@@ -1,0 +1,49 @@
+"""pi/reconstruction — M3. Per-LED 3D reconstruction from detection logs.
+
+DLT triangulation → sparse bundle adjustment (Huber) → outlier rejection →
+quality metrics → OutputMap (design doc §7.5/§8.3). Library + CLI.
+
+`imports = ["."]` puts this directory on the import path so the nested
+`reconstruction/` package is importable as `reconstruction` (and runnable as
+`python -m reconstruction`).
+"""
+
+load("@pypi//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "reconstruction",
+    srcs = glob(["reconstruction/*.py"]),
+    imports = ["."],
+    deps = [
+        "//shared/protocol:protocol",
+        requirement("numpy"),
+        requirement("scipy"),
+    ],
+)
+
+py_binary(
+    name = "reconstruct",
+    srcs = ["reconstruction/__main__.py"],
+    main = "reconstruction/__main__.py",
+    imports = ["."],
+    deps = [":reconstruction"],
+)
+
+py_test(
+    name = "reconstruct_test",
+    srcs = [
+        "tests/pytest_main.py",
+        "tests/test_reconstruct.py",
+    ],
+    main = "tests/pytest_main.py",
+    imports = ["."],
+    legacy_create_init = False,
+    deps = [
+        ":reconstruction",
+        requirement("numpy"),
+        requirement("pytest"),
+    ],
+)

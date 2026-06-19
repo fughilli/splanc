@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ledmapper.local/schemas/server_messages.json",
+  "title": "ServerMessage",
+  "description": "Discriminated union of all server (Pi) -> client (phone) messages. See design doc §7.2.",
+  "oneOf": [
+    { "$ref": "#/$defs/Welcome" },
+    { "$ref": "#/$defs/TimeSyncPong" },
+    { "$ref": "#/$defs/MappingStarted" },
+    { "$ref": "#/$defs/Status" },
+    { "$ref": "#/$defs/ResultReady" },
+    { "$ref": "#/$defs/Error" }
+  ],
+  "$defs": {
+    "Welcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "sessionId", "codeParams"],
+      "properties": {
+        "type": { "const": "welcome" },
+        "sessionId": { "type": "string", "description": "UUID for this control session." },
+        "codeParams": { "$ref": "code_params.json" }
+      }
+    },
+    "TimeSyncPong": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "t0", "t1", "t2"],
+      "properties": {
+        "type": { "const": "time_sync_pong" },
+        "t0": {
+          "type": "number",
+          "description": "Echoed phone clock at original send, in milliseconds."
+        },
+        "t1": {
+          "type": "number",
+          "description": "Server clock at receive of ping, in milliseconds."
+        },
+        "t2": {
+          "type": "number",
+          "description": "Server clock at send of pong, in milliseconds."
+        }
+      }
+    },
+    "MappingStarted": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "patternClockEpoch", "codeParams"],
+      "properties": {
+        "type": { "const": "mapping_started" },
+        "patternClockEpoch": {
+          "type": "number",
+          "description": "Server-clock time of the start of a known cycle, in milliseconds."
+        },
+        "codeParams": { "$ref": "code_params.json" }
+      }
+    },
+    "Status": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "identified", "total", "lowParallax"],
+      "properties": {
+        "type": { "const": "status" },
+        "identified": { "type": "integer", "minimum": 0 },
+        "total": { "type": "integer", "minimum": 0 },
+        "lowParallax": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "ResultReady": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "mapId"],
+      "properties": {
+        "type": { "const": "result_ready" },
+        "mapId": { "type": "string" }
+      }
+    },
+    "Error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "code", "message"],
+      "properties": {
+        "type": { "const": "error" },
+        "code": { "type": "string" },
+        "message": { "type": "string" }
+      }
+    }
+  }
+}

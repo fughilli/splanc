@@ -1,0 +1,18 @@
+# pnpm workspace for the LED Mapper repo.
+#
+# The web app (M5/M6/M7/M8) lives in web/, and consumes the protocol types
+# (M10) as a workspace package via @ledmapper/protocol.
+packages:
+  - "web"
+  - "shared/protocol/ts"
+
+# aspect_rules_js requires this to be set, even if empty: it is the explicit
+# allow-list of npm packages whose install-time lifecycle scripts (postinstall
+# etc.) we let run under Bazel. Empty means "no postinstall scripts", which is
+# the safest default — the protocol package and its TS toolchain don't need any.
+# Add packages here only after auditing what their install scripts do.
+# See https://pnpm.io/settings#allowbuilds
+#
+# Note: pnpm itself accepts a list here, but aspect_rules_js parses this as a
+# map of {package: bool}. We use the map form so both tools accept the file.
+allowBuilds: {}

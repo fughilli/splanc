@@ -1,0 +1,40 @@
+"""shared/protocol/ts — TypeScript surface of the protocol package.
+
+Both the hand-curated `index.ts` and the generated `generated/index.ts` are
+checked-in sources living here, so the ts_project lives here too, next to its
+inputs — no cross-package source references needed.
+"""
+
+load("@aspect_rules_ts//ts:defs.bzl", "ts_config", "ts_project")
+
+package(default_visibility = ["//visibility:public"])
+
+ts_config(
+    name = "tsconfig",
+    src = "tsconfig.json",
+    deps = ["//:tsconfig_base"],
+)
+
+# Type-check-only: the protocol package exposes types alone (see index.ts),
+# and the web app's bundler handles transpilation. `no_emit = True` pairs with
+# `"noEmit": true` in tsconfig.json so rules_ts type-checks without expecting
+# any JS/d.ts outputs.
+ts_project(
+    name = "protocol_ts",
+    srcs = [
+        "generated/index.ts",
+        "index.ts",
+    ],
+    no_emit = True,
+    # Must mirror compilerOptions.resolveJsonModule in tsconfig.base.json;
+    # rules_ts validates that the attribute and the tsconfig agree.
+    resolve_json_module = True,
+    tsconfig = ":tsconfig",
+)
+
+exports_files([
+    "index.ts",
+    "generated/index.ts",
+    "tsconfig.json",
+    "package.json",
+])

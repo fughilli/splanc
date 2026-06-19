@@ -1,0 +1,19 @@
+# Bazel configuration for the LED Mapper polyglot repo (Python on Pi, TS on web).
+# Pinned versions of toolchains are recorded in docs/decisions.md.
+
+# bzlmod is the source of truth — no WORKSPACE.
+common --enable_bzlmod
+common --registry=https://bcr.bazel.build
+
+# Make actions hermetic so caching is correct across machines.
+build --incompatible_strict_action_env
+
+# Reasonable test ergonomics: only show output for failing tests.
+test --test_output=errors
+
+# Avoid Bazel's default "//..." also descending into bazel-* symlinks.
+build --symlink_prefix=bazel-
+
+# Quieter status — agents and CI don't need a curses progress bar.
+common --color=yes
+common --show_timestamps

@@ -1,0 +1,60 @@
+# M4 — pi/provisioning. Nix-driven Raspberry Pi imaging + live redeploy.
+#
+# Two runnable targets (design doc / README "Active directives"):
+#   bazel run //pi/provisioning:image_sd    -- [--device /dev/sdX] [--no-write]
+#   bazel run //pi/provisioning:deploy_live -- <host-or-ip> [--user root]
+#
+# These are thin sh_binary wrappers that shell out to `nix` / `nixos-rebuild`
+# on a host that has Nix installed. They DO NOT require rules_nixpkgs to *run*
+# (they delegate to the nix CLI), which keeps `bazel build //...` working in
+# environments without nix. rules_nixpkgs is wired into MODULE.bazel for the
+# (future) option of importing nix-built packages as Bazel targets; see the
+# `nixpkgs` repo usage note in MODULE.bazel. If/when that path is exercised,
+# add the corresponding nixpkgs_package targets here.
+#
+# UNVERIFIED: these targets cannot be `bazel run` to completion in CI without
+# nix; they will print a clear error and exit. See README "Unverified".
+
+package(default_visibility = ["//visibility:public"])
+
+# Shared source files exposed to the wrapper binaries via runfiles.
+filegroup(
+    name = "nix_srcs",
+    srcs = glob([
+        "nix/flake.nix",
+        "nix/flake.lock",
+        "nix/modules/*.nix",
+    ]),
+)
+
+filegroup(
+    name = "key_script",
+    srcs = ["scripts/manage_keys.sh"],
+)
+
+# bazel run //pi/provisioning:image_sd
+sh_binary(
+    name = "image_sd",
+    srcs = ["scripts/image_sd.sh"],
+    data = [
+        ":nix_srcs",
+        ":key_script",
+    ],
+)
+
+# bazel run //pi/provisioning:deploy_live
+sh_binary(
+    name = "deploy_live",
+    srcs = ["scripts/deploy_live.sh"],
+    data = [
+        ":nix_srcs",
+        ":key_script",
+    ],
+)
+
+# Convenience: manage the deploy key pair.
+#   bazel run //pi/provisioning:keys -- init|rotate|pub|path
+sh_binary(
+    name = "keys",
+    srcs = ["scripts/manage_keys.sh"],
+)

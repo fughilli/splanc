@@ -1,0 +1,18 @@
+{
+  "name": "led-mapper",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "LED Mapper — pnpm workspace root.",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=10"
+  },
+  "packageManager": "pnpm@11.8.0",
+  "devDependencies": {
+    "json-schema-to-typescript": "15.0.4",
+    "typescript": "5.9.3",
+    "vite": "8.0.16"
+  }
+}

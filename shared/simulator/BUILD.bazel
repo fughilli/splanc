@@ -1,0 +1,50 @@
+"""shared/simulator — M9. Synthetic ground truth for the pipeline.
+
+Detection-log mode emits DetectionRecord-shaped observations for known fixtures
+and virtual walks, with injectable degradations (design doc §10.1). It depends
+on the reconstruction package for the shared camera model, so synthetic data is
+guaranteed in-distribution for the solver.
+
+`imports = ["."]` exposes the nested `simulator/` package as `simulator`.
+"""
+
+load("@pypi//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "simulator",
+    srcs = glob(["simulator/*.py"]),
+    imports = ["."],
+    deps = [
+        "//pi/reconstruction:reconstruction",
+        requirement("numpy"),
+    ],
+)
+
+py_binary(
+    name = "simulate",
+    srcs = ["simulator/__main__.py"],
+    main = "simulator/__main__.py",
+    imports = ["."],
+    deps = [":simulator"],
+)
+
+py_test(
+    name = "sim_recon_roundtrip_test",
+    srcs = [
+        "tests/pytest_main.py",
+        "tests/test_sim_recon_roundtrip.py",
+    ],
+    main = "tests/pytest_main.py",
+    imports = ["."],
+    legacy_create_init = False,
+    deps = [
+        ":simulator",
+        "//pi/reconstruction:reconstruction",
+        requirement("numpy"),
+        requirement("pytest"),
+        requirement("scipy"),
+    ],
+)

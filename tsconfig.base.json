@@ -1,0 +1,27 @@
+{
+  "//": "Shared TypeScript compiler options for the LED Mapper web app and protocol package. Per-package tsconfig.json files extend this and add `include` / `outDir`.",
+  "compilerOptions": {
+    "target": "ESNext",
+    "lib": ["ESNext", "DOM", "DOM.Iterable", "WebWorker"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "exactOptionalPropertyTypes": true,
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": false,
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@ledmapper/protocol": ["shared/protocol/ts/index.ts"],
+      "@ledmapper/protocol/*": ["shared/protocol/ts/*"]
+    }
+  }
+}

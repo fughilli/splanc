@@ -1,0 +1,4 @@
+node_modules
+web/node_modules
+shared/protocol/ts/node_modules
+.venv

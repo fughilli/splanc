@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ledmapper.local/schemas/detection_record.json",
+  "title": "DetectionRecord",
+  "description": "A single labeled, posed observation of one LED in one frame. See design doc §7.4.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ledId", "tCaptureMs", "u", "v", "imgW", "imgH", "K", "pose", "confidence"],
+  "properties": {
+    "ledId": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Decoded LED index."
+    },
+    "tCaptureMs": {
+      "type": "number",
+      "description": "Phone monotonic clock at frame capture, in milliseconds."
+    },
+    "u": {
+      "type": "number",
+      "description": "Sub-pixel centroid x in image coords (origin top-left)."
+    },
+    "v": {
+      "type": "number",
+      "description": "Sub-pixel centroid y in image coords (origin top-left)."
+    },
+    "imgW": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Image width in pixels for this frame."
+    },
+    "imgH": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Image height in pixels for this frame."
+    },
+    "K": {
+      "type": "array",
+      "description": "Camera intrinsics for this frame: [fx, fy, cx, cy].",
+      "items": { "type": "number" },
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "pose": {
+      "type": "object",
+      "description": "Camera pose in the WebXR session reference space.",
+      "additionalProperties": false,
+      "required": ["p", "q"],
+      "properties": {
+        "p": {
+          "type": "array",
+          "description": "Camera position [x, y, z] in meters.",
+          "items": { "type": "number" },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "q": {
+          "type": "array",
+          "description": "Camera orientation quaternion [x, y, z, w].",
+          "items": { "type": "number" },
+          "minItems": 4,
+          "maxItems": 4
+        }
+      }
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Decoder confidence in [0, 1] from bit margins and blob quality."
+    }
+  }
+}

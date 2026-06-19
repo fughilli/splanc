@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ledmapper.local/schemas/client_messages.json",
+  "title": "ClientMessage",
+  "description": "Discriminated union of all client (phone) -> server (Pi) messages. See design doc §7.1.",
+  "oneOf": [
+    { "$ref": "#/$defs/Hello" },
+    { "$ref": "#/$defs/TimeSyncPing" },
+    { "$ref": "#/$defs/StartMapping" },
+    { "$ref": "#/$defs/StopMapping" },
+    { "$ref": "#/$defs/Detections" },
+    { "$ref": "#/$defs/GetStatus" }
+  ],
+  "$defs": {
+    "Hello": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "client", "appVersion"],
+      "properties": {
+        "type": { "const": "hello" },
+        "client": {
+          "type": "string",
+          "description": "Client identifier, e.g. 'android-web'."
+        },
+        "appVersion": { "type": "string" }
+      }
+    },
+    "TimeSyncPing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "t0"],
+      "properties": {
+        "type": { "const": "time_sync_ping" },
+        "t0": {
+          "type": "number",
+          "description": "Phone clock at send, in milliseconds."
+        }
+      }
+    },
+    "StartMapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "options"],
+      "properties": {
+        "type": { "const": "start_mapping" },
+        "options": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["ledCount"],
+          "properties": {
+            "ledCount": { "type": "integer", "minimum": 1 }
+          }
+        }
+      }
+    },
+    "StopMapping": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "stop_mapping" }
+      }
+    },
+    "Detections": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "batch"],
+      "properties": {
+        "type": { "const": "detections" },
+        "batch": {
+          "type": "array",
+          "items": { "$ref": "detection_record.json" }
+        }
+      }
+    },
+    "GetStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": { "const": "get_status" }
+      }
+    }
+  }
+}

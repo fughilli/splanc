@@ -1,0 +1,20 @@
+{
+  "name": "@ledmapper/protocol",
+  "version": "0.1.0",
+  "description": "LED Mapper wire-protocol types (TypeScript). Generated from shared/protocol/schemas/.",
+  "type": "module",
+  "main": "index.ts",
+  "types": "index.ts",
+  "exports": {
+    ".": {
+      "types": "./index.ts",
+      "default": "./index.ts"
+    }
+  },
+  "files": [
+    "index.ts",
+    "generated/"
+  ],
+  "private": true,
+  "license": "UNLICENSED"
+}

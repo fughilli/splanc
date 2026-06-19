@@ -1,0 +1,25 @@
+# claude-container overlay — appended to the base image Dockerfile by the
+# launcher (runs as root at build time; the entrypoint switches to the non-root
+# runtime user `claude`, uid 501, at run time). See .claude/skills/container-overlay.
+
+# 2026-06-19: Nix with flakes — required by M4 (pi/provisioning). The image_sd /
+# deploy_live Bazel targets and generating pi/provisioning/nix/flake.lock all
+# shell out to `nix`, which is absent from the base image. This is the skill's
+# "project uses Nix" case: install once here; per-package additions go in the
+# repo's flake.nix, not this overlay.
+#
+# Installed single-user (no daemon — there's no init system at build time) and
+# made store-writable for ALL users, because the container runs as a non-root
+# user at run time and must be able to build into /nix/store. (This is the
+# runtime-user path the skill calls out; chosen here because M4 needs nix usable
+# by uid 501, not just root.) build-users-group is cleared so builds run as the
+# calling user, and the sandbox is disabled since the container can't set up
+# build-sandbox user namespaces without privilege.
+RUN curl -fsSL https://nixos.org/nix/install -o /tmp/install-nix \
+    && sh /tmp/install-nix --no-daemon --yes \
+    && rm /tmp/install-nix \
+    && chmod -R a+rwX /nix
+RUN mkdir -p /etc/nix \
+    && printf 'experimental-features = nix-command flakes\nbuild-users-group =\nsandbox = false\n' \
+        > /etc/nix/nix.conf
+ENV PATH=/nix/var/nix/profiles/default/bin:$PATH

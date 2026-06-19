@@ -1,0 +1,28 @@
+# LED Mapper — top-level Python dependencies for the whole repo.
+#
+# Regenerate the locked transitive set with:
+#     bazel run //:requirements.update
+#
+# This file is the only place to add a new direct dependency. The lockfile
+# (requirements.lock) is fully resolved from this set and is what Bazel
+# actually consumes via pip.parse() in MODULE.bazel.
+#
+# Per design doc §4, versions are pinned to the latest stable at repo init
+# (recorded in docs/decisions.md) and bumped intentionally, not opportunistically.
+
+# Wire-protocol modeling (M10).
+pydantic>=2.6
+jsonschema>=4.21
+
+# Reconstruction / simulator (M3, M9).
+numpy
+scipy
+opencv-python-headless
+
+# Pi server (M2).
+fastapi
+uvicorn[standard]
+websockets
+
+# Test runner.
+pytest

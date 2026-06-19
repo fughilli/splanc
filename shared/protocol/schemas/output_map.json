@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ledmapper.local/schemas/output_map.json",
+  "title": "OutputMap",
+  "description": "Per-LED 3D map produced by the reconstruction pipeline. See design doc §7.5.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["mapId", "createdAt", "units", "frame", "ledCount", "leds", "unmapped", "stats"],
+  "properties": {
+    "mapId": {
+      "type": "string",
+      "description": "UUID for this map artifact."
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 timestamp."
+    },
+    "units": {
+      "type": "string",
+      "enum": ["meters"],
+      "description": "Linear units of LED positions."
+    },
+    "frame": {
+      "type": "string",
+      "enum": ["webxr_session_ref"],
+      "description": "Coordinate frame for LED positions."
+    },
+    "ledCount": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total LEDs in the fixture, including any that were not mapped."
+    },
+    "leds": {
+      "type": "array",
+      "description": "One entry per identified LED.",
+      "items": { "$ref": "#/$defs/LedEntry" }
+    },
+    "unmapped": {
+      "type": "array",
+      "description": "LED indices that were not solved (no observations or insufficient parallax).",
+      "items": { "type": "integer", "minimum": 0 }
+    },
+    "stats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rmsReprojPxGlobal", "medianParallaxDeg"],
+      "properties": {
+        "rmsReprojPxGlobal": {
+          "type": "number",
+          "minimum": 0,
+          "description": "RMS reprojection error across all observations, in pixels."
+        },
+        "medianParallaxDeg": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Median per-LED maximum parallax angle, in degrees."
+        }
+      }
+    }
+  },
+  "$defs": {
+    "LedEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "xyz", "confidence", "nViews", "rmsReprojPx", "parallaxDeg"],
+      "properties": {
+        "id": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "LED index."
+        },
+        "xyz": {
+          "type": "array",
+          "description": "3D position [x, y, z] in meters, WebXR session reference frame.",
+          "items": { "type": "number" },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Per-LED confidence in [0, 1]."
+        },
+        "nViews": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of observations used in the solve."
+        },
+        "rmsReprojPx": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Per-LED RMS reprojection error, in pixels."
+        },
+        "parallaxDeg": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Maximum angle between any two observation rays, in degrees."
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,41 @@
+"""Repo-root build file.
+
+Most build targets live under their respective module directories. This file
+exists to:
+  1. mark the repo root as a Bazel package, and
+  2. host the `compile_pip_requirements` target that regenerates the root-level
+     Python lockfile (`requirements.lock`) from `requirements.in`.
+
+To regenerate the lockfile after editing requirements.in:
+    bazel run //:requirements.update
+"""
+
+load("@aspect_rules_ts//ts:defs.bzl", "ts_config")
+load("@rules_python//python:pip.bzl", "compile_pip_requirements")
+
+package(default_visibility = ["//visibility:public"])
+
+# The shared TypeScript base config, exposed as a ts_config so that package-level
+# ts_config targets can `extends` it via deps. (ts_config copies its deps to the
+# output tree, which only works for ts_config targets / same-package files — a
+# raw cross-package file label fails analysis.)
+ts_config(
+    name = "tsconfig_base",
+    src = "tsconfig.base.json",
+)
+
+# Exported so other packages (and the codegen genrule) can depend on the source
+# files without leaking implementation details about the root package.
+exports_files([
+    "requirements.in",
+    "requirements.lock",
+    "package.json",
+    "pnpm-lock.yaml",
+    "tsconfig.base.json",
+])
+
+compile_pip_requirements(
+    name = "requirements",
+    src = "requirements.in",
+    requirements_txt = "requirements.lock",
+)

@@ -1,0 +1,35 @@
+# --- Bazel ---------------------------------------------------------------
+# Convenience symlinks (symlink_prefix = bazel- in .bazelrc) into the cache.
+/bazel-*
+# MODULE.bazel.lock IS committed (it's a lockfile) — do not ignore it.
+
+# --- Node / pnpm ---------------------------------------------------------
+node_modules/
+.pnpm-store/
+npm-debug.log*
+pnpm-debug.log*
+
+# --- Python --------------------------------------------------------------
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+.venv/
+venv/
+
+# --- Nix (build results) -------------------------------------------------
+# (deploy secrets are ignored by pi/provisioning/.gitignore)
+/result
+/result-*
+
+# --- Claude Code ---------------------------------------------------------
+# Local, per-machine settings; the shared skill under .claude/skills/ and the
+# container overlay ARE tracked.
+.claude/settings.local.json
+
+# --- Editor / OS ---------------------------------------------------------
+.DS_Store
+*.swp
+*~
+.idea/
+.vscode/

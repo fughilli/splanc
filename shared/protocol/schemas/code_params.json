@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ledmapper.local/schemas/code_params.json",
+  "title": "CodeParams",
+  "description": "Code-book parameters describing the temporal blink pattern. See design doc §7.6.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ledCount", "bits", "encoding", "bitPeriodMs", "syncPattern", "cycleFrames"],
+  "properties": {
+    "ledCount": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Number of LEDs in the fixture."
+    },
+    "bits": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Number of bit frames per cycle. ceil(log2(ledCount))."
+    },
+    "encoding": {
+      "type": "string",
+      "enum": ["gray"],
+      "description": "Index encoding scheme. Currently only 'gray' is defined; modeled as enum so it remains extensible."
+    },
+    "bitPeriodMs": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Hold time per bit frame, in milliseconds."
+    },
+    "syncPattern": {
+      "type": "string",
+      "enum": ["on_off"],
+      "description": "Sync delimiter pattern. Currently only 'on_off' (one all-on frame, one all-off frame); modeled as enum so it remains extensible."
+    },
+    "cycleFrames": {
+      "type": "integer",
+      "minimum": 3,
+      "description": "Total frames per cycle: 2 (sync delimiter) + bits."
+    }
+  }
+}

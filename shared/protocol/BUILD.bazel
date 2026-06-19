@@ -1,0 +1,129 @@
+"""shared/protocol — M10. Single source of truth for the wire protocol.
+
+The JSON Schemas under `schemas/` are the contract. From them, this package
+generates:
+  - Pydantic v2 models, consumed by the Pi modules (M1..M3, M9).
+  - TypeScript types, consumed by the web app (M5..M8).
+
+The generation runs as a Bazel genrule so the outputs are reproducible and
+cached. The hand-curated `__init__.py` and `index.ts` re-export the generated
+symbols, giving consumers a stable import surface.
+"""
+
+load("@pypi//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# ---------------------------------------------------------------------------
+# Schemas — exposed as a filegroup so other packages (e.g. the simulator) can
+# load them at runtime if they need to validate wire data without going
+# through Pydantic.
+# ---------------------------------------------------------------------------
+
+filegroup(
+    name = "schemas",
+    srcs = glob(["schemas/*.json"]),
+)
+
+# ---------------------------------------------------------------------------
+# Codegen tool. The codegen script is pure stdlib — no third-party deps — so
+# the py_binary doesn't need any pip imports, which keeps it hermetic and fast.
+#
+# The Pydantic models (python/ledmapper_protocol/_generated.py) and the TS
+# types (ts/generated/index.ts) are checked into the source tree, because
+# they're consumed directly: the Pi modules import them as a normal Python
+# package, and the web app (and `tsc --noEmit`) needs the .ts files on disk.
+# That means they can't *also* be Bazel genrule outputs — a label can't be
+# both a source file and a generated artifact. So codegen is wired two ways:
+#
+#   1. `codegen_tool` regenerates the in-tree files. Run it directly for the
+#      byte-identical output Bazel/CI expects:
+#          python3 shared/protocol/codegen.py
+#      (`bazel run //shared/protocol:codegen_tool` writes into the runfiles
+#      sandbox, not the source tree, so it's only useful for `--check`.)
+#   2. `codegen_freshness` (below) fails the build if the checked-in files
+#      have drifted from the schemas — the single-source-of-truth guarantee.
+# ---------------------------------------------------------------------------
+
+py_binary(
+    name = "codegen_tool",
+    srcs = ["codegen.py"],
+    main = "codegen.py",
+    visibility = ["//visibility:private"],
+)
+
+# ---------------------------------------------------------------------------
+# Codegen freshness check. Runs `codegen.py --check`, which regenerates in
+# memory and diffs against the checked-in outputs, failing if they're stale.
+# It produces a stamp file purely so it's a buildable target; `bazel build
+# //...` (and CI) exercises it. The generated TS lives in the `ts` subpackage,
+# so it's referenced by its exported label, not a source path.
+# ---------------------------------------------------------------------------
+
+genrule(
+    name = "codegen_freshness",
+    srcs = [
+        ":schemas",
+        # Listed explicitly (in addition to :schemas) so $(location) can resolve
+        # it to derive the schema directory.
+        "schemas/detection_record.json",
+        "python/ledmapper_protocol/_generated.py",
+        "//shared/protocol/ts:generated/index.ts",
+    ],
+    outs = ["codegen_freshness.stamp"],
+    cmd = """
+        $(execpath :codegen_tool) --check \\
+            --schema-dir $$(dirname $(location schemas/detection_record.json)) \\
+            --ts-out $(location //shared/protocol/ts:generated/index.ts) \\
+            --py-out $(location python/ledmapper_protocol/_generated.py) \\
+        && touch $@
+    """,
+    tools = [":codegen_tool"],
+)
+
+# ---------------------------------------------------------------------------
+# Python library: hand-curated package + generated module. Consumers import
+# `ledmapper_protocol`, never `ledmapper_protocol._generated` directly.
+# imports = ["python"] makes `ledmapper_protocol` importable as a top-level
+# package from this Bazel target.
+# ---------------------------------------------------------------------------
+
+py_library(
+    name = "protocol",
+    srcs = [
+        "python/ledmapper_protocol/__init__.py",
+        "python/ledmapper_protocol/_generated.py",
+    ],
+    imports = ["python"],
+    deps = [
+        requirement("pydantic"),
+    ],
+)
+
+# ---------------------------------------------------------------------------
+# The TypeScript type-check target (protocol_ts) lives in the ts/ subpackage,
+# next to its sources — see //shared/protocol/ts:protocol_ts.
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Round-trip test (M10 acceptance). Runs the test against the in-tree
+# schemas (made available as data) and the in-tree Pydantic models.
+# ---------------------------------------------------------------------------
+
+py_test(
+    name = "roundtrip_test",
+    srcs = [
+        "tests/pytest_main.py",
+        "tests/test_roundtrip.py",
+    ],
+    main = "tests/pytest_main.py",
+    data = [":schemas"],
+    deps = [
+        ":protocol",
+        requirement("jsonschema"),
+        requirement("pytest"),
+        requirement("referencing"),
+    ],
+    legacy_create_init = False,
+)

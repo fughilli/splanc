@@ -1,0 +1,95 @@
+"""LED Mapper — Bazel module (bzlmod).
+
+Polyglot repo: Python (Pi server, reconstruction, simulator, protocol codegen)
+and TypeScript (web app, generated protocol types).
+
+All dependency versions are pinned. The decision log in `docs/decisions.md`
+records why these specific versions were chosen and the date they were pinned.
+Update both this file and the decision log together.
+"""
+
+module(
+    name = "led_mapper",
+    version = "0.0.0",
+    compatibility_level = 1,
+)
+
+# ---------------------------------------------------------------------------
+# Core language rules
+# ---------------------------------------------------------------------------
+
+bazel_dep(name = "rules_python", version = "2.0.3")
+bazel_dep(name = "aspect_rules_js", version = "3.2.2")
+bazel_dep(name = "aspect_rules_ts", version = "3.8.11")
+bazel_dep(name = "aspect_bazel_lib", version = "2.22.5")
+bazel_dep(name = "rules_pkg", version = "1.2.0")
+
+# ---------------------------------------------------------------------------
+# Nix integration (M4 — pi/provisioning).
+#
+# rules_nixpkgs lets Bazel import Nix-built packages as Bazel targets. The
+# M4 provisioning targets (//pi/provisioning:image_sd, :deploy_live) are
+# thin sh_binary wrappers that shell out to the `nix` CLI, so they DO NOT
+# require any nixpkgs repo to be fetched — they work without this dep. We
+# register rules_nixpkgs (pinned) so the future option of pulling nix
+# derivations into the Bazel graph is available.
+#
+# IMPORTANT (repo-wide build safety): we deliberately DO NOT declare a
+# `nix_repo` / `nixpkgs_package` here. Declaring one would make Bazel try to
+# evaluate Nix at fetch time, which FAILS on machines without `nix` installed
+# and would break `bazel build //...` for everyone. Keeping this to the
+# bazel_dep registration only means the dep is resolved from the registry but
+# nothing forces a nix evaluation. See pi/provisioning/README.md.
+#
+# rules_nixpkgs 0.13.0 (pinned 2026-06-19). bzlmod module: rules_nixpkgs_core.
+bazel_dep(name = "rules_nixpkgs_core", version = "0.13.0")
+
+# ---------------------------------------------------------------------------
+# Python toolchain — Pi-compatible 3.11.
+# rules_python provides a hermetic interpreter, so a system Python is not
+# required for the build.
+# ---------------------------------------------------------------------------
+
+PYTHON_VERSION = "3.11"
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(
+    is_default = True,
+    python_version = PYTHON_VERSION,
+)
+
+# ---------------------------------------------------------------------------
+# pip dependencies — single root-level lockfile drives the whole repo.
+# Regenerate with:  bazel run //:requirements.update
+# ---------------------------------------------------------------------------
+
+pip = use_extension("@rules_python//python/extensions:pip.bzl", "pip")
+pip.parse(
+    hub_name = "pypi",
+    python_version = PYTHON_VERSION,
+    requirements_lock = "//:requirements.lock",
+)
+use_repo(pip, "pypi")
+
+# ---------------------------------------------------------------------------
+# npm / pnpm — the single pnpm workspace covers web/ and shared/protocol/ts/.
+# ---------------------------------------------------------------------------
+
+npm = use_extension("@aspect_rules_js//npm:extensions.bzl", "npm")
+npm.npm_translate_lock(
+    name = "npm",
+    pnpm_lock = "//:pnpm-lock.yaml",
+    verify_node_modules_ignored = "//:.bazelignore",
+)
+use_repo(npm, "npm")
+
+# TypeScript compiler version. Kept aligned with package.json devDependencies.
+rules_ts_ext = use_extension(
+    "@aspect_rules_ts//ts:extensions.bzl",
+    "ext",
+    dev_dependency = True,
+)
+rules_ts_ext.deps(
+    ts_version_from = "//:package.json",
+)
+use_repo(rules_ts_ext, "npm_typescript")
