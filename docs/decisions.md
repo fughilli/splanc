@@ -88,13 +88,21 @@ redirected to a Bazel + Nix workflow (root README "Active directives"). See
 | Component            | Pin                                                                     | Rationale |
 | -------------------- | ----------------------------------------------------------------------- | --------- |
 | `rules_nixpkgs_core` | `0.13.0`                                                                | Latest tweag/rules_nixpkgs release; first with Bazel 8 support. Registration-only in `MODULE.bazel` (no `nix_repo`) so it never forces a Nix eval at fetch time — keeps `bazel build //...` green on machines without Nix. |
-| `nixos-raspberrypi`  | tag `1.20260517.0` (commit `06c6e3513e1ee64b651913193fc6ac38aa4963f5`)  | `nvmd/nixos-raspberrypi` provides Pi 4/5 kernel, firmware, device tree, and SD-image builders. Pinned to a tagged release for reproducibility. |
-| `nixpkgs`            | branch `nixos-25.05`                                                     | Followed by `nixos-raspberrypi.inputs.nixpkgs` so there is a single coherent package set (avoids divergent kernel/userspace). Lock-level pin comes from `flake.lock`. |
+| `nixos-raspberrypi`  | tag `v1.20260517.0` (commit `06c6e3513e1ee64b651913193fc6ac38aa4963f5`)  | `nvmd/nixos-raspberrypi` provides Pi 4/5 kernel, firmware, device tree, and SD-image builders. Pinned to a tagged release for reproducibility. **Note the `v` prefix** — the flake originally pinned `1.20260517.0` (no `v`), which GitHub does not resolve; corrected 2026-06-19 when generating `flake.lock`. |
+| `nixpkgs`            | branch `nixos-25.05` (locked to `ac62194` in `flake.lock`)               | Followed by `nixos-raspberrypi.inputs.nixpkgs` so there is a single coherent package set (avoids divergent kernel/userspace). **Trade-off:** because we pin our own `nixos-25.05` and make upstream `follows` it, the resolved nixpkgs differs from the one `nixos-raspberrypi.cachix.org` built its kernel/firmware against, so `image_sd` rebuilds the Pi kernel from source (~20–40 min on first build, then cached locally). To get kernel cache hits instead, drop the `follows` and accept upstream's nixpkgs. |
 | Target board         | `raspberry-pi-5` (default)                                               | Design doc §5 targets Pi 4 or 5; default to 5, switch via `board` in `flake.nix`. |
 
-**Open item:** `pi/provisioning/nix/flake.lock` is not yet generated (no Nix in
-the authoring environment). Generate it with `nix flake update` on a Nix host
-and commit it to lock input hashes.
+**`flake.lock`:** generated 2026-06-19 (`nix flake update`) and committed; locks
+`nixpkgs` → `ac62194`, `nixos-raspberrypi` → `06c6e35`. The full
+`system.build.sdImage` derivation evaluates and builds on an `aarch64-linux`
+host (the dev container is aarch64, so no qemu/binfmt cross is needed).
+
+**Deploy-key eval path:** the pubkey lives at `pi/provisioning/secrets/`, which
+is *outside* the flake root (`nix/`), so a relative path from the module cannot
+reach it through the flake's store copy. `image_sd`/`deploy_live` therefore
+export `LEDMAPPER_DEPLOY_PUBKEY_FILE` (absolute) and build with `--impure`;
+`ssh-deploy.nix` reads that env path first. Pure builds would require moving the
+flake root up to `provisioning/` (left as a future cleanup).
 
 **SSH deploy key:** ed25519 pair owned by the deploy flow. Public half baked
 into the image `authorized_keys`; private half used by `deploy_live`. Stored

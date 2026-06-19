@@ -1,6 +1,5 @@
 # claude-container overlay — appended to the base image Dockerfile by the
-# launcher (runs as root at build time; the entrypoint switches to the non-root
-# runtime user `claude`, uid 501, at run time). See .claude/skills/container-overlay.
+# launcher. Build and run both happen as root. See .claude/skills/container-overlay.
 
 # 2026-06-19: Nix with flakes — required by M4 (pi/provisioning). The image_sd /
 # deploy_live Bazel targets and generating pi/provisioning/nix/flake.lock all
@@ -8,18 +7,39 @@
 # "project uses Nix" case: install once here; per-package additions go in the
 # repo's flake.nix, not this overlay.
 #
-# Installed single-user (no daemon — there's no init system at build time) and
-# made store-writable for ALL users, because the container runs as a non-root
-# user at run time and must be able to build into /nix/store. (This is the
-# runtime-user path the skill calls out; chosen here because M4 needs nix usable
-# by uid 501, not just root.) build-users-group is cleared so builds run as the
-# calling user, and the sandbox is disabled since the container can't set up
-# build-sandbox user namespaces without privilege.
-RUN curl -fsSL https://nixos.org/nix/install -o /tmp/install-nix \
-    && sh /tmp/install-nix --no-daemon --yes \
-    && rm /tmp/install-nix \
-    && chmod -R a+rwX /nix
-RUN mkdir -p /etc/nix \
-    && printf 'experimental-features = nix-command flakes\nbuild-users-group =\nsandbox = false\n' \
-        > /etc/nix/nix.conf
+# Uses the Determinate Systems nix-installer: the upstream installer's
+# single-user path shells out to `sudo` (absent from the base image), so it
+# fails even when the build itself is already running as root. Determinate's
+# installer needs no sudo and exposes `--init none` to skip the systemd daemon
+# setup that has no place in a container.
+#
+# build-users-group is cleared so builds run as the calling user (no nixbld
+# group is created), and the sandbox is disabled since the container can't set
+# up build-sandbox user namespaces without privilege.
+RUN curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix \
+        -o /tmp/nix-installer.sh \
+    && sh /tmp/nix-installer.sh install linux \
+        --init none \
+        --no-confirm \
+        --extra-conf "experimental-features = nix-command flakes" \
+        --extra-conf "build-users-group =" \
+        --extra-conf "sandbox = false" \
+    && rm /tmp/nix-installer.sh
 ENV PATH=/nix/var/nix/profiles/default/bin:$PATH
+
+# The launcher runs the container as the non-root `claude` user regardless of a
+# `USER root` directive, and the Determinate installer leaves /nix owned by
+# root. Daemon-less Nix as `claude` then fails trying to chmod the root-owned
+# `/nix/var/nix/profiles/per-user` ("Operation not permitted"), which blocks
+# every `nix` invocation (flake.lock generation, image_sd, deploy_live).
+# Hand the whole single-user store to `claude` so it can manage profiles, the
+# DB, and gcroots without a daemon. (Store stays in /nix; the prebuilt paths and
+# their DB entries are preserved.)
+RUN chown -R claude:claude /nix
+
+# ssh-keygen for the M4 deploy-key flow (pi/provisioning/scripts/manage_keys.sh).
+# Not in the base image; install the client so `bazel run //pi/provisioning:keys`
+# and image_sd's key bootstrap work without shelling out to a nix-provided one.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends openssh-client \
+    && rm -rf /var/lib/apt/lists/*

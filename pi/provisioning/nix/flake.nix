@@ -28,8 +28,8 @@
 
     # Raspberry Pi board support (kernel, firmware, device tree, SD image).
     # Pinned to a tagged release of nvmd/nixos-raspberrypi.
-    # Tag 1.20260517.0 == commit 06c6e3513e1ee64b651913193fc6ac38aa4963f5.
-    nixos-raspberrypi.url = "github:nvmd/nixos-raspberrypi/1.20260517.0";
+    # Tag v1.20260517.0 == commit 06c6e3513e1ee64b651913193fc6ac38aa4963f5.
+    nixos-raspberrypi.url = "github:nvmd/nixos-raspberrypi/v1.20260517.0";
 
     # Keep nixos-raspberrypi's nixpkgs and ours aligned. (If you intentionally
     # want a different userspace, drop this `follows` and accept two package
@@ -53,9 +53,13 @@
           modules = [
             # Board hardware support from the nixos-raspberrypi flake.
             ({ ... }: {
-              imports = with nixos-raspberrypi.nixosModules; [
-                "${board}".base
-                "${board}".display-vc4
+              imports = [
+                nixos-raspberrypi.nixosModules.${board}.base
+                nixos-raspberrypi.nixosModules.${board}.display-vc4
+                # Provides config.system.build.sdImage (a directly-bootable
+                # SD image of THIS system — not the live installer; that is
+                # what nixos-raspberrypi.lib.nixosInstaller would add instead).
+                nixos-raspberrypi.nixosModules.sd-image
               ];
             })
 
@@ -65,7 +69,16 @@
             ./modules/networking.nix
             ./modules/spi.nix
 
-            { networking.hostName = hostName; }
+            {
+              networking.hostName = hostName;
+              # Turn on our application module (led-driver + led-server units).
+              # Without this the ledmapper.nix config block (lib.mkIf cfg.enable)
+              # is inert and the image ships no LED Mapper services.
+              services.ledMapper.enable = true;
+              # Pin the state version so upgrades are well-defined and the
+              # eval-time "stateVersion not set" warning goes away.
+              system.stateVersion = "25.05";
+            }
           ] ++ extraModules;
         };
     in

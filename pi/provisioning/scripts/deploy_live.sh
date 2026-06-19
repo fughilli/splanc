@@ -54,12 +54,18 @@ chmod 600 "$PRIV" 2>/dev/null || true
 export NIX_SSHOPTS="-i $PRIV -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
 TARGET="${USER_NAME}@${HOST}"
 
+# The baked-in deploy pubkey lives outside the flake root (see image_sd.sh /
+# ssh-deploy.nix); point eval at it and build --impure so the rebuilt config can
+# resolve it, matching what the image was built with.
+export LEDMAPPER_DEPLOY_PUBKEY_FILE="$SECRETS_DIR/deploy_key.pub"
+
 echo "==> Deploying $FLAKE_DIR#ledmapper to $TARGET (in-place switch)"
 # --use-remote-sudo lets us deploy as a non-root user too; for root it's a no-op.
 nixos-rebuild switch \
   --flake "path:${FLAKE_DIR}#ledmapper" \
   --target-host "$TARGET" \
   --use-remote-sudo \
+  --impure \
   "${EXTRA_ARGS[@]}"
 
 echo "==> Switch complete on $HOST."

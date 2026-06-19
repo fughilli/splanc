@@ -53,11 +53,21 @@ command -v nix >/dev/null 2>&1 || {
 echo "==> Ensuring deploy SSH key exists (public half is baked into the image)"
 bash "$KEYS" ensure
 
+# The deploy pubkey lives at <provisioning>/secrets/, which is OUTSIDE the flake
+# root (nix/). A flake's store copy only contains the flake dir, so a relative
+# path from the module can't reach it. ssh-deploy.nix resolves the key from
+# $LEDMAPPER_DEPLOY_PUBKEY_FILE (absolute) first; export it and build --impure so
+# eval can read the operator-local key. (No secret is committed; only the public
+# half is read, and it is baked into the image's authorized_keys.)
+SECRETS_DIR="${LEDMAPPER_DEPLOY_KEY_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)/secrets}"
+export LEDMAPPER_DEPLOY_PUBKEY_FILE="$SECRETS_DIR/deploy_key.pub"
+
 echo "==> Building SD image from $FLAKE_DIR"
 # Build the sdImage attribute. nixos-raspberrypi places it under
 # nixosConfigurations.<host>.config.system.build.sdImage; flake.nix re-exports
 # it as .#images.sdImage.
 nix build "${EXTRA_NIX_ARGS[@]}" \
+  --impure \
   --print-out-paths \
   "path:${FLAKE_DIR}#images.sdImage" \
   --out-link /tmp/ledmapper-sdimage
