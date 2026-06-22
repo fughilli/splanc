@@ -23,6 +23,21 @@ The project is managed with **Bazel using bzlmod** (`MODULE.bazel`, no
   TypeScript over the pnpm workspace. No reliance on system Python/Node for the
   build itself.
 
+### JVM SVE workaround (`.bazelrc`, added 2026-06-19)
+
+`.bazelrc` carries `startup --host_jvm_args=-XX:UseSVE=0`. Bazel 7.7.1 ships a
+bundled JDK 21.0.5; on some `aarch64` hosts that JDK emits SVE (Scalable Vector
+Extension) instructions in its VM-startup stub code, and the bundled JVM then
+crashes with `SIGILL` (illegal opcode) in `StubRoutines::call_stub` before it
+can run anything — every `bazelisk` command dies with "Server crashed during
+startup". This first appeared when this dev container was rebuilt onto a host
+whose CPU rejects those stubs. `-XX:UseSVE=0` disables SVE codegen in the JVM
+and is harmless on hosts without SVE, so it is set unconditionally rather than
+behind a config. If a future Bazel/JDK bump makes it unnecessary it can be
+dropped, but it costs nothing to keep. (Symptom to recognise: a zombie `[java]
+<defunct>` server process that `bazelisk` keeps trying and failing to kill — if
+that lock wedges, point bazel at a fresh `--output_base`.)
+
 ### Pinned versions (pinned 2026-06-18, lockfiles regenerated 2026-06-19)
 
 Update this table together with the file that holds each pin.
@@ -79,6 +94,34 @@ From design doc §8.3 / §12. These are the defaults in `pi/reconstruction`:
 | Min parallax to accept | `5°` | Below this an LED is kept but flagged low-confidence (§12). |
 | Min views | `2` | Fewer ⇒ LED listed in `unmapped`. |
 
+## M1 — LED driver choices (pinned 2026-06-19)
+
+SK9822/APA102 over hardware SPI (design doc §5). Decisions in `pi/led_driver`:
+
+| Choice | Decision | Rationale |
+| ------ | -------- | --------- |
+| Wire format | start `4×00`; per-LED `0xE0\|bright5, B, G, R`; end `ceil(n/16)` (min 4) `×00` | SK9822 latch semantics; zeros are the safer cross-compatible end frame (classic APA102 used `0xFF`). Long cascades get ~n/16 extra clock bytes. |
+| `spidev` | imported lazily inside `SpidevSink`; **not** in `requirements.lock` | Pi-only (provided by `pi/provisioning/nix/modules/spi.nix`), absent off-Pi. Lazy import keeps the package importable and the suite hermetic. |
+| SPI clock | 8 MHz default | Comfortable for SK9822; tune per strip length/wiring. |
+| On colour / brightness | white, brightness 31 | LEDs should be the brightest objects in frame (§5 dim-room guidance); configurable. |
+| Pattern clock | `time.monotonic()` ms, stamped at frame 0 of the cycle | Same monotonic base as M2 clock sync (§8.2); `start()` blocks until the worker stamps it so the epoch reflects the real cycle start. |
+| M1↔M2 transport | separate process + Unix-socket, newline-delimited JSON | §3 process split: server restarts don't drop the pattern; driver can run at RT priority. `CodeParams` authored by M2 (`codebook.py`), consumed by M1. |
+| Testability | injected `clock`/`sleep` + `RecordingSink` | Drive the loop deterministically with no wall-clock waits or hardware. Real cadence (§9 Phase 1) still needs a logic analyzer on a bench. |
+
+## M2 — Pi server choices (pinned 2026-06-19)
+
+FastAPI/uvicorn/websockets, per design doc §4. Decisions in `pi/server`:
+
+| Choice | Decision | Rationale |
+| ------ | -------- | --------- |
+| Server clock | `time.monotonic()` ms | §7.3 offset/rtt math needs differences from a clock that can't step; one clock feeds both `t1`/`t2` and `patternClockEpoch`. |
+| Reconstruction trigger | M3 library called in a worker thread (`asyncio.to_thread`) on `stop_mapping` | Keeps the event loop responsive during multi-second BA. Design §3 frames it as a "subprocess/job"; the seam is one async callable in `reconstruct.py`, so swapping to a true subprocess later is local. |
+| Session persistence | buffer in memory, flush the `{ledCount, detections}` log on stop | Simple; the log is exactly M3's input format. Trade-off: a crash mid-capture loses the session — on-disk journaling deferred. |
+| `patternClockEpoch` | stubbed to server clock at `start_mapping` | M1 driver isn't built; `get_clock().epoch` replaces it later. Seam: `SessionManager.start()`. |
+| `status` fields | `identified` = LEDs ≥2 views; `lowParallax` = LEDs seen once | True parallax needs geometry; these are honest live proxies for walk guidance. Real parallax is in the `OutputMap`. |
+| `welcome.codeParams` | server default `--led-count` (1024) until `start_mapping` | ledCount is unknown at `hello`; `mapping_started` carries the actual code-book once the client sends it. |
+| Testing | transport-decoupled core + a real-server integration test | `httpx` is intentionally *not* in the lockfile, so we avoid `fastapi.TestClient`; the integration test uses the `websockets` sync client + stdlib `urllib` against a live uvicorn. |
+
 ## M4 — Nix-driven provisioning (pinned 2026-06-19)
 
 The original M4 scope (shell + `hostapd`/`dnsmasq`/`avahi`/systemd) was
@@ -94,8 +137,26 @@ redirected to a Bazel + Nix workflow (root README "Active directives"). See
 
 **`flake.lock`:** generated 2026-06-19 (`nix flake update`) and committed; locks
 `nixpkgs` → `ac62194`, `nixos-raspberrypi` → `06c6e35`. The full
-`system.build.sdImage` derivation evaluates and builds on an `aarch64-linux`
-host (the dev container is aarch64, so no qemu/binfmt cross is needed).
+`system.build.sdImage` derivation evaluates on an `aarch64-linux` host (the dev
+container is aarch64, so no qemu/binfmt cross is needed).
+
+**Nix-verified 2026-06-19** on the native aarch64 dev container: the flake and
+the full `nixosConfigurations.ledmapper` evaluate; every flagged option
+path/module name is correct for the pin (`system.build.sdImage` →
+`nixos-image-rpi5-kernel.img.zst`, `raspberry-pi-5.{base,display-vc4}` +
+`sd-image` modules, `python3Packages.spidev` present, deploy pubkey baked into
+root `authorizedKeys`); the SD-image derivation realizes through substitution +
+~90 derivations. The from-source Pi kernel compile is RAM/disk-heavy — it OOM'd
+at full parallelism and hit ENOSPC on the final module link in a ~21 GiB-free
+sandbox — so the final `*.img.zst` was **not realized here**; it needs a host
+with ≥8 GiB RAM and ~25 GiB scratch (or a cache matching the pinned nixpkgs).
+Real Pi first-boot and a live `deploy_live` switch remain untested (no hardware).
+Three `bazel run`-path bugs were found and fixed in `pi/provisioning/`:
+`spi.nix` used `lib.mkDefault` on the whole `hardware.raspberry-pi.config` subtree,
+which dropped the `dtparam=spi=on` leaf (now set directly); and `image_sd.sh` +
+`manage_keys.sh` resolved the `secrets/` dir from the Bazel runfiles tree instead
+of `BUILD_WORKSPACE_DIRECTORY`, so generated keys never reached the flake closure
+(now anchored on the workspace dir, matching `deploy_live.sh`).
 
 **Deploy-key eval path:** the pubkey lives at `pi/provisioning/secrets/`, which
 is *outside* the flake root (`nix/`), so a relative path from the module cannot

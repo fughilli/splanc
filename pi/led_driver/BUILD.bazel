@@ -1,0 +1,51 @@
+"""pi/led_driver — M1. SK9822/APA102 Gray-code pattern driver + control socket.
+
+Continuous Gray-code cycle (design doc §8.1) over hardware SPI, with a local Unix
+socket so M2 can start/stop the pattern and read the pattern clock. The framing
+and cycle logic are pure (hardware-free), so they're unit-tested with a recording
+sink; `spidev` is imported lazily and is only present on the Pi.
+
+`imports = ["."]` exposes the nested `led_driver/` package as `led_driver` (and
+runnable as `python -m led_driver`).
+"""
+
+load("@pypi//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "led_driver",
+    srcs = glob(["led_driver/*.py"]),
+    imports = ["."],
+    deps = [
+        "//shared/protocol:protocol",
+    ],
+)
+
+py_binary(
+    name = "drive",
+    srcs = ["led_driver/__main__.py"],
+    main = "led_driver/__main__.py",
+    imports = ["."],
+    deps = [":led_driver"],
+)
+
+py_test(
+    name = "led_driver_test",
+    srcs = [
+        "tests/pytest_main.py",
+        "tests/test_control.py",
+        "tests/test_driver.py",
+        "tests/test_graycode.py",
+        "tests/test_spi.py",
+    ],
+    main = "tests/pytest_main.py",
+    imports = ["."],
+    legacy_create_init = False,
+    deps = [
+        ":led_driver",
+        "//shared/protocol:protocol",
+        requirement("pytest"),
+    ],
+)

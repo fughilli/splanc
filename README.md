@@ -12,14 +12,49 @@ algorithms, and phased build plan — lives in
 README is a working state-of-the-build snapshot for the next agent picking
 the project up; the design doc is the durable spec.
 
-## State of progress (2026-06-19)
+## State of progress (2026-06-22)
 
-**M10, M3, M9 are landed and green. M4 is authored but Nix-unverified.**
-`bazelisk build //...` and `bazelisk test //...` both pass (5 test targets).
-The next hard blocker is that **Nix is not installed in this container**, which
-is needed to verify/build M4. See "Hard blocker: Nix" below.
+**M10, M3, M9, M2, M1 are landed and green. M4 is Nix-verified** (config
+evaluates + image derivation builds; final image not realized in-sandbox and not
+booted on hardware). `bazelisk build //...` and `bazelisk test //...` both pass
+(**8 test targets**). The Nix blocker that stopped the previous session is
+**cleared** — the container was rebuilt with the Nix overlay, so `nix` works and
+the host is natively `aarch64-linux` (Pi images build without cross-emulation).
+
+> **Environment note (2026-06-19):** the container rebuild also surfaced a JVM
+> crash — Bazel 7.7.1's bundled JDK 21 emits SVE instructions that `SIGILL` on
+> this host. Fixed with `startup --host_jvm_args=-XX:UseSVE=0` in `.bazelrc`
+> (see `docs/decisions.md`). Plain `bazelisk` works again. If you ever see a
+> wedged zombie `[java]` server, point bazel at a fresh `--output_base`.
 
 ### Done (this session)
+
+- **M2 — `pi/server` is green.** FastAPI/uvicorn server + the §7 WebSocket
+  control plane. Serves the web app (or a Phase-0 hello page), `GET /healthz`,
+  `WS /ws`, `GET /maps/{id}` + `.csv`. Manages one capture session at a time,
+  persists it to the `{ledCount, detections}` log M3 consumes, and triggers
+  reconstruction (M3 library, off the event loop) on `stop_mapping`. The core
+  (codebook, session/map store, message handler) is transport-decoupled and unit
+  tested; `//pi/server:server_integration_test` boots a **real uvicorn server**
+  and drives the whole flow (hello → clock sync → start → detections → stop →
+  reconstruct → serve) over a real WebSocket using M9 simulator data — the §6 M2
+  acceptance. CLI: `bazelisk run //pi/server:serve -- --port 8080 ...`. See
+  `pi/server/README.md`.
+- **M1 — `pi/led_driver` is green.** SK9822/APA102 Gray-code cycle (§8.1) over
+  hardware SPI with an on/off sync delimiter, plus the Unix-socket control plane
+  M2 uses (`start`/`stop`/`get_clock`/`set_debug`). Framing + cycle logic are
+  pure (tested with a recording sink); the loop takes injected `clock`/`sleep`
+  so it's driven deterministically with no hardware. `spidev` is lazy-imported
+  (Pi-only). CLI: `bazelisk run //pi/led_driver:drive -- --dry-run --start 16`.
+  See `pi/led_driver/README.md`. **Real-strip cadence verification (§9 Phase 1)
+  still needs a logic analyzer on a bench.**
+- **Nix unblocked + M4 verified.** A dedicated subagent (per the "Active
+  directives" dispatch instruction) verified M4 against the now-available Nix:
+  config evaluates, image derivation builds (kernel compile is resource-bound),
+  keys + deploy_live confirmed, and it fixed 3 `bazel run`-path bugs. Full
+  status is in `pi/provisioning/README.md`.
+
+### Done (earlier sessions)
 
 - **M10 — `shared/protocol` is green.** `bazelisk test //shared/protocol:roundtrip_test`
   passes (24 tests). Fixes applied:
@@ -60,34 +95,37 @@ is needed to verify/build M4. See "Hard blocker: Nix" below.
   NixOS workflow: `image_sd`, `deploy_live`, `keys` targets, flake + modules,
   SSH deploy-key management. `MODULE.bazel` gained
   `bazel_dep(rules_nixpkgs_core, 0.13.0)` (registration-only — no nix eval at
-  fetch time, so it does not break `bazel build //...`). **Unverified** — see
-  `pi/provisioning/README.md`'s UNVERIFIED list and the blocker below.
+  fetch time, so it does not break `bazel build //...`). _Now Nix-verified — see
+  the M4 section below._
 - **`.claude-container-overlay` added** to install Nix (flakes) into the
   container image on the next launch — see `.claude/skills/container-overlay`.
 
-### Hard blocker: Nix (restart the container to clear it)
+### M4 — Nix-verified 2026-06-19 (image not yet realized; not booted)
 
-The remaining M4 work needs `nix`, which is absent from the running container
-(`which nix` fails; the runtime user is non-root and cannot install it live).
-A `.claude-container-overlay` has been written that bakes Nix into the image.
-**Action: restart `claude-container`** so the launcher rebuilds with the overlay,
-then a future session can do the Nix-gated steps:
+`nix` is installed and working; `flake.lock` is committed. The dedicated subagent
+**verified M4** on the native aarch64 container:
 
-- generate `pi/provisioning/nix/flake.lock` (`nix flake update`);
-- confirm the `.nix` modules evaluate (option paths flagged in
-  `pi/provisioning/README.md` may need small fixes against the pinned
-  `nixos-raspberrypi` rev);
-- `bazel run //pi/provisioning:image_sd` / `:deploy_live` end-to-end.
+- flake + full `nixosConfigurations.ledmapper` **evaluate**; every flagged option
+  path/module name is correct for the pin; `spi=on` actually merges; spidev
+  present; deploy pubkey baked into root `authorized_keys`;
+- the SD-image derivation realizes through substitution + ~90 derivations, but
+  the **from-source Pi kernel compile exhausted the sandbox's RAM/disk** (OOM at
+  full parallelism, ENOSPC on the final module link) — so the final `*.img.zst`
+  was **not realized here**. Needs ≥8 GiB RAM + ~25 GiB scratch (or a cache
+  matching the pinned nixpkgs);
+- `:keys` flow and `deploy_live` argument/error handling confirmed.
+
+It also **fixed 3 `bazel run`-path bugs** (`spi.nix` `mkDefault` dropping
+`dtparam=spi=on`; `image_sd.sh` + `manage_keys.sh` resolving `secrets/` from
+runfiles instead of `BUILD_WORKSPACE_DIRECTORY`). **Still untested:** real Pi 5
+first boot, a live deploy switch, the Pi 4 variant — all need hardware. See
+`pi/provisioning/README.md` for the full status. (Nix usability note: the
+Determinate install needs `/nix/var/nix/profiles/per-user` + `gcroots/per-user`
+owned by the runtime user; the overlay now handles this — if a fresh container
+still errors, `sudo chown $(whoami) /nix/var/nix/{profiles,gcroots}/per-user`.)
 
 ### Not started
 
-- **M2 — `pi/server`.** FastAPI + uvicorn + websockets. Endpoints:
-  static web app, `/healthz`, `WS /ws`, `/maps/{id}`. Persists detection
-  records to a session log (the `{"ledCount", "detections": [...]}` format
-  M3's CLI already consumes). Invokes M3 as a subprocess.
-- **M1 — `pi/led_driver`.** SK9822/APA102 over hardware SPI. Continuous
-  Gray-code cycle with on/off sync delimiter. Local-socket interface for
-  M2.
 - **M5 — `web/src/xr`.** WebXR `immersive-ar` + `camera-access`,
   `XRWebGLBinding.getCameraImage`, intrinsics derived from
   `XRView.projectionMatrix`. Implements the `CaptureSource` interface
@@ -145,9 +183,16 @@ the concrete next-step queue.
       < 1 mm RMS through M3. **Frame mode for M6 still TODO.**
 - [x] **M3 — reconstruction.** DLT → sparse Huber BA → outlier reject →
       per-LED quality. Library + CLI. Phase-2 acceptance met against M9.
-- [~] **M4 — Nix provisioning.** Authored (targets, flake, modules, keys);
-      `MODULE.bazel` wired. **Blocked on Nix** for flake.lock + eval +
-      end-to-end build — restart the container (overlay installs Nix) first.
+- [x] **M2 — `pi/server`.** FastAPI/uvicorn + §7 WebSocket control plane;
+      session persistence (the `{ledCount, detections}` log M3 consumes),
+      reconstruction trigger, map serving. Unit + real-server integration test
+      green. The server side of §9 Phase 0.
+- [~] **M4 — Nix provisioning.** **Nix-verified**: flake + NixOS config
+      evaluate, option paths correct, SD-image derivation builds (kernel compile
+      is resource-bound — final image not realized in-sandbox), keys +
+      `deploy_live` arg handling confirmed; 3 `bazel run`-path bugs fixed.
+      **Remaining:** realize the image on a bigger host + real Pi first-boot /
+      live deploy (needs hardware). See `pi/provisioning/README.md`.
 - [ ] **QEMU-emulated Pi for hardware-free E2E.** Stand up an emulated
       Raspberry Pi (à la
       https://azeria-labs.com/emulate-raspberry-pi-with-qemu/) so the
@@ -165,13 +210,18 @@ the concrete next-step queue.
       - run M1 (SPI driver — stub/loopback the SPI device under emulation)
         and M2 (server + clock sync + a recorded detection session →
         reconstruct) inside the guest as the embedded smoke test.
-      Mostly **Nix-blocked** (the image is Nix-built) and depends on M1/M2;
-      a generic QEMU boot harness can be scaffolded independently first. This
-      becomes the cheap gate that precedes "End-to-end on bench" (Phase 4).
-- [ ] **Phase 0 app skeleton.** M2 server stub serving a hello web app,
-      M5/M7 stubs that open WebXR and round-trip a clock-sync over
-      WebSocket. Acceptance: design doc §9 Phase 0.
-- [ ] **M1 — LED driver.** SPI Gray-code cycle. Acceptance: §9 Phase 1.
+      No longer Nix-blocked (config evaluates), and **M1/M2 now exist** to run
+      inside the guest — the gating dependency is now realizing the SD image on a
+      host with enough RAM/disk (the in-sandbox kernel compile OOM'd). A generic
+      QEMU boot harness can be scaffolded independently first. This becomes the
+      cheap gate that precedes "End-to-end on bench" (Phase 4).
+- [~] **Phase 0 app skeleton.** M2 server **done** (serves a hello web app +
+      clock-sync over WebSocket). Remaining: M5/M7 stubs that open WebXR and
+      round-trip the clock sync from the phone. Acceptance: design doc §9 Phase 0.
+- [~] **M1 — LED driver.** SPI Gray-code cycle + M2 control socket **done**
+      and unit-tested (recording sink, injected timing). Remaining: real-strip
+      cadence verification on a bench (§9 Phase 1 acceptance needs a logic
+      analyzer) and RT scheduling via the M4 systemd unit.
 - [ ] **M6 — CV pipeline.** Validates against M9 frame mode.
       Acceptance: §9 Phase 3.
 - [ ] **End-to-end on bench.** Real phone + real strip + golden fixture.
@@ -186,22 +236,29 @@ current dev machine.
 
 ```sh
 bazelisk build //...     # builds clean
-bazelisk test  //...     # 5 test targets, all green
+bazelisk test  //...     # 8 test targets, all green
 
 # Try the synthetic pipeline end-to-end (no phone, no hardware):
 bazelisk run //shared/simulator:simulate -- --fixture cube --leds 64 --noise none -o /tmp/log.json
 bazelisk run //pi/reconstruction:reconstruct -- /tmp/log.json -o /tmp/map.json --csv /tmp/map.csv
+
+# Or drive the same data through the live server (M2):
+bazelisk run //pi/server:serve -- --host 127.0.0.1 --port 8080 \
+    --session-dir /tmp/lm/sessions --maps-dir /tmp/lm/maps
 ```
 
 Working today: M10 (protocol), M3 (reconstruction), M9 (simulator
-detection-log mode). M4 (provisioning) is authored but Nix-blocked; M1/M2 and
-the web modules (M5–M8) are not started. See `docs/runbook.md` for details.
+detection-log mode), M2 (server), M1 (LED driver — software-tested, bench
+cadence pending). M4 (provisioning) is Nix-verified (config evaluates + image
+derivation builds; final image not realized in-sandbox, not booted). The web
+modules (M5–M8) are not started. See `docs/runbook.md` for details.
 
 ## Repo layout
 
 See design doc §11. Current on-disk reality matches it. Populated so far:
 `shared/protocol` (M10), `pi/reconstruction` (M3), `shared/simulator` (M9),
-`pi/provisioning` (M4, Nix-unverified), `docs/`.
+`pi/server` (M2), `pi/led_driver` (M1), `pi/provisioning` (M4, Nix-verified),
+`docs/`.
 
 ## Pointers
 
@@ -215,5 +272,8 @@ See design doc §11. Current on-disk reality matches it. Populated so far:
 - **Reconstruction (M3):** `pi/reconstruction/` — library + CLI; camera
   model in `reconstruction/camera.py` (shared with the simulator).
 - **Simulator (M9):** `shared/simulator/` — synthetic detection logs.
+- **Server (M2):** `pi/server/` — FastAPI/uvicorn + §7 WebSocket; see its README.
+- **LED driver (M1):** `pi/led_driver/` — Gray-code SPI driver + M2 control
+  socket; see its README.
 - **Bazel build graph entry:** `MODULE.bazel`, root `BUILD.bazel`.
 - **Ops:** `docs/runbook.md`, `docs/decisions.md`.

@@ -52,7 +52,7 @@ pi/provisioning/
   .gitignore               # secrets/ never committed
   nix/
     flake.nix              # inputs (pinned), nixosConfigurations.ledmapper, images.sdImage
-    flake.lock             # NOT generated here (no nix) — see "Unverified"
+    flake.lock             # committed and verified current (nix flake metadata)
     modules/
       ledmapper.nix        # led-driver + led-server systemd units, web static serving
       ssh-deploy.nix       # sshd + bake deploy pubkey into root authorized_keys
@@ -149,54 +149,138 @@ Pinned **2026-06-19**. Fold these into the repo decision log.
 | Target board         | `raspberry-pi-5` (switch to `raspberry-pi-4` via `board` in flake)   | `nix/flake.nix`                     |
 
 To bump: edit the ref in `nix/flake.nix`, run `nix flake update` on a Nix host
-to regenerate `flake.lock` (it does **not** exist yet — see below), commit the
-lock, and update the table above + `docs/decisions.md`.
+to regenerate `flake.lock` (it **is** committed and was verified current — see
+"Verification status" below), commit the lock, and update the table above +
+`docs/decisions.md`.
 
 ---
 
-## UNVERIFIED (no Nix in the authoring environment)
+## Verification status (Nix-verified 2026-06-19)
 
-`nix` is **not installed** in the environment where this module was written
-(`which nix` fails), so nothing Nix-related could be executed. The following is
-authored to be correct but **has not been built or evaluated** — treat as
-review-ready, not proven:
+This module was originally authored **without Nix** in the environment, so it
+shipped a long "UNVERIFIED" list. It has since been **evaluated and built on a
+native `aarch64-linux` Nix host** (Determinate Nix 3.21.1, flakes enabled). The
+results below replace the old unverified list. Each item says exactly what is
+now *proven* (eval'd and/or built) vs what still genuinely requires real Pi
+hardware.
 
-1. **`nix/flake.nix` and all `nix/modules/*.nix` were never evaluated.** Option
-   paths that depend on the pinned `nixos-raspberrypi` revision may need small
-   adjustments:
-   - `spi.nix` uses `hardware.raspberry-pi.config.all.base-dt-params.spi` for
-     `dtparam=spi=on`. Confirm this option path exists in the pinned flake; if
-     not, set the equivalent firmware config knob it exposes.
-   - `flake.nix` reads the SD image from
-     `nixosConfigurations.ledmapper.config.system.build.sdImage`. Confirm the
-     upstream flake builds `sdImage` for the chosen board (it may name it
-     differently, e.g. an `installerImages.<board>` package).
-   - The `raspberry-pi-5.base` / `.display-vc4` module names follow the
-     upstream README; verify against the pinned rev.
-2. **No `flake.lock` is checked in** — it must be generated with
-   `nix flake update` on a machine with Nix. Without it, input hashes are not
-   pinned at the lock level (only the refs in `flake.nix` are pinned).
-3. **`spi.nix`** references `python3Packages.spidev or null`; if `spidev` is not
-   in the pinned nixpkgs under that attr, drop it. (`or null` guards eval.)
-4. **The two `sh_binary` targets cannot be `bazel run` to completion** without
-   Nix — they detect a missing `nix`/`nixos-rebuild` and exit with a clear
-   error. The SD image must be built on an `aarch64-linux` builder (native Pi,
-   remote builder, or binfmt/qemu cross).
-5. **SSH pubkey eval path** (`ssh-deploy.nix`) resolves
-   `../../secrets/deploy_key.pub` relative to the module file. Confirm the
-   relative path resolves correctly from the flake's copy in the Nix store on a
-   real build (the `secrets/` dir must be inside the flake's source closure, or
-   pass `LEDMAPPER_DEPLOY_PUBKEY_FILE`).
+### Proven — evaluated against the pinned `nixos-raspberrypi` rev
 
-### What WAS verified (in this environment, with Bazel only)
+- **The flake resolves and locks cleanly.** `nix flake metadata` /
+  `nix flake show` succeed; all inputs (`nixpkgs nixos-25.05`,
+  `nixos-raspberrypi v1.20260517.0` and its transitive `argononed`,
+  `flake-compat`, `nixos-images`) resolve. The checked-in `flake.lock` is valid
+  and current — **it was already committed** (the old note claiming "no
+  flake.lock exists" was wrong; it is present and was confirmed unchanged by
+  `nix flake metadata`, no `nix flake update` needed).
+- **`nixosConfigurations.ledmapper` evaluates** fully, including
+  `config.system.build.toplevel` (the attr `deploy_live` switches to) and
+  `config.system.build.sdImage` (the attr `image_sd` builds).
+- **Module names are correct for the pin:**
+  `nixos-raspberrypi.nixosModules."raspberry-pi-5".{base,display-vc4}` and
+  `.sd-image` all exist, and `nixos-raspberrypi.lib.nixosSystem` exists.
+- **`system.build.sdImage` is the right attr** (the old note worried it might be
+  named `installerImages.<board>`). Eval yields a real derivation
+  `nixos-image-rpi5-kernel.img.zst.drv`. The `sd-image` module imported in
+  `flake.nix` is what provides it.
+- **`spidev` exists** in the pinned nixpkgs as
+  `python3Packages.spidev` (`python3.12-spidev-3.7`), so the
+  `... or null` guard in `spi.nix` never trips. (Guard left in as belt-and-braces.)
+- **The deploy pubkey is baked correctly.** With
+  `LEDMAPPER_DEPLOY_PUBKEY_FILE` set,
+  `config.users.users.root.openssh.authorizedKeys.keys` contains exactly the
+  generated `ledmapper-deploy` ed25519 public key.
 
-- `bazelisk query //pi/provisioning/...` lists all targets — BUILD.bazel parses.
+### Proven — builds (SD image derivation realizes)
+
+- **`bazel run //pi/provisioning:image_sd -- --no-write` drives the real
+  `nix build` of the SD image** on the native aarch64 host. The image
+  derivation **evaluates** (proven by `nix build --dry-run` and by eval'ing
+  `.#images.sdImage.drvPath` → `nixos-image-rpi5-kernel.img.zst.drv`), and the
+  build proceeds correctly: ~1.5 GiB of paths substitute from the binary cache
+  and all but ~13 of the ~90 derivations realize. The only heavy from-source
+  derivation is the **Raspberry Pi kernel** (`linux_rpi-bcm2712`, ~6.12), which
+  is **not in the binary cache** for this rev and must compile locally.
+  - On this 8-core / 3.8 GiB / ~21 GiB-free container the kernel compile first
+    **OOM-killed at full parallelism** (exit 137); re-running constrained
+    (`--cores 3 --max-jobs 1`) fit in memory and **compiled the entire kernel
+    and nearly all modules**, then failed at the very last module-link step with
+    **`No space left on device`** (the kernel build's scratch tree exhausted the
+    sandbox's free disk). Both failures are **host-resource limits, not Nix-code
+    defects** — the build reached the final `.ko` links, and the only code-level
+    blocker (`image_sd.sh`, fixed below) is gone. On a builder with ≥8 GiB RAM
+    and ~25 GiB free scratch (or with the kernel served from a cache that
+    matches our pinned nixpkgs — see `docs/decisions.md` M4 on the `follows`
+    trade-off) the image builds straight through. The final `*.img.zst` was
+    therefore **not realized end-to-end in this environment**; the derivation
+    and the whole build path up to the kernel link are proven.
+  - **No flashing was performed** (`--no-write`); the image has **not been
+    booted on real hardware**.
+- **Key management** (`keys -- init|ensure|rotate|pub|path`) generates and
+  rotates an ed25519 pair under `secrets/`; `secrets/*` (including `.bak.*`) is
+  git-ignored and never shows in `git status`.
+- **`deploy_live` argument assembly is correct.** Traced invocation:
+  `nixos-rebuild switch --flake path:.../nix#ledmapper --target-host root@<host>
+  --use-remote-sudo --impure [extra args]` with
+  `NIX_SSHOPTS="-i secrets/deploy_key -o IdentitiesOnly=yes -o
+  StrictHostKeyChecking=accept-new"`. The pinned nixpkgs `nixos-rebuild`
+  supports all of `--flake --target-host --use-remote-sudo --dry-run`, so
+  `bazel run //pi/provisioning:deploy_live -- <host> -n` works for a dry switch.
+  It fails **gracefully and clearly** when: no host is given (usage, exit 2),
+  the private key is missing (exit 1 with a `manage_keys.sh init` hint), or
+  `nixos-rebuild` is absent (exit 1).
+
+### Fixes made during verification
+
+1. **`spi.nix` — `dtparam=spi=on` never reached config.txt.** The module wrapped
+   the whole `{ all = …; }` tree in `lib.mkDefault`. Because
+   `hardware.raspberry-pi.config` is an *attrset of submodules*, a
+   default-priority definition of the entire `all` subtree loses to the
+   upstream normal-priority `all` defaults (audio, vc4-kms-v3d, …), so the `spi`
+   leaf silently vanished from the merged config. **Fixed** by setting the leaf
+   directly (`hardware.raspberry-pi.config.all.base-dt-params.spi`), which
+   merges alongside the upstream board defaults. Verified: merged
+   `base-dt-params` now contains both `audio` and `spi = on`.
+2. **`scripts/image_sd.sh` — build failed with `'secrets' is too short to be a
+   valid store path`.** Under `bazel run`, the script derived `SECRETS_DIR` from
+   its *runfiles* dir (which has no `secrets/`), so
+   `LEDMAPPER_DEPLOY_PUBKEY_FILE` pointed at a nonexistent file and
+   `ssh-deploy.nix` fell through to its in-store relative default
+   (`../../secrets/...`), which escapes the flake's store closure. **Fixed** by
+   anchoring `SECRETS_DIR`/`KEYS` on `BUILD_WORKSPACE_DIRECTORY` (the real
+   source tree, where `manage_keys.sh` actually writes the key) — matching how
+   `deploy_live.sh` already resolves them. After the fix the build reads the
+   operator's real key.
+3. **`scripts/manage_keys.sh` — `bazel run //pi/provisioning:keys` used the
+   wrong secrets dir.** As a standalone `sh_binary` it derived `SECRETS_DIR`
+   from its own runfiles location, so `keys -- init` wrote the key into a
+   throwaway `bazel-out/.../pi/secrets/` tree (not the repo's
+   `pi/provisioning/secrets/`), and a later `keys -- pub` couldn't find it —
+   and `image_sd` (anchored on the source tree) wouldn't see it either. **Fixed**
+   the same way: anchor on `BUILD_WORKSPACE_DIRECTORY` when set. After the fix
+   `keys -- {init,pub,path,rotate}` all operate on the one canonical
+   `pi/provisioning/secrets/`.
+
+### Still genuinely UNVERIFIED (requires real hardware)
+
+- **First boot on a real Pi 5.** The image builds, but has not been flashed or
+  booted. Untested in the field: that the firmware actually brings up
+  `/dev/spidev0.0`, that udev applies the `spi`/`gpio` group ownership, that
+  avahi advertises `ledmapper.local`, and that the baked deploy key grants
+  passwordless root SSH on first boot.
+- **A real `deploy_live` switch** against a running Pi (only the local argument
+  assembly and a dry path were exercised; no SSH to a real host).
+- **Pi 4.** Only `raspberry-pi-5` was eval'd/built. The `board` switch to
+  `raspberry-pi-4` is plausible (same module shape) but unverified.
+- **The application units do nothing yet** — `led-driver`/`led-server` are
+  placeholder `sleep infinity` stubs (M1/M2 not built). The units start and the
+  seams are correct, but there is no real LED driving or web server.
+
+### What was verified earlier with Bazel only (still true)
+
+- `bazelisk query //pi/provisioning/...` lists all targets; BUILD.bazel parses.
 - `bazelisk build --nobuild //pi/provisioning:{image_sd,deploy_live,keys}`
-  analyzes cleanly (3 targets configured, 0 errors).
-- `bazelisk query //...` over the whole repo still loads after the
-  `MODULE.bazel` change (rules_nixpkgs_core 0.13.0 resolves from the registry;
-  the other agent's `shared/protocol` targets are unaffected).
-- The `MODULE.bazel` change is **registration-only** — no `nix_repo` /
-  `nixpkgs_package` is declared, so Bazel never tries to evaluate Nix at fetch
-  time. This is deliberate: declaring one would break `bazel build //...` for
-  anyone without Nix installed.
+  analyzes cleanly.
+- The root `MODULE.bazel` change is **registration-only** (no `nix_repo` /
+  `nixpkgs_package`), so `bazel build //...` still works without Nix; the
+  wrappers shell out to the `nix` CLI at run time.

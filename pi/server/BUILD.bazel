@@ -1,0 +1,77 @@
+"""pi/server — M2. FastAPI/uvicorn web server + WebSocket control plane.
+
+Serves the web app, runs the §7 WebSocket protocol, persists capture sessions to
+a log M3 can consume, triggers reconstruction, and serves the resulting maps.
+Library + CLI (`serve`).
+
+`imports = ["."]` puts this directory on the import path so the nested
+`server/` package is importable as `server` (and runnable as `python -m server`).
+"""
+
+load("@pypi//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "server",
+    srcs = glob(["server/*.py"]),
+    imports = ["."],
+    deps = [
+        "//pi/reconstruction:reconstruction",
+        "//shared/protocol:protocol",
+        requirement("fastapi"),
+        requirement("uvicorn"),
+    ],
+)
+
+py_binary(
+    name = "serve",
+    srcs = ["server/__main__.py"],
+    main = "server/__main__.py",
+    imports = ["."],
+    deps = [":server"],
+)
+
+# Fast unit tests: code-book, session/map store, and the WebSocket message
+# handler (with a stub reconstructor) — no socket, no solver.
+py_test(
+    name = "server_test",
+    srcs = [
+        "tests/pytest_main.py",
+        "tests/test_codebook.py",
+        "tests/test_handler.py",
+        "tests/test_session.py",
+    ],
+    main = "tests/pytest_main.py",
+    imports = ["."],
+    legacy_create_init = False,
+    deps = [
+        ":server",
+        "//shared/protocol:protocol",
+        requirement("pytest"),
+    ],
+)
+
+# Integration test: boots a real uvicorn server, drives the full §7 flow over a
+# real WebSocket using simulator detections, then reconstructs and serves the
+# map over HTTP. Heavier (real solver) so kept separate from the unit suite.
+py_test(
+    name = "server_integration_test",
+    srcs = [
+        "tests/pytest_main.py",
+        "tests/test_app_integration.py",
+    ],
+    main = "tests/pytest_main.py",
+    imports = ["."],
+    legacy_create_init = False,
+    deps = [
+        ":server",
+        "//pi/reconstruction:reconstruction",
+        "//shared/protocol:protocol",
+        "//shared/simulator:simulator",
+        requirement("pytest"),
+        requirement("scipy"),
+        requirement("websockets"),
+    ],
+)

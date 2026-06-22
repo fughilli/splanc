@@ -16,20 +16,23 @@
 { config, lib, pkgs, ... }:
 {
   # Enable the SPI master in the device tree. nixos-raspberrypi surfaces the
-  # firmware config.txt knobs under `hardware.raspberry-pi.config`. We set the
-  # equivalent of:
+  # firmware config.txt knobs under `hardware.raspberry-pi.config`, which is an
+  # "attribute set of submodule" (board key -> { base-dt-params; dt-overlays;
+  # options; }). We set the equivalent of:
   #   dtparam=spi=on
   # which is the standard way to turn on hardware SPI0 for SK9822/APA102.
-  hardware.raspberry-pi.config = lib.mkDefault {
-    all = {
-      base-dt-params = {
-        # dtparam=spi=on
-        spi = {
-          enable = true;
-          value = "on";
-        };
-      };
-    };
+  #
+  # NOTE: set the LEAF (`...base-dt-params.spi`) directly. Do NOT wrap the whole
+  # `{ all = ...; }` tree in `lib.mkDefault`: because `config` is an attrset of
+  # submodules, a default-priority definition of the entire `all` subtree is
+  # dropped in favour of the upstream normal-priority `all` definitions (which
+  # set audio, vc4-kms-v3d, etc.), so the `spi` leaf would silently never
+  # appear in the merged config.txt. Setting the leaf lets it merge alongside
+  # the upstream board defaults. (Verified by eval against the pinned rev.)
+  hardware.raspberry-pi.config.all.base-dt-params.spi = {
+    # dtparam=spi=on
+    enable = true;
+    value = "on";
   };
 
   # Ship spidev tooling for debugging on the Pi.

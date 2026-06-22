@@ -53,6 +53,47 @@ fails the build if you forgot to regenerate. Run the codegen with `python3`
 directly (not `bazel run`) so it writes into the source tree rather than a
 sandbox.
 
+## The LED driver (M1)
+
+The real-time driver process owns the SPI bus and the pattern clock, running the
+Gray-code cycle and exposing a Unix-socket control plane for M2.
+
+```sh
+# On the Pi (real hardware):
+bazelisk run //pi/led_driver:drive -- --socket /run/ledmapper/control.sock
+
+# Hardware-free dry run (in-memory sink), lighting a 16-LED cycle:
+bazelisk run //pi/led_driver:drive -- --dry-run --socket /tmp/control.sock --start 16
+```
+
+The control commands (`start`/`stop`/`get_clock`/`set_debug`) and the wire format
+are documented in [`pi/led_driver/README.md`](../pi/led_driver/README.md). Real
+cadence verification (±10% per §9 Phase 1) needs a logic analyzer on a bench and
+is not covered by CI.
+
+## The Pi server (M2)
+
+The FastAPI/uvicorn server hosts the web app and the §7 WebSocket control plane,
+persists a capture to a session log, runs reconstruction when the capture ends,
+and serves the maps.
+
+```sh
+# Run locally on a high port (port 80 needs root):
+bazelisk run //pi/server:serve -- \
+    --host 127.0.0.1 --port 8080 \
+    --session-dir /tmp/ledmapper/sessions --maps-dir /tmp/ledmapper/maps
+
+curl -s http://127.0.0.1:8080/healthz            # {"status":"ok"}
+curl -s http://127.0.0.1:8080/maps/<id>          # reconstructed OutputMap JSON
+curl -s http://127.0.0.1:8080/maps/<id>.csv      # id,x,y,z,confidence,n_views
+```
+
+Endpoints and the full WebSocket message flow are documented in
+[`pi/server/README.md`](../pi/server/README.md). The
+`//pi/server:server_integration_test` target boots a real server and drives the
+whole flow (hello → clock sync → start → detections → stop → reconstruct →
+serve) using M9 simulator data — the §6 M2 acceptance.
+
 ## Reconstruction (M3) from a session log
 
 The Pi server (M2) persists a capture as a **detection log** — a JSON file of

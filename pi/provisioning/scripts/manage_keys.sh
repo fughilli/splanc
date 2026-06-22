@@ -19,9 +19,19 @@
 #   manage_keys.sh ensure    # init only if missing; used by the bazel targets
 set -euo pipefail
 
-# Resolve secrets dir: env override, else <provisioning>/secrets.
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROV_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+# Resolve the provisioning dir: under `bazel run` the runfiles copy of this
+# script lives in a throwaway bazel-out tree, so deriving the secrets dir from
+# our own location would write the key where image_sd / deploy_live can't read
+# it (and a later `pub`/`path` invocation, with its own runfiles dir, wouldn't
+# find it either). Anchor on BUILD_WORKSPACE_DIRECTORY (the real source tree)
+# when set — matching image_sd.sh / deploy_live.sh — so all three agree on one
+# secrets/ dir.
+if [[ -n "${BUILD_WORKSPACE_DIRECTORY:-}" ]]; then
+  PROV_DIR="$BUILD_WORKSPACE_DIRECTORY/pi/provisioning"
+else
+  SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  PROV_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+fi
 SECRETS_DIR="${LEDMAPPER_DEPLOY_KEY_DIR:-$PROV_DIR/secrets}"
 PRIV="$SECRETS_DIR/deploy_key"
 PUB="$SECRETS_DIR/deploy_key.pub"

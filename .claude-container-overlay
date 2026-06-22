@@ -1,5 +1,7 @@
 # claude-container overlay — appended to the base image Dockerfile by the
-# launcher. Build and run both happen as root. See .claude/skills/container-overlay.
+# launcher. The build runs as root; the container then runs as a non-root user
+# the entrypoint creates at start, mapped to the host UID/GID (named `claude`).
+# See .claude/skills/container-overlay.
 
 # 2026-06-19: Nix with flakes — required by M4 (pi/provisioning). The image_sd /
 # deploy_live Bazel targets and generating pi/provisioning/nix/flake.lock all
@@ -27,19 +29,38 @@ RUN curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/
     && rm /tmp/nix-installer.sh
 ENV PATH=/nix/var/nix/profiles/default/bin:$PATH
 
-# The launcher runs the container as the non-root `claude` user regardless of a
-# `USER root` directive, and the Determinate installer leaves /nix owned by
-# root. Daemon-less Nix as `claude` then fails trying to chmod the root-owned
-# `/nix/var/nix/profiles/per-user` ("Operation not permitted"), which blocks
-# every `nix` invocation (flake.lock generation, image_sd, deploy_live).
-# Hand the whole single-user store to `claude` so it can manage profiles, the
-# DB, and gcroots without a daemon. (Store stays in /nix; the prebuilt paths and
-# their DB entries are preserved.)
-RUN chown -R claude:claude /nix
+# The base image has no `claude` user at build time: the entrypoint fabricates
+# it at container start, mapping the *host* UID/GID in (so its uid/gid — and
+# even its group name — vary per host). The Determinate installer leaves /nix
+# owned by root, so daemon-less Nix as that runtime user fails trying to chmod
+# the root-owned `/nix/var/nix/profiles/per-user` ("Operation not permitted"),
+# which blocks every `nix` invocation (flake.lock generation, image_sd,
+# deploy_live).
+# We can't chown to a name/uid that doesn't exist yet and isn't known at build
+# time, so instead make the single-user store group/other-writable: any runtime
+# uid can then manage profiles, the DB, and gcroots without a daemon. Portable
+# across hosts. (Store stays in /nix; the prebuilt paths and DB are preserved.)
+#
+# The per-user profile/gcroots dirs need extra care: Nix re-chmods them to 0755
+# on *every* invocation and fails with EPERM when it doesn't own them — and
+# go+rwX leaves them 0777, which guarantees that failed re-chmod. So delete them
+# here; the runtime user recreates and owns them on its first `nix` call (the
+# go+rwX parents above make that mkdir possible). Without this, a fresh container
+# needs a manual `sudo chown $(whoami) /nix/var/nix/{profiles,gcroots}/per-user`
+# before any `nix` command works (the workaround used to verify M4 on 2026-06-19).
+RUN chmod -R go+rwX /nix \
+    && rm -rf /nix/var/nix/profiles/per-user /nix/var/nix/gcroots/per-user
 
-# ssh-keygen for the M4 deploy-key flow (pi/provisioning/scripts/manage_keys.sh).
-# Not in the base image; install the client so `bazel run //pi/provisioning:keys`
-# and image_sd's key bootstrap work without shelling out to a nix-provided one.
+# openssh-client: ssh-keygen for the M4 deploy-key flow
+# (pi/provisioning/scripts/manage_keys.sh). Not in the base image; install the
+# client so `bazel run //pi/provisioning:keys` and image_sd's key bootstrap work
+# without shelling out to a nix-provided one.
+# sudo: give the runtime user passwordless root. The entrypoint always names the
+# user it creates `claude`, and sudo resolves that name when invoked (at run
+# time), so the drop-in is valid even though `claude` does not exist at build
+# time. Portable: the rule keys on the name, not a host-specific uid.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends openssh-client \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get install -y --no-install-recommends openssh-client sudo \
+    && rm -rf /var/lib/apt/lists/* \
+    && echo 'claude ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/claude \
+    && chmod 0440 /etc/sudoers.d/claude

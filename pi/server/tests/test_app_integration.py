@@ -1,0 +1,161 @@
+"""End-to-end M2 integration (design doc §6 M2 acceptance, §9 Phase 0).
+
+Boots a real uvicorn server, drives the full §7 WebSocket flow over a real
+socket using simulator detections (no phone, no hardware), reconstructs, and
+serves the resulting map over HTTP:
+
+    hello → welcome
+    time_sync_ping × N → time_sync_pong (offset/rtt sane)
+    start_mapping → mapping_started
+    detections … → (buffered)
+    get_status → status (coverage > 0)
+    stop_mapping → reconstruction → result_ready
+    GET /healthz, GET /maps/{id}, GET /maps/{id}.csv
+
+This is the server side of "a recorded detection session persists to disk and is
+reconstructable" (§6 M2 acceptance).
+"""
+
+import contextlib
+import json
+import socket
+import threading
+import time
+import urllib.error
+import urllib.request
+
+import pytest
+import uvicorn
+from websockets.sync.client import connect
+
+from server.app import create_app
+from simulator import generate_log
+
+
+def _free_port() -> int:
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+
+@contextlib.contextmanager
+def _running_server(app, host="127.0.0.1", port=0):
+    config = uvicorn.Config(app, host=host, port=port, log_level="warning")
+    server = uvicorn.Server(config)
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    try:
+        # Wait until /healthz answers (or the thread dies).
+        base = f"http://{host}:{port}"
+        deadline = time.monotonic() + 15.0
+        while time.monotonic() < deadline:
+            if not thread.is_alive():
+                raise RuntimeError("uvicorn thread exited during startup")
+            try:
+                with urllib.request.urlopen(base + "/healthz", timeout=1.0) as r:
+                    if r.status == 200:
+                        break
+            except (urllib.error.URLError, ConnectionError, OSError):
+                time.sleep(0.1)
+        else:
+            raise RuntimeError("server did not become healthy in time")
+        yield base
+    finally:
+        server.should_exit = True
+        thread.join(timeout=10.0)
+
+
+def _http_get(url, timeout=10.0):
+    with urllib.request.urlopen(url, timeout=timeout) as r:
+        return r.status, r.read().decode()
+
+
+def test_full_capture_flow(tmp_path):
+    log, _truth = generate_log("cube", 64, seed=0)  # no-noise default
+    detections = log["detections"]
+    led_count = log["ledCount"]
+    assert len(detections) > 100  # sanity: the walk saw plenty
+
+    app = create_app(session_dir=tmp_path / "sessions", maps_dir=tmp_path / "maps")
+    port = _free_port()
+
+    with _running_server(app, port=port) as base:
+        # /healthz is implied by startup, but assert it explicitly.
+        status_code, body = _http_get(base + "/healthz")
+        assert status_code == 200 and json.loads(body)["status"] == "ok"
+
+        ws_url = f"ws://127.0.0.1:{port}/ws"
+        with connect(ws_url) as ws:
+            # hello → welcome
+            ws.send(json.dumps({"type": "hello", "client": "test", "appVersion": "0"}))
+            welcome = json.loads(ws.recv(timeout=10))
+            assert welcome["type"] == "welcome"
+            session_id = welcome["sessionId"]
+            assert session_id
+
+            # clock sync: a few rounds; min-RTT sample should be sane.
+            best_rtt = None
+            for i in range(5):
+                t0 = float(i)
+                ws.send(json.dumps({"type": "time_sync_ping", "t0": t0}))
+                pong = json.loads(ws.recv(timeout=10))
+                assert pong["type"] == "time_sync_pong"
+                assert pong["t0"] == t0
+                assert pong["t1"] <= pong["t2"]  # server recv ≤ send
+                rtt = pong["t2"] - pong["t1"]
+                best_rtt = rtt if best_rtt is None else min(best_rtt, rtt)
+            assert best_rtt is not None and best_rtt >= 0.0
+
+            # start_mapping → mapping_started
+            ws.send(json.dumps({"type": "start_mapping", "options": {"ledCount": led_count}}))
+            started = json.loads(ws.recv(timeout=10))
+            assert started["type"] == "mapping_started"
+            assert started["codeParams"]["ledCount"] == led_count
+            assert "patternClockEpoch" in started
+
+            # stream detections in batches (no per-batch response by contract)
+            for chunk in _batches(detections, 400):
+                ws.send(json.dumps({"type": "detections", "batch": chunk}))
+
+            # get_status → status reflects coverage
+            ws.send(json.dumps({"type": "get_status"}))
+            st = json.loads(ws.recv(timeout=10))
+            assert st["type"] == "status"
+            assert st["total"] == led_count
+            assert st["identified"] > 0
+
+            # stop_mapping → reconstruction runs → result_ready
+            ws.send(json.dumps({"type": "stop_mapping"}))
+            result = json.loads(ws.recv(timeout=60))
+            assert result["type"] == "result_ready"
+            map_id = result["mapId"]
+            assert map_id
+
+        # The session log was persisted under session_dir.
+        assert (tmp_path / "sessions" / f"{session_id}.json").is_file()
+
+        # Map is served as JSON and CSV.
+        code, body = _http_get(f"{base}/maps/{map_id}")
+        assert code == 200
+        out = json.loads(body)
+        assert out["mapId"] == map_id
+        assert out["ledCount"] == led_count
+        # No-noise cube: the great majority of LEDs should be reconstructed.
+        assert len(out["leds"]) >= int(0.8 * led_count)
+        assert len(out["leds"]) + len(out["unmapped"]) == led_count
+
+        code, csv_body = _http_get(f"{base}/maps/{map_id}.csv")
+        assert code == 200
+        assert csv_body.splitlines()[0] == "id,x,y,z,confidence,n_views"
+
+        # Unknown map → 404.
+        with pytest.raises(urllib.error.HTTPError) as ei:
+            _http_get(f"{base}/maps/does-not-exist")
+        assert ei.value.code == 404
+
+
+def _batches(items, n):
+    for i in range(0, len(items), n):
+        yield items[i : i + n]
