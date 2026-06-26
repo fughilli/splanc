@@ -1,0 +1,57 @@
+"""tools/sim_studio — interactive solver debugging studio (dev tool).
+
+Generate LED fixtures, fly a camera to synthesize captures, and watch the real
+M3 solver converge against ground truth, in a Three.js front-end backed by a
+FastAPI server that reuses M9 (fixtures/noise) + the shared M3 camera model + M3
+reconstruction. Not a shipping module — a developer tool for algorithm debugging.
+
+`imports = ["."]` exposes the nested `studio/` package as `studio` (and runnable
+as `python -m studio`). The `web/` assets ride along as runfiles `data`.
+"""
+
+load("@pypi//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "studio",
+    srcs = glob(["studio/*.py"]),
+    data = glob(["studio/web/**"]),
+    imports = ["."],
+    deps = [
+        "//pi/reconstruction:reconstruction",
+        "//shared/simulator:simulator",
+        requirement("fastapi"),
+        requirement("numpy"),
+        requirement("uvicorn"),
+    ],
+)
+
+py_binary(
+    name = "serve",
+    srcs = ["studio/__main__.py"],
+    main = "studio/__main__.py",
+    imports = ["."],
+    deps = [":studio"],
+)
+
+py_test(
+    name = "studio_test",
+    srcs = [
+        "tests/pytest_main.py",
+        "tests/test_app.py",
+        "tests/test_sim.py",
+    ],
+    main = "tests/pytest_main.py",
+    imports = ["."],
+    legacy_create_init = False,
+    deps = [
+        ":studio",
+        "//pi/reconstruction:reconstruction",
+        "//shared/simulator:simulator",
+        requirement("numpy"),
+        requirement("pytest"),
+        requirement("scipy"),
+    ],
+)

@@ -64,3 +64,16 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && echo 'claude ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/claude \
     && chmod 0440 /etc/sudoers.d/claude
+
+# 2026-06-26: Publish dev-server ports to the host via the launcher's
+# `claude-container:port` directives (passed straight to `docker run -p`). Bound
+# to 127.0.0.1 on the host so they're reachable from this machine only, not the
+# LAN — drop the `127.0.0.1:` prefix if you need to reach a server from another
+# device (e.g. a phone hitting the M2 web app).
+#   - 8090: Sim Studio (tools/sim_studio) — solver-debugging web UI
+#   - 8080: M2 server (pi/server) — FastAPI + WebSocket control plane
+# IMPORTANT: the in-container server must bind 0.0.0.0 (not 127.0.0.1) or docker
+# can't reach it. The studio defaults to 0.0.0.0; for M2 pass --host 0.0.0.0.
+# Then open http://localhost:8090 (studio) / http://localhost:8080 (M2) on the host.
+# claude-container:port 127.0.0.1:8090:8090
+# claude-container:port 127.0.0.1:8080:8080

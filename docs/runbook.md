@@ -130,6 +130,27 @@ bazelisk run //pi/reconstruction:reconstruct -- /tmp/log.json -o /tmp/map.json
 The `//shared/simulator:sim_recon_roundtrip_test` target wires these together
 and asserts the Phase-2 acceptance (zero-noise → < 1 mm RMS).
 
+## Sim Studio — interactive solver debugging
+
+An interactive 3D tool to generate a fixture, fly a camera around to synthesize
+captures, and watch the **real M3 solver** converge against ground truth (per-LED
+error, parallax, reprojection RMS update live). It reuses M9 + the shared camera
+model + M3, so it debugs the actual algorithm.
+
+```sh
+bazelisk run //tools/sim_studio:serve   # binds 0.0.0.0:8090 by default
+# then open http://localhost:8090  (front-end loads Three.js from a CDN)
+```
+
+In `claude-container`, the overlay maps `127.0.0.1:8090:8090` (and `:8080` for
+M2) to the host, so after a container **restart** `http://localhost:8090` works
+from your host browser. The server must bind `0.0.0.0` (the studio default) for
+the mapping to reach it.
+
+New scene → orbit & *Capture* (or *Auto-arc*) → *Solve*; toggle auto-solve to
+watch the fit tighten as coverage grows, and dial in pixel/pose/dropout noise to
+stress the solver. Full guide in [`tools/sim_studio/README.md`](../tools/sim_studio/README.md).
+
 ## Updating dependencies
 
 ```sh

@@ -17,7 +17,7 @@ the project up; the design doc is the durable spec.
 **M10, M3, M9, M2, M1 are landed and green. M4 is Nix-verified** (config
 evaluates + image derivation builds; final image not realized in-sandbox and not
 booted on hardware). `bazelisk build //...` and `bazelisk test //...` both pass
-(**8 test targets**). The Nix blocker that stopped the previous session is
+(**9 test targets**). The Nix blocker that stopped the previous session is
 **cleared** — the container was rebuilt with the Nix overlay, so `nix` works and
 the host is natively `aarch64-linux` (Pi images build without cross-emulation).
 
@@ -26,6 +26,30 @@ the host is natively `aarch64-linux` (Pi images build without cross-emulation).
 > this host. Fixed with `startup --host_jvm_args=-XX:UseSVE=0` in `.bazelrc`
 > (see `docs/decisions.md`). Plain `bazelisk` works again. If you ever see a
 > wedged zombie `[java]` server, point bazel at a fresh `--output_base`.
+
+### Handoff — restart to activate host port forwarding (2026-06-26)
+
+The **Sim Studio** (and the M2 server) can now be reached from the **host**
+browser. `.claude-container-overlay` declares `claude-container:port` mappings
+(`127.0.0.1:8090→8090` studio, `127.0.0.1:8080→8080` M2) that the launcher passes
+to `docker run -p`. **They take effect on the next `claude-container` restart.**
+After restarting:
+
+```sh
+bazelisk build //...                    # first build re-warms the bazel cache (slow once)
+bazelisk run //tools/sim_studio:serve   # binds 0.0.0.0:8090 by default
+# → open http://localhost:8090 on the host
+```
+
+(The in-container server must bind `0.0.0.0`, not `127.0.0.1`, for the mapping to
+reach it — the studio now defaults to that; for M2 pass `--host 0.0.0.0`.)
+
+All work is on branch **`m1-driver-m2-server-m4-verify`** — the `/workspace`
+bind mount persists it across the restart. It is **uncommitted beyond commit
+`92e79cd`** (M1/M2/M4-verify): the Sim Studio, the overlay port directives, and
+these doc updates are staged in the working tree only. The bazel cache lives
+inside the container (not the bind mount), so the post-restart first build is a
+full rebuild.
 
 ### Done (this session)
 
@@ -236,7 +260,7 @@ current dev machine.
 
 ```sh
 bazelisk build //...     # builds clean
-bazelisk test  //...     # 8 test targets, all green
+bazelisk test  //...     # 9 test targets, all green
 
 # Try the synthetic pipeline end-to-end (no phone, no hardware):
 bazelisk run //shared/simulator:simulate -- --fixture cube --leds 64 --noise none -o /tmp/log.json
@@ -258,7 +282,8 @@ modules (M5–M8) are not started. See `docs/runbook.md` for details.
 See design doc §11. Current on-disk reality matches it. Populated so far:
 `shared/protocol` (M10), `pi/reconstruction` (M3), `shared/simulator` (M9),
 `pi/server` (M2), `pi/led_driver` (M1), `pi/provisioning` (M4, Nix-verified),
-`docs/`.
+`docs/`. Plus `tools/sim_studio` — an interactive 3D solver-debugging studio
+(not a shipping module; see below).
 
 ## Pointers
 
@@ -275,5 +300,10 @@ See design doc §11. Current on-disk reality matches it. Populated so far:
 - **Server (M2):** `pi/server/` — FastAPI/uvicorn + §7 WebSocket; see its README.
 - **LED driver (M1):** `pi/led_driver/` — Gray-code SPI driver + M2 control
   socket; see its README.
+- **Sim Studio (dev tool):** `tools/sim_studio/` — interactive 3D studio to
+  generate fixtures, fly a camera to synthesize captures, and watch the real M3
+  solver converge vs ground truth. `bazelisk run //tools/sim_studio:serve`, then
+  open `http://localhost:8090` on the host (port mapping is in the overlay;
+  needs a container restart to take effect).
 - **Bazel build graph entry:** `MODULE.bazel`, root `BUILD.bazel`.
 - **Ops:** `docs/runbook.md`, `docs/decisions.md`.

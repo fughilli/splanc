@@ -38,6 +38,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 ```
 
+## Port forwarding
+
+The overlay can also publish container ports to the host, so a dev server, web UI,
+or debugger running inside the container is reachable from your machine. Declare
+mappings with directive comments anywhere in the overlay file:
+
+```dockerfile
+# claude-container:port 8080:8080
+# claude-container:port 127.0.0.1:3000:3000
+# claude-container:port 9000:9000/udp
+```
+
+Everything after `claude-container:port` is passed straight to `docker run -p`, so
+any value docker accepts works: `host:container`, `ip:host:container`, a bare
+container port, or a `/udp` suffix. These are plain Dockerfile comments, so they
+don't affect the build — the launcher reads them and adds the `-p` flags when it
+starts the container. Pair the port directive with whatever installs/starts the
+service (e.g. a `RUN` that installs it) so the mapping and the server stay together.
+
 ## Append, don't rewrite
 
 **Strongly bias toward appending new `RUN` blocks rather than editing existing ones.** Docker caches each layer by the literal text of its instruction. If you edit an earlier line, every layer after it rebuilds from scratch.

@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>LED Mapper — Sim Studio</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden;
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+  #app { display: flex; height: 100%; background: #0b0d12; color: #d7dbe2; }
+  #panel { width: 320px; flex: 0 0 320px; height: 100%; overflow-y: auto;
+    padding: 14px 16px; background: #11151c; border-right: 1px solid #232a36; }
+  #view { position: relative; flex: 1 1 auto; }
+  canvas { display: block; }
+  h1 { font-size: 15px; margin: 0 0 2px; letter-spacing: .3px; }
+  .sub { font-size: 11px; color: #7b8696; margin: 0 0 14px; }
+  fieldset { border: 1px solid #232a36; border-radius: 8px; margin: 0 0 12px; padding: 10px 12px; }
+  legend { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: #8b97a8; padding: 0 4px; }
+  label { display: flex; align-items: center; justify-content: space-between;
+    font-size: 12px; margin: 7px 0; gap: 8px; }
+  label > span.k { color: #9aa6b6; }
+  input[type="number"], select { width: 110px; background: #0b0d12; color: #d7dbe2;
+    border: 1px solid #2c3543; border-radius: 6px; padding: 4px 6px; font-size: 12px; }
+  input[type="range"] { width: 120px; }
+  .val { width: 46px; text-align: right; color: #cbd3df; font-variant-numeric: tabular-nums; }
+  button { width: 100%; margin: 4px 0; padding: 8px 10px; font-size: 12px; font-weight: 600;
+    background: #1c2531; color: #e6eaf1; border: 1px solid #2c3543; border-radius: 7px; cursor: pointer; }
+  button:hover { background: #233047; }
+  button.primary { background: #2563eb; border-color: #2563eb; color: #fff; }
+  button.primary:hover { background: #1d4ed8; }
+  button.danger { background: #2a1820; border-color: #5b2435; color: #f0b6c4; }
+  .row { display: flex; gap: 8px; }
+  .row > button { width: auto; flex: 1; }
+  .toggle { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+  #stats { font-size: 12px; line-height: 1.7; }
+  #stats .num { float: right; font-variant-numeric: tabular-nums; color: #fff; }
+  #stats .good { color: #46d39a; } #stats .warn { color: #f2b347; } #stats .bad { color: #f06a6a; }
+  #legendbar { position: absolute; left: 12px; bottom: 12px; font-size: 11px; color: #9aa6b6;
+    background: rgba(11,13,18,.7); padding: 8px 10px; border-radius: 8px; border: 1px solid #232a36; }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
+  #toast { position: absolute; right: 12px; top: 12px; font-size: 12px; padding: 8px 12px;
+    background: rgba(11,13,18,.85); border: 1px solid #2c3543; border-radius: 8px; opacity: 0; transition: opacity .2s; }
+  #toast.show { opacity: 1; }
+  .hint { font-size: 11px; color: #6f7a8a; margin: 6px 0 0; line-height: 1.5; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="panel">
+    <h1>Sim Studio</h1>
+    <p class="sub">Generate a fixture → fly &amp; capture → solve. Debugging the real M3 solver.</p>
+
+    <fieldset>
+      <legend>Scene</legend>
+      <label><span class="k">Fixture</span>
+        <select id="fixture"></select></label>
+      <label><span class="k">LEDs</span>
+        <input id="leds" type="number" min="1" max="2048" value="64" /></label>
+      <label><span class="k">Scale (m)</span>
+        <input id="scale" type="number" min="0.1" step="0.1" value="1.5" /></label>
+      <button id="newScene" class="primary">New scene</button>
+    </fieldset>
+
+    <fieldset>
+      <legend>Camera</legend>
+      <label><span class="k">H-FOV°</span>
+        <input id="hfov" type="range" min="30" max="110" value="70" />
+        <span class="val" id="hfovVal">70</span></label>
+      <p class="hint">Orbit to a viewpoint, then <b>Capture</b>. Or <b>Auto-arc</b> to
+        place a sweep of views automatically (like the real walk).</p>
+      <div class="row">
+        <button id="capture">Capture view</button>
+        <button id="autoArc">Auto-arc</button>
+      </div>
+      <label><span class="k">Arc views</span>
+        <input id="arcViews" type="number" min="2" max="120" value="24" /></label>
+      <label><span class="k">Arc degrees</span>
+        <input id="arcDeg" type="number" min="20" max="340" value="160" /></label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Noise (per capture)</legend>
+      <label><span class="k">Pixel σ (px)</span>
+        <input id="nPix" type="range" min="0" max="3" step="0.1" value="0" /><span class="val" id="nPixVal">0</span></label>
+      <label><span class="k">Pose σ (°)</span>
+        <input id="nDeg" type="range" min="0" max="3" step="0.1" value="0" /><span class="val" id="nDegVal">0</span></label>
+      <label><span class="k">Pose σ (mm)</span>
+        <input id="nPos" type="range" min="0" max="20" step="1" value="0" /><span class="val" id="nPosVal">0</span></label>
+      <label><span class="k">Dropout</span>
+        <input id="nDrop" type="range" min="0" max="0.5" step="0.05" value="0" /><span class="val" id="nDropVal">0</span></label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Solve</legend>
+      <label class="toggle"><input id="autoSolve" type="checkbox" checked /> Auto-solve after capture</label>
+      <label><span class="k">Min views</span>
+        <input id="minViews" type="number" min="2" max="20" value="2" /></label>
+      <label><span class="k">Min parallax°</span>
+        <input id="minPar" type="number" min="0" max="45" step="0.5" value="5" /></label>
+      <div class="row">
+        <button id="solve" class="primary">Solve</button>
+        <button id="reset" class="danger">Reset</button>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Stats</legend>
+      <div id="stats">
+        <div>Views <span class="num" id="sViews">0</span></div>
+        <div>Detections <span class="num" id="sDet">0</span></div>
+        <div>Solved <span class="num" id="sSolved">0 / 0</span></div>
+        <div>Mean error <span class="num" id="sMean">—</span></div>
+        <div>Max error <span class="num" id="sMax">—</span></div>
+        <div>Global RMS px <span class="num" id="sRms">—</span></div>
+        <div>Median parallax <span class="num" id="sPar">—</span></div>
+        <div>Solve time <span class="num" id="sTime">—</span></div>
+      </div>
+    </fieldset>
+  </div>
+
+  <div id="view">
+    <div id="legendbar">
+      <span class="swatch" style="background:#46d39a"></span>ground truth&nbsp;&nbsp;
+      <span class="swatch" style="background:#f2b347"></span>solved (hue = error)&nbsp;&nbsp;
+      <span class="swatch" style="background:#5b6b86"></span>capture frustum
+    </div>
+    <div id="toast"></div>
+  </div>
+</div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+}}
+</script>
+<script type="module" src="./app.js"></script>
+</body>
+</html>
