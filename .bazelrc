@@ -14,9 +14,16 @@ common --registry=https://bcr.bazel.build
 # Make actions hermetic so caching is correct across machines.
 build --incompatible_strict_action_env
 
-# Persist a build cache in the project tree (gitignored, dot-prefixed) so it
-# survives container restarts and fresh --output_base wipes.
+# Persist Bazel state in the project tree (gitignored, dot-prefixed) so it
+# survives container restarts, which wipe the container's root fs (~/.cache).
+# Both caches are content-addressable (hash filenames), so they are safe on the
+# case-insensitive macOS bind mount — unlike a full output base, whose Python
+# repo tree has files differing only by case and corrupts there.
+#   - disk cache: action outputs (skips recompile).
+#   - repository cache: downloaded external archives (skips the slow, flaky
+#     network re-fetch — the real first-build bottleneck).
 build --disk_cache=.bazel-disk-cache
+common --repository_cache=.bazel-repo-cache
 
 # Reasonable test ergonomics: only show output for failing tests.
 test --test_output=errors
