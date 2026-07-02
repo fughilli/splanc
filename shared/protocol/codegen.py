@@ -237,13 +237,18 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("export interface GetStatusMessage {")
     lines.append('  type: "get_status";')
     lines.append("}\n")
+    lines.append("/** Sent by pattern followers (e.g. the virtual LED wall) to poll the pattern clock. */")
+    lines.append("export interface GetPatternMessage {")
+    lines.append('  type: "get_pattern";')
+    lines.append("}\n")
     lines.append("export type ClientMessage =")
     lines.append("  | HelloMessage")
     lines.append("  | TimeSyncPingMessage")
     lines.append("  | StartMappingMessage")
     lines.append("  | StopMappingMessage")
     lines.append("  | DetectionsMessage")
-    lines.append("  | GetStatusMessage;\n")
+    lines.append("  | GetStatusMessage")
+    lines.append("  | GetPatternMessage;\n")
 
     lines.append("// ---------------------------------------------------------------------------")
     lines.append("// Server -> Client messages (§7.2)")
@@ -274,6 +279,14 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("  total: number;")
     lines.append("  lowParallax: number;")
     lines.append("}\n")
+    lines.append("/** Reply to get_pattern: the pattern clock a follower should render against. */")
+    lines.append("export interface PatternStateMessage {")
+    lines.append('  type: "pattern_state";')
+    lines.append("  active: boolean;")
+    lines.append("  /** Server-clock start of a known cycle (ms); null when no capture is active. */")
+    lines.append("  patternClockEpoch: number | null;")
+    lines.append("  codeParams: CodeParams;")
+    lines.append("}\n")
     lines.append("export interface ResultReadyMessage {")
     lines.append('  type: "result_ready";')
     lines.append("  mapId: string;")
@@ -288,6 +301,7 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("  | TimeSyncPongMessage")
     lines.append("  | MappingStartedMessage")
     lines.append("  | StatusMessage")
+    lines.append("  | PatternStateMessage")
     lines.append("  | ResultReadyMessage")
     lines.append("  | ErrorMessage;")
     return "\n".join(lines) + "\n"
@@ -459,6 +473,12 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append('    type: Literal["get_status"]')
     out.append("")
     out.append("")
+    out.append("class GetPatternMessage(_StrictModel):")
+    out.append('    """Sent by pattern followers (e.g. the virtual LED wall) to poll the pattern clock."""')
+    out.append("")
+    out.append('    type: Literal["get_pattern"]')
+    out.append("")
+    out.append("")
     out.append("ClientMessageInner = Annotated[")
     out.append("    Union[")
     out.append("        HelloMessage,")
@@ -467,6 +487,7 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append("        StopMappingMessage,")
     out.append("        DetectionsMessage,")
     out.append("        GetStatusMessage,")
+    out.append("        GetPatternMessage,")
     out.append("    ],")
     out.append('    Field(discriminator="type"),')
     out.append("]")
@@ -507,6 +528,15 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append("    lowParallax: int = Field(ge=0)")
     out.append("")
     out.append("")
+    out.append("class PatternStateMessage(_StrictModel):")
+    out.append('    """Reply to get_pattern: the pattern clock a follower should render against."""')
+    out.append("")
+    out.append('    type: Literal["pattern_state"]')
+    out.append("    active: bool")
+    out.append("    patternClockEpoch: Union[float, None]")
+    out.append("    codeParams: CodeParams")
+    out.append("")
+    out.append("")
     out.append("class ResultReadyMessage(_StrictModel):")
     out.append('    type: Literal["result_ready"]')
     out.append("    mapId: str")
@@ -524,6 +554,7 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append("        TimeSyncPongMessage,")
     out.append("        MappingStartedMessage,")
     out.append("        StatusMessage,")
+    out.append("        PatternStateMessage,")
     out.append("        ResultReadyMessage,")
     out.append("        ErrorMessage,")
     out.append("    ],")
@@ -555,11 +586,13 @@ def emit_python(schemas: dict[str, dict]) -> str:
         "StopMappingMessage",
         "DetectionsMessage",
         "GetStatusMessage",
+        "GetPatternMessage",
         "ClientMessage",
         "WelcomeMessage",
         "TimeSyncPongMessage",
         "MappingStartedMessage",
         "StatusMessage",
+        "PatternStateMessage",
         "ResultReadyMessage",
         "ErrorMessage",
         "ServerMessage",

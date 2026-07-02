@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+    <meta name="color-scheme" content="dark" />
+    <title>LED Mapper</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background: #101014;
+        color: #e8e8ea;
+        font: 15px/1.5 system-ui, sans-serif;
+      }
+      main {
+        max-width: 560px;
+        margin: 0 auto;
+        padding: 1.5rem 1rem 3rem;
+      }
+      h1 {
+        font-size: 1.3rem;
+        margin: 0 0 0.25rem;
+      }
+      .sub {
+        color: #9a9aa2;
+        margin: 0 0 1.25rem;
+      }
+      section {
+        background: #17171c;
+        border: 1px solid #26262e;
+        border-radius: 10px;
+        padding: 1rem;
+        margin-bottom: 1rem;
+      }
+      label {
+        display: block;
+        color: #b9b9c2;
+        margin-bottom: 0.35rem;
+        font-size: 0.9rem;
+      }
+      input[type="number"] {
+        width: 8rem;
+        background: #0e0e12;
+        color: inherit;
+        border: 1px solid #33333d;
+        border-radius: 6px;
+        padding: 0.45rem 0.6rem;
+        font: inherit;
+      }
+      button {
+        background: #3557d8;
+        color: #fff;
+        border: 0;
+        border-radius: 8px;
+        padding: 0.65rem 1.2rem;
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button:disabled {
+        background: #2a2a33;
+        color: #77777f;
+        cursor: default;
+      }
+      button.secondary {
+        background: #26262e;
+        color: #d8d8dd;
+      }
+      .row {
+        display: flex;
+        gap: 0.75rem;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      #conn {
+        font-size: 0.85rem;
+        color: #9a9aa2;
+      }
+      #err {
+        white-space: pre-wrap;
+        color: #ff9a9a;
+        font-size: 0.9rem;
+      }
+      #err ul {
+        margin: 0.4rem 0 0 1.1rem;
+        padding: 0;
+      }
+      a {
+        color: #7ea2ff;
+      }
+      #mapcanvas {
+        width: 100%;
+        border-radius: 8px;
+        background: #111;
+      }
+      /* --- in-session DOM overlay --- */
+      #overlay {
+        display: none;
+      }
+      body.in-xr #overlay {
+        display: block;
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        font-size: 14px;
+      }
+      #overlay .hud {
+        position: absolute;
+        top: env(safe-area-inset-top, 0);
+        left: 0;
+        right: 0;
+        padding: 0.6rem 0.8rem;
+        background: rgba(10, 10, 14, 0.6);
+        color: #fff;
+        line-height: 1.4;
+      }
+      #overlay .guide {
+        color: #ffd97a;
+      }
+      #overlay .stopwrap {
+        position: absolute;
+        bottom: calc(env(safe-area-inset-bottom, 0px) + 1.2rem);
+        left: 0;
+        right: 0;
+        text-align: center;
+        pointer-events: none;
+      }
+      #overlay button {
+        pointer-events: auto;
+        background: #d83535;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>LED Mapper</h1>
+      <p class="sub">
+        Map a fixture by walking an arc around it. No LEDs handy? Open the
+        <a href="/wall.html">virtual LED wall</a> on a laptop and map that.
+      </p>
+
+      <section id="setup">
+        <div class="row" style="margin-bottom: 0.75rem">
+          <div>
+            <label for="ledcount">LED count</label>
+            <input id="ledcount" type="number" min="1" max="4096" value="64" />
+          </div>
+          <div style="flex: 1"></div>
+          <button id="start">Start AR capture</button>
+        </div>
+        <div id="conn">connecting…</div>
+        <div id="err"></div>
+      </section>
+
+      <section id="result" style="display: none">
+        <h1 style="font-size: 1.05rem">Result</h1>
+        <canvas id="mapcanvas" width="520" height="390"></canvas>
+        <p class="row">
+          <a id="dl-json" download>map.json</a>
+          <a id="dl-csv" download>map.csv</a>
+          <button class="secondary" id="again">Map again</button>
+        </p>
+      </section>
+    </main>
+
+    <div id="overlay">
+      <div class="hud">
+        <div id="hud-stats">starting…</div>
+        <div class="guide" id="hud-guide">Walk a slow arc around the fixture — sideways steps, not toward it.</div>
+      </div>
+      <div class="stopwrap">
+        <button id="stop">Stop &amp; solve</button>
+      </div>
+    </div>
+
+    <script type="module" src="/src/ui/main.ts"></script>
+  </body>
+</html>

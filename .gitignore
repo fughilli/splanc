@@ -16,6 +16,13 @@ node_modules/
 npm-debug.log*
 pnpm-debug.log*
 
+# --- Web app -------------------------------------------------------------
+# Vite bundles (bazel builds //web:dist; `pnpm --dir web build` for ad-hoc).
+/web/dist/
+# Runtime state written by `bazelisk run //web:serve`: self-signed TLS cert,
+# capture session logs, reconstructed maps.
+/.ledmapper/
+
 # --- Python --------------------------------------------------------------
 __pycache__/
 *.py[cod]

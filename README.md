@@ -12,14 +12,15 @@ algorithms, and phased build plan — lives in
 README is a working state-of-the-build snapshot for the next agent picking
 the project up; the design doc is the durable spec.
 
-## State of progress (2026-06-22)
+## State of progress (2026-07-02)
 
-**M10, M3, M9, M2, M1 are landed and green. M4 is Nix-verified** (config
-evaluates + image derivation builds; final image not realized in-sandbox and not
-booted on hardware). `bazelisk build //...` and `bazelisk test //...` both pass
-(**9 test targets**). The Nix blocker that stopped the previous session is
-**cleared** — the container was rebuilt with the Nix overlay, so `nix` works and
-the host is natively `aarch64-linux` (Pi images build without cross-emulation).
+**M10, M3, M9, M2, M1, and the web stack M5–M8 (+ virtual LED wall) are landed
+and green. M4 is Nix-verified** (config evaluates + image derivation builds;
+final image not realized in-sandbox and not booted on hardware).
+`bazelisk build //...` and `bazelisk test //...` both pass (**20 test
+targets**). The Nix blocker that stopped the previous session is **cleared** —
+the container was rebuilt with the Nix overlay, so `nix` works and the host is
+natively `aarch64-linux` (Pi images build without cross-emulation).
 
 > **Environment note (2026-06-19):** the container rebuild also surfaced a JVM
 > crash — Bazel 7.7.1's bundled JDK 21 emits SVE instructions that `SIGILL` on
@@ -58,17 +59,50 @@ above. The output base stays in `~/.cache` (ephemeral) and is cheap to rebuild.
 
 **Host port forwarding.** `.claude-container-overlay` declares
 `claude-container:port` mappings (`127.0.0.1:8090→8090` studio,
-`127.0.0.1:8080→8080` M2) passed to `docker run -p`. The in-container server
-must bind `0.0.0.0` for the mapping to reach it — the studio defaults to that;
-for M2 pass `--host 0.0.0.0`. (The studio's 3D viewport was also fixed to
-center the origin/orbit pivot on retina displays and use CAD-style, no-inertia
-controls.)
+`127.0.0.1:8080→8080` M2, and **`8443→8443` LAN-exposed** for phone testing
+against `//web:serve` — added 2026-07-02, needs a container **restart** to
+take effect) passed to `docker run -p`. The in-container server must bind
+`0.0.0.0` for the mapping to reach it — the studio defaults to that; for M2
+pass `--host 0.0.0.0`; `//web:serve` does it by default. (The studio's 3D
+viewport was also fixed to center the origin/orbit pivot on retina displays
+and use CAD-style, no-inertia controls.)
 
-All work is on branch **`m1-driver-m2-server-m4-verify`**, committed through
-`6805600` (working tree clean). The `/workspace` bind mount — including the
-persisted caches — survives the restart.
+All work is on branch **`m1-driver-m2-server-m4-verify`** (working tree
+clean). The `/workspace` bind mount — including the persisted caches —
+survives the restart.
 
-### Done (this session)
+### Done (this session — 2026-07-02)
+
+- **Web stack M5–M8 is built and green** (`web/`, Vite + TS, no runtime npm
+  deps): M5 `WebXRCaptureSource` (immersive-ar + camera-access + dom-overlay,
+  intrinsics from the projection matrix, unit-tested), M6 detect/track/decode
+  (GPU threshold pass → CPU connected components → coasting NN tracker →
+  self-clocking Gray decoder with sync-delimiter ms-alignment), M7 WebSocket
+  client (SNTP clock sync, reconnect-safe detection batching), M8 session UI
+  (in-AR HUD, blob markers, canvas 3D result preview). 10 Bazel test targets:
+  typecheck + node:test suites incl. a **synthetic Phase-3-style pipeline
+  test** (planar wall + arc walk → ≥98 % ids, zero mis-ids, robust to 60 ms
+  camera latency and dropped frames) and **cross-language goldens** pinning
+  the TS Gray code to the M1 driver and the TS projection math to the M3
+  camera model. See `web/README.md`.
+- **Virtual LED wall** (`/wall.html`) — fullscreen flat grid of virtual LEDs
+  on a laptop, blinking the exact M1 frame plan synced to the server's
+  pattern clock, so the live solver can be tested with a phone and **zero LED
+  hardware**. Runs off a new §7 protocol pair `get_pattern`/`pattern_state`
+  (M10 schemas + both bindings regenerated; server handler + tests added).
+  Planar + grid-regular → shape-consistency checks need no measuring; the
+  page exports its ground-truth layout.
+- **One-command serving:** `bazelisk run //web:serve` = M2 + built web app
+  over **HTTPS** (self-signed cert persisted in `.ledmapper/`; WebXR needs a
+  secure context). `--no-tls` for plain HTTP. The overlay now LAN-publishes
+  port **8443** for the phone (needs a container restart to take effect).
+  Phone-testing runbook: `web/README.md`.
+- **Not yet done (needs the phone + you):** any on-device validation — Chrome
+  `#webxr-incubations` flag, real camera-texture orientation (`?flipv=`),
+  intrinsics accuracy, end-to-end wall capture. The whole software path below
+  the phone is exercised by tests.
+
+### Done (earlier sessions)
 
 - **M2 — `pi/server` is green.** FastAPI/uvicorn server + the §7 WebSocket
   control plane. Serves the web app (or a Phase-0 hello page), `GET /healthz`,
@@ -167,18 +201,12 @@ still errors, `sudo chown $(whoami) /nix/var/nix/{profiles,gcroots}/per-user`.)
 
 ### Not started
 
-- **M5 — `web/src/xr`.** WebXR `immersive-ar` + `camera-access`,
-  `XRWebGLBinding.getCameraImage`, intrinsics derived from
-  `XRView.projectionMatrix`. Implements the `CaptureSource` interface
-  from design doc §6 / M5.
-- **M6 — `web/src/cv`.** WebGL threshold + connected-components on the
-  GPU; nearest-neighbor track across frames; per-bit-window decode of
-  the Gray code → `DetectionRecord`s. Validates against an M9 **frame mode**
-  (not yet built — only detection-log mode exists).
-- **M7 — `web/src/net`.** WebSocket client, SNTP-style clock sync (§7.3),
-  detection batching.
-- **M8 — `web/src/ui`.** Session flow, live coverage guidance, low-
-  parallax warnings.
+- **M9 frame mode** (synthetic rendered frames for exercising the M6 GPU
+  detect stage; the track/decode stages are already covered by the TS
+  synthetic pipeline test, which fills the same role blob-level).
+- **On-device validation of M5–M8** (Phase 0/4 acceptance needs the real
+  phone): WebXR camera-access support check, camera-texture orientation,
+  intrinsics accuracy, a full wall capture.
 
 ## Active directives (latest user instructions)
 
@@ -256,15 +284,22 @@ the concrete next-step queue.
       host with enough RAM/disk (the in-sandbox kernel compile OOM'd). A generic
       QEMU boot harness can be scaffolded independently first. This becomes the
       cheap gate that precedes "End-to-end on bench" (Phase 4).
-- [~] **Phase 0 app skeleton.** M2 server **done** (serves a hello web app +
-      clock-sync over WebSocket). Remaining: M5/M7 stubs that open WebXR and
-      round-trip the clock sync from the phone. Acceptance: design doc §9 Phase 0.
+- [~] **Phase 0 app skeleton.** M2 server + the full web app (M5–M8) are
+      **built**; `bazelisk run //web:serve` serves it over HTTPS with clock
+      sync round-tripping. Remaining: confirm on a real phone (WebXR opens,
+      offset stable) — §9 Phase 0 acceptance is a device test.
 - [~] **M1 — LED driver.** SPI Gray-code cycle + M2 control socket **done**
       and unit-tested (recording sink, injected timing). Remaining: real-strip
       cadence verification on a bench (§9 Phase 1 acceptance needs a logic
       analyzer) and RT scheduling via the M4 systemd unit.
-- [ ] **M6 — CV pipeline.** Validates against M9 frame mode.
-      Acceptance: §9 Phase 3.
+- [~] **M6 — CV pipeline.** Track/decode **done** and validated against a
+      TS-synthetic blob stream (Phase-3-style: ≥98 % decode, latency + drop
+      robustness). Remaining: GPU detect stage on-device; optionally M9 frame
+      mode to exercise it synthetically. Acceptance: §9 Phase 3.
+- [ ] **Hardware-free E2E with a phone: virtual LED wall.** Built — laptop
+      fullscreen wall (`/wall.html`) + phone capture against it; see
+      `web/README.md` for the runbook. This is now the cheapest full-pipeline
+      gate (needs only a phone; precedes the bench).
 - [ ] **End-to-end on bench.** Real phone + real strip + golden fixture.
       Acceptance: §9 Phase 4.
 - [ ] **Robustness & UX.** Coverage guidance polish, exposure handling,
@@ -277,30 +312,31 @@ current dev machine.
 
 ```sh
 bazelisk build //...     # builds clean
-bazelisk test  //...     # 9 test targets, all green
+bazelisk test  //...     # 20 test targets, all green
 
 # Try the synthetic pipeline end-to-end (no phone, no hardware):
 bazelisk run //shared/simulator:simulate -- --fixture cube --leds 64 --noise none -o /tmp/log.json
 bazelisk run //pi/reconstruction:reconstruct -- /tmp/log.json -o /tmp/map.json --csv /tmp/map.csv
 
-# Or drive the same data through the live server (M2):
-bazelisk run //pi/server:serve -- --host 127.0.0.1 --port 8080 \
-    --session-dir /tmp/lm/sessions --maps-dir /tmp/lm/maps
+# Serve the real web app + control plane (phone testing, HTTPS):
+bazelisk run //web:serve            # https://0.0.0.0:8443, wall at /wall.html
+# (plain-HTTP dev variant: bazelisk run //web:serve -- --no-tls  → :8080)
 ```
 
 Working today: M10 (protocol), M3 (reconstruction), M9 (simulator
 detection-log mode), M2 (server), M1 (LED driver — software-tested, bench
-cadence pending). M4 (provisioning) is Nix-verified (config evaluates + image
-derivation builds; final image not realized in-sandbox, not booted). The web
-modules (M5–M8) are not started. See `docs/runbook.md` for details.
+cadence pending), M5–M8 (web app + virtual LED wall — fully unit/synthetic-
+tested, on-device validation pending). M4 (provisioning) is Nix-verified
+(config evaluates + image derivation builds; final image not realized
+in-sandbox, not booted). See `docs/runbook.md` and `web/README.md`.
 
 ## Repo layout
 
 See design doc §11. Current on-disk reality matches it. Populated so far:
 `shared/protocol` (M10), `pi/reconstruction` (M3), `shared/simulator` (M9),
 `pi/server` (M2), `pi/led_driver` (M1), `pi/provisioning` (M4, Nix-verified),
-`docs/`. Plus `tools/sim_studio` — an interactive 3D solver-debugging studio
-(not a shipping module; see below).
+`web/` (M5–M8 + the virtual LED wall), `docs/`. Plus `tools/sim_studio` — an
+interactive 3D solver-debugging studio (not a shipping module; see below).
 
 ## Pointers
 
@@ -317,6 +353,9 @@ See design doc §11. Current on-disk reality matches it. Populated so far:
 - **Server (M2):** `pi/server/` — FastAPI/uvicorn + §7 WebSocket; see its README.
 - **LED driver (M1):** `pi/led_driver/` — Gray-code SPI driver + M2 control
   socket; see its README.
+- **Web app (M5–M8) + virtual LED wall:** `web/` — capture app + the
+  hardware-free laptop test fixture; phone-testing runbook in `web/README.md`.
+  `bazelisk run //web:serve`.
 - **Sim Studio (dev tool):** `tools/sim_studio/` — interactive 3D studio to
   generate fixtures, fly a camera to synthesize captures, and watch the real M3
   solver converge vs ground truth. `bazelisk run //tools/sim_studio:serve`, then

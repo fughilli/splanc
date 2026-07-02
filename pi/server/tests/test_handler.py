@@ -100,6 +100,36 @@ def test_detections_require_active_session(tmp_path):
     assert status["lowParallax"] == 1  # one LED seen once
 
 
+def test_get_pattern_idle_reports_inactive_with_default_codebook(tmp_path):
+    handler, _ctx, _ = _make_handler(tmp_path)
+    m = _dump(_run(handler, '{"type":"get_pattern"}')[0])
+    assert m["type"] == "pattern_state"
+    assert m["active"] is False
+    assert m["patternClockEpoch"] is None
+    assert m["codeParams"]["ledCount"] == 512  # server default
+
+
+def test_get_pattern_active_reports_session_epoch_and_led_count(tmp_path):
+    handler, _ctx, _ = _make_handler(tmp_path)
+    started = _dump(_run(handler, '{"type":"start_mapping","options":{"ledCount":64}}')[0])
+    # A second connection (e.g. the virtual LED wall) polls the pattern state
+    # and must see the same clock the phone was handed.
+    wall = ConnectionHandler(_ctx)
+    m = _dump(_run(wall, '{"type":"get_pattern"}')[0])
+    assert m["type"] == "pattern_state"
+    assert m["active"] is True
+    assert m["patternClockEpoch"] == started["patternClockEpoch"]
+    assert m["codeParams"] == started["codeParams"]
+
+
+def test_get_pattern_after_stop_reports_inactive(tmp_path):
+    handler, _ctx, _ = _make_handler(tmp_path)
+    _run(handler, '{"type":"start_mapping","options":{"ledCount":4}}')
+    _run(handler, '{"type":"stop_mapping"}')
+    m = _dump(_run(handler, '{"type":"get_pattern"}')[0])
+    assert m["active"] is False and m["patternClockEpoch"] is None
+
+
 def test_stop_triggers_reconstruction_and_result_ready(tmp_path):
     handler, _ctx, recon_calls = _make_handler(tmp_path)
     _run(handler, '{"type":"start_mapping","options":{"ledCount":4}}')

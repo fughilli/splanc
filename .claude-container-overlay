@@ -77,3 +77,10 @@ RUN apt-get update \
 # Then open http://localhost:8090 (studio) / http://localhost:8080 (M2) on the host.
 # claude-container:port 127.0.0.1:8090:8090
 # claude-container:port 127.0.0.1:8080:8080
+
+# 2026-07-02: 8443 — `bazelisk run //web:serve` (M2 + built web app, HTTPS).
+# Deliberately LAN-exposed (no 127.0.0.1: prefix): the phone-testing flow needs
+# an Android phone on the same Wi-Fi to reach https://<laptop-LAN-IP>:8443
+# (WebXR requires a secure context; the server uses a persistent self-signed
+# cert — tap through the browser warning once). See web/README.md.
+# claude-container:port 8443:8443

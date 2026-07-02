@@ -2,9 +2,14 @@
 
     python -m server [--host H] [--port P] [--web-root DIR]
                      [--session-dir DIR] [--maps-dir DIR] [--led-count N]
+                     [--ssl-dir DIR | --ssl-certfile F --ssl-keyfile F]
 
 On the Pi this is launched as ``led-server.service`` (design doc §6 M4 /
 pi/provisioning), binding :80 and serving the built web app from ``--web-root``.
+
+For phone testing, serve HTTPS: WebXR needs a secure context, so either pass
+``--ssl-dir`` (self-signed cert generated once into that directory) or a real
+cert/key pair. The web app derives ws:// vs wss:// from the page protocol.
 """
 
 from __future__ import annotations
@@ -16,6 +21,7 @@ import uvicorn
 
 from server.app import create_app
 from server.codebook import DEFAULT_BIT_PERIOD_MS
+from server.tls import ensure_self_signed
 
 
 def main(argv=None) -> int:
@@ -27,7 +33,24 @@ def main(argv=None) -> int:
     parser.add_argument("--maps-dir", type=Path, default=Path("/var/lib/ledmapper/maps"))
     parser.add_argument("--led-count", type=int, default=1024, help="default code-book LED count")
     parser.add_argument("--bit-period-ms", type=float, default=DEFAULT_BIT_PERIOD_MS)
+    parser.add_argument(
+        "--ssl-dir",
+        type=Path,
+        default=None,
+        help="serve HTTPS with a self-signed cert kept in this directory "
+        "(generated on first run; WebXR on the phone requires a secure context)",
+    )
+    parser.add_argument("--ssl-certfile", type=Path, default=None)
+    parser.add_argument("--ssl-keyfile", type=Path, default=None)
     args = parser.parse_args(argv)
+
+    certfile, keyfile = args.ssl_certfile, args.ssl_keyfile
+    if args.ssl_dir is not None:
+        if certfile or keyfile:
+            parser.error("--ssl-dir and --ssl-certfile/--ssl-keyfile are mutually exclusive")
+        certfile, keyfile = ensure_self_signed(args.ssl_dir)
+    if bool(certfile) != bool(keyfile):
+        parser.error("--ssl-certfile and --ssl-keyfile must be given together")
 
     app = create_app(
         session_dir=args.session_dir,
@@ -36,7 +59,13 @@ def main(argv=None) -> int:
         default_led_count=args.led_count,
         bit_period_ms=args.bit_period_ms,
     )
-    uvicorn.run(app, host=args.host, port=args.port)
+    uvicorn.run(
+        app,
+        host=args.host,
+        port=args.port,
+        ssl_certfile=str(certfile) if certfile else None,
+        ssl_keyfile=str(keyfile) if keyfile else None,
+    )
     return 0
 
 

@@ -1,0 +1,109 @@
+# web — the phone app (M5–M8) + the virtual LED wall
+
+The Android-Chrome capture app from the design doc, plus a hardware-free test
+fixture. Two Vite entry pages:
+
+| Page | What it is |
+|---|---|
+| `/` | **Capture app** (M5 xr · M6 cv · M7 net · M8 ui): opens an `immersive-ar` WebXR session with `camera-access`, detects/tracks/decodes the blinking LEDs per frame, streams `DetectionRecord`s to the Pi over the §7 WebSocket, drives the session flow and shows the reconstructed result. |
+| `/wall.html` | **Virtual LED wall**: renders a flat grid of virtual LEDs fullscreen on a laptop and blinks the exact M1 Gray-code frame plan, synced to the server's pattern clock. Point the phone at the screen to exercise the entire live pipeline with zero LED hardware. |
+
+## Layout
+
+```
+src/code/   Gray-code frame plan + pattern-clock timing (§8.1/§8.2) — the TS
+            mirror of pi/led_driver/graycode.py, golden-tested against it
+src/geom/   pinhole camera math — mirror of reconstruction/camera.py (M3),
+            golden-tested against it; used by tests + result preview
+src/net/    M7: WebSocket client, SNTP clock sync (§7.3), detection batching
+            with reconnect-safe buffering
+src/xr/     M5: CaptureSource seam, WebXRCaptureSource (camera-access),
+            projectionMatrixToIntrinsics, raw-camera-access type shims
+src/cv/     M6: GPU threshold pass (detect.ts) → CPU connected components
+            (ccl.ts) → coasting NN tracker (tracker.ts) → self-clocking
+            per-bit-window decoder (decoder.ts); pipeline.ts is the pure-TS
+            track→decode glue the tests drive without a browser
+src/ui/     M8: session flow, in-AR HUD (dom-overlay), blob feedback markers,
+            canvas 3D result preview
+src/wall/   the virtual wall page
+tests/      node:test suites (compiled to CJS, run hermetically under Bazel)
+```
+
+## Build / test
+
+```sh
+bazelisk test //web:unit_tests            # all node test suites
+bazelisk test //web:web_ts_typecheck_test # tsc over the app sources
+bazelisk build //web:dist                 # production bundle (vite)
+```
+
+The synthetic pipeline test (`tests/pipeline_synthetic.test.ts`) is the
+browser-free Phase-3-style acceptance: a simulated planar wall + arc walk
+drives the production tracker/decoder, asserting ≥98 % id coverage, zero
+mis-ids, tolerance to 60 ms camera latency (via the decoder's sync-delimiter
+alignment) and to dropped frames + pixel noise. Cross-language goldens pin the
+Gray-code plan to the M1 driver and the projection math to the M3 solver.
+
+Dev loop (hot reload, proxies `/ws` + `/maps` to a local M2):
+
+```sh
+bazelisk run //pi/server:serve -- --port 8080 --session-dir /tmp/lm/s --maps-dir /tmp/lm/m
+pnpm --dir web dev        # http://localhost:5173
+```
+
+## Testing with a phone against the virtual wall (no LED hardware)
+
+One command serves everything (M2 + built app, HTTPS with a persistent
+self-signed cert under `.ledmapper/`):
+
+```sh
+bazelisk run //web:serve            # https on 0.0.0.0:8443
+```
+
+1. **Laptop**: open `https://localhost:8443/wall.html` (tap through the
+   certificate warning once), click **Fullscreen**. The wall idles until a
+   capture starts. Dim the room; crank screen brightness.
+2. **Phone** (Android Chrome, same Wi-Fi): open
+   `https://<laptop-LAN-IP>:8443`, tap through the cert warning. If running
+   inside claude-container, port 8443 must be LAN-published — see
+   `.claude-container-overlay` (needs a container restart after edits).
+3. Phone prerequisites (§13 — fail-clear, the app shows these hints too):
+   - `chrome://flags/#webxr-incubations` **enabled** (raw camera access),
+   - Google Play Services for AR (ARCore) installed/current.
+4. Set the LED count (e.g. 64), tap **Start AR capture**, point the phone at
+   the wall — green markers show detected blobs — and walk a slow arc while
+   the HUD counts decoded ids. Tap **Stop & solve**: the server runs M3 and
+   the page shows the reconstructed point cloud + JSON/CSV downloads.
+5. Sanity-check the result with no measurements: the wall is planar and
+   grid-regular, so the solved points should be coplanar with uniform spacing
+   (the §1 shape-consistency criteria). **Ground truth ⤓** on the wall page
+   exports the grid layout (in LED-pitch units) for comparison up to a
+   similarity transform.
+
+Useful query params — capture page: `?threshold=0.6` (detector luminance
+threshold), `?downscale=2`, `?flipv=1` (camera-texture row order — see
+`DetectorOptions.flipV`), `?leds=N`. Wall page: `?cols=N`, `?gap`, `?margin`,
+`?dot` (dot diameter as a fraction of pitch).
+
+### How the wall stays in sync
+
+The wall never owns the pattern: it connects to the same `/ws` control plane,
+runs the same SNTP clock sync, and polls the `get_pattern` → `pattern_state`
+message (added to §7 for exactly this) for `{active, patternClockEpoch,
+codeParams}`. When the phone's `start_mapping` stamps the epoch, the wall
+adopts it and renders `frameIndexAt(now + offset, epoch)` — the same function
+the phone's decoder uses to bucket bit windows. Residual latency (screen
+present, camera pipeline) is absorbed by the decoder's self-clocking
+alignment on the ALL_ON→ALL_OFF delimiter (§8.1).
+
+## Device caveats (§13, revisit at Phase-4 bench time)
+
+- **Camera-texture orientation** (`flipV`) and **intrinsics from
+  `projectionMatrix`** are device territory; a wrong flip shows up as huge M3
+  reprojection residuals. Validate on the target device once.
+- `tCaptureMs` is stamped at the rAF callback, not sensor readout; constant
+  latency is handled by decode alignment, jitter is not (keep bitPeriodMs
+  ≥ 3 frame intervals).
+- The GPU detect stage reads back a downsampled buffer synchronously
+  (~640×360 RGBA @ 30 fps). Fine for MVP; a PBO/fence pipeline is the known
+  optimization if frame time suffers.

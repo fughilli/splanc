@@ -33,12 +33,14 @@ from ledmapper_protocol import (
     DetectionRecord,
     DetectionsMessage,
     ErrorMessage,
+    GetPatternMessage,
     GetStatusMessage,
     HelloMessage,
     LedEntry,
     MappingStartedMessage,
     OutputMap,
     OutputMapStats,
+    PatternStateMessage,
     Pose,
     ResultReadyMessage,
     ServerMessage,
@@ -222,6 +224,7 @@ CLIENT_VARIANTS = [
         batch=[make_detection_record(0), make_detection_record(1)],
     ),
     GetStatusMessage(type="get_status"),
+    GetPatternMessage(type="get_pattern"),
 ]
 
 
@@ -262,6 +265,18 @@ SERVER_VARIANTS = [
         codeParams=make_code_params(),
     ),
     StatusMessage(type="status", identified=812, total=1024, lowParallax=37),
+    PatternStateMessage(
+        type="pattern_state",
+        active=True,
+        patternClockEpoch=988.5,
+        codeParams=make_code_params(),
+    ),
+    PatternStateMessage(
+        type="pattern_state",
+        active=False,
+        patternClockEpoch=None,
+        codeParams=make_code_params(),
+    ),
     ResultReadyMessage(type="result_ready", mapId="ffffffff-0000-1111-2222-333333333333"),
     ErrorMessage(type="error", code="capture_aborted", message="user pressed stop"),
 ]

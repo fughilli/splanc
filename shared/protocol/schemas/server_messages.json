@@ -8,6 +8,7 @@
     { "$ref": "#/$defs/TimeSyncPong" },
     { "$ref": "#/$defs/MappingStarted" },
     { "$ref": "#/$defs/Status" },
+    { "$ref": "#/$defs/PatternState" },
     { "$ref": "#/$defs/ResultReady" },
     { "$ref": "#/$defs/Error" }
   ],
@@ -64,6 +65,21 @@
         "identified": { "type": "integer", "minimum": 0 },
         "total": { "type": "integer", "minimum": 0 },
         "lowParallax": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "PatternState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "active", "patternClockEpoch", "codeParams"],
+      "description": "Reply to get_pattern: whether a capture is running and, if so, the pattern clock it is running against. codeParams is always present (the server default when inactive) so a pattern follower can lay out its display before mapping starts.",
+      "properties": {
+        "type": { "const": "pattern_state" },
+        "active": { "type": "boolean" },
+        "patternClockEpoch": {
+          "type": ["number", "null"],
+          "description": "Server-clock time of the start of a known cycle, in milliseconds; null when no capture is active."
+        },
+        "codeParams": { "$ref": "code_params.json" }
       }
     },
     "ResultReady": {

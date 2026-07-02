@@ -144,6 +144,12 @@ class GetStatusMessage(_StrictModel):
     type: Literal["get_status"]
 
 
+class GetPatternMessage(_StrictModel):
+    """Sent by pattern followers (e.g. the virtual LED wall) to poll the pattern clock."""
+
+    type: Literal["get_pattern"]
+
+
 ClientMessageInner = Annotated[
     Union[
         HelloMessage,
@@ -152,6 +158,7 @@ ClientMessageInner = Annotated[
         StopMappingMessage,
         DetectionsMessage,
         GetStatusMessage,
+        GetPatternMessage,
     ],
     Field(discriminator="type"),
 ]
@@ -192,6 +199,15 @@ class StatusMessage(_StrictModel):
     lowParallax: int = Field(ge=0)
 
 
+class PatternStateMessage(_StrictModel):
+    """Reply to get_pattern: the pattern clock a follower should render against."""
+
+    type: Literal["pattern_state"]
+    active: bool
+    patternClockEpoch: Union[float, None]
+    codeParams: CodeParams
+
+
 class ResultReadyMessage(_StrictModel):
     type: Literal["result_ready"]
     mapId: str
@@ -209,6 +225,7 @@ ServerMessageInner = Annotated[
         TimeSyncPongMessage,
         MappingStartedMessage,
         StatusMessage,
+        PatternStateMessage,
         ResultReadyMessage,
         ErrorMessage,
     ],
@@ -239,11 +256,13 @@ __all__ = [
     "StopMappingMessage",
     "DetectionsMessage",
     "GetStatusMessage",
+    "GetPatternMessage",
     "ClientMessage",
     "WelcomeMessage",
     "TimeSyncPongMessage",
     "MappingStartedMessage",
     "StatusMessage",
+    "PatternStateMessage",
     "ResultReadyMessage",
     "ErrorMessage",
     "ServerMessage",

@@ -96,6 +96,17 @@ class SessionManager:
                 return 0, 0, 0
             return self._active.status()
 
+    def pattern_state(self) -> Optional[Tuple[float, int]]:
+        """Return ``(patternClockEpoch, ledCount)`` of the active capture, or None.
+
+        Pattern followers (the virtual LED wall) poll this via ``get_pattern`` so
+        they can render the blink code against the same clock the phone decodes.
+        """
+        with self._lock:
+            if self._active is None:
+                return None
+            return self._active.pattern_clock_epoch, self._active.led_count
+
     def stop(self) -> Tuple[str, Path]:
         """Finalize the active session: write its log, clear active state.
 

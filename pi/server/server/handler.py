@@ -19,6 +19,7 @@ from ledmapper_protocol import (
     ErrorMessage,
     MappingStartedMessage,
     OutputMap,
+    PatternStateMessage,
     ResultReadyMessage,
     ServerMessage,
     StatusMessage,
@@ -92,6 +93,8 @@ class ConnectionHandler:
             return self._detections(msg.batch)
         if kind == "get_status":
             return [self._status()]
+        if kind == "get_pattern":
+            return [self._pattern()]
         if kind == "stop_mapping":
             return await self._stop()
         # ClientMessage's discriminated union makes this unreachable, but be loud.
@@ -127,6 +130,29 @@ class ConnectionHandler:
     def _status(self) -> ServerMessage:
         identified, total, low = self.ctx.sessions.status()
         return StatusMessage(type="status", identified=identified, total=total, lowParallax=low)
+
+    def _pattern(self) -> ServerMessage:
+        """Pattern-clock state for followers (the virtual LED wall test page).
+
+        When a capture is active the codeParams reflect its ledCount, so a wall
+        adopts the phone's LED count automatically; when idle it gets the server
+        default so it can lay out its grid before mapping starts.
+        """
+        state = self.ctx.sessions.pattern_state()
+        if state is None:
+            return PatternStateMessage(
+                type="pattern_state",
+                active=False,
+                patternClockEpoch=None,
+                codeParams=code_params_for(self.ctx.default_led_count, self.ctx.bit_period_ms),
+            )
+        epoch, led_count = state
+        return PatternStateMessage(
+            type="pattern_state",
+            active=True,
+            patternClockEpoch=epoch,
+            codeParams=code_params_for(led_count, self.ctx.bit_period_ms),
+        )
 
     async def _stop(self) -> List[ServerMessage]:
         try:

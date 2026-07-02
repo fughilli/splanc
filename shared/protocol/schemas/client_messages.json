@@ -9,7 +9,8 @@
     { "$ref": "#/$defs/StartMapping" },
     { "$ref": "#/$defs/StopMapping" },
     { "$ref": "#/$defs/Detections" },
-    { "$ref": "#/$defs/GetStatus" }
+    { "$ref": "#/$defs/GetStatus" },
+    { "$ref": "#/$defs/GetPattern" }
   ],
   "$defs": {
     "Hello": {
@@ -79,6 +80,15 @@
       "required": ["type"],
       "properties": {
         "type": { "const": "get_status" }
+      }
+    },
+    "GetPattern": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "description": "Ask for the current pattern-clock state. Sent by pattern followers (e.g. the virtual LED wall test page) that render the blink code but do not own the capture session.",
+      "properties": {
+        "type": { "const": "get_pattern" }
       }
     }
   }

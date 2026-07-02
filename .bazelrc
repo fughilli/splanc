@@ -34,3 +34,12 @@ build --symlink_prefix=bazel-
 # Quieter status — agents and CI don't need a curses progress bar.
 common --color=yes
 common --show_timestamps
+
+# Vite/rolldown breaks under the sandbox: it realpath()s entry files through
+# the sandbox's input symlinks while the project root stays at the sandbox
+# path, so emitted HTML asset names become ../../-escaping paths. Run the
+# (fully input/output-declared) Vite action unsandboxed instead. Applying the
+# strategy by mnemonic here avoids tagging the target, which would propagate
+# execution requirements into shared copy-to-bin actions and cause action
+# conflicts with the ts_project targets over the same sources.
+build --strategy=Vite=local

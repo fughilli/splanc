@@ -132,13 +132,19 @@ export interface GetStatusMessage {
   type: "get_status";
 }
 
+/** Sent by pattern followers (e.g. the virtual LED wall) to poll the pattern clock. */
+export interface GetPatternMessage {
+  type: "get_pattern";
+}
+
 export type ClientMessage =
   | HelloMessage
   | TimeSyncPingMessage
   | StartMappingMessage
   | StopMappingMessage
   | DetectionsMessage
-  | GetStatusMessage;
+  | GetStatusMessage
+  | GetPatternMessage;
 
 // ---------------------------------------------------------------------------
 // Server -> Client messages (§7.2)
@@ -174,6 +180,15 @@ export interface StatusMessage {
   lowParallax: number;
 }
 
+/** Reply to get_pattern: the pattern clock a follower should render against. */
+export interface PatternStateMessage {
+  type: "pattern_state";
+  active: boolean;
+  /** Server-clock start of a known cycle (ms); null when no capture is active. */
+  patternClockEpoch: number | null;
+  codeParams: CodeParams;
+}
+
 export interface ResultReadyMessage {
   type: "result_ready";
   mapId: string;
@@ -190,5 +205,6 @@ export type ServerMessage =
   | TimeSyncPongMessage
   | MappingStartedMessage
   | StatusMessage
+  | PatternStateMessage
   | ResultReadyMessage
   | ErrorMessage;

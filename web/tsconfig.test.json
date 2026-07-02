@@ -1,0 +1,22 @@
+{
+  "//": [
+    "Unit-test build: compiles src/ + tests/ to plain CommonJS that Node runs",
+    "directly under Bazel (node:test, no bundler, no test framework dep).",
+    "CJS is deliberate: tsc does not rewrite extensionless ESM import paths,",
+    "so emitted ESM would not resolve under Node — CJS require() does.",
+    "verbatimModuleSyntax must be off for ESM-syntax -> CJS emit; runtime",
+    "imports of @ledmapper/protocol never happen (types only, erased on emit)."
+  ],
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": false,
+    "module": "CommonJS",
+    "moduleResolution": "Node10",
+    "verbatimModuleSyntax": false,
+    "isolatedModules": false,
+    "types": ["node", "webxr"],
+    "paths": {}
+  },
+  "include": ["src/**/*.ts", "src/**/*.d.ts", "tests/**/*.ts"]
+}
