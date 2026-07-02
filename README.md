@@ -27,29 +27,46 @@ the host is natively `aarch64-linux` (Pi images build without cross-emulation).
 > (see `docs/decisions.md`). Plain `bazelisk` works again. If you ever see a
 > wedged zombie `[java]` server, point bazel at a fresh `--output_base`.
 
-### Handoff — restart to activate host port forwarding (2026-06-26)
+### Handoff — Bazel caches persisted across restarts (2026-07-02)
 
-The **Sim Studio** (and the M2 server) can now be reached from the **host**
-browser. `.claude-container-overlay` declares `claude-container:port` mappings
-(`127.0.0.1:8090→8090` studio, `127.0.0.1:8080→8080` M2) that the launcher passes
-to `docker run -p`. **They take effect on the next `claude-container` restart.**
-After restarting:
+**The post-restart first build is no longer a slow full rebuild.** The
+container's root fs (`~/.cache`) is wiped on every `claude-container` restart,
+which is why the first build used to take ~1.8 h re-downloading every external
+repo over a flaky network. Fixed by persisting Bazel's *content-addressable*
+caches on the `/workspace` bind mount (all `.gitignore`d dot-folders):
+
+- **`.bazelrc`** → `--repository_cache=.bazel-repo-cache` (downloaded external
+  archives) and `--disk_cache=.bazel-disk-cache` (action outputs).
+- **`.bazeliskrc`** → `BAZELISK_HOME=.bazelisk` (the downloaded Bazel binary).
+
+After a restart, Bazel rebuilds its output base locally from these caches with
+**zero network downloads** (validated: a fresh output base built
+`//tools/sim_studio:serve` in ~12 s). Just run the normal commands:
 
 ```sh
-bazelisk build //...                    # first build re-warms the bazel cache (slow once)
+bazelisk build //...                    # rebuilds from the persisted caches, no network
 bazelisk run //tools/sim_studio:serve   # binds 0.0.0.0:8090 by default
 # → open http://localhost:8090 on the host
 ```
 
-(The in-container server must bind `0.0.0.0`, not `127.0.0.1`, for the mapping to
-reach it — the studio now defaults to that; for M2 pass `--host 0.0.0.0`.)
+**Do not try to relocate the Bazel output base onto `/workspace`.** That mount
+is a **case-insensitive macOS filesystem**; an output base's extracted
+Python/pip tree has files differing only by case, which collide and corrupt
+there (analysis fails in `rules_python`). Only content-addressable caches
+(hash filenames) are safe on it — hence the repository/disk cache approach
+above. The output base stays in `~/.cache` (ephemeral) and is cheap to rebuild.
 
-All work is on branch **`m1-driver-m2-server-m4-verify`** — the `/workspace`
-bind mount persists it across the restart. It is **uncommitted beyond commit
-`92e79cd`** (M1/M2/M4-verify): the Sim Studio, the overlay port directives, and
-these doc updates are staged in the working tree only. The bazel cache lives
-inside the container (not the bind mount), so the post-restart first build is a
-full rebuild.
+**Host port forwarding.** `.claude-container-overlay` declares
+`claude-container:port` mappings (`127.0.0.1:8090→8090` studio,
+`127.0.0.1:8080→8080` M2) passed to `docker run -p`. The in-container server
+must bind `0.0.0.0` for the mapping to reach it — the studio defaults to that;
+for M2 pass `--host 0.0.0.0`. (The studio's 3D viewport was also fixed to
+center the origin/orbit pivot on retina displays and use CAD-style, no-inertia
+controls.)
+
+All work is on branch **`m1-driver-m2-server-m4-verify`**, committed through
+`6805600` (working tree clean). The `/workspace` bind mount — including the
+persisted caches — survives the restart.
 
 ### Done (this session)
 
@@ -303,7 +320,6 @@ See design doc §11. Current on-disk reality matches it. Populated so far:
 - **Sim Studio (dev tool):** `tools/sim_studio/` — interactive 3D studio to
   generate fixtures, fly a camera to synthesize captures, and watch the real M3
   solver converge vs ground truth. `bazelisk run //tools/sim_studio:serve`, then
-  open `http://localhost:8090` on the host (port mapping is in the overlay;
-  needs a container restart to take effect).
+  open `http://localhost:8090` on the host (port mapping is in the overlay).
 - **Bazel build graph entry:** `MODULE.bazel`, root `BUILD.bazel`.
 - **Ops:** `docs/runbook.md`, `docs/decisions.md`.
