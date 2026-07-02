@@ -14,6 +14,10 @@ common --registry=https://bcr.bazel.build
 # Make actions hermetic so caching is correct across machines.
 build --incompatible_strict_action_env
 
+# Persist a build cache in the project tree (gitignored, dot-prefixed) so it
+# survives container restarts and fresh --output_base wipes.
+build --disk_cache=.bazel-disk-cache
+
 # Reasonable test ergonomics: only show output for failing tests.
 test --test_output=errors
 

@@ -1,6 +1,10 @@
 # --- Bazel ---------------------------------------------------------------
 # Convenience symlinks (symlink_prefix = bazel- in .bazelrc) into the cache.
 /bazel-*
+# Project-local Bazel disk cache (--disk_cache in .bazelrc).
+/.bazel-disk-cache/
+# Project-local bazelisk download cache (BAZELISK_HOME in .bazeliskrc).
+/.bazelisk/
 # MODULE.bazel.lock IS committed (it's a lockfile) — do not ignore it.
 
 # --- Node / pnpm ---------------------------------------------------------

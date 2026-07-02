@@ -43,7 +43,11 @@ const camera = new THREE.PerspectiveCamera(55, 1, 0.01, 1000);
 camera.position.set(0, 1.2, 4);
 
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.enableDamping = true;
+// No inertia: rotate/pan/zoom stop the instant the mouse is released, so the
+// viewport feels like a CAD tool rather than a video game (no glide/coast).
+controls.enableDamping = false;
+// Scroll wheel dollies more per notch (default 1.0 felt too slow).
+controls.zoomSpeed = 2.0;
 
 scene.add(new THREE.AmbientLight(0xffffff, 0.8));
 const grid = new THREE.GridHelper(10, 20, 0x2a3340, 0x1a2029);
@@ -63,7 +67,12 @@ function clearObject(o) { if (o) { scene.remove(o); o.geometry?.dispose(); o.mat
 
 function resize() {
   const w = view.clientWidth, h = view.clientHeight;
-  renderer.setSize(w, h, false);
+  // Pass updateStyle=true (default) so three.js keeps the canvas CSS size equal
+  // to the container while the drawing buffer scales by devicePixelRatio. With
+  // updateStyle=false and no CSS sizing on <canvas>, a retina pixelRatio makes
+  // the canvas display at 2× the container, pushing the scene origin (and the
+  // orbit pivot) off to the lower-right of the viewport.
+  renderer.setSize(w, h);
   camera.aspect = w / Math.max(h, 1);
   camera.updateProjectionMatrix();
 }
