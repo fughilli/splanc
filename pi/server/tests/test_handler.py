@@ -142,7 +142,7 @@ def _detections_raw(led_id=0):
 
 def test_get_live_map_idle_reports_inactive(tmp_path):
     solve_calls = []
-    solver = LiveSolver(lambda d, n, s: solve_calls.append(len(d)) or _stub_map())
+    solver = LiveSolver(lambda d, n, s, prev_map=None: solve_calls.append(len(d)) or _stub_map())
     handler, _ctx, _ = _make_handler(tmp_path, live_solver=solver)
     m = _dump(_run(handler, '{"type":"get_live_map"}')[0])
     assert m["type"] == "live_map"
@@ -153,7 +153,7 @@ def test_get_live_map_idle_reports_inactive(tmp_path):
 def test_get_live_map_solves_continuously_single_flight(tmp_path):
     solve_calls = []
 
-    def stub_solve(detections, led_count, session_id):
+    def stub_solve(detections, led_count, session_id, prev_map=None):
         solve_calls.append((len(detections), led_count, session_id))
         return _stub_map()
 
@@ -192,7 +192,7 @@ def test_get_live_map_solves_continuously_single_flight(tmp_path):
 def test_get_live_map_survives_solve_failure(tmp_path):
     calls = []
 
-    def flaky_solve(detections, led_count, session_id):
+    def flaky_solve(detections, led_count, session_id, prev_map=None):
         calls.append(len(detections))
         if len(calls) == 1:
             raise ValueError("degenerate geometry")
@@ -242,7 +242,7 @@ def test_live_decimation_bounds_views_and_keeps_pose_spread():
 
 
 def test_get_live_map_resets_after_stop(tmp_path):
-    solver = LiveSolver(lambda d, n, s: _stub_map())
+    solver = LiveSolver(lambda d, n, s, prev_map=None: _stub_map())
     handler, _ctx, _ = _make_handler(tmp_path, live_solver=solver)
     _run(handler, '{"type":"start_mapping","options":{"ledCount":4}}')
     _run(handler, _detections_raw(0))

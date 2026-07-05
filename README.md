@@ -108,6 +108,21 @@ survives the restart.
   `?only=N` (only LED N blinks; layout unchanged) for the physical study.
   Report builder: `pi/server/server/debug.py`, unit-tested on synthetic
   known geometry incl. a corrupted-observation case.
+- **Solver 3–4× faster: batched per-LED LM with analytic Jacobians.**
+  Profiling the real 128-LED capture showed scipy's least_squares spending
+  ~60 % of solve time numerically differentiating the Jacobian across ~190
+  trust-region iterations. With poses fixed the problem is EXACTLY
+  block-diagonal (each LED an independent 3-parameter problem — the
+  "solver epochs" idea taken to its limit, with registration free because
+  all LEDs share the fixed pose frame), so `bundle.py` now runs a
+  vectorized Levenberg–Marquardt over all LEDs at once: analytic
+  Jacobians, per-LED 3×3 normal equations via one batched solve, IRLS
+  Huber, per-LED damping/step acceptance. Live-size solve 615→~200 ms,
+  final 1.3 s→0.4 s; agrees with the scipy solution to 0.3 mm; all
+  acceptance tests green. `reconstruct()` also gained `initial_points`
+  warm-starting (the LiveSolver seeds each interim solve from the previous
+  map). Next lever if 1024-LED sessions get slow: the per-observation
+  Python loops in api.py's ray building.
 - **VALIDATED AT SCALE: 128-LED wall solved to 1.5 mm rms in a lit room.**
   First gray-hue captures: the 4-LED study solved to a perfect uniform grid
   (77 mm pitch, sub-mm consistency), then a 128-LED wall (15×9 ragged,

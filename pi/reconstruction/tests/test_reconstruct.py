@@ -166,3 +166,25 @@ def test_majority_contamination_recovered_by_consensus():
     assert err_mm < 1.0, f"contaminated solve missed by {err_mm:.2f} mm"
     # The clean views survive; the junk is excluded from the fit.
     assert out.leds[0].nViews >= 10
+
+
+def test_warm_start_matches_cold_solve():
+    """initial_points seeding (the continuous solver's warm start) must land
+    on the same solution as a cold solve — it only changes the starting
+    point, not the optimum."""
+    points = np.array([[0.0, 0.0, 0.0], [0.2, 0.1, 0.05], [-0.1, 0.2, -0.05]])
+    angles = np.linspace(-0.9, 0.9, 10)
+    eyes = [[2.0 * np.sin(a), 0.2, 2.0 * np.cos(a)] for a in angles]
+    detections = _synthetic_detections(points, eyes, noise=0.3, seed=3)
+
+    cold = reconstruct(detections, led_count=len(points))
+    seeds = {e.id: e.xyz for e in cold.leds}
+    # Perturb the seeds a little, like a map that moved between interim solves.
+    seeds = {i: (x + 0.004, y - 0.003, z + 0.002) for i, (x, y, z) in seeds.items()}
+    warm = reconstruct(detections, led_count=len(points), initial_points=seeds)
+
+    cold_by = {e.id: np.array(e.xyz) for e in cold.leds}
+    warm_by = {e.id: np.array(e.xyz) for e in warm.leds}
+    assert set(cold_by) == set(warm_by)
+    for i in cold_by:
+        assert np.linalg.norm(cold_by[i] - warm_by[i]) < 1e-4, f"led {i} diverged"

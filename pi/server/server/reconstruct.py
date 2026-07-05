@@ -55,8 +55,11 @@ class ReconstructionRunner:
         return output_map
 
 
-# A live solve: (detections, led_count, session_id) -> OutputMap.
-LiveSolve = Callable[[Sequence[DetectionRecord], int, str], OutputMap]
+# A live solve: (detections, led_count, session_id, prev_map=...) -> OutputMap.
+# ``prev_map`` is the previously adopted interim map (or None) — the default
+# solve warm-starts from it, which is what keeps interim cadence flat as the
+# session grows.
+LiveSolve = Callable[..., OutputMap]
 
 # Interim solves subsample to this many observations per LED so the live map
 # keeps a fast, roughly constant update cadence however long the walk gets.
@@ -87,11 +90,19 @@ def _decimate_per_led(
     return out
 
 
-def _live_solve(detections: Sequence[DetectionRecord], led_count: int, session_id: str) -> OutputMap:
+def _live_solve(
+    detections: Sequence[DetectionRecord],
+    led_count: int,
+    session_id: str,
+    prev_map: Optional[OutputMap] = None,
+) -> OutputMap:
     sample = _decimate_per_led(detections, LIVE_MAX_VIEWS_PER_LED)
+    seeds = {e.id: e.xyz for e in prev_map.leds} if prev_map is not None else None
     # A stable, recognizable mapId: interim maps are never persisted, so there
     # is no store to collide with.
-    return reconstruct(sample, led_count=led_count, map_id=f"live-{session_id}")
+    return reconstruct(
+        sample, led_count=led_count, map_id=f"live-{session_id}", initial_points=seeds
+    )
 
 
 class LiveSolver:
@@ -150,7 +161,9 @@ class LiveSolver:
         if self._future is None and len(detections) > self._solved_count:
             self._solved_count = len(detections)
             self._future_n = len(detections)
-            self._future = self._executor.submit(self._solve, detections, led_count, session_id)
+            self._future = self._executor.submit(
+                self._solve, detections, led_count, session_id, prev_map=self._map
+            )
         return True, self._map
 
     def reset(self) -> None:

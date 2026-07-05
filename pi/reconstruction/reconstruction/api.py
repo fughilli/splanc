@@ -145,6 +145,7 @@ def reconstruct(
     outlier_floor_px: float = 1.0,
     map_id: Optional[str] = None,
     created_at: Optional[str] = None,
+    initial_points: Optional[Mapping[int, Sequence[float]]] = None,
 ) -> OutputMap:
     """Reconstruct 3D LED positions from detection records.
 
@@ -159,6 +160,10 @@ def reconstruct(
             ``outlier_sigma ×`` the robust σ (MAD) before re-solving.
         outlier_floor_px: never reject observations below this residual, so a
             near-perfect fit (tiny σ) doesn't reject good observations as noise.
+        initial_points: warm start — known ``ledId → xyz`` estimates (e.g. the
+            previous interim solve). Seeded LEDs skip DLT init and the bundle
+            adjustment converges in a couple of iterations when the map has
+            barely moved, which is what keeps the continuous solver cheap.
     """
     groups = _group_by_led(detections)
     all_ids = sorted(groups.keys())
@@ -185,14 +190,18 @@ def reconstruct(
             unmapped.add(led_id)
             continue
         origins, dirs = rays_from_observations(obs)
-        try:
-            x0 = triangulate_point(origins, dirs)
-        except (ValueError, np.linalg.LinAlgError):
-            unmapped.add(led_id)
-            continue
-        if not np.all(np.isfinite(x0)):
-            unmapped.add(led_id)
-            continue
+        seed = initial_points.get(led_id) if initial_points else None
+        if seed is not None and np.all(np.isfinite(seed)):
+            x0 = np.asarray(seed, dtype=float)
+        else:
+            try:
+                x0 = triangulate_point(origins, dirs)
+            except (ValueError, np.linalg.LinAlgError):
+                unmapped.add(led_id)
+                continue
+            if not np.all(np.isfinite(x0)):
+                unmapped.add(led_id)
+                continue
         active_ids.append(led_id)
         points0.append(x0)
         led_dirs[led_id] = dirs
@@ -255,14 +264,15 @@ def reconstruct(
                 unmapped.add(led_id)
 
         if survivors:
+            # Re-solve on inliers only, warm-started from the first BA's
+            # points — they are better inits than re-triangulating from
+            # scratch, and the re-solve then converges in a few iterations.
+            prev_points = {lid: points[idx_of[lid]] for lid in survivors}
             active_ids = survivors
             groups = kept_groups
             idx_of = {led_id: i for i, led_id in enumerate(active_ids)}
             led_dirs = {lid: rays_from_observations(groups[lid])[1] for lid in active_ids}
-            points = np.asarray(
-                [triangulate_point(*rays_from_observations(groups[lid])) for lid in active_ids],
-                dtype=float,
-            )
+            points = np.asarray([prev_points[lid] for lid in active_ids], dtype=float)
             point_idx, obs_p, obs_q, obs_k, obs_uv = _flatten(active_ids)
             points, repro = bundle_adjust(
                 points, point_idx, obs_p, obs_q, obs_k, obs_uv, huber_delta=huber_delta
