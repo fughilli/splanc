@@ -16,12 +16,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
+import json
+
 from .clock import now_ms
 from .codebook import DEFAULT_BIT_PERIOD_MS
+from .debug import led_report, session_overview
 from .handler import ConnectionHandler, ServerContext
 from .reconstruct import ReconstructionRunner
 from .session import MapStore, SessionManager
@@ -43,6 +46,7 @@ def create_app(
     web_root: Optional[Path] = None,
     default_led_count: int = 1024,
     bit_period_ms: float = DEFAULT_BIT_PERIOD_MS,
+    encoding: str = "gray",
     context: Optional[ServerContext] = None,
 ) -> FastAPI:
     """Build the FastAPI app.
@@ -58,6 +62,7 @@ def create_app(
             ReconstructionRunner(maps),
             default_led_count=default_led_count,
             bit_period_ms=bit_period_ms,
+            encoding=encoding,
         )
 
     app = FastAPI(title="LED Mapper", version="0.1.0")
@@ -80,6 +85,74 @@ def create_app(
         if not maps.exists(map_id):
             raise HTTPException(status_code=404, detail="map not found")
         return FileResponse(maps.json_path(map_id), media_type="application/json")
+
+    # -- ground-truth relay (dev-only; §7-external) -------------------------
+    # The virtual LED wall publishes its exact layout here (pitch-normalized,
+    # including ragged last rows); the capture app's result view fetches it so
+    # the truth overlay always matches what the wall actually displays.
+    app.state.truth = None
+
+    @app.post("/truth")
+    async def post_truth(request: Request):
+        app.state.truth = await request.json()
+        return {"ok": True}
+
+    @app.get("/truth")
+    async def get_truth():
+        if app.state.truth is None:
+            raise HTTPException(status_code=404, detail="no ground truth published")
+        return app.state.truth
+
+    # Raw per-frame blob recording (capture page `?record=1`): the full
+    # detector output stream, for offline diagnosis of what the CV stage
+    # actually sees. Appends JSONL; a `reset` payload starts a new file.
+    @app.post("/debug/frames")
+    async def post_frames(request: Request):
+        payload = await request.json()
+        path = Path(session_dir) / "frames-latest.jsonl"
+        mode = "w" if payload.get("reset") else "a"
+        with path.open(mode) as f:
+            if payload.get("reset"):
+                f.write(json.dumps({k: v for k, v in payload.items() if k != "frames"}) + "\n")
+            for frame in payload.get("frames", []):
+                f.write(json.dumps(frame) + "\n")
+        return {"ok": True}
+
+    # -- solver diagnostics (dev-only; §7-external) -------------------------
+    # Reads the ACTIVE session, falling back to the most recently persisted
+    # session log, so a study works both mid-walk and just after stop.
+
+    def _study_detections():
+        snap = context.sessions.snapshot()
+        if snap is not None:
+            _sid, led_count, detections = snap
+            return detections, led_count, "active"
+        logs = sorted(
+            Path(session_dir).glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True
+        )
+        if not logs:
+            return None, None, None
+        data = json.loads(logs[0].read_text())
+        return data.get("detections", []), data.get("ledCount"), logs[0].name
+
+    @app.get("/debug/led/{led_id}")
+    async def debug_led(led_id: int):
+        detections, _led_count, source = _study_detections()
+        if detections is None:
+            raise HTTPException(status_code=404, detail="no session (active or persisted)")
+        live_map = context.live.latest_map
+        report = led_report(detections, led_id, live_map, list(context.live.history))
+        report["source"] = source
+        return report
+
+    @app.get("/debug/session")
+    async def debug_session():
+        detections, led_count, source = _study_detections()
+        if detections is None:
+            raise HTTPException(status_code=404, detail="no session (active or persisted)")
+        overview = session_overview(detections, led_count)
+        overview["source"] = source
+        return overview
 
     @app.websocket("/ws")
     async def ws(websocket: WebSocket):

@@ -17,11 +17,17 @@
  * collinearity, uniform spacing) without measuring anything.
  *
  * Query params: ?cols=N (default ~square), &gap=px, &margin=px, &dot=frac,
- * &url=ws://...  (defaults to this page's origin).
+ * &only=id (single-LED study mode: only that LED blinks, the rest stay dark
+ * — layout/ids unchanged), &hue=1 (hue-modulation probe: dots stay LIT at
+ * constant brightness and encode the frame plan in COLOR — ALL_ON white,
+ * ALL_OFF green, data bit 1 red / 0 cyan — for uncontrolled-lighting rooms
+ * where intensity blinking drowns in scene luminance; pair with the capture
+ * page's ?record=1 to collect per-blob chroma for offline analysis),
+ * &url=ws://... (defaults to this page's origin).
  */
 
 import type { CodeParams } from "@ledmapper/protocol";
-import { ledLitInFrame } from "../code/gray";
+import { FRAME_ALL_OFF, FRAME_ALL_ON, HUE_FRAME_COLORS, ledLitInFrame } from "../code/gray";
 import { frameIndexAt } from "../code/timing";
 import { defaultWsUrl, LedMapperClient } from "../net/client";
 
@@ -31,8 +37,13 @@ const OPT = {
   gapPx: intParam("gap", 0), // 0 = auto
   marginPx: intParam("margin", 48),
   dotFrac: floatParam("dot", 0.35), // LED diameter as a fraction of cell pitch
+  only: intParam("only", -1), // >= 0: single-LED study mode
+  hue: qs.get("hue") === "1", // hue-modulation probe (constant brightness)
   wsUrl: qs.get("url") ?? defaultWsUrl(),
 };
+
+// The palette lives with the coding logic (code/gray.ts) — white + the three
+// primaries, shared with the phone decoder's expectations.
 
 function intParam(name: string, dflt: number): number {
   const v = qs.get(name);
@@ -133,11 +144,25 @@ function draw(frameIndex: number): void {
   if (!params) return;
   const l = layoutFor(params.ledCount);
   for (let id = 0; id < params.ledCount; id++) {
-    const lit = frameIndex >= 0 && ledLitInFrame(id, frameIndex, params);
+    const inStudy = OPT.only < 0 || id === OPT.only;
     const { x, y } = ledCenter(l, id);
     ctx.beginPath();
     ctx.arc(x, y, l.dotR, 0, Math.PI * 2);
-    if (lit) {
+    const hueMode = OPT.hue || params.encoding === "gray-hue";
+    if (hueMode && frameIndex >= 0 && inStudy) {
+      // gray-hue: constant full brightness, frame plan carried by COLOR.
+      const color =
+        frameIndex === FRAME_ALL_ON
+          ? HUE_FRAME_COLORS.allOn
+          : frameIndex === FRAME_ALL_OFF
+            ? HUE_FRAME_COLORS.allOff
+            : ledLitInFrame(id, frameIndex, params)
+              ? HUE_FRAME_COLORS.bit1
+              : HUE_FRAME_COLORS.bit0;
+      ctx.fillStyle = color;
+      ctx.shadowColor = color;
+      ctx.shadowBlur = l.dotR * 0.8;
+    } else if (frameIndex >= 0 && inStudy && ledLitInFrame(id, frameIndex, params)) {
       ctx.fillStyle = "#fff";
       ctx.shadowColor = "#fff";
       ctx.shadowBlur = l.dotR * 0.8; // a soft halo reads more like a real LED
@@ -177,6 +202,9 @@ function updateStatus(): void {
     const l = layoutFor(state.params.ledCount);
     bits.push(`${state.params.ledCount} LEDs (${l.cols}×${l.rows})`);
   }
+  if (OPT.only >= 0) bits.push(`STUDY MODE: only LED #${OPT.only}`);
+  if (OPT.hue || state.params?.encoding === "gray-hue")
+    bits.push("HUE CODE: constant brightness, color-coded frames");
   bits.push(state.active ? "PATTERN RUNNING" : "idle — start mapping from the phone");
   statusEl.textContent = bits.join("  ·  ");
 }
@@ -194,6 +222,29 @@ function groundTruth(): unknown {
     leds.push({ id, xyz: [c.x / l.pitch, c.y / l.pitch, 0] });
   }
   return { kind: "virtual_wall", cols: l.cols, rows: l.rows, units: "led_pitch", leds };
+}
+
+// Publish the layout to the server whenever it (re)settles, so the capture
+// app's result view can overlay the EXACT truth — including the ragged last
+// row of a non-square count — without anyone re-typing grid dimensions.
+let publishedSig = "";
+function publishTruth(): void {
+  // Only while a capture runs: when idle the wall lays out the SERVER
+  // DEFAULT code-book (e.g. 1024 LEDs), which is not this session's fixture —
+  // publishing it would overwrite the real truth the result view fetches.
+  if (!state.active) return;
+  const gt = groundTruth() as { cols: number; rows: number } | null;
+  if (gt === null || state.params === null) return;
+  const sig = `${state.params.ledCount}:${gt.cols}x${gt.rows}`;
+  if (sig === publishedSig) return;
+  publishedSig = sig;
+  fetch("/truth", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(gt),
+  }).catch(() => {
+    publishedSig = ""; // retry on the next tick
+  });
 }
 
 (document.getElementById("truth") as HTMLButtonElement).addEventListener("click", () => {
@@ -250,6 +301,7 @@ async function main(): Promise<void> {
         state.active = p.active && p.patternClockEpoch !== null;
         state.epochMs = p.patternClockEpoch;
         state.params = p.codeParams;
+        publishTruth();
       } catch {
         // disconnected mid-poll; the client reconnects on its own
       }

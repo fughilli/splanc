@@ -21,6 +21,17 @@ export interface CaptureFrame {
   imgH: number;
   /** Phone monotonic clock at capture, ms (performance.now domain). */
   tCaptureMs: number;
+  /**
+   * World→view matrix (column-major, inverse of the view pose). With
+   * `projMatrix` this is what 3D-composites overlays exactly onto the
+   * passthrough: anything rendered with projMatrix·viewMatrix lands on the
+   * same pixels the real scene point occupies.
+   */
+  viewMatrix: Float32Array;
+  /** View→clip projection matrix for this frame (column-major). */
+  projMatrix: Float32Array;
+  /** Region of the layer framebuffer this view renders into. */
+  viewport: { x: number; y: number; width: number; height: number };
 }
 
 export interface CaptureSource {

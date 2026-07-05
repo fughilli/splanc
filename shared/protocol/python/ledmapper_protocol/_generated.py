@@ -63,7 +63,7 @@ class DetectionRecord(_StrictModel):
 # ---------------------------------------------------------------------------
 
 
-Encoding = Literal["gray"]
+Encoding = Literal["gray", "gray-hue"]
 SyncPattern = Literal["on_off"]
 
 
@@ -150,6 +150,12 @@ class GetPatternMessage(_StrictModel):
     type: Literal["get_pattern"]
 
 
+class GetLiveMapMessage(_StrictModel):
+    """Poll the continuous solver for the latest interim reconstruction."""
+
+    type: Literal["get_live_map"]
+
+
 ClientMessageInner = Annotated[
     Union[
         HelloMessage,
@@ -159,6 +165,7 @@ ClientMessageInner = Annotated[
         DetectionsMessage,
         GetStatusMessage,
         GetPatternMessage,
+        GetLiveMapMessage,
     ],
     Field(discriminator="type"),
 ]
@@ -208,6 +215,14 @@ class PatternStateMessage(_StrictModel):
     codeParams: CodeParams
 
 
+class LiveMapMessage(_StrictModel):
+    """Reply to get_live_map: latest interim reconstruction; None before the first solve or when idle."""
+
+    type: Literal["live_map"]
+    active: bool
+    map: Union[OutputMap, None]
+
+
 class ResultReadyMessage(_StrictModel):
     type: Literal["result_ready"]
     mapId: str
@@ -226,6 +241,7 @@ ServerMessageInner = Annotated[
         MappingStartedMessage,
         StatusMessage,
         PatternStateMessage,
+        LiveMapMessage,
         ResultReadyMessage,
         ErrorMessage,
     ],
@@ -257,12 +273,14 @@ __all__ = [
     "DetectionsMessage",
     "GetStatusMessage",
     "GetPatternMessage",
+    "GetLiveMapMessage",
     "ClientMessage",
     "WelcomeMessage",
     "TimeSyncPongMessage",
     "MappingStartedMessage",
     "StatusMessage",
     "PatternStateMessage",
+    "LiveMapMessage",
     "ResultReadyMessage",
     "ErrorMessage",
     "ServerMessage",

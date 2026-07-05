@@ -3,8 +3,9 @@
 import asyncio
 import json
 
-from ledmapper_protocol import OutputMap, OutputMapStats
+from ledmapper_protocol import DetectionRecord, OutputMap, OutputMapStats
 from server.handler import ConnectionHandler, ServerContext
+from server.reconstruct import LiveSolver, _decimate_per_led
 from server.session import SessionManager
 
 
@@ -21,7 +22,7 @@ def _stub_map() -> OutputMap:
     )
 
 
-def _make_handler(tmp_path, *, clock_value=2000.0):
+def _make_handler(tmp_path, *, clock_value=2000.0, live_solver=None):
     recon_calls = []
 
     async def stub_reconstructor(log_path):
@@ -35,6 +36,7 @@ def _make_handler(tmp_path, *, clock_value=2000.0):
         bit_period_ms=100.0,
         id_factory=lambda: "sess-fixed",
         clock=lambda: clock_value,
+        live_solver=live_solver,
     )
     return ConnectionHandler(ctx), ctx, recon_calls
 
@@ -74,7 +76,7 @@ def test_start_mapping_uses_requested_led_count(tmp_path):
     m = _dump(out[0])
     assert m["type"] == "mapping_started"
     assert m["codeParams"]["ledCount"] == 64
-    assert m["codeParams"]["bits"] == 6
+    assert m["codeParams"]["bits"] == 7  # ceil(log2(64 + 1)) — id+1 codewords
     assert "patternClockEpoch" in m
     assert ctx.sessions.active is not None
 
@@ -130,6 +132,128 @@ def test_get_pattern_after_stop_reports_inactive(tmp_path):
     assert m["active"] is False and m["patternClockEpoch"] is None
 
 
+def _detections_raw(led_id=0):
+    det = {
+        "ledId": led_id, "tCaptureMs": 0.0, "u": 1.0, "v": 2.0, "imgW": 100, "imgH": 100,
+        "K": [9.0, 9.0, 5.0, 5.0], "pose": {"p": [0, 0, 0], "q": [0, 0, 0, 1]}, "confidence": 1.0,
+    }
+    return json.dumps({"type": "detections", "batch": [det]})
+
+
+def test_get_live_map_idle_reports_inactive(tmp_path):
+    solve_calls = []
+    solver = LiveSolver(lambda d, n, s: solve_calls.append(len(d)) or _stub_map())
+    handler, _ctx, _ = _make_handler(tmp_path, live_solver=solver)
+    m = _dump(_run(handler, '{"type":"get_live_map"}')[0])
+    assert m["type"] == "live_map"
+    assert m["active"] is False and m["map"] is None
+    assert solve_calls == []  # nothing to solve when idle
+
+
+def test_get_live_map_solves_continuously_single_flight(tmp_path):
+    solve_calls = []
+
+    def stub_solve(detections, led_count, session_id):
+        solve_calls.append((len(detections), led_count, session_id))
+        return _stub_map()
+
+    solver = LiveSolver(stub_solve)
+    handler, _ctx, _ = _make_handler(tmp_path, live_solver=solver)
+    _run(handler, '{"type":"start_mapping","options":{"ledCount":4}}')
+
+    # Active but no detections yet: nothing to solve.
+    m = _dump(_run(handler, '{"type":"get_live_map"}')[0])
+    assert m["active"] is True and m["map"] is None
+    assert solve_calls == []
+
+    # Detections arrive → the poll kicks a solve; its result shows up on a
+    # later poll (never blocks the reply).
+    _run(handler, _detections_raw(0))
+    m = _dump(_run(handler, '{"type":"get_live_map"}')[0])
+    assert m["active"] is True
+    solver.flush()
+    m = _dump(_run(handler, '{"type":"get_live_map"}')[0])
+    assert m["map"] is not None and m["map"]["mapId"] == "map-stub"
+    assert solve_calls == [(1, 4, "sess-fixed")]
+
+    # No new detections → no re-solve; the cached interim map is reused.
+    m = _dump(_run(handler, '{"type":"get_live_map"}')[0])
+    assert m["map"]["mapId"] == "map-stub"
+    assert len(solve_calls) == 1
+
+    # New detections → exactly one more solve.
+    _run(handler, _detections_raw(1))
+    _run(handler, '{"type":"get_live_map"}')
+    solver.flush()
+    _run(handler, '{"type":"get_live_map"}')
+    assert len(solve_calls) == 2 and solve_calls[1][0] == 2
+
+
+def test_get_live_map_survives_solve_failure(tmp_path):
+    calls = []
+
+    def flaky_solve(detections, led_count, session_id):
+        calls.append(len(detections))
+        if len(calls) == 1:
+            raise ValueError("degenerate geometry")
+        return _stub_map()
+
+    solver = LiveSolver(flaky_solve)
+    handler, _ctx, _ = _make_handler(tmp_path, live_solver=solver)
+    _run(handler, '{"type":"start_mapping","options":{"ledCount":4}}')
+    _run(handler, _detections_raw(0))
+    _run(handler, '{"type":"get_live_map"}')
+    solver.flush()
+    # Failed solve → still no map, but no error either (best-effort).
+    m = _dump(_run(handler, '{"type":"get_live_map"}')[0])
+    assert m["active"] is True and m["map"] is None
+    # New detections trigger a retry that succeeds.
+    _run(handler, _detections_raw(1))
+    _run(handler, '{"type":"get_live_map"}')
+    solver.flush()
+    m = _dump(_run(handler, '{"type":"get_live_map"}')[0])
+    assert m["map"] is not None
+
+
+def test_live_decimation_bounds_views_and_keeps_pose_spread():
+    def rec(led_id, t):
+        return DetectionRecord(
+            ledId=led_id, tCaptureMs=float(t), u=1.0, v=2.0, imgW=100, imgH=100,
+            K=(9.0, 9.0, 5.0, 5.0),
+            pose={"p": (float(t), 0.0, 0.0), "q": (0.0, 0.0, 0.0, 1.0)},
+            confidence=1.0,
+        )
+
+    # LED 0: 40 obs; LED 1: 3 obs (below the cap); interleaved arrival.
+    detections = [rec(0, t) for t in range(40)] + [rec(1, t) for t in range(3)]
+    out = _decimate_per_led(detections, 8)
+    by_led = {}
+    for d in out:
+        by_led.setdefault(d.ledId, []).append(d)
+    assert len(by_led[0]) == 8
+    assert len(by_led[1]) == 3  # untouched below the cap
+    times = [d.tCaptureMs for d in by_led[0]]
+    # Even stride: first and last observations survive (full parallax span),
+    # samples strictly chronological and roughly uniform.
+    assert times[0] == 0.0 and times[-1] == 39.0
+    assert times == sorted(times) and len(set(times)) == 8
+    gaps = [b - a for a, b in zip(times, times[1:])]
+    assert max(gaps) - min(gaps) <= 2.0
+
+
+def test_get_live_map_resets_after_stop(tmp_path):
+    solver = LiveSolver(lambda d, n, s: _stub_map())
+    handler, _ctx, _ = _make_handler(tmp_path, live_solver=solver)
+    _run(handler, '{"type":"start_mapping","options":{"ledCount":4}}')
+    _run(handler, _detections_raw(0))
+    _run(handler, '{"type":"get_live_map"}')
+    solver.flush()
+    assert _dump(_run(handler, '{"type":"get_live_map"}')[0])["map"] is not None
+    _run(handler, '{"type":"stop_mapping"}')
+    m = _dump(_run(handler, '{"type":"get_live_map"}')[0])
+    assert m["active"] is False and m["map"] is None
+
+
 def test_stop_triggers_reconstruction_and_result_ready(tmp_path):
     handler, _ctx, recon_calls = _make_handler(tmp_path)
     _run(handler, '{"type":"start_mapping","options":{"ledCount":4}}')
@@ -138,6 +262,25 @@ def test_stop_triggers_reconstruction_and_result_ready(tmp_path):
     assert m["type"] == "result_ready"
     assert m["mapId"] == "map-stub"
     assert len(recon_calls) == 1  # reconstructor was invoked with the log path
+
+
+def test_second_capture_on_one_connection_gets_its_own_log(tmp_path):
+    # A page that isn't reloaded runs many captures over one socket; each
+    # must persist to a distinct log (a shared id silently overwrote the
+    # earlier capture — observed live 2026-07-05).
+    handler, ctx, _ = _make_handler(tmp_path)
+    _run(handler, '{"type":"start_mapping","options":{"ledCount":4}}')
+    _run(handler, _detections_raw(0))
+    _run(handler, '{"type":"stop_mapping"}')
+    _run(handler, '{"type":"start_mapping","options":{"ledCount":4}}')
+    _run(handler, _detections_raw(1))
+    _run(handler, '{"type":"stop_mapping"}')
+    logs = sorted(p.name for p in (ctx.sessions.session_dir).glob("*.json"))
+    assert logs == ["sess-fixed-2.json", "sess-fixed.json"]
+    first = json.loads((ctx.sessions.session_dir / "sess-fixed.json").read_text())
+    second = json.loads((ctx.sessions.session_dir / "sess-fixed-2.json").read_text())
+    assert first["detections"][0]["ledId"] == 0
+    assert second["detections"][0]["ledId"] == 1
 
 
 def test_stop_without_session_errors(tmp_path):

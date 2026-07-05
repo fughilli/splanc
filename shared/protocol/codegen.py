@@ -241,6 +241,10 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("export interface GetPatternMessage {")
     lines.append('  type: "get_pattern";')
     lines.append("}\n")
+    lines.append("/** Poll the continuous solver for the latest interim reconstruction. */")
+    lines.append("export interface GetLiveMapMessage {")
+    lines.append('  type: "get_live_map";')
+    lines.append("}\n")
     lines.append("export type ClientMessage =")
     lines.append("  | HelloMessage")
     lines.append("  | TimeSyncPingMessage")
@@ -248,7 +252,8 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("  | StopMappingMessage")
     lines.append("  | DetectionsMessage")
     lines.append("  | GetStatusMessage")
-    lines.append("  | GetPatternMessage;\n")
+    lines.append("  | GetPatternMessage")
+    lines.append("  | GetLiveMapMessage;\n")
 
     lines.append("// ---------------------------------------------------------------------------")
     lines.append("// Server -> Client messages (§7.2)")
@@ -287,6 +292,12 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("  patternClockEpoch: number | null;")
     lines.append("  codeParams: CodeParams;")
     lines.append("}\n")
+    lines.append("/** Reply to get_live_map: latest interim reconstruction; null before the first solve or when idle. */")
+    lines.append("export interface LiveMapMessage {")
+    lines.append('  type: "live_map";')
+    lines.append("  active: boolean;")
+    lines.append("  map: OutputMap | null;")
+    lines.append("}\n")
     lines.append("export interface ResultReadyMessage {")
     lines.append('  type: "result_ready";')
     lines.append("  mapId: string;")
@@ -302,6 +313,7 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("  | MappingStartedMessage")
     lines.append("  | StatusMessage")
     lines.append("  | PatternStateMessage")
+    lines.append("  | LiveMapMessage")
     lines.append("  | ResultReadyMessage")
     lines.append("  | ErrorMessage;")
     return "\n".join(lines) + "\n"
@@ -479,6 +491,12 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append('    type: Literal["get_pattern"]')
     out.append("")
     out.append("")
+    out.append("class GetLiveMapMessage(_StrictModel):")
+    out.append('    """Poll the continuous solver for the latest interim reconstruction."""')
+    out.append("")
+    out.append('    type: Literal["get_live_map"]')
+    out.append("")
+    out.append("")
     out.append("ClientMessageInner = Annotated[")
     out.append("    Union[")
     out.append("        HelloMessage,")
@@ -488,6 +506,7 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append("        DetectionsMessage,")
     out.append("        GetStatusMessage,")
     out.append("        GetPatternMessage,")
+    out.append("        GetLiveMapMessage,")
     out.append("    ],")
     out.append('    Field(discriminator="type"),')
     out.append("]")
@@ -537,6 +556,14 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append("    codeParams: CodeParams")
     out.append("")
     out.append("")
+    out.append("class LiveMapMessage(_StrictModel):")
+    out.append('    """Reply to get_live_map: latest interim reconstruction; None before the first solve or when idle."""')
+    out.append("")
+    out.append('    type: Literal["live_map"]')
+    out.append("    active: bool")
+    out.append("    map: Union[OutputMap, None]")
+    out.append("")
+    out.append("")
     out.append("class ResultReadyMessage(_StrictModel):")
     out.append('    type: Literal["result_ready"]')
     out.append("    mapId: str")
@@ -555,6 +582,7 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append("        MappingStartedMessage,")
     out.append("        StatusMessage,")
     out.append("        PatternStateMessage,")
+    out.append("        LiveMapMessage,")
     out.append("        ResultReadyMessage,")
     out.append("        ErrorMessage,")
     out.append("    ],")
@@ -587,12 +615,14 @@ def emit_python(schemas: dict[str, dict]) -> str:
         "DetectionsMessage",
         "GetStatusMessage",
         "GetPatternMessage",
+        "GetLiveMapMessage",
         "ClientMessage",
         "WelcomeMessage",
         "TimeSyncPongMessage",
         "MappingStartedMessage",
         "StatusMessage",
         "PatternStateMessage",
+        "LiveMapMessage",
         "ResultReadyMessage",
         "ErrorMessage",
         "ServerMessage",

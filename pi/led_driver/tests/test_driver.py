@@ -20,7 +20,7 @@ def _auto_stop_sleep(driver, stop_after):
 
 
 def test_loop_emits_cycle_then_goes_dark():
-    cp = default_code_params(8)  # bits=3, cycleFrames=5
+    cp = default_code_params(8)  # bits=ceil(log2(9))=4, cycleFrames=6
     plan = frame_plan(cp)
     sink = RecordingSink()
     driver = LedDriver(sink, clock=lambda: 5000.0)

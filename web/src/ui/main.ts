@@ -8,13 +8,16 @@
  * Everything heavy lives in M5/M6/M7; this file is orchestration + DOM.
  */
 
-import type { DetectionRecord, OutputMap } from "@ledmapper/protocol";
+import type { DetectionRecord, LedEntry, OutputMap } from "@ledmapper/protocol";
 import { CvPipeline } from "../cv/pipeline";
 import { DetectorGL } from "../cv/detect";
+import { mul4 } from "../geom/mat4";
 import { defaultWsUrl, LedMapperClient } from "../net/client";
 import { WebXRCaptureSource, XrUnsupportedError } from "../xr/webxrCapture";
+import { LabelOverlay } from "./labels";
 import { MapView } from "./mapview";
 import { MarkerRenderer } from "./markers";
+import { SolvedMarkerRenderer } from "./points3d";
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 const startBtn = $<HTMLButtonElement>("start");
@@ -32,8 +35,51 @@ const wsUrl = qs.get("url") ?? defaultWsUrl();
 const detectorOpts = {
   threshold: numParam("threshold", 0.6),
   downscale: numParam("downscale", 2),
-  flipV: qs.get("flipv") === "1",
+  // Camera texture arrives bottom-up on-device (see DetectorOptions.flipV);
+  // ?flipv=0 reverts should another device differ.
+  flipV: qs.get("flipv") !== "0",
 };
+// Debug: also draw raw detector blobs (2D, aspect-fill approximation). The
+// default view shows only SOLVED LEDs, 3D-composited to overlap the real ones.
+const showBlobs = qs.get("blobs") === "1";
+// Debug: stream the raw per-frame blob field to the server (JSONL under the
+// session dir) so the CV stage's actual input can be inspected offline.
+const recordBlobs = qs.get("record") === "1";
+
+// Ground truth for the map views: `?truth=COLSxROWS` declares the wall's grid
+// (row-major, matching /wall.html's layout — the wall status bar shows its
+// cols×rows). Truth is pitch-normalized; the view aligns it to the solve with
+// a similarity fit and draws per-point delta vectors + magnitudes.
+function gridTruth(spec: string | null, ledCount: number): { id: number; xyz: [number, number, number] }[] | null {
+  const m = spec === null ? null : /^(\d+)x(\d+)$/i.exec(spec);
+  if (m === null) return null;
+  const cols = parseInt(m[1]!, 10);
+  const rows = parseInt(m[2]!, 10);
+  if (cols < 1 || rows < 1) return null;
+  const pts = [];
+  for (let id = 0; id < Math.min(ledCount, cols * rows); id++) {
+    pts.push({ id, xyz: [id % cols, Math.floor(id / cols), 0] as [number, number, number] });
+  }
+  return pts;
+}
+const truthSpec = qs.get("truth");
+
+/** Wall-published exact layout (GET /truth), falling back to ?truth=CxR. */
+async function fetchTruth(ledCount: number): Promise<{ id: number; xyz: [number, number, number] }[] | null> {
+  try {
+    const resp = await fetch("/truth");
+    if (resp.ok) {
+      const gt = (await resp.json()) as { leds?: { id: number; xyz: [number, number, number] }[] };
+      // Guard against stale/oversized truth (e.g. a wall that re-published
+      // its idle default layout): only ids this capture actually mapped.
+      const leds = (gt.leds ?? []).filter((l) => l.id < ledCount);
+      if (leds.length >= 3) return leds;
+    }
+  } catch {
+    // fall through to the manual spec
+  }
+  return gridTruth(truthSpec, ledCount);
+}
 
 function numParam(name: string, dflt: number): number {
   const v = qs.get(name);
@@ -45,6 +91,14 @@ const client = new LedMapperClient(wsUrl);
 let mapView: MapView | null = null;
 let capture: WebXRCaptureSource | null = null;
 let capturing = false;
+
+// Live (in-capture) solver feedback: solved LEDs 3D-composited over the
+// camera view (markers + id labels) + a small converging-map inset.
+const labels = new LabelOverlay($<HTMLCanvasElement>("labels"));
+const liveCanvas = $<HTMLCanvasElement>("livemap");
+let liveView: MapView | null = null;
+let liveLeds: readonly LedEntry[] = [];
+let liveSolvedText = "";
 
 function setError(message: string, hints: string[] = []): void {
   errEl.innerHTML = "";
@@ -109,8 +163,18 @@ $<HTMLButtonElement>("again").addEventListener("click", () => {
   mapView?.stop();
 });
 
+function resetLiveFeedback(): void {
+  liveView?.stop();
+  liveView = null;
+  liveLeds = [];
+  liveSolvedText = "";
+  liveCanvas.style.display = "none";
+  labels.clear();
+}
+
 async function startCapture(): Promise<void> {
   setError("");
+  resetLiveFeedback();
   const ledCount = Math.max(1, parseInt(ledCountInput.value, 10) || 64);
   startBtn.disabled = true;
   try {
@@ -125,7 +189,8 @@ async function startCapture(): Promise<void> {
     const params = started.codeParams;
 
     const detector = new DetectorGL(capture.gl, detectorOpts);
-    const markers = new MarkerRenderer(capture.gl);
+    const markers = showBlobs ? new MarkerRenderer(capture.gl) : null;
+    const solvedMarkers = new SolvedMarkerRenderer(capture.gl);
     const pipeline = new CvPipeline(params, started.patternClockEpoch, (t) =>
       client.clock.toServerTime(t),
     );
@@ -137,9 +202,38 @@ async function startCapture(): Promise<void> {
     document.body.classList.add("in-xr");
     let frameCount = 0;
 
+    // ?record=1 frame recorder: batches of raw detector output.
+    let frameBuf: unknown[] = [];
+    const postFrames = (body: object): void => {
+      void fetch("/debug/frames", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }).catch(() => undefined);
+    };
+    if (recordBlobs) {
+      postFrames({ reset: true, epoch: started.patternClockEpoch, codeParams: params });
+    }
+
     capture.onFrame((f) => {
       if (!capturing || !capture) return;
       const blobs = detector.detect(f.texture, f.imgW, f.imgH);
+      if (recordBlobs) {
+        frameBuf.push({
+          t: f.tCaptureMs,
+          tServer: client.clock.toServerTime(f.tCaptureMs),
+          pose: f.pose,
+          K: f.K,
+          imgW: f.imgW,
+          imgH: f.imgH,
+          blobs,
+        });
+        if (frameBuf.length >= 30) {
+          const batch = frameBuf;
+          frameBuf = [];
+          postFrames({ frames: batch });
+        }
+      }
       pipeline.step(blobs, {
         tCaptureMs: f.tCaptureMs,
         pose: f.pose,
@@ -148,22 +242,29 @@ async function startCapture(): Promise<void> {
         imgH: f.imgH,
       });
 
-      // Feedback markers into the XR layer.
+      // Feedback into the XR layer: solved LEDs, 3D-composited through the
+      // frame's real view/projection so markers overlap the physical LEDs.
       const gl = capture.gl;
       const fb = capture.layerFramebuffer;
-      const { width, height } = capture.layerSize;
+      const vp = f.viewport;
       gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
-      gl.viewport(0, 0, width, height);
+      gl.viewport(vp.x, vp.y, vp.width, vp.height);
       gl.clearColor(0, 0, 0, 0);
       gl.clear(gl.COLOR_BUFFER_BIT);
-      markers.draw(blobs, f.imgW, f.imgH, width, height, [0.2, 1, 0.6, 0.85]);
+      const mvp = mul4(f.projMatrix, f.viewMatrix);
+      solvedMarkers.draw(mvp);
+      markers?.draw(blobs, f.imgW, f.imgH, vp.width, vp.height, [0.2, 1, 0.6, 0.85]);
+
+      // 2D canvas: blob outlines (detection-stage feedback, colored by track
+      // association) + id labels next to the composited markers.
+      labels.draw(liveLeds, mvp, pipeline.lastBlobStatus, f.imgW, f.imgH);
 
       if (++frameCount % 15 === 0) {
         const s = pipeline.stats;
         hudStats.textContent =
           `decoded ${s.uniqueIds.size}/${params.ledCount} ids · ${s.tracks} tracks · ` +
           `${blobs.length} blobs · align ${s.alignShiftMs.toFixed(0)} ms · ` +
-          `${client.pendingBatchCount} unsent`;
+          `${client.pendingBatchCount} unsent${liveSolvedText}`;
       }
     });
 
@@ -172,10 +273,10 @@ async function startCapture(): Promise<void> {
       if (capturing) void stopCapture(true);
     });
 
-    // Server-side coverage poll for guidance.
-    const poll = setInterval(() => {
+    // Server-side coverage poll for guidance (slow — it's advisory text).
+    const statusPoll = setInterval(() => {
       if (!capturing) {
-        clearInterval(poll);
+        clearInterval(statusPoll);
         return;
       }
       client
@@ -190,6 +291,37 @@ async function startCapture(): Promise<void> {
         })
         .catch(() => undefined);
     }, 2000);
+
+    // Fast live-map poll — this drives the continuous solver (the server
+    // kicks a fresh solve whenever a poll finds new detections and none is
+    // in flight, so this cadence bounds the added display latency).
+    const livePoll = setInterval(() => {
+      if (!capturing) {
+        clearInterval(livePoll);
+        return;
+      }
+      client
+        .getLiveMap()
+        .then((lm) => {
+          if (!capturing || lm.map === null) return;
+          liveLeds = lm.map.leds;
+          solvedMarkers.setLeds(liveLeds);
+          // Pose-corrected temporal inertia: identified tracks now coast by
+          // reprojecting their solved 3D position through the frame pose.
+          pipeline.updateSolved(liveLeds);
+          liveSolvedText = ` · solved ${lm.map.leds.length}/${lm.map.ledCount}`;
+          liveCanvas.style.display = "block";
+          if (liveView === null) {
+            const view = new MapView(liveCanvas, lm.map);
+            liveView = view;
+            void fetchTruth(lm.map.ledCount).then((t) => view.setTruth(t));
+            view.start();
+          } else {
+            liveView.update(lm.map);
+          }
+        })
+        .catch(() => undefined);
+    }, 400);
   } catch (e) {
     capturing = false;
     document.body.classList.remove("in-xr");
@@ -211,8 +343,9 @@ async function stopCapture(sessionAlreadyEnded = false): Promise<void> {
   document.body.classList.remove("in-xr");
   if (!sessionAlreadyEnded) await capture?.stop().catch(() => undefined);
   capture = null;
+  resetLiveFeedback();
 
-  setConn("solving…");
+  setConn("final solve…");
   try {
     const result = await client.stopMapping();
     const resp = await fetch(`/maps/${result.mapId}`);
@@ -235,6 +368,8 @@ function showResult(mapId: string, map: OutputMap): void {
   $<HTMLAnchorElement>("dl-json").href = `/maps/${mapId}`;
   $<HTMLAnchorElement>("dl-csv").href = `/maps/${mapId}.csv`;
   mapView?.stop();
-  mapView = new MapView($<HTMLCanvasElement>("mapcanvas"), map);
-  mapView.start();
+  const view = new MapView($<HTMLCanvasElement>("mapcanvas"), map);
+  mapView = view;
+  void fetchTruth(map.ledCount).then((t) => view.setTruth(t));
+  view.start();
 }

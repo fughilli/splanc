@@ -2,8 +2,10 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import type { Intrinsics, Pose, Vec3 } from "@ledmapper/protocol";
 import { Tracker } from "../src/cv/tracker";
 import type { Blob, FrameMeta } from "../src/cv/types";
+import { project } from "../src/geom/pinhole";
 
 function meta(tCaptureMs: number): FrameMeta {
   return {
@@ -82,6 +84,71 @@ test("unmatched blobs found new tracks", () => {
   tr.step([blob(100, 100)], meta(0));
   tr.step([blob(100, 100), blob(400, 400)], meta(33));
   assert.equal(tr.tracks.length, 2);
+});
+
+test("lastAssignment reports per-blob association (UI feedback contract)", () => {
+  const tr = new Tracker({ gatePx: 30 });
+  tr.step([blob(100, 100)], meta(0));
+  const known = tr.tracks[0]!;
+  known.ledId = 3;
+
+  // Blob 0 continues the known track; blob 1 matches nothing.
+  tr.step([blob(102, 100), blob(400, 400)], meta(33));
+  assert.equal(tr.lastAssignment.length, 2);
+  assert.equal(tr.lastAssignment[0], known, "matched its pre-existing track");
+  assert.equal(tr.lastAssignment[0]!.ledId, 3, "identity readable off the assignment");
+  assert.equal(tr.lastAssignment[1], null, "fresh blob is unmatched this frame");
+
+  // Next frame the fresh track exists, so the same blob now matches.
+  tr.step([blob(400, 400)], meta(66));
+  assert.notEqual(tr.lastAssignment[0], null);
+  assert.equal(tr.lastAssignment[0]!.ledId, null, "tracked but not yet decoded");
+});
+
+test("identified+solved track coasts by reprojection under camera motion", () => {
+  // A static LED watched from a camera strafing sideways 5 cm/frame at 2 m:
+  // parallax races the LED's *apparent* position across the image while it is
+  // dark, so constant-velocity coasting (velocity ≈ 0 here — one on-frame)
+  // loses it — reprojection of its solved 3D position through each frame's
+  // pose must not.
+  const xyz: Vec3 = [0.3, 0.1, 0];
+  const K: Intrinsics = [500, 500, 320, 240];
+  const poseAt = (i: number): Pose => ({ p: [i * 0.05, 0, 2], q: [0, 0, 0, 1] });
+  const metaAt = (i: number): FrameMeta => ({
+    tCaptureMs: i * 33,
+    pose: poseAt(i),
+    K,
+    imgW: 640,
+    imgH: 480,
+  });
+  const blobAt = (i: number): Blob => {
+    const pr = project(poseAt(i), K, xyz);
+    return blob(pr.u, pr.v);
+  };
+
+  // Sanity: the dark-stretch apparent motion really does exceed the gate.
+  const p0 = project(poseAt(0), K, xyz);
+  const p11 = project(poseAt(11), K, xyz);
+  assert.ok(Math.hypot(p11.u - p0.u, p11.v - p0.v) > 60, "scenario must out-run the gate");
+
+  const run = (solved: boolean): Tracker => {
+    const tr = new Tracker({ gatePx: 20, maxCoastMs: 1000 });
+    tr.step([blobAt(0)], metaAt(0));
+    tr.tracks[0]!.ledId = 7; // as the decoder would stamp it
+    if (solved) tr.setSolvedPositions([{ id: 7, xyz }]);
+    for (let i = 1; i <= 10; i++) tr.step([], metaAt(i)); // dark, camera swinging
+    tr.step([blobAt(11)], metaAt(11)); // LED reappears
+    return tr;
+  };
+
+  const withSolve = run(true);
+  assert.equal(withSolve.tracks.length, 1, "re-acquired, no forked track");
+  assert.equal(withSolve.tracks[0]!.ledId, 7, "same identity");
+  assert.ok(withSolve.tracks[0]!.samples.at(-1)!.on);
+
+  // Control: without the solved position the same scenario forks a new track.
+  const without = run(false);
+  assert.equal(without.tracks.length, 2, "const-velocity coasting loses this LED");
 });
 
 test("pruneBefore drops old samples only", () => {

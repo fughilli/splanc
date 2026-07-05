@@ -17,6 +17,7 @@ from pydantic import ValidationError
 from ledmapper_protocol import (
     ClientMessage,
     ErrorMessage,
+    LiveMapMessage,
     MappingStartedMessage,
     OutputMap,
     PatternStateMessage,
@@ -29,6 +30,7 @@ from ledmapper_protocol import (
 
 from .clock import now_ms
 from .codebook import DEFAULT_BIT_PERIOD_MS, code_params_for
+from .reconstruct import LiveSolver
 from .session import SessionManager
 
 # A reconstruction job: session log path -> OutputMap (see reconstruct.py).
@@ -47,9 +49,13 @@ class ServerContext:
         bit_period_ms: float = DEFAULT_BIT_PERIOD_MS,
         id_factory: Callable[[], str] | None = None,
         clock: Callable[[], float] = now_ms,
+        live_solver: LiveSolver | None = None,
+        encoding: str = "gray",
     ):
         self.sessions = sessions
         self.reconstructor = reconstructor
+        self.encoding = encoding
+        self.live = live_solver if live_solver is not None else LiveSolver()
         self.default_led_count = default_led_count
         self.bit_period_ms = bit_period_ms
         self.clock = clock
@@ -66,6 +72,7 @@ class ConnectionHandler:
     def __init__(self, ctx: ServerContext):
         self.ctx = ctx
         self.session_id = ctx.id_factory()
+        self._capture_seq = 0
 
     async def handle(self, raw: str, *, recv_ms: float | None = None) -> List[ServerMessage]:
         """Parse one client frame and return the server responses to send.
@@ -95,6 +102,8 @@ class ConnectionHandler:
             return [self._status()]
         if kind == "get_pattern":
             return [self._pattern()]
+        if kind == "get_live_map":
+            return [self._live_map()]
         if kind == "stop_mapping":
             return await self._stop()
         # ClientMessage's discriminated union makes this unreachable, but be loud.
@@ -108,15 +117,24 @@ class ConnectionHandler:
         return WelcomeMessage(
             type="welcome",
             sessionId=self.session_id,
-            codeParams=code_params_for(self.ctx.default_led_count, self.ctx.bit_period_ms),
+            codeParams=code_params_for(self.ctx.default_led_count, self.ctx.bit_period_ms, self.ctx.encoding),
         )
 
     def _start(self, led_count: int) -> ServerMessage:
-        epoch = self.ctx.sessions.start(self.session_id, led_count)
+        # One connection can run several captures; each needs its own log id
+        # or the later capture's log OVERWRITES the earlier one on disk. The
+        # first capture keeps the bare connection id (the common case).
+        self._capture_seq += 1
+        capture_id = (
+            self.session_id
+            if self._capture_seq == 1
+            else f"{self.session_id}-{self._capture_seq}"
+        )
+        epoch = self.ctx.sessions.start(capture_id, led_count)
         return MappingStartedMessage(
             type="mapping_started",
             patternClockEpoch=epoch,
-            codeParams=code_params_for(led_count, self.ctx.bit_period_ms),
+            codeParams=code_params_for(led_count, self.ctx.bit_period_ms, self.ctx.encoding),
         )
 
     def _detections(self, batch) -> List[ServerMessage]:
@@ -144,15 +162,20 @@ class ConnectionHandler:
                 type="pattern_state",
                 active=False,
                 patternClockEpoch=None,
-                codeParams=code_params_for(self.ctx.default_led_count, self.ctx.bit_period_ms),
+                codeParams=code_params_for(self.ctx.default_led_count, self.ctx.bit_period_ms, self.ctx.encoding),
             )
         epoch, led_count = state
         return PatternStateMessage(
             type="pattern_state",
             active=True,
             patternClockEpoch=epoch,
-            codeParams=code_params_for(led_count, self.ctx.bit_period_ms),
+            codeParams=code_params_for(led_count, self.ctx.bit_period_ms, self.ctx.encoding),
         )
+
+    def _live_map(self) -> ServerMessage:
+        """Latest interim reconstruction; polling drives the continuous solver."""
+        active, interim = self.ctx.live.poll(self.ctx.sessions)
+        return LiveMapMessage(type="live_map", active=active, map=interim)
 
     async def _stop(self) -> List[ServerMessage]:
         try:

@@ -165,6 +165,7 @@ export class WebXRCaptureSource implements CaptureSource {
       // Capture timestamp: the rAF callback time is the closest monotonic
       // stamp we can get to the camera frame; constant camera→display latency
       // is absorbed by the decoder's sync-delimiter alignment (§8.1).
+      const vp = this.glLayer?.getViewport(view);
       const f: CaptureFrame = {
         texture,
         pose,
@@ -172,6 +173,16 @@ export class WebXRCaptureSource implements CaptureSource {
         imgW: camera.width,
         imgH: camera.height,
         tCaptureMs: performance.now(),
+        viewMatrix: view.transform.inverse.matrix,
+        projMatrix: view.projectionMatrix,
+        viewport: vp
+          ? { x: vp.x, y: vp.y, width: vp.width, height: vp.height }
+          : {
+              x: 0,
+              y: 0,
+              width: this.glLayer?.framebufferWidth ?? 0,
+              height: this.glLayer?.framebufferHeight ?? 0,
+            },
       };
       this.frameCb?.(f);
       break; // one view on handheld AR

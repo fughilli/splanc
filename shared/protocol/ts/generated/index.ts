@@ -49,7 +49,7 @@ export interface DetectionRecord {
 // CodeParams (§7.6)
 // ---------------------------------------------------------------------------
 
-export type Encoding = "gray";
+export type Encoding = "gray" | "gray-hue";
 export type SyncPattern = "on_off";
 
 export interface CodeParams {
@@ -137,6 +137,11 @@ export interface GetPatternMessage {
   type: "get_pattern";
 }
 
+/** Poll the continuous solver for the latest interim reconstruction. */
+export interface GetLiveMapMessage {
+  type: "get_live_map";
+}
+
 export type ClientMessage =
   | HelloMessage
   | TimeSyncPingMessage
@@ -144,7 +149,8 @@ export type ClientMessage =
   | StopMappingMessage
   | DetectionsMessage
   | GetStatusMessage
-  | GetPatternMessage;
+  | GetPatternMessage
+  | GetLiveMapMessage;
 
 // ---------------------------------------------------------------------------
 // Server -> Client messages (§7.2)
@@ -189,6 +195,13 @@ export interface PatternStateMessage {
   codeParams: CodeParams;
 }
 
+/** Reply to get_live_map: latest interim reconstruction; null before the first solve or when idle. */
+export interface LiveMapMessage {
+  type: "live_map";
+  active: boolean;
+  map: OutputMap | null;
+}
+
 export interface ResultReadyMessage {
   type: "result_ready";
   mapId: string;
@@ -206,5 +219,6 @@ export type ServerMessage =
   | MappingStartedMessage
   | StatusMessage
   | PatternStateMessage
+  | LiveMapMessage
   | ResultReadyMessage
   | ErrorMessage;

@@ -225,3 +225,32 @@ Never committed; rotatable via `bazel run //pi/provisioning:keys -- rotate`.
   `?flipv=1`): whether the raw-camera texture's v=0 row is image top or bottom
   is device territory; a wrong flip is loudly visible as huge M3 reprojection
   residuals. Default false; confirm once on the target device (§13).
+- **flipV resolved on-device (2026-07-03): default TRUE.** Chrome/ARCore
+  camera-access delivers the camera texture bottom-up. Symptom of a wrong
+  setting: the 3D-composited solve overlay renders Y-mirrored against the
+  passthrough (observed live, fixed same day). `?flipv=0` reverts.
+- **Codewords carry id + 1 (2026-07-05); the all-zero data word is
+  reserved-invalid.** Deviation from the design doc §7.6/§8.1 examples:
+  `bits = ceil(log2(ledCount + 1))`, so e.g. 1024 LEDs → 11 bits, not 10.
+  Why: anything that blinks the code decodes as an LED, and id 0's raw Gray
+  word is all-dark outside the sync flash — exactly what reflections and
+  auto-exposure pumping look like in a dark room, making id 0 a decode
+  magnet (observed live: a 1-LED session produced ~45 bogus id-0 records per
+  cycle, collapsing the solve onto the camera position). With the offset, a
+  "dark data frames" observation decodes to the reserved word and is
+  rejected. Sits alongside the other decode-poisoning defenses added the
+  same day: decoder `minConfidence` (0.4), per-cycle per-id brightest-anchor
+  dedup, and M3's consensus (mode-seeking) pre-filter for majority-bad
+  observation sets.
+- **`gray-hue` encoding (2026-07-05): color-carried code for uncontrolled
+  lighting.** Frame-level recordings showed intensity coding is unusable in a
+  lit room (~200 scene blobs/frame above threshold; dots AE-dimmed to ~0.65).
+  A probe confirmed chroma separates cleanly (green census = exactly the 4
+  dots; bit margins 0.4–0.8). Design: FIXED wire colors, maximally separated
+  — white + the three primaries (every pair 2.0 apart in RGB L1; sync axis
+  g−(r+b)/2 orthogonal to bit axis r−b) — with RELATIVE decoding: each
+  window normalized channel-wise by the track's own ALL_ON (white) window,
+  which cancels diagonal color correction exactly and makes static-hue
+  clutter fail the green sync (it normalizes to neutral). Always-lit dots
+  also remove the coasting/AE-pumping failure modes. Enabled by server flag
+  `--encoding gray-hue`; wall + phone follow `codeParams.encoding`.

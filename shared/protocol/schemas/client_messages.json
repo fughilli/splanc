@@ -10,7 +10,8 @@
     { "$ref": "#/$defs/StopMapping" },
     { "$ref": "#/$defs/Detections" },
     { "$ref": "#/$defs/GetStatus" },
-    { "$ref": "#/$defs/GetPattern" }
+    { "$ref": "#/$defs/GetPattern" },
+    { "$ref": "#/$defs/GetLiveMap" }
   ],
   "$defs": {
     "Hello": {
@@ -89,6 +90,15 @@
       "description": "Ask for the current pattern-clock state. Sent by pattern followers (e.g. the virtual LED wall test page) that render the blink code but do not own the capture session.",
       "properties": {
         "type": { "const": "get_pattern" }
+      }
+    },
+    "GetLiveMap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "description": "Poll the continuous solver for the latest interim reconstruction of the active capture. Polling also drives the solver: the server kicks a new solve when detections have arrived since the last one.",
+      "properties": {
+        "type": { "const": "get_live_map" }
       }
     }
   }

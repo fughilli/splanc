@@ -63,3 +63,38 @@ test("stride/offset scans RGBA readbacks without a copy", () => {
   assert.equal(blobs.length, 1);
   assert.ok(Math.abs(blobs[0]!.x - 1.5) < 1e-9);
 });
+
+test("bounding boxes: a horizontal band reports its elongation", () => {
+  // 8x4 buffer: a 6x1 band on row 0 and a 2x2 square at bottom-right
+  // (row 1 left empty so 4-connectivity keeps them separate).
+  const data = new Uint8Array(8 * 4);
+  for (let x = 1; x <= 6; x++) data[0 * 8 + x] = 200;
+  data[2 * 8 + 6] = 200;
+  data[2 * 8 + 7] = 200;
+  data[3 * 8 + 6] = 200;
+  data[3 * 8 + 7] = 200;
+  const blobs = connectedComponents(data, 8, 4);
+  const band = blobs.find((b) => b.area === 6)!;
+  const square = blobs.find((b) => b.area === 4)!;
+  assert.deepEqual([band.w, band.h], [6, 1]);
+  assert.deepEqual([square.w, square.h], [2, 2]);
+});
+
+test("colorBase: per-blob mean color from RGBA buffers (weight in alpha)", () => {
+  // 4x2 RGBA: a red 2px blob (left) and a cyan 2px blob (right).
+  const data = new Uint8Array(4 * 2 * 4);
+  const put = (x: number, y: number, r: number, g: number, b: number, a: number) => {
+    const i = (y * 4 + x) * 4;
+    data[i] = r; data[i + 1] = g; data[i + 2] = b; data[i + 3] = a;
+  };
+  put(0, 0, 255, 0, 0, 200);
+  put(0, 1, 255, 0, 0, 200);
+  put(3, 0, 0, 255, 255, 200);
+  put(3, 1, 0, 255, 255, 200);
+  const blobs = connectedComponents(data, 4, 2, 4, 3, { colorBase: 0 });
+  assert.equal(blobs.length, 2);
+  const red = blobs.find((b) => b.x < 2)!;
+  const cyan = blobs.find((b) => b.x > 2)!;
+  assert.ok(red.r! > 0.99 && red.g! < 0.01 && red.b! < 0.01);
+  assert.ok(cyan.r! < 0.01 && cyan.g! > 0.99 && cyan.b! > 0.99);
+});

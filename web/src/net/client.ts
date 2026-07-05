@@ -20,6 +20,7 @@ import type {
   ClientMessage,
   CodeParams,
   DetectionRecord,
+  LiveMapMessage,
   MappingStartedMessage,
   PatternStateMessage,
   ResultReadyMessage,
@@ -208,6 +209,11 @@ export class LedMapperClient {
 
   async getPattern(): Promise<PatternStateMessage> {
     return (await this.request({ type: "get_pattern" }, "pattern_state")) as PatternStateMessage;
+  }
+
+  /** Poll the continuous solver for the latest interim reconstruction. */
+  async getLiveMap(): Promise<LiveMapMessage> {
+    return (await this.request({ type: "get_live_map" }, "live_map")) as LiveMapMessage;
   }
 
   /** Queue a detection batch; delivered now or after reconnect. */

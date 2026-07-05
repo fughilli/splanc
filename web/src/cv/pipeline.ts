@@ -19,9 +19,23 @@ export interface PipelineOptions {
   decoder?: DecoderOptions;
 }
 
+/** Per-frame 2D-stage feedback: one entry per detected blob (see step()). */
+export interface BlobStatus {
+  u: number;
+  v: number;
+  /** Blob area in image px² (outline radius for the UI). */
+  area: number;
+  /** Matched a pre-existing track this frame (vs spawning a fresh one). */
+  matched: boolean;
+  /** The matched track's decoded LED id, when it has one. */
+  ledId: number | null;
+}
+
 export class CvPipeline {
   readonly tracker: Tracker;
   readonly decoder: Decoder;
+  /** 2D-stage feedback for the frame most recently passed to step(). */
+  lastBlobStatus: BlobStatus[] = [];
   private cb: ((records: DetectionRecord[]) => void) | null = null;
   private readonly toServerTime: (tLocalMs: number) => number;
 
@@ -43,10 +57,37 @@ export class CvPipeline {
     this.cb = cb;
   }
 
+  /**
+   * Feed the continuous solver's latest solved LEDs back into the tracker:
+   * identified tracks then coast by reprojection through the frame pose
+   * (pose-corrected temporal inertia) instead of 2D constant velocity.
+   */
+  updateSolved(leds: Iterable<{ id: number; xyz: [number, number, number] }>): void {
+    this.tracker.setSolvedPositions(leds);
+  }
+
   /** Ingest one frame. Returns records if a cycle completed on this frame. */
   step(blobs: readonly Blob[], meta: FrameMeta): DetectionRecord[] {
     const matched = this.tracker.step(blobs, meta);
-    const records = this.decoder.step(this.tracker.tracks, matched, meta.tCaptureMs);
+    this.lastBlobStatus = blobs.map((b, i) => {
+      const tr = this.tracker.lastAssignment[i] ?? null;
+      return { u: b.u, v: b.v, area: b.area, matched: tr !== null, ledId: tr?.ledId ?? null };
+    });
+    // gray-hue: the saturated-GREEN census is the global delimiter signal the
+    // decoder's self-clocking alignment keys on (ALL_OFF renders green).
+    let greens = 0;
+    if (this.params.encoding === "gray-hue") {
+      for (const b of blobs) {
+        const r = b.r ?? 0;
+        const g = b.g ?? 0;
+        const bl = b.b ?? 0;
+        const mx = Math.max(r, g, bl);
+        if (mx > 0 && (mx - Math.min(r, g, bl)) / mx >= 0.45 && g > 1.4 * r && g > 1.4 * bl) {
+          greens++;
+        }
+      }
+    }
+    const records = this.decoder.step(this.tracker.tracks, matched, meta.tCaptureMs, greens);
     if (records.length > 0) this.cb?.(records);
 
     // Bound memory: drop samples older than the last two cycles.

@@ -37,8 +37,10 @@ void main() {
   vec3 rgb = texture(cam, uv).rgb;
   // Max channel: robust for saturated white AND colored LEDs.
   float lum = max(rgb.r, max(rgb.g, rgb.b));
-  float v = lum >= threshold ? lum : 0.0;
-  outColor = vec4(v, v, v, 1.0);
+  float m = lum >= threshold ? 1.0 : 0.0;
+  // rgb: per-pixel color for the CPU stage's per-blob chroma (hue-coded
+  // fixtures); alpha: masked luminance, the CCL fill/weight channel.
+  outColor = vec4(rgb * m, m * lum);
 }`;
 
 export interface DetectorOptions {
@@ -51,11 +53,23 @@ export interface DetectorOptions {
   maxArea?: number;
   maxBlobs?: number;
   /**
+   * Reject blobs whose bounding-box aspect ratio (long/short side) exceeds
+   * this. Filming a display produces bright HORIZONTAL BANDS (panel
+   * refresh/PWM beating the rolling shutter) that are code-correlated and
+   * quasi-static, so they defeat every temporal filter — but they are
+   * strongly elongated where LEDs are compact. Observed live 2026-07-05:
+   * same-cycle records sharing one image row across the full width.
+   */
+  maxAspect?: number;
+  /**
    * Whether the camera texture's v=0 row is the image BOTTOM (GL-style) —
    * then blob v must be flipped to the §7.4 top-left origin. Camera-texture
-   * row order is device/driver territory: confirm on-device (a wrong flip
-   * shows up as huge reprojection residuals from M3, since poses and pixels
-   * disagree about "up"). Toggleable from the capture page (`?flipv=`).
+   * row order is device/driver territory; validated on-device 2026-07-03:
+   * Chrome/ARCore camera-access delivers the texture bottom-up, so this
+   * defaults to TRUE (a wrong setting shows up as the solve overlay
+   * Y-mirrored against the passthrough, plus huge M3 reprojection residuals,
+   * since poses and pixels disagree about "up"). Toggleable from the capture
+   * page (`?flipv=0`) if some device disagrees.
    */
   flipV?: boolean;
 }
@@ -77,6 +91,7 @@ export class DetectorGL {
   private readonly minArea: number;
   private readonly maxArea: number;
   private readonly maxBlobs: number;
+  private readonly maxAspect: number;
 
   constructor(
     private readonly gl: WebGL2RenderingContext,
@@ -84,10 +99,11 @@ export class DetectorGL {
   ) {
     this.downscale = opts.downscale ?? 2;
     this.threshold = opts.threshold ?? 0.6;
-    this.flipV = opts.flipV ?? false;
+    this.flipV = opts.flipV ?? true;
     this.minArea = opts.minArea ?? 2;
     this.maxArea = opts.maxArea ?? 4000;
     this.maxBlobs = opts.maxBlobs ?? 2048;
+    this.maxAspect = opts.maxAspect ?? 3;
 
     this.program = buildProgram(gl, VS, FS);
     this.uThreshold = gl.getUniformLocation(this.program, "threshold")!;
@@ -144,10 +160,12 @@ export class DetectorGL {
     gl.bindFramebuffer(gl.FRAMEBUFFER, prevFbo);
     gl.viewport(prevViewport[0]!, prevViewport[1]!, prevViewport[2]!, prevViewport[3]!);
 
-    const comps = connectedComponents(this.readback, w, h, 4, 0, {
+    // Fill/weight channel is alpha (masked luminance); RGB carries color.
+    const comps = connectedComponents(this.readback, w, h, 4, 3, {
       minArea: this.minArea,
       maxArea: this.maxArea,
       maxBlobs: this.maxBlobs,
+      colorBase: 0,
     });
 
     // readPixels row 0 is the render target's bottom row, and the fragment
@@ -155,12 +173,20 @@ export class DetectorGL {
     // holds the camera texture's v=0 row. Whether that row is the image top
     // or bottom is what `flipV` encodes (see DetectorOptions.flipV).
     const ds = this.downscale;
-    return comps.map((c) => ({
-      u: c.x * ds,
-      v: this.flipV ? imgH - c.y * ds : c.y * ds,
-      intensity: c.intensity,
-      area: c.area * ds * ds,
-    }));
+    return comps
+      .filter((c) => Math.max(c.w, c.h) <= this.maxAspect * Math.min(c.w, c.h))
+      .map((c) => ({
+        u: c.x * ds,
+        v: this.flipV ? imgH - c.y * ds : c.y * ds,
+        intensity: c.intensity,
+        area: c.area * ds * ds,
+        w: c.w * ds,
+        h: c.h * ds,
+        // Always present: this call passes colorBase.
+        r: c.r!,
+        g: c.g!,
+        b: c.b!,
+      }));
   }
 
   private ensureTarget(w: number, h: number): void {

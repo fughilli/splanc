@@ -130,3 +130,39 @@ def test_outlier_observation_is_rejected():
     by_id = {e.id: np.array(e.xyz) for e in out.leds}
     # Despite the gross outlier, LED 0 is recovered accurately.
     assert np.linalg.norm(by_id[0] - points[0]) * 1000.0 < 1.0
+
+
+def test_majority_contamination_recovered_by_consensus():
+    """Reflections/exposure artifacts blink the LED's own code, so an LED's
+    observation set can be MAJORITY-wrong — beyond MAD rejection (which needs
+    a good median). The consensus pre-filter must find the true mode."""
+    true_point = np.array([[0.1, 0.05, 0.0]])
+    angles = np.linspace(-0.9, 0.9, 12)
+    eyes = [[2.0 * np.sin(a), 0.3, 2.0 * np.cos(a)] for a in angles]
+    detections = _synthetic_detections(true_point, eyes, noise=0.0)
+    assert len(detections) == 12
+
+    # Add 60% contamination: same id, uniformly random pixels per view.
+    rng = np.random.default_rng(7)
+    junk = []
+    for eye in eyes + eyes[:6]:
+        p, q = _camera_at(eye, target=true_point.mean(axis=0))
+        junk.append(
+            {
+                "ledId": 0,
+                "tCaptureMs": 0.0,
+                "u": float(rng.uniform(0, 1280)),
+                "v": float(rng.uniform(0, 720)),
+                "imgW": 1280,
+                "imgH": 720,
+                "K": list(K),
+                "pose": {"p": [float(c) for c in p], "q": [float(c) for c in q]},
+                "confidence": 1.0,
+            }
+        )
+    out = reconstruct(detections + junk, led_count=1)
+    assert len(out.leds) == 1
+    err_mm = np.linalg.norm(np.array(out.leds[0].xyz) - true_point[0]) * 1000.0
+    assert err_mm < 1.0, f"contaminated solve missed by {err_mm:.2f} mm"
+    # The clean views survive; the junk is excluded from the fit.
+    assert out.leds[0].nViews >= 10

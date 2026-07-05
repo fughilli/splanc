@@ -34,6 +34,14 @@ def main(argv=None) -> int:
     parser.add_argument("--led-count", type=int, default=1024, help="default code-book LED count")
     parser.add_argument("--bit-period-ms", type=float, default=DEFAULT_BIT_PERIOD_MS)
     parser.add_argument(
+        "--encoding",
+        choices=["gray", "gray-hue"],
+        default="gray",
+        help="code carrier: intensity blink ('gray') or constant-brightness "
+        "color code ('gray-hue' — for uncontrolled lighting; the wall and "
+        "the phone decoder both follow this via codeParams)",
+    )
+    parser.add_argument(
         "--ssl-dir",
         type=Path,
         default=None,
@@ -58,6 +66,7 @@ def main(argv=None) -> int:
         web_root=args.web_root,
         default_led_count=args.led_count,
         bit_period_ms=args.bit_period_ms,
+        encoding=args.encoding,
     )
     uvicorn.run(
         app,

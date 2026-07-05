@@ -86,6 +86,21 @@ def test_full_capture_flow(tmp_path):
         status_code, body = _http_get(base + "/healthz")
         assert status_code == 200 and json.loads(body)["status"] == "ok"
 
+        # Ground-truth relay: 404 before the wall publishes, roundtrip after.
+        with pytest.raises(urllib.error.HTTPError) as no_truth:
+            _http_get(base + "/truth")
+        assert no_truth.value.code == 404
+        truth = {"kind": "virtual_wall", "cols": 3, "rows": 2, "units": "led_pitch",
+                 "leds": [{"id": i, "xyz": [i % 3, i // 3, 0]} for i in range(4)]}
+        req = urllib.request.Request(
+            base + "/truth", data=json.dumps(truth).encode(),
+            headers={"content-type": "application/json"}, method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=10) as r:
+            assert r.status == 200
+        code, body = _http_get(base + "/truth")
+        assert code == 200 and json.loads(body) == truth
+
         ws_url = f"ws://127.0.0.1:{port}/ws"
         with connect(ws_url) as ws:
             # hello → welcome
@@ -125,6 +140,22 @@ def test_full_capture_flow(tmp_path):
             assert st["type"] == "status"
             assert st["total"] == led_count
             assert st["identified"] > 0
+
+            # get_live_map: first poll kicks the continuous solver (reply is
+            # immediate, map may still be null), then poll until the interim
+            # map lands. Real solver, so give it time.
+            ws.send(json.dumps({"type": "get_live_map"}))
+            live = json.loads(ws.recv(timeout=10))
+            assert live["type"] == "live_map"
+            assert live["active"] is True
+            deadline = time.monotonic() + 60.0
+            while live["map"] is None and time.monotonic() < deadline:
+                time.sleep(0.5)
+                ws.send(json.dumps({"type": "get_live_map"}))
+                live = json.loads(ws.recv(timeout=10))
+            assert live["map"] is not None, "continuous solver produced no interim map"
+            assert live["map"]["ledCount"] == led_count
+            assert len(live["map"]["leds"]) >= int(0.8 * led_count)
 
             # stop_mapping → reconstruction runs → result_ready
             ws.send(json.dumps({"type": "stop_mapping"}))

@@ -9,6 +9,26 @@
 
 import type { Blob } from "../cv/types";
 
+/**
+ * Camera-image px → view px under the aspect-fill crop handheld AR uses to
+ * composit the passthrough (shared by the GL blob markers and the DOM label
+ * overlay so both annotate the same on-screen spot).
+ */
+export function imageToView(
+  u: number,
+  v: number,
+  imgW: number,
+  imgH: number,
+  viewW: number,
+  viewH: number,
+): { x: number; y: number } {
+  const scale = Math.max(viewW / imgW, viewH / imgH);
+  return {
+    x: (u - imgW / 2) * scale + viewW / 2,
+    y: (v - imgH / 2) * scale + viewH / 2,
+  };
+}
+
 const VS = `#version 300 es
 layout(location = 0) in vec2 ndc;
 uniform float pointSize;
@@ -64,13 +84,10 @@ export class MarkerRenderer {
     if (blobs.length === 0 || viewW === 0 || viewH === 0) return;
     const gl = this.gl;
 
-    // Aspect-fill: the camera image is cropped to cover the viewport.
-    const scale = Math.max(viewW / imgW, viewH / imgH);
     if (this.buf.length < blobs.length * 2) this.buf = new Float32Array(blobs.length * 2);
     let n = 0;
     for (const b of blobs) {
-      const xs = (b.u - imgW / 2) * scale + viewW / 2;
-      const ys = (b.v - imgH / 2) * scale + viewH / 2;
+      const { x: xs, y: ys } = imageToView(b.u, b.v, imgW, imgH, viewW, viewH);
       const nx = (xs / viewW) * 2 - 1;
       const ny = 1 - (ys / viewH) * 2; // v down -> NDC y up
       if (nx < -1 || nx > 1 || ny < -1 || ny > 1) continue;

@@ -19,8 +19,8 @@
     },
     "encoding": {
       "type": "string",
-      "enum": ["gray"],
-      "description": "Index encoding scheme. Currently only 'gray' is defined; modeled as enum so it remains extensible."
+      "enum": ["gray", "gray-hue"],
+      "description": "Index encoding scheme. 'gray': intensity blink code (§8.1) — LEDs on/off per Gray-code bit. 'gray-hue': same Gray frame plan carried by COLOR at constant brightness — ALL_ON white (per-track color reference), ALL_OFF green (chroma sync), data bit 1 red / 0 blue; for fixtures filmed in uncontrolled lighting, where the decoder discriminates by hue relative to the white frame instead of by intensity."
     },
     "bitPeriodMs": {
       "type": "number",

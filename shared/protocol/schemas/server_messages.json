@@ -9,6 +9,7 @@
     { "$ref": "#/$defs/MappingStarted" },
     { "$ref": "#/$defs/Status" },
     { "$ref": "#/$defs/PatternState" },
+    { "$ref": "#/$defs/LiveMap" },
     { "$ref": "#/$defs/ResultReady" },
     { "$ref": "#/$defs/Error" }
   ],
@@ -80,6 +81,19 @@
           "description": "Server-clock time of the start of a known cycle, in milliseconds; null when no capture is active."
         },
         "codeParams": { "$ref": "code_params.json" }
+      }
+    },
+    "LiveMap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "active", "map"],
+      "description": "Reply to get_live_map: the latest interim reconstruction of the active capture. `map` is null until the continuous solver has produced its first solve (or when no capture is active). Interim maps are in-memory only; the persisted, full-quality map still arrives via result_ready after stop_mapping.",
+      "properties": {
+        "type": { "const": "live_map" },
+        "active": { "type": "boolean" },
+        "map": {
+          "oneOf": [{ "$ref": "output_map.json" }, { "type": "null" }]
+        }
       }
     },
     "ResultReady": {

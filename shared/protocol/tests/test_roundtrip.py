@@ -33,10 +33,12 @@ from ledmapper_protocol import (
     DetectionRecord,
     DetectionsMessage,
     ErrorMessage,
+    GetLiveMapMessage,
     GetPatternMessage,
     GetStatusMessage,
     HelloMessage,
     LedEntry,
+    LiveMapMessage,
     MappingStartedMessage,
     OutputMap,
     OutputMapStats,
@@ -125,11 +127,11 @@ def _validator_for(schema_name: str) -> Draft202012Validator:
 # ---------------------------------------------------------------------------
 
 
-def make_code_params() -> CodeParams:
+def make_code_params(encoding: str = "gray") -> CodeParams:
     return CodeParams(
         ledCount=1024,
         bits=10,
-        encoding="gray",
+        encoding=encoding,
         bitPeriodMs=100.0,
         syncPattern="on_off",
         cycleFrames=12,
@@ -191,9 +193,10 @@ def make_output_map() -> OutputMap:
     [
         (DetectionRecord, make_detection_record, "detection_record"),
         (CodeParams, make_code_params, "code_params"),
+        (CodeParams, lambda: make_code_params("gray-hue"), "code_params"),
         (OutputMap, make_output_map, "output_map"),
     ],
-    ids=["DetectionRecord", "CodeParams", "OutputMap"],
+    ids=["DetectionRecord", "CodeParams", "CodeParamsHue", "OutputMap"],
 )
 def test_standalone_types_roundtrip(model_cls, instance_factory, schema_name) -> None:
     original = instance_factory()
@@ -225,6 +228,7 @@ CLIENT_VARIANTS = [
     ),
     GetStatusMessage(type="get_status"),
     GetPatternMessage(type="get_pattern"),
+    GetLiveMapMessage(type="get_live_map"),
 ]
 
 
@@ -277,6 +281,8 @@ SERVER_VARIANTS = [
         patternClockEpoch=None,
         codeParams=make_code_params(),
     ),
+    LiveMapMessage(type="live_map", active=True, map=make_output_map()),
+    LiveMapMessage(type="live_map", active=False, map=None),
     ResultReadyMessage(type="result_ready", mapId="ffffffff-0000-1111-2222-333333333333"),
     ErrorMessage(type="error", code="capture_aborted", message="user pressed stop"),
 ]

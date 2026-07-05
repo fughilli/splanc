@@ -81,9 +81,10 @@ bazelisk run //web:serve            # https on 0.0.0.0:8443
    similarity transform.
 
 Useful query params — capture page: `?threshold=0.6` (detector luminance
-threshold), `?downscale=2`, `?flipv=1` (camera-texture row order — see
-`DetectorOptions.flipV`), `?leds=N`. Wall page: `?cols=N`, `?gap`, `?margin`,
-`?dot` (dot diameter as a fraction of pitch).
+threshold), `?downscale=2`, `?flipv=0` (camera-texture row order; flipped by
+default after on-device validation 2026-07-03 — see `DetectorOptions.flipV`),
+`?leds=N`, `?blobs=1` (extra GL blob markers). Wall page: `?cols=N`, `?gap`,
+`?margin`, `?dot` (dot diameter as a fraction of pitch).
 
 ### How the wall stays in sync
 
@@ -98,9 +99,11 @@ alignment on the ALL_ON→ALL_OFF delimiter (§8.1).
 
 ## Device caveats (§13, revisit at Phase-4 bench time)
 
-- **Camera-texture orientation** (`flipV`) and **intrinsics from
-  `projectionMatrix`** are device territory; a wrong flip shows up as huge M3
-  reprojection residuals. Validate on the target device once.
+- **Camera-texture orientation** (`flipV`): validated on-device 2026-07-03 —
+  Chrome/ARCore delivers the camera texture bottom-up, so the flip is now the
+  default (symptom of a wrong setting: the solve overlay renders Y-mirrored
+  against the passthrough). **Intrinsics from `projectionMatrix`** remain
+  device territory; a wrong K shows up as inflated M3 reprojection residuals.
 - `tCaptureMs` is stamped at the rAF callback, not sensor readout; constant
   latency is handled by decode alignment, jitter is not (keep bitPeriodMs
   ≥ 3 frame intervals).

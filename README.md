@@ -71,7 +71,174 @@ All work is on branch **`m1-driver-m2-server-m4-verify`** (working tree
 clean). The `/workspace` bind mount — including the persisted caches —
 survives the restart.
 
-### Done (this session — 2026-07-02)
+### Done (2026-07-03)
+
+- **Continuous solving.** New §7 message pair `get_live_map`/`live_map`
+  (schemas + both bindings regenerated). While a capture runs, the server's
+  `LiveSolver` (`pi/server/server/reconstruct.py`) reconstructs interim maps
+  from the in-memory detections — poll-driven, single-flight, off the event
+  loop; interim maps are in-memory only. `stop_mapping` is unchanged and still
+  produces the persisted, final-quality map (`result_ready`). Unit +
+  integration tests cover the flow.
+- **Decoded-id overlay in the camera view.** Tracks now carry their decoded
+  `ledId`/`ledConfidence` (stamped by the M6 decoder); a 2D label canvas in
+  the XR dom-overlay draws `#id` rings at each identified track's position
+  (confidence-colored, dimmed while the LED is dark, persists through code-word
+  off frames). Same aspect-fill mapping as the GL blob markers
+  (`web/src/ui/labels.ts`, shared transform in `markers.ts`).
+- **Live map preview in-capture.** The phone polls `get_live_map` every 2 s;
+  the converging map renders in an inset (reusing `MapView`, now updatable)
+  and the HUD shows `solved N/M`. Stop button renamed "Stop & finish".
+- **Exact 3D-composited registration.** The camera viewport now shows ONLY
+  solved LEDs, rendered through the frame's real WebXR view/projection
+  matrices (`CaptureFrame` gained `viewMatrix`/`projMatrix`/`viewport`), so
+  each confidence-colored ring + `#id` label overlaps the physical LED
+  exactly — registration error is visible live. Raw 2D blob markers are
+  `?blobs=1` debug only. `web/src/geom/mat4.ts` holds the MVP math;
+  `mat4_test` pins it to the pinhole/M3 camera model pixel-for-pixel.
+- **Solver diagnostics for the single-LED study** (open problem: live solve
+  registration is correct but doesn't converge to the right result).
+  `GET /debug/led/{id}` dumps, for the active (or last persisted) session:
+  every observation of that LED with its back-projected ray, camera speed,
+  and reprojection residuals vs the DLT point AND the latest live solve;
+  ray-bundle stats (parallax, ray-miss distance); `residualTriVsSpeedCorr`
+  (positive ⇒ image↔pose latency); and the continuous solver's per-LED
+  history + jitter (LiveSolver now keeps a 300-deep solve history).
+  `GET /debug/session` gives the whole-session overview. Wall page gained
+  `?only=N` (only LED N blinks; layout unchanged) for the physical study.
+  Report builder: `pi/server/server/debug.py`, unit-tested on synthetic
+  known geometry incl. a corrupted-observation case.
+- **VALIDATED AT SCALE: 128-LED wall solved to 1.5 mm rms in a lit room.**
+  First gray-hue captures: the 4-LED study solved to a perfect uniform grid
+  (77 mm pitch, sub-mm consistency), then a 128-LED wall (15×9 ragged,
+  17.4 mm pitch): **128/128 solved, zero unmapped, Δtruth rms 1.48 mm / p50
+  1.10 mm / max 4.2 mm, coplanar to 0.8 mm median** — from a 61 s handheld
+  walk (5.4 k detections, 55° median parallax) in uncontrolled lighting.
+  §9 Phase-3-level acceptance on real capture. Also fixed en route: one
+  WebSocket connection running several captures reused its session id and
+  OVERWROTE the earlier log — per-capture ids now (`sess-id`, `sess-id-2`, …).
+- **`gray-hue` encoding LANDED (uncontrolled-lighting mode).** New §7.6
+  `encoding: "gray-hue"`: same Gray frame plan at constant brightness,
+  carried by COLOR — white + the three primaries (max pairwise camera-RGB
+  separation; `HUE_FRAME_COLORS` in `code/gray.ts`): ALL_ON white = per-track
+  color REFERENCE, ALL_OFF green = chroma sync, bit 1 red / bit 0 blue.
+  Decoding is RELATIVE: each window's color is divided channel-wise by the
+  track's own white window, cancelling white balance/color correction
+  exactly; bits = sign of the r−b opponent axis, sync = green score ≥ 0.25 on
+  the orthogonal axis. Static-hue clutter self-normalizes to neutral and
+  fails sync (rejected for free). Alignment keys on the global GREEN census
+  instead of the brightness dip. Enable server-side: `bazelisk run
+  //web:serve -- --encoding gray-hue` — the wall and the phone decoder both
+  follow `codeParams.encoding`. Synthetic pipeline test: 64/64 ids under a
+  strong color cast, zero mis-ids, clutter rejected. (M1 driver renders
+  hue frames on RGB strips — TODO at bench time; wall-only today.)
+- **Hue-modulation probe** (uncontrolled-lighting direction, user-requested):
+  the detector's GPU pass now reads back masked RGB (weight in alpha) and CCL
+  accumulates per-blob mean color (`CclBlob.r/g/b` → `Blob.r/g/b`, in the
+  `?record=1` stream); the wall gained `?hue=1` — dots stay LIT at constant
+  brightness and carry the frame plan in COLOR (ALL_ON white, ALL_OFF green,
+  bit 1 red, bit 0 cyan). Probe procedure: wall `?hue=1` + phone `?record=1`
+  in the lit room, then analyze the recording for chroma separability (dot
+  saturation/hue vs the ~200 scene blobs; white-balance stability). The
+  normal luminance decoder will NOT solve in hue mode — probe only; a hue
+  decode path is a follow-up if the data supports it.
+- **Frame-level recorder (`?record=1`) + the REAL root cause: operating
+  point.** The capture page can stream the raw per-frame detector output to
+  `POST /debug/frames` (JSONL in the session dir). First recording showed
+  ~210 blobs/frame EVEN DURING ALL_OFF at intensity ~0.6–0.8: the room was
+  bright, the detector threshold (0.6) was slicing ordinary scene luminance,
+  and the wall dots (AE-dimmed to ~0.60–0.70, area ~12 px) were nowhere near
+  the brightest things in frame — §5's core assumption violated. No
+  code-level gate can rescue that; the fix is the prescribed operating
+  point: DARK room + screen at max brightness (dots then saturate ≫ scene),
+  where the accumulated defenses (id+1 codewords, confidence/support gates,
+  dedup, aspect gate, consensus) handle the dark-room artifacts.
+- **Truth-relay race fixed.** The wall republished its IDLE layout (server
+  default 1024-LED grid) the moment a capture stopped, racing the result
+  pane's `/truth` fetch (user saw a full grid instead of 4 points). The wall
+  now publishes only while a capture is active, and the phone filters
+  fetched truth to the session's ledCount.
+- **ROOT CAUSE of the scatter found: screen banding.** The raw record stream
+  showed same-cycle records sharing one image ROW (v within a few px, u
+  across the full width) — bright horizontal bands from filming a display
+  (panel refresh/PWM beating the rolling shutter). Bands are real light,
+  code-correlated, quasi-static at 30 fps, and bright, so they beat margin,
+  support, AND brightest-anchor dedup. Fixes: CCL blobs now carry bbox
+  `w`/`h` and the detector rejects aspect > 3 (`maxAspect`); mitigation for
+  the residual: more ambient light (longer exposure averages bands out).
+- **Ground-truth relay.** The truth overlay showed a 2×2 grid while the wall
+  auto-laid out a ragged 3×2 — the wall now POSTs its exact layout to the new
+  `POST/GET /truth` endpoint on layout changes, and the phone's map views
+  fetch it (falling back to `?truth=CxR`). Integration-tested.
+- **Walked 4-LED study → decoder evidence gate.** The walked capture (0.52 m
+  path, real parallax) plus a mode analysis showed the remaining scatter is
+  NOT reflections (no discrete 3D modes) and NOT a convention bug (identity
+  beat all 16 orientation/quat hypotheses): sparse noise chains stitched by
+  the coasting tracker forge margin-1.0 codewords from ~1 sample per window
+  (margin measures agreement, not evidence). Decoder now requires
+  `minOnSamples` (default 3) real on-sightings behind the decoded word
+  (`rejectedSupport` stat).
+- **Ground-truth overlay in the map views.** `?truth=COLSxROWS` on the
+  capture page declares the wall grid; MapView aligns it to the solve with a
+  dependency-free similarity/Procrustes fit (`web/src/geom/fit.ts`, Horn
+  quaternion method, unit-tested) and draws truth markers, per-point delta
+  vectors with mm/cm magnitudes, dim markers for unsolved LEDs, and a
+  `Δtruth rms/max` summary. Works on both the result browser and the live
+  inset.
+- **4-LED study (2026-07-05) → two more fixes.** Traces confirmed the flood
+  fixes work (~2.6 records/cycle, all conf 1.0), but (a) the capture had only
+  4 cm of camera path — untriangulatable, walk an arc! — and (b) id 0 was
+  still a scatter magnet. So: **codewords now carry id + 1** (all-zero data
+  word reserved-invalid; `bits = ceil(log2(n+1))`; driver + TS + codebook +
+  goldens regenerated; deviation from §7.6 examples recorded in
+  docs/decisions.md), decoder window voting is **centrality-weighted** (hard
+  25 % guard starved windows via 33 ms-vs-100 ms phase aliasing → whole
+  cycles rejected), and the **alignment estimator no longer cold-starts on
+  <1.5 cycles of data** (its huge-plateau center could land bit-periods off,
+  and the EMA took ~4 cycles to walk back — killing the first cycles' decodes).
+- **Single-LED study DIAGNOSED + fixed (decode-collision flood).** Traces on
+  a real 1-LED session (82 s, 3.5 k records) showed up to ~100 records/cycle
+  all claiming LED 0, scattered over the whole image, half at confidence 0 —
+  windowed triangulation collapsed exactly onto the camera position. Cause:
+  anything blinking the LED's code decodes as that LED (reflections; and in a
+  dark room, auto-exposure pumping at the pattern period makes static
+  features blink in code-correlated ways). LED 0 is the worst case: its Gray
+  word is all-dark outside the sync flash. Fixes, in depth:
+  (1) decoder `minConfidence` (default 0.4) rejects margin-poor cycles;
+  (2) per-cycle per-id dedup — brightest anchor wins (reflections are
+  dimmer); (3) M3 consensus (RANSAC-style mode-seeking) pre-filter per LED,
+  engaging only when the bundle is contaminated (p90 DLT residual > 40 px) —
+  unit-tested to recover a 60 %-junk LED to < 1 mm; MAD rejection alone
+  cannot (needs a good median). Old sessions were recorded pre-fix — study
+  needs a fresh capture.
+- **Camera-texture orientation resolved on-device.** The `?flipv=` unknown is
+  settled: Chrome/ARCore camera-access delivers the texture bottom-up, so the
+  detector's v-flip is now the DEFAULT (`?flipv=0` reverts). Symptom that led
+  here: solve overlay Y-mirrored against the passthrough.
+- **Live-solve cadence.** `get_live_map` is polled every 400 ms (status
+  guidance stays at 2 s), and interim solves subsample to
+  `LIVE_MAX_VIEWS_PER_LED = 16` observations per LED (even stride — keeps
+  parallax span, bounds BA cost) so update latency stays roughly constant as
+  the session grows. The final solve still uses everything.
+- **2D-stage feedback.** The overlay outlines every detected blob per frame,
+  colored by track association: green = matched a decoded track, amber =
+  tracked awaiting decode, red = unmatched this frame (`Tracker.lastAssignment`
+  → `CvPipeline.lastBlobStatus` → `labels.ts`).
+- **Interactive result browser.** `MapView` now does CAD-style (no-inertia)
+  multitouch navigation: one-finger/left-drag orbit, two-finger drag pan,
+  pinch or scroll-wheel zoom (mouse pan via shift/middle/right drag);
+  auto-orbit until first interaction. Camera survives `update()` swaps, so
+  the live inset converges under a stable view.
+- **Pose-aware temporal inertia in the tracker.** The live map feeds back
+  into M6 (`pipeline.updateSolved`): a track whose LED is decoded AND solved
+  coasts by reprojecting the solved 3D point through each frame's pose —
+  correcting camera-motion parallax that constant-velocity coasting can't —
+  so identified LEDs re-acquire the same track when they reappear
+  (`tracker_test` has a strafing-camera control case). Beyond `maxCoastMs`,
+  identity still self-recovers one cycle later via the Gray code, and the
+  server merges observations by `ledId` regardless of track lineage.
+
+### Done (earlier — 2026-07-02)
 
 - **Web stack M5–M8 is built and green** (`web/`, Vite + TS, no runtime npm
   deps): M5 `WebXRCaptureSource` (immersive-ar + camera-access + dom-overlay,

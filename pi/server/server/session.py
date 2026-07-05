@@ -96,6 +96,18 @@ class SessionManager:
                 return 0, 0, 0
             return self._active.status()
 
+    def snapshot(self) -> Optional[Tuple[str, int, List[DetectionRecord]]]:
+        """``(session_id, led_count, detections copy)`` of the active capture.
+
+        The copy is what lets the continuous solver work on a consistent view
+        while new batches keep arriving.
+        """
+        with self._lock:
+            if self._active is None:
+                return None
+            s = self._active
+            return s.session_id, s.led_count, list(s.detections)
+
     def pattern_state(self) -> Optional[Tuple[float, int]]:
         """Return ``(patternClockEpoch, ledCount)`` of the active capture, or None.
 

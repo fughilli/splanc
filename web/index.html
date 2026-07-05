@@ -122,6 +122,24 @@
       #overlay .guide {
         color: #ffd97a;
       }
+      #overlay #labels {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+      }
+      #overlay #livemap {
+        position: absolute;
+        right: 0.8rem;
+        bottom: calc(env(safe-area-inset-bottom, 0px) + 4.8rem);
+        width: 38vw;
+        max-width: 240px;
+        aspect-ratio: 4 / 3;
+        background: rgba(10, 10, 14, 0.55);
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        border-radius: 8px;
+        display: none;
+      }
       #overlay .stopwrap {
         position: absolute;
         bottom: calc(env(safe-area-inset-bottom, 0px) + 1.2rem);
@@ -169,12 +187,14 @@
     </main>
 
     <div id="overlay">
+      <canvas id="labels"></canvas>
+      <canvas id="livemap" width="480" height="360"></canvas>
       <div class="hud">
         <div id="hud-stats">starting…</div>
         <div class="guide" id="hud-guide">Walk a slow arc around the fixture — sideways steps, not toward it.</div>
       </div>
       <div class="stopwrap">
-        <button id="stop">Stop &amp; solve</button>
+        <button id="stop">Stop &amp; finish</button>
       </div>
     </div>
 

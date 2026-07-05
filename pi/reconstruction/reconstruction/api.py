@@ -21,7 +21,14 @@ import numpy as np
 from ledmapper_protocol import LedEntry, OutputMap, OutputMapStats
 
 from .bundle import bundle_adjust
+from .camera import quat_to_rotmat
 from .triangulate import max_parallax_deg, rays_from_observations, triangulate_point
+
+# Consensus pre-filter thresholds (see _consensus_filter): engage only on
+# clearly contaminated bundles, accept observations within the inlier radius.
+_CONSENSUS_ENGAGE_P90_PX = 40.0
+_CONSENSUS_INLIER_PX = 12.0
+_CONSENSUS_MAX_SEEDS = 10
 
 
 def _as_obs(detection: Mapping) -> dict:
@@ -45,6 +52,70 @@ def _group_by_led(detections: Iterable[Mapping]) -> dict:
         obs = _as_obs(d)
         groups.setdefault(obs["ledId"], []).append(obs)
     return groups
+
+
+def _consensus_filter(obs_list: List[dict], min_views: int) -> List[dict]:
+    """RANSAC-style consensus pre-filter for ONE LED's observations.
+
+    Anything that blinks the LED's code decodes as the LED — reflections, and
+    (in dark scenes) exposure-pump artifacts — so an observation set can be
+    dominated by points that are mutually inconsistent with any single 3D
+    position. MAD outlier rejection assumes a good median and fails once bad
+    views are the majority; consensus is mode-seeking instead: triangulate
+    2-view candidates from spread-out observation pairs and keep the largest
+    set of observations that agree (reprojection ≤ inlier radius) on one point.
+
+    Engages only when the naive bundle looks contaminated (p90 DLT residual
+    above ``_CONSENSUS_ENGAGE_P90_PX``); healthy-but-noisy bundles pass
+    through untouched. Known limitation: if a single mirror reflection
+    genuinely outnumbers direct sightings, the reflection wins — consensus
+    picks the biggest mode, not the truest one.
+    """
+    n = len(obs_list)
+    if n < 4:
+        return obs_list
+    origins, dirs = rays_from_observations(obs_list)
+    rot = np.stack([quat_to_rotmat(o["q"]) for o in obs_list])  # cam->world
+    ps = np.asarray([o["p"] for o in obs_list])
+    ks = np.asarray([o["K"] for o in obs_list])
+    uvs = np.asarray([[o["u"], o["v"]] for o in obs_list])
+
+    def residuals(x: np.ndarray) -> np.ndarray:
+        xc = np.einsum("nji,nj->ni", rot, x - ps)  # R^T (x - p), per obs
+        depth = -xc[:, 2]
+        safe = np.where(np.abs(depth) < 1e-12, 1e-12, depth)
+        u = ks[:, 2] + ks[:, 0] * xc[:, 0] / safe
+        v = ks[:, 3] - ks[:, 1] * xc[:, 1] / safe
+        r = np.hypot(u - uvs[:, 0], v - uvs[:, 1])
+        r[depth <= 0] = np.inf
+        return r
+
+    try:
+        r_all = residuals(triangulate_point(origins, dirs))
+        if np.all(np.isfinite(r_all)) and np.percentile(r_all, 90) <= _CONSENSUS_ENGAGE_P90_PX:
+            return obs_list
+    except (ValueError, np.linalg.LinAlgError):
+        pass
+
+    seeds = np.unique(np.linspace(0, n - 1, min(_CONSENSUS_MAX_SEEDS, n)).astype(int))
+    best: Optional[np.ndarray] = None
+    for ai in range(len(seeds)):
+        for bi in range(ai + 1, len(seeds)):
+            a, b = int(seeds[ai]), int(seeds[bi])
+            if float(np.dot(dirs[a], dirs[b])) > 0.99995:
+                continue  # near-parallel pair: depth unconstrained
+            try:
+                x = triangulate_point(origins[[a, b]], dirs[[a, b]])
+            except (ValueError, np.linalg.LinAlgError):
+                continue
+            if not np.all(np.isfinite(x)):
+                continue
+            inliers = residuals(x) <= _CONSENSUS_INLIER_PX
+            if best is None or int(inliers.sum()) > int(best.sum()):
+                best = inliers
+    if best is not None and int(best.sum()) >= max(min_views, 3):
+        return [obs_list[i] for i in np.flatnonzero(best)]
+    return obs_list
 
 
 def _confidence(parallax_deg: float, n_views: int, rms_px: float) -> float:
@@ -102,6 +173,14 @@ def reconstruct(
 
     for led_id in all_ids:
         obs = groups[led_id]
+        if len(obs) < min_views:
+            unmapped.add(led_id)
+            continue
+        # Mode-seeking pre-filter: reflections/artifacts share the LED's code,
+        # so the per-LED set can be majority-bad — beyond what the MAD-based
+        # rejection below (which needs a good median) can recover from.
+        obs = _consensus_filter(obs, min_views)
+        groups[led_id] = obs
         if len(obs) < min_views:
             unmapped.add(led_id)
             continue
