@@ -108,6 +108,16 @@ survives the restart.
   `?only=N` (only LED N blinks; layout unchanged) for the physical study.
   Report builder: `pi/server/server/debug.py`, unit-tested on synthetic
   known geometry incl. a corrupted-observation case.
+- **Partial-visibility sweeps fixed: latency-corrected pose pairing.** M3
+  handles cropped coverage fine (synthetic sweep repro: 128/128 at 1.1 mm);
+  the sweep failure was camera→pose latency (~100 ms, measured): records
+  paired exposure-time pixels with delivery-time poses → motion × latency
+  bias (~60 px at sweep speed) → poisoned triangulation + MAD mass-pruning.
+  Decoder now pairs the anchor with the track sample nearest
+  `tCapture − alignShift` (the self-clocked latency estimate) and rejects
+  frame-entry records with no sample near the exposure time
+  (`rejectedPoseGap`). The synthetic sim now models device timing honestly
+  (frame pose ≠ exposure pose); new serpentine-sweep + latency test.
 - **Solver 3–4× faster: batched per-LED LM with analytic Jacobians.**
   Profiling the real 128-LED capture showed scipy's least_squares spending
   ~60 % of solve time numerically differentiating the Jacobian across ~190

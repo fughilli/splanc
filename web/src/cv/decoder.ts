@@ -76,6 +76,9 @@ export interface DecodeStats {
   rejectedLowConf: number;
   /** Cycles rejected: too few ON samples backing the decoded word. */
   rejectedSupport: number;
+  /** Records rejected: no track sample near the anchor's exposure time, so
+   * the pose pairing would carry motion × latency bias (frame-entry tracks). */
+  rejectedPoseGap: number;
   /** Records dropped: another track decoded the same id this cycle, brighter. */
   rejectedDuplicate: number;
 }
@@ -110,6 +113,7 @@ export class Decoder {
     rejectedRange: 0,
     rejectedLowConf: 0,
     rejectedSupport: 0,
+    rejectedPoseGap: 0,
     rejectedDuplicate: 0,
   };
 
@@ -443,7 +447,33 @@ export class Decoder {
     // Label the track for live UI feedback (id overlays in the camera view).
     track.ledId = ledId;
     track.ledConfidence = confidence;
-    const meta = anchorSample.meta;
+
+    // LATENCY-CORRECTED pose pairing: the anchor's pixels were EXPOSED
+    // ~alignShift ms before the frame that delivered them (alignShift is the
+    // self-clocked camera→display latency estimate — the same shift that
+    // aligns the code windows). Pairing them with that frame's pose biases
+    // every record by camera-motion × latency (~60 px at 0.3 m/s sweep,
+    // fatal for partial-visibility sweeps); instead take the pose from the
+    // track sample nearest the exposure time.
+    let meta = anchorSample.meta;
+    if (this.alignInitialized && this.alignShift > 0) {
+      const tExposure = anchorSample.tCaptureMs - this.alignShift;
+      let best = Infinity;
+      for (const s of track.samples) {
+        const d = Math.abs(s.tCaptureMs - tExposure);
+        if (d < best) {
+          best = d;
+          meta = s.meta;
+        }
+      }
+      // A track that entered the frame this cycle has no sample near the
+      // exposure time — its pose pairing would be biased by motion × latency
+      // no matter which sample we take. Skip; it decodes next cycle mature.
+      if (best > 40) {
+        this.stats.rejectedPoseGap++;
+        return null;
+      }
+    }
     return {
       rec: {
         ledId,

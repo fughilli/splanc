@@ -94,25 +94,29 @@ function runSim(opts: SimOptions = {}): { records: DetectionRecord[]; pipeline: 
   const nFrames = Math.floor(totalMs / FPS_DT);
   for (let f = 0; f < nFrames; f++) {
     if (rand() < dropP) continue;
-    // The image shows the pattern as it was when the light hit the sensor;
-    // the phone's timestamp lags that moment by `latency`.
+    // The image shows the pattern (and the WORLD) as they were when the
+    // light hit the sensor; the timestamp AND the pose WebXR reports with
+    // the frame are from `latency` ms later — as on a real device. Records
+    // must pair pixels with the EXPOSURE-time pose (decoder latency
+    // correction), or every record carries motion x latency bias.
     const tTrueLocal = f * FPS_DT;
     const tCaptureMs = tTrueLocal + latency;
     const tTrueServer = tTrueLocal + CLOCK_OFFSET;
     const frameIdx = frameIndexAt(tTrueServer, EPOCH_SERVER, PARAMS);
 
-    const pose = arcPose(f / nFrames);
+    const exposurePose = arcPose(tTrueLocal / totalMs);
+    const framePose = arcPose(Math.min(1, tCaptureMs / totalMs));
     const blobs: Blob[] = [];
     for (let id = 0; id < PARAMS.ledCount; id++) {
       if (!ledLitInFrame(id, frameIdx, PARAMS)) continue;
-      const pr = project(pose, K, leds[id]!);
+      const pr = project(exposurePose, K, leds[id]!);
       if (pr.depth <= 0) continue;
       const u = pr.u + gauss();
       const v = pr.v + gauss();
       if (u < 0 || u >= IMG_W || v < 0 || v >= IMG_H) continue;
       blobs.push({ u, v, intensity: 0.9, area: 12 });
     }
-    pipeline.step(blobs, { tCaptureMs, pose, K, imgW: IMG_W, imgH: IMG_H });
+    pipeline.step(blobs, { tCaptureMs, pose: framePose, K, imgW: IMG_W, imgH: IMG_H });
   }
   return { records, pipeline };
 }
@@ -158,7 +162,10 @@ test("60 ms camera latency: self-clocking alignment recovers decode", () => {
     ids.size >= PARAMS.ledCount * 0.98,
     `decoded ${ids.size}/${PARAMS.ledCount} ids with latency`,
   );
-  assert.equal(checkRecords(records, 1.0).wrong, 0);
+  // Tolerance: the exposure-time pose comes from the nearest 30 fps sample
+  // (<= half a frame off), and the first cycle decodes before the alignment
+  // estimator warms up — a few px of pose-pairing error remains.
+  assert.equal(checkRecords(records, 8.0).wrong, 0);
   // The estimator should have converged near the injected latency (sign:
   // samples are stamped late, so alignShift ≈ +latency). The score landscape
   // is a plateau at the sparse 30 fps sampling, so allow half a bit period.
@@ -205,7 +212,19 @@ function hueFrameColor(id: number, frameIdx: number): [number, number, number] {
   return ledLitInFrame(id, frameIdx, PARAMS_HUE) ? [1, 0, 0] : [0, 0, 1];
 }
 
-function runHueSim(cycles = 6): { records: DetectionRecord[]; pipeline: CvPipeline } {
+interface HueSimOptions {
+  /** Camera/pose latency, as in runSim: frame pose lags the exposure. */
+  latencyMs?: number;
+  /** Translating close-range pan (frame edges CROP the wall) instead of the
+   * look-at arc — the partial-visibility sweep scenario. */
+  sweep?: boolean;
+}
+
+function runHueSim(
+  cycles = 6,
+  opts: HueSimOptions = {},
+): { records: DetectionRecord[]; pipeline: CvPipeline } {
+  const latency = opts.latencyMs ?? 0;
   const leds = wallLeds();
   const pipeline = new CvPipeline(PARAMS_HUE, EPOCH_SERVER, (t) => t + CLOCK_OFFSET);
   const records: DetectionRecord[] = [];
@@ -213,14 +232,26 @@ function runHueSim(cycles = 6): { records: DetectionRecord[]; pipeline: CvPipeli
 
   const totalMs = cycles * cycleMs(PARAMS_HUE);
   const nFrames = Math.floor(totalMs / FPS_DT);
+  // Sweep: close to the wall, looking straight ahead, panning left->right —
+  // only a strip of the wall is in frame at any time.
+  const sweepPose = (frac: number): Pose => ({
+    // Serpentine: pan across with enough vertical weave that every row
+    // eventually enters the (cropping) frame.
+    p: [-0.55 + 1.1 * frac, 0.24 * Math.sin(frac * 9), 0.42],
+    q: [0, 0, 0, 1],
+  });
+  const poseAt = (frac: number): Pose =>
+    opts.sweep ? sweepPose(frac) : arcPose(frac);
   for (let f = 0; f < nFrames; f++) {
     const tTrueLocal = f * FPS_DT;
+    const tCaptureMs = tTrueLocal + latency;
     const frameIdx = frameIndexAt(tTrueLocal + CLOCK_OFFSET, EPOCH_SERVER, PARAMS_HUE);
-    const pose = arcPose(f / nFrames);
+    const exposurePose = poseAt(tTrueLocal / totalMs);
+    const framePose = poseAt(Math.min(1, tCaptureMs / totalMs));
     const blobs: Blob[] = [];
     for (let id = 0; id < PARAMS_HUE.ledCount; id++) {
       // Every LED is LIT every frame; only its color changes.
-      const pr = project(pose, K, leds[id]!);
+      const pr = project(exposurePose, K, leds[id]!);
       if (pr.depth <= 0) continue;
       if (pr.u < 0 || pr.u >= IMG_W || pr.v < 0 || pr.v >= IMG_H) continue;
       const c = hueFrameColor(id, frameIdx);
@@ -237,7 +268,7 @@ function runHueSim(cycles = 6): { records: DetectionRecord[]; pipeline: CvPipeli
     // Static-hue clutter: a red lamp and a bright white light, always on.
     blobs.push({ u: 100, v: 100, intensity: 0.95, area: 20, r: CAST[0], g: 0, b: 0 });
     blobs.push({ u: 1180, v: 620, intensity: 1.0, area: 30, r: CAST[0], g: CAST[1], b: CAST[2] });
-    pipeline.step(blobs, { tCaptureMs: tTrueLocal, pose, K, imgW: IMG_W, imgH: IMG_H });
+    pipeline.step(blobs, { tCaptureMs, pose: framePose, K, imgW: IMG_W, imgH: IMG_H });
   }
   return { records, pipeline };
 }
@@ -263,4 +294,30 @@ test("gray-hue: static-hue clutter is rejected by the relative sync check", () =
   }
   // Their tracks exist but fail the green sync (normalize to neutral).
   assert.ok(pipeline.decoder.stats.rejectedSync > 0, "clutter cycles were sync-rejected");
+});
+
+test("gray-hue partial-visibility sweep + 100 ms latency: records stay pose-consistent", () => {
+  // The user scenario: pan a close-in phone across the wall so frame edges
+  // crop it; every LED is visible only during part of the pass, and the
+  // camera moves the whole time (motion x latency bias would poison the
+  // solve without the decoder's exposure-time pose pairing).
+  const { records } = runHueSim(20, { sweep: true, latencyMs: 100 });
+  const ids = new Set(records.map((r) => r.ledId));
+  // Corner LEDs whose in-frame dwell bursts are shorter than one full code
+  // cycle cannot decode on this single pass (a real sweep revisits them).
+  assert.ok(
+    ids.size >= Math.floor(PARAMS_HUE.ledCount * 0.85),
+    `decoded ${ids.size}/${PARAMS_HUE.ledCount} ids under cropping`,
+  );
+  // Pose-pairing correctness is what the solver consumes: records must
+  // match their claimed pose to within nearest-sample interpolation error
+  // (frame-entry tracks with no sample near the exposure time are rejected
+  // outright; only pre-alignment first-cycle records may remain biased).
+  const wrong = checkRecords(records, 8.0).wrong;
+  assert.ok(wrong <= records.length * 0.02, `${wrong}/${records.length} pose-biased records`);
+  // Multi-view coverage survives cropping (enough for triangulation).
+  const views = new Map<number, number>();
+  for (const r of records) views.set(r.ledId, (views.get(r.ledId) ?? 0) + 1);
+  const enough = [...views.values()].filter((n) => n >= 2).length;
+  assert.ok(enough >= Math.floor(PARAMS_HUE.ledCount * 0.8), `${enough} LEDs with >=2 views`);
 });
