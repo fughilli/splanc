@@ -49,13 +49,22 @@ def wall_leds(cols: int = 6, rows: int = 6, pitch: float = 0.12) -> np.ndarray:
 # -- analytic trajectory (smooth, with real acceleration for observability) --
 
 
+# Radial (toward/away) excitation, settable per test: focal length is only
+# strongly observable when the wall DISTANCE varies (with metric baseline
+# from the IMU, depth change separates fx from scene scale; a constant-radius
+# arc leaves fx pinned only by weak perspective nonlinearity). The no-XR
+# capture guidance must therefore include moving closer/farther.
+RADIAL_AMP = 0.0
+
+
 def cam_pos(t: float) -> np.ndarray:
     theta = -0.5 + 1.0 * (t / DURATION) + 0.12 * np.sin(1.7 * t)
+    radius = 1.8 + RADIAL_AMP * np.sin(0.9 * t)
     return np.array(
         [
-            1.8 * np.sin(theta),
+            radius * np.sin(theta),
             0.12 + 0.15 * np.sin(2.1 * t),
-            1.8 * np.cos(theta),
+            radius * np.cos(theta),
         ]
     )
 
@@ -230,3 +239,117 @@ def test_pose_trusting_solver_breaks_on_webxr_drift_but_vio_does_not():
     # The production solver, fed drifting poses, is off by centimeters+ —
     # two orders of magnitude worse than the VIO acceptance bound above.
     assert rms_trusting > 0.02, "expected the pose-trusting solver to fail on drifting poses"
+
+
+def test_wrong_focal_preserves_shape_and_scale_tracks_fx_error():
+    """Focal-length observability, measured honestly: in a wall-facing walk
+    fx trades almost one-for-one against METRIC SCALE (image geometry is
+    invariant when depth scales with fx; the radial-motion signal that
+    separates them is weak vs pixel noise + trajectory slack). The probe:
+    an 8 % fx error leaves the SHAPE essentially perfect and moves metric
+    scale by ~the same 8 %.
+
+    Consequence for the WebXR-free path (docs/vio-exploration.md): a FOV
+    guess gives a correct map up to a few-% metric scale; a calibrated fx
+    (from a previous WebXR session's projectionMatrix K, cached per device,
+    or a known-pitch wall) restores metric accuracy. refine_intrinsics
+    exists as a polish, not a discovery mechanism.
+    """
+    global RADIAL_AMP
+    RADIAL_AMP = 0.35
+    try:
+        leds = wall_leds()
+        frames, _times = synth_frames(leds)
+        imu = synth_imu()
+    finally:
+        RADIAL_AMP = 0.0
+    fx_true = K[0]
+    k_guess = (fx_true * 1.08, fx_true * 1.08, K[2] + 15.0, K[3] - 12.0)
+    frames_wrong_k = [FrameObservations(t=f.t, k=k_guess, obs=f.obs) for f in frames]
+
+    result = solve_vio(frames_wrong_k, imu, max_nfev=150)
+    ids = sorted(result.led_positions.keys())
+    est = np.array([result.led_positions[j] for j in ids])
+    s, rot, t = similarity_align(est, leds[ids])
+    aligned = (s * (rot @ est.T)).T + t
+    shape_rms = float(np.sqrt(np.mean(np.sum((aligned - leds[ids]) ** 2, axis=1))))
+    scale_err = abs(s - 1.0)
+    print(f"\n8% wrong fx: shape rms {shape_rms*1000:.2f} mm, "
+          f"metric scale err {scale_err*100:.2f} %, reproj {result.rms_reproj_px:.2f} px")
+    assert shape_rms < 0.005, f"shape rms {shape_rms*1000:.2f} mm"
+    assert result.rms_reproj_px < 1.0
+    # Scale error tracks the fx error (the trade-off this test documents).
+    assert 0.04 < scale_err < 0.12, f"scale err {scale_err*100:.2f}%"
+
+    # refine_intrinsics is a polish: it must not make anything worse, and it
+    # returns the shared K it settled on.
+    refined = solve_vio(frames_wrong_k, imu, refine_intrinsics=True, max_nfev=120)
+    assert refined.intrinsics is not None
+    assert refined.rms_reproj_px < 1.0
+
+
+def test_reconstruct_vio_wire_end_to_end():
+    # The production path: §7.4 records with pose=None + imu_batch samples in
+    # wire format -> gravity-leveled OutputMap.
+    from reconstruction.vio_api import reconstruct_vio
+
+    leds = wall_leds()
+    frames, _times = synth_frames(leds)
+    imu = synth_imu()
+
+    records = []
+    for fr in frames:
+        for j, u, v in fr.obs:
+            records.append(
+                {
+                    "ledId": int(j),
+                    "tCaptureMs": fr.t * 1000.0,
+                    "u": u,
+                    "v": v,
+                    "imgW": IMG_W,
+                    "imgH": IMG_H,
+                    "K": list(K),
+                    "pose": None,
+                    "confidence": 1.0,
+                }
+            )
+    imu_wire = [
+        {"t": s.t * 1000.0, "gyro": [float(x) for x in s.gyro], "accel": [float(x) for x in s.accel]}
+        for s in imu
+    ]
+    out = reconstruct_vio(records, imu_wire, led_count=len(leds), refine_intrinsics=False)
+
+    assert out.frame == "gravity_leveled"
+    assert len(out.leds) == len(leds) and not out.unmapped
+    assert out.stats.rmsReprojPxGlobal < 1.0
+    # Gravity-leveled: the wall was built in the x/y plane in a y-up world,
+    # so the solved wall must be near-vertical — its plane normal ⊥ Y.
+    pts = np.array([e.xyz for e in out.leds])
+    centered = pts - pts.mean(axis=0)
+    _u, _sv, vt = np.linalg.svd(centered, full_matrices=False)
+    assert abs(vt[2][1]) < 0.05, f"wall normal has y-component {vt[2][1]:.3f}"
+    # Quality fields are populated with the shared conventions.
+    assert all(e.nViews >= 2 for e in out.leds)
+    assert all(0.0 <= e.confidence <= 1.0 for e in out.leds)
+    assert np.median([e.parallaxDeg for e in out.leds]) > 10
+
+
+def test_pose_trusting_solver_rejects_poseless_records():
+    with pytest.raises(ValueError, match="no pose"):
+        reconstruct(
+            [
+                {
+                    "ledId": 0,
+                    "tCaptureMs": 0.0,
+                    "u": 1.0,
+                    "v": 1.0,
+                    "imgW": IMG_W,
+                    "imgH": IMG_H,
+                    "K": list(K),
+                    "pose": None,
+                    "confidence": 1.0,
+                }
+            ]
+            * 3,
+            led_count=1,
+        )

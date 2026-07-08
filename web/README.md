@@ -135,3 +135,18 @@ alignment on the ALL_ON→ALL_OFF delimiter (§8.1).
 - The GPU detect stage reads back a downsampled buffer synchronously
   (~640×360 RGBA @ 30 fps). Fine for MVP; a PBO/fence pipeline is the known
   optimization if frame time suffers.
+
+### WebXR-free capture (`?noxr=1`, or automatic fallback)
+
+`docs/vio-exploration.md` phase 4: the capture page runs without WebXR —
+getUserMedia camera + DeviceMotion IMU; the SERVER solves camera poses
+jointly with the LED positions (visual-inertial bundle adjustment), so no
+ARCore/`#webxr-incubations` is needed and the ARCore-degenerate lighting
+conditions stop mattering. Devices that can't do camera-access AR take this
+path automatically. Extra params: `?imumap=+a,+b,+g;+x,+y,+z` (DeviceMotion
+axis mapping override — fit a new device with
+`bazelisk run //pi/reconstruction:vio_replay -- <trace> <decoded> --diagnose`),
+`?fx=` (focal seed; otherwise a previous WebXR session's cached K, otherwise
+a 70°-FOV guess — fx error shifts metric scale ~1:1, shape is unaffected).
+Live feedback in this mode is the 2D blob/id overlay + the converging map
+inset; exact 3D-composited registration returns with the PnP follow-up.

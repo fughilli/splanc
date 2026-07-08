@@ -141,7 +141,7 @@ function checkRecords(records: DetectionRecord[], tolPx: number): { wrong: numbe
   const leds = wallLeds();
   let wrong = 0;
   for (const r of records) {
-    const pr = project(r.pose, r.K, leds[r.ledId]!);
+    const pr = project(r.pose!, r.K, leds[r.ledId]!);
     const err = Math.hypot(pr.u - r.u, pr.v - r.v);
     if (err > tolPx) wrong++;
   }
@@ -226,7 +226,7 @@ test("records carry the frame's pose/K/dims (§7.4 contract)", () => {
     assert.equal(r.imgH, IMG_H);
     assert.deepEqual(r.K, K);
     assert.ok(r.confidence > 0 && r.confidence <= 1);
-    assert.ok(Math.hypot(...r.pose.p) > 1.5, "pose is on the arc");
+    assert.ok(r.pose !== null && Math.hypot(...r.pose.p) > 1.5, "pose is on the arc");
   }
 });
 
@@ -355,4 +355,64 @@ test("gray-hue partial-visibility sweep + 100 ms latency: records stay pose-cons
   for (const r of records) views.set(r.ledId, (views.get(r.ledId) ?? 0) + 1);
   const enough = [...views.values()].filter((n) => n >= 2).length;
   assert.ok(enough >= Math.floor(PARAMS_HUE.ledCount * 0.8), `${enough} LEDs with >=2 views`);
+});
+
+test("dense-records mode (no-XR path): per-frame pose-less samples, ids correct", () => {
+  // WebXR-free capture: pose is null and the pipeline emits one record per
+  // identified blob every denseStride-th frame instead of per-cycle anchors.
+  const cycles = 6;
+  const rand = mulberry32(9);
+  const leds = wallLeds();
+  const pipeline = new CvPipeline(PARAMS, EPOCH_SERVER, (t) => t + CLOCK_OFFSET, {
+    denseRecords: true,
+    denseStride: 3,
+  });
+  const records: DetectionRecord[] = [];
+  pipeline.onDetections((r) => records.push(...r));
+
+  const totalMs = cycles * cycleMs(PARAMS);
+  const nFrames = Math.floor(totalMs / FPS_DT);
+  const posesByT = new Map<number, Pose>();
+  for (let f = 0; f < nFrames; f++) {
+    const t = f * FPS_DT;
+    const pose = arcPose(t / totalMs);
+    posesByT.set(t, pose);
+    const frameIdx = frameIndexAt(t + CLOCK_OFFSET, EPOCH_SERVER, PARAMS);
+    const blobs: Blob[] = [];
+    for (let id = 0; id < PARAMS.ledCount; id++) {
+      if (!ledLitInFrame(id, frameIdx, PARAMS)) continue;
+      const pr = project(pose, K, leds[id]!);
+      if (pr.depth <= 0) continue;
+      const u = pr.u + (rand() - 0.5) * 0.4;
+      const v = pr.v + (rand() - 0.5) * 0.4;
+      if (u < 0 || u >= IMG_W || v < 0 || v >= IMG_H) continue;
+      blobs.push({ u, v, intensity: 0.9, area: 12 });
+    }
+    pipeline.step(blobs, { tCaptureMs: t, pose: null, K, imgW: IMG_W, imgH: IMG_H });
+  }
+
+  assert.ok(records.length > 0, "dense records were emitted");
+  // Every record is pose-less and much denser than per-cycle anchors.
+  for (const r of records) assert.equal(r.pose, null);
+  const perCycleCeiling = PARAMS.ledCount * cycles;
+  assert.ok(
+    records.length > 2 * perCycleCeiling,
+    `${records.length} dense records vs per-cycle ceiling ${perCycleCeiling}`,
+  );
+  // Id/pixel consistency, checked against the TRUE pose for the record's
+  // frame time (the pipeline never saw it).
+  let wrong = 0;
+  for (const r of records) {
+    const pose = posesByT.get(r.tCaptureMs)!;
+    const pr = project(pose, r.K, leds[r.ledId]!);
+    if (Math.hypot(pr.u - r.u, pr.v - r.v) > 1.5) wrong++;
+  }
+  assert.equal(wrong, 0, `${wrong}/${records.length} dense records misplaced`);
+  // At most one record per (frame, id): the brightest-per-id dedup.
+  const seen = new Set<string>();
+  for (const r of records) {
+    const key = `${r.tCaptureMs}:${r.ledId}`;
+    assert.ok(!seen.has(key), `duplicate ${key}`);
+    seen.add(key);
+  }
 });

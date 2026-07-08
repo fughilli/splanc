@@ -224,3 +224,49 @@ gyro+accel axis mapping from the trace itself against the WebXR attitudes
 (48 signed permutations; winner 0.0097 rad / 0.5 s window, 4× ahead) — run
 it once per new device until the mapping is negotiated/calibrated properly
 in phase 4.
+
+## 8. Phase 4 — the WebXR-free capture path (landed 2026-07-08)
+
+Everything needed to run a capture with NO WebXR is now in the tree:
+
+- **Protocol**: `imu_batch` client message (camera-frame rad/s + m/s²
+  samples; the CLIENT applies its device axis mapping — `web/src/xr/imu.ts`,
+  `?imumap=` override until a calibration flow exists);
+  `DetectionRecord.pose` is nullable; `OutputMap.frame` gained
+  `gravity_leveled` (the VIO gauge: metric, level by construction).
+- **Client**: `MediaStreamCaptureSource` (getUserMedia rear camera +
+  requestVideoFrameCallback + GL texture upload; `pose: null` frames;
+  detector runs flipV=false — video uploads are top-down, XR textures are
+  bottom-up). `?noxr=1` forces the path; devices without camera-access AR
+  fall back to it AUTOMATICALLY — the app now runs on any phone browser, no
+  Chrome flag, no ARCore. The pipeline emits DENSE records (one per
+  identified blob every 3rd frame, brightest-per-id dedup) instead of
+  per-cycle anchors — the joint solver wants every sighting. DeviceMotion
+  streams as ~1 s `imu_batch`es. Live feedback degrades to the 2D blob/id
+  overlay + the live-map inset (exact 3D registration needs client-side PnP
+  against the solved map — the phase-4.5 follow-up).
+- **Server**: sessions store the IMU stream (log key `imu`); the final AND
+  live reconstructions dispatch on record shape — pose-less + IMU →
+  `reconstruction.vio_api.reconstruct_vio` (gravity-leveled OutputMap, live
+  solves bounded to 60 keyframes / 40 evals), posed → the classic solver
+  (which now rejects pose-less records loudly).
+- **Intrinsics**: no projectionMatrix on this path. K seed priority:
+  `?fx=` → cached calibration (the XR path now caches its reported K in
+  localStorage — devices that ever ran WebXR are calibrated) → 70°-FOV
+  heuristic. **Measured observability finding** (vio_test): in wall-facing
+  walks fx trades ~1:1 against METRIC SCALE and barely affects shape — an
+  8 % fx error ⇒ 1.7 mm shape rms but ~9 % scale error. So an uncalibrated
+  first run yields a correct-shaped, slightly mis-scaled map;
+  `refine_intrinsics` exists as polish, and real metric accuracy comes from
+  the calibration cache (or a known-pitch wall). Capture guidance should
+  still include closer/farther motion.
+
+**Deferred (phase 4.5+):** client-side PnP live registration; per-device
+IMU-mapping auto-calibration (today: default mapping + `?imumap=`,
+diagnosed via `vio_replay --diagnose`); warm-started incremental live VIO;
+camera↔IMU extrinsic + rolling-shutter modeling if bench residuals demand.
+
+**Next experiment (phase 5 gate):** side-by-side wall captures — XR path vs
+`?noxr=1` — in the lit room, the dark room, and the reflective setup that
+breaks ARCore; compare Δtruth. The no-XR path must match the 1.5 mm
+best-case and win where WebXR degrades.

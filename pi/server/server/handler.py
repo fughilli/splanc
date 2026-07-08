@@ -104,6 +104,11 @@ class ConnectionHandler:
             # Telemetry: best-effort append, no reply (like detections).
             self.ctx.sessions.add_exposure(msg.report)
             return []
+        if kind == "imu_batch":
+            # WebXR-free capture path (docs/vio-exploration.md): inertial
+            # stream for the joint pose+LED solve. Best-effort, no reply.
+            self.ctx.sessions.add_imu(msg.samples)
+            return []
         if kind == "get_status":
             return [self._status()]
         if kind == "get_pattern":

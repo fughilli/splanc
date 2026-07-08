@@ -28,6 +28,8 @@ export type {
   GetPatternMessage,
   GetStatusMessage,
   HelloMessage,
+  ImuBatchMessage,
+  ImuSample,
   Intrinsics,
   LedEntry,
   LiveMapMessage,

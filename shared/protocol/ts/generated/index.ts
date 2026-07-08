@@ -40,7 +40,10 @@ export interface DetectionRecord {
   imgW: number;
   imgH: number;
   K: Intrinsics;
-  pose: Pose;
+  /** Camera pose, or null on the WebXR-free capture path (the
+   * visual-inertial reconstructor solves poses jointly; the session
+   * must then carry imu_batch samples). */
+  pose: Pose | null;
   /** Decoder confidence in [0, 1]. */
   confidence: number;
 }
@@ -91,7 +94,7 @@ export interface OutputMap {
   /** ISO-8601 timestamp. */
   createdAt: string;
   units: "meters";
-  frame: "webxr_session_ref";
+  frame: "webxr_session_ref" | "gravity_leveled";
   ledCount: number;
   leds: LedEntry[];
   unmapped: number[];
@@ -152,6 +155,24 @@ export interface DetectionsMessage {
   batch: DetectionRecord[];
 }
 
+/** One inertial sample, CAMERA frame (+X right, +Y up, -Z look) — the
+ * client applies its device-specific DeviceMotion axis mapping. */
+export interface ImuSample {
+  /** Phone monotonic clock, ms — same domain as tCaptureMs. */
+  t: number;
+  /** Angular rate [x, y, z], rad/s. */
+  gyro: Vec3;
+  /** Specific force (a − g) [x, y, z], m/s². */
+  accel: Vec3;
+}
+
+/** IMU batch for the WebXR-free capture path: dead reckoning between
+ * frames + metric scale + gravity for the joint pose+LED solve. */
+export interface ImuBatchMessage {
+  type: "imu_batch";
+  samples: ImuSample[];
+}
+
 /** Camera/exposure telemetry (§7.1 exposure_report). The web client cannot
  * read the real 3A/ISP state (WebXR exposes only the camera texture), so these
  * are software estimates; iso/exposureTimeMs are reserved for clients that can. */
@@ -204,6 +225,7 @@ export type ClientMessage =
   | ConfigureMessage
   | StopMappingMessage
   | DetectionsMessage
+  | ImuBatchMessage
   | ExposureReportMessage
   | GetStatusMessage
   | GetPatternMessage

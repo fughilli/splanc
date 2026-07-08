@@ -37,6 +37,8 @@ from ledmapper_protocol import (
     ErrorMessage,
     ExposureReportMessage,
     ExposureStats,
+    ImuBatchMessage,
+    ImuSample,
     GetLiveMapMessage,
     GetPatternMessage,
     GetStatusMessage,
@@ -273,6 +275,19 @@ CLIENT_VARIANTS = [
     DetectionsMessage(
         type="detections",
         batch=[make_detection_record(0), make_detection_record(1)],
+    ),
+    DetectionsMessage(
+        type="detections",
+        # WebXR-free path: pose-less records (the VIO reconstructor solves
+        # the trajectory from the session's imu_batch stream).
+        batch=[make_detection_record(0).model_copy(update={"pose": None})],
+    ),
+    ImuBatchMessage(
+        type="imu_batch",
+        samples=[
+            ImuSample(t=1000.0, gyro=(0.01, -0.02, 0.005), accel=(0.1, 9.75, -0.3)),
+            ImuSample(t=1016.7, gyro=(0.012, -0.018, 0.004), accel=(0.12, 9.74, -0.28)),
+        ],
     ),
     GetStatusMessage(type="get_status"),
     GetPatternMessage(type="get_pattern"),

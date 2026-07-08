@@ -131,6 +131,8 @@ class VioResult:
     gyro_bias: np.ndarray
     accel_bias: np.ndarray
     rms_reproj_px: float
+    # Refined shared camera model (fx, fy, cx, cy) when refine_intrinsics.
+    intrinsics: Optional[Tuple[float, float, float, float]] = None
 
 
 # ---------------------------------------------------------------------------
@@ -345,12 +347,20 @@ def solve_vio(
     accel_noise: float = 5e-2,  # m/s² at the sample rate
     huber_px: float = 4.0,
     max_nfev: int = 60,
+    refine_intrinsics: bool = False,
 ) -> VioResult:
     """Jointly estimate camera trajectory and LED positions; no pose input.
 
     `frames` must be time-ordered; `imu` must cover the frame time span.
     Returns a metric, gravity-consistent solution in an arbitrary yaw/origin
     gauge (pose 0 pinned at its seed).
+
+    ``refine_intrinsics`` adds a SHARED camera model [fx (=fy), cx, cy] to the
+    unknowns, seeded from frames[0].k with loose priors — for the WebXR-free
+    capture path, where there is no projectionMatrix and the client can only
+    guess K from a typical field of view. The dense observation graph
+    constrains focal length well (it trades off against scene depth, which
+    the IMU pins metrically).
     """
     frames = list(frames)
     led_ids = sorted({led for fr in frames for led, _u, _v in fr.obs})
@@ -370,6 +380,13 @@ def solve_vio(
     #   per frame i: rotvec(3), p(3), v(3)      → 9n
     #   per led j:   X(3)                       → 3m
     #   gyro bias(3), accel bias(3), gravity(3) → 9
+    #   [refine_intrinsics] shared fx, cx, cy   → 3
+    off_led = 9 * n
+    off_bias = off_led + 3 * m
+    off_k = off_bias + 9
+    n_par = off_k + (3 if refine_intrinsics else 0)
+    k_seed = np.array([frames[0].k[0], frames[0].k[2], frames[0].k[3]])
+
     def pack(rots, ps, vs, leds, bg, ba, g) -> np.ndarray:
         parts = []
         for i in range(n):
@@ -379,18 +396,21 @@ def solve_vio(
         for led in led_ids:
             parts.append(leds[led])
         parts += [bg, ba, g]
+        if refine_intrinsics:
+            parts.append(k_seed)
         return np.concatenate(parts)
 
     def unpack(x):
-        pose = x[: 9 * n].reshape(n, 9)
+        pose = x[:off_led].reshape(n, 9)
         rots = [so3_exp(pose[i, 0:3]) for i in range(n)]
         ps = pose[:, 3:6]
         vs = pose[:, 6:9]
-        leds = x[9 * n : 9 * n + 3 * m].reshape(m, 3)
-        bg = x[-9:-6]
-        ba = x[-6:-3]
-        g = x[-3:]
-        return rots, ps, vs, leds, bg, ba, g
+        leds = x[off_led:off_bias].reshape(m, 3)
+        bg = x[off_bias : off_bias + 3]
+        ba = x[off_bias + 3 : off_bias + 6]
+        g = x[off_bias + 6 : off_bias + 9]
+        kk = x[off_k : off_k + 3] if refine_intrinsics else None
+        return rots, ps, vs, leds, bg, ba, g, kk
 
     x0 = pack(
         rotations,
@@ -420,13 +440,18 @@ def solve_vio(
 
     sigmas = [interval_sigmas(i) for i in intervals]
 
+    n_k_res = 3 if refine_intrinsics else 0
+
     def residuals(x: np.ndarray) -> np.ndarray:
-        rots, ps, vs, leds, bg, ba, g = unpack(x)
-        out = np.empty(2 * len(obs_flat) + 9 * len(intervals) + 3 + 3 + 1 + 6)
+        rots, ps, vs, leds, bg, ba, g, kk = unpack(x)
+        out = np.empty(2 * len(obs_flat) + 9 * len(intervals) + 3 + 3 + 1 + 6 + n_k_res)
         k = 0
         # Reprojection.
         for i, j, u, v in obs_flat:
-            fx, fy, cx, cy = frames[i].k
+            if kk is not None:
+                fx, fy, cx, cy = kk[0], kk[0], kk[1], kk[2]
+            else:
+                fx, fy, cx, cy = frames[i].k
             xc = rots[i].T @ (leds[j] - ps[i])
             depth = -xc[2]
             if depth <= 1e-6:
@@ -461,26 +486,36 @@ def solve_vio(
         # and roll/pitch error transfers into the gravity estimate).
         out[k : k + 3] = (x[0:3] - rot0_seed) / 1e-6
         out[k + 3 : k + 6] = x[3:6] / 1e-6
+        k += 6
+        if kk is not None:
+            # Loose intrinsics priors: the seed is a FOV guess, not truth.
+            out[k] = (kk[0] - k_seed[0]) / (0.2 * k_seed[0])
+            out[k + 1] = (kk[1] - k_seed[1]) / (0.1 * 2 * k_seed[1])
+            out[k + 2] = (kk[2] - k_seed[2]) / (0.1 * 2 * k_seed[2])
         return out
 
     # Sparsity pattern for 2-point finite differencing.
-    n_res = 2 * len(obs_flat) + 9 * len(intervals) + 6 + 1 + 6
-    n_par = 9 * n + 3 * m + 9
+    n_res = 2 * len(obs_flat) + 9 * len(intervals) + 6 + 1 + 6 + n_k_res
     spar = lil_matrix((n_res, n_par), dtype=np.uint8)
     k = 0
     for i, j, _u, _v in obs_flat:
         spar[k : k + 2, 9 * i : 9 * i + 6] = 1
-        spar[k : k + 2, 9 * n + 3 * j : 9 * n + 3 * j + 3] = 1
+        spar[k : k + 2, off_led + 3 * j : off_led + 3 * j + 3] = 1
+        if refine_intrinsics:
+            spar[k : k + 2, off_k : off_k + 3] = 1
         k += 2
     for i in intervals:
         spar[k : k + 9, 9 * i : 9 * i + 18] = 1  # poses i and i+1
-        spar[k : k + 9, n_par - 9 : n_par] = 1  # biases + gravity
+        spar[k : k + 9, off_bias : off_bias + 9] = 1  # biases + gravity
         k += 9
-    spar[k : k + 6, n_par - 9 : n_par - 3] = 1
+    spar[k : k + 6, off_bias : off_bias + 6] = 1
     k += 6
-    spar[k, n_par - 3 : n_par] = 1
+    spar[k, off_bias + 6 : off_bias + 9] = 1
     k += 1
     spar[k : k + 6, 0:6] = 1
+    k += 6
+    if refine_intrinsics:
+        spar[k : k + 3, off_k : off_k + 3] = 1
 
     fit = least_squares(
         residuals,
@@ -493,7 +528,7 @@ def solve_vio(
         tr_solver="lsmr",
     )
 
-    rots, ps, vs, leds, bg, ba, g = unpack(fit.x)
+    rots, ps, vs, leds, bg, ba, g, kk = unpack(fit.x)
     reproj = fit.fun[: 2 * len(obs_flat)] * px_sigma
     rms = float(np.sqrt(np.mean(reproj**2)))
     quats = np.array([rotmat_to_quat(r) for r in rots])
@@ -506,6 +541,7 @@ def solve_vio(
         gyro_bias=bg.copy(),
         accel_bias=ba.copy(),
         rms_reproj_px=rms,
+        intrinsics=(float(kk[0]), float(kk[0]), float(kk[1]), float(kk[2])) if kk is not None else None,
     )
 
 

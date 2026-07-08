@@ -99,9 +99,22 @@ survives the restart.
   pose-trusting solver on the same observations — and its accelerometer-only
   metric scale matches WebXR's within 2 %. Caveat that cost the first run:
   this device's `rotationRate` axis names defy the W3C spec —
-  `vio_replay --diagnose` data-fits the mapping per device. Next: phase 4
-  (getUserMedia capture, first-class IMU protocol, server-side solve,
-  PnP-based live registration).
+  `vio_replay --diagnose` data-fits the mapping per device.
+- **Phase 4 LANDED: the WebXR-free capture path.** `?noxr=1` (or automatic
+  fallback on devices without camera-access AR — the app now runs in ANY
+  phone browser, no Chrome flag, no ARCore): getUserMedia + rVFC capture
+  (`MediaStreamCaptureSource`), pose-less DENSE records (per-frame labeled
+  samples), DeviceMotion streamed via the new §7.1 `imu_batch` message
+  (client applies its device axis mapping — `?imumap=` override), and the
+  server dispatches pose-less+IMU sessions to `reconstruct_vio` for BOTH the
+  final and the live solve (`OutputMap.frame: "gravity_leveled"`). K seed:
+  `?fx=` → localStorage calibration (the XR path caches its true K) → FOV
+  heuristic; measured: fx error moves METRIC SCALE ~1:1 and barely affects
+  shape, so uncalibrated runs are shape-correct. Deferred: PnP live
+  registration (2D overlay + live inset meanwhile), IMU auto-calibration,
+  warm-started live VIO. Phase-5 gate next: side-by-side XR vs no-XR wall
+  captures incl. the ARCore-breaking reflective setup. 26 test targets
+  green. Docs: `docs/vio-exploration.md` §8.
 
 ### Done (2026-07-08)
 

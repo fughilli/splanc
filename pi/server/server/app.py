@@ -135,7 +135,7 @@ def create_app(
     def _study_detections():
         snap = context.sessions.snapshot()
         if snap is not None:
-            _sid, led_count, detections = snap
+            _sid, led_count, detections, _imu = snap
             return detections, led_count, "active"
         logs = sorted(
             Path(session_dir).glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True

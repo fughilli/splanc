@@ -54,7 +54,9 @@ class DetectionRecord(_StrictModel):
     imgW: int = Field(ge=1)
     imgH: int = Field(ge=1)
     K: Intrinsics
-    pose: Pose
+    # None on the WebXR-free capture path: poses are then solved jointly
+    # from the session's imu_batch samples (docs/vio-exploration.md).
+    pose: Union[Pose, None]
     confidence: float = Field(ge=0.0, le=1.0)
 
 
@@ -102,7 +104,7 @@ class OutputMap(_StrictModel):
     mapId: str
     createdAt: str
     units: Literal["meters"]
-    frame: Literal["webxr_session_ref"]
+    frame: Literal["webxr_session_ref", "gravity_leveled"]
     ledCount: int = Field(ge=0)
     leds: List[LedEntry]
     unmapped: List[int]
@@ -160,6 +162,20 @@ class DetectionsMessage(_StrictModel):
     batch: List[DetectionRecord]
 
 
+class ImuSample(_StrictModel):
+    """One inertial sample, CAMERA frame — the client applies its
+    device-specific DeviceMotion axis mapping before sending."""
+
+    t: float
+    gyro: Vec3
+    accel: Vec3
+
+
+class ImuBatchMessage(_StrictModel):
+    type: Literal["imu_batch"]
+    samples: List[ImuSample]
+
+
 class ExposureStats(_StrictModel):
     """Camera/exposure telemetry: software estimates from the web client;
     iso/exposureTimeMs are reserved for clients that can read the real 3A."""
@@ -205,6 +221,7 @@ ClientMessageInner = Annotated[
         ConfigureMessage,
         StopMappingMessage,
         DetectionsMessage,
+        ImuBatchMessage,
         ExposureReportMessage,
         GetStatusMessage,
         GetPatternMessage,
@@ -317,6 +334,8 @@ __all__ = [
     "ConfigureMessage",
     "StopMappingMessage",
     "DetectionsMessage",
+    "ImuSample",
+    "ImuBatchMessage",
     "ExposureStats",
     "ExposureReportMessage",
     "GetStatusMessage",

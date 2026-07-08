@@ -36,6 +36,13 @@ def _as_obs(detection: Mapping) -> dict:
     if hasattr(detection, "model_dump"):
         detection = detection.model_dump()
     pose = detection["pose"]
+    if pose is None:
+        # Pose-less records come from the WebXR-free capture path and can
+        # only be solved by the visual-inertial reconstructor
+        # (vio_api.reconstruct_vio) — this solver TRUSTS poses by design.
+        raise ValueError(
+            "detection record has no pose; use reconstruct_vio for pose-less sessions"
+        )
     return {
         "ledId": int(detection["ledId"]),
         "u": float(detection["u"]),

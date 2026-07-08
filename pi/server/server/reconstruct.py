@@ -27,19 +27,41 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable, Deque, Optional, Sequence, Tuple
 
-from ledmapper_protocol import DetectionRecord, OutputMap
+from ledmapper_protocol import DetectionRecord, ImuSample, OutputMap
 from reconstruction.api import reconstruct
+from reconstruction.vio_api import reconstruct_vio
 
 from .clock import now_ms
 from .session import MapStore, SessionManager
 
 
+def _poseless(detections) -> bool:
+    """True when the records carry no poses (the WebXR-free capture path).
+
+    Sessions never mix paths: one capture source produced every record. Any
+    posed record therefore selects the pose-trusting solver.
+    """
+    for d in detections:
+        pose = d.get("pose") if isinstance(d, dict) else d.pose
+        if pose is not None:
+            return False
+    return bool(detections)
+
+
 def _reconstruct_sync(log_path: Path) -> OutputMap:
     data = json.loads(Path(log_path).read_text())
     if isinstance(data, list):
-        detections, led_count = data, None
+        detections, led_count, imu = data, None, []
     else:
-        detections, led_count = data.get("detections", []), data.get("ledCount")
+        detections = data.get("detections", [])
+        led_count = data.get("ledCount")
+        imu = data.get("imu", [])
+    if _poseless(detections):
+        # WebXR-free path: solve poses jointly from the session's IMU stream
+        # (docs/vio-exploration.md phase 4). Raises with a clear message when
+        # the IMU stream is missing/too thin — surfaced to the client as
+        # reconstruction_failed.
+        return reconstruct_vio(detections, imu, led_count=led_count)
     return reconstruct(detections, led_count=led_count)
 
 
@@ -65,6 +87,12 @@ LiveSolve = Callable[..., OutputMap]
 # keeps a fast, roughly constant update cadence however long the walk gets.
 # The final (stop_mapping) solve still uses every observation.
 LIVE_MAX_VIEWS_PER_LED = 16
+
+# Interim VIO solves (pose-less sessions) bound cost by keyframe count and
+# optimizer budget instead: the joint solve's size is dominated by pose
+# variables, not per-LED views. ~60 keyframes solves in a few seconds.
+LIVE_VIO_MAX_KEYFRAMES = 60
+LIVE_VIO_MAX_NFEV = 40
 
 
 def _decimate_per_led(
@@ -95,7 +123,21 @@ def _live_solve(
     led_count: int,
     session_id: str,
     prev_map: Optional[OutputMap] = None,
+    imu: Sequence[ImuSample] = (),
 ) -> OutputMap:
+    if _poseless(detections):
+        # Pose-less session: interim joint solve, cost-bounded by keyframe
+        # decimation + optimizer budget. (No warm start yet — the keyframe cap
+        # keeps it a few seconds; docs/vio-exploration.md phase 4 note.)
+        return reconstruct_vio(
+            [d.model_dump() if hasattr(d, "model_dump") else d for d in detections],
+            [s.model_dump() if hasattr(s, "model_dump") else s for s in imu],
+            led_count=led_count,
+            map_id=f"live-{session_id}",
+            max_keyframes=LIVE_VIO_MAX_KEYFRAMES,
+            max_nfev=LIVE_VIO_MAX_NFEV,
+            refine_intrinsics=False,
+        )
     sample = _decimate_per_led(detections, LIVE_MAX_VIEWS_PER_LED)
     seeds = {e.id: e.xyz for e in prev_map.leds} if prev_map is not None else None
     # A stable, recognizable mapId: interim maps are never persisted, so there
@@ -143,7 +185,7 @@ class LiveSolver:
         if snap is None:
             self.reset()
             return False, None
-        session_id, led_count, detections = snap
+        session_id, led_count, detections, imu = snap
         if session_id != self._session_id:
             self.reset()
             self._session_id = session_id
@@ -162,7 +204,7 @@ class LiveSolver:
             self._solved_count = len(detections)
             self._future_n = len(detections)
             self._future = self._executor.submit(
-                self._solve, detections, led_count, session_id, prev_map=self._map
+                self._solve, detections, led_count, session_id, prev_map=self._map, imu=imu
             )
         return True, self._map
 

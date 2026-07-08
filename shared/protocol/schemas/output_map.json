@@ -23,8 +23,8 @@
     },
     "frame": {
       "type": "string",
-      "enum": ["webxr_session_ref"],
-      "description": "Coordinate frame for LED positions."
+      "enum": ["webxr_session_ref", "gravity_leveled"],
+      "description": "Coordinate frame for LED positions. 'webxr_session_ref': the WebXR session reference space of the capture (pose-trusting solver). 'gravity_leveled': the visual-inertial solver's gauge — metric, -Y aligned with measured gravity, origin/yaw arbitrary (the map is level by construction)."
     },
     "ledCount": {
       "type": "integer",

@@ -23,7 +23,9 @@ export interface Blob {
 /** Per-frame capture metadata a detection record needs (§7.4). */
 export interface FrameMeta {
   tCaptureMs: number;
-  pose: Pose;
+  /** Null on the WebXR-free capture path — the server's visual-inertial
+   * solver estimates poses jointly (docs/vio-exploration.md phase 4). */
+  pose: Pose | null;
   K: Intrinsics;
   imgW: number;
   imgH: number;

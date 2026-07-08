@@ -17,6 +17,19 @@ import type { Blob, FrameMeta } from "./types";
 export interface PipelineOptions {
   tracker?: TrackerOptions;
   decoder?: DecoderOptions;
+  /**
+   * WebXR-free capture mode (docs/vio-exploration.md): emit DENSE records —
+   * one per identified blob per sampled frame, pose from the frame meta
+   * (null on that path) — instead of the per-(track, cycle) anchor records.
+   * The server's visual-inertial solver wants every sighting: its pose
+   * variables live at frame times, so per-cycle anchors would starve it
+   * (~10× fewer constraints). Ids still come from the decoder; the decoder
+   * also keeps running for HUD stats and track labeling.
+   */
+  denseRecords?: boolean;
+  /** Emit dense records every Nth frame (default 3 ≈ 10 Hz at 30 fps —
+   * matches the solver's keyframe rate; full rate just burns bandwidth). */
+  denseStride?: number;
 }
 
 /** Per-frame 2D-stage feedback: one entry per detected blob (see step()). */
@@ -38,6 +51,9 @@ export class CvPipeline {
   lastBlobStatus: BlobStatus[] = [];
   private cb: ((records: DetectionRecord[]) => void) | null = null;
   private readonly toServerTime: (tLocalMs: number) => number;
+  private readonly dense: boolean;
+  private readonly denseStride: number;
+  private frameIndex = 0;
 
   constructor(
     readonly params: CodeParams,
@@ -46,6 +62,8 @@ export class CvPipeline {
     opts: PipelineOptions = {},
   ) {
     this.toServerTime = toServerTime;
+    this.dense = opts.denseRecords ?? false;
+    this.denseStride = Math.max(1, opts.denseStride ?? 3);
     // Tracks must outlive the dark stretches of a code word: an LED can be
     // off for the ALL_OFF frame plus every 0-bit — worst case all data bits.
     const coast = opts.tracker?.maxCoastMs ?? 1.25 * cycleMs(params);
@@ -88,7 +106,40 @@ export class CvPipeline {
       }
     }
     const records = this.decoder.step(this.tracker.tracks, matched, meta.tCaptureMs, greens);
-    if (records.length > 0) this.cb?.(records);
+    if (this.dense) {
+      // Dense mode: per-frame samples of every identified blob replace the
+      // per-cycle anchor records on the wire (decoder records still label
+      // tracks and feed stats). Brightest-per-id mirrors the decoder's
+      // reflection dedup at frame granularity.
+      if (this.frameIndex % this.denseStride === 0) {
+        const best = new Map<number, { rec: DetectionRecord; intensity: number }>();
+        for (let i = 0; i < blobs.length; i++) {
+          const tr = this.tracker.lastAssignment[i] ?? null;
+          if (tr === null || tr.ledId === null) continue;
+          const b = blobs[i]!;
+          const prev = best.get(tr.ledId);
+          if (prev !== undefined && prev.intensity >= b.intensity) continue;
+          best.set(tr.ledId, {
+            intensity: b.intensity,
+            rec: {
+              ledId: tr.ledId,
+              tCaptureMs: meta.tCaptureMs,
+              u: b.u,
+              v: b.v,
+              imgW: meta.imgW,
+              imgH: meta.imgH,
+              K: meta.K,
+              pose: meta.pose,
+              confidence: tr.ledConfidence ?? 0.5,
+            },
+          });
+        }
+        if (best.size > 0) this.cb?.([...best.values()].map((e) => e.rec));
+      }
+      this.frameIndex++;
+    } else if (records.length > 0) {
+      this.cb?.(records);
+    }
 
     // Bound memory: drop samples older than the last two cycles.
     const lastCycle = this.decoder.lastCycle;

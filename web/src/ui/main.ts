@@ -20,6 +20,8 @@ import { CvPipeline } from "../cv/pipeline";
 import { DetectorGL } from "../cv/detect";
 import { mul4 } from "../geom/mat4";
 import { defaultWsUrl, LedMapperClient } from "../net/client";
+import { DEFAULT_IMU_MAPPING, ImuRecorder, parseImuMapping } from "../xr/imu";
+import { MediaStreamCaptureSource } from "../xr/mediaStreamCapture";
 import { WebXRCaptureSource, XrUnsupportedError } from "../xr/webxrCapture";
 import { LabelOverlay } from "./labels";
 import { MapView } from "./mapview";
@@ -49,6 +51,20 @@ const detectorOpts = {
   // ?flipv=0 reverts should another device differ.
   flipV: qs.get("flipv") !== "0",
 };
+// WebXR-free capture mode (docs/vio-exploration.md phase 4): ?noxr=1 forces
+// the getUserMedia + IMU path; it is also the automatic fallback when the
+// device can't do WebXR camera-access. ?imumap= overrides the DeviceMotion
+// axis mapping (see xr/imu.ts); ?fx= forces the focal-length seed.
+const forceNoXr = qs.get("noxr") === "1";
+const imuMapping = parseImuMapping(qs.get("imumap") ?? "") ?? DEFAULT_IMU_MAPPING;
+const forcedFx = ((): number | null => {
+  const v = parseFloat(qs.get("fx") ?? "");
+  return Number.isFinite(v) && v > 0 ? v : null;
+})();
+/** K observed by a previous WebXR session on this device — the best focal
+ * calibration available to the no-XR path (fx error ⇒ metric-scale error). */
+const K_CACHE_KEY = "ledmapper.calibratedK";
+
 // Capture auto-negotiation overrides (cv/exposure.ts picks these from the
 // measured scene by default): ?encoding=gray|gray-hue, ?bitms=N.
 const forcedEncoding = ((): Encoding | null => {
@@ -109,8 +125,10 @@ function numParam(name: string, dflt: number): number {
 
 const client = new LedMapperClient(wsUrl);
 let mapView: MapView | null = null;
-let capture: WebXRCaptureSource | null = null;
+let capture: WebXRCaptureSource | MediaStreamCaptureSource | null = null;
 let capturing = false;
+let imuRecorder: ImuRecorder | null = null;
+let previewVideo: HTMLVideoElement | null = null;
 
 // Live (in-capture) solver feedback: solved LEDs 3D-composited over the
 // camera view (markers + id labels) + a small converging-map inset.
@@ -198,14 +216,53 @@ async function startCapture(): Promise<void> {
   const ledCount = Math.max(1, parseInt(ledCountInput.value, 10) || 64);
   startBtn.disabled = true;
   try {
-    // Order matters: the XR session needs a user gesture, so create it first;
-    // start_mapping only once the camera is actually up.
-    capture = new WebXRCaptureSource($("overlay"));
-    await capture.start();
+    // Order matters: the camera/XR session needs a user gesture, so create it
+    // first; start_mapping only once the camera is actually up. WebXR is
+    // attempted unless ?noxr=1; devices without camera-access AR fall back to
+    // the getUserMedia + IMU path automatically (the server then solves poses
+    // jointly — docs/vio-exploration.md phase 4).
+    let usingXr = !forceNoXr;
+    if (usingXr) {
+      try {
+        capture = new WebXRCaptureSource($("overlay"));
+        await capture.start();
+      } catch (e) {
+        if (!(e instanceof XrUnsupportedError)) throw e;
+        usingXr = false;
+        setConn("WebXR unavailable — using camera + IMU capture (poses solved server-side)");
+      }
+    }
+    if (!usingXr) {
+      const cached = ((): { k: [number, number, number, number]; imgW: number; imgH: number } | undefined => {
+        try {
+          const raw = localStorage.getItem(K_CACHE_KEY);
+          return raw ? JSON.parse(raw) : undefined;
+        } catch {
+          return undefined;
+        }
+      })();
+      const ms = new MediaStreamCaptureSource({
+        kSeed: cached,
+        fxOverride: forcedFx ?? undefined,
+      });
+      capture = ms;
+      await capture.start();
+      // Fullscreen live preview behind the (dom-overlay styled) HUD.
+      ms.video.style.cssText =
+        "position:fixed;inset:0;width:100vw;height:100vh;object-fit:cover;z-index:0;background:#000";
+      document.body.prepend(ms.video);
+      previewVideo = ms.video;
+      // Inertial stream: the whole reason this path can skip WebXR.
+      imuRecorder = new ImuRecorder(imuMapping);
+      imuRecorder.start();
+    }
 
-    const detector = new DetectorGL(capture.gl, detectorOpts);
-    const markers = showBlobs ? new MarkerRenderer(capture.gl) : null;
-    const solvedMarkers = new SolvedMarkerRenderer(capture.gl);
+    // Camera texture row order differs between the two paths (XR delivers
+    // bottom-up, video uploads top-down); an explicit ?flipv= always wins.
+    const flipV = qs.get("flipv") !== null ? qs.get("flipv") !== "0" : usingXr;
+    const detector = new DetectorGL(capture!.gl, { ...detectorOpts, flipV });
+    const markers = showBlobs && usingXr ? new MarkerRenderer(capture!.gl) : null;
+    const solvedMarkers = usingXr ? new SolvedMarkerRenderer(capture!.gl) : null;
 
     // -- Pre-capture probe: measure the scene BEFORE the pattern runs, then
     // negotiate the capture configuration (§7.1 start_mapping options). The
@@ -260,7 +317,11 @@ async function startCapture(): Promise<void> {
     let params: CodeParams = started.codeParams;
     let epoch: number = started.patternClockEpoch;
     const makePipeline = (p: CodeParams, e: number): CvPipeline => {
-      const pl = new CvPipeline(p, e, (t) => client.clock.toServerTime(t));
+      // No-XR path: dense per-frame records (pose: null) — the server's
+      // joint solver wants every sighting, not per-cycle anchors.
+      const pl = new CvPipeline(p, e, (t) => client.clock.toServerTime(t), {
+        denseRecords: !usingXr,
+      });
       pl.onDetections((records: DetectionRecord[]) => {
         client.sendDetections(records);
       });
@@ -326,8 +387,20 @@ async function startCapture(): Promise<void> {
       }
     }
 
-    capture.onFrame((f) => {
+    // XR sessions report true intrinsics — cache them as this device's focal
+    // calibration for future no-XR captures (fx error ⇒ metric-scale error).
+    let cachedK = false;
+
+    capture!.onFrame((f) => {
       if (!capturing || !capture) return;
+      if (usingXr && !cachedK) {
+        cachedK = true;
+        try {
+          localStorage.setItem(K_CACHE_KEY, JSON.stringify({ k: f.K, imgW: f.imgW, imgH: f.imgH }));
+        } catch {
+          // storage full/blocked: the calibration cache is best-effort
+        }
+      }
       const blobs = detector.detect(f.texture, f.imgW, f.imgH);
       // Exposure monitoring: blob count every frame, the (cheap but not free)
       // unthresholded scene readback on a subsample — AE moves at ~1 Hz.
@@ -363,22 +436,28 @@ async function startCapture(): Promise<void> {
         imgH: f.imgH,
       });
 
-      // Feedback into the XR layer: solved LEDs, 3D-composited through the
-      // frame's real view/projection so markers overlap the physical LEDs.
-      const gl = capture.gl;
-      const fb = capture.layerFramebuffer;
-      const vp = f.viewport;
-      gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
-      gl.viewport(vp.x, vp.y, vp.width, vp.height);
-      gl.clearColor(0, 0, 0, 0);
-      gl.clear(gl.COLOR_BUFFER_BIT);
-      const mvp = mul4(f.projMatrix, f.viewMatrix);
-      solvedMarkers.draw(mvp);
-      markers?.draw(blobs, f.imgW, f.imgH, vp.width, vp.height, [0.2, 1, 0.6, 0.85]);
-
-      // 2D canvas: blob outlines (detection-stage feedback, colored by track
-      // association) + id labels next to the composited markers.
-      labels.draw(liveLeds, mvp, pipeline.lastBlobStatus, f.imgW, f.imgH);
+      if (usingXr && solvedMarkers !== null) {
+        // Feedback into the XR layer: solved LEDs, 3D-composited through the
+        // frame's real view/projection so markers overlap the physical LEDs.
+        const gl = capture.gl;
+        const fb = capture.layerFramebuffer;
+        const vp = f.viewport;
+        gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+        gl.viewport(vp.x, vp.y, vp.width, vp.height);
+        gl.clearColor(0, 0, 0, 0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+        const mvp = mul4(f.projMatrix, f.viewMatrix);
+        solvedMarkers.draw(mvp);
+        markers?.draw(blobs, f.imgW, f.imgH, vp.width, vp.height, [0.2, 1, 0.6, 0.85]);
+        labels.draw(liveLeds, mvp, pipeline.lastBlobStatus, f.imgW, f.imgH);
+      } else {
+        // No pose, no 3D compositing: the 2D blob/id overlay still gives full
+        // detection+decode feedback over the video preview, and the live map
+        // inset shows the server's joint solve converging. (Client-side PnP
+        // against the solved map — restoring exact registration — is the
+        // phase-4.5 follow-up in docs/vio-exploration.md.)
+        labels.draw([], null, pipeline.lastBlobStatus, f.imgW, f.imgH);
+      }
 
       if (++frameCount % 15 === 0) {
         const s = pipeline.stats;
@@ -389,7 +468,7 @@ async function startCapture(): Promise<void> {
       }
     });
 
-    capture.onEnd(() => {
+    capture!.onEnd(() => {
       // Session ended outside our Stop button (system gesture) — still solve.
       if (capturing) void stopCapture(true);
     });
@@ -426,7 +505,7 @@ async function startCapture(): Promise<void> {
         .then((lm) => {
           if (!capturing || lm.map === null) return;
           liveLeds = lm.map.leds;
-          solvedMarkers.setLeds(liveLeds);
+          solvedMarkers?.setLeds(liveLeds);
           // Pose-corrected temporal inertia: identified tracks now coast by
           // reprojecting their solved 3D position through the frame pose.
           pipeline.updateSolved(liveLeds);
@@ -443,6 +522,19 @@ async function startCapture(): Promise<void> {
         })
         .catch(() => undefined);
     }, 400);
+
+    // No-XR path: stream the inertial batches the joint solver dead-reckons
+    // with (~1 s cadence; ~60 samples per batch).
+    if (imuRecorder !== null) {
+      const rec = imuRecorder;
+      const imuTick = setInterval(() => {
+        if (!capturing) {
+          clearInterval(imuTick);
+          return;
+        }
+        client.sendImuBatch(rec.flush());
+      }, 1000);
+    }
 
     // -- Exposure telemetry + real-time adaptation (varying-light robustness).
     // Every tick: report the measured exposure state to the server (session
@@ -505,6 +597,10 @@ async function startCapture(): Promise<void> {
   } catch (e) {
     capturing = false;
     document.body.classList.remove("in-xr");
+    imuRecorder?.stop();
+    imuRecorder = null;
+    previewVideo?.remove();
+    previewVideo = null;
     await capture?.stop().catch(() => undefined);
     capture = null;
     startBtn.disabled = false;
@@ -521,6 +617,10 @@ async function stopCapture(sessionAlreadyEnded = false): Promise<void> {
   capturing = false;
   stopBtn.disabled = true;
   document.body.classList.remove("in-xr");
+  imuRecorder?.stop();
+  imuRecorder = null;
+  previewVideo?.remove();
+  previewVideo = null;
   if (!sessionAlreadyEnded) await capture?.stop().catch(() => undefined);
   capture = null;
   resetLiveFeedback();

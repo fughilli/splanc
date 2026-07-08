@@ -34,7 +34,9 @@ export class LabelOverlay {
   /** Redraw the frame's annotations. */
   draw(
     leds: readonly LedEntry[],
-    mvp: Mat4,
+    // Null on the pose-less (no-XR) path: blob outlines still draw; the
+    // 3D-composited id labels need a projection and are skipped.
+    mvp: Mat4 | null,
     blobs: readonly BlobStatus[] = [],
     imgW = 0,
     imgH = 0,
@@ -74,6 +76,7 @@ export class LabelOverlay {
     ctx.textBaseline = "middle";
 
     for (const l of leds) {
+      if (mvp === null) break;
       const ndc = projectPoint(mvp, l.xyz[0], l.xyz[1], l.xyz[2]);
       if (ndc === null || ndc.x < -1 || ndc.x > 1 || ndc.y < -1 || ndc.y > 1) continue;
       const x = (ndc.x * 0.5 + 0.5) * viewW;

@@ -22,6 +22,7 @@ import type {
   ConfigureOptions,
   DetectionRecord,
   ExposureStats,
+  ImuSample,
   LiveMapMessage,
   MappingStartedMessage,
   PatternStateMessage,
@@ -222,6 +223,17 @@ export class LedMapperClient {
    */
   sendExposureReport(report: ExposureStats): void {
     this.send({ type: "exposure_report", report });
+  }
+
+  /**
+   * Fire-and-forget inertial batch (§7.1 imu_batch, WebXR-free path). A
+   * batch lost to a reconnect leaves a dead-reckoning gap the solver bridges
+   * (or degrades around) — queueing stale motion data isn't worth the
+   * complexity at this stage.
+   */
+  sendImuBatch(samples: ImuSample[]): void {
+    if (samples.length === 0) return;
+    this.send({ type: "imu_batch", samples });
   }
 
   /**

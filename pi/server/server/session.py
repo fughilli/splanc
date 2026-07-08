@@ -23,7 +23,13 @@ import threading
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
 
-from ledmapper_protocol import CodeParams, DetectionRecord, ExposureStats, OutputMap
+from ledmapper_protocol import (
+    CodeParams,
+    DetectionRecord,
+    ExposureStats,
+    ImuSample,
+    OutputMap,
+)
 
 from .clock import now_ms
 
@@ -38,6 +44,9 @@ class Session:
         self.detections: List[DetectionRecord] = []
         # Client exposure telemetry (§7.1 exposure_report), kept for the log.
         self.exposure: List[ExposureStats] = []
+        # Inertial stream (§7.1 imu_batch) from the WebXR-free capture path:
+        # consumed by the visual-inertial reconstructor for pose-less records.
+        self.imu: List[ImuSample] = []
         # ledId -> number of observations, for live coverage guidance.
         self._views: dict = {}
 
@@ -123,23 +132,32 @@ class SessionManager:
             if self._active is not None:
                 self._active.exposure.append(report)
 
+    def add_imu(self, samples: Sequence[ImuSample]) -> None:
+        """Append an imu_batch; silently dropped when no capture is active
+        (batches race stop just like exposure telemetry)."""
+        with self._lock:
+            if self._active is not None:
+                self._active.imu.extend(samples)
+
     def status(self) -> Tuple[int, int, int]:
         with self._lock:
             if self._active is None:
                 return 0, 0, 0
             return self._active.status()
 
-    def snapshot(self) -> Optional[Tuple[str, int, List[DetectionRecord]]]:
-        """``(session_id, led_count, detections copy)`` of the active capture.
+    def snapshot(self) -> Optional[Tuple[str, int, List[DetectionRecord], List[ImuSample]]]:
+        """``(session_id, led_count, detections copy, imu copy)`` of the
+        active capture.
 
-        The copy is what lets the continuous solver work on a consistent view
-        while new batches keep arriving.
+        The copies are what let the continuous solver work on a consistent
+        view while new batches keep arriving. ``imu`` is empty for WebXR-path
+        sessions (whose records carry poses).
         """
         with self._lock:
             if self._active is None:
                 return None
             s = self._active
-            return s.session_id, s.led_count, list(s.detections)
+            return s.session_id, s.led_count, list(s.detections), list(s.imu)
 
     def pattern_state(self) -> Optional[Tuple[float, CodeParams]]:
         """Return ``(patternClockEpoch, codeParams)`` of the active capture, or None.
@@ -171,6 +189,7 @@ class SessionManager:
             "ledCount": session.led_count,
             "codeParams": session.code_params.model_dump(),
             "exposure": [e.model_dump() for e in session.exposure],
+            "imu": [s.model_dump() for s in session.imu],
             "detections": [d.model_dump() for d in session.detections],
         }
         path = self.session_dir / f"{session.session_id}.json"

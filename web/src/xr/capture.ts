@@ -13,8 +13,10 @@ import type { Intrinsics, Pose } from "@ledmapper/protocol";
 export interface CaptureFrame {
   /** Raw camera image for this frame (texture in the source's GL context). */
   texture: WebGLTexture;
-  /** Camera pose in the session reference space. */
-  pose: Pose;
+  /** Camera pose in the session reference space — null on the WebXR-free
+   * path (MediaStreamCaptureSource), where the server's visual-inertial
+   * solver estimates the trajectory jointly. */
+  pose: Pose | null;
   /** fx, fy, cx, cy for this frame. */
   K: Intrinsics;
   imgW: number;

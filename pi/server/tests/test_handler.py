@@ -144,7 +144,7 @@ def _detections_raw(led_id=0):
 
 def test_get_live_map_idle_reports_inactive(tmp_path):
     solve_calls = []
-    solver = LiveSolver(lambda d, n, s, prev_map=None: solve_calls.append(len(d)) or _stub_map())
+    solver = LiveSolver(lambda d, n, s, prev_map=None, imu=(): solve_calls.append(len(d)) or _stub_map())
     handler, _ctx, _ = _make_handler(tmp_path, live_solver=solver)
     m = _dump(_run(handler, '{"type":"get_live_map"}')[0])
     assert m["type"] == "live_map"
@@ -155,7 +155,7 @@ def test_get_live_map_idle_reports_inactive(tmp_path):
 def test_get_live_map_solves_continuously_single_flight(tmp_path):
     solve_calls = []
 
-    def stub_solve(detections, led_count, session_id, prev_map=None):
+    def stub_solve(detections, led_count, session_id, prev_map=None, imu=()):
         solve_calls.append((len(detections), led_count, session_id))
         return _stub_map()
 
@@ -194,7 +194,7 @@ def test_get_live_map_solves_continuously_single_flight(tmp_path):
 def test_get_live_map_survives_solve_failure(tmp_path):
     calls = []
 
-    def flaky_solve(detections, led_count, session_id, prev_map=None):
+    def flaky_solve(detections, led_count, session_id, prev_map=None, imu=()):
         calls.append(len(detections))
         if len(calls) == 1:
             raise ValueError("degenerate geometry")
@@ -244,7 +244,7 @@ def test_live_decimation_bounds_views_and_keeps_pose_spread():
 
 
 def test_get_live_map_resets_after_stop(tmp_path):
-    solver = LiveSolver(lambda d, n, s, prev_map=None: _stub_map())
+    solver = LiveSolver(lambda d, n, s, prev_map=None, imu=(): _stub_map())
     handler, _ctx, _ = _make_handler(tmp_path, live_solver=solver)
     _run(handler, '{"type":"start_mapping","options":{"ledCount":4}}')
     _run(handler, _detections_raw(0))
@@ -394,3 +394,73 @@ def test_exposure_reports_logged_with_session(tmp_path):
     log = json.loads((ctx.sessions.session_dir / "sess-fixed.json").read_text())
     assert [e["tCaptureMs"] for e in log["exposure"]] == [1.0, 2.0]
     assert log["exposure"][1]["frameIntervalMs"] == 66.7
+
+
+# ---------------------------------------------------------------------------
+# WebXR-free capture path (§7.1 imu_batch + pose-less records) — phase 4 of
+# docs/vio-exploration.md.
+# ---------------------------------------------------------------------------
+
+
+def _imu_batch_raw(t0=0.0, n=3):
+    return json.dumps(
+        {
+            "type": "imu_batch",
+            "samples": [
+                {
+                    "t": t0 + i * 16.7,
+                    "gyro": [0.01, -0.02, 0.005],
+                    "accel": [0.1, 9.75, -0.3],
+                }
+                for i in range(n)
+            ],
+        }
+    )
+
+
+def _poseless_detections_raw(led_id=0, t=1.0):
+    return json.dumps(
+        {
+            "type": "detections",
+            "batch": [
+                {
+                    "ledId": led_id,
+                    "tCaptureMs": t,
+                    "u": 100.0,
+                    "v": 100.0,
+                    "imgW": 1280,
+                    "imgH": 720,
+                    "K": [900.0, 900.0, 640.0, 360.0],
+                    "pose": None,
+                    "confidence": 1.0,
+                }
+            ],
+        }
+    )
+
+
+def test_imu_batches_and_poseless_records_persist_in_the_log(tmp_path):
+    handler, ctx, _ = _make_handler(tmp_path)
+    # IMU when idle is dropped silently (races stop like exposure telemetry).
+    assert _run(handler, _imu_batch_raw()) == []
+
+    _run(handler, '{"type":"start_mapping","options":{"ledCount":4}}')
+    assert _run(handler, _imu_batch_raw(0.0)) == []
+    assert _run(handler, _imu_batch_raw(50.0)) == []
+    assert _run(handler, _poseless_detections_raw(0)) == []
+    _run(handler, '{"type":"stop_mapping"}')
+
+    log = json.loads((ctx.sessions.session_dir / "sess-fixed.json").read_text())
+    assert len(log["imu"]) == 6
+    assert log["imu"][0]["gyro"] == [0.01, -0.02, 0.005]
+    assert log["detections"][0]["pose"] is None
+
+
+def test_snapshot_carries_imu_for_the_live_solver(tmp_path):
+    handler, ctx, _ = _make_handler(tmp_path)
+    _run(handler, '{"type":"start_mapping","options":{"ledCount":4}}')
+    _run(handler, _imu_batch_raw())
+    snap = ctx.sessions.snapshot()
+    assert snap is not None
+    _sid, _n, _dets, imu = snap
+    assert len(imu) == 3

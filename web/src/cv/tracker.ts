@@ -131,9 +131,10 @@ export class Tracker {
     this.solved = map.size > 0 ? map : null;
   }
 
-  /** Pose-aware prediction when identified + solved; constant velocity otherwise. */
+  /** Pose-aware prediction when identified + solved + posed; constant
+   * velocity otherwise (incl. the pose-less WebXR-free capture path). */
   private predictTrack(tr: Track, meta: FrameMeta): { u: number; v: number } {
-    if (tr.ledId !== null && this.solved !== null) {
+    if (tr.ledId !== null && this.solved !== null && meta.pose !== null) {
       const xyz = this.solved.get(tr.ledId);
       if (xyz !== undefined) {
         const pr = project(meta.pose, meta.K, xyz);

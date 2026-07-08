@@ -10,6 +10,7 @@
     { "$ref": "#/$defs/Configure" },
     { "$ref": "#/$defs/StopMapping" },
     { "$ref": "#/$defs/Detections" },
+    { "$ref": "#/$defs/ImuBatch" },
     { "$ref": "#/$defs/ExposureReport" },
     { "$ref": "#/$defs/GetStatus" },
     { "$ref": "#/$defs/GetPattern" },
@@ -103,6 +104,44 @@
         "batch": {
           "type": "array",
           "items": { "$ref": "detection_record.json" }
+        }
+      }
+    },
+    "ImuBatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "samples"],
+      "description": "A batch of inertial samples from the capture device (~1 s cadence, ~60 Hz samples). Sent by the WebXR-free capture path so the server can jointly solve camera poses and LED positions (docs/vio-exploration.md): the gyro dead-reckons between camera frames; the accelerometer provides metric scale and gravity. Samples are in the CAMERA frame (+X right, +Y up, -Z look) — the CLIENT applies its device-specific DeviceMotion axis mapping before sending, because only it knows the device. No reply; persisted in the session log.",
+      "properties": {
+        "type": { "const": "imu_batch" },
+        "samples": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ImuSample" }
+        }
+      }
+    },
+    "ImuSample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "gyro", "accel"],
+      "properties": {
+        "t": {
+          "type": "number",
+          "description": "Phone monotonic clock at the sample, ms — same domain as DetectionRecord.tCaptureMs."
+        },
+        "gyro": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Angular rate [x, y, z] in rad/s, camera frame."
+        },
+        "accel": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Specific force (a − g) [x, y, z] in m/s², camera frame. A device at rest reads +9.81 along whichever camera axis points up."
         }
       }
     },
