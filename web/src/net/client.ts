@@ -19,12 +19,15 @@
 import type {
   ClientMessage,
   CodeParams,
+  ConfigureOptions,
   DetectionRecord,
+  ExposureStats,
   LiveMapMessage,
   MappingStartedMessage,
   PatternStateMessage,
   ResultReadyMessage,
   ServerMessage,
+  StartMappingOptions,
   StatusMessage,
   WelcomeMessage,
 } from "@ledmapper/protocol";
@@ -186,12 +189,39 @@ export class LedMapperClient {
     return best;
   }
 
-  async startMapping(ledCount: number): Promise<MappingStartedMessage> {
+  /**
+   * Begin a capture. The client is the configuration authority (§7.1): pass
+   * the negotiated encoding/bitPeriodMs in `config`; omitted fields fall back
+   * to server defaults.
+   */
+  async startMapping(
+    ledCount: number,
+    config: Omit<StartMappingOptions, "ledCount"> = {},
+  ): Promise<MappingStartedMessage> {
     const reply = await this.request(
-      { type: "start_mapping", options: { ledCount } },
+      { type: "start_mapping", options: { ledCount, ...config } },
       "mapping_started",
     );
     return reply as MappingStartedMessage;
+  }
+
+  /**
+   * Mid-capture renegotiation (§7.1 configure): overlay the given fields on
+   * the active capture's code-book. The server restamps the pattern epoch;
+   * the reply carries the new epoch + params to rebuild the decode pipeline
+   * against. Detections already sent are preserved server-side.
+   */
+  async configure(options: ConfigureOptions): Promise<PatternStateMessage> {
+    return (await this.request({ type: "configure", options }, "pattern_state")) as PatternStateMessage;
+  }
+
+  /**
+   * Fire-and-forget exposure telemetry (§7.1 exposure_report). Unlike
+   * detections these are snapshots, not evidence — a report lost to a
+   * reconnect is stale by the time the socket is back, so no queueing.
+   */
+  sendExposureReport(report: ExposureStats): void {
+    this.send({ type: "exposure_report", report });
   }
 
   /**

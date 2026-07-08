@@ -51,10 +51,11 @@ export interface DetectionRecord {
 
 export type Encoding = "gray" | "gray-hue";
 export type SyncPattern = "on_off";
+export type Fec = "none" | "secded";
 
 export interface CodeParams {
   ledCount: number;
-  /** ceil(log2(ledCount)) */
+  /** Coded bit frames per cycle: ceil(log2(ledCount+1)) data bits + FEC parity frames. */
   bits: number;
   encoding: Encoding;
   /** Hold time per bit frame, in milliseconds. */
@@ -62,6 +63,9 @@ export interface CodeParams {
   syncPattern: SyncPattern;
   /** 2 (sync delimiter) + bits */
   cycleFrames: number;
+  /** FEC around the Gray data word ('secded' = extended Hamming, d=4:
+   * correct 1 misread bit frame, detect-and-reject 2). Absent = 'none'. */
+  fec?: Fec | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -110,13 +114,33 @@ export interface TimeSyncPingMessage {
   t0: number;
 }
 
+/** The client is the configuration authority: it measured the scene, so it
+ * chooses the code carrier and signaling rate; omitted fields fall back to
+ * server defaults. */
 export interface StartMappingOptions {
   ledCount: number;
+  /** Code carrier, chosen from measured light: dark -> 'gray', lit -> 'gray-hue'. */
+  encoding?: Encoding;
+  /** Signaling rate: each bit window should span >= ~3 camera frame intervals. */
+  bitPeriodMs?: number;
 }
 
 export interface StartMappingMessage {
   type: "start_mapping";
   options: StartMappingOptions;
+}
+
+/** Mid-capture renegotiation: overlay these on the active capture's params,
+ * restamp the pattern epoch, keep collected detections. Reply: pattern_state. */
+export interface ConfigureOptions {
+  ledCount?: number;
+  encoding?: Encoding;
+  bitPeriodMs?: number;
+}
+
+export interface ConfigureMessage {
+  type: "configure";
+  options: ConfigureOptions;
 }
 
 export interface StopMappingMessage {
@@ -126,6 +150,37 @@ export interface StopMappingMessage {
 export interface DetectionsMessage {
   type: "detections";
   batch: DetectionRecord[];
+}
+
+/** Camera/exposure telemetry (§7.1 exposure_report). The web client cannot
+ * read the real 3A/ISP state (WebXR exposes only the camera texture), so these
+ * are software estimates; iso/exposureTimeMs are reserved for clients that can. */
+export interface ExposureStats {
+  /** Phone monotonic clock at the end of the measurement window, ms. */
+  tCaptureMs: number;
+  /** Median camera frame interval, ms — the shutter-speed proxy. */
+  frameIntervalMs: number;
+  /** Mean scene luminance [0,1], unthresholded downsampled frame. */
+  meanLuma: number;
+  /** 95th-percentile scene luminance [0,1]. */
+  p95Luma: number;
+  /** Fraction of pixels at/above 0.98 (saturated highlights). */
+  clipFrac: number;
+  /** Median detector blobs per frame at the current threshold. */
+  blobCount: number;
+  /** Detector luminance threshold in effect. */
+  detectorThreshold: number;
+  /** Real sensor ISO from the 3A/ISP, when the platform exposes it. */
+  iso?: number | null;
+  /** Real sensor exposure time (ms), when the platform exposes it. */
+  exposureTimeMs?: number | null;
+  /** WebXR light-estimation primary intensity (max RGB, relative units). */
+  ambientIntensity?: number | null;
+}
+
+export interface ExposureReportMessage {
+  type: "exposure_report";
+  report: ExposureStats;
 }
 
 export interface GetStatusMessage {
@@ -146,8 +201,10 @@ export type ClientMessage =
   | HelloMessage
   | TimeSyncPingMessage
   | StartMappingMessage
+  | ConfigureMessage
   | StopMappingMessage
   | DetectionsMessage
+  | ExposureReportMessage
   | GetStatusMessage
   | GetPatternMessage
   | GetLiveMapMessage;

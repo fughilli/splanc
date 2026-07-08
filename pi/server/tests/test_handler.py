@@ -76,7 +76,9 @@ def test_start_mapping_uses_requested_led_count(tmp_path):
     m = _dump(out[0])
     assert m["type"] == "mapping_started"
     assert m["codeParams"]["ledCount"] == 64
-    assert m["codeParams"]["bits"] == 7  # ceil(log2(64 + 1)) — id+1 codewords
+    # 7 data bits (ceil(log2(64+1)), id+1 codewords) + SEC-DED parity = 12.
+    assert m["codeParams"]["fec"] == "secded"
+    assert m["codeParams"]["bits"] == 12
     assert "patternClockEpoch" in m
     assert ctx.sessions.active is not None
 
@@ -296,3 +298,99 @@ def test_malformed_message_returns_error(tmp_path):
 
     bad_json = _dump(_run(handler, "not json at all")[0])
     assert bad_json["type"] == "error" and bad_json["code"] == "bad_message"
+
+
+# ---------------------------------------------------------------------------
+# Client-driven configuration (§7.1 start_mapping options / configure) and
+# exposure telemetry. The client measured the scene; the server adopts its
+# choices — no CLI flags are needed for any encoding/rate.
+# ---------------------------------------------------------------------------
+
+
+def test_start_mapping_adopts_client_encoding_and_rate(tmp_path):
+    handler, _ctx, _ = _make_handler(tmp_path)
+    out = _run(
+        handler,
+        '{"type":"start_mapping","options":{"ledCount":64,"encoding":"gray-hue","bitPeriodMs":200}}',
+    )
+    m = _dump(out[0])
+    assert m["type"] == "mapping_started"
+    assert m["codeParams"]["encoding"] == "gray-hue"
+    assert m["codeParams"]["bitPeriodMs"] == 200
+    assert m["codeParams"]["ledCount"] == 64
+    # Followers see the same client-chosen code-book.
+    p = _dump(_run(handler, '{"type":"get_pattern"}')[0])
+    assert p["active"] is True and p["codeParams"] == m["codeParams"]
+
+
+def test_start_mapping_without_options_uses_server_defaults(tmp_path):
+    handler, _ctx, _ = _make_handler(tmp_path)
+    m = _dump(_run(handler, '{"type":"start_mapping","options":{"ledCount":64}}')[0])
+    assert m["codeParams"]["encoding"] == "gray"  # ctx default
+    assert m["codeParams"]["bitPeriodMs"] == 100.0  # ctx default
+
+
+def test_configure_renegotiates_mid_capture(tmp_path):
+    handler, ctx, _ = _make_handler(tmp_path)
+    started = _dump(_run(handler, '{"type":"start_mapping","options":{"ledCount":4}}')[0])
+    _run(handler, _detections_raw(0))
+
+    out = _run(handler, '{"type":"configure","options":{"bitPeriodMs":200,"encoding":"gray-hue"}}')
+    m = _dump(out[0])
+    assert m["type"] == "pattern_state" and m["active"] is True
+    # Unset fields keep the capture's values; set fields overlay.
+    assert m["codeParams"]["ledCount"] == 4
+    assert m["codeParams"]["bitPeriodMs"] == 200
+    assert m["codeParams"]["encoding"] == "gray-hue"
+    # The pattern epoch is restamped so all parties re-anchor the cycle.
+    assert m["patternClockEpoch"] is not None
+
+    # Followers polling get_pattern see the new code-book immediately.
+    p = _dump(_run(handler, '{"type":"get_pattern"}')[0])
+    assert p["codeParams"] == m["codeParams"]
+    assert p["patternClockEpoch"] == m["patternClockEpoch"]
+
+    # Detections from before the renegotiation are preserved in the log.
+    _run(handler, '{"type":"stop_mapping"}')
+    log = json.loads((ctx.sessions.session_dir / "sess-fixed.json").read_text())
+    assert len(log["detections"]) == 1
+    assert log["codeParams"]["bitPeriodMs"] == 200
+
+
+def test_configure_without_session_errors(tmp_path):
+    handler, _ctx, _ = _make_handler(tmp_path)
+    err = _dump(_run(handler, '{"type":"configure","options":{"bitPeriodMs":200}}')[0])
+    assert err["type"] == "error" and err["code"] == "no_session"
+
+
+def _exposure_raw(t=1.0, interval=33.3):
+    return json.dumps(
+        {
+            "type": "exposure_report",
+            "report": {
+                "tCaptureMs": t,
+                "frameIntervalMs": interval,
+                "meanLuma": 0.05,
+                "p95Luma": 0.2,
+                "clipFrac": 0.001,
+                "blobCount": 8,
+                "detectorThreshold": 0.6,
+            },
+        }
+    )
+
+
+def test_exposure_reports_logged_with_session(tmp_path):
+    handler, ctx, _ = _make_handler(tmp_path)
+    # Telemetry when idle is silently dropped (no error, no reply).
+    assert _run(handler, _exposure_raw()) == []
+
+    _run(handler, '{"type":"start_mapping","options":{"ledCount":4}}')
+    assert _run(handler, _exposure_raw(1.0)) == []
+    assert _run(handler, _exposure_raw(2.0, interval=66.7)) == []
+    _run(handler, _detections_raw(0))
+    _run(handler, '{"type":"stop_mapping"}')
+
+    log = json.loads((ctx.sessions.session_dir / "sess-fixed.json").read_text())
+    assert [e["tCaptureMs"] for e in log["exposure"]] == [1.0, 2.0]
+    assert log["exposure"][1]["frameIntervalMs"] == 66.7

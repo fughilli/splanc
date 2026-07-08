@@ -94,6 +94,7 @@ py_library(
     srcs = [
         "python/ledmapper_protocol/__init__.py",
         "python/ledmapper_protocol/_generated.py",
+        "python/ledmapper_protocol/fec.py",
     ],
     imports = ["python"],
     deps = [
@@ -115,6 +116,7 @@ py_test(
     name = "roundtrip_test",
     srcs = [
         "tests/pytest_main.py",
+        "tests/test_fec.py",
         "tests/test_roundtrip.py",
     ],
     main = "tests/pytest_main.py",

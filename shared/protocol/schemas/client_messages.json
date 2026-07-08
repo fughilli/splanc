@@ -7,8 +7,10 @@
     { "$ref": "#/$defs/Hello" },
     { "$ref": "#/$defs/TimeSyncPing" },
     { "$ref": "#/$defs/StartMapping" },
+    { "$ref": "#/$defs/Configure" },
     { "$ref": "#/$defs/StopMapping" },
     { "$ref": "#/$defs/Detections" },
+    { "$ref": "#/$defs/ExposureReport" },
     { "$ref": "#/$defs/GetStatus" },
     { "$ref": "#/$defs/GetPattern" },
     { "$ref": "#/$defs/GetLiveMap" }
@@ -43,6 +45,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["type", "options"],
+      "description": "Begin a capture. The CLIENT is the configuration authority: it measured the scene (light level, camera frame rate), so it chooses the code carrier and signaling rate. Omitted fields fall back to server defaults — the server needs no command-line configuration.",
       "properties": {
         "type": { "const": "start_mapping" },
         "options": {
@@ -50,7 +53,35 @@
           "additionalProperties": false,
           "required": ["ledCount"],
           "properties": {
-            "ledCount": { "type": "integer", "minimum": 1 }
+            "ledCount": { "type": "integer", "minimum": 1 },
+            "encoding": {
+              "type": ["string", "null"],
+              "enum": ["gray", "gray-hue", null],
+              "description": "Code carrier (see code_params.json). Chosen by the client from measured light conditions: dark scene -> 'gray' (LEDs outshine everything), lit scene -> 'gray-hue' (constant-brightness color code). Null/omitted -> server default."
+            },
+            "bitPeriodMs": {
+              "type": ["number", "null"],
+              "exclusiveMinimum": 0,
+              "description": "Signaling rate. Chosen by the client so each bit window spans >= ~3 camera frame intervals — in low light the camera lengthens exposure and drops fps, so the client requests a slower code. Null/omitted -> server default."
+            }
+          }
+        }
+      }
+    },
+    "Configure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "options"],
+      "description": "Mid-capture renegotiation: rebuild the code-book from the active capture's parameters overlaid with the provided fields and restamp the pattern clock epoch. Detections already collected are kept — they are (ledId, pixel, pose) records, independent of the signaling that produced them. The server replies with pattern_state carrying the new epoch + codeParams; pattern followers (the wall, the M1 driver) pick the change up through their normal pattern polling. Sent when measured conditions drift during a capture (e.g. the camera drops to 15 fps in dimming light and the current bit period no longer spans 3 camera frames). Errors with no_session when no capture is active.",
+      "properties": {
+        "type": { "const": "configure" },
+        "options": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "ledCount": { "type": ["integer", "null"], "minimum": 1 },
+            "encoding": { "type": ["string", "null"], "enum": ["gray", "gray-hue", null] },
+            "bitPeriodMs": { "type": ["number", "null"], "exclusiveMinimum": 0 }
           }
         }
       }
@@ -72,6 +103,73 @@
         "batch": {
           "type": "array",
           "items": { "$ref": "detection_record.json" }
+        }
+      }
+    },
+    "ExposureReport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "report"],
+      "description": "Periodic camera/exposure telemetry from the capture client (~every 2 s while capturing). The web client cannot read the camera's real 3A/ISP state (WebXR raw camera access exposes only the texture), so it reports software estimates: luminance statistics from an unthresholded downsampled readback plus the measured frame cadence (long exposure in low light lowers fps, making frameIntervalMs a shutter-speed proxy). iso/exposureTimeMs are reserved for clients that CAN read the 3A state (a native app, or a future web API); ambientIntensity comes from WebXR light estimation when available. The server appends reports to the session log for offline diagnosis; no reply.",
+      "properties": {
+        "type": { "const": "exposure_report" },
+        "report": { "$ref": "#/$defs/ExposureStats" }
+      }
+    },
+    "ExposureStats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tCaptureMs", "frameIntervalMs", "meanLuma", "p95Luma", "clipFrac", "blobCount", "detectorThreshold"],
+      "properties": {
+        "tCaptureMs": {
+          "type": "number",
+          "description": "Phone monotonic clock at the end of the measurement window, ms."
+        },
+        "frameIntervalMs": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Median camera frame interval over the window, ms. Rises when low light lengthens exposure — the shutter-speed proxy the signaling rate is negotiated against."
+        },
+        "meanLuma": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Mean scene luminance in [0,1] from the unthresholded downsampled frame."
+        },
+        "p95Luma": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "95th-percentile scene luminance in [0,1]."
+        },
+        "clipFrac": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Fraction of pixels at/above 0.98 — saturated highlights (blooming LEDs / clipped chroma)."
+        },
+        "blobCount": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Median detector blobs per frame over the window, at the current threshold."
+        },
+        "detectorThreshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Detector luminance threshold in effect during the window."
+        },
+        "iso": {
+          "type": ["number", "null"],
+          "description": "Real sensor ISO from the 3A/ISP, when the platform exposes it (native clients). Null/omitted on the web client."
+        },
+        "exposureTimeMs": {
+          "type": ["number", "null"],
+          "description": "Real sensor exposure time from the 3A/ISP, ms, when the platform exposes it. Null/omitted on the web client."
+        },
+        "ambientIntensity": {
+          "type": ["number", "null"],
+          "description": "WebXR light-estimation primary light intensity (max RGB component, relative units), when the session grants light-estimation."
         }
       }
     },

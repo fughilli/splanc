@@ -80,11 +80,36 @@ bazelisk run //web:serve            # https on 0.0.0.0:8443
    exports the grid layout (in LED-pitch units) for comparison up to a
    similarity transform.
 
-Useful query params — capture page: `?threshold=0.6` (detector luminance
-threshold), `?downscale=2`, `?flipv=0` (camera-texture row order; flipped by
-default after on-device validation 2026-07-03 — see `DetectorOptions.flipV`),
-`?leds=N`, `?blobs=1` (extra GL blob markers). Wall page: `?cols=N`, `?gap`,
+Useful query params — capture page: `?threshold=0.6` (FORCE a fixed detector
+luminance threshold, disabling the blob-count servo; unset, the threshold
+starts at 0.6 and adapts), `?downscale=2`, `?flipv=0` (camera-texture row
+order; flipped by default after on-device validation 2026-07-03 — see
+`DetectorOptions.flipV`), `?leds=N`, `?blobs=1` (extra GL blob markers),
+`?encoding=gray|gray-hue` and `?bitms=N` (FORCE the code carrier / signaling
+rate, skipping auto-negotiation for that field). Wall page: `?cols=N`, `?gap`,
 `?margin`, `?dot` (dot diameter as a fraction of pitch).
+
+### Auto-negotiated capture configuration (varying-light robustness)
+
+The client is the configuration authority — **no server flags needed** (the
+old `--encoding` / `--bit-period-ms` flags are now only fallbacks for clients
+that send bare options). On **Start**, the capture page probes the scene for
+~1.2 s before the pattern runs (HUD: "Measuring light…"): an unthresholded
+downsampled readback gives scene luminance stats, and the frame cadence is
+the shutter-speed proxy (WebXR exposes no real ISO/shutter — low light
+lengthens exposure and drops fps, which we CAN see). It then sends
+`start_mapping` options (§7.1): dark scene → `gray`, lit scene → `gray-hue`;
+`bitPeriodMs` = ≥3 camera frame intervals, so a 15 fps low-light camera gets
+a 210 ms code instead of undecodable 100 ms bits.
+
+During the capture the page streams `exposure_report` telemetry (~2 s cadence;
+persisted in the session log's `exposure` array for offline diagnosis), servos
+the detector threshold on the measured blob count (flood → raise, starve →
+walk back), and **renegotiates mid-capture** via the `configure` message when
+conditions drift (fps sag, lights toggled): the server restamps the pattern
+epoch, the wall follows on its next `get_pattern` poll, the phone rebuilds its
+decode pipeline, and detections already collected stay valid. Two consecutive
+2 s ticks must agree before a renegotiation fires (hysteresis).
 
 ### How the wall stays in sync
 

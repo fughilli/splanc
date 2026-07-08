@@ -32,6 +32,13 @@ export interface CaptureFrame {
   projMatrix: Float32Array;
   /** Region of the layer framebuffer this view renders into. */
   viewport: { x: number; y: number; width: number; height: number };
+  /**
+   * WebXR light-estimation ambient intensity (max RGB component of the
+   * primary light, relative units), when the session granted the feature and
+   * the runtime has an estimate this frame. Feeds exposure telemetry — the
+   * closest thing the web platform has to reading the camera's 3A state.
+   */
+  ambientIntensity?: number | undefined;
 }
 
 export interface CaptureSource {

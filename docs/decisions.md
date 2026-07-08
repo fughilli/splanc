@@ -254,3 +254,72 @@ Never committed; rotatable via `bazel run //pi/provisioning:keys -- rotate`.
   clutter fail the green sync (it normalizes to neutral). Always-lit dots
   also remove the coasting/AE-pumping failure modes. Enabled by server flag
   `--encoding gray-hue`; wall + phone follow `codeParams.encoding`.
+
+## Capture auto-negotiation + exposure telemetry (pinned 2026-07-08)
+
+- **The client configures the code, not the server CLI.** `start_mapping`
+  options grew optional `encoding` + `bitPeriodMs`; a new `configure` message
+  renegotiates them mid-capture (server restamps `patternClockEpoch`,
+  detections already collected are kept — they are (ledId, pixel, pose)
+  records, independent of the signaling that produced them). Rationale: only
+  the phone can see the light. The server's `--encoding`/`--bit-period-ms`
+  flags remain solely as fallbacks for bare clients.
+- **No real 3A/ISP readout exists on the web path.** WebXR raw camera access
+  exposes a texture, no ISO/exposure metadata; there is no concurrent
+  getUserMedia while ARCore holds the camera. The `exposure_report` message
+  therefore carries software estimates — scene luma stats from an
+  unthresholded 64-px-wide readback (`DetectorGL.measure`), median frame
+  interval as the shutter proxy (low light → longer integration → lower fps),
+  and WebXR `light-estimation` ambient intensity when granted — with
+  `iso`/`exposureTimeMs` reserved as nullable fields for a future native
+  client that can read the real state.
+- **Negotiation rules** (`web/src/cv/exposure.ts`, unit-tested):
+  - encoding: mean scene luma < 0.08 → `gray` (dark room: LEDs outshine all;
+    camera clipping kills gray-hue's green sync — measured gScore ~0.13 vs
+    the 0.25 gate, 2026-07-07 trace), else `gray-hue`. Mid-capture switch
+    only outside a 0.06/0.12 hysteresis band.
+  - bit period: ≥ 3 camera frame intervals, 10 ms grid, clamped [60, 400] ms.
+    Mid-capture renegotiation below 2.5 frames/bit (decode starving) or when
+    2× faster than needed (reclaim cycle time); two consecutive 2 s ticks
+    must agree.
+  - detector threshold: ±0.05/tick servo on median blob count (flood ceiling
+    max(150, 3·ledCount), starve floor ledCount/2), bounded [0.6, 0.9];
+    `?threshold=` forces and disables.
+- **Session logs** gained additive `codeParams` + `exposure` keys (M3's
+  reader ignores unknown keys).
+
+## SEC-DED FEC on the blink code (pinned 2026-07-08)
+
+- **Why.** The raw codebook (`gray(id+1)` over `ceil(log2(n+1))` frames) has
+  minimum Hamming distance 1: any single decisively-wrong bit window (all of
+  a window's samples agreeing on the wrong value — chroma misread near the
+  gray-hue thresholds, brief track contamination, a reflection landing on a
+  neighboring track) decodes to a valid WRONG id whenever the flipped word
+  lands in range, and the in-range fraction `(n+1)/2^bits` is ≥50 % by
+  construction (≈100 % at counts like 63). Window voting and the confidence
+  gate cannot see this failure — a decisive window has margin 1.0. Only the
+  M3 geometric outlier rejection caught it downstream, and that fails for
+  systematic wrong decodes (the decode-collision floods of 2026-07-05).
+- **What.** Extended Hamming, distance 4, used as **SEC-DED**: the Gray data
+  word (k bits) gains r Hamming parity bits (2^r ≥ k+r+1) at power-of-two
+  positions plus one overall parity bit transmitted last. Single bit-frame
+  errors are CORRECTED; double errors are DETECTED and the cycle rejected —
+  never miscorrected (a d=4 guarantee; triples can alias, at which point the
+  track is garbage and geometry remains the backstop). Note d=4 does NOT
+  give 2-bit correction — that would need d=5/6 (BCH); SEC-DED was chosen
+  deliberately: our double-window errors mean track contamination, where
+  rejection is the correct response anyway.
+- **Cost.** Transmitted bits k → k+r+1: 64 LEDs 7→12 bits (cycle 9→14
+  frames, +56 %), 1024 LEDs 11→16 (13→18, +38 %). At 100 ms bits a 64-LED
+  cycle is now 1.4 s. Accepted: identification latency, not accuracy, and
+  the id repeats every cycle.
+- **Where.** Canonical implementation `ledmapper_protocol/fec.py` (encode +
+  syndrome decode), TS mirror `web/src/code/fec.ts`, pinned by the
+  Python-generated `web/tests/golden_secded16.json`
+  (`bazelisk run //pi/led_driver:gen_golden -- secded16` regenerates).
+  `CodeParams` gained optional `fec: "none" | "secded"` (absent = "none",
+  legacy); `bits`/`cycleFrames` now count TRANSMITTED frames. M2's codebook
+  emits `fec="secded"` by default; the driver frame plan, wall, and phone
+  decoder all follow `codeParams`. Decoder stats gained `correctedCycles` +
+  `rejectedFec`. Exhaustive tests both languages (every 1-flip corrected,
+  every 2-flip rejected, k ≤ 11) + synthetic pipeline corruption tests.

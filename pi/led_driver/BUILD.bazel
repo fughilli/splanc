@@ -31,6 +31,15 @@ py_binary(
     deps = [":led_driver"],
 )
 
+# Emits the cross-language goldens pinning the TS code mirrors to this
+# driver's logic:  bazelisk run //pi/led_driver:gen_golden -- secded16
+py_binary(
+    name = "gen_golden",
+    srcs = ["gen_golden.py"],
+    imports = ["."],
+    deps = [":led_driver"],
+)
+
 py_test(
     name = "led_driver_test",
     srcs = [

@@ -38,6 +38,7 @@ export class WebXRCaptureSource implements CaptureSource {
   private refSpace: XRReferenceSpace | null = null;
   private binding: XRWebGLBinding | null = null;
   private glLayer: XRWebGLLayer | null = null;
+  private lightProbe: XRLightProbe | null = null;
   private frameCb: ((f: CaptureFrame) => void) | null = null;
   private endCb: (() => void) | null = null;
 
@@ -96,7 +97,9 @@ export class WebXRCaptureSource implements CaptureSource {
     try {
       const init: XRSessionInit = {
         requiredFeatures: ["camera-access"],
-        optionalFeatures: ["local-floor", "dom-overlay"],
+        // light-estimation feeds exposure telemetry when granted (optional —
+        // capture works without it, the estimate is advisory).
+        optionalFeatures: ["local-floor", "dom-overlay", "light-estimation"],
         ...(this.overlayRoot ? { domOverlay: { root: this.overlayRoot } } : {}),
       };
       session = await navigator.xr.requestSession("immersive-ar", init);
@@ -112,6 +115,7 @@ export class WebXRCaptureSource implements CaptureSource {
       this.refSpace = null;
       this.binding = null;
       this.glLayer = null;
+      this.lightProbe = null;
       this.endCb?.();
     });
 
@@ -127,6 +131,17 @@ export class WebXRCaptureSource implements CaptureSource {
     }
 
     this.binding = new XRWebGLBinding(session, this.gl);
+
+    // Light estimation is best-effort: absent API, denied feature, or a
+    // rejected probe all leave lightProbe null and frames carry no estimate.
+    if (typeof session.requestLightProbe === "function") {
+      try {
+        this.lightProbe = await session.requestLightProbe();
+      } catch {
+        this.lightProbe = null;
+      }
+    }
+
     session.requestAnimationFrame(this.xrFrame);
   }
 
@@ -165,6 +180,15 @@ export class WebXRCaptureSource implements CaptureSource {
       // Capture timestamp: the rAF callback time is the closest monotonic
       // stamp we can get to the camera frame; constant camera→display latency
       // is absorbed by the decoder's sync-delimiter alignment (§8.1).
+      let ambientIntensity: number | undefined;
+      if (this.lightProbe && typeof frame.getLightEstimate === "function") {
+        const est = frame.getLightEstimate(this.lightProbe);
+        if (est) {
+          const i = est.primaryLightIntensity;
+          ambientIntensity = Math.max(i.x, i.y, i.z);
+        }
+      }
+
       const vp = this.glLayer?.getViewport(view);
       const f: CaptureFrame = {
         texture,
@@ -173,6 +197,7 @@ export class WebXRCaptureSource implements CaptureSource {
         imgW: camera.width,
         imgH: camera.height,
         tCaptureMs: performance.now(),
+        ambientIntensity,
         viewMatrix: view.transform.inverse.matrix,
         projMatrix: view.projectionMatrix,
         viewport: vp

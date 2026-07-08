@@ -1,0 +1,236 @@
+/**
+ * Exposure monitoring + capture auto-negotiation (varying-light robustness).
+ *
+ * The web client cannot read the camera's real 3A/ISP state — WebXR raw
+ * camera access exposes only the texture, no ISO/shutter metadata — so this
+ * module derives software proxies and negotiates the capture configuration
+ * from them:
+ *
+ *  - **Scene luminance** (mean/p95/clip fraction) from an unthresholded,
+ *    downsampled readback ({@link DetectorGL.measure}). Auto-exposure targets
+ *    mid-gray; a scene it can't lift above ~dark despite max gain IS a dark
+ *    room, which is what the encoding choice keys on.
+ *  - **Frame cadence** as the shutter-speed proxy: in low light the camera
+ *    lengthens exposure and the delivered frame interval rises (30 → 15 fps
+ *    is a doubling of integration time). The SIGNALING RATE is negotiated
+ *    against this so each bit window always spans enough camera frames to
+ *    vote — a fixed 100 ms bit period is undecodable at 10 fps.
+ *
+ * Both feed three consumers:
+ *  1. `recommendConfig` — the pre-capture negotiation (start_mapping options).
+ *  2. `planReconfigure` — mid-capture renegotiation (§7.1 configure) when the
+ *     measured cadence drifts so far the current rate starves bit windows.
+ *  3. `adjustThreshold` — a detector-threshold servo on the measured blob
+ *     count (the flood/starve signal), replacing the fixed 0.6 operating
+ *     point that failed in bright rooms (~200 clutter blobs/frame, 2026-07-05).
+ *
+ * Everything here is pure state-in/state-out and unit-tested; the capture page
+ * owns the timers and the wire messages.
+ */
+
+import type { Encoding, ExposureStats } from "@ledmapper/protocol";
+
+/** Scene luminance statistics from one unthresholded downsampled frame. */
+export interface SceneStats {
+  meanLuma: number;
+  p95Luma: number;
+  /** Fraction of pixels at/above ~0.98 — clipped highlights. */
+  clipFrac: number;
+}
+
+export interface FrameSample {
+  tMs: number;
+  blobCount: number;
+  /** Present on frames where the (cheaper, subsampled) measure pass ran. */
+  scene?: SceneStats | undefined;
+}
+
+/**
+ * Scenes darker than this (mean luma, after auto-exposure did its best) are
+ * treated as DARK: the 'gray' intensity code wins there because the LEDs
+ * outshine everything, while camera clipping washes the chroma out of
+ * 'gray-hue' (the green sync died at gScore ~0.13 vs the 0.25 gate in the
+ * 2026-07-07 dark-room trace). Brighter scenes get 'gray-hue', whose
+ * white-relative chroma survives uncontrolled lighting that drowns intensity
+ * blinking. AE on a phone targets ~mid-gray and reaches it in any lit room;
+ * it undershoots badly only when there is genuinely no light.
+ */
+export const DARK_SCENE_MEAN_LUMA = 0.08;
+
+/** Minimum camera frames a bit window must span for centrality-weighted
+ * window voting to have evidence (≥3 keeps ≥1 mid-window sample under the
+ * 33 ms-vs-bit-period phase alias; see decoder.ts windowGuardFrac). */
+export const MIN_FRAMES_PER_BIT = 3.0;
+
+/** Renegotiate only below this many frames/bit — between this and
+ * MIN_FRAMES_PER_BIT the decoder still works; hysteresis, not a cliff. */
+export const RENEG_FRAMES_PER_BIT = 2.5;
+
+/** Bit-period bounds: floor keeps the cycle robust to timing jitter even on
+ * high-fps cameras; ceiling keeps a 64-LED SEC-DED cycle (14 frames) under
+ * ~6 s so decodes (and live solves) still converge in a handheld walk. */
+export const BIT_PERIOD_MIN_MS = 60;
+export const BIT_PERIOD_MAX_MS = 400;
+
+/** Detector-threshold servo bounds (base = the §5 dark-room operating point). */
+export const THRESHOLD_BASE = 0.6;
+export const THRESHOLD_MAX = 0.9;
+/** Blob-count band the servo aims for: flood ceiling and starve floor. */
+export const BLOB_FLOOD = 150;
+
+export interface NegotiatedConfig {
+  encoding: Encoding;
+  bitPeriodMs: number;
+}
+
+/** Round up to the 10 ms grid the wall/driver render cleanly. */
+function roundBitPeriod(ms: number): number {
+  const stepped = Math.ceil(ms / 10) * 10;
+  return Math.min(BIT_PERIOD_MAX_MS, Math.max(BIT_PERIOD_MIN_MS, stepped));
+}
+
+/** Pre-capture negotiation: pick the code carrier and signaling rate for the
+ * measured scene. Sent as start_mapping options — the server needs no flags. */
+export function recommendConfig(m: { frameIntervalMs: number; meanLuma: number }): NegotiatedConfig {
+  return {
+    encoding: m.meanLuma < DARK_SCENE_MEAN_LUMA ? "gray" : "gray-hue",
+    bitPeriodMs: roundBitPeriod(MIN_FRAMES_PER_BIT * m.frameIntervalMs),
+  };
+}
+
+/**
+ * Mid-capture renegotiation check: returns the new bit period to `configure`,
+ * or null to keep the current one. Only fires when the current rate has
+ * actually decayed below the decodable band (frames/bit < RENEG threshold) or
+ * recovered so much that the code is pointlessly slow (>2× what's needed —
+ * halving the cycle time is worth the one-cycle re-anchor cost).
+ */
+export function planReconfigure(currentBitPeriodMs: number, frameIntervalMs: number): number | null {
+  const framesPerBit = currentBitPeriodMs / frameIntervalMs;
+  if (framesPerBit < RENEG_FRAMES_PER_BIT) {
+    return roundBitPeriod(MIN_FRAMES_PER_BIT * frameIntervalMs);
+  }
+  const ideal = roundBitPeriod(MIN_FRAMES_PER_BIT * frameIntervalMs);
+  if (currentBitPeriodMs >= 2 * ideal) return ideal;
+  return null;
+}
+
+/** Hysteresis band around DARK_SCENE_MEAN_LUMA for mid-capture encoding
+ * switches: a room hovering at the boundary must not flap the carrier (every
+ * switch costs a cycle re-anchor on all parties). */
+export const ENCODING_SWITCH_DARK = 0.06;
+export const ENCODING_SWITCH_LIT = 0.12;
+
+/**
+ * Mid-capture carrier check: returns the encoding to switch to, or null to
+ * keep the current one. Same physics as {@link recommendConfig}, but with a
+ * wide hysteresis band so only a real lighting change (lights turned on/off
+ * during the walk) triggers the switch.
+ */
+export function planEncodingSwitch(current: Encoding, meanLuma: number): Encoding | null {
+  if (current === "gray-hue" && meanLuma < ENCODING_SWITCH_DARK) return "gray";
+  if (current === "gray" && meanLuma > ENCODING_SWITCH_LIT) return "gray-hue";
+  return null;
+}
+
+/**
+ * Detector-threshold servo: one step per report tick, driven by the measured
+ * blob count. A flooded detector (bright room slicing scene luminance —
+ * ~210 blobs/frame in the 2026-07-05 trace) raises the threshold; a starved
+ * one (fewer blobs than LEDs plausibly in view) walks back toward base.
+ * Steps are small and bounded so a pathological frame can't slam the
+ * operating point.
+ */
+export function adjustThreshold(current: number, medianBlobCount: number, ledCount: number): number {
+  const floodCeil = Math.max(BLOB_FLOOD, 3 * ledCount);
+  if (medianBlobCount > floodCeil) return Math.min(THRESHOLD_MAX, current + 0.05);
+  if (medianBlobCount < ledCount / 2 && current > THRESHOLD_BASE) {
+    return Math.max(THRESHOLD_BASE, current - 0.05);
+  }
+  return current;
+}
+
+/**
+ * Rolling window over recent frames: medians are robust to the odd stalled
+ * frame (GC pause, thermal hiccup) that a mean would smear into a phantom
+ * fps drop.
+ */
+export class ExposureMonitor {
+  private samples: FrameSample[] = [];
+
+  constructor(private readonly windowMs = 2000) {}
+
+  push(s: FrameSample): void {
+    this.samples.push(s);
+    const cutoff = s.tMs - this.windowMs;
+    let first = 0;
+    while (first < this.samples.length && this.samples[first]!.tMs < cutoff) first++;
+    if (first > 0) this.samples.splice(0, first);
+  }
+
+  get sampleCount(): number {
+    return this.samples.length;
+  }
+
+  /** Median camera frame interval (ms) — the shutter-speed proxy. */
+  frameIntervalMs(): number | null {
+    if (this.samples.length < 4) return null;
+    const deltas: number[] = [];
+    for (let i = 1; i < this.samples.length; i++) {
+      deltas.push(this.samples[i]!.tMs - this.samples[i - 1]!.tMs);
+    }
+    return median(deltas);
+  }
+
+  medianBlobCount(): number | null {
+    if (this.samples.length === 0) return null;
+    return median(this.samples.map((s) => s.blobCount));
+  }
+
+  /** Median scene stats over the frames that carried a measure pass. */
+  scene(): SceneStats | null {
+    const scenes = this.samples.filter((s) => s.scene !== undefined).map((s) => s.scene!);
+    if (scenes.length === 0) return null;
+    return {
+      meanLuma: median(scenes.map((s) => s.meanLuma)),
+      p95Luma: median(scenes.map((s) => s.p95Luma)),
+      clipFrac: median(scenes.map((s) => s.clipFrac)),
+    };
+  }
+
+  /** Everything measured, for negotiation. Null until the window has enough
+   * frames AND at least one measure pass. */
+  snapshot(): { frameIntervalMs: number; blobCount: number; scene: SceneStats } | null {
+    const interval = this.frameIntervalMs();
+    const blobs = this.medianBlobCount();
+    const scene = this.scene();
+    if (interval === null || blobs === null || scene === null) return null;
+    return { frameIntervalMs: interval, blobCount: blobs, scene };
+  }
+
+  /** Build the §7.1 exposure_report payload, or null before enough data. */
+  report(tMs: number, detectorThreshold: number, ambientIntensity: number | null = null): ExposureStats | null {
+    const snap = this.snapshot();
+    if (snap === null) return null;
+    return {
+      tCaptureMs: tMs,
+      frameIntervalMs: snap.frameIntervalMs,
+      meanLuma: snap.scene.meanLuma,
+      p95Luma: snap.scene.p95Luma,
+      clipFrac: snap.scene.clipFrac,
+      blobCount: Math.round(snap.blobCount),
+      detectorThreshold,
+      // Reserved for platforms that expose the real 3A state (native apps);
+      // the WebXR path can only estimate.
+      iso: null,
+      exposureTimeMs: null,
+      ambientIntensity,
+    };
+  }
+}
+
+function median(xs: readonly number[]): number {
+  const sorted = [...xs].sort((a, b) => a - b);
+  const mid = sorted.length >> 1;
+  return sorted.length % 2 === 1 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
+}

@@ -25,7 +25,7 @@
  */
 
 import type { CodeParams, DetectionRecord } from "@ledmapper/protocol";
-import { decodeCycle, FRAME_ALL_OFF, FRAME_ALL_ON } from "../code/gray";
+import { decodeCycleEx, FRAME_ALL_OFF, FRAME_ALL_ON } from "../code/gray";
 import { cycleIndexAt, cycleMs, frameFractionAt, frameIndexAt } from "../code/timing";
 import type { Track, TrackSample } from "./tracker";
 
@@ -72,6 +72,10 @@ export interface DecodeStats {
   rejectedGaps: number;
   /** Cycles rejected: decoded id out of range. */
   rejectedRange: number;
+  /** Cycles rejected: SEC-DED detected an uncorrectable (double) error. */
+  rejectedFec: number;
+  /** Cycles where SEC-DED corrected a single misread bit window. */
+  correctedCycles: number;
   /** Cycles rejected: confidence below minConfidence. */
   rejectedLowConf: number;
   /** Cycles rejected: too few ON samples backing the decoded word. */
@@ -111,6 +115,8 @@ export class Decoder {
     rejectedSync: 0,
     rejectedGaps: 0,
     rejectedRange: 0,
+    rejectedFec: 0,
+    correctedCycles: 0,
     rejectedLowConf: 0,
     rejectedSupport: 0,
     rejectedPoseGap: 0,
@@ -417,11 +423,17 @@ export class Decoder {
     }
     if (anchorSample === null) return null;
 
-    const ledId = decodeCycle(frames, p);
-    if (ledId === null) {
-      this.stats.rejectedRange++;
+    const dec = decodeCycleEx(frames, p);
+    if (dec.id === null) {
+      if (dec.uncorrectable) this.stats.rejectedFec++;
+      else this.stats.rejectedRange++;
       return null;
     }
+    const ledId = dec.id;
+    // A corrected cycle means one window was decisively WRONG — the d=4 code
+    // vouches for the fix (unless ≥3 windows lied), so the record stands;
+    // count it so on-device sessions expose their real window-error rate.
+    if (dec.corrected) this.stats.correctedCycles++;
 
     const confidence = Math.max(0, Math.min(1, minMargin));
     if (confidence < this.minConfidence) {

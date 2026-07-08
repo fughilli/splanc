@@ -23,11 +23,14 @@ import { lookAtQuat, project } from "../src/geom/pinhole";
 
 const PARAMS: CodeParams = {
   ledCount: 64,
-  bits: 7, // ceil(log2(64 + 1)) — codewords carry id+1
+  // 7 data bits (ceil(log2(64+1)) — codewords carry id+1) + 4 Hamming parity
+  // + 1 overall parity: the production SEC-DED code-book (fec.ts).
+  bits: 12,
   encoding: "gray",
   bitPeriodMs: 100,
   syncPattern: "on_off",
-  cycleFrames: 9,
+  cycleFrames: 14,
+  fec: "secded",
 };
 
 const IMG_W = 1280;
@@ -64,6 +67,11 @@ interface SimOptions {
   /** Gaussian-ish pixel noise sigma. */
   noisePx?: number;
   seed?: number;
+  /** Adversarial code corruption: this LED's light is INVERTED during the
+   * given bit-frame indices (0-based within the data bits) of EVERY cycle —
+   * the decisive-window error model (reflection/chroma misread) FEC targets. */
+  corruptLed?: number;
+  corruptBits?: number[];
 }
 
 function mulberry32(seed: number): () => number {
@@ -108,7 +116,11 @@ function runSim(opts: SimOptions = {}): { records: DetectionRecord[]; pipeline: 
     const framePose = arcPose(Math.min(1, tCaptureMs / totalMs));
     const blobs: Blob[] = [];
     for (let id = 0; id < PARAMS.ledCount; id++) {
-      if (!ledLitInFrame(id, frameIdx, PARAMS)) continue;
+      let lit = ledLitInFrame(id, frameIdx, PARAMS);
+      if (id === opts.corruptLed && (opts.corruptBits ?? []).includes(frameIdx - 2)) {
+        lit = !lit;
+      }
+      if (!lit) continue;
       const pr = project(exposurePose, K, leds[id]!);
       if (pr.depth <= 0) continue;
       const u = pr.u + gauss();
@@ -181,6 +193,29 @@ test("nominal degradation (0.5 px noise, 10% dropped frames): ≥98% ids, no wro
   assert.ok(ids.size >= Math.floor(PARAMS.ledCount * 0.98), `decoded ${ids.size}/64`);
   // Tolerance widened for the injected pixel noise.
   assert.equal(checkRecords(records, 3.0).wrong, 0);
+});
+
+test("a persistently corrupted bit window: FEC corrects, id never wrong", () => {
+  // Pre-FEC this was the misidentification hole: one decisively-wrong window
+  // (margin 1.0 — voting can't see it) decoded to a VALID wrong id. Under
+  // SEC-DED the cycle corrects to the true id instead.
+  const { records, pipeline } = runSim({ cycles: 6, corruptLed: 21, corruptBits: [4] });
+  const ids = new Set(records.map((r) => r.ledId));
+  assert.equal(ids.size, PARAMS.ledCount, `decoded ${ids.size}/${PARAMS.ledCount} ids`);
+  assert.equal(checkRecords(records, 1.0).wrong, 0);
+  assert.ok(pipeline.decoder.stats.correctedCycles > 0, "corrections were exercised");
+  assert.ok(records.some((r) => r.ledId === 21), "the corrupted LED still maps");
+});
+
+test("two corrupted bit windows: detected and rejected, never misidentified", () => {
+  const { records, pipeline } = runSim({ cycles: 6, corruptLed: 21, corruptBits: [1, 8] });
+  // The victim LED cannot decode (every cycle is a double error)…
+  assert.ok(!records.some((r) => r.ledId === 21), "double error must not decode");
+  assert.ok(pipeline.decoder.stats.rejectedFec > 0, "double errors were FEC-rejected");
+  // …but crucially nothing ELSE inherited its observations: zero wrong ids.
+  assert.equal(checkRecords(records, 1.0).wrong, 0);
+  const ids = new Set(records.map((r) => r.ledId));
+  assert.equal(ids.size, PARAMS.ledCount - 1);
 });
 
 test("records carry the frame's pose/K/dims (§7.4 contract)", () => {

@@ -93,9 +93,13 @@ def validate_schemas(schemas: dict[str, dict]) -> None:
     }, "detection_record required fields drifted from §7.4"
     for name in ("client_messages", "server_messages"):
         sch = schemas[name]
-        for variant in sch["$defs"].values():
+        # Only the oneOf members are message variants needing a discriminator;
+        # other $defs (e.g. ExposureStats) are plain shared structs.
+        for ref in sch["oneOf"]:
+            variant_name = ref["$ref"].rsplit("/", 1)[-1]
+            variant = sch["$defs"][variant_name]
             assert "type" in variant.get("properties", {}), (
-                f"{name}: variant missing 'type' discriminator"
+                f"{name}: variant {variant_name} missing 'type' discriminator"
             )
 
 
@@ -118,6 +122,7 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     cp = schemas["code_params"]
     encoding_values = cp["properties"]["encoding"]["enum"]
     sync_values = cp["properties"]["syncPattern"]["enum"]
+    fec_values = cp["properties"]["fec"]["enum"]
     omap = schemas["output_map"]
     units_values = omap["properties"]["units"]["enum"]
     frame_values = omap["properties"]["frame"]["enum"]
@@ -164,11 +169,14 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
         "export type Encoding = " + " | ".join(f'"{v}"' for v in encoding_values) + ";"
     )
     lines.append(
-        "export type SyncPattern = " + " | ".join(f'"{v}"' for v in sync_values) + ";\n"
+        "export type SyncPattern = " + " | ".join(f'"{v}"' for v in sync_values) + ";"
+    )
+    lines.append(
+        "export type Fec = " + " | ".join(f'"{v}"' for v in fec_values) + ";\n"
     )
     lines.append("export interface CodeParams {")
     lines.append("  ledCount: number;")
-    lines.append("  /** ceil(log2(ledCount)) */")
+    lines.append("  /** Coded bit frames per cycle: ceil(log2(ledCount+1)) data bits + FEC parity frames. */")
     lines.append("  bits: number;")
     lines.append("  encoding: Encoding;")
     lines.append("  /** Hold time per bit frame, in milliseconds. */")
@@ -176,6 +184,9 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("  syncPattern: SyncPattern;")
     lines.append("  /** 2 (sync delimiter) + bits */")
     lines.append("  cycleFrames: number;")
+    lines.append("  /** FEC around the Gray data word ('secded' = extended Hamming, d=4:")
+    lines.append("   * correct 1 misread bit frame, detect-and-reject 2). Absent = 'none'. */")
+    lines.append("  fec?: Fec | undefined;")
     lines.append("}\n")
 
     lines.append("// ---------------------------------------------------------------------------")
@@ -220,12 +231,30 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("  /** Phone clock at send, in milliseconds. */")
     lines.append("  t0: number;")
     lines.append("}\n")
+    lines.append("/** The client is the configuration authority: it measured the scene, so it")
+    lines.append(" * chooses the code carrier and signaling rate; omitted fields fall back to")
+    lines.append(" * server defaults. */")
     lines.append("export interface StartMappingOptions {")
     lines.append("  ledCount: number;")
+    lines.append("  /** Code carrier, chosen from measured light: dark -> 'gray', lit -> 'gray-hue'. */")
+    lines.append("  encoding?: Encoding;")
+    lines.append("  /** Signaling rate: each bit window should span >= ~3 camera frame intervals. */")
+    lines.append("  bitPeriodMs?: number;")
     lines.append("}\n")
     lines.append("export interface StartMappingMessage {")
     lines.append('  type: "start_mapping";')
     lines.append("  options: StartMappingOptions;")
+    lines.append("}\n")
+    lines.append("/** Mid-capture renegotiation: overlay these on the active capture's params,")
+    lines.append(" * restamp the pattern epoch, keep collected detections. Reply: pattern_state. */")
+    lines.append("export interface ConfigureOptions {")
+    lines.append("  ledCount?: number;")
+    lines.append("  encoding?: Encoding;")
+    lines.append("  bitPeriodMs?: number;")
+    lines.append("}\n")
+    lines.append("export interface ConfigureMessage {")
+    lines.append('  type: "configure";')
+    lines.append("  options: ConfigureOptions;")
     lines.append("}\n")
     lines.append("export interface StopMappingMessage {")
     lines.append('  type: "stop_mapping";')
@@ -233,6 +262,35 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("export interface DetectionsMessage {")
     lines.append('  type: "detections";')
     lines.append("  batch: DetectionRecord[];")
+    lines.append("}\n")
+    lines.append("/** Camera/exposure telemetry (§7.1 exposure_report). The web client cannot")
+    lines.append(" * read the real 3A/ISP state (WebXR exposes only the camera texture), so these")
+    lines.append(" * are software estimates; iso/exposureTimeMs are reserved for clients that can. */")
+    lines.append("export interface ExposureStats {")
+    lines.append("  /** Phone monotonic clock at the end of the measurement window, ms. */")
+    lines.append("  tCaptureMs: number;")
+    lines.append("  /** Median camera frame interval, ms — the shutter-speed proxy. */")
+    lines.append("  frameIntervalMs: number;")
+    lines.append("  /** Mean scene luminance [0,1], unthresholded downsampled frame. */")
+    lines.append("  meanLuma: number;")
+    lines.append("  /** 95th-percentile scene luminance [0,1]. */")
+    lines.append("  p95Luma: number;")
+    lines.append("  /** Fraction of pixels at/above 0.98 (saturated highlights). */")
+    lines.append("  clipFrac: number;")
+    lines.append("  /** Median detector blobs per frame at the current threshold. */")
+    lines.append("  blobCount: number;")
+    lines.append("  /** Detector luminance threshold in effect. */")
+    lines.append("  detectorThreshold: number;")
+    lines.append("  /** Real sensor ISO from the 3A/ISP, when the platform exposes it. */")
+    lines.append("  iso?: number | null;")
+    lines.append("  /** Real sensor exposure time (ms), when the platform exposes it. */")
+    lines.append("  exposureTimeMs?: number | null;")
+    lines.append("  /** WebXR light-estimation primary intensity (max RGB, relative units). */")
+    lines.append("  ambientIntensity?: number | null;")
+    lines.append("}\n")
+    lines.append("export interface ExposureReportMessage {")
+    lines.append('  type: "exposure_report";')
+    lines.append("  report: ExposureStats;")
     lines.append("}\n")
     lines.append("export interface GetStatusMessage {")
     lines.append('  type: "get_status";')
@@ -249,8 +307,10 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("  | HelloMessage")
     lines.append("  | TimeSyncPingMessage")
     lines.append("  | StartMappingMessage")
+    lines.append("  | ConfigureMessage")
     lines.append("  | StopMappingMessage")
     lines.append("  | DetectionsMessage")
+    lines.append("  | ExposureReportMessage")
     lines.append("  | GetStatusMessage")
     lines.append("  | GetPatternMessage")
     lines.append("  | GetLiveMapMessage;\n")
@@ -355,6 +415,7 @@ def emit_python(schemas: dict[str, dict]) -> str:
     cp = schemas["code_params"]
     encoding_values = cp["properties"]["encoding"]["enum"]
     sync_values = cp["properties"]["syncPattern"]["enum"]
+    fec_values = cp["properties"]["fec"]["enum"]
     omap = schemas["output_map"]
     units_values = omap["properties"]["units"]["enum"]
     frame_values = omap["properties"]["frame"]["enum"]
@@ -406,6 +467,7 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append("")
     out.append(f"Encoding = {_literal(encoding_values)}")
     out.append(f"SyncPattern = {_literal(sync_values)}")
+    out.append(f"Fec = {_literal(fec_values)}")
     out.append("")
     out.append("")
     out.append("class CodeParams(_StrictModel):")
@@ -415,6 +477,8 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append("    bitPeriodMs: float = Field(gt=0.0)")
     out.append("    syncPattern: SyncPattern")
     out.append("    cycleFrames: int = Field(ge=3)")
+    out.append('    # FEC around the Gray data word; absent on the wire = "none" (legacy).')
+    out.append('    fec: Fec = "none"')
     out.append("")
     out.append("")
     out.append("# ---------------------------------------------------------------------------")
@@ -464,12 +528,29 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append("")
     out.append("")
     out.append("class StartMappingOptions(_StrictModel):")
+    out.append('    """Client-chosen capture configuration; omitted fields -> server defaults."""')
+    out.append("")
     out.append("    ledCount: int = Field(ge=1)")
+    out.append("    encoding: Union[Encoding, None] = None")
+    out.append("    bitPeriodMs: Union[float, None] = Field(default=None, gt=0.0)")
     out.append("")
     out.append("")
     out.append("class StartMappingMessage(_StrictModel):")
     out.append('    type: Literal["start_mapping"]')
     out.append("    options: StartMappingOptions")
+    out.append("")
+    out.append("")
+    out.append("class ConfigureOptions(_StrictModel):")
+    out.append('    """Mid-capture renegotiation overlay; unset fields keep their current value."""')
+    out.append("")
+    out.append("    ledCount: Union[int, None] = Field(default=None, ge=1)")
+    out.append("    encoding: Union[Encoding, None] = None")
+    out.append("    bitPeriodMs: Union[float, None] = Field(default=None, gt=0.0)")
+    out.append("")
+    out.append("")
+    out.append("class ConfigureMessage(_StrictModel):")
+    out.append('    type: Literal["configure"]')
+    out.append("    options: ConfigureOptions")
     out.append("")
     out.append("")
     out.append("class StopMappingMessage(_StrictModel):")
@@ -479,6 +560,27 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append("class DetectionsMessage(_StrictModel):")
     out.append('    type: Literal["detections"]')
     out.append("    batch: List[DetectionRecord]")
+    out.append("")
+    out.append("")
+    out.append("class ExposureStats(_StrictModel):")
+    out.append('    """Camera/exposure telemetry: software estimates from the web client;')
+    out.append('    iso/exposureTimeMs are reserved for clients that can read the real 3A."""')
+    out.append("")
+    out.append("    tCaptureMs: float")
+    out.append("    frameIntervalMs: float = Field(gt=0.0)")
+    out.append("    meanLuma: float = Field(ge=0.0, le=1.0)")
+    out.append("    p95Luma: float = Field(ge=0.0, le=1.0)")
+    out.append("    clipFrac: float = Field(ge=0.0, le=1.0)")
+    out.append("    blobCount: int = Field(ge=0)")
+    out.append("    detectorThreshold: float = Field(ge=0.0, le=1.0)")
+    out.append("    iso: Union[float, None] = None")
+    out.append("    exposureTimeMs: Union[float, None] = None")
+    out.append("    ambientIntensity: Union[float, None] = None")
+    out.append("")
+    out.append("")
+    out.append("class ExposureReportMessage(_StrictModel):")
+    out.append('    type: Literal["exposure_report"]')
+    out.append("    report: ExposureStats")
     out.append("")
     out.append("")
     out.append("class GetStatusMessage(_StrictModel):")
@@ -502,8 +604,10 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append("        HelloMessage,")
     out.append("        TimeSyncPingMessage,")
     out.append("        StartMappingMessage,")
+    out.append("        ConfigureMessage,")
     out.append("        StopMappingMessage,")
     out.append("        DetectionsMessage,")
+    out.append("        ExposureReportMessage,")
     out.append("        GetStatusMessage,")
     out.append("        GetPatternMessage,")
     out.append("        GetLiveMapMessage,")
@@ -603,6 +707,7 @@ def emit_python(schemas: dict[str, dict]) -> str:
         "DetectionRecord",
         "Encoding",
         "SyncPattern",
+        "Fec",
         "CodeParams",
         "LedEntry",
         "OutputMapStats",
@@ -611,8 +716,12 @@ def emit_python(schemas: dict[str, dict]) -> str:
         "TimeSyncPingMessage",
         "StartMappingOptions",
         "StartMappingMessage",
+        "ConfigureOptions",
+        "ConfigureMessage",
         "StopMappingMessage",
         "DetectionsMessage",
+        "ExposureStats",
+        "ExposureReportMessage",
         "GetStatusMessage",
         "GetPatternMessage",
         "GetLiveMapMessage",

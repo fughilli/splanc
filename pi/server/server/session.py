@@ -23,7 +23,7 @@ import threading
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
 
-from ledmapper_protocol import DetectionRecord, OutputMap
+from ledmapper_protocol import CodeParams, DetectionRecord, ExposureStats, OutputMap
 
 from .clock import now_ms
 
@@ -31,13 +31,19 @@ from .clock import now_ms
 class Session:
     """A single in-progress capture."""
 
-    def __init__(self, session_id: str, led_count: int, pattern_clock_epoch: float):
+    def __init__(self, session_id: str, code_params: CodeParams, pattern_clock_epoch: float):
         self.session_id = session_id
-        self.led_count = led_count
+        self.code_params = code_params
         self.pattern_clock_epoch = pattern_clock_epoch
         self.detections: List[DetectionRecord] = []
+        # Client exposure telemetry (§7.1 exposure_report), kept for the log.
+        self.exposure: List[ExposureStats] = []
         # ledId -> number of observations, for live coverage guidance.
         self._views: dict = {}
+
+    @property
+    def led_count(self) -> int:
+        return self.code_params.ledCount
 
     def add(self, records: Sequence[DetectionRecord]) -> None:
         for r in records:
@@ -72,8 +78,12 @@ class SessionManager:
     def active(self) -> Optional[Session]:
         return self._active
 
-    def start(self, session_id: str, led_count: int) -> float:
+    def start(self, session_id: str, code_params: CodeParams) -> float:
         """Begin a capture; returns the ``patternClockEpoch`` (design doc §8.2).
+
+        The full code-book comes from the client (start_mapping options overlaid
+        on server defaults by the handler) — the phone measured the scene, so it
+        owns the encoding/rate choice.
 
         Until the M1 driver exists to report the true start-of-cycle epoch, the
         server stamps the epoch with the current server clock; the driver's
@@ -81,7 +91,23 @@ class SessionManager:
         """
         with self._lock:
             epoch = now_ms()
-            self._active = Session(session_id, led_count, epoch)
+            self._active = Session(session_id, code_params, epoch)
+            return epoch
+
+    def reconfigure(self, code_params: CodeParams) -> float:
+        """Mid-capture renegotiation (§7.1 configure): swap the code-book and
+        restamp the pattern epoch; detections already collected are kept (they
+        are (ledId, pixel, pose) records — independent of the signaling that
+        produced them). Followers pick the new clock up via ``get_pattern``.
+
+        Returns the new ``patternClockEpoch``. Raises if no capture is active.
+        """
+        with self._lock:
+            if self._active is None:
+                raise RuntimeError("no active capture session")
+            epoch = now_ms()
+            self._active.code_params = code_params
+            self._active.pattern_clock_epoch = epoch
             return epoch
 
     def add_detections(self, records: Sequence[DetectionRecord]) -> None:
@@ -89,6 +115,13 @@ class SessionManager:
             if self._active is None:
                 raise RuntimeError("no active capture session")
             self._active.add(records)
+
+    def add_exposure(self, report: ExposureStats) -> None:
+        """Record one exposure_report; silently dropped when no capture is
+        active (reports are telemetry, racing stop is not an error)."""
+        with self._lock:
+            if self._active is not None:
+                self._active.exposure.append(report)
 
     def status(self) -> Tuple[int, int, int]:
         with self._lock:
@@ -108,16 +141,18 @@ class SessionManager:
             s = self._active
             return s.session_id, s.led_count, list(s.detections)
 
-    def pattern_state(self) -> Optional[Tuple[float, int]]:
-        """Return ``(patternClockEpoch, ledCount)`` of the active capture, or None.
+    def pattern_state(self) -> Optional[Tuple[float, CodeParams]]:
+        """Return ``(patternClockEpoch, codeParams)`` of the active capture, or None.
 
         Pattern followers (the virtual LED wall) poll this via ``get_pattern`` so
         they can render the blink code against the same clock the phone decodes.
+        The full CodeParams (not just ledCount) matter: a mid-capture configure
+        can change the encoding or bit period, and followers must track it.
         """
         with self._lock:
             if self._active is None:
                 return None
-            return self._active.pattern_clock_epoch, self._active.led_count
+            return self._active.pattern_clock_epoch, self._active.code_params
 
     def stop(self) -> Tuple[str, Path]:
         """Finalize the active session: write its log, clear active state.
@@ -130,8 +165,12 @@ class SessionManager:
             session = self._active
             self._active = None
 
+        # codeParams + exposure are additive diagnostic keys; M3's log reader
+        # takes ledCount/detections and ignores the rest.
         log = {
             "ledCount": session.led_count,
+            "codeParams": session.code_params.model_dump(),
+            "exposure": [e.model_dump() for e in session.exposure],
             "detections": [d.model_dump() for d in session.detections],
         }
         path = self.session_dir / f"{session.session_id}.json"

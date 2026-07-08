@@ -204,3 +204,63 @@ test("detection batches survive a reconnect (M7 acceptance)", async () => {
   assert.deepEqual(batches, [[2], [3]]);
   assert.equal(client.pendingBatchCount, 0);
 });
+
+test("startMapping passes the negotiated config; configure renegotiates", async () => {
+  const { client, sockets } = makeClient();
+  const p = client.connect();
+  const s = sockets[0]!;
+  s.open();
+  s.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS });
+  await p;
+
+  // The client is the configuration authority (§7.1): the measured scene's
+  // encoding + rate ride along in start_mapping options.
+  const startP = client.startMapping(64, { encoding: "gray-hue", bitPeriodMs: 200 });
+  assert.deepEqual(s.lastSent(), {
+    type: "start_mapping",
+    options: { ledCount: 64, encoding: "gray-hue", bitPeriodMs: 200 },
+  });
+  s.receive({ type: "mapping_started", patternClockEpoch: 1.0, codeParams: CODE_PARAMS });
+  await startP;
+
+  // Mid-capture renegotiation: configure -> pattern_state with the new
+  // epoch + params to rebuild the pipeline against.
+  const cfgP = client.configure({ bitPeriodMs: 300 });
+  assert.deepEqual(s.lastSent(), { type: "configure", options: { bitPeriodMs: 300 } });
+  const newParams = { ...CODE_PARAMS, bitPeriodMs: 300 };
+  s.receive({ type: "pattern_state", active: true, patternClockEpoch: 999.9, codeParams: newParams });
+  const ps = await cfgP;
+  assert.equal(ps.patternClockEpoch, 999.9);
+  assert.equal(ps.codeParams.bitPeriodMs, 300);
+});
+
+test("exposure reports are fire-and-forget and dropped while disconnected", async () => {
+  const { client, sockets } = makeClient();
+  const p = client.connect();
+  const s = sockets[0]!;
+  s.open();
+  s.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS });
+  await p;
+
+  const report = {
+    tCaptureMs: 1.0,
+    frameIntervalMs: 33.3,
+    meanLuma: 0.05,
+    p95Luma: 0.2,
+    clipFrac: 0.001,
+    blobCount: 30,
+    detectorThreshold: 0.6,
+    iso: null,
+    exposureTimeMs: null,
+    ambientIntensity: null,
+  };
+  client.sendExposureReport(report);
+  assert.equal(s.lastSent().type, "exposure_report");
+  assert.deepEqual(s.lastSent()["report"], report);
+
+  // Disconnected: reports are stale snapshots, not evidence — no queueing.
+  const sentBefore = s.sent.length;
+  s.close();
+  client.sendExposureReport(report);
+  assert.equal(s.sent.length, sentBefore);
+});

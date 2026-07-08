@@ -95,9 +95,15 @@ class ConnectionHandler:
             # t1 = receive time, t2 = send time (design doc §7.3).
             return [TimeSyncPongMessage(type="time_sync_pong", t0=msg.t0, t1=recv_ms, t2=self.ctx.clock())]
         if kind == "start_mapping":
-            return [self._start(msg.options.ledCount)]
+            return [self._start(msg.options)]
+        if kind == "configure":
+            return [self._configure(msg.options)]
         if kind == "detections":
             return self._detections(msg.batch)
+        if kind == "exposure_report":
+            # Telemetry: best-effort append, no reply (like detections).
+            self.ctx.sessions.add_exposure(msg.report)
+            return []
         if kind == "get_status":
             return [self._status()]
         if kind == "get_pattern":
@@ -120,7 +126,7 @@ class ConnectionHandler:
             codeParams=code_params_for(self.ctx.default_led_count, self.ctx.bit_period_ms, self.ctx.encoding),
         )
 
-    def _start(self, led_count: int) -> ServerMessage:
+    def _start(self, options) -> ServerMessage:
         # One connection can run several captures; each needs its own log id
         # or the later capture's log OVERWRITES the earlier one on disk. The
         # first capture keeps the bare connection id (the common case).
@@ -130,11 +136,40 @@ class ConnectionHandler:
             if self._capture_seq == 1
             else f"{self.session_id}-{self._capture_seq}"
         )
-        epoch = self.ctx.sessions.start(capture_id, led_count)
+        # The client is the configuration authority (it measured the scene);
+        # the ctx values are only the fallback for clients that send bare
+        # options — the server needs no CLI flags to run any encoding/rate.
+        params = code_params_for(
+            options.ledCount,
+            options.bitPeriodMs if options.bitPeriodMs is not None else self.ctx.bit_period_ms,
+            options.encoding if options.encoding is not None else self.ctx.encoding,
+        )
+        epoch = self.ctx.sessions.start(capture_id, params)
         return MappingStartedMessage(
             type="mapping_started",
             patternClockEpoch=epoch,
-            codeParams=code_params_for(led_count, self.ctx.bit_period_ms, self.ctx.encoding),
+            codeParams=params,
+        )
+
+    def _configure(self, options) -> ServerMessage:
+        """Mid-capture renegotiation: overlay the given fields on the active
+        capture's params, restamp the epoch (sessions.reconfigure), and reply
+        pattern_state. Detections already collected are preserved."""
+        state = self.ctx.sessions.pattern_state()
+        if state is None:
+            return _error("no_session", "configure requires an active capture session")
+        _epoch, current = state
+        params = code_params_for(
+            options.ledCount if options.ledCount is not None else current.ledCount,
+            options.bitPeriodMs if options.bitPeriodMs is not None else current.bitPeriodMs,
+            options.encoding if options.encoding is not None else current.encoding,
+        )
+        epoch = self.ctx.sessions.reconfigure(params)
+        return PatternStateMessage(
+            type="pattern_state",
+            active=True,
+            patternClockEpoch=epoch,
+            codeParams=params,
         )
 
     def _detections(self, batch) -> List[ServerMessage]:
@@ -164,12 +199,12 @@ class ConnectionHandler:
                 patternClockEpoch=None,
                 codeParams=code_params_for(self.ctx.default_led_count, self.ctx.bit_period_ms, self.ctx.encoding),
             )
-        epoch, led_count = state
+        epoch, params = state
         return PatternStateMessage(
             type="pattern_state",
             active=True,
             patternClockEpoch=epoch,
-            codeParams=code_params_for(led_count, self.ctx.bit_period_ms, self.ctx.encoding),
+            codeParams=params,
         )
 
     def _live_map(self) -> ServerMessage:

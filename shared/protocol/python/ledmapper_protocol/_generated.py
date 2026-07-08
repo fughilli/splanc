@@ -65,6 +65,7 @@ class DetectionRecord(_StrictModel):
 
 Encoding = Literal["gray", "gray-hue"]
 SyncPattern = Literal["on_off"]
+Fec = Literal["none", "secded"]
 
 
 class CodeParams(_StrictModel):
@@ -74,6 +75,8 @@ class CodeParams(_StrictModel):
     bitPeriodMs: float = Field(gt=0.0)
     syncPattern: SyncPattern
     cycleFrames: int = Field(ge=3)
+    # FEC around the Gray data word; absent on the wire = "none" (legacy).
+    fec: Fec = "none"
 
 
 # ---------------------------------------------------------------------------
@@ -123,12 +126,29 @@ class TimeSyncPingMessage(_StrictModel):
 
 
 class StartMappingOptions(_StrictModel):
+    """Client-chosen capture configuration; omitted fields -> server defaults."""
+
     ledCount: int = Field(ge=1)
+    encoding: Union[Encoding, None] = None
+    bitPeriodMs: Union[float, None] = Field(default=None, gt=0.0)
 
 
 class StartMappingMessage(_StrictModel):
     type: Literal["start_mapping"]
     options: StartMappingOptions
+
+
+class ConfigureOptions(_StrictModel):
+    """Mid-capture renegotiation overlay; unset fields keep their current value."""
+
+    ledCount: Union[int, None] = Field(default=None, ge=1)
+    encoding: Union[Encoding, None] = None
+    bitPeriodMs: Union[float, None] = Field(default=None, gt=0.0)
+
+
+class ConfigureMessage(_StrictModel):
+    type: Literal["configure"]
+    options: ConfigureOptions
 
 
 class StopMappingMessage(_StrictModel):
@@ -138,6 +158,27 @@ class StopMappingMessage(_StrictModel):
 class DetectionsMessage(_StrictModel):
     type: Literal["detections"]
     batch: List[DetectionRecord]
+
+
+class ExposureStats(_StrictModel):
+    """Camera/exposure telemetry: software estimates from the web client;
+    iso/exposureTimeMs are reserved for clients that can read the real 3A."""
+
+    tCaptureMs: float
+    frameIntervalMs: float = Field(gt=0.0)
+    meanLuma: float = Field(ge=0.0, le=1.0)
+    p95Luma: float = Field(ge=0.0, le=1.0)
+    clipFrac: float = Field(ge=0.0, le=1.0)
+    blobCount: int = Field(ge=0)
+    detectorThreshold: float = Field(ge=0.0, le=1.0)
+    iso: Union[float, None] = None
+    exposureTimeMs: Union[float, None] = None
+    ambientIntensity: Union[float, None] = None
+
+
+class ExposureReportMessage(_StrictModel):
+    type: Literal["exposure_report"]
+    report: ExposureStats
 
 
 class GetStatusMessage(_StrictModel):
@@ -161,8 +202,10 @@ ClientMessageInner = Annotated[
         HelloMessage,
         TimeSyncPingMessage,
         StartMappingMessage,
+        ConfigureMessage,
         StopMappingMessage,
         DetectionsMessage,
+        ExposureReportMessage,
         GetStatusMessage,
         GetPatternMessage,
         GetLiveMapMessage,
@@ -261,6 +304,7 @@ __all__ = [
     "DetectionRecord",
     "Encoding",
     "SyncPattern",
+    "Fec",
     "CodeParams",
     "LedEntry",
     "OutputMapStats",
@@ -269,8 +313,12 @@ __all__ = [
     "TimeSyncPingMessage",
     "StartMappingOptions",
     "StartMappingMessage",
+    "ConfigureOptions",
+    "ConfigureMessage",
     "StopMappingMessage",
     "DetectionsMessage",
+    "ExposureStats",
+    "ExposureReportMessage",
     "GetStatusMessage",
     "GetPatternMessage",
     "GetLiveMapMessage",

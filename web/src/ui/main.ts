@@ -8,7 +8,14 @@
  * Everything heavy lives in M5/M6/M7; this file is orchestration + DOM.
  */
 
-import type { DetectionRecord, LedEntry, OutputMap } from "@ledmapper/protocol";
+import type { CodeParams, DetectionRecord, Encoding, LedEntry, OutputMap } from "@ledmapper/protocol";
+import {
+  adjustThreshold,
+  ExposureMonitor,
+  planEncodingSwitch,
+  planReconfigure,
+  recommendConfig,
+} from "../cv/exposure";
 import { CvPipeline } from "../cv/pipeline";
 import { DetectorGL } from "../cv/detect";
 import { mul4 } from "../geom/mat4";
@@ -32,6 +39,9 @@ const setupSection = $("setup");
 
 const qs = new URLSearchParams(location.search);
 const wsUrl = qs.get("url") ?? defaultWsUrl();
+// ?threshold= forces a fixed detector threshold (disables the blob-count
+// servo); unset, the base is 0.6 and adapts to the measured conditions.
+const forcedThreshold = qs.get("threshold") !== null;
 const detectorOpts = {
   threshold: numParam("threshold", 0.6),
   downscale: numParam("downscale", 2),
@@ -39,6 +49,16 @@ const detectorOpts = {
   // ?flipv=0 reverts should another device differ.
   flipV: qs.get("flipv") !== "0",
 };
+// Capture auto-negotiation overrides (cv/exposure.ts picks these from the
+// measured scene by default): ?encoding=gray|gray-hue, ?bitms=N.
+const forcedEncoding = ((): Encoding | null => {
+  const v = qs.get("encoding");
+  return v === "gray" || v === "gray-hue" ? v : null;
+})();
+const forcedBitMs = ((): number | null => {
+  const v = parseFloat(qs.get("bitms") ?? "");
+  return Number.isFinite(v) && v > 0 ? v : null;
+})();
 // Debug: also draw raw detector blobs (2D, aspect-fill approximation). The
 // default view shows only SOLVED LEDs, 3D-composited to overlap the real ones.
 const showBlobs = qs.get("blobs") === "1";
@@ -183,23 +203,73 @@ async function startCapture(): Promise<void> {
     capture = new WebXRCaptureSource($("overlay"));
     await capture.start();
 
-    // Re-sync the clock right before the epoch matters.
-    await client.syncClock(4);
-    const started = await client.startMapping(ledCount);
-    const params = started.codeParams;
-
     const detector = new DetectorGL(capture.gl, detectorOpts);
     const markers = showBlobs ? new MarkerRenderer(capture.gl) : null;
     const solvedMarkers = new SolvedMarkerRenderer(capture.gl);
-    const pipeline = new CvPipeline(params, started.patternClockEpoch, (t) =>
-      client.clock.toServerTime(t),
-    );
-    pipeline.onDetections((records: DetectionRecord[]) => {
-      client.sendDetections(records);
+
+    // -- Pre-capture probe: measure the scene BEFORE the pattern runs, then
+    // negotiate the capture configuration (§7.1 start_mapping options). The
+    // client owns this choice — it is the only party that can see the light.
+    const monitor = new ExposureMonitor();
+    let lastAmbient: number | null = null;
+    document.body.classList.add("in-xr");
+    hudGuide.textContent = "Measuring light…";
+    await new Promise<void>((resolve) => {
+      const deadline = setTimeout(resolve, 2500); // frames stopped? negotiate on defaults
+      let t0 = -1;
+      capture!.onFrame((f) => {
+        if (t0 < 0) t0 = f.tCaptureMs;
+        const blobs = detector.detect(f.texture, f.imgW, f.imgH);
+        monitor.push({
+          tMs: f.tCaptureMs,
+          blobCount: blobs.length,
+          scene: detector.measure(f.texture, f.imgW, f.imgH),
+        });
+        lastAmbient = f.ambientIntensity ?? lastAmbient;
+        if (f.tCaptureMs - t0 >= 1200) {
+          clearTimeout(deadline);
+          resolve();
+        }
+      });
     });
+    const probed = monitor.snapshot();
+    const recommended = probed
+      ? recommendConfig({ frameIntervalMs: probed.frameIntervalMs, meanLuma: probed.scene.meanLuma })
+      : null;
+    const config = {
+      ...(forcedEncoding !== null
+        ? { encoding: forcedEncoding }
+        : recommended !== null
+          ? { encoding: recommended.encoding }
+          : {}),
+      ...(forcedBitMs !== null
+        ? { bitPeriodMs: forcedBitMs }
+        : recommended !== null
+          ? { bitPeriodMs: recommended.bitPeriodMs }
+          : {}),
+    };
+
+    // Re-sync the clock right before the epoch matters.
+    await client.syncClock(4);
+    const started = await client.startMapping(ledCount, config);
+
+    // The pattern params/epoch (and the pipeline decoding against them) are
+    // MUTABLE for the rest of the capture: a mid-capture configure rebinds
+    // all three. Detections already sent stay valid — they are (ledId, pixel,
+    // pose) records, independent of the signaling that produced them.
+    let params: CodeParams = started.codeParams;
+    let epoch: number = started.patternClockEpoch;
+    const makePipeline = (p: CodeParams, e: number): CvPipeline => {
+      const pl = new CvPipeline(p, e, (t) => client.clock.toServerTime(t));
+      pl.onDetections((records: DetectionRecord[]) => {
+        client.sendDetections(records);
+      });
+      return pl;
+    };
+    let pipeline = makePipeline(params, epoch);
+    hudGuide.textContent = `code: ${params.encoding} @ ${params.bitPeriodMs} ms/bit`;
 
     capturing = true;
-    document.body.classList.add("in-xr");
     let frameCount = 0;
 
     // ?record=1 frame recorder: batches of raw detector output.
@@ -212,12 +282,20 @@ async function startCapture(): Promise<void> {
       }).catch(() => undefined);
     };
     if (recordBlobs) {
-      postFrames({ reset: true, epoch: started.patternClockEpoch, codeParams: params });
+      postFrames({ reset: true, epoch, codeParams: params });
     }
 
     capture.onFrame((f) => {
       if (!capturing || !capture) return;
       const blobs = detector.detect(f.texture, f.imgW, f.imgH);
+      // Exposure monitoring: blob count every frame, the (cheap but not free)
+      // unthresholded scene readback on a subsample — AE moves at ~1 Hz.
+      monitor.push({
+        tMs: f.tCaptureMs,
+        blobCount: blobs.length,
+        scene: frameCount % 6 === 0 ? detector.measure(f.texture, f.imgW, f.imgH) : undefined,
+      });
+      lastAmbient = f.ambientIntensity ?? lastAmbient;
       if (recordBlobs) {
         frameBuf.push({
           t: f.tCaptureMs,
@@ -322,6 +400,65 @@ async function startCapture(): Promise<void> {
         })
         .catch(() => undefined);
     }, 400);
+
+    // -- Exposure telemetry + real-time adaptation (varying-light robustness).
+    // Every tick: report the measured exposure state to the server (session
+    // diagnostics), servo the detector threshold on the blob count, and check
+    // whether the measured conditions have drifted far enough to renegotiate
+    // the pattern (§7.1 configure). Renegotiation requires the SAME plan on
+    // two consecutive ticks — one bad window (stall, occlusion) must not
+    // restamp the pattern clock for everyone.
+    let pendingBitPeriod: number | null = null;
+    let pendingEncoding: Encoding | null = null;
+    let renegotiating = false;
+    const applyReconfigure = (opts: { bitPeriodMs?: number; encoding?: Encoding }): void => {
+      renegotiating = true;
+      client
+        .configure(opts)
+        .then((ps) => {
+          if (!capturing || !ps.active || ps.patternClockEpoch === null) return;
+          params = ps.codeParams;
+          epoch = ps.patternClockEpoch;
+          pipeline = makePipeline(params, epoch);
+          pipeline.updateSolved(liveLeds);
+          if (recordBlobs) postFrames({ reset: true, epoch, codeParams: params });
+          hudGuide.textContent = `code renegotiated: ${params.encoding} @ ${params.bitPeriodMs} ms/bit`;
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          renegotiating = false;
+        });
+    };
+    const exposureTick = setInterval(() => {
+      if (!capturing) {
+        clearInterval(exposureTick);
+        return;
+      }
+      const report = monitor.report(performance.now(), detector.threshold, lastAmbient);
+      if (report === null) return;
+      client.sendExposureReport(report);
+
+      if (!forcedThreshold) {
+        detector.threshold = adjustThreshold(detector.threshold, report.blobCount, ledCount);
+      }
+      if (renegotiating) return;
+
+      // Signaling-rate renegotiation: fps sank (light dropped → longer
+      // shutter) or recovered. Encoding switch: the room's light level
+      // crossed the hysteresis band (lights toggled mid-walk).
+      const wantBit = forcedBitMs === null ? planReconfigure(params.bitPeriodMs, report.frameIntervalMs) : null;
+      const wantEnc = forcedEncoding === null ? planEncodingSwitch(params.encoding, report.meanLuma) : null;
+      if (wantBit !== null && wantBit === pendingBitPeriod) {
+        pendingBitPeriod = null;
+        applyReconfigure({ bitPeriodMs: wantBit, ...(wantEnc !== null ? { encoding: wantEnc } : {}) });
+      } else if (wantEnc !== null && wantEnc === pendingEncoding) {
+        pendingEncoding = null;
+        applyReconfigure({ encoding: wantEnc, ...(wantBit !== null ? { bitPeriodMs: wantBit } : {}) });
+      } else {
+        pendingBitPeriod = wantBit;
+        pendingEncoding = wantEnc;
+      }
+    }, 2000);
   } catch (e) {
     capturing = false;
     document.body.classList.remove("in-xr");

@@ -32,14 +32,22 @@ def main(argv=None) -> int:
     parser.add_argument("--session-dir", type=Path, default=Path("/var/lib/ledmapper/sessions"))
     parser.add_argument("--maps-dir", type=Path, default=Path("/var/lib/ledmapper/maps"))
     parser.add_argument("--led-count", type=int, default=1024, help="default code-book LED count")
-    parser.add_argument("--bit-period-ms", type=float, default=DEFAULT_BIT_PERIOD_MS)
+    parser.add_argument(
+        "--bit-period-ms",
+        type=float,
+        default=DEFAULT_BIT_PERIOD_MS,
+        help="FALLBACK bit period for clients that don't choose one; the phone "
+        "normally negotiates the rate itself from its measured camera cadence "
+        "(start_mapping options / mid-capture configure, §7.1)",
+    )
     parser.add_argument(
         "--encoding",
         choices=["gray", "gray-hue"],
         default="gray",
-        help="code carrier: intensity blink ('gray') or constant-brightness "
-        "color code ('gray-hue' — for uncontrolled lighting; the wall and "
-        "the phone decoder both follow this via codeParams)",
+        help="FALLBACK code carrier for clients that don't choose one: intensity "
+        "blink ('gray') or constant-brightness color code ('gray-hue'). The "
+        "phone normally measures the scene and picks the carrier itself in "
+        "start_mapping options — no flag needed",
     )
     parser.add_argument(
         "--ssl-dir",

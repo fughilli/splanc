@@ -30,9 +30,13 @@ from pydantic import ValidationError
 from ledmapper_protocol import (
     ClientMessage,
     CodeParams,
+    ConfigureMessage,
+    ConfigureOptions,
     DetectionRecord,
     DetectionsMessage,
     ErrorMessage,
+    ExposureReportMessage,
+    ExposureStats,
     GetLiveMapMessage,
     GetPatternMessage,
     GetStatusMessage,
@@ -127,7 +131,7 @@ def _validator_for(schema_name: str) -> Draft202012Validator:
 # ---------------------------------------------------------------------------
 
 
-def make_code_params(encoding: str = "gray") -> CodeParams:
+def make_code_params(encoding: str = "gray", fec: str = "none") -> CodeParams:
     return CodeParams(
         ledCount=1024,
         bits=10,
@@ -135,6 +139,7 @@ def make_code_params(encoding: str = "gray") -> CodeParams:
         bitPeriodMs=100.0,
         syncPattern="on_off",
         cycleFrames=12,
+        fec=fec,
     )
 
 
@@ -194,9 +199,10 @@ def make_output_map() -> OutputMap:
         (DetectionRecord, make_detection_record, "detection_record"),
         (CodeParams, make_code_params, "code_params"),
         (CodeParams, lambda: make_code_params("gray-hue"), "code_params"),
+        (CodeParams, lambda: make_code_params(fec="secded"), "code_params"),
         (OutputMap, make_output_map, "output_map"),
     ],
-    ids=["DetectionRecord", "CodeParams", "CodeParamsHue", "OutputMap"],
+    ids=["DetectionRecord", "CodeParams", "CodeParamsHue", "CodeParamsSecded", "OutputMap"],
 )
 def test_standalone_types_roundtrip(model_cls, instance_factory, schema_name) -> None:
     original = instance_factory()
@@ -220,6 +226,48 @@ CLIENT_VARIANTS = [
     StartMappingMessage(
         type="start_mapping",
         options=StartMappingOptions(ledCount=1024),
+    ),
+    StartMappingMessage(
+        type="start_mapping",
+        # Fully client-configured: the phone measured the scene and chose the
+        # carrier + rate (§7.1).
+        options=StartMappingOptions(ledCount=64, encoding="gray-hue", bitPeriodMs=200.0),
+    ),
+    ConfigureMessage(
+        type="configure",
+        options=ConfigureOptions(bitPeriodMs=200.0),
+    ),
+    ConfigureMessage(
+        type="configure",
+        options=ConfigureOptions(ledCount=64, encoding="gray", bitPeriodMs=133.0),
+    ),
+    ExposureReportMessage(
+        type="exposure_report",
+        report=ExposureStats(
+            tCaptureMs=123456.7,
+            frameIntervalMs=66.7,
+            meanLuma=0.04,
+            p95Luma=0.11,
+            clipFrac=0.002,
+            blobCount=31,
+            detectorThreshold=0.6,
+        ),
+    ),
+    ExposureReportMessage(
+        type="exposure_report",
+        # A client that CAN read the 3A/ISP state (native app) fills these in.
+        report=ExposureStats(
+            tCaptureMs=123456.7,
+            frameIntervalMs=33.3,
+            meanLuma=0.35,
+            p95Luma=0.83,
+            clipFrac=0.01,
+            blobCount=140,
+            detectorThreshold=0.7,
+            iso=800.0,
+            exposureTimeMs=16.6,
+            ambientIntensity=0.9,
+        ),
     ),
     StopMappingMessage(type="stop_mapping"),
     DetectionsMessage(

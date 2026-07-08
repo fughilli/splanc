@@ -71,6 +71,51 @@ All work is on branch **`m1-driver-m2-server-m4-verify`** (working tree
 clean). The `/workspace` bind mount — including the persisted caches —
 survives the restart.
 
+### Done (2026-07-08)
+
+- **SEC-DED FEC on the blink code (misidentification fix).** The raw
+  `gray(id+1)` codebook has Hamming distance 1, so ONE decisively-misread
+  bit window (margin 1.0 — invisible to voting/confidence gates) decoded to
+  a valid WRONG id ≥50 % of the time. Codewords are now wrapped in an
+  extended-Hamming **d=4** code used as SEC-DED: single bit-frame errors
+  corrected, doubles detected and rejected (never miscorrected; d=4 is NOT
+  2-bit correction — deliberate, see docs/decisions.md). Cost: 64 LEDs
+  9→14-frame cycles, 1024 LEDs 13→18. Canonical `ledmapper_protocol/fec.py`
+  + TS mirror `web/src/code/fec.ts`, pinned by a new Python-generated golden
+  (`//pi/led_driver:gen_golden`); `CodeParams.fec` field ("none"|"secded",
+  server default secded — legacy "none" still decodes); decoder stats gained
+  `correctedCycles`/`rejectedFec`; exhaustive 1-/2-flip tests in both
+  languages + adversarial corrupted-window pipeline tests. 24 test targets
+  green. (Old captures/sessions replay fine — detections are post-decode.)
+
+- **Varying-light robustness: client-negotiated capture config + exposure
+  telemetry.** The dark-room gray-hue failure (all decodes died on the green
+  chroma sync — census 52/27k, gScore 0.13 vs the 0.25 gate; diagnosed from a
+  `?record=1` trace 2026-07-07) is now prevented by AUTO-NEGOTIATION: the
+  phone probes the scene ~1.2 s before the pattern runs (unthresholded
+  luma-stats readback `DetectorGL.measure`; frame cadence as the shutter
+  proxy — WebXR exposes no real ISO/shutter) and sends its choices in
+  `start_mapping` options (§7.1: optional `encoding`, `bitPeriodMs`): dark →
+  `gray`, lit → `gray-hue`; bit period ≥3 camera frame intervals (15 fps in
+  low light → 210 ms bits). **The server needs no CLI flags** — `--encoding`/
+  `--bit-period-ms` are fallbacks only. Mid-capture, the phone streams
+  `exposure_report` telemetry (persisted in the session log `exposure` key),
+  servos the detector threshold on blob count (flood/starve), and
+  RENEGOTIATES via the new `configure` message when conditions drift (fps
+  sag or lights toggled, with hysteresis + 2-tick agreement): the server
+  restamps the epoch, the wall follows via its 1 s `get_pattern` poll, the
+  phone rebuilds its pipeline, collected detections stay valid. WebXR
+  `light-estimation` (optional feature) feeds ambient intensity into the
+  reports; schema reserves nullable `iso`/`exposureTimeMs` for clients that
+  can read the real 3A. Negotiation rules in `web/src/cv/exposure.ts`
+  (pure, unit-tested — `exposure_test`); server handler/session tests cover
+  configure + exposure persistence; protocol §7.1 gained
+  `configure`/`exposure_report` (schemas + both bindings). 23 test targets
+  green. Defaults rationale in `docs/decisions.md`. **Untested on device:**
+  the luma thresholds (0.08 dark boundary) and the probe duration are
+  first-principles picks — validate against the lit-room wall + a dark room
+  at the next phone session.
+
 ### Done (2026-07-03)
 
 - **Continuous solving.** New §7 message pair `get_live_map`/`live_map`

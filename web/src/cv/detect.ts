@@ -17,6 +17,7 @@
  */
 
 import { connectedComponents } from "./ccl";
+import type { SceneStats } from "./exposure";
 import type { Blob } from "./types";
 
 const VS = `#version 300 es
@@ -84,6 +85,12 @@ export class DetectorGL {
   private targetW = 0;
   private targetH = 0;
   private readback: Uint8Array = new Uint8Array(0);
+  // Separate tiny target for the unthresholded measure() pass.
+  private measureTex: WebGLTexture | null = null;
+  private measureFbo: WebGLFramebuffer | null = null;
+  private measureW = 0;
+  private measureH = 0;
+  private measureBuf: Uint8Array = new Uint8Array(0);
 
   readonly downscale: number;
   threshold: number;
@@ -189,6 +196,63 @@ export class DetectorGL {
       }));
   }
 
+  /**
+   * Unthresholded scene-luminance statistics for exposure monitoring
+   * (cv/exposure.ts): the same pass with threshold 0 into a tiny fixed
+   * target, so the readback (~64×36 RGBA) costs a fraction of a detect().
+   * Run every few frames, not per frame — scene stats move at AE speed.
+   */
+  measure(texture: WebGLTexture, imgW: number, imgH: number): SceneStats {
+    const gl = this.gl;
+    const w = MEASURE_W;
+    const h = Math.max(1, Math.round((MEASURE_W * imgH) / imgW));
+    this.ensureMeasureTarget(w, h);
+
+    const prevFbo = gl.getParameter(gl.FRAMEBUFFER_BINDING) as WebGLFramebuffer | null;
+    const prevViewport = gl.getParameter(gl.VIEWPORT) as Int32Array;
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.measureFbo!);
+    gl.viewport(0, 0, w, h);
+    gl.disable(gl.DEPTH_TEST);
+    gl.disable(gl.BLEND);
+    gl.useProgram(this.program);
+    gl.uniform1f(this.uThreshold, 0.0); // unthresholded: alpha = raw luminance
+    gl.uniform1i(this.uCam, 0);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.bindVertexArray(this.vao);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.bindVertexArray(null);
+
+    if (this.measureBuf.length !== w * h * 4) this.measureBuf = new Uint8Array(w * h * 4);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, this.measureBuf);
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, prevFbo);
+    gl.viewport(prevViewport[0]!, prevViewport[1]!, prevViewport[2]!, prevViewport[3]!);
+
+    return sceneStatsFromLuma(this.measureBuf, w * h);
+  }
+
+  private ensureMeasureTarget(w: number, h: number): void {
+    const gl = this.gl;
+    if (this.measureFbo !== null && w === this.measureW && h === this.measureH) return;
+    this.measureW = w;
+    this.measureH = h;
+    if (this.measureTex === null) this.measureTex = gl.createTexture()!;
+    if (this.measureFbo === null) this.measureFbo = gl.createFramebuffer()!;
+    gl.bindTexture(gl.TEXTURE_2D, this.measureTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.measureFbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.measureTex, 0);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  }
+
   private ensureTarget(w: number, h: number): void {
     if (w === this.targetW && h === this.targetH) return;
     const gl = this.gl;
@@ -202,6 +266,42 @@ export class DetectorGL {
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.targetTex, 0);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
+}
+
+/** Width of the measure() readback target; height follows the image aspect. */
+const MEASURE_W = 64;
+
+/**
+ * Luma statistics from the alpha channel of an unthresholded readback
+ * (alpha = max-channel luminance when threshold is 0). Exported for tests —
+ * the GL pass is device territory, the math is not.
+ */
+export function sceneStatsFromLuma(rgba: Uint8Array, pixels: number): SceneStats {
+  // 256-bin histogram: exact percentiles without a sort.
+  const hist = new Uint32Array(256);
+  let sum = 0;
+  for (let i = 0; i < pixels; i++) {
+    const a = rgba[i * 4 + 3]!;
+    hist[a]!++;
+    sum += a;
+  }
+  const p95Count = Math.ceil(pixels * 0.95);
+  let acc = 0;
+  let p95 = 255;
+  for (let v = 0; v < 256; v++) {
+    acc += hist[v]!;
+    if (acc >= p95Count) {
+      p95 = v;
+      break;
+    }
+  }
+  let clipped = 0;
+  for (let v = 250; v < 256; v++) clipped += hist[v]!; // ≥ ~0.98
+  return {
+    meanLuma: sum / pixels / 255,
+    p95Luma: p95 / 255,
+    clipFrac: clipped / pixels,
+  };
 }
 
 function buildProgram(gl: WebGL2RenderingContext, vsSrc: string, fsSrc: string): WebGLProgram {

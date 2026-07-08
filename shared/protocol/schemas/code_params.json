@@ -15,7 +15,13 @@
     "bits": {
       "type": "integer",
       "minimum": 1,
-      "description": "Number of bit frames per cycle. ceil(log2(ledCount))."
+      "description": "Number of coded bit frames per cycle: ceil(log2(ledCount+1)) data bits, plus the FEC parity frames when fec != 'none'."
+    },
+    "fec": {
+      "type": "string",
+      "enum": ["none", "secded"],
+      "default": "none",
+      "description": "Forward error correction wrapped around the Gray data word. 'secded': extended Hamming, distance 4 — a single misread bit frame is CORRECTED, a double is DETECTED and the cycle rejected (never miscorrected). Exists because the raw Gray codebook has distance 1: one decisively-wrong window otherwise decodes to a valid WRONG LED id. Omitted = 'none' (legacy code-books)."
     },
     "encoding": {
       "type": "string",
