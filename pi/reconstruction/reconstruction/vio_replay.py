@@ -226,20 +226,65 @@ def diagnose_conventions(trace_path: Path) -> None:
         print(f"  [{label}]  {err:.2f}")
 
 
+def solve_session_log(log_path: Path, profile: bool, max_nfev: int = 80) -> int:
+    """Re-run the production final solve on a persisted session log — the
+    exact code path stop_mapping triggers — optionally under cProfile."""
+    from reconstruction.vio_api import reconstruct_vio
+
+    log = json.loads(log_path.read_text())
+    detections = log.get("detections", [])
+    imu = log.get("imu", [])
+    print(f"session log: {len(detections)} records, {len(imu)} imu samples")
+
+    import time
+
+    def run():
+        t0 = time.perf_counter()
+        out = reconstruct_vio(detections, imu, led_count=log.get("ledCount"), max_nfev=max_nfev)
+        dt = time.perf_counter() - t0
+        print(
+            f"solved {len(out.leds)} LEDs in {dt:.1f} s · "
+            f"reproj rms {out.stats.rmsReprojPxGlobal:.2f} px · frame {out.frame}"
+        )
+        return out
+
+    if profile:
+        import cProfile
+        import pstats
+
+        pr = cProfile.Profile()
+        pr.enable()
+        run()
+        pr.disable()
+        stats = pstats.Stats(pr)
+        stats.sort_stats("cumulative")
+        print("\n-- top 18 by cumulative time --")
+        stats.print_stats(18)
+    else:
+        run()
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("trace", type=Path, help="frames.jsonl (?record=1 trace, for IMU)")
-    ap.add_argument("decoded", type=Path, help="offline_decode output json")
+    ap.add_argument("trace", type=Path, help="frames.jsonl trace, OR a session log with --session-log")
+    ap.add_argument("decoded", type=Path, nargs="?", help="offline_decode output json")
     ap.add_argument("--frame-hz", type=float, default=10.0, help="visual keyframe rate")
     ap.add_argument("--px-sigma", type=float, default=1.0)
     ap.add_argument("--max-nfev", type=int, default=80)
     ap.add_argument("--out", type=Path, default=None, help="write the VIO map json here")
     ap.add_argument("--diagnose", action="store_true", help="fit IMU axis conventions from the trace and exit")
+    ap.add_argument("--session-log", action="store_true", help="treat the input as a persisted session log and re-run the production final solve")
+    ap.add_argument("--profile", action="store_true", help="run under cProfile (with --session-log)")
     args = ap.parse_args(argv)
 
+    if args.session_log:
+        return solve_session_log(args.trace, args.profile, max_nfev=args.max_nfev)
     if args.diagnose:
         diagnose_conventions(args.trace)
         return 0
+    if args.decoded is None:
+        ap.error("decoded json is required unless --session-log/--diagnose")
 
     imu = load_imu(args.trace)
     frames = load_frames(args.decoded, args.frame_hz)

@@ -270,3 +270,29 @@ camera↔IMU extrinsic + rolling-shutter modeling if bench residuals demand.
 `?noxr=1` — in the lit room, the dark room, and the reflective setup that
 breaks ARCore; compare Δtruth. The no-XR path must match the 1.5 mm
 best-case and win where WebXR degrades.
+
+## 9. Final-solve performance fix (2026-07-08, post first no-XR capture)
+
+The first real no-XR capture (32 LEDs, 38 s, 5 532 dense records, 3 026 IMU
+samples) took ~4 minutes at stop_mapping. Profiled on the actual session log
+(`vio_replay --session-log --profile`): **80 % of the time was preintegration
+being recomputed 538 802 times** — once per interval per residual evaluation,
+though it only depends on the 6 bias parameters — and most of the rest was
+the pure-Python reprojection loop over 5.5 k observations.
+
+Fixes (numerics unchanged — pinned by the untouched vio_test asserts):
+- vectorized reprojection residuals + batched Rodrigues (`so3_exp_batch` /
+  `so3_log_batch`);
+- IMU samples pre-bucketed per interval once (bisect, not linear scans);
+- **bias-linearized preintegration cache** (Forster-style, numerically
+  derived): integrate once per reference bias + a 6-column numeric bias
+  Jacobian; finite-difference bias perturbations are answered by the
+  first-order correction, so Jacobian passes never re-integrate;
+- IMU residual block fully batched.
+
+Same session: **205.8 s → 9.9 s (21×)**, byte-identical map (reproj rms
+14.38 px both). vio_test suite: 766 s → 16.6 s. Live interim solves benefit
+identically. Note: the 14 px rms on this capture is converged (400 evals:
+14.28 px) — it is outlier mass in the dense record stream riding the robust
+loss, not misconvergence; a MAD-prune + re-solve pass (as in the classic
+solver) is the follow-up if map quality demands it.

@@ -94,6 +94,56 @@ def skew(v: np.ndarray) -> np.ndarray:
     )
 
 
+def so3_log_batch(rots: np.ndarray) -> np.ndarray:
+    """Vectorized inverse of :func:`so3_exp_batch` for rotations away from π
+    (residual rotations are small; the π neighborhood falls back to the
+    scalar implementation)."""
+    tr = np.trace(rots, axis1=1, axis2=2)
+    cos_t = np.clip((tr - 1.0) / 2.0, -1.0, 1.0)
+    theta = np.arccos(cos_t)
+    w = np.stack(
+        [
+            rots[:, 2, 1] - rots[:, 1, 2],
+            rots[:, 0, 2] - rots[:, 2, 0],
+            rots[:, 1, 0] - rots[:, 0, 1],
+        ],
+        axis=1,
+    )
+    sin_t = np.sin(theta)
+    # theta/(2 sin theta), series-guarded at 0; π handled below.
+    factor = np.where(theta > 1e-9, theta / np.maximum(2.0 * sin_t, 1e-30), 0.5)
+    out = w * factor[:, None]
+    near_pi = np.pi - theta < 1e-4
+    if near_pi.any():
+        for idx in np.nonzero(near_pi)[0]:
+            out[idx] = so3_log(rots[idx])
+    return out
+
+
+def so3_exp_batch(r: np.ndarray) -> np.ndarray:
+    """Vectorized Rodrigues: (n, 3) rotation vectors → (n, 3, 3) matrices.
+
+    Series-guarded for small angles; agrees with :func:`so3_exp` to machine
+    precision. This is the hot path of the solver's residual function (one
+    batch per evaluation), hence the dedicated implementation.
+    """
+    r = np.asarray(r, dtype=float)
+    theta = np.linalg.norm(r, axis=1)
+    theta2 = theta * theta
+    safe = np.maximum(theta, 1e-30)
+    a = np.where(theta > 1e-8, np.sin(theta) / safe, 1.0 - theta2 / 6.0)
+    b = np.where(theta > 1e-8, (1.0 - np.cos(theta)) / np.maximum(theta2, 1e-60), 0.5 - theta2 / 24.0)
+    kx = np.zeros((len(r), 3, 3))
+    kx[:, 0, 1] = -r[:, 2]
+    kx[:, 0, 2] = r[:, 1]
+    kx[:, 1, 0] = r[:, 2]
+    kx[:, 1, 2] = -r[:, 0]
+    kx[:, 2, 0] = -r[:, 1]
+    kx[:, 2, 1] = r[:, 0]
+    eye = np.broadcast_to(np.eye(3), (len(r), 3, 3))
+    return eye + a[:, None, None] * kx + b[:, None, None] * (kx @ kx)
+
+
 def unskew(m: np.ndarray) -> np.ndarray:
     return np.array([m[2, 1], m[0, 2], m[1, 0]], dtype=float)
 
@@ -439,41 +489,186 @@ def solve_vio(
         return max(sr, 1e-6), max(sv, 1e-6), max(sp, 1e-7)
 
     sigmas = [interval_sigmas(i) for i in intervals]
+    sig_r = np.array([s[0] for s in sigmas]).reshape(-1, 1)
+    sig_v = np.array([s[1] for s in sigmas]).reshape(-1, 1)
+    sig_p = np.array([s[2] for s in sigmas]).reshape(-1, 1)
 
     n_k_res = 3 if refine_intrinsics else 0
 
+    # ---- Residual-function precomputation. The residuals run thousands of
+    # times (numeric Jacobian × LM iterations); everything that does not
+    # depend on the parameter vector is hoisted out, and the two former
+    # per-eval hot spots are eliminated:
+    #  * reprojection is fully vectorized over observations,
+    #  * IMU preintegration depends ONLY on the biases (6 of thousands of
+    #    parameters), so segments are pre-bucketed once and the integrated
+    #    deltas are cached keyed by bias values — Jacobian columns for poses,
+    #    LEDs, gravity and K hit the cache.
+    n_obs = len(obs_flat)
+    obs_i = np.array([o[0] for o in obs_flat], dtype=np.intp)
+    obs_j = np.array([o[1] for o in obs_flat], dtype=np.intp)
+    obs_u = np.array([o[2] for o in obs_flat])
+    obs_v = np.array([o[3] for o in obs_flat])
+    obs_k = np.array([frames[i].k for i, _j, _u, _v in obs_flat])  # (n_obs, 4)
+
+    imu_sorted = sorted(imu, key=lambda s: s.t)
+    imu_t = np.array([s.t for s in imu_sorted])
+
+    def _bucket(i: int):
+        """Per-interval integration segments (bounds + held rates), mirroring
+        preintegrate()'s ZOH-with-leading-span semantics exactly."""
+        t0, t1 = frames[i].t, frames[i + 1].t
+        lo = int(np.searchsorted(imu_t, t0, side="right"))
+        hi = int(np.searchsorted(imu_t, t1, side="left"))
+        inside = imu_sorted[lo:hi]
+        active = imu_sorted[lo - 1] if lo > 0 else (inside[0] if inside else None)
+        if active is None:
+            return None
+        rates = [active] + inside
+        bounds = np.array([t0] + [s.t for s in inside] + [t1])
+        gyr = np.array([s.gyro for s in rates])
+        acc = np.array([s.accel for s in rates])
+        return np.diff(bounds), gyr, acc
+
+    segments = [_bucket(i) for i in intervals]
+    interval_dts = np.array([frames[i + 1].t - frames[i].t for i in intervals])
+
+    # Flattened sample arrays across all intervals: one batched exp per
+    # integration pass instead of thousands of scalar so3_exp calls.
+    flat_dts = np.concatenate([s[0] for s in segments if s is not None]) if intervals else np.zeros(0)
+    flat_gyr = (
+        np.concatenate([s[1] for s in segments if s is not None])
+        if intervals
+        else np.zeros((0, 3))
+    )
+    flat_acc = (
+        np.concatenate([s[2] for s in segments if s is not None])
+        if intervals
+        else np.zeros((0, 3))
+    )
+    seg_slices = []
+    pos = 0
+    for s in segments:
+        if s is None:
+            seg_slices.append(None)
+        else:
+            cnt = len(s[0])
+            seg_slices.append(slice(pos, pos + cnt))
+            pos += cnt
+
+    def integrate_all(bg: np.ndarray, ba: np.ndarray):
+        """(ΔR^T, Δv, Δp) arrays over all intervals for given biases."""
+        steps = so3_exp_batch((flat_gyr - bg) * flat_dts[:, None])
+        acc_c = flat_acc - ba
+        rot_t = np.empty((len(intervals), 3, 3))
+        vel = np.empty((len(intervals), 3))
+        posn = np.empty((len(intervals), 3))
+        for idx, sl in enumerate(seg_slices):
+            d_rot = np.eye(3)
+            d_vel = np.zeros(3)
+            d_pos = np.zeros(3)
+            if sl is not None:
+                for mi in range(sl.start, sl.stop):
+                    dt = flat_dts[mi]
+                    if dt <= 0:
+                        continue
+                    a_w = d_rot @ acc_c[mi]
+                    d_pos = d_pos + d_vel * dt + 0.5 * a_w * dt * dt
+                    d_vel = d_vel + a_w * dt
+                    d_rot = d_rot @ steps[mi]
+            rot_t[idx] = d_rot.T
+            vel[idx] = d_vel
+            posn[idx] = d_pos
+        return rot_t, vel, posn
+
+    # Bias-linearized preintegration cache (Forster-style, numerically
+    # derived): integrating is only ever a function of the 6 bias parameters,
+    # so integrate ONCE at a reference bias, compute the 6-column bias
+    # Jacobian numerically, and answer nearby-bias queries (finite-difference
+    # perturbations, in particular) with the first-order correction:
+    #     ΔR(b) ≈ ΔR_ref · exp(J_r δ),  Δv(b) ≈ Δv_ref + J_v δ,  …
+    # The reference is refreshed whenever the query strays beyond the
+    # linearization neighborhood (an accepted LM step on the biases).
+    _JH = 1e-6
+    preint_ref: dict = {"b": None, "vals": None, "jac": None}
+
+    def preint_all(bg: np.ndarray, ba: np.ndarray):
+        b = np.concatenate([bg, ba])
+        if preint_ref["b"] is None or np.max(np.abs(b - preint_ref["b"])) > 1e-4:
+            rot_t, vel, posn = integrate_all(bg, ba)
+            jr = np.empty((len(intervals), 3, 6))
+            jv = np.empty((len(intervals), 3, 6))
+            jp = np.empty((len(intervals), 3, 6))
+            for kdim in range(6):
+                bpert = b.copy()
+                bpert[kdim] += _JH
+                rot_t_k, vel_k, posn_k = integrate_all(bpert[:3], bpert[3:])
+                # log(ΔR_ref^T ΔR_k) = log((rot_t @ rot_t_k^T)^T)
+                rel = np.einsum("nij,nkj->nki", rot_t_k, rot_t)  # ΔR_ref^T ΔR_k
+                jr[:, :, kdim] = so3_log_batch(rel) / _JH
+                jv[:, :, kdim] = (vel_k - vel) / _JH
+                jp[:, :, kdim] = (posn_k - posn) / _JH
+            preint_ref["b"] = b
+            preint_ref["vals"] = (rot_t, vel, posn)
+            preint_ref["jac"] = (jr, jv, jp)
+        rot_t, vel, posn = preint_ref["vals"]
+        delta = b - preint_ref["b"]
+        if not delta.any():
+            return rot_t, vel, posn
+        jr, jv, jp = preint_ref["jac"]
+        # ΔR(b)^T = exp(-J_r δ) · ΔR_ref^T
+        corr = so3_exp_batch(-(jr @ delta))
+        return (
+            np.einsum("nij,njk->nik", corr, rot_t),
+            vel + jv @ delta,
+            posn + jp @ delta,
+        )
+
     def residuals(x: np.ndarray) -> np.ndarray:
-        rots, ps, vs, leds, bg, ba, g, kk = unpack(x)
-        out = np.empty(2 * len(obs_flat) + 9 * len(intervals) + 3 + 3 + 1 + 6 + n_k_res)
-        k = 0
-        # Reprojection.
-        for i, j, u, v in obs_flat:
-            if kk is not None:
-                fx, fy, cx, cy = kk[0], kk[0], kk[1], kk[2]
-            else:
-                fx, fy, cx, cy = frames[i].k
-            xc = rots[i].T @ (leds[j] - ps[i])
-            depth = -xc[2]
-            if depth <= 1e-6:
-                out[k] = out[k + 1] = 50.0  # behind the camera: hard penalty
-                k += 2
-                continue
-            uu = cx + fx * xc[0] / depth
-            vv = cy - fy * xc[1] / depth
-            out[k] = (uu - u) / px_sigma
-            out[k + 1] = (vv - v) / px_sigma
-            k += 2
-        # IMU preintegration factors.
-        for idx, i in enumerate(intervals):
-            d_rot, d_vel, d_pos, dt = preintegrate(imu, frames[i].t, frames[i + 1].t, bg, ba)
-            sr, sv, sp = sigmas[idx]
-            r_err = so3_log(d_rot.T @ rots[i].T @ rots[i + 1])
-            v_err = rots[i].T @ (vs[i + 1] - vs[i] - g * dt) - d_vel
-            p_err = rots[i].T @ (ps[i + 1] - ps[i] - vs[i] * dt - 0.5 * g * dt * dt) - d_pos
-            out[k : k + 3] = r_err / sr
-            out[k + 3 : k + 6] = v_err / sv
-            out[k + 6 : k + 9] = p_err / sp
-            k += 9
+        pose = x[:off_led].reshape(n, 9)
+        rotm = so3_exp_batch(pose[:, 0:3])
+        ps = pose[:, 3:6]
+        vs = pose[:, 6:9]
+        leds = x[off_led:off_bias].reshape(m, 3)
+        bg = x[off_bias : off_bias + 3]
+        ba = x[off_bias + 3 : off_bias + 6]
+        g = x[off_bias + 6 : off_bias + 9]
+        kk = x[off_k : off_k + 3] if refine_intrinsics else None
+        out = np.empty(2 * n_obs + 9 * len(intervals) + 3 + 3 + 1 + 6 + n_k_res)
+        # Reprojection, vectorized: xc = R^T (X - p) per observation.
+        d = leds[obs_j] - ps[obs_i]
+        xc = np.einsum("nba,nb->na", rotm[obs_i], d)
+        depth = -xc[:, 2]
+        bad = depth <= 1e-6
+        depth_safe = np.where(bad, 1.0, depth)
+        if kk is not None:
+            fx = fy = kk[0]
+            cx, cy = kk[1], kk[2]
+        else:
+            fx, fy, cx, cy = obs_k[:, 0], obs_k[:, 1], obs_k[:, 2], obs_k[:, 3]
+        ru = (cx + fx * xc[:, 0] / depth_safe - obs_u) / px_sigma
+        rv = (cy - fy * xc[:, 1] / depth_safe - obs_v) / px_sigma
+        ru[bad] = 50.0  # behind the camera: hard penalty
+        rv[bad] = 50.0
+        out[: 2 * n_obs : 2] = ru
+        out[1 : 2 * n_obs : 2] = rv
+        k = 2 * n_obs
+        # IMU preintegration factors, fully batched over intervals.
+        if intervals:
+            d_rot_t, d_vel, d_pos = preint_all(bg, ba)
+            ri = rotm[:-1]  # (nI, 3, 3), camera-to-world at interval starts
+            rj = rotm[1:]
+            dt = interval_dts[:, None]
+            # r_err = log(ΔR_meas^T · R_i^T · R_j); d_rot_t already holds ΔR^T.
+            rel = np.einsum("nij,njk->nik", d_rot_t, np.einsum("nji,njk->nik", ri, rj))
+            r_err = so3_log_batch(rel)
+            v_world = vs[1:] - vs[:-1] - g[None, :] * dt
+            v_err = np.einsum("nji,nj->ni", ri, v_world) - d_vel
+            p_world = ps[1:] - ps[:-1] - vs[:-1] * dt - 0.5 * g[None, :] * dt * dt
+            p_err = np.einsum("nji,nj->ni", ri, p_world) - d_pos
+            block = np.concatenate([r_err / sig_r, v_err / sig_v, p_err / sig_p], axis=1)
+            out[k : k + 9 * len(intervals)] = block.ravel()
+            k += 9 * len(intervals)
         # Bias priors (biases are small and constant per session).
         out[k : k + 3] = bg / 5e-3
         out[k + 3 : k + 6] = ba / 5e-2
