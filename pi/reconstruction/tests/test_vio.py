@@ -317,7 +317,30 @@ def test_reconstruct_vio_wire_end_to_end():
         {"t": s.t * 1000.0, "gyro": [float(x) for x in s.gyro], "accel": [float(x) for x in s.accel]}
         for s in imu
     ]
-    out = reconstruct_vio(records, imu_wire, led_count=len(leds), refine_intrinsics=False)
+    progress = []
+    out = reconstruct_vio(
+        records,
+        imu_wire,
+        led_count=len(leds),
+        refine_intrinsics=False,
+        progress_cb=lambda frac, leds_now, rms, positions: progress.append(
+            (frac, len(leds_now), rms, len(positions))
+        ),
+    )
+
+    # The optimizer reported throttled progress snapshots: fractions ascend
+    # within [0, 1), interim maps carry every LED, camera path present.
+    assert progress, "progress callback never fired"
+    fracs = [p[0] for p in progress]
+    assert all(0 <= f < 1 for f in fracs)
+    assert fracs == sorted(fracs)
+    assert all(p[1] == len(leds) for p in progress)
+    assert all(p[3] > 0 for p in progress)
+
+    # The final map carries the solved camera path for the viewport overlay.
+    assert out.trajectory is not None and len(out.trajectory) > 10
+    traj = np.array(out.trajectory)
+    assert np.linalg.norm(traj[-1] - traj[0]) > 0.1  # a real walk, leveled frame
 
     assert out.frame == "gravity_leveled"
     assert len(out.leds) == len(leds) and not out.unmapped

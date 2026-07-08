@@ -14,7 +14,8 @@
     { "$ref": "#/$defs/ExposureReport" },
     { "$ref": "#/$defs/GetStatus" },
     { "$ref": "#/$defs/GetPattern" },
-    { "$ref": "#/$defs/GetLiveMap" }
+    { "$ref": "#/$defs/GetLiveMap" },
+    { "$ref": "#/$defs/GetSolveStatus" }
   ],
   "$defs": {
     "Hello": {
@@ -236,6 +237,15 @@
       "description": "Poll the continuous solver for the latest interim reconstruction of the active capture. Polling also drives the solver: the server kicks a new solve when detections have arrived since the last one.",
       "properties": {
         "type": { "const": "get_live_map" }
+      }
+    },
+    "GetSolveStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "description": "Poll the FINAL solve's progress (after stop_mapping, while the reply is pending): optimizer progress, current reprojection rms, and the converging interim LED positions for a live preview. Reply: solve_status.",
+      "properties": {
+        "type": { "const": "get_solve_status" }
       }
     }
   }

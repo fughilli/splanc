@@ -108,6 +108,8 @@ class OutputMap(_StrictModel):
     ledCount: int = Field(ge=0)
     leds: List[LedEntry]
     unmapped: List[int]
+    # Solved camera path (visual-inertial solves), same frame as leds.
+    trajectory: Union[List[Vec3], None] = None
     stats: OutputMapStats
 
 
@@ -213,6 +215,12 @@ class GetLiveMapMessage(_StrictModel):
     type: Literal["get_live_map"]
 
 
+class GetSolveStatusMessage(_StrictModel):
+    """Poll the FINAL solve's progress while stop_mapping is pending."""
+
+    type: Literal["get_solve_status"]
+
+
 ClientMessageInner = Annotated[
     Union[
         HelloMessage,
@@ -226,6 +234,7 @@ ClientMessageInner = Annotated[
         GetStatusMessage,
         GetPatternMessage,
         GetLiveMapMessage,
+        GetSolveStatusMessage,
     ],
     Field(discriminator="type"),
 ]
@@ -283,6 +292,24 @@ class LiveMapMessage(_StrictModel):
     map: Union[OutputMap, None]
 
 
+class SolveLed(_StrictModel):
+    """Interim LED position during a running solve (lightweight preview)."""
+
+    id: int = Field(ge=0)
+    xyz: Vec3
+
+
+class SolveStatusMessage(_StrictModel):
+    """Reply to get_solve_status: the final solve's live state."""
+
+    type: Literal["solve_status"]
+    running: bool
+    progress: Union[float, None] = Field(default=None, ge=0.0, le=1.0)
+    rmsPx: Union[float, None] = None
+    leds: Union[List[SolveLed], None] = None
+    trajectory: Union[List[Vec3], None] = None
+
+
 class ResultReadyMessage(_StrictModel):
     type: Literal["result_ready"]
     mapId: str
@@ -302,6 +329,7 @@ ServerMessageInner = Annotated[
         StatusMessage,
         PatternStateMessage,
         LiveMapMessage,
+        SolveStatusMessage,
         ResultReadyMessage,
         ErrorMessage,
     ],
@@ -341,6 +369,7 @@ __all__ = [
     "GetStatusMessage",
     "GetPatternMessage",
     "GetLiveMapMessage",
+    "GetSolveStatusMessage",
     "ClientMessage",
     "WelcomeMessage",
     "TimeSyncPongMessage",
@@ -348,6 +377,8 @@ __all__ = [
     "StatusMessage",
     "PatternStateMessage",
     "LiveMapMessage",
+    "SolveLed",
+    "SolveStatusMessage",
     "ResultReadyMessage",
     "ErrorMessage",
     "ServerMessage",

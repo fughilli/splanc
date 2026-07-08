@@ -296,3 +296,25 @@ identically. Note: the 14 px rms on this capture is converged (400 evals:
 14.28 px) — it is outlier mass in the dense record stream riding the robust
 loss, not misconvergence; a MAD-prune + re-solve pass (as in the classic
 solver) is the follow-up if map quality demands it.
+
+## 10. Final-solve UX: progress + converging preview + trajectory (2026-07-08)
+
+- **§7 `get_solve_status`/`solve_status`**: while stop_mapping's reply is
+  pending, the phone polls the final solve's state — optimizer progress
+  (estimated from the sparsity-coloring evaluation budget), current reproj
+  rms, interim LED positions and the decimated camera path. Fed by a
+  throttled `progress_cb` inside the solver's own residual function
+  (scipy exposes no iteration hook, but we own the residuals);
+  `ReconstructionRunner.status` is the poll-visible snapshot (atomic dict
+  swaps across the solver thread).
+- **The ws loop no longer serializes behind slow handlers**: each message
+  dispatches as a task (sends lock-serialized) so progress polls flow while
+  stop_mapping awaits the solve. Fast handlers keep effective FIFO order
+  (they contain no awaits).
+- **Frontend**: the result pane appears at stop with a progress bar
+  (percent + live rms) and the CONVERGING map rendering in the viewport;
+  the final map swaps in on result_ready.
+- **`OutputMap.trajectory`** (optional, §7.5): the solved camera path
+  (decimated, gravity-leveled) ships with visual-inertial maps; the result
+  viewport gained a "Show camera path" toggle (also live during the solve),
+  and the view auto-fits bounds to include the path when shown.

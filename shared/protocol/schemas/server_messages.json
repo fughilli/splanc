@@ -10,6 +10,7 @@
     { "$ref": "#/$defs/Status" },
     { "$ref": "#/$defs/PatternState" },
     { "$ref": "#/$defs/LiveMap" },
+    { "$ref": "#/$defs/SolveStatus" },
     { "$ref": "#/$defs/ResultReady" },
     { "$ref": "#/$defs/Error" }
   ],
@@ -93,6 +94,42 @@
         "active": { "type": "boolean" },
         "map": {
           "oneOf": [{ "$ref": "output_map.json" }, { "type": "null" }]
+        }
+      }
+    },
+    "SolveStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "running", "progress", "rmsPx", "leds", "trajectory"],
+      "description": "Reply to get_solve_status: the final solve's live state, updated by the optimizer's progress callback. All-null fields when no solve is running (or the running solver does not report progress, e.g. the fast pose-trusting path). `leds` is a LIGHTWEIGHT interim position list for the converging preview (full quality metrics only exist in the final OutputMap); `trajectory` is the decimated solved camera path, same gauge as `leds`.",
+      "properties": {
+        "type": { "const": "solve_status" },
+        "running": { "type": "boolean" },
+        "progress": {
+          "type": ["number", "null"],
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Estimated optimizer progress in [0,1] (evaluation budget consumed); null when unknown."
+        },
+        "rmsPx": {
+          "type": ["number", "null"],
+          "description": "Current reprojection rms, px."
+        },
+        "leds": {
+          "type": ["array", "null"],
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "xyz"],
+            "properties": {
+              "id": { "type": "integer", "minimum": 0 },
+              "xyz": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 }
+            }
+          }
+        },
+        "trajectory": {
+          "type": ["array", "null"],
+          "items": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 }
         }
       }
     },

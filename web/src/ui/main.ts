@@ -626,6 +626,45 @@ async function stopCapture(sessionAlreadyEnded = false): Promise<void> {
   resetLiveFeedback();
 
   setConn("final solve…");
+  // While the final solve runs, poll its progress: a progress bar plus the
+  // CONVERGING interim map rendered live in the result viewport (the joint
+  // solve takes seconds — watching it settle beats staring at a spinner).
+  const progWrap = $("solveprog");
+  const progFill = $("solveprog-fill");
+  const progText = $("solveprog-text");
+  progWrap.style.display = "";
+  progFill.style.width = "0%";
+  progText.textContent = "solving…";
+  let previewView: MapView | null = null;
+  const solvePoll = setInterval(() => {
+    client
+      .getSolveStatus()
+      .then((st) => {
+        if (st.progress !== null) {
+          progFill.style.width = `${Math.round(st.progress * 100)}%`;
+          progText.textContent =
+            `solving… ${Math.round(st.progress * 100)} %` +
+            (st.rmsPx !== null ? ` · reproj ${st.rmsPx.toFixed(1)} px` : "");
+        }
+        if (st.leds !== null && st.leds.length >= 3) {
+          const interim = interimMap(st.leds, st.trajectory);
+          setupSection.style.display = "";
+          resultSection.style.display = "";
+          if (previewView === null) {
+            mapView?.stop();
+            previewView = new MapView($<HTMLCanvasElement>("mapcanvas"), interim);
+            previewView.showTrajectory = trajectoryOn;
+            mapView = previewView;
+            previewView.start();
+          } else {
+            previewView.update(interim);
+          }
+          previewView.setTrajectory(st.trajectory);
+          syncTrajButton(previewView);
+        }
+      })
+      .catch(() => undefined);
+  }, 400);
   try {
     const result = await client.stopMapping();
     const resp = await fetch(`/maps/${result.mapId}`);
@@ -637,9 +676,51 @@ async function stopCapture(sessionAlreadyEnded = false): Promise<void> {
     setError(`Reconstruction failed: ${e instanceof Error ? e.message : e}`);
     setConn(client.isConnected ? "connected" : "disconnected");
   } finally {
+    clearInterval(solvePoll);
+    progWrap.style.display = "none";
     stopBtn.disabled = false;
     startBtn.disabled = false;
   }
+}
+
+/** OutputMap-shaped wrapper around a solve_status interim snapshot, just
+ * enough for MapView (quality fields are placeholders until the final map). */
+function interimMap(
+  leds: { id: number; xyz: [number, number, number] }[],
+  trajectory: [number, number, number][] | null,
+): OutputMap {
+  return {
+    mapId: "solving",
+    createdAt: "",
+    units: "meters",
+    frame: "gravity_leveled",
+    ledCount: leds.length,
+    leds: leds.map((l) => ({
+      id: l.id,
+      xyz: l.xyz,
+      confidence: 1,
+      nViews: 0,
+      rmsReprojPx: 0,
+      parallaxDeg: 0,
+    })),
+    unmapped: [],
+    ...(trajectory !== null ? { trajectory } : {}),
+    stats: { rmsReprojPxGlobal: 0, medianParallaxDeg: 0 },
+  };
+}
+
+// Camera-path toggle: persists across interim/final view swaps.
+let trajectoryOn = false;
+const trajBtn = $<HTMLButtonElement>("trajtoggle");
+trajBtn.addEventListener("click", () => {
+  trajectoryOn = !trajectoryOn;
+  if (mapView !== null) mapView.showTrajectory = trajectoryOn;
+  trajBtn.textContent = trajectoryOn ? "Hide camera path" : "Show camera path";
+});
+
+function syncTrajButton(view: MapView): void {
+  trajBtn.style.display = view.hasTrajectory ? "" : "none";
+  trajBtn.textContent = trajectoryOn ? "Hide camera path" : "Show camera path";
 }
 
 function showResult(mapId: string, map: OutputMap): void {
@@ -650,6 +731,9 @@ function showResult(mapId: string, map: OutputMap): void {
   mapView?.stop();
   const view = new MapView($<HTMLCanvasElement>("mapcanvas"), map);
   mapView = view;
+  view.setTrajectory(map.trajectory ?? null);
+  view.showTrajectory = trajectoryOn;
+  syncTrajButton(view);
   void fetchTruth(map.ledCount).then((t) => view.setTruth(t));
   view.start();
 }

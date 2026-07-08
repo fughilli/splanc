@@ -464,3 +464,31 @@ def test_snapshot_carries_imu_for_the_live_solver(tmp_path):
     assert snap is not None
     _sid, _n, _dets, imu = snap
     assert len(imu) == 3
+
+
+def test_get_solve_status_idle_and_running(tmp_path):
+    handler, ctx, _ = _make_handler(tmp_path)
+    m = _dump(_run(handler, '{"type":"get_solve_status"}')[0])
+    assert m["type"] == "solve_status"
+    assert m == {
+        "type": "solve_status",
+        "running": False,
+        "progress": None,
+        "rmsPx": None,
+        "leds": None,
+        "trajectory": None,
+    }
+
+    # A running solve exposes the optimizer's latest snapshot through the
+    # reconstructor's poll-visible status (ReconstructionRunner contract).
+    ctx.reconstructor.status = {
+        "running": True,
+        "progress": 0.42,
+        "rmsPx": 3.1,
+        "leds": [{"id": 0, "xyz": [0.1, 0.2, 0.3]}],
+        "trajectory": [[0.0, 0.0, 0.0], [0.05, 0.0, -0.01]],
+    }
+    m = _dump(_run(handler, '{"type":"get_solve_status"}')[0])
+    assert m["running"] is True and m["progress"] == 0.42
+    assert m["leds"][0]["id"] == 0
+    assert len(m["trajectory"]) == 2

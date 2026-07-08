@@ -40,6 +40,7 @@ from ledmapper_protocol import (
     ImuBatchMessage,
     ImuSample,
     GetLiveMapMessage,
+    GetSolveStatusMessage,
     GetPatternMessage,
     GetStatusMessage,
     HelloMessage,
@@ -52,6 +53,8 @@ from ledmapper_protocol import (
     Pose,
     ResultReadyMessage,
     ServerMessage,
+    SolveLed,
+    SolveStatusMessage,
     StartMappingMessage,
     StartMappingOptions,
     StatusMessage,
@@ -292,6 +295,7 @@ CLIENT_VARIANTS = [
     GetStatusMessage(type="get_status"),
     GetPatternMessage(type="get_pattern"),
     GetLiveMapMessage(type="get_live_map"),
+    GetSolveStatusMessage(type="get_solve_status"),
 ]
 
 
@@ -346,6 +350,17 @@ SERVER_VARIANTS = [
     ),
     LiveMapMessage(type="live_map", active=True, map=make_output_map()),
     LiveMapMessage(type="live_map", active=False, map=None),
+    SolveStatusMessage(
+        type="solve_status",
+        running=True,
+        progress=0.4,
+        rmsPx=2.7,
+        leds=[SolveLed(id=0, xyz=(0.1, 0.2, 0.3)), SolveLed(id=3, xyz=(0.2, 0.2, 0.3))],
+        trajectory=[(0.0, 0.0, 0.0), (0.05, 0.01, -0.02)],
+    ),
+    SolveStatusMessage(
+        type="solve_status", running=False, progress=None, rmsPx=None, leds=None, trajectory=None
+    ),
     ResultReadyMessage(type="result_ready", mapId="ffffffff-0000-1111-2222-333333333333"),
     ErrorMessage(type="error", code="capture_aborted", message="user pressed stop"),
 ]

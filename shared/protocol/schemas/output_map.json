@@ -41,6 +41,11 @@
       "description": "LED indices that were not solved (no observations or insufficient parallax).",
       "items": { "type": "integer", "minimum": 0 }
     },
+    "trajectory": {
+      "type": ["array", "null"],
+      "items": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 },
+      "description": "OPTIONAL solved camera path (decimated camera centers, chronological), present for visual-inertial solves — same frame as `leds`. Enables the result viewport's trajectory overlay."
+    },
     "stats": {
       "type": "object",
       "additionalProperties": false,

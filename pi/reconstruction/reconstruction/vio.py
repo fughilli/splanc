@@ -40,7 +40,13 @@ gyro measures body angular rate ω with Ṙ = R [ω]×.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
+
+# Progress hook for long solves: (progress_frac, led_positions, rms_px,
+# camera_positions). Called FROM THE OPTIMIZER THREAD, throttled to a few Hz;
+# consumers own their thread-safety. progress_frac is the estimated fraction
+# of the evaluation budget consumed (an estimate — LM may converge earlier).
+ProgressCb = Callable[[float, Dict[int, "np.ndarray"], float, "np.ndarray"], None]
 
 import numpy as np
 from scipy.optimize import least_squares
@@ -398,6 +404,7 @@ def solve_vio(
     huber_px: float = 4.0,
     max_nfev: int = 60,
     refine_intrinsics: bool = False,
+    progress_cb: Optional["ProgressCb"] = None,
 ) -> VioResult:
     """Jointly estimate camera trajectory and LED positions; no pose input.
 
@@ -624,6 +631,27 @@ def solve_vio(
             posn + jp @ delta,
         )
 
+    # Progress reporting: the optimizer offers no iteration hook, but WE own
+    # the residual function. The total evaluation count is estimated from the
+    # sparsity coloring (each Jacobian costs ~one eval per column group —
+    # filled in below, once the pattern exists) and throttled snapshots of the
+    # current LED/camera estimates go to the callback.
+    eval_state = {"count": 0, "est_total": 0, "last_report": 0.0}
+
+    def _report(out: np.ndarray, leds: np.ndarray, ps: np.ndarray) -> None:
+        import time as _time
+
+        eval_state["count"] += 1
+        if progress_cb is None or eval_state["est_total"] == 0:
+            return
+        now = _time.monotonic()
+        if now - eval_state["last_report"] < 0.25:
+            return
+        eval_state["last_report"] = now
+        rms = float(np.sqrt(np.mean(out[: 2 * n_obs] ** 2))) * px_sigma
+        frac = min(0.99, eval_state["count"] / eval_state["est_total"])
+        progress_cb(frac, {led: leds[id_index[led]].copy() for led in led_ids}, rms, ps.copy())
+
     def residuals(x: np.ndarray) -> np.ndarray:
         pose = x[:off_led].reshape(n, 9)
         rotm = so3_exp_batch(pose[:, 0:3])
@@ -687,6 +715,7 @@ def solve_vio(
             out[k] = (kk[0] - k_seed[0]) / (0.2 * k_seed[0])
             out[k + 1] = (kk[1] - k_seed[1]) / (0.1 * 2 * k_seed[1])
             out[k + 2] = (kk[2] - k_seed[2]) / (0.1 * 2 * k_seed[2])
+        _report(out, leds, ps)
         return out
 
     # Sparsity pattern for 2-point finite differencing.
@@ -711,6 +740,15 @@ def solve_vio(
     k += 6
     if refine_intrinsics:
         spar[k : k + 3, off_k : off_k + 3] = 1
+
+    if progress_cb is not None:
+        try:
+            from scipy.optimize._numdiff import group_columns
+
+            n_groups = int(np.max(group_columns(spar.tocsc()))) + 1
+        except Exception:
+            n_groups = 30  # typical coloring for this problem shape
+        eval_state["est_total"] = max_nfev * (1 + n_groups)
 
     fit = least_squares(
         residuals,

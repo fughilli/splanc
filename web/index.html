@@ -177,10 +177,24 @@
 
       <section id="result" style="display: none">
         <h1 style="font-size: 1.05rem">Result</h1>
+        <div id="solveprog" style="display: none; margin: 0 0 0.6rem">
+          <div
+            style="height: 6px; background: #26262e; border-radius: 3px; overflow: hidden"
+          >
+            <div
+              id="solveprog-fill"
+              style="height: 100%; width: 0%; background: #3557d8; border-radius: 3px; transition: width 0.3s"
+            ></div>
+          </div>
+          <div id="solveprog-text" style="color: #9a9aa2; font-size: 0.85rem; margin-top: 0.25rem">
+            solving…
+          </div>
+        </div>
         <canvas id="mapcanvas" width="520" height="390"></canvas>
         <p class="row">
           <a id="dl-json" download>map.json</a>
           <a id="dl-csv" download>map.csv</a>
+          <button class="secondary" id="trajtoggle" style="display: none">Show camera path</button>
           <button class="secondary" id="again">Map again</button>
         </p>
       </section>

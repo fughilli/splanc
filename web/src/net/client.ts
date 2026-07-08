@@ -28,6 +28,7 @@ import type {
   PatternStateMessage,
   ResultReadyMessage,
   ServerMessage,
+  SolveStatusMessage,
   StartMappingOptions,
   StatusMessage,
   WelcomeMessage,
@@ -256,6 +257,11 @@ export class LedMapperClient {
   /** Poll the continuous solver for the latest interim reconstruction. */
   async getLiveMap(): Promise<LiveMapMessage> {
     return (await this.request({ type: "get_live_map" }, "live_map")) as LiveMapMessage;
+  }
+
+  /** Poll the FINAL solve's progress while stopMapping() is pending. */
+  async getSolveStatus(): Promise<SolveStatusMessage> {
+    return (await this.request({ type: "get_solve_status" }, "solve_status")) as SolveStatusMessage;
   }
 
   /** Queue a detection batch; delivered now or after reconnect. */

@@ -48,7 +48,7 @@ def _poseless(detections) -> bool:
     return bool(detections)
 
 
-def _reconstruct_sync(log_path: Path) -> OutputMap:
+def _reconstruct_sync(log_path: Path, progress_cb=None) -> OutputMap:
     data = json.loads(Path(log_path).read_text())
     if isinstance(data, list):
         detections, led_count, imu = data, None, []
@@ -61,18 +61,57 @@ def _reconstruct_sync(log_path: Path) -> OutputMap:
         # (docs/vio-exploration.md phase 4). Raises with a clear message when
         # the IMU stream is missing/too thin — surfaced to the client as
         # reconstruction_failed.
-        return reconstruct_vio(detections, imu, led_count=led_count)
+        return reconstruct_vio(detections, imu, led_count=led_count, progress_cb=progress_cb)
+    # The pose-trusting solver is ~1 s — no progress reporting needed.
     return reconstruct(detections, led_count=led_count)
 
 
+# The final solve's poll-visible state (§7 solve_status). Written by the
+# optimizer thread, read by the event loop: whole-dict swaps only (atomic
+# under the GIL), never in-place mutation.
+IDLE_SOLVE_STATUS = {
+    "running": False,
+    "progress": None,
+    "rmsPx": None,
+    "leds": None,
+    "trajectory": None,
+}
+
+
 class ReconstructionRunner:
-    """Async wrapper: reconstruct a session log off the event loop, then store it."""
+    """Async wrapper: reconstruct a session log off the event loop, then store it.
+
+    While a solve runs, `status` exposes the optimizer's throttled progress
+    snapshots (progress fraction, current rms, interim LED positions and
+    camera path) for the phone's get_solve_status poll — the progress bar and
+    the converging preview during "final solve…".
+    """
 
     def __init__(self, map_store: MapStore):
         self.map_store = map_store
+        self.status: dict = IDLE_SOLVE_STATUS
 
     async def __call__(self, log_path: Path) -> OutputMap:
-        output_map = await asyncio.to_thread(_reconstruct_sync, log_path)
+        from reconstruction.vio_api import decimate_path
+
+        def on_progress(frac: float, leds: dict, rms_px: float, positions) -> None:
+            # Solver thread → atomic dict swap; the poll reads self.status.
+            self.status = {
+                "running": True,
+                "progress": round(float(frac), 4),
+                "rmsPx": float(rms_px),
+                "leds": [
+                    {"id": int(led), "xyz": [float(c) for c in xyz]}
+                    for led, xyz in sorted(leds.items())
+                ],
+                "trajectory": decimate_path(positions),
+            }
+
+        self.status = {**IDLE_SOLVE_STATUS, "running": True}
+        try:
+            output_map = await asyncio.to_thread(_reconstruct_sync, log_path, on_progress)
+        finally:
+            self.status = IDLE_SOLVE_STATUS
         self.map_store.save(output_map)
         return output_map
 

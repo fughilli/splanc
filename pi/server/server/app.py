@@ -168,12 +168,35 @@ def create_app(
     async def ws(websocket: WebSocket):
         await websocket.accept()
         handler = ConnectionHandler(context)
+        # Each message is handled in its own task so a SLOW handler cannot
+        # starve the receive loop — concretely: stop_mapping awaits the final
+        # reconstruction (seconds), while the phone keeps polling
+        # get_solve_status on the same socket for the progress bar. Ordering
+        # is still effectively FIFO for the fast handlers (they contain no
+        # awaits, so tasks created in order complete in order); sends are
+        # serialized by a lock. Tasks are not cancelled on disconnect — an
+        # in-flight final solve must still persist its map; its send just
+        # fails quietly on the closed socket.
+        import asyncio
+
+        send_lock = asyncio.Lock()
+        pending: set = set()
+
+        async def dispatch(raw: str, recv_ms: float) -> None:
+            responses = await handler.handle(raw, recv_ms=recv_ms)
+            try:
+                async with send_lock:
+                    for response in responses:
+                        await websocket.send_text(response.model_dump_json())
+            except Exception:
+                pass  # client went away; the work itself is already done
+
         try:
             while True:
                 raw = await websocket.receive_text()
-                recv_ms = now_ms()
-                for response in await handler.handle(raw, recv_ms=recv_ms):
-                    await websocket.send_text(response.model_dump_json())
+                task = asyncio.create_task(dispatch(raw, now_ms()))
+                pending.add(task)
+                task.add_done_callback(pending.discard)
         except WebSocketDisconnect:
             return
 

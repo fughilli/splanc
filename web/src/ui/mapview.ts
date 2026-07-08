@@ -36,6 +36,11 @@ export class MapView {
   private fit: Similarity | null = null;
   private fitForMap: OutputMap | null = null;
 
+  // Solved camera trajectory (visual-inertial solves) — same frame as the
+  // LEDs; rendered as a polyline when toggled on.
+  private trajectory: Vec3[] | null = null;
+  showTrajectory = false;
+
   constructor(
     private readonly canvas: HTMLCanvasElement,
     private map: OutputMap,
@@ -50,6 +55,15 @@ export class MapView {
   setTruth(points: TruthPoint[] | null): void {
     this.truth = points;
     this.fitForMap = null;
+  }
+
+  /** Set (or clear) the solved camera path (drawn when showTrajectory). */
+  setTrajectory(path: Vec3[] | null): void {
+    this.trajectory = path && path.length >= 2 ? path : null;
+  }
+
+  get hasTrajectory(): boolean {
+    return this.trajectory !== null;
   }
 
   /** Re-fit the truth→solve similarity when the map instance changed. */
@@ -179,19 +193,22 @@ export class MapView {
       return;
     }
 
-    // Center + scale to fit.
+    // Center + scale to fit (the camera path, when shown, is part of the
+    // scene bounds — it extends meters beyond the fixture).
+    const boundPts: Vec3[] = leds.map((l) => l.xyz);
+    if (this.showTrajectory && this.trajectory !== null) boundPts.push(...this.trajectory);
     let cx = 0, cy = 0, cz = 0;
-    for (const l of leds) {
-      cx += l.xyz[0];
-      cy += l.xyz[1];
-      cz += l.xyz[2];
+    for (const p of boundPts) {
+      cx += p[0];
+      cy += p[1];
+      cz += p[2];
     }
-    cx /= leds.length;
-    cy /= leds.length;
-    cz /= leds.length;
+    cx /= boundPts.length;
+    cy /= boundPts.length;
+    cz /= boundPts.length;
     let maxR = 1e-6;
-    for (const l of leds) {
-      const r = Math.hypot(l.xyz[0] - cx, l.xyz[1] - cy, l.xyz[2] - cz);
+    for (const p of boundPts) {
+      const r = Math.hypot(p[0] - cx, p[1] - cy, p[2] - cz);
       if (r > maxR) maxR = r;
     }
     const scale = ((Math.min(w, h) * 0.42) / maxR) * this.zoom;
@@ -215,6 +232,30 @@ export class MapView {
         depth: tz,
       };
     };
+
+    // -- camera trajectory (under everything else: it is context, not data) --
+    if (this.showTrajectory && this.trajectory !== null) {
+      ctx.beginPath();
+      for (let i = 0; i < this.trajectory.length; i++) {
+        const s = proj(this.trajectory[i]!);
+        if (i === 0) ctx.moveTo(s.sx, s.sy);
+        else ctx.lineTo(s.sx, s.sy);
+      }
+      ctx.strokeStyle = "rgb(80 200 255 / 0.55)";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      // Walk direction: hollow ring at the start, filled dot at the end.
+      const first = proj(this.trajectory[0]!);
+      const last = proj(this.trajectory[this.trajectory.length - 1]!);
+      ctx.beginPath();
+      ctx.arc(first.sx, first.sy, 4, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgb(80 200 255 / 0.8)";
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(last.sx, last.sy, 4, 0, Math.PI * 2);
+      ctx.fillStyle = "rgb(80 200 255 / 0.9)";
+      ctx.fill();
+    }
 
     const pts = leds.map((l) => ({ ...proj(l.xyz), led: l }));
     pts.sort((a, b) => a.depth - b.depth);

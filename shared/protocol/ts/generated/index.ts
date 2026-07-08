@@ -98,6 +98,9 @@ export interface OutputMap {
   ledCount: number;
   leds: LedEntry[];
   unmapped: number[];
+  /** Solved camera path (decimated, chronological) — present for
+   * visual-inertial solves; same frame as leds. */
+  trajectory?: Vec3[] | undefined;
   stats: OutputMapStats;
 }
 
@@ -218,6 +221,11 @@ export interface GetLiveMapMessage {
   type: "get_live_map";
 }
 
+/** Poll the FINAL solve's progress while the stop_mapping reply is pending. */
+export interface GetSolveStatusMessage {
+  type: "get_solve_status";
+}
+
 export type ClientMessage =
   | HelloMessage
   | TimeSyncPingMessage
@@ -229,7 +237,8 @@ export type ClientMessage =
   | ExposureReportMessage
   | GetStatusMessage
   | GetPatternMessage
-  | GetLiveMapMessage;
+  | GetLiveMapMessage
+  | GetSolveStatusMessage;
 
 // ---------------------------------------------------------------------------
 // Server -> Client messages (§7.2)
@@ -281,6 +290,25 @@ export interface LiveMapMessage {
   map: OutputMap | null;
 }
 
+/** Interim LED position during a running solve (lightweight preview). */
+export interface SolveLed {
+  id: number;
+  xyz: Vec3;
+}
+
+/** Reply to get_solve_status: the final solve's live state. All-null
+ * fields when no solve is running or it reports no progress. */
+export interface SolveStatusMessage {
+  type: "solve_status";
+  running: boolean;
+  /** Estimated optimizer progress [0,1] (eval budget consumed). */
+  progress: number | null;
+  rmsPx: number | null;
+  leds: SolveLed[] | null;
+  /** Decimated solved camera path, same gauge as leds. */
+  trajectory: Vec3[] | null;
+}
+
 export interface ResultReadyMessage {
   type: "result_ready";
   mapId: string;
@@ -299,5 +327,6 @@ export type ServerMessage =
   | StatusMessage
   | PatternStateMessage
   | LiveMapMessage
+  | SolveStatusMessage
   | ResultReadyMessage
   | ErrorMessage;

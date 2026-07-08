@@ -23,6 +23,7 @@ from ledmapper_protocol import (
     PatternStateMessage,
     ResultReadyMessage,
     ServerMessage,
+    SolveStatusMessage,
     StatusMessage,
     TimeSyncPongMessage,
     WelcomeMessage,
@@ -115,6 +116,8 @@ class ConnectionHandler:
             return [self._pattern()]
         if kind == "get_live_map":
             return [self._live_map()]
+        if kind == "get_solve_status":
+            return [self._solve_status()]
         if kind == "stop_mapping":
             return await self._stop()
         # ClientMessage's discriminated union makes this unreachable, but be loud.
@@ -210,6 +213,20 @@ class ConnectionHandler:
             active=True,
             patternClockEpoch=epoch,
             codeParams=params,
+        )
+
+    def _solve_status(self) -> ServerMessage:
+        """Final-solve progress (§7 solve_status): served from the
+        ReconstructionRunner's poll-visible snapshot. Falls back to inactive
+        for reconstructors without one (test stubs, exotic wiring)."""
+        status = getattr(self.ctx.reconstructor, "status", None) or {}
+        return SolveStatusMessage(
+            type="solve_status",
+            running=bool(status.get("running", False)),
+            progress=status.get("progress"),
+            rmsPx=status.get("rmsPx"),
+            leds=status.get("leds"),
+            trajectory=status.get("trajectory"),
         )
 
     def _live_map(self) -> ServerMessage:

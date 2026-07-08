@@ -264,3 +264,28 @@ test("exposure reports are fire-and-forget and dropped while disconnected", asyn
   client.sendExposureReport(report);
   assert.equal(s.sent.length, sentBefore);
 });
+
+test("getSolveStatus polls the final solve's progress", async () => {
+  const { client, sockets } = makeClient();
+  const p = client.connect();
+  const s = sockets[0]!;
+  s.open();
+  s.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS });
+  await p;
+
+  const statusP = client.getSolveStatus();
+  assert.deepEqual(s.lastSent(), { type: "get_solve_status" });
+  s.receive({
+    type: "solve_status",
+    running: true,
+    progress: 0.55,
+    rmsPx: 3.2,
+    leds: [{ id: 1, xyz: [0.1, 0.2, 0.3] }],
+    trajectory: [[0, 0, 0], [0.1, 0, 0]],
+  });
+  const st = await statusP;
+  assert.equal(st.running, true);
+  assert.equal(st.progress, 0.55);
+  assert.equal(st.leds![0]!.id, 1);
+  assert.equal(st.trajectory!.length, 2);
+});

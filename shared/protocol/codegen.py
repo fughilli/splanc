@@ -218,6 +218,9 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("  ledCount: number;")
     lines.append("  leds: LedEntry[];")
     lines.append("  unmapped: number[];")
+    lines.append("  /** Solved camera path (decimated, chronological) — present for")
+    lines.append("   * visual-inertial solves; same frame as leds. */")
+    lines.append("  trajectory?: Vec3[] | undefined;")
     lines.append("  stats: OutputMapStats;")
     lines.append("}\n")
 
@@ -322,6 +325,10 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("export interface GetLiveMapMessage {")
     lines.append('  type: "get_live_map";')
     lines.append("}\n")
+    lines.append("/** Poll the FINAL solve\'s progress while the stop_mapping reply is pending. */")
+    lines.append("export interface GetSolveStatusMessage {")
+    lines.append('  type: "get_solve_status";')
+    lines.append("}\n")
     lines.append("export type ClientMessage =")
     lines.append("  | HelloMessage")
     lines.append("  | TimeSyncPingMessage")
@@ -333,7 +340,8 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("  | ExposureReportMessage")
     lines.append("  | GetStatusMessage")
     lines.append("  | GetPatternMessage")
-    lines.append("  | GetLiveMapMessage;\n")
+    lines.append("  | GetLiveMapMessage")
+    lines.append("  | GetSolveStatusMessage;\n")
 
     lines.append("// ---------------------------------------------------------------------------")
     lines.append("// Server -> Client messages (§7.2)")
@@ -378,6 +386,23 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("  active: boolean;")
     lines.append("  map: OutputMap | null;")
     lines.append("}\n")
+    lines.append("/** Interim LED position during a running solve (lightweight preview). */")
+    lines.append("export interface SolveLed {")
+    lines.append("  id: number;")
+    lines.append("  xyz: Vec3;")
+    lines.append("}\n")
+    lines.append("/** Reply to get_solve_status: the final solve\'s live state. All-null")
+    lines.append(" * fields when no solve is running or it reports no progress. */")
+    lines.append("export interface SolveStatusMessage {")
+    lines.append('  type: "solve_status";')
+    lines.append("  running: boolean;")
+    lines.append("  /** Estimated optimizer progress [0,1] (eval budget consumed). */")
+    lines.append("  progress: number | null;")
+    lines.append("  rmsPx: number | null;")
+    lines.append("  leds: SolveLed[] | null;")
+    lines.append("  /** Decimated solved camera path, same gauge as leds. */")
+    lines.append("  trajectory: Vec3[] | null;")
+    lines.append("}\n")
     lines.append("export interface ResultReadyMessage {")
     lines.append('  type: "result_ready";')
     lines.append("  mapId: string;")
@@ -394,6 +419,7 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("  | StatusMessage")
     lines.append("  | PatternStateMessage")
     lines.append("  | LiveMapMessage")
+    lines.append("  | SolveStatusMessage")
     lines.append("  | ResultReadyMessage")
     lines.append("  | ErrorMessage;")
     return "\n".join(lines) + "\n"
@@ -530,6 +556,8 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append("    ledCount: int = Field(ge=0)")
     out.append("    leds: List[LedEntry]")
     out.append("    unmapped: List[int]")
+    out.append("    # Solved camera path (visual-inertial solves), same frame as leds.")
+    out.append("    trajectory: Union[List[Vec3], None] = None")
     out.append("    stats: OutputMapStats")
     out.append("")
     out.append("")
@@ -635,6 +663,12 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append('    type: Literal["get_live_map"]')
     out.append("")
     out.append("")
+    out.append("class GetSolveStatusMessage(_StrictModel):")
+    out.append('    """Poll the FINAL solve\'s progress while stop_mapping is pending."""')
+    out.append("")
+    out.append('    type: Literal["get_solve_status"]')
+    out.append("")
+    out.append("")
     out.append("ClientMessageInner = Annotated[")
     out.append("    Union[")
     out.append("        HelloMessage,")
@@ -648,6 +682,7 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append("        GetStatusMessage,")
     out.append("        GetPatternMessage,")
     out.append("        GetLiveMapMessage,")
+    out.append("        GetSolveStatusMessage,")
     out.append("    ],")
     out.append('    Field(discriminator="type"),')
     out.append("]")
@@ -705,6 +740,24 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append("    map: Union[OutputMap, None]")
     out.append("")
     out.append("")
+    out.append("class SolveLed(_StrictModel):")
+    out.append('    """Interim LED position during a running solve (lightweight preview)."""')
+    out.append("")
+    out.append("    id: int = Field(ge=0)")
+    out.append("    xyz: Vec3")
+    out.append("")
+    out.append("")
+    out.append("class SolveStatusMessage(_StrictModel):")
+    out.append('    """Reply to get_solve_status: the final solve\'s live state."""')
+    out.append("")
+    out.append('    type: Literal["solve_status"]')
+    out.append("    running: bool")
+    out.append("    progress: Union[float, None] = Field(default=None, ge=0.0, le=1.0)")
+    out.append("    rmsPx: Union[float, None] = None")
+    out.append("    leds: Union[List[SolveLed], None] = None")
+    out.append("    trajectory: Union[List[Vec3], None] = None")
+    out.append("")
+    out.append("")
     out.append("class ResultReadyMessage(_StrictModel):")
     out.append('    type: Literal["result_ready"]')
     out.append("    mapId: str")
@@ -724,6 +777,7 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append("        StatusMessage,")
     out.append("        PatternStateMessage,")
     out.append("        LiveMapMessage,")
+    out.append("        SolveStatusMessage,")
     out.append("        ResultReadyMessage,")
     out.append("        ErrorMessage,")
     out.append("    ],")
@@ -764,6 +818,7 @@ def emit_python(schemas: dict[str, dict]) -> str:
         "GetStatusMessage",
         "GetPatternMessage",
         "GetLiveMapMessage",
+        "GetSolveStatusMessage",
         "ClientMessage",
         "WelcomeMessage",
         "TimeSyncPongMessage",
@@ -771,6 +826,8 @@ def emit_python(schemas: dict[str, dict]) -> str:
         "StatusMessage",
         "PatternStateMessage",
         "LiveMapMessage",
+        "SolveLed",
+        "SolveStatusMessage",
         "ResultReadyMessage",
         "ErrorMessage",
         "ServerMessage",

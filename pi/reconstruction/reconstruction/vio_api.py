@@ -24,7 +24,17 @@ from ledmapper_protocol import LedEntry, OutputMap, OutputMapStats
 
 from .api import _confidence
 from .triangulate import max_parallax_deg
-from .vio import FrameObservations, GRAVITY, ImuSample, VioResult, solve_vio
+from .vio import FrameObservations, GRAVITY, ImuSample, ProgressCb, VioResult, solve_vio
+
+
+def decimate_path(positions: np.ndarray, max_points: int = 240) -> list:
+    """Chronological camera centers, evenly strided to a display-sized
+    polyline (§7.5 OutputMap.trajectory / solve_status.trajectory)."""
+    pts = np.asarray(positions, dtype=float)
+    if len(pts) > max_points:
+        idx = np.linspace(0, len(pts) - 1, max_points).round().astype(int)
+        pts = pts[idx]
+    return [[float(c) for c in p] for p in pts]
 
 
 def _as_plain(rec: Mapping) -> Mapping:
@@ -104,9 +114,13 @@ def reconstruct_vio(
     px_sigma: float = 1.0,
     refine_intrinsics: bool = True,
     min_views: int = 2,
+    progress_cb: Optional[ProgressCb] = None,
 ) -> OutputMap:
     """Solve LED positions (and, internally, the camera trajectory) from
-    pose-less detection records + the session IMU stream."""
+    pose-less detection records + the session IMU stream.
+
+    ``progress_cb`` (optional) receives throttled optimizer snapshots — see
+    vio.ProgressCb; called from the solver thread."""
     frames = frames_from_records(detections, max_keyframes=max_keyframes)
     imu = imu_from_wire(imu_samples)
     if len(frames) < 8:
@@ -120,6 +134,7 @@ def reconstruct_vio(
         px_sigma=px_sigma,
         max_nfev=max_nfev,
         refine_intrinsics=refine_intrinsics,
+        progress_cb=progress_cb,
     )
     leveled, rot = _gravity_leveled(result)
 
@@ -188,6 +203,7 @@ def reconstruct_vio(
         ledCount=led_count,
         leds=entries,
         unmapped=unmapped,
+        trajectory=decimate_path((rot @ result.positions.T).T),
         stats=OutputMapStats(
             rmsReprojPxGlobal=result.rms_reproj_px,
             medianParallaxDeg=float(np.median(parallaxes)) if parallaxes else 0.0,
