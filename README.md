@@ -71,6 +71,27 @@ All work is on branch **`m1-driver-m2-server-m4-verify`** (working tree
 clean). The `/workspace` bind mount — including the persisted caches —
 survives the restart.
 
+### Exploration branch `vio-joint-solve` (2026-07-08)
+
+- **WebXR pose is degenerate in our lighting — measured.** The 2026-07-08
+  trace: corr(pose speed, image motion) = −0.002, single-frame jumps to
+  2.3 m, 13.2 m claimed path for a 0.5 m walk. Screen reflections +
+  code-correlated lighting break ARCore's static-world assumption; every
+  back-projected ray inherits the drift, so maps are bunk regardless of
+  decode quality.
+- **The fix under exploration: drop WebXR, solve poses jointly with LED
+  positions** — LEDs are identified landmarks (the blink code IS data
+  association), making this SfM with known correspondences; the phone IMU
+  (DeviceMotion) supplies dead reckoning between frames, metric scale and
+  gravity. Full analysis + staged plan: `docs/vio-exploration.md`. Offline
+  prototype `pi/reconstruction/reconstruction/vio.py` (preintegration →
+  known-rotation linear init → inertial alignment → full VI-BA): on
+  synthetic web-pessimistic data with NO pose input, **map rms 0.24 mm,
+  scale 0.5 %, gravity 0.04°**, vs **145 mm** for the production
+  pose-trusting solver fed WebXR-like drifting poses (`vio_test`).
+  `?record=1` now also streams DeviceMotion into the trace, so the next
+  phone session produces real solver-ready data (phase 2→3 of the plan).
+
 ### Done (2026-07-08)
 
 - **SEC-DED FEC on the blink code (misidentification fix).** The raw

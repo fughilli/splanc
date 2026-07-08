@@ -1,0 +1,232 @@
+"""VIO prototype acceptance (docs/vio-exploration.md §7).
+
+Synthetic 6×6 LED wall + handheld-style arc walk with web-platform-pessimistic
+IMU (60 Hz DeviceMotion, noise, constant biases, timestamp jitter). NO pose is
+given to the solver — it must recover the trajectory AND the LED map from
+id-labeled pixels + IMU alone, metrically (scale from the accelerometer).
+
+The control test feeds the SAME observations to the production pose-trusting
+solver paired with WebXR-degenerate poses (drift + relocalization jumps,
+calibrated to the 2026-07-08 real-trace statistics) and shows the failure
+mode this work eliminates.
+"""
+
+from __future__ import annotations
+
+import numpy as np
+import pytest
+
+from reconstruction.api import reconstruct
+from reconstruction.camera import look_at_quat, project, quat_to_rotmat
+from reconstruction.vio import (
+    FrameObservations,
+    ImuSample,
+    G_WORLD,
+    preintegrate,
+    similarity_align,
+    so3_exp,
+    so3_log,
+    solve_vio,
+)
+
+RNG = np.random.default_rng(11)
+
+IMG_W, IMG_H = 1280, 720
+K = (800.0, 800.0, 640.0, 360.0)
+DURATION = 12.0
+FRAME_HZ = 8.0
+IMU_HZ = 60.0
+
+
+def wall_leds(cols: int = 6, rows: int = 6, pitch: float = 0.12) -> np.ndarray:
+    pts = []
+    for i in range(cols * rows):
+        r, c = divmod(i, cols)
+        pts.append([(c - (cols - 1) / 2) * pitch, ((rows - 1) / 2 - r) * pitch, 0.0])
+    return np.array(pts)
+
+
+# -- analytic trajectory (smooth, with real acceleration for observability) --
+
+
+def cam_pos(t: float) -> np.ndarray:
+    theta = -0.5 + 1.0 * (t / DURATION) + 0.12 * np.sin(1.7 * t)
+    return np.array(
+        [
+            1.8 * np.sin(theta),
+            0.12 + 0.15 * np.sin(2.1 * t),
+            1.8 * np.cos(theta),
+        ]
+    )
+
+
+def cam_rot(t: float) -> np.ndarray:
+    q = look_at_quat(cam_pos(t), np.array([0.0, 0.0, 0.0]))
+    return quat_to_rotmat(q)
+
+
+def true_states(times: np.ndarray):
+    h = 1e-4
+    rots = [cam_rot(t) for t in times]
+    ps = np.array([cam_pos(t) for t in times])
+    vs = np.array([(cam_pos(t + h) - cam_pos(t - h)) / (2 * h) for t in times])
+    return rots, ps, vs
+
+
+def synth_imu(noise: bool = True) -> list[ImuSample]:
+    h = 1e-4
+    gyro_bias = np.array([2e-3, -1e-3, 1.5e-3])
+    accel_bias = np.array([0.03, -0.02, 0.04])
+    samples = []
+    n = int(DURATION * IMU_HZ)
+    for i in range(n):
+        t = i / IMU_HZ
+        r = cam_rot(t)
+        omega = so3_log(cam_rot(t).T @ cam_rot(t + h)) / h
+        a_world = (cam_pos(t + h) - 2 * cam_pos(t) + cam_pos(t - h)) / (h * h)
+        f_body = r.T @ (a_world - G_WORLD)
+        ts = t
+        if noise:
+            omega = omega + gyro_bias + RNG.normal(0, 2e-3, 3)
+            f_body = f_body + accel_bias + RNG.normal(0, 5e-2, 3)
+            ts = t + RNG.normal(0, 1.5e-3)  # DeviceMotion timestamp jitter
+        samples.append(ImuSample(t=ts, gyro=omega, accel=f_body))
+    samples.sort(key=lambda s: s.t)
+    return samples
+
+
+def synth_frames(leds: np.ndarray, px_noise: float = 0.3, drop_p: float = 0.05):
+    times = np.arange(0.0, DURATION, 1.0 / FRAME_HZ)
+    frames = []
+    for t in times:
+        p = cam_pos(t)
+        q = look_at_quat(p, np.array([0.0, 0.0, 0.0]))
+        uv, depth = project(p, q, K, leds)
+        obs = []
+        for j in range(len(leds)):
+            if depth[j] <= 0:
+                continue
+            u, v = uv[j]
+            if not (0 <= u < IMG_W and 0 <= v < IMG_H):
+                continue
+            if RNG.uniform() < drop_p:
+                continue
+            obs.append((j, float(u + RNG.normal(0, px_noise)), float(v + RNG.normal(0, px_noise))))
+        frames.append(FrameObservations(t=float(t), k=K, obs=obs))
+    return frames, times
+
+
+# ---------------------------------------------------------------------------
+
+
+def test_preintegration_matches_true_relative_states():
+    imu = synth_imu(noise=False)
+    times = np.array([2.0, 2.125])
+    rots, ps, vs = true_states(times)
+    zero = np.zeros(3)
+    d_rot, d_vel, d_pos, dt = preintegrate(imu, times[0], times[1], zero, zero)
+    # Predicted end state from the preintegration relation.
+    r1 = rots[0] @ d_rot
+    v1 = vs[0] + G_WORLD * dt + rots[0] @ d_vel
+    p1 = ps[0] + vs[0] * dt + 0.5 * G_WORLD * dt * dt + rots[0] @ d_pos
+    assert np.linalg.norm(so3_log(r1.T @ rots[1])) < 2e-3
+    assert np.linalg.norm(v1 - vs[1]) < 5e-3
+    assert np.linalg.norm(p1 - ps[1]) < 1e-3
+
+
+def test_vio_recovers_map_metrically_without_poses():
+    leds = wall_leds()
+    frames, _times = synth_frames(leds)
+    imu = synth_imu()
+
+    result = solve_vio(frames, imu)
+
+    ids = sorted(result.led_positions.keys())
+    assert len(ids) == len(leds)
+    est = np.array([result.led_positions[j] for j in ids])
+    truth = leds[ids]
+
+    s, rot, t = similarity_align(est, truth)
+    aligned = (s * (rot @ est.T)).T + t
+    rms = float(np.sqrt(np.mean(np.sum((aligned - truth) ** 2, axis=1))))
+    scale_err = abs(s - 1.0)
+    g_est_world = rot @ result.gravity  # into the truth frame for comparison
+    g_angle = np.degrees(
+        np.arccos(
+            np.clip(
+                np.dot(g_est_world, G_WORLD) / (np.linalg.norm(g_est_world) * 9.81),
+                -1,
+                1,
+            )
+        )
+    )
+
+    print(
+        f"\nVIO synthetic acceptance: map rms {rms*1000:.2f} mm, "
+        f"scale err {scale_err*100:.2f} %, gravity err {g_angle:.2f}°, "
+        f"reproj rms {result.rms_reproj_px:.2f} px"
+    )
+    assert rms < 0.005, f"map rms {rms*1000:.2f} mm"
+    assert scale_err < 0.02, f"scale error {scale_err*100:.2f}%"
+    assert g_angle < 1.5, f"gravity direction error {g_angle:.2f}°"
+    assert result.rms_reproj_px < 1.0
+
+
+def _webxr_corrupt_poses(times: np.ndarray):
+    """WebXR-degenerate pose stream: random-walk drift + relocalization jumps,
+    magnitudes calibrated to the 2026-07-08 trace (13 m claimed path over a
+    0.5 m walk; jumps up to 2.3 m)."""
+    rots, ps, _vs = true_states(times)
+    drift = np.zeros(3)
+    rot_drift = np.eye(3)
+    out = []
+    jump_frames = set(RNG.choice(len(times), size=3, replace=False).tolist())
+    for i, _t in enumerate(times):
+        drift = drift + RNG.normal(0, 0.008, 3)  # ~8 mm/frame random walk
+        if i in jump_frames:
+            drift = drift + RNG.normal(0, 0.4, 3)  # relocalization snap
+        rot_drift = rot_drift @ so3_exp(RNG.normal(0, np.radians(0.3), 3))
+        r = rots[i] @ rot_drift
+        from reconstruction.camera import rotmat_to_quat
+
+        out.append((ps[i] + drift, rotmat_to_quat(r)))
+    return out
+
+
+def test_pose_trusting_solver_breaks_on_webxr_drift_but_vio_does_not():
+    leds = wall_leds()
+    frames, times = synth_frames(leds)
+    corrupt = _webxr_corrupt_poses(times)
+
+    records = []
+    for fr, (p, q) in zip(frames, corrupt):
+        for j, u, v in fr.obs:
+            records.append(
+                {
+                    "ledId": int(j),
+                    "tCaptureMs": fr.t * 1000.0,
+                    "u": u,
+                    "v": v,
+                    "imgW": IMG_W,
+                    "imgH": IMG_H,
+                    "K": list(K),
+                    "pose": {"p": [float(x) for x in p], "q": [float(x) for x in q]},
+                    "confidence": 1.0,
+                }
+            )
+    output = reconstruct(records, led_count=len(leds))
+    solved = {e.id: np.array(e.xyz) for e in output.leds}
+    ids = sorted(solved.keys())
+    if len(ids) >= 4:
+        est = np.array([solved[j] for j in ids])
+        truth = leds[ids]
+        s, rot, t = similarity_align(est, truth)
+        aligned = (s * (rot @ est.T)).T + t
+        rms_trusting = float(np.sqrt(np.mean(np.sum((aligned - truth) ** 2, axis=1))))
+    else:
+        rms_trusting = float("inf")  # couldn't even solve
+
+    print(f"\npose-trusting solver on WebXR-drift poses: map rms {rms_trusting*1000:.1f} mm")
+    # The production solver, fed drifting poses, is off by centimeters+ —
+    # two orders of magnitude worse than the VIO acceptance bound above.
+    assert rms_trusting > 0.02, "expected the pose-trusting solver to fail on drifting poses"

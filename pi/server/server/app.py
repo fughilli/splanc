@@ -106,6 +106,9 @@ def create_app(
     # Raw per-frame blob recording (capture page `?record=1`): the full
     # detector output stream, for offline diagnosis of what the CV stage
     # actually sees. Appends JSONL; a `reset` payload starts a new file.
+    # DeviceMotion samples ride along as {"imu": {...}} lines (raw units, see
+    # the client's reset record) — the input the VIO exploration's offline
+    # joint pose+LED solver consumes (docs/vio-exploration.md).
     @app.post("/debug/frames")
     async def post_frames(request: Request):
         payload = await request.json()
@@ -113,9 +116,16 @@ def create_app(
         mode = "w" if payload.get("reset") else "a"
         with path.open(mode) as f:
             if payload.get("reset"):
-                f.write(json.dumps({k: v for k, v in payload.items() if k != "frames"}) + "\n")
+                f.write(
+                    json.dumps(
+                        {k: v for k, v in payload.items() if k not in ("frames", "imu")}
+                    )
+                    + "\n"
+                )
             for frame in payload.get("frames", []):
                 f.write(json.dumps(frame) + "\n")
+            for sample in payload.get("imu", []):
+                f.write(json.dumps({"imu": sample}) + "\n")
         return {"ok": True}
 
     # -- solver diagnostics (dev-only; §7-external) -------------------------

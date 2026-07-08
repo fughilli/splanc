@@ -47,3 +47,24 @@ py_test(
         requirement("pytest"),
     ],
 )
+
+# VIO exploration (docs/vio-exploration.md): joint pose+LED solve with IMU
+# dead reckoning — the WebXR-free path. Nonlinear VI-BA on a synthetic
+# session; slower than a unit test by nature.
+py_test(
+    name = "vio_test",
+    size = "large",
+    srcs = [
+        "tests/pytest_main.py",
+        "tests/test_vio.py",
+    ],
+    main = "tests/pytest_main.py",
+    imports = ["."],
+    legacy_create_init = False,
+    deps = [
+        ":reconstruction",
+        requirement("numpy"),
+        requirement("pytest"),
+        requirement("scipy"),
+    ],
+)

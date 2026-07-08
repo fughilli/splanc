@@ -272,8 +272,9 @@ async function startCapture(): Promise<void> {
     capturing = true;
     let frameCount = 0;
 
-    // ?record=1 frame recorder: batches of raw detector output.
+    // ?record=1 frame recorder: batches of raw detector output (+ IMU).
     let frameBuf: unknown[] = [];
+    let imuBuf: unknown[] = [];
     const postFrames = (body: object): void => {
       void fetch("/debug/frames", {
         method: "POST",
@@ -282,7 +283,47 @@ async function startCapture(): Promise<void> {
       }).catch(() => undefined);
     };
     if (recordBlobs) {
-      postFrames({ reset: true, epoch, codeParams: params });
+      postFrames({
+        reset: true,
+        epoch,
+        codeParams: params,
+        // IMU stream metadata (VIO exploration, docs/vio-exploration.md):
+        // raw DeviceMotion values, no client-side conversion. rotationRate
+        // alpha/beta/gamma are deg/s about the device z/x/y axes;
+        // accelerationIncludingGravity is the specific force in m/s² in the
+        // device frame (x right, y toward the top edge, z out of the screen).
+        // t is performance.now() at event delivery; tEvent the event stamp.
+        imuFormat: { rotationRate: "deg/s (alpha=z,beta=x,gamma=y)", accel: "m/s^2 specific force, device frame" },
+      });
+      // Record DeviceMotion for the offline joint pose+LED solver. Attach
+      // inside the Start gesture (iOS gates motion access on one); Android
+      // Chrome delivers ~60 Hz with no prompt.
+      const onMotion = (e: DeviceMotionEvent): void => {
+        if (!capturing) {
+          window.removeEventListener("devicemotion", onMotion);
+          return;
+        }
+        const rr = e.rotationRate;
+        const ag = e.accelerationIncludingGravity;
+        if (!rr || !ag) return;
+        imuBuf.push({
+          t: performance.now(),
+          tEvent: e.timeStamp,
+          rotationRate: { alpha: rr.alpha, beta: rr.beta, gamma: rr.gamma },
+          accel: { x: ag.x, y: ag.y, z: ag.z },
+        });
+      };
+      const dme = DeviceMotionEvent as unknown as { requestPermission?: () => Promise<string> };
+      if (typeof dme.requestPermission === "function") {
+        dme
+          .requestPermission()
+          .then((st) => {
+            if (st === "granted") window.addEventListener("devicemotion", onMotion);
+          })
+          .catch(() => undefined);
+      } else {
+        window.addEventListener("devicemotion", onMotion);
+      }
     }
 
     capture.onFrame((f) => {
@@ -308,8 +349,10 @@ async function startCapture(): Promise<void> {
         });
         if (frameBuf.length >= 30) {
           const batch = frameBuf;
+          const imuBatch = imuBuf;
           frameBuf = [];
-          postFrames({ frames: batch });
+          imuBuf = [];
+          postFrames({ frames: batch, imu: imuBatch });
         }
       }
       pipeline.step(blobs, {
