@@ -318,3 +318,58 @@ solver) is the follow-up if map quality demands it.
   (decimated, gravity-leveled) ships with visual-inertial maps; the result
   viewport gained a "Show camera path" toggle (also live during the solve),
   and the view auto-fits bounds to include the path when shown.
+
+## 11. Robustness round: outlier rejection + the scale-observability hunt (2026-07-08)
+
+Driven by two field reports on real captures — trajectory discontinuities,
+and LED 0 stuck at an 8.5 mm residual that more coverage couldn't fix.
+
+**Landed in `reconstruct_vio`:**
+- **Dominant-segment filter**: observation gaps > 3 s (user walked off the
+  wall — 17 s on the reported trace) split the session; dead-reckoning-only
+  stitches caused the trajectory seams, so only the observation-richest
+  segment is solved (IMU trimmed to its span — full-history accel averaging
+  had poisoned the attitude seed).
+- **Per-LED consensus + re-triangulated MAD prune + warm-started re-solve
+  (≤3 rounds)**: a coasting track stuck on a reflection emits a coherent
+  wrong cluster; robust losses only BOUND its pull (the stuck-LED report).
+  Consensus gates adapt to the session's residual floor (fixed gates failed
+  both directions); stage-2 residuals are measured against fresh per-LED
+  DLT triangulations, NOT the biased solved points (which had evicted 58/64
+  GOOD views). Safety valves: any round rejecting >25 % falls back to the
+  worst-quartile cap, and the best (most LEDs, lowest rms) state wins — a
+  regressing round rolls back. Synthetic regression: led 0 with 30 %
+  coherent contamination recovers 140 mm → 0.34 mm. Interim (live) solves
+  skip rejection for speed.
+
+**The scale hunt** (what the trajectory jumps turned into): on slow
+sessions, metric scale is weakly observable (accel-bias freedom absorbs
+much of the motion signal) and three separate defects let it drift or
+collapse — all fixed:
+1. `loss="huber"` applied globally let the optimizer SATURATE the IMU cost
+   and collapse the whole solution to ~1/400 scale (reprojection is
+   scale-invariant). Reprojection is now robustified inside the residual
+   (pseudo-Huber transform); IMU/priors stay quadratic.
+2. The linear init's scale gauge: one full-strength depth pin was hostage
+   to a single outlier (collapse); N independent pins warped shape (89 %
+   scale error); one sum-row lost per-point regularization (collapse on
+   ill-conditioned sessions). Now: N DOWN-WEIGHTED pins — scale has no
+   competing constraint so tiny weights pin it exactly, distortion enters
+   ∝ weight².
+3. Inertial alignment now iterates with ‖g‖ constrained to 9.81
+   (VINS-Mono-style) and the final solution is METRICALLY RE-ANCHORED by
+   re-running the alignment against the solved trajectory.
+   `refine_intrinsics` defaults OFF (fx↔scale trades ~1:1, measured §8) —
+   metric fidelity comes from the calibrated K.
+
+**Real-session results** (`vio_replay --session-log`): the 32-LED session:
+1.57 px, trajectory steps p50 8.1 mm / max 25.6 mm (was 37 mm jumps), LED 0
+healthy at 2.4 px / conf 0.84. The messy 88 s 64-LED session (17 s gap,
+heavy mislabeling): 21.7 → 2.06 px, 64/64 solved, real-scale trajectory.
+
+**Open issue:** absolute metric scale on LOW-EXCITATION sessions remains
+soft (~±20 % vs the WebXR-derived estimate on the 32-LED capture, unknown
+truth on the other). Mitigations available today: calibrated fx + brisker
+walks (scale observability needs acceleration). Candidate fixes: per-axis
+bias random-walk model instead of per-session constants, and a
+known-pitch-wall scale calibration.

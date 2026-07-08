@@ -376,3 +376,109 @@ def test_pose_trusting_solver_rejects_poseless_records():
             * 3,
             led_count=1,
         )
+
+
+def test_gap_segment_filter_solves_dominant_segment():
+    # A short stray prefix + a long observation gap (user walked away), then
+    # the real capture: the solver must keep the dominant segment and solve
+    # it cleanly (dead-reckoning across the gap would warp everything).
+    from reconstruction.vio_api import reconstruct_vio
+
+    leds = wall_leds()
+    frames, _times = synth_frames(leds)
+    imu = synth_imu()
+
+    # Prefix: reuse the first 2 s of frames shifted to start at t=-14 s with
+    # a 12 s gap before the main segment (IMU covers everything).
+    prefix = [
+        FrameObservations(t=f.t - 14.0, k=f.k, obs=f.obs) for f in frames if f.t < 2.0
+    ]
+    imu_prefix = [
+        ImuSample(t=s.t - 14.0, gyro=s.gyro, accel=s.accel) for s in imu if s.t < 2.05
+    ]
+    all_frames = prefix + list(frames)
+    all_imu = sorted(imu_prefix + list(imu), key=lambda s: s.t)
+
+    records = []
+    for fr in all_frames:
+        for j, u, v in fr.obs:
+            records.append(
+                {
+                    "ledId": int(j), "tCaptureMs": fr.t * 1000.0, "u": u, "v": v,
+                    "imgW": IMG_W, "imgH": IMG_H, "K": list(K), "pose": None,
+                    "confidence": 1.0,
+                }
+            )
+    imu_wire = [
+        {"t": s.t * 1000.0, "gyro": [float(x) for x in s.gyro], "accel": [float(x) for x in s.accel]}
+        for s in all_imu
+    ]
+    out = reconstruct_vio(records, imu_wire, led_count=len(leds), refine_intrinsics=False)
+    assert len(out.leds) == len(leds), f"solved only {len(out.leds)}"
+    assert out.stats.rmsReprojPxGlobal < 1.5
+
+    est = np.array([e.xyz for e in sorted(out.leds, key=lambda e: e.id)])
+    s, rot, t = similarity_align(est, leds[sorted(e.id for e in out.leds)])
+    aligned = (s * (rot @ est.T)).T + t
+    rms = float(np.sqrt(np.mean(np.sum((aligned - leds) ** 2, axis=1))))
+    assert rms < 0.005, f"map rms {rms*1000:.2f} mm"
+
+
+def test_outlier_rejection_unsticks_a_contaminated_led():
+    # The user-observed failure: mislabeled dense-stream samples bias one
+    # LED's estimate; more good passes never fix it (the robust loss only
+    # BOUNDS the outliers' pull). The MAD prune + warm-started re-solve must
+    # recover the LED to the clean-data accuracy.
+    from reconstruction.vio_api import reconstruct_vio
+
+    leds = wall_leds()
+    frames, _times = synth_frames(leds)
+    imu = synth_imu()
+
+    records = []
+    for fr in frames:
+        for j, u, v in fr.obs:
+            records.append(
+                {
+                    "ledId": int(j), "tCaptureMs": fr.t * 1000.0, "u": u, "v": v,
+                    "imgW": IMG_W, "imgH": IMG_H, "K": list(K), "pose": None,
+                    "confidence": 1.0,
+                }
+            )
+    # Contaminate led 0: 30% of its observations displaced by ~60 px (a
+    # coasting track stuck on a reflection emitting under the old id).
+    hit = 0
+    for rec in records:
+        if rec["ledId"] == 0 and hit < sum(1 for r in records if r["ledId"] == 0) * 0.3:
+            rec["u"] += 55.0
+            rec["v"] -= 35.0
+            hit += 1
+    imu_wire = [
+        {"t": s.t * 1000.0, "gyro": [float(x) for x in s.gyro], "accel": [float(x) for x in s.accel]}
+        for s in imu
+    ]
+
+    biased = reconstruct_vio(
+        records, imu_wire, led_count=len(leds), refine_intrinsics=False, reject_outliers=False
+    )
+    cleaned = reconstruct_vio(
+        records, imu_wire, led_count=len(leds), refine_intrinsics=False, reject_outliers=True
+    )
+
+    def led0_err(out):
+        e = next(e for e in out.leds if e.id == 0)
+        est = np.array([x.xyz for x in sorted(out.leds, key=lambda x: x.id)])
+        ids = sorted(x.id for x in out.leds)
+        s, rot, t = similarity_align(est, leds[ids])
+        aligned = dict(zip(ids, (s * (rot @ est.T)).T + t))
+        return float(np.linalg.norm(aligned[0] - leds[0])), e.rmsReprojPx
+
+    biased_mm, biased_rms = led0_err(biased)
+    clean_mm, clean_rms = led0_err(cleaned)
+    print(
+        f"\nled 0 with 30% contaminated obs: biased {biased_mm*1000:.2f} mm / {biased_rms:.1f} px"
+        f" -> pruned {clean_mm*1000:.2f} mm / {clean_rms:.1f} px"
+    )
+    assert biased_mm > 0.003, "contamination should visibly bias the estimate"
+    assert clean_mm < 0.001, f"led 0 still off by {clean_mm*1000:.2f} mm after rejection"
+    assert clean_rms < 1.0

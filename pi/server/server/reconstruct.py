@@ -176,6 +176,9 @@ def _live_solve(
             max_keyframes=LIVE_VIO_MAX_KEYFRAMES,
             max_nfev=LIVE_VIO_MAX_NFEV,
             refine_intrinsics=False,
+            # Interim solves skip the prune+re-solve round (2x cost); the
+            # final solve does the cleanup.
+            reject_outliers=False,
         )
     sample = _decimate_per_led(detections, LIVE_MAX_VIEWS_PER_LED)
     seeds = {e.id: e.xyz for e in prev_map.leds} if prev_map is not None else None

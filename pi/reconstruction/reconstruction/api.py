@@ -61,7 +61,12 @@ def _group_by_led(detections: Iterable[Mapping]) -> dict:
     return groups
 
 
-def _consensus_filter(obs_list: List[dict], min_views: int) -> List[dict]:
+def _consensus_filter(
+    obs_list: List[dict],
+    min_views: int,
+    engage_p90_px: float = _CONSENSUS_ENGAGE_P90_PX,
+    inlier_px: float = _CONSENSUS_INLIER_PX,
+) -> List[dict]:
     """RANSAC-style consensus pre-filter for ONE LED's observations.
 
     Anything that blinks the LED's code decodes as the LED — reflections, and
@@ -99,7 +104,7 @@ def _consensus_filter(obs_list: List[dict], min_views: int) -> List[dict]:
 
     try:
         r_all = residuals(triangulate_point(origins, dirs))
-        if np.all(np.isfinite(r_all)) and np.percentile(r_all, 90) <= _CONSENSUS_ENGAGE_P90_PX:
+        if np.all(np.isfinite(r_all)) and np.percentile(r_all, 90) <= engage_p90_px:
             return obs_list
     except (ValueError, np.linalg.LinAlgError):
         pass
@@ -117,7 +122,7 @@ def _consensus_filter(obs_list: List[dict], min_views: int) -> List[dict]:
                 continue
             if not np.all(np.isfinite(x)):
                 continue
-            inliers = residuals(x) <= _CONSENSUS_INLIER_PX
+            inliers = residuals(x) <= inlier_px
             if best is None or int(inliers.sum()) > int(best.sum()):
                 best = inliers
     if best is not None and int(best.sum()) >= max(min_views, 3):

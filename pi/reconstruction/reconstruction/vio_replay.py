@@ -226,7 +226,12 @@ def diagnose_conventions(trace_path: Path) -> None:
         print(f"  [{label}]  {err:.2f}")
 
 
-def solve_session_log(log_path: Path, profile: bool, max_nfev: int = 80) -> int:
+def solve_session_log(
+    log_path: Path, profile: bool, max_nfev: int = 80, reject: bool = True, gap_split_s: float = 3.0
+) -> int:
+    import logging
+
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     """Re-run the production final solve on a persisted session log — the
     exact code path stop_mapping triggers — optionally under cProfile."""
     from reconstruction.vio_api import reconstruct_vio
@@ -240,12 +245,20 @@ def solve_session_log(log_path: Path, profile: bool, max_nfev: int = 80) -> int:
 
     def run():
         t0 = time.perf_counter()
-        out = reconstruct_vio(detections, imu, led_count=log.get("ledCount"), max_nfev=max_nfev)
+        out = reconstruct_vio(
+            detections,
+            imu,
+            led_count=log.get("ledCount"),
+            max_nfev=max_nfev,
+            reject_outliers=reject,
+            gap_split_s=gap_split_s,
+        )
         dt = time.perf_counter() - t0
         print(
             f"solved {len(out.leds)} LEDs in {dt:.1f} s · "
             f"reproj rms {out.stats.rmsReprojPxGlobal:.2f} px · frame {out.frame}"
         )
+        _solve_report(out, detections)
         return out
 
     if profile:
@@ -265,6 +278,43 @@ def solve_session_log(log_path: Path, profile: bool, max_nfev: int = 80) -> int:
     return 0
 
 
+def _solve_report(out, detections) -> None:
+    """Post-solve diagnostics: worst per-LED residuals + trajectory
+    continuity (jumps between consecutive path points vs the observation
+    timeline — a jump across an observation GAP is IMU dead-reckoning drift;
+    a jump between well-observed frames points at outlier observations)."""
+    worst = sorted(out.leds, key=lambda e: -e.rmsReprojPx)[:5]
+    print("worst per-LED reproj rms:")
+    for e in worst:
+        print(f"  led {e.id:3d}: {e.rmsReprojPx:6.2f} px · {e.nViews} views · conf {e.confidence:.2f}")
+
+    if not out.trajectory or len(out.trajectory) < 3:
+        return
+    traj = np.array(out.trajectory)
+    par = np.median([e.parallaxDeg for e in out.leds]) if out.leds else 0
+    pitch = np.median([np.linalg.norm(np.array(a.xyz) - np.array(b.xyz))
+                       for a, b in zip(out.leds, out.leds[1:])]) if len(out.leds) > 1 else 0
+    print(f"trajectory extent {np.ptp(traj, axis=0).round(4).tolist()} m · "
+          f"median parallax {par:.1f}° · neighbor dist p50 {pitch*1000:.1f} mm")
+    steps = np.linalg.norm(np.diff(traj, axis=0), axis=1)
+    med = float(np.median(steps))
+    print(
+        f"trajectory: {len(traj)} pts, step p50 {med*1000:.1f} mm, "
+        f"p95 {np.percentile(steps,95)*1000:.1f} mm, max {steps.max()*1000:.1f} mm"
+    )
+    # Correlate the largest steps with gaps in the observation timeline.
+    times = sorted({float(d["tCaptureMs"]) for d in detections})
+    gaps = sorted(
+        ((t1 - t0, t0) for t0, t1 in zip(times, times[1:])),
+        reverse=True,
+    )[:5]
+    print("largest observation gaps (dead-reckoning-only stretches):")
+    for g, t0 in gaps:
+        print(f"  {g/1000:5.2f} s starting at t={(t0-times[0])/1000:6.2f} s")
+    jumps = np.argsort(steps)[-5:][::-1]
+    print("largest trajectory steps at path indices:", [int(j) for j in jumps])
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("trace", type=Path, help="frames.jsonl trace, OR a session log with --session-log")
@@ -276,10 +326,18 @@ def main(argv=None) -> int:
     ap.add_argument("--diagnose", action="store_true", help="fit IMU axis conventions from the trace and exit")
     ap.add_argument("--session-log", action="store_true", help="treat the input as a persisted session log and re-run the production final solve")
     ap.add_argument("--profile", action="store_true", help="run under cProfile (with --session-log)")
+    ap.add_argument("--no-reject", action="store_true", help="skip outlier rejection (with --session-log)")
+    ap.add_argument("--gap-split", type=float, default=3.0, help="segment split threshold, s (1e9 disables)")
     args = ap.parse_args(argv)
 
     if args.session_log:
-        return solve_session_log(args.trace, args.profile, max_nfev=args.max_nfev)
+        return solve_session_log(
+            args.trace,
+            args.profile,
+            max_nfev=args.max_nfev,
+            reject=not args.no_reject,
+            gap_split_s=args.gap_split,
+        )
     if args.diagnose:
         diagnose_conventions(args.trace)
         return 0

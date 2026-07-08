@@ -187,6 +187,9 @@ class VioResult:
     gyro_bias: np.ndarray
     accel_bias: np.ndarray
     rms_reproj_px: float
+    # Keyframe times (s), aligned with positions/quats/velocities — what a
+    # warm start joins on.
+    frame_times: Optional[np.ndarray] = None
     # Refined shared camera model (fx, fy, cx, cy) when refine_intrinsics.
     intrinsics: Optional[Tuple[float, float, float, float]] = None
 
@@ -278,13 +281,18 @@ def _known_rotation_linear_init(
     frames: Sequence[FrameObservations],
     rotations: Sequence[np.ndarray],
     led_ids: Sequence[int],
+    scale_pins: int = 64,
 ) -> Tuple[np.ndarray, Dict[int, np.ndarray]]:
     """Solve camera centers + LED positions with rotations held fixed.
 
     Every observation constrains its LED to lie on a known world-direction ray
     through the (unknown) camera center: (I − ww^T)(X_j − c_i) = 0 — linear.
-    Gauge: c_0 = 0; scale is fixed by pinning the first observation's depth
-    to 1 (metric scale comes later from the IMU alignment).
+    Gauge: c_0 = 0; scale is fixed by pinning the MEAN depth of ~64
+    observations spread across the session to 1 (metric scale comes later
+    from the IMU alignment). The spread matters: pinning a single
+    observation made the gauge hostage to that observation being an inlier —
+    one mislabeled sample as the pin collapsed the whole linear solution
+    toward zero on the 2026-07-08 real session.
     """
     id_index = {led: j for j, led in enumerate(led_ids)}
     n_frames = len(frames)
@@ -303,7 +311,7 @@ def _known_rotation_linear_init(
     def col_x(j: int) -> int:
         return 3 * (n_frames - 1) + 3 * j
 
-    scale_pin: Optional[Tuple[np.ndarray, int]] = None
+    pin_candidates: List[Tuple[np.ndarray, int, Optional[int]]] = []  # (w, led col j, c col i)
     for i, fr in enumerate(frames):
         fx, fy, cx, cy = fr.k
         r = rotations[i]
@@ -323,16 +331,34 @@ def _known_rotation_linear_init(
                     if ci is not None:
                         triplets.append((row + rr, ci + cc, -val))
             row += 3
-            if scale_pin is None and i == 0:
-                scale_pin = (w, j)
-    # Scale gauge: depth of the first frame-0 observation = 1  →  w·X_j = 1.
-    assert scale_pin is not None, "frame 0 has no observations"
-    w0, j0 = scale_pin
-    for cc in range(3):
-        triplets.append((row, col_x(j0) + cc, float(w0[cc])))
-    rhs_vec = np.zeros(row + 1)
-    rhs_vec[row] = 1.0
-    row += 1
+            pin_candidates.append((w, j, i))
+    # Scale gauge: ~64 spread observations' depths pinned to 1
+    # (w·(X_j − c_i) = 1), each row DOWN-WEIGHTED. The weight resolves a
+    # three-way tension, all failure modes observed on real sessions:
+    #  * ONE full-strength pin → hostage to that observation being an inlier
+    #    (a mislabeled pin collapsed the whole solution);
+    #  * N full-strength pins → they fight each other (true depths differ)
+    #    and WARP the geometry (89% metric-scale error downstream);
+    #  * one sum-of-depths row → exact and shape-neutral, but loses the mild
+    #    per-point depth regularization that keeps weakly-observed LEDs from
+    #    wandering in ill-conditioned real sessions (collapse returned).
+    # Down-weighted rows: the scale DOF has no competing constraint, so even
+    # small weights fix it exactly; the shape distortion from conflicting
+    # depth targets enters the least-squares trade-off ∝ weight² and becomes
+    # negligible, while the weak depth regularization survives.
+    assert pin_candidates, "no observations"
+    stride = max(1, len(pin_candidates) // scale_pins)
+    pins = pin_candidates[::stride]
+    w_pin = 0.05
+    rhs_vec = np.zeros(row + len(pins))
+    for w0, j0, i0 in pins:
+        for cc in range(3):
+            triplets.append((row, col_x(j0) + cc, w_pin * float(w0[cc])))
+            ci = col_c(i0)
+            if ci is not None:
+                triplets.append((row, ci + cc, -w_pin * float(w0[cc])))
+        rhs_vec[row] = w_pin
+        row += 1
 
     a = lil_matrix((row, n_unknowns))
     for rr, cc, val in triplets:
@@ -386,6 +412,37 @@ def _inertial_alignment(
     s = float(sol[0])
     g = sol[1:4]
     v = sol[4:].reshape(n, 3)
+
+    # Gravity-magnitude refinement (VINS-Mono style): with weak motion
+    # excitation the free linear solve can trade scale against |g| and
+    # collapse s toward zero (observed on a slow 88 s session: the whole
+    # solution initialized — and then stayed — at 1/400 scale). Gravity's
+    # 9.81 m/s² is the strongest accelerometer signal, so re-solve with g
+    # constrained to that sphere: g = 9.81·(ĝ + B·δ), δ ∈ R² in ĝ's tangent
+    # plane, iterated twice.
+    for _ in range(2):
+        g_norm = np.linalg.norm(g)
+        if g_norm < 1e-6:
+            break
+        g_dir = g / g_norm
+        # Tangent basis of the unit sphere at g_dir.
+        tmp = np.array([1.0, 0.0, 0.0]) if abs(g_dir[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
+        b1 = np.cross(g_dir, tmp)
+        b1 /= np.linalg.norm(b1)
+        b2 = np.cross(g_dir, b1)
+        basis = np.stack([b1, b2], axis=1)  # (3, 2)
+        # Unknowns [s, δ(2), v(3n)]: substitute g = GRAVITY·(g_dir + B δ).
+        a2 = np.zeros((a.shape[0], 3 + 3 * n))
+        a2[:, 0] = a[:, 0]
+        a2[:, 1:3] = a[:, 1:4] @ (GRAVITY * basis)
+        a2[:, 3:] = a[:, 4:]
+        b2v = b - a[:, 1:4] @ (GRAVITY * g_dir)
+        sol2, *_ = np.linalg.lstsq(a2, b2v, rcond=None)
+        s = float(sol2[0])
+        delta = sol2[1:3]
+        g = GRAVITY * (g_dir + basis @ delta)
+        g = GRAVITY * g / np.linalg.norm(g)
+        v = sol2[3:].reshape(n, 3)
     return s, g, v
 
 
@@ -405,6 +462,8 @@ def solve_vio(
     max_nfev: int = 60,
     refine_intrinsics: bool = False,
     progress_cb: Optional["ProgressCb"] = None,
+    warm_start: Optional[VioResult] = None,
+    ftol: float = 1e-6,
 ) -> VioResult:
     """Jointly estimate camera trajectory and LED positions; no pose input.
 
@@ -425,12 +484,41 @@ def solve_vio(
     m = len(led_ids)
     id_index = {led: j for j, led in enumerate(led_ids)}
 
-    # ---- Stages 1–3: seeds --------------------------------------------------
-    rotations = _rotation_seeds(frames, imu)
-    centers, led_seed = _known_rotation_linear_init(frames, rotations, led_ids)
-    scale, g_seed, v_seed = _inertial_alignment(frames, rotations, centers, imu)
-    centers = centers * scale
-    led_seed = {led: x * scale for led, x in led_seed.items()}
+    # ---- Stages 1–3: seeds (or a warm start from a previous solution) -------
+    if warm_start is not None and warm_start.frame_times is not None:
+        # Re-solves after outlier pruning: the state barely moves, so seed
+        # from the previous solution (frames join on their timestamps — the
+        # pruned frame set is a subset of the previous one) and skip the
+        # init stages entirely.
+        prev_idx = {float(t): i for i, t in enumerate(warm_start.frame_times)}
+        rotations = []
+        centers = np.zeros((n, 3))
+        v_seed = np.zeros((n, 3))
+        for i, fr in enumerate(frames):
+            pi = prev_idx.get(float(fr.t))
+            if pi is None:
+                pi = int(np.argmin(np.abs(warm_start.frame_times - fr.t)))
+            rotations.append(quat_to_rotmat(warm_start.quats[pi]))
+            centers[i] = warm_start.positions[pi]
+            v_seed[i] = warm_start.velocities[pi]
+        led_seed = {
+            led: warm_start.led_positions.get(led, np.zeros(3)).copy() for led in led_ids
+        }
+        g_seed = warm_start.gravity.copy()
+        bg_seed = warm_start.gyro_bias.copy()
+        ba_seed = warm_start.accel_bias.copy()
+        if refine_intrinsics and warm_start.intrinsics is not None:
+            k_seed = np.array(
+                [warm_start.intrinsics[0], warm_start.intrinsics[2], warm_start.intrinsics[3]]
+            )
+    else:
+        rotations = _rotation_seeds(frames, imu)
+        centers, led_seed = _known_rotation_linear_init(frames, rotations, led_ids)
+        scale, g_seed, v_seed = _inertial_alignment(frames, rotations, centers, imu)
+        centers = centers * scale
+        led_seed = {led: x * scale for led, x in led_seed.items()}
+        bg_seed = np.zeros(3)
+        ba_seed = np.zeros(3)
 
     # ---- Stage 4: nonlinear VI-BA -------------------------------------------
     # Parameter vector layout:
@@ -444,7 +532,7 @@ def solve_vio(
     n_par = off_k + (3 if refine_intrinsics else 0)
     k_seed = np.array([frames[0].k[0], frames[0].k[2], frames[0].k[3]])
 
-    def pack(rots, ps, vs, leds, bg, ba, g) -> np.ndarray:
+    def pack(rots, ps, vs, leds, bg, ba, g, kk=None) -> np.ndarray:
         parts = []
         for i in range(n):
             parts.append(so3_log(rots[i]))
@@ -454,7 +542,7 @@ def solve_vio(
             parts.append(leds[led])
         parts += [bg, ba, g]
         if refine_intrinsics:
-            parts.append(k_seed)
+            parts.append(k_seed if kk is None else kk)
         return np.concatenate(parts)
 
     def unpack(x):
@@ -474,8 +562,8 @@ def solve_vio(
         centers,
         v_seed,
         led_seed,
-        np.zeros(3),
-        np.zeros(3),
+        bg_seed,
+        ba_seed,
         g_seed,
     )
     rot0_seed = so3_log(rotations[0])
@@ -631,12 +719,20 @@ def solve_vio(
             posn + jp @ delta,
         )
 
+    _hub_delta = huber_px / px_sigma
+
+    def _robustify(r: np.ndarray) -> np.ndarray:
+        # Pseudo-Huber in residual space: quadratic near 0, ~sqrt beyond δ.
+        return np.sign(r) * _hub_delta * np.sqrt(
+            2.0 * (np.sqrt(1.0 + (r / _hub_delta) ** 2) - 1.0)
+        )
+
     # Progress reporting: the optimizer offers no iteration hook, but WE own
     # the residual function. The total evaluation count is estimated from the
     # sparsity coloring (each Jacobian costs ~one eval per column group —
     # filled in below, once the pattern exists) and throttled snapshots of the
     # current LED/camera estimates go to the callback.
-    eval_state = {"count": 0, "est_total": 0, "last_report": 0.0}
+    eval_state = {"count": 0, "est_total": 0, "last_report": 0.0, "raw_rms": 0.0}
 
     def _report(out: np.ndarray, leds: np.ndarray, ps: np.ndarray) -> None:
         import time as _time
@@ -648,7 +744,7 @@ def solve_vio(
         if now - eval_state["last_report"] < 0.25:
             return
         eval_state["last_report"] = now
-        rms = float(np.sqrt(np.mean(out[: 2 * n_obs] ** 2))) * px_sigma
+        rms = eval_state["raw_rms"]
         frac = min(0.99, eval_state["count"] / eval_state["est_total"])
         progress_cb(frac, {led: leds[id_index[led]].copy() for led in led_ids}, rms, ps.copy())
 
@@ -678,8 +774,18 @@ def solve_vio(
         rv = (cy - fy * xc[:, 1] / depth_safe - obs_v) / px_sigma
         ru[bad] = 50.0  # behind the camera: hard penalty
         rv[bad] = 50.0
-        out[: 2 * n_obs : 2] = ru
-        out[1 : 2 * n_obs : 2] = rv
+        eval_state["raw_rms"] = float(np.sqrt(np.mean(ru * ru + rv * rv) / 2.0)) * px_sigma
+        # Robustify the REPROJECTION block ONLY (pseudo-Huber via the
+        # residual-space transform r' = sign(r)·√ρ(r²)). scipy's global
+        # `loss=` would also saturate the IMU factors — and since
+        # reprojection is scale-invariant, a saturated IMU cost opens a
+        # degenerate basin where the whole scene collapses to near-zero
+        # scale (reprojection perfect, IMU penalty bounded — observed on the
+        # 2026-07-08 88 s session as an 8 mm "trajectory"). The IMU and
+        # prior residuals stay quadratic, so scale collapse costs what
+        # physics says it should.
+        out[: 2 * n_obs : 2] = _robustify(ru)
+        out[1 : 2 * n_obs : 2] = _robustify(rv)
         k = 2 * n_obs
         # IMU preintegration factors, fully batched over intervals.
         if intervals:
@@ -754,16 +860,32 @@ def solve_vio(
         residuals,
         x0,
         jac_sparsity=spar.tocsr(),
-        loss="huber",
-        f_scale=huber_px / px_sigma,
+        # loss stays linear: reprojection is robustified inside residuals();
+        # see the comment there for why a global robust loss is unsafe.
+        ftol=ftol,
         max_nfev=max_nfev,
         x_scale="jac",
         tr_solver="lsmr",
     )
 
     rots, ps, vs, leds, bg, ba, g, kk = unpack(fit.x)
-    reproj = fit.fun[: 2 * len(obs_flat)] * px_sigma
-    rms = float(np.sqrt(np.mean(reproj**2)))
+
+    # A-posteriori metric re-anchor: on low-excitation (slow) sessions the
+    # accel-bias freedom absorbs much of the motion signal and the BA can
+    # drift the GLOBAL SCALE (shape stays excellent — reprojection is
+    # scale-invariant; observed as a map at 1/4 to 1/400 of true size).
+    # The gravity-constrained inertial alignment against the SOLVED
+    # trajectory is exactly the metric estimator for a fixed shape — re-fit
+    # scale and apply it to the whole solution.
+    if intervals:
+        s_post, _g_post, v_post = _inertial_alignment(frames, rots, ps, imu)
+        if np.isfinite(s_post) and s_post > 1e-3 and abs(s_post - 1.0) > 0.02:
+            ps = ps * s_post
+            vs = v_post
+            leds = leds * s_post
+
+    residuals(pack(rots, ps, vs, {led: leds[id_index[led]] for led in led_ids}, bg, ba, g, kk))
+    rms = eval_state["raw_rms"]
     quats = np.array([rotmat_to_quat(r) for r in rots])
     return VioResult(
         led_positions={led: leds[id_index[led]].copy() for led in led_ids},
@@ -774,6 +896,7 @@ def solve_vio(
         gyro_bias=bg.copy(),
         accel_bias=ba.copy(),
         rms_reproj_px=rms,
+        frame_times=np.array([fr.t for fr in frames]),
         intrinsics=(float(kk[0]), float(kk[0]), float(kk[1]), float(kk[2])) if kk is not None else None,
     )
 
