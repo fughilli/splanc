@@ -32,6 +32,16 @@ py_binary(
     deps = [":reconstruction"],
 )
 
+# Real-data VIO solve (docs/vio-exploration.md phase 3): trace IMU + offline-
+# decoded observations -> joint pose+LED solve, vs the pose-trusting baseline.
+py_binary(
+    name = "vio_replay",
+    srcs = ["reconstruction/vio_replay.py"],
+    main = "reconstruction/vio_replay.py",
+    imports = ["."],
+    deps = [":reconstruction"],
+)
+
 py_test(
     name = "reconstruct_test",
     srcs = [

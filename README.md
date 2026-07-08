@@ -91,6 +91,17 @@ survives the restart.
   pose-trusting solver fed WebXR-like drifting poses (`vio_test`).
   `?record=1` now also streams DeviceMotion into the trace, so the next
   phone session produces real solver-ready data (phase 2→3 of the plan).
+- **Phase-3 gate PASSED on real data (2026-07-08).** `//web:offline_decode`
+  replays a trace through the canonical M6 decoder; `//pi/reconstruction:vio_replay`
+  joins the IMU and solves. On the drift-afflicted 16-LED capture, the VIO
+  joint solve (NO pose input) scores plane rms **0.2 mm** / pitch spread
+  **0.3 %** / reproj **1.17 px** vs 3.2 mm / 2.5 % / 16 px for the
+  pose-trusting solver on the same observations — and its accelerometer-only
+  metric scale matches WebXR's within 2 %. Caveat that cost the first run:
+  this device's `rotationRate` axis names defy the W3C spec —
+  `vio_replay --diagnose` data-fits the mapping per device. Next: phase 4
+  (getUserMedia capture, first-class IMU protocol, server-side solve,
+  PnP-based live registration).
 
 ### Done (2026-07-08)
 

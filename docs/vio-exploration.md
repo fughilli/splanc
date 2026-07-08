@@ -147,6 +147,10 @@ frame (§7.5 `frame` gains a `gravity_leveled` variant when this ships).
 
 ## 6. Staged plan
 
+> Status 2026-07-08: phases 1–3 are DONE and the phase-3 gate PASSED — see
+> §7b. Next up: phase 4 (`MediaStreamCaptureSource` + first-class IMU
+> protocol + server-side production solve + PnP-based live feedback).
+
 1. **[this branch] Offline prototype + synthetic acceptance** — `vio.py`:
    preintegration, SfM init chain, VI-BA; synthetic generator with
    web-pessimistic IMU noise and WebXR-style corrupt poses as a control.
@@ -188,3 +192,35 @@ the kind of thing the acceptance test exists to catch).
 Solver wall time: ~15 s for the 12 s session (97 keyframes, unoptimized
 scipy prototype, finite-difference Jacobian with sparsity groups). Plenty of
 headroom for the final solve; live/incremental needs the §6 phase-4 work.
+
+## 7b. FIRST REAL-DATA SOLVE (2026-07-08) — phase-3 gate PASSED
+
+Tooling (both landed): `bazelisk run //web:offline_decode -- frames.jsonl
+decoded.json` replays a `?record=1` trace through the CANONICAL M6
+tracker/decoder (no reimplementation — 188 records, 16/16 ids, 7 971 dense
+labeled samples over 537 frames on the 18 s capture), then
+`bazelisk run //pi/reconstruction:vio_replay -- frames.jsonl decoded.json`
+joins the trace's DeviceMotion stream and runs `solve_vio`.
+
+On the 2026-07-08 16-LED capture — the one with the measured 4.65°/6.2 cm
+WebXR frame drift and the IMU-disproven 3.7 cm relocalization snap — scored
+on §1 shape consistency (planar grid wall, no absolute truth needed):
+
+| | reproj rms | plane rms | pitch spread | pitch p50 |
+|---|---|---|---|---|
+| **VIO joint solve (no pose input)** | **1.17 px** | **0.2 mm** | **0.3 %** | 39.5 mm |
+| pose-trusting solver, WebXR poses | 16.0 px | 3.2 mm | 2.5 % | 40.3 mm |
+
+Gravity solved to 9.81 m/s², gyro bias ~1e-4 rad/s, accel bias 0.075 m/s²,
+trajectory length 1.18 m/18 s (physically plausible; WebXR claimed 13 m on
+the earlier capture). The two solutions agree on pitch within 2 % — i.e. the
+accelerometer-derived metric scale independently matches WebXR's.
+
+**Field lesson: don't trust DeviceMotion axis names.** The first solve
+collapsed because this device/Chrome delivers `rotationRate` with
+alpha/beta/gamma being the camera-frame x/y/z rates directly, NOT the W3C
+reading (alpha=z, beta=x, gamma=y). `vio_replay --diagnose` now fits the
+gyro+accel axis mapping from the trace itself against the WebXR attitudes
+(48 signed permutations; winner 0.0097 rad / 0.5 s window, 4× ahead) — run
+it once per new device until the mapping is negotiated/calibrated properly
+in phase 4.

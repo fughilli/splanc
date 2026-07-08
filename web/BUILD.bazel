@@ -14,7 +14,7 @@ Targets:
                            (bazelisk run //web:serve)
 """
 
-load("@aspect_rules_js//js:defs.bzl", "js_test")
+load("@aspect_rules_js//js:defs.bzl", "js_binary", "js_test")
 load("@aspect_rules_ts//ts:defs.bzl", "ts_config", "ts_project")
 load("@npm//:defs.bzl", "npm_link_all_packages")
 load("@npm//web:vite/package_json.bzl", vite_bin = "bin")
@@ -90,6 +90,28 @@ test_suite(
         f.removeprefix("tests/").removesuffix(".test.ts") + "_test"
         for f in glob(["tests/*.test.ts"])
     ],
+)
+
+# The emitted dist-test tree is CommonJS, but web/package.json declares
+# "type": "module" — this nearer package.json rescopes dist-test/*.js back to
+# CJS for plain `node` execution (js_binary; the js_test runner tolerates it
+# either way).
+genrule(
+    name = "dist_test_pkg_json",
+    outs = ["dist-test/package.json"],
+    cmd = "echo '{\"type\": \"commonjs\"}' > $@",
+)
+
+# Offline decode of a ?record=1 trace through the CANONICAL M6
+# tracker/decoder (VIO exploration phase 3, docs/vio-exploration.md):
+#   bazelisk run //web:offline_decode -- <frames.jsonl> <out.json>
+js_binary(
+    name = "offline_decode",
+    data = [
+        ":dist_test_pkg_json",
+        ":web_tests_js",
+    ],
+    entry_point = ":dist-test/tests/tools/offlineDecode.js",
 )
 
 # Production bundle. vite resolves the config's own `import "vite"` and the
