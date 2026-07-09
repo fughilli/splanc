@@ -98,9 +98,9 @@ def validate_schemas(schemas: dict[str, dict]) -> None:
         for ref in sch["oneOf"]:
             variant_name = ref["$ref"].rsplit("/", 1)[-1]
             variant = sch["$defs"][variant_name]
-            assert "type" in variant.get("properties", {}), (
-                f"{name}: variant {variant_name} missing 'type' discriminator"
-            )
+            assert "type" in variant.get(
+                "properties", {}
+            ), f"{name}: variant {variant_name} missing 'type' discriminator"
 
 
 # ---------------------------------------------------------------------------
@@ -168,18 +168,14 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("// ---------------------------------------------------------------------------")
     lines.append("// CodeParams (§7.6)")
     lines.append("// ---------------------------------------------------------------------------\n")
-    lines.append(
-        "export type Encoding = " + " | ".join(f'"{v}"' for v in encoding_values) + ";"
-    )
-    lines.append(
-        "export type SyncPattern = " + " | ".join(f'"{v}"' for v in sync_values) + ";"
-    )
-    lines.append(
-        "export type Fec = " + " | ".join(f'"{v}"' for v in fec_values) + ";\n"
-    )
+    lines.append("export type Encoding = " + " | ".join(f'"{v}"' for v in encoding_values) + ";")
+    lines.append("export type SyncPattern = " + " | ".join(f'"{v}"' for v in sync_values) + ";")
+    lines.append("export type Fec = " + " | ".join(f'"{v}"' for v in fec_values) + ";\n")
     lines.append("export interface CodeParams {")
     lines.append("  ledCount: number;")
-    lines.append("  /** Coded bit frames per cycle: ceil(log2(ledCount+1)) data bits + FEC parity frames. */")
+    lines.append(
+        "  /** Coded bit frames per cycle: ceil(log2(ledCount+1)) data bits + FEC parity frames. */"
+    )
     lines.append("  bits: number;")
     lines.append("  encoding: Encoding;")
     lines.append("  /** Hold time per bit frame, in milliseconds. */")
@@ -242,9 +238,13 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append(" * server defaults. */")
     lines.append("export interface StartMappingOptions {")
     lines.append("  ledCount: number;")
-    lines.append("  /** Code carrier, chosen from measured light: dark -> 'gray', lit -> 'gray-hue'. */")
+    lines.append(
+        "  /** Code carrier, chosen from measured light: dark -> 'gray', lit -> 'gray-hue'. */"
+    )
     lines.append("  encoding?: Encoding;")
-    lines.append("  /** Signaling rate: each bit window should span >= ~3 camera frame intervals. */")
+    lines.append(
+        "  /** Signaling rate: each bit window should span >= ~3 camera frame intervals. */"
+    )
     lines.append("  bitPeriodMs?: number;")
     lines.append("}\n")
     lines.append("export interface StartMappingMessage {")
@@ -252,7 +252,9 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("  options: StartMappingOptions;")
     lines.append("}\n")
     lines.append("/** Mid-capture renegotiation: overlay these on the active capture's params,")
-    lines.append(" * restamp the pattern epoch, keep collected detections. Reply: pattern_state. */")
+    lines.append(
+        " * restamp the pattern epoch, keep collected detections. Reply: pattern_state. */"
+    )
     lines.append("export interface ConfigureOptions {")
     lines.append("  ledCount?: number;")
     lines.append("  encoding?: Encoding;")
@@ -287,7 +289,9 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("}\n")
     lines.append("/** Camera/exposure telemetry (§7.1 exposure_report). The web client cannot")
     lines.append(" * read the real 3A/ISP state (WebXR exposes only the camera texture), so these")
-    lines.append(" * are software estimates; iso/exposureTimeMs are reserved for clients that can. */")
+    lines.append(
+        " * are software estimates; iso/exposureTimeMs are reserved for clients that can. */"
+    )
     lines.append("export interface ExposureStats {")
     lines.append("  /** Phone monotonic clock at the end of the measurement window, ms. */")
     lines.append("  tCaptureMs: number;")
@@ -317,7 +321,9 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("export interface GetStatusMessage {")
     lines.append('  type: "get_status";')
     lines.append("}\n")
-    lines.append("/** Sent by pattern followers (e.g. the virtual LED wall) to poll the pattern clock. */")
+    lines.append(
+        "/** Sent by pattern followers (e.g. the virtual LED wall) to poll the pattern clock. */"
+    )
     lines.append("export interface GetPatternMessage {")
     lines.append('  type: "get_pattern";')
     lines.append("}\n")
@@ -325,7 +331,7 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("export interface GetLiveMapMessage {")
     lines.append('  type: "get_live_map";')
     lines.append("}\n")
-    lines.append("/** Poll the FINAL solve\'s progress while the stop_mapping reply is pending. */")
+    lines.append("/** Poll the FINAL solve's progress while the stop_mapping reply is pending. */")
     lines.append("export interface GetSolveStatusMessage {")
     lines.append('  type: "get_solve_status";')
     lines.append("}\n")
@@ -376,11 +382,15 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("export interface PatternStateMessage {")
     lines.append('  type: "pattern_state";')
     lines.append("  active: boolean;")
-    lines.append("  /** Server-clock start of a known cycle (ms); null when no capture is active. */")
+    lines.append(
+        "  /** Server-clock start of a known cycle (ms); null when no capture is active. */"
+    )
     lines.append("  patternClockEpoch: number | null;")
     lines.append("  codeParams: CodeParams;")
     lines.append("}\n")
-    lines.append("/** Reply to get_live_map: latest interim reconstruction; null before the first solve or when idle. */")
+    lines.append(
+        "/** Reply to get_live_map: latest interim reconstruction; null before the first solve or when idle. */"
+    )
     lines.append("export interface LiveMapMessage {")
     lines.append('  type: "live_map";')
     lines.append("  active: boolean;")
@@ -391,7 +401,7 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("  id: number;")
     lines.append("  xyz: Vec3;")
     lines.append("}\n")
-    lines.append("/** Reply to get_solve_status: the final solve\'s live state. All-null")
+    lines.append("/** Reply to get_solve_status: the final solve's live state. All-null")
     lines.append(" * fields when no solve is running or it reports no progress. */")
     lines.append("export interface SolveStatusMessage {")
     lines.append('  type: "solve_status";')
@@ -591,7 +601,9 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append("")
     out.append("")
     out.append("class ConfigureOptions(_StrictModel):")
-    out.append('    """Mid-capture renegotiation overlay; unset fields keep their current value."""')
+    out.append(
+        '    """Mid-capture renegotiation overlay; unset fields keep their current value."""'
+    )
     out.append("")
     out.append("    ledCount: Union[int, None] = Field(default=None, ge=1)")
     out.append("    encoding: Union[Encoding, None] = None")
@@ -652,7 +664,9 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append("")
     out.append("")
     out.append("class GetPatternMessage(_StrictModel):")
-    out.append('    """Sent by pattern followers (e.g. the virtual LED wall) to poll the pattern clock."""')
+    out.append(
+        '    """Sent by pattern followers (e.g. the virtual LED wall) to poll the pattern clock."""'
+    )
     out.append("")
     out.append('    type: Literal["get_pattern"]')
     out.append("")
@@ -724,7 +738,9 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append("")
     out.append("")
     out.append("class PatternStateMessage(_StrictModel):")
-    out.append('    """Reply to get_pattern: the pattern clock a follower should render against."""')
+    out.append(
+        '    """Reply to get_pattern: the pattern clock a follower should render against."""'
+    )
     out.append("")
     out.append('    type: Literal["pattern_state"]')
     out.append("    active: bool")
@@ -733,7 +749,9 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append("")
     out.append("")
     out.append("class LiveMapMessage(_StrictModel):")
-    out.append('    """Reply to get_live_map: latest interim reconstruction; None before the first solve or when idle."""')
+    out.append(
+        '    """Reply to get_live_map: latest interim reconstruction; None before the first solve or when idle."""'
+    )
     out.append("")
     out.append('    type: Literal["live_map"]')
     out.append("    active: bool")

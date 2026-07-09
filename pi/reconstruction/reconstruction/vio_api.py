@@ -20,12 +20,11 @@ from datetime import datetime, timezone
 from typing import Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
-
 from ledmapper_protocol import LedEntry, OutputMap, OutputMapStats
 
 from .api import _confidence, _consensus_filter
 from .triangulate import max_parallax_deg
-from .vio import FrameObservations, GRAVITY, ImuSample, ProgressCb, VioResult, solve_vio
+from .vio import GRAVITY, FrameObservations, ImuSample, ProgressCb, VioResult, solve_vio
 
 _log = logging.getLogger(__name__)
 
@@ -112,9 +111,7 @@ def keep_dominant_segment(
 
     fine = split(frames, stub_gap_s)
     min_obs = max(10, int(0.02 * total_obs))
-    substantial = [
-        seg for seg in fine if sum(len(f.obs) for f in seg) >= min_obs and len(seg) >= 5
-    ]
+    substantial = [seg for seg in fine if sum(len(f.obs) for f in seg) >= min_obs and len(seg) >= 5]
     if not substantial:
         substantial = [max(fine, key=lambda seg: sum(len(f.obs) for f in seg))]
 
@@ -364,7 +361,10 @@ def reconstruct_vio(
         t0, t1 = frames[0].t - 0.25, frames[-1].t + 0.05
         imu = [s for s in imu if t0 <= s.t <= t1]
         _log.info(
-            "vio: kept segment %.2f..%.2f s with %d IMU samples", frames[0].t, frames[-1].t, len(imu)
+            "vio: kept segment %.2f..%.2f s with %d IMU samples",
+            frames[0].t,
+            frames[-1].t,
+            len(imu),
         )
     if len(frames) < 8:
         raise ValueError(f"too few observation frames for a VIO solve ({len(frames)})")
@@ -454,8 +454,10 @@ def reconstruct_vio(
             _log.info(
                 "vio: rejection rounds regressed (%d solved leds @ %.1f px); "
                 "keeping best (%d solved leds @ %.1f px)",
-                final_score[0], result.rms_reproj_px,
-                best_score[0], best_result.rms_reproj_px,
+                final_score[0],
+                result.rms_reproj_px,
+                best_score[0],
+                best_result.rms_reproj_px,
             )
             result, frames = best_result, best_frames
     leveled, rot = _gravity_leveled(result)
@@ -518,8 +520,7 @@ def reconstruct_vio(
     unmapped = sorted(set(range(led_count)) - solved_ids)
     return OutputMap(
         mapId=map_id or str(uuid.uuid4()),
-        createdAt=created_at
-        or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        createdAt=created_at or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         units="meters",
         frame="gravity_leveled",
         ledCount=led_count,

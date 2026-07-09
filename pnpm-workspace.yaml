@@ -3,8 +3,8 @@
 # The web app (M5/M6/M7/M8) lives in web/, and consumes the protocol types
 # (M10) as a workspace package via @ledmapper/protocol.
 packages:
-  - "web"
-  - "shared/protocol/ts"
+  - 'web'
+  - 'shared/protocol/ts'
 
 # aspect_rules_js requires this to be set, even if empty: it is the explicit
 # allow-list of npm packages whose install-time lifecycle scripts (postinstall

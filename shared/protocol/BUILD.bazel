@@ -119,13 +119,13 @@ py_test(
         "tests/test_fec.py",
         "tests/test_roundtrip.py",
     ],
-    main = "tests/pytest_main.py",
     data = [":schemas"],
+    legacy_create_init = False,
+    main = "tests/pytest_main.py",
     deps = [
         ":protocol",
         requirement("jsonschema"),
         requirement("pytest"),
         requirement("referencing"),
     ],
-    legacy_create_init = False,
 )

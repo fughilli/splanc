@@ -3,14 +3,14 @@
 The Android-Chrome capture app from the design doc, plus a hardware-free test
 fixture. Two Vite entry pages:
 
-| Page | What it is |
-|---|---|
-| `/` | **Capture app** (M5 xr · M6 cv · M7 net · M8 ui): opens an `immersive-ar` WebXR session with `camera-access`, detects/tracks/decodes the blinking LEDs per frame, streams `DetectionRecord`s to the Pi over the §7 WebSocket, drives the session flow and shows the reconstructed result. |
-| `/wall.html` | **Virtual LED wall**: renders a flat grid of virtual LEDs fullscreen on a laptop and blinks the exact M1 Gray-code frame plan, synced to the server's pattern clock. Point the phone at the screen to exercise the entire live pipeline with zero LED hardware. |
+| Page         | What it is                                                                                                                                                                                                                                                                                |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/`          | **Capture app** (M5 xr · M6 cv · M7 net · M8 ui): opens an `immersive-ar` WebXR session with `camera-access`, detects/tracks/decodes the blinking LEDs per frame, streams `DetectionRecord`s to the Pi over the §7 WebSocket, drives the session flow and shows the reconstructed result. |
+| `/wall.html` | **Virtual LED wall**: renders a flat grid of virtual LEDs fullscreen on a laptop and blinks the exact M1 Gray-code frame plan, synced to the server's pattern clock. Point the phone at the screen to exercise the entire live pipeline with zero LED hardware.                           |
 
 ## Layout
 
-```
+```text
 src/code/   Gray-code frame plan + pattern-clock timing (§8.1/§8.2) — the TS
             mirror of pi/led_driver/graycode.py, golden-tested against it
 src/geom/   pinhole camera math — mirror of reconstruction/camera.py (M3),

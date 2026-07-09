@@ -23,10 +23,6 @@ from typing import Any
 
 import pytest
 from jsonschema import Draft202012Validator
-from referencing import Registry, Resource
-from referencing.jsonschema import DRAFT202012
-from pydantic import ValidationError
-
 from ledmapper_protocol import (
     ClientMessage,
     CodeParams,
@@ -37,13 +33,13 @@ from ledmapper_protocol import (
     ErrorMessage,
     ExposureReportMessage,
     ExposureStats,
-    ImuBatchMessage,
-    ImuSample,
     GetLiveMapMessage,
-    GetSolveStatusMessage,
     GetPatternMessage,
+    GetSolveStatusMessage,
     GetStatusMessage,
     HelloMessage,
+    ImuBatchMessage,
+    ImuSample,
     LedEntry,
     LiveMapMessage,
     MappingStartedMessage,
@@ -63,7 +59,9 @@ from ledmapper_protocol import (
     TimeSyncPongMessage,
     WelcomeMessage,
 )
-
+from pydantic import ValidationError
+from referencing import Registry, Resource
+from referencing.jsonschema import DRAFT202012
 
 # ---------------------------------------------------------------------------
 # JSON Schema loading. The schemas live alongside the test file in the source

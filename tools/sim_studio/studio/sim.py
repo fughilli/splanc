@@ -22,7 +22,6 @@ import time
 from typing import Dict, List, Optional, Sequence
 
 import numpy as np
-
 from reconstruction import look_at_quat, project
 from reconstruction.api import reconstruct
 from simulator import NoiseModel, make_fixture

@@ -18,6 +18,7 @@ load("@aspect_rules_js//js:defs.bzl", "js_binary", "js_test")
 load("@aspect_rules_ts//ts:defs.bzl", "ts_config", "ts_project")
 load("@npm//:defs.bzl", "npm_link_all_packages")
 load("@npm//web:vite/package_json.bzl", vite_bin = "bin")
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -122,9 +123,9 @@ vite_bin.vite(
     name = "dist",
     srcs = SRCS + [
         "index.html",
-        "wall.html",
         "package.json",
         "vite.config.ts",
+        "wall.html",
         ":node_modules/@ledmapper/protocol",
         ":node_modules/vite",
     ],

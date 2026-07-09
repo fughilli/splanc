@@ -29,11 +29,11 @@ bazel run //pi/provisioning:deploy_live -- ledmapper.local
 bazel run //pi/provisioning:deploy_live -- 192.168.1.42 --user root
 ```
 
-| Target        | What it does                                                                                                                                                  |
-| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `image_sd`    | Ensures the deploy key exists, `nix build`s `nix/flake.nix#images.sdImage`, then `dd`s the image to `--device` (with confirmation) unless `--no-write`.       |
+| Target        | What it does                                                                                                                                                 |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `image_sd`    | Ensures the deploy key exists, `nix build`s `nix/flake.nix#images.sdImage`, then `dd`s the image to `--device` (with confirmation) unless `--no-write`.      |
 | `deploy_live` | `nixos-rebuild switch --flake nix/#ledmapper --target-host <host>` over SSH using the deploy **private** key. No password needed (key was baked at imaging). |
-| `keys`        | `bazel run //pi/provisioning:keys -- {init\|rotate\|pub\|path}` — manage the deploy key pair.                                                                 |
+| `keys`        | `bazel run //pi/provisioning:keys -- {init\|rotate\|pub\|path}` — manage the deploy key pair.                                                                |
 
 Both wrappers are `sh_binary` targets (`scripts/image_sd.sh`,
 `scripts/deploy_live.sh`) that shell out to the `nix` / `nixos-rebuild` CLI.
@@ -45,7 +45,7 @@ binfmt/qemu cross for building the Pi image).
 
 ## Layout
 
-```
+```text
 pi/provisioning/
   BUILD.bazel              # image_sd / deploy_live / keys targets
   README.md                # this file
@@ -141,12 +141,12 @@ and import it from `flake.nix` to turn the Pi into its own AP.
 
 Pinned **2026-06-19**. Fold these into the repo decision log.
 
-| Component            | Pin                                                                   | Where                                |
-| -------------------- | -------------------------------------------------------------------- | ------------------------------------ |
-| `rules_nixpkgs_core` | `0.13.0`                                                             | root `MODULE.bazel`                  |
-| `nixos-raspberrypi`  | tag `1.20260517.0` (commit `06c6e3513e1ee64b651913193fc6ac38aa4963f5`) | `nix/flake.nix` input               |
-| `nixpkgs`            | branch `nixos-25.05` (nixos-raspberrypi's nixpkgs `follows` this)     | `nix/flake.nix` input               |
-| Target board         | `raspberry-pi-5` (switch to `raspberry-pi-4` via `board` in flake)   | `nix/flake.nix`                     |
+| Component            | Pin                                                                    | Where                 |
+| -------------------- | ---------------------------------------------------------------------- | --------------------- |
+| `rules_nixpkgs_core` | `0.13.0`                                                               | root `MODULE.bazel`   |
+| `nixos-raspberrypi`  | tag `1.20260517.0` (commit `06c6e3513e1ee64b651913193fc6ac38aa4963f5`) | `nix/flake.nix` input |
+| `nixpkgs`            | branch `nixos-25.05` (nixos-raspberrypi's nixpkgs `follows` this)      | `nix/flake.nix` input |
+| Target board         | `raspberry-pi-5` (switch to `raspberry-pi-4` via `board` in flake)     | `nix/flake.nix`       |
 
 To bump: edit the ref in `nix/flake.nix`, run `nix flake update` on a Nix host
 to regenerate `flake.lock` (it **is** committed and was verified current — see
@@ -161,7 +161,7 @@ This module was originally authored **without Nix** in the environment, so it
 shipped a long "UNVERIFIED" list. It has since been **evaluated and built on a
 native `aarch64-linux` Nix host** (Determinate Nix 3.21.1, flakes enabled). The
 results below replace the old unverified list. Each item says exactly what is
-now *proven* (eval'd and/or built) vs what still genuinely requires real Pi
+now _proven_ (eval'd and/or built) vs what still genuinely requires real Pi
 hardware.
 
 ### Proven — evaluated against the pinned `nixos-raspberrypi` rev
@@ -221,9 +221,9 @@ hardware.
   git-ignored and never shows in `git status`.
 - **`deploy_live` argument assembly is correct.** Traced invocation:
   `nixos-rebuild switch --flake path:.../nix#ledmapper --target-host root@<host>
-  --use-remote-sudo --impure [extra args]` with
+--use-remote-sudo --impure [extra args]` with
   `NIX_SSHOPTS="-i secrets/deploy_key -o IdentitiesOnly=yes -o
-  StrictHostKeyChecking=accept-new"`. The pinned nixpkgs `nixos-rebuild`
+StrictHostKeyChecking=accept-new"`. The pinned nixpkgs `nixos-rebuild`
   supports all of `--flake --target-host --use-remote-sudo --dry-run`, so
   `bazel run //pi/provisioning:deploy_live -- <host> -n` works for a dry switch.
   It fails **gracefully and clearly** when: no host is given (usage, exit 2),
@@ -234,7 +234,7 @@ hardware.
 
 1. **`spi.nix` — `dtparam=spi=on` never reached config.txt.** The module wrapped
    the whole `{ all = …; }` tree in `lib.mkDefault`. Because
-   `hardware.raspberry-pi.config` is an *attrset of submodules*, a
+   `hardware.raspberry-pi.config` is an _attrset of submodules_, a
    default-priority definition of the entire `all` subtree loses to the
    upstream normal-priority `all` defaults (audio, vc4-kms-v3d, …), so the `spi`
    leaf silently vanished from the merged config. **Fixed** by setting the leaf
@@ -242,8 +242,8 @@ hardware.
    merges alongside the upstream board defaults. Verified: merged
    `base-dt-params` now contains both `audio` and `spi = on`.
 2. **`scripts/image_sd.sh` — build failed with `'secrets' is too short to be a
-   valid store path`.** Under `bazel run`, the script derived `SECRETS_DIR` from
-   its *runfiles* dir (which has no `secrets/`), so
+valid store path`.** Under `bazel run`, the script derived `SECRETS_DIR` from
+   its _runfiles_ dir (which has no `secrets/`), so
    `LEDMAPPER_DEPLOY_PUBKEY_FILE` pointed at a nonexistent file and
    `ssh-deploy.nix` fell through to its in-store relative default
    (`../../secrets/...`), which escapes the flake's store closure. **Fixed** by

@@ -9,7 +9,7 @@ See `led-mapper-design.md` §7 for the normative spec.
 
 ## Layout
 
-```
+```text
 shared/protocol/
   schemas/                       # JSON Schemas (the source of truth)
     detection_record.json        # §7.4
@@ -32,13 +32,13 @@ shared/protocol/
 
 After editing anything under `schemas/`:
 
-```
+```text
 python3 shared/protocol/codegen.py
 ```
 
 To verify in CI that the generated files are up to date:
 
-```
+```text
 python3 shared/protocol/codegen.py --check
 ```
 
@@ -46,7 +46,7 @@ python3 shared/protocol/codegen.py --check
 
 ### Python (Pi server, reconstruction, simulator)
 
-```
+```text
 pip install -e shared/protocol/python
 ```
 
@@ -81,7 +81,7 @@ import type {
   ServerMessage,
   CodeParams,
   OutputMap,
-} from "@ledmapper/protocol";
+} from '@ledmapper/protocol';
 ```
 
 Wire it up in the web app's `package.json` via a workspace dependency on
@@ -89,7 +89,7 @@ Wire it up in the web app's `package.json` via a workspace dependency on
 
 ## Running the round-trip test
 
-```
+```text
 pip install -e shared/protocol/python
 pytest shared/protocol/tests
 ```

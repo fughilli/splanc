@@ -18,7 +18,6 @@ import argparse
 from pathlib import Path
 
 import uvicorn
-
 from server.app import create_app
 from server.codebook import DEFAULT_BIT_PERIOD_MS
 from server.tls import ensure_self_signed

@@ -3,9 +3,7 @@
 import math
 
 import pytest
-
 from ledmapper_protocol.fec import secded_total_bits
-
 from server.codebook import DEFAULT_BIT_PERIOD_MS, code_params_for, data_bits_for
 
 

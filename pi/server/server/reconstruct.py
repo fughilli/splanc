@@ -203,7 +203,9 @@ class LiveSolver:
     so it has no affinity to a particular event loop.
     """
 
-    def __init__(self, solve: Optional[LiveSolve] = None, *, clock: Optional[Callable[[], float]] = None):
+    def __init__(
+        self, solve: Optional[LiveSolve] = None, *, clock: Optional[Callable[[], float]] = None
+    ):
         self._solve = solve or _live_solve
         self._clock = clock or now_ms
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="live-solve")

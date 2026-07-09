@@ -15,13 +15,12 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-
 from reconstruction.api import reconstruct
 from reconstruction.camera import look_at_quat, project, quat_to_rotmat
 from reconstruction.vio import (
+    G_WORLD,
     FrameObservations,
     ImuSample,
-    G_WORLD,
     preintegrate,
     similarity_align,
     so3_exp,
@@ -274,8 +273,10 @@ def test_wrong_focal_preserves_shape_and_scale_tracks_fx_error():
     aligned = (s * (rot @ est.T)).T + t
     shape_rms = float(np.sqrt(np.mean(np.sum((aligned - leds[ids]) ** 2, axis=1))))
     scale_err = abs(s - 1.0)
-    print(f"\n8% wrong fx: shape rms {shape_rms*1000:.2f} mm, "
-          f"metric scale err {scale_err*100:.2f} %, reproj {result.rms_reproj_px:.2f} px")
+    print(
+        f"\n8% wrong fx: shape rms {shape_rms*1000:.2f} mm, "
+        f"metric scale err {scale_err*100:.2f} %, reproj {result.rms_reproj_px:.2f} px"
+    )
     assert shape_rms < 0.005, f"shape rms {shape_rms*1000:.2f} mm"
     assert result.rms_reproj_px < 1.0
     # Scale error tracks the fx error (the trade-off this test documents).
@@ -314,7 +315,11 @@ def test_reconstruct_vio_wire_end_to_end():
                 }
             )
     imu_wire = [
-        {"t": s.t * 1000.0, "gyro": [float(x) for x in s.gyro], "accel": [float(x) for x in s.accel]}
+        {
+            "t": s.t * 1000.0,
+            "gyro": [float(x) for x in s.gyro],
+            "accel": [float(x) for x in s.accel],
+        }
         for s in imu
     ]
     progress = []
@@ -390,12 +395,8 @@ def test_gap_segment_filter_solves_dominant_segment():
 
     # Prefix: reuse the first 2 s of frames shifted to start at t=-14 s with
     # a 12 s gap before the main segment (IMU covers everything).
-    prefix = [
-        FrameObservations(t=f.t - 14.0, k=f.k, obs=f.obs) for f in frames if f.t < 2.0
-    ]
-    imu_prefix = [
-        ImuSample(t=s.t - 14.0, gyro=s.gyro, accel=s.accel) for s in imu if s.t < 2.05
-    ]
+    prefix = [FrameObservations(t=f.t - 14.0, k=f.k, obs=f.obs) for f in frames if f.t < 2.0]
+    imu_prefix = [ImuSample(t=s.t - 14.0, gyro=s.gyro, accel=s.accel) for s in imu if s.t < 2.05]
     all_frames = prefix + list(frames)
     all_imu = sorted(imu_prefix + list(imu), key=lambda s: s.t)
 
@@ -404,13 +405,23 @@ def test_gap_segment_filter_solves_dominant_segment():
         for j, u, v in fr.obs:
             records.append(
                 {
-                    "ledId": int(j), "tCaptureMs": fr.t * 1000.0, "u": u, "v": v,
-                    "imgW": IMG_W, "imgH": IMG_H, "K": list(K), "pose": None,
+                    "ledId": int(j),
+                    "tCaptureMs": fr.t * 1000.0,
+                    "u": u,
+                    "v": v,
+                    "imgW": IMG_W,
+                    "imgH": IMG_H,
+                    "K": list(K),
+                    "pose": None,
                     "confidence": 1.0,
                 }
             )
     imu_wire = [
-        {"t": s.t * 1000.0, "gyro": [float(x) for x in s.gyro], "accel": [float(x) for x in s.accel]}
+        {
+            "t": s.t * 1000.0,
+            "gyro": [float(x) for x in s.gyro],
+            "accel": [float(x) for x in s.accel],
+        }
         for s in all_imu
     ]
     out = reconstruct_vio(records, imu_wire, led_count=len(leds), refine_intrinsics=False)
@@ -440,8 +451,14 @@ def test_outlier_rejection_unsticks_a_contaminated_led():
         for j, u, v in fr.obs:
             records.append(
                 {
-                    "ledId": int(j), "tCaptureMs": fr.t * 1000.0, "u": u, "v": v,
-                    "imgW": IMG_W, "imgH": IMG_H, "K": list(K), "pose": None,
+                    "ledId": int(j),
+                    "tCaptureMs": fr.t * 1000.0,
+                    "u": u,
+                    "v": v,
+                    "imgW": IMG_W,
+                    "imgH": IMG_H,
+                    "K": list(K),
+                    "pose": None,
                     "confidence": 1.0,
                 }
             )
@@ -454,7 +471,11 @@ def test_outlier_rejection_unsticks_a_contaminated_led():
             rec["v"] -= 35.0
             hit += 1
     imu_wire = [
-        {"t": s.t * 1000.0, "gyro": [float(x) for x in s.gyro], "accel": [float(x) for x in s.accel]}
+        {
+            "t": s.t * 1000.0,
+            "gyro": [float(x) for x in s.gyro],
+            "accel": [float(x) for x in s.accel],
+        }
         for s in imu
     ]
 
@@ -489,7 +510,7 @@ def test_leading_stub_is_dropped_regardless_of_gap_length():
     # (under the coarse 3 s split), then the real capture. The gauge anchor
     # (pose 0) sat on the stub island and the solve diverged to 469k px.
     # Segment filtering must weigh observation MASS, not just gap duration.
-    from reconstruction.vio_api import keep_dominant_segment, reconstruct_vio, solved_led_count
+    from reconstruction.vio_api import keep_dominant_segment, reconstruct_vio
 
     leds = wall_leds()
     frames, _times = synth_frames(leds)
@@ -505,8 +526,17 @@ def test_leading_stub_is_dropped_regardless_of_gap_length():
     for fr in all_frames:
         for j, u, v in fr.obs:
             records.append(
-                {"ledId": int(j), "tCaptureMs": fr.t * 1000.0, "u": u, "v": v,
-                 "imgW": IMG_W, "imgH": IMG_H, "K": list(K), "pose": None, "confidence": 1.0}
+                {
+                    "ledId": int(j),
+                    "tCaptureMs": fr.t * 1000.0,
+                    "u": u,
+                    "v": v,
+                    "imgW": IMG_W,
+                    "imgH": IMG_H,
+                    "K": list(K),
+                    "pose": None,
+                    "confidence": 1.0,
+                }
             )
     imu_wire = [
         {"t": s.t * 1000.0, "gyro": list(map(float, s.gyro)), "accel": list(map(float, s.accel))}

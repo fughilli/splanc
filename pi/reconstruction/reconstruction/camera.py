@@ -91,7 +91,9 @@ def rotmat_to_quat(r: np.ndarray) -> Quat:
     return (float(q[0]), float(q[1]), float(q[2]), float(q[3]))
 
 
-def look_at_quat(eye: np.ndarray, target: np.ndarray, up: Sequence[float] = (0.0, 1.0, 0.0)) -> Quat:
+def look_at_quat(
+    eye: np.ndarray, target: np.ndarray, up: Sequence[float] = (0.0, 1.0, 0.0)
+) -> Quat:
     """Orientation (as ``[x, y, z, w]``) of a camera at ``eye`` looking at ``target``.
 
     Builds the camera-to-world rotation whose -Z axis points from ``eye`` toward

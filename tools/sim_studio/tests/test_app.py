@@ -10,7 +10,6 @@ import urllib.error
 import urllib.request
 
 import uvicorn
-
 from studio.app import create_app
 
 
@@ -55,7 +54,10 @@ def _get(url):
 
 def _post(url, body):
     req = urllib.request.Request(
-        url, data=json.dumps(body).encode(), headers={"Content-Type": "application/json"}, method="POST"
+        url,
+        data=json.dumps(body).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
     )
     with urllib.request.urlopen(req, timeout=30) as r:
         return r.status, json.loads(r.read().decode())

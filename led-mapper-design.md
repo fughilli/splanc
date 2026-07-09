@@ -78,19 +78,19 @@ The key architectural consequence: **the phone does all per-frame vision and emi
 
 ## 4. Technology choices (opinionated; pin latest stable at repo init)
 
-| Concern | Choice | Rationale |
-|---|---|---|
-| Pi OS | Raspberry Pi OS (64-bit), Pi 4 or Pi 5 | Pi 5 GPIO block differs; we avoid bit-banged WS281x and use SPI, which is stable across both. |
-| LED type (MVP) | **SK9822 / APA102 (DotStar)** driven over hardware **SPI** (`spidev`) | Separate clock line → deterministic, jitter-tolerant timing. The temporal code's reliability depends on clean transitions; this is the lowest-risk path. WS2812B is supported as a later option but its single-wire timing is jittery on a busy Pi. |
-| LED driver (upgrade path) | Offload pattern rendering to an **RP2040 (Pico)** over USB serial | Hard real-time pattern clock decoupled from OS scheduling. Designed as a drop-in behind the M1 interface; not required for MVP. |
-| Pi server | **Python + FastAPI + uvicorn**, `websockets` | Same language as reconstruction → one toolchain on the Pi. |
-| Reconstruction | **Python + NumPy + SciPy + OpenCV** (`scipy.optimize.least_squares`, sparse Jacobian) | Standard, debuggable, runs offline on the Pi. `pyceres`/`g2o` is an optional later swap behind the M3 interface. |
-| AP / provisioning | `hostapd` + `dnsmasq` for AP mode, `avahi` (mDNS, `ledmapper.local`) | Zero-config field use. |
-| Phone app language | **TypeScript**, bundled with **Vite** | Type safety against the shared protocol; fast dev loop. |
-| WebXR + render loop | **Three.js** (WebXR manager) | Mature WebXR session/pose handling; the camera-access texture integrates with its WebGL context. |
-| Camera frames | **WebXR Raw Camera Access** (`camera-access` feature) | Synced pose + frame + intrinsics from one source. See §5. |
-| On-device CV | **WebGL** threshold + connected-components pass (GPU), JS for tracking/decoding; **OpenCV.js** only if needed for later iOS PnP | Thresholding bright blobs is cheap and GPU-friendly; avoids loading heavy WASM on the hot path. |
-| Phone↔Pi transport | **WebSocket**, JSON messages (§7) | Simple, low volume (detection records are tiny). A packed binary variant is a later optimization behind the same message names. |
+| Concern                   | Choice                                                                                                                          | Rationale                                                                                                                                                                                                                                           |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pi OS                     | Raspberry Pi OS (64-bit), Pi 4 or Pi 5                                                                                          | Pi 5 GPIO block differs; we avoid bit-banged WS281x and use SPI, which is stable across both.                                                                                                                                                       |
+| LED type (MVP)            | **SK9822 / APA102 (DotStar)** driven over hardware **SPI** (`spidev`)                                                           | Separate clock line → deterministic, jitter-tolerant timing. The temporal code's reliability depends on clean transitions; this is the lowest-risk path. WS2812B is supported as a later option but its single-wire timing is jittery on a busy Pi. |
+| LED driver (upgrade path) | Offload pattern rendering to an **RP2040 (Pico)** over USB serial                                                               | Hard real-time pattern clock decoupled from OS scheduling. Designed as a drop-in behind the M1 interface; not required for MVP.                                                                                                                     |
+| Pi server                 | **Python + FastAPI + uvicorn**, `websockets`                                                                                    | Same language as reconstruction → one toolchain on the Pi.                                                                                                                                                                                          |
+| Reconstruction            | **Python + NumPy + SciPy + OpenCV** (`scipy.optimize.least_squares`, sparse Jacobian)                                           | Standard, debuggable, runs offline on the Pi. `pyceres`/`g2o` is an optional later swap behind the M3 interface.                                                                                                                                    |
+| AP / provisioning         | `hostapd` + `dnsmasq` for AP mode, `avahi` (mDNS, `ledmapper.local`)                                                            | Zero-config field use.                                                                                                                                                                                                                              |
+| Phone app language        | **TypeScript**, bundled with **Vite**                                                                                           | Type safety against the shared protocol; fast dev loop.                                                                                                                                                                                             |
+| WebXR + render loop       | **Three.js** (WebXR manager)                                                                                                    | Mature WebXR session/pose handling; the camera-access texture integrates with its WebGL context.                                                                                                                                                    |
+| Camera frames             | **WebXR Raw Camera Access** (`camera-access` feature)                                                                           | Synced pose + frame + intrinsics from one source. See §5.                                                                                                                                                                                           |
+| On-device CV              | **WebGL** threshold + connected-components pass (GPU), JS for tracking/decoding; **OpenCV.js** only if needed for later iOS PnP | Thresholding bright blobs is cheap and GPU-friendly; avoids loading heavy WASM on the hot path.                                                                                                                                                     |
+| Phone↔Pi transport       | **WebSocket**, JSON messages (§7)                                                                                               | Simple, low volume (detection records are tiny). A packed binary variant is a later optimization behind the same message names.                                                                                                                     |
 
 **Versioning note for agents:** Do not invent exact version numbers. At repo initialization, pin the latest stable release of each dependency in `requirements.txt` / `package.json` and record the pinned versions in `/docs/decisions.md`.
 
@@ -117,20 +117,24 @@ Per animation frame:
 Each module is independently buildable. "Interface" is the contract other modules depend on.
 
 ### M10 — `shared/protocol` (build first)
+
 **Responsibility:** Single source of truth for all wire formats: WebSocket messages (§7.1–7.3), the detection record (§7.4), the output map (§7.5), and the code-book parameters (§7.6).
 **Deliverable:** JSON Schema files + generated **TypeScript types** (for the web app) + **Pydantic models** (for the Pi). A small codegen script regenerates both from the schemas.
 **Acceptance:** A round-trip test serializes and deserializes one example of every message type in both languages without loss.
 
 ### M9 — `shared/simulator` (build first, alongside M10)
+
 **Responsibility:** Generate synthetic ground truth to validate the math and the CV without hardware.
 **Two output modes:**
+
 1. **Detection-log mode:** given a fixture (list of true LED xyz) and a virtual camera path, emit a stream of detection records (§7.4) directly — feeds M3.
 2. **Frame mode:** render synthetic camera frames (project the LEDs, apply the temporal code per frame, add blob blur) plus matching per-frame pose + K — feeds M5/M6.
-**Configurable degradations:** pose noise, pixel noise, blob blur radius, rolling-shutter row delay, dropped-frame probability, occlusion, reflection/phantom blobs.
-**Built-in fixtures:** straight line, planar grid, cube, helix, and a loader for a real fixture's measured coordinates.
-**Acceptance:** Re-running with a fixed seed is deterministic; a zero-noise detection log reconstructs to < 1 mm RMS through M3.
+   **Configurable degradations:** pose noise, pixel noise, blob blur radius, rolling-shutter row delay, dropped-frame probability, occlusion, reflection/phantom blobs.
+   **Built-in fixtures:** straight line, planar grid, cube, helix, and a loader for a real fixture's measured coordinates.
+   **Acceptance:** Re-running with a fixed seed is deterministic; a zero-noise detection log reconstructs to < 1 mm RMS through M3.
 
 ### M1 — `pi/led_driver`
+
 **Responsibility:** Render the coded blink pattern to the LEDs over SPI at a precise cadence; own the pattern clock.
 **Behavior:** Runs a continuous **Gray-code cycle** (§8.1). Each frame is held for `bit_period_ms`. Records a monotonic `pattern_clock_epoch` (the Pi-clock time of the start of a known cycle) and the cadence, readable by M2.
 **Debug modes:** light a single LED by index; light all; run a slow human-visible cycle.
@@ -138,6 +142,7 @@ Each module is independently buildable. "Interface" is the contract other module
 **Acceptance:** On a real strip, a logic analyzer (or a high-FPS camera) confirms the bit cadence is within ±10% of `bit_period_ms` and the sync delimiter is correctly emitted each cycle.
 
 ### M2 — `pi/server`
+
 **Responsibility:** Serve the web app, run the WebSocket control plane, manage capture sessions, ingest detection records to a store, trigger reconstruction, serve results.
 **Endpoints:** static file serving for the built web app; `GET /healthz`; `WS /ws` (all control + data, §7); `GET /maps/{id}` (JSON), `GET /maps/{id}.csv`.
 **State:** one active capture session at a time (MVP). Persist detection records to a session log on disk (so a capture can be re-reconstructed offline and used as a test fixture).
@@ -145,50 +150,60 @@ Each module is independently buildable. "Interface" is the contract other module
 **Acceptance:** Phone connects from the Pi AP, clock sync round-trips, a recorded detection session persists to disk and is reconstructable via the M3 CLI.
 
 ### M3 — `pi/reconstruction`
+
 **Responsibility:** Turn a set of detection records into a 3D map.
 **Pipeline:** group records by `led_id` → per-LED **linear DLT triangulation** for an initial point → **global bundle adjustment** (§8.3) with Huber loss, refining points (and optionally poses) → outlier rejection → compute per-LED quality (view count, RMS reprojection px, parallax angle) → export map (§7.5).
 **Interface:** library API `reconstruct(records, options) -> Map`, and a CLI `python -m reconstruction <session_log.json> -o <map.json>` so it runs standalone on simulator output or recorded sessions.
 **Acceptance:** Meets the synthetic-accuracy thresholds (§9, Phase 2) and the bench thresholds (§9, Phase 4).
 
 ### M4 — `pi/provisioning`
+
 **Responsibility:** Make a fresh Pi field-ready. Scripts + systemd units to: enable SPI, install the two services, configure AP mode (`hostapd`/`dnsmasq`) and mDNS (`avahi`), and bring everything up on boot.
 **Acceptance:** A clean Pi image, after running `provision.sh`, boots into an AP named e.g. `ledmapper`, and `http://ledmapper.local` serves the app.
 
 ### M5 — `web/src/xr` (capture)
+
 **Responsibility:** Own the WebXR session and render loop; expose each frame as `{ texture, pose, K, imgW, imgH, tCaptureMs }`.
-**Interface:** 
+**Interface:**
+
 ```ts
 interface CaptureSource {
   start(): Promise<void>;
   stop(): Promise<void>;
-  onFrame(cb: (f: CaptureFrame) => void): void;   // called once per rAF/XR frame
+  onFrame(cb: (f: CaptureFrame) => void): void; // called once per rAF/XR frame
 }
 interface CaptureFrame {
-  texture: WebGLTexture;     // raw camera image for this frame
-  pose: { p: [number,number,number]; q: [number,number,number,number] }; // ref-space
-  K: [number, number, number, number];  // fx, fy, cx, cy
-  imgW: number; imgH: number;
-  tCaptureMs: number;        // phone monotonic clock at capture
+  texture: WebGLTexture; // raw camera image for this frame
+  pose: { p: [number, number, number]; q: [number, number, number, number] }; // ref-space
+  K: [number, number, number, number]; // fx, fy, cx, cy
+  imgW: number;
+  imgH: number;
+  tCaptureMs: number; // phone monotonic clock at capture
 }
 ```
+
 Android implementation: `WebXRCaptureSource`. (iOS `MediaStreamCaptureSource` later.)
 **Acceptance:** On a target Android device, logs a stream of frames with plausible pose deltas and a `projectionMatrixToIntrinsics` unit test passing against fixtures.
 
 ### M6 — `web/src/cv` (detect · track · decode)
+
 **Responsibility:** Per frame: detect bright-blob centroids; track blobs across frames; decode each track's temporal code into an `led_id`; emit detection records.
 **Sub-stages:**
+
 - **Detect:** WebGL threshold pass on the camera texture → connected components → sub-pixel centroids + brightness. (Keep this GPU-side; read back only centroids.)
 - **Track:** nearest-neighbor / Hungarian assignment between consecutive frames, bridged with optical-flow prediction, to maintain stable track IDs through camera motion.
 - **Decode:** for each track, sample its on/off state per bit window relative to the code-book (§7.6) and the synced clock (§8.2); on completing a cycle, assign `led_id` (Gray decode) with a confidence from bit margins.
-**Interface:** `onDetections(cb: (records: DetectionRecord[]) => void)`. Consumes `CaptureFrame`s and the `CodeParams` from M10.
-**Acceptance:** On simulator frame-mode output (Phase 3): decode accuracy ≥ 98% of visible LEDs at nominal noise, centroid pixel error ≤ 1.0 px RMS.
+  **Interface:** `onDetections(cb: (records: DetectionRecord[]) => void)`. Consumes `CaptureFrame`s and the `CodeParams` from M10.
+  **Acceptance:** On simulator frame-mode output (Phase 3): decode accuracy ≥ 98% of visible LEDs at nominal noise, centroid pixel error ≤ 1.0 px RMS.
 
 ### M7 — `web/src/net`
+
 **Responsibility:** WebSocket client; clock sync (SNTP-style, §8.2); batch and stream detection records; relay control + status.
 **Interface:** `connect(url)`, `syncClock() -> {offsetMs, rttMs}`, `startMapping(opts)`, `stopMapping()`, `sendDetections(batch)`, event callbacks for `status` and `resultReady`.
 **Acceptance:** Clock offset estimate stable to within a few ms over a 60s session on the Pi AP; detection batches delivered with no loss across a simulated reconnect.
 
 ### M8 — `web/src/ui`
+
 **Responsibility:** Session flow + live guidance. Show detected/identified LED count, per-LED coverage, and **steer the user to walk an arc** (parallax) rather than straight at the fixture; flag LEDs still seen from too narrow a cone; start/stop; show result preview.
 **Acceptance:** A first-time user can complete a bench capture following only on-screen guidance.
 
@@ -199,6 +214,7 @@ Android implementation: `WebXRCaptureSource`. (iOS `MediaStreamCaptureSource` la
 All times in milliseconds. Vectors are JSON arrays. Quaternions are `[x, y, z, w]`. This section is normative; M10 encodes it as schemas.
 
 ### 7.1 Client → server messages
+
 ```jsonc
 { "type": "hello", "client": "android-web", "appVersion": "..." }
 { "type": "time_sync_ping", "t0": 123456.7 }                  // phone clock
@@ -209,6 +225,7 @@ All times in milliseconds. Vectors are JSON arrays. Quaternions are `[x, y, z, w
 ```
 
 ### 7.2 Server → client messages
+
 ```jsonc
 { "type": "welcome", "sessionId": "uuid", "codeParams": { /* §7.6 */ } }
 { "type": "time_sync_pong", "t0": 123456.7, "t1": 988.1, "t2": 988.3 } // t1,t2 = server clock at recv/send
@@ -219,24 +236,30 @@ All times in milliseconds. Vectors are JSON arrays. Quaternions are `[x, y, z, w
 ```
 
 ### 7.3 Clock sync
+
 SNTP-style: client sends `time_sync_ping{t0}`, server replies `time_sync_pong{t0,t1,t2}`, client computes
 `offset = ((t1 - t0) + (t2 - t3)) / 2`, `rtt = (t3 - t0) - (t2 - t1)`, where `t3` is the client receive time. Repeat a few times, keep the min-RTT sample. This aligns the phone's `tCaptureMs` to the Pi's `patternClockEpoch` well enough that the decoder can map a frame time to a bit index (§8.2). Self-clocking codes (sync delimiter) tolerate residual skew.
 
 ### 7.4 DetectionRecord (the core contract)
+
 ```jsonc
 {
   "ledId": 412,
-  "tCaptureMs": 123456.8,                 // phone clock
-  "u": 980.5, "v": 540.2,                 // raw pixel centroid (origin top-left)
-  "imgW": 1920, "imgH": 1080,
-  "K": [1450.2, 1451.0, 959.5, 539.7],    // fx, fy, cx, cy for this frame
-  "pose": { "p": [0.21,1.05,-0.83], "q": [0.0,0.38,0.0,0.92] }, // ref-space camera pose
-  "confidence": 0.87                       // [0,1], from bit margins + blob quality
+  "tCaptureMs": 123456.8, // phone clock
+  "u": 980.5,
+  "v": 540.2, // raw pixel centroid (origin top-left)
+  "imgW": 1920,
+  "imgH": 1080,
+  "K": [1450.2, 1451.0, 959.5, 539.7], // fx, fy, cx, cy for this frame
+  "pose": { "p": [0.21, 1.05, -0.83], "q": [0.0, 0.38, 0.0, 0.92] }, // ref-space camera pose
+  "confidence": 0.87 // [0,1], from bit margins + blob quality
 }
 ```
+
 Batched as `detections.batch`. The source (WebXR vs future iOS) is invisible here by design.
 
 ### 7.5 Output map
+
 ```jsonc
 {
   "mapId": "uuid",
@@ -245,25 +268,33 @@ Batched as `detections.batch`. The source (WebXR vs future iOS) is invisible her
   "frame": "webxr_session_ref",
   "ledCount": 1024,
   "leds": [
-    { "id": 0, "xyz": [0.10, 1.20, -0.55], "confidence": 0.93,
-      "nViews": 34, "rmsReprojPx": 0.6, "parallaxDeg": 22.4 }
+    {
+      "id": 0,
+      "xyz": [0.1, 1.2, -0.55],
+      "confidence": 0.93,
+      "nViews": 34,
+      "rmsReprojPx": 0.6,
+      "parallaxDeg": 22.4
+    }
     // ... one per identified LED; missing ids listed in `unmapped`
   ],
   "unmapped": [128, 129, 700],
   "stats": { "rmsReprojPxGlobal": 0.7, "medianParallaxDeg": 19.0 }
 }
 ```
+
 Also exported as CSV (`id,x,y,z,confidence,n_views`). Provide adapters (post-MVP) for WLED 2D/3D JSON, xLights, and FastLED coordinate arrays — keep them in `pi/reconstruction/export/` so they don't pollute the core.
 
 ### 7.6 CodeParams (code-book)
+
 ```jsonc
 {
   "ledCount": 1024,
-  "bits": 10,                 // ceil(log2(ledCount))
+  "bits": 10, // ceil(log2(ledCount))
   "encoding": "gray",
-  "bitPeriodMs": 100,         // hold time per bit frame
-  "syncPattern": "on_off",    // delimiter: one all-on frame then one all-off frame
-  "cycleFrames": 12           // syncFrames(2) + bits(10)
+  "bitPeriodMs": 100, // hold time per bit frame
+  "syncPattern": "on_off", // delimiter: one all-on frame then one all-off frame
+  "cycleFrames": 12 // syncFrames(2) + bits(10)
 }
 ```
 
@@ -272,6 +303,7 @@ Also exported as CSV (`id,x,y,z,confidence,n_views`). Provide adapters (post-MVP
 ## 8. Key algorithms
 
 ### 8.1 Temporal identification (Gray-code cycle)
+
 Run a continuously repeating cycle:
 
 ```
@@ -284,12 +316,14 @@ Run a continuously repeating cycle:
 - The sync delimiter makes the code **self-clocking**: the decoder can re-align after dropped frames or clock skew by finding the all-on→all-off transition.
 - **Timing budget:** keep `bitPeriodMs` ≥ ~3 camera frame intervals (≈ 100 ms at 30 fps) so the whole frame — despite rolling shutter — sees one consistent bit state. Trade-off: longer bit periods ⇒ user must walk slower. At `bitPeriodMs=100, B=10`, a cycle is ~1.2 s; over a 90 s walk the user yields ~70 labeled observation sets per visible LED.
 
-**Decode note (important):** because the camera moves *during* a cycle, the per-bit observations must be associated to the same physical blob before decoding. That is the job of the **track** stage (M6): maintain a stable track through the cycle, sample its on/off state per bit window, then Gray-decode. Slower walking and a clean sync delimiter make this robust.
+**Decode note (important):** because the camera moves _during_ a cycle, the per-bit observations must be associated to the same physical blob before decoding. That is the job of the **track** stage (M6): maintain a stable track through the cycle, sample its on/off state per bit window, then Gray-decode. Slower walking and a clean sync delimiter make this robust.
 
 ### 8.2 Mapping a frame to a bit index
+
 Given a frame captured at phone time `tCaptureMs`, convert to Pi time using the clock offset (§7.3): `tPi = tCaptureMs + offset`. Then `phase = (tPi - patternClockEpoch) mod (cycleFrames * bitPeriodMs)`, and `bitIndex = floor(phase / bitPeriodMs)`. The sync delimiter is used to correct integer drift each cycle rather than trusting the offset blindly.
 
 ### 8.3 Reconstruction
+
 Per LED, collect all `(pose, K, u, v)` observations.
 
 1. **Initialize** each 3D point by linear DLT triangulation from its observation rays (camera center + back-projected pixel direction). Need ≥ 2 observations with adequate parallax; defer LEDs that don't yet have it.
@@ -309,27 +343,27 @@ Per LED, collect all `(pose, K, u, v)` observations.
 
 **Phase 0 — Skeleton & contracts.** Deps: none.
 Build M10 (protocol + codegen) and M4 (provisioning enough to serve a page). Stub M2 to serve a "hello" web app; M5/M7 enough to open WebXR and round-trip a WebSocket + clock sync.
-*Acceptance:* Phone loads the app from the Pi AP; WebSocket connects; clock offset is estimated and stable.
+_Acceptance:_ Phone loads the app from the Pi AP; WebSocket connects; clock offset is estimated and stable.
 
 **Phase 1 — LED driver.** Deps: Phase 0.
 Build M1: real Gray-code cycle on a real strip; debug single-LED mode.
-*Acceptance:* Logic-analyzer/high-FPS-camera confirms cadence within ±10% and correct sync delimiter each cycle.
+_Acceptance:_ Logic-analyzer/high-FPS-camera confirms cadence within ±10% and correct sync delimiter each cycle.
 
 **Phase 2 — Reconstruction on synthetic logs (no hardware, no phone).** Deps: M10.
 Build M9 (detection-log mode) + M3.
-*Acceptance:* Zero-noise log → < 1 mm RMS. At nominal noise (define in `decisions.md`, e.g. 0.5 px pixel noise, 1° pose noise, arc walk), RMS ≤ 1% of fixture span and ≥ 99% of LEDs solved.
+_Acceptance:_ Zero-noise log → < 1 mm RMS. At nominal noise (define in `decisions.md`, e.g. 0.5 px pixel noise, 1° pose noise, arc walk), RMS ≤ 1% of fixture span and ≥ 99% of LEDs solved.
 
 **Phase 3 — CV pipeline on synthetic frames.** Deps: M9 (frame mode), M10.
 Build M6 (and the parts of M5 that decode a provided texture).
-*Acceptance:* On synthetic frames at nominal noise, decode accuracy ≥ 98% of visible LEDs, centroid pixel error ≤ 1.0 px RMS, robust to injected dropped frames and rolling-shutter delay.
+_Acceptance:_ On synthetic frames at nominal noise, decode accuracy ≥ 98% of visible LEDs, centroid pixel error ≤ 1.0 px RMS, robust to injected dropped frames and rolling-shutter delay.
 
 **Phase 4 — End-to-end on bench.** Deps: Phases 1–3, M2, M5, M7, M8.
 Real Android phone + real LEDs + the bench golden fixture (§8.3 / §10.3).
-*Acceptance:* Bench RMS ≤ 2% of longest dimension; ≥ 95% identified; collinearity/coplanarity checks pass.
+_Acceptance:_ Bench RMS ≤ 2% of longest dimension; ≥ 95% identified; collinearity/coplanarity checks pass.
 
 **Phase 5 — Robustness & UX.** Deps: Phase 4.
 Coverage guidance (M8), exposure handling, outlier-rejection tuning, export adapters, and the stress matrix (§10.6).
-*Acceptance:* Stress matrix passes with documented bounds; a naive user completes a capture unaided.
+_Acceptance:_ Stress matrix passes with documented bounds; a naive user completes a capture unaided.
 
 ---
 
@@ -377,17 +411,17 @@ Layered, cheapest-and-most-diagnostic first. The simulator (M9) is the backbone;
 
 ## 12. Configuration defaults (tune in `decisions.md`)
 
-| Param | Default | Notes |
-|---|---|---|
-| `ledCount` | 1024 | MVP ceiling. |
-| `bitPeriodMs` | 100 | ≥ ~3 frame intervals at 30 fps; raise if decode is noisy. |
-| `encoding` | gray | |
-| `syncPattern` | on_off | self-clocking delimiter. |
-| Walk pattern | arc around fixture | UI enforces parallax; straight-on walks are rejected. |
-| Capture length | ≤ 120 s | |
-| Huber delta | ~1–2 px | reprojection robust threshold. |
-| Outlier reject | residual > 3× robust σ | re-solve after dropping. |
-| Min parallax to accept | ~5° | below this, LED is flagged low-confidence. |
+| Param                  | Default                | Notes                                                     |
+| ---------------------- | ---------------------- | --------------------------------------------------------- |
+| `ledCount`             | 1024                   | MVP ceiling.                                              |
+| `bitPeriodMs`          | 100                    | ≥ ~3 frame intervals at 30 fps; raise if decode is noisy. |
+| `encoding`             | gray                   |                                                           |
+| `syncPattern`          | on_off                 | self-clocking delimiter.                                  |
+| Walk pattern           | arc around fixture     | UI enforces parallax; straight-on walks are rejected.     |
+| Capture length         | ≤ 120 s                |                                                           |
+| Huber delta            | ~1–2 px                | reprojection robust threshold.                            |
+| Outlier reject         | residual > 3× robust σ | re-solve after dropping.                                  |
+| Min parallax to accept | ~5°                    | below this, LED is flagged low-confidence.                |
 
 ---
 

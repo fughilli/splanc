@@ -10,7 +10,6 @@ data widths the system actually uses (k = 1..11 covers 1..2047 LEDs):
 """
 
 import pytest
-
 from ledmapper_protocol.fec import (
     secded_decode,
     secded_encode,

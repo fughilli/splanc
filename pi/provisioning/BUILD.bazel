@@ -15,14 +15,17 @@
 # UNVERIFIED: these targets cannot be `bazel run` to completion in CI without
 # nix; they will print a clear error and exit. See README "Unverified".
 
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+
 package(default_visibility = ["//visibility:public"])
 
 # Shared source files exposed to the wrapper binaries via runfiles.
 filegroup(
     name = "nix_srcs",
-    srcs = glob([
-        "nix/flake.nix",
+    srcs = [
         "nix/flake.lock",
+        "nix/flake.nix",
+    ] + glob([
         "nix/modules/*.nix",
     ]),
 )
@@ -37,8 +40,8 @@ sh_binary(
     name = "image_sd",
     srcs = ["scripts/image_sd.sh"],
     data = [
-        ":nix_srcs",
         ":key_script",
+        ":nix_srcs",
     ],
 )
 
@@ -47,8 +50,8 @@ sh_binary(
     name = "deploy_live",
     srcs = ["scripts/deploy_live.sh"],
     data = [
-        ":nix_srcs",
         ":key_script",
+        ":nix_srcs",
     ],
 )
 

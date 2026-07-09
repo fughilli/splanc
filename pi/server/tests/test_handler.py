@@ -86,8 +86,15 @@ def test_start_mapping_uses_requested_led_count(tmp_path):
 def test_detections_require_active_session(tmp_path):
     handler, _ctx, _ = _make_handler(tmp_path)
     det = {
-        "ledId": 0, "tCaptureMs": 0.0, "u": 1.0, "v": 2.0, "imgW": 100, "imgH": 100,
-        "K": [9.0, 9.0, 5.0, 5.0], "pose": {"p": [0, 0, 0], "q": [0, 0, 0, 1]}, "confidence": 1.0,
+        "ledId": 0,
+        "tCaptureMs": 0.0,
+        "u": 1.0,
+        "v": 2.0,
+        "imgW": 100,
+        "imgH": 100,
+        "K": [9.0, 9.0, 5.0, 5.0],
+        "pose": {"p": [0, 0, 0], "q": [0, 0, 0, 1]},
+        "confidence": 1.0,
     }
     raw = json.dumps({"type": "detections", "batch": [det]})
 
@@ -136,15 +143,24 @@ def test_get_pattern_after_stop_reports_inactive(tmp_path):
 
 def _detections_raw(led_id=0):
     det = {
-        "ledId": led_id, "tCaptureMs": 0.0, "u": 1.0, "v": 2.0, "imgW": 100, "imgH": 100,
-        "K": [9.0, 9.0, 5.0, 5.0], "pose": {"p": [0, 0, 0], "q": [0, 0, 0, 1]}, "confidence": 1.0,
+        "ledId": led_id,
+        "tCaptureMs": 0.0,
+        "u": 1.0,
+        "v": 2.0,
+        "imgW": 100,
+        "imgH": 100,
+        "K": [9.0, 9.0, 5.0, 5.0],
+        "pose": {"p": [0, 0, 0], "q": [0, 0, 0, 1]},
+        "confidence": 1.0,
     }
     return json.dumps({"type": "detections", "batch": [det]})
 
 
 def test_get_live_map_idle_reports_inactive(tmp_path):
     solve_calls = []
-    solver = LiveSolver(lambda d, n, s, prev_map=None, imu=(): solve_calls.append(len(d)) or _stub_map())
+    solver = LiveSolver(
+        lambda d, n, s, prev_map=None, imu=(): solve_calls.append(len(d)) or _stub_map()
+    )
     handler, _ctx, _ = _make_handler(tmp_path, live_solver=solver)
     m = _dump(_run(handler, '{"type":"get_live_map"}')[0])
     assert m["type"] == "live_map"
@@ -220,7 +236,12 @@ def test_get_live_map_survives_solve_failure(tmp_path):
 def test_live_decimation_bounds_views_and_keeps_pose_spread():
     def rec(led_id, t):
         return DetectionRecord(
-            ledId=led_id, tCaptureMs=float(t), u=1.0, v=2.0, imgW=100, imgH=100,
+            ledId=led_id,
+            tCaptureMs=float(t),
+            u=1.0,
+            v=2.0,
+            imgW=100,
+            imgH=100,
             K=(9.0, 9.0, 5.0, 5.0),
             pose={"p": (float(t), 0.0, 0.0), "q": (0.0, 0.0, 0.0, 1.0)},
             confidence=1.0,
@@ -332,7 +353,7 @@ def test_start_mapping_without_options_uses_server_defaults(tmp_path):
 
 def test_configure_renegotiates_mid_capture(tmp_path):
     handler, ctx, _ = _make_handler(tmp_path)
-    started = _dump(_run(handler, '{"type":"start_mapping","options":{"ledCount":4}}')[0])
+    _run(handler, '{"type":"start_mapping","options":{"ledCount":4}}')
     _run(handler, _detections_raw(0))
 
     out = _run(handler, '{"type":"configure","options":{"bitPeriodMs":200,"encoding":"gray-hue"}}')

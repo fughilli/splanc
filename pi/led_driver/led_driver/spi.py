@@ -41,7 +41,9 @@ def _end_frame_len(n: int) -> int:
     return max(4, (n + 15) // 16)
 
 
-def frame_bytes(on_ids: Set[int], n: int, color: RGB = (255, 255, 255), brightness: int = 31) -> bytes:
+def frame_bytes(
+    on_ids: Set[int], n: int, color: RGB = (255, 255, 255), brightness: int = 31
+) -> bytes:
     """Encode one frame: LEDs in ``on_ids`` lit with ``color``/``brightness``, rest off."""
     if brightness < 0 or brightness > 31:
         raise ValueError(f"brightness must be 0..31, got {brightness}")

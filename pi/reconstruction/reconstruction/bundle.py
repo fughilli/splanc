@@ -69,9 +69,7 @@ class _Reprojector:
         return np.linalg.norm(d, axis=1)
 
 
-def _residuals_and_jac(
-    repro: _Reprojector, points: np.ndarray
-) -> Tuple[np.ndarray, np.ndarray]:
+def _residuals_and_jac(repro: _Reprojector, points: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     """Residuals ``(M, 2)`` and analytic Jacobians ``(M, 2, 3)`` w.r.t. the point.
 
     With ``xc = Rᵀ(X − p)``, ``d = −xc_z``:
@@ -170,7 +168,9 @@ def bundle_adjust(
         try:
             dx = np.linalg.solve(A_damped, g[:, :, None])[:, :, 0]
         except np.linalg.LinAlgError:
-            dx = np.stack([np.linalg.lstsq(A_damped[i], g[i], rcond=None)[0] for i in range(n_points)])
+            dx = np.stack(
+                [np.linalg.lstsq(A_damped[i], g[i], rcond=None)[0] for i in range(n_points)]
+            )
         dx[frozen] = 0.0
 
         trial = points - dx

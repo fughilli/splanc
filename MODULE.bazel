@@ -24,6 +24,10 @@ bazel_dep(name = "aspect_rules_ts", version = "3.8.11")
 bazel_dep(name = "aspect_bazel_lib", version = "2.22.5")
 bazel_dep(name = "rules_pkg", version = "1.2.0")
 
+# buildifier-lint's modern-loads fix rewrites native sh_binary to the
+# rules_shell load; the dep makes that rewrite real.
+bazel_dep(name = "rules_shell", version = "0.4.0")
+
 # ---------------------------------------------------------------------------
 # Nix integration (M4 — pi/provisioning).
 #

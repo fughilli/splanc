@@ -6,12 +6,12 @@ rationale lives in [`decisions.md`](./decisions.md).
 
 ## Prerequisites
 
-| Tool | Version | Why |
-| ---- | ------- | --- |
-| [Bazelisk](https://github.com/bazelbuild/bazelisk) | any (pins Bazel via `.bazelversion` → 7.7.1) | The only build entry point. Invoke as `bazelisk`. |
-| pnpm | 11+ | TypeScript workspace (`web/`, `shared/protocol/ts/`). |
-| Node | 20+ | Runs `tsc` / the web toolchain. |
-| Nix | (only for M4) | Building/deploying the Pi image. See `pi/provisioning/README.md`. Not needed for the rest of the build. |
+| Tool                                               | Version                                      | Why                                                                                                     |
+| -------------------------------------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| [Bazelisk](https://github.com/bazelbuild/bazelisk) | any (pins Bazel via `.bazelversion` → 7.7.1) | The only build entry point. Invoke as `bazelisk`.                                                       |
+| pnpm                                               | 11+                                          | TypeScript workspace (`web/`, `shared/protocol/ts/`).                                                   |
+| Node                                               | 20+                                          | Runs `tsc` / the web toolchain.                                                                         |
+| Nix                                                | (only for M4)                                | Building/deploying the Pi image. See `pi/provisioning/README.md`. Not needed for the rest of the build. |
 
 A hermetic Python 3.11 and TypeScript come from Bazel; you do **not** need a
 system Python or a global `tsc` for `bazelisk` builds.
@@ -157,7 +157,7 @@ M2) to the host, so after a container **restart** `http://localhost:8090` works
 from your host browser. The server must bind `0.0.0.0` (the studio default) for
 the mapping to reach it.
 
-New scene → orbit & *Capture* (or *Auto-arc*) → *Solve*; toggle auto-solve to
+New scene → orbit & _Capture_ (or _Auto-arc_) → _Solve_; toggle auto-solve to
 watch the fit tighten as coverage grows, and dial in pixel/pose/dropout noise to
 stress the solver. Full guide in [`tools/sim_studio/README.md`](../tools/sim_studio/README.md).
 

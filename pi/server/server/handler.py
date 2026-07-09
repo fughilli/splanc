@@ -12,8 +12,6 @@ from __future__ import annotations
 
 from typing import Awaitable, Callable, List
 
-from pydantic import ValidationError
-
 from ledmapper_protocol import (
     ClientMessage,
     ErrorMessage,
@@ -28,6 +26,7 @@ from ledmapper_protocol import (
     TimeSyncPongMessage,
     WelcomeMessage,
 )
+from pydantic import ValidationError
 
 from .clock import now_ms
 from .codebook import DEFAULT_BIT_PERIOD_MS, code_params_for
@@ -94,7 +93,11 @@ class ConnectionHandler:
             return [self._welcome()]
         if kind == "time_sync_ping":
             # t1 = receive time, t2 = send time (design doc §7.3).
-            return [TimeSyncPongMessage(type="time_sync_pong", t0=msg.t0, t1=recv_ms, t2=self.ctx.clock())]
+            return [
+                TimeSyncPongMessage(
+                    type="time_sync_pong", t0=msg.t0, t1=recv_ms, t2=self.ctx.clock()
+                )
+            ]
         if kind == "start_mapping":
             return [self._start(msg.options)]
         if kind == "configure":
@@ -131,7 +134,9 @@ class ConnectionHandler:
         return WelcomeMessage(
             type="welcome",
             sessionId=self.session_id,
-            codeParams=code_params_for(self.ctx.default_led_count, self.ctx.bit_period_ms, self.ctx.encoding),
+            codeParams=code_params_for(
+                self.ctx.default_led_count, self.ctx.bit_period_ms, self.ctx.encoding
+            ),
         )
 
     def _start(self, options) -> ServerMessage:
@@ -140,9 +145,7 @@ class ConnectionHandler:
         # first capture keeps the bare connection id (the common case).
         self._capture_seq += 1
         capture_id = (
-            self.session_id
-            if self._capture_seq == 1
-            else f"{self.session_id}-{self._capture_seq}"
+            self.session_id if self._capture_seq == 1 else f"{self.session_id}-{self._capture_seq}"
         )
         # The client is the configuration authority (it measured the scene);
         # the ctx values are only the fallback for clients that send bare
@@ -205,7 +208,9 @@ class ConnectionHandler:
                 type="pattern_state",
                 active=False,
                 patternClockEpoch=None,
-                codeParams=code_params_for(self.ctx.default_led_count, self.ctx.bit_period_ms, self.ctx.encoding),
+                codeParams=code_params_for(
+                    self.ctx.default_led_count, self.ctx.bit_period_ms, self.ctx.encoding
+                ),
             )
         epoch, params = state
         return PatternStateMessage(

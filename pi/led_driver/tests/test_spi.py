@@ -1,7 +1,6 @@
 """SK9822/APA102 framing (design doc §5/§8.1)."""
 
 import pytest
-
 from led_driver.spi import RecordingSink, buffer_len, frame_bytes
 
 

@@ -18,8 +18,8 @@ py_library(
     srcs = glob(["server/*.py"]),
     imports = ["."],
     deps = [
-        "//pi/reconstruction:reconstruction",
-        "//shared/protocol:protocol",
+        "//pi/reconstruction",
+        "//shared/protocol",
         requirement("fastapi"),
         requirement("uvicorn"),
     ],
@@ -28,8 +28,8 @@ py_library(
 py_binary(
     name = "serve",
     srcs = ["server/__main__.py"],
-    main = "server/__main__.py",
     imports = ["."],
+    main = "server/__main__.py",
     deps = [":server"],
 )
 
@@ -44,12 +44,12 @@ py_test(
         "tests/test_handler.py",
         "tests/test_session.py",
     ],
-    main = "tests/pytest_main.py",
     imports = ["."],
     legacy_create_init = False,
+    main = "tests/pytest_main.py",
     deps = [
         ":server",
-        "//shared/protocol:protocol",
+        "//shared/protocol",
         requirement("pytest"),
     ],
 )
@@ -63,14 +63,14 @@ py_test(
         "tests/pytest_main.py",
         "tests/test_app_integration.py",
     ],
-    main = "tests/pytest_main.py",
     imports = ["."],
     legacy_create_init = False,
+    main = "tests/pytest_main.py",
     deps = [
         ":server",
-        "//pi/reconstruction:reconstruction",
-        "//shared/protocol:protocol",
-        "//shared/simulator:simulator",
+        "//pi/reconstruction",
+        "//shared/protocol",
+        "//shared/simulator",
         requirement("pytest"),
         requirement("scipy"),
         requirement("websockets"),

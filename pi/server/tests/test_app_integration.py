@@ -26,10 +26,9 @@ import urllib.request
 
 import pytest
 import uvicorn
-from websockets.sync.client import connect
-
 from server.app import create_app
 from simulator import generate_log
+from websockets.sync.client import connect
 
 
 def _free_port() -> int:
@@ -90,11 +89,18 @@ def test_full_capture_flow(tmp_path):
         with pytest.raises(urllib.error.HTTPError) as no_truth:
             _http_get(base + "/truth")
         assert no_truth.value.code == 404
-        truth = {"kind": "virtual_wall", "cols": 3, "rows": 2, "units": "led_pitch",
-                 "leds": [{"id": i, "xyz": [i % 3, i // 3, 0]} for i in range(4)]}
+        truth = {
+            "kind": "virtual_wall",
+            "cols": 3,
+            "rows": 2,
+            "units": "led_pitch",
+            "leds": [{"id": i, "xyz": [i % 3, i // 3, 0]} for i in range(4)],
+        }
         req = urllib.request.Request(
-            base + "/truth", data=json.dumps(truth).encode(),
-            headers={"content-type": "application/json"}, method="POST",
+            base + "/truth",
+            data=json.dumps(truth).encode(),
+            headers={"content-type": "application/json"},
+            method="POST",
         )
         with urllib.request.urlopen(req, timeout=10) as r:
             assert r.status == 200

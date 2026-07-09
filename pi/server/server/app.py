@@ -13,14 +13,13 @@ Everything stateful lives in `ServerContext`; this module is just plumbing.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
-
-import json
 
 from .clock import now_ms
 from .codebook import DEFAULT_BIT_PERIOD_MS
@@ -117,9 +116,7 @@ def create_app(
         with path.open(mode) as f:
             if payload.get("reset"):
                 f.write(
-                    json.dumps(
-                        {k: v for k, v in payload.items() if k not in ("frames", "imu")}
-                    )
+                    json.dumps({k: v for k, v in payload.items() if k not in ("frames", "imu")})
                     + "\n"
                 )
             for frame in payload.get("frames", []):

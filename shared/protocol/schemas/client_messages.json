@@ -159,7 +159,15 @@
     "ExposureStats": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["tCaptureMs", "frameIntervalMs", "meanLuma", "p95Luma", "clipFrac", "blobCount", "detectorThreshold"],
+      "required": [
+        "tCaptureMs",
+        "frameIntervalMs",
+        "meanLuma",
+        "p95Luma",
+        "clipFrac",
+        "blobCount",
+        "detectorThreshold"
+      ],
       "properties": {
         "tCaptureMs": {
           "type": "number",

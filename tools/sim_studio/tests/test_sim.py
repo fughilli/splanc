@@ -4,7 +4,6 @@ import math
 
 import numpy as np
 import pytest
-
 from simulator import NoiseModel
 from studio.sim import StudioSession, intrinsics_from_fov, noise_from_dict
 
@@ -75,12 +74,18 @@ def test_zero_noise_arc_recovers_ground_truth():
 
 
 def test_noise_increases_error():
-    clean = StudioSession(); clean.set_scene("helix", 48, 1.5)
+    clean = StudioSession()
+    clean.set_scene("helix", 48, 1.5)
     _arc_captures(clean, views=24)
     clean_res = clean.solve()
 
-    noisy = StudioSession(); noisy.set_scene("helix", 48, 1.5)
-    _arc_captures(noisy, views=24, noise=NoiseModel(pixel_noise_px=1.0, pose_noise_deg=1.0, pose_noise_pos_m=0.005))
+    noisy = StudioSession()
+    noisy.set_scene("helix", 48, 1.5)
+    _arc_captures(
+        noisy,
+        views=24,
+        noise=NoiseModel(pixel_noise_px=1.0, pose_noise_deg=1.0, pose_noise_pos_m=0.005),
+    )
     noisy_res = noisy.solve()
 
     assert noisy_res["meanErrorM"] > clean_res["meanErrorM"]
@@ -99,7 +104,9 @@ def test_reset_clears_captures_but_keeps_scene():
 
 
 def test_noise_from_dict():
-    nm = noise_from_dict({"pixelNoisePx": 0.5, "poseNoiseDeg": 1.0, "poseNoisePosM": 0.003, "dropoutProb": 0.1})
+    nm = noise_from_dict(
+        {"pixelNoisePx": 0.5, "poseNoiseDeg": 1.0, "poseNoisePosM": 0.003, "dropoutProb": 0.1}
+    )
     assert nm.pixel_noise_px == 0.5
     assert nm.dropout_prob == 0.1
     assert noise_from_dict(None).is_zero

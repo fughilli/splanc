@@ -1,9 +1,6 @@
 """Gray-code cycle generation (design doc §8.1)."""
 
 import pytest
-
-from ledmapper_protocol.fec import secded_decode
-
 from led_driver.graycode import (
     CODE_OFFSET,
     codeword,
@@ -14,6 +11,7 @@ from led_driver.graycode import (
     gray,
     gray_bit,
 )
+from ledmapper_protocol.fec import secded_decode
 
 
 def test_gray_sequence_first_values():
@@ -49,9 +47,7 @@ def test_frame_plan_structure():
     assert plan[1] == frozenset()  # ALL_OFF
     # Bit frame b lights exactly the LEDs whose codeword has bit b set.
     for b in range(cp.bits):
-        assert plan[2 + b] == frozenset(
-            i for i in range(64) if (codeword(i, cp) >> b) & 1
-        )
+        assert plan[2 + b] == frozenset(i for i in range(64) if (codeword(i, cp) >> b) & 1)
     # The reserved all-zero word: no LED is dark in every data frame.
     union = frozenset().union(*plan[2:])
     assert union == frozenset(range(64))
@@ -107,9 +103,7 @@ def test_frame_plan_rejects_inconsistent_codebook():
 
 
 # bits = SEC-DED total: k data bits + r Hamming parity + 1 overall parity.
-@pytest.mark.parametrize(
-    "n,bits", [(1, 4), (2, 6), (3, 6), (63, 11), (64, 12), (1024, 16)]
-)
+@pytest.mark.parametrize("n,bits", [(1, 4), (2, 6), (3, 6), (63, 11), (64, 12), (1024, 16)])
 def test_default_code_params(n, bits):
     cp = default_code_params(n)
     assert cp.fec == "secded"

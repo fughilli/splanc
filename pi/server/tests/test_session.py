@@ -3,7 +3,6 @@
 import json
 
 import pytest
-
 from ledmapper_protocol import (
     DetectionRecord,
     ExposureStats,
@@ -124,7 +123,14 @@ def _map(map_id: str) -> OutputMap:
         frame="webxr_session_ref",
         ledCount=2,
         leds=[
-            LedEntry(id=0, xyz=(1.0, 2.0, 3.0), confidence=0.9, nViews=5, rmsReprojPx=0.6, parallaxDeg=20.0),
+            LedEntry(
+                id=0,
+                xyz=(1.0, 2.0, 3.0),
+                confidence=0.9,
+                nViews=5,
+                rmsReprojPx=0.6,
+                parallaxDeg=20.0,
+            ),
         ],
         unmapped=[1],
         stats=OutputMapStats(rmsReprojPxGlobal=0.6, medianParallaxDeg=20.0),

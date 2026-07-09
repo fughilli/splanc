@@ -39,9 +39,15 @@ def main(argv=None) -> int:
 
     base = PRESETS[args.noise]
     noise = NoiseModel(
-        pixel_noise_px=args.pixel_noise_px if args.pixel_noise_px is not None else base.pixel_noise_px,
-        pose_noise_deg=args.pose_noise_deg if args.pose_noise_deg is not None else base.pose_noise_deg,
-        pose_noise_pos_m=args.pose_noise_pos_m if args.pose_noise_pos_m is not None else base.pose_noise_pos_m,
+        pixel_noise_px=(
+            args.pixel_noise_px if args.pixel_noise_px is not None else base.pixel_noise_px
+        ),
+        pose_noise_deg=(
+            args.pose_noise_deg if args.pose_noise_deg is not None else base.pose_noise_deg
+        ),
+        pose_noise_pos_m=(
+            args.pose_noise_pos_m if args.pose_noise_pos_m is not None else base.pose_noise_pos_m
+        ),
         dropout_prob=args.dropout_prob if args.dropout_prob is not None else base.dropout_prob,
     )
 

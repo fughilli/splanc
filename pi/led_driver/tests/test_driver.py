@@ -1,7 +1,6 @@
 """LedDriver loop, epoch, and debug modes (design doc §6 M1 / §8.1)."""
 
 import pytest
-
 from led_driver.driver import LedDriver
 from led_driver.graycode import default_code_params, frame_plan
 from led_driver.spi import RecordingSink, frame_bytes

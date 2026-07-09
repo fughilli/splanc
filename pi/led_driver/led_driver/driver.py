@@ -148,4 +148,6 @@ class LedDriver:
                 self._sleep(period_s)
         finally:
             # Leave the strip dark whenever the loop ends, however triggered.
-            self._sink.write(frame_bytes(frozenset(), n, color=self._on_color, brightness=self._brightness))
+            self._sink.write(
+                frame_bytes(frozenset(), n, color=self._on_color, brightness=self._brightness)
+            )

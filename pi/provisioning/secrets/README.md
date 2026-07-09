@@ -6,10 +6,10 @@ key.**
 
 Files created by `scripts/manage_keys.sh init`:
 
-| File             | Half    | Used by                                                        |
-| ---------------- | ------- | -------------------------------------------------------------- |
-| `deploy_key`     | private | `deploy_live` (`nixos-rebuild --target-host`)                  |
-| `deploy_key.pub` | public  | baked into the image's root `authorized_keys` at build time    |
+| File             | Half    | Used by                                                     |
+| ---------------- | ------- | ----------------------------------------------------------- |
+| `deploy_key`     | private | `deploy_live` (`nixos-rebuild --target-host`)               |
+| `deploy_key.pub` | public  | baked into the image's root `authorized_keys` at build time |
 
 ## Generate / rotate
 

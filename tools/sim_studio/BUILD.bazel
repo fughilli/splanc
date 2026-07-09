@@ -20,8 +20,8 @@ py_library(
     data = glob(["studio/web/**"]),
     imports = ["."],
     deps = [
-        "//pi/reconstruction:reconstruction",
-        "//shared/simulator:simulator",
+        "//pi/reconstruction",
+        "//shared/simulator",
         requirement("fastapi"),
         requirement("numpy"),
         requirement("uvicorn"),
@@ -31,8 +31,8 @@ py_library(
 py_binary(
     name = "serve",
     srcs = ["studio/__main__.py"],
-    main = "studio/__main__.py",
     imports = ["."],
+    main = "studio/__main__.py",
     deps = [":studio"],
 )
 
@@ -43,13 +43,13 @@ py_test(
         "tests/test_app.py",
         "tests/test_sim.py",
     ],
-    main = "tests/pytest_main.py",
     imports = ["."],
     legacy_create_init = False,
+    main = "tests/pytest_main.py",
     deps = [
         ":studio",
-        "//pi/reconstruction:reconstruction",
-        "//shared/simulator:simulator",
+        "//pi/reconstruction",
+        "//shared/simulator",
         requirement("numpy"),
         requirement("pytest"),
         requirement("scipy"),
