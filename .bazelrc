@@ -5,6 +5,9 @@
 # startup stubs that crash with SIGILL on some aarch64 hosts (notably this
 # dev container after an image rebuild). Disabling SVE codegen is harmless on
 # hosts without SVE. See docs/decisions.md.
+# IgnoreUnrecognizedVMOptions first: UseSVE only exists on aarch64 JVMs, and
+# an unguarded unknown flag would abort Bazel's server JVM on x86_64 (CI).
+startup --host_jvm_args=-XX:+IgnoreUnrecognizedVMOptions
 startup --host_jvm_args=-XX:UseSVE=0
 
 # bzlmod is the source of truth — no WORKSPACE.
