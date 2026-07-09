@@ -1,10 +1,15 @@
 # LED Mapper
 
 Recover the 3D position of every LED in an installed addressable-LED fixture
-by walking around it with an Android phone. A Raspberry Pi drives the LEDs
-through a known temporal blink code, the phone's WebXR session captures
-synced pose + camera frames, and the Pi triangulates per-LED positions and
-exports a `(led_id → xyz)` map.
+by walking around it with a phone. A Raspberry Pi drives the LEDs through a
+known temporal blink code; the phone detects and decodes them per frame and
+the Pi solves per-LED positions, exporting a `(led_id → xyz)` map. Two
+capture paths exist: the original WebXR one (phone supplies camera poses;
+server triangulates against them) and the WebXR-FREE one (`?noxr=1`, or
+automatic fallback — any phone browser, no ARCore: getUserMedia camera +
+DeviceMotion IMU, and the server solves camera poses JOINTLY with the LED
+positions). The joint solver exists because ARCore's tracking is measurably
+degenerate in this project's lighting — see `docs/vio-exploration.md`.
 
 The full design — goals, architecture, module breakdown, data contracts,
 algorithms, and phased build plan — lives in
@@ -12,13 +17,14 @@ algorithms, and phased build plan — lives in
 README is a working state-of-the-build snapshot for the next agent picking
 the project up; the design doc is the durable spec.
 
-## State of progress (2026-07-02)
+## State of progress (2026-07-09)
 
-**M10, M3, M9, M2, M1, and the web stack M5–M8 (+ virtual LED wall) are landed
-and green. M4 is Nix-verified** (config evaluates + image derivation builds;
-final image not realized in-sandbox and not booted on hardware).
-`bazelisk build //...` and `bazelisk test //...` both pass (**20 test
-targets**). The Nix blocker that stopped the previous session is **cleared** —
+**Everything below is merged to `main` (PR #1). M10, M3, M9, M2, M1, the web
+stack M5–M8 (+ virtual LED wall), and the WebXR-free visual-inertial capture
+path are landed and green. M4 is Nix-verified** (config evaluates + image
+derivation builds; final image not realized in-sandbox and not booted on
+hardware). `bazelisk build //...` and `bazelisk test //...` both pass
+(**26 test targets**). The Nix blocker that stopped the previous session is **cleared** —
 the container was rebuilt with the Nix overlay, so `nix` works and the host is
 natively `aarch64-linux` (Pi images build without cross-emulation).
 
@@ -67,11 +73,27 @@ pass `--host 0.0.0.0`; `//web:serve` does it by default. (The studio's 3D
 viewport was also fixed to center the origin/orbit pivot on retina displays
 and use CAD-style, no-inertia controls.)
 
-All work is on branch **`m1-driver-m2-server-m4-verify`** (working tree
-clean). The `/workspace` bind mount — including the persisted caches —
-survives the restart.
+All work is merged to **`main`** (working tree clean). The `/workspace`
+bind mount — including the persisted caches — survives the restart.
 
-### Exploration branch `vio-joint-solve` (2026-07-08)
+### The WebXR-free path (`vio-joint-solve`, merged to main 2026-07-09)
+
+Full narrative + estimator design + measured findings:
+`docs/vio-exploration.md` (§1–§12). Post-phase-4 highlights beyond the
+bullets below: **21× faster final solve** (bias-linearized preintegration
+cache + vectorized residuals); **final-solve progress bar + live-converging
+preview** (§7 `get_solve_status`, ws loop de-serialized) and a **camera-path
+toggle** in the result viewport (`OutputMap.trajectory`); a **robustness
+round** on real captures (mass-aware segment filtering, per-LED consensus +
+re-triangulated MAD outlier rejection with warm-started re-solves — the
+"LED stuck at 8.5 mm" fix — and the scale-observability fixes:
+reprojection-only robustification, gravity-constrained inertial alignment,
+metric re-anchoring, `refine_intrinsics` off by default); and the
+**stub-explosion fix** (quality-gated best-state rollback + divergence
+retry). Validated: three real sessions solve 1.57 / 2.06 / 3.11 px with
+correct-scale geometry. Open items: absolute scale on low-excitation walks
+(~±20 %), PnP live registration, per-device IMU-mapping calibration,
+phase-5 side-by-side gate.
 
 - **WebXR pose is degenerate in our lighting — measured.** The 2026-07-08
   trace: corr(pose speed, image motion) = −0.002, single-frame jumps to
@@ -594,7 +616,7 @@ current dev machine.
 
 ```sh
 bazelisk build //...     # builds clean
-bazelisk test  //...     # 20 test targets, all green
+bazelisk test  //...     # 26 test targets, all green
 
 # Try the synthetic pipeline end-to-end (no phone, no hardware):
 bazelisk run //shared/simulator:simulate -- --fixture cube --leds 64 --noise none -o /tmp/log.json
