@@ -151,6 +151,18 @@ export interface ConfigureMessage {
 
 export interface StopMappingMessage {
   type: "stop_mapping";
+  /** Solver placement (client benchmark decision): true/omitted -> the
+   * server reconstructs and replies result_ready; false -> the server only
+   * stops + persists (reply: mapping_stopped) and the client solves
+   * locally, uploading via submit_map. */
+  solveOnHost?: boolean | null;
+}
+
+/** Upload a client-solved OutputMap (phone-side final solve, wasm). The
+ * server persists it as if it had solved it and replies result_ready. */
+export interface SubmitMapMessage {
+  type: "submit_map";
+  map: OutputMap;
 }
 
 export interface DetectionsMessage {
@@ -232,6 +244,7 @@ export type ClientMessage =
   | StartMappingMessage
   | ConfigureMessage
   | StopMappingMessage
+  | SubmitMapMessage
   | DetectionsMessage
   | ImuBatchMessage
   | ExposureReportMessage
@@ -248,6 +261,17 @@ export interface WelcomeMessage {
   type: "welcome";
   sessionId: string;
   codeParams: CodeParams;
+  /** Host score on the canned solver benchmark (ms), for the client's
+   * solver-placement decision; null while still measuring. */
+  solverBenchMs: number | null;
+}
+
+/** Reply to stop_mapping with solveOnHost=false: capture stopped + log
+ * persisted, no host solve. The counts echo what the server logged. */
+export interface MappingStoppedMessage {
+  type: "mapping_stopped";
+  detections: number;
+  imuSamples: number;
 }
 
 export interface TimeSyncPongMessage {
@@ -324,6 +348,7 @@ export type ServerMessage =
   | WelcomeMessage
   | TimeSyncPongMessage
   | MappingStartedMessage
+  | MappingStoppedMessage
   | StatusMessage
   | PatternStateMessage
   | LiveMapMessage

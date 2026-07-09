@@ -62,10 +62,17 @@ ts_project(
 # tsc input/output collision).
 ts_project(
     name = "web_tests_js",
-    srcs = SRCS + glob([
-        "tests/**/*.ts",
-        "tests/**/*.json",
-    ]),
+    # src/solver/spawn.ts is browser-only (import.meta worker URL — a syntax
+    # error under this CJS compile) and only ever loaded lazily; see its
+    # docstring.
+    srcs = glob(
+        [
+            "src/**/*.ts",
+            "tests/**/*.ts",
+            "tests/**/*.json",
+        ],
+        exclude = ["src/solver/spawn.ts"],
+    ),
     declaration = False,
     out_dir = "dist-test",
     resolve_json_module = True,
@@ -148,5 +155,6 @@ sh_binary(
     data = [
         ":dist",
         "//pi/server:serve",
+        "//solver:solver_web",
     ],
 )

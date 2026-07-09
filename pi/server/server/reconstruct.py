@@ -22,8 +22,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+import uuid
 from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Deque, Optional, Sequence, Tuple
 
@@ -31,8 +34,15 @@ from ledmapper_protocol import DetectionRecord, ImuSample, OutputMap
 from reconstruction.api import reconstruct
 from reconstruction.vio_api import reconstruct_vio
 
+from . import native_solver
 from .clock import now_ms
 from .session import MapStore, SessionManager
+
+_log = logging.getLogger(__name__)
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _poseless(detections) -> bool:
@@ -48,7 +58,34 @@ def _poseless(detections) -> bool:
     return bool(detections)
 
 
-def _reconstruct_sync(log_path: Path, progress_cb=None) -> OutputMap:
+def _solve_vio_native(
+    detections,
+    imu,
+    led_count,
+    *,
+    map_id: Optional[str] = None,
+    options: Optional[dict] = None,
+    status_cb: Optional[Callable[[dict], None]] = None,
+) -> OutputMap:
+    """Pose-less solve via the Rust solver subprocess (see native_solver.py).
+
+    The subprocess's stderr progress lines are already solve_status-shaped
+    and pass straight through to ``status_cb``.
+    """
+    problem = {
+        "detections": [d if isinstance(d, dict) else d.model_dump() for d in detections],
+        "imu": [s if isinstance(s, dict) else s.model_dump() for s in imu],
+        "ledCount": led_count,
+        "mapId": map_id or str(uuid.uuid4()),
+        "createdAt": _now_iso(),
+    }
+    if options:
+        problem["options"] = options
+    result = native_solver.solve(problem, progress_cb=status_cb)
+    return OutputMap.model_validate(result)
+
+
+def _reconstruct_sync(log_path: Path, progress_cb=None, status_cb=None) -> OutputMap:
     data = json.loads(Path(log_path).read_text())
     if isinstance(data, list):
         detections, led_count, imu = data, None, []
@@ -60,7 +97,12 @@ def _reconstruct_sync(log_path: Path, progress_cb=None) -> OutputMap:
         # WebXR-free path: solve poses jointly from the session's IMU stream
         # (docs/vio-exploration.md phase 4). Raises with a clear message when
         # the IMU stream is missing/too thin — surfaced to the client as
-        # reconstruction_failed.
+        # reconstruction_failed. The Rust solver is the production engine;
+        # the Python reference remains the automatic fallback for checkouts
+        # without the Rust toolchain.
+        if native_solver.available():
+            return _solve_vio_native(detections, imu, led_count, status_cb=status_cb)
+        _log.warning("native solver unavailable; falling back to the Python VIO solver")
         return reconstruct_vio(detections, imu, led_count=led_count, progress_cb=progress_cb)
     # The pose-trusting solver is ~1 s — no progress reporting needed.
     return reconstruct(detections, led_count=led_count)
@@ -94,22 +136,30 @@ class ReconstructionRunner:
     async def __call__(self, log_path: Path) -> OutputMap:
         from reconstruction.vio_api import decimate_path
 
-        def on_progress(frac: float, leds: dict, rms_px: float, positions) -> None:
+        def on_status(snap: dict) -> None:
             # Solver thread → atomic dict swap; the poll reads self.status.
-            self.status = {
-                "running": True,
-                "progress": round(float(frac), 4),
-                "rmsPx": float(rms_px),
-                "leds": [
-                    {"id": int(led), "xyz": [float(c) for c in xyz]}
-                    for led, xyz in sorted(leds.items())
-                ],
-                "trajectory": decimate_path(positions),
-            }
+            # Native-solver stderr lines are already solve_status-shaped.
+            self.status = {**IDLE_SOLVE_STATUS, "running": True, **snap}
+
+        def on_progress(frac: float, leds: dict, rms_px: float, positions) -> None:
+            # Python-solver callback (fallback path): adapt to the same shape.
+            on_status(
+                {
+                    "progress": round(float(frac), 4),
+                    "rmsPx": float(rms_px),
+                    "leds": [
+                        {"id": int(led), "xyz": [float(c) for c in xyz]}
+                        for led, xyz in sorted(leds.items())
+                    ],
+                    "trajectory": decimate_path(positions),
+                }
+            )
 
         self.status = {**IDLE_SOLVE_STATUS, "running": True}
         try:
-            output_map = await asyncio.to_thread(_reconstruct_sync, log_path, on_progress)
+            output_map = await asyncio.to_thread(
+                _reconstruct_sync, log_path, on_progress, on_status
+            )
         finally:
             self.status = IDLE_SOLVE_STATUS
         self.map_store.save(output_map)
@@ -168,6 +218,20 @@ def _live_solve(
         # Pose-less session: interim joint solve, cost-bounded by keyframe
         # decimation + optimizer budget. (No warm start yet — the keyframe cap
         # keeps it a few seconds; docs/vio-exploration.md phase 4 note.)
+        # Interim solves skip the prune+re-solve round (2x cost); the final
+        # solve does the cleanup.
+        if native_solver.available():
+            return _solve_vio_native(
+                detections,
+                imu,
+                led_count,
+                map_id=f"live-{session_id}",
+                options={
+                    "maxKeyframes": LIVE_VIO_MAX_KEYFRAMES,
+                    "maxNfev": LIVE_VIO_MAX_NFEV,
+                    "rejectOutliers": False,
+                },
+            )
         return reconstruct_vio(
             [d.model_dump() if hasattr(d, "model_dump") else d for d in detections],
             [s.model_dump() if hasattr(s, "model_dump") else s for s in imu],
@@ -176,8 +240,6 @@ def _live_solve(
             max_keyframes=LIVE_VIO_MAX_KEYFRAMES,
             max_nfev=LIVE_VIO_MAX_NFEV,
             refine_intrinsics=False,
-            # Interim solves skip the prune+re-solve round (2x cost); the
-            # final solve does the cleanup.
             reject_outliers=False,
         )
     sample = _decimate_per_led(detections, LIVE_MAX_VIEWS_PER_LED)

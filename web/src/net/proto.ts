@@ -35,11 +35,13 @@ const CLIENT_ARMS: Record<string, string> = {
   get_pattern: "getPattern",
   get_live_map: "getLiveMap",
   get_solve_status: "getSolveStatus",
+  submit_map: "submitMap",
 };
 const SERVER_ARMS: Record<string, string> = {
   welcome: "welcome",
   time_sync_pong: "timeSyncPong",
   mapping_started: "mappingStarted",
+  mapping_stopped: "mappingStopped",
   status: "status",
   pattern_state: "patternState",
   live_map: "liveMap",
@@ -103,6 +105,7 @@ function fillNulls(type: string, flat: Json): Json {
   const ensure = (obj: Json, key: string): void => {
     if (!(key in obj)) obj[key] = null;
   };
+  if (type === "welcome") ensure(flat, "solverBenchMs");
   if (type === "pattern_state") ensure(flat, "patternClockEpoch");
   if (type === "live_map") ensure(flat, "map");
   if (type === "solve_status") {

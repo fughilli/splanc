@@ -21,6 +21,7 @@ py_library(
         "//pi/reconstruction",
         "//shared/protocol",
         "//shared/protocol/proto:ledmapper_py_proto",
+        "@rules_python//python/runfiles",
         requirement("fastapi"),
         requirement("uvicorn"),
     ],
@@ -36,6 +37,9 @@ py_binary(
 py_binary(
     name = "serve",
     srcs = ["server/__main__.py"],
+    # The native (Rust) solver rides in runfiles: pose-less final + interim
+    # solves run it as a subprocess (server/native_solver.py).
+    data = ["//solver:solver_cli"],
     imports = ["."],
     main = "server/__main__.py",
     deps = [":server"],
@@ -72,6 +76,7 @@ py_test(
         "tests/pytest_main.py",
         "tests/test_app_integration.py",
     ],
+    data = ["//solver:solver_cli"],
     imports = ["."],
     legacy_create_init = False,
     main = "tests/pytest_main.py",

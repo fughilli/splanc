@@ -45,16 +45,21 @@ def create_app(
     session_dir: Path,
     maps_dir: Path,
     web_root: Optional[Path] = None,
+    solver_dir: Optional[Path] = None,
     default_led_count: int = 1024,
     bit_period_ms: float = DEFAULT_BIT_PERIOD_MS,
     encoding: str = "gray",
     context: Optional[ServerContext] = None,
+    run_solver_benchmark: bool = True,
 ) -> FastAPI:
     """Build the FastAPI app.
 
     ``context`` lets tests inject a :class:`ServerContext` (e.g. with a stub
     reconstructor or a deterministic id factory); by default a real one is built
     from a :class:`SessionManager` + :class:`MapStore` + :class:`ReconstructionRunner`.
+
+    ``solver_dir`` serves the wasm solver bundle (//solver:solver_wasm_pkg)
+    at /solver/ for the phone's in-browser final solve.
     """
     maps = MapStore(maps_dir)
     if context is None:
@@ -64,7 +69,19 @@ def create_app(
             default_led_count=default_led_count,
             bit_period_ms=bit_period_ms,
             encoding=encoding,
+            map_store=maps,
         )
+        if run_solver_benchmark:
+            # Host solver-placement score (§7 welcome.solverBenchMs): measure
+            # once, off the startup path — welcome carries null until done.
+            import threading
+
+            from . import native_solver
+
+            def _bench(ctx: ServerContext = context) -> None:
+                ctx.solver_bench_ms = native_solver.benchmark()
+
+            threading.Thread(target=_bench, name="solver-bench", daemon=True).start()
 
     app = FastAPI(title="LED Mapper", version="0.1.0")
     app.state.context = context
@@ -225,6 +242,11 @@ def create_app(
                 task.add_done_callback(pending.discard)
         except WebSocketDisconnect:
             return
+
+    # The wasm solver bundle (phone-side final solve). Mounted before "/" so
+    # the app's static mount cannot shadow it.
+    if solver_dir is not None and Path(solver_dir).is_dir():
+        app.mount("/solver", StaticFiles(directory=str(solver_dir)), name="solver")
 
     # Static web app last, so the API routes above take precedence. Falls back
     # to a Phase-0 hello page when no built web app is present.

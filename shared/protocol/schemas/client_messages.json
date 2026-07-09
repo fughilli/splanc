@@ -9,6 +9,7 @@
     { "$ref": "#/$defs/StartMapping" },
     { "$ref": "#/$defs/Configure" },
     { "$ref": "#/$defs/StopMapping" },
+    { "$ref": "#/$defs/SubmitMap" },
     { "$ref": "#/$defs/Detections" },
     { "$ref": "#/$defs/ImuBatch" },
     { "$ref": "#/$defs/ExposureReport" },
@@ -93,7 +94,21 @@
       "additionalProperties": false,
       "required": ["type"],
       "properties": {
-        "type": { "const": "stop_mapping" }
+        "type": { "const": "stop_mapping" },
+        "solveOnHost": {
+          "type": ["boolean", "null"],
+          "description": "Where the final solve runs (solver placement, decided by the client's init-time benchmark). True/null/omitted: the server reconstructs and replies result_ready (the classic flow). False: the server only stops the capture and persists the log, replying mapping_stopped; the client solves locally in its wasm solver and uploads the map via submit_map."
+        }
+      }
+    },
+    "SubmitMap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "map"],
+      "description": "Upload a client-solved OutputMap (the phone-side final solve, produced by the wasm solver after stop_mapping with solveOnHost=false). The server persists it to the map store exactly as if it had solved it, and replies result_ready so the download flow is identical for both placements.",
+      "properties": {
+        "type": { "const": "submit_map" },
+        "map": { "$ref": "output_map.json" }
       }
     },
     "Detections": {

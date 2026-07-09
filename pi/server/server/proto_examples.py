@@ -61,6 +61,8 @@ CLIENT_FLATS = [
     },
     {"type": "configure", "options": {"bitPeriodMs": 200.0}},
     {"type": "stop_mapping"},
+    {"type": "stop_mapping", "solveOnHost": False},
+    {"type": "submit_map", "map": OUTPUT_MAP},
     {"type": "detections", "batch": [DETECTION, POSELESS]},
     {
         "type": "imu_batch",
@@ -88,9 +90,11 @@ CLIENT_FLATS = [
 ]
 
 SERVER_FLATS = [
-    {"type": "welcome", "sessionId": "s-1", "codeParams": CODE_PARAMS},
+    {"type": "welcome", "sessionId": "s-1", "codeParams": CODE_PARAMS, "solverBenchMs": None},
+    {"type": "welcome", "sessionId": "s-1", "codeParams": CODE_PARAMS, "solverBenchMs": 210.5},
     {"type": "time_sync_pong", "t0": 1.0, "t1": 2.0, "t2": 3.0},
     {"type": "mapping_started", "patternClockEpoch": 987.5, "codeParams": CODE_PARAMS},
+    {"type": "mapping_stopped", "detections": 4200, "imuSamples": 3600},
     {"type": "status", "identified": 5, "total": 64, "lowParallax": 2},
     {
         "type": "pattern_state",

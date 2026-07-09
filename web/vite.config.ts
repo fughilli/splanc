@@ -32,6 +32,7 @@ export default defineConfig({
       "/ws": { target: backend.replace(/^http/, "ws"), ws: true },
       "/maps": backend,
       "/healthz": backend,
+      "/solver": backend, // wasm solver bundle (served from server runfiles)
     },
   },
 });

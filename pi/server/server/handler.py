@@ -17,6 +17,7 @@ from ledmapper_protocol import (
     ErrorMessage,
     LiveMapMessage,
     MappingStartedMessage,
+    MappingStoppedMessage,
     OutputMap,
     PatternStateMessage,
     ResultReadyMessage,
@@ -51,6 +52,7 @@ class ServerContext:
         clock: Callable[[], float] = now_ms,
         live_solver: LiveSolver | None = None,
         encoding: str = "gray",
+        map_store=None,
     ):
         self.sessions = sessions
         self.reconstructor = reconstructor
@@ -59,6 +61,13 @@ class ServerContext:
         self.default_led_count = default_led_count
         self.bit_period_ms = bit_period_ms
         self.clock = clock
+        # Host score on the canned solver benchmark (ms), measured once at
+        # server startup (app.py) — None until the measurement finishes.
+        # Advertised in welcome for the client's solver-placement decision.
+        self.solver_bench_ms: float | None = None
+        # Where submit_map persists phone-solved maps; falls back to the
+        # reconstructor's store when not given (the production runner has one).
+        self.map_store = map_store
         if id_factory is None:
             import uuid
 
@@ -122,7 +131,9 @@ class ConnectionHandler:
         if kind == "get_solve_status":
             return [self._solve_status()]
         if kind == "stop_mapping":
-            return await self._stop()
+            return await self._stop(msg.solveOnHost)
+        if kind == "submit_map":
+            return [self._submit_map(msg.map)]
         # ClientMessage's discriminated union makes this unreachable, but be loud.
         return [_error("unknown_type", f"unhandled message type {kind!r}")]
 
@@ -137,6 +148,7 @@ class ConnectionHandler:
             codeParams=code_params_for(
                 self.ctx.default_led_count, self.ctx.bit_period_ms, self.ctx.encoding
             ),
+            solverBenchMs=self.ctx.solver_bench_ms,
         )
 
     def _start(self, options) -> ServerMessage:
@@ -239,16 +251,40 @@ class ConnectionHandler:
         active, interim = self.ctx.live.poll(self.ctx.sessions)
         return LiveMapMessage(type="live_map", active=active, map=interim)
 
-    async def _stop(self) -> List[ServerMessage]:
+    async def _stop(self, solve_on_host: bool | None = None) -> List[ServerMessage]:
         try:
             _session_id, log_path = self.ctx.sessions.stop()
         except RuntimeError as exc:
             return [_error("no_session", str(exc))]
+        if solve_on_host is False:
+            # Solver placement chose the phone: stop + persist only; the
+            # client solves in its wasm solver and uploads via submit_map.
+            # The echoed counts let it sanity-check its local buffers.
+            import json as _json
+
+            try:
+                data = _json.loads(log_path.read_text())
+                n_det = len(data.get("detections", []))
+                n_imu = len(data.get("imu", []))
+            except Exception:
+                n_det = n_imu = 0
+            return [
+                MappingStoppedMessage(type="mapping_stopped", detections=n_det, imuSamples=n_imu)
+            ]
         try:
             output_map = await self.ctx.reconstructor(log_path)
         except Exception as exc:  # reconstruction is best-effort; report, don't crash
             return [_error("reconstruction_failed", f"{type(exc).__name__}: {exc}")]
         return [ResultReadyMessage(type="result_ready", mapId=output_map.mapId)]
+
+    def _submit_map(self, output_map: OutputMap) -> ServerMessage:
+        """Persist a client-solved map (already contract-validated by the
+        ClientMessage parse) exactly as if the host had solved it."""
+        store = self.ctx.map_store or getattr(self.ctx.reconstructor, "map_store", None)
+        if store is None:
+            return _error("unsupported", "this server has no map store for submitted maps")
+        store.save(output_map)
+        return ResultReadyMessage(type="result_ready", mapId=output_map.mapId)
 
 
 def _error(code: str, message: str) -> ServerMessage:

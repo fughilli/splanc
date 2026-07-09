@@ -358,3 +358,45 @@ codeParams}`. Exists so _pattern followers_ — the virtual LED wall — can
   every §7 example); the TS proto test must decode byte-identical frames to
   the same objects. Plus full py roundtrip tests (test_proto_wire.py) and
   the real-server integration test on the binary wire.
+
+## Rust solver + wasm + solver placement (rust-wasm-solver branch, 2026-07-09)
+
+- **The VIO solver is rewritten in Rust** (`solver/` — one crate, zero
+  external math deps) and deployed twice: a host binary the Pi server runs
+  as a subprocess (stdin problem JSON → stdout §7.5 OutputMap, stderr
+  solve_status-shaped progress lines) and a wasm32/wasm-bindgen module the
+  phone runs in a Web Worker. The Python solver remains as the reference
+  implementation (parity-pinned), the automatic fallback when the binary is
+  absent, and the engine for replay/calibration tooling.
+- **Optimizer stand-in**: scipy's TRF(jac_sparsity, x_scale="jac",
+  tr_solver="lsmr") became hand-rolled Levenberg–Marquardt over damped LSMR
+  with Curtis–Powell–Reid column-grouped finite differences and Nielsen's
+  gain-ratio damping. Parity is asserted in SOLUTION space
+  (//pi/reconstruction:rust_parity_test: both solvers on one synthetic
+  session agree < 3 mm / < 2 % scale after similarity alignment), not
+  bitwise — the two optimizers walk different damping schedules.
+- **Solver placement (init-time benchmark)**: host and phone run the SAME
+  canned synthetic solve through the SAME Rust code (deterministic seeded
+  problem, `solver/src/synth.rs`), so the two wall-clock scores are directly
+  comparable. Host score rides in `welcome.solverBenchMs`; the phone times
+  its wasm module at page load (in the worker — the solve is synchronous)
+  and decides in `web/src/solver/placement.ts`. PHONE-FIRST with a 4×
+  slowdown margin: the phone holds the data locally and offloading ties up
+  the Pi; only decisively slow phones offload. Protocol additions:
+  `stop_mapping.solveOnHost` (false → server stops+persists only, replies
+  the new `mapping_stopped`), new `submit_map` client message (server
+  persists the phone-solved map and replies result_ready — the download
+  flow is placement-independent). The XR pose-trusting path always solves
+  on the host (~1 s there; the phone keeps no local copy for it).
+- **Wasm deployment via runfiles**: //solver:solver_web =
+  wasm-bindgen pkg + a PLAIN JS `worker.js` (deliberately not vite-bundled:
+  the whole solver deployment is one runfiles directory the server mounts
+  at /solver/, and the app references it by URL — no bundler coupling, no
+  import.meta in the CJS test build). rules_rust 0.71.3 +
+  rules_rust_wasm_bindgen (wasm-bindgen crate pinned `=0.2.121` to the
+  bundled CLI version — the bindgen ABI schema must match).
+- **fastbuild vs opt**: `bazelisk run //web:serve` serves fastbuild
+  (unoptimized) solvers — fine for dev; production wants `-c opt`
+  (~an order of magnitude faster, and placement scores that reflect it).
+  Both sides are always built in the SAME mode, so the placement decision
+  stays fair either way.

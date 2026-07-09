@@ -48,6 +48,47 @@ use_repo(
 )
 
 # ---------------------------------------------------------------------------
+# Rust — the native solver (solver/), built twice: host binary for the Pi
+# server (subprocess via runfiles) and wasm32 + wasm-bindgen for the phone.
+# ---------------------------------------------------------------------------
+
+bazel_dep(name = "rules_rust", version = "0.71.3")
+bazel_dep(name = "rules_rust_wasm_bindgen", version = "0.71.3")
+
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+rust.toolchain(
+    edition = "2021",
+    extra_target_triples = ["wasm32-unknown-unknown"],
+)
+use_repo(rust, "rust_toolchains")
+
+register_toolchains("@rust_toolchains//:all")
+
+crate = use_extension("@rules_rust//crate_universe:extensions.bzl", "crate")
+crate.spec(
+    features = ["derive"],
+    package = "serde",
+    version = "1",
+)
+crate.spec(
+    package = "serde_json",
+    version = "1",
+)
+
+# Pinned EXACTLY to rules_rust_wasm_bindgen's bundled CLI version — the
+# generated bindings' ABI schema must match the CLI that post-processes them.
+crate.spec(
+    package = "wasm-bindgen",
+    version = "=0.2.121",
+)
+crate.spec(
+    package = "js-sys",
+    version = "0.3",
+)
+crate.from_specs()
+use_repo(crate, "crates")
+
+# ---------------------------------------------------------------------------
 # Nix integration (M4 — pi/provisioning).
 #
 # rules_nixpkgs lets Bazel import Nix-built packages as Bazel targets. The

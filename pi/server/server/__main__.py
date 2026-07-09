@@ -28,6 +28,13 @@ def main(argv=None) -> int:
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=80)
     parser.add_argument("--web-root", type=Path, default=None, help="built web app to serve at /")
+    parser.add_argument(
+        "--solver-dir",
+        type=Path,
+        default=None,
+        help="wasm solver bundle (//solver:solver_wasm_pkg) to serve at /solver/ "
+        "for the phone-side final solve",
+    )
     parser.add_argument("--session-dir", type=Path, default=Path("/var/lib/ledmapper/sessions"))
     parser.add_argument("--maps-dir", type=Path, default=Path("/var/lib/ledmapper/maps"))
     parser.add_argument("--led-count", type=int, default=1024, help="default code-book LED count")
@@ -71,6 +78,7 @@ def main(argv=None) -> int:
         session_dir=args.session_dir,
         maps_dir=args.maps_dir,
         web_root=args.web_root,
+        solver_dir=args.solver_dir,
         default_led_count=args.led_count,
         bit_period_ms=args.bit_period_ms,
         encoding=args.encoding,

@@ -61,6 +61,29 @@ py_test(
 # VIO exploration (docs/vio-exploration.md): joint pose+LED solve with IMU
 # dead reckoning — the WebXR-free path. Nonlinear VI-BA on a synthetic
 # session; slower than a unit test by nature.
+# Cross-language parity: the Rust solver must functionally match the Python
+# reference on the same synthetic session (solution-space agreement, not
+# bitwise — see test_rust_parity.py).
+py_test(
+    name = "rust_parity_test",
+    size = "large",
+    srcs = [
+        "tests/pytest_main.py",
+        "tests/test_rust_parity.py",
+    ],
+    data = ["//solver:solver_cli"],
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/pytest_main.py",
+    deps = [
+        ":reconstruction",
+        "@rules_python//python/runfiles",
+        requirement("numpy"),
+        requirement("pytest"),
+        requirement("scipy"),
+    ],
+)
+
 py_test(
     name = "vio_test",
     size = "large",

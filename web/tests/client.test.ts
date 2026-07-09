@@ -108,7 +108,7 @@ test("connect sends hello and resolves on welcome", async () => {
   const s = sockets[0]!;
   s.open();
   assert.equal(s.lastSent().type, "hello");
-  s.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS });
+  s.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS, solverBenchMs: null });
   const welcome = await p;
   assert.equal(welcome.sessionId, "s-1");
   assert.ok(client.isConnected);
@@ -119,7 +119,7 @@ test("syncClock keeps the min-RTT sample", async () => {
   const p = client.connect();
   const s = sockets[0]!;
   s.open();
-  s.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS });
+  s.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS, solverBenchMs: null });
   await p;
 
   setNow(2000);
@@ -146,7 +146,7 @@ test("start/stop/status/pattern request-response", async () => {
   const p = client.connect();
   const s = sockets[0]!;
   s.open();
-  s.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS });
+  s.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS, solverBenchMs: null });
   await p;
 
   const startP = client.startMapping(64);
@@ -172,7 +172,7 @@ test("a server error rejects the pending request", async () => {
   const p = client.connect();
   const s = sockets[0]!;
   s.open();
-  s.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS });
+  s.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS, solverBenchMs: null });
   await p;
 
   const stopP = client.stopMapping();
@@ -185,7 +185,7 @@ test("detection batches survive a reconnect (M7 acceptance)", async () => {
   const p = client.connect();
   const s0 = sockets[0]!;
   s0.open();
-  s0.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS });
+  s0.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS, solverBenchMs: null });
   await p;
 
   client.sendDetections([det(1)]);
@@ -203,7 +203,7 @@ test("detection batches survive a reconnect (M7 acceptance)", async () => {
   scheduled[0]!();
   const s1 = sockets[1]!;
   s1.open();
-  s1.receive({ type: "welcome", sessionId: "s-2", codeParams: CODE_PARAMS });
+  s1.receive({ type: "welcome", sessionId: "s-2", codeParams: CODE_PARAMS, solverBenchMs: null });
   await Promise.resolve();
 
   const batches = s1
@@ -219,7 +219,7 @@ test("startMapping passes the negotiated config; configure renegotiates", async 
   const p = client.connect();
   const s = sockets[0]!;
   s.open();
-  s.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS });
+  s.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS, solverBenchMs: null });
   await p;
 
   // The client is the configuration authority (§7.1): the measured scene's
@@ -248,7 +248,7 @@ test("exposure reports are fire-and-forget and dropped while disconnected", asyn
   const p = client.connect();
   const s = sockets[0]!;
   s.open();
-  s.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS });
+  s.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS, solverBenchMs: null });
   await p;
 
   const report = {
@@ -281,7 +281,7 @@ test("getSolveStatus polls the final solve's progress", async () => {
   const p = client.connect();
   const s = sockets[0]!;
   s.open();
-  s.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS });
+  s.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS, solverBenchMs: null });
   await p;
 
   const statusP = client.getSolveStatus();
@@ -299,4 +299,60 @@ test("getSolveStatus polls the final solve's progress", async () => {
   assert.equal(st.progress, 0.55);
   assert.equal(st.leds![0]!.id, 1);
   assert.equal(st.trajectory!.length, 2);
+});
+
+test("welcome exposes the host solver benchmark score", async () => {
+  const { client, sockets } = makeClient();
+  const p = client.connect();
+  const s = sockets[0]!;
+  s.open();
+  s.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS, solverBenchMs: 187.5 });
+  await p;
+  assert.equal(client.hostSolverBenchMs, 187.5);
+});
+
+test("stopMappingNoSolve stops without a host solve (solver placement)", async () => {
+  const { client, sockets } = makeClient();
+  const p = client.connect();
+  const s = sockets[0]!;
+  s.open();
+  s.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS, solverBenchMs: null });
+  await p;
+
+  const stopP = client.stopMappingNoSolve();
+  assert.deepEqual(s.lastSent(), { type: "stop_mapping", solveOnHost: false });
+  s.receive({ type: "mapping_stopped", detections: 420, imuSamples: 360 });
+  const stopped = await stopP;
+  assert.equal(stopped.detections, 420);
+  assert.equal(stopped.imuSamples, 360);
+});
+
+test("submitMap uploads a phone-solved map and resolves on result_ready", async () => {
+  const { client, sockets } = makeClient();
+  const p = client.connect();
+  const s = sockets[0]!;
+  s.open();
+  s.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS, solverBenchMs: null });
+  await p;
+
+  const map = {
+    mapId: "phone-map-1",
+    createdAt: "2026-07-09T00:00:00Z",
+    units: "meters" as const,
+    frame: "gravity_leveled" as const,
+    ledCount: 2,
+    leds: [
+      { id: 0, xyz: [0.1, 0.2, 0.3] as [number, number, number], confidence: 0.9, nViews: 12, rmsReprojPx: 0.6, parallaxDeg: 21 },
+    ],
+    unmapped: [1],
+    trajectory: [[0, 0, 0], [0.05, 0.01, -0.02]] as [number, number, number][],
+    stats: { rmsReprojPxGlobal: 0.7, medianParallaxDeg: 19 },
+  };
+  const submitP = client.submitMap(map);
+  const sent = s.lastSent() as { type: string; map: { mapId: string } };
+  assert.equal(sent.type, "submit_map");
+  assert.equal(sent.map.mapId, "phone-map-1");
+  s.receive({ type: "result_ready", mapId: "phone-map-1" });
+  const ack = await submitP;
+  assert.equal(ack.mapId, "phone-map-1");
 });

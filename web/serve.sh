@@ -29,6 +29,7 @@ exec pi/server/serve \
   --host 0.0.0.0 \
   --port "$PORT" \
   --web-root web/dist \
+  --solver-dir solver/solver_web \
   --session-dir "$STATE_DIR/sessions" \
   --maps-dir "$STATE_DIR/maps" \
   "${TLS_ARGS[@]}" \

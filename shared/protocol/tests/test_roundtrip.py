@@ -455,6 +455,7 @@ def test_decode_raw_dict_welcome_message() -> None:
     raw = {
         "type": "welcome",
         "sessionId": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        "solverBenchMs": None,
         "codeParams": {
             "ledCount": 1024,
             "bits": 10,

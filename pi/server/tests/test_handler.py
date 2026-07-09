@@ -513,3 +513,70 @@ def test_get_solve_status_idle_and_running(tmp_path):
     assert m["running"] is True and m["progress"] == 0.42
     assert m["leds"][0]["id"] == 0
     assert len(m["trajectory"]) == 2
+
+
+# -- solver placement (stop_mapping.solveOnHost / submit_map) ---------------
+
+
+def _start_and_feed(handler):
+    _run(handler, '{"type":"start_mapping","options":{"ledCount":4}}')
+    rec = {
+        "ledId": 1,
+        "tCaptureMs": 1.0,
+        "u": 10.0,
+        "v": 20.0,
+        "imgW": 1280,
+        "imgH": 720,
+        "K": [800.0, 800.0, 640.0, 360.0],
+        "pose": None,
+        "confidence": 0.9,
+    }
+    _run(handler, json.dumps({"type": "detections", "batch": [rec]}))
+    _run(
+        handler,
+        json.dumps(
+            {
+                "type": "imu_batch",
+                "samples": [{"t": 1.0, "gyro": [0, 0, 0], "accel": [0, 9.8, 0]}],
+            }
+        ),
+    )
+
+
+def test_welcome_carries_solver_bench_score(tmp_path):
+    handler, ctx, _ = _make_handler(tmp_path)
+    m = _dump(_run(handler, '{"type":"hello","client":"c","appVersion":"1"}')[0])
+    assert m["solverBenchMs"] is None  # not measured yet
+    ctx.solver_bench_ms = 123.4
+    m = _dump(_run(handler, '{"type":"hello","client":"c","appVersion":"1"}')[0])
+    assert m["solverBenchMs"] == 123.4
+
+
+def test_stop_without_host_solve_persists_but_skips_reconstruction(tmp_path):
+    handler, _ctx, recon_calls = _make_handler(tmp_path)
+    _start_and_feed(handler)
+    out = _run(handler, '{"type":"stop_mapping","solveOnHost":false}')
+    m = _dump(out[0])
+    assert m["type"] == "mapping_stopped"
+    assert m["detections"] == 1
+    assert m["imuSamples"] == 1
+    assert recon_calls == []  # no host solve ran
+
+
+def test_submit_map_persists_and_acks_result_ready(tmp_path):
+    from server.session import MapStore
+
+    handler, ctx, _ = _make_handler(tmp_path)
+    ctx.map_store = MapStore(tmp_path / "maps")
+    out = _run(handler, json.dumps({"type": "submit_map", "map": _stub_map().model_dump()}))
+    m = _dump(out[0])
+    assert m["type"] == "result_ready"
+    assert m["mapId"] == "map-stub"
+    assert ctx.map_store.exists("map-stub")
+
+
+def test_submit_map_without_store_errors(tmp_path):
+    handler, _ctx, _ = _make_handler(tmp_path)
+    m = _dump(_run(handler, json.dumps({"type": "submit_map", "map": _stub_map().model_dump()}))[0])
+    assert m["type"] == "error"
+    assert m["code"] == "unsupported"

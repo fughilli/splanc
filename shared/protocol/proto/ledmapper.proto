@@ -163,7 +163,17 @@ message Configure {
   ConfigureOptions options = 1;
 }
 
-message StopMapping {}
+message StopMapping {
+  // Solver placement (client benchmark decision): unset/true -> host
+  // reconstructs (reply result_ready); false -> stop + persist only (reply
+  // mapping_stopped), the client solves locally and uploads via submit_map.
+  optional bool solve_on_host = 1;
+}
+
+// Client-solved OutputMap upload (phone-side final solve, wasm).
+message SubmitMap {
+  OutputMap map = 1;
+}
 
 message Detections {
   repeated DetectionRecord batch = 1;
@@ -200,6 +210,7 @@ message ClientMessage {
     GetPattern get_pattern = 10;
     GetLiveMap get_live_map = 11;
     GetSolveStatus get_solve_status = 12;
+    SubmitMap submit_map = 13;
   }
 }
 
@@ -210,6 +221,15 @@ message ClientMessage {
 message Welcome {
   string session_id = 1;
   CodeParams code_params = 2;
+  // Host score on the canned solver benchmark (ms); unset while measuring.
+  optional double solver_bench_ms = 3;
+}
+
+// Reply to stop_mapping(solve_on_host=false): stopped + persisted, no host
+// solve; counts echo what the server logged.
+message MappingStopped {
+  int32 detections = 1;
+  int32 imu_samples = 2;
 }
 
 message TimeSyncPong {
@@ -270,5 +290,6 @@ message ServerMessage {
     SolveStatus solve_status = 7;
     ResultReady result_ready = 8;
     Error error = 9;
+    MappingStopped mapping_stopped = 10;
   }
 }

@@ -156,7 +156,20 @@ class ConfigureMessage(_StrictModel):
 
 
 class StopMappingMessage(_StrictModel):
+    """solveOnHost (solver placement, from the client's init benchmark):
+    True/None -> server reconstructs, replies result_ready; False -> stop +
+    persist only (reply mapping_stopped), client solves and submit_map's."""
+
     type: Literal["stop_mapping"]
+    solveOnHost: Union[bool, None] = None
+
+
+class SubmitMapMessage(_StrictModel):
+    """Client-solved OutputMap upload (phone-side final solve, wasm); the
+    server persists it and replies result_ready."""
+
+    type: Literal["submit_map"]
+    map: OutputMap
 
 
 class DetectionsMessage(_StrictModel):
@@ -228,6 +241,7 @@ ClientMessageInner = Annotated[
         StartMappingMessage,
         ConfigureMessage,
         StopMappingMessage,
+        SubmitMapMessage,
         DetectionsMessage,
         ImuBatchMessage,
         ExposureReportMessage,
@@ -250,9 +264,22 @@ class ClientMessage(RootModel[ClientMessageInner]):
 
 
 class WelcomeMessage(_StrictModel):
+    """solverBenchMs: host score on the canned solver benchmark (ms), for
+    the client's solver-placement decision; None while still measuring."""
+
     type: Literal["welcome"]
     sessionId: str
     codeParams: CodeParams
+    solverBenchMs: Union[float, None] = None
+
+
+class MappingStoppedMessage(_StrictModel):
+    """Reply to stop_mapping(solveOnHost=False): stopped + persisted, no
+    host solve; counts echo what the server logged."""
+
+    type: Literal["mapping_stopped"]
+    detections: int = Field(ge=0)
+    imuSamples: int = Field(ge=0)
 
 
 class TimeSyncPongMessage(_StrictModel):
@@ -326,6 +353,7 @@ ServerMessageInner = Annotated[
         WelcomeMessage,
         TimeSyncPongMessage,
         MappingStartedMessage,
+        MappingStoppedMessage,
         StatusMessage,
         PatternStateMessage,
         LiveMapMessage,
@@ -361,6 +389,7 @@ __all__ = [
     "ConfigureOptions",
     "ConfigureMessage",
     "StopMappingMessage",
+    "SubmitMapMessage",
     "DetectionsMessage",
     "ImuSample",
     "ImuBatchMessage",
@@ -374,6 +403,7 @@ __all__ = [
     "WelcomeMessage",
     "TimeSyncPongMessage",
     "MappingStartedMessage",
+    "MappingStoppedMessage",
     "StatusMessage",
     "PatternStateMessage",
     "LiveMapMessage",

@@ -7,6 +7,7 @@
     { "$ref": "#/$defs/Welcome" },
     { "$ref": "#/$defs/TimeSyncPong" },
     { "$ref": "#/$defs/MappingStarted" },
+    { "$ref": "#/$defs/MappingStopped" },
     { "$ref": "#/$defs/Status" },
     { "$ref": "#/$defs/PatternState" },
     { "$ref": "#/$defs/LiveMap" },
@@ -18,11 +19,26 @@
     "Welcome": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["type", "sessionId", "codeParams"],
+      "required": ["type", "sessionId", "codeParams", "solverBenchMs"],
       "properties": {
         "type": { "const": "welcome" },
         "sessionId": { "type": "string", "description": "UUID for this control session." },
-        "codeParams": { "$ref": "code_params.json" }
+        "codeParams": { "$ref": "code_params.json" },
+        "solverBenchMs": {
+          "type": ["number", "null"],
+          "description": "Host score on the canned solver benchmark, milliseconds (measured once at server startup). The client times the SAME solve in its wasm solver and compares to decide where the final solve runs (solver placement). Null while the host benchmark has not finished."
+        }
+      }
+    },
+    "MappingStopped": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "detections", "imuSamples"],
+      "description": "Reply to stop_mapping with solveOnHost=false (the client's benchmark chose phone-side solving): the capture is stopped and the session log persisted, but NO host reconstruction runs. The client solves locally (wasm) and uploads the result via submit_map; the counts echo what the server logged, as a sanity check against the client's local buffers.",
+      "properties": {
+        "type": { "const": "mapping_stopped" },
+        "detections": { "type": "integer", "minimum": 0 },
+        "imuSamples": { "type": "integer", "minimum": 0 }
       }
     },
     "TimeSyncPong": {

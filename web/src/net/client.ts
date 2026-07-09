@@ -25,6 +25,8 @@ import type {
   ImuSample,
   LiveMapMessage,
   MappingStartedMessage,
+  MappingStoppedMessage,
+  OutputMap,
   PatternStateMessage,
   ResultReadyMessage,
   ServerMessage,
@@ -247,6 +249,29 @@ export class LedMapperClient {
   async stopMapping(): Promise<ResultReadyMessage> {
     const reply = await this.request({ type: "stop_mapping" }, "result_ready");
     return reply as ResultReadyMessage;
+  }
+
+  /**
+   * Stop the capture WITHOUT a host solve (solver placement chose the
+   * phone): the server persists the session log and replies immediately;
+   * the caller solves locally and uploads via {@link submitMap}.
+   */
+  async stopMappingNoSolve(): Promise<MappingStoppedMessage> {
+    const reply = await this.request(
+      { type: "stop_mapping", solveOnHost: false },
+      "mapping_stopped",
+    );
+    return reply as MappingStoppedMessage;
+  }
+
+  /** Upload a phone-solved OutputMap; the server persists it and acks. */
+  async submitMap(map: OutputMap): Promise<ResultReadyMessage> {
+    return (await this.request({ type: "submit_map", map }, "result_ready")) as ResultReadyMessage;
+  }
+
+  /** Host solver-benchmark score from welcome (ms); null while measuring. */
+  get hostSolverBenchMs(): number | null {
+    return this.welcome_?.solverBenchMs ?? null;
   }
 
   async getStatus(): Promise<StatusMessage> {

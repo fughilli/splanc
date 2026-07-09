@@ -8,7 +8,14 @@
  * Everything heavy lives in M5/M6/M7; this file is orchestration + DOM.
  */
 
-import type { CodeParams, DetectionRecord, Encoding, LedEntry, OutputMap } from "@ledmapper/protocol";
+import type {
+  CodeParams,
+  DetectionRecord,
+  Encoding,
+  ImuSample,
+  LedEntry,
+  OutputMap,
+} from "@ledmapper/protocol";
 import {
   adjustThreshold,
   ExposureMonitor,
@@ -23,6 +30,8 @@ import { defaultWsUrl, LedMapperClient } from "../net/client";
 import { DEFAULT_IMU_MAPPING, ImuRecorder, parseImuMapping } from "../xr/imu";
 import { MediaStreamCaptureSource } from "../xr/mediaStreamCapture";
 import { WebXRCaptureSource, XrUnsupportedError } from "../xr/webxrCapture";
+import { SolverAgent, type SolveSnapshot } from "../solver/agent";
+import { chooseSolvePlacement } from "../solver/placement";
 import { LabelOverlay } from "./labels";
 import { MapView } from "./mapview";
 import { MarkerRenderer } from "./markers";
@@ -130,6 +139,23 @@ let capturing = false;
 let imuRecorder: ImuRecorder | null = null;
 let previewVideo: HTMLVideoElement | null = null;
 
+// -- solver placement (Rust/wasm branch) --------------------------------------
+// Load the wasm solver in a worker and time the canned benchmark once at
+// startup; stopCapture() compares against the host's welcome.solverBenchMs
+// (chooseSolvePlacement) to decide where the final solve runs. The phone
+// retains its own detections/IMU during no-XR captures so a phone-side solve
+// needs nothing from the server.
+const solverAgent = new SolverAgent();
+const solverReady: Promise<boolean> = solverAgent.init().then((ok) => {
+  if (ok) console.info(`wasm solver ready: benchmark ${solverAgent.benchMs?.toFixed(0)} ms`);
+  else console.info("wasm solver unavailable; final solves stay on the host");
+  return ok;
+});
+let localDetections: DetectionRecord[] = [];
+let localImu: ImuSample[] = [];
+let lastLedCount = 64;
+let lastUsedXr = true;
+
 // Live (in-capture) solver feedback: solved LEDs 3D-composited over the
 // camera view (markers + id labels) + a small converging-map inset.
 const labels = new LabelOverlay($<HTMLCanvasElement>("labels"));
@@ -222,6 +248,9 @@ async function startCapture(): Promise<void> {
     // the getUserMedia + IMU path automatically (the server then solves poses
     // jointly — docs/vio-exploration.md phase 4).
     let usingXr = !forceNoXr;
+    lastLedCount = ledCount;
+    localDetections = [];
+    localImu = [];
     if (usingXr) {
       try {
         capture = new WebXRCaptureSource($("overlay"));
@@ -324,12 +353,16 @@ async function startCapture(): Promise<void> {
       });
       pl.onDetections((records: DetectionRecord[]) => {
         client.sendDetections(records);
+        // Local retention for the phone-side final solve (no-XR sessions
+        // only — the pose-trusting host path stays host-solved).
+        if (!usingXr) localDetections.push(...records);
       });
       return pl;
     };
     let pipeline = makePipeline(params, epoch);
     hudGuide.textContent = `code: ${params.encoding} @ ${params.bitPeriodMs} ms/bit`;
 
+    lastUsedXr = usingXr;
     capturing = true;
     let frameCount = 0;
 
@@ -532,7 +565,9 @@ async function startCapture(): Promise<void> {
           clearInterval(imuTick);
           return;
         }
-        client.sendImuBatch(rec.flush());
+        const samples = rec.flush();
+        localImu.push(...samples);
+        client.sendImuBatch(samples);
       }, 1000);
     }
 
@@ -625,10 +660,20 @@ async function stopCapture(sessionAlreadyEnded = false): Promise<void> {
   capture = null;
   resetLiveFeedback();
 
-  setConn("final solve…");
-  // While the final solve runs, poll its progress: a progress bar plus the
-  // CONVERGING interim map rendered live in the result viewport (the joint
-  // solve takes seconds — watching it settle beats staring at a spinner).
+  // Solver placement (init-time benchmarks, chooseSolvePlacement): the
+  // no-XR joint solve runs on the phone's wasm solver unless the host is
+  // decisively faster; the pose-trusting XR path always solves on the host
+  // (~1 s there, and the phone kept no local copy for it).
+  await solverReady.catch(() => false);
+  const placement = chooseSolvePlacement(solverAgent.benchMs, client.hostSolverBenchMs);
+  const solveOnPhone =
+    !lastUsedXr && placement === "phone" && solverAgent.available && localDetections.length > 0;
+
+  setConn(solveOnPhone ? "final solve (on phone)…" : "final solve…");
+  // While the final solve runs: a progress bar plus the CONVERGING interim
+  // map rendered live in the result viewport (the joint solve takes seconds
+  // — watching it settle beats staring at a spinner). Phone solves push
+  // snapshots from the worker; host solves poll get_solve_status.
   const progWrap = $("solveprog");
   const progFill = $("solveprog-fill");
   const progText = $("solveprog-text");
@@ -636,47 +681,77 @@ async function stopCapture(sessionAlreadyEnded = false): Promise<void> {
   progFill.style.width = "0%";
   progText.textContent = "solving…";
   let previewView: MapView | null = null;
-  const solvePoll = setInterval(() => {
-    client
-      .getSolveStatus()
-      .then((st) => {
-        if (st.progress !== null) {
-          progFill.style.width = `${Math.round(st.progress * 100)}%`;
-          progText.textContent =
-            `solving… ${Math.round(st.progress * 100)} %` +
-            (st.rmsPx !== null ? ` · reproj ${st.rmsPx.toFixed(1)} px` : "");
-        }
-        if (st.leds !== null && st.leds.length >= 3) {
-          const interim = interimMap(st.leds, st.trajectory);
-          setupSection.style.display = "";
-          resultSection.style.display = "";
-          if (previewView === null) {
-            mapView?.stop();
-            previewView = new MapView($<HTMLCanvasElement>("mapcanvas"), interim);
-            previewView.showTrajectory = trajectoryOn;
-            mapView = previewView;
-            previewView.start();
-          } else {
-            previewView.update(interim);
-          }
-          previewView.setTrajectory(st.trajectory);
-          syncTrajButton(previewView);
-        }
-      })
-      .catch(() => undefined);
-  }, 400);
+  const renderSolveSnapshot = (st: {
+    progress: number | null;
+    rmsPx: number | null;
+    leds: { id: number; xyz: [number, number, number] }[] | null;
+    trajectory: [number, number, number][] | null;
+  }): void => {
+    if (st.progress !== null) {
+      progFill.style.width = `${Math.round(st.progress * 100)}%`;
+      progText.textContent =
+        `solving… ${Math.round(st.progress * 100)} %` +
+        (st.rmsPx !== null ? ` · reproj ${st.rmsPx.toFixed(1)} px` : "");
+    }
+    if (st.leds !== null && st.leds.length >= 3) {
+      const interim = interimMap(st.leds, st.trajectory);
+      setupSection.style.display = "";
+      resultSection.style.display = "";
+      if (previewView === null) {
+        mapView?.stop();
+        previewView = new MapView($<HTMLCanvasElement>("mapcanvas"), interim);
+        previewView.showTrajectory = trajectoryOn;
+        mapView = previewView;
+        previewView.start();
+      } else {
+        previewView.update(interim);
+      }
+      previewView.setTrajectory(st.trajectory);
+      syncTrajButton(previewView);
+    }
+  };
+  const solvePoll = solveOnPhone
+    ? null
+    : setInterval(() => {
+        client
+          .getSolveStatus()
+          .then(renderSolveSnapshot)
+          .catch(() => undefined);
+      }, 400);
   try {
-    const result = await client.stopMapping();
-    const resp = await fetch(`/maps/${result.mapId}`);
-    if (!resp.ok) throw new Error(`fetching map failed: HTTP ${resp.status}`);
-    const map = (await resp.json()) as OutputMap;
-    showResult(result.mapId, map);
-    setConn(`map ${result.mapId} ready`);
+    let mapId: string;
+    let map: OutputMap;
+    if (solveOnPhone) {
+      // Phone placement: stop (server persists the log, no host solve),
+      // solve locally in the wasm worker, upload the result. The map shown
+      // is the locally solved one — no /maps fetch needed.
+      await client.stopMappingNoSolve();
+      map = await solverAgent.solve(
+        {
+          detections: localDetections,
+          imu: localImu,
+          ledCount: lastLedCount,
+          mapId: crypto.randomUUID(),
+          createdAt: new Date().toISOString(),
+        },
+        (snap: SolveSnapshot) => renderSolveSnapshot(snap),
+      );
+      const ack = await client.submitMap(map);
+      mapId = ack.mapId;
+    } else {
+      const result = await client.stopMapping();
+      mapId = result.mapId;
+      const resp = await fetch(`/maps/${mapId}`);
+      if (!resp.ok) throw new Error(`fetching map failed: HTTP ${resp.status}`);
+      map = (await resp.json()) as OutputMap;
+    }
+    showResult(mapId, map);
+    setConn(`map ${mapId} ready${solveOnPhone ? " (solved on phone)" : ""}`);
   } catch (e) {
     setError(`Reconstruction failed: ${e instanceof Error ? e.message : e}`);
     setConn(client.isConnected ? "connected" : "disconnected");
   } finally {
-    clearInterval(solvePoll);
+    if (solvePoll !== null) clearInterval(solvePoll);
     progWrap.style.display = "none";
     stopBtn.disabled = false;
     startBtn.disabled = false;

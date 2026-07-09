@@ -27,6 +27,10 @@ src/cv/     M6: GPU threshold pass (detect.ts) → CPU connected components
             track→decode glue the tests drive without a browser
 src/ui/     M8: session flow, in-AR HUD (dom-overlay), blob feedback markers,
             canvas 3D result preview
+src/solver/ solver placement: SolverAgent drives the wasm VIO solver (built
+            from solver/, served at /solver/ from server runfiles) in a Web
+            Worker; placement.ts decides phone-vs-host from the init-time
+            benchmarks (phone-first, 4x slowdown margin)
 src/wall/   the virtual wall page
 tests/      node:test suites (compiled to CJS, run hermetically under Bazel)
 ```

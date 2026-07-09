@@ -59,6 +59,61 @@
     },
     {
       "direction": "client",
+      "frameB64": "KgIIAA==",
+      "decoded": {
+        "type": "stop_mapping",
+        "solveOnHost": false
+      }
+    },
+    {
+      "direction": "client",
+      "frameB64": "asEBCr4BCgNtLTESFDIwMjYtMDctMDlUMDA6MDA6MDBaGgZtZXRlcnMiD2dyYXZpdHlfbGV2ZWxlZCgCMjcSGJqZmZmZmbk/mpmZmZmZyT8zMzMzMzPTPxnNzMzMzMzsPyAMKTMzMzMzM+M/MQAAAAAAADVAOgEBQhoKGAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEIaChiamZmZmZmpP3sUrkfheoQ/exSuR+F6lL9KEglmZmZmZmbmPxEAAAAAAAAzQA==",
+      "decoded": {
+        "type": "submit_map",
+        "map": {
+          "mapId": "m-1",
+          "createdAt": "2026-07-09T00:00:00Z",
+          "units": "meters",
+          "frame": "gravity_leveled",
+          "ledCount": 2,
+          "leds": [
+            {
+              "xyz": [
+                0.1,
+                0.2,
+                0.3
+              ],
+              "confidence": 0.9,
+              "nViews": 12,
+              "rmsReprojPx": 0.6,
+              "parallaxDeg": 21.0,
+              "id": 0
+            }
+          ],
+          "unmapped": [
+            1
+          ],
+          "trajectory": [
+            [
+              0.0,
+              0.0,
+              0.0
+            ],
+            [
+              0.05,
+              0.01,
+              -0.02
+            ]
+          ],
+          "stats": {
+            "rmsReprojPxGlobal": 0.7,
+            "medianParallaxDeg": 19.0
+          }
+        }
+      }
+    },
+    {
+      "direction": "client",
       "frameB64": "Mt8BCowBCAMRAAAAAADgXkAZAAAAAAAQWUAhAAAAAAAYaUAogAow0AU6IAAAAAAAAIlAAAAAAAAAiUAAAAAAAACEQAAAAAAAgHZAQjwKGJqZmZmZmbk/MzMzMzMz8z8zMzMzMzPTvxIgAAAAAAAAAABSuB6F61HYPwAAAAAAAAAAcT0K16Nw7T9J16NwPQrX6z8KTggDEQAAAAAA4F5AGQAAAAAAEFlAIQAAAAAAGGlAKIAKMNAFOiAAAAAAAACJQAAAAAAAAIlAAAAAAAAAhEAAAAAAAIB2QEnXo3A9CtfrPw==",
       "decoded": {
         "type": "detections",
@@ -195,6 +250,24 @@
     },
     {
       "direction": "server",
+      "frameB64": "CjkKA3MtMRIpCEAQDBoIZ3JheS1odWUhAAAAAACAW0AqBm9uX29mZjAOOgZzZWNkZWQZAAAAAABQakA=",
+      "decoded": {
+        "type": "welcome",
+        "sessionId": "s-1",
+        "codeParams": {
+          "ledCount": 64,
+          "bits": 12,
+          "encoding": "gray-hue",
+          "bitPeriodMs": 110.0,
+          "syncPattern": "on_off",
+          "cycleFrames": 14,
+          "fec": "secded"
+        },
+        "solverBenchMs": 210.5
+      }
+    },
+    {
+      "direction": "server",
       "frameB64": "EhsJAAAAAAAA8D8RAAAAAAAAAEAZAAAAAAAACEA=",
       "decoded": {
         "type": "time_sync_pong",
@@ -218,6 +291,15 @@
           "cycleFrames": 14,
           "fec": "secded"
         }
+      }
+    },
+    {
+      "direction": "server",
+      "frameB64": "UgYI6CAQkBw=",
+      "decoded": {
+        "type": "mapping_stopped",
+        "detections": 4200,
+        "imuSamples": 3600
       }
     },
     {

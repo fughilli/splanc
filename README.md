@@ -24,7 +24,7 @@ stack M5–M8 (+ virtual LED wall), and the WebXR-free visual-inertial capture
 path are landed and green. M4 is Nix-verified** (config evaluates + image
 derivation builds; final image not realized in-sandbox and not booted on
 hardware). `bazelisk build //...` and `bazelisk test //...` both pass
-(**27 test targets**).
+(**30 test targets**).
 
 Cleanup branches in flight (stacked for sequential review):
 `ci-presubmits` (GitHub Actions + pre-commit suite — see
@@ -32,8 +32,12 @@ Cleanup branches in flight (stacked for sequential review):
 `proto-comms` (host↔phone WebSocket now carries **binary protobuf**
 frames — `shared/protocol/proto/ledmapper.proto`, boundary converters
 `pi/server/server/proto_wire.py` / `web/src/net/proto.ts`, cross-language
-golden-frame test) → next: Rust/WASM solver + init-time placement
-benchmark. The Nix blocker that stopped the previous session is **cleared** —
+golden-frame test) → `rust-wasm-solver` (**the VIO solver rewritten in
+Rust**, `solver/`: native subprocess on the Pi + wasm in a phone Web
+Worker, cross-language parity test vs the Python reference, and
+**init-time solver placement** — both sides benchmark the same canned
+solve and the phone keeps the final solve unless it is decisively slower;
+see `solver/README.md`). The Nix blocker that stopped the previous session is **cleared** —
 the container was rebuilt with the Nix overlay, so `nix` works and the host is
 natively `aarch64-linux` (Pi images build without cross-emulation).
 
