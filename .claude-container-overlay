@@ -84,3 +84,8 @@ RUN apt-get update \
 # (WebXR requires a secure context; the server uses a persistent self-signed
 # cert — tap through the browser warning once). See web/README.md.
 # claude-container:port 8443:8443
+
+# Presubmit tooling (branch ci-presubmits): pip + pre-commit so the repo's
+# hooks (.pre-commit-config.yaml) run locally in the container.
+RUN apt-get update -qq && apt-get install -y -qq python3-pip python3-venv && \
+    python3 -m pip install --break-system-packages pre-commit
