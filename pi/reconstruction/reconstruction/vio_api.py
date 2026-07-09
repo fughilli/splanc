@@ -77,32 +77,98 @@ def frames_from_records(
 
 
 def keep_dominant_segment(
-    frames: List[FrameObservations], gap_split_s: float = 3.0
+    frames: List[FrameObservations],
+    gap_split_s: float = 3.0,
+    stub_gap_s: float = 1.0,
 ) -> Tuple[List[FrameObservations], int]:
-    """Split the observation timeline on gaps longer than ``gap_split_s`` and
-    keep the segment with the most observations.
+    """Keep the observation timeline's dominant, SUBSTANTIAL segments.
 
-    Rationale: across an observation gap the solver has only IMU dead
-    reckoning, whose drift grows quadratically — a multi-second gap makes the
-    segments effectively independent, and the forced stitch shows up as
-    trajectory discontinuities at the seam and a warped map (measured on the
-    2026-07-08 trace: a 17 s gap produced multi-cm path jumps). A short
-    stray prefix/suffix carries far less information than the damage it does.
+    Two-stage, both by observation MASS rather than duration alone:
+
+    1. Fine split at ``stub_gap_s``: segments carrying almost nothing
+       (< max(10, 2%) observations or < 5 frames) are STUBS — e.g. two stray
+       records at t=0 followed by a 2.6 s decode gap. A stub bridged only by
+       dead reckoning poisons the solve far beyond its information content
+       (the 2026-07-08 explosion: the gauge anchor — pose 0 — sat on a
+       2-record island and the first solve diverged to 469k px).
+    2. Coarse regroup at ``gap_split_s``: the surviving substantial segments
+       merge unless separated by a long dead-reckoning-only stretch, in
+       which case only the observation-richest group is kept (the earlier
+       17 s walk-away case).
 
     Returns (kept frames, dropped observation count).
     """
     if len(frames) < 2:
         return frames, 0
-    segments: List[List[FrameObservations]] = [[frames[0]]]
-    for prev, cur in zip(frames, frames[1:]):
-        if cur.t - prev.t > gap_split_s:
-            segments.append([])
-        segments[-1].append(cur)
-    if len(segments) == 1:
-        return frames, 0
-    best = max(segments, key=lambda seg: sum(len(f.obs) for f in seg))
-    dropped = sum(len(f.obs) for seg in segments if seg is not best for f in seg)
+    total_obs = sum(len(f.obs) for f in frames)
+
+    def split(seq: List[FrameObservations], gap: float) -> List[List[FrameObservations]]:
+        segs: List[List[FrameObservations]] = [[seq[0]]]
+        for prev, cur in zip(seq, seq[1:]):
+            if cur.t - prev.t > gap:
+                segs.append([])
+            segs[-1].append(cur)
+        return segs
+
+    fine = split(frames, stub_gap_s)
+    min_obs = max(10, int(0.02 * total_obs))
+    substantial = [
+        seg for seg in fine if sum(len(f.obs) for f in seg) >= min_obs and len(seg) >= 5
+    ]
+    if not substantial:
+        substantial = [max(fine, key=lambda seg: sum(len(f.obs) for f in seg))]
+
+    # Regroup the survivors: consecutive substantial segments belong together
+    # unless the dead-reckoning-only stretch between them exceeds the coarse
+    # threshold.
+    groups: List[List[FrameObservations]] = [list(substantial[0])]
+    for prev_seg, seg in zip(substantial, substantial[1:]):
+        if seg[0].t - prev_seg[-1].t > gap_split_s:
+            groups.append([])
+        groups[-1].extend(seg)
+    best = max(groups, key=lambda g: sum(len(f.obs) for f in g))
+    dropped = total_obs - sum(len(f.obs) for f in best)
     return best, dropped
+
+
+def solved_led_count(
+    frames: Sequence[FrameObservations], result: VioResult, ceiling_px: float = 8.0
+) -> int:
+    """How many LEDs a solution ACTUALLY solved: median reprojection of the
+    LED's observations against the solved state under ``ceiling_px``.
+
+    This is the sanity metric the rejection loop ranks candidate states by —
+    `len(result.led_positions)` merely counts ids present in the observation
+    set, which is CONSTANT across solve quality (a diverged 469k px solve
+    "had" all 32 LEDs and beat a healthy 15-LED state on that count).
+    """
+    from .camera import quat_to_rotmat
+
+    if result.intrinsics is not None:
+        fx, fy, cx, cy = result.intrinsics
+    errs_by_led: dict = {}
+    for fi, fr in enumerate(frames):
+        r = quat_to_rotmat(result.quats[fi])
+        p = result.positions[fi]
+        if result.intrinsics is None:
+            fx, fy, cx, cy = fr.k
+        for led, u, v in fr.obs:
+            x = result.led_positions.get(led)
+            if x is None:
+                continue
+            xc = r.T @ (x - p)
+            depth = -xc[2]
+            if depth <= 1e-6:
+                errs_by_led.setdefault(led, []).append(np.inf)
+                continue
+            uu = cx + fx * xc[0] / depth
+            vv = cy - fy * xc[1] / depth
+            errs_by_led.setdefault(led, []).append(float(np.hypot(uu - u, vv - v)))
+    return sum(
+        1
+        for errs in errs_by_led.values()
+        if len(errs) >= 2 and float(np.median(errs)) <= ceiling_px
+    )
 
 
 def reject_outlier_observations(
@@ -314,6 +380,29 @@ def reconstruct_vio(
         progress_cb=progress_cb,
     )
 
+    # Divergence gate: a first solve this far gone (an unhandled degenerate
+    # init) cannot seed rejection statistics or warm starts — retry once with
+    # stricter segmentation (drops marginal segments the default kept).
+    if result.rms_reproj_px > 100.0 and gap_split_s > 1.2:
+        strict, extra = keep_dominant_segment(frames, gap_split_s=1.2, stub_gap_s=0.8)
+        if extra > 0 and len(strict) >= 8:
+            _log.warning(
+                "vio: first solve diverged (%.0f px); retrying with stricter "
+                "segmentation (-%d observations)",
+                result.rms_reproj_px,
+                extra,
+            )
+            retry = solve_vio(
+                strict,
+                imu,
+                px_sigma=px_sigma,
+                max_nfev=max_nfev,
+                refine_intrinsics=refine_intrinsics,
+                progress_cb=progress_cb,
+            )
+            if retry.rms_reproj_px < result.rms_reproj_px:
+                frames, result = strict, retry
+
     # Outlier prune + re-solve: mislabeled dense-stream samples bias LED
     # estimates through the robust loss forever; one MAD-thresholded rejection
     # round against the first solution removes them (design doc §8.3 step 3,
@@ -325,10 +414,14 @@ def reconstruct_vio(
         # the best (most LEDs, then lowest rms) state seen: a round that
         # makes things WORSE (over-prune, degenerate re-solve) is rolled
         # back, so rejection can only improve on the plain solve.
-        def score(res):
-            return (len(res.led_positions), -res.rms_reproj_px)
+        def score(res, frs):
+            # QUALITY-solved LED count first (rms-gated per LED — ids merely
+            # present rank a diverged solve above a healthy partial one),
+            # then global rms.
+            return (solved_led_count(frs, res), -res.rms_reproj_px)
 
         best_result, best_frames = result, frames
+        best_score = score(result, frames)
         for _round in range(3):
             kept, outliers_dropped = reject_outlier_observations(
                 frames, result, outlier_sigma=outlier_sigma
@@ -353,13 +446,16 @@ def reconstruct_vio(
                 # micro-step; the prune loop only needs "settled".
                 ftol=1e-5 if first_resolve else 1e-4,
             )
-            if score(result) > score(best_result):
-                best_result, best_frames = result, frames
-        if score(best_result) > score(result):
+            cur_score = score(result, frames)
+            if cur_score > best_score:
+                best_result, best_frames, best_score = result, frames, cur_score
+        final_score = score(result, frames)
+        if best_score > final_score:
             _log.info(
-                "vio: rejection round regressed (%d leds @ %.1f px); keeping best (%d leds @ %.1f px)",
-                len(result.led_positions), result.rms_reproj_px,
-                len(best_result.led_positions), best_result.rms_reproj_px,
+                "vio: rejection rounds regressed (%d solved leds @ %.1f px); "
+                "keeping best (%d solved leds @ %.1f px)",
+                final_score[0], result.rms_reproj_px,
+                best_score[0], best_result.rms_reproj_px,
             )
             result, frames = best_result, best_frames
     leveled, rot = _gravity_leveled(result)

@@ -482,3 +482,52 @@ def test_outlier_rejection_unsticks_a_contaminated_led():
     assert biased_mm > 0.003, "contamination should visibly bias the estimate"
     assert clean_mm < 0.001, f"led 0 still off by {clean_mm*1000:.2f} mm after rejection"
     assert clean_rms < 1.0
+
+
+def test_leading_stub_is_dropped_regardless_of_gap_length():
+    # The 2026-07-08 explosion: TWO stray records at t=0, a 2.6 s decode gap
+    # (under the coarse 3 s split), then the real capture. The gauge anchor
+    # (pose 0) sat on the stub island and the solve diverged to 469k px.
+    # Segment filtering must weigh observation MASS, not just gap duration.
+    from reconstruction.vio_api import keep_dominant_segment, reconstruct_vio, solved_led_count
+
+    leds = wall_leds()
+    frames, _times = synth_frames(leds)
+    imu = synth_imu()
+
+    stub = [FrameObservations(t=-2.6, k=K, obs=frames[0].obs[:2])]
+    all_frames = stub + list(frames)
+    kept, dropped = keep_dominant_segment(all_frames)
+    assert dropped == 2 and kept[0].t == frames[0].t
+
+    imu_prefix = [ImuSample(t=s.t - 2.65, gyro=s.gyro, accel=s.accel) for s in imu if s.t < 2.7]
+    records = []
+    for fr in all_frames:
+        for j, u, v in fr.obs:
+            records.append(
+                {"ledId": int(j), "tCaptureMs": fr.t * 1000.0, "u": u, "v": v,
+                 "imgW": IMG_W, "imgH": IMG_H, "K": list(K), "pose": None, "confidence": 1.0}
+            )
+    imu_wire = [
+        {"t": s.t * 1000.0, "gyro": list(map(float, s.gyro)), "accel": list(map(float, s.accel))}
+        for s in sorted(imu_prefix + list(imu), key=lambda s: s.t)
+    ]
+    out = reconstruct_vio(records, imu_wire, led_count=len(leds), refine_intrinsics=False)
+    assert len(out.leds) == len(leds)
+    assert out.stats.rmsReprojPxGlobal < 1.5
+
+
+def test_solved_led_count_gates_on_quality():
+    from reconstruction.vio import solve_vio
+    from reconstruction.vio_api import solved_led_count
+
+    leds = wall_leds()
+    frames, _times = synth_frames(leds)
+    imu = synth_imu()
+    result = solve_vio(frames, imu)
+    assert solved_led_count(frames, result) == len(leds)
+
+    # Corrupt one LED's solved position: it must stop counting as solved,
+    # ids-present notwithstanding.
+    result.led_positions[0] = result.led_positions[0] + np.array([0.5, 0.0, 0.0])
+    assert solved_led_count(frames, result) == len(leds) - 1

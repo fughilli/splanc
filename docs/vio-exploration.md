@@ -373,3 +373,29 @@ truth on the other). Mitigations available today: calibrated fx + brisker
 walks (scale observability needs acceleration). Candidate fixes: per-axis
 bias random-walk model instead of per-session constants, and a
 known-pitch-wall scale calibration.
+
+## 12. The stub explosion (2026-07-08 capture, fixed 2026-07-09)
+
+A capture that "looked good until the end" exported a 1-LED map at 469k px.
+Fully reproduced offline; the causal chain and its three fixes:
+
+1. **Two stray records at t≈0.15 s + a 2.62 s decode gap** — under the 3 s
+   coarse split, so the (duration-based) segment filter kept the stub, and
+   the gauge anchor (pose 0) sat on a 2-observation island bridged only by
+   dead reckoning → the first solve diverged. FIX: segmentation now weighs
+   observation MASS — a fine split at 1 s drops segments carrying
+   < max(10, 2 %) observations or < 5 frames, then the coarse
+   dominant-group rule applies between substantial segments.
+2. **The best-state rollback preferred the explosion**: its score counted
+   ids-present (constant across solve quality), so (32 ids, 469k px) beat
+   the rejection rounds' honest (15 leds, 16 px). FIX: `solved_led_count`
+   — per-LED median reprojection under 8 px against the candidate state —
+   ranks first, then rms.
+3. **Defense in depth**: a first solve with rms > 100 px retries once with
+   stricter segmentation (1.2 s / 0.8 s) before any rejection statistics or
+   warm starts are built on it.
+
+The live preview was healthy throughout (60-keyframe decimation diluted the
+stub), which is why the failure only appeared at Stop. Post-fix, the same
+session solves 32/32 @ 3.11 px at default settings with the retry gate never
+firing; the two earlier real sessions are unchanged (1.57 px / 2.06 px).
