@@ -15,4 +15,4 @@ packages:
 #
 # Note: pnpm itself accepts a list here, but aspect_rules_js parses this as a
 # map of {package: bool}. We use the map form so both tools accept the file.
-allowBuilds: {}
+allowBuilds: { '@bufbuild/buf': set this to true or false }

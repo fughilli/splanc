@@ -1,0 +1,274 @@
+// LED Mapper wire protocol (design doc §7) — protocol-buffer contract.
+//
+// This is the WIRE format for all host <-> phone communication: binary
+// protobuf frames over the /ws WebSocket, wrapped in the ClientMessage /
+// ServerMessage envelopes (one oneof arm per §7 message type).
+//
+// JSON parity: field names and shapes are chosen so the proto3 JSON mapping
+// of every message matches the pre-protobuf JSON wire exactly (the server's
+// internal models and the web app's TypeScript types predate this file and
+// are generated from the JSON Schemas in ../schemas/). That parity is what
+// keeps the migration boundary thin — each end converts envelope <-> flat
+// JSON object at the socket and nothing else changes. Notes:
+//   - vectors are FLAT `repeated double` (JSON: [x, y, z]), matching the
+//     schema's fixed-arity arrays; `K` carries an explicit json_name;
+//   - enum-like fields (encoding, fec, units, frame, syncPattern) are
+//     STRINGS, because the JSON wire uses "gray-hue"-style values that
+//     proto enum JSON names cannot reproduce;
+//   - nullable-on-the-wire fields are `optional` (unset <-> null);
+//   - trajectories are `repeated Vec3` and need a tiny shape conversion at
+//     the boundary ([[x,y,z], ...] <-> [{v: [x,y,z]}, ...]) — the one spot
+//     proto3 JSON cannot express nested arrays.
+
+syntax = "proto3";
+
+package ledmapper.v1;
+
+// ---------------------------------------------------------------------------
+// Shared types
+// ---------------------------------------------------------------------------
+
+// 3-vector; used only where nesting forces a message type (trajectories).
+message Vec3 {
+  repeated double v = 1;
+}
+
+// Camera pose: position [x,y,z] (meters) + quaternion [x,y,z,w],
+// camera-to-world (§7.4).
+message Pose {
+  repeated double p = 1;
+  repeated double q = 2;
+}
+
+// Code-book parameters describing the temporal blink pattern (§7.6).
+message CodeParams {
+  int32 led_count = 1;
+  // Transmitted bit frames per cycle: data bits + FEC parity frames.
+  int32 bits = 2;
+  // "gray" | "gray-hue".
+  string encoding = 3;
+  double bit_period_ms = 4;
+  // "on_off".
+  string sync_pattern = 5;
+  // 2 (sync delimiter) + bits.
+  int32 cycle_frames = 6;
+  // "none" | "secded".
+  string fec = 7;
+}
+
+// One labeled observation of one LED in one frame (§7.4).
+message DetectionRecord {
+  int32 led_id = 1;
+  double t_capture_ms = 2;
+  double u = 3;
+  double v = 4;
+  int32 img_w = 5;
+  int32 img_h = 6;
+  // fx, fy, cx, cy.
+  repeated double k = 7 [json_name = "K"];
+  // Unset on the WebXR-free capture path (poses solved server-side).
+  optional Pose pose = 8;
+  double confidence = 9;
+}
+
+// One inertial sample, camera frame (§7.1 imu_batch).
+message ImuSample {
+  double t = 1;
+  repeated double gyro = 2;
+  repeated double accel = 3;
+}
+
+// Camera/exposure telemetry (§7.1 exposure_report).
+message ExposureStats {
+  double t_capture_ms = 1;
+  double frame_interval_ms = 2;
+  double mean_luma = 3;
+  double p95_luma = 4;
+  double clip_frac = 5;
+  int32 blob_count = 6;
+  double detector_threshold = 7;
+  optional double iso = 8;
+  optional double exposure_time_ms = 9;
+  optional double ambient_intensity = 10;
+}
+
+// Per-LED entry of a reconstructed map (§7.5).
+message LedEntry {
+  int32 id = 1;
+  repeated double xyz = 2;
+  double confidence = 3;
+  int32 n_views = 4;
+  double rms_reproj_px = 5;
+  double parallax_deg = 6;
+}
+
+message OutputMapStats {
+  double rms_reproj_px_global = 1;
+  double median_parallax_deg = 2;
+}
+
+// A reconstructed LED map (§7.5).
+message OutputMap {
+  string map_id = 1;
+  string created_at = 2;
+  // "meters".
+  string units = 3;
+  // "webxr_session_ref" | "gravity_leveled".
+  string frame = 4;
+  int32 led_count = 5;
+  repeated LedEntry leds = 6;
+  repeated int32 unmapped = 7;
+  // Solved camera path (visual-inertial solves), same frame as leds.
+  repeated Vec3 trajectory = 8;
+  OutputMapStats stats = 9;
+}
+
+// Interim LED position during a running solve (lightweight preview).
+message SolveLed {
+  int32 id = 1;
+  repeated double xyz = 2;
+}
+
+// ---------------------------------------------------------------------------
+// Client -> server messages (§7.1)
+// ---------------------------------------------------------------------------
+
+message Hello {
+  string client = 1;
+  string app_version = 2;
+}
+
+message TimeSyncPing {
+  double t0 = 1;
+}
+
+message StartMappingOptions {
+  int32 led_count = 1;
+  optional string encoding = 2;
+  optional double bit_period_ms = 3;
+}
+
+message StartMapping {
+  StartMappingOptions options = 1;
+}
+
+message ConfigureOptions {
+  optional int32 led_count = 1;
+  optional string encoding = 2;
+  optional double bit_period_ms = 3;
+}
+
+// Mid-capture renegotiation; reply is PatternState with the new epoch.
+message Configure {
+  ConfigureOptions options = 1;
+}
+
+message StopMapping {}
+
+message Detections {
+  repeated DetectionRecord batch = 1;
+}
+
+message ImuBatch {
+  repeated ImuSample samples = 1;
+}
+
+message ExposureReport {
+  ExposureStats report = 1;
+}
+
+message GetStatus {}
+
+message GetPattern {}
+
+message GetLiveMap {}
+
+message GetSolveStatus {}
+
+message ClientMessage {
+  // Arm names equal the pre-protobuf "type" discriminator values.
+  oneof msg {
+    Hello hello = 1;
+    TimeSyncPing time_sync_ping = 2;
+    StartMapping start_mapping = 3;
+    Configure configure = 4;
+    StopMapping stop_mapping = 5;
+    Detections detections = 6;
+    ImuBatch imu_batch = 7;
+    ExposureReport exposure_report = 8;
+    GetStatus get_status = 9;
+    GetPattern get_pattern = 10;
+    GetLiveMap get_live_map = 11;
+    GetSolveStatus get_solve_status = 12;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Server -> client messages (§7.2)
+// ---------------------------------------------------------------------------
+
+message Welcome {
+  string session_id = 1;
+  CodeParams code_params = 2;
+}
+
+message TimeSyncPong {
+  double t0 = 1;
+  double t1 = 2;
+  double t2 = 3;
+}
+
+message MappingStarted {
+  double pattern_clock_epoch = 1;
+  CodeParams code_params = 2;
+}
+
+message Status {
+  int32 identified = 1;
+  int32 total = 2;
+  int32 low_parallax = 3;
+}
+
+message PatternState {
+  bool active = 1;
+  // Unset when no capture is active (JSON null).
+  optional double pattern_clock_epoch = 2;
+  CodeParams code_params = 3;
+}
+
+message LiveMap {
+  bool active = 1;
+  // Unset before the first interim solve (JSON null).
+  optional OutputMap map = 2;
+}
+
+message SolveStatus {
+  bool running = 1;
+  optional double progress = 2;
+  optional double rms_px = 3;
+  repeated SolveLed leds = 4;
+  repeated Vec3 trajectory = 5;
+}
+
+message ResultReady {
+  string map_id = 1;
+}
+
+message Error {
+  string code = 1;
+  string message = 2;
+}
+
+message ServerMessage {
+  oneof msg {
+    Welcome welcome = 1;
+    TimeSyncPong time_sync_pong = 2;
+    MappingStarted mapping_started = 3;
+    Status status = 4;
+    PatternState pattern_state = 5;
+    LiveMap live_map = 6;
+    SolveStatus solve_status = 7;
+    ResultReady result_ready = 8;
+    Error error = 9;
+  }
+}

@@ -56,7 +56,7 @@ class DetectionRecord(_StrictModel):
     K: Intrinsics
     # None on the WebXR-free capture path: poses are then solved jointly
     # from the session's imu_batch samples (docs/vio-exploration.md).
-    pose: Union[Pose, None]
+    pose: Union[Pose, None] = None
     confidence: float = Field(ge=0.0, le=1.0)
 
 
@@ -280,7 +280,7 @@ class PatternStateMessage(_StrictModel):
 
     type: Literal["pattern_state"]
     active: bool
-    patternClockEpoch: Union[float, None]
+    patternClockEpoch: Union[float, None] = None
     codeParams: CodeParams
 
 
@@ -289,7 +289,7 @@ class LiveMapMessage(_StrictModel):
 
     type: Literal["live_map"]
     active: bool
-    map: Union[OutputMap, None]
+    map: Union[OutputMap, None] = None
 
 
 class SolveLed(_StrictModel):

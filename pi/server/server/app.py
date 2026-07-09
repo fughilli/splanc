@@ -20,7 +20,9 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from ledmapper_protocol import ErrorMessage
 
+from . import proto_wire
 from .clock import now_ms
 from .codebook import DEFAULT_BIT_PERIOD_MS
 from .debug import led_report, session_overview
@@ -179,19 +181,46 @@ def create_app(
         send_lock = asyncio.Lock()
         pending: set = set()
 
-        async def dispatch(raw: str, recv_ms: float) -> None:
-            responses = await handler.handle(raw, recv_ms=recv_ms)
+        async def dispatch(frame: bytes, recv_ms: float) -> None:
+            # Binary protobuf on the wire (proto-comms); the handler still
+            # speaks the flat-JSON §7 shape — proto_wire is the boundary.
+            try:
+                flat = proto_wire.decode_client(frame)
+            except Exception:
+                responses = [
+                    ErrorMessage(type="error", code="bad_message", message="undecodable frame")
+                ]
+            else:
+                responses = await handler.handle(json.dumps(flat), recv_ms=recv_ms)
             try:
                 async with send_lock:
                     for response in responses:
-                        await websocket.send_text(response.model_dump_json())
+                        await websocket.send_bytes(
+                            proto_wire.encode_server(json.loads(response.model_dump_json()))
+                        )
             except Exception:
                 pass  # client went away; the work itself is already done
 
         try:
             while True:
-                raw = await websocket.receive_text()
-                task = asyncio.create_task(dispatch(raw, now_ms()))
+                message = await websocket.receive()
+                if message["type"] == "websocket.disconnect":
+                    return
+                frame = message.get("bytes")
+                if frame is None:
+                    # Text frames are the pre-protobuf wire — reject loudly.
+                    async with send_lock:
+                        await websocket.send_bytes(
+                            proto_wire.encode_server(
+                                {
+                                    "type": "error",
+                                    "code": "bad_message",
+                                    "message": "expected binary protobuf frame",
+                                }
+                            )
+                        )
+                    continue
+                task = asyncio.create_task(dispatch(frame, now_ms()))
                 pending.add(task)
                 task.add_done_callback(pending.discard)
         except WebSocketDisconnect:

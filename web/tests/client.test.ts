@@ -6,12 +6,14 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { DetectionRecord } from "@ledmapper/protocol";
+import type { DetectionRecord, ServerMessage } from "@ledmapper/protocol";
 import { LedMapperClient, type SocketLike } from "../src/net/client";
+import { decodeClient, encodeServer } from "../src/net/proto";
 
 class FakeSocket implements SocketLike {
   readyState = 0; // CONNECTING
-  sent: string[] = [];
+  binaryType?: string;
+  sent: Uint8Array[] = [];
   onopen: ((ev?: unknown) => void) | null = null;
   onclose: ((ev?: unknown) => void) | null = null;
   onerror: ((ev?: unknown) => void) | null = null;
@@ -22,12 +24,15 @@ class FakeSocket implements SocketLike {
     this.onopen?.();
   }
 
+  /** Deliver a server message: encoded through the SAME wire boundary the
+   * real server uses (binary protobuf frames). */
   receive(msg: unknown): void {
-    this.onmessage?.({ data: JSON.stringify(msg) });
+    this.onmessage?.({ data: encodeServer(msg as ServerMessage) });
   }
 
-  send(data: string): void {
+  send(data: string | Uint8Array): void {
     if (this.readyState !== 1) throw new Error("not open");
+    if (!(data instanceof Uint8Array)) throw new Error("expected binary frame");
     this.sent.push(data);
   }
 
@@ -37,11 +42,15 @@ class FakeSocket implements SocketLike {
   }
 
   lastSent(): { type: string } & Record<string, unknown> {
-    return JSON.parse(this.sent[this.sent.length - 1]!);
+    return decodeClient(this.sent[this.sent.length - 1]!) as unknown as {
+      type: string;
+    } & Record<string, unknown>;
   }
 
   allSent(): Array<{ type: string } & Record<string, unknown>> {
-    return this.sent.map((s) => JSON.parse(s));
+    return this.sent.map(
+      (s) => decodeClient(s) as unknown as { type: string } & Record<string, unknown>,
+    );
   }
 }
 
@@ -256,7 +265,9 @@ test("exposure reports are fire-and-forget and dropped while disconnected", asyn
   };
   client.sendExposureReport(report);
   assert.equal(s.lastSent().type, "exposure_report");
-  assert.deepEqual(s.lastSent()["report"], report);
+  // Nulls are proto-unset on the wire: decoded reports omit them.
+  const { iso: _i, exposureTimeMs: _e, ambientIntensity: _a, ...present } = report;
+  assert.deepEqual(s.lastSent()["report"], present);
 
   // Disconnected: reports are stale snapshots, not evidence — no queueing.
   const sentBefore = s.sent.length;

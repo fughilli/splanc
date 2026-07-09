@@ -173,7 +173,9 @@ Never committed; rotatable via `bazel run //pi/provisioning:keys -- rotate`.
 ## Web stack — M5/M6/M7/M8 + virtual LED wall (pinned 2026-07-02)
 
 - **npm pins:** `vite 8.0.16`, `typescript 5.9.3` (already the workspace pins),
-  `@types/webxr 0.5.24`, `@types/node 24.10.9`. **No runtime dependencies** —
+  `@types/webxr 0.5.24`, `@types/node 24.10.9`. **No runtime dependencies**
+  (superseded 2026-07-09: the protobuf wire migration below adds
+  `@bufbuild/protobuf`) —
   the app is hand-rolled DOM + WebGL2; three.js was dropped because we render
   no 3D AR content (the CV pass and feedback markers are raw GL, the result
   preview is a 2D-canvas scatter), and every KB matters on a phone loading
@@ -323,3 +325,36 @@ codeParams}`. Exists so _pattern followers_ — the virtual LED wall — can
   decoder all follow `codeParams`. Decoder stats gained `correctedCycles` +
   `rejectedFec`. Exhaustive tests both languages (every 1-flip corrected,
   every 2-flip rejected, k ≤ 11) + synthetic pipeline corruption tests.
+
+## Protobuf wire migration (proto-comms branch, 2026-07-09)
+
+- **The WebSocket now carries binary `ledmapper.v1` protobuf frames** both
+  directions (`shared/protocol/proto/ledmapper.proto` — envelopes with one
+  oneof arm per §7 message type). Text frames are rejected with a
+  `bad_message` error frame.
+- **The migration boundary is deliberately thin**: the proto was designed
+  for JSON parity (flat repeated doubles for vectors, strings for
+  enum-likes, `optional` = null, oneof arm name = the old "type" value), so
+  each end converts envelope <-> flat §7 object at the socket
+  (`pi/server/server/proto_wire.py`, `web/src/net/proto.ts`) and ALL
+  internal code — pydantic models, handlers, TS types, tests — is
+  unchanged. Collapsing the internal JSON-schema layer onto the proto is a
+  possible follow-up, not part of this migration.
+- **Null/absence semantics**: JSON null == proto unset; decoded dicts OMIT
+  unset optionals (pydantic models default them to None); nullable repeated
+  fields decode as [] (all consumers treat null/[] alike). One shape seam:
+  trajectories ([[x,y,z], ...] <-> repeated Vec3) converted at the boundary
+  — proto3 JSON cannot express nested arrays.
+- **Toolchain**: hermetic prebuilt protoc (toolchains_protoc v29.3) via a
+  platform-select()ed alias (//tools/toolchains:protoc) — no from-source
+  protobuf compile, no proto toolchain resolution machinery. Python
+  bindings generated AT BUILD TIME (nothing checked in; pip `protobuf`
+  runtime); TypeScript bindings CHECKED IN (web/src/gen/, protobuf-es —
+  regenerate with shared/protocol/proto/gen_ts.sh) because vite/tsc want
+  them on disk. First runtime npm dependency of the web app
+  (@bufbuild/protobuf).
+- **Cross-language pinning**: //pi/server:gen_proto_golden emits
+  web/tests/golden_proto_frames.json (binary frames + decoded flats for
+  every §7 example); the TS proto test must decode byte-identical frames to
+  the same objects. Plus full py roundtrip tests (test_proto_wire.py) and
+  the real-server integration test on the binary wire.

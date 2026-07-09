@@ -24,7 +24,16 @@ stack M5–M8 (+ virtual LED wall), and the WebXR-free visual-inertial capture
 path are landed and green. M4 is Nix-verified** (config evaluates + image
 derivation builds; final image not realized in-sandbox and not booted on
 hardware). `bazelisk build //...` and `bazelisk test //...` both pass
-(**26 test targets**). The Nix blocker that stopped the previous session is **cleared** —
+(**27 test targets**).
+
+Cleanup branches in flight (stacked for sequential review):
+`ci-presubmits` (GitHub Actions + pre-commit suite — see
+`.github/workflows/test.yaml`, `.pre-commit-config.yaml`) →
+`proto-comms` (host↔phone WebSocket now carries **binary protobuf**
+frames — `shared/protocol/proto/ledmapper.proto`, boundary converters
+`pi/server/server/proto_wire.py` / `web/src/net/proto.ts`, cross-language
+golden-frame test) → next: Rust/WASM solver + init-time placement
+benchmark. The Nix blocker that stopped the previous session is **cleared** —
 the container was rebuilt with the Nix overlay, so `nix` works and the host is
 natively `aarch64-linux` (Pi images build without cross-emulation).
 
@@ -379,7 +388,8 @@ phase-5 side-by-side gate.
 ### Done (earlier — 2026-07-02)
 
 - **Web stack M5–M8 is built and green** (`web/`, Vite + TS, no runtime npm
-  deps): M5 `WebXRCaptureSource` (immersive-ar + camera-access + dom-overlay,
+  deps — true until the proto-comms branch added `@bufbuild/protobuf`):
+  M5 `WebXRCaptureSource` (immersive-ar + camera-access + dom-overlay,
   intrinsics from the projection matrix, unit-tested), M6 detect/track/decode
   (GPU threshold pass → CPU connected components → coasting NN tracker →
   self-clocking Gray decoder with sync-delimiter ms-alignment), M7 WebSocket

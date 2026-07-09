@@ -27,6 +27,7 @@ npm_link_all_packages(name = "node_modules")
 SRCS = glob(["src/**/*.ts"])
 
 TYPE_DEPS = [
+    ":node_modules/@bufbuild/protobuf",
     ":node_modules/@ledmapper/protocol",
     ":node_modules/@types/node",
     ":node_modules/@types/webxr",
@@ -126,6 +127,7 @@ vite_bin.vite(
         "package.json",
         "vite.config.ts",
         "wall.html",
+        ":node_modules/@bufbuild/protobuf",
         ":node_modules/@ledmapper/protocol",
         ":node_modules/vite",
     ],

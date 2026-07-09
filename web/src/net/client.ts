@@ -34,11 +34,13 @@ import type {
   WelcomeMessage,
 } from "@ledmapper/protocol";
 import { bestSample, ServerClock, syncSample, type SyncSample } from "./clocksync";
+import { decodeServer, encodeClient } from "./proto";
 
 /** The subset of the WebSocket API the client uses (fakeable in tests). */
 export interface SocketLike {
   readonly readyState: number;
-  send(data: string): void;
+  binaryType?: string;
+  send(data: string | Uint8Array): void;
   close(): void;
   onopen: ((ev?: unknown) => void) | null;
   onclose: ((ev?: unknown) => void) | null;
@@ -123,6 +125,7 @@ export class LedMapperClient {
     return new Promise((resolve, reject) => {
       let settled = false;
       const sock = this.factory(this.url);
+      sock.binaryType = "arraybuffer"; // binary protobuf frames (proto-comms)
       this.sock = sock;
       sock.onopen = () => {
         this.send({ type: "hello", client: this.clientName, appVersion: this.appVersion });
@@ -283,9 +286,11 @@ export class LedMapperClient {
   // -- internals ----------------------------------------------------------
 
   private parse(data: unknown): ServerMessage | null {
-    if (typeof data !== "string") return null;
+    // Binary protobuf frames (proto-comms). Anything else is not our wire.
     try {
-      return JSON.parse(data) as ServerMessage;
+      if (data instanceof ArrayBuffer) return decodeServer(new Uint8Array(data));
+      if (data instanceof Uint8Array) return decodeServer(data);
+      return null;
     } catch {
       return null;
     }
@@ -294,7 +299,7 @@ export class LedMapperClient {
   private send(msg: ClientMessage): boolean {
     if (this.sock === null || this.sock.readyState !== SOCKET_OPEN) return false;
     try {
-      this.sock.send(JSON.stringify(msg));
+      this.sock.send(encodeClient(msg));
       return true;
     } catch {
       return false;

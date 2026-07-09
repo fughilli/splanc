@@ -20,9 +20,17 @@ py_library(
     deps = [
         "//pi/reconstruction",
         "//shared/protocol",
+        "//shared/protocol/proto:ledmapper_py_proto",
         requirement("fastapi"),
         requirement("uvicorn"),
     ],
+)
+
+py_binary(
+    name = "gen_proto_golden",
+    srcs = ["gen_proto_golden.py"],
+    imports = ["."],
+    deps = [":server"],
 )
 
 py_binary(
@@ -42,6 +50,7 @@ py_test(
         "tests/test_codebook.py",
         "tests/test_debug.py",
         "tests/test_handler.py",
+        "tests/test_proto_wire.py",
         "tests/test_session.py",
     ],
     imports = ["."],

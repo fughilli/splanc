@@ -28,6 +28,25 @@ bazel_dep(name = "rules_pkg", version = "1.2.0")
 # rules_shell load; the dep makes that rewrite real.
 bazel_dep(name = "rules_shell", version = "0.4.0")
 
+# Wire protocol (proto-comms): prebuilt protoc toolchain — Python bindings
+# are generated at build time (no from-source protobuf compile, no checked-in
+# _pb2.py); the runtime comes from pip (`protobuf`).
+bazel_dep(name = "toolchains_protoc", version = "0.6.1")
+bazel_dep(name = "rules_proto", version = "7.1.0")
+
+protoc = use_extension("@toolchains_protoc//protoc:extensions.bzl", "protoc")
+protoc.toolchain(
+    google_protobuf = "com_google_protobuf",
+    version = "v29.3",
+)
+use_repo(
+    protoc,
+    protoc_linux_aarch64 = "toolchains_protoc_hub.linux_aarch_64",
+    protoc_linux_x86_64 = "toolchains_protoc_hub.linux_x86_64",
+    protoc_osx_aarch64 = "toolchains_protoc_hub.osx_aarch_64",
+    protoc_osx_x86_64 = "toolchains_protoc_hub.osx_x86_64",
+)
+
 # ---------------------------------------------------------------------------
 # Nix integration (M4 — pi/provisioning).
 #

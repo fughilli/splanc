@@ -16,7 +16,9 @@ src/code/   Gray-code frame plan + pattern-clock timing (§8.1/§8.2) — the TS
 src/geom/   pinhole camera math — mirror of reconstruction/camera.py (M3),
             golden-tested against it; used by tests + result preview
 src/net/    M7: WebSocket client, SNTP clock sync (§7.3), detection batching
-            with reconnect-safe buffering
+            with reconnect-safe buffering; proto.ts is the binary-protobuf
+            wire boundary (frames <-> flat §7 objects; regen TS bindings in
+            src/gen/ with shared/protocol/proto/gen_ts.sh)
 src/xr/     M5: CaptureSource seam, WebXRCaptureSource (camera-access),
             projectionMatrixToIntrinsics, raw-camera-access type shims
 src/cv/     M6: GPU threshold pass (detect.ts) → CPU connected components

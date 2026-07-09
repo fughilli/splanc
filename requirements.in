@@ -26,3 +26,7 @@ websockets
 
 # Test runner.
 pytest
+
+# Wire protocol (proto-comms branch): protobuf runtime for the generated
+# ledmapper.v1 bindings.
+protobuf==6.33.5
