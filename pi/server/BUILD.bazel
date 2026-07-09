@@ -38,8 +38,9 @@ py_binary(
     name = "serve",
     srcs = ["server/__main__.py"],
     # The native (Rust) solver rides in runfiles: pose-less final + interim
-    # solves run it as a subprocess (server/native_solver.py).
-    data = ["//solver:solver_cli"],
+    # solves run it as a subprocess (server/native_solver.py). The _opt
+    # wrapper transitions it to -c opt whatever mode this server builds in.
+    data = ["//solver:solver_cli_opt"],
     imports = ["."],
     main = "server/__main__.py",
     deps = [":server"],

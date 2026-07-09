@@ -1,0 +1,1 @@
+# Starlark transitions (see opt.bzl) — no build targets, just loadable .bzl.

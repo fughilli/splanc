@@ -127,9 +127,7 @@ def test_rust_solver_matches_python_reference():
     # Each matches ground truth to the standard acceptance thresholds.
     for name, out in (("rust", rust_map), ("python", py_map)):
         ids = sorted(led["id"] for led in out["leds"])
-        est = np.array(
-            [next(led["xyz"] for led in out["leds"] if led["id"] == i) for i in ids]
-        )
+        est = np.array([next(led["xyz"] for led in out["leds"] if led["id"] == i) for i in ids])
         rms, scale_err = _aligned_rms(est, leds[ids])
         print(f"{name}: vs truth rms {rms * 1000:.2f} mm, scale err {scale_err * 100:.2f}%")
         assert rms < 0.005, f"{name} map rms {rms * 1000:.2f} mm"

@@ -30,7 +30,13 @@ from typing import Callable, Optional
 
 _log = logging.getLogger(__name__)
 
-_RUNFILES_PATH = "_main/solver/solver_cli"
+# The production deployment carries the opt-transitioned wrapper
+# (//solver:solver_cli_opt — always -c opt, ~10x faster than fastbuild);
+# the raw target remains as a fallback for tests that data-dep it directly.
+_RUNFILES_PATHS = (
+    "_main/solver/solver_cli_opt",
+    "_main/solver/solver_cli",
+)
 
 
 def solver_path() -> Optional[str]:
@@ -42,9 +48,10 @@ def solver_path() -> Optional[str]:
         from python.runfiles import runfiles
 
         r = runfiles.Create()
-        path = r.Rlocation(_RUNFILES_PATH)
-        if path and Path(path).exists():
-            return path
+        for rpath in _RUNFILES_PATHS:
+            path = r.Rlocation(rpath)
+            if path and Path(path).exists():
+                return path
     except Exception:
         pass
     return None

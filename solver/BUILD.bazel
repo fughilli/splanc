@@ -9,6 +9,7 @@
 load("@aspect_bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_shared_library", "rust_test")
 load("@rules_rust_wasm_bindgen//:defs.bzl", "rust_wasm_bindgen")
+load("//tools/transitions:opt.bzl", "opt_binary", "opt_files")
 
 SRCS = glob(["src/**/*.rs"])
 
@@ -63,6 +64,22 @@ rust_wasm_bindgen(
     wasm_file = ":solver_wasm",
 )
 
+# DEPLOYMENT targets are pinned to -c opt via transition (an unoptimized
+# solve is ~10x slower, and the dev loop runs fastbuild): the native
+# subprocess binary the server carries in runfiles, and the wasm the phone
+# downloads. Both sides transition identically, so the placement benchmark
+# always compares opt against opt.
+opt_binary(
+    name = "solver_cli_opt",
+    binary = ":solver_cli",
+    visibility = ["//visibility:public"],
+)
+
+opt_files(
+    name = "solver_wasm_pkg_opt",
+    srcs = [":solver_wasm_pkg"],
+)
+
 # The complete phone-side solver deployment: wasm + JS glue + the worker
 # that hosts them off the main thread. Served by the Pi server at /solver/
 # (app.py --solver-dir, via runfiles — see web/serve.sh).
@@ -70,7 +87,7 @@ copy_to_directory(
     name = "solver_web",
     srcs = [
         "worker.js",
-        ":solver_wasm_pkg",
+        ":solver_wasm_pkg_opt",
     ],
     replace_prefixes = {"solver_wasm_pkg": ""},
     visibility = ["//visibility:public"],

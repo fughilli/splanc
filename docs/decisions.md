@@ -395,8 +395,14 @@ codeParams}`. Exists so _pattern followers_ — the virtual LED wall — can
   import.meta in the CJS test build). rules_rust 0.71.3 +
   rules_rust_wasm_bindgen (wasm-bindgen crate pinned `=0.2.121` to the
   bundled CLI version — the bindgen ABI schema must match).
-- **fastbuild vs opt**: `bazelisk run //web:serve` serves fastbuild
-  (unoptimized) solvers — fine for dev; production wants `-c opt`
-  (~an order of magnitude faster, and placement scores that reflect it).
-  Both sides are always built in the SAME mode, so the placement decision
-  stays fair either way.
+- **Deployments pinned to `-c opt` by transition**
+  (`tools/transitions/opt.bzl`): an unoptimized solve is ~10× slower and
+  nobody runs the dev loop with `-c opt`, so the deployed artifacts —
+  `//solver:solver_cli_opt` (the binary in the server's runfiles) and the
+  wasm inside `//solver:solver_web` — transition themselves to opt
+  regardless of the invocation's compilation mode (measured: benchmark
+  183 ms vs ~2 s fastbuild; wasm 360 KB vs 1.1 MB). Both sides transition
+  identically, so the placement decision always compares opt against opt.
+  Unit tests keep the invocation's mode for fast iteration;
+  `native_solver.py` falls back from the `_opt` runfiles path to the raw
+  one for tests that data-dep `:solver_cli` directly.

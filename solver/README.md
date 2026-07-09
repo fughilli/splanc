@@ -6,10 +6,11 @@ crate into two deployments:
 
 | Target             | What it is                                                                       |
 | ------------------ | -------------------------------------------------------------------------------- |
-| `:solver`          | the library (so3/IMU-preintegration/LSMR/LM/pipeline, unit-tested)                |
-| `:solver_cli`      | host binary — the Pi server runs it as a subprocess (`server/native_solver.py`)   |
-| `:solver_wasm_pkg` | wasm32 + wasm-bindgen JS glue for the phone                                       |
-| `:solver_web`      | the phone-side deployment dir: wasm pkg + `worker.js`, served at `/solver/`       |
+| `:solver`          | the library (so3/IMU-preintegration/LSMR/LM/pipeline, unit-tested)               |
+| `:solver_cli`      | host binary — the Pi server runs it as a subprocess (`server/native_solver.py`)  |
+| `:solver_cli_opt`  | the same binary pinned to `-c opt` by transition — what the server actually runs |
+| `:solver_wasm_pkg` | wasm32 + wasm-bindgen JS glue for the phone                                      |
+| `:solver_web`      | phone-side deployment dir: `-c opt` wasm pkg + `worker.js`, served at `/solver/` |
 
 ## Interface
 
@@ -61,6 +62,9 @@ bazelisk run  //solver:solver_cli -- --benchmark
 bazelisk build //solver:solver_web                    # phone bundle
 ```
 
-Production builds want `-c opt` (an order of magnitude faster solves — and
-benchmark scores that reflect it); `bazelisk run -c opt //web:serve`.
-Format with `bazelisk run @rules_rust//:rustfmt`.
+The DEPLOYMENT targets (`:solver_cli_opt`, `:solver_web`) are pinned to
+`-c opt` via a configuration transition (`tools/transitions/opt.bzl`) — an
+unoptimized solve is ~10× slower, and the dev loop runs fastbuild. Unit
+tests keep the invocation's mode for fast iteration; both deployed sides
+transition identically, so the placement benchmark always compares opt
+against opt. Format with `bazelisk run @rules_rust//:rustfmt`.
