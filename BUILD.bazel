@@ -11,9 +11,15 @@ To regenerate the lockfile after editing requirements.in:
 """
 
 load("@aspect_rules_ts//ts:defs.bzl", "ts_config")
+load("@npm//:defs.bzl", "npm_link_all_packages")
 load("@rules_python//python:pip.bzl", "compile_pip_requirements")
 
 package(default_visibility = ["//visibility:public"])
+
+# Links the root package.json's npm deps into //:node_modules. Required by
+# aspect_rules_js for the pnpm-workspace root: package-level bin macros (e.g.
+# the vite binary //web uses) resolve their store targets through here.
+npm_link_all_packages(name = "node_modules")
 
 # The shared TypeScript base config, exposed as a ts_config so that package-level
 # ts_config targets can `extends` it via deps. (ts_config copies its deps to the

@@ -40,7 +40,10 @@ export interface DetectionRecord {
   imgW: number;
   imgH: number;
   K: Intrinsics;
-  pose: Pose;
+  /** Camera pose, or null on the WebXR-free capture path (the
+   * visual-inertial reconstructor solves poses jointly; the session
+   * must then carry imu_batch samples). */
+  pose: Pose | null;
   /** Decoder confidence in [0, 1]. */
   confidence: number;
 }
@@ -49,12 +52,13 @@ export interface DetectionRecord {
 // CodeParams (§7.6)
 // ---------------------------------------------------------------------------
 
-export type Encoding = "gray";
+export type Encoding = "gray" | "gray-hue";
 export type SyncPattern = "on_off";
+export type Fec = "none" | "secded";
 
 export interface CodeParams {
   ledCount: number;
-  /** ceil(log2(ledCount)) */
+  /** Coded bit frames per cycle: ceil(log2(ledCount+1)) data bits + FEC parity frames. */
   bits: number;
   encoding: Encoding;
   /** Hold time per bit frame, in milliseconds. */
@@ -62,6 +66,9 @@ export interface CodeParams {
   syncPattern: SyncPattern;
   /** 2 (sync delimiter) + bits */
   cycleFrames: number;
+  /** FEC around the Gray data word ('secded' = extended Hamming, d=4:
+   * correct 1 misread bit frame, detect-and-reject 2). Absent = 'none'. */
+  fec?: Fec | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -87,10 +94,13 @@ export interface OutputMap {
   /** ISO-8601 timestamp. */
   createdAt: string;
   units: "meters";
-  frame: "webxr_session_ref";
+  frame: "webxr_session_ref" | "gravity_leveled";
   ledCount: number;
   leds: LedEntry[];
   unmapped: number[];
+  /** Solved camera path (decimated, chronological) — present for
+   * visual-inertial solves; same frame as leds. */
+  trajectory?: Vec3[] | undefined;
   stats: OutputMapStats;
 }
 
@@ -110,13 +120,33 @@ export interface TimeSyncPingMessage {
   t0: number;
 }
 
+/** The client is the configuration authority: it measured the scene, so it
+ * chooses the code carrier and signaling rate; omitted fields fall back to
+ * server defaults. */
 export interface StartMappingOptions {
   ledCount: number;
+  /** Code carrier, chosen from measured light: dark -> 'gray', lit -> 'gray-hue'. */
+  encoding?: Encoding;
+  /** Signaling rate: each bit window should span >= ~3 camera frame intervals. */
+  bitPeriodMs?: number;
 }
 
 export interface StartMappingMessage {
   type: "start_mapping";
   options: StartMappingOptions;
+}
+
+/** Mid-capture renegotiation: overlay these on the active capture's params,
+ * restamp the pattern epoch, keep collected detections. Reply: pattern_state. */
+export interface ConfigureOptions {
+  ledCount?: number;
+  encoding?: Encoding;
+  bitPeriodMs?: number;
+}
+
+export interface ConfigureMessage {
+  type: "configure";
+  options: ConfigureOptions;
 }
 
 export interface StopMappingMessage {
@@ -128,17 +158,87 @@ export interface DetectionsMessage {
   batch: DetectionRecord[];
 }
 
+/** One inertial sample, CAMERA frame (+X right, +Y up, -Z look) — the
+ * client applies its device-specific DeviceMotion axis mapping. */
+export interface ImuSample {
+  /** Phone monotonic clock, ms — same domain as tCaptureMs. */
+  t: number;
+  /** Angular rate [x, y, z], rad/s. */
+  gyro: Vec3;
+  /** Specific force (a − g) [x, y, z], m/s². */
+  accel: Vec3;
+}
+
+/** IMU batch for the WebXR-free capture path: dead reckoning between
+ * frames + metric scale + gravity for the joint pose+LED solve. */
+export interface ImuBatchMessage {
+  type: "imu_batch";
+  samples: ImuSample[];
+}
+
+/** Camera/exposure telemetry (§7.1 exposure_report). The web client cannot
+ * read the real 3A/ISP state (WebXR exposes only the camera texture), so these
+ * are software estimates; iso/exposureTimeMs are reserved for clients that can. */
+export interface ExposureStats {
+  /** Phone monotonic clock at the end of the measurement window, ms. */
+  tCaptureMs: number;
+  /** Median camera frame interval, ms — the shutter-speed proxy. */
+  frameIntervalMs: number;
+  /** Mean scene luminance [0,1], unthresholded downsampled frame. */
+  meanLuma: number;
+  /** 95th-percentile scene luminance [0,1]. */
+  p95Luma: number;
+  /** Fraction of pixels at/above 0.98 (saturated highlights). */
+  clipFrac: number;
+  /** Median detector blobs per frame at the current threshold. */
+  blobCount: number;
+  /** Detector luminance threshold in effect. */
+  detectorThreshold: number;
+  /** Real sensor ISO from the 3A/ISP, when the platform exposes it. */
+  iso?: number | null;
+  /** Real sensor exposure time (ms), when the platform exposes it. */
+  exposureTimeMs?: number | null;
+  /** WebXR light-estimation primary intensity (max RGB, relative units). */
+  ambientIntensity?: number | null;
+}
+
+export interface ExposureReportMessage {
+  type: "exposure_report";
+  report: ExposureStats;
+}
+
 export interface GetStatusMessage {
   type: "get_status";
+}
+
+/** Sent by pattern followers (e.g. the virtual LED wall) to poll the pattern clock. */
+export interface GetPatternMessage {
+  type: "get_pattern";
+}
+
+/** Poll the continuous solver for the latest interim reconstruction. */
+export interface GetLiveMapMessage {
+  type: "get_live_map";
+}
+
+/** Poll the FINAL solve's progress while the stop_mapping reply is pending. */
+export interface GetSolveStatusMessage {
+  type: "get_solve_status";
 }
 
 export type ClientMessage =
   | HelloMessage
   | TimeSyncPingMessage
   | StartMappingMessage
+  | ConfigureMessage
   | StopMappingMessage
   | DetectionsMessage
-  | GetStatusMessage;
+  | ImuBatchMessage
+  | ExposureReportMessage
+  | GetStatusMessage
+  | GetPatternMessage
+  | GetLiveMapMessage
+  | GetSolveStatusMessage;
 
 // ---------------------------------------------------------------------------
 // Server -> Client messages (§7.2)
@@ -174,6 +274,41 @@ export interface StatusMessage {
   lowParallax: number;
 }
 
+/** Reply to get_pattern: the pattern clock a follower should render against. */
+export interface PatternStateMessage {
+  type: "pattern_state";
+  active: boolean;
+  /** Server-clock start of a known cycle (ms); null when no capture is active. */
+  patternClockEpoch: number | null;
+  codeParams: CodeParams;
+}
+
+/** Reply to get_live_map: latest interim reconstruction; null before the first solve or when idle. */
+export interface LiveMapMessage {
+  type: "live_map";
+  active: boolean;
+  map: OutputMap | null;
+}
+
+/** Interim LED position during a running solve (lightweight preview). */
+export interface SolveLed {
+  id: number;
+  xyz: Vec3;
+}
+
+/** Reply to get_solve_status: the final solve's live state. All-null
+ * fields when no solve is running or it reports no progress. */
+export interface SolveStatusMessage {
+  type: "solve_status";
+  running: boolean;
+  /** Estimated optimizer progress [0,1] (eval budget consumed). */
+  progress: number | null;
+  rmsPx: number | null;
+  leds: SolveLed[] | null;
+  /** Decimated solved camera path, same gauge as leds. */
+  trajectory: Vec3[] | null;
+}
+
 export interface ResultReadyMessage {
   type: "result_ready";
   mapId: string;
@@ -190,5 +325,8 @@ export type ServerMessage =
   | TimeSyncPongMessage
   | MappingStartedMessage
   | StatusMessage
+  | PatternStateMessage
+  | LiveMapMessage
+  | SolveStatusMessage
   | ResultReadyMessage
   | ErrorMessage;

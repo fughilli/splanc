@@ -42,8 +42,8 @@
       "maxItems": 4
     },
     "pose": {
-      "type": "object",
-      "description": "Camera pose in the WebXR session reference space.",
+      "type": ["object", "null"],
+      "description": "Camera pose in the capture session reference space, or null when the capture path has no pose source (the WebXR-free path, docs/vio-exploration.md): pose-less records are solved jointly with the camera trajectory by the visual-inertial reconstructor, which requires the session to carry imu_batch samples.",
       "additionalProperties": false,
       "required": ["p", "q"],
       "properties": {

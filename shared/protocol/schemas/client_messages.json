@@ -7,9 +7,15 @@
     { "$ref": "#/$defs/Hello" },
     { "$ref": "#/$defs/TimeSyncPing" },
     { "$ref": "#/$defs/StartMapping" },
+    { "$ref": "#/$defs/Configure" },
     { "$ref": "#/$defs/StopMapping" },
     { "$ref": "#/$defs/Detections" },
-    { "$ref": "#/$defs/GetStatus" }
+    { "$ref": "#/$defs/ImuBatch" },
+    { "$ref": "#/$defs/ExposureReport" },
+    { "$ref": "#/$defs/GetStatus" },
+    { "$ref": "#/$defs/GetPattern" },
+    { "$ref": "#/$defs/GetLiveMap" },
+    { "$ref": "#/$defs/GetSolveStatus" }
   ],
   "$defs": {
     "Hello": {
@@ -41,6 +47,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": ["type", "options"],
+      "description": "Begin a capture. The CLIENT is the configuration authority: it measured the scene (light level, camera frame rate), so it chooses the code carrier and signaling rate. Omitted fields fall back to server defaults — the server needs no command-line configuration.",
       "properties": {
         "type": { "const": "start_mapping" },
         "options": {
@@ -48,7 +55,35 @@
           "additionalProperties": false,
           "required": ["ledCount"],
           "properties": {
-            "ledCount": { "type": "integer", "minimum": 1 }
+            "ledCount": { "type": "integer", "minimum": 1 },
+            "encoding": {
+              "type": ["string", "null"],
+              "enum": ["gray", "gray-hue", null],
+              "description": "Code carrier (see code_params.json). Chosen by the client from measured light conditions: dark scene -> 'gray' (LEDs outshine everything), lit scene -> 'gray-hue' (constant-brightness color code). Null/omitted -> server default."
+            },
+            "bitPeriodMs": {
+              "type": ["number", "null"],
+              "exclusiveMinimum": 0,
+              "description": "Signaling rate. Chosen by the client so each bit window spans >= ~3 camera frame intervals — in low light the camera lengthens exposure and drops fps, so the client requests a slower code. Null/omitted -> server default."
+            }
+          }
+        }
+      }
+    },
+    "Configure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "options"],
+      "description": "Mid-capture renegotiation: rebuild the code-book from the active capture's parameters overlaid with the provided fields and restamp the pattern clock epoch. Detections already collected are kept — they are (ledId, pixel, pose) records, independent of the signaling that produced them. The server replies with pattern_state carrying the new epoch + codeParams; pattern followers (the wall, the M1 driver) pick the change up through their normal pattern polling. Sent when measured conditions drift during a capture (e.g. the camera drops to 15 fps in dimming light and the current bit period no longer spans 3 camera frames). Errors with no_session when no capture is active.",
+      "properties": {
+        "type": { "const": "configure" },
+        "options": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "ledCount": { "type": ["integer", "null"], "minimum": 1 },
+            "encoding": { "type": ["string", "null"], "enum": ["gray", "gray-hue", null] },
+            "bitPeriodMs": { "type": ["number", "null"], "exclusiveMinimum": 0 }
           }
         }
       }
@@ -73,12 +108,144 @@
         }
       }
     },
+    "ImuBatch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "samples"],
+      "description": "A batch of inertial samples from the capture device (~1 s cadence, ~60 Hz samples). Sent by the WebXR-free capture path so the server can jointly solve camera poses and LED positions (docs/vio-exploration.md): the gyro dead-reckons between camera frames; the accelerometer provides metric scale and gravity. Samples are in the CAMERA frame (+X right, +Y up, -Z look) — the CLIENT applies its device-specific DeviceMotion axis mapping before sending, because only it knows the device. No reply; persisted in the session log.",
+      "properties": {
+        "type": { "const": "imu_batch" },
+        "samples": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ImuSample" }
+        }
+      }
+    },
+    "ImuSample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "gyro", "accel"],
+      "properties": {
+        "t": {
+          "type": "number",
+          "description": "Phone monotonic clock at the sample, ms — same domain as DetectionRecord.tCaptureMs."
+        },
+        "gyro": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Angular rate [x, y, z] in rad/s, camera frame."
+        },
+        "accel": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Specific force (a − g) [x, y, z] in m/s², camera frame. A device at rest reads +9.81 along whichever camera axis points up."
+        }
+      }
+    },
+    "ExposureReport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "report"],
+      "description": "Periodic camera/exposure telemetry from the capture client (~every 2 s while capturing). The web client cannot read the camera's real 3A/ISP state (WebXR raw camera access exposes only the texture), so it reports software estimates: luminance statistics from an unthresholded downsampled readback plus the measured frame cadence (long exposure in low light lowers fps, making frameIntervalMs a shutter-speed proxy). iso/exposureTimeMs are reserved for clients that CAN read the 3A state (a native app, or a future web API); ambientIntensity comes from WebXR light estimation when available. The server appends reports to the session log for offline diagnosis; no reply.",
+      "properties": {
+        "type": { "const": "exposure_report" },
+        "report": { "$ref": "#/$defs/ExposureStats" }
+      }
+    },
+    "ExposureStats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tCaptureMs", "frameIntervalMs", "meanLuma", "p95Luma", "clipFrac", "blobCount", "detectorThreshold"],
+      "properties": {
+        "tCaptureMs": {
+          "type": "number",
+          "description": "Phone monotonic clock at the end of the measurement window, ms."
+        },
+        "frameIntervalMs": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Median camera frame interval over the window, ms. Rises when low light lengthens exposure — the shutter-speed proxy the signaling rate is negotiated against."
+        },
+        "meanLuma": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Mean scene luminance in [0,1] from the unthresholded downsampled frame."
+        },
+        "p95Luma": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "95th-percentile scene luminance in [0,1]."
+        },
+        "clipFrac": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Fraction of pixels at/above 0.98 — saturated highlights (blooming LEDs / clipped chroma)."
+        },
+        "blobCount": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Median detector blobs per frame over the window, at the current threshold."
+        },
+        "detectorThreshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Detector luminance threshold in effect during the window."
+        },
+        "iso": {
+          "type": ["number", "null"],
+          "description": "Real sensor ISO from the 3A/ISP, when the platform exposes it (native clients). Null/omitted on the web client."
+        },
+        "exposureTimeMs": {
+          "type": ["number", "null"],
+          "description": "Real sensor exposure time from the 3A/ISP, ms, when the platform exposes it. Null/omitted on the web client."
+        },
+        "ambientIntensity": {
+          "type": ["number", "null"],
+          "description": "WebXR light-estimation primary light intensity (max RGB component, relative units), when the session grants light-estimation."
+        }
+      }
+    },
     "GetStatus": {
       "type": "object",
       "additionalProperties": false,
       "required": ["type"],
       "properties": {
         "type": { "const": "get_status" }
+      }
+    },
+    "GetPattern": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "description": "Ask for the current pattern-clock state. Sent by pattern followers (e.g. the virtual LED wall test page) that render the blink code but do not own the capture session.",
+      "properties": {
+        "type": { "const": "get_pattern" }
+      }
+    },
+    "GetLiveMap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "description": "Poll the continuous solver for the latest interim reconstruction of the active capture. Polling also drives the solver: the server kicks a new solve when detections have arrived since the last one.",
+      "properties": {
+        "type": { "const": "get_live_map" }
+      }
+    },
+    "GetSolveStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "description": "Poll the FINAL solve's progress (after stop_mapping, while the reply is pending): optimizer progress, current reprojection rms, and the converging interim LED positions for a live preview. Reply: solve_status.",
+      "properties": {
+        "type": { "const": "get_solve_status" }
       }
     }
   }

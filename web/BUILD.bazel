@@ -1,0 +1,149 @@
+"""web — M5 (xr), M6 (cv), M7 (net), M8 (ui) + the virtual LED wall test page.
+
+Two entry pages (Vite): `/` the phone capture app, `/wall.html` the laptop
+virtual-LED-wall fixture. `@ledmapper/protocol` (M10) comes in through the
+pnpm workspace link.
+
+Targets:
+  :web_ts_typecheck_test   type-checks the app sources (auto from no_emit)
+  :unit_tests              node:test suites for the pure-TS core (gray code,
+                           timing, clock sync, M7 client, tracker, decoder,
+                           and the synthetic Phase-3-style pipeline test)
+  :dist                    production bundle (vite build)
+  :serve                   M2 server + built web app, HTTPS by default
+                           (bazelisk run //web:serve)
+"""
+
+load("@aspect_rules_js//js:defs.bzl", "js_binary", "js_test")
+load("@aspect_rules_ts//ts:defs.bzl", "ts_config", "ts_project")
+load("@npm//:defs.bzl", "npm_link_all_packages")
+load("@npm//web:vite/package_json.bzl", vite_bin = "bin")
+
+package(default_visibility = ["//visibility:public"])
+
+npm_link_all_packages(name = "node_modules")
+
+SRCS = glob(["src/**/*.ts"])
+
+TYPE_DEPS = [
+    ":node_modules/@ledmapper/protocol",
+    ":node_modules/@types/node",
+    ":node_modules/@types/webxr",
+]
+
+ts_config(
+    name = "tsconfig",
+    src = "tsconfig.json",
+    deps = ["//:tsconfig_base"],
+)
+
+ts_config(
+    name = "tsconfig_test",
+    src = "tsconfig.test.json",
+    deps = ["//:tsconfig_base"],
+)
+
+# Type-check-only for the app + vite config; the bundler does the transpiling.
+# no_emit generates :web_ts_typecheck_test.
+ts_project(
+    name = "web_ts",
+    srcs = SRCS + ["vite.config.ts"],
+    no_emit = True,
+    resolve_json_module = True,
+    tsconfig = ":tsconfig",
+    deps = TYPE_DEPS + [":node_modules/vite"],
+)
+
+# Unit-test build: src + tests compiled to CommonJS that Node runs directly
+# (see tsconfig.test.json for why CJS). Emitted under dist-test/ so the
+# imported golden *.json fixtures can be emitted too (same-path would be a
+# tsc input/output collision).
+ts_project(
+    name = "web_tests_js",
+    srcs = SRCS + glob([
+        "tests/**/*.ts",
+        "tests/**/*.json",
+    ]),
+    declaration = False,
+    out_dir = "dist-test",
+    resolve_json_module = True,
+    source_map = False,
+    transpiler = "tsc",
+    tsconfig = ":tsconfig_test",
+    deps = TYPE_DEPS,
+)
+
+# One js_test per tests/*.test.ts file, running the emitted CJS under
+# node:test (registering tests at require-time sets the exit code).
+[
+    js_test(
+        name = f.removeprefix("tests/").removesuffix(".test.ts") + "_test",
+        data = [":web_tests_js"],
+        entry_point = ":dist-test/" + f.removesuffix(".ts") + ".js",
+    )
+    for f in glob(["tests/*.test.ts"])
+]
+
+test_suite(
+    name = "unit_tests",
+    tests = [
+        f.removeprefix("tests/").removesuffix(".test.ts") + "_test"
+        for f in glob(["tests/*.test.ts"])
+    ],
+)
+
+# The emitted dist-test tree is CommonJS, but web/package.json declares
+# "type": "module" — this nearer package.json rescopes dist-test/*.js back to
+# CJS for plain `node` execution (js_binary; the js_test runner tolerates it
+# either way).
+genrule(
+    name = "dist_test_pkg_json",
+    outs = ["dist-test/package.json"],
+    cmd = "echo '{\"type\": \"commonjs\"}' > $@",
+)
+
+# Offline decode of a ?record=1 trace through the CANONICAL M6
+# tracker/decoder (VIO exploration phase 3, docs/vio-exploration.md):
+#   bazelisk run //web:offline_decode -- <frames.jsonl> <out.json>
+js_binary(
+    name = "offline_decode",
+    data = [
+        ":dist_test_pkg_json",
+        ":web_tests_js",
+    ],
+    entry_point = ":dist-test/tests/tools/offlineDecode.js",
+)
+
+# Production bundle. vite resolves the config's own `import "vite"` and the
+# workspace protocol package through the linked node_modules. NOTE: the Vite
+# action runs unsandboxed via `--strategy=Vite=local` in .bazelrc — see the
+# comment there (rolldown vs sandbox symlinks).
+vite_bin.vite(
+    name = "dist",
+    srcs = SRCS + [
+        "index.html",
+        "wall.html",
+        "package.json",
+        "vite.config.ts",
+        ":node_modules/@ledmapper/protocol",
+        ":node_modules/vite",
+    ],
+    args = ["build"],
+    chdir = package_name(),
+    out_dirs = ["dist"],
+)
+
+# One-command phone-testing entry point: M2 server serving the built app.
+# HTTPS by default (WebXR needs a secure context); state (self-signed cert,
+# session logs, maps) persists under <workspace>/.ledmapper/.
+#   bazelisk run //web:serve                    # https://0.0.0.0:8443
+#   bazelisk run //web:serve -- --no-tls        # http://0.0.0.0:8080 (wall/dev)
+#   bazelisk run //web:serve -- --port 9000 ... # extra args go to the server
+sh_binary(
+    name = "serve",
+    srcs = ["serve.sh"],
+    data = [
+        ":dist",
+        "//pi/server:serve",
+    ],
+)

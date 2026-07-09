@@ -1,12 +1,29 @@
 # Bazel configuration for the LED Mapper polyglot repo (Python on Pi, TS on web).
 # Pinned versions of toolchains are recorded in docs/decisions.md.
 
+# Workaround: Bazel 7.7.1's bundled JDK 21 emits SVE instructions in its
+# startup stubs that crash with SIGILL on some aarch64 hosts (notably this
+# dev container after an image rebuild). Disabling SVE codegen is harmless on
+# hosts without SVE. See docs/decisions.md.
+startup --host_jvm_args=-XX:UseSVE=0
+
 # bzlmod is the source of truth — no WORKSPACE.
 common --enable_bzlmod
 common --registry=https://bcr.bazel.build
 
 # Make actions hermetic so caching is correct across machines.
 build --incompatible_strict_action_env
+
+# Persist Bazel state in the project tree (gitignored, dot-prefixed) so it
+# survives container restarts, which wipe the container's root fs (~/.cache).
+# Both caches are content-addressable (hash filenames), so they are safe on the
+# case-insensitive macOS bind mount — unlike a full output base, whose Python
+# repo tree has files differing only by case and corrupts there.
+#   - disk cache: action outputs (skips recompile).
+#   - repository cache: downloaded external archives (skips the slow, flaky
+#     network re-fetch — the real first-build bottleneck).
+build --disk_cache=.bazel-disk-cache
+common --repository_cache=.bazel-repo-cache
 
 # Reasonable test ergonomics: only show output for failing tests.
 test --test_output=errors
@@ -17,3 +34,12 @@ build --symlink_prefix=bazel-
 # Quieter status — agents and CI don't need a curses progress bar.
 common --color=yes
 common --show_timestamps
+
+# Vite/rolldown breaks under the sandbox: it realpath()s entry files through
+# the sandbox's input symlinks while the project root stays at the sandbox
+# path, so emitted HTML asset names become ../../-escaping paths. Run the
+# (fully input/output-declared) Vite action unsandboxed instead. Applying the
+# strategy by mnemonic here avoids tagging the target, which would propagate
+# execution requirements into shared copy-to-bin actions and cause action
+# conflicts with the ts_project targets over the same sources.
+build --strategy=Vite=local

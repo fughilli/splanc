@@ -93,9 +93,13 @@ def validate_schemas(schemas: dict[str, dict]) -> None:
     }, "detection_record required fields drifted from §7.4"
     for name in ("client_messages", "server_messages"):
         sch = schemas[name]
-        for variant in sch["$defs"].values():
+        # Only the oneOf members are message variants needing a discriminator;
+        # other $defs (e.g. ExposureStats) are plain shared structs.
+        for ref in sch["oneOf"]:
+            variant_name = ref["$ref"].rsplit("/", 1)[-1]
+            variant = sch["$defs"][variant_name]
             assert "type" in variant.get("properties", {}), (
-                f"{name}: variant missing 'type' discriminator"
+                f"{name}: variant {variant_name} missing 'type' discriminator"
             )
 
 
@@ -118,6 +122,7 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     cp = schemas["code_params"]
     encoding_values = cp["properties"]["encoding"]["enum"]
     sync_values = cp["properties"]["syncPattern"]["enum"]
+    fec_values = cp["properties"]["fec"]["enum"]
     omap = schemas["output_map"]
     units_values = omap["properties"]["units"]["enum"]
     frame_values = omap["properties"]["frame"]["enum"]
@@ -152,7 +157,10 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("  imgW: number;")
     lines.append("  imgH: number;")
     lines.append("  K: Intrinsics;")
-    lines.append("  pose: Pose;")
+    lines.append("  /** Camera pose, or null on the WebXR-free capture path (the")
+    lines.append("   * visual-inertial reconstructor solves poses jointly; the session")
+    lines.append("   * must then carry imu_batch samples). */")
+    lines.append("  pose: Pose | null;")
     lines.append("  /** Decoder confidence in [0, 1]. */")
     lines.append("  confidence: number;")
     lines.append("}\n")
@@ -164,11 +172,14 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
         "export type Encoding = " + " | ".join(f'"{v}"' for v in encoding_values) + ";"
     )
     lines.append(
-        "export type SyncPattern = " + " | ".join(f'"{v}"' for v in sync_values) + ";\n"
+        "export type SyncPattern = " + " | ".join(f'"{v}"' for v in sync_values) + ";"
+    )
+    lines.append(
+        "export type Fec = " + " | ".join(f'"{v}"' for v in fec_values) + ";\n"
     )
     lines.append("export interface CodeParams {")
     lines.append("  ledCount: number;")
-    lines.append("  /** ceil(log2(ledCount)) */")
+    lines.append("  /** Coded bit frames per cycle: ceil(log2(ledCount+1)) data bits + FEC parity frames. */")
     lines.append("  bits: number;")
     lines.append("  encoding: Encoding;")
     lines.append("  /** Hold time per bit frame, in milliseconds. */")
@@ -176,6 +187,9 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("  syncPattern: SyncPattern;")
     lines.append("  /** 2 (sync delimiter) + bits */")
     lines.append("  cycleFrames: number;")
+    lines.append("  /** FEC around the Gray data word ('secded' = extended Hamming, d=4:")
+    lines.append("   * correct 1 misread bit frame, detect-and-reject 2). Absent = 'none'. */")
+    lines.append("  fec?: Fec | undefined;")
     lines.append("}\n")
 
     lines.append("// ---------------------------------------------------------------------------")
@@ -204,6 +218,9 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("  ledCount: number;")
     lines.append("  leds: LedEntry[];")
     lines.append("  unmapped: number[];")
+    lines.append("  /** Solved camera path (decimated, chronological) — present for")
+    lines.append("   * visual-inertial solves; same frame as leds. */")
+    lines.append("  trajectory?: Vec3[] | undefined;")
     lines.append("  stats: OutputMapStats;")
     lines.append("}\n")
 
@@ -220,12 +237,30 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("  /** Phone clock at send, in milliseconds. */")
     lines.append("  t0: number;")
     lines.append("}\n")
+    lines.append("/** The client is the configuration authority: it measured the scene, so it")
+    lines.append(" * chooses the code carrier and signaling rate; omitted fields fall back to")
+    lines.append(" * server defaults. */")
     lines.append("export interface StartMappingOptions {")
     lines.append("  ledCount: number;")
+    lines.append("  /** Code carrier, chosen from measured light: dark -> 'gray', lit -> 'gray-hue'. */")
+    lines.append("  encoding?: Encoding;")
+    lines.append("  /** Signaling rate: each bit window should span >= ~3 camera frame intervals. */")
+    lines.append("  bitPeriodMs?: number;")
     lines.append("}\n")
     lines.append("export interface StartMappingMessage {")
     lines.append('  type: "start_mapping";')
     lines.append("  options: StartMappingOptions;")
+    lines.append("}\n")
+    lines.append("/** Mid-capture renegotiation: overlay these on the active capture's params,")
+    lines.append(" * restamp the pattern epoch, keep collected detections. Reply: pattern_state. */")
+    lines.append("export interface ConfigureOptions {")
+    lines.append("  ledCount?: number;")
+    lines.append("  encoding?: Encoding;")
+    lines.append("  bitPeriodMs?: number;")
+    lines.append("}\n")
+    lines.append("export interface ConfigureMessage {")
+    lines.append('  type: "configure";')
+    lines.append("  options: ConfigureOptions;")
     lines.append("}\n")
     lines.append("export interface StopMappingMessage {")
     lines.append('  type: "stop_mapping";')
@@ -234,16 +269,79 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append('  type: "detections";')
     lines.append("  batch: DetectionRecord[];")
     lines.append("}\n")
+    lines.append("/** One inertial sample, CAMERA frame (+X right, +Y up, -Z look) — the")
+    lines.append(" * client applies its device-specific DeviceMotion axis mapping. */")
+    lines.append("export interface ImuSample {")
+    lines.append("  /** Phone monotonic clock, ms — same domain as tCaptureMs. */")
+    lines.append("  t: number;")
+    lines.append("  /** Angular rate [x, y, z], rad/s. */")
+    lines.append("  gyro: Vec3;")
+    lines.append("  /** Specific force (a − g) [x, y, z], m/s². */")
+    lines.append("  accel: Vec3;")
+    lines.append("}\n")
+    lines.append("/** IMU batch for the WebXR-free capture path: dead reckoning between")
+    lines.append(" * frames + metric scale + gravity for the joint pose+LED solve. */")
+    lines.append("export interface ImuBatchMessage {")
+    lines.append('  type: "imu_batch";')
+    lines.append("  samples: ImuSample[];")
+    lines.append("}\n")
+    lines.append("/** Camera/exposure telemetry (§7.1 exposure_report). The web client cannot")
+    lines.append(" * read the real 3A/ISP state (WebXR exposes only the camera texture), so these")
+    lines.append(" * are software estimates; iso/exposureTimeMs are reserved for clients that can. */")
+    lines.append("export interface ExposureStats {")
+    lines.append("  /** Phone monotonic clock at the end of the measurement window, ms. */")
+    lines.append("  tCaptureMs: number;")
+    lines.append("  /** Median camera frame interval, ms — the shutter-speed proxy. */")
+    lines.append("  frameIntervalMs: number;")
+    lines.append("  /** Mean scene luminance [0,1], unthresholded downsampled frame. */")
+    lines.append("  meanLuma: number;")
+    lines.append("  /** 95th-percentile scene luminance [0,1]. */")
+    lines.append("  p95Luma: number;")
+    lines.append("  /** Fraction of pixels at/above 0.98 (saturated highlights). */")
+    lines.append("  clipFrac: number;")
+    lines.append("  /** Median detector blobs per frame at the current threshold. */")
+    lines.append("  blobCount: number;")
+    lines.append("  /** Detector luminance threshold in effect. */")
+    lines.append("  detectorThreshold: number;")
+    lines.append("  /** Real sensor ISO from the 3A/ISP, when the platform exposes it. */")
+    lines.append("  iso?: number | null;")
+    lines.append("  /** Real sensor exposure time (ms), when the platform exposes it. */")
+    lines.append("  exposureTimeMs?: number | null;")
+    lines.append("  /** WebXR light-estimation primary intensity (max RGB, relative units). */")
+    lines.append("  ambientIntensity?: number | null;")
+    lines.append("}\n")
+    lines.append("export interface ExposureReportMessage {")
+    lines.append('  type: "exposure_report";')
+    lines.append("  report: ExposureStats;")
+    lines.append("}\n")
     lines.append("export interface GetStatusMessage {")
     lines.append('  type: "get_status";')
+    lines.append("}\n")
+    lines.append("/** Sent by pattern followers (e.g. the virtual LED wall) to poll the pattern clock. */")
+    lines.append("export interface GetPatternMessage {")
+    lines.append('  type: "get_pattern";')
+    lines.append("}\n")
+    lines.append("/** Poll the continuous solver for the latest interim reconstruction. */")
+    lines.append("export interface GetLiveMapMessage {")
+    lines.append('  type: "get_live_map";')
+    lines.append("}\n")
+    lines.append("/** Poll the FINAL solve\'s progress while the stop_mapping reply is pending. */")
+    lines.append("export interface GetSolveStatusMessage {")
+    lines.append('  type: "get_solve_status";')
     lines.append("}\n")
     lines.append("export type ClientMessage =")
     lines.append("  | HelloMessage")
     lines.append("  | TimeSyncPingMessage")
     lines.append("  | StartMappingMessage")
+    lines.append("  | ConfigureMessage")
     lines.append("  | StopMappingMessage")
     lines.append("  | DetectionsMessage")
-    lines.append("  | GetStatusMessage;\n")
+    lines.append("  | ImuBatchMessage")
+    lines.append("  | ExposureReportMessage")
+    lines.append("  | GetStatusMessage")
+    lines.append("  | GetPatternMessage")
+    lines.append("  | GetLiveMapMessage")
+    lines.append("  | GetSolveStatusMessage;\n")
 
     lines.append("// ---------------------------------------------------------------------------")
     lines.append("// Server -> Client messages (§7.2)")
@@ -274,6 +372,37 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("  total: number;")
     lines.append("  lowParallax: number;")
     lines.append("}\n")
+    lines.append("/** Reply to get_pattern: the pattern clock a follower should render against. */")
+    lines.append("export interface PatternStateMessage {")
+    lines.append('  type: "pattern_state";')
+    lines.append("  active: boolean;")
+    lines.append("  /** Server-clock start of a known cycle (ms); null when no capture is active. */")
+    lines.append("  patternClockEpoch: number | null;")
+    lines.append("  codeParams: CodeParams;")
+    lines.append("}\n")
+    lines.append("/** Reply to get_live_map: latest interim reconstruction; null before the first solve or when idle. */")
+    lines.append("export interface LiveMapMessage {")
+    lines.append('  type: "live_map";')
+    lines.append("  active: boolean;")
+    lines.append("  map: OutputMap | null;")
+    lines.append("}\n")
+    lines.append("/** Interim LED position during a running solve (lightweight preview). */")
+    lines.append("export interface SolveLed {")
+    lines.append("  id: number;")
+    lines.append("  xyz: Vec3;")
+    lines.append("}\n")
+    lines.append("/** Reply to get_solve_status: the final solve\'s live state. All-null")
+    lines.append(" * fields when no solve is running or it reports no progress. */")
+    lines.append("export interface SolveStatusMessage {")
+    lines.append('  type: "solve_status";')
+    lines.append("  running: boolean;")
+    lines.append("  /** Estimated optimizer progress [0,1] (eval budget consumed). */")
+    lines.append("  progress: number | null;")
+    lines.append("  rmsPx: number | null;")
+    lines.append("  leds: SolveLed[] | null;")
+    lines.append("  /** Decimated solved camera path, same gauge as leds. */")
+    lines.append("  trajectory: Vec3[] | null;")
+    lines.append("}\n")
     lines.append("export interface ResultReadyMessage {")
     lines.append('  type: "result_ready";')
     lines.append("  mapId: string;")
@@ -288,6 +417,9 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("  | TimeSyncPongMessage")
     lines.append("  | MappingStartedMessage")
     lines.append("  | StatusMessage")
+    lines.append("  | PatternStateMessage")
+    lines.append("  | LiveMapMessage")
+    lines.append("  | SolveStatusMessage")
     lines.append("  | ResultReadyMessage")
     lines.append("  | ErrorMessage;")
     return "\n".join(lines) + "\n"
@@ -329,6 +461,7 @@ def emit_python(schemas: dict[str, dict]) -> str:
     cp = schemas["code_params"]
     encoding_values = cp["properties"]["encoding"]["enum"]
     sync_values = cp["properties"]["syncPattern"]["enum"]
+    fec_values = cp["properties"]["fec"]["enum"]
     omap = schemas["output_map"]
     units_values = omap["properties"]["units"]["enum"]
     frame_values = omap["properties"]["frame"]["enum"]
@@ -369,7 +502,9 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append("    imgW: int = Field(ge=1)")
     out.append("    imgH: int = Field(ge=1)")
     out.append("    K: Intrinsics")
-    out.append("    pose: Pose")
+    out.append("    # None on the WebXR-free capture path: poses are then solved jointly")
+    out.append("    # from the session's imu_batch samples (docs/vio-exploration.md).")
+    out.append("    pose: Union[Pose, None]")
     out.append("    confidence: float = Field(ge=0.0, le=1.0)")
     out.append("")
     out.append("")
@@ -380,6 +515,7 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append("")
     out.append(f"Encoding = {_literal(encoding_values)}")
     out.append(f"SyncPattern = {_literal(sync_values)}")
+    out.append(f"Fec = {_literal(fec_values)}")
     out.append("")
     out.append("")
     out.append("class CodeParams(_StrictModel):")
@@ -389,6 +525,8 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append("    bitPeriodMs: float = Field(gt=0.0)")
     out.append("    syncPattern: SyncPattern")
     out.append("    cycleFrames: int = Field(ge=3)")
+    out.append('    # FEC around the Gray data word; absent on the wire = "none" (legacy).')
+    out.append('    fec: Fec = "none"')
     out.append("")
     out.append("")
     out.append("# ---------------------------------------------------------------------------")
@@ -418,6 +556,8 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append("    ledCount: int = Field(ge=0)")
     out.append("    leds: List[LedEntry]")
     out.append("    unmapped: List[int]")
+    out.append("    # Solved camera path (visual-inertial solves), same frame as leds.")
+    out.append("    trajectory: Union[List[Vec3], None] = None")
     out.append("    stats: OutputMapStats")
     out.append("")
     out.append("")
@@ -438,12 +578,29 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append("")
     out.append("")
     out.append("class StartMappingOptions(_StrictModel):")
+    out.append('    """Client-chosen capture configuration; omitted fields -> server defaults."""')
+    out.append("")
     out.append("    ledCount: int = Field(ge=1)")
+    out.append("    encoding: Union[Encoding, None] = None")
+    out.append("    bitPeriodMs: Union[float, None] = Field(default=None, gt=0.0)")
     out.append("")
     out.append("")
     out.append("class StartMappingMessage(_StrictModel):")
     out.append('    type: Literal["start_mapping"]')
     out.append("    options: StartMappingOptions")
+    out.append("")
+    out.append("")
+    out.append("class ConfigureOptions(_StrictModel):")
+    out.append('    """Mid-capture renegotiation overlay; unset fields keep their current value."""')
+    out.append("")
+    out.append("    ledCount: Union[int, None] = Field(default=None, ge=1)")
+    out.append("    encoding: Union[Encoding, None] = None")
+    out.append("    bitPeriodMs: Union[float, None] = Field(default=None, gt=0.0)")
+    out.append("")
+    out.append("")
+    out.append("class ConfigureMessage(_StrictModel):")
+    out.append('    type: Literal["configure"]')
+    out.append("    options: ConfigureOptions")
     out.append("")
     out.append("")
     out.append("class StopMappingMessage(_StrictModel):")
@@ -455,8 +612,61 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append("    batch: List[DetectionRecord]")
     out.append("")
     out.append("")
+    out.append("class ImuSample(_StrictModel):")
+    out.append('    """One inertial sample, CAMERA frame — the client applies its')
+    out.append('    device-specific DeviceMotion axis mapping before sending."""')
+    out.append("")
+    out.append("    t: float")
+    out.append("    gyro: Vec3")
+    out.append("    accel: Vec3")
+    out.append("")
+    out.append("")
+    out.append("class ImuBatchMessage(_StrictModel):")
+    out.append('    type: Literal["imu_batch"]')
+    out.append("    samples: List[ImuSample]")
+    out.append("")
+    out.append("")
+    out.append("class ExposureStats(_StrictModel):")
+    out.append('    """Camera/exposure telemetry: software estimates from the web client;')
+    out.append('    iso/exposureTimeMs are reserved for clients that can read the real 3A."""')
+    out.append("")
+    out.append("    tCaptureMs: float")
+    out.append("    frameIntervalMs: float = Field(gt=0.0)")
+    out.append("    meanLuma: float = Field(ge=0.0, le=1.0)")
+    out.append("    p95Luma: float = Field(ge=0.0, le=1.0)")
+    out.append("    clipFrac: float = Field(ge=0.0, le=1.0)")
+    out.append("    blobCount: int = Field(ge=0)")
+    out.append("    detectorThreshold: float = Field(ge=0.0, le=1.0)")
+    out.append("    iso: Union[float, None] = None")
+    out.append("    exposureTimeMs: Union[float, None] = None")
+    out.append("    ambientIntensity: Union[float, None] = None")
+    out.append("")
+    out.append("")
+    out.append("class ExposureReportMessage(_StrictModel):")
+    out.append('    type: Literal["exposure_report"]')
+    out.append("    report: ExposureStats")
+    out.append("")
+    out.append("")
     out.append("class GetStatusMessage(_StrictModel):")
     out.append('    type: Literal["get_status"]')
+    out.append("")
+    out.append("")
+    out.append("class GetPatternMessage(_StrictModel):")
+    out.append('    """Sent by pattern followers (e.g. the virtual LED wall) to poll the pattern clock."""')
+    out.append("")
+    out.append('    type: Literal["get_pattern"]')
+    out.append("")
+    out.append("")
+    out.append("class GetLiveMapMessage(_StrictModel):")
+    out.append('    """Poll the continuous solver for the latest interim reconstruction."""')
+    out.append("")
+    out.append('    type: Literal["get_live_map"]')
+    out.append("")
+    out.append("")
+    out.append("class GetSolveStatusMessage(_StrictModel):")
+    out.append('    """Poll the FINAL solve\'s progress while stop_mapping is pending."""')
+    out.append("")
+    out.append('    type: Literal["get_solve_status"]')
     out.append("")
     out.append("")
     out.append("ClientMessageInner = Annotated[")
@@ -464,9 +674,15 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append("        HelloMessage,")
     out.append("        TimeSyncPingMessage,")
     out.append("        StartMappingMessage,")
+    out.append("        ConfigureMessage,")
     out.append("        StopMappingMessage,")
     out.append("        DetectionsMessage,")
+    out.append("        ImuBatchMessage,")
+    out.append("        ExposureReportMessage,")
     out.append("        GetStatusMessage,")
+    out.append("        GetPatternMessage,")
+    out.append("        GetLiveMapMessage,")
+    out.append("        GetSolveStatusMessage,")
     out.append("    ],")
     out.append('    Field(discriminator="type"),')
     out.append("]")
@@ -507,6 +723,41 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append("    lowParallax: int = Field(ge=0)")
     out.append("")
     out.append("")
+    out.append("class PatternStateMessage(_StrictModel):")
+    out.append('    """Reply to get_pattern: the pattern clock a follower should render against."""')
+    out.append("")
+    out.append('    type: Literal["pattern_state"]')
+    out.append("    active: bool")
+    out.append("    patternClockEpoch: Union[float, None]")
+    out.append("    codeParams: CodeParams")
+    out.append("")
+    out.append("")
+    out.append("class LiveMapMessage(_StrictModel):")
+    out.append('    """Reply to get_live_map: latest interim reconstruction; None before the first solve or when idle."""')
+    out.append("")
+    out.append('    type: Literal["live_map"]')
+    out.append("    active: bool")
+    out.append("    map: Union[OutputMap, None]")
+    out.append("")
+    out.append("")
+    out.append("class SolveLed(_StrictModel):")
+    out.append('    """Interim LED position during a running solve (lightweight preview)."""')
+    out.append("")
+    out.append("    id: int = Field(ge=0)")
+    out.append("    xyz: Vec3")
+    out.append("")
+    out.append("")
+    out.append("class SolveStatusMessage(_StrictModel):")
+    out.append('    """Reply to get_solve_status: the final solve\'s live state."""')
+    out.append("")
+    out.append('    type: Literal["solve_status"]')
+    out.append("    running: bool")
+    out.append("    progress: Union[float, None] = Field(default=None, ge=0.0, le=1.0)")
+    out.append("    rmsPx: Union[float, None] = None")
+    out.append("    leds: Union[List[SolveLed], None] = None")
+    out.append("    trajectory: Union[List[Vec3], None] = None")
+    out.append("")
+    out.append("")
     out.append("class ResultReadyMessage(_StrictModel):")
     out.append('    type: Literal["result_ready"]')
     out.append("    mapId: str")
@@ -524,6 +775,9 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append("        TimeSyncPongMessage,")
     out.append("        MappingStartedMessage,")
     out.append("        StatusMessage,")
+    out.append("        PatternStateMessage,")
+    out.append("        LiveMapMessage,")
+    out.append("        SolveStatusMessage,")
     out.append("        ResultReadyMessage,")
     out.append("        ErrorMessage,")
     out.append("    ],")
@@ -544,6 +798,7 @@ def emit_python(schemas: dict[str, dict]) -> str:
         "DetectionRecord",
         "Encoding",
         "SyncPattern",
+        "Fec",
         "CodeParams",
         "LedEntry",
         "OutputMapStats",
@@ -552,14 +807,27 @@ def emit_python(schemas: dict[str, dict]) -> str:
         "TimeSyncPingMessage",
         "StartMappingOptions",
         "StartMappingMessage",
+        "ConfigureOptions",
+        "ConfigureMessage",
         "StopMappingMessage",
         "DetectionsMessage",
+        "ImuSample",
+        "ImuBatchMessage",
+        "ExposureStats",
+        "ExposureReportMessage",
         "GetStatusMessage",
+        "GetPatternMessage",
+        "GetLiveMapMessage",
+        "GetSolveStatusMessage",
         "ClientMessage",
         "WelcomeMessage",
         "TimeSyncPongMessage",
         "MappingStartedMessage",
         "StatusMessage",
+        "PatternStateMessage",
+        "LiveMapMessage",
+        "SolveLed",
+        "SolveStatusMessage",
         "ResultReadyMessage",
         "ErrorMessage",
         "ServerMessage",

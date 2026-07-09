@@ -30,18 +30,31 @@ from pydantic import ValidationError
 from ledmapper_protocol import (
     ClientMessage,
     CodeParams,
+    ConfigureMessage,
+    ConfigureOptions,
     DetectionRecord,
     DetectionsMessage,
     ErrorMessage,
+    ExposureReportMessage,
+    ExposureStats,
+    ImuBatchMessage,
+    ImuSample,
+    GetLiveMapMessage,
+    GetSolveStatusMessage,
+    GetPatternMessage,
     GetStatusMessage,
     HelloMessage,
     LedEntry,
+    LiveMapMessage,
     MappingStartedMessage,
     OutputMap,
     OutputMapStats,
+    PatternStateMessage,
     Pose,
     ResultReadyMessage,
     ServerMessage,
+    SolveLed,
+    SolveStatusMessage,
     StartMappingMessage,
     StartMappingOptions,
     StatusMessage,
@@ -123,14 +136,15 @@ def _validator_for(schema_name: str) -> Draft202012Validator:
 # ---------------------------------------------------------------------------
 
 
-def make_code_params() -> CodeParams:
+def make_code_params(encoding: str = "gray", fec: str = "none") -> CodeParams:
     return CodeParams(
         ledCount=1024,
         bits=10,
-        encoding="gray",
+        encoding=encoding,
         bitPeriodMs=100.0,
         syncPattern="on_off",
         cycleFrames=12,
+        fec=fec,
     )
 
 
@@ -189,9 +203,11 @@ def make_output_map() -> OutputMap:
     [
         (DetectionRecord, make_detection_record, "detection_record"),
         (CodeParams, make_code_params, "code_params"),
+        (CodeParams, lambda: make_code_params("gray-hue"), "code_params"),
+        (CodeParams, lambda: make_code_params(fec="secded"), "code_params"),
         (OutputMap, make_output_map, "output_map"),
     ],
-    ids=["DetectionRecord", "CodeParams", "OutputMap"],
+    ids=["DetectionRecord", "CodeParams", "CodeParamsHue", "CodeParamsSecded", "OutputMap"],
 )
 def test_standalone_types_roundtrip(model_cls, instance_factory, schema_name) -> None:
     original = instance_factory()
@@ -216,12 +232,70 @@ CLIENT_VARIANTS = [
         type="start_mapping",
         options=StartMappingOptions(ledCount=1024),
     ),
+    StartMappingMessage(
+        type="start_mapping",
+        # Fully client-configured: the phone measured the scene and chose the
+        # carrier + rate (§7.1).
+        options=StartMappingOptions(ledCount=64, encoding="gray-hue", bitPeriodMs=200.0),
+    ),
+    ConfigureMessage(
+        type="configure",
+        options=ConfigureOptions(bitPeriodMs=200.0),
+    ),
+    ConfigureMessage(
+        type="configure",
+        options=ConfigureOptions(ledCount=64, encoding="gray", bitPeriodMs=133.0),
+    ),
+    ExposureReportMessage(
+        type="exposure_report",
+        report=ExposureStats(
+            tCaptureMs=123456.7,
+            frameIntervalMs=66.7,
+            meanLuma=0.04,
+            p95Luma=0.11,
+            clipFrac=0.002,
+            blobCount=31,
+            detectorThreshold=0.6,
+        ),
+    ),
+    ExposureReportMessage(
+        type="exposure_report",
+        # A client that CAN read the 3A/ISP state (native app) fills these in.
+        report=ExposureStats(
+            tCaptureMs=123456.7,
+            frameIntervalMs=33.3,
+            meanLuma=0.35,
+            p95Luma=0.83,
+            clipFrac=0.01,
+            blobCount=140,
+            detectorThreshold=0.7,
+            iso=800.0,
+            exposureTimeMs=16.6,
+            ambientIntensity=0.9,
+        ),
+    ),
     StopMappingMessage(type="stop_mapping"),
     DetectionsMessage(
         type="detections",
         batch=[make_detection_record(0), make_detection_record(1)],
     ),
+    DetectionsMessage(
+        type="detections",
+        # WebXR-free path: pose-less records (the VIO reconstructor solves
+        # the trajectory from the session's imu_batch stream).
+        batch=[make_detection_record(0).model_copy(update={"pose": None})],
+    ),
+    ImuBatchMessage(
+        type="imu_batch",
+        samples=[
+            ImuSample(t=1000.0, gyro=(0.01, -0.02, 0.005), accel=(0.1, 9.75, -0.3)),
+            ImuSample(t=1016.7, gyro=(0.012, -0.018, 0.004), accel=(0.12, 9.74, -0.28)),
+        ],
+    ),
     GetStatusMessage(type="get_status"),
+    GetPatternMessage(type="get_pattern"),
+    GetLiveMapMessage(type="get_live_map"),
+    GetSolveStatusMessage(type="get_solve_status"),
 ]
 
 
@@ -262,6 +336,31 @@ SERVER_VARIANTS = [
         codeParams=make_code_params(),
     ),
     StatusMessage(type="status", identified=812, total=1024, lowParallax=37),
+    PatternStateMessage(
+        type="pattern_state",
+        active=True,
+        patternClockEpoch=988.5,
+        codeParams=make_code_params(),
+    ),
+    PatternStateMessage(
+        type="pattern_state",
+        active=False,
+        patternClockEpoch=None,
+        codeParams=make_code_params(),
+    ),
+    LiveMapMessage(type="live_map", active=True, map=make_output_map()),
+    LiveMapMessage(type="live_map", active=False, map=None),
+    SolveStatusMessage(
+        type="solve_status",
+        running=True,
+        progress=0.4,
+        rmsPx=2.7,
+        leds=[SolveLed(id=0, xyz=(0.1, 0.2, 0.3)), SolveLed(id=3, xyz=(0.2, 0.2, 0.3))],
+        trajectory=[(0.0, 0.0, 0.0), (0.05, 0.01, -0.02)],
+    ),
+    SolveStatusMessage(
+        type="solve_status", running=False, progress=None, rmsPx=None, leds=None, trajectory=None
+    ),
     ResultReadyMessage(type="result_ready", mapId="ffffffff-0000-1111-2222-333333333333"),
     ErrorMessage(type="error", code="capture_aborted", message="user pressed stop"),
 ]

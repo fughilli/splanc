@@ -15,8 +15,10 @@
   # flake.lock (`nix flake update` on a machine with nix), then record the
   # change in the decision log.
   #
-  # NOTE: This flake has NOT been evaluated/built in the authoring environment
-  # because `nix` is not installed here (see README "Unverified" section).
+  # NOTE: This flake has been evaluated AND built on a native aarch64-linux Nix
+  # host (2026-06-19): `nix flake show` and a full `nix build .#images.sdImage`
+  # both succeed. See ../README.md "Verification status". (Real-hardware first
+  # boot and a live `deploy_live` switch remain untested.)
 
   description = "LED Mapper — Raspberry Pi NixOS image and live-deploy config";
 

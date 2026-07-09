@@ -1,0 +1,10 @@
+{
+  "//": "Type-check config for the web app sources (no emit; Vite bundles). The base config's repo-root `paths` mapping is cleared so @ledmapper/protocol resolves through the pnpm workspace link in node_modules — the same resolution Vite and Bazel use.",
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true,
+    "paths": {}
+  },
+  "include": ["src/**/*.ts", "src/**/*.d.ts", "vite.config.ts"]
+}

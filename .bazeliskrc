@@ -1,0 +1,6 @@
+# Bazelisk configuration. https://github.com/bazelbuild/bazelisk
+#
+# Cache downloaded Bazel binaries inside the project tree (gitignored,
+# dot-prefixed) instead of the per-user home, so they survive container
+# rebuilds / fresh homes. Path is relative to the workspace root.
+BAZELISK_HOME=.bazelisk

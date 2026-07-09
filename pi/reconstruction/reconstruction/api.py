@@ -21,7 +21,14 @@ import numpy as np
 from ledmapper_protocol import LedEntry, OutputMap, OutputMapStats
 
 from .bundle import bundle_adjust
+from .camera import quat_to_rotmat
 from .triangulate import max_parallax_deg, rays_from_observations, triangulate_point
+
+# Consensus pre-filter thresholds (see _consensus_filter): engage only on
+# clearly contaminated bundles, accept observations within the inlier radius.
+_CONSENSUS_ENGAGE_P90_PX = 40.0
+_CONSENSUS_INLIER_PX = 12.0
+_CONSENSUS_MAX_SEEDS = 10
 
 
 def _as_obs(detection: Mapping) -> dict:
@@ -29,6 +36,13 @@ def _as_obs(detection: Mapping) -> dict:
     if hasattr(detection, "model_dump"):
         detection = detection.model_dump()
     pose = detection["pose"]
+    if pose is None:
+        # Pose-less records come from the WebXR-free capture path and can
+        # only be solved by the visual-inertial reconstructor
+        # (vio_api.reconstruct_vio) — this solver TRUSTS poses by design.
+        raise ValueError(
+            "detection record has no pose; use reconstruct_vio for pose-less sessions"
+        )
     return {
         "ledId": int(detection["ledId"]),
         "u": float(detection["u"]),
@@ -45,6 +59,75 @@ def _group_by_led(detections: Iterable[Mapping]) -> dict:
         obs = _as_obs(d)
         groups.setdefault(obs["ledId"], []).append(obs)
     return groups
+
+
+def _consensus_filter(
+    obs_list: List[dict],
+    min_views: int,
+    engage_p90_px: float = _CONSENSUS_ENGAGE_P90_PX,
+    inlier_px: float = _CONSENSUS_INLIER_PX,
+) -> List[dict]:
+    """RANSAC-style consensus pre-filter for ONE LED's observations.
+
+    Anything that blinks the LED's code decodes as the LED — reflections, and
+    (in dark scenes) exposure-pump artifacts — so an observation set can be
+    dominated by points that are mutually inconsistent with any single 3D
+    position. MAD outlier rejection assumes a good median and fails once bad
+    views are the majority; consensus is mode-seeking instead: triangulate
+    2-view candidates from spread-out observation pairs and keep the largest
+    set of observations that agree (reprojection ≤ inlier radius) on one point.
+
+    Engages only when the naive bundle looks contaminated (p90 DLT residual
+    above ``_CONSENSUS_ENGAGE_P90_PX``); healthy-but-noisy bundles pass
+    through untouched. Known limitation: if a single mirror reflection
+    genuinely outnumbers direct sightings, the reflection wins — consensus
+    picks the biggest mode, not the truest one.
+    """
+    n = len(obs_list)
+    if n < 4:
+        return obs_list
+    origins, dirs = rays_from_observations(obs_list)
+    rot = np.stack([quat_to_rotmat(o["q"]) for o in obs_list])  # cam->world
+    ps = np.asarray([o["p"] for o in obs_list])
+    ks = np.asarray([o["K"] for o in obs_list])
+    uvs = np.asarray([[o["u"], o["v"]] for o in obs_list])
+
+    def residuals(x: np.ndarray) -> np.ndarray:
+        xc = np.einsum("nji,nj->ni", rot, x - ps)  # R^T (x - p), per obs
+        depth = -xc[:, 2]
+        safe = np.where(np.abs(depth) < 1e-12, 1e-12, depth)
+        u = ks[:, 2] + ks[:, 0] * xc[:, 0] / safe
+        v = ks[:, 3] - ks[:, 1] * xc[:, 1] / safe
+        r = np.hypot(u - uvs[:, 0], v - uvs[:, 1])
+        r[depth <= 0] = np.inf
+        return r
+
+    try:
+        r_all = residuals(triangulate_point(origins, dirs))
+        if np.all(np.isfinite(r_all)) and np.percentile(r_all, 90) <= engage_p90_px:
+            return obs_list
+    except (ValueError, np.linalg.LinAlgError):
+        pass
+
+    seeds = np.unique(np.linspace(0, n - 1, min(_CONSENSUS_MAX_SEEDS, n)).astype(int))
+    best: Optional[np.ndarray] = None
+    for ai in range(len(seeds)):
+        for bi in range(ai + 1, len(seeds)):
+            a, b = int(seeds[ai]), int(seeds[bi])
+            if float(np.dot(dirs[a], dirs[b])) > 0.99995:
+                continue  # near-parallel pair: depth unconstrained
+            try:
+                x = triangulate_point(origins[[a, b]], dirs[[a, b]])
+            except (ValueError, np.linalg.LinAlgError):
+                continue
+            if not np.all(np.isfinite(x)):
+                continue
+            inliers = residuals(x) <= inlier_px
+            if best is None or int(inliers.sum()) > int(best.sum()):
+                best = inliers
+    if best is not None and int(best.sum()) >= max(min_views, 3):
+        return [obs_list[i] for i in np.flatnonzero(best)]
+    return obs_list
 
 
 def _confidence(parallax_deg: float, n_views: int, rms_px: float) -> float:
@@ -74,6 +157,7 @@ def reconstruct(
     outlier_floor_px: float = 1.0,
     map_id: Optional[str] = None,
     created_at: Optional[str] = None,
+    initial_points: Optional[Mapping[int, Sequence[float]]] = None,
 ) -> OutputMap:
     """Reconstruct 3D LED positions from detection records.
 
@@ -88,6 +172,10 @@ def reconstruct(
             ``outlier_sigma ×`` the robust σ (MAD) before re-solving.
         outlier_floor_px: never reject observations below this residual, so a
             near-perfect fit (tiny σ) doesn't reject good observations as noise.
+        initial_points: warm start — known ``ledId → xyz`` estimates (e.g. the
+            previous interim solve). Seeded LEDs skip DLT init and the bundle
+            adjustment converges in a couple of iterations when the map has
+            barely moved, which is what keeps the continuous solver cheap.
     """
     groups = _group_by_led(detections)
     all_ids = sorted(groups.keys())
@@ -105,15 +193,27 @@ def reconstruct(
         if len(obs) < min_views:
             unmapped.add(led_id)
             continue
+        # Mode-seeking pre-filter: reflections/artifacts share the LED's code,
+        # so the per-LED set can be majority-bad — beyond what the MAD-based
+        # rejection below (which needs a good median) can recover from.
+        obs = _consensus_filter(obs, min_views)
+        groups[led_id] = obs
+        if len(obs) < min_views:
+            unmapped.add(led_id)
+            continue
         origins, dirs = rays_from_observations(obs)
-        try:
-            x0 = triangulate_point(origins, dirs)
-        except (ValueError, np.linalg.LinAlgError):
-            unmapped.add(led_id)
-            continue
-        if not np.all(np.isfinite(x0)):
-            unmapped.add(led_id)
-            continue
+        seed = initial_points.get(led_id) if initial_points else None
+        if seed is not None and np.all(np.isfinite(seed)):
+            x0 = np.asarray(seed, dtype=float)
+        else:
+            try:
+                x0 = triangulate_point(origins, dirs)
+            except (ValueError, np.linalg.LinAlgError):
+                unmapped.add(led_id)
+                continue
+            if not np.all(np.isfinite(x0)):
+                unmapped.add(led_id)
+                continue
         active_ids.append(led_id)
         points0.append(x0)
         led_dirs[led_id] = dirs
@@ -176,14 +276,15 @@ def reconstruct(
                 unmapped.add(led_id)
 
         if survivors:
+            # Re-solve on inliers only, warm-started from the first BA's
+            # points — they are better inits than re-triangulating from
+            # scratch, and the re-solve then converges in a few iterations.
+            prev_points = {lid: points[idx_of[lid]] for lid in survivors}
             active_ids = survivors
             groups = kept_groups
             idx_of = {led_id: i for i, led_id in enumerate(active_ids)}
             led_dirs = {lid: rays_from_observations(groups[lid])[1] for lid in active_ids}
-            points = np.asarray(
-                [triangulate_point(*rays_from_observations(groups[lid])) for lid in active_ids],
-                dtype=float,
-            )
+            points = np.asarray([prev_points[lid] for lid in active_ids], dtype=float)
             point_idx, obs_p, obs_q, obs_k, obs_uv = _flatten(active_ids)
             points, repro = bundle_adjust(
                 points, point_idx, obs_p, obs_q, obs_k, obs_uv, huber_delta=huber_delta

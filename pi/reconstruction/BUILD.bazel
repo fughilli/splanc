@@ -32,6 +32,16 @@ py_binary(
     deps = [":reconstruction"],
 )
 
+# Real-data VIO solve (docs/vio-exploration.md phase 3): trace IMU + offline-
+# decoded observations -> joint pose+LED solve, vs the pose-trusting baseline.
+py_binary(
+    name = "vio_replay",
+    srcs = ["reconstruction/vio_replay.py"],
+    main = "reconstruction/vio_replay.py",
+    imports = ["."],
+    deps = [":reconstruction"],
+)
+
 py_test(
     name = "reconstruct_test",
     srcs = [
@@ -45,5 +55,26 @@ py_test(
         ":reconstruction",
         requirement("numpy"),
         requirement("pytest"),
+    ],
+)
+
+# VIO exploration (docs/vio-exploration.md): joint pose+LED solve with IMU
+# dead reckoning — the WebXR-free path. Nonlinear VI-BA on a synthetic
+# session; slower than a unit test by nature.
+py_test(
+    name = "vio_test",
+    size = "large",
+    srcs = [
+        "tests/pytest_main.py",
+        "tests/test_vio.py",
+    ],
+    main = "tests/pytest_main.py",
+    imports = ["."],
+    legacy_create_init = False,
+    deps = [
+        ":reconstruction",
+        requirement("numpy"),
+        requirement("pytest"),
+        requirement("scipy"),
     ],
 )

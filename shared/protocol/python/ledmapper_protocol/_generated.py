@@ -54,7 +54,9 @@ class DetectionRecord(_StrictModel):
     imgW: int = Field(ge=1)
     imgH: int = Field(ge=1)
     K: Intrinsics
-    pose: Pose
+    # None on the WebXR-free capture path: poses are then solved jointly
+    # from the session's imu_batch samples (docs/vio-exploration.md).
+    pose: Union[Pose, None]
     confidence: float = Field(ge=0.0, le=1.0)
 
 
@@ -63,8 +65,9 @@ class DetectionRecord(_StrictModel):
 # ---------------------------------------------------------------------------
 
 
-Encoding = Literal["gray"]
+Encoding = Literal["gray", "gray-hue"]
 SyncPattern = Literal["on_off"]
+Fec = Literal["none", "secded"]
 
 
 class CodeParams(_StrictModel):
@@ -74,6 +77,8 @@ class CodeParams(_StrictModel):
     bitPeriodMs: float = Field(gt=0.0)
     syncPattern: SyncPattern
     cycleFrames: int = Field(ge=3)
+    # FEC around the Gray data word; absent on the wire = "none" (legacy).
+    fec: Fec = "none"
 
 
 # ---------------------------------------------------------------------------
@@ -99,10 +104,12 @@ class OutputMap(_StrictModel):
     mapId: str
     createdAt: str
     units: Literal["meters"]
-    frame: Literal["webxr_session_ref"]
+    frame: Literal["webxr_session_ref", "gravity_leveled"]
     ledCount: int = Field(ge=0)
     leds: List[LedEntry]
     unmapped: List[int]
+    # Solved camera path (visual-inertial solves), same frame as leds.
+    trajectory: Union[List[Vec3], None] = None
     stats: OutputMapStats
 
 
@@ -123,12 +130,29 @@ class TimeSyncPingMessage(_StrictModel):
 
 
 class StartMappingOptions(_StrictModel):
+    """Client-chosen capture configuration; omitted fields -> server defaults."""
+
     ledCount: int = Field(ge=1)
+    encoding: Union[Encoding, None] = None
+    bitPeriodMs: Union[float, None] = Field(default=None, gt=0.0)
 
 
 class StartMappingMessage(_StrictModel):
     type: Literal["start_mapping"]
     options: StartMappingOptions
+
+
+class ConfigureOptions(_StrictModel):
+    """Mid-capture renegotiation overlay; unset fields keep their current value."""
+
+    ledCount: Union[int, None] = Field(default=None, ge=1)
+    encoding: Union[Encoding, None] = None
+    bitPeriodMs: Union[float, None] = Field(default=None, gt=0.0)
+
+
+class ConfigureMessage(_StrictModel):
+    type: Literal["configure"]
+    options: ConfigureOptions
 
 
 class StopMappingMessage(_StrictModel):
@@ -140,8 +164,61 @@ class DetectionsMessage(_StrictModel):
     batch: List[DetectionRecord]
 
 
+class ImuSample(_StrictModel):
+    """One inertial sample, CAMERA frame — the client applies its
+    device-specific DeviceMotion axis mapping before sending."""
+
+    t: float
+    gyro: Vec3
+    accel: Vec3
+
+
+class ImuBatchMessage(_StrictModel):
+    type: Literal["imu_batch"]
+    samples: List[ImuSample]
+
+
+class ExposureStats(_StrictModel):
+    """Camera/exposure telemetry: software estimates from the web client;
+    iso/exposureTimeMs are reserved for clients that can read the real 3A."""
+
+    tCaptureMs: float
+    frameIntervalMs: float = Field(gt=0.0)
+    meanLuma: float = Field(ge=0.0, le=1.0)
+    p95Luma: float = Field(ge=0.0, le=1.0)
+    clipFrac: float = Field(ge=0.0, le=1.0)
+    blobCount: int = Field(ge=0)
+    detectorThreshold: float = Field(ge=0.0, le=1.0)
+    iso: Union[float, None] = None
+    exposureTimeMs: Union[float, None] = None
+    ambientIntensity: Union[float, None] = None
+
+
+class ExposureReportMessage(_StrictModel):
+    type: Literal["exposure_report"]
+    report: ExposureStats
+
+
 class GetStatusMessage(_StrictModel):
     type: Literal["get_status"]
+
+
+class GetPatternMessage(_StrictModel):
+    """Sent by pattern followers (e.g. the virtual LED wall) to poll the pattern clock."""
+
+    type: Literal["get_pattern"]
+
+
+class GetLiveMapMessage(_StrictModel):
+    """Poll the continuous solver for the latest interim reconstruction."""
+
+    type: Literal["get_live_map"]
+
+
+class GetSolveStatusMessage(_StrictModel):
+    """Poll the FINAL solve's progress while stop_mapping is pending."""
+
+    type: Literal["get_solve_status"]
 
 
 ClientMessageInner = Annotated[
@@ -149,9 +226,15 @@ ClientMessageInner = Annotated[
         HelloMessage,
         TimeSyncPingMessage,
         StartMappingMessage,
+        ConfigureMessage,
         StopMappingMessage,
         DetectionsMessage,
+        ImuBatchMessage,
+        ExposureReportMessage,
         GetStatusMessage,
+        GetPatternMessage,
+        GetLiveMapMessage,
+        GetSolveStatusMessage,
     ],
     Field(discriminator="type"),
 ]
@@ -192,6 +275,41 @@ class StatusMessage(_StrictModel):
     lowParallax: int = Field(ge=0)
 
 
+class PatternStateMessage(_StrictModel):
+    """Reply to get_pattern: the pattern clock a follower should render against."""
+
+    type: Literal["pattern_state"]
+    active: bool
+    patternClockEpoch: Union[float, None]
+    codeParams: CodeParams
+
+
+class LiveMapMessage(_StrictModel):
+    """Reply to get_live_map: latest interim reconstruction; None before the first solve or when idle."""
+
+    type: Literal["live_map"]
+    active: bool
+    map: Union[OutputMap, None]
+
+
+class SolveLed(_StrictModel):
+    """Interim LED position during a running solve (lightweight preview)."""
+
+    id: int = Field(ge=0)
+    xyz: Vec3
+
+
+class SolveStatusMessage(_StrictModel):
+    """Reply to get_solve_status: the final solve's live state."""
+
+    type: Literal["solve_status"]
+    running: bool
+    progress: Union[float, None] = Field(default=None, ge=0.0, le=1.0)
+    rmsPx: Union[float, None] = None
+    leds: Union[List[SolveLed], None] = None
+    trajectory: Union[List[Vec3], None] = None
+
+
 class ResultReadyMessage(_StrictModel):
     type: Literal["result_ready"]
     mapId: str
@@ -209,6 +327,9 @@ ServerMessageInner = Annotated[
         TimeSyncPongMessage,
         MappingStartedMessage,
         StatusMessage,
+        PatternStateMessage,
+        LiveMapMessage,
+        SolveStatusMessage,
         ResultReadyMessage,
         ErrorMessage,
     ],
@@ -228,6 +349,7 @@ __all__ = [
     "DetectionRecord",
     "Encoding",
     "SyncPattern",
+    "Fec",
     "CodeParams",
     "LedEntry",
     "OutputMapStats",
@@ -236,14 +358,27 @@ __all__ = [
     "TimeSyncPingMessage",
     "StartMappingOptions",
     "StartMappingMessage",
+    "ConfigureOptions",
+    "ConfigureMessage",
     "StopMappingMessage",
     "DetectionsMessage",
+    "ImuSample",
+    "ImuBatchMessage",
+    "ExposureStats",
+    "ExposureReportMessage",
     "GetStatusMessage",
+    "GetPatternMessage",
+    "GetLiveMapMessage",
+    "GetSolveStatusMessage",
     "ClientMessage",
     "WelcomeMessage",
     "TimeSyncPongMessage",
     "MappingStartedMessage",
     "StatusMessage",
+    "PatternStateMessage",
+    "LiveMapMessage",
+    "SolveLed",
+    "SolveStatusMessage",
     "ResultReadyMessage",
     "ErrorMessage",
     "ServerMessage",

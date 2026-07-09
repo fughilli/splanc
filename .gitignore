@@ -1,6 +1,13 @@
 # --- Bazel ---------------------------------------------------------------
 # Convenience symlinks (symlink_prefix = bazel- in .bazelrc) into the cache.
 /bazel-*
+# Project-local Bazel disk cache (--disk_cache in .bazelrc).
+/.bazel-disk-cache/
+# Project-local bazelisk download cache (BAZELISK_HOME in .bazeliskrc).
+/.bazelisk/
+# Project-local Bazel repository cache (--repository_cache in .bazelrc) —
+# downloaded external archives, persisted across container restarts.
+/.bazel-repo-cache/
 # MODULE.bazel.lock IS committed (it's a lockfile) — do not ignore it.
 
 # --- Node / pnpm ---------------------------------------------------------
@@ -8,6 +15,13 @@ node_modules/
 .pnpm-store/
 npm-debug.log*
 pnpm-debug.log*
+
+# --- Web app -------------------------------------------------------------
+# Vite bundles (bazel builds //web:dist; `pnpm --dir web build` for ad-hoc).
+/web/dist/
+# Runtime state written by `bazelisk run //web:serve`: self-signed TLS cert,
+# capture session logs, reconstructed maps.
+/.ledmapper/
 
 # --- Python --------------------------------------------------------------
 __pycache__/

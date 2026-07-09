@@ -5,9 +5,23 @@ checked-in sources living here, so the ts_project lives here too, next to its
 inputs — no cross-package source references needed.
 """
 
+load("@aspect_rules_js//npm:defs.bzl", "npm_package")
 load("@aspect_rules_ts//ts:defs.bzl", "ts_config", "ts_project")
 
 package(default_visibility = ["//visibility:public"])
+
+# The pnpm-workspace package consumed as `@ledmapper/protocol` (workspace:*)
+# by //web. aspect_rules_js links workspace packages through an `npm_package`
+# target named `pkg` in the package's directory. Type-only package: it ships
+# the .ts sources themselves (see package.json exports).
+npm_package(
+    name = "pkg",
+    srcs = [
+        "generated/index.ts",
+        "index.ts",
+        "package.json",
+    ],
+)
 
 ts_config(
     name = "tsconfig",

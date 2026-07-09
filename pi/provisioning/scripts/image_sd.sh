@@ -40,10 +40,20 @@ find_flake_dir() {
 }
 FLAKE_DIR="$(find_flake_dir)"
 
-# Find manage_keys.sh similarly.
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-KEYS="${SCRIPT_DIR}/manage_keys.sh"
-[[ -x "$KEYS" ]] || KEYS="${BUILD_WORKSPACE_DIRECTORY:-.}/pi/provisioning/scripts/manage_keys.sh"
+# Resolve the provisioning dir the same way the flake dir is resolved: under
+# `bazel run`, runfiles are read-only and have NO secrets/ dir, so we must
+# anchor on the real source tree (BUILD_WORKSPACE_DIRECTORY) where the key
+# pair actually lives — the same dir manage_keys.sh writes to. Falling back to
+# the runfiles path here is the bug that made the build fail with
+# "'secrets' is too short to be a valid store path" (the empty env pubkey path
+# pushed ssh-deploy.nix onto its in-store relative default, which escapes the
+# flake's store closure).
+if [[ -n "${BUILD_WORKSPACE_DIRECTORY:-}" ]]; then
+  PROV_DIR="$BUILD_WORKSPACE_DIRECTORY/pi/provisioning"
+else
+  PROV_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+fi
+KEYS="$PROV_DIR/scripts/manage_keys.sh"
 
 command -v nix >/dev/null 2>&1 || {
   echo "ERROR: 'nix' not found. The SD image must be built on a host with Nix (flakes enabled)." >&2
@@ -59,7 +69,7 @@ bash "$KEYS" ensure
 # $LEDMAPPER_DEPLOY_PUBKEY_FILE (absolute) first; export it and build --impure so
 # eval can read the operator-local key. (No secret is committed; only the public
 # half is read, and it is baked into the image's authorized_keys.)
-SECRETS_DIR="${LEDMAPPER_DEPLOY_KEY_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)/secrets}"
+SECRETS_DIR="${LEDMAPPER_DEPLOY_KEY_DIR:-$PROV_DIR/secrets}"
 export LEDMAPPER_DEPLOY_PUBKEY_FILE="$SECRETS_DIR/deploy_key.pub"
 
 echo "==> Building SD image from $FLAKE_DIR"
