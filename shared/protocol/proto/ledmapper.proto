@@ -43,17 +43,20 @@ message Pose {
 // Code-book parameters describing the temporal blink pattern (§7.6).
 message CodeParams {
   int32 led_count = 1;
-  // Transmitted bit frames per cycle: data bits + FEC parity frames.
+  // Coded BITS per cycle (data + FEC parity), sent log2(symbols) per frame.
   int32 bits = 2;
-  // "gray" | "gray-hue".
+  // "hue" (the only carrier: constant-brightness color code).
   string encoding = 3;
+  // Hold time per frame (symbol window), ms.
   double bit_period_ms = 4;
   // "on_off".
   string sync_pattern = 5;
-  // 2 (sync delimiter) + bits.
+  // 2 (sync delimiter) + ceil(bits / log2(symbols)) data frames.
   int32 cycle_frames = 6;
   // "none" | "secded".
   string fec = 7;
+  // Data-symbol alphabet size: 2 (red/blue) or 4 (Gray-ordered bit pairs).
+  int32 symbols = 8;
 }
 
 // One labeled observation of one LED in one frame (§7.4).
@@ -144,7 +147,7 @@ message TimeSyncPing {
 
 message StartMappingOptions {
   int32 led_count = 1;
-  optional string encoding = 2;
+  optional int32 symbols = 2;
   optional double bit_period_ms = 3;
 }
 
@@ -154,7 +157,7 @@ message StartMapping {
 
 message ConfigureOptions {
   optional int32 led_count = 1;
-  optional string encoding = 2;
+  optional int32 symbols = 2;
   optional double bit_period_ms = 3;
 }
 

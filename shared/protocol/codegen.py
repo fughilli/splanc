@@ -75,6 +75,7 @@ def validate_schemas(schemas: dict[str, dict]) -> None:
         "ledCount",
         "bits",
         "encoding",
+        "symbols",
         "bitPeriodMs",
         "syncPattern",
         "cycleFrames",
@@ -173,18 +174,21 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("export type Fec = " + " | ".join(f'"{v}"' for v in fec_values) + ";\n")
     lines.append("export interface CodeParams {")
     lines.append("  ledCount: number;")
-    lines.append(
-        "  /** Coded bit frames per cycle: ceil(log2(ledCount+1)) data bits + FEC parity frames. */"
-    )
+    lines.append("  /** Coded BITS per cycle: ceil(log2(ledCount+1)) data bits + FEC parity bits;")
+    lines.append("   * transmitted log2(symbols) at a time. */")
     lines.append("  bits: number;")
     lines.append("  encoding: Encoding;")
-    lines.append("  /** Hold time per bit frame, in milliseconds. */")
+    lines.append("  /** Data-symbol alphabet size (log2(symbols) bits per data frame):")
+    lines.append("   * 2 = red/blue, 4 = blue/magenta/red/yellow carrying Gray-ordered")
+    lines.append("   * bit pairs. Negotiated by the client from measured chroma SNR. */")
+    lines.append("  symbols: number;")
+    lines.append("  /** Hold time per frame (symbol window), in milliseconds. */")
     lines.append("  bitPeriodMs: number;")
     lines.append("  syncPattern: SyncPattern;")
-    lines.append("  /** 2 (sync delimiter) + bits */")
+    lines.append("  /** 2 (sync delimiter) + ceil(bits / log2(symbols)) data frames */")
     lines.append("  cycleFrames: number;")
     lines.append("  /** FEC around the Gray data word ('secded' = extended Hamming, d=4:")
-    lines.append("   * correct 1 misread bit frame, detect-and-reject 2). Absent = 'none'. */")
+    lines.append("   * correct 1 misread bit, detect-and-reject 2). Absent = 'none'. */")
     lines.append("  fec?: Fec | undefined;")
     lines.append("}\n")
 
@@ -234,16 +238,16 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("  t0: number;")
     lines.append("}\n")
     lines.append("/** The client is the configuration authority: it measured the scene, so it")
-    lines.append(" * chooses the code carrier and signaling rate; omitted fields fall back to")
-    lines.append(" * server defaults. */")
+    lines.append(" * chooses the symbol alphabet and signaling rate; omitted fields fall back")
+    lines.append(" * to server defaults. */")
     lines.append("export interface StartMappingOptions {")
     lines.append("  ledCount: number;")
     lines.append(
-        "  /** Code carrier, chosen from measured light: dark -> 'gray', lit -> 'gray-hue'. */"
+        "  /** Symbol alphabet size, chosen from measured chroma SNR: good -> 4, marginal -> 2. */"
     )
-    lines.append("  encoding?: Encoding;")
+    lines.append("  symbols?: number;")
     lines.append(
-        "  /** Signaling rate: each bit window should span >= ~3 camera frame intervals. */"
+        "  /** Signaling rate: each symbol window should span >= ~3 camera frame intervals. */"
     )
     lines.append("  bitPeriodMs?: number;")
     lines.append("}\n")
@@ -257,7 +261,7 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     )
     lines.append("export interface ConfigureOptions {")
     lines.append("  ledCount?: number;")
-    lines.append("  encoding?: Encoding;")
+    lines.append("  symbols?: number;")
     lines.append("  bitPeriodMs?: number;")
     lines.append("}\n")
     lines.append("export interface ConfigureMessage {")
@@ -553,8 +557,11 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append("")
     out.append("class CodeParams(_StrictModel):")
     out.append("    ledCount: int = Field(ge=1)")
+    out.append("    # Coded BITS per cycle (data + FEC parity), sent log2(symbols) per frame.")
     out.append("    bits: int = Field(ge=1)")
     out.append("    encoding: Encoding")
+    out.append("    # Data-symbol alphabet size: 2 (red/blue) or 4 (Gray-ordered bit pairs).")
+    out.append("    symbols: Literal[2, 4]")
     out.append("    bitPeriodMs: float = Field(gt=0.0)")
     out.append("    syncPattern: SyncPattern")
     out.append("    cycleFrames: int = Field(ge=3)")
@@ -614,7 +621,7 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append('    """Client-chosen capture configuration; omitted fields -> server defaults."""')
     out.append("")
     out.append("    ledCount: int = Field(ge=1)")
-    out.append("    encoding: Union[Encoding, None] = None")
+    out.append("    symbols: Union[Literal[2, 4], None] = None")
     out.append("    bitPeriodMs: Union[float, None] = Field(default=None, gt=0.0)")
     out.append("")
     out.append("")
@@ -629,7 +636,7 @@ def emit_python(schemas: dict[str, dict]) -> str:
     )
     out.append("")
     out.append("    ledCount: Union[int, None] = Field(default=None, ge=1)")
-    out.append("    encoding: Union[Encoding, None] = None")
+    out.append("    symbols: Union[Literal[2, 4], None] = None")
     out.append("    bitPeriodMs: Union[float, None] = Field(default=None, gt=0.0)")
     out.append("")
     out.append("")

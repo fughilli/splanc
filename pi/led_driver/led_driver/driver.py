@@ -21,8 +21,8 @@ from typing import Callable, Dict, Optional
 from ledmapper_protocol import CodeParams
 
 from .clock import now_ms
-from .graycode import frame_plan
-from .spi import RGB, SpiSink, frame_bytes
+from .graycode import color_plan
+from .spi import RGB, SpiSink, frame_bytes, frame_bytes_colors
 
 # Debug modes for set_debug (design doc M1 "debug single-LED mode").
 MODE_CYCLE = "cycle"  # normal Gray-code cycle
@@ -117,19 +117,22 @@ class LedDriver:
 
     # -- worker -----------------------------------------------------------
 
-    def _on_set_for(self, frame_idx: int, plan) -> frozenset:
+    def _frame_for(self, frame_idx: int, plan, n: int) -> bytes:
         with self._lock:
             mode, led = self._mode, self._debug_led
         if mode == MODE_OFF:
-            return frozenset()
+            return frame_bytes(frozenset(), n, brightness=self._brightness)
         if mode == MODE_SINGLE:
-            return frozenset((led,))
-        return plan[frame_idx % len(plan)]
+            return frame_bytes(
+                frozenset((led,)), n, color=self._on_color, brightness=self._brightness
+            )
+        # Normal hue cycle: every LED lit, per-LED colors from the plan.
+        return frame_bytes_colors(plan[frame_idx % len(plan)], brightness=self._brightness)
 
     def _run(self) -> None:
         assert self._params is not None
         params = self._params
-        plan = frame_plan(params)
+        plan = color_plan(params)
         n = params.ledCount
         period_s = params.bitPeriodMs / 1000.0
 
@@ -140,14 +143,9 @@ class LedDriver:
         frame_idx = 0
         try:
             while not self._stop.is_set():
-                on_set = self._on_set_for(frame_idx, plan)
-                self._sink.write(
-                    frame_bytes(on_set, n, color=self._on_color, brightness=self._brightness)
-                )
+                self._sink.write(self._frame_for(frame_idx, plan, n))
                 frame_idx += 1
                 self._sleep(period_s)
         finally:
             # Leave the strip dark whenever the loop ends, however triggered.
-            self._sink.write(
-                frame_bytes(frozenset(), n, color=self._on_color, brightness=self._brightness)
-            )
+            self._sink.write(frame_bytes(frozenset(), n, brightness=self._brightness))

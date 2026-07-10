@@ -57,15 +57,15 @@
           "required": ["ledCount"],
           "properties": {
             "ledCount": { "type": "integer", "minimum": 1 },
-            "encoding": {
-              "type": ["string", "null"],
-              "enum": ["gray", "gray-hue", null],
-              "description": "Code carrier (see code_params.json). Chosen by the client from measured light conditions: dark scene -> 'gray' (LEDs outshine everything), lit scene -> 'gray-hue' (constant-brightness color code). Null/omitted -> server default."
+            "symbols": {
+              "type": ["integer", "null"],
+              "enum": [2, 4, null],
+              "description": "Data-symbol alphabet size (see code_params.json). Chosen by the client from measured chroma SNR: good conditions -> 4 (2 bits/frame, ~half the data frames), marginal -> 2 (max hue separation). Null/omitted -> server default (2)."
             },
             "bitPeriodMs": {
               "type": ["number", "null"],
               "exclusiveMinimum": 0,
-              "description": "Signaling rate. Chosen by the client so each bit window spans >= ~3 camera frame intervals — in low light the camera lengthens exposure and drops fps, so the client requests a slower code. Null/omitted -> server default."
+              "description": "Signaling rate (per symbol window). Chosen by the client so each window spans >= ~3 camera frame intervals — in low light the camera lengthens exposure and drops fps, so the client requests a slower code. Null/omitted -> server default."
             }
           }
         }
@@ -83,7 +83,7 @@
           "additionalProperties": false,
           "properties": {
             "ledCount": { "type": ["integer", "null"], "minimum": 1 },
-            "encoding": { "type": ["string", "null"], "enum": ["gray", "gray-hue", null] },
+            "symbols": { "type": ["integer", "null"], "enum": [2, 4, null] },
             "bitPeriodMs": { "type": ["number", "null"], "exclusiveMinimum": 0 }
           }
         }

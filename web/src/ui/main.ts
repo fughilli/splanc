@@ -11,7 +11,6 @@
 import type {
   CodeParams,
   DetectionRecord,
-  Encoding,
   ImuSample,
   LedEntry,
   OutputMap,
@@ -19,8 +18,8 @@ import type {
 import {
   adjustThreshold,
   ExposureMonitor,
-  planEncodingSwitch,
   planReconfigure,
+  planSymbolSwitch,
   recommendConfig,
 } from "../cv/exposure";
 import { CvPipeline } from "../cv/pipeline";
@@ -75,10 +74,10 @@ const forcedFx = ((): number | null => {
 const K_CACHE_KEY = "ledmapper.calibratedK";
 
 // Capture auto-negotiation overrides (cv/exposure.ts picks these from the
-// measured scene by default): ?encoding=gray|gray-hue, ?bitms=N.
-const forcedEncoding = ((): Encoding | null => {
-  const v = qs.get("encoding");
-  return v === "gray" || v === "gray-hue" ? v : null;
+// measured scene by default): ?symbols=2|4, ?bitms=N.
+const forcedSymbols = ((): 2 | 4 | null => {
+  const v = qs.get("symbols");
+  return v === "2" ? 2 : v === "4" ? 4 : null;
 })();
 const forcedBitMs = ((): number | null => {
   const v = parseFloat(qs.get("bitms") ?? "");
@@ -320,13 +319,17 @@ async function startCapture(): Promise<void> {
     });
     const probed = monitor.snapshot();
     const recommended = probed
-      ? recommendConfig({ frameIntervalMs: probed.frameIntervalMs, meanLuma: probed.scene.meanLuma })
+      ? recommendConfig({
+          frameIntervalMs: probed.frameIntervalMs,
+          meanLuma: probed.scene.meanLuma,
+          clipFrac: probed.scene.clipFrac,
+        })
       : null;
     const config = {
-      ...(forcedEncoding !== null
-        ? { encoding: forcedEncoding }
+      ...(forcedSymbols !== null
+        ? { symbols: forcedSymbols }
         : recommended !== null
-          ? { encoding: recommended.encoding }
+          ? { symbols: recommended.symbols }
           : {}),
       ...(forcedBitMs !== null
         ? { bitPeriodMs: forcedBitMs }
@@ -360,7 +363,7 @@ async function startCapture(): Promise<void> {
       return pl;
     };
     let pipeline = makePipeline(params, epoch);
-    hudGuide.textContent = `code: ${params.encoding} @ ${params.bitPeriodMs} ms/bit`;
+    hudGuide.textContent = `code: ${params.symbols} symbols @ ${params.bitPeriodMs} ms/frame`;
 
     lastUsedXr = usingXr;
     capturing = true;
@@ -579,9 +582,9 @@ async function startCapture(): Promise<void> {
     // two consecutive ticks — one bad window (stall, occlusion) must not
     // restamp the pattern clock for everyone.
     let pendingBitPeriod: number | null = null;
-    let pendingEncoding: Encoding | null = null;
+    let pendingSymbols: 2 | 4 | null = null;
     let renegotiating = false;
-    const applyReconfigure = (opts: { bitPeriodMs?: number; encoding?: Encoding }): void => {
+    const applyReconfigure = (opts: { bitPeriodMs?: number; symbols?: 2 | 4 }): void => {
       renegotiating = true;
       client
         .configure(opts)
@@ -592,7 +595,7 @@ async function startCapture(): Promise<void> {
           pipeline = makePipeline(params, epoch);
           pipeline.updateSolved(liveLeds);
           if (recordBlobs) postFrames({ reset: true, epoch, codeParams: params });
-          hudGuide.textContent = `code renegotiated: ${params.encoding} @ ${params.bitPeriodMs} ms/bit`;
+          hudGuide.textContent = `code renegotiated: ${params.symbols} symbols @ ${params.bitPeriodMs} ms/frame`;
         })
         .catch(() => undefined)
         .finally(() => {
@@ -614,19 +617,27 @@ async function startCapture(): Promise<void> {
       if (renegotiating) return;
 
       // Signaling-rate renegotiation: fps sank (light dropped → longer
-      // shutter) or recovered. Encoding switch: the room's light level
-      // crossed the hysteresis band (lights toggled mid-walk).
+      // shutter) or recovered. Symbol-alphabet switch: the decoder's
+      // MEASURED symbol margins (its chroma SNR) say the current alphabet is
+      // struggling (4 → 2) or comfortably separable (2 → 4).
       const wantBit = forcedBitMs === null ? planReconfigure(params.bitPeriodMs, report.frameIntervalMs) : null;
-      const wantEnc = forcedEncoding === null ? planEncodingSwitch(params.encoding, report.meanLuma) : null;
+      const wantSym =
+        forcedSymbols === null
+          ? planSymbolSwitch(
+              params.symbols as 2 | 4,
+              { meanLuma: report.meanLuma, clipFrac: report.clipFrac },
+              pipeline.stats.marginEma,
+            )
+          : null;
       if (wantBit !== null && wantBit === pendingBitPeriod) {
         pendingBitPeriod = null;
-        applyReconfigure({ bitPeriodMs: wantBit, ...(wantEnc !== null ? { encoding: wantEnc } : {}) });
-      } else if (wantEnc !== null && wantEnc === pendingEncoding) {
-        pendingEncoding = null;
-        applyReconfigure({ encoding: wantEnc, ...(wantBit !== null ? { bitPeriodMs: wantBit } : {}) });
+        applyReconfigure({ bitPeriodMs: wantBit, ...(wantSym !== null ? { symbols: wantSym } : {}) });
+      } else if (wantSym !== null && wantSym === pendingSymbols) {
+        pendingSymbols = null;
+        applyReconfigure({ symbols: wantSym, ...(wantBit !== null ? { bitPeriodMs: wantBit } : {}) });
       } else {
         pendingBitPeriod = wantBit;
-        pendingEncoding = wantEnc;
+        pendingSymbols = wantSym;
       }
     }, 2000);
   } catch (e) {

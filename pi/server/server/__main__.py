@@ -47,13 +47,14 @@ def main(argv=None) -> int:
         "(start_mapping options / mid-capture configure, §7.1)",
     )
     parser.add_argument(
-        "--encoding",
-        choices=["gray", "gray-hue"],
-        default="gray",
-        help="FALLBACK code carrier for clients that don't choose one: intensity "
-        "blink ('gray') or constant-brightness color code ('gray-hue'). The "
-        "phone normally measures the scene and picks the carrier itself in "
-        "start_mapping options — no flag needed",
+        "--symbols",
+        type=int,
+        choices=[2, 4],
+        default=2,
+        help="FALLBACK symbol alphabet for clients that don't choose one. The "
+        "phone normally measures its chroma SNR and picks the alphabet itself "
+        "in start_mapping options (and renegotiates mid-capture) — no flag "
+        "needed",
     )
     parser.add_argument(
         "--ssl-dir",
@@ -81,7 +82,7 @@ def main(argv=None) -> int:
         solver_dir=args.solver_dir,
         default_led_count=args.led_count,
         bit_period_ms=args.bit_period_ms,
-        encoding=args.encoding,
+        symbols=args.symbols,
     )
     uvicorn.run(
         app,

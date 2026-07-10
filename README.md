@@ -37,7 +37,15 @@ Rust**, `solver/`: native subprocess on the Pi + wasm in a phone Web
 Worker, cross-language parity test vs the Python reference, and
 **init-time solver placement** — both sides benchmark the same canned
 solve and the phone keeps the final solve unless it is decisively slower;
-see `solver/README.md`). The Nix blocker that stopped the previous session is **cleared** —
+see `solver/README.md`) → `hue-only-signaling` (**the intensity "gray"
+carrier is REMOVED** — its dark frames made blobs disappear and broke
+cross-frame track association; hue is the only carrier, with an
+**SNR-adaptive symbol alphabet**: 2 colors (red/blue) when chroma is
+marginal, 4 (blue/magenta/red/yellow, Gray-ordered bit pairs so
+adjacent-hue misreads stay single-bit-correctable) when it's good —
+a 64-LED cycle drops from 14 to 8 windows; negotiated at start from
+scene stats and renegotiated mid-capture from the decoder's measured
+symbol-margin EMA). The Nix blocker that stopped the previous session is **cleared** —
 the container was rebuilt with the Nix overlay, so `nix` works and the host is
 natively `aarch64-linux` (Pi images build without cross-emulation).
 

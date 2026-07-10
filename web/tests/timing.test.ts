@@ -8,7 +8,8 @@ import { cycleIndexAt, cycleMs, frameFractionAt, frameIndexAt } from "../src/cod
 const params: CodeParams = {
   ledCount: 64,
   bits: 6,
-  encoding: "gray",
+  encoding: "hue",
+  symbols: 2,
   bitPeriodMs: 100,
   syncPattern: "on_off",
   cycleFrames: 8,

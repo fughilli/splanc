@@ -406,3 +406,46 @@ codeParams}`. Exists so _pattern followers_ — the virtual LED wall — can
   Unit tests keep the invocation's mode for fast iteration;
   `native_solver.py` falls back from the `_opt` runfiles path to the raw
   one for tests that data-dep `:solver_cli` directly.
+
+## Hue-only signaling + SNR-adaptive symbol alphabet (hue-only-signaling branch, 2026-07-10)
+
+- **The intensity ("gray") carrier is REMOVED; hue is the only carrier.**
+  On-device experience showed the intensity code's dark frames make blobs
+  DISAPPEAR — the tracker had to coast blind through every 0-bit and the
+  ALL_OFF frame, and cross-frame track association failed exactly where the
+  code needed it. Under the hue carrier every LED is lit every frame at
+  constant brightness (the code is in COLOR), so tracks never lose their
+  blobs. The §7.6 `encoding` enum collapses to `"hue"`; the old dark-room
+  fallback to `gray` is gone (dark rooms now get the robust 2-symbol
+  alphabet instead — chroma still washes out in a truly black room, which
+  is a lighting problem, not a carrier choice).
+- **`CodeParams.symbols` (2 | 4): the SNR-adaptive data alphabet.**
+  `bits` still counts CODE bits (Gray data + SEC-DED parity); frames carry
+  `log2(symbols)` bits each, so `cycleFrames = 2 + ceil(bits /
+log2(symbols))` — a 64-LED SEC-DED cycle is 14 windows at 2 symbols,
+  8 at 4 (~43% faster identification when conditions allow).
+- **Palette** (white=ALL_ON reference, green=ALL_OFF sync, both unchanged):
+  2 symbols → red(1)/blue(0), the maximally separated pair. 4 symbols →
+  the hue-adjacent path blue(240°) → magenta(300°) → red(0°) → yellow(60°)
+  carrying binary-reflected-Gray bit pairs 00→01→11→10, so the DOMINANT
+  misread (confusing neighboring hues) flips exactly one bit — which
+  SEC-DED corrects; the FEC's single-window guarantee survives the wider
+  alphabet for the realistic error mode. Cyan is unused (it scores on the
+  green sync axis and would confuse the alignment census). Pinned by
+  cross-language goldens (golden_secded16.json / golden_secded16_sym4.json)
+  and an end-to-end adjacent-misread pipeline test.
+- **Decode**: per-window mean color is normalized by the track's own white
+  window (cancels white balance; static-hue clutter reads neutral and
+  fails the green sync — both mechanisms carried over), then classified to
+  the NEAREST palette target (L1); the margin is the best-vs-runner-up gap
+  normalized so a perfect read scores 1.0 in either alphabet.
+- **Alphabet negotiation**: at start the phone picks from scene stats
+  (mean luma ≥ 0.12 and clip fraction ≤ 0.05 → 4, else 2 — clipping
+  saturates channels and collapses hue). Mid-capture it reads the
+  decoder's `marginEma` (EMA of per-cycle worst-window margins over
+  sync-valid cycles — the MEASURED chroma SNR): < 0.35 downgrades 4→2,
+  ≥ 0.7 in a still-good scene upgrades 2→4; the wide dead zone plus the
+  existing 2-tick agreement rule prevents flapping. `?symbols=2|4` forces.
+- **The M1 driver now renders per-LED colors** (`frame_bytes_colors`,
+  APA102 B,G,R order; `graycode.color_plan` replaces the binary
+  `frame_plan`) — the hue carrier is no longer wall-only.

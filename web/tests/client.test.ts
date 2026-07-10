@@ -57,7 +57,8 @@ class FakeSocket implements SocketLike {
 const CODE_PARAMS = {
   ledCount: 64,
   bits: 6,
-  encoding: "gray",
+  encoding: "hue",
+  symbols: 2,
   bitPeriodMs: 100,
   syncPattern: "on_off",
   cycleFrames: 8,
@@ -223,11 +224,11 @@ test("startMapping passes the negotiated config; configure renegotiates", async 
   await p;
 
   // The client is the configuration authority (§7.1): the measured scene's
-  // encoding + rate ride along in start_mapping options.
-  const startP = client.startMapping(64, { encoding: "gray-hue", bitPeriodMs: 200 });
+  // alphabet + rate ride along in start_mapping options.
+  const startP = client.startMapping(64, { symbols: 4, bitPeriodMs: 200 });
   assert.deepEqual(s.lastSent(), {
     type: "start_mapping",
-    options: { ledCount: 64, encoding: "gray-hue", bitPeriodMs: 200 },
+    options: { ledCount: 64, symbols: 4, bitPeriodMs: 200 },
   });
   s.receive({ type: "mapping_started", patternClockEpoch: 1.0, codeParams: CODE_PARAMS });
   await startP;

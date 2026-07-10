@@ -34,7 +34,7 @@ export interface TrackSample {
   v: number;
   intensity: number;
   /** Mean blob color when matched, [0, 1] each (0 while coasting) — the
-   * gray-hue decoder reads bit values from these. */
+   * hue decoder classifies symbols from these. */
   r: number;
   g: number;
   b: number;

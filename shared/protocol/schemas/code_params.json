@@ -5,7 +5,15 @@
   "description": "Code-book parameters describing the temporal blink pattern. See design doc §7.6.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["ledCount", "bits", "encoding", "bitPeriodMs", "syncPattern", "cycleFrames"],
+  "required": [
+    "ledCount",
+    "bits",
+    "encoding",
+    "symbols",
+    "bitPeriodMs",
+    "syncPattern",
+    "cycleFrames"
+  ],
   "properties": {
     "ledCount": {
       "type": "integer",
@@ -15,33 +23,38 @@
     "bits": {
       "type": "integer",
       "minimum": 1,
-      "description": "Number of coded bit frames per cycle: ceil(log2(ledCount+1)) data bits, plus the FEC parity frames when fec != 'none'."
+      "description": "Number of coded BITS per cycle: ceil(log2(ledCount+1)) data bits, plus the FEC parity bits when fec != 'none'. Bits are transmitted log2(symbols) at a time — the data-frame count is ceil(bits / log2(symbols))."
     },
     "fec": {
       "type": "string",
       "enum": ["none", "secded"],
       "default": "none",
-      "description": "Forward error correction wrapped around the Gray data word. 'secded': extended Hamming, distance 4 — a single misread bit frame is CORRECTED, a double is DETECTED and the cycle rejected (never miscorrected). Exists because the raw Gray codebook has distance 1: one decisively-wrong window otherwise decodes to a valid WRONG LED id. Omitted = 'none' (legacy code-books)."
+      "description": "Forward error correction wrapped around the Gray data word. 'secded': extended Hamming, distance 4 — a single misread bit is CORRECTED, a double is DETECTED and the cycle rejected (never miscorrected). Exists because the raw Gray codebook has distance 1: one decisively-wrong window otherwise decodes to a valid WRONG LED id. With symbols=4 the palette carries Gray-ordered bit pairs, so the dominant misread (adjacent hue) still flips only ONE bit. Omitted = 'none' (legacy code-books)."
     },
     "encoding": {
       "type": "string",
-      "enum": ["gray", "gray-hue"],
-      "description": "Index encoding scheme. 'gray': intensity blink code (§8.1) — LEDs on/off per Gray-code bit. 'gray-hue': same Gray frame plan carried by COLOR at constant brightness — ALL_ON white (per-track color reference), ALL_OFF green (chroma sync), data bit 1 red / 0 blue; for fixtures filmed in uncontrolled lighting, where the decoder discriminates by hue relative to the white frame instead of by intensity."
+      "enum": ["hue"],
+      "description": "The code carrier. 'hue' (the only carrier): every LED is lit EVERY frame at constant brightness and the code is carried by COLOR — ALL_ON white (per-track color reference), ALL_OFF green (chroma sync), data frames from the symbol palette. Constant lighting means blob tracks never lose their blobs (the intensity 'gray' carrier was removed because its dark frames broke cross-frame track association); the decoder discriminates hue RELATIVE to the track's own white frame, cancelling white balance. The alphabet size is `symbols`."
+    },
+    "symbols": {
+      "type": "integer",
+      "enum": [2, 4],
+      "description": "Data-symbol alphabet size — how many palette colors carry data, i.e. log2(symbols) bits per data frame. 2: red(1)/blue(0). 4: blue/magenta/red/yellow on a hue-adjacent path carrying Gray-ordered bit pairs 00/01/11/10 (adjacent-hue confusion flips one bit, which SEC-DED corrects). Negotiated by the client from measured chroma SNR: 4 halves the data frames when conditions are good; 2 is the robust fallback."
     },
     "bitPeriodMs": {
       "type": "number",
       "exclusiveMinimum": 0,
-      "description": "Hold time per bit frame, in milliseconds."
+      "description": "Hold time per FRAME (symbol window), in milliseconds. (Name kept from the binary-carrier era.)"
     },
     "syncPattern": {
       "type": "string",
       "enum": ["on_off"],
-      "description": "Sync delimiter pattern. Currently only 'on_off' (one all-on frame, one all-off frame); modeled as enum so it remains extensible."
+      "description": "Sync delimiter pattern. Currently only 'on_off' (one all-on/white frame, one all-off/green frame); modeled as enum so it remains extensible."
     },
     "cycleFrames": {
       "type": "integer",
       "minimum": 3,
-      "description": "Total frames per cycle: 2 (sync delimiter) + bits."
+      "description": "Total frames per cycle: 2 (sync delimiter) + ceil(bits / log2(symbols)) data frames."
     }
   }
 }

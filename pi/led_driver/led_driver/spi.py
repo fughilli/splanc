@@ -62,6 +62,24 @@ def frame_bytes(
     return bytes(buf)
 
 
+def frame_bytes_colors(colors: List[RGB], brightness: int = 31) -> bytes:
+    """Encode one hue-code frame: every LED lit with its OWN color.
+
+    The hue carrier keeps all LEDs lit every frame (constant brightness;
+    the code is in the color), so this is the driver's normal frame path;
+    :func:`frame_bytes` remains for the dark/debug frames.
+    """
+    bright = _brightness_byte(brightness)
+    buf = bytearray(b"\x00\x00\x00\x00")  # start frame
+    for r, g, b in colors:
+        for c in (r, g, b):
+            if not 0 <= c <= 255:
+                raise ValueError(f"colour channels must be 0..255, got {(r, g, b)}")
+        buf += bytes((bright, b, g, r))  # APA102 colour order: B, G, R
+    buf += b"\x00" * _end_frame_len(len(colors))  # end frame
+    return bytes(buf)
+
+
 def buffer_len(n: int) -> int:
     """Total framed length for ``n`` LEDs (start + LED frames + end)."""
     return 4 + 4 * n + _end_frame_len(n)

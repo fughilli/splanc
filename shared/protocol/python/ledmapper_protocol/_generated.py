@@ -65,15 +65,18 @@ class DetectionRecord(_StrictModel):
 # ---------------------------------------------------------------------------
 
 
-Encoding = Literal["gray", "gray-hue"]
+Encoding = Literal["hue"]
 SyncPattern = Literal["on_off"]
 Fec = Literal["none", "secded"]
 
 
 class CodeParams(_StrictModel):
     ledCount: int = Field(ge=1)
+    # Coded BITS per cycle (data + FEC parity), sent log2(symbols) per frame.
     bits: int = Field(ge=1)
     encoding: Encoding
+    # Data-symbol alphabet size: 2 (red/blue) or 4 (Gray-ordered bit pairs).
+    symbols: Literal[2, 4]
     bitPeriodMs: float = Field(gt=0.0)
     syncPattern: SyncPattern
     cycleFrames: int = Field(ge=3)
@@ -133,7 +136,7 @@ class StartMappingOptions(_StrictModel):
     """Client-chosen capture configuration; omitted fields -> server defaults."""
 
     ledCount: int = Field(ge=1)
-    encoding: Union[Encoding, None] = None
+    symbols: Union[Literal[2, 4], None] = None
     bitPeriodMs: Union[float, None] = Field(default=None, gt=0.0)
 
 
@@ -146,7 +149,7 @@ class ConfigureOptions(_StrictModel):
     """Mid-capture renegotiation overlay; unset fields keep their current value."""
 
     ledCount: Union[int, None] = Field(default=None, ge=1)
-    encoding: Union[Encoding, None] = None
+    symbols: Union[Literal[2, 4], None] = None
     bitPeriodMs: Union[float, None] = Field(default=None, gt=0.0)
 
 

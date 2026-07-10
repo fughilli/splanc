@@ -72,17 +72,17 @@ def test_status_proxies(tmp_path):
 
 def test_reconfigure_swaps_params_and_restamps_epoch(tmp_path):
     sm = SessionManager(tmp_path / "sessions")
-    epoch0 = sm.start("sess", code_params_for(8, 100.0, "gray"))
+    epoch0 = sm.start("sess", code_params_for(8, 100.0, 2))
     sm.add_detections([_det(0), _det(0)])
 
-    new_params = code_params_for(8, 200.0, "gray-hue")
+    new_params = code_params_for(8, 200.0, 4)
     epoch1 = sm.reconfigure(new_params)
     assert epoch1 >= epoch0
     state = sm.pattern_state()
     assert state is not None
     got_epoch, got_params = state
     assert got_epoch == epoch1
-    assert got_params.bitPeriodMs == 200.0 and got_params.encoding == "gray-hue"
+    assert got_params.bitPeriodMs == 200.0 and got_params.symbols == 4
 
     # Detections collected before the reconfigure survive it.
     _sid, log_path = sm.stop()

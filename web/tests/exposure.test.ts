@@ -1,8 +1,8 @@
 /**
  * Exposure monitoring + capture auto-negotiation (cv/exposure.ts): the
- * varying-light logic — scene stats → encoding, camera cadence → signaling
- * rate, blob count → detector-threshold servo, and the mid-capture
- * renegotiation/hysteresis rules.
+ * varying-light logic — scene stats → symbol alphabet, camera cadence →
+ * signaling rate, blob count → detector-threshold servo, and the
+ * mid-capture renegotiation/hysteresis rules.
  */
 
 import assert from "node:assert/strict";
@@ -13,43 +13,52 @@ import {
   adjustThreshold,
   BIT_PERIOD_MAX_MS,
   BIT_PERIOD_MIN_MS,
-  DARK_SCENE_MEAN_LUMA,
-  ENCODING_SWITCH_DARK,
-  ENCODING_SWITCH_LIT,
   ExposureMonitor,
-  planEncodingSwitch,
+  HUE4_MIN_MEAN_LUMA,
   planReconfigure,
+  planSymbolSwitch,
   recommendConfig,
+  SYMBOL_DOWNGRADE_MARGIN,
+  SYMBOL_UPGRADE_MARGIN,
   THRESHOLD_BASE,
   THRESHOLD_MAX,
 } from "../src/cv/exposure";
 
 // -- recommendConfig: the pre-capture negotiation ---------------------------
 
-test("dark scene -> gray encoding (the dark-room failure mode of gray-hue)", () => {
-  const cfg = recommendConfig({ frameIntervalMs: 33.3, meanLuma: 0.03 });
-  assert.equal(cfg.encoding, "gray");
+test("dark scene -> the robust 2-symbol alphabet (chroma washes out)", () => {
+  const cfg = recommendConfig({ frameIntervalMs: 33.3, meanLuma: 0.03, clipFrac: 0.001 });
+  assert.equal(cfg.symbols, 2);
 });
 
-test("lit scene -> gray-hue encoding", () => {
-  const cfg = recommendConfig({ frameIntervalMs: 33.3, meanLuma: 0.3 });
-  assert.equal(cfg.encoding, "gray-hue");
+test("lit low-clip scene -> the 4-symbol alphabet (shorter cycle)", () => {
+  const cfg = recommendConfig({ frameIntervalMs: 33.3, meanLuma: 0.3, clipFrac: 0.001 });
+  assert.equal(cfg.symbols, 4);
 });
 
-test("30 fps camera -> 100 ms bits (the design-doc default operating point)", () => {
-  const cfg = recommendConfig({ frameIntervalMs: 33.3, meanLuma: 0.3 });
+test("heavy clipping keeps 2 symbols even in a bright scene", () => {
+  // Clipped channels collapse hue — the finer palette is not separable.
+  const cfg = recommendConfig({ frameIntervalMs: 33.3, meanLuma: 0.4, clipFrac: 0.2 });
+  assert.equal(cfg.symbols, 2);
+});
+
+test("30 fps camera -> 100 ms windows (the design-doc default operating point)", () => {
+  const cfg = recommendConfig({ frameIntervalMs: 33.3, meanLuma: 0.3, clipFrac: 0.001 });
   assert.equal(cfg.bitPeriodMs, 100);
 });
 
-test("15 fps camera (low light doubles exposure) -> 200 ms bits", () => {
-  const cfg = recommendConfig({ frameIntervalMs: 66.7, meanLuma: 0.03 });
+test("15 fps camera (low light doubles exposure) -> 210 ms windows", () => {
+  const cfg = recommendConfig({ frameIntervalMs: 66.7, meanLuma: 0.03, clipFrac: 0.001 });
   assert.equal(cfg.bitPeriodMs, 210); // ceil(3 * 66.7 / 10) * 10
 });
 
-test("bit period clamps to sane bounds", () => {
-  assert.equal(recommendConfig({ frameIntervalMs: 5, meanLuma: 0.3 }).bitPeriodMs, BIT_PERIOD_MIN_MS);
+test("window period clamps to sane bounds", () => {
   assert.equal(
-    recommendConfig({ frameIntervalMs: 500, meanLuma: 0.3 }).bitPeriodMs,
+    recommendConfig({ frameIntervalMs: 5, meanLuma: 0.3, clipFrac: 0.001 }).bitPeriodMs,
+    BIT_PERIOD_MIN_MS,
+  );
+  assert.equal(
+    recommendConfig({ frameIntervalMs: 500, meanLuma: 0.3, clipFrac: 0.001 }).bitPeriodMs,
     BIT_PERIOD_MAX_MS,
   );
 });
@@ -76,18 +85,32 @@ test("a much faster camera reclaims cycle time only past 2x", () => {
   assert.equal(planReconfigure(180, 33.3), null);
 });
 
-// -- planEncodingSwitch: hysteresis on the carrier ---------------------------
+// -- planSymbolSwitch: margin-driven alphabet renegotiation -------------------
 
-test("encoding switches only outside the hysteresis band", () => {
-  const mid = (ENCODING_SWITCH_DARK + ENCODING_SWITCH_LIT) / 2;
-  assert.equal(planEncodingSwitch("gray-hue", ENCODING_SWITCH_DARK - 0.01), "gray");
-  assert.equal(planEncodingSwitch("gray-hue", mid), null);
-  assert.equal(planEncodingSwitch("gray", ENCODING_SWITCH_LIT + 0.01), "gray-hue");
-  assert.equal(planEncodingSwitch("gray", mid), null);
-  // The band brackets the cold-start threshold, so a scene right at the
-  // recommendConfig boundary can't flap after the first choice.
-  assert.ok(ENCODING_SWITCH_DARK < DARK_SCENE_MEAN_LUMA);
-  assert.ok(ENCODING_SWITCH_LIT > DARK_SCENE_MEAN_LUMA);
+test("no margin evidence yet -> no switch", () => {
+  assert.equal(planSymbolSwitch(4, { meanLuma: 0.3, clipFrac: 0.001 }, null), null);
+  assert.equal(planSymbolSwitch(2, { meanLuma: 0.3, clipFrac: 0.001 }, null), null);
+});
+
+test("chronically low margins downgrade 4 -> 2", () => {
+  const scene = { meanLuma: 0.3, clipFrac: 0.001 };
+  assert.equal(planSymbolSwitch(4, scene, SYMBOL_DOWNGRADE_MARGIN - 0.01), 2);
+  assert.equal(planSymbolSwitch(4, scene, SYMBOL_DOWNGRADE_MARGIN + 0.01), null);
+});
+
+test("comfortable margins in a good scene upgrade 2 -> 4", () => {
+  const scene = { meanLuma: 0.3, clipFrac: 0.001 };
+  assert.equal(planSymbolSwitch(2, scene, SYMBOL_UPGRADE_MARGIN + 0.01), 4);
+  // Margins alone are not enough: the scene must also support fine chroma.
+  assert.equal(planSymbolSwitch(2, { meanLuma: HUE4_MIN_MEAN_LUMA - 0.01, clipFrac: 0.001 }, 0.9), null);
+  assert.equal(planSymbolSwitch(2, { meanLuma: 0.3, clipFrac: 0.2 }, 0.9), null);
+});
+
+test("the margin band has a dead zone (no flapping)", () => {
+  const scene = { meanLuma: 0.3, clipFrac: 0.001 };
+  const mid = (SYMBOL_DOWNGRADE_MARGIN + SYMBOL_UPGRADE_MARGIN) / 2;
+  assert.equal(planSymbolSwitch(4, scene, mid), null);
+  assert.equal(planSymbolSwitch(2, scene, mid), null);
 });
 
 // -- adjustThreshold: the blob-count servo -----------------------------------

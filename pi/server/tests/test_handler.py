@@ -324,21 +324,23 @@ def test_malformed_message_returns_error(tmp_path):
 # ---------------------------------------------------------------------------
 # Client-driven configuration (§7.1 start_mapping options / configure) and
 # exposure telemetry. The client measured the scene; the server adopts its
-# choices — no CLI flags are needed for any encoding/rate.
+# choices — no CLI flags are needed for any alphabet/rate.
 # ---------------------------------------------------------------------------
 
 
-def test_start_mapping_adopts_client_encoding_and_rate(tmp_path):
+def test_start_mapping_adopts_client_symbols_and_rate(tmp_path):
     handler, _ctx, _ = _make_handler(tmp_path)
     out = _run(
         handler,
-        '{"type":"start_mapping","options":{"ledCount":64,"encoding":"gray-hue","bitPeriodMs":200}}',
+        '{"type":"start_mapping","options":{"ledCount":64,"symbols":4,"bitPeriodMs":200}}',
     )
     m = _dump(out[0])
     assert m["type"] == "mapping_started"
-    assert m["codeParams"]["encoding"] == "gray-hue"
+    assert m["codeParams"]["symbols"] == 4
     assert m["codeParams"]["bitPeriodMs"] == 200
     assert m["codeParams"]["ledCount"] == 64
+    # 4 symbols halve the data frames: 12 SEC-DED bits -> 6 frames + sync.
+    assert m["codeParams"]["cycleFrames"] == 8
     # Followers see the same client-chosen code-book.
     p = _dump(_run(handler, '{"type":"get_pattern"}')[0])
     assert p["active"] is True and p["codeParams"] == m["codeParams"]
@@ -347,7 +349,7 @@ def test_start_mapping_adopts_client_encoding_and_rate(tmp_path):
 def test_start_mapping_without_options_uses_server_defaults(tmp_path):
     handler, _ctx, _ = _make_handler(tmp_path)
     m = _dump(_run(handler, '{"type":"start_mapping","options":{"ledCount":64}}')[0])
-    assert m["codeParams"]["encoding"] == "gray"  # ctx default
+    assert m["codeParams"]["symbols"] == 2  # ctx default
     assert m["codeParams"]["bitPeriodMs"] == 100.0  # ctx default
 
 
@@ -356,13 +358,13 @@ def test_configure_renegotiates_mid_capture(tmp_path):
     _run(handler, '{"type":"start_mapping","options":{"ledCount":4}}')
     _run(handler, _detections_raw(0))
 
-    out = _run(handler, '{"type":"configure","options":{"bitPeriodMs":200,"encoding":"gray-hue"}}')
+    out = _run(handler, '{"type":"configure","options":{"bitPeriodMs":200,"symbols":4}}')
     m = _dump(out[0])
     assert m["type"] == "pattern_state" and m["active"] is True
     # Unset fields keep the capture's values; set fields overlay.
     assert m["codeParams"]["ledCount"] == 4
     assert m["codeParams"]["bitPeriodMs"] == 200
-    assert m["codeParams"]["encoding"] == "gray-hue"
+    assert m["codeParams"]["symbols"] == 4
     # The pattern epoch is restamped so all parties re-anchor the cycle.
     assert m["patternClockEpoch"] is not None
 

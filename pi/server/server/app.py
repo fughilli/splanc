@@ -48,7 +48,7 @@ def create_app(
     solver_dir: Optional[Path] = None,
     default_led_count: int = 1024,
     bit_period_ms: float = DEFAULT_BIT_PERIOD_MS,
-    encoding: str = "gray",
+    symbols: int = 2,
     context: Optional[ServerContext] = None,
     run_solver_benchmark: bool = True,
 ) -> FastAPI:
@@ -68,7 +68,7 @@ def create_app(
             ReconstructionRunner(maps),
             default_led_count=default_led_count,
             bit_period_ms=bit_period_ms,
-            encoding=encoding,
+            symbols=symbols,
             map_store=maps,
         )
         if run_solver_benchmark:

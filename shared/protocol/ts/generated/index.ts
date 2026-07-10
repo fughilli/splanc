@@ -52,22 +52,27 @@ export interface DetectionRecord {
 // CodeParams (§7.6)
 // ---------------------------------------------------------------------------
 
-export type Encoding = "gray" | "gray-hue";
+export type Encoding = "hue";
 export type SyncPattern = "on_off";
 export type Fec = "none" | "secded";
 
 export interface CodeParams {
   ledCount: number;
-  /** Coded bit frames per cycle: ceil(log2(ledCount+1)) data bits + FEC parity frames. */
+  /** Coded BITS per cycle: ceil(log2(ledCount+1)) data bits + FEC parity bits;
+   * transmitted log2(symbols) at a time. */
   bits: number;
   encoding: Encoding;
-  /** Hold time per bit frame, in milliseconds. */
+  /** Data-symbol alphabet size (log2(symbols) bits per data frame):
+   * 2 = red/blue, 4 = blue/magenta/red/yellow carrying Gray-ordered
+   * bit pairs. Negotiated by the client from measured chroma SNR. */
+  symbols: number;
+  /** Hold time per frame (symbol window), in milliseconds. */
   bitPeriodMs: number;
   syncPattern: SyncPattern;
-  /** 2 (sync delimiter) + bits */
+  /** 2 (sync delimiter) + ceil(bits / log2(symbols)) data frames */
   cycleFrames: number;
   /** FEC around the Gray data word ('secded' = extended Hamming, d=4:
-   * correct 1 misread bit frame, detect-and-reject 2). Absent = 'none'. */
+   * correct 1 misread bit, detect-and-reject 2). Absent = 'none'. */
   fec?: Fec | undefined;
 }
 
@@ -121,13 +126,13 @@ export interface TimeSyncPingMessage {
 }
 
 /** The client is the configuration authority: it measured the scene, so it
- * chooses the code carrier and signaling rate; omitted fields fall back to
- * server defaults. */
+ * chooses the symbol alphabet and signaling rate; omitted fields fall back
+ * to server defaults. */
 export interface StartMappingOptions {
   ledCount: number;
-  /** Code carrier, chosen from measured light: dark -> 'gray', lit -> 'gray-hue'. */
-  encoding?: Encoding;
-  /** Signaling rate: each bit window should span >= ~3 camera frame intervals. */
+  /** Symbol alphabet size, chosen from measured chroma SNR: good -> 4, marginal -> 2. */
+  symbols?: number;
+  /** Signaling rate: each symbol window should span >= ~3 camera frame intervals. */
   bitPeriodMs?: number;
 }
 
@@ -140,7 +145,7 @@ export interface StartMappingMessage {
  * restamp the pattern epoch, keep collected detections. Reply: pattern_state. */
 export interface ConfigureOptions {
   ledCount?: number;
-  encoding?: Encoding;
+  symbols?: number;
   bitPeriodMs?: number;
 }
 

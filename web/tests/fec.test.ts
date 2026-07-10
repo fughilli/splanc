@@ -1,25 +1,47 @@
 /**
  * SEC-DED codeword logic (code/fec.ts) vs the Python driver golden, plus the
- * distance-4 guarantees the decoder relies on: every single bit-frame error
- * is corrected, every double is detected — NEVER miscorrected into a valid
- * wrong id.
+ * distance-4 guarantees the decoder relies on: every single bit error is
+ * corrected, every double is detected — NEVER miscorrected into a valid
+ * wrong id. The symbols=4 alphabet adds one more guarantee: misreading a
+ * symbol as its NEAREST hue neighbor flips exactly one bit (Gray-ordered
+ * palette), so the dominant confusion stays correctable.
  */
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { CodeParams } from "@ledmapper/protocol";
 import { secdedDecode, secdedEncode, secdedParityBits, secdedTotalBits } from "../src/code/fec";
-import { codewordForId, decodeCycle, decodeCycleEx, gray, ledLitInFrame } from "../src/code/gray";
+import {
+  bitsPerSymbol,
+  codewordForId,
+  COLOR_BLUE,
+  COLOR_MAGENTA,
+  COLOR_RED,
+  COLOR_YELLOW,
+  dataFrames,
+  decodeCycleSymbols,
+  gray,
+  SYMBOL_COLORS,
+  symbolAt,
+} from "../src/code/gray";
 import golden from "./golden_secded16.json";
+import golden4 from "./golden_secded16_sym4.json";
 
 const params: CodeParams = {
   ledCount: golden.ledCount,
   bits: golden.bits,
-  encoding: "gray",
+  encoding: "hue",
+  symbols: 2,
   bitPeriodMs: 100,
   syncPattern: "on_off",
   cycleFrames: golden.cycleFrames,
   fec: "secded",
+};
+
+const params4: CodeParams = {
+  ...params,
+  symbols: 4,
+  cycleFrames: golden4.cycleFrames,
 };
 
 test("code sizes match the Python driver golden", () => {
@@ -35,51 +57,70 @@ test("codewords match the Python driver golden, id for id", () => {
   }
 });
 
-test("frame plan matches the Python driver golden, frame for frame", () => {
-  for (let frame = 0; frame < golden.cycleFrames; frame++) {
-    const lit = [];
-    for (let id = 0; id < golden.ledCount; id++) {
-      if (ledLitInFrame(id, frame, params)) lit.push(id);
-    }
-    assert.deepEqual(lit, golden.framePlan[frame], `frame ${frame}`);
-  }
-});
-
-function framesFor(id: number): boolean[] {
-  return Array.from({ length: params.cycleFrames }, (_, k) => ledLitInFrame(id, k, params));
+function symbolsFor(id: number, p: CodeParams): number[] {
+  return Array.from({ length: dataFrames(p) }, (_, f) => symbolAt(id, f, p));
 }
 
-test("clean cycles decode without correction", () => {
-  for (let id = 0; id < params.ledCount; id++) {
-    const dec = decodeCycleEx(framesFor(id), params);
-    assert.equal(dec.id, id);
-    assert.equal(dec.corrected, false);
-    assert.equal(dec.uncorrectable, false);
-  }
-});
-
-test("EVERY single bit-frame error is corrected to the right id", () => {
-  for (let id = 0; id < params.ledCount; id++) {
-    for (let b = 0; b < params.bits; b++) {
-      const frames = framesFor(id);
-      frames[2 + b] = !frames[2 + b];
-      const dec = decodeCycleEx(frames, params);
-      assert.equal(dec.id, id, `id ${id} flip ${b}`);
-      assert.equal(dec.corrected, true);
+test("clean cycles decode without correction (both alphabets)", () => {
+  for (const p of [params, params4]) {
+    for (let id = 0; id < p.ledCount; id++) {
+      const dec = decodeCycleSymbols(symbolsFor(id, p), p);
+      assert.equal(dec.id, id);
+      assert.equal(dec.corrected, false);
+      assert.equal(dec.uncorrectable, false);
     }
   }
 });
 
-test("EVERY double bit-frame error is detected, never miscorrected", () => {
+test("EVERY single bit error is corrected to the right id", () => {
+  for (const p of [params, params4]) {
+    const bps = bitsPerSymbol(p);
+    for (let id = 0; id < p.ledCount; id++) {
+      for (let b = 0; b < p.bits; b++) {
+        const symbols = symbolsFor(id, p);
+        const frame = Math.floor(b / bps);
+        symbols[frame]! ^= 1 << (b % bps);
+        const dec = decodeCycleSymbols(symbols, p);
+        assert.equal(dec.id, id, `symbols=${p.symbols} id ${id} flip ${b}`);
+        assert.equal(dec.corrected, true);
+      }
+    }
+  }
+});
+
+test("EVERY double bit error is detected, never miscorrected", () => {
+  const bps = bitsPerSymbol(params);
   for (let id = 0; id < params.ledCount; id++) {
     for (let b1 = 0; b1 < params.bits; b1++) {
       for (let b2 = b1 + 1; b2 < params.bits; b2++) {
-        const frames = framesFor(id);
-        frames[2 + b1] = !frames[2 + b1];
-        frames[2 + b2] = !frames[2 + b2];
-        const dec = decodeCycleEx(frames, params);
+        const symbols = symbolsFor(id, params);
+        symbols[Math.floor(b1 / bps)]! ^= 1 << (b1 % bps);
+        symbols[Math.floor(b2 / bps)]! ^= 1 << (b2 % bps);
+        const dec = decodeCycleSymbols(symbols, params);
         assert.equal(dec.id, null, `id ${id} flips ${b1},${b2} -> ${dec.id}`);
         assert.equal(dec.uncorrectable, true);
+      }
+    }
+  }
+});
+
+test("symbols=4: adjacent-hue misreads are single-bit errors and correct", () => {
+  // The Gray-ordered palette's whole point: the hue path blue → magenta →
+  // red → yellow carries 00 → 01 → 11 → 10, so confusing NEIGHBORING hues
+  // flips one bit and SEC-DED recovers the true id.
+  const path = [COLOR_BLUE, COLOR_MAGENTA, COLOR_RED, COLOR_YELLOW];
+  const palette = SYMBOL_COLORS[4]!;
+  const valueOf = (c: (typeof path)[number]): number => palette.indexOf(c);
+  for (let id = 0; id < params4.ledCount; id++) {
+    for (let f = 0; f < dataFrames(params4); f++) {
+      const trueValue = symbolAt(id, f, params4);
+      const pos = path.indexOf(palette[trueValue]!);
+      for (const n of [pos - 1, pos + 1]) {
+        if (n < 0 || n >= path.length) continue;
+        const symbols = symbolsFor(id, params4);
+        symbols[f] = valueOf(path[n]!);
+        const dec = decodeCycleSymbols(symbols, params4);
+        assert.equal(dec.id, id, `id ${id} frame ${f}: ${pos} misread as ${n}`);
       }
     }
   }
@@ -104,24 +145,19 @@ test("exhaustive encode/decode roundtrip + corruption for all used widths", () =
   }
 });
 
-test("decodeCycle back-compat wrapper returns the bare id", () => {
-  assert.equal(decodeCycle(framesFor(7), params), 7);
-});
-
 test("a legacy fec-less code-book still uses the raw Gray word", () => {
   const legacy: CodeParams = {
     ledCount: 16,
     bits: 5,
-    encoding: "gray",
+    encoding: "hue",
+    symbols: 2,
     bitPeriodMs: 100,
     syncPattern: "on_off",
     cycleFrames: 7,
     // fec omitted = "none"
   };
   for (let id = 0; id < legacy.ledCount; id++) {
-    const frames = Array.from({ length: legacy.cycleFrames }, (_, k) =>
-      ledLitInFrame(id, k, legacy),
-    );
-    assert.equal(decodeCycle(frames, legacy), id);
+    const dec = decodeCycleSymbols(symbolsFor(id, legacy), legacy);
+    assert.equal(dec.id, id);
   }
 });

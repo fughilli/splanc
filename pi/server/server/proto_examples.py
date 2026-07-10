@@ -9,10 +9,11 @@ identically on both sides.
 CODE_PARAMS = {
     "ledCount": 64,
     "bits": 12,
-    "encoding": "gray-hue",
+    "encoding": "hue",
+    "symbols": 4,
     "bitPeriodMs": 110.0,
     "syncPattern": "on_off",
-    "cycleFrames": 14,
+    "cycleFrames": 8,
     "fec": "secded",
 }
 
@@ -57,9 +58,9 @@ CLIENT_FLATS = [
     {"type": "start_mapping", "options": {"ledCount": 64}},
     {
         "type": "start_mapping",
-        "options": {"ledCount": 64, "encoding": "gray-hue", "bitPeriodMs": 200.0},
+        "options": {"ledCount": 64, "symbols": 4, "bitPeriodMs": 200.0},
     },
-    {"type": "configure", "options": {"bitPeriodMs": 200.0}},
+    {"type": "configure", "options": {"symbols": 2, "bitPeriodMs": 200.0}},
     {"type": "stop_mapping"},
     {"type": "stop_mapping", "solveOnHost": False},
     {"type": "submit_map", "map": OUTPUT_MAP},

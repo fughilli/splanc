@@ -30,22 +30,23 @@
     },
     {
       "direction": "client",
-      "frameB64": "GhcKFQhAEghncmF5LWh1ZRkAAAAAAABpQA==",
+      "frameB64": "Gg8KDQhAEAQZAAAAAAAAaUA=",
       "decoded": {
         "type": "start_mapping",
         "options": {
           "ledCount": 64,
-          "encoding": "gray-hue",
+          "symbols": 4,
           "bitPeriodMs": 200.0
         }
       }
     },
     {
       "direction": "client",
-      "frameB64": "IgsKCRkAAAAAAABpQA==",
+      "frameB64": "Ig0KCxACGQAAAAAAAGlA",
       "decoded": {
         "type": "configure",
         "options": {
+          "symbols": 2,
           "bitPeriodMs": 200.0
         }
       }
@@ -233,35 +234,37 @@
     },
     {
       "direction": "server",
-      "frameB64": "CjAKA3MtMRIpCEAQDBoIZ3JheS1odWUhAAAAAACAW0AqBm9uX29mZjAOOgZzZWNkZWQ=",
+      "frameB64": "Ci0KA3MtMRImCEAQDBoDaHVlIQAAAAAAgFtAKgZvbl9vZmYwCDoGc2VjZGVkQAQ=",
       "decoded": {
         "type": "welcome",
         "sessionId": "s-1",
         "codeParams": {
           "ledCount": 64,
           "bits": 12,
-          "encoding": "gray-hue",
+          "encoding": "hue",
           "bitPeriodMs": 110.0,
           "syncPattern": "on_off",
-          "cycleFrames": 14,
-          "fec": "secded"
+          "cycleFrames": 8,
+          "fec": "secded",
+          "symbols": 4
         }
       }
     },
     {
       "direction": "server",
-      "frameB64": "CjkKA3MtMRIpCEAQDBoIZ3JheS1odWUhAAAAAACAW0AqBm9uX29mZjAOOgZzZWNkZWQZAAAAAABQakA=",
+      "frameB64": "CjYKA3MtMRImCEAQDBoDaHVlIQAAAAAAgFtAKgZvbl9vZmYwCDoGc2VjZGVkQAQZAAAAAABQakA=",
       "decoded": {
         "type": "welcome",
         "sessionId": "s-1",
         "codeParams": {
           "ledCount": 64,
           "bits": 12,
-          "encoding": "gray-hue",
+          "encoding": "hue",
           "bitPeriodMs": 110.0,
           "syncPattern": "on_off",
-          "cycleFrames": 14,
-          "fec": "secded"
+          "cycleFrames": 8,
+          "fec": "secded",
+          "symbols": 4
         },
         "solverBenchMs": 210.5
       }
@@ -278,18 +281,19 @@
     },
     {
       "direction": "server",
-      "frameB64": "GjQJAAAAAADcjkASKQhAEAwaCGdyYXktaHVlIQAAAAAAgFtAKgZvbl9vZmYwDjoGc2VjZGVk",
+      "frameB64": "GjEJAAAAAADcjkASJghAEAwaA2h1ZSEAAAAAAIBbQCoGb25fb2ZmMAg6BnNlY2RlZEAE",
       "decoded": {
         "type": "mapping_started",
         "patternClockEpoch": 987.5,
         "codeParams": {
           "ledCount": 64,
           "bits": 12,
-          "encoding": "gray-hue",
+          "encoding": "hue",
           "bitPeriodMs": 110.0,
           "syncPattern": "on_off",
-          "cycleFrames": 14,
-          "fec": "secded"
+          "cycleFrames": 8,
+          "fec": "secded",
+          "symbols": 4
         }
       }
     },
@@ -314,7 +318,7 @@
     },
     {
       "direction": "server",
-      "frameB64": "KjYIAREAAAAAANyOQBopCEAQDBoIZ3JheS1odWUhAAAAAACAW0AqBm9uX29mZjAOOgZzZWNkZWQ=",
+      "frameB64": "KjMIAREAAAAAANyOQBomCEAQDBoDaHVlIQAAAAAAgFtAKgZvbl9vZmYwCDoGc2VjZGVkQAQ=",
       "decoded": {
         "type": "pattern_state",
         "active": true,
@@ -322,27 +326,29 @@
         "codeParams": {
           "ledCount": 64,
           "bits": 12,
-          "encoding": "gray-hue",
+          "encoding": "hue",
           "bitPeriodMs": 110.0,
           "syncPattern": "on_off",
-          "cycleFrames": 14,
-          "fec": "secded"
+          "cycleFrames": 8,
+          "fec": "secded",
+          "symbols": 4
         }
       }
     },
     {
       "direction": "server",
-      "frameB64": "KisaKQhAEAwaCGdyYXktaHVlIQAAAAAAgFtAKgZvbl9vZmYwDjoGc2VjZGVk",
+      "frameB64": "KigaJghAEAwaA2h1ZSEAAAAAAIBbQCoGb25fb2ZmMAg6BnNlY2RlZEAE",
       "decoded": {
         "type": "pattern_state",
         "codeParams": {
           "ledCount": 64,
           "bits": 12,
-          "encoding": "gray-hue",
+          "encoding": "hue",
           "bitPeriodMs": 110.0,
           "syncPattern": "on_off",
-          "cycleFrames": 14,
-          "fec": "secded"
+          "cycleFrames": 8,
+          "fec": "secded",
+          "symbols": 4
         },
         "active": false
       }

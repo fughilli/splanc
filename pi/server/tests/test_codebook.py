@@ -38,7 +38,7 @@ def test_unknown_fec_raises():
 
 def test_fixed_fields_and_default_period():
     cp = code_params_for(1024)
-    assert cp.encoding == "gray"
+    assert cp.encoding == "hue" and cp.symbols == 2
     assert cp.syncPattern == "on_off"
     assert cp.bitPeriodMs == DEFAULT_BIT_PERIOD_MS
     assert cp.cycleFrames >= 3  # schema floor

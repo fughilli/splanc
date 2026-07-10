@@ -28,7 +28,7 @@
  * owns the timers and the wire messages.
  */
 
-import type { Encoding, ExposureStats } from "@ledmapper/protocol";
+import type { ExposureStats } from "@ledmapper/protocol";
 
 /** Scene luminance statistics from one unthresholded downsampled frame. */
 export interface SceneStats {
@@ -46,16 +46,17 @@ export interface FrameSample {
 }
 
 /**
- * Scenes darker than this (mean luma, after auto-exposure did its best) are
- * treated as DARK: the 'gray' intensity code wins there because the LEDs
- * outshine everything, while camera clipping washes the chroma out of
- * 'gray-hue' (the green sync died at gScore ~0.13 vs the 0.25 gate in the
- * 2026-07-07 dark-room trace). Brighter scenes get 'gray-hue', whose
- * white-relative chroma survives uncontrolled lighting that drowns intensity
- * blinking. AE on a phone targets ~mid-gray and reaches it in any lit room;
- * it undershoots badly only when there is genuinely no light.
+ * Symbol-alphabet thresholds. The 4-ary alphabet needs finer hue
+ * discrimination (adjacent palette colors are 60° apart instead of 180°),
+ * so it is chosen only when the measured chroma conditions support it:
+ * a reasonably lit scene (auto-exposure reached its mid-gray target) with
+ * few clipped highlights (clipping saturates channels and collapses hue —
+ * the same physics that killed the green sync at gScore ~0.13 in the
+ * 2026-07-07 dark-room trace). Everything else gets the robust 2-ary
+ * red/blue alphabet.
  */
-export const DARK_SCENE_MEAN_LUMA = 0.08;
+export const HUE4_MIN_MEAN_LUMA = 0.12;
+export const HUE4_MAX_CLIP_FRAC = 0.05;
 
 /** Minimum camera frames a bit window must span for centrality-weighted
  * window voting to have evidence (≥3 keeps ≥1 mid-window sample under the
@@ -66,9 +67,10 @@ export const MIN_FRAMES_PER_BIT = 3.0;
  * MIN_FRAMES_PER_BIT the decoder still works; hysteresis, not a cliff. */
 export const RENEG_FRAMES_PER_BIT = 2.5;
 
-/** Bit-period bounds: floor keeps the cycle robust to timing jitter even on
- * high-fps cameras; ceiling keeps a 64-LED SEC-DED cycle (14 frames) under
- * ~6 s so decodes (and live solves) still converge in a handheld walk. */
+/** Window-period bounds: floor keeps the cycle robust to timing jitter even
+ * on high-fps cameras; ceiling keeps a 64-LED SEC-DED cycle (14 frames at
+ * 2 symbols, 8 at 4) under ~6 s so decodes (and live solves) still converge
+ * in a handheld walk. */
 export const BIT_PERIOD_MIN_MS = 60;
 export const BIT_PERIOD_MAX_MS = 400;
 
@@ -79,7 +81,7 @@ export const THRESHOLD_MAX = 0.9;
 export const BLOB_FLOOD = 150;
 
 export interface NegotiatedConfig {
-  encoding: Encoding;
+  symbols: 2 | 4;
   bitPeriodMs: number;
 }
 
@@ -89,11 +91,18 @@ function roundBitPeriod(ms: number): number {
   return Math.min(BIT_PERIOD_MAX_MS, Math.max(BIT_PERIOD_MIN_MS, stepped));
 }
 
-/** Pre-capture negotiation: pick the code carrier and signaling rate for the
- * measured scene. Sent as start_mapping options — the server needs no flags. */
-export function recommendConfig(m: { frameIntervalMs: number; meanLuma: number }): NegotiatedConfig {
+/** Pre-capture negotiation: pick the symbol alphabet and signaling rate for
+ * the measured scene. Sent as start_mapping options — the server needs no
+ * flags. 4 symbols when the chroma SNR looks good (shortens the cycle by
+ * ~40%); the mid-capture margin telemetry corrects an optimistic pick. */
+export function recommendConfig(m: {
+  frameIntervalMs: number;
+  meanLuma: number;
+  clipFrac: number;
+}): NegotiatedConfig {
+  const goodChroma = m.meanLuma >= HUE4_MIN_MEAN_LUMA && m.clipFrac <= HUE4_MAX_CLIP_FRAC;
   return {
-    encoding: m.meanLuma < DARK_SCENE_MEAN_LUMA ? "gray" : "gray-hue",
+    symbols: goodChroma ? 4 : 2,
     bitPeriodMs: roundBitPeriod(MIN_FRAMES_PER_BIT * m.frameIntervalMs),
   };
 }
@@ -115,21 +124,41 @@ export function planReconfigure(currentBitPeriodMs: number, frameIntervalMs: num
   return null;
 }
 
-/** Hysteresis band around DARK_SCENE_MEAN_LUMA for mid-capture encoding
- * switches: a room hovering at the boundary must not flap the carrier (every
- * switch costs a cycle re-anchor on all parties). */
-export const ENCODING_SWITCH_DARK = 0.06;
-export const ENCODING_SWITCH_LIT = 0.12;
+/**
+ * Margin thresholds for the mid-capture symbol-alphabet switch, read against
+ * the decoder's margin EMA (its measured chroma SNR — see
+ * DecodeStats.marginEma; a perfect symbol read scores 1.0 in either
+ * alphabet). The band is wide because every switch costs a cycle re-anchor
+ * on all parties: downgrade only when 4-ary decoding is demonstrably
+ * struggling, upgrade only when 2-ary margins are so comfortable that the
+ * halved 4-ary separation still clears the confidence gate.
+ */
+export const SYMBOL_DOWNGRADE_MARGIN = 0.35;
+export const SYMBOL_UPGRADE_MARGIN = 0.7;
 
 /**
- * Mid-capture carrier check: returns the encoding to switch to, or null to
- * keep the current one. Same physics as {@link recommendConfig}, but with a
- * wide hysteresis band so only a real lighting change (lights turned on/off
- * during the walk) triggers the switch.
+ * Mid-capture symbol-alphabet check: returns the alphabet to switch to, or
+ * null to keep the current one. Unlike the pre-capture pick (scene stats
+ * only), this reads the decoder's MEASURED margins — the ground truth for
+ * whether the current alphabet is separable in this scene — plus the scene
+ * stats as the upgrade gate. `marginEma` is null before the first decoded
+ * cycle; nothing switches on no evidence.
  */
-export function planEncodingSwitch(current: Encoding, meanLuma: number): Encoding | null {
-  if (current === "gray-hue" && meanLuma < ENCODING_SWITCH_DARK) return "gray";
-  if (current === "gray" && meanLuma > ENCODING_SWITCH_LIT) return "gray-hue";
+export function planSymbolSwitch(
+  current: 2 | 4,
+  m: { meanLuma: number; clipFrac: number },
+  marginEma: number | null,
+): 2 | 4 | null {
+  if (marginEma === null) return null;
+  if (current === 4 && marginEma < SYMBOL_DOWNGRADE_MARGIN) return 2;
+  if (
+    current === 2 &&
+    marginEma >= SYMBOL_UPGRADE_MARGIN &&
+    m.meanLuma >= HUE4_MIN_MEAN_LUMA &&
+    m.clipFrac <= HUE4_MAX_CLIP_FRAC
+  ) {
+    return 4;
+  }
   return null;
 }
 

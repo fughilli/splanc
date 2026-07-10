@@ -134,14 +134,16 @@ def _validator_for(schema_name: str) -> Draft202012Validator:
 # ---------------------------------------------------------------------------
 
 
-def make_code_params(encoding: str = "gray", fec: str = "none") -> CodeParams:
+def make_code_params(symbols: int = 2, fec: str = "none") -> CodeParams:
+    frames = -(-10 // (1 if symbols == 2 else 2))  # ceil(bits / log2(symbols))
     return CodeParams(
         ledCount=1024,
         bits=10,
-        encoding=encoding,
+        encoding="hue",
+        symbols=symbols,
         bitPeriodMs=100.0,
         syncPattern="on_off",
-        cycleFrames=12,
+        cycleFrames=2 + frames,
         fec=fec,
     )
 
@@ -201,11 +203,11 @@ def make_output_map() -> OutputMap:
     [
         (DetectionRecord, make_detection_record, "detection_record"),
         (CodeParams, make_code_params, "code_params"),
-        (CodeParams, lambda: make_code_params("gray-hue"), "code_params"),
+        (CodeParams, lambda: make_code_params(4), "code_params"),
         (CodeParams, lambda: make_code_params(fec="secded"), "code_params"),
         (OutputMap, make_output_map, "output_map"),
     ],
-    ids=["DetectionRecord", "CodeParams", "CodeParamsHue", "CodeParamsSecded", "OutputMap"],
+    ids=["DetectionRecord", "CodeParams", "CodeParams4Sym", "CodeParamsSecded", "OutputMap"],
 )
 def test_standalone_types_roundtrip(model_cls, instance_factory, schema_name) -> None:
     original = instance_factory()
@@ -234,7 +236,7 @@ CLIENT_VARIANTS = [
         type="start_mapping",
         # Fully client-configured: the phone measured the scene and chose the
         # carrier + rate (§7.1).
-        options=StartMappingOptions(ledCount=64, encoding="gray-hue", bitPeriodMs=200.0),
+        options=StartMappingOptions(ledCount=64, symbols=4, bitPeriodMs=200.0),
     ),
     ConfigureMessage(
         type="configure",
@@ -242,7 +244,7 @@ CLIENT_VARIANTS = [
     ),
     ConfigureMessage(
         type="configure",
-        options=ConfigureOptions(ledCount=64, encoding="gray", bitPeriodMs=133.0),
+        options=ConfigureOptions(ledCount=64, symbols=2, bitPeriodMs=133.0),
     ),
     ExposureReportMessage(
         type="exposure_report",
@@ -459,7 +461,8 @@ def test_decode_raw_dict_welcome_message() -> None:
         "codeParams": {
             "ledCount": 1024,
             "bits": 10,
-            "encoding": "gray",
+            "encoding": "hue",
+            "symbols": 2,
             "bitPeriodMs": 100.0,
             "syncPattern": "on_off",
             "cycleFrames": 12,

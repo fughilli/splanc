@@ -30,7 +30,7 @@ from ledmapper_protocol import (
 from pydantic import ValidationError
 
 from .clock import now_ms
-from .codebook import DEFAULT_BIT_PERIOD_MS, code_params_for
+from .codebook import DEFAULT_BIT_PERIOD_MS, DEFAULT_SYMBOLS, code_params_for
 from .reconstruct import LiveSolver
 from .session import SessionManager
 
@@ -51,12 +51,14 @@ class ServerContext:
         id_factory: Callable[[], str] | None = None,
         clock: Callable[[], float] = now_ms,
         live_solver: LiveSolver | None = None,
-        encoding: str = "gray",
+        symbols: int = DEFAULT_SYMBOLS,
         map_store=None,
     ):
         self.sessions = sessions
         self.reconstructor = reconstructor
-        self.encoding = encoding
+        # FALLBACK symbol alphabet for clients that don't negotiate one; the
+        # phone normally chooses from its measured chroma SNR (§7.1).
+        self.symbols = symbols
         self.live = live_solver if live_solver is not None else LiveSolver()
         self.default_led_count = default_led_count
         self.bit_period_ms = bit_period_ms
@@ -146,7 +148,7 @@ class ConnectionHandler:
             type="welcome",
             sessionId=self.session_id,
             codeParams=code_params_for(
-                self.ctx.default_led_count, self.ctx.bit_period_ms, self.ctx.encoding
+                self.ctx.default_led_count, self.ctx.bit_period_ms, self.ctx.symbols
             ),
             solverBenchMs=self.ctx.solver_bench_ms,
         )
@@ -161,11 +163,11 @@ class ConnectionHandler:
         )
         # The client is the configuration authority (it measured the scene);
         # the ctx values are only the fallback for clients that send bare
-        # options — the server needs no CLI flags to run any encoding/rate.
+        # options — the server needs no CLI flags to run any alphabet/rate.
         params = code_params_for(
             options.ledCount,
             options.bitPeriodMs if options.bitPeriodMs is not None else self.ctx.bit_period_ms,
-            options.encoding if options.encoding is not None else self.ctx.encoding,
+            options.symbols if options.symbols is not None else self.ctx.symbols,
         )
         epoch = self.ctx.sessions.start(capture_id, params)
         return MappingStartedMessage(
@@ -185,7 +187,7 @@ class ConnectionHandler:
         params = code_params_for(
             options.ledCount if options.ledCount is not None else current.ledCount,
             options.bitPeriodMs if options.bitPeriodMs is not None else current.bitPeriodMs,
-            options.encoding if options.encoding is not None else current.encoding,
+            options.symbols if options.symbols is not None else current.symbols,
         )
         epoch = self.ctx.sessions.reconfigure(params)
         return PatternStateMessage(
@@ -221,7 +223,7 @@ class ConnectionHandler:
                 active=False,
                 patternClockEpoch=None,
                 codeParams=code_params_for(
-                    self.ctx.default_led_count, self.ctx.bit_period_ms, self.ctx.encoding
+                    self.ctx.default_led_count, self.ctx.bit_period_ms, self.ctx.symbols
                 ),
             )
         epoch, params = state

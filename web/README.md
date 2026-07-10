@@ -91,31 +91,46 @@ luminance threshold, disabling the blob-count servo; unset, the threshold
 starts at 0.6 and adapts), `?downscale=2`, `?flipv=0` (camera-texture row
 order; flipped by default after on-device validation 2026-07-03 — see
 `DetectorOptions.flipV`), `?leds=N`, `?blobs=1` (extra GL blob markers),
-`?encoding=gray|gray-hue` and `?bitms=N` (FORCE the code carrier / signaling
-rate, skipping auto-negotiation for that field). Wall page: `?cols=N`, `?gap`,
+`?symbols=2|4` and `?bitms=N` (FORCE the symbol alphabet / signaling rate,
+skipping auto-negotiation for that field). Wall page: `?cols=N`, `?gap`,
 `?margin`, `?dot` (dot diameter as a fraction of pitch).
 
-### Auto-negotiated capture configuration (varying-light robustness)
+### The hue code + auto-negotiated capture configuration
+
+The code carrier is **hue-only**: every LED is lit every frame at constant
+brightness and the code rides in COLOR (ALL_ON white = per-track color
+reference, ALL_OFF green = chroma sync, data frames from the symbol
+palette — `src/code/gray.ts`, golden-pinned to the Python driver). Constant
+lighting means blobs never disappear, so the tracker keeps cross-frame
+association without coasting blind through dark bits (the failure that
+killed the old intensity carrier). The decoder reads each window's color
+RELATIVE to the track's own white window, which cancels white balance
+exactly and makes static-hue clutter fail the green sync.
 
 The client is the configuration authority — **no server flags needed** (the
-old `--encoding` / `--bit-period-ms` flags are now only fallbacks for clients
-that send bare options). On **Start**, the capture page probes the scene for
+`--symbols` / `--bit-period-ms` flags are only fallbacks for clients that
+send bare options). On **Start**, the capture page probes the scene for
 ~1.2 s before the pattern runs (HUD: "Measuring light…"): an unthresholded
 downsampled readback gives scene luminance stats, and the frame cadence is
 the shutter-speed proxy (WebXR exposes no real ISO/shutter — low light
 lengthens exposure and drops fps, which we CAN see). It then sends
-`start_mapping` options (§7.1): dark scene → `gray`, lit scene → `gray-hue`;
-`bitPeriodMs` = ≥3 camera frame intervals, so a 15 fps low-light camera gets
-a 210 ms code instead of undecodable 100 ms bits.
+`start_mapping` options (§7.1): a lit, low-clipping scene → **4 symbols**
+(2 bits per frame — a 64-LED SEC-DED cycle is 8 windows instead of 14),
+marginal chroma → the robust 2-symbol red/blue alphabet; `bitPeriodMs` =
+≥3 camera frame intervals, so a 15 fps low-light camera gets a 210 ms code
+instead of undecodable 100 ms windows.
 
 During the capture the page streams `exposure_report` telemetry (~2 s cadence;
 persisted in the session log's `exposure` array for offline diagnosis), servos
 the detector threshold on the measured blob count (flood → raise, starve →
 walk back), and **renegotiates mid-capture** via the `configure` message when
-conditions drift (fps sag, lights toggled): the server restamps the pattern
-epoch, the wall follows on its next `get_pattern` poll, the phone rebuilds its
-decode pipeline, and detections already collected stay valid. Two consecutive
-2 s ticks must agree before a renegotiation fires (hysteresis).
+conditions drift: the signaling rate follows the measured fps, and the symbol
+alphabet follows the decoder's MEASURED symbol margins (its chroma-SNR EMA —
+chronically low margins downgrade 4 → 2; comfortable margins in a bright
+scene upgrade). The server restamps the pattern epoch, the wall follows on
+its next `get_pattern` poll, the phone rebuilds its decode pipeline, and
+detections already collected stay valid. Two consecutive 2 s ticks must
+agree before a renegotiation fires (hysteresis).
 
 ### How the wall stays in sync
 
