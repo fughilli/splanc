@@ -36,6 +36,11 @@ venv/
 /result
 /result-*
 
+# --- Secrets / credentials -----------------------------------------------
+# Local-only private keys (e.g. the personal GitHub SSH key used to clone the
+# private embedded/graph-extractor repos). Never commit these.
+/credentials/
+
 # --- Claude Code ---------------------------------------------------------
 # Local, per-machine settings; the shared skill under .claude/skills/ and the
 # container overlay ARE tracked.
