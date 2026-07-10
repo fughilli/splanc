@@ -4,6 +4,7 @@
 # formatters must never touch them, hence the global exclude.
 exclude: |
   (?x)^(
+    \.claude-container-overlay/skills/.*|
     shared/protocol/python/ledmapper_protocol/_generated\.py|
     shared/protocol/ts/generated/.*|
     web/tests/golden_.*\.json|
