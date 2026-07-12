@@ -109,31 +109,42 @@ export function bleAvailable(): boolean {
   return typeof navigator !== "undefined" && "bluetooth" in navigator;
 }
 
+/** A picked Improv device (from `requestImprovDevice`). */
+export interface ImprovDevice {
+  gatt?: {
+    connect(): Promise<{
+      getPrimaryService(uuid: string): Promise<{
+        getCharacteristic(uuid: string): Promise<BleChar>;
+      }>;
+    }>;
+  };
+}
+
 /**
- * Full provisioning flow over Web Bluetooth. Must be called from a user
- * gesture (the chooser requires it). Resolves to the player's redirect URL
- * strings (typically one: its http address).
+ * Show the Bluetooth device chooser. MUST be the first async thing the
+ * click handler does: `requestDevice` demands an unconsumed user gesture,
+ * and even a `prompt()` beforehand consumes it — so pick the device first,
+ * ask for credentials after.
+ */
+export async function requestImprovDevice(): Promise<ImprovDevice> {
+  const bt = (navigator as { bluetooth?: { requestDevice(o: unknown): Promise<unknown> } })
+    .bluetooth;
+  if (!bt) throw new Error("Web Bluetooth is unavailable in this browser");
+  return (await bt.requestDevice({
+    filters: [{ services: [IMPROV_SERVICE] }],
+  })) as ImprovDevice;
+}
+
+/**
+ * Provision a picked device: send credentials, await the device's redirect
+ * URL strings (typically one: its http address on the joined network).
  */
 export async function provisionViaBle(
+  device: ImprovDevice,
   ssid: string,
   password: string,
   onStatus: (msg: string) => void = () => undefined,
 ): Promise<string[]> {
-  const bt = (navigator as { bluetooth?: { requestDevice(o: unknown): Promise<unknown> } })
-    .bluetooth;
-  if (!bt) throw new Error("Web Bluetooth is unavailable in this browser");
-  onStatus("Choose your player in the Bluetooth picker…");
-  const device = (await bt.requestDevice({
-    filters: [{ services: [IMPROV_SERVICE] }],
-  })) as {
-    gatt?: {
-      connect(): Promise<{
-        getPrimaryService(uuid: string): Promise<{
-          getCharacteristic(uuid: string): Promise<BleChar>;
-        }>;
-      }>;
-    };
-  };
   if (!device.gatt) throw new Error("device has no GATT server");
   onStatus("Connecting…");
   const server = await device.gatt.connect();

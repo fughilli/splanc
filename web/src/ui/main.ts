@@ -25,7 +25,12 @@ import {
 import { CvPipeline } from "../cv/pipeline";
 import { DetectorGL } from "../cv/detect";
 import { certApprovalUrl, defaultWsUrl, LedMapperClient } from "../net/client";
-import { bleAvailable, provisionViaBle, wsUrlFromRedirect } from "../net/improv";
+import {
+  bleAvailable,
+  provisionViaBle,
+  requestImprovDevice,
+  wsUrlFromRedirect,
+} from "../net/improv";
 import { CaptureUnsupportedError } from "../xr/capture";
 import { DEFAULT_IMU_MAPPING, ImuRecorder, parseImuMapping } from "../xr/imu";
 import { MediaStreamCaptureSource } from "../xr/mediaStreamCapture";
@@ -234,13 +239,19 @@ if (bleAvailable()) {
   bleBtn.style.display = "";
   bleBtn.addEventListener("click", () => {
     void (async () => {
-      const ssid = prompt("WiFi network name (SSID) for the player:");
-      if (!ssid) return;
-      const password = prompt(`WiFi password for "${ssid}" (empty for open):`) ?? "";
       bleBtn.disabled = true;
       setError("");
       try {
-        const urls = await provisionViaBle(ssid, password, setConn);
+        // Chooser FIRST: requestDevice needs the click's (unconsumed) user
+        // gesture — even a prompt() beforehand eats it.
+        const device = await requestImprovDevice();
+        const ssid = prompt("WiFi network name (SSID) for the player:");
+        if (!ssid) {
+          bleBtn.disabled = false;
+          return;
+        }
+        const password = prompt(`WiFi password for "${ssid}" (empty for open):`) ?? "";
+        const urls = await provisionViaBle(device, ssid, password, setConn);
         const target = urls.map((u) => wsUrlFromRedirect(u)).find((u) => u !== null);
         if (!target) throw new Error(`player joined, but sent no usable address (${urls})`);
         setConn(`player provisioned at ${target} — reconnecting…`);
