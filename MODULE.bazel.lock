@@ -301,6 +301,41 @@
         ]
       }
     },
+    "@@firmware~//rules:extensions.bzl%arduino": {
+      "general": {
+        "bzlTransitiveDigest": "L6BrQLO40uqvoG37kXEbRwMtmSK5lrIoiM2UWrg76Tw=",
+        "usagesDigest": "Y5PmJX9FN4K4tdQvOCReQz7Cjj2NJofoJzn5wbpV+XU=",
+        "recordedFileInputs": {},
+        "recordedDirentsInputs": {},
+        "envVariables": {},
+        "generatedRepoSpecs": {
+          "fastled": {
+            "bzlFile": "@@firmware~//rules:arduino_library.bzl",
+            "ruleClassName": "arduino_library",
+            "attributes": {
+              "url": "",
+              "urls": [
+                "https://github.com/FastLED/FastLED/archive/refs/tags/3.10.5.zip"
+              ],
+              "sha256": "1d873ce548a9a00aaaf0f8fd9e9c15560fd997f19871810e9889750f6094ae66",
+              "strip_prefix": "FastLED-3.10.5",
+              "lib_name": "fastled",
+              "src_dirs": [
+                "src"
+              ],
+              "copts": [],
+              "defines": [
+                "FASTLED_INTERNAL"
+              ],
+              "deps": [
+                "@firmware//libs/board:arduino_core"
+              ]
+            }
+          }
+        },
+        "recordedRepoMappingEntries": []
+      }
+    },
     "@@rules_java~//java:rules_java_deps.bzl%compatibility_proxy": {
       "general": {
         "bzlTransitiveDigest": "C4xqrMy1wN4iuTN6Z2eCm94S5XingHhD6uwrIXvCxVI=",

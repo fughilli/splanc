@@ -80,6 +80,28 @@ export function defaultWsUrl(loc: { protocol: string; host: string } = location)
   return `${scheme}://${loc.host}/ws`;
 }
 
+/**
+ * The player origin to visit for a one-tap self-signed-certificate approval
+ * (R2 trust flow — firmware/landing/README.md). Browsers never show a cert
+ * interstitial for a WebSocket, so a hosted app targeting a cross-origin
+ * `wss:` player with an untrusted cert fails with no user-visible fix; the
+ * fix is a TOP-LEVEL visit to the player's own origin. Null when the socket
+ * targets the serving origin (loading the page already took the approval)
+ * or the target is not `wss:`.
+ */
+export function certApprovalUrl(
+  wsUrl: string,
+  loc: { host: string } = location,
+): string | null {
+  try {
+    const u = new URL(wsUrl);
+    if (u.protocol !== "wss:" || u.host === loc.host) return null;
+    return `https://${u.host}/`;
+  } catch {
+    return null;
+  }
+}
+
 export class LedMapperClient {
   private sock: SocketLike | null = null;
   private readonly factory: SocketFactory;

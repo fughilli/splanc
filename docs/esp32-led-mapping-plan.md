@@ -324,14 +324,21 @@ build/vendor the RFC6455 codec. M10 cross-target proto conformance test
 - **R1** RMT-while-WiFi coexistence on single-core C6 — _existence proof for
   the whole ESP32 target._ Spike a throwaway RMT+WSS-ping app first.
 - **R2** Self-signed WSS from an **externally-hosted** origin has no
-  background trust path (a `wss://esp32.local` self-signed cert can't be
-  click-through-approved from `app.example.com`). Spike Chrome + iOS Safari
-  trust flows before Phase 4c. Likely resolution: ESP32 serves a minimal
-  **same-origin** landing page so the user approves the cert once, then
-  loads/bounces to the external app. May reopen WS-vs-WSS. The hosted-origin
-  half exists (`//web:deploy_cloudflare` publishes the app + solver to
-  Cloudflare Pages; player selected via `?url=`); the spike is the trust
-  flow itself.
+  background trust path. **Spike apparatus built** (`firmware/landing/`):
+  the resolution is committed to the landing-page design — the ESP32 serves
+  ONE same-origin page (`index.html`, `%%APP_ORIGIN%%` baked by firmware
+  config) whose load forces the one-tap cert approval, probes its own
+  `wss://…/ws` to prove the exception stuck, and bounces to the hosted app
+  with `?url=` pre-filled; the app side surfaces the matching recovery hint
+  (`certApprovalUrl` in `web/src/net/client.ts`) when a cross-origin `wss:`
+  target won't connect. WS-vs-WSS is settled by platform rules: the app
+  origin is `https:` (Pages + getUserMedia), and mixed-content blocks `ws://`
+  from secure origins — WSS stays. **Remaining bench validation** (real
+  Chrome-for-Android + iOS Safari; runbook in `firmware/landing/README.md`,
+  Pi stands in as the self-signed player): exception scope + lifetime after
+  the interstitial, and Chrome **Private Network Access** enforcement (a
+  public→private-network WSS may come to require a PNA preflight —
+  `Access-Control-Allow-Private-Network` — independent of cert trust).
 - **R3** micropb + heapless + arena on `riscv32imac-none`, panic=abort, no
   alloc. **Half-resolved** (Phase 1½): micropb + heapless + the generated
   bindings + player core build no_std/no-alloc for the C6 triple; remaining

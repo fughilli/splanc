@@ -24,7 +24,7 @@ import {
 } from "../cv/exposure";
 import { CvPipeline } from "../cv/pipeline";
 import { DetectorGL } from "../cv/detect";
-import { defaultWsUrl, LedMapperClient } from "../net/client";
+import { certApprovalUrl, defaultWsUrl, LedMapperClient } from "../net/client";
 import { CaptureUnsupportedError } from "../xr/capture";
 import { DEFAULT_IMU_MAPPING, ImuRecorder, parseImuMapping } from "../xr/imu";
 import { MediaStreamCaptureSource } from "../xr/mediaStreamCapture";
@@ -197,10 +197,21 @@ async function boot(): Promise<void> {
     startBtn.disabled = false;
   } catch {
     setConn("connection failed — retrying…");
+    // Cross-origin wss target (hosted-app flow): the likely cause is the
+    // player's self-signed cert, which a WebSocket can never prompt for —
+    // point at the player's landing page (R2 trust flow).
+    const certHelp = certApprovalUrl(wsUrl);
+    if (certHelp !== null) {
+      setError(`Can't reach the player at ${wsUrl}.`, [
+        `If this player uses a self-signed certificate, open ${certHelp} first ` +
+          "and accept the certificate warning, then come back and reload.",
+      ]);
+    }
     // client auto-reconnects; enable start once connected.
     const enable = setInterval(() => {
       if (client.isConnected) {
         startBtn.disabled = false;
+        setError("");
         clearInterval(enable);
         void client.syncClock().catch(() => undefined);
       }

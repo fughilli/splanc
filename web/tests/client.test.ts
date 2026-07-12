@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { DetectionRecord, ServerMessage } from "@ledmapper/protocol";
-import { LedMapperClient, type SocketLike } from "../src/net/client";
+import { certApprovalUrl, LedMapperClient, type SocketLike } from "../src/net/client";
 import { decodeClient, encodeServer } from "../src/net/proto";
 
 class FakeSocket implements SocketLike {
@@ -356,4 +356,22 @@ test("submitMap uploads a phone-solved map and resolves on result_ready", async 
   s.receive({ type: "result_ready", mapId: "phone-map-1" });
   const ack = await submitP;
   assert.equal(ack.mapId, "phone-map-1");
+});
+
+test("certApprovalUrl points cross-origin wss targets at the player origin", () => {
+  const page = { host: "ledmapper.pages.dev" };
+  // Hosted-app flow: the player's origin is the certificate-approval stop.
+  assert.equal(
+    certApprovalUrl("wss://esp32.local/ws", page),
+    "https://esp32.local/",
+  );
+  assert.equal(
+    certApprovalUrl("wss://192.168.1.20:8443/ws", page),
+    "https://192.168.1.20:8443/",
+  );
+  // Same-origin: loading the page already took the approval.
+  assert.equal(certApprovalUrl("wss://ledmapper.pages.dev/ws", page), null);
+  // Non-wss targets have no certificate to approve; garbage is not a URL.
+  assert.equal(certApprovalUrl("ws://esp32.local/ws", page), null);
+  assert.equal(certApprovalUrl("not a url", page), null);
 });

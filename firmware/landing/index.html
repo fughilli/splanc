@@ -1,0 +1,128 @@
+<!doctype html>
+<!--
+  ESP32 same-origin landing page (R2 trust flow — docs/esp32-led-mapping-plan.md).
+
+  Browsers never show a certificate interstitial for a WebSocket connection:
+  a hosted app at https://app.example.com that opens wss://esp32.local/ws
+  against a self-signed cert just fails. The click-through ("Advanced ->
+  Proceed" / "visit website") only exists for TOP-LEVEL navigations — and
+  once taken, the exception is stored per (origin, certificate) and unlocks
+  subsequent cross-origin WSS to this host.
+
+  So the ESP32 serves exactly one page: the user navigates here first
+  (https://<esp32-host>/), takes the one-tap cert approval to load it, and
+  this page (1) proves the approval stuck by opening a SAME-ORIGIN WebSocket
+  to /ws, then (2) bounces to the hosted app with ?url= pre-filled.
+
+  %%APP_ORIGIN%% is baked in by the firmware from its configuration (e.g.
+  https://ledmapper.pages.dev). Keep this file dependency-free and tiny —
+  it ships in the ESP32 flash image.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LED Mapper player</title>
+    <style>
+      body {
+        font: 16px/1.5 system-ui, sans-serif;
+        background: #111;
+        color: #eee;
+        display: grid;
+        place-items: center;
+        min-height: 100vh;
+        margin: 0;
+      }
+      main {
+        max-width: 26rem;
+        padding: 1.5rem;
+        text-align: center;
+      }
+      .ok {
+        color: #6f6;
+      }
+      .bad {
+        color: #f88;
+      }
+      a.button {
+        display: inline-block;
+        margin-top: 1rem;
+        padding: 0.7rem 1.4rem;
+        border-radius: 0.5rem;
+        background: #2a6;
+        color: #fff;
+        text-decoration: none;
+        font-weight: 600;
+      }
+      a.button[aria-disabled="true"] {
+        background: #444;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>LED Mapper player</h1>
+      <p id="status">Checking the connection…</p>
+      <a id="go" class="button" href="#" aria-disabled="true">Open the app</a>
+      <p style="opacity: 0.6; font-size: 0.85rem">
+        This player hosts no app of its own — mapping and playback control
+        run from the hosted app, connected back to
+        <code id="host"></code>.
+      </p>
+    </main>
+    <script>
+      "use strict";
+      var APP_ORIGIN = "%%APP_ORIGIN%%";
+      var wsUrl = "wss://" + location.host + "/ws";
+      var target =
+        APP_ORIGIN.replace(/\/+$/, "") + "/?url=" + encodeURIComponent(wsUrl);
+      document.getElementById("host").textContent = location.host;
+      var status = document.getElementById("status");
+      var go = document.getElementById("go");
+      go.href = target;
+
+      // Same-origin WSS probe: loading this page took the cert approval, so
+      // this succeeding means the exception is stored and the player's WSS
+      // endpoint is up — the cross-origin connection from the app should now
+      // work too.
+      var enabled = false;
+      function enable(msg, cls) {
+        status.textContent = msg;
+        status.className = cls;
+        go.removeAttribute("aria-disabled");
+        enabled = true;
+      }
+      try {
+        var probe = new WebSocket(wsUrl);
+        var timer = setTimeout(function () {
+          probe.close();
+          if (!enabled)
+            enable(
+              "Could not verify the player connection — you can still try the app.",
+              "bad",
+            );
+        }, 4000);
+        probe.onopen = function () {
+          clearTimeout(timer);
+          probe.close();
+          enable("Player connection verified — certificate trusted.", "ok");
+          // Auto-bounce: the user came here only to approve the cert.
+          setTimeout(function () {
+            location.href = target;
+          }, 1200);
+        };
+        probe.onerror = function () {
+          clearTimeout(timer);
+          if (!enabled)
+            enable(
+              "WebSocket check failed. Reload this page and accept the certificate warning, then try again.",
+              "bad",
+            );
+        };
+      } catch (e) {
+        enable("WebSocket unavailable: " + e, "bad");
+      }
+    </script>
+  </body>
+</html>
