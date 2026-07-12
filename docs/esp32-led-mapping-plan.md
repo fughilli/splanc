@@ -197,7 +197,11 @@ player app + `//tools:player_probe` is the sustained-load test). The RMT
 port returns only if the bench shows glitches. The R1 60-second
 LEDs-while-connection-live acceptance moves onto the player app bench.
 
-**Phase 2½ — Player firmware app (bring-up). ✅ BUILT, awaiting bench.**
+**Phase 2½ — Player firmware app (bring-up). ✅ BUILT + PROTOCOL
+BENCH-PASSED on hardware** (2026-07-12: `//tools:player_probe` against the
+flashed C6 over the soft-AP — every CORE-profile reply contract-clean,
+including the arena map+topology uploads and the solverless stop
+semantics; clock sync bridged the ~12 h monotonic-domain gap as designed).
 `//firmware/player_app` (`bazelisk run -c opt
 //firmware/player_app:flash_esp32c6`): WiFi soft-AP (`ledmapper`/
 `ledmapper`), HTTP :80 (the R2 landing page, scheme/port-aware bounce), the
