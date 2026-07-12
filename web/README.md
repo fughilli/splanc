@@ -171,6 +171,33 @@ the phone's decoder uses to bucket bit windows. Residual latency (screen
 present, camera pipeline) is absorbed by the decoder's self-clocking
 alignment on the ALL_ON→ALL_OFF delimiter (§8.1).
 
+## Debugging detection with traces (`?trace=`)
+
+Detection problems that only show on real hardware — LED **blooming** (a
+too-bright LED saturates the sensor to a white core that washes out the hue
+the decoder needs), misclassification — are hard to see from the phone. The
+`?trace=<url>` capture-page param dumps rich per-frame CV data to a standalone
+trace server for offline inspection:
+
+```sh
+bazelisk run //tools:trace_server              # http://0.0.0.0:8444
+bazelisk run //tools:trace_server -- --tls     # https (self-signed) — needed
+                                               # from an https app origin
+```
+
+Then open the capture page with `?trace=https://<laptop-ip>:8444/trace` (take
+the trace server's cert exception once from an https origin — same mixed-content
+rule as the player WS). Each traced frame carries, per blob: the **mean color**
+(what the bloom drags toward gray), the **chroma-weighted color** (`cr/cg/cb` —
+the halo hue that survives blooming, each pixel weighted by its own chroma so
+the saturated core contributes ~nothing), **peak** luminance and the
+**saturated-pixel fraction** — plus periodic color thumbnails. The server
+writes `traces/<session>/{meta.json, frames.jsonl, thumbs/*.png}`. `satFrac`
+high with `cr/cg/cb` still carrying the right hue means blooming is the
+problem and chroma-weighted decoding (and/or lower LED brightness) is the fix;
+`cr/cg/cb` collapsed toward gray means the sensor clipped past recovery and
+brightness must come down.
+
 ## Device caveats (§13, revisit at Phase-4 bench time)
 
 - **Camera-texture orientation** (`flipV`): `texImage2D(video)` uploads are

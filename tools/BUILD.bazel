@@ -11,3 +11,10 @@ py_binary(
         requirement("websockets"),
     ],
 )
+
+# Standalone CV trace sink (stdlib only) — receives ?trace= dumps from the
+# capture page and writes readable JSONL + PNG thumbnails.
+py_binary(
+    name = "trace_server",
+    srcs = ["trace_server.py"],
+)

@@ -25,6 +25,23 @@ export interface CclBlob {
   r?: number;
   g?: number;
   b?: number;
+  /**
+   * Blooming diagnostics (only when `stats` is set, needs `colorBase`).
+   * A too-bright LED saturates the sensor to a white core surrounded by a
+   * colored halo, which washes the mean color toward gray and defeats the
+   * hue decode. These separate "how blown out" from "what hue the halo is":
+   */
+  /** Peak weight-channel luminance in the blob, [0, 1] (1 = fully clipped). */
+  peak?: number;
+  /** Fraction of member pixels at/above the saturation cut (~0.98). */
+  satFrac?: number;
+  /** CHROMA-WEIGHTED mean color, [0, 1]: each pixel weighted by its own
+   * chroma (max−min channel), so the near-gray saturated core contributes
+   * ~nothing and the colored halo dominates — the hue as it survives
+   * blooming. `null`-ish (0,0,0) when the blob has no chroma anywhere. */
+  cr?: number;
+  cg?: number;
+  cb?: number;
 }
 
 export interface CclOptions {
@@ -39,7 +56,13 @@ export interface CclOptions {
    * colorBase .. +2` (e.g. 0 for RGB when the weight channel is alpha).
    */
   colorBase?: number;
+  /** Also compute the blooming diagnostics (peak, satFrac, chroma-weighted
+   * color) — a per-pixel extra pass, so opt-in (the trace path only). */
+  stats?: boolean;
 }
+
+/** Weight-channel value at/above which a pixel counts as saturated (~0.98). */
+const SAT_CUT = 250;
 
 /**
  * @param data intensity buffer, 0 = background; sampled at `offset + (y*width+x)*stride`
@@ -57,6 +80,7 @@ export function connectedComponents(
   const maxArea = opts.maxArea ?? 10_000;
   const maxBlobs = opts.maxBlobs ?? 4096;
   const colorBase = opts.colorBase;
+  const stats = opts.stats === true && colorBase !== undefined;
 
   const visited = new Uint8Array(width * height);
   const blobs: CclBlob[] = [];
@@ -83,6 +107,12 @@ export function connectedComponents(
       let sumR = 0;
       let sumG = 0;
       let sumB = 0;
+      let peak = 0;
+      let satCount = 0;
+      let sumCW = 0;
+      let sumCWR = 0;
+      let sumCWG = 0;
+      let sumCWB = 0;
       stack.length = 0;
       stack.push(idx);
       visited[idx] = 1;
@@ -100,9 +130,24 @@ export function connectedComponents(
         if (iy < minY) minY = iy;
         if (iy > maxY) maxY = iy;
         if (colorBase !== undefined) {
-          sumR += colorAt(ix, iy, 0);
-          sumG += colorAt(ix, iy, 1);
-          sumB += colorAt(ix, iy, 2);
+          const cr = colorAt(ix, iy, 0);
+          const cg = colorAt(ix, iy, 1);
+          const cb = colorAt(ix, iy, 2);
+          sumR += cr;
+          sumG += cg;
+          sumB += cb;
+          if (stats) {
+            if (w > peak) peak = w;
+            if (w >= SAT_CUT) satCount++;
+            // Chroma = max−min channel: 0 for gray/white (the saturated
+            // core), high for a colored halo pixel. Weighting the color sum
+            // by it recovers the hue the bloom didn't destroy.
+            const chroma = Math.max(cr, cg, cb) - Math.min(cr, cg, cb);
+            sumCW += chroma;
+            sumCWR += chroma * cr;
+            sumCWG += chroma * cg;
+            sumCWB += chroma * cb;
+          }
         }
         // 4-connectivity.
         if (ix > 0) tryPush(i - 1, ix - 1, iy);
@@ -123,6 +168,14 @@ export function connectedComponents(
           blob.r = sumR / area / 255;
           blob.g = sumG / area / 255;
           blob.b = sumB / area / 255;
+        }
+        if (stats) {
+          blob.peak = peak / 255;
+          blob.satFrac = satCount / area;
+          const cwNorm = sumCW > 0 ? sumCW * 255 : 1;
+          blob.cr = sumCWR / cwNorm;
+          blob.cg = sumCWG / cwNorm;
+          blob.cb = sumCWB / cwNorm;
         }
         blobs.push(blob);
       }

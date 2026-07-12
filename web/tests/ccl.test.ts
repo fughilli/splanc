@@ -98,3 +98,42 @@ test("colorBase: per-blob mean color from RGBA buffers (weight in alpha)", () =>
   assert.ok(red.r! > 0.99 && red.g! < 0.01 && red.b! < 0.01);
   assert.ok(cyan.r! < 0.01 && cyan.g! > 0.99 && cyan.b! > 0.99);
 });
+
+test("stats: blooming diagnostics separate the white core from the halo hue", () => {
+  // A 4x4 RGBA blob simulating a bloomed blue LED: a 2x2 saturated white
+  // core (chroma 0) ringed by blue halo pixels (weight in alpha).
+  const data = new Uint8Array(4 * 4 * 4);
+  const put = (x: number, y: number, r: number, g: number, b: number, a: number) => {
+    const i = (y * 4 + x) * 4;
+    data[i] = r; data[i + 1] = g; data[i + 2] = b; data[i + 3] = a;
+  };
+  for (let y = 0; y < 4; y++) {
+    for (let x = 0; x < 4; x++) {
+      const core = x >= 1 && x <= 2 && y >= 1 && y <= 2;
+      if (core) put(x, y, 255, 255, 255, 255); // clipped white core
+      else put(x, y, 20, 40, 220, 180); // blue halo
+    }
+  }
+  const [blob] = connectedComponents(data, 4, 4, 4, 3, { colorBase: 0, stats: true });
+  // Plain mean is dragged toward white/gray by the core...
+  assert.ok(blob!.r! > 0.25 && blob!.g! > 0.3, "mean color washed toward gray");
+  // ...peak clipped, a chunk saturated...
+  assert.ok(blob!.peak! >= 0.99);
+  assert.ok(blob!.satFrac! > 0.2 && blob!.satFrac! < 0.5);
+  // ...but the CHROMA-WEIGHTED color recovers the blue halo (b dominant,
+  // r small), which is the hue the decoder needs.
+  assert.ok(blob!.cb! > blob!.cr! && blob!.cb! > blob!.cg!, "halo reads blue");
+  assert.ok(blob!.cr! < 0.2, "chroma-weighting suppresses the white core");
+});
+
+test("stats: an all-gray blob has zero chroma and safe defaults", () => {
+  const data = new Uint8Array(2 * 2 * 4);
+  for (let i = 0; i < 4; i++) {
+    data[i * 4] = 200; data[i * 4 + 1] = 200; data[i * 4 + 2] = 200; data[i * 4 + 3] = 200;
+  }
+  const [blob] = connectedComponents(data, 2, 2, 4, 3, { colorBase: 0, stats: true });
+  assert.equal(blob!.cr, 0);
+  assert.equal(blob!.cg, 0);
+  assert.equal(blob!.cb, 0);
+  assert.equal(blob!.satFrac, 0);
+});

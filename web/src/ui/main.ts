@@ -31,6 +31,7 @@ import {
   requestImprovDevice,
   wsUrlFromRedirect,
 } from "../net/improv";
+import { rgbaToB64, toTraceBlob, TraceSink, type TraceFrame } from "../net/trace";
 import { CaptureUnsupportedError } from "../xr/capture";
 import { DEFAULT_IMU_MAPPING, ImuRecorder, parseImuMapping } from "../xr/imu";
 import { MediaStreamCaptureSource } from "../xr/mediaStreamCapture";
@@ -92,6 +93,11 @@ const forcedBitMs = ((): number | null => {
 // Debug: stream the raw per-frame blob field to the server (JSONL under the
 // session dir) so the CV stage's actual input can be inspected offline.
 const recordBlobs = qs.get("record") === "1";
+// Debug: `?trace=<url>` dumps rich per-frame CV traces (blob saturation +
+// chroma-weighted color, periodic thumbnails) to a trace server
+// (tools/trace_server.py) for offline blooming/misclassification analysis.
+// From an https origin the URL must be https too (mixed content).
+const traceUrl = qs.get("trace");
 
 // Ground truth for the map views: `?truth=COLSxROWS` declares the wall's grid
 // (row-major, matching /wall.html's layout — the wall status bar shows its
@@ -140,6 +146,7 @@ let capture: MediaStreamCaptureSource | null = null;
 let capturing = false;
 let imuRecorder: ImuRecorder | null = null;
 let previewVideo: HTMLVideoElement | null = null;
+let traceSink: TraceSink | null = null;
 
 // -- solver placement (Rust/wasm branch) --------------------------------------
 // Load the wasm solver in a worker and time the canned benchmark once at
@@ -410,6 +417,21 @@ async function startCapture(): Promise<void> {
     let pipeline = makePipeline(params, epoch);
     hudGuide.textContent = `code: ${params.symbols} symbols @ ${params.bitPeriodMs} ms/frame`;
 
+    // Trace sink (?trace=): rich CV dump for offline blooming analysis.
+    const trace = traceUrl !== null ? new TraceSink(traceUrl) : null;
+    traceSink = trace;
+    if (trace) {
+      trace.begin({
+        sessionId: `${Date.now()}`,
+        startedAt: new Date().toISOString(),
+        ledCount,
+        wsUrl,
+        userAgent: navigator.userAgent,
+        codeParams: params,
+      });
+      setConn(`tracing to ${traceUrl}`);
+    }
+
     capturing = true;
     let frameCount = 0;
 
@@ -469,15 +491,33 @@ async function startCapture(): Promise<void> {
 
     capture.onFrame((f) => {
       if (!capturing || !capture) return;
-      const blobs = detector.detect(f.texture, f.imgW, f.imgH);
+      const blobs = detector.detect(f.texture, f.imgW, f.imgH, trace ? { stats: true } : {});
       // Exposure monitoring: blob count every frame, the (cheap but not free)
       // unthresholded scene readback on a subsample — AE moves at ~1 Hz.
-      monitor.push({
-        tMs: f.tCaptureMs,
-        blobCount: blobs.length,
-        scene: frameCount % 6 === 0 ? detector.measure(f.texture, f.imgW, f.imgH) : undefined,
-      });
+      const measured = frameCount % 6 === 0 ? detector.measure(f.texture, f.imgW, f.imgH) : undefined;
+      monitor.push({ tMs: f.tCaptureMs, blobCount: blobs.length, scene: measured });
       lastAmbient = f.ambientIntensity ?? lastAmbient;
+
+      if (trace) {
+        const tf: TraceFrame = {
+          t: f.tCaptureMs,
+          tServer: client.clock.toServerTime(f.tCaptureMs),
+          frameIndex: Math.floor(
+            (client.clock.toServerTime(f.tCaptureMs) - epoch) / params.bitPeriodMs,
+          ) % params.cycleFrames,
+          blobs: blobs.map(toTraceBlob),
+          scene: measured,
+        };
+        // A color thumbnail on the frames the measure pass just ran (every
+        // 6th) — lets the trace show bloom shape/color, not just numbers.
+        if (measured) {
+          const m = detector.lastMeasureFrame();
+          if (m.rgba.length > 0) {
+            tf.thumb = { w: m.w, h: m.h, rgbaB64: rgbaToB64(m.rgba) };
+          }
+        }
+        if (trace.push(tf)) void trace.flush();
+      }
       if (recordBlobs) {
         frameBuf.push({
           t: f.tCaptureMs,
@@ -662,6 +702,10 @@ async function startCapture(): Promise<void> {
     imuRecorder = null;
     previewVideo?.remove();
     previewVideo = null;
+    if (traceSink) {
+      await traceSink.flush().catch(() => undefined);
+      traceSink = null;
+    }
     await capture?.stop().catch(() => undefined);
     capture = null;
     startBtn.disabled = false;
@@ -682,6 +726,10 @@ async function stopCapture(sessionAlreadyEnded = false): Promise<void> {
   imuRecorder = null;
   previewVideo?.remove();
   previewVideo = null;
+  if (traceSink) {
+    await traceSink.flush().catch(() => undefined);
+    traceSink = null;
+  }
   if (!sessionAlreadyEnded) await capture?.stop().catch(() => undefined);
   capture = null;
   resetLiveFeedback();

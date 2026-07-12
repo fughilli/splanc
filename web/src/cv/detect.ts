@@ -135,7 +135,7 @@ export class DetectorGL {
    * full-resolution pixels, origin top-left (§7.4) — the readback's GL
    * bottom-left rows are flipped here.
    */
-  detect(texture: WebGLTexture, imgW: number, imgH: number): Blob[] {
+  detect(texture: WebGLTexture, imgW: number, imgH: number, opts: { stats?: boolean } = {}): Blob[] {
     const gl = this.gl;
     const w = Math.max(1, Math.round(imgW / this.downscale));
     const h = Math.max(1, Math.round(imgH / this.downscale));
@@ -173,6 +173,7 @@ export class DetectorGL {
       maxArea: this.maxArea,
       maxBlobs: this.maxBlobs,
       colorBase: 0,
+      stats: opts.stats === true,
     });
 
     // readPixels row 0 is the render target's bottom row, and the fragment
@@ -182,18 +183,29 @@ export class DetectorGL {
     const ds = this.downscale;
     return comps
       .filter((c) => Math.max(c.w, c.h) <= this.maxAspect * Math.min(c.w, c.h))
-      .map((c) => ({
-        u: c.x * ds,
-        v: this.flipV ? imgH - c.y * ds : c.y * ds,
-        intensity: c.intensity,
-        area: c.area * ds * ds,
-        w: c.w * ds,
-        h: c.h * ds,
-        // Always present: this call passes colorBase.
-        r: c.r!,
-        g: c.g!,
-        b: c.b!,
-      }));
+      .map((c) => {
+        const blob: Blob = {
+          u: c.x * ds,
+          v: this.flipV ? imgH - c.y * ds : c.y * ds,
+          intensity: c.intensity,
+          area: c.area * ds * ds,
+          w: c.w * ds,
+          h: c.h * ds,
+          // Always present: this call passes colorBase.
+          r: c.r!,
+          g: c.g!,
+          b: c.b!,
+        };
+        if (opts.stats) {
+          // stats:true guarantees CCL populated these.
+          blob.peak = c.peak!;
+          blob.satFrac = c.satFrac!;
+          blob.cr = c.cr!;
+          blob.cg = c.cg!;
+          blob.cb = c.cb!;
+        }
+        return blob;
+      });
   }
 
   /**
@@ -235,6 +247,17 @@ export class DetectorGL {
     gl.viewport(prevViewport[0]!, prevViewport[1]!, prevViewport[2]!, prevViewport[3]!);
 
     return sceneStatsFromLuma(this.measureBuf, w * h);
+  }
+
+  /**
+   * The last {@link measure} pass's raw downsampled frame (RGB color, alpha =
+   * unthresholded luminance) — a small color thumbnail for offline trace
+   * inspection (seeing bloom shape/color). Call right after measure(); returns
+   * an empty buffer if measure() hasn't run. The buffer is reused, so the
+   * caller must copy (the trace sink base64-encodes it immediately).
+   */
+  lastMeasureFrame(): { w: number; h: number; rgba: Uint8Array } {
+    return { w: this.measureW, h: this.measureH, rgba: this.measureBuf };
   }
 
   private ensureMeasureTarget(w: number, h: number): void {
