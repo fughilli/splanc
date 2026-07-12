@@ -1,0 +1,40 @@
+"""The R2 landing page (see README.md), packaged for the ESP32 webserver.
+
+The vendored firmware module now provides the delivery mechanism the Phase
+4c webserver needs: `c_resource_library` (as used by @embedded's verified
+wifi_ap app) embeds files as C const char arrays. `:landing_page` exposes
+`landing_html[]` / `landing_html_len` — the same shape wifi_ap serves its
+page with — with `%%APP_ORIGIN%%` baked to the deployed webapp origin.
+"""
+
+load("@embedded//rules:resources.bzl", "c_resource_library")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["index.html"])
+
+# The deployed hosted-app origin (//web:deploy_cloudflare). Phase 4c can
+# turn this into a build setting (or substitute at serve time from NVS
+# config) if players must point at per-install origins.
+APP_ORIGIN = "https://ledmapper.pages.dev"
+
+genrule(
+    name = "baked",
+    srcs = ["index.html"],
+    outs = ["landing.html"],
+    cmd = "sed 's|%%APP_ORIGIN%%|" + APP_ORIGIN + "|g' $(location index.html) > $@",
+)
+
+# -> landing_html[] / landing_html_len (symbols from the file basename).
+c_resource_library(
+    name = "landing_page",
+    srcs = [":baked"],
+)
+
+sh_test(
+    name = "baked_test",
+    srcs = ["baked_test.sh"],
+    args = ["$(location :baked)"],
+    data = [":baked"],
+)

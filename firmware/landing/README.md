@@ -28,9 +28,14 @@ The app side has the matching recovery path (`web/src/net/client.ts`
 connection won't come up, the error UI tells the user to visit the player's
 origin and approve the certificate.
 
-`%%APP_ORIGIN%%` is substituted by the firmware from its configuration when
-serving the page (Phase 4c wires this); the file is dependency-free and
-small enough for the flash image.
+`%%APP_ORIGIN%%` is baked at build time (`:baked` genrule, currently the
+deployed <https://ledmapper.pages.dev>; Phase 4c can promote it to a build
+setting or substitute at serve time from NVS config). The page ships as a
+C array via the vendored module's `c_resource_library` —
+`//firmware/landing:landing_page` exposes `landing_html[]` /
+`landing_html_len`, the same shape the hardware-verified
+`@embedded//apps/wifi_ap` app serves its page with. `:baked_test` pins the
+substitution + the load-bearing pieces (same-origin probe, `?url=` bounce).
 
 ## What must be validated ON DEVICE (the actual spike bench work)
 

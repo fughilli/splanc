@@ -236,6 +236,13 @@ tail).
   **no WebSocket lib** — use `httpd_ws_*` if the Arduino-merged tree exposes
   it, else vendor a minimal frame codec. **Accept:** browser opens a WSS session
   to the self-signed endpoint and exchanges one proto message each way.
+  **De-risked upstream** (embedded @ 9f91e12, hardware-verified): WiFi
+  soft-AP + HTTP webserver work on the C6 (`@embedded//apps/wifi_ap` —
+  arduino-esp32 WiFi/WebServer wired into Bazel), and `c_resource_library`
+  embeds served pages as C arrays — `//firmware/landing:landing_page`
+  already packages the R2 landing page that way (`landing_html[]`, app
+  origin baked to the deployed <https://ledmapper.pages.dev>). Remaining 4c
+  scope: TLS (mbedtls/esp_https_server) + the RFC6455 codec + proto framing.
 
 **Phase 5 — LED counting.** Firmware displays commanded color-block/spatial-
 binary patterns; phone CV detects blocks and binary-searches strip length;
