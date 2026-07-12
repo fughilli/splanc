@@ -359,6 +359,12 @@ has a domain and can create A records; when picked up:
 
 - **R1** RMT-while-WiFi coexistence on single-core C6 — _existence proof for
   the whole ESP32 target._ Spike a throwaway RMT+WSS-ping app first.
+  **Partially validated on hardware** (2026-07-12, `@embedded//apps/wifi_ap`
+  flashed from this repo's vendored pin): soft-AP + webserver + onboard-LED
+  color updates work together. Still owed before Phase 2 is committed: a
+  SUSTAINED animation on a real strip under concurrent request load for
+  ~60 s with no frame glitches (the color picker exercises sparse one-shot
+  updates, not continuous signal generation).
 - **R2** Self-signed WSS from an **externally-hosted** origin has no
   background trust path. **Spike apparatus built and core flow
   bench-validated** (2026-07-12: the app served from
