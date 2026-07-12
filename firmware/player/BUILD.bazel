@@ -44,6 +44,26 @@ rust_test(
 )
 
 rust_test(
+    name = "arena_upload_test",
+    srcs = ["tests/arena_upload.rs"],
+    data = ["//web:tests/golden_proto_frames.json"],
+    edition = "2021",
+    env = {
+        "GOLDEN_PROTO_FRAMES": "$(rootpath //web:tests/golden_proto_frames.json)",
+        "RUST_MIN_STACK": "16777216",
+    },
+    deps = [
+        ":player",
+        "//firmware/arena",
+        "//firmware/store",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:base64",
+        "@crates//:micropb",
+        "@crates//:serde_json",
+    ],
+)
+
+rust_test(
     name = "phone_client_frames_test",
     srcs = ["tests/phone_client_frames.rs"],
     data = ["//web:tests/golden_proto_frames.json"],

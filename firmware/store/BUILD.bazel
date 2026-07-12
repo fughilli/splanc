@@ -1,0 +1,40 @@
+"""Decode-into-arena for the variable-size uploads (Phase 3): map + topology
+land in the bump arena (LED list pre-sized from the upload's own led_count
+header), with deterministic ArenaFull and BlobStore persistence that re-runs
+the same decode (and its OOM check) on reload."""
+
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "store",
+    srcs = ["src/lib.rs"],
+    crate_name = "ledmapper_store",
+    edition = "2021",
+    deps = [
+        "//firmware/arena",
+        "@crates//:micropb",
+    ],
+)
+
+rust_test(
+    name = "store_test",
+    srcs = ["tests/store.rs"],
+    data = ["//web:tests/golden_proto_frames.json"],
+    edition = "2021",
+    env = {
+        "GOLDEN_PROTO_FRAMES": "$(rootpath //web:tests/golden_proto_frames.json)",
+        # The generated envelope types used to BUILD fixtures carry inline
+        # heapless storage; they land on the test thread's stack.
+        "RUST_MIN_STACK": "16777216",
+    },
+    deps = [
+        ":store",
+        "//firmware/arena",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:base64",
+        "@crates//:micropb",
+        "@crates//:serde_json",
+    ],
+)

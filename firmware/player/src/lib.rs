@@ -331,6 +331,43 @@ impl Player {
     pub fn led_count(&self, channel: usize) -> Option<u32> {
         self.led_counts.get(channel).copied().flatten()
     }
+
+    // -- arena-upload integration (Phase 3) ---------------------------------
+    // The transport routes the upload arms (ledmapper_store::ARM_SUBMIT_MAP /
+    // ARM_SUBMIT_TOPOLOGY, peeked with envelope_arm) through the arena
+    // decoder instead of handle(), so the generated envelope's inline
+    // heapless capacity never has to fit an upload. These produce the
+    // protocol replies for that path.
+
+    /// A map upload decoded into the arena: record it and ack result_ready.
+    pub fn map_stored(&mut self, map_id: &str) -> pb::ServerMessage {
+        self.stored_map_id = Some(s64(map_id));
+        let mut r = pb::ResultReady::default();
+        r.r#map_id = s64(map_id);
+        reply(SMsg::ResultReady(r))
+    }
+
+    /// A topology upload decoded into the arena: ack against the stored map
+    /// (mirrors the generated-path submit_topology semantics).
+    pub fn topology_stored(&mut self, map_id: &str) -> pb::ServerMessage {
+        if self.stored_map_id.as_deref() != Some(map_id) {
+            return error("unknown_map", "no stored map for this topology");
+        }
+        let mut r = pb::ResultReady::default();
+        r.r#map_id = s64(map_id);
+        reply(SMsg::ResultReady(r))
+    }
+}
+
+/// Bounded reply for an upload that exceeded the arena (StoreError::
+/// ArenaFull): the phone learns the fixture is too large for this player.
+pub fn upload_too_large() -> pb::ServerMessage {
+    error("map_too_large", "upload exceeds this player's storage arena")
+}
+
+/// Bounded reply for an upload that violated the wire contract.
+pub fn upload_malformed() -> pb::ServerMessage {
+    error("bad_message", "upload violates the map/topology contract")
 }
 
 /// pb CodeParams from a derived spec (mirrors codebook.py code_params_for;

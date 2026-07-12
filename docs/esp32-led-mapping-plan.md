@@ -193,14 +193,30 @@ WS2812B via RMT **while a WSS connection stays live** for 60s with no dropped
 pings or frame glitches. **This is the existence proof for the ESP32 target —
 run it as the first spike (R1).**
 
-**Phase 3 — Arena allocator + micropb data model.** Bump-allocator arena;
-statically bound frame buffers / decode scratch (`heapless`); arena-back the
-variable-size map/topology (LED count flexible to capacity). Bind micropb
-container traits to arena slices; **decode-into-arena** for chunked map
-upload; deterministic `ArenaFull` → bounded protocol error. NVS persistence
-via the same decoder. **Accept:** host `std` test decodes a chunked upload into
-the arena, hits clean OOM at capacity+1, and round-trips through NVS. **Must
-precede Phase 4/5** (they decode into it).
+**Phase 3 — Arena allocator + micropb data model. ✅ DONE (host-side).**
+`//firmware/arena` (`ledmapper_arena`): bump arena over a caller-owned
+buffer, deterministic `ArenaFull`, checkpoint/rollback (borrow-checked:
+`reset*` needs `&mut`, allocations borrow `&self`), plus `ArenaVec`
+(grow-and-leak for headerless lists, `with_exact_capacity` for header-sized
+ones). `//firmware/store` (`ledmapper_store`): **decode-into-arena** for the
+two variable-size uploads — hand-walked field decoders over `micropb`'s
+`PbDecoder` (a delta from the original "bind micropb container traits" idea:
+generated containers are constructed by `Default`, which cannot reach an
+arena without global state; walking exactly OutputMap/Topology is smaller
+and keeps the generated bindings for control messages) — LED list pre-sized
+from the upload's own `led_count` header, `ChunkedReader` decodes straight
+from a WSS fragment list with no contiguous frame buffer, positions stored
+as `f32`. `envelope_arm` peeks the oneof arm so the transport routes arms
+13/16 around the generated envelope; the player replies `result_ready` /
+`error{map_too_large}` (`map_stored`/`topology_stored`/`upload_too_large`).
+Persistence: `BlobStore` trait (NVS = opaque upload blob keyed by map id);
+reload runs the SAME decoder, re-running the OOM check. **Accepted:** host
+std tests decode a chunked 1024-LED upload into one exactly-sized region,
+hit clean OOM at capacity+1 with rollback, and round-trip through the blob
+store (incl. the OOM re-check on a shrunken arena); golden topology frame
+decodes value-exact; everything builds for the C6 triple. Remaining for
+hardware: the esp-idf NVS `BlobStore` impl + panic=abort footprint (R3
+tail).
 
 **Phase 4 — Pattern-gen + clock + WSS on ESP32.**
 
