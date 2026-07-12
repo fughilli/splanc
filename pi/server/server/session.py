@@ -29,6 +29,7 @@ from ledmapper_protocol import (
     ExposureStats,
     ImuSample,
     OutputMap,
+    Topology,
 )
 
 from .clock import now_ms
@@ -210,12 +211,20 @@ class MapStore:
     def csv_path(self, map_id: str) -> Path:
         return self.maps_dir / f"{map_id}.csv"
 
+    def topology_path(self, map_id: str) -> Path:
+        return self.maps_dir / f"{map_id}.topology.json"
+
     def exists(self, map_id: str) -> bool:
         return self.json_path(map_id).is_file()
 
     def save(self, output_map: OutputMap) -> None:
         self.json_path(output_map.mapId).write_text(output_map.model_dump_json(indent=2))
         self.csv_path(output_map.mapId).write_text(_to_csv(output_map))
+
+    def save_topology(self, topology: Topology) -> None:
+        """Persist a skeletonized topology (§7.7) next to its map — the
+        playback engines (Phase G) load it for the O(N) pulse illuminate."""
+        self.topology_path(topology.mapId).write_text(topology.model_dump_json(indent=2))
 
 
 def _to_csv(output_map: OutputMap) -> str:

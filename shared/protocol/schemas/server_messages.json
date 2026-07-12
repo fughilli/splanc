@@ -13,7 +13,10 @@
     { "$ref": "#/$defs/LiveMap" },
     { "$ref": "#/$defs/SolveStatus" },
     { "$ref": "#/$defs/ResultReady" },
-    { "$ref": "#/$defs/Error" }
+    { "$ref": "#/$defs/Error" },
+    { "$ref": "#/$defs/CountingState" },
+    { "$ref": "#/$defs/LedCountState" },
+    { "$ref": "#/$defs/PlaybackState" }
   ],
   "$defs": {
     "Welcome": {
@@ -171,6 +174,52 @@
         "type": { "const": "error" },
         "code": { "type": "string" },
         "message": { "type": "string" }
+      }
+    },
+    "CountingState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "active", "epochMs"],
+      "description": "Reply to set_counting_pattern: whether a counting pattern is now displayed (active = the commanded blocks were non-empty) and the server-clock time it latched, so the phone knows when its camera view is valid to read.",
+      "properties": {
+        "type": { "const": "counting_state" },
+        "active": { "type": "boolean" },
+        "epochMs": {
+          "type": ["number", "null"],
+          "description": "Server-clock time the pattern took effect, ms; null when inactive."
+        }
+      }
+    },
+    "LedCountState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "ledCount", "channel"],
+      "description": "Reply to set_led_count: echo of the persisted per-channel strip length.",
+      "properties": {
+        "type": { "const": "led_count_state" },
+        "ledCount": { "type": "integer", "minimum": 0 },
+        "channel": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "PlaybackState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "active", "effect", "params", "mapId"],
+      "description": "Reply to set_playback / get_playback: the effective playback configuration (the player echoes what it is actually running, with its defaults filled into params).",
+      "properties": {
+        "type": { "const": "playback_state" },
+        "active": { "type": "boolean" },
+        "effect": {
+          "type": "string",
+          "description": "The running effect; 'off' when inactive."
+        },
+        "params": {
+          "oneOf": [{ "$ref": "playback_params.json" }, { "type": "null" }]
+        },
+        "mapId": {
+          "type": ["string", "null"],
+          "description": "The stored map/topology playback runs on; null when the player has none selected."
+        }
       }
     }
   }

@@ -110,6 +110,65 @@ export interface OutputMap {
 }
 
 // ---------------------------------------------------------------------------
+// Topology (§7.7) — skeletonized fixture, uploaded alongside a map
+// ---------------------------------------------------------------------------
+
+export interface BranchPoint {
+  id: number;
+  /** Position in meters, same frame as the OutputMap. */
+  xyz: Vec3;
+}
+
+export interface TopologySegment {
+  id: number;
+  /** Branch-point id at the segment start (arclength 0); -1 = free end. */
+  a: number;
+  /** Branch-point id at the segment end; -1 = free end. */
+  b: number;
+  /** Polyline from a to b; arclength is measured along it from a. */
+  polyline: Vec3[];
+  /** Total polyline arclength, meters. */
+  length: number;
+}
+
+export interface LedAssociation {
+  ledId: number;
+  segmentId: number;
+  /** Arclength of the LED's foot point along the segment, meters from a. */
+  footArclength: number;
+  /** Perpendicular distance LED -> foot point, meters. */
+  dPerp: number;
+}
+
+/** Skeletonized fixture topology (Phase F output): drives the O(N)
+ * pulse illuminate on players. Keyed to the OutputMap it skeletonizes. */
+export interface Topology {
+  mapId: string;
+  branchPoints: BranchPoint[];
+  segments: TopologySegment[];
+  associations: LedAssociation[];
+}
+
+// ---------------------------------------------------------------------------
+// PlaybackParams (§7.8) — effect tunables (pulse reference controls)
+// ---------------------------------------------------------------------------
+
+/** All fields are optional overlays: unset keeps the player's current or
+ * default value, so a UI can send just the slider that moved. */
+export interface PlaybackParams {
+  /** Global output brightness scale in [0,1]. */
+  intensity?: number | null;
+  /** Soft-falloff radius around a pulse agent, meters ('soft'). */
+  glowRadius?: number | null;
+  /** Concurrent pulse agents traversing the topology. */
+  agentCount?: number | null;
+  /** Agent travel speed along the topology, m/s. */
+  speed?: number | null;
+  /** Palette as 0xRRGGBB ints; empty/omitted keeps the player default. */
+  palette?: number[];
+}
+
+// ---------------------------------------------------------------------------
 // Client -> Server messages (§7.1)
 // ---------------------------------------------------------------------------
 
@@ -243,6 +302,58 @@ export interface GetSolveStatusMessage {
   type: "get_solve_status";
 }
 
+/** A contiguous run of same-color LEDs in a counting pattern. */
+export interface ColorBlock {
+  start: number;
+  count: number;
+  /** Block color [r, g, b] in [0,1]. */
+  rgb: Vec3;
+}
+
+/** LED-counting handshake (§7.9): display a static color-block pattern.
+ * Blocks paint [start, start+count); uncovered LEDs are off; painting past
+ * the physical strip end IS the probe (the phone binary-searches the length
+ * by observing which blocks light). Empty blocks = all off. Reply:
+ * counting_state. */
+export interface SetCountingPatternMessage {
+  type: "set_counting_pattern";
+  blocks: ColorBlock[];
+  /** Player output channel; null/omitted -> 0. */
+  channel?: number | null;
+}
+
+/** Persist the detected strip length for a channel (defaults future
+ * codeParams.ledCount, bounds playback buffers). Reply: led_count_state. */
+export interface SetLedCountMessage {
+  type: "set_led_count";
+  ledCount: number;
+  /** Player output channel; null/omitted -> 0. */
+  channel?: number | null;
+}
+
+/** Upload the skeletonized topology for a stored map (Phase F). The player
+ * persists it next to the map and replies result_ready (mirrors submit_map). */
+export interface SubmitTopologyMessage {
+  type: "submit_topology";
+  topology: Topology;
+}
+
+/** Playback control (§7.8): select the effect and overlay params. 'off' is
+ * universal; other effects are player-capability-dependent (reply: error
+ * code='unsupported_effect' when not shipped). Reply: playback_state. */
+export interface SetPlaybackMessage {
+  type: "set_playback";
+  effect: string;
+  params?: PlaybackParams | null;
+  /** Stored map/topology to play on; null keeps the current selection. */
+  mapId?: string | null;
+}
+
+/** Poll the current playback state. Reply: playback_state. */
+export interface GetPlaybackMessage {
+  type: "get_playback";
+}
+
 export type ClientMessage =
   | HelloMessage
   | TimeSyncPingMessage
@@ -256,7 +367,12 @@ export type ClientMessage =
   | GetStatusMessage
   | GetPatternMessage
   | GetLiveMapMessage
-  | GetSolveStatusMessage;
+  | GetSolveStatusMessage
+  | SetCountingPatternMessage
+  | SetLedCountMessage
+  | SubmitTopologyMessage
+  | SetPlaybackMessage
+  | GetPlaybackMessage;
 
 // ---------------------------------------------------------------------------
 // Server -> Client messages (§7.2)
@@ -349,6 +465,34 @@ export interface ErrorMessage {
   message: string;
 }
 
+/** Reply to set_counting_pattern: whether a counting pattern is displayed
+ * and the server-clock time it latched (the phone's read-valid time). */
+export interface CountingStateMessage {
+  type: "counting_state";
+  active: boolean;
+  /** Server-clock time the pattern took effect (ms); null when inactive. */
+  epochMs: number | null;
+}
+
+/** Reply to set_led_count: echo of the persisted per-channel strip length. */
+export interface LedCountStateMessage {
+  type: "led_count_state";
+  ledCount: number;
+  channel: number;
+}
+
+/** Reply to set_playback / get_playback: the effective configuration (the
+ * player echoes what it actually runs, defaults filled into params). */
+export interface PlaybackStateMessage {
+  type: "playback_state";
+  active: boolean;
+  /** The running effect; "off" when inactive. */
+  effect: string;
+  params: PlaybackParams | null;
+  /** The stored map/topology playback runs on; null when none selected. */
+  mapId: string | null;
+}
+
 export type ServerMessage =
   | WelcomeMessage
   | TimeSyncPongMessage
@@ -359,4 +503,7 @@ export type ServerMessage =
   | LiveMapMessage
   | SolveStatusMessage
   | ResultReadyMessage
-  | ErrorMessage;
+  | ErrorMessage
+  | CountingStateMessage
+  | LedCountStateMessage
+  | PlaybackStateMessage;

@@ -233,6 +233,147 @@
       }
     },
     {
+      "direction": "client",
+      "frameB64": "ckAKHBBAGhgAAAAAAADwPwAAAAAAAAAAAAAAAAAAAAAKHghAEEAaGAAAAAAAAAAAAAAAAAAAAAAAAAAAAADwPxAB",
+      "decoded": {
+        "type": "set_counting_pattern",
+        "blocks": [
+          {
+            "count": 64,
+            "rgb": [
+              1.0,
+              0.0,
+              0.0
+            ],
+            "start": 0
+          },
+          {
+            "start": 64,
+            "count": 64,
+            "rgb": [
+              0.0,
+              0.0,
+              1.0
+            ]
+          }
+        ],
+        "channel": 1
+      }
+    },
+    {
+      "direction": "client",
+      "frameB64": "cgA=",
+      "decoded": {
+        "type": "set_counting_pattern",
+        "blocks": []
+      }
+    },
+    {
+      "direction": "client",
+      "frameB64": "egMIrAI=",
+      "decoded": {
+        "type": "set_led_count",
+        "ledCount": 300
+      }
+    },
+    {
+      "direction": "client",
+      "frameB64": "egUIlgEQAQ==",
+      "decoded": {
+        "type": "set_led_count",
+        "ledCount": 150,
+        "channel": 1
+      }
+    },
+    {
+      "direction": "client",
+      "frameB64": "ggGiAQqfAQoDbS0xEhoSGAAAAAAAAAAAmpmZmZmZuT8AAAAAAAAAABpoGP///////////wEiGgoYAAAAAAAAAACamZmZmZm5PwAAAAAAAAAAIhoKGAAAAAAAAOA/mpmZmZmZuT8AAAAAAAAAACIaChgAAAAAAADgPzMzMzMzM+M/AAAAAAAAAAApAAAAAAAA8D8iEhkAAAAAAADQPyH6fmq8dJNoPw==",
+      "decoded": {
+        "type": "submit_topology",
+        "topology": {
+          "mapId": "m-1",
+          "branchPoints": [
+            {
+              "xyz": [
+                0.0,
+                0.1,
+                0.0
+              ],
+              "id": 0
+            }
+          ],
+          "segments": [
+            {
+              "b": -1,
+              "polyline": [
+                [
+                  0.0,
+                  0.1,
+                  0.0
+                ],
+                [
+                  0.5,
+                  0.1,
+                  0.0
+                ],
+                [
+                  0.5,
+                  0.6,
+                  0.0
+                ]
+              ],
+              "length": 1.0,
+              "id": 0,
+              "a": 0
+            }
+          ],
+          "associations": [
+            {
+              "footArclength": 0.25,
+              "dPerp": 0.003,
+              "ledId": 0,
+              "segmentId": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "direction": "client",
+      "frameB64": "igE2CgVwdWxzZRIoCZqZmZmZmek/EbgehetRuL4/GAMhAAAAAAAA+D8qCYCA/AeA/gP/ARoDbS0x",
+      "decoded": {
+        "type": "set_playback",
+        "effect": "pulse",
+        "params": {
+          "intensity": 0.8,
+          "glowRadius": 0.12,
+          "agentCount": 3,
+          "speed": 1.5,
+          "palette": [
+            16711680,
+            65280,
+            255
+          ]
+        },
+        "mapId": "m-1"
+      }
+    },
+    {
+      "direction": "client",
+      "frameB64": "igEFCgNvZmY=",
+      "decoded": {
+        "type": "set_playback",
+        "effect": "off"
+      }
+    },
+    {
+      "direction": "client",
+      "frameB64": "kgEA",
+      "decoded": {
+        "type": "get_playback"
+      }
+    },
+    {
       "direction": "server",
       "frameB64": "Ci0KA3MtMRImCEAQDBoDaHVlIQAAAAAAgFtAKgZvbl9vZmYwCDoGc2VjZGVkQAQ=",
       "decoded": {
@@ -466,6 +607,62 @@
         "type": "error",
         "code": "no_session",
         "message": "no active capture"
+      }
+    },
+    {
+      "direction": "server",
+      "frameB64": "WgsIAREAAAAAwBzIQA==",
+      "decoded": {
+        "type": "counting_state",
+        "active": true,
+        "epochMs": 12345.5
+      }
+    },
+    {
+      "direction": "server",
+      "frameB64": "WgA=",
+      "decoded": {
+        "type": "counting_state",
+        "active": false
+      }
+    },
+    {
+      "direction": "server",
+      "frameB64": "YgMIrAI=",
+      "decoded": {
+        "type": "led_count_state",
+        "ledCount": 300,
+        "channel": 0
+      }
+    },
+    {
+      "direction": "server",
+      "frameB64": "ajgIARIFcHVsc2UaKAmamZmZmZnpPxG4HoXrUbi+PxgDIQAAAAAAAPg/KgmAgPwHgP4D/wEiA20tMQ==",
+      "decoded": {
+        "type": "playback_state",
+        "active": true,
+        "effect": "pulse",
+        "params": {
+          "intensity": 0.8,
+          "glowRadius": 0.12,
+          "agentCount": 3,
+          "speed": 1.5,
+          "palette": [
+            16711680,
+            65280,
+            255
+          ]
+        },
+        "mapId": "m-1"
+      }
+    },
+    {
+      "direction": "server",
+      "frameB64": "agUSA29mZg==",
+      "decoded": {
+        "type": "playback_state",
+        "effect": "off",
+        "active": false
       }
     }
   ]

@@ -36,6 +36,11 @@ const CLIENT_ARMS: Record<string, string> = {
   get_live_map: "getLiveMap",
   get_solve_status: "getSolveStatus",
   submit_map: "submitMap",
+  set_counting_pattern: "setCountingPattern",
+  set_led_count: "setLedCount",
+  submit_topology: "submitTopology",
+  set_playback: "setPlayback",
+  get_playback: "getPlayback",
 };
 const SERVER_ARMS: Record<string, string> = {
   welcome: "welcome",
@@ -48,6 +53,9 @@ const SERVER_ARMS: Record<string, string> = {
   solve_status: "solveStatus",
   result_ready: "resultReady",
   error: "error",
+  counting_state: "countingState",
+  led_count_state: "ledCountState",
+  playback_state: "playbackState",
 };
 const CLIENT_TYPES: Record<string, string> = Object.fromEntries(
   Object.entries(CLIENT_ARMS).map(([snake, camel]) => [camel, snake]),
@@ -70,13 +78,18 @@ function stripNulls(value: unknown): unknown {
   return value;
 }
 
+// Keys whose JSON shape is a nested point list [[x,y,z], ...] carried as
+// `repeated Vec3` on the proto side: camera trajectories and topology
+// segment polylines.
+const VEC3_LIST_KEYS = new Set(["trajectory", "polyline"]);
+
 function trajectoryToProto(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(trajectoryToProto);
   if (value !== null && typeof value === "object") {
     const out: Json = {};
     for (const [k, v] of Object.entries(value as Json)) {
       out[k] =
-        k === "trajectory" && Array.isArray(v)
+        VEC3_LIST_KEYS.has(k) && Array.isArray(v)
           ? v.map((p) => ({ v: p }))
           : trajectoryToProto(v);
     }
@@ -91,7 +104,7 @@ function trajectoryFromProto(value: unknown): unknown {
     const out: Json = {};
     for (const [k, v] of Object.entries(value as Json)) {
       out[k] =
-        k === "trajectory" && Array.isArray(v)
+        VEC3_LIST_KEYS.has(k) && Array.isArray(v)
           ? v.map((p) => (p as { v?: number[] }).v ?? [])
           : trajectoryFromProto(v);
     }
@@ -111,6 +124,11 @@ function fillNulls(type: string, flat: Json): Json {
   if (type === "solve_status") {
     ensure(flat, "progress");
     ensure(flat, "rmsPx");
+  }
+  if (type === "counting_state") ensure(flat, "epochMs");
+  if (type === "playback_state") {
+    ensure(flat, "params");
+    ensure(flat, "mapId");
   }
   return flat;
 }

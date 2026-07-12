@@ -117,6 +117,63 @@ class OutputMap(_StrictModel):
 
 
 # ---------------------------------------------------------------------------
+# Topology (§7.7) — skeletonized fixture, uploaded alongside a map
+# ---------------------------------------------------------------------------
+
+
+class BranchPoint(_StrictModel):
+    id: int = Field(ge=0)
+    # Position in meters, same frame as the OutputMap.
+    xyz: Vec3
+
+
+class TopologySegment(_StrictModel):
+    id: int = Field(ge=0)
+    # Endpoint branch-point ids; -1 = free end. Arclength runs from a to b.
+    a: int = Field(ge=-1)
+    b: int = Field(ge=-1)
+    polyline: List[Vec3] = Field(min_length=2)
+    # Total polyline arclength, meters.
+    length: float = Field(ge=0.0)
+
+
+class LedAssociation(_StrictModel):
+    ledId: int = Field(ge=0)
+    segmentId: int = Field(ge=0)
+    # Arclength of the LED's foot point along the segment, meters from a.
+    footArclength: float = Field(ge=0.0)
+    # Perpendicular distance LED -> foot point, meters.
+    dPerp: float = Field(ge=0.0)
+
+
+class Topology(_StrictModel):
+    """Skeletonized fixture topology (Phase F output): drives the O(N)
+    pulse illuminate on players. Keyed to the OutputMap it skeletonizes."""
+
+    mapId: str
+    branchPoints: List[BranchPoint]
+    segments: List[TopologySegment]
+    associations: List[LedAssociation]
+
+
+# ---------------------------------------------------------------------------
+# PlaybackParams (§7.8) — effect tunables (pulse reference controls)
+# ---------------------------------------------------------------------------
+
+
+class PlaybackParams(_StrictModel):
+    """All fields are optional overlays: unset keeps the player's current
+    or default value, so a UI can send just the slider that moved."""
+
+    intensity: Union[float, None] = Field(default=None, ge=0.0, le=1.0)
+    glowRadius: Union[float, None] = Field(default=None, gt=0.0)
+    agentCount: Union[int, None] = Field(default=None, ge=1)
+    speed: Union[float, None] = Field(default=None, gt=0.0)
+    # Palette as 0xRRGGBB ints; empty keeps the player default.
+    palette: List[int] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
 # Client -> Server messages (§7.1)
 # ---------------------------------------------------------------------------
 
@@ -237,6 +294,61 @@ class GetSolveStatusMessage(_StrictModel):
     type: Literal["get_solve_status"]
 
 
+class ColorBlock(_StrictModel):
+    """A contiguous run of same-color LEDs in a counting pattern."""
+
+    start: int = Field(ge=0)
+    count: int = Field(ge=1)
+    # Block color [r, g, b] in [0,1].
+    rgb: Vec3
+
+
+class SetCountingPatternMessage(_StrictModel):
+    """LED-counting handshake (§7.9): display a static color-block pattern.
+    Blocks paint [start, start+count); uncovered LEDs are off; painting past
+    the physical strip end IS the probe. Empty blocks = all off. Reply:
+    counting_state."""
+
+    type: Literal["set_counting_pattern"]
+    blocks: List[ColorBlock]
+    # Player output channel; None -> 0.
+    channel: Union[int, None] = Field(default=None, ge=0)
+
+
+class SetLedCountMessage(_StrictModel):
+    """Persist the detected strip length for a channel. Reply: led_count_state."""
+
+    type: Literal["set_led_count"]
+    ledCount: int = Field(ge=0)
+    channel: Union[int, None] = Field(default=None, ge=0)
+
+
+class SubmitTopologyMessage(_StrictModel):
+    """Upload the skeletonized topology for a stored map (Phase F); the
+    player persists it next to the map and replies result_ready."""
+
+    type: Literal["submit_topology"]
+    topology: Topology
+
+
+class SetPlaybackMessage(_StrictModel):
+    """Playback control (§7.8): select the effect and overlay params. 'off'
+    is universal; other effects are player-capability-dependent (reply: error
+    code='unsupported_effect' when not shipped). Reply: playback_state."""
+
+    type: Literal["set_playback"]
+    effect: str
+    params: Union[PlaybackParams, None] = None
+    # Stored map/topology to play on; None keeps the current selection.
+    mapId: Union[str, None] = None
+
+
+class GetPlaybackMessage(_StrictModel):
+    """Poll the current playback state. Reply: playback_state."""
+
+    type: Literal["get_playback"]
+
+
 ClientMessageInner = Annotated[
     Union[
         HelloMessage,
@@ -252,6 +364,11 @@ ClientMessageInner = Annotated[
         GetPatternMessage,
         GetLiveMapMessage,
         GetSolveStatusMessage,
+        SetCountingPatternMessage,
+        SetLedCountMessage,
+        SubmitTopologyMessage,
+        SetPlaybackMessage,
+        GetPlaybackMessage,
     ],
     Field(discriminator="type"),
 ]
@@ -351,6 +468,37 @@ class ErrorMessage(_StrictModel):
     message: str
 
 
+class CountingStateMessage(_StrictModel):
+    """Reply to set_counting_pattern: whether a counting pattern is displayed
+    and the server-clock time it latched (the phone's read-valid time)."""
+
+    type: Literal["counting_state"]
+    active: bool
+    # Server-clock time the pattern took effect (ms); None when inactive.
+    epochMs: Union[float, None] = None
+
+
+class LedCountStateMessage(_StrictModel):
+    """Reply to set_led_count: echo of the persisted per-channel strip length."""
+
+    type: Literal["led_count_state"]
+    ledCount: int = Field(ge=0)
+    channel: int = Field(ge=0)
+
+
+class PlaybackStateMessage(_StrictModel):
+    """Reply to set_playback / get_playback: the effective configuration (the
+    player echoes what it actually runs, defaults filled into params)."""
+
+    type: Literal["playback_state"]
+    active: bool
+    # The running effect; "off" when inactive.
+    effect: str
+    params: Union[PlaybackParams, None] = None
+    # The stored map/topology playback runs on; None when none selected.
+    mapId: Union[str, None] = None
+
+
 ServerMessageInner = Annotated[
     Union[
         WelcomeMessage,
@@ -363,6 +511,9 @@ ServerMessageInner = Annotated[
         SolveStatusMessage,
         ResultReadyMessage,
         ErrorMessage,
+        CountingStateMessage,
+        LedCountStateMessage,
+        PlaybackStateMessage,
     ],
     Field(discriminator="type"),
 ]
@@ -385,6 +536,11 @@ __all__ = [
     "LedEntry",
     "OutputMapStats",
     "OutputMap",
+    "BranchPoint",
+    "TopologySegment",
+    "LedAssociation",
+    "Topology",
+    "PlaybackParams",
     "HelloMessage",
     "TimeSyncPingMessage",
     "StartMappingOptions",
@@ -402,6 +558,12 @@ __all__ = [
     "GetPatternMessage",
     "GetLiveMapMessage",
     "GetSolveStatusMessage",
+    "ColorBlock",
+    "SetCountingPatternMessage",
+    "SetLedCountMessage",
+    "SubmitTopologyMessage",
+    "SetPlaybackMessage",
+    "GetPlaybackMessage",
     "ClientMessage",
     "WelcomeMessage",
     "TimeSyncPongMessage",
@@ -414,5 +576,8 @@ __all__ = [
     "SolveStatusMessage",
     "ResultReadyMessage",
     "ErrorMessage",
+    "CountingStateMessage",
+    "LedCountStateMessage",
+    "PlaybackStateMessage",
     "ServerMessage",
 ]

@@ -16,7 +16,12 @@
     { "$ref": "#/$defs/GetStatus" },
     { "$ref": "#/$defs/GetPattern" },
     { "$ref": "#/$defs/GetLiveMap" },
-    { "$ref": "#/$defs/GetSolveStatus" }
+    { "$ref": "#/$defs/GetSolveStatus" },
+    { "$ref": "#/$defs/SetCountingPattern" },
+    { "$ref": "#/$defs/SetLedCount" },
+    { "$ref": "#/$defs/SubmitTopology" },
+    { "$ref": "#/$defs/SetPlayback" },
+    { "$ref": "#/$defs/GetPlayback" }
   ],
   "$defs": {
     "Hello": {
@@ -269,6 +274,95 @@
       "description": "Poll the FINAL solve's progress (after stop_mapping, while the reply is pending): optimizer progress, current reprojection rms, and the converging interim LED positions for a live preview. Reply: solve_status.",
       "properties": {
         "type": { "const": "get_solve_status" }
+      }
+    },
+    "ColorBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "count", "rgb"],
+      "description": "A contiguous run of same-color LEDs in a counting pattern.",
+      "properties": {
+        "start": { "type": "integer", "minimum": 0 },
+        "count": { "type": "integer", "minimum": 1 },
+        "rgb": {
+          "type": "array",
+          "items": { "type": "number", "minimum": 0, "maximum": 1 },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Block color [r, g, b] in [0,1]."
+        }
+      }
+    },
+    "SetCountingPattern": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "blocks"],
+      "description": "LED-counting handshake (design doc §7.9): command the player to display a static color-block pattern. Blocks paint [start, start+count) in rgb; LEDs not covered by any block are off. Painting past the physical strip end is expected — that IS the probe: the phone binary-searches the strip length by observing which blocks light. Empty blocks = all off (ends the counting display). Reply: counting_state.",
+      "properties": {
+        "type": { "const": "set_counting_pattern" },
+        "blocks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ColorBlock" }
+        },
+        "channel": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Player output channel; null/omitted -> 0. The Pi has one channel; the ESP32 may drive several RMT outputs."
+        }
+      }
+    },
+    "SetLedCount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "ledCount"],
+      "description": "Report the LED count the counting handshake detected so the player persists it as the channel's configured strip length (used to default codeParams.ledCount and to bound playback buffers). Reply: led_count_state.",
+      "properties": {
+        "type": { "const": "set_led_count" },
+        "ledCount": { "type": "integer", "minimum": 0 },
+        "channel": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Player output channel; null/omitted -> 0."
+        }
+      }
+    },
+    "SubmitTopology": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "topology"],
+      "description": "Upload the skeletonized topology for a stored map (phone-side skeletonization, Phase F). The player persists it next to the map — it drives the O(N) pulse illuminate — and replies result_ready with the map id, mirroring submit_map.",
+      "properties": {
+        "type": { "const": "submit_topology" },
+        "topology": { "$ref": "topology.json" }
+      }
+    },
+    "SetPlayback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "effect"],
+      "description": "Playback control (design doc §7.8): select the running effect and overlay its params. 'off' stops playback and is supported by every player; other effect names are player-capability-dependent (a player replies error code='unsupported_effect' for engines it does not ship, listing what it does). Reply: playback_state with the effective configuration.",
+      "properties": {
+        "type": { "const": "set_playback" },
+        "effect": {
+          "type": "string",
+          "description": "Effect name: 'off' (universal), 'solid', 'pulse', 'rainbow', ... — an open set, validated by the player."
+        },
+        "params": {
+          "oneOf": [{ "$ref": "playback_params.json" }, { "type": "null" }]
+        },
+        "mapId": {
+          "type": ["string", "null"],
+          "description": "Which stored map/topology to play on; null/omitted keeps the player's current selection (or its only stored map)."
+        }
+      }
+    },
+    "GetPlayback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "description": "Poll the current playback state (for a config UI attaching to a running player). Reply: playback_state.",
+      "properties": {
+        "type": { "const": "get_playback" }
       }
     }
   }

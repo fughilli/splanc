@@ -14,12 +14,16 @@ from typing import Awaitable, Callable, List
 
 from ledmapper_protocol import (
     ClientMessage,
+    CountingStateMessage,
     ErrorMessage,
+    LedCountStateMessage,
     LiveMapMessage,
     MappingStartedMessage,
     MappingStoppedMessage,
     OutputMap,
     PatternStateMessage,
+    PlaybackParams,
+    PlaybackStateMessage,
     ResultReadyMessage,
     ServerMessage,
     SolveStatusMessage,
@@ -70,6 +74,14 @@ class ServerContext:
         # Where submit_map persists phone-solved maps; falls back to the
         # reconstructor's store when not given (the production runner has one).
         self.map_store = map_store
+        # Counting handshake (§7.9): the currently displayed color-block
+        # pattern as (epoch_ms, blocks, channel), or None when inactive. The
+        # display path (driver/wall rendering) lands with Phase 5; until then
+        # this is protocol state only.
+        self.counting: tuple[float, list, int] | None = None
+        # Per-channel strip lengths persisted by set_led_count. Channel 0
+        # doubles as the fallback default_led_count for codeParams.
+        self.led_counts: dict[int, int] = {}
         if id_factory is None:
             import uuid
 
@@ -136,6 +148,16 @@ class ConnectionHandler:
             return await self._stop(msg.solveOnHost)
         if kind == "submit_map":
             return [self._submit_map(msg.map)]
+        if kind == "set_counting_pattern":
+            return [self._set_counting_pattern(msg.blocks, msg.channel)]
+        if kind == "set_led_count":
+            return [self._set_led_count(msg.ledCount, msg.channel)]
+        if kind == "submit_topology":
+            return [self._submit_topology(msg.topology)]
+        if kind == "set_playback":
+            return [self._set_playback(msg.effect)]
+        if kind == "get_playback":
+            return [self._playback_state()]
         # ClientMessage's discriminated union makes this unreachable, but be loud.
         return [_error("unknown_type", f"unhandled message type {kind!r}")]
 
@@ -287,6 +309,59 @@ class ConnectionHandler:
             return _error("unsupported", "this server has no map store for submitted maps")
         store.save(output_map)
         return ResultReadyMessage(type="result_ready", mapId=output_map.mapId)
+
+    # -- player protocol (counting / topology / playback, §7.7–§7.9) -------
+
+    def _set_counting_pattern(self, blocks, channel) -> ServerMessage:
+        """Latch a counting color-block pattern (§7.9). Phase 1 records the
+        protocol state and acks; the display path (driver/wall render the
+        blocks) lands with the counting flow in Phase 5."""
+        if blocks:
+            epoch = self.ctx.clock()
+            self.ctx.counting = (epoch, list(blocks), channel or 0)
+            return CountingStateMessage(type="counting_state", active=True, epochMs=epoch)
+        self.ctx.counting = None
+        return CountingStateMessage(type="counting_state", active=False, epochMs=None)
+
+    def _set_led_count(self, led_count: int, channel) -> ServerMessage:
+        """Persist the counting handshake's detected strip length. Channel 0
+        becomes the fallback ledCount for future code-books."""
+        ch = channel or 0
+        self.ctx.led_counts[ch] = led_count
+        if ch == 0 and led_count >= 1:
+            self.ctx.default_led_count = led_count
+        return LedCountStateMessage(type="led_count_state", ledCount=led_count, channel=ch)
+
+    def _submit_topology(self, topology) -> ServerMessage:
+        """Persist a phone-skeletonized topology next to its map (mirrors
+        submit_map, including the result_ready reply)."""
+        store = self.ctx.map_store or getattr(self.ctx.reconstructor, "map_store", None)
+        if store is None:
+            return _error("unsupported", "this server has no map store for topologies")
+        if not store.exists(topology.mapId):
+            return _error("unknown_map", f"no stored map {topology.mapId!r} for this topology")
+        store.save_topology(topology)
+        return ResultReadyMessage(type="result_ready", mapId=topology.mapId)
+
+    def _set_playback(self, effect: str) -> ServerMessage:
+        """Playback control (§7.8). The Pi playback engines land in Phase G;
+        until then only the universal 'off' is accepted, so a phone can probe
+        capabilities without wedging the player."""
+        if effect == "off":
+            return self._playback_state()
+        return _error(
+            "unsupported_effect",
+            f"effect {effect!r} not available on this player (supported: off)",
+        )
+
+    def _playback_state(self) -> ServerMessage:
+        return PlaybackStateMessage(
+            type="playback_state",
+            active=False,
+            effect="off",
+            params=PlaybackParams(),
+            mapId=None,
+        )
 
 
 def _error(code: str, message: str) -> ServerMessage:

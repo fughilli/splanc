@@ -106,17 +106,26 @@ ResultReady, Error. Cross-language byte-parity is pinned by
 
 Remaining protocol work:
 
-- **Counting handshake** (Phase 5): command color-block/spatial-binary
-  patterns + report detected counts per output channel.
-- **Topology**: extend the map upload with `branch_points`, `segments`, and
-  the per-LED association `(segment_id, foot_arclength, d_perp)` — either
-  new fields on OutputMap or a sibling message.
-- **Playback control**: effect selection + params (intensity,
-  glow_radius/`soft`, agent count, palette — mirror the pulse reference's
-  tunables).
-- **Player profiles**: document which envelope arms each player implements
-  (ESP32: no Detections/ImuBatch/solve polls); unknown-arm handling on
-  firmware = bounded error, not panic.
+- ~~**Counting handshake**~~ **landed** (Phase 1): `set_counting_pattern`
+  (ColorBlock list + channel; painting past the strip end IS the length
+  probe) → `counting_state`, and `set_led_count` → `led_count_state`
+  persisting the detected count per output channel. The Pi latches the
+  pattern as protocol state; the display path lands with Phase 5.
+- ~~**Topology**~~ **landed** (Phase 1): sibling message, not OutputMap
+  fields — `Topology{map_id, branch_points, segments, associations}` with
+  the per-LED `(segment_id, foot_arclength, d_perp)` association, uploaded
+  via `submit_topology` → `result_ready` (mirrors submit_map; the Pi
+  persists `<map_id>.topology.json` next to the map).
+- ~~**Playback control**~~ **landed** (Phase 1): `set_playback{effect,
+PlaybackParams, map_id}` / `get_playback` → `playback_state`.
+  PlaybackParams mirrors the pulse tunables (intensity, glow_radius/`soft`,
+  agent_count, speed, palette as 0xRRGGBB ints) as optional overlays. "off"
+  is universal; unsupported effects reply `error{unsupported_effect}` (what
+  the Pi does until Phase G).
+- ~~**Player profiles**~~ **landed** (Phase 1): documented in the
+  ledmapper.proto header (CORE vs PI-ONLY arm sets); unknown-arm handling on
+  firmware = bounded `error{unsupported}` for request arms, silent drop
+  allowed for fire-and-forget arms.
 - **micropb backend** wired as a Bazel genrule (like the existing
   toolchains_protoc genrule for Python), and a **cross-target conformance
   test**: extend the existing golden-frames fixture so the SAME bytes
@@ -139,10 +148,13 @@ backends already exist). Use the **bazel-polyglot-nix** skill.
 
 **Phase 1 — Protocol reshaping.** ~~Migrate the wire from JSON to binary
 proto~~ **done** (proto-comms; the 4 seams listed in the original plan are
-already binary). Remaining: author the counting/topology/playback additions,
-define the player profiles, and land the Rust conformance leg. **Accept:**
-cross-target conformance green; existing mapping flow unchanged (30-target
-suite stays green).
+already binary). ~~Author the counting/topology/playback additions, define
+the player profiles~~ **done** (see "Remaining protocol work" above — schemas
+
+- codegen + proto + both boundary converters + Pi handler + goldens, 42
+  cross-language golden frames). Remaining: the micropb Bazel backend and the
+  Rust conformance leg. **Accept:** cross-target conformance green; existing
+  mapping flow unchanged (30-target suite stays green).
 
 **Phase 2 — RMT LED output.** Port FastLED output from bit-bang
 (`apps/rainbow/rainbow.cpp:11`) to the C6 **RMT** peripheral. **Accept:** drive

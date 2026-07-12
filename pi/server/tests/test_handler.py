@@ -582,3 +582,100 @@ def test_submit_map_without_store_errors(tmp_path):
     m = _dump(_run(handler, json.dumps({"type": "submit_map", "map": _stub_map().model_dump()}))[0])
     assert m["type"] == "error"
     assert m["code"] == "unsupported"
+
+
+# -- player protocol (counting / topology / playback, §7.7–§7.9) ------------
+
+
+def test_set_counting_pattern_latches_and_acks(tmp_path):
+    handler, ctx, _ = _make_handler(tmp_path, clock_value=4321.0)
+    raw = json.dumps(
+        {
+            "type": "set_counting_pattern",
+            "blocks": [{"start": 0, "count": 32, "rgb": [1.0, 0.0, 0.0]}],
+            "channel": 1,
+        }
+    )
+    m = _dump(_run(handler, raw)[0])
+    assert m == {"type": "counting_state", "active": True, "epochMs": 4321.0}
+    epoch, blocks, channel = ctx.counting
+    assert epoch == 4321.0
+    assert channel == 1
+    assert blocks[0].count == 32
+
+
+def test_set_counting_pattern_empty_blocks_clears(tmp_path):
+    handler, ctx, _ = _make_handler(tmp_path)
+    _run(handler, '{"type":"set_counting_pattern","blocks":[{"start":0,"count":1,"rgb":[0,1,0]}]}')
+    m = _dump(_run(handler, '{"type":"set_counting_pattern","blocks":[]}')[0])
+    assert m == {"type": "counting_state", "active": False, "epochMs": None}
+    assert ctx.counting is None
+
+
+def test_set_led_count_persists_and_defaults_channel_zero(tmp_path):
+    handler, ctx, _ = _make_handler(tmp_path)
+    m = _dump(_run(handler, '{"type":"set_led_count","ledCount":300}')[0])
+    assert m == {"type": "led_count_state", "ledCount": 300, "channel": 0}
+    # Channel 0 becomes the fallback code-book ledCount...
+    assert ctx.default_led_count == 300
+    welcome = _dump(_run(handler, '{"type":"hello","client":"c","appVersion":"1"}')[0])
+    assert welcome["codeParams"]["ledCount"] == 300
+    # ...while other channels are recorded without touching the default.
+    m = _dump(_run(handler, '{"type":"set_led_count","ledCount":150,"channel":1}')[0])
+    assert m == {"type": "led_count_state", "ledCount": 150, "channel": 1}
+    assert ctx.default_led_count == 300
+    assert ctx.led_counts == {0: 300, 1: 150}
+
+
+def _stub_topology(map_id="map-stub"):
+    return {
+        "mapId": map_id,
+        "branchPoints": [{"id": 0, "xyz": [0.0, 0.0, 0.0]}],
+        "segments": [
+            {
+                "id": 0,
+                "a": 0,
+                "b": -1,
+                "polyline": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+                "length": 1.0,
+            }
+        ],
+        "associations": [{"ledId": 0, "segmentId": 0, "footArclength": 0.5, "dPerp": 0.01}],
+    }
+
+
+def test_submit_topology_persists_next_to_its_map(tmp_path):
+    from server.session import MapStore
+
+    handler, ctx, _ = _make_handler(tmp_path)
+    ctx.map_store = MapStore(tmp_path / "maps")
+    ctx.map_store.save(_stub_map())
+    out = _run(handler, json.dumps({"type": "submit_topology", "topology": _stub_topology()}))
+    m = _dump(out[0])
+    assert m == {"type": "result_ready", "mapId": "map-stub"}
+    saved = json.loads(ctx.map_store.topology_path("map-stub").read_text())
+    assert saved["segments"][0]["length"] == 1.0
+
+
+def test_submit_topology_for_unknown_map_errors(tmp_path):
+    from server.session import MapStore
+
+    handler, ctx, _ = _make_handler(tmp_path)
+    ctx.map_store = MapStore(tmp_path / "maps")
+    out = _run(handler, json.dumps({"type": "submit_topology", "topology": _stub_topology("nope")}))
+    m = _dump(out[0])
+    assert m["type"] == "error"
+    assert m["code"] == "unknown_map"
+
+
+def test_playback_off_is_universal_other_effects_unsupported_until_phase_g(tmp_path):
+    handler, _ctx, _ = _make_handler(tmp_path)
+    state = _dump(_run(handler, '{"type":"get_playback"}')[0])
+    assert state["type"] == "playback_state"
+    assert state["active"] is False
+    assert state["effect"] == "off"
+    ok = _dump(_run(handler, '{"type":"set_playback","effect":"off"}')[0])
+    assert ok["type"] == "playback_state"
+    err = _dump(_run(handler, '{"type":"set_playback","effect":"pulse"}')[0])
+    assert err["type"] == "error"
+    assert err["code"] == "unsupported_effect"

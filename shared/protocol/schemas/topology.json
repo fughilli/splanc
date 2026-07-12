@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ledmapper.local/schemas/topology.json",
+  "title": "Topology",
+  "description": "Skeletonized fixture topology (design doc §7.7): branch points + polyline segments + the per-LED association onto the skeleton. Produced by the phone-side skeletonization (Phase F) from a solved OutputMap and uploaded to a player, where it drives the O(N) pulse illuminate (Phase G). Keyed to the OutputMap it skeletonizes via mapId.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["mapId", "branchPoints", "segments", "associations"],
+  "properties": {
+    "mapId": {
+      "type": "string",
+      "description": "The OutputMap this topology was skeletonized from."
+    },
+    "branchPoints": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/BranchPoint" }
+    },
+    "segments": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/TopologySegment" }
+    },
+    "associations": {
+      "type": "array",
+      "description": "One entry per mapped LED: which segment it lies on and where.",
+      "items": { "$ref": "#/$defs/LedAssociation" }
+    }
+  },
+  "$defs": {
+    "BranchPoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "xyz"],
+      "properties": {
+        "id": { "type": "integer", "minimum": 0 },
+        "xyz": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Position in meters, same frame as the OutputMap."
+        }
+      }
+    },
+    "TopologySegment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "a", "b", "polyline", "length"],
+      "properties": {
+        "id": { "type": "integer", "minimum": 0 },
+        "a": {
+          "type": "integer",
+          "minimum": -1,
+          "description": "Branch-point id at the segment start (arclength 0); -1 for a free end."
+        },
+        "b": {
+          "type": "integer",
+          "minimum": -1,
+          "description": "Branch-point id at the segment end; -1 for a free end."
+        },
+        "polyline": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": { "type": "number" },
+            "minItems": 3,
+            "maxItems": 3
+          },
+          "minItems": 2,
+          "description": "Polyline through space from a to b; arclength is measured along it starting at a."
+        },
+        "length": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Total polyline arclength, meters."
+        }
+      }
+    },
+    "LedAssociation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ledId", "segmentId", "footArclength", "dPerp"],
+      "properties": {
+        "ledId": { "type": "integer", "minimum": 0 },
+        "segmentId": { "type": "integer", "minimum": 0 },
+        "footArclength": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Arclength of the LED's foot point (nearest point on the segment polyline), meters from endpoint a."
+        },
+        "dPerp": {
+          "type": "number",
+          "minimum": 0,
+          "description": "Perpendicular distance from the LED to its foot point, meters."
+        }
+      }
+    }
+  }
+}

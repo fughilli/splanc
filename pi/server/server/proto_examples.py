@@ -52,6 +52,29 @@ OUTPUT_MAP = {
     "stats": {"rmsReprojPxGlobal": 0.7, "medianParallaxDeg": 19.0},
 }
 
+TOPOLOGY = {
+    "mapId": "m-1",
+    "branchPoints": [{"id": 0, "xyz": [0.0, 0.1, 0.0]}],
+    "segments": [
+        {
+            "id": 0,
+            "a": 0,
+            "b": -1,
+            "polyline": [[0.0, 0.1, 0.0], [0.5, 0.1, 0.0], [0.5, 0.6, 0.0]],
+            "length": 1.0,
+        }
+    ],
+    "associations": [{"ledId": 0, "segmentId": 0, "footArclength": 0.25, "dPerp": 0.003}],
+}
+
+PLAYBACK_PARAMS = {
+    "intensity": 0.8,
+    "glowRadius": 0.12,
+    "agentCount": 3,
+    "speed": 1.5,
+    "palette": [16711680, 65280, 255],
+}
+
 CLIENT_FLATS = [
     {"type": "hello", "client": "android-web", "appVersion": "0.1.0"},
     {"type": "time_sync_ping", "t0": 123456.7},
@@ -88,6 +111,21 @@ CLIENT_FLATS = [
     {"type": "get_pattern"},
     {"type": "get_live_map"},
     {"type": "get_solve_status"},
+    {
+        "type": "set_counting_pattern",
+        "blocks": [
+            {"start": 0, "count": 64, "rgb": [1.0, 0.0, 0.0]},
+            {"start": 64, "count": 64, "rgb": [0.0, 0.0, 1.0]},
+        ],
+        "channel": 1,
+    },
+    {"type": "set_counting_pattern", "blocks": []},
+    {"type": "set_led_count", "ledCount": 300},
+    {"type": "set_led_count", "ledCount": 150, "channel": 1},
+    {"type": "submit_topology", "topology": TOPOLOGY},
+    {"type": "set_playback", "effect": "pulse", "params": PLAYBACK_PARAMS, "mapId": "m-1"},
+    {"type": "set_playback", "effect": "off"},
+    {"type": "get_playback"},
 ]
 
 SERVER_FLATS = [
@@ -129,4 +167,15 @@ SERVER_FLATS = [
     },
     {"type": "result_ready", "mapId": "m-9"},
     {"type": "error", "code": "no_session", "message": "no active capture"},
+    {"type": "counting_state", "active": True, "epochMs": 12345.5},
+    {"type": "counting_state", "active": False, "epochMs": None},
+    {"type": "led_count_state", "ledCount": 300, "channel": 0},
+    {
+        "type": "playback_state",
+        "active": True,
+        "effect": "pulse",
+        "params": PLAYBACK_PARAMS,
+        "mapId": "m-1",
+    },
+    {"type": "playback_state", "active": False, "effect": "off", "params": None, "mapId": None},
 ]

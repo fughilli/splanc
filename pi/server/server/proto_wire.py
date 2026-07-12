@@ -37,13 +37,18 @@ def _strip_nones(value: Any) -> Any:
     return value
 
 
+# Keys whose JSON shape is a nested point list [[x,y,z], ...] carried as
+# `repeated Vec3` on the proto side: camera trajectories (OutputMap inside
+# live_map, and solve_status) and topology segment polylines.
+_VEC3_LIST_KEYS = frozenset({"trajectory", "polyline"})
+
+
 def _trajectory_to_proto(value: Any) -> Any:
-    """[[x,y,z], ...] -> [{"v": [x,y,z]}, ...] wherever a `trajectory` key
-    appears (OutputMap inside live_map, and solve_status)."""
+    """[[x,y,z], ...] -> [{"v": [x,y,z]}, ...] for the _VEC3_LIST_KEYS."""
     if isinstance(value, dict):
         out = {}
         for k, v in value.items():
-            if k == "trajectory" and isinstance(v, list):
+            if k in _VEC3_LIST_KEYS and isinstance(v, list):
                 out[k] = [{"v": p} for p in v]
             else:
                 out[k] = _trajectory_to_proto(v)
@@ -57,7 +62,7 @@ def _trajectory_from_proto(value: Any) -> Any:
     if isinstance(value, dict):
         out = {}
         for k, v in value.items():
-            if k == "trajectory" and isinstance(v, list):
+            if k in _VEC3_LIST_KEYS and isinstance(v, list):
                 out[k] = [p.get("v", []) for p in v]
             else:
                 out[k] = _trajectory_from_proto(v)

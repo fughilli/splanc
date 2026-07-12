@@ -24,10 +24,13 @@ from typing import Any
 import pytest
 from jsonschema import Draft202012Validator
 from ledmapper_protocol import (
+    BranchPoint,
     ClientMessage,
     CodeParams,
+    ColorBlock,
     ConfigureMessage,
     ConfigureOptions,
+    CountingStateMessage,
     DetectionRecord,
     DetectionsMessage,
     ErrorMessage,
@@ -35,28 +38,39 @@ from ledmapper_protocol import (
     ExposureStats,
     GetLiveMapMessage,
     GetPatternMessage,
+    GetPlaybackMessage,
     GetSolveStatusMessage,
     GetStatusMessage,
     HelloMessage,
     ImuBatchMessage,
     ImuSample,
+    LedAssociation,
+    LedCountStateMessage,
     LedEntry,
     LiveMapMessage,
     MappingStartedMessage,
     OutputMap,
     OutputMapStats,
     PatternStateMessage,
+    PlaybackParams,
+    PlaybackStateMessage,
     Pose,
     ResultReadyMessage,
     ServerMessage,
+    SetCountingPatternMessage,
+    SetLedCountMessage,
+    SetPlaybackMessage,
     SolveLed,
     SolveStatusMessage,
     StartMappingMessage,
     StartMappingOptions,
     StatusMessage,
     StopMappingMessage,
+    SubmitTopologyMessage,
     TimeSyncPingMessage,
     TimeSyncPongMessage,
+    Topology,
+    TopologySegment,
     WelcomeMessage,
 )
 from pydantic import ValidationError
@@ -104,6 +118,8 @@ SCHEMAS = {
         "detection_record",
         "code_params",
         "output_map",
+        "topology",
+        "playback_params",
         "client_messages",
         "server_messages",
     )
@@ -192,6 +208,33 @@ def make_output_map() -> OutputMap:
     )
 
 
+def make_topology() -> Topology:
+    return Topology(
+        mapId="11111111-2222-3333-4444-555555555555",
+        branchPoints=[BranchPoint(id=0, xyz=(0.0, 1.0, 0.0))],
+        segments=[
+            TopologySegment(
+                id=0,
+                a=0,
+                b=-1,
+                polyline=[(0.0, 1.0, 0.0), (0.5, 1.0, 0.0), (0.5, 1.5, 0.0)],
+                length=1.0,
+            )
+        ],
+        associations=[LedAssociation(ledId=0, segmentId=0, footArclength=0.25, dPerp=0.004)],
+    )
+
+
+def make_playback_params() -> PlaybackParams:
+    return PlaybackParams(
+        intensity=0.8,
+        glowRadius=0.12,
+        agentCount=3,
+        speed=1.5,
+        palette=[0xFF0000, 0x00FF00, 0x0000FF],
+    )
+
+
 # ---------------------------------------------------------------------------
 # Standalone-type round-trips. Each example is run through both the Pydantic
 # round-trip and the JSON Schema validator.
@@ -206,8 +249,20 @@ def make_output_map() -> OutputMap:
         (CodeParams, lambda: make_code_params(4), "code_params"),
         (CodeParams, lambda: make_code_params(fec="secded"), "code_params"),
         (OutputMap, make_output_map, "output_map"),
+        (Topology, make_topology, "topology"),
+        (PlaybackParams, make_playback_params, "playback_params"),
+        (PlaybackParams, PlaybackParams, "playback_params"),
     ],
-    ids=["DetectionRecord", "CodeParams", "CodeParams4Sym", "CodeParamsSecded", "OutputMap"],
+    ids=[
+        "DetectionRecord",
+        "CodeParams",
+        "CodeParams4Sym",
+        "CodeParamsSecded",
+        "OutputMap",
+        "Topology",
+        "PlaybackParams",
+        "PlaybackParamsEmpty",
+    ],
 )
 def test_standalone_types_roundtrip(model_cls, instance_factory, schema_name) -> None:
     original = instance_factory()
@@ -296,6 +351,22 @@ CLIENT_VARIANTS = [
     GetPatternMessage(type="get_pattern"),
     GetLiveMapMessage(type="get_live_map"),
     GetSolveStatusMessage(type="get_solve_status"),
+    SetCountingPatternMessage(
+        type="set_counting_pattern",
+        blocks=[
+            ColorBlock(start=0, count=64, rgb=(1.0, 0.0, 0.0)),
+            ColorBlock(start=64, count=64, rgb=(0.0, 0.0, 1.0)),
+        ],
+        channel=1,
+    ),
+    SetCountingPatternMessage(type="set_counting_pattern", blocks=[]),
+    SetLedCountMessage(type="set_led_count", ledCount=300),
+    SubmitTopologyMessage(type="submit_topology", topology=make_topology()),
+    SetPlaybackMessage(
+        type="set_playback", effect="pulse", params=make_playback_params(), mapId="m-1"
+    ),
+    SetPlaybackMessage(type="set_playback", effect="off"),
+    GetPlaybackMessage(type="get_playback"),
 ]
 
 
@@ -363,6 +434,19 @@ SERVER_VARIANTS = [
     ),
     ResultReadyMessage(type="result_ready", mapId="ffffffff-0000-1111-2222-333333333333"),
     ErrorMessage(type="error", code="capture_aborted", message="user pressed stop"),
+    CountingStateMessage(type="counting_state", active=True, epochMs=12345.5),
+    CountingStateMessage(type="counting_state", active=False, epochMs=None),
+    LedCountStateMessage(type="led_count_state", ledCount=300, channel=0),
+    PlaybackStateMessage(
+        type="playback_state",
+        active=True,
+        effect="pulse",
+        params=make_playback_params(),
+        mapId="m-1",
+    ),
+    PlaybackStateMessage(
+        type="playback_state", active=False, effect="off", params=None, mapId=None
+    ),
 ]
 
 

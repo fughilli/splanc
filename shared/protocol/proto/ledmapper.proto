@@ -18,7 +18,34 @@
 //   - nullable-on-the-wire fields are `optional` (unset <-> null);
 //   - trajectories are `repeated Vec3` and need a tiny shape conversion at
 //     the boundary ([[x,y,z], ...] <-> [{v: [x,y,z]}, ...]) — the one spot
-//     proto3 JSON cannot express nested arrays.
+//     proto3 JSON cannot express nested arrays. Segment polylines (Topology)
+//     get the same conversion.
+//
+// PLAYER PROFILES (docs/esp32-led-mapping-plan.md): two player targets
+// implement this protocol behind one wire. Which envelope arms each supports:
+//
+//   CORE (every player — the stable player protocol):
+//     client: hello, time_sync_ping, start_mapping, configure, stop_mapping,
+//             submit_map, get_pattern, set_counting_pattern, set_led_count,
+//             submit_topology, set_playback, get_playback
+//     server: welcome, time_sync_pong, mapping_started, mapping_stopped,
+//             pattern_state, result_ready, error, counting_state,
+//             led_count_state, playback_state
+//
+//   PI ONLY (host-solve + live-map + telemetry paths — the Pi serves the
+//   webapp and can run the solver):
+//     client: detections, imu_batch, exposure_report, get_status,
+//             get_live_map, get_solve_status
+//     server: status, live_map, solve_status
+//     The Pi's welcome carries solverBenchMs; an ESP32 never sets it, which
+//     already makes the phone's placement decision "solve on phone"
+//     (web/src/solver/placement.ts).
+//
+//   Unknown/unsupported arms on a player MUST produce a bounded reply, never
+//   a crash: REQUEST arms (those with a defined reply) get
+//   error{code: "unsupported"}; fire-and-forget arms (detections, imu_batch,
+//   exposure_report) MAY be silently dropped so a chatty phone cannot flood
+//   the error channel.
 
 syntax = "proto3";
 
@@ -132,6 +159,64 @@ message SolveLed {
   repeated double xyz = 2;
 }
 
+// A contiguous run of same-color LEDs in a counting pattern (§7.9).
+message ColorBlock {
+  int32 start = 1;
+  int32 count = 2;
+  // [r, g, b] in [0,1].
+  repeated double rgb = 3;
+}
+
+// Skeletonized fixture topology (§7.7, Phase F output) — drives the O(N)
+// pulse illuminate on players. Keyed to the OutputMap it skeletonizes.
+message BranchPoint {
+  int32 id = 1;
+  // Meters, same frame as the OutputMap.
+  repeated double xyz = 2;
+}
+
+message TopologySegment {
+  int32 id = 1;
+  // Endpoint branch-point ids; -1 = free end. Arclength runs from a to b.
+  int32 a = 2;
+  int32 b = 3;
+  // Polyline from a to b (JSON: [[x,y,z], ...] — converted like trajectory).
+  repeated Vec3 polyline = 4;
+  // Total polyline arclength, meters.
+  double length = 5;
+}
+
+message LedAssociation {
+  int32 led_id = 1;
+  int32 segment_id = 2;
+  // Arclength of the LED's foot point along the segment, meters from a.
+  double foot_arclength = 3;
+  // Perpendicular distance LED -> foot point, meters.
+  double d_perp = 4;
+}
+
+message Topology {
+  string map_id = 1;
+  repeated BranchPoint branch_points = 2;
+  repeated TopologySegment segments = 3;
+  repeated LedAssociation associations = 4;
+}
+
+// Effect tunables (§7.8), mirroring the pulse reference's controls. All
+// fields are optional overlays: unset keeps the player's current/default.
+message PlaybackParams {
+  // Global output brightness scale in [0,1].
+  optional double intensity = 1;
+  // Soft-falloff radius around a pulse agent, meters ('soft').
+  optional double glow_radius = 2;
+  // Concurrent pulse agents traversing the topology.
+  optional int32 agent_count = 3;
+  // Agent travel speed along the topology, m/s.
+  optional double speed = 4;
+  // Palette as 0xRRGGBB ints; empty keeps the player default.
+  repeated uint32 palette = 5;
+}
+
 // ---------------------------------------------------------------------------
 // Client -> server messages (§7.1)
 // ---------------------------------------------------------------------------
@@ -198,6 +283,43 @@ message GetLiveMap {}
 
 message GetSolveStatus {}
 
+// LED-counting handshake (§7.9): display a static color-block pattern.
+// Blocks paint [start, start+count); uncovered LEDs are off; painting past
+// the physical strip end IS the probe (the phone binary-searches the strip
+// length by observing which blocks light). Empty blocks = all off.
+// Reply: counting_state.
+message SetCountingPattern {
+  repeated ColorBlock blocks = 1;
+  // Player output channel; unset -> 0 (the Pi has one channel; the ESP32
+  // may drive several RMT outputs).
+  optional int32 channel = 2;
+}
+
+// Persist the detected strip length for a channel (defaults future
+// codeParams.ledCount, bounds playback buffers). Reply: led_count_state.
+message SetLedCount {
+  int32 led_count = 1;
+  optional int32 channel = 2;
+}
+
+// Upload the skeletonized topology for a stored map (Phase F). The player
+// persists it next to the map and replies result_ready (mirrors submit_map).
+message SubmitTopology {
+  Topology topology = 1;
+}
+
+// Playback control (§7.8): select the effect and overlay params. "off" is
+// universal; other effects are player-capability-dependent (reply: error
+// code="unsupported_effect" when not shipped). Reply: playback_state.
+message SetPlayback {
+  string effect = 1;
+  PlaybackParams params = 2;
+  // Stored map/topology to play on; unset keeps the current selection.
+  optional string map_id = 3;
+}
+
+message GetPlayback {}
+
 message ClientMessage {
   // Arm names equal the pre-protobuf "type" discriminator values.
   oneof msg {
@@ -214,6 +336,11 @@ message ClientMessage {
     GetLiveMap get_live_map = 11;
     GetSolveStatus get_solve_status = 12;
     SubmitMap submit_map = 13;
+    SetCountingPattern set_counting_pattern = 14;
+    SetLedCount set_led_count = 15;
+    SubmitTopology submit_topology = 16;
+    SetPlayback set_playback = 17;
+    GetPlayback get_playback = 18;
   }
 }
 
@@ -282,6 +409,31 @@ message Error {
   string message = 2;
 }
 
+// Reply to set_counting_pattern: whether a counting pattern is displayed and
+// the server-clock time it latched (the phone's read-valid time).
+message CountingState {
+  bool active = 1;
+  // Unset when inactive (JSON null).
+  optional double epoch_ms = 2;
+}
+
+// Reply to set_led_count: echo of the persisted per-channel strip length.
+message LedCountState {
+  int32 led_count = 1;
+  int32 channel = 2;
+}
+
+// Reply to set_playback / get_playback: the effective configuration (the
+// player echoes what it actually runs, defaults filled into params).
+message PlaybackState {
+  bool active = 1;
+  // The running effect; "off" when inactive.
+  string effect = 2;
+  PlaybackParams params = 3;
+  // Unset when no stored map is selected (JSON null).
+  optional string map_id = 4;
+}
+
 message ServerMessage {
   oneof msg {
     Welcome welcome = 1;
@@ -294,5 +446,8 @@ message ServerMessage {
     ResultReady result_ready = 8;
     Error error = 9;
     MappingStopped mapping_stopped = 10;
+    CountingState counting_state = 11;
+    LedCountState led_count_state = 12;
+    PlaybackState playback_state = 13;
   }
 }
