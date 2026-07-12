@@ -64,6 +64,18 @@ Safari before Phase 4c is committed:
   always be reachable and never cached stale (serve with
   `Cache-Control: no-store`).
 
+## Bench results so far
+
+- **2026-07-12** — hosted-origin flow **validated end-to-end** against the
+  container-hosted stand-in player (`bazelisk run //web:serve`, self-signed
+  WSS): the app served from <https://ledmapper.pages.dev> connected to the
+  player and drove the virtual-wall capture flow. This confirms the load
+  bearing assumption: a stored certificate exception on the player's origin
+  unlocks cross-origin WSS from the hosted app.
+- Still to record (see below): per-browser behavior (Chrome-for-Android vs
+  iOS Safari), exception lifetime across browser restarts / ~24 h, and any
+  Private Network Access warnings in the console.
+
 ## Bench runbook (no ESP32 needed — the Pi stands in)
 
 The Pi server is already a self-signed WSS player, so the trust flow can be

@@ -331,7 +331,11 @@ build/vendor the RFC6455 codec. M10 cross-target proto conformance test
 - **R1** RMT-while-WiFi coexistence on single-core C6 — _existence proof for
   the whole ESP32 target._ Spike a throwaway RMT+WSS-ping app first.
 - **R2** Self-signed WSS from an **externally-hosted** origin has no
-  background trust path. **Spike apparatus built** (`firmware/landing/`):
+  background trust path. **Spike apparatus built and core flow
+  bench-validated** (2026-07-12: the app served from
+  <https://ledmapper.pages.dev> connected to the container-hosted self-signed
+  stand-in player and drove the virtual-wall flow — the stored cert
+  exception does unlock cross-origin WSS). (`firmware/landing/`):
   the resolution is committed to the landing-page design — the ESP32 serves
   ONE same-origin page (`index.html`, `%%APP_ORIGIN%%` baked by firmware
   config) whose load forces the one-tap cert approval, probes its own
