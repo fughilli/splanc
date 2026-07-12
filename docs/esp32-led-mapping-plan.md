@@ -323,8 +323,37 @@ the hue-only carrier removed its dependence on blob on/off tracking. M8
 extend the M9 simulator to emit IMU + real timestamps (note
 `solver/src/synth.rs` + `test_rust_parity.py::synth_session` already provide
 synthetic IMU fixtures — the M9 gap is only for simulator-driven flows). M9
-build/vendor the RFC6455 codec. M10 cross-target proto conformance test
-(extend `golden_proto_frames.json` to a Rust/micropb leg).
+build/vendor the RFC6455 codec. M10 ~~cross-target proto conformance test~~
+done (extend `golden_proto_frames.json` to a Rust/micropb leg —
+`//shared/protocol/rust:conformance_test`).
+
+**M11 — legitimate player certificates via DNS-01 ACME (deferred by choice;
+punts the whole R2 cert-exception dance for online installs).** The owner
+has a domain and can create A records; when picked up:
+
+1. **DNS**: put the domain's zone on the existing Cloudflare account; give
+   each player a DHCP reservation and a public A record to its PRIVATE LAN
+   IP (allowed and standard for this), e.g. `pi.leds.<domain>`,
+   `esp32-<id>.leds.<domain>` — per-device names, not a wildcard, so one
+   leaked device key can't impersonate the rest.
+2. **Token**: a SECOND Cloudflare API token with Zone → DNS → Edit on that
+   zone only (keep the Pages deploy token separate), dropped under
+   `credentials/` like the others.
+3. **Issue/renew tooling**: `lego` (or certbot) with the CF DNS provider —
+   DNS-01 needs no inbound reachability, so it works for LAN-only devices.
+   A `tools/` script + docs; certs renew every ≤90 days.
+4. **Pi integration**: trivial — the server already takes cert/key files
+   (`tls.py` / `--ssl-dir`); run the renewal on the Pi itself (systemd
+   timer, fold into pi/provisioning) and point the server at lego's output.
+5. **ESP32 integration**: the C6 cannot run ACME but can HOLD a cert+key —
+   this upgrades M1 from "bake self-signed" to "push a real cert at
+   provisioning, re-push on renewal" (provisioning tool or a
+   `set_certificate` protocol arm in Phase 4c; key material only ever over
+   an already-authenticated link).
+6. **Fallback stays**: capture must work on offline/venue LANs with no
+   public DNS, so self-signed + the landing-page trust flow
+   (`firmware/landing/`) remain the fallback path; the app already handles
+   both (`certApprovalUrl` hint fires only when needed).
 
 ## Risks & first spikes (run before committing the dependent phase)
 
