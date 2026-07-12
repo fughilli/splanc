@@ -21,4 +21,8 @@ grep -q '"/?url=" + encodeURIComponent(wsUrl)' "$page" || {
   echo "FAIL: bounce link construction missing" >&2
   exit 1
 }
+grep -q 'location.replace(target)' "$page" || {
+  echo "FAIL: unconditional redirect (location.replace) missing" >&2
+  exit 1
+}
 echo "PASS"

@@ -12,7 +12,13 @@
   So the ESP32 serves exactly one page: the user navigates here first
   (https://<esp32-host>/), takes the one-tap cert approval to load it, and
   this page (1) proves the approval stuck by opening a SAME-ORIGIN WebSocket
-  to /ws, then (2) bounces to the hosted app with ?url= pre-filled.
+  to /ws, then (2) REDIRECTS to the hosted app with ?url= pre-filled.
+
+  The redirect is UNCONDITIONAL: loading this page at all means the cert
+  was accepted, so a probe failure indicts the player's WS endpoint, not
+  the trust flow — the failure is flashed briefly and the user is sent on
+  anyway (the app's error UI owns connection troubleshooting). It uses
+  location.replace so Back from the app doesn't loop through this page.
 
   %%APP_ORIGIN%% is baked in by the firmware from its configuration (e.g.
   https://ledmapper.pages.dev). Keep this file dependency-free and tiny —
@@ -64,7 +70,7 @@
     <main>
       <h1>LED Mapper player</h1>
       <p id="status">Checking the connection…</p>
-      <a id="go" class="button" href="#" aria-disabled="true">Open the app</a>
+      <a id="go" class="button" href="#">Open the app</a>
       <p style="opacity: 0.6; font-size: 0.85rem">
         This player hosts no app of its own — mapping and playback control
         run from the hosted app, connected back to
@@ -84,44 +90,44 @@
 
       // Same-origin WSS probe: loading this page took the cert approval, so
       // this succeeding means the exception is stored and the player's WSS
-      // endpoint is up — the cross-origin connection from the app should now
-      // work too.
-      var enabled = false;
-      function enable(msg, cls) {
+      // endpoint is up — the cross-origin connection from the app will work.
+      // Either way the user ends up at the app (see the header comment);
+      // the probe only decides how fast and what the status line says.
+      var done = false;
+      function redirect(delayMs, msg, cls) {
+        if (done) return;
+        done = true;
         status.textContent = msg;
         status.className = cls;
-        go.removeAttribute("aria-disabled");
-        enabled = true;
+        setTimeout(function () {
+          location.replace(target);
+        }, delayMs);
       }
       try {
         var probe = new WebSocket(wsUrl);
         var timer = setTimeout(function () {
           probe.close();
-          if (!enabled)
-            enable(
-              "Could not verify the player connection — you can still try the app.",
-              "bad",
-            );
+          redirect(
+            2500,
+            "Could not verify the player connection — opening the app anyway…",
+            "bad",
+          );
         }, 4000);
         probe.onopen = function () {
           clearTimeout(timer);
           probe.close();
-          enable("Player connection verified — certificate trusted.", "ok");
-          // Auto-bounce: the user came here only to approve the cert.
-          setTimeout(function () {
-            location.href = target;
-          }, 1200);
+          redirect(400, "Player connection verified — opening the app…", "ok");
         };
         probe.onerror = function () {
           clearTimeout(timer);
-          if (!enabled)
-            enable(
-              "WebSocket check failed. Reload this page and accept the certificate warning, then try again.",
-              "bad",
-            );
+          redirect(
+            2500,
+            "Player WebSocket check failed — opening the app anyway…",
+            "bad",
+          );
         };
       } catch (e) {
-        enable("WebSocket unavailable: " + e, "bad");
+        redirect(2500, "WebSocket unavailable: " + e, "bad");
       }
     </script>
   </body>

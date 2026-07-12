@@ -19,9 +19,14 @@ page, `index.html`:
 3. The page probes `wss://<its own host>/ws` (same-origin, so the stored
    exception applies) and shows the result — the approval demonstrably
    stuck before the user leaves.
-4. It bounces to `%%APP_ORIGIN%%/?url=wss://<esp32-host>/ws` — the hosted
+4. It redirects to `%%APP_ORIGIN%%/?url=wss://<esp32-host>/ws` — the hosted
    app, told which player to talk to. The app's cross-origin WSS now reuses
-   the stored exception.
+   the stored exception. The redirect is UNCONDITIONAL (`location.replace`,
+   so Back doesn't loop): loading the page at all means the cert was
+   accepted, so a probe failure indicts the player's WS endpoint, which the
+   app's own error UI is better placed to explain — the probe only decides
+   how fast the redirect fires (~0.4 s verified, ~2.5 s with a warning
+   flash otherwise).
 
 The app side has the matching recovery path (`web/src/net/client.ts`
 `certApprovalUrl`): when the socket target is cross-origin `wss:` and the
