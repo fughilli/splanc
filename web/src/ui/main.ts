@@ -75,6 +75,9 @@ const forcedFx = ((): number | null => {
  * the calibrated-K source — but reading it keeps previously calibrated
  * devices scale-exact until a calibration flow returns (phase 4.5 PnP). */
 const K_CACHE_KEY = "ledmapper.calibratedK";
+/** Last WiFi credentials sent to a player (BLE provisioning), pre-filled on
+ * the next setup so re-provisioning doesn't retype the network. */
+const WIFI_CACHE_KEY = "ledmapper.wifi";
 
 // Capture auto-negotiation overrides (cv/exposure.ts picks these from the
 // measured scene by default): ?symbols=2|4, ?bitms=N.
@@ -245,13 +248,29 @@ if (bleAvailable()) {
         // Chooser FIRST: requestDevice needs the click's (unconsumed) user
         // gesture — even a prompt() beforehand eats it.
         const device = await requestImprovDevice();
-        const ssid = prompt("WiFi network name (SSID) for the player:");
+        // Pre-fill from the last successful provisioning so re-runs (a
+        // second player, a re-provision) don't retype the network.
+        const cached = ((): { ssid: string; password: string } => {
+          try {
+            return JSON.parse(localStorage.getItem(WIFI_CACHE_KEY) ?? "{}");
+          } catch {
+            return { ssid: "", password: "" };
+          }
+        })();
+        const ssid = prompt("WiFi network name (SSID) for the player:", cached.ssid ?? "");
         if (!ssid) {
           bleBtn.disabled = false;
           return;
         }
-        const password = prompt(`WiFi password for "${ssid}" (empty for open):`) ?? "";
+        const password =
+          prompt(`WiFi password for "${ssid}" (empty for open):`, cached.password ?? "") ?? "";
         const urls = await provisionViaBle(device, ssid, password, setConn);
+        // Cache only after the device reports it JOINED (below succeeds).
+        try {
+          localStorage.setItem(WIFI_CACHE_KEY, JSON.stringify({ ssid, password }));
+        } catch {
+          // storage blocked — non-fatal, just no pre-fill next time
+        }
         const target = urls.map((u) => wsUrlFromRedirect(u)).find((u) => u !== null);
         if (!target) throw new Error(`player joined, but sent no usable address (${urls})`);
         setConn(`player provisioned at ${target} — reconnecting…`);
@@ -671,18 +690,31 @@ async function stopCapture(sessionAlreadyEnded = false): Promise<void> {
   // joint solve runs on the phone's wasm solver unless the host is
   // decisively faster.
   await solverReady.catch(() => false);
+  // Against a solverless player (ESP32: no welcome.solverBenchMs), the phone
+  // wasm solver is the ONLY option. If its startup load failed (cold CDN,
+  // slow venue network), retry it HERE instead of dead-ending the user on a
+  // "reload the page" — the capture's detections are still in hand.
+  if (client.hostSolverBenchMs === null && !solverAgent.available) {
+    setConn("loading the solver…");
+    await solverAgent.init().catch(() => false);
+  }
   const placement = chooseSolvePlacement(solverAgent.benchMs, client.hostSolverBenchMs);
   const solveOnPhone =
     placement === "phone" && solverAgent.available && localDetections.length > 0;
   if (!solveOnPhone && client.hostSolverBenchMs === null) {
     // The player never advertised a solver bench score — it HAS no solver
-    // (ESP32 profile). Without the wasm solver there is nowhere to solve.
+    // (ESP32 profile) — and the wasm solver still won't load. Stop + persist
+    // on the player; the capture stays recoverable (localDetections kept),
+    // and the app is left fully usable so a later attempt can re-solve.
     setError(
-      "This player has no solver and the in-browser wasm solver is unavailable — cannot solve the capture.",
-      ["Reload the page (the solver loads at startup) or capture against a Pi host."],
+      solverAgent.available
+        ? "Nothing to solve — no LEDs were decoded in this capture."
+        : "The in-browser solver could not load (needed because this player has no solver). Check the connection and press Start to capture again.",
     );
     setConn("capture stopped (unsolved)");
     await client.stopMappingNoSolve().catch(() => undefined);
+    setupSection.style.display = "";
+    resultSection.style.display = "none";
     startBtn.disabled = false;
     stopBtn.disabled = true;
     return;

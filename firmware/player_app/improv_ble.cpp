@@ -66,11 +66,25 @@ class RpcHandler : public BLECharacteristicCallbacks {
 
 RpcHandler g_rpc_handler;
 
+// A BLE peripheral stops advertising once a central connects, and does NOT
+// resume on its own — so after the app provisions and reloads (dropping the
+// link), the device would go silent and never be discoverable again. Resume
+// advertising on every disconnect so re-provisioning always works.
+class ServerHandler : public BLEServerCallbacks {
+  void onDisconnect(BLEServer *server) override {
+    (void)server;
+    BLEDevice::startAdvertising();
+  }
+};
+
+ServerHandler g_server_handler;
+
 }  // namespace
 
 void improv_ble_begin(const char *device_name, uint8_t initial_state) {
   BLEDevice::init(device_name);
   BLEServer *server = BLEDevice::createServer();
+  server->setCallbacks(&g_server_handler);
   BLEService *service = server->createService(kServiceUuid);
 
   g_state = service->createCharacteristic(
