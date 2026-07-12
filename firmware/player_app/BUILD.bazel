@@ -95,6 +95,7 @@ cc_binary(
     srcs = [
         "improv_ble.cpp",
         "improv_ble.h",
+        "led_config.h",
         "main.cpp",
         "player_ffi.h",
     ],
@@ -110,8 +111,9 @@ cc_binary(
         ":player_ffi",
         ":ws_codec",
         "//firmware/landing:landing_page",
+        # NOT @embedded//libs/pins: it propagates LED_DATA_PIN=8 (the
+        # DevKitC-1 onboard LED); our strip wiring lives in led_config.h.
         "@embedded//libs/board:arduino_core",
-        "@embedded//libs/pins",
         "@embedded//libs/vendor:ble",
         "@embedded//libs/vendor:fastled",
         "@embedded//libs/vendor:preferences",

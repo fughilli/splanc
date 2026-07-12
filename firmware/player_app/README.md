@@ -84,7 +84,12 @@ app + nvs — fits the common 4 MB-flash C6 devkits). Then:
 
 ```text
 main.cpp        Arduino app: AP + HTTP + WS pump + FastLED render loop
+led_config.h    strip wiring (NUM_LEDS + LED_DATA_PIN) — a LOCAL choice, not
+                the vendored @embedded default (whose GPIO8 = onboard LED)
 ws_codec.h      RFC 6455 server codec (own SHA-1/base64; ws_codec_test.cc)
+improv_codec.h  Improv BLE packet codec (improv_codec_test.cc; same vectors
+                as web/tests/improv.test.ts)
+improv_ble.*    Improv GATT service (BLE provisioning)
 ffi.rs          C ABI over the Rust player stack (tests/ffi.rs drives the
                 full device flow through it on the host)
 player_ffi.h    the C side of that ABI

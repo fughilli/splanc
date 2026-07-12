@@ -27,9 +27,9 @@
 #include "firmware/landing/landing_page.h"
 #include "firmware/player_app/improv_ble.h"
 #include "firmware/player_app/improv_codec.h"
+#include "firmware/player_app/led_config.h"
 #include "firmware/player_app/player_ffi.h"
 #include "firmware/player_app/ws_codec.h"
-#include "libs/pins/pins.h"
 
 static const char *kApSsid = "ledmapper";
 static const char *kApPassword = "ledmapper";
