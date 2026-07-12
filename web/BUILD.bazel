@@ -22,6 +22,10 @@ load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 
 package(default_visibility = ["//visibility:public"])
 
+# The cross-language wire golden (Python-generated, TS-verified here) also
+# feeds the Rust/micropb conformance leg (//shared/protocol/rust).
+exports_files(["tests/golden_proto_frames.json"])
+
 npm_link_all_packages(name = "node_modules")
 
 SRCS = glob(["src/**/*.ts"])

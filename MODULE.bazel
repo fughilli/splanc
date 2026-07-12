@@ -97,17 +97,19 @@ crate.spec(
 # Firmware protocol deps (docs/esp32-led-mapping-plan.md Phase 0b): no_std
 # protobuf + fixed-capacity containers for the ESP32-C6 target. No std/alloc
 # features; enable-64bit is required (CodeParams/solver fields are doubles);
-# container-heapless-0-8 binds repeated/string fields to heapless 0.8.
+# container-heapless binds repeated/string fields to heapless 0.8. The 0.5
+# line is the newest whose generator builds on the firmware-validated rustc
+# 1.85.0 (micropb-gen 0.6 needs let-chains, MSRV 1.88).
 crate.spec(
     default_features = False,
     features = [
         "encode",
         "decode",
         "enable-64bit",
-        "container-heapless-0-8",
+        "container-heapless",
     ],
     package = "micropb",
-    version = "0.6.0",
+    version = "0.5.1",
 )
 
 # 0.8 line: 0.9 requires a newer rustc than the firmware-validated 1.85.0
@@ -117,6 +119,21 @@ crate.spec(
     default_features = False,
     package = "heapless",
     version = "0.8",
+)
+
+# HOST-side code generator for micropb (build tool, not a firmware dep):
+# invoked by //shared/protocol/rust to turn ledmapper.proto into no_std Rust.
+# Version-locked to the micropb runtime line above.
+crate.spec(
+    package = "micropb-gen",
+    version = "0.5.1",
+)
+
+# Test-only: the Rust leg of the cross-language proto conformance test reads
+# web/tests/golden_proto_frames.json (base64 frames).
+crate.spec(
+    package = "base64",
+    version = "0.22",
 )
 crate.from_specs(
     # rules_rust's default list is a small host-centric subset (splicing is

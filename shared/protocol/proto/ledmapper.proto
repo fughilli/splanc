@@ -57,14 +57,14 @@ package ledmapper.v1;
 
 // 3-vector; used only where nesting forces a message type (trajectories).
 message Vec3 {
-  repeated double v = 1;
+  repeated double v = 1 [packed = true];
 }
 
 // Camera pose: position [x,y,z] (meters) + quaternion [x,y,z,w],
 // camera-to-world (§7.4).
 message Pose {
-  repeated double p = 1;
-  repeated double q = 2;
+  repeated double p = 1 [packed = true];
+  repeated double q = 2 [packed = true];
 }
 
 // Code-book parameters describing the temporal blink pattern (§7.6).
@@ -95,7 +95,7 @@ message DetectionRecord {
   int32 img_w = 5;
   int32 img_h = 6;
   // fx, fy, cx, cy.
-  repeated double k = 7 [json_name = "K"];
+  repeated double k = 7 [json_name = "K", packed = true];
   // Unset on the WebXR-free capture path (poses solved server-side).
   optional Pose pose = 8;
   double confidence = 9;
@@ -104,8 +104,8 @@ message DetectionRecord {
 // One inertial sample, camera frame (§7.1 imu_batch).
 message ImuSample {
   double t = 1;
-  repeated double gyro = 2;
-  repeated double accel = 3;
+  repeated double gyro = 2 [packed = true];
+  repeated double accel = 3 [packed = true];
 }
 
 // Camera/exposure telemetry (§7.1 exposure_report).
@@ -125,7 +125,7 @@ message ExposureStats {
 // Per-LED entry of a reconstructed map (§7.5).
 message LedEntry {
   int32 id = 1;
-  repeated double xyz = 2;
+  repeated double xyz = 2 [packed = true];
   double confidence = 3;
   int32 n_views = 4;
   double rms_reproj_px = 5;
@@ -147,7 +147,7 @@ message OutputMap {
   string frame = 4;
   int32 led_count = 5;
   repeated LedEntry leds = 6;
-  repeated int32 unmapped = 7;
+  repeated int32 unmapped = 7 [packed = true];
   // Solved camera path (visual-inertial solves), same frame as leds.
   repeated Vec3 trajectory = 8;
   OutputMapStats stats = 9;
@@ -156,7 +156,7 @@ message OutputMap {
 // Interim LED position during a running solve (lightweight preview).
 message SolveLed {
   int32 id = 1;
-  repeated double xyz = 2;
+  repeated double xyz = 2 [packed = true];
 }
 
 // A contiguous run of same-color LEDs in a counting pattern (§7.9).
@@ -164,7 +164,7 @@ message ColorBlock {
   int32 start = 1;
   int32 count = 2;
   // [r, g, b] in [0,1].
-  repeated double rgb = 3;
+  repeated double rgb = 3 [packed = true];
 }
 
 // Skeletonized fixture topology (§7.7, Phase F output) — drives the O(N)
@@ -172,7 +172,7 @@ message ColorBlock {
 message BranchPoint {
   int32 id = 1;
   // Meters, same frame as the OutputMap.
-  repeated double xyz = 2;
+  repeated double xyz = 2 [packed = true];
 }
 
 message TopologySegment {
@@ -214,7 +214,7 @@ message PlaybackParams {
   // Agent travel speed along the topology, m/s.
   optional double speed = 4;
   // Palette as 0xRRGGBB ints; empty keeps the player default.
-  repeated uint32 palette = 5;
+  repeated uint32 palette = 5 [packed = true];
 }
 
 // ---------------------------------------------------------------------------
