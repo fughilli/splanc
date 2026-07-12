@@ -8,18 +8,42 @@ hue code, `ledmapper_arena`/`ledmapper_store` upload storage) behind a C ABI
 (`player_ffi.h`); the C++ side owns WiFi, sockets, RFC 6455 framing
 (`ws_codec.h`, host-tested byte-exactly) and the LED loop.
 
+## Player onboarding (BLE, the primary flow)
+
+The soft-AP + landing-page bounce CANNOT onboard a phone (bench finding
+2026-07-12: a phone joined to the device's AP routes ALL traffic there, so
+the hosted app never loads). The flow is inverted — **provision over BLE
+from the hosted app**, using the Improv Wi-Fi BLE standard:
+
+1. Open <https://ledmapper.pages.dev> on your NORMAL network (Chrome —
+   Android or desktop; iOS Safari has no Web Bluetooth and keeps the
+   manual `?url=` path).
+2. Tap **Set up player (Bluetooth)** → pick "LEDMapper C6" in the chooser
+   → enter your WiFi SSID + password.
+3. The device stores the credentials (NVS), joins your LAN (AP+STA — the
+   soft-AP stays up as the bench fallback), and answers over BLE with its
+   address; the app reloads itself pointed at `ws://<device-ip>:81/ws`.
+   Bad credentials: bounded Improv error, stored creds cleared, device
+   stays re-provisionable.
+
+Note the mixed-content rule still applies until Phase 4c: from the https
+app, plain `ws://` is blocked — so after provisioning, TODAY's checks are
+the probe/wall (below) against the device's LAN address. TLS/wss makes the
+hosted-app path fully live.
+
 ## Flash + bench
 
 ```sh
 bazelisk run -c opt //firmware/player_app:flash_esp32c6 -- --port /dev/ttyACM0
 ```
 
-The image needs the single-app partition layout (~1.5 MB at `-c opt` >
-default.csv's 1.25 MB slot); `:flash_esp32c6` already writes the `no_ota`
-table (2 MB app0). Then:
+The image (~2.05 MB at `-c opt` with BLE) needs a large app slot;
+`:flash_esp32c6` writes the 8 MB dual-OTA layout (3.2 MB slots — C6 devkit
+flash). Then:
 
-1. Join the AP: SSID `ledmapper`, password `ledmapper` (device is
-   `192.168.4.1`; serial prints a heartbeat line every 5 s).
+1. Provision over BLE (above), or join the fallback AP: SSID `ledmapper`,
+   password `ledmapper` (device is `192.168.4.1`; serial prints a
+   heartbeat line every 5 s with AP + STA state).
 2. Protocol bench, no phone required (from a laptop on the AP):
 
    ```sh
@@ -32,6 +56,7 @@ table (2 MB app0). Then:
    `LED_DATA_PIN` you should SEE the hue cycle, then the red/blue counting
    halves. The same probe passes against the Pi (`--profile pi --insecure`),
    so a failure is the firmware, not the tool.
+
 3. Phone flow: the wall page over plain http can drive it
    (`?url=ws://192.168.4.1:81/ws`); the CAPTURE app cannot yet — it runs on
    an https origin and mixed content blocks `ws://` (see scope below).
@@ -48,8 +73,9 @@ table (2 MB app0). Then:
   ~1024-LED `submit_map` is ~45 KB; bigger gets close code 1009. The arena
   (96 KB) then bounds what a decoded map+topology may occupy
   (`error{map_too_large}` beyond).
-- **Soft-AP only**; joining an existing network (STA) + mDNS is config
-  work that arrives with the provisioning story (M1/M11).
+- **AP+STA**: the soft-AP stays up always (bench + re-provisioning
+  reachability); STA joins the BLE-provisioned network. mDNS naming comes
+  with M11.
 - Memory: the generated protobuf links in the FIRMWARE capacity profile
   (control-traffic-sized; uploads bypass it through the arena decoder), so
   the envelope statics are ~2 KB instead of ~230 KB.

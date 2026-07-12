@@ -28,6 +28,10 @@ bazel_dep(name = "rules_pkg", version = "1.2.0")
 # rules_shell load; the dep makes that rewrite real.
 bazel_dep(name = "rules_shell", version = "0.4.0")
 
+# Same story for cc_* (firmware/player_app): the per-rule .bzl files
+# (cc/cc_binary.bzl, ...) need a modern rules_cc.
+bazel_dep(name = "rules_cc", version = "0.1.1")
+
 # Wire protocol (proto-comms): prebuilt protoc toolchain — Python bindings
 # are generated at build time (no from-source protobuf compile, no checked-in
 # _pb2.py); the runtime comes from pip (`protobuf`).

@@ -25,6 +25,7 @@ import {
 import { CvPipeline } from "../cv/pipeline";
 import { DetectorGL } from "../cv/detect";
 import { certApprovalUrl, defaultWsUrl, LedMapperClient } from "../net/client";
+import { bleAvailable, provisionViaBle, wsUrlFromRedirect } from "../net/improv";
 import { CaptureUnsupportedError } from "../xr/capture";
 import { DEFAULT_IMU_MAPPING, ImuRecorder, parseImuMapping } from "../xr/imu";
 import { MediaStreamCaptureSource } from "../xr/mediaStreamCapture";
@@ -224,6 +225,35 @@ void boot();
 
 startBtn.addEventListener("click", () => void startCapture());
 stopBtn.addEventListener("click", () => void stopCapture());
+
+// Player onboarding over BLE (Improv Wi-Fi — see net/improv.ts): the hosted
+// app provisions an ESP32 player onto THIS network, gets its address back,
+// and reloads itself pointed at it. Chrome-only (no Web Bluetooth on iOS).
+const bleBtn = $<HTMLButtonElement>("blesetup");
+if (bleAvailable()) {
+  bleBtn.style.display = "";
+  bleBtn.addEventListener("click", () => {
+    void (async () => {
+      const ssid = prompt("WiFi network name (SSID) for the player:");
+      if (!ssid) return;
+      const password = prompt(`WiFi password for "${ssid}" (empty for open):`) ?? "";
+      bleBtn.disabled = true;
+      setError("");
+      try {
+        const urls = await provisionViaBle(ssid, password, setConn);
+        const target = urls.map((u) => wsUrlFromRedirect(u)).find((u) => u !== null);
+        if (!target) throw new Error(`player joined, but sent no usable address (${urls})`);
+        setConn(`player provisioned at ${target} — reconnecting…`);
+        const qs2 = new URLSearchParams(location.search);
+        qs2.set("url", target);
+        location.search = qs2.toString(); // reload, rebound to the player
+      } catch (e) {
+        setError(`Player setup failed: ${e instanceof Error ? e.message : e}`);
+        bleBtn.disabled = false;
+      }
+    })();
+  });
+}
 $<HTMLButtonElement>("again").addEventListener("click", () => {
   resultSection.style.display = "none";
   setupSection.style.display = "";

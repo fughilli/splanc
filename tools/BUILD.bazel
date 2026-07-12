@@ -7,7 +7,7 @@ py_binary(
     name = "player_probe",
     srcs = ["player_probe.py"],
     deps = [
-        "//pi/server:server",
+        "//pi/server",
         requirement("websockets"),
     ],
 )

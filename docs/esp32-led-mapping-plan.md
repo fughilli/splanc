@@ -211,7 +211,18 @@ brain is the host-tested Rust stack behind a C ABI (`player_ffi.h`; the
 device flow is host-tested end-to-end through the same extern "C" surface),
 and the RFC 6455 codec is host-tested byte-exactly against the RFC vectors.
 Bench it with `//tools:player_probe` (contract-checks every reply;
-validated live against the Pi player). Bring-up scope + the Phase 4c
+validated live against the Pi player). **Onboarding pivot (2026-07-12
+bench finding): the soft-AP + landing-bounce flow cannot onboard a phone —
+a phone joined to the device's AP routes ALL traffic there, so the hosted
+app never loads. Primary onboarding is now BLE provisioning (Improv
+Wi-Fi BLE, the ESPHome standard): the HOSTED app (Web Bluetooth — Chrome
+Android/desktop; iOS has none and keeps manual `?url=`) sends WiFi
+credentials over GATT, the device stores them in NVS, joins the LAN in
+AP+STA mode (soft-AP stays as the bench fallback), and returns its address
+over BLE; the app reloads pointed at it. Both codec ends are pinned to the
+SAME test vectors (web/tests/improv.test.ts ==
+firmware/player_app/improv_codec_test.cc). Mixed content still gates the
+hosted app's actual WS connection until Phase 4c TLS.** Bring-up scope + the Phase 4c
 hardening list (TLS/wss, multi-client, STA) in
 `firmware/player_app/README.md`. Ships with the `no_ota` partition table
 (the image outgrows the default 1.25 MB slot; upstream provides

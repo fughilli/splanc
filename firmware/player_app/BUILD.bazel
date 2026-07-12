@@ -9,6 +9,9 @@ against the host profile, and the RFC6455 codec is host-tested byte-exactly.
 
 load("@embedded//rules:firmware.bzl", "firmware_binary")
 load("@embedded//rules:flash.bzl", "esptool_flash")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("@rules_rust//rust:defs.bzl", "rust_library", "rust_static_library", "rust_test")
 
 package(default_visibility = ["//visibility:public"])
@@ -43,7 +46,7 @@ rust_library(
     edition = "2021",
     deps = [
         "//firmware/arena",
-        "//firmware/player:player",
+        "//firmware/player",
         "//firmware/store",
         "//shared/protocol/rust:ledmapper_pb",
         "@crates//:micropb",
@@ -76,23 +79,42 @@ cc_test(
     deps = [":ws_codec"],
 )
 
+cc_library(
+    name = "improv_codec",
+    hdrs = ["improv_codec.h"],
+)
+
+cc_test(
+    name = "improv_codec_test",
+    srcs = ["improv_codec_test.cc"],
+    deps = [":improv_codec"],
+)
+
 cc_binary(
     name = "player_app",
     srcs = [
+        "improv_ble.cpp",
+        "improv_ble.h",
         "main.cpp",
         "player_ffi.h",
     ],
+    # Match the SDK/library ABI: the Arduino tree builds -fno-rtti, and a
+    # subclass of its polymorphic types must not demand base typeinfo.
+    copts = ["-fno-rtti"],
     target_compatible_with = select({
         "@embedded//platforms:is_esp32c6": [],
         "//conditions:default": ["@platforms//:incompatible"],
     }),
     deps = [
+        ":improv_codec",
         ":player_ffi",
         ":ws_codec",
         "//firmware/landing:landing_page",
         "@embedded//libs/board:arduino_core",
         "@embedded//libs/pins",
+        "@embedded//libs/vendor:ble",
         "@embedded//libs/vendor:fastled",
+        "@embedded//libs/vendor:preferences",
         "@embedded//libs/vendor:webserver",
         "@embedded//libs/vendor:wifi",
     ],
@@ -108,13 +130,14 @@ firmware_binary(
     tags = ["manual"],
 )
 
-# The image (~1.5 MB at -c opt: WiFi + webserver + FastLED + the protocol
-# stack) exceeds default.csv's 0x140000 app slot — flash with the single-app
-# 2 MB layout. Flashing switches the partition table; going back to an OTA
-# app means re-flashing with the default table.
+# The image (~2.05 MB at -c opt: WiFi + BLE + webserver + FastLED + the
+# protocol stack) exceeds default.csv's 1.25 MB app slot and barely fits
+# no_ota's 2 MB — flash the 8 MB dual-OTA layout (3.2 MB slots; the C6
+# devkit has 8 MB flash). The image header stays 4MB (flash_size default),
+# which only bounds what the BOOTLOADER maps, not the partition table.
 esptool_flash(
     name = "flash_esp32c6",
     app = ":esp32c6",
-    partitions = "@embedded//libs/vendor:partitions_no_ota",
+    partitions = "@embedded//libs/vendor:partitions_default_8mb",
     tags = ["manual"],
 )

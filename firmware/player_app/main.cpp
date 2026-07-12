@@ -20,17 +20,23 @@
 //    submit_map is ~45 KB); larger -> close 1009 (message too big).
 #include <Arduino.h>
 #include <FastLED.h>
+#include <Preferences.h>
 #include <WebServer.h>
 #include <WiFi.h>
 
 #include "firmware/landing/landing_page.h"
+#include "firmware/player_app/improv_ble.h"
+#include "firmware/player_app/improv_codec.h"
 #include "firmware/player_app/player_ffi.h"
 #include "firmware/player_app/ws_codec.h"
 #include "libs/pins/pins.h"
 
-static const char *kSsid = "ledmapper";
-static const char *kPassword = "ledmapper";
+static const char *kApSsid = "ledmapper";
+static const char *kApPassword = "ledmapper";
+static const char *kBleName = "LEDMapper C6";
 static const uint16_t kWsPort = 81;
+// STA join budget before a provisioning attempt is reported failed.
+static const uint32_t kStaJoinTimeoutMs = 20000;
 
 // Render buffer cap; the actual rendered count follows the active pattern /
 // counting configuration at runtime (min'd against this).
@@ -50,6 +56,12 @@ static size_t hdr_len = 0;
 static WebServer http(80);
 static WiFiServer ws_listener(kWsPort);
 static WiFiClient ws;
+
+// WiFi credentials persisted across boots (BLE-provisioned, Improv).
+static Preferences prefs;
+// STA join in progress: reports success (Improv redirect) / failure.
+static bool sta_joining = false;
+static uint32_t sta_join_started = 0;
 enum class WsState { kIdle, kHandshake, kOpen };
 static WsState ws_state = WsState::kIdle;
 
@@ -278,7 +290,23 @@ void setup() {
 
   lm_player_init(NUM_LEDS);
 
-  WiFi.softAP(kSsid, kPassword);
+  // WiFi: AP+STA. The soft-AP is always up (bench access + the fallback
+  // when no LAN is joined); stored credentials (BLE-provisioned via
+  // Improv) additionally join the user's network so the HOSTED app can
+  // reach the player (the AP-only onboarding was a dead end: a phone on
+  // the AP routes everything there and the hosted app can never load).
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.softAP(kApSsid, kApPassword);
+  prefs.begin("ledmapper");
+  String ssid = prefs.getString("ssid", "");
+  if (ssid.length() > 0) {
+    WiFi.begin(ssid.c_str(), prefs.getString("pass", "").c_str());
+    sta_joining = true;
+    sta_join_started = millis();
+  }
+  improv_ble_begin(kBleName,
+                   ssid.length() > 0 ? IMPROV_STATE_PROVISIONING : IMPROV_STATE_AUTHORIZED);
+
   http.on("/", []() {
     http.sendHeader("Cache-Control", "no-store");  // cert-rotation safety
     http.send(200, "text/html", landing_html);
@@ -288,19 +316,56 @@ void setup() {
   ws_listener.begin();
 }
 
+// Improv provisioning state machine (Arduino task; BLE callbacks only latch).
+static void provisioning_poll() {
+  char ssid[33], pass[65];
+  if (improv_ble_take_credentials(ssid, sizeof ssid, pass, sizeof pass)) {
+    Serial.printf("[player] provisioning: joining \"%s\"\n", ssid);
+    prefs.putString("ssid", ssid);
+    prefs.putString("pass", pass);
+    WiFi.disconnect();
+    WiFi.begin(ssid, pass);
+    sta_joining = true;
+    sta_join_started = millis();
+    improv_ble_set_state(IMPROV_STATE_PROVISIONING);
+  }
+  if (!sta_joining) return;
+  if (WiFi.status() == WL_CONNECTED) {
+    sta_joining = false;
+    String url = "http://" + WiFi.localIP().toString() + "/";
+    Serial.printf("[player] joined, %s\n", url.c_str());
+    improv_ble_set_state(IMPROV_STATE_PROVISIONED);
+    improv_ble_send_redirect(url.c_str());
+  } else if (millis() - sta_join_started > kStaJoinTimeoutMs) {
+    sta_joining = false;
+    Serial.println("[player] STA join failed; clearing stored credentials");
+    // Bad credentials would wedge every future boot in a join loop — drop
+    // them; the soft-AP stays up and the device stays re-provisionable.
+    prefs.remove("ssid");
+    prefs.remove("pass");
+    WiFi.disconnect();
+    improv_ble_set_error(IMPROV_ERROR_UNABLE_TO_CONNECT);
+    improv_ble_set_state(IMPROV_STATE_AUTHORIZED);
+  }
+}
+
 void loop() {
   http.handleClient();
   ws_poll();
+  provisioning_poll();
   render();
 
   static uint32_t last_report = 0;
   if (millis() - last_report > 5000) {
     last_report = millis();
+    String sta = WiFi.status() == WL_CONNECTED
+                     ? "sta " + WiFi.localIP().toString()
+                     : (sta_joining ? String("sta joining…") : String("sta off"));
     Serial.printf(
-        "[player] AP \"%s\" %d station(s) http://%s/ ws://%s:%u/ws  "
+        "[player] AP \"%s\" %d station(s) http://%s/  %s  ws :%u  "
         "ws=%s map=%lu leds\n",
-        kSsid, WiFi.softAPgetStationNum(), WiFi.softAPIP().toString().c_str(),
-        WiFi.softAPIP().toString().c_str(), kWsPort,
+        kApSsid, WiFi.softAPgetStationNum(), WiFi.softAPIP().toString().c_str(),
+        sta.c_str(), kWsPort,
         ws_state == WsState::kOpen        ? "open"
         : ws_state == WsState::kHandshake ? "handshake"
                                           : "idle",

@@ -1,0 +1,60 @@
+/**
+ * Improv BLE codec vectors — shared with the firmware's C++ leg
+ * (firmware/player_app/improv_codec_test.cc pins the SAME bytes), so the
+ * app and the device cannot drift apart on the wire.
+ */
+
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { buildWifiSettings, parseRpcResult, wsUrlFromRedirect } from "../src/net/improv";
+
+test("wifi settings packet: layout + checksum", () => {
+  const pkt = buildWifiSettings("net", "pw");
+  // cmd=1, len=2+3+2=7, ssid(3) "net", pass(2) "pw", checksum
+  assert.deepEqual(
+    Array.from(pkt),
+    [
+      0x01,
+      0x07,
+      0x03,
+      0x6e,
+      0x65,
+      0x74, // "net"
+      0x02,
+      0x70,
+      0x77, // "pw"
+      (0x01 + 0x07 + 0x03 + 0x6e + 0x65 + 0x74 + 0x02 + 0x70 + 0x77) & 0xff,
+    ],
+  );
+});
+
+test("wifi settings: open network (empty password) is allowed", () => {
+  const pkt = buildWifiSettings("open", "");
+  assert.equal(pkt[1], 2 + 4 + 0);
+  assert.equal(pkt[2 + 1 + 4], 0); // pass_len = 0
+});
+
+test("rpc result parses the redirect URL strings", () => {
+  const url = "http://192.168.1.50/";
+  const enc = new TextEncoder().encode(url);
+  const body = [0x01, enc.length + 1, enc.length, ...enc];
+  const sum = body.reduce((a, b) => (a + b) & 0xff, 0);
+  const strings = parseRpcResult(new Uint8Array([...body, sum]));
+  assert.deepEqual(strings, [url]);
+});
+
+test("rpc result rejects bad checksum / wrong command / truncation", () => {
+  const url = new TextEncoder().encode("http://x/");
+  const body = [0x01, url.length + 1, url.length, ...url];
+  const sum = body.reduce((a, b) => (a + b) & 0xff, 0);
+  assert.equal(parseRpcResult(new Uint8Array([...body, (sum + 1) & 0xff])), null);
+  assert.equal(parseRpcResult(new Uint8Array([0x02, ...body.slice(1), sum])), null);
+  assert.equal(parseRpcResult(new Uint8Array(body)), null); // no checksum byte
+});
+
+test("player WS endpoint from the redirect URL", () => {
+  assert.equal(wsUrlFromRedirect("http://192.168.1.50/"), "ws://192.168.1.50:81/ws");
+  assert.equal(wsUrlFromRedirect("https://player.local/"), "wss://player.local:81/ws");
+  assert.equal(wsUrlFromRedirect("not a url"), null);
+  assert.equal(wsUrlFromRedirect("ftp://x/"), null);
+});

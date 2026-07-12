@@ -19,10 +19,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import ssl
 import sys
 import time
-
-import ssl
 
 import websockets
 from server import proto_wire
