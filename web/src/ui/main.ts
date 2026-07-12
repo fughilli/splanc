@@ -1,9 +1,9 @@
 /**
  * M8 — capture app session flow (design doc §6 M8):
  *
- *   connect → clock sync → [user taps Start] → immersive-ar w/ camera-access
+ *   connect → clock sync → [user taps Start] → getUserMedia camera + IMU
  *   → per-frame detect/track/decode → stream detections → live HUD guidance
- *   → [Stop] → server reconstructs → result preview + downloads.
+ *   → [Stop] → final solve (phone wasm or host) → result preview + downloads.
  *
  * Everything heavy lives in M5/M6/M7; this file is orchestration + DOM.
  */
@@ -24,17 +24,14 @@ import {
 } from "../cv/exposure";
 import { CvPipeline } from "../cv/pipeline";
 import { DetectorGL } from "../cv/detect";
-import { mul4 } from "../geom/mat4";
 import { defaultWsUrl, LedMapperClient } from "../net/client";
+import { CaptureUnsupportedError } from "../xr/capture";
 import { DEFAULT_IMU_MAPPING, ImuRecorder, parseImuMapping } from "../xr/imu";
 import { MediaStreamCaptureSource } from "../xr/mediaStreamCapture";
-import { WebXRCaptureSource, XrUnsupportedError } from "../xr/webxrCapture";
 import { SolverAgent, type SolveSnapshot } from "../solver/agent";
 import { chooseSolvePlacement } from "../solver/placement";
 import { LabelOverlay } from "./labels";
 import { MapView } from "./mapview";
-import { MarkerRenderer } from "./markers";
-import { SolvedMarkerRenderer } from "./points3d";
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 const startBtn = $<HTMLButtonElement>("start");
@@ -55,22 +52,22 @@ const forcedThreshold = qs.get("threshold") !== null;
 const detectorOpts = {
   threshold: numParam("threshold", 0.6),
   downscale: numParam("downscale", 2),
-  // Camera texture arrives bottom-up on-device (see DetectorOptions.flipV);
-  // ?flipv=0 reverts should another device differ.
-  flipV: qs.get("flipv") !== "0",
+  // texImage2D(video) delivers the TOP row at v=0 — no flip. ?flipv=1
+  // reverts should another device differ.
+  flipV: qs.get("flipv") !== null ? qs.get("flipv") !== "0" : false,
 };
-// WebXR-free capture mode (docs/vio-exploration.md phase 4): ?noxr=1 forces
-// the getUserMedia + IMU path; it is also the automatic fallback when the
-// device can't do WebXR camera-access. ?imumap= overrides the DeviceMotion
-// axis mapping (see xr/imu.ts); ?fx= forces the focal-length seed.
-const forceNoXr = qs.get("noxr") === "1";
+// Capture tuning (docs/vio-exploration.md phase 4): ?imumap= overrides the
+// DeviceMotion axis mapping (see xr/imu.ts); ?fx= forces the focal-length
+// seed.
 const imuMapping = parseImuMapping(qs.get("imumap") ?? "") ?? DEFAULT_IMU_MAPPING;
 const forcedFx = ((): number | null => {
   const v = parseFloat(qs.get("fx") ?? "");
   return Number.isFinite(v) && v > 0 ? v : null;
 })();
-/** K observed by a previous WebXR session on this device — the best focal
- * calibration available to the no-XR path (fx error ⇒ metric-scale error). */
+/** Focal calibration cached by earlier sessions (fx error ⇒ metric-scale
+ * error). Nothing WRITES it since the WebXR removal (M6) — XR sessions were
+ * the calibrated-K source — but reading it keeps previously calibrated
+ * devices scale-exact until a calibration flow returns (phase 4.5 PnP). */
 const K_CACHE_KEY = "ledmapper.calibratedK";
 
 // Capture auto-negotiation overrides (cv/exposure.ts picks these from the
@@ -83,9 +80,6 @@ const forcedBitMs = ((): number | null => {
   const v = parseFloat(qs.get("bitms") ?? "");
   return Number.isFinite(v) && v > 0 ? v : null;
 })();
-// Debug: also draw raw detector blobs (2D, aspect-fill approximation). The
-// default view shows only SOLVED LEDs, 3D-composited to overlap the real ones.
-const showBlobs = qs.get("blobs") === "1";
 // Debug: stream the raw per-frame blob field to the server (JSONL under the
 // session dir) so the CV stage's actual input can be inspected offline.
 const recordBlobs = qs.get("record") === "1";
@@ -133,7 +127,7 @@ function numParam(name: string, dflt: number): number {
 
 const client = new LedMapperClient(wsUrl);
 let mapView: MapView | null = null;
-let capture: WebXRCaptureSource | MediaStreamCaptureSource | null = null;
+let capture: MediaStreamCaptureSource | null = null;
 let capturing = false;
 let imuRecorder: ImuRecorder | null = null;
 let previewVideo: HTMLVideoElement | null = null;
@@ -153,10 +147,9 @@ const solverReady: Promise<boolean> = solverAgent.init().then((ok) => {
 let localDetections: DetectionRecord[] = [];
 let localImu: ImuSample[] = [];
 let lastLedCount = 64;
-let lastUsedXr = true;
 
-// Live (in-capture) solver feedback: solved LEDs 3D-composited over the
-// camera view (markers + id labels) + a small converging-map inset.
+// Live (in-capture) solver feedback: 2D blob/id overlay over the camera
+// preview + a small converging-map inset.
 const labels = new LabelOverlay($<HTMLCanvasElement>("labels"));
 const liveCanvas = $<HTMLCanvasElement>("livemap");
 let liveView: MapView | null = null;
@@ -241,63 +234,44 @@ async function startCapture(): Promise<void> {
   const ledCount = Math.max(1, parseInt(ledCountInput.value, 10) || 64);
   startBtn.disabled = true;
   try {
-    // Order matters: the camera/XR session needs a user gesture, so create it
-    // first; start_mapping only once the camera is actually up. WebXR is
-    // attempted unless ?noxr=1; devices without camera-access AR fall back to
-    // the getUserMedia + IMU path automatically (the server then solves poses
-    // jointly — docs/vio-exploration.md phase 4).
-    let usingXr = !forceNoXr;
+    // Order matters: the camera needs a user gesture, so open it first;
+    // start_mapping only once the camera is actually up. Poses are solved
+    // jointly from the decoded observations + the inertial stream
+    // (docs/vio-exploration.md phase 4).
     lastLedCount = ledCount;
     localDetections = [];
     localImu = [];
-    if (usingXr) {
+    const cached = ((): { k: [number, number, number, number]; imgW: number; imgH: number } | undefined => {
       try {
-        capture = new WebXRCaptureSource($("overlay"));
-        await capture.start();
-      } catch (e) {
-        if (!(e instanceof XrUnsupportedError)) throw e;
-        usingXr = false;
-        setConn("WebXR unavailable — using camera + IMU capture (poses solved server-side)");
+        const raw = localStorage.getItem(K_CACHE_KEY);
+        return raw ? JSON.parse(raw) : undefined;
+      } catch {
+        return undefined;
       }
-    }
-    if (!usingXr) {
-      const cached = ((): { k: [number, number, number, number]; imgW: number; imgH: number } | undefined => {
-        try {
-          const raw = localStorage.getItem(K_CACHE_KEY);
-          return raw ? JSON.parse(raw) : undefined;
-        } catch {
-          return undefined;
-        }
-      })();
-      const ms = new MediaStreamCaptureSource({
-        kSeed: cached,
-        fxOverride: forcedFx ?? undefined,
-      });
-      capture = ms;
-      await capture.start();
-      // Fullscreen live preview behind the (dom-overlay styled) HUD.
-      ms.video.style.cssText =
-        "position:fixed;inset:0;width:100vw;height:100vh;object-fit:cover;z-index:0;background:#000";
-      document.body.prepend(ms.video);
-      previewVideo = ms.video;
-      // Inertial stream: the whole reason this path can skip WebXR.
-      imuRecorder = new ImuRecorder(imuMapping);
-      imuRecorder.start();
-    }
+    })();
+    const ms = new MediaStreamCaptureSource({
+      kSeed: cached,
+      fxOverride: forcedFx ?? undefined,
+    });
+    capture = ms;
+    await capture.start();
+    // Fullscreen live preview behind the HUD.
+    ms.video.style.cssText =
+      "position:fixed;inset:0;width:100vw;height:100vh;object-fit:cover;z-index:0;background:#000";
+    document.body.prepend(ms.video);
+    previewVideo = ms.video;
+    // Inertial stream: what lets the joint solver recover the trajectory.
+    imuRecorder = new ImuRecorder(imuMapping);
+    imuRecorder.start();
 
-    // Camera texture row order differs between the two paths (XR delivers
-    // bottom-up, video uploads top-down); an explicit ?flipv= always wins.
-    const flipV = qs.get("flipv") !== null ? qs.get("flipv") !== "0" : usingXr;
-    const detector = new DetectorGL(capture!.gl, { ...detectorOpts, flipV });
-    const markers = showBlobs && usingXr ? new MarkerRenderer(capture!.gl) : null;
-    const solvedMarkers = usingXr ? new SolvedMarkerRenderer(capture!.gl) : null;
+    const detector = new DetectorGL(capture.gl, detectorOpts);
 
     // -- Pre-capture probe: measure the scene BEFORE the pattern runs, then
     // negotiate the capture configuration (§7.1 start_mapping options). The
     // client owns this choice — it is the only party that can see the light.
     const monitor = new ExposureMonitor();
     let lastAmbient: number | null = null;
-    document.body.classList.add("in-xr");
+    document.body.classList.add("in-capture");
     hudGuide.textContent = "Measuring light…";
     await new Promise<void>((resolve) => {
       const deadline = setTimeout(resolve, 2500); // frames stopped? negotiate on defaults
@@ -349,23 +323,22 @@ async function startCapture(): Promise<void> {
     let params: CodeParams = started.codeParams;
     let epoch: number = started.patternClockEpoch;
     const makePipeline = (p: CodeParams, e: number): CvPipeline => {
-      // No-XR path: dense per-frame records (pose: null) — the server's
-      // joint solver wants every sighting, not per-cycle anchors.
+      // Dense per-frame records (pose: null) — the joint pose+LED solver
+      // wants every sighting, not per-cycle anchors.
       const pl = new CvPipeline(p, e, (t) => client.clock.toServerTime(t), {
-        denseRecords: !usingXr,
+        denseRecords: true,
       });
       pl.onDetections((records: DetectionRecord[]) => {
         client.sendDetections(records);
-        // Local retention for the phone-side final solve (no-XR sessions
-        // only — the pose-trusting host path stays host-solved).
-        if (!usingXr) localDetections.push(...records);
+        // Local retention so a phone-side final solve needs nothing back
+        // from the server.
+        localDetections.push(...records);
       });
       return pl;
     };
     let pipeline = makePipeline(params, epoch);
     hudGuide.textContent = `code: ${params.symbols} symbols @ ${params.bitPeriodMs} ms/frame`;
 
-    lastUsedXr = usingXr;
     capturing = true;
     let frameCount = 0;
 
@@ -423,20 +396,8 @@ async function startCapture(): Promise<void> {
       }
     }
 
-    // XR sessions report true intrinsics — cache them as this device's focal
-    // calibration for future no-XR captures (fx error ⇒ metric-scale error).
-    let cachedK = false;
-
-    capture!.onFrame((f) => {
+    capture.onFrame((f) => {
       if (!capturing || !capture) return;
-      if (usingXr && !cachedK) {
-        cachedK = true;
-        try {
-          localStorage.setItem(K_CACHE_KEY, JSON.stringify({ k: f.K, imgW: f.imgW, imgH: f.imgH }));
-        } catch {
-          // storage full/blocked: the calibration cache is best-effort
-        }
-      }
       const blobs = detector.detect(f.texture, f.imgW, f.imgH);
       // Exposure monitoring: blob count every frame, the (cheap but not free)
       // unthresholded scene readback on a subsample — AE moves at ~1 Hz.
@@ -472,28 +433,12 @@ async function startCapture(): Promise<void> {
         imgH: f.imgH,
       });
 
-      if (usingXr && solvedMarkers !== null) {
-        // Feedback into the XR layer: solved LEDs, 3D-composited through the
-        // frame's real view/projection so markers overlap the physical LEDs.
-        const gl = capture.gl;
-        const fb = capture.layerFramebuffer;
-        const vp = f.viewport;
-        gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
-        gl.viewport(vp.x, vp.y, vp.width, vp.height);
-        gl.clearColor(0, 0, 0, 0);
-        gl.clear(gl.COLOR_BUFFER_BIT);
-        const mvp = mul4(f.projMatrix, f.viewMatrix);
-        solvedMarkers.draw(mvp);
-        markers?.draw(blobs, f.imgW, f.imgH, vp.width, vp.height, [0.2, 1, 0.6, 0.85]);
-        labels.draw(liveLeds, mvp, pipeline.lastBlobStatus, f.imgW, f.imgH);
-      } else {
-        // No pose, no 3D compositing: the 2D blob/id overlay still gives full
-        // detection+decode feedback over the video preview, and the live map
-        // inset shows the server's joint solve converging. (Client-side PnP
-        // against the solved map — restoring exact registration — is the
-        // phase-4.5 follow-up in docs/vio-exploration.md.)
-        labels.draw([], null, pipeline.lastBlobStatus, f.imgW, f.imgH);
-      }
+      // The 2D blob/id overlay gives full detection+decode feedback over the
+      // video preview, and the live map inset shows the joint solve
+      // converging. (Client-side PnP against the solved map — 3D-registered
+      // overlays without a platform tracker — is the phase-4.5 follow-up in
+      // docs/vio-exploration.md.)
+      labels.draw(pipeline.lastBlobStatus, f.imgW, f.imgH);
 
       if (++frameCount % 15 === 0) {
         const s = pipeline.stats;
@@ -504,7 +449,7 @@ async function startCapture(): Promise<void> {
       }
     });
 
-    capture!.onEnd(() => {
+    capture.onEnd(() => {
       // Session ended outside our Stop button (system gesture) — still solve.
       if (capturing) void stopCapture(true);
     });
@@ -541,7 +486,6 @@ async function startCapture(): Promise<void> {
         .then((lm) => {
           if (!capturing || lm.map === null) return;
           liveLeds = lm.map.leds;
-          solvedMarkers?.setLeds(liveLeds);
           // Pose-corrected temporal inertia: identified tracks now coast by
           // reprojecting their solved 3D position through the frame pose.
           pipeline.updateSolved(liveLeds);
@@ -642,7 +586,7 @@ async function startCapture(): Promise<void> {
     }, 2000);
   } catch (e) {
     capturing = false;
-    document.body.classList.remove("in-xr");
+    document.body.classList.remove("in-capture");
     imuRecorder?.stop();
     imuRecorder = null;
     previewVideo?.remove();
@@ -650,7 +594,7 @@ async function startCapture(): Promise<void> {
     await capture?.stop().catch(() => undefined);
     capture = null;
     startBtn.disabled = false;
-    if (e instanceof XrUnsupportedError) {
+    if (e instanceof CaptureUnsupportedError) {
       setError(e.message, e.hints);
     } else {
       setError(e instanceof Error ? e.message : String(e));
@@ -662,7 +606,7 @@ async function stopCapture(sessionAlreadyEnded = false): Promise<void> {
   if (!capturing) return;
   capturing = false;
   stopBtn.disabled = true;
-  document.body.classList.remove("in-xr");
+  document.body.classList.remove("in-capture");
   imuRecorder?.stop();
   imuRecorder = null;
   previewVideo?.remove();
@@ -672,13 +616,25 @@ async function stopCapture(sessionAlreadyEnded = false): Promise<void> {
   resetLiveFeedback();
 
   // Solver placement (init-time benchmarks, chooseSolvePlacement): the
-  // no-XR joint solve runs on the phone's wasm solver unless the host is
-  // decisively faster; the pose-trusting XR path always solves on the host
-  // (~1 s there, and the phone kept no local copy for it).
+  // joint solve runs on the phone's wasm solver unless the host is
+  // decisively faster.
   await solverReady.catch(() => false);
   const placement = chooseSolvePlacement(solverAgent.benchMs, client.hostSolverBenchMs);
   const solveOnPhone =
-    !lastUsedXr && placement === "phone" && solverAgent.available && localDetections.length > 0;
+    placement === "phone" && solverAgent.available && localDetections.length > 0;
+  if (!solveOnPhone && client.hostSolverBenchMs === null) {
+    // The player never advertised a solver bench score — it HAS no solver
+    // (ESP32 profile). Without the wasm solver there is nowhere to solve.
+    setError(
+      "This player has no solver and the in-browser wasm solver is unavailable — cannot solve the capture.",
+      ["Reload the page (the solver loads at startup) or capture against a Pi host."],
+    );
+    setConn("capture stopped (unsolved)");
+    await client.stopMappingNoSolve().catch(() => undefined);
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+    return;
+  }
 
   setConn(solveOnPhone ? "final solve (on phone)…" : "final solve…");
   // While the final solve runs: a progress bar plus the CONVERGING interim

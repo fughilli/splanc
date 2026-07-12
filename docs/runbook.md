@@ -97,11 +97,11 @@ serve) using M9 simulator data — the §6 M2 acceptance.
 ## The web app (M5–M8) + phone testing against the virtual LED wall
 
 `bazelisk run //web:serve` serves the built web app through M2 over **HTTPS**
-(WebXR needs a secure context; self-signed cert persisted under
-`.ledmapper/`). Open `/wall.html` fullscreen on a laptop — a flat grid of
-virtual LEDs blinking the M1 Gray code against the server's pattern clock —
-and run a capture from an Android phone pointed at the screen: the full live
-pipeline with no LED hardware. The step-by-step runbook (ports, Chrome flags,
+(getUserMedia/DeviceMotion need a secure context; self-signed cert persisted
+under `.ledmapper/`). Open `/wall.html` fullscreen on a laptop — a flat grid
+of virtual LEDs blinking the M1 hue code against the server's pattern clock —
+and run a capture from a phone pointed at the screen: the full live
+pipeline with no LED hardware. The step-by-step runbook (ports, permissions,
 tuning query params) is in [`web/README.md`](../web/README.md).
 
 ## Reconstruction (M3) from a session log

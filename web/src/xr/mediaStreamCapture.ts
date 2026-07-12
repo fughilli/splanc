@@ -1,33 +1,28 @@
 /**
- * MediaStreamCaptureSource — the WebXR-FREE capture path (M5 alternative;
- * docs/vio-exploration.md phase 4).
+ * MediaStreamCaptureSource — THE capture path (M5; docs/vio-exploration.md
+ * phase 4, sole path since the M6 WebXR removal).
  *
  * getUserMedia rear camera + requestVideoFrameCallback, uploading each video
- * frame into a WebGL2 texture for the same GPU detect pass the XR path uses.
- * Works in ANY browser — no `#webxr-incubations` flag, no ARCore — which is
- * the point: ARCore's tracker is degenerate in our operating conditions, so
- * frames carry `pose: null` and the server's visual-inertial solver estimates
- * the trajectory jointly from the decoded observations + the DeviceMotion
- * stream (xr/imu.ts).
+ * frame into a WebGL2 texture for the GPU detect pass. Works in ANY browser
+ * — no `#webxr-incubations` flag, no ARCore (whose tracker was degenerate in
+ * our operating conditions anyway). Frames carry `pose: null`; the
+ * visual-inertial solver estimates the trajectory jointly from the decoded
+ * observations + the DeviceMotion stream (xr/imu.ts).
  *
  * Intrinsics: there is no projectionMatrix here. The K seed comes from (in
- * priority order) an explicit override, a cached calibration (e.g. the K a
- * previous WebXR session reported for this device), or a typical-FOV
- * heuristic (fx ≈ 0.72 · long side ≈ 70° horizontal). Focal error moves the
- * map's METRIC SCALE ~1:1 and barely affects shape — see the vio_test
- * observability probe — so an uncalibrated first run is usable, just not
- * scale-exact.
+ * priority order) an explicit override, a cached calibration, or a
+ * typical-FOV heuristic (fx ≈ 0.72 · long side ≈ 70° horizontal). Focal
+ * error moves the map's METRIC SCALE ~1:1 and barely affects shape — see
+ * the vio_test observability probe — so an uncalibrated first run is
+ * usable, just not scale-exact.
  *
  * NOTE video row order: texImage2D(video) puts the image TOP row at texture
- * v=0, the opposite of the XR camera texture — the detector must run with
- * flipV = false on this path.
+ * v=0 — the detector must run with flipV = false on this path.
  */
 
 import type { Intrinsics } from "@ledmapper/protocol";
 import type { CaptureFrame, CaptureSource } from "./capture";
-import { XrUnsupportedError } from "./webxrCapture";
-
-const IDENTITY4 = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+import { CaptureUnsupportedError } from "./capture";
 
 /** Typical phone rear camera: ~70° horizontal FOV on the long side. */
 export function heuristicK(w: number, h: number): Intrinsics {
@@ -49,9 +44,6 @@ export class MediaStreamCaptureSource implements CaptureSource {
   readonly gl: WebGL2RenderingContext;
   /** The live camera preview element — the caller composites UI over it. */
   readonly video: HTMLVideoElement;
-  /** Interface parity with WebXRCaptureSource: no XR layer here. */
-  readonly layerFramebuffer: WebGLFramebuffer | null = null;
-  readonly layerSize = { width: 0, height: 0 };
 
   private stream: MediaStream | null = null;
   private texture: WebGLTexture | null = null;
@@ -64,7 +56,7 @@ export class MediaStreamCaptureSource implements CaptureSource {
   constructor(private readonly opts: MediaStreamCaptureOptions = {}) {
     this.canvas = document.createElement("canvas");
     const gl = this.canvas.getContext("webgl2", { antialias: false });
-    if (!gl) throw new XrUnsupportedError("WebGL2 is unavailable", []);
+    if (!gl) throw new CaptureUnsupportedError("WebGL2 is unavailable", []);
     this.gl = gl;
     this.video = document.createElement("video");
     this.video.playsInline = true;
@@ -82,7 +74,7 @@ export class MediaStreamCaptureSource implements CaptureSource {
   async start(): Promise<void> {
     if (this.running) return;
     if (!navigator.mediaDevices?.getUserMedia) {
-      throw new XrUnsupportedError("getUserMedia is unavailable (secure context needed).", []);
+      throw new CaptureUnsupportedError("getUserMedia is unavailable (secure context needed).", []);
     }
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({
@@ -94,7 +86,7 @@ export class MediaStreamCaptureSource implements CaptureSource {
         },
       });
     } catch (e) {
-      throw new XrUnsupportedError(
+      throw new CaptureUnsupportedError(
         `Camera access failed: ${e instanceof Error ? e.message : e}`,
         ["Grant the camera permission and reload."],
       );
@@ -165,9 +157,6 @@ export class MediaStreamCaptureSource implements CaptureSource {
       imgW: w,
       imgH: h,
       tCaptureMs: performance.now(),
-      viewMatrix: IDENTITY4,
-      projMatrix: IDENTITY4,
-      viewport: { x: 0, y: 0, width: w, height: h },
     });
     this.scheduleNext();
   }

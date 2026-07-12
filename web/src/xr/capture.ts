@@ -1,20 +1,34 @@
 /**
  * M5 — the capture seam (design doc §6 M5).
  *
- * `CaptureSource` is the interface everything downstream consumes; the Android
- * implementation is {@link WebXRCaptureSource} (webxrCapture.ts). A future iOS
- * `MediaStreamCaptureSource` satisfies the same interface — nothing downstream
- * of M5 knows which source produced a frame, because the frame already carries
- * pose + K.
+ * `CaptureSource` is the interface everything downstream consumes; the
+ * implementation is {@link MediaStreamCaptureSource} (mediaStreamCapture.ts):
+ * getUserMedia + DeviceMotion, poses solved jointly by the visual-inertial
+ * solver. (The former WebXR path was removed — M6: ARCore's tracker is
+ * degenerate in our operating conditions and the incubations flag made it
+ * effectively demo-only. Nothing downstream knows which source produced a
+ * frame, so a future calibrated/native source slots back in here.)
  */
 
 import type { Intrinsics, Pose } from "@ledmapper/protocol";
 
+/** Capture setup failed in a way the user can act on (permissions, secure
+ * context, missing APIs). `hints` are remediation lines for the error UI. */
+export class CaptureUnsupportedError extends Error {
+  constructor(
+    message: string,
+    readonly hints: string[],
+  ) {
+    super(message);
+    this.name = "CaptureUnsupportedError";
+  }
+}
+
 export interface CaptureFrame {
   /** Raw camera image for this frame (texture in the source's GL context). */
   texture: WebGLTexture;
-  /** Camera pose in the session reference space — null on the WebXR-free
-   * path (MediaStreamCaptureSource), where the server's visual-inertial
+  /** Camera pose in the session reference space — null when the source has
+   * no tracker (MediaStreamCaptureSource), in which case the visual-inertial
    * solver estimates the trajectory jointly. */
   pose: Pose | null;
   /** fx, fy, cx, cy for this frame. */
@@ -24,21 +38,8 @@ export interface CaptureFrame {
   /** Phone monotonic clock at capture, ms (performance.now domain). */
   tCaptureMs: number;
   /**
-   * World→view matrix (column-major, inverse of the view pose). With
-   * `projMatrix` this is what 3D-composites overlays exactly onto the
-   * passthrough: anything rendered with projMatrix·viewMatrix lands on the
-   * same pixels the real scene point occupies.
-   */
-  viewMatrix: Float32Array;
-  /** View→clip projection matrix for this frame (column-major). */
-  projMatrix: Float32Array;
-  /** Region of the layer framebuffer this view renders into. */
-  viewport: { x: number; y: number; width: number; height: number };
-  /**
-   * WebXR light-estimation ambient intensity (max RGB component of the
-   * primary light, relative units), when the session granted the feature and
-   * the runtime has an estimate this frame. Feeds exposure telemetry — the
-   * closest thing the web platform has to reading the camera's 3A state.
+   * Ambient light estimate (relative units) when the source has one; feeds
+   * exposure telemetry. Unset on the getUserMedia path.
    */
   ambientIntensity?: number | undefined;
 }
@@ -46,6 +47,6 @@ export interface CaptureFrame {
 export interface CaptureSource {
   start(): Promise<void>;
   stop(): Promise<void>;
-  /** Called once per rAF/XR frame while started. */
+  /** Called once per delivered camera frame while started. */
   onFrame(cb: (f: CaptureFrame) => void): void;
 }

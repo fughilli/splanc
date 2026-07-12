@@ -235,13 +235,18 @@ ends, and phone-solved maps upload via `submit_map`. A Rust synthetic fixture
 also exists (`solver/src/synth.rs` — the canned benchmark scene). Remaining
 in this phase:
 
-- **WebXR removal** (M6): delete `web/src/xr/webxrCapture.ts` +
-  `webxr-camera.d.ts`, keep `mediaStreamCapture.ts`/`imu.ts`/`intrinsics.ts`;
-  fix `pi/server/server/tls.py` docstring (it justifies TLS by WebXR — the
-  real reasons now are getUserMedia/DeviceMotion secure contexts + WSS).
-- **ESP32 solve flow**: the phone must not offer/attempt host solve against a
-  player with no solver (no `solverBenchMs` in welcome → placement already
-  says "phone"; surface a clear error if wasm is unavailable there).
+- ~~**WebXR removal** (M6)~~ **done**: `webxrCapture.ts`, the
+  `webxr-camera.d.ts` shims and the XR-layer GL renderers (`points3d.ts`,
+  MarkerRenderer) are deleted; `mediaStreamCapture.ts` (now THE capture
+  path), `imu.ts` and `intrinsics.ts` (tested; PnP/calibration will want it)
+  stay; `tls.py` now justifies TLS by getUserMedia/DeviceMotion secure
+  contexts + WSS. The calibrated-K localStorage cache is still READ (legacy
+  XR-era calibrations keep their scale) but nothing writes it until the
+  phase-4.5 calibration flow.
+- ~~**ESP32 solve flow**~~ **done**: on stop, a player that never advertised
+  `solverBenchMs` + an unavailable wasm solver now produces a clear error
+  (capture stopped with `solveOnHost=false`, nothing solved) instead of a
+  doomed host-solve request.
 - **_(Optional, later)_** move the TS↔wasm boundary from JSON strings to proto
   bytes (`observation.proto` idea) — pure optimization; the JSON boundary is
   landed and tested.

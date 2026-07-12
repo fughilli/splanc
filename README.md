@@ -3,13 +3,14 @@
 Recover the 3D position of every LED in an installed addressable-LED fixture
 by walking around it with a phone. A Raspberry Pi drives the LEDs through a
 known temporal blink code; the phone detects and decodes them per frame and
-the Pi solves per-LED positions, exporting a `(led_id → xyz)` map. Two
-capture paths exist: the original WebXR one (phone supplies camera poses;
-server triangulates against them) and the WebXR-FREE one (`?noxr=1`, or
-automatic fallback — any phone browser, no ARCore: getUserMedia camera +
-DeviceMotion IMU, and the server solves camera poses JOINTLY with the LED
-positions). The joint solver exists because ARCore's tracking is measurably
-degenerate in this project's lighting — see `docs/vio-exploration.md`.
+the Pi solves per-LED positions, exporting a `(led_id → xyz)` map. Capture
+works in any phone browser — getUserMedia camera + DeviceMotion IMU, no
+ARCore — and the solver estimates camera poses JOINTLY with the LED
+positions (visual-inertial bundle adjustment). The joint solver exists
+because ARCore's tracking is measurably degenerate in this project's
+lighting — see `docs/vio-exploration.md`. (The original WebXR capture path
+was removed — M6 of the ESP32 plan — after the joint path proved better in
+exactly the conditions that matter.)
 
 The full design — goals, architecture, module breakdown, data contracts,
 algorithms, and phased build plan — lives in
@@ -20,7 +21,7 @@ the project up; the design doc is the durable spec.
 ## State of progress (2026-07-09)
 
 **Everything below is merged to `main` (PR #1). M10, M3, M9, M2, M1, the web
-stack M5–M8 (+ virtual LED wall), and the WebXR-free visual-inertial capture
+stack M5–M8 (+ virtual LED wall), and the visual-inertial capture
 path are landed and green. M4 is Nix-verified** (config evaluates + image
 derivation builds; final image not realized in-sandbox and not booted on
 hardware). `bazelisk build //...` and `bazelisk test //...` both pass
