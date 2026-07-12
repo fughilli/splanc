@@ -46,3 +46,8 @@ common --show_timestamps
 # execution requirements into shared copy-to-bin actions and cause action
 # conflicts with the ts_project targets over the same sources.
 build --strategy=Vite=local
+
+# The vendored firmware module (third_party/embedded) uses ISOLATED
+# rules_nixpkgs extension usages (its nix attr/file tags are otherwise
+# root-module-only); isolation is experimental in Bazel 7.
+common --experimental_isolated_extension_usages

@@ -50,6 +50,8 @@ use_repo(
 # ---------------------------------------------------------------------------
 # Rust — the native solver (solver/), built twice: host binary for the Pi
 # server (subprocess via runfiles) and wasm32 + wasm-bindgen for the phone.
+# The bare-metal triples serve the vendored firmware module (below): rules_rust
+# merges toolchain requests root-module-first, so the ROOT declares the union.
 # ---------------------------------------------------------------------------
 
 bazel_dep(name = "rules_rust", version = "0.71.3")
@@ -58,7 +60,13 @@ bazel_dep(name = "rules_rust_wasm_bindgen", version = "0.71.3")
 rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
 rust.toolchain(
     edition = "2021",
-    extra_target_triples = ["wasm32-unknown-unknown"],
+    extra_target_triples = [
+        "wasm32-unknown-unknown",  # phone solver
+        "riscv32imac-unknown-none-elf",  # ESP32-C6
+        "thumbv8m.main-none-eabi",  # RP2350 (soft-float ABI; see firmware)
+    ],
+    # Pinned to the version the vendored firmware validated on-device.
+    versions = ["1.85.0"],
 )
 use_repo(rust, "rust_toolchains")
 
@@ -85,8 +93,65 @@ crate.spec(
     package = "js-sys",
     version = "0.3",
 )
-crate.from_specs()
+
+# Firmware protocol deps (docs/esp32-led-mapping-plan.md Phase 0b): no_std
+# protobuf + fixed-capacity containers for the ESP32-C6 target. No std/alloc
+# features; enable-64bit is required (CodeParams/solver fields are doubles);
+# container-heapless-0-8 binds repeated/string fields to heapless 0.8.
+crate.spec(
+    default_features = False,
+    features = [
+        "encode",
+        "decode",
+        "enable-64bit",
+        "container-heapless-0-8",
+    ],
+    package = "micropb",
+    version = "0.6.0",
+)
+
+# 0.8 line: 0.9 requires a newer rustc than the firmware-validated 1.85.0
+# (core::ffi::FromBytesWithNulError changed shape), and 0.8 is what the
+# embedded ecosystem (and micropb's container-heapless) target.
+crate.spec(
+    default_features = False,
+    package = "heapless",
+    version = "0.8",
+)
+crate.from_specs(
+    # rules_rust's default list is a small host-centric subset (splicing is
+    # O(N^2) per triple) — it must be restated here to EXTEND it with the
+    # bare-metal firmware triples, or @crates//:* are marked incompatible
+    # with the @embedded platforms.
+    supported_platform_triples = [
+        # rules_rust defaults (SUPPORTED_PLATFORM_TRIPLES).
+        "aarch64-apple-darwin",
+        "aarch64-unknown-linux-gnu",
+        "wasm32-unknown-unknown",
+        "wasm32-wasip1",
+        "x86_64-pc-windows-msvc",
+        "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-nixos-gnu",
+        # Firmware targets (docs/esp32-led-mapping-plan.md Phase 0b).
+        "riscv32imac-unknown-none-elf",  # ESP32-C6
+        "thumbv8m.main-none-eabi",  # RP2350
+    ],
+)
 use_repo(crate, "crates")
+
+# ---------------------------------------------------------------------------
+# Vendored ESP32-C6/RP2350 firmware monorepo (docs/esp32-led-mapping-plan.md
+# Phase 0a): git submodule at third_party/embedded, consumed as the Bazel
+# module `firmware` (repo name @embedded). Its toolchains + Arduino cores come
+# from Nix (the container/host has nix); the directory is .bazelignore'd so
+# the ROOT module does not also discover its BUILD files as local packages.
+# ---------------------------------------------------------------------------
+
+bazel_dep(name = "firmware", version = "0.0.0", repo_name = "embedded")
+local_path_override(
+    module_name = "firmware",
+    path = "third_party/embedded",
+)
 
 # ---------------------------------------------------------------------------
 # Nix integration (M4 — pi/provisioning).
