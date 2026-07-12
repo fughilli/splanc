@@ -169,3 +169,15 @@ sh_binary(
         "//solver:solver_web",
     ],
 )
+
+# Publish the static artifacts (app bundle + wasm solver) to Cloudflare
+# Pages — the externally-hosted webapp the ESP32 player points phones at.
+# Deploys need CLOUDFLARE_API_TOKEN; `-- --dry-run` stages and prints only.
+sh_binary(
+    name = "deploy_cloudflare",
+    srcs = ["deploy_cloudflare.sh"],
+    data = [
+        ":dist",
+        "//solver:solver_web",
+    ],
+)

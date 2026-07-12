@@ -57,6 +57,29 @@ bazelisk run //pi/server:serve -- --port 8080 --session-dir /tmp/lm/s --maps-dir
 pnpm --dir web dev        # http://localhost:5173
 ```
 
+## Hosting the static app on Cloudflare Pages (the ESP32 flow)
+
+An ESP32 player doesn't serve the webapp — it points phones at an
+externally-hosted copy (docs/esp32-led-mapping-plan.md). Publish one with:
+
+```sh
+bazelisk run //web:deploy_cloudflare -- --dry-run   # stage + show what ships
+CLOUDFLARE_API_TOKEN=... CLOUDFLARE_ACCOUNT_ID=... \
+  bazelisk run //web:deploy_cloudflare              # deploy
+```
+
+The deploy stages exactly what the Pi serves — the vite bundle at `/` and
+the wasm solver at `/solver/` — so the same app works from either origin
+(wrangler via `pnpm dlx`, pinned to the 4.x line; project/branch via
+`LEDMAPPER_CF_PROJECT` / `LEDMAPPER_CF_BRANCH`, default `ledmapper`/`main`;
+first deploy of a new project needs `wrangler pages project create`). From
+a hosted origin the phone picks its player explicitly:
+`https://<project>.pages.dev/?url=wss://<player-host>/ws` — `defaultWsUrl`
+targets the serving origin, which on Pages is not a player. Note the R2
+spike in the plan: a self-signed player cert cannot be click-through-trusted
+from a Pages origin, so the WSS trust flow must be resolved before this is
+the primary path.
+
 ## Testing with a phone against the virtual wall (no LED hardware)
 
 One command serves everything (M2 + built app, HTTPS with a persistent

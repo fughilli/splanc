@@ -85,7 +85,10 @@ Confirmed decisions, annotated with what already landed:
 - **ESP32-C6 player:** RMT WS2812 output; WSS server; micropb decode into
   arena; no_std Rust pulse/WLED engine; **hue-code pattern gen** (per-LED
   colors — the carrier has no on/off sets anymore, which the RMT path needs
-  anyway); points phone at an externally-hosted webapp.
+  anyway); points phone at an externally-hosted webapp — publish it with
+  `bazelisk run //web:deploy_cloudflare` (Cloudflare Pages: the vite bundle
+  at `/` + the wasm solver at `/solver/`, same layout the Pi serves; the
+  phone then selects its player via `?url=wss://<player>/ws`).
 - **Pi player:** serves the whole webapp (reuse `pi/server`); same
   protobuf/WSS API; CPU illuminate first, GLES shader later; drives existing
   `pi/led_driver` SPI sink (already renders per-LED colors —
@@ -325,7 +328,10 @@ build/vendor the RFC6455 codec. M10 cross-target proto conformance test
   click-through-approved from `app.example.com`). Spike Chrome + iOS Safari
   trust flows before Phase 4c. Likely resolution: ESP32 serves a minimal
   **same-origin** landing page so the user approves the cert once, then
-  loads/bounces to the external app. May reopen WS-vs-WSS.
+  loads/bounces to the external app. May reopen WS-vs-WSS. The hosted-origin
+  half exists (`//web:deploy_cloudflare` publishes the app + solver to
+  Cloudflare Pages; player selected via `?url=`); the spike is the trust
+  flow itself.
 - **R3** micropb + heapless + arena on `riscv32imac-none`, panic=abort, no
   alloc. **Half-resolved** (Phase 1½): micropb + heapless + the generated
   bindings + player core build no_std/no-alloc for the C6 triple; remaining
