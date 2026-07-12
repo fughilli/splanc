@@ -131,13 +131,13 @@ firmware_binary(
 )
 
 # The image (~2.05 MB at -c opt: WiFi + BLE + webserver + FastLED + the
-# protocol stack) exceeds default.csv's 1.25 MB app slot and barely fits
-# no_ota's 2 MB — flash the 8 MB dual-OTA layout (3.2 MB slots; the C6
-# devkit has 8 MB flash). The image header stays 4MB (flash_size default),
-# which only bounds what the BOOTLOADER maps, not the partition table.
+# protocol stack) exceeds default.csv's 1.25 MB app slot and just misses
+# no_ota's 2 MB — flash the 4 MB "huge app" layout (single 3 MB factory
+# app + nvs, fits the common 4 MB-flash C6 devkits; a dual-OTA 8 MB table
+# would overrun a 4 MB chip and boot-loop).
 esptool_flash(
     name = "flash_esp32c6",
     app = ":esp32c6",
-    partitions = "@embedded//libs/vendor:partitions_default_8mb",
+    partitions = "@embedded//libs/vendor:partitions_huge_app",
     tags = ["manual"],
 )

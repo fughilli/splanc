@@ -38,8 +38,8 @@ bazelisk run -c opt //firmware/player_app:flash_esp32c6 -- --port /dev/ttyACM0
 ```
 
 The image (~2.05 MB at `-c opt` with BLE) needs a large app slot;
-`:flash_esp32c6` writes the 8 MB dual-OTA layout (3.2 MB slots — C6 devkit
-flash). Then:
+`:flash_esp32c6` writes the 4 MB "huge app" layout (single 3 MB factory
+app + nvs — fits the common 4 MB-flash C6 devkits). Then:
 
 1. Provision over BLE (above), or join the fallback AP: SSID `ledmapper`,
    password `ledmapper` (device is `192.168.4.1`; serial prints a
