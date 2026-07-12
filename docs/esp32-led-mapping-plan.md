@@ -190,11 +190,28 @@ before any hardware exists:
   alloc, on the C6 triple); the remaining R3 scope is panic=abort and
   on-device footprint.
 
-**Phase 2 — RMT LED output.** Port FastLED output from bit-bang
-(`apps/rainbow/rainbow.cpp:11`) to the C6 **RMT** peripheral. **Accept:** drive
-WS2812B via RMT **while a WSS connection stays live** for 60s with no dropped
-pings or frame glitches. **This is the existence proof for the ESP32 target —
-run it as the first spike (R1).**
+**Phase 2 — RMT LED output.** ~~Port FastLED output from bit-bang to the C6
+RMT peripheral~~ **de-scoped by decision (2026-07-12): FastLED is assumed
+fine under CPU/WiFi load** (bench: wifi_ap color picker verified; the
+player app + `//tools:player_probe` is the sustained-load test). The RMT
+port returns only if the bench shows glitches. The R1 60-second
+LEDs-while-connection-live acceptance moves onto the player app bench.
+
+**Phase 2½ — Player firmware app (bring-up). ✅ BUILT, awaiting bench.**
+`//firmware/player_app` (`bazelisk run -c opt
+//firmware/player_app:flash_esp32c6`): WiFi soft-AP (`ledmapper`/
+`ledmapper`), HTTP :80 (the R2 landing page, scheme/port-aware bounce), the
+full CORE player protocol over plain WS :81, FastLED strip render of the
+counting + hue mapping patterns, uploads through the arena. The protocol
+brain is the host-tested Rust stack behind a C ABI (`player_ffi.h`; the
+device flow is host-tested end-to-end through the same extern "C" surface),
+and the RFC 6455 codec is host-tested byte-exactly against the RFC vectors.
+Bench it with `//tools:player_probe` (contract-checks every reply;
+validated live against the Pi player). Bring-up scope + the Phase 4c
+hardening list (TLS/wss, multi-client, STA) in
+`firmware/player_app/README.md`. Ships with the `no_ota` partition table
+(the image outgrows the default 1.25 MB slot; upstream provides
+`partitions_no_ota`).
 
 **Phase 3 — Arena allocator + micropb data model. ✅ DONE (host-side).**
 `//firmware/arena` (`ledmapper_arena`): bump arena over a caller-owned

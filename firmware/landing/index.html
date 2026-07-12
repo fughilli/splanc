@@ -80,7 +80,12 @@
     <script>
       "use strict";
       var APP_ORIGIN = "%%APP_ORIGIN%%";
-      var wsUrl = "wss://" + location.host + "/ws";
+      // Empty = the page's own host:port; the bring-up firmware serves WS on
+      // its own port (TLS/wss on the page's port is the Phase 4c end state).
+      var WS_PORT = "%%WS_PORT%%";
+      var scheme = location.protocol === "https:" ? "wss" : "ws";
+      var wsHost = WS_PORT ? location.hostname + ":" + WS_PORT : location.host;
+      var wsUrl = scheme + "://" + wsHost + "/ws";
       var target =
         APP_ORIGIN.replace(/\/+$/, "") + "/?url=" + encodeURIComponent(wsUrl);
       document.getElementById("host").textContent = location.host;

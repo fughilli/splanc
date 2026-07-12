@@ -23,6 +23,21 @@ rust_library(
     ],
 )
 
+# The same core against the FIRMWARE capacity profile of the generated
+# bindings (see //shared/protocol/rust) — what the player app links. Host
+# tests use :player; never depend on both (same crate name, by design).
+rust_library(
+    name = "player_fw",
+    srcs = ["src/lib.rs"],
+    crate_name = "ledmapper_player",
+    edition = "2021",
+    deps = [
+        "//firmware/pattern",
+        "//shared/protocol/rust:ledmapper_pb_fw",
+        "@crates//:micropb",
+    ],
+)
+
 rust_test(
     name = "session_test",
     srcs = ["tests/session.rs"],

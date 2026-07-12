@@ -4,21 +4,33 @@
 //! hermetic protoc genrule pattern the Python bindings use, so no protoc is
 //! needed at generator runtime (`compile_fdset_file`).
 //!
-//! Container strategy (Phase 1 of docs/esp32-led-mapping-plan.md): heapless
-//! fixed-capacity containers with capacities sized generously for the
-//! cross-language conformance test and for phone->player uploads. Phase 3
-//! rebinds the large variable-size collections (map, topology) to the
-//! firmware arena; these static capacities are the interim, host-testable
-//! binding, and the single place to change them.
+//! Container strategy (Phases 1/3 of docs/esp32-led-mapping-plan.md):
+//! heapless fixed-capacity containers, generated in TWO PROFILES from the
+//! same proto — the capacity tables below are the single place to change:
+//!
+//! - `host`: sized generously for the cross-language conformance test and
+//!   for BUILDING large fixtures (the store tests encode 1024-LED uploads
+//!   with the generated encoder). Envelope structs run to hundreds of KB of
+//!   inline storage — fine on a host, meaningless on a microcontroller.
+//! - `firmware`: sized for what a player actually decodes through the
+//!   GENERATED bindings — control traffic only. The variable-size uploads
+//!   (map, topology) never take this path on a player: the transport routes
+//!   them through the arena decoder (ledmapper_store), so their collections
+//!   shrink to capacity 1 and the whole ClientMessage envelope fits in a
+//!   couple of KB. Pi-only telemetry arms (detections, imu_batch) also
+//!   shrink to 1: players drop them, and the firmware decoder runs with
+//!   `ignore_repeated_cap_err` so oversized repeats truncate instead of
+//!   erroring.
 
 use micropb_gen::{Config, Generator};
 
 fn main() -> std::io::Result<()> {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() != 3 {
-        eprintln!("usage: {} <descriptor-set.bin> <out.rs>", args[0]);
+    if args.len() != 4 || !matches!(args[3].as_str(), "host" | "firmware") {
+        eprintln!("usage: {} <descriptor-set.bin> <out.rs> host|firmware", args[0]);
         std::process::exit(2);
     }
+    let firmware = args[3] == "firmware";
 
     let mut g = Generator::new();
     g.use_container_heapless();
@@ -31,11 +43,19 @@ fn main() -> std::io::Result<()> {
     // Human-facing error text gets more room than identifier strings.
     g.configure(".ledmapper.v1.Error.message", Config::new().max_bytes(128));
 
-    // Batched telemetry (Pi-profile arms; a player never stores these).
-    g.configure(".ledmapper.v1.Detections.batch", Config::new().max_len(16));
-    g.configure(".ledmapper.v1.ImuBatch.samples", Config::new().max_len(32));
+    // Batched telemetry (Pi-profile arms; players silently drop them).
+    g.configure(
+        ".ledmapper.v1.Detections.batch",
+        Config::new().max_len(if firmware { 1 } else { 16 }),
+    );
+    g.configure(
+        ".ledmapper.v1.ImuBatch.samples",
+        Config::new().max_len(if firmware { 1 } else { 32 }),
+    );
 
-    // Map + solve preview collections: sized for a 1024-LED fixture.
+    // Map + solve preview collections: on the host, sized for a 1024-LED
+    // fixture; on firmware these arms are never decoded through the
+    // generated bindings (arena path / never sent to a player).
     g.configure_many(
         &[
             ".ledmapper.v1.OutputMap.leds",
@@ -43,32 +63,37 @@ fn main() -> std::io::Result<()> {
             ".ledmapper.v1.SolveStatus.leds",
             ".ledmapper.v1.Topology.associations",
         ],
-        Config::new().max_len(1024),
+        Config::new().max_len(if firmware { 1 } else { 1024 }),
     );
-    // Camera paths are decimated before upload; firmware never consumes
-    // them, so the cap only needs to admit the conformance fixtures and keep
-    // the envelope structs sane (they are inline heapless storage).
+    // Camera paths are decimated before upload; nothing on the player side
+    // consumes them at all.
     g.configure_many(
         &[
             ".ledmapper.v1.OutputMap.trajectory",
             ".ledmapper.v1.SolveStatus.trajectory",
         ],
-        Config::new().max_len(512),
+        Config::new().max_len(if firmware { 1 } else { 512 }),
     );
 
     // Topology skeleton: branch points / segments are orders of magnitude
     // fewer than LEDs; polylines are decimated. NOTE these two multiply
     // (polyline storage is inline PER SEGMENT), so they dominate the size of
-    // the envelope structs — keep the product small until the Phase 3 arena
-    // rebind replaces inline storage for the variable-size collections.
-    g.configure(".ledmapper.v1.Topology.branch_points", Config::new().max_len(64));
-    g.configure(".ledmapper.v1.Topology.segments", Config::new().max_len(32));
+    // the host envelope structs.
+    g.configure(
+        ".ledmapper.v1.Topology.branch_points",
+        Config::new().max_len(if firmware { 1 } else { 64 }),
+    );
+    g.configure(
+        ".ledmapper.v1.Topology.segments",
+        Config::new().max_len(if firmware { 1 } else { 32 }),
+    );
     g.configure(
         ".ledmapper.v1.TopologySegment.polyline",
-        Config::new().max_len(64),
+        Config::new().max_len(if firmware { 1 } else { 64 }),
     );
 
-    // Counting + playback control.
+    // Counting + playback control: REAL firmware traffic — full size in
+    // both profiles.
     g.configure(
         ".ledmapper.v1.SetCountingPattern.blocks",
         Config::new().max_len(32),

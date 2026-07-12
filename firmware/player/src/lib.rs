@@ -327,6 +327,16 @@ impl Player {
         self.active.as_ref().map(|a| a.epoch_ms)
     }
 
+    /// Timing of the active mapping pattern, for the output driver's frame
+    /// loop: `(pattern_clock_epoch_ms, bit_period_ms, cycle_frames,
+    /// led_count)`. Frame index at player-clock `t` is
+    /// `((t - epoch) / bit_period) % cycle_frames`.
+    pub fn pattern_timing(&self) -> Option<(f64, f64, u32, u32)> {
+        self.active
+            .as_ref()
+            .map(|a| (a.epoch_ms, a.bit_period_ms, a.spec.cycle_frames, a.spec.led_count))
+    }
+
     /// The persisted strip length for `channel` (set_led_count).
     pub fn led_count(&self, channel: usize) -> Option<u32> {
         self.led_counts.get(channel).copied().flatten()

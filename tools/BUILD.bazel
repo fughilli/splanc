@@ -1,0 +1,13 @@
+"""Bench tooling."""
+
+load("@pypi//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_binary")
+
+py_binary(
+    name = "player_probe",
+    srcs = ["player_probe.py"],
+    deps = [
+        "//pi/server:server",
+        requirement("websockets"),
+    ],
+)

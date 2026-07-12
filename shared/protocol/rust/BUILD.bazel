@@ -34,19 +34,42 @@ rust_binary(
 )
 
 # The generated module content becomes the crate root; the prepended
-# `#![no_std]` keeps the crate buildable for the bare-metal targets.
-genrule(
-    name = "ledmapper_rs_gen",
-    srcs = [":ledmapper_fdset"],
-    outs = ["ledmapper_pb.rs"],
-    cmd = "$(execpath :micropb_gen_bin) $(location :ledmapper_fdset) $@.body && (echo '#![no_std]'; cat $@.body) > $@ && rm $@.body",
-    tools = [":micropb_gen_bin"],
-)
+# `#![no_std]` keeps the crate buildable for the bare-metal targets. Two
+# profiles from one proto (see gen_main.rs): `host` for conformance tests +
+# fixture building, `firmware` with control-traffic-sized caps (the big
+# uploads take the arena path on players).
+[
+    genrule(
+        name = "ledmapper_rs_gen_" + profile,
+        srcs = [":ledmapper_fdset"],
+        outs = ["ledmapper_pb_" + profile + ".rs"],
+        cmd = "$(execpath :micropb_gen_bin) $(location :ledmapper_fdset) $@.body " +
+              profile +
+              " && (echo '#![no_std]'; cat $@.body) > $@ && rm $@.body",
+        tools = [":micropb_gen_bin"],
+    )
+    for profile in [
+        "host",
+        "firmware",
+    ]
+]
 
 rust_library(
     name = "ledmapper_pb",
-    srcs = [":ledmapper_rs_gen"],
-    crate_root = ":ledmapper_rs_gen",
+    srcs = [":ledmapper_rs_gen_host"],
+    crate_root = ":ledmapper_rs_gen_host",
+    edition = "2021",
+    deps = ["@crates//:micropb"],
+)
+
+# Same crate name, firmware capacity profile — a target may depend on ONE of
+# the two (they collide by crate name, by design: downstream code is
+# identical either way).
+rust_library(
+    name = "ledmapper_pb_fw",
+    srcs = [":ledmapper_rs_gen_firmware"],
+    crate_name = "ledmapper_pb",
+    crate_root = ":ledmapper_rs_gen_firmware",
     edition = "2021",
     deps = ["@crates//:micropb"],
 )

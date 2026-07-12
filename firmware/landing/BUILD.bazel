@@ -19,11 +19,15 @@ exports_files(["index.html"])
 # config) if players must point at per-install origins.
 APP_ORIGIN = "https://ledmapper.pages.dev"
 
+# Bring-up: the firmware serves plain WS on its own port; empty means "the
+# page's own host:port" (the TLS end state).
+WS_PORT = "81"
+
 genrule(
     name = "baked",
     srcs = ["index.html"],
     outs = ["landing.html"],
-    cmd = "sed 's|%%APP_ORIGIN%%|" + APP_ORIGIN + "|g' $(location index.html) > $@",
+    cmd = "sed -e 's|%%APP_ORIGIN%%|" + APP_ORIGIN + "|g' -e 's|%%WS_PORT%%|" + WS_PORT + "|g' $(location index.html) > $@",
 )
 
 # -> landing_html[] / landing_html_len (symbols from the file basename).
