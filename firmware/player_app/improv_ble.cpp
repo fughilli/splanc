@@ -1,5 +1,6 @@
 #include "firmware/player_app/improv_ble.h"
 
+#include <Arduino.h>
 #include <BLE2902.h>
 #include <BLEDevice.h>
 #include <BLEServer.h>
@@ -98,10 +99,27 @@ void improv_ble_begin(const char *device_name, uint8_t initial_state) {
   caps->setValue(&cap, 1);
 
   service->start();
+
+  // Build the advertisement explicitly. Web Bluetooth filters on the
+  // 128-bit Improv service UUID, so that UUID MUST be in the primary
+  // advertising packet — a device missing it never appears in the chooser.
+  // A 128-bit UUID (18 B) + flags (3 B) already fills most of the 31-byte
+  // PDU, so the name goes in the SCAN RESPONSE (letting the stack auto-add
+  // an overflowing name to the primary packet risks it dropping the UUID
+  // instead). Split it by hand rather than trust include_name heuristics.
   BLEAdvertising *adv = BLEDevice::getAdvertising();
-  adv->addServiceUUID(kServiceUuid);
-  adv->setScanResponse(true);
+  BLEAdvertisementData advData;
+  advData.setFlags(0x06);  // LE General Discoverable + BR/EDR not supported
+  advData.setCompleteServices(BLEUUID(kServiceUuid));
+  adv->setAdvertisementData(advData);
+
+  BLEAdvertisementData scanResp;
+  scanResp.setName(device_name);
+  adv->setScanResponseData(scanResp);
+
   BLEDevice::startAdvertising();
+  Serial.printf("[ble] advertising \"%s\" as %s (Improv service %s)\n", device_name,
+                BLEDevice::getAddress().toString().c_str(), kServiceUuid);
 }
 
 bool improv_ble_take_credentials(char *ssid, size_t ssid_cap, char *pass, size_t pass_cap) {
