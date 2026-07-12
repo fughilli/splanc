@@ -1,0 +1,36 @@
+"""Firmware hue-code pattern generator (Phase 4a, pulled forward host-side).
+
+no_std, zero-dependency — buildable for the ESP32-C6 triple. The golden test
+pins it to the SAME fixtures the phone decoder verifies (web/tests/
+golden_secded16{,_sym4}.json): what the firmware emits is what the phone is
+tested to decode.
+"""
+
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "pattern",
+    srcs = ["src/lib.rs"],
+    crate_name = "ledmapper_pattern",
+    edition = "2021",
+)
+
+rust_test(
+    name = "golden_pattern_test",
+    srcs = ["tests/golden_pattern.rs"],
+    data = [
+        "//web:tests/golden_secded16.json",
+        "//web:tests/golden_secded16_sym4.json",
+    ],
+    edition = "2021",
+    env = {
+        "GOLDEN_SECDED16": "$(rootpath //web:tests/golden_secded16.json)",
+        "GOLDEN_SECDED16_SYM4": "$(rootpath //web:tests/golden_secded16_sym4.json)",
+    },
+    deps = [
+        ":pattern",
+        "@crates//:serde_json",
+    ],
+)

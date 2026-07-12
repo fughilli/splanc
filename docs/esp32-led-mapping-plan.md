@@ -126,11 +126,15 @@ PlaybackParams, map_id}` / `get_playback` → `playback_state`.
   ledmapper.proto header (CORE vs PI-ONLY arm sets); unknown-arm handling on
   firmware = bounded `error{unsupported}` for request arms, silent drop
   allowed for fire-and-forget arms.
-- **micropb backend** wired as a Bazel genrule (like the existing
-  toolchains_protoc genrule for Python), and a **cross-target conformance
-  test**: extend the existing golden-frames fixture so the SAME bytes
-  round-trip identically in TS/Python/Rust (micropb default/presence handling
-  can differ from canonical protobuf).
+- ~~**micropb backend + cross-target conformance**~~ **landed** (Phase 1):
+  `//shared/protocol/rust` generates no_std Rust from the descriptor set at
+  build time (micropb-gen 0.5.1 in an ISOLATED host crate universe — its
+  std-micropb must not feature-unify onto the firmware's); heapless
+  containers with the capacity table in gen_main.rs (Phase 3 re-binds the
+  big collections to the arena). `conformance_test` requires every golden
+  frame to decode AND re-encode byte-identically — which caught micropb-gen
+  ignoring proto3 implicit packing (fixed by explicit `[packed = true]`
+  on every repeated scalar; same wire as before).
 
 **Keep `shared/protocol/fec.py`** — it is optical-channel FEC, not transport.
 
@@ -146,15 +150,42 @@ and `heapless`/`micropb` to the existing crate_universe; **accept:** resolve
 `heapless` for the C6 triple. (c) Wire the micropb codegen backend (TS/Python
 backends already exist). Use the **bazel-polyglot-nix** skill.
 
-**Phase 1 — Protocol reshaping.** ~~Migrate the wire from JSON to binary
-proto~~ **done** (proto-comms; the 4 seams listed in the original plan are
-already binary). ~~Author the counting/topology/playback additions, define
-the player profiles~~ **done** (see "Remaining protocol work" above — schemas
+**Phase 1 — Protocol reshaping. ✅ DONE.** ~~Migrate the wire from JSON to
+binary proto~~ (proto-comms; the 4 seams listed in the original plan are
+already binary); counting/topology/playback additions and player profiles
+(see "Remaining protocol work" above — schemas, codegen, proto, both
+boundary converters, Pi handler, goldens: 42 cross-language golden frames);
+micropb Bazel backend and the Rust conformance leg
+(`//shared/protocol/rust:conformance_test`, byte-identical re-encode of all
+42 frames). **Accepted:** cross-target conformance green; existing mapping
+flow unchanged (suite grew 30 → 34 targets, all green).
 
-- codegen + proto + both boundary converters + Pi handler + goldens, 42
-  cross-language golden frames). Remaining: the micropb Bazel backend and the
-  Rust conformance leg. **Accept:** cross-target conformance green; existing
-  mapping flow unchanged (30-target suite stays green).
+**Phase 1½ — Player core + pattern gen (host-side pulls from Phases 3/4a).**
+Landed alongside Phase 1 so the firmware protocol/pattern logic is testable
+before any hardware exists:
+
+- `//firmware/pattern` (`ledmapper_pattern`): no_std, zero-dep port of the
+  hue-code generator, SEC-DED FEC, and the code-book derivation
+  (graycode.py, fec.py and codebook.py in one crate). Golden test pins it to
+  `web/tests/golden_secded16{,_sym4}.json` — the same fixtures the phone
+  decoder is verified against — plus exhaustive single-flip-corrects /
+  double-flip-rejects FEC property checks. **Phase 4a's remaining scope is
+  the RMT/driver integration, not the pattern math.**
+- `//firmware/player` (`ledmapper_player`): no_std, transport-free session
+  state machine implementing the CORE player profile (welcome WITHOUT
+  solverBenchMs; stop_mapping without solveOnHost=false refused with
+  error{unsupported} — no solver here; counting latch with driver-facing
+  `counting_color`/`pattern_color` hooks; Pi-only arms bounded per the
+  profile rules). Tests: a scripted full phone session (mapping_started
+  CodeParams == golden header, emitted pattern == golden colorPlan), and
+  every golden CLIENT frame — real phone wire bytes — driven through the
+  handler with the reply arm checked against the profile contract and every
+  reply required to encode.
+- All three crates (`ledmapper_pb`, pattern, player) **build for
+  `riscv32imac-unknown-none-elf`** (`--platforms=@embedded//platforms:esp32c6`),
+  resolving the software half of **R3** (micropb + heapless, no_std, no
+  alloc, on the C6 triple); the remaining R3 scope is panic=abort and
+  on-device footprint.
 
 **Phase 2 — RMT LED output.** Port FastLED output from bit-bang
 (`apps/rainbow/rainbow.cpp:11`) to the C6 **RMT** peripheral. **Accept:** drive
@@ -275,7 +306,9 @@ build/vendor the RFC6455 codec. M10 cross-target proto conformance test
   **same-origin** landing page so the user approves the cert once, then
   loads/bounces to the external app. May reopen WS-vs-WSS.
 - **R3** micropb + heapless + arena on `riscv32imac-none`, panic=abort, no
-  alloc.
+  alloc. **Half-resolved** (Phase 1½): micropb + heapless + the generated
+  bindings + player core build no_std/no-alloc for the C6 triple; remaining
+  is panic=abort linkage + on-device footprint (with the arena, Phase 3).
 - ~~**R4** VIO estimator harness doesn't exist~~ — resolved: the Rust port
   landed with a parity harness.
 - ~~**R5** Sparse-LM numerical parity Rust↔scipy~~ — resolved: parity is

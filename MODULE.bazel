@@ -121,14 +121,6 @@ crate.spec(
     version = "0.8",
 )
 
-# HOST-side code generator for micropb (build tool, not a firmware dep):
-# invoked by //shared/protocol/rust to turn ledmapper.proto into no_std Rust.
-# Version-locked to the micropb runtime line above.
-crate.spec(
-    package = "micropb-gen",
-    version = "0.5.1",
-)
-
 # Test-only: the Rust leg of the cross-language proto conformance test reads
 # web/tests/golden_proto_frames.json (base64 frames).
 crate.spec(
@@ -155,6 +147,24 @@ crate.from_specs(
     ],
 )
 use_repo(crate, "crates")
+
+# HOST-side code generator for micropb (build tool, not a firmware dep):
+# invoked by //shared/protocol/rust to turn ledmapper.proto into no_std Rust.
+# Version-locked to the micropb runtime line above. ISOLATED universe: the
+# generator needs micropb WITH the std feature, and crate_universe unifies
+# features per crate across a universe — sharing one universe would leak std
+# onto the firmware micropb and break the riscv32imac-none build.
+host_crate = use_extension(
+    "@rules_rust//crate_universe:extensions.bzl",
+    "crate",
+    isolate = True,
+)
+host_crate.spec(
+    package = "micropb-gen",
+    version = "0.5.1",
+)
+host_crate.from_specs(name = "host_crates")
+use_repo(host_crate, "host_crates")
 
 # ---------------------------------------------------------------------------
 # Vendored ESP32-C6/RP2350 firmware monorepo (docs/esp32-led-mapping-plan.md

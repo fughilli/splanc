@@ -27,7 +27,10 @@ rust_binary(
     name = "micropb_gen_bin",
     srcs = ["gen_main.rs"],
     edition = "2021",
-    deps = ["@crates//:micropb-gen"],
+    # @host_crates: the ISOLATED host-tool universe (see MODULE.bazel) — the
+    # generator's micropb-with-std must not feature-unify onto the firmware's
+    # no_std micropb in @crates.
+    deps = ["@host_crates//:micropb-gen"],
 )
 
 # The generated module content becomes the crate root; the prepended
