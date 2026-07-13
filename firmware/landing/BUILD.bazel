@@ -1,18 +1,24 @@
 """The R2 landing page (see README.md), packaged for the ESP32 webserver.
 
-The vendored firmware module now provides the delivery mechanism the Phase
-4c webserver needs: `c_resource_library` (as used by @embedded's verified
+The vendored firmware module provides the delivery mechanism the Phase 4c
+webserver needs: `c_resource_library` (as used by @embedded's verified
 wifi_ap app) embeds files as C const char arrays. `:landing_page` exposes
 `landing_html[]` / `landing_html_len` — the same shape wifi_ap serves its
-page with — with `%%APP_ORIGIN%%` baked to the deployed webapp origin.
+page with.
+
+Pipeline: index.html.j2 --jinja_template--> expanded --html_minify--> baked.
+The template bakes the deployed webapp origin; the minifier strips the
+sizeable header comment/indentation before the page costs flash and SoftAP
+airtime. NOTE: html_minify uses the Nix-provided minifier, so building this
+package requires `nix` (see the Nix section of MODULE.bazel).
 """
 
 load("@embedded//rules:resources.bzl", "c_resource_library")
 load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load("//tools/html:minify.bzl", "html_minify")
+load("//tools/jinja:jinja.bzl", "jinja_template")
 
 package(default_visibility = ["//visibility:public"])
-
-exports_files(["index.html"])
 
 # The deployed hosted-app origin (//web:deploy_cloudflare). Phase 4c can
 # turn this into a build setting (or substitute at serve time from NVS
@@ -23,11 +29,22 @@ APP_ORIGIN = "https://ledmapper.pages.dev"
 # page's own host:port" (the TLS end state).
 WS_PORT = "81"
 
-genrule(
+jinja_template(
+    name = "expanded",
+    out = "landing.expanded.html",
+    template = "index.html.j2",
+    vars = {
+        "app_origin": APP_ORIGIN,
+        "ws_port": WS_PORT,
+    },
+)
+
+# `out` must stay landing.html: c_resource_library derives the C symbol
+# names (landing_html[] / landing_html_len) from the file basename.
+html_minify(
     name = "baked",
-    srcs = ["index.html"],
-    outs = ["landing.html"],
-    cmd = "sed -e 's|%%APP_ORIGIN%%|" + APP_ORIGIN + "|g' -e 's|%%WS_PORT%%|" + WS_PORT + "|g' $(location index.html) > $@",
+    src = ":expanded",
+    out = "landing.html",
 )
 
 # -> landing_html[] / landing_html_len (symbols from the file basename).

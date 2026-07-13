@@ -20,9 +20,10 @@
   anyway (the app's error UI owns connection troubleshooting). It uses
   location.replace so Back from the app doesn't loop through this page.
 
-  %%APP_ORIGIN%% is baked in by the firmware from its configuration (e.g.
-  https://ledmapper.pages.dev). Keep this file dependency-free and tiny —
-  it ships in the ESP32 flash image.
+  The app origin and WS port are baked in at build time (jinja_template
+  vars in BUILD.bazel; origin e.g. https://ledmapper.pages.dev). Keep this
+  file dependency-free and tiny — it ships in the ESP32 flash image
+  (minified; this comment never reaches the device).
 -->
 <html lang="en">
   <head>
@@ -79,10 +80,10 @@
     </main>
     <script>
       "use strict";
-      var APP_ORIGIN = "%%APP_ORIGIN%%";
+      var APP_ORIGIN = "{{ app_origin }}";
       // Empty = the page's own host:port; the bring-up firmware serves WS on
       // its own port (TLS/wss on the page's port is the Phase 4c end state).
-      var WS_PORT = "%%WS_PORT%%";
+      var WS_PORT = "{{ ws_port }}";
       var scheme = location.protocol === "https:" ? "wss" : "ws";
       var wsHost = WS_PORT ? location.hostname + ":" + WS_PORT : location.host;
       var wsUrl = scheme + "://" + wsHost + "/ws";
