@@ -49,6 +49,9 @@ struct ActiveCapture {
     epoch_ms: f64,
     spec: CodeSpec,
     bit_period_ms: f64,
+    /// LED output brightness scale in [0,1] — servoed by the phone against
+    /// its measured bloom/wash-out (§7.1 start_mapping/configure).
+    brightness: f64,
 }
 
 /// The protocol session core. One per WSS connection (like the Pi's
@@ -160,15 +163,20 @@ impl Player {
         if !(bit_period_ms > 0.0) {
             return error("bad_message", "bitPeriodMs must be > 0");
         }
+        let brightness = options.r#brightness().copied().unwrap_or(1.0);
+        if !(0.0..=1.0).contains(&brightness) {
+            return error("bad_message", "brightness must be in [0, 1]");
+        }
         let spec = CodeSpec::derive(led_count as u32, symbols, true);
         self.active = Some(ActiveCapture {
             epoch_ms: now_ms,
             spec,
             bit_period_ms,
+            brightness,
         });
         let mut started = pb::MappingStarted::default();
         started.r#pattern_clock_epoch = now_ms;
-        started.set_code_params(code_params_msg(&spec, bit_period_ms));
+        started.set_code_params(code_params_msg(&spec, bit_period_ms, brightness));
         reply(SMsg::MappingStarted(started))
     }
 
@@ -195,11 +203,18 @@ impl Player {
         if !(bit_period_ms > 0.0) {
             return error("bad_message", "bitPeriodMs must be > 0");
         }
+        let brightness = options
+            .and_then(|o| o.r#brightness().copied())
+            .unwrap_or(active.brightness);
+        if !(0.0..=1.0).contains(&brightness) {
+            return error("bad_message", "brightness must be in [0, 1]");
+        }
         let spec = CodeSpec::derive(led_count as u32, symbols, true);
         self.active = Some(ActiveCapture {
             epoch_ms: now_ms,
             spec,
             bit_period_ms,
+            brightness,
         });
         self.pattern_state()
     }
@@ -228,12 +243,16 @@ impl Player {
             Some(active) => {
                 state.r#active = true;
                 state.set_pattern_clock_epoch(active.epoch_ms);
-                state.set_code_params(code_params_msg(&active.spec, active.bit_period_ms));
+                state.set_code_params(code_params_msg(
+                    &active.spec,
+                    active.bit_period_ms,
+                    active.brightness,
+                ));
             }
             None => {
                 state.r#active = false;
                 let spec = CodeSpec::derive(self.default_led_count, DEFAULT_SYMBOLS, true);
-                state.set_code_params(code_params_msg(&spec, DEFAULT_BIT_PERIOD_MS));
+                state.set_code_params(code_params_msg(&spec, DEFAULT_BIT_PERIOD_MS, 1.0));
             }
         }
         reply(SMsg::PatternState(state))
@@ -287,7 +306,7 @@ impl Player {
         let mut w = pb::Welcome::default();
         w.r#session_id = self.session_id.clone();
         let spec = CodeSpec::derive(self.default_led_count, DEFAULT_SYMBOLS, true);
-        w.set_code_params(code_params_msg(&spec, DEFAULT_BIT_PERIOD_MS));
+        w.set_code_params(code_params_msg(&spec, DEFAULT_BIT_PERIOD_MS, 1.0));
         // NO solver_bench_ms: chooseSolvePlacement(phone, null) == "phone".
         reply(SMsg::Welcome(w))
     }
@@ -296,10 +315,15 @@ impl Player {
 
     /// The color LED `led` shows in mapping-pattern cycle frame
     /// `frame_index` (callers reduce the running frame counter modulo
-    /// `cycle_frames`); None when no capture is active.
+    /// `cycle_frames`); None when no capture is active. Scaled by the
+    /// phone-servoed capture brightness — hue is the carrier, so a uniform
+    /// scale changes nothing the decoder reads (it normalizes against each
+    /// track's own white frame).
     pub fn pattern_color(&self, led: u32, frame_index: u32) -> Option<Rgb> {
         let active = self.active.as_ref()?;
-        Some(color_for_frame(led, frame_index, &active.spec))
+        let (r, g, b) = color_for_frame(led, frame_index, &active.spec);
+        let scale = |v: u8| -> u8 { (v as f64 * active.brightness + 0.5) as u8 };
+        Some((scale(r), scale(g), scale(b)))
     }
 
     /// The color LED `led` shows under the latched counting pattern: blocks
@@ -383,7 +407,7 @@ pub fn upload_malformed() -> pb::ServerMessage {
 /// pb CodeParams from a derived spec (mirrors codebook.py code_params_for;
 /// the derivation itself lives in ledmapper_pattern so the pattern generator
 /// and the advertised code-book cannot disagree).
-pub fn code_params_msg(spec: &CodeSpec, bit_period_ms: f64) -> pb::CodeParams {
+pub fn code_params_msg(spec: &CodeSpec, bit_period_ms: f64, brightness: f64) -> pb::CodeParams {
     let mut cp = pb::CodeParams::default();
     cp.r#led_count = spec.led_count as i32;
     cp.r#bits = spec.bits as i32;
@@ -393,6 +417,10 @@ pub fn code_params_msg(spec: &CodeSpec, bit_period_ms: f64) -> pb::CodeParams {
     cp.r#cycle_frames = spec.cycle_frames as i32;
     cp.r#fec = s64(if spec.secded { "secded" } else { "none" });
     cp.r#symbols = spec.symbols as i32;
+    // Wire contract: unset means 1.0 — only a servoed-down level is echoed.
+    if brightness < 1.0 {
+        cp.set_brightness(brightness);
+    }
     cp
 }
 

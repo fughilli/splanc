@@ -74,6 +74,9 @@ export interface CodeParams {
   /** FEC around the Gray data word ('secded' = extended Hamming, d=4:
    * correct 1 misread bit, detect-and-reject 2). Absent = 'none'. */
   fec?: Fec | undefined;
+  /** LED output brightness scale in [0,1]; absent = 1.0. Servoed by the
+   * phone against measured bloom/wash-out (planLedBrightness). */
+  brightness?: number | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -193,6 +196,8 @@ export interface StartMappingOptions {
   symbols?: number;
   /** Signaling rate: each symbol window should span >= ~3 camera frame intervals. */
   bitPeriodMs?: number;
+  /** LED output brightness scale in [0,1]; omitted -> server default 1.0. */
+  brightness?: number;
 }
 
 export interface StartMappingMessage {
@@ -206,6 +211,8 @@ export interface ConfigureOptions {
   ledCount?: number;
   symbols?: number;
   bitPeriodMs?: number;
+  /** LED output brightness scale in [0,1]; omitted -> keep current. */
+  brightness?: number;
 }
 
 export interface ConfigureMessage {

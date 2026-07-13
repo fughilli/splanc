@@ -39,6 +39,7 @@ def code_params_for(
     bit_period_ms: float = DEFAULT_BIT_PERIOD_MS,
     symbols: int = DEFAULT_SYMBOLS,
     fec: str = "secded",
+    brightness: float | None = None,
 ) -> CodeParams:
     """Build the :class:`CodeParams` code-book for a fixture of ``led_count`` LEDs.
 
@@ -58,6 +59,8 @@ def code_params_for(
         raise ValueError(f"unknown fec {fec!r}")
     if symbols not in (2, 4):
         raise ValueError(f"symbols must be 2 or 4, got {symbols}")
+    if brightness is not None and not 0.0 <= brightness <= 1.0:
+        raise ValueError(f"brightness must be in [0, 1], got {brightness}")
     k = data_bits_for(led_count)
     bits = k if fec == "none" else secded_total_bits(k)
     bits_per_frame = 1 if symbols == 2 else 2
@@ -70,4 +73,7 @@ def code_params_for(
         syncPattern="on_off",
         cycleFrames=2 + math.ceil(bits / bits_per_frame),
         fec=fec,
+        # None (= 1.0 on the wire) unless the phone servoed it down against
+        # measured bloom/wash-out (exposure.ts planLedBrightness).
+        brightness=brightness,
     )

@@ -190,6 +190,7 @@ class ConnectionHandler:
             options.ledCount,
             options.bitPeriodMs if options.bitPeriodMs is not None else self.ctx.bit_period_ms,
             options.symbols if options.symbols is not None else self.ctx.symbols,
+            brightness=options.brightness,
         )
         epoch = self.ctx.sessions.start(capture_id, params)
         return MappingStartedMessage(
@@ -210,6 +211,7 @@ class ConnectionHandler:
             options.ledCount if options.ledCount is not None else current.ledCount,
             options.bitPeriodMs if options.bitPeriodMs is not None else current.bitPeriodMs,
             options.symbols if options.symbols is not None else current.symbols,
+            brightness=options.brightness if options.brightness is not None else current.brightness,
         )
         epoch = self.ctx.sessions.reconfigure(params)
         return PatternStateMessage(

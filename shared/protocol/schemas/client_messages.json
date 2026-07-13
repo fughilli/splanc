@@ -71,6 +71,12 @@
               "type": ["number", "null"],
               "exclusiveMinimum": 0,
               "description": "Signaling rate (per symbol window). Chosen by the client so each window spans >= ~3 camera frame intervals — in low light the camera lengthens exposure and drops fps, so the client requests a slower code. Null/omitted -> server default."
+            },
+            "brightness": {
+              "type": ["number", "null"],
+              "minimum": 0,
+              "maximum": 1,
+              "description": "LED output brightness scale (see code_params.json). Servoed by the client against measured bloom/wash-out. Null/omitted -> server default (1.0)."
             }
           }
         }
@@ -89,7 +95,8 @@
           "properties": {
             "ledCount": { "type": ["integer", "null"], "minimum": 1 },
             "symbols": { "type": ["integer", "null"], "enum": [2, 4, null] },
-            "bitPeriodMs": { "type": ["number", "null"], "exclusiveMinimum": 0 }
+            "bitPeriodMs": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+            "brightness": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }
           }
         }
       }

@@ -84,6 +84,9 @@ message CodeParams {
   string fec = 7;
   // Data-symbol alphabet size: 2 (red/blue) or 4 (Gray-ordered bit pairs).
   int32 symbols = 8;
+  // LED output brightness scale in [0,1]; unset = 1.0. Servoed by the phone
+  // against measured bloom/wash-out (exposure.ts planLedBrightness).
+  optional double brightness = 9;
 }
 
 // One labeled observation of one LED in one frame (§7.4).
@@ -234,6 +237,7 @@ message StartMappingOptions {
   int32 led_count = 1;
   optional int32 symbols = 2;
   optional double bit_period_ms = 3;
+  optional double brightness = 4;
 }
 
 message StartMapping {
@@ -244,6 +248,7 @@ message ConfigureOptions {
   optional int32 led_count = 1;
   optional int32 symbols = 2;
   optional double bit_period_ms = 3;
+  optional double brightness = 4;
 }
 
 // Mid-capture renegotiation; reply is PatternState with the new epoch.

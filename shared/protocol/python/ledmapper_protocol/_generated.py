@@ -82,6 +82,9 @@ class CodeParams(_StrictModel):
     cycleFrames: int = Field(ge=3)
     # FEC around the Gray data word; absent on the wire = "none" (legacy).
     fec: Fec = "none"
+    # LED output brightness scale; absent on the wire = 1.0. Servoed by the
+    # phone against measured bloom/wash-out (planLedBrightness).
+    brightness: Union[float, None] = Field(default=None, ge=0.0, le=1.0)
 
 
 # ---------------------------------------------------------------------------
@@ -195,6 +198,7 @@ class StartMappingOptions(_StrictModel):
     ledCount: int = Field(ge=1)
     symbols: Union[Literal[2, 4], None] = None
     bitPeriodMs: Union[float, None] = Field(default=None, gt=0.0)
+    brightness: Union[float, None] = Field(default=None, ge=0.0, le=1.0)
 
 
 class StartMappingMessage(_StrictModel):
@@ -208,6 +212,7 @@ class ConfigureOptions(_StrictModel):
     ledCount: Union[int, None] = Field(default=None, ge=1)
     symbols: Union[Literal[2, 4], None] = None
     bitPeriodMs: Union[float, None] = Field(default=None, gt=0.0)
+    brightness: Union[float, None] = Field(default=None, ge=0.0, le=1.0)
 
 
 class ConfigureMessage(_StrictModel):

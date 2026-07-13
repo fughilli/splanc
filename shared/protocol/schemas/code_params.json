@@ -55,6 +55,13 @@
       "type": "integer",
       "minimum": 3,
       "description": "Total frames per cycle: 2 (sync delimiter) + ceil(bits / log2(symbols)) data frames."
+    },
+    "brightness": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 1,
+      "default": 1.0,
+      "description": "LED output brightness scale in [0,1]; null/omitted = 1.0. Servoed by the phone against its MEASURED wash-out (bloom-split and near-gray blob fractions, scene clipping): detection probability over brightness is an inverted U whose optimum moves with scene gain — a dim room's auto-exposure (high ISO) washes hue to white at a fraction of the brightness a lit room wants."
     }
   }
 }

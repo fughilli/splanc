@@ -25,7 +25,7 @@
  */
 
 import type { CodeParams } from "@ledmapper/protocol";
-import { colorForFrame, cssColor } from "../code/gray";
+import { colorForFrame } from "../code/gray";
 import { frameIndexAt } from "../code/timing";
 import { defaultWsUrl, LedMapperClient } from "../net/client";
 
@@ -134,6 +134,14 @@ resize();
 
 // -- rendering ----------------------------------------------------------------
 
+/** Palette color scaled by the servoed output brightness (cssColor is the
+ * full-brightness special case, kept for the golden-pinned palette tests). */
+function cssScaled(c: readonly [number, number, number], brightness: number): string {
+  const s = Math.max(0, Math.min(1, brightness));
+  const ch = (v: number): number => Math.round(255 * v * s);
+  return `rgb(${ch(c[0])},${ch(c[1])},${ch(c[2])})`;
+}
+
 function draw(frameIndex: number): void {
   const params = state.params;
   ctx.fillStyle = "#000";
@@ -146,8 +154,10 @@ function draw(frameIndex: number): void {
     ctx.beginPath();
     ctx.arc(x, y, l.dotR, 0, Math.PI * 2);
     if (frameIndex >= 0 && inStudy) {
-      // Hue carrier: constant full brightness, the code is in the color.
-      const color = cssColor(colorForFrame(id, frameIndex, params));
+      // Hue carrier: constant brightness within the cycle, the code is in
+      // the color. The LEVEL is the phone-servoed CodeParams.brightness
+      // (renegotiated against measured bloom/wash-out; absent = full).
+      const color = cssScaled(colorForFrame(id, frameIndex, params), params.brightness ?? 1);
       ctx.fillStyle = color;
       ctx.shadowColor = color;
       ctx.shadowBlur = l.dotR * 0.8; // a soft halo reads more like a real LED
