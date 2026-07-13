@@ -58,3 +58,37 @@ test("player WS endpoint from the redirect URL", () => {
   assert.equal(wsUrlFromRedirect("not a url"), null);
   assert.equal(wsUrlFromRedirect("ftp://x/"), null);
 });
+
+test("retryGatt returns after transient failures without sleeping for real", async () => {
+  const { retryGatt } = await import("../src/net/improv");
+  let calls = 0;
+  const retries: number[] = [];
+  const result = await retryGatt(
+    async () => {
+      calls++;
+      if (calls < 3) throw new Error("GATT operation failed for unknown reason");
+      return "ok";
+    },
+    { onRetry: (n) => retries.push(n), sleepFn: async () => undefined },
+  );
+  assert.equal(result, "ok");
+  assert.equal(calls, 3, "succeeded on the 3rd try");
+  assert.deepEqual(retries, [1, 2], "retried after attempts 1 and 2");
+});
+
+test("retryGatt rethrows the last error after exhausting attempts", async () => {
+  const { retryGatt } = await import("../src/net/improv");
+  let calls = 0;
+  await assert.rejects(
+    () =>
+      retryGatt(
+        async () => {
+          calls++;
+          throw new Error(`fail ${calls}`);
+        },
+        { attempts: 3, sleepFn: async () => undefined },
+      ),
+    /fail 3/,
+  );
+  assert.equal(calls, 3);
+});

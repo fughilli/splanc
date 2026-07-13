@@ -117,7 +117,43 @@ export interface ImprovDevice {
         getCharacteristic(uuid: string): Promise<BleChar>;
       }>;
     }>;
+    disconnect(): void;
   };
+}
+
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Retry a GATT operation sequence. Android's Bluetooth stack routinely fails
+ * the first connect / service-discovery with "GATT operation failed for
+ * unknown reason", then succeeds on a retry — so wrap the whole
+ * connect+discover block, not individual calls.
+ */
+export async function retryGatt<T>(
+  fn: () => Promise<T>,
+  opts: {
+    attempts?: number;
+    onRetry?: (attempt: number, err: unknown) => void;
+    delayMs?: (attempt: number) => number;
+    sleepFn?: (ms: number) => Promise<void>;
+  } = {},
+): Promise<T> {
+  const attempts = opts.attempts ?? 4;
+  const delayMs = opts.delayMs ?? ((a) => 400 * a);
+  const sleepFn = opts.sleepFn ?? sleep;
+  let lastErr: unknown;
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      return await fn();
+    } catch (e) {
+      lastErr = e;
+      if (i < attempts) {
+        opts.onRetry?.(i, e);
+        await sleepFn(delayMs(i));
+      }
+    }
+  }
+  throw lastErr;
 }
 
 /**
@@ -145,13 +181,33 @@ export async function provisionViaBle(
   password: string,
   onStatus: (msg: string) => void = () => undefined,
 ): Promise<string[]> {
-  if (!device.gatt) throw new Error("device has no GATT server");
+  const gatt = device.gatt;
+  if (!gatt) throw new Error("device has no GATT server");
   onStatus("Connecting…");
-  const server = await device.gatt.connect();
-  const service = await server.getPrimaryService(IMPROV_SERVICE);
-  const rpcCommand = await service.getCharacteristic(CHAR_RPC_COMMAND);
-  const rpcResult = await service.getCharacteristic(CHAR_RPC_RESULT);
-  const errorState = await service.getCharacteristic(CHAR_ERROR_STATE);
+  // Connect + discover, retried: the first attempt on Android frequently
+  // throws "GATT operation failed for unknown reason". Disconnect before
+  // each retry so the stack starts the next attempt clean.
+  const { rpcCommand, rpcResult, errorState } = await retryGatt(
+    async () => {
+      const server = await gatt.connect();
+      const service = await server.getPrimaryService(IMPROV_SERVICE);
+      return {
+        rpcCommand: await service.getCharacteristic(CHAR_RPC_COMMAND),
+        rpcResult: await service.getCharacteristic(CHAR_RPC_RESULT),
+        errorState: await service.getCharacteristic(CHAR_ERROR_STATE),
+      };
+    },
+    {
+      onRetry: (attempt) => {
+        try {
+          gatt.disconnect();
+        } catch {
+          // already disconnected — fine
+        }
+        onStatus(`Connecting (retry ${attempt})…`);
+      },
+    },
+  );
 
   // Await the result via notification; surface device-reported errors.
   const result = new Promise<string[]>((resolve, reject) => {
