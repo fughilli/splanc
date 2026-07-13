@@ -180,14 +180,28 @@ the decoder needs), misclassification — are hard to see from the phone. The
 trace server for offline inspection:
 
 ```sh
-bazelisk run //tools:trace_server              # http://0.0.0.0:8444
 bazelisk run //tools:trace_server -- --tls     # https (self-signed) — needed
                                                # from an https app origin
+bazelisk run //tools:trace_server              # http (app served over http)
 ```
 
-Then open the capture page with `?trace=https://<laptop-ip>:8444/trace` (take
-the trace server's cert exception once from an https origin — same mixed-content
-rule as the player WS). Each traced frame carries, per blob: the **mean color**
+**Pair by QR (easiest):** the server prints a laptop URL
+(`https://<laptop-ip>:8444/`) — open it on the laptop and it shows a **QR that
+encodes the capture-app URL with `?trace=` pre-filled**. Scan it with the phone
+camera to open the app already pointed at this trace server (no typing the IP).
+Accept the trace server's cert on the phone if it warns (same self-signed
+mixed-content rule as the player WS — visit the URL once and proceed). Then set
+up the player over Bluetooth as usual; the `?url=` the app adds is kept
+alongside the trace param. `--app-url` overrides the app origin the QR points
+at (default `https://ledmapper.pages.dev`); `--host-ip` overrides the
+auto-detected LAN IP.
+
+The server logs a line on the CORS preflight, on each new session, and per
+batch (`+N frames, M blobs, K with >10% saturation`) — so an empty log means
+the phone never reached it (cert not accepted, or wrong IP). Or, to skip the QR,
+open the capture page manually with `?trace=https://<laptop-ip>:8444/trace`.
+
+Each traced frame carries, per blob: the **mean color**
 (what the bloom drags toward gray), the **chroma-weighted color** (`cr/cg/cb` —
 the halo hue that survives blooming, each pixel weighted by its own chroma so
 the saturated core contributes ~nothing), **peak** luminance and the

@@ -24,21 +24,42 @@ from __future__ import annotations
 
 import argparse
 import base64
+import html
 import json
 import os
+import socket
 import struct
 import subprocess
 import sys
 import tempfile
+import urllib.parse
 import zlib
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import segno
+
+DEFAULT_APP_URL = "https://ledmapper.pages.dev"
+
 
 def _log(msg: str) -> None:
     # bazel run pipes stdout, so force a flush or nothing shows live.
     print(msg, flush=True)
+
+
+def _lan_ip() -> str:
+    """The primary outbound-interface IP (the address the phone reaches us
+    at), found by asking the routing table which source a UDP socket to a
+    public IP would use — no packet is sent."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("8.8.8.8", 80))
+        return s.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+    finally:
+        s.close()
 
 
 # Default under the source workspace (so dumps are readable + survive), not
@@ -108,14 +129,10 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:  # noqa: N802
         _log(f"[trace] GET from {self.client_address[0]} (cert accepted if from a browser)")
         sessions = sorted(p.name for p in OUT_DIR.glob("*") if p.is_dir())
-        body = (
-            "ledmapper trace server\n\nsessions:\n"
-            + ("\n".join(f"  {s}" for s in sessions) or "  (none yet)")
-            + f"\n\nwriting under: {OUT_DIR.resolve()}\n"
-        ).encode()
+        body = _landing_html(sessions).encode()
         self.send_response(200)
         self._cors()
-        self.send_header("content-type", "text/plain")
+        self.send_header("content-type", "text/html; charset=utf-8")
         self.end_headers()
         self.wfile.write(body)
 
@@ -171,11 +188,51 @@ class Handler(BaseHTTPRequestHandler):
 
 
 _last_session: str | None = None
+# Pairing state, set in main(): the trace POST endpoint and the full capture
+# URL the phone should open (app origin + ?trace=), which the QR encodes.
+PAIR_URL = ""
+TRACE_URL = ""
 
 
-def _self_signed() -> tuple[str, str]:
+def _landing_html(sessions: list[str]) -> str:
+    """The pairing page (shown on the laptop): a QR encoding the capture URL
+    with ?trace= pre-filled — scan it with the phone to open the app already
+    pointed at this trace server, no typing. Plus live session status."""
+    qr = segno.make(PAIR_URL, error="m")
+    qr_img = qr.png_data_uri(scale=6, border=3, dark="#111", light="#fff")
+    session_list = "".join(f"<li>{html.escape(s)}</li>" for s in sessions) or "<li>(none yet)</li>"
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LED Mapper trace server</title>
+<style>
+  body {{ font: 15px/1.5 system-ui, sans-serif; background:#fff; color:#111;
+         display:grid; place-items:center; min-height:100vh; margin:0; }}
+  main {{ max-width:30rem; padding:1.5rem; text-align:center; }}
+  img.qr {{ width:min(70vw,320px); height:auto; image-rendering:pixelated; }}
+  code {{ background:#f0f0f0; padding:.1em .3em; border-radius:.2em;
+          word-break:break-all; font-size:.85em; }}
+  .muted {{ color:#666; font-size:.85rem; }}
+  ul {{ text-align:left; }}
+</style></head>
+<body><main>
+  <h1>Scan to start a traced capture</h1>
+  <p>Scan with the phone camera to open the capture app pointed at this trace
+     server. (First accept this page's certificate on the phone if it warns —
+     same self-signed cert the trace POSTs use.)</p>
+  <img class="qr" src="{qr_img}" alt="pairing QR">
+  <p class="muted">encodes:<br><code>{html.escape(PAIR_URL)}</code></p>
+  <p class="muted">Then set up the player over Bluetooth as usual (the
+     <code>?url=</code> the app adds is kept across the trace param).</p>
+  <h2 style="font-size:1rem">Sessions received</h2>
+  <ul>{session_list}</ul>
+</main></body></html>"""
+
+
+def _self_signed(lan_ip: str) -> tuple[str, str]:
     """cert+key pair via openssl (present on the dev container + Pi image);
-    no Python crypto dependency. Regenerated per run (dev tool)."""
+    no Python crypto dependency. Names the LAN IP in the SAN so the browser's
+    warning is just "self-signed" (not also a hostname mismatch)."""
     d = Path(tempfile.mkdtemp(prefix="trace-tls-"))
     cert, key = d / "cert.pem", d / "key.pem"
     subprocess.run(
@@ -195,7 +252,7 @@ def _self_signed() -> tuple[str, str]:
             "-subj",
             "/CN=ledmapper-trace",
             "-addext",
-            "subjectAltName=DNS:localhost,IP:127.0.0.1",
+            f"subjectAltName=DNS:localhost,IP:127.0.0.1,IP:{lan_ip}",
         ],
         check=True,
         capture_output=True,
@@ -204,36 +261,52 @@ def _self_signed() -> tuple[str, str]:
 
 
 def main() -> int:
-    global OUT_DIR
+    global OUT_DIR, PAIR_URL, TRACE_URL
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--host", default="0.0.0.0")
     ap.add_argument("--port", type=int, default=8444)
     ap.add_argument("--out", type=Path, default=OUT_DIR)
     ap.add_argument("--tls", action="store_true", help="serve https (self-signed)")
+    ap.add_argument(
+        "--app-url",
+        default=DEFAULT_APP_URL,
+        help=f"capture app origin the QR points at (default {DEFAULT_APP_URL})",
+    )
+    ap.add_argument(
+        "--host-ip",
+        default=None,
+        help="the address the phone reaches this server at (default: auto-detected LAN IP)",
+    )
     args = ap.parse_args()
 
     OUT_DIR = args.out
     OUT_DIR.mkdir(parents=True, exist_ok=True)
 
+    host_ip = args.host_ip or _lan_ip()
     httpd = ThreadingHTTPServer((args.host, args.port), Handler)
     scheme = "http"
     if args.tls:
         import ssl
 
-        cert, key = _self_signed()
+        cert, key = _self_signed(host_ip)
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ctx.load_cert_chain(cert, key)
         httpd.socket = ctx.wrap_socket(httpd.socket, server_side=True)
         scheme = "https"
 
+    TRACE_URL = f"{scheme}://{host_ip}:{args.port}/trace"
+    PAIR_URL = f"{args.app_url.rstrip('/')}/?trace={urllib.parse.quote(TRACE_URL, safe='')}"
+
     stamp = datetime.now(timezone.utc).isoformat()
-    print(f"[trace] {stamp} listening on {scheme}://{args.host}:{args.port}")
-    print(f"[trace] point the capture page at: ?trace={scheme}://<this-host>:{args.port}/trace")
-    print(f"[trace] writing traces under: {OUT_DIR.resolve()}")
+    _log(f"[trace] {stamp} listening on {scheme}://{args.host}:{args.port}")
+    _log(f"[trace] OPEN THIS ON THE LAPTOP for the pairing QR: {scheme}://{host_ip}:{args.port}/")
+    _log("[trace]   (scan it with the phone to open the app with tracing on)")
+    _log(f"[trace] trace endpoint: {TRACE_URL}")
+    _log(f"[trace] writing traces under: {OUT_DIR.resolve()}")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
-        print("\n[trace] shutting down")
+        _log("\n[trace] shutting down")
     return 0
 
 

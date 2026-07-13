@@ -12,9 +12,10 @@ py_binary(
     ],
 )
 
-# Standalone CV trace sink (stdlib only) — receives ?trace= dumps from the
-# capture page and writes readable JSONL + PNG thumbnails.
+# Standalone CV trace sink — receives ?trace= dumps from the capture page,
+# writes readable JSONL + PNG thumbnails, and hosts a pairing QR (segno).
 py_binary(
     name = "trace_server",
     srcs = ["trace_server.py"],
+    deps = [requirement("segno")],
 )
