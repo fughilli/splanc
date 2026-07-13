@@ -13,8 +13,13 @@ import {
   adjustThreshold,
   BIT_PERIOD_MAX_MS,
   BIT_PERIOD_MIN_MS,
+  blobPopulation,
   ExposureMonitor,
   HUE4_MIN_MEAN_LUMA,
+  LED_BRIGHTNESS_MAX,
+  LED_BRIGHTNESS_MIN,
+  type LedBrightnessSignals,
+  planLedBrightness,
   planReconfigure,
   planSymbolSwitch,
   recommendConfig,
@@ -134,6 +139,121 @@ test("starved detector walks back toward base, never below", () => {
 
 test("healthy blob count holds the operating point", () => {
   assert.equal(adjustThreshold(0.7, 40, 32), 0.7);
+});
+
+// -- planLedBrightness: the LED output brightness servo -----------------------
+
+/** Healthy operating point; tests override the signal under test. */
+function signals(over: Partial<LedBrightnessSignals> = {}): LedBrightnessSignals {
+  return {
+    blobCount: 30,
+    ledCount: 32,
+    splitFrac: 0,
+    grayFrac: 0.1,
+    medianIntensity: 0.8,
+    clipFrac: 0.002,
+    ...over,
+  };
+}
+
+test("brightness servo: healthy population holds", () => {
+  assert.equal(planLedBrightness(0.5, signals()), null);
+});
+
+test("brightness servo: split blobs (merging halos) step down fast", () => {
+  const next = planLedBrightness(0.5, signals({ splitFrac: 0.4 }));
+  assert.ok(next !== null && next < 0.5 * 0.7, `bloom must escape fast, got ${next}`);
+});
+
+test("brightness servo: majority-gray blobs (washed hue) step down", () => {
+  const next = planLedBrightness(0.5, signals({ grayFrac: 0.8 }));
+  assert.ok(next !== null && next < 0.5);
+});
+
+test("brightness servo: zero blobs — clipFrac picks the direction", () => {
+  // Washed out: the frame is flooded with clipped light (glare was dropped).
+  const down = planLedBrightness(0.8, signals({ blobCount: 0, clipFrac: 0.1 }));
+  assert.ok(down !== null && down < 0.8);
+  // Just dim: nothing clips, the strip is under the detector threshold.
+  const up = planLedBrightness(0.1, signals({ blobCount: 0, clipFrac: 0.001 }));
+  assert.ok(up !== null && up > 0.1);
+});
+
+test("brightness servo: starved but BRIGHT blobs mean merged neighbors — down", () => {
+  const next = planLedBrightness(0.5, signals({ blobCount: 8, medianIntensity: 0.95 }));
+  assert.ok(next !== null && next < 0.5);
+});
+
+test("brightness servo: starved and dim — up", () => {
+  const next = planLedBrightness(0.2, signals({ blobCount: 8, medianIntensity: 0.65 }));
+  assert.ok(next !== null && next > 0.2);
+});
+
+test("brightness servo: starved at mid intensity is framing, not exposure — hold", () => {
+  // 40 of 64 LEDs in view at a healthy intensity: chasing the count would
+  // oscillate against the bloom gates.
+  assert.equal(
+    planLedBrightness(0.5, signals({ blobCount: 40, ledCount: 64, medianIntensity: 0.8 })),
+    null,
+  );
+});
+
+test("brightness servo: healthy but dim claims SNR headroom, gently", () => {
+  const next = planLedBrightness(0.4, signals({ medianIntensity: 0.6 }));
+  assert.ok(next !== null && next > 0.4 && next < 0.55, `gentle up, got ${next}`);
+  // ...but not with any bloom evidence.
+  assert.equal(planLedBrightness(0.4, signals({ medianIntensity: 0.6, splitFrac: 0.05 })), null);
+});
+
+test("brightness servo: clamps to bounds and holds at them", () => {
+  // At the ceiling, an up-signal returns null (no-op renegotiation).
+  assert.equal(
+    planLedBrightness(LED_BRIGHTNESS_MAX, signals({ medianIntensity: 0.5 })),
+    null,
+  );
+  // At the floor, a down-signal returns null.
+  assert.equal(planLedBrightness(LED_BRIGHTNESS_MIN, signals({ splitFrac: 1 })), null);
+  // Near the floor, a down-step lands ON the floor.
+  assert.equal(planLedBrightness(0.07, signals({ splitFrac: 1 })), LED_BRIGHTNESS_MIN);
+});
+
+test("blobPopulation summarizes split/gray/intensity from a frame's blobs", () => {
+  const pop = blobPopulation([
+    { u: 0, v: 0, intensity: 0.9, area: 4, r: 1, g: 0.1, b: 0.1, split: true },
+    { u: 9, v: 0, intensity: 0.7, area: 4, r: 0.8, g: 0.8, b: 0.79 }, // gray
+    { u: 18, v: 0, intensity: 0.8, area: 4, r: 0.1, g: 0.1, b: 1 },
+  ]);
+  assert.ok(Math.abs(pop.splitFrac - 1 / 3) < 1e-9);
+  assert.ok(Math.abs(pop.grayFrac - 1 / 3) < 1e-9);
+  assert.equal(pop.medianIntensity, 0.8);
+});
+
+test("blobPopulation of an empty frame is all-zero (servo reads blobCount)", () => {
+  assert.deepEqual(blobPopulation([]), { splitFrac: 0, grayFrac: 0, medianIntensity: 0 });
+});
+
+test("monitor blob-population medians shrug off the cycle's ALL_ON frames", () => {
+  const mon = new ExposureMonitor();
+  // 12-frame cycle: 2 ALL_ON white frames (grayFrac 1.0), 10 data frames.
+  let t = 1000;
+  for (let cycle = 0; cycle < 3; cycle++) {
+    for (let f = 0; f < 12; f++) {
+      t += 33.3;
+      const allOn = f < 2;
+      mon.push({
+        tMs: t,
+        blobCount: 30,
+        blobs: {
+          splitFrac: 0,
+          grayFrac: allOn ? 1.0 : 0.05,
+          medianIntensity: 0.8,
+        },
+      });
+    }
+  }
+  const pop = mon.blobPopulation();
+  assert.ok(pop !== null);
+  assert.equal(pop.grayFrac, 0.05, "median sits on the data frames");
 });
 
 // -- ExposureMonitor ----------------------------------------------------------

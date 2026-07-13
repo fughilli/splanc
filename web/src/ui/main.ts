@@ -17,7 +17,9 @@ import type {
 } from "@ledmapper/protocol";
 import {
   adjustThreshold,
+  blobPopulation,
   ExposureMonitor,
+  planLedBrightness,
   planReconfigure,
   planSymbolSwitch,
   recommendConfig,
@@ -89,6 +91,13 @@ const forcedSymbols = ((): 2 | 4 | null => {
 const forcedBitMs = ((): number | null => {
   const v = parseFloat(qs.get("bitms") ?? "");
   return Number.isFinite(v) && v > 0 ? v : null;
+})();
+// ?brightness= forces a fixed LED output brightness (disables the wash-out
+// servo); unset, capture starts at full and servos down against measured
+// bloom (split/gray blob fractions, scene clipping).
+const forcedBrightness = ((): number | null => {
+  const v = parseFloat(qs.get("brightness") ?? "");
+  return Number.isFinite(v) && v >= 0 && v <= 1 ? v : null;
 })();
 // Debug: stream the raw per-frame blob field to the server (JSONL under the
 // session dir) so the CV stage's actual input can be inspected offline.
@@ -388,6 +397,8 @@ async function startCapture(): Promise<void> {
         : recommended !== null
           ? { bitPeriodMs: recommended.bitPeriodMs }
           : {}),
+      // Omitted = full brightness; the wash-out servo dims mid-capture.
+      ...(forcedBrightness !== null ? { brightness: forcedBrightness } : {}),
     };
 
     // Re-sync the clock right before the epoch matters.
@@ -495,7 +506,13 @@ async function startCapture(): Promise<void> {
       // Exposure monitoring: blob count every frame, the (cheap but not free)
       // unthresholded scene readback on a subsample — AE moves at ~1 Hz.
       const measured = frameCount % 6 === 0 ? detector.measure(f.texture, f.imgW, f.imgH) : undefined;
-      monitor.push({ tMs: f.tCaptureMs, blobCount: blobs.length, scene: measured });
+      monitor.push({
+        tMs: f.tCaptureMs,
+        blobCount: blobs.length,
+        scene: measured,
+        // Wash-out signals for the LED brightness servo (split/gray/intensity).
+        blobs: blobPopulation(blobs),
+      });
       lastAmbient = f.ambientIntensity ?? lastAmbient;
 
       if (trace) {
@@ -638,8 +655,9 @@ async function startCapture(): Promise<void> {
     // restamp the pattern clock for everyone.
     let pendingBitPeriod: number | null = null;
     let pendingSymbols: 2 | 4 | null = null;
+    let pendingBrightness: number | null = null;
     let renegotiating = false;
-    const applyReconfigure = (opts: { bitPeriodMs?: number; symbols?: 2 | 4 }): void => {
+    const applyReconfigure = (opts: { bitPeriodMs?: number; symbols?: 2 | 4; brightness?: number }): void => {
       renegotiating = true;
       client
         .configure(opts)
@@ -650,7 +668,9 @@ async function startCapture(): Promise<void> {
           pipeline = makePipeline(params, epoch);
           pipeline.updateSolved(liveLeds);
           if (recordBlobs) postFrames({ reset: true, epoch, codeParams: params });
-          hudGuide.textContent = `code renegotiated: ${params.symbols} symbols @ ${params.bitPeriodMs} ms/frame`;
+          hudGuide.textContent =
+            `code renegotiated: ${params.symbols} symbols @ ${params.bitPeriodMs} ms/frame` +
+            ` · LED ${Math.round((params.brightness ?? 1) * 100)}%`;
         })
         .catch(() => undefined)
         .finally(() => {
@@ -684,15 +704,41 @@ async function startCapture(): Promise<void> {
               pipeline.stats.marginEma,
             )
           : null;
-      if (wantBit !== null && wantBit === pendingBitPeriod) {
+      // LED brightness servo: detection probability over brightness is an
+      // inverted U (dim → blobs starve; bright → bloom merges halos and
+      // washes hue), so servo on the MEASURED wash-out signals.
+      const pop = monitor.blobPopulation();
+      const wantBright =
+        forcedBrightness === null && pop !== null
+          ? planLedBrightness(params.brightness ?? 1, {
+              blobCount: report.blobCount,
+              ledCount,
+              splitFrac: pop.splitFrac,
+              grayFrac: pop.grayFrac,
+              medianIntensity: pop.medianIntensity,
+              clipFrac: report.clipFrac,
+            })
+          : null;
+      // Two-consecutive-ticks confirmation on ANY knob; a confirmed change
+      // carries the others' current wants so one configure (one pattern
+      // re-anchor) covers them all.
+      const confirmed =
+        (wantBit !== null && wantBit === pendingBitPeriod) ||
+        (wantSym !== null && wantSym === pendingSymbols) ||
+        (wantBright !== null && wantBright === pendingBrightness);
+      if (confirmed) {
         pendingBitPeriod = null;
-        applyReconfigure({ bitPeriodMs: wantBit, ...(wantSym !== null ? { symbols: wantSym } : {}) });
-      } else if (wantSym !== null && wantSym === pendingSymbols) {
         pendingSymbols = null;
-        applyReconfigure({ symbols: wantSym, ...(wantBit !== null ? { bitPeriodMs: wantBit } : {}) });
+        pendingBrightness = null;
+        applyReconfigure({
+          ...(wantBit !== null ? { bitPeriodMs: wantBit } : {}),
+          ...(wantSym !== null ? { symbols: wantSym } : {}),
+          ...(wantBright !== null ? { brightness: wantBright } : {}),
+        });
       } else {
         pendingBitPeriod = wantBit;
         pendingSymbols = wantSym;
+        pendingBrightness = wantBright;
       }
     }, 2000);
   } catch (e) {

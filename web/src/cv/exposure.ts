@@ -29,6 +29,7 @@
  */
 
 import type { ExposureStats } from "@ledmapper/protocol";
+import type { Blob } from "./types";
 
 /** Scene luminance statistics from one unthresholded downsampled frame. */
 export interface SceneStats {
@@ -38,11 +39,51 @@ export interface SceneStats {
   clipFrac: number;
 }
 
+/** Per-frame blob-population signals for the LED brightness servo — what the
+ * detector can see about wash-out without any ground truth. */
+export interface BlobPopulation {
+  /** Fraction of blobs that came out of an oversized bloom component
+   * (Blob.split) — halos are merging; unambiguously "too bright". */
+  splitFrac: number;
+  /** Fraction of blobs whose mean color is near-gray. NOTE: ALL_ON white
+   * frames legitimately read 1.0, so consume this as a MEDIAN over a window
+   * spanning a cycle (data frames dominate) — never a single frame. */
+  grayFrac: number;
+  /** Median blob mean-luminance, [0, 1]. */
+  medianIntensity: number;
+}
+
+/** Chroma fraction below which a blob's hue is considered washed out. */
+export const GRAY_CHROMA_FRAC = 0.25;
+
+/** Summarize one frame's blobs for the servo. */
+export function blobPopulation(blobs: readonly Blob[]): BlobPopulation {
+  let split = 0;
+  let gray = 0;
+  const intensities: number[] = [];
+  for (const b of blobs) {
+    if (b.split === true) split++;
+    const mx = Math.max(b.r ?? 0, b.g ?? 0, b.b ?? 0);
+    const mn = Math.min(b.r ?? 0, b.g ?? 0, b.b ?? 0);
+    if (mx === 0 || (mx - mn) / mx < GRAY_CHROMA_FRAC) gray++;
+    intensities.push(b.intensity);
+  }
+  intensities.sort((a, b) => a - b);
+  const n = blobs.length;
+  return {
+    splitFrac: n > 0 ? split / n : 0,
+    grayFrac: n > 0 ? gray / n : 0,
+    medianIntensity: n > 0 ? intensities[n >> 1]! : 0,
+  };
+}
+
 export interface FrameSample {
   tMs: number;
   blobCount: number;
   /** Present on frames where the (cheaper, subsampled) measure pass ran. */
   scene?: SceneStats | undefined;
+  /** Blob-population summary for the LED brightness servo. */
+  blobs?: BlobPopulation | undefined;
 }
 
 /**
@@ -162,6 +203,89 @@ export function planSymbolSwitch(
   return null;
 }
 
+/** LED output brightness bounds. The floor keeps enough PWM resolution on an
+ * 8-bit strip for the hue palette to survive quantization (0.05 ≈ 13/255). */
+export const LED_BRIGHTNESS_MIN = 0.05;
+export const LED_BRIGHTNESS_MAX = 1.0;
+/** Multiplicative servo steps: DOWN escapes fast (wash-out is a cliff — the
+ * 2026-07-13 bloom study lost ALL detections within ~2× above the good
+ * band), UP creeps (the only cost of slightly-too-dim is detection range). */
+export const LED_BRIGHTNESS_UP = 1.25;
+export const LED_BRIGHTNESS_DOWN = 0.6;
+/** Bloom gates: any split blobs beyond noise, or a majority-gray population,
+ * means halos are merging / hue is washing — step down. */
+export const BLOOM_SPLIT_FRAC = 0.15;
+export const BLOOM_GRAY_FRAC = 0.5;
+/** Scene clip fraction that reads "the frame is flooded with clipped light"
+ * — disambiguates ZERO blobs (washed-out glare got dropped as oversized)
+ * from "strip is too dim to detect". */
+export const WASHOUT_CLIP_FRAC = 0.03;
+/** Blob count below this fraction of ledCount reads as starved. Above 1/2
+ * because pairwise-merged neighbors land EXACTLY at ledCount/2 (the G=24
+ * sim run settled there); below 1 because captures rarely frame the whole
+ * strip, so a modest shortfall is normal. */
+export const STARVE_FRAC = 0.7;
+/** Median blob intensity above which a STARVED detector means merged blobs
+ * (bright but too few), not dim ones. */
+export const STARVE_BRIGHT_INTENSITY = 0.85;
+/** Median blob intensity below which a healthy population still has SNR
+ * headroom worth claiming. */
+export const DIM_INTENSITY = 0.7;
+
+export interface LedBrightnessSignals {
+  blobCount: number;
+  ledCount: number;
+  /** Median per-frame BlobPopulation over the report window. */
+  splitFrac: number;
+  grayFrac: number;
+  medianIntensity: number;
+  /** Scene clip fraction from the measure pass (SceneStats.clipFrac). */
+  clipFrac: number;
+}
+
+/**
+ * LED brightness servo: returns the brightness to renegotiate to, or null to
+ * hold. Detection probability over brightness is an inverted U — too dim and
+ * blobs fall under the detector threshold, too bright and blooming merges
+ * halos and washes hue to white — and the optimum moves with scene gain
+ * (auto-exposure in a dim room = high ISO = wash-out at a fraction of the
+ * brightness a lit room wants; measured 2026-07-13: the workable band at
+ * 12× the gain sits ~6× lower). So this servos on the phone's MEASURED
+ * wash-out signals, not scene luminance:
+ *
+ *  - no blobs at all: clipFrac says which side of the U we're on (a washed
+ *    scene floods the frame with clipped light; a dim strip doesn't);
+ *  - split/gray blobs: halos merging, hue washing — down;
+ *  - starved but BRIGHT blobs: neighbors merged into few blobs — down;
+ *    starved and dim — up;
+ *  - healthy but dim: claim SNR headroom — up, until a bloom gate answers.
+ *
+ * One step per report tick, like adjustThreshold; the caller applies the
+ * same two-consecutive-ticks confirmation as the other renegotiations (a
+ * configure re-stamps the pattern clock for everyone).
+ */
+export function planLedBrightness(current: number, m: LedBrightnessSignals): number | null {
+  const up = Math.min(LED_BRIGHTNESS_MAX, current * LED_BRIGHTNESS_UP);
+  const down = Math.max(LED_BRIGHTNESS_MIN, current * LED_BRIGHTNESS_DOWN);
+  const step = (next: number): number | null => (Math.abs(next - current) < 1e-3 ? null : next);
+  if (m.blobCount === 0) {
+    return step(m.clipFrac > WASHOUT_CLIP_FRAC ? down : up);
+  }
+  if (m.splitFrac > BLOOM_SPLIT_FRAC || m.grayFrac > BLOOM_GRAY_FRAC) return step(down);
+  if (m.blobCount < m.ledCount * STARVE_FRAC) {
+    // Bright-but-few = neighbors merged into shared blobs; dim-and-few = the
+    // strip is fading under the detector threshold. In between, the deficit
+    // is probably framing (not every LED in view) — don't chase it.
+    if (m.medianIntensity >= STARVE_BRIGHT_INTENSITY) return step(down);
+    if (m.medianIntensity < DIM_INTENSITY) return step(up);
+    return null;
+  }
+  if (m.medianIntensity < DIM_INTENSITY && m.splitFrac === 0 && m.grayFrac < GRAY_CHROMA_FRAC) {
+    return step(up);
+  }
+  return null;
+}
+
 /**
  * Detector-threshold servo: one step per report tick, driven by the measured
  * blob count. A flooded detector (bright room slicing scene luminance —
@@ -224,6 +348,19 @@ export class ExposureMonitor {
       meanLuma: median(scenes.map((s) => s.meanLuma)),
       p95Luma: median(scenes.map((s) => s.p95Luma)),
       clipFrac: median(scenes.map((s) => s.clipFrac)),
+    };
+  }
+
+  /** Median blob-population signals over the window's frames. Per-frame
+   * medians make grayFrac robust to the cycle's ALL_ON white frames (a
+   * minority of any window spanning a cycle). Null until frames carry them. */
+  blobPopulation(): BlobPopulation | null {
+    const pops = this.samples.filter((s) => s.blobs !== undefined).map((s) => s.blobs!);
+    if (pops.length === 0) return null;
+    return {
+      splitFrac: median(pops.map((p) => p.splitFrac)),
+      grayFrac: median(pops.map((p) => p.grayFrac)),
+      medianIntensity: median(pops.map((p) => p.medianIntensity)),
     };
   }
 
