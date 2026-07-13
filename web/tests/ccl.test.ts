@@ -137,3 +137,98 @@ test("stats: an all-gray blob has zero chroma and safe defaults", () => {
   assert.equal(blob!.cb, 0);
   assert.equal(blob!.satFrac, 0);
 });
+
+/** RGBA buffer builder for the splitOversized tests. */
+function rgbaBuffer(w: number, h: number): {
+  data: Uint8Array;
+  put: (x: number, y: number, r: number, g: number, b: number, a: number) => void;
+} {
+  const data = new Uint8Array(w * h * 4);
+  return {
+    data,
+    put: (x, y, r, g, b, a) => {
+      const i = (y * w + x) * 4;
+      data[i] = r; data[i + 1] = g; data[i + 2] = b; data[i + 3] = a;
+    },
+  };
+}
+
+test("splitOversized: whiteness ladder resolves cores in a fully clipped band", () => {
+  // A washed-out strip: one saturated band (weight 255 EVERYWHERE, so the
+  // weight ladder cannot split it) holding two bloomed white cores, red halo
+  // on the left half and blue on the right. maxArea drops the whole band
+  // today; splitting must recover the two cores with their own halo hues.
+  const W = 40, H = 8;
+  const { data, put } = rgbaBuffer(W, H);
+  for (let y = 2; y <= 5; y++) {
+    for (let x = 2; x <= 37; x++) {
+      if (x < 18) put(x, y, 200, 0, 0, 255); // red halo
+      else put(x, y, 0, 0, 200, 255); // blue halo
+    }
+  }
+  for (let y = 3; y <= 5; y++) {
+    for (let x = 7; x <= 9; x++) put(x, y, 255, 255, 255, 255); // left core
+    for (let x = 27; x <= 29; x++) put(x, y, 255, 255, 255, 255); // right core
+  }
+  // An ordinary small blob elsewhere must come through unchanged.
+  put(38, 0, 0, 220, 0, 200);
+
+  const off = connectedComponents(data, W, H, 4, 3, { maxArea: 30, colorBase: 0 });
+  assert.equal(off.length, 1, "without splitting, the band is silently dropped");
+
+  const blobs = connectedComponents(data, W, H, 4, 3, {
+    maxArea: 30,
+    colorBase: 0,
+    splitOversized: true,
+  });
+  const cores = blobs.filter((b) => b.split === true);
+  const plain = blobs.filter((b) => b.split !== true);
+  assert.equal(cores.length, 2);
+  assert.equal(plain.length, 1);
+  assert.equal(plain[0]!.g, 220 / 255, "ordinary blob keeps its member-mean color");
+  const [left, right] = [...cores].sort((a, b) => a.x - b.x);
+  // Centroids on the cores (x centers 7..9 -> 8.5, 27..29 -> 28.5).
+  assert.ok(Math.abs(left!.x - 8.5) < 0.01 && Math.abs(left!.y - 4.5) < 0.01, `left at ${left!.x}`);
+  assert.ok(Math.abs(right!.x - 28.5) < 0.01, `right at ${right!.x}`);
+  // Halo hue, not the white core mean — and each core gets its OWN halo.
+  assert.ok(left!.r! > 2 * left!.b! && left!.r! > 0.3, "left core reads its red halo");
+  assert.ok(right!.b! > 2 * right!.r! && right!.b! > 0.3, "right core reads its blue halo");
+});
+
+test("splitOversized: weight ladder separates dim LEDs merged below saturation", () => {
+  // Two unsaturated mounds (weights 200 / 220) bridged by dimmer glow (160):
+  // one component over maxArea, no clipped pixels anywhere — the weight
+  // ladder must find the cut (192) that separates them.
+  const W = 20, H = 4;
+  const { data, put } = rgbaBuffer(W, H);
+  for (let y = 1; y <= 2; y++) {
+    for (let x = 2; x <= 6; x++) put(x, y, 200, 0, 0, 200); // red mound
+    for (let x = 7; x <= 11; x++) put(x, y, 60, 60, 60, 160); // gray bridge
+    for (let x = 12; x <= 16; x++) put(x, y, 0, 0, 220, 220); // blue mound
+  }
+  const blobs = connectedComponents(data, W, H, 4, 3, {
+    maxArea: 20,
+    colorBase: 0,
+    splitOversized: true,
+  });
+  assert.equal(blobs.length, 2);
+  assert.ok(blobs.every((b) => b.split === true));
+  const [red, blue] = [...blobs].sort((a, b) => a.x - b.x);
+  assert.ok(Math.abs(red!.x - 4.5) < 0.01 && Math.abs(blue!.x - 14.5) < 0.01);
+  assert.ok(red!.r! > 2 * red!.b!, "red mound keeps its hue");
+  assert.ok(blue!.b! > 2 * blue!.r!, "blue mound keeps its hue");
+});
+
+test("splitOversized: a giant all-white region is still glare, not LEDs", () => {
+  // White wall of light: saturated in every channel, larger than maxArea at
+  // every cut of both ladders — must produce nothing.
+  const W = 20, H = 10;
+  const { data, put } = rgbaBuffer(W, H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) put(x, y, 255, 255, 255, 255);
+  const blobs = connectedComponents(data, W, H, 4, 3, {
+    maxArea: 50,
+    colorBase: 0,
+    splitOversized: true,
+  });
+  assert.equal(blobs.length, 0);
+});

@@ -168,12 +168,18 @@ export class DetectorGL {
     gl.viewport(prevViewport[0]!, prevViewport[1]!, prevViewport[2]!, prevViewport[3]!);
 
     // Fill/weight channel is alpha (masked luminance); RGB carries color.
+    // splitOversized: a washed-out strip merges every halo into one giant
+    // component that maxArea used to silently drop — taking every LED with
+    // it (2026-07-12 capture screenshot: one 98k-px component spanned the
+    // frame at threshold 0.6, beyond even the threshold servo's 0.9 cap).
+    // The cut ladders re-threshold such components into per-core blobs.
     const comps = connectedComponents(this.readback, w, h, 4, 3, {
       minArea: this.minArea,
       maxArea: this.maxArea,
       maxBlobs: this.maxBlobs,
       colorBase: 0,
       stats: opts.stats === true,
+      splitOversized: true,
     });
 
     // readPixels row 0 is the render target's bottom row, and the fragment
@@ -196,6 +202,7 @@ export class DetectorGL {
           g: c.g!,
           b: c.b!,
         };
+        if (c.split) blob.split = true;
         if (opts.stats) {
           // stats:true guarantees CCL populated these.
           blob.peak = c.peak!;

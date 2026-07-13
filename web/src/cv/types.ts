@@ -26,6 +26,9 @@ export interface Blob {
   cr?: number;
   cg?: number;
   cb?: number;
+  /** Split out of an oversized bloom component (CclBlob.split): r/g/b are
+   * the sampled halo hue, not a member mean. */
+  split?: boolean;
 }
 
 /** Per-frame capture metadata a detection record needs (§7.4). */
