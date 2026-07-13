@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import os
 import struct
 import subprocess
 import sys
@@ -34,7 +35,16 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-OUT_DIR = Path("traces")
+
+def _log(msg: str) -> None:
+    # bazel run pipes stdout, so force a flush or nothing shows live.
+    print(msg, flush=True)
+
+
+# Default under the source workspace (so dumps are readable + survive), not
+# the bazel runfiles sandbox. BUILD_WORKSPACE_DIRECTORY is set by `bazel run`.
+_WS = os.environ.get("BUILD_WORKSPACE_DIRECTORY")
+OUT_DIR = Path(_WS) / "traces" if _WS else Path("traces")
 
 
 def _png(width: int, height: int, rgb: bytes) -> bytes:
@@ -87,11 +97,16 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "content-type")
 
     def do_OPTIONS(self) -> None:  # noqa: N802 (http.server API)
+        # The CORS preflight is the FIRST contact from the capture page — log
+        # it so the user sees the phone reached the server (cert trusted, CORS
+        # negotiated) even before any frames flush.
+        _log(f"[trace] preflight from {self.client_address[0]} — phone can reach the server")
         self.send_response(204)
         self._cors()
         self.end_headers()
 
     def do_GET(self) -> None:  # noqa: N802
+        _log(f"[trace] GET from {self.client_address[0]} (cert accepted if from a browser)")
         sessions = sorted(p.name for p in OUT_DIR.glob("*") if p.is_dir())
         body = (
             "ledmapper trace server\n\nsessions:\n"
@@ -124,7 +139,7 @@ class Handler(BaseHTTPRequestHandler):
             session_dir = OUT_DIR / _last_session
             session_dir.mkdir(parents=True, exist_ok=True)
             (session_dir / "meta.json").write_text(json.dumps(header, indent=2))
-            print(f"[trace] new session {_last_session}: {header.get('userAgent', '')}")
+            _log(f"[trace] new session {_last_session}: {header.get('userAgent', '')}")
         session_dir = OUT_DIR / (_last_session or "unknown")
         session_dir.mkdir(parents=True, exist_ok=True)
 
@@ -143,7 +158,7 @@ class Handler(BaseHTTPRequestHandler):
                 f.write(json.dumps(frame) + "\n")
 
         if frames:
-            print(
+            _log(
                 f"[trace] {_last_session}: +{len(frames)} frames, "
                 f"{n_blobs} blobs ({n_sat} with >10% saturation)"
             )
@@ -165,10 +180,22 @@ def _self_signed() -> tuple[str, str]:
     cert, key = d / "cert.pem", d / "key.pem"
     subprocess.run(
         [
-            "openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
-            "-keyout", str(key), "-out", str(cert), "-days", "365",
-            "-subj", "/CN=ledmapper-trace",
-            "-addext", "subjectAltName=DNS:localhost,IP:127.0.0.1",
+            "openssl",
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-keyout",
+            str(key),
+            "-out",
+            str(cert),
+            "-days",
+            "365",
+            "-subj",
+            "/CN=ledmapper-trace",
+            "-addext",
+            "subjectAltName=DNS:localhost,IP:127.0.0.1",
         ],
         check=True,
         capture_output=True,

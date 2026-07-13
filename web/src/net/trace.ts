@@ -107,8 +107,13 @@ export class TraceSink {
     return this.buf.length;
   }
 
+  private warned = false;
+
   /** POST the queued frames (with the header on the first flush). Best-effort:
-   * a failed POST drops the batch rather than stalling the capture. */
+   * a failed POST drops the batch rather than stalling the capture. NOTE: no
+   * `keepalive` — the Fetch spec caps keepalive bodies at 64 KB and a batch
+   * with base64 thumbnails blows past that (silent throw); the page isn't
+   * unloading mid-capture, so a plain fetch is correct anyway. */
   async flush(): Promise<void> {
     if (this.buf.length === 0 || this.posting || !this.fetchFn) return;
     this.posting = true;
@@ -121,10 +126,17 @@ export class TraceSink {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ header, frames }),
-        keepalive: true,
       });
-    } catch {
-      // best-effort — the capture must not stall on a trace hiccup
+    } catch (e) {
+      // best-effort — the capture must not stall on a trace hiccup — but
+      // surface the FIRST failure so a mistyped/untrusted trace URL is
+      // visible in the console (the usual cause: the self-signed trace-server
+      // cert wasn't accepted on the phone, so the cross-origin POST is
+      // rejected before it leaves).
+      if (!this.warned) {
+        this.warned = true;
+        console.warn(`trace POST to ${this.url} failed (first of possibly many):`, e);
+      }
     } finally {
       this.posting = false;
     }
