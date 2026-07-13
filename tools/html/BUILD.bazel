@@ -1,0 +1,32 @@
+"""html_minify — Nix-provided HTML minification (see minify.bzl).
+
+The test asserts PROPERTIES of the output (comments gone, content and
+script tokens preserved, strictly smaller), not exact bytes — the minifier
+version floats with the nixpkgs pin and its byte-level choices are not this
+repo's contract.
+"""
+
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load(":minify.bzl", "html_minify")
+
+package(default_visibility = ["//visibility:public"])
+
+html_minify(
+    name = "fixture_min",
+    testonly = True,
+    src = "testdata/fixture.html",
+    out = "fixture.min.html",
+)
+
+sh_test(
+    name = "minify_test",
+    srcs = ["minify_test.sh"],
+    args = [
+        "$(location testdata/fixture.html)",
+        "$(location :fixture_min)",
+    ],
+    data = [
+        "testdata/fixture.html",
+        ":fixture_min",
+    ],
+)

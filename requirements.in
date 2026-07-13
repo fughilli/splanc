@@ -34,3 +34,7 @@ segno
 # Wire protocol (proto-comms branch): protobuf runtime for the generated
 # ledmapper.v1 bindings.
 protobuf==6.33.5
+
+# Build tooling: template expansion behind //tools/jinja:jinja_template
+# (bakes build constants into shipped resources with StrictUndefined).
+jinja2

@@ -194,15 +194,46 @@ local_path_override(
 # register rules_nixpkgs (pinned) so the future option of pulling nix
 # derivations into the Bazel graph is available.
 #
-# IMPORTANT (repo-wide build safety): we deliberately DO NOT declare a
-# `nix_repo` / `nixpkgs_package` here. Declaring one would make Bazel try to
-# evaluate Nix at fetch time, which FAILS on machines without `nix` installed
-# and would break `bazel build //...` for everyone. Keeping this to the
-# bazel_dep registration only means the dep is resolved from the registry but
-# nothing forces a nix evaluation. See pi/provisioning/README.md.
+# IMPORTANT (repo-wide build safety): repository fetches are LAZY — the
+# nixpkgs repo and packages below are only evaluated when a target that
+# references them is built. `bazel build //...` minus those targets stays
+# green on machines without `nix`; the targets that DO reference them
+# (currently the //firmware/landing resource chain via //tools/html:minify)
+# require `nix` on the builder's PATH at fetch time. Keep this set small and
+# deliberate. See pi/provisioning/README.md.
 #
 # rules_nixpkgs 0.13.0 (pinned 2026-06-19). bzlmod module: rules_nixpkgs_core.
 bazel_dep(name = "rules_nixpkgs_core", version = "0.13.0")
+
+# Pinned nixpkgs snapshot (release tag 25.05, pinned 2026-07-13) — the source
+# for Nix-provided build tools. sha256 is of the GitHub archive tarball.
+nix_repo = use_extension("@rules_nixpkgs_core//extensions:repository.bzl", "nix_repo")
+nix_repo.github(
+    name = "nixpkgs",
+    org = "NixOS",
+    repo = "nixpkgs",
+    sha256 = "130b4257b3d53bfbfea6d61fb76d4751a3989a4a09a28615ff77516a82b3924d",
+    tag = "25.05",
+)
+use_repo(nix_repo, "nixpkgs")
+
+# tdewolff/minify — a single static Go binary that minifies HTML/CSS/JS; the
+# tool behind //tools/html:minify (html_minify rule) for resources baked into
+# firmware flash (every byte served from the ESP32 counts).
+nix_pkg = use_extension("@rules_nixpkgs_core//extensions:package.bzl", "nix_pkg")
+nix_pkg.attr(
+    attr = "minify",
+    build_file_content = """\
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "minify",
+    srcs = ["bin/minify"],
+)
+""",
+    repo = "@nixpkgs",
+)
+use_repo(nix_pkg, "minify")
 
 # ---------------------------------------------------------------------------
 # Python toolchain — Pi-compatible 3.11.

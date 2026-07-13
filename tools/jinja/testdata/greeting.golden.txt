@@ -1,0 +1,5 @@
+Hello from LED Mapper!
+The WebSocket listens on port 81.
+channel: red
+channel: green
+channel: blue
