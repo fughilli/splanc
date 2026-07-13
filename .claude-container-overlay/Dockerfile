@@ -52,8 +52,18 @@ ENV PATH=/nix/var/nix/profiles/default/bin:$PATH
 # go+rwX parents above make that mkdir possible). Without this, a fresh container
 # needs a manual `sudo chown $(whoami) /nix/var/nix/profiles/per-user` before any
 # `nix` command works (the workaround used to verify M4 on 2026-06-19).
-RUN chmod -R go+rwX /nix \
-    && rm -rf /nix/var/nix/profiles/per-user /nix/var/nix/gcroots/per-user
+#
+# BUT deleting per-user also severs the `default` profile: the installer makes
+# /nix/var/nix/profiles/default a symlink INTO per-user/root/profile, so after
+# the rm -rf the ENV PATH above points through a dangling link and no `nix` is
+# callable at all (bit us 2026-07-13; repaired by hand that session). Resolve
+# default to its store path FIRST and re-point it directly at the store —
+# profile MUTATION by the runtime user was never supported here; PATH access
+# to the pinned binaries is all `default` has to provide.
+RUN PROFILE_STORE_PATH="$(readlink -f /nix/var/nix/profiles/default)" \
+    && chmod -R go+rwX /nix \
+    && rm -rf /nix/var/nix/profiles/per-user /nix/var/nix/gcroots/per-user \
+    && ln -sfn "$PROFILE_STORE_PATH" /nix/var/nix/profiles/default
 
 # openssh-client: ssh-keygen for the M4 deploy-key flow
 # (pi/provisioning/scripts/manage_keys.sh). Not in the base image; install the
