@@ -127,9 +127,18 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self) -> None:  # noqa: N802
-        _log(f"[trace] GET from {self.client_address[0]} (cert accepted if from a browser)")
-        sessions = sorted(p.name for p in OUT_DIR.glob("*") if p.is_dir())
-        body = _landing_html(sessions).encode()
+        path = self.path.split("?", 1)[0]
+        # /go is the QR target: the PHONE lands here (a top-level navigation to
+        # THIS origin), which is what lets it accept the self-signed cert —
+        # without which the later cross-origin trace POSTs are silently
+        # blocked. It then bounces to the app with ?trace= filled.
+        if path == "/go":
+            _log(f"[trace] /go from {self.client_address[0]} — cert accepted, bouncing to the app")
+            body = _bounce_html().encode()
+        else:
+            _log(f"[trace] GET {path} from {self.client_address[0]}")
+            sessions = sorted(p.name for p in OUT_DIR.glob("*") if p.is_dir())
+            body = _landing_html(sessions).encode()
         self.send_response(200)
         self._cors()
         self.send_header("content-type", "text/html; charset=utf-8")
@@ -188,42 +197,72 @@ class Handler(BaseHTTPRequestHandler):
 
 
 _last_session: str | None = None
-# Pairing state, set in main(): the trace POST endpoint and the full capture
-# URL the phone should open (app origin + ?trace=), which the QR encodes.
+# Pairing state, set in main(): the app URL with ?trace= filled (PAIR_URL),
+# the trace POST endpoint (TRACE_URL), and the /go bounce URL the QR encodes
+# (GO_URL — points at THIS server so the phone accepts the cert first).
 PAIR_URL = ""
 TRACE_URL = ""
+GO_URL = ""
+
+_PAGE_STYLE = """
+  body { font: 15px/1.5 system-ui, sans-serif; background:#fff; color:#111;
+         display:grid; place-items:center; min-height:100vh; margin:0; }
+  main { max-width:30rem; padding:1.5rem; text-align:center; }
+  img.qr { width:min(70vw,320px); height:auto; image-rendering:pixelated; }
+  a.button { display:inline-block; margin-top:1rem; padding:.7rem 1.4rem;
+             border-radius:.5rem; background:#2a6; color:#fff;
+             text-decoration:none; font-weight:600; }
+  code { background:#f0f0f0; padding:.1em .3em; border-radius:.2em;
+         word-break:break-all; font-size:.85em; }
+  .muted { color:#666; font-size:.85rem; }
+  ul { text-align:left; }
+"""
+
+
+def _bounce_html() -> str:
+    """Served at /go — the QR target. Loading it (a top-level navigation to
+    THIS origin) is what lets the phone accept the self-signed cert; it then
+    redirects to the capture app with ?trace= filled, so the later
+    cross-origin trace POSTs reuse the stored cert exception."""
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LED Mapper trace</title>
+<style>{_PAGE_STYLE}</style>
+<script>
+  var target = {json.dumps(PAIR_URL)};
+  setTimeout(function () {{ location.replace(target); }}, 800);
+</script></head>
+<body><main>
+  <h1>Trace server trusted</h1>
+  <p>Opening the capture app… then set up the player over Bluetooth.</p>
+  <a class="button" href="{html.escape(PAIR_URL)}">Open the app</a>
+</main></body></html>"""
 
 
 def _landing_html(sessions: list[str]) -> str:
-    """The pairing page (shown on the laptop): a QR encoding the capture URL
-    with ?trace= pre-filled — scan it with the phone to open the app already
-    pointed at this trace server, no typing. Plus live session status."""
-    qr = segno.make(PAIR_URL, error="m")
+    """The pairing page (shown on the LAPTOP): a QR encoding the /go bounce on
+    this server — scan it with the phone to accept the cert AND open the app
+    pointed at this trace server. Plus live session status."""
+    qr = segno.make(GO_URL, error="m")
     qr_img = qr.png_data_uri(scale=6, border=3, dark="#111", light="#fff")
     session_list = "".join(f"<li>{html.escape(s)}</li>" for s in sessions) or "<li>(none yet)</li>"
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LED Mapper trace server</title>
-<style>
-  body {{ font: 15px/1.5 system-ui, sans-serif; background:#fff; color:#111;
-         display:grid; place-items:center; min-height:100vh; margin:0; }}
-  main {{ max-width:30rem; padding:1.5rem; text-align:center; }}
-  img.qr {{ width:min(70vw,320px); height:auto; image-rendering:pixelated; }}
-  code {{ background:#f0f0f0; padding:.1em .3em; border-radius:.2em;
-          word-break:break-all; font-size:.85em; }}
-  .muted {{ color:#666; font-size:.85rem; }}
-  ul {{ text-align:left; }}
-</style></head>
+<style>{_PAGE_STYLE}</style></head>
 <body><main>
   <h1>Scan to start a traced capture</h1>
-  <p>Scan with the phone camera to open the capture app pointed at this trace
-     server. (First accept this page's certificate on the phone if it warns —
-     same self-signed cert the trace POSTs use.)</p>
+  <p>Scan with the phone camera. It opens THIS server first (accept the
+     certificate warning — "Advanced &rarr; Proceed"), which then bounces to
+     the capture app with tracing on. Accepting the cert here is what lets the
+     trace POSTs through.</p>
   <img class="qr" src="{qr_img}" alt="pairing QR">
-  <p class="muted">encodes:<br><code>{html.escape(PAIR_URL)}</code></p>
-  <p class="muted">Then set up the player over Bluetooth as usual (the
-     <code>?url=</code> the app adds is kept across the trace param).</p>
+  <p class="muted">QR &rarr; <code>{html.escape(GO_URL)}</code><br>
+     then &rarr; <code>{html.escape(PAIR_URL)}</code></p>
+  <p class="muted">After the app opens, set up the player over Bluetooth (the
+     <code>?url=</code> it adds is kept across the trace param).</p>
   <h2 style="font-size:1rem">Sessions received</h2>
   <ul>{session_list}</ul>
 </main></body></html>"""
@@ -261,7 +300,7 @@ def _self_signed(lan_ip: str) -> tuple[str, str]:
 
 
 def main() -> int:
-    global OUT_DIR, PAIR_URL, TRACE_URL
+    global OUT_DIR, PAIR_URL, TRACE_URL, GO_URL
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--host", default="0.0.0.0")
     ap.add_argument("--port", type=int, default=8444)
@@ -296,11 +335,13 @@ def main() -> int:
 
     TRACE_URL = f"{scheme}://{host_ip}:{args.port}/trace"
     PAIR_URL = f"{args.app_url.rstrip('/')}/?trace={urllib.parse.quote(TRACE_URL, safe='')}"
+    GO_URL = f"{scheme}://{host_ip}:{args.port}/go"
 
     stamp = datetime.now(timezone.utc).isoformat()
     _log(f"[trace] {stamp} listening on {scheme}://{args.host}:{args.port}")
     _log(f"[trace] OPEN THIS ON THE LAPTOP for the pairing QR: {scheme}://{host_ip}:{args.port}/")
-    _log("[trace]   (scan it with the phone to open the app with tracing on)")
+    _log("[trace]   scan it with the phone: it accepts this server's cert, then")
+    _log("[trace]   bounces to the app with tracing on (then do BLE player setup)")
     _log(f"[trace] trace endpoint: {TRACE_URL}")
     _log(f"[trace] writing traces under: {OUT_DIR.resolve()}")
     try:
