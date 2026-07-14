@@ -185,22 +185,17 @@ local_path_override(
 )
 
 # ---------------------------------------------------------------------------
-# Nix integration (M4 — pi/provisioning).
+# Nix integration.
 #
-# rules_nixpkgs lets Bazel import Nix-built packages as Bazel targets. The
-# M4 provisioning targets (//pi/provisioning:image_sd, :deploy_live) are
-# thin sh_binary wrappers that shell out to the `nix` CLI, so they DO NOT
-# require any nixpkgs repo to be fetched — they work without this dep. We
-# register rules_nixpkgs (pinned) so the future option of pulling nix
-# derivations into the Bazel graph is available.
-#
-# IMPORTANT (repo-wide build safety): repository fetches are LAZY — the
-# nixpkgs repo and packages below are only evaluated when a target that
-# references them is built. `bazel build //...` minus those targets stays
-# green on machines without `nix`; the targets that DO reference them
-# (currently the //firmware/landing resource chain via //tools/html:minify)
-# require `nix` on the builder's PATH at fetch time. Keep this set small and
-# deliberate. See pi/provisioning/README.md.
+# `nix` is a SYSTEM REQUIREMENT for this repository (README prerequisites):
+# rules_nixpkgs imports Nix-built tools/packages as Bazel targets, the M4
+# provisioning targets (//pi/provisioning:*) shell out to the `nix` CLI, and
+# build tools like the HTML minifier (//tools/html:minify) come from the
+# pinned nixpkgs snapshot below. Repository fetches are still lazy (a nixpkgs
+# package is realized only when a target that uses it is built), so an
+# unrelated `bazel build //some:target` needn't pay for nix it doesn't touch
+# — but the repo as a whole (`bazel test //...`) does require `nix` on PATH,
+# and that is intended, not a regression to work around.
 #
 # rules_nixpkgs 0.13.0 (pinned 2026-06-19). bzlmod module: rules_nixpkgs_core.
 bazel_dep(name = "rules_nixpkgs_core", version = "0.13.0")

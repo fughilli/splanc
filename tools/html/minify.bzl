@@ -6,10 +6,10 @@ SoftAP link; comments and indentation are pure waste there. This rule runs
 tdewolff/minify (HTML + embedded CSS/JS) over a single file.
 
 The minifier binary comes from the pinned nixpkgs snapshot (@minify,
-declared in MODULE.bazel) — a single static Go binary, no host install.
-NOTE: that makes `nix` a build-time requirement FOR TARGETS USING THIS RULE
-(the repository is fetched lazily, so the rest of the repo still builds on
-nix-less machines — see the Nix section of MODULE.bazel).
+declared in MODULE.bazel) — a single static Go binary, no separate host
+install. `nix` is a system requirement for this repo (see the Nix section of
+MODULE.bazel); the @minify fetch is lazy, so only targets using this rule
+realize it.
 """
 
 def _html_minify_impl(ctx):

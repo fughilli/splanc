@@ -281,6 +281,6 @@ valid store path`.** Under `bazel run`, the script derived `SECRETS_DIR` from
 - `bazelisk query //pi/provisioning/...` lists all targets; BUILD.bazel parses.
 - `bazelisk build --nobuild //pi/provisioning:{image_sd,deploy_live,keys}`
   analyzes cleanly.
-- The root `MODULE.bazel` change is **registration-only** (no `nix_repo` /
-  `nixpkgs_package`), so `bazel build //...` still works without Nix; the
-  wrappers shell out to the `nix` CLI at run time.
+- These provisioning wrappers shell out to the `nix` CLI at run time. (Nix is
+  a system requirement for the repo generally — `MODULE.bazel` now also imports
+  nix-built build tools; see its Nix section.)

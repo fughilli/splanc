@@ -11,8 +11,9 @@ jobs:
       - name: Setup repository
         uses: actions/checkout@v4
 
-      # pi/provisioning (M4) is Nix-driven; bazel test //... itself does not
-      # evaluate Nix, but the toolchain registration expects it present.
+      # Nix is a system requirement for this repo (see MODULE.bazel): the M4
+      # provisioning targets shell out to it and `bazel test //...` realizes
+      # nixpkgs-provided build tools (e.g. the HTML minifier).
       - name: Install Nix
         uses: cachix/install-nix-action@v31
         with:

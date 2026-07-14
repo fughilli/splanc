@@ -78,6 +78,14 @@ bazelisk run //tools/sim_studio:serve   # binds 0.0.0.0:8090 by default
 # → open http://localhost:8090 on the host
 ```
 
+**Prerequisite: `nix` on PATH.** `bazel test //...` realizes nixpkgs-provided
+build tools (the HTML minifier for firmware-baked pages; the firmware
+toolchains) and the M4 provisioning targets shell out to the `nix` CLI, so Nix
+is a system requirement (flakes enabled). The claude-container ships it; CI
+installs it. Fetches are lazy, so a narrow `bazel build //some:target` that
+touches no nix-backed target still works without it — but the repo as a whole
+requires Nix.
+
 **Do not try to relocate the Bazel output base onto `/workspace`.** That mount
 is a **case-insensitive macOS filesystem**; an output base's extracted
 Python/pip tree has files differing only by case, which collide and corrupt
@@ -497,9 +505,9 @@ phase-5 side-by-side gate.
 - **M4 — `pi/provisioning` authored** (parallel subagent track). Bazel +
   NixOS workflow: `image_sd`, `deploy_live`, `keys` targets, flake + modules,
   SSH deploy-key management. `MODULE.bazel` gained
-  `bazel_dep(rules_nixpkgs_core, 0.13.0)` (registration-only — no nix eval at
-  fetch time, so it does not break `bazel build //...`). _Now Nix-verified — see
-  the M4 section below._
+  `bazel_dep(rules_nixpkgs_core, 0.13.0)`. (Nix is now a system requirement for
+  the repo — see the build prerequisites above.) _Nix-verified — see the M4
+  section below._
 - **`.claude-container-overlay` added** to install Nix (flakes) into the
   container image on the next launch — see `.claude/skills/container-overlay`.
 
