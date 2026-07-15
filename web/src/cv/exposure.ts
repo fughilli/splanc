@@ -51,6 +51,12 @@ export interface BlobPopulation {
   grayFrac: number;
   /** Median blob mean-luminance, [0, 1]. */
   medianIntensity: number;
+  /** Median blob saturated-pixel fraction (Blob.satFrac): how blown out the
+   * typical blob is. High even when the hue survives (a clipped BLUE LED is
+   * saturated on its max channel but still vivid) — the "bright enough to
+   * bloom-and-scatter, not enough to wash the hue" regime the gray/split
+   * signals miss. Reducing brightness lowers it (closed loop). */
+  satFrac: number;
 }
 
 /** Chroma fraction below which a blob's hue is considered washed out. */
@@ -61,19 +67,23 @@ export function blobPopulation(blobs: readonly Blob[]): BlobPopulation {
   let split = 0;
   let gray = 0;
   const intensities: number[] = [];
+  const satFracs: number[] = [];
   for (const b of blobs) {
     if (b.split === true) split++;
     const mx = Math.max(b.r ?? 0, b.g ?? 0, b.b ?? 0);
     const mn = Math.min(b.r ?? 0, b.g ?? 0, b.b ?? 0);
     if (mx === 0 || (mx - mn) / mx < GRAY_CHROMA_FRAC) gray++;
     intensities.push(b.intensity);
+    satFracs.push(b.satFrac ?? 0);
   }
   intensities.sort((a, b) => a - b);
+  satFracs.sort((a, b) => a - b);
   const n = blobs.length;
   return {
     splitFrac: n > 0 ? split / n : 0,
     grayFrac: n > 0 ? gray / n : 0,
     medianIntensity: n > 0 ? intensities[n >> 1]! : 0,
+    satFrac: n > 0 ? satFracs[n >> 1]! : 0,
   };
 }
 
@@ -216,6 +226,13 @@ export const LED_BRIGHTNESS_DOWN = 0.6;
  * means halos are merging / hue is washing — step down. */
 export const BLOOM_SPLIT_FRAC = 0.15;
 export const BLOOM_GRAY_FRAC = 0.5;
+/** Clipping gate: median blob more than this fraction clipped (Blob.satFrac)
+ * is over-bright even if the hue still survives — the sensor is well past the
+ * knee, so the LEDs bloom and scatter (measured 2026-07-15: satFrac ~0.84 on
+ * a dark-room capture flooding to ~1.6× ledCount from bloom-lit surfaces).
+ * A clipped LED wastes dynamic range, so dimming toward this costs nothing
+ * the decode reads (hue is scale-invariant) and shrinks the bloom. */
+export const BLOOM_SAT_FRAC = 0.5;
 /** Scene clip fraction that reads "the frame is flooded with clipped light"
  * — disambiguates ZERO blobs (washed-out glare got dropped as oversized)
  * from "strip is too dim to detect". */
@@ -239,6 +256,7 @@ export interface LedBrightnessSignals {
   splitFrac: number;
   grayFrac: number;
   medianIntensity: number;
+  satFrac: number;
   /** Scene clip fraction from the measure pass (SceneStats.clipFrac). */
   clipFrac: number;
 }
@@ -255,7 +273,11 @@ export interface LedBrightnessSignals {
  *
  *  - no blobs at all: clipFrac says which side of the U we're on (a washed
  *    scene floods the frame with clipped light; a dim strip doesn't);
- *  - split/gray blobs: halos merging, hue washing — down;
+ *  - split/gray blobs, OR the median blob heavily CLIPPED (satFrac): halos
+ *    merging, hue washing, or just over-bright and blooming — down. The
+ *    satFrac gate catches the "bright enough to bloom-and-scatter, not
+ *    enough to wash the hue" regime the split/gray gates miss (a clipped
+ *    blue LED reads vivid blue yet blooms all over a nearby surface);
  *  - starved but BRIGHT blobs: neighbors merged into few blobs — down;
  *    starved and dim — up;
  *  - healthy but dim: claim SNR headroom — up, until a bloom gate answers.
@@ -271,7 +293,13 @@ export function planLedBrightness(current: number, m: LedBrightnessSignals): num
   if (m.blobCount === 0) {
     return step(m.clipFrac > WASHOUT_CLIP_FRAC ? down : up);
   }
-  if (m.splitFrac > BLOOM_SPLIT_FRAC || m.grayFrac > BLOOM_GRAY_FRAC) return step(down);
+  if (
+    m.splitFrac > BLOOM_SPLIT_FRAC ||
+    m.grayFrac > BLOOM_GRAY_FRAC ||
+    m.satFrac > BLOOM_SAT_FRAC
+  ) {
+    return step(down);
+  }
   if (m.blobCount < m.ledCount * STARVE_FRAC) {
     // Bright-but-few = neighbors merged into shared blobs; dim-and-few = the
     // strip is fading under the detector threshold. In between, the deficit
@@ -361,6 +389,7 @@ export class ExposureMonitor {
       splitFrac: median(pops.map((p) => p.splitFrac)),
       grayFrac: median(pops.map((p) => p.grayFrac)),
       medianIntensity: median(pops.map((p) => p.medianIntensity)),
+      satFrac: median(pops.map((p) => p.satFrac)),
     };
   }
 

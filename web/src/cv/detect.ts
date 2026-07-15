@@ -203,10 +203,12 @@ export class DetectorGL {
           b: c.b!,
         };
         if (c.split) blob.split = true;
+        // Always present (CCL computes them unconditionally): the brightness
+        // servo reads satFrac each frame.
+        blob.peak = c.peak!;
+        blob.satFrac = c.satFrac!;
         if (opts.stats) {
-          // stats:true guarantees CCL populated these.
-          blob.peak = c.peak!;
-          blob.satFrac = c.satFrac!;
+          // The chroma-weighted color is only computed under stats:true.
           blob.cr = c.cr!;
           blob.cg = c.cg!;
           blob.cb = c.cb!;

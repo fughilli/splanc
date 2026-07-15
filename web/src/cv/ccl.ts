@@ -26,10 +26,11 @@ export interface CclBlob {
   g?: number;
   b?: number;
   /**
-   * Blooming diagnostics (only when `stats` is set, needs `colorBase`).
-   * A too-bright LED saturates the sensor to a white core surrounded by a
-   * colored halo, which washes the mean color toward gray and defeats the
-   * hue decode. These separate "how blown out" from "what hue the halo is":
+   * Blooming diagnostics. A too-bright LED saturates the sensor to a white
+   * core surrounded by a colored halo, which blooms the blob and can wash
+   * its mean color toward gray. `peak`/`satFrac` say "how blown out" (always
+   * computed — cheap, and the brightness servo reads satFrac every frame);
+   * `cr/cg/cb` say "what hue the halo is" (only with `stats`/`split`).
    */
   /** Peak weight-channel luminance in the blob, [0, 1] (1 = fully clipped). */
   peak?: number;
@@ -59,8 +60,9 @@ export interface CclOptions {
    * colorBase .. +2` (e.g. 0 for RGB when the weight channel is alpha).
    */
   colorBase?: number;
-  /** Also compute the blooming diagnostics (peak, satFrac, chroma-weighted
-   * color) — a per-pixel extra pass, so opt-in (the trace path only). */
+  /** Also compute the CHROMA-WEIGHTED color (cr/cg/cb) — the extra per-pixel
+   * chroma math, so opt-in (the trace path). peak/satFrac are always
+   * computed regardless (cheap; the brightness servo needs satFrac). */
   stats?: boolean;
   /**
    * Split components larger than `maxArea` instead of dropping them (needs
@@ -209,6 +211,11 @@ export function connectedComponents(
       if (ix > maxX) maxX = ix;
       if (iy < minY) minY = iy;
       if (iy > maxY) maxY = iy;
+      // peak/satFrac are weight-channel only and CHEAP, and the brightness
+      // servo reads satFrac every frame (exposure.ts), so compute them
+      // always — not just on the trace path.
+      if (w > peak) peak = w;
+      if (w >= SAT_CUT) satCount++;
       if (colorBase !== undefined) {
         const cr = chAt(i, 0);
         const cg = chAt(i, 1);
@@ -217,8 +224,6 @@ export function connectedComponents(
         sumG += cg;
         sumB += cb;
         if (stats || split) {
-          if (w > peak) peak = w;
-          if (w >= SAT_CUT) satCount++;
           // Chroma = max−min channel: 0 for gray/white (the saturated
           // core), high for a colored halo pixel. Weighting the color sum
           // by it recovers the hue the bloom didn't destroy.
@@ -244,9 +249,10 @@ export function connectedComponents(
       blob.g = sumG / area / 255;
       blob.b = sumB / area / 255;
     }
+    // Always present (cheap): how blown out the blob is.
+    blob.peak = peak / 255;
+    blob.satFrac = satCount / area;
     if (stats || split) {
-      blob.peak = peak / 255;
-      blob.satFrac = satCount / area;
       const cwNorm = sumCW > 0 ? sumCW * 255 : 1;
       blob.cr = sumCWR / cwNorm;
       blob.cg = sumCWG / cwNorm;

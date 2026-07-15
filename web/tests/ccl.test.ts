@@ -97,6 +97,23 @@ test("colorBase: per-blob mean color from RGBA buffers (weight in alpha)", () =>
   const cyan = blobs.find((b) => b.x > 2)!;
   assert.ok(red.r! > 0.99 && red.g! < 0.01 && red.b! < 0.01);
   assert.ok(cyan.r! < 0.01 && cyan.g! > 0.99 && cyan.b! > 0.99);
+  // peak/satFrac are computed WITHOUT stats (the brightness servo reads them
+  // every frame): weight 200 < the ~250 sat cut, so nothing's clipped here.
+  assert.ok(Math.abs(red.peak! - 200 / 255) < 1e-9);
+  assert.equal(red.satFrac, 0);
+});
+
+test("satFrac counts clipped pixels without the stats flag", () => {
+  // 2px blob, weight (alpha) clipped to 255 → fully saturated.
+  const data = new Uint8Array(2 * 1 * 4);
+  for (let x = 0; x < 2; x++) {
+    const i = x * 4;
+    data[i] = 255; data[i + 1] = 0; data[i + 2] = 0; data[i + 3] = 255;
+  }
+  const [blob] = connectedComponents(data, 2, 1, 4, 3, { colorBase: 0 });
+  assert.equal(blob!.satFrac, 1);
+  assert.equal(blob!.peak, 1);
+  assert.equal(blob!.cr, undefined); // chroma-weighted color still stats-gated
 });
 
 test("stats: blooming diagnostics separate the white core from the halo hue", () => {

@@ -570,10 +570,25 @@ async function startCapture(): Promise<void> {
 
       if (++frameCount % 15 === 0) {
         const s = pipeline.stats;
+        // Second HUD line: the configured LED brightness plus the servo's
+        // inputs, so its behavior is legible on-device. `sat` (median blob
+        // saturated-pixel fraction) and `split`/`gray` are the "too bright"
+        // gates; `medI` the "too dim" one; `blobs` vs the LED count the
+        // starve/flood signal. (Window medians, same data the servo reads.)
+        const pop = monitor.blobPopulation();
+        const scn = monitor.scene();
+        const br = Math.round((params.brightness ?? 1) * 100);
+        const pct = (x: number): string => `${Math.round(x * 100)}%`;
+        const servoLine = pop
+          ? `LED ${br}% · sat ${pop.satFrac.toFixed(2)} split ${pct(pop.splitFrac)} ` +
+            `gray ${pct(pop.grayFrac)} · medI ${pop.medianIntensity.toFixed(2)}` +
+            (scn ? ` clip ${pct(scn.clipFrac)}` : "")
+          : `LED ${br}%`;
         hudStats.textContent =
           `decoded ${s.uniqueIds.size}/${params.ledCount} ids · ${s.tracks} tracks · ` +
           `${blobs.length} blobs · align ${s.alignShiftMs.toFixed(0)} ms · ` +
-          `${client.pendingBatchCount} unsent${liveSolvedText}`;
+          `${client.pendingBatchCount} unsent${liveSolvedText}\n` +
+          servoLine;
       }
     });
 
@@ -716,6 +731,7 @@ async function startCapture(): Promise<void> {
               splitFrac: pop.splitFrac,
               grayFrac: pop.grayFrac,
               medianIntensity: pop.medianIntensity,
+              satFrac: pop.satFrac,
               clipFrac: report.clipFrac,
             })
           : null;

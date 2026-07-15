@@ -151,6 +151,7 @@ function signals(over: Partial<LedBrightnessSignals> = {}): LedBrightnessSignals
     splitFrac: 0,
     grayFrac: 0.1,
     medianIntensity: 0.8,
+    satFrac: 0.1,
     clipFrac: 0.002,
     ...over,
   };
@@ -168,6 +169,21 @@ test("brightness servo: split blobs (merging halos) step down fast", () => {
 test("brightness servo: majority-gray blobs (washed hue) step down", () => {
   const next = planLedBrightness(0.5, signals({ grayFrac: 0.8 }));
   assert.ok(next !== null && next < 0.5);
+});
+
+test("brightness servo: heavily clipped blobs step down even with vivid hue", () => {
+  // The dark-room bloom regime (2026-07-15): hue intact (low gray, no split)
+  // but the median blob is 84% clipped — over-bright, blooming onto surfaces.
+  const next = planLedBrightness(
+    0.5,
+    signals({ satFrac: 0.84, grayFrac: 0.05, splitFrac: 0, medianIntensity: 0.98 }),
+  );
+  assert.ok(next !== null && next < 0.5, `clipping must step down, got ${next}`);
+});
+
+test("brightness servo: a bright-but-unclipped population is left alone", () => {
+  // satFrac below the gate: bright points, not blown out — hold.
+  assert.equal(planLedBrightness(0.5, signals({ satFrac: 0.3, medianIntensity: 0.9 })), null);
 });
 
 test("brightness servo: zero blobs — clipFrac picks the direction", () => {
@@ -217,19 +233,25 @@ test("brightness servo: clamps to bounds and holds at them", () => {
   assert.equal(planLedBrightness(0.07, signals({ splitFrac: 1 })), LED_BRIGHTNESS_MIN);
 });
 
-test("blobPopulation summarizes split/gray/intensity from a frame's blobs", () => {
+test("blobPopulation summarizes split/gray/intensity/satFrac from a frame's blobs", () => {
   const pop = blobPopulation([
-    { u: 0, v: 0, intensity: 0.9, area: 4, r: 1, g: 0.1, b: 0.1, split: true },
-    { u: 9, v: 0, intensity: 0.7, area: 4, r: 0.8, g: 0.8, b: 0.79 }, // gray
-    { u: 18, v: 0, intensity: 0.8, area: 4, r: 0.1, g: 0.1, b: 1 },
+    { u: 0, v: 0, intensity: 0.9, area: 4, r: 1, g: 0.1, b: 0.1, split: true, satFrac: 0.9 },
+    { u: 9, v: 0, intensity: 0.7, area: 4, r: 0.8, g: 0.8, b: 0.79, satFrac: 0.5 }, // gray
+    { u: 18, v: 0, intensity: 0.8, area: 4, r: 0.1, g: 0.1, b: 1, satFrac: 0.2 },
   ]);
   assert.ok(Math.abs(pop.splitFrac - 1 / 3) < 1e-9);
   assert.ok(Math.abs(pop.grayFrac - 1 / 3) < 1e-9);
   assert.equal(pop.medianIntensity, 0.8);
+  assert.equal(pop.satFrac, 0.5); // median of {0.2, 0.5, 0.9}
 });
 
 test("blobPopulation of an empty frame is all-zero (servo reads blobCount)", () => {
-  assert.deepEqual(blobPopulation([]), { splitFrac: 0, grayFrac: 0, medianIntensity: 0 });
+  assert.deepEqual(blobPopulation([]), {
+    splitFrac: 0,
+    grayFrac: 0,
+    medianIntensity: 0,
+    satFrac: 0,
+  });
 });
 
 test("monitor blob-population medians shrug off the cycle's ALL_ON frames", () => {
@@ -247,6 +269,7 @@ test("monitor blob-population medians shrug off the cycle's ALL_ON frames", () =
           splitFrac: 0,
           grayFrac: allOn ? 1.0 : 0.05,
           medianIntensity: 0.8,
+          satFrac: 0.1,
         },
       });
     }
