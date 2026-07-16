@@ -355,9 +355,15 @@ async function startCapture(): Promise<void> {
     capture = ms;
     await capture.start();
     if (ms.exposureApplied !== null) setConn(`exposure: ${ms.exposureApplied}`);
-    // Fullscreen live preview behind the HUD.
+    // Fullscreen live preview behind the HUD. Size it to the SAME box as the
+    // #overlay/#labels canvas (position:fixed; inset:0 → the visual viewport),
+    // NOT 100vw/100vh: on mobile 100vh is the LARGER viewport behind the
+    // retractable toolbar, so the video box would be taller than the overlay
+    // box and object-fit:cover would center the image differently in each —
+    // the detection overlay ends up shifted up relative to the video. Matching
+    // boxes makes the two aspect-fill crops identical (markers.ts/imageToView).
     ms.video.style.cssText =
-      "position:fixed;inset:0;width:100vw;height:100vh;object-fit:cover;z-index:0;background:#000";
+      "position:fixed;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;background:#000";
     document.body.prepend(ms.video);
     previewVideo = ms.video;
     // Inertial stream: what lets the joint solver recover the trajectory.
