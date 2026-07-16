@@ -402,6 +402,12 @@ def main() -> int:
         default=None,
         help="the address the phone reaches this server at (default: auto-detected LAN IP)",
     )
+    ap.add_argument(
+        "--frames",
+        action="store_true",
+        help="pair with ?frames=1 so the phone also uploads full-res frames + IMU "
+        "for offline pipeline replay (heavy — short diagnostic captures)",
+    )
     args = ap.parse_args()
 
     OUT_DIR = args.out
@@ -421,6 +427,8 @@ def main() -> int:
 
     TRACE_URL = f"{scheme}://{host_ip}:{args.port}/trace"
     PAIR_URL = f"{args.app_url.rstrip('/')}/?trace={urllib.parse.quote(TRACE_URL, safe='')}"
+    if args.frames:
+        PAIR_URL += "&frames=1"  # phone also uploads full-res frames + IMU
     GO_URL = f"{scheme}://{host_ip}:{args.port}/go"
 
     stamp = datetime.now(timezone.utc).isoformat()
@@ -429,6 +437,8 @@ def main() -> int:
     _log("[trace]   scan it with the phone: it accepts this server's cert, then")
     _log("[trace]   bounces to the app with tracing on (then do BLE player setup)")
     _log(f"[trace] trace endpoint: {TRACE_URL}")
+    if args.frames:
+        _log("[trace] FULL-FRAME CAPTURE ON (?frames=1): expect frames/<seq>.rgba.gz + imu.jsonl")
     _log(f"[trace] writing traces under: {OUT_DIR.resolve()}")
     try:
         httpd.serve_forever()
