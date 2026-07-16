@@ -22,6 +22,7 @@ import type {
   ConfigureOptions,
   DetectionRecord,
   ExposureStats,
+  FrameTimingMessage,
   ImuSample,
   LiveMapMessage,
   MappingStartedMessage,
@@ -302,6 +303,16 @@ export class LedMapperClient {
 
   async getPattern(): Promise<PatternStateMessage> {
     return (await this.request({ type: "get_pattern" }, "pattern_state")) as PatternStateMessage;
+  }
+
+  /** Drain the player's rendered-frame timing log (monotonic-clock time of
+   * each mapping-pattern frame it pushed to the LEDs). Polled while tracing so
+   * the samples can be forwarded to the trace server for stutter diagnosis. */
+  async getFrameTiming(): Promise<FrameTimingMessage> {
+    return (await this.request(
+      { type: "get_frame_timing" },
+      "frame_timing",
+    )) as FrameTimingMessage;
   }
 
   /** Poll the continuous solver for the latest interim reconstruction. */

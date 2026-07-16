@@ -456,6 +456,40 @@ async function startCapture(): Promise<void> {
     capturing = true;
     let frameCount = 0;
 
+    // Frame-timing forwarding (?trace=): periodically drain the player's
+    // rendered-frame timing log and hand it to the trace sink, so uneven
+    // per-frame emit times (pattern-generator stutter) are visible offline.
+    // Fire-and-forget — never blocks capture; at most one poll in flight; on a
+    // peer that lacks the arm (e.g. an old firmware, or the Pi) it errors once
+    // and then stays quiet.
+    let frameTimingInFlight = false;
+    let frameTimingUnsupported = false;
+    const pollFrameTiming = (): void => {
+      if (!trace || frameTimingInFlight || frameTimingUnsupported) return;
+      const sink = trace;
+      frameTimingInFlight = true;
+      client
+        .getFrameTiming()
+        .then((ft) => {
+          if (ft.ticks.length > 0 || ft.dropped > 0) {
+            sink.pushTiming({
+              tPhone: performance.now(),
+              patternClockEpoch: ft.patternClockEpoch,
+              bitPeriodMs: ft.bitPeriodMs,
+              cycleFrames: ft.cycleFrames,
+              dropped: ft.dropped,
+              ticks: ft.ticks.map((t) => ({ seq: t.seq, tMonoMs: t.tMonoMs })),
+            });
+          }
+        })
+        .catch(() => {
+          frameTimingUnsupported = true; // peer has no get_frame_timing arm
+        })
+        .finally(() => {
+          frameTimingInFlight = false;
+        });
+    };
+
     // ?record=1 frame recorder: batches of raw detector output (+ IMU).
     let frameBuf: unknown[] = [];
     let imuBuf: unknown[] = [];
@@ -544,7 +578,10 @@ async function startCapture(): Promise<void> {
             tf.thumb = { w: m.w, h: m.h, rgbaB64: rgbaToB64(m.rgba) };
           }
         }
-        if (trace.push(tf)) void trace.flush();
+        if (trace.push(tf)) {
+          pollFrameTiming(); // rides the next flush once the player replies
+          void trace.flush();
+        }
       }
       if (recordBlobs) {
         frameBuf.push({

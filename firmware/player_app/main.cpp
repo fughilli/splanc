@@ -247,7 +247,8 @@ static void render() {
     double now = (double)millis();
     double since = now - epoch;
     if (since < 0) since = 0;
-    uint32_t frame_index = (uint32_t)(since / period) % cycle_frames;
+    uint32_t seq = (uint32_t)(since / period);
+    uint32_t frame_index = seq % cycle_frames;
     if (frame_index != last_shown_frame) {
       uint32_t n = led_count < kMaxLeds ? led_count : kMaxLeds;
       for (uint32_t i = 0; i < n; i++) {
@@ -257,6 +258,14 @@ static void render() {
       }
       for (uint32_t i = n; i < kMaxLeds; i++) leds[i] = CRGB::Black;
       FastLED.show();
+      // Sample the clock AFTER the strip update so the record reflects the
+      // true per-frame cadence (blocked loop() passes show up as gaps); the
+      // phone drains these via get_frame_timing to diagnose stutter. micros()
+      // (not millis()) for sub-millisecond resolution on the gaps — carried as
+      // fractional ms so the unit matches bit_period_ms. micros() wraps every
+      // ~71 min, which at worst mis-measures the single gap straddling a wrap
+      // (a large negative delta the analysis simply ignores).
+      lm_pattern_frame_shown(seq, (double)micros() / 1000.0);
       last_shown_frame = frame_index;
     }
     was_active = true;

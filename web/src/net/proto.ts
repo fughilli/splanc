@@ -41,6 +41,7 @@ const CLIENT_ARMS: Record<string, string> = {
   submit_topology: "submitTopology",
   set_playback: "setPlayback",
   get_playback: "getPlayback",
+  get_frame_timing: "getFrameTiming",
 };
 const SERVER_ARMS: Record<string, string> = {
   welcome: "welcome",
@@ -56,6 +57,7 @@ const SERVER_ARMS: Record<string, string> = {
   counting_state: "countingState",
   led_count_state: "ledCountState",
   playback_state: "playbackState",
+  frame_timing: "frameTiming",
 };
 const CLIENT_TYPES: Record<string, string> = Object.fromEntries(
   Object.entries(CLIENT_ARMS).map(([snake, camel]) => [camel, snake]),
@@ -130,6 +132,7 @@ function fillNulls(type: string, flat: Json): Json {
     ensure(flat, "params");
     ensure(flat, "mapId");
   }
+  if (type === "frame_timing") ensure(flat, "patternClockEpoch");
   return flat;
 }
 

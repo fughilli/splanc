@@ -16,7 +16,8 @@
     { "$ref": "#/$defs/Error" },
     { "$ref": "#/$defs/CountingState" },
     { "$ref": "#/$defs/LedCountState" },
-    { "$ref": "#/$defs/PlaybackState" }
+    { "$ref": "#/$defs/PlaybackState" },
+    { "$ref": "#/$defs/FrameTiming" }
   ],
   "$defs": {
     "Welcome": {
@@ -219,6 +220,53 @@
         "mapId": {
           "type": ["string", "null"],
           "description": "The stored map/topology playback runs on; null when the player has none selected."
+        }
+      }
+    },
+    "FrameTiming": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "patternClockEpoch", "bitPeriodMs", "cycleFrames", "dropped", "ticks"],
+      "description": "Reply to get_frame_timing: a drained batch of rendered-frame timestamps (the player samples its monotonic clock as it pushes each mapping-pattern frame to the LEDs) plus the number of samples dropped to ring-buffer overflow since the last poll. Even bitPeriodMs spacing between successive tMonoMs means smooth generation; gaps mean the pattern render loop stalled that long. Forwarded by the phone to the trace server for offline stutter analysis.",
+      "properties": {
+        "type": { "const": "frame_timing" },
+        "patternClockEpoch": {
+          "type": ["number", "null"],
+          "description": "Active capture's pattern-clock epoch (player-clock ms); null when no capture is running (ticks then empty)."
+        },
+        "bitPeriodMs": {
+          "type": "number",
+          "description": "Expected inter-frame spacing (the mapping bit period)."
+        },
+        "cycleFrames": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Frames per pattern cycle, so a tick's cycle is seq / cycleFrames."
+        },
+        "dropped": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Samples lost to ring-buffer overflow since the last poll (the phone did not drain fast enough)."
+        },
+        "ticks": {
+          "type": "array",
+          "description": "Rendered frames in emit order.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["seq", "tMonoMs"],
+            "properties": {
+              "seq": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Absolute frame index since the pattern epoch, BEFORE the cycle-length modulo."
+              },
+              "tMonoMs": {
+                "type": "number",
+                "description": "Player monotonic clock when the firmware pushed this frame to the LEDs. Milliseconds, but sampled from the microsecond clock so it carries sub-millisecond precision for the inter-frame gaps."
+              }
+            }
+          }
         }
       }
     }

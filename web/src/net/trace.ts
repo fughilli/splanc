@@ -55,6 +55,19 @@ export interface TraceHeader {
   codeParams: unknown;
 }
 
+/** One drained get_frame_timing batch: the player's monotonic-clock times for
+ * the mapping-pattern frames it rendered, forwarded so pattern-generator
+ * stutter (uneven tMonoMs spacing) can be seen offline. `tPhone` is the phone
+ * clock when the batch was drained, for correlating the two clock domains. */
+export interface TraceTiming {
+  tPhone: number;
+  patternClockEpoch: number | null;
+  bitPeriodMs: number;
+  cycleFrames: number;
+  dropped: number;
+  ticks: { seq: number; tMonoMs: number }[];
+}
+
 /** Keep only the fields worth tracing (drops bbox etc.). */
 export function toTraceBlob(b: Blob): TraceBlob {
   const t: TraceBlob = { u: b.u, v: b.v, area: b.area, intensity: b.intensity };
@@ -86,6 +99,7 @@ export function rgbaToB64(rgba: Uint8Array): string {
 
 export class TraceSink {
   private buf: TraceFrame[] = [];
+  private timing: TraceTiming[] = [];
   private header: TraceHeader | null = null;
   private posting = false;
 
@@ -106,8 +120,13 @@ export class TraceSink {
     return this.buf.length >= this.flushEvery;
   }
 
+  /** Queue a drained frame-timing batch; it rides the next flush. */
+  pushTiming(timing: TraceTiming): void {
+    this.timing.push(timing);
+  }
+
   get pending(): number {
-    return this.buf.length;
+    return this.buf.length + this.timing.length;
   }
 
   private warned = false;
@@ -118,17 +137,19 @@ export class TraceSink {
    * with base64 thumbnails blows past that (silent throw); the page isn't
    * unloading mid-capture, so a plain fetch is correct anyway. */
   async flush(): Promise<void> {
-    if (this.buf.length === 0 || this.posting || !this.fetchFn) return;
+    if ((this.buf.length === 0 && this.timing.length === 0) || this.posting || !this.fetchFn) return;
     this.posting = true;
     const frames = this.buf;
     this.buf = [];
+    const timing = this.timing;
+    this.timing = [];
     const header = this.header;
     this.header = null; // header rides only the first batch
     try {
       await this.fetchFn(this.url, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ header, frames }),
+        body: JSON.stringify({ header, frames, timing }),
       });
     } catch (e) {
       // best-effort — the capture must not stall on a trace hiccup — but

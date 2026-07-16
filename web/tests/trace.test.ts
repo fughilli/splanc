@@ -67,6 +67,28 @@ test("push signals a flush at the batch size; flush POSTs header once", async ()
   assert.equal(second.frames.length, 1);
 });
 
+test("frame-timing batches ride the flush and can flush on their own", async () => {
+  const posts: { frames: unknown[]; timing: unknown[] }[] = [];
+  const fakeFetch = (async (_url: string, init: { body: string }) => {
+    posts.push(JSON.parse(init.body));
+    return { ok: true } as Response;
+  }) as unknown as typeof fetch;
+
+  const sink = new TraceSink("https://trace/local", 3, fakeFetch);
+  const batch = {
+    tPhone: 5, patternClockEpoch: 1000, bitPeriodMs: 100, cycleFrames: 8,
+    dropped: 0, ticks: [{ seq: 0, tMonoMs: 1000 }, { seq: 1, tMonoMs: 1101 }],
+  };
+  // Timing alone (no frames queued) still counts as pending and flushes.
+  sink.pushTiming(batch);
+  assert.equal(sink.pending, 1);
+  await sink.flush();
+  assert.equal(sink.pending, 0);
+  assert.equal(posts.length, 1);
+  assert.deepEqual(posts[0]!.timing, [batch]);
+  assert.equal(posts[0]!.frames.length, 0);
+});
+
 test("a failed POST drops the batch instead of stalling", async () => {
   const failing = (async () => {
     throw new Error("network down");

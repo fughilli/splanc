@@ -92,6 +92,15 @@ fn main() -> std::io::Result<()> {
         Config::new().max_len(if firmware { 1 } else { 64 }),
     );
 
+    // Rendered-frame timing drain (get_frame_timing): REAL firmware traffic —
+    // the player ENCODES this reply, so the cap bounds how many ticks ride one
+    // poll (48 * ~16 B stays well under the 2 KB reply buffer); the rest wait
+    // for the next poll. Host gets more room for the drain tests.
+    g.configure(
+        ".ledmapper.v1.FrameTiming.ticks",
+        Config::new().max_len(if firmware { 48 } else { 128 }),
+    );
+
     // Counting + playback control: REAL firmware traffic — full size in
     // both profiles.
     g.configure(

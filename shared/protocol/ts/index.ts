@@ -24,6 +24,8 @@ export type {
   ExposureReportMessage,
   ExposureStats,
   Fec,
+  FrameTick,
+  FrameTimingMessage,
   GetLiveMapMessage,
   GetPatternMessage,
   GetSolveStatusMessage,

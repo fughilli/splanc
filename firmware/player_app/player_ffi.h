@@ -26,6 +26,10 @@ int32_t lm_player_handle(const uint8_t *data, size_t len, double recv_ms,
 bool lm_pattern_timing(double *epoch_ms, double *bit_period_ms,
                        uint32_t *cycle_frames, uint32_t *led_count);
 bool lm_pattern_color(uint32_t led, uint32_t frame_index, uint8_t rgb[3]);
+// Record the monotonic-clock time (t_mono_ms) at which the frame loop pushed
+// absolute mapping-pattern frame `seq` (before the cycle modulo) to the LEDs,
+// buffered for the phone to drain via get_frame_timing (stutter diagnosis).
+void lm_pattern_frame_shown(uint32_t seq, double t_mono_ms);
 bool lm_counting_color(uint32_t led, uint8_t rgb[3]);
 int32_t lm_led_count(uint32_t channel);
 uint32_t lm_map_len(void);

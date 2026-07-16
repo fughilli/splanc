@@ -21,7 +21,8 @@
     { "$ref": "#/$defs/SetLedCount" },
     { "$ref": "#/$defs/SubmitTopology" },
     { "$ref": "#/$defs/SetPlayback" },
-    { "$ref": "#/$defs/GetPlayback" }
+    { "$ref": "#/$defs/GetPlayback" },
+    { "$ref": "#/$defs/GetFrameTiming" }
   ],
   "$defs": {
     "Hello": {
@@ -370,6 +371,15 @@
       "description": "Poll the current playback state (for a config UI attaching to a running player). Reply: playback_state.",
       "properties": {
         "type": { "const": "get_playback" }
+      }
+    },
+    "GetFrameTiming": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "description": "Drain the player's rendered-frame timing log. The player samples its monotonic clock as it pushes each mapping-pattern frame to the LEDs; the phone polls this while tracing and forwards the samples to the trace server, so pattern-generator stutter is visible offline. Reply: frame_timing.",
+      "properties": {
+        "type": { "const": "get_frame_timing" }
       }
     }
   }

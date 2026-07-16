@@ -66,6 +66,7 @@ fn reply_allowed(req: &CMsg, reply: &Option<SMsg>) -> bool {
             }
         }
         CMsg::GetPlayback(_) => matches!(reply, Some(SMsg::PlaybackState(_))),
+        CMsg::GetFrameTiming(_) => matches!(reply, Some(SMsg::FrameTiming(_))),
         // Fire-and-forget Pi telemetry: silence.
         CMsg::Detections(_) | CMsg::ImuBatch(_) | CMsg::ExposureReport(_) => reply.is_none(),
         // Pi-only request arms: bounded refusal.
@@ -87,6 +88,7 @@ fn arm_name(req: &CMsg) -> &'static str {
         CMsg::SubmitTopology(_) => "submit_topology",
         CMsg::SetPlayback(_) => "set_playback",
         CMsg::GetPlayback(_) => "get_playback",
+        CMsg::GetFrameTiming(_) => "get_frame_timing",
         CMsg::Detections(_) => "detections",
         CMsg::ImuBatch(_) => "imu_batch",
         CMsg::ExposureReport(_) => "exposure_report",

@@ -59,7 +59,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file ledmapper.proto.
  */
 export const file_ledmapper: GenFile = /*@__PURE__*/
-  fileDesc("Cg9sZWRtYXBwZXIucHJvdG8SDGxlZG1hcHBlci52MSIVCgRWZWMzEg0KAXYYASADKAFCAhABIiQKBFBvc2USDQoBcBgBIAMoAUICEAESDQoBcRgCIAMoAUICEAEiyAEKCkNvZGVQYXJhbXMSEQoJbGVkX2NvdW50GAEgASgFEgwKBGJpdHMYAiABKAUSEAoIZW5jb2RpbmcYAyABKAkSFQoNYml0X3BlcmlvZF9tcxgEIAEoARIUCgxzeW5jX3BhdHRlcm4YBSABKAkSFAoMY3ljbGVfZnJhbWVzGAYgASgFEgsKA2ZlYxgHIAEoCRIPCgdzeW1ib2xzGAggASgFEhcKCmJyaWdodG5lc3MYCSABKAFIAIgBAUINCgtfYnJpZ2h0bmVzcyLBAQoPRGV0ZWN0aW9uUmVjb3JkEg4KBmxlZF9pZBgBIAEoBRIUCgx0X2NhcHR1cmVfbXMYAiABKAESCQoBdRgDIAEoARIJCgF2GAQgASgBEg0KBWltZ193GAUgASgFEg0KBWltZ19oGAYgASgFEhAKAWsYByADKAFCAhABUgFLEiUKBHBvc2UYCCABKAsyEi5sZWRtYXBwZXIudjEuUG9zZUgAiAEBEhIKCmNvbmZpZGVuY2UYCSABKAFCBwoFX3Bvc2UiOwoJSW11U2FtcGxlEgkKAXQYASABKAESEAoEZ3lybxgCIAMoAUICEAESEQoFYWNjZWwYAyADKAFCAhABIqwCCg1FeHBvc3VyZVN0YXRzEhQKDHRfY2FwdHVyZV9tcxgBIAEoARIZChFmcmFtZV9pbnRlcnZhbF9tcxgCIAEoARIRCgltZWFuX2x1bWEYAyABKAESEAoIcDk1X2x1bWEYBCABKAESEQoJY2xpcF9mcmFjGAUgASgBEhIKCmJsb2JfY291bnQYBiABKAUSGgoSZGV0ZWN0b3JfdGhyZXNob2xkGAcgASgBEhAKA2lzbxgIIAEoAUgAiAEBEh0KEGV4cG9zdXJlX3RpbWVfbXMYCSABKAFIAYgBARIeChFhbWJpZW50X2ludGVuc2l0eRgKIAEoAUgCiAEBQgYKBF9pc29CEwoRX2V4cG9zdXJlX3RpbWVfbXNCFAoSX2FtYmllbnRfaW50ZW5zaXR5InkKCExlZEVudHJ5EgoKAmlkGAEgASgFEg8KA3h5ehgCIAMoAUICEAESEgoKY29uZmlkZW5jZRgDIAEoARIPCgduX3ZpZXdzGAQgASgFEhUKDXJtc19yZXByb2pfcHgYBSABKAESFAoMcGFyYWxsYXhfZGVnGAYgASgBIksKDk91dHB1dE1hcFN0YXRzEhwKFHJtc19yZXByb2pfcHhfZ2xvYmFsGAEgASgBEhsKE21lZGlhbl9wYXJhbGxheF9kZWcYAiABKAEi8QEKCU91dHB1dE1hcBIOCgZtYXBfaWQYASABKAkSEgoKY3JlYXRlZF9hdBgCIAEoCRINCgV1bml0cxgDIAEoCRINCgVmcmFtZRgEIAEoCRIRCglsZWRfY291bnQYBSABKAUSJAoEbGVkcxgGIAMoCzIWLmxlZG1hcHBlci52MS5MZWRFbnRyeRIUCgh1bm1hcHBlZBgHIAMoBUICEAESJgoKdHJhamVjdG9yeRgIIAMoCzISLmxlZG1hcHBlci52MS5WZWMzEisKBXN0YXRzGAkgASgLMhwubGVkbWFwcGVyLnYxLk91dHB1dE1hcFN0YXRzIicKCFNvbHZlTGVkEgoKAmlkGAEgASgFEg8KA3h5ehgCIAMoAUICEAEiOwoKQ29sb3JCbG9jaxINCgVzdGFydBgBIAEoBRINCgVjb3VudBgCIAEoBRIPCgNyZ2IYAyADKAFCAhABIioKC0JyYW5jaFBvaW50EgoKAmlkGAEgASgFEg8KA3h5ehgCIAMoAUICEAEiaQoPVG9wb2xvZ3lTZWdtZW50EgoKAmlkGAEgASgFEgkKAWEYAiABKAUSCQoBYhgDIAEoBRIkCghwb2x5bGluZRgEIAMoCzISLmxlZG1hcHBlci52MS5WZWMzEg4KBmxlbmd0aBgFIAEoASJcCg5MZWRBc3NvY2lhdGlvbhIOCgZsZWRfaWQYASABKAUSEgoKc2VnbWVudF9pZBgCIAEoBRIWCg5mb290X2FyY2xlbmd0aBgDIAEoARIOCgZkX3BlcnAYBCABKAEisQEKCFRvcG9sb2d5Eg4KBm1hcF9pZBgBIAEoCRIwCg1icmFuY2hfcG9pbnRzGAIgAygLMhkubGVkbWFwcGVyLnYxLkJyYW5jaFBvaW50Ei8KCHNlZ21lbnRzGAMgAygLMh0ubGVkbWFwcGVyLnYxLlRvcG9sb2d5U2VnbWVudBIyCgxhc3NvY2lhdGlvbnMYBCADKAsyHC5sZWRtYXBwZXIudjEuTGVkQXNzb2NpYXRpb24ivQEKDlBsYXliYWNrUGFyYW1zEhYKCWludGVuc2l0eRgBIAEoAUgAiAEBEhgKC2dsb3dfcmFkaXVzGAIgASgBSAGIAQESGAoLYWdlbnRfY291bnQYAyABKAVIAogBARISCgVzcGVlZBgEIAEoAUgDiAEBEhMKB3BhbGV0dGUYBSADKA1CAhABQgwKCl9pbnRlbnNpdHlCDgoMX2dsb3dfcmFkaXVzQg4KDF9hZ2VudF9jb3VudEIICgZfc3BlZWQiLAoFSGVsbG8SDgoGY2xpZW50GAEgASgJEhMKC2FwcF92ZXJzaW9uGAIgASgJIhoKDFRpbWVTeW5jUGluZxIKCgJ0MBgBIAEoASKgAQoTU3RhcnRNYXBwaW5nT3B0aW9ucxIRCglsZWRfY291bnQYASABKAUSFAoHc3ltYm9scxgCIAEoBUgAiAEBEhoKDWJpdF9wZXJpb2RfbXMYAyABKAFIAYgBARIXCgpicmlnaHRuZXNzGAQgASgBSAKIAQFCCgoIX3N5bWJvbHNCEAoOX2JpdF9wZXJpb2RfbXNCDQoLX2JyaWdodG5lc3MiQgoMU3RhcnRNYXBwaW5nEjIKB29wdGlvbnMYASABKAsyIS5sZWRtYXBwZXIudjEuU3RhcnRNYXBwaW5nT3B0aW9ucyKwAQoQQ29uZmlndXJlT3B0aW9ucxIWCglsZWRfY291bnQYASABKAVIAIgBARIUCgdzeW1ib2xzGAIgASgFSAGIAQESGgoNYml0X3BlcmlvZF9tcxgDIAEoAUgCiAEBEhcKCmJyaWdodG5lc3MYBCABKAFIA4gBAUIMCgpfbGVkX2NvdW50QgoKCF9zeW1ib2xzQhAKDl9iaXRfcGVyaW9kX21zQg0KC19icmlnaHRuZXNzIjwKCUNvbmZpZ3VyZRIvCgdvcHRpb25zGAEgASgLMh4ubGVkbWFwcGVyLnYxLkNvbmZpZ3VyZU9wdGlvbnMiOwoLU3RvcE1hcHBpbmcSGgoNc29sdmVfb25faG9zdBgBIAEoCEgAiAEBQhAKDl9zb2x2ZV9vbl9ob3N0IjEKCVN1Ym1pdE1hcBIkCgNtYXAYASABKAsyFy5sZWRtYXBwZXIudjEuT3V0cHV0TWFwIjoKCkRldGVjdGlvbnMSLAoFYmF0Y2gYASADKAsyHS5sZWRtYXBwZXIudjEuRGV0ZWN0aW9uUmVjb3JkIjQKCEltdUJhdGNoEigKB3NhbXBsZXMYASADKAsyFy5sZWRtYXBwZXIudjEuSW11U2FtcGxlIj0KDkV4cG9zdXJlUmVwb3J0EisKBnJlcG9ydBgBIAEoCzIbLmxlZG1hcHBlci52MS5FeHBvc3VyZVN0YXRzIgsKCUdldFN0YXR1cyIMCgpHZXRQYXR0ZXJuIgwKCkdldExpdmVNYXAiEAoOR2V0U29sdmVTdGF0dXMiYAoSU2V0Q291bnRpbmdQYXR0ZXJuEigKBmJsb2NrcxgBIAMoCzIYLmxlZG1hcHBlci52MS5Db2xvckJsb2NrEhQKB2NoYW5uZWwYAiABKAVIAIgBAUIKCghfY2hhbm5lbCJCCgtTZXRMZWRDb3VudBIRCglsZWRfY291bnQYASABKAUSFAoHY2hhbm5lbBgCIAEoBUgAiAEBQgoKCF9jaGFubmVsIjoKDlN1Ym1pdFRvcG9sb2d5EigKCHRvcG9sb2d5GAEgASgLMhYubGVkbWFwcGVyLnYxLlRvcG9sb2d5ImsKC1NldFBsYXliYWNrEg4KBmVmZmVjdBgBIAEoCRIsCgZwYXJhbXMYAiABKAsyHC5sZWRtYXBwZXIudjEuUGxheWJhY2tQYXJhbXMSEwoGbWFwX2lkGAMgASgJSACIAQFCCQoHX21hcF9pZCINCgtHZXRQbGF5YmFjayKuBwoNQ2xpZW50TWVzc2FnZRIkCgVoZWxsbxgBIAEoCzITLmxlZG1hcHBlci52MS5IZWxsb0gAEjQKDnRpbWVfc3luY19waW5nGAIgASgLMhoubGVkbWFwcGVyLnYxLlRpbWVTeW5jUGluZ0gAEjMKDXN0YXJ0X21hcHBpbmcYAyABKAsyGi5sZWRtYXBwZXIudjEuU3RhcnRNYXBwaW5nSAASLAoJY29uZmlndXJlGAQgASgLMhcubGVkbWFwcGVyLnYxLkNvbmZpZ3VyZUgAEjEKDHN0b3BfbWFwcGluZxgFIAEoCzIZLmxlZG1hcHBlci52MS5TdG9wTWFwcGluZ0gAEi4KCmRldGVjdGlvbnMYBiABKAsyGC5sZWRtYXBwZXIudjEuRGV0ZWN0aW9uc0gAEisKCWltdV9iYXRjaBgHIAEoCzIWLmxlZG1hcHBlci52MS5JbXVCYXRjaEgAEjcKD2V4cG9zdXJlX3JlcG9ydBgIIAEoCzIcLmxlZG1hcHBlci52MS5FeHBvc3VyZVJlcG9ydEgAEi0KCmdldF9zdGF0dXMYCSABKAsyFy5sZWRtYXBwZXIudjEuR2V0U3RhdHVzSAASLwoLZ2V0X3BhdHRlcm4YCiABKAsyGC5sZWRtYXBwZXIudjEuR2V0UGF0dGVybkgAEjAKDGdldF9saXZlX21hcBgLIAEoCzIYLmxlZG1hcHBlci52MS5HZXRMaXZlTWFwSAASOAoQZ2V0X3NvbHZlX3N0YXR1cxgMIAEoCzIcLmxlZG1hcHBlci52MS5HZXRTb2x2ZVN0YXR1c0gAEi0KCnN1Ym1pdF9tYXAYDSABKAsyFy5sZWRtYXBwZXIudjEuU3VibWl0TWFwSAASQAoUc2V0X2NvdW50aW5nX3BhdHRlcm4YDiABKAsyIC5sZWRtYXBwZXIudjEuU2V0Q291bnRpbmdQYXR0ZXJuSAASMgoNc2V0X2xlZF9jb3VudBgPIAEoCzIZLmxlZG1hcHBlci52MS5TZXRMZWRDb3VudEgAEjcKD3N1Ym1pdF90b3BvbG9neRgQIAEoCzIcLmxlZG1hcHBlci52MS5TdWJtaXRUb3BvbG9neUgAEjEKDHNldF9wbGF5YmFjaxgRIAEoCzIZLmxlZG1hcHBlci52MS5TZXRQbGF5YmFja0gAEjEKDGdldF9wbGF5YmFjaxgSIAEoCzIZLmxlZG1hcHBlci52MS5HZXRQbGF5YmFja0gAQgUKA21zZyJ+CgdXZWxjb21lEhIKCnNlc3Npb25faWQYASABKAkSLQoLY29kZV9wYXJhbXMYAiABKAsyGC5sZWRtYXBwZXIudjEuQ29kZVBhcmFtcxIcCg9zb2x2ZXJfYmVuY2hfbXMYAyABKAFIAIgBAUISChBfc29sdmVyX2JlbmNoX21zIjkKDk1hcHBpbmdTdG9wcGVkEhIKCmRldGVjdGlvbnMYASABKAUSEwoLaW11X3NhbXBsZXMYAiABKAUiMgoMVGltZVN5bmNQb25nEgoKAnQwGAEgASgBEgoKAnQxGAIgASgBEgoKAnQyGAMgASgBIlwKDk1hcHBpbmdTdGFydGVkEhsKE3BhdHRlcm5fY2xvY2tfZXBvY2gYASABKAESLQoLY29kZV9wYXJhbXMYAiABKAsyGC5sZWRtYXBwZXIudjEuQ29kZVBhcmFtcyJBCgZTdGF0dXMSEgoKaWRlbnRpZmllZBgBIAEoBRINCgV0b3RhbBgCIAEoBRIUCgxsb3dfcGFyYWxsYXgYAyABKAUihwEKDFBhdHRlcm5TdGF0ZRIOCgZhY3RpdmUYASABKAgSIAoTcGF0dGVybl9jbG9ja19lcG9jaBgCIAEoAUgAiAEBEi0KC2NvZGVfcGFyYW1zGAMgASgLMhgubGVkbWFwcGVyLnYxLkNvZGVQYXJhbXNCFgoUX3BhdHRlcm5fY2xvY2tfZXBvY2giTAoHTGl2ZU1hcBIOCgZhY3RpdmUYASABKAgSKQoDbWFwGAIgASgLMhcubGVkbWFwcGVyLnYxLk91dHB1dE1hcEgAiAEBQgYKBF9tYXAisAEKC1NvbHZlU3RhdHVzEg8KB3J1bm5pbmcYASABKAgSFQoIcHJvZ3Jlc3MYAiABKAFIAIgBARITCgZybXNfcHgYAyABKAFIAYgBARIkCgRsZWRzGAQgAygLMhYubGVkbWFwcGVyLnYxLlNvbHZlTGVkEiYKCnRyYWplY3RvcnkYBSADKAsyEi5sZWRtYXBwZXIudjEuVmVjM0ILCglfcHJvZ3Jlc3NCCQoHX3Jtc19weCIdCgtSZXN1bHRSZWFkeRIOCgZtYXBfaWQYASABKAkiJgoFRXJyb3ISDAoEY29kZRgBIAEoCRIPCgdtZXNzYWdlGAIgASgJIkMKDUNvdW50aW5nU3RhdGUSDgoGYWN0aXZlGAEgASgIEhUKCGVwb2NoX21zGAIgASgBSACIAQFCCwoJX2Vwb2NoX21zIjMKDUxlZENvdW50U3RhdGUSEQoJbGVkX2NvdW50GAEgASgFEg8KB2NoYW5uZWwYAiABKAUifQoNUGxheWJhY2tTdGF0ZRIOCgZhY3RpdmUYASABKAgSDgoGZWZmZWN0GAIgASgJEiwKBnBhcmFtcxgDIAEoCzIcLmxlZG1hcHBlci52MS5QbGF5YmFja1BhcmFtcxITCgZtYXBfaWQYBCABKAlIAIgBAUIJCgdfbWFwX2lkIqIFCg1TZXJ2ZXJNZXNzYWdlEigKB3dlbGNvbWUYASABKAsyFS5sZWRtYXBwZXIudjEuV2VsY29tZUgAEjQKDnRpbWVfc3luY19wb25nGAIgASgLMhoubGVkbWFwcGVyLnYxLlRpbWVTeW5jUG9uZ0gAEjcKD21hcHBpbmdfc3RhcnRlZBgDIAEoCzIcLmxlZG1hcHBlci52MS5NYXBwaW5nU3RhcnRlZEgAEiYKBnN0YXR1cxgEIAEoCzIULmxlZG1hcHBlci52MS5TdGF0dXNIABIzCg1wYXR0ZXJuX3N0YXRlGAUgASgLMhoubGVkbWFwcGVyLnYxLlBhdHRlcm5TdGF0ZUgAEikKCGxpdmVfbWFwGAYgASgLMhUubGVkbWFwcGVyLnYxLkxpdmVNYXBIABIxCgxzb2x2ZV9zdGF0dXMYByABKAsyGS5sZWRtYXBwZXIudjEuU29sdmVTdGF0dXNIABIxCgxyZXN1bHRfcmVhZHkYCCABKAsyGS5sZWRtYXBwZXIudjEuUmVzdWx0UmVhZHlIABIkCgVlcnJvchgJIAEoCzITLmxlZG1hcHBlci52MS5FcnJvckgAEjcKD21hcHBpbmdfc3RvcHBlZBgKIAEoCzIcLmxlZG1hcHBlci52MS5NYXBwaW5nU3RvcHBlZEgAEjUKDmNvdW50aW5nX3N0YXRlGAsgASgLMhsubGVkbWFwcGVyLnYxLkNvdW50aW5nU3RhdGVIABI2Cg9sZWRfY291bnRfc3RhdGUYDCABKAsyGy5sZWRtYXBwZXIudjEuTGVkQ291bnRTdGF0ZUgAEjUKDnBsYXliYWNrX3N0YXRlGA0gASgLMhsubGVkbWFwcGVyLnYxLlBsYXliYWNrU3RhdGVIAEIFCgNtc2diBnByb3RvMw");
+  fileDesc("Cg9sZWRtYXBwZXIucHJvdG8SDGxlZG1hcHBlci52MSIVCgRWZWMzEg0KAXYYASADKAFCAhABIiQKBFBvc2USDQoBcBgBIAMoAUICEAESDQoBcRgCIAMoAUICEAEiyAEKCkNvZGVQYXJhbXMSEQoJbGVkX2NvdW50GAEgASgFEgwKBGJpdHMYAiABKAUSEAoIZW5jb2RpbmcYAyABKAkSFQoNYml0X3BlcmlvZF9tcxgEIAEoARIUCgxzeW5jX3BhdHRlcm4YBSABKAkSFAoMY3ljbGVfZnJhbWVzGAYgASgFEgsKA2ZlYxgHIAEoCRIPCgdzeW1ib2xzGAggASgFEhcKCmJyaWdodG5lc3MYCSABKAFIAIgBAUINCgtfYnJpZ2h0bmVzcyLBAQoPRGV0ZWN0aW9uUmVjb3JkEg4KBmxlZF9pZBgBIAEoBRIUCgx0X2NhcHR1cmVfbXMYAiABKAESCQoBdRgDIAEoARIJCgF2GAQgASgBEg0KBWltZ193GAUgASgFEg0KBWltZ19oGAYgASgFEhAKAWsYByADKAFCAhABUgFLEiUKBHBvc2UYCCABKAsyEi5sZWRtYXBwZXIudjEuUG9zZUgAiAEBEhIKCmNvbmZpZGVuY2UYCSABKAFCBwoFX3Bvc2UiOwoJSW11U2FtcGxlEgkKAXQYASABKAESEAoEZ3lybxgCIAMoAUICEAESEQoFYWNjZWwYAyADKAFCAhABIqwCCg1FeHBvc3VyZVN0YXRzEhQKDHRfY2FwdHVyZV9tcxgBIAEoARIZChFmcmFtZV9pbnRlcnZhbF9tcxgCIAEoARIRCgltZWFuX2x1bWEYAyABKAESEAoIcDk1X2x1bWEYBCABKAESEQoJY2xpcF9mcmFjGAUgASgBEhIKCmJsb2JfY291bnQYBiABKAUSGgoSZGV0ZWN0b3JfdGhyZXNob2xkGAcgASgBEhAKA2lzbxgIIAEoAUgAiAEBEh0KEGV4cG9zdXJlX3RpbWVfbXMYCSABKAFIAYgBARIeChFhbWJpZW50X2ludGVuc2l0eRgKIAEoAUgCiAEBQgYKBF9pc29CEwoRX2V4cG9zdXJlX3RpbWVfbXNCFAoSX2FtYmllbnRfaW50ZW5zaXR5InkKCExlZEVudHJ5EgoKAmlkGAEgASgFEg8KA3h5ehgCIAMoAUICEAESEgoKY29uZmlkZW5jZRgDIAEoARIPCgduX3ZpZXdzGAQgASgFEhUKDXJtc19yZXByb2pfcHgYBSABKAESFAoMcGFyYWxsYXhfZGVnGAYgASgBIksKDk91dHB1dE1hcFN0YXRzEhwKFHJtc19yZXByb2pfcHhfZ2xvYmFsGAEgASgBEhsKE21lZGlhbl9wYXJhbGxheF9kZWcYAiABKAEi8QEKCU91dHB1dE1hcBIOCgZtYXBfaWQYASABKAkSEgoKY3JlYXRlZF9hdBgCIAEoCRINCgV1bml0cxgDIAEoCRINCgVmcmFtZRgEIAEoCRIRCglsZWRfY291bnQYBSABKAUSJAoEbGVkcxgGIAMoCzIWLmxlZG1hcHBlci52MS5MZWRFbnRyeRIUCgh1bm1hcHBlZBgHIAMoBUICEAESJgoKdHJhamVjdG9yeRgIIAMoCzISLmxlZG1hcHBlci52MS5WZWMzEisKBXN0YXRzGAkgASgLMhwubGVkbWFwcGVyLnYxLk91dHB1dE1hcFN0YXRzIicKCFNvbHZlTGVkEgoKAmlkGAEgASgFEg8KA3h5ehgCIAMoAUICEAEiOwoKQ29sb3JCbG9jaxINCgVzdGFydBgBIAEoBRINCgVjb3VudBgCIAEoBRIPCgNyZ2IYAyADKAFCAhABIioKC0JyYW5jaFBvaW50EgoKAmlkGAEgASgFEg8KA3h5ehgCIAMoAUICEAEiaQoPVG9wb2xvZ3lTZWdtZW50EgoKAmlkGAEgASgFEgkKAWEYAiABKAUSCQoBYhgDIAEoBRIkCghwb2x5bGluZRgEIAMoCzISLmxlZG1hcHBlci52MS5WZWMzEg4KBmxlbmd0aBgFIAEoASJcCg5MZWRBc3NvY2lhdGlvbhIOCgZsZWRfaWQYASABKAUSEgoKc2VnbWVudF9pZBgCIAEoBRIWCg5mb290X2FyY2xlbmd0aBgDIAEoARIOCgZkX3BlcnAYBCABKAEisQEKCFRvcG9sb2d5Eg4KBm1hcF9pZBgBIAEoCRIwCg1icmFuY2hfcG9pbnRzGAIgAygLMhkubGVkbWFwcGVyLnYxLkJyYW5jaFBvaW50Ei8KCHNlZ21lbnRzGAMgAygLMh0ubGVkbWFwcGVyLnYxLlRvcG9sb2d5U2VnbWVudBIyCgxhc3NvY2lhdGlvbnMYBCADKAsyHC5sZWRtYXBwZXIudjEuTGVkQXNzb2NpYXRpb24ivQEKDlBsYXliYWNrUGFyYW1zEhYKCWludGVuc2l0eRgBIAEoAUgAiAEBEhgKC2dsb3dfcmFkaXVzGAIgASgBSAGIAQESGAoLYWdlbnRfY291bnQYAyABKAVIAogBARISCgVzcGVlZBgEIAEoAUgDiAEBEhMKB3BhbGV0dGUYBSADKA1CAhABQgwKCl9pbnRlbnNpdHlCDgoMX2dsb3dfcmFkaXVzQg4KDF9hZ2VudF9jb3VudEIICgZfc3BlZWQiLAoFSGVsbG8SDgoGY2xpZW50GAEgASgJEhMKC2FwcF92ZXJzaW9uGAIgASgJIhoKDFRpbWVTeW5jUGluZxIKCgJ0MBgBIAEoASKgAQoTU3RhcnRNYXBwaW5nT3B0aW9ucxIRCglsZWRfY291bnQYASABKAUSFAoHc3ltYm9scxgCIAEoBUgAiAEBEhoKDWJpdF9wZXJpb2RfbXMYAyABKAFIAYgBARIXCgpicmlnaHRuZXNzGAQgASgBSAKIAQFCCgoIX3N5bWJvbHNCEAoOX2JpdF9wZXJpb2RfbXNCDQoLX2JyaWdodG5lc3MiQgoMU3RhcnRNYXBwaW5nEjIKB29wdGlvbnMYASABKAsyIS5sZWRtYXBwZXIudjEuU3RhcnRNYXBwaW5nT3B0aW9ucyKwAQoQQ29uZmlndXJlT3B0aW9ucxIWCglsZWRfY291bnQYASABKAVIAIgBARIUCgdzeW1ib2xzGAIgASgFSAGIAQESGgoNYml0X3BlcmlvZF9tcxgDIAEoAUgCiAEBEhcKCmJyaWdodG5lc3MYBCABKAFIA4gBAUIMCgpfbGVkX2NvdW50QgoKCF9zeW1ib2xzQhAKDl9iaXRfcGVyaW9kX21zQg0KC19icmlnaHRuZXNzIjwKCUNvbmZpZ3VyZRIvCgdvcHRpb25zGAEgASgLMh4ubGVkbWFwcGVyLnYxLkNvbmZpZ3VyZU9wdGlvbnMiOwoLU3RvcE1hcHBpbmcSGgoNc29sdmVfb25faG9zdBgBIAEoCEgAiAEBQhAKDl9zb2x2ZV9vbl9ob3N0IjEKCVN1Ym1pdE1hcBIkCgNtYXAYASABKAsyFy5sZWRtYXBwZXIudjEuT3V0cHV0TWFwIjoKCkRldGVjdGlvbnMSLAoFYmF0Y2gYASADKAsyHS5sZWRtYXBwZXIudjEuRGV0ZWN0aW9uUmVjb3JkIjQKCEltdUJhdGNoEigKB3NhbXBsZXMYASADKAsyFy5sZWRtYXBwZXIudjEuSW11U2FtcGxlIj0KDkV4cG9zdXJlUmVwb3J0EisKBnJlcG9ydBgBIAEoCzIbLmxlZG1hcHBlci52MS5FeHBvc3VyZVN0YXRzIgsKCUdldFN0YXR1cyIMCgpHZXRQYXR0ZXJuIgwKCkdldExpdmVNYXAiEAoOR2V0U29sdmVTdGF0dXMiYAoSU2V0Q291bnRpbmdQYXR0ZXJuEigKBmJsb2NrcxgBIAMoCzIYLmxlZG1hcHBlci52MS5Db2xvckJsb2NrEhQKB2NoYW5uZWwYAiABKAVIAIgBAUIKCghfY2hhbm5lbCJCCgtTZXRMZWRDb3VudBIRCglsZWRfY291bnQYASABKAUSFAoHY2hhbm5lbBgCIAEoBUgAiAEBQgoKCF9jaGFubmVsIjoKDlN1Ym1pdFRvcG9sb2d5EigKCHRvcG9sb2d5GAEgASgLMhYubGVkbWFwcGVyLnYxLlRvcG9sb2d5ImsKC1NldFBsYXliYWNrEg4KBmVmZmVjdBgBIAEoCRIsCgZwYXJhbXMYAiABKAsyHC5sZWRtYXBwZXIudjEuUGxheWJhY2tQYXJhbXMSEwoGbWFwX2lkGAMgASgJSACIAQFCCQoHX21hcF9pZCINCgtHZXRQbGF5YmFjayIQCg5HZXRGcmFtZVRpbWluZyLoBwoNQ2xpZW50TWVzc2FnZRIkCgVoZWxsbxgBIAEoCzITLmxlZG1hcHBlci52MS5IZWxsb0gAEjQKDnRpbWVfc3luY19waW5nGAIgASgLMhoubGVkbWFwcGVyLnYxLlRpbWVTeW5jUGluZ0gAEjMKDXN0YXJ0X21hcHBpbmcYAyABKAsyGi5sZWRtYXBwZXIudjEuU3RhcnRNYXBwaW5nSAASLAoJY29uZmlndXJlGAQgASgLMhcubGVkbWFwcGVyLnYxLkNvbmZpZ3VyZUgAEjEKDHN0b3BfbWFwcGluZxgFIAEoCzIZLmxlZG1hcHBlci52MS5TdG9wTWFwcGluZ0gAEi4KCmRldGVjdGlvbnMYBiABKAsyGC5sZWRtYXBwZXIudjEuRGV0ZWN0aW9uc0gAEisKCWltdV9iYXRjaBgHIAEoCzIWLmxlZG1hcHBlci52MS5JbXVCYXRjaEgAEjcKD2V4cG9zdXJlX3JlcG9ydBgIIAEoCzIcLmxlZG1hcHBlci52MS5FeHBvc3VyZVJlcG9ydEgAEi0KCmdldF9zdGF0dXMYCSABKAsyFy5sZWRtYXBwZXIudjEuR2V0U3RhdHVzSAASLwoLZ2V0X3BhdHRlcm4YCiABKAsyGC5sZWRtYXBwZXIudjEuR2V0UGF0dGVybkgAEjAKDGdldF9saXZlX21hcBgLIAEoCzIYLmxlZG1hcHBlci52MS5HZXRMaXZlTWFwSAASOAoQZ2V0X3NvbHZlX3N0YXR1cxgMIAEoCzIcLmxlZG1hcHBlci52MS5HZXRTb2x2ZVN0YXR1c0gAEi0KCnN1Ym1pdF9tYXAYDSABKAsyFy5sZWRtYXBwZXIudjEuU3VibWl0TWFwSAASQAoUc2V0X2NvdW50aW5nX3BhdHRlcm4YDiABKAsyIC5sZWRtYXBwZXIudjEuU2V0Q291bnRpbmdQYXR0ZXJuSAASMgoNc2V0X2xlZF9jb3VudBgPIAEoCzIZLmxlZG1hcHBlci52MS5TZXRMZWRDb3VudEgAEjcKD3N1Ym1pdF90b3BvbG9neRgQIAEoCzIcLmxlZG1hcHBlci52MS5TdWJtaXRUb3BvbG9neUgAEjEKDHNldF9wbGF5YmFjaxgRIAEoCzIZLmxlZG1hcHBlci52MS5TZXRQbGF5YmFja0gAEjEKDGdldF9wbGF5YmFjaxgSIAEoCzIZLmxlZG1hcHBlci52MS5HZXRQbGF5YmFja0gAEjgKEGdldF9mcmFtZV90aW1pbmcYEyABKAsyHC5sZWRtYXBwZXIudjEuR2V0RnJhbWVUaW1pbmdIAEIFCgNtc2cifgoHV2VsY29tZRISCgpzZXNzaW9uX2lkGAEgASgJEi0KC2NvZGVfcGFyYW1zGAIgASgLMhgubGVkbWFwcGVyLnYxLkNvZGVQYXJhbXMSHAoPc29sdmVyX2JlbmNoX21zGAMgASgBSACIAQFCEgoQX3NvbHZlcl9iZW5jaF9tcyI5Cg5NYXBwaW5nU3RvcHBlZBISCgpkZXRlY3Rpb25zGAEgASgFEhMKC2ltdV9zYW1wbGVzGAIgASgFIjIKDFRpbWVTeW5jUG9uZxIKCgJ0MBgBIAEoARIKCgJ0MRgCIAEoARIKCgJ0MhgDIAEoASJcCg5NYXBwaW5nU3RhcnRlZBIbChNwYXR0ZXJuX2Nsb2NrX2Vwb2NoGAEgASgBEi0KC2NvZGVfcGFyYW1zGAIgASgLMhgubGVkbWFwcGVyLnYxLkNvZGVQYXJhbXMiQQoGU3RhdHVzEhIKCmlkZW50aWZpZWQYASABKAUSDQoFdG90YWwYAiABKAUSFAoMbG93X3BhcmFsbGF4GAMgASgFIocBCgxQYXR0ZXJuU3RhdGUSDgoGYWN0aXZlGAEgASgIEiAKE3BhdHRlcm5fY2xvY2tfZXBvY2gYAiABKAFIAIgBARItCgtjb2RlX3BhcmFtcxgDIAEoCzIYLmxlZG1hcHBlci52MS5Db2RlUGFyYW1zQhYKFF9wYXR0ZXJuX2Nsb2NrX2Vwb2NoIkwKB0xpdmVNYXASDgoGYWN0aXZlGAEgASgIEikKA21hcBgCIAEoCzIXLmxlZG1hcHBlci52MS5PdXRwdXRNYXBIAIgBAUIGCgRfbWFwIrABCgtTb2x2ZVN0YXR1cxIPCgdydW5uaW5nGAEgASgIEhUKCHByb2dyZXNzGAIgASgBSACIAQESEwoGcm1zX3B4GAMgASgBSAGIAQESJAoEbGVkcxgEIAMoCzIWLmxlZG1hcHBlci52MS5Tb2x2ZUxlZBImCgp0cmFqZWN0b3J5GAUgAygLMhIubGVkbWFwcGVyLnYxLlZlYzNCCwoJX3Byb2dyZXNzQgkKB19ybXNfcHgiHQoLUmVzdWx0UmVhZHkSDgoGbWFwX2lkGAEgASgJIiYKBUVycm9yEgwKBGNvZGUYASABKAkSDwoHbWVzc2FnZRgCIAEoCSJDCg1Db3VudGluZ1N0YXRlEg4KBmFjdGl2ZRgBIAEoCBIVCghlcG9jaF9tcxgCIAEoAUgAiAEBQgsKCV9lcG9jaF9tcyIzCg1MZWRDb3VudFN0YXRlEhEKCWxlZF9jb3VudBgBIAEoBRIPCgdjaGFubmVsGAIgASgFIn0KDVBsYXliYWNrU3RhdGUSDgoGYWN0aXZlGAEgASgIEg4KBmVmZmVjdBgCIAEoCRIsCgZwYXJhbXMYAyABKAsyHC5sZWRtYXBwZXIudjEuUGxheWJhY2tQYXJhbXMSEwoGbWFwX2lkGAQgASgJSACIAQFCCQoHX21hcF9pZCIrCglGcmFtZVRpY2sSCwoDc2VxGAEgASgNEhEKCXRfbW9ub19tcxgCIAEoASKtAQoLRnJhbWVUaW1pbmcSIAoTcGF0dGVybl9jbG9ja19lcG9jaBgBIAEoAUgAiAEBEhUKDWJpdF9wZXJpb2RfbXMYAiABKAESFAoMY3ljbGVfZnJhbWVzGAMgASgNEg8KB2Ryb3BwZWQYBCABKA0SJgoFdGlja3MYBSADKAsyFy5sZWRtYXBwZXIudjEuRnJhbWVUaWNrQhYKFF9wYXR0ZXJuX2Nsb2NrX2Vwb2NoItUFCg1TZXJ2ZXJNZXNzYWdlEigKB3dlbGNvbWUYASABKAsyFS5sZWRtYXBwZXIudjEuV2VsY29tZUgAEjQKDnRpbWVfc3luY19wb25nGAIgASgLMhoubGVkbWFwcGVyLnYxLlRpbWVTeW5jUG9uZ0gAEjcKD21hcHBpbmdfc3RhcnRlZBgDIAEoCzIcLmxlZG1hcHBlci52MS5NYXBwaW5nU3RhcnRlZEgAEiYKBnN0YXR1cxgEIAEoCzIULmxlZG1hcHBlci52MS5TdGF0dXNIABIzCg1wYXR0ZXJuX3N0YXRlGAUgASgLMhoubGVkbWFwcGVyLnYxLlBhdHRlcm5TdGF0ZUgAEikKCGxpdmVfbWFwGAYgASgLMhUubGVkbWFwcGVyLnYxLkxpdmVNYXBIABIxCgxzb2x2ZV9zdGF0dXMYByABKAsyGS5sZWRtYXBwZXIudjEuU29sdmVTdGF0dXNIABIxCgxyZXN1bHRfcmVhZHkYCCABKAsyGS5sZWRtYXBwZXIudjEuUmVzdWx0UmVhZHlIABIkCgVlcnJvchgJIAEoCzITLmxlZG1hcHBlci52MS5FcnJvckgAEjcKD21hcHBpbmdfc3RvcHBlZBgKIAEoCzIcLmxlZG1hcHBlci52MS5NYXBwaW5nU3RvcHBlZEgAEjUKDmNvdW50aW5nX3N0YXRlGAsgASgLMhsubGVkbWFwcGVyLnYxLkNvdW50aW5nU3RhdGVIABI2Cg9sZWRfY291bnRfc3RhdGUYDCABKAsyGy5sZWRtYXBwZXIudjEuTGVkQ291bnRTdGF0ZUgAEjUKDnBsYXliYWNrX3N0YXRlGA0gASgLMhsubGVkbWFwcGVyLnYxLlBsYXliYWNrU3RhdGVIABIxCgxmcmFtZV90aW1pbmcYDiABKAsyGS5sZWRtYXBwZXIudjEuRnJhbWVUaW1pbmdIAEIFCgNtc2diBnByb3RvMw");
 
 /**
  * 3-vector; used only where nesting forces a message type (trajectories).
@@ -1116,6 +1116,24 @@ export const GetPlaybackSchema: GenMessage<GetPlayback> = /*@__PURE__*/
   messageDesc(file_ledmapper, 35);
 
 /**
+ * Poll rendered-frame timing. The player samples its monotonic clock as it
+ * pushes each mapping-pattern frame to the LEDs; this drains the accumulated
+ * samples so the phone can forward them to the trace server and pattern-
+ * generator stutter becomes visible offline. Reply: frame_timing.
+ *
+ * @generated from message ledmapper.v1.GetFrameTiming
+ */
+export type GetFrameTiming = Message<"ledmapper.v1.GetFrameTiming"> & {
+};
+
+/**
+ * Describes the message ledmapper.v1.GetFrameTiming.
+ * Use `create(GetFrameTimingSchema)` to create a new message.
+ */
+export const GetFrameTimingSchema: GenMessage<GetFrameTiming> = /*@__PURE__*/
+  messageDesc(file_ledmapper, 36);
+
+/**
  * @generated from message ledmapper.v1.ClientMessage
  */
 export type ClientMessage = Message<"ledmapper.v1.ClientMessage"> & {
@@ -1232,6 +1250,12 @@ export type ClientMessage = Message<"ledmapper.v1.ClientMessage"> & {
      */
     value: GetPlayback;
     case: "getPlayback";
+  } | {
+    /**
+     * @generated from field: ledmapper.v1.GetFrameTiming get_frame_timing = 19;
+     */
+    value: GetFrameTiming;
+    case: "getFrameTiming";
   } | { case: undefined; value?: undefined };
 };
 
@@ -1240,7 +1264,7 @@ export type ClientMessage = Message<"ledmapper.v1.ClientMessage"> & {
  * Use `create(ClientMessageSchema)` to create a new message.
  */
 export const ClientMessageSchema: GenMessage<ClientMessage> = /*@__PURE__*/
-  messageDesc(file_ledmapper, 36);
+  messageDesc(file_ledmapper, 37);
 
 /**
  * @generated from message ledmapper.v1.Welcome
@@ -1269,7 +1293,7 @@ export type Welcome = Message<"ledmapper.v1.Welcome"> & {
  * Use `create(WelcomeSchema)` to create a new message.
  */
 export const WelcomeSchema: GenMessage<Welcome> = /*@__PURE__*/
-  messageDesc(file_ledmapper, 37);
+  messageDesc(file_ledmapper, 38);
 
 /**
  * Reply to stop_mapping(solve_on_host=false): stopped + persisted, no host
@@ -1294,7 +1318,7 @@ export type MappingStopped = Message<"ledmapper.v1.MappingStopped"> & {
  * Use `create(MappingStoppedSchema)` to create a new message.
  */
 export const MappingStoppedSchema: GenMessage<MappingStopped> = /*@__PURE__*/
-  messageDesc(file_ledmapper, 38);
+  messageDesc(file_ledmapper, 39);
 
 /**
  * @generated from message ledmapper.v1.TimeSyncPong
@@ -1321,7 +1345,7 @@ export type TimeSyncPong = Message<"ledmapper.v1.TimeSyncPong"> & {
  * Use `create(TimeSyncPongSchema)` to create a new message.
  */
 export const TimeSyncPongSchema: GenMessage<TimeSyncPong> = /*@__PURE__*/
-  messageDesc(file_ledmapper, 39);
+  messageDesc(file_ledmapper, 40);
 
 /**
  * @generated from message ledmapper.v1.MappingStarted
@@ -1343,7 +1367,7 @@ export type MappingStarted = Message<"ledmapper.v1.MappingStarted"> & {
  * Use `create(MappingStartedSchema)` to create a new message.
  */
 export const MappingStartedSchema: GenMessage<MappingStarted> = /*@__PURE__*/
-  messageDesc(file_ledmapper, 40);
+  messageDesc(file_ledmapper, 41);
 
 /**
  * @generated from message ledmapper.v1.Status
@@ -1370,7 +1394,7 @@ export type Status = Message<"ledmapper.v1.Status"> & {
  * Use `create(StatusSchema)` to create a new message.
  */
 export const StatusSchema: GenMessage<Status> = /*@__PURE__*/
-  messageDesc(file_ledmapper, 41);
+  messageDesc(file_ledmapper, 42);
 
 /**
  * @generated from message ledmapper.v1.PatternState
@@ -1399,7 +1423,7 @@ export type PatternState = Message<"ledmapper.v1.PatternState"> & {
  * Use `create(PatternStateSchema)` to create a new message.
  */
 export const PatternStateSchema: GenMessage<PatternState> = /*@__PURE__*/
-  messageDesc(file_ledmapper, 42);
+  messageDesc(file_ledmapper, 43);
 
 /**
  * @generated from message ledmapper.v1.LiveMap
@@ -1423,7 +1447,7 @@ export type LiveMap = Message<"ledmapper.v1.LiveMap"> & {
  * Use `create(LiveMapSchema)` to create a new message.
  */
 export const LiveMapSchema: GenMessage<LiveMap> = /*@__PURE__*/
-  messageDesc(file_ledmapper, 43);
+  messageDesc(file_ledmapper, 44);
 
 /**
  * @generated from message ledmapper.v1.SolveStatus
@@ -1460,7 +1484,7 @@ export type SolveStatus = Message<"ledmapper.v1.SolveStatus"> & {
  * Use `create(SolveStatusSchema)` to create a new message.
  */
 export const SolveStatusSchema: GenMessage<SolveStatus> = /*@__PURE__*/
-  messageDesc(file_ledmapper, 44);
+  messageDesc(file_ledmapper, 45);
 
 /**
  * @generated from message ledmapper.v1.ResultReady
@@ -1477,7 +1501,7 @@ export type ResultReady = Message<"ledmapper.v1.ResultReady"> & {
  * Use `create(ResultReadySchema)` to create a new message.
  */
 export const ResultReadySchema: GenMessage<ResultReady> = /*@__PURE__*/
-  messageDesc(file_ledmapper, 45);
+  messageDesc(file_ledmapper, 46);
 
 /**
  * @generated from message ledmapper.v1.Error
@@ -1499,7 +1523,7 @@ export type Error = Message<"ledmapper.v1.Error"> & {
  * Use `create(ErrorSchema)` to create a new message.
  */
 export const ErrorSchema: GenMessage<Error> = /*@__PURE__*/
-  messageDesc(file_ledmapper, 46);
+  messageDesc(file_ledmapper, 47);
 
 /**
  * Reply to set_counting_pattern: whether a counting pattern is displayed and
@@ -1526,7 +1550,7 @@ export type CountingState = Message<"ledmapper.v1.CountingState"> & {
  * Use `create(CountingStateSchema)` to create a new message.
  */
 export const CountingStateSchema: GenMessage<CountingState> = /*@__PURE__*/
-  messageDesc(file_ledmapper, 47);
+  messageDesc(file_ledmapper, 48);
 
 /**
  * Reply to set_led_count: echo of the persisted per-channel strip length.
@@ -1550,7 +1574,7 @@ export type LedCountState = Message<"ledmapper.v1.LedCountState"> & {
  * Use `create(LedCountStateSchema)` to create a new message.
  */
 export const LedCountStateSchema: GenMessage<LedCountState> = /*@__PURE__*/
-  messageDesc(file_ledmapper, 48);
+  messageDesc(file_ledmapper, 49);
 
 /**
  * Reply to set_playback / get_playback: the effective configuration (the
@@ -1589,7 +1613,81 @@ export type PlaybackState = Message<"ledmapper.v1.PlaybackState"> & {
  * Use `create(PlaybackStateSchema)` to create a new message.
  */
 export const PlaybackStateSchema: GenMessage<PlaybackState> = /*@__PURE__*/
-  messageDesc(file_ledmapper, 49);
+  messageDesc(file_ledmapper, 50);
+
+/**
+ * One rendered mapping-pattern frame: the player's monotonic-clock time (ms)
+ * at which the firmware pushed absolute frame `seq` to the LEDs. `seq` is the
+ * frame index since the pattern epoch BEFORE the cycle-length modulo, so the
+ * cycle is seq / cycle_frames and the expected emit time is
+ * pattern_clock_epoch + seq * bit_period_ms — the gap between that and
+ * t_mono_ms is the render stutter.
+ *
+ * @generated from message ledmapper.v1.FrameTick
+ */
+export type FrameTick = Message<"ledmapper.v1.FrameTick"> & {
+  /**
+   * @generated from field: uint32 seq = 1;
+   */
+  seq: number;
+
+  /**
+   * @generated from field: double t_mono_ms = 2;
+   */
+  tMonoMs: number;
+};
+
+/**
+ * Describes the message ledmapper.v1.FrameTick.
+ * Use `create(FrameTickSchema)` to create a new message.
+ */
+export const FrameTickSchema: GenMessage<FrameTick> = /*@__PURE__*/
+  messageDesc(file_ledmapper, 51);
+
+/**
+ * Reply to get_frame_timing: a drained batch of rendered-frame timestamps
+ * plus the number of samples dropped to ring-buffer overflow since the last
+ * poll. Even bit_period_ms spacing between successive t_mono_ms = smooth
+ * generation; gaps = the pattern render loop stalled that long.
+ *
+ * @generated from message ledmapper.v1.FrameTiming
+ */
+export type FrameTiming = Message<"ledmapper.v1.FrameTiming"> & {
+  /**
+   * Active-capture context; pattern_clock_epoch is unset (and the rest 0)
+   * when no capture is running, so the phone can skip a no-op batch.
+   *
+   * @generated from field: optional double pattern_clock_epoch = 1;
+   */
+  patternClockEpoch?: number | undefined;
+
+  /**
+   * @generated from field: double bit_period_ms = 2;
+   */
+  bitPeriodMs: number;
+
+  /**
+   * @generated from field: uint32 cycle_frames = 3;
+   */
+  cycleFrames: number;
+
+  /**
+   * @generated from field: uint32 dropped = 4;
+   */
+  dropped: number;
+
+  /**
+   * @generated from field: repeated ledmapper.v1.FrameTick ticks = 5;
+   */
+  ticks: FrameTick[];
+};
+
+/**
+ * Describes the message ledmapper.v1.FrameTiming.
+ * Use `create(FrameTimingSchema)` to create a new message.
+ */
+export const FrameTimingSchema: GenMessage<FrameTiming> = /*@__PURE__*/
+  messageDesc(file_ledmapper, 52);
 
 /**
  * @generated from message ledmapper.v1.ServerMessage
@@ -1676,6 +1774,12 @@ export type ServerMessage = Message<"ledmapper.v1.ServerMessage"> & {
      */
     value: PlaybackState;
     case: "playbackState";
+  } | {
+    /**
+     * @generated from field: ledmapper.v1.FrameTiming frame_timing = 14;
+     */
+    value: FrameTiming;
+    case: "frameTiming";
   } | { case: undefined; value?: undefined };
 };
 
@@ -1684,4 +1788,5 @@ export type ServerMessage = Message<"ledmapper.v1.ServerMessage"> & {
  * Use `create(ServerMessageSchema)` to create a new message.
  */
 export const ServerMessageSchema: GenMessage<ServerMessage> = /*@__PURE__*/
-  messageDesc(file_ledmapper, 50);
+  messageDesc(file_ledmapper, 53);
+

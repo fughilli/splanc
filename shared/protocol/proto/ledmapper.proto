@@ -325,6 +325,12 @@ message SetPlayback {
 
 message GetPlayback {}
 
+// Poll rendered-frame timing. The player samples its monotonic clock as it
+// pushes each mapping-pattern frame to the LEDs; this drains the accumulated
+// samples so the phone can forward them to the trace server and pattern-
+// generator stutter becomes visible offline. Reply: frame_timing.
+message GetFrameTiming {}
+
 message ClientMessage {
   // Arm names equal the pre-protobuf "type" discriminator values.
   oneof msg {
@@ -346,6 +352,7 @@ message ClientMessage {
     SubmitTopology submit_topology = 16;
     SetPlayback set_playback = 17;
     GetPlayback get_playback = 18;
+    GetFrameTiming get_frame_timing = 19;
   }
 }
 
@@ -439,6 +446,31 @@ message PlaybackState {
   optional string map_id = 4;
 }
 
+// One rendered mapping-pattern frame: the player's monotonic-clock time (ms)
+// at which the firmware pushed absolute frame `seq` to the LEDs. `seq` is the
+// frame index since the pattern epoch BEFORE the cycle-length modulo, so the
+// cycle is seq / cycle_frames and the expected emit time is
+// pattern_clock_epoch + seq * bit_period_ms — the gap between that and
+// t_mono_ms is the render stutter.
+message FrameTick {
+  uint32 seq = 1;
+  double t_mono_ms = 2;
+}
+
+// Reply to get_frame_timing: a drained batch of rendered-frame timestamps
+// plus the number of samples dropped to ring-buffer overflow since the last
+// poll. Even bit_period_ms spacing between successive t_mono_ms = smooth
+// generation; gaps = the pattern render loop stalled that long.
+message FrameTiming {
+  // Active-capture context; pattern_clock_epoch is unset (and the rest 0)
+  // when no capture is running, so the phone can skip a no-op batch.
+  optional double pattern_clock_epoch = 1;
+  double bit_period_ms = 2;
+  uint32 cycle_frames = 3;
+  uint32 dropped = 4;
+  repeated FrameTick ticks = 5;
+}
+
 message ServerMessage {
   oneof msg {
     Welcome welcome = 1;
@@ -454,5 +486,6 @@ message ServerMessage {
     CountingState counting_state = 11;
     LedCountState led_count_state = 12;
     PlaybackState playback_state = 13;
+    FrameTiming frame_timing = 14;
   }
 }

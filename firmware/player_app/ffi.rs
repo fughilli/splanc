@@ -204,6 +204,16 @@ pub unsafe extern "C" fn lm_pattern_timing(
     }
 }
 
+/// Record that the frame loop just pushed mapping-pattern frame `seq` (the
+/// absolute frame index since the pattern epoch, before the cycle modulo) to
+/// the LEDs at player monotonic clock `t_mono_ms`. Buffered for the phone to
+/// drain via get_frame_timing (stutter diagnosis). Cheap ring write — call it
+/// unconditionally right after the strip update.
+#[no_mangle]
+pub unsafe extern "C" fn lm_pattern_frame_shown(seq: u32, t_mono_ms: f64) {
+    player().record_frame_shown(seq, t_mono_ms);
+}
+
 /// The color LED `led` shows in mapping cycle frame `frame_index`
 /// (caller reduces modulo cycle_frames). False when no capture is active.
 #[no_mangle]

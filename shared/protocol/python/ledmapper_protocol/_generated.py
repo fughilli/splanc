@@ -354,6 +354,14 @@ class GetPlaybackMessage(_StrictModel):
     type: Literal["get_playback"]
 
 
+class GetFrameTimingMessage(_StrictModel):
+    """Drain the player's rendered-frame timing log (the phone forwards it
+    to the trace server to diagnose pattern-generator stutter). Reply:
+    frame_timing."""
+
+    type: Literal["get_frame_timing"]
+
+
 ClientMessageInner = Annotated[
     Union[
         HelloMessage,
@@ -374,6 +382,7 @@ ClientMessageInner = Annotated[
         SubmitTopologyMessage,
         SetPlaybackMessage,
         GetPlaybackMessage,
+        GetFrameTimingMessage,
     ],
     Field(discriminator="type"),
 ]
@@ -504,6 +513,29 @@ class PlaybackStateMessage(_StrictModel):
     mapId: Union[str, None] = None
 
 
+class FrameTick(_StrictModel):
+    """One rendered mapping-pattern frame: the player monotonic-clock time
+    (ms) at which it pushed absolute frame `seq` (frames since the pattern
+    epoch, before the cycle modulo) to the LEDs."""
+
+    seq: int = Field(ge=0)
+    tMonoMs: float
+
+
+class FrameTimingMessage(_StrictModel):
+    """Reply to get_frame_timing: a drained batch of rendered-frame
+    timestamps plus the count dropped to ring-buffer overflow since the last
+    poll. Even bitPeriodMs spacing between successive tMonoMs = smooth
+    generation; gaps = the pattern render loop stalled."""
+
+    type: Literal["frame_timing"]
+    patternClockEpoch: Union[float, None] = None
+    bitPeriodMs: float
+    cycleFrames: int = Field(ge=0)
+    dropped: int = Field(ge=0)
+    ticks: List[FrameTick]
+
+
 ServerMessageInner = Annotated[
     Union[
         WelcomeMessage,
@@ -519,6 +551,7 @@ ServerMessageInner = Annotated[
         CountingStateMessage,
         LedCountStateMessage,
         PlaybackStateMessage,
+        FrameTimingMessage,
     ],
     Field(discriminator="type"),
 ]
@@ -569,6 +602,7 @@ __all__ = [
     "SubmitTopologyMessage",
     "SetPlaybackMessage",
     "GetPlaybackMessage",
+    "GetFrameTimingMessage",
     "ClientMessage",
     "WelcomeMessage",
     "TimeSyncPongMessage",
@@ -584,5 +618,7 @@ __all__ = [
     "CountingStateMessage",
     "LedCountStateMessage",
     "PlaybackStateMessage",
+    "FrameTick",
+    "FrameTimingMessage",
     "ServerMessage",
 ]

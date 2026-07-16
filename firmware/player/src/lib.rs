@@ -34,6 +34,60 @@ pub const DEFAULT_SYMBOLS: u8 = 2;
 /// Output channels a player may drive (the C6 has plenty of RMT channels).
 pub const MAX_CHANNELS: usize = 8;
 
+/// Rendered-frame timing ring-buffer depth. Holds recent frames until the
+/// phone polls (get_frame_timing); at 100 ms/frame that is ~13 s of history,
+/// far more than the phone's poll interval, so overflow only happens when the
+/// phone is not draining (and then `dropped` records it).
+const FRAME_LOG_CAP: usize = 128;
+
+/// Ring buffer of recently rendered mapping-pattern frames. The output driver
+/// appends one `(seq, monotonic-clock)` sample per frame it pushes to the
+/// LEDs; get_frame_timing drains it. On overflow the oldest sample is dropped
+/// and `dropped` counts it, so a phone that fell behind learns its history
+/// has gaps rather than reading stale data.
+struct FrameLog {
+    seq: [u32; FRAME_LOG_CAP],
+    t_ms: [f64; FRAME_LOG_CAP],
+    head: usize,
+    len: usize,
+    dropped: u32,
+}
+
+impl FrameLog {
+    const fn new() -> Self {
+        FrameLog {
+            seq: [0; FRAME_LOG_CAP],
+            t_ms: [0.0; FRAME_LOG_CAP],
+            head: 0,
+            len: 0,
+            dropped: 0,
+        }
+    }
+
+    fn push(&mut self, seq: u32, t_ms: f64) {
+        let tail = (self.head + self.len) % FRAME_LOG_CAP;
+        self.seq[tail] = seq;
+        self.t_ms[tail] = t_ms;
+        if self.len == FRAME_LOG_CAP {
+            self.head = (self.head + 1) % FRAME_LOG_CAP; // overwrite oldest
+            self.dropped = self.dropped.saturating_add(1);
+        } else {
+            self.len += 1;
+        }
+    }
+
+    fn pop(&mut self) -> Option<(u32, f64)> {
+        if self.len == 0 {
+            return None;
+        }
+        let s = self.seq[self.head];
+        let t = self.t_ms[self.head];
+        self.head = (self.head + 1) % FRAME_LOG_CAP;
+        self.len -= 1;
+        Some((s, t))
+    }
+}
+
 type Str64 = micropb::heapless::String<64>;
 
 fn s64(s: &str) -> Str64 {
@@ -64,6 +118,7 @@ pub struct Player {
     counting: Option<(f64, pb::SetCountingPattern)>,
     led_counts: [Option<u32>; MAX_CHANNELS],
     stored_map_id: Option<Str64>,
+    frame_log: FrameLog,
 }
 
 impl Player {
@@ -75,6 +130,7 @@ impl Player {
             counting: None,
             led_counts: [None; MAX_CHANNELS],
             stored_map_id: None,
+            frame_log: FrameLog::new(),
         }
     }
 
@@ -131,6 +187,7 @@ impl Player {
                 }
             }
             CMsg::GetPlayback(_) => Some(self.playback_state()),
+            CMsg::GetFrameTiming(_) => Some(self.frame_timing()),
             // Fire-and-forget Pi-profile telemetry: silently dropped.
             CMsg::Detections(_) | CMsg::ImuBatch(_) | CMsg::ExposureReport(_) => None,
             // Pi-only REQUEST arms: bounded unsupported error.
@@ -292,6 +349,35 @@ impl Player {
         reply(SMsg::LedCountState(state))
     }
 
+    /// Drain the rendered-frame timing log into a FrameTiming reply. Reports
+    /// the active capture's context (epoch/period/cycle) so the phone can
+    /// compute expected-vs-actual emit times without a second lookup, the
+    /// overflow `dropped` count since the last poll, and as many buffered
+    /// ticks as fit the reply's capacity (the rest stay for the next poll).
+    fn frame_timing(&mut self) -> pb::ServerMessage {
+        let mut ft = pb::FrameTiming::default();
+        if let Some(active) = self.active.as_ref() {
+            ft.set_pattern_clock_epoch(active.epoch_ms);
+            ft.r#bit_period_ms = active.bit_period_ms;
+            ft.r#cycle_frames = active.spec.cycle_frames;
+        }
+        ft.r#dropped = self.frame_log.dropped;
+        self.frame_log.dropped = 0;
+        // Drain oldest-first until the FrameTick vector is at capacity; any
+        // remaining samples are NOT dropped, they wait for the next poll.
+        while !ft.r#ticks.is_full() {
+            let Some((seq, t_ms)) = self.frame_log.pop() else {
+                break;
+            };
+            let mut tick = pb::FrameTick::default();
+            tick.r#seq = seq;
+            tick.r#t_mono_ms = t_ms;
+            // is_full() was just checked, so this push cannot fail.
+            let _ = ft.r#ticks.push(tick);
+        }
+        reply(SMsg::FrameTiming(ft))
+    }
+
     fn playback_state(&self) -> pb::ServerMessage {
         // Playback engines land in Phase G; until then the truthful state is
         // "off", params at player defaults (an empty overlay).
@@ -344,6 +430,16 @@ impl Player {
             }
         }
         Some(color)
+    }
+
+    /// Record that the output driver just pushed mapping-pattern frame `seq`
+    /// (the absolute frame index since the pattern epoch, BEFORE the
+    /// cycle-length modulo) to the LEDs at player monotonic clock `t_ms`.
+    /// Buffered until the phone polls get_frame_timing; on overflow the oldest
+    /// sample is dropped (and counted). Cheap (a ring write) so the frame loop
+    /// can call it unconditionally.
+    pub fn record_frame_shown(&mut self, seq: u32, t_ms: f64) {
+        self.frame_log.push(seq, t_ms);
     }
 
     /// Pattern clock epoch of the active capture, if any.

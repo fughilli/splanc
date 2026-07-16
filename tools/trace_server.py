@@ -183,13 +183,56 @@ class Handler(BaseHTTPRequestHandler):
                         n_sat += 1
                 f.write(json.dumps(frame) + "\n")
 
-        if frames:
-            last = frames[-1]
-            br = last.get("brightness")
-            br_str = f", LED {br * 100:.0f}%" if isinstance(br, (int, float)) else ""
+        # Rendered-frame timing from the player (get_frame_timing): the
+        # monotonic-clock time it pushed each mapping-pattern frame. Written to
+        # its own log; the summary flags stutter (a frame that took longer than
+        # ~1.5x the expected bit period) and any samples the phone dropped.
+        timing = payload.get("timing", [])
+        worst_gap = 0.0
+        n_stutter = 0  # single frames that took > ~1.5x the bit period
+        n_skipped = 0  # frames never rendered at all (a seq jump > 1)
+        n_dropped = 0  # samples lost to the player's ring overflow
+        n_ticks = 0
+        if timing:
+            with (session_dir / "timing.jsonl").open("a") as f:
+                for batch in timing:
+                    f.write(json.dumps(batch) + "\n")
+                    n_dropped += int(batch.get("dropped", 0))
+                    period = batch.get("bitPeriodMs") or 0
+                    ticks = batch.get("ticks", [])
+                    n_ticks += len(ticks)
+                    for prev, cur in zip(ticks, ticks[1:]):
+                        step = cur.get("seq", 0) - prev.get("seq", 0)
+                        gap = cur.get("tMonoMs", 0) - prev.get("tMonoMs", 0)
+                        if step > 1:
+                            # Non-adjacent seq = the loop stalled past whole
+                            # frames, so they were never displayed. (This spans
+                            # poll boundaries too, but a boundary that dropped
+                            # nothing is still contiguous seq, so this is real.)
+                            n_skipped += step - 1
+                        elif step == 1:
+                            worst_gap = max(worst_gap, gap)
+                            if period and gap > 1.5 * period:
+                                n_stutter += 1
+
+        if frames or timing:
+            br_str = ""
+            if frames:
+                br = frames[-1].get("brightness")
+                br_str = f", LED {br * 100:.0f}%" if isinstance(br, (int, float)) else ""
+            timing_str = ""
+            if timing:
+                timing_str = f", {n_ticks} rendered frames"
+                if n_stutter or n_skipped or n_dropped:
+                    parts = [f"{n_stutter} slow (worst {worst_gap:.0f}ms)"]
+                    if n_skipped:
+                        parts.append(f"{n_skipped} skipped")
+                    if n_dropped:
+                        parts.append(f"{n_dropped} dropped")
+                    timing_str += f" [STUTTER: {', '.join(parts)}]"
             _log(
                 f"[trace] {_last_session}: +{len(frames)} frames, "
-                f"{n_blobs} blobs ({n_sat} with >10% saturation){br_str}"
+                f"{n_blobs} blobs ({n_sat} with >10% saturation){br_str}{timing_str}"
             )
         self.send_response(204)
         self._cors()

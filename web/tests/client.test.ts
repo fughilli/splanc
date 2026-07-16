@@ -168,6 +168,34 @@ test("start/stop/status/pattern request-response", async () => {
   assert.equal((await stopP).mapId, "m-9");
 });
 
+test("getFrameTiming drains the player's rendered-frame log", async () => {
+  const { client, sockets } = makeClient();
+  const p = client.connect();
+  const s = sockets[0]!;
+  s.open();
+  s.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS, solverBenchMs: null });
+  await p;
+
+  const timingP = client.getFrameTiming();
+  assert.deepEqual(s.lastSent(), { type: "get_frame_timing" });
+  s.receive({
+    type: "frame_timing",
+    patternClockEpoch: 1000,
+    bitPeriodMs: 100,
+    cycleFrames: 8,
+    dropped: 2,
+    ticks: [
+      { seq: 0, tMonoMs: 1000 },
+      { seq: 1, tMonoMs: 1101 },
+    ],
+  });
+  const ft = await timingP;
+  assert.equal(ft.patternClockEpoch, 1000);
+  assert.equal(ft.dropped, 2);
+  assert.equal(ft.ticks.length, 2);
+  assert.deepEqual(ft.ticks[1], { seq: 1, tMonoMs: 1101 });
+});
+
 test("a server error rejects the pending request", async () => {
   const { client, sockets } = makeClient();
   const p = client.connect();

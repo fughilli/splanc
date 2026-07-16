@@ -220,3 +220,79 @@ fn full_phone_session() {
         "unsupported",
     );
 }
+
+/// get_frame_timing drains the rendered-frame log the output driver feeds via
+/// record_frame_shown: the reply carries the active capture's context, the
+/// samples in emit order, and the overflow-drop count; a second poll comes
+/// back empty (the log was drained, not re-read).
+#[test]
+fn frame_timing_drain() {
+    let mut player = Player::new("esp32-0001", 16);
+
+    // No capture yet: empty context, no ticks, nothing dropped.
+    let Some(SMsg::FrameTiming(ft)) =
+        send(&mut player, CMsg::GetFrameTiming(pb::GetFrameTiming::default()), 10.0)
+    else {
+        panic!("get_frame_timing must produce frame_timing");
+    };
+    assert_eq!(ft.r#pattern_clock_epoch(), None, "idle: no epoch");
+    assert!(ft.r#ticks.is_empty());
+    assert_eq!(ft.r#dropped, 0);
+
+    // Start a capture so the reply can report epoch/period/cycle context.
+    let mut opts = pb::StartMappingOptions::default();
+    opts.r#led_count = 16;
+    opts.set_bit_period_ms(100.0);
+    let mut start = pb::StartMapping::default();
+    start.set_options(opts);
+    let Some(SMsg::MappingStarted(started)) = send(&mut player, CMsg::StartMapping(start), 1000.0)
+    else {
+        panic!("start_mapping must produce mapping_started");
+    };
+    let cycle_frames = started.r#code_params.r#cycle_frames as u32;
+
+    // Frame loop emits frames 0..5, one bit-period apart (smooth).
+    for seq in 0..5u32 {
+        player.record_frame_shown(seq, 1000.0 + f64::from(seq) * 100.0);
+    }
+    let Some(SMsg::FrameTiming(ft)) =
+        send(&mut player, CMsg::GetFrameTiming(pb::GetFrameTiming::default()), 1600.0)
+    else {
+        panic!("frame_timing");
+    };
+    assert_eq!(ft.r#pattern_clock_epoch().copied(), Some(1000.0));
+    assert_eq!(ft.r#bit_period_ms, 100.0);
+    assert_eq!(ft.r#cycle_frames, cycle_frames);
+    assert_eq!(ft.r#dropped, 0);
+    assert_eq!(ft.r#ticks.len(), 5);
+    for (i, tick) in ft.r#ticks.iter().enumerate() {
+        assert_eq!(tick.r#seq, i as u32);
+        assert_eq!(tick.r#t_mono_ms, 1000.0 + (i as f64) * 100.0);
+    }
+
+    // Draining consumes the log: an immediate re-poll is empty.
+    let Some(SMsg::FrameTiming(ft)) =
+        send(&mut player, CMsg::GetFrameTiming(pb::GetFrameTiming::default()), 1700.0)
+    else {
+        panic!("frame_timing");
+    };
+    assert!(ft.r#ticks.is_empty());
+    assert_eq!(ft.r#dropped, 0);
+
+    // Overflow: flood well past the ring depth without polling. The oldest
+    // samples are dropped (and counted); what survives is the most recent.
+    for seq in 0..500u32 {
+        player.record_frame_shown(seq, 2000.0 + f64::from(seq));
+    }
+    let Some(SMsg::FrameTiming(ft)) =
+        send(&mut player, CMsg::GetFrameTiming(pb::GetFrameTiming::default()), 3000.0)
+    else {
+        panic!("frame_timing");
+    };
+    assert!(ft.r#dropped > 0, "flood past the ring must drop samples");
+    // Survivors are contiguous and the newest: last survivor is frame 499.
+    let last = ft.r#ticks.iter().last().expect("some survivors");
+    assert_eq!(last.r#seq, 499);
+    // dropped + delivered accounts for every sample pushed since the last poll.
+    assert_eq!(ft.r#dropped + ft.r#ticks.len() as u32, 500);
+}

@@ -361,6 +361,13 @@ export interface GetPlaybackMessage {
   type: "get_playback";
 }
 
+/** Drain the player's rendered-frame timing log (the phone forwards it to
+ * the trace server to diagnose pattern-generator stutter). Reply:
+ * frame_timing. */
+export interface GetFrameTimingMessage {
+  type: "get_frame_timing";
+}
+
 export type ClientMessage =
   | HelloMessage
   | TimeSyncPingMessage
@@ -379,7 +386,8 @@ export type ClientMessage =
   | SetLedCountMessage
   | SubmitTopologyMessage
   | SetPlaybackMessage
-  | GetPlaybackMessage;
+  | GetPlaybackMessage
+  | GetFrameTimingMessage;
 
 // ---------------------------------------------------------------------------
 // Server -> Client messages (§7.2)
@@ -500,6 +508,27 @@ export interface PlaybackStateMessage {
   mapId: string | null;
 }
 
+/** One rendered mapping-pattern frame: the player's monotonic-clock time
+ * (ms) at which it pushed absolute frame `seq` (frames since the pattern
+ * epoch, before the cycle modulo) to the LEDs. */
+export interface FrameTick {
+  seq: number;
+  tMonoMs: number;
+}
+
+/** Reply to get_frame_timing: a drained batch of rendered-frame timestamps
+ * plus the count dropped to ring-buffer overflow since the last poll. Even
+ * bitPeriodMs spacing between successive tMonoMs = smooth generation; gaps =
+ * the pattern render loop stalled. patternClockEpoch is null when idle. */
+export interface FrameTimingMessage {
+  type: "frame_timing";
+  patternClockEpoch: number | null;
+  bitPeriodMs: number;
+  cycleFrames: number;
+  dropped: number;
+  ticks: FrameTick[];
+}
+
 export type ServerMessage =
   | WelcomeMessage
   | TimeSyncPongMessage
@@ -513,4 +542,5 @@ export type ServerMessage =
   | ErrorMessage
   | CountingStateMessage
   | LedCountStateMessage
-  | PlaybackStateMessage;
+  | PlaybackStateMessage
+  | FrameTimingMessage;

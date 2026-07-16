@@ -459,6 +459,12 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("export interface GetPlaybackMessage {")
     lines.append('  type: "get_playback";')
     lines.append("}\n")
+    lines.append("/** Drain the player's rendered-frame timing log (the phone forwards it to")
+    lines.append(" * the trace server to diagnose pattern-generator stutter). Reply:")
+    lines.append(" * frame_timing. */")
+    lines.append("export interface GetFrameTimingMessage {")
+    lines.append('  type: "get_frame_timing";')
+    lines.append("}\n")
     lines.append("export type ClientMessage =")
     lines.append("  | HelloMessage")
     lines.append("  | TimeSyncPingMessage")
@@ -477,7 +483,8 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("  | SetLedCountMessage")
     lines.append("  | SubmitTopologyMessage")
     lines.append("  | SetPlaybackMessage")
-    lines.append("  | GetPlaybackMessage;\n")
+    lines.append("  | GetPlaybackMessage")
+    lines.append("  | GetFrameTimingMessage;\n")
 
     lines.append("// ---------------------------------------------------------------------------")
     lines.append("// Server -> Client messages (§7.2)")
@@ -587,6 +594,25 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("  /** The stored map/topology playback runs on; null when none selected. */")
     lines.append("  mapId: string | null;")
     lines.append("}\n")
+    lines.append("/** One rendered mapping-pattern frame: the player's monotonic-clock time")
+    lines.append(" * (ms) at which it pushed absolute frame `seq` (frames since the pattern")
+    lines.append(" * epoch, before the cycle modulo) to the LEDs. */")
+    lines.append("export interface FrameTick {")
+    lines.append("  seq: number;")
+    lines.append("  tMonoMs: number;")
+    lines.append("}\n")
+    lines.append("/** Reply to get_frame_timing: a drained batch of rendered-frame timestamps")
+    lines.append(" * plus the count dropped to ring-buffer overflow since the last poll. Even")
+    lines.append(" * bitPeriodMs spacing between successive tMonoMs = smooth generation; gaps =")
+    lines.append(" * the pattern render loop stalled. patternClockEpoch is null when idle. */")
+    lines.append("export interface FrameTimingMessage {")
+    lines.append('  type: "frame_timing";')
+    lines.append("  patternClockEpoch: number | null;")
+    lines.append("  bitPeriodMs: number;")
+    lines.append("  cycleFrames: number;")
+    lines.append("  dropped: number;")
+    lines.append("  ticks: FrameTick[];")
+    lines.append("}\n")
     lines.append("export type ServerMessage =")
     lines.append("  | WelcomeMessage")
     lines.append("  | TimeSyncPongMessage")
@@ -600,7 +626,8 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("  | ErrorMessage")
     lines.append("  | CountingStateMessage")
     lines.append("  | LedCountStateMessage")
-    lines.append("  | PlaybackStateMessage;")
+    lines.append("  | PlaybackStateMessage")
+    lines.append("  | FrameTimingMessage;")
     return "\n".join(lines) + "\n"
 
 
@@ -985,6 +1012,14 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append('    type: Literal["get_playback"]')
     out.append("")
     out.append("")
+    out.append("class GetFrameTimingMessage(_StrictModel):")
+    out.append('    """Drain the player\'s rendered-frame timing log (the phone forwards it')
+    out.append("    to the trace server to diagnose pattern-generator stutter). Reply:")
+    out.append('    frame_timing."""')
+    out.append("")
+    out.append('    type: Literal["get_frame_timing"]')
+    out.append("")
+    out.append("")
     out.append("ClientMessageInner = Annotated[")
     out.append("    Union[")
     out.append("        HelloMessage,")
@@ -1005,6 +1040,7 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append("        SubmitTopologyMessage,")
     out.append("        SetPlaybackMessage,")
     out.append("        GetPlaybackMessage,")
+    out.append("        GetFrameTimingMessage,")
     out.append("    ],")
     out.append('    Field(discriminator="type"),')
     out.append("]")
@@ -1139,6 +1175,29 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append("    mapId: Union[str, None] = None")
     out.append("")
     out.append("")
+    out.append("class FrameTick(_StrictModel):")
+    out.append('    """One rendered mapping-pattern frame: the player monotonic-clock time')
+    out.append("    (ms) at which it pushed absolute frame `seq` (frames since the pattern")
+    out.append('    epoch, before the cycle modulo) to the LEDs."""')
+    out.append("")
+    out.append("    seq: int = Field(ge=0)")
+    out.append("    tMonoMs: float")
+    out.append("")
+    out.append("")
+    out.append("class FrameTimingMessage(_StrictModel):")
+    out.append('    """Reply to get_frame_timing: a drained batch of rendered-frame')
+    out.append("    timestamps plus the count dropped to ring-buffer overflow since the last")
+    out.append("    poll. Even bitPeriodMs spacing between successive tMonoMs = smooth")
+    out.append('    generation; gaps = the pattern render loop stalled."""')
+    out.append("")
+    out.append('    type: Literal["frame_timing"]')
+    out.append("    patternClockEpoch: Union[float, None] = None")
+    out.append("    bitPeriodMs: float")
+    out.append("    cycleFrames: int = Field(ge=0)")
+    out.append("    dropped: int = Field(ge=0)")
+    out.append("    ticks: List[FrameTick]")
+    out.append("")
+    out.append("")
     out.append("ServerMessageInner = Annotated[")
     out.append("    Union[")
     out.append("        WelcomeMessage,")
@@ -1154,6 +1213,7 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append("        CountingStateMessage,")
     out.append("        LedCountStateMessage,")
     out.append("        PlaybackStateMessage,")
+    out.append("        FrameTimingMessage,")
     out.append("    ],")
     out.append('    Field(discriminator="type"),')
     out.append("]")
@@ -1205,6 +1265,7 @@ def emit_python(schemas: dict[str, dict]) -> str:
         "SubmitTopologyMessage",
         "SetPlaybackMessage",
         "GetPlaybackMessage",
+        "GetFrameTimingMessage",
         "ClientMessage",
         "WelcomeMessage",
         "TimeSyncPongMessage",
@@ -1220,6 +1281,8 @@ def emit_python(schemas: dict[str, dict]) -> str:
         "CountingStateMessage",
         "LedCountStateMessage",
         "PlaybackStateMessage",
+        "FrameTick",
+        "FrameTimingMessage",
         "ServerMessage",
     ]:
         out.append(f'    "{name}",')
