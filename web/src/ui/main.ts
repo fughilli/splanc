@@ -607,6 +607,8 @@ async function startCapture(): Promise<void> {
           const seq = frameSeq++;
           tf.seq = seq;
           const grab = detector.grabFrame(f.texture, f.imgW, f.imgH);
+          tf.imgW = grab.w;
+          tf.imgH = grab.h;
           void frameSink.capture(seq, grab.w, grab.h, grab.rgba);
         }
         if (trace.push(tf)) {

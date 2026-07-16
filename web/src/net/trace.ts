@@ -41,6 +41,10 @@ export interface TraceFrame {
    * is on — joins this metadata row to the uploaded frame bytes (seq.rgba.gz)
    * so the offline harness can re-run the detector on the exact input. */
   seq?: number;
+  /** Full-frame dimensions (present with `seq`), so the offline harness knows
+   * how to interpret the raw RGBA without guessing from its byte length. */
+  imgW?: number;
+  imgH?: number;
   /** The LED output brightness in effect this frame (the servo's current
    * value, 1 = full) — so a trace shows what the brightness servo did. */
   brightness: number;
