@@ -474,11 +474,11 @@ async function startCapture(): Promise<void> {
           if (ft.ticks.length > 0 || ft.dropped > 0) {
             sink.pushTiming({
               tPhone: performance.now(),
-              patternClockEpoch: ft.patternClockEpoch,
-              bitPeriodMs: ft.bitPeriodMs,
+              patternClockEpochMs: ft.patternClockEpochMs,
+              bitPeriodUs: ft.bitPeriodUs,
               cycleFrames: ft.cycleFrames,
               dropped: ft.dropped,
-              ticks: ft.ticks.map((t) => ({ seq: t.seq, tMonoMs: t.tMonoMs })),
+              ticks: ft.ticks.map((t) => ({ seq: t.seq, tMonoUs: t.tMonoUs })),
             });
           }
         })

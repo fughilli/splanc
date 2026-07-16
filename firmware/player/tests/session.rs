@@ -13,9 +13,11 @@ use ledmapper_player::Player;
 use pb::ClientMessage_::Msg as CMsg;
 use pb::ServerMessage_::Msg as SMsg;
 
+// `now` stays f64 at the call sites (the golden fixtures are written that way)
+// and is narrowed to the player's integer clock here.
 fn send(player: &mut Player, msg: CMsg, now: f64) -> Option<SMsg> {
     let req = pb::ClientMessage { r#msg: Some(msg) };
-    player.handle(req, now, now).and_then(|r| r.r#msg)
+    player.handle(req, now as i64, now as i64).and_then(|r| r.r#msg)
 }
 
 fn expect_error(reply: Option<SMsg>, code: &str) {
@@ -60,10 +62,12 @@ fn full_phone_session() {
     let mut ping = pb::TimeSyncPing::default();
     ping.r#t0 = 123.5;
     let req = pb::ClientMessage { r#msg: Some(CMsg::TimeSyncPing(ping)) };
-    let Some(SMsg::TimeSyncPong(pong)) = player.handle(req, 500.0, 501.0).and_then(|r| r.r#msg)
+    let Some(SMsg::TimeSyncPong(pong)) = player.handle(req, 500, 501).and_then(|r| r.r#msg)
     else {
         panic!("ping must produce pong");
     };
+    // t0 keeps its fractional value (the phone clock); t1/t2 are the player's
+    // integer clock widened to the wire double.
     assert_eq!((pong.r#t0, pong.r#t1, pong.r#t2), (123.5, 500.0, 501.0));
 
     // start_mapping for the golden's geometry: 16 LEDs, symbols=2.
@@ -235,7 +239,7 @@ fn frame_timing_drain() {
     else {
         panic!("get_frame_timing must produce frame_timing");
     };
-    assert_eq!(ft.r#pattern_clock_epoch(), None, "idle: no epoch");
+    assert_eq!(ft.r#pattern_clock_epoch_ms(), None, "idle: no epoch");
     assert!(ft.r#ticks.is_empty());
     assert_eq!(ft.r#dropped, 0);
 
@@ -251,23 +255,23 @@ fn frame_timing_drain() {
     };
     let cycle_frames = started.r#code_params.r#cycle_frames as u32;
 
-    // Frame loop emits frames 0..5, one bit-period apart (smooth).
+    // Frame loop emits frames 0..5, one bit-period (100 ms = 100_000 µs) apart.
     for seq in 0..5u32 {
-        player.record_frame_shown(seq, 1000.0 + f64::from(seq) * 100.0);
+        player.record_frame_shown(seq, 1_000_000 + seq * 100_000);
     }
     let Some(SMsg::FrameTiming(ft)) =
         send(&mut player, CMsg::GetFrameTiming(pb::GetFrameTiming::default()), 1600.0)
     else {
         panic!("frame_timing");
     };
-    assert_eq!(ft.r#pattern_clock_epoch().copied(), Some(1000.0));
-    assert_eq!(ft.r#bit_period_ms, 100.0);
+    assert_eq!(ft.r#pattern_clock_epoch_ms().copied(), Some(1000));
+    assert_eq!(ft.r#bit_period_us, 100_000);
     assert_eq!(ft.r#cycle_frames, cycle_frames);
     assert_eq!(ft.r#dropped, 0);
     assert_eq!(ft.r#ticks.len(), 5);
     for (i, tick) in ft.r#ticks.iter().enumerate() {
         assert_eq!(tick.r#seq, i as u32);
-        assert_eq!(tick.r#t_mono_ms, 1000.0 + (i as f64) * 100.0);
+        assert_eq!(tick.r#t_mono_us, 1_000_000 + (i as u32) * 100_000);
     }
 
     // Draining consumes the log: an immediate re-poll is empty.
@@ -282,7 +286,7 @@ fn frame_timing_drain() {
     // Overflow: flood well past the ring depth without polling. The oldest
     // samples are dropped (and counted); what survives is the most recent.
     for seq in 0..500u32 {
-        player.record_frame_shown(seq, 2000.0 + f64::from(seq));
+        player.record_frame_shown(seq, 2_000_000 + seq);
     }
     let Some(SMsg::FrameTiming(ft)) =
         send(&mut player, CMsg::GetFrameTiming(pb::GetFrameTiming::default()), 3000.0)

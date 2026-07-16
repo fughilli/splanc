@@ -226,17 +226,19 @@
     "FrameTiming": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["type", "patternClockEpoch", "bitPeriodMs", "cycleFrames", "dropped", "ticks"],
-      "description": "Reply to get_frame_timing: a drained batch of rendered-frame timestamps (the player samples its monotonic clock as it pushes each mapping-pattern frame to the LEDs) plus the number of samples dropped to ring-buffer overflow since the last poll. Even bitPeriodMs spacing between successive tMonoMs means smooth generation; gaps mean the pattern render loop stalled that long. Forwarded by the phone to the trace server for offline stutter analysis.",
+      "required": ["type", "patternClockEpochMs", "bitPeriodUs", "cycleFrames", "dropped", "ticks"],
+      "description": "Reply to get_frame_timing: a drained batch of rendered-frame timestamps (the player samples its monotonic clock as it pushes each mapping-pattern frame to the LEDs) plus the number of samples dropped to ring-buffer overflow since the last poll. Even bitPeriodUs spacing between successive tMonoUs means smooth generation; gaps mean the pattern render loop stalled that long. Forwarded by the phone to the trace server for offline stutter analysis. All fields are integers (microseconds/milliseconds): this message is firmware->phone only, so it carries the player's native integer units and the firmware (a single-precision-only RISC-V core) never touches a double on this path.",
       "properties": {
         "type": { "const": "frame_timing" },
-        "patternClockEpoch": {
-          "type": ["number", "null"],
-          "description": "Active capture's pattern-clock epoch (player-clock ms); null when no capture is running (ticks then empty)."
+        "patternClockEpochMs": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Active capture's pattern-clock epoch (player-clock ms, integer); null when no capture is running (ticks then empty)."
         },
-        "bitPeriodMs": {
-          "type": "number",
-          "description": "Expected inter-frame spacing (the mapping bit period)."
+        "bitPeriodUs": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Expected inter-frame spacing in MICROSECONDS (the mapping bit period)."
         },
         "cycleFrames": {
           "type": "integer",
@@ -254,16 +256,17 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["seq", "tMonoMs"],
+            "required": ["seq", "tMonoUs"],
             "properties": {
               "seq": {
                 "type": "integer",
                 "minimum": 0,
                 "description": "Absolute frame index since the pattern epoch, BEFORE the cycle-length modulo."
               },
-              "tMonoMs": {
-                "type": "number",
-                "description": "Player monotonic clock when the firmware pushed this frame to the LEDs. Milliseconds, but sampled from the microsecond clock so it carries sub-millisecond precision for the inter-frame gaps."
+              "tMonoUs": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Player monotonic clock in MICROSECONDS (raw micros()) when the firmware pushed this frame to the LEDs. Wraps ~every 71 min; only deltas are meaningful."
               }
             }
           }

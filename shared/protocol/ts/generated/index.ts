@@ -509,21 +509,23 @@ export interface PlaybackStateMessage {
 }
 
 /** One rendered mapping-pattern frame: the player's monotonic-clock time
- * (ms) at which it pushed absolute frame `seq` (frames since the pattern
- * epoch, before the cycle modulo) to the LEDs. */
+ * (MICROSECONDS, raw micros()) at which it pushed absolute frame `seq`
+ * (frames since the pattern epoch, before the cycle modulo) to the LEDs.
+ * Integer µs — the firmware is a single-precision-only RISC-V core. */
 export interface FrameTick {
   seq: number;
-  tMonoMs: number;
+  tMonoUs: number;
 }
 
 /** Reply to get_frame_timing: a drained batch of rendered-frame timestamps
  * plus the count dropped to ring-buffer overflow since the last poll. Even
- * bitPeriodMs spacing between successive tMonoMs = smooth generation; gaps =
- * the pattern render loop stalled. patternClockEpoch is null when idle. */
+ * bitPeriodUs spacing between successive tMonoUs = smooth generation; gaps =
+ * the pattern render loop stalled. patternClockEpochMs is null when idle.
+ * All-integer (µs/ms): firmware->phone only, so no double on that path. */
 export interface FrameTimingMessage {
   type: "frame_timing";
-  patternClockEpoch: number | null;
-  bitPeriodMs: number;
+  patternClockEpochMs: number | null;
+  bitPeriodUs: number;
   cycleFrames: number;
   dropped: number;
   ticks: FrameTick[];

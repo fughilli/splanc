@@ -180,20 +180,20 @@ test("getFrameTiming drains the player's rendered-frame log", async () => {
   assert.deepEqual(s.lastSent(), { type: "get_frame_timing" });
   s.receive({
     type: "frame_timing",
-    patternClockEpoch: 1000,
-    bitPeriodMs: 100,
+    patternClockEpochMs: 1000,
+    bitPeriodUs: 100000,
     cycleFrames: 8,
     dropped: 2,
     ticks: [
-      { seq: 0, tMonoMs: 1000 },
-      { seq: 1, tMonoMs: 1101 },
+      { seq: 0, tMonoUs: 1000000 },
+      { seq: 1, tMonoUs: 1101000 },
     ],
   });
   const ft = await timingP;
-  assert.equal(ft.patternClockEpoch, 1000);
+  assert.equal(ft.patternClockEpochMs, 1000);
   assert.equal(ft.dropped, 2);
   assert.equal(ft.ticks.length, 2);
-  assert.deepEqual(ft.ticks[1], { seq: 1, tMonoMs: 1101 });
+  assert.deepEqual(ft.ticks[1], { seq: 1, tMonoUs: 1101000 });
 });
 
 test("a server error rejects the pending request", async () => {

@@ -89,8 +89,10 @@ static void ws_drop(uint16_t close_code) {
 }
 
 static void ws_dispatch_message() {
-  double now = (double)millis();
-  int32_t n = lm_player_handle(rx, rx_len, now, (double)millis(), tx, sizeof tx);
+  // Integer player clock (millis()) — no f64: the session core does its time
+  // arithmetic in integers and widens to the wire's double only at encode.
+  int64_t now = (int64_t)millis();
+  int32_t n = lm_player_handle(rx, rx_len, now, now, tx, sizeof tx);
   if (n > 0) ws_send_frame(WS_OP_BINARY, tx, (size_t)n);
   rx_len = 0;
 }
@@ -227,8 +229,8 @@ static void render() {
   static bool was_active = false;
 
   uint8_t rgb[3];
-  double epoch, period;
-  uint32_t cycle_frames, led_count;
+  int64_t epoch_ms;
+  uint32_t bit_period_us, cycle_frames, led_count;
 
   if (lm_counting_color(0, rgb)) {
     // Counting pattern: static; repaint every pass is cheap and correct.
@@ -243,11 +245,13 @@ static void render() {
     return;
   }
 
-  if (lm_pattern_timing(&epoch, &period, &cycle_frames, &led_count)) {
-    double now = (double)millis();
-    double since = now - epoch;
-    if (since < 0) since = 0;
-    uint32_t seq = (uint32_t)(since / period);
+  if (lm_pattern_timing(&epoch_ms, &bit_period_us, &cycle_frames, &led_count)) {
+    // Integer pattern clock — no f64 on this per-loop-pass hot path. Elapsed
+    // ms since the epoch, then frames = elapsed_us / period_us (64-bit product
+    // so it can't overflow across a long capture).
+    int64_t since_ms = (int64_t)millis() - epoch_ms;
+    if (since_ms < 0) since_ms = 0;
+    uint32_t seq = (uint32_t)(((uint64_t)since_ms * 1000ULL) / bit_period_us);
     uint32_t frame_index = seq % cycle_frames;
     if (frame_index != last_shown_frame) {
       uint32_t n = led_count < kMaxLeds ? led_count : kMaxLeds;
@@ -260,12 +264,11 @@ static void render() {
       FastLED.show();
       // Sample the clock AFTER the strip update so the record reflects the
       // true per-frame cadence (blocked loop() passes show up as gaps); the
-      // phone drains these via get_frame_timing to diagnose stutter. micros()
-      // (not millis()) for sub-millisecond resolution on the gaps — carried as
-      // fractional ms so the unit matches bit_period_ms. micros() wraps every
-      // ~71 min, which at worst mis-measures the single gap straddling a wrap
-      // (a large negative delta the analysis simply ignores).
-      lm_pattern_frame_shown(seq, (double)micros() / 1000.0);
+      // phone drains these via get_frame_timing to diagnose stutter. Raw
+      // micros() (integer µs, no f64) for sub-millisecond gap resolution;
+      // micros() wraps ~every 71 min, which at worst mis-measures the single
+      // gap straddling a wrap (a large delta the analysis simply ignores).
+      lm_pattern_frame_shown(seq, micros());
       last_shown_frame = frame_index;
     }
     was_active = true;

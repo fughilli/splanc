@@ -100,8 +100,8 @@ fn encode_reply(reply: &pb::ServerMessage, out: *mut u8, out_cap: usize) -> i32 
 pub unsafe extern "C" fn lm_player_handle(
     data: *const u8,
     len: usize,
-    recv_ms: f64,
-    send_ms: f64,
+    recv_ms: i64,
+    send_ms: i64,
     out: *mut u8,
     out_cap: usize,
 ) -> i32 {
@@ -183,19 +183,21 @@ fn upload_error(e: StoreError) -> pb::ServerMessage {
 
 // -- render-side accessors (pure reads; the FastLED loop polls these) --------
 
-/// Mapping-pattern timing: writes [epoch_ms, bit_period_ms] and
-/// [cycle_frames, led_count]; false when no capture is active.
+/// Mapping-pattern timing, all INTEGER (the render loop touches no f64):
+/// writes epoch_ms (i64), bit_period_us (u32), cycle_frames, led_count. False
+/// when no capture is active. Absolute frame index at player-clock ms `t` is
+/// `((t - epoch_ms) * 1000) / bit_period_us`.
 #[no_mangle]
 pub unsafe extern "C" fn lm_pattern_timing(
-    epoch_ms: *mut f64,
-    bit_period_ms: *mut f64,
+    epoch_ms: *mut i64,
+    bit_period_us: *mut u32,
     cycle_frames: *mut u32,
     led_count: *mut u32,
 ) -> bool {
     match player().pattern_timing() {
-        Some((epoch, period, frames, leds)) => {
+        Some((epoch, period_us, frames, leds)) => {
             *epoch_ms = epoch;
-            *bit_period_ms = period;
+            *bit_period_us = period_us;
             *cycle_frames = frames;
             *led_count = leds;
             true
@@ -206,12 +208,12 @@ pub unsafe extern "C" fn lm_pattern_timing(
 
 /// Record that the frame loop just pushed mapping-pattern frame `seq` (the
 /// absolute frame index since the pattern epoch, before the cycle modulo) to
-/// the LEDs at player monotonic clock `t_mono_ms`. Buffered for the phone to
-/// drain via get_frame_timing (stutter diagnosis). Cheap ring write — call it
-/// unconditionally right after the strip update.
+/// the LEDs at player monotonic clock `t_mono_us` (raw micros(), integer µs).
+/// Buffered for the phone to drain via get_frame_timing (stutter diagnosis).
+/// Cheap ring write — call it unconditionally right after the strip update.
 #[no_mangle]
-pub unsafe extern "C" fn lm_pattern_frame_shown(seq: u32, t_mono_ms: f64) {
-    player().record_frame_shown(seq, t_mono_ms);
+pub unsafe extern "C" fn lm_pattern_frame_shown(seq: u32, t_mono_us: u32) {
+    player().record_frame_shown(seq, t_mono_us);
 }
 
 /// The color LED `led` shows in mapping cycle frame `frame_index`

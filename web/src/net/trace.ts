@@ -55,17 +55,18 @@ export interface TraceHeader {
   codeParams: unknown;
 }
 
-/** One drained get_frame_timing batch: the player's monotonic-clock times for
- * the mapping-pattern frames it rendered, forwarded so pattern-generator
- * stutter (uneven tMonoMs spacing) can be seen offline. `tPhone` is the phone
- * clock when the batch was drained, for correlating the two clock domains. */
+/** One drained get_frame_timing batch: the player's monotonic-clock times (µs)
+ * for the mapping-pattern frames it rendered, forwarded so pattern-generator
+ * stutter (uneven tMonoUs spacing) can be seen offline. Integer µs/ms — the
+ * player is a single-precision-only RISC-V core. `tPhone` is the phone clock
+ * when the batch was drained, for correlating the two clock domains. */
 export interface TraceTiming {
   tPhone: number;
-  patternClockEpoch: number | null;
-  bitPeriodMs: number;
+  patternClockEpochMs: number | null;
+  bitPeriodUs: number;
   cycleFrames: number;
   dropped: number;
-  ticks: { seq: number; tMonoMs: number }[];
+  ticks: { seq: number; tMonoUs: number }[];
 }
 
 /** Keep only the fields worth tracing (drops bbox etc.). */

@@ -76,8 +76,8 @@ test("frame-timing batches ride the flush and can flush on their own", async () 
 
   const sink = new TraceSink("https://trace/local", 3, fakeFetch);
   const batch = {
-    tPhone: 5, patternClockEpoch: 1000, bitPeriodMs: 100, cycleFrames: 8,
-    dropped: 0, ticks: [{ seq: 0, tMonoMs: 1000 }, { seq: 1, tMonoMs: 1101 }],
+    tPhone: 5, patternClockEpochMs: 1000, bitPeriodUs: 100000, cycleFrames: 8,
+    dropped: 0, ticks: [{ seq: 0, tMonoUs: 1000000 }, { seq: 1, tMonoUs: 1101000 }],
   };
   // Timing alone (no frames queued) still counts as pending and flushes.
   sink.pushTiming(batch);

@@ -47,7 +47,8 @@ const FRAME_LOG_CAP: usize = 128;
 /// has gaps rather than reading stale data.
 struct FrameLog {
     seq: [u32; FRAME_LOG_CAP],
-    t_ms: [f64; FRAME_LOG_CAP],
+    // Microseconds (raw micros()), integer — no f64 on the render hot path.
+    t_us: [u32; FRAME_LOG_CAP],
     head: usize,
     len: usize,
     dropped: u32,
@@ -57,17 +58,17 @@ impl FrameLog {
     const fn new() -> Self {
         FrameLog {
             seq: [0; FRAME_LOG_CAP],
-            t_ms: [0.0; FRAME_LOG_CAP],
+            t_us: [0; FRAME_LOG_CAP],
             head: 0,
             len: 0,
             dropped: 0,
         }
     }
 
-    fn push(&mut self, seq: u32, t_ms: f64) {
+    fn push(&mut self, seq: u32, t_us: u32) {
         let tail = (self.head + self.len) % FRAME_LOG_CAP;
         self.seq[tail] = seq;
-        self.t_ms[tail] = t_ms;
+        self.t_us[tail] = t_us;
         if self.len == FRAME_LOG_CAP {
             self.head = (self.head + 1) % FRAME_LOG_CAP; // overwrite oldest
             self.dropped = self.dropped.saturating_add(1);
@@ -76,12 +77,12 @@ impl FrameLog {
         }
     }
 
-    fn pop(&mut self) -> Option<(u32, f64)> {
+    fn pop(&mut self) -> Option<(u32, u32)> {
         if self.len == 0 {
             return None;
         }
         let s = self.seq[self.head];
-        let t = self.t_ms[self.head];
+        let t = self.t_us[self.head];
         self.head = (self.head + 1) % FRAME_LOG_CAP;
         self.len -= 1;
         Some((s, t))
@@ -98,15 +99,62 @@ fn s64(s: &str) -> Str64 {
     out
 }
 
+/// Fixed-point brightness at full scale (Q8: 256 == 1.0). The phone-facing
+/// brightness is [0,1]; we carry it as an integer so the per-LED scale in the
+/// render loop is an integer multiply+shift, not an f64 multiply (the C6's
+/// RISC-V FPU is single-precision only, so f64 ops are software-emulated).
+const BRIGHTNESS_ONE_Q8: u16 = 256;
+
+/// The active capture, in the INTEGER forms the render hot path needs (see
+/// the module note on f64 cost). The wire is milliseconds/[0,1] doubles; those
+/// are reconstructed only at the cold encode boundary (`bit_period_ms()` /
+/// `brightness()`), never in the frame loop.
 #[derive(Debug, Clone, Copy)]
 struct ActiveCapture {
-    epoch_ms: f64,
+    /// Player-clock epoch (integer milliseconds; the clock is millis()).
+    epoch_ms: i64,
     spec: CodeSpec,
-    bit_period_ms: f64,
-    /// LED output brightness scale in [0,1] — servoed by the phone against
-    /// its measured bloom/wash-out (§7.1 start_mapping/configure).
-    brightness: f64,
+    /// Frame period in MICROSECONDS — integer so the frame-index division in
+    /// the render loop stays integer even for fractional-ms periods.
+    bit_period_us: u32,
+    /// LED brightness as Q8 fixed-point in [0, 256] (256 == full); servoed by
+    /// the phone against its measured bloom/wash-out (§7.1).
+    brightness_q8: u16,
 }
+
+impl ActiveCapture {
+    /// Wire brightness in [0,1] (cold: only for encoding CodeParams).
+    fn brightness(&self) -> f64 {
+        self.brightness_q8 as f64 / BRIGHTNESS_ONE_Q8 as f64
+    }
+    /// Wire bit period in ms (cold: only for encoding CodeParams).
+    fn bit_period_ms(&self) -> f64 {
+        self.bit_period_us as f64 / 1000.0
+    }
+}
+
+/// Parse the wire brightness ([0,1] double) into Q8 fixed-point, rounding to
+/// the nearest step. Cold (once per start/configure).
+fn brightness_to_q8(v: f64) -> u16 {
+    let q = (v * BRIGHTNESS_ONE_Q8 as f64 + 0.5) as i32;
+    q.clamp(0, BRIGHTNESS_ONE_Q8 as i32) as u16
+}
+
+/// Counting-pattern block capacity (matches SetCountingPattern.blocks in the
+/// firmware micropb profile, //shared/protocol/rust:gen_main.rs).
+const MAX_COUNTING_BLOCKS: usize = 32;
+
+/// A counting-pattern block with its color pre-reduced to 8-bit RGB. The wire
+/// carries [0,1] doubles; we convert them ONCE here (cold, at set time) so
+/// `counting_color` — polled per-LED on every render pass — is pure integer.
+#[derive(Clone, Copy, Default)]
+struct CountingBlock {
+    start: u32,
+    count: u32,
+    rgb: Rgb,
+}
+
+type CountingBlocks = micropb::heapless::Vec<CountingBlock, MAX_COUNTING_BLOCKS>;
 
 /// The protocol session core. One per WSS connection (like the Pi's
 /// ConnectionHandler), with the persisted bits (led_counts, stored map)
@@ -115,7 +163,7 @@ pub struct Player {
     session_id: Str64,
     default_led_count: u32,
     active: Option<ActiveCapture>,
-    counting: Option<(f64, pb::SetCountingPattern)>,
+    counting: Option<(i64, CountingBlocks)>,
     led_counts: [Option<u32>; MAX_CHANNELS],
     stored_map_id: Option<Str64>,
     frame_log: FrameLog,
@@ -135,14 +183,14 @@ impl Player {
     }
 
     /// Handle one client message. `recv_ms`/`send_ms` are the player-clock
-    /// receive and reply timestamps (§7.3 time sync needs both; everything
-    /// else uses `send_ms` as "now"). Returns the reply, or None for
-    /// fire-and-forget arms.
+    /// receive and reply timestamps, INTEGER milliseconds (the player clock is
+    /// millis()). §7.3 time sync needs both; everything else uses `send_ms` as
+    /// "now". Returns the reply, or None for fire-and-forget arms.
     pub fn handle(
         &mut self,
         req: pb::ClientMessage,
-        recv_ms: f64,
-        send_ms: f64,
+        recv_ms: i64,
+        send_ms: i64,
     ) -> Option<pb::ServerMessage> {
         let Some(msg) = req.r#msg else {
             return Some(error("bad_message", "envelope has no message set"));
@@ -151,9 +199,13 @@ impl Player {
             CMsg::Hello(_) => Some(self.welcome()),
             CMsg::TimeSyncPing(p) => {
                 let mut pong = pb::TimeSyncPong::default();
+                // t0 is the phone clock (fractional, epoch-scale ms) — echoed
+                // verbatim as f64; float32 could not hold it (this is the one
+                // place double is genuinely required). t1/t2 are the player's
+                // integer clock, widened only here at the wire boundary.
                 pong.r#t0 = p.r#t0;
-                pong.r#t1 = recv_ms;
-                pong.r#t2 = send_ms;
+                pong.r#t1 = recv_ms as f64;
+                pong.r#t2 = send_ms as f64;
                 Some(reply(SMsg::TimeSyncPong(pong)))
             }
             CMsg::StartMapping(m) => Some(self.start_mapping(&m, send_ms)),
@@ -199,7 +251,7 @@ impl Player {
 
     // -- capture ----------------------------------------------------------
 
-    fn start_mapping(&mut self, m: &pb::StartMapping, now_ms: f64) -> pb::ServerMessage {
+    fn start_mapping(&mut self, m: &pb::StartMapping, now_ms: i64) -> pb::ServerMessage {
         let Some(options) = m.r#options() else {
             return error("bad_message", "start_mapping without options");
         };
@@ -213,6 +265,8 @@ impl Player {
             Some(4) => 4,
             Some(_) => return error("bad_message", "symbols must be 2 or 4"),
         };
+        // Wire values (ms/[0,1] doubles) are validated here at the cold decode
+        // boundary, then stored in integer/fixed-point form for the hot loop.
         let bit_period_ms = options
             .r#bit_period_ms()
             .copied()
@@ -225,19 +279,20 @@ impl Player {
             return error("bad_message", "brightness must be in [0, 1]");
         }
         let spec = CodeSpec::derive(led_count as u32, symbols, true);
-        self.active = Some(ActiveCapture {
+        let active = ActiveCapture {
             epoch_ms: now_ms,
             spec,
-            bit_period_ms,
-            brightness,
-        });
+            bit_period_us: (bit_period_ms * 1000.0 + 0.5) as u32,
+            brightness_q8: brightness_to_q8(brightness),
+        };
+        self.active = Some(active);
         let mut started = pb::MappingStarted::default();
-        started.r#pattern_clock_epoch = now_ms;
-        started.set_code_params(code_params_msg(&spec, bit_period_ms, brightness));
+        started.r#pattern_clock_epoch = now_ms as f64;
+        started.set_code_params(code_params_msg(&spec, active.bit_period_ms(), active.brightness()));
         reply(SMsg::MappingStarted(started))
     }
 
-    fn configure(&mut self, m: &pb::Configure, now_ms: f64) -> pb::ServerMessage {
+    fn configure(&mut self, m: &pb::Configure, now_ms: i64) -> pb::ServerMessage {
         let Some(active) = self.active else {
             return error("no_session", "configure requires an active capture session");
         };
@@ -256,13 +311,13 @@ impl Player {
         };
         let bit_period_ms = options
             .and_then(|o| o.r#bit_period_ms().copied())
-            .unwrap_or(active.bit_period_ms);
+            .unwrap_or(active.bit_period_ms());
         if !(bit_period_ms > 0.0) {
             return error("bad_message", "bitPeriodMs must be > 0");
         }
         let brightness = options
             .and_then(|o| o.r#brightness().copied())
-            .unwrap_or(active.brightness);
+            .unwrap_or(active.brightness());
         if !(0.0..=1.0).contains(&brightness) {
             return error("bad_message", "brightness must be in [0, 1]");
         }
@@ -270,8 +325,8 @@ impl Player {
         self.active = Some(ActiveCapture {
             epoch_ms: now_ms,
             spec,
-            bit_period_ms,
-            brightness,
+            bit_period_us: (bit_period_ms * 1000.0 + 0.5) as u32,
+            brightness_q8: brightness_to_q8(brightness),
         });
         self.pattern_state()
     }
@@ -299,11 +354,11 @@ impl Player {
         match self.active {
             Some(active) => {
                 state.r#active = true;
-                state.set_pattern_clock_epoch(active.epoch_ms);
+                state.set_pattern_clock_epoch(active.epoch_ms as f64);
                 state.set_code_params(code_params_msg(
                     &active.spec,
-                    active.bit_period_ms,
-                    active.brightness,
+                    active.bit_period_ms(),
+                    active.brightness(),
                 ));
             }
             None => {
@@ -320,7 +375,7 @@ impl Player {
     fn set_counting_pattern(
         &mut self,
         m: pb::SetCountingPattern,
-        now_ms: f64,
+        now_ms: i64,
     ) -> pb::ServerMessage {
         let mut state = pb::CountingState::default();
         if m.r#blocks.is_empty() {
@@ -328,8 +383,23 @@ impl Player {
             state.r#active = false;
         } else {
             state.r#active = true;
-            state.set_epoch_ms(now_ms);
-            self.counting = Some((now_ms, m));
+            state.set_epoch_ms(now_ms as f64); // integer clock → wire ms double
+            // Pre-reduce each block's [0,1] wire color to 8-bit RGB now (cold),
+            // so the per-LED counting_color polled every render pass is integer.
+            let mut blocks = CountingBlocks::new();
+            for b in m.r#blocks.iter() {
+                let ch = |i: usize| -> u8 {
+                    let v = b.r#rgb.get(i).copied().unwrap_or(0.0);
+                    (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8
+                };
+                // blocks capacity == the wire block cap, so push cannot fail.
+                let _ = blocks.push(CountingBlock {
+                    start: b.r#start.max(0) as u32,
+                    count: b.r#count.max(0) as u32,
+                    rgb: (ch(0), ch(1), ch(2)),
+                });
+            }
+            self.counting = Some((now_ms, blocks));
         }
         reply(SMsg::CountingState(state))
     }
@@ -357,8 +427,8 @@ impl Player {
     fn frame_timing(&mut self) -> pb::ServerMessage {
         let mut ft = pb::FrameTiming::default();
         if let Some(active) = self.active.as_ref() {
-            ft.set_pattern_clock_epoch(active.epoch_ms);
-            ft.r#bit_period_ms = active.bit_period_ms;
+            ft.set_pattern_clock_epoch_ms(active.epoch_ms as u32);
+            ft.r#bit_period_us = active.bit_period_us;
             ft.r#cycle_frames = active.spec.cycle_frames;
         }
         ft.r#dropped = self.frame_log.dropped;
@@ -366,12 +436,12 @@ impl Player {
         // Drain oldest-first until the FrameTick vector is at capacity; any
         // remaining samples are NOT dropped, they wait for the next poll.
         while !ft.r#ticks.is_full() {
-            let Some((seq, t_ms)) = self.frame_log.pop() else {
+            let Some((seq, t_us)) = self.frame_log.pop() else {
                 break;
             };
             let mut tick = pb::FrameTick::default();
             tick.r#seq = seq;
-            tick.r#t_mono_ms = t_ms;
+            tick.r#t_mono_us = t_us;
             // is_full() was just checked, so this push cannot fail.
             let _ = ft.r#ticks.push(tick);
         }
@@ -408,7 +478,10 @@ impl Player {
     pub fn pattern_color(&self, led: u32, frame_index: u32) -> Option<Rgb> {
         let active = self.active.as_ref()?;
         let (r, g, b) = color_for_frame(led, frame_index, &active.spec);
-        let scale = |v: u8| -> u8 { (v as f64 * active.brightness + 0.5) as u8 };
+        // Integer Q8 scale (v * q8 / 256, rounded) — no f64 in the per-LED,
+        // per-frame hot path. q8 == 256 is exact identity.
+        let q8 = active.brightness_q8 as u32;
+        let scale = |v: u8| -> u8 { ((v as u32 * q8 + 128) >> 8) as u8 };
         Some((scale(r), scale(g), scale(b)))
     }
 
@@ -416,17 +489,12 @@ impl Player {
     /// paint [start, start+count), everything else is off. Painting past the
     /// physical strip end is expected — that IS the length probe.
     pub fn counting_color(&self, led: u32) -> Option<Rgb> {
-        let (_, pattern) = self.counting.as_ref()?;
+        let (_, blocks) = self.counting.as_ref()?;
         let mut color = (0, 0, 0);
-        for block in pattern.r#blocks.iter() {
-            let start = block.r#start.max(0) as u32;
-            let count = block.r#count.max(0) as u32;
-            if led >= start && led < start + count {
-                let ch = |i: usize| -> u8 {
-                    let v = block.r#rgb.get(i).copied().unwrap_or(0.0);
-                    (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8
-                };
-                color = (ch(0), ch(1), ch(2));
+        for block in blocks.iter() {
+            // Later blocks win on overlap (matches the wire-order semantics).
+            if led >= block.start && led < block.start + block.count {
+                color = block.rgb;
             }
         }
         Some(color)
@@ -434,27 +502,30 @@ impl Player {
 
     /// Record that the output driver just pushed mapping-pattern frame `seq`
     /// (the absolute frame index since the pattern epoch, BEFORE the
-    /// cycle-length modulo) to the LEDs at player monotonic clock `t_ms`.
-    /// Buffered until the phone polls get_frame_timing; on overflow the oldest
-    /// sample is dropped (and counted). Cheap (a ring write) so the frame loop
-    /// can call it unconditionally.
-    pub fn record_frame_shown(&mut self, seq: u32, t_ms: f64) {
-        self.frame_log.push(seq, t_ms);
+    /// cycle-length modulo) to the LEDs at player monotonic clock `t_us`
+    /// (raw micros(), integer). Buffered until the phone polls
+    /// get_frame_timing; on overflow the oldest sample is dropped (and
+    /// counted). Cheap (a ring write) so the frame loop can call it
+    /// unconditionally.
+    pub fn record_frame_shown(&mut self, seq: u32, t_us: u32) {
+        self.frame_log.push(seq, t_us);
     }
 
-    /// Pattern clock epoch of the active capture, if any.
-    pub fn pattern_epoch_ms(&self) -> Option<f64> {
+    /// Pattern clock epoch of the active capture, if any (integer ms).
+    pub fn pattern_epoch_ms(&self) -> Option<i64> {
         self.active.as_ref().map(|a| a.epoch_ms)
     }
 
     /// Timing of the active mapping pattern, for the output driver's frame
-    /// loop: `(pattern_clock_epoch_ms, bit_period_ms, cycle_frames,
-    /// led_count)`. Frame index at player-clock `t` is
-    /// `((t - epoch) / bit_period) % cycle_frames`.
-    pub fn pattern_timing(&self) -> Option<(f64, f64, u32, u32)> {
+    /// loop, all INTEGER: `(epoch_ms, bit_period_us, cycle_frames,
+    /// led_count)`. Absolute frame index at player-clock ms `t` is
+    /// `((t - epoch_ms) * 1000) / bit_period_us`; the render frame is that
+    /// modulo `cycle_frames`. Integer throughout so the frame loop touches no
+    /// f64.
+    pub fn pattern_timing(&self) -> Option<(i64, u32, u32, u32)> {
         self.active
             .as_ref()
-            .map(|a| (a.epoch_ms, a.bit_period_ms, a.spec.cycle_frames, a.spec.led_count))
+            .map(|a| (a.epoch_ms, a.bit_period_us, a.spec.cycle_frames, a.spec.led_count))
     }
 
     /// The persisted strip length for `channel` (set_led_count).

@@ -446,26 +446,34 @@ message PlaybackState {
   optional string map_id = 4;
 }
 
-// One rendered mapping-pattern frame: the player's monotonic-clock time (ms)
-// at which the firmware pushed absolute frame `seq` to the LEDs. `seq` is the
-// frame index since the pattern epoch BEFORE the cycle-length modulo, so the
-// cycle is seq / cycle_frames and the expected emit time is
-// pattern_clock_epoch + seq * bit_period_ms — the gap between that and
-// t_mono_ms is the render stutter.
+// One rendered mapping-pattern frame: the player's monotonic-clock time
+// (MICROSECONDS, raw micros()) at which the firmware pushed absolute frame
+// `seq` to the LEDs. `seq` is the frame index since the pattern epoch BEFORE
+// the cycle-length modulo, so the cycle is seq / cycle_frames and the expected
+// emit time is pattern_clock_epoch_ms*1000 + seq * bit_period_us — the gap
+// between that and t_mono_us is the render stutter. Integer µs (not double ms)
+// because the player is a 32-bit RISC-V core with a single-precision-only FPU;
+// keeping this path integer avoids software-emulated f64 on the firmware. NOTE
+// micros() wraps ~every 71 min; the analysis only uses deltas, so a single
+// wrap-straddling gap is simply ignored.
 message FrameTick {
   uint32 seq = 1;
-  double t_mono_ms = 2;
+  uint32 t_mono_us = 2;
 }
 
 // Reply to get_frame_timing: a drained batch of rendered-frame timestamps
 // plus the number of samples dropped to ring-buffer overflow since the last
-// poll. Even bit_period_ms spacing between successive t_mono_ms = smooth
-// generation; gaps = the pattern render loop stalled that long.
+// poll. Even bit_period_us spacing between successive t_mono_us = smooth
+// generation; gaps = the pattern render loop stalled that long. All integer
+// (see FrameTick) — this message is firmware↔phone only, so it carries the
+// player's native integer units rather than the wire's usual double ms.
 message FrameTiming {
-  // Active-capture context; pattern_clock_epoch is unset (and the rest 0)
-  // when no capture is running, so the phone can skip a no-op batch.
-  optional double pattern_clock_epoch = 1;
-  double bit_period_ms = 2;
+  // Active-capture context; pattern_clock_epoch_ms is unset (and the rest 0)
+  // when no capture is running, so the phone can skip a no-op batch. uint32
+  // (not 64-bit): a millis() epoch fits (< 50 days) AND proto3 JSON keeps
+  // 32-bit ints as numbers, where int64 would stringify.
+  optional uint32 pattern_clock_epoch_ms = 1;
+  uint32 bit_period_us = 2;
   uint32 cycle_frames = 3;
   uint32 dropped = 4;
   repeated FrameTick ticks = 5;

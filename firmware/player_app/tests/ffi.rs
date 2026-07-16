@@ -22,10 +22,18 @@ fn encode(msg: CMsg) -> Vec<u8> {
     enc.into_writer().to_vec()
 }
 
+// `now` stays f64 at the call sites; the FFI clock is integer ms.
 fn handle(frame: &[u8], now: f64) -> Option<SMsg> {
     let mut out = vec![0u8; 4096];
     let n = unsafe {
-        lm_player_handle(frame.as_ptr(), frame.len(), now, now, out.as_mut_ptr(), out.len())
+        lm_player_handle(
+            frame.as_ptr(),
+            frame.len(),
+            now as i64,
+            now as i64,
+            out.as_mut_ptr(),
+            out.len(),
+        )
     };
     assert!(n >= 0, "handle returned {n}");
     if n == 0 {
@@ -57,10 +65,11 @@ fn full_device_flow_through_the_c_abi() {
     else {
         panic!("mapping_started expected");
     };
-    let (mut epoch, mut period, mut frames, mut leds) = (0f64, 0f64, 0u32, 0u32);
-    assert!(unsafe { lm_pattern_timing(&mut epoch, &mut period, &mut frames, &mut leds) });
-    assert_eq!(epoch, 1000.0);
-    assert_eq!(period, started.r#code_params.r#bit_period_ms);
+    let (mut epoch, mut period_us, mut frames, mut leds) = (0i64, 0u32, 0u32, 0u32);
+    assert!(unsafe { lm_pattern_timing(&mut epoch, &mut period_us, &mut frames, &mut leds) });
+    assert_eq!(epoch, 1000);
+    // Integer µs period == the wire's ms period * 1000 (default 100 ms).
+    assert_eq!(period_us, started.r#code_params.r#bit_period_ms as u32 * 1000);
     assert_eq!(frames as i32, started.r#code_params.r#cycle_frames);
     assert_eq!(leds, 16);
     let mut rgb = [0u8; 3];
@@ -156,5 +165,5 @@ fn full_device_flow_through_the_c_abi() {
     let Some(SMsg::MappingStopped(_)) = handle(&encode(CMsg::StopMapping(stop)), 5000.0) else {
         panic!("mapping_stopped expected");
     };
-    assert!(!unsafe { lm_pattern_timing(&mut epoch, &mut period, &mut frames, &mut leds) });
+    assert!(!unsafe { lm_pattern_timing(&mut epoch, &mut period_us, &mut frames, &mut leds) });
 }

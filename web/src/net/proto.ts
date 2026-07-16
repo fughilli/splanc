@@ -132,7 +132,7 @@ function fillNulls(type: string, flat: Json): Json {
     ensure(flat, "params");
     ensure(flat, "mapId");
   }
-  if (type === "frame_timing") ensure(flat, "patternClockEpoch");
+  if (type === "frame_timing") ensure(flat, "patternClockEpochMs");
   return flat;
 }
 

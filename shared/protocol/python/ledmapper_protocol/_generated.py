@@ -515,22 +515,22 @@ class PlaybackStateMessage(_StrictModel):
 
 class FrameTick(_StrictModel):
     """One rendered mapping-pattern frame: the player monotonic-clock time
-    (ms) at which it pushed absolute frame `seq` (frames since the pattern
-    epoch, before the cycle modulo) to the LEDs."""
+    (MICROSECONDS, raw micros()) at which it pushed absolute frame `seq`
+    (frames since the pattern epoch, before the cycle modulo) to the LEDs."""
 
     seq: int = Field(ge=0)
-    tMonoMs: float
+    tMonoUs: int = Field(ge=0)
 
 
 class FrameTimingMessage(_StrictModel):
     """Reply to get_frame_timing: a drained batch of rendered-frame
     timestamps plus the count dropped to ring-buffer overflow since the last
-    poll. Even bitPeriodMs spacing between successive tMonoMs = smooth
-    generation; gaps = the pattern render loop stalled."""
+    poll. Even bitPeriodUs spacing between successive tMonoUs = smooth
+    generation; gaps = the pattern render loop stalled. All-integer."""
 
     type: Literal["frame_timing"]
-    patternClockEpoch: Union[float, None] = None
-    bitPeriodMs: float
+    patternClockEpochMs: Union[int, None] = None
+    bitPeriodUs: int = Field(ge=0)
     cycleFrames: int = Field(ge=0)
     dropped: int = Field(ge=0)
     ticks: List[FrameTick]
