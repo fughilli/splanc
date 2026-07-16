@@ -23,6 +23,9 @@
 #include <Preferences.h>
 #include <WebServer.h>
 #include <WiFi.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#include <freertos/task.h>
 
 #include "firmware/landing/landing_page.h"
 #include "firmware/player_app/improv_ble.h"
@@ -42,6 +45,18 @@ static const uint32_t kStaJoinTimeoutMs = 20000;
 // counting configuration at runtime (min'd against this).
 static const uint32_t kMaxLeds = 256;
 static CRGB leds[kMaxLeds];
+
+// LED rendering is decoupled from loop() (which cooperatively services WiFi,
+// HTTP and BLE and can stall for milliseconds during a burst): it runs in its
+// own high-priority FreeRTOS task woken close to each frame boundary, so the
+// pattern cadence no longer depends on how busy loop() is. The Rust session
+// core (player_ffi) is single-threaded by contract, so `player_mutex`
+// serializes EVERY call into it — the render task and the loop-task message
+// handler take it in turn. Priority sits above the Arduino loopTask (1) but
+// well below the WiFi/BLE stacks (~23) so networking still preempts rendering.
+static SemaphoreHandle_t player_mutex = nullptr;
+static const UBaseType_t kRenderTaskPrio = 10;   // tune on-device if needed
+static const uint32_t kRenderTaskStack = 8192;   // FastLED.show() needs headroom
 
 // Largest inbound protocol message (submit_map for ~1024 LEDs ≈ 45 KB).
 static const size_t kRxCap = 49152;
@@ -92,7 +107,10 @@ static void ws_dispatch_message() {
   // Integer player clock (millis()) — no f64: the session core does its time
   // arithmetic in integers and widens to the wire's double only at encode.
   int64_t now = (int64_t)millis();
+  // Serialize with the render task's Player access (single-threaded core).
+  xSemaphoreTake(player_mutex, portMAX_DELAY);
   int32_t n = lm_player_handle(rx, rx_len, now, now, tx, sizeof tx);
+  xSemaphoreGive(player_mutex);
   if (n > 0) ws_send_frame(WS_OP_BINARY, tx, (size_t)n);
   rx_len = 0;
 }
@@ -222,33 +240,42 @@ static void ws_poll() {
   }
 }
 
-// -- LED rendering ------------------------------------------------------------
+// -- LED rendering (own high-priority task; see player_mutex note above) ------
 
-static void render() {
+// Poll cadence for the two STATIC modes (counting probe, idle heartbeat):
+// they don't chase a frame clock, so a slow tick keeps CPU/DMA use low.
+static const uint32_t kStaticPollMs = 100;
+
+// Compute + push (at most) one frame. Player reads happen under player_mutex
+// (the core is single-threaded); the long FastLED.show() runs OUTSIDE the lock
+// so the loop-task message handler isn't blocked by the strip write. Returns
+// how long the render task should sleep before the next wake — for the mapping
+// pattern that's the time to the NEXT frame boundary, so frames land on the
+// pattern clock regardless of loop() load.
+static uint32_t render_once() {
   static uint32_t last_shown_frame = 0xffffffff;
   static bool was_active = false;
+  static uint32_t last_beat = 0;
 
   uint8_t rgb[3];
   int64_t epoch_ms;
   uint32_t bit_period_us, cycle_frames, led_count;
+  bool show = false;
+  uint32_t next_delay_ms = kStaticPollMs;
 
+  xSemaphoreTake(player_mutex, portMAX_DELAY);
   if (lm_counting_color(0, rgb)) {
-    // Counting pattern: static; repaint every pass is cheap and correct.
-    uint32_t n = kMaxLeds;
-    for (uint32_t i = 0; i < n; i++) {
+    // Counting probe: static pattern, repaint at the slow static cadence.
+    for (uint32_t i = 0; i < kMaxLeds; i++) {
       lm_counting_color(i, rgb);
       leds[i] = CRGB(rgb[0], rgb[1], rgb[2]);
     }
-    FastLED.show();
+    show = true;
     was_active = true;
     last_shown_frame = 0xffffffff;
-    return;
-  }
-
-  if (lm_pattern_timing(&epoch_ms, &bit_period_us, &cycle_frames, &led_count)) {
-    // Integer pattern clock — no f64 on this per-loop-pass hot path. Elapsed
-    // ms since the epoch, then frames = elapsed_us / period_us (64-bit product
-    // so it can't overflow across a long capture).
+  } else if (lm_pattern_timing(&epoch_ms, &bit_period_us, &cycle_frames, &led_count)) {
+    // Integer pattern clock — no f64. Elapsed ms since the epoch, then frames =
+    // elapsed_us / period_us (64-bit product so it can't overflow).
     int64_t since_ms = (int64_t)millis() - epoch_ms;
     if (since_ms < 0) since_ms = 0;
     uint32_t seq = (uint32_t)(((uint64_t)since_ms * 1000ULL) / bit_period_us);
@@ -261,33 +288,47 @@ static void render() {
         }
       }
       for (uint32_t i = n; i < kMaxLeds; i++) leds[i] = CRGB::Black;
-      FastLED.show();
-      // Sample the clock AFTER the strip update so the record reflects the
-      // true per-frame cadence (blocked loop() passes show up as gaps); the
-      // phone drains these via get_frame_timing to diagnose stutter. Raw
-      // micros() (integer µs, no f64) for sub-millisecond gap resolution;
-      // micros() wraps ~every 71 min, which at worst mis-measures the single
-      // gap straddling a wrap (a large delta the analysis simply ignores).
+      // Record the render instant (raw micros(), integer µs — no f64) BEFORE
+      // the strip write; consecutive records reveal the true frame cadence,
+      // drained by the phone via get_frame_timing. micros() wraps ~71 min; the
+      // analysis uses only deltas, so the one wrap-straddling gap is ignored.
       lm_pattern_frame_shown(seq, micros());
       last_shown_frame = frame_index;
+      show = true;
     }
+    // Sleep until the NEXT frame boundary (seq+1), so we land on the clock.
+    int64_t next_ms =
+        epoch_ms + (int64_t)(((uint64_t)(seq + 1) * bit_period_us) / 1000ULL);
+    int64_t d = next_ms - (int64_t)millis();
+    next_delay_ms = d <= 1 ? 1 : (d > (int64_t)kStaticPollMs ? kStaticPollMs : (uint32_t)d);
     was_active = true;
-    return;
+  } else {
+    // Idle: blank once after activity, then a dim heartbeat on LED 0.
+    if (was_active) {
+      fill_solid(leds, kMaxLeds, CRGB::Black);
+      show = true;
+      was_active = false;
+    } else {
+      uint32_t t = millis();
+      if (t - last_beat > kStaticPollMs) {
+        last_beat = t;
+        uint8_t breath = (uint8_t)(8 + 7 * sin8(t / 8) / 255);
+        leds[0] = CRGB(0, 0, breath);
+        show = true;
+      }
+    }
   }
+  xSemaphoreGive(player_mutex);
 
-  // Idle: blank once after activity, then a dim heartbeat on LED 0.
-  if (was_active) {
-    fill_solid(leds, kMaxLeds, CRGB::Black);
-    FastLED.show();
-    was_active = false;
-  }
-  static uint32_t last_beat = 0;
-  uint32_t t = millis();
-  if (t - last_beat > 100) {
-    last_beat = t;
-    uint8_t breath = (uint8_t)(8 + 7 * sin8(t / 8) / 255);
-    leds[0] = CRGB(0, 0, breath);
-    FastLED.show();
+  if (show) FastLED.show();  // long strip write kept outside the Player lock
+  return next_delay_ms;
+}
+
+// The render task: forever, render one frame then sleep until the next is due.
+static void render_task(void *) {
+  for (;;) {
+    uint32_t delay_ms = render_once();
+    vTaskDelay(pdMS_TO_TICKS(delay_ms));
   }
 }
 
@@ -300,6 +341,9 @@ void setup() {
   fill_solid(leds, kMaxLeds, CRGB::Black);
   FastLED.show();
 
+  // Guards every call into the single-threaded Rust core; must exist before
+  // either the message handler or the render task can touch it.
+  player_mutex = xSemaphoreCreateMutex();
   lm_player_init(NUM_LEDS);
 
   // WiFi: AP+STA. The soft-AP is always up (bench access + the fallback
@@ -326,6 +370,11 @@ void setup() {
   http.on("/healthz", []() { http.send(200, "text/plain", "ok"); });
   http.begin();
   ws_listener.begin();
+
+  // Drive the LEDs from a dedicated high-priority task so the pattern cadence
+  // no longer rides on loop()'s cooperative WiFi/HTTP/BLE servicing.
+  xTaskCreate(render_task, "render", kRenderTaskStack, nullptr, kRenderTaskPrio,
+              nullptr);
 }
 
 // Improv provisioning state machine (Arduino task; BLE callbacks only latch).
@@ -362,14 +411,18 @@ static void provisioning_poll() {
 }
 
 void loop() {
+  // loop() now only services the network stacks; the LEDs are driven by
+  // render_task (started in setup), decoupled from this cooperative cycle.
   http.handleClient();
   ws_poll();
   provisioning_poll();
-  render();
 
   static uint32_t last_report = 0;
   if (millis() - last_report > 5000) {
     last_report = millis();
+    xSemaphoreTake(player_mutex, portMAX_DELAY);
+    unsigned long map_leds = (unsigned long)lm_map_len();
+    xSemaphoreGive(player_mutex);
     String sta = WiFi.status() == WL_CONNECTED
                      ? "sta " + WiFi.localIP().toString()
                      : (sta_joining ? String("sta joining…") : String("sta off"));
@@ -381,7 +434,7 @@ void loop() {
         ws_state == WsState::kOpen        ? "open"
         : ws_state == WsState::kHandshake ? "handshake"
                                           : "idle",
-        (unsigned long)lm_map_len());
+        map_leds);
   }
   delay(1);
 }
