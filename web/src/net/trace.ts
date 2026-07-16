@@ -37,6 +37,10 @@ export interface TraceFrame {
   t: number;
   tServer: number;
   frameIndex: number;
+  /** Monotonic capture sequence, present when full-frame capture (?frames=1)
+   * is on — joins this metadata row to the uploaded frame bytes (seq.rgba.gz)
+   * so the offline harness can re-run the detector on the exact input. */
+  seq?: number;
   /** The LED output brightness in effect this frame (the servo's current
    * value, 1 = full) — so a trace shows what the brightness servo did. */
   brightness: number;
@@ -98,9 +102,18 @@ export function rgbaToB64(rgba: Uint8Array): string {
   return typeof btoa === "function" ? btoa(s) : Buffer.from(s, "binary").toString("base64");
 }
 
+/** One inertial sample (normalized camera-frame IMU), forwarded so the offline
+ * harness can drive the same joint solver. */
+export interface TraceImu {
+  t: number;
+  gyro: [number, number, number];
+  accel: [number, number, number];
+}
+
 export class TraceSink {
   private buf: TraceFrame[] = [];
   private timing: TraceTiming[] = [];
+  private imu: TraceImu[] = [];
   private header: TraceHeader | null = null;
   private posting = false;
 
@@ -126,8 +139,13 @@ export class TraceSink {
     this.timing.push(timing);
   }
 
+  /** Queue drained IMU samples; they ride the next flush. */
+  pushImu(samples: TraceImu[]): void {
+    if (samples.length > 0) this.imu.push(...samples);
+  }
+
   get pending(): number {
-    return this.buf.length + this.timing.length;
+    return this.buf.length + this.timing.length + this.imu.length;
   }
 
   private warned = false;
@@ -138,19 +156,27 @@ export class TraceSink {
    * with base64 thumbnails blows past that (silent throw); the page isn't
    * unloading mid-capture, so a plain fetch is correct anyway. */
   async flush(): Promise<void> {
-    if ((this.buf.length === 0 && this.timing.length === 0) || this.posting || !this.fetchFn) return;
+    if (
+      (this.buf.length === 0 && this.timing.length === 0 && this.imu.length === 0) ||
+      this.posting ||
+      !this.fetchFn
+    ) {
+      return;
+    }
     this.posting = true;
     const frames = this.buf;
     this.buf = [];
     const timing = this.timing;
     this.timing = [];
+    const imu = this.imu;
+    this.imu = [];
     const header = this.header;
     this.header = null; // header rides only the first batch
     try {
       await this.fetchFn(this.url, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ header, frames, timing }),
+        body: JSON.stringify({ header, frames, timing, imu }),
       });
     } catch (e) {
       // best-effort — the capture must not stall on a trace hiccup — but

@@ -34,6 +34,7 @@ import {
   wsUrlFromRedirect,
 } from "../net/improv";
 import { rgbaToB64, toTraceBlob, TraceSink, type TraceFrame } from "../net/trace";
+import { FrameSink, frameUrlFromTraceUrl } from "../net/frameCapture";
 import { CaptureUnsupportedError } from "../xr/capture";
 import { DEFAULT_IMU_MAPPING, ImuRecorder, parseImuMapping } from "../xr/imu";
 import { MediaStreamCaptureSource } from "../xr/mediaStreamCapture";
@@ -115,6 +116,11 @@ const recordBlobs = qs.get("record") === "1";
 // (tools/trace_server.py) for offline blooming/misclassification analysis.
 // From an https origin the URL must be https too (mixed content).
 const traceUrl = qs.get("trace");
+// Debug: `?frames=1` (with ?trace=) additionally uploads the FULL-RESOLUTION
+// camera frame (the detector's byte-exact input, gzip-compressed) per frame,
+// so the whole CV pipeline can be re-run/tuned offline. Heavy — diagnostic
+// captures only. See net/frameCapture.ts.
+const captureFrames = qs.get("frames") === "1" && traceUrl !== null;
 
 // Ground truth for the map views: `?truth=COLSxROWS` declares the wall's grid
 // (row-major, matching /wall.html's layout — the wall status bar shows its
@@ -448,11 +454,12 @@ async function startCapture(): Promise<void> {
     hudGuide.textContent = `code: ${params.symbols} symbols @ ${params.bitPeriodMs} ms/frame`;
 
     // Trace sink (?trace=): rich CV dump for offline blooming analysis.
+    const traceSessionId = `${Date.now()}`;
     const trace = traceUrl !== null ? new TraceSink(traceUrl) : null;
     traceSink = trace;
     if (trace) {
       trace.begin({
-        sessionId: `${Date.now()}`,
+        sessionId: traceSessionId,
         startedAt: new Date().toISOString(),
         ledCount,
         wsUrl,
@@ -461,6 +468,13 @@ async function startCapture(): Promise<void> {
       });
       setConn(`tracing to ${traceUrl}`);
     }
+    // Full-frame capture sink (?frames=1): the detector's byte-exact input,
+    // gzipped, to the SAME trace-server session — for offline pipeline replay.
+    const frameSink =
+      captureFrames && traceUrl !== null
+        ? new FrameSink(frameUrlFromTraceUrl(traceUrl), traceSessionId)
+        : null;
+    let frameSeq = 0;
 
     capturing = true;
     let frameCount = 0;
@@ -586,6 +600,14 @@ async function startCapture(): Promise<void> {
           if (m.rgba.length > 0) {
             tf.thumb = { w: m.w, h: m.h, rgbaB64: rgbaToB64(m.rgba) };
           }
+        }
+        // ?frames=1: also upload the detector's byte-exact full-res input,
+        // keyed by seq, so the whole pipeline can be replayed/tuned offline.
+        if (frameSink) {
+          const seq = frameSeq++;
+          tf.seq = seq;
+          const grab = detector.grabFrame(f.texture, f.imgW, f.imgH);
+          void frameSink.capture(seq, grab.w, grab.h, grab.rgba);
         }
         if (trace.push(tf)) {
           pollFrameTiming(); // rides the next flush once the player replies
@@ -715,6 +737,9 @@ async function startCapture(): Promise<void> {
         const samples = rec.flush();
         localImu.push(...samples);
         client.sendImuBatch(samples);
+        // Full-frame capture (?frames=1) forwards IMU to the trace too, so the
+        // offline harness has the inertial stream for the joint solve.
+        if (captureFrames) trace?.pushImu(samples);
       }, 1000);
     }
 

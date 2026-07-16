@@ -91,6 +91,12 @@ export class DetectorGL {
   private measureW = 0;
   private measureH = 0;
   private measureBuf: Uint8Array = new Uint8Array(0);
+  // Full-resolution readback target for grabFrame() (offline-replay capture).
+  private grabTex: WebGLTexture | null = null;
+  private grabFbo: WebGLFramebuffer | null = null;
+  private grabW = 0;
+  private grabH = 0;
+  private grabBuf: Uint8Array = new Uint8Array(0);
 
   readonly downscale: number;
   threshold: number;
@@ -267,6 +273,69 @@ export class DetectorGL {
    */
   lastMeasureFrame(): { w: number; h: number; rgba: Uint8Array } {
     return { w: this.measureW, h: this.measureH, rgba: this.measureBuf };
+  }
+
+  /**
+   * Read back the camera frame at FULL resolution, byte-exact to what
+   * `detect()` samples: the same pass with threshold 0, whose fragment shader
+   * writes the raw camera rgb to the color channels (`outColor = vec4(rgb, lum)`
+   * when the mask is 1). This is the detector's true INPUT — captured for the
+   * offline replay harness so the whole CV pipeline (threshold/downsample →
+   * CCL → tracker → decoder) can be re-run and tuned against real frames.
+   * Returns a reused RGBA buffer (RGB = camera color, alpha = luminance);
+   * copy/compress it before the next call. GL row order (v=0 = the camera
+   * texture's first row) matches detect()'s readback, so the same `flipV`
+   * applies on replay.
+   */
+  grabFrame(texture: WebGLTexture, imgW: number, imgH: number): { w: number; h: number; rgba: Uint8Array } {
+    const gl = this.gl;
+    const w = Math.max(1, imgW);
+    const h = Math.max(1, imgH);
+    this.ensureGrabTarget(w, h);
+
+    const prevFbo = gl.getParameter(gl.FRAMEBUFFER_BINDING) as WebGLFramebuffer | null;
+    const prevViewport = gl.getParameter(gl.VIEWPORT) as Int32Array;
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.grabFbo!);
+    gl.viewport(0, 0, w, h);
+    gl.disable(gl.DEPTH_TEST);
+    gl.disable(gl.BLEND);
+    gl.useProgram(this.program);
+    gl.uniform1f(this.uThreshold, 0.0); // mask = 1 everywhere -> rgb passes through
+    gl.uniform1i(this.uCam, 0);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.bindVertexArray(this.vao);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.bindVertexArray(null);
+
+    if (this.grabBuf.length !== w * h * 4) this.grabBuf = new Uint8Array(w * h * 4);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, this.grabBuf);
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, prevFbo);
+    gl.viewport(prevViewport[0]!, prevViewport[1]!, prevViewport[2]!, prevViewport[3]!);
+
+    return { w, h, rgba: this.grabBuf };
+  }
+
+  private ensureGrabTarget(w: number, h: number): void {
+    const gl = this.gl;
+    if (this.grabFbo !== null && w === this.grabW && h === this.grabH) return;
+    this.grabW = w;
+    this.grabH = h;
+    if (this.grabTex === null) this.grabTex = gl.createTexture()!;
+    if (this.grabFbo === null) this.grabFbo = gl.createFramebuffer()!;
+    gl.bindTexture(gl.TEXTURE_2D, this.grabTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.grabFbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.grabTex, 0);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
 
   private ensureMeasureTarget(w: number, h: number): void {

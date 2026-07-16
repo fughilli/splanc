@@ -146,6 +146,13 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self) -> None:  # noqa: N802
+        # Full-resolution frame upload (?frames=1): a gzipped RGBA body, keyed
+        # by seq, stored verbatim for the offline replay harness. Binary, so it
+        # is routed BEFORE the JSON trace parse.
+        if self.path.split("?", 1)[0].rstrip("/") == "/frame":
+            self._handle_frame()
+            return
+
         length = int(self.headers.get("content-length", 0))
         try:
             payload = json.loads(self.rfile.read(length) or b"{}")
@@ -182,6 +189,14 @@ class Handler(BaseHTTPRequestHandler):
                     if b.get("satFrac", 0) > 0.1:
                         n_sat += 1
                 f.write(json.dumps(frame) + "\n")
+
+        # Inertial stream (?frames=1): one normalized IMU sample per line, for
+        # the offline joint solve.
+        imu = payload.get("imu", [])
+        if imu:
+            with (session_dir / "imu.jsonl").open("a") as f:
+                for s in imu:
+                    f.write(json.dumps(s) + "\n")
 
         # Rendered-frame timing from the player (get_frame_timing): the
         # monotonic-clock time it pushed each mapping-pattern frame. Written to
@@ -233,10 +248,32 @@ class Handler(BaseHTTPRequestHandler):
                     if n_dropped:
                         parts.append(f"{n_dropped} dropped")
                     timing_str += f" [STUTTER: {', '.join(parts)}]"
+            imu_str = f", +{len(imu)} imu" if imu else ""
             _log(
                 f"[trace] {_last_session}: +{len(frames)} frames, "
-                f"{n_blobs} blobs ({n_sat} with >10% saturation){br_str}{timing_str}"
+                f"{n_blobs} blobs ({n_sat} with >10% saturation)"
+                f"{br_str}{timing_str}{imu_str}"
             )
+        self.send_response(204)
+        self._cors()
+        self.end_headers()
+
+    def _handle_frame(self) -> None:
+        """Store one gzipped full-res RGBA frame verbatim at
+        <session>/frames/<seq>.rgba.gz, keyed by the ?seq the trace metadata
+        also carries. Body is the gzip stream; we keep it compressed on disk."""
+        q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        length = int(self.headers.get("content-length", 0))
+        body = self.rfile.read(length) if length else b""
+        session = (q.get("session") or [_last_session or "unknown"])[0]
+        seq = (q.get("seq") or ["0"])[0]
+        frames_dir = OUT_DIR / session / "frames"
+        frames_dir.mkdir(parents=True, exist_ok=True)
+        # seq is caller-supplied — keep only the digits so it can't escape the dir.
+        safe_seq = "".join(c for c in seq if c.isdigit()) or "0"
+        (frames_dir / f"{safe_seq}.rgba.gz").write_bytes(body)
+        if int(safe_seq) % 30 == 0:
+            _log(f"[trace] {session}: frame {safe_seq} ({len(body) // 1024} KB gz)")
         self.send_response(204)
         self._cors()
         self.end_headers()
