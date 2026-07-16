@@ -23,6 +23,7 @@
 import type { Intrinsics } from "@ledmapper/protocol";
 import type { CaptureFrame, CaptureSource } from "./capture";
 import { CaptureUnsupportedError } from "./capture";
+import { type ExposureCapabilities, planExposure } from "./exposureControl";
 
 /** Typical phone rear camera: ~70° horizontal FOV on the long side. */
 export function heuristicK(w: number, h: number): Intrinsics {
@@ -37,6 +38,9 @@ export interface MediaStreamCaptureOptions {
    * centered. Wins over kSeed. */
   fxOverride?: number | undefined;
   video?: MediaTrackConstraints | undefined;
+  /** Lock the camera exposure to this point in [0,1] (0 = minimum exposure —
+   * darkest, least LED bloom; see exposureControl.ts). Unset = leave auto. */
+  exposure?: number | undefined;
 }
 
 export class MediaStreamCaptureSource implements CaptureSource {
@@ -52,6 +56,8 @@ export class MediaStreamCaptureSource implements CaptureSource {
   private running = false;
   private rvfcHandle = 0;
   private rafHandle = 0;
+  /** What planExposure() applied (or why it didn't), for the HUD/log. */
+  exposureApplied: string | null = null;
 
   constructor(private readonly opts: MediaStreamCaptureOptions = {}) {
     this.canvas = document.createElement("canvas");
@@ -93,9 +99,35 @@ export class MediaStreamCaptureSource implements CaptureSource {
     }
     this.video.srcObject = this.stream;
     await this.video.play();
+    await this.applyExposure();
     this.texture = this.gl.createTexture();
     this.running = true;
     this.scheduleNext();
+  }
+
+  /** Lock the camera exposure per opts.exposure (no-op when unset). Best
+   * effort: records what happened in exposureApplied and never throws. */
+  private async applyExposure(): Promise<void> {
+    if (this.opts.exposure === undefined) return;
+    const track = this.stream?.getVideoTracks()[0];
+    const getCaps = track?.getCapabilities?.bind(track);
+    if (!track || !getCaps) {
+      this.exposureApplied = "unsupported (no track capabilities)";
+      return;
+    }
+    try {
+      const plan = planExposure(getCaps() as ExposureCapabilities, this.opts.exposure);
+      if (!plan) {
+        this.exposureApplied = "unsupported by this camera";
+        return;
+      }
+      await track.applyConstraints(plan.constraints);
+      this.exposureApplied = plan.description;
+      console.info(`[exposure] ${plan.description}`);
+    } catch (e) {
+      this.exposureApplied = `failed: ${e instanceof Error ? e.message : e}`;
+      console.warn("[exposure] applyConstraints failed:", e);
+    }
   }
 
   async stop(): Promise<void> {

@@ -99,6 +99,14 @@ const forcedBrightness = ((): number | null => {
   const v = parseFloat(qs.get("brightness") ?? "");
   return Number.isFinite(v) && v >= 0 && v <= 1 ? v : null;
 })();
+// `?exposure=<0..1>` locks the camera exposure (0 = minimum = darkest, least
+// LED bloom). This is the real lever against bloom in the dark: auto-exposure
+// clips the LEDs to white regardless of LED brightness, so we pin exposure
+// down instead of dimming the strip. See xr/exposureControl.ts.
+const forcedExposure = ((): number | null => {
+  const v = parseFloat(qs.get("exposure") ?? "");
+  return Number.isFinite(v) && v >= 0 && v <= 1 ? v : null;
+})();
 // Debug: stream the raw per-frame blob field to the server (JSONL under the
 // session dir) so the CV stage's actual input can be inspected offline.
 const recordBlobs = qs.get("record") === "1";
@@ -339,9 +347,11 @@ async function startCapture(): Promise<void> {
     const ms = new MediaStreamCaptureSource({
       kSeed: cached,
       fxOverride: forcedFx ?? undefined,
+      ...(forcedExposure !== null ? { exposure: forcedExposure } : {}),
     });
     capture = ms;
     await capture.start();
+    if (ms.exposureApplied !== null) setConn(`exposure: ${ms.exposureApplied}`);
     // Fullscreen live preview behind the HUD.
     ms.video.style.cssText =
       "position:fixed;inset:0;width:100vw;height:100vh;object-fit:cover;z-index:0;background:#000";
