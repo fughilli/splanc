@@ -184,23 +184,37 @@ export async function provisionViaBle(
   const gatt = device.gatt;
   if (!gatt) throw new Error("device has no GATT server");
   onStatus("Connecting…");
-  // Connect + discover, retried: the first attempt on Android frequently
-  // throws "GATT operation failed for unknown reason". Disconnect before
-  // each retry so the stack starts the next attempt clean.
-  const { rpcCommand, rpcResult, errorState } = await retryGatt(
+
+  // Android's BLE stack flakes "GATT operation failed for unknown reason" on
+  // the first attempt(s) — and NOT only at connect: service discovery,
+  // startNotifications and writeValue fail the same way. The old code retried
+  // just connect+discover, so a flake at subscribe/write threw the whole thing
+  // and the user had to re-click. Wrap the ENTIRE GATT handshake (connect →
+  // settle → discover → subscribe → send credentials) in the retry, with a
+  // full disconnect between tries, so one button press succeeds.
+  const { rpcResult, errorState } = await retryGatt(
     async () => {
       const server = await gatt.connect();
+      // Some Android stacks resolve connect() before the link is really ready;
+      // a short settle before the first GATT op avoids an immediate failure.
+      await sleep(300);
       const service = await server.getPrimaryService(IMPROV_SERVICE);
-      return {
-        rpcCommand: await service.getCharacteristic(CHAR_RPC_COMMAND),
-        rpcResult: await service.getCharacteristic(CHAR_RPC_RESULT),
-        errorState: await service.getCharacteristic(CHAR_ERROR_STATE),
-      };
+      const rpcCommand = await service.getCharacteristic(CHAR_RPC_COMMAND);
+      const rpcResult = await service.getCharacteristic(CHAR_RPC_RESULT);
+      const errorState = await service.getCharacteristic(CHAR_ERROR_STATE);
+      // Subscribe BEFORE writing so the device's reply is never missed; both
+      // of these are inside the retry because they flake too.
+      await rpcResult.startNotifications();
+      await errorState.startNotifications();
+      onStatus("Sending WiFi credentials…");
+      await rpcCommand.writeValue(buildWifiSettings(ssid, password));
+      return { rpcResult, errorState };
     },
     {
+      attempts: 5,
       onRetry: (attempt) => {
         try {
-          gatt.disconnect();
+          gatt.disconnect(); // clean slate — the next connect re-discovers
         } catch {
           // already disconnected — fine
         }
@@ -209,45 +223,35 @@ export async function provisionViaBle(
     },
   );
 
-  // Await the result via notification; surface device-reported errors.
-  const result = new Promise<string[]>((resolve, reject) => {
+  // Network-join phase: the player now tries to join WiFi and reports back on
+  // the (already-subscribed) result/error notifications. The device joins
+  // seconds after the write, so attaching listeners here misses nothing. This
+  // is NOT a GATT flake, so it is not wrapped in the BLE retry — just a
+  // generous timeout.
+  onStatus("Waiting for the player to join the network…");
+  return new Promise<string[]>((resolve, reject) => {
     const timer = setTimeout(
       () => reject(new Error("timed out waiting for the player to join the network")),
       45_000,
     );
-    void rpcResult
-      .startNotifications()
-      .then(() => {
-        rpcResult.addEventListener("characteristicvaluechanged", (ev) => {
-          const dv = (ev.target as BleChar).value;
-          if (!dv) return;
-          const strings = parseRpcResult(new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength));
-          if (strings) {
-            clearTimeout(timer);
-            resolve(strings);
-          }
-        });
-      })
-      .catch(reject);
-    void errorState
-      .startNotifications()
-      .then(() => {
-        errorState.addEventListener("characteristicvaluechanged", (ev) => {
-          const dv = (ev.target as BleChar).value;
-          const code = dv && dv.byteLength > 0 ? dv.getUint8(0) : 0;
-          if (code !== ERROR_NONE) {
-            clearTimeout(timer);
-            reject(new Error(IMPROV_ERRORS[code] ?? `device error ${code}`));
-          }
-        });
-      })
-      .catch(() => undefined); // error notifications are best-effort
+    rpcResult.addEventListener("characteristicvaluechanged", (ev) => {
+      const dv = (ev.target as BleChar).value;
+      if (!dv) return;
+      const strings = parseRpcResult(new Uint8Array(dv.buffer, dv.byteOffset, dv.byteLength));
+      if (strings) {
+        clearTimeout(timer);
+        resolve(strings);
+      }
+    });
+    errorState.addEventListener("characteristicvaluechanged", (ev) => {
+      const dv = (ev.target as BleChar).value;
+      const code = dv && dv.byteLength > 0 ? dv.getUint8(0) : 0;
+      if (code !== ERROR_NONE) {
+        clearTimeout(timer);
+        reject(new Error(IMPROV_ERRORS[code] ?? `device error ${code}`));
+      }
+    });
   });
-
-  onStatus("Sending WiFi credentials…");
-  await rpcCommand.writeValue(buildWifiSettings(ssid, password));
-  onStatus("Waiting for the player to join the network…");
-  return result;
 }
 
 interface BleChar {
