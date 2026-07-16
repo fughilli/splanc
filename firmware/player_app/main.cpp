@@ -34,6 +34,18 @@
 #include "firmware/player_app/player_ffi.h"
 #include "firmware/player_app/ws_codec.h"
 
+// The player protocol handler (lm_player_handle -> Player::handle) decodes a
+// ClientMessage and builds a ServerMessage as by-value protobuf structs on the
+// caller's stack, and this path runs in loopTask (ws_poll). Measured frames on
+// the -c opt image are large (micropb by-value): lm_player_handle ~4.6 KB +
+// Player::handle ~12.5 KB ⇒ a ~17-18 KB peak, so the arduino-esp32 default
+// 8 KB loopTask stack overflows (observed: Stack protection fault in
+// Player::handle). Size loopTask well above the measured peak. Must be at
+// global scope (overrides a weak core getter). If the protobuf frames ever
+// grow, re-measure with objdump on the .elf prologues. (The render task has
+// its own stack; it only calls the small pure-read accessors + FastLED.show.)
+SET_LOOP_TASK_STACK_SIZE(24 * 1024);
+
 static const char *kApSsid = "ledmapper";
 static const char *kApPassword = "ledmapper";
 static const char *kBleName = "LEDMapper C6";
