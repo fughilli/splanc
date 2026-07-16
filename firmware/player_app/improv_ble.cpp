@@ -7,6 +7,7 @@
 #include <BLEUtils.h>
 
 #include "firmware/player_app/improv_codec.h"
+#include "firmware/player_app/serial_log.h"
 
 // Improv BLE service + characteristic UUIDs (spec constants; the web app's
 // net/improv.ts carries the same set).
@@ -132,7 +133,7 @@ void improv_ble_begin(const char *device_name, uint8_t initial_state) {
   adv->setScanResponseData(scanResp);
 
   BLEDevice::startAdvertising();
-  Serial.printf("[ble] advertising \"%s\" as %s (Improv service %s)\n", device_name,
+  Log().printf("[ble] advertising \"%s\" as %s (Improv service %s)\n", device_name,
                 BLEDevice::getAddress().toString().c_str(), kServiceUuid);
 }
 

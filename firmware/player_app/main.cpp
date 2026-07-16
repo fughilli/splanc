@@ -32,6 +32,7 @@
 #include "firmware/player_app/improv_codec.h"
 #include "firmware/player_app/led_config.h"
 #include "firmware/player_app/player_ffi.h"
+#include "firmware/player_app/serial_log.h"
 #include "firmware/player_app/ws_codec.h"
 
 // The player protocol handler (lm_player_handle -> Player::handle) decodes a
@@ -393,7 +394,7 @@ void setup() {
 static void provisioning_poll() {
   char ssid[33], pass[65];
   if (improv_ble_take_credentials(ssid, sizeof ssid, pass, sizeof pass)) {
-    Serial.printf("[player] provisioning: joining \"%s\"\n", ssid);
+    Log().printf("[player] provisioning: joining \"%s\"\n", ssid);
     prefs.putString("ssid", ssid);
     prefs.putString("pass", pass);
     WiFi.disconnect();
@@ -406,12 +407,12 @@ static void provisioning_poll() {
   if (WiFi.status() == WL_CONNECTED) {
     sta_joining = false;
     String url = "http://" + WiFi.localIP().toString() + "/";
-    Serial.printf("[player] joined, %s\n", url.c_str());
+    Log().printf("[player] joined, %s\n", url.c_str());
     improv_ble_set_state(IMPROV_STATE_PROVISIONED);
     improv_ble_send_redirect(url.c_str());
   } else if (millis() - sta_join_started > kStaJoinTimeoutMs) {
     sta_joining = false;
-    Serial.println("[player] STA join failed; clearing stored credentials");
+    Log().println("[player] STA join failed; clearing stored credentials");
     // Bad credentials would wedge every future boot in a join loop — drop
     // them; the soft-AP stays up and the device stays re-provisionable.
     prefs.remove("ssid");
@@ -438,7 +439,7 @@ void loop() {
     String sta = WiFi.status() == WL_CONNECTED
                      ? "sta " + WiFi.localIP().toString()
                      : (sta_joining ? String("sta joining…") : String("sta off"));
-    Serial.printf(
+    Log().printf(
         "[player] AP \"%s\" %d station(s) http://%s/  %s  ws :%u  "
         "ws=%s map=%lu leds\n",
         kApSsid, WiFi.softAPgetStationNum(), WiFi.softAPIP().toString().c_str(),
