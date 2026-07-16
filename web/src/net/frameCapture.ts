@@ -48,6 +48,7 @@ export function frameUrlFromTraceUrl(traceUrl: string): string {
 export class FrameSink {
   private inFlight = 0;
   private dropped = 0;
+  private sent = 0;
   private warned = false;
 
   /** @param maxInFlight cap on concurrent uploads; excess frames are dropped. */
@@ -61,6 +62,11 @@ export class FrameSink {
   /** Frames skipped because uploads were saturated (surfaced in the HUD). */
   get droppedCount(): number {
     return this.dropped;
+  }
+
+  /** Frames successfully uploaded (surfaced in the HUD as capture feedback). */
+  get sentCount(): number {
+    return this.sent;
   }
 
   /**
@@ -87,6 +93,7 @@ export class FrameSink {
         headers: { "content-type": "application/octet-stream" },
         body: body as unknown as BodyInit,
       });
+      this.sent++;
     } catch (e) {
       if (!this.warned) {
         this.warned = true;

@@ -466,7 +466,7 @@ async function startCapture(): Promise<void> {
         userAgent: navigator.userAgent,
         codeParams: params,
       });
-      setConn(`tracing to ${traceUrl}`);
+      setConn(`tracing to ${traceUrl}${captureFrames ? " · full-frame capture ON" : ""}`);
     }
     // Full-frame capture sink (?frames=1): the detector's byte-exact input,
     // gzipped, to the SAME trace-server session — for offline pipeline replay.
@@ -658,11 +658,18 @@ async function startCapture(): Promise<void> {
         const scn = monitor.scene();
         const br = Math.round((params.brightness ?? 1) * 100);
         const pct = (x: number): string => `${Math.round(x * 100)}%`;
-        const servoLine = pop
-          ? `LED ${br}% · sat ${pop.satFrac.toFixed(2)} split ${pct(pop.splitFrac)} ` +
-            `gray ${pct(pop.grayFrac)} · medI ${pop.medianIntensity.toFixed(2)}` +
-            (scn ? ` clip ${pct(scn.clipFrac)}` : "")
-          : `LED ${br}%`;
+        // Frame-capture feedback (?frames=1): so it's obvious on-device whether
+        // full-frame upload is actually on (a common footgun — the URL param is
+        // easy to miss) and keeping up (drops = the encoder/net fell behind).
+        const framesLine = frameSink
+          ? ` · frames ${frameSink.sentCount}↑${frameSink.droppedCount ? ` ${frameSink.droppedCount} drop` : ""}`
+          : "";
+        const servoLine =
+          (pop
+            ? `LED ${br}% · sat ${pop.satFrac.toFixed(2)} split ${pct(pop.splitFrac)} ` +
+              `gray ${pct(pop.grayFrac)} · medI ${pop.medianIntensity.toFixed(2)}` +
+              (scn ? ` clip ${pct(scn.clipFrac)}` : "")
+            : `LED ${br}%`) + framesLine;
         hudStats.textContent =
           `decoded ${s.uniqueIds.size}/${params.ledCount} ids · ${s.tracks} tracks · ` +
           `${blobs.length} blobs · align ${s.alignShiftMs.toFixed(0)} ms · ` +
