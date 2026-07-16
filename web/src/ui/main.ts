@@ -211,8 +211,10 @@ function setConn(text: string): void {
 // -- boot: connect + sync ----------------------------------------------------
 
 client.events = {
-  onConnected: () => setConn(`connected to ${wsUrl}`),
-  onDisconnected: () => setConn("disconnected — retrying…"),
+  onConnecting: (attempt, url) =>
+    setConn(attempt <= 1 ? `connecting to ${url}…` : `connecting to ${url} (attempt ${attempt})…`),
+  onConnected: () => setConn(`connected to ${wsUrl} — syncing clock…`),
+  onDisconnected: () => setConn("disconnected — reconnecting…"),
   onServerError: (code, msg) => setError(`server error ${code}: ${msg}`),
 };
 
@@ -223,6 +225,7 @@ async function boot(): Promise<void> {
     ledCountInput.value = String(
       parseInt(qs.get("leds") ?? "", 10) || welcome.codeParams.ledCount,
     );
+    setConn(`connected to ${wsUrl} — syncing clock…`);
     const sync = await client.syncClock();
     setConn(
       `connected · clock offset ${sync.offsetMs.toFixed(1)} ms (rtt ${sync.rttMs.toFixed(1)} ms)`,

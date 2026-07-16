@@ -63,6 +63,11 @@ export interface ClientOptions {
   schedule?: (fn: () => void, ms: number) => void;
   /** Reconnect backoff steps, ms. */
   backoffMs?: number[];
+  /** Give up on a socket that hasn't reached `welcome` this long and retry.
+   * The browser's own WS/TCP connect timeout is tens of seconds on mobile, so
+   * without this a not-yet-reachable player (e.g. just after it joins WiFi)
+   * hangs the UI at "connecting…". Default 5000. */
+  connectTimeoutMs?: number;
   appVersion?: string;
   clientName?: string;
 }
@@ -71,6 +76,9 @@ export interface ClientEvents {
   /** Connection state changes (true right after welcome). */
   onConnected?: (welcome: WelcomeMessage) => void;
   onDisconnected?: () => void;
+  /** Fired at the start of each connect attempt (attempt is 1-based within a
+   * run; resets after a successful welcome), for progress UI. */
+  onConnecting?: (attempt: number, url: string) => void;
   /** Any server error message not consumed by a pending request. */
   onServerError?: (code: string, message: string) => void;
 }
@@ -109,12 +117,14 @@ export class LedMapperClient {
   private readonly now: () => number;
   private readonly schedule: (fn: () => void, ms: number) => void;
   private readonly backoffMs: number[];
+  private readonly connectTimeoutMs: number;
   private readonly appVersion: string;
   private readonly clientName: string;
 
   private welcome_: WelcomeMessage | null = null;
   private closed = false;
   private backoffIdx = 0;
+  private attempt = 0;
 
   /** Outbound detection batches not yet written to an open socket. */
   private pendingBatches: DetectionRecord[][] = [];
@@ -131,6 +141,7 @@ export class LedMapperClient {
     this.now = opts.now ?? (() => performance.now());
     this.schedule = opts.schedule ?? ((fn, ms) => setTimeout(fn, ms));
     this.backoffMs = opts.backoffMs ?? [250, 500, 1000, 2000, 4000];
+    this.connectTimeoutMs = opts.connectTimeoutMs ?? 5000;
     this.appVersion = opts.appVersion ?? "0.1.0";
     this.clientName = opts.clientName ?? "android-web";
     this.clock = new ServerClock({ offsetMs: 0, rttMs: Infinity }, this.now);
@@ -147,11 +158,27 @@ export class LedMapperClient {
   /** Open the socket and complete the hello/welcome handshake. */
   connect(): Promise<WelcomeMessage> {
     this.closed = false;
+    this.events.onConnecting?.(++this.attempt, this.url);
     return new Promise((resolve, reject) => {
       let settled = false;
+      let welcomed = false;
       const sock = this.factory(this.url);
       sock.binaryType = "arraybuffer"; // binary protobuf frames (proto-comms)
       this.sock = sock;
+      // Bounded open timeout: if this socket hasn't reached `welcome` in time,
+      // force it closed so onclose runs the (short) backoff retry instead of
+      // waiting out the browser's tens-of-seconds TCP timeout. Guarded by
+      // `welcomed` and scoped to this captured `sock`, so it's a no-op once
+      // connected or once a newer socket has replaced this one.
+      this.schedule(() => {
+        if (!welcomed) {
+          try {
+            sock.close();
+          } catch {
+            // already closing — fine
+          }
+        }
+      }, this.connectTimeoutMs);
       sock.onopen = () => {
         this.send({ type: "hello", client: this.clientName, appVersion: this.appVersion });
       };
@@ -161,6 +188,8 @@ export class LedMapperClient {
         if (msg.type === "welcome") {
           this.welcome_ = msg;
           this.backoffIdx = 0;
+          this.attempt = 0;
+          welcomed = true;
           this.flushBatches();
           this.events.onConnected?.(msg);
           if (!settled) {

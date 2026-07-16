@@ -115,6 +115,46 @@ test("connect sends hello and resolves on welcome", async () => {
   assert.ok(client.isConnected);
 });
 
+test("a socket that never opens times out, reports attempts, and retries", async () => {
+  const { client, sockets, scheduled } = makeClient();
+  const attempts: number[] = [];
+  client.events = { onConnecting: (attempt) => attempts.push(attempt) };
+
+  const p = client.connect();
+  p.catch(() => undefined); // the first attempt rejects when it's force-closed
+  const s0 = sockets[0]!;
+  assert.equal(s0.readyState, 0, "still CONNECTING (never opened)");
+
+  // The open-timeout is the first scheduled callback; firing it force-closes
+  // the stuck socket instead of waiting out the browser's TCP timeout.
+  assert.equal(scheduled.length, 1);
+  scheduled[0]!();
+  assert.equal(s0.readyState, 3, "timeout closed the stuck socket");
+
+  // onclose scheduled a backoff reconnect; fire it -> a fresh socket connects.
+  scheduled[scheduled.length - 1]!();
+  const s1 = sockets[1]!;
+  s1.open();
+  s1.receive({ type: "welcome", sessionId: "s-2", codeParams: CODE_PARAMS, solverBenchMs: null });
+  await Promise.resolve();
+
+  assert.ok(client.isConnected);
+  assert.deepEqual(attempts, [1, 2], "one onConnecting per attempt");
+});
+
+test("the open-timeout is a no-op once welcomed", async () => {
+  const { client, sockets, scheduled } = makeClient();
+  const p = client.connect();
+  const s = sockets[0]!;
+  s.open();
+  s.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS, solverBenchMs: null });
+  await p;
+  // Fire the queued open-timeout: connected, so it must NOT close the socket.
+  scheduled[0]!();
+  assert.ok(client.isConnected);
+  assert.equal(s.readyState, 1);
+});
+
 test("syncClock keeps the min-RTT sample", async () => {
   const { client, sockets, setNow } = makeClient();
   const p = client.connect();
@@ -227,9 +267,10 @@ test("detection batches survive a reconnect (M7 acceptance)", async () => {
   client.sendDetections([det(3)]);
   assert.equal(client.pendingBatchCount, 2);
 
-  // Reconnect timer fires -> new socket, handshake, automatic flush.
-  assert.equal(scheduled.length, 1);
-  scheduled[0]!();
+  // connect() scheduled a (now-harmless, since welcomed) open-timeout; the
+  // socket close scheduled the backoff reconnect. Fire the reconnect (latest).
+  assert.equal(scheduled.length, 2);
+  scheduled[scheduled.length - 1]!();
   const s1 = sockets[1]!;
   s1.open();
   s1.receive({ type: "welcome", sessionId: "s-2", codeParams: CODE_PARAMS, solverBenchMs: null });
