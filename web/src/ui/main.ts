@@ -522,6 +522,7 @@ async function startCapture(): Promise<void> {
           frameIndex: Math.floor(
             (client.clock.toServerTime(f.tCaptureMs) - epoch) / params.bitPeriodMs,
           ) % params.cycleFrames,
+          brightness: params.brightness ?? 1,
           blobs: blobs.map(toTraceBlob),
           scene: measured,
         };

@@ -184,9 +184,12 @@ class Handler(BaseHTTPRequestHandler):
                 f.write(json.dumps(frame) + "\n")
 
         if frames:
+            last = frames[-1]
+            br = last.get("brightness")
+            br_str = f", LED {br * 100:.0f}%" if isinstance(br, (int, float)) else ""
             _log(
                 f"[trace] {_last_session}: +{len(frames)} frames, "
-                f"{n_blobs} blobs ({n_sat} with >10% saturation)"
+                f"{n_blobs} blobs ({n_sat} with >10% saturation){br_str}"
             )
         self.send_response(204)
         self._cors()

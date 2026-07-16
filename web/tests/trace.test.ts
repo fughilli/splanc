@@ -32,7 +32,7 @@ test("rgbaToB64 round-trips through the standard decoder", () => {
 });
 
 function frame(t: number) {
-  return { t, tServer: t, frameIndex: t % 14, blobs: [] };
+  return { t, tServer: t, frameIndex: t % 14, brightness: 1, blobs: [] };
 }
 
 test("push signals a flush at the batch size; flush POSTs header once", async () => {

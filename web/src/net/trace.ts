@@ -37,6 +37,9 @@ export interface TraceFrame {
   t: number;
   tServer: number;
   frameIndex: number;
+  /** The LED output brightness in effect this frame (the servo's current
+   * value, 1 = full) — so a trace shows what the brightness servo did. */
+  brightness: number;
   blobs: TraceBlob[];
   scene?: { meanLuma: number; p95Luma: number; clipFrac: number } | undefined;
   /** A small color thumbnail (base64 PNG-ish payload) on periodic frames. */
