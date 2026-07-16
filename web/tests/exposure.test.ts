@@ -151,7 +151,6 @@ function signals(over: Partial<LedBrightnessSignals> = {}): LedBrightnessSignals
     splitFrac: 0,
     grayFrac: 0.1,
     medianIntensity: 0.8,
-    satFrac: 0.1,
     clipFrac: 0.002,
     ...over,
   };
@@ -171,19 +170,12 @@ test("brightness servo: majority-gray blobs (washed hue) step down", () => {
   assert.ok(next !== null && next < 0.5);
 });
 
-test("brightness servo: heavily clipped blobs step down even with vivid hue", () => {
-  // The dark-room bloom regime (2026-07-15): hue intact (low gray, no split)
-  // but the median blob is 84% clipped — over-bright, blooming onto surfaces.
-  const next = planLedBrightness(
-    0.5,
-    signals({ satFrac: 0.84, grayFrac: 0.05, splitFrac: 0, medianIntensity: 0.98 }),
-  );
-  assert.ok(next !== null && next < 0.5, `clipping must step down, got ${next}`);
-});
-
-test("brightness servo: a bright-but-unclipped population is left alone", () => {
-  // satFrac below the gate: bright points, not blown out — hold.
-  assert.equal(planLedBrightness(0.5, signals({ satFrac: 0.3, medianIntensity: 0.9 })), null);
+test("brightness servo: clipped-but-vivid blobs are NOT a down signal", () => {
+  // Dark-room clipping (satFrac high, hue intact) is unavoidable — the
+  // camera's AE re-clips the LEDs at any brightness, so dimming can't lower
+  // it; the servo must NOT chase it (it dove to the 5% floor when it did).
+  // A healthy population with vivid hue holds regardless of clipping.
+  assert.equal(planLedBrightness(0.5, signals({ grayFrac: 0.05, medianIntensity: 0.98 })), null);
 });
 
 test("brightness servo: zero blobs — clipFrac picks the direction", () => {

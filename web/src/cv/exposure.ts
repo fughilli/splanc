@@ -226,13 +226,14 @@ export const LED_BRIGHTNESS_DOWN = 0.6;
  * means halos are merging / hue is washing — step down. */
 export const BLOOM_SPLIT_FRAC = 0.15;
 export const BLOOM_GRAY_FRAC = 0.5;
-/** Clipping gate: median blob more than this fraction clipped (Blob.satFrac)
- * is over-bright even if the hue still survives — the sensor is well past the
- * knee, so the LEDs bloom and scatter (measured 2026-07-15: satFrac ~0.84 on
- * a dark-room capture flooding to ~1.6× ledCount from bloom-lit surfaces).
- * A clipped LED wastes dynamic range, so dimming toward this costs nothing
- * the decode reads (hue is scale-invariant) and shrinks the bloom. */
-export const BLOOM_SAT_FRAC = 0.5;
+// NOTE (2026-07-16): a satFrac (blob-clipping) down-gate was tried and
+// REMOVED. In a dark room the camera's auto-exposure raises gain until the
+// frame meters mid-gray; with only the LEDs in view that pins them clipped
+// (satFrac ~1.0) INDEPENDENT of brightness — halving brightness just doubles
+// the gain. So dimming can't lower satFrac, and the gate chased brightness to
+// the 5% floor uselessly (worse: dim LEDs at max sensor gain). satFrac stays
+// in the trace/HUD as a diagnostic, but LED brightness is not the lever for
+// bloom in the dark — camera exposure / ambient light / a matte surface are.
 /** Scene clip fraction that reads "the frame is flooded with clipped light"
  * — disambiguates ZERO blobs (washed-out glare got dropped as oversized)
  * from "strip is too dim to detect". */
@@ -256,7 +257,6 @@ export interface LedBrightnessSignals {
   splitFrac: number;
   grayFrac: number;
   medianIntensity: number;
-  satFrac: number;
   /** Scene clip fraction from the measure pass (SceneStats.clipFrac). */
   clipFrac: number;
 }
@@ -273,11 +273,7 @@ export interface LedBrightnessSignals {
  *
  *  - no blobs at all: clipFrac says which side of the U we're on (a washed
  *    scene floods the frame with clipped light; a dim strip doesn't);
- *  - split/gray blobs, OR the median blob heavily CLIPPED (satFrac): halos
- *    merging, hue washing, or just over-bright and blooming — down. The
- *    satFrac gate catches the "bright enough to bloom-and-scatter, not
- *    enough to wash the hue" regime the split/gray gates miss (a clipped
- *    blue LED reads vivid blue yet blooms all over a nearby surface);
+ *  - split/gray blobs: halos merging, hue washing — down;
  *  - starved but BRIGHT blobs: neighbors merged into few blobs — down;
  *    starved and dim — up;
  *  - healthy but dim: claim SNR headroom — up, until a bloom gate answers.
@@ -293,13 +289,7 @@ export function planLedBrightness(current: number, m: LedBrightnessSignals): num
   if (m.blobCount === 0) {
     return step(m.clipFrac > WASHOUT_CLIP_FRAC ? down : up);
   }
-  if (
-    m.splitFrac > BLOOM_SPLIT_FRAC ||
-    m.grayFrac > BLOOM_GRAY_FRAC ||
-    m.satFrac > BLOOM_SAT_FRAC
-  ) {
-    return step(down);
-  }
+  if (m.splitFrac > BLOOM_SPLIT_FRAC || m.grayFrac > BLOOM_GRAY_FRAC) return step(down);
   if (m.blobCount < m.ledCount * STARVE_FRAC) {
     // Bright-but-few = neighbors merged into shared blobs; dim-and-few = the
     // strip is fading under the detector threshold. In between, the deficit

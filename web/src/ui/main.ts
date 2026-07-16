@@ -732,7 +732,6 @@ async function startCapture(): Promise<void> {
               splitFrac: pop.splitFrac,
               grayFrac: pop.grayFrac,
               medianIntensity: pop.medianIntensity,
-              satFrac: pop.satFrac,
               clipFrac: report.clipFrac,
             })
           : null;
