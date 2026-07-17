@@ -46,61 +46,116 @@ export function frameUrlFromTraceUrl(traceUrl: string): string {
 }
 
 export class FrameSink {
-  private inFlight = 0;
+  private readonly queue: { seq: number; w: number; h: number; rgba: Uint8Array }[] = [];
+  private ramBytes = 0;
+  private draining = 0;
   private dropped = 0;
   private sent = 0;
   private warned = false;
+  private closed = false;
 
-  /** @param maxInFlight cap on concurrent uploads; excess frames are dropped. */
+  /**
+   * @param concurrency  background gzip+upload workers (overlap CPU + network).
+   * @param ramCapBytes  safety valve: frames buffered beyond this are dropped
+   *   (counted + warned) rather than risking an OOM. Normally the drain keeps
+   *   up and the queue stays tiny, so this is rarely hit.
+   */
   constructor(
     private readonly url: string,
     private readonly session: string,
-    private readonly maxInFlight = 2,
+    private readonly concurrency = 3,
+    private readonly ramCapBytes = 1_000_000_000,
     private readonly fetchFn: typeof fetch = globalThis.fetch?.bind(globalThis),
   ) {}
 
-  /** Frames skipped because uploads were saturated (surfaced in the HUD). */
+  /** Frames dropped to the RAM cap (should stay 0; surfaced in the HUD). */
   get droppedCount(): number {
     return this.dropped;
   }
 
-  /** Frames successfully uploaded (surfaced in the HUD as capture feedback). */
+  /** Frames fully compressed + uploaded. */
   get sentCount(): number {
     return this.sent;
   }
 
+  /** Frames buffered in RAM, awaiting compression + upload (backpressure). */
+  get queuedCount(): number {
+    return this.queue.length;
+  }
+
+  /** Approximate RAM held by the buffered frames, in MB. */
+  get ramMB(): number {
+    return Math.round(this.ramBytes / 1e6);
+  }
+
   /**
-   * Snapshot, gzip and upload one full-res RGBA frame under `seq`. The `rgba`
-   * buffer is reused by the caller, so it is COPIED synchronously before the
-   * first await. Returns immediately if too many uploads are in flight (the
-   * frame is dropped + counted) so the capture loop never blocks on I/O.
+   * Cache one full-res RGBA frame in RAM and kick the background drain. Never
+   * blocks the capture loop: the reused buffer is snapshotted synchronously,
+   * then gzip + upload happen in the background (and keep going after the
+   * capture ends — see finish()), so no frame is dropped for I/O backpressure.
+   * The only drop path is the RAM safety cap.
    */
-  async capture(seq: number, w: number, h: number, rgba: Uint8Array): Promise<void> {
-    if (!this.fetchFn) return;
-    if (this.inFlight >= this.maxInFlight) {
+  capture(seq: number, w: number, h: number, rgba: Uint8Array): void {
+    if (!this.fetchFn || this.closed) return;
+    if (this.ramBytes + rgba.length > this.ramCapBytes) {
       this.dropped++;
-      return;
-    }
-    this.inFlight++;
-    const snapshot = rgba.slice(); // detector reuses the buffer next frame
-    try {
-      const body = await gzip(snapshot);
-      const url =
-        `${this.url}?session=${encodeURIComponent(this.session)}` +
-        `&seq=${seq}&w=${w}&h=${h}`;
-      await this.fetchFn(url, {
-        method: "POST",
-        headers: { "content-type": "application/octet-stream" },
-        body: body as unknown as BodyInit,
-      });
-      this.sent++;
-    } catch (e) {
       if (!this.warned) {
         this.warned = true;
-        console.warn(`frame upload to ${this.url} failed (first of possibly many):`, e);
+        console.warn(`frame RAM cap (${this.ramMB} MB) hit — dropping to avoid OOM`);
       }
-    } finally {
-      this.inFlight--;
+      return;
     }
+    const snapshot = rgba.slice(); // the detector reuses the buffer next frame
+    this.queue.push({ seq, w, h, rgba: snapshot });
+    this.ramBytes += snapshot.length;
+    this.pump();
+  }
+
+  private pump(): void {
+    while (this.draining < this.concurrency && this.queue.length > 0) {
+      this.draining++;
+      void this.drainWorker();
+    }
+  }
+
+  private async drainWorker(): Promise<void> {
+    for (;;) {
+      const item = this.queue.shift();
+      if (!item) break;
+      this.ramBytes -= item.rgba.length;
+      try {
+        const body = await gzip(item.rgba);
+        const url =
+          `${this.url}?session=${encodeURIComponent(this.session)}` +
+          `&seq=${item.seq}&w=${item.w}&h=${item.h}`;
+        await this.fetchFn!(url, {
+          method: "POST",
+          headers: { "content-type": "application/octet-stream" },
+          body: body as unknown as BodyInit,
+        });
+        this.sent++;
+      } catch (e) {
+        if (!this.warned) {
+          this.warned = true;
+          console.warn(`frame upload to ${this.url} failed (first of possibly many):`, e);
+        }
+      }
+    }
+    this.draining--;
+  }
+
+  /**
+   * Resolve once the RAM queue is fully drained (all frames compressed +
+   * uploaded). Call after the capture stops; the drain keeps running in the
+   * background so the ENTIRE session lands even though full-res frames outrun
+   * the live upload bandwidth. `onProgress(remaining)` is polled for a HUD.
+   */
+  async finish(onProgress: (remaining: number) => void = () => undefined): Promise<void> {
+    this.closed = true;
+    while (this.queue.length > 0 || this.draining > 0) {
+      onProgress(this.queue.length + this.draining);
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    onProgress(0);
   }
 }

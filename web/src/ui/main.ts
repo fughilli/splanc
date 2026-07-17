@@ -176,6 +176,9 @@ let capturing = false;
 let imuRecorder: ImuRecorder | null = null;
 let previewVideo: HTMLVideoElement | null = null;
 let traceSink: TraceSink | null = null;
+// Kept past capture end so its RAM-buffered frames finish uploading in the
+// background (full-res frames outrun the live bandwidth; see FrameSink).
+let frameSinkRef: FrameSink | null = null;
 
 // -- solver placement (Rust/wasm branch) --------------------------------------
 // Load the wasm solver in a worker and time the canned benchmark once at
@@ -483,6 +486,7 @@ async function startCapture(): Promise<void> {
       captureFrames && traceUrl !== null
         ? new FrameSink(frameUrlFromTraceUrl(traceUrl), traceSessionId)
         : null;
+    frameSinkRef = frameSink;
     let frameSeq = 0;
 
     capturing = true;
@@ -618,7 +622,7 @@ async function startCapture(): Promise<void> {
           const grab = detector.grabFrame(f.texture, f.imgW, f.imgH);
           tf.imgW = grab.w;
           tf.imgH = grab.h;
-          void frameSink.capture(seq, grab.w, grab.h, grab.rgba);
+          frameSink.capture(seq, grab.w, grab.h, grab.rgba);
         }
         if (trace.push(tf)) {
           pollFrameTiming(); // rides the next flush once the player replies
@@ -673,7 +677,9 @@ async function startCapture(): Promise<void> {
         // full-frame upload is actually on (a common footgun — the URL param is
         // easy to miss) and keeping up (drops = the encoder/net fell behind).
         const framesLine = frameSink
-          ? ` · frames ${frameSink.sentCount}↑${frameSink.droppedCount ? ` ${frameSink.droppedCount} drop` : ""}`
+          ? ` · frames ${frameSink.sentCount}↑` +
+            (frameSink.queuedCount ? ` ${frameSink.queuedCount} q ${frameSink.ramMB}MB` : "") +
+            (frameSink.droppedCount ? ` ${frameSink.droppedCount} drop` : "")
           : "";
         const expLine = servoExposure ? ` · exp ${servoedExposure.toFixed(2)}` : "";
         const servoLine =
@@ -886,6 +892,7 @@ async function startCapture(): Promise<void> {
       await traceSink.flush().catch(() => undefined);
       traceSink = null;
     }
+    drainFramesInBackground();
     await capture?.stop().catch(() => undefined);
     capture = null;
     startBtn.disabled = false;
@@ -895,6 +902,22 @@ async function startCapture(): Promise<void> {
       setError(e instanceof Error ? e.message : String(e));
     }
   }
+}
+
+/** Let the frame sink keep compressing + uploading its RAM-buffered frames in
+ * the background after capture ends, so the whole session lands even though
+ * full-res frames outran the live upload bandwidth. Non-blocking; the trace
+ * server logs each frame as it arrives. */
+function drainFramesInBackground(): void {
+  const fs = frameSinkRef;
+  frameSinkRef = null;
+  if (!fs || fs.queuedCount === 0) return;
+  console.info(`[frames] uploading ${fs.queuedCount} buffered frames in the background…`);
+  setConn(`uploading ${fs.queuedCount} frames in the background — keep this tab open`);
+  void fs.finish((remaining) => {
+    if (remaining > 0) console.info(`[frames] ${remaining} frames left to upload`);
+    else console.info("[frames] all frames uploaded");
+  });
 }
 
 async function stopCapture(sessionAlreadyEnded = false): Promise<void> {
@@ -910,6 +933,7 @@ async function stopCapture(sessionAlreadyEnded = false): Promise<void> {
     await traceSink.flush().catch(() => undefined);
     traceSink = null;
   }
+  drainFramesInBackground();
   if (!sessionAlreadyEnded) await capture?.stop().catch(() => undefined);
   capture = null;
   resetLiveFeedback();

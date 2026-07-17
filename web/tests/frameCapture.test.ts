@@ -53,37 +53,42 @@ test("capture uploads gzipped bytes with seq/w/h and snapshots the buffer", asyn
     return { ok: true } as Response;
   }) as unknown as typeof fetch;
 
-  const sink = new FrameSink("https://host/frame", "sess-1", 2, fakeFetch);
+  const sink = new FrameSink("https://host/frame", "sess-1", 3, 1e9, fakeFetch);
   const rgba = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
-  const p = sink.capture(7, 2, 1, rgba);
-  // The detector reuses the buffer immediately — mutate it before the upload
-  // resolves; the snapshot must be unaffected.
+  sink.capture(7, 2, 1, rgba); // returns immediately; upload happens in the drain
+  // The detector reuses the buffer next frame — mutate it now; the RAM-cached
+  // snapshot must be unaffected.
   rgba.fill(0);
-  await p;
+  await sink.finish();
 
   assert.equal(posts.length, 1);
   assert.equal(posts[0]!.url, "https://host/frame?session=sess-1&seq=7&w=2&h=1");
   assert.deepEqual(Array.from(await gunzip(posts[0]!.body)), [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.equal(sink.sentCount, 1);
 });
 
-test("capture drops frames when uploads are saturated (never blocks)", async () => {
-  let release!: () => void;
-  const gate = new Promise<void>((r) => (release = r));
+test("no frame is dropped for backpressure; finish() drains them all", async () => {
+  // Every upload is slow, so capture must never block or drop — the frames
+  // buffer in RAM and finish() drains them after the (simulated) capture ends.
   const fakeFetch = (async () => {
-    await gate; // hold the upload open to saturate the in-flight budget
+    await new Promise((r) => setTimeout(r, 1));
     return { ok: true } as Response;
   }) as unknown as typeof fetch;
 
-  const sink = new FrameSink("https://host/frame", "s", 1, fakeFetch);
-  const rgba = new Uint8Array(16);
-  const first = sink.capture(0, 2, 2, rgba); // occupies the only slot
-  await sink.capture(1, 2, 2, rgba); // saturated -> dropped immediately
-  await sink.capture(2, 2, 2, rgba); // dropped
-  assert.equal(sink.droppedCount, 2);
+  const sink = new FrameSink("https://host/frame", "s", 2, 1e9, fakeFetch);
+  for (let i = 0; i < 20; i++) sink.capture(i, 1, 1, new Uint8Array(4));
+  assert.equal(sink.droppedCount, 0, "no drops under backpressure");
+  await sink.finish();
+  assert.equal(sink.sentCount, 20, "every buffered frame uploaded");
+  assert.equal(sink.droppedCount, 0);
+  assert.equal(sink.queuedCount, 0);
+});
 
-  release();
-  await first;
-  // A slot is free again.
-  await sink.capture(3, 2, 2, rgba);
-  assert.equal(sink.droppedCount, 2);
+test("the RAM cap drops frames instead of OOMing", () => {
+  const hang = (() => new Promise(() => undefined)) as unknown as typeof fetch; // uploads never resolve
+  const sink = new FrameSink("https://host/frame", "s", 1, 10, hang); // 10-byte cap, 1 worker
+  sink.capture(0, 1, 1, new Uint8Array(8)); // drained-in-flight (ram back to 0)
+  sink.capture(1, 1, 1, new Uint8Array(8)); // buffered (8 ≤ 10)
+  sink.capture(2, 1, 1, new Uint8Array(8)); // 8+8 > 10 → dropped
+  assert.equal(sink.droppedCount, 1);
 });
