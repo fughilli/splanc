@@ -333,8 +333,9 @@ export class LedMapperClient {
     )) as ResultReadyMessage;
   }
 
-  /** Start/stop a topology-aware playback effect (`"off"` or `"pulse"`); the
-   * player runs it against the stored topology. Reply: the effective state. */
+  /** Start/stop a topology-aware playback effect (`"off"`, `"pulse"`, or
+   * `"flood"`); the player runs it against the stored topology. Reply: the
+   * effective state. */
   async setPlayback(effect: string, params?: PlaybackParams): Promise<PlaybackStateMessage> {
     return (await this.request(
       { type: "set_playback", effect, ...(params ? { params } : {}) },

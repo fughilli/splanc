@@ -14,6 +14,7 @@ import type {
   ImuSample,
   LedEntry,
   OutputMap,
+  PlaybackParams,
   Topology,
 } from "@ledmapper/protocol";
 import {
@@ -334,28 +335,49 @@ $<HTMLButtonElement>("again").addEventListener("click", () => {
   mapView?.stop();
 });
 
-// Topology-aware pulse effect: toggle it on the player (shown once a topology
-// has been uploaded). A comet of light runs along the fixture's physical shape.
+// Topology-aware effects: pulses that traverse the graph (spawn at a terminus,
+// pick a direction at each junction, may split, despawn at a terminus) and a
+// flood that propagates outward from a terminus and decays to black. Shown once
+// a topology has been uploaded; each button toggles its effect, and only one
+// effect runs at a time.
 const playEffectBtn = $<HTMLButtonElement>("playeffect");
-let pulseOn = false;
-playEffectBtn.addEventListener("click", () => {
-  void (async () => {
-    playEffectBtn.disabled = true;
-    try {
-      pulseOn = !pulseOn;
-      await client.setPlayback(
-        pulseOn ? "pulse" : "off",
-        pulseOn ? { agentCount: 2, speed: 0.4, glowRadius: 0.08 } : undefined,
-      );
-      playEffectBtn.textContent = pulseOn ? "Stop effect" : "Play effect";
-    } catch (e) {
-      setError(`playback failed: ${e instanceof Error ? e.message : e}`);
-      pulseOn = !pulseOn; // revert
-    } finally {
-      playEffectBtn.disabled = false;
-    }
-  })();
-});
+const playFloodBtn = $<HTMLButtonElement>("playflood");
+type Effect = "pulse" | "flood";
+let activeEffect: Effect | null = null;
+
+const EFFECT_PARAMS: Record<Effect, PlaybackParams> = {
+  pulse: { agentCount: 2, speed: 0.4, glowRadius: 0.08 },
+  flood: { agentCount: 1, speed: 0.35, glowRadius: 0.1 },
+};
+const effectButtons: Record<Effect, { btn: HTMLButtonElement; label: string }> = {
+  pulse: { btn: playEffectBtn, label: "pulse" },
+  flood: { btn: playFloodBtn, label: "flood" },
+};
+
+function refreshEffectButtons(): void {
+  for (const [name, { btn, label }] of Object.entries(effectButtons)) {
+    btn.textContent = activeEffect === name ? `Stop ${label}` : `Play ${label}`;
+  }
+}
+
+async function toggleEffect(effect: Effect): Promise<void> {
+  playEffectBtn.disabled = true;
+  playFloodBtn.disabled = true;
+  const next = activeEffect === effect ? null : effect;
+  try {
+    await client.setPlayback(next ?? "off", next ? EFFECT_PARAMS[next] : undefined);
+    activeEffect = next;
+    refreshEffectButtons();
+  } catch (e) {
+    setError(`playback failed: ${e instanceof Error ? e.message : e}`);
+  } finally {
+    playEffectBtn.disabled = false;
+    playFloodBtn.disabled = false;
+  }
+}
+
+playEffectBtn.addEventListener("click", () => void toggleEffect("pulse"));
+playFloodBtn.addEventListener("click", () => void toggleEffect("flood"));
 
 // -- Topology preview + tuning (Phase F): re-extract on any control change and
 // overlay the skeleton on the map view; upload is a manual, explicit step so
@@ -408,7 +430,9 @@ topoUploadBtn.addEventListener("click", () => {
     try {
       await client.submitTopology(currentTopology);
       topoUploadBtn.textContent = "Uploaded ✓";
-      playEffectBtn.style.display = ""; // effect can now run against it
+      // Effects can now run against the uploaded topology.
+      playEffectBtn.style.display = "";
+      playFloodBtn.style.display = "";
     } catch (e) {
       setError(`topology upload failed: ${e instanceof Error ? e.message : e}`);
       topoUploadBtn.disabled = false;
@@ -1145,8 +1169,9 @@ async function stopCapture(sessionAlreadyEnded = false): Promise<void> {
     resultMap = map;
     resultMapId = mapId;
     playEffectBtn.style.display = "none";
-    playEffectBtn.textContent = "Play effect";
-    pulseOn = false;
+    playFloodBtn.style.display = "none";
+    activeEffect = null;
+    refreshEffectButtons();
     topoControls.style.display = map.leds.length >= 2 ? "" : "none";
     previewTopology();
     setConn(`map ${mapId} ready${solveOnPhone ? " (solved on phone)" : ""}`);
