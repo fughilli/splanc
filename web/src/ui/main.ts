@@ -14,6 +14,7 @@ import type {
   ImuSample,
   LedEntry,
   OutputMap,
+  Topology,
 } from "@ledmapper/protocol";
 import {
   adjustThreshold,
@@ -352,6 +353,61 @@ playEffectBtn.addEventListener("click", () => {
       pulseOn = !pulseOn; // revert
     } finally {
       playEffectBtn.disabled = false;
+    }
+  })();
+});
+
+// -- Topology preview + tuning (Phase F): re-extract on any control change and
+// overlay the skeleton on the map view; upload is a manual, explicit step so
+// the extraction can be dialed in first.
+const topoControls = $("topo-controls");
+const topoSummary = $("topo-summary");
+const gapInput = $<HTMLInputElement>("topo-gap");
+const simplifyInput = $<HTMLInputElement>("topo-simplify");
+const maxPolyInput = $<HTMLInputElement>("topo-maxpoly");
+const topoUploadBtn = $<HTMLButtonElement>("topo-upload");
+let resultMap: OutputMap | null = null;
+let resultMapId: string | null = null;
+let currentTopology: Topology | null = null;
+
+function previewTopology(): void {
+  if (resultMap === null || mapView === null) return;
+  const gap = parseFloat(gapInput.value);
+  const simplify = parseFloat(simplifyInput.value);
+  const maxPoly = parseInt(maxPolyInput.value, 10);
+  $("topo-gap-v").textContent = gap.toFixed(1);
+  $("topo-simplify-v").textContent = simplify.toFixed(1);
+  $("topo-maxpoly-v").textContent = String(maxPoly);
+  const topo = extractTopology(resultMap, {
+    gapSplitFactor: gap,
+    simplifyFrac: simplify,
+    maxPolyline: maxPoly,
+  });
+  if (resultMapId !== null) topo.mapId = resultMapId;
+  currentTopology = topo;
+  mapView.setTopology(topo);
+  const verts = topo.segments.reduce((n, s) => n + s.polyline.length, 0);
+  const lenM = topo.segments.reduce((a, s) => a + s.length, 0);
+  topoSummary.textContent =
+    `${topo.segments.length} seg · ${verts} verts · ${lenM.toFixed(2)} m · ` +
+    `${topo.associations.length}/${resultMap.leds.length} LEDs`;
+  topoUploadBtn.textContent = "Upload topology";
+  topoUploadBtn.disabled = topo.segments.length === 0;
+}
+for (const el of [gapInput, simplifyInput, maxPolyInput]) {
+  el.addEventListener("input", previewTopology);
+}
+topoUploadBtn.addEventListener("click", () => {
+  void (async () => {
+    if (currentTopology === null || currentTopology.segments.length === 0) return;
+    topoUploadBtn.disabled = true;
+    try {
+      await client.submitTopology(currentTopology);
+      topoUploadBtn.textContent = "Uploaded ✓";
+      playEffectBtn.style.display = ""; // effect can now run against it
+    } catch (e) {
+      setError(`topology upload failed: ${e instanceof Error ? e.message : e}`);
+      topoUploadBtn.disabled = false;
     }
   })();
 });
@@ -1079,20 +1135,16 @@ async function stopCapture(sessionAlreadyEnded = false): Promise<void> {
       map = (await resp.json()) as OutputMap;
     }
     showResult(mapId, map);
-    // Phase F: extract the fixture graph topology from the solved positions and
-    // upload it (keyed to the stored map) so the player's pulse engine can drive
-    // effects along the physical shape. Non-fatal — the map is already shown.
-    try {
-      const topology = extractTopology(map);
-      topology.mapId = mapId;
-      if (topology.segments.length > 0) {
-        await client.submitTopology(topology);
-        // A topology is now on the player — offer the pulse effect.
-        playEffectBtn.style.display = "";
-      }
-    } catch (e) {
-      console.warn("topology extract/upload failed (non-fatal):", e);
-    }
+    // Phase F: extract + PREVIEW the fixture graph topology on the map view.
+    // The user tunes the extraction params (live overlay) and uploads it to the
+    // player explicitly (topo-upload), which then enables the pulse effect.
+    resultMap = map;
+    resultMapId = mapId;
+    playEffectBtn.style.display = "none";
+    playEffectBtn.textContent = "Play effect";
+    pulseOn = false;
+    topoControls.style.display = map.leds.length >= 2 ? "" : "none";
+    previewTopology();
     setConn(`map ${mapId} ready${solveOnPhone ? " (solved on phone)" : ""}`);
   } catch (e) {
     setError(`Reconstruction failed: ${e instanceof Error ? e.message : e}`);

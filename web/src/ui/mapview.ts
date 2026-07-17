@@ -10,7 +10,7 @@
  * in-capture inset (`update()` swaps maps without resetting the camera).
  */
 
-import type { OutputMap, Vec3 } from "@ledmapper/protocol";
+import type { OutputMap, Topology, Vec3 } from "@ledmapper/protocol";
 import { applySimilarity, fitSimilarity, type Similarity } from "../geom/fit";
 
 export interface TruthPoint {
@@ -41,6 +41,10 @@ export class MapView {
   private trajectory: Vec3[] | null = null;
   showTrajectory = false;
 
+  // Extracted topology overlay: the segment polylines drawn over the LEDs, for
+  // live preview while tuning the extraction (topology/extract.ts).
+  private topology: Topology | null = null;
+
   constructor(
     private readonly canvas: HTMLCanvasElement,
     private map: OutputMap,
@@ -60,6 +64,11 @@ export class MapView {
   /** Set (or clear) the solved camera path (drawn when showTrajectory). */
   setTrajectory(path: Vec3[] | null): void {
     this.trajectory = path && path.length >= 2 ? path : null;
+  }
+
+  /** Set (or clear) the extracted topology to overlay (segment polylines). */
+  setTopology(topology: Topology | null): void {
+    this.topology = topology;
   }
 
   get hasTrajectory(): boolean {
@@ -337,6 +346,30 @@ export class MapView {
       const hue = Math.round(c * 120);
       ctx.fillStyle = `hsl(${hue} 90% 50%)`;
       ctx.fill();
+    }
+
+    // -- topology overlay: the extracted skeleton polylines over the LEDs -----
+    if (this.topology !== null) {
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = "rgb(80 220 255 / 0.9)";
+      for (const seg of this.topology.segments) {
+        if (seg.polyline.length < 2) continue;
+        ctx.beginPath();
+        for (let i = 0; i < seg.polyline.length; i++) {
+          const s = proj(seg.polyline[i]!);
+          if (i === 0) ctx.moveTo(s.sx, s.sy);
+          else ctx.lineTo(s.sx, s.sy);
+        }
+        ctx.stroke();
+        // Small ring at each polyline vertex (the decimated waypoints).
+        ctx.fillStyle = "rgb(80 220 255 / 0.9)";
+        for (const v of seg.polyline) {
+          const s = proj(v);
+          ctx.beginPath();
+          ctx.arc(s.sx, s.sy, 2.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
     }
 
     ctx.fillStyle = "#aaa";

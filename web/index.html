@@ -196,6 +196,19 @@
           </div>
         </div>
         <canvas id="mapcanvas" width="520" height="390"></canvas>
+        <div id="topo-controls" style="display: none; margin: 0.4rem 0; font-size: 0.85rem; color: #b8b8c0">
+          <div style="margin-bottom: 0.2rem">Topology <span id="topo-summary" style="color:#7fd8ff"></span></div>
+          <label style="display: block">gap split
+            <input id="topo-gap" type="range" min="1.5" max="8" step="0.5" value="4" />
+            <span id="topo-gap-v">4</span></label>
+          <label style="display: block">simplify
+            <input id="topo-simplify" type="range" min="0" max="2" step="0.1" value="0.5" />
+            <span id="topo-simplify-v">0.5</span></label>
+          <label style="display: block">max verts/segment
+            <input id="topo-maxpoly" type="range" min="4" max="128" step="4" value="64" />
+            <span id="topo-maxpoly-v">64</span></label>
+          <button class="secondary" id="topo-upload">Upload topology</button>
+        </div>
         <p class="row">
           <a id="dl-json" download>map.json</a>
           <a id="dl-csv" download>map.csv</a>
