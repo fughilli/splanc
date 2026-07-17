@@ -109,6 +109,13 @@ export class MediaStreamCaptureSource implements CaptureSource {
    * effort: records what happened in exposureApplied and never throws. */
   private async applyExposure(): Promise<void> {
     if (this.opts.exposure === undefined) return;
+    await this.setExposure(this.opts.exposure);
+  }
+
+  /** Re-lock the camera exposure to `target01` (0 = shortest, 1 = longest).
+   * Public so the exposure servo can retune it live. Best effort: records the
+   * outcome in exposureApplied and never throws. */
+  async setExposure(target01: number): Promise<void> {
     const track = this.stream?.getVideoTracks()[0];
     const getCaps = track?.getCapabilities?.bind(track);
     if (!track || !getCaps) {
@@ -116,14 +123,13 @@ export class MediaStreamCaptureSource implements CaptureSource {
       return;
     }
     try {
-      const plan = planExposure(getCaps() as ExposureCapabilities, this.opts.exposure);
+      const plan = planExposure(getCaps() as ExposureCapabilities, target01);
       if (!plan) {
         this.exposureApplied = "unsupported by this camera";
         return;
       }
       await track.applyConstraints(plan.constraints);
       this.exposureApplied = plan.description;
-      console.info(`[exposure] ${plan.description}`);
     } catch (e) {
       this.exposureApplied = `failed: ${e instanceof Error ? e.message : e}`;
       console.warn("[exposure] applyConstraints failed:", e);

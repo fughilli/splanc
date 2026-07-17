@@ -18,7 +18,9 @@ import type {
 import {
   adjustThreshold,
   blobPopulation,
+  EXPOSURE_SERVO_START,
   ExposureMonitor,
+  planExposureServo,
   planLedBrightness,
   planReconfigure,
   planSymbolSwitch,
@@ -104,6 +106,10 @@ const forcedBrightness = ((): number | null => {
 // LED bloom). This is the real lever against bloom in the dark: auto-exposure
 // clips the LEDs to white regardless of LED brightness, so we pin exposure
 // down instead of dimming the strip. See xr/exposureControl.ts.
+// `?exposure=servo` auto-servos the exposure to the detection sweet spot
+// (long enough to integrate the LEDs' PWM banding, short enough to avoid
+// bloom); `?exposure=<0..1>` pins a fixed value.
+const servoExposure = qs.get("exposure") === "servo";
 const forcedExposure = ((): number | null => {
   const v = parseFloat(qs.get("exposure") ?? "");
   return Number.isFinite(v) && v >= 0 && v <= 1 ? v : null;
@@ -353,10 +359,13 @@ async function startCapture(): Promise<void> {
         return undefined;
       }
     })();
+    // Exposure servo starts mid-range; a fixed ?exposure= pins its value.
+    const initialExposure = servoExposure ? EXPOSURE_SERVO_START : forcedExposure;
+    let servoedExposure = initialExposure ?? EXPOSURE_SERVO_START;
     const ms = new MediaStreamCaptureSource({
       kSeed: cached,
       fxOverride: forcedFx ?? undefined,
-      ...(forcedExposure !== null ? { exposure: forcedExposure } : {}),
+      ...(initialExposure !== null ? { exposure: initialExposure } : {}),
     });
     capture = ms;
     await capture.start();
@@ -666,12 +675,13 @@ async function startCapture(): Promise<void> {
         const framesLine = frameSink
           ? ` · frames ${frameSink.sentCount}↑${frameSink.droppedCount ? ` ${frameSink.droppedCount} drop` : ""}`
           : "";
+        const expLine = servoExposure ? ` · exp ${servoedExposure.toFixed(2)}` : "";
         const servoLine =
           (pop
             ? `LED ${br}% · sat ${pop.satFrac.toFixed(2)} split ${pct(pop.splitFrac)} ` +
               `gray ${pct(pop.grayFrac)} · medI ${pop.medianIntensity.toFixed(2)}` +
               (scn ? ` clip ${pct(scn.clipFrac)}` : "")
-            : `LED ${br}%`) + framesLine;
+            : `LED ${br}%`) + expLine + framesLine;
         hudStats.textContent =
           `decoded ${s.uniqueIds.size}/${params.ledCount} ids · ${s.tracks} tracks · ` +
           `${blobs.length} blobs · align ${s.alignShiftMs.toFixed(0)} ms · ` +
@@ -810,12 +820,30 @@ async function startCapture(): Promise<void> {
               pipeline.stats.marginEma,
             )
           : null;
+      const pop = monitor.blobPopulation();
+      // Camera-exposure servo (?exposure=servo): retune the locked exposure
+      // toward the sweet spot between PWM banding (too short) and bloom (too
+      // long). Applied directly — it's a local camera setting, no pattern-clock
+      // restamp — so no two-tick confirmation. It's the primary brightness
+      // lever here, so the LED-brightness servo is frozen while it runs.
+      if (servoExposure && pop !== null) {
+        const nextExp = planExposureServo(servoedExposure, {
+          blobCount: report.blobCount,
+          ledCount,
+          satFrac: pop.satFrac,
+          grayFrac: pop.grayFrac,
+          medianIntensity: pop.medianIntensity,
+        });
+        if (nextExp !== null) {
+          servoedExposure = nextExp;
+          void ms.setExposure(nextExp);
+        }
+      }
       // LED brightness servo: detection probability over brightness is an
       // inverted U (dim → blobs starve; bright → bloom merges halos and
       // washes hue), so servo on the MEASURED wash-out signals.
-      const pop = monitor.blobPopulation();
       const wantBright =
-        forcedBrightness === null && pop !== null
+        !servoExposure && forcedBrightness === null && pop !== null
           ? planLedBrightness(params.brightness ?? 1, {
               blobCount: report.blobCount,
               ledCount,

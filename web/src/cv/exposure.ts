@@ -220,12 +220,21 @@ export const LED_BRIGHTNESS_MAX = 1.0;
 /** Multiplicative servo steps: DOWN escapes fast (wash-out is a cliff — the
  * 2026-07-13 bloom study lost ALL detections within ~2× above the good
  * band), UP creeps (the only cost of slightly-too-dim is detection range). */
-export const LED_BRIGHTNESS_UP = 1.25;
-export const LED_BRIGHTNESS_DOWN = 0.6;
+export const LED_BRIGHTNESS_UP = 1.2;
+export const LED_BRIGHTNESS_DOWN = 0.5;
 /** Bloom gates: any split blobs beyond noise, or a majority-gray population,
  * means halos are merging / hue is washing — step down. */
-export const BLOOM_SPLIT_FRAC = 0.15;
-export const BLOOM_GRAY_FRAC = 0.5;
+export const BLOOM_SPLIT_FRAC = 0.1;
+export const BLOOM_GRAY_FRAC = 0.4;
+/** Over-detection gate: blob count this far above the LED count means each LED
+ * is fragmenting into several detections (bloom halos splitting off, or PWM /
+ * rolling-shutter banding) — the dominant failure mode in the field traces
+ * (120 blobs for 64 LEDs, with split=0 so the split gate never fired). Lower
+ * brightness shrinks the bloom that drives most of it (indoors, detection
+ * accuracy rises as brightness falls), so this steps DOWN. Above ledCount, not
+ * ledCount/2, so the STARVE band (pairwise-merged neighbors ≈ ledCount/2) can't
+ * be mistaken for a flood. */
+export const LED_FLOOD_FRAC = 1.4;
 // NOTE (2026-07-16): a satFrac (blob-clipping) down-gate was tried and
 // REMOVED. In a dark room the camera's auto-exposure raises gain until the
 // frame meters mid-gray; with only the LEDs in view that pins them clipped
@@ -290,6 +299,9 @@ export function planLedBrightness(current: number, m: LedBrightnessSignals): num
     return step(m.clipFrac > WASHOUT_CLIP_FRAC ? down : up);
   }
   if (m.splitFrac > BLOOM_SPLIT_FRAC || m.grayFrac > BLOOM_GRAY_FRAC) return step(down);
+  // Over-detection: each LED fragmenting into several blobs (bloom / banding).
+  // Dimming shrinks the bloom that drives it — the biggest lever indoors.
+  if (m.blobCount > m.ledCount * LED_FLOOD_FRAC) return step(down);
   if (m.blobCount < m.ledCount * STARVE_FRAC) {
     // Bright-but-few = neighbors merged into shared blobs; dim-and-few = the
     // strip is fading under the detector threshold. In between, the deficit
@@ -301,6 +313,67 @@ export function planLedBrightness(current: number, m: LedBrightnessSignals): num
   if (m.medianIntensity < DIM_INTENSITY && m.splitFrac === 0 && m.grayFrac < GRAY_CHROMA_FRAC) {
     return step(up);
   }
+  return null;
+}
+
+/** Camera-exposure servo target step, in the [0,1] exposureTime range
+ * (planExposure lerps this over the camera's exposureTime capability). DOWN
+ * (shorten) escapes bloom a hair faster than UP creeps. */
+export const EXPOSURE_UP_STEP = 0.1;
+export const EXPOSURE_DOWN_STEP = 0.12;
+/** Where the exposure servo starts (mid of the exposureTime range). */
+export const EXPOSURE_SERVO_START = 0.5;
+/** Blob clipping / washed-hue fractions that read "exposure too long" (bloom). */
+export const EXPOSURE_SAT_FRAC = 0.4;
+export const EXPOSURE_GRAY_FRAC = 0.5;
+/** Over-detection above this × ledCount, at LOW saturation, reads as PWM /
+ * rolling-shutter banding fragmenting each LED — lengthen the exposure so it
+ * integrates several PWM cycles and the bands average out. */
+export const EXPOSURE_FLOOD_FRAC = 1.4;
+/** Median blob intensity below which the frame is too dark — lengthen. */
+export const EXPOSURE_DIM_INTENSITY = 0.5;
+
+export interface ExposureServoSignals {
+  blobCount: number;
+  ledCount: number;
+  /** Median blob clipping (Blob.satFrac) and washed-hue fraction, and median
+   * blob intensity — from the same BlobPopulation the brightness servo reads. */
+  satFrac: number;
+  grayFrac: number;
+  medianIntensity: number;
+}
+
+/**
+ * Camera-exposure servo: returns the next exposure target in [0,1] (0 = the
+ * shortest exposureTime the camera offers, 1 = the longest), or null to hold.
+ *
+ * Unlike LED brightness, exposure fixes BOTH sides of the field problem: too
+ * SHORT and the rolling shutter samples the LEDs' ~kHz PWM mid-cycle, so each
+ * LED breaks into a stack of on/off horizontal bands the detector fragments
+ * (over-detection); too LONG and the LEDs bloom and wash to white (clipping).
+ * The good exposure integrates enough PWM cycles to kill the banding without
+ * blooming — so servo toward it:
+ *
+ *  - clipping / washed hue: exposure is too long → shorten;
+ *  - over-detection at LOW saturation: banding → lengthen (integrate the PWM);
+ *  - too dim: lengthen.
+ *
+ * Because the camera exposure is LOCKED (we own it), satFrac is a real bloom
+ * signal here — unlike the LED-brightness servo, where auto-exposure re-clips
+ * the LEDs at any brightness. Applied directly per tick (no pattern-clock
+ * restamp, unlike a configure), so it needs no two-tick confirmation.
+ */
+export function planExposureServo(current: number, m: ExposureServoSignals): number | null {
+  const up = Math.min(1, current + EXPOSURE_UP_STEP);
+  const down = Math.max(0, current - EXPOSURE_DOWN_STEP);
+  const step = (next: number): number | null => (Math.abs(next - current) < 1e-3 ? null : next);
+  const bloom = m.satFrac > EXPOSURE_SAT_FRAC || m.grayFrac > EXPOSURE_GRAY_FRAC;
+  if (m.blobCount === 0) {
+    return step(bloom ? down : up); // washed → shorten; dark → lengthen
+  }
+  if (bloom) return step(down);
+  if (m.blobCount > m.ledCount * EXPOSURE_FLOOD_FRAC) return step(up); // banding → integrate
+  if (m.medianIntensity < EXPOSURE_DIM_INTENSITY) return step(up);
   return null;
 }
 

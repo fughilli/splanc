@@ -15,10 +15,12 @@ import {
   BIT_PERIOD_MIN_MS,
   blobPopulation,
   ExposureMonitor,
+  type ExposureServoSignals,
   HUE4_MIN_MEAN_LUMA,
   LED_BRIGHTNESS_MAX,
   LED_BRIGHTNESS_MIN,
   type LedBrightnessSignals,
+  planExposureServo,
   planLedBrightness,
   planReconfigure,
   planSymbolSwitch,
@@ -170,6 +172,14 @@ test("brightness servo: majority-gray blobs (washed hue) step down", () => {
   assert.ok(next !== null && next < 0.5);
 });
 
+test("brightness servo: over-detection (bloom fragmentation) steps down", () => {
+  // 120 blobs for 64 LEDs with NO split flag — the field-trace failure mode
+  // the split/gray gates missed, so the servo used to hold while over-
+  // detecting. Now the flood gate dims it.
+  const next = planLedBrightness(0.5, signals({ blobCount: 120, ledCount: 64, grayFrac: 0.1 }));
+  assert.ok(next !== null && next < 0.5, `flood must step down, got ${next}`);
+});
+
 test("brightness servo: clipped-but-vivid blobs are NOT a down signal", () => {
   // Dark-room clipping (satFrac high, hue intact) is unavoidable — the
   // camera's AE re-clips the LEDs at any brightness, so dimming can't lower
@@ -211,6 +221,44 @@ test("brightness servo: healthy but dim claims SNR headroom, gently", () => {
   assert.ok(next !== null && next > 0.4 && next < 0.55, `gentle up, got ${next}`);
   // ...but not with any bloom evidence.
   assert.equal(planLedBrightness(0.4, signals({ medianIntensity: 0.6, splitFrac: 0.05 })), null);
+});
+
+// -- planExposureServo: the camera-exposure servo ----------------------------
+
+function expSignals(over: Partial<ExposureServoSignals> = {}): ExposureServoSignals {
+  return { blobCount: 64, ledCount: 64, satFrac: 0.1, grayFrac: 0.1, medianIntensity: 0.8, ...over };
+}
+
+test("exposure servo: healthy population holds", () => {
+  assert.equal(planExposureServo(0.5, expSignals()), null);
+});
+
+test("exposure servo: clipping/washed hue (bloom) shortens the exposure", () => {
+  assert.ok(planExposureServo(0.5, expSignals({ satFrac: 0.6 }))! < 0.5);
+  assert.ok(planExposureServo(0.5, expSignals({ grayFrac: 0.7 }))! < 0.5);
+});
+
+test("exposure servo: over-detection at low saturation (banding) lengthens", () => {
+  // Each LED fragmenting into bands with no clipping — lengthen to integrate
+  // the PWM. This is the opposite direction from the bloom case.
+  const next = planExposureServo(0.4, expSignals({ blobCount: 200, ledCount: 64, satFrac: 0.05 }));
+  assert.ok(next !== null && next > 0.4, `banding must lengthen, got ${next}`);
+});
+
+test("exposure servo: bloom wins over banding when both present", () => {
+  // Over-detection AND clipping: shorten (bloom is the worse failure).
+  assert.ok(planExposureServo(0.5, expSignals({ blobCount: 200, satFrac: 0.6 }))! < 0.5);
+});
+
+test("exposure servo: too dim lengthens; clamps at the ends", () => {
+  assert.ok(planExposureServo(0.4, expSignals({ medianIntensity: 0.3 }))! > 0.4);
+  assert.equal(planExposureServo(1, expSignals({ blobCount: 200, satFrac: 0.05 })), null); // at max
+  assert.equal(planExposureServo(0, expSignals({ satFrac: 0.9 })), null); // at min
+});
+
+test("exposure servo: zero blobs — saturation picks the direction", () => {
+  assert.ok(planExposureServo(0.5, expSignals({ blobCount: 0, satFrac: 0.9 }))! < 0.5); // washed → shorten
+  assert.ok(planExposureServo(0.5, expSignals({ blobCount: 0, satFrac: 0.02, grayFrac: 0 }))! > 0.5); // dark → lengthen
 });
 
 test("brightness servo: clamps to bounds and holds at them", () => {
