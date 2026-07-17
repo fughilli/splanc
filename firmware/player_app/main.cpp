@@ -316,15 +316,25 @@ static uint32_t render_once() {
     next_delay_ms = d <= 1 ? 1 : (d > (int64_t)kStaticPollMs ? kStaticPollMs : (uint32_t)d);
     was_active = true;
   } else if (lm_playback_active()) {
-    // Topology-aware pulse effect: colour every LED from the stored topology at
-    // the current player time. It's an animation, so repaint at ~30 fps.
-    uint64_t now = (uint64_t)millis();
-    for (uint32_t i = 0; i < kMaxLeds; i++) {
-      if (lm_playback_color(i, now, rgb)) {
-        leds[i] = CRGB(rgb[0], rgb[1], rgb[2]);
-      } else {
-        leds[i] = CRGB::Black;
+    // Topology-aware effect (pulse/flood): advance the stateful sim by the real
+    // elapsed time, then colour every LED from its stored association. It's an
+    // animation, so repaint at ~30 fps.
+    static uint32_t last_playback_ms = 0;
+    uint32_t now = millis();
+    uint32_t dt = now - last_playback_ms;   // wraps cleanly (unsigned)
+    if (last_playback_ms == 0 || dt > 100) dt = 33;  // fresh entry / long gap
+    last_playback_ms = now;
+    if (lm_playback_step(dt)) {
+      for (uint32_t i = 0; i < kMaxLeds; i++) {
+        if (lm_playback_color(i, rgb)) {
+          leds[i] = CRGB(rgb[0], rgb[1], rgb[2]);
+        } else {
+          leds[i] = CRGB::Black;
+        }
       }
+    } else {
+      // Effect configured but no topology stored yet — hold black.
+      fill_solid(leds, kMaxLeds, CRGB::Black);
     }
     show = true;
     was_active = true;

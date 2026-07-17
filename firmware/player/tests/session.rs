@@ -223,8 +223,16 @@ fn full_phone_session() {
     };
     assert!(ps.r#active);
     assert_eq!(ps.r#effect.as_str(), "pulse");
-    assert!(player.pulse_config().is_some());
-    // An unknown effect is refused and leaves pulse running.
+    assert!(player.effect_config().is_some());
+    // The topology-aware flood effect is also accepted.
+    let mut flood = pb::SetPlayback::default();
+    flood.r#effect = core::str::FromStr::from_str("flood").unwrap();
+    let Some(SMsg::PlaybackState(ps)) = send(&mut player, CMsg::SetPlayback(flood), 7120.0) else {
+        panic!("set_playback flood must produce playback_state");
+    };
+    assert!(ps.r#active);
+    assert_eq!(ps.r#effect.as_str(), "flood");
+    // An unknown effect is refused and leaves the effect running.
     let mut bad = pb::SetPlayback::default();
     bad.r#effect = core::str::FromStr::from_str("rainbow").unwrap();
     expect_error(send(&mut player, CMsg::SetPlayback(bad), 7150.0), "unsupported_effect");
@@ -235,7 +243,7 @@ fn full_phone_session() {
         panic!("set_playback off");
     };
     assert!(!ps.r#active);
-    assert!(player.pulse_config().is_none());
+    assert!(player.effect_config().is_none());
 
     // Pi-profile arms: telemetry drops silently, polls refuse loudly.
     assert!(send(&mut player, CMsg::Detections(pb::Detections::default()), 8000.0).is_none());

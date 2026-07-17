@@ -21,7 +21,7 @@ use core::ptr::{addr_of, addr_of_mut};
 use ledmapper_arena::Arena;
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_player::{upload_malformed, upload_too_large, Player};
-use ledmapper_pulse::pulse_led_color;
+use ledmapper_pulse::{Graph, Sim, MAX_SEGMENTS};
 use ledmapper_store::{
     decode_submit_map, decode_submit_topology, envelope_arm, StoreError, StoredMap,
     StoredTopology, ARM_SUBMIT_MAP, ARM_SUBMIT_TOPOLOGY,
@@ -42,6 +42,12 @@ static mut ARENA: Option<Arena<'static>> = None;
 static mut MAP: Option<StoredMap<'static>> = None;
 static mut TOPO: Option<StoredTopology<'static>> = None;
 static mut PLAYER: Option<Player> = None;
+
+/// The topology-aware effect simulator, rebuilt lazily from TOPO + the active
+/// effect config. `SIM_GEN` records the `playback_gen` it was built for so a
+/// config change forces a rebuild; a topology upload nulls SIM directly.
+static mut SIM: Option<Sim> = None;
+static mut SIM_GEN: u32 = u32::MAX;
 
 // The staticlib is linked into the Arduino app, which has no Rust runtime:
 // provide the panic handler on the bare-metal target. Host tests (std)
@@ -73,6 +79,7 @@ pub extern "C" fn lm_player_init(default_led_count: u32) {
     unsafe {
         *addr_of_mut!(MAP) = None;
         *addr_of_mut!(TOPO) = None;
+        *addr_of_mut!(SIM) = None;
         *addr_of_mut!(ARENA) = Some(Arena::new(&mut *addr_of_mut!(ARENA_MEM)));
         *addr_of_mut!(PLAYER) = Some(Player::new("esp32c6-player", default_led_count.max(1)));
     }
@@ -136,6 +143,7 @@ pub unsafe extern "C" fn lm_player_handle(
 unsafe fn handle_map_upload(frame: &[u8]) -> pb::ServerMessage {
     *addr_of_mut!(MAP) = None;
     *addr_of_mut!(TOPO) = None;
+    *addr_of_mut!(SIM) = None;
     arena_mut().reset();
     match decode_submit_map(frame, frame.len(), arena_ref()) {
         Ok(map) => {
@@ -153,6 +161,7 @@ unsafe fn handle_map_upload(frame: &[u8]) -> pb::ServerMessage {
 /// Topology appends after the map; a failed decode rolls back to the map.
 unsafe fn handle_topology_upload(frame: &[u8]) -> pb::ServerMessage {
     *addr_of_mut!(TOPO) = None;
+    *addr_of_mut!(SIM) = None;
     let cp = arena_ref().checkpoint();
     match decode_submit_topology(frame, frame.len(), arena_ref()) {
         Ok(topo) => {
@@ -232,21 +241,74 @@ pub unsafe extern "C" fn lm_pattern_color(led: u32, frame_index: u32, rgb: *mut 
     }
 }
 
-/// Whether a playback effect ("pulse") is active — the render loop drives the
-/// LEDs via lm_playback_color when so (and no capture/counting is running).
+/// Whether a playback effect ("pulse"/"flood") is configured — the render loop
+/// drives the LEDs via lm_playback_step + lm_playback_color when so (and no
+/// capture/counting is running). LEDs stay black until a topology is uploaded.
 #[no_mangle]
 pub unsafe extern "C" fn lm_playback_active() -> bool {
-    player().pulse_config().is_some()
+    player().effect_config().is_some()
 }
 
-/// The color LED `led` shows under the active "pulse" playback effect, from the
-/// stored topology's per-LED association (segment length + foot arclength) and
-/// the player time `now_ms`. False when playback is off, no topology is stored,
-/// or this LED has no association. Meters→mm uses f32 (hardware on the C6); the
-/// pulse math itself is integer.
+/// (Re)build the effect simulator from the stored topology + active config if
+/// stale, then advance it by `dt_ms`. Returns whether a renderable sim exists
+/// (config active AND a topology is stored). Call once per render frame before
+/// the per-LED lm_playback_color sweep.
 #[no_mangle]
-pub unsafe extern "C" fn lm_playback_color(led: u32, now_ms: u64, rgb: *mut u8) -> bool {
-    let Some(cfg) = player().pulse_config() else {
+pub unsafe extern "C" fn lm_playback_step(dt_ms: u32) -> bool {
+    ensure_sim();
+    match (*addr_of_mut!(SIM)).as_mut() {
+        Some(sim) => {
+            sim.step(dt_ms);
+            true
+        }
+        None => false,
+    }
+}
+
+/// Ensure SIM reflects the current TOPO + effect config. Rebuilds when the
+/// playback generation changed (config edit) or SIM was invalidated (upload);
+/// nulls SIM when the effect is off or no topology is stored.
+unsafe fn ensure_sim() {
+    let cfg = match player().effect_config() {
+        Some(c) => *c,
+        None => {
+            *addr_of_mut!(SIM) = None;
+            return;
+        }
+    };
+    let gen = player().playback_gen();
+    if (*addr_of!(SIM)).is_some() && SIM_GEN == gen {
+        return;
+    }
+    let Some(topo) = (*addr_of!(TOPO)).as_ref() else {
+        *addr_of_mut!(SIM) = None;
+        return;
+    };
+    // Graph::build takes (branch-point a, b, length_mm) per segment in order;
+    // the resulting segment index equals the input position, which is how
+    // lm_playback_color maps an association's segment_id back to a sim segment.
+    let mut segs = [(0i32, 0i32, 0u32); MAX_SEGMENTS];
+    let mut n = 0usize;
+    for s in topo.segments.iter() {
+        if n >= MAX_SEGMENTS {
+            break;
+        }
+        segs[n] = (s.a, s.b, (s.length * 1000.0) as u32);
+        n += 1;
+    }
+    let graph = Graph::build(&segs[..n]);
+    // Vary the PRNG seed per config so successive effects don't replay identically.
+    *addr_of_mut!(SIM) = Some(Sim::new(graph, cfg, gen ^ 0x9E37_79B9));
+    SIM_GEN = gen;
+}
+
+/// The color LED `led` shows under the active effect, from the stepped sim and
+/// this LED's stored association (segment index, foot arclength, perpendicular
+/// offset). False when no sim is renderable or this LED has no association.
+/// Meters→mm uses f32 (hardware on the C6); the sim math itself is integer.
+#[no_mangle]
+pub unsafe extern "C" fn lm_playback_color(led: u32, rgb: *mut u8) -> bool {
+    let Some(sim) = (*addr_of!(SIM)).as_ref() else {
         return false;
     };
     let Some(topo) = (*addr_of!(TOPO)).as_ref() else {
@@ -255,13 +317,15 @@ pub unsafe extern "C" fn lm_playback_color(led: u32, now_ms: u64, rgb: *mut u8) 
     let Some(assoc) = topo.associations.iter().find(|a| a.led_id == led) else {
         return false;
     };
-    let Some(seg) = topo.segments.iter().find(|s| s.id == assoc.segment_id) else {
+    let Some(idx) = topo.segments.iter().position(|s| s.id == assoc.segment_id) else {
         return false;
     };
+    if idx >= MAX_SEGMENTS {
+        return false;
+    }
     let s_mm = (assoc.foot_arclength * 1000.0) as u32;
     let d_perp_mm = (assoc.d_perp * 1000.0) as u32;
-    let seg_len_mm = (seg.length * 1000.0) as u32;
-    let (r, g, b) = pulse_led_color(s_mm, d_perp_mm, seg_len_mm, now_ms, cfg);
+    let (r, g, b) = sim.led_color(idx as u16, s_mm, d_perp_mm);
     *rgb = r;
     *rgb.add(1) = g;
     *rgb.add(2) = b;

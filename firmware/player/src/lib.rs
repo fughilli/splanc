@@ -23,7 +23,7 @@
 #![no_std]
 
 use ledmapper_pattern::{color_for_frame, CodeSpec, Rgb};
-use ledmapper_pulse::{PulseConfig, MAX_PALETTE};
+use ledmapper_pulse::{Effect, EffectConfig, MAX_PALETTE};
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use pb::ClientMessage_::Msg as CMsg;
 use pb::ServerMessage_::Msg as SMsg;
@@ -168,9 +168,12 @@ pub struct Player {
     led_counts: [Option<u32>; MAX_CHANNELS],
     stored_map_id: Option<Str64>,
     frame_log: FrameLog,
-    /// Active "pulse" playback effect: the render config (integer, for the hot
-    /// path) + the wire params it was built from (to echo). None = "off".
-    playback: Option<(PulseConfig, pb::PlaybackParams)>,
+    /// Active playback effect: the sim config (integer, for the hot path) + the
+    /// wire params it was built from (to echo). None = "off".
+    playback: Option<(EffectConfig, pb::PlaybackParams)>,
+    /// Bumped on every set_playback so the render side can rebuild its sim when
+    /// the effect/params change.
+    playback_gen: u32,
 }
 
 impl Player {
@@ -184,6 +187,7 @@ impl Player {
             stored_map_id: None,
             frame_log: FrameLog::new(),
             playback: None,
+            playback_gen: 0,
         }
     }
 
@@ -234,19 +238,27 @@ impl Player {
                 Some(reply(SMsg::ResultReady(r)))
             }
             CMsg::SetPlayback(m) => {
-                match m.r#effect.as_str() {
-                    "off" => {
+                let effect = match m.r#effect.as_str() {
+                    "off" => Some(None),
+                    "pulse" => Some(Some(Effect::Pulse)),
+                    "flood" => Some(Some(Effect::Flood)),
+                    _ => None,
+                };
+                match effect {
+                    Some(None) => {
                         self.playback = None;
+                        self.playback_gen = self.playback_gen.wrapping_add(1);
                         Some(self.playback_state())
                     }
-                    "pulse" => {
+                    Some(Some(e)) => {
                         let params = m.r#params.clone();
-                        self.playback = Some((pulse_config_from(&params), params));
+                        self.playback = Some((effect_config_from(e, &params), params));
+                        self.playback_gen = self.playback_gen.wrapping_add(1);
                         Some(self.playback_state())
                     }
-                    _ => Some(error(
+                    None => Some(error(
                         "unsupported_effect",
-                        "effect not available on this player (supported: off, pulse)",
+                        "effect not available on this player (supported: off, pulse, flood)",
                     )),
                 }
             }
@@ -463,9 +475,12 @@ impl Player {
     fn playback_state(&self) -> pb::ServerMessage {
         let mut state = pb::PlaybackState::default();
         match self.playback.as_ref() {
-            Some((_, params)) => {
+            Some((cfg, params)) => {
                 state.r#active = true;
-                state.r#effect = s64("pulse");
+                state.r#effect = s64(match cfg.effect {
+                    Effect::Pulse => "pulse",
+                    Effect::Flood => "flood",
+                });
                 state.set_params(params.clone());
             }
             None => {
@@ -530,11 +545,17 @@ impl Player {
         self.frame_log.push(seq, t_us);
     }
 
-    /// The active pulse-playback config, or None when playback is "off". The
-    /// render loop combines it with the stored topology's per-LED association
-    /// (segment length + foot arclength) to colour each LED.
-    pub fn pulse_config(&self) -> Option<&PulseConfig> {
+    /// The active effect-playback config, or None when playback is "off". The
+    /// render loop feeds it (plus the stored topology) to a `Sim` that it steps
+    /// each frame and samples per LED via its (segment, foot arclength, dPerp).
+    pub fn effect_config(&self) -> Option<&EffectConfig> {
         self.playback.as_ref().map(|(cfg, _)| cfg)
+    }
+
+    /// Monotonic counter bumped on every SetPlayback; the render side rebuilds
+    /// its `Sim` when this changes.
+    pub fn playback_gen(&self) -> u32 {
+        self.playback_gen
     }
 
     /// Pattern clock epoch of the active capture, if any (integer ms).
@@ -600,14 +621,19 @@ pub fn upload_malformed() -> pb::ServerMessage {
 /// pb CodeParams from a derived spec (mirrors codebook.py code_params_for;
 /// the derivation itself lives in ledmapper_pattern so the pattern generator
 /// and the advertised code-book cannot disagree).
-/// Build the integer/fixed-point PulseConfig from the wire PlaybackParams.
+/// Build the integer/fixed-point EffectConfig from the wire PlaybackParams.
 /// The f64 arithmetic here is COLD (once per set_playback) — the render hot
-/// path (ledmapper_pulse::pulse_led_color) is integer-only.
-fn pulse_config_from(p: &pb::PlaybackParams) -> PulseConfig {
+/// path (ledmapper_pulse::Sim) is integer-only.
+///
+/// The wire currently carries only intensity/glow/speed/agent_count/palette;
+/// the sim's finer knobs (lead-in distance, split probability, spawn cadence,
+/// flood decay length) are derived from those with sensible defaults so we can
+/// tune behaviour without an immediate proto/regen churn.
+fn effect_config_from(effect: Effect, p: &pb::PlaybackParams) -> EffectConfig {
     let intensity = p.r#intensity().copied().unwrap_or(1.0).clamp(0.0, 1.0);
     let glow_m = p.r#glow_radius().copied().unwrap_or(0.15).max(0.0);
-    let agents = p.r#agent_count().copied().unwrap_or(1).max(0) as u32;
-    let speed_m = p.r#speed().copied().unwrap_or(0.5).max(0.0);
+    let agents = p.r#agent_count().copied().unwrap_or(2).max(1) as u32;
+    let speed_m = p.r#speed().copied().unwrap_or(0.5).max(0.01);
     let mut palette = [(0u8, 0u8, 0u8); MAX_PALETTE];
     let mut palette_len = 0usize;
     for &c in p.r#palette.iter() {
@@ -617,11 +643,23 @@ fn pulse_config_from(p: &pb::PlaybackParams) -> PulseConfig {
         palette[palette_len] = ((c >> 16) as u8, (c >> 8) as u8, c as u8);
         palette_len += 1;
     }
-    PulseConfig {
+    let glow_mm = (glow_m * 1000.0 + 0.5) as u32;
+    let speed_mm_s = (speed_m * 1000.0 + 0.5) as u32;
+    EffectConfig {
+        effect,
         intensity_q8: (intensity * 256.0 + 0.5) as u16,
-        glow_radius_mm: (glow_m * 1000.0 + 0.5) as u32,
-        agent_count: agents,
-        speed_mm_s: (speed_m * 1000.0 + 0.5) as u32,
+        speed_mm_s,
+        glow_radius_mm: glow_mm.max(1),
+        // Ramp a pulse in/out of a terminus over roughly one glow radius so it
+        // neither pops on nor snaps off.
+        lead_mm: glow_mm.max(20),
+        // Modest chance to fork at a junction; keeps the graph lively without
+        // instantly saturating the pulse budget.
+        split_q8: 64,
+        // Spread `agent_count` desired concurrent pulses over ~a 2 s window.
+        spawn_interval_ms: (2000 / agents).max(80),
+        // Flood tail: fade to black over several glow radii behind the front.
+        decay_mm: (glow_mm.max(50)).saturating_mul(4),
         palette,
         palette_len,
     }
