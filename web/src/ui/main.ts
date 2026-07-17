@@ -362,7 +362,8 @@ playEffectBtn.addEventListener("click", () => {
 // the extraction can be dialed in first.
 const topoControls = $("topo-controls");
 const topoSummary = $("topo-summary");
-const gapInput = $<HTMLInputElement>("topo-gap");
+const radiusInput = $<HTMLInputElement>("topo-radius");
+const pruneInput = $<HTMLInputElement>("topo-prune");
 const simplifyInput = $<HTMLInputElement>("topo-simplify");
 const maxPolyInput = $<HTMLInputElement>("topo-maxpoly");
 const topoUploadBtn = $<HTMLButtonElement>("topo-upload");
@@ -372,14 +373,17 @@ let currentTopology: Topology | null = null;
 
 function previewTopology(): void {
   if (resultMap === null || mapView === null) return;
-  const gap = parseFloat(gapInput.value);
+  const radius = parseFloat(radiusInput.value);
+  const prune = parseFloat(pruneInput.value);
   const simplify = parseFloat(simplifyInput.value);
   const maxPoly = parseInt(maxPolyInput.value, 10);
-  $("topo-gap-v").textContent = gap.toFixed(1);
+  $("topo-radius-v").textContent = radius.toFixed(1);
+  $("topo-prune-v").textContent = prune.toFixed(1);
   $("topo-simplify-v").textContent = simplify.toFixed(1);
   $("topo-maxpoly-v").textContent = String(maxPoly);
   const topo = extractTopology(resultMap, {
-    gapSplitFactor: gap,
+    radiusFactor: radius,
+    pruneFactor: prune,
     simplifyFrac: simplify,
     maxPolyline: maxPoly,
   });
@@ -389,12 +393,12 @@ function previewTopology(): void {
   const verts = topo.segments.reduce((n, s) => n + s.polyline.length, 0);
   const lenM = topo.segments.reduce((a, s) => a + s.length, 0);
   topoSummary.textContent =
-    `${topo.segments.length} seg · ${verts} verts · ${lenM.toFixed(2)} m · ` +
-    `${topo.associations.length}/${resultMap.leds.length} LEDs`;
+    `${topo.branchPoints.length} junc · ${topo.segments.length} seg · ${verts} verts · ` +
+    `${lenM.toFixed(2)} m · ${topo.associations.length}/${resultMap.leds.length} LEDs`;
   topoUploadBtn.textContent = "Upload topology";
   topoUploadBtn.disabled = topo.segments.length === 0;
 }
-for (const el of [gapInput, simplifyInput, maxPolyInput]) {
+for (const el of [radiusInput, pruneInput, simplifyInput, maxPolyInput]) {
   el.addEventListener("input", previewTopology);
 }
 topoUploadBtn.addEventListener("click", () => {

@@ -370,6 +370,15 @@ export class MapView {
           ctx.fill();
         }
       }
+      // Junctions (branch points) as distinct magenta rings.
+      ctx.strokeStyle = "rgb(255 90 220 / 0.95)";
+      ctx.lineWidth = 2;
+      for (const bp of this.topology.branchPoints) {
+        const s = proj(bp.xyz);
+        ctx.beginPath();
+        ctx.arc(s.sx, s.sy, 6, 0, Math.PI * 2);
+        ctx.stroke();
+      }
     }
 
     ctx.fillStyle = "#aaa";
