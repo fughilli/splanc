@@ -37,6 +37,7 @@ import {
 } from "../net/improv";
 import { rgbaToB64, toTraceBlob, TraceSink, type TraceFrame } from "../net/trace";
 import { FrameSink, frameUrlFromTraceUrl } from "../net/frameCapture";
+import { extractTopology } from "../topology/extract";
 import { CaptureUnsupportedError } from "../xr/capture";
 import { DEFAULT_IMU_MAPPING, ImuRecorder, parseImuMapping } from "../xr/imu";
 import { MediaStreamCaptureSource } from "../xr/mediaStreamCapture";
@@ -1055,6 +1056,16 @@ async function stopCapture(sessionAlreadyEnded = false): Promise<void> {
       map = (await resp.json()) as OutputMap;
     }
     showResult(mapId, map);
+    // Phase F: extract the fixture graph topology from the solved positions and
+    // upload it (keyed to the stored map) so the player's pulse engine can drive
+    // effects along the physical shape. Non-fatal — the map is already shown.
+    try {
+      const topology = extractTopology(map);
+      topology.mapId = mapId;
+      if (topology.segments.length > 0) await client.submitTopology(topology);
+    } catch (e) {
+      console.warn("topology extract/upload failed (non-fatal):", e);
+    }
     setConn(`map ${mapId} ready${solveOnPhone ? " (solved on phone)" : ""}`);
   } catch (e) {
     setError(`Reconstruction failed: ${e instanceof Error ? e.message : e}`);

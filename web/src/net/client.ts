@@ -29,6 +29,7 @@ import type {
   MappingStoppedMessage,
   OutputMap,
   PatternStateMessage,
+  Topology,
   ResultReadyMessage,
   ServerMessage,
   SolveStatusMessage,
@@ -319,6 +320,15 @@ export class LedMapperClient {
   /** Upload a phone-solved OutputMap; the server persists it and acks. */
   async submitMap(map: OutputMap): Promise<ResultReadyMessage> {
     return (await this.request({ type: "submit_map", map }, "result_ready")) as ResultReadyMessage;
+  }
+
+  /** Upload the extracted graph topology for an already-submitted map; the
+   * player persists it (keyed to map_id) for the pulse engine. */
+  async submitTopology(topology: Topology): Promise<ResultReadyMessage> {
+    return (await this.request(
+      { type: "submit_topology", topology },
+      "result_ready",
+    )) as ResultReadyMessage;
   }
 
   /** Host solver-benchmark score from welcome (ms); null while measuring. */
