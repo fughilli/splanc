@@ -46,16 +46,30 @@ impl PulseConfig {
     }
 }
 
-/// Color for an LED whose foot point is at `s_mm` along a segment of length
-/// `seg_len_mm`, at player time `now_ms`. Agents are evenly spaced on the
-/// segment and wrap at its end; the LED accumulates each agent's palette color
-/// weighted by a linear falloff of the (wrap-around) along-segment distance
-/// over `glow_radius_mm`, then scaled by `intensity_q8` and saturated.
-pub fn pulse_led_color(s_mm: u32, seg_len_mm: u32, now_ms: u64, cfg: &PulseConfig) -> Rgb {
+/// Color for an LED whose foot point is at arclength `s_mm` along a segment of
+/// length `seg_len_mm`, and `d_perp_mm` OFF the segment (from its topology
+/// association), at player time `now_ms`. Agents are evenly spaced on the
+/// segment and wrap at its end; each is a point source traveling linearly along
+/// the segment, so the LED's brightness from it uses the true 3D distance
+/// `r² = Δs² + d_perp²` (Δs = wrap-around along-segment distance) with a soft
+/// INVERSE-SQUARE falloff `radius²/(radius²+r²)` — full at the source, ∝1/r²
+/// far away. An LED offset from the wire (larger d_perp) is correctly dimmer.
+/// Contributions from all agents accumulate; the result is scaled by
+/// `intensity_q8` and saturated. Integer throughout.
+pub fn pulse_led_color(
+    s_mm: u32,
+    d_perp_mm: u32,
+    seg_len_mm: u32,
+    now_ms: u64,
+    cfg: &PulseConfig,
+) -> Rgb {
     if seg_len_mm == 0 || cfg.agent_count == 0 || cfg.glow_radius_mm == 0 {
         return (0, 0, 0);
     }
     let l = seg_len_mm as u64;
+    let r2_radius = (cfg.glow_radius_mm as u64) * (cfg.glow_radius_mm as u64); // radius², mm²
+    let cutoff2 = r2_radius.saturating_mul(16); // r > 4·radius → negligible tail
+    let dp2 = (d_perp_mm as u64) * (d_perp_mm as u64);
     // How far the lead agent has traveled, wrapped into [0, L).
     let travel = (cfg.speed_mm_s as u64).saturating_mul(now_ms) / 1000 % l;
 
@@ -63,11 +77,13 @@ pub fn pulse_led_color(s_mm: u32, seg_len_mm: u32, now_ms: u64, cfg: &PulseConfi
     for i in 0..cfg.agent_count {
         let pos = (travel + (i as u64) * l / cfg.agent_count as u64) % l;
         let raw = (s_mm as u64).abs_diff(pos);
-        let d = raw.min(l - raw) as u32; // circular distance on [0, L), mm
-        if d >= cfg.glow_radius_mm {
+        let ds = raw.min(l - raw); // along-segment (wrap-around) distance, mm
+        let r2 = ds * ds + dp2; // squared 3D distance to the point source
+        if r2 > cutoff2 {
             continue;
         }
-        let w = 256 * (cfg.glow_radius_mm - d) / cfg.glow_radius_mm; // Q8 falloff
+        // Soft inverse-square falloff, Q8: radius²/(radius²+r²).
+        let w = ((256 * r2_radius) / (r2_radius + r2)) as u32;
         let (r, g, b) = cfg.palette_at(i);
         ar += w * r as u32;
         ag += w * g as u32;

@@ -259,8 +259,9 @@ pub unsafe extern "C" fn lm_playback_color(led: u32, now_ms: u64, rgb: *mut u8) 
         return false;
     };
     let s_mm = (assoc.foot_arclength * 1000.0) as u32;
+    let d_perp_mm = (assoc.d_perp * 1000.0) as u32;
     let seg_len_mm = (seg.length * 1000.0) as u32;
-    let (r, g, b) = pulse_led_color(s_mm, seg_len_mm, now_ms, cfg);
+    let (r, g, b) = pulse_led_color(s_mm, d_perp_mm, seg_len_mm, now_ms, cfg);
     *rgb = r;
     *rgb.add(1) = g;
     *rgb.add(2) = b;

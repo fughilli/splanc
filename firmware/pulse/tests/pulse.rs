@@ -1,4 +1,5 @@
-//! Pulse illuminate math: falloff, wrap-around, palette, time evolution.
+//! Pulse illuminate math: inverse-square falloff over the true 3D distance
+//! (along-segment Δs AND perpendicular d_perp), wrap-around, palette, time.
 
 use ledmapper_pulse::{pulse_led_color, PulseConfig, Rgb, MAX_PALETTE};
 
@@ -19,61 +20,69 @@ fn cfg(agents: u32, radius: u32, speed: u32, palette: &[Rgb]) -> PulseConfig {
 
 #[test]
 fn agent_at_the_led_is_full_brightness_in_palette_color() {
-    // 1 agent, speed 0 → agent sits at arclength 0. An LED at 0 gets full red.
-    let c = cfg(1, 100, 0, &[(255, 0, 0)]);
-    assert_eq!(pulse_led_color(0, 1000, 0, &c), (255, 0, 0));
+    let c = cfg(1, 100, 0, &[(255, 0, 0)]); // agent at 0
+    assert_eq!(pulse_led_color(0, 0, 1000, 0, &c), (255, 0, 0));
 }
 
 #[test]
-fn brightness_falls_off_linearly_with_distance() {
+fn inverse_square_falloff_halves_at_the_glow_radius() {
     let c = cfg(1, 100, 0, &[(200, 0, 0)]); // agent at 0, radius 100 mm
-    let at0 = pulse_led_color(0, 1000, 0, &c).0;
-    let at50 = pulse_led_color(50, 1000, 0, &c).0; // half radius → ~half
-    let at100 = pulse_led_color(100, 1000, 0, &c).0; // at radius → off
+    let at0 = pulse_led_color(0, 0, 1000, 0, &c).0;
+    let at_r = pulse_led_color(100, 0, 1000, 0, &c).0; // r = radius → half
+    let far = pulse_led_color(350, 0, 1000, 0, &c).0; // r = 3.5·radius → tiny
     assert_eq!(at0, 200);
-    assert!(at50 > 80 && at50 < 120, "half-radius ≈ half: {at50}");
-    assert_eq!(at100, 0, "beyond the glow radius → dark");
+    assert!((at_r as i32 - 100).abs() <= 3, "≈ half at the glow radius: {at_r}");
+    assert!(far < 30, "long tail is dim: {far}");
+}
+
+#[test]
+fn perpendicular_offset_dims_the_led_like_along_distance() {
+    // An LED OFF the wire is farther from the point source, so dimmer — and the
+    // 3D distance is symmetric in Δs and d_perp (r² = Δs² + d_perp²).
+    let c = cfg(1, 100, 0, &[(255, 0, 0)]); // agent at arclength 0, radius 100
+    let on_wire = pulse_led_color(0, 0, 1000, 0, &c).0; // r = 0
+    let offset = pulse_led_color(0, 100, 1000, 0, &c).0; // d_perp = radius → r = radius
+    let along = pulse_led_color(100, 0, 1000, 0, &c).0; // Δs = radius → r = radius
+    assert_eq!(on_wire, 255);
+    assert!((offset as i32 - 127).abs() <= 3, "offset by the radius ≈ half: {offset}");
+    assert!((offset as i32 - along as i32).abs() <= 2, "Δs and d_perp are symmetric");
 }
 
 #[test]
 fn distance_wraps_around_the_segment_end() {
-    // Agent at 0 on a 1000 mm loop; an LED at 990 mm is only 10 mm away going
-    // backwards over the wrap, so it lights up.
-    let c = cfg(1, 100, 0, &[(0, 255, 0)]);
-    assert!(pulse_led_color(990, 1000, 0, &c).1 > 200, "wrap-around glow");
+    let c = cfg(1, 50, 0, &[(0, 255, 0)]); // agent at 0 on a 1000 mm loop
+    assert!(pulse_led_color(990, 0, 1000, 0, &c).1 > 200, "10 mm away over the wrap");
 }
 
 #[test]
 fn the_agent_travels_with_time() {
-    // speed 1000 mm/s → at t=500 ms the agent is at 500 mm. The LED there lights.
-    let c = cfg(1, 100, 1000, &[(0, 0, 255)]);
-    assert_eq!(pulse_led_color(0, 1000, 0, &c).2, 255, "at t=0 the agent is at 0");
-    assert_eq!(pulse_led_color(0, 1000, 500, &c).2, 0, "moved away from 0");
-    assert_eq!(pulse_led_color(500, 1000, 500, &c).2, 255, "now over 500 mm");
+    let c = cfg(1, 60, 1000, &[(0, 0, 255)]); // 1000 mm/s
+    assert_eq!(pulse_led_color(0, 0, 1000, 0, &c).2, 255, "at t=0 the agent is at 0");
+    assert_eq!(pulse_led_color(0, 0, 1000, 500, &c).2, 0, "moved far from 0");
+    assert_eq!(pulse_led_color(500, 0, 1000, 500, &c).2, 255, "now over 500 mm");
 }
 
 #[test]
 fn agents_are_evenly_spaced_and_cycle_the_palette() {
-    // 2 agents on a 1000 mm loop → at 0 and 500. Distinct palette colors.
-    let c = cfg(2, 50, 0, &[(255, 0, 0), (0, 255, 0)]);
-    assert_eq!(pulse_led_color(0, 1000, 0, &c), (255, 0, 0)); // agent 0 (red)
-    assert_eq!(pulse_led_color(500, 1000, 0, &c), (0, 255, 0)); // agent 1 (green)
-    assert_eq!(pulse_led_color(250, 1000, 0, &c), (0, 0, 0)); // between → dark
+    let c = cfg(2, 40, 0, &[(255, 0, 0), (0, 255, 0)]); // agents at 0 and 500
+    assert_eq!(pulse_led_color(0, 0, 1000, 0, &c), (255, 0, 0)); // agent 0 (red)
+    assert_eq!(pulse_led_color(500, 0, 1000, 0, &c), (0, 255, 0)); // agent 1 (green)
+    assert_eq!(pulse_led_color(250, 0, 1000, 0, &c), (0, 0, 0)); // between → dark
 }
 
 #[test]
 fn intensity_scales_the_output() {
     let mut c = cfg(1, 100, 0, &[(255, 255, 255)]);
     c.intensity_q8 = 128; // half
-    let v = pulse_led_color(0, 1000, 0, &c).0;
-    assert!(v > 120 && v < 136, "half intensity ≈ 128: {v}");
+    let v = pulse_led_color(0, 0, 1000, 0, &c).0;
+    assert!((v as i32 - 128).abs() <= 4, "half intensity ≈ 128: {v}");
 }
 
 #[test]
 fn degenerate_configs_are_dark_not_a_panic() {
-    assert_eq!(pulse_led_color(0, 0, 0, &cfg(1, 100, 0, &[(255, 0, 0)])), (0, 0, 0));
-    assert_eq!(pulse_led_color(0, 1000, 0, &cfg(0, 100, 0, &[(255, 0, 0)])), (0, 0, 0));
-    assert_eq!(pulse_led_color(0, 1000, 0, &cfg(1, 0, 0, &[(255, 0, 0)])), (0, 0, 0));
-    // Empty palette → white.
-    assert_eq!(pulse_led_color(0, 1000, 0, &cfg(1, 100, 0, &[])), (255, 255, 255));
+    assert_eq!(pulse_led_color(0, 0, 0, 0, &cfg(1, 100, 0, &[(255, 0, 0)])), (0, 0, 0));
+    assert_eq!(pulse_led_color(0, 0, 1000, 0, &cfg(0, 100, 0, &[(255, 0, 0)])), (0, 0, 0));
+    assert_eq!(pulse_led_color(0, 0, 1000, 0, &cfg(1, 0, 0, &[(255, 0, 0)])), (0, 0, 0));
+    // Empty palette → white at the source.
+    assert_eq!(pulse_led_color(0, 0, 1000, 0, &cfg(1, 100, 0, &[])), (255, 255, 255));
 }
