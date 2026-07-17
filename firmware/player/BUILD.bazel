@@ -18,6 +18,7 @@ rust_library(
     edition = "2021",
     deps = [
         "//firmware/pattern",
+        "//firmware/pulse",
         "//shared/protocol/rust:ledmapper_pb",
         "@crates//:micropb",
     ],
@@ -33,6 +34,7 @@ rust_library(
     edition = "2021",
     deps = [
         "//firmware/pattern",
+        "//firmware/pulse",
         "//shared/protocol/rust:ledmapper_pb_fw",
         "@crates//:micropb",
     ],
@@ -52,6 +54,7 @@ rust_test(
     deps = [
         ":player",
         "//firmware/pattern",
+        "//firmware/pulse",
         "//shared/protocol/rust:ledmapper_pb",
         "@crates//:micropb",
         "@crates//:serde_json",

@@ -315,6 +315,21 @@ static uint32_t render_once() {
     int64_t d = next_ms - (int64_t)millis();
     next_delay_ms = d <= 1 ? 1 : (d > (int64_t)kStaticPollMs ? kStaticPollMs : (uint32_t)d);
     was_active = true;
+  } else if (lm_playback_active()) {
+    // Topology-aware pulse effect: colour every LED from the stored topology at
+    // the current player time. It's an animation, so repaint at ~30 fps.
+    uint64_t now = (uint64_t)millis();
+    for (uint32_t i = 0; i < kMaxLeds; i++) {
+      if (lm_playback_color(i, now, rgb)) {
+        leds[i] = CRGB(rgb[0], rgb[1], rgb[2]);
+      } else {
+        leds[i] = CRGB::Black;
+      }
+    }
+    show = true;
+    was_active = true;
+    last_shown_frame = 0xffffffff;
+    next_delay_ms = 33; // ~30 fps
   } else {
     // Idle: blank once after activity, then a dim heartbeat on LED 0.
     if (was_active) {

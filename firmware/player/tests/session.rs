@@ -202,8 +202,8 @@ fn full_phone_session() {
     };
     assert_eq!(r.r#map_id.as_str(), "m-77");
 
-    // Playback: off is universal, anything else is a bounded refusal until
-    // Phase G ships engines.
+    // Playback: off is universal, "pulse" is the topology-aware effect, any
+    // other name is a bounded refusal.
     let Some(SMsg::PlaybackState(ps)) =
         send(&mut player, CMsg::GetPlayback(pb::GetPlayback::default()), 7000.0)
     else {
@@ -211,9 +211,31 @@ fn full_phone_session() {
     };
     assert!(!ps.r#active);
     assert_eq!(ps.r#effect.as_str(), "off");
+    // Enable the pulse effect: state goes active + the config is stored.
+    let mut params = pb::PlaybackParams::default();
+    params.set_speed(0.5);
+    params.set_agent_count(2);
     let mut sp = pb::SetPlayback::default();
     sp.r#effect = core::str::FromStr::from_str("pulse").unwrap();
-    expect_error(send(&mut player, CMsg::SetPlayback(sp), 7100.0), "unsupported_effect");
+    sp.set_params(params);
+    let Some(SMsg::PlaybackState(ps)) = send(&mut player, CMsg::SetPlayback(sp), 7100.0) else {
+        panic!("set_playback pulse must produce playback_state");
+    };
+    assert!(ps.r#active);
+    assert_eq!(ps.r#effect.as_str(), "pulse");
+    assert!(player.pulse_config().is_some());
+    // An unknown effect is refused and leaves pulse running.
+    let mut bad = pb::SetPlayback::default();
+    bad.r#effect = core::str::FromStr::from_str("rainbow").unwrap();
+    expect_error(send(&mut player, CMsg::SetPlayback(bad), 7150.0), "unsupported_effect");
+    // "off" clears it.
+    let mut off = pb::SetPlayback::default();
+    off.r#effect = core::str::FromStr::from_str("off").unwrap();
+    let Some(SMsg::PlaybackState(ps)) = send(&mut player, CMsg::SetPlayback(off), 7200.0) else {
+        panic!("set_playback off");
+    };
+    assert!(!ps.r#active);
+    assert!(player.pulse_config().is_none());
 
     // Pi-profile arms: telemetry drops silently, polls refuse loudly.
     assert!(send(&mut player, CMsg::Detections(pb::Detections::default()), 8000.0).is_none());

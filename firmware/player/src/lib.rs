@@ -23,6 +23,7 @@
 #![no_std]
 
 use ledmapper_pattern::{color_for_frame, CodeSpec, Rgb};
+use ledmapper_pulse::{PulseConfig, MAX_PALETTE};
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use pb::ClientMessage_::Msg as CMsg;
 use pb::ServerMessage_::Msg as SMsg;
@@ -167,6 +168,9 @@ pub struct Player {
     led_counts: [Option<u32>; MAX_CHANNELS],
     stored_map_id: Option<Str64>,
     frame_log: FrameLog,
+    /// Active "pulse" playback effect: the render config (integer, for the hot
+    /// path) + the wire params it was built from (to echo). None = "off".
+    playback: Option<(PulseConfig, pb::PlaybackParams)>,
 }
 
 impl Player {
@@ -179,6 +183,7 @@ impl Player {
             led_counts: [None; MAX_CHANNELS],
             stored_map_id: None,
             frame_log: FrameLog::new(),
+            playback: None,
         }
     }
 
@@ -229,13 +234,20 @@ impl Player {
                 Some(reply(SMsg::ResultReady(r)))
             }
             CMsg::SetPlayback(m) => {
-                if m.r#effect.as_str() == "off" {
-                    Some(self.playback_state())
-                } else {
-                    Some(error(
+                match m.r#effect.as_str() {
+                    "off" => {
+                        self.playback = None;
+                        Some(self.playback_state())
+                    }
+                    "pulse" => {
+                        let params = m.r#params.clone();
+                        self.playback = Some((pulse_config_from(&params), params));
+                        Some(self.playback_state())
+                    }
+                    _ => Some(error(
                         "unsupported_effect",
-                        "effect not available on this player (supported: off)",
-                    ))
+                        "effect not available on this player (supported: off, pulse)",
+                    )),
                 }
             }
             CMsg::GetPlayback(_) => Some(self.playback_state()),
@@ -449,12 +461,19 @@ impl Player {
     }
 
     fn playback_state(&self) -> pb::ServerMessage {
-        // Playback engines land in Phase G; until then the truthful state is
-        // "off", params at player defaults (an empty overlay).
         let mut state = pb::PlaybackState::default();
-        state.r#active = false;
-        state.r#effect = s64("off");
-        state.set_params(pb::PlaybackParams::default());
+        match self.playback.as_ref() {
+            Some((_, params)) => {
+                state.r#active = true;
+                state.r#effect = s64("pulse");
+                state.set_params(params.clone());
+            }
+            None => {
+                state.r#active = false;
+                state.r#effect = s64("off");
+                state.set_params(pb::PlaybackParams::default());
+            }
+        }
         reply(SMsg::PlaybackState(state))
     }
 
@@ -509,6 +528,13 @@ impl Player {
     /// unconditionally.
     pub fn record_frame_shown(&mut self, seq: u32, t_us: u32) {
         self.frame_log.push(seq, t_us);
+    }
+
+    /// The active pulse-playback config, or None when playback is "off". The
+    /// render loop combines it with the stored topology's per-LED association
+    /// (segment length + foot arclength) to colour each LED.
+    pub fn pulse_config(&self) -> Option<&PulseConfig> {
+        self.playback.as_ref().map(|(cfg, _)| cfg)
     }
 
     /// Pattern clock epoch of the active capture, if any (integer ms).
@@ -574,6 +600,33 @@ pub fn upload_malformed() -> pb::ServerMessage {
 /// pb CodeParams from a derived spec (mirrors codebook.py code_params_for;
 /// the derivation itself lives in ledmapper_pattern so the pattern generator
 /// and the advertised code-book cannot disagree).
+/// Build the integer/fixed-point PulseConfig from the wire PlaybackParams.
+/// The f64 arithmetic here is COLD (once per set_playback) — the render hot
+/// path (ledmapper_pulse::pulse_led_color) is integer-only.
+fn pulse_config_from(p: &pb::PlaybackParams) -> PulseConfig {
+    let intensity = p.r#intensity().copied().unwrap_or(1.0).clamp(0.0, 1.0);
+    let glow_m = p.r#glow_radius().copied().unwrap_or(0.15).max(0.0);
+    let agents = p.r#agent_count().copied().unwrap_or(1).max(0) as u32;
+    let speed_m = p.r#speed().copied().unwrap_or(0.5).max(0.0);
+    let mut palette = [(0u8, 0u8, 0u8); MAX_PALETTE];
+    let mut palette_len = 0usize;
+    for &c in p.r#palette.iter() {
+        if palette_len >= MAX_PALETTE {
+            break;
+        }
+        palette[palette_len] = ((c >> 16) as u8, (c >> 8) as u8, c as u8);
+        palette_len += 1;
+    }
+    PulseConfig {
+        intensity_q8: (intensity * 256.0 + 0.5) as u16,
+        glow_radius_mm: (glow_m * 1000.0 + 0.5) as u32,
+        agent_count: agents,
+        speed_mm_s: (speed_m * 1000.0 + 0.5) as u32,
+        palette,
+        palette_len,
+    }
+}
+
 pub fn code_params_msg(spec: &CodeSpec, bit_period_ms: f64, brightness: f64) -> pb::CodeParams {
     let mut cp = pb::CodeParams::default();
     cp.r#led_count = spec.led_count as i32;

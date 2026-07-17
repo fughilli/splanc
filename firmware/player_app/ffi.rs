@@ -21,6 +21,7 @@ use core::ptr::{addr_of, addr_of_mut};
 use ledmapper_arena::Arena;
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_player::{upload_malformed, upload_too_large, Player};
+use ledmapper_pulse::pulse_led_color;
 use ledmapper_store::{
     decode_submit_map, decode_submit_topology, envelope_arm, StoreError, StoredMap,
     StoredTopology, ARM_SUBMIT_MAP, ARM_SUBMIT_TOPOLOGY,
@@ -229,6 +230,41 @@ pub unsafe extern "C" fn lm_pattern_color(led: u32, frame_index: u32, rgb: *mut 
         }
         None => false,
     }
+}
+
+/// Whether a playback effect ("pulse") is active — the render loop drives the
+/// LEDs via lm_playback_color when so (and no capture/counting is running).
+#[no_mangle]
+pub unsafe extern "C" fn lm_playback_active() -> bool {
+    player().pulse_config().is_some()
+}
+
+/// The color LED `led` shows under the active "pulse" playback effect, from the
+/// stored topology's per-LED association (segment length + foot arclength) and
+/// the player time `now_ms`. False when playback is off, no topology is stored,
+/// or this LED has no association. Meters→mm uses f32 (hardware on the C6); the
+/// pulse math itself is integer.
+#[no_mangle]
+pub unsafe extern "C" fn lm_playback_color(led: u32, now_ms: u64, rgb: *mut u8) -> bool {
+    let Some(cfg) = player().pulse_config() else {
+        return false;
+    };
+    let Some(topo) = (*addr_of!(TOPO)).as_ref() else {
+        return false;
+    };
+    let Some(assoc) = topo.associations.iter().find(|a| a.led_id == led) else {
+        return false;
+    };
+    let Some(seg) = topo.segments.iter().find(|s| s.id == assoc.segment_id) else {
+        return false;
+    };
+    let s_mm = (assoc.foot_arclength * 1000.0) as u32;
+    let seg_len_mm = (seg.length * 1000.0) as u32;
+    let (r, g, b) = pulse_led_color(s_mm, seg_len_mm, now_ms, cfg);
+    *rgb = r;
+    *rgb.add(1) = g;
+    *rgb.add(2) = b;
+    true
 }
 
 /// The color LED `led` shows under the latched counting pattern (blocks

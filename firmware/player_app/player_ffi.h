@@ -34,6 +34,10 @@ bool lm_pattern_color(uint32_t led, uint32_t frame_index, uint8_t rgb[3]);
 // to the LEDs, buffered for the phone to drain via get_frame_timing.
 void lm_pattern_frame_shown(uint32_t seq, uint32_t t_mono_us);
 bool lm_counting_color(uint32_t led, uint8_t rgb[3]);
+// Topology-aware "pulse" playback: lm_playback_active() gates it; per LED,
+// lm_playback_color() colours it from the stored topology + player time.
+bool lm_playback_active(void);
+bool lm_playback_color(uint32_t led, uint64_t now_ms, uint8_t rgb[3]);
 int32_t lm_led_count(uint32_t channel);
 uint32_t lm_map_len(void);
 bool lm_map_led(uint32_t index, uint32_t *id, float xyz[3]);

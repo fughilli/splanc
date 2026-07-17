@@ -1,0 +1,25 @@
+"""Topology-aware pulse effect (design doc §7.8 / Phase G).
+
+no_std, zero-dependency — buildable for the ESP32-C6 triple and the shared
+reference for the Pi/ESP32 illuminate backends. The math is integer/fixed-point
+(no hardware f64 on the C6) and stateless (agents are a closed-form function of
+time), so the player needs no per-frame animation state.
+"""
+
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "pulse",
+    srcs = ["src/lib.rs"],
+    crate_name = "ledmapper_pulse",
+    edition = "2021",
+)
+
+rust_test(
+    name = "pulse_test",
+    srcs = ["tests/pulse.rs"],
+    edition = "2021",
+    deps = [":pulse"],
+)

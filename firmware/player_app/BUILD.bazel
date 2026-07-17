@@ -31,6 +31,7 @@ rust_static_library(
     deps = [
         "//firmware/arena",
         "//firmware/player:player_fw",
+        "//firmware/pulse",
         "//firmware/store",
         "//shared/protocol/rust:ledmapper_pb_fw",
         "@crates//:micropb",
@@ -47,6 +48,7 @@ rust_library(
     deps = [
         "//firmware/arena",
         "//firmware/player",
+        "//firmware/pulse",
         "//firmware/store",
         "//shared/protocol/rust:ledmapper_pb",
         "@crates//:micropb",
