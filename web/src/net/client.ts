@@ -29,6 +29,8 @@ import type {
   MappingStoppedMessage,
   OutputMap,
   PatternStateMessage,
+  PlaybackParams,
+  PlaybackStateMessage,
   Topology,
   ResultReadyMessage,
   ServerMessage,
@@ -329,6 +331,15 @@ export class LedMapperClient {
       { type: "submit_topology", topology },
       "result_ready",
     )) as ResultReadyMessage;
+  }
+
+  /** Start/stop a topology-aware playback effect (`"off"` or `"pulse"`); the
+   * player runs it against the stored topology. Reply: the effective state. */
+  async setPlayback(effect: string, params?: PlaybackParams): Promise<PlaybackStateMessage> {
+    return (await this.request(
+      { type: "set_playback", effect, ...(params ? { params } : {}) },
+      "playback_state",
+    )) as PlaybackStateMessage;
   }
 
   /** Host solver-benchmark score from welcome (ms); null while measuring. */

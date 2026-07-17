@@ -333,6 +333,29 @@ $<HTMLButtonElement>("again").addEventListener("click", () => {
   mapView?.stop();
 });
 
+// Topology-aware pulse effect: toggle it on the player (shown once a topology
+// has been uploaded). A comet of light runs along the fixture's physical shape.
+const playEffectBtn = $<HTMLButtonElement>("playeffect");
+let pulseOn = false;
+playEffectBtn.addEventListener("click", () => {
+  void (async () => {
+    playEffectBtn.disabled = true;
+    try {
+      pulseOn = !pulseOn;
+      await client.setPlayback(
+        pulseOn ? "pulse" : "off",
+        pulseOn ? { agentCount: 2, speed: 0.4, glowRadius: 0.08 } : undefined,
+      );
+      playEffectBtn.textContent = pulseOn ? "Stop effect" : "Play effect";
+    } catch (e) {
+      setError(`playback failed: ${e instanceof Error ? e.message : e}`);
+      pulseOn = !pulseOn; // revert
+    } finally {
+      playEffectBtn.disabled = false;
+    }
+  })();
+});
+
 function resetLiveFeedback(): void {
   liveView?.stop();
   liveView = null;
@@ -1062,7 +1085,11 @@ async function stopCapture(sessionAlreadyEnded = false): Promise<void> {
     try {
       const topology = extractTopology(map);
       topology.mapId = mapId;
-      if (topology.segments.length > 0) await client.submitTopology(topology);
+      if (topology.segments.length > 0) {
+        await client.submitTopology(topology);
+        // A topology is now on the player — offer the pulse effect.
+        playEffectBtn.style.display = "";
+      }
     } catch (e) {
       console.warn("topology extract/upload failed (non-fatal):", e);
     }

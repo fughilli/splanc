@@ -37,6 +37,8 @@ export type {
   Intrinsics,
   LedAssociation,
   LedEntry,
+  PlaybackParams,
+  PlaybackStateMessage,
   LiveMapMessage,
   MappingStartedMessage,
   MappingStoppedMessage,
