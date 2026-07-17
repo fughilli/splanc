@@ -408,7 +408,21 @@ def main() -> int:
         help="pair with ?frames=1 so the phone also uploads full-res frames + IMU "
         "for offline pipeline replay (heavy — short diagnostic captures)",
     )
+    ap.add_argument(
+        "--exposure",
+        metavar="servo|0..1",
+        help="pair with ?exposure=<v>: 'servo' to auto-servo the camera exposure "
+        "to the detection sweet spot, or a fixed 0..1 (0=shortest exposure)",
+    )
     args = ap.parse_args()
+
+    if args.exposure is not None and args.exposure != "servo":
+        try:
+            v = float(args.exposure)
+        except ValueError:
+            ap.error("--exposure must be 'servo' or a number in [0,1]")
+        if not 0.0 <= v <= 1.0:
+            ap.error("--exposure must be 'servo' or a number in [0,1]")
 
     OUT_DIR = args.out
     OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -429,6 +443,8 @@ def main() -> int:
     PAIR_URL = f"{args.app_url.rstrip('/')}/?trace={urllib.parse.quote(TRACE_URL, safe='')}"
     if args.frames:
         PAIR_URL += "&frames=1"  # phone also uploads full-res frames + IMU
+    if args.exposure:
+        PAIR_URL += f"&exposure={urllib.parse.quote(args.exposure, safe='')}"
     GO_URL = f"{scheme}://{host_ip}:{args.port}/go"
 
     stamp = datetime.now(timezone.utc).isoformat()
@@ -439,6 +455,8 @@ def main() -> int:
     _log(f"[trace] trace endpoint: {TRACE_URL}")
     if args.frames:
         _log("[trace] FULL-FRAME CAPTURE ON (?frames=1): expect frames/<seq>.rgba.gz + imu.jsonl")
+    if args.exposure:
+        _log(f"[trace] EXPOSURE = {args.exposure} (?exposure={args.exposure})")
     _log(f"[trace] writing traces under: {OUT_DIR.resolve()}")
     try:
         httpd.serve_forever()
