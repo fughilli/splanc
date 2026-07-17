@@ -116,7 +116,15 @@ export class Tracker {
   lastAssignment: (Track | null)[] = [];
 
   constructor(opts: TrackerOptions = {}) {
-    this.gatePx = opts.gatePx ?? 60;
+    // 60 px was ~3× the observed inter-LED spacing (median 22 px, p90 34 px in
+    // the 2026-07-17 64/64 trace), so a coasting track could grab a neighbour's
+    // blob when its own merged away — the "gap" failure. The gate sits around
+    // the velocity PREDICTION, so it only needs to cover prediction error, not
+    // full motion; 40 px comfortably does that while no longer reaching past
+    // the immediate neighbour. Conservative interim value — see
+    // docs/blob-detection-playbook.md; the fuller fix is hue in the association
+    // cost, tuned against captured frames.
+    this.gatePx = opts.gatePx ?? 40;
     this.maxCoastMs = opts.maxCoastMs ?? 2500;
     this.velocityBlend = opts.velocityBlend ?? 0.3;
   }
