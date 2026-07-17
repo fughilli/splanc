@@ -41,6 +41,9 @@ export interface MediaStreamCaptureOptions {
   /** Lock the camera exposure to this point in [0,1] (0 = minimum exposure —
    * darkest, least LED bloom; see exposureControl.ts). Unset = leave auto. */
   exposure?: number | undefined;
+  /** Hard cap on the manual exposure duration, ms (Nyquist — bitPeriodMs/2, so
+   * the exposure can't integrate across a pattern-frame hue transition). */
+  maxExposureMs?: number | undefined;
 }
 
 export class MediaStreamCaptureSource implements CaptureSource {
@@ -109,13 +112,14 @@ export class MediaStreamCaptureSource implements CaptureSource {
    * effort: records what happened in exposureApplied and never throws. */
   private async applyExposure(): Promise<void> {
     if (this.opts.exposure === undefined) return;
-    await this.setExposure(this.opts.exposure);
+    await this.setExposure(this.opts.exposure, this.opts.maxExposureMs);
   }
 
   /** Re-lock the camera exposure to `target01` (0 = shortest, 1 = longest).
+   * `maxExposureMs` (Nyquist cap = bitPeriodMs/2) bounds the longest exposure.
    * Public so the exposure servo can retune it live. Best effort: records the
    * outcome in exposureApplied and never throws. */
-  async setExposure(target01: number): Promise<void> {
+  async setExposure(target01: number, maxExposureMs?: number): Promise<void> {
     const track = this.stream?.getVideoTracks()[0];
     const getCaps = track?.getCapabilities?.bind(track);
     if (!track || !getCaps) {
@@ -123,7 +127,7 @@ export class MediaStreamCaptureSource implements CaptureSource {
       return;
     }
     try {
-      const plan = planExposure(getCaps() as ExposureCapabilities, target01);
+      const plan = planExposure(getCaps() as ExposureCapabilities, target01, maxExposureMs);
       if (!plan) {
         this.exposureApplied = "unsupported by this camera";
         return;

@@ -362,13 +362,14 @@ async function startCapture(): Promise<void> {
         return undefined;
       }
     })();
-    // Exposure servo starts mid-range; a fixed ?exposure= pins its value.
+    // Exposure servo starts mid-range; a fixed ?exposure= pins its value. It's
+    // applied AFTER the code is negotiated (below), so the first application
+    // already respects the bitPeriodMs/2 Nyquist cap.
     const initialExposure = servoExposure ? EXPOSURE_SERVO_START : forcedExposure;
     let servoedExposure = initialExposure ?? EXPOSURE_SERVO_START;
     const ms = new MediaStreamCaptureSource({
       kSeed: cached,
       fxOverride: forcedFx ?? undefined,
-      ...(initialExposure !== null ? { exposure: initialExposure } : {}),
     });
     capture = ms;
     await capture.start();
@@ -448,6 +449,11 @@ async function startCapture(): Promise<void> {
     // pose) records, independent of the signaling that produced them.
     let params: CodeParams = started.codeParams;
     let epoch: number = started.patternClockEpoch;
+    // Lock the camera exposure now that the bit period is known — capped to
+    // bitPeriodMs/2 so it can't integrate across a hue transition (Nyquist).
+    if (initialExposure !== null) {
+      void ms.setExposure(initialExposure, params.bitPeriodMs / 2);
+    }
     const makePipeline = (p: CodeParams, e: number): CvPipeline => {
       // Dense per-frame records (pose: null) — the joint pose+LED solver
       // wants every sighting, not per-cycle anchors.
@@ -842,7 +848,7 @@ async function startCapture(): Promise<void> {
         });
         if (nextExp !== null) {
           servoedExposure = nextExp;
-          void ms.setExposure(nextExp);
+          void ms.setExposure(nextExp, params.bitPeriodMs / 2);
         }
       }
       // LED brightness servo: detection probability over brightness is an

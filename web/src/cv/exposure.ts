@@ -321,8 +321,11 @@ export function planLedBrightness(current: number, m: LedBrightnessSignals): num
  * (shorten) escapes bloom a hair faster than UP creeps. */
 export const EXPOSURE_UP_STEP = 0.1;
 export const EXPOSURE_DOWN_STEP = 0.12;
-/** Where the exposure servo starts (mid of the exposureTime range). */
-export const EXPOSURE_SERVO_START = 0.5;
+/** Where the exposure servo starts within [shortest, bitPeriodMs/2]. Biased
+ * SHORT: banding (too short) is recoverable — the servo lengthens toward the
+ * sweet spot — but too long integrates across a hue transition and hard-fails
+ * the decode, so start well under the Nyquist cap and creep up. */
+export const EXPOSURE_SERVO_START = 0.25;
 /** Blob clipping / washed-hue fractions that read "exposure too long" (bloom). */
 export const EXPOSURE_SAT_FRAC = 0.4;
 export const EXPOSURE_GRAY_FRAC = 0.5;

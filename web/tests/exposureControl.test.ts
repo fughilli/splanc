@@ -45,6 +45,29 @@ test("target interpolates linearly across the exposureTime range", () => {
   assert.equal(adv(planExposure(caps, 1))["exposureTime"], 1000);
 });
 
+test("maxExposureMs (Nyquist) caps the manual exposure range", () => {
+  const caps: ExposureCapabilities = { exposureMode: ["manual"], exposureTime: { min: 5, max: 10000 } };
+  // exposureTime is in 100µs units, so a 35ms cap = 350 units. target=1 lands
+  // at the cap, not the camera's 10000.
+  assert.equal(adv(planExposure(caps, 1, 35))["exposureTime"], 350);
+  assert.equal(adv(planExposure(caps, 0, 35))["exposureTime"], 5); // the min is unchanged
+  assert.equal(adv(planExposure(caps, 1))["exposureTime"], 10000); // uncapped, for contrast
+});
+
+test("maxExposureMs never forces below the camera minimum", () => {
+  const caps: ExposureCapabilities = { exposureMode: ["manual"], exposureTime: { min: 50, max: 10000 } };
+  // 1ms cap = 10 units < min 50 → clamp to the min (can't expose shorter).
+  assert.equal(adv(planExposure(caps, 1, 1))["exposureTime"], 50);
+});
+
+test("maxExposureMs does not touch the compensation fallback", () => {
+  const caps: ExposureCapabilities = {
+    exposureMode: ["continuous"],
+    exposureCompensation: { min: -3, max: 3 },
+  };
+  assert.equal(adv(planExposure(caps, 1, 35))["exposureCompensation"], 3);
+});
+
 test("target is clamped to [0,1]", () => {
   const caps: ExposureCapabilities = {
     exposureMode: ["manual"],
