@@ -7,7 +7,15 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { decodeClient, decodeServer, encodeClient, encodeServer } from "../src/net/proto";
+import {
+  decodeClient,
+  decodeMappingBundle,
+  decodeServer,
+  encodeClient,
+  encodeMappingBundle,
+  encodeServer,
+} from "../src/net/proto";
+import type { OutputMap, Topology } from "@ledmapper/protocol";
 import golden from "./golden_proto_frames.json";
 
 interface GoldenFrame {
@@ -47,6 +55,61 @@ test("golden frames decode to the same flat objects Python decoded", () => {
       `${f.direction}:${(f.decoded as { type?: string }).type}`,
     );
   }
+});
+
+test("MappingBundle round-trips map + topology (incl. trajectory/polyline)", () => {
+  const map: OutputMap = {
+    mapId: "m-42",
+    createdAt: "2026-07-18T00:00:00Z",
+    units: "meters",
+    frame: "gravity_leveled",
+    ledCount: 3,
+    leds: [
+      { id: 0, xyz: [0, 0, 0], confidence: 1, nViews: 3, rmsReprojPx: 0.4, parallaxDeg: 20 },
+      { id: 1, xyz: [1, 0, 0], confidence: 1, nViews: 3, rmsReprojPx: 0.4, parallaxDeg: 20 },
+      { id: 2, xyz: [2, 0.5, 0], confidence: 1, nViews: 3, rmsReprojPx: 0.4, parallaxDeg: 20 },
+    ],
+    unmapped: [],
+    trajectory: [
+      [0, 0, 1],
+      [0.1, 0, 1],
+    ],
+    stats: { rmsReprojPxGlobal: 0.4, medianParallaxDeg: 20 },
+  };
+  const topology: Topology = {
+    mapId: "m-42",
+    branchPoints: [{ id: 0, xyz: [1, 0, 0] }],
+    segments: [
+      {
+        id: 0,
+        a: -1,
+        b: 0,
+        polyline: [
+          [0, 0, 0],
+          [1, 0, 0],
+        ],
+        length: 1,
+      },
+      {
+        id: 1,
+        a: 0,
+        b: -1,
+        polyline: [
+          [1, 0, 0],
+          [2, 0.5, 0],
+        ],
+        length: 1.118,
+      },
+    ],
+    associations: [
+      { ledId: 0, segmentId: 0, footArclength: 0, dPerp: 0 },
+      { ledId: 1, segmentId: 0, footArclength: 1, dPerp: 0 },
+      { ledId: 2, segmentId: 1, footArclength: 1.118, dPerp: 0 },
+    ],
+  };
+  const again = decodeMappingBundle(encodeMappingBundle({ map, topology }));
+  assert.deepEqual(stripNulls(again.map), stripNulls(map));
+  assert.deepEqual(stripNulls(again.topology), stripNulls(topology));
 });
 
 test("TS re-encode of every golden decodes back to the same object", () => {

@@ -31,6 +31,7 @@ import {
 import { CvPipeline } from "../cv/pipeline";
 import { DetectorGL } from "../cv/detect";
 import { certApprovalUrl, defaultWsUrl, LedMapperClient } from "../net/client";
+import { encodeMappingBundle } from "../net/proto";
 import {
   bleAvailable,
   provisionViaBle,
@@ -486,6 +487,28 @@ topoUploadBtn.addEventListener("click", () => {
       topoUploadBtn.disabled = false;
     }
   })();
+});
+
+// Export the solved fixture (map + current topology) as a .binpb MappingBundle
+// for the host effects-simulator workspace. Uses the live-extracted topology so
+// whatever the preview shows is what gets bundled; the workspace can re-extract
+// too, but bundling it keeps the file self-contained.
+$<HTMLButtonElement>("export-binpb").addEventListener("click", () => {
+  if (resultMap === null) return;
+  const topology = currentTopology ?? {
+    mapId: resultMapId ?? resultMap.mapId,
+    branchPoints: [],
+    segments: [],
+    associations: [],
+  };
+  const bytes = encodeMappingBundle({ map: resultMap, topology });
+  const blob = new Blob([bytes as unknown as BlobPart], { type: "application/octet-stream" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${resultMapId ?? resultMap.mapId ?? "mapping"}.binpb`;
+  a.click();
+  URL.revokeObjectURL(url);
 });
 
 function resetLiveFeedback(): void {

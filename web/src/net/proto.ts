@@ -14,9 +14,10 @@
 
 import { create, fromBinary, fromJson, toBinary, toJson } from "@bufbuild/protobuf";
 import type { DescMessage, JsonValue, MessageShape } from "@bufbuild/protobuf";
-import type { ClientMessage, ServerMessage } from "@ledmapper/protocol";
+import type { ClientMessage, OutputMap, ServerMessage, Topology } from "@ledmapper/protocol";
 import {
   ClientMessageSchema,
+  MappingBundleSchema,
   ServerMessageSchema,
 } from "../gen/ledmapper_pb";
 
@@ -184,6 +185,32 @@ export function encodeServer(msg: ServerMessage): Uint8Array {
   const parsed = fromJsonEnvelope(ServerMessageSchema, arm, inner as Json);
   env.msg = parsed.msg;
   return toBinary(ServerMessageSchema, env);
+}
+
+// -- MappingBundle (.binpb file format) -------------------------------------
+// A standalone map+topology file for offline effect experimentation: exported
+// by the phone (post-solve) or dumped from a player, imported into the effects
+// workspace. Same flat<->proto boundary as the envelopes (null == unset, the
+// Vec3-list shape conversion for trajectory/polyline), just no oneof arm.
+
+export interface MappingBundle {
+  map: OutputMap;
+  topology: Topology;
+}
+
+export function encodeMappingBundle(bundle: MappingBundle): Uint8Array {
+  const inner = trajectoryToProto(stripNulls(bundle)) as Json;
+  return toBinary(MappingBundleSchema, fromJson(MappingBundleSchema, inner as JsonValue));
+}
+
+export function decodeMappingBundle(data: Uint8Array): MappingBundle {
+  const msg = fromBinary(MappingBundleSchema, data);
+  const json = toJson(MappingBundleSchema, msg, { alwaysEmitImplicit: true }) as Json;
+  const flat = trajectoryFromProto(json) as Json;
+  return {
+    map: (flat["map"] ?? null) as unknown as OutputMap,
+    topology: (flat["topology"] ?? null) as unknown as Topology,
+  };
 }
 
 function fromJsonEnvelope<T extends DescMessage>(

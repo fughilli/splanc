@@ -205,6 +205,16 @@ message Topology {
   repeated LedAssociation associations = 4;
 }
 
+// A solved fixture bundled for OFFLINE use: the point cloud + its skeleton
+// topology, as one self-contained binaryproto file (.binpb). Exported by the
+// phone (post-solve) or dumped from a player, and imported into the host
+// effects-simulator workspace to preview effects on real captured data. Not an
+// envelope arm — a standalone file format.
+message MappingBundle {
+  OutputMap map = 1;
+  Topology topology = 2;
+}
+
 // Effect tunables (§7.8), mirroring the pulse reference's controls. All
 // fields are optional overlays: unset keeps the player's current/default.
 message PlaybackParams {
