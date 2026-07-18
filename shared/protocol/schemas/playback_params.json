@@ -32,6 +32,22 @@
       "type": "array",
       "items": { "type": "integer", "minimum": 0, "maximum": 16777215 },
       "description": "Effect color palette as 0xRRGGBB integers; empty/omitted keeps the player's default palette."
+    },
+    "leadIn": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Pulse lead-in/out ramp distance at termini, meters (0/omitted derives from the glow radius)."
+    },
+    "splitProb": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Probability in [0,1] that a pulse splits into two at a junction."
+    },
+    "decay": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Flood fade length behind the wavefront, meters (0/omitted derives from the glow radius)."
     }
   }
 }

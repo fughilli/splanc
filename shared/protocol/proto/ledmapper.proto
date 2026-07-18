@@ -218,6 +218,12 @@ message PlaybackParams {
   optional double speed = 4;
   // Palette as 0xRRGGBB ints; empty keeps the player default.
   repeated uint32 palette = 5 [packed = true];
+  // Pulse lead-in/out ramp distance at termini, meters (0 = derive from glow).
+  optional double lead_in = 6;
+  // Probability [0,1] a pulse splits at a junction.
+  optional double split_prob = 7;
+  // Flood fade length behind the wavefront, meters (0 = derive from glow).
+  optional double decay = 8;
 }
 
 // ---------------------------------------------------------------------------

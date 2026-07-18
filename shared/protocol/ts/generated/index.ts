@@ -169,6 +169,12 @@ export interface PlaybackParams {
   speed?: number | null;
   /** Palette as 0xRRGGBB ints; empty/omitted keeps the player default. */
   palette?: number[];
+  /** Pulse lead-in/out ramp distance at termini, m (0/omitted derives from glow). */
+  leadIn?: number | null;
+  /** Probability [0,1] a pulse splits at a junction. */
+  splitProb?: number | null;
+  /** Flood fade length behind the wavefront, m (0/omitted derives from glow). */
+  decay?: number | null;
 }
 
 // ---------------------------------------------------------------------------

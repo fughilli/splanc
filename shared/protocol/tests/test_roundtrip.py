@@ -232,6 +232,9 @@ def make_playback_params() -> PlaybackParams:
         agentCount=3,
         speed=1.5,
         palette=[0xFF0000, 0x00FF00, 0x0000FF],
+        leadIn=0.1,
+        splitProb=0.25,
+        decay=0.5,
     )
 
 

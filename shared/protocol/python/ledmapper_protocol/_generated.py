@@ -174,6 +174,12 @@ class PlaybackParams(_StrictModel):
     speed: Union[float, None] = Field(default=None, gt=0.0)
     # Palette as 0xRRGGBB ints; empty keeps the player default.
     palette: List[int] = Field(default_factory=list)
+    # Pulse lead-in/out ramp at termini, m (0/omitted derives from glow).
+    leadIn: Union[float, None] = Field(default=None, ge=0.0)
+    # Probability [0,1] a pulse splits at a junction.
+    splitProb: Union[float, None] = Field(default=None, ge=0.0, le=1.0)
+    # Flood fade length behind the wavefront, m (0/omitted derives from glow).
+    decay: Union[float, None] = Field(default=None, ge=0.0)
 
 
 # ---------------------------------------------------------------------------
