@@ -45,6 +45,11 @@ export class MapView {
   // live preview while tuning the extraction (topology/extract.ts).
   private topology: Topology | null = null;
 
+  // Per-LED effect colours (flat RGB, aligned to map.leds order). When set, the
+  // LEDs render as glowing lights on black instead of confidence shading — the
+  // effects-simulator workspace pushes a fresh frame here each animation tick.
+  private ledColors: Uint8Array | null = null;
+
   constructor(
     private readonly canvas: HTMLCanvasElement,
     private map: OutputMap,
@@ -69,6 +74,12 @@ export class MapView {
   /** Set (or clear) the extracted topology to overlay (segment polylines). */
   setTopology(topology: Topology | null): void {
     this.topology = topology;
+  }
+
+  /** Set (or clear) per-LED effect colours (flat RGB, one triple per LED in
+   * map.leds order). Non-null switches the scatter into "light" rendering. */
+  setLedColors(colors: Uint8Array | null): void {
+    this.ledColors = colors;
   }
 
   get hasTrajectory(): boolean {
@@ -266,7 +277,7 @@ export class MapView {
       ctx.fill();
     }
 
-    const pts = leds.map((l) => ({ ...proj(l.xyz), led: l }));
+    const pts = leds.map((l, i) => ({ ...proj(l.xyz), led: l, idx: i }));
     pts.sort((a, b) => a.depth - b.depth);
 
     // -- ground truth: aligned points, delta vectors, magnitudes -----------
@@ -337,15 +348,52 @@ export class MapView {
       deltaSummary = " · Δtruth: needs ≥3 solved ids";
     }
 
-    for (const p of pts) {
-      const c = p.led.confidence;
-      const r = 2.5 + 2 * c;
-      ctx.beginPath();
-      ctx.arc(p.sx, p.sy, r, 0, Math.PI * 2);
-      // Confidence: green (high) -> amber -> red (low).
-      const hue = Math.round(c * 120);
-      ctx.fillStyle = `hsl(${hue} 90% 50%)`;
-      ctx.fill();
+    if (this.ledColors !== null) {
+      // Effect mode: LEDs as glowing lights. A soft additive halo sells the
+      // "light" look; the core dot carries the true colour.
+      const col = this.ledColors;
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      for (const p of pts) {
+        const o = p.idx * 3;
+        const r = col[o] ?? 0;
+        const g = col[o + 1] ?? 0;
+        const b = col[o + 2] ?? 0;
+        const bright = (r + g + b) / 3;
+        if (bright > 6) {
+          const rad = 6 + bright / 10;
+          const halo = ctx.createRadialGradient(p.sx, p.sy, 0, p.sx, p.sy, rad);
+          halo.addColorStop(0, `rgb(${r} ${g} ${b} / 0.55)`);
+          halo.addColorStop(1, `rgb(${r} ${g} ${b} / 0)`);
+          ctx.fillStyle = halo;
+          ctx.beginPath();
+          ctx.arc(p.sx, p.sy, rad, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      ctx.restore();
+      for (const p of pts) {
+        const o = p.idx * 3;
+        const r = col[o] ?? 0;
+        const g = col[o + 1] ?? 0;
+        const b = col[o + 2] ?? 0;
+        ctx.beginPath();
+        ctx.arc(p.sx, p.sy, 2.2, 0, Math.PI * 2);
+        // Unlit LEDs stay a faint grey so the fixture shape is always visible.
+        ctx.fillStyle = r + g + b < 12 ? "rgb(60 60 68)" : `rgb(${r} ${g} ${b})`;
+        ctx.fill();
+      }
+    } else {
+      for (const p of pts) {
+        const c = p.led.confidence;
+        const r = 2.5 + 2 * c;
+        ctx.beginPath();
+        ctx.arc(p.sx, p.sy, r, 0, Math.PI * 2);
+        // Confidence: green (high) -> amber -> red (low).
+        const hue = Math.round(c * 120);
+        ctx.fillStyle = `hsl(${hue} 90% 50%)`;
+        ctx.fill();
+      }
     }
 
     // -- topology overlay: the extracted skeleton polylines over the LEDs -----

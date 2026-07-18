@@ -141,6 +141,7 @@ js_binary(
 vite_bin.vite(
     name = "dist",
     srcs = SRCS + [
+        "effects.html",
         "index.html",
         "package.json",
         "vite.config.ts",

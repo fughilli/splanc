@@ -23,6 +23,7 @@ export default defineConfig({
       input: {
         index: "index.html",
         wall: "wall.html",
+        effects: "effects.html",
       },
     },
   },
