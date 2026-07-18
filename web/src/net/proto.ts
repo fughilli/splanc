@@ -43,6 +43,7 @@ const CLIENT_ARMS: Record<string, string> = {
   set_playback: "setPlayback",
   get_playback: "getPlayback",
   get_frame_timing: "getFrameTiming",
+  get_stored_map: "getStoredMap",
 };
 const SERVER_ARMS: Record<string, string> = {
   welcome: "welcome",
@@ -59,6 +60,7 @@ const SERVER_ARMS: Record<string, string> = {
   led_count_state: "ledCountState",
   playback_state: "playbackState",
   frame_timing: "frameTiming",
+  stored_map_chunk: "storedMapChunk",
 };
 const CLIENT_TYPES: Record<string, string> = Object.fromEntries(
   Object.entries(CLIENT_ARMS).map(([snake, camel]) => [camel, snake]),

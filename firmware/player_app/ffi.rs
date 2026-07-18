@@ -23,8 +23,8 @@ use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_player::{upload_malformed, upload_too_large, Player};
 use ledmapper_pulse::{Graph, Sim, MAX_SEGMENTS};
 use ledmapper_store::{
-    decode_submit_map, decode_submit_topology, envelope_arm, StoreError, StoredMap,
-    StoredTopology, ARM_SUBMIT_MAP, ARM_SUBMIT_TOPOLOGY,
+    decode_submit_map, decode_submit_topology, dump, envelope_arm, StoreError, StoredMap,
+    StoredTopology, ARM_GET_STORED_MAP, ARM_SUBMIT_MAP, ARM_SUBMIT_TOPOLOGY,
 };
 use micropb::{MessageDecode, MessageEncode, PbDecoder, PbEncoder};
 
@@ -120,6 +120,9 @@ pub unsafe extern "C" fn lm_player_handle(
     let reply = match envelope_arm(frame) {
         Some(ARM_SUBMIT_MAP) => handle_map_upload(frame),
         Some(ARM_SUBMIT_TOPOLOGY) => handle_topology_upload(frame),
+        // Dump the stored map+topology (it lives in the arena, not the session
+        // core) back out to the phone, one MappingBundle byte-window per call.
+        Some(ARM_GET_STORED_MAP) => handle_get_stored_map(frame),
         _ => {
             let mut env = pb::ClientMessage::default();
             let mut dec = PbDecoder::new(frame);
@@ -189,6 +192,50 @@ fn upload_error(e: StoreError) -> pb::ServerMessage {
         StoreError::ArenaFull => upload_too_large(),
         _ => upload_malformed(),
     }
+}
+
+/// Stream a byte window of the stored map+topology re-encoded as a
+/// MappingBundle. The phone requests [offset, offset+max_len) repeatedly until
+/// it has `total_len` bytes. `no_map` when nothing is stored.
+unsafe fn handle_get_stored_map(frame: &[u8]) -> pb::ServerMessage {
+    let mut env = pb::ClientMessage::default();
+    let mut dec = PbDecoder::new(frame);
+    dec.ignore_repeated_cap_err = true;
+    let (offset, max_len) = match env.decode(&mut dec, frame.len()) {
+        Ok(()) => match env.r#msg {
+            Some(pb::ClientMessage_::Msg::GetStoredMap(g)) => {
+                (g.r#offset.max(0) as usize, g.r#max_len.max(1) as usize)
+            }
+            _ => return upload_malformed(),
+        },
+        Err(_) => return upload_malformed(),
+    };
+    let Some(map) = (*addr_of!(MAP)).as_ref() else {
+        return dump_error("no_map", "no stored map to dump");
+    };
+    let topo = (*addr_of!(TOPO)).as_ref();
+    let total = dump::bundle_len(map, topo);
+    // Bound the chunk by the reply field capacity (StoredMapChunk.data).
+    let cap = max_len.min(1024);
+    let mut chunk = [0u8; 1024];
+    let n = if offset < total {
+        dump::encode_bundle_window(map, topo, offset, &mut chunk[..cap])
+    } else {
+        0
+    };
+    let mut m = pb::StoredMapChunk::default();
+    m.r#total_len = total as i32;
+    m.r#offset = offset as i32;
+    let _ = m.r#data.extend_from_slice(&chunk[..n]);
+    m.r#has_topology = topo.is_some();
+    pb::ServerMessage { r#msg: Some(pb::ServerMessage_::Msg::StoredMapChunk(m)) }
+}
+
+fn dump_error(code: &str, message: &str) -> pb::ServerMessage {
+    let mut e = pb::Error::default();
+    let _ = e.r#code.push_str(code);
+    let _ = e.r#message.push_str(message);
+    pb::ServerMessage { r#msg: Some(pb::ServerMessage_::Msg::Error(e)) }
 }
 
 // -- render-side accessors (pure reads; the FastLED loop polls these) --------

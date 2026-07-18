@@ -471,6 +471,13 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("export interface GetFrameTimingMessage {")
     lines.append('  type: "get_frame_timing";')
     lines.append("}\n")
+    lines.append("/** Pull the player's stored map+topology as a MappingBundle, streamed in")
+    lines.append(" * chunks (bytes [offset, offset+maxLen)). Reply: stored_map_chunk. */")
+    lines.append("export interface GetStoredMapMessage {")
+    lines.append('  type: "get_stored_map";')
+    lines.append("  offset: number;")
+    lines.append("  maxLen: number;")
+    lines.append("}\n")
     lines.append("export type ClientMessage =")
     lines.append("  | HelloMessage")
     lines.append("  | TimeSyncPingMessage")
@@ -490,7 +497,8 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("  | SubmitTopologyMessage")
     lines.append("  | SetPlaybackMessage")
     lines.append("  | GetPlaybackMessage")
-    lines.append("  | GetFrameTimingMessage;\n")
+    lines.append("  | GetFrameTimingMessage")
+    lines.append("  | GetStoredMapMessage;\n")
 
     lines.append("// ---------------------------------------------------------------------------")
     lines.append("// Server -> Client messages (§7.2)")
@@ -621,6 +629,16 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("  dropped: number;")
     lines.append("  ticks: FrameTick[];")
     lines.append("}\n")
+    lines.append("/** Reply to get_stored_map: a slice of the encoded MappingBundle. `data` is")
+    lines.append(" * base64; the phone loops until it has `totalLen` bytes, then decodes. */")
+    lines.append("export interface StoredMapChunkMessage {")
+    lines.append('  type: "stored_map_chunk";')
+    lines.append("  totalLen: number;")
+    lines.append("  offset: number;")
+    lines.append("  /** Base64-encoded bytes [offset, offset+len) of the MappingBundle. */")
+    lines.append("  data: string;")
+    lines.append("  hasTopology: boolean;")
+    lines.append("}\n")
     lines.append("export type ServerMessage =")
     lines.append("  | WelcomeMessage")
     lines.append("  | TimeSyncPongMessage")
@@ -635,7 +653,8 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("  | CountingStateMessage")
     lines.append("  | LedCountStateMessage")
     lines.append("  | PlaybackStateMessage")
-    lines.append("  | FrameTimingMessage;")
+    lines.append("  | FrameTimingMessage")
+    lines.append("  | StoredMapChunkMessage;")
     return "\n".join(lines) + "\n"
 
 
@@ -1034,6 +1053,15 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append('    type: Literal["get_frame_timing"]')
     out.append("")
     out.append("")
+    out.append("class GetStoredMapMessage(_StrictModel):")
+    out.append('    """Pull the player\'s stored map+topology as a MappingBundle, streamed in')
+    out.append("    chunks (bytes [offset, offset+maxLen)). Reply: stored_map_chunk.\"\"\"")
+    out.append("")
+    out.append('    type: Literal["get_stored_map"]')
+    out.append("    offset: int = Field(ge=0)")
+    out.append("    maxLen: int = Field(ge=1)")
+    out.append("")
+    out.append("")
     out.append("ClientMessageInner = Annotated[")
     out.append("    Union[")
     out.append("        HelloMessage,")
@@ -1055,6 +1083,7 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append("        SetPlaybackMessage,")
     out.append("        GetPlaybackMessage,")
     out.append("        GetFrameTimingMessage,")
+    out.append("        GetStoredMapMessage,")
     out.append("    ],")
     out.append('    Field(discriminator="type"),')
     out.append("]")
@@ -1212,6 +1241,17 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append("    ticks: List[FrameTick]")
     out.append("")
     out.append("")
+    out.append("class StoredMapChunkMessage(_StrictModel):")
+    out.append('    """Reply to get_stored_map: a slice of the encoded MappingBundle. `data`')
+    out.append("    is base64; the phone loops until it has `totalLen` bytes, then decodes.\"\"\"")
+    out.append("")
+    out.append('    type: Literal["stored_map_chunk"]')
+    out.append("    totalLen: int = Field(ge=0)")
+    out.append("    offset: int = Field(ge=0)")
+    out.append("    data: str")
+    out.append("    hasTopology: bool")
+    out.append("")
+    out.append("")
     out.append("ServerMessageInner = Annotated[")
     out.append("    Union[")
     out.append("        WelcomeMessage,")
@@ -1228,6 +1268,7 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append("        LedCountStateMessage,")
     out.append("        PlaybackStateMessage,")
     out.append("        FrameTimingMessage,")
+    out.append("        StoredMapChunkMessage,")
     out.append("    ],")
     out.append('    Field(discriminator="type"),')
     out.append("]")
@@ -1280,6 +1321,7 @@ def emit_python(schemas: dict[str, dict]) -> str:
         "SetPlaybackMessage",
         "GetPlaybackMessage",
         "GetFrameTimingMessage",
+        "GetStoredMapMessage",
         "ClientMessage",
         "WelcomeMessage",
         "TimeSyncPongMessage",
@@ -1297,6 +1339,7 @@ def emit_python(schemas: dict[str, dict]) -> str:
         "PlaybackStateMessage",
         "FrameTick",
         "FrameTimingMessage",
+        "StoredMapChunkMessage",
         "ServerMessage",
     ]:
         out.append(f'    "{name}",')

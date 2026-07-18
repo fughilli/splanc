@@ -116,6 +116,9 @@ pub struct StoredTopology<'a> {
 /// ClientMessage oneof arms that take the arena path (ledmapper.proto).
 pub const ARM_SUBMIT_MAP: u32 = 13;
 pub const ARM_SUBMIT_TOPOLOGY: u32 = 16;
+/// ClientMessage arm the ffi intercepts to stream the stored map+topology
+/// back out (it lives in the arena, not the session core).
+pub const ARM_GET_STORED_MAP: u32 = 20;
 
 /// Peek the envelope's oneof arm (the first tag's field number) from the
 /// frame's first buffered bytes, so the transport can route arena uploads
@@ -527,4 +530,228 @@ pub trait BlobStore {
         key: &str,
         f: impl FnOnce(&[u8]) -> T,
     ) -> Result<Option<T>, Self::Error>;
+}
+
+// ---------------------------------------------------------------------------
+// MappingBundle dump — re-encode the stored map + topology back to protobuf.
+// ---------------------------------------------------------------------------
+
+/// Streaming protobuf encoder for the `MappingBundle` file format, straight
+/// from the arena-backed `Stored*` structs — the player has no protobuf
+/// ENCODER otherwise (uploads take a hand-written decoder), and a full map far
+/// exceeds one control frame, so this emits an arbitrary byte window without
+/// ever buffering the whole bundle: [`bundle_len`] gives the total, and
+/// [`encode_bundle_window`] fills bytes `[start, start+buf.len())`. The phone
+/// loops requesting windows until it has `bundle_len` bytes, then decodes it as
+/// a `MappingBundle` (wire fields mirror ledmapper.proto exactly).
+pub mod dump {
+    use super::{StoredAssociation, StoredBranchPoint, StoredLed, StoredMap, StoredSegment, StoredTopology};
+
+    // OutputMap defaults we fill so the bundle is a complete, valid map.
+    const UNITS: &str = "meters";
+    const FRAME: &str = "gravity_leveled";
+
+    // -- size pass (no buffering) -------------------------------------------
+    fn varint_len(v: u64) -> usize {
+        let mut n = 1;
+        let mut x = v >> 7;
+        while x > 0 {
+            n += 1;
+            x >>= 7;
+        }
+        n
+    }
+    fn tag_len(field: u32) -> usize {
+        varint_len((field as u64) << 3)
+    }
+    fn i32_len(field: u32, v: i32) -> usize {
+        tag_len(field) + varint_len(v as i64 as u64)
+    }
+    fn f64_len(field: u32) -> usize {
+        tag_len(field) + 8
+    }
+    fn str_len(field: u32, s: &str) -> usize {
+        tag_len(field) + varint_len(s.len() as u64) + s.len()
+    }
+    fn packed3_len(field: u32) -> usize {
+        tag_len(field) + varint_len(24) + 24 // three packed doubles
+    }
+    fn sub_len(field: u32, content: usize) -> usize {
+        tag_len(field) + varint_len(content as u64) + content
+    }
+
+    fn led_len(l: &StoredLed) -> usize {
+        i32_len(1, l.id as i32) + packed3_len(2)
+    }
+    fn map_len(m: &StoredMap) -> usize {
+        let mut n = str_len(1, m.map_id.as_str())
+            + str_len(3, UNITS)
+            + str_len(4, FRAME)
+            + i32_len(5, m.led_count as i32);
+        for l in m.leds {
+            n += sub_len(6, led_len(l));
+        }
+        n
+    }
+    fn bp_len(b: &StoredBranchPoint) -> usize {
+        i32_len(1, b.id as i32) + packed3_len(2)
+    }
+    fn vec3_len() -> usize {
+        packed3_len(1)
+    }
+    fn seg_len(s: &StoredSegment) -> usize {
+        let mut n = i32_len(1, s.id as i32) + i32_len(2, s.a) + i32_len(3, s.b) + f64_len(5);
+        for _ in s.polyline {
+            n += sub_len(4, vec3_len());
+        }
+        n
+    }
+    fn assoc_len(a: &StoredAssociation) -> usize {
+        i32_len(1, a.led_id as i32) + i32_len(2, a.segment_id as i32) + f64_len(3) + f64_len(4)
+    }
+    fn topo_len(t: &StoredTopology) -> usize {
+        let mut n = str_len(1, t.map_id.as_str());
+        for b in t.branch_points {
+            n += sub_len(2, bp_len(b));
+        }
+        for s in t.segments {
+            n += sub_len(3, seg_len(s));
+        }
+        for a in t.associations {
+            n += sub_len(4, assoc_len(a));
+        }
+        n
+    }
+
+    /// Total encoded MappingBundle length in bytes.
+    pub fn bundle_len(map: &StoredMap, topo: Option<&StoredTopology>) -> usize {
+        let mut n = sub_len(1, map_len(map));
+        if let Some(t) = topo {
+            n += sub_len(2, topo_len(t));
+        }
+        n
+    }
+
+    // -- windowed encode ----------------------------------------------------
+    struct Win<'b> {
+        pos: usize,
+        start: usize,
+        end: usize,
+        buf: &'b mut [u8],
+        w: usize,
+    }
+    impl Win<'_> {
+        fn put(&mut self, b: u8) {
+            if self.pos >= self.start && self.pos < self.end {
+                self.buf[self.w] = b;
+                self.w += 1;
+            }
+            self.pos += 1;
+        }
+        fn bytes(&mut self, s: &[u8]) {
+            for &b in s {
+                self.put(b);
+            }
+        }
+        fn varint(&mut self, mut v: u64) {
+            loop {
+                let mut byte = (v & 0x7f) as u8;
+                v >>= 7;
+                if v != 0 {
+                    byte |= 0x80;
+                }
+                self.put(byte);
+                if v == 0 {
+                    break;
+                }
+            }
+        }
+        fn tag(&mut self, field: u32, wire: u32) {
+            self.varint(((field as u64) << 3) | wire as u64);
+        }
+        fn i32_field(&mut self, field: u32, v: i32) {
+            self.tag(field, 0);
+            self.varint(v as i64 as u64);
+        }
+        fn f64_field(&mut self, field: u32, x: f64) {
+            self.tag(field, 1);
+            self.bytes(&x.to_le_bytes());
+        }
+        fn str_field(&mut self, field: u32, s: &str) {
+            self.tag(field, 2);
+            self.varint(s.len() as u64);
+            self.bytes(s.as_bytes());
+        }
+        fn packed3(&mut self, field: u32, xyz: [f32; 3]) {
+            self.tag(field, 2);
+            self.varint(24);
+            for c in xyz {
+                self.bytes(&(c as f64).to_le_bytes());
+            }
+        }
+        fn sub(&mut self, field: u32, content_len: usize) {
+            self.tag(field, 2);
+            self.varint(content_len as u64);
+        }
+    }
+
+    fn enc_led(w: &mut Win, l: &StoredLed) {
+        w.i32_field(1, l.id as i32);
+        w.packed3(2, l.xyz);
+    }
+    fn enc_map(w: &mut Win, m: &StoredMap) {
+        w.str_field(1, m.map_id.as_str());
+        w.str_field(3, UNITS);
+        w.str_field(4, FRAME);
+        w.i32_field(5, m.led_count as i32);
+        for l in m.leds {
+            w.sub(6, led_len(l));
+            enc_led(w, l);
+        }
+    }
+    fn enc_topo(w: &mut Win, t: &StoredTopology) {
+        w.str_field(1, t.map_id.as_str());
+        for b in t.branch_points {
+            w.sub(2, bp_len(b));
+            w.i32_field(1, b.id as i32);
+            w.packed3(2, b.xyz);
+        }
+        for s in t.segments {
+            w.sub(3, seg_len(s));
+            w.i32_field(1, s.id as i32);
+            w.i32_field(2, s.a);
+            w.i32_field(3, s.b);
+            for p in s.polyline {
+                w.sub(4, vec3_len());
+                w.packed3(1, *p);
+            }
+            w.f64_field(5, s.length as f64);
+        }
+        for a in t.associations {
+            w.sub(4, assoc_len(a));
+            w.i32_field(1, a.led_id as i32);
+            w.i32_field(2, a.segment_id as i32);
+            w.f64_field(3, a.foot_arclength as f64);
+            w.f64_field(4, a.d_perp as f64);
+        }
+    }
+
+    /// Encode bytes `[start, start+buf.len())` of the MappingBundle into `buf`;
+    /// returns the chunk length written (`< buf.len()` for the final window).
+    pub fn encode_bundle_window(
+        map: &StoredMap,
+        topo: Option<&StoredTopology>,
+        start: usize,
+        buf: &mut [u8],
+    ) -> usize {
+        let end = start + buf.len();
+        let mut w = Win { pos: 0, start, end, buf, w: 0 };
+        w.sub(1, map_len(map));
+        enc_map(&mut w, map);
+        if let Some(t) = topo {
+            w.sub(2, topo_len(t));
+            enc_topo(&mut w, t);
+        }
+        w.w
+    }
 }

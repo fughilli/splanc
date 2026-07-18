@@ -368,6 +368,15 @@ class GetFrameTimingMessage(_StrictModel):
     type: Literal["get_frame_timing"]
 
 
+class GetStoredMapMessage(_StrictModel):
+    """Pull the player's stored map+topology as a MappingBundle, streamed in
+    chunks (bytes [offset, offset+maxLen)). Reply: stored_map_chunk."""
+
+    type: Literal["get_stored_map"]
+    offset: int = Field(ge=0)
+    maxLen: int = Field(ge=1)
+
+
 ClientMessageInner = Annotated[
     Union[
         HelloMessage,
@@ -389,6 +398,7 @@ ClientMessageInner = Annotated[
         SetPlaybackMessage,
         GetPlaybackMessage,
         GetFrameTimingMessage,
+        GetStoredMapMessage,
     ],
     Field(discriminator="type"),
 ]
@@ -542,6 +552,17 @@ class FrameTimingMessage(_StrictModel):
     ticks: List[FrameTick]
 
 
+class StoredMapChunkMessage(_StrictModel):
+    """Reply to get_stored_map: a slice of the encoded MappingBundle. `data`
+    is base64; the phone loops until it has `totalLen` bytes, then decodes."""
+
+    type: Literal["stored_map_chunk"]
+    totalLen: int = Field(ge=0)
+    offset: int = Field(ge=0)
+    data: str
+    hasTopology: bool
+
+
 ServerMessageInner = Annotated[
     Union[
         WelcomeMessage,
@@ -558,6 +579,7 @@ ServerMessageInner = Annotated[
         LedCountStateMessage,
         PlaybackStateMessage,
         FrameTimingMessage,
+        StoredMapChunkMessage,
     ],
     Field(discriminator="type"),
 ]
@@ -609,6 +631,7 @@ __all__ = [
     "SetPlaybackMessage",
     "GetPlaybackMessage",
     "GetFrameTimingMessage",
+    "GetStoredMapMessage",
     "ClientMessage",
     "WelcomeMessage",
     "TimeSyncPongMessage",
@@ -626,5 +649,6 @@ __all__ = [
     "PlaybackStateMessage",
     "FrameTick",
     "FrameTimingMessage",
+    "StoredMapChunkMessage",
     "ServerMessage",
 ]

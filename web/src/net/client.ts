@@ -37,8 +37,10 @@ import type {
   SolveStatusMessage,
   StartMappingOptions,
   StatusMessage,
+  StoredMapChunkMessage,
   WelcomeMessage,
 } from "@ledmapper/protocol";
+import { decodeMappingBundle, type MappingBundle } from "./proto";
 import { bestSample, ServerClock, syncSample, type SyncSample } from "./clocksync";
 import { decodeServer, encodeClient } from "./proto";
 
@@ -343,6 +345,34 @@ export class LedMapperClient {
     )) as PlaybackStateMessage;
   }
 
+  /** Pull the player's stored map+topology back off the device — streamed in
+   * chunks and decoded as a MappingBundle. Rejects if the player has nothing
+   * stored (server error `no_map`). `onProgress(done, total)` tracks assembly. */
+  async pullStoredMap(
+    onProgress?: (done: number, total: number) => void,
+    chunkLen = 1024,
+  ): Promise<MappingBundle> {
+    let assembled = new Uint8Array(0);
+    let total = 0;
+    for (;;) {
+      const reply = (await this.request(
+        { type: "get_stored_map", offset: assembled.length, maxLen: chunkLen },
+        "stored_map_chunk",
+      )) as StoredMapChunkMessage;
+      total = reply.totalLen;
+      const data = b64ToBytes(reply.data);
+      if (data.length === 0) break;
+      const next = new Uint8Array(assembled.length + data.length);
+      next.set(assembled);
+      next.set(data, assembled.length);
+      assembled = next;
+      onProgress?.(assembled.length, total);
+      if (assembled.length >= total) break;
+    }
+    if (total === 0 || assembled.length === 0) throw new Error("player has no stored map");
+    return decodeMappingBundle(assembled);
+  }
+
   /** Host solver-benchmark score from welcome (ms); null while measuring. */
   get hostSolverBenchMs(): number | null {
     return this.welcome_?.solverBenchMs ?? null;
@@ -482,4 +512,13 @@ export class LedMapperClient {
     for (const w of this.pingWaiters.values()) w.reject(err);
     this.pingWaiters.clear();
   }
+}
+
+/** Decode a base64 string (a proto `bytes` field over the JSON-parity boundary)
+ * to raw bytes. */
+function b64ToBytes(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
 }

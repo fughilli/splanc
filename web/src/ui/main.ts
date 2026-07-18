@@ -493,6 +493,16 @@ topoUploadBtn.addEventListener("click", () => {
 // for the host effects-simulator workspace. Uses the live-extracted topology so
 // whatever the preview shows is what gets bundled; the workspace can re-extract
 // too, but bundling it keeps the file self-contained.
+function downloadBytes(bytes: Uint8Array, name: string): void {
+  const blob = new Blob([bytes as unknown as BlobPart], { type: "application/octet-stream" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 $<HTMLButtonElement>("export-binpb").addEventListener("click", () => {
   if (resultMap === null) return;
   const topology = currentTopology ?? {
@@ -501,14 +511,33 @@ $<HTMLButtonElement>("export-binpb").addEventListener("click", () => {
     segments: [],
     associations: [],
   };
-  const bytes = encodeMappingBundle({ map: resultMap, topology });
-  const blob = new Blob([bytes as unknown as BlobPart], { type: "application/octet-stream" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `${resultMapId ?? resultMap.mapId ?? "mapping"}.binpb`;
-  a.click();
-  URL.revokeObjectURL(url);
+  downloadBytes(
+    encodeMappingBundle({ map: resultMap, topology }),
+    `${resultMapId ?? resultMap.mapId ?? "mapping"}.binpb`,
+  );
+});
+
+// Pull the map+topology stored on the connected player (an ESP32 player that
+// supports get_stored_map) back to the phone and save it as a .binpb, so a
+// previously-mapped fixture can be recovered without re-mapping.
+$<HTMLButtonElement>("pull-map").addEventListener("click", () => {
+  void (async () => {
+    const btn = $<HTMLButtonElement>("pull-map");
+    const orig = btn.textContent;
+    btn.disabled = true;
+    try {
+      const bundle = await client.pullStoredMap((done, total) => {
+        btn.textContent = `Pulling ${Math.round((100 * done) / Math.max(1, total))}%`;
+      });
+      downloadBytes(encodeMappingBundle(bundle), `${bundle.map.mapId || "player-map"}.binpb`);
+      btn.textContent = `Pulled ${bundle.map.leds.length} LEDs ✓`;
+    } catch (e) {
+      setError(`pull failed: ${e instanceof Error ? e.message : e}`);
+      btn.textContent = orig;
+    } finally {
+      btn.disabled = false;
+    }
+  })();
 });
 
 function resetLiveFeedback(): void {

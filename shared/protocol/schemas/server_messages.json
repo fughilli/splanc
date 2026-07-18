@@ -17,7 +17,8 @@
     { "$ref": "#/$defs/CountingState" },
     { "$ref": "#/$defs/LedCountState" },
     { "$ref": "#/$defs/PlaybackState" },
-    { "$ref": "#/$defs/FrameTiming" }
+    { "$ref": "#/$defs/FrameTiming" },
+    { "$ref": "#/$defs/StoredMapChunk" }
   ],
   "$defs": {
     "Welcome": {
@@ -271,6 +272,23 @@
             }
           }
         }
+      }
+    },
+    "StoredMapChunk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "totalLen", "offset", "data", "hasTopology"],
+      "description": "Reply to get_stored_map: a slice of the encoded MappingBundle. totalLen is the full bundle length (so the phone knows when it has all of it); data is the base64-encoded bytes [offset, offset+len); hasTopology flags whether the bundle carries a topology. The phone loops get_stored_map until it has totalLen bytes, then decodes the MappingBundle.",
+      "properties": {
+        "type": { "const": "stored_map_chunk" },
+        "totalLen": { "type": "integer", "minimum": 0 },
+        "offset": { "type": "integer", "minimum": 0 },
+        "data": {
+          "type": "string",
+          "contentEncoding": "base64",
+          "description": "Base64-encoded bytes [offset, offset+len) of the MappingBundle."
+        },
+        "hasTopology": { "type": "boolean" }
       }
     }
   }

@@ -275,3 +275,72 @@ fn envelope_arm_routes_the_golden_frames() {
     }
     assert!(saw_map);
 }
+
+// -- MappingBundle dump (re-encode stored map+topology) ---------------------
+
+#[test]
+fn dump_reencodes_a_bundle_the_generated_decoder_accepts() {
+    use ledmapper_store::{
+        dump, StoredAssociation, StoredBranchPoint, StoredMap, StoredSegment, StoredTopology, Str64,
+    };
+    use micropb::{MessageDecode, PbDecoder};
+
+    let mut map_id = Str64::new();
+    map_id.push_str("dump-1").unwrap();
+
+    let leds = [
+        StoredLed { id: 0, xyz: [0.0, 0.0, 0.0] },
+        StoredLed { id: 1, xyz: [0.05, 0.0, 0.0] },
+        StoredLed { id: 2, xyz: [0.1, 0.02, -0.01] },
+    ];
+    let map = StoredMap { map_id: map_id.clone(), led_count: 3, leds: &leds };
+
+    let bps = [StoredBranchPoint { id: 0, xyz: [0.05, 0.0, 0.0] }];
+    let poly0: [[f32; 3]; 2] = [[0.0, 0.0, 0.0], [0.05, 0.0, 0.0]];
+    let poly1: [[f32; 3]; 2] = [[0.05, 0.0, 0.0], [0.1, 0.02, -0.01]];
+    let segs = [
+        StoredSegment { id: 0, a: -1, b: 0, length: 0.05, polyline: &poly0 },
+        StoredSegment { id: 1, a: 0, b: -1, length: 0.0559, polyline: &poly1 },
+    ];
+    let assoc = [
+        StoredAssociation { led_id: 0, segment_id: 0, foot_arclength: 0.0, d_perp: 0.0 },
+        StoredAssociation { led_id: 1, segment_id: 0, foot_arclength: 0.05, d_perp: 0.0 },
+        StoredAssociation { led_id: 2, segment_id: 1, foot_arclength: 0.0559, d_perp: 0.01 },
+    ];
+    let topo =
+        StoredTopology { map_id, branch_points: &bps, segments: &segs, associations: &assoc };
+
+    let total = dump::bundle_len(&map, Some(&topo));
+    let mut full = vec![0u8; total];
+    assert_eq!(dump::encode_bundle_window(&map, Some(&topo), 0, &mut full), total);
+
+    // Windowing: 5-byte slices concatenate to exactly the full encode.
+    let mut streamed = Vec::new();
+    let mut off = 0;
+    while off < total {
+        let mut buf = [0u8; 5];
+        let got = dump::encode_bundle_window(&map, Some(&topo), off, &mut buf);
+        assert!(got > 0 && got <= 5);
+        streamed.extend_from_slice(&buf[..got]);
+        off += got;
+    }
+    assert_eq!(streamed, full, "windowed encode == full encode");
+
+    // The generated (host) decoder round-trips every field.
+    let mut bundle = pb::MappingBundle::default();
+    let mut dec = PbDecoder::new(full.as_slice());
+    bundle.decode(&mut dec, full.len()).expect("bundle decodes");
+    assert_eq!(bundle.r#map.r#map_id.as_str(), "dump-1");
+    assert_eq!(bundle.r#map.r#led_count, 3);
+    assert_eq!(bundle.r#map.r#leds.len(), 3);
+    assert_eq!(bundle.r#map.r#leds[2].r#id, 2);
+    assert_eq!(bundle.r#map.r#leds[2].r#xyz[0], 0.1_f32 as f64);
+    assert_eq!(bundle.r#topology.r#segments.len(), 2);
+    assert_eq!(bundle.r#topology.r#segments[0].r#a, -1);
+    assert_eq!(bundle.r#topology.r#segments[1].r#a, 0);
+    assert_eq!(bundle.r#topology.r#segments[1].r#polyline.len(), 2);
+    assert_eq!(bundle.r#topology.r#associations.len(), 3);
+    assert_eq!(bundle.r#topology.r#associations[2].r#segment_id, 1);
+    assert_eq!(bundle.r#topology.r#associations[2].r#d_perp, 0.01_f32 as f64);
+    assert_eq!(bundle.r#topology.r#branch_points.len(), 1);
+}

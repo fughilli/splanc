@@ -374,6 +374,14 @@ export interface GetFrameTimingMessage {
   type: "get_frame_timing";
 }
 
+/** Pull the player's stored map+topology as a MappingBundle, streamed in
+ * chunks (bytes [offset, offset+maxLen)). Reply: stored_map_chunk. */
+export interface GetStoredMapMessage {
+  type: "get_stored_map";
+  offset: number;
+  maxLen: number;
+}
+
 export type ClientMessage =
   | HelloMessage
   | TimeSyncPingMessage
@@ -393,7 +401,8 @@ export type ClientMessage =
   | SubmitTopologyMessage
   | SetPlaybackMessage
   | GetPlaybackMessage
-  | GetFrameTimingMessage;
+  | GetFrameTimingMessage
+  | GetStoredMapMessage;
 
 // ---------------------------------------------------------------------------
 // Server -> Client messages (§7.2)
@@ -537,6 +546,17 @@ export interface FrameTimingMessage {
   ticks: FrameTick[];
 }
 
+/** Reply to get_stored_map: a slice of the encoded MappingBundle. `data` is
+ * base64; the phone loops until it has `totalLen` bytes, then decodes. */
+export interface StoredMapChunkMessage {
+  type: "stored_map_chunk";
+  totalLen: number;
+  offset: number;
+  /** Base64-encoded bytes [offset, offset+len) of the MappingBundle. */
+  data: string;
+  hasTopology: boolean;
+}
+
 export type ServerMessage =
   | WelcomeMessage
   | TimeSyncPongMessage
@@ -551,4 +571,5 @@ export type ServerMessage =
   | CountingStateMessage
   | LedCountStateMessage
   | PlaybackStateMessage
-  | FrameTimingMessage;
+  | FrameTimingMessage
+  | StoredMapChunkMessage;

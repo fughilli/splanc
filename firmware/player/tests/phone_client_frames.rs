@@ -71,6 +71,8 @@ fn reply_allowed(req: &CMsg, reply: &Option<SMsg>) -> bool {
         CMsg::Detections(_) | CMsg::ImuBatch(_) | CMsg::ExposureReport(_) => reply.is_none(),
         // Pi-only request arms: bounded refusal.
         CMsg::GetStatus(_) | CMsg::GetLiveMap(_) | CMsg::GetSolveStatus(_) => is_err("unsupported"),
+        // The map dump is handled by the ffi arena layer, not the session core.
+        CMsg::GetStoredMap(_) => is_err("unsupported"),
     }
 }
 
@@ -95,6 +97,7 @@ fn arm_name(req: &CMsg) -> &'static str {
         CMsg::GetStatus(_) => "get_status",
         CMsg::GetLiveMap(_) => "get_live_map",
         CMsg::GetSolveStatus(_) => "get_solve_status",
+        CMsg::GetStoredMap(_) => "get_stored_map",
     }
 }
 

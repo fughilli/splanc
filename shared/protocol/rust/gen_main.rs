@@ -43,6 +43,11 @@ fn main() -> std::io::Result<()> {
     // Human-facing error text gets more room than identifier strings.
     g.configure(".ledmapper.v1.Error.message", Config::new().max_bytes(128));
 
+    // Stored-map dump chunk: the player streams its map+topology back to the
+    // phone a slice at a time; the payload must hold a control-frame-sized
+    // chunk (the phone caps its request to this). 1 KiB fits the reply cap.
+    g.configure(".ledmapper.v1.StoredMapChunk.data", Config::new().max_bytes(1024));
+
     // Batched telemetry (Pi-profile arms; players silently drop them).
     g.configure(
         ".ledmapper.v1.Detections.batch",

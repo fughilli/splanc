@@ -347,6 +347,17 @@ message GetPlayback {}
 // generator stutter becomes visible offline. Reply: frame_timing.
 message GetFrameTiming {}
 
+// Pull the player's stored map + topology back off the device as a
+// MappingBundle, streamed in chunks (a map is far larger than one control
+// frame). Request bytes [offset, offset+max_len) of the encoded bundle; the
+// reply carries the total length so the phone knows when it has it all. Lets a
+// phone recover a previously-mapped fixture without re-mapping and preview /
+// export it. Reply: stored_map_chunk (or error `no_map`).
+message GetStoredMap {
+  int32 offset = 1;
+  int32 max_len = 2;
+}
+
 message ClientMessage {
   // Arm names equal the pre-protobuf "type" discriminator values.
   oneof msg {
@@ -369,6 +380,7 @@ message ClientMessage {
     SetPlayback set_playback = 17;
     GetPlayback get_playback = 18;
     GetFrameTiming get_frame_timing = 19;
+    GetStoredMap get_stored_map = 20;
   }
 }
 
@@ -495,6 +507,17 @@ message FrameTiming {
   repeated FrameTick ticks = 5;
 }
 
+// Reply to get_stored_map: a slice of the encoded MappingBundle. total_len is
+// the full bundle length (so the phone knows when it has all of it); data is
+// bytes [offset, offset+len) of it; has_topology flags whether the bundle
+// carries a topology (vs. just the point cloud).
+message StoredMapChunk {
+  int32 total_len = 1;
+  int32 offset = 2;
+  bytes data = 3;
+  bool has_topology = 4;
+}
+
 message ServerMessage {
   oneof msg {
     Welcome welcome = 1;
@@ -511,5 +534,6 @@ message ServerMessage {
     LedCountState led_count_state = 12;
     PlaybackState playback_state = 13;
     FrameTiming frame_timing = 14;
+    StoredMapChunk stored_map_chunk = 15;
   }
 }

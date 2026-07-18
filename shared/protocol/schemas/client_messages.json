@@ -22,7 +22,8 @@
     { "$ref": "#/$defs/SubmitTopology" },
     { "$ref": "#/$defs/SetPlayback" },
     { "$ref": "#/$defs/GetPlayback" },
-    { "$ref": "#/$defs/GetFrameTiming" }
+    { "$ref": "#/$defs/GetFrameTiming" },
+    { "$ref": "#/$defs/GetStoredMap" }
   ],
   "$defs": {
     "Hello": {
@@ -380,6 +381,17 @@
       "description": "Drain the player's rendered-frame timing log. The player samples its monotonic clock as it pushes each mapping-pattern frame to the LEDs; the phone polls this while tracing and forwards the samples to the trace server, so pattern-generator stutter is visible offline. Reply: frame_timing.",
       "properties": {
         "type": { "const": "get_frame_timing" }
+      }
+    },
+    "GetStoredMap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "offset", "maxLen"],
+      "description": "Pull the player's stored map + topology back off the device as a MappingBundle, streamed in chunks (a map is far larger than one control frame). Requests bytes [offset, offset+maxLen) of the encoded bundle; the phone loops until it has totalLen bytes, then decodes the MappingBundle. Lets a phone recover a previously-mapped fixture without re-mapping. Reply: stored_map_chunk (or error 'no_map').",
+      "properties": {
+        "type": { "const": "get_stored_map" },
+        "offset": { "type": "integer", "minimum": 0 },
+        "maxLen": { "type": "integer", "minimum": 1 }
       }
     }
   }

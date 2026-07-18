@@ -143,6 +143,35 @@ fn full_device_flow_through_the_c_abi() {
         panic!("topology result_ready expected");
     };
 
+    // Dump the stored map+topology back out (get_stored_map), streamed in small
+    // windows; reassemble and decode as a MappingBundle.
+    let mut assembled: Vec<u8> = Vec::new();
+    let mut total = 0usize;
+    loop {
+        let mut g = pb::GetStoredMap::default();
+        g.r#offset = assembled.len() as i32;
+        g.r#max_len = 40; // small chunk to exercise the windowed encoder
+        let Some(SMsg::StoredMapChunk(c)) = handle(&encode(CMsg::GetStoredMap(g)), 3600.0) else {
+            panic!("stored_map_chunk expected");
+        };
+        assert_eq!(c.r#offset as usize, assembled.len());
+        assert!(c.r#has_topology);
+        total = c.r#total_len as usize;
+        if c.r#data.is_empty() {
+            break;
+        }
+        assembled.extend_from_slice(&c.r#data);
+        if assembled.len() >= total {
+            break;
+        }
+    }
+    assert_eq!(assembled.len(), total, "assembled the whole bundle");
+    let mut bundle = pb::MappingBundle::default();
+    bundle.decode_from_bytes(&assembled).expect("dumped bundle decodes");
+    assert_eq!(bundle.r#map.r#map_id.as_str(), "m-ffi");
+    assert_eq!(bundle.r#map.r#leds.len(), 64);
+    assert_eq!(bundle.r#map.r#leds[63].r#id, 63);
+
     // A malformed upload (leds without a led_count header) gets a bounded
     // error, and the previously stored map is GONE (the upload reset the
     // arena) — the phone re-uploads.

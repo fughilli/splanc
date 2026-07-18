@@ -54,6 +54,7 @@ export type {
   StartMappingMessage,
   StartMappingOptions,
   StatusMessage,
+  StoredMapChunkMessage,
   StopMappingMessage,
   SubmitMapMessage,
   SyncPattern,

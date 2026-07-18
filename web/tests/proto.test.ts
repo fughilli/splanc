@@ -112,6 +112,26 @@ test("MappingBundle round-trips map + topology (incl. trajectory/polyline)", () 
   assert.deepEqual(stripNulls(again.topology), stripNulls(topology));
 });
 
+test("get_stored_map / stored_map_chunk round-trip (incl. bytes as base64)", () => {
+  const req = { type: "get_stored_map", offset: 40, maxLen: 1024 } as const;
+  assert.deepEqual(decodeClient(encodeClient(req)), req);
+
+  // stored_map_chunk carries a `bytes` field, base64 over the JSON boundary.
+  const data = btoa(String.fromCharCode(1, 2, 3, 250, 0, 128));
+  const chunk = {
+    type: "stored_map_chunk",
+    totalLen: 128,
+    offset: 40,
+    data,
+    hasTopology: true,
+  } as const;
+  const back = decodeServer(encodeServer(chunk)) as typeof chunk;
+  assert.equal(back.totalLen, 128);
+  assert.equal(back.offset, 40);
+  assert.equal(back.data, data);
+  assert.equal(back.hasTopology, true);
+});
+
 test("TS re-encode of every golden decodes back to the same object", () => {
   for (const f of frames) {
     if (f.direction === "client") {

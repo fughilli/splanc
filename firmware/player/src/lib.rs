@@ -264,6 +264,9 @@ impl Player {
             }
             CMsg::GetPlayback(_) => Some(self.playback_state()),
             CMsg::GetFrameTiming(_) => Some(self.frame_timing()),
+            // The map dump lives in the arena layer (ffi), which intercepts this
+            // arm before the session core ever sees it; unreachable here.
+            CMsg::GetStoredMap(_) => Some(error("unsupported", "map dump handled by the arena layer")),
             // Fire-and-forget Pi-profile telemetry: silently dropped.
             CMsg::Detections(_) | CMsg::ImuBatch(_) | CMsg::ExposureReport(_) => None,
             // Pi-only REQUEST arms: bounded unsupported error.
