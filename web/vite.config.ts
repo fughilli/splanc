@@ -33,6 +33,7 @@ export default defineConfig({
       "/maps": backend,
       "/healthz": backend,
       "/solver": backend, // wasm solver bundle (served from server runfiles)
+      "/pulse": backend, // wasm effects Sim (effects.html workspace)
     },
   },
 });

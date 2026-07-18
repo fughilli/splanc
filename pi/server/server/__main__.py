@@ -35,6 +35,13 @@ def main(argv=None) -> int:
         help="wasm solver bundle (//solver:solver_wasm_pkg) to serve at /solver/ "
         "for the phone-side final solve",
     )
+    parser.add_argument(
+        "--pulse-dir",
+        type=Path,
+        default=None,
+        help="wasm effects Sim (//firmware/pulse:pulse_web) to serve at /pulse/ "
+        "for the effects-simulator workspace (effects.html)",
+    )
     parser.add_argument("--session-dir", type=Path, default=Path("/var/lib/ledmapper/sessions"))
     parser.add_argument("--maps-dir", type=Path, default=Path("/var/lib/ledmapper/maps"))
     parser.add_argument("--led-count", type=int, default=1024, help="default code-book LED count")
@@ -80,6 +87,7 @@ def main(argv=None) -> int:
         maps_dir=args.maps_dir,
         web_root=args.web_root,
         solver_dir=args.solver_dir,
+        pulse_dir=args.pulse_dir,
         default_led_count=args.led_count,
         bit_period_ms=args.bit_period_ms,
         symbols=args.symbols,

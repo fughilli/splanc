@@ -46,6 +46,7 @@ def create_app(
     maps_dir: Path,
     web_root: Optional[Path] = None,
     solver_dir: Optional[Path] = None,
+    pulse_dir: Optional[Path] = None,
     default_led_count: int = 1024,
     bit_period_ms: float = DEFAULT_BIT_PERIOD_MS,
     symbols: int = 2,
@@ -59,7 +60,9 @@ def create_app(
     from a :class:`SessionManager` + :class:`MapStore` + :class:`ReconstructionRunner`.
 
     ``solver_dir`` serves the wasm solver bundle (//solver:solver_wasm_pkg)
-    at /solver/ for the phone's in-browser final solve.
+    at /solver/ for the phone's in-browser final solve. ``pulse_dir`` serves
+    the wasm effects Sim (//firmware/pulse:pulse_web) at /pulse/ for the
+    effects-simulator workspace (effects.html).
     """
     maps = MapStore(maps_dir)
     if context is None:
@@ -247,6 +250,10 @@ def create_app(
     # the app's static mount cannot shadow it.
     if solver_dir is not None and Path(solver_dir).is_dir():
         app.mount("/solver", StaticFiles(directory=str(solver_dir)), name="solver")
+
+    # The wasm effects Sim (effects-simulator workspace). Mounted before "/".
+    if pulse_dir is not None and Path(pulse_dir).is_dir():
+        app.mount("/pulse", StaticFiles(directory=str(pulse_dir)), name="pulse")
 
     # Static web app last, so the API routes above take precedence. Falls back
     # to a Phase-0 hello page when no built web app is present.

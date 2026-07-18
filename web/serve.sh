@@ -30,6 +30,7 @@ exec pi/server/serve \
   --port "$PORT" \
   --web-root web/dist \
   --solver-dir solver/solver_web \
+  --pulse-dir firmware/pulse/pulse_web \
   --session-dir "$STATE_DIR/sessions" \
   --maps-dir "$STATE_DIR/maps" \
   "${TLS_ARGS[@]}" \

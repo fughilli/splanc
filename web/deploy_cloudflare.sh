@@ -38,12 +38,15 @@ if [[ "${1:-}" == "--dry-run" ]]; then
   shift
 fi
 
-# Stage the site exactly as the Pi serves it: bundle at /, solver at /solver.
+# Stage the site exactly as the Pi serves it: bundle at /, solver at /solver,
+# effects Sim at /pulse.
 STAGE="$(mktemp -d)"
 trap 'chmod -R u+w "$STAGE" 2>/dev/null; rm -rf "$STAGE"' EXIT
 cp -RL web/dist/. "$STAGE"/
 mkdir -p "$STAGE/solver"
 cp -RL solver/solver_web/. "$STAGE/solver/"
+mkdir -p "$STAGE/pulse"
+cp -RL firmware/pulse/pulse_web/. "$STAGE/pulse/"
 # Bazel outputs arrive read-only; the staging copy is ours.
 chmod -R u+w "$STAGE"
 # Dev-only artifacts that have no business on a CDN.
