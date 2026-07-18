@@ -342,11 +342,18 @@ impl Sim {
     // -- flood --------------------------------------------------------------
 
     fn start_flood(&mut self) {
-        if self.graph.n_termini == 0 {
+        if self.graph.n_nodes == 0 {
             return;
         }
-        let ti = (rng_next(&mut self.rng) as usize) % self.graph.n_termini;
-        let source = self.graph.termini[ti];
+        // Flood from a random terminus; on a terminus-less graph (a pure loop)
+        // fall back to an arbitrary node so the wavefront still swirls around
+        // the cycle instead of the effect going dark.
+        let source = if self.graph.n_termini > 0 {
+            let ti = (rng_next(&mut self.rng) as usize) % self.graph.n_termini;
+            self.graph.termini[ti]
+        } else {
+            (rng_next(&mut self.rng) as usize % self.graph.n_nodes) as u16
+        };
         self.node_dijkstra(source);
         self.flood_front_mm = 0;
         // Longest geodesic reach → when the flood is done (plus the decay tail).

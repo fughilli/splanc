@@ -90,6 +90,26 @@ fn junction_traversal_and_splits_stay_bounded() {
 }
 
 #[test]
+fn flood_swirls_on_a_terminus_less_loop() {
+    // A triangle: three segments between branch points 0,1,2 — every node is
+    // degree 2, so there is NO terminus. The flood must fall back to an
+    // arbitrary source and still light the ring (swirl), not go dark.
+    let loop_graph = Graph::build(&[(0, 1, 300), (1, 2, 300), (2, 0, 300)]);
+    let mut sim = Sim::new(loop_graph, cfg(Effect::Flood, &[(255, 255, 255)]), 9);
+    sim.step(150); // wavefront partway around
+    let mut lit = 0;
+    for seg in 0..3u16 {
+        for s in (0..=300).step_by(30) {
+            let (r, g, b) = sim.led_color(seg, s, 0);
+            if r as u32 + g as u32 + b as u32 > 0 {
+                lit += 1;
+            }
+        }
+    }
+    assert!(lit > 0, "a terminus-less loop still floods (swirl), got {lit} lit");
+}
+
+#[test]
 fn flood_lights_a_moving_band_and_restarts() {
     let mut sim = Sim::new(Graph::build(&[(-1, -1, 1000)]), cfg(Effect::Flood, &[(80, 80, 255)]), 5);
     // Advance the wavefront to ~400 mm.
