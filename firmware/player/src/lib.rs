@@ -645,21 +645,25 @@ fn effect_config_from(effect: Effect, p: &pb::PlaybackParams) -> EffectConfig {
     }
     let glow_mm = (glow_m * 1000.0 + 0.5) as u32;
     let speed_mm_s = (speed_m * 1000.0 + 0.5) as u32;
+    // Optional fine knobs: honour them when set (>0), else derive from glow.
+    let lead_m = p.r#lead_in().copied().unwrap_or(0.0).max(0.0);
+    let split = p.r#split_prob().copied().unwrap_or(-1.0);
+    let decay_m = p.r#decay().copied().unwrap_or(0.0).max(0.0);
     EffectConfig {
         effect,
         intensity_q8: (intensity * 256.0 + 0.5) as u16,
         speed_mm_s,
         glow_radius_mm: glow_mm.max(1),
-        // Ramp a pulse in/out of a terminus over roughly one glow radius so it
-        // neither pops on nor snaps off.
-        lead_mm: glow_mm.max(20),
-        // Modest chance to fork at a junction; keeps the graph lively without
-        // instantly saturating the pulse budget.
-        split_q8: 64,
+        // Ramp a pulse in/out of a terminus over the given distance, else over
+        // roughly one glow radius, so it neither pops on nor snaps off.
+        lead_mm: if lead_m > 0.0 { (lead_m * 1000.0 + 0.5) as u32 } else { glow_mm.max(20) },
+        // Split probability at a junction; default a modest fork rate that keeps
+        // the graph lively without instantly saturating the pulse budget.
+        split_q8: if split >= 0.0 { (split.clamp(0.0, 1.0) * 256.0 + 0.5) as u16 } else { 64 },
         // Spread `agent_count` desired concurrent pulses over ~a 2 s window.
         spawn_interval_ms: (2000 / agents).max(80),
-        // Flood tail: fade to black over several glow radii behind the front.
-        decay_mm: (glow_mm.max(50)).saturating_mul(4),
+        // Flood tail: fade to black over the given length, else several glow radii.
+        decay_mm: if decay_m > 0.0 { (decay_m * 1000.0 + 0.5) as u32 } else { (glow_mm.max(50)).saturating_mul(4) },
         palette,
         palette_len,
     }
