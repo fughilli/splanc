@@ -40,6 +40,11 @@ export interface ExtractOptions {
   /** Prune leaf spur segments shorter than this × the median spacing (k-NN
    * noise); their LEDs re-associate to the nearest surviving segment. */
   pruneFactor?: number;
+  /** Re-add spanning-tree edges the MST dropped when they close a real LOOP:
+   * a dropped edge ≤ this × the median spacing whose endpoints are still far
+   * apart in the graph becomes a chord, so a ring in the fixture stays a ring
+   * (the flood effect can then swirl around it). 0 disables (pure forest). */
+  loopFactor?: number;
   /** Max polyline vertices per segment (firmware footprint; decimated). */
   maxPolyline?: number;
   /** Douglas–Peucker tolerance as a fraction of the median spacing. */
@@ -120,6 +125,34 @@ function projectToPolyline(q: Vec3, poly: Vec3[], cum: number[]): { s: number; d
   return best;
 }
 
+/** A loop chord must close a cycle of at least this many edges (smaller ones
+ * are k-NN noise / redundant near-parallel edges, not real fixture loops). */
+const MIN_LOOP_HOPS = 4;
+/** Safety cap on re-added loop chords (real fixtures have very few loops). */
+const MAX_LOOPS = 64;
+
+/** BFS: is `dst` reachable from `src` in `adj` within `maxHops` edges? Used to
+ * reject loop chords whose endpoints are already close in the graph. */
+function reachableWithin(adj: number[][], src: number, dst: number, maxHops: number): boolean {
+  if (src === dst) return true;
+  const seen = new Set<number>([src]);
+  let frontier = [src];
+  for (let hop = 0; hop < maxHops && frontier.length; hop++) {
+    const next: number[] = [];
+    for (const u of frontier) {
+      for (const v of adj[u]!) {
+        if (v === dst) return true;
+        if (!seen.has(v)) {
+          seen.add(v);
+          next.push(v);
+        }
+      }
+    }
+    frontier = next;
+  }
+  return false;
+}
+
 /** Union–find for the minimum spanning forest. */
 class UnionFind {
   private parent: number[];
@@ -148,6 +181,7 @@ export function extractTopology(map: OutputMap, opts: ExtractOptions = {}): Topo
   const k = Math.max(1, opts.k ?? 8);
   const radiusFactor = opts.radiusFactor ?? 2.5;
   const pruneFactor = opts.pruneFactor ?? 3;
+  const loopFactor = opts.loopFactor ?? 2;
   const maxPolyline = Math.max(2, opts.maxPolyline ?? 64);
   const simplifyFrac = opts.simplifyFrac ?? 0.5;
 
@@ -186,26 +220,49 @@ export function extractTopology(map: OutputMap, opts: ExtractOptions = {}): Topo
   const edges = [...edgeMap.values()].sort((a, b) => a.d - b.d);
   const uf = new UnionFind(n);
   const adj: number[][] = Array.from({ length: n }, () => []);
+  const dropped: { i: number; j: number; d: number }[] = [];
   for (const e of edges) {
     if (uf.union(e.i, e.j)) {
       adj[e.i]!.push(e.j);
       adj[e.j]!.push(e.i);
+    } else {
+      dropped.push(e); // stays length-ascending (edges is sorted)
+    }
+  }
+
+  // 3b. re-add loop-closing chords: a short dropped edge whose endpoints are
+  //     still far apart in the graph closes a genuine cycle (a ring in the
+  //     fixture). Its endpoints become anchors so the loop traces as segments.
+  const forced = new Set<number>();
+  if (loopFactor > 0) {
+    const maxLoopEdge = s * loopFactor;
+    for (const e of dropped) {
+      if (forced.size / 2 >= MAX_LOOPS) break;
+      if (e.d > maxLoopEdge) break; // ascending → the rest are longer too
+      if (!reachableWithin(adj, e.i, e.j, MIN_LOOP_HOPS - 1)) {
+        adj[e.i]!.push(e.j);
+        adj[e.j]!.push(e.i);
+        forced.add(e.i);
+        forced.add(e.j);
+      }
     }
   }
   const deg = adj.map((a) => a.length);
 
-  // 4. branch points = degree ≥ 3 nodes.
+  // 4. branch points = degree ≥ 3 nodes, plus loop-chord endpoints (which may
+  //    stay degree 2 on a pure ring but must anchor the cycle's segments).
   const branchId = new Map<number, number>();
   const branchPoints: BranchPoint[] = [];
   for (let i = 0; i < n; i++) {
-    if (deg[i]! >= 3) {
+    if (deg[i]! >= 3 || forced.has(i)) {
       branchId.set(i, branchPoints.length);
       branchPoints.push({ id: branchPoints.length, xyz: P[i]! });
     }
   }
 
-  // 5. trace segments: maximal degree-2 chains between anchors (deg ≠ 2).
-  const isAnchor = (i: number): boolean => deg[i]! !== 2;
+  // 5. trace segments: maximal degree-2 chains between anchors (deg ≠ 2, or a
+  //    loop-chord endpoint).
+  const isAnchor = (i: number): boolean => deg[i]! !== 2 || forced.has(i);
   const seen = new Set<string>();
   const chains: number[][] = [];
   for (let a = 0; a < n; a++) {

@@ -90,6 +90,51 @@ test("radiusFactor controls whether a gap splits the strip", () => {
   assert.equal(extractTopology(map(leds), { radiusFactor: 6 }).segments.length, 1);
 });
 
+// A closed ring of `count` points, unit spacing, in the XY plane.
+function ring(count: number, order?: number[]): LedEntry[] {
+  const R = 1 / (2 * Math.sin(Math.PI / count)); // chord spacing ≈ 1
+  const pts: Vec3[] = Array.from({ length: count }, (_, i) => {
+    const th = (2 * Math.PI * i) / count;
+    return [R * Math.cos(th), R * Math.sin(th), 0];
+  });
+  const ids = order ?? Array.from({ length: count }, (_, i) => i);
+  return ids.map((id, i) => led(id, pts[i]!));
+}
+
+// The two segments of a graph share the same unordered endpoint pair → a cycle.
+function hasCycle(t: ReturnType<typeof extractTopology>): boolean {
+  const key = (s: { a: number; b: number }): string =>
+    s.a === s.b ? `self${s.a}` : [s.a, s.b].sort((x, y) => x - y).join("-");
+  const seen = new Set<string>();
+  for (const s of t.segments) {
+    if (s.a < 0 || s.b < 0) continue; // an open end can't be part of a cycle
+    const k = key(s);
+    if (s.a === s.b || seen.has(k)) return true;
+    seen.add(k);
+  }
+  return false;
+}
+
+test("a closed ring keeps its loop (flood can swirl); id-order-independent", () => {
+  const t = extractTopology(map(ring(16)));
+  assert.equal(t.branchPoints.length, 2, "the ring anchors at the chord's ends");
+  assert.equal(t.segments.length, 2, "two arcs between the anchors");
+  assert.ok(hasCycle(t), "the two arcs form a cycle");
+  assert.equal(t.associations.length, 16, "every LED associated");
+
+  // Geometry-only: scrambling ids yields the same cyclic topology.
+  const scrambled = extractTopology(map(ring(16, [9, 2, 14, 5, 0, 11, 7, 3, 15, 1, 8, 12, 4, 10, 6, 13])));
+  assert.ok(hasCycle(scrambled), "still a cycle with scrambled ids");
+  assert.equal(scrambled.associations.length, 16);
+});
+
+test("loopFactor 0 breaks the ring into an open path (pure forest)", () => {
+  const t = extractTopology(map(ring(16)), { loopFactor: 0 });
+  assert.equal(t.branchPoints.length, 0, "no anchors without loop closure");
+  assert.equal(t.segments.length, 1, "the ring opens into a single strip");
+  assert.ok(!hasCycle(t));
+});
+
 test("fewer than two LEDs → empty topology", () => {
   assert.deepEqual(extractTopology(map([led(0, [0, 0, 0])])).segments, []);
   assert.deepEqual(extractTopology(map([])).associations, []);

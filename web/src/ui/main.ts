@@ -386,6 +386,7 @@ const topoControls = $("topo-controls");
 const topoSummary = $("topo-summary");
 const radiusInput = $<HTMLInputElement>("topo-radius");
 const pruneInput = $<HTMLInputElement>("topo-prune");
+const loopInput = $<HTMLInputElement>("topo-loop");
 const simplifyInput = $<HTMLInputElement>("topo-simplify");
 const maxPolyInput = $<HTMLInputElement>("topo-maxpoly");
 const topoUploadBtn = $<HTMLButtonElement>("topo-upload");
@@ -397,15 +398,18 @@ function previewTopology(): void {
   if (resultMap === null || mapView === null) return;
   const radius = parseFloat(radiusInput.value);
   const prune = parseFloat(pruneInput.value);
+  const loop = parseFloat(loopInput.value);
   const simplify = parseFloat(simplifyInput.value);
   const maxPoly = parseInt(maxPolyInput.value, 10);
   $("topo-radius-v").textContent = radius.toFixed(1);
   $("topo-prune-v").textContent = prune.toFixed(1);
+  $("topo-loop-v").textContent = loop.toFixed(1);
   $("topo-simplify-v").textContent = simplify.toFixed(1);
   $("topo-maxpoly-v").textContent = String(maxPoly);
   const topo = extractTopology(resultMap, {
     radiusFactor: radius,
     pruneFactor: prune,
+    loopFactor: loop,
     simplifyFrac: simplify,
     maxPolyline: maxPoly,
   });
@@ -420,7 +424,7 @@ function previewTopology(): void {
   topoUploadBtn.textContent = "Upload topology";
   topoUploadBtn.disabled = topo.segments.length === 0;
 }
-for (const el of [radiusInput, pruneInput, simplifyInput, maxPolyInput]) {
+for (const el of [radiusInput, pruneInput, loopInput, simplifyInput, maxPolyInput]) {
   el.addEventListener("input", previewTopology);
 }
 topoUploadBtn.addEventListener("click", () => {
