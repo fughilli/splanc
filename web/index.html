@@ -223,6 +223,24 @@
           <button class="secondary" id="playflood" style="display: none">Play flood</button>
           <button class="secondary" id="again">Map again</button>
         </p>
+        <div id="effect-controls" style="display: none; margin: 0.4rem 0; font-size: 0.85rem; color: #b8b8c0">
+          <div style="margin-bottom: 0.2rem">Effect tuning <span style="color:#7f8a99">(live)</span></div>
+          <label style="display: block">speed (m/s)
+            <input id="fx-speed" type="range" min="0.05" max="2" step="0.05" value="0.4" />
+            <span id="fx-speed-v">0.40</span></label>
+          <label style="display: block">glow radius (m)
+            <input id="fx-glow" type="range" min="0.01" max="0.5" step="0.01" value="0.08" />
+            <span id="fx-glow-v">0.08</span></label>
+          <label style="display: block">pulse lead-in (m)
+            <input id="fx-lead" type="range" min="0" max="0.5" step="0.01" value="0" />
+            <span id="fx-lead-v">auto</span></label>
+          <label style="display: block">pulse split prob
+            <input id="fx-split" type="range" min="0" max="1" step="0.05" value="0.25" />
+            <span id="fx-split-v">0.25</span></label>
+          <label style="display: block">flood decay (m)
+            <input id="fx-decay" type="range" min="0" max="2" step="0.05" value="0" />
+            <span id="fx-decay-v">auto</span></label>
+        </div>
       </section>
     </main>
 

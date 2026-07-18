@@ -342,17 +342,47 @@ $<HTMLButtonElement>("again").addEventListener("click", () => {
 // effect runs at a time.
 const playEffectBtn = $<HTMLButtonElement>("playeffect");
 const playFloodBtn = $<HTMLButtonElement>("playflood");
+const effectControls = $("effect-controls");
+const fxSpeed = $<HTMLInputElement>("fx-speed");
+const fxGlow = $<HTMLInputElement>("fx-glow");
+const fxLead = $<HTMLInputElement>("fx-lead");
+const fxSplit = $<HTMLInputElement>("fx-split");
+const fxDecay = $<HTMLInputElement>("fx-decay");
 type Effect = "pulse" | "flood";
 let activeEffect: Effect | null = null;
 
-const EFFECT_PARAMS: Record<Effect, PlaybackParams> = {
-  pulse: { agentCount: 2, speed: 0.4, glowRadius: 0.08 },
-  flood: { agentCount: 1, speed: 0.35, glowRadius: 0.1 },
-};
 const effectButtons: Record<Effect, { btn: HTMLButtonElement; label: string }> = {
   pulse: { btn: playEffectBtn, label: "pulse" },
   flood: { btn: playFloodBtn, label: "flood" },
 };
+
+// Read the tuning sliders into wire params. leadIn/decay of 0 mean "auto"
+// (the player derives them from the glow radius) — omit them so the overlay
+// stays unset rather than pinning the value to 0.
+function effectParams(effect: Effect): PlaybackParams {
+  const speed = parseFloat(fxSpeed.value);
+  const glow = parseFloat(fxGlow.value);
+  const lead = parseFloat(fxLead.value);
+  const split = parseFloat(fxSplit.value);
+  const decay = parseFloat(fxDecay.value);
+  fxSpeed.nextElementSibling!.textContent = speed.toFixed(2);
+  fxGlow.nextElementSibling!.textContent = glow.toFixed(2);
+  fxLead.nextElementSibling!.textContent = lead > 0 ? lead.toFixed(2) : "auto";
+  fxSplit.nextElementSibling!.textContent = split.toFixed(2);
+  fxDecay.nextElementSibling!.textContent = decay > 0 ? decay.toFixed(2) : "auto";
+  const p: PlaybackParams = {
+    agentCount: effect === "pulse" ? 2 : 1,
+    speed,
+    glowRadius: glow,
+  };
+  if (effect === "pulse") {
+    p.splitProb = split;
+    if (lead > 0) p.leadIn = lead;
+  } else if (decay > 0) {
+    p.decay = decay;
+  }
+  return p;
+}
 
 function refreshEffectButtons(): void {
   for (const [name, { btn, label }] of Object.entries(effectButtons)) {
@@ -365,7 +395,7 @@ async function toggleEffect(effect: Effect): Promise<void> {
   playFloodBtn.disabled = true;
   const next = activeEffect === effect ? null : effect;
   try {
-    await client.setPlayback(next ?? "off", next ? EFFECT_PARAMS[next] : undefined);
+    await client.setPlayback(next ?? "off", next ? effectParams(next) : undefined);
     activeEffect = next;
     refreshEffectButtons();
   } catch (e) {
@@ -378,6 +408,19 @@ async function toggleEffect(effect: Effect): Promise<void> {
 
 playEffectBtn.addEventListener("click", () => void toggleEffect("pulse"));
 playFloodBtn.addEventListener("click", () => void toggleEffect("flood"));
+
+// Live-retune: while an effect runs, moving a slider re-sends its params.
+for (const el of [fxSpeed, fxGlow, fxLead, fxSplit, fxDecay]) {
+  el.addEventListener("input", () => {
+    if (activeEffect === null) {
+      effectParams("pulse"); // refresh the readouts even when idle
+      return;
+    }
+    void client
+      .setPlayback(activeEffect, effectParams(activeEffect))
+      .catch((e) => setError(`retune failed: ${e instanceof Error ? e.message : e}`));
+  });
+}
 
 // -- Topology preview + tuning (Phase F): re-extract on any control change and
 // overlay the skeleton on the map view; upload is a manual, explicit step so
@@ -437,6 +480,7 @@ topoUploadBtn.addEventListener("click", () => {
       // Effects can now run against the uploaded topology.
       playEffectBtn.style.display = "";
       playFloodBtn.style.display = "";
+      effectControls.style.display = "";
     } catch (e) {
       setError(`topology upload failed: ${e instanceof Error ? e.message : e}`);
       topoUploadBtn.disabled = false;
@@ -1174,6 +1218,7 @@ async function stopCapture(sessionAlreadyEnded = false): Promise<void> {
     resultMapId = mapId;
     playEffectBtn.style.display = "none";
     playFloodBtn.style.display = "none";
+    effectControls.style.display = "none";
     activeEffect = null;
     refreshEffectButtons();
     topoControls.style.display = map.leds.length >= 2 ? "" : "none";
