@@ -60,6 +60,62 @@ pub struct EffectConfig {
 }
 
 impl EffectConfig {
+    /// Build the fixed-point config from human/wire units (meters, m/s, [0,1]).
+    /// The single source of truth for effect-param derivation, shared by the
+    /// player (proto path) and the host WASM preview so they can never drift.
+    ///
+    /// `lead_m`/`decay_m` ≤ 0 derive from the glow radius; `split_prob` < 0 uses
+    /// the default fork rate; `palette_rgb` is 0xRRGGBB (empty → player white).
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_wire(
+        effect: Effect,
+        intensity: f32,
+        glow_m: f32,
+        speed_m_s: f32,
+        agent_count: u32,
+        lead_m: f32,
+        split_prob: f32,
+        decay_m: f32,
+        palette_rgb: &[u32],
+    ) -> EffectConfig {
+        let glow_mm = (glow_m.max(0.0) * 1000.0 + 0.5) as u32;
+        let agents = agent_count.max(1);
+        let mut palette = [(0u8, 0u8, 0u8); MAX_PALETTE];
+        let mut palette_len = 0usize;
+        for &c in palette_rgb {
+            if palette_len >= MAX_PALETTE {
+                break;
+            }
+            palette[palette_len] = ((c >> 16) as u8, (c >> 8) as u8, c as u8);
+            palette_len += 1;
+        }
+        EffectConfig {
+            effect,
+            intensity_q8: (intensity.clamp(0.0, 1.0) * 256.0 + 0.5) as u16,
+            speed_mm_s: (speed_m_s.max(0.0) * 1000.0 + 0.5) as u32,
+            glow_radius_mm: glow_mm.max(1),
+            // Ramp in/out over the given distance, else roughly one glow radius,
+            // so a pulse neither pops on nor snaps off at a terminus.
+            lead_mm: if lead_m > 0.0 { (lead_m * 1000.0 + 0.5) as u32 } else { glow_mm.max(20) },
+            // Given split probability, else a modest default fork rate.
+            split_q8: if split_prob >= 0.0 {
+                (split_prob.clamp(0.0, 1.0) * 256.0 + 0.5) as u16
+            } else {
+                64
+            },
+            // Spread `agent_count` desired concurrent pulses over ~a 2 s window.
+            spawn_interval_ms: (2000 / agents).max(80),
+            // Flood tail over the given length, else several glow radii.
+            decay_mm: if decay_m > 0.0 {
+                (decay_m * 1000.0 + 0.5) as u32
+            } else {
+                glow_mm.max(50).saturating_mul(4)
+            },
+            palette,
+            palette_len,
+        }
+    }
+
     fn palette_at(&self, i: u32) -> Rgb {
         if self.palette_len == 0 {
             (255, 255, 255)

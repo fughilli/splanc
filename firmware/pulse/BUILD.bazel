@@ -1,12 +1,16 @@
-"""Topology-aware pulse effect (design doc §7.8 / Phase G).
+"""Topology-aware pulse + flood effects (design doc §7.8 / Phase G).
 
 no_std, zero-dependency — buildable for the ESP32-C6 triple and the shared
 reference for the Pi/ESP32 illuminate backends. The math is integer/fixed-point
-(no hardware f64 on the C6) and stateless (agents are a closed-form function of
-time), so the player needs no per-frame animation state.
+(no hardware f64 on the C6). A stateful graph Sim (pulse spawn/traverse/split,
+flood wavefront) drives per-LED colour. The same crate compiles to wasm for the
+host effects-simulator workspace, so its preview cannot drift from the firmware.
 """
 
-load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+load("@aspect_bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_shared_library", "rust_test")
+load("@rules_rust_wasm_bindgen//:defs.bzl", "rust_wasm_bindgen")
+load("//tools/transitions:opt.bzl", "opt_files")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -22,4 +26,37 @@ rust_test(
     srcs = ["tests/pulse.rs"],
     edition = "2021",
     deps = [":pulse"],
+)
+
+# Host-side effects-simulator carrier: the EXACT firmware Sim compiled to wasm
+# so the workspace preview cannot drift from what a player renders. A thin
+# cdylib of #[wasm_bindgen] exports over :pulse; rust_wasm_bindgen's platform
+# transition builds the dep tree for wasm32-unknown-unknown.
+rust_shared_library(
+    name = "pulse_wasm",
+    srcs = ["bin/wasm_lib.rs"],
+    edition = "2021",
+    deps = [
+        ":pulse",
+        "@crates//:wasm-bindgen",
+    ],
+)
+
+rust_wasm_bindgen(
+    name = "pulse_wasm_pkg",
+    target = "web",
+    wasm_file = ":pulse_wasm",
+)
+
+opt_files(
+    name = "pulse_wasm_pkg_opt",
+    srcs = [":pulse_wasm_pkg"],
+)
+
+# The effects-workspace wasm deployment (JS glue + .wasm), served by the M2
+# server at /pulse/ (app.py --pulse-dir, via web/serve.sh runfiles).
+copy_to_directory(
+    name = "pulse_web",
+    srcs = [":pulse_wasm_pkg_opt"],
+    replace_prefixes = {"pulse_wasm_pkg": ""},
 )

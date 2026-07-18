@@ -23,7 +23,7 @@
 #![no_std]
 
 use ledmapper_pattern::{color_for_frame, CodeSpec, Rgb};
-use ledmapper_pulse::{Effect, EffectConfig, MAX_PALETTE};
+use ledmapper_pulse::{Effect, EffectConfig};
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use pb::ClientMessage_::Msg as CMsg;
 use pb::ServerMessage_::Msg as SMsg;
@@ -621,52 +621,23 @@ pub fn upload_malformed() -> pb::ServerMessage {
 /// pb CodeParams from a derived spec (mirrors codebook.py code_params_for;
 /// the derivation itself lives in ledmapper_pattern so the pattern generator
 /// and the advertised code-book cannot disagree).
-/// Build the integer/fixed-point EffectConfig from the wire PlaybackParams.
-/// The f64 arithmetic here is COLD (once per set_playback) — the render hot
-/// path (ledmapper_pulse::Sim) is integer-only.
-///
-/// The wire currently carries only intensity/glow/speed/agent_count/palette;
-/// the sim's finer knobs (lead-in distance, split probability, spawn cadence,
-/// flood decay length) are derived from those with sensible defaults so we can
-/// tune behaviour without an immediate proto/regen churn.
+/// Build the fixed-point EffectConfig from the wire PlaybackParams. Decoding
+/// the wire doubles here is COLD (once per set_playback); the derivation itself
+/// lives in ledmapper_pulse::EffectConfig::from_wire so the player and the host
+/// WASM preview share one source of truth. Optional knobs unset → sensible
+/// defaults (lead/decay derive from glow; split → the default fork rate).
 fn effect_config_from(effect: Effect, p: &pb::PlaybackParams) -> EffectConfig {
-    let intensity = p.r#intensity().copied().unwrap_or(1.0).clamp(0.0, 1.0);
-    let glow_m = p.r#glow_radius().copied().unwrap_or(0.15).max(0.0);
-    let agents = p.r#agent_count().copied().unwrap_or(2).max(1) as u32;
-    let speed_m = p.r#speed().copied().unwrap_or(0.5).max(0.01);
-    let mut palette = [(0u8, 0u8, 0u8); MAX_PALETTE];
-    let mut palette_len = 0usize;
-    for &c in p.r#palette.iter() {
-        if palette_len >= MAX_PALETTE {
-            break;
-        }
-        palette[palette_len] = ((c >> 16) as u8, (c >> 8) as u8, c as u8);
-        palette_len += 1;
-    }
-    let glow_mm = (glow_m * 1000.0 + 0.5) as u32;
-    let speed_mm_s = (speed_m * 1000.0 + 0.5) as u32;
-    // Optional fine knobs: honour them when set (>0), else derive from glow.
-    let lead_m = p.r#lead_in().copied().unwrap_or(0.0).max(0.0);
-    let split = p.r#split_prob().copied().unwrap_or(-1.0);
-    let decay_m = p.r#decay().copied().unwrap_or(0.0).max(0.0);
-    EffectConfig {
+    EffectConfig::from_wire(
         effect,
-        intensity_q8: (intensity * 256.0 + 0.5) as u16,
-        speed_mm_s,
-        glow_radius_mm: glow_mm.max(1),
-        // Ramp a pulse in/out of a terminus over the given distance, else over
-        // roughly one glow radius, so it neither pops on nor snaps off.
-        lead_mm: if lead_m > 0.0 { (lead_m * 1000.0 + 0.5) as u32 } else { glow_mm.max(20) },
-        // Split probability at a junction; default a modest fork rate that keeps
-        // the graph lively without instantly saturating the pulse budget.
-        split_q8: if split >= 0.0 { (split.clamp(0.0, 1.0) * 256.0 + 0.5) as u16 } else { 64 },
-        // Spread `agent_count` desired concurrent pulses over ~a 2 s window.
-        spawn_interval_ms: (2000 / agents).max(80),
-        // Flood tail: fade to black over the given length, else several glow radii.
-        decay_mm: if decay_m > 0.0 { (decay_m * 1000.0 + 0.5) as u32 } else { (glow_mm.max(50)).saturating_mul(4) },
-        palette,
-        palette_len,
-    }
+        p.r#intensity().copied().unwrap_or(1.0) as f32,
+        p.r#glow_radius().copied().unwrap_or(0.15) as f32,
+        p.r#speed().copied().unwrap_or(0.5) as f32,
+        p.r#agent_count().copied().unwrap_or(2).max(0) as u32,
+        p.r#lead_in().copied().unwrap_or(0.0) as f32,
+        p.r#split_prob().map(|v| *v as f32).unwrap_or(-1.0),
+        p.r#decay().copied().unwrap_or(0.0) as f32,
+        &p.r#palette,
+    )
 }
 
 pub fn code_params_msg(spec: &CodeSpec, bit_period_ms: f64, brightness: f64) -> pb::CodeParams {
