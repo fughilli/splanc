@@ -258,6 +258,10 @@
           <label style="display: block">max verts/segment
             <input id="topo-maxpoly" type="range" min="4" max="128" step="4" value="64" />
             <span id="topo-maxpoly-v">64</span></label>
+          <div id="topo-progress" style="display: none; margin: 0.3rem 0; color: #ffd97a">
+            <span id="topo-progress-text">Extracting…</span>
+            <button class="secondary" id="topo-abort" type="button" style="margin-left: 0.5rem">Abort</button>
+          </div>
           <button class="secondary" id="topo-upload">Upload topology</button>
         </div>
         <p class="row">

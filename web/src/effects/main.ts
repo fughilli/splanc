@@ -126,9 +126,9 @@ function retuneSim(): void {
   sim.setConfig(effectParams());
 }
 
-function reextract(): void {
+async function reextract(): Promise<void> {
   if (currentMap === null) return;
-  currentTopology = extractTopology(currentMap, extractOptions());
+  currentTopology = await extractTopology(currentMap, extractOptions());
   mapView?.setTopology($<HTMLInputElement>("show-topo").checked ? currentTopology : null);
   rebuildSim();
 }
@@ -144,7 +144,7 @@ function loadFixture(map: OutputMap): void {
     mapView.setTruth(null);
     mapView.setTrajectory(null);
   }
-  reextract();
+  void reextract();
 }
 
 // -- animation --------------------------------------------------------------
@@ -235,7 +235,7 @@ function init(): void {
   });
 
   for (const id of ["radius", "prune", "loop", "simplify"]) {
-    $(id).addEventListener("input", reextract);
+    $(id).addEventListener("input", () => void reextract());
   }
   $("show-topo").addEventListener("change", () =>
     mapView?.setTopology($<HTMLInputElement>("show-topo").checked ? currentTopology : null),

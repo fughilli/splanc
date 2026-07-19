@@ -51,6 +51,16 @@ export interface ExtractOptions {
   simplifyFrac?: number;
 }
 
+/** Cooperative-scheduling hooks: the extractor yields to the event loop during
+ * its O(n²) phases, so the UI stays responsive on large maps and a long solve
+ * can be cancelled (`signal`) and shown a progress bar (`onProgress`, 0..1). */
+export interface ExtractHooks {
+  signal?: AbortSignal;
+  onProgress?: (frac: number) => void;
+}
+
+const yieldToEventLoop = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
+
 const sub = (a: Vec3, b: Vec3): Vec3 => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
 const norm = (a: Vec3): number => Math.hypot(a[0], a[1], a[2]);
 const dist = (a: Vec3, b: Vec3): number => norm(sub(a, b));
@@ -98,13 +108,32 @@ function simplify(points: Vec3[], tol: number, maxVerts: number): number[] {
     for (let i = 0; i < n; i++) if (keep[i]) idx.push(i);
     return idx;
   };
-  let t = tol;
-  let idx = run(t);
-  while (idx.length > maxVerts) {
-    t *= 1.6;
-    idx = run(t);
+  let idx = run(tol);
+  if (idx.length > maxVerts) {
+    // Relax the tolerance until the vertex budget fits. Seed a positive value
+    // (a fraction of the polyline extent) when tol is 0 — otherwise `t *= 1.6`
+    // stays 0 and this never terminates — and cap iterations as a backstop.
+    let t = tol > 0 ? tol : polylineExtent(points) * 1e-3 || 1e-6;
+    for (let guard = 0; idx.length > maxVerts && guard < 64; guard++) {
+      t *= 1.6;
+      idx = run(t);
+    }
   }
   return idx;
+}
+
+/** Largest coordinate span of a polyline's bounding box (used to seed a
+ * positive simplify tolerance when the caller asks for 0). */
+function polylineExtent(points: Vec3[]): number {
+  let lo = [Infinity, Infinity, Infinity];
+  let hi = [-Infinity, -Infinity, -Infinity];
+  for (const p of points) {
+    for (let k = 0; k < 3; k++) {
+      lo[k] = Math.min(lo[k]!, p[k]!);
+      hi[k] = Math.max(hi[k]!, p[k]!);
+    }
+  }
+  return Math.max(hi[0]! - lo[0]!, hi[1]! - lo[1]!, hi[2]! - lo[2]!);
 }
 
 /** Project `q` onto polyline `poly` (cumulative arclengths `cum`): the foot's
@@ -176,14 +205,32 @@ class UnionFind {
   }
 }
 
-/** Extract a graph topology from the solved point cloud (order-independent). */
-export function extractTopology(map: OutputMap, opts: ExtractOptions = {}): Topology {
+/** Extract a graph topology from the solved point cloud (order-independent).
+ * Async + cooperatively scheduled: the two O(n²) phases yield to the event loop
+ * (keeping the UI live on big maps) and honour `hooks.signal` / `hooks.onProgress`.
+ * Rejects with an AbortError if the signal fires. */
+export async function extractTopology(
+  map: OutputMap,
+  opts: ExtractOptions = {},
+  hooks: ExtractHooks = {},
+): Promise<Topology> {
   const k = Math.max(1, opts.k ?? 8);
   const radiusFactor = opts.radiusFactor ?? 2.5;
   const pruneFactor = opts.pruneFactor ?? 3;
   const loopFactor = opts.loopFactor ?? 2;
   const maxPolyline = Math.max(2, opts.maxPolyline ?? 64);
   const simplifyFrac = opts.simplifyFrac ?? 0.5;
+  const { signal, onProgress } = hooks;
+  // Yield every N rows of the O(n²) phases so input/paint get a turn and abort
+  // is responsive; below that many LEDs the whole solve stays within one task.
+  const YIELD_ROWS = 64;
+  const breathe = async (i: number, frac: number): Promise<void> => {
+    if (i > 0 && i % YIELD_ROWS === 0) {
+      if (signal?.aborted) throw new DOMException("topology extraction aborted", "AbortError");
+      onProgress?.(frac);
+      await yieldToEventLoop();
+    }
+  };
 
   const leds = map.leds;
   const n = leds.length;
@@ -194,6 +241,7 @@ export function extractTopology(map: OutputMap, opts: ExtractOptions = {}): Topo
   // 1. median nearest-neighbour spacing → edge-length cap.
   const nnd: number[] = [];
   for (let i = 0; i < n; i++) {
+    await breathe(i, (i / n) * 0.5);
     let best = Infinity;
     for (let j = 0; j < n; j++) if (j !== i) best = Math.min(best, dist(P[i]!, P[j]!));
     nnd.push(best);
@@ -204,6 +252,7 @@ export function extractTopology(map: OutputMap, opts: ExtractOptions = {}): Topo
   // 2. k-NN proximity edges within the cap (deduped, min→max).
   const edgeMap = new Map<string, { i: number; j: number; d: number }>();
   for (let i = 0; i < n; i++) {
+    await breathe(i, 0.5 + (i / n) * 0.5);
     const ds: { j: number; d: number }[] = [];
     for (let j = 0; j < n; j++) if (j !== i) ds.push({ j, d: dist(P[i]!, P[j]!) });
     ds.sort((a, b) => a.d - b.d);
@@ -215,6 +264,7 @@ export function extractTopology(map: OutputMap, opts: ExtractOptions = {}): Topo
       edgeMap.set(`${lo}-${hi}`, { i: lo, j: hi, d });
     }
   }
+  onProgress?.(1);
 
   // 3. minimum spanning FOREST (Kruskal) — one tree per spatial component.
   const edges = [...edgeMap.values()].sort((a, b) => a.d - b.d);

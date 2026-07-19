@@ -503,8 +503,19 @@ let resultMap: OutputMap | null = null;
 let resultMapId: string | null = null;
 let currentTopology: Topology | null = null;
 
+// The skelgraph extraction is O(n²) and runs off the main task cooperatively
+// (extractTopology yields + reports progress + honours an AbortSignal). Each
+// call supersedes the in-flight one; a slow solve reveals a progress + Abort
+// row after a short delay (a fast solve shows nothing).
+const topoProgress = $("topo-progress");
+const topoProgressText = $("topo-progress-text");
+let topoAbort: AbortController | null = null;
+let topoDelay: number | null = null;
+
 function previewTopology(): void {
-  if (resultMap === null || mapView === null) return;
+  const map = resultMap;
+  const view = mapView;
+  if (map === null || view === null) return;
   const radius = parseFloat(radiusInput.value);
   const prune = parseFloat(pruneInput.value);
   const loop = parseFloat(loopInput.value);
@@ -515,27 +526,55 @@ function previewTopology(): void {
   $("topo-loop-v").textContent = loop.toFixed(1);
   $("topo-simplify-v").textContent = simplify.toFixed(1);
   $("topo-maxpoly-v").textContent = String(maxPoly);
-  const topo = extractTopology(resultMap, {
-    radiusFactor: radius,
-    pruneFactor: prune,
-    loopFactor: loop,
-    simplifyFrac: simplify,
-    maxPolyline: maxPoly,
-  });
-  if (resultMapId !== null) topo.mapId = resultMapId;
-  currentTopology = topo;
-  mapView.setTopology(topo);
-  const verts = topo.segments.reduce((n, s) => n + s.polyline.length, 0);
-  const lenM = topo.segments.reduce((a, s) => a + s.length, 0);
-  topoSummary.textContent =
-    `${topo.branchPoints.length} junc · ${topo.segments.length} seg · ${verts} verts · ` +
-    `${lenM.toFixed(2)} m · ${topo.associations.length}/${resultMap.leds.length} LEDs`;
-  topoUploadBtn.textContent = "Upload topology";
-  topoUploadBtn.disabled = topo.segments.length === 0;
+
+  // Supersede any in-flight extraction, and (re)arm the delayed progress row.
+  topoAbort?.abort();
+  const ac = new AbortController();
+  topoAbort = ac;
+  if (topoDelay !== null) clearTimeout(topoDelay);
+  topoDelay = window.setTimeout(() => {
+    if (topoAbort === ac) topoProgress.style.display = "";
+  }, 300);
+
+  void (async () => {
+    try {
+      const topo = await extractTopology(
+        map,
+        { radiusFactor: radius, pruneFactor: prune, loopFactor: loop, simplifyFrac: simplify, maxPolyline: maxPoly },
+        { signal: ac.signal, onProgress: (frac) => (topoProgressText.textContent = `Extracting… ${Math.round(frac * 100)}%`) },
+      );
+      if (ac.signal.aborted) return;
+      if (resultMapId !== null) topo.mapId = resultMapId;
+      currentTopology = topo;
+      view.setTopology(topo);
+      const verts = topo.segments.reduce((n, s) => n + s.polyline.length, 0);
+      const lenM = topo.segments.reduce((a, s) => a + s.length, 0);
+      topoSummary.textContent =
+        `${topo.branchPoints.length} junc · ${topo.segments.length} seg · ${verts} verts · ` +
+        `${lenM.toFixed(2)} m · ${topo.associations.length}/${map.leds.length} LEDs`;
+      topoUploadBtn.textContent = "Upload topology";
+      topoUploadBtn.disabled = topo.segments.length === 0;
+    } catch (e) {
+      if (!(e instanceof DOMException && e.name === "AbortError")) {
+        setError(`topology extraction failed: ${e instanceof Error ? e.message : e}`);
+      }
+    } finally {
+      if (topoAbort === ac) {
+        topoAbort = null;
+        if (topoDelay !== null) clearTimeout(topoDelay);
+        topoDelay = null;
+        topoProgress.style.display = "none";
+      }
+    }
+  })();
 }
 for (const el of [radiusInput, pruneInput, loopInput, simplifyInput, maxPolyInput]) {
   el.addEventListener("input", previewTopology);
 }
+$<HTMLButtonElement>("topo-abort").addEventListener("click", () => {
+  topoAbort?.abort();
+  topoSummary.textContent = "extraction aborted — adjust a slider to retry";
+});
 topoUploadBtn.addEventListener("click", () => {
   void (async () => {
     if (currentTopology === null || currentTopology.segments.length === 0) return;
