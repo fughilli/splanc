@@ -23,9 +23,11 @@
 #include <Preferences.h>
 #include <WebServer.h>
 #include <WiFi.h>
+#include <esp_littlefs.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
+#include <stdio.h>
 
 #include "firmware/landing/landing_page.h"
 #include "firmware/player_app/improv_ble.h"
@@ -87,6 +89,24 @@ static WiFiClient ws;
 
 // WiFi credentials persisted across boots (BLE-provisioned, Improv).
 static Preferences prefs;
+
+// Nonvolatile map/topology store: a LittleFS filesystem over the flash data
+// partition (the huge_app layout's `spiffs`-subtype partition, ~960 KB). The
+// raw submit_map / submit_topology upload frames are persisted verbatim, so a
+// reboot replays them through the SAME decode path a live upload takes; a
+// previously-mapped fixture survives a power cycle (get_stored_map / effects
+// still work without re-mapping).
+static const char *kFsBase = "/lfs";
+static const char *kFsPartition = "spiffs";
+static const char *kMapPath = "/lfs/map.pb";
+static const char *kTopoPath = "/lfs/topo.pb";
+static bool fs_ok = false;
+// Protobuf envelope arm numbers (ledmapper.proto oneofs) used to classify
+// frames for persistence — see lm_envelope_arm.
+static const int32_t kArmSubmitMap = 13;
+static const int32_t kArmSubmitTopology = 16;
+static const int32_t kArmResultReady = 8;
+
 // STA join in progress: reports success (Improv redirect) / failure.
 static bool sta_joining = false;
 static uint32_t sta_join_started = 0;
@@ -116,6 +136,68 @@ static void ws_drop(uint16_t close_code) {
   in_frame = false;
 }
 
+static void fs_write_file(const char *path, const uint8_t *data, size_t len) {
+  FILE *f = fopen(path, "wb");
+  if (f == nullptr) {
+    Log().printf("littlefs: open %s for write failed\n", path);
+    return;
+  }
+  fwrite(data, 1, len, f);
+  fclose(f);
+}
+
+// Persist the raw upload frame after a SUCCESSFUL submit_map / submit_topology
+// so the fixture survives a reboot. A new map invalidates any stored topology.
+static void persist_if_upload(const uint8_t *req, size_t req_len,
+                              const uint8_t *reply, size_t reply_len) {
+  if (!fs_ok || lm_envelope_arm(reply, reply_len) != kArmResultReady) return;
+  const int32_t arm = lm_envelope_arm(req, req_len);
+  if (arm == kArmSubmitMap) {
+    fs_write_file(kMapPath, req, req_len);
+    remove(kTopoPath);  // the previous topology no longer matches this map
+  } else if (arm == kArmSubmitTopology) {
+    fs_write_file(kTopoPath, req, req_len);
+  }
+}
+
+// Replay a persisted upload frame through the session core on boot — the SAME
+// decode path a live upload takes — to repopulate the arena.
+static void fs_replay(const char *path) {
+  FILE *f = fopen(path, "rb");
+  if (f == nullptr) return;
+  fseek(f, 0, SEEK_END);
+  long n = ftell(f);
+  fseek(f, 0, SEEK_SET);
+  if (n > 0 && (size_t)n <= (long)kRxCap) {
+    size_t got = fread(rx, 1, (size_t)n, f);
+    if (got == (size_t)n) {
+      int64_t now = (int64_t)millis();
+      lm_player_handle(rx, got, now, now, tx, sizeof tx);  // reply discarded
+      Log().printf("littlefs: restored %s (%ld B)\n", path, n);
+    }
+  }
+  fclose(f);
+  rx_len = 0;
+}
+
+// Mount the LittleFS store and restore a previously-mapped fixture: the map
+// first (sets the stored id), then its topology (validated against that id).
+// Runs in setup() before the render task starts, so no player_mutex is needed.
+static void fs_begin_and_restore() {
+  esp_vfs_littlefs_conf_t conf = {};
+  conf.base_path = kFsBase;
+  conf.partition_label = kFsPartition;
+  conf.format_if_mount_failed = true;
+  esp_err_t err = esp_vfs_littlefs_register(&conf);
+  if (err != ESP_OK) {
+    Log().printf("littlefs mount failed (%d); map persistence disabled\n", (int)err);
+    return;
+  }
+  fs_ok = true;
+  fs_replay(kMapPath);
+  fs_replay(kTopoPath);
+}
+
 static void ws_dispatch_message() {
   // Integer player clock (millis()) — no f64: the session core does its time
   // arithmetic in integers and widens to the wire's double only at encode.
@@ -124,7 +206,10 @@ static void ws_dispatch_message() {
   xSemaphoreTake(player_mutex, portMAX_DELAY);
   int32_t n = lm_player_handle(rx, rx_len, now, now, tx, sizeof tx);
   xSemaphoreGive(player_mutex);
-  if (n > 0) ws_send_frame(WS_OP_BINARY, tx, (size_t)n);
+  if (n > 0) {
+    ws_send_frame(WS_OP_BINARY, tx, (size_t)n);
+    persist_if_upload(rx, rx_len, tx, (size_t)n);
+  }
   rx_len = 0;
 }
 
@@ -383,6 +468,8 @@ void setup() {
   // either the message handler or the render task can touch it.
   player_mutex = xSemaphoreCreateMutex();
   lm_player_init(NUM_LEDS);
+  // Restore a previously-mapped fixture from flash (LittleFS) before serving.
+  fs_begin_and_restore();
 
   // WiFi: AP+STA. The soft-AP is always up (bench access + the fallback
   // when no LAN is joined); stored credentials (BLE-provisioned via

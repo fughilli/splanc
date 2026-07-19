@@ -238,6 +238,22 @@ fn dump_error(code: &str, message: &str) -> pb::ServerMessage {
     pb::ServerMessage { r#msg: Some(pb::ServerMessage_::Msg::Error(e)) }
 }
 
+/// The oneof arm (first-tag field number) of a protocol envelope, or -1 if it
+/// can't be read. Lets the C app classify a frame without a full protobuf
+/// decode — e.g. a request as submit_map (13) / submit_topology (16) and a
+/// reply as result_ready (8) — so it can persist only successful uploads.
+///
+/// # Safety
+/// `data` must point to `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn lm_envelope_arm(data: *const u8, len: usize) -> i32 {
+    if data.is_null() || len == 0 {
+        return -1;
+    }
+    let s = core::slice::from_raw_parts(data, len);
+    envelope_arm(s).map(|a| a as i32).unwrap_or(-1)
+}
+
 // -- render-side accessors (pure reads; the FastLED loop polls these) --------
 
 /// Mapping-pattern timing, all INTEGER (the render loop touches no f64):

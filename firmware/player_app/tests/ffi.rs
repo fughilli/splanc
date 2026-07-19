@@ -8,7 +8,7 @@
 
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_player_ffi::{
-    lm_counting_color, lm_led_count, lm_map_led, lm_map_len, lm_pattern_color,
+    lm_counting_color, lm_envelope_arm, lm_led_count, lm_map_led, lm_map_len, lm_pattern_color,
     lm_pattern_timing, lm_player_handle, lm_player_init,
 };
 use micropb::{MessageDecode, MessageEncode, PbEncoder};
@@ -123,9 +123,22 @@ fn full_device_flow_through_the_c_abi() {
     }
     let mut submit = pb::SubmitMap::default();
     submit.set_map(*map);
-    let Some(SMsg::ResultReady(r)) = handle(&encode(CMsg::SubmitMap(submit)), 3000.0) else {
+    // The envelope-arm classifier (drives LittleFS persistence): a submit_map
+    // request is arm 13; its result_ready reply is arm 8.
+    let map_frame = encode(CMsg::SubmitMap(submit));
+    assert_eq!(unsafe { lm_envelope_arm(map_frame.as_ptr(), map_frame.len()) }, 13);
+    assert_eq!(unsafe { lm_envelope_arm(core::ptr::null(), 0) }, -1);
+    let Some(SMsg::ResultReady(r)) = handle(&map_frame, 3000.0) else {
         panic!("result_ready expected");
     };
+    let rr = {
+        let mut enc = PbEncoder::new(micropb::heapless::Vec::<u8, 128>::new());
+        pb::ServerMessage { r#msg: Some(SMsg::ResultReady(pb::ResultReady::default())) }
+            .encode(&mut enc)
+            .unwrap();
+        enc.into_writer().to_vec()
+    };
+    assert_eq!(unsafe { lm_envelope_arm(rr.as_ptr(), rr.len()) }, 8);
     assert_eq!(r.r#map_id.as_str(), "m-ffi");
     assert_eq!(unsafe { lm_map_len() }, 64);
     let (mut id, mut xyz) = (0u32, [0f32; 3]);

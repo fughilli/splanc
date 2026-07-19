@@ -22,6 +22,12 @@ void lm_player_init(uint32_t default_led_count);
 int32_t lm_player_handle(const uint8_t *data, size_t len, int64_t recv_ms,
                          int64_t send_ms, uint8_t *out, size_t out_cap);
 
+// The oneof arm (first-tag field number) of a protocol envelope, or -1. Lets
+// the app classify a frame without decoding it: a request as submit_map (13) /
+// submit_topology (16), a reply as result_ready (8) — used to persist only
+// successful uploads to LittleFS.
+int32_t lm_envelope_arm(const uint8_t *data, size_t len);
+
 // Render-side accessors (pure reads, polled by the LED frame loop). All
 // integer so the loop touches no f64 (the C6 RISC-V FPU is single-precision
 // only): absolute frame index at player-clock ms `t` is
