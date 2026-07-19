@@ -178,6 +178,15 @@
           <label>simplify <span class="v" id="simplify-v">0.5</span>
             <input id="simplify" type="range" min="0" max="2" step="0.1" value="0.5" /></label>
           <label><input id="show-topo" type="checkbox" /> show skeleton overlay</label>
+          <label><input id="edit-mode" type="checkbox" /> edit adjacency</label>
+          <div id="edit-panel" style="display: none">
+            <div id="edit-status" style="color: #ffe63c; margin: 0.3rem 0">tap two LEDs</div>
+            <div class="seg">
+              <button id="edit-connect" disabled>Connect</button>
+              <button id="edit-cut" disabled>Cut</button>
+              <button id="edit-clear">Clear edits</button>
+            </div>
+          </div>
         </fieldset>
 
         <fieldset>

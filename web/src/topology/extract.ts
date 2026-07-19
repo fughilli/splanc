@@ -49,6 +49,17 @@ export interface ExtractOptions {
   maxPolyline?: number;
   /** Douglas–Peucker tolerance as a fraction of the median spacing. */
   simplifyFrac?: number;
+  /** Manual adjacency edits, as sorted "ledIdA-ledIdB" keys (LED IDs, so they
+   * survive re-extraction). Applied AFTER the auto k-NN/MST/loop pass so tuning
+   * the sliders doesn't wipe them: `forceEdges` connects a pair (endpoints
+   * become anchors); `cutEdges` disconnects one. */
+  forceEdges?: string[];
+  cutEdges?: string[];
+}
+
+/** Sorted "a-b" key for an adjacency between two LED ids (order-independent). */
+export function edgeKey(a: number, b: number): string {
+  return a < b ? `${a}-${b}` : `${b}-${a}`;
 }
 
 /** Cooperative-scheduling hooks: the extractor yields to the event loop during
@@ -297,6 +308,35 @@ export async function extractTopology(
       }
     }
   }
+
+  // 3c. manual adjacency edits (keyed by LED id → index). Cut first, then
+  //     force, so a forced edge always wins; forced endpoints become anchors.
+  const idToIndex = new Map(leds.map((l, i) => [l.id, i]));
+  const asPair = (key: string): [number, number] | null => {
+    const dash = key.lastIndexOf("-");
+    const ia = idToIndex.get(Number(key.slice(0, dash)));
+    const ib = idToIndex.get(Number(key.slice(dash + 1)));
+    return ia === undefined || ib === undefined || ia === ib ? null : [ia, ib];
+  };
+  for (const key of opts.cutEdges ?? []) {
+    const pair = asPair(key);
+    if (pair === null) continue;
+    const [ia, ib] = pair;
+    adj[ia] = adj[ia]!.filter((v) => v !== ib);
+    adj[ib] = adj[ib]!.filter((v) => v !== ia);
+  }
+  for (const key of opts.forceEdges ?? []) {
+    const pair = asPair(key);
+    if (pair === null) continue;
+    const [ia, ib] = pair;
+    if (!adj[ia]!.includes(ib)) {
+      adj[ia]!.push(ib);
+      adj[ib]!.push(ia);
+    }
+    forced.add(ia);
+    forced.add(ib);
+  }
+
   const deg = adj.map((a) => a.length);
 
   // 4. branch points = degree ≥ 3 nodes, plus loop-chord endpoints (which may

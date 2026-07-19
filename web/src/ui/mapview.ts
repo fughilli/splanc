@@ -50,6 +50,15 @@ export class MapView {
   // effects-simulator workspace pushes a fresh frame here each animation tick.
   private ledColors: Uint8Array | null = null;
 
+  // Cached view transform (rewritten each draw) so pick/hit-testing can reuse
+  // exactly the projection the last frame used. Null before the first draw.
+  private tf: {
+    cx: number; cy: number; cz: number; scale: number;
+    sinA: number; cosA: number; sinP: number; cosP: number; w: number; h: number;
+  } | null = null;
+  // LED ids highlighted as the manual topology-edit selection.
+  private editSel: number[] = [];
+
   constructor(
     private readonly canvas: HTMLCanvasElement,
     private map: OutputMap,
@@ -80,6 +89,42 @@ export class MapView {
    * map.leds order). Non-null switches the scatter into "light" rendering. */
   setLedColors(colors: Uint8Array | null): void {
     this.ledColors = colors;
+  }
+
+  /** Highlight these LED ids as the topology-edit selection (empty clears). */
+  setEditSelection(ledIds: number[]): void {
+    this.editSel = ledIds;
+  }
+
+  /** Project a world point with the CURRENT camera; null before the first draw. */
+  project(p: Vec3): { sx: number; sy: number; depth: number } | null {
+    const t = this.tf;
+    if (t === null) return null;
+    const x = p[0] - t.cx;
+    const y = p[1] - t.cy;
+    const z = p[2] - t.cz;
+    const rx = x * t.cosA + z * t.sinA;
+    const rz = -x * t.sinA + z * t.cosA;
+    const ty = y * t.cosP - rz * t.sinP;
+    const tz = y * t.sinP + rz * t.cosP;
+    return { sx: t.w / 2 + rx * t.scale + this.panX, sy: t.h / 2 - ty * t.scale + this.panY, depth: tz };
+  }
+
+  /** Nearest LED id to a point in CANVAS (device) pixels, or null if none is
+   * within `maxDistPx`. Used to pick nodes for manual topology editing. */
+  pickLedId(canvasX: number, canvasY: number, maxDistPx: number): number | null {
+    let best: number | null = null;
+    let bestD = maxDistPx * maxDistPx;
+    for (const l of this.map.leds) {
+      const s = this.project(l.xyz);
+      if (s === null) continue;
+      const d = (s.sx - canvasX) ** 2 + (s.sy - canvasY) ** 2;
+      if (d < bestD) {
+        bestD = d;
+        best = l.id;
+      }
+    }
+    return best;
   }
 
   get hasTrajectory(): boolean {
@@ -233,25 +278,14 @@ export class MapView {
     }
     const scale = ((Math.min(w, h) * 0.42) / maxR) * this.zoom;
 
-    const sinA = Math.sin(this.yaw);
-    const cosA = Math.cos(this.yaw);
-    const sinP = Math.sin(this.pitch);
-    const cosP = Math.cos(this.pitch);
-    // Orbit about the +Y (up) axis, then pitch about the view's x axis.
-    const proj = (p: Vec3): { sx: number; sy: number; depth: number } => {
-      const x = p[0] - cx;
-      const y = p[1] - cy;
-      const z = p[2] - cz;
-      const rx = x * cosA + z * sinA;
-      const rz = -x * sinA + z * cosA;
-      const ty = y * cosP - rz * sinP;
-      const tz = y * sinP + rz * cosP;
-      return {
-        sx: w / 2 + rx * scale + this.panX,
-        sy: h / 2 - ty * scale + this.panY,
-        depth: tz,
-      };
+    // Cache the transform so project()/pickLedId() reproduce this exact frame.
+    this.tf = {
+      cx, cy, cz, scale,
+      sinA: Math.sin(this.yaw), cosA: Math.cos(this.yaw),
+      sinP: Math.sin(this.pitch), cosP: Math.cos(this.pitch),
+      w, h,
     };
+    const proj = (p: Vec3): { sx: number; sy: number; depth: number } => this.project(p)!;
 
     // -- camera trajectory (under everything else: it is context, not data) --
     if (this.showTrajectory && this.trajectory !== null) {
@@ -425,6 +459,21 @@ export class MapView {
         const s = proj(bp.xyz);
         ctx.beginPath();
         ctx.arc(s.sx, s.sy, 6, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+
+    // -- manual-edit selection: bright yellow rings on the picked LEDs -------
+    if (this.editSel.length > 0) {
+      const byId = new Map(leds.map((l) => [l.id, l.xyz]));
+      ctx.strokeStyle = "rgb(255 230 60 / 0.98)";
+      ctx.lineWidth = 3;
+      for (const id of this.editSel) {
+        const xyz = byId.get(id);
+        if (xyz === undefined) continue;
+        const p = proj(xyz);
+        ctx.beginPath();
+        ctx.arc(p.sx, p.sy, 9, 0, Math.PI * 2);
         ctx.stroke();
       }
     }

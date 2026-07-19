@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 
 import type { LedEntry, OutputMap, Vec3 } from "@ledmapper/protocol";
-import { extractTopology } from "../src/topology/extract";
+import { edgeKey, extractTopology } from "../src/topology/extract";
 
 function led(id: number, xyz: Vec3): LedEntry {
   return { id, xyz, confidence: 1, nViews: 3, rmsReprojPx: 0.5, parallaxDeg: 20 };
@@ -162,6 +162,27 @@ test("reports progress on a large map", async () => {
     fracs.every((f) => f >= 0 && f <= 1) && Math.max(...fracs) === 1,
     "progress runs within [0,1] and reaches 1",
   );
+});
+
+test("manual edits: cutEdges splits a strip, forceEdges bridges strips", async () => {
+  // Cut the 3–4 edge of a straight strip → two segments.
+  const cut = await extractTopology(map(line(8)), { cutEdges: [edgeKey(3, 4)] });
+  assert.equal(cut.segments.length, 2, "the cut splits the strip");
+
+  // Two separate strips 10 m apart; force an edge between their near ends →
+  // one connected fixture (endpoints 3 & 4 become junction anchors).
+  const a = [0, 1, 2, 3].map((i) => led(i, [i, 0, 0]));
+  const b = [4, 5, 6, 7].map((i) => led(i, [i - 4, 10, 0]));
+  const bridged = await extractTopology(map([...a, ...b]), { forceEdges: [edgeKey(3, 4)] });
+  assert.equal(bridged.branchPoints.length, 2, "forced endpoints anchor the join");
+  assert.equal(bridged.segments.length, 3, "two arms + the forced link");
+  // Edits survive re-extraction with different slider values.
+  const again = await extractTopology(map([...a, ...b]), {
+    forceEdges: [edgeKey(3, 4)],
+    radiusFactor: 4,
+    simplifyFrac: 0.2,
+  });
+  assert.equal(again.segments.length, 3, "edit persists across a re-extract");
 });
 
 test("fewer than two LEDs → empty topology", async () => {

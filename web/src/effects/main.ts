@@ -7,7 +7,7 @@
 
 import type { OutputMap, Topology } from "@ledmapper/protocol";
 import { decodeMappingBundle } from "../net/proto";
-import { extractTopology, type ExtractOptions } from "../topology/extract";
+import { edgeKey, extractTopology, type ExtractOptions } from "../topology/extract";
 import { MapView } from "../ui/mapview";
 import {
   FIXTURE_KINDS,
@@ -59,8 +59,20 @@ function extractOptions(): ExtractOptions {
   setV("prune", prune.toFixed(1));
   setV("loop", loop.toFixed(1));
   setV("simplify", simplify.toFixed(1));
-  return { radiusFactor: radius, pruneFactor: prune, loopFactor: loop, simplifyFrac: simplify };
+  return {
+    radiusFactor: radius,
+    pruneFactor: prune,
+    loopFactor: loop,
+    simplifyFrac: simplify,
+    forceEdges: [...forceEdges],
+    cutEdges: [...cutEdges],
+  };
 }
+
+// Manual topology edits (survive re-extraction; see topology/extract.ts).
+const forceEdges = new Set<string>();
+const cutEdges = new Set<string>();
+let editSel: number[] = [];
 
 function effectParams(): EffectParams {
   const intensity = num("intensity");
@@ -244,6 +256,60 @@ function init(): void {
   $("show-topo").addEventListener("change", () =>
     mapView?.setTopology($<HTMLInputElement>("show-topo").checked ? currentTopology : null),
   );
+
+  // -- manual topology editing: tap two LEDs, then Connect / Cut ------------
+  const editStatus = (): void => {
+    const n = forceEdges.size + cutEdges.size;
+    $("edit-status").textContent =
+      editSel.length === 0
+        ? `tap two LEDs · ${n} edit${n === 1 ? "" : "s"}`
+        : editSel.length === 1
+          ? `LED ${editSel[0]} → tap another · ${n} edit${n === 1 ? "" : "s"}`
+          : `LED ${editSel[0]} ↔ ${editSel[1]} · Connect or Cut`;
+    const two = editSel.length === 2;
+    $<HTMLButtonElement>("edit-connect").disabled = !two;
+    $<HTMLButtonElement>("edit-cut").disabled = !two;
+  };
+  const editMode = (): boolean => $<HTMLInputElement>("edit-mode").checked;
+  $("edit-mode").addEventListener("change", () => {
+    $("edit-panel").style.display = editMode() ? "block" : "none";
+    editSel = [];
+    mapView?.setEditSelection([]);
+    editStatus();
+  });
+  $<HTMLCanvasElement>("view").addEventListener("click", (e) => {
+    if (!editMode() || mapView === null) return;
+    const c = $<HTMLCanvasElement>("view");
+    const rect = c.getBoundingClientRect();
+    const scale = c.width / Math.max(1, rect.width);
+    const id = mapView.pickLedId((e.clientX - rect.left) * scale, (e.clientY - rect.top) * scale, 22 * scale);
+    if (id === null) return;
+    editSel = editSel.length >= 2 ? [id] : [...editSel, id];
+    mapView.setEditSelection(editSel);
+    editStatus();
+  });
+  const applyEdit = (connect: boolean): void => {
+    if (editSel.length !== 2) return;
+    const key = edgeKey(editSel[0]!, editSel[1]!);
+    forceEdges.delete(key);
+    cutEdges.delete(key);
+    (connect ? forceEdges : cutEdges).add(key);
+    editSel = [];
+    mapView?.setEditSelection([]);
+    editStatus();
+    void reextract();
+  };
+  $("edit-connect").addEventListener("click", () => applyEdit(true));
+  $("edit-cut").addEventListener("click", () => applyEdit(false));
+  $("edit-clear").addEventListener("click", () => {
+    forceEdges.clear();
+    cutEdges.clear();
+    editSel = [];
+    mapView?.setEditSelection([]);
+    editStatus();
+    void reextract();
+  });
+  editStatus();
   // Live config: adopted smoothly on the running sim (no restart).
   const liveIds = ["intensity", "speed", "glow", "agents", "lead", "split", "decay", "spawn", "cycle", "reach", "trail"];
   for (const id of liveIds) {
