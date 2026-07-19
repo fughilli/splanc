@@ -14,6 +14,7 @@ import {
   generateFixture,
   type FixtureKind,
 } from "./fixtures";
+import { PALETTES } from "./palettes";
 import { EffectSimulation, loadPulseWasm, type EffectParams } from "./sim";
 
 type PulseModule = Awaited<ReturnType<typeof loadPulseWasm>>;
@@ -24,15 +25,6 @@ const $ = <T extends HTMLElement>(id: string): T => {
   return el as T;
 };
 
-const PALETTES: { name: string; rgb: number[] }[] = [
-  { name: "Rainbow", rgb: [0xff0000, 0xff8800, 0xffff00, 0x00ff00, 0x0088ff, 0x8800ff] },
-  { name: "Fire", rgb: [0xff2200, 0xff6600, 0xffaa00, 0xffdd44] },
-  { name: "Ice", rgb: [0x0044ff, 0x00aaff, 0x66ddff, 0xffffff] },
-  { name: "Forest", rgb: [0x004411, 0x00aa33, 0x66ff66, 0xccff99] },
-  { name: "Cyan", rgb: [0x00ffdd] },
-  { name: "Magenta", rgb: [0xff00aa] },
-  { name: "White", rgb: [0xffffff] },
-];
 
 // -- state ------------------------------------------------------------------
 let mod: PulseModule | null = null;

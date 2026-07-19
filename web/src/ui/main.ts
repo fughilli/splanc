@@ -46,6 +46,7 @@ import { DEFAULT_IMU_MAPPING, ImuRecorder, parseImuMapping } from "../xr/imu";
 import { MediaStreamCaptureSource } from "../xr/mediaStreamCapture";
 import { SolverAgent, type SolveSnapshot } from "../solver/agent";
 import { chooseSolvePlacement } from "../solver/placement";
+import { PALETTES } from "../effects/palettes";
 import { LabelOverlay } from "./labels";
 import { MapView } from "./mapview";
 
@@ -409,11 +410,18 @@ $<HTMLButtonElement>("again").addEventListener("click", () => {
 const playEffectBtn = $<HTMLButtonElement>("playeffect");
 const playFloodBtn = $<HTMLButtonElement>("playflood");
 const effectControls = $("effect-controls");
+const fxPalette = $<HTMLSelectElement>("fx-palette");
 const fxSpeed = $<HTMLInputElement>("fx-speed");
 const fxGlow = $<HTMLInputElement>("fx-glow");
 const fxLead = $<HTMLInputElement>("fx-lead");
 const fxSplit = $<HTMLInputElement>("fx-split");
 const fxDecay = $<HTMLInputElement>("fx-decay");
+// Populate the palette selector (shared presets with the effects workspace).
+for (const p of PALETTES) {
+  const o = document.createElement("option");
+  o.textContent = p.name;
+  fxPalette.appendChild(o);
+}
 type Effect = "pulse" | "flood";
 let activeEffect: Effect | null = null;
 
@@ -440,6 +448,7 @@ function effectParams(effect: Effect): PlaybackParams {
     agentCount: effect === "pulse" ? 2 : 1,
     speed,
     glowRadius: glow,
+    palette: PALETTES[fxPalette.selectedIndex]?.rgb ?? [0xffffff],
   };
   if (effect === "pulse") {
     p.splitProb = split;
@@ -475,18 +484,20 @@ async function toggleEffect(effect: Effect): Promise<void> {
 playEffectBtn.addEventListener("click", () => void toggleEffect("pulse"));
 playFloodBtn.addEventListener("click", () => void toggleEffect("flood"));
 
-// Live-retune: while an effect runs, moving a slider re-sends its params.
+// Live-retune: while an effect runs, changing a control re-sends its params.
+const retune = (): void => {
+  if (activeEffect === null) {
+    effectParams("pulse"); // refresh the readouts even when idle
+    return;
+  }
+  void client
+    .setPlayback(activeEffect, effectParams(activeEffect))
+    .catch((e) => setError(`retune failed: ${e instanceof Error ? e.message : e}`));
+};
 for (const el of [fxSpeed, fxGlow, fxLead, fxSplit, fxDecay]) {
-  el.addEventListener("input", () => {
-    if (activeEffect === null) {
-      effectParams("pulse"); // refresh the readouts even when idle
-      return;
-    }
-    void client
-      .setPlayback(activeEffect, effectParams(activeEffect))
-      .catch((e) => setError(`retune failed: ${e instanceof Error ? e.message : e}`));
-  });
+  el.addEventListener("input", retune);
 }
+fxPalette.addEventListener("change", retune);
 
 // -- Topology preview + tuning (Phase F): re-extract on any control change and
 // overlay the skeleton on the map view; upload is a manual, explicit step so
