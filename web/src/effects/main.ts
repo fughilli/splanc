@@ -70,6 +70,10 @@ function effectParams(): EffectParams {
   const lead = num("lead");
   const split = num("split");
   const decay = num("decay");
+  const spawnRate = num("spawn");
+  const floodCycle = num("cycle");
+  const glowReach = num("reach");
+  const trail = num("trail");
   const seed = num("seed");
   setV("intensity", intensity.toFixed(2));
   setV("speed", speed.toFixed(2));
@@ -78,6 +82,10 @@ function effectParams(): EffectParams {
   setV("lead", lead > 0 ? lead.toFixed(2) : "auto");
   setV("split", split.toFixed(2));
   setV("decay", decay > 0 ? decay.toFixed(2) : "auto");
+  setV("spawn", spawnRate > 0 ? `${spawnRate.toFixed(1)}/s` : "auto");
+  setV("cycle", floodCycle === 0 ? "frozen" : String(floodCycle));
+  setV("reach", `${glowReach.toFixed(1)}×`);
+  setV("trail", trail > 0 ? trail.toFixed(2) : "off");
   setV("seed", String(seed));
   return {
     effect,
@@ -88,6 +96,10 @@ function effectParams(): EffectParams {
     lead,
     split,
     decay,
+    spawnRate,
+    floodCycle,
+    glowReach,
+    trail,
     palette: PALETTES[$<HTMLSelectElement>("palette").selectedIndex]?.rgb ?? [0xffffff],
     seed,
   };
@@ -233,7 +245,8 @@ function init(): void {
     mapView?.setTopology($<HTMLInputElement>("show-topo").checked ? currentTopology : null),
   );
   // Live config: adopted smoothly on the running sim (no restart).
-  for (const id of ["intensity", "speed", "glow", "agents", "lead", "split", "decay"]) {
+  const liveIds = ["intensity", "speed", "glow", "agents", "lead", "split", "decay", "spawn", "cycle", "reach", "trail"];
+  for (const id of liveIds) {
     $(id).addEventListener("input", retuneSim);
   }
   $<HTMLSelectElement>("palette").addEventListener("change", retuneSim);

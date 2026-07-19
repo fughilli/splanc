@@ -416,6 +416,10 @@ const fxGlow = $<HTMLInputElement>("fx-glow");
 const fxLead = $<HTMLInputElement>("fx-lead");
 const fxSplit = $<HTMLInputElement>("fx-split");
 const fxDecay = $<HTMLInputElement>("fx-decay");
+const fxSpawn = $<HTMLInputElement>("fx-spawn");
+const fxTrail = $<HTMLInputElement>("fx-trail");
+const fxReach = $<HTMLInputElement>("fx-reach");
+const fxCycle = $<HTMLInputElement>("fx-cycle");
 // Populate the palette selector (shared presets with the effects workspace).
 for (const p of PALETTES) {
   const o = document.createElement("option");
@@ -439,11 +443,19 @@ function effectParams(effect: Effect): PlaybackParams {
   const lead = parseFloat(fxLead.value);
   const split = parseFloat(fxSplit.value);
   const decay = parseFloat(fxDecay.value);
+  const spawn = parseFloat(fxSpawn.value);
+  const trail = parseFloat(fxTrail.value);
+  const reach = parseFloat(fxReach.value);
+  const cycle = parseFloat(fxCycle.value);
   fxSpeed.nextElementSibling!.textContent = speed.toFixed(2);
   fxGlow.nextElementSibling!.textContent = glow.toFixed(2);
   fxLead.nextElementSibling!.textContent = lead > 0 ? lead.toFixed(2) : "auto";
   fxSplit.nextElementSibling!.textContent = split.toFixed(2);
   fxDecay.nextElementSibling!.textContent = decay > 0 ? decay.toFixed(2) : "auto";
+  fxSpawn.nextElementSibling!.textContent = spawn > 0 ? `${spawn.toFixed(1)}/s` : "auto";
+  fxTrail.nextElementSibling!.textContent = trail > 0 ? trail.toFixed(2) : "off";
+  fxReach.nextElementSibling!.textContent = `${reach.toFixed(1)}×`;
+  fxCycle.nextElementSibling!.textContent = cycle === 0 ? "frozen" : String(cycle);
   const p: PlaybackParams = {
     agentCount: effect === "pulse" ? 2 : 1,
     speed,
@@ -452,9 +464,13 @@ function effectParams(effect: Effect): PlaybackParams {
   };
   if (effect === "pulse") {
     p.splitProb = split;
+    p.glowReach = reach;
     if (lead > 0) p.leadIn = lead;
-  } else if (decay > 0) {
-    p.decay = decay;
+    if (spawn > 0) p.spawnRate = spawn;
+    if (trail > 0) p.trail = trail;
+  } else {
+    if (decay > 0) p.decay = decay;
+    if (cycle > 0) p.floodCycle = cycle;
   }
   return p;
 }
@@ -494,7 +510,7 @@ const retune = (): void => {
     .setPlayback(activeEffect, effectParams(activeEffect))
     .catch((e) => setError(`retune failed: ${e instanceof Error ? e.message : e}`));
 };
-for (const el of [fxSpeed, fxGlow, fxLead, fxSplit, fxDecay]) {
+for (const el of [fxSpeed, fxGlow, fxLead, fxSplit, fxDecay, fxSpawn, fxTrail, fxReach, fxCycle]) {
   el.addEventListener("input", retune);
 }
 fxPalette.addEventListener("change", retune);

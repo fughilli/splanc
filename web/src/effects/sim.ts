@@ -19,6 +19,10 @@ export interface EffectParams {
   /** meters; ≤0 derives from glow */ lead: number;
   /** [0,1]; <0 uses the default */ split: number;
   /** meters; ≤0 derives from glow */ decay: number;
+  /** pulse spawns/sec; ≤0 derives from agentCount */ spawnRate: number;
+  /** flood: termini advanced per restart; 0 = frozen */ floodCycle: number;
+  /** pulse bloom reach as a multiple of glow; ≤0 = default */ glowReach: number;
+  /** pulse comet-trail length, meters; 0 = point source */ trail: number;
   /** 0xRRGGBB palette */ palette: number[];
   seed: number;
 }
@@ -34,6 +38,10 @@ interface WasmEffectSim {
     leadM: number,
     splitProb: number,
     decayM: number,
+    spawnRate: number,
+    floodCycle: number,
+    glowReach: number,
+    trailM: number,
     paletteRgb: Uint32Array,
   ): void;
   render(): Uint8Array;
@@ -59,6 +67,10 @@ interface PulseModule {
     leadM: number,
     splitProb: number,
     decayM: number,
+    spawnRate: number,
+    floodCycle: number,
+    glowReach: number,
+    trailM: number,
     paletteRgb: Uint32Array,
     seed: number,
   ) => WasmEffectSim;
@@ -129,6 +141,10 @@ export class EffectSimulation {
       p.lead,
       p.split,
       p.decay,
+      p.spawnRate,
+      p.floodCycle,
+      p.glowReach,
+      p.trail,
       Uint32Array.from(p.palette),
       p.seed >>> 0,
     );
@@ -150,6 +166,10 @@ export class EffectSimulation {
       p.lead,
       p.split,
       p.decay,
+      p.spawnRate,
+      p.floodCycle,
+      p.glowReach,
+      p.trail,
       Uint32Array.from(p.palette),
     );
   }
