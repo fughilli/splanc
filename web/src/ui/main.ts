@@ -31,7 +31,7 @@ import {
 import { CvPipeline } from "../cv/pipeline";
 import { DetectorGL } from "../cv/detect";
 import { certApprovalUrl, defaultWsUrl, LedMapperClient } from "../net/client";
-import { encodeMappingBundle } from "../net/proto";
+import { decodeMappingBundle, encodeMappingBundle } from "../net/proto";
 import {
   bleAvailable,
   provisionViaBle,
@@ -667,6 +667,39 @@ $<HTMLButtonElement>("pull-map").addEventListener("click", () => {
       btn.textContent = orig;
     } finally {
       btn.disabled = false;
+    }
+  })();
+});
+
+// Upload a saved/edited .binpb (map + topology) to the connected player: decode
+// the MappingBundle and push it as submit_map + submit_topology (the arena +
+// LittleFS store). Lets you flash a fixture tuned in the workspace onto a player.
+const uploadBtn = $<HTMLButtonElement>("upload-binpb");
+const uploadFile = $<HTMLInputElement>("upload-binpb-file");
+uploadBtn.addEventListener("click", () => uploadFile.click());
+uploadFile.addEventListener("change", (e) => {
+  const file = (e.target as HTMLInputElement).files?.[0];
+  if (!file) return;
+  uploadFile.value = ""; // allow re-selecting the same file later
+  void (async () => {
+    const orig = uploadBtn.textContent;
+    uploadBtn.disabled = true;
+    try {
+      const bundle = decodeMappingBundle(new Uint8Array(await file.arrayBuffer()));
+      if (!bundle.map || bundle.map.leds.length === 0) throw new Error("bundle has no LEDs");
+      uploadBtn.textContent = "Uploading map…";
+      await client.submitMap(bundle.map);
+      if (bundle.topology && bundle.topology.segments.length > 0) {
+        uploadBtn.textContent = "Uploading topology…";
+        // The player validates the topology against the just-stored map id.
+        await client.submitTopology({ ...bundle.topology, mapId: bundle.map.mapId });
+      }
+      uploadBtn.textContent = `Uploaded ${bundle.map.leds.length} LEDs ✓`;
+    } catch (err) {
+      setError(`upload failed: ${err instanceof Error ? err.message : err}`);
+      uploadBtn.textContent = orig;
+    } finally {
+      uploadBtn.disabled = false;
     }
   })();
 });
