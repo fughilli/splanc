@@ -234,6 +234,16 @@ message PlaybackParams {
   optional double split_prob = 7;
   // Flood fade length behind the wavefront, meters (0 = derive from glow).
   optional double decay = 8;
+  // Pulse spawns per second (0 = derive from agent_count).
+  optional double spawn_rate = 9;
+  // Flood: termini to advance the source by on each restart (0 = frozen, so it
+  // always fills from the same direction; 1 = rotate to the next each cycle).
+  optional double flood_cycle = 10;
+  // Halo reach as a multiple of the glow radius — the pulse bloom extent
+  // (0 = default). Larger blooms softer/wider.
+  optional double glow_reach = 11;
+  // Pulse comet-trail length, meters (0 = a bare point source, no tail).
+  optional double trail = 12;
 }
 
 // ---------------------------------------------------------------------------

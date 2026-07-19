@@ -48,6 +48,26 @@
       "type": ["number", "null"],
       "minimum": 0,
       "description": "Flood fade length behind the wavefront, meters (0/omitted derives from the glow radius)."
+    },
+    "spawnRate": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Pulse spawns per second (0/omitted derives from agentCount)."
+    },
+    "floodCycle": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Flood: termini to advance the source by on each restart (0 = frozen/one direction; 1 = rotate to the next each cycle)."
+    },
+    "glowReach": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Halo reach as a multiple of the glow radius — the pulse bloom extent (0/omitted = default)."
+    },
+    "trail": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Pulse comet-trail length, meters (0 = a bare point source, no tail)."
     }
   }
 }

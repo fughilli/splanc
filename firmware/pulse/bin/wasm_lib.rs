@@ -50,6 +50,10 @@ impl EffectSim {
         lead_m: f32,
         split_prob: f32,
         decay_m: f32,
+        spawn_rate: f32,
+        flood_cycle: f32,
+        glow_reach: f32,
+        trail_m: f32,
         palette_rgb: &[u32],
         seed: u32,
     ) -> EffectSim {
@@ -69,6 +73,10 @@ impl EffectSim {
             lead_m,
             split_prob,
             decay_m,
+            spawn_rate,
+            flood_cycle,
+            glow_reach,
+            trail_m,
             palette_rgb,
         );
         EffectSim {
@@ -93,6 +101,10 @@ impl EffectSim {
         lead_m: f32,
         split_prob: f32,
         decay_m: f32,
+        spawn_rate: f32,
+        flood_cycle: f32,
+        glow_reach: f32,
+        trail_m: f32,
         palette_rgb: &[u32],
     ) {
         let eff = if effect == 1 { Effect::Flood } else { Effect::Pulse };
@@ -105,6 +117,10 @@ impl EffectSim {
             lead_m,
             split_prob,
             decay_m,
+            spawn_rate,
+            flood_cycle,
+            glow_reach,
+            trail_m,
             palette_rgb,
         );
         self.sim.set_config(cfg);

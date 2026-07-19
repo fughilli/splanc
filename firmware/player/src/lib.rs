@@ -639,6 +639,10 @@ fn effect_config_from(effect: Effect, p: &pb::PlaybackParams) -> EffectConfig {
         p.r#lead_in().copied().unwrap_or(0.0) as f32,
         p.r#split_prob().map(|v| *v as f32).unwrap_or(-1.0),
         p.r#decay().copied().unwrap_or(0.0) as f32,
+        p.r#spawn_rate().copied().unwrap_or(0.0) as f32,
+        p.r#flood_cycle().copied().unwrap_or(0.0) as f32,
+        p.r#glow_reach().copied().unwrap_or(0.0) as f32,
+        p.r#trail().copied().unwrap_or(0.0) as f32,
         &p.r#palette,
     )
 }

@@ -17,6 +17,9 @@ fn cfg(effect: Effect, palette: &[Rgb]) -> EffectConfig {
         split_q8: 0,
         spawn_interval_ms: 50,
         decay_mm: 200,
+        flood_cycle_step: 0,
+        glow_cutoff_mult: 16,
+        trail_mm: 0,
         palette: pal,
         palette_len: palette.len(),
     }
@@ -134,6 +137,59 @@ fn switching_effect_kind_reinitialises() {
         }
     }
     assert!(lit > 0, "the flood runs after the switch");
+}
+
+#[test]
+fn from_wire_spawn_rate_and_derived_interval() {
+    // 4 spawns/s → 250 ms between spawns.
+    let c = EffectConfig::from_wire(Effect::Pulse, 1.0, 0.1, 0.5, 2, 0.0, -1.0, 0.0, 4.0, 0.0, 0.0, 0.0, &[]);
+    assert_eq!(c.spawn_interval_ms, 250);
+    // 0 → derive from agent_count (2 agents → a 2 s window → 1000 ms).
+    let d = EffectConfig::from_wire(Effect::Pulse, 1.0, 0.1, 0.5, 2, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 0.0, &[]);
+    assert_eq!(d.spawn_interval_ms, 1000);
+}
+
+#[test]
+fn flood_source_freezes_or_cycles() {
+    // Frozen (step 0): the source never advances across restarts.
+    let mut frozen = Sim::new(y_graph(), cfg(Effect::Flood, &[(255, 255, 255)]), 3);
+    for _ in 0..300 {
+        frozen.step(50); // many flood restarts
+    }
+    assert_eq!(frozen.flood_source_idx(), 0, "step 0 keeps the source frozen");
+
+    // Cycling (step 1): the source rotates on each restart.
+    let mut c = cfg(Effect::Flood, &[(255, 255, 255)]);
+    c.flood_cycle_step = 1;
+    let mut cyc = Sim::new(y_graph(), c, 3);
+    for _ in 0..300 {
+        cyc.step(50);
+    }
+    assert!(cyc.flood_source_idx() > 1, "step 1 advances the source across restarts");
+}
+
+#[test]
+fn comet_trail_adds_light_behind_the_head() {
+    let total = |sim: &Sim| -> u64 {
+        let mut sum = 0u64;
+        for s in (0..=2000).step_by(10) {
+            let (r, g, b) = sim.led_color(0, s, 0);
+            sum += r as u64 + g as u64 + b as u64;
+        }
+        sum
+    };
+    let make = |trail_mm: u32| {
+        let mut c = cfg(Effect::Pulse, &[(0, 255, 0)]);
+        c.glow_radius_mm = 50; // tight glow so the trail's extra reach shows
+        c.trail_mm = trail_mm;
+        let mut sim = Sim::new(Graph::build(&[(-1, -1, 2000)]), c, 7);
+        for _ in 0..10 {
+            sim.step(50); // identical seed+steps → identical pulse positions
+        }
+        sim
+    };
+    // Same pulses; only rendering differs → the trail can only add light.
+    assert!(total(&make(400)) > total(&make(0)), "the comet trail drags a lit tail");
 }
 
 #[test]

@@ -55,6 +55,13 @@ pub struct EffectConfig {
     pub spawn_interval_ms: u32,
     /// Flood: fade length behind the wavefront, mm.
     pub decay_mm: u32,
+    /// Flood: termini to advance the source by on each restart (0 = frozen).
+    pub flood_cycle_step: u16,
+    /// Pulse halo cutoff as a multiple of glow_radius² (bloom extent; default 16
+    /// ≈ a 4× glow-radius reach).
+    pub glow_cutoff_mult: u32,
+    /// Pulse comet-trail length, mm behind the head (0 = a bare point source).
+    pub trail_mm: u32,
     pub palette: [Rgb; MAX_PALETTE],
     pub palette_len: usize,
 }
@@ -76,6 +83,10 @@ impl EffectConfig {
         lead_m: f32,
         split_prob: f32,
         decay_m: f32,
+        spawn_rate: f32,
+        flood_cycle: f32,
+        glow_reach: f32,
+        trail_m: f32,
         palette_rgb: &[u32],
     ) -> EffectConfig {
         let glow_mm = (glow_m.max(0.0) * 1000.0 + 0.5) as u32;
@@ -103,14 +114,29 @@ impl EffectConfig {
             } else {
                 64
             },
-            // Spread `agent_count` desired concurrent pulses over ~a 2 s window.
-            spawn_interval_ms: (2000 / agents).max(80),
+            // Explicit spawn rate (spawns/s), else spread `agent_count` desired
+            // concurrent pulses over ~a 2 s window.
+            spawn_interval_ms: if spawn_rate > 0.0 {
+                ((1000.0 / spawn_rate) + 0.5) as u32
+            } else {
+                (2000 / agents).max(80)
+            },
             // Flood tail over the given length, else several glow radii.
             decay_mm: if decay_m > 0.0 {
                 (decay_m * 1000.0 + 0.5) as u32
             } else {
                 glow_mm.max(50).saturating_mul(4)
             },
+            // Source rotation per flood restart (rounded); 0 keeps it frozen.
+            flood_cycle_step: (flood_cycle.max(0.0) + 0.5) as u16,
+            // Cutoff = reach², where reach is a glow-radius multiple (default 4).
+            glow_cutoff_mult: {
+                let reach = if glow_reach > 0.0 { glow_reach } else { 4.0 };
+                ((reach * reach) + 0.5) as u32
+            }
+            .max(1),
+            // Comet-trail length behind the pulse head; 0 = point source.
+            trail_mm: (trail_m.max(0.0) * 1000.0 + 0.5) as u32,
             palette,
             palette_len,
         }
@@ -256,6 +282,9 @@ pub struct Sim {
     /// Max geodesic distance from the source (the decay tail is added on top at
     /// use, so a live `decay_mm` change is adopted without restarting the flood).
     flood_reach_mm: u32,
+    /// Which terminus the flood starts from; advanced by `flood_cycle_step` each
+    /// restart so the fill direction rotates (0 = frozen).
+    flood_source_idx: u16,
 }
 
 fn rng_next(s: &mut u32) -> u32 {
@@ -279,6 +308,7 @@ impl Sim {
             node_dist: [u32::MAX; MAX_NODES],
             flood_front_mm: 0,
             flood_reach_mm: 0,
+            flood_source_idx: 0,
         };
         if cfg.effect == Effect::Flood {
             sim.start_flood();
@@ -317,6 +347,12 @@ impl Sim {
     /// Current flood wavefront distance, mm (introspection / tests).
     pub fn flood_front_mm(&self) -> u32 {
         self.flood_front_mm
+    }
+
+    /// Flood source rotation counter (introspection / tests): advances by
+    /// flood_cycle_step each restart (stays put when frozen).
+    pub fn flood_source_idx(&self) -> u16 {
+        self.flood_source_idx
     }
 
     /// Advance the simulation by `dt_ms`.
@@ -422,15 +458,17 @@ impl Sim {
         if self.graph.n_nodes == 0 {
             return;
         }
-        // Flood from a random terminus; on a terminus-less graph (a pure loop)
-        // fall back to an arbitrary node so the wavefront still swirls around
-        // the cycle instead of the effect going dark.
+        // Flood from `flood_source_idx` (which the restart advances by
+        // flood_cycle_step, so the fill direction rotates; step 0 = frozen). On a
+        // terminus-less graph (a pure loop) fall back to a node index so the
+        // wavefront still swirls around the cycle instead of going dark.
         let source = if self.graph.n_termini > 0 {
-            let ti = (rng_next(&mut self.rng) as usize) % self.graph.n_termini;
-            self.graph.termini[ti]
+            self.graph.termini[self.flood_source_idx as usize % self.graph.n_termini]
         } else {
-            (rng_next(&mut self.rng) as usize % self.graph.n_nodes) as u16
+            self.flood_source_idx % self.graph.n_nodes as u16
         };
+        // Advance for the NEXT restart (frozen when step is 0).
+        self.flood_source_idx = self.flood_source_idx.wrapping_add(self.cfg.flood_cycle_step);
         self.node_dijkstra(source);
         self.flood_front_mm = 0;
         // Longest geodesic reach; the decay tail is added at the restart check
@@ -501,19 +539,34 @@ impl Sim {
 
     fn pulse_led(&self, seg: u16, s_mm: u32, d_perp_mm: u32) -> Rgb {
         let r2_radius = (self.cfg.glow_radius_mm as u64).pow(2).max(1);
-        let cutoff2 = r2_radius.saturating_mul(16);
+        let cutoff2 = r2_radius.saturating_mul(self.cfg.glow_cutoff_mult as u64);
         let dp2 = (d_perp_mm as u64).pow(2);
+        let trail_mm = self.cfg.trail_mm as u64;
         let (mut ar, mut ag, mut ab) = (0u32, 0u32, 0u32);
         for p in self.pulses.iter() {
             if !p.alive || p.seg != seg {
                 continue; // same-segment illumination
             }
-            let ds = (p.pos_mm as i64 - s_mm as i64).unsigned_abs();
+            let ds_signed = p.pos_mm as i64 - s_mm as i64; // pos − s
+            let ds = ds_signed.unsigned_abs();
             let r2 = ds * ds + dp2;
-            if r2 > cutoff2 {
+            // Point-source r² glow (Q8), gated by the bloom-reach cutoff.
+            let point_fall: u64 = if r2 <= cutoff2 { (256 * r2_radius) / (r2_radius + r2) } else { 0 };
+            // Comet trail: BEHIND the head (fwd → smaller s, back → larger s),
+            // a linear fade over trail_mm with the r² perpendicular falloff, so
+            // the pulse drags a tail past the point-glow cutoff.
+            let behind = if p.fwd { ds_signed } else { -ds_signed };
+            let trail_fall: u64 = if trail_mm > 0 && behind > 0 && (behind as u64) <= trail_mm {
+                let along = 256 - (256 * behind as u64 / trail_mm);
+                let perp = (256 * r2_radius) / (r2_radius + dp2);
+                (along * perp) >> 8
+            } else {
+                0
+            };
+            let fall = point_fall.max(trail_fall);
+            if fall == 0 {
                 continue;
             }
-            let fall = (256 * r2_radius) / (r2_radius + r2); // r² kernel, Q8
             let env = self.lead_env(p); // Q8 lead-in/out
             let w = (fall * env as u64) >> 8;
             let (r, g, b) = self.cfg.palette_at(p.color);
@@ -561,7 +614,9 @@ impl Sim {
         let perp = (256 * r2_radius) / (r2_radius + dp2);
         let fade = 256 - (256 * behind as u64 / decay as u64) as u32;
         let w = (perp * fade as u64) >> 8;
-        let (r, g, b) = self.cfg.palette_at(0);
+        // Walk the palette by geodesic distance so a multi-colour palette paints
+        // a moving gradient across the fixture (one band per decay length).
+        let (r, g, b) = self.cfg.palette_at(arrival / decay);
         self.scale((w * r as u64) as u32, (w * g as u64) as u32, (w * b as u64) as u32)
     }
 

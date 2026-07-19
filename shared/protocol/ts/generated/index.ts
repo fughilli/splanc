@@ -175,6 +175,14 @@ export interface PlaybackParams {
   splitProb?: number | null;
   /** Flood fade length behind the wavefront, m (0/omitted derives from glow). */
   decay?: number | null;
+  /** Pulse spawns per second (0/omitted derives from agentCount). */
+  spawnRate?: number | null;
+  /** Flood: termini to advance the source per restart (0 = frozen). */
+  floodCycle?: number | null;
+  /** Halo reach as a multiple of the glow radius — pulse bloom extent. */
+  glowReach?: number | null;
+  /** Pulse comet-trail length, m (0 = a bare point source). */
+  trail?: number | null;
 }
 
 // ---------------------------------------------------------------------------

@@ -180,6 +180,14 @@ class PlaybackParams(_StrictModel):
     splitProb: Union[float, None] = Field(default=None, ge=0.0, le=1.0)
     # Flood fade length behind the wavefront, m (0/omitted derives from glow).
     decay: Union[float, None] = Field(default=None, ge=0.0)
+    # Pulse spawns per second (0/omitted derives from agentCount).
+    spawnRate: Union[float, None] = Field(default=None, ge=0.0)
+    # Flood: termini to advance the source per restart (0 = frozen).
+    floodCycle: Union[float, None] = Field(default=None, ge=0.0)
+    # Halo reach as a multiple of the glow radius — pulse bloom extent.
+    glowReach: Union[float, None] = Field(default=None, ge=0.0)
+    # Pulse comet-trail length, m (0 = a bare point source).
+    trail: Union[float, None] = Field(default=None, ge=0.0)
 
 
 # ---------------------------------------------------------------------------
