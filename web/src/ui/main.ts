@@ -44,6 +44,7 @@ import { extractTopology } from "../topology/extract";
 import { CaptureUnsupportedError } from "../xr/capture";
 import { DEFAULT_IMU_MAPPING, ImuRecorder, parseImuMapping } from "../xr/imu";
 import { MediaStreamCaptureSource } from "../xr/mediaStreamCapture";
+import { buildLedMask, mergeRecapture, pickAnchors } from "../xr/recapture";
 import { SolverAgent, type SolveSnapshot } from "../solver/agent";
 import { chooseSolvePlacement } from "../solver/placement";
 import { PALETTES } from "../effects/palettes";
@@ -343,7 +344,10 @@ void boot();
 
 // -- capture -----------------------------------------------------------------
 
-startBtn.addEventListener("click", () => void startCapture());
+startBtn.addEventListener("click", () => {
+  recaptureCtx = null; // a fresh full-fixture map, not a recapture
+  void startCapture();
+});
 stopBtn.addEventListener("click", () => void stopCapture());
 
 // Player onboarding over BLE (Improv Wi-Fi — see net/improv.ts): the hosted
@@ -530,6 +534,18 @@ let resultMap: OutputMap | null = null;
 let resultMapId: string | null = null;
 let currentTopology: Topology | null = null;
 
+// Recapture (§7.10): when set, the next capture re-maps only this subset
+// (anchors + targets) and merges the result back into `baseMap`.
+interface RecaptureCtx {
+  baseMap: OutputMap;
+  targetIds: Set<number>;
+  anchorIds: Set<number>;
+  rollingMod: number;
+}
+let recaptureCtx: RecaptureCtx | null = null;
+// The current target selection in the result view (low-confidence + tapped).
+let recaptureTargets = new Set<number>();
+
 // The skelgraph extraction is O(n²) and runs off the main task cooperatively
 // (extractTopology yields + reports progress + honours an AbortSignal). Each
 // call supersedes the in-flight one; a slow solve reveals a progress + Abort
@@ -601,6 +617,65 @@ for (const el of [radiusInput, pruneInput, loopInput, simplifyInput, maxPolyInpu
 $<HTMLButtonElement>("topo-abort").addEventListener("click", () => {
   topoAbort?.abort();
   topoSummary.textContent = "extraction aborted — adjust a slider to retry";
+});
+
+// -- Recapture selection (§7.10): pick low-confidence / tapped LEDs to re-map -
+const recapControls = $("recapture-controls");
+const recapThresh = $<HTMLInputElement>("recap-thresh");
+const recapRoll = $<HTMLInputElement>("recap-roll");
+
+/** Refresh the target highlight + summary from the current selection. */
+function refreshRecapture(): void {
+  if (resultMap === null || mapView === null) return;
+  const anchors = pickAnchors(resultMap, recaptureTargets, 12);
+  mapView.setEditSelection([...recaptureTargets]);
+  $("recap-summary").textContent =
+    recaptureTargets.size === 0
+      ? "no LEDs selected"
+      : `${recaptureTargets.size} target${recaptureTargets.size === 1 ? "" : "s"} · ${anchors.length} anchors`;
+  $<HTMLButtonElement>("recap-go").disabled = recaptureTargets.size === 0;
+}
+
+/** Seed the target set from the confidence threshold (reset on show / slider). */
+function seedRecaptureTargets(): void {
+  if (resultMap === null) return;
+  const thr = parseFloat(recapThresh.value);
+  $("recap-thresh-v").textContent = thr.toFixed(2);
+  recaptureTargets = new Set(resultMap.leds.filter((l) => l.confidence < thr).map((l) => l.id));
+  refreshRecapture();
+}
+
+recapThresh.addEventListener("input", seedRecaptureTargets);
+recapRoll.addEventListener("input", () => {
+  const k = parseInt(recapRoll.value, 10);
+  $("recap-roll-v").textContent = k === 0 ? "off" : `×${k}`;
+});
+// Tap a LED on the map to toggle it in/out of the target set.
+$<HTMLCanvasElement>("mapcanvas").addEventListener("click", (e) => {
+  if (recapControls.style.display === "none" || mapView === null) return;
+  const c = $<HTMLCanvasElement>("mapcanvas");
+  const rect = c.getBoundingClientRect();
+  const scale = c.width / Math.max(1, rect.width);
+  const id = mapView.pickLedId((e.clientX - rect.left) * scale, (e.clientY - rect.top) * scale, 22 * scale);
+  if (id === null) return;
+  if (recaptureTargets.has(id)) recaptureTargets.delete(id);
+  else recaptureTargets.add(id);
+  refreshRecapture();
+});
+$<HTMLButtonElement>("recap-go").addEventListener("click", () => {
+  if (resultMap === null || recaptureTargets.size === 0) return;
+  const anchors = pickAnchors(resultMap, recaptureTargets, 12);
+  if (anchors.length < 3) {
+    setError("need at least 3 confident anchor LEDs to recapture — lower the threshold");
+    return;
+  }
+  recaptureCtx = {
+    baseMap: resultMap,
+    targetIds: new Set(recaptureTargets),
+    anchorIds: new Set(anchors),
+    rollingMod: parseInt(recapRoll.value, 10),
+  };
+  void startCapture();
 });
 topoUploadBtn.addEventListener("click", () => {
   void (async () => {
@@ -716,7 +791,11 @@ function resetLiveFeedback(): void {
 async function startCapture(): Promise<void> {
   setError("");
   resetLiveFeedback();
-  const ledCount = Math.max(1, parseInt(ledCountInput.value, 10) || 64);
+  // A recapture keeps the base map's full LED count so the code-book (and thus
+  // the ids/codes of the masked subset) is unchanged.
+  const ledCount = recaptureCtx
+    ? recaptureCtx.baseMap.ledCount
+    : Math.max(1, parseInt(ledCountInput.value, 10) || 64);
   startBtn.disabled = true;
   try {
     // Order matters: the camera needs a user gesture, so open it first;
@@ -809,6 +888,17 @@ async function startCapture(): Promise<void> {
           : {}),
       // Omitted = full brightness; the wash-out servo dims mid-capture.
       ...(forcedBrightness !== null ? { brightness: forcedBrightness } : {}),
+      // Recapture: light only anchors + targets; roll overlapping targets.
+      ...(recaptureCtx !== null
+        ? {
+            ledMask: buildLedMask(
+              [...recaptureCtx.anchorIds, ...recaptureCtx.targetIds],
+              ledCount,
+            ),
+            anchorMask: buildLedMask(recaptureCtx.anchorIds, ledCount),
+            ...(recaptureCtx.rollingMod > 0 ? { rollingMod: recaptureCtx.rollingMod } : {}),
+          }
+        : {}),
     };
 
     // Re-sync the clock right before the epoch matters.
@@ -1435,6 +1525,13 @@ async function stopCapture(sessionAlreadyEnded = false): Promise<void> {
         },
         (snap: SolveSnapshot) => renderSolveSnapshot(snap),
       );
+      // Recapture: align+splice the re-mapped subset into the base, then upload
+      // the full merged map (not just the subset) to the player.
+      if (recaptureCtx !== null) {
+        const m = mergeRecapture(recaptureCtx.baseMap, map, recaptureCtx.anchorIds);
+        map = m.map;
+        setConn(`recaptured ${m.updated} LEDs (${m.anchorsUsed} anchors)`);
+      }
       const ack = await client.submitMap(map);
       mapId = ack.mapId;
     } else {
@@ -1443,7 +1540,13 @@ async function stopCapture(sessionAlreadyEnded = false): Promise<void> {
       const resp = await fetch(`/maps/${mapId}`);
       if (!resp.ok) throw new Error(`fetching map failed: HTTP ${resp.status}`);
       map = (await resp.json()) as OutputMap;
+      if (recaptureCtx !== null) {
+        const m = mergeRecapture(recaptureCtx.baseMap, map, recaptureCtx.anchorIds);
+        map = m.map;
+        setConn(`recaptured ${m.updated} LEDs (${m.anchorsUsed} anchors)`);
+      }
     }
+    recaptureCtx = null; // one-shot
     showResult(mapId, map);
     // Phase F: extract + PREVIEW the fixture graph topology on the map view.
     // The user tunes the extraction params (live overlay) and uploads it to the
@@ -1457,11 +1560,15 @@ async function stopCapture(sessionAlreadyEnded = false): Promise<void> {
     refreshEffectButtons();
     topoControls.style.display = map.leds.length >= 2 ? "" : "none";
     previewTopology();
+    // Offer a recapture pass: pre-select low-confidence LEDs as targets.
+    recapControls.style.display = map.leds.length >= 4 ? "" : "none";
+    seedRecaptureTargets();
     setConn(`map ${mapId} ready${solveOnPhone ? " (solved on phone)" : ""}`);
   } catch (e) {
     setError(`Reconstruction failed: ${e instanceof Error ? e.message : e}`);
     setConn(client.isConnected ? "connected" : "disconnected");
   } finally {
+    recaptureCtx = null; // don't leak a recapture into the next capture
     if (solvePoll !== null) clearInterval(solvePoll);
     progWrap.style.display = "none";
     stopBtn.disabled = false;
