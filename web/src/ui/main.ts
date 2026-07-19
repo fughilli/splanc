@@ -350,6 +350,50 @@ startBtn.addEventListener("click", () => {
 });
 stopBtn.addEventListener("click", () => void stopCapture());
 
+// Control an already-mapped player WITHOUT re-mapping: connect, pull its stored
+// map+topology (LittleFS / get_stored_map), and open the full result view so
+// you can drive effects live and download/upload maps.
+const controlBtn = $<HTMLButtonElement>("control");
+controlBtn.addEventListener("click", () => {
+  void (async () => {
+    controlBtn.disabled = true;
+    try {
+      if (!client.isConnected) {
+        setConn("connecting…");
+        await client.connect();
+      }
+      setConn("loading map from player…");
+      const bundle = await client.pullStoredMap((d, t) =>
+        setConn(`loading ${Math.round((100 * d) / Math.max(1, t))}%`),
+      );
+      if (!bundle.map || bundle.map.leds.length === 0) throw new Error("no map on the player");
+      recaptureCtx = null;
+      resultMap = bundle.map;
+      resultMapId = bundle.map.mapId || null;
+      showResult(bundle.map.mapId || "player-map", bundle.map);
+      // Use the player's ACTUAL stored topology (not a fresh extraction).
+      currentTopology = bundle.topology.segments.length > 0 ? bundle.topology : null;
+      mapView?.setTopology(currentTopology);
+      topoControls.style.display = bundle.map.leds.length >= 2 ? "" : "none";
+      recapControls.style.display = "none"; // control-only: no mapping run
+      if (currentTopology !== null) {
+        topoSummary.textContent = `from player · ${currentTopology.segments.length} seg · ${currentTopology.branchPoints.length} junc`;
+        topoUploadBtn.textContent = "Re-upload topology";
+        topoUploadBtn.disabled = false;
+        playEffectBtn.style.display = "";
+        playFloodBtn.style.display = "";
+        effectControls.style.display = "";
+      }
+      setConn(`connected · ${bundle.map.leds.length} LEDs${currentTopology ? " · topology loaded" : " · no topology"}`);
+    } catch (e) {
+      setError(`control failed: ${e instanceof Error ? e.message : e}`);
+      setConn(client.isConnected ? "connected" : "disconnected");
+    } finally {
+      controlBtn.disabled = false;
+    }
+  })();
+});
+
 // Player onboarding over BLE (Improv Wi-Fi — see net/improv.ts): the hosted
 // app provisions an ESP32 player onto THIS network, gets its address back,
 // and reloads itself pointed at it. Chrome-only (no Web Bluetooth on iOS).
