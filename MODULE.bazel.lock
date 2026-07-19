@@ -478,7 +478,7 @@
     "@@rules_nixpkgs_core~//extensions:package.bzl%nix_pkg%firmware@_~nix_pkg": {
       "general": {
         "bzlTransitiveDigest": "2alEQC7q9PgrArc8ZeI662VmDHLGfuswqnzBJvVDnmg=",
-        "usagesDigest": "C7SehRwMoTVU0W5QD4wRnJKIITjH951wGjRR9MACPhQ=",
+        "usagesDigest": "ujTP9VPzEHlWVEr3IqvO+Mtja/3MtS0HdHZ0KbBRMto=",
         "recordedFileInputs": {},
         "recordedDirentsInputs": {},
         "envVariables": {},
@@ -632,12 +632,36 @@
               "nix_file_deps": {
                 "@@firmware~//nix:arduino_esp32_drv.nix": "'@@firmware~//nix:arduino_esp32_drv.nix'",
                 "@@firmware~//nix:esp32_arduino_libs.nix": "'@@firmware~//nix:esp32_arduino_libs.nix'",
-                "@@firmware~//nix:esp_riscv_gcc.nix": "'@@firmware~//nix:esp_riscv_gcc.nix'"
+                "@@firmware~//nix:esp_riscv_gcc.nix": "'@@firmware~//nix:esp_riscv_gcc.nix'",
+                "@@firmware~//nix:esp_xtensa_gcc.nix": "'@@firmware~//nix:esp_xtensa_gcc.nix'"
               },
               "nix_file_content": "",
               "repository": "@@rules_nixpkgs_core~~_nix_repo~firmware~~nix_repo~nixpkgs//:nixpkgs",
               "repositories": {},
               "build_file": "@@firmware~//nix:riscv_gcc.BUILD",
+              "build_file_content": "",
+              "nixopts": [],
+              "quiet": false,
+              "fail_not_supported": true
+            }
+          },
+          "xtensa_gcc": {
+            "bzlFile": "@@rules_nixpkgs_core~//:nixpkgs.bzl",
+            "ruleClassName": "_nixpkgs_package",
+            "attributes": {
+              "unmangled_name": "xtensa_gcc",
+              "attribute_path": "xtensa-esp-elf",
+              "nix_file": "@@firmware~//nix:arduino_esp32.nix",
+              "nix_file_deps": {
+                "@@firmware~//nix:arduino_esp32_drv.nix": "'@@firmware~//nix:arduino_esp32_drv.nix'",
+                "@@firmware~//nix:esp32_arduino_libs.nix": "'@@firmware~//nix:esp32_arduino_libs.nix'",
+                "@@firmware~//nix:esp_riscv_gcc.nix": "'@@firmware~//nix:esp_riscv_gcc.nix'",
+                "@@firmware~//nix:esp_xtensa_gcc.nix": "'@@firmware~//nix:esp_xtensa_gcc.nix'"
+              },
+              "nix_file_content": "",
+              "repository": "@@rules_nixpkgs_core~~_nix_repo~firmware~~nix_repo~nixpkgs//:nixpkgs",
+              "repositories": {},
+              "build_file": "@@firmware~//nix:xtensa_gcc.BUILD",
               "build_file_content": "",
               "nixopts": [],
               "quiet": false,
@@ -654,7 +678,8 @@
               "nix_file_deps": {
                 "@@firmware~//nix:arduino_esp32_drv.nix": "'@@firmware~//nix:arduino_esp32_drv.nix'",
                 "@@firmware~//nix:esp32_arduino_libs.nix": "'@@firmware~//nix:esp32_arduino_libs.nix'",
-                "@@firmware~//nix:esp_riscv_gcc.nix": "'@@firmware~//nix:esp_riscv_gcc.nix'"
+                "@@firmware~//nix:esp_riscv_gcc.nix": "'@@firmware~//nix:esp_riscv_gcc.nix'",
+                "@@firmware~//nix:esp_xtensa_gcc.nix": "'@@firmware~//nix:esp_xtensa_gcc.nix'"
               },
               "nix_file_content": "",
               "repository": "@@rules_nixpkgs_core~~_nix_repo~firmware~~nix_repo~nixpkgs//:nixpkgs",
