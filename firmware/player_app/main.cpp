@@ -28,6 +28,7 @@
 #include <freertos/semphr.h>
 #include <freertos/task.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "firmware/landing/landing_page.h"
 #include "firmware/player_app/improv_ble.h"
@@ -100,12 +101,26 @@ static const char *kFsBase = "/lfs";
 static const char *kFsPartition = "spiffs";
 static const char *kMapPath = "/lfs/map.pb";
 static const char *kTopoPath = "/lfs/topo.pb";
+// The last playback selection (set_playback frame), so the show auto-resumes
+// on boot. Coalesced (live tuning fires rapidly) — see queue/flush below.
+static const char *kPlaybackPath = "/lfs/play.pb";
 static bool fs_ok = false;
 // Protobuf envelope arm numbers (ledmapper.proto oneofs) used to classify
 // frames for persistence — see lm_envelope_arm.
 static const int32_t kArmSubmitMap = 13;
 static const int32_t kArmSubmitTopology = 16;
+static const int32_t kArmSetPlayback = 17;
 static const int32_t kArmResultReady = 8;
+static const int32_t kArmPlaybackState = 13;
+
+// Coalesced playback save: live slider tuning re-sends set_playback on every
+// tick, so writing flash each time would thrash it. Stash the latest frame and
+// flush once the stream goes quiet (from loop()).
+static uint8_t pending_playback[512];
+static size_t pending_playback_len = 0;
+static bool playback_dirty = false;
+static uint32_t playback_dirty_at = 0;
+static const uint32_t kPlaybackSaveQuietMs = 1500;
 
 // STA join in progress: reports success (Improv redirect) / failure.
 static bool sta_joining = false;
@@ -146,17 +161,38 @@ static void fs_write_file(const char *path, const uint8_t *data, size_t len) {
   fclose(f);
 }
 
-// Persist the raw upload frame after a SUCCESSFUL submit_map / submit_topology
-// so the fixture survives a reboot. A new map invalidates any stored topology.
+// Stash the latest playback selection to flush once live tuning goes quiet.
+static void queue_playback_save(const uint8_t *data, size_t len) {
+  if (len > sizeof pending_playback) return;  // too big to persist (bounded)
+  memcpy(pending_playback, data, len);
+  pending_playback_len = len;
+  playback_dirty = true;
+  playback_dirty_at = millis();
+}
+
+// Flush the coalesced playback selection once the change stream has settled.
+// Called from loop(); one flash write per settled edit, not per slider tick.
+static void flush_playback_save() {
+  if (!playback_dirty || millis() - playback_dirty_at < kPlaybackSaveQuietMs) return;
+  fs_write_file(kPlaybackPath, pending_playback, pending_playback_len);
+  playback_dirty = false;
+}
+
+// Persist state after a SUCCESSFUL upload/selection so it survives a reboot:
+// the map+topology (fixture) and the playback selection (auto-resume the show).
+// A new map invalidates any stored topology.
 static void persist_if_upload(const uint8_t *req, size_t req_len,
                               const uint8_t *reply, size_t reply_len) {
-  if (!fs_ok || lm_envelope_arm(reply, reply_len) != kArmResultReady) return;
-  const int32_t arm = lm_envelope_arm(req, req_len);
-  if (arm == kArmSubmitMap) {
+  if (!fs_ok) return;
+  const int32_t req_arm = lm_envelope_arm(req, req_len);
+  const int32_t reply_arm = lm_envelope_arm(reply, reply_len);
+  if (reply_arm == kArmResultReady && req_arm == kArmSubmitMap) {
     fs_write_file(kMapPath, req, req_len);
     remove(kTopoPath);  // the previous topology no longer matches this map
-  } else if (arm == kArmSubmitTopology) {
+  } else if (reply_arm == kArmResultReady && req_arm == kArmSubmitTopology) {
     fs_write_file(kTopoPath, req, req_len);
+  } else if (reply_arm == kArmPlaybackState && req_arm == kArmSetPlayback) {
+    queue_playback_save(req, req_len);  // coalesced: live tuning fires rapidly
   }
 }
 
@@ -196,6 +232,7 @@ static void fs_begin_and_restore() {
   fs_ok = true;
   fs_replay(kMapPath);
   fs_replay(kTopoPath);
+  fs_replay(kPlaybackPath);  // resume the last show (the render task picks it up)
 }
 
 static void ws_dispatch_message() {
@@ -541,6 +578,7 @@ void loop() {
   http.handleClient();
   ws_poll();
   provisioning_poll();
+  if (fs_ok) flush_playback_save();
 
   static uint32_t last_report = 0;
   if (millis() - last_report > 5000) {

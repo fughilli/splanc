@@ -328,9 +328,10 @@ pub unsafe extern "C" fn lm_playback_step(dt_ms: u32) -> bool {
     }
 }
 
-/// Ensure SIM reflects the current TOPO + effect config. Rebuilds when the
-/// playback generation changed (config edit) or SIM was invalidated (upload);
-/// nulls SIM when the effect is off or no topology is stored.
+/// Ensure SIM reflects the current TOPO + effect config. A config-only change
+/// (a live slider) is ADOPTED IN PLACE so the running animation isn't reset; a
+/// fresh sim is built only when none exists yet or the topology was (re)uploaded
+/// (which nulls SIM). Nulls SIM when the effect is off or no topology is stored.
 unsafe fn ensure_sim() {
     let cfg = match player().effect_config() {
         Some(c) => *c,
@@ -340,11 +341,15 @@ unsafe fn ensure_sim() {
         }
     };
     let gen = player().playback_gen();
-    if (*addr_of!(SIM)).is_some() && SIM_GEN == gen {
+    // A sim already exists (same topology): adopt config changes smoothly.
+    if let Some(sim) = (*addr_of_mut!(SIM)).as_mut() {
+        if SIM_GEN != gen {
+            sim.set_config(cfg);
+            SIM_GEN = gen;
+        }
         return;
     }
     let Some(topo) = (*addr_of!(TOPO)).as_ref() else {
-        *addr_of_mut!(SIM) = None;
         return;
     };
     // Graph::build takes (branch-point a, b, length_mm) per segment in order;
