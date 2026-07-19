@@ -63,7 +63,36 @@ const resultSection = $("result");
 const setupSection = $("setup");
 
 const qs = new URLSearchParams(location.search);
-const wsUrl = qs.get("url") ?? defaultWsUrl();
+// The player WebSocket URL: an explicit ?url= wins, else a remembered player
+// address (localStorage — so a hosted deploy points at the same device across
+// reloads), else this page's own origin (works when a device serves the app).
+const WS_STORE_KEY = "ledmapper.playerWs";
+const savedWs = (() => {
+  try {
+    return localStorage.getItem(WS_STORE_KEY);
+  } catch {
+    return null;
+  }
+})();
+const wsUrl = qs.get("url") ?? savedWs ?? defaultWsUrl();
+
+/** Turn a user-typed player address into a ws URL. A full ws(s):// URL is used
+ * as-is (with a default /ws path); a bare host[:port] gets the page's scheme. */
+function normalizePlayerWs(input: string): string | null {
+  const s = input.trim();
+  if (s === "") return null;
+  try {
+    if (/^wss?:\/\//i.test(s)) {
+      const u = new URL(s);
+      if (u.pathname === "" || u.pathname === "/") u.pathname = "/ws";
+      return u.toString();
+    }
+    const scheme = location.protocol === "https:" ? "wss" : "ws";
+    return `${scheme}://${s}/ws`;
+  } catch {
+    return null;
+  }
+}
 // ?threshold= forces a fixed detector threshold (disables the blob-count
 // servo); unset, the base is 0.6 and adapts to the measured conditions.
 const forcedThreshold = qs.get("threshold") !== null;
@@ -296,9 +325,18 @@ function setConn(text: string): void {
 
 // -- boot: connect + sync ----------------------------------------------------
 
+// After a couple of failed attempts against this page's own origin, the app is
+// almost certainly a hosted deploy with no WS server here — point the user at
+// the player-address field instead of spinning forever.
+const usingOwnOrigin = wsUrl === defaultWsUrl();
 client.events = {
-  onConnecting: (attempt, url) =>
-    setConn(attempt <= 1 ? `connecting to ${url}…` : `connecting to ${url} (attempt ${attempt})…`),
+  onConnecting: (attempt, url) => {
+    if (usingOwnOrigin && attempt >= 3) {
+      setConn(`no player at ${url} — enter your player's address above and press Connect`);
+      return;
+    }
+    setConn(attempt <= 1 ? `connecting to ${url}…` : `connecting to ${url} (attempt ${attempt})…`);
+  },
   onConnected: () => setConn(`connected to ${wsUrl} — syncing clock…`),
   onDisconnected: () => setConn("disconnected — reconnecting…"),
   onServerError: (code, msg) => setError(`server error ${code}: ${msg}`),
@@ -352,7 +390,31 @@ stopBtn.addEventListener("click", () => void stopCapture());
 
 // Control an already-mapped player WITHOUT re-mapping: connect, pull its stored
 // map+topology (LittleFS / get_stored_map), and open the full result view so
-// you can drive effects live and download/upload maps.
+// Player-address field: point a hosted app at a specific device. Pre-fill with
+// the current target (unless it's just this page's own origin), and on Connect
+// remember it + reload so the whole app rebinds to it.
+const playerAddr = $<HTMLInputElement>("player-addr");
+if (!usingOwnOrigin) playerAddr.value = wsUrl;
+function connectToPlayer(): void {
+  const url = normalizePlayerWs(playerAddr.value);
+  if (url === null) {
+    setError("enter a player address, e.g. 192.168.1.50:81 or ws://192.168.1.50:81/ws");
+    return;
+  }
+  try {
+    localStorage.setItem(WS_STORE_KEY, url);
+  } catch {
+    /* private mode: fall back to a ?url= reload */
+  }
+  const next = new URLSearchParams(location.search);
+  next.set("url", url);
+  location.search = next.toString(); // reload, rebound to the player
+}
+$<HTMLButtonElement>("player-connect").addEventListener("click", connectToPlayer);
+playerAddr.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") connectToPlayer();
+});
+
 const controlBtn = $<HTMLButtonElement>("control");
 controlBtn.addEventListener("click", () => {
   void (async () => {
