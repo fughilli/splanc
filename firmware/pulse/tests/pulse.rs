@@ -90,6 +90,53 @@ fn junction_traversal_and_splits_stay_bounded() {
 }
 
 #[test]
+fn live_config_change_is_adopted_without_restarting() {
+    // Pulse: a same-effect config tweak keeps the running pulses (no restart).
+    let mut sim = Sim::new(Graph::build(&[(-1, -1, 2000)]), cfg(Effect::Pulse, &[(0, 255, 0)]), 7);
+    for _ in 0..6 {
+        sim.step(60); // spawn + advance a pulse
+    }
+    let before = sim.active_pulses();
+    assert!(before >= 1, "a pulse is running");
+    let mut c2 = cfg(Effect::Pulse, &[(0, 0, 255)]);
+    c2.glow_radius_mm = 200;
+    c2.speed_mm_s = 400;
+    sim.set_config(c2);
+    assert_eq!(sim.active_pulses(), before, "pulses survive a same-effect config change");
+    assert_eq!(sim.config().glow_radius_mm, 200, "the new config took effect");
+
+    // Flood: a speed tweak leaves the wavefront exactly where it was.
+    let mut f = Sim::new(Graph::build(&[(-1, -1, 2000)]), cfg(Effect::Flood, &[(80, 80, 255)]), 5);
+    f.step(300);
+    let front = f.flood_front_mm();
+    assert!(front > 0);
+    let mut c3 = cfg(Effect::Flood, &[(80, 80, 255)]);
+    c3.speed_mm_s = 250;
+    f.set_config(c3);
+    assert_eq!(f.flood_front_mm(), front, "flood wavefront preserved across a config change");
+}
+
+#[test]
+fn switching_effect_kind_reinitialises() {
+    let mut sim = Sim::new(Graph::build(&[(-1, -1, 1000)]), cfg(Effect::Pulse, &[(0, 255, 0)]), 3);
+    for _ in 0..6 {
+        sim.step(60);
+    }
+    assert!(sim.active_pulses() >= 1);
+    sim.set_config(cfg(Effect::Flood, &[(255, 255, 255)])); // pulse → flood
+    assert_eq!(sim.active_pulses(), 0, "mode switch clears the pulses");
+    sim.step(100);
+    let mut lit = 0;
+    for s in (0..=1000).step_by(50) {
+        let (r, g, b) = sim.led_color(0, s, 0);
+        if r as u32 + g as u32 + b as u32 > 0 {
+            lit += 1;
+        }
+    }
+    assert!(lit > 0, "the flood runs after the switch");
+}
+
+#[test]
 fn flood_swirls_on_a_terminus_less_loop() {
     // A triangle: three segments between branch points 0,1,2 — every node is
     // degree 2, so there is NO terminus. The flood must fall back to an

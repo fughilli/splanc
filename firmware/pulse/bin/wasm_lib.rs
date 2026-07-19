@@ -79,6 +79,37 @@ impl EffectSim {
         }
     }
 
+    /// Adopt a new effect config on the RUNNING sim without resetting animation
+    /// state (smooth live tuning). Same arg order as the constructor's config
+    /// tail. A change of effect kind (pulse↔flood) re-initialises that effect.
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_config(
+        &mut self,
+        effect: u8,
+        intensity: f32,
+        glow_m: f32,
+        speed_m_s: f32,
+        agent_count: u32,
+        lead_m: f32,
+        split_prob: f32,
+        decay_m: f32,
+        palette_rgb: &[u32],
+    ) {
+        let eff = if effect == 1 { Effect::Flood } else { Effect::Pulse };
+        let cfg = EffectConfig::from_wire(
+            eff,
+            intensity,
+            glow_m,
+            speed_m_s,
+            agent_count,
+            lead_m,
+            split_prob,
+            decay_m,
+            palette_rgb,
+        );
+        self.sim.set_config(cfg);
+    }
+
     /// Advance the simulation by `dt_ms`.
     pub fn step(&mut self, dt_ms: u32) {
         self.sim.step(dt_ms);

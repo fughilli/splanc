@@ -253,7 +253,9 @@ pub struct Sim {
     // flood: geodesic distance from the source to each node + the wavefront.
     node_dist: [u32; MAX_NODES],
     flood_front_mm: u32,
-    flood_max_mm: u32,
+    /// Max geodesic distance from the source (the decay tail is added on top at
+    /// use, so a live `decay_mm` change is adopted without restarting the flood).
+    flood_reach_mm: u32,
 }
 
 fn rng_next(s: &mut u32) -> u32 {
@@ -276,7 +278,7 @@ impl Sim {
             spawn_accum_ms: 0,
             node_dist: [u32::MAX; MAX_NODES],
             flood_front_mm: 0,
-            flood_max_mm: 0,
+            flood_reach_mm: 0,
         };
         if cfg.effect == Effect::Flood {
             sim.start_flood();
@@ -286,6 +288,25 @@ impl Sim {
 
     pub fn config(&self) -> &EffectConfig {
         &self.cfg
+    }
+
+    /// Adopt a new config on the RUNNING sim WITHOUT resetting animation state,
+    /// so live tuning (speed / glow / lead / split / decay / palette / intensity)
+    /// is smooth — the pulses and flood wavefront keep their positions. Only a
+    /// change of EFFECT KIND (pulse↔flood) re-initialises, since the running
+    /// state isn't meaningful across modes.
+    pub fn set_config(&mut self, cfg: EffectConfig) {
+        let mode_changed = cfg.effect != self.cfg.effect;
+        self.cfg = cfg;
+        if mode_changed {
+            for p in self.pulses.iter_mut() {
+                p.alive = false;
+            }
+            self.spawn_accum_ms = 0;
+            if self.cfg.effect == Effect::Flood {
+                self.start_flood();
+            }
+        }
     }
 
     /// Live pulse count (introspection / tests).
@@ -412,19 +433,21 @@ impl Sim {
         };
         self.node_dijkstra(source);
         self.flood_front_mm = 0;
-        // Longest geodesic reach → when the flood is done (plus the decay tail).
+        // Longest geodesic reach; the decay tail is added at the restart check
+        // (step_flood) so a live decay change is honoured without a restart.
         let mut maxd = 0u32;
         for nd in 0..self.graph.n_nodes {
             if self.node_dist[nd] != u32::MAX {
                 maxd = maxd.max(self.node_dist[nd]);
             }
         }
-        self.flood_max_mm = maxd + self.cfg.decay_mm;
+        self.flood_reach_mm = maxd;
     }
 
     fn step_flood(&mut self, adv: u32) {
         self.flood_front_mm = self.flood_front_mm.saturating_add(adv);
-        if self.flood_front_mm > self.flood_max_mm {
+        // Done once the wavefront has cleared the far reach plus its decay tail.
+        if self.flood_front_mm > self.flood_reach_mm.saturating_add(self.cfg.decay_mm) {
             self.start_flood(); // faded to black — restart from a fresh terminus
         }
     }
