@@ -92,7 +92,7 @@ fn full_phone_session() {
     // i.e. exactly what the phone decoder is tested to read.
     for (f, row) in g["colorPlan"].as_array().unwrap().iter().enumerate() {
         for (id, expected) in row.as_str().unwrap().chars().enumerate() {
-            let got = letter(player.pattern_color(id as u32, f as u32).expect("active"));
+            let got = letter(player.pattern_color(id as u32, f as u32, 0).expect("active"));
             assert_eq!(got, expected, "frame {f}, LED {id}");
         }
     }
@@ -329,4 +329,40 @@ fn frame_timing_drain() {
     assert_eq!(last.r#seq, 499);
     // dropped + delivered accounts for every sample pushed since the last poll.
     assert_eq!(ft.r#dropped + ft.r#ticks.len() as u32, 500);
+}
+
+#[test]
+fn masked_recapture_holds_off_unmasked_and_rolls_targets() {
+    let mut player = Player::new("p", 8);
+    send(&mut player, CMsg::Hello(pb::Hello::default()), 0.0);
+
+    // Light LEDs 0, 2, 5 only (byte 0 bits 0,2,5 = 0x25); the rest are held off.
+    let mut opts = pb::StartMappingOptions::default();
+    opts.r#led_count = 8;
+    opts.r#led_mask.extend_from_slice(&[0x25]).unwrap();
+    let mut sm = pb::StartMapping::default();
+    sm.set_options(opts);
+    send(&mut player, CMsg::StartMapping(sm), 1000.0);
+    // Frame 0 is ALL_ON white for lit LEDs; masked-off LEDs are black.
+    assert_eq!(player.pattern_color(0, 0, 0).unwrap(), pat::WHITE, "masked LED 0 lit");
+    assert_eq!(player.pattern_color(2, 0, 0).unwrap(), pat::WHITE, "masked LED 2 lit");
+    assert_eq!(player.pattern_color(1, 0, 0).unwrap(), (0, 0, 0), "unmasked LED 1 off");
+    assert_eq!(player.pattern_color(7, 0, 0).unwrap(), (0, 0, 0), "unmasked LED 7 off");
+
+    // Rolling: mask 0,1,2,3; anchor 0; mod 2. Anchor lit every cycle; a target
+    // lights only on cycles where cycle % 2 == id % 2.
+    let mut opts = pb::StartMappingOptions::default();
+    opts.r#led_count = 8;
+    opts.r#led_mask.extend_from_slice(&[0x0F]).unwrap();
+    opts.r#anchor_mask.extend_from_slice(&[0x01]).unwrap();
+    opts.r#rolling_mod = 2;
+    let mut sm = pb::StartMapping::default();
+    sm.set_options(opts);
+    send(&mut player, CMsg::StartMapping(sm), 2000.0);
+    assert_eq!(player.pattern_color(0, 0, 0).unwrap(), pat::WHITE, "anchor lit on even cycle");
+    assert_eq!(player.pattern_color(0, 0, 1).unwrap(), pat::WHITE, "anchor lit on odd cycle");
+    assert_eq!(player.pattern_color(1, 0, 0).unwrap(), (0, 0, 0), "target 1 off out of phase");
+    assert_eq!(player.pattern_color(1, 0, 1).unwrap(), pat::WHITE, "target 1 lit in phase");
+    assert_eq!(player.pattern_color(2, 0, 0).unwrap(), pat::WHITE, "target 2 lit in phase");
+    assert_eq!(player.pattern_color(2, 0, 1).unwrap(), (0, 0, 0), "target 2 off out of phase");
 }

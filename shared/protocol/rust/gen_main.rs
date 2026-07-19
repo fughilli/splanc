@@ -48,6 +48,16 @@ fn main() -> std::io::Result<()> {
     // chunk (the phone caps its request to this). 1 KiB fits the reply cap.
     g.configure(".ledmapper.v1.StoredMapChunk.data", Config::new().max_bytes(1024));
 
+    // Recapture masks: a bitmask over the LEDs — 32 bytes covers 256 LEDs (the
+    // player's render ceiling).
+    g.configure_many(
+        &[
+            ".ledmapper.v1.StartMappingOptions.led_mask",
+            ".ledmapper.v1.StartMappingOptions.anchor_mask",
+        ],
+        Config::new().max_bytes(32),
+    );
+
     // Batched telemetry (Pi-profile arms; players silently drop them).
     g.configure(
         ".ledmapper.v1.Detections.batch",

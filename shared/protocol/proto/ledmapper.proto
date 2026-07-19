@@ -264,6 +264,17 @@ message StartMappingOptions {
   optional int32 symbols = 2;
   optional double bit_period_ms = 3;
   optional double brightness = 4;
+  // Recapture mask (§7.10): a bitmask, byte b bit i = LED (b*8+i) is lit.
+  // Empty = every LED (a normal full-fixture map). Lets a phone re-map just a
+  // subset (registration anchors + low-confidence targets) while the code-book
+  // stays over the FULL led_count, so ids/codes are unchanged.
+  optional bytes led_mask = 5;
+  // Subset of led_mask kept lit in EVERY rolling phase (registration anchors).
+  optional bytes anchor_mask = 6;
+  // Rolling subsets: 0 = all masked LEDs lit together; K>0 = a target LED
+  // (masked, non-anchor) lights only on cycles where cycle_index % K == id % K,
+  // so overlapping neighbours are never lit at once (K passes cover them all).
+  optional int32 rolling_mod = 7;
 }
 
 message StartMapping {

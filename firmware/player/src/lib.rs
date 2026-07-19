@@ -110,6 +110,28 @@ const BRIGHTNESS_ONE_Q8: u16 = 256;
 /// the module note on f64 cost). The wire is milliseconds/[0,1] doubles; those
 /// are reconstructed only at the cold encode boundary (`bit_period_ms()` /
 /// `brightness()`), never in the frame loop.
+/// Recapture-mask width: 32 bytes = 256 LEDs (the render ceiling).
+const MASK_BYTES: usize = 32;
+
+/// Is LED `led` set in a bitmask (byte b, bit i = LED b*8+i)?
+fn mask_bit(mask: &[u8; MASK_BYTES], led: u32) -> bool {
+    let byte = (led / 8) as usize;
+    byte < MASK_BYTES && (mask[byte] >> (led % 8)) & 1 == 1
+}
+
+/// Copy a wire bitmask (heapless bytes) into a fixed array, truncating beyond
+/// MASK_BYTES. Returns whether ANY bit is set (i.e. masking is in effect).
+fn load_mask(src: &[u8], dst: &mut [u8; MASK_BYTES]) -> bool {
+    let mut any = false;
+    for (i, &b) in src.iter().enumerate() {
+        if i < MASK_BYTES {
+            dst[i] = b;
+            any |= b != 0;
+        }
+    }
+    any
+}
+
 #[derive(Debug, Clone, Copy)]
 struct ActiveCapture {
     /// Player-clock epoch (integer milliseconds; the clock is millis()).
@@ -121,6 +143,14 @@ struct ActiveCapture {
     /// LED brightness as Q8 fixed-point in [0, 256] (256 == full); servoed by
     /// the phone against its measured bloom/wash-out (§7.1).
     brightness_q8: u16,
+    /// Recapture mask (§7.10): only these LEDs are lit; the rest are held off.
+    /// `masked` false = every LED (a normal full-fixture map).
+    masked: bool,
+    led_mask: [u8; MASK_BYTES],
+    /// Anchors kept lit in every rolling phase.
+    anchor_mask: [u8; MASK_BYTES],
+    /// Rolling-subset modulus (0/1 = all masked LEDs at once).
+    rolling_mod: u32,
 }
 
 impl ActiveCapture {
@@ -306,11 +336,19 @@ impl Player {
             return error("bad_message", "brightness must be in [0, 1]");
         }
         let spec = CodeSpec::derive(led_count as u32, symbols, true);
+        let mut led_mask = [0u8; MASK_BYTES];
+        let mut anchor_mask = [0u8; MASK_BYTES];
+        let masked = load_mask(&options.r#led_mask, &mut led_mask);
+        load_mask(&options.r#anchor_mask, &mut anchor_mask);
         let active = ActiveCapture {
             epoch_ms: now_ms,
             spec,
             bit_period_us: (bit_period_ms * 1000.0 + 0.5) as u32,
             brightness_q8: brightness_to_q8(brightness),
+            masked,
+            led_mask,
+            anchor_mask,
+            rolling_mod: options.r#rolling_mod.max(0) as u32,
         };
         self.active = Some(active);
         let mut started = pb::MappingStarted::default();
@@ -354,6 +392,11 @@ impl Player {
             spec,
             bit_period_us: (bit_period_ms * 1000.0 + 0.5) as u32,
             brightness_q8: brightness_to_q8(brightness),
+            // A mid-capture reconfigure keeps the recapture mask.
+            masked: active.masked,
+            led_mask: active.led_mask,
+            anchor_mask: active.anchor_mask,
+            rolling_mod: active.rolling_mod,
         });
         self.pattern_state()
     }
@@ -512,8 +555,21 @@ impl Player {
     /// phone-servoed capture brightness — hue is the carrier, so a uniform
     /// scale changes nothing the decoder reads (it normalizes against each
     /// track's own white frame).
-    pub fn pattern_color(&self, led: u32, frame_index: u32) -> Option<Rgb> {
+    pub fn pattern_color(&self, led: u32, frame_index: u32, cycle_index: u32) -> Option<Rgb> {
         let active = self.active.as_ref()?;
+        if active.masked {
+            if !mask_bit(&active.led_mask, led) {
+                return Some((0, 0, 0)); // outside the recapture mask → held off
+            }
+            // Rolling subsets: a target (masked, non-anchor) lights only on the
+            // cycles of its phase, so overlapping neighbours never light at once.
+            if active.rolling_mod > 1
+                && !mask_bit(&active.anchor_mask, led)
+                && cycle_index % active.rolling_mod != led % active.rolling_mod
+            {
+                return Some((0, 0, 0));
+            }
+        }
         let (r, g, b) = color_for_frame(led, frame_index, &active.spec);
         // Integer Q8 scale (v * q8 / 256, rounded) — no f64 in the per-LED,
         // per-frame hot path. q8 == 256 is exact identity.

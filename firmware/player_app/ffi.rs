@@ -289,11 +289,18 @@ pub unsafe extern "C" fn lm_pattern_frame_shown(seq: u32, t_mono_us: u32) {
     player().record_frame_shown(seq, t_mono_us);
 }
 
-/// The color LED `led` shows in mapping cycle frame `frame_index`
-/// (caller reduces modulo cycle_frames). False when no capture is active.
+/// The color LED `led` shows in mapping cycle frame `frame_index` of absolute
+/// cycle `cycle_index` (the caller reduces the running frame counter: frame =
+/// seq % cycle_frames, cycle = seq / cycle_frames). cycle_index drives the
+/// recapture rolling-subset rotation. False when no capture is active.
 #[no_mangle]
-pub unsafe extern "C" fn lm_pattern_color(led: u32, frame_index: u32, rgb: *mut u8) -> bool {
-    match player().pattern_color(led, frame_index) {
+pub unsafe extern "C" fn lm_pattern_color(
+    led: u32,
+    frame_index: u32,
+    cycle_index: u32,
+    rgb: *mut u8,
+) -> bool {
+    match player().pattern_color(led, frame_index, cycle_index) {
         Some((r, g, b)) => {
             *rgb = r;
             *rgb.add(1) = g;

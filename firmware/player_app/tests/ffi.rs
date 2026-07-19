@@ -73,9 +73,9 @@ fn full_device_flow_through_the_c_abi() {
     assert_eq!(frames as i32, started.r#code_params.r#cycle_frames);
     assert_eq!(leds, 16);
     let mut rgb = [0u8; 3];
-    assert!(unsafe { lm_pattern_color(0, 0, rgb.as_mut_ptr()) });
+    assert!(unsafe { lm_pattern_color(0, 0, 0, rgb.as_mut_ptr()) });
     assert_eq!(rgb, [255, 255, 255], "frame 0 is the white ALL_ON reference");
-    assert!(unsafe { lm_pattern_color(0, 1, rgb.as_mut_ptr()) });
+    assert!(unsafe { lm_pattern_color(0, 1, 0, rgb.as_mut_ptr()) });
     assert_eq!(rgb, [0, 255, 0], "frame 1 is the green ALL_OFF sync");
 
     // Fire-and-forget telemetry produces no reply.

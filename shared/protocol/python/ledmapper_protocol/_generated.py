@@ -213,6 +213,12 @@ class StartMappingOptions(_StrictModel):
     symbols: Union[Literal[2, 4], None] = None
     bitPeriodMs: Union[float, None] = Field(default=None, gt=0.0)
     brightness: Union[float, None] = Field(default=None, ge=0.0, le=1.0)
+    # Recapture bitmask (base64), byte b bit i = LED (b*8+i) lit; omitted = all.
+    ledMask: Union[str, None] = None
+    # base64 bitmask: subset of ledMask kept lit every rolling phase (anchors).
+    anchorMask: Union[str, None] = None
+    # Rolling subsets: 0/omitted = all at once; K>0 = one target phase per cycle.
+    rollingMod: Union[int, None] = Field(default=None, ge=0)
 
 
 class StartMappingMessage(_StrictModel):

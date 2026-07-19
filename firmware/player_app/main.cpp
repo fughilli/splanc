@@ -415,10 +415,11 @@ static uint32_t render_once() {
     if (since_ms < 0) since_ms = 0;
     uint32_t seq = (uint32_t)(((uint64_t)since_ms * 1000ULL) / bit_period_us);
     uint32_t frame_index = seq % cycle_frames;
+    uint32_t cycle_index = seq / cycle_frames; // drives recapture rolling subsets
     if (frame_index != last_shown_frame) {
       uint32_t n = led_count < kMaxLeds ? led_count : kMaxLeds;
       for (uint32_t i = 0; i < n; i++) {
-        if (lm_pattern_color(i, frame_index, rgb)) {
+        if (lm_pattern_color(i, frame_index, cycle_index, rgb)) {
           leds[i] = CRGB(rgb[0], rgb[1], rgb[2]);
         }
       }

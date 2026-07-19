@@ -212,6 +212,12 @@ export interface StartMappingOptions {
   bitPeriodMs?: number;
   /** LED output brightness scale in [0,1]; omitted -> server default 1.0. */
   brightness?: number;
+  /** Recapture bitmask (base64), byte b bit i = LED (b*8+i) lit; omitted = all. */
+  ledMask?: string | null;
+  /** base64 bitmask: subset of ledMask kept lit every rolling phase (anchors). */
+  anchorMask?: string | null;
+  /** Rolling subsets: 0/omitted = all at once; K>0 = one target phase per cycle. */
+  rollingMod?: number | null;
 }
 
 export interface StartMappingMessage {

@@ -79,6 +79,21 @@
               "minimum": 0,
               "maximum": 1,
               "description": "LED output brightness scale (see code_params.json). Servoed by the client against measured bloom/wash-out. Null/omitted -> server default (1.0)."
+            },
+            "ledMask": {
+              "type": ["string", "null"],
+              "contentEncoding": "base64",
+              "description": "Recapture mask (§7.10): base64 bitmask, byte b bit i = LED (b*8+i) is lit. Omitted/empty = every LED. Lets the phone re-map a subset (anchors + low-confidence targets); the code-book stays over the full ledCount."
+            },
+            "anchorMask": {
+              "type": ["string", "null"],
+              "contentEncoding": "base64",
+              "description": "Base64 bitmask: subset of ledMask kept lit in every rolling phase (registration anchors)."
+            },
+            "rollingMod": {
+              "type": ["integer", "null"],
+              "minimum": 0,
+              "description": "Rolling subsets: 0/omitted = all masked LEDs at once; K>0 = a target LED lights only on cycles where cycle_index % K == id % K (overlapping neighbours never lit together)."
             }
           }
         }
