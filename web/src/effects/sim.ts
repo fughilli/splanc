@@ -25,6 +25,17 @@ export interface EffectParams {
 
 interface WasmEffectSim {
   step(dtMs: number): void;
+  set_config(
+    effect: number,
+    intensity: number,
+    glowM: number,
+    speedMs: number,
+    agentCount: number,
+    leadM: number,
+    splitProb: number,
+    decayM: number,
+    paletteRgb: Uint32Array,
+  ): void;
   render(): Uint8Array;
   active_pulses(): number;
   flood_front_mm(): number;
@@ -125,6 +136,22 @@ export class EffectSimulation {
 
   step(dtMs: number): void {
     this.sim.step(Math.max(0, Math.round(dtMs)));
+  }
+
+  /** Adopt new effect params on the running sim WITHOUT resetting animation
+   * state (smooth live tuning). A change of effect kind re-inits that effect. */
+  setConfig(p: EffectParams): void {
+    this.sim.set_config(
+      p.effect === "flood" ? 1 : 0,
+      p.intensity,
+      p.glow,
+      p.speed,
+      Math.max(1, Math.round(p.agentCount)),
+      p.lead,
+      p.split,
+      p.decay,
+      Uint32Array.from(p.palette),
+    );
   }
 
   /** Flat RGB, one triple per LED in map.leds order. */

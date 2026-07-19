@@ -115,6 +115,17 @@ function rebuildSim(): void {
   }
 }
 
+// A config-only change (a live slider / palette / effect toggle): adopt it on
+// the running sim so the animation isn't reset. Falls back to a build when
+// there's no sim yet.
+function retuneSim(): void {
+  if (sim === null) {
+    rebuildSim();
+    return;
+  }
+  sim.setConfig(effectParams());
+}
+
 function reextract(): void {
   if (currentMap === null) return;
   currentTopology = extractTopology(currentMap, extractOptions());
@@ -184,7 +195,7 @@ function selectEffect(next: "pulse" | "flood"): void {
   effect = next;
   $("fx-pulse").classList.toggle("on", next === "pulse");
   $("fx-flood").classList.toggle("on", next === "flood");
-  rebuildSim();
+  retuneSim(); // set_config re-inits the effect kind in place
 }
 
 function init(): void {
@@ -229,10 +240,13 @@ function init(): void {
   $("show-topo").addEventListener("change", () =>
     mapView?.setTopology($<HTMLInputElement>("show-topo").checked ? currentTopology : null),
   );
-  for (const id of ["intensity", "speed", "glow", "agents", "lead", "split", "decay", "seed"]) {
-    $(id).addEventListener("input", rebuildSim);
+  // Live config: adopted smoothly on the running sim (no restart).
+  for (const id of ["intensity", "speed", "glow", "agents", "lead", "split", "decay"]) {
+    $(id).addEventListener("input", retuneSim);
   }
-  $<HTMLSelectElement>("palette").addEventListener("change", rebuildSim);
+  $<HTMLSelectElement>("palette").addEventListener("change", retuneSim);
+  // Seed feeds the PRNG at construction only, so it needs a fresh sim.
+  $("seed").addEventListener("input", rebuildSim);
   $("tscale").addEventListener("input", () => setV("tscale", `${num("tscale").toFixed(1)}×`));
 
   $("fx-pulse").addEventListener("click", () => selectEffect("pulse"));
