@@ -582,8 +582,16 @@ static void provisioning_poll() {
   if (!sta_joining) return;
   if (WiFi.status() == WL_CONNECTED) {
     sta_joining = false;
+    // Onboarding done: drop the soft-AP and run station-only. The ESP32 has one
+    // radio, so AP+STA share it, and on some routers (notably consumer mesh)
+    // that leaves the station pingable-but-unreachable — inbound replies can
+    // egress the AP netif. Also disable modem sleep so the station answers
+    // promptly (no DTIM latency) now that the always-on AP isn't forcing the
+    // radio awake. Re-provisioning still works: that path is BLE, not the AP.
+    WiFi.mode(WIFI_STA);
+    WiFi.setSleep(false);
     String url = "http://" + WiFi.localIP().toString() + "/";
-    Log().printf("[player] joined, %s\n", url.c_str());
+    Log().printf("[player] joined, %s (station-only)\n", url.c_str());
     improv_ble_set_state(IMPROV_STATE_PROVISIONED);
     improv_ble_send_redirect(url.c_str());
   } else if (millis() - sta_join_started > kStaJoinTimeoutMs) {
@@ -616,15 +624,21 @@ void loop() {
     String sta = WiFi.status() == WL_CONNECTED
                      ? "sta " + WiFi.localIP().toString()
                      : (sta_joining ? String("sta joining…") : String("sta off"));
-    Log().printf(
-        "[player] AP \"%s\" %d station(s) http://%s/  %s  ws :%u  "
-        "ws=%s map=%lu leds\n",
-        kApSsid, WiFi.softAPgetStationNum(), WiFi.softAPIP().toString().c_str(),
-        sta.c_str(), kWsPort,
-        ws_state == WsState::kOpen        ? "open"
-        : ws_state == WsState::kHandshake ? "handshake"
-                                          : "idle",
-        map_leds);
+    const char *ws = ws_state == WsState::kOpen        ? "open"
+                     : ws_state == WsState::kHandshake ? "handshake"
+                                                       : "idle";
+    // The soft-AP is dropped once the station joins (station-only reachability),
+    // so only report AP details while it's actually up.
+    if (((int)WiFi.getMode() & (int)WIFI_MODE_AP) != 0) {
+      Log().printf(
+          "[player] AP \"%s\" %d station(s) http://%s/  %s  ws :%u ws=%s "
+          "map=%lu leds\n",
+          kApSsid, WiFi.softAPgetStationNum(), WiFi.softAPIP().toString().c_str(),
+          sta.c_str(), kWsPort, ws, map_leds);
+    } else {
+      Log().printf("[player] %s  ws :%u ws=%s map=%lu leds\n", sta.c_str(),
+                   kWsPort, ws, map_leds);
+    }
   }
   delay(1);
 }
