@@ -156,6 +156,51 @@
         pointer-events: auto;
         background: #d83535;
       }
+      /* In-capture manual override for the exposure/brightness servo. */
+      #cap-controls {
+        position: absolute;
+        left: 0.8rem;
+        bottom: calc(env(safe-area-inset-bottom, 0px) + 4.2rem);
+        width: min(62vw, 320px);
+        pointer-events: auto;
+        background: rgba(10, 10, 14, 0.72);
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        border-radius: 10px;
+        padding: 0.5rem 0.7rem;
+        color: #fff;
+        font-size: 13px;
+      }
+      #cap-controls .cc-row {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        justify-content: space-between;
+      }
+      #cap-controls #cc-toggle {
+        pointer-events: auto;
+        background: #2a6ea3;
+        border: none;
+        color: #fff;
+        border-radius: 6px;
+        padding: 0.3rem 0.6rem;
+        font-size: 12px;
+      }
+      #cap-controls.manual #cc-toggle {
+        background: #b8862a;
+      }
+      #cap-controls label {
+        display: block;
+        margin-top: 0.45rem;
+        color: #d5d5dd;
+      }
+      #cap-controls input[type="range"] {
+        width: 100%;
+      }
+      #cap-controls .cc-v {
+        float: right;
+        color: #9fd8ff;
+        font-variant-numeric: tabular-nums;
+      }
     </style>
   </head>
   <body>
@@ -252,6 +297,18 @@
       <div class="hud">
         <div id="hud-stats">starting…</div>
         <div class="guide" id="hud-guide">Walk a slow arc around the fixture — sideways steps, not toward it.</div>
+      </div>
+      <div id="cap-controls">
+        <div class="cc-row">
+          <span id="cc-mode-label">Auto (servo)</span>
+          <button id="cc-toggle" type="button">Manual override</button>
+        </div>
+        <div id="cc-sliders" style="display: none">
+          <label>LED brightness <span class="cc-v" id="cc-bright-v">100%</span>
+            <input id="cc-bright" type="range" min="5" max="100" step="1" value="100" /></label>
+          <label>Camera exposure <span class="cc-v" id="cc-exp-v">0.25</span>
+            <input id="cc-exp" type="range" min="0" max="1" step="0.02" value="0.25" /></label>
+        </div>
       </div>
       <div class="stopwrap">
         <button id="stop">Stop &amp; finish</button>

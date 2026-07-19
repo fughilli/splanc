@@ -184,6 +184,71 @@ let traceSink: TraceSink | null = null;
 // background (full-res frames outrun the live bandwidth; see FrameSink).
 let frameSinkRef: FrameSink | null = null;
 
+// -- manual exposure/brightness override (in-capture) -------------------------
+// The exposure + LED-brightness servos don't always land on a good operating
+// point, so the capture HUD exposes a manual override: the toggle freezes both
+// servos and the two sliders drive the camera exposure and LED brightness
+// directly; toggling back resumes servo mode from wherever the sliders are.
+// While in auto mode the sliders track the servo, so switching never jumps.
+const capControls = $("cap-controls");
+const ccToggle = $<HTMLButtonElement>("cc-toggle");
+const ccSliders = $("cc-sliders");
+const ccModeLabel = $("cc-mode-label");
+const ccBright = $<HTMLInputElement>("cc-bright");
+const ccBrightV = $("cc-bright-v");
+const ccExp = $<HTMLInputElement>("cc-exp");
+const ccExpV = $("cc-exp-v");
+let manualMode = false;
+// Set by the capture loop while running (null otherwise): applies a slider
+// value into the live capture (brightness via a configure, exposure via the
+// camera track).
+let manualHooks: { applyBrightness: (b01: number) => void; applyExposure: (e01: number) => void } | null =
+  null;
+
+function setManualMode(on: boolean): void {
+  manualMode = on;
+  capControls.classList.toggle("manual", on);
+  ccSliders.style.display = on ? "block" : "none";
+  ccModeLabel.textContent = on ? "Manual" : "Auto (servo)";
+  ccToggle.textContent = on ? "Back to servo" : "Manual override";
+}
+
+/** Keep the sliders showing the servo's current values (auto mode only), so
+ * flipping to manual doesn't jump the levers. */
+function syncManualSliders(brightness01: number, exposure01: number): void {
+  if (manualMode) return;
+  ccBright.value = String(Math.round(brightness01 * 100));
+  ccBrightV.textContent = `${ccBright.value}%`;
+  ccExp.value = exposure01.toFixed(2);
+  ccExpV.textContent = exposure01.toFixed(2);
+}
+
+ccToggle.addEventListener("click", () => setManualMode(!manualMode));
+ccBright.addEventListener("input", () => {
+  ccBrightV.textContent = `${ccBright.value}%`;
+});
+// Brightness is a code param — a configure re-anchors the pattern clock — so
+// apply on release, not on every drag pixel.
+ccBright.addEventListener("change", () => {
+  if (manualMode) manualHooks?.applyBrightness(parseInt(ccBright.value, 10) / 100);
+});
+// Exposure is a local camera setting (no pattern restamp) → apply live, but
+// throttle the applyConstraints calls during a drag; the release always lands
+// the final value.
+let lastExpApply = 0;
+function applyManualExposure(final: boolean): void {
+  if (!manualMode) return;
+  const now = performance.now();
+  if (!final && now - lastExpApply < 120) return;
+  lastExpApply = now;
+  manualHooks?.applyExposure(parseFloat(ccExp.value));
+}
+ccExp.addEventListener("input", () => {
+  ccExpV.textContent = parseFloat(ccExp.value).toFixed(2);
+  applyManualExposure(false);
+});
+ccExp.addEventListener("change", () => applyManualExposure(true));
+
 // -- solver placement (Rust/wasm branch) --------------------------------------
 // Load the wasm solver in a worker and time the canned benchmark once at
 // startup; stopCapture() compares against the host's welcome.solverBenchMs
@@ -1013,6 +1078,19 @@ async function startCapture(): Promise<void> {
           renegotiating = false;
         });
     };
+
+    // Wire the in-capture manual override to this capture's levers. Start in
+    // auto (servo) mode with the sliders reflecting the initial values.
+    setManualMode(false);
+    syncManualSliders(params.brightness ?? 1, servoedExposure);
+    manualHooks = {
+      applyBrightness: (b01) => applyReconfigure({ brightness: b01 }),
+      applyExposure: (e01) => {
+        servoedExposure = e01;
+        void ms.setExposure(e01, params.bitPeriodMs / 2);
+      },
+    };
+
     const exposureTick = setInterval(() => {
       if (!capturing) {
         clearInterval(exposureTick);
@@ -1046,7 +1124,8 @@ async function startCapture(): Promise<void> {
       // long). Applied directly — it's a local camera setting, no pattern-clock
       // restamp — so no two-tick confirmation. It's the primary brightness
       // lever here, so the LED-brightness servo is frozen while it runs.
-      if (servoExposure && pop !== null) {
+      // Manual override freezes BOTH servos (the user drives the sliders).
+      if (servoExposure && !manualMode && pop !== null) {
         const nextExp = planExposureServo(servoedExposure, {
           blobCount: report.blobCount,
           ledCount,
@@ -1063,7 +1142,7 @@ async function startCapture(): Promise<void> {
       // inverted U (dim → blobs starve; bright → bloom merges halos and
       // washes hue), so servo on the MEASURED wash-out signals.
       const wantBright =
-        !servoExposure && forcedBrightness === null && pop !== null
+        !servoExposure && forcedBrightness === null && !manualMode && pop !== null
           ? planLedBrightness(params.brightness ?? 1, {
               blobCount: report.blobCount,
               ledCount,
@@ -1094,8 +1173,11 @@ async function startCapture(): Promise<void> {
         pendingSymbols = wantSym;
         pendingBrightness = wantBright;
       }
+      // Let the sliders track the servo so a switch to manual doesn't jump.
+      syncManualSliders(params.brightness ?? 1, servoedExposure);
     }, 2000);
   } catch (e) {
+    manualHooks = null;
     capturing = false;
     document.body.classList.remove("in-capture");
     imuRecorder?.stop();
@@ -1137,6 +1219,7 @@ function drainFramesInBackground(): void {
 async function stopCapture(sessionAlreadyEnded = false): Promise<void> {
   if (!capturing) return;
   capturing = false;
+  manualHooks = null;
   stopBtn.disabled = true;
   document.body.classList.remove("in-capture");
   imuRecorder?.stop();
