@@ -1,0 +1,36 @@
+"""The built web bundle (//web:dist), embedded for the player's HTTP server.
+
+`embed_web` gzips each file in the dist tree into a C asset table
+(web_assets.cpp); `web_assets` wraps it with the hand-written header so the
+player app can serve the control UI over plain HTTP on its own :80 port
+(same-origin ws://:81 — no TLS, no mixed-content wall for the hosted app).
+"""
+
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_python//python:defs.bzl", "py_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+py_binary(
+    name = "embed_web",
+    srcs = ["embed_web.py"],
+)
+
+genrule(
+    name = "web_assets_gen",
+    outs = ["web_assets.cpp"],
+    # //web:dist is a JS/vite build; keep it in the exec config (as a `tool`)
+    # so the esp32c6 board transition on the firmware graph doesn't try to
+    # configure the bundle for the MCU platform (no nodejs toolchain there).
+    cmd = "$(execpath :embed_web) $(execpath //web:dist) $@",
+    tools = [
+        ":embed_web",
+        "//web:dist",
+    ],
+)
+
+cc_library(
+    name = "web_assets",
+    srcs = ["web_assets.cpp"],
+    hdrs = ["web_assets.h"],
+)

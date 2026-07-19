@@ -1,7 +1,10 @@
 // LED Mapper ESP32-C6 player app — bring-up build (plan Phases 2/4 partial).
 //
-//   WiFi soft-AP  ──  HTTP :80  /          the R2 landing page (cert flow;
-//                                          a formality until TLS lands)
+//   WiFi soft-AP  ──  HTTP :80  /*         the control-UI bundle (//web:dist),
+//                                          embedded in flash — a phone opens
+//                                          http://<player>/ and reaches the
+//                                          same-origin ws below over plain
+//                                          HTTP (no TLS, no mixed-content wall)
 //                                 /healthz  "ok"
 //                 ──  WS   :81  /ws        the ledmapper.v1 player protocol
 //                                          (binary frames -> lm_player_handle,
@@ -11,10 +14,10 @@
 //   heartbeat.
 //
 // Deliberate bring-up scope (documented in README.md):
-//  - plain ws:// on its own port (TLS/wss + RFC6455-over-httpd is Phase 4c
-//    hardening) — so the CAPTURE app (https origin) cannot connect yet
-//    (mixed content); protocol testing uses the wall page / a test client
-//    over http, or `tools/player_probe.py`.
+//  - plain ws:// on its own port. The hosted (https) CAPTURE app can't reach
+//    it directly (mixed content); instead it provisions over BLE and hands off
+//    to http://<player>/ (this app's embedded bundle), whose same-origin
+//    ws://<player>:81 is reachable over plain HTTP. TLS/wss stays Phase 4c.
 //  - one WebSocket client at a time; a second connect replaces the first.
 //  - one reassembly buffer bounds the largest inbound message (a ~1024-LED
 //    submit_map is ~45 KB); larger -> close 1009 (message too big).
@@ -30,13 +33,13 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "firmware/landing/landing_page.h"
 #include "firmware/player_app/improv_ble.h"
 #include "firmware/player_app/improv_codec.h"
 #include "firmware/player_app/led_config.h"
 #include "firmware/player_app/player_ffi.h"
 #include "firmware/player_app/serial_log.h"
 #include "firmware/player_app/ws_codec.h"
+#include "firmware/webapp/web_assets.h"
 
 // The player protocol handler (lm_player_handle -> Player::handle) decodes a
 // ClientMessage and builds a ServerMessage as by-value protobuf structs on the
@@ -493,6 +496,28 @@ static void render_task(void *) {
   }
 }
 
+// Serve the embedded control-UI bundle from flash. `http.uri()` is the path
+// (query already stripped by WebServer), so "/index.html?url=…&control=1"
+// arrives as "/". Returns false when nothing matches (→ 404).
+static bool serve_web_asset() {
+  String path = http.uri();
+  if (path.length() == 0 || path == "/") path = "/index.html";
+  for (size_t i = 0; i < kWebAssetCount; i++) {
+    if (path == kWebAssets[i].path) {
+      if (kWebAssets[i].gzip) http.sendHeader("Content-Encoding", "gzip");
+      // Hashed asset names are content-addressed (cache forever); index.html
+      // must refresh across a reflash.
+      http.sendHeader("Cache-Control", path == "/index.html"
+                                           ? "no-cache"
+                                           : "max-age=31536000, immutable");
+      http.send_P(200, kWebAssets[i].ctype,
+                  reinterpret_cast<PGM_P>(kWebAssets[i].data), kWebAssets[i].len);
+      return true;
+    }
+  }
+  return false;
+}
+
 // -- app ----------------------------------------------------------------------
 
 void setup() {
@@ -526,11 +551,12 @@ void setup() {
   improv_ble_begin(kBleName,
                    ssid.length() > 0 ? IMPROV_STATE_PROVISIONING : IMPROV_STATE_AUTHORIZED);
 
-  http.on("/", []() {
-    http.sendHeader("Cache-Control", "no-store");  // cert-rotation safety
-    http.send(200, "text/html", landing_html);
-  });
   http.on("/healthz", []() { http.send(200, "text/plain", "ok"); });
+  // Everything else is the embedded control-UI bundle. "/" (and any unknown
+  // path with no extension, e.g. a deep link) falls back to index.html.
+  http.onNotFound([]() {
+    if (!serve_web_asset()) http.send(404, "text/plain", "not found");
+  });
   http.begin();
   ws_listener.begin();
 

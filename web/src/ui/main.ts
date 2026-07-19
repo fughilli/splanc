@@ -416,45 +416,50 @@ playerAddr.addEventListener("keydown", (e) => {
 });
 
 const controlBtn = $<HTMLButtonElement>("control");
-controlBtn.addEventListener("click", () => {
-  void (async () => {
-    controlBtn.disabled = true;
-    try {
-      if (!client.isConnected) {
-        setConn("connecting…");
-        await client.connect();
-      }
-      setConn("loading map from player…");
-      const bundle = await client.pullStoredMap((d, t) =>
-        setConn(`loading ${Math.round((100 * d) / Math.max(1, t))}%`),
-      );
-      if (!bundle.map || bundle.map.leds.length === 0) throw new Error("no map on the player");
-      recaptureCtx = null;
-      resultMap = bundle.map;
-      resultMapId = bundle.map.mapId || null;
-      showResult(bundle.map.mapId || "player-map", bundle.map);
-      // Use the player's ACTUAL stored topology (not a fresh extraction).
-      currentTopology = bundle.topology.segments.length > 0 ? bundle.topology : null;
-      mapView?.setTopology(currentTopology);
-      topoControls.style.display = bundle.map.leds.length >= 2 ? "" : "none";
-      recapControls.style.display = "none"; // control-only: no mapping run
-      if (currentTopology !== null) {
-        topoSummary.textContent = `from player · ${currentTopology.segments.length} seg · ${currentTopology.branchPoints.length} junc`;
-        topoUploadBtn.textContent = "Re-upload topology";
-        topoUploadBtn.disabled = false;
-        playEffectBtn.style.display = "";
-        playFloodBtn.style.display = "";
-        effectControls.style.display = "";
-      }
-      setConn(`connected · ${bundle.map.leds.length} LEDs${currentTopology ? " · topology loaded" : " · no topology"}`);
-    } catch (e) {
-      setError(`control failed: ${e instanceof Error ? e.message : e}`);
-      setConn(client.isConnected ? "connected" : "disconnected");
-    } finally {
-      controlBtn.disabled = false;
+async function enterControlMode(): Promise<void> {
+  controlBtn.disabled = true;
+  try {
+    if (!client.isConnected) {
+      setConn("connecting…");
+      await client.connect();
     }
-  })();
-});
+    setConn("loading map from player…");
+    const bundle = await client.pullStoredMap((d, t) =>
+      setConn(`loading ${Math.round((100 * d) / Math.max(1, t))}%`),
+    );
+    if (!bundle.map || bundle.map.leds.length === 0) throw new Error("no map on the player");
+    recaptureCtx = null;
+    resultMap = bundle.map;
+    resultMapId = bundle.map.mapId || null;
+    showResult(bundle.map.mapId || "player-map", bundle.map);
+    // Use the player's ACTUAL stored topology (not a fresh extraction).
+    currentTopology = bundle.topology.segments.length > 0 ? bundle.topology : null;
+    mapView?.setTopology(currentTopology);
+    topoControls.style.display = bundle.map.leds.length >= 2 ? "" : "none";
+    recapControls.style.display = "none"; // control-only: no mapping run
+    if (currentTopology !== null) {
+      topoSummary.textContent = `from player · ${currentTopology.segments.length} seg · ${currentTopology.branchPoints.length} junc`;
+      topoUploadBtn.textContent = "Re-upload topology";
+      topoUploadBtn.disabled = false;
+      playEffectBtn.style.display = "";
+      playFloodBtn.style.display = "";
+      effectControls.style.display = "";
+    }
+    setConn(`connected · ${bundle.map.leds.length} LEDs${currentTopology ? " · topology loaded" : " · no topology"}`);
+  } catch (e) {
+    setError(`control failed: ${e instanceof Error ? e.message : e}`);
+    setConn(client.isConnected ? "connected" : "disconnected");
+  } finally {
+    controlBtn.disabled = false;
+  }
+}
+controlBtn.addEventListener("click", () => void enterControlMode());
+
+// Served by the device itself (BLE hand-off adds ?control=1 to the player's
+// http://<ip>/ page): skip mapping and drop straight into controlling the
+// already-onboarded fixture. The camera is unavailable over plain HTTP anyway,
+// so mapping isn't an option here — control is exactly what this page is for.
+if (qs.get("control") === "1") void enterControlMode();
 
 // Player onboarding over BLE (Improv Wi-Fi — see net/improv.ts): the hosted
 // app provisions an ESP32 player onto THIS network, gets its address back,
@@ -493,12 +498,29 @@ if (bleAvailable()) {
         } catch {
           // storage blocked — non-fatal, just no pre-fill next time
         }
-        const target = urls.map((u) => wsUrlFromRedirect(u)).find((u) => u !== null);
-        if (!target) throw new Error(`player joined, but sent no usable address (${urls})`);
+        const redirect = urls.find((u) => /^https?:\/\//i.test(u));
+        const target = redirect ? wsUrlFromRedirect(redirect) : null;
+        if (!redirect || !target) {
+          throw new Error(`player joined, but sent no usable address (${urls})`);
+        }
+        // Mixed-content wall: a secure (https) origin can't open a plain ws://
+        // to the player. But the player serves its OWN control UI over http, so
+        // hand off there — same-origin ws:// works over plain HTTP. The
+        // ?control=1 flag makes that page skip mapping and go straight to
+        // controlling the already-onboarded fixture.
+        if (location.protocol === "https:" && target.startsWith("ws://")) {
+          const handoff = new URL(redirect); // http://<player-ip>/
+          handoff.search = new URLSearchParams({ url: target, control: "1" }).toString();
+          setConn(`player joined — opening its control page at ${handoff.host}…`);
+          location.href = handoff.toString();
+          return;
+        }
+        // Already reachable (this page is http, or the player speaks wss):
+        // reload in place, rebound to the player.
         setConn(`player provisioned at ${target} — reconnecting…`);
         const qs2 = new URLSearchParams(location.search);
         qs2.set("url", target);
-        location.search = qs2.toString(); // reload, rebound to the player
+        location.search = qs2.toString();
       } catch (e) {
         setError(`Player setup failed: ${e instanceof Error ? e.message : e}`);
         bleBtn.disabled = false;
