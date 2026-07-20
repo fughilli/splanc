@@ -463,11 +463,15 @@ async function enterControlMode(): Promise<void> {
 }
 controlBtn.addEventListener("click", () => void enterControlMode());
 
-// Served by the device itself (BLE hand-off adds ?control=1 to the player's
-// http://<ip>/ page): skip mapping and drop straight into controlling the
-// already-onboarded fixture. The camera is unavailable over plain HTTP anyway,
-// so mapping isn't an option here — control is exactly what this page is for.
-if (qs.get("control") === "1") void enterControlMode();
+// When the page is served by the device itself (a plain-http page on the
+// default port — the firmware's embedded bundle at http://<ip>/), drop straight
+// into control mode: the camera is unavailable over plain http, so mapping
+// isn't an option here — control is what this page is for. ?control=1 forces it
+// explicitly (e.g. a shared link). The hosted mapping app (https) never does
+// this, so its capture flow is untouched.
+const servedByDevice =
+  location.protocol === "http:" && (location.port === "" || location.port === "80");
+if (qs.get("control") === "1" || servedByDevice) void enterControlMode();
 
 // Player onboarding over BLE (Improv Wi-Fi — see net/improv.ts): the hosted
 // app provisions an ESP32 player onto THIS network, gets its address back,
@@ -511,20 +515,22 @@ if (bleAvailable()) {
         if (!redirect || !target) {
           throw new Error(`player joined, but sent no usable address (${urls})`);
         }
-        // Mixed-content wall: a secure (https) origin can't open a plain ws://
-        // to the player. But the player serves its OWN control UI over http, so
-        // hand off there — same-origin ws:// works over plain HTTP. The
-        // ?control=1 flag makes that page skip mapping and go straight to
-        // controlling the already-onboarded fixture.
-        if (location.protocol === "https:" && target.startsWith("ws://")) {
-          const handoff = new URL(redirect); // http://<player-ip>/
-          handoff.search = new URLSearchParams({ url: target, control: "1" }).toString();
-          setConn(`player joined — opening its control page at ${handoff.host}…`);
-          location.href = handoff.toString();
+        // Onboarding is done — the device is on the LAN. NEVER navigate to it:
+        // the mapping flow needs THIS https origin (the camera is a secure-
+        // context API), and a plain-ws device is unreachable from https anyway
+        // (mixed content). Only rebind in place when the player is actually
+        // reachable from here — it speaks wss, or this page is plain http. A
+        // plain-ws device is just reported; its standalone control UI lives at
+        // the http URL, which the user opens directly when they want control.
+        const reachable = !(location.protocol === "https:" && target.startsWith("ws://"));
+        if (!reachable) {
+          setConn(
+            `player onboarded on your network — to control it, open ${redirect} directly. ` +
+              `Mapping continues here.`,
+          );
+          bleBtn.disabled = false;
           return;
         }
-        // Already reachable (this page is http, or the player speaks wss):
-        // reload in place, rebound to the player.
         setConn(`player provisioned at ${target} — reconnecting…`);
         const qs2 = new URLSearchParams(location.search);
         qs2.set("url", target);
