@@ -503,17 +503,30 @@ static bool serve_web_asset() {
   String path = http.uri();
   if (path.length() == 0 || path == "/") path = "/index.html";
   for (size_t i = 0; i < kWebAssetCount; i++) {
-    if (path == kWebAssets[i].path) {
-      if (kWebAssets[i].gzip) http.sendHeader("Content-Encoding", "gzip");
-      // Hashed asset names are content-addressed (cache forever); index.html
-      // must refresh across a reflash.
-      http.sendHeader("Cache-Control", path == "/index.html"
-                                           ? "no-cache"
-                                           : "max-age=31536000, immutable");
-      http.send_P(200, kWebAssets[i].ctype,
-                  reinterpret_cast<PGM_P>(kWebAssets[i].data), kWebAssets[i].len);
-      return true;
+    if (path != kWebAssets[i].path) continue;
+    const WebAsset &a = kWebAssets[i];
+    // The bundle's JS chunks (~20 KB gzipped) were crawling at ~1 KB/s and then
+    // truncating: Nagle held small segments waiting on the client's delayed
+    // ACKs, and that stall tripped the socket write timeout mid-file, so the
+    // WebServer closed the connection before the whole asset went out and the
+    // app never finished loading. Disable Nagle and stream the body in
+    // MSS-sized chunks under an explicit Content-Length (send_P's one-shot
+    // write is the unreliable path for payloads this large).
+    http.client().setNoDelay(true);
+    if (a.gzip) http.sendHeader("Content-Encoding", "gzip");
+    // Hashed asset names are content-addressed (cache forever); index.html must
+    // refresh across a reflash.
+    http.sendHeader("Cache-Control", path == "/index.html"
+                                         ? "no-cache"
+                                         : "max-age=31536000, immutable");
+    http.setContentLength(a.len);
+    http.send(200, a.ctype, "");  // status + headers (Content-Length from above)
+    const size_t kChunk = 1460;   // ~one TCP segment
+    for (size_t off = 0; off < a.len; off += kChunk) {
+      size_t n = a.len - off < kChunk ? a.len - off : kChunk;
+      http.sendContent_P(reinterpret_cast<PGM_P>(a.data + off), n);
     }
+    return true;
   }
   return false;
 }
