@@ -74,7 +74,15 @@ const savedWs = (() => {
     return null;
   }
 })();
-const wsUrl = qs.get("url") ?? savedWs ?? defaultWsUrl();
+// A plain ws:// player is unreachable from an https page (mixed content). Ignore
+// such a target there so the HOSTED mapping app (ledmapper.pages.dev) doesn't
+// endlessly retry a device address left in ?url=/localStorage from a prior
+// control session — it falls back to its own-origin wss and the camera-based
+// mapping flow. On http (a device's own control page) ws:// is fine and kept;
+// a wss:// player URL is always honored.
+const reachableTarget = (url: string | null): string | null =>
+  url && !(location.protocol === "https:" && url.startsWith("ws://")) ? url : null;
+const wsUrl = reachableTarget(qs.get("url")) ?? reachableTarget(savedWs) ?? defaultWsUrl();
 
 /** Turn a user-typed player address into a ws URL. A full ws(s):// URL is used
  * as-is (with a default /ws path); a bare host[:port] gets the page's scheme. */
