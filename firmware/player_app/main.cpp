@@ -27,6 +27,9 @@
 #include <WebServer.h>
 #include <WiFi.h>
 #include <esp_littlefs.h>
+#include <errno.h>
+#include <esp_heap_caps.h>
+#include <esp_system.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
@@ -564,11 +567,39 @@ static bool serve_web_asset() {
     // that's a timed-out/closed socket, and retrying every remaining chunk
     // would burn the 4 s SO_SNDTIMEO apiece.
     const size_t kChunk = 1460;
+    size_t sent = 0;
+    int last_errno = 0;
+    uint32_t min_heap = esp_get_free_heap_size();
+    uint32_t t0 = millis();
     for (size_t off = 0; off < a.len; off += kChunk) {
       size_t n = a.len - off < kChunk ? a.len - off : kChunk;
-      if (client.write(a.data + off, n) != n) break;
+      errno = 0;
+      size_t w = client.write(a.data + off, n);
+      sent += w;
+      uint32_t h = esp_get_free_heap_size();
+      if (h < min_heap) min_heap = h;
+      if (w != n) {
+        last_errno = errno;  // ENOMEM = pbuf/heap exhaustion; EAGAIN = SNDTIMEO
+        break;
+      }
     }
     g_http_busy = false;
+    // Telemetry for the "are we exhausting lwip send/pbuf buffers?" question:
+    // log large or failed transfers with the socket send-buffer size, the errno
+    // that stopped a short write, and heap low-water during the send. Small
+    // successful assets stay quiet to avoid spamming the line.
+    if (a.len >= 8192 || sent != a.len) {
+      int sndbuf = 0;
+      socklen_t sl = sizeof sndbuf;
+      if (fd >= 0) getsockopt(fd, SOL_SOCKET, SO_SNDBUF, &sndbuf, &sl);
+      Log().printf(
+          "[serve] %s %u/%u B %lums sndbuf=%d errno=%d(%s) heapmin=%u "
+          "largest=%u\n",
+          a.path, (unsigned)sent, (unsigned)a.len,
+          (unsigned long)(millis() - t0), sndbuf, last_errno,
+          last_errno ? strerror(last_errno) : "ok", (unsigned)min_heap,
+          (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+    }
     return true;
   }
   return false;
@@ -606,6 +637,16 @@ void setup() {
   }
   improv_ble_begin(kBleName,
                    ssid.length() > 0 ? IMPROV_STATE_PROVISIONING : IMPROV_STATE_AUTHORIZED);
+
+  // One-shot: the compile-time buffer ceilings that bound HTTP throughput, so
+  // the [serve] telemetry below can be read against them.
+  Log().printf(
+      "[player] lwip TCP_SND_BUF=%d TCP_WND=%d recvmbox=%d  wifi tx_dyn=%d "
+      "rx_static=%d rx_dyn=%d  heap=%u\n",
+      CONFIG_LWIP_TCP_SND_BUF_DEFAULT, CONFIG_LWIP_TCP_WND_DEFAULT,
+      CONFIG_LWIP_TCPIP_RECVMBOX_SIZE, CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM,
+      CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM, CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM,
+      (unsigned)esp_get_free_heap_size());
 
   http.on("/healthz", []() { http.send(200, "text/plain", "ok"); });
   // Everything else is the embedded control-UI bundle. "/" (and any unknown
@@ -685,15 +726,17 @@ void loop() {
                                                        : "idle";
     // The soft-AP is dropped once the station joins (station-only reachability),
     // so only report AP details while it's actually up.
+    unsigned heap = esp_get_free_heap_size();
+    unsigned heap_min = esp_get_minimum_free_heap_size();
     if (((int)WiFi.getMode() & (int)WIFI_MODE_AP) != 0) {
       Log().printf(
           "[player] AP \"%s\" %d station(s) http://%s/  %s  ws :%u ws=%s "
-          "map=%lu leds\n",
+          "map=%lu leds heap=%u min=%u\n",
           kApSsid, WiFi.softAPgetStationNum(), WiFi.softAPIP().toString().c_str(),
-          sta.c_str(), kWsPort, ws, map_leds);
+          sta.c_str(), kWsPort, ws, map_leds, heap, heap_min);
     } else {
-      Log().printf("[player] %s  ws :%u ws=%s map=%lu leds\n", sta.c_str(),
-                   kWsPort, ws, map_leds);
+      Log().printf("[player] %s  ws :%u ws=%s map=%lu leds heap=%u min=%u\n",
+                   sta.c_str(), kWsPort, ws, map_leds, heap, heap_min);
     }
   }
   delay(1);
