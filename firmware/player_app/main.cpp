@@ -30,8 +30,10 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
+#include <lwip/sockets.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/time.h>
 
 #include "firmware/player_app/improv_ble.h"
 #include "firmware/player_app/improv_codec.h"
@@ -539,7 +541,16 @@ static bool serve_web_asset() {
     // finish before the first chunk goes out.
     g_http_busy = true;
     vTaskDelay(pdMS_TO_TICKS(12));
-    http.client().setNoDelay(true);
+    WiFiClient &client = http.client();
+    client.setNoDelay(true);
+    // Bound each write so a stalled socket (flaky link → window never advances)
+    // can't block loop() forever and wedge the whole server; a timed-out send
+    // just truncates this one response, which a refresh retries (cached).
+    int fd = client.fd();
+    if (fd >= 0) {
+      struct timeval tv = {.tv_sec = 4, .tv_usec = 0};
+      setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
+    }
     if (a.gzip) http.sendHeader("Content-Encoding", "gzip");
     // Hashed asset names are content-addressed (cache forever); index.html must
     // refresh across a reflash.
@@ -548,10 +559,14 @@ static bool serve_web_asset() {
                                          : "max-age=31536000, immutable");
     http.setContentLength(a.len);
     http.send(200, a.ctype, "");  // status + headers (Content-Length from above)
-    const size_t kChunk = 1460;   // ~one TCP segment
+    // Write the body straight to the socket in ~MSS chunks (flash is
+    // memory-mapped, so no PROGMEM copy needed) and STOP on any short write —
+    // that's a timed-out/closed socket, and retrying every remaining chunk
+    // would burn the 4 s SO_SNDTIMEO apiece.
+    const size_t kChunk = 1460;
     for (size_t off = 0; off < a.len; off += kChunk) {
       size_t n = a.len - off < kChunk ? a.len - off : kChunk;
-      http.sendContent_P(reinterpret_cast<PGM_P>(a.data + off), n);
+      if (client.write(a.data + off, n) != n) break;
     }
     g_http_busy = false;
     return true;
