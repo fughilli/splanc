@@ -91,6 +91,13 @@ static WebServer http(80);
 static WiFiServer ws_listener(kWsPort);
 static WiFiClient ws;
 
+// Set while the HTTP server is streaming a bundle asset. The render task holds
+// FastLED.show() during that window: show() disables interrupts for
+// milliseconds at a time, which drops WiFi RX (incl. TCP ACKs) and stalls any
+// transfer larger than ~one TCP window — enough to hang the blocking write and
+// wedge the server. Freezing the animation for the ~1 s of a page load fixes it.
+static volatile bool g_http_busy = false;
+
 // WiFi credentials persisted across boots (BLE-provisioned, Improv).
 static Preferences prefs;
 
@@ -490,7 +497,22 @@ static uint32_t render_once() {
 
 // The render task: forever, render one frame then sleep until the next is due.
 static void render_task(void *) {
+  uint32_t busy_since = 0;
   for (;;) {
+    // Hold the strip while the HTTP server streams an asset (see g_http_busy):
+    // FastLED.show()'s interrupt-off windows otherwise drop TCP ACKs and stall
+    // large transfers. The LEDs just hold their last frame for the ~1 s load.
+    if (g_http_busy) {
+      uint32_t now = millis();
+      if (busy_since == 0) busy_since = now;
+      // Safety net: never freeze the strip forever if a transfer wedges.
+      if (now - busy_since < 10000) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+        continue;
+      }
+      g_http_busy = false;
+    }
+    busy_since = 0;
     uint32_t delay_ms = render_once();
     vTaskDelay(pdMS_TO_TICKS(delay_ms));
   }
@@ -512,6 +534,11 @@ static bool serve_web_asset() {
     // app never finished loading. Disable Nagle and stream the body in
     // MSS-sized chunks under an explicit Content-Length (send_P's one-shot
     // write is the unreliable path for payloads this large).
+    // Freeze the animation for the transfer so FastLED's interrupt-off windows
+    // don't drop ACKs mid-stream; the short settle lets any in-flight show()
+    // finish before the first chunk goes out.
+    g_http_busy = true;
+    vTaskDelay(pdMS_TO_TICKS(12));
     http.client().setNoDelay(true);
     if (a.gzip) http.sendHeader("Content-Encoding", "gzip");
     // Hashed asset names are content-addressed (cache forever); index.html must
@@ -526,6 +553,7 @@ static bool serve_web_asset() {
       size_t n = a.len - off < kChunk ? a.len - off : kChunk;
       http.sendContent_P(reinterpret_cast<PGM_P>(a.data + off), n);
     }
+    g_http_busy = false;
     return true;
   }
   return false;
