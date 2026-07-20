@@ -480,10 +480,14 @@ export class MapView {
 
     ctx.fillStyle = "#aaa";
     ctx.font = "12px system-ui";
+    // Maps pulled from a player (get_stored_map) carry no solve stats, so guard
+    // the summary rather than assume `stats` is present.
     const s = this.map.stats;
+    const solveSummary = s
+      ? ` · rms ${s.rmsReprojPxGlobal.toFixed(2)} px · median parallax ${s.medianParallaxDeg.toFixed(1)}°`
+      : "";
     ctx.fillText(
-      `${leds.length}/${this.map.ledCount} solved · rms ${s.rmsReprojPxGlobal.toFixed(2)} px · ` +
-        `median parallax ${s.medianParallaxDeg.toFixed(1)}°${deltaSummary}`,
+      `${leds.length}/${this.map.ledCount} solved${solveSummary}${deltaSummary}`,
       12,
       h - 12,
     );

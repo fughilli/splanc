@@ -88,9 +88,22 @@ export interface ClientEvents {
   onServerError?: (code: string, message: string) => void;
 }
 
-/** Default WebSocket URL for the page's own origin (wss on https pages). */
-export function defaultWsUrl(loc: { protocol: string; host: string } = location): string {
+/** Default WebSocket URL for the page's own origin (wss on https pages).
+ *
+ * Special case: a player (ESP) serves its bundle over plain HTTP on :80 but
+ * speaks the WS protocol on :81. When the page is loaded straight from such a
+ * device (plain ws, default http port), target :81 — otherwise the socket would
+ * hit :80 where nothing listens. Any explicit port (e.g. the dev server on
+ * :8080, which serves /ws on its own port) is left alone. */
+export function defaultWsUrl(
+  loc: { protocol: string; host: string; hostname?: string; port?: string } = location,
+): string {
   const scheme = loc.protocol === "https:" ? "wss" : "ws";
+  const hostname = loc.hostname ?? loc.host.split(":")[0]!;
+  const port = loc.port ?? (loc.host.includes(":") ? loc.host.split(":")[1]! : "");
+  if (scheme === "ws" && (port === "" || port === "80")) {
+    return `ws://${hostname}:81/ws`;
+  }
   return `${scheme}://${loc.host}/ws`;
 }
 

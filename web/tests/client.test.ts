@@ -7,7 +7,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { DetectionRecord, ServerMessage } from "@ledmapper/protocol";
-import { certApprovalUrl, LedMapperClient, type SocketLike } from "../src/net/client";
+import {
+  certApprovalUrl,
+  defaultWsUrl,
+  LedMapperClient,
+  type SocketLike,
+} from "../src/net/client";
 import { decodeClient, encodeServer } from "../src/net/proto";
 
 class FakeSocket implements SocketLike {
@@ -102,6 +107,24 @@ function det(ledId: number): DetectionRecord {
     confidence: 1,
   };
 }
+
+test("defaultWsUrl targets the player's :81 when served from a device over http", () => {
+  // Device (ESP) serves the bundle on :80, WS on :81 → default must be :81.
+  assert.equal(
+    defaultWsUrl({ protocol: "http:", host: "192.168.68.71", hostname: "192.168.68.71", port: "" }),
+    "ws://192.168.68.71:81/ws",
+  );
+  // An explicit non-default port (dev server) is left alone (same-origin /ws).
+  assert.equal(
+    defaultWsUrl({ protocol: "http:", host: "192.168.1.5:8080", hostname: "192.168.1.5", port: "8080" }),
+    "ws://192.168.1.5:8080/ws",
+  );
+  // https origin keeps wss on its own host:port (a TLS player / hosted app).
+  assert.equal(
+    defaultWsUrl({ protocol: "https:", host: "player.example.com", hostname: "player.example.com", port: "" }),
+    "wss://player.example.com/ws",
+  );
+});
 
 test("connect sends hello and resolves on welcome", async () => {
   const { client, sockets } = makeClient();
