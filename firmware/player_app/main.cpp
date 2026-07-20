@@ -19,8 +19,8 @@
 //    to http://<player>/ (this app's embedded bundle), whose same-origin
 //    ws://<player>:81 is reachable over plain HTTP. TLS/wss stays Phase 4c.
 //  - one WebSocket client at a time; a second connect replaces the first.
-//  - one reassembly buffer bounds the largest inbound message (a ~1024-LED
-//    submit_map is ~45 KB); larger -> close 1009 (message too big).
+//  - one reassembly buffer bounds the largest inbound message (a 256-LED
+//    submit_map is ~25 KB); larger -> close 1009 (message too big).
 #include <Arduino.h>
 #include <FastLED.h>
 #include <Preferences.h>
@@ -82,8 +82,12 @@ static SemaphoreHandle_t player_mutex = nullptr;
 static const UBaseType_t kRenderTaskPrio = 10;   // tune on-device if needed
 static const uint32_t kRenderTaskStack = 8192;   // FastLED.show() needs headroom
 
-// Largest inbound protocol message (submit_map for ~1024 LEDs ≈ 45 KB).
-static const size_t kRxCap = 49152;
+// Largest inbound protocol message: a full submit_map for kMaxLeds. Empirically
+// ~96 B/LED (a 113-LED map is ~10.9 KB), so 256 LEDs ≈ 25 KB; 32 KB leaves
+// headroom. This is the app's biggest static buffer — keeping it matched to the
+// LED cap (rather than the old 1024-LED sizing) returns ~16 KB to the heap,
+// which the RAM-tight C6's WiFi TX / pbuf path needs to serve the bundle.
+static const size_t kRxCap = 32768;
 static uint8_t rx[kRxCap];      // reassembled message payload
 static size_t rx_len = 0;
 static uint8_t tx[2048];        // encoded reply frames are control-sized
