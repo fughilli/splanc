@@ -1,0 +1,56 @@
+"""Effects bytecode VM (docs/design/effects-runtime.md).
+
+no_std, no-alloc interpreter over the `.fxb` format: runs a program's update()
+once/frame and shade(led) per LED. Buildable for the ESP32-C6 triple (firmware
+render loop) AND compiled to wasm for the browser's offline preview, so the two
+render identically. Host-tested with hand-assembled bytecode.
+"""
+
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_shared_library", "rust_test")
+load("@rules_rust_wasm_bindgen//:defs.bzl", "rust_wasm_bindgen")
+load("@aspect_bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
+load("//tools/transitions:opt.bzl", "opt_files")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "fx_vm",
+    srcs = ["src/lib.rs"],
+    crate_name = "ledmapper_fx_vm",
+    edition = "2021",
+)
+
+rust_test(
+    name = "fx_vm_test",
+    srcs = ["tests/vm.rs"],
+    edition = "2021",
+    deps = [":fx_vm"],
+)
+
+# The exact firmware VM compiled to wasm so the browser preview can't drift.
+rust_shared_library(
+    name = "fx_vm_wasm",
+    srcs = ["bin/wasm_lib.rs"],
+    edition = "2021",
+    deps = [
+        ":fx_vm",
+        "@crates//:wasm-bindgen",
+    ],
+)
+
+rust_wasm_bindgen(
+    name = "fx_vm_wasm_pkg",
+    target = "web",
+    wasm_file = ":fx_vm_wasm",
+)
+
+opt_files(
+    name = "fx_vm_wasm_pkg_opt",
+    srcs = [":fx_vm_wasm_pkg"],
+)
+
+copy_to_directory(
+    name = "fx_vm_web",
+    srcs = [":fx_vm_wasm_pkg_opt"],
+    replace_prefixes = {"fx_vm_wasm_pkg": ""},
+)
