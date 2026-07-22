@@ -115,6 +115,96 @@ fn uniform_manifest() {
 }
 
 #[test]
+fn integer_math_native() {
+    // int n = 5; return vec3(float(n) / 10.0, 0, 0) -> 0.5 -> 127
+    let src = r#"
+        vec3 shade(Led led) {
+            int n = 5;
+            return vec3(float(n) / 10.0, 0.0, 0.0);
+        }
+    "#;
+    assert_eq!(run_shade(src, &[], Led::default(), Frame::default()).0, 127);
+}
+
+#[test]
+fn fixed_point_math() {
+    // pure Q16.16 multiply: 0.5 * 2.0 = 1.0 -> 255
+    let src = r#"
+        vec3 shade(Led led) {
+            fixed f = 0.5;
+            fixed h = fixed(2.0);
+            fixed g = f * h;
+            return vec3(float(g), 0.0, 0.0);
+        }
+    "#;
+    assert_eq!(run_shade(src, &[], Led::default(), Frame::default()).0, 255);
+}
+
+#[test]
+fn vec_broadcast_both_sides() {
+    // vec + scalar (scalar on right)
+    let a = r#"vec3 shade(Led led) { vec3 c = vec3(0.2,0.4,0.6); return c + 0.1; }"#;
+    assert_eq!(run_shade(a, &[], Led::default(), Frame::default()), (76, 127, 178));
+    // scalar - vec (scalar on left; order must be preserved)
+    let b = r#"vec3 shade(Led led) { return 1.0 - vec3(0.2,0.4,0.6); }"#;
+    assert_eq!(run_shade(b, &[], Led::default(), Frame::default()), (204, 153, 101));
+}
+
+#[test]
+fn for_loop_accumulate() {
+    let src = r#"
+        vec3 shade(Led led) {
+            float s = 0.0;
+            for (int i = 0; i < 4; i = i + 1) {
+                s = s + 0.1;
+            }
+            return vec3(s, 0.0, 0.0);
+        }
+    "#;
+    // 4 * 0.1 = 0.4 -> 102
+    assert_eq!(run_shade(src, &[], Led::default(), Frame::default()).0, 102);
+}
+
+#[test]
+fn user_function_call() {
+    let src = r#"
+        float sq(float x) { return x * x; }
+        vec3 shade(Led led) {
+            float d = sq(led.pos.x);
+            return vec3(d, 0.0, 0.0);
+        }
+    "#;
+    let led = Led { pos: [0.5, 0.0, 0.0], ..Default::default() };
+    // sq(0.5) = 0.25 -> 63
+    assert_eq!(run_shade(src, &[], led, Frame::default()).0, 63);
+}
+
+#[test]
+fn user_function_two_args() {
+    let src = r#"
+        float lerp(float a, float b) { return (a + b) * 0.5; }
+        vec3 shade(Led led) { return vec3(lerp(0.2, 0.8), 0.0, 0.0); }
+    "#;
+    // (0.2+0.8)/2 = 0.5 -> 127
+    assert_eq!(run_shade(src, &[], Led::default(), Frame::default()).0, 127);
+}
+
+#[test]
+fn doc_int_fixed_hotpath_snippet() {
+    // Mirrors the second code sample in docs/design/effects-runtime.md.
+    let src = r#"
+        vec3 shade(Led led) {
+            int   stripe = int(led.pos.x * 8.0) % 3;
+            fixed t      = fixed(led.pos.y) * fixed(0.5);
+            return vec3(float(stripe) / 2.0, float(t), 0.0);
+        }
+    "#;
+    let led = Led { pos: [0.5, 0.5, 0.0], ..Default::default() };
+    // stripe: int(4.0)%3 = 1 -> 0.5 -> 127; t: 0.5*0.5 = 0.25 -> 63
+    assert_eq!(run_shade(src, &[], led, Frame::default()), (127, 63, 0));
+}
+
+#[test]
 fn reports_errors() {
     assert!(compile("vec3 shade(Led led) { return nope(); }").is_err());
     assert!(compile("float x = 1;").is_err()); // no shade()

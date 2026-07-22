@@ -16,14 +16,15 @@ pub enum Ty {
     Vec2,
     Vec3,
     Vec4,
-    Int,
+    Int,   // native i32 (fast — no soft-float)
+    Fixed, // Q16.16 fixed-point (fast fractional)
     Bool,
     Void,
 }
 impl Ty {
     fn width(self) -> u8 {
         match self {
-            Ty::Float | Ty::Int | Ty::Bool => 1,
+            Ty::Float | Ty::Int | Ty::Fixed | Ty::Bool => 1,
             Ty::Vec2 => 2,
             Ty::Vec3 => 3,
             Ty::Vec4 => 4,
@@ -40,6 +41,9 @@ impl Ty {
     }
     fn is_num(self) -> bool {
         !matches!(self, Ty::Bool | Ty::Void)
+    }
+    fn is_scalar(self) -> bool {
+        matches!(self, Ty::Float | Ty::Int | Ty::Fixed)
     }
 }
 
@@ -212,17 +216,26 @@ struct Sym {
     ty: Ty,
 }
 
+#[derive(Clone)]
+struct FuncInfo {
+    entry: u16,
+    params: Vec<Ty>,
+    ret: Ty,
+}
+
 pub struct Compiler {
     lx_toks: Vec<(Tok, u32, u32)>,
     p: usize,
     // symbol tables
     syms: HashMap<String, Sym>,
+    funcs: HashMap<String, FuncInfo>,
+    cur_fn_is_entry: bool,
     uniforms: Vec<UniformInfo>,
     n_uniform_slots: u8,
     n_state: u8,
     n_locals: u8,
-    // const pool
-    consts: Vec<f32>,
+    // const pool (raw 32-bit words: f32 bits, or i32/Q16.16 bit patterns)
+    consts: Vec<u32>,
     // output code (per function)
     code: Vec<u8>,
     update_entry: u16,
@@ -249,6 +262,8 @@ pub fn compile(src: &str) -> Result<Compiled, Vec<Diagnostic>> {
         lx_toks: toks,
         p: 0,
         syms: HashMap::new(),
+        funcs: HashMap::new(),
+        cur_fn_is_entry: false,
         uniforms: Vec::new(),
         n_uniform_slots: 0,
         n_state: 0,
@@ -301,14 +316,19 @@ impl Compiler {
             self.err("expected identifier")
         }
     }
-    fn const_idx(&mut self, v: f32) -> u16 {
+    fn const_word(&mut self, w: u32) -> u16 {
         for (i, c) in self.consts.iter().enumerate() {
-            if *c == v {
+            if *c == w {
                 return i as u16;
             }
         }
-        self.consts.push(v);
+        self.consts.push(w);
         (self.consts.len() - 1) as u16
+    }
+    fn push_const(&mut self, w: u32) {
+        let idx = self.const_word(w);
+        self.emit(fx_vm_op::PUSH_CONST);
+        self.emit_u16(idx);
     }
     fn emit(&mut self, b: u8) {
         self.code.push(b);
@@ -324,6 +344,7 @@ impl Compiler {
             "vec3" => Ty::Vec3,
             "vec4" => Ty::Vec4,
             "int" => Ty::Int,
+            "fixed" => Ty::Fixed,
             "bool" => Ty::Bool,
             "void" => Ty::Void,
             _ => return None,
@@ -482,27 +503,71 @@ impl Compiler {
         let ret_ty = Self::ty_from_ident(&self.eat_ident()?).unwrap();
         let name = self.eat_ident()?;
         self.expect_sym('(')?;
-        // params: only `Led led` supported (for shade). skip tokens to ')'.
-        while *self.cur() != Tok::Sym(')') && *self.cur() != Tok::Eof {
-            self.advance();
+        // params: `type name, ...`; the special `Led led` (shade) is the ctx
+        // namespace, not a real local.
+        let mut param_tys: Vec<Ty> = Vec::new();
+        let mut param_syms: Vec<(String, u8, Ty)> = Vec::new();
+        if *self.cur() != Tok::Sym(')') {
+            loop {
+                let pty_name = self.eat_ident()?;
+                if pty_name == "Led" {
+                    let _ = self.eat_ident()?; // `led`
+                } else {
+                    let pty = Self::ty_from_ident(&pty_name)
+                        .ok_or_else(|| self.mkdiag("unknown parameter type"))?;
+                    let pname = self.eat_ident()?;
+                    let slot = self.n_locals;
+                    self.n_locals += pty.width();
+                    param_tys.push(pty);
+                    param_syms.push((pname, slot, pty));
+                }
+                if *self.cur() == Tok::Sym(',') {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
         }
         self.expect_sym(')')?;
-        // reset per-function locals
-        self.n_locals = 0;
+        let is_entry = name == "update" || name == "shade";
         let entry = self.code.len() as u16;
+        if !is_entry {
+            self.funcs.insert(
+                name.clone(),
+                FuncInfo { entry, params: param_tys, ret: ret_ty },
+            );
+        }
+        for (pname, slot, pty) in &param_syms {
+            self.syms
+                .insert(pname.clone(), Sym { kind: SymKind::Local, slot: *slot, ty: *pty });
+        }
+        // args are pushed left→right (last on top), so store params in reverse.
+        for (_, slot, pty) in param_syms.iter().rev() {
+            self.emit(fx_vm_op::STORE_LOCAL);
+            self.emit(*slot);
+            self.emit(pty.width());
+        }
         self.expect_sym('{')?;
-        let want = match name.as_str() {
-            "update" => Ty::Void,
-            "shade" => Ty::Vec3,
-            _ => return self.err("only update() and shade(Led led) supported in v1"),
+        let want = if is_entry {
+            if name == "update" {
+                Ty::Void
+            } else {
+                Ty::Vec3
+            }
+        } else {
+            ret_ty
         };
-        let _ = ret_ty;
+        self.cur_fn_is_entry = is_entry;
         self.block(want)?;
-        // implicit return
-        self.emit(fx_vm_op::RET);
-        self.emit(want.width());
+        if is_entry {
+            self.emit(fx_vm_op::RET);
+            self.emit(want.width());
+        } else {
+            self.emit(fx_vm_op::RET_FN);
+        }
         self.expect_sym('}')?;
-        // clear locals from scope
+        // Scope out this function's locals, but DON'T reuse the slots — disjoint
+        // ranges so a callee can't clobber a caller's locals (no recursion).
         self.syms.retain(|_, s| !matches!(s.kind, SymKind::Local));
         match name.as_str() {
             "update" => self.update_entry = entry,
@@ -525,18 +590,27 @@ impl Compiler {
                 self.advance();
                 if *self.cur() == Tok::Sym(';') {
                     self.advance();
-                    self.emit(fx_vm_op::RET);
-                    self.emit(0);
+                    if self.cur_fn_is_entry {
+                        self.emit(fx_vm_op::RET);
+                        self.emit(0);
+                    } else {
+                        self.emit(fx_vm_op::RET_FN);
+                    }
                 } else {
                     let t = self.expr()?;
                     self.coerce(t, ret)?;
                     self.expect_sym(';')?;
-                    self.emit(fx_vm_op::RET);
-                    self.emit(ret.width());
+                    if self.cur_fn_is_entry {
+                        self.emit(fx_vm_op::RET);
+                        self.emit(ret.width());
+                    } else {
+                        self.emit(fx_vm_op::RET_FN);
+                    }
                 }
                 Ok(())
             }
             Tok::Ident(kw) if kw == "if" => self.if_stmt(ret),
+            Tok::Ident(kw) if kw == "for" => self.for_stmt(ret),
             Tok::Ident(tyname) if Self::ty_from_ident(&tyname).is_some() => {
                 // local decl: `float d = expr;`
                 self.advance();
@@ -611,6 +685,70 @@ impl Compiler {
         Ok(())
     }
 
+    // for (init; cond; update) { body }. The instruction budget in the VM is
+    // the hard bound on total iterations (no unbounded frame time).
+    fn for_stmt(&mut self, ret: Ty) -> Result<(), Diagnostic> {
+        use fx_vm_op::*;
+        self.advance(); // 'for'
+        self.expect_sym('(')?;
+        self.stmt(ret)?; // init (declares loop-local, consumes ';')
+        let loop_top = self.code.len();
+        let ct = self.expr()?;
+        if ct != Ty::Bool {
+            return self.err("for condition must be bool");
+        }
+        self.expect_sym(';')?;
+        self.emit(BR_FALSE);
+        let patch_end = self.code.len();
+        self.emit_u16(0);
+        // The update runs AFTER the body but is written before it — skip its
+        // tokens now, emit the body, then rewind and emit the update.
+        let update_start = self.p;
+        let mut depth = 0i32;
+        while !(depth == 0 && *self.cur() == Tok::Sym(')')) && *self.cur() != Tok::Eof {
+            match self.cur() {
+                Tok::Sym('(') => depth += 1,
+                Tok::Sym(')') => depth -= 1,
+                _ => {}
+            }
+            self.advance();
+        }
+        self.expect_sym(')')?;
+        self.expect_sym('{')?;
+        self.block(ret)?;
+        self.expect_sym('}')?;
+        let after = self.p;
+        self.p = update_start;
+        self.assign_no_semi()?;
+        self.p = after;
+        self.emit(JMP);
+        let rel = (loop_top as isize - (self.code.len() + 2) as isize) as i16;
+        self.emit_u16(rel as u16);
+        let rel_end = (self.code.len() as isize - (patch_end + 2) as isize) as i16;
+        self.code[patch_end..patch_end + 2].copy_from_slice(&rel_end.to_le_bytes());
+        Ok(())
+    }
+
+    fn assign_no_semi(&mut self) -> Result<(), Diagnostic> {
+        let name = self.eat_ident()?;
+        let sym = *self
+            .syms
+            .get(&name)
+            .ok_or_else(|| self.mkdiag(&format!("unknown identifier '{name}'")))?;
+        self.expect_sym('=')?;
+        let et = self.expr()?;
+        self.coerce(et, sym.ty)?;
+        let opc = match sym.kind {
+            SymKind::State => fx_vm_op::STORE_STATE,
+            SymKind::Local => fx_vm_op::STORE_LOCAL,
+            SymKind::Uniform => return self.err("cannot assign to a uniform"),
+        };
+        self.emit(opc);
+        self.emit(sym.slot);
+        self.emit(sym.ty.width());
+        Ok(())
+    }
+
     // -- expressions (Pratt-ish precedence climbing) --------------------------
 
     fn expr(&mut self) -> Result<Ty, Diagnostic> {
@@ -633,6 +771,7 @@ impl Compiler {
                 Tok::Sym('-') => ("-", 3),
                 Tok::Sym('*') => ("*", 4),
                 Tok::Sym('/') => ("/", 4),
+                Tok::Sym('%') => ("%", 4),
                 _ => break,
             };
             if bp < min_bp {
@@ -646,11 +785,13 @@ impl Compiler {
     }
 
     fn emit_binop(&mut self, op: &str, l: Ty, r: Ty) -> Result<Ty, Diagnostic> {
-        // Comparisons / logic -> Bool (scalars only in v1)
+        use fx_vm_op::*;
+        // Comparisons -> Bool (scalars). Promote to a common numeric type.
         if matches!(op, "<" | ">" | "<=" | ">=" | "==" | "!=") {
-            if l.width() != 1 || r.width() != 1 {
+            if !l.is_scalar() || !r.is_scalar() {
                 return self.err("comparison operands must be scalar");
             }
+            let p = self.promote_scalars(l, r)?;
             let kind = match op {
                 "<" => 0,
                 "<=" => 1,
@@ -659,48 +800,126 @@ impl Compiler {
                 "==" => 4,
                 _ => 5,
             };
-            self.emit(fx_vm_op::CMP);
+            self.emit(if matches!(p, Ty::Int | Ty::Fixed) { CMP_I } else { CMP });
             self.emit(kind);
             return Ok(Ty::Bool);
         }
         if matches!(op, "&&" | "||") {
-            self.emit(fx_vm_op::LOGIC);
+            self.emit(LOGIC);
             self.emit(if op == "&&" { 0 } else { 1 });
             return Ok(Ty::Bool);
         }
-        // arithmetic. Note: operands already emitted (l then r on stack).
         if !l.is_num() || !r.is_num() {
             return self.err("arithmetic on non-numeric");
         }
+        // Any vector operand: float-vector arithmetic with scalar broadcast.
+        if l.width() > 1 || r.width() > 1 {
+            return self.emit_vec_arith(op, l, r);
+        }
+        // Scalar arithmetic: promote to a common type, emit the typed op.
+        let p = self.promote_scalars(l, r)?;
+        match (op, p) {
+            ("+", Ty::Int) | ("+", Ty::Fixed) => self.emit(ADD_I),
+            ("-", Ty::Int) | ("-", Ty::Fixed) => self.emit(SUB_I),
+            ("*", Ty::Int) => self.emit(MUL_I),
+            ("/", Ty::Int) => self.emit(DIV_I),
+            // Q16.16 remainder is the plain integer remainder of the scaled ints.
+            ("%", Ty::Int) | ("%", Ty::Fixed) => self.emit(MOD_I),
+            ("%", Ty::Float) => return self.err("'%' is integer-only; use mod() for floats"),
+            ("*", Ty::Fixed) => self.emit(MUL_FIX),
+            ("/", Ty::Fixed) => self.emit(DIV_FIX),
+            ("+", Ty::Float) => self.emit2(ADD, 1),
+            ("-", Ty::Float) => self.emit2(SUB, 1),
+            ("*", Ty::Float) => self.emit2(MUL, 1),
+            ("/", Ty::Float) => self.emit2(DIV, 1),
+            _ => return self.err("bad operator"),
+        }
+        Ok(p)
+    }
+
+    fn emit2(&mut self, a: u8, b: u8) {
+        self.emit(a);
+        self.emit(b);
+    }
+
+    /// Promote the two scalar operands already on the stack (left below, right
+    /// on top) to a common type (Float > Fixed > Int), emitting conversions.
+    fn promote_scalars(&mut self, l: Ty, r: Ty) -> Result<Ty, Diagnostic> {
+        let asnum = |t: Ty| if t == Ty::Bool { Ty::Int } else { t };
+        let (l, r) = (asnum(l), asnum(r));
+        let p = if l == Ty::Float || r == Ty::Float {
+            Ty::Float
+        } else if l == Ty::Fixed || r == Ty::Fixed {
+            Ty::Fixed
+        } else {
+            Ty::Int
+        };
+        if r != p {
+            self.coerce(r, p)?; // top
+        }
+        if l != p {
+            // bring left to top, convert, restore order
+            self.emit2(fx_vm_op::SWAP, 1);
+            self.emit(1);
+            self.coerce(l, p)?;
+            self.emit2(fx_vm_op::SWAP, 1);
+            self.emit(1);
+        }
+        Ok(p)
+    }
+
+    /// Float-vector arithmetic with scalar broadcast (handles vec⊙vec,
+    /// vec⊙scalar, scalar⊙vec — for +,-,*,/). Vectors are float in v1.
+    fn emit_vec_arith(&mut self, op: &str, l: Ty, r: Ty) -> Result<Ty, Diagnostic> {
+        use fx_vm_op::*;
+        let opc = match op {
+            "+" => ADD,
+            "-" => SUB,
+            "*" => MUL,
+            "/" => DIV,
+            _ => return self.err("bad vector operator"),
+        };
         let lw = l.width();
         let rw = r.width();
-        // vec * scalar / scalar * vec -> Scale (mul only)
-        if op == "*" && lw > 1 && rw == 1 {
-            self.emit(fx_vm_op::SCALE);
-            self.emit(lw);
-            return Ok(l);
+        if lw > 1 && rw > 1 {
+            if lw != rw {
+                return self.err("mismatched vector widths");
+            }
+            self.emit2(opc, lw);
+            return Ok(Ty::vec_of(lw));
         }
-        if op == "*" && lw == 1 && rw > 1 {
-            // stack is [scalar, vec]; Scale expects [vec, scalar]. Emit a swap
-            // is awkward; instead broadcast the scalar was cheaper — but here we
-            // reorder by recompiling isn't possible. Use element-wise after
-            // broadcasting the scalar. Simpler: disallow and ask `vec * scalar`.
-            return self.err("write `vec * scalar` (scalar on the right)");
+        if lw > 1 && rw == 1 {
+            // vec ⊙ scalar : coerce scalar→float (top), broadcast, op
+            if r != Ty::Float {
+                self.coerce(r, Ty::Float)?;
+            }
+            self.broadcast_top(lw);
+            self.emit2(opc, lw);
+            return Ok(Ty::vec_of(lw));
         }
-        // mixed widths for +,-,/ : broadcast scalar to vec width
-        let (out_w, opc) = match op {
-            "+" => (lw.max(rw), fx_vm_op::ADD),
-            "-" => (lw.max(rw), fx_vm_op::SUB),
-            "*" => (lw.max(rw), fx_vm_op::MUL),
-            "/" => (lw.max(rw), fx_vm_op::DIV),
-            _ => return self.err("bad operator"),
-        };
-        if lw != rw {
-            return self.err("mismatched vector widths (broadcast: use vec*scalar for scaling)");
+        // scalar ⊙ vec : [s, v]. Reorder to keep operand order for -,/.
+        // 1) Swap(1, rw) -> [v, s]  2) coerce s->float, broadcast -> [v, s(rw)]
+        // 3) Swap(rw, rw) -> [s(rw), v]  4) op
+        self.emit2(SWAP, 1);
+        self.emit(rw);
+        if l != Ty::Float {
+            self.coerce(l, Ty::Float)?;
         }
-        self.emit(opc);
-        self.emit(out_w);
-        Ok(Ty::vec_of(out_w))
+        self.broadcast_top(rw);
+        self.emit2(SWAP, rw);
+        self.emit(rw);
+        self.emit2(opc, rw);
+        Ok(Ty::vec_of(rw))
+    }
+
+    /// Broadcast the scalar on top of the stack to a width-`n` vector (.xxx).
+    fn broadcast_top(&mut self, n: u8) {
+        self.emit(fx_vm_op::SWIZZLE);
+        self.emit(1);
+        self.emit(n);
+        for _ in 0..n {
+            self.emit(0);
+        }
     }
 
     fn unary(&mut self) -> Result<Ty, Diagnostic> {
@@ -708,8 +927,13 @@ impl Compiler {
             Tok::Sym('-') => {
                 self.advance();
                 let t = self.unary()?;
-                self.emit(fx_vm_op::NEG);
-                self.emit(t.width());
+                match t {
+                    Ty::Int | Ty::Fixed => self.emit(fx_vm_op::NEG_I),
+                    _ => {
+                        self.emit(fx_vm_op::NEG);
+                        self.emit(t.width());
+                    }
+                }
                 Ok(t)
             }
             Tok::Sym('!') => {
@@ -769,16 +993,17 @@ impl Compiler {
         match self.cur().clone() {
             Tok::Num(v, is_int) => {
                 self.advance();
-                let idx = self.const_idx(v);
-                self.emit(fx_vm_op::PUSH_CONST);
-                self.emit_u16(idx);
-                Ok(if is_int { Ty::Int } else { Ty::Float })
+                if is_int {
+                    self.push_const(v as i32 as u32);
+                    Ok(Ty::Int)
+                } else {
+                    self.push_const(v.to_bits());
+                    Ok(Ty::Float)
+                }
             }
             Tok::Ident(id) if id == "true" || id == "false" => {
                 self.advance();
-                let idx = self.const_idx(if id == "true" { 1.0 } else { 0.0 });
-                self.emit(fx_vm_op::PUSH_CONST);
-                self.emit_u16(idx);
+                self.push_const(if id == "true" { 1.0f32 } else { 0.0f32 }.to_bits());
                 Ok(Ty::Bool)
             }
             Tok::Sym('(') => {
@@ -844,13 +1069,26 @@ impl Compiler {
 
     fn call(&mut self, name: &str) -> Result<Ty, Diagnostic> {
         self.expect_sym('(')?;
-        // vecN constructor
+        // Type constructor: scalar cast (float/int/fixed) or vecN.
         if let Some(cty) = Self::ty_from_ident(name) {
+            if cty.is_scalar() {
+                let at = self.expr()?;
+                self.expect_sym(')')?;
+                if !at.is_scalar() {
+                    return self.err(format!("{name}() expects a scalar"));
+                }
+                self.coerce(at, cty)?;
+                return Ok(cty);
+            }
             let w = cty.width();
             let mut got = 0u8;
             loop {
                 let at = self.expr()?;
-                if at.width() == 1 {
+                if at.is_scalar() {
+                    // vec components are float
+                    if at != Ty::Float {
+                        self.coerce(at, Ty::Float)?;
+                    }
                     got += 1;
                 } else {
                     got += at.width();
@@ -863,17 +1101,25 @@ impl Compiler {
             }
             self.expect_sym(')')?;
             if got == 1 && w > 1 {
-                // broadcast: dup the scalar (w-1) more times via swizzle .xxx
-                self.emit(fx_vm_op::SWIZZLE);
-                self.emit(1);
-                self.emit(w);
-                for _ in 0..w {
-                    self.emit(0);
-                }
+                self.broadcast_top(w);
             } else if got != w {
                 return self.err(format!("{name}() needs {w} components, got {got}"));
             }
             return Ok(cty);
+        }
+        // user-defined function (define-before-use)
+        if let Some(f) = self.funcs.get(name).cloned() {
+            for (i, pty) in f.params.iter().enumerate() {
+                if i > 0 {
+                    self.expect_sym(',')?;
+                }
+                let at = self.expr()?;
+                self.coerce(at, *pty)?;
+            }
+            self.expect_sym(')')?;
+            self.emit(fx_vm_op::CALL);
+            self.emit_u16(f.entry);
+            return Ok(f.ret);
         }
         // built-in functions
         let args = self.call_args()?;
@@ -1057,12 +1303,35 @@ impl Compiler {
         Ok(ty)
     }
 
+    /// Coerce the value on TOP of the stack from `from` to `to`, emitting a
+    /// conversion op if the scalar numeric representation differs.
     fn coerce(&mut self, from: Ty, to: Ty) -> Result<(), Diagnostic> {
         if from == to {
             return Ok(());
         }
-        // int/float interchangeable at the value level (both 1 slot)
-        if from.width() == to.width() && from.is_num() && to.is_num() {
+        if from.is_scalar() && to.is_scalar() {
+            let op = match (from, to) {
+                (Ty::Int, Ty::Float) => Some(fx_vm_op::I2F),
+                (Ty::Float, Ty::Int) => Some(fx_vm_op::F2I),
+                (Ty::Fixed, Ty::Float) => Some(fx_vm_op::FIX2F),
+                (Ty::Float, Ty::Fixed) => Some(fx_vm_op::F2FIX),
+                (Ty::Int, Ty::Fixed) => Some(fx_vm_op::I2FIX),
+                (Ty::Fixed, Ty::Int) => Some(fx_vm_op::FIX2I),
+                _ => None,
+            };
+            if let Some(o) = op {
+                self.emit(o);
+                return Ok(());
+            }
+        }
+        // bool <-> {int,float} at the value level (0/1) — allow reading a bool
+        // as a number and vice-versa without an op (both are 0/1 words).
+        if matches!(from, Ty::Bool) && to.is_scalar() {
+            if to == Ty::Fixed {
+                self.emit(fx_vm_op::F2FIX);
+            } else if to == Ty::Int {
+                self.emit(fx_vm_op::F2I);
+            }
             return Ok(());
         }
         self.err(format!("type mismatch: {from:?} vs {to:?}"))
@@ -1177,6 +1446,24 @@ mod fx_vm_op {
     pub const PALETTE: u8 = 31;
     pub const _POP: u8 = 32;
     pub const RET: u8 = 33;
+    pub const SWAP: u8 = 34;
+    pub const ADD_I: u8 = 35;
+    pub const SUB_I: u8 = 36;
+    pub const MUL_I: u8 = 37;
+    pub const DIV_I: u8 = 38;
+    pub const MOD_I: u8 = 39;
+    pub const NEG_I: u8 = 40;
+    pub const CMP_I: u8 = 41;
+    pub const MUL_FIX: u8 = 42;
+    pub const DIV_FIX: u8 = 43;
+    pub const I2F: u8 = 44;
+    pub const F2I: u8 = 45;
+    pub const FIX2F: u8 = 46;
+    pub const F2FIX: u8 = 47;
+    pub const I2FIX: u8 = 48;
+    pub const FIX2I: u8 = 49;
+    pub const CALL: u8 = 50;
+    pub const RET_FN: u8 = 51;
 }
 mod fx_ctx {
     pub const TIME: u8 = 0;

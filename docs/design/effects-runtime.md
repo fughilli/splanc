@@ -54,7 +54,30 @@ vec3 shade(Led led) {
 }
 ```
 
-- **Types**: `float`, `vec2/3/4`, `int`, `bool`. Colors are `vec3`/`vec4`.
+`float` is fine here (`fract`/`palette_lookup` are float built-ins). Reach for
+`int`/`fixed` in the arithmetic-heavy inner math that *doesn't* go through a
+float built-in — counters, indices, and smooth Q16.16 ramps you fold yourself:
+
+```glsl
+// integer stripe index + Q16.16 ramp, no soft-float in the hot path
+vec3 shade(Led led) {
+    int   stripe = int(led.pos.x * 8.0) % 3;      // native int math
+    fixed t      = fixed(led.pos.y) * fixed(0.5);  // Q16.16 mul
+    return vec3(float(stripe) / 2.0, float(t), 0.0);
+}
+```
+
+- **Types**: `float`, `vec2/3/4`, `int`, `fixed`, `bool`. Colors are `vec3`/`vec4`.
+  - `int` is a native 32-bit integer with real integer opcodes (`+ - * / %`),
+    not float-emulated — cheap on the FPU-less core.
+  - `fixed` is **Q16.16 fixed-point**: use it for the smooth quantities (phase,
+    positions, palette coords) that would otherwise pay soft-float cost. `+`/`-`
+    are plain integer adds; `*`/`/` use the Q16.16 mul/div opcodes. Literals like
+    `0.5` become `fixed` in a `fixed` context; convert explicitly with
+    `fixed(x)` / `float(x)` / `int(x)`.
+  - **Mixed-type arithmetic promotes** `int → fixed → float` (widest operand
+    wins), so `fixed * float` yields `float`. Keep a hot expression all-`fixed`
+    (or all-`int`) to stay off soft-float.
 - **Contexts** (built-in reads):
   - global: `time` (s, float), `dt` (s), `frame` (int)
   - `Led led`: `led.pos` (vec3, in the map's gravity-leveled frame, roughly
@@ -65,26 +88,42 @@ vec3 shade(Led led) {
 - **Built-ins**: `sin cos tan abs floor ceil fract mod min max clamp mix step
   smoothstep length distance dot cross normalize pow exp log sqrt sign` +
   `hash11/hash31` (cheap noise), `hsv2rgb`, `palette_lookup(int,float)`.
-- **User functions**: `float f(float x) { ... }` — plain, no recursion (bounded
-  stack). Control flow: `if/else`, `for` with a compile-time-bounded trip count
-  (no unbounded loops on the hot path).
+- **Vector/scalar broadcast**: a scalar combines with a `vecN` element-wise
+  (`c + 0.1`, `1.0 - c`), operand order preserved for `-`/`/`.
+- **User functions**: `float f(float x) { ... }` (any scalar/vec params + return)
+  — plain, no recursion (bounded stack). Defined before use; called with
+  `CALL`/`RET_FN`, a small return-address stack, and locals allocated disjointly
+  across functions (no per-call frame). Control flow: `if/else`, `for` with a
+  C-style header (`for (int i=0; i<n; i=i+1) { ... }`).
 
 ## Bytecode / VM
 
-Stack-based, **f32 slots** (a `vecN` is N contiguous slots; `int`/`bool` ride in
-f32 with compile-time typing, so the VM itself is untyped at runtime — the
-compiler guarantees validity). Chosen over a register VM for compiler
-simplicity; revisit if profiling demands it.
+Stack-based, **32-bit slots** (a `vecN` is N contiguous slots). Every slot is a
+raw 32-bit word: `float` bits, an `int`, a Q16.16 `fixed`, or a `bool` (1.0/0.0).
+The VM is untyped at runtime — the **compiler types every operation** and picks
+the matching opcode, so the word is always interpreted correctly. Chosen over a
+register VM for compiler simplicity; revisit if profiling demands it.
 
-Opcode families: `PushConst`, `LoadUniform(idx,size)`, `LoadCtx(id)` (time/led.*/
-imu), `LoadState/StoreState(idx,size)`, `LoadLocal/StoreLocal`, element-wise
-`Add/Sub/Mul/Div/Neg`, `Dot/Cross/Length/Normalize`, unary math (`Sin`…),
-`MakeVec(n)`, `Swizzle(mask)`, compares + `BrFalse/Jmp`, `Call/Ret`, `Return`.
+Opcode families:
+- float element-wise `Add/Sub/Mul/Div/Neg`, `Dot/Cross/Length/Normalize`, unary
+  math (`Sin`…) — soft-float.
+- **integer** `AddI/SubI/MulI/DivI/ModI/NegI/CmpI` — native RV32IM, no soft-float.
+- **fixed-point (Q16.16)** `MulFix/DivFix` (adds/subs/neg/compares reuse the int
+  ops since the representation is a scaled integer).
+- **conversions** `I2F/F2I/Fix2F/F2Fix/I2Fix/Fix2I` — emitted by casts and by
+  mixed-type promotion.
+- data/flow: `PushConst`, `LoadUniform(idx,size)`, `LoadCtx(id)` (time/led.*/imu),
+  `LoadState/StoreState(idx,size)`, `LoadLocal/StoreLocal`, `MakeVec(n)`,
+  `Swizzle(mask)` (also used for scalar→vec broadcast), `Swap` (operand reorder
+  for promotion/broadcast), compares + `BrFalse/Jmp`, `Call/RetFn` (user
+  functions, with a 16-deep return-address stack), `Return`.
 
-**Values are `f32`. The C6 (RV32IMAC) has no FPU → soft-float.** Budget: 256 LEDs
-× ~30 ops × 30 fps ≈ 230k float ops/s ≈ low-single-digit % CPU — fine for v1.
-Fixed-point (Q16.16) is a later optimization if profiling shows it's needed;
-the ISA is value-width-agnostic so it can be swapped without language changes.
+**The C6 (RV32IMAC) has no FPU → floats are soft-float.** Budget: 256 LEDs × ~30
+ops × 30 fps ≈ 230k ops/s ≈ low-single-digit % CPU even in soft-float. `int`/
+`fixed` run natively, so hot paths written against them are effectively free —
+`fixed` (Q16.16) is the recommended type for smooth per-LED quantities. The ISA
+carries both, so a script chooses its precision/speed tradeoff without any VM
+change.
 
 ## File format (`.fxb`)
 
@@ -152,5 +191,6 @@ the identical thing in both.
 
 - Topology built-ins (`led.seg/s/branch`): exact set — start minimal, extend.
 - Palette source: built-in tables vs user-provided — start with a few built-ins.
-- `for` bound: a fixed compile-time max iterations vs a global instruction
-  budget per frame (favor an **instruction budget** to hard-bound frame time).
+- `for` bound: currently a plain C-style loop (runtime trip count). Still open
+  whether to hard-bound frame time via a global per-frame **instruction budget**
+  (favored) vs a compile-time max-iterations cap. Not yet enforced.

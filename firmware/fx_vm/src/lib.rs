@@ -57,13 +57,35 @@ pub enum Op {
     Palette,    // u8 id: pop scalar t -> vec3
     Pop,        // u8 n
     Ret,        // return `n` slots (0 for update, 3 for shade) : u8 n
+    // --- integer / Q16.16 fixed-point fast path (scalar, no FPU) ------------
+    Swap,   // u8 an, u8 bn : swap the top bn slots with the an below (broadcast)
+    AddI,   // i32 add
+    SubI,
+    MulI,
+    DivI,
+    ModI,
+    NegI,
+    CmpI,   // u8 kind : integer compare -> bool
+    MulFix, // Q16.16: (a*b)>>16
+    DivFix, // Q16.16: (a<<16)/b
+    I2F,    // i32 -> f32
+    F2I,    // f32 -> i32 (trunc)
+    Fix2F,  // Q16.16 -> f32
+    F2Fix,  // f32 -> Q16.16
+    I2Fix,  // i32 -> Q16.16 (<<16)
+    Fix2I,  // Q16.16 -> i32 (>>16)
+    // --- user functions -----------------------------------------------------
+    Call,  // u16 target : push return pc, jump
+    RetFn, // pop return pc, jump back (values left on the operand stack)
 }
+
+pub const FIX_ONE: i32 = 1 << 16;
 
 impl Op {
     #[inline]
     fn from_u8(b: u8) -> Option<Op> {
-        // Op is a contiguous enum 0..=RET; guard the range then transmute.
-        if b <= Op::Ret as u8 {
+        // Op is a contiguous enum 0..=RetFn; guard the range then transmute.
+        if b <= Op::RetFn as u8 {
             Some(unsafe { core::mem::transmute::<u8, Op>(b) })
         } else {
             None
@@ -280,6 +302,8 @@ fn run(
     let mut sp: usize = 0;
     let mut pc: usize = entry;
     let mut budget: u32 = 100_000; // instructions per invocation
+    let mut call_stack = [0usize; 16];
+    let mut csp: usize = 0;
 
     macro_rules! push {
         ($v:expr) => {{
@@ -293,6 +317,19 @@ fn run(
         () => {{
             sp = sp.saturating_sub(1);
             stack[sp]
+        }};
+    }
+    // Integers/fixed ride in the f32 slots bit-for-bit (the compiler types every
+    // op, so the runtime interpretation is unambiguous).
+    macro_rules! popi {
+        () => {{
+            pop!().to_bits() as i32
+        }};
+    }
+    macro_rules! pushi {
+        ($v:expr) => {{
+            let vv: i32 = $v;
+            push!(f32::from_bits(vv as u32));
         }};
     }
 
@@ -651,6 +688,117 @@ fn run(
                     out[i] = stack[base + i];
                 }
                 return out;
+            }
+            Op::Swap => {
+                let an = code[pc] as usize;
+                let bn = code[pc + 1] as usize;
+                pc += 2;
+                // stack: [.. a(an) b(bn)] -> [.. b(bn) a(an)]
+                let base = sp - an - bn;
+                let mut tmp = [0.0f32; 8];
+                for i in 0..an {
+                    tmp[i] = stack[base + i];
+                }
+                for i in 0..bn {
+                    stack[base + i] = stack[base + an + i];
+                }
+                for i in 0..an {
+                    stack[base + bn + i] = tmp[i];
+                }
+            }
+            Op::AddI => {
+                let b = popi!();
+                let a = popi!();
+                pushi!(a.wrapping_add(b));
+            }
+            Op::SubI => {
+                let b = popi!();
+                let a = popi!();
+                pushi!(a.wrapping_sub(b));
+            }
+            Op::MulI => {
+                let b = popi!();
+                let a = popi!();
+                pushi!(a.wrapping_mul(b));
+            }
+            Op::DivI => {
+                let b = popi!();
+                let a = popi!();
+                pushi!(if b == 0 { 0 } else { a.wrapping_div(b) });
+            }
+            Op::ModI => {
+                let b = popi!();
+                let a = popi!();
+                pushi!(if b == 0 { 0 } else { a.wrapping_rem(b) });
+            }
+            Op::NegI => {
+                let a = popi!();
+                pushi!(a.wrapping_neg());
+            }
+            Op::CmpI => {
+                let kind = code[pc];
+                pc += 1;
+                let b = popi!();
+                let a = popi!();
+                let r = match kind {
+                    0 => a < b,
+                    1 => a <= b,
+                    2 => a > b,
+                    3 => a >= b,
+                    4 => a == b,
+                    _ => a != b,
+                };
+                push!(if r { 1.0 } else { 0.0 });
+            }
+            Op::MulFix => {
+                let b = popi!() as i64;
+                let a = popi!() as i64;
+                pushi!(((a * b) >> 16) as i32);
+            }
+            Op::DivFix => {
+                let b = popi!() as i64;
+                let a = popi!() as i64;
+                pushi!(if b == 0 { 0 } else { ((a << 16) / b) as i32 });
+            }
+            Op::I2F => {
+                let a = popi!();
+                push!(a as f32);
+            }
+            Op::F2I => {
+                let a = pop!();
+                pushi!(a as i32);
+            }
+            Op::Fix2F => {
+                let a = popi!();
+                push!(a as f32 / FIX_ONE as f32);
+            }
+            Op::F2Fix => {
+                let a = pop!();
+                pushi!((a * FIX_ONE as f32) as i32);
+            }
+            Op::I2Fix => {
+                let a = popi!();
+                pushi!(a.wrapping_shl(16));
+            }
+            Op::Fix2I => {
+                let a = popi!();
+                pushi!(a >> 16);
+            }
+            Op::Call => {
+                let target = rd_u16(code, pc) as usize;
+                pc += 2;
+                if csp < call_stack.len() {
+                    call_stack[csp] = pc;
+                    csp += 1;
+                }
+                pc = target;
+            }
+            Op::RetFn => {
+                if csp == 0 {
+                    break;
+                }
+                csp -= 1;
+                pc = call_stack[csp];
             }
         }
     }
