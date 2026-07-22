@@ -177,10 +177,11 @@ use_repo(host_crate, "host_crates")
 # ---------------------------------------------------------------------------
 
 bazel_dep(name = "firmware", version = "0.0.0", repo_name = "embedded")
-git_override(
+archive_override(
     module_name = "firmware",
-    remote = "https://github.com/fughilli/embedded.git",
-    commit = "a14ef48712b820948f8e1bae28987539a4aa2ff8",
+    integrity = "sha256-ABnfxLMtY8E5KqJkrtIlPB4ML7CSFvjizCabv7i7SbU=",
+    strip_prefix = "embedded-a14ef48712b820948f8e1bae28987539a4aa2ff8",
+    urls = ["https://github.com/fughilli/embedded/archive/a14ef48712b820948f8e1bae28987539a4aa2ff8.tar.gz"],
 )
 
 # ---------------------------------------------------------------------------
