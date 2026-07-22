@@ -184,9 +184,25 @@ is on) — the 11 wraps that engage the dynamic path:
 on the new `mbedtls_src` (`alwayslink = True`, ahead of the `--start-group`), so
 our symbols satisfy the precompiled `libesp-tls.a` / `libesp_https_server.a`.
 
-**What still needs hardware (cannot be done in-container):** the feature is a
-*runtime RAM* behavior, so the payoff is only observable on the device — see
-Verification. In-container we can only confirm it **builds + links**.
+**Build-through PASSED in-container (2026-07-22).** `bazel build -c opt
+//firmware/player_app:esp32c6` links against the from-source mbedtls with **HW
+crypto** (GDMA SHA/AES, HW MPI/ECC, esp_ds) — no software-crypto fallback
+needed. Verified on the ELF via `nm`: all 8 `__wrap_mbedtls_ssl_*` shims + 24
+`esp_mbedtls_*` dynamic-buffer symbols present, and the link params carry **zero**
+`-lmbedtls/-lmbedcrypto/-lmbedx509` (prebuilt archives fully excluded; our
+symbols satisfy the precompiled esp-tls/https_server). Five follow-on fixes were
+needed on the `@embedded` branch beyond the initial scaffold: (1) `mbedtls_src.nix`
+must `import <nixpkgs>` and return an attrset for `nix_pkg.file -A`; (2) port
+include dirs must precede `mbedtls/include` (the port ships `#include_next`
+wrapper headers); (3) everest — compile only the 3 CMake-listed files (the
+`_joined.c` includes the rest) + its private include dirs; (4) strip the stale
+`-lmbedtls*` tokens from the SDK's `ld_libs` response file; (5) add
+`port/md/esp_md.c` (SDK sets `MBEDTLS_MD5_ALT` via `CONFIG_MBEDTLS_ROM_MD5`).
+
+**What still needs hardware:** the feature is a *runtime RAM* behavior, so the
+payoff is only observable on the device — see Verification (8 parallel https,
+idle-per-session ~2 KB, healthy min-heap). In-container we've confirmed it
+**builds + links**; the RAM win is the remaining on-device check.
 
 ## Integration in `led_mapper`
 
