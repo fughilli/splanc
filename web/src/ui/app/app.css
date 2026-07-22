@@ -570,3 +570,62 @@
   font: inherit;
   margin-bottom: var(--sp-3);
 }
+
+/* ===========================================================================
+   Wide viewports — desktop and unfolded foldables. Use the horizontal space
+   instead of a narrow phone column; dock drawers to the side as a narrow panel
+   with fixed-width (not full-bleed) controls.
+   =========================================================================== */
+@media (min-width: 720px) {
+  .shell:not(.shell--overlay) {
+    max-width: 900px;
+  }
+
+  /* The map library becomes a responsive card grid rather than one tall
+     single column, so a wide screen shows many maps at once. */
+  .maps-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+    gap: var(--sp-3);
+    align-content: start;
+  }
+
+  /* Bottom sheets dock as a right-side drawer: narrower, full-height, sliding
+     in from the edge instead of covering the width. */
+  .k-sheet {
+    left: auto;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(24rem, 92vw);
+    max-height: none;
+    height: 100%;
+    border-top: 0;
+    border-radius: 0;
+    border-left: 1px solid var(--border);
+    transform: translateX(100%);
+    padding-bottom: var(--sp-4);
+  }
+  .k-sheet.k-sheet--in {
+    transform: none;
+  }
+
+  /* In a docked drawer, controls are compact and fixed-width, not full-bleed —
+     full-width buttons look oversized in a narrow side panel. */
+  .k-sheet .k-btn {
+    padding: 0.5rem 0.9rem;
+  }
+  .device-actions {
+    align-items: flex-start;
+  }
+  .device-actions .k-btn--block {
+    width: auto;
+    min-width: 13rem;
+  }
+}
+
+@media (min-width: 1200px) {
+  .shell:not(.shell--overlay) {
+    max-width: 1040px;
+  }
+}
