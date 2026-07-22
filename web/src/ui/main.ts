@@ -306,6 +306,57 @@ function setConn(text: string): void {
   connEl.textContent = text;
 }
 
+// Popup-based self-signed-cert trust. A browser only offers the "proceed
+// anyway" interstitial for a TOP-LEVEL context (never an iframe/subresource),
+// so we open the device's https page as a popup — the interstitial appears
+// there. Its page postMessages this window once loaded (past the interstitial);
+// on that signal we close the popup and reload, connected — no navigate-back.
+// If the popup is blocked, we fall back to a manual link + the client's
+// auto-reconnect (which succeeds on its own once the cert is trusted).
+function showCertApprovalPrompt(certUrl: string): void {
+  const deviceOrigin = new URL(certUrl).origin;
+  let popup: Window | null = null;
+  const onMsg = (ev: MessageEvent): void => {
+    if (ev.origin !== deviceOrigin || ev.data !== "ledmapper-cert-ok") return;
+    window.removeEventListener("message", onMsg);
+    try {
+      popup?.close();
+    } catch {
+      /* some browsers refuse cross-origin close — the reload covers it */
+    }
+    setConn("certificate trusted — connecting…");
+    location.reload();
+  };
+  window.addEventListener("message", onMsg);
+
+  errEl.innerHTML = "";
+  errEl.append("This device uses a self-signed certificate — trust it once to connect.");
+  const btn = document.createElement("button");
+  btn.textContent = "Trust this device & connect";
+  btn.style.cssText =
+    "display:block;margin:.6rem 0;padding:.55rem 1rem;font-size:1rem;border:0;" +
+    "border-radius:.4rem;background:#2b6;color:#fff;cursor:pointer";
+  btn.addEventListener("click", () => {
+    popup = window.open(certUrl, "ledmapper-cert", "width=420,height=560");
+    if (popup === null) {
+      // Popup blocked → manual top-level open; auto-reconnect finishes the job.
+      setError("Popup blocked. Open this, accept the warning, then come back:", [certUrl]);
+    }
+  });
+  errEl.append(btn);
+  const note = document.createElement("div");
+  note.style.cssText = "font-size:.85em;opacity:.8";
+  note.append("Or open ");
+  const a = document.createElement("a");
+  a.href = certUrl;
+  a.target = "_blank";
+  a.rel = "noopener";
+  a.textContent = certUrl;
+  a.style.color = "#6cf";
+  note.append(a, " manually — it'll connect on its own once accepted.");
+  errEl.append(note);
+}
+
 // -- boot: connect + sync ----------------------------------------------------
 
 client.events = {
@@ -336,11 +387,7 @@ async function boot(): Promise<void> {
     // point at the player's landing page (R2 trust flow).
     const certHelp = certApprovalUrl(wsUrl);
     if (certHelp !== null) {
-      setError(`Trust this device to connect (one time).`, [
-        `Open ${certHelp} and accept the security warning — it's the device's ` +
-          "own self-signed certificate.",
-        "Then come back to this tab — it connects automatically, no reload needed.",
-      ]);
+      showCertApprovalPrompt(certHelp);
     }
     // client auto-reconnects; enable start once connected.
     const enable = setInterval(() => {

@@ -558,14 +558,20 @@ static esp_err_t wss_ws_handler(httpd_req_t *req) {
 // cert (certApprovalUrl in the webapp points here). After that, wss connects
 // with no interstitial.
 static esp_err_t wss_page_handler(httpd_req_t *req) {
+  // If the app opened us as a popup (window.open), tell it the cert is trusted
+  // now so it can close this window and connect immediately — no navigate-back.
+  // targetOrigin "*" is fine: the payload is a non-secret signal and the app
+  // validates the message's origin against this device.
   static const char kPage[] =
       "<!doctype html><meta charset=utf-8>"
       "<meta name=viewport content='width=device-width,initial-scale=1'>"
       "<title>LED Mapper player</title>"
       "<body style='font-family:system-ui;background:#111;color:#eee;padding:2rem'>"
       "<h2>Certificate accepted \xE2\x9C\x93</h2>"
-      "<p>This player's certificate is now trusted in this browser. Return to the "
-      "LED Mapper app and start mapping — it connects to this device directly.</p>";
+      "<p>You can close this and return to the LED Mapper app — it connects to "
+      "this device directly.</p>"
+      "<script>try{if(window.opener)window.opener.postMessage("
+      "'ledmapper-cert-ok','*');}catch(e){}</script>";
   httpd_resp_set_type(req, "text/html");
   // Close after serving so this one-shot GET's ~28 KB TLS session frees at once
   // instead of lingering keep-alive and crowding out the wss/mapping session.
