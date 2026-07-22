@@ -567,11 +567,15 @@ static esp_err_t wss_page_handler(httpd_req_t *req) {
       "<p>This player's certificate is now trusted in this browser. Return to the "
       "LED Mapper app and start mapping — it connects to this device directly.</p>";
   httpd_resp_set_type(req, "text/html");
+  // Close after serving so this one-shot GET's ~28 KB TLS session frees at once
+  // instead of lingering keep-alive and crowding out the wss/mapping session.
+  httpd_resp_set_hdr(req, "Connection", "close");
   return httpd_resp_send(req, kPage, HTTPD_RESP_USE_STRLEN);
 }
 
 static esp_err_t wss_health_handler(httpd_req_t *req) {
   httpd_resp_set_type(req, "text/plain");
+  httpd_resp_set_hdr(req, "Connection", "close");
   return httpd_resp_send(req, "ok", 2);
 }
 
@@ -581,13 +585,16 @@ static void wss_start() {
   cfg.servercert_len = sizeof kDevCertPem;
   cfg.prvtkey_pem = (const uint8_t *)kDevKeyPem;
   cfg.prvtkey_len = sizeof kDevKeyPem;
-  // TLS is heap-heavy on the C6: keep the socket count small and purge the
-  // least-recently-used socket rather than reject a reconnecting phone. The
-  // handler task runs lm_player_handle, whose micropb by-value structs need a
-  // big stack — the loop task is 24 KB for exactly this — so give the httpd
-  // task the same budget plus TLS-record margin, or it overflows on the first
-  // message and the socket drops mid-protocol.
-  cfg.httpd.max_open_sockets = 3;
+  // TLS is heap-heavy on the C6: each mbedtls session is ~28 KB (the 16 KB
+  // record buffer + context), so cap concurrency hard — 2 sessions ≈ 56 KB
+  // leaves headroom, while 3+ (a browser's parallel connections plus the app's
+  // wss retries against a not-yet-trusted cert) exhaust the heap and every
+  // session fails with -0x7F00. LRU-purge the oldest rather than reject a
+  // reconnecting phone. The handler task runs lm_player_handle, whose micropb
+  // by-value structs need a big stack (the loop task is 24 KB for exactly this),
+  // so give the httpd task the same budget plus TLS-record margin or it
+  // overflows on the first message.
+  cfg.httpd.max_open_sockets = 2;
   cfg.httpd.stack_size = 28 * 1024;
   cfg.httpd.lru_purge_enable = true;
   esp_err_t err = httpd_ssl_start(&wss, &cfg);

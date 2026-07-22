@@ -145,7 +145,12 @@ export class LedMapperClient {
     this.factory = opts.socketFactory ?? ((u) => new WebSocket(u) as unknown as SocketLike);
     this.now = opts.now ?? (() => performance.now());
     this.schedule = opts.schedule ?? ((fn, ms) => setTimeout(fn, ms));
-    this.backoffMs = opts.backoffMs ?? [250, 500, 1000, 2000, 4000];
+    // Gentle by default: a wss player (self-signed cert) rejects the socket
+    // fast until the user accepts the cert, and a heap-tight ESP can only hold
+    // ~2 TLS sessions — hammering every 250 ms fills both slots and starves the
+    // cert-approval page load. Spacing retries out (1–8 s) keeps a slot free for
+    // it and still reconnects within ~8 s once the cert is trusted.
+    this.backoffMs = opts.backoffMs ?? [1000, 2000, 4000, 8000];
     this.connectTimeoutMs = opts.connectTimeoutMs ?? 5000;
     this.appVersion = opts.appVersion ?? "0.1.0";
     this.clientName = opts.clientName ?? "android-web";
