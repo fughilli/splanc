@@ -39,7 +39,7 @@ import {
 import { effectStore } from "../../store/effectStore";
 import { mapStore } from "../../store/mapStore";
 import { appState } from "../app/state";
-import { Button, Card, Field, IconButton } from "../kit";
+import { Button, Card, Field, IconButton, toast } from "../kit";
 import { openAiKeySheet } from "./aiKeySheet";
 import type { Router, Screen } from "../app/router";
 
@@ -772,47 +772,47 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     codeEl.value = rec.source;
     paintHighlight();
 
-    const defaultMapId = await populateMapPicker();
-    mapPicker.value = defaultMapId ?? "__fixture__";
-    await selectMap(mapPicker.value);
+    try {
+      const defaultMapId = await populateMapPicker();
+      mapPicker.value = defaultMapId ?? "__fixture__";
+      await selectMap(mapPicker.value);
+    } catch (e) {
+      // A preview/map hiccup must not disable the rest of the editor.
+      console.error("effect editor: preview/map init failed", e);
+      toast("Preview unavailable — editing still works", { error: true });
+    }
 
     refreshDevice();
     refreshDisasmVisibility();
     unsubAppState = appState.subscribe(() => refreshDevice());
 
-    codeEl.addEventListener("input", () => {
-      paintHighlight();
-      syncScroll();
-      scheduleCompile();
-      scheduleSave();
-      schedulePopup();
-    });
-    codeEl.addEventListener("scroll", syncScroll);
-
-    // Popup keyboard: navigation keys are consumed before they reach the
-    // textarea; other keys fall through and re-open the popup on keyup.
-    codeEl.addEventListener("keydown", (ev) => {
-      if (popupKeydown(ev)) {
-        ev.preventDefault();
-        ev.stopPropagation();
-      }
-    });
-    codeEl.addEventListener("keyup", (ev) => {
-      // Ignore keys the popup already handled or that shouldn't re-trigger it.
-      if (["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(ev.key)) return;
-      if (ev.key === "ArrowLeft" || ev.key === "ArrowRight") {
-        // Caret moved by arrows: refresh (may reposition or dismiss).
-        schedulePopup();
-        return;
-      }
-      schedulePopup();
-    });
-    codeEl.addEventListener("blur", () => closePopup());
-    document.addEventListener("selectionchange", onSelectionChange);
-
     raf = requestAnimationFrame(tick);
     scheduleCompile();
   }
+
+  // Wire editor interactions SYNCHRONOUSLY (not inside the async load(), whose
+  // awaits — map picker / preview — could throw and skip attachment, leaving the
+  // textarea "dead": edits wouldn't repaint the backdrop and scroll wouldn't sync.
+  codeEl.addEventListener("input", () => {
+    paintHighlight();
+    syncScroll();
+    scheduleCompile();
+    scheduleSave();
+    schedulePopup();
+  });
+  codeEl.addEventListener("scroll", syncScroll);
+  codeEl.addEventListener("keydown", (ev) => {
+    if (popupKeydown(ev)) {
+      ev.preventDefault();
+      ev.stopPropagation();
+    }
+  });
+  codeEl.addEventListener("keyup", (ev) => {
+    if (["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(ev.key)) return;
+    schedulePopup();
+  });
+  codeEl.addEventListener("blur", () => closePopup());
+  document.addEventListener("selectionchange", onSelectionChange);
 
   return {
     el,
