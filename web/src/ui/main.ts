@@ -281,7 +281,21 @@ function setError(message: string, hints: string[] = []): void {
     const ul = document.createElement("ul");
     for (const h of hints) {
       const li = document.createElement("li");
-      li.textContent = h;
+      // Linkify http(s) URLs so cert-approval links (https://<player>/) are one
+      // tap on a phone rather than something to copy by hand.
+      for (const part of h.split(/(https?:\/\/[^\s]+)/g)) {
+        if (/^https?:\/\//.test(part)) {
+          const a = document.createElement("a");
+          a.href = part;
+          a.target = "_blank";
+          a.rel = "noopener";
+          a.textContent = part;
+          a.style.color = "#6cf";
+          li.append(a);
+        } else if (part) {
+          li.append(part);
+        }
+      }
       ul.append(li);
     }
     errEl.append(ul);
@@ -322,9 +336,10 @@ async function boot(): Promise<void> {
     // point at the player's landing page (R2 trust flow).
     const certHelp = certApprovalUrl(wsUrl);
     if (certHelp !== null) {
-      setError(`Can't reach the player at ${wsUrl}.`, [
-        `If this player uses a self-signed certificate, open ${certHelp} first ` +
-          "and accept the certificate warning, then come back and reload.",
+      setError(`Trust this device to connect (one time).`, [
+        `Open ${certHelp} and accept the security warning — it's the device's ` +
+          "own self-signed certificate.",
+        "Then come back to this tab — it connects automatically, no reload needed.",
       ]);
     }
     // client auto-reconnects; enable start once connected.
@@ -384,10 +399,14 @@ if (bleAvailable()) {
         }
         const target = urls.map((u) => wsUrlFromRedirect(u)).find((u) => u !== null);
         if (!target) throw new Error(`player joined, but sent no usable address (${urls})`);
-        setConn(`player provisioned at ${target} — reconnecting…`);
+        // Reload bound to the player over wss. It has a self-signed cert, which a
+        // WebSocket can't prompt for — so the connect flow (boot()) surfaces a
+        // one-time "trust this device" link (certApprovalUrl → https://<ip>/);
+        // once accepted, the client's auto-reconnect completes on its own.
+        setConn(`player provisioned at ${target} — connecting…`);
         const qs2 = new URLSearchParams(location.search);
         qs2.set("url", target);
-        location.search = qs2.toString(); // reload, rebound to the player
+        location.search = qs2.toString(); // reload, rebound to the player over wss
       } catch (e) {
         setError(`Player setup failed: ${e instanceof Error ? e.message : e}`);
         bleBtn.disabled = false;

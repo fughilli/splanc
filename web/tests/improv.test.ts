@@ -52,9 +52,10 @@ test("rpc result rejects bad checksum / wrong command / truncation", () => {
   assert.equal(parseRpcResult(new Uint8Array(body)), null); // no checksum byte
 });
 
-test("player WS endpoint from the redirect URL", () => {
-  assert.equal(wsUrlFromRedirect("http://192.168.1.50/"), "ws://192.168.1.50:81/ws");
-  assert.equal(wsUrlFromRedirect("https://player.local/"), "wss://player.local:81/ws");
+test("player WS endpoint from the redirect URL (wss on 443)", () => {
+  // The device reports http://<ip>/ over BLE but speaks wss on 443 → target it.
+  assert.equal(wsUrlFromRedirect("http://192.168.1.50/"), "wss://192.168.1.50/ws");
+  assert.equal(wsUrlFromRedirect("https://player.local/"), "wss://player.local/ws");
   assert.equal(wsUrlFromRedirect("not a url"), null);
   assert.equal(wsUrlFromRedirect("ftp://x/"), null);
 });
