@@ -114,6 +114,7 @@ cc_binary(
         ":player_ffi",
         ":ws_codec",
         "//firmware/landing:landing_page",
+        "//firmware/player_app/devcert:dev_cert",
         # NOT @embedded//libs/pins: it propagates LED_DATA_PIN=8 (the
         # DevKitC-1 onboard LED); our strip wiring lives in led_config.h.
         "@embedded//libs/board:arduino_core",

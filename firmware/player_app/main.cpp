@@ -23,7 +23,9 @@
 #include <Preferences.h>
 #include <WebServer.h>
 #include <WiFi.h>
+#include <esp_https_server.h>
 #include <esp_littlefs.h>
+#include <esp_system.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
@@ -37,6 +39,7 @@
 #include "firmware/player_app/player_ffi.h"
 #include "firmware/player_app/serial_log.h"
 #include "firmware/player_app/ws_codec.h"
+#include "firmware/player_app/devcert/dev_cert.h"
 
 // The player protocol handler (lm_player_handle -> Player::handle) decodes a
 // ClientMessage and builds a ServerMessage as by-value protobuf structs on the
@@ -74,8 +77,11 @@ static SemaphoreHandle_t player_mutex = nullptr;
 static const UBaseType_t kRenderTaskPrio = 10;   // tune on-device if needed
 static const uint32_t kRenderTaskStack = 8192;   // FastLED.show() needs headroom
 
-// Largest inbound protocol message (submit_map for ~1024 LEDs ≈ 45 KB).
-static const size_t kRxCap = 49152;
+// Largest inbound protocol message: a full submit_map for kMaxLeds (~96 B/LED,
+// so 256 LEDs ≈ 25 KB; 32 KB leaves headroom). Sized to the LED cap rather than
+// the old 1024-LED assumption — the reclaimed static RAM is headroom the
+// heap-hungry TLS (wss) handshake needs. Shared by the ws:81 and wss:443 paths.
+static const size_t kRxCap = 32768;
 static uint8_t rx[kRxCap];      // reassembled message payload
 static size_t rx_len = 0;
 static uint8_t tx[2048];        // encoded reply frames are control-sized
@@ -494,6 +500,108 @@ static void render_task(void *) {
 
 // -- app ----------------------------------------------------------------------
 
+// -- wss: TLS WebSocket player endpoint (:443) -------------------------------
+// The hosted https app (ledmapper.pages.dev) can't open a plain ws:// to the
+// player — mixed content — so expose the SAME player protocol over wss via the
+// IDF https server. GET / serves a tiny page so a top-level https visit lets the
+// phone accept the self-signed cert once; then wss://<player>/ws works directly
+// from the static app, with no intermediate server. Runs ALONGSIDE the plain
+// ws:81 path (bench/local testing); the two share `rx`/`tx`, so exactly one
+// client (ws OR wss) is meant to be active at a time.
+static httpd_handle_t wss = nullptr;
+
+static esp_err_t wss_ws_handler(httpd_req_t *req) {
+  if (req->method == HTTP_GET) return ESP_OK;  // upgrade handshake; nothing to send
+
+  httpd_ws_frame_t frame = {};
+  frame.type = HTTPD_WS_TYPE_BINARY;
+  // First call with max_len 0 fills frame.len without copying the payload.
+  esp_err_t err = httpd_ws_recv_frame(req, &frame, 0);
+  if (err != ESP_OK) return err;
+  if (frame.type == HTTPD_WS_TYPE_CLOSE) return ESP_OK;
+  if (frame.len == 0) return ESP_OK;
+  if (frame.len > kRxCap) return ESP_FAIL;  // too big → drop the socket
+
+  // Read into the shared reassembly buffer OUTSIDE player_mutex, so a slow TLS
+  // read of a big submit_map doesn't stall the render task; only the
+  // single-threaded core call is serialized (mirrors ws_dispatch_message).
+  frame.payload = rx;
+  err = httpd_ws_recv_frame(req, &frame, kRxCap);
+  if (err != ESP_OK) return err;
+  rx_len = frame.len;
+
+  int64_t now = (int64_t)millis();
+  xSemaphoreTake(player_mutex, portMAX_DELAY);
+  int32_t n = lm_player_handle(rx, rx_len, now, now, tx, sizeof tx);
+  xSemaphoreGive(player_mutex);
+  if (n > 0) {
+    httpd_ws_frame_t out = {};
+    out.type = HTTPD_WS_TYPE_BINARY;
+    out.payload = tx;
+    out.len = (size_t)n;
+    httpd_ws_send_frame(req, &out);
+    persist_if_upload(rx, rx_len, tx, (size_t)n);
+  }
+  rx_len = 0;
+  return ESP_OK;
+}
+
+// GET / over TLS: the landing the phone visits once to accept the self-signed
+// cert (certApprovalUrl in the webapp points here). After that, wss connects
+// with no interstitial.
+static esp_err_t wss_page_handler(httpd_req_t *req) {
+  static const char kPage[] =
+      "<!doctype html><meta charset=utf-8>"
+      "<meta name=viewport content='width=device-width,initial-scale=1'>"
+      "<title>LED Mapper player</title>"
+      "<body style='font-family:system-ui;background:#111;color:#eee;padding:2rem'>"
+      "<h2>Certificate accepted \xE2\x9C\x93</h2>"
+      "<p>This player's certificate is now trusted in this browser. Return to the "
+      "LED Mapper app and start mapping — it connects to this device directly.</p>";
+  httpd_resp_set_type(req, "text/html");
+  return httpd_resp_send(req, kPage, HTTPD_RESP_USE_STRLEN);
+}
+
+static esp_err_t wss_health_handler(httpd_req_t *req) {
+  httpd_resp_set_type(req, "text/plain");
+  return httpd_resp_send(req, "ok", 2);
+}
+
+static void wss_start() {
+  httpd_ssl_config_t cfg = HTTPD_SSL_CONFIG_DEFAULT();
+  cfg.servercert = (const uint8_t *)kDevCertPem;
+  cfg.servercert_len = sizeof kDevCertPem;
+  cfg.prvtkey_pem = (const uint8_t *)kDevKeyPem;
+  cfg.prvtkey_len = sizeof kDevKeyPem;
+  // TLS is heap-heavy on the C6: keep the socket count small, give the handler
+  // task extra stack for the handshake, and purge the least-recently-used
+  // socket rather than reject a reconnecting phone.
+  cfg.httpd.max_open_sockets = 3;
+  cfg.httpd.stack_size = 10240;
+  cfg.httpd.lru_purge_enable = true;
+  esp_err_t err = httpd_ssl_start(&wss, &cfg);
+  if (err != ESP_OK) {
+    Log().printf("[wss] httpd_ssl_start failed: %d (heap=%u)\n", (int)err,
+                 (unsigned)esp_get_free_heap_size());
+    return;
+  }
+  httpd_uri_t u = {};
+  u.method = HTTP_GET;
+  u.uri = "/ws";
+  u.handler = wss_ws_handler;
+  u.is_websocket = true;
+  httpd_register_uri_handler(wss, &u);
+  u.is_websocket = false;
+  u.uri = "/";
+  u.handler = wss_page_handler;
+  httpd_register_uri_handler(wss, &u);
+  u.uri = "/healthz";
+  u.handler = wss_health_handler;
+  httpd_register_uri_handler(wss, &u);
+  Log().printf("[wss] TLS player on :443 (heap=%u)\n",
+               (unsigned)esp_get_free_heap_size());
+}
+
 void setup() {
   Serial.begin(115200);
   FastLED.addLeds<WS2812B, LED_DATA_PIN, GRB>(leds, kMaxLeds);
@@ -532,6 +640,7 @@ void setup() {
   http.on("/healthz", []() { http.send(200, "text/plain", "ok"); });
   http.begin();
   ws_listener.begin();
+  wss_start();  // TLS player on :443 for the hosted https app (direct, no relay)
 
   // Drive the LEDs from a dedicated high-priority task so the pattern cadence
   // no longer rides on loop()'s cooperative WiFi/HTTP/BLE servicing.
