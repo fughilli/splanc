@@ -37,6 +37,11 @@ npm_link_all_packages(name = "node_modules")
 
 SRCS = glob(["src/**/*.ts"])
 
+# Non-TS assets imported for their side effects by the app bundle (the design
+# tokens + app-shell stylesheet). tsc ignores these (they resolve via the
+# `*.css` module declaration in src/env.d.ts); Vite needs the real files.
+CSS = glob(["src/**/*.css"])
+
 TYPE_DEPS = [
     ":node_modules/@bufbuild/protobuf",
     ":node_modules/@ledmapper/protocol",
@@ -149,7 +154,7 @@ js_binary(
 # comment there (rolldown vs sandbox symlinks).
 vite_bin.vite(
     name = "dist",
-    srcs = SRCS + [
+    srcs = SRCS + CSS + [
         "editor.html",
         "effects.html",
         "index.html",

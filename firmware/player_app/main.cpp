@@ -23,6 +23,7 @@
 #include <Preferences.h>
 #include <WebServer.h>
 #include <WiFi.h>
+#include <esp_cpu.h>
 #include <esp_https_server.h>
 #include <esp_littlefs.h>
 #include <esp_system.h>
@@ -454,6 +455,15 @@ static uint32_t render_once() {
   bool show = false;
   uint32_t next_delay_ms = kStaticPollMs;
 
+  // Perf (Tier 0): time the effect update()/shade span with the free-running
+  // cycle counter; the show() span is timed separately AFTER the strip write
+  // (it runs outside the lock). Only sampled while a perf mode is active and an
+  // effect is rendering — the built-in patterns aren't the profiling target.
+  bool perf_on = lm_perf_mode() != 0;
+  bool fx_frame_rendered = false;
+  uint32_t perf_seq = 0, perf_update_c = 0, perf_shade_c = 0, perf_frame_c = 0;
+  uint32_t perf_led_count = 0;
+
   xSemaphoreTake(player_mutex, portMAX_DELAY);
   if (lm_fx_active()) {
     // User effect (.fxb shader) takes priority over the built-in playback:
@@ -476,9 +486,18 @@ static uint32_t render_once() {
     // guard and is fully effective without the timer.
     uint32_t n = lm_map_len();
     if (n > kMaxLeds) n = kMaxLeds;
-    if (lm_fx_update(fx_time_s, dt_s, fx_frame++, n)) {
+    uint32_t this_seq = fx_frame++;
+    // Cycle-counter span around update() (perf-monitoring.md: two CSR reads,
+    // negligible against the per-frame float ops).
+    uint32_t c_frame_start = perf_on ? esp_cpu_get_cycle_count() : 0;
+    uint32_t c_update_start = c_frame_start;
+    bool updated = lm_fx_update(fx_time_s, dt_s, this_seq, n);
+    uint32_t c_update_end = perf_on ? esp_cpu_get_cycle_count() : 0;
+    if (updated) {
       uint32_t id;
       float xyz[3];
+      // The whole per-LED shade loop is timed as one span (never per LED — that
+      // would add a counter read to the hottest inner loop 256x/frame).
       for (uint32_t i = 0; i < n; i++) {
         // Shade over the stored fixture position (map order == LED order here).
         if (lm_map_led(i, &id, xyz) && lm_fx_shade(i, xyz[0], xyz[1], xyz[2], rgb)) {
@@ -491,6 +510,17 @@ static uint32_t render_once() {
     } else {
       // Effect active but not runnable (shouldn't happen) — hold black.
       fill_solid(leds, kMaxLeds, CRGB::Black);
+    }
+    if (perf_on) {
+      uint32_t c_frame_end = esp_cpu_get_cycle_count();
+      // Wrap-safe deltas (the cycle counter is free-running 32-bit; unsigned
+      // subtraction handles the ~27 s wrap at 160 MHz for one frame's span).
+      perf_seq = this_seq;
+      perf_update_c = c_update_end - c_update_start;
+      perf_shade_c = c_frame_end - c_update_end;   // shade + buffer writeout
+      perf_frame_c = c_frame_end - c_frame_start;  // update + shade (excl show)
+      perf_led_count = n;
+      fx_frame_rendered = true;
     }
     show = true;
     was_active = true;
@@ -577,7 +607,27 @@ static uint32_t render_once() {
   }
   xSemaphoreGive(player_mutex);
 
-  if (show) FastLED.show();  // long strip write kept outside the Player lock
+  // Time FastLED.show() (DMA/RMT push) as its own span — it runs outside the
+  // Player lock, so it's measured here, not folded into frame_cycles.
+  uint32_t show_c = 0;
+  if (show) {
+    uint32_t c_show_start = fx_frame_rendered ? esp_cpu_get_cycle_count() : 0;
+    FastLED.show();  // long strip write kept outside the Player lock
+    if (fx_frame_rendered) show_c = esp_cpu_get_cycle_count() - c_show_start;
+  }
+
+  // Push this effect frame's Tier-0 sample into the perf ring (drained by the
+  // phone via get_perf_report). Overrun = frame+show exceeded the ~33 ms budget.
+  if (fx_frame_rendered) {
+    // budget_cycles = 33 ms * 160 MHz; kept in sync with ffi.rs PERF_BUDGET.
+    const uint32_t kBudgetCycles = (160000000u / 1000u) * 33u;
+    bool overran = (perf_frame_c + show_c) > kBudgetCycles;
+    xSemaphoreTake(player_mutex, portMAX_DELAY);
+    lm_perf_set_heap(esp_get_free_heap_size(), esp_get_minimum_free_heap_size());
+    lm_perf_push(perf_seq, perf_update_c, perf_shade_c, perf_frame_c, show_c,
+                 perf_led_count, overran);
+    xSemaphoreGive(player_mutex);
+  }
   return next_delay_ms;
 }
 
@@ -587,6 +637,34 @@ static void render_task(void *) {
     uint32_t delay_ms = render_once();
     vTaskDelay(pdMS_TO_TICKS(delay_ms));
   }
+}
+
+// -- perf: unsolicited PerfReport push ----------------------------------------
+// While a perf mode is active with interval_ms > 0, the phone asked us to push
+// a rolled-up report every interval_ms rather than poll. Built + drained on the
+// loop task (never the render task — the render loop only fills the ring, no
+// network work), coalesced by the interval like the playback-save timer.
+// Shipped over the plain ws:81 socket (directly writable from loop()); the
+// wss:443 path is httpd-owned and has no async push handle here, so a phone on
+// wss falls back to polling get_perf_report. TODO(hw): validate the push cadence
+// on-device and, if wss push is wanted, stash the httpd req/fd for async send.
+static void emit_perf_report_if_due() {
+  xSemaphoreTake(player_mutex, portMAX_DELAY);
+  uint32_t mode = lm_perf_mode();
+  uint32_t interval = lm_perf_interval_ms();
+  xSemaphoreGive(player_mutex);
+  if (mode == 0 || interval == 0) return;   // OFF or poll-only
+  if (ws_state != WsState::kOpen) return;   // only the plain ws:81 push path
+
+  static uint32_t last_push = 0;
+  uint32_t nowm = millis();
+  if (nowm - last_push < interval) return;
+  last_push = nowm;
+
+  xSemaphoreTake(player_mutex, portMAX_DELAY);
+  int32_t n = lm_perf_build_report(tx, sizeof tx);
+  xSemaphoreGive(player_mutex);
+  if (n > 0) ws_send_frame(WS_OP_BINARY, tx, (size_t)n);
 }
 
 // -- app ----------------------------------------------------------------------
@@ -806,6 +884,7 @@ void loop() {
     flush_playback_save();
     flush_fx_sel_save();
   }
+  emit_perf_report_if_due();
 
   static uint32_t last_report = 0;
   if (millis() - last_report > 5000) {

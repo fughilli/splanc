@@ -21,7 +21,9 @@ use core::ptr::{addr_of, addr_of_mut};
 use core::sync::atomic::AtomicBool;
 
 use ledmapper_arena::Arena;
-use ledmapper_fx_vm::{Budget, Frame as FxFrame, Led as FxLed, Outcome, Program, Vm as FxVm};
+use ledmapper_fx_vm::{
+    Budget, Counters as FxCounters, Frame as FxFrame, Led as FxLed, Outcome, Program, Vm as FxVm,
+};
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_player::{upload_malformed, upload_too_large, Player};
 use ledmapper_pulse::{Graph, Sim, MAX_SEGMENTS};
@@ -82,6 +84,199 @@ static FX_DEADLINE: AtomicBool = AtomicBool::new(false);
 /// Per-invocation instruction budget for one update()/shade(). Tunable from
 /// C++ (lm_fx_set_budget); defaults to the VM's default.
 static mut FX_BUDGET: u32 = ledmapper_fx_vm::DEFAULT_BUDGET;
+
+// -- perf monitoring (docs/design/perf-monitoring.md) -------------------------
+// A small perf ring the render task fills (one PerfFrame per rendered effect
+// frame, Tier-0 cycle spans + Tier-1 opcode counts when FULL) and the phone
+// drains via get_perf_report — mirroring the FrameLog/get_frame_timing pattern
+// one level up. Everything is `static` and single-threaded like the rest of
+// this file (render task + message handler take turns under player_mutex).
+// Integer-only throughout — no float on the perf path.
+
+/// Perf instrumentation tier. Matches `SetPerf.Mode` on the wire (OFF/BASIC/
+/// FULL). BASIC = Tier 0 (cycle spans + heap + counters, always cheap). FULL =
+/// Tier 0 + Tier 1 (per-opcode instruction counts + stack high-water); gated so
+/// BASIC never pays the counted VM path.
+const PERF_OFF: u32 = 0;
+/// BASIC (Tier 0) is the wire value 1; the firmware only branches on OFF vs
+/// FULL (Tier-1 gating), so BASIC needs no direct reference beyond documenting
+/// the enum. Kept for parity with `SetPerf.Mode`.
+#[allow(dead_code)]
+const PERF_BASIC: u32 = 1;
+const PERF_FULL: u32 = 2;
+
+/// Perf ring capacity (recent PerfFrames). ~64 frames ≈ 2 s at 30 fps — the
+/// live-graph window. On overflow the oldest is dropped (samples_dropped),
+/// exactly like FrameLog: a phone that polled too slowly learns its history
+/// has gaps rather than reading smoothed data.
+const PERF_RING_CAP: usize = 64;
+
+/// Current perf mode (PERF_OFF/BASIC/FULL) and unsolicited-push interval (ms,
+/// 0 = poll-only). Read by the render task to gate Tier-1 and by main.cpp to
+/// pace the push.
+static mut PERF_MODE: u32 = PERF_OFF;
+static mut PERF_INTERVAL_MS: u32 = 0;
+
+/// Last invocation's Tier-1 counters, latched by lm_fx_update / lm_fx_shade
+/// when FULL is active (else left zero). shade counts accumulate across the
+/// per-LED sweep; update is a single call. Read into the pushed PerfFrame.
+static mut FX_INSTR_UPDATE: u32 = 0;
+static mut FX_INSTR_SHADE: u32 = 0;
+static mut FX_STACK_MAX: u16 = 0;
+
+/// The effect identity a PerfReport is pinned to (perf-monitoring.md: the
+/// panel/AI must know metrics belong to the running compiled script). A hash of
+/// the loaded `.fxb`, recomputed on load; effect_id echoes the last submit.
+static mut FX_HASH: u32 = 0;
+static mut FX_ID: [u8; 64] = [0; 64];
+static mut FX_ID_LEN: usize = 0;
+
+/// One rendered effect frame's Tier-0/Tier-1 sample, in native firmware units
+/// (CPU cycles, counts, bytes) — the ring element and the PerfReport tick.
+#[derive(Clone, Copy, Default)]
+struct PerfSample {
+    seq: u32,
+    update_cycles: u32,
+    shade_cycles: u32,
+    frame_cycles: u32,
+    show_cycles: u32,
+    led_count: u32,
+    instr_update: u32,
+    instr_shade: u32,
+    stack_max: u32,
+}
+
+/// Ring of recent PerfSamples with the same overflow discipline as FrameLog:
+/// the render task pushes; get_perf_report drains oldest-first. `overruns` and
+/// `dropped_frames` are since-last-drain counters (the report resets them);
+/// `samples_dropped` counts ring overflow (phone polled too slowly).
+struct PerfRing {
+    buf: [PerfSample; PERF_RING_CAP],
+    head: usize,
+    len: usize,
+    /// Frames whose (frame + show) cycles exceeded the ~33 ms budget.
+    overruns: u32,
+    /// Frames the render task skipped (fell behind schedule).
+    dropped_frames: u32,
+    /// Ring-overflow drops (phone drained too slowly).
+    samples_dropped: u32,
+}
+
+impl PerfRing {
+    const fn new() -> Self {
+        PerfRing {
+            buf: [PerfSample {
+                seq: 0,
+                update_cycles: 0,
+                shade_cycles: 0,
+                frame_cycles: 0,
+                show_cycles: 0,
+                led_count: 0,
+                instr_update: 0,
+                instr_shade: 0,
+                stack_max: 0,
+            }; PERF_RING_CAP],
+            head: 0,
+            len: 0,
+            overruns: 0,
+            dropped_frames: 0,
+            samples_dropped: 0,
+        }
+    }
+
+    fn push(&mut self, s: PerfSample) {
+        let tail = (self.head + self.len) % PERF_RING_CAP;
+        self.buf[tail] = s;
+        if self.len == PERF_RING_CAP {
+            self.head = (self.head + 1) % PERF_RING_CAP; // overwrite oldest
+            self.samples_dropped = self.samples_dropped.saturating_add(1);
+        } else {
+            self.len += 1;
+        }
+    }
+
+    fn pop(&mut self) -> Option<PerfSample> {
+        if self.len == 0 {
+            return None;
+        }
+        let s = self.buf[self.head];
+        self.head = (self.head + 1) % PERF_RING_CAP;
+        self.len -= 1;
+        Some(s)
+    }
+
+    /// Peek the i-th oldest buffered sample (for the rolling-window rollup,
+    /// which summarizes without draining).
+    fn get(&self, i: usize) -> Option<&PerfSample> {
+        if i >= self.len {
+            return None;
+        }
+        Some(&self.buf[(self.head + i) % PERF_RING_CAP])
+    }
+}
+
+static mut PERF_RING: PerfRing = PerfRing::new();
+
+/// Rolling-window summary computed on-device (integer min/mean/max over the
+/// buffered samples), so a single poll shows a stable headroom number and the
+/// AI gets a denoised value. Host-testable (pure) — see perf_rollup below.
+#[derive(Clone, Copy, Default)]
+struct PerfWindow {
+    frame_min: u32,
+    frame_mean: u32,
+    frame_max: u32,
+    update_mean: u32,
+    shade_mean: u32,
+    show_mean: u32,
+}
+
+/// Summarize a slice of samples into min/mean/max over frame_cycles plus the
+/// per-phase means (integer division; empty → all zero). Pulled out as a free
+/// function so it is exercised off-device by the host test.
+fn perf_rollup(samples: &[PerfSample]) -> PerfWindow {
+    if samples.is_empty() {
+        return PerfWindow::default();
+    }
+    let mut w = PerfWindow {
+        frame_min: u32::MAX,
+        ..Default::default()
+    };
+    // u64 accumulators so a full window of large cycle counts can't overflow.
+    let mut frame_sum: u64 = 0;
+    let mut update_sum: u64 = 0;
+    let mut shade_sum: u64 = 0;
+    let mut show_sum: u64 = 0;
+    for s in samples {
+        if s.frame_cycles < w.frame_min {
+            w.frame_min = s.frame_cycles;
+        }
+        if s.frame_cycles > w.frame_max {
+            w.frame_max = s.frame_cycles;
+        }
+        frame_sum += s.frame_cycles as u64;
+        update_sum += s.update_cycles as u64;
+        shade_sum += s.shade_cycles as u64;
+        show_sum += s.show_cycles as u64;
+    }
+    let n = samples.len() as u64;
+    w.frame_mean = (frame_sum / n) as u32;
+    w.update_mean = (update_sum / n) as u32;
+    w.shade_mean = (shade_sum / n) as u32;
+    w.show_mean = (show_sum / n) as u32;
+    w
+}
+
+/// Cheap 32-bit FNV-1a of the loaded `.fxb`, so a PerfReport pins metrics to the
+/// exact compiled script (perf-monitoring.md: a hot-reload can't mis-attribute
+/// a frame). Truncated hash is enough — the app only needs equality.
+fn fxb_hash(bytes: &[u8]) -> u32 {
+    let mut h: u32 = 0x811c_9dc5;
+    for &b in bytes {
+        h ^= b as u32;
+        h = h.wrapping_mul(0x0100_0193);
+    }
+    h
+}
 
 // The staticlib is linked into the Arduino app, which has no Rust runtime:
 // provide the panic handler on the bare-metal target. Host tests (std)
@@ -163,6 +358,10 @@ pub unsafe extern "C" fn lm_player_handle(
         Some(ARM_SET_EFFECT) => handle_set_effect(frame),
         Some(ARM_SET_UNIFORMS) => handle_set_uniforms(frame),
         Some(ARM_GET_EFFECT_UNIFORMS) => handle_get_effect_uniforms(frame),
+        // Perf-monitoring arms: configure the instrumentation tier / push
+        // cadence, or drain the ring into a rolled-up PerfReport.
+        Some(ARM_SET_PERF) => handle_set_perf(frame),
+        Some(ARM_GET_PERF_REPORT) => handle_get_perf_report(),
         _ => {
             let mut env = pb::ClientMessage::default();
             let mut dec = PbDecoder::new(frame);
@@ -309,6 +508,8 @@ const ARM_SUBMIT_EFFECT: u32 = 21;
 const ARM_SET_EFFECT: u32 = 22;
 const ARM_SET_UNIFORMS: u32 = 23;
 const ARM_GET_EFFECT_UNIFORMS: u32 = 24;
+const ARM_SET_PERF: u32 = 25;
+const ARM_GET_PERF_REPORT: u32 = 26;
 
 /// Read a base-128 varint at `buf[*o..]`, advancing `*o`. None on truncation.
 fn rd_varint(buf: &[u8], o: &mut usize) -> Option<u64> {
@@ -427,9 +628,13 @@ unsafe fn handle_submit_effect(frame: &[u8]) -> pb::ServerMessage {
     // set_effect can activate later).
     lm_fx_set_active(activate);
     let mut r = pb::ResultReady::default();
-    // effect_id echoes back so the app can correlate the ack.
+    // effect_id echoes back so the app can correlate the ack; also latch it so
+    // the PerfReport can pin its metrics to this effect (perf-monitoring.md).
     if let Some(id) = read_effect_id(body) {
         let _ = r.r#map_id.push_str(id);
+        perf_set_effect_id(id);
+    } else {
+        FX_ID_LEN = 0;
     }
     pb::ServerMessage { r#msg: Some(pb::ServerMessage_::Msg::ResultReady(r)) }
 }
@@ -566,6 +771,145 @@ fn fx_error(code: &str, message: &str) -> pb::ServerMessage {
     let _ = e.r#code.push_str(code);
     let _ = e.r#message.push_str(message);
     pb::ServerMessage { r#msg: Some(pb::ServerMessage_::Msg::Error(e)) }
+}
+
+// -- perf-monitoring protocol handlers ---------------------------------------
+
+/// The C6's CPU clock (cycles → ms conversion factor, carried in the report so
+/// the app never hardcodes it). The bring-up image runs the C6 at 160 MHz.
+/// TODO(hw): read this from the SoC (esp_clk_cpu_freq / rtc_clk_cpu_freq_get)
+/// via a C++-provided value instead of the constant, in case a build downclocks.
+const PERF_CPU_HZ: u32 = 160_000_000;
+
+/// Target frame budget = 1/30 s. budget_cycles = 33 ms × cpu_hz (perf-
+/// monitoring.md); overruns are frames whose frame+show cycles exceed this.
+const PERF_BUDGET_CYCLES: u32 = (PERF_CPU_HZ / 1000) * 33;
+
+/// set_perf: store the tier + push interval. Reply is an immediate PerfReport
+/// (current window), like get_perf_report — so opening the panel gets one
+/// synchronously. FULL flips on Tier-1 counting; OFF/BASIC skip it.
+unsafe fn handle_set_perf(frame: &[u8]) -> pb::ServerMessage {
+    let mut mode = PERF_OFF;
+    let mut interval = 0u32;
+    if let Some(body) = unwrap_arm(frame, ARM_SET_PERF) {
+        // SetPerf { Mode mode = 1; uint32 interval_ms = 2; }
+        let mut o = 0;
+        while o < body.len() {
+            let Some(key) = rd_varint(body, &mut o) else { break };
+            let field = (key >> 3) as u32;
+            let wire = (key & 7) as u8;
+            match (field, wire) {
+                (1, 0) => {
+                    let Some(v) = rd_varint(body, &mut o) else { break };
+                    mode = v as u32;
+                }
+                (2, 0) => {
+                    let Some(v) = rd_varint(body, &mut o) else { break };
+                    interval = v as u32;
+                }
+                _ => {
+                    if !skip_field(body, &mut o, wire) {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    PERF_MODE = if mode > PERF_FULL { PERF_FULL } else { mode };
+    PERF_INTERVAL_MS = interval;
+    // OFF clears the accumulated ring so a later BASIC/FULL starts clean.
+    if PERF_MODE == PERF_OFF {
+        perf_reset_ring();
+    }
+    build_perf_report()
+}
+
+/// get_perf_report: roll up the ring window + drain the tail into a PerfReport.
+unsafe fn handle_get_perf_report() -> pb::ServerMessage {
+    build_perf_report()
+}
+
+/// Build a PerfReport: the rolling-window summary over all buffered samples,
+/// the since-drain counters (reset here), identity (effect_id + fxb_hash +
+/// cpu_hz + budget_cycles), heap, and the raw tail drained into `ticks` (bounded
+/// by the field cap; the rest wait for the next poll — the ring buffers them).
+unsafe fn build_perf_report() -> pb::ServerMessage {
+    let ring = &mut *addr_of_mut!(PERF_RING);
+    // Rolling window over everything currently buffered (summary is non-
+    // destructive; the drain below is what empties the ring).
+    let mut window_buf = [PerfSample::default(); PERF_RING_CAP];
+    let mut wn = 0usize;
+    while let Some(s) = ring.get(wn) {
+        window_buf[wn] = *s;
+        wn += 1;
+    }
+    let w = perf_rollup(&window_buf[..wn]);
+
+    let mut r = pb::PerfReport::default();
+    // Identity.
+    let id = core::str::from_utf8(&(*addr_of!(FX_ID))[..FX_ID_LEN]).unwrap_or("");
+    let _ = r.r#effect_id.push_str(id);
+    r.r#fxb_hash = FX_HASH;
+    r.r#cpu_hz = PERF_CPU_HZ;
+    r.r#budget_cycles = PERF_BUDGET_CYCLES;
+    // Rolling window.
+    r.r#frame_cycles_min = w.frame_min;
+    r.r#frame_cycles_mean = w.frame_mean;
+    r.r#frame_cycles_max = w.frame_max;
+    r.r#update_cycles_mean = w.update_mean;
+    r.r#shade_cycles_mean = w.shade_mean;
+    r.r#show_cycles_mean = w.show_mean;
+    // Since-drain counters (reset on drain).
+    r.r#overruns = ring.overruns;
+    r.r#dropped_frames = ring.dropped_frames;
+    r.r#samples_dropped = ring.samples_dropped;
+    ring.overruns = 0;
+    ring.dropped_frames = 0;
+    ring.samples_dropped = 0;
+    // Memory (heap is read on the C++ side and pushed via lm_perf_set_heap; the
+    // latest values ride here).
+    r.r#heap_free = PERF_HEAP_FREE;
+    r.r#heap_min_free = PERF_HEAP_MIN_FREE;
+    // Raw tail: drain oldest-first until the ticks field is at capacity; any
+    // remaining samples stay in the ring for the next poll (no loss).
+    while r.r#ticks.len() < r.r#ticks.capacity() {
+        let Some(s) = ring.pop() else { break };
+        let mut t = pb::PerfFrame::default();
+        t.r#seq = s.seq;
+        t.r#update_cycles = s.update_cycles;
+        t.r#shade_cycles = s.shade_cycles;
+        t.r#frame_cycles = s.frame_cycles;
+        t.r#show_cycles = s.show_cycles;
+        t.r#led_count = s.led_count;
+        t.r#instr_update = s.instr_update;
+        t.r#instr_shade = s.instr_shade;
+        t.r#stack_max = s.stack_max;
+        let _ = r.r#ticks.push(t);
+    }
+    pb::ServerMessage { r#msg: Some(pb::ServerMessage_::Msg::PerfReport(r)) }
+}
+
+/// Latest heap figures, refreshed by main.cpp before each ring push (the FFI
+/// core has no ESP-IDF; the C++ side reads esp_get_free_heap_size et al.).
+static mut PERF_HEAP_FREE: u32 = 0;
+static mut PERF_HEAP_MIN_FREE: u32 = 0;
+
+/// Reset the ring + its counters (fresh effect / mode change). Latched Tier-1
+/// counters are cleared too so a stale count can't leak into the next frame.
+unsafe fn perf_reset_ring() {
+    *addr_of_mut!(PERF_RING) = PerfRing::new();
+    FX_INSTR_UPDATE = 0;
+    FX_INSTR_SHADE = 0;
+    FX_STACK_MAX = 0;
+}
+
+/// Latch the effect_id (truncated to the fixed buffer) for PerfReport identity.
+unsafe fn perf_set_effect_id(id: &str) {
+    let b = id.as_bytes();
+    let dst = &mut *addr_of_mut!(FX_ID);
+    let n = b.len().min(dst.len());
+    dst[..n].copy_from_slice(&b[..n]);
+    FX_ID_LEN = n;
 }
 
 // -- render-side accessors (pure reads; the FastLED loop polls these) --------
@@ -796,6 +1140,10 @@ pub unsafe extern "C" fn lm_fx_load(fxb: *const u8, len: usize) -> bool {
     FX_LEN = len;
     *addr_of_mut!(FX_VM) = Some(FxVm::new());
     FX_DEADLINE.store(false, core::sync::atomic::Ordering::Relaxed);
+    // A fresh effect (re)stamps the perf identity and resets the ring/window so
+    // metrics can't be mis-attributed across a hot-reload (perf-monitoring.md).
+    FX_HASH = fxb_hash(src);
+    perf_reset_ring();
     true
 }
 
@@ -806,6 +1154,9 @@ pub unsafe extern "C" fn lm_fx_clear() {
     FX_LEN = 0;
     FX_ACTIVE = false;
     *addr_of_mut!(FX_VM) = None;
+    FX_HASH = 0;
+    FX_ID_LEN = 0;
+    perf_reset_ring();
 }
 
 /// Whether an effect is loaded, ACTIVE, and renderable — the render loop gates
@@ -887,7 +1238,20 @@ pub unsafe extern "C" fn lm_fx_update(time_s: f32, dt_s: f32, frame: u32, led_co
         led_count,
         ..Default::default()
     };
-    vm.run_update_bounded(&prog, &f, &fx_budget());
+    // A new frame: reset the per-frame Tier-1 shade accumulators (they sum over
+    // the coming per-LED sweep). update()'s own counts are latched here.
+    FX_INSTR_SHADE = 0;
+    FX_STACK_MAX = 0;
+    if PERF_MODE == PERF_FULL {
+        // FULL: pay the counted VM path so instr_update / stack_max are real.
+        let (_outcome, c) = vm.run_update_counted(&prog, &f, &fx_budget());
+        FX_INSTR_UPDATE = c.instrs;
+        FX_STACK_MAX = c.stack_max;
+    } else {
+        // BASIC/OFF: the plain path — no per-opcode counting overhead.
+        FX_INSTR_UPDATE = 0;
+        vm.run_update_bounded(&prog, &f, &fx_budget());
+    }
     true
 }
 
@@ -925,14 +1289,32 @@ pub unsafe extern "C" fn lm_fx_shade(
         s: 0.0,
         branch: false,
     };
-    let ((r, g, b), outcome) = vm.run_shade_bounded(&prog, &f, &led, &fx_budget());
-    if outcome != Outcome::Ok {
-        return false;
-    }
-    *rgb = r;
-    *rgb.add(1) = g;
-    *rgb.add(2) = b;
-    true
+    let outcome = if PERF_MODE == PERF_FULL {
+        // FULL: count this LED's opcodes into the per-frame shade accumulator
+        // and lift the stack high-water. This is the hottest path, so the
+        // counting is gated behind FULL exactly as perf-monitoring.md requires.
+        let ((r, g, b), outcome, c): ((u8, u8, u8), Outcome, FxCounters) =
+            vm.run_shade_counted(&prog, &f, &led, &fx_budget());
+        FX_INSTR_SHADE = FX_INSTR_SHADE.saturating_add(c.instrs);
+        if c.stack_max > FX_STACK_MAX {
+            FX_STACK_MAX = c.stack_max;
+        }
+        if outcome == Outcome::Ok {
+            *rgb = r;
+            *rgb.add(1) = g;
+            *rgb.add(2) = b;
+        }
+        outcome
+    } else {
+        let ((r, g, b), outcome) = vm.run_shade_bounded(&prog, &f, &led, &fx_budget());
+        if outcome == Outcome::Ok {
+            *rgb = r;
+            *rgb.add(1) = g;
+            *rgb.add(2) = b;
+        }
+        outcome
+    };
+    outcome == Outcome::Ok
 }
 
 /// Copy the active effect's uniforms manifest into `out` (cap `cap`). Returns
@@ -958,4 +1340,109 @@ pub unsafe extern "C" fn lm_fx_manifest(out: *mut u8, cap: usize) -> i32 {
         core::ptr::copy_nonoverlapping(m.as_ptr(), out, m.len());
     }
     m.len() as i32
+}
+
+// -- perf-monitoring FFI (render loop pushes samples; loop() paces the push) --
+// Single-threaded, under player_mutex like the rest. The C++ side owns the
+// cycle counter (esp_cpu_get_cycle_count) + heap reads (esp_get_free_heap_size);
+// it hands the integer results here. Tier-1 counts live in FX_* statics latched
+// by lm_fx_update / lm_fx_shade during the frame.
+
+/// Current perf tier (0 OFF, 1 BASIC, 2 FULL). The render loop reads this to
+/// decide whether to sample at all; loop() reads it to decide whether to push
+/// an unsolicited report.
+#[no_mangle]
+pub unsafe extern "C" fn lm_perf_mode() -> u32 {
+    PERF_MODE
+}
+
+/// The unsolicited-push interval in ms (0 = poll-only). main.cpp coalesces the
+/// push at this cadence, like the playback-save quiet timer.
+#[no_mangle]
+pub unsafe extern "C" fn lm_perf_interval_ms() -> u32 {
+    PERF_INTERVAL_MS
+}
+
+/// The latched Tier-1 counters from the just-rendered frame (0 unless FULL):
+/// opcodes retired in update() / across the shade sweep, and the stack
+/// high-water. The render loop reads these into its PerfFrame push.
+#[no_mangle]
+pub unsafe extern "C" fn lm_perf_instr_update() -> u32 {
+    FX_INSTR_UPDATE
+}
+#[no_mangle]
+pub unsafe extern "C" fn lm_perf_instr_shade() -> u32 {
+    FX_INSTR_SHADE
+}
+#[no_mangle]
+pub unsafe extern "C" fn lm_perf_stack_max() -> u32 {
+    FX_STACK_MAX as u32
+}
+
+/// Refresh the heap figures carried in the next PerfReport. Called by the render
+/// loop right before lm_perf_push (esp_get_free_heap_size / _minimum on C++).
+#[no_mangle]
+pub unsafe extern "C" fn lm_perf_set_heap(free: u32, min_free: u32) {
+    PERF_HEAP_FREE = free;
+    PERF_HEAP_MIN_FREE = min_free;
+}
+
+/// Push one rendered effect frame's Tier-0 cycle spans (+ the latched Tier-1
+/// counts) into the perf ring. `overran` marks a frame whose frame+show cycles
+/// exceeded the budget (counted since-drain). Cheap ring write — the render task
+/// calls it unconditionally once per frame while a perf mode is active.
+#[no_mangle]
+pub unsafe extern "C" fn lm_perf_push(
+    seq: u32,
+    update_cycles: u32,
+    shade_cycles: u32,
+    frame_cycles: u32,
+    show_cycles: u32,
+    led_count: u32,
+    overran: bool,
+) {
+    let ring = &mut *addr_of_mut!(PERF_RING);
+    if overran {
+        ring.overruns = ring.overruns.saturating_add(1);
+    }
+    ring.push(PerfSample {
+        seq,
+        update_cycles,
+        shade_cycles,
+        frame_cycles,
+        show_cycles,
+        led_count,
+        // Tier-1 counts ride only when FULL latched them this frame.
+        instr_update: FX_INSTR_UPDATE,
+        instr_shade: FX_INSTR_SHADE,
+        stack_max: FX_STACK_MAX as u32,
+    });
+}
+
+/// Record that the render task skipped a scheduled frame (fell behind). Counted
+/// since the last PerfReport drain (dropped_frames).
+#[no_mangle]
+pub unsafe extern "C" fn lm_perf_note_dropped() {
+    let ring = &mut *addr_of_mut!(PERF_RING);
+    ring.dropped_frames = ring.dropped_frames.saturating_add(1);
+}
+
+/// Build an UNSOLICITED PerfReport (same rollup + drain as the get_perf_report
+/// reply) into `out`, for main.cpp to ship at the configured interval while a
+/// perf mode is active. Returns the encoded length, 0 if perf is OFF (nothing
+/// to push) or -2 if `out_cap` is too small. Drains the ring like a poll would,
+/// so it and get_perf_report share the same no-loss discipline.
+///
+/// # Safety
+/// `out` must point to `out_cap` writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn lm_perf_build_report(out: *mut u8, out_cap: usize) -> i32 {
+    if out.is_null() {
+        return -1;
+    }
+    if PERF_MODE == PERF_OFF {
+        return 0;
+    }
+    let reply = build_perf_report();
+    encode_reply(&reply, out, out_cap)
 }

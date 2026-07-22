@@ -221,3 +221,66 @@ fn rejects_bad_magic() {
     buf[0] = b'X';
     assert!(matches!(Program::parse(&buf), Err(ParseErr::BadMagic)));
 }
+
+#[test]
+fn counters_report_instr_and_stack_high_water() {
+    // shade: push led.pos(3), swizzle to .x, then build vec3(x, const0, x) and
+    // return. Exercises a handful of ops so the instruction count is a stable,
+    // hand-countable number and the stack rises above the 3-slot return.
+    #[rustfmt::skip]
+    let code = [
+        Op::LoadCtx as u8, C_LED_POS,     // +3   (sp: 0 -> 3)
+        Op::PushConst as u8, 0, 0,        // +1   (sp: 3 -> 4)  const0 = 0.25
+        Op::LoadCtx as u8, C_LED_POS,     // +3   (sp: 4 -> 7)  high-water here
+        Op::Swizzle as u8, 3, 1, 0,       // 7 -> 5 (.x of the last vec3)
+        Op::Ret as u8, 3,                 // return top 3
+    ];
+    let buf = fxb(0, 0, NO_ENTRY, 0, &[0.25], &code);
+    let prog = Program::parse(&buf).expect("parse");
+    let vm = Vm::new();
+    let frame = Frame::default();
+    let led = Led { pos: [0.5, 0.1, 0.2], ..Default::default() };
+    let (_rgb, outcome, c) =
+        vm.run_shade_counted(&prog, &frame, &led, &Budget::default());
+    assert_eq!(outcome, Outcome::Ok);
+    // 5 opcodes retired (LoadCtx, PushConst, LoadCtx, Swizzle, Ret).
+    assert_eq!(c.instrs, 5);
+    // High-water is the 7 slots pushed before the swizzle collapses them.
+    assert_eq!(c.stack_max, 7);
+}
+
+#[test]
+fn counters_count_budget_exhaustion() {
+    // An infinite Jmp loop trips the instruction budget; the counter reports as
+    // many opcodes as the budget allowed (the Jmp executed budget times).
+    #[rustfmt::skip]
+    let mut code = vec![Op::Jmp as u8];
+    code.extend_from_slice(&(-3i16).to_le_bytes());
+    let buf = fxb(0, 0, NO_ENTRY, 0, &[], &code);
+    let prog = Program::parse(&buf).expect("parse");
+    let vm = Vm::new();
+    let (_rgb, outcome, c) =
+        vm.run_shade_counted(&prog, &Frame::default(), &Led::default(), &Budget::instructions(50));
+    assert_eq!(outcome, Outcome::Budget);
+    assert_eq!(c.instrs, 50, "every budgeted opcode is counted before the cap");
+}
+
+#[test]
+fn update_counted_reports_counters() {
+    // update: state[0] += 0.25 (LoadState, PushConst, Add, StoreState, Ret) = 5 ops.
+    #[rustfmt::skip]
+    let update = [
+        Op::LoadState as u8, 0, 1,
+        Op::PushConst as u8, 0, 0,
+        Op::Add as u8, 1,
+        Op::StoreState as u8, 0, 1,
+        Op::Ret as u8, 0,
+    ];
+    let buf = fxb(1, 0, 0, NO_ENTRY, &[0.25], &update);
+    let prog = Program::parse(&buf).expect("parse");
+    let mut vm = Vm::new();
+    let (outcome, c) = vm.run_update_counted(&prog, &Frame::default(), &Budget::default());
+    assert_eq!(outcome, Outcome::Ok);
+    assert_eq!(c.instrs, 5);
+    assert!(vm.state[0] > 0.24 && vm.state[0] < 0.26);
+}

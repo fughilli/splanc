@@ -9,7 +9,8 @@
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_player_ffi::{
     lm_counting_color, lm_envelope_arm, lm_led_count, lm_map_led, lm_map_len, lm_pattern_color,
-    lm_pattern_timing, lm_player_handle, lm_player_init,
+    lm_pattern_timing, lm_perf_build_report, lm_perf_interval_ms, lm_perf_mode, lm_perf_push,
+    lm_player_handle, lm_player_init,
 };
 use micropb::{MessageDecode, MessageEncode, PbEncoder};
 use pb::ClientMessage_::Msg as CMsg;
@@ -208,4 +209,66 @@ fn full_device_flow_through_the_c_abi() {
         panic!("mapping_stopped expected");
     };
     assert!(!unsafe { lm_pattern_timing(&mut epoch, &mut period_us, &mut frames, &mut leds) });
+
+    // -- perf monitoring: set_perf toggles the tier + interval, lm_perf_push
+    // fills the ring, and get_perf_report rolls up the window (min/mean/max)
+    // and drains the tail. Exercises the rollup off-device (the crux logic).
+    let mut sp = pb::SetPerf::default();
+    sp.r#mode = pb::SetPerf_::Mode::Full;
+    sp.r#interval_ms = 250;
+    // set_perf replies with an immediate (empty-window) PerfReport.
+    let Some(SMsg::PerfReport(rep0)) = handle(&encode(CMsg::SetPerf(sp)), 6000.0) else {
+        panic!("perf_report expected from set_perf");
+    };
+    assert_eq!(rep0.r#cpu_hz, 160_000_000);
+    assert_eq!(rep0.r#budget_cycles, (160_000_000 / 1000) * 33);
+    assert_eq!(rep0.r#ticks.len(), 0, "ring empty right after set_perf");
+    assert_eq!(unsafe { lm_perf_mode() }, 2, "FULL latched");
+    assert_eq!(unsafe { lm_perf_interval_ms() }, 250);
+
+    // Push three frames with known frame_cycles {100, 300, 200} → min 100,
+    // max 300, mean 200; one marked overran.
+    unsafe {
+        lm_perf_push(0, 40, 60, 100, 500, 64, false);
+        lm_perf_push(1, 90, 210, 300, 500, 64, true); // overran
+        lm_perf_push(2, 80, 120, 200, 500, 64, false);
+    }
+    let Some(SMsg::PerfReport(rep)) = handle(&encode(CMsg::GetPerfReport(Default::default())), 6300.0)
+    else {
+        panic!("perf_report expected from get_perf_report");
+    };
+    assert_eq!(rep.r#frame_cycles_min, 100);
+    assert_eq!(rep.r#frame_cycles_max, 300);
+    assert_eq!(rep.r#frame_cycles_mean, 200);
+    assert_eq!(rep.r#show_cycles_mean, 500);
+    assert_eq!(rep.r#overruns, 1, "one frame over budget");
+    // Host profile caps ticks generously; all three drained here.
+    assert_eq!(rep.r#ticks.len(), 3);
+    assert_eq!(rep.r#ticks[1].r#frame_cycles, 300);
+    assert_eq!(rep.r#ticks[1].r#seq, 1);
+
+    // A second poll sees the counters reset and the ring drained.
+    let Some(SMsg::PerfReport(rep2)) =
+        handle(&encode(CMsg::GetPerfReport(Default::default())), 6400.0)
+    else {
+        panic!("perf_report expected");
+    };
+    assert_eq!(rep2.r#overruns, 0, "counters reset on drain");
+    assert_eq!(rep2.r#ticks.len(), 0, "ring drained");
+
+    // The unsolicited builder produces the same PerfReport frame shape.
+    let mut buf = vec![0u8; 2048];
+    let n = unsafe { lm_perf_build_report(buf.as_mut_ptr(), buf.len()) };
+    assert!(n > 0, "unsolicited report encodes ({n})");
+    let mut rep3 = pb::ServerMessage::default();
+    rep3.decode_from_bytes(&buf[..n as usize]).expect("decodes");
+    assert!(matches!(rep3.r#msg, Some(SMsg::PerfReport(_))));
+
+    // OFF stops the stream; the builder then returns 0 (nothing to push).
+    let mut off = pb::SetPerf::default();
+    off.r#mode = pb::SetPerf_::Mode::Off;
+    let _ = handle(&encode(CMsg::SetPerf(off)), 6500.0);
+    assert_eq!(unsafe { lm_perf_mode() }, 0);
+    let n_off = unsafe { lm_perf_build_report(buf.as_mut_ptr(), buf.len()) };
+    assert_eq!(n_off, 0, "OFF: unsolicited builder emits nothing");
 }

@@ -95,6 +95,45 @@ bool lm_fx_shade(uint32_t idx, float x, float y, float z, uint8_t rgb[3]);
 // length written, -1 when no effect is loaded, -2 when it doesn't fit cap.
 int32_t lm_fx_manifest(uint8_t *out, size_t cap);
 
+// -- Perf monitoring (docs/design/perf-monitoring.md) -------------------------
+// The set_perf / get_perf_report protocol arms are handled inside
+// lm_player_handle (store mode+interval, roll up + drain the perf ring). These
+// accessors let the render loop feed the ring and let loop() pace the
+// unsolicited push. Single-threaded like the rest — call under player_mutex.
+//
+// Tier 0 (BASIC): the render loop times update()/shade()/show() with
+// esp_cpu_get_cycle_count() deltas and pushes them via lm_perf_push; heap +
+// overrun/drop counters ride along. Tier 1 (FULL): lm_fx_update/lm_fx_shade
+// additionally count VM opcodes + stack high-water (gated on FULL, near-zero
+// overhead in BASIC), read back via lm_perf_instr_* / lm_perf_stack_max.
+
+// Current perf tier: 0 OFF, 1 BASIC, 2 FULL. The render loop samples only when
+// != OFF; loop() pushes an unsolicited report only when != OFF.
+uint32_t lm_perf_mode(void);
+// Unsolicited-push interval in ms (0 = poll-only); loop() coalesces at this
+// cadence, like the playback-save quiet timer.
+uint32_t lm_perf_interval_ms(void);
+// The just-rendered frame's latched Tier-1 counts (0 unless FULL): opcodes
+// retired in update() / across the shade sweep, and the stack high-water.
+uint32_t lm_perf_instr_update(void);
+uint32_t lm_perf_instr_shade(void);
+uint32_t lm_perf_stack_max(void);
+// Refresh the heap figures carried in the next PerfReport (call before push).
+void lm_perf_set_heap(uint32_t free, uint32_t min_free);
+// Push one rendered effect frame's Tier-0 cycle spans (+ latched Tier-1 counts)
+// into the perf ring. `overran` marks a frame whose frame+show cycles exceeded
+// the ~33 ms budget (counted since the last report drain).
+void lm_perf_push(uint32_t seq, uint32_t update_cycles, uint32_t shade_cycles,
+                  uint32_t frame_cycles, uint32_t show_cycles,
+                  uint32_t led_count, bool overran);
+// Record that the render task skipped a scheduled frame (fell behind).
+void lm_perf_note_dropped(void);
+// Build an unsolicited PerfReport frame (rolls up + drains the ring, same as
+// the get_perf_report reply) into out. Returns the encoded length, 0 when perf
+// is OFF (nothing to send), -1 bad args, -2 out_cap too small. loop() ships it
+// at lm_perf_interval_ms() cadence over the active socket.
+int32_t lm_perf_build_report(uint8_t *out, size_t out_cap);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif

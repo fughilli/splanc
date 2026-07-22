@@ -140,6 +140,19 @@ impl Outcome {
     }
 }
 
+/// Cheap Tier-1 profiling counters for one VM invocation (perf-monitoring.md
+/// "Metrics collected"). Both are near-free by construction: `instrs` is one
+/// add per opcode next to the budget decrement already in the dispatch loop,
+/// and `stack_max` piggybacks the running stack pointer. Integer-only — no
+/// float on the perf path. See [`Vm::run_shade_counted`] / [`run_update_counted`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Counters {
+    /// Opcodes retired this invocation.
+    pub instrs: u32,
+    /// High-water operand-stack depth (f32 slots) reached this invocation.
+    pub stack_max: u16,
+}
+
 impl Op {
     #[inline]
     fn from_u8(b: u8) -> Option<Op> {
@@ -320,15 +333,28 @@ impl Vm {
     /// update() writes state incrementally and a partial advance is harmless
     /// (the next frame simply continues). Returns why it stopped.
     pub fn run_update_bounded(&mut self, prog: &Program, frame: &Frame, budget: &Budget) -> Outcome {
+        self.run_update_counted(prog, frame, budget).0
+    }
+
+    /// Like [`run_update_bounded`], additionally returning Tier-1 [`Counters`]
+    /// (opcodes retired + stack high-water) for the perf stream. The counters
+    /// cost one add/compare per opcode; the firmware gates FULL mode so BASIC
+    /// callers stay on the plain path.
+    pub fn run_update_counted(
+        &mut self,
+        prog: &Program,
+        frame: &Frame,
+        budget: &Budget,
+    ) -> (Outcome, Counters) {
         if prog.update_entry == NO_ENTRY {
-            return Outcome::Ok;
+            return (Outcome::Ok, Counters::default());
         }
         let led = Led::default();
         let mut st = self.state;
-        let (_out, outcome) =
+        let (_out, outcome, counters) =
             run(prog, self.uniforms, &mut st, frame, &led, prog.update_entry as usize, budget);
         self.state = st;
-        outcome
+        (outcome, counters)
     }
 
     /// Run `shade(led)` → RGB. Does not mutate `state` (read-only in shade).
@@ -347,11 +373,24 @@ impl Vm {
         led: &Led,
         budget: &Budget,
     ) -> (Rgb, Outcome) {
+        let (rgb, outcome, _counters) = self.run_shade_counted(prog, frame, led, budget);
+        (rgb, outcome)
+    }
+
+    /// Like [`run_shade_bounded`], additionally returning Tier-1 [`Counters`]
+    /// (opcodes retired + stack high-water) for the perf stream.
+    pub fn run_shade_counted(
+        &self,
+        prog: &Program,
+        frame: &Frame,
+        led: &Led,
+        budget: &Budget,
+    ) -> (Rgb, Outcome, Counters) {
         let mut st = self.state; // copy; shade shouldn't write it, but be safe
-        let (out, outcome) =
+        let (out, outcome, counters) =
             run(prog, self.uniforms, &mut st, frame, led, prog.shade_entry as usize, budget);
         if outcome.timed_out() {
-            return ((0, 0, 0), outcome);
+            return ((0, 0, 0), outcome, counters);
         }
         let r = clamp01(out[0]);
         let g = clamp01(out[1]);
@@ -359,6 +398,7 @@ impl Vm {
         (
             ((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8),
             outcome,
+            counters,
         )
     }
 }
@@ -389,7 +429,7 @@ fn run(
     led: &Led,
     entry: usize,
     guard: &Budget,
-) -> ([f32; 3], Outcome) {
+) -> ([f32; 3], Outcome, Counters) {
     use core::sync::atomic::Ordering;
     let code = prog.code;
     let mut stack = [0.0f32; MAX_STACK];
@@ -397,6 +437,10 @@ fn run(
     let mut sp: usize = 0;
     let mut pc: usize = entry;
     let mut budget: u32 = guard.instructions; // instructions per invocation
+    // Tier-1 counters (perf-monitoring.md): opcodes retired + stack high-water.
+    // Cheap-by-construction — one add + one max next to the budget decrement.
+    let mut instrs: u32 = 0;
+    let mut sp_max: usize = 0;
     // Poll the wall-time flag every N ops (an atomic load per op would dominate
     // the tiny opcodes); the instruction budget bounds the slop between polls.
     const DEADLINE_POLL_MASK: u32 = 0x3FF;
@@ -438,6 +482,12 @@ fn run(
             break;
         }
         budget -= 1;
+        instrs += 1;
+        // Stack high-water: the sp before this op ran (post-op depth is folded
+        // in via the NEXT iteration's read, and the terminal Ret is small).
+        if sp > sp_max {
+            sp_max = sp;
+        }
         // Secondary wall-time guard: a hardware timer raises this flag at a
         // frame-relative deadline; polled sparsely so the load isn't hot.
         if budget & DEADLINE_POLL_MASK == 0 {
@@ -800,7 +850,10 @@ fn run(
                 for i in 0..n.min(3) {
                     out[i] = stack[base + i];
                 }
-                return (out, Outcome::Ok);
+                if sp > sp_max {
+                    sp_max = sp;
+                }
+                return (out, Outcome::Ok, Counters { instrs, stack_max: sp_max as u16 });
             }
             Op::Swap => {
                 let an = code[pc] as usize;
@@ -915,7 +968,7 @@ fn run(
             }
         }
     }
-    ([0.0, 0.0, 0.0], outcome)
+    ([0.0, 0.0, 0.0], outcome, Counters { instrs, stack_max: sp_max as u16 })
 }
 
 // --- soft-float helpers (no libm dependency; small polynomial approximations
