@@ -309,25 +309,40 @@ function setConn(text: string): void {
 // Popup-based self-signed-cert trust. A browser only offers the "proceed
 // anyway" interstitial for a TOP-LEVEL context (never an iframe/subresource),
 // so we open the device's https page as a popup — the interstitial appears
-// there. Its page postMessages this window once loaded (past the interstitial);
-// on that signal we close the popup and reload, connected — no navigate-back.
-// If the popup is blocked, we fall back to a manual link + the client's
-// auto-reconnect (which succeeds on its own once the cert is trusted).
+// there. Its page postMessages this window once loaded (past the interstitial).
+//
+// Crucially we FIRST stop the client's background reconnect: a heap-tight ESP
+// holds only ~2 TLS sessions, and the app's wss retries occupy them, resetting
+// the popup before its cert page can load. With the client quiet, the popup has
+// the device to itself. We then reconnect by reloading — on the cert-ok signal,
+// or when the user returns to this tab after accepting (covers a missed message
+// or a popup-blocked manual open).
 function showCertApprovalPrompt(certUrl: string): void {
   const deviceOrigin = new URL(certUrl).origin;
+  client.close(); // stop competing for the device's scarce TLS slots
   let popup: Window | null = null;
-  const onMsg = (ev: MessageEvent): void => {
-    if (ev.origin !== deviceOrigin || ev.data !== "ledmapper-cert-ok") return;
-    window.removeEventListener("message", onMsg);
+  let done = false;
+  const finish = (): void => {
+    if (done) return;
+    done = true;
     try {
       popup?.close();
     } catch {
       /* some browsers refuse cross-origin close — the reload covers it */
     }
     setConn("certificate trusted — connecting…");
-    location.reload();
+    location.reload(); // fresh client, cert now trusted
   };
-  window.addEventListener("message", onMsg);
+  window.addEventListener("message", (ev: MessageEvent): void => {
+    if (ev.origin === deviceOrigin && ev.data === "ledmapper-cert-ok") finish();
+  });
+  // Only reload-on-return once the user has actually started the trust flow, so
+  // idle tab-switching before that doesn't bounce them.
+  const armReturn = (): void => {
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") finish();
+    });
+  };
 
   errEl.innerHTML = "";
   errEl.append("This device uses a self-signed certificate — trust it once to connect.");
@@ -337,10 +352,10 @@ function showCertApprovalPrompt(certUrl: string): void {
     "display:block;margin:.6rem 0;padding:.55rem 1rem;font-size:1rem;border:0;" +
     "border-radius:.4rem;background:#2b6;color:#fff;cursor:pointer";
   btn.addEventListener("click", () => {
+    armReturn();
     popup = window.open(certUrl, "ledmapper-cert", "width=420,height=560");
     if (popup === null) {
-      // Popup blocked → manual top-level open; auto-reconnect finishes the job.
-      setError("Popup blocked. Open this, accept the warning, then come back:", [certUrl]);
+      setError("Popup blocked. Open this, accept the warning, then return here:", [certUrl]);
     }
   });
   errEl.append(btn);
@@ -353,7 +368,8 @@ function showCertApprovalPrompt(certUrl: string): void {
   a.rel = "noopener";
   a.textContent = certUrl;
   a.style.color = "#6cf";
-  note.append(a, " manually — it'll connect on its own once accepted.");
+  a.addEventListener("click", armReturn); // manual path also reconnects on return
+  note.append(a, " manually — return here and it connects.");
   errEl.append(note);
 }
 
