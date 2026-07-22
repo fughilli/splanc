@@ -56,7 +56,7 @@ class DetectionRecord(_StrictModel):
     K: Intrinsics
     # None on the WebXR-free capture path: poses are then solved jointly
     # from the session's imu_batch samples (docs/vio-exploration.md).
-    pose: Union[Pose, None]
+    pose: Union[Pose, None] = None
     confidence: float = Field(ge=0.0, le=1.0)
 
 
@@ -65,20 +65,26 @@ class DetectionRecord(_StrictModel):
 # ---------------------------------------------------------------------------
 
 
-Encoding = Literal["gray", "gray-hue"]
+Encoding = Literal["hue"]
 SyncPattern = Literal["on_off"]
 Fec = Literal["none", "secded"]
 
 
 class CodeParams(_StrictModel):
     ledCount: int = Field(ge=1)
+    # Coded BITS per cycle (data + FEC parity), sent log2(symbols) per frame.
     bits: int = Field(ge=1)
     encoding: Encoding
+    # Data-symbol alphabet size: 2 (red/blue) or 4 (Gray-ordered bit pairs).
+    symbols: Literal[2, 4]
     bitPeriodMs: float = Field(gt=0.0)
     syncPattern: SyncPattern
     cycleFrames: int = Field(ge=3)
     # FEC around the Gray data word; absent on the wire = "none" (legacy).
     fec: Fec = "none"
+    # LED output brightness scale; absent on the wire = 1.0. Servoed by the
+    # phone against measured bloom/wash-out (planLedBrightness).
+    brightness: Union[float, None] = Field(default=None, ge=0.0, le=1.0)
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +120,69 @@ class OutputMap(_StrictModel):
 
 
 # ---------------------------------------------------------------------------
+# Topology (§7.7) — skeletonized fixture, uploaded alongside a map
+# ---------------------------------------------------------------------------
+
+
+class BranchPoint(_StrictModel):
+    id: int = Field(ge=0)
+    # Position in meters, same frame as the OutputMap.
+    xyz: Vec3
+
+
+class TopologySegment(_StrictModel):
+    id: int = Field(ge=0)
+    # Endpoint branch-point ids; -1 = free end. Arclength runs from a to b.
+    a: int = Field(ge=-1)
+    b: int = Field(ge=-1)
+    polyline: List[Vec3] = Field(min_length=2)
+    # Total polyline arclength, meters.
+    length: float = Field(ge=0.0)
+
+
+class LedAssociation(_StrictModel):
+    ledId: int = Field(ge=0)
+    segmentId: int = Field(ge=0)
+    # Arclength of the LED's foot point along the segment, meters from a.
+    footArclength: float = Field(ge=0.0)
+    # Perpendicular distance LED -> foot point, meters.
+    dPerp: float = Field(ge=0.0)
+
+
+class Topology(_StrictModel):
+    """Skeletonized fixture topology (Phase F output): drives the O(N)
+    pulse illuminate on players. Keyed to the OutputMap it skeletonizes."""
+
+    mapId: str
+    branchPoints: List[BranchPoint]
+    segments: List[TopologySegment]
+    associations: List[LedAssociation]
+
+
+# ---------------------------------------------------------------------------
+# PlaybackParams (§7.8) — effect tunables (pulse reference controls)
+# ---------------------------------------------------------------------------
+
+
+class PlaybackParams(_StrictModel):
+    """All fields are optional overlays: unset keeps the player's current
+    or default value, so a UI can send just the slider that moved."""
+
+    intensity: Union[float, None] = Field(default=None, ge=0.0, le=1.0)
+    glowRadius: Union[float, None] = Field(default=None, gt=0.0)
+    agentCount: Union[int, None] = Field(default=None, ge=1)
+    speed: Union[float, None] = Field(default=None, gt=0.0)
+    # Palette as 0xRRGGBB ints; empty keeps the player default.
+    palette: List[int] = Field(default_factory=list)
+    # Pulse lead-in/out ramp at termini, m (0/omitted derives from glow).
+    leadIn: Union[float, None] = Field(default=None, ge=0.0)
+    # Probability [0,1] a pulse splits at a junction.
+    splitProb: Union[float, None] = Field(default=None, ge=0.0, le=1.0)
+    # Flood fade length behind the wavefront, m (0/omitted derives from glow).
+    decay: Union[float, None] = Field(default=None, ge=0.0)
+
+
+# ---------------------------------------------------------------------------
 # Client -> Server messages (§7.1)
 # ---------------------------------------------------------------------------
 
@@ -133,8 +202,9 @@ class StartMappingOptions(_StrictModel):
     """Client-chosen capture configuration; omitted fields -> server defaults."""
 
     ledCount: int = Field(ge=1)
-    encoding: Union[Encoding, None] = None
+    symbols: Union[Literal[2, 4], None] = None
     bitPeriodMs: Union[float, None] = Field(default=None, gt=0.0)
+    brightness: Union[float, None] = Field(default=None, ge=0.0, le=1.0)
 
 
 class StartMappingMessage(_StrictModel):
@@ -146,8 +216,9 @@ class ConfigureOptions(_StrictModel):
     """Mid-capture renegotiation overlay; unset fields keep their current value."""
 
     ledCount: Union[int, None] = Field(default=None, ge=1)
-    encoding: Union[Encoding, None] = None
+    symbols: Union[Literal[2, 4], None] = None
     bitPeriodMs: Union[float, None] = Field(default=None, gt=0.0)
+    brightness: Union[float, None] = Field(default=None, ge=0.0, le=1.0)
 
 
 class ConfigureMessage(_StrictModel):
@@ -156,7 +227,20 @@ class ConfigureMessage(_StrictModel):
 
 
 class StopMappingMessage(_StrictModel):
+    """solveOnHost (solver placement, from the client's init benchmark):
+    True/None -> server reconstructs, replies result_ready; False -> stop +
+    persist only (reply mapping_stopped), client solves and submit_map's."""
+
     type: Literal["stop_mapping"]
+    solveOnHost: Union[bool, None] = None
+
+
+class SubmitMapMessage(_StrictModel):
+    """Client-solved OutputMap upload (phone-side final solve, wasm); the
+    server persists it and replies result_ready."""
+
+    type: Literal["submit_map"]
+    map: OutputMap
 
 
 class DetectionsMessage(_StrictModel):
@@ -221,6 +305,78 @@ class GetSolveStatusMessage(_StrictModel):
     type: Literal["get_solve_status"]
 
 
+class ColorBlock(_StrictModel):
+    """A contiguous run of same-color LEDs in a counting pattern."""
+
+    start: int = Field(ge=0)
+    count: int = Field(ge=1)
+    # Block color [r, g, b] in [0,1].
+    rgb: Vec3
+
+
+class SetCountingPatternMessage(_StrictModel):
+    """LED-counting handshake (§7.9): display a static color-block pattern.
+    Blocks paint [start, start+count); uncovered LEDs are off; painting past
+    the physical strip end IS the probe. Empty blocks = all off. Reply:
+    counting_state."""
+
+    type: Literal["set_counting_pattern"]
+    blocks: List[ColorBlock]
+    # Player output channel; None -> 0.
+    channel: Union[int, None] = Field(default=None, ge=0)
+
+
+class SetLedCountMessage(_StrictModel):
+    """Persist the detected strip length for a channel. Reply: led_count_state."""
+
+    type: Literal["set_led_count"]
+    ledCount: int = Field(ge=0)
+    channel: Union[int, None] = Field(default=None, ge=0)
+
+
+class SubmitTopologyMessage(_StrictModel):
+    """Upload the skeletonized topology for a stored map (Phase F); the
+    player persists it next to the map and replies result_ready."""
+
+    type: Literal["submit_topology"]
+    topology: Topology
+
+
+class SetPlaybackMessage(_StrictModel):
+    """Playback control (§7.8): select the effect and overlay params. 'off'
+    is universal; other effects are player-capability-dependent (reply: error
+    code='unsupported_effect' when not shipped). Reply: playback_state."""
+
+    type: Literal["set_playback"]
+    effect: str
+    params: Union[PlaybackParams, None] = None
+    # Stored map/topology to play on; None keeps the current selection.
+    mapId: Union[str, None] = None
+
+
+class GetPlaybackMessage(_StrictModel):
+    """Poll the current playback state. Reply: playback_state."""
+
+    type: Literal["get_playback"]
+
+
+class GetFrameTimingMessage(_StrictModel):
+    """Drain the player's rendered-frame timing log (the phone forwards it
+    to the trace server to diagnose pattern-generator stutter). Reply:
+    frame_timing."""
+
+    type: Literal["get_frame_timing"]
+
+
+class GetStoredMapMessage(_StrictModel):
+    """Pull the player's stored map+topology as a MappingBundle, streamed in
+    chunks (bytes [offset, offset+maxLen)). Reply: stored_map_chunk."""
+
+    type: Literal["get_stored_map"]
+    offset: int = Field(ge=0)
+    maxLen: int = Field(ge=1)
+
+
 ClientMessageInner = Annotated[
     Union[
         HelloMessage,
@@ -228,6 +384,7 @@ ClientMessageInner = Annotated[
         StartMappingMessage,
         ConfigureMessage,
         StopMappingMessage,
+        SubmitMapMessage,
         DetectionsMessage,
         ImuBatchMessage,
         ExposureReportMessage,
@@ -235,6 +392,13 @@ ClientMessageInner = Annotated[
         GetPatternMessage,
         GetLiveMapMessage,
         GetSolveStatusMessage,
+        SetCountingPatternMessage,
+        SetLedCountMessage,
+        SubmitTopologyMessage,
+        SetPlaybackMessage,
+        GetPlaybackMessage,
+        GetFrameTimingMessage,
+        GetStoredMapMessage,
     ],
     Field(discriminator="type"),
 ]
@@ -250,9 +414,22 @@ class ClientMessage(RootModel[ClientMessageInner]):
 
 
 class WelcomeMessage(_StrictModel):
+    """solverBenchMs: host score on the canned solver benchmark (ms), for
+    the client's solver-placement decision; None while still measuring."""
+
     type: Literal["welcome"]
     sessionId: str
     codeParams: CodeParams
+    solverBenchMs: Union[float, None] = None
+
+
+class MappingStoppedMessage(_StrictModel):
+    """Reply to stop_mapping(solveOnHost=False): stopped + persisted, no
+    host solve; counts echo what the server logged."""
+
+    type: Literal["mapping_stopped"]
+    detections: int = Field(ge=0)
+    imuSamples: int = Field(ge=0)
 
 
 class TimeSyncPongMessage(_StrictModel):
@@ -280,7 +457,7 @@ class PatternStateMessage(_StrictModel):
 
     type: Literal["pattern_state"]
     active: bool
-    patternClockEpoch: Union[float, None]
+    patternClockEpoch: Union[float, None] = None
     codeParams: CodeParams
 
 
@@ -289,7 +466,7 @@ class LiveMapMessage(_StrictModel):
 
     type: Literal["live_map"]
     active: bool
-    map: Union[OutputMap, None]
+    map: Union[OutputMap, None] = None
 
 
 class SolveLed(_StrictModel):
@@ -321,17 +498,88 @@ class ErrorMessage(_StrictModel):
     message: str
 
 
+class CountingStateMessage(_StrictModel):
+    """Reply to set_counting_pattern: whether a counting pattern is displayed
+    and the server-clock time it latched (the phone's read-valid time)."""
+
+    type: Literal["counting_state"]
+    active: bool
+    # Server-clock time the pattern took effect (ms); None when inactive.
+    epochMs: Union[float, None] = None
+
+
+class LedCountStateMessage(_StrictModel):
+    """Reply to set_led_count: echo of the persisted per-channel strip length."""
+
+    type: Literal["led_count_state"]
+    ledCount: int = Field(ge=0)
+    channel: int = Field(ge=0)
+
+
+class PlaybackStateMessage(_StrictModel):
+    """Reply to set_playback / get_playback: the effective configuration (the
+    player echoes what it actually runs, defaults filled into params)."""
+
+    type: Literal["playback_state"]
+    active: bool
+    # The running effect; "off" when inactive.
+    effect: str
+    params: Union[PlaybackParams, None] = None
+    # The stored map/topology playback runs on; None when none selected.
+    mapId: Union[str, None] = None
+
+
+class FrameTick(_StrictModel):
+    """One rendered mapping-pattern frame: the player monotonic-clock time
+    (MICROSECONDS, raw micros()) at which it pushed absolute frame `seq`
+    (frames since the pattern epoch, before the cycle modulo) to the LEDs."""
+
+    seq: int = Field(ge=0)
+    tMonoUs: int = Field(ge=0)
+
+
+class FrameTimingMessage(_StrictModel):
+    """Reply to get_frame_timing: a drained batch of rendered-frame
+    timestamps plus the count dropped to ring-buffer overflow since the last
+    poll. Even bitPeriodUs spacing between successive tMonoUs = smooth
+    generation; gaps = the pattern render loop stalled. All-integer."""
+
+    type: Literal["frame_timing"]
+    patternClockEpochMs: Union[int, None] = None
+    bitPeriodUs: int = Field(ge=0)
+    cycleFrames: int = Field(ge=0)
+    dropped: int = Field(ge=0)
+    ticks: List[FrameTick]
+
+
+class StoredMapChunkMessage(_StrictModel):
+    """Reply to get_stored_map: a slice of the encoded MappingBundle. `data`
+    is base64; the phone loops until it has `totalLen` bytes, then decodes."""
+
+    type: Literal["stored_map_chunk"]
+    totalLen: int = Field(ge=0)
+    offset: int = Field(ge=0)
+    data: str
+    hasTopology: bool
+
+
 ServerMessageInner = Annotated[
     Union[
         WelcomeMessage,
         TimeSyncPongMessage,
         MappingStartedMessage,
+        MappingStoppedMessage,
         StatusMessage,
         PatternStateMessage,
         LiveMapMessage,
         SolveStatusMessage,
         ResultReadyMessage,
         ErrorMessage,
+        CountingStateMessage,
+        LedCountStateMessage,
+        PlaybackStateMessage,
+        FrameTimingMessage,
+        StoredMapChunkMessage,
     ],
     Field(discriminator="type"),
 ]
@@ -354,6 +602,11 @@ __all__ = [
     "LedEntry",
     "OutputMapStats",
     "OutputMap",
+    "BranchPoint",
+    "TopologySegment",
+    "LedAssociation",
+    "Topology",
+    "PlaybackParams",
     "HelloMessage",
     "TimeSyncPingMessage",
     "StartMappingOptions",
@@ -361,6 +614,7 @@ __all__ = [
     "ConfigureOptions",
     "ConfigureMessage",
     "StopMappingMessage",
+    "SubmitMapMessage",
     "DetectionsMessage",
     "ImuSample",
     "ImuBatchMessage",
@@ -370,10 +624,19 @@ __all__ = [
     "GetPatternMessage",
     "GetLiveMapMessage",
     "GetSolveStatusMessage",
+    "ColorBlock",
+    "SetCountingPatternMessage",
+    "SetLedCountMessage",
+    "SubmitTopologyMessage",
+    "SetPlaybackMessage",
+    "GetPlaybackMessage",
+    "GetFrameTimingMessage",
+    "GetStoredMapMessage",
     "ClientMessage",
     "WelcomeMessage",
     "TimeSyncPongMessage",
     "MappingStartedMessage",
+    "MappingStoppedMessage",
     "StatusMessage",
     "PatternStateMessage",
     "LiveMapMessage",
@@ -381,5 +644,11 @@ __all__ = [
     "SolveStatusMessage",
     "ResultReadyMessage",
     "ErrorMessage",
+    "CountingStateMessage",
+    "LedCountStateMessage",
+    "PlaybackStateMessage",
+    "FrameTick",
+    "FrameTimingMessage",
+    "StoredMapChunkMessage",
     "ServerMessage",
 ]

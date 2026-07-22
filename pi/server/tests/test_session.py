@@ -3,7 +3,6 @@
 import json
 
 import pytest
-
 from ledmapper_protocol import (
     DetectionRecord,
     ExposureStats,
@@ -73,17 +72,17 @@ def test_status_proxies(tmp_path):
 
 def test_reconfigure_swaps_params_and_restamps_epoch(tmp_path):
     sm = SessionManager(tmp_path / "sessions")
-    epoch0 = sm.start("sess", code_params_for(8, 100.0, "gray"))
+    epoch0 = sm.start("sess", code_params_for(8, 100.0, 2))
     sm.add_detections([_det(0), _det(0)])
 
-    new_params = code_params_for(8, 200.0, "gray-hue")
+    new_params = code_params_for(8, 200.0, 4)
     epoch1 = sm.reconfigure(new_params)
     assert epoch1 >= epoch0
     state = sm.pattern_state()
     assert state is not None
     got_epoch, got_params = state
     assert got_epoch == epoch1
-    assert got_params.bitPeriodMs == 200.0 and got_params.encoding == "gray-hue"
+    assert got_params.bitPeriodMs == 200.0 and got_params.symbols == 4
 
     # Detections collected before the reconfigure survive it.
     _sid, log_path = sm.stop()
@@ -124,7 +123,14 @@ def _map(map_id: str) -> OutputMap:
         frame="webxr_session_ref",
         ledCount=2,
         leds=[
-            LedEntry(id=0, xyz=(1.0, 2.0, 3.0), confidence=0.9, nViews=5, rmsReprojPx=0.6, parallaxDeg=20.0),
+            LedEntry(
+                id=0,
+                xyz=(1.0, 2.0, 3.0),
+                confidence=0.9,
+                nViews=5,
+                rmsReprojPx=0.6,
+                parallaxDeg=20.0,
+            ),
         ],
         unmapped=[1],
         stats=OutputMapStats(rmsReprojPxGlobal=0.6, medianParallaxDeg=20.0),

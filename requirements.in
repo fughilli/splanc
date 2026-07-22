@@ -26,3 +26,15 @@ websockets
 
 # Test runner.
 pytest
+
+# Bench tooling: pure-Python QR generation for the trace server's pairing
+# landing page (tools/trace_server.py). Zero transitive deps.
+segno
+
+# Wire protocol (proto-comms branch): protobuf runtime for the generated
+# ledmapper.v1 bindings.
+protobuf==6.33.5
+
+# Build tooling: template expansion behind //tools/jinja:jinja_template
+# (bakes build constants into shipped resources with StrictUndefined).
+jinja2

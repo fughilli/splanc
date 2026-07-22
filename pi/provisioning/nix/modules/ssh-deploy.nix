@@ -34,18 +34,19 @@ let
   pubkey =
     if builtins.pathExists pubkeyPath
     then lib.strings.trim (builtins.readFile pubkeyPath)
-    else throw ''
-      LED Mapper deploy public key not found.
+    else
+      throw ''
+        LED Mapper deploy public key not found.
 
-      Looked at:
-        $LEDMAPPER_DEPLOY_PUBKEY_FILE (= "${toString envPath}")
-        ${toString defaultPath}
+        Looked at:
+          $LEDMAPPER_DEPLOY_PUBKEY_FILE (= "${toString envPath}")
+          ${toString defaultPath}
 
-      Generate one with:
-        pi/provisioning/scripts/manage_keys.sh init
+        Generate one with:
+          pi/provisioning/scripts/manage_keys.sh init
 
-      (Never commit the private key. See pi/provisioning/README.md.)
-    '';
+        (Never commit the private key. See pi/provisioning/README.md.)
+      '';
 in
 {
   services.openssh = {

@@ -1,0 +1,151 @@
+"""ESP32-C6 player firmware app (bring-up build — see README.md).
+
+WiFi soft-AP + HTTP (landing page) + plain-WS player protocol bridged into
+the Rust session core via a C ABI staticlib, FastLED strip rendering. The
+Rust side links the FIRMWARE capacity profile of the generated protobuf
+(//shared/protocol/rust:ledmapper_pb_fw); host tests drive the same ffi.rs
+against the host profile, and the RFC6455 codec is host-tested byte-exactly.
+"""
+
+load("@embedded//rules:firmware.bzl", "firmware_binary")
+load("@embedded//rules:flash.bzl", "esptool_flash")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("@rules_cc//cc:cc_test.bzl", "cc_test")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_static_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# The C ABI over the player stack, as the firmware links it. Bare-metal
+# only (it carries the panic handler); the host test drives the same source
+# via :player_ffi_host.
+rust_static_library(
+    name = "player_ffi",
+    srcs = ["ffi.rs"],
+    crate_name = "ledmapper_player_ffi",
+    edition = "2021",
+    target_compatible_with = select({
+        "@embedded//platforms:is_esp32c6": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        "//firmware/arena",
+        "//firmware/player:player_fw",
+        "//firmware/pulse",
+        "//firmware/store",
+        "//shared/protocol/rust:ledmapper_pb_fw",
+        "@crates//:micropb",
+    ],
+)
+
+# The same ffi.rs against the HOST capacity profile, for the host test (the
+# profiles differ only in repeated-field capacities).
+rust_library(
+    name = "player_ffi_host",
+    srcs = ["ffi.rs"],
+    crate_name = "ledmapper_player_ffi",
+    edition = "2021",
+    deps = [
+        "//firmware/arena",
+        "//firmware/player",
+        "//firmware/pulse",
+        "//firmware/store",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+    ],
+)
+
+rust_test(
+    name = "ffi_test",
+    srcs = ["tests/ffi.rs"],
+    edition = "2021",
+    env = {
+        # Host-profile envelopes carry big inline heapless storage.
+        "RUST_MIN_STACK": "16777216",
+    },
+    deps = [
+        ":player_ffi_host",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+    ],
+)
+
+cc_library(
+    name = "ws_codec",
+    hdrs = ["ws_codec.h"],
+)
+
+cc_test(
+    name = "ws_codec_test",
+    srcs = ["ws_codec_test.cc"],
+    deps = [":ws_codec"],
+)
+
+cc_library(
+    name = "improv_codec",
+    hdrs = ["improv_codec.h"],
+)
+
+cc_test(
+    name = "improv_codec_test",
+    srcs = ["improv_codec_test.cc"],
+    deps = [":improv_codec"],
+)
+
+cc_binary(
+    name = "player_app",
+    srcs = [
+        "improv_ble.cpp",
+        "improv_ble.h",
+        "led_config.h",
+        "main.cpp",
+        "player_ffi.h",
+        "serial_log.h",
+    ],
+    # Match the SDK/library ABI: the Arduino tree builds -fno-rtti, and a
+    # subclass of its polymorphic types must not demand base typeinfo.
+    copts = ["-fno-rtti"],
+    target_compatible_with = select({
+        "@embedded//platforms:is_esp32c6": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        ":improv_codec",
+        ":player_ffi",
+        ":ws_codec",
+        "//firmware/landing:landing_page",
+        # NOT @embedded//libs/pins: it propagates LED_DATA_PIN=8 (the
+        # DevKitC-1 onboard LED); our strip wiring lives in led_config.h.
+        "@embedded//libs/board:arduino_core",
+        "@embedded//libs/vendor:ble",
+        "@embedded//libs/vendor:fastled",
+        "@embedded//libs/vendor:preferences",
+        "@embedded//libs/vendor:webserver",
+        "@embedded//libs/vendor:wifi",
+    ],
+)
+
+# opt_mode="opt": the image is unusable unoptimized (fastbuild is far larger and
+# slower), so the target pins -c opt via the board transition — no need to pass
+# `-c opt` on the command line. tags=manual: the image needs the nix-provided
+# toolchains (absent on CI — see .github/workflows); build it explicitly:
+#   bazelisk build //firmware/player_app:esp32c6
+firmware_binary(
+    name = "esp32c6",
+    binary = ":player_app",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+# The image (~2.05 MB at -c opt: WiFi + BLE + webserver + FastLED + the
+# protocol stack) exceeds default.csv's 1.25 MB app slot and just misses
+# no_ota's 2 MB — flash the 4 MB "huge app" layout (single 3 MB factory
+# app + nvs, fits the common 4 MB-flash C6 devkits; a dual-OTA 8 MB table
+# would overrun a 4 MB chip and boot-loop).
+esptool_flash(
+    name = "flash_esp32c6",
+    app = ":esp32c6",
+    partitions = "@embedded//libs/vendor:partitions_huge_app",
+    tags = ["manual"],
+)

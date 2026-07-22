@@ -1,8 +1,9 @@
-"""Self-signed TLS for phone testing (WebXR requires a secure context).
+"""Self-signed TLS for phone testing (the capture APIs need a secure context).
 
-The web app's WebXR capture path (`immersive-ar` + `camera-access`) is only
-available on a secure origin. In the field the Pi serves over its own AP and
-users can flag the origin; on a dev laptop the practical path is HTTPS with a
+The web app's capture path needs a secure origin: getUserMedia (camera) and
+DeviceMotion (the inertial stream) are secure-context APIs, and the control
+plane runs over WSS. In the field the Pi serves over its own AP and users can
+flag the origin; on a dev laptop the practical path is HTTPS with a
 self-signed certificate the user taps through once ("Advanced → Proceed").
 
 `ensure_self_signed(dir)` generates a long-lived self-signed cert + key pair
@@ -33,11 +34,22 @@ def ensure_self_signed(cert_dir: Path) -> Tuple[Path, Path]:
         return cert, key
     subprocess.run(
         [
-            "openssl", "req", "-x509", "-newkey", "rsa:2048",
-            "-keyout", str(key), "-out", str(cert),
-            "-days", "3650", "-nodes",
-            "-subj", "/CN=ledmapper",
-            "-addext", f"subjectAltName={_SAN}",
+            "openssl",
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-keyout",
+            str(key),
+            "-out",
+            str(cert),
+            "-days",
+            "3650",
+            "-nodes",
+            "-subj",
+            "/CN=ledmapper",
+            "-addext",
+            f"subjectAltName={_SAN}",
         ],
         check=True,
         capture_output=True,

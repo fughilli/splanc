@@ -1,0 +1,140 @@
+<!doctype html>
+<!--
+  ESP32 same-origin landing page (R2 trust flow — docs/esp32-led-mapping-plan.md).
+
+  Browsers never show a certificate interstitial for a WebSocket connection:
+  a hosted app at https://app.example.com that opens wss://esp32.local/ws
+  against a self-signed cert just fails. The click-through ("Advanced ->
+  Proceed" / "visit website") only exists for TOP-LEVEL navigations — and
+  once taken, the exception is stored per (origin, certificate) and unlocks
+  subsequent cross-origin WSS to this host.
+
+  So the ESP32 serves exactly one page: the user navigates here first
+  (https://<esp32-host>/), takes the one-tap cert approval to load it, and
+  this page (1) proves the approval stuck by opening a SAME-ORIGIN WebSocket
+  to /ws, then (2) REDIRECTS to the hosted app with ?url= pre-filled.
+
+  The redirect is UNCONDITIONAL: loading this page at all means the cert
+  was accepted, so a probe failure indicts the player's WS endpoint, not
+  the trust flow — the failure is flashed briefly and the user is sent on
+  anyway (the app's error UI owns connection troubleshooting). It uses
+  location.replace so Back from the app doesn't loop through this page.
+
+  The app origin and WS port are baked in at build time (jinja_template
+  vars in BUILD.bazel; origin e.g. https://ledmapper.pages.dev). Keep this
+  file dependency-free and tiny — it ships in the ESP32 flash image
+  (minified; this comment never reaches the device).
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>LED Mapper player</title>
+    <style>
+      body {
+        font: 16px/1.5 system-ui, sans-serif;
+        background: #111;
+        color: #eee;
+        display: grid;
+        place-items: center;
+        min-height: 100vh;
+        margin: 0;
+      }
+      main {
+        max-width: 26rem;
+        padding: 1.5rem;
+        text-align: center;
+      }
+      .ok {
+        color: #6f6;
+      }
+      .bad {
+        color: #f88;
+      }
+      a.button {
+        display: inline-block;
+        margin-top: 1rem;
+        padding: 0.7rem 1.4rem;
+        border-radius: 0.5rem;
+        background: #2a6;
+        color: #fff;
+        text-decoration: none;
+        font-weight: 600;
+      }
+      a.button[aria-disabled="true"] {
+        background: #444;
+        pointer-events: none;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>LED Mapper player</h1>
+      <p id="status">Checking the connection…</p>
+      <a id="go" class="button" href="#">Open the app</a>
+      <p style="opacity: 0.6; font-size: 0.85rem">
+        This player hosts no app of its own — mapping and playback control
+        run from the hosted app, connected back to
+        <code id="host"></code>.
+      </p>
+    </main>
+    <script>
+      "use strict";
+      var APP_ORIGIN = "{{ app_origin }}";
+      // Empty = the page's own host:port; the bring-up firmware serves WS on
+      // its own port (TLS/wss on the page's port is the Phase 4c end state).
+      var WS_PORT = "{{ ws_port }}";
+      var scheme = location.protocol === "https:" ? "wss" : "ws";
+      var wsHost = WS_PORT ? location.hostname + ":" + WS_PORT : location.host;
+      var wsUrl = scheme + "://" + wsHost + "/ws";
+      var target =
+        APP_ORIGIN.replace(/\/+$/, "") + "/?url=" + encodeURIComponent(wsUrl);
+      document.getElementById("host").textContent = location.host;
+      var status = document.getElementById("status");
+      var go = document.getElementById("go");
+      go.href = target;
+
+      // Same-origin WSS probe: loading this page took the cert approval, so
+      // this succeeding means the exception is stored and the player's WSS
+      // endpoint is up — the cross-origin connection from the app will work.
+      // Either way the user ends up at the app (see the header comment);
+      // the probe only decides how fast and what the status line says.
+      var done = false;
+      function redirect(delayMs, msg, cls) {
+        if (done) return;
+        done = true;
+        status.textContent = msg;
+        status.className = cls;
+        setTimeout(function () {
+          location.replace(target);
+        }, delayMs);
+      }
+      try {
+        var probe = new WebSocket(wsUrl);
+        var timer = setTimeout(function () {
+          probe.close();
+          redirect(
+            2500,
+            "Could not verify the player connection — opening the app anyway…",
+            "bad",
+          );
+        }, 4000);
+        probe.onopen = function () {
+          clearTimeout(timer);
+          probe.close();
+          redirect(400, "Player connection verified — opening the app…", "ok");
+        };
+        probe.onerror = function () {
+          clearTimeout(timer);
+          redirect(
+            2500,
+            "Player WebSocket check failed — opening the app anyway…",
+            "bad",
+          );
+        };
+      } catch (e) {
+        redirect(2500, "WebSocket unavailable: " + e, "bad");
+      }
+    </script>
+  </body>
+</html>

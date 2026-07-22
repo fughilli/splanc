@@ -18,14 +18,27 @@ load("@aspect_rules_js//js:defs.bzl", "js_binary", "js_test")
 load("@aspect_rules_ts//ts:defs.bzl", "ts_config", "ts_project")
 load("@npm//:defs.bzl", "npm_link_all_packages")
 load("@npm//web:vite/package_json.bzl", vite_bin = "bin")
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 
 package(default_visibility = ["//visibility:public"])
+
+# The cross-language goldens (Python-generated, TS-verified here) also feed
+# the firmware legs: the wire frames drive the Rust/micropb conformance test
+# (//shared/protocol/rust) and the player protocol test (//firmware/player);
+# the pattern goldens pin the firmware hue-code generator
+# (//firmware/pattern) to what the phone decoder is tested against.
+exports_files([
+    "tests/golden_proto_frames.json",
+    "tests/golden_secded16.json",
+    "tests/golden_secded16_sym4.json",
+])
 
 npm_link_all_packages(name = "node_modules")
 
 SRCS = glob(["src/**/*.ts"])
 
 TYPE_DEPS = [
+    ":node_modules/@bufbuild/protobuf",
     ":node_modules/@ledmapper/protocol",
     ":node_modules/@types/node",
     ":node_modules/@types/webxr",
@@ -60,10 +73,17 @@ ts_project(
 # tsc input/output collision).
 ts_project(
     name = "web_tests_js",
-    srcs = SRCS + glob([
-        "tests/**/*.ts",
-        "tests/**/*.json",
-    ]),
+    # src/solver/spawn.ts is browser-only (import.meta worker URL — a syntax
+    # error under this CJS compile) and only ever loaded lazily; see its
+    # docstring.
+    srcs = glob(
+        [
+            "src/**/*.ts",
+            "tests/**/*.ts",
+            "tests/**/*.json",
+        ],
+        exclude = ["src/solver/spawn.ts"],
+    ),
     declaration = False,
     out_dir = "dist-test",
     resolve_json_module = True,
@@ -121,10 +141,12 @@ js_binary(
 vite_bin.vite(
     name = "dist",
     srcs = SRCS + [
+        "effects.html",
         "index.html",
-        "wall.html",
         "package.json",
         "vite.config.ts",
+        "wall.html",
+        ":node_modules/@bufbuild/protobuf",
         ":node_modules/@ledmapper/protocol",
         ":node_modules/vite",
     ],
@@ -144,6 +166,21 @@ sh_binary(
     srcs = ["serve.sh"],
     data = [
         ":dist",
+        "//firmware/pulse:pulse_web",
         "//pi/server:serve",
+        "//solver:solver_web",
+    ],
+)
+
+# Publish the static artifacts (app bundle + wasm solver) to Cloudflare
+# Pages — the externally-hosted webapp the ESP32 player points phones at.
+# Deploys need CLOUDFLARE_API_TOKEN; `-- --dry-run` stages and prints only.
+sh_binary(
+    name = "deploy_cloudflare",
+    srcs = ["deploy_cloudflare.sh"],
+    data = [
+        ":dist",
+        "//firmware/pulse:pulse_web",
+        "//solver:solver_web",
     ],
 )

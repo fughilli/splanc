@@ -1,0 +1,4 @@
+# The durable spec uses one-line-per-paragraph authoring; do not rewrap it.
+led-mapper-design.md
+.claude/
+.claude-container-overlay/

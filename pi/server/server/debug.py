@@ -24,9 +24,7 @@ import math
 from typing import List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
-
 from ledmapper_protocol import OutputMap
-
 from reconstruction.api import _as_obs
 from reconstruction.camera import project
 from reconstruction.triangulate import max_parallax_deg, rays_from_observations, triangulate_point
@@ -163,7 +161,11 @@ def led_report(
             "t": times[i],
             "u": obs[i]["u"],
             "v": obs[i]["v"],
-            "confidence": float(mine[i]["confidence"]) if isinstance(mine[i], Mapping) else float(mine[i].confidence),
+            "confidence": (
+                float(mine[i]["confidence"])
+                if isinstance(mine[i], Mapping)
+                else float(mine[i].confidence)
+            ),
             "p": obs[i]["p"],
             "q": obs[i]["q"],
             "K": obs[i]["K"],
@@ -181,7 +183,9 @@ def led_report(
 
     ps = np.asarray([o["p"] for o in obs])
     report["pose"] = {
-        "pathLenM": float(np.sum(np.linalg.norm(np.diff(ps, axis=0), axis=1))) if len(ps) > 1 else 0.0,
+        "pathLenM": (
+            float(np.sum(np.linalg.norm(np.diff(ps, axis=0), axis=1))) if len(ps) > 1 else 0.0
+        ),
         "bboxM": [ps.min(axis=0).tolist(), ps.max(axis=0).tolist()],
         "meanSpeedMps": float(np.mean(speeds)),
         "maxSpeedMps": float(np.max(speeds)),
@@ -209,9 +213,14 @@ def led_report(
         for e in m.leds:
             if e.id == led_id:
                 hist.append(
-                    {"t": t_ms, "nDetections": n_det, "xyz": list(e.xyz),
-                     "confidence": e.confidence, "rmsReprojPx": e.rmsReprojPx,
-                     "parallaxDeg": e.parallaxDeg}
+                    {
+                        "t": t_ms,
+                        "nDetections": n_det,
+                        "xyz": list(e.xyz),
+                        "confidence": e.confidence,
+                        "rmsReprojPx": e.rmsReprojPx,
+                        "parallaxDeg": e.parallaxDeg,
+                    }
                 )
                 break
     report["solveHistory"] = hist
@@ -247,8 +256,14 @@ def session_overview(detections: Sequence[Mapping], led_count: Optional[int]) ->
         "nDetections": len(detections),
         "ledsSeen": len(by_led),
         "timeSpanMs": (t1 - t0) if ps else 0.0,
-        "posePathLenM": float(np.sum(np.linalg.norm(np.diff(ps_arr, axis=0), axis=1))) if len(ps_arr) > 1 else 0.0,
-        "poseBboxM": [ps_arr.min(axis=0).tolist(), ps_arr.max(axis=0).tolist()] if len(ps_arr) else None,
+        "posePathLenM": (
+            float(np.sum(np.linalg.norm(np.diff(ps_arr, axis=0), axis=1)))
+            if len(ps_arr) > 1
+            else 0.0
+        ),
+        "poseBboxM": (
+            [ps_arr.min(axis=0).tolist(), ps_arr.max(axis=0).tolist()] if len(ps_arr) else None
+        ),
         "viewsPerLed": {str(k): v for k, v in counts},
     }
 

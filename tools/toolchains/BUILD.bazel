@@ -1,0 +1,50 @@
+"""Prebuilt protoc, resolved per host platform (toolchains_protoc hub repos).
+
+A plain select()ed alias instead of full proto toolchain resolution: the only
+consumer is the ledmapper.proto codegen genrule, which keeps the protobuf
+module (and a from-source protoc compile) out of the dependency graph.
+"""
+
+package(default_visibility = ["//visibility:public"])
+
+config_setting(
+    name = "linux_aarch64",
+    constraint_values = [
+        "@platforms//cpu:aarch64",
+        "@platforms//os:linux",
+    ],
+)
+
+config_setting(
+    name = "linux_x86_64",
+    constraint_values = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:linux",
+    ],
+)
+
+config_setting(
+    name = "osx_aarch64",
+    constraint_values = [
+        "@platforms//cpu:aarch64",
+        "@platforms//os:osx",
+    ],
+)
+
+config_setting(
+    name = "osx_x86_64",
+    constraint_values = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:osx",
+    ],
+)
+
+alias(
+    name = "protoc",
+    actual = select({
+        ":linux_aarch64": "@protoc_linux_aarch64//:bin/protoc",
+        ":linux_x86_64": "@protoc_linux_x86_64//:bin/protoc",
+        ":osx_aarch64": "@protoc_osx_aarch64//:bin/protoc",
+        ":osx_x86_64": "@protoc_osx_x86_64//:bin/protoc",
+    }),
+)

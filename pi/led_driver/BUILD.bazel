@@ -19,15 +19,15 @@ py_library(
     srcs = glob(["led_driver/*.py"]),
     imports = ["."],
     deps = [
-        "//shared/protocol:protocol",
+        "//shared/protocol",
     ],
 )
 
 py_binary(
     name = "drive",
     srcs = ["led_driver/__main__.py"],
-    main = "led_driver/__main__.py",
     imports = ["."],
+    main = "led_driver/__main__.py",
     deps = [":led_driver"],
 )
 
@@ -49,12 +49,12 @@ py_test(
         "tests/test_graycode.py",
         "tests/test_spi.py",
     ],
-    main = "tests/pytest_main.py",
     imports = ["."],
     legacy_create_init = False,
+    main = "tests/pytest_main.py",
     deps = [
         ":led_driver",
-        "//shared/protocol:protocol",
+        "//shared/protocol",
         requirement("pytest"),
     ],
 )

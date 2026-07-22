@@ -9,7 +9,6 @@ The full M9→M3 pipeline acceptance lives in the simulator package.
 from __future__ import annotations
 
 import numpy as np
-
 from reconstruction import back_project_ray, look_at_quat, project, reconstruct
 
 

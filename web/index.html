@@ -81,6 +81,10 @@
         font-size: 0.85rem;
         color: #9a9aa2;
       }
+      #hud-stats {
+        white-space: pre-line;
+        font-variant-numeric: tabular-nums;
+      }
       #err {
         white-space: pre-wrap;
         color: #ff9a9a;
@@ -102,7 +106,7 @@
       #overlay {
         display: none;
       }
-      body.in-xr #overlay {
+      body.in-capture #overlay {
         display: block;
         position: fixed;
         inset: 0;
@@ -152,6 +156,51 @@
         pointer-events: auto;
         background: #d83535;
       }
+      /* In-capture manual override for the exposure/brightness servo. */
+      #cap-controls {
+        position: absolute;
+        left: 0.8rem;
+        bottom: calc(env(safe-area-inset-bottom, 0px) + 4.2rem);
+        width: min(62vw, 320px);
+        pointer-events: auto;
+        background: rgba(10, 10, 14, 0.72);
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        border-radius: 10px;
+        padding: 0.5rem 0.7rem;
+        color: #fff;
+        font-size: 13px;
+      }
+      #cap-controls .cc-row {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        justify-content: space-between;
+      }
+      #cap-controls #cc-toggle {
+        pointer-events: auto;
+        background: #2a6ea3;
+        border: none;
+        color: #fff;
+        border-radius: 6px;
+        padding: 0.3rem 0.6rem;
+        font-size: 12px;
+      }
+      #cap-controls.manual #cc-toggle {
+        background: #b8862a;
+      }
+      #cap-controls label {
+        display: block;
+        margin-top: 0.45rem;
+        color: #d5d5dd;
+      }
+      #cap-controls input[type="range"] {
+        width: 100%;
+      }
+      #cap-controls .cc-v {
+        float: right;
+        color: #9fd8ff;
+        font-variant-numeric: tabular-nums;
+      }
     </style>
   </head>
   <body>
@@ -169,7 +218,8 @@
             <input id="ledcount" type="number" min="1" max="4096" value="64" />
           </div>
           <div style="flex: 1"></div>
-          <button id="start">Start AR capture</button>
+          <button id="blesetup" style="display: none">Set up player (Bluetooth)</button>
+          <button id="start">Start capture</button>
         </div>
         <div id="conn">connecting…</div>
         <div id="err"></div>
@@ -191,12 +241,57 @@
           </div>
         </div>
         <canvas id="mapcanvas" width="520" height="390"></canvas>
+        <div id="topo-controls" style="display: none; margin: 0.4rem 0; font-size: 0.85rem; color: #b8b8c0">
+          <div style="margin-bottom: 0.2rem">Topology <span id="topo-summary" style="color:#7fd8ff"></span></div>
+          <label style="display: block">neighbour radius
+            <input id="topo-radius" type="range" min="1.2" max="8" step="0.2" value="2.5" />
+            <span id="topo-radius-v">2.5</span></label>
+          <label style="display: block">prune spurs
+            <input id="topo-prune" type="range" min="0" max="8" step="0.5" value="3" />
+            <span id="topo-prune-v">3</span></label>
+          <label style="display: block">close loops
+            <input id="topo-loop" type="range" min="0" max="4" step="0.2" value="2" />
+            <span id="topo-loop-v">2</span></label>
+          <label style="display: block">simplify
+            <input id="topo-simplify" type="range" min="0" max="2" step="0.1" value="0.5" />
+            <span id="topo-simplify-v">0.5</span></label>
+          <label style="display: block">max verts/segment
+            <input id="topo-maxpoly" type="range" min="4" max="128" step="4" value="64" />
+            <span id="topo-maxpoly-v">64</span></label>
+          <div id="topo-progress" style="display: none; margin: 0.3rem 0; color: #ffd97a">
+            <span id="topo-progress-text">Extracting…</span>
+            <button class="secondary" id="topo-abort" type="button" style="margin-left: 0.5rem">Abort</button>
+          </div>
+          <button class="secondary" id="topo-upload">Upload topology</button>
+        </div>
         <p class="row">
           <a id="dl-json" download>map.json</a>
           <a id="dl-csv" download>map.csv</a>
+          <button class="secondary" id="export-binpb" title="Download a map+topology .binpb for the effects-simulator workspace">Export .binpb</button>
           <button class="secondary" id="trajtoggle" style="display: none">Show camera path</button>
+          <button class="secondary" id="playeffect" style="display: none">Play pulse</button>
+          <button class="secondary" id="playflood" style="display: none">Play flood</button>
+          <button class="secondary" id="pull-map" title="Download the map+topology stored on the connected player as a .binpb">Pull from player</button>
           <button class="secondary" id="again">Map again</button>
         </p>
+        <div id="effect-controls" style="display: none; margin: 0.4rem 0; font-size: 0.85rem; color: #b8b8c0">
+          <div style="margin-bottom: 0.2rem">Effect tuning <span style="color:#7f8a99">(live)</span></div>
+          <label style="display: block">speed (m/s)
+            <input id="fx-speed" type="range" min="0.05" max="2" step="0.05" value="0.4" />
+            <span id="fx-speed-v">0.40</span></label>
+          <label style="display: block">glow radius (m)
+            <input id="fx-glow" type="range" min="0.01" max="0.5" step="0.01" value="0.08" />
+            <span id="fx-glow-v">0.08</span></label>
+          <label style="display: block">pulse lead-in (m)
+            <input id="fx-lead" type="range" min="0" max="0.5" step="0.01" value="0" />
+            <span id="fx-lead-v">auto</span></label>
+          <label style="display: block">pulse split prob
+            <input id="fx-split" type="range" min="0" max="1" step="0.05" value="0.25" />
+            <span id="fx-split-v">0.25</span></label>
+          <label style="display: block">flood decay (m)
+            <input id="fx-decay" type="range" min="0" max="2" step="0.05" value="0" />
+            <span id="fx-decay-v">auto</span></label>
+        </div>
       </section>
     </main>
 
@@ -206,6 +301,18 @@
       <div class="hud">
         <div id="hud-stats">starting…</div>
         <div class="guide" id="hud-guide">Walk a slow arc around the fixture — sideways steps, not toward it.</div>
+      </div>
+      <div id="cap-controls">
+        <div class="cc-row">
+          <span id="cc-mode-label">Auto (servo)</span>
+          <button id="cc-toggle" type="button">Manual override</button>
+        </div>
+        <div id="cc-sliders" style="display: none">
+          <label>LED brightness <span class="cc-v" id="cc-bright-v">100%</span>
+            <input id="cc-bright" type="range" min="5" max="100" step="1" value="100" /></label>
+          <label>Camera exposure <span class="cc-v" id="cc-exp-v">0.25</span>
+            <input id="cc-exp" type="range" min="0" max="1" step="0.02" value="0.25" /></label>
+        </div>
       </div>
       <div class="stopwrap">
         <button id="stop">Stop &amp; finish</button>

@@ -9,13 +9,21 @@
     { "$ref": "#/$defs/StartMapping" },
     { "$ref": "#/$defs/Configure" },
     { "$ref": "#/$defs/StopMapping" },
+    { "$ref": "#/$defs/SubmitMap" },
     { "$ref": "#/$defs/Detections" },
     { "$ref": "#/$defs/ImuBatch" },
     { "$ref": "#/$defs/ExposureReport" },
     { "$ref": "#/$defs/GetStatus" },
     { "$ref": "#/$defs/GetPattern" },
     { "$ref": "#/$defs/GetLiveMap" },
-    { "$ref": "#/$defs/GetSolveStatus" }
+    { "$ref": "#/$defs/GetSolveStatus" },
+    { "$ref": "#/$defs/SetCountingPattern" },
+    { "$ref": "#/$defs/SetLedCount" },
+    { "$ref": "#/$defs/SubmitTopology" },
+    { "$ref": "#/$defs/SetPlayback" },
+    { "$ref": "#/$defs/GetPlayback" },
+    { "$ref": "#/$defs/GetFrameTiming" },
+    { "$ref": "#/$defs/GetStoredMap" }
   ],
   "$defs": {
     "Hello": {
@@ -56,15 +64,21 @@
           "required": ["ledCount"],
           "properties": {
             "ledCount": { "type": "integer", "minimum": 1 },
-            "encoding": {
-              "type": ["string", "null"],
-              "enum": ["gray", "gray-hue", null],
-              "description": "Code carrier (see code_params.json). Chosen by the client from measured light conditions: dark scene -> 'gray' (LEDs outshine everything), lit scene -> 'gray-hue' (constant-brightness color code). Null/omitted -> server default."
+            "symbols": {
+              "type": ["integer", "null"],
+              "enum": [2, 4, null],
+              "description": "Data-symbol alphabet size (see code_params.json). Chosen by the client from measured chroma SNR: good conditions -> 4 (2 bits/frame, ~half the data frames), marginal -> 2 (max hue separation). Null/omitted -> server default (2)."
             },
             "bitPeriodMs": {
               "type": ["number", "null"],
               "exclusiveMinimum": 0,
-              "description": "Signaling rate. Chosen by the client so each bit window spans >= ~3 camera frame intervals — in low light the camera lengthens exposure and drops fps, so the client requests a slower code. Null/omitted -> server default."
+              "description": "Signaling rate (per symbol window). Chosen by the client so each window spans >= ~3 camera frame intervals — in low light the camera lengthens exposure and drops fps, so the client requests a slower code. Null/omitted -> server default."
+            },
+            "brightness": {
+              "type": ["number", "null"],
+              "minimum": 0,
+              "maximum": 1,
+              "description": "LED output brightness scale (see code_params.json). Servoed by the client against measured bloom/wash-out. Null/omitted -> server default (1.0)."
             }
           }
         }
@@ -82,8 +96,9 @@
           "additionalProperties": false,
           "properties": {
             "ledCount": { "type": ["integer", "null"], "minimum": 1 },
-            "encoding": { "type": ["string", "null"], "enum": ["gray", "gray-hue", null] },
-            "bitPeriodMs": { "type": ["number", "null"], "exclusiveMinimum": 0 }
+            "symbols": { "type": ["integer", "null"], "enum": [2, 4, null] },
+            "bitPeriodMs": { "type": ["number", "null"], "exclusiveMinimum": 0 },
+            "brightness": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }
           }
         }
       }
@@ -93,7 +108,21 @@
       "additionalProperties": false,
       "required": ["type"],
       "properties": {
-        "type": { "const": "stop_mapping" }
+        "type": { "const": "stop_mapping" },
+        "solveOnHost": {
+          "type": ["boolean", "null"],
+          "description": "Where the final solve runs (solver placement, decided by the client's init-time benchmark). True/null/omitted: the server reconstructs and replies result_ready (the classic flow). False: the server only stops the capture and persists the log, replying mapping_stopped; the client solves locally in its wasm solver and uploads the map via submit_map."
+        }
+      }
+    },
+    "SubmitMap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "map"],
+      "description": "Upload a client-solved OutputMap (the phone-side final solve, produced by the wasm solver after stop_mapping with solveOnHost=false). The server persists it to the map store exactly as if it had solved it, and replies result_ready so the download flow is identical for both placements.",
+      "properties": {
+        "type": { "const": "submit_map" },
+        "map": { "$ref": "output_map.json" }
       }
     },
     "Detections": {
@@ -159,7 +188,15 @@
     "ExposureStats": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["tCaptureMs", "frameIntervalMs", "meanLuma", "p95Luma", "clipFrac", "blobCount", "detectorThreshold"],
+      "required": [
+        "tCaptureMs",
+        "frameIntervalMs",
+        "meanLuma",
+        "p95Luma",
+        "clipFrac",
+        "blobCount",
+        "detectorThreshold"
+      ],
       "properties": {
         "tCaptureMs": {
           "type": "number",
@@ -246,6 +283,115 @@
       "description": "Poll the FINAL solve's progress (after stop_mapping, while the reply is pending): optimizer progress, current reprojection rms, and the converging interim LED positions for a live preview. Reply: solve_status.",
       "properties": {
         "type": { "const": "get_solve_status" }
+      }
+    },
+    "ColorBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "count", "rgb"],
+      "description": "A contiguous run of same-color LEDs in a counting pattern.",
+      "properties": {
+        "start": { "type": "integer", "minimum": 0 },
+        "count": { "type": "integer", "minimum": 1 },
+        "rgb": {
+          "type": "array",
+          "items": { "type": "number", "minimum": 0, "maximum": 1 },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "Block color [r, g, b] in [0,1]."
+        }
+      }
+    },
+    "SetCountingPattern": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "blocks"],
+      "description": "LED-counting handshake (design doc §7.9): command the player to display a static color-block pattern. Blocks paint [start, start+count) in rgb; LEDs not covered by any block are off. Painting past the physical strip end is expected — that IS the probe: the phone binary-searches the strip length by observing which blocks light. Empty blocks = all off (ends the counting display). Reply: counting_state.",
+      "properties": {
+        "type": { "const": "set_counting_pattern" },
+        "blocks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/ColorBlock" }
+        },
+        "channel": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Player output channel; null/omitted -> 0. The Pi has one channel; the ESP32 may drive several RMT outputs."
+        }
+      }
+    },
+    "SetLedCount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "ledCount"],
+      "description": "Report the LED count the counting handshake detected so the player persists it as the channel's configured strip length (used to default codeParams.ledCount and to bound playback buffers). Reply: led_count_state.",
+      "properties": {
+        "type": { "const": "set_led_count" },
+        "ledCount": { "type": "integer", "minimum": 0 },
+        "channel": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Player output channel; null/omitted -> 0."
+        }
+      }
+    },
+    "SubmitTopology": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "topology"],
+      "description": "Upload the skeletonized topology for a stored map (phone-side skeletonization, Phase F). The player persists it next to the map — it drives the O(N) pulse illuminate — and replies result_ready with the map id, mirroring submit_map.",
+      "properties": {
+        "type": { "const": "submit_topology" },
+        "topology": { "$ref": "topology.json" }
+      }
+    },
+    "SetPlayback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "effect"],
+      "description": "Playback control (design doc §7.8): select the running effect and overlay its params. 'off' stops playback and is supported by every player; other effect names are player-capability-dependent (a player replies error code='unsupported_effect' for engines it does not ship, listing what it does). Reply: playback_state with the effective configuration.",
+      "properties": {
+        "type": { "const": "set_playback" },
+        "effect": {
+          "type": "string",
+          "description": "Effect name: 'off' (universal), 'solid', 'pulse', 'rainbow', ... — an open set, validated by the player."
+        },
+        "params": {
+          "oneOf": [{ "$ref": "playback_params.json" }, { "type": "null" }]
+        },
+        "mapId": {
+          "type": ["string", "null"],
+          "description": "Which stored map/topology to play on; null/omitted keeps the player's current selection (or its only stored map)."
+        }
+      }
+    },
+    "GetPlayback": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "description": "Poll the current playback state (for a config UI attaching to a running player). Reply: playback_state.",
+      "properties": {
+        "type": { "const": "get_playback" }
+      }
+    },
+    "GetFrameTiming": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "description": "Drain the player's rendered-frame timing log. The player samples its monotonic clock as it pushes each mapping-pattern frame to the LEDs; the phone polls this while tracing and forwards the samples to the trace server, so pattern-generator stutter is visible offline. Reply: frame_timing.",
+      "properties": {
+        "type": { "const": "get_frame_timing" }
+      }
+    },
+    "GetStoredMap": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "offset", "maxLen"],
+      "description": "Pull the player's stored map + topology back off the device as a MappingBundle, streamed in chunks (a map is far larger than one control frame). Requests bytes [offset, offset+maxLen) of the encoded bundle; the phone loops until it has totalLen bytes, then decodes the MappingBundle. Lets a phone recover a previously-mapped fixture without re-mapping. Reply: stored_map_chunk (or error 'no_map').",
+      "properties": {
+        "type": { "const": "get_stored_map" },
+        "offset": { "type": "integer", "minimum": 0 },
+        "maxLen": { "type": "integer", "minimum": 1 }
       }
     }
   }

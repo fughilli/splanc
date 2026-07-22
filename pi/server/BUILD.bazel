@@ -18,18 +18,31 @@ py_library(
     srcs = glob(["server/*.py"]),
     imports = ["."],
     deps = [
-        "//pi/reconstruction:reconstruction",
-        "//shared/protocol:protocol",
+        "//pi/reconstruction",
+        "//shared/protocol",
+        "//shared/protocol/proto:ledmapper_py_proto",
+        "@rules_python//python/runfiles",
         requirement("fastapi"),
         requirement("uvicorn"),
     ],
 )
 
 py_binary(
+    name = "gen_proto_golden",
+    srcs = ["gen_proto_golden.py"],
+    imports = ["."],
+    deps = [":server"],
+)
+
+py_binary(
     name = "serve",
     srcs = ["server/__main__.py"],
-    main = "server/__main__.py",
+    # The native (Rust) solver rides in runfiles: pose-less final + interim
+    # solves run it as a subprocess (server/native_solver.py). The _opt
+    # wrapper transitions it to -c opt whatever mode this server builds in.
+    data = ["//solver:solver_cli_opt"],
     imports = ["."],
+    main = "server/__main__.py",
     deps = [":server"],
 )
 
@@ -42,14 +55,15 @@ py_test(
         "tests/test_codebook.py",
         "tests/test_debug.py",
         "tests/test_handler.py",
+        "tests/test_proto_wire.py",
         "tests/test_session.py",
     ],
-    main = "tests/pytest_main.py",
     imports = ["."],
     legacy_create_init = False,
+    main = "tests/pytest_main.py",
     deps = [
         ":server",
-        "//shared/protocol:protocol",
+        "//shared/protocol",
         requirement("pytest"),
     ],
 )
@@ -63,14 +77,15 @@ py_test(
         "tests/pytest_main.py",
         "tests/test_app_integration.py",
     ],
-    main = "tests/pytest_main.py",
+    data = ["//solver:solver_cli"],
     imports = ["."],
     legacy_create_init = False,
+    main = "tests/pytest_main.py",
     deps = [
         ":server",
-        "//pi/reconstruction:reconstruction",
-        "//shared/protocol:protocol",
-        "//shared/simulator:simulator",
+        "//pi/reconstruction",
+        "//shared/protocol",
+        "//shared/simulator",
         requirement("pytest"),
         requirement("scipy"),
         requirement("websockets"),

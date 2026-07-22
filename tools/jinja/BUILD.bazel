@@ -1,0 +1,52 @@
+"""jinja_template — Jinja2 expansion rule + its hermetic expander.
+
+`jinja.bzl` documents why this replaces the sed genrules (strict-undefined
+failure, argv-safe values, real includes). The golden test drives the RULE
+(not just the Python): testdata/greeting.txt.j2 expanded by an actual
+jinja_template target must match the checked-in golden byte-for-byte.
+"""
+
+load("@rules_python//python:defs.bzl", "py_binary", "py_test")
+load("@rules_shell//shell:sh_test.bzl", "sh_test")
+load(":jinja.bzl", "jinja_template")
+
+package(default_visibility = ["//visibility:public"])
+
+py_binary(
+    name = "expand",
+    srcs = ["expand.py"],
+    deps = ["@pypi//jinja2"],
+)
+
+py_test(
+    name = "expand_test",
+    srcs = ["expand_test.py"],
+    deps = [
+        ":expand",
+        "@pypi//jinja2",
+    ],
+)
+
+jinja_template(
+    name = "golden_expanded",
+    testonly = True,
+    out = "greeting.txt",
+    template = "testdata/greeting.txt.j2",
+    vars = {
+        "name": "LED Mapper",
+        "port": "81",
+    },
+)
+
+sh_test(
+    name = "golden_test",
+    srcs = ["golden_test.sh"],
+    args = [
+        "$(location :golden_expanded)",
+        "$(location testdata/greeting.golden.txt)",
+    ],
+    data = [
+        "testdata/greeting.golden.txt",
+        ":golden_expanded",
+    ],
+)

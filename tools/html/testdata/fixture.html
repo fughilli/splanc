@@ -1,0 +1,29 @@
+<!doctype html>
+<!-- A comment the minifier must strip. -->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Fixture</title>
+    <style>
+      /* CSS comment to strip */
+      body {
+        background: #000000;
+        color: #ffffff;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Minify fixture</h1>
+    <p>
+      Visible text must survive, including this MARKER_TOKEN and the
+      link to <a href="https://example.invalid/page?a=b">a page</a>.
+    </p>
+    <script>
+      // JS comment to strip
+      var GLOBAL_SETTING = "value-with-%-and-{{braces}}";
+      function probe(wsUrl) {
+        return new WebSocket(wsUrl);
+      }
+    </script>
+  </body>
+</html>

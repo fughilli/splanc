@@ -6,12 +6,12 @@ rationale lives in [`decisions.md`](./decisions.md).
 
 ## Prerequisites
 
-| Tool | Version | Why |
-| ---- | ------- | --- |
-| [Bazelisk](https://github.com/bazelbuild/bazelisk) | any (pins Bazel via `.bazelversion` → 7.7.1) | The only build entry point. Invoke as `bazelisk`. |
-| pnpm | 11+ | TypeScript workspace (`web/`, `shared/protocol/ts/`). |
-| Node | 20+ | Runs `tsc` / the web toolchain. |
-| Nix | (only for M4) | Building/deploying the Pi image. See `pi/provisioning/README.md`. Not needed for the rest of the build. |
+| Tool                                               | Version                                      | Why                                                                                                     |
+| -------------------------------------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| [Bazelisk](https://github.com/bazelbuild/bazelisk) | any (pins Bazel via `.bazelversion` → 7.7.1) | The only build entry point. Invoke as `bazelisk`.                                                       |
+| pnpm                                               | 11+                                          | TypeScript workspace (`web/`, `shared/protocol/ts/`).                                                   |
+| Node                                               | 20+                                          | Runs `tsc` / the web toolchain.                                                                         |
+| Nix                                                | (only for M4)                                | Building/deploying the Pi image. See `pi/provisioning/README.md`. Not needed for the rest of the build. |
 
 A hermetic Python 3.11 and TypeScript come from Bazel; you do **not** need a
 system Python or a global `tsc` for `bazelisk` builds.
@@ -97,11 +97,11 @@ serve) using M9 simulator data — the §6 M2 acceptance.
 ## The web app (M5–M8) + phone testing against the virtual LED wall
 
 `bazelisk run //web:serve` serves the built web app through M2 over **HTTPS**
-(WebXR needs a secure context; self-signed cert persisted under
-`.ledmapper/`). Open `/wall.html` fullscreen on a laptop — a flat grid of
-virtual LEDs blinking the M1 Gray code against the server's pattern clock —
-and run a capture from an Android phone pointed at the screen: the full live
-pipeline with no LED hardware. The step-by-step runbook (ports, Chrome flags,
+(getUserMedia/DeviceMotion need a secure context; self-signed cert persisted
+under `.ledmapper/`). Open `/wall.html` fullscreen on a laptop — a flat grid
+of virtual LEDs blinking the M1 hue code against the server's pattern clock —
+and run a capture from a phone pointed at the screen: the full live
+pipeline with no LED hardware. The step-by-step runbook (ports, permissions,
 tuning query params) is in [`web/README.md`](../web/README.md).
 
 ## Reconstruction (M3) from a session log
@@ -157,7 +157,7 @@ M2) to the host, so after a container **restart** `http://localhost:8090` works
 from your host browser. The server must bind `0.0.0.0` (the studio default) for
 the mapping to reach it.
 
-New scene → orbit & *Capture* (or *Auto-arc*) → *Solve*; toggle auto-solve to
+New scene → orbit & _Capture_ (or _Auto-arc_) → _Solve_; toggle auto-solve to
 watch the fit tighten as coverage grows, and dial in pixel/pose/dropout noise to
 stress the solver. Full guide in [`tools/sim_studio/README.md`](../tools/sim_studio/README.md).
 

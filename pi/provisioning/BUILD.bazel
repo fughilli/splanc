@@ -5,24 +5,25 @@
 #   bazel run //pi/provisioning:deploy_live -- <host-or-ip> [--user root]
 #
 # These are thin sh_binary wrappers that shell out to `nix` / `nixos-rebuild`
-# on a host that has Nix installed. They DO NOT require rules_nixpkgs to *run*
-# (they delegate to the nix CLI), which keeps `bazel build //...` working in
-# environments without nix. rules_nixpkgs is wired into MODULE.bazel for the
-# (future) option of importing nix-built packages as Bazel targets; see the
-# `nixpkgs` repo usage note in MODULE.bazel. If/when that path is exercised,
-# add the corresponding nixpkgs_package targets here.
+# (nix is a system requirement for this repo — see MODULE.bazel). rules_nixpkgs
+# is also wired into MODULE.bazel and now imports nix-built build tools as
+# Bazel targets (e.g. the HTML minifier); nix-built packages for the
+# provisioning image can be added here the same way if that path is exercised.
 #
 # UNVERIFIED: these targets cannot be `bazel run` to completion in CI without
 # nix; they will print a clear error and exit. See README "Unverified".
+
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 
 package(default_visibility = ["//visibility:public"])
 
 # Shared source files exposed to the wrapper binaries via runfiles.
 filegroup(
     name = "nix_srcs",
-    srcs = glob([
-        "nix/flake.nix",
+    srcs = [
         "nix/flake.lock",
+        "nix/flake.nix",
+    ] + glob([
         "nix/modules/*.nix",
     ]),
 )
@@ -37,8 +38,8 @@ sh_binary(
     name = "image_sd",
     srcs = ["scripts/image_sd.sh"],
     data = [
-        ":nix_srcs",
         ":key_script",
+        ":nix_srcs",
     ],
 )
 
@@ -47,8 +48,8 @@ sh_binary(
     name = "deploy_live",
     srcs = ["scripts/deploy_live.sh"],
     data = [
-        ":nix_srcs",
         ":key_script",
+        ":nix_srcs",
     ],
 )
 

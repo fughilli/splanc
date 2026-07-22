@@ -13,15 +13,16 @@ Everything stateful lives in `ServerContext`; this module is just plumbing.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
+from ledmapper_protocol import ErrorMessage
 
-import json
-
+from . import proto_wire
 from .clock import now_ms
 from .codebook import DEFAULT_BIT_PERIOD_MS
 from .debug import led_report, session_overview
@@ -44,16 +45,24 @@ def create_app(
     session_dir: Path,
     maps_dir: Path,
     web_root: Optional[Path] = None,
+    solver_dir: Optional[Path] = None,
+    pulse_dir: Optional[Path] = None,
     default_led_count: int = 1024,
     bit_period_ms: float = DEFAULT_BIT_PERIOD_MS,
-    encoding: str = "gray",
+    symbols: int = 2,
     context: Optional[ServerContext] = None,
+    run_solver_benchmark: bool = True,
 ) -> FastAPI:
     """Build the FastAPI app.
 
     ``context`` lets tests inject a :class:`ServerContext` (e.g. with a stub
     reconstructor or a deterministic id factory); by default a real one is built
     from a :class:`SessionManager` + :class:`MapStore` + :class:`ReconstructionRunner`.
+
+    ``solver_dir`` serves the wasm solver bundle (//solver:solver_wasm_pkg)
+    at /solver/ for the phone's in-browser final solve. ``pulse_dir`` serves
+    the wasm effects Sim (//firmware/pulse:pulse_web) at /pulse/ for the
+    effects-simulator workspace (effects.html).
     """
     maps = MapStore(maps_dir)
     if context is None:
@@ -62,8 +71,20 @@ def create_app(
             ReconstructionRunner(maps),
             default_led_count=default_led_count,
             bit_period_ms=bit_period_ms,
-            encoding=encoding,
+            symbols=symbols,
+            map_store=maps,
         )
+        if run_solver_benchmark:
+            # Host solver-placement score (§7 welcome.solverBenchMs): measure
+            # once, off the startup path — welcome carries null until done.
+            import threading
+
+            from . import native_solver
+
+            def _bench(ctx: ServerContext = context) -> None:
+                ctx.solver_bench_ms = native_solver.benchmark()
+
+            threading.Thread(target=_bench, name="solver-bench", daemon=True).start()
 
     app = FastAPI(title="LED Mapper", version="0.1.0")
     app.state.context = context
@@ -117,9 +138,7 @@ def create_app(
         with path.open(mode) as f:
             if payload.get("reset"):
                 f.write(
-                    json.dumps(
-                        {k: v for k, v in payload.items() if k not in ("frames", "imu")}
-                    )
+                    json.dumps({k: v for k, v in payload.items() if k not in ("frames", "imu")})
                     + "\n"
                 )
             for frame in payload.get("frames", []):
@@ -182,23 +201,59 @@ def create_app(
         send_lock = asyncio.Lock()
         pending: set = set()
 
-        async def dispatch(raw: str, recv_ms: float) -> None:
-            responses = await handler.handle(raw, recv_ms=recv_ms)
+        async def dispatch(frame: bytes, recv_ms: float) -> None:
+            # Binary protobuf on the wire (proto-comms); the handler still
+            # speaks the flat-JSON §7 shape — proto_wire is the boundary.
+            try:
+                flat = proto_wire.decode_client(frame)
+            except Exception:
+                responses = [
+                    ErrorMessage(type="error", code="bad_message", message="undecodable frame")
+                ]
+            else:
+                responses = await handler.handle(json.dumps(flat), recv_ms=recv_ms)
             try:
                 async with send_lock:
                     for response in responses:
-                        await websocket.send_text(response.model_dump_json())
+                        await websocket.send_bytes(
+                            proto_wire.encode_server(json.loads(response.model_dump_json()))
+                        )
             except Exception:
                 pass  # client went away; the work itself is already done
 
         try:
             while True:
-                raw = await websocket.receive_text()
-                task = asyncio.create_task(dispatch(raw, now_ms()))
+                message = await websocket.receive()
+                if message["type"] == "websocket.disconnect":
+                    return
+                frame = message.get("bytes")
+                if frame is None:
+                    # Text frames are the pre-protobuf wire — reject loudly.
+                    async with send_lock:
+                        await websocket.send_bytes(
+                            proto_wire.encode_server(
+                                {
+                                    "type": "error",
+                                    "code": "bad_message",
+                                    "message": "expected binary protobuf frame",
+                                }
+                            )
+                        )
+                    continue
+                task = asyncio.create_task(dispatch(frame, now_ms()))
                 pending.add(task)
                 task.add_done_callback(pending.discard)
         except WebSocketDisconnect:
             return
+
+    # The wasm solver bundle (phone-side final solve). Mounted before "/" so
+    # the app's static mount cannot shadow it.
+    if solver_dir is not None and Path(solver_dir).is_dir():
+        app.mount("/solver", StaticFiles(directory=str(solver_dir)), name="solver")
+
+    # The wasm effects Sim (effects-simulator workspace). Mounted before "/".
+    if pulse_dir is not None and Path(pulse_dir).is_dir():
+        app.mount("/pulse", StaticFiles(directory=str(pulse_dir)), name="pulse")
 
     # Static web app last, so the API routes above take precedence. Falls back
     # to a Phase-0 hello page when no built web app is present.

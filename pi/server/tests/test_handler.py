@@ -86,8 +86,15 @@ def test_start_mapping_uses_requested_led_count(tmp_path):
 def test_detections_require_active_session(tmp_path):
     handler, _ctx, _ = _make_handler(tmp_path)
     det = {
-        "ledId": 0, "tCaptureMs": 0.0, "u": 1.0, "v": 2.0, "imgW": 100, "imgH": 100,
-        "K": [9.0, 9.0, 5.0, 5.0], "pose": {"p": [0, 0, 0], "q": [0, 0, 0, 1]}, "confidence": 1.0,
+        "ledId": 0,
+        "tCaptureMs": 0.0,
+        "u": 1.0,
+        "v": 2.0,
+        "imgW": 100,
+        "imgH": 100,
+        "K": [9.0, 9.0, 5.0, 5.0],
+        "pose": {"p": [0, 0, 0], "q": [0, 0, 0, 1]},
+        "confidence": 1.0,
     }
     raw = json.dumps({"type": "detections", "batch": [det]})
 
@@ -136,15 +143,24 @@ def test_get_pattern_after_stop_reports_inactive(tmp_path):
 
 def _detections_raw(led_id=0):
     det = {
-        "ledId": led_id, "tCaptureMs": 0.0, "u": 1.0, "v": 2.0, "imgW": 100, "imgH": 100,
-        "K": [9.0, 9.0, 5.0, 5.0], "pose": {"p": [0, 0, 0], "q": [0, 0, 0, 1]}, "confidence": 1.0,
+        "ledId": led_id,
+        "tCaptureMs": 0.0,
+        "u": 1.0,
+        "v": 2.0,
+        "imgW": 100,
+        "imgH": 100,
+        "K": [9.0, 9.0, 5.0, 5.0],
+        "pose": {"p": [0, 0, 0], "q": [0, 0, 0, 1]},
+        "confidence": 1.0,
     }
     return json.dumps({"type": "detections", "batch": [det]})
 
 
 def test_get_live_map_idle_reports_inactive(tmp_path):
     solve_calls = []
-    solver = LiveSolver(lambda d, n, s, prev_map=None, imu=(): solve_calls.append(len(d)) or _stub_map())
+    solver = LiveSolver(
+        lambda d, n, s, prev_map=None, imu=(): solve_calls.append(len(d)) or _stub_map()
+    )
     handler, _ctx, _ = _make_handler(tmp_path, live_solver=solver)
     m = _dump(_run(handler, '{"type":"get_live_map"}')[0])
     assert m["type"] == "live_map"
@@ -220,7 +236,12 @@ def test_get_live_map_survives_solve_failure(tmp_path):
 def test_live_decimation_bounds_views_and_keeps_pose_spread():
     def rec(led_id, t):
         return DetectionRecord(
-            ledId=led_id, tCaptureMs=float(t), u=1.0, v=2.0, imgW=100, imgH=100,
+            ledId=led_id,
+            tCaptureMs=float(t),
+            u=1.0,
+            v=2.0,
+            imgW=100,
+            imgH=100,
             K=(9.0, 9.0, 5.0, 5.0),
             pose={"p": (float(t), 0.0, 0.0), "q": (0.0, 0.0, 0.0, 1.0)},
             confidence=1.0,
@@ -303,21 +324,23 @@ def test_malformed_message_returns_error(tmp_path):
 # ---------------------------------------------------------------------------
 # Client-driven configuration (§7.1 start_mapping options / configure) and
 # exposure telemetry. The client measured the scene; the server adopts its
-# choices — no CLI flags are needed for any encoding/rate.
+# choices — no CLI flags are needed for any alphabet/rate.
 # ---------------------------------------------------------------------------
 
 
-def test_start_mapping_adopts_client_encoding_and_rate(tmp_path):
+def test_start_mapping_adopts_client_symbols_and_rate(tmp_path):
     handler, _ctx, _ = _make_handler(tmp_path)
     out = _run(
         handler,
-        '{"type":"start_mapping","options":{"ledCount":64,"encoding":"gray-hue","bitPeriodMs":200}}',
+        '{"type":"start_mapping","options":{"ledCount":64,"symbols":4,"bitPeriodMs":200}}',
     )
     m = _dump(out[0])
     assert m["type"] == "mapping_started"
-    assert m["codeParams"]["encoding"] == "gray-hue"
+    assert m["codeParams"]["symbols"] == 4
     assert m["codeParams"]["bitPeriodMs"] == 200
     assert m["codeParams"]["ledCount"] == 64
+    # 4 symbols halve the data frames: 12 SEC-DED bits -> 6 frames + sync.
+    assert m["codeParams"]["cycleFrames"] == 8
     # Followers see the same client-chosen code-book.
     p = _dump(_run(handler, '{"type":"get_pattern"}')[0])
     assert p["active"] is True and p["codeParams"] == m["codeParams"]
@@ -326,22 +349,22 @@ def test_start_mapping_adopts_client_encoding_and_rate(tmp_path):
 def test_start_mapping_without_options_uses_server_defaults(tmp_path):
     handler, _ctx, _ = _make_handler(tmp_path)
     m = _dump(_run(handler, '{"type":"start_mapping","options":{"ledCount":64}}')[0])
-    assert m["codeParams"]["encoding"] == "gray"  # ctx default
+    assert m["codeParams"]["symbols"] == 2  # ctx default
     assert m["codeParams"]["bitPeriodMs"] == 100.0  # ctx default
 
 
 def test_configure_renegotiates_mid_capture(tmp_path):
     handler, ctx, _ = _make_handler(tmp_path)
-    started = _dump(_run(handler, '{"type":"start_mapping","options":{"ledCount":4}}')[0])
+    _run(handler, '{"type":"start_mapping","options":{"ledCount":4}}')
     _run(handler, _detections_raw(0))
 
-    out = _run(handler, '{"type":"configure","options":{"bitPeriodMs":200,"encoding":"gray-hue"}}')
+    out = _run(handler, '{"type":"configure","options":{"bitPeriodMs":200,"symbols":4}}')
     m = _dump(out[0])
     assert m["type"] == "pattern_state" and m["active"] is True
     # Unset fields keep the capture's values; set fields overlay.
     assert m["codeParams"]["ledCount"] == 4
     assert m["codeParams"]["bitPeriodMs"] == 200
-    assert m["codeParams"]["encoding"] == "gray-hue"
+    assert m["codeParams"]["symbols"] == 4
     # The pattern epoch is restamped so all parties re-anchor the cycle.
     assert m["patternClockEpoch"] is not None
 
@@ -492,3 +515,167 @@ def test_get_solve_status_idle_and_running(tmp_path):
     assert m["running"] is True and m["progress"] == 0.42
     assert m["leds"][0]["id"] == 0
     assert len(m["trajectory"]) == 2
+
+
+# -- solver placement (stop_mapping.solveOnHost / submit_map) ---------------
+
+
+def _start_and_feed(handler):
+    _run(handler, '{"type":"start_mapping","options":{"ledCount":4}}')
+    rec = {
+        "ledId": 1,
+        "tCaptureMs": 1.0,
+        "u": 10.0,
+        "v": 20.0,
+        "imgW": 1280,
+        "imgH": 720,
+        "K": [800.0, 800.0, 640.0, 360.0],
+        "pose": None,
+        "confidence": 0.9,
+    }
+    _run(handler, json.dumps({"type": "detections", "batch": [rec]}))
+    _run(
+        handler,
+        json.dumps(
+            {
+                "type": "imu_batch",
+                "samples": [{"t": 1.0, "gyro": [0, 0, 0], "accel": [0, 9.8, 0]}],
+            }
+        ),
+    )
+
+
+def test_welcome_carries_solver_bench_score(tmp_path):
+    handler, ctx, _ = _make_handler(tmp_path)
+    m = _dump(_run(handler, '{"type":"hello","client":"c","appVersion":"1"}')[0])
+    assert m["solverBenchMs"] is None  # not measured yet
+    ctx.solver_bench_ms = 123.4
+    m = _dump(_run(handler, '{"type":"hello","client":"c","appVersion":"1"}')[0])
+    assert m["solverBenchMs"] == 123.4
+
+
+def test_stop_without_host_solve_persists_but_skips_reconstruction(tmp_path):
+    handler, _ctx, recon_calls = _make_handler(tmp_path)
+    _start_and_feed(handler)
+    out = _run(handler, '{"type":"stop_mapping","solveOnHost":false}')
+    m = _dump(out[0])
+    assert m["type"] == "mapping_stopped"
+    assert m["detections"] == 1
+    assert m["imuSamples"] == 1
+    assert recon_calls == []  # no host solve ran
+
+
+def test_submit_map_persists_and_acks_result_ready(tmp_path):
+    from server.session import MapStore
+
+    handler, ctx, _ = _make_handler(tmp_path)
+    ctx.map_store = MapStore(tmp_path / "maps")
+    out = _run(handler, json.dumps({"type": "submit_map", "map": _stub_map().model_dump()}))
+    m = _dump(out[0])
+    assert m["type"] == "result_ready"
+    assert m["mapId"] == "map-stub"
+    assert ctx.map_store.exists("map-stub")
+
+
+def test_submit_map_without_store_errors(tmp_path):
+    handler, _ctx, _ = _make_handler(tmp_path)
+    m = _dump(_run(handler, json.dumps({"type": "submit_map", "map": _stub_map().model_dump()}))[0])
+    assert m["type"] == "error"
+    assert m["code"] == "unsupported"
+
+
+# -- player protocol (counting / topology / playback, §7.7–§7.9) ------------
+
+
+def test_set_counting_pattern_latches_and_acks(tmp_path):
+    handler, ctx, _ = _make_handler(tmp_path, clock_value=4321.0)
+    raw = json.dumps(
+        {
+            "type": "set_counting_pattern",
+            "blocks": [{"start": 0, "count": 32, "rgb": [1.0, 0.0, 0.0]}],
+            "channel": 1,
+        }
+    )
+    m = _dump(_run(handler, raw)[0])
+    assert m == {"type": "counting_state", "active": True, "epochMs": 4321.0}
+    epoch, blocks, channel = ctx.counting
+    assert epoch == 4321.0
+    assert channel == 1
+    assert blocks[0].count == 32
+
+
+def test_set_counting_pattern_empty_blocks_clears(tmp_path):
+    handler, ctx, _ = _make_handler(tmp_path)
+    _run(handler, '{"type":"set_counting_pattern","blocks":[{"start":0,"count":1,"rgb":[0,1,0]}]}')
+    m = _dump(_run(handler, '{"type":"set_counting_pattern","blocks":[]}')[0])
+    assert m == {"type": "counting_state", "active": False, "epochMs": None}
+    assert ctx.counting is None
+
+
+def test_set_led_count_persists_and_defaults_channel_zero(tmp_path):
+    handler, ctx, _ = _make_handler(tmp_path)
+    m = _dump(_run(handler, '{"type":"set_led_count","ledCount":300}')[0])
+    assert m == {"type": "led_count_state", "ledCount": 300, "channel": 0}
+    # Channel 0 becomes the fallback code-book ledCount...
+    assert ctx.default_led_count == 300
+    welcome = _dump(_run(handler, '{"type":"hello","client":"c","appVersion":"1"}')[0])
+    assert welcome["codeParams"]["ledCount"] == 300
+    # ...while other channels are recorded without touching the default.
+    m = _dump(_run(handler, '{"type":"set_led_count","ledCount":150,"channel":1}')[0])
+    assert m == {"type": "led_count_state", "ledCount": 150, "channel": 1}
+    assert ctx.default_led_count == 300
+    assert ctx.led_counts == {0: 300, 1: 150}
+
+
+def _stub_topology(map_id="map-stub"):
+    return {
+        "mapId": map_id,
+        "branchPoints": [{"id": 0, "xyz": [0.0, 0.0, 0.0]}],
+        "segments": [
+            {
+                "id": 0,
+                "a": 0,
+                "b": -1,
+                "polyline": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]],
+                "length": 1.0,
+            }
+        ],
+        "associations": [{"ledId": 0, "segmentId": 0, "footArclength": 0.5, "dPerp": 0.01}],
+    }
+
+
+def test_submit_topology_persists_next_to_its_map(tmp_path):
+    from server.session import MapStore
+
+    handler, ctx, _ = _make_handler(tmp_path)
+    ctx.map_store = MapStore(tmp_path / "maps")
+    ctx.map_store.save(_stub_map())
+    out = _run(handler, json.dumps({"type": "submit_topology", "topology": _stub_topology()}))
+    m = _dump(out[0])
+    assert m == {"type": "result_ready", "mapId": "map-stub"}
+    saved = json.loads(ctx.map_store.topology_path("map-stub").read_text())
+    assert saved["segments"][0]["length"] == 1.0
+
+
+def test_submit_topology_for_unknown_map_errors(tmp_path):
+    from server.session import MapStore
+
+    handler, ctx, _ = _make_handler(tmp_path)
+    ctx.map_store = MapStore(tmp_path / "maps")
+    out = _run(handler, json.dumps({"type": "submit_topology", "topology": _stub_topology("nope")}))
+    m = _dump(out[0])
+    assert m["type"] == "error"
+    assert m["code"] == "unknown_map"
+
+
+def test_playback_off_is_universal_other_effects_unsupported_until_phase_g(tmp_path):
+    handler, _ctx, _ = _make_handler(tmp_path)
+    state = _dump(_run(handler, '{"type":"get_playback"}')[0])
+    assert state["type"] == "playback_state"
+    assert state["active"] is False
+    assert state["effect"] == "off"
+    ok = _dump(_run(handler, '{"type":"set_playback","effect":"off"}')[0])
+    assert ok["type"] == "playback_state"
+    err = _dump(_run(handler, '{"type":"set_playback","effect":"pulse"}')[0])
+    assert err["type"] == "error"
+    assert err["code"] == "unsupported_effect"

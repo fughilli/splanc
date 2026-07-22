@@ -39,12 +39,12 @@ two ESM files next to `app.js` and adjust the import map in `index.html`.)
 
 1. **New scene** — pick a fixture (line/grid/cube/helix), LED count, and scale.
    Ground-truth LEDs render in green.
-2. **Capture** — orbit to a viewpoint and click *Capture view*: the LEDs the
+2. **Capture** — orbit to a viewpoint and click _Capture view_: the LEDs the
    camera sees become detections and a frustum is drawn. Or click **Auto-arc** to
    place a whole sweep of views automatically (mirrors the real arc walk).
 3. **Solve** — runs M3 on the accumulated detections. Solved LEDs render colored
    by error (green = accurate → red = far from truth) with red lines to their
-   true positions. *Auto-solve after capture* re-solves on every new view, so you
+   true positions. _Auto-solve after capture_ re-solves on every new view, so you
    watch the fit tighten as coverage grows.
 4. **Noise** — dial in pixel / pose / dropout noise per capture to see how the
    solver degrades; **Min views / Min parallax** expose the solver's gates.
@@ -62,13 +62,13 @@ error (mm), global reprojection RMS (px), median parallax, and solve time.
 
 ## HTTP API
 
-| Endpoint | Body | Returns |
-| -------- | ---- | ------- |
-| `POST /api/scene` | `{fixture, leds, scale}` | ground-truth LED positions + centroid/span |
-| `POST /api/capture` | `{eye, target, hfov, imgW, imgH, noise}` | visible/added counts, pose, K |
-| `POST /api/solve` | `{minViews, minParallaxDeg, huberDelta}` | OutputMap + per-LED ground-truth error + stats |
-| `POST /api/reset` | — | clears captures (keeps the scene) |
-| `GET /api/fixtures` · `GET /api/state` | — | fixture list · current counts |
+| Endpoint                               | Body                                     | Returns                                        |
+| -------------------------------------- | ---------------------------------------- | ---------------------------------------------- |
+| `POST /api/scene`                      | `{fixture, leds, scale}`                 | ground-truth LED positions + centroid/span     |
+| `POST /api/capture`                    | `{eye, target, hfov, imgW, imgH, noise}` | visible/added counts, pose, K                  |
+| `POST /api/solve`                      | `{minViews, minParallaxDeg, huberDelta}` | OutputMap + per-LED ground-truth error + stats |
+| `POST /api/reset`                      | —                                        | clears captures (keeps the scene)              |
+| `GET /api/fixtures` · `GET /api/state` | —                                        | fixture list · current counts                  |
 
 ## Tests
 

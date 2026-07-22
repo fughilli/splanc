@@ -52,23 +52,31 @@ export interface DetectionRecord {
 // CodeParams (§7.6)
 // ---------------------------------------------------------------------------
 
-export type Encoding = "gray" | "gray-hue";
+export type Encoding = "hue";
 export type SyncPattern = "on_off";
 export type Fec = "none" | "secded";
 
 export interface CodeParams {
   ledCount: number;
-  /** Coded bit frames per cycle: ceil(log2(ledCount+1)) data bits + FEC parity frames. */
+  /** Coded BITS per cycle: ceil(log2(ledCount+1)) data bits + FEC parity bits;
+   * transmitted log2(symbols) at a time. */
   bits: number;
   encoding: Encoding;
-  /** Hold time per bit frame, in milliseconds. */
+  /** Data-symbol alphabet size (log2(symbols) bits per data frame):
+   * 2 = red/blue, 4 = blue/magenta/red/yellow carrying Gray-ordered
+   * bit pairs. Negotiated by the client from measured chroma SNR. */
+  symbols: number;
+  /** Hold time per frame (symbol window), in milliseconds. */
   bitPeriodMs: number;
   syncPattern: SyncPattern;
-  /** 2 (sync delimiter) + bits */
+  /** 2 (sync delimiter) + ceil(bits / log2(symbols)) data frames */
   cycleFrames: number;
   /** FEC around the Gray data word ('secded' = extended Hamming, d=4:
-   * correct 1 misread bit frame, detect-and-reject 2). Absent = 'none'. */
+   * correct 1 misread bit, detect-and-reject 2). Absent = 'none'. */
   fec?: Fec | undefined;
+  /** LED output brightness scale in [0,1]; absent = 1.0. Servoed by the
+   * phone against measured bloom/wash-out (planLedBrightness). */
+  brightness?: number | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -105,6 +113,71 @@ export interface OutputMap {
 }
 
 // ---------------------------------------------------------------------------
+// Topology (§7.7) — skeletonized fixture, uploaded alongside a map
+// ---------------------------------------------------------------------------
+
+export interface BranchPoint {
+  id: number;
+  /** Position in meters, same frame as the OutputMap. */
+  xyz: Vec3;
+}
+
+export interface TopologySegment {
+  id: number;
+  /** Branch-point id at the segment start (arclength 0); -1 = free end. */
+  a: number;
+  /** Branch-point id at the segment end; -1 = free end. */
+  b: number;
+  /** Polyline from a to b; arclength is measured along it from a. */
+  polyline: Vec3[];
+  /** Total polyline arclength, meters. */
+  length: number;
+}
+
+export interface LedAssociation {
+  ledId: number;
+  segmentId: number;
+  /** Arclength of the LED's foot point along the segment, meters from a. */
+  footArclength: number;
+  /** Perpendicular distance LED -> foot point, meters. */
+  dPerp: number;
+}
+
+/** Skeletonized fixture topology (Phase F output): drives the O(N)
+ * pulse illuminate on players. Keyed to the OutputMap it skeletonizes. */
+export interface Topology {
+  mapId: string;
+  branchPoints: BranchPoint[];
+  segments: TopologySegment[];
+  associations: LedAssociation[];
+}
+
+// ---------------------------------------------------------------------------
+// PlaybackParams (§7.8) — effect tunables (pulse reference controls)
+// ---------------------------------------------------------------------------
+
+/** All fields are optional overlays: unset keeps the player's current or
+ * default value, so a UI can send just the slider that moved. */
+export interface PlaybackParams {
+  /** Global output brightness scale in [0,1]. */
+  intensity?: number | null;
+  /** Soft-falloff radius around a pulse agent, meters ('soft'). */
+  glowRadius?: number | null;
+  /** Concurrent pulse agents traversing the topology. */
+  agentCount?: number | null;
+  /** Agent travel speed along the topology, m/s. */
+  speed?: number | null;
+  /** Palette as 0xRRGGBB ints; empty/omitted keeps the player default. */
+  palette?: number[];
+  /** Pulse lead-in/out ramp distance at termini, m (0/omitted derives from glow). */
+  leadIn?: number | null;
+  /** Probability [0,1] a pulse splits at a junction. */
+  splitProb?: number | null;
+  /** Flood fade length behind the wavefront, m (0/omitted derives from glow). */
+  decay?: number | null;
+}
+
+// ---------------------------------------------------------------------------
 // Client -> Server messages (§7.1)
 // ---------------------------------------------------------------------------
 
@@ -121,14 +194,16 @@ export interface TimeSyncPingMessage {
 }
 
 /** The client is the configuration authority: it measured the scene, so it
- * chooses the code carrier and signaling rate; omitted fields fall back to
- * server defaults. */
+ * chooses the symbol alphabet and signaling rate; omitted fields fall back
+ * to server defaults. */
 export interface StartMappingOptions {
   ledCount: number;
-  /** Code carrier, chosen from measured light: dark -> 'gray', lit -> 'gray-hue'. */
-  encoding?: Encoding;
-  /** Signaling rate: each bit window should span >= ~3 camera frame intervals. */
+  /** Symbol alphabet size, chosen from measured chroma SNR: good -> 4, marginal -> 2. */
+  symbols?: number;
+  /** Signaling rate: each symbol window should span >= ~3 camera frame intervals. */
   bitPeriodMs?: number;
+  /** LED output brightness scale in [0,1]; omitted -> server default 1.0. */
+  brightness?: number;
 }
 
 export interface StartMappingMessage {
@@ -140,8 +215,10 @@ export interface StartMappingMessage {
  * restamp the pattern epoch, keep collected detections. Reply: pattern_state. */
 export interface ConfigureOptions {
   ledCount?: number;
-  encoding?: Encoding;
+  symbols?: number;
   bitPeriodMs?: number;
+  /** LED output brightness scale in [0,1]; omitted -> keep current. */
+  brightness?: number;
 }
 
 export interface ConfigureMessage {
@@ -151,6 +228,18 @@ export interface ConfigureMessage {
 
 export interface StopMappingMessage {
   type: "stop_mapping";
+  /** Solver placement (client benchmark decision): true/omitted -> the
+   * server reconstructs and replies result_ready; false -> the server only
+   * stops + persists (reply: mapping_stopped) and the client solves
+   * locally, uploading via submit_map. */
+  solveOnHost?: boolean | null;
+}
+
+/** Upload a client-solved OutputMap (phone-side final solve, wasm). The
+ * server persists it as if it had solved it and replies result_ready. */
+export interface SubmitMapMessage {
+  type: "submit_map";
+  map: OutputMap;
 }
 
 export interface DetectionsMessage {
@@ -226,19 +315,94 @@ export interface GetSolveStatusMessage {
   type: "get_solve_status";
 }
 
+/** A contiguous run of same-color LEDs in a counting pattern. */
+export interface ColorBlock {
+  start: number;
+  count: number;
+  /** Block color [r, g, b] in [0,1]. */
+  rgb: Vec3;
+}
+
+/** LED-counting handshake (§7.9): display a static color-block pattern.
+ * Blocks paint [start, start+count); uncovered LEDs are off; painting past
+ * the physical strip end IS the probe (the phone binary-searches the length
+ * by observing which blocks light). Empty blocks = all off. Reply:
+ * counting_state. */
+export interface SetCountingPatternMessage {
+  type: "set_counting_pattern";
+  blocks: ColorBlock[];
+  /** Player output channel; null/omitted -> 0. */
+  channel?: number | null;
+}
+
+/** Persist the detected strip length for a channel (defaults future
+ * codeParams.ledCount, bounds playback buffers). Reply: led_count_state. */
+export interface SetLedCountMessage {
+  type: "set_led_count";
+  ledCount: number;
+  /** Player output channel; null/omitted -> 0. */
+  channel?: number | null;
+}
+
+/** Upload the skeletonized topology for a stored map (Phase F). The player
+ * persists it next to the map and replies result_ready (mirrors submit_map). */
+export interface SubmitTopologyMessage {
+  type: "submit_topology";
+  topology: Topology;
+}
+
+/** Playback control (§7.8): select the effect and overlay params. 'off' is
+ * universal; other effects are player-capability-dependent (reply: error
+ * code='unsupported_effect' when not shipped). Reply: playback_state. */
+export interface SetPlaybackMessage {
+  type: "set_playback";
+  effect: string;
+  params?: PlaybackParams | null;
+  /** Stored map/topology to play on; null keeps the current selection. */
+  mapId?: string | null;
+}
+
+/** Poll the current playback state. Reply: playback_state. */
+export interface GetPlaybackMessage {
+  type: "get_playback";
+}
+
+/** Drain the player's rendered-frame timing log (the phone forwards it to
+ * the trace server to diagnose pattern-generator stutter). Reply:
+ * frame_timing. */
+export interface GetFrameTimingMessage {
+  type: "get_frame_timing";
+}
+
+/** Pull the player's stored map+topology as a MappingBundle, streamed in
+ * chunks (bytes [offset, offset+maxLen)). Reply: stored_map_chunk. */
+export interface GetStoredMapMessage {
+  type: "get_stored_map";
+  offset: number;
+  maxLen: number;
+}
+
 export type ClientMessage =
   | HelloMessage
   | TimeSyncPingMessage
   | StartMappingMessage
   | ConfigureMessage
   | StopMappingMessage
+  | SubmitMapMessage
   | DetectionsMessage
   | ImuBatchMessage
   | ExposureReportMessage
   | GetStatusMessage
   | GetPatternMessage
   | GetLiveMapMessage
-  | GetSolveStatusMessage;
+  | GetSolveStatusMessage
+  | SetCountingPatternMessage
+  | SetLedCountMessage
+  | SubmitTopologyMessage
+  | SetPlaybackMessage
+  | GetPlaybackMessage
+  | GetFrameTimingMessage
+  | GetStoredMapMessage;
 
 // ---------------------------------------------------------------------------
 // Server -> Client messages (§7.2)
@@ -248,6 +412,17 @@ export interface WelcomeMessage {
   type: "welcome";
   sessionId: string;
   codeParams: CodeParams;
+  /** Host score on the canned solver benchmark (ms), for the client's
+   * solver-placement decision; null while still measuring. */
+  solverBenchMs: number | null;
+}
+
+/** Reply to stop_mapping with solveOnHost=false: capture stopped + log
+ * persisted, no host solve. The counts echo what the server logged. */
+export interface MappingStoppedMessage {
+  type: "mapping_stopped";
+  detections: number;
+  imuSamples: number;
 }
 
 export interface TimeSyncPongMessage {
@@ -320,13 +495,81 @@ export interface ErrorMessage {
   message: string;
 }
 
+/** Reply to set_counting_pattern: whether a counting pattern is displayed
+ * and the server-clock time it latched (the phone's read-valid time). */
+export interface CountingStateMessage {
+  type: "counting_state";
+  active: boolean;
+  /** Server-clock time the pattern took effect (ms); null when inactive. */
+  epochMs: number | null;
+}
+
+/** Reply to set_led_count: echo of the persisted per-channel strip length. */
+export interface LedCountStateMessage {
+  type: "led_count_state";
+  ledCount: number;
+  channel: number;
+}
+
+/** Reply to set_playback / get_playback: the effective configuration (the
+ * player echoes what it actually runs, defaults filled into params). */
+export interface PlaybackStateMessage {
+  type: "playback_state";
+  active: boolean;
+  /** The running effect; "off" when inactive. */
+  effect: string;
+  params: PlaybackParams | null;
+  /** The stored map/topology playback runs on; null when none selected. */
+  mapId: string | null;
+}
+
+/** One rendered mapping-pattern frame: the player's monotonic-clock time
+ * (MICROSECONDS, raw micros()) at which it pushed absolute frame `seq`
+ * (frames since the pattern epoch, before the cycle modulo) to the LEDs.
+ * Integer µs — the firmware is a single-precision-only RISC-V core. */
+export interface FrameTick {
+  seq: number;
+  tMonoUs: number;
+}
+
+/** Reply to get_frame_timing: a drained batch of rendered-frame timestamps
+ * plus the count dropped to ring-buffer overflow since the last poll. Even
+ * bitPeriodUs spacing between successive tMonoUs = smooth generation; gaps =
+ * the pattern render loop stalled. patternClockEpochMs is null when idle.
+ * All-integer (µs/ms): firmware->phone only, so no double on that path. */
+export interface FrameTimingMessage {
+  type: "frame_timing";
+  patternClockEpochMs: number | null;
+  bitPeriodUs: number;
+  cycleFrames: number;
+  dropped: number;
+  ticks: FrameTick[];
+}
+
+/** Reply to get_stored_map: a slice of the encoded MappingBundle. `data` is
+ * base64; the phone loops until it has `totalLen` bytes, then decodes. */
+export interface StoredMapChunkMessage {
+  type: "stored_map_chunk";
+  totalLen: number;
+  offset: number;
+  /** Base64-encoded bytes [offset, offset+len) of the MappingBundle. */
+  data: string;
+  hasTopology: boolean;
+}
+
 export type ServerMessage =
   | WelcomeMessage
   | TimeSyncPongMessage
   | MappingStartedMessage
+  | MappingStoppedMessage
   | StatusMessage
   | PatternStateMessage
   | LiveMapMessage
   | SolveStatusMessage
   | ResultReadyMessage
-  | ErrorMessage;
+  | ErrorMessage
+  | CountingStateMessage
+  | LedCountStateMessage
+  | PlaybackStateMessage
+  | FrameTimingMessage
+  | StoredMapChunkMessage;

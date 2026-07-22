@@ -18,12 +18,12 @@ they MOVE with the pattern, so the tracker's static-world assumption breaks.
 Quantified on the 2026-07-08 `?record=1` trace (16-LED wall, 41 s, 1 230
 frames, gray-hue @ 110 ms bits):
 
-| metric | value | healthy |
-|---|---|---|
-| corr(pose speed, median image blob shift) | **−0.002** | ≳ 0.7 |
-| largest single-frame position jump | **2.28 m** (51 m/s) | ≪ 5 cm |
-| claimed path length vs net displacement | **13.2 m vs 0.51 m** | ratio ≈ walk shape |
-| frames with >30 cm jumps | 5 | 0 |
+| metric                                    | value                | healthy            |
+| ----------------------------------------- | -------------------- | ------------------ |
+| corr(pose speed, median image blob shift) | **−0.002**           | ≳ 0.7              |
+| largest single-frame position jump        | **2.28 m** (51 m/s)  | ≪ 5 cm             |
+| claimed path length vs net displacement   | **13.2 m vs 0.51 m** | ratio ≈ walk shape |
+| frames with >30 cm jumps                  | 5                    | 0                  |
 
 The pose stream and the image stream are fully decoupled: the tracker is
 hallucinating motion (drift + relocalization snaps). Every back-projected ray
@@ -62,7 +62,7 @@ buys:
 So the target formulation is classic visual-inertial bundle adjustment where
 the ONLY visual landmarks are the LEDs:
 
-```
+```text
 min over {T_i, v_i, b_a, b_g, X_j, g}   of
   Σ_obs ρ( π(T_i, X_j) − u_ij )                 reprojection (robust)
 + Σ_i  ‖ preint(imu_i→i+1; b_a, b_g) ⊖ (T_i, v_i, T_i+1, v_i+1, g) ‖_Σ    IMU factors
@@ -75,13 +75,13 @@ between consecutive keyframes.
 
 ## 3. Platform: what replaces each WebXR ingredient
 
-| WebXR gave us | Replacement | Notes |
-|---|---|---|
-| camera texture | `getUserMedia` rear camera → same GL detect pass | works in ANY browser (no `#webxr-incubations` flag, no ARCore dependency — a portability WIN); still HTTPS |
-| pose | **solved** (this work) | live preview needs the incremental solve (§6) |
-| intrinsics (from projectionMatrix) | unknowns in the solve (shared fx=fy, cx,cy≈center prior) or one-time calibration from a solved session | wall sessions strongly constrain K; prototype supports fixed-K and K-refinement |
-| timestamps | `requestVideoFrameCallback` gives per-frame capture timestamps | same clock domain as DeviceMotion events |
-| (nothing) | `DeviceMotionEvent` accel+gyro @ ~60 Hz | Android Chrome: no permission prompt; iOS: needs a gesture-gated permission — fine, we're Android-first |
+| WebXR gave us                      | Replacement                                                                                            | Notes                                                                                                      |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
+| camera texture                     | `getUserMedia` rear camera → same GL detect pass                                                       | works in ANY browser (no `#webxr-incubations` flag, no ARCore dependency — a portability WIN); still HTTPS |
+| pose                               | **solved** (this work)                                                                                 | live preview needs the incremental solve (§6)                                                              |
+| intrinsics (from projectionMatrix) | unknowns in the solve (shared fx=fy, cx,cy≈center prior) or one-time calibration from a solved session | wall sessions strongly constrain K; prototype supports fixed-K and K-refinement                            |
+| timestamps                         | `requestVideoFrameCallback` gives per-frame capture timestamps                                         | same clock domain as DeviceMotion events                                                                   |
+| (nothing)                          | `DeviceMotionEvent` accel+gyro @ ~60 Hz                                                                | Android Chrome: no permission prompt; iOS: needs a gesture-gated permission — fine, we're Android-first    |
 
 The M5 `CaptureSource` seam was designed for exactly this swap: a
 `MediaStreamCaptureSource` implements the same interface, minus trusted pose
@@ -100,6 +100,7 @@ linearization is deferred; the prototype re-preintegrates on bias updates —
 simpler, fine offline).
 
 **Initialization** (the part WebXR used to hand us for free):
+
 1. **Attitude**: integrate gyro for relative rotations; anchor roll/pitch
    with the accelerometer average over low-motion windows (gravity).
 2. **Two-view seed**: pick two frames with ≥8 shared decoded LEDs and wide
@@ -177,10 +178,10 @@ acceleration content, 8 Hz keyframes, 60 Hz IMU with web-pessimistic noise
 0.04 m/s², 1.5 ms timestamp jitter), 0.3 px pixel noise, 5 % dropped
 observations, **no pose input**:
 
-| | map RMS vs truth | scale error | gravity dir | reproj RMS |
-|---|---|---|---|---|
-| **VIO joint solve** | **0.24 mm** | **0.54 %** | **0.04°** | 0.30 px |
-| pose-trusting solver + WebXR-drift poses (control) | 145 mm | — | — | — |
+|                                                    | map RMS vs truth | scale error | gravity dir | reproj RMS |
+| -------------------------------------------------- | ---------------- | ----------- | ----------- | ---------- |
+| **VIO joint solve**                                | **0.24 mm**      | **0.54 %**  | **0.04°**   | 0.30 px    |
+| pose-trusting solver + WebXR-drift poses (control) | 145 mm           | —           | —           | —          |
 
 The control feeds the SAME observations to the production solver paired with
 poses corrupted to the real trace's statistics (8 mm/frame random walk +
@@ -206,10 +207,10 @@ On the 2026-07-08 16-LED capture — the one with the measured 4.65°/6.2 cm
 WebXR frame drift and the IMU-disproven 3.7 cm relocalization snap — scored
 on §1 shape consistency (planar grid wall, no absolute truth needed):
 
-| | reproj rms | plane rms | pitch spread | pitch p50 |
-|---|---|---|---|---|
-| **VIO joint solve (no pose input)** | **1.17 px** | **0.2 mm** | **0.3 %** | 39.5 mm |
-| pose-trusting solver, WebXR poses | 16.0 px | 3.2 mm | 2.5 % | 40.3 mm |
+|                                     | reproj rms  | plane rms  | pitch spread | pitch p50 |
+| ----------------------------------- | ----------- | ---------- | ------------ | --------- |
+| **VIO joint solve (no pose input)** | **1.17 px** | **0.2 mm** | **0.3 %**    | 39.5 mm   |
+| pose-trusting solver, WebXR poses   | 16.0 px     | 3.2 mm     | 2.5 %        | 40.3 mm   |
 
 Gravity solved to 9.81 m/s², gyro bias ~1e-4 rad/s, accel bias 0.075 m/s²,
 trajectory length 1.18 m/18 s (physically plausible; WebXR claimed 13 m on
@@ -281,6 +282,7 @@ though it only depends on the 6 bias parameters — and most of the rest was
 the pure-Python reprojection loop over 5.5 k observations.
 
 Fixes (numerics unchanged — pinned by the untouched vio_test asserts):
+
 - vectorized reprojection residuals + batched Rodrigues (`so3_exp_batch` /
   `so3_log_batch`);
 - IMU samples pre-bucketed per interval once (bisect, not linear scans);
@@ -325,6 +327,7 @@ Driven by two field reports on real captures — trajectory discontinuities,
 and LED 0 stuck at an 8.5 mm residual that more coverage couldn't fix.
 
 **Landed in `reconstruct_vio`:**
+
 - **Dominant-segment filter**: observation gaps > 3 s (user walked off the
   wall — 17 s on the reported trace) split the session; dead-reckoning-only
   stitches caused the trajectory seams, so only the observation-richest
@@ -346,6 +349,7 @@ and LED 0 stuck at an 8.5 mm residual that more coverage couldn't fix.
 sessions, metric scale is weakly observable (accel-bias freedom absorbs
 much of the motion signal) and three separate defects let it drift or
 collapse — all fixed:
+
 1. `loss="huber"` applied globally let the optimizer SATURATE the IMU cost
    and collapse the whole solution to ~1/400 scale (reprojection is
    scale-invariant). Reprojection is now robustified inside the residual

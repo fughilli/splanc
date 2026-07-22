@@ -18,7 +18,7 @@ py_library(
     srcs = glob(["reconstruction/*.py"]),
     imports = ["."],
     deps = [
-        "//shared/protocol:protocol",
+        "//shared/protocol",
         requirement("numpy"),
         requirement("scipy"),
     ],
@@ -27,8 +27,8 @@ py_library(
 py_binary(
     name = "reconstruct",
     srcs = ["reconstruction/__main__.py"],
-    main = "reconstruction/__main__.py",
     imports = ["."],
+    main = "reconstruction/__main__.py",
     deps = [":reconstruction"],
 )
 
@@ -37,8 +37,8 @@ py_binary(
 py_binary(
     name = "vio_replay",
     srcs = ["reconstruction/vio_replay.py"],
-    main = "reconstruction/vio_replay.py",
     imports = ["."],
+    main = "reconstruction/vio_replay.py",
     deps = [":reconstruction"],
 )
 
@@ -48,9 +48,9 @@ py_test(
         "tests/pytest_main.py",
         "tests/test_reconstruct.py",
     ],
-    main = "tests/pytest_main.py",
     imports = ["."],
     legacy_create_init = False,
+    main = "tests/pytest_main.py",
     deps = [
         ":reconstruction",
         requirement("numpy"),
@@ -61,6 +61,29 @@ py_test(
 # VIO exploration (docs/vio-exploration.md): joint pose+LED solve with IMU
 # dead reckoning — the WebXR-free path. Nonlinear VI-BA on a synthetic
 # session; slower than a unit test by nature.
+# Cross-language parity: the Rust solver must functionally match the Python
+# reference on the same synthetic session (solution-space agreement, not
+# bitwise — see test_rust_parity.py).
+py_test(
+    name = "rust_parity_test",
+    size = "large",
+    srcs = [
+        "tests/pytest_main.py",
+        "tests/test_rust_parity.py",
+    ],
+    data = ["//solver:solver_cli"],
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/pytest_main.py",
+    deps = [
+        ":reconstruction",
+        "@rules_python//python/runfiles",
+        requirement("numpy"),
+        requirement("pytest"),
+        requirement("scipy"),
+    ],
+)
+
 py_test(
     name = "vio_test",
     size = "large",
@@ -68,9 +91,9 @@ py_test(
         "tests/pytest_main.py",
         "tests/test_vio.py",
     ],
-    main = "tests/pytest_main.py",
     imports = ["."],
     legacy_create_init = False,
+    main = "tests/pytest_main.py",
     deps = [
         ":reconstruction",
         requirement("numpy"),

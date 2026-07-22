@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ledmapper.local/schemas/playback_params.json",
+  "title": "PlaybackParams",
+  "description": "Effect tunables (design doc §7.8), mirroring the pulse reference's controls. All fields are optional overlays: unset fields keep the player's current/default value, so a UI can send just the slider that moved. Effects ignore params they don't use.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [],
+  "properties": {
+    "intensity": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Global output brightness scale in [0,1]."
+    },
+    "glowRadius": {
+      "type": ["number", "null"],
+      "exclusiveMinimum": 0,
+      "description": "Soft-falloff radius around a pulse agent, meters (the pulse reference's 'soft' control)."
+    },
+    "agentCount": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "description": "Number of concurrent pulse agents traversing the topology."
+    },
+    "speed": {
+      "type": ["number", "null"],
+      "exclusiveMinimum": 0,
+      "description": "Agent travel speed along the topology, meters per second."
+    },
+    "palette": {
+      "type": "array",
+      "items": { "type": "integer", "minimum": 0, "maximum": 16777215 },
+      "description": "Effect color palette as 0xRRGGBB integers; empty/omitted keeps the player's default palette."
+    },
+    "leadIn": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Pulse lead-in/out ramp distance at termini, meters (0/omitted derives from the glow radius)."
+    },
+    "splitProb": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Probability in [0,1] that a pulse splits into two at a junction."
+    },
+    "decay": {
+      "type": ["number", "null"],
+      "minimum": 0,
+      "description": "Flood fade length behind the wavefront, meters (0/omitted derives from the glow radius)."
+    }
+  }
+}

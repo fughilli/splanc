@@ -8,7 +8,7 @@ regenerate them and how the contracts map to the design doc (§7).
 
 ## Install (editable)
 
-```
+```text
 pip install -e shared/protocol/python
 ```
 

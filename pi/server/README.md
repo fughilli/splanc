@@ -16,14 +16,14 @@ bazelisk run //pi/server:serve -- \
 # On the Pi it runs as led-server.service binding :80, serving --web-root.
 ```
 
-| Flag | Default | Meaning |
-| ---- | ------- | ------- |
-| `--host` / `--port` | `0.0.0.0` / `80` | bind address |
-| `--web-root` | _none_ | built web app (M5–M8) to serve at `/`; falls back to a Phase-0 hello page |
-| `--session-dir` | `/var/lib/ledmapper/sessions` | where capture logs are written |
-| `--maps-dir` | `/var/lib/ledmapper/maps` | where reconstructed maps are stored |
-| `--led-count` | `1024` | default code-book size used in `welcome` before `start_mapping` |
-| `--bit-period-ms` | `100` | Gray-code bit hold time (design doc §12) |
+| Flag                | Default                       | Meaning                                                                   |
+| ------------------- | ----------------------------- | ------------------------------------------------------------------------- |
+| `--host` / `--port` | `0.0.0.0` / `80`              | bind address                                                              |
+| `--web-root`        | _none_                        | built web app (M5–M8) to serve at `/`; falls back to a Phase-0 hello page |
+| `--session-dir`     | `/var/lib/ledmapper/sessions` | where capture logs are written                                            |
+| `--maps-dir`        | `/var/lib/ledmapper/maps`     | where reconstructed maps are stored                                       |
+| `--led-count`       | `1024`                        | default code-book size used in `welcome` before `start_mapping`           |
+| `--bit-period-ms`   | `100`                         | Gray-code bit hold time (design doc §12)                                  |
 
 ## HTTP + WebSocket surface
 
@@ -35,7 +35,7 @@ bazelisk run //pi/server:serve -- \
 
 ### WebSocket flow (design doc §7)
 
-```
+```text
 client → hello                       server → welcome{sessionId, codeParams}
 client → time_sync_ping{t0}          server → time_sync_pong{t0,t1,t2}   (× a few; §7.3)
 client → start_mapping{ledCount}     server → mapping_started{patternClockEpoch, codeParams}

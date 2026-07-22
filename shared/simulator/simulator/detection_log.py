@@ -8,10 +8,9 @@ no phone and no hardware. Deterministic given a seed.
 
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import Tuple
 
 import numpy as np
-
 from reconstruction import project
 
 from .degrade import NoiseModel, perturb_pixel, perturb_pose

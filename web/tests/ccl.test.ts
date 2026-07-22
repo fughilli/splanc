@@ -97,4 +97,155 @@ test("colorBase: per-blob mean color from RGBA buffers (weight in alpha)", () =>
   const cyan = blobs.find((b) => b.x > 2)!;
   assert.ok(red.r! > 0.99 && red.g! < 0.01 && red.b! < 0.01);
   assert.ok(cyan.r! < 0.01 && cyan.g! > 0.99 && cyan.b! > 0.99);
+  // peak/satFrac are computed WITHOUT stats (the brightness servo reads them
+  // every frame): weight 200 < the ~250 sat cut, so nothing's clipped here.
+  assert.ok(Math.abs(red.peak! - 200 / 255) < 1e-9);
+  assert.equal(red.satFrac, 0);
+});
+
+test("satFrac counts clipped pixels without the stats flag", () => {
+  // 2px blob, weight (alpha) clipped to 255 → fully saturated.
+  const data = new Uint8Array(2 * 1 * 4);
+  for (let x = 0; x < 2; x++) {
+    const i = x * 4;
+    data[i] = 255; data[i + 1] = 0; data[i + 2] = 0; data[i + 3] = 255;
+  }
+  const [blob] = connectedComponents(data, 2, 1, 4, 3, { colorBase: 0 });
+  assert.equal(blob!.satFrac, 1);
+  assert.equal(blob!.peak, 1);
+  assert.equal(blob!.cr, undefined); // chroma-weighted color still stats-gated
+});
+
+test("stats: blooming diagnostics separate the white core from the halo hue", () => {
+  // A 4x4 RGBA blob simulating a bloomed blue LED: a 2x2 saturated white
+  // core (chroma 0) ringed by blue halo pixels (weight in alpha).
+  const data = new Uint8Array(4 * 4 * 4);
+  const put = (x: number, y: number, r: number, g: number, b: number, a: number) => {
+    const i = (y * 4 + x) * 4;
+    data[i] = r; data[i + 1] = g; data[i + 2] = b; data[i + 3] = a;
+  };
+  for (let y = 0; y < 4; y++) {
+    for (let x = 0; x < 4; x++) {
+      const core = x >= 1 && x <= 2 && y >= 1 && y <= 2;
+      if (core) put(x, y, 255, 255, 255, 255); // clipped white core
+      else put(x, y, 20, 40, 220, 180); // blue halo
+    }
+  }
+  const [blob] = connectedComponents(data, 4, 4, 4, 3, { colorBase: 0, stats: true });
+  // Plain mean is dragged toward white/gray by the core...
+  assert.ok(blob!.r! > 0.25 && blob!.g! > 0.3, "mean color washed toward gray");
+  // ...peak clipped, a chunk saturated...
+  assert.ok(blob!.peak! >= 0.99);
+  assert.ok(blob!.satFrac! > 0.2 && blob!.satFrac! < 0.5);
+  // ...but the CHROMA-WEIGHTED color recovers the blue halo (b dominant,
+  // r small), which is the hue the decoder needs.
+  assert.ok(blob!.cb! > blob!.cr! && blob!.cb! > blob!.cg!, "halo reads blue");
+  assert.ok(blob!.cr! < 0.2, "chroma-weighting suppresses the white core");
+});
+
+test("stats: an all-gray blob has zero chroma and safe defaults", () => {
+  const data = new Uint8Array(2 * 2 * 4);
+  for (let i = 0; i < 4; i++) {
+    data[i * 4] = 200; data[i * 4 + 1] = 200; data[i * 4 + 2] = 200; data[i * 4 + 3] = 200;
+  }
+  const [blob] = connectedComponents(data, 2, 2, 4, 3, { colorBase: 0, stats: true });
+  assert.equal(blob!.cr, 0);
+  assert.equal(blob!.cg, 0);
+  assert.equal(blob!.cb, 0);
+  assert.equal(blob!.satFrac, 0);
+});
+
+/** RGBA buffer builder for the splitOversized tests. */
+function rgbaBuffer(w: number, h: number): {
+  data: Uint8Array;
+  put: (x: number, y: number, r: number, g: number, b: number, a: number) => void;
+} {
+  const data = new Uint8Array(w * h * 4);
+  return {
+    data,
+    put: (x, y, r, g, b, a) => {
+      const i = (y * w + x) * 4;
+      data[i] = r; data[i + 1] = g; data[i + 2] = b; data[i + 3] = a;
+    },
+  };
+}
+
+test("splitOversized: whiteness ladder resolves cores in a fully clipped band", () => {
+  // A washed-out strip: one saturated band (weight 255 EVERYWHERE, so the
+  // weight ladder cannot split it) holding two bloomed white cores, red halo
+  // on the left half and blue on the right. maxArea drops the whole band
+  // today; splitting must recover the two cores with their own halo hues.
+  const W = 40, H = 8;
+  const { data, put } = rgbaBuffer(W, H);
+  for (let y = 2; y <= 5; y++) {
+    for (let x = 2; x <= 37; x++) {
+      if (x < 18) put(x, y, 200, 0, 0, 255); // red halo
+      else put(x, y, 0, 0, 200, 255); // blue halo
+    }
+  }
+  for (let y = 3; y <= 5; y++) {
+    for (let x = 7; x <= 9; x++) put(x, y, 255, 255, 255, 255); // left core
+    for (let x = 27; x <= 29; x++) put(x, y, 255, 255, 255, 255); // right core
+  }
+  // An ordinary small blob elsewhere must come through unchanged.
+  put(38, 0, 0, 220, 0, 200);
+
+  const off = connectedComponents(data, W, H, 4, 3, { maxArea: 30, colorBase: 0 });
+  assert.equal(off.length, 1, "without splitting, the band is silently dropped");
+
+  const blobs = connectedComponents(data, W, H, 4, 3, {
+    maxArea: 30,
+    colorBase: 0,
+    splitOversized: true,
+  });
+  const cores = blobs.filter((b) => b.split === true);
+  const plain = blobs.filter((b) => b.split !== true);
+  assert.equal(cores.length, 2);
+  assert.equal(plain.length, 1);
+  assert.equal(plain[0]!.g, 220 / 255, "ordinary blob keeps its member-mean color");
+  const [left, right] = [...cores].sort((a, b) => a.x - b.x);
+  // Centroids on the cores (x centers 7..9 -> 8.5, 27..29 -> 28.5).
+  assert.ok(Math.abs(left!.x - 8.5) < 0.01 && Math.abs(left!.y - 4.5) < 0.01, `left at ${left!.x}`);
+  assert.ok(Math.abs(right!.x - 28.5) < 0.01, `right at ${right!.x}`);
+  // Halo hue, not the white core mean — and each core gets its OWN halo.
+  assert.ok(left!.r! > 2 * left!.b! && left!.r! > 0.3, "left core reads its red halo");
+  assert.ok(right!.b! > 2 * right!.r! && right!.b! > 0.3, "right core reads its blue halo");
+});
+
+test("splitOversized: weight ladder separates dim LEDs merged below saturation", () => {
+  // Two unsaturated mounds (weights 200 / 220) bridged by dimmer glow (160):
+  // one component over maxArea, no clipped pixels anywhere — the weight
+  // ladder must find the cut (192) that separates them.
+  const W = 20, H = 4;
+  const { data, put } = rgbaBuffer(W, H);
+  for (let y = 1; y <= 2; y++) {
+    for (let x = 2; x <= 6; x++) put(x, y, 200, 0, 0, 200); // red mound
+    for (let x = 7; x <= 11; x++) put(x, y, 60, 60, 60, 160); // gray bridge
+    for (let x = 12; x <= 16; x++) put(x, y, 0, 0, 220, 220); // blue mound
+  }
+  const blobs = connectedComponents(data, W, H, 4, 3, {
+    maxArea: 20,
+    colorBase: 0,
+    splitOversized: true,
+  });
+  assert.equal(blobs.length, 2);
+  assert.ok(blobs.every((b) => b.split === true));
+  const [red, blue] = [...blobs].sort((a, b) => a.x - b.x);
+  assert.ok(Math.abs(red!.x - 4.5) < 0.01 && Math.abs(blue!.x - 14.5) < 0.01);
+  assert.ok(red!.r! > 2 * red!.b!, "red mound keeps its hue");
+  assert.ok(blue!.b! > 2 * blue!.r!, "blue mound keeps its hue");
+});
+
+test("splitOversized: a giant all-white region is still glare, not LEDs", () => {
+  // White wall of light: saturated in every channel, larger than maxArea at
+  // every cut of both ladders — must produce nothing.
+  const W = 20, H = 10;
+  const { data, put } = rgbaBuffer(W, H);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) put(x, y, 255, 255, 255, 255);
+  const blobs = connectedComponents(data, W, H, 4, 3, {
+    maxArea: 50,
+    colorBase: 0,
+    splitOversized: true,
+  });
+  assert.equal(blobs.length, 0);
 });

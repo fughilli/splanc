@@ -1,6 +1,6 @@
 /**
- * M8 — the 2D annotation layer of the camera view (a canvas in the XR
- * dom-overlay), drawn once per XR frame:
+ * M8 — the 2D annotation layer of the camera view (a canvas over the video
+ * preview), drawn once per frame:
  *
  *  - **Blob outlines** — the 2D detection stage's per-frame output, colored
  *    by track association: green = matched a track with a decoded id (the
@@ -8,14 +8,14 @@
  *    the LED is solved), amber = matched a track still awaiting decode,
  *    red = matched nothing this frame (spawned a fresh track). Mapped with
  *    the camera image's aspect-fill crop — these annotate the *image*.
- *  - **Id labels** — one per SOLVED LED, projected through the frame's real
- *    view/projection (the same MVP as the GL rings, see points3d.ts), so the
- *    text tracks the physical LED and survives dark code-word frames.
+ *
+ * (The 3D-composited per-LED id labels left with the M6 WebXR removal —
+ * there is no per-frame pose to project through. Client-side PnP against
+ * the solved map is the phase-4.5 follow-up that brings registered
+ * overlays back — docs/vio-exploration.md.)
  */
 
-import type { LedEntry } from "@ledmapper/protocol";
 import type { BlobStatus } from "../cv/pipeline";
-import { projectPoint, type Mat4 } from "../geom/mat4";
 import { imageToView } from "./markers";
 
 const OUTLINE = {
@@ -32,15 +32,7 @@ export class LabelOverlay {
   }
 
   /** Redraw the frame's annotations. */
-  draw(
-    leds: readonly LedEntry[],
-    // Null on the pose-less (no-XR) path: blob outlines still draw; the
-    // 3D-composited id labels need a projection and are skipped.
-    mvp: Mat4 | null,
-    blobs: readonly BlobStatus[] = [],
-    imgW = 0,
-    imgH = 0,
-  ): void {
+  draw(blobs: readonly BlobStatus[] = [], imgW = 0, imgH = 0): void {
     const dpr = devicePixelRatio;
     const viewW = this.canvas.clientWidth * dpr;
     const viewH = this.canvas.clientHeight * dpr;
@@ -52,7 +44,6 @@ export class LabelOverlay {
     const ctx = this.ctx;
     ctx.clearRect(0, 0, viewW, viewH);
 
-    // -- 2D stage: blob outlines (aspect-fill image mapping) ---------------
     if (imgW > 0 && imgH > 0) {
       const scale = Math.max(viewW / imgW, viewH / imgH);
       ctx.lineWidth = 1.5 * dpr;
@@ -69,28 +60,6 @@ export class LabelOverlay {
             : OUTLINE.tracked;
         ctx.stroke();
       }
-    }
-
-    // -- solved LEDs: id labels (3D-composited mapping) --------------------
-    ctx.font = `${Math.round(13 * dpr)}px system-ui, sans-serif`;
-    ctx.textBaseline = "middle";
-
-    for (const l of leds) {
-      if (mvp === null) break;
-      const ndc = projectPoint(mvp, l.xyz[0], l.xyz[1], l.xyz[2]);
-      if (ndc === null || ndc.x < -1 || ndc.x > 1 || ndc.y < -1 || ndc.y > 1) continue;
-      const x = (ndc.x * 0.5 + 0.5) * viewW;
-      const y = (0.5 - ndc.y * 0.5) * viewH; // NDC y up → canvas y down
-
-      // Confidence: green (high) -> amber -> red (low), like the map preview.
-      const hue = Math.round(l.confidence * 120);
-      const label = `#${l.id}`;
-      const tx = x + 12 * dpr; // clear of the GL ring
-      ctx.lineWidth = 3 * dpr;
-      ctx.strokeStyle = "rgb(0 0 0 / 0.75)";
-      ctx.strokeText(label, tx, y);
-      ctx.fillStyle = `hsl(${hue} 85% 70%)`;
-      ctx.fillText(label, tx, y);
     }
   }
 

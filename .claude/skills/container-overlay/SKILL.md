@@ -63,7 +63,7 @@ service (e.g. a `RUN` that installs it) so the mapping and the server stay toget
 
 Concretely:
 
-- **Good** — adding a new package next session: append a *new* `RUN apt-get install -y --no-install-recommends newpkg && rm -rf /var/lib/apt/lists/*` block at the bottom.
+- **Good** — adding a new package next session: append a _new_ `RUN apt-get install -y --no-install-recommends newpkg && rm -rf /var/lib/apt/lists/*` block at the bottom.
 - **Bad** — adding `newpkg` to the package list of an existing `RUN apt-get install` block. That invalidates the cached layer and every layer below it.
 
 The only reasons to edit an existing entry:
@@ -138,4 +138,4 @@ Because the tag is content-addressed, switching branches that have different ove
 - `USER` directives in the overlay — the base image's entrypoint manages users dynamically based on `USER_UID`/`USER_GID`. Setting `USER` in the overlay breaks the UID-mapping flow.
 - `ENTRYPOINT` / `CMD` — same reason; the base image's entrypoint must run.
 - `WORKDIR` other than `/workspace` — `/workspace` is the bind mount point.
-- Anything that requires the workspace files to be present at *build* time. The workspace is mounted at *run* time. If you need files inside the image, copy them into a stable subdirectory in the overlay context, but prefer not to — bind mounts are simpler.
+- Anything that requires the workspace files to be present at _build_ time. The workspace is mounted at _run_ time. If you need files inside the image, copy them into a stable subdirectory in the overlay context, but prefer not to — bind mounts are simpler.

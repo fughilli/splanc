@@ -24,25 +24,211 @@ bazel_dep(name = "aspect_rules_ts", version = "3.8.11")
 bazel_dep(name = "aspect_bazel_lib", version = "2.22.5")
 bazel_dep(name = "rules_pkg", version = "1.2.0")
 
+# buildifier-lint's modern-loads fix rewrites native sh_binary to the
+# rules_shell load; the dep makes that rewrite real.
+bazel_dep(name = "rules_shell", version = "0.4.0")
+
+# Same story for cc_* (firmware/player_app): the per-rule .bzl files
+# (cc/cc_binary.bzl, ...) need a modern rules_cc.
+bazel_dep(name = "rules_cc", version = "0.1.1")
+
+# Wire protocol (proto-comms): prebuilt protoc toolchain — Python bindings
+# are generated at build time (no from-source protobuf compile, no checked-in
+# _pb2.py); the runtime comes from pip (`protobuf`).
+bazel_dep(name = "toolchains_protoc", version = "0.6.1")
+bazel_dep(name = "rules_proto", version = "7.1.0")
+
+protoc = use_extension("@toolchains_protoc//protoc:extensions.bzl", "protoc")
+protoc.toolchain(
+    google_protobuf = "com_google_protobuf",
+    version = "v29.3",
+)
+use_repo(
+    protoc,
+    protoc_linux_aarch64 = "toolchains_protoc_hub.linux_aarch_64",
+    protoc_linux_x86_64 = "toolchains_protoc_hub.linux_x86_64",
+    protoc_osx_aarch64 = "toolchains_protoc_hub.osx_aarch_64",
+    protoc_osx_x86_64 = "toolchains_protoc_hub.osx_x86_64",
+)
+
 # ---------------------------------------------------------------------------
-# Nix integration (M4 — pi/provisioning).
+# Rust — the native solver (solver/), built twice: host binary for the Pi
+# server (subprocess via runfiles) and wasm32 + wasm-bindgen for the phone.
+# The bare-metal triples serve the vendored firmware module (below): rules_rust
+# merges toolchain requests root-module-first, so the ROOT declares the union.
+# ---------------------------------------------------------------------------
+
+bazel_dep(name = "rules_rust", version = "0.71.3")
+bazel_dep(name = "rules_rust_wasm_bindgen", version = "0.71.3")
+
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+rust.toolchain(
+    edition = "2021",
+    extra_target_triples = [
+        "wasm32-unknown-unknown",  # phone solver
+        "riscv32imac-unknown-none-elf",  # ESP32-C6
+        "thumbv8m.main-none-eabi",  # RP2350 (soft-float ABI; see firmware)
+    ],
+    # Pinned to the version the vendored firmware validated on-device.
+    versions = ["1.85.0"],
+)
+use_repo(rust, "rust_toolchains")
+
+register_toolchains("@rust_toolchains//:all")
+
+crate = use_extension("@rules_rust//crate_universe:extensions.bzl", "crate")
+crate.spec(
+    features = ["derive"],
+    package = "serde",
+    version = "1",
+)
+crate.spec(
+    package = "serde_json",
+    version = "1",
+)
+
+# Pinned EXACTLY to rules_rust_wasm_bindgen's bundled CLI version — the
+# generated bindings' ABI schema must match the CLI that post-processes them.
+crate.spec(
+    package = "wasm-bindgen",
+    version = "=0.2.121",
+)
+crate.spec(
+    package = "js-sys",
+    version = "0.3",
+)
+
+# Firmware protocol deps (docs/esp32-led-mapping-plan.md Phase 0b): no_std
+# protobuf + fixed-capacity containers for the ESP32-C6 target. No std/alloc
+# features; enable-64bit is required (CodeParams/solver fields are doubles);
+# container-heapless binds repeated/string fields to heapless 0.8. The 0.5
+# line is the newest whose generator builds on the firmware-validated rustc
+# 1.85.0 (micropb-gen 0.6 needs let-chains, MSRV 1.88).
+crate.spec(
+    default_features = False,
+    features = [
+        "encode",
+        "decode",
+        "enable-64bit",
+        "container-heapless",
+    ],
+    package = "micropb",
+    version = "0.5.1",
+)
+
+# 0.8 line: 0.9 requires a newer rustc than the firmware-validated 1.85.0
+# (core::ffi::FromBytesWithNulError changed shape), and 0.8 is what the
+# embedded ecosystem (and micropb's container-heapless) target.
+crate.spec(
+    default_features = False,
+    package = "heapless",
+    version = "0.8",
+)
+
+# Test-only: the Rust leg of the cross-language proto conformance test reads
+# web/tests/golden_proto_frames.json (base64 frames).
+crate.spec(
+    package = "base64",
+    version = "0.22",
+)
+crate.from_specs(
+    # rules_rust's default list is a small host-centric subset (splicing is
+    # O(N^2) per triple) — it must be restated here to EXTEND it with the
+    # bare-metal firmware triples, or @crates//:* are marked incompatible
+    # with the @embedded platforms.
+    supported_platform_triples = [
+        # rules_rust defaults (SUPPORTED_PLATFORM_TRIPLES).
+        "aarch64-apple-darwin",
+        "aarch64-unknown-linux-gnu",
+        "wasm32-unknown-unknown",
+        "wasm32-wasip1",
+        "x86_64-pc-windows-msvc",
+        "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-nixos-gnu",
+        # Firmware targets (docs/esp32-led-mapping-plan.md Phase 0b).
+        "riscv32imac-unknown-none-elf",  # ESP32-C6
+        "thumbv8m.main-none-eabi",  # RP2350
+    ],
+)
+use_repo(crate, "crates")
+
+# HOST-side code generator for micropb (build tool, not a firmware dep):
+# invoked by //shared/protocol/rust to turn ledmapper.proto into no_std Rust.
+# Version-locked to the micropb runtime line above. ISOLATED universe: the
+# generator needs micropb WITH the std feature, and crate_universe unifies
+# features per crate across a universe — sharing one universe would leak std
+# onto the firmware micropb and break the riscv32imac-none build.
+host_crate = use_extension(
+    "@rules_rust//crate_universe:extensions.bzl",
+    "crate",
+    isolate = True,
+)
+host_crate.spec(
+    package = "micropb-gen",
+    version = "0.5.1",
+)
+host_crate.from_specs(name = "host_crates")
+use_repo(host_crate, "host_crates")
+
+# ---------------------------------------------------------------------------
+# ESP32-C6/RP2350 firmware monorepo (docs/esp32-led-mapping-plan.md Phase 0a):
+# fetched directly from GitHub as a Bazel module (repo name @embedded).
+# Its toolchains + Arduino cores come from Nix (the container/host has nix).
+# ---------------------------------------------------------------------------
+
+bazel_dep(name = "firmware", version = "0.0.0", repo_name = "embedded")
+archive_override(
+    module_name = "firmware",
+    integrity = "sha256-a40swrAADjiQatlf2XzVpUF0Rt/EN/ggrz8N20PcWTQ=",
+    strip_prefix = "embedded-a14ef48712b820948f8e1bae28987539a4aa2ff8",
+    urls = ["https://github.com/fughilli/embedded/archive/a14ef48712b820948f8e1bae28987539a4aa2ff8.tar.gz"],
+)
+
+# ---------------------------------------------------------------------------
+# Nix integration.
 #
-# rules_nixpkgs lets Bazel import Nix-built packages as Bazel targets. The
-# M4 provisioning targets (//pi/provisioning:image_sd, :deploy_live) are
-# thin sh_binary wrappers that shell out to the `nix` CLI, so they DO NOT
-# require any nixpkgs repo to be fetched — they work without this dep. We
-# register rules_nixpkgs (pinned) so the future option of pulling nix
-# derivations into the Bazel graph is available.
-#
-# IMPORTANT (repo-wide build safety): we deliberately DO NOT declare a
-# `nix_repo` / `nixpkgs_package` here. Declaring one would make Bazel try to
-# evaluate Nix at fetch time, which FAILS on machines without `nix` installed
-# and would break `bazel build //...` for everyone. Keeping this to the
-# bazel_dep registration only means the dep is resolved from the registry but
-# nothing forces a nix evaluation. See pi/provisioning/README.md.
+# `nix` is a SYSTEM REQUIREMENT for this repository (README prerequisites):
+# rules_nixpkgs imports Nix-built tools/packages as Bazel targets, the M4
+# provisioning targets (//pi/provisioning:*) shell out to the `nix` CLI, and
+# build tools like the HTML minifier (//tools/html:minify) come from the
+# pinned nixpkgs snapshot below. Repository fetches are still lazy (a nixpkgs
+# package is realized only when a target that uses it is built), so an
+# unrelated `bazel build //some:target` needn't pay for nix it doesn't touch
+# — but the repo as a whole (`bazel test //...`) does require `nix` on PATH,
+# and that is intended, not a regression to work around.
 #
 # rules_nixpkgs 0.13.0 (pinned 2026-06-19). bzlmod module: rules_nixpkgs_core.
 bazel_dep(name = "rules_nixpkgs_core", version = "0.13.0")
+
+# Pinned nixpkgs snapshot (release tag 25.05, pinned 2026-07-13) — the source
+# for Nix-provided build tools. sha256 is of the GitHub archive tarball.
+nix_repo = use_extension("@rules_nixpkgs_core//extensions:repository.bzl", "nix_repo")
+nix_repo.github(
+    name = "nixpkgs",
+    org = "NixOS",
+    repo = "nixpkgs",
+    sha256 = "130b4257b3d53bfbfea6d61fb76d4751a3989a4a09a28615ff77516a82b3924d",
+    tag = "25.05",
+)
+use_repo(nix_repo, "nixpkgs")
+
+# tdewolff/minify — a single static Go binary that minifies HTML/CSS/JS; the
+# tool behind //tools/html:minify (html_minify rule) for resources baked into
+# firmware flash (every byte served from the ESP32 counts).
+nix_pkg = use_extension("@rules_nixpkgs_core//extensions:package.bzl", "nix_pkg")
+nix_pkg.attr(
+    attr = "minify",
+    build_file_content = """\
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "minify",
+    srcs = ["bin/minify"],
+)
+""",
+    repo = "@nixpkgs",
+)
+use_repo(nix_pkg, "minify")
 
 # ---------------------------------------------------------------------------
 # Python toolchain — Pi-compatible 3.11.

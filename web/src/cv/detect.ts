@@ -91,6 +91,12 @@ export class DetectorGL {
   private measureW = 0;
   private measureH = 0;
   private measureBuf: Uint8Array = new Uint8Array(0);
+  // Full-resolution readback target for grabFrame() (offline-replay capture).
+  private grabTex: WebGLTexture | null = null;
+  private grabFbo: WebGLFramebuffer | null = null;
+  private grabW = 0;
+  private grabH = 0;
+  private grabBuf: Uint8Array = new Uint8Array(0);
 
   readonly downscale: number;
   threshold: number;
@@ -135,7 +141,7 @@ export class DetectorGL {
    * full-resolution pixels, origin top-left (§7.4) — the readback's GL
    * bottom-left rows are flipped here.
    */
-  detect(texture: WebGLTexture, imgW: number, imgH: number): Blob[] {
+  detect(texture: WebGLTexture, imgW: number, imgH: number, opts: { stats?: boolean } = {}): Blob[] {
     const gl = this.gl;
     const w = Math.max(1, Math.round(imgW / this.downscale));
     const h = Math.max(1, Math.round(imgH / this.downscale));
@@ -168,11 +174,18 @@ export class DetectorGL {
     gl.viewport(prevViewport[0]!, prevViewport[1]!, prevViewport[2]!, prevViewport[3]!);
 
     // Fill/weight channel is alpha (masked luminance); RGB carries color.
+    // splitOversized: a washed-out strip merges every halo into one giant
+    // component that maxArea used to silently drop — taking every LED with
+    // it (2026-07-12 capture screenshot: one 98k-px component spanned the
+    // frame at threshold 0.6, beyond even the threshold servo's 0.9 cap).
+    // The cut ladders re-threshold such components into per-core blobs.
     const comps = connectedComponents(this.readback, w, h, 4, 3, {
       minArea: this.minArea,
       maxArea: this.maxArea,
       maxBlobs: this.maxBlobs,
       colorBase: 0,
+      stats: opts.stats === true,
+      splitOversized: true,
     });
 
     // readPixels row 0 is the render target's bottom row, and the fragment
@@ -182,18 +195,32 @@ export class DetectorGL {
     const ds = this.downscale;
     return comps
       .filter((c) => Math.max(c.w, c.h) <= this.maxAspect * Math.min(c.w, c.h))
-      .map((c) => ({
-        u: c.x * ds,
-        v: this.flipV ? imgH - c.y * ds : c.y * ds,
-        intensity: c.intensity,
-        area: c.area * ds * ds,
-        w: c.w * ds,
-        h: c.h * ds,
-        // Always present: this call passes colorBase.
-        r: c.r!,
-        g: c.g!,
-        b: c.b!,
-      }));
+      .map((c) => {
+        const blob: Blob = {
+          u: c.x * ds,
+          v: this.flipV ? imgH - c.y * ds : c.y * ds,
+          intensity: c.intensity,
+          area: c.area * ds * ds,
+          w: c.w * ds,
+          h: c.h * ds,
+          // Always present: this call passes colorBase.
+          r: c.r!,
+          g: c.g!,
+          b: c.b!,
+        };
+        if (c.split) blob.split = true;
+        // Always present (CCL computes them unconditionally): the brightness
+        // servo reads satFrac each frame.
+        blob.peak = c.peak!;
+        blob.satFrac = c.satFrac!;
+        if (opts.stats) {
+          // The chroma-weighted color is only computed under stats:true.
+          blob.cr = c.cr!;
+          blob.cg = c.cg!;
+          blob.cb = c.cb!;
+        }
+        return blob;
+      });
   }
 
   /**
@@ -235,6 +262,80 @@ export class DetectorGL {
     gl.viewport(prevViewport[0]!, prevViewport[1]!, prevViewport[2]!, prevViewport[3]!);
 
     return sceneStatsFromLuma(this.measureBuf, w * h);
+  }
+
+  /**
+   * The last {@link measure} pass's raw downsampled frame (RGB color, alpha =
+   * unthresholded luminance) — a small color thumbnail for offline trace
+   * inspection (seeing bloom shape/color). Call right after measure(); returns
+   * an empty buffer if measure() hasn't run. The buffer is reused, so the
+   * caller must copy (the trace sink base64-encodes it immediately).
+   */
+  lastMeasureFrame(): { w: number; h: number; rgba: Uint8Array } {
+    return { w: this.measureW, h: this.measureH, rgba: this.measureBuf };
+  }
+
+  /**
+   * Read back the camera frame at FULL resolution, byte-exact to what
+   * `detect()` samples: the same pass with threshold 0, whose fragment shader
+   * writes the raw camera rgb to the color channels (`outColor = vec4(rgb, lum)`
+   * when the mask is 1). This is the detector's true INPUT — captured for the
+   * offline replay harness so the whole CV pipeline (threshold/downsample →
+   * CCL → tracker → decoder) can be re-run and tuned against real frames.
+   * Returns a reused RGBA buffer (RGB = camera color, alpha = luminance);
+   * copy/compress it before the next call. GL row order (v=0 = the camera
+   * texture's first row) matches detect()'s readback, so the same `flipV`
+   * applies on replay.
+   */
+  grabFrame(texture: WebGLTexture, imgW: number, imgH: number): { w: number; h: number; rgba: Uint8Array } {
+    const gl = this.gl;
+    const w = Math.max(1, imgW);
+    const h = Math.max(1, imgH);
+    this.ensureGrabTarget(w, h);
+
+    const prevFbo = gl.getParameter(gl.FRAMEBUFFER_BINDING) as WebGLFramebuffer | null;
+    const prevViewport = gl.getParameter(gl.VIEWPORT) as Int32Array;
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.grabFbo!);
+    gl.viewport(0, 0, w, h);
+    gl.disable(gl.DEPTH_TEST);
+    gl.disable(gl.BLEND);
+    gl.useProgram(this.program);
+    gl.uniform1f(this.uThreshold, 0.0); // mask = 1 everywhere -> rgb passes through
+    gl.uniform1i(this.uCam, 0);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.bindVertexArray(this.vao);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    gl.bindVertexArray(null);
+
+    if (this.grabBuf.length !== w * h * 4) this.grabBuf = new Uint8Array(w * h * 4);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, this.grabBuf);
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, prevFbo);
+    gl.viewport(prevViewport[0]!, prevViewport[1]!, prevViewport[2]!, prevViewport[3]!);
+
+    return { w, h, rgba: this.grabBuf };
+  }
+
+  private ensureGrabTarget(w: number, h: number): void {
+    const gl = this.gl;
+    if (this.grabFbo !== null && w === this.grabW && h === this.grabH) return;
+    this.grabW = w;
+    this.grabH = h;
+    if (this.grabTex === null) this.grabTex = gl.createTexture()!;
+    if (this.grabFbo === null) this.grabFbo = gl.createFramebuffer()!;
+    gl.bindTexture(gl.TEXTURE_2D, this.grabTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.grabFbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.grabTex, 0);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   }
 
   private ensureMeasureTarget(w: number, h: number): void {

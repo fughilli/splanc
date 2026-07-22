@@ -2,6 +2,10 @@
 # launcher. The build runs as root; the container then runs as a non-root user
 # the entrypoint creates at start, mapped to the host UID/GID (named `claude`).
 # See .claude/skills/container-overlay.
+#
+# Port mappings live in overlay.json (migrated 2026-07-09 from the legacy
+# single-file overlay form; the `# claude-container:port` comments that used to
+# sit at the bottom of this file are now overlay.json `ports` entries).
 
 # 2026-06-19: Nix with flakes — required by M4 (pi/provisioning). The image_sd /
 # deploy_live Bazel targets and generating pi/provisioning/nix/flake.lock all
@@ -46,10 +50,20 @@ ENV PATH=/nix/var/nix/profiles/default/bin:$PATH
 # go+rwX leaves them 0777, which guarantees that failed re-chmod. So delete them
 # here; the runtime user recreates and owns them on its first `nix` call (the
 # go+rwX parents above make that mkdir possible). Without this, a fresh container
-# needs a manual `sudo chown $(whoami) /nix/var/nix/{profiles,gcroots}/per-user`
-# before any `nix` command works (the workaround used to verify M4 on 2026-06-19).
-RUN chmod -R go+rwX /nix \
-    && rm -rf /nix/var/nix/profiles/per-user /nix/var/nix/gcroots/per-user
+# needs a manual `sudo chown $(whoami) /nix/var/nix/profiles/per-user` before any
+# `nix` command works (the workaround used to verify M4 on 2026-06-19).
+#
+# BUT deleting per-user also severs the `default` profile: the installer makes
+# /nix/var/nix/profiles/default a symlink INTO per-user/root/profile, so after
+# the rm -rf the ENV PATH above points through a dangling link and no `nix` is
+# callable at all (bit us 2026-07-13; repaired by hand that session). Resolve
+# default to its store path FIRST and re-point it directly at the store —
+# profile MUTATION by the runtime user was never supported here; PATH access
+# to the pinned binaries is all `default` has to provide.
+RUN PROFILE_STORE_PATH="$(readlink -f /nix/var/nix/profiles/default)" \
+    && chmod -R go+rwX /nix \
+    && rm -rf /nix/var/nix/profiles/per-user /nix/var/nix/gcroots/per-user \
+    && ln -sfn "$PROFILE_STORE_PATH" /nix/var/nix/profiles/default
 
 # openssh-client: ssh-keygen for the M4 deploy-key flow
 # (pi/provisioning/scripts/manage_keys.sh). Not in the base image; install the
@@ -65,22 +79,7 @@ RUN apt-get update \
     && echo 'claude ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/claude \
     && chmod 0440 /etc/sudoers.d/claude
 
-# 2026-06-26: Publish dev-server ports to the host via the launcher's
-# `claude-container:port` directives (passed straight to `docker run -p`). Bound
-# to 127.0.0.1 on the host so they're reachable from this machine only, not the
-# LAN — drop the `127.0.0.1:` prefix if you need to reach a server from another
-# device (e.g. a phone hitting the M2 web app).
-#   - 8090: Sim Studio (tools/sim_studio) — solver-debugging web UI
-#   - 8080: M2 server (pi/server) — FastAPI + WebSocket control plane
-# IMPORTANT: the in-container server must bind 0.0.0.0 (not 127.0.0.1) or docker
-# can't reach it. The studio defaults to 0.0.0.0; for M2 pass --host 0.0.0.0.
-# Then open http://localhost:8090 (studio) / http://localhost:8080 (M2) on the host.
-# claude-container:port 127.0.0.1:8090:8090
-# claude-container:port 127.0.0.1:8080:8080
-
-# 2026-07-02: 8443 — `bazelisk run //web:serve` (M2 + built web app, HTTPS).
-# Deliberately LAN-exposed (no 127.0.0.1: prefix): the phone-testing flow needs
-# an Android phone on the same Wi-Fi to reach https://<laptop-LAN-IP>:8443
-# (WebXR requires a secure context; the server uses a persistent self-signed
-# cert — tap through the browser warning once). See web/README.md.
-# claude-container:port 8443:8443
+# Presubmit tooling (branch ci-presubmits): pip + pre-commit so the repo's
+# hooks (.pre-commit-config.yaml) run locally in the container.
+RUN apt-get update -qq && apt-get install -y -qq python3-pip python3-venv && \
+    python3 -m pip install --break-system-packages pre-commit

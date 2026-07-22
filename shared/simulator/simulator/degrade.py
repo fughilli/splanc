@@ -19,7 +19,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-
 from reconstruction import quat_to_rotmat, rotmat_to_quat
 
 

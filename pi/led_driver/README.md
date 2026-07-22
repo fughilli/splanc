@@ -16,24 +16,24 @@ bazelisk run //pi/led_driver:drive -- \
 bazelisk run //pi/led_driver:drive -- --dry-run --socket /tmp/control.sock --start 16
 ```
 
-| Flag | Default | Meaning |
-| ---- | ------- | ------- |
-| `--socket` | `/run/ledmapper/control.sock` | control socket M2 connects to |
-| `--bus` / `--device` | `0` / `0` | `/dev/spidev<bus>.<device>` |
-| `--speed-hz` | `8_000_000` | SPI clock |
-| `--brightness` | `31` | global 5-bit brightness (0..31) |
-| `--dry-run` | off | use an in-memory sink (no `spidev`) — for emulation / CI |
-| `--start N` | _none_ | immediately start a default cycle for `N` LEDs (debug) |
+| Flag                 | Default                       | Meaning                                                  |
+| -------------------- | ----------------------------- | -------------------------------------------------------- |
+| `--socket`           | `/run/ledmapper/control.sock` | control socket M2 connects to                            |
+| `--bus` / `--device` | `0` / `0`                     | `/dev/spidev<bus>.<device>`                              |
+| `--speed-hz`         | `8_000_000`                   | SPI clock                                                |
+| `--brightness`       | `31`                          | global 5-bit brightness (0..31)                          |
+| `--dry-run`          | off                           | use an in-memory sink (no `spidev`) — for emulation / CI |
+| `--start N`          | _none_                        | immediately start a default cycle for `N` LEDs (debug)   |
 
 ## The Gray-code cycle (§8.1)
 
-```
+```text
 [ ALL_ON ][ ALL_OFF ]            sync delimiter (self-clocking)
 [ bit 0  ][ bit 1 ] … [ bit B-1 ]   LED i lit iff bit b of gray(i) is set
 ```
 
 `B = ceil(log2(ledCount))`, `cycleFrames = 2 + B`. Each frame is held for
-`bitPeriodMs`. Gray coding means a single misread bit mislabels to an *adjacent*
+`bitPeriodMs`. Gray coding means a single misread bit mislabels to an _adjacent_
 LED, not a random one. `frame_plan(code_params)` returns the per-frame on-sets;
 `frame_bytes(on_set, n)` encodes one frame to SK9822/APA102 bytes.
 
@@ -42,13 +42,13 @@ LED, not a random one. `frame_plan(code_params)` returns the per-frame on-sets;
 Newline-delimited JSON over the Unix socket (`control.py`). M2 uses
 `ControlClient`:
 
-| Command | Reply |
-| ------- | ----- |
-| `{"cmd":"start","codeParams":{…}}` | `{"ok":true,"patternClockEpoch":<ms>}` |
-| `{"cmd":"stop"}` | `{"ok":true}` |
-| `{"cmd":"get_clock"}` | `{"ok":true,"epoch":…,"bitPeriodMs":…,"cycleLen":…}` |
-| `{"cmd":"set_debug","mode":"single","args":{"ledId":5}}` | `{"ok":true}` |
-| _invalid_ | `{"ok":false,"error":"…"}` |
+| Command                                                  | Reply                                                |
+| -------------------------------------------------------- | ---------------------------------------------------- |
+| `{"cmd":"start","codeParams":{…}}`                       | `{"ok":true,"patternClockEpoch":<ms>}`               |
+| `{"cmd":"stop"}`                                         | `{"ok":true}`                                        |
+| `{"cmd":"get_clock"}`                                    | `{"ok":true,"epoch":…,"bitPeriodMs":…,"cycleLen":…}` |
+| `{"cmd":"set_debug","mode":"single","args":{"ledId":5}}` | `{"ok":true}`                                        |
+| _invalid_                                                | `{"ok":false,"error":"…"}`                           |
 
 The **`CodeParams` are computed by M2** (`pi/server/server/codebook.py`, the
 authority) and handed to `start()`; M1's `default_code_params()` is a

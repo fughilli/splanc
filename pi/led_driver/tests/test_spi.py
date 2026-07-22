@@ -1,7 +1,6 @@
 """SK9822/APA102 framing (design doc §5/§8.1)."""
 
 import pytest
-
 from led_driver.spi import RecordingSink, buffer_len, frame_bytes
 
 
@@ -54,3 +53,17 @@ def test_recording_sink():
     assert sink.writes == [b"abc", b"def"]
     sink.close()
     assert sink.closed
+
+
+def test_frame_bytes_colors_per_led_bgr_order():
+    from led_driver.spi import frame_bytes_colors
+
+    buf = frame_bytes_colors([(255, 0, 0), (0, 255, 0), (0, 0, 255)], brightness=31)
+    assert buf[:4] == b"\x00\x00\x00\x00"
+    # Per LED: brightness byte then B, G, R.
+    assert buf[4:8] == bytes((0xE0 | 31, 0, 0, 255))  # red
+    assert buf[8:12] == bytes((0xE0 | 31, 0, 255, 0))  # green
+    assert buf[12:16] == bytes((0xE0 | 31, 255, 0, 0))  # blue
+    from led_driver.spi import buffer_len
+
+    assert len(buf) == buffer_len(3)

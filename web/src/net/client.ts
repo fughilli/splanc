@@ -22,23 +22,33 @@ import type {
   ConfigureOptions,
   DetectionRecord,
   ExposureStats,
+  FrameTimingMessage,
   ImuSample,
   LiveMapMessage,
   MappingStartedMessage,
+  MappingStoppedMessage,
+  OutputMap,
   PatternStateMessage,
+  PlaybackParams,
+  PlaybackStateMessage,
+  Topology,
   ResultReadyMessage,
   ServerMessage,
   SolveStatusMessage,
   StartMappingOptions,
   StatusMessage,
+  StoredMapChunkMessage,
   WelcomeMessage,
 } from "@ledmapper/protocol";
+import { decodeMappingBundle, type MappingBundle } from "./proto";
 import { bestSample, ServerClock, syncSample, type SyncSample } from "./clocksync";
+import { decodeServer, encodeClient } from "./proto";
 
 /** The subset of the WebSocket API the client uses (fakeable in tests). */
 export interface SocketLike {
   readonly readyState: number;
-  send(data: string): void;
+  binaryType?: string;
+  send(data: string | Uint8Array): void;
   close(): void;
   onopen: ((ev?: unknown) => void) | null;
   onclose: ((ev?: unknown) => void) | null;
@@ -58,6 +68,11 @@ export interface ClientOptions {
   schedule?: (fn: () => void, ms: number) => void;
   /** Reconnect backoff steps, ms. */
   backoffMs?: number[];
+  /** Give up on a socket that hasn't reached `welcome` this long and retry.
+   * The browser's own WS/TCP connect timeout is tens of seconds on mobile, so
+   * without this a not-yet-reachable player (e.g. just after it joins WiFi)
+   * hangs the UI at "connecting…". Default 5000. */
+  connectTimeoutMs?: number;
   appVersion?: string;
   clientName?: string;
 }
@@ -66,6 +81,9 @@ export interface ClientEvents {
   /** Connection state changes (true right after welcome). */
   onConnected?: (welcome: WelcomeMessage) => void;
   onDisconnected?: () => void;
+  /** Fired at the start of each connect attempt (attempt is 1-based within a
+   * run; resets after a successful welcome), for progress UI. */
+  onConnecting?: (attempt: number, url: string) => void;
   /** Any server error message not consumed by a pending request. */
   onServerError?: (code: string, message: string) => void;
 }
@@ -76,18 +94,42 @@ export function defaultWsUrl(loc: { protocol: string; host: string } = location)
   return `${scheme}://${loc.host}/ws`;
 }
 
+/**
+ * The player origin to visit for a one-tap self-signed-certificate approval
+ * (R2 trust flow — firmware/landing/README.md). Browsers never show a cert
+ * interstitial for a WebSocket, so a hosted app targeting a cross-origin
+ * `wss:` player with an untrusted cert fails with no user-visible fix; the
+ * fix is a TOP-LEVEL visit to the player's own origin. Null when the socket
+ * targets the serving origin (loading the page already took the approval)
+ * or the target is not `wss:`.
+ */
+export function certApprovalUrl(
+  wsUrl: string,
+  loc: { host: string } = location,
+): string | null {
+  try {
+    const u = new URL(wsUrl);
+    if (u.protocol !== "wss:" || u.host === loc.host) return null;
+    return `https://${u.host}/`;
+  } catch {
+    return null;
+  }
+}
+
 export class LedMapperClient {
   private sock: SocketLike | null = null;
   private readonly factory: SocketFactory;
   private readonly now: () => number;
   private readonly schedule: (fn: () => void, ms: number) => void;
   private readonly backoffMs: number[];
+  private readonly connectTimeoutMs: number;
   private readonly appVersion: string;
   private readonly clientName: string;
 
   private welcome_: WelcomeMessage | null = null;
   private closed = false;
   private backoffIdx = 0;
+  private attempt = 0;
 
   /** Outbound detection batches not yet written to an open socket. */
   private pendingBatches: DetectionRecord[][] = [];
@@ -104,6 +146,7 @@ export class LedMapperClient {
     this.now = opts.now ?? (() => performance.now());
     this.schedule = opts.schedule ?? ((fn, ms) => setTimeout(fn, ms));
     this.backoffMs = opts.backoffMs ?? [250, 500, 1000, 2000, 4000];
+    this.connectTimeoutMs = opts.connectTimeoutMs ?? 5000;
     this.appVersion = opts.appVersion ?? "0.1.0";
     this.clientName = opts.clientName ?? "android-web";
     this.clock = new ServerClock({ offsetMs: 0, rttMs: Infinity }, this.now);
@@ -120,10 +163,27 @@ export class LedMapperClient {
   /** Open the socket and complete the hello/welcome handshake. */
   connect(): Promise<WelcomeMessage> {
     this.closed = false;
+    this.events.onConnecting?.(++this.attempt, this.url);
     return new Promise((resolve, reject) => {
       let settled = false;
+      let welcomed = false;
       const sock = this.factory(this.url);
+      sock.binaryType = "arraybuffer"; // binary protobuf frames (proto-comms)
       this.sock = sock;
+      // Bounded open timeout: if this socket hasn't reached `welcome` in time,
+      // force it closed so onclose runs the (short) backoff retry instead of
+      // waiting out the browser's tens-of-seconds TCP timeout. Guarded by
+      // `welcomed` and scoped to this captured `sock`, so it's a no-op once
+      // connected or once a newer socket has replaced this one.
+      this.schedule(() => {
+        if (!welcomed) {
+          try {
+            sock.close();
+          } catch {
+            // already closing — fine
+          }
+        }
+      }, this.connectTimeoutMs);
       sock.onopen = () => {
         this.send({ type: "hello", client: this.clientName, appVersion: this.appVersion });
       };
@@ -133,6 +193,8 @@ export class LedMapperClient {
         if (msg.type === "welcome") {
           this.welcome_ = msg;
           this.backoffIdx = 0;
+          this.attempt = 0;
+          welcomed = true;
           this.flushBatches();
           this.events.onConnected?.(msg);
           if (!settled) {
@@ -246,12 +308,92 @@ export class LedMapperClient {
     return reply as ResultReadyMessage;
   }
 
+  /**
+   * Stop the capture WITHOUT a host solve (solver placement chose the
+   * phone): the server persists the session log and replies immediately;
+   * the caller solves locally and uploads via {@link submitMap}.
+   */
+  async stopMappingNoSolve(): Promise<MappingStoppedMessage> {
+    const reply = await this.request(
+      { type: "stop_mapping", solveOnHost: false },
+      "mapping_stopped",
+    );
+    return reply as MappingStoppedMessage;
+  }
+
+  /** Upload a phone-solved OutputMap; the server persists it and acks. */
+  async submitMap(map: OutputMap): Promise<ResultReadyMessage> {
+    return (await this.request({ type: "submit_map", map }, "result_ready")) as ResultReadyMessage;
+  }
+
+  /** Upload the extracted graph topology for an already-submitted map; the
+   * player persists it (keyed to map_id) for the pulse engine. */
+  async submitTopology(topology: Topology): Promise<ResultReadyMessage> {
+    return (await this.request(
+      { type: "submit_topology", topology },
+      "result_ready",
+    )) as ResultReadyMessage;
+  }
+
+  /** Start/stop a topology-aware playback effect (`"off"`, `"pulse"`, or
+   * `"flood"`); the player runs it against the stored topology. Reply: the
+   * effective state. */
+  async setPlayback(effect: string, params?: PlaybackParams): Promise<PlaybackStateMessage> {
+    return (await this.request(
+      { type: "set_playback", effect, ...(params ? { params } : {}) },
+      "playback_state",
+    )) as PlaybackStateMessage;
+  }
+
+  /** Pull the player's stored map+topology back off the device — streamed in
+   * chunks and decoded as a MappingBundle. Rejects if the player has nothing
+   * stored (server error `no_map`). `onProgress(done, total)` tracks assembly. */
+  async pullStoredMap(
+    onProgress?: (done: number, total: number) => void,
+    chunkLen = 1024,
+  ): Promise<MappingBundle> {
+    let assembled = new Uint8Array(0);
+    let total = 0;
+    for (;;) {
+      const reply = (await this.request(
+        { type: "get_stored_map", offset: assembled.length, maxLen: chunkLen },
+        "stored_map_chunk",
+      )) as StoredMapChunkMessage;
+      total = reply.totalLen;
+      const data = b64ToBytes(reply.data);
+      if (data.length === 0) break;
+      const next = new Uint8Array(assembled.length + data.length);
+      next.set(assembled);
+      next.set(data, assembled.length);
+      assembled = next;
+      onProgress?.(assembled.length, total);
+      if (assembled.length >= total) break;
+    }
+    if (total === 0 || assembled.length === 0) throw new Error("player has no stored map");
+    return decodeMappingBundle(assembled);
+  }
+
+  /** Host solver-benchmark score from welcome (ms); null while measuring. */
+  get hostSolverBenchMs(): number | null {
+    return this.welcome_?.solverBenchMs ?? null;
+  }
+
   async getStatus(): Promise<StatusMessage> {
     return (await this.request({ type: "get_status" }, "status")) as StatusMessage;
   }
 
   async getPattern(): Promise<PatternStateMessage> {
     return (await this.request({ type: "get_pattern" }, "pattern_state")) as PatternStateMessage;
+  }
+
+  /** Drain the player's rendered-frame timing log (monotonic-clock time of
+   * each mapping-pattern frame it pushed to the LEDs). Polled while tracing so
+   * the samples can be forwarded to the trace server for stutter diagnosis. */
+  async getFrameTiming(): Promise<FrameTimingMessage> {
+    return (await this.request(
+      { type: "get_frame_timing" },
+      "frame_timing",
+    )) as FrameTimingMessage;
   }
 
   /** Poll the continuous solver for the latest interim reconstruction. */
@@ -283,9 +425,11 @@ export class LedMapperClient {
   // -- internals ----------------------------------------------------------
 
   private parse(data: unknown): ServerMessage | null {
-    if (typeof data !== "string") return null;
+    // Binary protobuf frames (proto-comms). Anything else is not our wire.
     try {
-      return JSON.parse(data) as ServerMessage;
+      if (data instanceof ArrayBuffer) return decodeServer(new Uint8Array(data));
+      if (data instanceof Uint8Array) return decodeServer(data);
+      return null;
     } catch {
       return null;
     }
@@ -294,7 +438,7 @@ export class LedMapperClient {
   private send(msg: ClientMessage): boolean {
     if (this.sock === null || this.sock.readyState !== SOCKET_OPEN) return false;
     try {
-      this.sock.send(JSON.stringify(msg));
+      this.sock.send(encodeClient(msg));
       return true;
     } catch {
       return false;
@@ -368,4 +512,13 @@ export class LedMapperClient {
     for (const w of this.pingWaiters.values()) w.reject(err);
     this.pingWaiters.clear();
   }
+}
+
+/** Decode a base64 string (a proto `bytes` field over the JSON-parity boundary)
+ * to raw bytes. */
+function b64ToBytes(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
 }

@@ -11,7 +11,6 @@ from __future__ import annotations
 from typing import List, Tuple
 
 import numpy as np
-
 from reconstruction import look_at_quat
 
 

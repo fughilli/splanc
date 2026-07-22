@@ -3,13 +3,14 @@
 Recover the 3D position of every LED in an installed addressable-LED fixture
 by walking around it with a phone. A Raspberry Pi drives the LEDs through a
 known temporal blink code; the phone detects and decodes them per frame and
-the Pi solves per-LED positions, exporting a `(led_id → xyz)` map. Two
-capture paths exist: the original WebXR one (phone supplies camera poses;
-server triangulates against them) and the WebXR-FREE one (`?noxr=1`, or
-automatic fallback — any phone browser, no ARCore: getUserMedia camera +
-DeviceMotion IMU, and the server solves camera poses JOINTLY with the LED
-positions). The joint solver exists because ARCore's tracking is measurably
-degenerate in this project's lighting — see `docs/vio-exploration.md`.
+the Pi solves per-LED positions, exporting a `(led_id → xyz)` map. Capture
+works in any phone browser — getUserMedia camera + DeviceMotion IMU, no
+ARCore — and the solver estimates camera poses JOINTLY with the LED
+positions (visual-inertial bundle adjustment). The joint solver exists
+because ARCore's tracking is measurably degenerate in this project's
+lighting — see `docs/vio-exploration.md`. (The original WebXR capture path
+was removed — M6 of the ESP32 plan — after the joint path proved better in
+exactly the conditions that matter.)
 
 The full design — goals, architecture, module breakdown, data contracts,
 algorithms, and phased build plan — lives in
@@ -20,11 +21,32 @@ the project up; the design doc is the durable spec.
 ## State of progress (2026-07-09)
 
 **Everything below is merged to `main` (PR #1). M10, M3, M9, M2, M1, the web
-stack M5–M8 (+ virtual LED wall), and the WebXR-free visual-inertial capture
+stack M5–M8 (+ virtual LED wall), and the visual-inertial capture
 path are landed and green. M4 is Nix-verified** (config evaluates + image
 derivation builds; final image not realized in-sandbox and not booted on
 hardware). `bazelisk build //...` and `bazelisk test //...` both pass
-(**26 test targets**). The Nix blocker that stopped the previous session is **cleared** —
+(**30 test targets**).
+
+Cleanup branches in flight (stacked for sequential review):
+`ci-presubmits` (GitHub Actions + pre-commit suite — see
+`.github/workflows/test.yaml`, `.pre-commit-config.yaml`) →
+`proto-comms` (host↔phone WebSocket now carries **binary protobuf**
+frames — `shared/protocol/proto/ledmapper.proto`, boundary converters
+`pi/server/server/proto_wire.py` / `web/src/net/proto.ts`, cross-language
+golden-frame test) → `rust-wasm-solver` (**the VIO solver rewritten in
+Rust**, `solver/`: native subprocess on the Pi + wasm in a phone Web
+Worker, cross-language parity test vs the Python reference, and
+**init-time solver placement** — both sides benchmark the same canned
+solve and the phone keeps the final solve unless it is decisively slower;
+see `solver/README.md`) → `hue-only-signaling` (**the intensity "gray"
+carrier is REMOVED** — its dark frames made blobs disappear and broke
+cross-frame track association; hue is the only carrier, with an
+**SNR-adaptive symbol alphabet**: 2 colors (red/blue) when chroma is
+marginal, 4 (blue/magenta/red/yellow, Gray-ordered bit pairs so
+adjacent-hue misreads stay single-bit-correctable) when it's good —
+a 64-LED cycle drops from 14 to 8 windows; negotiated at start from
+scene stats and renegotiated mid-capture from the decoder's measured
+symbol-margin EMA). The Nix blocker that stopped the previous session is **cleared** —
 the container was rebuilt with the Nix overlay, so `nix` works and the host is
 natively `aarch64-linux` (Pi images build without cross-emulation).
 
@@ -39,7 +61,7 @@ natively `aarch64-linux` (Pi images build without cross-emulation).
 **The post-restart first build is no longer a slow full rebuild.** The
 container's root fs (`~/.cache`) is wiped on every `claude-container` restart,
 which is why the first build used to take ~1.8 h re-downloading every external
-repo over a flaky network. Fixed by persisting Bazel's *content-addressable*
+repo over a flaky network. Fixed by persisting Bazel's _content-addressable_
 caches on the `/workspace` bind mount (all `.gitignore`d dot-folders):
 
 - **`.bazelrc`** → `--repository_cache=.bazel-repo-cache` (downloaded external
@@ -55,6 +77,14 @@ bazelisk build //...                    # rebuilds from the persisted caches, no
 bazelisk run //tools/sim_studio:serve   # binds 0.0.0.0:8090 by default
 # → open http://localhost:8090 on the host
 ```
+
+**Prerequisite: `nix` on PATH.** `bazel test //...` realizes nixpkgs-provided
+build tools (the HTML minifier for firmware-baked pages; the firmware
+toolchains) and the M4 provisioning targets shell out to the `nix` CLI, so Nix
+is a system requirement (flakes enabled). The claude-container ships it; CI
+installs it. Fetches are lazy, so a narrow `bazel build //some:target` that
+touches no nix-backed target still works without it — but the repo as a whole
+requires Nix.
 
 **Do not try to relocate the Bazel output base onto `/workspace`.** That mount
 is a **case-insensitive macOS filesystem**; an output base's extracted
@@ -148,12 +178,13 @@ phase-5 side-by-side gate.
   corrected, doubles detected and rejected (never miscorrected; d=4 is NOT
   2-bit correction — deliberate, see docs/decisions.md). Cost: 64 LEDs
   9→14-frame cycles, 1024 LEDs 13→18. Canonical `ledmapper_protocol/fec.py`
-  + TS mirror `web/src/code/fec.ts`, pinned by a new Python-generated golden
-  (`//pi/led_driver:gen_golden`); `CodeParams.fec` field ("none"|"secded",
-  server default secded — legacy "none" still decodes); decoder stats gained
-  `correctedCycles`/`rejectedFec`; exhaustive 1-/2-flip tests in both
-  languages + adversarial corrupted-window pipeline tests. 24 test targets
-  green. (Old captures/sessions replay fine — detections are post-decode.)
+
+  - TS mirror `web/src/code/fec.ts`, pinned by a new Python-generated golden
+    (`//pi/led_driver:gen_golden`); `CodeParams.fec` field ("none"|"secded",
+    server default secded — legacy "none" still decodes); decoder stats gained
+    `correctedCycles`/`rejectedFec`; exhaustive 1-/2-flip tests in both
+    languages + adversarial corrupted-window pipeline tests. 24 test targets
+    green. (Old captures/sessions replay fine — detections are post-decode.)
 
 - **Varying-light robustness: client-negotiated capture config + exposure
   telemetry.** The dark-room gray-hue failure (all decodes died on the green
@@ -265,7 +296,7 @@ phase-5 side-by-side gate.
   the orthogonal axis. Static-hue clutter self-normalizes to neutral and
   fails sync (rejected for free). Alignment keys on the global GREEN census
   instead of the brightness dip. Enable server-side: `bazelisk run
-  //web:serve -- --encoding gray-hue` — the wall and the phone decoder both
+//web:serve -- --encoding gray-hue` — the wall and the phone decoder both
   follow `codeParams.encoding`. Synthetic pipeline test: 64/64 ids under a
   strong color cast, zero mis-ids, clutter rejected. (M1 driver renders
   hue frames on RGB strips — TODO at bench time; wall-only today.)
@@ -378,7 +409,8 @@ phase-5 side-by-side gate.
 ### Done (earlier — 2026-07-02)
 
 - **Web stack M5–M8 is built and green** (`web/`, Vite + TS, no runtime npm
-  deps): M5 `WebXRCaptureSource` (immersive-ar + camera-access + dom-overlay,
+  deps — true until the proto-comms branch added `@bufbuild/protobuf`):
+  M5 `WebXRCaptureSource` (immersive-ar + camera-access + dom-overlay,
   intrinsics from the projection matrix, unit-tested), M6 detect/track/decode
   (GPU threshold pass → CPU connected components → coasting NN tracker →
   self-clocking Gray decoder with sync-delimiter ms-alignment), M7 WebSocket
@@ -433,7 +465,7 @@ phase-5 side-by-side gate.
   keys + deploy_live confirmed, and it fixed 3 `bazel run`-path bugs. Full
   status is in `pi/provisioning/README.md`.
 
-### Done (earlier sessions)
+### Done (earliest sessions)
 
 - **M10 — `shared/protocol` is green.** `bazelisk test //shared/protocol:roundtrip_test`
   passes (24 tests). Fixes applied:
@@ -473,9 +505,9 @@ phase-5 side-by-side gate.
 - **M4 — `pi/provisioning` authored** (parallel subagent track). Bazel +
   NixOS workflow: `image_sd`, `deploy_live`, `keys` targets, flake + modules,
   SSH deploy-key management. `MODULE.bazel` gained
-  `bazel_dep(rules_nixpkgs_core, 0.13.0)` (registration-only — no nix eval at
-  fetch time, so it does not break `bazel build //...`). _Now Nix-verified — see
-  the M4 section below._
+  `bazel_dep(rules_nixpkgs_core, 0.13.0)`. (Nix is now a system requirement for
+  the repo — see the build prerequisites above.) _Nix-verified — see the M4
+  section below._
 - **`.claude-container-overlay` added** to install Nix (flakes) into the
   container image on the next launch — see `.claude/skills/container-overlay`.
 
@@ -561,45 +593,44 @@ the concrete next-step queue.
       reconstruction trigger, map serving. Unit + real-server integration test
       green. The server side of §9 Phase 0.
 - [~] **M4 — Nix provisioning.** **Nix-verified**: flake + NixOS config
-      evaluate, option paths correct, SD-image derivation builds (kernel compile
-      is resource-bound — final image not realized in-sandbox), keys +
-      `deploy_live` arg handling confirmed; 3 `bazel run`-path bugs fixed.
-      **Remaining:** realize the image on a bigger host + real Pi first-boot /
-      live deploy (needs hardware). See `pi/provisioning/README.md`.
+  evaluate, option paths correct, SD-image derivation builds (kernel compile
+  is resource-bound — final image not realized in-sandbox), keys +
+  `deploy_live` arg handling confirmed; 3 `bazel run`-path bugs fixed.
+  **Remaining:** realize the image on a bigger host + real Pi first-boot /
+  live deploy (needs hardware). See `pi/provisioning/README.md`.
 - [ ] **QEMU-emulated Pi for hardware-free E2E.** Stand up an emulated
       Raspberry Pi (à la
-      https://azeria-labs.com/emulate-raspberry-pi-with-qemu/) so the
+      <https://azeria-labs.com/emulate-raspberry-pi-with-qemu/>) so the
       deployment workflow (M4) and the embedded app (M1 driver + M2 server)
       can be exercised end-to-end in CI with no physical board. The linked
       guide uses 32-bit Raspbian on `qemu-system-arm -M versatilepb` with a
       `qemu-rpi-kernel`; adapt to our stack: our M4 image is a **64-bit NixOS
       aarch64** build, so use `qemu-system-aarch64` (`-M virt` or a `raspi*`
       machine), booting the SD image / extracted kernel+dtb, with
-      `-netdev user,hostfwd=tcp::5022-:22` for SSH. Target shape:
-      - `bazel run //pi/provisioning:emulate` — boot the built image in QEMU;
-      - point `deploy_live` at `ssh://…:5022` to prove the deploy key trust
-        and `nixos-rebuild switch --target-host` round-trip against a live
-        (virtual) system;
-      - run M1 (SPI driver — stub/loopback the SPI device under emulation)
-        and M2 (server + clock sync + a recorded detection session →
-        reconstruct) inside the guest as the embedded smoke test.
+      `-netdev user,hostfwd=tcp::5022-:22` for SSH. Target shape: `bazel run
+//pi/provisioning:emulate` boots the built image in QEMU; `deploy_live`
+      pointed at `ssh://…:5022` proves the deploy-key trust and the
+      `nixos-rebuild switch --target-host` round-trip against a live (virtual)
+      system; M1 (SPI driver — stub/loopback the SPI device under emulation)
+      and M2 (server + clock sync + a recorded detection session →
+      reconstruct) run inside the guest as the embedded smoke test.
       No longer Nix-blocked (config evaluates), and **M1/M2 now exist** to run
       inside the guest — the gating dependency is now realizing the SD image on a
       host with enough RAM/disk (the in-sandbox kernel compile OOM'd). A generic
       QEMU boot harness can be scaffolded independently first. This becomes the
       cheap gate that precedes "End-to-end on bench" (Phase 4).
 - [~] **Phase 0 app skeleton.** M2 server + the full web app (M5–M8) are
-      **built**; `bazelisk run //web:serve` serves it over HTTPS with clock
-      sync round-tripping. Remaining: confirm on a real phone (WebXR opens,
-      offset stable) — §9 Phase 0 acceptance is a device test.
+  **built**; `bazelisk run //web:serve` serves it over HTTPS with clock
+  sync round-tripping. Remaining: confirm on a real phone (WebXR opens,
+  offset stable) — §9 Phase 0 acceptance is a device test.
 - [~] **M1 — LED driver.** SPI Gray-code cycle + M2 control socket **done**
-      and unit-tested (recording sink, injected timing). Remaining: real-strip
-      cadence verification on a bench (§9 Phase 1 acceptance needs a logic
-      analyzer) and RT scheduling via the M4 systemd unit.
+  and unit-tested (recording sink, injected timing). Remaining: real-strip
+  cadence verification on a bench (§9 Phase 1 acceptance needs a logic
+  analyzer) and RT scheduling via the M4 systemd unit.
 - [~] **M6 — CV pipeline.** Track/decode **done** and validated against a
-      TS-synthetic blob stream (Phase-3-style: ≥98 % decode, latency + drop
-      robustness). Remaining: GPU detect stage on-device; optionally M9 frame
-      mode to exercise it synthetically. Acceptance: §9 Phase 3.
+  TS-synthetic blob stream (Phase-3-style: ≥98 % decode, latency + drop
+  robustness). Remaining: GPU detect stage on-device; optionally M9 frame
+  mode to exercise it synthetically. Acceptance: §9 Phase 3.
 - [ ] **Hardware-free E2E with a phone: virtual LED wall.** Built — laptop
       fullscreen wall (`/wall.html`) + phone capture against it; see
       `web/README.md` for the runbook. This is now the cheapest full-pipeline

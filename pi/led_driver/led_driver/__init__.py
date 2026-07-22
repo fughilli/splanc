@@ -1,21 +1,36 @@
 """LED pattern driver (M1, design doc §6 M1 / §8.1).
 
-Drives an SK9822/APA102 strip over hardware SPI through a continuous Gray-code
-cycle with an on/off sync delimiter, and exposes a local control socket so M2 can
+Drives an SK9822/APA102 strip over hardware SPI through a continuous hue-code
+cycle (constant brightness, per-LED colors carry the code) with a
+white/green sync delimiter, and exposes a local control socket so M2 can
 ``start``/``stop`` the pattern and read the pattern clock.
 
 Public surface:
 
     from led_driver import LedDriver, ControlServer, ControlClient
-    from led_driver import frame_plan, frame_bytes, RecordingSink, SpidevSink
+    from led_driver import color_plan, frame_bytes_colors, RecordingSink, SpidevSink
 """
 
 from __future__ import annotations
 
 from .control import ControlClient, ControlServer, handle_line
 from .driver import MODE_CYCLE, MODE_OFF, MODE_SINGLE, LedDriver
-from .graycode import decode_gray, default_code_params, frame_plan, gray, gray_bit
-from .spi import RecordingSink, SpidevSink, SpiSink, buffer_len, frame_bytes
+from .graycode import (
+    color_for_frame,
+    color_plan,
+    decode_gray,
+    default_code_params,
+    gray,
+    symbol_at,
+)
+from .spi import (
+    RecordingSink,
+    SpidevSink,
+    SpiSink,
+    buffer_len,
+    frame_bytes,
+    frame_bytes_colors,
+)
 
 __all__ = [
     "LedDriver",
@@ -25,11 +40,13 @@ __all__ = [
     "ControlServer",
     "ControlClient",
     "handle_line",
-    "frame_plan",
+    "color_plan",
+    "color_for_frame",
+    "symbol_at",
     "frame_bytes",
+    "frame_bytes_colors",
     "buffer_len",
     "gray",
-    "gray_bit",
     "decode_gray",
     "default_code_params",
     "SpiSink",

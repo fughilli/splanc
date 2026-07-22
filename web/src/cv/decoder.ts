@@ -1,60 +1,67 @@
 /**
- * M6 decode stage: turn each track's per-frame on/off history into an LED id
+ * M6 decode stage: turn each track's per-frame COLOR history into an LED id
  * once per completed cycle, and emit `DetectionRecord`s (§7.4).
  *
- * Frame times are mapped onto the pattern clock via the synced server clock
- * (§8.2), then corrected by a **self-clocking alignment** estimated from the
- * data itself (§8.1): the ALL_ON→ALL_OFF sync delimiter is visible as a
- * global brightness spike/dip, so the decoder scans for the intra-cycle shift
- * that best aligns observed global on-counts with the delimiter. This absorbs
- * constant camera→rAF latency and residual clock-sync error, which would
- * otherwise smear every bit window.
+ * The hue carrier keeps every LED lit every frame — the code is entirely in
+ * color, so tracks never lose their blobs (the reason the old intensity
+ * carrier was removed). Frame times are mapped onto the pattern clock via
+ * the synced server clock (§8.2), then corrected by a **self-clocking
+ * alignment** estimated from the data itself (§8.1): the ALL_OFF delimiter
+ * renders saturated GREEN, so the decoder scans for the intra-cycle shift
+ * that best concentrates the global green-blob census in that window. This
+ * absorbs constant camera→rAF latency and residual clock-sync error, which
+ * would otherwise smear every symbol window.
  *
  * Per cycle and per track: samples are bucketed into the cycle's frame
- * windows and each window votes on/off by CENTRALITY-WEIGHTED majority: a
- * sample's weight grows with its distance from the window edges (zero inside
- * the guard band), so samples near a bit transition barely count — tolerating
- * rolling shutter and residual misalignment — without starving windows. A
- * hard, wide guard did starve them: at 30 fps against 100 ms bits, the
- * 33 ms-vs-100 ms phase alias left some window empty for multi-cycle
- * stretches, rejecting every track's cycle. The delimiter is verified and the
- * data bits Gray-decode to an id (codewords carry id+1 — see code/gray.ts).
- * Confidence comes from the worst window's weighted margin. One
- * DetectionRecord per (track, cycle), anchored at the track's measured
- * position during the ALL_ON frame.
+ * windows by CENTRALITY weight (near-transition samples barely vote — see
+ * windowGuardFrac), the mean window color is normalized by the track's own
+ * ALL_ON (white) window — cancelling white balance / color correction
+ * exactly, and making static-hue clutter read neutral (failing the green
+ * sync) — and each data window is classified to the NEAREST palette symbol.
+ * The per-window margin is the normalized gap between the best and
+ * runner-up palette match; a rolling margin EMA is exported as the chroma
+ * SNR signal the symbol-alphabet negotiation keys on. Symbols Gray-decode
+ * to an id through the SEC-DED FEC (codewords carry id+1 — see
+ * code/gray.ts). One DetectionRecord per (track, cycle), anchored at the
+ * track's measured position during the ALL_ON frame.
  */
 
 import type { CodeParams, DetectionRecord } from "@ledmapper/protocol";
-import { decodeCycleEx, FRAME_ALL_OFF, FRAME_ALL_ON } from "../code/gray";
+import {
+  dataFrames,
+  decodeCycleSymbols,
+  FRAME_ALL_OFF,
+  FRAME_ALL_ON,
+  SYMBOL_COLORS,
+} from "../code/gray";
 import { cycleIndexAt, cycleMs, frameFractionAt, frameIndexAt } from "../code/timing";
 import type { Track, TrackSample } from "./tracker";
 
 export interface DecoderOptions {
   /**
-   * Fraction of each bit window with ZERO weight at BOTH edges (transition
-   * guard). Above it, sample weight ramps with distance from the edge.
-   * Keep below one camera-frame interval / bitPeriod (≈0.33 at 30 fps,
-   * 100 ms bits) or windows can end up with no weighted samples.
+   * Fraction of each symbol window with ZERO weight at BOTH edges
+   * (transition guard). Above it, sample weight ramps with distance from
+   * the edge. Keep below one camera-frame interval / bitPeriod (≈0.33 at
+   * 30 fps, 100 ms windows) or windows can end up with no weighted samples.
    */
   windowGuardFrac?: number;
   /** Max data windows with no usable sample before the cycle is discarded. */
   maxMissingWindows?: number;
   /** EMA factor for the alignment-shift estimate. */
   alignBlend?: number;
-  /** Alignment search resolution as a fraction of the bit period. */
+  /** Alignment search resolution as a fraction of the window period. */
   alignStepFrac?: number;
   /**
    * Reject decodes whose worst window margin is below this. Marginal cycles
-   * (50/50 windows → confidence 0) are exactly what exposure pumping and
-   * reflections produce in bulk — feeding them to the solver poisons it.
+   * are exactly what washed-out chroma and reflections produce in bulk —
+   * feeding them to the solver poisons it.
    */
   minConfidence?: number;
   /**
-   * Minimum ON samples (weighted-in, in windows decoded as lit) for a cycle
-   * to count. Margin measures agreement, not EVIDENCE: one sample per window
-   * decodes with margin 1.0, which is how sparse noise chains stitched by
-   * the coasting tracker forge clean codewords. A real LED is lit for
-   * ALL_ON plus ≥1 data frame ≈ 6 samples/cycle at 30 fps and 100 ms bits.
+   * Minimum matched samples (weighted-in) across the cycle's windows for a
+   * cycle to count. Margin measures agreement, not EVIDENCE: one sample per
+   * window decodes with margin 1.0, which is how sparse noise chains
+   * stitched by the coasting tracker forge clean codewords.
    */
   minOnSamples?: number;
 }
@@ -66,7 +73,7 @@ export interface DecodeStats {
   uniqueIds: Set<number>;
   /** Current alignment shift estimate, ms. */
   alignShiftMs: number;
-  /** Cycles rejected: bad sync delimiter. */
+  /** Cycles rejected: bad sync delimiter (white ref / green window). */
   rejectedSync: number;
   /** Cycles rejected: too many empty windows. */
   rejectedGaps: number;
@@ -74,23 +81,34 @@ export interface DecodeStats {
   rejectedRange: number;
   /** Cycles rejected: SEC-DED detected an uncorrectable (double) error. */
   rejectedFec: number;
-  /** Cycles where SEC-DED corrected a single misread bit window. */
+  /** Cycles where SEC-DED corrected a single misread bit. */
   correctedCycles: number;
   /** Cycles rejected: confidence below minConfidence. */
   rejectedLowConf: number;
-  /** Cycles rejected: too few ON samples backing the decoded word. */
+  /** Cycles rejected: too few samples backing the decoded word. */
   rejectedSupport: number;
   /** Records rejected: no track sample near the anchor's exposure time, so
    * the pose pairing would carry motion × latency bias (frame-entry tracks). */
   rejectedPoseGap: number;
   /** Records dropped: another track decoded the same id this cycle, brighter. */
   rejectedDuplicate: number;
+  /**
+   * EMA of per-cycle worst-window symbol margins over sync-valid cycles
+   * (including ones later rejected for low confidence) — the measured
+   * chroma SNR. The symbol-alphabet renegotiation reads this: chronically
+   * low margins downgrade 4 → 2 symbols; high margins in a bright scene
+   * upgrade. Null until the first sync-valid cycle.
+   */
+  marginEma: number | null;
 }
 
 interface GlobalSample {
   tServerMs: number;
-  onCount: number;
+  greenCount: number;
 }
+
+/** EMA factor for the margin statistic (~10 cycles of memory). */
+const MARGIN_EMA_BLEND = 0.2;
 
 export class Decoder {
   private readonly guard: number;
@@ -99,8 +117,7 @@ export class Decoder {
   private readonly alignStep: number;
   private readonly minConfidence: number;
   private readonly minOnSamples: number;
-  /** gray-hue mode: bits carried by color relative to the white sync frame. */
-  private readonly hue: boolean;
+  private readonly nDataFrames: number;
 
   private lastCompletedCycle: number | null = null;
   private globalSamples: GlobalSample[] = [];
@@ -121,6 +138,7 @@ export class Decoder {
     rejectedSupport: 0,
     rejectedPoseGap: 0,
     rejectedDuplicate: 0,
+    marginEma: null,
   };
 
   constructor(
@@ -135,28 +153,19 @@ export class Decoder {
     this.alignStep = (opts.alignStepFrac ?? 0.1) * params.bitPeriodMs;
     this.minConfidence = opts.minConfidence ?? 0.4;
     this.minOnSamples = opts.minOnSamples ?? 3;
-    this.hue = params.encoding === "gray-hue";
+    this.nDataFrames = dataFrames(params);
   }
 
   /**
    * Feed one frame's global result (after tracker.step) and decode any cycle
    * that has just completed. Returns the records decoded from that cycle.
    *
-   * `chromaSyncCount` (gray-hue mode): how many of this frame's blobs are
-   * saturated GREEN — the chroma-domain delimiter signal the self-clocking
-   * alignment keys on when there is no global brightness dip to find.
+   * `chromaSyncCount`: how many of this frame's blobs are saturated GREEN —
+   * the delimiter signal the self-clocking alignment keys on.
    */
-  step(
-    tracks: readonly Track[],
-    matchedCount: number,
-    tLocalMs: number,
-    chromaSyncCount = 0,
-  ): DetectionRecord[] {
+  step(tracks: readonly Track[], tLocalMs: number, chromaSyncCount: number): DetectionRecord[] {
     const tServer = this.toServerTime(tLocalMs);
-    this.globalSamples.push({
-      tServerMs: tServer,
-      onCount: this.hue ? chromaSyncCount : matchedCount,
-    });
+    this.globalSamples.push({ tServerMs: tServer, greenCount: chromaSyncCount });
 
     const cycle = cycleIndexAt(tServer - this.alignShift, this.epochMs, this.params);
     if (this.lastCompletedCycle === null) {
@@ -176,9 +185,9 @@ export class Decoder {
 
     // Decode every track, then keep at most ONE record per LED id for this
     // cycle: the physical LED and any reflection of it blink the same code,
-    // so same-id collisions are expected in shiny/dark scenes — the direct
+    // so same-id collisions are expected in shiny scenes — the direct
     // sighting is (almost always) the brightest. Without this, reflections
-    // and exposure-pump artifacts outvote the real LED in the solver.
+    // outvote the real LED in the solver.
     const bestById = new Map<number, { rec: DetectionRecord; intensity: number }>();
     let decoded = 0;
     for (const track of tracks) {
@@ -221,8 +230,9 @@ export class Decoder {
   // -- internals ----------------------------------------------------------
 
   /**
-   * Self-clocking alignment (§8.1): find the shift that maximizes global
-   * on-count in the ALL_ON window minus the ALL_OFF window.
+   * Self-clocking alignment (§8.1): find the shift that concentrates the
+   * global green census in the ALL_OFF window (and out of ALL_ON, which is
+   * white).
    */
   private updateAlignment(): void {
     const p = this.params;
@@ -238,31 +248,28 @@ export class Decoder {
       this.globalSamples[nSamples - 1]!.tServerMs - this.globalSamples[0]!.tServerMs;
     if (span < 1.5 * cyc) return;
     const half = cyc / 2;
-    const shifts: number[] = [];
     const scores: number[] = [];
     for (let shift = -half; shift < half; shift += this.alignStep) {
-      let onSum = 0;
-      let onN = 0;
       let offSum = 0;
       let offN = 0;
+      let onSum = 0;
+      let onN = 0;
       for (const s of this.globalSamples) {
         const idx = frameIndexAt(s.tServerMs - shift, this.epochMs, p);
         const frac = frameFractionAt(s.tServerMs - shift, this.epochMs, p);
         if (frac < this.guard || frac > 1 - this.guard) continue;
-        if (idx === 0) {
-          onSum += s.onCount;
-          onN++;
-        } else if (idx === 1) {
-          offSum += s.onCount;
+        if (idx === FRAME_ALL_OFF) {
+          offSum += s.greenCount;
           offN++;
+        } else if (idx === FRAME_ALL_ON) {
+          onSum += s.greenCount;
+          onN++;
         }
       }
-      shifts.push(shift);
-      // gray: the delimiter is bright-then-dark (on-count high in ALL_ON, low
-      // in ALL_OFF). gray-hue: the fed signal is the GREEN census, maximal in
-      // ALL_OFF and near-zero in ALL_ON — same estimator, flipped sign.
-      const contrast = onN === 0 || offN === 0 ? null : onSum / onN - offSum / offN;
-      scores.push(contrast === null ? -Infinity : this.hue ? -contrast : contrast);
+      // The delimiter signal: green census maximal in ALL_OFF, near-zero in
+      // the white ALL_ON window right before it.
+      const contrast = onN === 0 || offN === 0 ? null : offSum / offN - onSum / onN;
+      scores.push(contrast === null ? -Infinity : contrast);
     }
     const bestScore = Math.max(...scores);
     if (!Number.isFinite(bestScore) || bestScore <= 0) return; // no delimiter signal yet
@@ -315,7 +322,6 @@ export class Decoder {
     // center, so near-transition samples barely vote but never starve a
     // window that has any mid-window sample.
     const windowOnW: number[] = new Array(p.cycleFrames).fill(0);
-    const windowW: number[] = new Array(p.cycleFrames).fill(0);
     const windowOnN: number[] = new Array(p.cycleFrames).fill(0);
     const windowR: number[] = new Array(p.cycleFrames).fill(0);
     const windowG: number[] = new Array(p.cycleFrames).fill(0);
@@ -330,7 +336,6 @@ export class Decoder {
       const w = Math.min(frac, 1 - frac) - this.guard;
       if (w <= 0) continue;
       const idx = frameIndexAt(tAligned, this.epochMs, p);
-      windowW[idx]! += w;
       if (s.on) {
         windowOnW[idx]! += w;
         windowOnN[idx]!++;
@@ -348,82 +353,88 @@ export class Decoder {
       }
     }
 
+    // The track's own ALL_ON (white) window is the color reference:
+    // channel-wise division cancels white balance / color correction
+    // exactly, and a static-hue blob (lamp, reflection) normalizes to
+    // neutral in every window — failing the green sync below.
+    if (windowOnW[FRAME_ALL_ON] === 0) {
+      this.stats.rejectedGaps++;
+      return null;
+    }
+    const refW = windowOnW[FRAME_ALL_ON]!;
+    const wr = windowR[FRAME_ALL_ON]! / refW;
+    const wg = windowG[FRAME_ALL_ON]! / refW;
+    const wb = windowB[FRAME_ALL_ON]! / refW;
+    if (Math.min(wr, wg, wb) < 0.02) {
+      this.stats.rejectedSync++; // reference too dark/colored to normalize
+      return null;
+    }
+
+    const palette = SYMBOL_COLORS[p.symbols]!;
+    // Normalize margins so a PERFECT symbol read scores 1.0 whatever the
+    // alphabet: the best-vs-runner-up similarity gap is at most
+    // minPairDist/3 (L1 distance between the two closest palette targets).
+    const minPairDist = p.symbols === 2 ? 2 : 1;
+
     let missing = 0;
     let minMargin = 1;
-    const frames: boolean[] = new Array(p.cycleFrames);
-    if (this.hue) {
-      // gray-hue: every LED is lit every frame; bits live in COLOR measured
-      // RELATIVE to this track's own ALL_ON (white) window. Channel-wise
-      // division by the white reference cancels white balance/color
-      // correction exactly, and a static-hue blob (lamp, reflection)
-      // normalizes to neutral in every window — failing the green sync.
-      if (windowOnW[FRAME_ALL_ON] === 0) {
-        this.stats.rejectedGaps++;
-        return null;
+    const symbols: number[] = new Array(this.nDataFrames).fill(0);
+    for (let k = 1; k < p.cycleFrames; k++) {
+      if (windowOnW[k] === 0) {
+        missing++;
+        continue;
       }
-      const refW = windowOnW[FRAME_ALL_ON]!;
-      const wr = windowR[FRAME_ALL_ON]! / refW;
-      const wg = windowG[FRAME_ALL_ON]! / refW;
-      const wb = windowB[FRAME_ALL_ON]! / refW;
-      if (Math.min(wr, wg, wb) < 0.02) {
-        this.stats.rejectedSync++; // reference too dark/colored to normalize
-        return null;
-      }
-      frames[FRAME_ALL_ON] = true;
-      frames[FRAME_ALL_OFF] = false;
-      for (let k = 0; k < p.cycleFrames; k++) {
-        if (k === FRAME_ALL_ON) continue;
-        if (windowOnW[k] === 0) {
-          missing++;
-          if (k >= 2) frames[k] = false;
-          continue;
+      const rr = windowR[k]! / windowOnW[k]! / wr;
+      const gg = windowG[k]! / windowOnW[k]! / wg;
+      const bb = windowB[k]! / windowOnW[k]! / wb;
+      const mx = Math.max(rr, gg, bb, 1e-6);
+      if (k === FRAME_ALL_OFF) {
+        // Chroma sync: the delimiter window must read GREEN.
+        const gScore = (gg - (rr + bb) / 2) / mx;
+        if (gScore < 0.25) {
+          this.stats.rejectedSync++;
+          return null;
         }
-        const rr = windowR[k]! / windowOnW[k]! / wr;
-        const gg = windowG[k]! / windowOnW[k]! / wg;
-        const bb = windowB[k]! / windowOnW[k]! / wb;
-        const mx = Math.max(rr, gg, bb, 1e-6);
-        if (k === FRAME_ALL_OFF) {
-          // Chroma sync: the delimiter window must read GREEN.
-          const gScore = (gg - (rr + bb) / 2) / mx;
-          if (gScore < 0.25) {
-            this.stats.rejectedSync++;
-            return null;
+        minMargin = Math.min(minMargin, gScore);
+      } else {
+        // Nearest-palette symbol classification on the normalized color.
+        const o: [number, number, number] = [rr / mx, gg / mx, bb / mx];
+        let best = -Infinity;
+        let second = -Infinity;
+        let bestSym = 0;
+        for (let v = 0; v < palette.length; v++) {
+          const t = palette[v]!;
+          const sim =
+            1 -
+            (Math.abs(o[0] - t[0]) + Math.abs(o[1] - t[1]) + Math.abs(o[2] - t[2])) / 3;
+          if (sim > best) {
+            second = best;
+            best = sim;
+            bestSym = v;
+          } else if (sim > second) {
+            second = sim;
           }
-          minMargin = Math.min(minMargin, gScore);
-        } else {
-          // Bit axis: red (+) vs blue (−), orthogonal to the sync axis.
-          const opp = (rr - (gg + bb) / 2) / mx;
-          frames[k] = opp > 0;
-          minMargin = Math.min(minMargin, Math.abs(opp));
         }
+        symbols[k - 2] = bestSym;
+        const margin = ((best - second) * 3) / minPairDist;
+        minMargin = Math.min(minMargin, margin);
       }
-      if (missing > this.maxMissing) {
-        this.stats.rejectedGaps++;
-        return null;
-      }
-    } else {
-      for (let k = 0; k < p.cycleFrames; k++) {
-        if (windowW[k] === 0) {
-          missing++;
-          frames[k] = false;
-          continue;
-        }
-        const onFrac = windowOnW[k]! / windowW[k]!;
-        frames[k] = onFrac >= 0.5;
-        minMargin = Math.min(minMargin, Math.abs(onFrac - 0.5) * 2);
-      }
-      if (missing > this.maxMissing) {
-        this.stats.rejectedGaps++;
-        return null;
-      }
-      if (!frames[0] || frames[1]) {
-        this.stats.rejectedSync++;
-        return null;
-      }
+    }
+    if (missing > this.maxMissing) {
+      this.stats.rejectedGaps++;
+      return null;
     }
     if (anchorSample === null) return null;
 
-    const dec = decodeCycleEx(frames, p);
+    // Chroma-SNR telemetry: every sync-valid cycle's worst margin feeds the
+    // EMA the symbol-alphabet renegotiation reads — including cycles the
+    // confidence gate is about to reject (those ARE the low-SNR signal).
+    this.stats.marginEma =
+      this.stats.marginEma === null
+        ? minMargin
+        : this.stats.marginEma + MARGIN_EMA_BLEND * (minMargin - this.stats.marginEma);
+
+    const dec = decodeCycleSymbols(symbols, p);
     if (dec.id === null) {
       if (dec.uncorrectable) this.stats.rejectedFec++;
       else this.stats.rejectedRange++;
@@ -431,7 +442,7 @@ export class Decoder {
     }
     const ledId = dec.id;
     // A corrected cycle means one window was decisively WRONG — the d=4 code
-    // vouches for the fix (unless ≥3 windows lied), so the record stands;
+    // vouches for the fix (unless ≥3 bits lied), so the record stands;
     // count it so on-device sessions expose their real window-error rate.
     if (dec.corrected) this.stats.correctedCycles++;
 
@@ -443,13 +454,10 @@ export class Decoder {
 
     // Evidence gate: margin says the windows AGREE, support says how many
     // real sightings back the decode. One-sample windows decode with margin
-    // 1.0, which is how noise chains forge codewords. gray: count sightings
-    // in the LIT windows (dark windows legitimately have none); gray-hue:
-    // every window is lit, count them all.
+    // 1.0, which is how noise chains forge codewords. Every window is lit
+    // under the hue carrier, so count all matched samples.
     let support = 0;
-    for (let k = 0; k < p.cycleFrames; k++) {
-      if (this.hue || frames[k]) support += windowOnN[k]!;
-    }
+    for (let k = 0; k < p.cycleFrames; k++) support += windowOnN[k]!;
     if (support < this.minOnSamples) {
       this.stats.rejectedSupport++;
       return null;

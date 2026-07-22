@@ -28,7 +28,8 @@
  * owns the timers and the wire messages.
  */
 
-import type { Encoding, ExposureStats } from "@ledmapper/protocol";
+import type { ExposureStats } from "@ledmapper/protocol";
+import type { Blob } from "./types";
 
 /** Scene luminance statistics from one unthresholded downsampled frame. */
 export interface SceneStats {
@@ -38,24 +39,75 @@ export interface SceneStats {
   clipFrac: number;
 }
 
+/** Per-frame blob-population signals for the LED brightness servo — what the
+ * detector can see about wash-out without any ground truth. */
+export interface BlobPopulation {
+  /** Fraction of blobs that came out of an oversized bloom component
+   * (Blob.split) — halos are merging; unambiguously "too bright". */
+  splitFrac: number;
+  /** Fraction of blobs whose mean color is near-gray. NOTE: ALL_ON white
+   * frames legitimately read 1.0, so consume this as a MEDIAN over a window
+   * spanning a cycle (data frames dominate) — never a single frame. */
+  grayFrac: number;
+  /** Median blob mean-luminance, [0, 1]. */
+  medianIntensity: number;
+  /** Median blob saturated-pixel fraction (Blob.satFrac): how blown out the
+   * typical blob is. High even when the hue survives (a clipped BLUE LED is
+   * saturated on its max channel but still vivid) — the "bright enough to
+   * bloom-and-scatter, not enough to wash the hue" regime the gray/split
+   * signals miss. Reducing brightness lowers it (closed loop). */
+  satFrac: number;
+}
+
+/** Chroma fraction below which a blob's hue is considered washed out. */
+export const GRAY_CHROMA_FRAC = 0.25;
+
+/** Summarize one frame's blobs for the servo. */
+export function blobPopulation(blobs: readonly Blob[]): BlobPopulation {
+  let split = 0;
+  let gray = 0;
+  const intensities: number[] = [];
+  const satFracs: number[] = [];
+  for (const b of blobs) {
+    if (b.split === true) split++;
+    const mx = Math.max(b.r ?? 0, b.g ?? 0, b.b ?? 0);
+    const mn = Math.min(b.r ?? 0, b.g ?? 0, b.b ?? 0);
+    if (mx === 0 || (mx - mn) / mx < GRAY_CHROMA_FRAC) gray++;
+    intensities.push(b.intensity);
+    satFracs.push(b.satFrac ?? 0);
+  }
+  intensities.sort((a, b) => a - b);
+  satFracs.sort((a, b) => a - b);
+  const n = blobs.length;
+  return {
+    splitFrac: n > 0 ? split / n : 0,
+    grayFrac: n > 0 ? gray / n : 0,
+    medianIntensity: n > 0 ? intensities[n >> 1]! : 0,
+    satFrac: n > 0 ? satFracs[n >> 1]! : 0,
+  };
+}
+
 export interface FrameSample {
   tMs: number;
   blobCount: number;
   /** Present on frames where the (cheaper, subsampled) measure pass ran. */
   scene?: SceneStats | undefined;
+  /** Blob-population summary for the LED brightness servo. */
+  blobs?: BlobPopulation | undefined;
 }
 
 /**
- * Scenes darker than this (mean luma, after auto-exposure did its best) are
- * treated as DARK: the 'gray' intensity code wins there because the LEDs
- * outshine everything, while camera clipping washes the chroma out of
- * 'gray-hue' (the green sync died at gScore ~0.13 vs the 0.25 gate in the
- * 2026-07-07 dark-room trace). Brighter scenes get 'gray-hue', whose
- * white-relative chroma survives uncontrolled lighting that drowns intensity
- * blinking. AE on a phone targets ~mid-gray and reaches it in any lit room;
- * it undershoots badly only when there is genuinely no light.
+ * Symbol-alphabet thresholds. The 4-ary alphabet needs finer hue
+ * discrimination (adjacent palette colors are 60° apart instead of 180°),
+ * so it is chosen only when the measured chroma conditions support it:
+ * a reasonably lit scene (auto-exposure reached its mid-gray target) with
+ * few clipped highlights (clipping saturates channels and collapses hue —
+ * the same physics that killed the green sync at gScore ~0.13 in the
+ * 2026-07-07 dark-room trace). Everything else gets the robust 2-ary
+ * red/blue alphabet.
  */
-export const DARK_SCENE_MEAN_LUMA = 0.08;
+export const HUE4_MIN_MEAN_LUMA = 0.12;
+export const HUE4_MAX_CLIP_FRAC = 0.05;
 
 /** Minimum camera frames a bit window must span for centrality-weighted
  * window voting to have evidence (≥3 keeps ≥1 mid-window sample under the
@@ -66,9 +118,10 @@ export const MIN_FRAMES_PER_BIT = 3.0;
  * MIN_FRAMES_PER_BIT the decoder still works; hysteresis, not a cliff. */
 export const RENEG_FRAMES_PER_BIT = 2.5;
 
-/** Bit-period bounds: floor keeps the cycle robust to timing jitter even on
- * high-fps cameras; ceiling keeps a 64-LED SEC-DED cycle (14 frames) under
- * ~6 s so decodes (and live solves) still converge in a handheld walk. */
+/** Window-period bounds: floor keeps the cycle robust to timing jitter even
+ * on high-fps cameras; ceiling keeps a 64-LED SEC-DED cycle (14 frames at
+ * 2 symbols, 8 at 4) under ~6 s so decodes (and live solves) still converge
+ * in a handheld walk. */
 export const BIT_PERIOD_MIN_MS = 60;
 export const BIT_PERIOD_MAX_MS = 400;
 
@@ -79,7 +132,7 @@ export const THRESHOLD_MAX = 0.9;
 export const BLOB_FLOOD = 150;
 
 export interface NegotiatedConfig {
-  encoding: Encoding;
+  symbols: 2 | 4;
   bitPeriodMs: number;
 }
 
@@ -89,11 +142,18 @@ function roundBitPeriod(ms: number): number {
   return Math.min(BIT_PERIOD_MAX_MS, Math.max(BIT_PERIOD_MIN_MS, stepped));
 }
 
-/** Pre-capture negotiation: pick the code carrier and signaling rate for the
- * measured scene. Sent as start_mapping options — the server needs no flags. */
-export function recommendConfig(m: { frameIntervalMs: number; meanLuma: number }): NegotiatedConfig {
+/** Pre-capture negotiation: pick the symbol alphabet and signaling rate for
+ * the measured scene. Sent as start_mapping options — the server needs no
+ * flags. 4 symbols when the chroma SNR looks good (shortens the cycle by
+ * ~40%); the mid-capture margin telemetry corrects an optimistic pick. */
+export function recommendConfig(m: {
+  frameIntervalMs: number;
+  meanLuma: number;
+  clipFrac: number;
+}): NegotiatedConfig {
+  const goodChroma = m.meanLuma >= HUE4_MIN_MEAN_LUMA && m.clipFrac <= HUE4_MAX_CLIP_FRAC;
   return {
-    encoding: m.meanLuma < DARK_SCENE_MEAN_LUMA ? "gray" : "gray-hue",
+    symbols: goodChroma ? 4 : 2,
     bitPeriodMs: roundBitPeriod(MIN_FRAMES_PER_BIT * m.frameIntervalMs),
   };
 }
@@ -115,21 +175,208 @@ export function planReconfigure(currentBitPeriodMs: number, frameIntervalMs: num
   return null;
 }
 
-/** Hysteresis band around DARK_SCENE_MEAN_LUMA for mid-capture encoding
- * switches: a room hovering at the boundary must not flap the carrier (every
- * switch costs a cycle re-anchor on all parties). */
-export const ENCODING_SWITCH_DARK = 0.06;
-export const ENCODING_SWITCH_LIT = 0.12;
+/**
+ * Margin thresholds for the mid-capture symbol-alphabet switch, read against
+ * the decoder's margin EMA (its measured chroma SNR — see
+ * DecodeStats.marginEma; a perfect symbol read scores 1.0 in either
+ * alphabet). The band is wide because every switch costs a cycle re-anchor
+ * on all parties: downgrade only when 4-ary decoding is demonstrably
+ * struggling, upgrade only when 2-ary margins are so comfortable that the
+ * halved 4-ary separation still clears the confidence gate.
+ */
+export const SYMBOL_DOWNGRADE_MARGIN = 0.35;
+export const SYMBOL_UPGRADE_MARGIN = 0.7;
 
 /**
- * Mid-capture carrier check: returns the encoding to switch to, or null to
- * keep the current one. Same physics as {@link recommendConfig}, but with a
- * wide hysteresis band so only a real lighting change (lights turned on/off
- * during the walk) triggers the switch.
+ * Mid-capture symbol-alphabet check: returns the alphabet to switch to, or
+ * null to keep the current one. Unlike the pre-capture pick (scene stats
+ * only), this reads the decoder's MEASURED margins — the ground truth for
+ * whether the current alphabet is separable in this scene — plus the scene
+ * stats as the upgrade gate. `marginEma` is null before the first decoded
+ * cycle; nothing switches on no evidence.
  */
-export function planEncodingSwitch(current: Encoding, meanLuma: number): Encoding | null {
-  if (current === "gray-hue" && meanLuma < ENCODING_SWITCH_DARK) return "gray";
-  if (current === "gray" && meanLuma > ENCODING_SWITCH_LIT) return "gray-hue";
+export function planSymbolSwitch(
+  current: 2 | 4,
+  m: { meanLuma: number; clipFrac: number },
+  marginEma: number | null,
+): 2 | 4 | null {
+  if (marginEma === null) return null;
+  if (current === 4 && marginEma < SYMBOL_DOWNGRADE_MARGIN) return 2;
+  if (
+    current === 2 &&
+    marginEma >= SYMBOL_UPGRADE_MARGIN &&
+    m.meanLuma >= HUE4_MIN_MEAN_LUMA &&
+    m.clipFrac <= HUE4_MAX_CLIP_FRAC
+  ) {
+    return 4;
+  }
+  return null;
+}
+
+/** LED output brightness bounds. The floor keeps enough PWM resolution on an
+ * 8-bit strip for the hue palette to survive quantization (0.05 ≈ 13/255). */
+export const LED_BRIGHTNESS_MIN = 0.05;
+export const LED_BRIGHTNESS_MAX = 1.0;
+/** Multiplicative servo steps: DOWN escapes fast (wash-out is a cliff — the
+ * 2026-07-13 bloom study lost ALL detections within ~2× above the good
+ * band), UP creeps (the only cost of slightly-too-dim is detection range). */
+export const LED_BRIGHTNESS_UP = 1.2;
+export const LED_BRIGHTNESS_DOWN = 0.5;
+/** Bloom gates: any split blobs beyond noise, or a majority-gray population,
+ * means halos are merging / hue is washing — step down. */
+export const BLOOM_SPLIT_FRAC = 0.1;
+export const BLOOM_GRAY_FRAC = 0.4;
+/** Over-detection gate: blob count this far above the LED count means each LED
+ * is fragmenting into several detections (bloom halos splitting off, or PWM /
+ * rolling-shutter banding) — the dominant failure mode in the field traces
+ * (120 blobs for 64 LEDs, with split=0 so the split gate never fired). Lower
+ * brightness shrinks the bloom that drives most of it (indoors, detection
+ * accuracy rises as brightness falls), so this steps DOWN. Above ledCount, not
+ * ledCount/2, so the STARVE band (pairwise-merged neighbors ≈ ledCount/2) can't
+ * be mistaken for a flood. */
+export const LED_FLOOD_FRAC = 1.4;
+// NOTE (2026-07-16): a satFrac (blob-clipping) down-gate was tried and
+// REMOVED. In a dark room the camera's auto-exposure raises gain until the
+// frame meters mid-gray; with only the LEDs in view that pins them clipped
+// (satFrac ~1.0) INDEPENDENT of brightness — halving brightness just doubles
+// the gain. So dimming can't lower satFrac, and the gate chased brightness to
+// the 5% floor uselessly (worse: dim LEDs at max sensor gain). satFrac stays
+// in the trace/HUD as a diagnostic, but LED brightness is not the lever for
+// bloom in the dark — camera exposure / ambient light / a matte surface are.
+/** Scene clip fraction that reads "the frame is flooded with clipped light"
+ * — disambiguates ZERO blobs (washed-out glare got dropped as oversized)
+ * from "strip is too dim to detect". */
+export const WASHOUT_CLIP_FRAC = 0.03;
+/** Blob count below this fraction of ledCount reads as starved. Above 1/2
+ * because pairwise-merged neighbors land EXACTLY at ledCount/2 (the G=24
+ * sim run settled there); below 1 because captures rarely frame the whole
+ * strip, so a modest shortfall is normal. */
+export const STARVE_FRAC = 0.7;
+/** Median blob intensity above which a STARVED detector means merged blobs
+ * (bright but too few), not dim ones. */
+export const STARVE_BRIGHT_INTENSITY = 0.85;
+/** Median blob intensity below which a healthy population still has SNR
+ * headroom worth claiming. */
+export const DIM_INTENSITY = 0.7;
+
+export interface LedBrightnessSignals {
+  blobCount: number;
+  ledCount: number;
+  /** Median per-frame BlobPopulation over the report window. */
+  splitFrac: number;
+  grayFrac: number;
+  medianIntensity: number;
+  /** Scene clip fraction from the measure pass (SceneStats.clipFrac). */
+  clipFrac: number;
+}
+
+/**
+ * LED brightness servo: returns the brightness to renegotiate to, or null to
+ * hold. Detection probability over brightness is an inverted U — too dim and
+ * blobs fall under the detector threshold, too bright and blooming merges
+ * halos and washes hue to white — and the optimum moves with scene gain
+ * (auto-exposure in a dim room = high ISO = wash-out at a fraction of the
+ * brightness a lit room wants; measured 2026-07-13: the workable band at
+ * 12× the gain sits ~6× lower). So this servos on the phone's MEASURED
+ * wash-out signals, not scene luminance:
+ *
+ *  - no blobs at all: clipFrac says which side of the U we're on (a washed
+ *    scene floods the frame with clipped light; a dim strip doesn't);
+ *  - split/gray blobs: halos merging, hue washing — down;
+ *  - starved but BRIGHT blobs: neighbors merged into few blobs — down;
+ *    starved and dim — up;
+ *  - healthy but dim: claim SNR headroom — up, until a bloom gate answers.
+ *
+ * One step per report tick, like adjustThreshold; the caller applies the
+ * same two-consecutive-ticks confirmation as the other renegotiations (a
+ * configure re-stamps the pattern clock for everyone).
+ */
+export function planLedBrightness(current: number, m: LedBrightnessSignals): number | null {
+  const up = Math.min(LED_BRIGHTNESS_MAX, current * LED_BRIGHTNESS_UP);
+  const down = Math.max(LED_BRIGHTNESS_MIN, current * LED_BRIGHTNESS_DOWN);
+  const step = (next: number): number | null => (Math.abs(next - current) < 1e-3 ? null : next);
+  if (m.blobCount === 0) {
+    return step(m.clipFrac > WASHOUT_CLIP_FRAC ? down : up);
+  }
+  if (m.splitFrac > BLOOM_SPLIT_FRAC || m.grayFrac > BLOOM_GRAY_FRAC) return step(down);
+  // Over-detection: each LED fragmenting into several blobs (bloom / banding).
+  // Dimming shrinks the bloom that drives it — the biggest lever indoors.
+  if (m.blobCount > m.ledCount * LED_FLOOD_FRAC) return step(down);
+  if (m.blobCount < m.ledCount * STARVE_FRAC) {
+    // Bright-but-few = neighbors merged into shared blobs; dim-and-few = the
+    // strip is fading under the detector threshold. In between, the deficit
+    // is probably framing (not every LED in view) — don't chase it.
+    if (m.medianIntensity >= STARVE_BRIGHT_INTENSITY) return step(down);
+    if (m.medianIntensity < DIM_INTENSITY) return step(up);
+    return null;
+  }
+  if (m.medianIntensity < DIM_INTENSITY && m.splitFrac === 0 && m.grayFrac < GRAY_CHROMA_FRAC) {
+    return step(up);
+  }
+  return null;
+}
+
+/** Camera-exposure servo target step, in the [0,1] exposureTime range
+ * (planExposure lerps this over the camera's exposureTime capability). DOWN
+ * (shorten) escapes bloom a hair faster than UP creeps. */
+export const EXPOSURE_UP_STEP = 0.1;
+export const EXPOSURE_DOWN_STEP = 0.12;
+/** Where the exposure servo starts within [shortest, bitPeriodMs/2]. Biased
+ * SHORT: banding (too short) is recoverable — the servo lengthens toward the
+ * sweet spot — but too long integrates across a hue transition and hard-fails
+ * the decode, so start well under the Nyquist cap and creep up. */
+export const EXPOSURE_SERVO_START = 0.25;
+/** Blob clipping / washed-hue fractions that read "exposure too long" (bloom). */
+export const EXPOSURE_SAT_FRAC = 0.4;
+export const EXPOSURE_GRAY_FRAC = 0.5;
+/** Over-detection above this × ledCount, at LOW saturation, reads as PWM /
+ * rolling-shutter banding fragmenting each LED — lengthen the exposure so it
+ * integrates several PWM cycles and the bands average out. */
+export const EXPOSURE_FLOOD_FRAC = 1.4;
+/** Median blob intensity below which the frame is too dark — lengthen. */
+export const EXPOSURE_DIM_INTENSITY = 0.5;
+
+export interface ExposureServoSignals {
+  blobCount: number;
+  ledCount: number;
+  /** Median blob clipping (Blob.satFrac) and washed-hue fraction, and median
+   * blob intensity — from the same BlobPopulation the brightness servo reads. */
+  satFrac: number;
+  grayFrac: number;
+  medianIntensity: number;
+}
+
+/**
+ * Camera-exposure servo: returns the next exposure target in [0,1] (0 = the
+ * shortest exposureTime the camera offers, 1 = the longest), or null to hold.
+ *
+ * Unlike LED brightness, exposure fixes BOTH sides of the field problem: too
+ * SHORT and the rolling shutter samples the LEDs' ~kHz PWM mid-cycle, so each
+ * LED breaks into a stack of on/off horizontal bands the detector fragments
+ * (over-detection); too LONG and the LEDs bloom and wash to white (clipping).
+ * The good exposure integrates enough PWM cycles to kill the banding without
+ * blooming — so servo toward it:
+ *
+ *  - clipping / washed hue: exposure is too long → shorten;
+ *  - over-detection at LOW saturation: banding → lengthen (integrate the PWM);
+ *  - too dim: lengthen.
+ *
+ * Because the camera exposure is LOCKED (we own it), satFrac is a real bloom
+ * signal here — unlike the LED-brightness servo, where auto-exposure re-clips
+ * the LEDs at any brightness. Applied directly per tick (no pattern-clock
+ * restamp, unlike a configure), so it needs no two-tick confirmation.
+ */
+export function planExposureServo(current: number, m: ExposureServoSignals): number | null {
+  const up = Math.min(1, current + EXPOSURE_UP_STEP);
+  const down = Math.max(0, current - EXPOSURE_DOWN_STEP);
+  const step = (next: number): number | null => (Math.abs(next - current) < 1e-3 ? null : next);
+  const bloom = m.satFrac > EXPOSURE_SAT_FRAC || m.grayFrac > EXPOSURE_GRAY_FRAC;
+  if (m.blobCount === 0) {
+    return step(bloom ? down : up); // washed → shorten; dark → lengthen
+  }
+  if (bloom) return step(down);
+  if (m.blobCount > m.ledCount * EXPOSURE_FLOOD_FRAC) return step(up); // banding → integrate
+  if (m.medianIntensity < EXPOSURE_DIM_INTENSITY) return step(up);
   return null;
 }
 
@@ -195,6 +442,20 @@ export class ExposureMonitor {
       meanLuma: median(scenes.map((s) => s.meanLuma)),
       p95Luma: median(scenes.map((s) => s.p95Luma)),
       clipFrac: median(scenes.map((s) => s.clipFrac)),
+    };
+  }
+
+  /** Median blob-population signals over the window's frames. Per-frame
+   * medians make grayFrac robust to the cycle's ALL_ON white frames (a
+   * minority of any window spanning a cycle). Null until frames carry them. */
+  blobPopulation(): BlobPopulation | null {
+    const pops = this.samples.filter((s) => s.blobs !== undefined).map((s) => s.blobs!);
+    if (pops.length === 0) return null;
+    return {
+      splitFrac: median(pops.map((p) => p.splitFrac)),
+      grayFrac: median(pops.map((p) => p.grayFrac)),
+      medianIntensity: median(pops.map((p) => p.medianIntensity)),
+      satFrac: median(pops.map((p) => p.satFrac)),
     };
   }
 

@@ -1,0 +1,5 @@
+Hello from {{ name }}!
+{% if port %}The WebSocket listens on port {{ port }}.{% endif %}
+{% for channel in ["red", "green", "blue"] -%}
+channel: {{ channel }}
+{% endfor -%}

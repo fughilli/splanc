@@ -1,11 +1,9 @@
 """Solver diagnostics (server/debug.py): report correctness on known geometry."""
 
 import numpy as np
-
 from ledmapper_protocol import DetectionRecord, LedEntry, OutputMap, OutputMapStats
 from reconstruction.camera import look_at_quat, project
 from server.debug import led_report, session_overview
-
 
 LED = np.array([0.3, 0.1, 0.0])
 K = (500.0, 500.0, 320.0, 240.0)
@@ -41,8 +39,11 @@ def _map_with(led_id, xyz):
         units="meters",
         frame="webxr_session_ref",
         ledCount=8,
-        leds=[LedEntry(id=led_id, xyz=xyz, confidence=0.8, nViews=9,
-                       rmsReprojPx=0.4, parallaxDeg=20.0)],
+        leds=[
+            LedEntry(
+                id=led_id, xyz=xyz, confidence=0.8, nViews=9, rmsReprojPx=0.4, parallaxDeg=20.0
+            )
+        ],
         unmapped=[],
         stats=OutputMapStats(rmsReprojPxGlobal=0.4, medianParallaxDeg=20.0),
     )
@@ -51,7 +52,10 @@ def _map_with(led_id, xyz):
 def test_led_report_recovers_clean_geometry():
     detections = [_record(i) for i in range(12)]
     live = _map_with(5, tuple(LED))
-    history = [(1000.0 + 100 * j, 4 * j, _map_with(5, (LED[0], LED[1] + 0.001 * j, LED[2]))) for j in range(5)]
+    history = [
+        (1000.0 + 100 * j, 4 * j, _map_with(5, (LED[0], LED[1] + 0.001 * j, LED[2])))
+        for j in range(5)
+    ]
 
     r = led_report(detections, 5, live, history)
     assert r["nObservations"] == 12

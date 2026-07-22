@@ -42,18 +42,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
-# Progress hook for long solves: (progress_frac, led_positions, rms_px,
-# camera_positions). Called FROM THE OPTIMIZER THREAD, throttled to a few Hz;
-# consumers own their thread-safety. progress_frac is the estimated fraction
-# of the evaluation budget consumed (an estimate — LM may converge earlier).
-ProgressCb = Callable[[float, Dict[int, "np.ndarray"], float, "np.ndarray"], None]
-
 import numpy as np
 from scipy.optimize import least_squares
 from scipy.sparse import lil_matrix
 from scipy.sparse.linalg import lsqr
 
 from .camera import quat_to_rotmat, rotmat_to_quat
+
+# Progress hook for long solves: (progress_frac, led_positions, rms_px,
+# camera_positions). Called FROM THE OPTIMIZER THREAD, throttled to a few Hz;
+# consumers own their thread-safety. progress_frac is the estimated fraction
+# of the evaluation budget consumed (an estimate — LM may converge earlier).
+ProgressCb = Callable[[float, Dict[int, "np.ndarray"], float, "np.ndarray"], None]
 
 GRAVITY = 9.81
 G_WORLD = np.array([0.0, -GRAVITY, 0.0])
@@ -95,9 +95,7 @@ def so3_log(rot: np.ndarray) -> np.ndarray:
 
 
 def skew(v: np.ndarray) -> np.ndarray:
-    return np.array(
-        [[0.0, -v[2], v[1]], [v[2], 0.0, -v[0]], [-v[1], v[0], 0.0]], dtype=float
-    )
+    return np.array([[0.0, -v[2], v[1]], [v[2], 0.0, -v[0]], [-v[1], v[0], 0.0]], dtype=float)
 
 
 def so3_log_batch(rots: np.ndarray) -> np.ndarray:
@@ -138,7 +136,9 @@ def so3_exp_batch(r: np.ndarray) -> np.ndarray:
     theta2 = theta * theta
     safe = np.maximum(theta, 1e-30)
     a = np.where(theta > 1e-8, np.sin(theta) / safe, 1.0 - theta2 / 6.0)
-    b = np.where(theta > 1e-8, (1.0 - np.cos(theta)) / np.maximum(theta2, 1e-60), 0.5 - theta2 / 24.0)
+    b = np.where(
+        theta > 1e-8, (1.0 - np.cos(theta)) / np.maximum(theta2, 1e-60), 0.5 - theta2 / 24.0
+    )
     kx = np.zeros((len(r), 3, 3))
     kx[:, 0, 1] = -r[:, 2]
     kx[:, 0, 2] = r[:, 1]
@@ -299,10 +299,7 @@ def _known_rotation_linear_init(
     n_leds = len(led_ids)
     n_unknowns = 3 * (n_frames - 1) + 3 * n_leds  # c_0 fixed at origin
 
-    rows: List[Tuple[int, np.ndarray, int]] = []  # (frame idx, projector row, led col)
-    a = lil_matrix((0, 0))  # placeholder; built below once count is known
     triplets: List[Tuple[int, int, float]] = []
-    rhs: List[float] = []
     row = 0
 
     def col_c(i: int) -> Optional[int]:
@@ -501,9 +498,7 @@ def solve_vio(
             rotations.append(quat_to_rotmat(warm_start.quats[pi]))
             centers[i] = warm_start.positions[pi]
             v_seed[i] = warm_start.velocities[pi]
-        led_seed = {
-            led: warm_start.led_positions.get(led, np.zeros(3)).copy() for led in led_ids
-        }
+        led_seed = {led: warm_start.led_positions.get(led, np.zeros(3)).copy() for led in led_ids}
         g_seed = warm_start.gravity.copy()
         bg_seed = warm_start.gyro_bias.copy()
         ba_seed = warm_start.accel_bias.copy()
@@ -569,9 +564,7 @@ def solve_vio(
     rot0_seed = so3_log(rotations[0])
 
     # Interval sample counts drive the preintegration noise scaling.
-    obs_flat = [
-        (i, id_index[led], u, v) for i, fr in enumerate(frames) for led, u, v in fr.obs
-    ]
+    obs_flat = [(i, id_index[led], u, v) for i, fr in enumerate(frames) for led, u, v in fr.obs]
     intervals = list(range(n - 1))
 
     def interval_sigmas(i: int) -> Tuple[float, float, float]:
@@ -630,16 +623,14 @@ def solve_vio(
 
     # Flattened sample arrays across all intervals: one batched exp per
     # integration pass instead of thousands of scalar so3_exp calls.
-    flat_dts = np.concatenate([s[0] for s in segments if s is not None]) if intervals else np.zeros(0)
+    flat_dts = (
+        np.concatenate([s[0] for s in segments if s is not None]) if intervals else np.zeros(0)
+    )
     flat_gyr = (
-        np.concatenate([s[1] for s in segments if s is not None])
-        if intervals
-        else np.zeros((0, 3))
+        np.concatenate([s[1] for s in segments if s is not None]) if intervals else np.zeros((0, 3))
     )
     flat_acc = (
-        np.concatenate([s[2] for s in segments if s is not None])
-        if intervals
-        else np.zeros((0, 3))
+        np.concatenate([s[2] for s in segments if s is not None]) if intervals else np.zeros((0, 3))
     )
     seg_slices = []
     pos = 0
@@ -723,9 +714,7 @@ def solve_vio(
 
     def _robustify(r: np.ndarray) -> np.ndarray:
         # Pseudo-Huber in residual space: quadratic near 0, ~sqrt beyond δ.
-        return np.sign(r) * _hub_delta * np.sqrt(
-            2.0 * (np.sqrt(1.0 + (r / _hub_delta) ** 2) - 1.0)
-        )
+        return np.sign(r) * _hub_delta * np.sqrt(2.0 * (np.sqrt(1.0 + (r / _hub_delta) ** 2) - 1.0))
 
     # Progress reporting: the optimizer offers no iteration hook, but WE own
     # the residual function. The total evaluation count is estimated from the
@@ -897,7 +886,9 @@ def solve_vio(
         accel_bias=ba.copy(),
         rms_reproj_px=rms,
         frame_times=np.array([fr.t for fr in frames]),
-        intrinsics=(float(kk[0]), float(kk[0]), float(kk[1]), float(kk[2])) if kk is not None else None,
+        intrinsics=(
+            (float(kk[0]), float(kk[0]), float(kk[1]), float(kk[2])) if kk is not None else None
+        ),
     )
 
 
@@ -906,9 +897,7 @@ def solve_vio(
 # ---------------------------------------------------------------------------
 
 
-def similarity_align(
-    src: np.ndarray, dst: np.ndarray
-) -> Tuple[float, np.ndarray, np.ndarray]:
+def similarity_align(src: np.ndarray, dst: np.ndarray) -> Tuple[float, np.ndarray, np.ndarray]:
     """Least-squares similarity transform mapping src → dst.
 
     Returns (s, R, t) with dst ≈ s·R·src + t. Used by tests/evaluation to

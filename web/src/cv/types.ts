@@ -18,6 +18,17 @@ export interface Blob {
   r?: number;
   g?: number;
   b?: number;
+  /** Blooming diagnostics (trace path only — detect(_, _, _, {stats:true})).
+   * See CclBlob: `peak`/`satFrac` = how blown out, `cr/cg/cb` = the
+   * chroma-weighted halo hue that survives it. */
+  peak?: number;
+  satFrac?: number;
+  cr?: number;
+  cg?: number;
+  cb?: number;
+  /** Split out of an oversized bloom component (CclBlob.split): r/g/b are
+   * the sampled halo hue, not a member mean. */
+  split?: boolean;
 }
 
 /** Per-frame capture metadata a detection record needs (§7.4). */

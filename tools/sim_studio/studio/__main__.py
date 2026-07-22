@@ -11,7 +11,6 @@ from __future__ import annotations
 import argparse
 
 import uvicorn
-
 from studio.app import create_app
 
 
@@ -25,7 +24,10 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
 
     app = create_app()
-    print(f"Sim Studio bound on {args.host}:{args.port} — open http://localhost:{args.port}", flush=True)
+    print(
+        f"Sim Studio bound on {args.host}:{args.port} — open http://localhost:{args.port}",
+        flush=True,
+    )
     uvicorn.run(app, host=args.host, port=args.port)
     return 0
 

@@ -1,10 +1,9 @@
 """LedDriver loop, epoch, and debug modes (design doc §6 M1 / §8.1)."""
 
 import pytest
-
 from led_driver.driver import LedDriver
-from led_driver.graycode import default_code_params, frame_plan
-from led_driver.spi import RecordingSink, frame_bytes
+from led_driver.graycode import color_plan, default_code_params
+from led_driver.spi import RecordingSink, frame_bytes, frame_bytes_colors
 
 
 def _auto_stop_sleep(driver, stop_after):
@@ -20,8 +19,8 @@ def _auto_stop_sleep(driver, stop_after):
 
 
 def test_loop_emits_cycle_then_goes_dark():
-    cp = default_code_params(8)  # bits=ceil(log2(9))=4, cycleFrames=6
-    plan = frame_plan(cp)
+    cp = default_code_params(8)  # bits=ceil(log2(9))=4 -> SEC-DED 8, cycle 10
+    plan = color_plan(cp)
     sink = RecordingSink()
     driver = LedDriver(sink, clock=lambda: 5000.0)
     driver._sleep = _auto_stop_sleep(driver, stop_after=3)
@@ -32,9 +31,9 @@ def test_loop_emits_cycle_then_goes_dark():
     assert epoch == 5000.0
     # 3 frames emitted, then an all-off frame from the finally clause.
     assert len(sink.writes) == 4
-    assert sink.writes[0] == frame_bytes(plan[0], 8)  # ALL_ON
-    assert sink.writes[1] == frame_bytes(plan[1], 8)  # ALL_OFF (sync)
-    assert sink.writes[2] == frame_bytes(plan[2], 8)  # first bit frame
+    assert sink.writes[0] == frame_bytes_colors(plan[0])  # ALL_ON (white)
+    assert sink.writes[1] == frame_bytes_colors(plan[1])  # ALL_OFF (green sync)
+    assert sink.writes[2] == frame_bytes_colors(plan[2])  # first symbol frame
     assert sink.writes[3] == frame_bytes(frozenset(), 8)  # dark on exit
 
 
@@ -52,20 +51,20 @@ def test_get_clock_before_and_after_start():
     assert clk == {"epoch": 1234.0, "bitPeriodMs": cp.bitPeriodMs, "cycleLen": cp.cycleFrames}
 
 
-def test_on_set_modes():
+def test_frame_modes():
     cp = default_code_params(16)
-    plan = frame_plan(cp)
+    plan = color_plan(cp)
     driver = LedDriver(RecordingSink())
 
-    # Default = cycle: follows the plan, wrapping.
-    assert driver._on_set_for(0, plan) == plan[0]
-    assert driver._on_set_for(len(plan), plan) == plan[0]
+    # Default = cycle: follows the color plan, wrapping.
+    assert driver._frame_for(0, plan, 16) == frame_bytes_colors(plan[0])
+    assert driver._frame_for(len(plan), plan, 16) == frame_bytes_colors(plan[0])
 
     driver.set_debug("off")
-    assert driver._on_set_for(0, plan) == frozenset()
+    assert driver._frame_for(0, plan, 16) == frame_bytes(frozenset(), 16)
 
     driver.set_debug("single", {"ledId": 5})
-    assert driver._on_set_for(0, plan) == frozenset((5,))
+    assert driver._frame_for(0, plan, 16) == frame_bytes(frozenset((5,)), 16)
 
 
 def test_set_debug_rejects_unknown_mode():

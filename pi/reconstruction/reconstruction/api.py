@@ -17,7 +17,6 @@ from datetime import datetime, timezone
 from typing import Iterable, List, Mapping, Optional, Sequence
 
 import numpy as np
-
 from ledmapper_protocol import LedEntry, OutputMap, OutputMapStats
 
 from .bundle import bundle_adjust
@@ -40,9 +39,7 @@ def _as_obs(detection: Mapping) -> dict:
         # Pose-less records come from the WebXR-free capture path and can
         # only be solved by the visual-inertial reconstructor
         # (vio_api.reconstruct_vio) — this solver TRUSTS poses by design.
-        raise ValueError(
-            "detection record has no pose; use reconstruct_vio for pose-less sessions"
-        )
+        raise ValueError("detection record has no pose; use reconstruct_vio for pose-less sessions")
     return {
         "ledId": int(detection["ledId"]),
         "u": float(detection["u"]),

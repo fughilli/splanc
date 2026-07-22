@@ -23,6 +23,7 @@ export default defineConfig({
       input: {
         index: "index.html",
         wall: "wall.html",
+        effects: "effects.html",
       },
     },
   },
@@ -32,6 +33,8 @@ export default defineConfig({
       "/ws": { target: backend.replace(/^http/, "ws"), ws: true },
       "/maps": backend,
       "/healthz": backend,
+      "/solver": backend, // wasm solver bundle (served from server runfiles)
+      "/pulse": backend, // wasm effects Sim (effects.html workspace)
     },
   },
 });

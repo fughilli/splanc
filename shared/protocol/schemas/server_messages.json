@@ -7,22 +7,43 @@
     { "$ref": "#/$defs/Welcome" },
     { "$ref": "#/$defs/TimeSyncPong" },
     { "$ref": "#/$defs/MappingStarted" },
+    { "$ref": "#/$defs/MappingStopped" },
     { "$ref": "#/$defs/Status" },
     { "$ref": "#/$defs/PatternState" },
     { "$ref": "#/$defs/LiveMap" },
     { "$ref": "#/$defs/SolveStatus" },
     { "$ref": "#/$defs/ResultReady" },
-    { "$ref": "#/$defs/Error" }
+    { "$ref": "#/$defs/Error" },
+    { "$ref": "#/$defs/CountingState" },
+    { "$ref": "#/$defs/LedCountState" },
+    { "$ref": "#/$defs/PlaybackState" },
+    { "$ref": "#/$defs/FrameTiming" },
+    { "$ref": "#/$defs/StoredMapChunk" }
   ],
   "$defs": {
     "Welcome": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["type", "sessionId", "codeParams"],
+      "required": ["type", "sessionId", "codeParams", "solverBenchMs"],
       "properties": {
         "type": { "const": "welcome" },
         "sessionId": { "type": "string", "description": "UUID for this control session." },
-        "codeParams": { "$ref": "code_params.json" }
+        "codeParams": { "$ref": "code_params.json" },
+        "solverBenchMs": {
+          "type": ["number", "null"],
+          "description": "Host score on the canned solver benchmark, milliseconds (measured once at server startup). The client times the SAME solve in its wasm solver and compares to decide where the final solve runs (solver placement). Null while the host benchmark has not finished."
+        }
+      }
+    },
+    "MappingStopped": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "detections", "imuSamples"],
+      "description": "Reply to stop_mapping with solveOnHost=false (the client's benchmark chose phone-side solving): the capture is stopped and the session log persisted, but NO host reconstruction runs. The client solves locally (wasm) and uploads the result via submit_map; the counts echo what the server logged, as a sanity check against the client's local buffers.",
+      "properties": {
+        "type": { "const": "mapping_stopped" },
+        "detections": { "type": "integer", "minimum": 0 },
+        "imuSamples": { "type": "integer", "minimum": 0 }
       }
     },
     "TimeSyncPong": {
@@ -123,7 +144,12 @@
             "required": ["id", "xyz"],
             "properties": {
               "id": { "type": "integer", "minimum": 0 },
-              "xyz": { "type": "array", "items": { "type": "number" }, "minItems": 3, "maxItems": 3 }
+              "xyz": {
+                "type": "array",
+                "items": { "type": "number" },
+                "minItems": 3,
+                "maxItems": 3
+              }
             }
           }
         },
@@ -150,6 +176,119 @@
         "type": { "const": "error" },
         "code": { "type": "string" },
         "message": { "type": "string" }
+      }
+    },
+    "CountingState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "active", "epochMs"],
+      "description": "Reply to set_counting_pattern: whether a counting pattern is now displayed (active = the commanded blocks were non-empty) and the server-clock time it latched, so the phone knows when its camera view is valid to read.",
+      "properties": {
+        "type": { "const": "counting_state" },
+        "active": { "type": "boolean" },
+        "epochMs": {
+          "type": ["number", "null"],
+          "description": "Server-clock time the pattern took effect, ms; null when inactive."
+        }
+      }
+    },
+    "LedCountState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "ledCount", "channel"],
+      "description": "Reply to set_led_count: echo of the persisted per-channel strip length.",
+      "properties": {
+        "type": { "const": "led_count_state" },
+        "ledCount": { "type": "integer", "minimum": 0 },
+        "channel": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "PlaybackState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "active", "effect", "params", "mapId"],
+      "description": "Reply to set_playback / get_playback: the effective playback configuration (the player echoes what it is actually running, with its defaults filled into params).",
+      "properties": {
+        "type": { "const": "playback_state" },
+        "active": { "type": "boolean" },
+        "effect": {
+          "type": "string",
+          "description": "The running effect; 'off' when inactive."
+        },
+        "params": {
+          "oneOf": [{ "$ref": "playback_params.json" }, { "type": "null" }]
+        },
+        "mapId": {
+          "type": ["string", "null"],
+          "description": "The stored map/topology playback runs on; null when the player has none selected."
+        }
+      }
+    },
+    "FrameTiming": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "patternClockEpochMs", "bitPeriodUs", "cycleFrames", "dropped", "ticks"],
+      "description": "Reply to get_frame_timing: a drained batch of rendered-frame timestamps (the player samples its monotonic clock as it pushes each mapping-pattern frame to the LEDs) plus the number of samples dropped to ring-buffer overflow since the last poll. Even bitPeriodUs spacing between successive tMonoUs means smooth generation; gaps mean the pattern render loop stalled that long. Forwarded by the phone to the trace server for offline stutter analysis. All fields are integers (microseconds/milliseconds): this message is firmware->phone only, so it carries the player's native integer units and the firmware (a single-precision-only RISC-V core) never touches a double on this path.",
+      "properties": {
+        "type": { "const": "frame_timing" },
+        "patternClockEpochMs": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "Active capture's pattern-clock epoch (player-clock ms, integer); null when no capture is running (ticks then empty)."
+        },
+        "bitPeriodUs": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Expected inter-frame spacing in MICROSECONDS (the mapping bit period)."
+        },
+        "cycleFrames": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Frames per pattern cycle, so a tick's cycle is seq / cycleFrames."
+        },
+        "dropped": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Samples lost to ring-buffer overflow since the last poll (the phone did not drain fast enough)."
+        },
+        "ticks": {
+          "type": "array",
+          "description": "Rendered frames in emit order.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["seq", "tMonoUs"],
+            "properties": {
+              "seq": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Absolute frame index since the pattern epoch, BEFORE the cycle-length modulo."
+              },
+              "tMonoUs": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Player monotonic clock in MICROSECONDS (raw micros()) when the firmware pushed this frame to the LEDs. Wraps ~every 71 min; only deltas are meaningful."
+              }
+            }
+          }
+        }
+      }
+    },
+    "StoredMapChunk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "totalLen", "offset", "data", "hasTopology"],
+      "description": "Reply to get_stored_map: a slice of the encoded MappingBundle. totalLen is the full bundle length (so the phone knows when it has all of it); data is the base64-encoded bytes [offset, offset+len); hasTopology flags whether the bundle carries a topology. The phone loops get_stored_map until it has totalLen bytes, then decodes the MappingBundle.",
+      "properties": {
+        "type": { "const": "stored_map_chunk" },
+        "totalLen": { "type": "integer", "minimum": 0 },
+        "offset": { "type": "integer", "minimum": 0 },
+        "data": {
+          "type": "string",
+          "contentEncoding": "base64",
+          "description": "Base64-encoded bytes [offset, offset+len) of the MappingBundle."
+        },
+        "hasTopology": { "type": "boolean" }
       }
     }
   }

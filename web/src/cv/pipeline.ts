@@ -64,8 +64,9 @@ export class CvPipeline {
     this.toServerTime = toServerTime;
     this.dense = opts.denseRecords ?? false;
     this.denseStride = Math.max(1, opts.denseStride ?? 3);
-    // Tracks must outlive the dark stretches of a code word: an LED can be
-    // off for the ALL_OFF frame plus every 0-bit — worst case all data bits.
+    // Every LED is lit every frame under the hue carrier, so coasting only
+    // bridges occlusion / frame exit — but keep the generous default: a
+    // track that survives a full cycle re-acquires its identity instantly.
     const coast = opts.tracker?.maxCoastMs ?? 1.25 * cycleMs(params);
     this.tracker = new Tracker({ ...opts.tracker, maxCoastMs: coast });
     this.decoder = new Decoder(params, epochMs, toServerTime, opts.decoder);
@@ -86,26 +87,25 @@ export class CvPipeline {
 
   /** Ingest one frame. Returns records if a cycle completed on this frame. */
   step(blobs: readonly Blob[], meta: FrameMeta): DetectionRecord[] {
-    const matched = this.tracker.step(blobs, meta);
+    this.tracker.step(blobs, meta);
     this.lastBlobStatus = blobs.map((b, i) => {
       const tr = this.tracker.lastAssignment[i] ?? null;
       return { u: b.u, v: b.v, area: b.area, matched: tr !== null, ledId: tr?.ledId ?? null };
     });
-    // gray-hue: the saturated-GREEN census is the global delimiter signal the
-    // decoder's self-clocking alignment keys on (ALL_OFF renders green).
+    // The saturated-GREEN census is the global delimiter signal the
+    // decoder's self-clocking alignment keys on (ALL_OFF renders green;
+    // no data symbol is green — yellow has r≈g, cyan is unused).
     let greens = 0;
-    if (this.params.encoding === "gray-hue") {
-      for (const b of blobs) {
-        const r = b.r ?? 0;
-        const g = b.g ?? 0;
-        const bl = b.b ?? 0;
-        const mx = Math.max(r, g, bl);
-        if (mx > 0 && (mx - Math.min(r, g, bl)) / mx >= 0.45 && g > 1.4 * r && g > 1.4 * bl) {
-          greens++;
-        }
+    for (const b of blobs) {
+      const r = b.r ?? 0;
+      const g = b.g ?? 0;
+      const bl = b.b ?? 0;
+      const mx = Math.max(r, g, bl);
+      if (mx > 0 && (mx - Math.min(r, g, bl)) / mx >= 0.45 && g > 1.4 * r && g > 1.4 * bl) {
+        greens++;
       }
     }
-    const records = this.decoder.step(this.tracker.tracks, matched, meta.tCaptureMs, greens);
+    const records = this.decoder.step(this.tracker.tracks, meta.tCaptureMs, greens);
     if (this.dense) {
       // Dense mode: per-frame samples of every identified blob replace the
       // per-cycle anchor records on the wire (decoder records still label

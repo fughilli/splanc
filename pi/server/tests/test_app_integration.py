@@ -26,10 +26,10 @@ import urllib.request
 
 import pytest
 import uvicorn
-from websockets.sync.client import connect
-
+from server import proto_wire
 from server.app import create_app
 from simulator import generate_log
+from websockets.sync.client import connect
 
 
 def _free_port() -> int:
@@ -90,11 +90,18 @@ def test_full_capture_flow(tmp_path):
         with pytest.raises(urllib.error.HTTPError) as no_truth:
             _http_get(base + "/truth")
         assert no_truth.value.code == 404
-        truth = {"kind": "virtual_wall", "cols": 3, "rows": 2, "units": "led_pitch",
-                 "leds": [{"id": i, "xyz": [i % 3, i // 3, 0]} for i in range(4)]}
+        truth = {
+            "kind": "virtual_wall",
+            "cols": 3,
+            "rows": 2,
+            "units": "led_pitch",
+            "leds": [{"id": i, "xyz": [i % 3, i // 3, 0]} for i in range(4)],
+        }
         req = urllib.request.Request(
-            base + "/truth", data=json.dumps(truth).encode(),
-            headers={"content-type": "application/json"}, method="POST",
+            base + "/truth",
+            data=json.dumps(truth).encode(),
+            headers={"content-type": "application/json"},
+            method="POST",
         )
         with urllib.request.urlopen(req, timeout=10) as r:
             assert r.status == 200
@@ -104,8 +111,10 @@ def test_full_capture_flow(tmp_path):
         ws_url = f"ws://127.0.0.1:{port}/ws"
         with connect(ws_url) as ws:
             # hello → welcome
-            ws.send(json.dumps({"type": "hello", "client": "test", "appVersion": "0"}))
-            welcome = json.loads(ws.recv(timeout=10))
+            ws.send(
+                proto_wire.encode_client({"type": "hello", "client": "test", "appVersion": "0"})
+            )
+            welcome = proto_wire.decode_server(ws.recv(timeout=10))
             assert welcome["type"] == "welcome"
             session_id = welcome["sessionId"]
             assert session_id
@@ -114,8 +123,8 @@ def test_full_capture_flow(tmp_path):
             best_rtt = None
             for i in range(5):
                 t0 = float(i)
-                ws.send(json.dumps({"type": "time_sync_ping", "t0": t0}))
-                pong = json.loads(ws.recv(timeout=10))
+                ws.send(proto_wire.encode_client({"type": "time_sync_ping", "t0": t0}))
+                pong = proto_wire.decode_server(ws.recv(timeout=10))
                 assert pong["type"] == "time_sync_pong"
                 assert pong["t0"] == t0
                 assert pong["t1"] <= pong["t2"]  # server recv ≤ send
@@ -124,19 +133,23 @@ def test_full_capture_flow(tmp_path):
             assert best_rtt is not None and best_rtt >= 0.0
 
             # start_mapping → mapping_started
-            ws.send(json.dumps({"type": "start_mapping", "options": {"ledCount": led_count}}))
-            started = json.loads(ws.recv(timeout=10))
+            ws.send(
+                proto_wire.encode_client(
+                    {"type": "start_mapping", "options": {"ledCount": led_count}}
+                )
+            )
+            started = proto_wire.decode_server(ws.recv(timeout=10))
             assert started["type"] == "mapping_started"
             assert started["codeParams"]["ledCount"] == led_count
             assert "patternClockEpoch" in started
 
             # stream detections in batches (no per-batch response by contract)
             for chunk in _batches(detections, 400):
-                ws.send(json.dumps({"type": "detections", "batch": chunk}))
+                ws.send(proto_wire.encode_client({"type": "detections", "batch": chunk}))
 
             # get_status → status reflects coverage
-            ws.send(json.dumps({"type": "get_status"}))
-            st = json.loads(ws.recv(timeout=10))
+            ws.send(proto_wire.encode_client({"type": "get_status"}))
+            st = proto_wire.decode_server(ws.recv(timeout=10))
             assert st["type"] == "status"
             assert st["total"] == led_count
             assert st["identified"] > 0
@@ -144,22 +157,22 @@ def test_full_capture_flow(tmp_path):
             # get_live_map: first poll kicks the continuous solver (reply is
             # immediate, map may still be null), then poll until the interim
             # map lands. Real solver, so give it time.
-            ws.send(json.dumps({"type": "get_live_map"}))
-            live = json.loads(ws.recv(timeout=10))
+            ws.send(proto_wire.encode_client({"type": "get_live_map"}))
+            live = proto_wire.decode_server(ws.recv(timeout=10))
             assert live["type"] == "live_map"
             assert live["active"] is True
             deadline = time.monotonic() + 60.0
-            while live["map"] is None and time.monotonic() < deadline:
+            while live.get("map") is None and time.monotonic() < deadline:
                 time.sleep(0.5)
-                ws.send(json.dumps({"type": "get_live_map"}))
-                live = json.loads(ws.recv(timeout=10))
-            assert live["map"] is not None, "continuous solver produced no interim map"
-            assert live["map"]["ledCount"] == led_count
-            assert len(live["map"]["leds"]) >= int(0.8 * led_count)
+                ws.send(proto_wire.encode_client({"type": "get_live_map"}))
+                live = proto_wire.decode_server(ws.recv(timeout=10))
+            assert live.get("map") is not None, "continuous solver produced no interim map"
+            assert live.get("map")["ledCount"] == led_count
+            assert len(live.get("map")["leds"]) >= int(0.8 * led_count)
 
             # stop_mapping → reconstruction runs → result_ready
-            ws.send(json.dumps({"type": "stop_mapping"}))
-            result = json.loads(ws.recv(timeout=60))
+            ws.send(proto_wire.encode_client({"type": "stop_mapping"}))
+            result = proto_wire.decode_server(ws.recv(timeout=60))
             assert result["type"] == "result_ready"
             map_id = result["mapId"]
             assert map_id

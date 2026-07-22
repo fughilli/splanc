@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-
 from reconstruction import reconstruct
 from simulator import NOMINAL, NONE, generate_log
 

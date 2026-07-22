@@ -12,15 +12,18 @@ from __future__ import annotations
 
 from typing import Awaitable, Callable, List
 
-from pydantic import ValidationError
-
 from ledmapper_protocol import (
     ClientMessage,
+    CountingStateMessage,
     ErrorMessage,
+    LedCountStateMessage,
     LiveMapMessage,
     MappingStartedMessage,
+    MappingStoppedMessage,
     OutputMap,
     PatternStateMessage,
+    PlaybackParams,
+    PlaybackStateMessage,
     ResultReadyMessage,
     ServerMessage,
     SolveStatusMessage,
@@ -28,9 +31,10 @@ from ledmapper_protocol import (
     TimeSyncPongMessage,
     WelcomeMessage,
 )
+from pydantic import ValidationError
 
 from .clock import now_ms
-from .codebook import DEFAULT_BIT_PERIOD_MS, code_params_for
+from .codebook import DEFAULT_BIT_PERIOD_MS, DEFAULT_SYMBOLS, code_params_for
 from .reconstruct import LiveSolver
 from .session import SessionManager
 
@@ -51,15 +55,33 @@ class ServerContext:
         id_factory: Callable[[], str] | None = None,
         clock: Callable[[], float] = now_ms,
         live_solver: LiveSolver | None = None,
-        encoding: str = "gray",
+        symbols: int = DEFAULT_SYMBOLS,
+        map_store=None,
     ):
         self.sessions = sessions
         self.reconstructor = reconstructor
-        self.encoding = encoding
+        # FALLBACK symbol alphabet for clients that don't negotiate one; the
+        # phone normally chooses from its measured chroma SNR (§7.1).
+        self.symbols = symbols
         self.live = live_solver if live_solver is not None else LiveSolver()
         self.default_led_count = default_led_count
         self.bit_period_ms = bit_period_ms
         self.clock = clock
+        # Host score on the canned solver benchmark (ms), measured once at
+        # server startup (app.py) — None until the measurement finishes.
+        # Advertised in welcome for the client's solver-placement decision.
+        self.solver_bench_ms: float | None = None
+        # Where submit_map persists phone-solved maps; falls back to the
+        # reconstructor's store when not given (the production runner has one).
+        self.map_store = map_store
+        # Counting handshake (§7.9): the currently displayed color-block
+        # pattern as (epoch_ms, blocks, channel), or None when inactive. The
+        # display path (driver/wall rendering) lands with Phase 5; until then
+        # this is protocol state only.
+        self.counting: tuple[float, list, int] | None = None
+        # Per-channel strip lengths persisted by set_led_count. Channel 0
+        # doubles as the fallback default_led_count for codeParams.
+        self.led_counts: dict[int, int] = {}
         if id_factory is None:
             import uuid
 
@@ -94,7 +116,11 @@ class ConnectionHandler:
             return [self._welcome()]
         if kind == "time_sync_ping":
             # t1 = receive time, t2 = send time (design doc §7.3).
-            return [TimeSyncPongMessage(type="time_sync_pong", t0=msg.t0, t1=recv_ms, t2=self.ctx.clock())]
+            return [
+                TimeSyncPongMessage(
+                    type="time_sync_pong", t0=msg.t0, t1=recv_ms, t2=self.ctx.clock()
+                )
+            ]
         if kind == "start_mapping":
             return [self._start(msg.options)]
         if kind == "configure":
@@ -119,7 +145,19 @@ class ConnectionHandler:
         if kind == "get_solve_status":
             return [self._solve_status()]
         if kind == "stop_mapping":
-            return await self._stop()
+            return await self._stop(msg.solveOnHost)
+        if kind == "submit_map":
+            return [self._submit_map(msg.map)]
+        if kind == "set_counting_pattern":
+            return [self._set_counting_pattern(msg.blocks, msg.channel)]
+        if kind == "set_led_count":
+            return [self._set_led_count(msg.ledCount, msg.channel)]
+        if kind == "submit_topology":
+            return [self._submit_topology(msg.topology)]
+        if kind == "set_playback":
+            return [self._set_playback(msg.effect)]
+        if kind == "get_playback":
+            return [self._playback_state()]
         # ClientMessage's discriminated union makes this unreachable, but be loud.
         return [_error("unknown_type", f"unhandled message type {kind!r}")]
 
@@ -131,7 +169,10 @@ class ConnectionHandler:
         return WelcomeMessage(
             type="welcome",
             sessionId=self.session_id,
-            codeParams=code_params_for(self.ctx.default_led_count, self.ctx.bit_period_ms, self.ctx.encoding),
+            codeParams=code_params_for(
+                self.ctx.default_led_count, self.ctx.bit_period_ms, self.ctx.symbols
+            ),
+            solverBenchMs=self.ctx.solver_bench_ms,
         )
 
     def _start(self, options) -> ServerMessage:
@@ -140,17 +181,16 @@ class ConnectionHandler:
         # first capture keeps the bare connection id (the common case).
         self._capture_seq += 1
         capture_id = (
-            self.session_id
-            if self._capture_seq == 1
-            else f"{self.session_id}-{self._capture_seq}"
+            self.session_id if self._capture_seq == 1 else f"{self.session_id}-{self._capture_seq}"
         )
         # The client is the configuration authority (it measured the scene);
         # the ctx values are only the fallback for clients that send bare
-        # options — the server needs no CLI flags to run any encoding/rate.
+        # options — the server needs no CLI flags to run any alphabet/rate.
         params = code_params_for(
             options.ledCount,
             options.bitPeriodMs if options.bitPeriodMs is not None else self.ctx.bit_period_ms,
-            options.encoding if options.encoding is not None else self.ctx.encoding,
+            options.symbols if options.symbols is not None else self.ctx.symbols,
+            brightness=options.brightness,
         )
         epoch = self.ctx.sessions.start(capture_id, params)
         return MappingStartedMessage(
@@ -170,7 +210,8 @@ class ConnectionHandler:
         params = code_params_for(
             options.ledCount if options.ledCount is not None else current.ledCount,
             options.bitPeriodMs if options.bitPeriodMs is not None else current.bitPeriodMs,
-            options.encoding if options.encoding is not None else current.encoding,
+            options.symbols if options.symbols is not None else current.symbols,
+            brightness=options.brightness if options.brightness is not None else current.brightness,
         )
         epoch = self.ctx.sessions.reconfigure(params)
         return PatternStateMessage(
@@ -205,7 +246,9 @@ class ConnectionHandler:
                 type="pattern_state",
                 active=False,
                 patternClockEpoch=None,
-                codeParams=code_params_for(self.ctx.default_led_count, self.ctx.bit_period_ms, self.ctx.encoding),
+                codeParams=code_params_for(
+                    self.ctx.default_led_count, self.ctx.bit_period_ms, self.ctx.symbols
+                ),
             )
         epoch, params = state
         return PatternStateMessage(
@@ -234,16 +277,93 @@ class ConnectionHandler:
         active, interim = self.ctx.live.poll(self.ctx.sessions)
         return LiveMapMessage(type="live_map", active=active, map=interim)
 
-    async def _stop(self) -> List[ServerMessage]:
+    async def _stop(self, solve_on_host: bool | None = None) -> List[ServerMessage]:
         try:
             _session_id, log_path = self.ctx.sessions.stop()
         except RuntimeError as exc:
             return [_error("no_session", str(exc))]
+        if solve_on_host is False:
+            # Solver placement chose the phone: stop + persist only; the
+            # client solves in its wasm solver and uploads via submit_map.
+            # The echoed counts let it sanity-check its local buffers.
+            import json as _json
+
+            try:
+                data = _json.loads(log_path.read_text())
+                n_det = len(data.get("detections", []))
+                n_imu = len(data.get("imu", []))
+            except Exception:
+                n_det = n_imu = 0
+            return [
+                MappingStoppedMessage(type="mapping_stopped", detections=n_det, imuSamples=n_imu)
+            ]
         try:
             output_map = await self.ctx.reconstructor(log_path)
         except Exception as exc:  # reconstruction is best-effort; report, don't crash
             return [_error("reconstruction_failed", f"{type(exc).__name__}: {exc}")]
         return [ResultReadyMessage(type="result_ready", mapId=output_map.mapId)]
+
+    def _submit_map(self, output_map: OutputMap) -> ServerMessage:
+        """Persist a client-solved map (already contract-validated by the
+        ClientMessage parse) exactly as if the host had solved it."""
+        store = self.ctx.map_store or getattr(self.ctx.reconstructor, "map_store", None)
+        if store is None:
+            return _error("unsupported", "this server has no map store for submitted maps")
+        store.save(output_map)
+        return ResultReadyMessage(type="result_ready", mapId=output_map.mapId)
+
+    # -- player protocol (counting / topology / playback, §7.7–§7.9) -------
+
+    def _set_counting_pattern(self, blocks, channel) -> ServerMessage:
+        """Latch a counting color-block pattern (§7.9). Phase 1 records the
+        protocol state and acks; the display path (driver/wall render the
+        blocks) lands with the counting flow in Phase 5."""
+        if blocks:
+            epoch = self.ctx.clock()
+            self.ctx.counting = (epoch, list(blocks), channel or 0)
+            return CountingStateMessage(type="counting_state", active=True, epochMs=epoch)
+        self.ctx.counting = None
+        return CountingStateMessage(type="counting_state", active=False, epochMs=None)
+
+    def _set_led_count(self, led_count: int, channel) -> ServerMessage:
+        """Persist the counting handshake's detected strip length. Channel 0
+        becomes the fallback ledCount for future code-books."""
+        ch = channel or 0
+        self.ctx.led_counts[ch] = led_count
+        if ch == 0 and led_count >= 1:
+            self.ctx.default_led_count = led_count
+        return LedCountStateMessage(type="led_count_state", ledCount=led_count, channel=ch)
+
+    def _submit_topology(self, topology) -> ServerMessage:
+        """Persist a phone-skeletonized topology next to its map (mirrors
+        submit_map, including the result_ready reply)."""
+        store = self.ctx.map_store or getattr(self.ctx.reconstructor, "map_store", None)
+        if store is None:
+            return _error("unsupported", "this server has no map store for topologies")
+        if not store.exists(topology.mapId):
+            return _error("unknown_map", f"no stored map {topology.mapId!r} for this topology")
+        store.save_topology(topology)
+        return ResultReadyMessage(type="result_ready", mapId=topology.mapId)
+
+    def _set_playback(self, effect: str) -> ServerMessage:
+        """Playback control (§7.8). The Pi playback engines land in Phase G;
+        until then only the universal 'off' is accepted, so a phone can probe
+        capabilities without wedging the player."""
+        if effect == "off":
+            return self._playback_state()
+        return _error(
+            "unsupported_effect",
+            f"effect {effect!r} not available on this player (supported: off)",
+        )
+
+    def _playback_state(self) -> ServerMessage:
+        return PlaybackStateMessage(
+            type="playback_state",
+            active=False,
+            effect="off",
+            params=PlaybackParams(),
+            mapId=None,
+        )
 
 
 def _error(code: str, message: str) -> ServerMessage:

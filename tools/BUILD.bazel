@@ -1,0 +1,21 @@
+"""Bench tooling."""
+
+load("@pypi//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_binary")
+
+py_binary(
+    name = "player_probe",
+    srcs = ["player_probe.py"],
+    deps = [
+        "//pi/server",
+        requirement("websockets"),
+    ],
+)
+
+# Standalone CV trace sink — receives ?trace= dumps from the capture page,
+# writes readable JSONL + PNG thumbnails, and hosts a pairing QR (segno).
+py_binary(
+    name = "trace_server",
+    srcs = ["trace_server.py"],
+    deps = [requirement("segno")],
+)

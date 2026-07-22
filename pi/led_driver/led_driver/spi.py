@@ -41,7 +41,9 @@ def _end_frame_len(n: int) -> int:
     return max(4, (n + 15) // 16)
 
 
-def frame_bytes(on_ids: Set[int], n: int, color: RGB = (255, 255, 255), brightness: int = 31) -> bytes:
+def frame_bytes(
+    on_ids: Set[int], n: int, color: RGB = (255, 255, 255), brightness: int = 31
+) -> bytes:
     """Encode one frame: LEDs in ``on_ids`` lit with ``color``/``brightness``, rest off."""
     if brightness < 0 or brightness > 31:
         raise ValueError(f"brightness must be 0..31, got {brightness}")
@@ -57,6 +59,24 @@ def frame_bytes(on_ids: Set[int], n: int, color: RGB = (255, 255, 255), brightne
     for i in range(n):
         buf += on_led if i in on_ids else off_led
     buf += b"\x00" * _end_frame_len(n)  # end frame
+    return bytes(buf)
+
+
+def frame_bytes_colors(colors: List[RGB], brightness: int = 31) -> bytes:
+    """Encode one hue-code frame: every LED lit with its OWN color.
+
+    The hue carrier keeps all LEDs lit every frame (constant brightness;
+    the code is in the color), so this is the driver's normal frame path;
+    :func:`frame_bytes` remains for the dark/debug frames.
+    """
+    bright = _brightness_byte(brightness)
+    buf = bytearray(b"\x00\x00\x00\x00")  # start frame
+    for r, g, b in colors:
+        for c in (r, g, b):
+            if not 0 <= c <= 255:
+                raise ValueError(f"colour channels must be 0..255, got {(r, g, b)}")
+        buf += bytes((bright, b, g, r))  # APA102 colour order: B, G, R
+    buf += b"\x00" * _end_frame_len(len(colors))  # end frame
     return bytes(buf)
 
 

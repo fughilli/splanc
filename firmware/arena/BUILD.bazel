@@ -1,0 +1,20 @@
+"""Firmware bump-allocator arena (Phase 3): the variable-size uploads (map,
+topology) decode into this instead of fixed-capacity heapless fields.
+no_std, zero-dependency, deterministic ArenaFull, checkpoint/rollback."""
+
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "arena",
+    srcs = ["src/lib.rs"],
+    crate_name = "ledmapper_arena",
+    edition = "2021",
+)
+
+rust_test(
+    name = "arena_test",
+    crate = ":arena",
+    edition = "2021",
+)

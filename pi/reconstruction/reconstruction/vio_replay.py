@@ -27,12 +27,10 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 from pathlib import Path
 from typing import List
 
 import numpy as np
-
 from reconstruction.api import reconstruct
 from reconstruction.vio import FrameObservations, ImuSample, solve_vio
 
@@ -286,21 +284,33 @@ def _solve_report(out, detections) -> None:
     worst = sorted(out.leds, key=lambda e: -e.rmsReprojPx)[:5]
     print("worst per-LED reproj rms:")
     for e in worst:
-        print(f"  led {e.id:3d}: {e.rmsReprojPx:6.2f} px · {e.nViews} views · conf {e.confidence:.2f}")
+        print(
+            f"  led {e.id:3d}: {e.rmsReprojPx:6.2f} px · {e.nViews} views · conf {e.confidence:.2f}"
+        )
 
     if not out.trajectory or len(out.trajectory) < 3:
         return
     traj = np.array(out.trajectory)
     par = np.median([e.parallaxDeg for e in out.leds]) if out.leds else 0
-    pitch = np.median([np.linalg.norm(np.array(a.xyz) - np.array(b.xyz))
-                       for a, b in zip(out.leds, out.leds[1:])]) if len(out.leds) > 1 else 0
-    print(f"trajectory extent {np.ptp(traj, axis=0).round(4).tolist()} m · "
-          f"median parallax {par:.1f}° · neighbor dist p50 {pitch*1000:.1f} mm")
+    pitch = (
+        np.median(
+            [
+                np.linalg.norm(np.array(a.xyz) - np.array(b.xyz))
+                for a, b in zip(out.leds, out.leds[1:])
+            ]
+        )
+        if len(out.leds) > 1
+        else 0
+    )
+    print(
+        f"trajectory extent {np.ptp(traj, axis=0).round(4).tolist()} m · "
+        f"median parallax {par:.1f}° · neighbor dist p50 {pitch*1000:.1f} mm"
+    )
     steps = np.linalg.norm(np.diff(traj, axis=0), axis=1)
     med = float(np.median(steps))
     print(
         f"trajectory: {len(traj)} pts, step p50 {med*1000:.1f} mm, "
-        f"p95 {np.percentile(steps,95)*1000:.1f} mm, max {steps.max()*1000:.1f} mm"
+        f"p95 {np.percentile(steps, 95)*1000:.1f} mm, max {steps.max()*1000:.1f} mm"
     )
     # Correlate the largest steps with gaps in the observation timeline.
     times = sorted({float(d["tCaptureMs"]) for d in detections})
@@ -317,17 +327,31 @@ def _solve_report(out, detections) -> None:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("trace", type=Path, help="frames.jsonl trace, OR a session log with --session-log")
+    ap.add_argument(
+        "trace", type=Path, help="frames.jsonl trace, OR a session log with --session-log"
+    )
     ap.add_argument("decoded", type=Path, nargs="?", help="offline_decode output json")
     ap.add_argument("--frame-hz", type=float, default=10.0, help="visual keyframe rate")
     ap.add_argument("--px-sigma", type=float, default=1.0)
     ap.add_argument("--max-nfev", type=int, default=80)
     ap.add_argument("--out", type=Path, default=None, help="write the VIO map json here")
-    ap.add_argument("--diagnose", action="store_true", help="fit IMU axis conventions from the trace and exit")
-    ap.add_argument("--session-log", action="store_true", help="treat the input as a persisted session log and re-run the production final solve")
-    ap.add_argument("--profile", action="store_true", help="run under cProfile (with --session-log)")
-    ap.add_argument("--no-reject", action="store_true", help="skip outlier rejection (with --session-log)")
-    ap.add_argument("--gap-split", type=float, default=3.0, help="segment split threshold, s (1e9 disables)")
+    ap.add_argument(
+        "--diagnose", action="store_true", help="fit IMU axis conventions from the trace and exit"
+    )
+    ap.add_argument(
+        "--session-log",
+        action="store_true",
+        help="treat the input as a persisted session log and re-run the production final solve",
+    )
+    ap.add_argument(
+        "--profile", action="store_true", help="run under cProfile (with --session-log)"
+    )
+    ap.add_argument(
+        "--no-reject", action="store_true", help="skip outlier rejection (with --session-log)"
+    )
+    ap.add_argument(
+        "--gap-split", type=float, default=3.0, help="segment split threshold, s (1e9 disables)"
+    )
     args = ap.parse_args(argv)
 
     if args.session_log:
@@ -348,8 +372,10 @@ def main(argv=None) -> int:
     frames = load_frames(args.decoded, args.frame_hz)
     dec = json.loads(args.decoded.read_text())
     n_obs = sum(len(f.obs) for f in frames)
-    print(f"inputs: {len(frames)} keyframes @ ~{args.frame_hz} Hz, {n_obs} observations, "
-          f"{len(imu)} IMU samples")
+    print(
+        f"inputs: {len(frames)} keyframes @ ~{args.frame_hz} Hz, {n_obs} observations, "
+        f"{len(imu)} IMU samples"
+    )
 
     # ---- VIO joint solve (no pose input) -----------------------------------
     result = solve_vio(frames, imu, px_sigma=args.px_sigma, max_nfev=args.max_nfev)
@@ -360,11 +386,15 @@ def main(argv=None) -> int:
     path_len = float(np.sum(np.linalg.norm(np.diff(result.positions, axis=0), axis=1)))
     print("\n== VIO joint solve (poses + LEDs from pixels + IMU only) ==")
     print(f"  solved LEDs: {len(ids)}  reproj rms {result.rms_reproj_px:.2f} px")
-    print(f"  plane rms {vio_shape['planeRmsMm']:.1f} mm · pitch p50 "
-          f"{vio_shape['pitchP50Mm']:.1f} mm · pitch spread {vio_shape['pitchSpreadPct']:.1f} %")
-    print(f"  gravity |g| {g_mag:.2f} m/s² (prior 9.81) · "
-          f"gyro bias {np.linalg.norm(result.gyro_bias):.4f} rad/s · "
-          f"accel bias {np.linalg.norm(result.accel_bias):.3f} m/s²")
+    print(
+        f"  plane rms {vio_shape['planeRmsMm']:.1f} mm · pitch p50 "
+        f"{vio_shape['pitchP50Mm']:.1f} mm · pitch spread {vio_shape['pitchSpreadPct']:.1f} %"
+    )
+    print(
+        f"  gravity |g| {g_mag:.2f} m/s² (prior 9.81) · "
+        f"gyro bias {np.linalg.norm(result.gyro_bias):.4f} rad/s · "
+        f"accel bias {np.linalg.norm(result.accel_bias):.3f} m/s²"
+    )
     print(f"  trajectory path length {path_len:.2f} m over {frames[-1].t - frames[0].t:.1f} s")
 
     # ---- Baseline: production solver trusting the recorded WebXR poses -----
@@ -376,10 +406,14 @@ def main(argv=None) -> int:
     if len(base_ids) >= 4:
         base_pts = np.array([base[j] for j in base_ids])
         base_shape = shape_report(base_pts)
-        print(f"  solved LEDs: {len(base_ids)}  global reproj rms "
-              f"{out_map.stats.rmsReprojPxGlobal:.2f} px")
-        print(f"  plane rms {base_shape['planeRmsMm']:.1f} mm · pitch p50 "
-              f"{base_shape['pitchP50Mm']:.1f} mm · pitch spread {base_shape['pitchSpreadPct']:.1f} %")
+        print(
+            f"  solved LEDs: {len(base_ids)}  global reproj rms "
+            f"{out_map.stats.rmsReprojPxGlobal:.2f} px"
+        )
+        print(
+            f"  plane rms {base_shape['planeRmsMm']:.1f} mm · pitch p50 "
+            f"{base_shape['pitchP50Mm']:.1f} mm · pitch spread {base_shape['pitchSpreadPct']:.1f} %"
+        )
     else:
         print(f"  solved only {len(base_ids)} LEDs")
 

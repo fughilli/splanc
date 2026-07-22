@@ -1,0 +1,16 @@
+ESP32-based LED mapping
+
+Overview:
+Enable mapping of LEDs attached to an ESP32 board.
+
+1. Port the pattern generator to embedded.
+2. Enable a webserver on the ESP32 serving the client-side code (probably just pointing the phone at a resource hosted elsewhere, since the client-side code is large).
+3. Webserver on the ESP32 implements the API required to sync pattern clock for mapping.
+4. Add support for counting LEDs as well (user can solder whatever length to the output channels on the ESP32--there should be an algorithm that as a first stage uses the camera to detect how many LEDs there are on each strip; could be done by binary-searching with color blocks)
+5. Once LEDs are counted/mapped, user can optionally run skeletonization (see https://github.com/fughilli/graph-extractor)
+6. LED mapping + skeletonization data are sent to embedded system over webserver
+7. ESP32 then runs patterns on array (configurable via webserver as well, similar to WLED). If skeletonized, the "pulse" pattern should be used (see graph-extractor for the reference implementation; this will need to be ported to an efficient real-time embedded library in Rust)
+
+For embedded support, use https://github.com/fughilli/embedded
+
+All heavy-lifting computationally should be performed on the phone. The embedded system should only have to do the timing-critical control of the LEDs and the pattern generation (none of the solver arithmetic).

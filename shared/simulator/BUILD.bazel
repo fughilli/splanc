@@ -18,7 +18,7 @@ py_library(
     srcs = glob(["simulator/*.py"]),
     imports = ["."],
     deps = [
-        "//pi/reconstruction:reconstruction",
+        "//pi/reconstruction",
         requirement("numpy"),
     ],
 )
@@ -26,8 +26,8 @@ py_library(
 py_binary(
     name = "simulate",
     srcs = ["simulator/__main__.py"],
-    main = "simulator/__main__.py",
     imports = ["."],
+    main = "simulator/__main__.py",
     deps = [":simulator"],
 )
 
@@ -37,12 +37,12 @@ py_test(
         "tests/pytest_main.py",
         "tests/test_sim_recon_roundtrip.py",
     ],
-    main = "tests/pytest_main.py",
     imports = ["."],
     legacy_create_init = False,
+    main = "tests/pytest_main.py",
     deps = [
         ":simulator",
-        "//pi/reconstruction:reconstruction",
+        "//pi/reconstruction",
         requirement("numpy"),
         requirement("pytest"),
         requirement("scipy"),

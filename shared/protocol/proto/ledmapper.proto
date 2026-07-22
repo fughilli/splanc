@@ -1,0 +1,539 @@
+// LED Mapper wire protocol (design doc §7) — protocol-buffer contract.
+//
+// This is the WIRE format for all host <-> phone communication: binary
+// protobuf frames over the /ws WebSocket, wrapped in the ClientMessage /
+// ServerMessage envelopes (one oneof arm per §7 message type).
+//
+// JSON parity: field names and shapes are chosen so the proto3 JSON mapping
+// of every message matches the pre-protobuf JSON wire exactly (the server's
+// internal models and the web app's TypeScript types predate this file and
+// are generated from the JSON Schemas in ../schemas/). That parity is what
+// keeps the migration boundary thin — each end converts envelope <-> flat
+// JSON object at the socket and nothing else changes. Notes:
+//   - vectors are FLAT `repeated double` (JSON: [x, y, z]), matching the
+//     schema's fixed-arity arrays; `K` carries an explicit json_name;
+//   - enum-like fields (encoding, fec, units, frame, syncPattern) are
+//     STRINGS, because the JSON wire uses "gray-hue"-style values that
+//     proto enum JSON names cannot reproduce;
+//   - nullable-on-the-wire fields are `optional` (unset <-> null);
+//   - trajectories are `repeated Vec3` and need a tiny shape conversion at
+//     the boundary ([[x,y,z], ...] <-> [{v: [x,y,z]}, ...]) — the one spot
+//     proto3 JSON cannot express nested arrays. Segment polylines (Topology)
+//     get the same conversion.
+//
+// PLAYER PROFILES (docs/esp32-led-mapping-plan.md): two player targets
+// implement this protocol behind one wire. Which envelope arms each supports:
+//
+//   CORE (every player — the stable player protocol):
+//     client: hello, time_sync_ping, start_mapping, configure, stop_mapping,
+//             submit_map, get_pattern, set_counting_pattern, set_led_count,
+//             submit_topology, set_playback, get_playback
+//     server: welcome, time_sync_pong, mapping_started, mapping_stopped,
+//             pattern_state, result_ready, error, counting_state,
+//             led_count_state, playback_state
+//
+//   PI ONLY (host-solve + live-map + telemetry paths — the Pi serves the
+//   webapp and can run the solver):
+//     client: detections, imu_batch, exposure_report, get_status,
+//             get_live_map, get_solve_status
+//     server: status, live_map, solve_status
+//     The Pi's welcome carries solverBenchMs; an ESP32 never sets it, which
+//     already makes the phone's placement decision "solve on phone"
+//     (web/src/solver/placement.ts).
+//
+//   Unknown/unsupported arms on a player MUST produce a bounded reply, never
+//   a crash: REQUEST arms (those with a defined reply) get
+//   error{code: "unsupported"}; fire-and-forget arms (detections, imu_batch,
+//   exposure_report) MAY be silently dropped so a chatty phone cannot flood
+//   the error channel.
+
+syntax = "proto3";
+
+package ledmapper.v1;
+
+// ---------------------------------------------------------------------------
+// Shared types
+// ---------------------------------------------------------------------------
+
+// 3-vector; used only where nesting forces a message type (trajectories).
+message Vec3 {
+  repeated double v = 1 [packed = true];
+}
+
+// Camera pose: position [x,y,z] (meters) + quaternion [x,y,z,w],
+// camera-to-world (§7.4).
+message Pose {
+  repeated double p = 1 [packed = true];
+  repeated double q = 2 [packed = true];
+}
+
+// Code-book parameters describing the temporal blink pattern (§7.6).
+message CodeParams {
+  int32 led_count = 1;
+  // Coded BITS per cycle (data + FEC parity), sent log2(symbols) per frame.
+  int32 bits = 2;
+  // "hue" (the only carrier: constant-brightness color code).
+  string encoding = 3;
+  // Hold time per frame (symbol window), ms.
+  double bit_period_ms = 4;
+  // "on_off".
+  string sync_pattern = 5;
+  // 2 (sync delimiter) + ceil(bits / log2(symbols)) data frames.
+  int32 cycle_frames = 6;
+  // "none" | "secded".
+  string fec = 7;
+  // Data-symbol alphabet size: 2 (red/blue) or 4 (Gray-ordered bit pairs).
+  int32 symbols = 8;
+  // LED output brightness scale in [0,1]; unset = 1.0. Servoed by the phone
+  // against measured bloom/wash-out (exposure.ts planLedBrightness).
+  optional double brightness = 9;
+}
+
+// One labeled observation of one LED in one frame (§7.4).
+message DetectionRecord {
+  int32 led_id = 1;
+  double t_capture_ms = 2;
+  double u = 3;
+  double v = 4;
+  int32 img_w = 5;
+  int32 img_h = 6;
+  // fx, fy, cx, cy.
+  repeated double k = 7 [json_name = "K", packed = true];
+  // Unset on the WebXR-free capture path (poses solved server-side).
+  optional Pose pose = 8;
+  double confidence = 9;
+}
+
+// One inertial sample, camera frame (§7.1 imu_batch).
+message ImuSample {
+  double t = 1;
+  repeated double gyro = 2 [packed = true];
+  repeated double accel = 3 [packed = true];
+}
+
+// Camera/exposure telemetry (§7.1 exposure_report).
+message ExposureStats {
+  double t_capture_ms = 1;
+  double frame_interval_ms = 2;
+  double mean_luma = 3;
+  double p95_luma = 4;
+  double clip_frac = 5;
+  int32 blob_count = 6;
+  double detector_threshold = 7;
+  optional double iso = 8;
+  optional double exposure_time_ms = 9;
+  optional double ambient_intensity = 10;
+}
+
+// Per-LED entry of a reconstructed map (§7.5).
+message LedEntry {
+  int32 id = 1;
+  repeated double xyz = 2 [packed = true];
+  double confidence = 3;
+  int32 n_views = 4;
+  double rms_reproj_px = 5;
+  double parallax_deg = 6;
+}
+
+message OutputMapStats {
+  double rms_reproj_px_global = 1;
+  double median_parallax_deg = 2;
+}
+
+// A reconstructed LED map (§7.5).
+message OutputMap {
+  string map_id = 1;
+  string created_at = 2;
+  // "meters".
+  string units = 3;
+  // "webxr_session_ref" | "gravity_leveled".
+  string frame = 4;
+  int32 led_count = 5;
+  repeated LedEntry leds = 6;
+  repeated int32 unmapped = 7 [packed = true];
+  // Solved camera path (visual-inertial solves), same frame as leds.
+  repeated Vec3 trajectory = 8;
+  OutputMapStats stats = 9;
+}
+
+// Interim LED position during a running solve (lightweight preview).
+message SolveLed {
+  int32 id = 1;
+  repeated double xyz = 2 [packed = true];
+}
+
+// A contiguous run of same-color LEDs in a counting pattern (§7.9).
+message ColorBlock {
+  int32 start = 1;
+  int32 count = 2;
+  // [r, g, b] in [0,1].
+  repeated double rgb = 3 [packed = true];
+}
+
+// Skeletonized fixture topology (§7.7, Phase F output) — drives the O(N)
+// pulse illuminate on players. Keyed to the OutputMap it skeletonizes.
+message BranchPoint {
+  int32 id = 1;
+  // Meters, same frame as the OutputMap.
+  repeated double xyz = 2 [packed = true];
+}
+
+message TopologySegment {
+  int32 id = 1;
+  // Endpoint branch-point ids; -1 = free end. Arclength runs from a to b.
+  int32 a = 2;
+  int32 b = 3;
+  // Polyline from a to b (JSON: [[x,y,z], ...] — converted like trajectory).
+  repeated Vec3 polyline = 4;
+  // Total polyline arclength, meters.
+  double length = 5;
+}
+
+message LedAssociation {
+  int32 led_id = 1;
+  int32 segment_id = 2;
+  // Arclength of the LED's foot point along the segment, meters from a.
+  double foot_arclength = 3;
+  // Perpendicular distance LED -> foot point, meters.
+  double d_perp = 4;
+}
+
+message Topology {
+  string map_id = 1;
+  repeated BranchPoint branch_points = 2;
+  repeated TopologySegment segments = 3;
+  repeated LedAssociation associations = 4;
+}
+
+// A solved fixture bundled for OFFLINE use: the point cloud + its skeleton
+// topology, as one self-contained binaryproto file (.binpb). Exported by the
+// phone (post-solve) or dumped from a player, and imported into the host
+// effects-simulator workspace to preview effects on real captured data. Not an
+// envelope arm — a standalone file format.
+message MappingBundle {
+  OutputMap map = 1;
+  Topology topology = 2;
+}
+
+// Effect tunables (§7.8), mirroring the pulse reference's controls. All
+// fields are optional overlays: unset keeps the player's current/default.
+message PlaybackParams {
+  // Global output brightness scale in [0,1].
+  optional double intensity = 1;
+  // Soft-falloff radius around a pulse agent, meters ('soft').
+  optional double glow_radius = 2;
+  // Concurrent pulse agents traversing the topology.
+  optional int32 agent_count = 3;
+  // Agent travel speed along the topology, m/s.
+  optional double speed = 4;
+  // Palette as 0xRRGGBB ints; empty keeps the player default.
+  repeated uint32 palette = 5 [packed = true];
+  // Pulse lead-in/out ramp distance at termini, meters (0 = derive from glow).
+  optional double lead_in = 6;
+  // Probability [0,1] a pulse splits at a junction.
+  optional double split_prob = 7;
+  // Flood fade length behind the wavefront, meters (0 = derive from glow).
+  optional double decay = 8;
+}
+
+// ---------------------------------------------------------------------------
+// Client -> server messages (§7.1)
+// ---------------------------------------------------------------------------
+
+message Hello {
+  string client = 1;
+  string app_version = 2;
+}
+
+message TimeSyncPing {
+  double t0 = 1;
+}
+
+message StartMappingOptions {
+  int32 led_count = 1;
+  optional int32 symbols = 2;
+  optional double bit_period_ms = 3;
+  optional double brightness = 4;
+}
+
+message StartMapping {
+  StartMappingOptions options = 1;
+}
+
+message ConfigureOptions {
+  optional int32 led_count = 1;
+  optional int32 symbols = 2;
+  optional double bit_period_ms = 3;
+  optional double brightness = 4;
+}
+
+// Mid-capture renegotiation; reply is PatternState with the new epoch.
+message Configure {
+  ConfigureOptions options = 1;
+}
+
+message StopMapping {
+  // Solver placement (client benchmark decision): unset/true -> host
+  // reconstructs (reply result_ready); false -> stop + persist only (reply
+  // mapping_stopped), the client solves locally and uploads via submit_map.
+  optional bool solve_on_host = 1;
+}
+
+// Client-solved OutputMap upload (phone-side final solve, wasm).
+message SubmitMap {
+  OutputMap map = 1;
+}
+
+message Detections {
+  repeated DetectionRecord batch = 1;
+}
+
+message ImuBatch {
+  repeated ImuSample samples = 1;
+}
+
+message ExposureReport {
+  ExposureStats report = 1;
+}
+
+message GetStatus {}
+
+message GetPattern {}
+
+message GetLiveMap {}
+
+message GetSolveStatus {}
+
+// LED-counting handshake (§7.9): display a static color-block pattern.
+// Blocks paint [start, start+count); uncovered LEDs are off; painting past
+// the physical strip end IS the probe (the phone binary-searches the strip
+// length by observing which blocks light). Empty blocks = all off.
+// Reply: counting_state.
+message SetCountingPattern {
+  repeated ColorBlock blocks = 1;
+  // Player output channel; unset -> 0 (the Pi has one channel; the ESP32
+  // may drive several RMT outputs).
+  optional int32 channel = 2;
+}
+
+// Persist the detected strip length for a channel (defaults future
+// codeParams.ledCount, bounds playback buffers). Reply: led_count_state.
+message SetLedCount {
+  int32 led_count = 1;
+  optional int32 channel = 2;
+}
+
+// Upload the skeletonized topology for a stored map (Phase F). The player
+// persists it next to the map and replies result_ready (mirrors submit_map).
+message SubmitTopology {
+  Topology topology = 1;
+}
+
+// Playback control (§7.8): select the effect and overlay params. "off" is
+// universal; other effects are player-capability-dependent (reply: error
+// code="unsupported_effect" when not shipped). Reply: playback_state.
+message SetPlayback {
+  string effect = 1;
+  PlaybackParams params = 2;
+  // Stored map/topology to play on; unset keeps the current selection.
+  optional string map_id = 3;
+}
+
+message GetPlayback {}
+
+// Poll rendered-frame timing. The player samples its monotonic clock as it
+// pushes each mapping-pattern frame to the LEDs; this drains the accumulated
+// samples so the phone can forward them to the trace server and pattern-
+// generator stutter becomes visible offline. Reply: frame_timing.
+message GetFrameTiming {}
+
+// Pull the player's stored map + topology back off the device as a
+// MappingBundle, streamed in chunks (a map is far larger than one control
+// frame). Request bytes [offset, offset+max_len) of the encoded bundle; the
+// reply carries the total length so the phone knows when it has it all. Lets a
+// phone recover a previously-mapped fixture without re-mapping and preview /
+// export it. Reply: stored_map_chunk (or error `no_map`).
+message GetStoredMap {
+  int32 offset = 1;
+  int32 max_len = 2;
+}
+
+message ClientMessage {
+  // Arm names equal the pre-protobuf "type" discriminator values.
+  oneof msg {
+    Hello hello = 1;
+    TimeSyncPing time_sync_ping = 2;
+    StartMapping start_mapping = 3;
+    Configure configure = 4;
+    StopMapping stop_mapping = 5;
+    Detections detections = 6;
+    ImuBatch imu_batch = 7;
+    ExposureReport exposure_report = 8;
+    GetStatus get_status = 9;
+    GetPattern get_pattern = 10;
+    GetLiveMap get_live_map = 11;
+    GetSolveStatus get_solve_status = 12;
+    SubmitMap submit_map = 13;
+    SetCountingPattern set_counting_pattern = 14;
+    SetLedCount set_led_count = 15;
+    SubmitTopology submit_topology = 16;
+    SetPlayback set_playback = 17;
+    GetPlayback get_playback = 18;
+    GetFrameTiming get_frame_timing = 19;
+    GetStoredMap get_stored_map = 20;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Server -> client messages (§7.2)
+// ---------------------------------------------------------------------------
+
+message Welcome {
+  string session_id = 1;
+  CodeParams code_params = 2;
+  // Host score on the canned solver benchmark (ms); unset while measuring.
+  optional double solver_bench_ms = 3;
+}
+
+// Reply to stop_mapping(solve_on_host=false): stopped + persisted, no host
+// solve; counts echo what the server logged.
+message MappingStopped {
+  int32 detections = 1;
+  int32 imu_samples = 2;
+}
+
+message TimeSyncPong {
+  double t0 = 1;
+  double t1 = 2;
+  double t2 = 3;
+}
+
+message MappingStarted {
+  double pattern_clock_epoch = 1;
+  CodeParams code_params = 2;
+}
+
+message Status {
+  int32 identified = 1;
+  int32 total = 2;
+  int32 low_parallax = 3;
+}
+
+message PatternState {
+  bool active = 1;
+  // Unset when no capture is active (JSON null).
+  optional double pattern_clock_epoch = 2;
+  CodeParams code_params = 3;
+}
+
+message LiveMap {
+  bool active = 1;
+  // Unset before the first interim solve (JSON null).
+  optional OutputMap map = 2;
+}
+
+message SolveStatus {
+  bool running = 1;
+  optional double progress = 2;
+  optional double rms_px = 3;
+  repeated SolveLed leds = 4;
+  repeated Vec3 trajectory = 5;
+}
+
+message ResultReady {
+  string map_id = 1;
+}
+
+message Error {
+  string code = 1;
+  string message = 2;
+}
+
+// Reply to set_counting_pattern: whether a counting pattern is displayed and
+// the server-clock time it latched (the phone's read-valid time).
+message CountingState {
+  bool active = 1;
+  // Unset when inactive (JSON null).
+  optional double epoch_ms = 2;
+}
+
+// Reply to set_led_count: echo of the persisted per-channel strip length.
+message LedCountState {
+  int32 led_count = 1;
+  int32 channel = 2;
+}
+
+// Reply to set_playback / get_playback: the effective configuration (the
+// player echoes what it actually runs, defaults filled into params).
+message PlaybackState {
+  bool active = 1;
+  // The running effect; "off" when inactive.
+  string effect = 2;
+  PlaybackParams params = 3;
+  // Unset when no stored map is selected (JSON null).
+  optional string map_id = 4;
+}
+
+// One rendered mapping-pattern frame: the player's monotonic-clock time
+// (MICROSECONDS, raw micros()) at which the firmware pushed absolute frame
+// `seq` to the LEDs. `seq` is the frame index since the pattern epoch BEFORE
+// the cycle-length modulo, so the cycle is seq / cycle_frames and the expected
+// emit time is pattern_clock_epoch_ms*1000 + seq * bit_period_us — the gap
+// between that and t_mono_us is the render stutter. Integer µs (not double ms)
+// because the player is a 32-bit RISC-V core with a single-precision-only FPU;
+// keeping this path integer avoids software-emulated f64 on the firmware. NOTE
+// micros() wraps ~every 71 min; the analysis only uses deltas, so a single
+// wrap-straddling gap is simply ignored.
+message FrameTick {
+  uint32 seq = 1;
+  uint32 t_mono_us = 2;
+}
+
+// Reply to get_frame_timing: a drained batch of rendered-frame timestamps
+// plus the number of samples dropped to ring-buffer overflow since the last
+// poll. Even bit_period_us spacing between successive t_mono_us = smooth
+// generation; gaps = the pattern render loop stalled that long. All integer
+// (see FrameTick) — this message is firmware↔phone only, so it carries the
+// player's native integer units rather than the wire's usual double ms.
+message FrameTiming {
+  // Active-capture context; pattern_clock_epoch_ms is unset (and the rest 0)
+  // when no capture is running, so the phone can skip a no-op batch. uint32
+  // (not 64-bit): a millis() epoch fits (< 50 days) AND proto3 JSON keeps
+  // 32-bit ints as numbers, where int64 would stringify.
+  optional uint32 pattern_clock_epoch_ms = 1;
+  uint32 bit_period_us = 2;
+  uint32 cycle_frames = 3;
+  uint32 dropped = 4;
+  repeated FrameTick ticks = 5;
+}
+
+// Reply to get_stored_map: a slice of the encoded MappingBundle. total_len is
+// the full bundle length (so the phone knows when it has all of it); data is
+// bytes [offset, offset+len) of it; has_topology flags whether the bundle
+// carries a topology (vs. just the point cloud).
+message StoredMapChunk {
+  int32 total_len = 1;
+  int32 offset = 2;
+  bytes data = 3;
+  bool has_topology = 4;
+}
+
+message ServerMessage {
+  oneof msg {
+    Welcome welcome = 1;
+    TimeSyncPong time_sync_pong = 2;
+    MappingStarted mapping_started = 3;
+    Status status = 4;
+    PatternState pattern_state = 5;
+    LiveMap live_map = 6;
+    SolveStatus solve_status = 7;
+    ResultReady result_ready = 8;
+    Error error = 9;
+    MappingStopped mapping_stopped = 10;
+    CountingState counting_state = 11;
+    LedCountState led_count_state = 12;
+    PlaybackState playback_state = 13;
+    FrameTiming frame_timing = 14;
+    StoredMapChunk stored_map_chunk = 15;
+  }
+}

@@ -1,0 +1,100 @@
+"""Player protocol core — the firmware-side session state machine.
+
+no_std + transport-free; the WSS/RMT plumbing (Phases 2/4c) wraps it. The
+tests pin the firmware server to the PHONE CLIENT via shared fixtures: the
+golden wire frames (what the phone's verified wire layer emits) drive the
+handler, and the emitted mapping pattern must match the golden colorPlan the
+phone decoder is tested against.
+"""
+
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "player",
+    srcs = ["src/lib.rs"],
+    crate_name = "ledmapper_player",
+    edition = "2021",
+    deps = [
+        "//firmware/pattern",
+        "//firmware/pulse",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+    ],
+)
+
+# The same core against the FIRMWARE capacity profile of the generated
+# bindings (see //shared/protocol/rust) — what the player app links. Host
+# tests use :player; never depend on both (same crate name, by design).
+rust_library(
+    name = "player_fw",
+    srcs = ["src/lib.rs"],
+    crate_name = "ledmapper_player",
+    edition = "2021",
+    deps = [
+        "//firmware/pattern",
+        "//firmware/pulse",
+        "//shared/protocol/rust:ledmapper_pb_fw",
+        "@crates//:micropb",
+    ],
+)
+
+rust_test(
+    name = "session_test",
+    srcs = ["tests/session.rs"],
+    data = ["//web:tests/golden_secded16.json"],
+    edition = "2021",
+    env = {
+        "GOLDEN_SECDED16": "$(rootpath //web:tests/golden_secded16.json)",
+        # Envelope structs carry inline heapless storage (see
+        # //shared/protocol/rust) and land on the test thread's stack.
+        "RUST_MIN_STACK": "16777216",
+    },
+    deps = [
+        ":player",
+        "//firmware/pattern",
+        "//firmware/pulse",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+        "@crates//:serde_json",
+    ],
+)
+
+rust_test(
+    name = "arena_upload_test",
+    srcs = ["tests/arena_upload.rs"],
+    data = ["//web:tests/golden_proto_frames.json"],
+    edition = "2021",
+    env = {
+        "GOLDEN_PROTO_FRAMES": "$(rootpath //web:tests/golden_proto_frames.json)",
+        "RUST_MIN_STACK": "16777216",
+    },
+    deps = [
+        ":player",
+        "//firmware/arena",
+        "//firmware/store",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:base64",
+        "@crates//:micropb",
+        "@crates//:serde_json",
+    ],
+)
+
+rust_test(
+    name = "phone_client_frames_test",
+    srcs = ["tests/phone_client_frames.rs"],
+    data = ["//web:tests/golden_proto_frames.json"],
+    edition = "2021",
+    env = {
+        "GOLDEN_PROTO_FRAMES": "$(rootpath //web:tests/golden_proto_frames.json)",
+        "RUST_MIN_STACK": "16777216",
+    },
+    deps = [
+        ":player",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:base64",
+        "@crates//:micropb",
+        "@crates//:serde_json",
+    ],
+)

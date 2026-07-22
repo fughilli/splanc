@@ -17,17 +17,15 @@
  * collinearity, uniform spacing) without measuring anything.
  *
  * Query params: ?cols=N (default ~square), &gap=px, &margin=px, &dot=frac,
- * &only=id (single-LED study mode: only that LED blinks, the rest stay dark
- * — layout/ids unchanged), &hue=1 (hue-modulation probe: dots stay LIT at
- * constant brightness and encode the frame plan in COLOR — ALL_ON white,
- * ALL_OFF green, data bit 1 red / 0 cyan — for uncontrolled-lighting rooms
- * where intensity blinking drowns in scene luminance; pair with the capture
- * page's ?record=1 to collect per-blob chroma for offline analysis),
- * &url=ws://... (defaults to this page's origin).
+ * &only=id (single-LED study mode: only that LED renders, the rest stay
+ * dark — layout/ids unchanged), &url=ws://... (defaults to this page's
+ * origin). The blink code itself is the hue carrier: every dot stays LIT at
+ * constant brightness and the code is in COLOR (ALL_ON white, ALL_OFF
+ * green, data frames from the negotiated symbol palette — see code/gray.ts).
  */
 
 import type { CodeParams } from "@ledmapper/protocol";
-import { FRAME_ALL_OFF, FRAME_ALL_ON, HUE_FRAME_COLORS, ledLitInFrame } from "../code/gray";
+import { colorForFrame } from "../code/gray";
 import { frameIndexAt } from "../code/timing";
 import { defaultWsUrl, LedMapperClient } from "../net/client";
 
@@ -38,12 +36,11 @@ const OPT = {
   marginPx: intParam("margin", 48),
   dotFrac: floatParam("dot", 0.35), // LED diameter as a fraction of cell pitch
   only: intParam("only", -1), // >= 0: single-LED study mode
-  hue: qs.get("hue") === "1", // hue-modulation probe (constant brightness)
   wsUrl: qs.get("url") ?? defaultWsUrl(),
 };
 
-// The palette lives with the coding logic (code/gray.ts) — white + the three
-// primaries, shared with the phone decoder's expectations.
+// The palette lives with the coding logic (code/gray.ts), shared with the
+// phone decoder's expectations and golden-pinned to the Python driver.
 
 function intParam(name: string, dflt: number): number {
   const v = qs.get(name);
@@ -137,6 +134,14 @@ resize();
 
 // -- rendering ----------------------------------------------------------------
 
+/** Palette color scaled by the servoed output brightness (cssColor is the
+ * full-brightness special case, kept for the golden-pinned palette tests). */
+function cssScaled(c: readonly [number, number, number], brightness: number): string {
+  const s = Math.max(0, Math.min(1, brightness));
+  const ch = (v: number): number => Math.round(255 * v * s);
+  return `rgb(${ch(c[0])},${ch(c[1])},${ch(c[2])})`;
+}
+
 function draw(frameIndex: number): void {
   const params = state.params;
   ctx.fillStyle = "#000";
@@ -148,23 +153,13 @@ function draw(frameIndex: number): void {
     const { x, y } = ledCenter(l, id);
     ctx.beginPath();
     ctx.arc(x, y, l.dotR, 0, Math.PI * 2);
-    const hueMode = OPT.hue || params.encoding === "gray-hue";
-    if (hueMode && frameIndex >= 0 && inStudy) {
-      // gray-hue: constant full brightness, frame plan carried by COLOR.
-      const color =
-        frameIndex === FRAME_ALL_ON
-          ? HUE_FRAME_COLORS.allOn
-          : frameIndex === FRAME_ALL_OFF
-            ? HUE_FRAME_COLORS.allOff
-            : ledLitInFrame(id, frameIndex, params)
-              ? HUE_FRAME_COLORS.bit1
-              : HUE_FRAME_COLORS.bit0;
+    if (frameIndex >= 0 && inStudy) {
+      // Hue carrier: constant brightness within the cycle, the code is in
+      // the color. The LEVEL is the phone-servoed CodeParams.brightness
+      // (renegotiated against measured bloom/wash-out; absent = full).
+      const color = cssScaled(colorForFrame(id, frameIndex, params), params.brightness ?? 1);
       ctx.fillStyle = color;
       ctx.shadowColor = color;
-      ctx.shadowBlur = l.dotR * 0.8;
-    } else if (frameIndex >= 0 && inStudy && ledLitInFrame(id, frameIndex, params)) {
-      ctx.fillStyle = "#fff";
-      ctx.shadowColor = "#fff";
       ctx.shadowBlur = l.dotR * 0.8; // a soft halo reads more like a real LED
     } else {
       // Idle dots barely visible for framing; must stay below the detector
@@ -203,8 +198,7 @@ function updateStatus(): void {
     bits.push(`${state.params.ledCount} LEDs (${l.cols}×${l.rows})`);
   }
   if (OPT.only >= 0) bits.push(`STUDY MODE: only LED #${OPT.only}`);
-  if (OPT.hue || state.params?.encoding === "gray-hue")
-    bits.push("HUE CODE: constant brightness, color-coded frames");
+  if (state.params) bits.push(`${state.params.symbols}-symbol hue code`);
   bits.push(state.active ? "PATTERN RUNNING" : "idle — start mapping from the phone");
   statusEl.textContent = bits.join("  ·  ");
 }
