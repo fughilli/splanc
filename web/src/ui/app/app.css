@@ -235,8 +235,26 @@
   position: fixed;
   right: var(--sp-4);
   bottom: calc(env(safe-area-inset-bottom, 0px) + 4.5rem);
+  width: 3.5rem;
+  height: 3.5rem;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
   z-index: 40;
+  transition: transform 0.08s var(--ease);
+}
+.fab:active {
+  transform: scale(0.93);
+}
+.fab svg {
+  width: 1.6rem;
+  height: 1.6rem;
 }
 
 /* --- map detail --- */

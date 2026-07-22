@@ -13,21 +13,25 @@ let openHandle: { close: () => void } | null = null;
 
 export function openDeviceSheet(): void {
   if (openHandle) return; // already open — don't stack
-  const sheet = Sheet("Devices");
+  // onClose fires for EVERY close path (✕, scrim, programmatic), so the reopen
+  // guard is always reset — the ✕ calls the sheet's internal close, not this
+  // handle, so we must hook onClose rather than wrap handle.close.
+  let unsubDev: () => void = () => {};
+  let unsubApp: () => void = () => {};
+  const sheet = Sheet("Devices", {
+    onClose: () => {
+      unsubDev();
+      unsubApp();
+      openHandle = null;
+    },
+  });
   openHandle = sheet;
   const rerender = (): void => {
     sheet.body.innerHTML = "";
     sheet.body.append(render());
   };
-  const unsubDev = deviceStore.subscribe(rerender);
-  const unsubApp = appState.subscribe(rerender);
-  const origClose = sheet.close;
-  sheet.close = () => {
-    unsubDev();
-    unsubApp();
-    openHandle = null;
-    origClose();
-  };
+  unsubDev = deviceStore.subscribe(rerender);
+  unsubApp = appState.subscribe(rerender);
   rerender();
 }
 

@@ -54,14 +54,19 @@ export function MapBrowserScreen(router: Router): Screen {
   const listEl = document.createElement("div");
   listEl.className = "maps-list";
 
-  const fab = Button({
-    label: "New map",
-    icon: "plus",
-    onClick: () => router.navigate("/capture"),
-  });
-  fab.classList.add("fab");
+  // Circular icon-only FAB. Lives on document.body (NOT inside `el`): the
+  // `.screen` enter animation applies a `transform`, which would make this
+  // `position: fixed` button anchor to the animating screen and visibly snap
+  // into place. Body-mounted, it's anchored to the viewport from frame one.
+  const fab = document.createElement("button");
+  fab.type = "button";
+  fab.className = "fab";
+  fab.title = "New map";
+  fab.setAttribute("aria-label", "New map");
+  fab.appendChild(icon("plus"));
+  fab.addEventListener("click", () => router.navigate("/capture"));
 
-  el.append(searchWrap, tagRow, listEl, fab);
+  el.append(searchWrap, tagRow, listEl);
 
   async function refresh(): Promise<void> {
     const all = await mapStore.list();
@@ -199,7 +204,11 @@ export function MapBrowserScreen(router: Router): Screen {
 
   return {
     el,
-    onMount: () => void refresh(),
+    onMount: () => {
+      document.body.appendChild(fab);
+      void refresh();
+    },
+    onUnmount: () => fab.remove(),
   };
 }
 

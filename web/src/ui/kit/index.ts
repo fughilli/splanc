@@ -209,7 +209,7 @@ export interface SheetHandle {
 
 /** Open a bottom sheet. Returns a handle whose `body` you populate; the sheet
  * animates in immediately and closes on scrim tap / the ✕ button / handle. */
-export function Sheet(title: string): SheetHandle {
+export function Sheet(title: string, opts: { onClose?: () => void } = {}): SheetHandle {
   const scrim = document.createElement("div");
   scrim.className = "k-sheet-scrim";
   const sheet = document.createElement("div");
@@ -231,6 +231,7 @@ export function Sheet(title: string): SheetHandle {
   function close(): void {
     if (closed) return;
     closed = true;
+    opts.onClose?.();
     scrim.classList.remove("k-sheet--in");
     sheet.classList.remove("k-sheet--in");
     setTimeout(() => {
