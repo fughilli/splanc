@@ -12,7 +12,11 @@ genrule(
     outs = ["dev_cert.h"],
     cmd = """
 set -e
-openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-256 \
+# RSA-2048, not EC: this build's mbedtls has the EC curves #undef'd
+# (esp_config.h gates MBEDTLS_ECP_DP_SECP256R1_ENABLED on a sdkconfig option
+# that isn't set), so an EC cert's public key fails to parse (-0x3D00). RSA is
+# always available.
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
     -out cert_key.pem 2>/dev/null
 openssl req -new -x509 -key cert_key.pem -out cert_crt.pem -days 3650 \
     -subj "/CN=ledmapper-player" 2>/dev/null
