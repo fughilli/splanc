@@ -53,7 +53,10 @@ export interface ListQuery {
 }
 
 const DB_NAME = "ledmapper";
-const DB_VERSION = 1;
+// Shared DB with effectStore (which added the `effects` store at v2). Both
+// modules MUST open at the same version — an older version request throws
+// VersionError once the DB has been upgraded. The upgrade below is additive.
+const DB_VERSION = 2;
 const IDX = "maps_index";
 const PAYLOAD = "maps_payload";
 
@@ -126,6 +129,14 @@ class MapStore {
           }
           if (!db.objectStoreNames.contains(PAYLOAD)) {
             db.createObjectStore(PAYLOAD, { keyPath: "id" });
+          }
+          // effectStore's store (v2) — created here too so a fresh install that
+          // opens the DB via mapStore first still reaches the v2 schema.
+          if (!db.objectStoreNames.contains("effects")) {
+            const e = db.createObjectStore("effects", { keyPath: "id" });
+            e.createIndex("updatedAt", "updatedAt");
+            e.createIndex("tags", "tags", { multiEntry: true });
+            e.createIndex("name", "name");
           }
         };
         req.onsuccess = () => resolve(req.result);

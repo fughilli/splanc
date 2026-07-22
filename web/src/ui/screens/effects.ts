@@ -120,15 +120,12 @@ export function EffectsScreen(router: Router): Screen {
       },
     });
     const editorLink = Button({
-      label: "Shader editor",
-      icon: "edit",
+      label: "Effect library",
+      icon: "sparkles",
       variant: "quiet",
-      onClick: () => {
-        // Link to /editor.html (owned by another task); carry the map id so it
-        // can pick up the same fixture if it supports it.
-        const q = appState.selectedMapId ? `?map=${encodeURIComponent(appState.selectedMapId)}` : "";
-        window.location.href = `/editor.html${q}`;
-      },
+      // The shader editor now lives in the in-shell Effects library
+      // (#/effects) — the detached /editor.html has been retired.
+      onClick: () => router.navigate("/effects"),
     });
     const perfLink = Button({
       label: "Performance",
@@ -154,12 +151,19 @@ export function EffectsScreen(router: Router): Screen {
   }
 
   async function load(): Promise<void> {
-    const id = appState.selectedMapId;
+    // Prefer the workspace-selected map, but fall back to the first library map
+    // (e.g. the seeded sample) so the pulse/flood preview is reachable without
+    // pre-selecting a map from the effects library.
+    let id = appState.selectedMapId;
+    if (id === null) {
+      const first = (await mapStore.list({ sort: "updated" }))[0];
+      id = first?.id ?? null;
+    }
     if (id === null) {
       el.append(
         EmptyState({
           icon: "sparkles",
-          title: "Select a map to preview effects",
+          title: "Map a fixture to preview effects",
           action: Button({ label: "Browse maps", icon: "map", onClick: () => router.navigate("/maps") }),
         }),
       );

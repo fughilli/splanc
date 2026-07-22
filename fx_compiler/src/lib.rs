@@ -446,7 +446,36 @@ impl Compiler {
             }
             Tok::Num(v, _) => {
                 self.advance();
-                Ok(vec![v])
+                // A bare number. For a vecN uniform, also accept a comma-list
+                // (`= 0.2, 0.6, 1.0`) or broadcast a lone scalar (`= 0.5`), so
+                // `uniform vec3 tint : color = 0.2, 0.6, 1.0;` works without the
+                // `vec3(...)` wrapper (natural for colors).
+                let mut vals = vec![v];
+                if ty.width() > 1 {
+                    while *self.cur() == Tok::Sym(',') {
+                        self.advance();
+                        match self.cur().clone() {
+                            Tok::Num(x, _) => {
+                                self.advance();
+                                vals.push(x);
+                            }
+                            Tok::Sym('-') => {
+                                self.advance();
+                                if let Tok::Num(x, _) = self.cur().clone() {
+                                    self.advance();
+                                    vals.push(-x);
+                                } else {
+                                    return self.err("expected number in default");
+                                }
+                            }
+                            _ => return self.err("expected number in default"),
+                        }
+                    }
+                    if vals.len() == 1 {
+                        return Ok(vec![vals[0]; ty.width() as usize]);
+                    }
+                }
+                Ok(vals)
             }
             Tok::Ident(ctor) if Self::ty_from_ident(&ctor).is_some() => {
                 // vecN(a,b,c)
@@ -1243,7 +1272,14 @@ impl Compiler {
                 Ok(Ty::Float)
             }
             "hsv2rgb" => {
-                self.arg1(args)?;
+                // Accept hsv2rgb(vec3) OR hsv2rgb(h, s, v). Three scalar args are
+                // already three contiguous stack slots — exactly the vec3(h,s,v)
+                // that HSV2RGB pops — so no MakeVec is needed either way.
+                let ok = (args.len() == 1 && args[0].width() == 3)
+                    || (args.len() == 3 && args.iter().all(|a| a.width() == 1));
+                if !ok {
+                    return self.err("hsv2rgb expects a vec3 or (h, s, v)");
+                }
                 self.emit(HSV2RGB);
                 Ok(Ty::Vec3)
             }

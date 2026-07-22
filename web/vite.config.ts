@@ -24,7 +24,6 @@ export default defineConfig({
         index: "index.html",
         wall: "wall.html",
         effects: "effects.html",
-        editor: "editor.html",
       },
     },
   },
@@ -36,8 +35,8 @@ export default defineConfig({
       "/healthz": backend,
       "/solver": backend, // wasm solver bundle (served from server runfiles)
       "/pulse": backend, // wasm effects Sim (effects.html workspace)
-      "/fx-compiler": backend, // wasm effects compiler (editor.html workspace)
-      "/fx-vm": backend, // wasm effects preview VM (editor.html workspace)
+      "/fx-compiler": backend, // wasm effects compiler (in-shell effect editor)
+      "/fx-vm": backend, // wasm effects preview VM (in-shell effect editor)
     },
   },
 });

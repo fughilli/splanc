@@ -205,6 +205,57 @@ fn doc_int_fixed_hotpath_snippet() {
 }
 
 #[test]
+fn vec_uniform_bare_list_default() {
+    // A color default written as a bare comma list (no vec3(...) wrapper) — the
+    // natural way to write a color, and what the editor's default script uses.
+    let src = r#"
+        uniform vec3 tint : color = 0.2, 0.6, 1.0;
+        vec3 shade(Led led) { return tint; }
+    "#;
+    let c = compile(src).unwrap_or_else(|d| panic!("compile error: {:?}", d));
+    assert_eq!(c.uniforms.len(), 1);
+    assert_eq!(c.uniforms[0].default, vec![0.2, 0.6, 1.0]);
+    assert_eq!(
+        run_shade(src, &[(0, &[0.2, 0.6, 1.0])], Led::default(), Frame::default()),
+        (51, 153, 255),
+    );
+    // a lone scalar broadcasts across the vector
+    let src2 = r#"uniform vec3 g = 0.5; vec3 shade(Led led) { return g; }"#;
+    let c2 = compile(src2).unwrap_or_else(|d| panic!("compile error: {:?}", d));
+    assert_eq!(c2.uniforms[0].default, vec![0.5, 0.5, 0.5]);
+}
+
+#[test]
+fn seeded_starter_effects_compile() {
+    // The three built-in starter effects the app seeds (web/src/store/seedEffects.ts)
+    // MUST compile, or the effects workspace looks broken on first open.
+    let rainbow = "uniform float scale : 0.2 .. 4.0 = 1.0;\n\
+        uniform float drift : 0.0 .. 2.0 = 0.3;\n\
+        void update() {}\n\
+        vec3 shade(Led led) {\n\
+          float h = fract(led.pos.y * scale + time * drift);\n\
+          return hsv2rgb(h, 0.9, 1.0);\n\
+        }";
+    let breathing = "uniform float rate : 0.1 .. 3.0 = 0.6;\n\
+        uniform vec3 base : color = 1.0, 0.3, 0.1;\n\
+        state float glow;\n\
+        void update() { glow = 0.5 + 0.5 * sin(time * rate); }\n\
+        vec3 shade(Led led) { return base * glow; }";
+    let comet = "uniform float speed : 0.0 .. 5.0 = 1.0;\n\
+        uniform float width : 0.02 .. 0.5 = 0.12;\n\
+        uniform vec3 tint : color = 0.2, 0.6, 1.0;\n\
+        void update() {}\n\
+        vec3 shade(Led led) {\n\
+          float phase = fract(led.s - time * speed);\n\
+          float band = smoothstep(width, 0.0, abs(phase - 0.5));\n\
+          return tint * band;\n\
+        }";
+    for (name, src) in [("rainbow", rainbow), ("breathing", breathing), ("comet", comet)] {
+        compile(src).unwrap_or_else(|d| panic!("starter {name} failed to compile: {:?}", d));
+    }
+}
+
+#[test]
 fn reports_errors() {
     assert!(compile("vec3 shade(Led led) { return nope(); }").is_err());
     assert!(compile("float x = 1;").is_err()); // no shade()

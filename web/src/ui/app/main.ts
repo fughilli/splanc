@@ -16,11 +16,14 @@ import { Shell } from "./shell";
 import { appState } from "./state";
 import { mapStore } from "../../store/mapStore";
 import { seedBuiltinMaps } from "../../store/seedMaps";
+import { seedBuiltinEffects } from "../../store/seedEffects";
 import { deviceStore } from "../../store/deviceStore";
 import { OnboardingScreen } from "../screens/onboarding";
 import { MapBrowserScreen } from "../screens/mapBrowser";
 import { MapDetailScreen } from "../screens/mapDetail";
 import { EffectsScreen } from "../screens/effects";
+import { EffectsBrowserScreen } from "../screens/effectsBrowser";
+import { EffectEditorScreen } from "../screens/effectEditor";
 import { CaptureScreen } from "../screens/capture";
 import { PerfPanelScreen } from "../screens/perfPanel";
 import { CalibrateScreen } from "../screens/calibrate";
@@ -62,7 +65,15 @@ async function main(): Promise<void> {
     })
     .add("/effects", () => {
       shell.setChrome({ title: "Effects", tabs: true });
+      return EffectsBrowserScreen(router);
+    })
+    .add("/effects/pulse", () => {
+      shell.setChrome({ title: "Pulse / Flood", back: true, tabs: true });
       return EffectsScreen(router);
+    })
+    .add("/effects/edit/:id", (m) => {
+      shell.setChrome({ title: "Edit effect", back: true, tabs: false });
+      return EffectEditorScreen(router, m.params["id"]!);
     })
     .add("/perf", () => {
       shell.setChrome({ title: "Performance", back: true, tabs: true });
@@ -90,6 +101,7 @@ async function main(): Promise<void> {
   // Seed built-in sample maps once, before the first render, so the library is
   // populated on a fresh install (cheap no-op on subsequent loads).
   await seedBuiltinMaps();
+  await seedBuiltinEffects();
 
   router.start();
 }

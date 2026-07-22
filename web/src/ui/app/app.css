@@ -365,6 +365,154 @@
   font: inherit;
 }
 
+/* --- effects library (browser) --- */
+.fxlib-aikey {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-3);
+}
+.fxlib-aikey-title {
+  font-weight: 600;
+}
+.fxlib-aikey-sub {
+  color: var(--text-dim);
+  font-size: var(--f-caption);
+}
+
+/* --- effect editor (in-shell) --- */
+.screen--fxedit {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.fxedit-canvas {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  border-radius: var(--r-card);
+  background: #000;
+}
+.fxedit-name {
+  display: flex;
+  flex-direction: column;
+}
+.fxedit-editor {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  overflow: hidden;
+  background: var(--surface);
+}
+.fxedit-code {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 12rem;
+  resize: vertical;
+  background: var(--surface);
+  color: var(--text);
+  border: 0;
+  padding: 0.6rem 0.8rem;
+  font: 13px/1.5 ui-monospace, monospace;
+  tab-size: 2;
+  outline: none;
+}
+.fxedit-status {
+  padding: 0.35rem 0.8rem;
+  font: 12px/1.4 ui-monospace, monospace;
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+  min-height: 1.4em;
+  color: var(--text-dim);
+}
+.fxedit-status--ok {
+  color: var(--ok, #9fe6a0);
+}
+.fxedit-status--err {
+  color: var(--warn, #ff9d9d);
+}
+.fxedit-legend {
+  font-size: var(--f-caption);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  margin-bottom: var(--sp-2);
+}
+.fxedit-muted {
+  color: var(--text-dim);
+  font-size: var(--f-caption);
+  margin: var(--sp-2) 0 0;
+  min-height: 1em;
+}
+.fxedit-fieldrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+.fxedit-mappick,
+.fxedit-ask {
+  width: 100%;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctrl);
+  padding: 0.45rem 0.5rem;
+  font: inherit;
+  box-sizing: border-box;
+}
+.fxedit-ask {
+  margin-bottom: var(--sp-2);
+  resize: vertical;
+}
+.fxedit-btnrow {
+  display: flex;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+.fxedit-diags {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font: 12px/1.4 ui-monospace, monospace;
+}
+.fxedit-diags li {
+  color: var(--warn, #ff9d9d);
+  margin: 0.15rem 0;
+}
+.fxedit-aihint {
+  color: var(--text-dim);
+  font-size: var(--f-caption);
+  margin-bottom: var(--sp-2);
+}
+.fxedit-link,
+.fxedit-aihint .fxedit-link {
+  background: none;
+  border: 0;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+}
+
+/* --- AI key sheet --- */
+.aikey-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.aikey-status {
+  color: var(--text-dim);
+  font-size: var(--f-caption);
+}
+.aikey-note {
+  color: var(--text-dim);
+  font-size: var(--f-caption);
+  margin: 0 0 var(--sp-2);
+}
+
 /* --- capture (full-screen over the camera video) --- */
 .screen--capture {
   padding: 0;

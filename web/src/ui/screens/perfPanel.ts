@@ -358,15 +358,11 @@ export function PerfPanelScreen(router: Router): Screen {
       onClick: () => router.navigate("/perf/calibrate"),
     }),
     Button({
-      label: "Shader editor",
-      icon: "edit",
+      label: "Effect library",
+      icon: "sparkles",
       variant: "quiet",
-      onClick: () => {
-        const q = appState.selectedMapId
-          ? `?map=${encodeURIComponent(appState.selectedMapId)}`
-          : "";
-        window.location.href = `/editor.html${q}`;
-      },
+      // Shader authoring now lives in the in-shell Effects library.
+      onClick: () => router.navigate("/effects"),
     }),
   );
 
