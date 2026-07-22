@@ -44,6 +44,8 @@ import {
   decodeMappingBundle,
   type EffectUniformsMessage,
   type MappingBundle,
+  type PerfMode,
+  type PerfReportMessage,
   type UniformValueFlat,
 } from "./proto";
 import { bestSample, ServerClock, syncSample, type SyncSample } from "./clocksync";
@@ -142,6 +144,11 @@ export class LedMapperClient {
   // Single-flight response waiters, keyed by the reply's message type.
   private waiters = new Map<string, { resolve: (m: ServerMessage) => void; reject: (e: Error) => void }>();
   private pingWaiters = new Map<number, { resolve: (m: ServerMessage) => void; reject: (e: Error) => void }>();
+
+  // Perf-report subscribers: perf_report arrives both as a reply to
+  // set_perf/get_perf_report AND unsolicited while a stream is active, so it
+  // can't be a single-flight waiter. The panel subscribes here for live frames.
+  private perfSubs = new Set<(r: PerfReportMessage) => void>();
 
   readonly clock: ServerClock;
   events: ClientEvents = {};
@@ -399,6 +406,33 @@ export class LedMapperClient {
     )) as unknown as EffectUniformsMessage;
   }
 
+  /** Configure effect perf instrumentation (perf-monitoring.md). `mode` picks
+   * the tier (OFF/BASIC/FULL); `intervalMs` > 0 asks the device to push
+   * perf_report unsolicited (0 = poll-only). Reply: an immediate perf_report
+   * for the current window. */
+  async setPerf(mode: PerfMode, intervalMs = 0): Promise<PerfReportMessage> {
+    return (await this.request(
+      { type: "set_perf", mode, intervalMs } as unknown as ClientMessage,
+      "perf_report",
+    )) as unknown as PerfReportMessage;
+  }
+
+  /** Drain the perf ring + rolling-window summary now (perf-monitoring.md).
+   * Reply: perf_report. Used when interval_ms == 0 (poll-only). */
+  async getPerfReport(): Promise<PerfReportMessage> {
+    return (await this.request(
+      { type: "get_perf_report" } as unknown as ClientMessage,
+      "perf_report",
+    )) as unknown as PerfReportMessage;
+  }
+
+  /** Subscribe to perf_report frames — both replies and unsolicited pushes.
+   * Returns an unsubscribe fn. The perf panel drives its live graph from here. */
+  onPerfReport(fn: (r: PerfReportMessage) => void): () => void {
+    this.perfSubs.add(fn);
+    return () => this.perfSubs.delete(fn);
+  }
+
   /** Pull the player's stored map+topology back off the device — streamed in
    * chunks and decoded as a MappingBundle. Rejects if the player has nothing
    * stored (server error `no_map`). `onProgress(done, total)` tracks assembly. */
@@ -513,6 +547,18 @@ export class LedMapperClient {
       if (w) {
         this.pingWaiters.delete(msg.t0);
         w.resolve(msg);
+      }
+      return;
+    }
+    if ((msg.type as string) === "perf_report") {
+      // Fan out to subscribers (live panel) first, then resolve any pending
+      // set_perf/get_perf_report waiter — the same frame satisfies both.
+      const report = msg as unknown as PerfReportMessage;
+      for (const fn of this.perfSubs) fn(report);
+      const pw = this.waiters.get("perf_report");
+      if (pw) {
+        this.waiters.delete("perf_report");
+        pw.resolve(msg);
       }
       return;
     }

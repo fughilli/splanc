@@ -130,7 +130,13 @@ export function EffectsScreen(router: Router): Screen {
         window.location.href = `/editor.html${q}`;
       },
     });
-    bar.append(playBtn, editorLink);
+    const perfLink = Button({
+      label: "Performance",
+      icon: "device",
+      variant: "quiet",
+      onClick: () => router.navigate("/perf"),
+    });
+    bar.append(playBtn, editorLink, perfLink);
     controlsWrap.append(bar);
 
     // Data-driven uniform panel (schema → controls → re-run).

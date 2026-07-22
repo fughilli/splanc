@@ -52,11 +52,16 @@ interface GenerateOptions {
   signal?: AbortSignal;
 }
 
-/** Build the user turn for a fresh ask or a refinement (with current script). */
-export function askTurn(ask: string, currentScript?: string): Turn {
-  const content = currentScript
+/** Build the user turn for a fresh ask or a refinement (with current script).
+ * `perfContext` (optional) is the assembled AI perf-context prompt block
+ * (effects/perfContext.perfContextToPrompt) — measured or predicted metrics +
+ * the hot-opcode histogram — so an "optimize this" ask is grounded in the
+ * effect's actual budget. */
+export function askTurn(ask: string, currentScript?: string, perfContext?: string): Turn {
+  const base = currentScript
     ? `Current script:\n\n${currentScript}\n\nRequested change: ${ask}`
     : ask;
+  const content = perfContext ? `${base}\n\n${perfContext}` : base;
   return { role: "user", content };
 }
 

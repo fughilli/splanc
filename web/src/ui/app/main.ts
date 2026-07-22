@@ -21,6 +21,8 @@ import { MapBrowserScreen } from "../screens/mapBrowser";
 import { MapDetailScreen } from "../screens/mapDetail";
 import { EffectsScreen } from "../screens/effects";
 import { CaptureScreen } from "../screens/capture";
+import { PerfPanelScreen } from "../screens/perfPanel";
+import { CalibrateScreen } from "../screens/calibrate";
 
 function main(): void {
   installIconSprite();
@@ -60,6 +62,14 @@ function main(): void {
     .add("/effects", () => {
       shell.setChrome({ title: "Effects", tabs: true });
       return EffectsScreen(router);
+    })
+    .add("/perf", () => {
+      shell.setChrome({ title: "Performance", back: true, tabs: true });
+      return PerfPanelScreen(router);
+    })
+    .add("/perf/calibrate", () => {
+      shell.setChrome({ title: "Calibrate", back: true, tabs: false });
+      return CalibrateScreen(router);
     })
     .add("/capture", () => {
       shell.setChrome({ title: "Capture", back: true, tabs: false, overlay: true });

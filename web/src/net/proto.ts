@@ -48,6 +48,8 @@ const CLIENT_ARMS: Record<string, string> = {
   set_effect: "setEffect",
   set_uniforms: "setUniforms",
   get_effect_uniforms: "getEffectUniforms",
+  set_perf: "setPerf",
+  get_perf_report: "getPerfReport",
 };
 const SERVER_ARMS: Record<string, string> = {
   welcome: "welcome",
@@ -66,6 +68,7 @@ const SERVER_ARMS: Record<string, string> = {
   frame_timing: "frameTiming",
   stored_map_chunk: "storedMapChunk",
   effect_uniforms: "effectUniforms",
+  perf_report: "perfReport",
 };
 const CLIENT_TYPES: Record<string, string> = Object.fromEntries(
   Object.entries(CLIENT_ARMS).map(([snake, camel]) => [camel, snake]),
@@ -289,6 +292,64 @@ export interface EffectUniformsMessage {
   effectId: string;
   manifest: Uint8Array;
   current: UniformValueFlat[];
+}
+
+// -- Perf arms (flat shapes) ------------------------------------------------
+// Perf-monitoring instrumentation (docs/design/perf-monitoring.md). Same
+// firmware↔phone drain-on-poll shape as FrameTiming; native integer units
+// (cycles/bytes/counts). Proto enum SetPerf.Mode rides the JSON boundary as its
+// name string ("OFF"|"BASIC"|"FULL"), matching how fromJson resolves enums.
+
+/** Instrumentation tier: OFF = no stream, BASIC = Tier-0 cycle/heap spans,
+ * FULL = Tier-0 + Tier-1 per-opcode counting + stack high-water. */
+export type PerfMode = "OFF" | "BASIC" | "FULL";
+
+/** Configure effect perf instrumentation (proto SetPerf). `intervalMs` = 0 is
+ * poll-only; > 0 asks the device to push perf_report unsolicited. */
+export interface SetPerfMessage {
+  type: "set_perf";
+  mode: PerfMode;
+  intervalMs: number;
+}
+
+/** Drain the perf ring + current window now (proto GetPerfReport). */
+export interface GetPerfReportMessage {
+  type: "get_perf_report";
+}
+
+/** One instrumented effect frame (proto PerfFrame). All native integer units. */
+export interface PerfFrameFlat {
+  seq: number;
+  updateCycles: number;
+  shadeCycles: number;
+  frameCycles: number;
+  showCycles: number;
+  ledCount: number;
+  instrUpdate: number;
+  instrShade: number;
+  stackMax: number;
+}
+
+/** Rolled-up perf report (proto PerfReport). Reply to get_perf_report/set_perf
+ * and the unsolicited push when intervalMs > 0. */
+export interface PerfReportMessage {
+  type: "perf_report";
+  effectId: string;
+  fxbHash: number;
+  cpuHz: number;
+  budgetCycles: number;
+  frameCyclesMin: number;
+  frameCyclesMean: number;
+  frameCyclesMax: number;
+  updateCyclesMean: number;
+  shadeCyclesMean: number;
+  showCyclesMean: number;
+  overruns: number;
+  droppedFrames: number;
+  samplesDropped: number;
+  heapFree: number;
+  heapMinFree: number;
+  ticks: PerfFrameFlat[];
 }
 
 // -- MappingBundle (.binpb file format) -------------------------------------
