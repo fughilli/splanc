@@ -281,11 +281,15 @@ def emit_typescript(schemas: dict[str, dict]) -> str:
     lines.append("  speed?: number | null;")
     lines.append("  /** Palette as 0xRRGGBB ints; empty/omitted keeps the player default. */")
     lines.append("  palette?: number[];")
-    lines.append("  /** Pulse lead-in/out ramp distance at termini, m (0/omitted derives from glow). */")
+    lines.append(
+        "  /** Pulse lead-in/out ramp distance at termini, m (0/omitted derives from glow). */"
+    )
     lines.append("  leadIn?: number | null;")
     lines.append("  /** Probability [0,1] a pulse splits at a junction. */")
     lines.append("  splitProb?: number | null;")
-    lines.append("  /** Flood fade length behind the wavefront, m (0/omitted derives from glow). */")
+    lines.append(
+        "  /** Flood fade length behind the wavefront, m (0/omitted derives from glow). */"
+    )
     lines.append("  decay?: number | null;")
     lines.append("}\n")
 
@@ -1055,7 +1059,7 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append("")
     out.append("class GetStoredMapMessage(_StrictModel):")
     out.append('    """Pull the player\'s stored map+topology as a MappingBundle, streamed in')
-    out.append("    chunks (bytes [offset, offset+maxLen)). Reply: stored_map_chunk.\"\"\"")
+    out.append('    chunks (bytes [offset, offset+maxLen)). Reply: stored_map_chunk."""')
     out.append("")
     out.append('    type: Literal["get_stored_map"]')
     out.append("    offset: int = Field(ge=0)")
@@ -1243,7 +1247,7 @@ def emit_python(schemas: dict[str, dict]) -> str:
     out.append("")
     out.append("class StoredMapChunkMessage(_StrictModel):")
     out.append('    """Reply to get_stored_map: a slice of the encoded MappingBundle. `data`')
-    out.append("    is base64; the phone loops until it has `totalLen` bytes, then decodes.\"\"\"")
+    out.append('    is base64; the phone loops until it has `totalLen` bytes, then decodes."""')
     out.append("")
     out.append('    type: Literal["stored_map_chunk"]')
     out.append("    totalLen: int = Field(ge=0)")

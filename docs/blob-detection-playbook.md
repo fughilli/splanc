@@ -11,14 +11,14 @@ Locking the camera exposure to the Nyquist-capped sweet spot
 (`?exposure=servo`, capped at `bitPeriodMs/2`, see `cv/exposure.ts`
 `planExposureServo` + `xr/exposureControl.ts`) transformed detection:
 
-| metric (per frame, 64-LED strip) | before (bloom/banding) | now (exposure servo) |
-| --- | --- | --- |
-| blobs / frame (median) | ~120 | **66** (≈ 64) |
-| chroma spread (cr..cb) | ~0.44 | **0.70** (vividly decodable) |
-| blob satFrac (clipping) | p90 0.66 | **0.15** |
-| solve | "No LEDs solved" | **64/64, matches the physical layout** |
+| metric (per frame, 64-LED strip) | before (bloom/banding) | now (exposure servo)                   |
+| -------------------------------- | ---------------------- | -------------------------------------- |
+| blobs / frame (median)           | ~120                   | **66** (≈ 64)                          |
+| chroma spread (cr..cb)           | ~0.44                  | **0.70** (vividly decodable)           |
+| blob satFrac (clipping)          | p90 0.66               | **0.15**                               |
+| solve                            | "No LEDs solved"       | **64/64, matches the physical layout** |
 
-Detection is now *good*. Two residual problems remain, both visible in the
+Detection is now _good_. Two residual problems remain, both visible in the
 success trace:
 
 1. **~2 extra blobs** (66 vs 64) — residual bloom-halo fragments / speckle.
@@ -34,6 +34,7 @@ success trace:
 
 - **Frame rate is sacred.** This is the sharpest lesson from the two latest
   traces. Both had the SAME detection quality (66 blobs, chroma 0.70), but:
+
   - `1784272462556` (no frame capture): **30 fps** (33 ms/frame) → 64/64.
   - `1784272339037` (frame capture on): **8.7 fps** (114 ms/frame, p90 208 ms)
     → unreliable, no clean solve.
@@ -45,6 +46,7 @@ success trace:
   `?frames=1` path pays this because `DetectorGL.grabFrame` (full-res
   `readPixels`) + gzip run on the capture thread — see "capture without the fps
   hit" below.
+
 - **Exposure ≤ `bitPeriodMs/2`** (Nyquist — a longer exposure integrates across
   a hue transition and blurs the code). Enforced in `planExposure`.
 - **Don't over-dim / over-shorten** — banding (WS2812 PWM × rolling shutter)
@@ -57,7 +59,7 @@ We can now capture the detector's byte-exact input (`?frames=1` →
 a harness (`//web:offline_pipeline`, next to `//web:offline_decode`) that
 re-runs the whole CV stack on captured frames:
 
-```
+```text
 raw frame → detectCpu (mirror of the detect.ts threshold/downsample shader)
           → connectedComponents (ccl.ts, unchanged)
           → Tracker → Decoder (pipeline.ts, unchanged)
@@ -92,7 +94,7 @@ Symptom: LEDs 8–15 px apart merge into one blob or the tracker mis-associates.
   merged-pair rate; blobs/frame → 64 without dropping decode yield.
 - **c. Tracker gate + appearance.** `gatePx = 60` ≫ the 22 px spacing. Either
   tighten it toward the inter-LED distance (watch for lost tracks under fast
-  motion — the gate is around the *predicted* position, so it interacts with
+  motion — the gate is around the _predicted_ position, so it interacts with
   the coasting model), or better, **add hue to the association cost** so a
   track prefers the blob matching its colour and won't steal a differently-hued
   neighbour even inside the gate. Metric: track-swap rate; count of LEDs that

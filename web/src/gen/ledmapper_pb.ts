@@ -1924,4 +1924,3 @@ export type ServerMessage = Message<"ledmapper.v1.ServerMessage"> & {
  */
 export const ServerMessageSchema: GenMessage<ServerMessage> = /*@__PURE__*/
   messageDesc(file_ledmapper, 56);
-
