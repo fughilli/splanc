@@ -15,6 +15,7 @@ import { Router } from "./router";
 import { Shell } from "./shell";
 import { appState } from "./state";
 import { mapStore } from "../../store/mapStore";
+import { seedBuiltinMaps } from "../../store/seedMaps";
 import { deviceStore } from "../../store/deviceStore";
 import { OnboardingScreen } from "../screens/onboarding";
 import { MapBrowserScreen } from "../screens/mapBrowser";
@@ -24,7 +25,7 @@ import { CaptureScreen } from "../screens/capture";
 import { PerfPanelScreen } from "../screens/perfPanel";
 import { CalibrateScreen } from "../screens/calibrate";
 
-function main(): void {
+async function main(): Promise<void> {
   installIconSprite();
 
   const mount = document.getElementById("app") ?? document.body;
@@ -86,7 +87,11 @@ function main(): void {
       return OnboardingScreen(router);
     });
 
+  // Seed built-in sample maps once, before the first render, so the library is
+  // populated on a fresh install (cheap no-op on subsequent loads).
+  await seedBuiltinMaps();
+
   router.start();
 }
 
-main();
+void main();
