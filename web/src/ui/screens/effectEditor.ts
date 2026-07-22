@@ -29,6 +29,7 @@ import { generateFixture } from "../../effects/fixtures";
 import { FxCompilerWorker } from "../../effects/editor/compiler";
 import { UniformPanel } from "../../effects/editor/uniform-panel";
 import { highlight } from "../../effects/editor/highlight";
+import { complete, type CompletionItem } from "../../effects/editor/completions";
 import {
   chatTurn,
   editorContext,
@@ -110,6 +111,217 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   function syncScroll(): void {
     backdrop.scrollTop = codeEl.scrollTop;
     backdrop.scrollLeft = codeEl.scrollLeft;
+    if (popupOpen) positionPopup();
+  }
+
+  // -- autocomplete popup ---------------------------------------------------
+  // A floating list anchored at the caret with per-item docstrings. Caret pixel
+  // coordinates are computed via a hidden "mirror" <div> that duplicates the
+  // textarea's text + font metrics up to the caret; the caret position is the
+  // offset of a zero-width marker span inside the mirror (the standard trick).
+  const popup = document.createElement("div");
+  popup.className = "fxac";
+  popup.style.display = "none";
+  const popupList = document.createElement("div");
+  popupList.className = "fxac-list";
+  const popupDoc = document.createElement("div");
+  popupDoc.className = "fxac-doc";
+  popup.append(popupList, popupDoc);
+
+  // Mirror for caret measurement. Hidden but laid out; styles are copied from
+  // the textarea on demand so font/padding/line-height match exactly.
+  const mirror = document.createElement("div");
+  mirror.className = "fxac-mirror";
+  mirror.setAttribute("aria-hidden", "true");
+  const mirrorMark = document.createElement("span");
+  codeWrap.append(popup, mirror);
+
+  let popupOpen = false;
+  let popupItems: CompletionItem[] = [];
+  let popupFrom = 0;
+  let popupActive = 0;
+  let popupTimer: number | null = null;
+
+  const KIND_BADGE: Record<CompletionItem["kind"], string> = {
+    member: "mem",
+    func: "fn",
+    type: "ty",
+    keyword: "kw",
+    context: "ctx",
+    uniform: "var",
+    state: "state",
+    swizzle: "sw",
+  };
+
+  function caretPixel(): { left: number; top: number } {
+    // Copy the metrics that affect glyph flow from the textarea to the mirror.
+    const cs = getComputedStyle(codeEl);
+    const props = [
+      "fontFamily",
+      "fontSize",
+      "fontWeight",
+      "lineHeight",
+      "letterSpacing",
+      "paddingTop",
+      "paddingRight",
+      "paddingBottom",
+      "paddingLeft",
+      "borderTopWidth",
+      "borderRightWidth",
+      "borderBottomWidth",
+      "borderLeftWidth",
+      "boxSizing",
+      "tabSize",
+    ] as const;
+    for (const p of props) mirror.style.setProperty(cssProp(p), cs[p as keyof CSSStyleDeclaration] as string);
+    mirror.style.width = `${codeEl.clientWidth}px`;
+
+    const caret = codeEl.selectionEnd;
+    mirror.textContent = codeEl.value.slice(0, caret);
+    mirror.appendChild(mirrorMark);
+    mirrorMark.textContent = "​";
+
+    const left = mirrorMark.offsetLeft - codeEl.scrollLeft;
+    const top = mirrorMark.offsetTop - codeEl.scrollTop;
+    return { left, top };
+  }
+
+  function cssProp(camel: string): string {
+    return camel.replace(/[A-Z]/g, (m) => `-${m.toLowerCase()}`);
+  }
+
+  function positionPopup(): void {
+    const { left, top } = caretPixel();
+    const lineH = parseFloat(getComputedStyle(codeEl).lineHeight) || 18;
+    popup.style.left = `${Math.max(0, left)}px`;
+    popup.style.top = `${top + lineH + 2}px`;
+  }
+
+  function renderPopup(): void {
+    popupList.replaceChildren();
+    popupItems.forEach((it, i) => {
+      const row = document.createElement("div");
+      row.className = "fxac-row" + (i === popupActive ? " fxac-row--active" : "");
+      const badge = document.createElement("span");
+      badge.className = `fxac-badge fxac-badge--${it.kind}`;
+      badge.textContent = KIND_BADGE[it.kind];
+      const label = document.createElement("span");
+      label.className = "fxac-label";
+      label.textContent = it.label;
+      const detail = document.createElement("span");
+      detail.className = "fxac-detail";
+      detail.textContent = it.detail;
+      row.append(badge, label, detail);
+      row.addEventListener("mousedown", (ev) => {
+        // mousedown (not click) so the textarea doesn't blur before we accept.
+        ev.preventDefault();
+        popupActive = i;
+        acceptCompletion();
+      });
+      row.addEventListener("mouseenter", () => {
+        popupActive = i;
+        highlightActive();
+      });
+      popupList.appendChild(row);
+    });
+    const active = popupItems[popupActive];
+    popupDoc.textContent = active ? active.doc : "";
+  }
+
+  function highlightActive(): void {
+    const rows = popupList.children;
+    for (let i = 0; i < rows.length; i++) {
+      rows[i]!.classList.toggle("fxac-row--active", i === popupActive);
+    }
+    const active = popupItems[popupActive];
+    popupDoc.textContent = active ? active.doc : "";
+    const el2 = rows[popupActive] as HTMLElement | undefined;
+    el2?.scrollIntoView({ block: "nearest" });
+  }
+
+  function openPopup(): void {
+    if (disposed) return;
+    const caret = codeEl.selectionEnd;
+    // Only trigger with a collapsed selection.
+    if (codeEl.selectionStart !== caret) return closePopup();
+    const { items, from } = complete(codeEl.value, caret);
+    if (items.length === 0) return closePopup();
+    popupItems = items;
+    popupFrom = from;
+    popupActive = 0;
+    popupOpen = true;
+    popup.style.display = "";
+    renderPopup();
+    positionPopup();
+  }
+
+  function closePopup(): void {
+    if (!popupOpen) return;
+    popupOpen = false;
+    popup.style.display = "none";
+    popupItems = [];
+  }
+
+  function schedulePopup(): void {
+    if (popupTimer !== null) clearTimeout(popupTimer);
+    popupTimer = window.setTimeout(openPopup, 60);
+  }
+
+  // selectionchange fires on any caret move (mouse click, arrow keys). If the
+  // caret is no longer at the token the popup was opened for, dismiss it — we
+  // don't reopen here to avoid a popup on every click; typing reopens it.
+  function onSelectionChange(): void {
+    if (!popupOpen) return;
+    if (document.activeElement !== codeEl) return closePopup();
+    const caret = codeEl.selectionEnd;
+    if (caret < popupFrom) return closePopup();
+    positionPopup();
+  }
+
+  function acceptCompletion(): void {
+    const it = popupItems[popupActive];
+    if (!it) return closePopup();
+    const caret = codeEl.selectionEnd;
+    const before = codeEl.value.slice(0, popupFrom);
+    const after = codeEl.value.slice(caret);
+    // Functions insert `name(` and leave the caret inside the parens.
+    const insert = it.kind === "func" ? `${it.insertText}(` : it.insertText;
+    codeEl.value = before + insert + after;
+    const newCaret = before.length + insert.length;
+    codeEl.selectionStart = codeEl.selectionEnd = newCaret;
+    closePopup();
+    // Repaint highlight + persist, but do NOT trigger a compile from an accept
+    // beyond the normal edit path — reuse the same schedulers as typing.
+    paintHighlight();
+    syncScroll();
+    scheduleCompile();
+    scheduleSave();
+    codeEl.focus();
+  }
+
+  /** Keydown handler for popup navigation; returns true if it consumed the key
+   * (so the caller can preventDefault and skip other editor handling). */
+  function popupKeydown(ev: KeyboardEvent): boolean {
+    if (!popupOpen) return false;
+    switch (ev.key) {
+      case "ArrowDown":
+        popupActive = (popupActive + 1) % popupItems.length;
+        highlightActive();
+        return true;
+      case "ArrowUp":
+        popupActive = (popupActive - 1 + popupItems.length) % popupItems.length;
+        highlightActive();
+        return true;
+      case "Enter":
+      case "Tab":
+        acceptCompletion();
+        return true;
+      case "Escape":
+        closePopup();
+        return true;
+      default:
+        return false;
+    }
   }
 
   // -- compile status chip --------------------------------------------------
@@ -573,8 +785,30 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
       syncScroll();
       scheduleCompile();
       scheduleSave();
+      schedulePopup();
     });
     codeEl.addEventListener("scroll", syncScroll);
+
+    // Popup keyboard: navigation keys are consumed before they reach the
+    // textarea; other keys fall through and re-open the popup on keyup.
+    codeEl.addEventListener("keydown", (ev) => {
+      if (popupKeydown(ev)) {
+        ev.preventDefault();
+        ev.stopPropagation();
+      }
+    });
+    codeEl.addEventListener("keyup", (ev) => {
+      // Ignore keys the popup already handled or that shouldn't re-trigger it.
+      if (["ArrowDown", "ArrowUp", "Enter", "Tab", "Escape"].includes(ev.key)) return;
+      if (ev.key === "ArrowLeft" || ev.key === "ArrowRight") {
+        // Caret moved by arrows: refresh (may reposition or dismiss).
+        schedulePopup();
+        return;
+      }
+      schedulePopup();
+    });
+    codeEl.addEventListener("blur", () => closePopup());
+    document.addEventListener("selectionchange", onSelectionChange);
 
     raf = requestAnimationFrame(tick);
     scheduleCompile();
@@ -586,9 +820,12 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     onUnmount: () => {
       disposed = true;
       closeMenu();
+      closePopup();
+      document.removeEventListener("selectionchange", onSelectionChange);
       if (raf) cancelAnimationFrame(raf);
       if (compileTimer !== null) clearTimeout(compileTimer);
       if (saveTimer !== null) clearTimeout(saveTimer);
+      if (popupTimer !== null) clearTimeout(popupTimer);
       void effectStore.save(effectId, codeEl.value);
       unsubAppState?.();
       preview?.dispose();

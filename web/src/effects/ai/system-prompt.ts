@@ -13,7 +13,8 @@ import { BUILTINS, CONTEXTS, KEYWORDS } from "../editor/lang-spec";
 
 const builtinTable = BUILTINS.map((b) => `  ${b.sig}  — ${b.doc}`).join("\n");
 const contextTable = CONTEXTS.map(
-  (c) => `  ${c.name}${c.members.length ? ` (.${c.members.join(", .")})` : ""} — ${c.doc}`,
+  (c) =>
+    `  ${c.name}${c.members.length ? ` (.${c.members.map((m) => m.name).join(", .")})` : ""} — ${c.doc}`,
 ).join("\n");
 
 /** Two worked examples — few-shot examples do more for validity than prose. */

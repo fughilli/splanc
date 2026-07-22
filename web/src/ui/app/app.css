@@ -462,6 +462,93 @@
 .fxhl-fn { color: #c9a3ff; }
 .fxhl-ctx { color: #ff9d7a; }
 
+/* Autocomplete popup — a floating list anchored at the caret with a docstring
+ * line for the highlighted item. Positioned inside .fxedit-codewrap (relative).
+ * The mirror is an off-screen duplicate of the textarea used to measure the
+ * caret's pixel position; it must never be seen. */
+.fxac-mirror {
+  position: absolute;
+  top: 0;
+  left: 0;
+  visibility: hidden;
+  pointer-events: none;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow: hidden;
+  z-index: -1;
+}
+.fxac {
+  position: absolute;
+  z-index: 5;
+  min-width: 15rem;
+  max-width: 24rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctrl);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+  font: 12px/1.4 ui-monospace, monospace;
+}
+.fxac-list {
+  max-height: 13rem;
+  overflow-y: auto;
+}
+.fxac-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 0.2rem 0.5rem;
+  cursor: pointer;
+  color: var(--text);
+}
+.fxac-row--active {
+  background: var(--accent-quiet);
+}
+.fxac-badge {
+  flex: 0 0 auto;
+  min-width: 2.6em;
+  text-align: center;
+  padding: 0 0.3em;
+  border-radius: 3px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--surface);
+  background: var(--text-dim);
+}
+.fxac-badge--func { background: #c9a3ff; }
+.fxac-badge--type { background: #7fd0ff; }
+.fxac-badge--member { background: #ff9d7a; }
+.fxac-badge--context { background: #ff9d7a; }
+.fxac-badge--keyword { background: var(--accent); }
+.fxac-badge--swizzle { background: #7fd0ff; }
+.fxac-badge--uniform { background: var(--ok, #9fe6a0); }
+.fxac-badge--state { background: var(--warn, #e6c56a); }
+.fxac-label {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fxac-detail {
+  flex: 0 1 auto;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 55%;
+}
+.fxac-doc {
+  padding: 0.35rem 0.5rem;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-dim);
+  white-space: normal;
+}
+.fxac-doc:empty {
+  display: none;
+}
+
 .fxedit-status {
   display: flex;
   align-items: center;
