@@ -1,0 +1,57 @@
+"""Effects compiler (docs/design/effects-compiler.md): GLSL-ish source → .fxb
+bytecode + uniform manifest for the fx_vm interpreter. Host + wasm (the browser
+editor compiles live). Tests compile real shaders and run them through the
+actual fx_vm, so the source→bytecode→VM pipeline is verified end-to-end.
+"""
+
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_shared_library", "rust_test")
+load("@rules_rust_wasm_bindgen//:defs.bzl", "rust_wasm_bindgen")
+load("@aspect_bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
+load("//tools/transitions:opt.bzl", "opt_files")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "fx_compiler",
+    srcs = ["src/lib.rs"],
+    crate_name = "ledmapper_fx_compiler",
+    edition = "2021",
+)
+
+rust_test(
+    name = "fx_compiler_test",
+    srcs = ["tests/compile.rs"],
+    edition = "2021",
+    deps = [
+        ":fx_compiler",
+        "//firmware/fx_vm",
+    ],
+)
+
+# Browser: compile scripts live in the editor.
+rust_shared_library(
+    name = "fx_compiler_wasm",
+    srcs = ["bin/wasm_lib.rs"],
+    edition = "2021",
+    deps = [
+        ":fx_compiler",
+        "@crates//:wasm-bindgen",
+    ],
+)
+
+rust_wasm_bindgen(
+    name = "fx_compiler_wasm_pkg",
+    target = "web",
+    wasm_file = ":fx_compiler_wasm",
+)
+
+opt_files(
+    name = "fx_compiler_wasm_pkg_opt",
+    srcs = [":fx_compiler_wasm_pkg"],
+)
+
+copy_to_directory(
+    name = "fx_compiler_web",
+    srcs = [":fx_compiler_wasm_pkg_opt"],
+    replace_prefixes = {"fx_compiler_wasm_pkg": ""},
+)
