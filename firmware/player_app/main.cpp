@@ -700,13 +700,14 @@ void loop() {
                      : (sta_joining ? String("sta joining…") : String("sta off"));
     Log().printf(
         "[player] AP \"%s\" %d station(s) http://%s/  %s  ws :%u  "
-        "ws=%s map=%lu leds\n",
+        "ws=%s map=%lu leds heap=%u min=%u\n",
         kApSsid, WiFi.softAPgetStationNum(), WiFi.softAPIP().toString().c_str(),
         sta.c_str(), kWsPort,
         ws_state == WsState::kOpen        ? "open"
         : ws_state == WsState::kHandshake ? "handshake"
                                           : "idle",
-        map_leds);
+        map_leds, (unsigned)esp_get_free_heap_size(),
+        (unsigned)esp_get_minimum_free_heap_size());
   }
   delay(1);
 }

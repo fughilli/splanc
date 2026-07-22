@@ -28,10 +28,14 @@ use ledmapper_store::{
 };
 use micropb::{MessageDecode, MessageEncode, PbDecoder, PbEncoder};
 
-/// Storage for the decoded map + topology (Phase 3 arena). 96 KiB holds a
-/// ~5000-LED map (16 B/LED) plus a topology; ArenaFull is the bounded
-/// answer beyond that.
-const ARENA_BYTES: usize = 96 * 1024;
+/// Storage for the decoded map + topology (Phase 3 arena). Reset wholesale per
+/// upload, so it only holds ONE map+topology at a time. Sized to the firmware's
+/// 256-LED cap (~16 B/LED → ~4 KB map; with topology + bump-arena grow-churn the
+/// worst case is ~16 KB), 32 KiB gives 2× margin. This was 96 KiB (sized for a
+/// ~5000-LED map we can't drive) — the reclaimed 64 KB of .bss is heap the
+/// TLS/wss handshake needs for its 16 KB record buffers. ArenaFull is still the
+/// bounded answer for an over-large upload.
+const ARENA_BYTES: usize = 32 * 1024;
 
 /// Reply frames are control traffic (firmware caps): welcome is the
 /// largest at a few hundred bytes.
