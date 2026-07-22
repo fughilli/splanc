@@ -226,3 +226,226 @@ function parseResult(json: string): GenerateResult {
     notes: typeof obj.notes === "string" ? obj.notes : "",
   };
 }
+
+// =============================================================================
+// Interactive chat with a tool-use loop (replaces the one-shot generate above
+// in the editor). The conversation is multi-turn; the assistant can call two
+// client-fulfilled tools:
+//   - set_script({source})   → replace the editor content + trigger a compile
+//   - capture_preview()      → render the live FxPreview canvas to a PNG and
+//                              return it as an IMAGE tool_result block (vision),
+//                              so the model can SEE the effect and iterate.
+// The loop: send messages(+tools) → if the response has tool_use, execute each
+// tool locally, append tool_result blocks, and call again; stop at a final text
+// turn. The system prompt is a stable cached prefix so prompt caching engages
+// across turns (docs: model claude-opus-4-8, anthropic-version 2023-06-01,
+// direct-browser CORS, BYO key).
+// =============================================================================
+
+/** A content block in an Anthropic message (the subset we produce/consume). */
+export type ContentBlock =
+  | { type: "text"; text: string }
+  | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> }
+  | {
+      type: "tool_result";
+      tool_use_id: string;
+      content: (
+        | { type: "text"; text: string }
+        | { type: "image"; source: { type: "base64"; media_type: string; data: string } }
+      )[];
+      is_error?: boolean;
+    };
+
+/** A full conversation message (chat history is an array of these). */
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string | ContentBlock[];
+}
+
+/** The tool the model calls to replace the editor script. */
+export interface SetScriptCall {
+  source: string;
+}
+
+/** Client-side fulfillment of the two tools + streaming hooks. The editor
+ * supplies these so the AI can act on the live editor + preview. */
+export interface ChatHooks {
+  /** The model proposed a new script. Apply it, compile, and return the compile
+   * outcome text (ok/diagnostics/uniforms + disassembly) to feed back. */
+  onSetScript: (source: string) => Promise<string>;
+  /** The model asked to see the preview. Return a PNG data URL
+   * ("data:image/png;base64,...") of the current live preview canvas. */
+  onCapturePreview: () => Promise<string>;
+  /** Streamed assistant text (deltas) for the "thinking…"/live panel. */
+  onText?: (delta: string) => void;
+  /** A tool is about to run (for a status line in the panel). */
+  onToolUse?: (name: string) => void;
+  signal?: AbortSignal;
+}
+
+const TOOLS = [
+  {
+    name: "set_script",
+    description:
+      "Replace the entire editor script with a new effect program and compile it. " +
+      "Use this to author or revise the effect. The compile result (success, " +
+      "diagnostics, uniforms, and disassembly) is returned so you can iterate.",
+    input_schema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        source: { type: "string", description: "The complete new effect source." },
+      },
+      required: ["source"],
+    },
+  },
+  {
+    name: "capture_preview",
+    description:
+      "Render the current live preview to a PNG image so you can see how the " +
+      "effect looks on the LED map right now, and comment or iterate on it.",
+    input_schema: { type: "object", additionalProperties: false, properties: {} },
+  },
+] as const;
+
+const CHAT_SYSTEM = `${SYSTEM_PROMPT}
+
+You are now in an interactive chat with the user inside the effect editor. You can:
+- Answer questions about the current effect program.
+- Call set_script to author or revise the effect; you'll get the compile result back (fix any errors and iterate).
+- Call capture_preview to SEE the live preview rendered to an image, then comment on or refine the look.
+Keep prose brief. When you change the script, prefer minimal, targeted edits. After a change, it's often useful to capture_preview to confirm the result.`;
+
+function dataUrlToImageBlock(dataUrl: string): {
+  type: "image";
+  source: { type: "base64"; media_type: string; data: string };
+} {
+  const m = /^data:([^;]+);base64,(.*)$/s.exec(dataUrl);
+  const media_type = m?.[1] ?? "image/png";
+  const data = m?.[2] ?? "";
+  return { type: "image", source: { type: "base64", media_type, data } };
+}
+
+async function messagesRequest(messages: ChatMessage[], signal?: AbortSignal): Promise<{
+  content: ContentBlock[];
+  stop_reason: string | null;
+}> {
+  const key = getApiKey();
+  if (!key) throw new Error("no Anthropic API key set (add one in AI settings)");
+  const resp = await fetch(API_URL, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": key,
+      "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
+    },
+    signal: signal ?? null,
+    body: JSON.stringify({
+      model: MODEL,
+      max_tokens: 4000,
+      thinking: { type: "adaptive" },
+      // Frozen, cacheable system prefix so caching engages across turns.
+      system: [
+        { type: "text", text: CHAT_SYSTEM, cache_control: { type: "ephemeral" } },
+      ],
+      tools: TOOLS,
+      messages: messages.map((m) => ({ role: m.role, content: m.content })),
+    }),
+  });
+  if (!resp.ok) {
+    const body = await resp.text().catch(() => "");
+    throw new Error(`Anthropic API ${resp.status}: ${body.slice(0, 300)}`);
+  }
+  const json = (await resp.json()) as {
+    content?: ContentBlock[];
+    stop_reason?: string | null;
+  };
+  return { content: json.content ?? [], stop_reason: json.stop_reason ?? null };
+}
+
+/** Assemble the always-included editor context block for a user turn: the
+ * current source + latest compile result (+ disassembly when present). */
+export function editorContext(opts: {
+  source: string;
+  compileSummary: string;
+  disassembly?: string;
+}): string {
+  let ctx = `Current editor script:\n\n\`\`\`\n${opts.source}\n\`\`\`\n\nLatest compile result: ${opts.compileSummary}`;
+  if (opts.disassembly) {
+    ctx += `\n\nDisassembly:\n\`\`\`\n${opts.disassembly}\n\`\`\``;
+  }
+  return ctx;
+}
+
+/**
+ * Run the tool-use loop for one user turn. `history` is the running conversation
+ * (mutated in place: the user turn should already be appended by the caller, or
+ * pass it and we append). Returns the updated history plus the final assistant
+ * text. Executes set_script / capture_preview locally; a few rounds of
+ * auto-iteration are natural since the model gets compile results back.
+ */
+export async function chatTurn(history: ChatMessage[], hooks: ChatHooks): Promise<string> {
+  let finalText = "";
+  const MAX_ROUNDS = 8; // hard cap so a misbehaving loop can't run forever
+  for (let round = 0; round < MAX_ROUNDS; round++) {
+    const { content, stop_reason } = await messagesRequest(history, hooks.signal);
+    history.push({ role: "assistant", content });
+
+    // Surface any assistant text.
+    for (const block of content) {
+      if (block.type === "text" && block.text) {
+        finalText = block.text;
+        hooks.onText?.(block.text);
+      }
+    }
+
+    const toolUses = content.filter(
+      (b): b is Extract<ContentBlock, { type: "tool_use" }> => b.type === "tool_use",
+    );
+    if (stop_reason !== "tool_use" || toolUses.length === 0) break;
+
+    // Fulfill every tool call locally, then feed the results back in one user turn.
+    const results: ContentBlock[] = [];
+    for (const tu of toolUses) {
+      hooks.onToolUse?.(tu.name);
+      try {
+        if (tu.name === "set_script") {
+          const source = String((tu.input as { source?: unknown }).source ?? "");
+          const summary = await hooks.onSetScript(source);
+          results.push({
+            type: "tool_result",
+            tool_use_id: tu.id,
+            content: [{ type: "text", text: summary }],
+          });
+        } else if (tu.name === "capture_preview") {
+          const dataUrl = await hooks.onCapturePreview();
+          results.push({
+            type: "tool_result",
+            tool_use_id: tu.id,
+            content: [
+              { type: "text", text: "Live preview rendered:" },
+              dataUrlToImageBlock(dataUrl),
+            ],
+          });
+        } else {
+          results.push({
+            type: "tool_result",
+            tool_use_id: tu.id,
+            content: [{ type: "text", text: `unknown tool ${tu.name}` }],
+            is_error: true,
+          });
+        }
+      } catch (e) {
+        results.push({
+          type: "tool_result",
+          tool_use_id: tu.id,
+          content: [{ type: "text", text: `tool error: ${e instanceof Error ? e.message : String(e)}` }],
+          is_error: true,
+        });
+      }
+    }
+    history.push({ role: "user", content: results });
+  }
+  return finalText;
+}

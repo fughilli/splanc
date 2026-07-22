@@ -6,13 +6,20 @@
  * the store. When a device is connected (appState.client) it can push the
  * compiled .fxb and live uniform values.
  *
- * The editor NEVER requires selecting a map first: it defaults to the seeded
- * sample map (or a generated fixture if the library is empty). The AI generate
- * box (ask → stream → deferred compile → repair) surfaces the BYO-key input and
- * a first-run hint when no key is set.
- *
- * Wiring is ported from src/effects/editor/main.ts — same modules, reshaped into
- * the app shell with kit components and CSS tokens.
+ * Editor features (see the task brief):
+ *  1. A compile status chip that reflects the worker compile lifecycle
+ *     (compiling… → ✓ compiled · N uniforms · M bytes / ✕ line L: msg), made
+ *     visible the instant a compile is kicked off and race-safe against
+ *     superseded compiles.
+ *  2. A collapsible disassembly panel, refreshed on each successful compile —
+ *     the .fxb is disassembled by the AUTHORITATIVE Rust disassembler exposed
+ *     through the compiler wasm (fx_disassemble) via the worker.
+ *  3. A lightweight syntax-highlight overlay (transparent textarea over a
+ *     <pre><code> backdrop, see highlight.ts) — no heavy editor dependency.
+ *  4. An interactive AI CHAT panel driving a tool-use loop (set_script /
+ *     capture_preview vision) against api.anthropic.com (BYO key).
+ *  5. Key config + disassembly toggle moved into a ⋯ overflow menu in the
+ *     editor header (out of the main body).
  */
 
 import type { OutputMap } from "@ledmapper/protocol";
@@ -21,23 +28,22 @@ import { MapView } from "../mapview";
 import { generateFixture } from "../../effects/fixtures";
 import { FxCompilerWorker } from "../../effects/editor/compiler";
 import { UniformPanel } from "../../effects/editor/uniform-panel";
+import { highlight } from "../../effects/editor/highlight";
 import {
-  askTurn,
-  generate,
+  chatTurn,
+  editorContext,
   getApiKey,
-  repairTurn,
-  type Turn,
+  type ChatMessage,
 } from "../../effects/ai/generate";
 import { effectStore } from "../../store/effectStore";
 import { mapStore } from "../../store/mapStore";
 import { appState } from "../app/state";
-import { Button, Card, Field } from "../kit";
+import { Button, Card, Field, IconButton } from "../kit";
 import { openAiKeySheet } from "./aiKeySheet";
 import type { Router, Screen } from "../app/router";
 
 const COMPILE_DEBOUNCE_MS = 300;
 const SAVE_DEBOUNCE_MS = 800;
-const REPAIR_ROUNDS = 2;
 
 function msg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -53,14 +59,18 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   let mapView: MapView | null = null;
   let positions: Float32Array | null = null;
   let preview: FxPreview | null = null;
-  let lastManifest: FxUniform[] = [];
   let lastT = 0;
   let frame = 0;
   let startT = 0;
   let compileTimer: number | null = null;
   let saveTimer: number | null = null;
   let compileSeq = 0;
-  let aiTurns: Turn[] = [];
+  // Latest successful-compile artefacts, fed to the AI as turn context.
+  let lastCompileSummary = "not compiled yet";
+  let lastDisassembly = "";
+  let showDisassembly = false;
+  let chatBusy = false;
+  const chatHistory: ChatMessage[] = [];
   let raf = 0;
   let disposed = false;
 
@@ -76,14 +86,69 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     void effectStore.rename(effectId, nameField.input.value.trim() || "Untitled effect");
   });
 
+  // -- code editor: transparent textarea layered над a highlighted backdrop --
+  const editorWrap = document.createElement("div");
+  editorWrap.className = "fxedit-editor";
+
+  const codeWrap = document.createElement("div");
+  codeWrap.className = "fxedit-codewrap";
+  const backdrop = document.createElement("pre");
+  backdrop.className = "fxedit-backdrop";
+  backdrop.setAttribute("aria-hidden", "true");
+  const backdropCode = document.createElement("code");
+  backdrop.appendChild(backdropCode);
   const codeEl = document.createElement("textarea");
   codeEl.className = "fxedit-code";
   codeEl.spellcheck = false;
   codeEl.autocapitalize = "off";
   codeEl.setAttribute("autocomplete", "off");
+  codeWrap.append(backdrop, codeEl);
 
+  function paintHighlight(): void {
+    backdropCode.innerHTML = highlight(codeEl.value);
+  }
+  function syncScroll(): void {
+    backdrop.scrollTop = codeEl.scrollTop;
+    backdrop.scrollLeft = codeEl.scrollLeft;
+  }
+
+  // -- compile status chip --------------------------------------------------
   const statusEl = document.createElement("div");
   statusEl.className = "fxedit-status";
+  editorWrap.append(codeWrap, statusEl);
+
+  function setStatusCompiling(): void {
+    statusEl.className = "fxedit-status fxedit-status--busy";
+    statusEl.replaceChildren();
+    const spin = document.createElement("span");
+    spin.className = "fxedit-spinner";
+    const txt = document.createElement("span");
+    txt.textContent = "compiling…";
+    statusEl.append(spin, txt);
+  }
+  function setStatusOk(text: string): void {
+    statusEl.className = "fxedit-status fxedit-status--ok";
+    statusEl.textContent = `✓ ${text}`;
+  }
+  function setStatusErr(text: string): void {
+    statusEl.className = "fxedit-status fxedit-status--err";
+    statusEl.textContent = `✕ ${text}`;
+  }
+
+  // -- disassembly panel ----------------------------------------------------
+  const disasmCard = Card();
+  disasmCard.classList.add("fxedit-disasm-card");
+  disasmCard.style.display = "none";
+  const disasmHead = document.createElement("div");
+  disasmHead.className = "fxedit-legend";
+  disasmHead.textContent = "Disassembly (.fxb)";
+  const disasmPre = document.createElement("pre");
+  disasmPre.className = "fxedit-disasm";
+  disasmCard.append(disasmHead, disasmPre);
+
+  function refreshDisasmVisibility(): void {
+    disasmCard.style.display = showDisassembly ? "" : "none";
+  }
 
   const uniformsHost = document.createElement("div");
   uniformsHost.className = "uniform-panel";
@@ -101,28 +166,39 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     if (c?.isConnected) void c.setUniforms([{ slot, value }]).catch(() => undefined);
   });
 
-  // -- AI section -----------------------------------------------------------
-  const aiHint = document.createElement("div");
-  aiHint.className = "fxedit-aihint";
-  const aiAsk = document.createElement("textarea");
-  aiAsk.className = "fxedit-ask";
-  aiAsk.rows = 2;
-  aiAsk.placeholder = "gentle blue breathing along the trunk";
-  const aiNotes = document.createElement("div");
-  aiNotes.className = "fxedit-muted";
-  const aiBtn = Button({ label: "Generate with AI", icon: "sparkles", onClick: () => void runAi() });
+  // -- AI chat panel --------------------------------------------------------
+  const chatLog = document.createElement("div");
+  chatLog.className = "fxedit-chatlog";
+  const chatHint = document.createElement("p");
+  chatHint.className = "fxedit-muted";
+  chatHint.textContent =
+    "Ask the AI to write or tweak this effect. It can compile changes and see the live preview.";
+  chatLog.appendChild(chatHint);
 
-  function refreshAiHint(): void {
-    aiHint.replaceChildren();
-    if (getApiKey()) return;
-    const span = document.createElement("span");
-    span.textContent = "Add your Anthropic key to generate effects with AI. ";
-    const link = document.createElement("button");
-    link.type = "button";
-    link.className = "fxedit-link";
-    link.textContent = "Add key";
-    link.addEventListener("click", () => openAiKeySheet(() => refreshAiHint()));
-    aiHint.append(span, link);
+  const chatInput = document.createElement("textarea");
+  chatInput.className = "fxedit-ask";
+  chatInput.rows = 2;
+  chatInput.placeholder = "e.g. make it a gentle blue breathing along the trunk";
+  const chatSend = Button({
+    label: "Send",
+    icon: "sparkles",
+    onClick: () => void runChat(),
+  });
+  chatInput.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) {
+      ev.preventDefault();
+      void runChat();
+    }
+  });
+
+  function appendChat(role: "user" | "assistant" | "tool", text: string): HTMLElement {
+    if (chatHint.isConnected) chatHint.remove();
+    const row = document.createElement("div");
+    row.className = `fxedit-msg fxedit-msg--${role}`;
+    row.textContent = text;
+    chatLog.appendChild(row);
+    chatLog.scrollTop = chatLog.scrollHeight;
+    return row;
   }
 
   // -- device section -------------------------------------------------------
@@ -136,6 +212,66 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     sendBtn.disabled = !connected;
     hydrateBtn.disabled = !connected;
     if (!connected) devStatus.textContent = "Connect a device (tap the status pill) to send this effect.";
+  }
+
+  // -- editor header + ⋯ overflow menu --------------------------------------
+  // The Shell owns the app bar and only exposes setChrome(); to keep all key
+  // config out of the editor BODY we add an editor-local header row with a ⋯
+  // kebab whose menu holds "AI key…" and the disassembly toggle.
+  const header = document.createElement("div");
+  header.className = "fxedit-header";
+  const headerTitle = document.createElement("div");
+  headerTitle.className = "fxedit-header-title";
+  headerTitle.textContent = "Effect editor";
+  const kebab = IconButton("more", { title: "Editor menu", onClick: () => toggleMenu() });
+  header.append(headerTitle, kebab);
+
+  const menu = document.createElement("div");
+  menu.className = "fxedit-menu";
+  menu.style.display = "none";
+  const miKey = document.createElement("button");
+  miKey.type = "button";
+  miKey.className = "fxedit-menu-item";
+  miKey.textContent = "AI key…";
+  miKey.addEventListener("click", () => {
+    closeMenu();
+    openAiKeySheet();
+  });
+  const miDisasm = document.createElement("button");
+  miDisasm.type = "button";
+  miDisasm.className = "fxedit-menu-item";
+  function syncDisasmLabel(): void {
+    miDisasm.textContent = showDisassembly ? "Hide disassembly" : "Show disassembly";
+  }
+  syncDisasmLabel();
+  miDisasm.addEventListener("click", () => {
+    showDisassembly = !showDisassembly;
+    syncDisasmLabel();
+    refreshDisasmVisibility();
+    closeMenu();
+  });
+  menu.append(miKey, miDisasm);
+  header.appendChild(menu);
+
+  let menuOpen = false;
+  function toggleMenu(): void {
+    if (menuOpen) closeMenu();
+    else openMenu();
+  }
+  function openMenu(): void {
+    menuOpen = true;
+    menu.style.display = "";
+    // Defer the outside-click listener so this same click doesn't close it.
+    setTimeout(() => document.addEventListener("click", onDocClick), 0);
+  }
+  function closeMenu(): void {
+    menuOpen = false;
+    menu.style.display = "none";
+    document.removeEventListener("click", onDocClick);
+  }
+  function onDocClick(ev: MouseEvent): void {
+    const t = ev.target as Node;
+    if (!menu.contains(t) && !kebab.contains(t)) closeMenu();
   }
 
   // -- map picker -----------------------------------------------------------
@@ -155,8 +291,6 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
       o.textContent = m.name;
       mapPicker.appendChild(o);
     }
-    // Default: the workspace-selected map, else the first library map, else the
-    // synthetic fixture — so the editor is always usable with no setup.
     return appState.selectedMapId ?? maps[0]?.id ?? null;
   }
 
@@ -192,13 +326,11 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   }
 
   // -- compile --------------------------------------------------------------
-  function setStatus(text: string, cls: "ok" | "err"): void {
-    statusEl.textContent = text;
-    statusEl.className = `fxedit-status fxedit-status--${cls}`;
-  }
-
   function scheduleCompile(): void {
     if (compileTimer !== null) clearTimeout(compileTimer);
+    // Signal "compiling…" immediately on any edit; the worker call is debounced
+    // but the UI shows intent right away.
+    setStatusCompiling();
     compileTimer = window.setTimeout(() => void compileNow(), COMPILE_DEBOUNCE_MS);
   }
 
@@ -209,22 +341,37 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     }, SAVE_DEBOUNCE_MS);
   }
 
+  /** Compile once and update all sinks. Returns the FxCompiled for callers that
+   * need the result (the AI set_script tool). Superseded compiles no-op. */
   async function compileNow(): Promise<void> {
+    // Mark busy synchronously so a compile kicked off programmatically (AI) is
+    // visible before the worker returns.
+    setStatusCompiling();
     const src = codeEl.value;
     const seq = ++compileSeq;
     const r = await worker.compile(src);
-    if (seq !== compileSeq || disposed) return;
+    if (seq !== compileSeq || disposed) return; // a newer compile supersedes us
 
     renderDiagnostics(r.diagnostics);
     if (!r.ok) {
       const first = r.diagnostics[0];
-      setStatus(first ? `line ${first.line + 1}: ${first.msg}` : "compile failed", "err");
+      const summary = first ? `line ${first.line + 1}: ${first.msg}` : "compile failed";
+      setStatusErr(summary);
+      lastCompileSummary = `ERROR — ${summary}`;
+      lastDisassembly = "";
+      disasmPre.textContent = "";
       return;
     }
-    setStatus(`compiled · ${r.uniforms.length} uniforms`, "ok");
+    setStatusOk(`compiled · ${r.uniforms.length} uniforms · ${r.bytecode.length} bytes`);
+    lastCompileSummary = `OK — ${r.uniforms.length} uniforms, ${r.bytecode.length} bytes`;
     panel.setManifest(r.uniforms);
-    lastManifest = r.uniforms;
     await swapPreview(r.bytecode);
+
+    // Refresh disassembly (authoritative Rust disassembler via the worker).
+    const disasm = await worker.disassemble(r.bytecode);
+    if (seq !== compileSeq || disposed) return;
+    lastDisassembly = disasm;
+    disasmPre.textContent = disasm;
   }
 
   async function swapPreview(bytecode: Uint8Array): Promise<void> {
@@ -260,46 +407,72 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     mapView.setLedColors(preview.shadeAll(positions));
   }
 
-  // -- AI -------------------------------------------------------------------
-  async function runAi(): Promise<void> {
+  // -- AI chat: run one user turn through the tool-use loop ------------------
+  async function runChat(): Promise<void> {
+    if (chatBusy) return;
     if (!getApiKey()) {
-      openAiKeySheet(() => refreshAiHint());
+      // No key yet — prompt via the same sheet the ⋯ menu opens.
+      openAiKeySheet();
       return;
     }
-    const ask = aiAsk.value.trim();
+    const ask = chatInput.value.trim();
     if (!ask) return;
-    aiBtn.disabled = true;
-    aiNotes.textContent = "Generating…";
-    const turn = askTurn(ask, aiTurns.length > 0 ? codeEl.value : undefined);
+    chatInput.value = "";
+    appendChat("user", ask);
+
+    // Always ground the turn in the current editor + latest compile (+ disasm).
+    const ctx = editorContext(
+      lastDisassembly
+        ? { source: codeEl.value, compileSummary: lastCompileSummary, disassembly: lastDisassembly }
+        : { source: codeEl.value, compileSummary: lastCompileSummary },
+    );
+    chatHistory.push({ role: "user", content: `${ctx}\n\nUser: ${ask}` });
+
+    chatBusy = true;
+    chatSend.disabled = true;
+    const thinking = appendChat("assistant", "thinking…");
+
     try {
-      let result = await streamInto([...aiTurns, turn]);
-      aiTurns = [...aiTurns, turn, { role: "assistant", content: result.script }];
-      for (let round = 0; round < REPAIR_ROUNDS; round++) {
-        const c = await worker.compile(codeEl.value);
-        if (c.ok) break;
-        aiNotes.textContent = `Repairing (round ${round + 1})…`;
-        const rt = repairTurn(codeEl.value, c.diagnostics);
-        result = await streamInto([...aiTurns, rt]);
-        aiTurns = [...aiTurns, rt, { role: "assistant", content: result.script }];
-      }
-      aiNotes.textContent = result.notes || "Done.";
+      const finalText = await chatTurn(chatHistory, {
+        onSetScript: async (source) => {
+          appendChat("tool", "· applied script + compiling…");
+          codeEl.value = source;
+          paintHighlight();
+          syncScroll();
+          scheduleSave();
+          await compileNow();
+          return `Compile result: ${lastCompileSummary}${
+            lastDisassembly ? `\n\nDisassembly:\n${lastDisassembly}` : ""
+          }`;
+        },
+        onCapturePreview: async () => {
+          appendChat("tool", "· captured preview");
+          return capturePreviewPng();
+        },
+        onToolUse: () => undefined,
+      });
+      thinking.textContent = finalText || "(done)";
     } catch (e) {
-      aiNotes.textContent = `AI error: ${msg(e)}`;
+      thinking.textContent = `AI error: ${msg(e)}`;
     } finally {
-      aiBtn.disabled = false;
-      scheduleCompile();
-      scheduleSave();
+      chatBusy = false;
+      chatSend.disabled = false;
+      chatLog.scrollTop = chatLog.scrollHeight;
     }
   }
 
-  async function streamInto(turns: Turn[]): Promise<{ script: string; notes: string }> {
-    const result = await generate(turns, {
-      onScript: (partial) => {
-        codeEl.value = partial;
-      },
-    });
-    codeEl.value = result.script;
-    return result;
+  /** Render the live preview canvas to a PNG data URL for the vision tool. The
+   * MapView draws to `canvas` (a 2D context), so toDataURL captures the current
+   * frame directly — we nudge one frame first so it reflects the latest script. */
+  function capturePreviewPng(): string {
+    if (preview !== null && mapView !== null && currentMap !== null && positions !== null) {
+      const time = (performance.now() - startT) / 1000;
+      preview.tick(time, 1 / 60, frame++, currentMap.leds.length);
+      // MapView runs its own rAF loop, so pushing fresh colors updates the
+      // canvas on the next frame; the capture reflects the current effect.
+      mapView.setLedColors(preview.shadeAll(positions));
+    }
+    return canvas.toDataURL("image/png");
   }
 
   // -- device ---------------------------------------------------------------
@@ -344,39 +517,31 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     return wrap;
   }
 
-  const mapRow = document.createElement("label");
-  mapRow.className = "fxedit-fieldrow";
-  const mapCap = document.createElement("span");
-  mapCap.textContent = "Preview map";
-  mapRow.append(mapCap, mapPicker);
-
-  const editorWrap = document.createElement("div");
-  editorWrap.className = "fxedit-editor";
-  editorWrap.append(codeEl, statusEl);
-
-  el.append(
-    canvas,
-    nameField.el,
-    editorWrap,
-    fieldset("Preview", mapRow),
-    fieldset(
-      "AI (bring your own key)",
-      aiHint,
-      aiAsk,
-      buttonRow(aiBtn),
-      aiNotes,
-    ),
-    fieldset("Uniforms", uniformsHost),
-    fieldset("Diagnostics", diagsEl),
-    fieldset("Device", buttonRow(sendBtn, hydrateBtn), devStatus),
-  );
-
   function buttonRow(...btns: HTMLElement[]): HTMLElement {
     const row = document.createElement("div");
     row.className = "fxedit-btnrow";
     row.append(...btns);
     return row;
   }
+
+  const mapRow = document.createElement("label");
+  mapRow.className = "fxedit-fieldrow";
+  const mapCap = document.createElement("span");
+  mapCap.textContent = "Preview map";
+  mapRow.append(mapCap, mapPicker);
+
+  el.append(
+    header,
+    canvas,
+    nameField.el,
+    editorWrap,
+    disasmCard,
+    fieldset("Preview", mapRow),
+    fieldset("AI chat", chatLog, chatInput, buttonRow(chatSend)),
+    fieldset("Uniforms", uniformsHost),
+    fieldset("Diagnostics", diagsEl),
+    fieldset("Device", buttonRow(sendBtn, hydrateBtn), devStatus),
+  );
 
   let unsubAppState: (() => void) | null = null;
 
@@ -393,19 +558,23 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     }
     nameField.input.value = rec.name;
     codeEl.value = rec.source;
+    paintHighlight();
 
     const defaultMapId = await populateMapPicker();
     mapPicker.value = defaultMapId ?? "__fixture__";
     await selectMap(mapPicker.value);
 
-    refreshAiHint();
     refreshDevice();
+    refreshDisasmVisibility();
     unsubAppState = appState.subscribe(() => refreshDevice());
 
     codeEl.addEventListener("input", () => {
+      paintHighlight();
+      syncScroll();
       scheduleCompile();
       scheduleSave();
     });
+    codeEl.addEventListener("scroll", syncScroll);
 
     raf = requestAnimationFrame(tick);
     scheduleCompile();
@@ -416,10 +585,10 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     onMount: () => void load(),
     onUnmount: () => {
       disposed = true;
+      closeMenu();
       if (raf) cancelAnimationFrame(raf);
       if (compileTimer !== null) clearTimeout(compileTimer);
       if (saveTimer !== null) clearTimeout(saveTimer);
-      // Flush any pending edit so nothing is lost on navigate-away.
       void effectStore.save(effectId, codeEl.value);
       unsubAppState?.();
       preview?.dispose();

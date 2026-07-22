@@ -405,32 +405,184 @@
   overflow: hidden;
   background: var(--surface);
 }
-.fxedit-code {
-  width: 100%;
-  box-sizing: border-box;
+
+/* Highlight overlay: a transparent <textarea> layered exactly over a
+ * <pre><code> backdrop that renders the tokenized HTML. Both share identical
+ * font metrics/padding so glyphs align; the textarea holds the caret + input,
+ * the backdrop paints the colors. */
+.fxedit-codewrap {
+  position: relative;
   min-height: 12rem;
   resize: vertical;
-  background: var(--surface);
-  color: var(--text);
-  border: 0;
+  overflow: hidden;
+}
+.fxedit-code,
+.fxedit-backdrop {
+  margin: 0;
+  box-sizing: border-box;
   padding: 0.6rem 0.8rem;
   font: 13px/1.5 ui-monospace, monospace;
   tab-size: 2;
-  outline: none;
+  white-space: pre;
+  overflow: auto;
+  border: 0;
 }
+.fxedit-backdrop {
+  position: absolute;
+  inset: 0;
+  background: var(--surface);
+  color: var(--text);
+  pointer-events: none;
+  z-index: 0;
+}
+.fxedit-backdrop code {
+  font: inherit;
+}
+.fxedit-code {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  resize: none;
+  background: transparent;
+  /* Text is transparent so the colored backdrop shows through; the caret stays
+   * visible via caret-color. */
+  color: transparent;
+  caret-color: var(--text);
+  outline: none;
+  z-index: 1;
+}
+
+/* Token colors — dark theme via kit tokens. */
+.fxhl-comment { color: var(--text-dim); font-style: italic; }
+.fxhl-str { color: var(--ok); }
+.fxhl-num { color: var(--warn); }
+.fxhl-kw { color: var(--accent); font-weight: 600; }
+.fxhl-type { color: #7fd0ff; }
+.fxhl-fn { color: #c9a3ff; }
+.fxhl-ctx { color: #ff9d7a; }
+
 .fxedit-status {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
   padding: 0.35rem 0.8rem;
   font: 12px/1.4 ui-monospace, monospace;
   border-top: 1px solid var(--border);
   background: var(--surface-2);
-  min-height: 1.4em;
+  min-height: 1.8em;
   color: var(--text-dim);
 }
 .fxedit-status--ok {
   color: var(--ok, #9fe6a0);
 }
 .fxedit-status--err {
-  color: var(--warn, #ff9d9d);
+  color: var(--err, #ff9d9d);
+}
+.fxedit-status--busy {
+  color: var(--text-dim);
+}
+.fxedit-spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  animation: fxedit-spin 0.7s linear infinite;
+}
+@keyframes fxedit-spin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fxedit-spinner { animation: none; }
+}
+
+/* --- editor header + ⋯ overflow menu --- */
+.fxedit-header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.fxedit-header-title {
+  font-size: var(--f-caption);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+.fxedit-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 20;
+  min-width: 12rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctrl);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+  padding: var(--sp-1);
+  display: flex;
+  flex-direction: column;
+}
+.fxedit-menu-item {
+  text-align: left;
+  background: none;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  padding: 0.5rem 0.7rem;
+  border-radius: var(--r-ctrl);
+  cursor: pointer;
+}
+.fxedit-menu-item:hover {
+  background: var(--surface);
+}
+
+/* --- disassembly panel --- */
+.fxedit-disasm-card {
+  padding: var(--sp-3);
+}
+.fxedit-disasm {
+  margin: 0;
+  max-height: 20rem;
+  overflow: auto;
+  font: 11px/1.4 ui-monospace, monospace;
+  color: var(--text-dim);
+  white-space: pre;
+}
+
+/* --- AI chat --- */
+.fxedit-chatlog {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  max-height: 22rem;
+  overflow-y: auto;
+  margin-bottom: var(--sp-2);
+}
+.fxedit-msg {
+  padding: 0.45rem 0.7rem;
+  border-radius: var(--r-ctrl);
+  font-size: var(--f-body);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.fxedit-msg--user {
+  align-self: flex-end;
+  background: var(--accent-quiet);
+  max-width: 85%;
+}
+.fxedit-msg--assistant {
+  align-self: flex-start;
+  background: var(--surface-2);
+  max-width: 90%;
+}
+.fxedit-msg--tool {
+  align-self: flex-start;
+  color: var(--text-dim);
+  font-size: var(--f-caption);
+  font-style: italic;
+  padding: 0.1rem 0.7rem;
 }
 .fxedit-legend {
   font-size: var(--f-caption);

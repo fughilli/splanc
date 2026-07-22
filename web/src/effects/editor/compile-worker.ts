@@ -15,14 +15,15 @@
 
 import type { FxCompiled, FxDiagnostic, FxUniform } from "../../fx/preview";
 
-export interface CompileRequest {
-  id: number;
-  src: string;
-}
-export interface CompileResponse {
-  id: number;
-  result: FxCompiled;
-}
+/** A compile request (`src`) or a disassemble request (`fxb`). Discriminated by
+ * `kind`; the untagged legacy `{id, src}` shape is treated as a compile. */
+export type CompileRequest =
+  | { id: number; kind?: "compile"; src: string }
+  | { id: number; kind: "disassemble"; fxb: Uint8Array };
+
+export type CompileResponse =
+  | { id: number; kind?: "compile"; result: FxCompiled }
+  | { id: number; kind: "disassemble"; text: string };
 
 interface CompilerResult {
   readonly ok: boolean;
@@ -33,6 +34,7 @@ interface CompilerResult {
 interface CompilerModule {
   default(wasm: string): Promise<unknown>;
   fx_compile(src: string): CompilerResult;
+  fx_disassemble(fxb: Uint8Array): string;
 }
 
 let modP: Promise<CompilerModule> | null = null;
@@ -60,12 +62,24 @@ function toCompiled(r: CompilerResult): FxCompiled {
 }
 
 self.onmessage = (ev: MessageEvent<CompileRequest>): void => {
-  const { id, src } = ev.data;
+  const req = ev.data;
   void (async () => {
+    if (req.kind === "disassemble") {
+      let text: string;
+      try {
+        const mod = await loadCompiler();
+        text = mod.fx_disassemble(req.fxb);
+      } catch (e) {
+        text = `; disassembly failed: ${e instanceof Error ? e.message : String(e)}`;
+      }
+      const resp: CompileResponse = { id: req.id, kind: "disassemble", text };
+      (self as unknown as Worker).postMessage(resp);
+      return;
+    }
     let result: FxCompiled;
     try {
       const mod = await loadCompiler();
-      result = toCompiled(mod.fx_compile(src));
+      result = toCompiled(mod.fx_compile(req.src));
     } catch (e) {
       // A wasm panic or load failure — surface as an error diagnostic rather
       // than throwing, so the editor stays alive.
@@ -78,7 +92,7 @@ self.onmessage = (ev: MessageEvent<CompileRequest>): void => {
         ] satisfies FxDiagnostic[],
       };
     }
-    const resp: CompileResponse = { id, result };
+    const resp: CompileResponse = { id: req.id, result };
     (self as unknown as Worker).postMessage(resp);
   })();
 };

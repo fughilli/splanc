@@ -3,7 +3,7 @@
 //! (JSON) + diagnostics (JSON) so the editor can show inline errors, build the
 //! uniform panel, and feed the `.fxb` to the preview VM (fx_vm_web).
 
-use ledmapper_fx_compiler::{compile, manifest_json};
+use ledmapper_fx_compiler::{compile, disassemble, manifest_json};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -63,6 +63,15 @@ pub fn fx_compile(src: &str) -> CompileResult {
             }
         }
     }
+}
+
+/// Disassemble compiled `.fxb` bytecode to a readable op listing (offsets +
+/// mnemonics + operands, entry points labelled). Wraps the authoritative
+/// `ledmapper_fx_compiler::disassemble` so the editor's disassembly panel can
+/// never drift from the VM's opcode table.
+#[wasm_bindgen]
+pub fn fx_disassemble(fxb: &[u8]) -> String {
+    disassemble(fxb)
 }
 
 fn json_str(s: &str) -> String {

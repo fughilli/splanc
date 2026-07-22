@@ -15,19 +15,22 @@ import type { CompileRequest, CompileResponse } from "./compile-worker";
 export class FxCompilerWorker {
   private readonly worker: Worker;
   private nextId = 1;
-  private readonly pending = new Map<number, (r: FxCompiled) => void>();
+  // Pending resolvers keyed by request id. Compile resolvers take an FxCompiled,
+  // disassemble resolvers take a string — stored untyped and narrowed by the
+  // response's `kind`.
+  private readonly pending = new Map<number, (r: never) => void>();
 
   constructor() {
     this.worker = new Worker(new URL("./compile-worker.ts", import.meta.url), {
       type: "module",
     });
     this.worker.onmessage = (ev: MessageEvent<CompileResponse>): void => {
-      const { id, result } = ev.data;
-      const resolve = this.pending.get(id);
-      if (resolve) {
-        this.pending.delete(id);
-        resolve(result);
-      }
+      const data = ev.data;
+      const resolve = this.pending.get(data.id);
+      if (!resolve) return;
+      this.pending.delete(data.id);
+      if (data.kind === "disassemble") (resolve as (t: string) => void)(data.text);
+      else (resolve as (r: FxCompiled) => void)(data.result);
     };
   }
 
@@ -37,7 +40,18 @@ export class FxCompilerWorker {
     const id = this.nextId++;
     const req: CompileRequest = { id, src };
     return new Promise<FxCompiled>((resolve) => {
-      this.pending.set(id, resolve);
+      this.pending.set(id, resolve as (r: never) => void);
+      this.worker.postMessage(req);
+    });
+  }
+
+  /** Disassemble compiled `.fxb` bytecode off-thread to a readable op listing.
+   * Never rejects — failures come back as a `; ...` error line. */
+  disassemble(fxb: Uint8Array): Promise<string> {
+    const id = this.nextId++;
+    const req: CompileRequest = { id, kind: "disassemble", fxb };
+    return new Promise<string>((resolve) => {
+      this.pending.set(id, resolve as (r: never) => void);
       this.worker.postMessage(req);
     });
   }

@@ -1405,6 +1405,193 @@ impl Compiler {
     }
 }
 
+// -- disassembler -------------------------------------------------------------
+
+/// Disassemble a `.fxb` byte buffer to a human-readable listing: the header
+/// summary, the const pool, then the code stream as `offset: MNEMONIC operands`
+/// with the `update()`/`shade()` entry points labelled. This is the AUTHORITATIVE
+/// disassembler — it reads the exact `.fxb` header (mirrors fx_vm::Program::parse
+/// in firmware/fx_vm/src/lib.rs) and the `fx_vm_op` opcode table below, so it can
+/// never drift from what the VM executes. Malformed input yields a short error
+/// line rather than a panic.
+pub fn disassemble(fxb: &[u8]) -> String {
+    let mut out = String::new();
+    if fxb.len() < 18 {
+        return "; error: buffer too short for header\n".into();
+    }
+    if &fxb[0..4] != b"FXB1" {
+        return "; error: bad magic (expected FXB1)\n".into();
+    }
+    let ver = fxb[4];
+    let n_state = fxb[6];
+    let n_uniform_slots = fxb[7];
+    let manifest_len = u16::from_le_bytes([fxb[8], fxb[9]]) as usize;
+    let n_consts = u16::from_le_bytes([fxb[10], fxb[11]]) as usize;
+    let code_len = u16::from_le_bytes([fxb[12], fxb[13]]) as usize;
+    let update_entry = u16::from_le_bytes([fxb[14], fxb[15]]);
+    let shade_entry = u16::from_le_bytes([fxb[16], fxb[17]]);
+
+    let _ = write!(
+        out,
+        "; FXB v{ver}  state={n_state}  uniform_slots={n_uniform_slots}  consts={n_consts}  code={code_len}B\n"
+    );
+    let _ = write!(
+        out,
+        "; update_entry={}  shade_entry={}\n",
+        entry_label(update_entry),
+        entry_label(shade_entry)
+    );
+
+    let mut o = 18usize;
+    let consts_off = o + manifest_len;
+    o = consts_off;
+    // Const pool (raw 32-bit words shown as both f32 and i32 — the compiler types
+    // every op so the runtime interpretation is unambiguous, but showing both is
+    // handy since ints/fixed ride in the same slots).
+    if n_consts > 0 && consts_off + n_consts * 4 <= fxb.len() {
+        out.push_str("; consts:\n");
+        for i in 0..n_consts {
+            let b = &fxb[consts_off + i * 4..consts_off + i * 4 + 4];
+            let bits = u32::from_le_bytes([b[0], b[1], b[2], b[3]]);
+            let f = f32::from_bits(bits);
+            let _ = write!(out, ";   [{i}] = {f} (i32 {})\n", bits as i32);
+        }
+    }
+    o += n_consts * 4;
+    let code_off = o;
+    if code_off + code_len > fxb.len() {
+        out.push_str("; error: code section exceeds buffer\n");
+        return out;
+    }
+    let code = &fxb[code_off..code_off + code_len];
+
+    let mut pc = 0usize;
+    while pc < code.len() {
+        // Label the entry points as the disassembler reaches them.
+        if pc == update_entry as usize && update_entry != NO_ENTRY {
+            out.push_str("update:\n");
+        }
+        if pc == shade_entry as usize && shade_entry != NO_ENTRY {
+            out.push_str("shade:\n");
+        }
+        let (text, len) = decode_op(code, pc);
+        let _ = write!(out, "{pc:>5}: {text}\n");
+        if len == 0 {
+            break;
+        }
+        pc += len;
+    }
+    out
+}
+
+fn entry_label(e: u16) -> String {
+    if e == NO_ENTRY {
+        "none".into()
+    } else {
+        e.to_string()
+    }
+}
+
+/// Decode one opcode at `pc`. Returns `(rendered text, byte length incl operands)`.
+/// A length of 0 signals an unknown opcode (stop). Mirrors the `run` dispatch in
+/// firmware/fx_vm/src/lib.rs and the `fx_vm_op` table below.
+fn decode_op(code: &[u8], pc: usize) -> (String, usize) {
+    use fx_vm_op::*;
+    let op = code[pc];
+    let b = |k: usize| *code.get(pc + 1 + k).unwrap_or(&0);
+    let u16at = |k: usize| u16::from_le_bytes([b(k), b(k + 1)]);
+    let i16at = |k: usize| i16::from_le_bytes([b(k), b(k + 1)]);
+    // Signed branch targets are resolved to an absolute offset for readability.
+    let rel_target = |operand_len: usize| {
+        let next = pc + 1 + operand_len;
+        (next as isize + i16at(0) as isize) as isize
+    };
+    let un_fn = |f: u8| match f {
+        0 => "sin", 1 => "cos", 2 => "abs", 3 => "floor", 4 => "ceil", 5 => "fract",
+        6 => "sqrt", 7 => "exp", 8 => "log", 9 => "sign", 10 => "tan", _ => "?",
+    };
+    let bin_fn = |f: u8| match f {
+        0 => "min", 1 => "max", 2 => "pow", 3 => "mod", 4 => "step", 5 => "atan2", _ => "?",
+    };
+    let ctx_name = |id: u8| match id {
+        0 => "time", 1 => "dt", 2 => "frame", 3 => "led.pos", 4 => "led.idx",
+        5 => "led.count", 6 => "led.seg", 7 => "led.s", 8 => "led.branch",
+        9 => "imu.accel", 10 => "imu.gyro", _ => "?",
+    };
+    let cmp_kind = |k: u8| match k {
+        0 => "lt", 1 => "le", 2 => "gt", 3 => "ge", 4 => "eq", _ => "ne",
+    };
+    match op {
+        PUSH_CONST => (format!("PUSH_CONST c{}", u16at(0)), 3),
+        LOAD_UNIFORM => (format!("LOAD_UNIFORM slot={} n={}", b(0), b(1)), 3),
+        LOAD_STATE => (format!("LOAD_STATE slot={} n={}", b(0), b(1)), 3),
+        STORE_STATE => (format!("STORE_STATE slot={} n={}", b(0), b(1)), 3),
+        LOAD_LOCAL => (format!("LOAD_LOCAL slot={} n={}", b(0), b(1)), 3),
+        STORE_LOCAL => (format!("STORE_LOCAL slot={} n={}", b(0), b(1)), 3),
+        LOAD_CTX => (format!("LOAD_CTX {}", ctx_name(b(0))), 2),
+        ADD => (format!("ADD n={}", b(0)), 2),
+        SUB => (format!("SUB n={}", b(0)), 2),
+        MUL => (format!("MUL n={}", b(0)), 2),
+        DIV => (format!("DIV n={}", b(0)), 2),
+        NEG => (format!("NEG n={}", b(0)), 2),
+        SCALE => (format!("SCALE n={}", b(0)), 2),
+        UN_MATH => (format!("UN_MATH {} n={}", un_fn(b(0)), b(1)), 3),
+        BIN_MATH => (format!("BIN_MATH {} n={}", bin_fn(b(0)), b(1)), 3),
+        CLAMP => (format!("CLAMP n={}", b(0)), 2),
+        MIX => (format!("MIX n={}", b(0)), 2),
+        SMOOTHSTEP => (format!("SMOOTHSTEP n={}", b(0)), 2),
+        DOT => (format!("DOT n={}", b(0)), 2),
+        CROSS => (format!("CROSS n={}", b(0)), 2),
+        LENGTH => (format!("LENGTH n={}", b(0)), 2),
+        NORMALIZE => (format!("NORMALIZE n={}", b(0)), 2),
+        DISTANCE => (format!("DISTANCE n={}", b(0)), 2),
+        SWIZZLE => {
+            let src_n = b(0);
+            let dst_n = b(1) as usize;
+            let mut comps = String::new();
+            for i in 0..dst_n {
+                if i > 0 {
+                    comps.push(',');
+                }
+                let _ = write!(comps, "{}", b(2 + i));
+            }
+            (format!("SWIZZLE src={src_n} dst={dst_n} [{comps}]"), 3 + dst_n)
+        }
+        CMP => (format!("CMP {}", cmp_kind(b(0))), 2),
+        LOGIC => {
+            let k = match b(0) { 0 => "and", 1 => "or", _ => "not" };
+            (format!("LOGIC {k}"), 2)
+        }
+        BR_FALSE => (format!("BR_FALSE -> {}", rel_target(2)), 3),
+        JMP => (format!("JMP -> {}", rel_target(2)), 3),
+        HASH1 => ("HASH1".into(), 1),
+        HASH3 => ("HASH3".into(), 1),
+        HSV2RGB => ("HSV2RGB".into(), 1),
+        PALETTE => (format!("PALETTE id={}", b(0)), 2),
+        _POP => (format!("POP n={}", b(0)), 2),
+        RET => (format!("RET n={}", b(0)), 2),
+        SWAP => (format!("SWAP a={} b={}", b(0), b(1)), 3),
+        ADD_I => ("ADD_I".into(), 1),
+        SUB_I => ("SUB_I".into(), 1),
+        MUL_I => ("MUL_I".into(), 1),
+        DIV_I => ("DIV_I".into(), 1),
+        MOD_I => ("MOD_I".into(), 1),
+        NEG_I => ("NEG_I".into(), 1),
+        CMP_I => (format!("CMP_I {}", cmp_kind(b(0))), 2),
+        MUL_FIX => ("MUL_FIX".into(), 1),
+        DIV_FIX => ("DIV_FIX".into(), 1),
+        I2F => ("I2F".into(), 1),
+        F2I => ("F2I".into(), 1),
+        FIX2F => ("FIX2F".into(), 1),
+        F2FIX => ("F2FIX".into(), 1),
+        I2FIX => ("I2FIX".into(), 1),
+        FIX2I => ("FIX2I".into(), 1),
+        CALL => (format!("CALL -> {}", u16at(0)), 3),
+        RET_FN => ("RET_FN".into(), 1),
+        other => (format!("?? 0x{other:02x}"), 0),
+    }
+}
+
 fn default_ui(ty: Ty) -> UiKind {
     match ty {
         Ty::Bool => UiKind::Toggle,
