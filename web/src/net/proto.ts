@@ -44,6 +44,10 @@ const CLIENT_ARMS: Record<string, string> = {
   get_playback: "getPlayback",
   get_frame_timing: "getFrameTiming",
   get_stored_map: "getStoredMap",
+  submit_effect: "submitEffect",
+  set_effect: "setEffect",
+  set_uniforms: "setUniforms",
+  get_effect_uniforms: "getEffectUniforms",
 };
 const SERVER_ARMS: Record<string, string> = {
   welcome: "welcome",
@@ -61,6 +65,7 @@ const SERVER_ARMS: Record<string, string> = {
   playback_state: "playbackState",
   frame_timing: "frameTiming",
   stored_map_chunk: "storedMapChunk",
+  effect_uniforms: "effectUniforms",
 };
 const CLIENT_TYPES: Record<string, string> = Object.fromEntries(
   Object.entries(CLIENT_ARMS).map(([snake, camel]) => [camel, snake]),
@@ -87,6 +92,51 @@ function stripNulls(value: unknown): unknown {
 // `repeated Vec3` on the proto side: camera trajectories and topology
 // segment polylines.
 const VEC3_LIST_KEYS = new Set(["trajectory", "polyline"]);
+
+// Keys carrying a proto `bytes` field. proto3 JSON encodes bytes as a base64
+// string, but the flat TS shapes use Uint8Array (submit_effect.fxb outbound,
+// effect_uniforms.manifest inbound) — convert at this boundary.
+const BYTES_KEYS = new Set(["fxb", "manifest"]);
+
+function bytesToB64(bytes: Uint8Array): string {
+  let bin = "";
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]!);
+  return btoa(bin);
+}
+
+function b64ToBytes(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+/** Turn Uint8Array bytes fields into base64 strings (flat -> proto JSON). */
+function bytesToProto(value: unknown): unknown {
+  if (value instanceof Uint8Array) return bytesToB64(value);
+  if (Array.isArray(value)) return value.map(bytesToProto);
+  if (value !== null && typeof value === "object") {
+    const out: Json = {};
+    for (const [k, v] of Object.entries(value as Json)) {
+      out[k] = BYTES_KEYS.has(k) && v instanceof Uint8Array ? bytesToB64(v) : bytesToProto(v);
+    }
+    return out;
+  }
+  return value;
+}
+
+/** Turn base64 bytes fields back into Uint8Array (proto JSON -> flat). */
+function bytesFromProto(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(bytesFromProto);
+  if (value !== null && typeof value === "object") {
+    const out: Json = {};
+    for (const [k, v] of Object.entries(value as Json)) {
+      out[k] = BYTES_KEYS.has(k) && typeof v === "string" ? b64ToBytes(v) : bytesFromProto(v);
+    }
+    return out;
+  }
+  return value;
+}
 
 function trajectoryToProto(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(trajectoryToProto);
@@ -143,7 +193,9 @@ export function encodeClient(msg: ClientMessage): Uint8Array {
   const { type, ...rest } = msg as unknown as Json & { type: string };
   const arm = CLIENT_ARMS[type];
   if (arm === undefined) throw new Error(`unknown client message type ${type}`);
-  const inner = trajectoryToProto(stripNulls(rest));
+  // bytes -> base64 first: stripNulls would otherwise walk a Uint8Array's
+  // numeric indices and destroy the field.
+  const inner = trajectoryToProto(stripNulls(bytesToProto(rest)));
   const env = create(ClientMessageSchema);
   // fromJson via the envelope keeps oneof/arm handling in the runtime.
   const parsed = fromJsonEnvelope(ClientMessageSchema, arm, inner as Json);
@@ -160,7 +212,7 @@ export function decodeServer(data: Uint8Array): ServerMessage {
   if (type === undefined) throw new Error(`unknown server envelope arm ${arm}`);
   const flat = fillNulls(type, {
     type,
-    ...(trajectoryFromProto(json[arm]) as Json),
+    ...(bytesFromProto(trajectoryFromProto(json[arm])) as Json),
   });
   return flat as unknown as ServerMessage;
 }
@@ -175,18 +227,68 @@ export function decodeClient(data: Uint8Array): ClientMessage {
   if (arm === undefined) throw new Error("client envelope has no message set");
   const type = CLIENT_TYPES[arm];
   if (type === undefined) throw new Error(`unknown client envelope arm ${arm}`);
-  return { type, ...(trajectoryFromProto(json[arm]) as Json) } as unknown as ClientMessage;
+  return {
+    type,
+    ...(bytesFromProto(trajectoryFromProto(json[arm])) as Json),
+  } as unknown as ClientMessage;
 }
 
 export function encodeServer(msg: ServerMessage): Uint8Array {
   const { type, ...rest } = msg as unknown as Json & { type: string };
   const arm = SERVER_ARMS[type];
   if (arm === undefined) throw new Error(`unknown server message type ${type}`);
-  const inner = trajectoryToProto(stripNulls(rest));
+  const inner = trajectoryToProto(stripNulls(bytesToProto(rest)));
   const env = create(ServerMessageSchema);
   const parsed = fromJsonEnvelope(ServerMessageSchema, arm, inner as Json);
   env.msg = parsed.msg;
   return toBinary(ServerMessageSchema, env);
+}
+
+// -- Effect arms (flat shapes) ----------------------------------------------
+// The checked-in @ledmapper/protocol flat types don't yet carry these arms
+// (they're new proto additions consumed only by the effects editor), so the
+// flat shapes live here alongside the arm-table entries above. Field names are
+// the proto3 JSON (camel) names, matching how encode/decodeClient round-trip.
+
+/** A single uniform's live value (proto UniformValue). */
+export interface UniformValueFlat {
+  slot: number;
+  value: number[];
+}
+
+/** Upload a compiled effect (proto SubmitEffect). */
+export interface SubmitEffectMessage {
+  type: "submit_effect";
+  effectId: string;
+  fxb: Uint8Array;
+  activate: boolean;
+}
+
+/** Select the active effect by id (proto SetEffect). */
+export interface SetEffectMessage {
+  type: "set_effect";
+  effectId: string;
+}
+
+/** Push live uniform values on the active effect (proto SetUniforms). */
+export interface SetUniformsMessage {
+  type: "set_uniforms";
+  values: UniformValueFlat[];
+}
+
+/** Request an effect's manifest + current values (proto GetEffectUniforms). */
+export interface GetEffectUniformsMessage {
+  type: "get_effect_uniforms";
+  effectId?: string;
+}
+
+/** Reply to get_effect_uniforms (proto EffectUniforms). `manifest` is the raw
+ * compiler-emitted uniform-manifest JSON bytes. */
+export interface EffectUniformsMessage {
+  type: "effect_uniforms";
+  effectId: string;
+  manifest: Uint8Array;
+  current: UniformValueFlat[];
 }
 
 // -- MappingBundle (.binpb file format) -------------------------------------

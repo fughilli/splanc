@@ -81,6 +81,65 @@ pub enum Op {
 
 pub const FIX_ONE: i32 = 1 << 16;
 
+/// Default per-invocation instruction budget (one `update()` or one `shade()`).
+/// A pathological loop trips this deterministically on every platform, so the
+/// render task can never hang on a user script. See [`Budget`].
+pub const DEFAULT_BUDGET: u32 = 100_000;
+
+/// A bounded-execution guard for one VM invocation (the DECISION in
+/// docs/design/effects-runtime.md "Open questions").
+///
+/// Two independent guards, primary first:
+/// 1. **instruction budget** — a hard, deterministic op count. It is the
+///    portable, host-testable wall against runaway loops; when it hits zero the
+///    invocation unwinds to a [`Outcome::Budget`] timeout.
+/// 2. **wall-time deadline flag** — an optional pointer to a flag the VM loop
+///    polls each op. On-device a hardware timer (esp_timer/systimer) raises it
+///    at a frame-relative deadline (the C++ side owns that timer); the VM sees
+///    the raised flag and unwinds to [`Outcome::Timeout`]. On the host it is
+///    left `None`, so tests exercise the budget guard alone.
+#[derive(Clone, Copy)]
+pub struct Budget {
+    /// Max instructions before the invocation is cancelled.
+    pub instructions: u32,
+    /// Optional wall-time cancel flag (raised asynchronously by a hw timer).
+    /// `None` = no time guard (host/preview). Read-only from the VM's view.
+    pub deadline: Option<*const core::sync::atomic::AtomicBool>,
+}
+
+impl Default for Budget {
+    fn default() -> Self {
+        Budget { instructions: DEFAULT_BUDGET, deadline: None }
+    }
+}
+
+impl Budget {
+    /// A budget with just an instruction cap (no wall-time guard).
+    pub fn instructions(n: u32) -> Self {
+        Budget { instructions: n, deadline: None }
+    }
+}
+
+/// Why a VM invocation stopped.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Outcome {
+    /// Ran to a `Ret`/`RetFn`/end-of-code normally.
+    Ok,
+    /// The instruction budget was exhausted (runaway loop) — treat as timeout.
+    Budget,
+    /// The wall-time deadline flag was raised (hardware timer) — treat as
+    /// timeout. The caller holds last/black for the affected LED.
+    Timeout,
+}
+
+impl Outcome {
+    /// Whether execution was cancelled by a guard (budget or wall-time).
+    #[inline]
+    pub fn timed_out(self) -> bool {
+        !matches!(self, Outcome::Ok)
+    }
+}
+
 impl Op {
     #[inline]
     fn from_u8(b: u8) -> Option<Op> {
@@ -251,25 +310,56 @@ impl Vm {
         }
     }
 
-    /// Run `update()` (if present), evolving `state`.
+    /// Run `update()` (if present), evolving `state`. Uses the default budget.
     pub fn run_update(&mut self, prog: &Program, frame: &Frame) {
+        self.run_update_bounded(prog, frame, &Budget::default());
+    }
+
+    /// Run `update()` under an explicit [`Budget`], evolving `state`. If the
+    /// invocation is cancelled (budget/timeout) `state` is still committed —
+    /// update() writes state incrementally and a partial advance is harmless
+    /// (the next frame simply continues). Returns why it stopped.
+    pub fn run_update_bounded(&mut self, prog: &Program, frame: &Frame, budget: &Budget) -> Outcome {
         if prog.update_entry == NO_ENTRY {
-            return;
+            return Outcome::Ok;
         }
         let led = Led::default();
         let mut st = self.state;
-        run(prog, self.uniforms, &mut st, frame, &led, prog.update_entry as usize);
+        let (_out, outcome) =
+            run(prog, self.uniforms, &mut st, frame, &led, prog.update_entry as usize, budget);
         self.state = st;
+        outcome
     }
 
     /// Run `shade(led)` → RGB. Does not mutate `state` (read-only in shade).
+    /// Uses the default budget.
     pub fn run_shade(&self, prog: &Program, frame: &Frame, led: &Led) -> Rgb {
+        self.run_shade_bounded(prog, frame, led, &Budget::default()).0
+    }
+
+    /// Run `shade(led)` under an explicit [`Budget`]. On a cancelled invocation
+    /// (budget/timeout) the returned RGB is black — the caller may instead hold
+    /// the LED's previous colour. Returns `(rgb, outcome)`.
+    pub fn run_shade_bounded(
+        &self,
+        prog: &Program,
+        frame: &Frame,
+        led: &Led,
+        budget: &Budget,
+    ) -> (Rgb, Outcome) {
         let mut st = self.state; // copy; shade shouldn't write it, but be safe
-        let out = run(prog, self.uniforms, &mut st, frame, led, prog.shade_entry as usize);
+        let (out, outcome) =
+            run(prog, self.uniforms, &mut st, frame, led, prog.shade_entry as usize, budget);
+        if outcome.timed_out() {
+            return ((0, 0, 0), outcome);
+        }
         let r = clamp01(out[0]);
         let g = clamp01(out[1]);
         let b = clamp01(out[2]);
-        ((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8)
+        (
+            ((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8),
+            outcome,
+        )
     }
 }
 
@@ -286,8 +376,11 @@ fn clamp01(x: f32) -> f32 {
     }
 }
 
-/// Execute from `entry`, returning up to 3 result slots (RGB for shade). A
-/// bounded instruction budget hard-caps frame time and traps runaway loops.
+/// Execute from `entry`, returning `(up to 3 result slots, outcome)`. Two
+/// bounded-execution guards hard-cap frame time and trap runaway loops (see
+/// [`Budget`]): a per-invocation instruction budget (primary, deterministic)
+/// and an optional wall-time deadline flag raised by a hardware timer
+/// (secondary). Either firing unwinds to the caller with a timeout outcome.
 fn run(
     prog: &Program,
     uniforms: [f32; MAX_UNIFORM_SLOTS],
@@ -295,15 +388,21 @@ fn run(
     frame: &Frame,
     led: &Led,
     entry: usize,
-) -> [f32; 3] {
+    guard: &Budget,
+) -> ([f32; 3], Outcome) {
+    use core::sync::atomic::Ordering;
     let code = prog.code;
     let mut stack = [0.0f32; MAX_STACK];
     let mut locals = [0.0f32; MAX_LOCALS];
     let mut sp: usize = 0;
     let mut pc: usize = entry;
-    let mut budget: u32 = 100_000; // instructions per invocation
+    let mut budget: u32 = guard.instructions; // instructions per invocation
+    // Poll the wall-time flag every N ops (an atomic load per op would dominate
+    // the tiny opcodes); the instruction budget bounds the slop between polls.
+    const DEADLINE_POLL_MASK: u32 = 0x3FF;
     let mut call_stack = [0usize; 16];
     let mut csp: usize = 0;
+    let mut outcome = Outcome::Ok;
 
     macro_rules! push {
         ($v:expr) => {{
@@ -335,9 +434,23 @@ fn run(
 
     while pc < code.len() {
         if budget == 0 {
+            outcome = Outcome::Budget;
             break;
         }
         budget -= 1;
+        // Secondary wall-time guard: a hardware timer raises this flag at a
+        // frame-relative deadline; polled sparsely so the load isn't hot.
+        if budget & DEADLINE_POLL_MASK == 0 {
+            if let Some(flag) = guard.deadline {
+                // SAFETY: `flag` points at a live AtomicBool owned by the
+                // caller for the duration of this call (the C++ FFI holds it
+                // in a static). Atomic load is sound through a shared ref.
+                if unsafe { (*flag).load(Ordering::Relaxed) } {
+                    outcome = Outcome::Timeout;
+                    break;
+                }
+            }
+        }
         let op = match Op::from_u8(code[pc]) {
             Some(o) => o,
             None => break,
@@ -687,7 +800,7 @@ fn run(
                 for i in 0..n.min(3) {
                     out[i] = stack[base + i];
                 }
-                return out;
+                return (out, Outcome::Ok);
             }
             Op::Swap => {
                 let an = code[pc] as usize;
@@ -802,7 +915,7 @@ fn run(
             }
         }
     }
-    [0.0, 0.0, 0.0]
+    ([0.0, 0.0, 0.0], outcome)
 }
 
 // --- soft-float helpers (no libm dependency; small polynomial approximations

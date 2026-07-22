@@ -52,6 +52,49 @@ int32_t lm_led_count(uint32_t channel);
 uint32_t lm_map_len(void);
 bool lm_map_led(uint32_t index, uint32_t *id, float xyz[3]);
 
+// -- Effects VM (fx_vm) -------------------------------------------------------
+// A user "effect" (.fxb shader bytecode) executed on-device. The upload/select/
+// uniforms arms are handled inside lm_player_handle; these accessors drive the
+// render loop and (de)serialize the manifest. Single-threaded like the rest —
+// call under the player_mutex.
+//
+// Bounded execution (docs/design/effects-runtime.md): every update()/shade()
+// runs under a per-invocation INSTRUCTION BUDGET (primary guard) plus an
+// optional WALL-TIME deadline flag a hardware timer raises (secondary). A
+// cancelled shade returns false so the render loop holds last/black for that
+// LED instead of hanging.
+
+// Load (parse + hold) a .fxb, copying len bytes into a static buffer and
+// resetting VM state. False if it doesn't fit or fails to parse. Loading does
+// NOT activate — use lm_fx_set_active (the protocol arms do this).
+bool lm_fx_load(const uint8_t *fxb, size_t len);
+// Clear the loaded effect (back to built-in playback/idle).
+void lm_fx_clear(void);
+// True when an effect is loaded AND active (the render loop gate).
+bool lm_fx_active(void);
+// True when an effect is loaded at all (active or parked) — for persistence.
+bool lm_fx_loaded(void);
+// Activate (true) / park (false) the loaded effect.
+void lm_fx_set_active(bool active);
+// Per-invocation instruction cap for update()/shade() (0 = default).
+void lm_fx_set_budget(uint32_t instructions);
+// Raise/lower the wall-time deadline flag (the hardware-timer callback raises
+// it at the frame deadline; the render loop clears it each frame). TODO(hw):
+// arm an esp_timer/systimer one-shot per frame to call this at the deadline.
+void lm_fx_set_deadline(bool hit);
+// Apply a uniform value (n = its width, 1..4) to the active VM.
+void lm_fx_set_uniform(uint32_t slot, const float *vals, size_t n);
+// Run update() once for this frame (clears the deadline flag first). False when
+// no effect is loaded. A cancelled update still returns true (partial state is
+// harmless).
+bool lm_fx_update(float time_s, float dt_s, uint32_t frame, uint32_t led_count);
+// Shade one LED at position (x,y,z) into rgb[3]. False when no effect is loaded
+// or the invocation was cancelled by a bounded-execution guard.
+bool lm_fx_shade(uint32_t idx, float x, float y, float z, uint8_t rgb[3]);
+// Copy the active effect's uniform manifest into out (cap bytes). Returns the
+// length written, -1 when no effect is loaded, -2 when it doesn't fit cap.
+int32_t lm_fx_manifest(uint8_t *out, size_t cap);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif

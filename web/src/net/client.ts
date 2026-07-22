@@ -40,7 +40,12 @@ import type {
   StoredMapChunkMessage,
   WelcomeMessage,
 } from "@ledmapper/protocol";
-import { decodeMappingBundle, type MappingBundle } from "./proto";
+import {
+  decodeMappingBundle,
+  type EffectUniformsMessage,
+  type MappingBundle,
+  type UniformValueFlat,
+} from "./proto";
 import { bestSample, ServerClock, syncSample, type SyncSample } from "./clocksync";
 import { decodeServer, encodeClient } from "./proto";
 
@@ -348,6 +353,50 @@ export class LedMapperClient {
       { type: "set_playback", effect, ...(params ? { params } : {}) },
       "playback_state",
     )) as PlaybackStateMessage;
+  }
+
+  /** Upload a compiled effect (`.fxb` = bytecode + embedded uniform manifest)
+   * to the connected device. `activate` makes it the running effect on receipt
+   * (the editor's "Send to device" path). Reply: result_ready (id=effectId). */
+  async submitEffect(
+    effectId: string,
+    fxb: Uint8Array,
+    activate = true,
+  ): Promise<ResultReadyMessage> {
+    return (await this.request(
+      { type: "submit_effect", effectId, fxb, activate } as unknown as ClientMessage,
+      "result_ready",
+    )) as ResultReadyMessage;
+  }
+
+  /** Select the active effect by id ("" or "off" clears it). Reply:
+   * playback_state. */
+  async setEffect(effectId: string): Promise<PlaybackStateMessage> {
+    return (await this.request(
+      { type: "set_effect", effectId } as unknown as ClientMessage,
+      "playback_state",
+    )) as PlaybackStateMessage;
+  }
+
+  /** Push live uniform values on the active effect (slider drags). Reply:
+   * playback_state. */
+  async setUniforms(values: UniformValueFlat[]): Promise<PlaybackStateMessage> {
+    return (await this.request(
+      { type: "set_uniforms", values } as unknown as ClientMessage,
+      "playback_state",
+    )) as PlaybackStateMessage;
+  }
+
+  /** Fetch an effect's uniform manifest + current live values for UI
+   * hydration. Omit `effectId` for the active effect. Reply: effect_uniforms. */
+  async getEffectUniforms(effectId?: string): Promise<EffectUniformsMessage> {
+    return (await this.request(
+      {
+        type: "get_effect_uniforms",
+        ...(effectId !== undefined ? { effectId } : {}),
+      } as unknown as ClientMessage,
+      "effect_uniforms",
+    )) as unknown as EffectUniformsMessage;
   }
 
   /** Pull the player's stored map+topology back off the device — streamed in

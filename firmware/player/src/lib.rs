@@ -267,11 +267,24 @@ impl Player {
             // The map dump lives in the arena layer (ffi), which intercepts this
             // arm before the session core ever sees it; unreachable here.
             CMsg::GetStoredMap(_) => Some(error("unsupported", "map dump handled by the arena layer")),
+            // Effects arms are intercepted by the fx layer (ffi) before the
+            // session core sees them (the firmware profile can't decode a full
+            // .fxb / uniform set); unreachable here.
+            CMsg::SubmitEffect(_)
+            | CMsg::SetEffect(_)
+            | CMsg::SetUniforms(_)
+            | CMsg::GetEffectUniforms(_) => {
+                Some(error("unsupported", "effects handled by the fx layer"))
+            }
             // Fire-and-forget Pi-profile telemetry: silently dropped.
             CMsg::Detections(_) | CMsg::ImuBatch(_) | CMsg::ExposureReport(_) => None,
             // Pi-only REQUEST arms: bounded unsupported error.
             CMsg::GetStatus(_) | CMsg::GetLiveMap(_) | CMsg::GetSolveStatus(_) => {
                 Some(error("unsupported", "not available on this player profile"))
+            }
+            // Perf-monitoring arms: not implemented on this player yet.
+            CMsg::SetPerf(_) | CMsg::GetPerfReport(_) => {
+                Some(error("unsupported", "perf monitoring not available on this player"))
             }
         }
     }
@@ -473,6 +486,13 @@ impl Player {
             let _ = ft.r#ticks.push(tick);
         }
         reply(SMsg::FrameTiming(ft))
+    }
+
+    /// The current playback selection as a `playback_state` reply. Public so
+    /// the effects arms (ffi.rs) can ack set_effect / set_uniforms with the
+    /// session's playback state (keeping the app's playback UI consistent).
+    pub fn playback_reply(&self) -> pb::ServerMessage {
+        self.playback_state()
     }
 
     fn playback_state(&self) -> pb::ServerMessage {

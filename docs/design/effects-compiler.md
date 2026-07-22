@@ -501,19 +501,26 @@ Consolidating the preview contract that both hand-edits and AI generation share:
   Alternative: emit byte offsets and convert in JS. Pick one and pin it in the
   wasm binding tests; effects source is usually ASCII so it rarely bites, but the
   off-by-N is real for any non-ASCII comment/string.
+  DECISION: emit UTF-16 cols in the wasm binding
 - **Compiler on main thread vs. worker.** Default main-thread (§Compile
   pipeline); revisit if compile latency janks the preview on low-end phones.
+  DECISION: run on background thread
 - **AI transport default per deployment.** Ship the Worker proxy for the public
   Cloudflare Pages site; is BYO-key even exposed there, or only in self-host
   builds? (Leaning: expose BYO as an opt-in "advanced" setting, Worker as the
   default.)
+  DECISION: There will be no server proxy anywhere in this design. BYO key is
+  the only option. Client-side CORS to Anthropic for the chat requests.
 - **Repair round cap N** and whether to also feed warnings/perf estimates into
   the repair turn — tune against real prompts once the compiler exists.
 - **Streaming the AI script into the editor.** Nice UX (code appears live) but
   means compiling partial/invalid source mid-stream; simplest v1 is to wait for
   the full `{script}` then drop it in. Revisit if the wait feels long.
+  DECISION: live feed the editor, run the compilation in the background thread so it doesn't feel sluggish, and defer compilation until the agent is done with a given code block edit so the user doesn't see warnings/errors thrashing.
 - **Worker abuse hardening depth.** Start with CORS + per-IP rate limit + spend
   ceiling; add Turnstile/app-token only if the open endpoint is actually abused.
+  DECISION: No worker. Only CORS to Anthropic from client directly. BYO key is the only option.
 - **System-prompt size vs. cache economics.** The built-in table + few-shot
   examples make a sizable frozen prefix; confirm it clears the model's minimum
   cacheable prefix so caching actually engages across repair turns.
+  DECISION: sounds good

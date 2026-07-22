@@ -18,7 +18,10 @@
 
 use core::ptr::{addr_of, addr_of_mut};
 
+use core::sync::atomic::AtomicBool;
+
 use ledmapper_arena::Arena;
+use ledmapper_fx_vm::{Budget, Frame as FxFrame, Led as FxLed, Outcome, Program, Vm as FxVm};
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_player::{upload_malformed, upload_too_large, Player};
 use ledmapper_pulse::{Graph, Sim, MAX_SEGMENTS};
@@ -52,6 +55,33 @@ static mut PLAYER: Option<Player> = None;
 /// config change forces a rebuild; a topology upload nulls SIM directly.
 static mut SIM: Option<Sim> = None;
 static mut SIM_GEN: u32 = u32::MAX;
+
+// -- effects VM (fx_vm) -------------------------------------------------------
+// The active `.fxb` lives in a fixed static buffer the C++ side copies the
+// upload into (lm_fx_load); the parsed Program borrows it fresh each call
+// (a cheap header parse, like the wasm preview) so nothing is self-referential.
+// The Vm holds the persistent uniforms + state across frames. Bounded execution
+// (docs/design/effects-runtime.md) guards every invocation: a per-call
+// instruction budget (primary) and a wall-time deadline flag a hardware timer
+// raises (secondary).
+
+/// Max `.fxb` the player will hold. A compiled effect is small (bytecode +
+/// manifest); 8 KiB is generous and bounds the static cost.
+const FX_MAX_BYTES: usize = 8 * 1024;
+
+static mut FX_BYTES: [u8; FX_MAX_BYTES] = [0; FX_MAX_BYTES];
+static mut FX_LEN: usize = 0;
+static mut FX_VM: Option<FxVm> = None;
+/// Whether the loaded effect is the ACTIVE one the render loop drives. An
+/// upload with `activate=false` parks the effect (loaded, validated) without
+/// taking over rendering; set_effect can activate it, or clear it.
+static mut FX_ACTIVE: bool = false;
+/// Wall-time cancel flag, raised by the C++ hardware-timer callback at a
+/// frame-relative deadline; the VM loop polls it and unwinds to a timeout.
+static FX_DEADLINE: AtomicBool = AtomicBool::new(false);
+/// Per-invocation instruction budget for one update()/shade(). Tunable from
+/// C++ (lm_fx_set_budget); defaults to the VM's default.
+static mut FX_BUDGET: u32 = ledmapper_fx_vm::DEFAULT_BUDGET;
 
 // The staticlib is linked into the Arduino app, which has no Rust runtime:
 // provide the panic handler on the bare-metal target. Host tests (std)
@@ -127,6 +157,12 @@ pub unsafe extern "C" fn lm_player_handle(
         // Dump the stored map+topology (it lives in the arena, not the session
         // core) back out to the phone, one MappingBundle byte-window per call.
         Some(ARM_GET_STORED_MAP) => handle_get_stored_map(frame),
+        // Effects arms: decoded by a hand-rolled walker (the firmware profile
+        // caps SubmitEffect.fxb at 64 B), then loaded/selected/tuned on the VM.
+        Some(ARM_SUBMIT_EFFECT) => handle_submit_effect(frame),
+        Some(ARM_SET_EFFECT) => handle_set_effect(frame),
+        Some(ARM_SET_UNIFORMS) => handle_set_uniforms(frame),
+        Some(ARM_GET_EFFECT_UNIFORMS) => handle_get_effect_uniforms(frame),
         _ => {
             let mut env = pb::ClientMessage::default();
             let mut dec = PbDecoder::new(frame);
@@ -256,6 +292,280 @@ pub unsafe extern "C" fn lm_envelope_arm(data: *const u8, len: usize) -> i32 {
     }
     let s = core::slice::from_raw_parts(data, len);
     envelope_arm(s).map(|a| a as i32).unwrap_or(-1)
+}
+
+// -- effects protocol dispatch (submit_effect / set_effect / set_uniforms /
+//    get_effect_uniforms) -----------------------------------------------------
+//
+// These are decoded by a tiny hand-rolled protobuf walker rather than the
+// generated envelope, exactly like the arena upload arms: the firmware profile
+// caps `SubmitEffect.fxb` at 64 B and `SetUniforms.values` at a handful, far
+// too small for a real effect, so the generated decode can't be used. Walking
+// the raw frame lets a full `.fxb` (up to FX_MAX_BYTES) and any number of
+// uniform slots ride the same fixed statics the VM already owns.
+
+/// ClientMessage oneof field numbers for the effect arms.
+const ARM_SUBMIT_EFFECT: u32 = 21;
+const ARM_SET_EFFECT: u32 = 22;
+const ARM_SET_UNIFORMS: u32 = 23;
+const ARM_GET_EFFECT_UNIFORMS: u32 = 24;
+
+/// Read a base-128 varint at `buf[*o..]`, advancing `*o`. None on truncation.
+fn rd_varint(buf: &[u8], o: &mut usize) -> Option<u64> {
+    let mut val: u64 = 0;
+    let mut shift = 0u32;
+    while *o < buf.len() {
+        let b = buf[*o];
+        *o += 1;
+        val |= u64::from(b & 0x7f) << shift;
+        if b & 0x80 == 0 {
+            return Some(val);
+        }
+        shift += 7;
+        if shift >= 64 {
+            return None;
+        }
+    }
+    None
+}
+
+/// Skip a field of the given wire type at `buf[*o..]`. False on truncation.
+fn skip_field(buf: &[u8], o: &mut usize, wire: u8) -> bool {
+    match wire {
+        0 => rd_varint(buf, o).is_some(),
+        1 => {
+            *o += 8;
+            *o <= buf.len()
+        }
+        5 => {
+            *o += 4;
+            *o <= buf.len()
+        }
+        2 => match rd_varint(buf, o) {
+            Some(len) => {
+                *o += len as usize;
+                *o <= buf.len()
+            }
+            None => false,
+        },
+        _ => false,
+    }
+}
+
+/// Unwrap `ClientMessage { <arm> = N }` → the inner message's byte slice for
+/// the expected arm number. Returns None if the frame's first field isn't a
+/// LEN-delimited field with that number.
+fn unwrap_arm(frame: &[u8], arm: u32) -> Option<&[u8]> {
+    let mut o = 0;
+    let key = rd_varint(frame, &mut o)?;
+    let field = (key >> 3) as u32;
+    let wire = (key & 7) as u8;
+    if field != arm || wire != 2 {
+        return None;
+    }
+    let len = rd_varint(frame, &mut o)? as usize;
+    frame.get(o..o + len)
+}
+
+/// submit_effect: extract fxb (field 2, LEN) + activate (field 3, varint) from
+/// the raw frame, load it into the VM, and (optionally) activate. Reply
+/// result_ready(effect_id) or error(bad_fxb / effect_too_large).
+unsafe fn handle_submit_effect(frame: &[u8]) -> pb::ServerMessage {
+    let Some(body) = unwrap_arm(frame, ARM_SUBMIT_EFFECT) else {
+        return fx_error("bad_fxb", "submit_effect is malformed");
+    };
+    // SubmitEffect { string effect_id = 1; bytes fxb = 2; bool activate = 3; }
+    let mut fxb: Option<&[u8]> = None;
+    let mut activate = false;
+    let mut o = 0;
+    while o < body.len() {
+        let Some(key) = rd_varint(body, &mut o) else {
+            return fx_error("bad_fxb", "submit_effect is malformed");
+        };
+        let field = (key >> 3) as u32;
+        let wire = (key & 7) as u8;
+        match (field, wire) {
+            (2, 2) => {
+                let Some(len) = rd_varint(body, &mut o) else {
+                    return fx_error("bad_fxb", "submit_effect is malformed");
+                };
+                let len = len as usize;
+                let Some(s) = body.get(o..o + len) else {
+                    return fx_error("bad_fxb", "submit_effect is malformed");
+                };
+                fxb = Some(s);
+                o += len;
+            }
+            (3, 0) => {
+                let Some(v) = rd_varint(body, &mut o) else {
+                    return fx_error("bad_fxb", "submit_effect is malformed");
+                };
+                activate = v != 0;
+            }
+            _ => {
+                if !skip_field(body, &mut o, wire) {
+                    return fx_error("bad_fxb", "submit_effect is malformed");
+                }
+            }
+        }
+    }
+    let Some(fxb) = fxb else {
+        return fx_error("bad_fxb", "submit_effect without fxb");
+    };
+    if fxb.len() > FX_MAX_BYTES {
+        return fx_error("effect_too_large", "fxb exceeds this player's effect buffer");
+    }
+    let ok = lm_fx_load(fxb.as_ptr(), fxb.len());
+    if !ok {
+        // Distinguish size (bounded) from a parse failure.
+        if fxb.len() > FX_MAX_BYTES {
+            return fx_error("effect_too_large", "fxb exceeds this player's effect buffer");
+        }
+        return fx_error("bad_fxb", "fxb failed to parse");
+    }
+    // activate=true takes over rendering now; false parks it (loaded + valid,
+    // set_effect can activate later).
+    lm_fx_set_active(activate);
+    let mut r = pb::ResultReady::default();
+    // effect_id echoes back so the app can correlate the ack.
+    if let Some(id) = read_effect_id(body) {
+        let _ = r.r#map_id.push_str(id);
+    }
+    pb::ServerMessage { r#msg: Some(pb::ServerMessage_::Msg::ResultReady(r)) }
+}
+
+/// Read a message's `effect_id` (field 1, string) if present.
+fn read_effect_id(body: &[u8]) -> Option<&str> {
+    let mut o = 0;
+    while o < body.len() {
+        let key = rd_varint(body, &mut o)?;
+        let field = (key >> 3) as u32;
+        let wire = (key & 7) as u8;
+        if field == 1 && wire == 2 {
+            let len = rd_varint(body, &mut o)? as usize;
+            let s = body.get(o..o + len)?;
+            return core::str::from_utf8(s).ok();
+        }
+        if !skip_field(body, &mut o, wire) {
+            return None;
+        }
+    }
+    None
+}
+
+/// set_effect: "" / "off" clears the active effect; any other id keeps the
+/// loaded effect active (a single effect is held at a time, matching the arena
+/// map). Reply: playback_state (via the session core, so the app's playback UI
+/// stays consistent). We just clear/keep and echo the current playback state.
+unsafe fn handle_set_effect(frame: &[u8]) -> pb::ServerMessage {
+    let id = unwrap_arm(frame, ARM_SET_EFFECT).and_then(read_effect_id).unwrap_or("");
+    if id.is_empty() || id == "off" {
+        lm_fx_clear();
+    } else {
+        // Select the (single) loaded effect as active. One effect is held at a
+        // time, so any non-empty id activates whatever is loaded.
+        lm_fx_set_active(true);
+    }
+    // Ack with the session's playback state so the app's playback UI stays put.
+    player().playback_reply()
+}
+
+/// set_uniforms: apply every UniformValue{slot, value[]} to the VM. Reply:
+/// playback_state.
+unsafe fn handle_set_uniforms(frame: &[u8]) -> pb::ServerMessage {
+    if let Some(body) = unwrap_arm(frame, ARM_SET_UNIFORMS) {
+        // SetUniforms { repeated UniformValue values = 1; }
+        let mut o = 0;
+        while o < body.len() {
+            let Some(key) = rd_varint(body, &mut o) else { break };
+            let field = (key >> 3) as u32;
+            let wire = (key & 7) as u8;
+            if field == 1 && wire == 2 {
+                let Some(len) = rd_varint(body, &mut o) else { break };
+                let len = len as usize;
+                let Some(uv) = body.get(o..o + len) else { break };
+                apply_uniform_value(uv);
+                o += len;
+            } else if !skip_field(body, &mut o, wire) {
+                break;
+            }
+        }
+    }
+    player().playback_reply()
+}
+
+/// Decode one UniformValue{ uint32 slot = 1; repeated float value = 2; } and
+/// push it into the VM. `value` may arrive packed (a single LEN field of f32s)
+/// or unpacked (repeated fixed32) — handle both.
+unsafe fn apply_uniform_value(uv: &[u8]) {
+    let mut slot: u32 = 0;
+    let mut vals = [0.0f32; 4];
+    let mut n = 0usize;
+    let mut o = 0;
+    while o < uv.len() {
+        let Some(key) = rd_varint(uv, &mut o) else { break };
+        let field = (key >> 3) as u32;
+        let wire = (key & 7) as u8;
+        match (field, wire) {
+            (1, 0) => {
+                let Some(v) = rd_varint(uv, &mut o) else { break };
+                slot = v as u32;
+            }
+            (2, 2) => {
+                // packed floats
+                let Some(len) = rd_varint(uv, &mut o) else { break };
+                let len = len as usize;
+                let Some(p) = uv.get(o..o + len) else { break };
+                let mut k = 0;
+                while k + 4 <= p.len() && n < vals.len() {
+                    vals[n] = f32::from_le_bytes([p[k], p[k + 1], p[k + 2], p[k + 3]]);
+                    n += 1;
+                    k += 4;
+                }
+                o += len;
+            }
+            (2, 5) => {
+                // unpacked single float
+                let Some(p) = uv.get(o..o + 4) else { break };
+                if n < vals.len() {
+                    vals[n] = f32::from_le_bytes([p[0], p[1], p[2], p[3]]);
+                    n += 1;
+                }
+                o += 4;
+            }
+            _ => {
+                if !skip_field(uv, &mut o, wire) {
+                    break;
+                }
+            }
+        }
+    }
+    if n > 0 {
+        lm_fx_set_uniform(slot, vals.as_ptr(), n);
+    }
+}
+
+/// get_effect_uniforms: build an EffectUniforms reply carrying the active
+/// effect's manifest bytes. `current` uniform values aren't tracked back out
+/// (the app holds them); left empty. Error `no_effect` when nothing is loaded.
+unsafe fn handle_get_effect_uniforms(_frame: &[u8]) -> pb::ServerMessage {
+    if !lm_fx_active() {
+        return fx_error("no_effect", "no active effect to describe");
+    }
+    let bytes = &(*addr_of!(FX_BYTES))[..FX_LEN];
+    let Ok(prog) = Program::parse(bytes) else {
+        return fx_error("no_effect", "no active effect to describe");
+    };
+    let mut m = pb::EffectUniforms::default();
+    let _ = m.r#manifest.extend_from_slice(prog.manifest);
+    pb::ServerMessage { r#msg: Some(pb::ServerMessage_::Msg::EffectUniforms(m)) }
+}
+
+fn fx_error(code: &str, message: &str) -> pb::ServerMessage {
+    let mut e = pb::Error::default();
+    let _ = e.r#code.push_str(code);
+    let _ = e.r#message.push_str(message);
+    pb::ServerMessage { r#msg: Some(pb::ServerMessage_::Msg::Error(e)) }
 }
 
 // -- render-side accessors (pure reads; the FastLED loop polls these) --------
@@ -447,4 +757,205 @@ pub unsafe extern "C" fn lm_map_led(index: u32, id: *mut u32, xyz: *mut f32) -> 
         }
         None => false,
     }
+}
+
+// -- effects VM FFI (fx_vm) ---------------------------------------------------
+// Single-threaded, like the rest of this file: the render task and the message
+// handler both call these under the C++ player_mutex.
+
+/// The per-invocation bounded-execution guard for the active budget + the
+/// wall-time deadline flag.
+unsafe fn fx_budget() -> Budget {
+    Budget {
+        instructions: FX_BUDGET,
+        deadline: Some(&FX_DEADLINE as *const AtomicBool),
+    }
+}
+
+/// Load (parse + hold) a `.fxb` effect, copying `len` bytes into the static
+/// buffer. Resets the VM's state (fresh effect). Returns false if the bytes
+/// don't fit or don't parse as a valid `.fxb`. After a successful load the
+/// effect is HELD but not necessarily active (see lm_fx_active is a pure read
+/// of "is a program loaded").
+///
+/// # Safety
+/// `fxb` must point to `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_load(fxb: *const u8, len: usize) -> bool {
+    if fxb.is_null() || len == 0 || len > FX_MAX_BYTES {
+        return false;
+    }
+    let src = core::slice::from_raw_parts(fxb, len);
+    // Validate before committing: reject a malformed .fxb so a bad upload can't
+    // wedge the render loop on garbage.
+    if Program::parse(src).is_err() {
+        return false;
+    }
+    let buf = &mut *addr_of_mut!(FX_BYTES);
+    buf[..len].copy_from_slice(src);
+    FX_LEN = len;
+    *addr_of_mut!(FX_VM) = Some(FxVm::new());
+    FX_DEADLINE.store(false, core::sync::atomic::Ordering::Relaxed);
+    true
+}
+
+/// Clear the loaded effect (back to the built-in playback/idle). Frees nothing
+/// (the buffer is static) but marks no program loaded and not active.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_clear() {
+    FX_LEN = 0;
+    FX_ACTIVE = false;
+    *addr_of_mut!(FX_VM) = None;
+}
+
+/// Whether an effect is loaded, ACTIVE, and renderable — the render loop gates
+/// on this, taking priority over the built-in pulse/flood playback.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_active() -> bool {
+    FX_ACTIVE && FX_LEN > 0 && (*addr_of!(FX_VM)).is_some()
+}
+
+/// Whether an effect is loaded at all (active or parked). Used by persistence.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_loaded() -> bool {
+    FX_LEN > 0 && (*addr_of!(FX_VM)).is_some()
+}
+
+/// Mark the loaded effect active (true) or parked (false). No-op with nothing
+/// loaded.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_set_active(active: bool) {
+    if FX_LEN > 0 && (*addr_of!(FX_VM)).is_some() {
+        FX_ACTIVE = active;
+    }
+}
+
+/// Set the max instruction count for one update()/shade() invocation (bounded
+/// execution, primary guard). 0 restores the default.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_set_budget(instructions: u32) {
+    FX_BUDGET = if instructions == 0 {
+        ledmapper_fx_vm::DEFAULT_BUDGET
+    } else {
+        instructions
+    };
+}
+
+/// Raise/lower the wall-time deadline flag (secondary guard). The C++ hardware
+/// timer callback calls this with `true` at the frame deadline; the render loop
+/// clears it (false) before each frame's update()/shade() sweep. Cheap atomic
+/// store — safe to call from an ISR/timer context. TODO(hw): wire an
+/// esp_timer/systimer one-shot armed each frame to invoke this at the deadline.
+#[no_mangle]
+pub extern "C" fn lm_fx_set_deadline(hit: bool) {
+    FX_DEADLINE.store(hit, core::sync::atomic::Ordering::Relaxed);
+}
+
+/// Apply a uniform value (`vals` = its slot count, 1..4) to the active VM.
+///
+/// # Safety
+/// `vals` must point to `n` readable f32.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_set_uniform(slot: u32, vals: *const f32, n: usize) {
+    if vals.is_null() || n == 0 {
+        return;
+    }
+    if let Some(vm) = (*addr_of_mut!(FX_VM)).as_mut() {
+        let s = core::slice::from_raw_parts(vals, n);
+        vm.set_uniform(slot as usize, s);
+    }
+}
+
+/// Run `update()` once for this frame (before the per-LED shade sweep). Clears
+/// the wall-time deadline flag first (a fresh frame gets the full budget).
+/// Returns false when no effect is loaded. A cancelled update (budget/timeout)
+/// still returns true — a partial state advance is harmless.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_update(time_s: f32, dt_s: f32, frame: u32, led_count: u32) -> bool {
+    FX_DEADLINE.store(false, core::sync::atomic::Ordering::Relaxed);
+    let Some(vm) = (*addr_of_mut!(FX_VM)).as_mut() else {
+        return false;
+    };
+    let bytes = &(*addr_of!(FX_BYTES))[..FX_LEN];
+    let Ok(prog) = Program::parse(bytes) else {
+        return false;
+    };
+    let f = FxFrame {
+        time: time_s,
+        dt: dt_s,
+        frame,
+        led_count,
+        ..Default::default()
+    };
+    vm.run_update_bounded(&prog, &f, &fx_budget());
+    true
+}
+
+/// Shade one LED: run `shade(led)` → rgb (3 bytes). `x`,`y`,`z` are the LED's
+/// position (the render loop passes the stored map position via lm_map_led).
+/// Returns false when no effect is loaded OR the invocation was cancelled by a
+/// bounded-execution guard (budget/timeout) — the caller then holds last/black
+/// for that LED rather than hanging the render task.
+///
+/// # Safety
+/// `rgb` must point to 3 writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_shade(
+    idx: u32,
+    x: f32,
+    y: f32,
+    z: f32,
+    rgb: *mut u8,
+) -> bool {
+    let Some(vm) = (*addr_of!(FX_VM)).as_ref() else {
+        return false;
+    };
+    let bytes = &(*addr_of!(FX_BYTES))[..FX_LEN];
+    let Ok(prog) = Program::parse(bytes) else {
+        return false;
+    };
+    // time/dt/frame carry across from the last update() via the VM's state; the
+    // shade only needs the per-frame Frame for time-driven built-ins, which we
+    // reconstruct minimally (position is what varies per LED).
+    let f = FxFrame::default();
+    let led = FxLed {
+        pos: [x, y, z],
+        idx,
+        seg: -1,
+        s: 0.0,
+        branch: false,
+    };
+    let ((r, g, b), outcome) = vm.run_shade_bounded(&prog, &f, &led, &fx_budget());
+    if outcome != Outcome::Ok {
+        return false;
+    }
+    *rgb = r;
+    *rgb.add(1) = g;
+    *rgb.add(2) = b;
+    true
+}
+
+/// Copy the active effect's uniforms manifest into `out` (cap `cap`). Returns
+/// the manifest length written, or -1 when no effect is loaded, or -2 when the
+/// manifest doesn't fit `cap`. Used to build the get_effect_uniforms reply.
+///
+/// # Safety
+/// `out` must point to `cap` writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_manifest(out: *mut u8, cap: usize) -> i32 {
+    if FX_LEN == 0 {
+        return -1;
+    }
+    let bytes = &(*addr_of!(FX_BYTES))[..FX_LEN];
+    let Ok(prog) = Program::parse(bytes) else {
+        return -1;
+    };
+    let m = prog.manifest;
+    if m.len() > cap {
+        return -2;
+    }
+    if !out.is_null() && !m.is_empty() {
+        core::ptr::copy_nonoverlapping(m.as_ptr(), out, m.len());
+    }
+    m.len() as i32
 }

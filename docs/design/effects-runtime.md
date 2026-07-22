@@ -194,3 +194,16 @@ the identical thing in both.
 - `for` bound: currently a plain C-style loop (runtime trip count). Still open
   whether to hard-bound frame time via a global per-frame **instruction budget**
   (favored) vs a compile-time max-iterations cap. Not yet enforced.
+  DECISION: include bounded execution (instruction count) in the impl. Also support
+  bounded-time execution via continuation; save thread context on invocation and
+  set up hardware timer to trigger at deadline (with some margin before frame)
+  which cancels execution and resumes to timeout error branch at callsite.
+
+Additional guidance:
+Come up with a few effects as candidates to explore the design space and requirements.
+As a few examples:
+- chaser effects that are topology-aware, such as the current "agentic pulse" effect
+- 3D volumetric effects (plane waves traveling along 3D vectors, spherical waves propagating outwards from spawn points, "hue field" function paramterized over 3D coordinates
+- 2D video mapping: stream bitmap frames from client, sample bitmap in uv space like `texture()`
+
+The effects runtime should have a dedicated arena allocator for any data structures needed so as to prevent the firmware from locking up because of heap exhaustion.

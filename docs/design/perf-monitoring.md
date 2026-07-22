@@ -468,25 +468,33 @@ model** as a side effect.
   dynamic profile gives the real path but only for the current uniforms/map. Do
   we profile once, on uniform change, or every N preview frames? (Lean: profile
   on load + on uniform change, since uniforms can flip branches.)
+  DECISION: agree, profile both
 - **Opcode granularity of the cost table.** Per-opcode for the expensive float
   ops for sure; do cheap ops (stack/branch/int) get individual costs or one
   shared "cheap" bucket? Fewer benchmarks vs finer accuracy.
+  DECISION: can explore this--start with fewer benchmarks and see what the fit loss is
 - **Vector cost model.** Store expanded per-lane costs, or scalar cost × lane
   count from the opcode size field? The lane-check benchmark decides whether a
   per-op fixed component exists.
+  DECISION: scalar cost x lane count
 - **`show` attribution.** Model FastLED transmit as `show_fixed + per_led`, or
   measure it as one lumped constant per LED count? WS2812 timing is fixed per
   LED, so `per_led` should be near-exact — confirm it isn't contention-dependent.
+  DECISION: we may support other LED types in the future as a runtime configuration option--should be able to model different LED types which may have variable per-frame timing
 - **Tier 1 overhead honesty.** The `instr++` cost should be measured (Tier 1 on
   vs off during calibration) and *subtracted* from reported cycles, so FULL-mode
   numbers match BASIC-mode reality. Is one global correction factor enough?
+  DECISION: one global correction factor probably enough--can check r^2 to see after we build out
 - **Instruction budget vs `for` bound.** The runtime doc leaves open whether the
   hard frame bound is a compile-time loop cap or a global per-frame instruction
   budget. If it's an instruction budget, the perf stream should also report
   budget consumed / remaining per frame — cheap, and a great AI signal.
+  DECISION: see other doc. We'll want to estimate how much of the budget we've consumed (preferably in terms of wall time using our model)
 - **Where residual/error bars live.** Do we surface the model's error band in the
   UI always, or only when uncalibrated? (Lean: always show it offline; hide once
   calibrated within threshold.)
+  DECISION: always surface--error bars should be smaller once calibrated. Use error bars to determine confidence level -> colorization of the report (red=unlikely to fit, yellow=might fit, green=likely to fit)
 - **Multi-SoC.** Cost tables are keyed by SoC; when non-C6 targets appear, is the
   linear model still adequate (in-order assumption) or do cached cores need a
   richer model?
+  DECISION: other cores might need a richer model. Let's not worry about that for now, we can always revisit when we support other cores. Make sure there's some way to save/restore models and that the save files have some metadata, perhaps even including the direct experimental observations so they can be rederived if the modeling approach changes.

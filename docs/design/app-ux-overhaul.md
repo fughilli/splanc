@@ -614,17 +614,26 @@ app; recommend keeping `wall.html` (virtual LED wall for testing) as-is.
 1. **Device: tab vs. app-bar pill only?** §3.2 lists Device as a tab, but it's really global
    chrome. Leaning toward **pill-only** (opens the sheet) and making the third tab **Effects** +
    a **Settings**/overflow. Decide the final tab set.
+   DECISION: app bar pill and tab
 2. **Live preview source of truth during capture:** server `getLiveMap` poll (works today) vs.
    local `SolverAgent` streaming snapshots (lower latency, offline-capable). Ship server-poll
    first, add local streaming as an enhancement?
+   The live preview should surface results from the **same solver** that runs the final solve, so the user sees what they will get.
 3. **Map upload support:** the device path today reliably supports topology upload and *pull*;
    confirm the firmware accepts a full **map** submission (`SubmitMapMessage`) so "Send map to
    device" is real vs. topology-only.
+   The device should get both the 3D map and the topology, so it can do effects that require global LED position as well as topology.
 4. **Cleanup single-knob curve:** which two of the five `ExtractOptions` the one slider drives,
    and the mapping curve. Proposal: radius + prune; validate on real captures.
-5. **iOS constraints:** no Web Bluetooth (BLE onboarding hidden) and stricter media/motion
-   permissions — confirm the "Enter address manually / offline" paths fully cover iOS.
+   The topology workspace should just expose the full set of controls for the skelgraph solver. There should be a visualization of the different parameters when adjusting them, such as a circular reticle around the LED points to show the radius and lines to show the pruning.
+5. **iOS constraints:** ignore iOS support for now. We'll separately investigate making the web flow work on iOS, or perhaps deploying a react native app.
 6. **Storage quota / eviction:** IndexedDB can be evicted under pressure. Do we request
    persistent storage (`navigator.storage.persist()`) and/or nudge users to export important maps?
+   Request persistent storage and also provide an "export bundle" option for users to back up their maps. Additionally, consider implementing a warning system that alerts users when storage is nearing capacity.
 7. **Thumbnail cost:** off-screen `MapView` render on every save — acceptable, or generate lazily
    on first browser view?
+   Off-screen render for thumbnail and then lazily replace thumbnails on first view with live render (rotating).
+
+Additional guidance:
+
+please include a toggleable "grid" and "coordinate triad" in the 3D views so that users can see where the captured geometry is w.r.t. world reference frame.

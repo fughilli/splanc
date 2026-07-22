@@ -82,7 +82,16 @@ ts_project(
             "tests/**/*.ts",
             "tests/**/*.json",
         ],
-        exclude = ["src/solver/spawn.ts"],
+        exclude = [
+            "src/solver/spawn.ts",
+            # Browser-only: import.meta worker URL / `self` — syntax-invalid or
+            # meaningless under the CJS test compile (see their docstrings). The
+            # editor entry page statically imports the worker client, so it's
+            # excluded too (it's a page bundle, not a unit-tested module).
+            "src/effects/editor/compiler.ts",
+            "src/effects/editor/compile-worker.ts",
+            "src/effects/editor/main.ts",
+        ],
     ),
     declaration = False,
     out_dir = "dist-test",
@@ -141,6 +150,7 @@ js_binary(
 vite_bin.vite(
     name = "dist",
     srcs = SRCS + [
+        "editor.html",
         "effects.html",
         "index.html",
         "package.json",
@@ -166,6 +176,8 @@ sh_binary(
     srcs = ["serve.sh"],
     data = [
         ":dist",
+        "//fx_compiler:fx_compiler_web",
+        "//firmware/fx_vm:fx_vm_web",
         "//firmware/pulse:pulse_web",
         "//pi/server:serve",
         "//solver:solver_web",
@@ -180,6 +192,8 @@ sh_binary(
     srcs = ["deploy_cloudflare.sh"],
     data = [
         ":dist",
+        "//fx_compiler:fx_compiler_web",
+        "//firmware/fx_vm:fx_vm_web",
         "//firmware/pulse:pulse_web",
         "//solver:solver_web",
     ],

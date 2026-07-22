@@ -80,21 +80,113 @@ Rebuilding the entire SDK via `esp32-arduino-lib-builder` is out of scope
    mbedtls `ssl_setup`, so esp-tls doesn't need recompiling. **(Validate this
    assumption early — see Risks.)**
 
-## ABI-compatibility strategy (the main risk)
+## ABI-compatibility — RESOLVED (2026-07-22): dynamic buffers are link-wrapped
 
-The precompiled `libesp-tls.a` / `libesp_https_server.a` were built against the
-SDK's mbedtls **config**. mbedtls struct layouts depend on config `#ifdef`s, so
-our from-source build **must use the identical `esp_config.h` + `sdkconfig`**,
-changing *only* the dynamic-buffer knobs, or those callers get a struct-layout
-mismatch (silent memory corruption). Plan: extract the exact config from the
-fetched SDK, diff our effective config against it, add only the DYNAMIC_BUFFER
-options, and assert no other `MBEDTLS_*` macro changed.
+The open question below is now answered by inspecting the IDF v5.5.4 port and
+the shipped `esp_mbedtls_dynamic.h`: **`CONFIG_MBEDTLS_DYNAMIC_BUFFER` does NOT
+change any mbedtls struct.** The feature is implemented entirely at link time —
+the port compiles `components/mbedtls/port/dynamic/*.c` and links with
+`-Wl,--wrap=mbedtls_ssl_setup` (plus `ssl_read`/`ssl_write`/`ssl_free`/
+`ssl_session_reset`/`mbedtls_ssl_send_alert_message`/…). The `__wrap_*` shims
+reallocate `ssl->in_buf` / `ssl->out_buf` between records using fields that
+already exist on `mbedtls_ssl_context`. No field is added or resized.
 
-Open question to validate first: does `CONFIG_MBEDTLS_DYNAMIC_BUFFER` alter any
-mbedtls struct that `libesp-tls.a` sees? If it adds fields to
-`mbedtls_ssl_context`, esp-tls (compiled without the macro) would disagree on
-the layout → we'd also need to rebuild esp-tls/esp_https_server from source.
-Determine this before committing to the mbedtls-only override.
+Consequences:
+- The precompiled `libesp-tls.a` / `libesp_https_server.a` stay ABI-compatible —
+  their calls to `mbedtls_ssl_*` are simply redirected to the wrappers at the
+  final link. **They do not need rebuilding.** (So we keep them precompiled,
+  which also satisfies "no precompiled ESP libs where avoidable" for the crypto
+  core we actually care about — mbedtls itself is what goes to source.)
+- The struct-layout config-parity concern still applies to *our* mbedtls build:
+  compile it with the SDK's exact `esp_config.h` + `mbedtls_config.h`, adding
+  only `CONFIG_MBEDTLS_DYNAMIC_BUFFER=y` (a port knob, not a `mbedtls_config.h`
+  struct macro), so our `mbedtls_ssl_context` matches what esp-tls was built
+  against.
+
+## Chosen approach (locked 2026-07-22)
+
+Build **mbedtls from source** (`library/*.c` + IDF `port/*.c` incl. the HW-crypto
+`*_alt` drivers + `port/dynamic/*.c`) as an `@embedded` `cc_library`
+(`alwayslink`), linked ahead of / replacing the precompiled
+`libmbedtls*.a`/`libmbedcrypto.a`/`libmbedx509.a`, with the `--wrap` link flags
+and `DYNAMIC_BUFFER=y`. Keep `libesp-tls.a`/`libesp_https_server.a` precompiled
+(ABI-safe per above). This honors "from-source mbedtls" while not rebuilding the
+whole IDF.
+
+## Turnkey build spec (pins + exact C6 sources, gathered 2026-07-22)
+
+Everything below is extracted from the frozen SDK's `versions.txt` and esp-idf
+v5.5.4's `components/mbedtls/CMakeLists.txt` — enough to write the `@embedded`
+targets without further spelunking.
+
+**Source pins (nix `fetchFromGitHub`):**
+- `espressif/mbedtls` rev `ffb280bb63c78bfec1e1ab55040671768c85c923` (mbedtls
+  3.6.5 + esp patches), `hash = "sha256-671VYuTxMOLF90UXnBofct5jBQZuBJUoBVueMP3vVUQ="`.
+  Provides `library/*.c` (108), `include/`, `library/*.h` (internal), and
+  `3rdparty/{everest,p256-m}` (ECC — compile these too).
+- `espressif/esp-idf` rev `v5.5.4`, `hash =
+  "sha256-6p+4DO2/KjOel+vLQbbJH7xFNIYAwymKbxepQx3towI="` — only for
+  `components/mbedtls/port/**` (assemble a small tree in a `runCommand`; don't
+  ship all of IDF). All *headers* the port needs already live in the prebuilt
+  SDK's `include/` tree (reuse `@arduino_esp32//:sdk_hdrs`).
+
+**mbedtls core:** compile `mbedtls/library/*.c` + `3rdparty/everest/library/*.c`
++ `3rdparty/p256-m/**/p256-m.c`. Include dirs: `port/include`, `mbedtls/include`,
+`mbedtls/library` (+ the SDK's `mbedtls/port/include` for `esp_config.h`).
+
+**IDF port sources for the C6** (SHA/AES use **GDMA**; MPI/SHA/AES/ECC HW on;
+HMAC + DIG_SIGN present; LWIP on):
+- base: `port/mbedtls_debug.c`, `port/esp_platform_time.c`, `port/net_sockets.c`,
+  `port/esp_hardware.c`, `port/esp_mem.c`, `port/esp_timing.c`,
+  `port/esp_hmac_pbkdf2.c`
+- SHA: `port/sha/esp_sha.c`, `port/sha/core/sha.c`, `port/sha/core/esp_sha_gdma_impl.c`,
+  `port/sha/core/esp_sha1.c`, `.../esp_sha256.c`, `.../esp_sha512.c`
+- AES: `port/aes/esp_aes_common.c`, `port/aes/esp_aes_xts.c`,
+  `port/aes/esp_aes_gcm.c`, `port/aes/dma/esp_aes.c`,
+  `port/aes/dma/esp_aes_gdma_impl.c`, `port/aes/dma/esp_aes_dma_core.c`
+- shared DMA: `port/crypto_shared_gdma/esp_crypto_shared_gdma.c`
+- MPI: `port/bignum/esp_bignum.c`, `port/bignum/bignum_alt.c`
+- ECC: `port/ecc/esp_ecc.c`, `port/ecc/ecc_alt.c`
+- DIG_SIGN (esp_ds): `port/esp_ds/esp_rsa_sign_alt.c`, `.../esp_rsa_dec_alt.c`,
+  `.../esp_ds_common.c`
+- extra port include dirs: `port/aes/include`, `port/aes/dma/include`,
+  `port/sha/core/include`
+- **dynamic buffers (the feature):** add `port/dynamic/esp_mbedtls_dynamic_impl.c`,
+  `esp_ssl_cli.c`, `esp_ssl_srv.c`, `esp_ssl_tls.c`
+- (ECDSA-HW `port/ecdsa/ecdsa_alt.c` + its own wrap set — optional; only if
+  `MBEDTLS_HARDWARE_ECDSA_*`. Our RSA cert path doesn't need it; skip for v1.)
+
+**Config:** compile every TU with `-DMBEDTLS_CONFIG_FILE='"mbedtls/esp_config.h"'`
+(the SDK's) and a `sdkconfig.h` on the include path identical to the SDK's plus
+`#define CONFIG_MBEDTLS_DYNAMIC_BUFFER 1`. Change **only** that knob — no
+`mbedtls_config.h` struct macro moves (ABI parity with precompiled esp-tls).
+
+**Link flags** (add to `:core`'s linkopts, `INTERFACE`-style, when DYNAMIC_BUFFER
+is on) — the 11 wraps that engage the dynamic path:
+```
+-Wl,--wrap=mbedtls_ssl_write_client_hello
+-Wl,--wrap=mbedtls_ssl_handshake_client_step
+-Wl,--wrap=mbedtls_ssl_tls13_handshake_client_step
+-Wl,--wrap=mbedtls_ssl_handshake_server_step
+-Wl,--wrap=mbedtls_ssl_read
+-Wl,--wrap=mbedtls_ssl_write
+-Wl,--wrap=mbedtls_ssl_session_reset
+-Wl,--wrap=mbedtls_ssl_free
+-Wl,--wrap=mbedtls_ssl_setup
+-Wl,--wrap=mbedtls_ssl_send_alert_message
+-Wl,--wrap=mbedtls_ssl_close_notify
+```
+`__real_*` resolve from our from-source mbedtls; `__wrap_*` come from the
+`port/dynamic/*.c` above.
+
+**Wiring:** drop `libmbedtls*.a` / `libmbedtls_2.a` / `libmbedcrypto.a` /
+`libmbedx509.a` from `:sdk_libs` (arduino_esp32.BUILD glob) and depend `:core`
+on the new `mbedtls_src` (`alwayslink = True`, ahead of the `--start-group`), so
+our symbols satisfy the precompiled `libesp-tls.a` / `libesp_https_server.a`.
+
+**What still needs hardware (cannot be done in-container):** the feature is a
+*runtime RAM* behavior, so the payoff is only observable on the device — see
+Verification. In-container we can only confirm it **builds + links**.
 
 ## Integration in `led_mapper`
 

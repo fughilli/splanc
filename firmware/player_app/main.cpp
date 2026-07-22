@@ -110,6 +110,12 @@ static const char *kTopoPath = "/lfs/topo.pb";
 // The last playback selection (set_playback frame), so the show auto-resumes
 // on boot. Coalesced (live tuning fires rapidly) — see queue/flush below.
 static const char *kPlaybackPath = "/lfs/play.pb";
+// The active user effect: the raw submit_effect upload frame (bytecode) and,
+// separately, the last effect-control frame (set_effect / set_uniforms) so the
+// effect + its live uniforms auto-resume on boot. Replayed through the SAME
+// decode path (lm_player_handle) as a live upload, after map+topology.
+static const char *kEffectPath = "/lfs/fx.pb";
+static const char *kEffectSelPath = "/lfs/fx_sel.pb";
 static bool fs_ok = false;
 // Protobuf envelope arm numbers (ledmapper.proto oneofs) used to classify
 // frames for persistence — see lm_envelope_arm.
@@ -118,6 +124,10 @@ static const int32_t kArmSubmitTopology = 16;
 static const int32_t kArmSetPlayback = 17;
 static const int32_t kArmResultReady = 8;
 static const int32_t kArmPlaybackState = 13;
+static const int32_t kArmSubmitEffect = 21;
+static const int32_t kArmSetEffect = 22;
+static const int32_t kArmSetUniforms = 23;
+static const int32_t kArmEffectUniforms = 16;
 
 // Coalesced playback save: live slider tuning re-sends set_playback on every
 // tick, so writing flash each time would thrash it. Stash the latest frame and
@@ -127,6 +137,14 @@ static size_t pending_playback_len = 0;
 static bool playback_dirty = false;
 static uint32_t playback_dirty_at = 0;
 static const uint32_t kPlaybackSaveQuietMs = 1500;
+
+// Coalesced effect-control save (set_effect / set_uniforms): slider drags
+// re-send set_uniforms every tick, so coalesce exactly like playback above.
+// The largest such frame is a full uniform set — bounded to this buffer.
+static uint8_t pending_fx_sel[2048];
+static size_t pending_fx_sel_len = 0;
+static bool fx_sel_dirty = false;
+static uint32_t fx_sel_dirty_at = 0;
 
 // STA join in progress: reports success (Improv redirect) / failure.
 static bool sta_joining = false;
@@ -184,6 +202,22 @@ static void flush_playback_save() {
   playback_dirty = false;
 }
 
+// Stash the latest effect-control frame (set_effect / set_uniforms) to flush
+// once live tuning settles, same coalescing as playback.
+static void queue_fx_sel_save(const uint8_t *data, size_t len) {
+  if (len > sizeof pending_fx_sel) return;  // too big to persist (bounded)
+  memcpy(pending_fx_sel, data, len);
+  pending_fx_sel_len = len;
+  fx_sel_dirty = true;
+  fx_sel_dirty_at = millis();
+}
+
+static void flush_fx_sel_save() {
+  if (!fx_sel_dirty || millis() - fx_sel_dirty_at < kPlaybackSaveQuietMs) return;
+  fs_write_file(kEffectSelPath, pending_fx_sel, pending_fx_sel_len);
+  fx_sel_dirty = false;
+}
+
 // Persist state after a SUCCESSFUL upload/selection so it survives a reboot:
 // the map+topology (fixture) and the playback selection (auto-resume the show).
 // A new map invalidates any stored topology.
@@ -199,6 +233,16 @@ static void persist_if_upload(const uint8_t *req, size_t req_len,
     fs_write_file(kTopoPath, req, req_len);
   } else if (reply_arm == kArmPlaybackState && req_arm == kArmSetPlayback) {
     queue_playback_save(req, req_len);  // coalesced: live tuning fires rapidly
+  } else if (reply_arm == kArmResultReady && req_arm == kArmSubmitEffect) {
+    // A validated effect upload: persist the raw .fxb frame (the effect
+    // bytecode) so it auto-resumes on boot. A new effect supersedes any prior
+    // selection/uniforms (they belong to the old effect).
+    fs_write_file(kEffectPath, req, req_len);
+    remove(kEffectSelPath);
+  } else if (reply_arm == kArmPlaybackState &&
+             (req_arm == kArmSetEffect || req_arm == kArmSetUniforms)) {
+    // Effect selection / live uniforms — coalesced like set_playback.
+    queue_fx_sel_save(req, req_len);
   }
 }
 
@@ -239,6 +283,12 @@ static void fs_begin_and_restore() {
   fs_replay(kMapPath);
   fs_replay(kTopoPath);
   fs_replay(kPlaybackPath);  // resume the last show (the render task picks it up)
+  // Resume a user effect after the map/topology it shades over: the .fxb first
+  // (submit_effect, activate flag replayed as-sent), then its last selection +
+  // live uniforms (set_effect / set_uniforms). The render task picks it up via
+  // lm_fx_active once these replay through the same decode path.
+  fs_replay(kEffectPath);
+  fs_replay(kEffectSelPath);
 }
 
 static void ws_dispatch_message() {
@@ -405,7 +455,48 @@ static uint32_t render_once() {
   uint32_t next_delay_ms = kStaticPollMs;
 
   xSemaphoreTake(player_mutex, portMAX_DELAY);
-  if (lm_counting_color(0, rgb)) {
+  if (lm_fx_active()) {
+    // User effect (.fxb shader) takes priority over the built-in playback:
+    // run update() once, then shade() per LED over the stored map position.
+    // Bounded execution guards each invocation (instruction budget + wall-time
+    // deadline flag); a cancelled shade holds black for that LED. ~30 fps.
+    static uint32_t fx_frame = 0;
+    static uint32_t fx_last_ms = 0;
+    static float fx_time_s = 0.0f;
+    uint32_t now = millis();
+    uint32_t dt_ms = now - fx_last_ms;
+    if (fx_last_ms == 0 || dt_ms > 200) dt_ms = 33;  // fresh entry / long gap
+    fx_last_ms = now;
+    float dt_s = (float)dt_ms / 1000.0f;
+    fx_time_s += dt_s;
+    // TODO(hw): arm an esp_timer/systimer one-shot here for a frame-relative
+    // wall-time deadline that calls lm_fx_set_deadline(true); the VM already
+    // polls that flag and unwinds to a timeout branch. lm_fx_update clears the
+    // flag at the start of each frame. The instruction budget is the primary
+    // guard and is fully effective without the timer.
+    uint32_t n = lm_map_len();
+    if (n > kMaxLeds) n = kMaxLeds;
+    if (lm_fx_update(fx_time_s, dt_s, fx_frame++, n)) {
+      uint32_t id;
+      float xyz[3];
+      for (uint32_t i = 0; i < n; i++) {
+        // Shade over the stored fixture position (map order == LED order here).
+        if (lm_map_led(i, &id, xyz) && lm_fx_shade(i, xyz[0], xyz[1], xyz[2], rgb)) {
+          leds[i] = CRGB(rgb[0], rgb[1], rgb[2]);
+        } else {
+          leds[i] = CRGB::Black;  // no map entry or a cancelled/timed-out shade
+        }
+      }
+      for (uint32_t i = n; i < kMaxLeds; i++) leds[i] = CRGB::Black;
+    } else {
+      // Effect active but not runnable (shouldn't happen) — hold black.
+      fill_solid(leds, kMaxLeds, CRGB::Black);
+    }
+    show = true;
+    was_active = true;
+    last_shown_frame = 0xffffffff;
+    next_delay_ms = 33;  // ~30 fps
+  } else if (lm_counting_color(0, rgb)) {
     // Counting probe: static pattern, repaint at the slow static cadence.
     for (uint32_t i = 0; i < kMaxLeds; i++) {
       lm_counting_color(i, rgb);
@@ -711,7 +802,10 @@ void loop() {
   http.handleClient();
   ws_poll();
   provisioning_poll();
-  if (fs_ok) flush_playback_save();
+  if (fs_ok) {
+    flush_playback_save();
+    flush_fx_sel_save();
+  }
 
   static uint32_t last_report = 0;
   if (millis() - last_report > 5000) {

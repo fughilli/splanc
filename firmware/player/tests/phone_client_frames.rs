@@ -73,6 +73,14 @@ fn reply_allowed(req: &CMsg, reply: &Option<SMsg>) -> bool {
         CMsg::GetStatus(_) | CMsg::GetLiveMap(_) | CMsg::GetSolveStatus(_) => is_err("unsupported"),
         // The map dump is handled by the ffi arena layer, not the session core.
         CMsg::GetStoredMap(_) => is_err("unsupported"),
+        // Effects arms are handled by the ffi fx layer, not the session core;
+        // perf arms are not implemented on this player.
+        CMsg::SubmitEffect(_)
+        | CMsg::SetEffect(_)
+        | CMsg::SetUniforms(_)
+        | CMsg::GetEffectUniforms(_)
+        | CMsg::SetPerf(_)
+        | CMsg::GetPerfReport(_) => is_err("unsupported"),
     }
 }
 
@@ -98,6 +106,12 @@ fn arm_name(req: &CMsg) -> &'static str {
         CMsg::GetLiveMap(_) => "get_live_map",
         CMsg::GetSolveStatus(_) => "get_solve_status",
         CMsg::GetStoredMap(_) => "get_stored_map",
+        CMsg::SubmitEffect(_) => "submit_effect",
+        CMsg::SetEffect(_) => "set_effect",
+        CMsg::SetUniforms(_) => "set_uniforms",
+        CMsg::GetEffectUniforms(_) => "get_effect_uniforms",
+        CMsg::SetPerf(_) => "set_perf",
+        CMsg::GetPerfReport(_) => "get_perf_report",
     }
 }
 

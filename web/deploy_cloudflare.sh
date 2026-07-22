@@ -39,7 +39,7 @@ if [[ "${1:-}" == "--dry-run" ]]; then
 fi
 
 # Stage the site exactly as the Pi serves it: bundle at /, solver at /solver,
-# effects Sim at /pulse.
+# effects Sim at /pulse, effects compiler at /fx-compiler, preview VM at /fx-vm.
 STAGE="$(mktemp -d)"
 trap 'chmod -R u+w "$STAGE" 2>/dev/null; rm -rf "$STAGE"' EXIT
 cp -RL web/dist/. "$STAGE"/
@@ -47,6 +47,10 @@ mkdir -p "$STAGE/solver"
 cp -RL solver/solver_web/. "$STAGE/solver/"
 mkdir -p "$STAGE/pulse"
 cp -RL firmware/pulse/pulse_web/. "$STAGE/pulse/"
+mkdir -p "$STAGE/fx-compiler"
+cp -RL fx_compiler/fx_compiler_web/. "$STAGE/fx-compiler/"
+mkdir -p "$STAGE/fx-vm"
+cp -RL firmware/fx_vm/fx_vm_web/. "$STAGE/fx-vm/"
 # Bazel outputs arrive read-only; the staging copy is ours.
 chmod -R u+w "$STAGE"
 # Dev-only artifacts that have no business on a CDN.

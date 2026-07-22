@@ -147,6 +147,75 @@ fn branch_control_flow() {
 }
 
 #[test]
+fn budget_trips_on_pathological_loop() {
+    // shade: `for (;;) {}` — an unconditional back-branch with no exit. Layout:
+    //   [0] Jmp -3   (rel is applied AFTER reading the 2 offset bytes at pc=1..3,
+    //                 so pc=3 + (-3) = 0: an infinite self-loop)
+    // The VM must trip the instruction budget deterministically rather than hang.
+    #[rustfmt::skip]
+    let mut code = vec![Op::Jmp as u8];
+    code.extend_from_slice(&(-3i16).to_le_bytes());
+    let buf = fxb(0, 0, NO_ENTRY, 0, &[], &code);
+    let prog = Program::parse(&buf).expect("parse");
+    let vm = Vm::new();
+    let frame = Frame::default();
+    let led = Led::default();
+
+    // A tiny budget trips fast and deterministically.
+    let (rgb, outcome) = vm.run_shade_bounded(&prog, &frame, &led, &Budget::instructions(1000));
+    assert_eq!(outcome, Outcome::Budget, "runaway loop must exhaust the budget");
+    assert!(outcome.timed_out());
+    assert_eq!(rgb, (0, 0, 0), "a cancelled shade yields black");
+
+    // Determinism: the same program + budget always stops the same way. And a
+    // 10x budget still trips (the loop never exits on its own).
+    let (_r2, o2) = vm.run_shade_bounded(&prog, &frame, &led, &Budget::instructions(1000));
+    assert_eq!(o2, Outcome::Budget);
+    let (_r3, o3) = vm.run_shade_bounded(&prog, &frame, &led, &Budget::instructions(10_000));
+    assert_eq!(o3, Outcome::Budget);
+}
+
+#[test]
+fn budget_leaves_normal_programs_untouched() {
+    // A normal, short shade completes well under the budget → Outcome::Ok.
+    #[rustfmt::skip]
+    let code = [
+        Op::PushConst as u8, 0, 0, // 1.0
+        Op::PushConst as u8, 1, 0, // 0.0
+        Op::PushConst as u8, 1, 0, // 0.0
+        Op::Ret as u8, 3,
+    ];
+    let buf = fxb(0, 0, NO_ENTRY, 0, &[1.0, 0.0], &code);
+    let prog = Program::parse(&buf).expect("parse");
+    let vm = Vm::new();
+    let frame = Frame::default();
+    let led = Led::default();
+    let (rgb, outcome) = vm.run_shade_bounded(&prog, &frame, &led, &Budget::instructions(1000));
+    assert_eq!(outcome, Outcome::Ok);
+    assert_eq!(rgb, (255, 0, 0));
+}
+
+#[test]
+fn deadline_flag_cancels_execution() {
+    // Same infinite loop, but here a pre-raised wall-time deadline flag (as a
+    // hardware timer would set) cancels it → Outcome::Timeout.
+    use core::sync::atomic::AtomicBool;
+    #[rustfmt::skip]
+    let mut code = vec![Op::Jmp as u8];
+    code.extend_from_slice(&(-3i16).to_le_bytes());
+    let buf = fxb(0, 0, NO_ENTRY, 0, &[], &code);
+    let prog = Program::parse(&buf).expect("parse");
+    let vm = Vm::new();
+    let frame = Frame::default();
+    let led = Led::default();
+
+    let flag = AtomicBool::new(true); // deadline already passed
+    let budget = Budget { instructions: 1_000_000, deadline: Some(&flag as *const _) };
+    let (_rgb, outcome) = vm.run_shade_bounded(&prog, &frame, &led, &budget);
+    assert_eq!(outcome, Outcome::Timeout, "raised deadline flag must cancel");
+}
+
+#[test]
 fn rejects_bad_magic() {
     let mut buf = fxb(0, 0, NO_ENTRY, 0, &[], &[Op::Ret as u8, 0]);
     buf[0] = b'X';
