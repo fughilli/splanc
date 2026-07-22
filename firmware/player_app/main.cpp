@@ -527,7 +527,11 @@ static esp_err_t wss_ws_handler(httpd_req_t *req) {
   // single-threaded core call is serialized (mirrors ws_dispatch_message).
   frame.payload = rx;
   err = httpd_ws_recv_frame(req, &frame, kRxCap);
-  if (err != ESP_OK) return err;
+  if (err != ESP_OK) {
+    Log().printf("[wss] recv_frame failed: %d (len=%u)\n", (int)err,
+                 (unsigned)frame.len);
+    return err;
+  }
   rx_len = frame.len;
 
   int64_t now = (int64_t)millis();
@@ -539,7 +543,11 @@ static esp_err_t wss_ws_handler(httpd_req_t *req) {
     out.type = HTTPD_WS_TYPE_BINARY;
     out.payload = tx;
     out.len = (size_t)n;
-    httpd_ws_send_frame(req, &out);
+    esp_err_t serr = httpd_ws_send_frame(req, &out);
+    if (serr != ESP_OK) {
+      Log().printf("[wss] send_frame failed: %d (reply=%d B, heap=%u)\n",
+                   (int)serr, (int)n, (unsigned)esp_get_free_heap_size());
+    }
     persist_if_upload(rx, rx_len, tx, (size_t)n);
   }
   rx_len = 0;
@@ -573,11 +581,14 @@ static void wss_start() {
   cfg.servercert_len = sizeof kDevCertPem;
   cfg.prvtkey_pem = (const uint8_t *)kDevKeyPem;
   cfg.prvtkey_len = sizeof kDevKeyPem;
-  // TLS is heap-heavy on the C6: keep the socket count small, give the handler
-  // task extra stack for the handshake, and purge the least-recently-used
-  // socket rather than reject a reconnecting phone.
+  // TLS is heap-heavy on the C6: keep the socket count small and purge the
+  // least-recently-used socket rather than reject a reconnecting phone. The
+  // handler task runs lm_player_handle, whose micropb by-value structs need a
+  // big stack — the loop task is 24 KB for exactly this — so give the httpd
+  // task the same budget plus TLS-record margin, or it overflows on the first
+  // message and the socket drops mid-protocol.
   cfg.httpd.max_open_sockets = 3;
-  cfg.httpd.stack_size = 10240;
+  cfg.httpd.stack_size = 28 * 1024;
   cfg.httpd.lru_purge_enable = true;
   esp_err_t err = httpd_ssl_start(&wss, &cfg);
   if (err != ESP_OK) {
