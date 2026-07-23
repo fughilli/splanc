@@ -478,7 +478,7 @@
     "@@rules_nixpkgs_core~//extensions:package.bzl%nix_pkg%firmware@_~nix_pkg": {
       "general": {
         "bzlTransitiveDigest": "2alEQC7q9PgrArc8ZeI662VmDHLGfuswqnzBJvVDnmg=",
-        "usagesDigest": "ujTP9VPzEHlWVEr3IqvO+Mtja/3MtS0HdHZ0KbBRMto=",
+        "usagesDigest": "G6rds/xpSH75WV/LYhob8V7rTRgXeoU8XUbEmTc9Xo4=",
         "recordedFileInputs": {},
         "recordedDirentsInputs": {},
         "envVariables": {},
@@ -616,6 +616,24 @@
               "repository": "@@rules_nixpkgs_core~~_nix_repo~firmware~~nix_repo~nixpkgs//:nixpkgs",
               "repositories": {},
               "build_file": "@@firmware~//nix:arduino_pico.BUILD",
+              "build_file_content": "",
+              "nixopts": [],
+              "quiet": false,
+              "fail_not_supported": true
+            }
+          },
+          "mbedtls_src": {
+            "bzlFile": "@@rules_nixpkgs_core~//:nixpkgs.bzl",
+            "ruleClassName": "_nixpkgs_package",
+            "attributes": {
+              "unmangled_name": "mbedtls_src",
+              "attribute_path": "mbedtls-src",
+              "nix_file": "@@firmware~//nix:mbedtls_src.nix",
+              "nix_file_deps": {},
+              "nix_file_content": "",
+              "repository": "@@rules_nixpkgs_core~~_nix_repo~firmware~~nix_repo~nixpkgs//:nixpkgs",
+              "repositories": {},
+              "build_file": "@@firmware~//nix:mbedtls_src.BUILD",
               "build_file_content": "",
               "nixopts": [],
               "quiet": false,
@@ -976,7 +994,7 @@
         "bzlTransitiveDigest": "vt4SxWkQ68m/aCDZsNn52k7/n0uWiqqPHns004YWnPk=",
         "usagesDigest": "OlW6WWXv/18Gr0b4Af7hJ1klqvmCzNU25VIs31y4Wqs=",
         "recordedFileInputs": {
-          "@@//MODULE.bazel": "2820d91cf8410a8b5d0d5b70f90fc6b1ef9b154dde5d60ecb1a2f26f1b9be5a5",
+          "@@//MODULE.bazel": "2d23c92357eda3c36a4a48936f0aeb7064322b02998c14b91da985348796c2e4",
           "@@rules_rust~~rust_host_tools~rust_host_tools//rust_host_tools": "ENOENT"
         },
         "recordedDirentsInputs": {},
@@ -1727,7 +1745,7 @@
         "bzlTransitiveDigest": "vt4SxWkQ68m/aCDZsNn52k7/n0uWiqqPHns004YWnPk=",
         "usagesDigest": "28S0c0v9E9ZvyYWD0ltX6dRQnIcS6QTp9mhHSIJVP2Q=",
         "recordedFileInputs": {
-          "@@//MODULE.bazel": "2820d91cf8410a8b5d0d5b70f90fc6b1ef9b154dde5d60ecb1a2f26f1b9be5a5",
+          "@@//MODULE.bazel": "2d23c92357eda3c36a4a48936f0aeb7064322b02998c14b91da985348796c2e4",
           "@@rules_rust~~rust_host_tools~rust_host_tools//rust_host_tools": "ENOENT"
         },
         "recordedDirentsInputs": {},
