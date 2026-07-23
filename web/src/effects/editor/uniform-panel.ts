@@ -65,41 +65,69 @@ export class UniformPanel {
     this.root.replaceChildren();
     if (this.slots.length === 0) {
       const p = document.createElement("p");
-      p.className = "muted";
+      p.className = "muted upanel-empty";
       p.textContent = "No uniforms declared.";
       this.root.appendChild(p);
       return;
     }
-    this.slots.forEach((s, i) => this.root.appendChild(this.control(s, i)));
+    // A single 3-column grid (name · control · value) so every control type —
+    // slider, color, toggle, dropdown — is the same width and lines up.
+    const grid = document.createElement("div");
+    grid.className = "upanel-grid";
+    this.slots.forEach((s, i) => this.row(grid, s, i));
+    this.root.appendChild(grid);
   }
 
-  private control(s: Slot, i: number): HTMLElement {
-    const wrap = document.createElement("label");
-    wrap.className = "uni";
+  /** Append one uniform's three grid cells (name, control, value). The row is a
+   * `display:contents` label so clicking the name targets the control. */
+  private row(grid: HTMLElement, s: Slot, i: number): void {
+    const row = document.createElement("label");
+    row.className = "upanel-row";
+
     const name = document.createElement("span");
-    name.className = "uni-name";
+    name.className = "upanel-name";
     name.textContent = s.uniform.name;
-    wrap.appendChild(name);
-    wrap.appendChild(this.input(s, i));
-    return wrap;
+    name.title = s.uniform.name;
+
+    const ctrl = document.createElement("span");
+    ctrl.className = "upanel-ctrl";
+    const value = document.createElement("span");
+    value.className = "upanel-val";
+
+    this.fill(ctrl, value, s, i);
+    row.append(name, ctrl, value);
+    grid.appendChild(row);
   }
 
-  private input(s: Slot, i: number): HTMLElement {
+  private fill(ctrl: HTMLElement, value: HTMLElement, s: Slot, i: number): void {
     const ui: FxUiKind = s.uniform.ui;
+
     if (ui.kind === "toggle") {
       const el = document.createElement("input");
       el.type = "checkbox";
       el.checked = (s.value[0] ?? 0) >= 0.5;
-      el.addEventListener("change", () => this.set(i, [el.checked ? 1 : 0]));
-      return el;
+      el.addEventListener("change", () => {
+        this.set(i, [el.checked ? 1 : 0]);
+        value.textContent = el.checked ? "on" : "off";
+      });
+      ctrl.appendChild(el);
+      value.textContent = el.checked ? "on" : "off";
+      return;
     }
+
     if (ui.kind === "color") {
       const el = document.createElement("input");
       el.type = "color";
       el.value = rgbToHex(s.value);
-      el.addEventListener("input", () => this.set(i, hexToRgb(el.value, s.uniform.width)));
-      return el;
+      value.textContent = el.value;
+      el.addEventListener("input", () => {
+        this.set(i, hexToRgb(el.value, s.uniform.width));
+        value.textContent = el.value;
+      });
+      ctrl.appendChild(el);
+      return;
     }
+
     if (ui.kind === "dropdown") {
       const el = document.createElement("select");
       ui.options.forEach((opt, idx) => {
@@ -110,29 +138,69 @@ export class UniformPanel {
       });
       el.value = String(Math.round(s.value[0] ?? 0));
       el.addEventListener("change", () => this.set(i, [parseInt(el.value, 10)]));
-      return el;
+      ctrl.appendChild(el);
+      return;
     }
-    // slider
-    const box = document.createElement("span");
-    box.className = "uni-slider";
+
+    // slider + an editable number field (type a value → clamp+snap to range).
+    const step = ui.step > 0 ? ui.step : 0.001;
+    const cur = s.value[0] ?? ui.min;
     const el = document.createElement("input");
     el.type = "range";
     el.min = String(ui.min);
     el.max = String(ui.max);
-    el.step = String(ui.step > 0 ? ui.step : 0.001);
-    el.value = String(s.value[0] ?? ui.min);
-    const val = document.createElement("span");
-    val.className = "uni-val";
-    val.textContent = (s.value[0] ?? ui.min).toFixed(2);
+    el.step = String(step);
+    el.value = String(cur);
+
+    const num = document.createElement("input");
+    num.type = "number";
+    num.className = "upanel-num";
+    num.min = String(ui.min);
+    num.max = String(ui.max);
+    num.step = String(step);
+    num.value = fmtNum(cur);
+
     el.addEventListener("input", () => {
       const v = parseFloat(el.value);
-      val.textContent = v.toFixed(2);
+      num.value = fmtNum(v);
       this.set(i, [v]);
     });
-    box.appendChild(el);
-    box.appendChild(val);
-    return box;
+    // Commit the typed value on Enter/blur: clamp to [min,max] and snap to step.
+    const commit = (): void => {
+      let v = parseFloat(num.value);
+      if (!Number.isFinite(v)) v = this.slots[i]?.value[0] ?? ui.min;
+      v = snap(v, ui.min, ui.max, step);
+      el.value = String(v);
+      num.value = fmtNum(v);
+      this.set(i, [v]);
+    };
+    num.addEventListener("change", commit);
+    num.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        commit();
+        num.blur();
+      }
+    });
+
+    ctrl.appendChild(el);
+    value.appendChild(num);
   }
+}
+
+function clampN(v: number, lo: number, hi: number): number {
+  return Math.min(hi, Math.max(lo, v));
+}
+/** Clamp to [min,max] then snap to the slider's step grid. */
+function snap(v: number, min: number, max: number, step: number): number {
+  v = clampN(v, min, max);
+  if (step > 0) v = min + Math.round((v - min) / step) * step;
+  return clampN(v, min, max);
+}
+/** Compact numeric label (up to 4 decimals, trailing zeros trimmed). */
+function fmtNum(v: number): string {
+  if (!Number.isFinite(v)) return "0";
+  return String(Math.round(v * 1e4) / 1e4);
 }
 
 function clamp255(x: number): number {

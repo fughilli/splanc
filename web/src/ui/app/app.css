@@ -359,6 +359,74 @@ body.is-locked {
   flex-direction: column;
   gap: var(--sp-2);
 }
+
+/* Uniform controls as a tight aligned table: name · control · value. Every
+ * control type shares the same (control) column width, so sliders / color
+ * pickers / toggles / dropdowns all line up vertically. */
+.upanel-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 6.5rem) minmax(0, 1fr) 3.6rem;
+  column-gap: var(--sp-2);
+  row-gap: 6px;
+  align-items: center;
+  width: 100%;
+}
+.upanel-row {
+  display: contents;
+}
+.upanel-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--f-caption);
+  color: var(--text-dim);
+}
+.upanel-ctrl {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.upanel-ctrl input[type="range"] {
+  width: 100%;
+  margin: 0;
+}
+.upanel-ctrl input[type="color"] {
+  width: 100%;
+  height: 1.5rem;
+  padding: 0;
+  border: 1px solid var(--border);
+  background: none;
+}
+.upanel-ctrl select {
+  width: 100%;
+}
+.upanel-ctrl input[type="checkbox"] {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+.upanel-val {
+  font-size: var(--f-caption);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  text-align: right;
+  min-width: 0;
+}
+.upanel-num {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 1px 2px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--f-caption);
+  text-align: right;
+}
+.upanel-num::-webkit-outer-spin-button,
+.upanel-num::-webkit-inner-spin-button {
+  appearance: none;
+  margin: 0;
+}
 .uniform-row {
   display: flex;
   align-items: center;
