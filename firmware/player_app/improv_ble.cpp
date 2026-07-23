@@ -137,6 +137,18 @@ void improv_ble_begin(const char *device_name, uint8_t initial_state) {
                 BLEDevice::getAddress().toString().c_str(), kServiceUuid);
 }
 
+void improv_ble_set_name(const char *device_name) {
+  // The scan-response name is what the Web Bluetooth chooser shows; refresh it
+  // and restart advertising so the rename takes effect without a reboot. The
+  // primary packet (Improv service UUID) is left intact.
+  BLEDevice::stopAdvertising();
+  BLEAdvertisementData scanResp;
+  scanResp.setName(device_name);
+  BLEDevice::getAdvertising()->setScanResponseData(scanResp);
+  BLEDevice::startAdvertising();
+  Log().printf("[ble] renamed advertisement to \"%s\"\n", device_name);
+}
+
 bool improv_ble_take_credentials(char *ssid, size_t ssid_cap, char *pass, size_t pass_cap) {
   if (!g_have_creds) return false;
   g_have_creds = false;

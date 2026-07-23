@@ -162,6 +162,11 @@ type CountingBlocks = micropb::heapless::Vec<CountingBlock, MAX_COUNTING_BLOCKS>
 /// living for the player's lifetime in the real firmware.
 pub struct Player {
     session_id: Str64,
+    /// Stable hardware MAC + current display/BLE name, set by the firmware via
+    /// [`Player::set_identity`] and echoed in every `welcome`. `set_device_name`
+    /// updates `device_name` in place (the firmware persists it + renames BLE).
+    mac: Str64,
+    device_name: Str64,
     default_led_count: u32,
     active: Option<ActiveCapture>,
     counting: Option<(i64, CountingBlocks)>,
@@ -180,6 +185,8 @@ impl Player {
     pub fn new(session_id: &str, default_led_count: u32) -> Self {
         Player {
             session_id: s64(session_id),
+            mac: Str64::new(),
+            device_name: Str64::new(),
             default_led_count,
             active: None,
             counting: None,
@@ -270,6 +277,13 @@ impl Player {
             // Effects arms are intercepted by the fx layer (ffi) before the
             // session core sees them (the firmware profile can't decode a full
             // .fxb / uniform set); unreachable here.
+            // Rename: update the in-core name and reply welcome (echoing it).
+            // The firmware notices this arm, persists the name, and renames the
+            // BLE advertisement.
+            CMsg::SetDeviceName(m) => {
+                self.device_name = s64(m.r#name.as_str());
+                Some(self.welcome())
+            }
             CMsg::SubmitEffect(_)
             | CMsg::SetEffect(_)
             | CMsg::SetUniforms(_)
@@ -515,9 +529,24 @@ impl Player {
         reply(SMsg::PlaybackState(state))
     }
 
+    /// Set the player identity echoed in `welcome` (called once at init by the
+    /// firmware, which owns the MAC read + persisted name).
+    pub fn set_identity(&mut self, mac: &str, device_name: &str) {
+        self.mac = s64(mac);
+        self.device_name = s64(device_name);
+    }
+
+    /// The player's current display name (after any `set_device_name`), so the
+    /// firmware can persist it + rename the BLE advertisement.
+    pub fn device_name(&self) -> &str {
+        self.device_name.as_str()
+    }
+
     fn welcome(&self) -> pb::ServerMessage {
         let mut w = pb::Welcome::default();
         w.r#session_id = self.session_id.clone();
+        w.r#mac = self.mac.clone();
+        w.r#device_name = self.device_name.clone();
         let spec = CodeSpec::derive(self.default_led_count, DEFAULT_SYMBOLS, true);
         w.set_code_params(code_params_msg(&spec, DEFAULT_BIT_PERIOD_MS, 1.0));
         // NO solver_bench_ms: chooseSolvePlacement(phone, null) == "phone".

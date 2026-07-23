@@ -367,6 +367,51 @@ pub extern "C" fn lm_player_init(default_led_count: u32) {
     }
 }
 
+/// Set the player's hardware identity (MAC + current display name) echoed in
+/// every `welcome`. Call once after [`lm_player_init`], from the firmware that
+/// owns the factory-MAC read and the persisted name.
+///
+/// # Safety
+/// `mac`/`name` point to `mac_len`/`name_len` readable UTF-8 bytes.
+#[no_mangle]
+pub unsafe extern "C" fn lm_player_set_identity(
+    mac: *const u8,
+    mac_len: usize,
+    name: *const u8,
+    name_len: usize,
+) {
+    let mac_s = if mac.is_null() {
+        ""
+    } else {
+        core::str::from_utf8(core::slice::from_raw_parts(mac, mac_len)).unwrap_or("")
+    };
+    let name_s = if name.is_null() {
+        ""
+    } else {
+        core::str::from_utf8(core::slice::from_raw_parts(name, name_len)).unwrap_or("")
+    };
+    player().set_identity(mac_s, name_s);
+}
+
+/// Copy the player's CURRENT display name into `out` (cap bytes); returns the
+/// length written, or -2 when it doesn't fit. The firmware polls this after each
+/// `lm_player_handle` so a `set_device_name` can be persisted + reflected to the
+/// BLE advertisement.
+///
+/// # Safety
+/// `out` must point to `cap` writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn lm_device_name(out: *mut u8, cap: usize) -> i32 {
+    let name = player().device_name().as_bytes();
+    if name.len() > cap {
+        return -2;
+    }
+    if !out.is_null() && !name.is_empty() {
+        core::ptr::copy_nonoverlapping(name.as_ptr(), out, name.len());
+    }
+    name.len() as i32
+}
+
 fn encode_reply(reply: &pb::ServerMessage, out: *mut u8, out_cap: usize) -> i32 {
     let mut enc = PbEncoder::new(micropb::heapless::Vec::<u8, REPLY_CAP>::new());
     if reply.encode(&mut enc).is_err() {

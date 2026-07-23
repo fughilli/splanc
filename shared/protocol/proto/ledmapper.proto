@@ -481,6 +481,7 @@ message ClientMessage {
     GetEffectUniforms get_effect_uniforms = 24;
     SetPerf set_perf = 25;
     GetPerfReport get_perf_report = 26;
+    SetDeviceName set_device_name = 27;
   }
 }
 
@@ -493,6 +494,19 @@ message Welcome {
   CodeParams code_params = 2;
   // Host score on the canned solver benchmark (ms); unset while measuring.
   optional double solver_bench_ms = 3;
+  // Stable hardware MAC (factory-programmed; same address the BLE advertisement
+  // uses), colon-separated uppercase hex. Lets the app match a player across the
+  // BLE-onboarding and LAN paths. Empty on older firmware.
+  string mac = 4;
+  // Current display / Bluetooth-advertised name (default "Led Widget <6-hex>"
+  // from the MAC, or a user-customized name). Empty on older firmware.
+  string device_name = 5;
+}
+
+// Set the player's display name; it becomes the Bluetooth-advertised name too
+// and is persisted on the device. Reply: welcome (echoing the new device_name).
+message SetDeviceName {
+  string name = 1;
 }
 
 // Reply to stop_mapping(solve_on_host=false): stopped + persisted, no host

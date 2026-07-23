@@ -81,6 +81,8 @@ fn reply_allowed(req: &CMsg, reply: &Option<SMsg>) -> bool {
         | CMsg::GetEffectUniforms(_)
         | CMsg::SetPerf(_)
         | CMsg::GetPerfReport(_) => is_err("unsupported"),
+        // Rename replies welcome (echoing the new device_name).
+        CMsg::SetDeviceName(_) => matches!(reply, Some(SMsg::Welcome(_))),
     }
 }
 
@@ -112,6 +114,7 @@ fn arm_name(req: &CMsg) -> &'static str {
         CMsg::GetEffectUniforms(_) => "get_effect_uniforms",
         CMsg::SetPerf(_) => "set_perf",
         CMsg::GetPerfReport(_) => "get_perf_report",
+        CMsg::SetDeviceName(_) => "set_device_name",
     }
 }
 

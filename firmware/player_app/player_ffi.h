@@ -15,6 +15,15 @@ extern "C" {
 // until the counting handshake / start_mapping override it.
 void lm_player_init(uint32_t default_led_count);
 
+// Set the player's hardware identity (factory MAC + current display name),
+// echoed in every welcome. Call once after lm_player_init.
+void lm_player_set_identity(const uint8_t *mac, size_t mac_len,
+                            const uint8_t *name, size_t name_len);
+// Copy the player's CURRENT display name into out (cap bytes). Returns the
+// length written, or -2 when it doesn't fit. The app polls this after each
+// lm_player_handle so a set_device_name is persisted + reflected to BLE.
+int32_t lm_device_name(uint8_t *out, size_t cap);
+
 // Handle one received protocol frame (a binary WebSocket message).
 // recv_ms/send_ms are the player clock (millis()) at receive / reply time,
 // integer milliseconds. Returns: >0 = reply length written to out; 0 = no

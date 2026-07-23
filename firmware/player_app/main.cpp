@@ -25,6 +25,7 @@
 #include <WiFi.h>
 #include <esp_cpu.h>
 #include <esp_https_server.h>
+#include <esp_mac.h>
 #include <esp_littlefs.h>
 #include <esp_system.h>
 #include <freertos/FreeRTOS.h>
@@ -56,8 +57,12 @@ SET_LOOP_TASK_STACK_SIZE(24 * 1024);
 
 static const char *kApSsid = "ledmapper";
 static const char *kApPassword = "ledmapper";
-static const char *kBleName = "LEDMapper C6";
 static const uint16_t kWsPort = 81;
+
+// The player's display / Bluetooth-advertised name. Set in setup() from the
+// persisted custom name, or a "Led Widget <6-hex>" default derived from the MAC.
+// Reflected to BLE + persisted whenever the app sends set_device_name.
+static char g_device_name[33] = "Led Widget";
 // STA join budget before a provisioning attempt is reported failed.
 static const uint32_t kStaJoinTimeoutMs = 20000;
 
@@ -292,6 +297,24 @@ static void fs_begin_and_restore() {
   fs_replay(kEffectSelPath);
 }
 
+// After handling a message, pick up a set_device_name rename: read the player's
+// current name (under the lock), and if it changed, persist it to NVS and rename
+// the BLE advertisement (both outside the lock — they're heavy and rare).
+static void poll_device_rename() {
+  char buf[33];
+  xSemaphoreTake(player_mutex, portMAX_DELAY);
+  int32_t n = lm_device_name(reinterpret_cast<uint8_t *>(buf), sizeof buf - 1);
+  xSemaphoreGive(player_mutex);
+  if (n <= 0) return;
+  buf[n] = 0;
+  if (strncmp(buf, g_device_name, sizeof g_device_name) == 0) return;
+  strncpy(g_device_name, buf, sizeof g_device_name - 1);
+  g_device_name[sizeof g_device_name - 1] = 0;
+  prefs.putString("name", g_device_name);
+  improv_ble_set_name(g_device_name);
+  Log().printf("[player] renamed to \"%s\"\n", g_device_name);
+}
+
 static void ws_dispatch_message() {
   // Integer player clock (millis()) — no f64: the session core does its time
   // arithmetic in integers and widens to the wire's double only at encode.
@@ -304,6 +327,7 @@ static void ws_dispatch_message() {
     ws_send_frame(WS_OP_BINARY, tx, (size_t)n);
     persist_if_upload(rx, rx_len, tx, (size_t)n);
   }
+  poll_device_rename();
   rx_len = 0;
 }
 
@@ -724,6 +748,7 @@ static esp_err_t wss_ws_handler(httpd_req_t *req) {
   xSemaphoreTake(player_mutex, portMAX_DELAY);
   int32_t n = lm_player_handle(rx, rx_len, now, now, tx, sizeof tx);
   xSemaphoreGive(player_mutex);
+  poll_device_rename();
   if (n > 0) {
     httpd_ws_frame_t out = {};
     out.type = HTTPD_WS_TYPE_BINARY;
@@ -840,7 +865,28 @@ void setup() {
     sta_joining = true;
     sta_join_started = millis();
   }
-  improv_ble_begin(kBleName,
+
+  // Device identity: factory MAC (the same address the BLE advertisement uses)
+  // + a display/BLE name. The default name "Led Widget <6-hex>" comes from an
+  // FNV-1a hash of the MAC; a user-set name persisted in NVS overrides it.
+  uint8_t macb[6] = {0};
+  esp_read_mac(macb, ESP_MAC_BT);
+  char macstr[18];
+  snprintf(macstr, sizeof macstr, "%02X:%02X:%02X:%02X:%02X:%02X", macb[0], macb[1], macb[2],
+           macb[3], macb[4], macb[5]);
+  uint32_t namehash = 2166136261u;
+  for (int i = 0; i < 6; i++) namehash = (namehash ^ macb[i]) * 16777619u;
+  char defname[33];
+  snprintf(defname, sizeof defname, "Led Widget %06lX", (unsigned long)(namehash & 0xFFFFFF));
+  String stored = prefs.getString("name", "");
+  const char *name = stored.length() > 0 ? stored.c_str() : defname;
+  strncpy(g_device_name, name, sizeof g_device_name - 1);
+  g_device_name[sizeof g_device_name - 1] = 0;
+  lm_player_set_identity(reinterpret_cast<const uint8_t *>(macstr), strlen(macstr),
+                         reinterpret_cast<const uint8_t *>(g_device_name), strlen(g_device_name));
+  Log().printf("[player] identity %s / \"%s\"\n", macstr, g_device_name);
+
+  improv_ble_begin(g_device_name,
                    ssid.length() > 0 ? IMPROV_STATE_PROVISIONING : IMPROV_STATE_AUTHORIZED);
 
   http.on("/", []() {

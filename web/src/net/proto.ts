@@ -50,6 +50,7 @@ const CLIENT_ARMS: Record<string, string> = {
   get_effect_uniforms: "getEffectUniforms",
   set_perf: "setPerf",
   get_perf_report: "getPerfReport",
+  set_device_name: "setDeviceName",
 };
 const SERVER_ARMS: Record<string, string> = {
   welcome: "welcome",
