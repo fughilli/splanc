@@ -68,8 +68,11 @@ static mut SIM_GEN: u32 = u32::MAX;
 // raises (secondary).
 
 /// Max `.fxb` the player will hold. A compiled effect is small (bytecode +
-/// manifest); 8 KiB is generous and bounds the static cost.
-const FX_MAX_BYTES: usize = 8 * 1024;
+/// manifest) — a rich shader is well under 2 KiB. Keep this tight: it is static
+/// RAM out of the heap pool the TLS record buffers need (mbedtls_ssl_setup
+/// fails with -0x7F00 when the heap can't spare ~28 KiB for a session).
+/// submit_effect rejects a larger upload with `effect_too_large`.
+const FX_MAX_BYTES: usize = 4 * 1024;
 
 static mut FX_BYTES: [u8; FX_MAX_BYTES] = [0; FX_MAX_BYTES];
 static mut FX_LEN: usize = 0;
@@ -105,11 +108,13 @@ const PERF_OFF: u32 = 0;
 const PERF_BASIC: u32 = 1;
 const PERF_FULL: u32 = 2;
 
-/// Perf ring capacity (recent PerfFrames). ~64 frames ≈ 2 s at 30 fps — the
-/// live-graph window. On overflow the oldest is dropped (samples_dropped),
+/// Perf ring capacity (recent PerfFrames). 16 frames ≈ 0.5 s at 30 fps — enough
+/// for the live graph between polls while keeping the static cost (and the
+/// stack window buffer that mirrors it) small; heap headroom matters more here
+/// (see FX_MAX_BYTES). On overflow the oldest is dropped (samples_dropped),
 /// exactly like FrameLog: a phone that polled too slowly learns its history
 /// has gaps rather than reading smoothed data.
-const PERF_RING_CAP: usize = 64;
+const PERF_RING_CAP: usize = 16;
 
 /// Current perf mode (PERF_OFF/BASIC/FULL) and unsolicited-push interval (ms,
 /// 0 = poll-only). Read by the render task to gate Tier-1 and by main.cpp to
