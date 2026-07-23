@@ -139,7 +139,10 @@ export function MapDetailScreen(
       view.setTopology(currentTopology);
     }
     buildTopoPanel();
-    if (opts.topologyOpen) toggleTopo();
+    // Deep-linked / remounted onto the topology route: open the panel WITHOUT
+    // navigating — navigating to the route we're already on would re-resolve the
+    // router and remount this screen in an infinite loop (blank/thrashing page).
+    if (opts.topologyOpen) openTopoPanel();
   }
 
   function setViewFlag(flag: "showGrid" | "showTriad", v: boolean): void {
@@ -148,12 +151,25 @@ export function MapDetailScreen(
     if (view) (view as unknown as Record<string, boolean>)[flag] = v;
   }
 
+  // Open the topology panel (DOM state only — no routing). Safe to call on mount.
+  function openTopoPanel(): void {
+    topoPanel.style.display = "";
+    if (currentTopology === null) void previewTopology();
+  }
+
+  // User action (the "Topology" button): flip the panel AND reflect it in the
+  // route so it's deep-linkable / survives back. The navigation remounts the
+  // screen, which re-opens the panel via openTopoPanel (never toggleTopo — that
+  // would navigate to the current route again and loop).
   function toggleTopo(): void {
-    const open = topoPanel.style.display === "none";
-    topoPanel.style.display = open ? "" : "none";
-    if (open && currentTopology === null) void previewTopology();
-    if (open) router.navigate(`/map/${mapId}/topology`);
-    else router.navigate(`/map/${mapId}`);
+    const willOpen = topoPanel.style.display === "none";
+    if (willOpen) {
+      openTopoPanel();
+      router.navigate(`/map/${mapId}/topology`);
+    } else {
+      topoPanel.style.display = "none";
+      router.navigate(`/map/${mapId}`);
+    }
   }
 
   const summaryEl = document.createElement("div");
