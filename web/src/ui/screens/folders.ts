@@ -130,14 +130,15 @@ export function appendGrouped<T>(
     const nodes: HTMLElement[] = [];
     for (const it of arr) {
       const node = renderItem(it) as HTMLElement;
-      node.hidden = isCollapsed;
       nodes.push(node);
       listEl.appendChild(node);
     }
 
+    // Toggle a class (not the `hidden` attribute): the item rows/cards set their
+    // own `display`, which would override [hidden]'s `display:none`.
     const apply = (): void => {
       header.classList.toggle("folder-header--collapsed", isCollapsed);
-      for (const n of nodes) n.hidden = isCollapsed;
+      for (const n of nodes) n.classList.toggle("folder-hidden", isCollapsed);
     };
     apply();
     header.addEventListener("click", () => {

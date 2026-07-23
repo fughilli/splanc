@@ -1676,6 +1676,10 @@ body.is-locked {
 .folder-header--muted {
   opacity: 0.75;
 }
+/* Items in a collapsed folder — beats the row/card's own `display`. */
+.folder-hidden {
+  display: none !important;
+}
 .folder-picker {
   display: flex;
   flex-direction: column;
