@@ -95,6 +95,14 @@ vec3 shade(Led led) {
   `CALL`/`RET_FN`, a small return-address stack, and locals allocated disjointly
   across functions (no per-call frame). Control flow: `if/else`, `for` with a
   C-style header (`for (int i=0; i<n; i=i+1) { ... }`).
+- **Structs & arrays**: user `struct Name { float a; vec3 b; };` (scalar/vec
+  fields) and fixed-size arrays `Type name[N];` in `state`/locals, with `.field`
+  and `a[i]` access. A struct/array is a contiguous slot range; `a[i].field`
+  compiles to base + `i`*stride + field-offset, and a runtime (non-constant)
+  index emits the `*_IDX` load/store ops (one dynamic index per access path, the
+  index clamped in-bounds at runtime). This is what lets a script keep an array
+  of agents in `state` and simulate them in `update()`. Slot budgets: `state`
+  and locals are each ≤128 slots (`MAX_STATE`/`MAX_LOCALS`).
 
 ## Bytecode / VM
 

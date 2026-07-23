@@ -15,6 +15,7 @@
 export const KEYWORDS = [
   "uniform",
   "state",
+  "struct",
   "void",
   "vec2",
   "vec3",
@@ -33,6 +34,7 @@ export const KEYWORDS = [
 export const KEYWORD_DOCS: Record<string, string> = {
   uniform: "declare a live, user-tweakable parameter with a range + default",
   state: "declare a value persisted across frames (written in update())",
+  struct: "declare a composite type: struct Name { float a; vec3 b; };",
   void: "the return type of update() — produces no value",
   return: "return a value from shade() (or exit update())",
   if: "conditional branch",

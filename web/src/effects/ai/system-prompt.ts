@@ -43,7 +43,33 @@ uniform float rate : 0.1 .. 3.0 = 0.6;
 uniform vec3 base : color = 1.0, 0.3, 0.1;
 state float glow;
 void update() { glow = 0.5 + 0.5 * sin(time * rate); }
-vec3 shade(Led led) { return base * glow; }`;
+vec3 shade(Led led) { return base * glow; }
+
+EXAMPLE 4 — agents simulated in update() with a struct array:
+struct Agent { float pos; float vel; vec3 col; };
+state Agent agents[8];
+state bool inited;
+void update() {
+  if (!inited) {
+    for (int i = 0; i < 8; i = i + 1) {
+      agents[i].pos = hash(float(i));
+      agents[i].vel = 0.1 + hash(float(i) * 3.0) * 0.3;
+      agents[i].col = hsv2rgb(hash(float(i) * 7.0), 0.9, 1.0);
+    }
+    inited = true;
+  }
+  for (int i = 0; i < 8; i = i + 1) {
+    agents[i].pos = fract(agents[i].pos + agents[i].vel * dt);
+  }
+}
+vec3 shade(Led led) {
+  vec3 c = vec3(0.0, 0.0, 0.0);
+  for (int i = 0; i < 8; i = i + 1) {
+    float d = abs(led.s - agents[i].pos);
+    c = c + agents[i].col * smoothstep(0.06, 0.0, d);
+  }
+  return c;
+}`;
 
 export const SYSTEM_PROMPT = `You write effects for an LED-mapping runtime. Output ONLY a program in the language described below. It must compile with the provided grammar and built-ins — no other functions, no imports, no host APIs.
 
@@ -65,6 +91,8 @@ UNIFORM SYNTAX (expose the interesting parameters as uniforms with sensible rang
 - toggle:   uniform bool invert = false;
 
 STATE: \`state\` variables persist across frames — written by update(), read-only in shade(). Use them for phases/integrators.
+
+STRUCTS & ARRAYS: declare composite types with \`struct Name { float a; vec3 b; };\` (scalar/vec fields) and fixed-size arrays with \`Type name[N];\`. Arrays index with \`a[i]\` (a runtime int index is fine, one per access) and struct fields with \`.field\`. Put an array of structs in \`state\` to simulate agents/particles across frames (seed them once behind a \`state bool\` flag, then advance them in a \`for\` loop). Keep totals modest — state and locals are each capped near 128 slots.
 
 ${EXAMPLES}
 

@@ -80,6 +80,49 @@ fn update_state_and_shade_reads_it() {
 }
 
 #[test]
+fn indexed_state_store_load_and_clamp() {
+    // update: xs[0]=0.2, xs[1]=0.7, xs[2]=0.3 (dynamic StoreStateIdx over an
+    // int index built via F2I). shade: return vec3(xs[int(led.idx)], 0, 0).
+    // consts: [0]=0.0 [1]=1.0 [2]=2.0 [3]=0.2 [4]=0.7 [5]=0.3
+    let write = |ci: u8, cv: u8| {
+        [
+            Op::PushConst as u8, ci, 0,  // index (float)
+            Op::F2I as u8,               // -> int
+            Op::PushConst as u8, cv, 0,  // value
+            Op::StoreStateIdx as u8, 0, 1, 0, 1, 3, // base,stride,off,n,count
+        ]
+    };
+    let mut update = Vec::new();
+    update.extend_from_slice(&write(0, 3));
+    update.extend_from_slice(&write(1, 4));
+    update.extend_from_slice(&write(2, 5));
+    update.extend_from_slice(&[Op::Ret as u8, 0]);
+    let shade_off = update.len();
+    #[rustfmt::skip]
+    let shade = [
+        Op::LoadCtx as u8, C_LED_IDX,          // float led.idx
+        Op::F2I as u8,                         // -> int index
+        Op::LoadStateIdx as u8, 0, 1, 0, 1, 3, // xs[idx] (clamped to 0..2)
+        Op::PushConst as u8, 0, 0,             // 0.0
+        Op::PushConst as u8, 0, 0,             // 0.0
+        Op::Ret as u8, 3,
+    ];
+    let mut code = update.clone();
+    code.extend_from_slice(&shade);
+    let buf = fxb(3, 0, 0, shade_off as u16, &[0.0, 1.0, 2.0, 0.2, 0.7, 0.3], &code);
+    let prog = Program::parse(&buf).expect("parse");
+    let mut vm = Vm::new();
+    let frame = Frame::default();
+    vm.run_update(&prog, &frame);
+    // idx 1 -> xs[1] = 0.7
+    assert_eq!(vm.run_shade(&prog, &frame, &Led { idx: 1, ..Default::default() }).0, 178);
+    // idx 0 -> xs[0] = 0.2
+    assert_eq!(vm.run_shade(&prog, &frame, &Led { idx: 0, ..Default::default() }).0, 51);
+    // idx 9 (out of range) clamps to the last element xs[2] = 0.3
+    assert_eq!(vm.run_shade(&prog, &frame, &Led { idx: 9, ..Default::default() }).0, 76);
+}
+
+#[test]
 fn math_and_palette() {
     // shade: return palette(2 /*rainbow*/, fract(led.pos.x))
     #[rustfmt::skip]

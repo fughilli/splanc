@@ -12,8 +12,8 @@
 pub type Rgb = (u8, u8, u8);
 
 pub const MAX_STACK: usize = 128; // f32 slots
-pub const MAX_STATE: usize = 64;
-pub const MAX_LOCALS: usize = 64;
+pub const MAX_STATE: usize = 128; // raised for arrays/structs (agent sims live here)
+pub const MAX_LOCALS: usize = 128;
 pub const MAX_UNIFORM_SLOTS: usize = 128;
 
 /// Opcodes. Operands follow inline in the code stream (little-endian).
@@ -77,6 +77,14 @@ pub enum Op {
     // --- user functions -----------------------------------------------------
     Call,  // u16 target : push return pc, jump
     RetFn, // pop return pc, jump back (values left on the operand stack)
+    // --- indexed array/struct access (dynamic index) ------------------------
+    // Address = base + clamp(i, 0, count-1)*stride + off. The index i (int, in
+    // f32 bits) is popped; the clamp keeps a runaway index in-bounds (safe,
+    // deterministic) rather than reading/writing past the slot arrays.
+    LoadStateIdx, // base:u8 stride:u8 off:u8 n:u8 count:u8 ; pop i -> push n slots
+    StoreStateIdx, // base:u8 stride:u8 off:u8 n:u8 count:u8 ; pop n vals then i
+    LoadLocalIdx,  // same, over locals
+    StoreLocalIdx,
 }
 
 pub const FIX_ONE: i32 = 1 << 16;
@@ -156,8 +164,8 @@ pub struct Counters {
 impl Op {
     #[inline]
     fn from_u8(b: u8) -> Option<Op> {
-        // Op is a contiguous enum 0..=RetFn; guard the range then transmute.
-        if b <= Op::RetFn as u8 {
+        // Op is a contiguous enum 0..=StoreLocalIdx; guard the range then transmute.
+        if b <= Op::StoreLocalIdx as u8 {
             Some(unsafe { core::mem::transmute::<u8, Op>(b) })
         } else {
             None
@@ -965,6 +973,52 @@ fn run(
                 }
                 csp -= 1;
                 pc = call_stack[csp];
+            }
+            // Indexed load: pop the (int) index, push `n` slots from
+            // base + clamp(i,0,count-1)*stride + off.
+            Op::LoadStateIdx | Op::LoadLocalIdx => {
+                let base = code[pc] as usize;
+                let stride = code[pc + 1] as usize;
+                let off = code[pc + 2] as usize;
+                let n = code[pc + 3] as usize;
+                let count = code[pc + 4] as usize;
+                pc += 5;
+                let i = popi!();
+                let hi = count.saturating_sub(1) as i32;
+                let idx = i.clamp(0, hi) as usize;
+                let p = base + idx * stride + off;
+                let src: &[f32] = if op == Op::LoadStateIdx { &state[..] } else { &locals[..] };
+                for k in 0..n {
+                    push!(*src.get(p + k).unwrap_or(&0.0));
+                }
+            }
+            // Indexed store: the `n` values are on top, the (int) index just
+            // below them. Writes to base + clamp(i,0,count-1)*stride + off.
+            Op::StoreStateIdx | Op::StoreLocalIdx => {
+                let base = code[pc] as usize;
+                let stride = code[pc + 1] as usize;
+                let off = code[pc + 2] as usize;
+                let n = code[pc + 3] as usize;
+                let count = code[pc + 4] as usize;
+                pc += 5;
+                if sp >= n + 1 {
+                    let i = stack[sp - n - 1].to_bits() as i32;
+                    let hi = count.saturating_sub(1) as i32;
+                    let idx = i.clamp(0, hi) as usize;
+                    let p = base + idx * stride + off;
+                    let cap = if op == Op::StoreStateIdx { MAX_STATE } else { MAX_LOCALS };
+                    for k in 0..n {
+                        let v = stack[sp - n + k];
+                        if p + k < cap {
+                            if op == Op::StoreStateIdx {
+                                state[p + k] = v;
+                            } else {
+                                locals[p + k] = v;
+                            }
+                        }
+                    }
+                    sp -= n + 1;
+                }
             }
         }
     }

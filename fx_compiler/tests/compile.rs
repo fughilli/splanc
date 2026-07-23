@@ -260,3 +260,123 @@ fn reports_errors() {
     assert!(compile("vec3 shade(Led led) { return nope(); }").is_err());
     assert!(compile("float x = 1;").is_err()); // no shade()
 }
+
+// Run `update()` `updates` times, then shade one LED. For array/struct sims.
+fn run_program(src: &str, updates: usize, led: Led, frame: Frame) -> (u8, u8, u8) {
+    let c = compile(src).unwrap_or_else(|d| panic!("compile error: {:?}", d));
+    let prog = Program::parse(&c.fxb).expect("parse fxb");
+    let mut vm = Vm::new();
+    for u in &c.uniforms {
+        vm.set_uniform(u.slot as usize, &u.default);
+    }
+    for _ in 0..updates {
+        vm.run_update(&prog, &frame);
+    }
+    vm.run_shade(&prog, &frame, &led)
+}
+
+#[test]
+fn scalar_array_dynamic_index() {
+    // A state array seeded once, advanced each frame, read by a dynamic index.
+    let src = r#"
+        state float xs[3];
+        state bool init;
+        void update() {
+            if (!init) {
+                xs[0] = 0.1;
+                xs[1] = 0.5;
+                xs[2] = 0.9;
+                init = true;
+            }
+            for (int i = 0; i < 3; i = i + 1) {
+                xs[i] = xs[i] + 0.25;
+            }
+        }
+        vec3 shade(Led led) {
+            int k = int(led.idx);
+            return vec3(xs[k], 0.0, 0.0);
+        }
+    "#;
+    // After one update: xs = [0.35, 0.75, 1.15].
+    let led0 = Led { idx: 0, ..Default::default() };
+    let led1 = Led { idx: 1, ..Default::default() };
+    assert_eq!(run_program(src, 1, led0, Frame::default()).0, 89); // 0.35*255
+    assert_eq!(run_program(src, 1, led1, Frame::default()).0, 191); // 0.75*255
+}
+
+#[test]
+fn struct_array_agent_sim() {
+    // The headline use case: an array of user structs simulated in update(),
+    // read back per-LED in shade() (glow around each agent's position along s).
+    let src = r#"
+        struct Agent { float pos; vec3 col; };
+        state Agent agents[2];
+        state bool init;
+        void update() {
+            if (!init) {
+                agents[0].pos = 0.25;
+                agents[0].col = vec3(1.0, 0.0, 0.0);
+                agents[1].pos = 0.75;
+                agents[1].col = vec3(0.0, 1.0, 0.0);
+                init = true;
+            }
+            for (int i = 0; i < 2; i = i + 1) {
+                agents[i].pos = agents[i].pos + 0.1;
+            }
+        }
+        vec3 shade(Led led) {
+            vec3 c = vec3(0.0, 0.0, 0.0);
+            for (int i = 0; i < 2; i = i + 1) {
+                float d = abs(led.s - agents[i].pos);
+                float glow = smoothstep(0.1, 0.0, d);
+                c = c + agents[i].col * glow;
+            }
+            return c;
+        }
+    "#;
+    // After one update agents are at pos 0.35 (red) and 0.85 (green).
+    // An LED at s=0.35 lands exactly on agent 0 -> full red, no green.
+    assert_eq!(run_program(src, 1, Led { s: 0.35, ..Default::default() }, Frame::default()), (255, 0, 0));
+    // An LED at s=0.85 lands on agent 1 -> full green.
+    assert_eq!(run_program(src, 1, Led { s: 0.85, ..Default::default() }, Frame::default()), (0, 255, 0));
+    // Midway (s=0.6) is >0.1 from both -> dark.
+    assert_eq!(run_program(src, 1, Led { s: 0.6, ..Default::default() }, Frame::default()), (0, 0, 0));
+}
+
+#[test]
+fn whole_struct_copy_and_static_index() {
+    // Whole-struct assignment (block copy) + constant array index.
+    let src = r#"
+        struct P { vec3 col; float k; };
+        state P slots[2];
+        void update() {
+            P a;
+            a.col = vec3(0.2, 0.4, 0.6);
+            a.k = 1.0;
+            slots[0] = a;
+            slots[1] = slots[0];
+        }
+        vec3 shade(Led led) { return slots[1].col; }
+    "#;
+    assert_eq!(run_program(src, 1, Led::default(), Frame::default()), (51, 102, 153));
+}
+
+#[test]
+fn array_struct_error_cases() {
+    // Index out of range (constant).
+    assert!(compile("state float xs[2]; vec3 shade(Led led) { return vec3(xs[5], 0.0, 0.0); }").is_err());
+    // Indexing a non-array.
+    assert!(compile("state float x; vec3 shade(Led led) { return vec3(x[0], 0.0, 0.0); }").is_err());
+    // Unknown struct field.
+    assert!(compile(
+        "struct A { float p; }; state A a; vec3 shade(Led led) { return vec3(a.q, 0.0, 0.0); }"
+    )
+    .is_err());
+    // Array field inside a struct is not supported yet.
+    assert!(compile("struct A { float xs[2]; }; vec3 shade(Led led) { return vec3(0.0,0.0,0.0); }").is_err());
+    // Two dynamic indices in one access path (needs a 2D address).
+    assert!(compile(
+        "struct A { float p; }; state A a[2]; vec3 shade(Led led) { int i = int(led.idx); return vec3(a[i].p, 0.0, 0.0); }"
+    )
+    .is_ok()); // one dynamic index is fine
+}

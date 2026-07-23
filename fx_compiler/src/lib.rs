@@ -3,7 +3,9 @@
 //! the host (tests) and in the browser as wasm. A compact single-pass
 //! type-checking codegen over a recursive-descent parse — enough for the
 //! hybrid update()/shade() model, uniforms with ranges, scalar/vector math,
-//! swizzles, the built-ins, and if/else. (User functions + for-loops: TODO.)
+//! swizzles, the built-ins, if/else, for-loops, user functions, and user
+//! `struct` types + fixed-size arrays with dynamic indexing (so scripts can
+//! define e.g. agents with custom properties and simulate them in update()).
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -20,15 +22,22 @@ pub enum Ty {
     Fixed, // Q16.16 fixed-point (fast fractional)
     Bool,
     Void,
+    // Composite types (aggregate scalar/vec slots). The payload indexes the
+    // compiler's `structs` / `arrays` side tables; their slot width comes from
+    // `Compiler::ty_width` (NOT `Ty::width`, which only knows the primitives).
+    Struct(u16),
+    Array(u16),
 }
 impl Ty {
+    /// Primitive slot width. Composites return 0 here — use
+    /// [`Compiler::ty_width`], which consults the struct/array tables.
     fn width(self) -> u8 {
         match self {
             Ty::Float | Ty::Int | Ty::Fixed | Ty::Bool => 1,
             Ty::Vec2 => 2,
             Ty::Vec3 => 3,
             Ty::Vec4 => 4,
-            Ty::Void => 0,
+            Ty::Void | Ty::Struct(_) | Ty::Array(_) => 0,
         }
     }
     fn vec_of(n: u8) -> Ty {
@@ -40,11 +49,37 @@ impl Ty {
         }
     }
     fn is_num(self) -> bool {
-        !matches!(self, Ty::Bool | Ty::Void)
+        !matches!(self, Ty::Bool | Ty::Void | Ty::Struct(_) | Ty::Array(_))
     }
     fn is_scalar(self) -> bool {
         matches!(self, Ty::Float | Ty::Int | Ty::Fixed)
     }
+}
+
+/// A field of a user `struct`: its name, type, and slot offset from the struct's
+/// base (fields are laid out contiguously in declaration order).
+#[derive(Clone)]
+struct StructField {
+    name: String,
+    ty: Ty,
+    offset: u8,
+}
+
+/// A registered `struct` type: its fields and total slot width.
+#[derive(Clone)]
+struct StructInfo {
+    #[allow(dead_code)]
+    name: String,
+    fields: Vec<StructField>,
+    width: u8,
+}
+
+/// A registered fixed-size array type `elem[count]`. Total width = elem_w*count.
+#[derive(Clone, Copy)]
+struct ArrayInfo {
+    elem: Ty,
+    elem_w: u8,
+    count: u8,
 }
 
 // -- uniform manifest ---------------------------------------------------------
@@ -223,12 +258,32 @@ struct FuncInfo {
     ret: Ty,
 }
 
+/// A resolved access path (`base` variable + `[index]` / `.field` steps) reduced
+/// to one addressable slot form. `off` folds every static struct offset and
+/// constant array index; `dynamic` marks that a runtime index expression was
+/// already emitted (so the `*_IDX` ops apply, addressing base + i*stride + off).
+#[derive(Clone, Copy)]
+struct Place {
+    kind: SymKind,
+    base: u8,
+    off: u8,
+    dynamic: bool,
+    stride: u8,
+    count: u8,
+    ty: Ty,
+    width: u8,
+}
+
 pub struct Compiler {
     lx_toks: Vec<(Tok, u32, u32)>,
     p: usize,
     // symbol tables
     syms: HashMap<String, Sym>,
     funcs: HashMap<String, FuncInfo>,
+    // composite type tables (indexed by Ty::Struct / Ty::Array payloads)
+    structs: Vec<StructInfo>,
+    arrays: Vec<ArrayInfo>,
+    struct_names: HashMap<String, u16>,
     cur_fn_is_entry: bool,
     uniforms: Vec<UniformInfo>,
     n_uniform_slots: u8,
@@ -263,6 +318,9 @@ pub fn compile(src: &str) -> Result<Compiled, Vec<Diagnostic>> {
         p: 0,
         syms: HashMap::new(),
         funcs: HashMap::new(),
+        structs: Vec::new(),
+        arrays: Vec::new(),
+        struct_names: HashMap::new(),
         cur_fn_is_entry: false,
         uniforms: Vec::new(),
         n_uniform_slots: 0,
@@ -280,6 +338,10 @@ pub fn compile(src: &str) -> Result<Compiled, Vec<Diagnostic>> {
 }
 
 const NO_ENTRY: u16 = 0xFFFF;
+// Mirror the VM's slot-array sizes (fx_vm::MAX_STATE / MAX_LOCALS) so the
+// compiler rejects programs that would overflow them at runtime.
+const MAX_STATE: usize = 128;
+const MAX_LOCALS: usize = 128;
 
 impl Compiler {
     fn err<T>(&self, msg: impl Into<String>) -> Result<T, Diagnostic> {
@@ -351,12 +413,78 @@ impl Compiler {
         })
     }
 
+    /// Resolve a type name to a [`Ty`]: a primitive, or a user `struct` declared
+    /// earlier in the program.
+    fn resolve_ty(&self, s: &str) -> Option<Ty> {
+        Self::ty_from_ident(s).or_else(|| self.struct_names.get(s).map(|&i| Ty::Struct(i)))
+    }
+
+    /// Slot width of any type, including composites (the authoritative width —
+    /// see [`Ty::width`], which only knows primitives).
+    fn ty_width(&self, ty: Ty) -> u8 {
+        match ty {
+            Ty::Struct(i) => self.structs[i as usize].width,
+            Ty::Array(i) => {
+                let a = self.arrays[i as usize];
+                a.elem_w.saturating_mul(a.count)
+            }
+            other => other.width(),
+        }
+    }
+
+    /// Register (or reuse) a fixed-size array type `elem[count]`.
+    fn make_array(&mut self, elem: Ty, count: u32) -> Result<Ty, Diagnostic> {
+        if count == 0 || count > 255 {
+            return self.err("array length must be 1..255");
+        }
+        let elem_w = self.ty_width(elem);
+        if elem_w == 0 {
+            return self.err("cannot make an array of this type");
+        }
+        if elem_w as u32 * count > 255 {
+            return self.err("array is too large (over 255 slots)");
+        }
+        // Dedup identical array types so `T[N]` used twice is one entry.
+        for (i, a) in self.arrays.iter().enumerate() {
+            if a.elem == elem && a.count == count as u8 {
+                return Ok(Ty::Array(i as u16));
+            }
+        }
+        let idx = self.arrays.len() as u16;
+        self.arrays.push(ArrayInfo { elem, elem_w, count: count as u8 });
+        Ok(Ty::Array(idx))
+    }
+
+    /// Allocate `w` contiguous `state` slots, erroring if that overflows the VM's
+    /// state array (MAX_STATE).
+    fn alloc_state(&mut self, w: u8) -> Result<u8, Diagnostic> {
+        let slot = self.n_state;
+        let end = slot as usize + w as usize;
+        if end > MAX_STATE {
+            return self.err("too many state variables (over the state slot budget)");
+        }
+        self.n_state = end as u8;
+        Ok(slot)
+    }
+
+    /// Allocate `w` contiguous `local` slots, erroring on overflow (MAX_LOCALS).
+    fn alloc_local(&mut self, w: u8) -> Result<u8, Diagnostic> {
+        let slot = self.n_locals;
+        let end = slot as usize + w as usize;
+        if end > MAX_LOCALS {
+            return self.err("too many locals (over the local slot budget)");
+        }
+        self.n_locals = end as u8;
+        Ok(slot)
+    }
+
     fn program(&mut self) -> Result<(), Diagnostic> {
         loop {
             match self.cur().clone() {
                 Tok::Eof => break,
                 Tok::Ident(kw) if kw == "uniform" => self.uniform_decl()?,
                 Tok::Ident(kw) if kw == "state" => self.state_decl()?,
+                Tok::Ident(kw) if kw == "struct" => self.struct_decl()?,
                 Tok::Ident(kw) if Self::ty_from_ident(&kw).is_some() => self.func_decl()?,
                 other => return self.err(format!("unexpected token {other:?}")),
             }
@@ -516,16 +644,85 @@ impl Compiler {
         }
     }
 
+    // struct Agent { float pos; vec3 col; };  (fields: scalar/vec/nested struct)
+    fn struct_decl(&mut self) -> Result<(), Diagnostic> {
+        self.advance(); // 'struct'
+        let name = self.eat_ident()?;
+        if self.struct_names.contains_key(&name) || Self::ty_from_ident(&name).is_some() {
+            return self.err("duplicate type name");
+        }
+        self.expect_sym('{')?;
+        let mut fields: Vec<StructField> = Vec::new();
+        let mut off: u8 = 0;
+        while *self.cur() != Tok::Sym('}') && *self.cur() != Tok::Eof {
+            let ftyname = self.eat_ident()?;
+            let fty = self
+                .resolve_ty(&ftyname)
+                .ok_or_else(|| self.mkdiag("unknown field type"))?;
+            // Arrays inside structs would need a second dynamic index in access
+            // paths (agents[i].trail[j]); out of scope for now.
+            if matches!(fty, Ty::Array(_)) {
+                return self.err("array fields in structs are not supported yet");
+            }
+            if matches!(fty, Ty::Void) {
+                return self.err("a struct field cannot be void");
+            }
+            let fname = self.eat_ident()?;
+            if fields.iter().any(|f| f.name == fname) {
+                return self.err("duplicate struct field");
+            }
+            self.expect_sym(';')?;
+            let w = self.ty_width(fty);
+            fields.push(StructField { name: fname, ty: fty, offset: off });
+            off = off
+                .checked_add(w)
+                .ok_or_else(|| self.mkdiag("struct is too large (over 255 slots)"))?;
+        }
+        self.expect_sym('}')?;
+        if *self.cur() == Tok::Sym(';') {
+            self.advance(); // optional trailing ';'
+        }
+        if fields.is_empty() {
+            return self.err("a struct must have at least one field");
+        }
+        let idx = self.structs.len() as u16;
+        self.structs.push(StructInfo { name: name.clone(), fields, width: off });
+        self.struct_names.insert(name, idx);
+        Ok(())
+    }
+
+    // state float phase;   state Agent agents[16];   (arrays allowed here)
     fn state_decl(&mut self) -> Result<(), Diagnostic> {
         self.advance(); // 'state'
         let tyname = self.eat_ident()?;
-        let ty = Self::ty_from_ident(&tyname).ok_or_else(|| self.mkdiag("unknown type"))?;
+        let base_ty = self
+            .resolve_ty(&tyname)
+            .ok_or_else(|| self.mkdiag("unknown type"))?;
         let name = self.eat_ident()?;
+        let ty = self.maybe_array_suffix(base_ty)?;
         self.expect_sym(';')?;
-        let slot = self.n_state;
-        self.n_state += ty.width();
+        let w = self.ty_width(ty);
+        let slot = self.alloc_state(w)?;
         self.syms.insert(name, Sym { kind: SymKind::State, slot, ty });
         Ok(())
+    }
+
+    /// If the next token is `[`, parse `[N]` and wrap `base` in an array type;
+    /// otherwise return `base` unchanged.
+    fn maybe_array_suffix(&mut self, base: Ty) -> Result<Ty, Diagnostic> {
+        if *self.cur() != Tok::Sym('[') {
+            return Ok(base);
+        }
+        self.advance(); // '['
+        let n = match *self.cur() {
+            Tok::Num(v, true) => {
+                self.advance();
+                v as u32
+            }
+            _ => return self.err("array length must be an integer literal"),
+        };
+        self.expect_sym(']')?;
+        self.make_array(base, n)
     }
 
     fn func_decl(&mut self) -> Result<(), Diagnostic> {
@@ -640,43 +837,92 @@ impl Compiler {
             }
             Tok::Ident(kw) if kw == "if" => self.if_stmt(ret),
             Tok::Ident(kw) if kw == "for" => self.for_stmt(ret),
-            Tok::Ident(tyname) if Self::ty_from_ident(&tyname).is_some() => {
-                // local decl: `float d = expr;`
+            Tok::Ident(tyname) if self.resolve_ty(&tyname).is_some() => {
+                // local decl: `float d = expr;`, `Agent a;`, `Agent tmp[8];`
                 self.advance();
-                let ty = Self::ty_from_ident(&tyname).unwrap();
+                let base_ty = self.resolve_ty(&tyname).unwrap();
                 let name = self.eat_ident()?;
-                self.expect_sym('=')?;
-                let et = self.expr()?;
-                self.coerce(et, ty)?;
-                self.expect_sym(';')?;
-                let slot = self.n_locals;
-                self.n_locals += ty.width();
-                self.syms.insert(name, Sym { kind: SymKind::Local, slot, ty });
-                self.emit(fx_vm_op::STORE_LOCAL);
-                self.emit(slot);
-                self.emit(ty.width());
-                Ok(())
+                self.local_decl(base_ty, name)
             }
             Tok::Ident(name) => {
-                // assignment: name = expr;
-                let sym = *self.syms.get(&name).ok_or_else(|| self.mkdiag("unknown identifier"))?;
                 self.advance();
-                self.expect_sym('=')?;
-                let et = self.expr()?;
-                self.coerce(et, sym.ty)?;
-                self.expect_sym(';')?;
-                let opc = match sym.kind {
-                    SymKind::State => fx_vm_op::STORE_STATE,
-                    SymKind::Local => fx_vm_op::STORE_LOCAL,
-                    SymKind::Uniform => return self.err("cannot assign to a uniform"),
-                };
-                self.emit(opc);
-                self.emit(sym.slot);
-                self.emit(sym.ty.width());
-                Ok(())
+                self.assign_stmt(name)
             }
             _ => self.err("expected statement"),
         }
+    }
+
+    /// A local variable declaration, `base_ty` + `name` already consumed. Handles
+    /// scalar/vec `= expr` initializers, zero-initialized `struct`/array locals,
+    /// and array suffixes. Locals start zeroed (the VM clears them at entry), so
+    /// composite decls emit no init code.
+    fn local_decl(&mut self, base_ty: Ty, name: String) -> Result<(), Diagnostic> {
+        // Array: `T name[N];`
+        if *self.cur() == Tok::Sym('[') {
+            let ty = self.maybe_array_suffix(base_ty)?;
+            self.expect_sym(';')?;
+            let w = self.ty_width(ty);
+            let slot = self.alloc_local(w)?;
+            self.syms.insert(name, Sym { kind: SymKind::Local, slot, ty });
+            return Ok(());
+        }
+        // Struct with no initializer: `Agent a;`
+        if matches!(base_ty, Ty::Struct(_)) && *self.cur() == Tok::Sym(';') {
+            self.advance();
+            let w = self.ty_width(base_ty);
+            let slot = self.alloc_local(w)?;
+            self.syms.insert(name, Sym { kind: SymKind::Local, slot, ty: base_ty });
+            return Ok(());
+        }
+        // Initialized: `T name = expr;`
+        self.expect_sym('=')?;
+        let et = self.expr()?;
+        self.coerce(et, base_ty)?;
+        self.expect_sym(';')?;
+        let w = self.ty_width(base_ty);
+        let slot = self.alloc_local(w)?;
+        self.syms.insert(name, Sym { kind: SymKind::Local, slot, ty: base_ty });
+        self.emit(fx_vm_op::STORE_LOCAL);
+        self.emit(slot);
+        self.emit(w);
+        Ok(())
+    }
+
+    /// An assignment, the target `name` already consumed. Simple whole-variable
+    /// assignment (`x = expr;`, including whole-struct/array copy) or an indexed /
+    /// struct-field place (`agents[i].pos = expr;`).
+    fn assign_stmt(&mut self, name: String) -> Result<(), Diagnostic> {
+        let sym = *self.syms.get(&name).ok_or_else(|| self.mkdiag("unknown identifier"))?;
+        // Indexed / struct-field target -> place store (may emit a dynamic index
+        // BEFORE the RHS, which the *_IDX store then finds beneath the value).
+        if *self.cur() == Tok::Sym('[')
+            || (matches!(sym.ty, Ty::Struct(_)) && *self.cur() == Tok::Sym('.'))
+        {
+            let place = self.parse_access(sym)?;
+            if *self.cur() == Tok::Sym('.') {
+                return self.err("cannot assign to a vector component");
+            }
+            self.expect_sym('=')?;
+            let et = self.expr()?;
+            self.coerce(et, place.ty)?;
+            self.expect_sym(';')?;
+            return self.emit_store_place(&place);
+        }
+        // Whole-variable assignment.
+        self.expect_sym('=')?;
+        let et = self.expr()?;
+        self.coerce(et, sym.ty)?;
+        self.expect_sym(';')?;
+        let opc = match sym.kind {
+            SymKind::State => fx_vm_op::STORE_STATE,
+            SymKind::Local => fx_vm_op::STORE_LOCAL,
+            SymKind::Uniform => return self.err("cannot assign to a uniform"),
+        };
+        let w = self.ty_width(sym.ty);
+        self.emit(opc);
+        self.emit(sym.slot);
+        self.emit(w);
+        Ok(())
     }
 
     fn if_stmt(&mut self, ret: Ty) -> Result<(), Diagnostic> {
@@ -774,7 +1020,165 @@ impl Compiler {
         };
         self.emit(opc);
         self.emit(sym.slot);
-        self.emit(sym.ty.width());
+        self.emit(self.ty_width(sym.ty));
+        Ok(())
+    }
+
+    // -- array/struct access paths --------------------------------------------
+
+    /// Resolve an access path starting at `sym`, consuming `[index]` and `.field`
+    /// postfixes while the current type is composite. Constant indices and struct
+    /// offsets fold into `off`; the first non-constant index is EMITTED here (so
+    /// it lands on the stack) and recorded as the place's dynamic term. Stops when
+    /// the type becomes a scalar/vec (a trailing `.xyz` is then a swizzle the
+    /// caller handles). Errors on a second dynamic index (one per access).
+    fn parse_access(&mut self, sym: Sym) -> Result<Place, Diagnostic> {
+        let mut p = Place {
+            kind: sym.kind,
+            base: sym.slot,
+            off: 0,
+            dynamic: false,
+            stride: 0,
+            count: 0,
+            ty: sym.ty,
+            width: self.ty_width(sym.ty),
+        };
+        loop {
+            match self.cur().clone() {
+                Tok::Sym('[') => {
+                    let ai = match p.ty {
+                        Ty::Array(i) => i,
+                        _ => return self.err("cannot index a non-array"),
+                    };
+                    let info = self.arrays[ai as usize]; // Copy
+                    self.advance(); // '['
+                    if let Tok::Num(v, true) = self.cur().clone() {
+                        // constant index -> fold into the static offset
+                        self.advance();
+                        self.expect_sym(']')?;
+                        let ix = v as i64;
+                        if ix < 0 || ix >= info.count as i64 {
+                            return self.err("array index out of range");
+                        }
+                        let add = (ix as u8).wrapping_mul(info.elem_w);
+                        p.off = p
+                            .off
+                            .checked_add(add)
+                            .ok_or_else(|| self.mkdiag("access offset overflow"))?;
+                    } else {
+                        // dynamic index -> emit it (coerced to int), record stride
+                        if p.dynamic {
+                            return self.err("only one dynamic index per access");
+                        }
+                        let it = self.expr()?;
+                        if !it.is_scalar() {
+                            return self.err("array index must be a scalar");
+                        }
+                        self.coerce(it, Ty::Int)?;
+                        self.expect_sym(']')?;
+                        p.dynamic = true;
+                        p.stride = info.elem_w;
+                        p.count = info.count;
+                    }
+                    p.ty = info.elem;
+                    p.width = info.elem_w;
+                }
+                Tok::Sym('.') => {
+                    let si = match p.ty {
+                        Ty::Struct(i) => i,
+                        _ => break, // scalar/vec: a trailing swizzle for the caller
+                    };
+                    self.advance(); // '.'
+                    let field = self.eat_ident()?;
+                    let found = self.structs[si as usize]
+                        .fields
+                        .iter()
+                        .find(|f| f.name == field)
+                        .map(|f| (f.ty, f.offset));
+                    let (fty, foff) = match found {
+                        Some(x) => x,
+                        None => return self.err(format!("no field .{field}")),
+                    };
+                    p.off = p
+                        .off
+                        .checked_add(foff)
+                        .ok_or_else(|| self.mkdiag("access offset overflow"))?;
+                    p.ty = fty;
+                    p.width = self.ty_width(fty);
+                }
+                _ => break,
+            }
+        }
+        Ok(p)
+    }
+
+    /// Emit a load of `p`'s slots onto the stack (the dynamic index, if any, is
+    /// already on the stack from [`parse_access`]).
+    fn emit_load_place(&mut self, p: &Place) -> Result<(), Diagnostic> {
+        use fx_vm_op::*;
+        if p.dynamic {
+            let opc = match p.kind {
+                SymKind::State => LOAD_STATE_IDX,
+                SymKind::Local => LOAD_LOCAL_IDX,
+                SymKind::Uniform => return self.err("indexed uniforms are not supported"),
+            };
+            self.emit(opc);
+            self.emit(p.base);
+            self.emit(p.stride);
+            self.emit(p.off);
+            self.emit(p.width);
+            self.emit(p.count);
+        } else {
+            let opc = match p.kind {
+                SymKind::Uniform => LOAD_UNIFORM,
+                SymKind::State => LOAD_STATE,
+                SymKind::Local => LOAD_LOCAL,
+            };
+            let slot = p
+                .base
+                .checked_add(p.off)
+                .ok_or_else(|| self.mkdiag("access offset overflow"))?;
+            self.emit(opc);
+            self.emit(slot);
+            self.emit(p.width);
+        }
+        Ok(())
+    }
+
+    /// Emit a store into `p`. For a dynamic place the value's `width` slots are on
+    /// top of the stack with the index just beneath them (the *_IDX store pops the
+    /// values then the index).
+    fn emit_store_place(&mut self, p: &Place) -> Result<(), Diagnostic> {
+        use fx_vm_op::*;
+        if matches!(p.kind, SymKind::Uniform) {
+            return self.err("cannot assign to a uniform");
+        }
+        if p.dynamic {
+            let opc = if matches!(p.kind, SymKind::State) {
+                STORE_STATE_IDX
+            } else {
+                STORE_LOCAL_IDX
+            };
+            self.emit(opc);
+            self.emit(p.base);
+            self.emit(p.stride);
+            self.emit(p.off);
+            self.emit(p.width);
+            self.emit(p.count);
+        } else {
+            let opc = if matches!(p.kind, SymKind::State) {
+                STORE_STATE
+            } else {
+                STORE_LOCAL
+            };
+            let slot = p
+                .base
+                .checked_add(p.off)
+                .ok_or_else(|| self.mkdiag("access offset overflow"))?;
+            self.emit(opc);
+            self.emit(slot);
+            self.emit(p.width);
+        }
         Ok(())
     }
 
@@ -1052,10 +1456,35 @@ impl Compiler {
             Tok::Ident(id) => {
                 self.advance();
                 if *self.cur() == Tok::Sym('(') {
-                    self.call(&id)
-                } else {
-                    self.load_ident(&id)
+                    return self.call(&id);
                 }
+                if let Some(sym) = self.syms.get(&id).copied() {
+                    // Indexed / struct-field access -> resolve a place and load it
+                    // (a leftover `.xyz` on a vec result is swizzled by postfix()).
+                    if *self.cur() == Tok::Sym('[')
+                        || (matches!(sym.ty, Ty::Struct(_)) && *self.cur() == Tok::Sym('.'))
+                    {
+                        let place = self.parse_access(sym)?;
+                        self.emit_load_place(&place)?;
+                        return Ok(place.ty);
+                    }
+                    // Whole composite value (e.g. RHS of `Agent a = other;`).
+                    if matches!(sym.ty, Ty::Struct(_) | Ty::Array(_)) {
+                        let place = Place {
+                            kind: sym.kind,
+                            base: sym.slot,
+                            off: 0,
+                            dynamic: false,
+                            stride: 0,
+                            count: 0,
+                            ty: sym.ty,
+                            width: self.ty_width(sym.ty),
+                        };
+                        self.emit_load_place(&place)?;
+                        return Ok(sym.ty);
+                    }
+                }
+                self.load_ident(&id)
             }
             other => self.err(format!("unexpected {other:?} in expression")),
         }
@@ -1588,6 +2017,22 @@ fn decode_op(code: &[u8], pc: usize) -> (String, usize) {
         FIX2I => ("FIX2I".into(), 1),
         CALL => (format!("CALL -> {}", u16at(0)), 3),
         RET_FN => ("RET_FN".into(), 1),
+        LOAD_STATE_IDX => (
+            format!("LOAD_STATE_IDX base={} stride={} off={} n={} count={}", b(0), b(1), b(2), b(3), b(4)),
+            6,
+        ),
+        STORE_STATE_IDX => (
+            format!("STORE_STATE_IDX base={} stride={} off={} n={} count={}", b(0), b(1), b(2), b(3), b(4)),
+            6,
+        ),
+        LOAD_LOCAL_IDX => (
+            format!("LOAD_LOCAL_IDX base={} stride={} off={} n={} count={}", b(0), b(1), b(2), b(3), b(4)),
+            6,
+        ),
+        STORE_LOCAL_IDX => (
+            format!("STORE_LOCAL_IDX base={} stride={} off={} n={} count={}", b(0), b(1), b(2), b(3), b(4)),
+            6,
+        ),
         other => (format!("?? 0x{other:02x}"), 0),
     }
 }
@@ -1687,6 +2132,10 @@ mod fx_vm_op {
     pub const FIX2I: u8 = 49;
     pub const CALL: u8 = 50;
     pub const RET_FN: u8 = 51;
+    pub const LOAD_STATE_IDX: u8 = 52;
+    pub const STORE_STATE_IDX: u8 = 53;
+    pub const LOAD_LOCAL_IDX: u8 = 54;
+    pub const STORE_LOCAL_IDX: u8 = 55;
 }
 mod fx_ctx {
     pub const TIME: u8 = 0;
