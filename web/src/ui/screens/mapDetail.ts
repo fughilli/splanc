@@ -123,7 +123,13 @@ export function MapDetailScreen(
     actions.append(
       Button({ label: "Topology", icon: "graph", variant: "quiet", onClick: toggleTopo }),
       Button({ label: "Effects", icon: "sparkles", variant: "quiet", onClick: () => router.navigate("/effects") }),
-      Button({ label: "Send to device", icon: "upload", onClick: () => void sendToDevice() }),
+      Button({ label: "Send to device", icon: "map-to-device", onClick: () => void sendToDevice() }),
+      Button({
+        label: "Pull from device",
+        icon: "map-from-device",
+        variant: "quiet",
+        onClick: () => void pullFromDevice(),
+      }),
     );
 
     // Seed topology: prefer a stored one (pulled/imported maps carry it) over
@@ -221,7 +227,7 @@ export function MapDetailScreen(
 
     const applyBtn = Button({
       label: "Apply to device",
-      icon: "upload",
+      icon: "map-to-device",
       onClick: () => void uploadTopology(),
     });
     const saveBtn = Button({
@@ -298,6 +304,24 @@ export function MapDetailScreen(
       toast("Sent to device");
     } catch (e) {
       toast(`Send failed: ${e instanceof Error ? e.message : e}`, { error: true });
+    }
+  }
+
+  async function pullFromDevice(): Promise<void> {
+    const client = appState.client;
+    if (client === null || !client.isConnected) {
+      toast("No device connected", { error: true });
+      openDeviceSheet();
+      return;
+    }
+    try {
+      toast("Pulling map from device…");
+      const bundle = await client.pullStoredMap();
+      const id = await mapStore.importBundleObject(bundle, { source: "pull" });
+      toast("Map pulled from device");
+      router.navigate(`/map/${id}`);
+    } catch (e) {
+      toast(`Pull failed: ${e instanceof Error ? e.message : e}`, { error: true });
     }
   }
 

@@ -344,7 +344,15 @@ class MapStore {
     bytes: Uint8Array,
     opts: { source?: StoredMapSummary["source"] } = {},
   ): Promise<string> {
-    const bundle = decodeMappingBundle(bytes);
+    return this.importBundleObject(decodeMappingBundle(bytes), opts);
+  }
+
+  /** Import an already-decoded MappingBundle (e.g. pulled off a device via the
+   * wss client). Same dedup-by-device-mapId behaviour as {@link importBundle}. */
+  async importBundleObject(
+    bundle: ReturnType<typeof decodeMappingBundle>,
+    opts: { source?: StoredMapSummary["source"] } = {},
+  ): Promise<string> {
     if (!bundle.map || bundle.map.leds.length === 0) {
       throw new Error("bundle has no LEDs");
     }

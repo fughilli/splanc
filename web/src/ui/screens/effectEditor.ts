@@ -475,8 +475,8 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   // -- device section -------------------------------------------------------
   const devStatus = document.createElement("div");
   devStatus.className = "fxedit-muted";
-  const sendBtn = Button({ label: "Send to device", icon: "upload", onClick: () => void sendToDevice() });
-  const hydrateBtn = Button({ label: "Load uniforms", icon: "download", variant: "quiet", onClick: () => void hydrateFromDevice() });
+  const sendBtn = Button({ label: "Send to device", icon: "effect-to-device", onClick: () => void sendToDevice() });
+  const hydrateBtn = Button({ label: "Load uniforms", icon: "effect-from-device", variant: "quiet", onClick: () => void hydrateFromDevice() });
 
   function refreshDevice(): void {
     const connected = appState.client?.isConnected ?? false;

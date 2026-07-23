@@ -6,6 +6,10 @@
 
 export type IconName =
   | "device"
+  | "map-to-device"
+  | "map-from-device"
+  | "effect-to-device"
+  | "effect-from-device"
   | "link"
   | "link-off"
   | "camera"
@@ -30,9 +34,31 @@ export type IconName =
   | "help"
   | "move";
 
+// -- shared fragments for the device-transfer glyphs (24x24, top→bottom layout:
+//    content over a small device pentagon, joined by a direction arrow) --------
+/** Small device pentagon at the bottom (the transfer target). */
+const DEVICE_SMALL = `<path d="M12 14.5 16 17.4 14.5 22.1 9.5 22.1 8 17.4Z"/>`;
+/** Folded map, compact, at the top. */
+const MAP_TOP = `<path d="M6 3.6 10 3 14 3.6 18 3 18 7.4 14 8 10 7.4 6 8Z"/><path d="M10 3V7.4"/><path d="M14 3.6V8"/>`;
+/** Four-point sparkle, compact, at the top. */
+const SPARK_TOP = `<path d="M12 1.9 12.78 4.32 15.2 5.1 12.78 5.88 12 8.3 11.22 5.88 8.8 5.1 11.22 4.32Z"/>`;
+/** Arrow pointing DOWN into the device (send). */
+const ARROW_DOWN = `<path d="M12 8.6V13.9"/><path d="M9.7 11.6 12 13.9 14.3 11.6"/>`;
+/** Arrow pointing UP out of the device (pull). */
+const ARROW_UP = `<path d="M12 13.9V8.6"/><path d="M9.7 10.9 12 8.6 14.3 10.9"/>`;
+
 // Each entry is the inner markup of a 24x24 <symbol> (currentColor stroke).
 const PATHS: Record<IconName, string> = {
-  device: `<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 20h6"/>`,
+  // A "device" is a distinctive upward pentagon — the shared glyph for a player
+  // everywhere in the app (tabs, status, transfer buttons).
+  device: `<path d="M12 4.5 19.6 10 16.7 19 7.3 19 4.4 10Z"/>`,
+  // Transfer glyphs: content (map / sparkle) over the device pentagon, with a
+  // vertical arrow — pointing DOWN into the device (send) or UP out of it
+  // (pull). One consistent design language for send/pull across maps + effects.
+  "map-to-device": `${MAP_TOP}${ARROW_DOWN}${DEVICE_SMALL}`,
+  "map-from-device": `${MAP_TOP}${ARROW_UP}${DEVICE_SMALL}`,
+  "effect-to-device": `${SPARK_TOP}${ARROW_DOWN}${DEVICE_SMALL}`,
+  "effect-from-device": `${SPARK_TOP}${ARROW_UP}${DEVICE_SMALL}`,
   link: `<path d="M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1"/>`,
   "link-off": `<path d="M9 15l6-6"/><path d="M11 6l1-1a5 5 0 0 1 7 7l-1 1"/><path d="M13 18l-1 1a5 5 0 0 1-7-7l1-1"/><path d="M3 3l18 18"/>`,
   camera: `<path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>`,
