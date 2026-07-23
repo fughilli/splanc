@@ -67,6 +67,7 @@ rust_test(
     },
     deps = [
         ":player_ffi_host",
+        "//fx_compiler",
         "//shared/protocol/rust:ledmapper_pb",
         "@crates//:micropb",
     ],

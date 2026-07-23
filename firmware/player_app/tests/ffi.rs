@@ -8,9 +8,9 @@
 
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_player_ffi::{
-    lm_counting_color, lm_envelope_arm, lm_led_count, lm_map_led, lm_map_len, lm_pattern_color,
-    lm_pattern_timing, lm_perf_build_report, lm_perf_interval_ms, lm_perf_mode, lm_perf_push,
-    lm_player_handle, lm_player_init,
+    lm_counting_color, lm_envelope_arm, lm_fx_load, lm_fx_set_active, lm_fx_shade, lm_fx_update,
+    lm_led_count, lm_map_led, lm_map_len, lm_pattern_color, lm_pattern_timing, lm_perf_build_report,
+    lm_perf_interval_ms, lm_perf_mode, lm_perf_push, lm_player_handle, lm_player_init,
 };
 use micropb::{MessageDecode, MessageEncode, PbEncoder};
 use pb::ClientMessage_::Msg as CMsg;
@@ -185,6 +185,88 @@ fn full_device_flow_through_the_c_abi() {
     assert_eq!(bundle.r#map.r#map_id.as_str(), "m-ffi");
     assert_eq!(bundle.r#map.r#leds.len(), 64);
     assert_eq!(bundle.r#map.r#leds[63].r#id, 63);
+
+    // -- effects: per-LED topology (led.seg / led.s / led.branch) end-to-end ---
+    // Replace the (empty) topology with a real Y-junction: three segments meeting
+    // at branch point 0 (degree 3 -> a junction), so a shader can read a mapped
+    // LED's segment index, normalized arclength and junction flag. A shade() that
+    // returns vec3(led.s, led.seg*0.1, led.branch) surfaces those terms straight
+    // into the RGB the render loop would drive.
+    {
+        let mut topo = pb::Topology::default();
+        topo.r#map_id = "m-ffi".parse().unwrap();
+        for id in 0..4 {
+            let mut bp = pb::BranchPoint::default();
+            bp.r#id = id;
+            bp.r#xyz.extend_from_slice(&[0.0, 0.0, 0.0]).unwrap();
+            topo.r#branch_points.push(bp).unwrap();
+        }
+        // seg ids 10/11/12 -> indices 0/1/2, all rooted at junction bp 0.
+        for (sid, endb) in [(10, 1), (11, 2), (12, 3)] {
+            let mut s = pb::TopologySegment::default();
+            s.r#id = sid;
+            s.r#a = 0; // junction endpoint (degree 3)
+            s.r#b = endb; // terminal (degree 1)
+            s.r#length = 1.0;
+            topo.r#segments.push(s).unwrap();
+        }
+        // LED 0 near the junction (branch=true, s≈0.02, seg idx 0); LED 1 mid
+        // seg 10 (branch=false, s=0.5, seg idx 0); LED 2 near the terminal end of
+        // seg 11 (branch=false, s≈0.99, seg idx 1).
+        let assoc = |led_id, segment_id, foot: f64| {
+            let mut a = pb::LedAssociation::default();
+            a.r#led_id = led_id;
+            a.r#segment_id = segment_id;
+            a.r#foot_arclength = foot;
+            a
+        };
+        topo.r#associations.push(assoc(0, 10, 0.02)).unwrap();
+        topo.r#associations.push(assoc(1, 10, 0.5)).unwrap();
+        topo.r#associations.push(assoc(2, 11, 0.99)).unwrap();
+        let mut submit = pb::SubmitTopology::default();
+        submit.set_topology(topo);
+        let Some(SMsg::ResultReady(_)) = handle(&encode(CMsg::SubmitTopology(submit)), 3700.0)
+        else {
+            panic!("topology result_ready expected");
+        };
+
+        // Compile a shader that surfaces the topology terms into RGB.
+        let src = "vec3 shade(Led led) {\n  \
+                   float b = 0.0;\n  \
+                   if (led.branch) { b = 1.0; }\n  \
+                   return vec3(led.s, led.seg * 0.1, b);\n}\n";
+        let compiled = ledmapper_fx_compiler::compile(src).expect("shader compiles");
+        assert!(unsafe { lm_fx_load(compiled.fxb.as_ptr(), compiled.fxb.len()) });
+        unsafe { lm_fx_set_active(true) };
+        // update() rebuilds the per-LED topology cache the shade sweep reads.
+        assert!(unsafe { lm_fx_update(0.0, 0.033, 0, 64) });
+        let shade = |i: u32| -> [u8; 3] {
+            let mut rgb = [0u8; 3];
+            assert!(unsafe { lm_fx_shade(i, 0.0, 0.0, 0.0, rgb.as_mut_ptr()) });
+            rgb
+        };
+        // LED 0: s≈0.02 -> tiny R, seg idx 0 -> G=0, at the junction -> B=255.
+        let c0 = shade(0);
+        assert!(c0[0] <= 10, "led 0 s≈0.02 -> small R, got {}", c0[0]);
+        assert_eq!(c0[1], 0, "led 0 on segment index 0");
+        assert_eq!(c0[2], 255, "led 0 sits at the junction");
+        // LED 1: s=0.5 -> R≈127, seg idx 0 -> G=0, mid-segment -> B=0.
+        let c1 = shade(1);
+        assert!((120..=135).contains(&c1[0]), "led 1 s=0.5 -> R≈127, got {}", c1[0]);
+        assert_eq!(c1[1], 0);
+        assert_eq!(c1[2], 0, "led 1 mid-segment is not a junction");
+        // LED 2: s≈0.99 -> large R, seg idx 1 -> G≈25, terminal end -> B=0.
+        let c2 = shade(2);
+        assert!(c2[0] >= 245, "led 2 s≈0.99 -> large R, got {}", c2[0]);
+        assert!((20..=30).contains(&c2[1]), "led 2 seg index 1 -> G≈25, got {}", c2[1]);
+        assert_eq!(c2[2], 0, "led 2 near a terminal (degree 1) is not a junction");
+        // An unassociated LED reads seg=-1 (G clamps to 0), s=0, branch=false.
+        assert_eq!(shade(5), [0, 0, 0], "unassociated LED has no topology terms");
+
+        // Park the effect so the rest of the flow (which asserts map wipes) runs
+        // against the built-in playback path, not an active shader.
+        unsafe { lm_fx_set_active(false) };
+    }
 
     // A malformed upload (leds without a led_count header) gets a bounded
     // error, and the previously stored map is GONE (the upload reset the

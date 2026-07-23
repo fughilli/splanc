@@ -16,6 +16,7 @@ rust_library(
     srcs = ["src/lib.rs"],
     crate_name = "ledmapper_fx_compiler",
     edition = "2021",
+    visibility = ["//visibility:public"],
 )
 
 rust_test(

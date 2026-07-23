@@ -49,6 +49,7 @@ interface CompilerModule {
 }
 interface FxPreviewWasm {
   set_uniform(slot: number, vals: Float32Array): void;
+  set_topology(seg: Int32Array, s: Float32Array, branch: Uint8Array): void;
   update(time: number, dt: number, frame: number, ledCount: number): void;
   shade_all(positions: Float32Array): Uint8Array;
   free(): void;
@@ -108,6 +109,16 @@ export class FxPreview {
     this.inner.set_uniform(slot, new Float32Array(vals));
   }
 
+  /**
+   * Feed per-LED topology (LED order) so `shade()` sees `led.seg`/`led.s`/
+   * `led.branch` exactly as the device does. Pass the result of
+   * {@link deriveLedTopology}; call again (or with empty arrays) when the map or
+   * topology changes.
+   */
+  setTopology(topo: LedTopology): void {
+    this.inner.set_topology(topo.seg, topo.s, topo.branch);
+  }
+
   /** Advance one frame (runs update()). */
   tick(time: number, dt: number, frame: number, ledCount: number): void {
     this.inner.update(time, dt, frame, ledCount);
@@ -121,4 +132,64 @@ export class FxPreview {
   dispose(): void {
     this.inner.free();
   }
+}
+
+/** Per-LED topology in LED order, ready to hand to {@link FxPreview.setTopology}. */
+export interface LedTopology {
+  seg: Int32Array; // segment index, -1 = no association
+  s: Float32Array; // normalized arclength 0..1 along the segment (from endpoint a)
+  branch: Uint8Array; // 1 = within BRANCH_DIST of a junction (degree >= 3), else 0
+}
+
+/** An LED is "at a junction" within this arclength (m) of a degree>=3 endpoint. */
+const FX_BRANCH_DIST_M = 0.05;
+
+/**
+ * Derive per-LED `led.seg` / `led.s` / `led.branch` from a map + its topology,
+ * in LED order. This is the BROWSER MIRROR of the device's cache builder
+ * (firmware/player_app/ffi.rs `fx_rebuild_topo`) — keep the two in sync so the
+ * preview matches the hardware:
+ *   - seg = index of the LED's segment in `topology.segments` (-1 if none)
+ *   - s   = footArclength / segment.length, clamped to 0..1
+ *   - branch = the LED is within FX_BRANCH_DIST_M of an endpoint whose branch
+ *     point is a real junction (>=3 segments meet there)
+ * Returns all-default topology (seg=-1) when there is no topology.
+ */
+export function deriveLedTopology(
+  map: { leds: { id: number }[] },
+  topology?: {
+    branchPoints: { id: number }[];
+    segments: { id: number; a: number; b: number; length: number }[];
+    associations: { ledId: number; segmentId: number; footArclength: number }[];
+  },
+): LedTopology {
+  const n = map.leds.length;
+  const seg = new Int32Array(n).fill(-1);
+  const s = new Float32Array(n);
+  const branch = new Uint8Array(n);
+  if (!topology || topology.segments.length === 0) return { seg, s, branch };
+
+  // Branch points with degree >= 3 are true junctions (a pass-through is 2).
+  const degree = new Map<number, number>();
+  for (const g of topology.segments) {
+    if (g.a >= 0) degree.set(g.a, (degree.get(g.a) ?? 0) + 1);
+    if (g.b >= 0) degree.set(g.b, (degree.get(g.b) ?? 0) + 1);
+  }
+  const isJunction = (bpId: number): boolean => bpId >= 0 && (degree.get(bpId) ?? 0) >= 3;
+
+  const segById = new Map(topology.segments.map((g, i) => [g.id, { i, g }]));
+  const assocByLed = new Map(topology.associations.map((a) => [a.ledId, a]));
+  for (let i = 0; i < n; i++) {
+    const a = assocByLed.get(map.leds[i]!.id);
+    if (a === undefined) continue;
+    const hit = segById.get(a.segmentId);
+    if (hit === undefined) continue;
+    seg[i] = hit.i;
+    const len = hit.g.length;
+    s[i] = len > 1e-6 ? Math.min(1, Math.max(0, a.footArclength / len)) : 0;
+    const nearA = a.footArclength <= FX_BRANCH_DIST_M;
+    const nearB = len - a.footArclength <= FX_BRANCH_DIST_M;
+    branch[i] = (nearA && isJunction(hit.g.a)) || (nearB && isJunction(hit.g.b)) ? 1 : 0;
+  }
+  return { seg, s, branch };
 }

@@ -22,10 +22,11 @@
  *     editor header (out of the main body).
  */
 
-import type { OutputMap } from "@ledmapper/protocol";
-import { FxPreview, type FxUniform } from "../../fx/preview";
+import type { OutputMap, Topology } from "@ledmapper/protocol";
+import { FxPreview, deriveLedTopology, type FxUniform, type LedTopology } from "../../fx/preview";
 import { MapView } from "../mapview";
 import { generateFixture } from "../../effects/fixtures";
+import { extractTopology } from "../../topology/extract";
 import { FxCompilerWorker } from "../../effects/editor/compiler";
 import { UniformPanel } from "../../effects/editor/uniform-panel";
 import { highlight } from "../../effects/editor/highlight";
@@ -61,6 +62,10 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   let mapView: MapView | null = null;
   let positions: Float32Array | null = null;
   let preview: FxPreview | null = null;
+  // Per-LED topology (led.seg/s/branch) for the current map, so the preview
+  // matches the device. Recomputed async on map change; token guards staleness.
+  let currentTopo: LedTopology | null = null;
+  let topoToken = 0;
   let lastT = 0;
   let frame = 0;
   let startT = 0;
@@ -572,11 +577,11 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
       return;
     }
     const rec = await mapStore.get(id);
-    if (rec) loadMap(rec.map);
+    if (rec) loadMap(rec.map, rec.topology);
     else loadMap(generateFixture("tree", { count: 160, seed: 3, jitterFrac: 0.06 }));
   }
 
-  function loadMap(map: OutputMap): void {
+  function loadMap(map: OutputMap, topology?: Topology): void {
     currentMap = map;
     positions = new Float32Array(map.leds.length * 3);
     for (let i = 0; i < map.leds.length; i++) {
@@ -593,6 +598,23 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
       mapView.update(map);
       mapView.setLedColors(new Uint8Array(map.leds.length * 3));
     }
+    void refreshTopology(map, topology);
+  }
+
+  // Compute the current map's per-LED topology (led.seg/s/branch) so the preview
+  // matches the device. Uses the stored topology when present, else extracts one
+  // (the same path real data takes) so synthetic/junction fixtures preview their
+  // topology too. Async + token-guarded: a newer map load supersedes an older
+  // extraction that's still running.
+  async function refreshTopology(map: OutputMap, topology?: Topology): Promise<void> {
+    const token = ++topoToken;
+    let topo = topology;
+    if (!topo || topo.segments.length === 0) {
+      topo = await extractTopology(map).catch(() => undefined);
+    }
+    if (token !== topoToken || disposed || currentMap !== map) return;
+    currentTopo = deriveLedTopology(map, topo);
+    preview?.setTopology(currentTopo);
   }
 
   // -- compile --------------------------------------------------------------
@@ -653,6 +675,7 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
       return;
     }
     for (const { slot, value } of panel.values()) preview.setUniform(slot, value);
+    if (currentTopo !== null) preview.setTopology(currentTopo);
     startT = performance.now();
     frame = 0;
   }

@@ -100,6 +100,42 @@ static mut FX_F_LEDS: u32 = 0;
 /// C++ for the rate-limited `[fx]` diagnostic log.
 static mut FX_LAST_UPDATE_OUTCOME: u32 = 0;
 
+// -- per-LED topology for shade() (led.seg / led.s / led.branch) --------------
+// The stored topology maps each LED (StoredAssociation) to a segment + arclength
+// + perpendicular offset. shade() exposes that to scripts as `led.seg` (segment
+// INDEX, -1 when the LED has no association), `led.s` (normalized 0..1 arclength
+// along its segment, from endpoint a) and `led.branch` (true within
+// BRANCH_DIST_M of a real junction — a branch point where >=3 segments meet).
+//
+// We derive it ONCE per topology change into a cache in map-index order, so the
+// per-LED shade() sweep is a cheap array read rather than an O(associations)
+// scan every call. lm_map_led hands the render loop the map index, which is
+// exactly this cache's index.
+
+/// Cache capacity: the firmware's LED cap (main.cpp kMaxLeds). One entry/LED.
+const FX_TOPO_CAP: usize = 256;
+/// An LED is "at a junction" (`led.branch`) within this arclength (meters) of a
+/// segment endpoint that is a real branch point (degree >= 3).
+const FX_BRANCH_DIST_M: f32 = 0.05;
+
+/// One LED's derived topology terms. `seg` is the segment INDEX (position in
+/// topo.segments), -1 = no association; `s` is normalized 0..1; `branch` = near
+/// a junction. 8 bytes/entry → 2 KiB for the whole cache.
+#[derive(Clone, Copy)]
+struct FxLedTopo {
+    seg: i16,
+    s: f32,
+    branch: bool,
+}
+impl FxLedTopo {
+    const NONE: FxLedTopo = FxLedTopo { seg: -1, s: 0.0, branch: false };
+}
+
+static mut FX_LED_TOPO: [FxLedTopo; FX_TOPO_CAP] = [FxLedTopo::NONE; FX_TOPO_CAP];
+/// False when the cache is stale (a map/topology upload cleared it); rebuilt
+/// lazily at the top of the next lm_fx_update frame.
+static mut FX_TOPO_READY: bool = false;
+
 // -- perf monitoring (docs/design/perf-monitoring.md) -------------------------
 // A small perf ring the render task fills (one PerfFrame per rendered effect
 // frame, Tier-0 cycle spans + Tier-1 opcode counts when FULL) and the phone
@@ -403,6 +439,7 @@ unsafe fn handle_map_upload(frame: &[u8]) -> pb::ServerMessage {
     *addr_of_mut!(MAP) = None;
     *addr_of_mut!(TOPO) = None;
     *addr_of_mut!(SIM) = None;
+    FX_TOPO_READY = false; // map replaced → per-LED topology cache is stale
     arena_mut().reset();
     match decode_submit_map(frame, frame.len(), arena_ref()) {
         Ok(map) => {
@@ -421,6 +458,7 @@ unsafe fn handle_map_upload(frame: &[u8]) -> pb::ServerMessage {
 unsafe fn handle_topology_upload(frame: &[u8]) -> pb::ServerMessage {
     *addr_of_mut!(TOPO) = None;
     *addr_of_mut!(SIM) = None;
+    FX_TOPO_READY = false; // topology replaced → per-LED topology cache is stale
     let cp = arena_ref().checkpoint();
     match decode_submit_topology(frame, frame.len(), arena_ref()) {
         Ok(topo) => {
@@ -1124,6 +1162,72 @@ pub unsafe extern "C" fn lm_map_led(index: u32, id: *mut u32, xyz: *mut f32) -> 
 // Single-threaded, like the rest of this file: the render task and the message
 // handler both call these under the C++ player_mutex.
 
+/// Rebuild [`FX_LED_TOPO`] from the stored map + topology (in map-index order),
+/// deriving each LED's segment index, normalized arclength and junction flag
+/// from its [`StoredAssociation`]. Cheap to call every frame — it early-returns
+/// via [`FX_TOPO_READY`] unless a map/topology upload invalidated the cache.
+/// With no topology stored, every entry stays `NONE` (seg = -1), so unmapped
+/// LEDs read `led.seg == -1` and topology-aware effects fall back gracefully.
+unsafe fn fx_rebuild_topo() {
+    let cache = &mut *addr_of_mut!(FX_LED_TOPO);
+    for e in cache.iter_mut() {
+        *e = FxLedTopo::NONE;
+    }
+    FX_TOPO_READY = true;
+    let (Some(map), Some(topo)) = ((*addr_of!(MAP)).as_ref(), (*addr_of!(TOPO)).as_ref()) else {
+        return;
+    };
+    // Precompute which branch points are true junctions (degree >= 3). A branch
+    // point's degree is how many segment endpoints (a or b) reference its id; a
+    // pass-through has degree 2, a free end/terminal <= 1. Branch points are few.
+    const MAX_BP: usize = 64;
+    let mut junction = [false; MAX_BP];
+    for (bi, bp) in topo.branch_points.iter().enumerate().take(MAX_BP) {
+        let id = bp.id as i32;
+        let mut deg = 0u32;
+        for s in topo.segments.iter() {
+            if s.a == id {
+                deg += 1;
+            }
+            if s.b == id {
+                deg += 1;
+            }
+        }
+        junction[bi] = deg >= 3;
+    }
+    // True when branch-point id `bp_id` (a segment endpoint) is a junction.
+    let is_junction = |bp_id: i32| -> bool {
+        bp_id >= 0
+            && topo
+                .branch_points
+                .iter()
+                .position(|b| b.id as i32 == bp_id)
+                .is_some_and(|bi| bi < MAX_BP && junction[bi])
+    };
+    for (i, led) in map.leds.iter().enumerate() {
+        if i >= FX_TOPO_CAP {
+            break;
+        }
+        let Some(assoc) = topo.associations.iter().find(|a| a.led_id == led.id) else {
+            continue;
+        };
+        let Some(seg_idx) = topo.segments.iter().position(|s| s.id == assoc.segment_id) else {
+            continue;
+        };
+        let seg = &topo.segments[seg_idx];
+        let s_norm = if seg.length > 1e-6 {
+            (assoc.foot_arclength / seg.length).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        // Near endpoint a (s≈0) or b (s≈1) AND that endpoint is a real junction.
+        let near_a = assoc.foot_arclength <= FX_BRANCH_DIST_M;
+        let near_b = (seg.length - assoc.foot_arclength) <= FX_BRANCH_DIST_M;
+        let branch = (near_a && is_junction(seg.a)) || (near_b && is_junction(seg.b));
+        cache[i] = FxLedTopo { seg: seg_idx as i16, s: s_norm, branch };
+    }
+}
+
 /// The per-invocation bounded-execution guard for the active budget + the
 /// wall-time deadline flag.
 unsafe fn fx_budget() -> Budget {
@@ -1268,6 +1372,11 @@ pub unsafe extern "C" fn lm_fx_update(time_s: f32, dt_s: f32, frame: u32, led_co
     FX_F_DT = dt_s;
     FX_F_FRAME = frame;
     FX_F_LEDS = led_count;
+    // Refresh the per-LED topology cache if a map/topology upload invalidated it,
+    // so the coming shade() sweep sees current led.seg / led.s / led.branch.
+    if !FX_TOPO_READY {
+        fx_rebuild_topo();
+    }
     // A new frame: reset the per-frame Tier-1 shade accumulators (they sum over
     // the coming per-LED sweep). update()'s own counts are latched here.
     FX_INSTR_SHADE = 0;
@@ -1319,12 +1428,16 @@ pub unsafe extern "C" fn lm_fx_shade(
         led_count: FX_F_LEDS,
         ..Default::default()
     };
+    // Per-LED topology (led.seg / led.s / led.branch) from the cache the last
+    // lm_fx_update refreshed. `idx` is the map index — exactly this cache's key.
+    // No association (or no topology stored) → seg = -1, s = 0, branch = false.
+    let t = (*addr_of!(FX_LED_TOPO)).get(idx as usize).copied().unwrap_or(FxLedTopo::NONE);
     let led = FxLed {
         pos: [x, y, z],
         idx,
-        seg: -1,
-        s: 0.0,
-        branch: false,
+        seg: t.seg as i32,
+        s: t.s,
+        branch: t.branch,
     };
     let outcome = if PERF_MODE == PERF_FULL {
         // FULL: count this LED's opcodes into the per-frame shade accumulator
