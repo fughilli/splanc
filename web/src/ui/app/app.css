@@ -1578,6 +1578,57 @@ body.is-locked {
   color: var(--text);
 }
 
+/* --- Wi-Fi picker (add-device flow) --- */
+.wifi-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.wifi-lead {
+  color: var(--text-dim);
+  font-size: var(--f-caption);
+  margin: 0 0 var(--sp-1);
+}
+.wifi-cap {
+  font-size: var(--f-caption);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+.wifi-picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+}
+.wifi-pick {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctrl);
+  color: var(--text);
+  font: inherit;
+  padding: 0.3rem 0.6rem;
+  cursor: pointer;
+}
+.wifi-pick--on {
+  border-color: var(--accent);
+}
+.wifi-status {
+  color: var(--warn);
+  font-size: var(--f-caption);
+  min-height: 1em;
+}
+
+/* Onboarding reuses the device-add row, a touch larger. */
+.onboard-add-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.onboard-add .k-iconbtn {
+  width: 3rem;
+  height: 3rem;
+}
+
 /* --- context / edit sheets --- */
 .context-sheet {
   display: flex;

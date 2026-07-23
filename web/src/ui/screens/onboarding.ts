@@ -1,126 +1,56 @@
 /**
  * Onboarding screen (design doc §4.1 / §7.4) — get from "fresh install" to a
- * linked device (or an explicit offline start) in the fewest taps, wrapping the
- * two gnarly realities from main.ts: BLE Improv provisioning and self-signed
- * wss cert trust.
+ * linked device (or an explicit offline start) in the fewest taps.
  *
- * Behavior preserved from main.ts: the WiFi form is pre-filled from the cache;
- * BLE is shown only where supported; on provision success we bind to the player
- * (appState.connect) whose boot flow surfaces the cert-trust step in the device
- * sheet; Skip lands directly in Maps.
+ * The add-device affordances are the SAME two no-text icon buttons the device
+ * sheet uses (Bluetooth / manual address), driving the shared add-device flow
+ * (Wi-Fi picker → BLE chooser or manual entry, see addDevice.ts). BLE is shown
+ * only where Web Bluetooth exists; manual + skip are always offered.
  */
 
-import { Button, Card, Field, toast } from "../kit";
-import {
-  bleAvailable,
-  provisionViaBle,
-  requestImprovDevice,
-  wsUrlFromRedirect,
-} from "../../net/improv";
-import { prefs } from "../../store/prefs";
-import { appState } from "../app/state";
-import type { Router } from "../app/router";
-import type { Screen } from "../app/router";
+import { Button, Card, IconButton } from "../kit";
+import { bleAvailable } from "../../net/improv";
+import { openAddDevice } from "./addDevice";
+import type { Router, Screen } from "../app/router";
 
 export function OnboardingScreen(router: Router): Screen {
   const el = document.createElement("div");
   el.className = "screen screen--onboard";
 
-  const cached = prefs.getWifi();
-  const ssid = Field({ label: "Wi-Fi network (SSID)", value: cached.ssid, placeholder: "HomeNet" });
-  const pass = Field({ label: "Wi-Fi password", type: "password", value: cached.password });
-
   const intro = document.createElement("p");
   intro.className = "screen-sub";
   intro.textContent = "Set up a player, or skip and work offline — you can add a device later.";
 
-  const status = document.createElement("div");
-  status.className = "onboard-status metric";
-  const setStatus = (s: string): void => {
-    status.textContent = s;
-  };
+  const done = (): void => router.navigate("/maps");
 
-  const ble = Button({
-    label: "Connect via Bluetooth",
-    icon: "bluetooth",
-    block: true,
-    onClick: () => void provision(),
-  });
-
-  const manual = Button({
-    label: "Enter address manually",
-    icon: "link",
-    variant: "quiet",
-    block: true,
-    onClick: () => {
-      const url = prompt("Player address (wss://host:port):", "wss://");
-      if (!url) return;
-      if (!/^wss?:\/\//.test(url)) {
-        toast("Address must start with ws:// or wss://", { error: true });
-        return;
-      }
-      appState.connect(url);
-      router.navigate("/maps");
-    },
-  });
-
-  const skip = Button({
-    label: "Skip — work offline",
-    variant: "quiet",
-    block: true,
-    onClick: () => router.navigate("/maps"),
-  });
-
-  const form = document.createElement("div");
-  form.className = "onboard-form";
+  const addLabel = document.createElement("div");
+  addLabel.className = "device-add-label";
+  addLabel.textContent = "Add device…";
+  const addRow = document.createElement("div");
+  addRow.className = "device-add-row onboard-add";
   if (bleAvailable()) {
-    form.append(ssid.el, pass.el, ble);
-    const or = document.createElement("div");
-    or.className = "onboard-or";
-    or.textContent = "or";
-    form.append(or, manual, skip);
-  } else {
-    // BLE unsupported (iOS / non-Chrome): offer manual + skip only (§4.1).
+    addRow.append(
+      IconButton("bluetooth", { title: "Add device (Bluetooth)", onClick: () => openAddDevice("ble", done) }),
+    );
+  }
+  addRow.append(
+    IconButton("link", { title: "Enter address manually", onClick: () => openAddDevice("manual", done) }),
+  );
+
+  const card = document.createElement("div");
+  card.className = "onboard-add-card";
+  card.append(addLabel, addRow);
+  if (!bleAvailable()) {
     const note = document.createElement("p");
     note.className = "screen-sub";
-    note.textContent = "Bluetooth setup isn't available in this browser.";
-    form.append(note, manual, skip);
+    note.style.margin = "var(--sp-2) 0 0";
+    note.textContent = "Bluetooth setup isn't available in this browser — enter the address manually.";
+    card.append(note);
   }
 
-  el.append(headline("Set up your player"), intro, Card(form), status);
+  const skip = Button({ label: "Skip — work offline", variant: "quiet", block: true, onClick: done });
 
-  async function provision(): Promise<void> {
-    ble.disabled = true;
-    setStatus("");
-    try {
-      // Chooser FIRST: requestDevice needs the click's (unconsumed) user
-      // gesture — even a prompt() beforehand eats it. The form fields already
-      // hold the credentials, so there's no prompt() to steal it now.
-      const device = await requestImprovDevice();
-      const netSsid = ssid.input.value.trim();
-      if (!netSsid) {
-        toast("Enter a Wi-Fi network name", { error: true });
-        ble.disabled = false;
-        return;
-      }
-      const password = pass.input.value;
-      const urls = await provisionViaBle(device, netSsid, password, setStatus);
-      // Cache only after the device reports it JOINED.
-      prefs.setWifi({ ssid: netSsid, password });
-      const target = urls.map((u) => wsUrlFromRedirect(u)).find((u) => u !== null);
-      if (!target) throw new Error(`player joined, but sent no usable address (${urls})`);
-      setStatus(`player provisioned at ${target} — connecting…`);
-      // Bind to the player. Its self-signed cert can't be prompted for over a
-      // WebSocket; appState.connect surfaces the one-time trust step in the
-      // device sheet, and the client's auto-reconnect completes on accept.
-      appState.connect(target);
-      router.navigate("/maps");
-    } catch (e) {
-      setStatus(`Player setup failed: ${e instanceof Error ? e.message : e}`);
-      ble.disabled = false;
-    }
-  }
-
+  el.append(headline("Set up your player"), intro, Card(card), skip);
   return { el };
 }
 

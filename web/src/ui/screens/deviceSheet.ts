@@ -14,6 +14,7 @@ import { Button, IconButton, Sheet, toast } from "../kit";
 import { appState } from "../app/state";
 import { LedMapperClient } from "../../net/client";
 import { deviceStore, deviceHost, type KnownDevice } from "../../store/deviceStore";
+import { bleRediscover, openAddDevice } from "./addDevice";
 
 let openHandle: { close: () => void } | null = null;
 
@@ -140,12 +141,12 @@ function render(reachable: Map<string, { mac: string; deviceName: string }>): HT
   addRow.append(
     IconButton("bluetooth", {
       title: "Add device (Bluetooth)",
-      onClick: () => {
-        openHandle?.close();
-        location.hash = "#/onboard";
-      },
+      onClick: () => openAddDevice("ble"),
     }),
-    IconButton("link", { title: "Enter address manually", onClick: () => addManual() }),
+    IconButton("link", {
+      title: "Enter address manually",
+      onClick: () => openAddDevice("manual"),
+    }),
   );
   addSection.append(addLabel, addRow);
   wrap.append(addSection);
@@ -191,15 +192,12 @@ function deviceRow(
   } else if (isReachable) {
     btns.append(Button({ label: "Connect", onClick: () => appState.connect(dev.wssUrl, dev.label) }));
   } else {
-    // Unreachable on the LAN: the connect affordance re-discovers over Bluetooth
-    // (re-provision / re-learn its current address via the Improv flow).
+    // Unreachable on the LAN: the connect affordance opens the BLE picker
+    // directly to re-discover / re-provision the device (Improv flow).
     btns.append(
       IconButton("ble-search", {
         title: "Find over Bluetooth",
-        onClick: () => {
-          openHandle?.close();
-          location.hash = "#/onboard";
-        },
+        onClick: () => bleRediscover(),
       }),
     );
   }
@@ -313,16 +311,6 @@ function openDeviceDetail(dev: KnownDevice): void {
     }),
   );
   input.focus();
-}
-
-function addManual(): void {
-  const url = prompt("Player address (wss://host:port):", appState.client?.url ?? "wss://");
-  if (!url) return;
-  if (!/^wss?:\/\//.test(url)) {
-    toast("Address must start with ws:// or wss://", { error: true });
-    return;
-  }
-  appState.connect(url);
 }
 
 /**
