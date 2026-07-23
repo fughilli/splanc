@@ -496,17 +496,34 @@ static uint32_t render_once() {
     if (updated) {
       uint32_t id;
       float xyz[3];
+      uint32_t shade_bad = 0;  // shades cancelled by the bounded-exec guard
       // The whole per-LED shade loop is timed as one span (never per LED — that
       // would add a counter read to the hottest inner loop 256x/frame).
       for (uint32_t i = 0; i < n; i++) {
         // Shade over the stored fixture position (map order == LED order here).
-        if (lm_map_led(i, &id, xyz) && lm_fx_shade(i, xyz[0], xyz[1], xyz[2], rgb)) {
-          leds[i] = CRGB(rgb[0], rgb[1], rgb[2]);
+        if (lm_map_led(i, &id, xyz)) {
+          if (lm_fx_shade(i, xyz[0], xyz[1], xyz[2], rgb)) {
+            leds[i] = CRGB(rgb[0], rgb[1], rgb[2]);
+          } else {
+            leds[i] = CRGB::Black;  // a cancelled/timed-out shade
+            shade_bad++;
+          }
         } else {
-          leds[i] = CRGB::Black;  // no map entry or a cancelled/timed-out shade
+          leds[i] = CRGB::Black;  // no map entry
         }
       }
       for (uint32_t i = n; i < kMaxLeds; i++) leds[i] = CRGB::Black;
+      // Rate-limited interpreter diagnostic (~1 Hz): update outcome + how many
+      // LEDs the bounded-exec guard cancelled this frame. Cheap; helps see if an
+      // effect is tripping the instruction budget / wall-time deadline.
+      static uint32_t fx_log_ms = 0;
+      if (now - fx_log_ms >= 1000) {
+        fx_log_ms = now;
+        static const char *kOc[] = {"ok", "budget", "timeout"};
+        uint32_t oc = lm_fx_last_update_outcome();
+        Log().printf("[fx] t=%.2f frame=%u update=%s shade_cancelled=%u/%u\n",
+                     fx_time_s, this_seq, kOc[oc <= 2 ? oc : 0], shade_bad, n);
+      }
     } else {
       // Effect active but not runnable (shouldn't happen) — hold black.
       fill_solid(leds, kMaxLeds, CRGB::Black);

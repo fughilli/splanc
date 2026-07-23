@@ -88,6 +88,18 @@ static FX_DEADLINE: AtomicBool = AtomicBool::new(false);
 /// C++ (lm_fx_set_budget); defaults to the VM's default.
 static mut FX_BUDGET: u32 = ledmapper_fx_vm::DEFAULT_BUDGET;
 
+// Frame context captured by lm_fx_update and reused by lm_fx_shade, so shade()
+// sees the SAME time/dt/frame as update(). Shaders commonly animate by reading
+// `time` directly in shade() (e.g. `fract(led.s - time*speed)`); without this
+// shade() got a zero Frame and every frame looked identical (a "frozen" effect).
+static mut FX_F_TIME: f32 = 0.0;
+static mut FX_F_DT: f32 = 0.0;
+static mut FX_F_FRAME: u32 = 0;
+static mut FX_F_LEDS: u32 = 0;
+/// Last update() bounded-exec outcome (0=Ok, 1=Budget, 2=Timeout) — surfaced to
+/// C++ for the rate-limited `[fx]` diagnostic log.
+static mut FX_LAST_UPDATE_OUTCOME: u32 = 0;
+
 // -- perf monitoring (docs/design/perf-monitoring.md) -------------------------
 // A small perf ring the render task fills (one PerfFrame per rendered effect
 // frame, Tier-0 cycle spans + Tier-1 opcode counts when FULL) and the phone
@@ -1207,6 +1219,13 @@ pub extern "C" fn lm_fx_set_deadline(hit: bool) {
     FX_DEADLINE.store(hit, core::sync::atomic::Ordering::Relaxed);
 }
 
+/// Last update() bounded-exec outcome: 0=Ok, 1=budget exceeded, 2=wall-time
+/// timeout. For the rate-limited `[fx]` diagnostic log in the render loop.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_last_update_outcome() -> u32 {
+    FX_LAST_UPDATE_OUTCOME
+}
+
 /// Apply a uniform value (`vals` = its slot count, 1..4) to the active VM.
 ///
 /// # Safety
@@ -1243,20 +1262,28 @@ pub unsafe extern "C" fn lm_fx_update(time_s: f32, dt_s: f32, frame: u32, led_co
         led_count,
         ..Default::default()
     };
+    // Capture the frame context so the per-LED shade() sweep sees the same
+    // time/dt/frame (shaders animate off `time` in shade()).
+    FX_F_TIME = time_s;
+    FX_F_DT = dt_s;
+    FX_F_FRAME = frame;
+    FX_F_LEDS = led_count;
     // A new frame: reset the per-frame Tier-1 shade accumulators (they sum over
     // the coming per-LED sweep). update()'s own counts are latched here.
     FX_INSTR_SHADE = 0;
     FX_STACK_MAX = 0;
-    if PERF_MODE == PERF_FULL {
+    let outcome = if PERF_MODE == PERF_FULL {
         // FULL: pay the counted VM path so instr_update / stack_max are real.
-        let (_outcome, c) = vm.run_update_counted(&prog, &f, &fx_budget());
+        let (oc, c) = vm.run_update_counted(&prog, &f, &fx_budget());
         FX_INSTR_UPDATE = c.instrs;
         FX_STACK_MAX = c.stack_max;
+        oc
     } else {
         // BASIC/OFF: the plain path — no per-opcode counting overhead.
         FX_INSTR_UPDATE = 0;
-        vm.run_update_bounded(&prog, &f, &fx_budget());
-    }
+        vm.run_update_bounded(&prog, &f, &fx_budget())
+    };
+    FX_LAST_UPDATE_OUTCOME = outcome as u32;
     true
 }
 
@@ -1283,10 +1310,15 @@ pub unsafe extern "C" fn lm_fx_shade(
     let Ok(prog) = Program::parse(bytes) else {
         return false;
     };
-    // time/dt/frame carry across from the last update() via the VM's state; the
-    // shade only needs the per-frame Frame for time-driven built-ins, which we
-    // reconstruct minimally (position is what varies per LED).
-    let f = FxFrame::default();
+    // Reuse the frame context captured by lm_fx_update so `time`/`dt`/`frame`
+    // are the same as update() — shaders animate off `time` in shade().
+    let f = FxFrame {
+        time: FX_F_TIME,
+        dt: FX_F_DT,
+        frame: FX_F_FRAME,
+        led_count: FX_F_LEDS,
+        ..Default::default()
+    };
     let led = FxLed {
         pos: [x, y, z],
         idx,

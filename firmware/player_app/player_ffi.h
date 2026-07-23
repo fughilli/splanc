@@ -82,6 +82,9 @@ void lm_fx_set_budget(uint32_t instructions);
 // it at the frame deadline; the render loop clears it each frame). TODO(hw):
 // arm an esp_timer/systimer one-shot per frame to call this at the deadline.
 void lm_fx_set_deadline(bool hit);
+// Last update() bounded-exec outcome: 0=Ok, 1=budget exceeded, 2=wall-time
+// timeout. For the rate-limited [fx] diagnostic log.
+uint32_t lm_fx_last_update_outcome(void);
 // Apply a uniform value (n = its width, 1..4) to the active VM.
 void lm_fx_set_uniform(uint32_t slot, const float *vals, size_t n);
 // Run update() once for this frame (clears the deadline flag first). False when
