@@ -29,6 +29,15 @@ export class MapView {
   private ac: AbortController | null = null;
   private readonly pointers = new Map<number, { x: number; y: number }>();
 
+  // Backing-store sizing: the canvas is drawn in CSS-pixel units and the 2D
+  // context is scaled by the device pixel ratio, so the backing store matches
+  // the on-screen size at full resolution (crisp in wide/desktop layouts, not
+  // an upscaled fixed-size buffer). Kept in sync via a ResizeObserver.
+  private dpr = 1;
+  private cssW = 0;
+  private cssH = 0;
+  private resizeObs: ResizeObserver | null = null;
+
   // Ground-truth overlay: truth points are aligned to the solve via a
   // similarity fit (truth is only meaningful up to scale/rotation/translation)
   // and rendered with per-point delta vectors + magnitudes.
@@ -109,6 +118,11 @@ export class MapView {
   start(): void {
     this.stop();
     this.attach();
+    this.resizeToDisplay();
+    // Track the element's displayed size so the backing store always matches it
+    // (wide layouts, splitter drags, orientation changes, DPR shifts on zoom).
+    this.resizeObs = new ResizeObserver(() => this.resizeToDisplay());
+    this.resizeObs.observe(this.canvas);
     const loop = () => {
       this.raf = requestAnimationFrame(loop);
       if (this.autoOrbit) this.yaw += 0.005;
@@ -122,7 +136,26 @@ export class MapView {
     this.raf = 0;
     this.ac?.abort();
     this.ac = null;
+    this.resizeObs?.disconnect();
+    this.resizeObs = null;
     this.pointers.clear();
+  }
+
+  /** Match the canvas backing store to its CSS display size × devicePixelRatio.
+   * Draw code works in CSS px (the context is scaled by dpr in `draw`). */
+  private resizeToDisplay(): void {
+    const c = this.canvas;
+    const cssW = c.clientWidth;
+    const cssH = c.clientHeight;
+    if (cssW === 0 || cssH === 0) return; // not laid out yet
+    const dpr = Math.min(window.devicePixelRatio || 1, 2.5); // cap for fill-rate
+    this.dpr = dpr;
+    this.cssW = cssW;
+    this.cssH = cssH;
+    const bw = Math.round(cssW * dpr);
+    const bh = Math.round(cssH * dpr);
+    if (c.width !== bw) c.width = bw;
+    if (c.height !== bh) c.height = bh;
   }
 
   // -- input ------------------------------------------------------------
@@ -150,8 +183,9 @@ export class MapView {
         const prev = this.pointers.get(e.pointerId);
         if (!prev) return;
         const cur = { x: e.clientX, y: e.clientY };
-        // Pointer deltas are CSS px; pan/zoom work in canvas px.
-        const s = c.clientWidth > 0 ? c.width / c.clientWidth : 1;
+        // Draw space is CSS px (the context is dpr-scaled), so pointer deltas —
+        // also CSS px — map 1:1 for panning.
+        const s = 1;
 
         if (this.pointers.size === 1) {
           const dx = cur.x - prev.x;
@@ -204,8 +238,13 @@ export class MapView {
 
   private draw(): void {
     const ctx = this.canvas.getContext("2d")!;
-    const w = this.canvas.width;
-    const h = this.canvas.height;
+    // Draw in CSS px; scale the context by dpr so the backing store renders at
+    // full device resolution. Fall back to raw canvas px before first layout.
+    const laidOut = this.cssW > 0 && this.cssH > 0;
+    const dpr = laidOut ? this.dpr : 1;
+    const w = laidOut ? this.cssW : this.canvas.width;
+    const h = laidOut ? this.cssH : this.canvas.height;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.fillStyle = "#111";
     ctx.fillRect(0, 0, w, h);
     const leds = this.map.leds;

@@ -907,6 +907,63 @@ body.is-locked {
   margin-bottom: var(--sp-2);
   resize: vertical;
 }
+
+/* Chat input with an inline up-arrow send button nested at the right. */
+.fxedit-askwrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+.fxedit-askwrap .fxedit-ask {
+  margin-bottom: 0;
+  padding-right: 2.7rem;
+  resize: none;
+  min-height: 3.2rem;
+}
+.fxedit-asksend {
+  position: absolute;
+  right: 0.4rem;
+  bottom: 0.4rem;
+  width: 1.9rem;
+  height: 1.9rem;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+.fxedit-asksend:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.fxedit-asksend svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Live "model is working" indicator: reuses the existing .fxedit-spinner, with
+   a phase label ("Thinking…", "Generating code…", "Inspecting rendered image…"). */
+.fxedit-chatstatus {
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--text-dim);
+  font-size: var(--f-caption);
+  padding: 0.15rem 0.2rem;
+}
+
+/* AI pane: keep the input legible. The chat content has a minimum width and the
+   pane CROPS it (overflow hidden) when the pane is dragged narrower, rather than
+   squishing the text box below readability. */
+.fxedit-chatbody {
+  min-width: 16rem;
+}
+.fxpane[data-pane="chat"] .fxpane-body {
+  overflow: hidden;
+}
 .fxedit-btnrow {
   display: flex;
   gap: var(--sp-2);

@@ -278,6 +278,8 @@ export interface ChatHooks {
   onCapturePreview: () => Promise<string>;
   /** Streamed assistant text (deltas) for the "thinking…"/live panel. */
   onText?: (delta: string) => void;
+  /** A model request is starting (the model is reasoning) — drive a spinner. */
+  onThinking?: () => void;
   /** A tool is about to run (for a status line in the panel). */
   onToolUse?: (name: string) => void;
   signal?: AbortSignal;
@@ -302,8 +304,12 @@ const TOOLS = [
   {
     name: "capture_preview",
     description:
-      "Render the current live preview to a PNG image so you can see how the " +
-      "effect looks on the LED map right now, and comment or iterate on it.",
+      "Render the current live preview to a PNG image so you can SEE how the " +
+      "effect looks on the LED map right now. Call this ONLY when actually seeing " +
+      "the result matters (e.g. to judge colours, motion, or coverage). Do NOT " +
+      "capture after a compile error (there's nothing new to see — fix the code " +
+      "first), and don't capture on every change; skipping it when unneeded is " +
+      "faster and cheaper.",
     input_schema: { type: "object", additionalProperties: false, properties: {} },
   },
 ] as const;
@@ -313,8 +319,8 @@ const CHAT_SYSTEM = `${SYSTEM_PROMPT}
 You are now in an interactive chat with the user inside the effect editor. You can:
 - Answer questions about the current effect program.
 - Call set_script to author or revise the effect; you'll get the compile result back (fix any errors and iterate).
-- Call capture_preview to SEE the live preview rendered to an image, then comment on or refine the look.
-Keep prose brief. When you change the script, prefer minimal, targeted edits. After a change, it's often useful to capture_preview to confirm the result.`;
+- Call capture_preview to SEE the live preview rendered to an image — but only when seeing the result actually matters (judging colours/motion/coverage). Skip it when it wouldn't help (e.g. after a compile error, or a purely mechanical edit); capturing every turn is slow and wasteful.
+Keep prose brief. When you change the script, prefer minimal, targeted edits.`;
 
 function dataUrlToImageBlock(dataUrl: string): {
   type: "image";
@@ -389,6 +395,7 @@ export async function chatTurn(history: ChatMessage[], hooks: ChatHooks): Promis
   let finalText = "";
   const MAX_ROUNDS = 8; // hard cap so a misbehaving loop can't run forever
   for (let round = 0; round < MAX_ROUNDS; round++) {
+    hooks.onThinking?.();
     const { content, stop_reason } = await messagesRequest(history, hooks.signal);
     history.push({ role: "assistant", content });
 

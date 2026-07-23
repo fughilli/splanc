@@ -40,7 +40,7 @@ import {
 import { effectStore } from "../../store/effectStore";
 import { mapStore } from "../../store/mapStore";
 import { appState } from "../app/state";
-import { Button, IconButton, toast } from "../kit";
+import { Button, IconButton, icon, toast } from "../kit";
 import { FxLayout } from "../../effects/editor/layout";
 import { openAiKeySheet } from "./aiKeySheet";
 import type { Router, Screen } from "../app/router";
@@ -86,20 +86,11 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   canvas.width = 640;
   canvas.height = 420;
 
-  /** Recompute the preview canvas backing store from its laid-out CSS box (DPR
-   * aware). MapView reads canvas.width/height directly, so after any relayout /
-   * viewport change we must resize the backing store or the preview draws into a
-   * stale-sized buffer. Safe to call before the canvas is in the DOM (no-op). */
+  /** MapView now owns the preview canvas resolution (it tracks the element's CSS
+   * box via a ResizeObserver and scales the context by devicePixelRatio), so a
+   * relayout needs no manual resize here — kept as a hook point for onRelayout. */
   function resizePreviewCanvas(): void {
-    const rect = canvas.getBoundingClientRect();
-    if (rect.width < 1 || rect.height < 1) return;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const w = Math.round(rect.width * dpr);
-    const h = Math.round(rect.height * dpr);
-    if (canvas.width !== w || canvas.height !== h) {
-      canvas.width = w;
-      canvas.height = h;
-    }
+    /* no-op: MapView self-sizes to its display box */
   }
 
   // -- inline-editable effect name (a small pill; click → input in place) ----
@@ -446,15 +437,22 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     "Ask the AI to write or tweak this effect. It can compile changes and see the live preview.";
   chatLog.appendChild(chatHint);
 
+  // The input is a textarea with the send control nested inline at its right as
+  // an up-arrow button (so the box stays the dominant, legible element).
   const chatInput = document.createElement("textarea");
   chatInput.className = "fxedit-ask";
   chatInput.rows = 2;
   chatInput.placeholder = "e.g. make it a gentle blue breathing along the trunk";
-  const chatSend = Button({
-    label: "Send",
-    icon: "sparkles",
-    onClick: () => void runChat(),
-  });
+  const chatSend = document.createElement("button");
+  chatSend.type = "button";
+  chatSend.className = "fxedit-asksend";
+  chatSend.title = "Send (⌘/Ctrl + Enter)";
+  chatSend.setAttribute("aria-label", "Send");
+  chatSend.appendChild(icon("arrow-up"));
+  chatSend.addEventListener("click", () => void runChat());
+  const chatInputWrap = document.createElement("div");
+  chatInputWrap.className = "fxedit-askwrap";
+  chatInputWrap.append(chatInput, chatSend);
   chatInput.addEventListener("keydown", (ev) => {
     if (ev.key === "Enter" && (ev.metaKey || ev.ctrlKey)) {
       ev.preventDefault();
@@ -470,6 +468,29 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     chatLog.appendChild(row);
     chatLog.scrollTop = chatLog.scrollHeight;
     return row;
+  }
+
+  // A live "what the model is doing" indicator (spinner + phase label), shown at
+  // the foot of the log while a turn runs and updated as phases change.
+  let chatStatusEl: HTMLElement | null = null;
+  function setChatStatus(label: string): void {
+    if (chatHint.isConnected) chatHint.remove();
+    if (chatStatusEl === null) {
+      chatStatusEl = document.createElement("div");
+      chatStatusEl.className = "fxedit-chatstatus";
+      const sp = document.createElement("span");
+      sp.className = "fxedit-spinner";
+      const tx = document.createElement("span");
+      tx.className = "fxedit-chatstatus-label";
+      chatStatusEl.append(sp, tx);
+    }
+    (chatStatusEl.querySelector(".fxedit-chatstatus-label") as HTMLElement).textContent = label;
+    chatLog.appendChild(chatStatusEl); // keep it pinned to the bottom
+    chatLog.scrollTop = chatLog.scrollHeight;
+  }
+  function clearChatStatus(): void {
+    chatStatusEl?.remove();
+    chatStatusEl = null;
   }
 
   // -- device section -------------------------------------------------------
@@ -723,30 +744,34 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
 
     chatBusy = true;
     chatSend.disabled = true;
-    const thinking = appendChat("assistant", "thinking…");
+    setChatStatus("Thinking…");
 
     try {
       const finalText = await chatTurn(chatHistory, {
+        onThinking: () => setChatStatus("Thinking…"),
         onSetScript: async (source) => {
-          appendChat("tool", "· applied script + compiling…");
+          setChatStatus("Generating code…");
           codeEl.value = source;
           paintHighlight();
           syncScroll();
           scheduleSave();
+          setChatStatus("Compiling…");
           await compileNow();
           return `Compile result: ${lastCompileSummary}${
             lastDisassembly ? `\n\nDisassembly:\n${lastDisassembly}` : ""
           }`;
         },
         onCapturePreview: async () => {
-          appendChat("tool", "· captured preview");
+          setChatStatus("Inspecting rendered image…");
           return capturePreviewPng();
         },
         onToolUse: () => undefined,
       });
-      thinking.textContent = finalText || "(done)";
+      clearChatStatus();
+      appendChat("assistant", finalText || "(done)");
     } catch (e) {
-      thinking.textContent = `AI error: ${msg(e)}`;
+      clearChatStatus();
+      appendChat("assistant", `AI error: ${msg(e)}`);
     } finally {
       chatBusy = false;
       chatSend.disabled = false;
@@ -853,7 +878,7 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   // Chat pane content.
   const chatBody = document.createElement("div");
   chatBody.className = "fxedit-chatbody";
-  chatBody.append(chatLog, chatInput, buttonRow(chatSend));
+  chatBody.append(chatLog, chatInputWrap);
 
   // Diagnostics pane content (diags list + device controls live together — both
   // are "status" surfaces the user consults, not primary editing views).

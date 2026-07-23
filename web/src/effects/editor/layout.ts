@@ -72,6 +72,16 @@ interface Persisted {
 }
 
 const STORAGE_KEY = "fxedit.layout.v2";
+
+// Pane size bounds (fractions of the workspace). Kept intentionally permissive
+// so panes can be dragged very small (content crops via overflow:hidden) — the
+// dividers track the pointer 1:1 because the center track takes the *remaining*
+// fraction (see wideCols/wideRows), not a fixed 1fr.
+const MIN_EDGE = 0.04;
+const MAX_EDGE = 0.92;
+const MIN_CENTER = 0.04;
+const MIN_SPLIT = 0.06;
+const MAX_SPLIT = 0.94;
 const NARROW_QUERY = "(max-width: 719px)";
 
 /** Default WIDE arrangement: Code is the center; Uniforms + Preview dock right;
@@ -352,26 +362,16 @@ export class FxLayout {
     const hasT = this.visibleAt("top").length > 0;
     const hasB = this.visibleAt("bottom").length > 0;
 
-    // Column tracks: [left] [div] center [div] [right]
-    const cols: string[] = [];
-    if (hasL) cols.push(`${this.frac("left")}fr`, "var(--fxdiv)");
-    cols.push("1fr");
-    if (hasR) cols.push("var(--fxdiv)", `${this.frac("right")}fr`);
-    // Row tracks: [top] [div] middle [div] [bottom]
-    const rows: string[] = [];
-    if (hasT) rows.push(`${this.frac("top")}fr`, "var(--fxdiv)");
-    rows.push("1fr");
-    if (hasB) rows.push("var(--fxdiv)", `${this.frac("bottom")}fr`);
-
-    grid.style.gridTemplateColumns = cols.join(" ");
-    grid.style.gridTemplateRows = rows.join(" ");
+    // Track templates (center takes the remaining fraction — see wideCols).
+    grid.style.gridTemplateColumns = this.wideCols();
+    grid.style.gridTemplateRows = this.wideRows();
 
     // Compute grid line indices for the center cell.
     const colStart = hasL ? 3 : 1;
     const rowStart = hasT ? 3 : 1;
 
     // Top/bottom strips span the FULL width so they butt the outer edges.
-    const totalCols = cols.length;
+    const totalCols = (hasL ? 2 : 0) + 1 + (hasR ? 2 : 0);
     if (hasT) {
       const strip = this.renderEdge("top");
       strip.style.gridColumn = `1 / ${totalCols + 1}`;
@@ -418,7 +418,7 @@ export class FxLayout {
   }
 
   private frac(edge: Exclude<Dock, "center">): number {
-    return clamp(this.state.edgeSizes[edge] || 0.28, 0.1, 0.7);
+    return clamp(this.state.edgeSizes[edge] || 0.28, MIN_EDGE, MAX_EDGE);
   }
 
   /** An edge strip: an optional tab bar (when >1 pane) over the fronted pane. */
@@ -483,7 +483,7 @@ export class FxLayout {
         edge === "left" || edge === "top"
           ? raw
           : 1 - raw;
-      this.state.edgeSizes[edge] = clamp(f, 0.1, 0.7);
+      this.state.edgeSizes[edge] = clamp(f, MIN_EDGE, MAX_EDGE);
       grid.style.gridTemplateColumns = this.wideCols();
       grid.style.gridTemplateRows = this.wideRows();
       this.opts.onRelayout();
@@ -499,17 +499,29 @@ export class FxLayout {
   }
 
   private wideCols(): string {
+    const hasL = this.visibleAt("left").length > 0;
+    const hasR = this.visibleAt("right").length > 0;
+    const l = hasL ? this.frac("left") : 0;
+    const r = hasR ? this.frac("right") : 0;
+    // Center takes what's left, so an edge fraction == its share of the width and
+    // its divider sits under the pointer (no fr rescaling).
+    const c = Math.max(MIN_CENTER, 1 - l - r);
     const cols: string[] = [];
-    if (this.visibleAt("left").length) cols.push(`${this.frac("left")}fr`, "var(--fxdiv)");
-    cols.push("1fr");
-    if (this.visibleAt("right").length) cols.push("var(--fxdiv)", `${this.frac("right")}fr`);
+    if (hasL) cols.push(`${l}fr`, "var(--fxdiv)");
+    cols.push(`${c}fr`);
+    if (hasR) cols.push("var(--fxdiv)", `${r}fr`);
     return cols.join(" ");
   }
   private wideRows(): string {
+    const hasT = this.visibleAt("top").length > 0;
+    const hasB = this.visibleAt("bottom").length > 0;
+    const t = hasT ? this.frac("top") : 0;
+    const b = hasB ? this.frac("bottom") : 0;
+    const c = Math.max(MIN_CENTER, 1 - t - b);
     const rows: string[] = [];
-    if (this.visibleAt("top").length) rows.push(`${this.frac("top")}fr`, "var(--fxdiv)");
-    rows.push("1fr");
-    if (this.visibleAt("bottom").length) rows.push("var(--fxdiv)", `${this.frac("bottom")}fr`);
+    if (hasT) rows.push(`${t}fr`, "var(--fxdiv)");
+    rows.push(`${c}fr`);
+    if (hasB) rows.push("var(--fxdiv)", `${b}fr`);
     return rows.join(" ");
   }
 
@@ -519,7 +531,7 @@ export class FxLayout {
     // Primary split: code over uniforms with a draggable divider.
     const split = document.createElement("div");
     split.className = "fxlayout-nsplit";
-    const codeShare = clamp(this.state.split, 0.25, 0.85);
+    const codeShare = clamp(this.state.split, MIN_SPLIT, MAX_SPLIT);
     split.style.gridTemplateRows = `${codeShare}fr var(--fxdiv) ${1 - codeShare}fr`;
 
     const codeCell = document.createElement("div");
@@ -578,7 +590,7 @@ export class FxLayout {
     target.setPointerCapture(e.pointerId);
     const rect = split.getBoundingClientRect();
     const move = (ev: PointerEvent) => {
-      const frac = clamp((ev.clientY - rect.top) / Math.max(1, rect.height), 0.25, 0.85);
+      const frac = clamp((ev.clientY - rect.top) / Math.max(1, rect.height), MIN_SPLIT, MAX_SPLIT);
       this.state.split = frac;
       split.style.gridTemplateRows = `${frac}fr var(--fxdiv) ${1 - frac}fr`;
       this.opts.onRelayout();
