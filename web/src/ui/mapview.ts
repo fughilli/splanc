@@ -40,6 +40,9 @@ export class MapView {
   // LEDs; rendered as a polyline when toggled on.
   private trajectory: Vec3[] | null = null;
   showTrajectory = false;
+  /** Toggle a graduated ground grid (Y=0 plane) and a world coordinate triad. */
+  showGrid = false;
+  showTriad = false;
 
   // Extracted topology overlay: the segment polylines drawn over the LEDs, for
   // live preview while tuning the extraction (topology/extract.ts).
@@ -252,6 +255,46 @@ export class MapView {
         depth: tz,
       };
     };
+    // Project a world point given as (x,y,z) — cast keeps the tuple type happy.
+    const pw = (x: number, y: number, z: number): { sx: number; sy: number; depth: number } =>
+      proj([x, y, z] as unknown as Vec3);
+
+    // -- reference grid on the ground (Y=0) plane, with graduations ---------
+    if (this.showGrid) {
+      const step = niceStep(maxR / 4); // ~8 divisions across the fixture
+      const n = Math.max(2, Math.ceil((maxR * 1.4) / step));
+      const ext = n * step;
+      ctx.lineWidth = 1;
+      for (let i = -n; i <= n; i++) {
+        const t = i * step;
+        ctx.strokeStyle = i === 0 ? "rgb(255 255 255 / 0.28)" : "rgb(255 255 255 / 0.08)";
+        let a = pw(t, 0, -ext);
+        let b = pw(t, 0, ext);
+        ctx.beginPath();
+        ctx.moveTo(a.sx, a.sy);
+        ctx.lineTo(b.sx, b.sy);
+        ctx.stroke();
+        a = pw(-ext, 0, t);
+        b = pw(ext, 0, t);
+        ctx.beginPath();
+        ctx.moveTo(a.sx, a.sy);
+        ctx.lineTo(b.sx, b.sy);
+        ctx.stroke();
+      }
+      // Graduation labels along the X (z=0) and Z (x=0) axes.
+      ctx.font = "10px system-ui";
+      ctx.fillStyle = "rgb(255 255 255 / 0.4)";
+      for (let i = -n; i <= n; i++) {
+        if (i === 0) continue;
+        const t = i * step;
+        const lx = pw(t, 0, 0);
+        ctx.fillText(fmtMeters(t), lx.sx + 2, lx.sy - 2);
+        const lz = pw(0, 0, t);
+        ctx.fillText(fmtMeters(t), lz.sx + 2, lz.sy - 2);
+      }
+      ctx.fillStyle = "rgb(255 255 255 / 0.5)";
+      ctx.fillText(`grid ${fmtMeters(step)}`, 12, 34);
+    }
 
     // -- camera trajectory (under everything else: it is context, not data) --
     if (this.showTrajectory && this.trajectory !== null) {
@@ -429,6 +472,32 @@ export class MapView {
       }
     }
 
+    // -- world coordinate triad (X red, Y green, Z blue), on top -----------
+    if (this.showTriad) {
+      const L = niceStep(maxR / 2) * 2;
+      const O = pw(0, 0, 0);
+      const axes: [number, number, number, string, string][] = [
+        [L, 0, 0, "rgb(255 90 90 / 0.95)", "X"],
+        [0, L, 0, "rgb(120 230 120 / 0.95)", "Y"],
+        [0, 0, L, "rgb(90 160 255 / 0.95)", "Z"],
+      ];
+      ctx.lineWidth = 2;
+      ctx.font = "bold 11px system-ui";
+      for (const [x, y, z, color, label] of axes) {
+        const e = pw(x, y, z);
+        ctx.strokeStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(O.sx, O.sy);
+        ctx.lineTo(e.sx, e.sy);
+        ctx.stroke();
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(e.sx, e.sy, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillText(label, e.sx + 3, e.sy - 3);
+      }
+    }
+
     ctx.fillStyle = "#aaa";
     ctx.font = "12px system-ui";
     const s = this.map.stats;
@@ -445,4 +514,21 @@ export class MapView {
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
+}
+
+/** Round up to a "nice" 1/2/5×10^k step for grid graduations. */
+function niceStep(x: number): number {
+  if (!(x > 0) || !isFinite(x)) return 1;
+  const p = Math.pow(10, Math.floor(Math.log10(x)));
+  const f = x / p;
+  const m = f < 1.5 ? 1 : f < 3.5 ? 2 : f < 7.5 ? 5 : 10;
+  return m * p;
+}
+
+/** Compact meter/cm/mm label for a signed length. */
+function fmtMeters(m: number): string {
+  const a = Math.abs(m);
+  if (a < 0.01) return `${Math.round(m * 1000)}mm`;
+  if (a < 1) return `${(m * 100).toFixed(a < 0.1 ? 1 : 0)}cm`;
+  return `${m.toFixed(a < 10 ? 1 : 0)}m`;
 }
