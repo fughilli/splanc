@@ -10,7 +10,7 @@
  * discoverable "AI key" affordance that opens the BYO-key sheet.
  */
 
-import { Button, Card, Chip, EmptyState, IconButton, Sheet, toast, icon } from "../kit";
+import { Button, Chip, EmptyState, HelpTip, IconButton, Sheet, toast, icon } from "../kit";
 import { effectStore, type StoredEffect } from "../../store/effectStore";
 import { openAiKeySheet } from "./aiKeySheet";
 import { getApiKey } from "../../effects/ai/generate";
@@ -55,31 +55,33 @@ export function EffectsBrowserScreen(router: Router): Screen {
   });
   searchWrap.appendChild(sortSel);
 
-  // -- AI key affordance ----------------------------------------------------
-  const aiKeyCard = Card();
-  aiKeyCard.className = "k-card fxlib-aikey";
-  function renderAiKeyCard(): void {
-    aiKeyCard.replaceChildren();
-    const info = document.createElement("div");
-    info.className = "fxlib-aikey-info";
-    const title = document.createElement("div");
-    title.className = "fxlib-aikey-title";
-    title.textContent = "AI generation";
-    const sub = document.createElement("div");
-    sub.className = "fxlib-aikey-sub";
-    sub.textContent = getApiKey()
-      ? "Anthropic key set — used only in your browser."
-      : "Add your Anthropic key to generate effects with AI.";
-    info.append(title, sub);
-    const btn = Button({
-      label: getApiKey() ? "Manage key" : "Add AI key",
-      icon: "sparkles",
-      variant: "quiet",
-      onClick: () => openAiKeySheet(() => renderAiKeyCard()),
+  // -- AI key affordance: a compact floating "?" help tip, shown ONLY until a
+  // key is configured. Once a key is saved, AI generation just works, so the
+  // hint disappears (managing/clearing the key stays in the editor's ⋯ menu).
+  const aiHelp = document.createElement("div");
+  aiHelp.className = "fxlib-aihelp";
+  function renderAiHelp(): void {
+    aiHelp.replaceChildren();
+    if (getApiKey()) return; // key configured → nothing to prompt
+    const tip = HelpTip({
+      label: "About AI generation",
+      title: "AI generation",
+      body: "Generate effects from a text prompt with your own Anthropic API key — stored only in this browser and sent directly to Anthropic.",
+      align: "right",
+      action: {
+        label: "Add AI key",
+        icon: "sparkles",
+        onClick: () => openAiKeySheet(() => renderAiHelp()),
+      },
     });
-    aiKeyCard.append(info, btn);
+    aiHelp.appendChild(tip.el);
   }
-  renderAiKeyCard();
+  renderAiHelp();
+
+  // Toolbar row: the search field takes the space; the "?" tip floats at its end.
+  const toolbar = document.createElement("div");
+  toolbar.className = "fxlib-toolbar";
+  toolbar.append(searchWrap, aiHelp);
 
   const tagRow = document.createElement("div");
   tagRow.className = "maps-tags";
@@ -123,7 +125,7 @@ export function EffectsBrowserScreen(router: Router): Screen {
     router.navigate(`/effects/edit/${id}`);
   }
 
-  el.append(searchWrap, aiKeyCard, tagRow, listEl);
+  el.append(toolbar, tagRow, listEl);
 
   async function refresh(): Promise<void> {
     const all = await effectStore.list();

@@ -443,19 +443,23 @@ body.is-locked {
 }
 
 /* --- effects library (browser) --- */
-.fxlib-aikey {
+/* Toolbar row: the search field flexes to fill; the AI "?" help tip floats at
+ * its trailing edge and collapses to nothing once a key is configured. */
+.fxlib-toolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--sp-3);
+  gap: var(--sp-2);
   margin-bottom: var(--sp-3);
 }
-.fxlib-aikey-title {
-  font-weight: 600;
+.fxlib-toolbar .maps-search {
+  flex: 1;
+  margin-bottom: 0;
 }
-.fxlib-aikey-sub {
-  color: var(--text-dim);
-  font-size: var(--f-caption);
+.fxlib-aihelp {
+  flex: 0 0 auto;
+}
+.fxlib-aihelp:empty {
+  display: none;
 }
 
 /* --- effect editor (in-shell) --- */

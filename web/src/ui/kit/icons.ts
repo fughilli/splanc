@@ -27,6 +27,7 @@ export type IconName =
   | "bluetooth"
   | "sparkles"
   | "alert"
+  | "help"
   | "move";
 
 // Each entry is the inner markup of a 24x24 <symbol> (currentColor stroke).
@@ -53,6 +54,7 @@ const PATHS: Record<IconName, string> = {
   bluetooth: `<path d="M7 8l10 8-5 4V4l5 4-10 8"/>`,
   sparkles: `<path d="M12 4l1.6 4.4L18 10l-4.4 1.6L12 16l-1.6-4.4L6 10l4.4-1.6z"/><path d="M18 15l.8 2 2 .8-2 .8L18 21l-.8-2-2-.8 2-.8z"/>`,
   alert: `<path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17h.01"/>`,
+  help: `<circle cx="12" cy="12" r="9"/><path d="M9.2 9.3a2.8 2.8 0 0 1 5.3 1.2c0 1.9-2.6 2.3-2.6 4"/><path d="M12 17.5h.01"/>`,
   // Four-way move arrows (relocate a pane between regions).
   move: `<path d="M12 3v18M3 12h18"/><path d="M12 3l-2.5 2.5M12 3l2.5 2.5"/><path d="M12 21l-2.5-2.5M12 21l2.5-2.5"/><path d="M3 12l2.5-2.5M3 12l2.5 2.5"/><path d="M21 12l-2.5-2.5M21 12l2.5 2.5"/>`,
 };

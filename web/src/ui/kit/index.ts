@@ -268,3 +268,96 @@ export function toast(message: string, opts: { error?: boolean; ms?: number } = 
     setTimeout(() => t.remove(), 160);
   }, opts.ms ?? 2600);
 }
+
+// -- HelpTip -----------------------------------------------------------------
+
+export interface HelpTipHandle {
+  el: HTMLElement;
+  close: () => void;
+}
+
+/**
+ * A floating help affordance: a small “?” trigger that reveals a popover bubble
+ * with explanatory text and an optional action. This is the shared pattern for
+ * inline help across the app — a light, dismissible tooltip rather than a card
+ * baked into the content flow. The caller positions `el` (e.g. an absolute/
+ * fixed corner) via a wrapper class; the popover anchors to the trigger.
+ */
+export function HelpTip(opts: {
+  title?: string;
+  body: string | Node;
+  action?: { label: string; icon?: IconName; onClick: () => void };
+  label?: string; // aria-label for the trigger
+  align?: "left" | "right"; // which edge the popover aligns to (default right)
+}): HelpTipHandle {
+  const el = document.createElement("div");
+  el.className = "k-helptip";
+
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "k-helptip-btn";
+  const lbl = opts.label ?? "Help";
+  btn.title = lbl;
+  btn.setAttribute("aria-label", lbl);
+  btn.setAttribute("aria-expanded", "false");
+  btn.appendChild(icon("help"));
+
+  const pop = document.createElement("div");
+  pop.className = "k-helptip-pop";
+  if (opts.align === "left") pop.classList.add("k-helptip-pop--left");
+  pop.hidden = true;
+  if (opts.title) {
+    const t = document.createElement("div");
+    t.className = "k-helptip-title";
+    t.textContent = opts.title;
+    pop.appendChild(t);
+  }
+  const body = document.createElement("div");
+  body.className = "k-helptip-body";
+  if (typeof opts.body === "string") body.textContent = opts.body;
+  else body.appendChild(opts.body);
+  pop.appendChild(body);
+  if (opts.action) {
+    const a = opts.action;
+    const btnOpts: ButtonOpts = {
+      label: a.label,
+      variant: "primary",
+      onClick: () => {
+        close();
+        a.onClick();
+      },
+    };
+    if (a.icon) btnOpts.icon = a.icon;
+    pop.appendChild(Button(btnOpts));
+  }
+
+  let open = false;
+  function onDocClick(ev: MouseEvent): void {
+    if (!el.contains(ev.target as Node)) close();
+  }
+  function onKey(ev: KeyboardEvent): void {
+    if (ev.key === "Escape") close();
+  }
+  function openPop(): void {
+    open = true;
+    pop.hidden = false;
+    btn.setAttribute("aria-expanded", "true");
+    el.classList.add("k-helptip--open");
+    setTimeout(() => {
+      document.addEventListener("click", onDocClick);
+      document.addEventListener("keydown", onKey);
+    }, 0);
+  }
+  function close(): void {
+    open = false;
+    pop.hidden = true;
+    btn.setAttribute("aria-expanded", "false");
+    el.classList.remove("k-helptip--open");
+    document.removeEventListener("click", onDocClick);
+    document.removeEventListener("keydown", onKey);
+  }
+  btn.addEventListener("click", () => (open ? close() : openPop()));
+
+  el.append(btn, pop);
+  return { el, close };
+}

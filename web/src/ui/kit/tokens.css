@@ -239,6 +239,65 @@ a {
   border-color: var(--err);
 }
 
+/* --- HelpTip: a floating "?" trigger + popover bubble (shared inline-help
+   pattern; the caller positions the wrapper, the popover anchors to the "?") --- */
+.k-helptip {
+  position: relative;
+  display: inline-flex;
+}
+.k-helptip-btn {
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border-radius: 50%;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition:
+    color var(--motion-micro) var(--ease),
+    border-color var(--motion-micro) var(--ease);
+}
+.k-helptip-btn:hover,
+.k-helptip--open .k-helptip-btn {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.k-helptip-btn svg {
+  width: 18px;
+  height: 18px;
+}
+.k-helptip-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 60;
+  width: min(18rem, 78vw);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+.k-helptip-pop--left {
+  right: auto;
+  left: 0;
+}
+.k-helptip-title {
+  font-weight: 600;
+  font-size: var(--f-body);
+}
+.k-helptip-body {
+  color: var(--text-dim);
+  font-size: var(--f-caption);
+  line-height: 1.4;
+}
+
 .k-pill {
   display: inline-flex;
   align-items: center;
