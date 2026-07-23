@@ -115,6 +115,11 @@ export function bleAvailable(): boolean {
 
 /** A picked Improv device (from `requestImprovDevice`). */
 export interface ImprovDevice {
+  /** Stable, origin-scoped id for this physical device (Web Bluetooth). Lets us
+   * tell whether the user re-picked the SAME device when re-discovering. */
+  id?: string;
+  /** Advertised name at pick time (the device's Bluetooth name). */
+  name?: string;
   gatt?: {
     connect(): Promise<{
       getPrimaryService(uuid: string): Promise<{

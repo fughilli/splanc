@@ -12,9 +12,10 @@
 
 import { Button, IconButton, Sheet, toast } from "../kit";
 import { appState } from "../app/state";
-import { LedMapperClient } from "../../net/client";
+import { deviceProber } from "../../net/deviceProber";
 import { deviceStore, deviceHost, type KnownDevice } from "../../store/deviceStore";
 import { bleRediscover, openAddDevice } from "./addDevice";
+import { appendGrouped, openFolderPicker } from "./folders";
 
 let openHandle: { close: () => void } | null = null;
 
@@ -22,16 +23,13 @@ export function openDeviceSheet(): void {
   if (openHandle) return; // already open — don't stack
   let unsubDev: () => void = () => {};
   let unsubApp: () => void = () => {};
-  // Probe results for this sheet session: id -> the device's reported identity.
-  const reachable = new Map<string, { mac: string; deviceName: string }>();
-  let probeTimer: number | null = null;
-  let probing = false;
+  let unsubProbe: () => void = () => {};
 
   const sheet = Sheet("Devices", {
     onClose: () => {
       unsubDev();
       unsubApp();
-      if (probeTimer !== null) clearInterval(probeTimer);
+      unsubProbe();
       openHandle = null;
     },
   });
@@ -39,57 +37,18 @@ export function openDeviceSheet(): void {
 
   const rerender = (): void => {
     sheet.body.innerHTML = "";
-    sheet.body.append(render(reachable));
+    sheet.body.append(render());
   };
   unsubDev = deviceStore.subscribe(rerender);
   unsubApp = appState.subscribe(rerender);
+  // Reachability comes from the shared background prober (lazy: 1/min → 1/10min).
+  // Opening the sheet asks it for a fresh, prompt look.
+  unsubProbe = deviceProber.subscribe(rerender);
+  deviceProber.refresh();
   rerender();
-
-  // -- reachability probe: open the wss the app already uses, read the device's
-  // welcome (MAC + name), fold it into the record, then close. Runs sequentially
-  // over the non-active devices while the sheet is open, and once immediately.
-  async function probeAll(): Promise<void> {
-    if (probing) return;
-    probing = true;
-    try {
-      for (const dev of deviceStore.list()) {
-        if (dev.id === deviceStore.activeId()) continue;
-        const info = await probeDevice(dev.wssUrl);
-        if (info) {
-          reachable.set(dev.id, info);
-          deviceStore.applyWelcome(dev.id, info); // adopt mac/name (fires rerender)
-        } else {
-          reachable.delete(dev.id);
-        }
-      }
-      rerender();
-    } finally {
-      probing = false;
-    }
-  }
-  void probeAll();
-  probeTimer = window.setInterval(() => void probeAll(), 20_000);
 }
 
-/** Open a transient wss to read a device's welcome (MAC + name), then close.
- * Returns null if it can't be reached (untrusted cert, offline, timeout). */
-async function probeDevice(wssUrl: string): Promise<{ mac: string; deviceName: string } | null> {
-  const client = new LedMapperClient(wssUrl);
-  try {
-    const timeout = new Promise<never>((_, rej) =>
-      setTimeout(() => rej(new Error("probe timeout")), 4000),
-    );
-    await Promise.race([client.connect(), timeout]);
-    const w = client.welcome;
-    return w ? { mac: w.mac, deviceName: w.deviceName } : null;
-  } catch {
-    return null;
-  } finally {
-    client.close();
-  }
-}
-
-function render(reachable: Map<string, { mac: string; deviceName: string }>): HTMLElement {
+function render(): HTMLElement {
   const wrap = document.createElement("div");
   const status = appState.status;
   const activeId = deviceStore.activeId();
@@ -126,9 +85,12 @@ function render(reachable: Map<string, { mac: string; deviceName: string }>): HT
     wrap.append(empty);
   }
 
-  for (const dev of devices) {
-    wrap.append(deviceRow(dev, dev.id === activeId, status, reachable.has(dev.id)));
-  }
+  appendGrouped(
+    wrap,
+    devices,
+    (dev) => dev.folder,
+    (dev) => deviceRow(dev, dev.id === activeId, status, deviceProber.isReachable(dev.id)),
+  );
 
   // -- add-device section (compact icon buttons under a labelled divider).
   const addSection = document.createElement("div");
@@ -197,7 +159,7 @@ function deviceRow(
     btns.append(
       IconButton("ble-search", {
         title: "Find over Bluetooth",
-        onClick: () => bleRediscover(),
+        onClick: () => bleRediscover(dev),
       }),
     );
   }
@@ -298,7 +260,22 @@ function openDeviceDetail(dev: KnownDevice): void {
     rowFor("LAN address", deviceHost(cur)),
     rowFor("MAC address", cur.bleMac || "unknown (connect once)"),
     rowFor("Bluetooth name", cur.label),
+    rowFor("Folder", cur.folder || "Ungrouped"),
     save,
+    Button({
+      label: "Move to folder…",
+      icon: "folder",
+      variant: "quiet",
+      block: true,
+      onClick: () => {
+        sheet.close();
+        openFolderPicker({
+          current: cur.folder ?? "",
+          existing: deviceStore.folders(),
+          onPick: (folder) => deviceStore.setFolder(dev.id, folder),
+        });
+      },
+    }),
     Button({
       label: "Forget device",
       icon: "trash",

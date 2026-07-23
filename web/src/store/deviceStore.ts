@@ -15,12 +15,17 @@ export interface KnownDevice {
   label: string;
   /** Last hardware MAC the device reported (welcome.mac); "" until seen. */
   bleMac: string;
+  /** Web Bluetooth's stable device id captured when this device was provisioned
+   * over BLE — used to warn if a re-discover picks a DIFFERENT physical device. */
+  bleId?: string;
   /** True once the device reported its own name (so a host fallback never
    * clobbers a real device name). */
   named: boolean;
   /** A rename queued while disconnected — pushed to the device on next connect
    * (which renames its Bluetooth advertisement + persists it). */
   pendingName?: string;
+  /** Optional folder for organizing devices; "" / absent = ungrouped. */
+  folder?: string;
   /** ISO timestamp of the last successful connection. */
   lastSeen: string;
 }
@@ -47,6 +52,8 @@ function normalize(d: Partial<KnownDevice> & { id: string; wssUrl: string }): Kn
     label: d.label ?? labelForUrl(d.wssUrl),
     bleMac: d.bleMac ?? "",
     named: d.named ?? false,
+    ...(d.bleId ? { bleId: d.bleId } : {}),
+    ...(d.folder ? { folder: d.folder } : {}),
     ...(d.pendingName ? { pendingName: d.pendingName } : {}),
     lastSeen: d.lastSeen ?? new Date(0).toISOString(),
   };
@@ -159,6 +166,15 @@ class DeviceStore {
     });
   }
 
+  /** Record the Web Bluetooth device id captured during BLE provisioning, keyed
+   * by the resulting wss URL. */
+  setBleId(wssUrl: string, bleId: string): void {
+    if (!bleId) return;
+    this.mutate(idForUrl(wssUrl), (d) => {
+      d.bleId = bleId;
+    });
+  }
+
   setActive(id: string | null): void {
     if (id === null) localStorage.removeItem(ACTIVE_KEY);
     else localStorage.setItem(ACTIVE_KEY, id);
@@ -186,6 +202,20 @@ class DeviceStore {
       delete d.pendingName;
     });
     return pending;
+  }
+
+  /** Assign a folder (empty string = ungrouped). */
+  setFolder(id: string, folder: string): void {
+    this.mutate(id, (d) => {
+      d.folder = folder.trim();
+    });
+  }
+
+  /** Distinct non-empty folder names, sorted. */
+  folders(): string[] {
+    const set = new Set<string>();
+    for (const d of read()) if (d.folder) set.add(d.folder);
+    return [...set].sort((a, b) => a.localeCompare(b));
   }
 
   forget(id: string): void {

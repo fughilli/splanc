@@ -20,6 +20,7 @@ import {
   type ImprovDevice,
 } from "../../net/improv";
 import { prefs, type WifiCreds } from "../../store/prefs";
+import { deviceStore, type KnownDevice } from "../../store/deviceStore";
 import { appState } from "../app/state";
 
 export type AddMethod = "ble" | "manual";
@@ -120,8 +121,10 @@ export function openAddDevice(method: AddMethod, onDone?: () => void): void {
 
 /** Per-device "re-discover over Bluetooth": straight to the BLE picker, then
  * provision with the most-recent saved network (falling back to the dialog if
- * none is saved yet). */
-export function bleRediscover(onDone?: () => void): void {
+ * none is saved yet). When re-discovering a KNOWN device, warns first if the
+ * user picked a DIFFERENT physical device (a mismatched Web Bluetooth id) — so
+ * they don't accidentally re-point it and overwrite its name. */
+export function bleRediscover(known?: KnownDevice, onDone?: () => void): void {
   void (async () => {
     let device: ImprovDevice;
     try {
@@ -129,6 +132,14 @@ export function bleRediscover(onDone?: () => void): void {
     } catch (e) {
       if (!isCancel(e)) toast(`Bluetooth: ${msg(e)}`, { error: true });
       return;
+    }
+    if (known?.bleId && device.id && device.id !== known.bleId) {
+      const ok = window.confirm(
+        `The device you picked${device.name ? ` ("${device.name}")` : ""} doesn't look ` +
+          `like "${known.label}" — it's a different Bluetooth device. Setting it up will ` +
+          `connect to it and may overwrite "${known.label}"'s name. Continue?`,
+      );
+      if (!ok) return;
     }
     const creds = prefs.getWifiList()[0];
     if (!creds || !creds.ssid) {
@@ -186,6 +197,9 @@ async function provisionWithDevice(
   if (!target) throw new Error(`player joined but sent no usable address (${urls})`);
   setStatus(`Provisioned at ${target} — connecting…`);
   appState.connect(target);
+  // Remember which physical Bluetooth device this record is, so a later
+  // re-discover can warn if a different one is picked.
+  if (device.id) deviceStore.setBleId(target, device.id);
   toast("Device provisioned");
 }
 

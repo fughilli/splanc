@@ -14,6 +14,7 @@ import { installIconSprite } from "../kit";
 import { Router } from "./router";
 import { Shell } from "./shell";
 import { initPwa } from "./pwa";
+import { deviceProber } from "../../net/deviceProber";
 import { appState } from "./state";
 import { mapStore } from "../../store/mapStore";
 import { seedBuiltinMaps } from "../../store/seedMaps";
@@ -38,6 +39,9 @@ async function main(): Promise<void> {
 
   // PWA: register the service worker + offer the install banner / ⋯-menu entry.
   initPwa();
+
+  // Lazily probe known devices' liveness in the background (1/min → 1/10min).
+  deviceProber.start();
 
   const router = new Router(shell.outlet);
   shell.attach(router);
