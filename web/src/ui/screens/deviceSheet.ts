@@ -79,29 +79,31 @@ function render(): HTMLElement {
     wrap.append(deviceRow(dev, dev.id === activeId, status));
   }
 
-  // -- actions
-  const actions = document.createElement("div");
-  actions.className = "device-actions";
-  actions.append(
-    Button({
-      label: "Add device (Bluetooth)",
-      icon: "bluetooth",
-      variant: "quiet",
-      block: true,
+  // -- add-device section: a labelled divider, then two compact icon buttons
+  // side by side (Bluetooth onboarding / manual address). Icon-only keeps them
+  // small; the label tells the user what the row is for.
+  const addSection = document.createElement("div");
+  addSection.className = "device-add";
+  const addLabel = document.createElement("div");
+  addLabel.className = "device-add-label";
+  addLabel.textContent = "Add device…";
+  const addRow = document.createElement("div");
+  addRow.className = "device-add-row";
+  addRow.append(
+    IconButton("bluetooth", {
+      title: "Add device (Bluetooth)",
       onClick: () => {
         openHandle?.close();
         location.hash = "#/onboard";
       },
     }),
-    Button({
-      label: "Enter address manually",
-      icon: "link",
-      variant: "quiet",
-      block: true,
+    IconButton("link", {
+      title: "Enter address manually",
       onClick: () => addManual(),
     }),
   );
-  wrap.append(actions);
+  addSection.append(addLabel, addRow);
+  wrap.append(addSection);
   return wrap;
 }
 
