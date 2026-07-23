@@ -39,7 +39,7 @@ import {
 import { effectStore } from "../../store/effectStore";
 import { mapStore } from "../../store/mapStore";
 import { appState } from "../app/state";
-import { Button, Field, IconButton, toast } from "../kit";
+import { Button, IconButton, toast } from "../kit";
 import { FxLayout } from "../../effects/editor/layout";
 import { openAiKeySheet } from "./aiKeySheet";
 import type { Router, Screen } from "../app/router";
@@ -97,11 +97,58 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     }
   }
 
-  const nameField = Field({ label: "Effect name", placeholder: "My effect" });
-  nameField.el.classList.add("fxedit-name");
-  nameField.input.addEventListener("change", () => {
-    void effectStore.rename(effectId, nameField.input.value.trim() || "Untitled effect");
+  // -- inline-editable effect name (a small pill; click → input in place) ----
+  // Rendered as plain text; clicking swaps in an input that commits on
+  // Enter/blur (effectStore.rename) and cancels on Esc. It lives in the floating
+  // control cluster (top-left), NOT as a full Field row.
+  let effectName = "Untitled effect";
+  const nameLabel = document.createElement("button");
+  nameLabel.type = "button";
+  nameLabel.className = "fxedit-namepill";
+  nameLabel.title = "Rename effect";
+  const nameInput = document.createElement("input");
+  nameInput.className = "fxedit-nameinput";
+  nameInput.spellcheck = false;
+  nameInput.autocapitalize = "off";
+  nameInput.setAttribute("autocomplete", "off");
+  nameInput.style.display = "none";
+
+  function setNameText(name: string): void {
+    effectName = name;
+    nameLabel.textContent = name;
+  }
+  function beginNameEdit(): void {
+    nameInput.value = effectName;
+    nameLabel.style.display = "none";
+    nameInput.style.display = "";
+    nameInput.focus();
+    nameInput.select();
+  }
+  function commitNameEdit(): void {
+    if (nameInput.style.display === "none") return;
+    const next = nameInput.value.trim() || "Untitled effect";
+    nameInput.style.display = "none";
+    nameLabel.style.display = "";
+    if (next !== effectName) {
+      setNameText(next);
+      void effectStore.rename(effectId, next);
+    }
+  }
+  function cancelNameEdit(): void {
+    nameInput.style.display = "none";
+    nameLabel.style.display = "";
+  }
+  nameLabel.addEventListener("click", beginNameEdit);
+  nameInput.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      commitNameEdit();
+    } else if (ev.key === "Escape") {
+      ev.preventDefault();
+      cancelNameEdit();
+    }
   });
+  nameInput.addEventListener("blur", commitNameEdit);
 
   // -- code editor: transparent textarea layered над a highlighted backdrop --
   const editorWrap = document.createElement("div");
@@ -433,17 +480,23 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     if (!connected) devStatus.textContent = "Connect a device (tap the status pill) to send this effect.";
   }
 
-  // -- editor header + ⋯ overflow menu --------------------------------------
-  // The Shell owns the app bar and only exposes setChrome(); to keep all key
-  // config out of the editor BODY we add an editor-local header row with a ⋯
-  // kebab whose menu holds "AI key…" and the disassembly toggle.
-  const header = document.createElement("div");
-  header.className = "fxedit-header";
-  const headerTitle = document.createElement("div");
-  headerTitle.className = "fxedit-header-title";
-  headerTitle.textContent = "Effect editor";
+  // -- floating chrome + ⋯ overflow menu ------------------------------------
+  // The editor route runs under the Shell's OVERLAY chrome (app-bar + tab-bar
+  // hidden), so all controls live in small, semi-transparent clusters that
+  // OVERLAY the workspace corners instead of pushing layout:
+  //   • top-left:  floating Back button + the inline-editable name pill
+  //   • top-right: a floating ⋯ overflow menu (AI key…, disasm toggle)
+  const floatL = document.createElement("div");
+  floatL.className = "fxedit-float fxedit-float--l";
+  const backBtn = IconButton("back", { title: "Back to effects", onClick: () => router.navigate("/effects") });
+  backBtn.classList.add("fxedit-floatbtn");
+  floatL.append(backBtn, nameLabel, nameInput);
+
+  const floatR = document.createElement("div");
+  floatR.className = "fxedit-float fxedit-float--r";
   const kebab = IconButton("more", { title: "Editor menu", onClick: () => toggleMenu() });
-  header.append(headerTitle, kebab);
+  kebab.classList.add("fxedit-floatbtn");
+  floatR.appendChild(kebab);
 
   const menu = document.createElement("div");
   menu.className = "fxedit-menu";
@@ -468,7 +521,7 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     closeMenu();
   });
   menu.append(miKey, miDisasm);
-  header.appendChild(menu);
+  floatR.appendChild(menu);
 
   let menuOpen = false;
   function toggleMenu(): void {
@@ -800,8 +853,6 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   // localStorage. On narrow viewports the wide layout is ignored: code +
   // uniforms are primary, the rest cycle through an overflow tab strip.
   const layout = new FxLayout({
-    header,
-    nameEl: nameField.el,
     panes: [
       { id: "code", title: "Code", primary: true, node: editorWrap },
       { id: "uniforms", title: "Uniforms", primary: true, node: uniformsHost },
@@ -815,7 +866,8 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
       resizePreviewCanvas();
     },
   });
-  el.append(layout.root);
+  // The layout fills the workspace; the floating control clusters overlay it.
+  el.append(layout.root, floatL, floatR);
 
   let unsubAppState: (() => void) | null = null;
 
@@ -830,7 +882,7 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
       el.append(warn, back);
       return;
     }
-    nameField.input.value = rec.name;
+    setNameText(rec.name);
     codeEl.value = rec.source;
     paintHighlight();
 
@@ -880,9 +932,19 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
 
   return {
     el,
-    onMount: () => void load(),
+    onMount: () => {
+      // Lock document scroll while the editor is mounted. The editor root is
+      // pinned to the layout viewport (position: fixed) so the soft keyboard
+      // OVERLAYS instead of reflowing the layout — but the <html>/<body> can
+      // still scroll behind it, so we freeze them too. Removed on unmount.
+      document.documentElement.classList.add("is-locked");
+      document.body.classList.add("is-locked");
+      void load();
+    },
     onUnmount: () => {
       disposed = true;
+      document.documentElement.classList.remove("is-locked");
+      document.body.classList.remove("is-locked");
       closeMenu();
       closePopup();
       document.removeEventListener("selectionchange", onSelectionChange);

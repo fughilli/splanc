@@ -72,7 +72,9 @@ async function main(): Promise<void> {
       return EffectsScreen(router);
     })
     .add("/effects/edit/:id", (m) => {
-      shell.setChrome({ title: "Edit effect", back: true, tabs: false });
+      // Overlay chrome: hide the app-bar + tab-bar so the editor owns the whole
+      // viewport and supplies its own floating back/⋯/name controls.
+      shell.setChrome({ title: "Edit effect", back: true, tabs: false, overlay: true });
       return EffectEditorScreen(router, m.params["id"]!);
     })
     .add("/perf", () => {

@@ -16,27 +16,35 @@
  *    strip — a "Views" segmented switcher that shows exactly one secondary pane
  *    at a time (tap the active tab again to collapse it).
  *
- *  • WIDE (>= 720px): an N-up workspace of five regions —
+ *  • WIDE (>= 720px): an EDGE-DOCK workspace. ONE pane is the CENTER and fills
+ *    the remaining space; every other pane is docked to an edge (left / right /
+ *    top / bottom) as a resizable strip butting flush against the center:
+ *
  *        ┌──────────────── top ────────────────┐
- *        │ left │      center      │   right    │
+ *        │ left │      CENTER      │   right    │
  *        └────────────── bottom ───────────────┘
- *    Each region holds an ordered list of panes stacked vertically. Draggable
- *    dividers resize the columns (left|center|right) and the top/bottom rows.
- *    Each pane header has a ⋯-style relocate menu (snap to a region) and a
- *    hide toggle. The arrangement (which panes are where + split sizes + hidden
- *    set) persists to localStorage under a versioned key and survives reloads.
+ *
+ *    Each edge holds one or more panes; when more than one lands on the same
+ *    edge they are TABBED (a strip of pane tabs picks the visible one). Hairline
+ *    dividers between the center and each occupied edge drag to resize the strip.
+ *    Each pane header carries a ⋯-style relocate menu (dock to an edge, or make
+ *    it the center) plus a hide toggle. The arrangement (dock of each pane, the
+ *    center pane, edge sizes, active tab per edge, hidden set) persists to
+ *    localStorage under a versioned key and survives reloads.
  */
 
 import { icon } from "../../ui/kit/icons";
 
-export type Region = "top" | "left" | "center" | "right" | "bottom";
-const REGIONS: Region[] = ["top", "left", "center", "right", "bottom"];
-const REGION_LABEL: Record<Region, string> = {
-  top: "Top",
-  left: "Left",
+/** Where a pane can live: docked to an edge, or the single center pane. */
+export type Dock = "left" | "right" | "top" | "bottom" | "center";
+const EDGES: Exclude<Dock, "center">[] = ["left", "right", "top", "bottom"];
+const DOCKS: Dock[] = ["center", "left", "right", "top", "bottom"];
+const DOCK_LABEL: Record<Dock, string> = {
   center: "Center",
-  right: "Right",
-  bottom: "Bottom",
+  left: "Dock left",
+  right: "Dock right",
+  top: "Dock top",
+  bottom: "Dock bottom",
 };
 
 export interface PaneSpec {
@@ -50,31 +58,36 @@ export interface PaneSpec {
 
 interface Persisted {
   v: number;
-  slots: Record<Region, string[]>;
-  colSizes: [number, number, number]; // fractions for left|center|right
-  rowSizes: [number, number]; // fractions for top | bottom (of a nominal budget)
+  /** Which pane is the center (fills the remaining space). */
+  center: string;
+  /** Ordered pane ids docked at each edge (tabbed when more than one). */
+  docks: Record<Exclude<Dock, "center">, string[]>;
+  /** Active (front) pane id per edge when tabbed. */
+  active: Record<Exclude<Dock, "center">, string | null>;
+  /** Edge strip sizes as fractions of the workspace (0..1). */
+  edgeSizes: Record<Exclude<Dock, "center">, number>;
   split: number; // narrow: code-height fraction 0..1
   hidden: string[];
   activeTab: string | null; // narrow overflow active pane id (or null = collapsed)
 }
 
-const STORAGE_KEY = "fxedit.layout.v1";
+const STORAGE_KEY = "fxedit.layout.v2";
 const NARROW_QUERY = "(max-width: 719px)";
 
-/** Default WIDE arrangement: Code on the left; Uniforms + Preview stacked on
- * the right; Chat / Diagnostics / Disassembly as secondary panes in center. */
+/** Default WIDE arrangement: Code is the center; Uniforms + Preview dock right;
+ * Chat / Diagnostics / Disassembly dock bottom (disasm hidden by default). */
 function defaultLayout(): Persisted {
   return {
-    v: 1,
-    slots: {
-      top: [],
-      left: ["code"],
-      center: ["chat", "diagnostics", "disasm"],
+    v: 2,
+    center: "code",
+    docks: {
+      left: [],
       right: ["uniforms", "preview"],
-      bottom: [],
+      top: [],
+      bottom: ["diagnostics", "chat", "disasm"],
     },
-    colSizes: [0.42, 0.3, 0.28],
-    rowSizes: [0, 0], // top/bottom empty by default
+    active: { left: null, right: "uniforms", top: null, bottom: "diagnostics" },
+    edgeSizes: { left: 0.24, right: 0.3, top: 0.25, bottom: 0.32 },
     split: 0.62,
     hidden: ["disasm"],
     activeTab: "preview",
@@ -86,19 +99,29 @@ function loadPersisted(): Persisted {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return defaultLayout();
     const p = JSON.parse(raw) as Partial<Persisted>;
-    if (p.v !== 1 || !p.slots) return defaultLayout();
+    if (p.v !== 2 || !p.docks) return defaultLayout();
     const def = defaultLayout();
     return {
-      v: 1,
-      slots: {
-        top: p.slots.top ?? [],
-        left: p.slots.left ?? [],
-        center: p.slots.center ?? [],
-        right: p.slots.right ?? [],
-        bottom: p.slots.bottom ?? [],
+      v: 2,
+      center: typeof p.center === "string" ? p.center : def.center,
+      docks: {
+        left: p.docks.left ?? [],
+        right: p.docks.right ?? [],
+        top: p.docks.top ?? [],
+        bottom: p.docks.bottom ?? [],
       },
-      colSizes: p.colSizes ?? def.colSizes,
-      rowSizes: p.rowSizes ?? def.rowSizes,
+      active: {
+        left: p.active?.left ?? null,
+        right: p.active?.right ?? null,
+        top: p.active?.top ?? null,
+        bottom: p.active?.bottom ?? null,
+      },
+      edgeSizes: {
+        left: p.edgeSizes?.left ?? def.edgeSizes.left,
+        right: p.edgeSizes?.right ?? def.edgeSizes.right,
+        top: p.edgeSizes?.top ?? def.edgeSizes.top,
+        bottom: p.edgeSizes?.bottom ?? def.edgeSizes.bottom,
+      },
       split: typeof p.split === "number" ? p.split : def.split,
       hidden: p.hidden ?? def.hidden,
       activeTab: p.activeTab ?? def.activeTab,
@@ -109,11 +132,6 @@ function loadPersisted(): Persisted {
 }
 
 interface Opts {
-  /** The editor header row (name + ⋯ menu + compile chip live here). Re-parented
-   * to the top of the workspace on every render so it stays visible. */
-  header: HTMLElement;
-  /** The effect-name field row, kept alongside the header. */
-  nameEl: HTMLElement;
   panes: PaneSpec[];
   /** Called after any relayout (DOM re-parent) or viewport resize, so the screen
    * can recompute the MapView canvas backing store. */
@@ -156,27 +174,43 @@ export class FxLayout {
     };
   }
 
-  /** Ensure every known pane appears in exactly one slot and every slot id is
+  /** Ensure every known pane appears in exactly one dock/center and every id is
    * known — guards against stale/partial persisted layouts. */
   private reconcileState(): void {
     const seen = new Set<string>();
-    for (const r of REGIONS) {
-      this.state.slots[r] = this.state.slots[r].filter((id) => {
+    // Center must be a known pane.
+    if (this.panes.has(this.state.center)) seen.add(this.state.center);
+    else this.state.center = "";
+    for (const e of EDGES) {
+      this.state.docks[e] = this.state.docks[e].filter((id) => {
         if (!this.panes.has(id) || seen.has(id)) return false;
         seen.add(id);
         return true;
       });
     }
+    // Any pane not placed yet → dock somewhere sensible (or become center if
+    // none exists yet).
     for (const id of this.order) {
-      if (!seen.has(id)) {
-        // Missing pane → put it somewhere sensible.
+      if (seen.has(id)) continue;
+      if (!this.state.center) {
+        this.state.center = id;
+      } else {
         const spec = this.panes.get(id)!;
-        const target: Region = spec.primary ? (id === "code" ? "left" : "right") : "center";
-        this.state.slots[target].push(id);
-        seen.add(id);
+        const target: Exclude<Dock, "center"> = spec.primary ? "right" : "bottom";
+        this.state.docks[target].push(id);
       }
+      seen.add(id);
     }
+    if (!this.state.center) this.state.center = this.order[0] ?? "";
+    // Heal active-tab pointers so each occupied edge fronts a visible pane.
+    for (const e of EDGES) this.healActive(e);
     this.state.hidden = this.state.hidden.filter((id) => this.panes.has(id));
+  }
+
+  private healActive(edge: Exclude<Dock, "center">): void {
+    const vis = this.visibleAt(edge);
+    const cur = this.state.active[edge];
+    if (!cur || !vis.includes(cur)) this.state.active[edge] = vis[0] ?? null;
   }
 
   mount(): void {
@@ -208,6 +242,12 @@ export class FxLayout {
       const spec = this.panes.get(id);
       if (spec && !spec.primary) this.state.activeTab = id;
     }
+    // On wide, showing a docked pane fronts it on its edge.
+    if (on && !this.mql.matches) {
+      const e = EDGES.find((edge) => this.state.docks[edge].includes(id));
+      if (e) this.state.active[e] = id;
+    }
+    for (const e of EDGES) this.healActive(e);
     this.persist();
     this.render();
   }
@@ -220,19 +260,58 @@ export class FxLayout {
     }
   }
 
-  /** Move a pane to a region (wide) — appended to that region's stack. */
-  relocate(id: string, region: Region): void {
-    for (const r of REGIONS) {
-      this.state.slots[r] = this.state.slots[r].filter((x) => x !== id);
+  /** Snap a pane to a dock (edge) or make it the center. */
+  relocate(id: string, dock: Dock): void {
+    if (dock === "center") {
+      // Displace the current center to the pane's former edge (or right).
+      const from = this.edgeOf(id);
+      const prevCenter = this.state.center;
+      this.removeFromEdges(id);
+      this.state.center = id;
+      if (prevCenter && prevCenter !== id) {
+        const home = from ?? "right";
+        this.state.docks[home].push(prevCenter);
+        this.state.active[home] = prevCenter;
+      }
+    } else {
+      if (this.state.center === id) {
+        // Moving the center away — promote another pane to center so the
+        // workspace always has one. Prefer a docked pane; else keep as-is.
+        const replacement = this.firstDockedOther(id);
+        if (!replacement) return; // can't leave center empty
+        this.removeFromEdges(replacement);
+        this.state.center = replacement;
+      } else {
+        this.removeFromEdges(id);
+      }
+      this.state.docks[dock].push(id);
+      this.state.active[dock] = id;
     }
-    this.state.slots[region].push(id);
+    for (const e of EDGES) this.healActive(e);
     this.persist();
     this.render();
   }
 
-  regionOf(id: string): Region {
-    for (const r of REGIONS) if (this.state.slots[r].includes(id)) return r;
-    return "center";
+  private firstDockedOther(exclude: string): string | null {
+    for (const e of EDGES) {
+      for (const id of this.state.docks[e]) if (id !== exclude) return id;
+    }
+    return null;
+  }
+
+  private removeFromEdges(id: string): void {
+    for (const e of EDGES) {
+      this.state.docks[e] = this.state.docks[e].filter((x) => x !== id);
+    }
+  }
+
+  private edgeOf(id: string): Exclude<Dock, "center"> | null {
+    return EDGES.find((e) => this.state.docks[e].includes(id)) ?? null;
+  }
+
+  dockOf(id: string): Dock {
+    if (this.state.center === id) return "center";
+    return this.edgeOf(id) ?? "center";
   }
 
   // -- rendering ------------------------------------------------------------
@@ -254,96 +333,159 @@ export class FxLayout {
   private wrapped(id: string, showControls: boolean): HTMLElement {
     const w = this.wrappers.get(id)!;
     w.setControlsVisible(showControls);
-    w.syncHideLabel(this.isVisible(id));
+    w.setHeaderVisible(true);
     return w.attach();
   }
 
+  private visibleAt(edge: Exclude<Dock, "center">): string[] {
+    return this.state.docks[edge].filter((id) => this.isVisible(id));
+  }
+
+  // ---- WIDE: edge-dock ----------------------------------------------------
+
   private renderWide(): void {
-    // Header on top, then the grid.
-    this.root.append(this.opts.header, this.opts.nameEl);
-
     const grid = document.createElement("div");
-    grid.className = "fxlayout-grid";
+    grid.className = "fxlayout-dock";
 
-    const hasTop = this.visibleIn("top").length > 0;
-    const hasBottom = this.visibleIn("bottom").length > 0;
-    // Row template includes explicit divider tracks so the grid track count
-    // matches the appended children (slot / divider / mid / divider / slot).
-    grid.style.gridTemplateRows = this.gridRowTemplate();
+    const hasL = this.visibleAt("left").length > 0;
+    const hasR = this.visibleAt("right").length > 0;
+    const hasT = this.visibleAt("top").length > 0;
+    const hasB = this.visibleAt("bottom").length > 0;
 
-    if (hasTop) {
-      grid.appendChild(this.renderSlot("top"));
-      grid.appendChild(this.divider("row-top"));
+    // Column tracks: [left] [div] center [div] [right]
+    const cols: string[] = [];
+    if (hasL) cols.push(`${this.frac("left")}fr`, "var(--fxdiv)");
+    cols.push("1fr");
+    if (hasR) cols.push("var(--fxdiv)", `${this.frac("right")}fr`);
+    // Row tracks: [top] [div] middle [div] [bottom]
+    const rows: string[] = [];
+    if (hasT) rows.push(`${this.frac("top")}fr`, "var(--fxdiv)");
+    rows.push("1fr");
+    if (hasB) rows.push("var(--fxdiv)", `${this.frac("bottom")}fr`);
+
+    grid.style.gridTemplateColumns = cols.join(" ");
+    grid.style.gridTemplateRows = rows.join(" ");
+
+    // Compute grid line indices for the center cell.
+    const colStart = hasL ? 3 : 1;
+    const rowStart = hasT ? 3 : 1;
+
+    // Top/bottom strips span the FULL width so they butt the outer edges.
+    const totalCols = cols.length;
+    if (hasT) {
+      const strip = this.renderEdge("top");
+      strip.style.gridColumn = `1 / ${totalCols + 1}`;
+      strip.style.gridRow = "1";
+      grid.appendChild(strip);
+      grid.appendChild(this.dockDivider("top", `1 / ${totalCols + 1}`, "2"));
+    }
+    if (hasL) {
+      const strip = this.renderEdge("left");
+      strip.style.gridColumn = "1";
+      strip.style.gridRow = `${rowStart}`;
+      grid.appendChild(strip);
+      grid.appendChild(this.dockDivider("left", "2", `${rowStart}`));
     }
 
-    // Middle row: left | center | right with column dividers.
-    const mid = document.createElement("div");
-    mid.className = "fxlayout-midrow";
-    const cols = (["left", "center", "right"] as Region[]).filter(
-      (r) => this.visibleIn(r).length > 0,
-    );
-    mid.style.gridTemplateColumns = this.midColTemplate(cols);
-    cols.forEach((r, i) => {
-      mid.appendChild(this.renderSlot(r));
-      if (i < cols.length - 1) mid.appendChild(this.divider(`col-${r}`));
-    });
-    grid.appendChild(mid);
+    // Center.
+    if (this.state.center) {
+      const c = document.createElement("div");
+      c.className = "fxlayout-center";
+      c.style.gridColumn = `${colStart}`;
+      c.style.gridRow = `${rowStart}`;
+      c.appendChild(this.wrapped(this.state.center, true));
+      grid.appendChild(c);
+    }
 
-    if (hasBottom) {
-      grid.appendChild(this.divider("row-bottom"));
-      grid.appendChild(this.renderSlot("bottom"));
+    if (hasR) {
+      const divCol = colStart + 1;
+      grid.appendChild(this.dockDivider("right", `${divCol}`, `${rowStart}`));
+      const strip = this.renderEdge("right");
+      strip.style.gridColumn = `${divCol + 1}`;
+      strip.style.gridRow = `${rowStart}`;
+      grid.appendChild(strip);
+    }
+    if (hasB) {
+      const divRow = rowStart + 1;
+      grid.appendChild(this.dockDivider("bottom", `1 / ${totalCols + 1}`, `${divRow}`));
+      const strip = this.renderEdge("bottom");
+      strip.style.gridColumn = `1 / ${totalCols + 1}`;
+      strip.style.gridRow = `${divRow + 1}`;
+      grid.appendChild(strip);
     }
 
     this.root.appendChild(grid);
   }
 
-  private midColTemplate(cols: Region[]): string {
-    const idx: Record<string, number> = { left: 0, center: 1, right: 2 };
-    const parts: string[] = [];
-    cols.forEach((r, i) => {
-      const f = Math.max(0.12, this.state.colSizes[idx[r]!] ?? 0.33);
-      parts.push(`${f}fr`);
-      if (i < cols.length - 1) parts.push("var(--fxdiv)");
-    });
-    return parts.join(" ");
+  private frac(edge: Exclude<Dock, "center">): number {
+    return clamp(this.state.edgeSizes[edge] || 0.28, 0.1, 0.7);
   }
 
-  private visibleIn(region: Region): string[] {
-    return this.state.slots[region].filter((id) => this.isVisible(id));
-  }
-
-  private renderSlot(region: Region): HTMLElement {
-    const slot = document.createElement("div");
-    slot.className = `fxlayout-slot fxlayout-slot--${region}`;
-    for (const id of this.visibleIn(region)) {
-      slot.appendChild(this.wrapped(id, true));
+  /** An edge strip: an optional tab bar (when >1 pane) over the fronted pane. */
+  private renderEdge(edge: Exclude<Dock, "center">): HTMLElement {
+    const strip = document.createElement("div");
+    strip.className = `fxlayout-edge fxlayout-edge--${edge}`;
+    const vis = this.visibleAt(edge);
+    if (vis.length > 1) {
+      const tabs = document.createElement("div");
+      tabs.className = "fxlayout-edgetabs";
+      const activeId = this.state.active[edge] ?? vis[0]!;
+      for (const id of vis) {
+        const spec = this.panes.get(id)!;
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "fxlayout-edgetab" + (id === activeId ? " fxlayout-edgetab--active" : "");
+        btn.textContent = spec.title;
+        btn.addEventListener("click", () => {
+          this.state.active[edge] = id;
+          this.persist();
+          this.render();
+        });
+        tabs.appendChild(btn);
+      }
+      strip.appendChild(tabs);
     }
-    return slot;
+    const activeId = vis.length > 1 ? (this.state.active[edge] ?? vis[0]!) : vis[0];
+    if (activeId) strip.appendChild(this.wrapped(activeId, true));
+    return strip;
   }
 
-  private divider(kind: string): HTMLElement {
+  private dockDivider(edge: Exclude<Dock, "center">, col: string, row: string): HTMLElement {
+    const horizontal = edge === "left" || edge === "right"; // drag along X
     const d = document.createElement("div");
-    const horizontal = kind.startsWith("col-");
-    d.className = "fxlayout-divider " + (horizontal ? "fxlayout-divider--v" : "fxlayout-divider--h");
+    d.className =
+      "fxlayout-divider " + (horizontal ? "fxlayout-divider--v" : "fxlayout-divider--h");
+    d.style.gridColumn = col;
+    d.style.gridRow = row;
     d.setAttribute("role", "separator");
-    d.addEventListener("pointerdown", (e) => this.startDividerDrag(e, kind, horizontal));
+    d.addEventListener("pointerdown", (e) => this.startEdgeDrag(e, edge, horizontal));
     return d;
   }
 
-  private startDividerDrag(e: PointerEvent, kind: string, horizontal: boolean): void {
+  private startEdgeDrag(
+    e: PointerEvent,
+    edge: Exclude<Dock, "center">,
+    horizontal: boolean,
+  ): void {
     e.preventDefault();
     const target = e.currentTarget as HTMLElement;
-    const container = horizontal
-      ? (target.parentElement as HTMLElement) // .fxlayout-midrow
-      : (target.parentElement as HTMLElement); // .fxlayout-grid
+    const grid = this.root.querySelector(".fxlayout-dock") as HTMLElement | null;
+    if (!grid) return;
     target.setPointerCapture(e.pointerId);
-    const rect = container.getBoundingClientRect();
+    const rect = grid.getBoundingClientRect();
     const total = horizontal ? rect.width : rect.height;
 
     const move = (ev: PointerEvent) => {
       const pos = horizontal ? ev.clientX - rect.left : ev.clientY - rect.top;
-      const frac = clamp(pos / Math.max(1, total), 0.12, 0.88);
-      this.applyDivider(kind, frac);
+      // For right/bottom edges the strip is measured from the far side.
+      const raw = pos / Math.max(1, total);
+      const f =
+        edge === "left" || edge === "top"
+          ? raw
+          : 1 - raw;
+      this.state.edgeSizes[edge] = clamp(f, 0.1, 0.7);
+      grid.style.gridTemplateColumns = this.wideCols();
+      grid.style.gridTemplateRows = this.wideRows();
       this.opts.onRelayout();
     };
     const up = (ev: PointerEvent) => {
@@ -356,57 +498,24 @@ export class FxLayout {
     target.addEventListener("pointerup", up);
   }
 
-  /** Update the relevant size fraction and re-apply the grid template in place
-   * (no full re-render — panes keep their DOM parents while dragging). */
-  private applyDivider(kind: string, frac: number): void {
-    const grid = this.root.querySelector(".fxlayout-grid") as HTMLElement | null;
-    const mid = this.root.querySelector(".fxlayout-midrow") as HTMLElement | null;
-    if (kind === "row-top") {
-      // frac is the top's share of the whole grid height.
-      this.state.rowSizes[0] = frac;
-      if (grid) grid.style.gridTemplateRows = this.gridRowTemplate();
-    } else if (kind === "row-bottom") {
-      this.state.rowSizes[1] = 1 - frac;
-      if (grid) grid.style.gridTemplateRows = this.gridRowTemplate();
-    } else if (kind.startsWith("col-")) {
-      const cols = (["left", "center", "right"] as Region[]).filter(
-        (r) => this.visibleIn(r).length > 0,
-      );
-      const idx: Record<string, number> = { left: 0, center: 1, right: 2 };
-      const which = kind.slice(4) as Region; // the col to the LEFT of the divider
-      const pos = cols.indexOf(which);
-      const next = cols[pos + 1];
-      if (next) {
-        // Redistribute only within this adjacent pair; other columns keep their
-        // fractions. `frac` is the divider's position across the whole midrow —
-        // convert it to a share of the pair's combined span so the drag tracks
-        // the pointer regardless of how many columns precede the pair.
-        const a = this.state.colSizes[idx[which]!]!;
-        const b = this.state.colSizes[idx[next]!]!;
-        const pair = a + b;
-        const before = cols.slice(0, pos).reduce((s, r) => s + this.state.colSizes[idx[r]!]!, 0);
-        const totalF = cols.reduce((s, r) => s + this.state.colSizes[idx[r]!]!, 0);
-        const local = clamp((frac * totalF - before) / pair, 0.15, 0.85);
-        this.state.colSizes[idx[which]!] = pair * local;
-        this.state.colSizes[idx[next]!] = pair * (1 - local);
-      }
-      if (mid) mid.style.gridTemplateColumns = this.midColTemplate(cols);
-    }
+  private wideCols(): string {
+    const cols: string[] = [];
+    if (this.visibleAt("left").length) cols.push(`${this.frac("left")}fr`, "var(--fxdiv)");
+    cols.push("1fr");
+    if (this.visibleAt("right").length) cols.push("var(--fxdiv)", `${this.frac("right")}fr`);
+    return cols.join(" ");
   }
-
-  private gridRowTemplate(): string {
-    const hasTop = this.visibleIn("top").length > 0;
-    const hasBottom = this.visibleIn("bottom").length > 0;
+  private wideRows(): string {
     const rows: string[] = [];
-    if (hasTop) rows.push(`${Math.max(0.08, this.state.rowSizes[0] || 0.22)}fr`, "var(--fxdiv)");
+    if (this.visibleAt("top").length) rows.push(`${this.frac("top")}fr`, "var(--fxdiv)");
     rows.push("1fr");
-    if (hasBottom) rows.push("var(--fxdiv)", `${Math.max(0.08, this.state.rowSizes[1] || 0.22)}fr`);
+    if (this.visibleAt("bottom").length) rows.push("var(--fxdiv)", `${this.frac("bottom")}fr`);
     return rows.join(" ");
   }
 
-  private renderNarrow(): void {
-    this.root.append(this.opts.header, this.opts.nameEl);
+  // ---- NARROW: code/uniforms split + overflow tabs ------------------------
 
+  private renderNarrow(): void {
     // Primary split: code over uniforms with a draggable divider.
     const split = document.createElement("div");
     split.className = "fxlayout-nsplit";
@@ -490,31 +599,34 @@ export class FxLayout {
     this.closeRelocate();
     const pop = document.createElement("div");
     pop.className = "fxlayout-relo";
-    const cur = this.regionOf(id);
+    const cur = this.dockOf(id);
     const title = document.createElement("div");
     title.className = "fxlayout-relo-title";
-    title.textContent = "Move to";
+    title.textContent = "Move pane";
     pop.appendChild(title);
-    for (const r of REGIONS) {
+    for (const d of DOCKS) {
       const b = document.createElement("button");
       b.type = "button";
-      b.className = "fxlayout-relo-item" + (r === cur ? " fxlayout-relo-item--cur" : "");
-      b.textContent = REGION_LABEL[r];
+      b.className = "fxlayout-relo-item" + (d === cur ? " fxlayout-relo-item--cur" : "");
+      b.textContent = DOCK_LABEL[d];
       b.addEventListener("click", () => {
         this.closeRelocate();
-        this.relocate(id, r);
+        this.relocate(id, d);
       });
       pop.appendChild(b);
     }
-    const hide = document.createElement("button");
-    hide.type = "button";
-    hide.className = "fxlayout-relo-item fxlayout-relo-hide";
-    hide.textContent = "Hide pane";
-    hide.addEventListener("click", () => {
-      this.closeRelocate();
-      this.setVisible(id, false);
-    });
-    pop.appendChild(hide);
+    // The center pane can't be hidden (the workspace must keep one).
+    if (this.state.center !== id) {
+      const hide = document.createElement("button");
+      hide.type = "button";
+      hide.className = "fxlayout-relo-item fxlayout-relo-hide";
+      hide.textContent = "Hide pane";
+      hide.addEventListener("click", () => {
+        this.closeRelocate();
+        this.setVisible(id, false);
+      });
+      pop.appendChild(hide);
+    }
 
     anchor.parentElement?.appendChild(pop);
     const onDoc = (ev: MouseEvent) => {
@@ -541,6 +653,7 @@ export class FxLayout {
 class PaneWrap {
   readonly el: HTMLElement;
   private readonly body: HTMLElement;
+  private readonly head: HTMLElement;
   private readonly reloBtn: HTMLButtonElement;
   private readonly hideBtn: HTMLButtonElement;
   private readonly controls: HTMLElement;
@@ -553,8 +666,8 @@ class PaneWrap {
     this.el.className = "fxpane";
     this.el.dataset.pane = spec.id;
 
-    const head = document.createElement("div");
-    head.className = "fxpane-head";
+    this.head = document.createElement("div");
+    this.head.className = "fxpane-head";
     const title = document.createElement("span");
     title.className = "fxpane-title";
     title.textContent = spec.title;
@@ -571,11 +684,11 @@ class PaneWrap {
     });
     this.controls.append(this.reloBtn, this.hideBtn);
 
-    head.append(title, this.controls);
+    this.head.append(title, this.controls);
     this.body = document.createElement("div");
     this.body.className = "fxpane-body";
     this.body.appendChild(spec.node);
-    this.el.append(head, this.body);
+    this.el.append(this.head, this.body);
   }
 
   attach(): HTMLElement {
@@ -590,8 +703,8 @@ class PaneWrap {
     this.controls.style.display = on ? "" : "none";
   }
 
-  syncHideLabel(_visible: boolean): void {
-    /* reserved for future stateful label; hide button is symmetric today */
+  setHeaderVisible(on: boolean): void {
+    this.head.style.display = on ? "" : "none";
   }
 }
 
