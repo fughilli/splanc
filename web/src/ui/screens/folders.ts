@@ -58,14 +58,39 @@ export function openFolderPicker(opts: {
   sheet.body.append(list, newWrap);
 }
 
-/** Append `items` to `listEl`, grouped under folder headers. Folders come first
- * (alphabetical), each with a header; ungrouped items follow (under an
- * "Ungrouped" header only when folders exist, else laid out flat). */
+const COLLAPSE_KEY = "ledmapper.foldersCollapsed";
+function readCollapsed(): Set<string> {
+  try {
+    const raw = localStorage.getItem(COLLAPSE_KEY);
+    const arr = raw ? (JSON.parse(raw) as string[]) : [];
+    return new Set(Array.isArray(arr) ? arr : []);
+  } catch {
+    return new Set();
+  }
+}
+function writeCollapsed(s: Set<string>): void {
+  try {
+    localStorage.setItem(COLLAPSE_KEY, JSON.stringify([...s]));
+  } catch {
+    /* non-fatal */
+  }
+}
+
+/**
+ * Append `items` to `listEl`, grouped under COLLAPSIBLE folder headers. Folders
+ * come first (alphabetical), each with a header showing a chevron + item count;
+ * clicking a header collapses/expands that folder (persisted per `opts.scope`).
+ * Ungrouped items follow (under an "Ungrouped" header only when folders exist,
+ * else laid out flat). Headers span the full row so this works with both the
+ * mobile flex list and the wide-screen card grid; collapse just hides the item
+ * nodes, leaving the responsive layout intact.
+ */
 export function appendGrouped<T>(
   listEl: HTMLElement,
   items: T[],
   getFolder: (item: T) => string | undefined,
   renderItem: (item: T) => Node,
+  opts: { scope: string },
 ): void {
   const groups = new Map<string, T[]>();
   const ungrouped: T[] = [];
@@ -80,22 +105,55 @@ export function appendGrouped<T>(
     }
   }
   const hasFolders = groups.size > 0;
+  const collapsed = readCollapsed();
+
+  const section = (folder: string, arr: T[], muted = false): void => {
+    const key = `${opts.scope}:${folder}`;
+    let isCollapsed = collapsed.has(key);
+
+    const header = document.createElement("button");
+    header.type = "button";
+    header.className = "folder-header" + (muted ? " folder-header--muted" : "");
+    const chev = icon("chevron");
+    chev.classList.add("folder-chevron");
+    header.append(chev);
+    if (!muted) header.append(icon("folder"));
+    const label = document.createElement("span");
+    label.className = "folder-header-name";
+    label.textContent = folder;
+    const count = document.createElement("span");
+    count.className = "folder-count";
+    count.textContent = String(arr.length);
+    header.append(label, count);
+    listEl.appendChild(header);
+
+    const nodes: HTMLElement[] = [];
+    for (const it of arr) {
+      const node = renderItem(it) as HTMLElement;
+      node.hidden = isCollapsed;
+      nodes.push(node);
+      listEl.appendChild(node);
+    }
+
+    const apply = (): void => {
+      header.classList.toggle("folder-header--collapsed", isCollapsed);
+      for (const n of nodes) n.hidden = isCollapsed;
+    };
+    apply();
+    header.addEventListener("click", () => {
+      isCollapsed = !isCollapsed;
+      if (isCollapsed) collapsed.add(key);
+      else collapsed.delete(key);
+      writeCollapsed(collapsed);
+      apply();
+    });
+  };
+
   for (const folder of [...groups.keys()].sort((a, b) => a.localeCompare(b))) {
-    listEl.appendChild(folderHeader(folder));
-    for (const it of groups.get(folder)!) listEl.appendChild(renderItem(it));
+    section(folder, groups.get(folder)!);
   }
   if (ungrouped.length > 0) {
-    if (hasFolders) listEl.appendChild(folderHeader("Ungrouped", true));
-    for (const it of ungrouped) listEl.appendChild(renderItem(it));
+    if (hasFolders) section("Ungrouped", ungrouped, true);
+    else for (const it of ungrouped) listEl.appendChild(renderItem(it));
   }
-}
-
-function folderHeader(name: string, muted = false): HTMLElement {
-  const h = document.createElement("div");
-  h.className = "folder-header" + (muted ? " folder-header--muted" : "");
-  if (!muted) h.append(icon("folder"));
-  const s = document.createElement("span");
-  s.textContent = name;
-  h.appendChild(s);
-  return h;
 }

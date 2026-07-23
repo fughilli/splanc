@@ -1630,22 +1630,51 @@ body.is-locked {
 }
 
 /* --- folders (library grouping + picker) --- */
+/* A collapsible section header. Spans the full row (grid-column: 1/-1) so it
+   works with both the mobile flex list and the wide-screen card grid. */
 .folder-header {
+  grid-column: 1 / -1;
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  margin: var(--sp-3) 0 var(--sp-1);
+  width: 100%;
+  margin: var(--sp-2) 0 0;
+  padding: 0.3rem 0.2rem;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  font: inherit;
   font-size: var(--f-caption);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--text-dim);
+  cursor: pointer;
+}
+.folder-header:hover {
+  color: var(--text);
 }
 .folder-header svg {
   width: 14px;
   height: 14px;
+  flex: 0 0 auto;
+}
+.folder-header-name {
+  flex: 1 1 auto;
+  text-align: left;
+}
+.folder-count {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.folder-chevron {
+  transition: transform 0.15s var(--ease);
+  transform: rotate(90deg); /* expanded → points down */
+}
+.folder-header--collapsed .folder-chevron {
+  transform: rotate(0deg); /* collapsed → points right */
 }
 .folder-header--muted {
-  opacity: 0.7;
+  opacity: 0.75;
 }
 .folder-picker {
   display: flex;

@@ -4,7 +4,7 @@
  * NEW screen (no equivalent in main.ts).
  */
 
-import { Button, Chip, EmptyState, IconButton, Sheet, toast, icon } from "../kit";
+import { ActionGrid, Button, Chip, EmptyState, IconButton, Sheet, toast, icon } from "../kit";
 import { mapStore, renderThumbnail, type StoredMapSummary } from "../../store/mapStore";
 import { appendGrouped, openFolderPicker } from "./folders";
 import type { Router, Screen } from "../app/router";
@@ -106,7 +106,7 @@ export function MapBrowserScreen(router: Router): Screen {
       );
       return;
     }
-    appendGrouped(listEl, rows, (m) => m.folder, row);
+    appendGrouped(listEl, rows, (m) => m.folder, row, { scope: "maps" });
   }
 
   function row(m: StoredMapSummary): HTMLElement {
@@ -157,59 +157,71 @@ export function MapBrowserScreen(router: Router): Screen {
 
   function openContextSheet(m: StoredMapSummary): void {
     const sheet = Sheet(m.name);
-    const item = (label: string, ic: NonNullable<Parameters<typeof Button>[0]["icon"]>, fn: () => void): HTMLElement =>
-      Button({ label, icon: ic, variant: "quiet", block: true, onClick: fn });
-    sheet.body.className = "context-sheet";
+    const act = (fn: () => void) => (): void => {
+      sheet.close();
+      fn();
+    };
     sheet.body.append(
-      item("Rename", "edit", () => {
-        sheet.close();
-        void editText("Rename", m.name, (v) => mapStore.rename(m.id, v).then(refresh));
-      }),
-      item("Edit description", "edit", () => {
-        sheet.close();
-        void editText("Description", m.description, (v) => mapStore.setDescription(m.id, v).then(refresh));
-      }),
-      item("Tags", "tag", () => {
-        sheet.close();
-        void editText("Tags (space-separated)", m.tags.join(" "), (v) =>
-          mapStore.setTags(m.id, v.split(/\s+/)).then(refresh),
-        );
-      }),
-      item("Move to folder…", "folder", () => {
-        sheet.close();
-        void mapStore.folders().then((existing) =>
-          openFolderPicker({
-            current: m.folder ?? "",
-            existing,
-            onPick: (folder) => void mapStore.setFolder(m.id, folder).then(refresh),
-          }),
-        );
-      }),
-      item("Duplicate", "map", () => {
-        sheet.close();
-        void mapStore.duplicate(m.id).then(() => {
-          toast("Duplicated");
-          void refresh();
-        });
-      }),
-      item("Export .binpb", "download", () => {
-        sheet.close();
-        void exportMap(m);
-      }),
-      Button({
-        label: "Delete",
-        icon: "trash",
-        variant: "danger",
-        block: true,
-        onClick: () => {
-          if (!confirm(`Delete "${m.name}"? This cannot be undone.`)) return;
-          sheet.close();
-          void mapStore.delete(m.id).then(() => {
-            toast("Deleted");
-            void refresh();
-          });
+      ActionGrid([
+        {
+          label: "Rename",
+          icon: "edit",
+          onClick: act(() => void editText("Rename", m.name, (v) => mapStore.rename(m.id, v).then(refresh))),
         },
-      }),
+        {
+          label: "Description",
+          icon: "edit",
+          onClick: act(() =>
+            void editText("Description", m.description, (v) => mapStore.setDescription(m.id, v).then(refresh)),
+          ),
+        },
+        {
+          label: "Tags",
+          icon: "tag",
+          onClick: act(() =>
+            void editText("Tags (space-separated)", m.tags.join(" "), (v) =>
+              mapStore.setTags(m.id, v.split(/\s+/)).then(refresh),
+            ),
+          ),
+        },
+        {
+          label: "Move",
+          icon: "folder",
+          onClick: act(() =>
+            void mapStore.folders().then((existing) =>
+              openFolderPicker({
+                current: m.folder ?? "",
+                existing,
+                onPick: (folder) => void mapStore.setFolder(m.id, folder).then(refresh),
+              }),
+            ),
+          ),
+        },
+        {
+          label: "Duplicate",
+          icon: "map",
+          onClick: act(() =>
+            void mapStore.duplicate(m.id).then(() => {
+              toast("Duplicated");
+              void refresh();
+            }),
+          ),
+        },
+        { label: "Export", icon: "download", onClick: act(() => void exportMap(m)) },
+        {
+          label: "Delete",
+          icon: "trash",
+          variant: "danger",
+          onClick: () => {
+            if (!confirm(`Delete "${m.name}"? This cannot be undone.`)) return;
+            sheet.close();
+            void mapStore.delete(m.id).then(() => {
+              toast("Deleted");
+              void refresh();
+            });
+          },
+        },
+      ]),
     );
   }
 

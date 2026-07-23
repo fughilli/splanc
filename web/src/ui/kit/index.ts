@@ -54,6 +54,34 @@ export function IconButton(
   return b;
 }
 
+// -- ActionGrid --------------------------------------------------------------
+
+export interface ActionItem {
+  label: string;
+  icon: IconName;
+  variant?: "danger";
+  onClick: () => void;
+}
+
+/** A compact grid of icon+label action tiles — for context ("⋯") menus, where a
+ * stack of full-width buttons is unwieldy. */
+export function ActionGrid(items: ActionItem[]): HTMLDivElement {
+  const grid = document.createElement("div");
+  grid.className = "k-actiongrid";
+  for (const it of items) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "k-actiontile" + (it.variant === "danger" ? " k-actiontile--danger" : "");
+    b.append(icon(it.icon));
+    const s = document.createElement("span");
+    s.textContent = it.label;
+    b.appendChild(s);
+    b.addEventListener("click", it.onClick);
+    grid.appendChild(b);
+  }
+  return grid;
+}
+
 // -- Card --------------------------------------------------------------------
 
 export function Card(...children: (Node | string)[]): HTMLDivElement {

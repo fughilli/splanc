@@ -10,7 +10,7 @@
  * discoverable "AI key" affordance that opens the BYO-key sheet.
  */
 
-import { Button, Chip, EmptyState, HelpTip, IconButton, Sheet, toast, icon } from "../kit";
+import { ActionGrid, Button, Chip, EmptyState, HelpTip, IconButton, Sheet, toast, icon } from "../kit";
 import { effectStore, type StoredEffect } from "../../store/effectStore";
 import { appendGrouped, openFolderPicker } from "./folders";
 import { openAiKeySheet } from "./aiKeySheet";
@@ -168,7 +168,7 @@ export function EffectsBrowserScreen(router: Router): Screen {
       listEl.append(EmptyState({ icon: "sparkles", title: "No effects match your search" }));
       return;
     }
-    appendGrouped(listEl, rows, (e) => e.folder, row);
+    appendGrouped(listEl, rows, (e) => e.folder, row, { scope: "effects" });
   }
 
   function row(e: StoredEffect): HTMLElement {
@@ -208,58 +208,64 @@ export function EffectsBrowserScreen(router: Router): Screen {
 
   function openContextSheet(e: StoredEffect): void {
     const sheet = Sheet(e.name);
-    sheet.body.className = "context-sheet";
-    const item = (
-      label: string,
-      ic: NonNullable<Parameters<typeof Button>[0]["icon"]>,
-      fn: () => void,
-    ): HTMLElement => Button({ label, icon: ic, variant: "quiet", block: true, onClick: fn });
+    const act = (fn: () => void) => (): void => {
+      sheet.close();
+      fn();
+    };
     sheet.body.append(
-      item("Edit", "edit", () => {
-        sheet.close();
-        router.navigate(`/effects/edit/${e.id}`);
-      }),
-      item("Rename", "edit", () => {
-        sheet.close();
-        void editText("Rename", e.name, (v) => effectStore.rename(e.id, v).then(refresh));
-      }),
-      item("Tags", "tag", () => {
-        sheet.close();
-        void editText("Tags (space-separated)", e.tags.join(" "), (v) =>
-          effectStore.setTags(e.id, v.split(/\s+/)).then(refresh),
-        );
-      }),
-      item("Move to folder…", "folder", () => {
-        sheet.close();
-        void effectStore.folders().then((existing) =>
-          openFolderPicker({
-            current: e.folder ?? "",
-            existing,
-            onPick: (folder) => void effectStore.setFolder(e.id, folder).then(refresh),
-          }),
-        );
-      }),
-      item("Duplicate", "sparkles", () => {
-        sheet.close();
-        void effectStore.duplicate(e.id).then(() => {
-          toast("Duplicated");
-          void refresh();
-        });
-      }),
-      Button({
-        label: "Delete",
-        icon: "trash",
-        variant: "danger",
-        block: true,
-        onClick: () => {
-          if (!confirm(`Delete "${e.name}"? This cannot be undone.`)) return;
-          sheet.close();
-          void effectStore.delete(e.id).then(() => {
-            toast("Deleted");
-            void refresh();
-          });
+      ActionGrid([
+        { label: "Edit", icon: "edit", onClick: act(() => router.navigate(`/effects/edit/${e.id}`)) },
+        {
+          label: "Rename",
+          icon: "edit",
+          onClick: act(() => void editText("Rename", e.name, (v) => effectStore.rename(e.id, v).then(refresh))),
         },
-      }),
+        {
+          label: "Tags",
+          icon: "tag",
+          onClick: act(() =>
+            void editText("Tags (space-separated)", e.tags.join(" "), (v) =>
+              effectStore.setTags(e.id, v.split(/\s+/)).then(refresh),
+            ),
+          ),
+        },
+        {
+          label: "Move",
+          icon: "folder",
+          onClick: act(() =>
+            void effectStore.folders().then((existing) =>
+              openFolderPicker({
+                current: e.folder ?? "",
+                existing,
+                onPick: (folder) => void effectStore.setFolder(e.id, folder).then(refresh),
+              }),
+            ),
+          ),
+        },
+        {
+          label: "Duplicate",
+          icon: "sparkles",
+          onClick: act(() =>
+            void effectStore.duplicate(e.id).then(() => {
+              toast("Duplicated");
+              void refresh();
+            }),
+          ),
+        },
+        {
+          label: "Delete",
+          icon: "trash",
+          variant: "danger",
+          onClick: () => {
+            if (!confirm(`Delete "${e.name}"? This cannot be undone.`)) return;
+            sheet.close();
+            void effectStore.delete(e.id).then(() => {
+              toast("Deleted");
+              void refresh();
+            });
+          },
+        },
+      ]),
     );
   }
 

@@ -90,6 +90,7 @@ function render(): HTMLElement {
     devices,
     (dev) => dev.folder,
     (dev) => deviceRow(dev, dev.id === activeId, status, deviceProber.isReachable(dev.id)),
+    { scope: "devices" },
   );
 
   // -- add-device section (compact icon buttons under a labelled divider).
