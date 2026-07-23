@@ -1164,11 +1164,16 @@ body.is-locked {
   height: var(--fxdiv);
   cursor: row-resize;
 }
-/* Transparent pointer hit-area straddling the 1px line (visible line stays 1px). */
+/* Transparent pointer hit-area straddling the 1px line (visible line stays 1px).
+   touch-action is NOT inherited, so it must be set on the pseudo too — otherwise
+   a vertical drag on the ±3px hit area of a horizontal (row-resize) divider is
+   stolen by the browser as a scroll gesture and the divider won't move (the bug
+   only showed on narrow/portrait, where the split divider is horizontal). */
 .fxlayout-divider::before {
   content: "";
   position: absolute;
   z-index: 1;
+  touch-action: none;
 }
 .fxlayout-divider--v::before {
   top: 0;
