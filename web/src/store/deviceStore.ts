@@ -1,13 +1,26 @@
 /**
  * Known-devices store (design doc §6.2 / §7.5) — localStorage-backed list of
- * players the user has connected to, generalizing today's single `?url=`
- * binding into a managed list. Screens read/mutate through this module only.
+ * players the user has connected to. Each record keeps the display name (which
+ * is also the device's Bluetooth-advertised name), the last-known LAN address
+ * (the wss URL), and the hardware MAC the device reports in its `welcome`. That
+ * MAC lets the app recognize the SAME player across the BLE-onboarding and LAN
+ * paths. Screens read/mutate through this module only.
  */
 
 export interface KnownDevice {
   id: string;
-  label: string;
+  /** Last-known LAN address as a wss URL (wss://host[:port]/ws). */
   wssUrl: string;
+  /** Display name — also the device's Bluetooth-advertised name. */
+  label: string;
+  /** Last hardware MAC the device reported (welcome.mac); "" until seen. */
+  bleMac: string;
+  /** True once the device reported its own name (so a host fallback never
+   * clobbers a real device name). */
+  named: boolean;
+  /** A rename queued while disconnected — pushed to the device on next connect
+   * (which renames its Bluetooth advertisement + persists it). */
+  pendingName?: string;
   /** ISO timestamp of the last successful connection. */
   lastSeen: string;
 }
@@ -17,11 +30,33 @@ const ACTIVE_KEY = "ledmapper.activeDevice";
 
 type Listener = () => void;
 
+/** Friendly default label from a wss URL (host[:port]). */
+function labelForUrl(wssUrl: string): string {
+  try {
+    return new URL(wssUrl).host;
+  } catch {
+    return wssUrl;
+  }
+}
+
+/** Fill in fields absent from older stored records. */
+function normalize(d: Partial<KnownDevice> & { id: string; wssUrl: string }): KnownDevice {
+  return {
+    id: d.id,
+    wssUrl: d.wssUrl,
+    label: d.label ?? labelForUrl(d.wssUrl),
+    bleMac: d.bleMac ?? "",
+    named: d.named ?? false,
+    ...(d.pendingName ? { pendingName: d.pendingName } : {}),
+    lastSeen: d.lastSeen ?? new Date(0).toISOString(),
+  };
+}
+
 function read(): KnownDevice[] {
   try {
     const raw = localStorage.getItem(KEY);
     const arr = raw ? (JSON.parse(raw) as KnownDevice[]) : [];
-    return Array.isArray(arr) ? arr : [];
+    return Array.isArray(arr) ? arr.filter((d) => d && d.id && d.wssUrl).map(normalize) : [];
   } catch {
     return [];
   }
@@ -40,13 +75,12 @@ function idForUrl(wssUrl: string): string {
   return `dev-${wssUrl.replace(/[^a-z0-9]+/gi, "-")}`;
 }
 
-/** Friendly default label from a wss URL (host[:port]). */
-function labelForUrl(wssUrl: string): string {
+/** The host[:port] of a device's LAN address (for the detail view). */
+export function deviceHost(dev: KnownDevice): string {
   try {
-    const u = new URL(wssUrl);
-    return u.host;
+    return new URL(dev.wssUrl).host;
   } catch {
-    return wssUrl;
+    return dev.wssUrl;
   }
 }
 
@@ -79,6 +113,16 @@ class DeviceStore {
     return id ? this.get(id) : undefined;
   }
 
+  private mutate(id: string, fn: (d: KnownDevice) => void): KnownDevice | undefined {
+    const list = read();
+    const d = list.find((x) => x.id === id);
+    if (!d) return undefined;
+    fn(d);
+    write(list);
+    this.emit();
+    return d;
+  }
+
   /** Add (or refresh lastSeen for) a device by URL; returns its id. Does not
    * change the active selection. */
   upsert(wssUrl: string, label?: string): KnownDevice {
@@ -88,16 +132,31 @@ class DeviceStore {
     const existing = list.find((d) => d.id === id);
     if (existing) {
       existing.lastSeen = now;
-      if (label) existing.label = label;
+      existing.wssUrl = wssUrl;
+      if (label && !existing.named) existing.label = label;
       write(list);
       this.emit();
       return existing;
     }
-    const dev: KnownDevice = { id, label: label ?? labelForUrl(wssUrl), wssUrl, lastSeen: now };
+    const dev = normalize({ id, wssUrl, label: label ?? labelForUrl(wssUrl), lastSeen: now });
     list.push(dev);
     write(list);
     this.emit();
     return dev;
+  }
+
+  /** Fold a device's `welcome` (mac + device name) into its record: adopt the
+   * MAC and, unless a rename is queued, the device's own name as the display
+   * name. */
+  applyWelcome(id: string, welcome: { mac?: string; deviceName?: string }): void {
+    this.mutate(id, (d) => {
+      if (welcome.mac) d.bleMac = welcome.mac;
+      if (welcome.deviceName && !d.pendingName) {
+        d.label = welcome.deviceName;
+        d.named = true;
+      }
+      d.lastSeen = new Date().toISOString();
+    });
   }
 
   setActive(id: string | null): void {
@@ -106,13 +165,27 @@ class DeviceStore {
     this.emit();
   }
 
+  /** Set the display name. Shown immediately (optimistic) and queued as a
+   * pendingName to push to the device on the next connection; if a device is
+   * connected the caller also pushes it live via client.setDeviceName. */
   rename(id: string, label: string): void {
-    const list = read();
-    const d = list.find((x) => x.id === id);
-    if (!d) return;
-    d.label = label;
-    write(list);
-    this.emit();
+    const name = label.trim();
+    if (!name) return;
+    this.mutate(id, (d) => {
+      d.label = name;
+      d.named = true;
+      d.pendingName = name;
+    });
+  }
+
+  /** Read + clear a queued rename (called when it has been pushed to a device). */
+  takePending(id: string): string | undefined {
+    let pending: string | undefined;
+    this.mutate(id, (d) => {
+      pending = d.pendingName;
+      delete d.pendingName;
+    });
+    return pending;
   }
 
   forget(id: string): void {

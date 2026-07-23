@@ -71,6 +71,20 @@ class AppState {
         await client.connect();
         const sync = await client.syncClock();
         deviceStore.upsert(wssUrl, label); // refresh lastSeen
+        // Fold the device's identity (MAC + name) into its record, and push a
+        // rename that was queued while it was disconnected so its Bluetooth name
+        // tracks the display name the user set.
+        const w = client.welcome;
+        if (w) {
+          deviceStore.applyWelcome(dev.id, { mac: w.mac, deviceName: w.deviceName });
+          const pending = deviceStore.takePending(dev.id);
+          if (pending && pending !== w.deviceName) {
+            await client
+              .setDeviceName(pending)
+              .then((nw) => deviceStore.applyWelcome(dev.id, { mac: nw.mac, deviceName: nw.deviceName }))
+              .catch(() => undefined);
+          }
+        }
         this.setStatus({
           state: "connected",
           text: "connected",

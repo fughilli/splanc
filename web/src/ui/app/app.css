@@ -1496,6 +1496,36 @@ body.is-locked {
 .device-dot[data-state="error"] {
   background: var(--err);
 }
+.device-dot[data-state="reachable"] {
+  background: var(--warn);
+}
+
+/* --- device detail popup (long-press) --- */
+.device-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.device-detail-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+.device-detail-cap {
+  font-size: var(--f-caption);
+  color: var(--text-dim);
+}
+.device-detail-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--sp-2);
+}
+.device-detail-val {
+  color: var(--text);
+  word-break: break-all;
+  text-align: right;
+}
 .device-info {
   flex: 1;
   min-width: 0;

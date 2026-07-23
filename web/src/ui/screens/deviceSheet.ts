@@ -1,41 +1,94 @@
 /**
  * Device sheet (design doc §6.2 / §7.4) — a bottom sheet reachable everywhere
- * (the app-bar pill and the Device tab both open it). Lists known devices with
- * status, lets the user switch/forget, add a device (re-enters onboarding),
- * enter an address manually, and surfaces connection/cert errors in-context.
+ * (the app-bar pill and the Device tab both open it). Lists known devices by
+ * their display name, shows reachability (probed over the wss the app already
+ * uses — a device answers `welcome` with its MAC + name), and lets the user
+ * connect, re-discover over Bluetooth when unreachable, rename, and forget.
+ *
+ * Long-pressing (or right-clicking) a row opens a detail popup with the recorded
+ * LAN address, MAC, Bluetooth name, and the editable display name (which is
+ * reflected to the device — and its Bluetooth advertisement — on connect).
  */
 
 import { Button, IconButton, Sheet, toast } from "../kit";
 import { appState } from "../app/state";
-import { deviceStore, type KnownDevice } from "../../store/deviceStore";
+import { LedMapperClient } from "../../net/client";
+import { deviceStore, deviceHost, type KnownDevice } from "../../store/deviceStore";
 
 let openHandle: { close: () => void } | null = null;
 
 export function openDeviceSheet(): void {
   if (openHandle) return; // already open — don't stack
-  // onClose fires for EVERY close path (✕, scrim, programmatic), so the reopen
-  // guard is always reset — the ✕ calls the sheet's internal close, not this
-  // handle, so we must hook onClose rather than wrap handle.close.
   let unsubDev: () => void = () => {};
   let unsubApp: () => void = () => {};
+  // Probe results for this sheet session: id -> the device's reported identity.
+  const reachable = new Map<string, { mac: string; deviceName: string }>();
+  let probeTimer: number | null = null;
+  let probing = false;
+
   const sheet = Sheet("Devices", {
     onClose: () => {
       unsubDev();
       unsubApp();
+      if (probeTimer !== null) clearInterval(probeTimer);
       openHandle = null;
     },
   });
   openHandle = sheet;
+
   const rerender = (): void => {
     sheet.body.innerHTML = "";
-    sheet.body.append(render());
+    sheet.body.append(render(reachable));
   };
   unsubDev = deviceStore.subscribe(rerender);
   unsubApp = appState.subscribe(rerender);
   rerender();
+
+  // -- reachability probe: open the wss the app already uses, read the device's
+  // welcome (MAC + name), fold it into the record, then close. Runs sequentially
+  // over the non-active devices while the sheet is open, and once immediately.
+  async function probeAll(): Promise<void> {
+    if (probing) return;
+    probing = true;
+    try {
+      for (const dev of deviceStore.list()) {
+        if (dev.id === deviceStore.activeId()) continue;
+        const info = await probeDevice(dev.wssUrl);
+        if (info) {
+          reachable.set(dev.id, info);
+          deviceStore.applyWelcome(dev.id, info); // adopt mac/name (fires rerender)
+        } else {
+          reachable.delete(dev.id);
+        }
+      }
+      rerender();
+    } finally {
+      probing = false;
+    }
+  }
+  void probeAll();
+  probeTimer = window.setInterval(() => void probeAll(), 20_000);
 }
 
-function render(): HTMLElement {
+/** Open a transient wss to read a device's welcome (MAC + name), then close.
+ * Returns null if it can't be reached (untrusted cert, offline, timeout). */
+async function probeDevice(wssUrl: string): Promise<{ mac: string; deviceName: string } | null> {
+  const client = new LedMapperClient(wssUrl);
+  try {
+    const timeout = new Promise<never>((_, rej) =>
+      setTimeout(() => rej(new Error("probe timeout")), 4000),
+    );
+    await Promise.race([client.connect(), timeout]);
+    const w = client.welcome;
+    return w ? { mac: w.mac, deviceName: w.deviceName } : null;
+  } catch {
+    return null;
+  } finally {
+    client.close();
+  }
+}
+
+function render(reachable: Map<string, { mac: string; deviceName: string }>): HTMLElement {
   const wrap = document.createElement("div");
   const status = appState.status;
   const activeId = deviceStore.activeId();
@@ -51,10 +104,7 @@ function render(): HTMLElement {
     const p = document.createElement("div");
     p.textContent = "This device uses a self-signed certificate — trust it once to connect.";
     p.style.marginBottom = "var(--sp-2)";
-    const btn = Button({
-      label: "Trust & connect",
-      onClick: () => trustCert(status.certUrl!),
-    });
+    const btn = Button({ label: "Trust & connect", onClick: () => trustCert(status.certUrl!) });
     card.append(p, btn);
     wrap.append(card);
   }
@@ -76,12 +126,10 @@ function render(): HTMLElement {
   }
 
   for (const dev of devices) {
-    wrap.append(deviceRow(dev, dev.id === activeId, status));
+    wrap.append(deviceRow(dev, dev.id === activeId, status, reachable.has(dev.id)));
   }
 
-  // -- add-device section: a labelled divider, then two compact icon buttons
-  // side by side (Bluetooth onboarding / manual address). Icon-only keeps them
-  // small; the label tells the user what the row is for.
+  // -- add-device section (compact icon buttons under a labelled divider).
   const addSection = document.createElement("div");
   addSection.className = "device-add";
   const addLabel = document.createElement("div");
@@ -97,61 +145,174 @@ function render(): HTMLElement {
         location.hash = "#/onboard";
       },
     }),
-    IconButton("link", {
-      title: "Enter address manually",
-      onClick: () => addManual(),
-    }),
+    IconButton("link", { title: "Enter address manually", onClick: () => addManual() }),
   );
   addSection.append(addLabel, addRow);
   wrap.append(addSection);
   return wrap;
 }
 
-function deviceRow(dev: KnownDevice, isActive: boolean, status = appState.status): HTMLElement {
+function deviceRow(
+  dev: KnownDevice,
+  isActive: boolean,
+  status = appState.status,
+  isReachable = false,
+): HTMLElement {
   const row = document.createElement("div");
   row.className = "device-row";
 
+  const connected = isActive && (appState.client?.isConnected ?? false);
   const dot = document.createElement("span");
   dot.className = "device-dot";
-  dot.dataset["state"] = isActive ? status.state : "offline";
+  dot.dataset["state"] = connected
+    ? status.state // connected/connecting/error
+    : isReachable
+      ? "reachable" // on the LAN, MAC known — yellow
+      : "offline";
 
   const info = document.createElement("div");
   info.className = "device-info";
   const name = document.createElement("div");
   name.className = "device-name";
   name.textContent = dev.label;
-  const url = document.createElement("div");
-  url.className = "device-url";
-  url.textContent = dev.wssUrl;
-  info.append(name, url);
-  if (isActive) {
-    const meta = document.createElement("div");
-    meta.className = "device-meta metric";
-    const c = appState.client;
-    if (c?.isConnected) {
-      const sync = c.clock;
-      meta.textContent = `${status.text} · offset ${sync.offsetMs.toFixed(1)}ms`;
-    } else {
-      meta.textContent = status.text;
-    }
-    info.append(meta);
-  }
+  const meta = document.createElement("div");
+  meta.className = "device-url";
+  meta.textContent = isActive
+    ? connectedMeta(status)
+    : isReachable
+      ? `on this network · ${deviceHost(dev)}`
+      : deviceHost(dev);
+  info.append(name, meta);
 
   const btns = document.createElement("div");
   btns.className = "device-btns";
   if (isActive) {
-    btns.append(
-      Button({ label: "Disconnect", variant: "quiet", onClick: () => appState.disconnect() }),
-    );
+    btns.append(Button({ label: "Disconnect", variant: "quiet", onClick: () => appState.disconnect() }));
+  } else if (isReachable) {
+    btns.append(Button({ label: "Connect", onClick: () => appState.connect(dev.wssUrl, dev.label) }));
   } else {
+    // Unreachable on the LAN: the connect affordance re-discovers over Bluetooth
+    // (re-provision / re-learn its current address via the Improv flow).
     btns.append(
-      Button({ label: "Connect", onClick: () => appState.connect(dev.wssUrl, dev.label) }),
+      IconButton("ble-search", {
+        title: "Find over Bluetooth",
+        onClick: () => {
+          openHandle?.close();
+          location.hash = "#/onboard";
+        },
+      }),
     );
   }
   btns.append(IconButton("trash", { title: "Forget", onClick: () => deviceStore.forget(dev.id) }));
 
   row.append(dot, info, btns);
+
+  // Long-press (or right-click) opens the device detail popup. Ignore presses
+  // that start on a button so Connect/Forget still work normally.
+  let pressTimer: number | null = null;
+  const startPress = (ev: PointerEvent): void => {
+    if ((ev.target as HTMLElement).closest(".device-btns")) return;
+    pressTimer = window.setTimeout(() => openDeviceDetail(dev), 500);
+  };
+  const cancelPress = (): void => {
+    if (pressTimer !== null) {
+      clearTimeout(pressTimer);
+      pressTimer = null;
+    }
+  };
+  row.addEventListener("pointerdown", startPress);
+  row.addEventListener("pointerup", cancelPress);
+  row.addEventListener("pointermove", cancelPress);
+  row.addEventListener("pointerleave", cancelPress);
+  row.addEventListener("contextmenu", (ev) => {
+    ev.preventDefault();
+    openDeviceDetail(dev);
+  });
   return row;
+}
+
+function connectedMeta(status = appState.status): string {
+  const c = appState.client;
+  if (c?.isConnected) return `${status.text} · offset ${c.clock.offsetMs.toFixed(1)}ms`;
+  return status.text;
+}
+
+/** Detail popup: recorded LAN address, MAC, Bluetooth name + editable display
+ * name (reflected to the device on connect). */
+function openDeviceDetail(dev: KnownDevice): void {
+  const cur = deviceStore.get(dev.id) ?? dev;
+  const sheet = Sheet("Device");
+  sheet.body.className = "device-detail";
+
+  const nameLabel = document.createElement("label");
+  nameLabel.className = "device-detail-field";
+  const nameCap = document.createElement("span");
+  nameCap.className = "device-detail-cap";
+  nameCap.textContent = "Display name (also the Bluetooth name)";
+  const input = document.createElement("input");
+  input.className = "sheet-input";
+  input.value = cur.label;
+  nameLabel.append(nameCap, input);
+
+  const rowFor = (cap: string, value: string): HTMLElement => {
+    const r = document.createElement("div");
+    r.className = "device-detail-row";
+    const c = document.createElement("span");
+    c.className = "device-detail-cap";
+    c.textContent = cap;
+    const v = document.createElement("span");
+    v.className = "device-detail-val metric";
+    v.textContent = value;
+    r.append(c, v);
+    return r;
+  };
+
+  const isActive = deviceStore.activeId() === dev.id && (appState.client?.isConnected ?? false);
+  const save = Button({
+    label: "Save name",
+    block: true,
+    onClick: () => {
+      const name = input.value.trim();
+      if (!name || name === cur.label) {
+        sheet.close();
+        return;
+      }
+      // Optimistic + queued for next connect; push live if connected now.
+      deviceStore.rename(dev.id, name);
+      if (isActive && appState.client) {
+        void appState.client
+          .setDeviceName(name)
+          .then((w) => {
+            deviceStore.applyWelcome(dev.id, { mac: w.mac, deviceName: w.deviceName });
+            deviceStore.takePending(dev.id);
+            toast("Device renamed");
+          })
+          .catch(() => toast("Rename will apply on next connection"));
+      } else {
+        toast("Name saved — applies on next connection");
+      }
+      sheet.close();
+    },
+  });
+
+  sheet.body.append(
+    nameLabel,
+    rowFor("LAN address", deviceHost(cur)),
+    rowFor("MAC address", cur.bleMac || "unknown (connect once)"),
+    rowFor("Bluetooth name", cur.label),
+    save,
+    Button({
+      label: "Forget device",
+      icon: "trash",
+      variant: "danger",
+      block: true,
+      onClick: () => {
+        deviceStore.forget(dev.id);
+        sheet.close();
+      },
+    }),
+  );
+  input.focus();
 }
 
 function addManual(): void {
@@ -168,9 +329,6 @@ function addManual(): void {
  * Popup-based self-signed-cert trust (unchanged from main.ts §4.1). A browser
  * only offers "proceed anyway" for a TOP-LEVEL context, so we open the device's
  * https page as a popup; its page postMessages us once past the interstitial.
- * We first close the client (a heap-tight ESP holds ~2 TLS sessions; our wss
- * retries would starve the cert page), then reconnect on the ok signal or the
- * visibility-return fallback.
  */
 function trustCert(certUrl: string): void {
   const deviceOrigin = new URL(certUrl).origin;

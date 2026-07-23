@@ -394,6 +394,16 @@ export class LedMapperClient {
     )) as PlaybackStateMessage;
   }
 
+  /** Rename the player: sets its display name, which becomes the Bluetooth-
+   * advertised name too and is persisted on the device. Reply: welcome (echoing
+   * the new device_name + mac). */
+  async setDeviceName(name: string): Promise<WelcomeMessage> {
+    return (await this.request(
+      { type: "set_device_name", name } as unknown as ClientMessage,
+      "welcome",
+    )) as unknown as WelcomeMessage;
+  }
+
   /** Fetch an effect's uniform manifest + current live values for UI
    * hydration. Omit `effectId` for the active effect. Reply: effect_uniforms. */
   async getEffectUniforms(effectId?: string): Promise<EffectUniformsMessage> {
