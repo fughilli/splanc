@@ -1218,6 +1218,42 @@ body.is-locked {
   background: var(--accent);
 }
 
+/* -- drag a pane handle (tab / header title) to a new dock -- */
+.fxlayout-draghandle {
+  touch-action: none; /* let the long-press drag win over browser scroll */
+  cursor: grab;
+}
+.fxlayout-draghandle--active {
+  cursor: grabbing;
+}
+.fxlayout-dropzones {
+  position: absolute;
+  inset: 0;
+  z-index: 90;
+  pointer-events: none;
+}
+.fxlayout-dropzone {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  border: 2px dashed var(--border);
+  border-radius: var(--r-ctrl);
+  background: rgba(14, 14, 18, 0.35);
+  color: var(--text-dim);
+  font-size: var(--f-caption);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  transition:
+    border-color var(--motion-micro) var(--ease),
+    background var(--motion-micro) var(--ease);
+}
+.fxlayout-dropzone--on {
+  border-style: solid;
+  border-color: var(--accent);
+  background: var(--accent-quiet);
+  color: var(--text);
+}
+
 /* -- relocate popover -- */
 .fxlayout-relo {
   position: absolute;

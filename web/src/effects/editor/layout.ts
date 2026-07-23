@@ -441,6 +441,7 @@ export class FxLayout {
           this.persist();
           this.render();
         });
+        this.attachDragHandle(btn, id); // long-press → drag to re-dock
         tabs.appendChild(btn);
       }
       strip.appendChild(tabs);
@@ -655,6 +656,123 @@ export class FxLayout {
     this.openRelocate?.();
     this.openRelocate = null;
   }
+
+  // -- drag a pane handle (tab / header) to a new dock ----------------------
+
+  /** Make `el` a long-press drag handle for pane `id`: after a hold it picks the
+   * pane up and dragging over the workspace re-docks it (wide layout only —
+   * docks don't exist on the narrow split). A quick tap is left alone (so a tab
+   * still switches), and the click that would follow a drag is suppressed. */
+  attachDragHandle(el: HTMLElement, id: string): void {
+    el.classList.add("fxlayout-draghandle");
+    let timer: number | null = null;
+    let sx = 0;
+    let sy = 0;
+    let dragged = false;
+    const clear = (): void => {
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    };
+    el.addEventListener("pointerdown", (e) => {
+      if (e.button != null && e.button > 0) return; // primary button / touch only
+      if (this.mql.matches) return; // docks only exist in the wide layout
+      sx = e.clientX;
+      sy = e.clientY;
+      dragged = false;
+      clear();
+      timer = window.setTimeout(() => {
+        timer = null;
+        dragged = true;
+        this.startPaneDrag(e, id, el);
+      }, 380);
+    });
+    el.addEventListener("pointermove", (e) => {
+      if (timer !== null && Math.hypot(e.clientX - sx, e.clientY - sy) > 8) clear();
+    });
+    el.addEventListener("pointerup", clear);
+    el.addEventListener("pointercancel", clear);
+    // Swallow the click a completed long-press drag would otherwise fire.
+    el.addEventListener(
+      "click",
+      (e) => {
+        if (dragged) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          dragged = false;
+        }
+      },
+      true,
+    );
+  }
+
+  private startPaneDrag(e: PointerEvent, id: string, handle: HTMLElement): void {
+    const rect = this.root.getBoundingClientRect();
+    const overlay = document.createElement("div");
+    overlay.className = "fxlayout-dropzones";
+    const zones = new Map<Dock, HTMLElement>();
+    const defs: [Dock, string, Record<string, string>][] = [
+      ["left", "Left", { left: "0", top: "0", width: "24%", height: "100%" }],
+      ["right", "Right", { right: "0", top: "0", width: "24%", height: "100%" }],
+      ["top", "Top", { left: "24%", top: "0", width: "52%", height: "24%" }],
+      ["bottom", "Bottom", { left: "24%", bottom: "0", width: "52%", height: "24%" }],
+      ["center", "Center", { left: "24%", top: "24%", width: "52%", height: "52%" }],
+    ];
+    for (const [dock, label, css] of defs) {
+      const z = document.createElement("div");
+      z.className = "fxlayout-dropzone";
+      Object.assign(z.style, css);
+      const s = document.createElement("span");
+      s.textContent = label;
+      z.appendChild(s);
+      overlay.appendChild(z);
+      zones.set(dock, z);
+    }
+    this.root.appendChild(overlay);
+    handle.classList.add("fxlayout-draghandle--active");
+
+    const zoneFor = (x: number, y: number): Dock => {
+      const fx = (x - rect.left) / Math.max(1, rect.width);
+      const fy = (y - rect.top) / Math.max(1, rect.height);
+      if (fx < 0.24) return "left";
+      if (fx > 0.76) return "right";
+      if (fy < 0.24) return "top";
+      if (fy > 0.76) return "bottom";
+      return "center";
+    };
+    let dock = zoneFor(e.clientX, e.clientY);
+    const highlight = (d: Dock): void => {
+      for (const [k, z] of zones) z.classList.toggle("fxlayout-dropzone--on", k === d);
+    };
+    highlight(dock);
+
+    try {
+      handle.setPointerCapture(e.pointerId);
+    } catch {
+      /* the pointer may already be gone */
+    }
+    const move = (ev: PointerEvent): void => {
+      dock = zoneFor(ev.clientX, ev.clientY);
+      highlight(dock);
+    };
+    const end = (ev: PointerEvent): void => {
+      try {
+        handle.releasePointerCapture(ev.pointerId);
+      } catch {
+        /* ignore */
+      }
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", end);
+      handle.removeEventListener("pointercancel", end);
+      overlay.remove();
+      handle.classList.remove("fxlayout-draghandle--active");
+      if (dock !== this.dockOf(id)) this.relocate(id, dock); // relocate re-renders
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", end);
+    handle.addEventListener("pointercancel", end);
+  }
 }
 
 /** A reusable pane wrapper: a header (title + relocate + hide) over the pane's
@@ -683,6 +801,9 @@ class PaneWrap {
     const title = document.createElement("span");
     title.className = "fxpane-title";
     title.textContent = spec.title;
+    // The header title is also a long-press drag handle (for the center pane and
+    // single-pane edges, which have no tab strip).
+    this.owner.attachDragHandle(title, spec.id);
 
     this.controls = document.createElement("div");
     this.controls.className = "fxpane-ctl";
