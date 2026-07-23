@@ -28,6 +28,8 @@ export interface StoredMapSummary {
   rmsReprojPx: number;
   hasTopology: boolean;
   deviceMapId?: string;
+  /** Optional folder for organizing the library; "" / absent = ungrouped. */
+  folder?: string;
   /** dataURL — small MapView snapshot; may be "" until first browser view. */
   thumbnail: string;
 }
@@ -287,6 +289,18 @@ class MapStore {
 
   async setTags(id: string, tags: string[]): Promise<void> {
     await this.patchSummary(id, { tags: normTags(tags) });
+  }
+
+  /** Assign a library folder (empty string = ungrouped). */
+  async setFolder(id: string, folder: string): Promise<void> {
+    await this.patchSummary(id, { folder: folder.trim() });
+  }
+
+  /** Distinct non-empty folder names in the library, sorted. */
+  async folders(): Promise<string[]> {
+    const set = new Set<string>();
+    for (const m of await this.list()) if (m.folder) set.add(m.folder);
+    return [...set].sort((a, b) => a.localeCompare(b));
   }
 
   /** Persist an updated topology for an existing map (from the cleanup panel). */

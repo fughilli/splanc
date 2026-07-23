@@ -17,6 +17,8 @@ export interface StoredEffect {
   /** GLSL-ish effect source (the same string the fx_compiler compiles). */
   source: string;
   tags: string[];
+  /** Optional folder for organizing the library; "" / absent = ungrouped. */
+  folder?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -215,6 +217,18 @@ class EffectStore {
 
   async setTags(id: string, tags: string[]): Promise<void> {
     await this.patch(id, { tags: normTags(tags) });
+  }
+
+  /** Assign a library folder (empty string = ungrouped). */
+  async setFolder(id: string, folder: string): Promise<void> {
+    await this.patch(id, { folder: folder.trim() });
+  }
+
+  /** Distinct non-empty folder names in the library, sorted. */
+  async folders(): Promise<string[]> {
+    const set = new Set<string>();
+    for (const e of await this.list()) if (e.folder) set.add(e.folder);
+    return [...set].sort((a, b) => a.localeCompare(b));
   }
 
   async duplicate(id: string): Promise<string | undefined> {

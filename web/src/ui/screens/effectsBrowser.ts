@@ -12,6 +12,7 @@
 
 import { Button, Chip, EmptyState, HelpTip, IconButton, Sheet, toast, icon } from "../kit";
 import { effectStore, type StoredEffect } from "../../store/effectStore";
+import { appendGrouped, openFolderPicker } from "./folders";
 import { openAiKeySheet } from "./aiKeySheet";
 import { getApiKey } from "../../effects/ai/generate";
 import type { Router, Screen } from "../app/router";
@@ -167,7 +168,7 @@ export function EffectsBrowserScreen(router: Router): Screen {
       listEl.append(EmptyState({ icon: "sparkles", title: "No effects match your search" }));
       return;
     }
-    for (const e of rows) listEl.append(row(e));
+    appendGrouped(listEl, rows, (e) => e.folder, row);
   }
 
   function row(e: StoredEffect): HTMLElement {
@@ -226,6 +227,16 @@ export function EffectsBrowserScreen(router: Router): Screen {
         sheet.close();
         void editText("Tags (space-separated)", e.tags.join(" "), (v) =>
           effectStore.setTags(e.id, v.split(/\s+/)).then(refresh),
+        );
+      }),
+      item("Move to folder…", "folder", () => {
+        sheet.close();
+        void effectStore.folders().then((existing) =>
+          openFolderPicker({
+            current: e.folder ?? "",
+            existing,
+            onPick: (folder) => void effectStore.setFolder(e.id, folder).then(refresh),
+          }),
         );
       }),
       item("Duplicate", "sparkles", () => {

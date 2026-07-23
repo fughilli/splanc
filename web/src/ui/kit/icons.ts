@@ -34,6 +34,7 @@ export type IconName =
   | "alert"
   | "help"
   | "arrow-up"
+  | "folder"
   | "move";
 
 // -- shared fragments for the device-transfer glyphs (24x24, top→bottom layout:
@@ -86,6 +87,7 @@ const PATHS: Record<IconName, string> = {
   alert: `<path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17h.01"/>`,
   help: `<circle cx="12" cy="12" r="9"/><path d="M9.2 9.3a2.8 2.8 0 0 1 5.3 1.2c0 1.9-2.6 2.3-2.6 4"/><path d="M12 17.5h.01"/>`,
   "arrow-up": `<path d="M12 19V5"/><path d="M6 11l6-6 6 6"/>`,
+  folder: `<path d="M3 7a2 2 0 0 1 2-2h3.5l2 2H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>`,
   // Four-way move arrows (relocate a pane between regions).
   move: `<path d="M12 3v18M3 12h18"/><path d="M12 3l-2.5 2.5M12 3l2.5 2.5"/><path d="M12 21l-2.5-2.5M12 21l2.5-2.5"/><path d="M3 12l2.5-2.5M3 12l2.5 2.5"/><path d="M21 12l-2.5-2.5M21 12l2.5 2.5"/>`,
 };

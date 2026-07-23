@@ -6,6 +6,7 @@
 
 import { Button, Chip, EmptyState, IconButton, Sheet, toast, icon } from "../kit";
 import { mapStore, renderThumbnail, type StoredMapSummary } from "../../store/mapStore";
+import { appendGrouped, openFolderPicker } from "./folders";
 import type { Router, Screen } from "../app/router";
 
 type Sort = "updated" | "name" | "leds";
@@ -105,7 +106,7 @@ export function MapBrowserScreen(router: Router): Screen {
       );
       return;
     }
-    for (const m of rows) listEl.append(row(m));
+    appendGrouped(listEl, rows, (m) => m.folder, row);
   }
 
   function row(m: StoredMapSummary): HTMLElement {
@@ -172,6 +173,16 @@ export function MapBrowserScreen(router: Router): Screen {
         sheet.close();
         void editText("Tags (space-separated)", m.tags.join(" "), (v) =>
           mapStore.setTags(m.id, v.split(/\s+/)).then(refresh),
+        );
+      }),
+      item("Move to folder…", "folder", () => {
+        sheet.close();
+        void mapStore.folders().then((existing) =>
+          openFolderPicker({
+            current: m.folder ?? "",
+            existing,
+            onPick: (folder) => void mapStore.setFolder(m.id, folder).then(refresh),
+          }),
         );
       }),
       item("Duplicate", "map", () => {

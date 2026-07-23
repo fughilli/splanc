@@ -1629,6 +1629,63 @@ body.is-locked {
   height: 3rem;
 }
 
+/* --- folders (library grouping + picker) --- */
+.folder-header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin: var(--sp-3) 0 var(--sp-1);
+  font-size: var(--f-caption);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+.folder-header svg {
+  width: 14px;
+  height: 14px;
+}
+.folder-header--muted {
+  opacity: 0.7;
+}
+.folder-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.folder-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+.folder-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctrl);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  padding: 0.5rem 0.7rem;
+  cursor: pointer;
+}
+.folder-row svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+.folder-row--on {
+  border-color: var(--accent);
+}
+.folder-new {
+  display: flex;
+  gap: var(--sp-2);
+}
+.folder-new .sheet-input {
+  margin-bottom: 0;
+}
+
 /* --- context / edit sheets --- */
 .context-sheet {
   display: flex;
