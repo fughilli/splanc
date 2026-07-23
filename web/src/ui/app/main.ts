@@ -13,6 +13,7 @@ import "./app.css";
 import { installIconSprite } from "../kit";
 import { Router } from "./router";
 import { Shell } from "./shell";
+import { initPwa } from "./pwa";
 import { appState } from "./state";
 import { mapStore } from "../../store/mapStore";
 import { seedBuiltinMaps } from "../../store/seedMaps";
@@ -34,6 +35,9 @@ async function main(): Promise<void> {
   const mount = document.getElementById("app") ?? document.body;
   const shell = new Shell();
   mount.appendChild(shell.root);
+
+  // PWA: register the service worker + offer the install banner / ⋯-menu entry.
+  initPwa();
 
   const router = new Router(shell.outlet);
   shell.attach(router);

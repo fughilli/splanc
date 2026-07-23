@@ -10,6 +10,7 @@
 
 import { IconButton, StatusPill, type IconName, type PillHandle } from "../kit";
 import { openDeviceSheet } from "../screens/deviceSheet";
+import { installMenuItem, onInstallChange } from "./pwa";
 import { appState } from "./state";
 import type { Router } from "./router";
 
@@ -35,6 +36,11 @@ export class Shell {
   private tabBar!: HTMLElement;
   private appBar!: HTMLElement;
   private router: Router | null = null;
+  // App-bar ⋯ overflow menu (currently the PWA install entry).
+  private menuWrap!: HTMLElement;
+  private kebab!: HTMLButtonElement;
+  private menu!: HTMLElement;
+  private menuOpen = false;
 
   constructor() {
     this.root = document.createElement("div");
@@ -65,8 +71,49 @@ export class Shell {
     const spacer = document.createElement("div");
     spacer.style.flex = "1";
     this.pill = StatusPill(() => openDeviceSheet());
-    this.appBar.append(this.backBtn, this.titleEl, spacer, this.pill.el);
+    // ⋯ overflow menu (anchored popup). Holds the PWA install action; the whole
+    // affordance hides itself when there's nothing to offer.
+    this.menuWrap = document.createElement("div");
+    this.menuWrap.className = "appbar-menu-wrap";
+    this.kebab = IconButton("more", { title: "More", onClick: () => this.toggleMenu() });
+    this.menu = document.createElement("div");
+    this.menu.className = "appbar-menu";
+    this.menu.style.display = "none";
+    this.menuWrap.append(this.kebab, this.menu);
+    this.appBar.append(this.backBtn, this.titleEl, spacer, this.pill.el, this.menuWrap);
+    this.rebuildMenu();
+    onInstallChange(() => this.rebuildMenu());
   }
+
+  /** Repopulate the ⋯ menu and hide the whole affordance when it's empty. */
+  private rebuildMenu(): void {
+    this.menu.replaceChildren();
+    const install = installMenuItem(() => this.closeMenu());
+    if (install) this.menu.appendChild(install);
+    const hasItems = this.menu.childElementCount > 0;
+    this.menuWrap.style.display = hasItems ? "" : "none";
+    if (!hasItems) this.closeMenu();
+  }
+
+  private toggleMenu(): void {
+    if (this.menuOpen) this.closeMenu();
+    else this.openMenu();
+  }
+  private openMenu(): void {
+    this.menuOpen = true;
+    this.menu.style.display = "";
+    // Defer the outside-click listener so this same click doesn't close it.
+    setTimeout(() => document.addEventListener("click", this.onDocClick), 0);
+  }
+  private closeMenu(): void {
+    this.menuOpen = false;
+    this.menu.style.display = "none";
+    document.removeEventListener("click", this.onDocClick);
+  }
+  private onDocClick = (ev: MouseEvent): void => {
+    const t = ev.target as Node;
+    if (!this.menu.contains(t) && !this.kebab.contains(t)) this.closeMenu();
+  };
 
   private buildTabBar(): void {
     this.tabBar = document.createElement("nav");

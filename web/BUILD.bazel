@@ -158,7 +158,7 @@ js_binary(
 # comment there (rolldown vs sandbox symlinks).
 vite_bin.vite(
     name = "dist",
-    srcs = SRCS + CSS + [
+    srcs = SRCS + CSS + glob(["public/**"]) + [
         "effects.html",
         "index.html",
         "package.json",

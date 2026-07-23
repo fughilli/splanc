@@ -1505,3 +1505,106 @@ body.is-locked {
     max-width: 1040px;
   }
 }
+
+/* --- app-bar ⋯ overflow menu (PWA install, etc.) --- */
+.appbar-menu-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.appbar-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  z-index: 61;
+  min-width: 12rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+  padding: var(--sp-1);
+  display: flex;
+  flex-direction: column;
+}
+.appbar-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  text-align: left;
+  background: none;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  padding: 0.5rem 0.7rem;
+  cursor: pointer;
+}
+.appbar-menu-item:hover {
+  background: var(--surface);
+}
+.appbar-menu-item svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* --- dismissible install banner (first load) --- */
+.pwa-banner {
+  position: fixed;
+  left: 50%;
+  bottom: calc(64px + env(safe-area-inset-bottom, 0px) + var(--sp-2));
+  transform: translate(-50%, 12px);
+  z-index: 55;
+  width: min(92vw, 30rem);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
+}
+.pwa-banner--in {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+.pwa-banner-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  flex: 0 0 auto;
+}
+.pwa-banner-text {
+  flex: 1;
+  min-width: 0;
+}
+.pwa-banner-title {
+  font-weight: 600;
+  font-size: var(--f-body);
+}
+.pwa-banner-sub {
+  color: var(--text-dim);
+  font-size: var(--f-caption);
+}
+.pwa-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  flex: 0 0 auto;
+}
+
+/* --- iOS Add-to-Home-Screen guide --- */
+.pwa-ios-lead {
+  margin: 0 0 var(--sp-2);
+  color: var(--text-dim);
+}
+.pwa-ios-steps {
+  margin: 0 0 var(--sp-3);
+  padding-left: 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
