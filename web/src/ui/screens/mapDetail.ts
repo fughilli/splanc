@@ -11,6 +11,13 @@
 
 import type { OutputMap, Topology } from "@ledmapper/protocol";
 import { extractTopology, type ExtractOptions } from "../../topology/extract";
+import {
+  autoscaleToUnitBox,
+  mapBounds,
+  recenterToCentroid,
+  transformMap,
+  type MapXform,
+} from "../../geom/mapTransform";
 import { MapView } from "../mapview";
 import { Button, Card, IconButton, Sheet, Slider, toast } from "../kit";
 import { mapStore, type StoredMap } from "../../store/mapStore";
@@ -74,7 +81,16 @@ export function MapDetailScreen(
   topoPanel.className = "detail-topo";
   topoPanel.style.display = "none";
 
-  el.append(canvas, metaStrip, viewToggles, actions, topoPanel);
+  const xformPanel = document.createElement("div");
+  xformPanel.className = "detail-topo detail-xform";
+  xformPanel.style.display = "none";
+
+  el.append(canvas, metaStrip, viewToggles, actions, xformPanel, topoPanel);
+
+  // The map + topology being edited live on `rec`/`currentTopology` (in memory);
+  // transforms mutate those and re-render, and Save persists them. `dirty` gates
+  // the Save button; Reset re-reads the stored record.
+  let dirty = false;
 
   let view: MapView | null = null;
   let rec: StoredMap | null = null;
@@ -121,6 +137,7 @@ export function MapDetailScreen(
 
     // Primary paths.
     actions.append(
+      Button({ label: "Transform", icon: "move", variant: "quiet", onClick: toggleXform }),
       Button({ label: "Topology", icon: "graph", variant: "quiet", onClick: toggleTopo }),
       Button({ label: "Effects", icon: "sparkles", variant: "quiet", onClick: () => router.navigate("/effects") }),
       Button({ label: "Send to device", icon: "map-to-device", onClick: () => void sendToDevice() }),
@@ -170,6 +187,160 @@ export function MapDetailScreen(
       topoPanel.style.display = "none";
       router.navigate(`/map/${mapId}`);
     }
+  }
+
+  // -- transform tools (translate / rotate / scale + auto-fixes) --------------
+  // A purely local panel (no routing — it isn't deep-linked). Transforms mutate
+  // the in-memory rec.map (+ currentTopology) and re-render; Save persists.
+  let xformBuilt = false;
+  const xformDirty = document.createElement("span");
+
+  function toggleXform(): void {
+    const open = xformPanel.style.display === "none";
+    xformPanel.style.display = open ? "" : "none";
+    if (open && !xformBuilt) {
+      buildTransformPanel();
+      xformBuilt = true;
+    }
+  }
+
+  function markDirty(): void {
+    dirty = true;
+    xformDirty.textContent = "• unsaved";
+  }
+
+  /** Apply a transform to the working map (and topology) and re-render. */
+  function applyXform(x: MapXform): void {
+    if (rec === null) return;
+    const out = transformMap(rec.map, currentTopology ?? undefined, x);
+    rec.map = out.map;
+    if (out.topology) currentTopology = out.topology;
+    view?.update(rec.map);
+    if (currentTopology) view?.setTopology(currentTopology);
+    markDirty();
+  }
+
+  function nudgeStep(): number {
+    const b = rec ? mapBounds(rec.map) : null;
+    return Math.max(0.01, (b?.maxDim ?? 1) * 0.05); // 5% of the map's extent
+  }
+
+  function pivotCentroid(): [number, number, number] {
+    const b = rec ? mapBounds(rec.map) : null;
+    return b ? b.centroid : [0, 0, 0];
+  }
+
+  function autoSnap(): void {
+    if (rec === null) return;
+    const out = recenterToCentroid(rec.map, currentTopology ?? undefined);
+    rec.map = out.map;
+    if (out.topology) currentTopology = out.topology;
+    view?.update(rec.map);
+    if (currentTopology) view?.setTopology(currentTopology);
+    markDirty();
+    toast("Centered on origin");
+  }
+
+  function autoScale(): void {
+    if (rec === null) return;
+    const out = autoscaleToUnitBox(rec.map, currentTopology ?? undefined);
+    rec.map = out.map;
+    if (out.topology) currentTopology = out.topology;
+    view?.update(rec.map);
+    if (currentTopology) view?.setTopology(currentTopology);
+    markDirty();
+    toast("Scaled to unit box");
+  }
+
+  async function resetEdits(): Promise<void> {
+    const fresh = await mapStore.get(mapId);
+    if (!fresh) return;
+    rec = fresh;
+    currentTopology =
+      fresh.topology && fresh.topology.segments.length > 0 ? fresh.topology : null;
+    view?.update(rec.map);
+    view?.setTopology(currentTopology);
+    dirty = false;
+    xformDirty.textContent = "";
+    toast("Reverted edits");
+  }
+
+  async function saveEdits(): Promise<void> {
+    if (rec === null || !dirty) return;
+    await mapStore.setMap(mapId, rec.map, currentTopology ?? undefined);
+    dirty = false;
+    xformDirty.textContent = "";
+    toast("Transform saved");
+  }
+
+  function buildTransformPanel(): void {
+    xformDirty.className = "xform-dirty metric";
+
+    const mkRow = (label: string, ...btns: HTMLElement[]): HTMLElement => {
+      const row = document.createElement("div");
+      row.className = "xform-row";
+      const l = document.createElement("span");
+      l.className = "xform-label";
+      l.textContent = label;
+      row.append(l, ...btns);
+      return row;
+    };
+    const tiny = (label: string, title: string, fn: () => void): HTMLButtonElement => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "xform-btn";
+      b.textContent = label;
+      b.title = title;
+      b.addEventListener("click", fn);
+      return b;
+    };
+
+    // Auto-fixes.
+    const auto = document.createElement("div");
+    auto.className = "xform-row";
+    auto.append(
+      Button({ label: "Snap to origin", icon: "move", variant: "quiet", onClick: autoSnap }),
+      Button({ label: "Autoscale to unit box", variant: "quiet", onClick: autoScale }),
+    );
+
+    // Translate — Y is up in the viewer.
+    const move = mkRow(
+      "Move",
+      tiny("X−", "Move −X", () => applyXform({ translate: [-nudgeStep(), 0, 0] })),
+      tiny("X+", "Move +X", () => applyXform({ translate: [nudgeStep(), 0, 0] })),
+      tiny("Y−", "Move down", () => applyXform({ translate: [0, -nudgeStep(), 0] })),
+      tiny("Y+", "Move up", () => applyXform({ translate: [0, nudgeStep(), 0] })),
+      tiny("Z−", "Move −Z", () => applyXform({ translate: [0, 0, -nudgeStep()] })),
+      tiny("Z+", "Move +Z", () => applyXform({ translate: [0, 0, nudgeStep()] })),
+    );
+
+    // Rotate about the map centroid; Y is the up axis (yaw) — most useful first.
+    const rotate = mkRow(
+      "Rotate",
+      tiny("⟲Y", "Yaw −15°", () => applyXform({ rot: { axis: "y", deg: -15 }, pivot: pivotCentroid() })),
+      tiny("⟳Y", "Yaw +15°", () => applyXform({ rot: { axis: "y", deg: 15 }, pivot: pivotCentroid() })),
+      tiny("⟲X", "Pitch −15°", () => applyXform({ rot: { axis: "x", deg: -15 }, pivot: pivotCentroid() })),
+      tiny("⟳X", "Pitch +15°", () => applyXform({ rot: { axis: "x", deg: 15 }, pivot: pivotCentroid() })),
+      tiny("⟲Z", "Roll −15°", () => applyXform({ rot: { axis: "z", deg: -15 }, pivot: pivotCentroid() })),
+      tiny("⟳Z", "Roll +15°", () => applyXform({ rot: { axis: "z", deg: 15 }, pivot: pivotCentroid() })),
+    );
+
+    // Uniform scale about the centroid.
+    const scale = mkRow(
+      "Scale",
+      tiny("÷", "Shrink 10%", () => applyXform({ scale: 1 / 1.1, pivot: pivotCentroid() })),
+      tiny("×", "Grow 10%", () => applyXform({ scale: 1.1, pivot: pivotCentroid() })),
+    );
+
+    const btns = document.createElement("div");
+    btns.className = "topo-btns";
+    btns.append(
+      Button({ label: "Reset", variant: "quiet", onClick: () => void resetEdits() }),
+      Button({ label: "Save", onClick: () => void saveEdits() }),
+      xformDirty,
+    );
+
+    xformPanel.append(auto, move, rotate, scale, btns);
   }
 
   const summaryEl = document.createElement("div");

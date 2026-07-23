@@ -339,6 +339,43 @@ body.is-locked {
   display: flex;
   gap: var(--sp-2);
   margin-top: var(--sp-3);
+  align-items: center;
+}
+
+/* --- transform tools --- */
+.detail-xform {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.xform-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.xform-label {
+  color: var(--text-dim);
+  font-size: var(--f-caption);
+  width: 3.5rem;
+  flex: 0 0 auto;
+}
+.xform-btn {
+  min-width: 2.4rem;
+  padding: 0.4rem 0.5rem;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctrl);
+  font: inherit;
+  cursor: pointer;
+}
+.xform-btn:hover {
+  border-color: var(--accent);
+}
+.xform-dirty {
+  color: var(--warn);
+  font-size: var(--f-caption);
 }
 
 /* --- effects --- */

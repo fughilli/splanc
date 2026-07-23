@@ -305,6 +305,32 @@ class MapStore {
     this.emit();
   }
 
+  /** Persist an edited map geometry (the editor's transform tools) — replaces
+   * the stored map, and the topology when one is passed, then regenerates the
+   * thumbnail from the new geometry. */
+  async setMap(id: string, map: OutputMap, topology?: Topology): Promise<void> {
+    const thumbnail = await renderThumbnail(map).catch(() => "");
+    await this.tx([IDX, PAYLOAD], "readwrite", async (tx) => {
+      const pStore = tx.objectStore(PAYLOAD);
+      const cur = await MapStore.req(
+        pStore.get(id) as IDBRequest<{ id: string; map: OutputMap; topology?: Topology } | undefined>,
+      );
+      if (!cur) return;
+      const next: { id: string; map: OutputMap; topology?: Topology } = { ...cur, map };
+      if (topology !== undefined) next.topology = topology;
+      pStore.put(next);
+      const iStore = tx.objectStore(IDX);
+      const s = await MapStore.req(iStore.get(id) as IDBRequest<StoredMapSummary | undefined>);
+      if (s) {
+        const ns: StoredMapSummary = { ...s, updatedAt: new Date().toISOString() };
+        if (thumbnail) ns.thumbnail = thumbnail;
+        if (topology !== undefined) ns.hasTopology = topology.segments.length > 0;
+        iStore.put(ns);
+      }
+    });
+    this.emit();
+  }
+
   /** Store a freshly-rendered thumbnail (lazy replacement on first view). */
   async setThumbnail(id: string, dataUrl: string): Promise<void> {
     await this.tx([IDX], "readwrite", async (tx) => {

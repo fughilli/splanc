@@ -36,6 +36,7 @@ import { LabelOverlay } from "../labels";
 import { MapView } from "../mapview";
 import { prefs } from "../../store/prefs";
 import { mapStore } from "../../store/mapStore";
+import { recenterToCentroid } from "../../geom/mapTransform";
 import { appState } from "../app/state";
 import { Button, IconButton, Slider, toast } from "../kit";
 import type { Router, Screen } from "../app/router";
@@ -667,7 +668,7 @@ export function CaptureScreen(router: Router): Screen {
       let map: OutputMap;
       if (solveOnPhone) {
         await c.stopMappingNoSolve();
-        map = await solverAgent.solve(
+        const solved = await solverAgent.solve(
           {
             detections: localDetections,
             imu: localImu,
@@ -677,12 +678,16 @@ export function CaptureScreen(router: Router): Screen {
           },
           (snap: SolveSnapshot) => renderSolveSnapshot(snap),
         );
+        // The solve frame is camera-anchored (origin ≈ camera-path end). Recenter
+        // on the LED centroid — the natural fixture origin — before the device
+        // and the library both take it, so they agree.
+        map = recenterToCentroid(solved).map;
         await c.submitMap(map);
       } else {
         const result = await c.stopMapping();
         const resp = await fetch(`/maps/${result.mapId}`);
         if (!resp.ok) throw new Error(`fetching map failed: HTTP ${resp.status}`);
-        map = (await resp.json()) as OutputMap;
+        map = recenterToCentroid((await resp.json()) as OutputMap).map;
       }
       preview.view?.stop();
       // New tail: save the solved result as a NEW library map (design doc §4.2)
