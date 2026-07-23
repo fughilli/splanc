@@ -382,16 +382,35 @@
 }
 
 /* --- effect editor (in-shell) --- */
+/* The editor is a full-height workspace: it fills the shell outlet so the
+ * N-up panes (wide) and the code/uniforms split (narrow) can own the vertical
+ * space and scroll independently. The screen padding is dropped here — the
+ * layout supplies its own gaps. */
 .screen--fxedit {
   display: flex;
   flex-direction: column;
   gap: var(--sp-3);
+  padding: var(--sp-3);
+  min-height: 0;
+  /* Fill the outlet (app-bar + tab-bar are ~56px + 3.5rem of chrome). */
+  height: calc(100dvh - 56px - 3.5rem);
+}
+.screen--fxedit .fxlayout {
+  flex: 1;
+  min-height: 0;
 }
 .fxedit-canvas {
   width: 100%;
+  height: 100%;
+  min-height: 8rem;
   aspect-ratio: 4 / 3;
   border-radius: var(--r-card);
   background: #000;
+}
+/* Inside a pane the canvas fills the body (no forced aspect ratio). */
+.fxpane .fxedit-canvas {
+  aspect-ratio: auto;
+  flex: 1;
 }
 .fxedit-name {
   display: flex;
@@ -404,6 +423,10 @@
   border-radius: var(--r-card);
   overflow: hidden;
   background: var(--surface);
+  /* Fill the pane body so the code area gets the majority of the height and
+   * scrolls internally rather than growing the page. */
+  flex: 1;
+  min-height: 0;
 }
 
 /* Highlight overlay: a transparent <textarea> layered exactly over a
@@ -412,8 +435,11 @@
  * the backdrop paints the colors. */
 .fxedit-codewrap {
   position: relative;
-  min-height: 12rem;
-  resize: vertical;
+  min-height: 8rem;
+  /* Grow to fill the editor column; the textarea + backdrop are inset:0 so they
+   * track this box exactly (keeps the highlight overlay + completion mirror
+   * co-located and scroll-synced). */
+  flex: 1;
   overflow: hidden;
 }
 .fxedit-code,
@@ -734,6 +760,291 @@
   cursor: pointer;
   padding: 0;
   text-decoration: underline;
+}
+
+/* ===========================================================================
+   Effect-editor composable workspace (FxLayout). Two modes toggled by a
+   matchMedia at 720px. --fxdiv is the divider thickness (also its hit target).
+   =========================================================================== */
+.fxlayout {
+  --fxdiv: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-height: 0;
+}
+.fxlayout .fxedit-header,
+.fxlayout .fxedit-name {
+  flex: 0 0 auto;
+}
+
+/* -- pane wrapper: header (title + controls) over a scrollable body -- */
+.fxpane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  background: var(--surface);
+  overflow: hidden;
+}
+.fxpane-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 0.25rem 0.25rem 0.25rem 0.6rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+  flex: 0 0 auto;
+}
+.fxpane-title {
+  flex: 1 1 auto;
+  font-size: var(--f-caption);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fxpane-ctl {
+  display: flex;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+.fxpane-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-ctrl);
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.fxpane-btn:hover {
+  background: var(--surface);
+  color: var(--text);
+}
+.fxpane-btn svg {
+  width: 15px;
+  height: 15px;
+}
+.fxpane-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+  padding: var(--sp-2);
+}
+/* The code pane body holds the editor which supplies its own border/scroll. */
+.fxpane[data-pane="code"] .fxpane-body {
+  padding: 0;
+  overflow: hidden;
+}
+.fxpane[data-pane="code"] .fxedit-editor {
+  border: 0;
+  border-radius: 0;
+}
+.fxpane[data-pane="preview"] .fxpane-body {
+  padding: var(--sp-2);
+}
+
+/* -- WIDE: the N-up grid -- */
+.fxlayout-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  gap: 0;
+}
+.fxlayout-midrow {
+  min-height: 0;
+  display: grid;
+}
+.fxlayout-slot {
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  overflow: hidden;
+  padding: 2px;
+}
+.fxlayout-slot > .fxpane {
+  flex: 1 1 0;
+}
+
+/* -- dividers (drag to resize) -- */
+.fxlayout-divider {
+  background: transparent;
+  position: relative;
+  z-index: 2;
+  flex: 0 0 auto;
+}
+.fxlayout-divider--v {
+  width: var(--fxdiv);
+  cursor: col-resize;
+}
+.fxlayout-divider--h {
+  height: var(--fxdiv);
+  cursor: row-resize;
+}
+.fxlayout-divider::after {
+  content: "";
+  position: absolute;
+  background: var(--border);
+  border-radius: 2px;
+}
+.fxlayout-divider--v::after {
+  top: 12%;
+  bottom: 12%;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-1px);
+}
+.fxlayout-divider--h::after {
+  left: 12%;
+  right: 12%;
+  top: 50%;
+  height: 2px;
+  transform: translateY(-1px);
+}
+.fxlayout-divider:hover::after {
+  background: var(--accent);
+}
+
+/* -- relocate popover -- */
+.fxlayout-relo {
+  position: absolute;
+  z-index: 30;
+  margin-top: 2px;
+  min-width: 9rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctrl);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+  padding: var(--sp-1);
+  display: flex;
+  flex-direction: column;
+}
+.fxlayout-relo-title {
+  font-size: var(--f-caption);
+  color: var(--text-dim);
+  padding: 0.2rem 0.5rem;
+}
+.fxlayout-relo-item {
+  text-align: left;
+  background: none;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  padding: 0.4rem 0.6rem;
+  border-radius: var(--r-ctrl);
+  cursor: pointer;
+}
+.fxlayout-relo-item:hover {
+  background: var(--surface);
+}
+.fxlayout-relo-item--cur {
+  color: var(--accent);
+}
+.fxlayout-relo-hide {
+  border-top: 1px solid var(--border);
+  margin-top: 2px;
+  color: var(--text-dim);
+}
+
+/* -- NARROW: primary code/uniforms split + overflow tab strip -- */
+.fxlayout-nsplit {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+}
+.fxlayout-ncell {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.fxlayout-ncell > .fxpane {
+  flex: 1;
+}
+.fxlayout-tabs {
+  display: flex;
+  gap: var(--sp-1);
+  overflow-x: auto;
+  flex: 0 0 auto;
+  padding-bottom: 2px;
+}
+.fxlayout-tab {
+  flex: 0 0 auto;
+  background: var(--surface-2);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.3rem 0.7rem;
+  font: inherit;
+  font-size: var(--f-caption);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.fxlayout-tab--active {
+  background: var(--accent-quiet);
+  color: var(--text);
+  border-color: var(--accent);
+}
+.fxlayout-nsheet {
+  flex: 0 0 auto;
+  max-height: 45vh;
+  min-height: 8rem;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.fxlayout-nsheet > .fxpane {
+  flex: 1;
+}
+/* On narrow the pane header controls (move/hide) are hidden — the tab strip is
+   the switcher — so show a clean body. */
+.fxlayout--narrow .fxpane-ctl {
+  display: none;
+}
+
+/* -- preview pane internals -- */
+.fxedit-previewbody,
+.fxedit-chatbody,
+.fxedit-diagbody,
+.fxedit-disasmbody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-height: 0;
+  flex: 1;
+}
+.fxedit-previewctl {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  flex: 0 0 auto;
+}
+.fxedit-viewtoggles {
+  display: flex;
+  gap: var(--sp-2);
+}
+.fxedit-chatbody .fxedit-chatlog {
+  flex: 1 1 auto;
+  max-height: none;
+  min-height: 6rem;
+}
+.fxedit-disasmbody .fxedit-disasm {
+  flex: 1;
+  max-height: none;
 }
 
 /* --- AI key sheet --- */

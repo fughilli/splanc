@@ -39,7 +39,8 @@ import {
 import { effectStore } from "../../store/effectStore";
 import { mapStore } from "../../store/mapStore";
 import { appState } from "../app/state";
-import { Button, Card, Field, IconButton, toast } from "../kit";
+import { Button, Field, IconButton, toast } from "../kit";
+import { FxLayout } from "../../effects/editor/layout";
 import { openAiKeySheet } from "./aiKeySheet";
 import type { Router, Screen } from "../app/router";
 
@@ -69,7 +70,6 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   // Latest successful-compile artefacts, fed to the AI as turn context.
   let lastCompileSummary = "not compiled yet";
   let lastDisassembly = "";
-  let showDisassembly = false;
   let chatBusy = false;
   const chatHistory: ChatMessage[] = [];
   let raf = 0;
@@ -80,6 +80,22 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   canvas.className = "fxedit-canvas";
   canvas.width = 640;
   canvas.height = 420;
+
+  /** Recompute the preview canvas backing store from its laid-out CSS box (DPR
+   * aware). MapView reads canvas.width/height directly, so after any relayout /
+   * viewport change we must resize the backing store or the preview draws into a
+   * stale-sized buffer. Safe to call before the canvas is in the DOM (no-op). */
+  function resizePreviewCanvas(): void {
+    const rect = canvas.getBoundingClientRect();
+    if (rect.width < 1 || rect.height < 1) return;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const w = Math.round(rect.width * dpr);
+    const h = Math.round(rect.height * dpr);
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w;
+      canvas.height = h;
+    }
+  }
 
   const nameField = Field({ label: "Effect name", placeholder: "My effect" });
   nameField.el.classList.add("fxedit-name");
@@ -348,19 +364,10 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   }
 
   // -- disassembly panel ----------------------------------------------------
-  const disasmCard = Card();
-  disasmCard.classList.add("fxedit-disasm-card");
-  disasmCard.style.display = "none";
-  const disasmHead = document.createElement("div");
-  disasmHead.className = "fxedit-legend";
-  disasmHead.textContent = "Disassembly (.fxb)";
+  // The disassembly <pre> is a pane body (see FxLayout below); its show/hide is
+  // driven by the layout, and mirrored by the ⋯ menu toggle.
   const disasmPre = document.createElement("pre");
   disasmPre.className = "fxedit-disasm";
-  disasmCard.append(disasmHead, disasmPre);
-
-  function refreshDisasmVisibility(): void {
-    disasmCard.style.display = showDisassembly ? "" : "none";
-  }
 
   const uniformsHost = document.createElement("div");
   uniformsHost.className = "uniform-panel";
@@ -453,13 +460,11 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   miDisasm.type = "button";
   miDisasm.className = "fxedit-menu-item";
   function syncDisasmLabel(): void {
-    miDisasm.textContent = showDisassembly ? "Hide disassembly" : "Show disassembly";
+    miDisasm.textContent = layout.isVisible("disasm") ? "Hide disassembly" : "Show disassembly";
   }
-  syncDisasmLabel();
   miDisasm.addEventListener("click", () => {
-    showDisassembly = !showDisassembly;
+    layout.setVisible("disasm", !layout.isVisible("disasm"));
     syncDisasmLabel();
-    refreshDisasmVisibility();
     closeMenu();
   });
   menu.append(miKey, miDisasm);
@@ -720,20 +725,27 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   }
 
   // -- layout ---------------------------------------------------------------
-  function fieldset(legend: string, ...children: (Node | string)[]): HTMLElement {
-    const wrap = Card();
-    const h = document.createElement("div");
-    h.className = "fxedit-legend";
-    h.textContent = legend;
-    wrap.append(h, ...children);
-    return wrap;
-  }
-
   function buttonRow(...btns: HTMLElement[]): HTMLElement {
     const row = document.createElement("div");
     row.className = "fxedit-btnrow";
     row.append(...btns);
     return row;
+  }
+
+  // Grid / Triad segmented toggle for the preview (same feature Map Detail
+  // exposes). Flips mapView.showGrid / showTriad; safe before mapView exists.
+  function viewToggle(label: string, apply: (on: boolean) => void): HTMLButtonElement {
+    let on = false;
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "toggle-chip";
+    b.textContent = label;
+    b.addEventListener("click", () => {
+      on = !on;
+      b.classList.toggle("toggle-chip--on", on);
+      apply(on);
+    });
+    return b;
   }
 
   const mapRow = document.createElement("label");
@@ -742,18 +754,68 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   mapCap.textContent = "Preview map";
   mapRow.append(mapCap, mapPicker);
 
-  el.append(
-    header,
-    canvas,
-    nameField.el,
-    editorWrap,
-    disasmCard,
-    fieldset("Preview", mapRow),
-    fieldset("AI chat", chatLog, chatInput, buttonRow(chatSend)),
-    fieldset("Uniforms", uniformsHost),
-    fieldset("Diagnostics", diagsEl),
-    fieldset("Device", buttonRow(sendBtn, hydrateBtn), devStatus),
+  const viewToggles = document.createElement("div");
+  viewToggles.className = "fxedit-viewtoggles";
+  viewToggles.append(
+    viewToggle("Grid", (v) => {
+      if (mapView) mapView.showGrid = v;
+    }),
+    viewToggle("Triad", (v) => {
+      if (mapView) mapView.showTriad = v;
+    }),
   );
+
+  // Preview pane content: canvas + its controls. The canvas node is STABLE —
+  // it's created once and only re-parented, so MapView keeps drawing to it.
+  const previewBody = document.createElement("div");
+  previewBody.className = "fxedit-previewbody";
+  const previewControls = document.createElement("div");
+  previewControls.className = "fxedit-previewctl";
+  previewControls.append(viewToggles, mapRow);
+  previewBody.append(canvas, previewControls);
+
+  // Chat pane content.
+  const chatBody = document.createElement("div");
+  chatBody.className = "fxedit-chatbody";
+  chatBody.append(chatLog, chatInput, buttonRow(chatSend));
+
+  // Diagnostics pane content (diags list + device controls live together — both
+  // are "status" surfaces the user consults, not primary editing views).
+  const diagBody = document.createElement("div");
+  diagBody.className = "fxedit-diagbody";
+  const devLegend = document.createElement("div");
+  devLegend.className = "fxedit-legend";
+  devLegend.textContent = "Device";
+  diagBody.append(diagsEl, devLegend, buttonRow(sendBtn, hydrateBtn), devStatus);
+
+  // Disassembly pane content (the .fxedit-disasm <pre>).
+  const disasmBody = document.createElement("div");
+  disasmBody.className = "fxedit-disasmbody";
+  disasmBody.appendChild(disasmPre);
+
+  // ---- pane model + slots -------------------------------------------------
+  // Each pane wraps a STABLE content node (never recreated — only re-parented)
+  // so the code textarea / MapView canvas / chat log preserve state across
+  // relayouts. Panes live in "slots" (regions); the layout persists to
+  // localStorage. On narrow viewports the wide layout is ignored: code +
+  // uniforms are primary, the rest cycle through an overflow tab strip.
+  const layout = new FxLayout({
+    header,
+    nameEl: nameField.el,
+    panes: [
+      { id: "code", title: "Code", primary: true, node: editorWrap },
+      { id: "uniforms", title: "Uniforms", primary: true, node: uniformsHost },
+      { id: "preview", title: "Preview", node: previewBody },
+      { id: "diagnostics", title: "Diagnostics", node: diagBody },
+      { id: "disasm", title: "Disassembly", node: disasmBody },
+      { id: "chat", title: "AI chat", node: chatBody },
+    ],
+    onRelayout: () => {
+      // A resize/relayout changes the canvas box; keep the preview crisp.
+      resizePreviewCanvas();
+    },
+  });
+  el.append(layout.root);
 
   let unsubAppState: (() => void) | null = null;
 
@@ -783,7 +845,9 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     }
 
     refreshDevice();
-    refreshDisasmVisibility();
+    layout.mount();
+    syncDisasmLabel();
+    resizePreviewCanvas();
     unsubAppState = appState.subscribe(() => refreshDevice());
 
     raf = requestAnimationFrame(tick);
@@ -828,6 +892,7 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
       if (popupTimer !== null) clearTimeout(popupTimer);
       void effectStore.save(effectId, codeEl.value);
       unsubAppState?.();
+      layout.unmount();
       preview?.dispose();
       worker.dispose();
       mapView?.stop();
