@@ -546,7 +546,16 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     syncDisasmLabel();
     closeMenu();
   });
-  menu.append(miKey, miDisasm);
+  const miReset = document.createElement("button");
+  miReset.type = "button";
+  miReset.className = "fxedit-menu-item";
+  miReset.textContent = "Reset layout";
+  miReset.addEventListener("click", () => {
+    layout.resetLayout();
+    syncDisasmLabel(); // reset re-hides disassembly
+    closeMenu();
+  });
+  menu.append(miKey, miDisasm, miReset);
   floatR.appendChild(menu);
 
   let menuOpen = false;

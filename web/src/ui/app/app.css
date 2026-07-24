@@ -1295,9 +1295,9 @@ body.is-locked {
   color: var(--text-dim);
 }
 
-/* -- NARROW: primary code/uniforms split + overflow tab strip -- */
-/* Fill the pinned root as a flex column; leave headroom at the top so the code
- * pane doesn't sit under the floating back/name/⋯ controls. */
+/* -- NARROW: vertical top / center / bottom dock stack -- */
+/* Fill the pinned root; leave headroom at the top so the stack doesn't sit under
+ * the floating back/name/⋯ controls. */
 .fxlayout--narrow {
   position: absolute;
   inset: 0;
@@ -1305,19 +1305,22 @@ body.is-locked {
   flex-direction: column;
   padding-top: calc(env(safe-area-inset-top, 0px) + 2rem);
 }
-.fxlayout-nsplit {
+/* The three regions stack vertically; grid-template-rows (fr shares + dividers)
+   is set inline from the persisted region sizes. */
+.fxlayout-nstack {
   flex: 1 1 auto;
   min-height: 0;
   display: grid;
 }
-.fxlayout-ncell {
+.fxlayout-nregion {
   min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
-.fxlayout-ncell > .fxpane {
+.fxlayout-nregion > .fxpane {
   flex: 1;
+  min-height: 0;
 }
 /* Match the wide edge-tab strip: a flush bar of zero-gap tabs with hairline
    separators (not floating pills). */
@@ -1326,7 +1329,7 @@ body.is-locked {
   overflow-x: auto;
   flex: 0 0 auto;
   background: var(--surface-2);
-  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
 }
 .fxlayout-tab {
   flex: 0 0 auto;
@@ -1346,22 +1349,6 @@ body.is-locked {
 .fxlayout-tab--active {
   background: var(--surface);
   color: var(--text);
-}
-.fxlayout-nsheet {
-  flex: 0 0 auto;
-  max-height: 45vh;
-  min-height: 8rem;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-.fxlayout-nsheet > .fxpane {
-  flex: 1;
-}
-/* On narrow the pane header controls (move/hide) are hidden — the tab strip is
-   the switcher — so show a clean body. */
-.fxlayout--narrow .fxpane-ctl {
-  display: none;
 }
 
 /* -- preview pane internals -- */

@@ -10,11 +10,12 @@
  *
  * Two modes, chosen by viewport width (a matchMedia at 720px):
  *
- *  • NARROW (< 720px): Code + Uniforms are the primary, always-visible views,
- *    stacked with a draggable split divider (code gets the majority). The other
- *    panes (Preview, Diagnostics, Disassembly, Chat) live in an overflow tab
- *    strip — a "Views" segmented switcher that shows exactly one secondary pane
- *    at a time (tap the active tab again to collapse it).
+ *  • NARROW (< 720px): a vertical TOP / CENTER / BOTTOM dock stack — the phone
+ *    analogue of the wide edge docks, but vertical-only and with its own
+ *    arrangement. Each region holds one or more panes (TABBED when more than one)
+ *    and is separated from its neighbours by a draggable divider. Panes drag
+ *    freely between the three regions (long-press a tab or header); by default
+ *    Code fills the center and everything else is a tab group in the bottom.
  *
  *  • WIDE (>= 720px): an EDGE-DOCK workspace. ONE pane is the CENTER and fills
  *    the remaining space; every other pane is docked to an edge (left / right /
@@ -39,6 +40,17 @@ import { icon } from "../../ui/kit/icons";
 export type Dock = "left" | "right" | "top" | "bottom" | "center";
 const EDGES: Exclude<Dock, "center">[] = ["left", "right", "top", "bottom"];
 const DOCKS: Dock[] = ["center", "left", "right", "top", "bottom"];
+
+/** NARROW is a vertical stack of three tab-grouped regions (top over center over
+ * bottom). Panes drag freely between them — the phone analogue of the wide docks,
+ * but vertical-only and independent of the wide arrangement. */
+type NRegion = "top" | "center" | "bottom";
+const NREGIONS: NRegion[] = ["top", "center", "bottom"];
+const NREGION_LABEL: Record<NRegion, string> = {
+  top: "Move to top",
+  center: "Move to center",
+  bottom: "Move to bottom",
+};
 const DOCK_LABEL: Record<Dock, string> = {
   center: "Center",
   left: "Dock left",
@@ -66,9 +78,13 @@ interface Persisted {
   active: Record<Exclude<Dock, "center">, string | null>;
   /** Edge strip sizes as fractions of the workspace (0..1). */
   edgeSizes: Record<Exclude<Dock, "center">, number>;
-  split: number; // narrow: code-height fraction 0..1
   hidden: string[];
-  activeTab: string | null; // narrow overflow active pane id (or null = collapsed)
+  /** NARROW: which vertical region each pane lives in. */
+  ndock: Record<string, NRegion>;
+  /** NARROW: front (active) pane id per region when a region is tab-grouped. */
+  nactive: Record<NRegion, string | null>;
+  /** NARROW: region size weights (normalized across the *present* regions). */
+  nsize: Record<NRegion, number>;
 }
 
 const STORAGE_KEY = "fxedit.layout.v2";
@@ -80,12 +96,13 @@ const STORAGE_KEY = "fxedit.layout.v2";
 const MIN_EDGE = 0.04;
 const MAX_EDGE = 0.92;
 const MIN_CENTER = 0.04;
-const MIN_SPLIT = 0.06;
-const MAX_SPLIT = 0.94;
+const MIN_NREG = 0.08; // narrow region minimum height fraction
 const NARROW_QUERY = "(max-width: 719px)";
 
 /** Default WIDE arrangement: Code is the center; Uniforms + Preview dock right;
- * Chat / Diagnostics / Disassembly dock bottom (disasm hidden by default). */
+ * Chat / Diagnostics / Disassembly dock bottom (disasm hidden by default).
+ * Default NARROW arrangement: Code fills the center region; everything else is a
+ * tab group in the bottom region (Uniforms fronted; disasm hidden). */
 function defaultLayout(): Persisted {
   return {
     v: 2,
@@ -98,9 +115,17 @@ function defaultLayout(): Persisted {
     },
     active: { left: null, right: "uniforms", top: null, bottom: "diagnostics" },
     edgeSizes: { left: 0.24, right: 0.3, top: 0.25, bottom: 0.32 },
-    split: 0.62,
     hidden: ["disasm"],
-    activeTab: "preview",
+    ndock: {
+      code: "center",
+      uniforms: "bottom",
+      preview: "bottom",
+      diagnostics: "bottom",
+      chat: "bottom",
+      disasm: "bottom",
+    },
+    nactive: { top: null, center: "code", bottom: "uniforms" },
+    nsize: { top: 0.28, center: 0.52, bottom: 0.34 },
   };
 }
 
@@ -132,9 +157,22 @@ function loadPersisted(): Persisted {
         top: p.edgeSizes?.top ?? def.edgeSizes.top,
         bottom: p.edgeSizes?.bottom ?? def.edgeSizes.bottom,
       },
-      split: typeof p.split === "number" ? p.split : def.split,
       hidden: p.hidden ?? def.hidden,
-      activeTab: p.activeTab ?? def.activeTab,
+      // Narrow fields are new; fold defaults under any stored overrides. Values
+      // are sanitized in reconcileState (every pane ends up in exactly one
+      // region and each region fronts a visible pane).
+      ndock:
+        p.ndock && typeof p.ndock === "object" ? { ...def.ndock, ...p.ndock } : def.ndock,
+      nactive: {
+        top: p.nactive?.top ?? def.nactive.top,
+        center: p.nactive?.center ?? def.nactive.center,
+        bottom: p.nactive?.bottom ?? def.nactive.bottom,
+      },
+      nsize: {
+        top: p.nsize?.top ?? def.nsize.top,
+        center: p.nsize?.center ?? def.nsize.center,
+        bottom: p.nsize?.bottom ?? def.nsize.bottom,
+      },
     };
   } catch {
     return defaultLayout();
@@ -215,12 +253,30 @@ export class FxLayout {
     // Heal active-tab pointers so each occupied edge fronts a visible pane.
     for (const e of EDGES) this.healActive(e);
     this.state.hidden = this.state.hidden.filter((id) => this.panes.has(id));
+
+    // Narrow: every pane must live in exactly one region; drop unknown ids.
+    for (const id of Object.keys(this.state.ndock)) {
+      if (!this.panes.has(id)) delete this.state.ndock[id];
+    }
+    for (const id of this.order) {
+      const r = this.state.ndock[id];
+      if (r !== "top" && r !== "center" && r !== "bottom") {
+        this.state.ndock[id] = this.panes.get(id)!.primary ? "center" : "bottom";
+      }
+    }
+    for (const r of NREGIONS) this.healNActive(r);
   }
 
   private healActive(edge: Exclude<Dock, "center">): void {
     const vis = this.visibleAt(edge);
     const cur = this.state.active[edge];
     if (!cur || !vis.includes(cur)) this.state.active[edge] = vis[0] ?? null;
+  }
+
+  private healNActive(r: NRegion): void {
+    const vis = this.nvisibleAt(r);
+    const cur = this.state.nactive[r];
+    if (!cur || !vis.includes(cur)) this.state.nactive[r] = vis[0] ?? null;
   }
 
   mount(): void {
@@ -247,10 +303,10 @@ export class FxLayout {
     if (on && has) this.state.hidden = this.state.hidden.filter((x) => x !== id);
     else if (!on && !has) this.state.hidden.push(id);
     else return;
-    // On narrow, showing a secondary pane also makes it the active tab.
+    // On narrow, showing a pane fronts it within its region.
     if (on && this.mql.matches) {
-      const spec = this.panes.get(id);
-      if (spec && !spec.primary) this.state.activeTab = id;
+      const r = this.state.ndock[id];
+      if (r) this.state.nactive[r] = id;
     }
     // On wide, showing a docked pane fronts it on its edge.
     if (on && !this.mql.matches) {
@@ -258,6 +314,7 @@ export class FxLayout {
       if (e) this.state.active[e] = id;
     }
     for (const e of EDGES) this.healActive(e);
+    for (const r of NREGIONS) this.healNActive(r);
     this.persist();
     this.render();
   }
@@ -298,6 +355,24 @@ export class FxLayout {
       this.state.active[dock] = id;
     }
     for (const e of EDGES) this.healActive(e);
+    this.persist();
+    this.render();
+  }
+
+  /** NARROW: move a pane into a vertical region and front it there. */
+  relocateNarrow(id: string, region: NRegion): void {
+    this.state.ndock[id] = region;
+    if (!this.state.hidden.includes(id)) this.state.nactive[region] = id;
+    for (const r of NREGIONS) this.healNActive(r);
+    this.persist();
+    this.render();
+  }
+
+  /** Restore the built-in default arrangement (both wide and narrow) and forget
+   * any persisted customization. */
+  resetLayout(): void {
+    this.state = defaultLayout();
+    this.reconcileState();
     this.persist();
     this.render();
   }
@@ -349,6 +424,22 @@ export class FxLayout {
 
   private visibleAt(edge: Exclude<Dock, "center">): string[] {
     return this.state.docks[edge].filter((id) => this.isVisible(id));
+  }
+
+  /** NARROW: visible panes in a region, in stable declaration order. */
+  private nvisibleAt(r: NRegion): string[] {
+    return this.order.filter((id) => this.state.ndock[id] === r && this.isVisible(id));
+  }
+
+  /** NARROW: the region's front pane (stored active if visible, else the first). */
+  private nActiveOf(r: NRegion): string | null {
+    const vis = this.nvisibleAt(r);
+    const cur = this.state.nactive[r];
+    return cur && vis.includes(cur) ? cur : (vis[0] ?? null);
+  }
+
+  private nfrac(r: NRegion): number {
+    return clamp(this.state.nsize[r] || 0.33, MIN_NREG, 1);
   }
 
   // ---- WIDE: edge-dock ----------------------------------------------------
@@ -526,74 +617,97 @@ export class FxLayout {
     return rows.join(" ");
   }
 
-  // ---- NARROW: code/uniforms split + overflow tabs ------------------------
+  // ---- NARROW: vertical top / center / bottom dock stack ------------------
 
   private renderNarrow(): void {
-    // Primary split: code over uniforms with a draggable divider.
-    const split = document.createElement("div");
-    split.className = "fxlayout-nsplit";
-    const codeShare = clamp(this.state.split, MIN_SPLIT, MAX_SPLIT);
-    split.style.gridTemplateRows = `${codeShare}fr var(--fxdiv) ${1 - codeShare}fr`;
+    const present = NREGIONS.filter((r) => this.nvisibleAt(r).length > 0);
+    const stack = document.createElement("div");
+    stack.className = "fxlayout-nstack";
+    stack.style.gridTemplateRows = this.nRows(present);
 
-    const codeCell = document.createElement("div");
-    codeCell.className = "fxlayout-ncell";
-    codeCell.appendChild(this.wrapped("code", false));
-
-    const uniCell = document.createElement("div");
-    uniCell.className = "fxlayout-ncell";
-    uniCell.appendChild(this.wrapped("uniforms", false));
-
-    const div = document.createElement("div");
-    div.className = "fxlayout-divider fxlayout-divider--h";
-    div.setAttribute("role", "separator");
-    div.addEventListener("pointerdown", (e) => this.startNarrowSplitDrag(e, split));
-
-    split.append(codeCell, div, uniCell);
-    this.root.appendChild(split);
-
-    // Overflow "Views" tab strip for the secondary panes.
-    const secondary = this.order.filter((id) => !this.panes.get(id)!.primary);
-    const strip = document.createElement("div");
-    strip.className = "fxlayout-tabs";
-    for (const id of secondary) {
-      const spec = this.panes.get(id)!;
-      const active = this.state.activeTab === id;
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "fxlayout-tab" + (active ? " fxlayout-tab--active" : "");
-      btn.textContent = spec.title;
-      btn.addEventListener("click", () => {
-        // Tap active → collapse; else activate (and mark visible).
-        this.state.activeTab = active ? null : id;
-        if (this.state.activeTab && this.state.hidden.includes(id)) {
-          this.state.hidden = this.state.hidden.filter((x) => x !== id);
-        }
-        this.persist();
-        this.render();
-      });
-      strip.appendChild(btn);
-    }
-    this.root.appendChild(strip);
-
-    // The one active secondary pane (if any).
-    const activeId = this.state.activeTab;
-    if (activeId && secondary.includes(activeId)) {
-      const sheet = document.createElement("div");
-      sheet.className = "fxlayout-nsheet";
-      sheet.appendChild(this.wrapped(activeId, false));
-      this.root.appendChild(sheet);
-    }
+    present.forEach((r, i) => {
+      if (i > 0) stack.appendChild(this.nDivider(present[i - 1]!, r, stack, present));
+      stack.appendChild(this.renderNRegion(r));
+    });
+    this.root.appendChild(stack);
   }
 
-  private startNarrowSplitDrag(e: PointerEvent, split: HTMLElement): void {
+  /** grid-template-rows for the present regions (fr shares) + dividers between. */
+  private nRows(present: NRegion[]): string {
+    const sum = present.reduce((s, r) => s + this.nfrac(r), 0) || 1;
+    const rows: string[] = [];
+    present.forEach((r, i) => {
+      if (i > 0) rows.push("var(--fxdiv)");
+      rows.push(`${this.nfrac(r) / sum}fr`);
+    });
+    return rows.join(" ");
+  }
+
+  /** A narrow region: an optional tab bar (when >1 pane) over the fronted pane. */
+  private renderNRegion(r: NRegion): HTMLElement {
+    const cell = document.createElement("div");
+    cell.className = `fxlayout-nregion fxlayout-nregion--${r}`;
+    const vis = this.nvisibleAt(r);
+    if (vis.length > 1) {
+      const tabs = document.createElement("div");
+      tabs.className = "fxlayout-tabs";
+      const activeId = this.nActiveOf(r);
+      for (const id of vis) {
+        const spec = this.panes.get(id)!;
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "fxlayout-tab" + (id === activeId ? " fxlayout-tab--active" : "");
+        btn.textContent = spec.title;
+        btn.addEventListener("click", () => {
+          this.state.nactive[r] = id;
+          this.persist();
+          this.render();
+        });
+        this.attachDragHandle(btn, id); // long-press → drag to another region
+        tabs.appendChild(btn);
+      }
+      cell.appendChild(tabs);
+    }
+    const activeId = this.nActiveOf(r);
+    if (activeId) cell.appendChild(this.wrapped(activeId, true));
+    return cell;
+  }
+
+  private nDivider(above: NRegion, below: NRegion, stack: HTMLElement, present: NRegion[]): HTMLElement {
+    const d = document.createElement("div");
+    d.className = "fxlayout-divider fxlayout-divider--h";
+    d.setAttribute("role", "separator");
+    d.addEventListener("pointerdown", (e) => this.startNRegionDrag(e, above, below, stack, present));
+    return d;
+  }
+
+  /** Drag the boundary between two adjacent regions, keeping every other region
+   * fixed (only the pair's split changes — like the wide edge dividers). */
+  private startNRegionDrag(
+    e: PointerEvent,
+    above: NRegion,
+    below: NRegion,
+    stack: HTMLElement,
+    present: NRegion[],
+  ): void {
     e.preventDefault();
     const target = e.currentTarget as HTMLElement;
     target.setPointerCapture(e.pointerId);
-    const rect = split.getBoundingClientRect();
+    const rect = stack.getBoundingClientRect();
+    const sum = present.reduce((s, r) => s + this.nfrac(r), 0) || 1;
+    // Weight above the boundary that stays fixed during this drag.
+    let before = 0;
+    for (const r of present) {
+      if (r === above) break;
+      before += this.nfrac(r);
+    }
+    const pairTotal = this.nfrac(above) + this.nfrac(below);
     const move = (ev: PointerEvent) => {
-      const frac = clamp((ev.clientY - rect.top) / Math.max(1, rect.height), MIN_SPLIT, MAX_SPLIT);
-      this.state.split = frac;
-      split.style.gridTemplateRows = `${frac}fr var(--fxdiv) ${1 - frac}fr`;
+      const pos = clamp((ev.clientY - rect.top) / Math.max(1, rect.height), 0, 1) * sum;
+      const a = clamp(pos - before, MIN_NREG, pairTotal - MIN_NREG);
+      this.state.nsize[above] = a;
+      this.state.nsize[below] = pairTotal - a;
+      stack.style.gridTemplateRows = this.nRows(present);
       this.opts.onRelayout();
     };
     const up = (ev: PointerEvent) => {
@@ -610,26 +724,36 @@ export class FxLayout {
 
   showRelocate(anchor: HTMLElement, id: string): void {
     this.closeRelocate();
+    const narrow = this.mql.matches;
     const pop = document.createElement("div");
     pop.className = "fxlayout-relo";
-    const cur = this.dockOf(id);
     const title = document.createElement("div");
     title.className = "fxlayout-relo-title";
     title.textContent = "Move pane";
     pop.appendChild(title);
-    for (const d of DOCKS) {
+    const item = (label: string, on: boolean, onClick: () => void): void => {
       const b = document.createElement("button");
       b.type = "button";
-      b.className = "fxlayout-relo-item" + (d === cur ? " fxlayout-relo-item--cur" : "");
-      b.textContent = DOCK_LABEL[d];
+      b.className = "fxlayout-relo-item" + (on ? " fxlayout-relo-item--cur" : "");
+      b.textContent = label;
       b.addEventListener("click", () => {
         this.closeRelocate();
-        this.relocate(id, d);
+        onClick();
       });
       pop.appendChild(b);
+    };
+    if (narrow) {
+      const cur = this.state.ndock[id];
+      for (const r of NREGIONS) item(NREGION_LABEL[r], r === cur, () => this.relocateNarrow(id, r));
+    } else {
+      const cur = this.dockOf(id);
+      for (const d of DOCKS) item(DOCK_LABEL[d], d === cur, () => this.relocate(id, d));
     }
-    // The center pane can't be hidden (the workspace must keep one).
-    if (this.state.center !== id) {
+    // Keep at least one pane on screen (wide: the center must stay).
+    const canHide = narrow
+      ? this.order.filter((x) => this.isVisible(x)).length > 1
+      : this.state.center !== id;
+    if (canHide) {
       const hide = document.createElement("button");
       hide.type = "button";
       hide.className = "fxlayout-relo-item fxlayout-relo-hide";
@@ -660,8 +784,8 @@ export class FxLayout {
   // -- drag a pane handle (tab / header) to a new dock ----------------------
 
   /** Make `el` a long-press drag handle for pane `id`: after a hold it picks the
-   * pane up and dragging over the workspace re-docks it (wide layout only —
-   * docks don't exist on the narrow split). A quick tap is left alone (so a tab
+   * pane up and dragging over the workspace re-docks it — into an edge on wide,
+   * or a top/center/bottom region on narrow. A quick tap is left alone (so a tab
    * still switches), and the click that would follow a drag is suppressed. */
   attachDragHandle(el: HTMLElement, id: string): void {
     el.classList.add("fxlayout-draghandle");
@@ -677,7 +801,6 @@ export class FxLayout {
     };
     el.addEventListener("pointerdown", (e) => {
       if (e.button != null && e.button > 0) return; // primary button / touch only
-      if (this.mql.matches) return; // docks only exist in the wide layout
       sx = e.clientX;
       sy = e.clientY;
       dragged = false;
@@ -708,18 +831,27 @@ export class FxLayout {
   }
 
   private startPaneDrag(e: PointerEvent, id: string, handle: HTMLElement): void {
+    const narrow = this.mql.matches;
     const rect = this.root.getBoundingClientRect();
     const overlay = document.createElement("div");
     overlay.className = "fxlayout-dropzones";
-    const zones = new Map<Dock, HTMLElement>();
-    const defs: [Dock, string, Record<string, string>][] = [
-      ["left", "Left", { left: "0", top: "0", width: "24%", height: "100%" }],
-      ["right", "Right", { right: "0", top: "0", width: "24%", height: "100%" }],
-      ["top", "Top", { left: "24%", top: "0", width: "52%", height: "24%" }],
-      ["bottom", "Bottom", { left: "24%", bottom: "0", width: "52%", height: "24%" }],
-      ["center", "Center", { left: "24%", top: "24%", width: "52%", height: "52%" }],
-    ];
-    for (const [dock, label, css] of defs) {
+    const zones = new Map<string, HTMLElement>();
+    // Narrow drops into a vertical top/center/bottom region; wide into an edge or
+    // the center. Each entry: [zone key, label, absolute CSS box].
+    const defs: [string, string, Record<string, string>][] = narrow
+      ? [
+          ["top", "Top", { left: "0", top: "0", width: "100%", height: "33%" }],
+          ["center", "Center", { left: "0", top: "33%", width: "100%", height: "34%" }],
+          ["bottom", "Bottom", { left: "0", bottom: "0", width: "100%", height: "33%" }],
+        ]
+      : [
+          ["left", "Left", { left: "0", top: "0", width: "24%", height: "100%" }],
+          ["right", "Right", { right: "0", top: "0", width: "24%", height: "100%" }],
+          ["top", "Top", { left: "24%", top: "0", width: "52%", height: "24%" }],
+          ["bottom", "Bottom", { left: "24%", bottom: "0", width: "52%", height: "24%" }],
+          ["center", "Center", { left: "24%", top: "24%", width: "52%", height: "52%" }],
+        ];
+    for (const [zone, label, css] of defs) {
       const z = document.createElement("div");
       z.className = "fxlayout-dropzone";
       Object.assign(z.style, css);
@@ -727,25 +859,30 @@ export class FxLayout {
       s.textContent = label;
       z.appendChild(s);
       overlay.appendChild(z);
-      zones.set(dock, z);
+      zones.set(zone, z);
     }
     this.root.appendChild(overlay);
     handle.classList.add("fxlayout-draghandle--active");
 
-    const zoneFor = (x: number, y: number): Dock => {
+    const zoneFor = (x: number, y: number): string => {
       const fx = (x - rect.left) / Math.max(1, rect.width);
       const fy = (y - rect.top) / Math.max(1, rect.height);
+      if (narrow) {
+        if (fy < 0.34) return "top";
+        if (fy > 0.66) return "bottom";
+        return "center";
+      }
       if (fx < 0.24) return "left";
       if (fx > 0.76) return "right";
       if (fy < 0.24) return "top";
       if (fy > 0.76) return "bottom";
       return "center";
     };
-    let dock = zoneFor(e.clientX, e.clientY);
-    const highlight = (d: Dock): void => {
+    let zone = zoneFor(e.clientX, e.clientY);
+    const highlight = (d: string): void => {
       for (const [k, z] of zones) z.classList.toggle("fxlayout-dropzone--on", k === d);
     };
-    highlight(dock);
+    highlight(zone);
 
     try {
       handle.setPointerCapture(e.pointerId);
@@ -753,8 +890,8 @@ export class FxLayout {
       /* the pointer may already be gone */
     }
     const move = (ev: PointerEvent): void => {
-      dock = zoneFor(ev.clientX, ev.clientY);
-      highlight(dock);
+      zone = zoneFor(ev.clientX, ev.clientY);
+      highlight(zone);
     };
     const end = (ev: PointerEvent): void => {
       try {
@@ -767,7 +904,12 @@ export class FxLayout {
       handle.removeEventListener("pointercancel", end);
       overlay.remove();
       handle.classList.remove("fxlayout-draghandle--active");
-      if (dock !== this.dockOf(id)) this.relocate(id, dock); // relocate re-renders
+      // relocate*/re-render only when the pane actually changes home.
+      if (narrow) {
+        if (zone !== this.state.ndock[id]) this.relocateNarrow(id, zone as NRegion);
+      } else if (zone !== this.dockOf(id)) {
+        this.relocate(id, zone as Dock);
+      }
     };
     handle.addEventListener("pointermove", move);
     handle.addEventListener("pointerup", end);
