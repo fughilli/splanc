@@ -36,11 +36,14 @@ use micropb::{MessageDecode, MessageEncode, PbDecoder, PbEncoder};
 /// Storage for the decoded map + topology (Phase 3 arena). Reset wholesale per
 /// upload, so it only holds ONE map+topology at a time. Sized to the firmware's
 /// 256-LED cap (~16 B/LED → ~4 KB map; with topology + bump-arena grow-churn the
-/// worst case is ~16 KB), 32 KiB gives 2× margin. This was 96 KiB (sized for a
-/// ~5000-LED map we can't drive) — the reclaimed 64 KB of .bss is heap the
-/// TLS/wss handshake needs for its 16 KB record buffers. ArenaFull is still the
-/// bounded answer for an over-large upload.
-const ARENA_BYTES: usize = 32 * 1024;
+/// worst case is ~16 KB). Trimmed 96 KiB → 32 KiB → **16 KiB**: on the C6 the
+/// TLS handshake needs a ~17 KB contiguous heap block for its record buffer and
+/// the cert-page load was OOMing (alloc(17058) failed → -0x7F00) even after the
+/// soft-AP drop, so every KB of .bss reclaimed here is handshake headroom. 16 KB
+/// matches the worst-case decode with no spare margin — a full 256-LED upload
+/// that churns past it gets the bounded ArenaFull ("map_too_large"), not a
+/// crash; today's maps are ~150 LEDs and fit comfortably.
+const ARENA_BYTES: usize = 16 * 1024;
 
 /// Reply frames are control traffic (firmware caps): welcome is the
 /// largest at a few hundred bytes.
@@ -120,15 +123,18 @@ const FX_BRANCH_DIST_M: f32 = 0.05;
 
 /// One LED's derived topology terms. `seg` is the segment INDEX (position in
 /// topo.segments), -1 = no association; `s` is normalized 0..1; `branch` = near
-/// a junction. 8 bytes/entry → 2 KiB for the whole cache.
+/// a junction; `dist` is the geodesic distance from the topology root, 0..1
+/// (accumulates across segments — flood/pulse ride it). 12 bytes/entry → 3 KiB
+/// for the whole cache.
 #[derive(Clone, Copy)]
 struct FxLedTopo {
     seg: i16,
     s: f32,
     branch: bool,
+    dist: f32,
 }
 impl FxLedTopo {
-    const NONE: FxLedTopo = FxLedTopo { seg: -1, s: 0.0, branch: false };
+    const NONE: FxLedTopo = FxLedTopo { seg: -1, s: 0.0, branch: false, dist: 0.0 };
 }
 
 static mut FX_LED_TOPO: [FxLedTopo; FX_TOPO_CAP] = [FxLedTopo::NONE; FX_TOPO_CAP];
@@ -1249,6 +1255,73 @@ unsafe fn fx_rebuild_topo() {
                 .position(|b| b.id as i32 == bp_id)
                 .is_some_and(|bi| bi < MAX_BP && junction[bi])
     };
+    // Geodesic distance field (led.dist): a node graph over branch points + one
+    // leaf per free segment end; single-source Dijkstra from a deterministic
+    // strand end (the first free end in segment order — a real terminal is a
+    // free end, id -1 — else segment 0's 'a'). Each LED's raw distance is the
+    // shorter of reaching endpoint a then walking foot_arclength, vs endpoint b
+    // then the remainder; normalized 0..1 after the sweep. Node numbering:
+    // branch-point index for a real endpoint, else n_bp + seg_idx*2 + side.
+    // Mirrors web deriveLedTopology so the editor preview matches the device.
+    const MAX_SEG: usize = 128;
+    const MAX_NODES: usize = MAX_BP + 2 * MAX_SEG;
+    let n_bp = topo.branch_points.len().min(MAX_BP);
+    let n_seg = topo.segments.len().min(MAX_SEG);
+    let node_of = |si: usize, side: usize| -> usize {
+        let sg = &topo.segments[si];
+        let bp = if side == 0 { sg.a } else { sg.b };
+        if bp >= 0 {
+            topo.branch_points
+                .iter()
+                .position(|b| b.id as i32 == bp)
+                .map(|bi| bi.min(MAX_BP - 1))
+                .unwrap_or(MAX_BP - 1)
+        } else {
+            n_bp + (si * 2 + side).min(2 * MAX_SEG - 1)
+        }
+    };
+    let mut root = if n_seg > 0 { node_of(0, 0) } else { 0 };
+    for si in 0..n_seg {
+        let sg = &topo.segments[si];
+        if sg.a < 0 {
+            root = node_of(si, 0);
+            break;
+        }
+        if sg.b < 0 {
+            root = node_of(si, 1);
+            break;
+        }
+    }
+    let n_nodes = (n_bp + n_seg * 2).min(MAX_NODES);
+    let mut node_dist = [f32::INFINITY; MAX_NODES];
+    let mut seen = [false; MAX_NODES];
+    if root < MAX_NODES {
+        node_dist[root] = 0.0;
+    }
+    for _ in 0..n_nodes {
+        let (mut u, mut best) = (usize::MAX, f32::INFINITY);
+        for k in 0..n_nodes {
+            if !seen[k] && node_dist[k] < best {
+                best = node_dist[k];
+                u = k;
+            }
+        }
+        if u == usize::MAX {
+            break;
+        }
+        seen[u] = true;
+        for si in 0..n_seg {
+            let (a, b, w) = (node_of(si, 0), node_of(si, 1), topo.segments[si].length);
+            if a == u && node_dist[u] + w < node_dist[b] {
+                node_dist[b] = node_dist[u] + w;
+            }
+            if b == u && node_dist[u] + w < node_dist[a] {
+                node_dist[a] = node_dist[u] + w;
+            }
+        }
+    }
+
+    let mut max_geo = 0.0f32;
     for (i, led) in map.leds.iter().enumerate() {
         if i >= FX_TOPO_CAP {
             break;
@@ -1269,7 +1342,61 @@ unsafe fn fx_rebuild_topo() {
         let near_a = assoc.foot_arclength <= FX_BRANCH_DIST_M;
         let near_b = (seg.length - assoc.foot_arclength) <= FX_BRANCH_DIST_M;
         let branch = (near_a && is_junction(seg.a)) || (near_b && is_junction(seg.b));
-        cache[i] = FxLedTopo { seg: seg_idx as i16, s: s_norm, branch };
+        let geo = if seg_idx < n_seg {
+            let da = node_dist[node_of(seg_idx, 0)];
+            let db = node_dist[node_of(seg_idx, 1)];
+            let g = (da + assoc.foot_arclength).min(db + (seg.length - assoc.foot_arclength));
+            if g.is_finite() {
+                g
+            } else {
+                0.0
+            }
+        } else {
+            0.0
+        };
+        if geo > max_geo {
+            max_geo = geo;
+        }
+        cache[i] = FxLedTopo { seg: seg_idx as i16, s: s_norm, branch, dist: geo };
+    }
+    // Normalize the raw geodesic distances to 0..1 (unassociated LEDs stay 0).
+    if max_geo > 1e-6 {
+        for e in cache.iter_mut() {
+            e.dist /= max_geo;
+        }
+    }
+
+    // Push the topology graph to the active VM for the graph-query intrinsics
+    // (agentic effects). Compact node ids: a real branch point keeps its index,
+    // each free end gets a fresh id after the branch points (kept small so it
+    // stays under fx_vm::MAX_NODE). Segment index i matches led.seg / ag.seg.
+    if let Some(vm) = (*addr_of_mut!(FX_VM)).as_mut() {
+        const G: usize = 64; // fx_vm::MAX_SEG
+        let mut seg_len = [0.0f32; G];
+        let mut seg_a = [-1i32; G];
+        let mut seg_b = [-1i32; G];
+        let ng = n_seg.min(G);
+        let node_id = |bp: i32, next_free: &mut i32| -> i32 {
+            if bp >= 0 {
+                topo.branch_points
+                    .iter()
+                    .position(|b| b.id as i32 == bp)
+                    .map(|i| i as i32)
+                    .unwrap_or(-1)
+            } else {
+                let id = *next_free;
+                *next_free += 1;
+                id
+            }
+        };
+        let mut next_free = n_bp as i32;
+        for i in 0..ng {
+            let seg = &topo.segments[i];
+            seg_len[i] = seg.length;
+            seg_a[i] = node_id(seg.a, &mut next_free);
+            seg_b[i] = node_id(seg.b, &mut next_free);
+        }
+        vm.set_graph(&seg_len[..ng], &seg_a[..ng], &seg_b[..ng]);
     }
 }
 
@@ -1305,6 +1432,9 @@ pub unsafe extern "C" fn lm_fx_load(fxb: *const u8, len: usize) -> bool {
     buf[..len].copy_from_slice(src);
     FX_LEN = len;
     *addr_of_mut!(FX_VM) = Some(FxVm::new());
+    // Force a topology-cache rebuild so the fresh VM gets the current graph
+    // (set_graph) + per-LED cache on its first frame, regardless of load order.
+    FX_TOPO_READY = false;
     FX_DEADLINE.store(false, core::sync::atomic::Ordering::Relaxed);
     // A fresh effect (re)stamps the perf identity and resets the ring/window so
     // metrics can't be mis-attributed across a hot-reload (perf-monitoring.md).
@@ -1483,6 +1613,7 @@ pub unsafe extern "C" fn lm_fx_shade(
         seg: t.seg as i32,
         s: t.s,
         branch: t.branch,
+        dist: t.dist,
     };
     let outcome = if PERF_MODE == PERF_FULL {
         // FULL: count this LED's opcodes into the per-frame shade accumulator

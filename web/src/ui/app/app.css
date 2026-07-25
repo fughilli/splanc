@@ -827,6 +827,29 @@ body.is-locked {
   background: var(--surface);
 }
 
+/* --- built-in (immutable) effect banner: floats top-center over the editor --- */
+.fxedit-builtin {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 0.4rem);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 0.25rem 0.25rem 0.25rem 0.8rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: var(--f-caption);
+  color: var(--text-dim);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+}
+.fxedit-builtin .k-btn {
+  padding: 0.35rem 0.8rem;
+  font-size: var(--f-caption);
+}
+
 /* --- disassembly panel --- */
 .fxedit-disasm-card {
   padding: var(--sp-3);

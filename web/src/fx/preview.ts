@@ -49,7 +49,8 @@ interface CompilerModule {
 }
 interface FxPreviewWasm {
   set_uniform(slot: number, vals: Float32Array): void;
-  set_topology(seg: Int32Array, s: Float32Array, branch: Uint8Array): void;
+  set_topology(seg: Int32Array, s: Float32Array, branch: Uint8Array, dist: Float32Array): void;
+  set_graph(segLen: Float32Array, segA: Int32Array, segB: Int32Array): void;
   update(time: number, dt: number, frame: number, ledCount: number): void;
   shade_all(positions: Float32Array): Uint8Array;
   free(): void;
@@ -116,7 +117,8 @@ export class FxPreview {
    * topology changes.
    */
   setTopology(topo: LedTopology): void {
-    this.inner.set_topology(topo.seg, topo.s, topo.branch);
+    this.inner.set_topology(topo.seg, topo.s, topo.branch, topo.dist);
+    this.inner.set_graph(topo.segLen, topo.segA, topo.segB);
   }
 
   /** Advance one frame (runs update()). */
@@ -139,6 +141,13 @@ export interface LedTopology {
   seg: Int32Array; // segment index, -1 = no association
   s: Float32Array; // normalized arclength 0..1 along the segment (from endpoint a)
   branch: Uint8Array; // 1 = within BRANCH_DIST of a junction (degree >= 3), else 0
+  dist: Float32Array; // geodesic distance from the topology root, normalized 0..1
+  // Topology graph (per segment, indexed like `seg`) for the graph-query
+  // intrinsics: arclength + the two endpoint node ids (branch points get a
+  // stable id; each free end gets its own leaf id).
+  segLen: Float32Array;
+  segA: Int32Array;
+  segB: Int32Array;
 }
 
 /** An LED is "at a junction" within this arclength (m) of a degree>=3 endpoint. */
@@ -167,7 +176,17 @@ export function deriveLedTopology(
   const seg = new Int32Array(n).fill(-1);
   const s = new Float32Array(n);
   const branch = new Uint8Array(n);
-  if (!topology || topology.segments.length === 0) return { seg, s, branch };
+  const dist = new Float32Array(n);
+  if (!topology || topology.segments.length === 0)
+    return {
+      seg,
+      s,
+      branch,
+      dist,
+      segLen: new Float32Array(0),
+      segA: new Int32Array(0),
+      segB: new Int32Array(0),
+    };
 
   // Branch points with degree >= 3 are true junctions (a pass-through is 2).
   const degree = new Map<number, number>();
@@ -177,8 +196,86 @@ export function deriveLedTopology(
   }
   const isJunction = (bpId: number): boolean => bpId >= 0 && (degree.get(bpId) ?? 0) >= 3;
 
+  // Geodesic distance: build the segment graph (branch points + one synthetic
+  // leaf per free end), find a far root (double Dijkstra sweep ≈ a diameter
+  // endpoint), then each LED's distance is the shorter of "reach endpoint a then
+  // walk footArc" vs "reach endpoint b then walk the remainder". Normalized to
+  // 0..1, this is a global coordinate that sweeps the whole structure and
+  // branches at junctions — what flood/pulse ride on.
+  const nodeKey = (g: { id: number; a: number; b: number }, side: 0 | 1): string => {
+    const bp = side === 0 ? g.a : g.b;
+    return bp >= 0 ? `b${bp}` : `e${g.id}.${side}`;
+  };
+  const adj = new Map<string, { to: string; w: number }[]>();
+  const edge = (u: string, v: string, w: number): void => {
+    (adj.get(u) ?? adj.set(u, []).get(u)!).push({ to: v, w });
+  };
+  for (const g of topology.segments) {
+    const u = nodeKey(g, 0);
+    const v = nodeKey(g, 1);
+    edge(u, v, g.length);
+    edge(v, u, g.length);
+  }
+
+  // Integer node ids (stable per nodeKey) for the graph-query intrinsics, and
+  // the per-segment length + endpoint node ids, indexed like `seg`.
+  const nodeId = new Map<string, number>();
+  const idOf = (k: string): number => {
+    let id = nodeId.get(k);
+    if (id === undefined) {
+      id = nodeId.size;
+      nodeId.set(k, id);
+    }
+    return id;
+  };
+  const segLen = new Float32Array(topology.segments.length);
+  const segA = new Int32Array(topology.segments.length);
+  const segB = new Int32Array(topology.segments.length);
+  topology.segments.forEach((g, i) => {
+    segLen[i] = g.length;
+    segA[i] = idOf(nodeKey(g, 0));
+    segB[i] = idOf(nodeKey(g, 1));
+  });
+  const dijkstra = (src: string): Map<string, number> => {
+    const d = new Map<string, number>();
+    for (const k of adj.keys()) d.set(k, Infinity);
+    d.set(src, 0);
+    const seen = new Set<string>();
+    for (;;) {
+      let u: string | null = null;
+      let best = Infinity;
+      for (const [k, dk] of d) if (!seen.has(k) && dk < best) ((best = dk), (u = k));
+      if (u === null) break;
+      seen.add(u);
+      for (const e of adj.get(u) ?? []) {
+        const nd = d.get(u)! + e.w;
+        if (nd < (d.get(e.to) ?? Infinity)) d.set(e.to, nd);
+      }
+    }
+    return d;
+  };
+  // Root = a deterministic strand end: the first free end in segment order (a
+  // real terminal is a free end, endpoint id -1), else the first segment's
+  // 'a' endpoint. The firmware picks the root by the identical rule, so the
+  // preview's geodesic field matches the device's.
+  let root: string | undefined;
+  for (const g of topology.segments) {
+    if (g.a < 0) {
+      root = nodeKey(g, 0);
+      break;
+    }
+    if (g.b < 0) {
+      root = nodeKey(g, 1);
+      break;
+    }
+  }
+  if (root === undefined && topology.segments.length > 0) root = nodeKey(topology.segments[0]!, 0);
+  const D = root !== undefined ? dijkstra(root) : new Map<string, number>();
+
   const segById = new Map(topology.segments.map((g, i) => [g.id, { i, g }]));
   const assocByLed = new Map(topology.associations.map((a) => [a.ledId, a]));
+  const raw = new Float32Array(n);
+  let maxGeo = 0;
   for (let i = 0; i < n; i++) {
     const a = assocByLed.get(map.leds[i]!.id);
     if (a === undefined) continue;
@@ -190,6 +287,12 @@ export function deriveLedTopology(
     const nearA = a.footArclength <= FX_BRANCH_DIST_M;
     const nearB = len - a.footArclength <= FX_BRANCH_DIST_M;
     branch[i] = (nearA && isJunction(hit.g.a)) || (nearB && isJunction(hit.g.b)) ? 1 : 0;
+    const da = D.get(nodeKey(hit.g, 0)) ?? Infinity;
+    const db = D.get(nodeKey(hit.g, 1)) ?? Infinity;
+    const geo = Math.min(da + a.footArclength, db + (len - a.footArclength));
+    raw[i] = Number.isFinite(geo) ? geo : 0;
+    if (raw[i]! > maxGeo) maxGeo = raw[i]!;
   }
-  return { seg, s, branch };
+  if (maxGeo > 1e-6) for (let i = 0; i < n; i++) dist[i] = raw[i]! / maxGeo;
+  return { seg, s, branch, dist, segLen, segA, segB };
 }

@@ -16,6 +16,15 @@ pub const MAX_STATE: usize = 128; // raised for arrays/structs (agent sims live 
 pub const MAX_LOCALS: usize = 128;
 pub const MAX_UNIFORM_SLOTS: usize = 128;
 
+// Topology graph tables the VM carries for graph-walking effects (agentic
+// chasers): segments (length + the two endpoint node ids) and, per node, the
+// incident segments. Bounded (≈2.6 KiB) and filled via [`Vm::set_graph`] when
+// the topology changes — the graph-query intrinsics (seg_len/node_seg/…) read
+// these. Excess segments/nodes/degree are dropped (queries clamp/return 0).
+pub const MAX_SEG: usize = 64;
+pub const MAX_NODE: usize = 96;
+pub const MAX_NODE_DEG: usize = 6;
+
 /// Opcodes. Operands follow inline in the code stream (little-endian).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
@@ -85,6 +94,23 @@ pub enum Op {
     StoreStateIdx, // base:u8 stride:u8 off:u8 n:u8 count:u8 ; pop n vals then i
     LoadLocalIdx,  // same, over locals
     StoreLocalIdx,
+    // --- topology graph queries (agentic/graph-walking effects) --------------
+    // u8 kind: 0 seg_count()->int, 1 seg_len(seg)->float, 2 seg_node(seg,side)->int,
+    // 3 node_deg(node)->int, 4 node_seg(node,k)->int, 5 node_side(node,k)->int.
+    // Int args are popped (2,4,5 pop two; 1,3 pop one; 0 pops none); the result
+    // is pushed as a float slot (int results carry their i32 bits). Reads the
+    // graph tables the VM was given via set_graph.
+    GraphQuery,
+}
+
+/// Graph-query kinds (the `GraphQuery` opcode operand).
+pub mod gq {
+    pub const SEG_COUNT: u8 = 0;
+    pub const SEG_LEN: u8 = 1;
+    pub const SEG_NODE: u8 = 2;
+    pub const NODE_DEG: u8 = 3;
+    pub const NODE_SEG: u8 = 4;
+    pub const NODE_SIDE: u8 = 5;
 }
 
 pub const FIX_ONE: i32 = 1 << 16;
@@ -164,8 +190,8 @@ pub struct Counters {
 impl Op {
     #[inline]
     fn from_u8(b: u8) -> Option<Op> {
-        // Op is a contiguous enum 0..=StoreLocalIdx; guard the range then transmute.
-        if b <= Op::StoreLocalIdx as u8 {
+        // Op is a contiguous enum 0..=GraphQuery; guard the range then transmute.
+        if b <= Op::GraphQuery as u8 {
             Some(unsafe { core::mem::transmute::<u8, Op>(b) })
         } else {
             None
@@ -205,6 +231,7 @@ pub const C_LED_S: u8 = 7; // 1
 pub const C_LED_BRANCH: u8 = 8; // 1
 pub const C_IMU_ACCEL: u8 = 9; // 3
 pub const C_IMU_GYRO: u8 = 10; // 3
+pub const C_LED_DIST: u8 = 11; // 1 — geodesic distance along the topology, 0..1
 
 pub const MAGIC: [u8; 4] = *b"FXB1";
 pub const NO_ENTRY: u16 = 0xFFFF;
@@ -300,12 +327,24 @@ pub struct Led {
     pub seg: i32,
     pub s: f32,
     pub branch: bool,
+    /// Geodesic distance from the topology root, normalized 0..1 along the
+    /// segment graph (accumulates across segments, unlike `s` which is per
+    /// segment). 0 when there is no topology. Enables flood/pulse effects.
+    pub dist: f32,
 }
 
-/// Persistent VM state across frames: uniform values + `state` vars.
+/// Persistent VM state across frames: uniform values + `state` vars + the
+/// topology graph tables (for graph-walking effects — see [`Vm::set_graph`]).
 pub struct Vm {
     pub uniforms: [f32; MAX_UNIFORM_SLOTS],
     pub state: [f32; MAX_STATE],
+    // -- topology graph (read-only; filled by set_graph) --
+    n_seg: u32,
+    seg_len: [f32; MAX_SEG],       // segment arclength (meters)
+    seg_node: [[i32; 2]; MAX_SEG], // endpoint node ids (a, b); -1 = free end w/o node
+    node_deg: [u8; MAX_NODE],      // incident-segment count per node (clamped to MAX_NODE_DEG)
+    node_seg: [[i16; MAX_NODE_DEG]; MAX_NODE], // incident segment ids
+    node_side: [[u8; MAX_NODE_DEG]; MAX_NODE], // which end (0=a,1=b) of that segment touches the node
 }
 
 impl Default for Vm {
@@ -313,6 +352,12 @@ impl Default for Vm {
         Vm {
             uniforms: [0.0; MAX_UNIFORM_SLOTS],
             state: [0.0; MAX_STATE],
+            n_seg: 0,
+            seg_len: [0.0; MAX_SEG],
+            seg_node: [[-1; 2]; MAX_SEG],
+            node_deg: [0; MAX_NODE],
+            node_seg: [[0; MAX_NODE_DEG]; MAX_NODE],
+            node_side: [[0; MAX_NODE_DEG]; MAX_NODE],
         }
     }
 }
@@ -328,6 +373,46 @@ impl Vm {
             if slot + i < MAX_UNIFORM_SLOTS {
                 self.uniforms[slot + i] = *v;
             }
+        }
+    }
+
+    /// Fill the topology graph tables from per-segment arclengths and endpoint
+    /// node ids (`seg_a`/`seg_b`, -1 for a free end with no shared node), then
+    /// build the per-node incident-segment lists. Call whenever the topology
+    /// changes; pass empty slices to clear. The graph-query intrinsics read this.
+    pub fn set_graph(&mut self, seg_len: &[f32], seg_a: &[i32], seg_b: &[i32]) {
+        let n = seg_len.len().min(seg_a.len()).min(seg_b.len()).min(MAX_SEG);
+        self.n_seg = n as u32;
+        self.node_deg = [0; MAX_NODE];
+        for i in 0..n {
+            self.seg_len[i] = seg_len[i];
+            self.seg_node[i] = [seg_a[i], seg_b[i]];
+            for side in 0..2usize {
+                let node = self.seg_node[i][side];
+                if node >= 0 && (node as usize) < MAX_NODE {
+                    let d = self.node_deg[node as usize] as usize;
+                    if d < MAX_NODE_DEG {
+                        self.node_seg[node as usize][d] = i as i16;
+                        self.node_side[node as usize][d] = side as u8;
+                        self.node_deg[node as usize] = (d + 1) as u8;
+                    }
+                }
+            }
+        }
+        for i in n..MAX_SEG {
+            self.seg_len[i] = 0.0;
+            self.seg_node[i] = [-1; 2];
+        }
+    }
+
+    fn graph_ref(&self) -> GraphRef<'_> {
+        GraphRef {
+            n_seg: self.n_seg,
+            seg_len: &self.seg_len,
+            seg_node: &self.seg_node,
+            node_deg: &self.node_deg,
+            node_seg: &self.node_seg,
+            node_side: &self.node_side,
         }
     }
 
@@ -359,8 +444,9 @@ impl Vm {
         }
         let led = Led::default();
         let mut st = self.state;
+        let g = self.graph_ref();
         let (_out, outcome, counters) =
-            run(prog, self.uniforms, &mut st, frame, &led, prog.update_entry as usize, budget);
+            run(prog, self.uniforms, &mut st, frame, &led, &g, prog.update_entry as usize, budget);
         self.state = st;
         (outcome, counters)
     }
@@ -395,8 +481,9 @@ impl Vm {
         budget: &Budget,
     ) -> (Rgb, Outcome, Counters) {
         let mut st = self.state; // copy; shade shouldn't write it, but be safe
+        let g = self.graph_ref();
         let (out, outcome, counters) =
-            run(prog, self.uniforms, &mut st, frame, led, prog.shade_entry as usize, budget);
+            run(prog, self.uniforms, &mut st, frame, led, &g, prog.shade_entry as usize, budget);
         if outcome.timed_out() {
             return ((0, 0, 0), outcome, counters);
         }
@@ -424,6 +511,65 @@ fn clamp01(x: f32) -> f32 {
     }
 }
 
+/// A borrow of the VM's topology graph tables, passed to `run()` so the
+/// graph-query opcode can read them without giving `run` the whole `Vm`.
+struct GraphRef<'a> {
+    n_seg: u32,
+    seg_len: &'a [f32; MAX_SEG],
+    seg_node: &'a [[i32; 2]; MAX_SEG],
+    node_deg: &'a [u8; MAX_NODE],
+    node_seg: &'a [[i16; MAX_NODE_DEG]; MAX_NODE],
+    node_side: &'a [[u8; MAX_NODE_DEG]; MAX_NODE],
+}
+
+impl GraphRef<'_> {
+    /// Evaluate a graph query. Int results carry their i32 bits in the f32 slot
+    /// (the compiler types the result, so consumers read them back as int).
+    #[inline]
+    fn query(&self, kind: u8, a: i32, b: i32) -> f32 {
+        let asi = |v: i32| f32::from_bits(v as u32);
+        let node_ok = |n: i32| n >= 0 && (n as usize) < MAX_NODE;
+        match kind {
+            gq::SEG_COUNT => asi(self.n_seg as i32),
+            gq::SEG_LEN => {
+                if a >= 0 && (a as usize) < (self.n_seg as usize).min(MAX_SEG) {
+                    self.seg_len[a as usize]
+                } else {
+                    0.0
+                }
+            }
+            gq::SEG_NODE => {
+                let v = if a >= 0 && (a as usize) < MAX_SEG && (b == 0 || b == 1) {
+                    self.seg_node[a as usize][b as usize]
+                } else {
+                    -1
+                };
+                asi(v)
+            }
+            gq::NODE_DEG => asi(if node_ok(a) { self.node_deg[a as usize] as i32 } else { 0 }),
+            gq::NODE_SEG | gq::NODE_SIDE => {
+                let ok = node_ok(a)
+                    && b >= 0
+                    && (b as usize) < MAX_NODE_DEG
+                    && (b as usize) < self.node_deg[a as usize] as usize;
+                let v = if !ok {
+                    if kind == gq::NODE_SEG {
+                        -1
+                    } else {
+                        0
+                    }
+                } else if kind == gq::NODE_SEG {
+                    self.node_seg[a as usize][b as usize] as i32
+                } else {
+                    self.node_side[a as usize][b as usize] as i32
+                };
+                asi(v)
+            }
+            _ => 0.0,
+        }
+    }
+}
+
 /// Execute from `entry`, returning `(up to 3 result slots, outcome)`. Two
 /// bounded-execution guards hard-cap frame time and trap runaway loops (see
 /// [`Budget`]): a per-invocation instruction budget (primary, deterministic)
@@ -435,6 +581,7 @@ fn run(
     state: &mut [f32; MAX_STATE],
     frame: &Frame,
     led: &Led,
+    graph: &GraphRef,
     entry: usize,
     guard: &Budget,
 ) -> ([f32; 3], Outcome, Counters) {
@@ -593,6 +740,7 @@ fn run(
                         push!(frame.imu_gyro[1]);
                         push!(frame.imu_gyro[2]);
                     }
+                    C_LED_DIST => push!(led.dist),
                     _ => push!(0.0),
                 }
             }
@@ -1019,6 +1167,19 @@ fn run(
                     }
                     sp -= n + 1;
                 }
+            }
+            Op::GraphQuery => {
+                let kind = code[pc];
+                pc += 1;
+                let (a, b) = match kind {
+                    gq::SEG_LEN | gq::NODE_DEG => (popi!(), 0),
+                    gq::SEG_NODE | gq::NODE_SEG | gq::NODE_SIDE => {
+                        let b = popi!();
+                        (popi!(), b)
+                    }
+                    _ => (0, 0),
+                };
+                push!(graph.query(kind, a, b));
             }
         }
     }

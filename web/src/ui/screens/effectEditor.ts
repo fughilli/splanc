@@ -37,7 +37,7 @@ import {
   getApiKey,
   type ChatMessage,
 } from "../../effects/ai/generate";
-import { effectStore } from "../../store/effectStore";
+import { effectStore, isBuiltinEffect } from "../../store/effectStore";
 import { mapStore } from "../../store/mapStore";
 import { appState } from "../app/state";
 import { Button, IconButton, icon, toast } from "../kit";
@@ -942,6 +942,29 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     setNameText(rec.name);
     codeEl.value = rec.source;
     paintHighlight();
+
+    // Built-in starter effects are IMMUTABLE: show them read-only and offer a
+    // one-tap fork. (effectStore.save is a no-op for them too, as a backstop.)
+    if (isBuiltinEffect(effectId)) {
+      codeEl.readOnly = true;
+      nameInput.readOnly = true;
+      const banner = document.createElement("div");
+      banner.className = "fxedit-builtin";
+      const label = document.createElement("span");
+      label.textContent = "Built-in effect — read-only";
+      banner.append(
+        label,
+        Button({
+          label: "Duplicate to edit",
+          icon: "sparkles",
+          onClick: async () => {
+            const nid = await effectStore.duplicate(effectId);
+            if (nid) router.navigate(`/effects/edit/${nid}`);
+          },
+        }),
+      );
+      el.appendChild(banner);
+    }
 
     try {
       const defaultMapId = await populateMapPicker();

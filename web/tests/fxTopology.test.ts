@@ -45,6 +45,15 @@ test("deriveLedTopology matches the device cache", () => {
   // Only LED 0 sits at the junction (degree-3 branch point 0); the terminal
   // ends (degree 1) are not junctions.
   assert.deepEqual([...t.branch], [1, 0, 0, 0]);
+  // Geodesic distance (normalized 0..1) from the root (this fixture has no free
+  // ends, so the root is segment 10's 'a' = the junction b0): every value in
+  // range, distance grows outward from the junction along segment 10 (LED 0 at
+  // s≈0.02 < LED 1 at s=0.5), the farthest terminal (LED 2, s≈0.99) is the max,
+  // and the unassociated LED is 0.
+  for (const d of t.dist) assert.ok(d >= 0 && d <= 1);
+  assert.equal(t.dist[2], 1);
+  assert.equal(t.dist[3], 0);
+  assert.ok(t.dist[0]! < t.dist[1]!);
 });
 
 test("deriveLedTopology returns all-default topology without a topology", () => {

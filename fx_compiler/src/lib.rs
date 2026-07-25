@@ -1735,6 +1735,46 @@ impl Compiler {
                 self.emit(id);
                 Ok(Ty::Vec3)
             }
+            // -- topology graph queries (agentic/graph-walking effects) --------
+            // All take integer indices; seg_len returns float, the rest return
+            // an int (segment/node id, degree, side). The args are already on the
+            // stack; GraphQuery pops them per its kind. See fx_vm::gq.
+            "seg_count" => {
+                self.need(args, 0)?;
+                self.emit(GRAPH_QUERY);
+                self.emit(0);
+                Ok(Ty::Int)
+            }
+            "seg_len" => {
+                self.graph_int_args(args, 1)?;
+                self.emit(GRAPH_QUERY);
+                self.emit(1);
+                Ok(Ty::Float)
+            }
+            "seg_node" => {
+                self.graph_int_args(args, 2)?;
+                self.emit(GRAPH_QUERY);
+                self.emit(2);
+                Ok(Ty::Int)
+            }
+            "node_deg" => {
+                self.graph_int_args(args, 1)?;
+                self.emit(GRAPH_QUERY);
+                self.emit(3);
+                Ok(Ty::Int)
+            }
+            "node_seg" => {
+                self.graph_int_args(args, 2)?;
+                self.emit(GRAPH_QUERY);
+                self.emit(4);
+                Ok(Ty::Int)
+            }
+            "node_side" => {
+                self.graph_int_args(args, 2)?;
+                self.emit(GRAPH_QUERY);
+                self.emit(5);
+                Ok(Ty::Int)
+            }
             _ => self.err(format!("unknown function '{name}'")),
         }
     }
@@ -1751,6 +1791,17 @@ impl Compiler {
         }
     }
 
+    /// Validate a graph-query's args: exactly `n`, each a scalar `int` (they are
+    /// integer indices the GraphQuery opcode pops). No coercion — wrap a
+    /// non-int index in `int(...)` at the call site.
+    fn graph_int_args(&self, args: &[Ty], n: usize) -> Result<(), Diagnostic> {
+        self.need(args, n)?;
+        if args.iter().any(|a| !matches!(a, Ty::Int)) {
+            return Err(self.mkdiag("graph query arguments must be int (wrap with int(...))"));
+        }
+        Ok(())
+    }
+
     fn emit_namespace(&mut self, ns: &str, field: &str) -> Result<Ty, Diagnostic> {
         let (id, ty) = match (ns, field) {
             ("led", "pos") => (fx_ctx::LED_POS, Ty::Vec3),
@@ -1758,6 +1809,7 @@ impl Compiler {
             ("led", "count") => (fx_ctx::LED_COUNT, Ty::Float),
             ("led", "seg") => (fx_ctx::LED_SEG, Ty::Float),
             ("led", "s") => (fx_ctx::LED_S, Ty::Float),
+            ("led", "dist") => (fx_ctx::LED_DIST, Ty::Float),
             ("led", "branch") => (fx_ctx::LED_BRANCH, Ty::Bool),
             ("imu", "accel") => (fx_ctx::IMU_ACCEL, Ty::Vec3),
             ("imu", "gyro") => (fx_ctx::IMU_GYRO, Ty::Vec3),
@@ -1945,7 +1997,7 @@ fn decode_op(code: &[u8], pc: usize) -> (String, usize) {
     let ctx_name = |id: u8| match id {
         0 => "time", 1 => "dt", 2 => "frame", 3 => "led.pos", 4 => "led.idx",
         5 => "led.count", 6 => "led.seg", 7 => "led.s", 8 => "led.branch",
-        9 => "imu.accel", 10 => "imu.gyro", _ => "?",
+        9 => "imu.accel", 10 => "imu.gyro", 11 => "led.dist", _ => "?",
     };
     let cmp_kind = |k: u8| match k {
         0 => "lt", 1 => "le", 2 => "gt", 3 => "ge", 4 => "eq", _ => "ne",
@@ -2136,6 +2188,7 @@ mod fx_vm_op {
     pub const STORE_STATE_IDX: u8 = 53;
     pub const LOAD_LOCAL_IDX: u8 = 54;
     pub const STORE_LOCAL_IDX: u8 = 55;
+    pub const GRAPH_QUERY: u8 = 56;
 }
 mod fx_ctx {
     pub const TIME: u8 = 0;
@@ -2149,4 +2202,5 @@ mod fx_ctx {
     pub const LED_BRANCH: u8 = 8;
     pub const IMU_ACCEL: u8 = 9;
     pub const IMU_GYRO: u8 = 10;
+    pub const LED_DIST: u8 = 11;
 }

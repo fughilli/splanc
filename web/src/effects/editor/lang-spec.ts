@@ -64,6 +64,7 @@ export const CONTEXTS: {
       { name: "count", type: "int", doc: "total LED count" },
       { name: "seg", type: "int", doc: "topology segment id, -1 if none" },
       { name: "s", type: "float", doc: "0..1 arclength along the LED's segment" },
+      { name: "dist", type: "float", doc: "0..1 geodesic distance from the topology root; accumulates across segments (flood/pulse ride this)" },
       { name: "branch", type: "bool", doc: "true at a junction/branch point" },
     ],
   },
@@ -117,6 +118,13 @@ export const BUILTINS: { sig: string; doc: string }[] = [
   { sig: "palette0(t)", doc: "sample built-in palette 0 at t (vec3)" },
   { sig: "palette1(t)", doc: "sample built-in palette 1 at t (vec3)" },
   { sig: "palette2(t)", doc: "sample built-in palette 2 at t (vec3)" },
+  // topology graph queries (agentic/graph-walking effects; args are int indices)
+  { sig: "seg_count()", doc: "number of topology segments (int)" },
+  { sig: "seg_len(seg)", doc: "arclength of segment `seg` in meters (float)" },
+  { sig: "seg_node(seg, side)", doc: "endpoint node id of `seg` (side 0=a, 1=b; int, -1 if free)" },
+  { sig: "node_deg(node)", doc: "number of segments incident to `node` (int)" },
+  { sig: "node_seg(node, k)", doc: "k-th segment incident to `node` (int segment id) — pick a branch" },
+  { sig: "node_side(node, k)", doc: "which end (0=a,1=b) of that k-th segment touches `node` (int)" },
 ];
 
 /** Value types accepted by the language, with docstrings for completion. */

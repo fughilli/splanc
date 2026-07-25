@@ -208,14 +208,17 @@ class EffectStore {
   }
 
   async save(id: string, source: string): Promise<void> {
+    if (isBuiltinEffect(id)) return; // built-ins are immutable — duplicate to edit
     await this.patch(id, { source });
   }
 
   async rename(id: string, name: string): Promise<void> {
+    if (isBuiltinEffect(id)) return;
     await this.patch(id, { name });
   }
 
   async setTags(id: string, tags: string[]): Promise<void> {
+    if (isBuiltinEffect(id)) return;
     await this.patch(id, { tags: normTags(tags) });
   }
 
@@ -244,3 +247,11 @@ class EffectStore {
 }
 
 export const effectStore = new EffectStore();
+
+/** Built-in starter effects (seeded with a stable `builtin-` id) are IMMUTABLE:
+ * their source/name/tags can't be edited in place — the UI offers "Duplicate"
+ * to fork an editable copy. Identified purely by the id prefix (no schema flag,
+ * so it also holds for effects seeded before this convention was enforced). */
+export function isBuiltinEffect(id: string): boolean {
+  return id.startsWith("builtin-");
+}

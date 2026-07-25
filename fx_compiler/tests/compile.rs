@@ -250,9 +250,117 @@ fn seeded_starter_effects_compile() {
           float band = smoothstep(width, 0.0, abs(phase - 0.5));\n\
           return tint * band;\n\
         }";
-    for (name, src) in [("rainbow", rainbow), ("breathing", breathing), ("comet", comet)] {
+    // Topology-aware starters using led.dist (geodesic distance).
+    let flood = "uniform float rate : 0.05 .. 2.0 = 0.35;\n\
+        uniform float edge : 0.02 .. 0.4 = 0.12;\n\
+        uniform vec3 tint : color = 0.2, 0.7, 1.0;\n\
+        uniform float rainbow : 0.0 .. 1.0 = 0.0;\n\
+        state float front;\n\
+        void update() { front = fract(time * rate); }\n\
+        vec3 shade(Led led) {\n\
+          float lit = 1.0 - smoothstep(front, front + edge, led.dist);\n\
+          vec3 hue = hsv2rgb(led.dist * 0.7, 0.9, 1.0);\n\
+          vec3 col = tint * (1.0 - rainbow) + hue * rainbow;\n\
+          return col * lit;\n\
+        }";
+    let pulse = "uniform float speed : 0.05 .. 2.0 = 0.4;\n\
+        uniform float width : 0.02 .. 0.35 = 0.1;\n\
+        uniform int agents : 1 .. 6 = 2;\n\
+        uniform vec3 tint : color = 1.0, 0.4, 0.1;\n\
+        uniform float rainbow : 0.0 .. 1.0 = 1.0;\n\
+        state float head;\n\
+        void update() { head = time * speed; }\n\
+        vec3 shade(Led led) {\n\
+          float v = 0.0;\n\
+          float inv = 1.0 / float(agents);\n\
+          for (int k = 0; k < 6; k = k + 1) {\n\
+            if (k < agents) {\n\
+              float p = fract(head + float(k) * inv);\n\
+              float d = abs(led.dist - p);\n\
+              v = max(v, smoothstep(width, 0.0, d));\n\
+            }\n\
+          }\n\
+          vec3 hue = hsv2rgb(led.dist, 0.9, 1.0);\n\
+          vec3 col = tint * (1.0 - rainbow) + hue * rainbow;\n\
+          return col * v;\n\
+        }";
+    for (name, src) in [
+        ("rainbow", rainbow),
+        ("breathing", breathing),
+        ("comet", comet),
+        ("flood", flood),
+        ("pulse", pulse),
+    ] {
         compile(src).unwrap_or_else(|d| panic!("starter {name} failed to compile: {:?}", d));
     }
+}
+
+#[test]
+fn graph_queries_and_agentic_pulse_compile() {
+    // Every graph-query intrinsic typechecks (int args, int/float return).
+    let g = "vec3 shade(Led led) {\n\
+        int z = 0; int one = 1;\n\
+        int n = seg_count();\n\
+        int node = seg_node(z, one);\n\
+        int d = node_deg(node);\n\
+        int ns = node_seg(node, z);\n\
+        int sd = node_side(node, z);\n\
+        float L = seg_len(z);\n\
+        return vec3(float(n + d + ns + sd) * 0.0 + L * 0.0, 0.0, 0.0);\n\
+    }";
+    compile(g).unwrap_or_else(|d| panic!("graph queries failed: {:?}", d));
+    // Non-int graph arg is rejected (led.seg is a float ctx value).
+    assert!(compile("vec3 shade(Led led){ float l = seg_len(led.seg); return vec3(l); }").is_err());
+
+    // The agentic-pulse starter: agents walk the graph, choosing a random
+    // incident segment at each junction (per-agent path choice).
+    let agentic = "uniform float speed : 0.05 .. 2.0 = 0.5;\n\
+        uniform float glow : 0.01 .. 0.3 = 0.08;\n\
+        uniform int count : 1 .. 8 = 3;\n\
+        uniform vec3 tint : color = 0.9, 0.5, 0.1;\n\
+        struct Agent { int seg; float s; };\n\
+        state Agent ag[8];\n\
+        state int started;\n\
+        void update() {\n\
+          if (started == 0) {\n\
+            started = 1;\n\
+            for (int i = 0; i < 8; i = i + 1) { ag[i].seg = i; ag[i].s = 0.0; }\n\
+          }\n\
+          for (int i = 0; i < 8; i = i + 1) {\n\
+            if (i < count) {\n\
+              int sg = ag[i].seg;\n\
+              float L = seg_len(sg);\n\
+              if (L < 0.001) { L = 1.0; }\n\
+              float ns = ag[i].s + speed * dt / L;\n\
+              if (ns < 1.0) {\n\
+                ag[i].s = ns;\n\
+              } else {\n\
+                int node = seg_node(sg, 1);\n\
+                int deg = node_deg(node);\n\
+                if (deg > 0) {\n\
+                  float r = hash(float(frame) * 0.13 + float(i) * 9.7);\n\
+                  int choice = int(r * float(deg));\n\
+                  if (choice >= deg) { choice = 0; }\n\
+                  ag[i].seg = node_seg(node, choice);\n\
+                }\n\
+                ag[i].s = 0.0;\n\
+              }\n\
+            }\n\
+          }\n\
+        }\n\
+        vec3 shade(Led led) {\n\
+          float v = 0.0;\n\
+          for (int i = 0; i < 8; i = i + 1) {\n\
+            if (i < count) {\n\
+              if (int(led.seg) == ag[i].seg) {\n\
+                float d = abs(led.s - ag[i].s);\n\
+                v = max(v, smoothstep(glow, 0.0, d));\n\
+              }\n\
+            }\n\
+          }\n\
+          return tint * v;\n\
+        }";
+    compile(agentic).unwrap_or_else(|d| panic!("agentic pulse failed: {:?}", d));
 }
 
 #[test]

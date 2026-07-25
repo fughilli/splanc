@@ -19,6 +19,7 @@ pub struct FxPreview {
     topo_seg: Vec<i32>,
     topo_s: Vec<f32>,
     topo_branch: Vec<u8>,
+    topo_dist: Vec<f32>,
 }
 
 #[wasm_bindgen]
@@ -33,6 +34,7 @@ impl FxPreview {
             topo_seg: Vec::new(),
             topo_s: Vec::new(),
             topo_branch: Vec::new(),
+            topo_dist: Vec::new(),
         })
     }
 
@@ -45,10 +47,18 @@ impl FxPreview {
     /// led.branch — the browser mirror of the device's FX_LED_TOPO cache. `seg`
     /// is the segment index (-1 = none), `s` normalized 0..1, `branch` 0/1. The
     /// three slices must be LED-count long; pass empty slices to clear.
-    pub fn set_topology(&mut self, seg: &[i32], s: &[f32], branch: &[u8]) {
+    pub fn set_topology(&mut self, seg: &[i32], s: &[f32], branch: &[u8], dist: &[f32]) {
         self.topo_seg = seg.to_vec();
         self.topo_s = s.to_vec();
         self.topo_branch = branch.to_vec();
+        self.topo_dist = dist.to_vec();
+    }
+
+    /// Provide the topology graph (per-segment length + endpoint node ids) so the
+    /// graph-query intrinsics (seg_len/node_seg/…) work in the preview — the
+    /// browser mirror of the device's set_graph. Pass empty slices to clear.
+    pub fn set_graph(&mut self, seg_len: &[f32], seg_a: &[i32], seg_b: &[i32]) {
+        self.vm.set_graph(seg_len, seg_a, seg_b);
     }
 
     /// Advance one frame: sets time/dt/frame and runs update().
@@ -78,6 +88,7 @@ impl FxPreview {
                     seg: self.topo_seg.get(i).copied().unwrap_or(-1),
                     s: self.topo_s.get(i).copied().unwrap_or(0.0),
                     branch: self.topo_branch.get(i).copied().unwrap_or(0) != 0,
+                    dist: self.topo_dist.get(i).copied().unwrap_or(0.0),
                 };
                 let (r, g, b) = self.vm.run_shade(&prog, &self.frame, &led);
                 out.push(r);

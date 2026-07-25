@@ -11,7 +11,7 @@
  */
 
 import { ActionGrid, Button, Chip, EmptyState, HelpTip, IconButton, Sheet, toast, icon } from "../kit";
-import { effectStore, type StoredEffect } from "../../store/effectStore";
+import { effectStore, isBuiltinEffect, type StoredEffect } from "../../store/effectStore";
 import { appendGrouped, openFolderPicker } from "./folders";
 import { openAiKeySheet } from "./aiKeySheet";
 import { getApiKey } from "../../effects/ai/generate";
@@ -212,23 +212,36 @@ export function EffectsBrowserScreen(router: Router): Screen {
       sheet.close();
       fn();
     };
+    // Built-in starters are immutable: open read-only and drop the in-place
+    // mutators (Rename/Tags) — Duplicate makes an editable fork.
+    const builtin = isBuiltinEffect(e.id);
     sheet.body.append(
       ActionGrid([
-        { label: "Edit", icon: "edit", onClick: act(() => router.navigate(`/effects/edit/${e.id}`)) },
         {
-          label: "Rename",
+          label: builtin ? "Open" : "Edit",
           icon: "edit",
-          onClick: act(() => void editText("Rename", e.name, (v) => effectStore.rename(e.id, v).then(refresh))),
+          onClick: act(() => router.navigate(`/effects/edit/${e.id}`)),
         },
-        {
-          label: "Tags",
-          icon: "tag",
-          onClick: act(() =>
-            void editText("Tags (space-separated)", e.tags.join(" "), (v) =>
-              effectStore.setTags(e.id, v.split(/\s+/)).then(refresh),
-            ),
-          ),
-        },
+        ...(builtin
+          ? []
+          : [
+              {
+                label: "Rename",
+                icon: "edit" as const,
+                onClick: act(() =>
+                  void editText("Rename", e.name, (v) => effectStore.rename(e.id, v).then(refresh)),
+                ),
+              },
+              {
+                label: "Tags",
+                icon: "tag" as const,
+                onClick: act(() =>
+                  void editText("Tags (space-separated)", e.tags.join(" "), (v) =>
+                    effectStore.setTags(e.id, v.split(/\s+/)).then(refresh),
+                  ),
+                ),
+              },
+            ]),
         {
           label: "Move",
           icon: "folder",
