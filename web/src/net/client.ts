@@ -82,6 +82,12 @@ export interface ClientOptions {
   connectTimeoutMs?: number;
   appVersion?: string;
   clientName?: string;
+  /** How many times to attempt a socket that has NEVER reached `welcome` before
+   * giving up, when the target needs a self-signed-cert trust (cross-origin
+   * wss). Past this, stop auto-retrying and wait for an explicit reconnect — the
+   * cert won't get trusted without the user, and each doomed handshake burns a
+   * heap-tight TLS slot the cert-approval page needs. Default 1. */
+  coldRetryLimit?: number;
 }
 
 export interface ClientEvents {
@@ -93,6 +99,10 @@ export interface ClientEvents {
   onConnecting?: (attempt: number, url: string) => void;
   /** Any server error message not consumed by a pending request. */
   onServerError?: (code: string, message: string) => void;
+  /** Fired when we stop auto-retrying a never-connected cert-trust target (see
+   * coldRetryLimit): the UI should show the "trust the cert" affordance and wait
+   * for the user rather than expect a background reconnect. */
+  onCertTrustNeeded?: (url: string) => void;
 }
 
 /** Default WebSocket URL for the page's own origin (wss on https pages). */
@@ -112,9 +122,10 @@ export function defaultWsUrl(loc: { protocol: string; host: string } = location)
  */
 export function certApprovalUrl(
   wsUrl: string,
-  loc: { host: string } = location,
+  loc: { host: string } | undefined = typeof location !== "undefined" ? location : undefined,
 ): string | null {
   try {
+    if (!loc) return null; // no page origin (e.g. a unit-test/node context)
     const u = new URL(wsUrl);
     if (u.protocol !== "wss:" || u.host === loc.host) return null;
     return `https://${u.host}/`;
@@ -137,6 +148,13 @@ export class LedMapperClient {
   private closed = false;
   private backoffIdx = 0;
   private attempt = 0;
+  // Whether this client has EVER completed a welcome. Distinguishes a cold
+  // never-connected socket (likely an untrusted cert) from a warm drop (a
+  // genuine disconnect that should reconnect with backoff).
+  private everWelcomed = false;
+  private coldFails = 0;
+  private readonly needsTrust: boolean;
+  private readonly coldRetryLimit: number;
 
   /** Outbound detection batches not yet written to an open socket. */
   private pendingBatches: DetectionRecord[][] = [];
@@ -164,6 +182,8 @@ export class LedMapperClient {
     // it and still reconnects within ~8 s once the cert is trusted.
     this.backoffMs = opts.backoffMs ?? [1000, 2000, 4000, 8000];
     this.connectTimeoutMs = opts.connectTimeoutMs ?? 5000;
+    this.coldRetryLimit = opts.coldRetryLimit ?? 1;
+    this.needsTrust = certApprovalUrl(url) !== null;
     this.appVersion = opts.appVersion ?? "0.1.0";
     this.clientName = opts.clientName ?? "android-web";
     this.clock = new ServerClock({ offsetMs: 0, rttMs: Infinity }, this.now);
@@ -211,6 +231,8 @@ export class LedMapperClient {
           this.welcome_ = msg;
           this.backoffIdx = 0;
           this.attempt = 0;
+          this.everWelcomed = true;
+          this.coldFails = 0;
           welcomed = true;
           this.flushBatches();
           this.events.onConnected?.(msg);
@@ -231,10 +253,24 @@ export class LedMapperClient {
         this.failWaiters(new Error("socket closed"));
         if (hadWelcome) this.events.onDisconnected?.();
         if (!this.closed) {
-          const delay = this.backoffMs[Math.min(this.backoffIdx++, this.backoffMs.length - 1)]!;
-          this.schedule(() => {
-            if (!this.closed) void this.connect().catch(() => undefined);
-          }, delay);
+          // A socket that never reached `welcome` against a cert-trust target is
+          // almost certainly failing on the untrusted self-signed cert. Retrying
+          // is futile (only the user can trust it) and actively harmful on the
+          // heap-tight ESP: every doomed TLS handshake holds one of the player's
+          // two TLS slots, starving BOTH the cert-approval page load and any
+          // concurrent wss. So stop after `coldRetryLimit` and wait for an
+          // explicit reconnect (the user trusts the cert → a fresh connect()).
+          // Warm drops (we were connected) always reconnect with backoff.
+          const coldGiveUp =
+            !this.everWelcomed && this.needsTrust && ++this.coldFails >= this.coldRetryLimit;
+          if (coldGiveUp) {
+            this.events.onCertTrustNeeded?.(this.url);
+          } else {
+            const delay = this.backoffMs[Math.min(this.backoffIdx++, this.backoffMs.length - 1)]!;
+            this.schedule(() => {
+              if (!this.closed) void this.connect().catch(() => undefined);
+            }, delay);
+          }
         }
         if (!settled) {
           settled = true;

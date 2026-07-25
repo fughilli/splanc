@@ -65,6 +65,11 @@ class AppState {
       onConnected: () => this.setStatus({ state: "connecting", text: "syncing clock…", certUrl: null }),
       onDisconnected: () => this.setStatus({ state: "connecting", text: "reconnecting…" }),
       onServerError: (code, msg) => this.setStatus({ state: "error", text: "error", error: `server ${code}: ${msg}` }),
+      // The client gave up auto-retrying because the cert isn't trusted — show
+      // the trust affordance and STOP hammering; the user's "Trust & connect"
+      // does a fresh connect() once the cert is accepted.
+      onCertTrustNeeded: (url) =>
+        this.setStatus({ state: "connecting", text: "trust needed", certUrl: certApprovalUrl(url), error: null }),
     };
     void (async () => {
       try {
@@ -95,7 +100,10 @@ class AppState {
       } catch {
         // The likely cause for a cross-origin wss target is the player's
         // self-signed cert (a WebSocket can never prompt for it). Surface the
-        // trust URL; the client keeps auto-reconnecting in the background.
+        // trust URL. For a cert-trust target the client has STOPPED retrying (so
+        // it doesn't starve the cert page's TLS slot); reconnection is driven by
+        // the user's "Trust & connect". For other failures it reconnects with
+        // backoff, so poll for that completing.
         const certUrl = certApprovalUrl(wssUrl);
         this.setStatus({
           state: certUrl ? "connecting" : "error",
@@ -103,7 +111,7 @@ class AppState {
           certUrl,
           error: certUrl ? null : "connection failed — retrying",
         });
-        this.watchReconnect();
+        if (!certUrl) this.watchReconnect();
       }
     })();
   }
