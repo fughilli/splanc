@@ -36,6 +36,7 @@
 
 #include "firmware/landing/landing_page.h"
 #include "firmware/player_app/improv_ble.h"
+#include "selfsigned.h"  // @embedded//libs/tls: on-device cert re-issuance
 #include "firmware/player_app/improv_codec.h"
 #include "firmware/player_app/led_config.h"
 #include "firmware/player_app/player_ffi.h"
@@ -155,6 +156,11 @@ static uint32_t fx_sel_dirty_at = 0;
 // STA join in progress: reports success (Improv redirect) / failure.
 static bool sta_joining = false;
 static uint32_t sta_join_started = 0;
+// The soft-AP is up only until we successfully join a LAN — then it is torn
+// down (STA-only) to reclaim its heap for the TLS handshake, which is tight on
+// the C6 (a wss handshake needs a ~17 KB buffer). It comes back on the next
+// boot if no STA join is stored/succeeds, so the device stays re-provisionable.
+static bool softap_up = false;
 enum class WsState { kIdle, kHandshake, kOpen };
 static WsState ws_state = WsState::kIdle;
 
@@ -720,6 +726,16 @@ static void emit_perf_report_if_due() {
 // client (ws OR wss) is meant to be active at a time.
 static httpd_handle_t wss = nullptr;
 
+// The cert the wss server presents. Defaults to the build-time dev cert (no SAN,
+// used only pre-join / AP mode); after a LAN join we re-issue one carrying the
+// live STA IP in its SAN (see reissue_cert_for_lan) so browsers accept it. The
+// PRIVATE KEY is always the build-time kDevKeyPem — we only re-sign a new cert
+// for it, avoiding slow on-device keygen.
+static const char *g_wss_cert = kDevCertPem;
+static size_t g_wss_cert_len = sizeof kDevCertPem;
+static char g_gen_cert[1024];  // PEM of the SAN cert (fits an RSA-2048 leaf)
+static bool g_cert_reissued = false;
+
 static esp_err_t wss_ws_handler(httpd_req_t *req) {
   if (req->method == HTTP_GET) return ESP_OK;  // upgrade handshake; nothing to send
 
@@ -798,8 +814,8 @@ static esp_err_t wss_health_handler(httpd_req_t *req) {
 
 static void wss_start() {
   httpd_ssl_config_t cfg = HTTPD_SSL_CONFIG_DEFAULT();
-  cfg.servercert = (const uint8_t *)kDevCertPem;
-  cfg.servercert_len = sizeof kDevCertPem;
+  cfg.servercert = (const uint8_t *)g_wss_cert;
+  cfg.servercert_len = g_wss_cert_len;
   cfg.prvtkey_pem = (const uint8_t *)kDevKeyPem;
   cfg.prvtkey_len = sizeof kDevKeyPem;
   // TLS is heap-heavy on the C6: each mbedtls session is ~28 KB (the 16 KB
@@ -810,7 +826,8 @@ static void wss_start() {
   // reconnecting phone. The handler task runs lm_player_handle, whose micropb
   // by-value structs need a big stack (the loop task is 24 KB for exactly this),
   // so give the httpd task the same budget plus TLS-record margin or it
-  // overflows on the first message.
+  // overflows on the first message. Two sessions is deliberate: the phone loads
+  // the status/landing page over one while the app's wss holds the other.
   cfg.httpd.max_open_sockets = 2;
   cfg.httpd.stack_size = 28 * 1024;
   cfg.httpd.lru_purge_enable = true;
@@ -837,6 +854,35 @@ static void wss_start() {
                (unsigned)esp_get_free_heap_size());
 }
 
+// Re-issue the wss cert with the live STA IP (+ the soft-AP IP + a stable mDNS
+// name) in its SAN, then restart the TLS server so browsers accept it — the
+// build-time cert has no SAN and is rejected with a fatal alert. Same private
+// key, deterministic serial/validity → identical bytes for a given IP, so the
+// phone's stored trust exception survives reboots (only an IP change re-issues).
+static void reissue_cert_for_lan() {
+  if (g_cert_reissued) return;
+  uint32_t ips[2];
+  int n = 0;
+  ips[n++] = (uint32_t)WiFi.localIP();        // STA (LAN) address
+  ips[n++] = (uint32_t)IPAddress(192, 168, 4, 1);  // soft-AP address
+  int ret = ledmapper_selfsign(kDevKeyPem, g_device_name, ips, n, "ledmapper.local",
+                               g_gen_cert, sizeof g_gen_cert);
+  if (ret != 0) {
+    Log().printf("[wss] cert re-issue failed: -0x%04X (keeping build-time cert)\n", -ret);
+    return;
+  }
+  g_cert_reissued = true;
+  g_wss_cert = g_gen_cert;
+  g_wss_cert_len = strlen(g_gen_cert) + 1;  // esp-tls wants the NUL in the length
+  if (wss) {
+    httpd_ssl_stop(wss);
+    wss = nullptr;
+  }
+  Log().printf("[wss] re-issued cert with SAN IP:%s (heap=%u); restarting TLS\n",
+               WiFi.localIP().toString().c_str(), (unsigned)esp_get_free_heap_size());
+  wss_start();
+}
+
 void setup() {
   Serial.begin(115200);
   FastLED.addLeds<WS2812B, LED_DATA_PIN, GRB>(leds, kMaxLeds);
@@ -858,6 +904,7 @@ void setup() {
   // the AP routes everything there and the hosted app can never load).
   WiFi.mode(WIFI_AP_STA);
   WiFi.softAP(kApSsid, kApPassword);
+  softap_up = true;
   prefs.begin("ledmapper");
   String ssid = prefs.getString("ssid", "");
   if (ssid.length() > 0) {
@@ -924,6 +971,20 @@ static void provisioning_poll() {
     Log().printf("[player] joined, %s\n", url.c_str());
     improv_ble_set_state(IMPROV_STATE_PROVISIONED);
     improv_ble_send_redirect(url.c_str());
+    // Now that the LAN is reachable, drop the soft-AP and go STA-only: the AP
+    // netif + its buffers are pure overhead once joined, and the C6 needs that
+    // heap back for the ~17 KB mbedTLS handshake buffer (wss on :443 was OOMing
+    // with AP+STA+BLE all resident).
+    if (softap_up) {
+      WiFi.softAPdisconnect(true);
+      WiFi.mode(WIFI_STA);
+      softap_up = false;
+      Log().printf("[player] soft-AP down; STA-only, heap=%u\n",
+                   (unsigned)esp_get_free_heap_size());
+    }
+    // Re-sign the wss cert with this IP in the SAN so browsers will take the
+    // trust exception (the build-time cert has none → fatal alert / ERR_TIMED_OUT).
+    reissue_cert_for_lan();
   } else if (millis() - sta_join_started > kStaJoinTimeoutMs) {
     sta_joining = false;
     Log().println("[player] STA join failed; clearing stored credentials");
@@ -958,10 +1019,14 @@ void loop() {
     String sta = WiFi.status() == WL_CONNECTED
                      ? "sta " + WiFi.localIP().toString()
                      : (sta_joining ? String("sta joining…") : String("sta off"));
+    String ap = softap_up ? String("AP \"") + kApSsid + "\" " +
+                                (unsigned)WiFi.softAPgetStationNum() + " sta http://" +
+                                WiFi.softAPIP().toString() + "/"
+                          : String("AP off");
     Log().printf(
-        "[player] AP \"%s\" %d station(s) http://%s/  %s  ws :%u  "
+        "[player] %s  %s  ws :%u  "
         "ws=%s map=%lu leds heap=%u min=%u\n",
-        kApSsid, WiFi.softAPgetStationNum(), WiFi.softAPIP().toString().c_str(),
+        ap.c_str(),
         sta.c_str(), kWsPort,
         ws_state == WsState::kOpen        ? "open"
         : ws_state == WsState::kHandshake ? "handshake"

@@ -179,12 +179,16 @@ use_repo(host_crate, "host_crates")
 bazel_dep(name = "firmware", version = "0.0.0", repo_name = "embedded")
 archive_override(
     module_name = "firmware",
-    # feat/mbedtls-from-source-dynamic-buffers: mbedtls 3.6.5 + IDF v5.5.4 port
-    # built FROM SOURCE with CONFIG_MBEDTLS_DYNAMIC_BUFFER, so idle TLS sessions
-    # cost ~2 KB instead of ~28 KB (fixes mbedtls_ssl_setup -0x7F00 on the C6).
-    integrity = "sha256-aWp2gdvvUGnkd1Z9d+pYI9+/I5IWXkFn2gYn+DAUyRM=",
-    strip_prefix = "embedded-a8259fd100ef469d7f2e3bf886ef48a3a6dde660",
-    urls = ["https://github.com/fughilli/embedded/archive/a8259fd100ef469d7f2e3bf886ef48a3a6dde660.tar.gz"],
+    # feat/mbedtls-8k-record-and-selfsigned-cert: mbedtls 3.6.5 + IDF v5.5.4 port
+    # built FROM SOURCE with CONFIG_MBEDTLS_DYNAMIC_BUFFER. Adds: TLS record
+    # buffer trimmed 16 KB -> 8 KB (fixes the C6's fragmented-heap wss/cert
+    # handshake OOM, -0x7F00 alloc(17058) failed), and //libs/tls:selfsigned —
+    # on-device re-issuance of a SAN cert (browsers reject the SAN-less
+    # build-time cert with a fatal alert). Based on the earlier
+    # dynamic-buffers commit (a8259fd).
+    integrity = "sha256-A5rLoiEbzEBU5HkPvcqEZ6z9ti78O6qOjXdKo8gn9Fc=",
+    strip_prefix = "embedded-fa9de07e3a4f9a908955ab9c45699bde17b51f2a",
+    urls = ["https://github.com/fughilli/embedded/archive/fa9de07e3a4f9a908955ab9c45699bde17b51f2a.tar.gz"],
 )
 
 # ---------------------------------------------------------------------------
