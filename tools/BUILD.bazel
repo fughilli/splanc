@@ -29,3 +29,22 @@ py_binary(
     name = "flash_server",
     srcs = ["flash_server.py"],
 )
+
+# Host-side Improv-BLE onboarding driver — provisions the player onto WiFi via a
+# real Bluetooth radio (SimpleBLE), replacing the phone's Web Bluetooth step
+# (which can't be automated). Run on the host: `bazel run //tools:ble_onboard_server`.
+py_binary(
+    name = "ble_onboard_server",
+    srcs = ["ble_onboard_server.py"],
+    deps = [requirement("simplepyble")],
+)
+
+# Host-side headless-browser driver — drives Chromium (Playwright) to exercise
+# the player's wss + self-signed-cert flow. Run on the host: `bazel run
+# //tools:browser_server`. NOTE: `playwright install chromium` once to fetch the
+# browser binary (not a pip artifact).
+py_binary(
+    name = "browser_server",
+    srcs = ["browser_server.py"],
+    deps = [requirement("playwright")],
+)
