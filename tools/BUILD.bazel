@@ -19,3 +19,13 @@ py_binary(
     srcs = ["trace_server.py"],
     deps = [requirement("segno")],
 )
+
+# Host-side flash + serial-log helper. Run on the machine the board is plugged
+# into (`bazel run //tools:flash_server`); drive it over HTTP from the
+# container. It shells back out to `bazel` under $BUILD_WORKSPACE_DIRECTORY to
+# run the flash target, and reads the serial console for logs. Stdlib-only
+# (pyserial used if importable, else a termios fallback).
+py_binary(
+    name = "flash_server",
+    srcs = ["flash_server.py"],
+)
