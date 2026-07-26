@@ -82,6 +82,18 @@ struct ArrayInfo {
     count: u8,
 }
 
+/// A declared hidden buffer / texture. `kind` 0 = LED-arity (one element per
+/// LED; the arena sizes it to led_count at run time), 1 = a WxH 2D texture.
+/// `elem` is the slot width of one element (1 = float … 4 = vec4). Serialized
+/// into the `.fxb` buffer table for the VM's LoadBuf/StoreBuf (see fx_vm).
+#[derive(Clone, Copy)]
+struct BufferInfo {
+    kind: u8,
+    elem: u8,
+    w: u16,
+    h: u16,
+}
+
 // -- uniform manifest ---------------------------------------------------------
 
 #[derive(Clone, Debug, PartialEq)]
@@ -243,6 +255,9 @@ enum SymKind {
     Uniform,
     State,
     Local,
+    /// A hidden buffer/texture. `Sym::slot` is the buffer id (index into
+    /// `Compiler::buffers`), not a VM slot; access is via LoadBuf/StoreBuf.
+    Buffer,
 }
 #[derive(Clone, Copy)]
 struct Sym {
@@ -283,6 +298,7 @@ pub struct Compiler {
     // composite type tables (indexed by Ty::Struct / Ty::Array payloads)
     structs: Vec<StructInfo>,
     arrays: Vec<ArrayInfo>,
+    buffers: Vec<BufferInfo>,
     struct_names: HashMap<String, u16>,
     cur_fn_is_entry: bool,
     uniforms: Vec<UniformInfo>,
@@ -320,6 +336,7 @@ pub fn compile(src: &str) -> Result<Compiled, Vec<Diagnostic>> {
         funcs: HashMap::new(),
         structs: Vec::new(),
         arrays: Vec::new(),
+        buffers: Vec::new(),
         struct_names: HashMap::new(),
         cur_fn_is_entry: false,
         uniforms: Vec::new(),
@@ -484,6 +501,7 @@ impl Compiler {
                 Tok::Eof => break,
                 Tok::Ident(kw) if kw == "uniform" => self.uniform_decl()?,
                 Tok::Ident(kw) if kw == "state" => self.state_decl()?,
+                Tok::Ident(kw) if kw == "buffer" => self.buffer_decl()?,
                 Tok::Ident(kw) if kw == "struct" => self.struct_decl()?,
                 Tok::Ident(kw) if Self::ty_from_ident(&kw).is_some() => self.func_decl()?,
                 other => return self.err(format!("unexpected token {other:?}")),
@@ -707,6 +725,31 @@ impl Compiler {
         Ok(())
     }
 
+    // buffer vec3 trail;   — a hidden LED-arity buffer (one `elem` per LED,
+    // persisted across frames in the VM arena; sized to led_count at run time).
+    // Element type is a scalar/vec (float/vec2/vec3/vec4). Access is `trail[i]`
+    // (read) and `trail[i] = v;` (write), i an int LED index.
+    fn buffer_decl(&mut self) -> Result<(), Diagnostic> {
+        self.advance(); // 'buffer'
+        let tyname = self.eat_ident()?;
+        let elem_ty = Self::ty_from_ident(&tyname).ok_or_else(|| self.mkdiag("unknown type"))?;
+        let elem = elem_ty.width();
+        // Numeric scalar/vector element: float/int/fixed (width 1) or vec2..4.
+        // Excludes bool (width 1 but not numeric), struct/array/void (width 0/>4).
+        if elem == 0 || elem > 4 || matches!(elem_ty, Ty::Bool) {
+            return self.err("buffer element must be numeric: float/int/vec2/vec3/vec4");
+        }
+        let name = self.eat_ident()?;
+        self.expect_sym(';')?;
+        if self.buffers.len() >= 255 {
+            return self.err("too many buffers (max 255)");
+        }
+        let id = self.buffers.len() as u8;
+        self.buffers.push(BufferInfo { kind: 0, elem, w: 0, h: 0 });
+        self.syms.insert(name, Sym { kind: SymKind::Buffer, slot: id, ty: elem_ty });
+        Ok(())
+    }
+
     /// If the next token is `[`, parse `[N]` and wrap `base` in an array type;
     /// otherwise return `base` unchanged.
     fn maybe_array_suffix(&mut self, base: Ty) -> Result<Ty, Diagnostic> {
@@ -893,6 +936,10 @@ impl Compiler {
     /// struct-field place (`agents[i].pos = expr;`).
     fn assign_stmt(&mut self, name: String) -> Result<(), Diagnostic> {
         let sym = *self.syms.get(&name).ok_or_else(|| self.mkdiag("unknown identifier"))?;
+        // Buffer element store: `buf[i] = v;` -> LoadBuf/StoreBuf, not a slot place.
+        if matches!(sym.kind, SymKind::Buffer) {
+            return self.buffer_index_store(sym);
+        }
         // Indexed / struct-field target -> place store (may emit a dynamic index
         // BEFORE the RHS, which the *_IDX store then finds beneath the value).
         if *self.cur() == Tok::Sym('[')
@@ -917,11 +964,46 @@ impl Compiler {
             SymKind::State => fx_vm_op::STORE_STATE,
             SymKind::Local => fx_vm_op::STORE_LOCAL,
             SymKind::Uniform => return self.err("cannot assign to a uniform"),
+            SymKind::Buffer => return self.err("cannot assign to a buffer; use buf[i] = ..."),
         };
         let w = self.ty_width(sym.ty);
         self.emit(opc);
         self.emit(sym.slot);
         self.emit(w);
+        Ok(())
+    }
+
+    /// `buf[i]` read: emit the (int) index, then LoadBuf(id); the result is one
+    /// element (the buffer's elem type) on the stack.
+    fn buffer_index_load(&mut self, sym: Sym) -> Result<Ty, Diagnostic> {
+        self.expect_sym('[')?;
+        let it = self.expr()?;
+        if !it.is_scalar() {
+            return self.err("buffer index must be a scalar");
+        }
+        self.coerce(it, Ty::Int)?;
+        self.expect_sym(']')?;
+        self.emit(fx_vm_op::LOAD_BUF);
+        self.emit(sym.slot); // buffer id
+        Ok(sym.ty)
+    }
+
+    /// `buf[i] = v;` write: index first, then the value slots, then StoreBuf(id)
+    /// — matching the VM's expectation of `[index, v0..v_elem]` beneath the op.
+    fn buffer_index_store(&mut self, sym: Sym) -> Result<(), Diagnostic> {
+        self.expect_sym('[')?;
+        let it = self.expr()?;
+        if !it.is_scalar() {
+            return self.err("buffer index must be a scalar");
+        }
+        self.coerce(it, Ty::Int)?;
+        self.expect_sym(']')?;
+        self.expect_sym('=')?;
+        let et = self.expr()?;
+        self.coerce(et, sym.ty)?;
+        self.expect_sym(';')?;
+        self.emit(fx_vm_op::STORE_BUF);
+        self.emit(sym.slot); // buffer id
         Ok(())
     }
 
@@ -1017,6 +1099,7 @@ impl Compiler {
             SymKind::State => fx_vm_op::STORE_STATE,
             SymKind::Local => fx_vm_op::STORE_LOCAL,
             SymKind::Uniform => return self.err("cannot assign to a uniform"),
+            SymKind::Buffer => return self.err("cannot assign a buffer in a for-update"),
         };
         self.emit(opc);
         self.emit(sym.slot);
@@ -1121,6 +1204,7 @@ impl Compiler {
                 SymKind::State => LOAD_STATE_IDX,
                 SymKind::Local => LOAD_LOCAL_IDX,
                 SymKind::Uniform => return self.err("indexed uniforms are not supported"),
+                SymKind::Buffer => return self.err("internal: buffers use LoadBuf, not a place"),
             };
             self.emit(opc);
             self.emit(p.base);
@@ -1133,6 +1217,7 @@ impl Compiler {
                 SymKind::Uniform => LOAD_UNIFORM,
                 SymKind::State => LOAD_STATE,
                 SymKind::Local => LOAD_LOCAL,
+                SymKind::Buffer => return self.err("internal: buffers use LoadBuf, not a place"),
             };
             let slot = p
                 .base
@@ -1459,6 +1544,13 @@ impl Compiler {
                     return self.call(&id);
                 }
                 if let Some(sym) = self.syms.get(&id).copied() {
+                    // Buffer element read: `buf[i]` -> LoadBuf, result = elem type.
+                    if matches!(sym.kind, SymKind::Buffer) {
+                        if *self.cur() != Tok::Sym('[') {
+                            return self.err("a buffer must be indexed: name[i]");
+                        }
+                        return self.buffer_index_load(sym);
+                    }
                     // Indexed / struct-field access -> resolve a place and load it
                     // (a leftover `.xyz` on a vec result is swizzled by postfix()).
                     if *self.cur() == Tok::Sym('[')
@@ -1518,6 +1610,7 @@ impl Compiler {
             SymKind::Uniform => fx_vm_op::LOAD_UNIFORM,
             SymKind::State => fx_vm_op::LOAD_STATE,
             SymKind::Local => fx_vm_op::LOAD_LOCAL,
+            SymKind::Buffer => return self.err("a buffer must be indexed: name[i]"),
         };
         self.emit(opc);
         self.emit(sym.slot);
@@ -1864,9 +1957,10 @@ impl Compiler {
 
     fn finish(self) -> Compiled {
         let mut b = Vec::new();
+        let flags = if self.buffers.is_empty() { 0 } else { FLAG_BUFFERS };
         b.extend_from_slice(b"FXB1");
         b.push(1); // version
-        b.push(0); // flags
+        b.push(flags); // flags
         b.push(self.n_state);
         b.push(self.n_uniform_slots);
         // manifest: a compact encoding (VM skips it; the app decodes via the
@@ -1882,6 +1976,17 @@ impl Compiler {
             b.extend_from_slice(&c.to_le_bytes());
         }
         b.extend_from_slice(&self.code);
+        // Optional buffer descriptor table (FLAG_BUFFERS): n_buffers, then
+        // n × [kind(u8) elem(u8) w(u16) h(u16)] — mirrors fx_vm::Program::parse.
+        if !self.buffers.is_empty() {
+            b.push(self.buffers.len() as u8);
+            for buf in &self.buffers {
+                b.push(buf.kind);
+                b.push(buf.elem);
+                b.extend_from_slice(&buf.w.to_le_bytes());
+                b.extend_from_slice(&buf.h.to_le_bytes());
+            }
+        }
         Compiled { fxb: b, uniforms: self.uniforms }
     }
 }
@@ -2085,6 +2190,15 @@ fn decode_op(code: &[u8], pc: usize) -> (String, usize) {
             format!("STORE_LOCAL_IDX base={} stride={} off={} n={} count={}", b(0), b(1), b(2), b(3), b(4)),
             6,
         ),
+        GRAPH_QUERY => {
+            let k = match b(0) {
+                0 => "seg_count", 1 => "seg_len", 2 => "seg_node", 3 => "node_deg",
+                4 => "node_seg", 5 => "node_side", _ => "?",
+            };
+            (format!("GRAPH_QUERY {k}"), 2)
+        }
+        LOAD_BUF => (format!("LOAD_BUF id={}", b(0)), 2),
+        STORE_BUF => (format!("STORE_BUF id={}", b(0)), 2),
         other => (format!("?? 0x{other:02x}"), 0),
     }
 }
@@ -2189,7 +2303,14 @@ mod fx_vm_op {
     pub const LOAD_LOCAL_IDX: u8 = 54;
     pub const STORE_LOCAL_IDX: u8 = 55;
     pub const GRAPH_QUERY: u8 = 56;
+    pub const LOAD_BUF: u8 = 57;
+    pub const STORE_BUF: u8 = 58;
 }
+
+/// `.fxb` flags bit: a buffer descriptor table follows `code` (mirrors
+/// fx_vm::FLAG_BUFFERS). One byte `n_buffers`, then n × [kind(u8) elem(u8)
+/// w(u16) h(u16)] (6 bytes each = fx_vm::BUF_DESC_LEN).
+const FLAG_BUFFERS: u8 = 0x01;
 mod fx_ctx {
     pub const TIME: u8 = 0;
     pub const DT: u8 = 1;

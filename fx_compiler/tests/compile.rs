@@ -488,3 +488,61 @@ fn array_struct_error_cases() {
     )
     .is_ok()); // one dynamic index is fine
 }
+
+#[test]
+fn buffer_trails_persist_per_led() {
+    // A hidden LED-arity buffer read+written in shade() via led.idx: each LED's
+    // slot decays and accumulates across frames (the "Trails" pattern). This
+    // exercises the `buffer` grammar, LoadBuf/StoreBuf, the .fxb buffer table,
+    // and the VM arena end to end.
+    let src = r#"
+        buffer float trail;
+        vec3 shade(Led led) {
+            float v = trail[led.idx] * 0.5 + 0.2;
+            trail[led.idx] = v;
+            return vec3(v, 0.0, 0.0);
+        }
+    "#;
+    let c = compile(src).unwrap_or_else(|d| panic!("compile error: {:?}", d));
+    let prog = Program::parse(&c.fxb).expect("parse fxb");
+    // Buffer table present with one LED-arity (kind 0) float (elem 1) buffer.
+    assert_eq!(prog.n_buffers, 1);
+    let d = prog.buf_desc(0).expect("buf desc");
+    assert_eq!((d.kind, d.elem), (0, 1));
+
+    let led_count = 4usize;
+    let mut arena = vec![0.0f32; prog.arena_slots(led_count)];
+    assert_eq!(arena.len(), led_count); // 1 slot/elem * 4 LEDs
+
+    let mut vm = Vm::new();
+    vm.set_arena(&mut arena);
+    let frame = Frame { led_count: led_count as u32, ..Frame::default() };
+    let led = Led::default(); // idx 0
+    // frame 1: v = 0*0.5 + 0.2 = 0.2 -> 51
+    let (r1, _, _) = vm.run_shade(&prog, &frame, &led);
+    // frame 2: v = 0.2*0.5 + 0.2 = 0.3 -> 76 (proves the write persisted)
+    let (r2, _, _) = vm.run_shade(&prog, &frame, &led);
+    assert_eq!(r1, (0.2f32 * 255.0) as u8);
+    assert_eq!(r2, (0.3f32 * 255.0) as u8);
+    assert!(r2 > r1, "trail should accumulate across frames");
+}
+
+#[test]
+fn buffer_misuse_errors() {
+    // A buffer must be indexed.
+    assert!(compile("buffer float b; vec3 shade(Led led) { return vec3(b, 0.0, 0.0); }").is_err());
+    // Cannot whole-assign a buffer.
+    assert!(
+        compile("buffer float b; void update() { b = 1.0; } vec3 shade(Led led) { return vec3(0.0,0.0,0.0); }")
+            .is_err()
+    );
+    // Element type must be a scalar/vec.
+    assert!(compile("buffer bool b; vec3 shade(Led led) { return vec3(0.0,0.0,0.0); }").is_err());
+    // A vec3 buffer round-trips (elem 3).
+    let c = compile(
+        "buffer vec3 c; vec3 shade(Led led) { c[led.idx] = vec3(1.0,0.0,0.0); return c[led.idx]; }",
+    )
+    .expect("vec3 buffer compiles");
+    let prog = Program::parse(&c.fxb).unwrap();
+    assert_eq!(prog.buf_desc(0).unwrap().elem, 3);
+}
