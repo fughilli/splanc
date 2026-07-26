@@ -154,6 +154,18 @@ def _pb_submit_effect(effect_id: str, fxb: bytes, activate: bool) -> bytes:
     return _msgf(21, _strf(1, effect_id) + _bytesf(2, fxb) + _boolf(3, activate))
 
 
+def _varintf(field: int, val: int) -> bytes:
+    return _varint((field << 3) | 0) + _varint(val)
+
+
+def _pb_set_texture(tex: int, fmt: int, w: int, h: int, flags: int, data: bytes) -> bytes:
+    # ClientMessage{set_texture=28: SetTexture{tex_index=1, format=2, width=3,
+    # height=4, flags=5, data=6}}
+    inner = (_varintf(1, tex) + _varintf(2, fmt) + _varintf(3, w) + _varintf(4, h)
+             + _varintf(5, flags) + _bytesf(6, data))
+    return _msgf(28, inner)
+
+
 def _pb_fields(buf: bytes) -> dict:
     out: dict = {}
     i = 0
@@ -420,6 +432,25 @@ def ws_effect_raw(url: str, fxb_hex: str, effect_id: str, activate: bool,
         _ws_graceful_close(s)
 
 
+def ws_texture_raw(url: str, tex: int, fmt: int, w: int, h: int, flags: int,
+                   data_hex: str, timeout_ms: float) -> dict:
+    """Send one set_texture frame (fire-and-forget) — hardware smoke test for the
+    video-texture decode. The effect with the target texture must be loaded."""
+    u = urllib.parse.urlparse(url)
+    to = timeout_ms / 1000.0
+    data = bytes.fromhex(data_hex.strip()) if data_hex else b""
+    s = _wss_open(u.hostname, u.port or 443, u.path or "/ws", to)
+    try:
+        _ws_send(s, _pb_hello())
+        name, _ = _next_welcome(s)
+        _ws_send(s, _pb_set_texture(tex, fmt, w, h, flags, data))
+        return {"url": url, "sent": True, "tex_index": tex, "format": fmt,
+                "w": w, "h": h, "flags": flags, "data_bytes": len(data),
+                "device_name": name}
+    finally:
+        _ws_graceful_close(s)
+
+
 def ws_rename_raw(url: str, new_name: str, timeout_ms: float) -> dict:
     u = urllib.parse.urlparse(url)
     to = timeout_ms / 1000.0
@@ -610,6 +641,15 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(ws_effect_raw(url, fxb, g("id", "hwtest"),
                                          g("activate", "1") not in ("0", "false"),
                                          int(g("timeout", "10000"))))
+            elif route == "/wstexture":
+                url = g("url")
+                if not url:
+                    self._json({"error": "need ?url=&data=<hex>&w=&h=[&tex=&format=&flags=]"}, 400)
+                    return
+                self._json(ws_texture_raw(
+                    url, int(g("tex", "0")), int(g("format", "0")),
+                    int(g("w", "0")), int(g("h", "0")), int(g("flags", "0")),
+                    g("data", ""), int(g("timeout", "10000"))))
             elif route == "/wsrename":
                 url = g("url")
                 name = g("name")
