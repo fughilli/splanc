@@ -834,6 +834,25 @@ static void wss_start() {
   cfg.httpd.max_open_sockets = 2;
   cfg.httpd.stack_size = 28 * 1024;
   cfg.httpd.lru_purge_enable = true;
+  // Reclaim dead/half-open sessions so this single-task server can't wedge under
+  // connection churn. With only 2 slots, a client that vanishes mid-handshake or
+  // drops a live wss without a FIN otherwise holds a slot forever (it sits idle
+  // in the httpd select loop with no way to notice the peer is gone), and new
+  // handshakes stall behind it — observed on hardware: no recovery until reboot.
+  //   - TCP keepalive detects a silently-gone peer and frees the slot (~14 s).
+  //   - recv/send timeouts bound a blocked frame read/write (default 5 s, set
+  //     explicitly for clarity).
+  //   - a shorter TLS-handshake cap (was 10 s) frees a stalled handshake sooner.
+  //   - SO_LINGER keeps closed sockets from lingering in TIME_WAIT on the slot.
+  cfg.httpd.recv_wait_timeout = 5;
+  cfg.httpd.send_wait_timeout = 5;
+  cfg.httpd.keep_alive_enable = true;
+  cfg.httpd.keep_alive_idle = 5;
+  cfg.httpd.keep_alive_interval = 3;
+  cfg.httpd.keep_alive_count = 3;
+  cfg.httpd.enable_so_linger = true;
+  cfg.httpd.linger_timeout = 2;
+  cfg.tls_handshake_timeout_ms = 5000;
   esp_err_t err = httpd_ssl_start(&wss, &cfg);
   if (err != ESP_OK) {
     Log().printf("[wss] httpd_ssl_start failed: %d (heap=%u)\n", (int)err,

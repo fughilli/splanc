@@ -199,23 +199,34 @@ def _wss_open(host: str, port: int, path: str, timeout: float,
     elif tls_max == "13":
         ctx.minimum_version = ssl.TLSVersion.TLSv1_3
     raw = socket.create_connection((host, port), timeout=timeout)
-    # Browsers omit SNI for an IP literal; Python sends it unless we pass None.
-    s = ctx.wrap_socket(raw, server_hostname=(host if use_sni else None))
-    s.settimeout(timeout)
-    key = base64.b64encode(os.urandom(16)).decode()
-    s.sendall((f"GET {path} HTTP/1.1\r\nHost: {host}\r\nUpgrade: websocket\r\n"
-               f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\n"
-               f"Sec-WebSocket-Version: 13\r\n\r\n").encode())
-    resp = b""
-    while b"\r\n\r\n" not in resp:
-        chunk = s.recv(1024)
-        if not chunk:
-            raise ConnectionError("closed during handshake")
-        resp += chunk
-    status = resp.split(b"\r\n", 1)[0].decode("latin1")
-    if "101" not in status:
-        raise ConnectionError(f"no upgrade (got: {status!r})")
-    return s
+    raw.settimeout(timeout)
+    # On ANY failure (handshake timeout, no-101) close the socket so we send a
+    # FIN and the device frees its slot immediately — otherwise a failed probe
+    # leaks a client socket that keeps the device's half-open session alive,
+    # cascading into more failures and confounding churn measurements.
+    try:
+        # Browsers omit SNI for an IP literal; Python sends it unless we pass None.
+        s = ctx.wrap_socket(raw, server_hostname=(host if use_sni else None))
+        key = base64.b64encode(os.urandom(16)).decode()
+        s.sendall((f"GET {path} HTTP/1.1\r\nHost: {host}\r\nUpgrade: websocket\r\n"
+                   f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\n"
+                   f"Sec-WebSocket-Version: 13\r\n\r\n").encode())
+        resp = b""
+        while b"\r\n\r\n" not in resp:
+            chunk = s.recv(1024)
+            if not chunk:
+                raise ConnectionError("closed during handshake")
+            resp += chunk
+        status = resp.split(b"\r\n", 1)[0].decode("latin1")
+        if "101" not in status:
+            raise ConnectionError(f"no upgrade (got: {status!r})")
+        return s
+    except BaseException:
+        try:
+            raw.close()
+        except OSError:
+            pass
+        raise
 
 
 def _ws_send(s: ssl.SSLSocket, payload: bytes) -> None:
