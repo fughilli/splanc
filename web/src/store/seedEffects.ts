@@ -11,7 +11,7 @@
 
 import { effectStore, type StoredEffect } from "./effectStore";
 
-const SEED_FLAG = "ledmapper.seededEffects.v3";
+const SEED_FLAG = "ledmapper.seededEffects.v4";
 
 interface Starter {
   id: string;
@@ -217,6 +217,35 @@ vec3 shade(Led led) {
   vec3 col = tint * (1.0 - rainbow) + hue * rainbow;
   return col * v;
 }
+`,
+  },
+  {
+    id: "builtin-texture-map",
+    name: "Texture map",
+    tags: ["starter"],
+    source: `texture vec3 tex(24, 24);
+state bool baked;
+uniform vec3 a : color = 0.1, 0.2, 0.8;
+uniform vec3 b : color = 1.0, 0.6, 0.1;
+
+void update() {
+  // Bake a radial gradient into the 2D texture ONCE (behind a state flag);
+  // shade then just samples it per-LED via led.uv — a top-down texture-mapped
+  // wash. Swap the bake loop for any pattern, or paint(tex, uv, c) at runtime.
+  if (!baked) {
+    for (int y = 0; y < 24; y = y + 1) {
+      for (int x = 0; x < 24; x = x + 1) {
+        float fx = float(x) / 23.0;
+        float fy = float(y) / 23.0;
+        float d = distance(vec2(fx, fy), vec2(0.5, 0.5)) * 2.0;
+        tex[y * 24 + x] = a * (1.0 - d) + b * d;
+      }
+    }
+    baked = true;
+  }
+}
+
+vec3 shade(Led led) { return sample(tex, led.uv); }
 `,
   },
 ];

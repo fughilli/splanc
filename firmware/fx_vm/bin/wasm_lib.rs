@@ -93,8 +93,27 @@ impl FxPreview {
     pub fn shade_all(&self, positions: &[f32]) -> Vec<u8> {
         let n = positions.len() / 3;
         let mut out = Vec::with_capacity(n * 3);
+        // Map XY bounds for led.uv (mirrors the device's fx_rebuild_topo): a
+        // top-down projection of the LED positions to 0..1.
+        let mut mn = [f32::INFINITY; 2];
+        let mut mx = [f32::NEG_INFINITY; 2];
+        for i in 0..n {
+            for k in 0..2 {
+                let v = positions[3 * i + k];
+                mn[k] = mn[k].min(v);
+                mx[k] = mx[k].max(v);
+            }
+        }
+        let inv = [
+            if mx[0] - mn[0] > 1e-6 { 1.0 / (mx[0] - mn[0]) } else { 0.0 },
+            if mx[1] - mn[1] > 1e-6 { 1.0 / (mx[1] - mn[1]) } else { 0.0 },
+        ];
         if let Ok(prog) = Program::parse(&self.bytes) {
             for i in 0..n {
+                let uv = [
+                    ((positions[3 * i] - mn[0]) * inv[0]).clamp(0.0, 1.0),
+                    ((positions[3 * i + 1] - mn[1]) * inv[1]).clamp(0.0, 1.0),
+                ];
                 let led = Led {
                     pos: [positions[3 * i], positions[3 * i + 1], positions[3 * i + 2]],
                     idx: i as u32,
@@ -102,6 +121,7 @@ impl FxPreview {
                     s: self.topo_s.get(i).copied().unwrap_or(0.0),
                     branch: self.topo_branch.get(i).copied().unwrap_or(0) != 0,
                     dist: self.topo_dist.get(i).copied().unwrap_or(0.0),
+                    uv,
                 };
                 let (r, g, b) = self.vm.run_shade(&prog, &self.frame, &led);
                 out.push(r);

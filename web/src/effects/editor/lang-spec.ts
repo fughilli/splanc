@@ -16,6 +16,7 @@ export const KEYWORDS = [
   "uniform",
   "state",
   "buffer",
+  "texture",
   "struct",
   "void",
   "vec2",
@@ -36,6 +37,7 @@ export const KEYWORD_DOCS: Record<string, string> = {
   uniform: "declare a live, user-tweakable parameter with a range + default",
   state: "declare a value persisted across frames (written in update())",
   buffer: "declare a hidden per-LED buffer that persists across frames: `buffer vec3 trail;` then read/write `trail[i]` (i an int LED index)",
+  texture: "declare a hidden WxH 2D texture: `texture vec3 img(64, 64);` then `sample(img, uv)` (bilinear) / `paint(img, uv, c)` / flat `img[i]`",
   struct: "declare a composite type: struct Name { float a; vec3 b; };",
   void: "the return type of update() — produces no value",
   return: "return a value from shade() (or exit update())",
@@ -68,6 +70,7 @@ export const CONTEXTS: {
       { name: "s", type: "float", doc: "0..1 arclength along the LED's segment" },
       { name: "dist", type: "float", doc: "0..1 geodesic distance from the topology root; accumulates across segments (flood/pulse ride this)" },
       { name: "branch", type: "bool", doc: "true at a junction/branch point" },
+      { name: "uv", type: "vec2", doc: "per-LED texture coord in 0..1 (this LED's XY position normalized over the map bounds — a top-down projection); feed sample(tex, led.uv)" },
     ],
   },
   {
@@ -127,6 +130,9 @@ export const BUILTINS: { sig: string; doc: string }[] = [
   { sig: "node_deg(node)", doc: "number of segments incident to `node` (int)" },
   { sig: "node_seg(node, k)", doc: "k-th segment incident to `node` (int segment id) — pick a branch" },
   { sig: "node_side(node, k)", doc: "which end (0=a,1=b) of that k-th segment touches `node` (int)" },
+  // 2D textures (declare with `texture <elem> name(w, h);`)
+  { sig: "sample(tex, uv)", doc: "bilinearly sample 2D texture `tex` at uv (vec2, 0..1, edge-clamped); returns the texture's element type" },
+  { sig: "paint(tex, uv, color)", doc: "write `color` to the nearest texel of `tex` at uv (vec2, 0..1); a void statement" },
 ];
 
 /** Value types accepted by the language, with docstrings for completion. */

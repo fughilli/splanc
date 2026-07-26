@@ -145,6 +145,12 @@ impl FxLedTopo {
 }
 
 static mut FX_LED_TOPO: [FxLedTopo; FX_TOPO_CAP] = [FxLedTopo::NONE; FX_TOPO_CAP];
+
+/// Map XY bounding box for `led.uv` (a top-down projection of the map to 0..1):
+/// `uv = (pos.xy - FX_UV_MIN) * FX_UV_INV`, clamped. Recomputed by
+/// fx_rebuild_topo when the map changes; inv = 0 for a degenerate axis (uv 0).
+static mut FX_UV_MIN: [f32; 2] = [0.0, 0.0];
+static mut FX_UV_INV: [f32; 2] = [0.0, 0.0];
 /// False when the cache is stale (a map/topology upload cleared it); rebuilt
 /// lazily at the top of the next lm_fx_update frame.
 static mut FX_TOPO_READY: bool = false;
@@ -1232,6 +1238,23 @@ unsafe fn fx_rebuild_topo() {
         *e = FxLedTopo::NONE;
     }
     FX_TOPO_READY = true;
+    // Map XY bounds for led.uv — needs only the map (independent of topology), so
+    // compute it before the map+topo gate below.
+    if let Some(map) = (*addr_of!(MAP)).as_ref() {
+        let mut mn = [f32::INFINITY; 2];
+        let mut mx = [f32::NEG_INFINITY; 2];
+        for led in map.leds.iter() {
+            for k in 0..2 {
+                mn[k] = mn[k].min(led.xyz[k]);
+                mx[k] = mx[k].max(led.xyz[k]);
+            }
+        }
+        for k in 0..2 {
+            let range = mx[k] - mn[k];
+            FX_UV_MIN[k] = if range.is_finite() { mn[k] } else { 0.0 };
+            FX_UV_INV[k] = if range > 1e-6 { 1.0 / range } else { 0.0 };
+        }
+    }
     let (Some(map), Some(topo)) = ((*addr_of!(MAP)).as_ref(), (*addr_of!(TOPO)).as_ref()) else {
         return;
     };
@@ -1623,6 +1646,10 @@ pub unsafe extern "C" fn lm_fx_shade(
     // lm_fx_update refreshed. `idx` is the map index — exactly this cache's key.
     // No association (or no topology stored) → seg = -1, s = 0, branch = false.
     let t = (*addr_of!(FX_LED_TOPO)).get(idx as usize).copied().unwrap_or(FxLedTopo::NONE);
+    let uv = [
+        ((x - FX_UV_MIN[0]) * FX_UV_INV[0]).clamp(0.0, 1.0),
+        ((y - FX_UV_MIN[1]) * FX_UV_INV[1]).clamp(0.0, 1.0),
+    ];
     let led = FxLed {
         pos: [x, y, z],
         idx,
@@ -1630,6 +1657,7 @@ pub unsafe extern "C" fn lm_fx_shade(
         s: t.s,
         branch: t.branch,
         dist: t.dist,
+        uv,
     };
     let outcome = if PERF_MODE == PERF_FULL {
         // FULL: count this LED's opcodes into the per-frame shade accumulator

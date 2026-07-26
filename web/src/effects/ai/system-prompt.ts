@@ -96,6 +96,8 @@ STRUCTS & ARRAYS: declare composite types with \`struct Name { float a; vec3 b; 
 
 BUFFERS: \`buffer vec3 trail;\` declares a hidden per-LED buffer (one element per LED, numeric scalar/vec) that persists across frames — like \`state\`, but sized to the whole LED raster instead of a single slot. Read/write with \`trail[i]\`, i an int LED index (0..led.count-1). Ideal for feedback effects: in shade() do \`vec3 p = trail[led.idx]; vec3 v = p * 0.9 + spark; trail[led.idx] = v; return v;\` for decaying trails/persistence-of-vision. Unlike \`state\`, a buffer MAY be written from shade() (each LED owns its slot). Always index it — a bare \`trail\` is an error.
 
+TEXTURES: \`texture vec3 img(64, 64);\` declares a hidden WxH 2D texture (numeric scalar/vec element). Sample it with \`sample(img, uv)\` (BILINEAR, edge-clamped, uv a vec2 in 0..1) and write with \`paint(img, uv, color);\` (nearest texel; a void statement) or flat \`img[i]\`. Use \`led.uv\` (each LED's XY position normalized to 0..1 over the map — a top-down projection) as the sample coordinate for texture-mapped/pixel-space effects: \`return sample(img, led.uv);\`. Textures persist across frames too, so you can render into one in update()/shade() and read it back later (feedback / reaction-diffusion).
+
 ${EXAMPLES}
 
 REPAIR: If you are given a previous script and compiler diagnostics, return a corrected script that fixes every error; change as little else as possible.`;
