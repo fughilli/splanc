@@ -733,7 +733,10 @@ static httpd_handle_t wss = nullptr;
 // for it, avoiding slow on-device keygen.
 static const char *g_wss_cert = kDevCertPem;
 static size_t g_wss_cert_len = sizeof kDevCertPem;
-static char g_gen_cert[1024];  // PEM of the SAN cert (fits an RSA-2048 leaf)
+// PEM of the re-issued SAN cert. An EC P-256 leaf is ~600 B in PEM; sized
+// generously (an earlier RSA-2048 leaf at ~1.4 KB overflowed a 1024 buffer with
+// -0x002A MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL).
+static char g_gen_cert[2048];
 static bool g_cert_reissued = false;
 
 static esp_err_t wss_ws_handler(httpd_req_t *req) {
