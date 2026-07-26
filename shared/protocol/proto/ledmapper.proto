@@ -482,6 +482,7 @@ message ClientMessage {
     SetPerf set_perf = 25;
     GetPerfReport get_perf_report = 26;
     SetDeviceName set_device_name = 27;
+    SetTexture set_texture = 28;
   }
 }
 
@@ -501,6 +502,24 @@ message Welcome {
   // Current display / Bluetooth-advertised name (default "Led Widget <6-hex>"
   // from the MAC, or a user-customized name). Empty on older firmware.
   string device_name = 5;
+}
+
+// Stream a frame into a loaded effect's 2D `texture` (video textures). `data` is
+// the frame quantized to `format` (row-major, `width`*`height` texels),
+// optionally XOR-delta'd against the previous frame (flags bit0 = DELTA — the
+// device keeps the last quantized frame; a keyframe with DELTA unset resets that
+// buffer first), then run-length coded (flags bit1 = RLE, a zero-run scheme:
+// repeated [varint zero_run][varint literal_run][literal bytes...]). `tex_index`
+// selects which declared texture (buffer id, kind=1) in the active effect; the
+// texture's w/h/elem must match. No reply (fire-and-forget for high frame rates).
+message SetTexture {
+  uint32 tex_index = 1;
+  uint32 format = 2; // 0 RGB888, 1 RGB565, 2 RGB332, 3 GRAY8, 4 INDEXED8
+  uint32 width = 3;
+  uint32 height = 4;
+  uint32 flags = 5; // bit0 DELTA (XOR vs previous frame), bit1 RLE
+  bytes data = 6;
+  repeated uint32 palette = 7 [packed = true]; // INDEXED8 only: 0x00RRGGBB entries
 }
 
 // Set the player's display name; it becomes the Bluetooth-advertised name too

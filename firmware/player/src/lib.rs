@@ -290,8 +290,12 @@ impl Player {
             | CMsg::GetEffectUniforms(_) => {
                 Some(error("unsupported", "effects handled by the fx layer"))
             }
-            // Fire-and-forget Pi-profile telemetry: silently dropped.
-            CMsg::Detections(_) | CMsg::ImuBatch(_) | CMsg::ExposureReport(_) => None,
+            // Fire-and-forget: Pi-profile telemetry, and set_texture (a video
+            // frame handled by the fx layer before it reaches here). Dropped.
+            CMsg::Detections(_)
+            | CMsg::ImuBatch(_)
+            | CMsg::ExposureReport(_)
+            | CMsg::SetTexture(_) => None,
             // Pi-only REQUEST arms: bounded unsupported error.
             CMsg::GetStatus(_) | CMsg::GetLiveMap(_) | CMsg::GetSolveStatus(_) => {
                 Some(error("unsupported", "not available on this player profile"))

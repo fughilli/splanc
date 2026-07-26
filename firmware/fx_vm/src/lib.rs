@@ -375,8 +375,9 @@ impl<'a> Program<'a> {
         n
     }
 
-    /// Byte-offset (in slots) of buffer `id`'s region within the arena.
-    fn buf_base(&self, id: usize, led_count: usize) -> usize {
+    /// Byte-offset (in slots) of buffer `id`'s region within the arena. Public so
+    /// the host FFI can stream video frames straight into a texture's slots.
+    pub fn buf_base(&self, id: usize, led_count: usize) -> usize {
         let mut base = 0;
         for i in 0..id.min(self.n_buffers as usize) {
             if let Some(d) = self.buf_desc(i) {

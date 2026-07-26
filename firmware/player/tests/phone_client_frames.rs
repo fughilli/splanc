@@ -67,8 +67,12 @@ fn reply_allowed(req: &CMsg, reply: &Option<SMsg>) -> bool {
         }
         CMsg::GetPlayback(_) => matches!(reply, Some(SMsg::PlaybackState(_))),
         CMsg::GetFrameTiming(_) => matches!(reply, Some(SMsg::FrameTiming(_))),
-        // Fire-and-forget Pi telemetry: silence.
-        CMsg::Detections(_) | CMsg::ImuBatch(_) | CMsg::ExposureReport(_) => reply.is_none(),
+        // Fire-and-forget Pi telemetry + set_texture (a video frame handled by
+        // the ffi fx layer): silence.
+        CMsg::Detections(_)
+        | CMsg::ImuBatch(_)
+        | CMsg::ExposureReport(_)
+        | CMsg::SetTexture(_) => reply.is_none(),
         // Pi-only request arms: bounded refusal.
         CMsg::GetStatus(_) | CMsg::GetLiveMap(_) | CMsg::GetSolveStatus(_) => is_err("unsupported"),
         // The map dump is handled by the ffi arena layer, not the session core.
@@ -115,6 +119,7 @@ fn arm_name(req: &CMsg) -> &'static str {
         CMsg::SetPerf(_) => "set_perf",
         CMsg::GetPerfReport(_) => "get_perf_report",
         CMsg::SetDeviceName(_) => "set_device_name",
+        CMsg::SetTexture(_) => "set_texture",
     }
 }
 

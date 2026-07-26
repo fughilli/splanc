@@ -268,6 +268,51 @@ fn full_device_flow_through_the_c_abi() {
         unsafe { lm_fx_set_active(false) };
     }
 
+    // --- set_texture: stream a video frame into a texture-sampler effect -----
+    // Upload UNIFORM frames so the sampled colour is uv-independent (any led.uv
+    // returns the same texel), making the decode assertions deterministic
+    // regardless of the map bounds. Exercises keyframe, DELTA (XOR-prev) and RLE.
+    {
+        let src = "texture vec3 v(2, 2);\n\
+                   void update() {}\n\
+                   vec3 shade(Led led) { return sample(v, led.uv); }\n";
+        let compiled = ledmapper_fx_compiler::compile(src).expect("texture shader compiles");
+        assert!(unsafe { lm_fx_load(compiled.fxb.as_ptr(), compiled.fxb.len()) });
+        unsafe { lm_fx_set_active(true) };
+        assert!(unsafe { lm_fx_update(0.0, 0.033, 0, 64) });
+        let shade0 = || -> [u8; 3] {
+            let mut rgb = [0u8; 3];
+            assert!(unsafe { lm_fx_shade(0, 0.0, 0.0, 0.0, rgb.as_mut_ptr()) });
+            rgb
+        };
+        let set_tex = |flags: u32, data: &[u8]| {
+            let mut st = pb::SetTexture::default();
+            st.r#tex_index = 0;
+            st.r#format = 0; // RGB888
+            st.r#width = 2;
+            st.r#height = 2;
+            st.r#flags = flags;
+            st.r#data = micropb::heapless::Vec::from_slice(data).unwrap();
+            // Fire-and-forget: no reply.
+            assert!(handle(&encode(CMsg::SetTexture(st)), 4000.0).is_none());
+        };
+
+        // Keyframe (no flags): all-red, 4 texels of RGB888.
+        set_tex(0, &[0xFF, 0, 0, 0xFF, 0, 0, 0xFF, 0, 0, 0xFF, 0, 0]);
+        assert_eq!(shade0(), [255, 0, 0], "keyframe all-red -> sample red");
+
+        // DELTA (bit0): red -> green. delta = new XOR prev = 00FF00 ^ FF0000 = FFFF00.
+        set_tex(0x01, &[0xFF, 0xFF, 0, 0xFF, 0xFF, 0, 0xFF, 0xFF, 0, 0xFF, 0xFF, 0]);
+        assert_eq!(shade0(), [0, 255, 0], "delta XOR -> sample green");
+
+        // RLE keyframe (bit1) back to all-red. Zero-run scheme for FF 00 00 x4:
+        // [z0 l1 FF][z2 l1 FF][z2 l1 FF][z2 l1 FF][z2 l0].
+        set_tex(0x02, &[0, 1, 0xFF, 2, 1, 0xFF, 2, 1, 0xFF, 2, 1, 0xFF, 2, 0]);
+        assert_eq!(shade0(), [255, 0, 0], "RLE keyframe all-red -> sample red");
+
+        unsafe { lm_fx_set_active(false) };
+    }
+
     // A malformed upload (leds without a led_count header) gets a bounded
     // error, and the previously stored map is GONE (the upload reset the
     // arena) — the phone re-uploads.

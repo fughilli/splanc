@@ -87,6 +87,12 @@ static mut FX_VM: Option<FxVm> = None;
 /// across frames (buffer semantics) and is zeroed on (re)load for a clean start.
 const FX_ARENA_SLOTS: usize = 6 * 1024; // 24 KB
 static mut FX_ARENA: [f32; FX_ARENA_SLOTS] = [0.0; FX_ARENA_SLOTS];
+
+/// Previous quantized video-texture frame, for set_texture DELTA (XOR) decoding.
+/// One buffer — video streams target a single texture at a time. A frame whose
+/// quantized byte size exceeds this is dropped (keep the transport small).
+const FX_TEX_PREV_MAX: usize = 8 * 1024;
+static mut FX_TEX_PREV: [u8; FX_TEX_PREV_MAX] = [0; FX_TEX_PREV_MAX];
 /// Whether the loaded effect is the ACTIVE one the render loop drives. An
 /// upload with `activate=false` parks the effect (loaded, validated) without
 /// taking over rendering; set_effect can activate it, or clear it.
@@ -479,6 +485,13 @@ pub unsafe extern "C" fn lm_player_handle(
         // cadence, or drain the ring into a rolled-up PerfReport.
         Some(ARM_SET_PERF) => handle_set_perf(frame),
         Some(ARM_GET_PERF_REPORT) => handle_get_perf_report(),
+        // Video-texture frame: decode into the active effect's texture arena.
+        // Fire-and-forget (no reply) so high frame rates aren't gated on a round
+        // trip — a malformed/oversized frame is silently dropped.
+        Some(ARM_SET_TEXTURE) => {
+            handle_set_texture(frame);
+            return 0;
+        }
         _ => {
             let mut env = pb::ClientMessage::default();
             let mut dec = PbDecoder::new(frame);
@@ -629,6 +642,7 @@ const ARM_SET_UNIFORMS: u32 = 23;
 const ARM_GET_EFFECT_UNIFORMS: u32 = 24;
 const ARM_SET_PERF: u32 = 25;
 const ARM_GET_PERF_REPORT: u32 = 26;
+const ARM_SET_TEXTURE: u32 = 28;
 
 /// Read a base-128 varint at `buf[*o..]`, advancing `*o`. None on truncation.
 fn rd_varint(buf: &[u8], o: &mut usize) -> Option<u64> {
@@ -756,6 +770,160 @@ unsafe fn handle_submit_effect(frame: &[u8]) -> pb::ServerMessage {
         FX_ID_LEN = 0;
     }
     pb::ServerMessage { r#msg: Some(pb::ServerMessage_::Msg::ResultReady(r)) }
+}
+
+// SetTexture.format values (mirror the .proto / web encoder).
+const TEX_RGB888: u64 = 0;
+const TEX_RGB565: u64 = 1;
+const TEX_RGB332: u64 = 2;
+
+fn tex_bytes_per_texel(format: u64) -> usize {
+    match format {
+        TEX_RGB888 => 3,
+        TEX_RGB565 => 2,
+        _ => 1, // RGB332 / GRAY8 / INDEXED8(no-palette -> gray)
+    }
+}
+
+/// Dequantize one texel's `bpt` bytes to linear RGB in 0..1.
+fn dequant_texel(b: &[u8], format: u64) -> (f32, f32, f32) {
+    match format {
+        TEX_RGB888 => (b[0] as f32 / 255.0, b[1] as f32 / 255.0, b[2] as f32 / 255.0),
+        TEX_RGB565 => {
+            let v = (b[0] as u16) | ((b[1] as u16) << 8); // little-endian
+            (
+                ((v >> 11) & 0x1f) as f32 / 31.0,
+                ((v >> 5) & 0x3f) as f32 / 63.0,
+                (v & 0x1f) as f32 / 31.0,
+            )
+        }
+        TEX_RGB332 => {
+            let v = b[0];
+            (((v >> 5) & 7) as f32 / 7.0, ((v >> 2) & 7) as f32 / 7.0, (v & 3) as f32 / 3.0)
+        }
+        _ => {
+            let g = b[0] as f32 / 255.0; // GRAY8 / INDEXED8 (palette TODO)
+            (g, g, g)
+        }
+    }
+}
+
+/// set_texture: stream a quantized frame into the active effect's 2D texture.
+/// Walks SetTexture { tex_index=1, format=2, width=3, height=4, flags=5, data=6 }
+/// (palette TODO). The payload is applied as an XOR delta into the kept previous
+/// frame (a keyframe zeroes it first), optionally RLE'd (zero-run scheme), then
+/// dequantized into the texture's arena slots. Silently drops on any mismatch.
+unsafe fn handle_set_texture(frame: &[u8]) {
+    let Some(body) = unwrap_arm(frame, ARM_SET_TEXTURE) else {
+        return;
+    };
+    let (mut tex_index, mut format, mut width, mut height, mut flags) = (0u64, 0u64, 0u64, 0u64, 0u64);
+    let mut data: &[u8] = &[];
+    let mut o = 0;
+    while o < body.len() {
+        let Some(key) = rd_varint(body, &mut o) else {
+            return;
+        };
+        let field = (key >> 3) as u32;
+        let wire = (key & 7) as u8;
+        macro_rules! rdv {
+            ($dst:expr) => {{
+                match rd_varint(body, &mut o) {
+                    Some(v) => $dst = v,
+                    None => return,
+                }
+            }};
+        }
+        match (field, wire) {
+            (1, 0) => rdv!(tex_index),
+            (2, 0) => rdv!(format),
+            (3, 0) => rdv!(width),
+            (4, 0) => rdv!(height),
+            (5, 0) => rdv!(flags),
+            (6, 2) => {
+                let Some(len) = rd_varint(body, &mut o) else {
+                    return;
+                };
+                let Some(s) = body.get(o..o + len as usize) else {
+                    return;
+                };
+                data = s;
+                o += len as usize;
+            }
+            _ => {
+                if !skip_field(body, &mut o, wire) {
+                    return;
+                }
+            }
+        }
+    }
+    // Resolve the target texture in the active program.
+    let bytes = &(*addr_of!(FX_BYTES))[..FX_LEN];
+    let Ok(prog) = Program::parse(bytes) else {
+        return;
+    };
+    let Some(d) = prog.buf_desc(tex_index as usize) else {
+        return;
+    };
+    if d.kind != 1 || d.w as u64 != width || d.h as u64 != height {
+        return; // not a texture, or dimensions don't match the declared texture
+    }
+    let bpt = tex_bytes_per_texel(format);
+    let n_texels = (width * height) as usize;
+    let total = n_texels * bpt;
+    if total == 0 || total > FX_TEX_PREV_MAX {
+        return;
+    }
+    let prev = &mut (*addr_of_mut!(FX_TEX_PREV))[..total];
+    if flags & 0x01 == 0 {
+        prev.fill(0); // keyframe: start from black, then XOR-apply the frame
+    }
+    // Apply the payload as an XOR delta into `prev` (a zero-run leaves it as-is).
+    if flags & 0x02 != 0 {
+        let mut j = 0usize;
+        let mut p = 0usize;
+        while j < total && p < data.len() {
+            let Some(zeros) = rd_varint(data, &mut p) else {
+                break;
+            };
+            j += zeros as usize;
+            let Some(lits) = rd_varint(data, &mut p) else {
+                break;
+            };
+            for _ in 0..lits {
+                if j >= total || p >= data.len() {
+                    break;
+                }
+                prev[j] ^= data[p];
+                p += 1;
+                j += 1;
+            }
+        }
+    } else {
+        for j in 0..data.len().min(total) {
+            prev[j] ^= data[j];
+        }
+    }
+    // Dequantize prev -> f32 into the texture's arena region.
+    let arena = &mut (*addr_of_mut!(FX_ARENA))[..];
+    let base = prog.buf_base(tex_index as usize, FX_F_LEDS as usize);
+    let elem = d.elem as usize;
+    for t in 0..n_texels {
+        let (r, g, b) = dequant_texel(&prev[t * bpt..t * bpt + bpt], format);
+        let ab = base + t * elem;
+        if elem == 1 {
+            if ab < arena.len() {
+                arena[ab] = 0.299 * r + 0.587 * g + 0.114 * b; // luma
+            }
+        } else {
+            let ch = [r, g, b, 1.0];
+            for (k, &c) in ch.iter().enumerate().take(elem.min(4)) {
+                if ab + k < arena.len() {
+                    arena[ab + k] = c;
+                }
+            }
+        }
+    }
 }
 
 /// Read a message's `effect_id` (field 1, string) if present.
