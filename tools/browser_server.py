@@ -598,7 +598,7 @@ def _lan_ip() -> str:
         s.connect(("8.8.8.8", 80))
         return s.getsockname()[0]
     finally:
-        _ws_graceful_close(s)
+        s.close()
 
 
 def main() -> int:
