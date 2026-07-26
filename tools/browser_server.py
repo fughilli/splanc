@@ -189,12 +189,18 @@ def _welcome_name(frame: bytes):
     return name, mac
 
 
-def _wss_open(host: str, port: int, path: str, timeout: float) -> ssl.SSLSocket:
+def _wss_open(host: str, port: int, path: str, timeout: float,
+              tls_max: str = "", use_sni: bool = True) -> ssl.SSLSocket:
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
+    if tls_max == "12":  # pin TLS 1.2 (isolate a broken 1.3 path on the device)
+        ctx.maximum_version = ssl.TLSVersion.TLSv1_2
+    elif tls_max == "13":
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_3
     raw = socket.create_connection((host, port), timeout=timeout)
-    s = ctx.wrap_socket(raw, server_hostname=host)
+    # Browsers omit SNI for an IP literal; Python sends it unless we pass None.
+    s = ctx.wrap_socket(raw, server_hostname=(host if use_sni else None))
     s.settimeout(timeout)
     key = base64.b64encode(os.urandom(16)).decode()
     s.sendall((f"GET {path} HTTP/1.1\r\nHost: {host}\r\nUpgrade: websocket\r\n"
@@ -255,14 +261,17 @@ def _next_welcome(s: ssl.SSLSocket, tries: int = 6):
     raise ConnectionError("no welcome frame")
 
 
-def ws_probe_raw(url: str, timeout_ms: float) -> dict:
+def ws_probe_raw(url: str, timeout_ms: float, tls_max: str = "",
+                 use_sni: bool = True) -> dict:
     u = urllib.parse.urlparse(url)
     to = timeout_ms / 1000.0
-    s = _wss_open(u.hostname, u.port or 443, u.path or "/ws", to)
+    s = _wss_open(u.hostname, u.port or 443, u.path or "/ws", to, tls_max, use_sni)
     try:
+        ver = s.version()
         _ws_send(s, _pb_hello())
         name, mac = _next_welcome(s)
-        return {"url": url, "connected": True, "device_name": name, "mac": mac}
+        return {"url": url, "connected": True, "tls": ver,
+                "device_name": name, "mac": mac}
     finally:
         s.close()
 
@@ -440,7 +449,8 @@ class Handler(BaseHTTPRequestHandler):
                 if not url:
                     self._json({"error": "missing ?url=wss://host/ws"}, 400)
                     return
-                self._json(ws_probe_raw(url, int(g("timeout", "8000"))))
+                self._json(ws_probe_raw(url, int(g("timeout", "8000")),
+                                        g("tls", ""), g("sni", "1") not in ("0", "false")))
             elif route == "/wsrename":
                 url = g("url")
                 name = g("name")
