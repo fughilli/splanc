@@ -889,14 +889,15 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   chatBody.className = "fxedit-chatbody";
   chatBody.append(chatLog, chatInputWrap);
 
-  // Diagnostics pane content (diags list + device controls live together — both
-  // are "status" surfaces the user consults, not primary editing views).
+  // "Device" pane content: the upload/download (send/hydrate) controls are the
+  // primary surface; the compiler diagnostics list lives below under its own
+  // label (both are "status" surfaces the user consults, not editing views).
   const diagBody = document.createElement("div");
   diagBody.className = "fxedit-diagbody";
-  const devLegend = document.createElement("div");
-  devLegend.className = "fxedit-legend";
-  devLegend.textContent = "Device";
-  diagBody.append(diagsEl, devLegend, buttonRow(sendBtn, hydrateBtn), devStatus);
+  const diagsLegend = document.createElement("div");
+  diagsLegend.className = "fxedit-legend";
+  diagsLegend.textContent = "Diagnostics";
+  diagBody.append(buttonRow(sendBtn, hydrateBtn), devStatus, diagsLegend, diagsEl);
 
   // Disassembly pane content (the .fxedit-disasm <pre>).
   const disasmBody = document.createElement("div");
@@ -914,7 +915,7 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
       { id: "code", title: "Code", primary: true, node: editorWrap },
       { id: "uniforms", title: "Uniforms", primary: true, node: uniformsHost },
       { id: "preview", title: "Preview", node: previewBody },
-      { id: "diagnostics", title: "Diagnostics", node: diagBody },
+      { id: "diagnostics", title: "Device", node: diagBody },
       { id: "disasm", title: "Disassembly", node: disasmBody },
       { id: "chat", title: "AI chat", node: chatBody },
     ],
