@@ -253,6 +253,25 @@ def _ws_recv(s: ssl.SSLSocket) -> bytes:
     return exact(ln)  # server frames are unmasked
 
 
+def _ws_graceful_close(s: ssl.SSLSocket) -> None:
+    """Close like a real client would — WS Close frame (opcode 0x8, masked,
+    empty) then a TLS close_notify — so the device frees its session slot
+    promptly. (An abrupt SSLSocket.close() sends neither, which can leave the
+    player's max_open_sockets=2 cap occupied by a lingering half-open session.)"""
+    try:
+        s.sendall(bytes([0x88, 0x80]) + os.urandom(4))
+    except OSError:
+        pass
+    try:
+        s.unwrap()  # TLS close_notify
+    except (OSError, ssl.SSLError):
+        pass
+    try:
+        s.close()
+    except OSError:
+        pass
+
+
 def _next_welcome(s: ssl.SSLSocket, tries: int = 6):
     for _ in range(tries):  # skip any non-welcome server frames
         nm = _welcome_name(_ws_recv(s))
@@ -348,7 +367,7 @@ def ws_probe_raw(url: str, timeout_ms: float, tls_max: str = "",
         return {"url": url, "connected": True, "tls": ver,
                 "device_name": name, "mac": mac}
     finally:
-        s.close()
+        _ws_graceful_close(s)
 
 
 def ws_rename_raw(url: str, new_name: str, timeout_ms: float) -> dict:
@@ -366,7 +385,7 @@ def ws_rename_raw(url: str, new_name: str, timeout_ms: float) -> dict:
                 "after": after, "restored": restored,
                 "applied": after == new_name, "restored_ok": restored == before}
     finally:
-        s.close()
+        _ws_graceful_close(s)
 
 
 def _origin_of(ws_url: str) -> str:
@@ -579,7 +598,7 @@ def _lan_ip() -> str:
         s.connect(("8.8.8.8", 80))
         return s.getsockname()[0]
     finally:
-        s.close()
+        _ws_graceful_close(s)
 
 
 def main() -> int:
