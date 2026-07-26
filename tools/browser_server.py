@@ -261,6 +261,81 @@ def _next_welcome(s: ssl.SSLSocket, tries: int = 6):
     raise ConnectionError("no welcome frame")
 
 
+def _parse_tls_server_flight(data: bytes) -> dict:
+    """Walk a TLS 1.2 plaintext server flight into its handshake messages so a
+    truncated/malformed ServerKeyExchange or a missing ServerHelloDone is
+    visible (the suspected ECDSA-handshake deadlock)."""
+    records, hs = [], bytearray()
+    i = 0
+    while i + 5 <= len(data):
+        ct, ln = data[i], (data[i + 3] << 8) | data[i + 4]
+        body = data[i + 5:i + 5 + ln]
+        rec = {"type": ct, "len": ln, "complete": len(body) == ln}
+        if ct == 21:  # alert
+            rec["alert"] = list(body[:2])
+        records.append(rec)
+        if ct == 22:  # handshake
+            hs += body
+        i += 5 + ln
+    names = {0: "HelloRequest", 2: "ServerHello", 11: "Certificate",
+             12: "ServerKeyExchange", 13: "CertificateRequest",
+             14: "ServerHelloDone"}
+    msgs, j = [], 0
+    while j + 4 <= len(hs):
+        t = hs[j]
+        ln = (hs[j + 1] << 16) | (hs[j + 2] << 8) | hs[j + 3]
+        present = len(hs) - (j + 4)
+        msgs.append({"name": names.get(t, str(t)), "declared_len": ln,
+                     "bytes_present": min(ln, present), "truncated": present < ln})
+        j += 4 + ln
+    return {"raw_bytes": len(data), "records": records, "handshake_bytes": len(hs),
+            "messages": msgs, "server_hello_done": any(m["name"] == "ServerHelloDone" for m in msgs)}
+
+
+def ws_hs_capture(url: str, timeout_ms: float) -> dict:
+    u = urllib.parse.urlparse(url)
+    to = timeout_ms / 1000.0
+    raw = socket.create_connection((u.hostname, u.port or 443), timeout=to)
+    raw.settimeout(to)
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    ctx.maximum_version = ssl.TLSVersion.TLSv1_2  # keep the flight plaintext
+    inb, outb = ssl.MemoryBIO(), ssl.MemoryBIO()
+    obj = ctx.wrap_bio(inb, outb, server_hostname=u.hostname)
+    server = bytearray()
+    done = stalled = False
+    err = None
+    try:
+        while True:
+            try:
+                obj.do_handshake()
+                done = True
+                break
+            except ssl.SSLWantReadError:
+                pass
+            except ssl.SSLError as e:
+                err = str(e).splitlines()[0]
+                break
+            out = outb.read()
+            if out:
+                raw.sendall(out)
+            try:
+                chunk = raw.recv(4096)
+            except socket.timeout:
+                stalled = True
+                break
+            if not chunk:
+                break
+            server += chunk
+            inb.write(chunk)
+    finally:
+        raw.close()
+    return {"url": url, "handshake_complete": done, "stalled": stalled,
+            "error": err, "tls": (obj.version() if done else "TLSv1.2-attempt"),
+            **_parse_tls_server_flight(bytes(server))}
+
+
 def ws_probe_raw(url: str, timeout_ms: float, tls_max: str = "",
                  use_sni: bool = True) -> dict:
     u = urllib.parse.urlparse(url)
@@ -451,6 +526,12 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 self._json(ws_probe_raw(url, int(g("timeout", "8000")),
                                         g("tls", ""), g("sni", "1") not in ("0", "false")))
+            elif route == "/hscapture":
+                url = g("url")
+                if not url:
+                    self._json({"error": "missing ?url=wss://host/ws"}, 400)
+                    return
+                self._json(ws_hs_capture(url, int(g("timeout", "8000"))))
             elif route == "/wsrename":
                 url = g("url")
                 name = g("name")
