@@ -80,6 +80,13 @@ const FX_MAX_BYTES: usize = 4 * 1024;
 static mut FX_BYTES: [u8; FX_MAX_BYTES] = [0; FX_MAX_BYTES];
 static mut FX_LEN: usize = 0;
 static mut FX_VM: Option<FxVm> = None;
+/// Hidden-buffer/texture arena for the fx VM (LoadBuf/StoreBuf). 24 KB of f32
+/// slots — enough for several LED-arity buffers (a vec4 trail on 256 LEDs is
+/// 1024 slots); the VM clamps a program that would need more. Static, so its
+/// pointer is stable for the process; bound once per effect load. Persists
+/// across frames (buffer semantics) and is zeroed on (re)load for a clean start.
+const FX_ARENA_SLOTS: usize = 6 * 1024; // 24 KB
+static mut FX_ARENA: [f32; FX_ARENA_SLOTS] = [0.0; FX_ARENA_SLOTS];
 /// Whether the loaded effect is the ACTIVE one the render loop drives. An
 /// upload with `activate=false` parks the effect (loaded, validated) without
 /// taking over rendering; set_effect can activate it, or clear it.
@@ -1432,6 +1439,15 @@ pub unsafe extern "C" fn lm_fx_load(fxb: *const u8, len: usize) -> bool {
     buf[..len].copy_from_slice(src);
     FX_LEN = len;
     *addr_of_mut!(FX_VM) = Some(FxVm::new());
+    // Bind + zero the hidden-buffer arena for the fresh effect (buffers start
+    // clean each load; the static memory's pointer is stable so one bind holds).
+    {
+        let arena = &mut *addr_of_mut!(FX_ARENA);
+        arena.fill(0.0);
+        if let Some(vm) = (*addr_of_mut!(FX_VM)).as_mut() {
+            vm.set_arena(arena);
+        }
+    }
     // Force a topology-cache rebuild so the fresh VM gets the current graph
     // (set_graph) + per-LED cache on its first frame, regardless of load order.
     FX_TOPO_READY = false;
