@@ -4,7 +4,7 @@ editor compiles live). Tests compile real shaders and run them through the
 actual fx_vm, so the source→bytecode→VM pipeline is verified end-to-end.
 """
 
-load("@rules_rust//rust:defs.bzl", "rust_library", "rust_shared_library", "rust_test")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_shared_library", "rust_test")
 load("@rules_rust_wasm_bindgen//:defs.bzl", "rust_wasm_bindgen")
 load("@aspect_bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
 load("//tools/transitions:opt.bzl", "opt_files")
@@ -17,6 +17,13 @@ rust_library(
     crate_name = "ledmapper_fx_compiler",
     edition = "2021",
     visibility = ["//visibility:public"],
+)
+
+rust_binary(
+    name = "fx_compile",
+    srcs = ["bin/compile_main.rs"],
+    edition = "2021",
+    deps = [":fx_compiler"],
 )
 
 rust_test(

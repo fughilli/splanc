@@ -141,6 +141,19 @@ def _pb_setname(name: str) -> bytes:  # ClientMessage{set_device_name=27: {name=
     return _msgf(27, _strf(1, name))
 
 
+def _bytesf(field: int, b: bytes) -> bytes:  # length-delimited raw bytes
+    return _varint((field << 3) | 2) + _varint(len(b)) + b
+
+
+def _boolf(field: int, val: bool) -> bytes:  # varint field
+    return _varint((field << 3) | 0) + _varint(1 if val else 0)
+
+
+def _pb_submit_effect(effect_id: str, fxb: bytes, activate: bool) -> bytes:
+    # ClientMessage{submit_effect=21: SubmitEffect{effect_id=1, fxb=2, activate=3}}
+    return _msgf(21, _strf(1, effect_id) + _bytesf(2, fxb) + _boolf(3, activate))
+
+
 def _pb_fields(buf: bytes) -> dict:
     out: dict = {}
     i = 0
@@ -381,6 +394,32 @@ def ws_probe_raw(url: str, timeout_ms: float, tls_max: str = "",
         _ws_graceful_close(s)
 
 
+def ws_effect_raw(url: str, fxb_hex: str, effect_id: str, activate: bool,
+                  timeout_ms: float) -> dict:
+    """Submit a precompiled `.fxb` (hex) to the device and (optionally) activate
+    it — the host-side path to load a real effect for hardware validation."""
+    u = urllib.parse.urlparse(url)
+    to = timeout_ms / 1000.0
+    fxb = bytes.fromhex(fxb_hex.strip())
+    s = _wss_open(u.hostname, u.port or 443, u.path or "/ws", to)
+    try:
+        _ws_send(s, _pb_hello())
+        name, _ = _next_welcome(s)
+        _ws_send(s, _pb_submit_effect(effect_id, fxb, activate))
+        # Best-effort: read a reply frame (status/ack) if the device sends one.
+        reply = 0
+        try:
+            s.settimeout(2.0)
+            reply = len(_ws_recv(s))
+        except (OSError, ssl.SSLError, ConnectionError):
+            pass
+        return {"url": url, "submitted": True, "effect_id": effect_id,
+                "fxb_bytes": len(fxb), "activate": activate,
+                "device_name": name, "reply_bytes": reply}
+    finally:
+        _ws_graceful_close(s)
+
+
 def ws_rename_raw(url: str, new_name: str, timeout_ms: float) -> dict:
     u = urllib.parse.urlparse(url)
     to = timeout_ms / 1000.0
@@ -562,6 +601,15 @@ class Handler(BaseHTTPRequestHandler):
                     self._json({"error": "missing ?url=wss://host/ws"}, 400)
                     return
                 self._json(ws_hs_capture(url, int(g("timeout", "8000"))))
+            elif route == "/wseffect":
+                url = g("url")
+                fxb = g("fxb")
+                if not url or not fxb:
+                    self._json({"error": "need ?url=wss://host/ws&fxb=<hex>"}, 400)
+                    return
+                self._json(ws_effect_raw(url, fxb, g("id", "hwtest"),
+                                         g("activate", "1") not in ("0", "false"),
+                                         int(g("timeout", "10000"))))
             elif route == "/wsrename":
                 url = g("url")
                 name = g("name")
