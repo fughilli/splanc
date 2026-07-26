@@ -108,6 +108,14 @@ pub enum Op {
     // the index is clamped in-bounds. No-op / 0 when no arena is bound.
     LoadBuf,
     StoreBuf,
+    // --- 2D texture sampling (kind=1 buffers) --------------------------------
+    // SampleTex u8 id: pop a uv (vec2, 0..1) -> push `elem` slots, BILINEARLY
+    // sampled from the WxH texture (edge-clamped). PaintTex u8 id: pop `elem`
+    // colour slots then a uv -> write the NEAREST texel. w/h/elem come from the
+    // .fxb buffer desc. No-op / 0 when no arena is bound or the buffer isn't a
+    // texture (kind != 1).
+    SampleTex,
+    PaintTex,
 }
 
 /// Graph-query kinds (the `GraphQuery` opcode operand).
@@ -197,8 +205,8 @@ pub struct Counters {
 impl Op {
     #[inline]
     fn from_u8(b: u8) -> Option<Op> {
-        // Op is a contiguous enum 0..=StoreBuf; guard the range then transmute.
-        if b <= Op::StoreBuf as u8 {
+        // Op is a contiguous enum 0..=PaintTex; guard the range then transmute.
+        if b <= Op::PaintTex as u8 {
             Some(unsafe { core::mem::transmute::<u8, Op>(b) })
         } else {
             None
@@ -239,6 +247,7 @@ pub const C_LED_BRANCH: u8 = 8; // 1
 pub const C_IMU_ACCEL: u8 = 9; // 3
 pub const C_IMU_GYRO: u8 = 10; // 3
 pub const C_LED_DIST: u8 = 11; // 1 — geodesic distance along the topology, 0..1
+pub const C_LED_UV: u8 = 12; // 2 — per-LED texture coord (pos.xy over map bounds)
 
 pub const MAGIC: [u8; 4] = *b"FXB1";
 pub const NO_ENTRY: u16 = 0xFFFF;
@@ -417,6 +426,10 @@ pub struct Led {
     /// segment graph (accumulates across segments, unlike `s` which is per
     /// segment). 0 when there is no topology. Enables flood/pulse effects.
     pub dist: f32,
+    /// Per-LED texture coordinate in 0..1, the LED's XY position normalized over
+    /// the map's bounding box (a top-down projection of the gravity-leveled
+    /// frame). Feeds `led.uv` for texture-mapped effects (`sample(tex, led.uv)`).
+    pub uv: [f32; 2],
 }
 
 /// Persistent VM state across frames: uniform values + `state` vars + the
@@ -871,6 +884,10 @@ fn run(
                         push!(frame.imu_gyro[2]);
                     }
                     C_LED_DIST => push!(led.dist),
+                    C_LED_UV => {
+                        push!(led.uv[0]);
+                        push!(led.uv[1]);
+                    }
                     _ => push!(0.0),
                 }
             }
@@ -1344,6 +1361,74 @@ fn run(
                         }
                         sp -= elem + 1;
                     }
+                }
+            }
+            Op::SampleTex => {
+                let id = code[pc] as usize;
+                pc += 1;
+                let d = prog.buf_desc(id).unwrap_or_default();
+                let elem = d.elem as usize;
+                // pop uv (2 slots): stack [.., u, v]
+                let (u, v) = if sp >= 2 {
+                    let v = stack[sp - 1];
+                    let u = stack[sp - 2];
+                    sp -= 2;
+                    (u, v)
+                } else {
+                    (0.0, 0.0)
+                };
+                if d.kind == 1 && d.w > 0 && d.h > 0 {
+                    let w = d.w as usize;
+                    let h = d.h as usize;
+                    let base = prog.buf_base(id, frame.led_count as usize);
+                    // Bilinear, edge-clamped.
+                    let fx = u.clamp(0.0, 1.0) * (w as f32 - 1.0);
+                    let fy = v.clamp(0.0, 1.0) * (h as f32 - 1.0);
+                    let x0 = floorf(fx) as usize;
+                    let y0 = floorf(fy) as usize;
+                    let x1 = (x0 + 1).min(w - 1);
+                    let y1 = (y0 + 1).min(h - 1);
+                    let tx = fx - x0 as f32;
+                    let ty = fy - y0 as f32;
+                    for k in 0..elem {
+                        let tap = |x: usize, y: usize| {
+                            arena.get(base + (y * w + x) * elem + k).copied().unwrap_or(0.0)
+                        };
+                        let a = tap(x0, y0) * (1.0 - tx) + tap(x1, y0) * tx;
+                        let b = tap(x0, y1) * (1.0 - tx) + tap(x1, y1) * tx;
+                        push!(a * (1.0 - ty) + b * ty);
+                    }
+                } else {
+                    for _ in 0..elem {
+                        push!(0.0);
+                    }
+                }
+            }
+            Op::PaintTex => {
+                let id = code[pc] as usize;
+                pc += 1;
+                let d = prog.buf_desc(id).unwrap_or_default();
+                let elem = d.elem as usize;
+                // stack: [.., u, v, c0..c_elem] — uv below the colour slots.
+                if sp >= elem + 2 {
+                    let v = stack[sp - elem - 1];
+                    let u = stack[sp - elem - 2];
+                    if d.kind == 1 && d.w > 0 && d.h > 0 {
+                        let w = d.w as usize;
+                        let h = d.h as usize;
+                        let base = prog.buf_base(id, frame.led_count as usize);
+                        // Nearest texel.
+                        let x = floorf(u.clamp(0.0, 1.0) * (w as f32 - 1.0) + 0.5) as usize;
+                        let y = floorf(v.clamp(0.0, 1.0) * (h as f32 - 1.0) + 0.5) as usize;
+                        let off = base + (y.min(h - 1) * w + x.min(w - 1)) * elem;
+                        for k in 0..elem {
+                            let c = stack[sp - elem + k];
+                            if off + k < arena.len() {
+                                arena[off + k] = c;
+                            }
+                        }
+                    }
+                    sp -= elem + 2;
                 }
             }
         }

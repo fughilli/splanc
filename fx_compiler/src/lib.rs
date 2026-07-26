@@ -502,6 +502,7 @@ impl Compiler {
                 Tok::Ident(kw) if kw == "uniform" => self.uniform_decl()?,
                 Tok::Ident(kw) if kw == "state" => self.state_decl()?,
                 Tok::Ident(kw) if kw == "buffer" => self.buffer_decl()?,
+                Tok::Ident(kw) if kw == "texture" => self.texture_decl()?,
                 Tok::Ident(kw) if kw == "struct" => self.struct_decl()?,
                 Tok::Ident(kw) if Self::ty_from_ident(&kw).is_some() => self.func_decl()?,
                 other => return self.err(format!("unexpected token {other:?}")),
@@ -750,6 +751,47 @@ impl Compiler {
         Ok(())
     }
 
+    // texture vec3 img(64, 64);  — a hidden WxH 2D texture (kind 1). Read via
+    // sample(img, uv) (bilinear) or flat img[i]; write via paint(img, uv, c) or
+    // flat img[i] = c. Lives in the VM arena (elem*w*h slots).
+    fn texture_decl(&mut self) -> Result<(), Diagnostic> {
+        self.advance(); // 'texture'
+        let tyname = self.eat_ident()?;
+        let elem_ty = Self::ty_from_ident(&tyname).ok_or_else(|| self.mkdiag("unknown type"))?;
+        let elem = elem_ty.width();
+        if elem == 0 || elem > 4 || matches!(elem_ty, Ty::Bool) {
+            return self.err("texture element must be numeric: float/int/vec2/vec3/vec4");
+        }
+        let name = self.eat_ident()?;
+        self.expect_sym('(')?;
+        let w = self.eat_uint("texture width")?;
+        self.expect_sym(',')?;
+        let h = self.eat_uint("texture height")?;
+        self.expect_sym(')')?;
+        self.expect_sym(';')?;
+        if w == 0 || w > 1024 || h == 0 || h > 1024 {
+            return self.err("texture dimensions must be 1..1024");
+        }
+        if self.buffers.len() >= 255 {
+            return self.err("too many buffers/textures (max 255)");
+        }
+        let id = self.buffers.len() as u8;
+        self.buffers.push(BufferInfo { kind: 1, elem, w: w as u16, h: h as u16 });
+        self.syms.insert(name, Sym { kind: SymKind::Buffer, slot: id, ty: elem_ty });
+        Ok(())
+    }
+
+    /// Eat a non-negative integer literal (for texture dimensions).
+    fn eat_uint(&mut self, what: &str) -> Result<u32, Diagnostic> {
+        match *self.cur() {
+            Tok::Num(v, true) if v >= 0.0 => {
+                self.advance();
+                Ok(v as u32)
+            }
+            _ => self.err(format!("{what} must be a non-negative integer literal")),
+        }
+    }
+
     /// If the next token is `[`, parse `[N]` and wrap `base` in an array type;
     /// otherwise return `base` unchanged.
     fn maybe_array_suffix(&mut self, base: Ty) -> Result<Ty, Diagnostic> {
@@ -889,6 +931,16 @@ impl Compiler {
             }
             Tok::Ident(name) => {
                 self.advance();
+                // A call-statement (e.g. `paint(tex, uv, c);`) — only void
+                // results may be discarded; a value result must be assigned.
+                if *self.cur() == Tok::Sym('(') {
+                    let ty = self.call(&name)?;
+                    self.expect_sym(';')?;
+                    if ty != Ty::Void {
+                        return self.err(format!("result of {name}() is unused — assign it"));
+                    }
+                    return Ok(());
+                }
                 self.assign_stmt(name)
             }
             _ => self.err("expected statement"),
@@ -1620,6 +1672,10 @@ impl Compiler {
 
     fn call(&mut self, name: &str) -> Result<Ty, Diagnostic> {
         self.expect_sym('(')?;
+        // Texture ops take a texture NAME (not a value) as their first argument.
+        if name == "sample" || name == "paint" {
+            return self.texture_call(name);
+        }
         // Type constructor: scalar cast (float/int/fixed) or vecN.
         if let Some(cty) = Self::ty_from_ident(name) {
             if cty.is_scalar() {
@@ -1676,6 +1732,40 @@ impl Compiler {
         let args = self.call_args()?;
         self.expect_sym(')')?;
         self.emit_builtin(name, &args)
+    }
+
+    /// `sample(tex, uv)` bilinearly samples a 2D texture at uv (vec2, 0..1) →
+    /// its element type; `paint(tex, uv, color)` writes the nearest texel →
+    /// void. The `(` is already consumed. `tex` must be a `texture`-declared
+    /// buffer (kind 1).
+    fn texture_call(&mut self, name: &str) -> Result<Ty, Diagnostic> {
+        let tex_name = self.eat_ident()?;
+        let sym = *self
+            .syms
+            .get(&tex_name)
+            .ok_or_else(|| self.mkdiag(&format!("unknown texture '{tex_name}'")))?;
+        if !matches!(sym.kind, SymKind::Buffer) || self.buffers[sym.slot as usize].kind != 1 {
+            return self.err(format!(
+                "{name}(): '{tex_name}' must be a 2D texture (declare with `texture <elem> {tex_name}(w, h);`)"
+            ));
+        }
+        self.expect_sym(',')?;
+        let uvt = self.expr()?;
+        self.coerce(uvt, Ty::Vec2)?;
+        if name == "sample" {
+            self.expect_sym(')')?;
+            self.emit(fx_vm_op::SAMPLE_TEX);
+            self.emit(sym.slot);
+            Ok(sym.ty)
+        } else {
+            self.expect_sym(',')?;
+            let ct = self.expr()?;
+            self.coerce(ct, sym.ty)?;
+            self.expect_sym(')')?;
+            self.emit(fx_vm_op::PAINT_TEX);
+            self.emit(sym.slot);
+            Ok(Ty::Void)
+        }
     }
 
     fn call_args(&mut self) -> Result<Vec<Ty>, Diagnostic> {
@@ -1903,6 +1993,7 @@ impl Compiler {
             ("led", "seg") => (fx_ctx::LED_SEG, Ty::Float),
             ("led", "s") => (fx_ctx::LED_S, Ty::Float),
             ("led", "dist") => (fx_ctx::LED_DIST, Ty::Float),
+            ("led", "uv") => (fx_ctx::LED_UV, Ty::Vec2),
             ("led", "branch") => (fx_ctx::LED_BRANCH, Ty::Bool),
             ("imu", "accel") => (fx_ctx::IMU_ACCEL, Ty::Vec3),
             ("imu", "gyro") => (fx_ctx::IMU_GYRO, Ty::Vec3),
@@ -2102,7 +2193,7 @@ fn decode_op(code: &[u8], pc: usize) -> (String, usize) {
     let ctx_name = |id: u8| match id {
         0 => "time", 1 => "dt", 2 => "frame", 3 => "led.pos", 4 => "led.idx",
         5 => "led.count", 6 => "led.seg", 7 => "led.s", 8 => "led.branch",
-        9 => "imu.accel", 10 => "imu.gyro", 11 => "led.dist", _ => "?",
+        9 => "imu.accel", 10 => "imu.gyro", 11 => "led.dist", 12 => "led.uv", _ => "?",
     };
     let cmp_kind = |k: u8| match k {
         0 => "lt", 1 => "le", 2 => "gt", 3 => "ge", 4 => "eq", _ => "ne",
@@ -2199,6 +2290,8 @@ fn decode_op(code: &[u8], pc: usize) -> (String, usize) {
         }
         LOAD_BUF => (format!("LOAD_BUF id={}", b(0)), 2),
         STORE_BUF => (format!("STORE_BUF id={}", b(0)), 2),
+        SAMPLE_TEX => (format!("SAMPLE_TEX id={}", b(0)), 2),
+        PAINT_TEX => (format!("PAINT_TEX id={}", b(0)), 2),
         other => (format!("?? 0x{other:02x}"), 0),
     }
 }
@@ -2305,6 +2398,8 @@ mod fx_vm_op {
     pub const GRAPH_QUERY: u8 = 56;
     pub const LOAD_BUF: u8 = 57;
     pub const STORE_BUF: u8 = 58;
+    pub const SAMPLE_TEX: u8 = 59;
+    pub const PAINT_TEX: u8 = 60;
 }
 
 /// `.fxb` flags bit: a buffer descriptor table follows `code` (mirrors
@@ -2324,4 +2419,5 @@ mod fx_ctx {
     pub const IMU_ACCEL: u8 = 9;
     pub const IMU_GYRO: u8 = 10;
     pub const LED_DIST: u8 = 11;
+    pub const LED_UV: u8 = 12;
 }

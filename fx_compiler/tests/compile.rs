@@ -301,6 +301,26 @@ fn seeded_starter_effects_compile() {
           vec3 col = tint * (1.0 - rainbow) + hue * rainbow;\n\
           return col * v;\n\
         }";
+    // Texture starter: bake a radial gradient into a 2D texture once, then
+    // sample it per-LED by led.uv (pixel-space / texture-mapped).
+    let texmap = "texture vec3 tex(24, 24);\n\
+        state bool baked;\n\
+        uniform vec3 a : color = 0.1, 0.2, 0.8;\n\
+        uniform vec3 b : color = 1.0, 0.6, 0.1;\n\
+        void update() {\n\
+          if (!baked) {\n\
+            for (int y = 0; y < 24; y = y + 1) {\n\
+              for (int x = 0; x < 24; x = x + 1) {\n\
+                float fx = float(x) / 23.0;\n\
+                float fy = float(y) / 23.0;\n\
+                float d = distance(vec2(fx, fy), vec2(0.5, 0.5)) * 2.0;\n\
+                tex[y * 24 + x] = a * (1.0 - d) + b * d;\n\
+              }\n\
+            }\n\
+            baked = true;\n\
+          }\n\
+        }\n\
+        vec3 shade(Led led) { return sample(tex, led.uv); }";
     for (name, src) in [
         ("rainbow", rainbow),
         ("breathing", breathing),
@@ -308,6 +328,7 @@ fn seeded_starter_effects_compile() {
         ("flood", flood),
         ("pulse", pulse),
         ("trails", trails),
+        ("texmap", texmap),
     ] {
         compile(src).unwrap_or_else(|d| panic!("starter {name} failed to compile: {:?}", d));
     }
@@ -563,4 +584,71 @@ fn buffer_misuse_errors() {
     .expect("vec3 buffer compiles");
     let prog = Program::parse(&c.fxb).unwrap();
     assert_eq!(prog.buf_desc(0).unwrap().elem, 3);
+}
+
+#[test]
+fn texture_sample_bilinear() {
+    // A 2x1 float texture holding [0, 1]; sampling led.uv.x interpolates.
+    let src = r#"
+        texture float grad(2, 1);
+        void update() { grad[0] = 0.0; grad[1] = 1.0; }
+        vec3 shade(Led led) { float v = sample(grad, led.uv); return vec3(v, v, v); }
+    "#;
+    let c = compile(src).unwrap_or_else(|d| panic!("compile error: {:?}", d));
+    let prog = Program::parse(&c.fxb).expect("parse fxb");
+    let d = prog.buf_desc(0).expect("buf desc");
+    assert_eq!((d.kind, d.elem, d.w, d.h), (1, 1, 2, 1)); // 2D texture, 2x1
+
+    let led_count = 4usize;
+    let mut arena = vec![0.0f32; prog.arena_slots(led_count)];
+    assert_eq!(arena.len(), 2); // elem*w*h, independent of led_count
+    let mut vm = Vm::new();
+    vm.set_arena(&mut arena);
+    let frame = Frame { led_count: led_count as u32, ..Frame::default() };
+    vm.run_update(&prog, &frame); // grad = [0, 1]
+
+    let at = |ux: f32| {
+        vm.run_shade(&prog, &frame, &Led { uv: [ux, 0.0], ..Led::default() }).0
+    };
+    assert_eq!(at(0.0), 0); // edge -> texel 0
+    assert_eq!(at(1.0), 255); // edge -> texel 1
+    assert_eq!(at(0.5), 127); // midpoint -> bilinear 0.5
+}
+
+#[test]
+fn texture_paint_round_trips() {
+    // paint a texel via uv, then sample the same uv back (same frame).
+    let src = r#"
+        texture vec3 img(4, 4);
+        void update() {}
+        vec3 shade(Led led) {
+            paint(img, vec2(0.0, 0.0), vec3(1.0, 0.5, 0.25));
+            return sample(img, vec2(0.0, 0.0));
+        }
+    "#;
+    let c = compile(src).unwrap_or_else(|d| panic!("compile error: {:?}", d));
+    let prog = Program::parse(&c.fxb).expect("parse fxb");
+    assert_eq!(prog.buf_desc(0).unwrap().elem, 3);
+    let mut arena = vec![0.0f32; prog.arena_slots(8)];
+    let mut vm = Vm::new();
+    vm.set_arena(&mut arena);
+    let frame = Frame { led_count: 8, ..Frame::default() };
+    let (r, g, b) = vm.run_shade(&prog, &frame, &Led::default());
+    assert_eq!((r, g, b), (255, 127, 63)); // 1.0, 0.5, 0.25
+}
+
+#[test]
+fn texture_misuse_errors() {
+    // sample() on a non-texture buffer.
+    assert!(compile(
+        "buffer float b; vec3 shade(Led led) { return vec3(sample(b, led.uv), 0.0, 0.0); }"
+    )
+    .is_err());
+    // Bad dimensions.
+    assert!(compile("texture float t(0, 4); vec3 shade(Led led) { return vec3(0.0,0.0,0.0); }").is_err());
+    // A value-returning call used as a bare statement is rejected.
+    assert!(compile(
+        "texture float t(2, 2); void update() { sample(t, vec2(0.0,0.0)); } vec3 shade(Led led) { return vec3(0.0,0.0,0.0); }"
+    )
+    .is_err());
 }
