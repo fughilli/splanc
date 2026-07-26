@@ -101,6 +101,17 @@ _RENAME = """
 """
 
 
+def _origin_of(ws_url: str) -> str:
+    """https://host[:port]/ for a wss://host[:port]/path — the device's own
+    origin. We navigate there before opening the socket so the WebSocket is
+    SAME-ORIGIN and in a secure context: Chromium blocks a wss to a private IP
+    (192.168.x) from an opaque about:blank origin (Private Network Access +
+    mixed-context), which silently drops the connection before it ever dials."""
+    u = urllib.parse.urlparse(ws_url)
+    scheme = "https" if u.scheme in ("wss", "https") else "http"
+    return f"{scheme}://{u.netloc}/"
+
+
 def _log(msg: str) -> None:
     print(msg, flush=True)
 
@@ -122,9 +133,16 @@ def probe_ws(url: str, timeout_ms: int, ignore_cert: bool) -> dict:
         try:
             ctx = browser.new_context(ignore_https_errors=ignore_cert)
             page = ctx.new_page()
-            page.goto("about:blank")
+            # Land on the device's own origin first so the socket is same-origin
+            # + secure (see _origin_of). about:blank's opaque origin gets the wss
+            # to a private IP silently dropped before it dials.
+            nav = None
+            try:
+                page.goto(_origin_of(url), timeout=timeout_ms, wait_until="domcontentloaded")
+            except Exception as e:
+                nav = str(e).splitlines()[0]
             res = page.evaluate(_WS_PROBE, [url, timeout_ms])
-            return {"url": url, "ignore_cert": ignore_cert, **res}
+            return {"url": url, "ignore_cert": ignore_cert, "nav_error": nav, **res}
         finally:
             browser.close()
 
@@ -135,9 +153,13 @@ def rename_dev(url: str, new_name: str, timeout_ms: int) -> dict:
         try:
             ctx = browser.new_context(ignore_https_errors=True)
             page = ctx.new_page()
-            page.goto("about:blank")
+            nav = None
+            try:
+                page.goto(_origin_of(url), timeout=timeout_ms, wait_until="domcontentloaded")
+            except Exception as e:
+                nav = str(e).splitlines()[0]
             res = page.evaluate(_RENAME, [url, new_name, timeout_ms])
-            return {"url": url, "new_name": new_name, **res}
+            return {"url": url, "new_name": new_name, "nav_error": nav, **res}
         finally:
             browser.close()
 
