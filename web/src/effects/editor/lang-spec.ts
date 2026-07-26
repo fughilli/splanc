@@ -15,6 +15,7 @@
 export const KEYWORDS = [
   "uniform",
   "state",
+  "buffer",
   "struct",
   "void",
   "vec2",
@@ -34,6 +35,7 @@ export const KEYWORDS = [
 export const KEYWORD_DOCS: Record<string, string> = {
   uniform: "declare a live, user-tweakable parameter with a range + default",
   state: "declare a value persisted across frames (written in update())",
+  buffer: "declare a hidden per-LED buffer that persists across frames: `buffer vec3 trail;` then read/write `trail[i]` (i an int LED index)",
   struct: "declare a composite type: struct Name { float a; vec3 b; };",
   void: "the return type of update() — produces no value",
   return: "return a value from shade() (or exit update())",

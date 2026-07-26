@@ -11,7 +11,7 @@
 
 import { effectStore, type StoredEffect } from "./effectStore";
 
-const SEED_FLAG = "ledmapper.seededEffects.v2";
+const SEED_FLAG = "ledmapper.seededEffects.v3";
 
 interface Starter {
   id: string;
@@ -185,6 +185,35 @@ vec3 shade(Led led) {
     }
   }
   vec3 hue = hsv2rgb(led.dist, 0.9, 1.0);
+  vec3 col = tint * (1.0 - rainbow) + hue * rainbow;
+  return col * v;
+}
+`,
+  },
+  {
+    id: "builtin-trails",
+    name: "Trails",
+    tags: ["starter", "topology"],
+    source: `uniform float decay : 0.5 .. 0.98 = 0.85;
+uniform float speed : 0.0 .. 4.0 = 1.2;
+uniform float width : 0.02 .. 0.3 = 0.08;
+uniform vec3 tint : color = 0.2, 0.8, 1.0;
+uniform float rainbow : 0.0 .. 1.0 = 0.6;
+
+// A hidden per-LED buffer holds each LED's fading brightness, so the moving
+// head leaves a comet-like trail that persists across frames (feedback in
+// shade() — each LED reads its own slot, decays it, writes it back).
+buffer float trail;
+
+state float head;
+
+void update() { head = fract(time * speed * 0.2); }
+
+vec3 shade(Led led) {
+  float spark = smoothstep(width, 0.0, abs(led.dist - head));
+  float v = max(trail[led.idx] * decay, spark);
+  trail[led.idx] = v;
+  vec3 hue = hsv2rgb(led.dist, 0.85, 1.0);
   vec3 col = tint * (1.0 - rainbow) + hue * rainbow;
   return col * v;
 }

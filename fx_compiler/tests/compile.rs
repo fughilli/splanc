@@ -284,12 +284,30 @@ fn seeded_starter_effects_compile() {
           vec3 col = tint * (1.0 - rainbow) + hue * rainbow;\n\
           return col * v;\n\
         }";
+    // Buffer-based starter (per-LED feedback trail persisted in a hidden buffer).
+    let trails = "uniform float decay : 0.5 .. 0.98 = 0.85;\n\
+        uniform float speed : 0.0 .. 4.0 = 1.2;\n\
+        uniform float width : 0.02 .. 0.3 = 0.08;\n\
+        uniform vec3 tint : color = 0.2, 0.8, 1.0;\n\
+        uniform float rainbow : 0.0 .. 1.0 = 0.6;\n\
+        buffer float trail;\n\
+        state float head;\n\
+        void update() { head = fract(time * speed * 0.2); }\n\
+        vec3 shade(Led led) {\n\
+          float spark = smoothstep(width, 0.0, abs(led.dist - head));\n\
+          float v = max(trail[led.idx] * decay, spark);\n\
+          trail[led.idx] = v;\n\
+          vec3 hue = hsv2rgb(led.dist, 0.85, 1.0);\n\
+          vec3 col = tint * (1.0 - rainbow) + hue * rainbow;\n\
+          return col * v;\n\
+        }";
     for (name, src) in [
         ("rainbow", rainbow),
         ("breathing", breathing),
         ("comet", comet),
         ("flood", flood),
         ("pulse", pulse),
+        ("trails", trails),
     ] {
         compile(src).unwrap_or_else(|d| panic!("starter {name} failed to compile: {:?}", d));
     }
