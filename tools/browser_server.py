@@ -68,7 +68,12 @@ def _pw():
 
 def probe_ws(url: str, timeout_ms: int, ignore_cert: bool) -> dict:
     with _LOCK, _pw()() as p:
-        browser = p.chromium.launch(headless=True)
+        # `ignore_https_errors` (context) does NOT cover WebSocket TLS in
+        # Chromium — the WS handshake still validates the cert. The
+        # `--ignore-certificate-errors` LAUNCH flag does cover WS, so use it when
+        # asked to ignore the (self-signed) cert for a raw wss OPEN probe.
+        args = ["--ignore-certificate-errors"] if ignore_cert else []
+        browser = p.chromium.launch(headless=True, args=args)
         try:
             ctx = browser.new_context(ignore_https_errors=ignore_cert)
             page = ctx.new_page()
@@ -104,7 +109,9 @@ def load_app(app_url: str, wss: str, timeout_ms: int) -> dict:
     full = f"{app_url}{'&' if '?' in app_url else '?'}url={urllib.parse.quote(wss, safe='')}"
     shot = "/tmp/browser_server_app.png"
     with _LOCK, _pw()() as p:
-        browser = p.chromium.launch(headless=True)
+        # Cover WebSocket TLS too (see probe_ws) so the app's wss to a self-signed
+        # player connects headlessly.
+        browser = p.chromium.launch(headless=True, args=["--ignore-certificate-errors"])
         try:
             ctx = browser.new_context(ignore_https_errors=True)
             page = ctx.new_page()
