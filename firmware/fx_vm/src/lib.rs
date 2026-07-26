@@ -101,6 +101,13 @@ pub enum Op {
     // is pushed as a float slot (int results carry their i32 bits). Reads the
     // graph tables the VM was given via set_graph.
     GraphQuery,
+    // --- declared buffers / textures (feedback, pixel-space) -----------------
+    // LoadBuf u8 id: pop an int index -> push the buffer element's `elem` slots
+    // from the arena. StoreBuf u8 id: pop `elem` value slots then an int index ->
+    // write the element. The element width/count come from the .fxb buffer desc;
+    // the index is clamped in-bounds. No-op / 0 when no arena is bound.
+    LoadBuf,
+    StoreBuf,
 }
 
 /// Graph-query kinds (the `GraphQuery` opcode operand).
@@ -190,8 +197,8 @@ pub struct Counters {
 impl Op {
     #[inline]
     fn from_u8(b: u8) -> Option<Op> {
-        // Op is a contiguous enum 0..=GraphQuery; guard the range then transmute.
-        if b <= Op::GraphQuery as u8 {
+        // Op is a contiguous enum 0..=StoreBuf; guard the range then transmute.
+        if b <= Op::StoreBuf as u8 {
             Some(unsafe { core::mem::transmute::<u8, Op>(b) })
         } else {
             None
@@ -246,6 +253,26 @@ pub struct Program<'a> {
     pub shade_entry: u16,
     /// The raw uniforms manifest (for the app; the VM ignores it).
     pub manifest: &'a [u8],
+    /// Buffer descriptor table (present when flags & FLAG_BUFFERS): `n_buffers`
+    /// entries of `BUF_DESC_LEN` bytes each — kind(u8) elem(u8) w(u16) h(u16).
+    /// A buffer of `kind=0` is LED-arity (arity = led_count); `kind=1` is a WxH
+    /// 2D texture (Phase 3). Held raw; [`buf_desc`] decodes an entry.
+    pub n_buffers: u8,
+    buffers: &'a [u8],
+}
+
+/// flags bit: a buffer descriptor table follows `code` in the `.fxb`.
+pub const FLAG_BUFFERS: u8 = 0x01;
+/// Bytes per buffer descriptor: kind(u8) elem(u8) w(u16) h(u16).
+pub const BUF_DESC_LEN: usize = 6;
+
+/// One decoded buffer descriptor.
+#[derive(Clone, Copy, Default)]
+pub struct BufDesc {
+    pub kind: u8,  // 0 = LED-arity, 1 = 2D texture
+    pub elem: u8,  // slots per element (1 = float, 3 = vec3, …)
+    pub w: u16,    // texture width (kind 1); 0 for LED-arity
+    pub h: u16,    // texture height (kind 1); 0 for LED-arity
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -272,6 +299,7 @@ impl<'a> Program<'a> {
         if buf[4] != 1 {
             return Err(ParseErr::BadVersion);
         }
+        let flags = buf[5];
         let n_state = buf[6];
         let n_uniform_slots = buf[7];
         let manifest_len = rd_u16(buf, 8) as usize;
@@ -285,6 +313,18 @@ impl<'a> Program<'a> {
         let consts = buf.get(o..o + n_consts * 4).ok_or(ParseErr::TooShort)?;
         o += n_consts * 4;
         let code = buf.get(o..o + code_len).ok_or(ParseErr::TooShort)?;
+        o += code_len;
+        // Optional buffer descriptor table (appended after code, back-compatible).
+        let (n_buffers, buffers) = if flags & FLAG_BUFFERS != 0 {
+            let nb = *buf.get(o).ok_or(ParseErr::TooShort)?;
+            o += 1;
+            let bytes = buf
+                .get(o..o + nb as usize * BUF_DESC_LEN)
+                .ok_or(ParseErr::TooShort)?;
+            (nb, bytes)
+        } else {
+            (0, &buf[buf.len()..])
+        };
         Ok(Program {
             consts,
             code,
@@ -293,7 +333,53 @@ impl<'a> Program<'a> {
             update_entry,
             shade_entry,
             manifest,
+            n_buffers,
+            buffers,
         })
+    }
+
+    /// Decode buffer descriptor `i` (or `None`).
+    pub fn buf_desc(&self, i: usize) -> Option<BufDesc> {
+        let b = self.buffers.get(i * BUF_DESC_LEN..i * BUF_DESC_LEN + BUF_DESC_LEN)?;
+        Some(BufDesc {
+            kind: b[0],
+            elem: b[1],
+            w: u16::from_le_bytes([b[2], b[3]]),
+            h: u16::from_le_bytes([b[4], b[5]]),
+        })
+    }
+
+    /// Total arena slots the program's buffers need, given `led_count`. Each
+    /// LED-arity buffer is `elem * led_count`; each 2D texture is `elem * w * h`.
+    pub fn arena_slots(&self, led_count: usize) -> usize {
+        let mut n = 0;
+        for i in 0..self.n_buffers as usize {
+            if let Some(d) = self.buf_desc(i) {
+                let count = if d.kind == 0 {
+                    led_count
+                } else {
+                    d.w as usize * d.h as usize
+                };
+                n += d.elem as usize * count;
+            }
+        }
+        n
+    }
+
+    /// Byte-offset (in slots) of buffer `id`'s region within the arena.
+    fn buf_base(&self, id: usize, led_count: usize) -> usize {
+        let mut base = 0;
+        for i in 0..id.min(self.n_buffers as usize) {
+            if let Some(d) = self.buf_desc(i) {
+                let count = if d.kind == 0 {
+                    led_count
+                } else {
+                    d.w as usize * d.h as usize
+                };
+                base += d.elem as usize * count;
+            }
+        }
+        base
     }
 
     #[inline]
@@ -345,6 +431,11 @@ pub struct Vm {
     node_deg: [u8; MAX_NODE],      // incident-segment count per node (clamped to MAX_NODE_DEG)
     node_seg: [[i16; MAX_NODE_DEG]; MAX_NODE], // incident segment ids
     node_side: [[u8; MAX_NODE_DEG]; MAX_NODE], // which end (0=a,1=b) of that segment touches the node
+    // Buffer arena (LED-arity buffers / textures): external memory bound per
+    // program via set_arena. Raw ptr so Vm needs no lifetime; the caller keeps
+    // it alive and disjoint from `state`. Null/0 = no buffers.
+    arena_ptr: *mut f32,
+    arena_len: usize,
 }
 
 impl Default for Vm {
@@ -358,6 +449,8 @@ impl Default for Vm {
             node_deg: [0; MAX_NODE],
             node_seg: [[0; MAX_NODE_DEG]; MAX_NODE],
             node_side: [[0; MAX_NODE_DEG]; MAX_NODE],
+            arena_ptr: core::ptr::null_mut(),
+            arena_len: 0,
         }
     }
 }
@@ -405,6 +498,14 @@ impl Vm {
         }
     }
 
+    /// Bind the buffer arena (LED-arity buffers / textures). The slice must
+    /// outlive the following run calls and be disjoint from any other access.
+    /// Pass an empty slice to unbind. Size it to `Program::arena_slots(led_count)`.
+    pub fn set_arena(&mut self, arena: &mut [f32]) {
+        self.arena_ptr = arena.as_mut_ptr();
+        self.arena_len = arena.len();
+    }
+
     fn graph_ref(&self) -> GraphRef<'_> {
         GraphRef {
             n_seg: self.n_seg,
@@ -445,8 +546,22 @@ impl Vm {
         let led = Led::default();
         let mut st = self.state;
         let g = self.graph_ref();
-        let (_out, outcome, counters) =
-            run(prog, self.uniforms, &mut st, frame, &led, &g, prog.update_entry as usize, budget);
+        let arena: &mut [f32] = if self.arena_ptr.is_null() || self.arena_len == 0 {
+            &mut []
+        } else {
+            unsafe { core::slice::from_raw_parts_mut(self.arena_ptr, self.arena_len) }
+        };
+        let (_out, outcome, counters) = run(
+            prog,
+            self.uniforms,
+            &mut st,
+            frame,
+            &led,
+            &g,
+            arena,
+            prog.update_entry as usize,
+            budget,
+        );
         self.state = st;
         (outcome, counters)
     }
@@ -482,8 +597,22 @@ impl Vm {
     ) -> (Rgb, Outcome, Counters) {
         let mut st = self.state; // copy; shade shouldn't write it, but be safe
         let g = self.graph_ref();
-        let (out, outcome, counters) =
-            run(prog, self.uniforms, &mut st, frame, led, &g, prog.shade_entry as usize, budget);
+        let arena: &mut [f32] = if self.arena_ptr.is_null() || self.arena_len == 0 {
+            &mut []
+        } else {
+            unsafe { core::slice::from_raw_parts_mut(self.arena_ptr, self.arena_len) }
+        };
+        let (out, outcome, counters) = run(
+            prog,
+            self.uniforms,
+            &mut st,
+            frame,
+            led,
+            &g,
+            arena,
+            prog.shade_entry as usize,
+            budget,
+        );
         if outcome.timed_out() {
             return ((0, 0, 0), outcome, counters);
         }
@@ -582,6 +711,7 @@ fn run(
     frame: &Frame,
     led: &Led,
     graph: &GraphRef,
+    arena: &mut [f32],
     entry: usize,
     guard: &Budget,
 ) -> ([f32; 3], Outcome, Counters) {
@@ -1180,6 +1310,41 @@ fn run(
                     _ => (0, 0),
                 };
                 push!(graph.query(kind, a, b));
+            }
+            Op::LoadBuf => {
+                let id = code[pc] as usize;
+                pc += 1;
+                if let Some(d) = prog.buf_desc(id) {
+                    let lc = frame.led_count as usize;
+                    let elem = d.elem as usize;
+                    let count = if d.kind == 0 { lc } else { d.w as usize * d.h as usize };
+                    let i = popi!().clamp(0, count.saturating_sub(1) as i32) as usize;
+                    let base = prog.buf_base(id, lc) + i * elem;
+                    for k in 0..elem {
+                        push!(arena.get(base + k).copied().unwrap_or(0.0));
+                    }
+                }
+            }
+            Op::StoreBuf => {
+                let id = code[pc] as usize;
+                pc += 1;
+                if let Some(d) = prog.buf_desc(id) {
+                    let lc = frame.led_count as usize;
+                    let elem = d.elem as usize;
+                    let count = if d.kind == 0 { lc } else { d.w as usize * d.h as usize };
+                    if sp >= elem + 1 {
+                        let i = stack[sp - elem - 1].to_bits() as i32;
+                        let idx = i.clamp(0, count.saturating_sub(1) as i32) as usize;
+                        let base = prog.buf_base(id, lc) + idx * elem;
+                        for k in 0..elem {
+                            let v = stack[sp - elem + k];
+                            if base + k < arena.len() {
+                                arena[base + k] = v;
+                            }
+                        }
+                        sp -= elem + 1;
+                    }
+                }
             }
         }
     }
