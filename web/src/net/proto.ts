@@ -51,6 +51,7 @@ const CLIENT_ARMS: Record<string, string> = {
   set_perf: "setPerf",
   get_perf_report: "getPerfReport",
   set_device_name: "setDeviceName",
+  set_texture: "setTexture",
 };
 const SERVER_ARMS: Record<string, string> = {
   welcome: "welcome",
@@ -101,6 +102,11 @@ const VEC3_LIST_KEYS = new Set(["trajectory", "polyline"]);
 // string, but the flat TS shapes use Uint8Array (submit_effect.fxb outbound,
 // effect_uniforms.manifest inbound) — convert at this boundary.
 const BYTES_KEYS = new Set(["fxb", "manifest"]);
+// `data` is a bytes field on both SetTexture (outbound, a Uint8Array we send)
+// and StoredMapChunk (inbound, kept as a base64 string the map decoder unpacks
+// itself). So convert it on ENCODE only, leaving the inbound StoredMapChunk.data
+// as-is.
+const BYTES_KEYS_OUT = new Set([...BYTES_KEYS, "data"]);
 
 function bytesToB64(bytes: Uint8Array): string {
   let bin = "";
@@ -122,7 +128,7 @@ function bytesToProto(value: unknown): unknown {
   if (value !== null && typeof value === "object") {
     const out: Json = {};
     for (const [k, v] of Object.entries(value as Json)) {
-      out[k] = BYTES_KEYS.has(k) && v instanceof Uint8Array ? bytesToB64(v) : bytesToProto(v);
+      out[k] = BYTES_KEYS_OUT.has(k) && v instanceof Uint8Array ? bytesToB64(v) : bytesToProto(v);
     }
     return out;
   }
@@ -266,6 +272,20 @@ export interface SubmitEffectMessage {
   effectId: string;
   fxb: Uint8Array;
   activate: boolean;
+}
+
+/** Stream a video frame into a loaded effect's 2D texture (proto SetTexture).
+ * `data` is the frame quantized to `format`, optionally XOR-delta'd (flags bit0)
+ * and RLE'd (flags bit1) — see textureCodec.ts. Fire-and-forget (no reply). */
+export interface SetTextureMessage {
+  type: "set_texture";
+  texIndex: number;
+  format: number;
+  width: number;
+  height: number;
+  flags: number;
+  data: Uint8Array;
+  palette?: number[];
 }
 
 /** Select the active effect by id (proto SetEffect). */

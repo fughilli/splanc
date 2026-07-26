@@ -46,6 +46,7 @@ import {
   type MappingBundle,
   type PerfMode,
   type PerfReportMessage,
+  type SetTextureMessage,
   type UniformValueFlat,
 } from "./proto";
 import { bestSample, ServerClock, syncSample, type SyncSample } from "./clocksync";
@@ -438,6 +439,14 @@ export class LedMapperClient {
       { type: "set_device_name", name } as unknown as ClientMessage,
       "welcome",
     )) as unknown as WelcomeMessage;
+  }
+
+  /** Stream a video frame into a loaded effect's 2D texture. Build the message
+   * with the textureCodec (quantize + optional XOR-delta + RLE); fire-and-forget
+   * so a high frame rate isn't gated on a round trip. Returns false if the
+   * socket isn't open (the frame is dropped — video is lossy by nature). */
+  setTexture(msg: SetTextureMessage): boolean {
+    return this.send(msg as unknown as ClientMessage);
   }
 
   /** Fetch an effect's uniform manifest + current live values for UI
