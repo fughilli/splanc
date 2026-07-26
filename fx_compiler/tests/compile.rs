@@ -652,3 +652,76 @@ fn texture_misuse_errors() {
     )
     .is_err());
 }
+
+#[test]
+fn preview_flow_flood_animates_and_texture_lights() {
+    // Mirrors the browser preview's update()->shade() loop to guard against a
+    // VM/preview regression (the symptoms a stale cached wasm would also show).
+    // FLOOD: with topology (varying led.dist), the output must change over time.
+    let flood = "uniform float rate : 0.05 .. 2.0 = 0.35;\n\
+        uniform float edge : 0.02 .. 0.4 = 0.12;\n\
+        uniform vec3 tint : color = 0.2, 0.7, 1.0;\n\
+        uniform float rainbow : 0.0 .. 1.0 = 0.0;\n\
+        state float front;\n\
+        void update() { front = fract(time * rate); }\n\
+        vec3 shade(Led led) {\n\
+          float lit = 1.0 - smoothstep(front, front + edge, led.dist);\n\
+          return tint * lit;\n\
+        }";
+    let c = compile(flood).unwrap_or_else(|d| panic!("flood: {:?}", d));
+    let prog = Program::parse(&c.fxb).unwrap();
+    let mut vm = Vm::new();
+    for u in &c.uniforms {
+        vm.set_uniform(u.slot as usize, &u.default);
+    }
+    let leds: Vec<Led> = (0..10)
+        .map(|i| Led { dist: i as f32 / 9.0, idx: i, ..Default::default() })
+        .collect();
+    let frame_at = |vm: &mut Vm, t: f32| -> Vec<(u8, u8, u8)> {
+        let f = Frame { time: t, dt: 0.033, led_count: 10, ..Default::default() };
+        vm.run_update(&prog, &f);
+        leds.iter().map(|l| vm.run_shade(&prog, &f, l)).collect()
+    };
+    let a = frame_at(&mut vm, 0.0);
+    let b = frame_at(&mut vm, 0.6);
+    assert_ne!(a, b, "flood must evolve over time with topology");
+
+    // TEXTURE-MAP: after the bake, sampling led.uv must be lit (not all dark).
+    let texmap = "texture vec3 tex(24, 24);\n\
+        state bool baked;\n\
+        uniform vec3 a : color = 0.1, 0.2, 0.8;\n\
+        uniform vec3 b : color = 1.0, 0.6, 0.1;\n\
+        void update() {\n\
+          if (!baked) {\n\
+            for (int y = 0; y < 24; y = y + 1) {\n\
+              for (int x = 0; x < 24; x = x + 1) {\n\
+                float fx = float(x) / 23.0;\n\
+                float fy = float(y) / 23.0;\n\
+                float d = distance(vec2(fx, fy), vec2(0.5, 0.5)) * 2.0;\n\
+                tex[y * 24 + x] = a * (1.0 - d) + b * d;\n\
+              }\n\
+            }\n\
+            baked = true;\n\
+          }\n\
+        }\n\
+        vec3 shade(Led led) { return sample(tex, led.uv); }";
+    let c2 = compile(texmap).unwrap_or_else(|d| panic!("texmap: {:?}", d));
+    let prog2 = Program::parse(&c2.fxb).unwrap();
+    let mut vm2 = Vm::new();
+    for u in &c2.uniforms {
+        vm2.set_uniform(u.slot as usize, &u.default);
+    }
+    let mut arena = vec![0.0f32; prog2.arena_slots(64)];
+    // Mirror the wasm: bind the arena on update, bake on the first frame.
+    for f in 0..2u32 {
+        let frame = Frame { time: f as f32 * 0.033, dt: 0.033, frame: f, led_count: 64, ..Default::default() };
+        vm2.set_arena(&mut arena);
+        vm2.run_update(&prog2, &frame);
+    }
+    let frame = Frame { led_count: 64, ..Default::default() };
+    let lit = vm2.run_shade(&prog2, &frame, &Led { uv: [0.5, 0.5], ..Default::default() });
+    assert!(
+        lit.0 as u32 + lit.1 as u32 + lit.2 as u32 > 0,
+        "texture sample must be lit after the bake, got {lit:?}"
+    );
+}

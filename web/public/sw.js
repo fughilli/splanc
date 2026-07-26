@@ -5,17 +5,26 @@
  * Strategy, same-origin GET only (everything else passes straight through, so
  * the wss control plane and any dynamic API are untouched):
  *   - navigations: network-first, falling back to the cached app shell offline;
- *   - static assets (Vite emits content-hashed names + the wasm bundles under
- *     /solver, /fx-vm, /fx-compiler, /pulse): stale-while-revalidate.
+ *   - the wasm bundles under /solver, /fx-vm, /fx-compiler, /pulse: network-first
+ *     too. These have FIXED (non-content-hashed) filenames whose bytes change on
+ *     every deploy, so stale-while-revalidate would serve last deploy's wasm to
+ *     the current session (e.g. an old fx_vm that doesn't know new opcodes) —
+ *     keep them in lockstep with the app that references them;
+ *   - other static assets (Vite content-hashed /assets/*): stale-while-revalidate.
  * The dynamic API paths below are never cached.
  */
 
-const VERSION = "v1";
+// Bump on any change that must invalidate the old cache (esp. the fixed-name
+// wasm bundles) — `activate` deletes every cache that isn't the current one.
+const VERSION = "v2";
 const CACHE = `ledmapper-${VERSION}`;
 const SHELL = ["/", "/index.html", "/manifest.webmanifest", "/icons/icon-192.png"];
 
 // Same-origin paths that are dynamic (server API) — never cache these.
 const NO_CACHE = [/^\/maps(\/|$)/, /^\/healthz$/, /^\/ws(\/|$)/, /^\/api(\/|$)/];
+// Fixed-name, version-coupled bundles: serve network-first (fresh online, cache
+// only as the offline fallback) so a deploy's new wasm is never shadowed.
+const NETWORK_FIRST = [/^\/(fx-vm|fx-compiler|solver|pulse)\//];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -57,6 +66,21 @@ self.addEventListener("fetch", (event) => {
           return res;
         })
         .catch(() => caches.match(req).then((hit) => hit || caches.match("/index.html"))),
+    );
+    return;
+  }
+
+  // Fixed-name wasm/js bundles: network-first (see NETWORK_FIRST) so a fresh
+  // deploy's bytes win over the last session's cached copy; fall back to cache
+  // offline.
+  if (NETWORK_FIRST.some((re) => re.test(url.pathname))) {
+    event.respondWith(
+      fetch(req)
+        .then((res) => {
+          if (res && res.status === 200 && res.type === "basic") cachePut(req, res.clone());
+          return res;
+        })
+        .catch(() => caches.match(req)),
     );
     return;
   }
