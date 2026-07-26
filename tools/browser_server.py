@@ -17,6 +17,7 @@ Drive it from the container:
     curl 'host:8092/probe?url=wss://10.59.111.165/ws'   # does the wss OPEN?
     curl 'host:8092/cert?host=10.59.111.165'            # is the cert acceptable?
     curl 'host:8092/app?wss=wss://10.59.111.165/ws'     # load the hosted app, read status
+    curl 'host:8092/rename?url=wss://10.59.111.165/ws&name=Foo'  # rename round-trip (restores)
 
   /probe  opens `new WebSocket(url)` from a cert-accepting context and reports
           whether it reaches OPEN (i.e. TLS handshake + WS upgrade succeed — the
@@ -56,6 +57,50 @@ _WS_PROBE = """
 """
 
 
+# In-page protocol round-trip: hello -> welcome(before) -> set_device_name(new)
+# -> welcome(after) -> set_device_name(before) -> welcome(restored). Hand-encodes
+# the (tiny) protobuf envelopes so we exercise the REAL wss control plane + the
+# rename feature over a cert-trusting Chromium (launched with
+# --ignore-certificate-errors so the self-signed player is reachable).
+_RENAME = """
+(url, newName, ms) => new Promise((resolve) => {
+  const enc = new TextEncoder(), dec = new TextDecoder();
+  const varint = (n) => { const b=[]; while(n>127){b.push((n&0x7f)|0x80); n=n>>>7;} b.push(n); return b; };
+  const strF = (f,s) => { const by=enc.encode(s); return [...varint((f<<3)|2), ...varint(by.length), ...by]; };
+  const msgF = (f,inner) => [...varint((f<<3)|2), ...varint(inner.length), ...inner];
+  const hello = msgF(1, [...strF(1,'browser-probe'), ...strF(2,'probe')]);
+  const rename = (name) => msgF(27, strF(1, name));
+  const readMsg = (buf) => {
+    const out={}; let i=0;
+    const rv=()=>{let sh=0,r=0,b; do{b=buf[i++]; r|=(b&0x7f)<<sh; sh+=7;}while(b&0x80); return r>>>0;};
+    while(i<buf.length){ const tag=rv(), f=tag>>>3, w=tag&7; let v;
+      if(w===2){const L=rv(); v=buf.slice(i,i+L); i+=L;}
+      else if(w===0){v=rv();} else if(w===1){i+=8;} else if(w===5){i+=4;} else break;
+      (out[f]=out[f]||[]).push(v); }
+    return out;
+  };
+  let ws, state='hello', before=null, after=null, mac='';
+  const t=setTimeout(()=>{try{ws&&ws.close()}catch(e){} resolve({ok:false,error:'timeout',state,before,after})}, ms);
+  try { ws=new WebSocket(url); } catch(e){ clearTimeout(t); return resolve({ok:false,error:'ctor '+e}); }
+  ws.binaryType='arraybuffer';
+  ws.onopen=()=>ws.send(new Uint8Array(hello));
+  ws.onerror=()=>{ clearTimeout(t); resolve({ok:false,error:'ws error (see /cert — likely untrusted cert)',state}); };
+  ws.onclose=(ev)=>{ clearTimeout(t); resolve({ok:false,error:'closed code '+ev.code,state,before,after}); };
+  ws.onmessage=(ev)=>{
+    const sm=readMsg(new Uint8Array(ev.data));
+    if(!sm[1]) return;                     // only care about ServerMessage.welcome (field 1)
+    const w=readMsg(sm[1][0]);
+    const name=w[5]?dec.decode(w[5][0]):''; mac=w[4]?dec.decode(w[4][0]):'';
+    if(state==='hello'){ before=name; state='renamed'; ws.send(new Uint8Array(rename(newName))); }
+    else if(state==='renamed'){ after=name; state='restore'; ws.send(new Uint8Array(rename(before))); }
+    else if(state==='restore'){ clearTimeout(t);
+      resolve({ok:true, before, after, restored:name, mac, applied: after===newName, restored_ok: name===before});
+      try{ws.close()}catch(e){} }
+  };
+}
+"""
+
+
 def _log(msg: str) -> None:
     print(msg, flush=True)
 
@@ -80,6 +125,19 @@ def probe_ws(url: str, timeout_ms: int, ignore_cert: bool) -> dict:
             page.goto("about:blank")
             res = page.evaluate(_WS_PROBE, [url, timeout_ms])
             return {"url": url, "ignore_cert": ignore_cert, **res}
+        finally:
+            browser.close()
+
+
+def rename_dev(url: str, new_name: str, timeout_ms: int) -> dict:
+    with _LOCK, _pw()() as p:
+        browser = p.chromium.launch(headless=True, args=["--ignore-certificate-errors"])
+        try:
+            ctx = browser.new_context(ignore_https_errors=True)
+            page = ctx.new_page()
+            page.goto("about:blank")
+            res = page.evaluate(_RENAME, [url, new_name, timeout_ms])
+            return {"url": url, "new_name": new_name, **res}
         finally:
             browser.close()
 
@@ -171,6 +229,13 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 self._json(probe_ws(url, int(g("timeout", "8000")),
                                     g("ignore_cert", "1") not in ("0", "false")))
+            elif route == "/rename":
+                url = g("url")
+                name = g("name")
+                if not url or not name:
+                    self._json({"error": "need ?url=wss://host/ws&name=NewName"}, 400)
+                    return
+                self._json(rename_dev(url, name, int(g("timeout", "12000"))))
             elif route == "/cert":
                 host = g("host")
                 if not host:
