@@ -68,7 +68,7 @@ export const CONTEXTS: {
       { name: "count", type: "int", doc: "total LED count" },
       { name: "seg", type: "int", doc: "topology segment id, -1 if none" },
       { name: "s", type: "float", doc: "0..1 arclength along the LED's segment" },
-      { name: "dist", type: "float", doc: "0..1 geodesic distance from the topology root; accumulates across segments (flood/pulse ride this)" },
+      { name: "dist", type: "float", doc: "0..1 geodesic distance from the current source (the topology root by default; call flood_from(node) in update() to re-source it, e.g. to flood from a random endpoint)" },
       { name: "branch", type: "bool", doc: "true at a junction/branch point" },
       { name: "uv", type: "vec2", doc: "per-LED texture coord in 0..1 (this LED's XY position normalized over the map bounds — a top-down projection); feed sample(tex, led.uv)" },
     ],
@@ -130,6 +130,9 @@ export const BUILTINS: { sig: string; doc: string }[] = [
   { sig: "node_deg(node)", doc: "number of segments incident to `node` (int)" },
   { sig: "node_seg(node, k)", doc: "k-th segment incident to `node` (int segment id) — pick a branch" },
   { sig: "node_side(node, k)", doc: "which end (0=a,1=b) of that k-th segment touches `node` (int)" },
+  { sig: "term_count()", doc: "number of termini — degree-1 endpoints of the topology (int)" },
+  { sig: "term(k)", doc: "the k-th terminus node id (int, -1 if out of range); pick a random one to flood/spawn from" },
+  { sig: "flood_from(node)", doc: "set the geodesic source: `led.dist` then reports distance from `node` (0..1). Call once per cycle in update() — lets Flood/agents start from any endpoint. void" },
   // 2D textures (declare with `texture <elem> name(w, h);`)
   { sig: "sample(tex, uv)", doc: "bilinearly sample 2D texture `tex` at uv (vec2, 0..1, edge-clamped); returns the texture's element type" },
   { sig: "paint(tex, uv, color)", doc: "write `color` to the nearest texel of `tex` at uv (vec2, 0..1); a void statement" },

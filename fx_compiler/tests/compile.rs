@@ -251,15 +251,28 @@ fn seeded_starter_effects_compile() {
           return tint * band;\n\
         }";
     // Topology-aware starters using led.dist (geodesic distance).
-    let flood = "uniform float rate : 0.05 .. 2.0 = 0.35;\n\
-        uniform float edge : 0.02 .. 0.4 = 0.12;\n\
+    let flood = "uniform float speed : 0.05 .. 2.0 = 0.35;\n\
+        uniform float tail : 0.05 .. 0.6 = 0.25;\n\
         uniform vec3 tint : color = 0.2, 0.7, 1.0;\n\
         uniform float rainbow : 0.0 .. 1.0 = 0.0;\n\
         state float front;\n\
-        void update() { front = fract(time * rate); }\n\
+        state int started;\n\
+        void update() {\n\
+          if (started == 0) { started = 1; flood_from(term(0)); front = 0.0; }\n\
+          front = front + speed * dt;\n\
+          if (front > 1.0 + tail) {\n\
+            int tc = term_count();\n\
+            int k = 0;\n\
+            if (tc > 0) { k = int(hash(float(frame) * 0.017) * float(tc)); }\n\
+            if (k >= tc) { k = 0; }\n\
+            flood_from(term(k));\n\
+            front = 0.0;\n\
+          }\n\
+        }\n\
         vec3 shade(Led led) {\n\
-          float lit = 1.0 - smoothstep(front, front + edge, led.dist);\n\
-          vec3 hue = hsv2rgb(led.dist * 0.7, 0.9, 1.0);\n\
+          float reached = front - led.dist;\n\
+          float lit = clamp(1.0 - reached / tail, 0.0, 1.0) * step(0.0, reached);\n\
+          vec3 hue = hsv2rgb(led.dist, 0.9, 1.0);\n\
           vec3 col = tint * (1.0 - rainbow) + hue * rainbow;\n\
           return col * lit;\n\
         }";
@@ -363,7 +376,14 @@ fn graph_queries_and_agentic_pulse_compile() {
         void update() {\n\
           if (started == 0) {\n\
             started = 1;\n\
-            for (int i = 0; i < 8; i = i + 1) { ag[i].seg = i; ag[i].s = 0.0; }\n\
+            int tc = term_count();\n\
+            for (int i = 0; i < 8; i = i + 1) {\n\
+              int node = term(int(hash(float(i) * 3.7 + 1.0) * float(tc)));\n\
+              int sg = node_seg(node, 0);\n\
+              if (sg < 0) { sg = i; }\n\
+              ag[i].seg = sg;\n\
+              ag[i].s = 0.0;\n\
+            }\n\
           }\n\
           for (int i = 0; i < 8; i = i + 1) {\n\
             if (i < count) {\n\
@@ -724,4 +744,33 @@ fn preview_flow_flood_animates_and_texture_lights() {
         lit.0 as u32 + lit.1 as u32 + lit.2 as u32 > 0,
         "texture sample must be lit after the bake, got {lit:?}"
     );
+}
+
+#[test]
+fn flood_from_reseats_the_geodesic_source() {
+    // Chain graph: leafA(10) --seg0-- junction(0) --seg1-- leafB(11). Termini are
+    // the two deg-1 leaves. flood_from(term(0)=10) makes an LED at leafA read
+    // dist 0; flood_from(term(1)=11) makes the SAME LED read dist 1 — proving the
+    // source is settable (what Flood needs to start from different endpoints).
+    let src = r#"
+        uniform int pick : 0 .. 3 = 0;
+        void update() { flood_from(term(pick)); }
+        vec3 shade(Led led) { return vec3(led.dist, 0.0, 0.0); }
+    "#;
+    let c = compile(src).unwrap_or_else(|d| panic!("compile: {:?}", d));
+    let prog = Program::parse(&c.fxb).unwrap();
+    let mut vm = Vm::new();
+    vm.set_graph(&[1.0, 1.0], &[10, 0], &[0, 11]);
+    let frame = Frame { led_count: 1, ..Default::default() };
+    let led_a = Led { seg: 0, s: 0.0, idx: 0, ..Default::default() }; // sits at leafA
+    // Flood from term 0 (leafA): distance 0 there.
+    vm.set_uniform(0, &[f32::from_bits(0)]); // pick = 0 (int bits)
+    vm.run_update(&prog, &frame);
+    let d0 = vm.run_shade(&prog, &frame, &led_a).0;
+    // Flood from term 1 (leafB): leafA is now the far end → distance ~1.
+    vm.set_uniform(0, &[f32::from_bits(1)]);
+    vm.run_update(&prog, &frame);
+    let d1 = vm.run_shade(&prog, &frame, &led_a).0;
+    assert_eq!(d0, 0, "flooding from leafA, leafA is at distance 0");
+    assert_eq!(d1, 255, "flooding from leafB, leafA is the far end (dist 1)");
 }

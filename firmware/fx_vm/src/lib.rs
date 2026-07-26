@@ -116,6 +116,12 @@ pub enum Op {
     // texture (kind != 1).
     SampleTex,
     PaintTex,
+    // --- settable geodesic source (topology flood/agents) --------------------
+    // FloodFrom: pop an int node id, run a single-source geodesic sweep over the
+    // graph into the VM's DistSrc, so subsequent `led.dist` reads report distance
+    // from that node (normalized 0..1 by the reach). Void; call once per cycle in
+    // update(). No source set → led.dist stays the map-load root field.
+    FloodFrom,
 }
 
 /// Graph-query kinds (the `GraphQuery` opcode operand).
@@ -126,6 +132,8 @@ pub mod gq {
     pub const NODE_DEG: u8 = 3;
     pub const NODE_SEG: u8 = 4;
     pub const NODE_SIDE: u8 = 5;
+    pub const TERM_COUNT: u8 = 6; // number of termini (degree-1 nodes)
+    pub const TERM: u8 = 7; // the a-th terminus node id (-1 if out of range)
 }
 
 pub const FIX_ONE: i32 = 1 << 16;
@@ -205,8 +213,8 @@ pub struct Counters {
 impl Op {
     #[inline]
     fn from_u8(b: u8) -> Option<Op> {
-        // Op is a contiguous enum 0..=PaintTex; guard the range then transmute.
-        if b <= Op::PaintTex as u8 {
+        // Op is a contiguous enum 0..=FloodFrom; guard the range then transmute.
+        if b <= Op::FloodFrom as u8 {
             Some(unsafe { core::mem::transmute::<u8, Op>(b) })
         } else {
             None
@@ -450,6 +458,27 @@ pub struct Vm {
     // it alive and disjoint from `state`. Null/0 = no buffers.
     arena_ptr: *mut f32,
     arena_len: usize,
+    // Single-source geodesic field for `flood_from` (see [`DistSrc`]). Persists
+    // across frames like `state`; reset when a fresh effect is loaded.
+    dist_src: DistSrc,
+}
+
+/// Single-source geodesic node-distance field, filled by the `flood_from`
+/// opcode: `d[node]` is the raw arclength (meters) from the chosen source node
+/// to each node, `max` the farthest reach (for normalizing `led.dist` to 0..1).
+/// `set` stays false until a shader calls `flood_from`, so `led.dist` defaults
+/// to the map-load root field carried in the [`Led`] struct.
+#[derive(Clone, Copy)]
+pub struct DistSrc {
+    d: [f32; MAX_NODE],
+    max: f32,
+    set: bool,
+}
+
+impl Default for DistSrc {
+    fn default() -> Self {
+        DistSrc { d: [f32::INFINITY; MAX_NODE], max: 1.0, set: false }
+    }
 }
 
 impl Default for Vm {
@@ -465,6 +494,7 @@ impl Default for Vm {
             node_side: [[0; MAX_NODE_DEG]; MAX_NODE],
             arena_ptr: core::ptr::null_mut(),
             arena_len: 0,
+            dist_src: DistSrc::default(),
         }
     }
 }
@@ -559,6 +589,7 @@ impl Vm {
         }
         let led = Led::default();
         let mut st = self.state;
+        let mut dist = self.dist_src;
         let g = self.graph_ref();
         let arena: &mut [f32] = if self.arena_ptr.is_null() || self.arena_len == 0 {
             &mut []
@@ -572,11 +603,13 @@ impl Vm {
             frame,
             &led,
             &g,
+            &mut dist,
             arena,
             prog.update_entry as usize,
             budget,
         );
         self.state = st;
+        self.dist_src = dist; // persist a flood_from source across frames
         (outcome, counters)
     }
 
@@ -610,6 +643,7 @@ impl Vm {
         budget: &Budget,
     ) -> (Rgb, Outcome, Counters) {
         let mut st = self.state; // copy; shade shouldn't write it, but be safe
+        let mut dist = self.dist_src; // read-only in shade (led.dist); not persisted
         let g = self.graph_ref();
         let arena: &mut [f32] = if self.arena_ptr.is_null() || self.arena_len == 0 {
             &mut []
@@ -623,6 +657,7 @@ impl Vm {
             frame,
             led,
             &g,
+            &mut dist,
             arena,
             prog.shade_entry as usize,
             budget,
@@ -690,6 +725,31 @@ impl GraphRef<'_> {
                 asi(v)
             }
             gq::NODE_DEG => asi(if node_ok(a) { self.node_deg[a as usize] as i32 } else { 0 }),
+            gq::TERM_COUNT => {
+                let mut c = 0i32;
+                for n in 0..MAX_NODE {
+                    if self.node_deg[n] == 1 {
+                        c += 1;
+                    }
+                }
+                asi(c)
+            }
+            gq::TERM => {
+                let mut want = a;
+                let mut found = -1i32;
+                if want >= 0 {
+                    for n in 0..MAX_NODE {
+                        if self.node_deg[n] == 1 {
+                            if want == 0 {
+                                found = n as i32;
+                                break;
+                            }
+                            want -= 1;
+                        }
+                    }
+                }
+                asi(found)
+            }
             gq::NODE_SEG | gq::NODE_SIDE => {
                 let ok = node_ok(a)
                     && b >= 0
@@ -725,6 +785,7 @@ fn run(
     frame: &Frame,
     led: &Led,
     graph: &GraphRef,
+    dist: &mut DistSrc,
     arena: &mut [f32],
     entry: usize,
     guard: &Budget,
@@ -884,7 +945,34 @@ fn run(
                         push!(frame.imu_gyro[1]);
                         push!(frame.imu_gyro[2]);
                     }
-                    C_LED_DIST => push!(led.dist),
+                    C_LED_DIST => {
+                        // With a flood_from source set, report this LED's geodesic
+                        // distance from that source (normalized 0..1); otherwise
+                        // the map-load root field carried in the Led struct.
+                        if dist.set
+                            && led.seg >= 0
+                            && (led.seg as usize) < (graph.n_seg as usize).min(MAX_SEG)
+                        {
+                            let si = led.seg as usize;
+                            let a = graph.seg_node[si][0];
+                            let b = graph.seg_node[si][1];
+                            let l = graph.seg_len[si];
+                            let da = if a >= 0 && (a as usize) < MAX_NODE {
+                                dist.d[a as usize] + led.s * l
+                            } else {
+                                f32::INFINITY
+                            };
+                            let db = if b >= 0 && (b as usize) < MAX_NODE {
+                                dist.d[b as usize] + (1.0 - led.s) * l
+                            } else {
+                                f32::INFINITY
+                            };
+                            let g = if da < db { da } else { db };
+                            push!(if g.is_finite() { (g / dist.max).min(1.0) } else { 1.0 });
+                        } else {
+                            push!(led.dist);
+                        }
+                    }
                     C_LED_UV => {
                         push!(led.uv[0]);
                         push!(led.uv[1]);
@@ -1320,12 +1408,12 @@ fn run(
                 let kind = code[pc];
                 pc += 1;
                 let (a, b) = match kind {
-                    gq::SEG_LEN | gq::NODE_DEG => (popi!(), 0),
+                    gq::SEG_LEN | gq::NODE_DEG | gq::TERM => (popi!(), 0),
                     gq::SEG_NODE | gq::NODE_SEG | gq::NODE_SIDE => {
                         let b = popi!();
                         (popi!(), b)
                     }
-                    _ => (0, 0),
+                    _ => (0, 0), // SEG_COUNT, TERM_COUNT: no args
                 };
                 push!(graph.query(kind, a, b));
             }
@@ -1430,6 +1518,53 @@ fn run(
                         }
                     }
                     sp -= elem + 2;
+                }
+            }
+            Op::FloodFrom => {
+                // Pop the source node; single-source geodesic sweep (Bellman-Ford
+                // over segment edges, non-negative weights) into `dist`.
+                let src = popi!();
+                for x in dist.d.iter_mut() {
+                    *x = f32::INFINITY;
+                }
+                dist.set = false;
+                if src >= 0 && (src as usize) < MAX_NODE {
+                    dist.d[src as usize] = 0.0;
+                    let ns = (graph.n_seg as usize).min(MAX_SEG);
+                    for _ in 0..MAX_NODE {
+                        let mut changed = false;
+                        for si in 0..ns {
+                            let a = graph.seg_node[si][0];
+                            let b = graph.seg_node[si][1];
+                            if a < 0 || b < 0 {
+                                continue;
+                            }
+                            let (a, b) = (a as usize, b as usize);
+                            if a >= MAX_NODE || b >= MAX_NODE {
+                                continue;
+                            }
+                            let w = graph.seg_len[si];
+                            if dist.d[a] + w < dist.d[b] {
+                                dist.d[b] = dist.d[a] + w;
+                                changed = true;
+                            }
+                            if dist.d[b] + w < dist.d[a] {
+                                dist.d[a] = dist.d[b] + w;
+                                changed = true;
+                            }
+                        }
+                        if !changed {
+                            break;
+                        }
+                    }
+                    let mut mx = 0.0f32;
+                    for &x in dist.d.iter() {
+                        if x.is_finite() && x > mx {
+                            mx = x;
+                        }
+                    }
+                    dist.max = if mx > 1e-6 { mx } else { 1.0 };
+                    dist.set = true;
                 }
             }
         }

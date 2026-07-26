@@ -1958,6 +1958,26 @@ impl Compiler {
                 self.emit(5);
                 Ok(Ty::Int)
             }
+            // Settable geodesic source (flood from any endpoint / agents):
+            "term_count" => {
+                self.need(args, 0)?;
+                self.emit(GRAPH_QUERY);
+                self.emit(6);
+                Ok(Ty::Int)
+            }
+            "term" => {
+                self.graph_int_args(args, 1)?;
+                self.emit(GRAPH_QUERY);
+                self.emit(7);
+                Ok(Ty::Int)
+            }
+            // flood_from(node): set the geodesic source; led.dist then reports
+            // distance from `node`. Void — call it in update(), once per cycle.
+            "flood_from" => {
+                self.graph_int_args(args, 1)?;
+                self.emit(FLOOD_FROM);
+                Ok(Ty::Void)
+            }
             _ => self.err(format!("unknown function '{name}'")),
         }
     }
@@ -2284,7 +2304,7 @@ fn decode_op(code: &[u8], pc: usize) -> (String, usize) {
         GRAPH_QUERY => {
             let k = match b(0) {
                 0 => "seg_count", 1 => "seg_len", 2 => "seg_node", 3 => "node_deg",
-                4 => "node_seg", 5 => "node_side", _ => "?",
+                4 => "node_seg", 5 => "node_side", 6 => "term_count", 7 => "term", _ => "?",
             };
             (format!("GRAPH_QUERY {k}"), 2)
         }
@@ -2292,6 +2312,7 @@ fn decode_op(code: &[u8], pc: usize) -> (String, usize) {
         STORE_BUF => (format!("STORE_BUF id={}", b(0)), 2),
         SAMPLE_TEX => (format!("SAMPLE_TEX id={}", b(0)), 2),
         PAINT_TEX => (format!("PAINT_TEX id={}", b(0)), 2),
+        FLOOD_FROM => ("FLOOD_FROM".into(), 1),
         other => (format!("?? 0x{other:02x}"), 0),
     }
 }
@@ -2400,6 +2421,7 @@ mod fx_vm_op {
     pub const STORE_BUF: u8 = 58;
     pub const SAMPLE_TEX: u8 = 59;
     pub const PAINT_TEX: u8 = 60;
+    pub const FLOOD_FROM: u8 = 61;
 }
 
 /// `.fxb` flags bit: a buffer descriptor table follows `code` (mirrors

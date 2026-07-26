@@ -11,7 +11,7 @@
 
 import { effectStore, type StoredEffect } from "./effectStore";
 
-const SEED_FLAG = "ledmapper.seededEffects.v4";
+const SEED_FLAG = "ledmapper.seededEffects.v5";
 
 interface Starter {
   id: string;
@@ -73,23 +73,36 @@ vec3 shade(Led led) {
     id: "builtin-flood",
     name: "Flood",
     tags: ["starter", "topology"],
-    source: `uniform float rate : 0.05 .. 2.0 = 0.35;
-uniform float edge : 0.02 .. 0.4 = 0.12;
+    source: `uniform float speed : 0.05 .. 2.0 = 0.35;
+uniform float tail : 0.05 .. 0.6 = 0.25;
 uniform vec3 tint : color = 0.2, 0.7, 1.0;
 uniform float rainbow : 0.0 .. 1.0 = 0.0;
 
+// A wavefront leaves an endpoint and propagates outward by geodesic distance,
+// lighting each LED as it arrives then decaying behind it; once everything has
+// faded it restarts from a DIFFERENT random endpoint. flood_from(node) reseats
+// led.dist to be the distance from that endpoint (0..1), so the fill follows
+// the wires and forks at Ys.
 state float front;
+state int started;
 
 void update() {
-  // Wavefront position sweeps 0..1 along the topology, then repeats.
-  front = fract(time * rate);
+  if (started == 0) { started = 1; flood_from(term(0)); front = 0.0; }
+  front = front + speed * dt;
+  if (front > 1.0 + tail) {
+    int tc = term_count();
+    int k = 0;
+    if (tc > 0) { k = int(hash(float(frame) * 0.017) * float(tc)); }
+    if (k >= tc) { k = 0; }
+    flood_from(term(k)); // re-roll the source endpoint each cycle
+    front = 0.0;
+  }
 }
 
 vec3 shade(Led led) {
-  // Fill everything the front has passed (led.dist < front) with a soft leading
-  // edge. led.dist is geodesic, so the fill follows the wires and forks at Ys.
-  float lit = 1.0 - smoothstep(front, front + edge, led.dist);
-  vec3 hue = hsv2rgb(led.dist * 0.7, 0.9, 1.0);
+  float reached = front - led.dist;            // >0 once the front has passed
+  float lit = clamp(1.0 - reached / tail, 0.0, 1.0) * step(0.0, reached);
+  vec3 hue = hsv2rgb(led.dist, 0.9, 1.0);
   vec3 col = tint * (1.0 - rainbow) + hue * rainbow;
   return col * lit;
 }
@@ -115,7 +128,16 @@ state int started;
 void update() {
   if (started == 0) {
     started = 1;
-    for (int i = 0; i < 8; i = i + 1) { ag[i].seg = i; ag[i].s = 0.0; }
+    // Spawn each agent at a RANDOM endpoint (terminus) of the graph, on a
+    // segment leaving it — then they traverse and branch at junctions below.
+    int tc = term_count();
+    for (int i = 0; i < 8; i = i + 1) {
+      int node = term(int(hash(float(i) * 3.7 + 1.0) * float(tc)));
+      int sg = node_seg(node, 0);
+      if (sg < 0) { sg = i; }
+      ag[i].seg = sg;
+      ag[i].s = 0.0;
+    }
   }
   for (int i = 0; i < 8; i = i + 1) {
     if (i < count) {
@@ -256,15 +278,18 @@ export async function seedBuiltinEffects(): Promise<void> {
     if (localStorage.getItem(SEED_FLAG)) return;
     const now = new Date().toISOString();
     for (const s of STARTERS) {
-      // Skip ids already present so a version bump adds only the NEW starters
-      // (and re-adds ones the user removed) without erroring on existing rows.
-      if (await effectStore.get(s.id)) continue;
+      // Builtins are immutable (the editor blocks edits), so on a version bump
+      // OVERWRITE them — this refreshes a starter's source for existing users
+      // (e.g. Flood/Agentic gaining flood_from) rather than leaving the old
+      // copy. A user's own duplicates have non-builtin ids and are untouched.
+      // createdAt is preserved so the library ordering doesn't churn.
+      const existing = await effectStore.get(s.id);
       const rec: StoredEffect = {
         id: s.id,
         name: s.name,
         source: s.source,
         tags: s.tags,
-        createdAt: now,
+        createdAt: existing?.createdAt ?? now,
         updatedAt: now,
       };
       await effectStore.createWithId(rec);
