@@ -38,6 +38,10 @@
   --f-body: 0.95rem;
   --f-caption: 0.8rem;
 
+  /* --- font families (overridable by Settings ▸ Appearance) --- */
+  --font-ui: system-ui, sans-serif;
+  --font-mono: ui-monospace, monospace;
+
   /* --- motion (§2.6) --- */
   --motion-micro: 120ms;
   --motion-screen: 220ms;
@@ -55,7 +59,7 @@ body {
   min-height: 100%;
   background: var(--bg);
   color: var(--text);
-  font: var(--f-body) / 1.5 system-ui, sans-serif;
+  font: var(--f-body) / 1.5 var(--font-ui);
   -webkit-tap-highlight-color: transparent;
 }
 

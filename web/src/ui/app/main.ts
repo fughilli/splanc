@@ -29,8 +29,14 @@ import { EffectEditorScreen } from "../screens/effectEditor";
 import { CaptureScreen } from "../screens/capture";
 import { PerfPanelScreen } from "../screens/perfPanel";
 import { CalibrateScreen } from "../screens/calibrate";
+import { SettingsScreen } from "../screens/settings";
+import { initAppearance } from "../../store/appearance";
 
 async function main(): Promise<void> {
+  // Apply the saved appearance (theme / fonts / scale) before the shell mounts
+  // so there's no flash of the default palette.
+  initAppearance();
+
   installIconSprite();
 
   const mount = document.getElementById("app") ?? document.body;
@@ -92,6 +98,10 @@ async function main(): Promise<void> {
     .add("/perf/calibrate", () => {
       shell.setChrome({ title: "Calibrate", back: true, tabs: false });
       return CalibrateScreen(router);
+    })
+    .add("/settings", () => {
+      shell.setChrome({ title: "Appearance", back: true, tabs: true });
+      return SettingsScreen(router);
     })
     .add("/capture", () => {
       shell.setChrome({ title: "Capture", back: true, tabs: false, overlay: true });

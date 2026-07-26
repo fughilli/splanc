@@ -12,6 +12,7 @@
 
 import type { OutputMap, Topology, Vec3 } from "@ledmapper/protocol";
 import { applySimilarity, fitSimilarity, type Similarity } from "../geom/fit";
+import { renderSettings } from "../store/appearance";
 
 export interface TruthPoint {
   id: number;
@@ -244,8 +245,16 @@ export class MapView {
     const dpr = laidOut ? this.dpr : 1;
     const w = laidOut ? this.cssW : this.canvas.width;
     const h = laidOut ? this.cssH : this.canvas.height;
+    // Live appearance knobs (Settings ▸ Appearance) — read each frame so a
+    // change re-themes every open viewport immediately. Instance toggles OR the
+    // configured defaults, so a screen's explicit "Grid"/"Triad" still wins.
+    const rs = renderSettings();
+    const showGrid = this.showGrid || rs.showGrid;
+    const showTriad = this.showTriad || rs.showTriad;
+    const ledScale = rs.ledSize;
+    const glow = rs.glow;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = "#111";
+    ctx.fillStyle = rs.viewBg;
     ctx.fillRect(0, 0, w, h);
     const leds = this.map.leds;
     if (leds.length === 0) {
@@ -299,7 +308,7 @@ export class MapView {
       proj([x, y, z] as unknown as Vec3);
 
     // -- reference grid on the ground (Y=0) plane, with graduations ---------
-    if (this.showGrid) {
+    if (showGrid) {
       const step = niceStep(maxR / 4); // ~8 divisions across the fixture
       const n = Math.max(2, Math.ceil((maxR * 1.4) / step));
       const ext = n * step;
@@ -442,10 +451,10 @@ export class MapView {
         const g = col[o + 1] ?? 0;
         const b = col[o + 2] ?? 0;
         const bright = (r + g + b) / 3;
-        if (bright > 6) {
-          const rad = 6 + bright / 10;
+        if (bright > 6 && glow > 0) {
+          const rad = (6 + bright / 10) * ledScale;
           const halo = ctx.createRadialGradient(p.sx, p.sy, 0, p.sx, p.sy, rad);
-          halo.addColorStop(0, `rgb(${r} ${g} ${b} / 0.55)`);
+          halo.addColorStop(0, `rgb(${r} ${g} ${b} / ${Math.min(1, 0.55 * glow).toFixed(3)})`);
           halo.addColorStop(1, `rgb(${r} ${g} ${b} / 0)`);
           ctx.fillStyle = halo;
           ctx.beginPath();
@@ -460,7 +469,7 @@ export class MapView {
         const g = col[o + 1] ?? 0;
         const b = col[o + 2] ?? 0;
         ctx.beginPath();
-        ctx.arc(p.sx, p.sy, 2.2, 0, Math.PI * 2);
+        ctx.arc(p.sx, p.sy, 2.2 * ledScale, 0, Math.PI * 2);
         // Unlit LEDs stay a faint grey so the fixture shape is always visible.
         ctx.fillStyle = r + g + b < 12 ? "rgb(60 60 68)" : `rgb(${r} ${g} ${b})`;
         ctx.fill();
@@ -468,7 +477,7 @@ export class MapView {
     } else {
       for (const p of pts) {
         const c = p.led.confidence;
-        const r = 2.5 + 2 * c;
+        const r = (2.5 + 2 * c) * ledScale;
         ctx.beginPath();
         ctx.arc(p.sx, p.sy, r, 0, Math.PI * 2);
         // Confidence: green (high) -> amber -> red (low).
@@ -512,7 +521,7 @@ export class MapView {
     }
 
     // -- world coordinate triad (X red, Y green, Z blue), on top -----------
-    if (this.showTriad) {
+    if (showTriad) {
       const L = niceStep(maxR / 2) * 2;
       const O = pw(0, 0, 0);
       const axes: [number, number, number, string, string][] = [

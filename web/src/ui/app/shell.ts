@@ -8,7 +8,7 @@
  * AND a tab — tapping either opens the device sheet.
  */
 
-import { IconButton, StatusPill, type IconName, type PillHandle } from "../kit";
+import { IconButton, StatusPill, icon, type IconName, type PillHandle } from "../kit";
 import { openDeviceSheet } from "../screens/deviceSheet";
 import { installMenuItem, onInstallChange } from "./pwa";
 import { appState } from "./state";
@@ -88,11 +88,31 @@ export class Shell {
   /** Repopulate the ⋯ menu and hide the whole affordance when it's empty. */
   private rebuildMenu(): void {
     this.menu.replaceChildren();
+    // Appearance (theme / fonts / 3D view) — always available.
+    this.menu.appendChild(
+      this.menuItem("settings", "Appearance", () => this.router?.navigate("/settings")),
+    );
     const install = installMenuItem(() => this.closeMenu());
     if (install) this.menu.appendChild(install);
     const hasItems = this.menu.childElementCount > 0;
     this.menuWrap.style.display = hasItems ? "" : "none";
     if (!hasItems) this.closeMenu();
+  }
+
+  /** Build a ⋯-menu row (icon + label) that closes the menu, then runs `onPick`. */
+  private menuItem(iconName: IconName, label: string, onPick: () => void): HTMLButtonElement {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "appbar-menu-item";
+    item.append(icon(iconName));
+    const span = document.createElement("span");
+    span.textContent = label;
+    item.appendChild(span);
+    item.addEventListener("click", () => {
+      this.closeMenu();
+      onPick();
+    });
+    return item;
   }
 
   private toggleMenu(): void {
