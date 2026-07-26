@@ -18,6 +18,8 @@ Drive it from the container:
     curl 'host:8092/cert?host=10.59.111.165'            # is the cert acceptable?
     curl 'host:8092/app?wss=wss://10.59.111.165/ws'     # load the hosted app, read status
     curl 'host:8092/rename?url=wss://10.59.111.165/ws&name=Foo'  # rename round-trip (restores)
+    curl 'host:8092/wsprobe?url=wss://10.59.111.165/ws'     # RAW host wss client (no browser/PNA)
+    curl 'host:8092/wsrename?url=wss://10.59.111.165/ws&name=Foo'  # RAW rename round-trip
 
   /probe  opens `new WebSocket(url)` from a cert-accepting context and reports
           whether it reaches OPEN (i.e. TLS handshake + WS upgrade succeed — the
@@ -33,8 +35,12 @@ Drive it from the container:
 from __future__ import annotations
 
 import argparse
+import base64
 import json
+import os
 import socket
+import ssl
+import struct
 import sys
 import threading
 import urllib.parse
@@ -99,6 +105,184 @@ _RENAME = """
   };
 }
 """
+
+
+# --- Raw TLS-WebSocket client (no browser) --------------------------------
+# The headless browser can't reach a private-IP wss from a scriptable origin
+# (Private Network Access + the player's 2-socket cap fighting the landing
+# page). This host-side client dials the device directly with CERT_NONE — no
+# browser policy in the way — and speaks the real ledmapper protocol, so it
+# validates the wss:443 upgrade + hello/welcome + SetDeviceName end to end.
+
+
+def _varint(n: int) -> bytes:
+    out = bytearray()
+    while n > 127:
+        out.append((n & 0x7F) | 0x80)
+        n >>= 7
+    out.append(n)
+    return bytes(out)
+
+
+def _strf(field: int, s: str) -> bytes:
+    b = s.encode()
+    return _varint((field << 3) | 2) + _varint(len(b)) + b
+
+
+def _msgf(field: int, inner: bytes) -> bytes:
+    return _varint((field << 3) | 2) + _varint(len(inner)) + inner
+
+
+def _pb_hello() -> bytes:  # ClientMessage{hello=1: Hello{client=1, app_version=2}}
+    return _msgf(1, _strf(1, "host-wsprobe") + _strf(2, "probe"))
+
+
+def _pb_setname(name: str) -> bytes:  # ClientMessage{set_device_name=27: {name=1}}
+    return _msgf(27, _strf(1, name))
+
+
+def _pb_fields(buf: bytes) -> dict:
+    out: dict = {}
+    i = 0
+    n = len(buf)
+
+    def rv() -> int:
+        nonlocal i
+        sh = res = 0
+        while True:
+            b = buf[i]
+            i += 1
+            res |= (b & 0x7F) << sh
+            sh += 7
+            if not (b & 0x80):
+                return res
+
+    while i < n:
+        tag = rv()
+        field, wire = tag >> 3, tag & 7
+        if wire == 2:
+            ln = rv()
+            v = buf[i:i + ln]
+            i += ln
+        elif wire == 0:
+            v = rv()
+        elif wire == 1:
+            v = buf[i:i + 8]
+            i += 8
+        elif wire == 5:
+            v = buf[i:i + 4]
+            i += 4
+        else:
+            break
+        out.setdefault(field, []).append(v)
+    return out
+
+
+def _welcome_name(frame: bytes):
+    """(device_name, mac) if `frame` is a ServerMessage.welcome, else None."""
+    sm = _pb_fields(frame)
+    if 1 not in sm:  # ServerMessage.welcome = field 1
+        return None
+    w = _pb_fields(sm[1][0])
+    name = w[5][0].decode() if 5 in w else ""  # Welcome.device_name = 5
+    mac = w[4][0].decode() if 4 in w else ""    # Welcome.mac = 4
+    return name, mac
+
+
+def _wss_open(host: str, port: int, path: str, timeout: float) -> ssl.SSLSocket:
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    raw = socket.create_connection((host, port), timeout=timeout)
+    s = ctx.wrap_socket(raw, server_hostname=host)
+    s.settimeout(timeout)
+    key = base64.b64encode(os.urandom(16)).decode()
+    s.sendall((f"GET {path} HTTP/1.1\r\nHost: {host}\r\nUpgrade: websocket\r\n"
+               f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\n"
+               f"Sec-WebSocket-Version: 13\r\n\r\n").encode())
+    resp = b""
+    while b"\r\n\r\n" not in resp:
+        chunk = s.recv(1024)
+        if not chunk:
+            raise ConnectionError("closed during handshake")
+        resp += chunk
+    status = resp.split(b"\r\n", 1)[0].decode("latin1")
+    if "101" not in status:
+        raise ConnectionError(f"no upgrade (got: {status!r})")
+    return s
+
+
+def _ws_send(s: ssl.SSLSocket, payload: bytes) -> None:
+    hdr = bytearray([0x82])  # FIN + binary
+    n = len(payload)
+    mask = os.urandom(4)
+    if n < 126:
+        hdr.append(0x80 | n)
+    elif n < 65536:
+        hdr.append(0x80 | 126)
+        hdr += struct.pack("!H", n)
+    else:
+        hdr.append(0x80 | 127)
+        hdr += struct.pack("!Q", n)
+    hdr += mask
+    s.sendall(bytes(hdr) + bytes(b ^ mask[i % 4] for i, b in enumerate(payload)))
+
+
+def _ws_recv(s: ssl.SSLSocket) -> bytes:
+    def exact(n: int) -> bytes:
+        buf = b""
+        while len(buf) < n:
+            c = s.recv(n - len(buf))
+            if not c:
+                raise ConnectionError("closed")
+            buf += c
+        return buf
+
+    b0, b1 = exact(2)
+    ln = b1 & 0x7F
+    if ln == 126:
+        ln = struct.unpack("!H", exact(2))[0]
+    elif ln == 127:
+        ln = struct.unpack("!Q", exact(8))[0]
+    return exact(ln)  # server frames are unmasked
+
+
+def _next_welcome(s: ssl.SSLSocket, tries: int = 6):
+    for _ in range(tries):  # skip any non-welcome server frames
+        nm = _welcome_name(_ws_recv(s))
+        if nm is not None:
+            return nm
+    raise ConnectionError("no welcome frame")
+
+
+def ws_probe_raw(url: str, timeout_ms: float) -> dict:
+    u = urllib.parse.urlparse(url)
+    to = timeout_ms / 1000.0
+    s = _wss_open(u.hostname, u.port or 443, u.path or "/ws", to)
+    try:
+        _ws_send(s, _pb_hello())
+        name, mac = _next_welcome(s)
+        return {"url": url, "connected": True, "device_name": name, "mac": mac}
+    finally:
+        s.close()
+
+
+def ws_rename_raw(url: str, new_name: str, timeout_ms: float) -> dict:
+    u = urllib.parse.urlparse(url)
+    to = timeout_ms / 1000.0
+    s = _wss_open(u.hostname, u.port or 443, u.path or "/ws", to)
+    try:
+        _ws_send(s, _pb_hello())
+        before, mac = _next_welcome(s)
+        _ws_send(s, _pb_setname(new_name))
+        after, _ = _next_welcome(s)
+        _ws_send(s, _pb_setname(before))       # restore original
+        restored, _ = _next_welcome(s)
+        return {"url": url, "new_name": new_name, "mac": mac, "before": before,
+                "after": after, "restored": restored,
+                "applied": after == new_name, "restored_ok": restored == before}
+    finally:
+        s.close()
 
 
 def _origin_of(ws_url: str) -> str:
@@ -251,6 +435,19 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 self._json(probe_ws(url, int(g("timeout", "8000")),
                                     g("ignore_cert", "1") not in ("0", "false")))
+            elif route == "/wsprobe":
+                url = g("url")
+                if not url:
+                    self._json({"error": "missing ?url=wss://host/ws"}, 400)
+                    return
+                self._json(ws_probe_raw(url, int(g("timeout", "8000"))))
+            elif route == "/wsrename":
+                url = g("url")
+                name = g("name")
+                if not url or not name:
+                    self._json({"error": "need ?url=wss://host/ws&name=NewName"}, 400)
+                    return
+                self._json(ws_rename_raw(url, name, int(g("timeout", "10000"))))
             elif route == "/rename":
                 url = g("url")
                 name = g("name")
