@@ -227,3 +227,36 @@ test("a real ring still closes at its strand ends (exactly one loop-chord)", asy
   const t = await extractTopology(map(pts), { debug: true });
   assert.equal(t.debug!.edges.filter((e) => e.chord).length, 1, "the ring closes with one chord at its seam");
 });
+
+// A closed "double figure-8": a single strand that crosses ITSELF at two points
+// — (2,0) and (4,0) — rather than the figure-8's single crossing. Arm A sweeps
+// y = amp·sin(πx/2) left→right across x∈[0,6] (an up/down/up weave); arm B is its
+// mirror (y negated) returning right→left. The arms coincide exactly at x=2 and
+// x=4 (where sin=0 — the crossings) and bow ±amp apart between them, forming
+// three lobes joined at two degree-4 nodes. This is the hard degeneracy case:
+// distinct parts of one strand are solved coincident (at each crossing) AND two
+// arcs run in parallel between the same pair of junctions (a double edge).
+function doubleFigureEight(amp = 2, step = 0.5): LedEntry[] {
+  const yA = (x: number): number => amp * Math.sin((Math.PI * x) / 2);
+  const pts: Vec3[] = [];
+  for (let x = 0; x <= 6 + 1e-9; x += step) pts.push([x, yA(x), 0]); // arm A  →
+  for (let x = 6 - step; x > 1e-9; x -= step) pts.push([x, -yA(x), 0]); // arm B  ←
+  return pts.map((p, i) => led(i, p));
+}
+
+// The correct topology has exactly two junctions — the two self-crossings — with
+// the lobes remaining closed loops. The extractor currently mis-solves the
+// coincident crossings into a spray of off-crossing branch points with no cycle
+// (observed: 6 branch points, none at a crossing, 0 cycles). Marked `todo` so it
+// documents the target without failing CI; it should start passing once the
+// crossing/coincident handling is fixed, at which point drop the todo flag.
+test("a double figure-8 resolves its two self-crossings as junctions", { todo: true }, async () => {
+  const t = await extractTopology(map(doubleFigureEight()), { debug: true });
+  const nearCrossing = (xy: Vec3): boolean =>
+    t.branchPoints.some((b) => Math.hypot(b.xyz[0] - xy[0], b.xyz[1] - xy[1]) < 0.6);
+  assert.equal(t.branchPoints.length, 2, "one junction per self-crossing");
+  assert.ok(nearCrossing([2, 0, 0]), "a junction sits at the first crossing (2,0)");
+  assert.ok(nearCrossing([4, 0, 0]), "a junction sits at the second crossing (4,0)");
+  assert.ok(hasCycle(t), "the lobes remain closed loops");
+  assert.equal(t.associations.length, 24, "every LED associated");
+});
