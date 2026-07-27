@@ -18,7 +18,7 @@
  *     <pre><code> backdrop, see highlight.ts) — no heavy editor dependency.
  *  4. An interactive AI CHAT panel driving a tool-use loop (set_script /
  *     capture_preview vision) against api.anthropic.com (BYO key).
- *  5. Key config + disassembly toggle moved into a ⋯ overflow menu in the
+ *  5. Key config moved into a ⋯ overflow menu in the
  *     editor header (out of the main body).
  */
 
@@ -518,7 +518,7 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   // hidden), so all controls live in small, semi-transparent clusters that
   // OVERLAY the workspace corners instead of pushing layout:
   //   • top-left:  floating Back button + the inline-editable name pill
-  //   • top-right: a floating ⋯ overflow menu (AI key…, disasm toggle)
+  //   • top-right: a floating ⋯ overflow menu (AI key…, Format code, Reset layout)
   const floatL = document.createElement("div");
   floatL.className = "fxedit-float fxedit-float--l";
   const backBtn = IconButton("back", { title: "Back to effects", onClick: () => router.navigate("/effects") });
@@ -542,17 +542,6 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     closeMenu();
     openAiKeySheet();
   });
-  const miDisasm = document.createElement("button");
-  miDisasm.type = "button";
-  miDisasm.className = "fxedit-menu-item";
-  function syncDisasmLabel(): void {
-    miDisasm.textContent = layout.isVisible("disasm") ? "Hide disassembly" : "Show disassembly";
-  }
-  miDisasm.addEventListener("click", () => {
-    layout.setVisible("disasm", !layout.isVisible("disasm"));
-    syncDisasmLabel();
-    closeMenu();
-  });
   const miFormat = document.createElement("button");
   miFormat.type = "button";
   miFormat.className = "fxedit-menu-item";
@@ -567,10 +556,9 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   miReset.textContent = "Reset layout";
   miReset.addEventListener("click", () => {
     layout.resetLayout();
-    syncDisasmLabel(); // reset re-hides disassembly
     closeMenu();
   });
-  menu.append(miKey, miFormat, miDisasm, miReset);
+  menu.append(miKey, miFormat, miReset);
 
   // Auto-format (re-indent) the buffer, keeping the caret at roughly the same
   // logical spot (measured in non-whitespace characters, which the reformat
@@ -1031,7 +1019,6 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
 
     refreshDevice();
     layout.mount();
-    syncDisasmLabel();
     resizePreviewCanvas();
     unsubAppState = appState.subscribe(() => refreshDevice());
 

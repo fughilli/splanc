@@ -102,7 +102,7 @@ const NARROW_QUERY = "(max-width: 719px)";
 /** Default WIDE arrangement: Code is the center; Uniforms + Preview dock right;
  * Chat / Diagnostics / Disassembly dock bottom (disasm hidden by default).
  * Default NARROW arrangement: Code fills the center region; everything else is a
- * tab group in the bottom region (Uniforms fronted; disasm hidden). */
+ * tab group in the bottom region (Uniforms fronted). */
 function defaultLayout(): Persisted {
   return {
     v: 2,
@@ -115,7 +115,7 @@ function defaultLayout(): Persisted {
     },
     active: { left: null, right: "uniforms", top: null, bottom: "diagnostics" },
     edgeSizes: { left: 0.24, right: 0.3, top: 0.25, bottom: 0.32 },
-    hidden: ["disasm"],
+    hidden: [],
     ndock: {
       code: "center",
       uniforms: "bottom",
@@ -157,7 +157,9 @@ function loadPersisted(): Persisted {
         top: p.edgeSizes?.top ?? def.edgeSizes.top,
         bottom: p.edgeSizes?.bottom ?? def.edgeSizes.bottom,
       },
-      hidden: p.hidden ?? def.hidden,
+      // Disassembly is always present now (its show/hide toggle was removed);
+      // force it out of any previously-persisted `hidden` set.
+      hidden: (p.hidden ?? def.hidden).filter((id) => id !== "disasm"),
       // Narrow fields are new; fold defaults under any stored overrides. Values
       // are sanitized in reconcileState (every pane ends up in exactly one
       // region and each region fronts a visible pane).
