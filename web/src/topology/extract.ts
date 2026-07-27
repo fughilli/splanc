@@ -400,74 +400,74 @@ export async function extractTopology(
   const edges = [...edgeMap.values()].sort((a, b) => a.d - b.d);
   const uf = new UnionFind(nNodes);
   const adj: number[][] = Array.from({ length: nNodes }, () => []);
-  const dropped: { i: number; j: number; d: number }[] = [];
   for (const e of edges) {
     if (uf.union(e.i, e.j)) {
       adj[e.i]!.push(e.j);
       adj[e.j]!.push(e.i);
       if (wantDebug) dbgEdges.push({ a: NP[e.i]!, b: NP[e.j]!, d: e.d, chord: false });
-    } else {
-      dropped.push(e); // stays length-ascending (edges is sorted)
     }
   }
   pushStage("MST forest", { nodes: snapNodes(), edges: adjToEdges(adj) });
 
-  // 3b. re-add loop-closing chords. The MST is a spanning tree, so it breaks
-  //     EVERY cycle the k-NN graph had — a genuine fixture loop is opened at its
-  //     longest edge. We re-close a dropped edge (i,j) when it looks like a real
-  //     seam rather than a false "fold" shortcut, judged by:
-  //       • short:   d ≤ loopFactor × spacing,
-  //       • far:     i,j are ≥ MIN_LOOP_HOPS apart in the tree (a real loop, not
-  //                  a tiny redundant chord),
-  //       • not a junction end: each endpoint currently has degree ≤ 2 (we don't
-  //                  hang a chord off an existing branch), and
-  //       • COLLINEAR: at each endpoint the chord is roughly collinear with the
-  //                  strand's local TANGENT — it continues the strand rather than
-  //                  branching off it. This is the key discriminator: a real seam
-  //                  extends the strand's through-direction (|cos| ≈ 1), whereas a
-  //                  fold where two parallel arms pass near each other meets the
-  //                  strand side-on (|cos| ≈ 0), so it is rejected — even for a
-  //                  slanted cross-edge that a "points-away-from-neighbour" test
-  //                  would wrongly accept. This lets a loop that broke at a
-  //                  degree-2 interior point still re-close, which the old
-  //                  degree-1-only rule could not. Endpoints become anchors so the
-  //                  loop traces as segments.
+  // 3b. reconnect the loose ends the MST created. The MST is a spanning tree, so
+  //     it opens every cycle in the k-NN graph — a real fixture loop is cut at one
+  //     edge, and a self-CROSSING (a coincidence-merged node the strand passes
+  //     through twice) has some of its edges cut too. Both leave degree-1 "loose
+  //     ends". Re-run the nearest-neighbour search (from the first pass) at each
+  //     loose end: rejoin it to the closest node within the cap that is NOT
+  //     already a few hops away — the single shortest candidate per end.
+  //
+  //     Anchoring on genuine loose ends is the whole trick. A fold, where two
+  //     parallel arms pass near each other, is made of degree-2 THROUGH-points,
+  //     never loose ends, so it is never bridged — no tangent/collinearity test
+  //     needed. And a cut crossing arm-neighbour IS a loose end whose nearest
+  //     far-hop node is the crossing itself, so each cut arm rejoins it and the
+  //     crossing is restored to its true (degree-4) degree.
+  //
+  //     For the partner we pick the best strand CONTINUATION, not the nearest
+  //     node: a loose end reconnects to whichever candidate most extends its
+  //     strand's forward direction. Nearest is wrong at a crossing — a cut arm's
+  //     closest node is the adjacent arm 1 spacing away, but the crossing it
+  //     should pass through is collinear with the arm, so the continuation score
+  //     picks the crossing and restores it to degree-4. A fold's parallel arms
+  //     have no forward continuation (they run alongside, not into each other),
+  //     so nothing bridges them — no separate tangent test needed.
+  //
+  //     `reachableWithin` rejects a 2-hop "triangle" to an immediate 2nd-neighbour;
+  //     with loopFactor ≤ radiusFactor the partner is always in the same k-NN
+  //     component, so a reconnect only ever closes a loop, never fuses two strands.
   const unit = (v: Vec3): Vec3 => {
     const m = norm(v) || 1;
     return [v[0] / m, v[1] / m, v[2] / m];
   };
-  // Local strand tangent at i: for a degree-1 end, the forward direction (away
-  // from its neighbour); otherwise the through-line of its two nearest neighbours.
-  const tangentAt = (i: number): { dir: Vec3; deg1: boolean } | null => {
-    const nbrs = adj[i]!;
-    if (nbrs.length === 0) return null;
-    if (nbrs.length === 1) return { dir: unit(sub(NP[i]!, NP[nbrs[0]!]!)), deg1: true };
-    const sorted = [...nbrs].sort((a, b) => dist(NP[i]!, NP[a]!) - dist(NP[i]!, NP[b]!));
-    return { dir: unit(sub(NP[sorted[0]!]!, NP[sorted[1]!]!)), deg1: false };
-  };
-  // The chord i→j continues the strand at i (collinear with its tangent; for a
-  // degree-1 end it must point FORWARD, away from the strand body).
-  const continues = (i: number, j: number): boolean => {
-    const t = tangentAt(i);
-    if (t === null) return true;
-    const c = unit(sub(NP[j]!, NP[i]!));
-    const d = c[0] * t.dir[0] + c[1] * t.dir[1] + c[2] * t.dir[2];
-    return t.deg1 ? d > 0.6 : Math.abs(d) > 0.6;
-  };
   const forced = new Set<number>();
   if (loopFactor > 0) {
     const maxLoopEdge = s * loopFactor;
-    for (const e of dropped) {
+    const ends: number[] = [];
+    for (let i = 0; i < nNodes; i++) if (adj[i]!.length === 1) ends.push(i);
+    for (const u of ends) {
       if (forced.size / 2 >= MAX_LOOPS) break;
-      if (e.d > maxLoopEdge) break; // ascending → the rest are longer too
-      if (adj[e.i]!.length > 2 || adj[e.j]!.length > 2) continue; // not off a junction
-      if (!continues(e.i, e.j) || !continues(e.j, e.i)) continue; // reject side-on folds
-      if (!reachableWithin(adj, e.i, e.j, MIN_LOOP_HOPS - 1)) {
-        adj[e.i]!.push(e.j);
-        adj[e.j]!.push(e.i);
-        forced.add(e.i);
-        forced.add(e.j);
-        if (wantDebug) dbgEdges.push({ a: NP[e.i]!, b: NP[e.j]!, d: e.d, chord: true });
+      if (adj[u]!.length !== 1) continue; // may have gained an edge as another end's partner
+      const fwd = unit(sub(NP[u]!, NP[adj[u]![0]!]!)); // the loose end's forward direction
+      let best = -1;
+      let bestScore = 0.5; // require a genuine forward continuation
+      for (let v = 0; v < nNodes; v++) {
+        if (v === u || adj[u]!.includes(v)) continue;
+        if (dist(NP[u]!, NP[v]!) > maxLoopEdge) continue;
+        if (reachableWithin(adj, u, v, MIN_LOOP_HOPS - 1)) continue; // no corner-cutting
+        const dir = unit(sub(NP[v]!, NP[u]!));
+        const score = dir[0] * fwd[0] + dir[1] * fwd[1] + dir[2] * fwd[2];
+        if (score > bestScore) {
+          bestScore = score;
+          best = v;
+        }
+      }
+      if (best >= 0) {
+        adj[u]!.push(best);
+        adj[best]!.push(u);
+        forced.add(u);
+        forced.add(best);
+        if (wantDebug) dbgEdges.push({ a: NP[u]!, b: NP[best]!, d: dist(NP[u]!, NP[best]!), chord: true });
       }
     }
   }
