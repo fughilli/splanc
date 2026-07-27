@@ -342,6 +342,45 @@ body.is-locked {
   align-items: center;
 }
 
+/* --- topology diagnostics (Debug section) --- */
+.topo-debug {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.topo-debug-layers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+.topo-debug-layers--off {
+  opacity: 0.5;
+}
+.topo-debug-summary {
+  color: var(--text-dim);
+  font-size: var(--f-caption);
+}
+.topo-debug-summary--warn {
+  color: var(--err);
+  font-weight: 600;
+}
+.topo-debug-hint {
+  color: var(--warn);
+  font-size: var(--f-caption);
+}
+.topo-debug-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.topo-debug-pair {
+  color: var(--err);
+  font-size: var(--f-caption);
+}
+.topo-debug-pair--more {
+  color: var(--text-dim);
+}
+
 /* --- transform tools --- */
 .detail-xform {
   display: flex;

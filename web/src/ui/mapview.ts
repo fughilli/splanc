@@ -11,8 +11,17 @@
  */
 
 import type { OutputMap, Topology, Vec3 } from "@ledmapper/protocol";
+import type { TopologyDebug } from "../topology/extract";
 import { applySimilarity, fitSimilarity, type Similarity } from "../geom/fit";
 import { renderSettings } from "../store/appearance";
+
+/** Which diagnostic overlays to draw over the topology (all off by default —
+ * MapView pays no cost until a layer is switched on from the Debug section). */
+export interface DebugOverlayFlags {
+  coincident: boolean;
+  edges: boolean;
+  chords: boolean;
+}
 
 export interface TruthPoint {
   id: number;
@@ -58,6 +67,13 @@ export class MapView {
   // live preview while tuning the extraction (topology/extract.ts).
   private topology: Topology | null = null;
 
+  // Diagnostic overlay (topology/extract.ts debug report): (near-)coincident LED
+  // pairs, the raw graph edges, and loop-chords — drawn only for the enabled
+  // flags. Null (the default) draws nothing extra, so normal topology rendering
+  // is untouched unless the user opts in from the Debug section.
+  private debug: TopologyDebug | null = null;
+  private debugFlags: DebugOverlayFlags = { coincident: false, edges: false, chords: false };
+
   // Per-LED effect colours (flat RGB, aligned to map.leds order). When set, the
   // LEDs render as glowing lights on black instead of confidence shading — the
   // effects-simulator workspace pushes a fresh frame here each animation tick.
@@ -93,6 +109,14 @@ export class MapView {
    * map.leds order). Non-null switches the scatter into "light" rendering. */
   setLedColors(colors: Uint8Array | null): void {
     this.ledColors = colors;
+  }
+
+  /** Set (or clear) the topology-diagnostics overlay + which layers to draw.
+   * Pass `debug = null` to remove it entirely; the enabled `flags` decide which
+   * of coincident pairs / graph edges / loop-chords appear. */
+  setDebugOverlay(debug: TopologyDebug | null, flags?: Partial<DebugOverlayFlags>): void {
+    this.debug = debug;
+    if (flags) this.debugFlags = { ...this.debugFlags, ...flags };
   }
 
   get hasTrajectory(): boolean {
@@ -517,6 +541,69 @@ export class MapView {
         ctx.beginPath();
         ctx.arc(s.sx, s.sy, 6, 0, Math.PI * 2);
         ctx.stroke();
+      }
+    }
+
+    // -- diagnostics overlay: raw graph edges, loop-chords, coincident pairs --
+    // Drawn over the skeleton, under the triad. Each layer is independent and
+    // only present when its flag is on (see setDebugOverlay).
+    if (this.debug !== null) {
+      const dbg = this.debug;
+      const f = this.debugFlags;
+      // Raw connectivity: thin faint grey lines a→b (the whole kept graph).
+      if (f.edges) {
+        ctx.strokeStyle = "rgb(200 210 230 / 0.28)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        for (const e of dbg.edges) {
+          const a = proj(e.a);
+          const b = proj(e.b);
+          ctx.moveTo(a.sx, a.sy);
+          ctx.lineTo(b.sx, b.sy);
+        }
+        ctx.stroke();
+      }
+      // Loop-chords: thick orange — the candidate false bridges.
+      if (f.chords) {
+        ctx.strokeStyle = "rgb(255 140 40 / 0.95)";
+        ctx.lineWidth = 3;
+        for (const e of dbg.edges) {
+          if (!e.chord) continue;
+          const a = proj(e.a);
+          const b = proj(e.b);
+          ctx.beginPath();
+          ctx.moveTo(a.sx, a.sy);
+          ctx.lineTo(b.sx, b.sy);
+          ctx.stroke();
+        }
+      }
+      // Coincident pairs: a bright warning marker at each pair's midpoint, plus
+      // a short connector, sized so an overlapping pair is still eyeball-able.
+      if (f.coincident) {
+        ctx.lineWidth = 1.5;
+        for (const c of dbg.coincident) {
+          const a = proj(c.a);
+          const b = proj(c.b);
+          const mx = (a.sx + b.sx) / 2;
+          const my = (a.sy + b.sy) / 2;
+          ctx.strokeStyle = "rgb(242 85 90 / 0.9)";
+          ctx.beginPath();
+          ctx.moveTo(a.sx, a.sy);
+          ctx.lineTo(b.sx, b.sy);
+          ctx.stroke();
+          // Diamond marker (distinct from the round LED/junction dots).
+          const r = 7;
+          ctx.beginPath();
+          ctx.moveTo(mx, my - r);
+          ctx.lineTo(mx + r, my);
+          ctx.lineTo(mx, my + r);
+          ctx.lineTo(mx - r, my);
+          ctx.closePath();
+          ctx.fillStyle = "rgb(242 85 90 / 0.35)";
+          ctx.fill();
+          ctx.strokeStyle = "rgb(255 120 120 / 0.95)";
+          ctx.stroke();
+        }
       }
     }
 

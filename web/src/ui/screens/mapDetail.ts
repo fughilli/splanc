@@ -10,7 +10,12 @@
  */
 
 import type { OutputMap, Topology } from "@ledmapper/protocol";
-import { extractTopology, type ExtractOptions } from "../../topology/extract";
+import {
+  extractTopology,
+  type ExtractOptions,
+  type TopologyDebug,
+} from "../../topology/extract";
+import { fmtLen, summarizeTopologyDebug } from "../../topology/debugSummary";
 import {
   autoscaleToUnitBox,
   mapBounds,
@@ -99,6 +104,12 @@ export function MapDetailScreen(
   let fineTune = false;
   let cleanup = 0.5;
   const raw = { ...DEFAULTS };
+
+  // Diagnostics (Debug section): master toggle gates the extra `debug: true`
+  // compute; the three layer flags drive the MapView overlay. All off ⇒ no cost.
+  let diagnostics = false;
+  const debugFlags = { coincident: false, edges: false, chords: false };
+  let lastDebug: TopologyDebug | null = null;
 
   const setToggle = (label: string, on: boolean, fn: (v: boolean) => void): HTMLElement => {
     const b = document.createElement("button");
@@ -349,6 +360,55 @@ export function MapDetailScreen(
   progressEl.className = "topo-progress";
   progressEl.style.display = "none";
 
+  // Debug section: a summary line, a hint, and a compact coincident-pair list.
+  const debugSummaryEl = document.createElement("div");
+  debugSummaryEl.className = "topo-debug-summary metric";
+  const debugHintEl = document.createElement("div");
+  debugHintEl.className = "topo-debug-hint";
+  debugHintEl.style.display = "none";
+  debugHintEl.textContent =
+    "Coincident LEDs create a false bridge — re-solve or nudge them, or edit the topology manually.";
+  const debugListEl = document.createElement("div");
+  debugListEl.className = "topo-debug-list metric";
+
+  /** Repaint the Debug section's summary/hint/list from the latest report. */
+  function refreshDebugReport(): void {
+    if (!diagnostics) {
+      debugSummaryEl.textContent = "";
+      debugSummaryEl.classList.remove("topo-debug-summary--warn");
+      debugHintEl.style.display = "none";
+      debugListEl.innerHTML = "";
+      return;
+    }
+    if (lastDebug === null) {
+      debugSummaryEl.textContent = "Diagnostics on — extracting…";
+      debugSummaryEl.classList.remove("topo-debug-summary--warn");
+      debugHintEl.style.display = "none";
+      debugListEl.innerHTML = "";
+      return;
+    }
+    const d = lastDebug;
+    debugSummaryEl.textContent = summarizeTopologyDebug(d);
+    // Prominent warning colour when there's a coincident pair (bridge suspect).
+    debugSummaryEl.classList.toggle("topo-debug-summary--warn", d.coincident.length > 0);
+    debugHintEl.style.display = d.coincident.length > 0 ? "" : "none";
+    debugListEl.innerHTML = "";
+    // Eyeball list of the closest coincident pairs (cap so it stays compact).
+    const pairs = [...d.coincident].sort((a, b) => a.dist - b.dist).slice(0, 8);
+    for (const p of pairs) {
+      const row = document.createElement("div");
+      row.className = "topo-debug-pair";
+      row.textContent = `● coincident pair · ${fmtLen(p.dist)}`;
+      debugListEl.append(row);
+    }
+    if (d.coincident.length > pairs.length) {
+      const more = document.createElement("div");
+      more.className = "topo-debug-pair topo-debug-pair--more";
+      more.textContent = `…and ${d.coincident.length - pairs.length} more`;
+      debugListEl.append(more);
+    }
+  }
+
   function buildTopoPanel(): void {
     topoPanel.innerHTML = "";
     const head = document.createElement("div");
@@ -412,6 +472,61 @@ export function MapDetailScreen(
     addRaw("maxPolyline", "max verts/segment", 4, 128, 4);
     topoPanel.append(disclosure, fine, progressEl);
 
+    // -- Debug disclosure: diagnostics master + overlay layer toggles ---------
+    const dbgDisclosure = document.createElement("button");
+    dbgDisclosure.type = "button";
+    dbgDisclosure.className = "topo-disclosure";
+    let dbgOpen = false;
+    const dbgBody = document.createElement("div");
+    dbgBody.className = "topo-fine topo-debug";
+    dbgBody.style.display = "none";
+    dbgDisclosure.textContent = "Debug ▸";
+    dbgDisclosure.addEventListener("click", () => {
+      dbgOpen = !dbgOpen;
+      dbgBody.style.display = dbgOpen ? "" : "none";
+      dbgDisclosure.textContent = dbgOpen ? "Hide debug" : "Debug ▸";
+    });
+
+    // Layer sub-toggles live in their own row; disabled visually until the
+    // master Diagnostics toggle is on (they still work, just have no report).
+    const layerRow = document.createElement("div");
+    layerRow.className = "topo-debug-layers";
+    const layerToggle = (
+      label: string,
+      key: keyof typeof debugFlags,
+    ): HTMLElement =>
+      setToggle(label, false, (v) => {
+        debugFlags[key] = v;
+        view?.setDebugOverlay(lastDebug, debugFlags);
+      });
+    layerRow.append(
+      layerToggle("Flag coincident LEDs", "coincident"),
+      layerToggle("Show graph edges", "edges"),
+      layerToggle("Highlight loop-chords", "chords"),
+    );
+    const syncLayerRow = (): void => {
+      layerRow.classList.toggle("topo-debug-layers--off", !diagnostics);
+    };
+    syncLayerRow();
+
+    const masterToggle = setToggle("Diagnostics", diagnostics, (v) => {
+      diagnostics = v;
+      syncLayerRow();
+      if (v) {
+        // Re-run with debug on so the report is available.
+        void previewTopology();
+      } else {
+        // Off: drop the report + overlay and clear the section (no extra cost).
+        lastDebug = null;
+        view?.setDebugOverlay(null, debugFlags);
+        refreshDebugReport();
+      }
+    });
+
+    dbgBody.append(masterToggle, layerRow, debugSummaryEl, debugHintEl, debugListEl);
+    topoPanel.append(dbgDisclosure, dbgBody);
+    refreshDebugReport();
+
     const applyBtn = Button({
       label: "Apply to device",
       icon: "map-to-device",
@@ -432,6 +547,8 @@ export function MapDetailScreen(
     if (rec === null || view === null) return;
     const map = rec.map;
     const options: ExtractOptions = useFine || fineTune ? { ...raw } : cleanupToOptions(cleanup, raw);
+    // Only pay for the debug report when the master Diagnostics toggle is on.
+    if (diagnostics) options.debug = true;
     topoAbort?.abort();
     const ac = new AbortController();
     topoAbort = ac;
@@ -447,6 +564,11 @@ export function MapDetailScreen(
       topo.mapId = map.mapId;
       currentTopology = topo;
       view.setTopology(topo);
+      // Refresh the diagnostics report + overlay (or clear it when Diagnostics
+      // is off), then update the Debug section's summary + coincident list.
+      lastDebug = diagnostics ? (topo.debug ?? null) : null;
+      view.setDebugOverlay(lastDebug, debugFlags);
+      refreshDebugReport();
       const verts = topo.segments.reduce((n, s) => n + s.polyline.length, 0);
       const lenM = topo.segments.reduce((a, s) => a + s.length, 0);
       summaryEl.textContent =
