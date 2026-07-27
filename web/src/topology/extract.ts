@@ -412,24 +412,56 @@ export async function extractTopology(
   }
   pushStage("MST forest", { nodes: snapNodes(), edges: adjToEdges(adj) });
 
-  // 3b. re-add loop-closing chords: a short dropped edge closes a genuine cycle
-  //     (a ring in the fixture) ONLY when it joins two STRAND ENDS (the seam the
-  //     MST broke). When the MST spans a cycle it removes one edge, leaving its
-  //     two endpoints at degree 1 — those are the ends to rejoin. Requiring both
-  //     endpoints to be degree-1 rejects the false "mid-loop" bridges that arise
-  //     where a strand folds and two INTERIOR (degree-2) points pass near each
-  //     other — the spurious geodesic shortcuts that made flood pulses jump. The
-  //     `> MIN_LOOP_HOPS` guard keeps a real ring (ends far along the strand)
-  //     from being "closed" over a tiny fold. Endpoints become anchors so the
-  //     loop traces as segments.
+  // 3b. re-add loop-closing chords. The MST is a spanning tree, so it breaks
+  //     EVERY cycle the k-NN graph had — a genuine fixture loop is opened at its
+  //     longest edge. We re-close a dropped edge (i,j) when it looks like a real
+  //     seam rather than a false "fold" shortcut, judged by:
+  //       • short:   d ≤ loopFactor × spacing,
+  //       • far:     i,j are ≥ MIN_LOOP_HOPS apart in the tree (a real loop, not
+  //                  a tiny redundant chord),
+  //       • not a junction end: each endpoint currently has degree ≤ 2 (we don't
+  //                  hang a chord off an existing branch), and
+  //       • COLLINEAR: at each endpoint the chord is roughly collinear with the
+  //                  strand's local TANGENT — it continues the strand rather than
+  //                  branching off it. This is the key discriminator: a real seam
+  //                  extends the strand's through-direction (|cos| ≈ 1), whereas a
+  //                  fold where two parallel arms pass near each other meets the
+  //                  strand side-on (|cos| ≈ 0), so it is rejected — even for a
+  //                  slanted cross-edge that a "points-away-from-neighbour" test
+  //                  would wrongly accept. This lets a loop that broke at a
+  //                  degree-2 interior point still re-close, which the old
+  //                  degree-1-only rule could not. Endpoints become anchors so the
+  //                  loop traces as segments.
+  const unit = (v: Vec3): Vec3 => {
+    const m = norm(v) || 1;
+    return [v[0] / m, v[1] / m, v[2] / m];
+  };
+  // Local strand tangent at i: for a degree-1 end, the forward direction (away
+  // from its neighbour); otherwise the through-line of its two nearest neighbours.
+  const tangentAt = (i: number): { dir: Vec3; deg1: boolean } | null => {
+    const nbrs = adj[i]!;
+    if (nbrs.length === 0) return null;
+    if (nbrs.length === 1) return { dir: unit(sub(NP[i]!, NP[nbrs[0]!]!)), deg1: true };
+    const sorted = [...nbrs].sort((a, b) => dist(NP[i]!, NP[a]!) - dist(NP[i]!, NP[b]!));
+    return { dir: unit(sub(NP[sorted[0]!]!, NP[sorted[1]!]!)), deg1: false };
+  };
+  // The chord i→j continues the strand at i (collinear with its tangent; for a
+  // degree-1 end it must point FORWARD, away from the strand body).
+  const continues = (i: number, j: number): boolean => {
+    const t = tangentAt(i);
+    if (t === null) return true;
+    const c = unit(sub(NP[j]!, NP[i]!));
+    const d = c[0] * t.dir[0] + c[1] * t.dir[1] + c[2] * t.dir[2];
+    return t.deg1 ? d > 0.6 : Math.abs(d) > 0.6;
+  };
   const forced = new Set<number>();
   if (loopFactor > 0) {
     const maxLoopEdge = s * loopFactor;
     for (const e of dropped) {
       if (forced.size / 2 >= MAX_LOOPS) break;
       if (e.d > maxLoopEdge) break; // ascending → the rest are longer too
-      // Only join two current strand ends (degree 1) — not mid-strand interiors.
-      if (adj[e.i]!.length !== 1 || adj[e.j]!.length !== 1) continue;
+      if (adj[e.i]!.length > 2 || adj[e.j]!.length > 2) continue; // not off a junction
+      if (!continues(e.i, e.j) || !continues(e.j, e.i)) continue; // reject side-on folds
       if (!reachableWithin(adj, e.i, e.j, MIN_LOOP_HOPS - 1)) {
         adj[e.i]!.push(e.j);
         adj[e.j]!.push(e.i);

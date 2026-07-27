@@ -132,6 +132,31 @@ test("a closed ring keeps its loop (flood can swirl); id-order-independent", asy
   assert.equal(scrambled.associations.length, 16);
 });
 
+test("a lollipop keeps its loop even though the loop breaks at a non-end node", async () => {
+  // A stem leading into a ring (a "lollipop"/"P"). The ring is a cycle whose
+  // nodes are NOT degree-1 after the MST opens it (the break points keep two
+  // neighbours), so the old degree-1-only loop closure could not re-close it.
+  // The direction-based closure must: the seam continues the ring smoothly.
+  const pts: Vec3[] = [];
+  let id = 0;
+  const add = (x: number, y: number): void => {
+    pts.push([x, y, 0]);
+    id++;
+  };
+  for (let x = -4; x < 0; x++) add(x, 0); // stem, ending just before the ring
+  const N = 16;
+  const R = 1 / (2 * Math.sin(Math.PI / N)); // unit chord spacing
+  // Ring centred at (R,0) so it passes through the origin (θ=π), where the stem
+  // meets it. θ=π is the shared node (added once here); the stem stops at x=-1.
+  for (let kk = 0; kk < N; kk++) {
+    const th = Math.PI + (2 * Math.PI * kk) / N;
+    add(R + R * Math.cos(th), R * Math.sin(th));
+  }
+  const t = await extractTopology(map(pts.map((p, i) => led(i, p))));
+  assert.ok(hasCycle(t), "the lollipop's loop survives the MST + re-closure");
+  assert.equal(t.associations.length, pts.length, "every LED associated");
+});
+
 test("loopFactor 0 breaks the ring into an open path (pure forest)", async () => {
   const t = await extractTopology(map(ring(16)), { loopFactor: 0 });
   assert.equal(t.branchPoints.length, 0, "no anchors without loop closure");
