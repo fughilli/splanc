@@ -299,19 +299,10 @@ export async function extractTopology(
   }
   const deg = adj.map((a) => a.length);
 
-  // 4. branch points = degree ≥ 3 nodes, plus loop-chord endpoints (which may
-  //    stay degree 2 on a pure ring but must anchor the cycle's segments).
-  const branchId = new Map<number, number>();
-  const branchPoints: BranchPoint[] = [];
-  for (let i = 0; i < n; i++) {
-    if (deg[i]! >= 3 || forced.has(i)) {
-      branchId.set(i, branchPoints.length);
-      branchPoints.push({ id: branchPoints.length, xyz: P[i]! });
-    }
-  }
-
-  // 5. trace segments: maximal degree-2 chains between anchors (deg ≠ 2, or a
-  //    loop-chord endpoint).
+  // 4. first trace: maximal degree-2 chains between anchors (deg ≠ 2, or a
+  //    loop-chord endpoint). This trace only feeds the spur prune (step 5); the
+  //    SURVIVING graph is re-derived + re-traced in step 6 so a junction left
+  //    behind by a pruned spur collapses instead of splitting a strand.
   const isAnchor = (i: number): boolean => deg[i]! !== 2 || forced.has(i);
   const seen = new Set<string>();
   const chains: number[][] = [];
@@ -350,10 +341,70 @@ export async function extractTopology(
   });
   if (kept.length === 0) kept = chains; // don't prune the whole fixture away
 
+  // 6. RE-DERIVE the graph from the kept chains and re-trace. Pruning a spur
+  //    leaves the junction it hung off as an effective degree-2 pass-through;
+  //    re-tracing over the pruned graph collapses those into the through-segment
+  //    (no spurious mid-strand junctions) and drops branch points the prune
+  //    orphaned. Branch points are then the surviving deg≥3 nodes plus loop-chord
+  //    endpoints that still carry ≥2 edges (they anchor a ring's segments).
+  const adj2: number[][] = Array.from({ length: n }, () => []);
+  const linked = new Set<string>();
+  for (const c of kept) {
+    for (let i = 1; i < c.length; i++) {
+      const u = c[i - 1]!;
+      const v = c[i]!;
+      const key = u < v ? `${u}-${v}` : `${v}-${u}`;
+      if (linked.has(key)) continue;
+      linked.add(key);
+      adj2[u]!.push(v);
+      adj2[v]!.push(u);
+    }
+  }
+  const deg2 = adj2.map((a) => a.length);
+  const isAnchor2 = (i: number): boolean => deg2[i]! !== 0 && (deg2[i]! !== 2 || forced.has(i));
+
+  const branchId = new Map<number, number>();
+  const branchPoints: BranchPoint[] = [];
+  for (let i = 0; i < n; i++) {
+    if (deg2[i]! >= 3 || (forced.has(i) && deg2[i]! >= 2)) {
+      branchId.set(i, branchPoints.length);
+      branchPoints.push({ id: branchPoints.length, xyz: P[i]! });
+    }
+  }
+
+  const seen2 = new Set<string>();
+  const traced: number[][] = [];
+  for (let a = 0; a < n; a++) {
+    if (!isAnchor2(a)) continue;
+    for (const start of adj2[a]!) {
+      if (seen2.has(`${a}-${start}`)) continue;
+      const chain = [a];
+      let prev = a;
+      let cur = start;
+      seen2.add(`${a}-${start}`);
+      for (;;) {
+        chain.push(cur);
+        if (isAnchor2(cur)) {
+          seen2.add(`${cur}-${prev}`);
+          break;
+        }
+        const next = adj2[cur]!.find((x) => x !== prev);
+        if (next === undefined) break; // dangling end (shouldn't happen)
+        seen2.add(`${cur}-${next}`);
+        prev = cur;
+        cur = next;
+      }
+      traced.push(chain);
+    }
+  }
+  // A pure ring with no anchor at all (loop-closing disabled) leaves no deg≠2
+  // node — fall back to the kept chains so it still traces as a segment.
+  const outChains = traced.length > 0 ? traced : kept;
+
   // 7. build segments (decimated polylines; a/b from the endpoint branch ids).
   const segments: TopologySegment[] = [];
   const segCum: number[][] = [];
-  kept.forEach((c, idx) => {
+  outChains.forEach((c, idx) => {
     const path = c.map((i) => P[i]!);
     const poly = simplify(path, s * simplifyFrac, maxPolyline).map((i) => path[i]!);
     const cum = [0];

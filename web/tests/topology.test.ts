@@ -168,3 +168,16 @@ test("fewer than two LEDs → empty topology", async () => {
   assert.deepEqual((await extractTopology(map([led(0, [0, 0, 0])]))).segments, []);
   assert.deepEqual((await extractTopology(map([]))).associations, []);
 });
+
+test("a short spur off mid-strand is pruned AND its junction collapses", async () => {
+  // A straight strip with one k-NN-noise stub hanging off the middle. The old
+  // extractor pruned the stub chain but left the mid-strand node a branch point
+  // with two segments meeting at it (a spurious junction). The re-trace over the
+  // pruned graph must collapse it: one clean segment, no branch point.
+  const pts: LedEntry[] = [];
+  for (let i = 0; i < 10; i++) pts.push(led(i, [i, 0, 0]));
+  pts.push(led(10, [5, 0.4, 0])); // short perpendicular stub off LED 5
+  const t = await extractTopology(map(pts));
+  assert.equal(t.branchPoints.length, 0, "pruned-spur junction must be collapsed away");
+  assert.equal(t.segments.length, 1, "one clean segment through the former junction");
+});
