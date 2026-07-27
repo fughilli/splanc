@@ -181,3 +181,21 @@ test("a short spur off mid-strand is pruned AND its junction collapses", async (
   assert.equal(t.branchPoints.length, 0, "pruned-spur junction must be collapsed away");
   assert.equal(t.segments.length, 1, "one clean segment through the former junction");
 });
+
+test("debug report flags coincident LEDs (solve degeneracy)", async () => {
+  // LED 5 is solved coincident with LED 2 — a zero-length graph shortcut that
+  // would bridge distant parts of a strand. The debug report must surface it.
+  const pts: LedEntry[] = [];
+  for (let i = 0; i < 8; i++) pts.push(led(i, [i, 0, 0]));
+  pts[5] = led(5, [2, 0, 0]); // coincident with LED 2
+  const t = await extractTopology(map(pts), { debug: true });
+  assert.ok(t.debug, "debug present when requested");
+  assert.ok(
+    t.debug!.coincident.some((c) => c.dist < 1e-6),
+    "the coincident pair is flagged (dist ~0)",
+  );
+  assert.ok(t.debug!.edges.length > 0, "graph edges are reported for the overlay");
+  // Without debug, no report (and existing callers keep the plain Topology).
+  const plain = await extractTopology(map(pts));
+  assert.equal((plain as { debug?: unknown }).debug, undefined);
+});

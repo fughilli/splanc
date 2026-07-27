@@ -49,6 +49,28 @@ export interface ExtractOptions {
   maxPolyline?: number;
   /** Douglas–Peucker tolerance as a fraction of the median spacing. */
   simplifyFrac?: number;
+  /** Emit a {@link TopologyDebug} report (coincident LEDs + graph edges) for the
+   * diagnostic overlay. Off by default (extra O(n·k) bookkeeping). */
+  debug?: boolean;
+  /** Flag LED pairs closer than this × the median spacing as (near-)coincident
+   * — likely solve degeneracies that create a zero-length graph shortcut. */
+  coincidentFactor?: number;
+}
+
+/** Diagnostic view of the raw graph the topology was extracted from, to reveal
+ * degeneracies (a solve that collapsed distant LEDs onto one point makes a
+ * zero-length shortcut → a false geodesic "bridge"; a stray loop-chord fuses two
+ * strands). Positions are the solved LED coordinates so the overlay can draw
+ * directly. Present only when `ExtractOptions.debug` is set. */
+export interface TopologyDebug {
+  /** (Near-)coincident LED pairs (≤ coincidentFactor × spacing apart) — the most
+   * likely cause of an unexpected bridge; each collapses distant graph regions. */
+  coincident: { a: Vec3; b: Vec3; dist: number }[];
+  /** The kept graph edges (MST + loop-chords); `chord` marks a re-added
+   * loop-closing edge (a candidate false bridge). */
+  edges: { a: Vec3; b: Vec3; d: number; chord: boolean }[];
+  /** Median nearest-neighbour spacing (the length scale for every factor). */
+  spacing: number;
 }
 
 /** Cooperative-scheduling hooks: the extractor yields to the event loop during
@@ -213,7 +235,7 @@ export async function extractTopology(
   map: OutputMap,
   opts: ExtractOptions = {},
   hooks: ExtractHooks = {},
-): Promise<Topology> {
+): Promise<Topology & { debug?: TopologyDebug }> {
   const k = Math.max(1, opts.k ?? 8);
   const radiusFactor = opts.radiusFactor ?? 2.5;
   const pruneFactor = opts.pruneFactor ?? 3;
@@ -249,6 +271,14 @@ export async function extractTopology(
   const s = median(nnd) || 1e-6;
   const maxEdge = s * radiusFactor;
 
+  // Diagnostic collection (only when opts.debug): (near-)coincident pairs and,
+  // below, the kept graph edges with a loop-chord flag.
+  const wantDebug = opts.debug ?? false;
+  const coincEps = (opts.coincidentFactor ?? 0.2) * s;
+  const coincSeen = new Set<string>();
+  const coincident: TopologyDebug["coincident"] = [];
+  const dbgEdges: TopologyDebug["edges"] = [];
+
   // 2. k-NN proximity edges within the cap (deduped, min→max).
   const edgeMap = new Map<string, { i: number; j: number; d: number }>();
   for (let i = 0; i < n; i++) {
@@ -262,6 +292,13 @@ export async function extractTopology(
       const lo = Math.min(i, j);
       const hi = Math.max(i, j);
       edgeMap.set(`${lo}-${hi}`, { i: lo, j: hi, d });
+      if (wantDebug && d <= coincEps) {
+        const key = `${lo}-${hi}`;
+        if (!coincSeen.has(key)) {
+          coincSeen.add(key);
+          coincident.push({ a: P[lo]!, b: P[hi]!, dist: d });
+        }
+      }
     }
   }
   onProgress?.(1);
@@ -275,6 +312,7 @@ export async function extractTopology(
     if (uf.union(e.i, e.j)) {
       adj[e.i]!.push(e.j);
       adj[e.j]!.push(e.i);
+      if (wantDebug) dbgEdges.push({ a: P[e.i]!, b: P[e.j]!, d: e.d, chord: false });
     } else {
       dropped.push(e); // stays length-ascending (edges is sorted)
     }
@@ -294,6 +332,7 @@ export async function extractTopology(
         adj[e.j]!.push(e.i);
         forced.add(e.i);
         forced.add(e.j);
+        if (wantDebug) dbgEdges.push({ a: P[e.i]!, b: P[e.j]!, d: e.d, chord: true });
       }
     }
   }
@@ -433,5 +472,11 @@ export async function extractTopology(
     }
   }
 
-  return { mapId: map.mapId, branchPoints, segments, associations };
+  return {
+    mapId: map.mapId,
+    branchPoints,
+    segments,
+    associations,
+    ...(wantDebug ? { debug: { coincident, edges: dbgEdges, spacing: s } } : {}),
+  };
 }
