@@ -182,6 +182,43 @@ test("a short spur off mid-strand is pruned AND its junction collapses", async (
   assert.equal(t.segments.length, 1, "one clean segment through the former junction");
 });
 
+test("a junction over-split into two nearby branch points merges into one", async () => {
+  // A horizontal strand with an up-arm branching at (2,0) and a down-arm at
+  // (2.5,0): two genuine degree-3 nodes only 0.5 apart, joined by a short
+  // connector segment. That is one physical junction the extractor split in two;
+  // mergeFactor must contract the short connector into a single branch point.
+  // (Arms are 4 long so none is pruned as a spur — pruneFactor·spacing = 3.)
+  const pts: LedEntry[] = [
+    [-2, 0, 0], [-1, 0, 0], [0, 0, 0], [1, 0, 0],
+    [2, 0, 0], // up-arm root
+    [2.5, 0, 0], // down-arm root
+    [3.5, 0, 0], [4.5, 0, 0], [5.5, 0, 0], [6.5, 0, 0],
+    [2, 1, 0], [2, 2, 0], [2, 3, 0], [2, 4, 0], // up arm
+    [2.5, -1, 0], [2.5, -2, 0], [2.5, -3, 0], [2.5, -4, 0], // down arm
+  ].map((p, i) => led(i, p as Vec3));
+
+  // Off: the split is visible — two branch points a hair apart.
+  const raw = await extractTopology(map(pts), { mergeFactor: 0 });
+  assert.equal(raw.branchPoints.length, 2, "without merge, the junction stays split");
+
+  // On (default): the short connector contracts to a single junction.
+  const t = await extractTopology(map(pts));
+  assert.equal(t.branchPoints.length, 1, "the near-coincident junctions merge");
+  assert.ok(
+    t.segments.every((sg) => sg.a !== sg.b),
+    "no zero-ish self-loop left by the contraction",
+  );
+  assert.equal(t.associations.length, pts.length, "every LED still associated");
+});
+
+test("mergeFactor keeps a genuine loop (long parallel arc survives as a self-loop)", async () => {
+  // A ring's two anchors are joined by two LONG arcs, not a short connector, so
+  // the merge must NOT fuse them away — the cycle has to stay a cycle.
+  const t = await extractTopology(map(ring(16)));
+  assert.ok(hasCycle(t), "the ring's loop is preserved through the merge pass");
+  assert.equal(t.associations.length, 16);
+});
+
 test("debug report flags coincident LEDs (solve degeneracy)", async () => {
   // LED 5 is solved coincident with LED 2 — a zero-length graph shortcut that
   // would bridge distant parts of a strand. The debug report must surface it.
@@ -260,3 +297,4 @@ test("a double figure-8 resolves its two self-crossings as junctions", { todo: t
   assert.ok(hasCycle(t), "the lobes remain closed loops");
   assert.equal(t.associations.length, 24, "every LED associated");
 });
+

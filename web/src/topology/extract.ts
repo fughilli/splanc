@@ -45,6 +45,13 @@ export interface ExtractOptions {
    * apart in the graph becomes a chord, so a ring in the fixture stays a ring
    * (the flood effect can then swirl around it). 0 disables (pure forest). */
   loopFactor?: number;
+  /** Merge two branch points joined by a segment shorter than this × the median
+   * spacing into a single junction — collapses a knot of near-coincident branch
+   * points the extractor over-splits one physical junction into (e.g. at a
+   * self-crossing, where coincident LEDs spawn a cluster of degree-3 nodes). A
+   * longer parallel arc between the same pair survives as a (real) loop. 0
+   * disables. */
+  mergeFactor?: number;
   /** Max polyline vertices per segment (firmware footprint; decimated). */
   maxPolyline?: number;
   /** Douglas–Peucker tolerance as a fraction of the median spacing. */
@@ -240,6 +247,7 @@ export async function extractTopology(
   const radiusFactor = opts.radiusFactor ?? 2.5;
   const pruneFactor = opts.pruneFactor ?? 3;
   const loopFactor = opts.loopFactor ?? 2;
+  const mergeFactor = opts.mergeFactor ?? 1.5;
   const maxPolyline = Math.max(2, opts.maxPolyline ?? 64);
   const simplifyFrac = opts.simplifyFrac ?? 0.5;
   const { signal, onProgress } = hooks;
@@ -467,13 +475,89 @@ export async function extractTopology(
     segCum.push(cum);
   });
 
+  // 7b. merge junction clusters. Where one physical junction is over-split into
+  //     several branch points a hair apart (e.g. at a self-crossing, where
+  //     coincident LEDs spawn a knot of degree-3 nodes), walk each
+  //     junction-to-junction segment: if it is shorter than the merge radius,
+  //     contract it — the two branch points fuse into one node at their centroid,
+  //     the short connector is dropped, and LEDs re-associate below. A LONGER
+  //     parallel arc between the same pair (a double edge) survives the remap as
+  //     a self-loop, so real loops are preserved. `mergeFactor` 0 disables.
+  let bpsOut = branchPoints;
+  let segsOut = segments;
+  if (mergeFactor > 0 && branchPoints.length > 1) {
+    const mergeRadius = s * mergeFactor;
+    // Count segments between each branch-point pair: a pair joined by MORE than
+    // one segment is a real loop (a short chord + a long arc), not an over-split
+    // junction — contracting its short chord would destroy the cycle, so skip it.
+    const pairKey = (a: number, b: number): string => (a < b ? `${a}-${b}` : `${b}-${a}`);
+    const pairCount = new Map<string, number>();
+    for (const sg of segments) {
+      if (sg.a >= 0 && sg.b >= 0 && sg.a !== sg.b) {
+        const key = pairKey(sg.a, sg.b);
+        pairCount.set(key, (pairCount.get(key) ?? 0) + 1);
+      }
+    }
+    const bpUf = new UnionFind(branchPoints.length);
+    let anyMerged = false;
+    for (const sg of segments) {
+      if (sg.a >= 0 && sg.b >= 0 && sg.a !== sg.b && sg.length < mergeRadius) {
+        if (pairCount.get(pairKey(sg.a, sg.b)) !== 1) continue; // parallel arc → loop, keep it
+        if (bpUf.union(sg.a, sg.b)) anyMerged = true;
+      }
+    }
+    if (anyMerged) {
+      // Compact each cluster root → a new id, positioned at its members' centroid.
+      const rootMembers = new Map<number, number[]>();
+      for (let i = 0; i < branchPoints.length; i++) {
+        const r = bpUf.find(i);
+        let arr = rootMembers.get(r);
+        if (!arr) rootMembers.set(r, (arr = []));
+        arr.push(i);
+      }
+      const newId = new Map<number, number>(); // old branch id → merged id
+      const merged: BranchPoint[] = [];
+      for (const members of rootMembers.values()) {
+        const id = merged.length;
+        let cx = 0;
+        let cy = 0;
+        let cz = 0;
+        for (const m of members) {
+          const p = branchPoints[m]!.xyz;
+          cx += p[0];
+          cy += p[1];
+          cz += p[2];
+          newId.set(m, id);
+        }
+        const c = members.length;
+        merged.push({ id, xyz: [cx / c, cy / c, cz / c] });
+      }
+      const remap = (bp: number): number => (bp >= 0 ? newId.get(bp)! : -1);
+      const rebuilt: TopologySegment[] = [];
+      const rebuiltCum: number[][] = [];
+      segments.forEach((sg, i) => {
+        const a = remap(sg.a);
+        const b = remap(sg.b);
+        // Drop only the contracted short connectors (both ends now one node AND
+        // the segment was short); keep long self-loops (genuine lobes/rings).
+        if (a === b && a >= 0 && sg.length < mergeRadius) return;
+        rebuilt.push({ ...sg, id: rebuilt.length, a, b });
+        rebuiltCum.push(segCum[i]!);
+      });
+      bpsOut = merged;
+      segsOut = rebuilt;
+      segCum.length = 0;
+      segCum.push(...rebuiltCum);
+    }
+  }
+
   // 8. associate EVERY LED to the nearest segment (no orphans — isolated LEDs
   //    and pruned-spur LEDs snap to the closest surviving segment).
   const associations: LedAssociation[] = [];
   for (let i = 0; i < n; i++) {
     let best = { seg: -1, s: 0, d: Infinity };
-    for (let sg = 0; sg < segments.length; sg++) {
-      const { s: arclen, d } = projectToPolyline(P[i]!, segments[sg]!.polyline, segCum[sg]!);
+    for (let sg = 0; sg < segsOut.length; sg++) {
+      const { s: arclen, d } = projectToPolyline(P[i]!, segsOut[sg]!.polyline, segCum[sg]!);
       if (d < best.d) best = { seg: sg, s: arclen, d };
     }
     if (best.seg >= 0) {
@@ -483,8 +567,8 @@ export async function extractTopology(
 
   return {
     mapId: map.mapId,
-    branchPoints,
-    segments,
+    branchPoints: bpsOut,
+    segments: segsOut,
     associations,
     ...(wantDebug ? { debug: { coincident, edges: dbgEdges, spacing: s } } : {}),
   };
