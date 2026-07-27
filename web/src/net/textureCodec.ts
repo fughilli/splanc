@@ -9,7 +9,7 @@
 
 import type { SetTextureMessage } from "./proto";
 
-export type TextureFormat = "rgb888" | "rgb565" | "rgb332" | "gray8";
+export type TextureFormat = "rgb888" | "rgb565" | "rgb332" | "gray8" | "indexed8";
 
 /** proto SetTexture.format codes (mirror ffi.rs TEX_*). */
 export const FORMAT_CODE: Record<TextureFormat, number> = {
@@ -17,6 +17,7 @@ export const FORMAT_CODE: Record<TextureFormat, number> = {
   rgb565: 1,
   rgb332: 2,
   gray8: 3,
+  indexed8: 4,
 };
 /** Packed bytes per texel for each format. */
 export const FORMAT_BPT: Record<TextureFormat, number> = {
@@ -24,7 +25,80 @@ export const FORMAT_BPT: Record<TextureFormat, number> = {
   rgb565: 2,
   rgb332: 1,
   gray8: 1,
+  indexed8: 1,
 };
+
+/** Median-cut palette quantizer for INDEXED8: pick ≤`maxColors` representative
+ * colors and map each texel to its box's index. Returns row-major `indices`
+ * (1 byte/texel) + a `palette` of 0x00RRGGBB entries. Per-frame (adaptive), so
+ * INDEXED8 frames are sent as keyframes (indices aren't comparable across
+ * palettes, so no XOR-delta). */
+export function quantizeIndexed(
+  rgba: Uint8Array | Uint8ClampedArray,
+  w: number,
+  h: number,
+  maxColors = 256,
+): { indices: Uint8Array; palette: number[] } {
+  const n = w * h;
+  const px: number[][] = new Array(n);
+  for (let i = 0; i < n; i++) px[i] = [rgba[i * 4] ?? 0, rgba[i * 4 + 1] ?? 0, rgba[i * 4 + 2] ?? 0, i];
+  const rangeOf = (b: number[][]): { ch: number; range: number } => {
+    let ch = 0;
+    let best = -1;
+    for (let c = 0; c < 3; c++) {
+      let mn = 255;
+      let mx = 0;
+      for (const p of b) {
+        const v = p[c]!;
+        if (v < mn) mn = v;
+        if (v > mx) mx = v;
+      }
+      if (mx - mn > best) {
+        best = mx - mn;
+        ch = c;
+      }
+    }
+    return { ch, range: best };
+  };
+  const init = rangeOf(px);
+  const boxes: { px: number[][]; ch: number; range: number }[] = [{ px, ch: init.ch, range: init.range }];
+  while (boxes.length < maxColors) {
+    let bi = -1;
+    let best = 0;
+    for (let k = 0; k < boxes.length; k++) {
+      const b = boxes[k]!;
+      if (b.px.length > 1 && b.range > best) {
+        best = b.range;
+        bi = k;
+      }
+    }
+    if (bi < 0) break; // every box is a single colour
+    const box = boxes[bi]!;
+    box.px.sort((a, b) => a[box.ch]! - b[box.ch]!);
+    const mid = box.px.length >> 1;
+    const a = box.px.slice(0, mid);
+    const b = box.px.slice(mid);
+    const ra = rangeOf(a);
+    const rb = rangeOf(b);
+    boxes.splice(bi, 1, { px: a, ch: ra.ch, range: ra.range }, { px: b, ch: rb.ch, range: rb.range });
+  }
+  const palette: number[] = [];
+  const indices = new Uint8Array(n);
+  boxes.forEach((box, bi) => {
+    let r = 0;
+    let g = 0;
+    let bl = 0;
+    for (const p of box.px) {
+      r += p[0]!;
+      g += p[1]!;
+      bl += p[2]!;
+    }
+    const c = box.px.length || 1;
+    palette.push((Math.round(r / c) << 16) | (Math.round(g / c) << 8) | Math.round(bl / c));
+    for (const p of box.px) indices[p[3]!] = bi;
+  });
+  return { indices, palette };
+}
 const FLAG_DELTA = 0x01;
 const FLAG_RLE = 0x02;
 
@@ -110,6 +184,21 @@ export function encodeTextureFrame(opts: {
   rle?: boolean;
 }): { message: SetTextureMessage; quant: Uint8Array } {
   const { texIndex, width, height, rgba, format } = opts;
+  // INDEXED8: adaptive per-frame palette → keyframe (no cross-palette delta);
+  // RLE still compresses flat/limited-colour regions of the index map.
+  if (format === "indexed8") {
+    const { indices, palette } = quantizeIndexed(rgba, width, height, 256);
+    let flags = 0;
+    let payload = indices;
+    if (opts.rle) {
+      flags |= FLAG_RLE;
+      payload = rleEncode(indices);
+    }
+    return {
+      message: { type: "set_texture", texIndex, format: FORMAT_CODE.indexed8, width, height, flags, data: payload, palette },
+      quant: indices,
+    };
+  }
   const quant = quantize(rgba, width, height, format);
   let flags = 0;
   let payload: Uint8Array;

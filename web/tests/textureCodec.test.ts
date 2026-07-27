@@ -109,3 +109,28 @@ test("set_texture round-trips through encodeClient/decodeClient", () => {
   assert.equal(back.width, 2);
   assert.deepEqual([...Buffer.from(back.data, "base64")], [...message.data]);
 });
+
+test("indexed8 builds an adaptive palette and reconstructs via lookup", () => {
+  // 2x2 with two distinct colors → median-cut yields exactly those two.
+  const rgba = new Uint8Array([255, 0, 0, 255, 0, 255, 0, 255, 255, 0, 0, 255, 0, 255, 0, 255]);
+  const { message } = encodeTextureFrame({
+    texIndex: 0,
+    width: 2,
+    height: 2,
+    rgba,
+    format: "indexed8",
+    rle: false,
+  });
+  assert.equal(message.format, 4, "format code = INDEXED8");
+  const pal = message.palette ?? [];
+  assert.ok(pal.length >= 2, "at least two palette entries");
+  const idx = message.data; // no RLE → raw indices, one per texel
+  for (let i = 0; i < 4; i++) {
+    const v = pal[idx[i]!]!;
+    assert.deepEqual(
+      [(v >> 16) & 0xff, (v >> 8) & 0xff, v & 0xff],
+      [rgba[i * 4], rgba[i * 4 + 1], rgba[i * 4 + 2]],
+      `texel ${i} reconstructs from palette`,
+    );
+  }
+});

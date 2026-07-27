@@ -776,17 +776,21 @@ unsafe fn handle_submit_effect(frame: &[u8]) -> pb::ServerMessage {
 const TEX_RGB888: u64 = 0;
 const TEX_RGB565: u64 = 1;
 const TEX_RGB332: u64 = 2;
+const TEX_GRAY8: u64 = 3;
+const TEX_INDEXED8: u64 = 4;
+const TEX_PAL_MAX: usize = 256;
 
 fn tex_bytes_per_texel(format: u64) -> usize {
     match format {
         TEX_RGB888 => 3,
         TEX_RGB565 => 2,
-        _ => 1, // RGB332 / GRAY8 / INDEXED8(no-palette -> gray)
+        _ => 1, // RGB332 / GRAY8 / INDEXED8 — 1 byte/texel
     }
 }
 
-/// Dequantize one texel's `bpt` bytes to linear RGB in 0..1.
-fn dequant_texel(b: &[u8], format: u64) -> (f32, f32, f32) {
+/// Dequantize one texel's `bpt` bytes to linear RGB in 0..1. `palette` (0x00RRGGBB
+/// entries) is used only for INDEXED8.
+fn dequant_texel(b: &[u8], format: u64, palette: &[u32]) -> (f32, f32, f32) {
     match format {
         TEX_RGB888 => (b[0] as f32 / 255.0, b[1] as f32 / 255.0, b[2] as f32 / 255.0),
         TEX_RGB565 => {
@@ -801,8 +805,16 @@ fn dequant_texel(b: &[u8], format: u64) -> (f32, f32, f32) {
             let v = b[0];
             (((v >> 5) & 7) as f32 / 7.0, ((v >> 2) & 7) as f32 / 7.0, (v & 3) as f32 / 3.0)
         }
+        TEX_INDEXED8 => {
+            let v = palette.get(b[0] as usize).copied().unwrap_or(0);
+            (
+                ((v >> 16) & 0xff) as f32 / 255.0,
+                ((v >> 8) & 0xff) as f32 / 255.0,
+                (v & 0xff) as f32 / 255.0,
+            )
+        }
         _ => {
-            let g = b[0] as f32 / 255.0; // GRAY8 / INDEXED8 (palette TODO)
+            let g = b[0] as f32 / 255.0; // GRAY8
             (g, g, g)
         }
     }
@@ -819,6 +831,7 @@ unsafe fn handle_set_texture(frame: &[u8]) {
     };
     let (mut tex_index, mut format, mut width, mut height, mut flags) = (0u64, 0u64, 0u64, 0u64, 0u64);
     let mut data: &[u8] = &[];
+    let mut palette = [0u32; TEX_PAL_MAX]; // INDEXED8 lookup (0x00RRGGBB)
     let mut o = 0;
     while o < body.len() {
         let Some(key) = rd_varint(body, &mut o) else {
@@ -849,6 +862,24 @@ unsafe fn handle_set_texture(frame: &[u8]) {
                 };
                 data = s;
                 o += len as usize;
+            }
+            (7, 2) => {
+                // palette (packed repeated uint32, 0x00RRGGBB) for INDEXED8.
+                let Some(len) = rd_varint(body, &mut o) else {
+                    return;
+                };
+                let end = o + len as usize;
+                let mut pi = 0usize;
+                while o < end && pi < TEX_PAL_MAX {
+                    match rd_varint(body, &mut o) {
+                        Some(v) => {
+                            palette[pi] = v as u32;
+                            pi += 1;
+                        }
+                        None => return,
+                    }
+                }
+                o = end; // skip any overflow entries
             }
             _ => {
                 if !skip_field(body, &mut o, wire) {
@@ -909,7 +940,7 @@ unsafe fn handle_set_texture(frame: &[u8]) {
     let base = prog.buf_base(tex_index as usize, FX_F_LEDS as usize);
     let elem = d.elem as usize;
     for t in 0..n_texels {
-        let (r, g, b) = dequant_texel(&prev[t * bpt..t * bpt + bpt], format);
+        let (r, g, b) = dequant_texel(&prev[t * bpt..t * bpt + bpt], format, &palette);
         let ab = base + t * elem;
         if elem == 1 {
             if ab < arena.len() {
