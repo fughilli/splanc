@@ -11,7 +11,7 @@
  */
 
 import type { OutputMap, Topology, Vec3 } from "@ledmapper/protocol";
-import type { TopologyDebug } from "../topology/extract";
+import type { TopologyDebug, TopologyStage } from "../topology/extract";
 import { applySimilarity, fitSimilarity, type Similarity } from "../geom/fit";
 import { renderSettings } from "../store/appearance";
 
@@ -74,6 +74,11 @@ export class MapView {
   private debug: TopologyDebug | null = null;
   private debugFlags: DebugOverlayFlags = { coincident: false, edges: false, chords: false };
 
+  // Pipeline-stage inspector: when set, the overlay draws THIS stage's graph
+  // (nodes/edges/segments/branch points) INSTEAD of the final topology, so the
+  // Debug "stage" scrubber can step through k-NN → MST → … → dissolve.
+  private stage: TopologyStage | null = null;
+
   // Per-LED effect colours (flat RGB, aligned to map.leds order). When set, the
   // LEDs render as glowing lights on black instead of confidence shading — the
   // effects-simulator workspace pushes a fresh frame here each animation tick.
@@ -117,6 +122,12 @@ export class MapView {
   setDebugOverlay(debug: TopologyDebug | null, flags?: Partial<DebugOverlayFlags>): void {
     this.debug = debug;
     if (flags) this.debugFlags = { ...this.debugFlags, ...flags };
+  }
+
+  /** Show a single pipeline stage's graph instead of the final topology (Debug
+   * "stage" scrubber). Pass `null` to return to the normal topology overlay. */
+  setStage(stage: TopologyStage | null): void {
+    this.stage = stage;
   }
 
   get hasTrajectory(): boolean {
@@ -511,8 +522,68 @@ export class MapView {
       }
     }
 
+    // -- pipeline-stage inspector: draw the selected stage's graph (edges +
+    //    nodes for early stages, polylines + junctions for late ones) and skip
+    //    the normal topology overlay so the two don't overlap.
+    if (this.stage !== null) {
+      const st = this.stage;
+      // Graph edges: thin cyan lines.
+      ctx.strokeStyle = "rgb(80 220 255 / 0.55)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (const e of st.edges) {
+        const a = proj(e.a);
+        const b = proj(e.b);
+        ctx.moveTo(a.sx, a.sy);
+        ctx.lineTo(b.sx, b.sy);
+      }
+      ctx.stroke();
+      // Graph nodes (deduped): small yellow dots (a self-crossing shows one dot
+      // where two strand parts merged).
+      ctx.fillStyle = "rgb(255 210 90 / 0.9)";
+      for (const nd of st.nodes) {
+        const p = proj(nd);
+        ctx.beginPath();
+        ctx.arc(p.sx, p.sy, 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      // Segment polylines (later stages): brighter cyan with vertex rings.
+      ctx.strokeStyle = "rgb(80 220 255 / 0.95)";
+      ctx.lineWidth = 2;
+      ctx.fillStyle = "rgb(80 220 255 / 0.95)";
+      for (const seg of st.segments) {
+        if (seg.polyline.length < 2) continue;
+        ctx.beginPath();
+        seg.polyline.forEach((v, i) => {
+          const p = proj(v);
+          if (i === 0) ctx.moveTo(p.sx, p.sy);
+          else ctx.lineTo(p.sx, p.sy);
+        });
+        ctx.stroke();
+        for (const v of seg.polyline) {
+          const p = proj(v);
+          ctx.beginPath();
+          ctx.arc(p.sx, p.sy, 2.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      // Branch points: magenta rings.
+      ctx.strokeStyle = "rgb(255 90 220 / 0.95)";
+      ctx.lineWidth = 2;
+      for (const bp of st.branchPoints) {
+        const p = proj(bp);
+        ctx.beginPath();
+        ctx.arc(p.sx, p.sy, 6, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      // Stage name, top-left under the hint line.
+      ctx.fillStyle = "rgb(255 210 90 / 0.95)";
+      ctx.font = "bold 12px system-ui";
+      ctx.fillText(`stage: ${st.name}`, 12, 36);
+    }
+
     // -- topology overlay: the extracted skeleton polylines over the LEDs -----
-    if (this.topology !== null) {
+    if (this.stage === null && this.topology !== null) {
       ctx.lineWidth = 2;
       ctx.strokeStyle = "rgb(80 220 255 / 0.9)";
       for (const seg of this.topology.segments) {

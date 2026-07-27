@@ -14,7 +14,7 @@ const mk = (
   coincident: TopologyDebug["coincident"],
   edges: TopologyDebug["edges"],
   spacing: number,
-): TopologyDebug => ({ coincident, edges, spacing });
+): TopologyDebug => ({ coincident, edges, spacing, stages: [] });
 
 test("fmtLen picks mm / cm / m by magnitude", () => {
   assert.equal(fmtLen(0.004), "4mm");

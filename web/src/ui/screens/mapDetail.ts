@@ -123,6 +123,14 @@ export function MapDetailScreen(
   let diagnostics = false;
   const debugFlags = { coincident: false, edges: false, chords: false };
   let lastDebug: TopologyDebug | null = null;
+  // Stage scrubber: 0 = off (show the final topology); 1..N select stages[idx-1].
+  let stageIdx = 0;
+
+  // Show the currently-selected pipeline stage (or clear it when off / no report).
+  const applyStage = (): void => {
+    const stages = lastDebug?.stages ?? [];
+    view?.setStage(stageIdx > 0 ? (stages[stageIdx - 1] ?? null) : null);
+  };
 
   // Text pill toggle (used for in-panel diagnostics layer toggles).
   const setToggle = (label: string, on: boolean, fn: (v: boolean) => void): HTMLElement => {
@@ -541,8 +549,36 @@ export function MapDetailScreen(
       layerToggle("Show graph edges", "edges"),
       layerToggle("Highlight loop-chords", "chords"),
     );
+    // Stage scrubber: step through each pipeline stage's raw output. Names come
+    // from the report; the pipeline always emits the same 7 in order.
+    const STAGE_NAMES = [
+      "k-NN graph",
+      "MST forest",
+      "loop chords",
+      "prune + retrace",
+      "segments",
+      "merge junctions",
+      "dissolve (final)",
+    ];
+    const stageLabel = (v: number): string =>
+      v === 0 ? "off" : (lastDebug?.stages[v - 1]?.name ?? STAGE_NAMES[v - 1] ?? `stage ${v}`);
+    const stageSlider = Slider({
+      label: "Stage",
+      min: 0,
+      max: STAGE_NAMES.length,
+      step: 1,
+      value: stageIdx,
+      format: stageLabel,
+      onInput: (v) => {
+        stageIdx = v;
+        applyStage();
+      },
+    });
+    stageSlider.el.classList.add("topo-debug-stage");
+
     const syncLayerRow = (): void => {
       layerRow.classList.toggle("topo-debug-layers--off", !diagnostics);
+      stageSlider.el.classList.toggle("topo-debug-layers--off", !diagnostics);
     };
     syncLayerRow();
 
@@ -553,14 +589,18 @@ export function MapDetailScreen(
         // Re-run with debug on so the report is available.
         void previewTopology();
       } else {
-        // Off: drop the report + overlay and clear the section (no extra cost).
+        // Off: drop the report + overlay + stage view and clear the section.
         lastDebug = null;
+        stageIdx = 0;
+        stageSlider.input.value = "0";
+        stageSlider.setValueText(stageLabel(0));
+        view?.setStage(null);
         view?.setDebugOverlay(null, debugFlags);
         refreshDebugReport();
       }
     });
 
-    dbgBody.append(masterToggle, layerRow, debugSummaryEl, debugHintEl, debugListEl);
+    dbgBody.append(masterToggle, layerRow, stageSlider.el, debugSummaryEl, debugHintEl, debugListEl);
     topoPanel.append(dbgDisclosure, dbgBody);
     refreshDebugReport();
 
@@ -605,6 +645,7 @@ export function MapDetailScreen(
       // is off), then update the Debug section's summary + coincident list.
       lastDebug = diagnostics ? (topo.debug ?? null) : null;
       view.setDebugOverlay(lastDebug, debugFlags);
+      applyStage(); // refresh the stage overlay against the new report
       refreshDebugReport();
       const verts = topo.segments.reduce((n, s) => n + s.polyline.length, 0);
       const lenM = topo.segments.reduce((a, s) => a + s.length, 0);

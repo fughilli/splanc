@@ -78,6 +78,21 @@ export interface TopologyDebug {
   edges: { a: Vec3; b: Vec3; d: number; chord: boolean }[];
   /** Median nearest-neighbour spacing (the length scale for every factor). */
   spacing: number;
+  /** Per-stage snapshots of the pipeline (k-NN → MST → chords → prune → segments
+   * → merge → dissolve), for the "stage" scrubber that inspects each step's
+   * output. In pipeline order; the last is the final topology. */
+  stages: TopologyStage[];
+}
+
+/** A single pipeline stage's drawable state, for the stage scrubber. Early stages
+ * carry graph `nodes` + `edges`; later stages carry `segments` + `branchPoints`.
+ * Any field may be empty for a stage that doesn't produce it. */
+export interface TopologyStage {
+  name: string;
+  nodes: Vec3[];
+  edges: { a: Vec3; b: Vec3 }[];
+  segments: { polyline: Vec3[] }[];
+  branchPoints: Vec3[];
 }
 
 /** Cooperative-scheduling hooks: the extractor yields to the event loop during
@@ -287,6 +302,30 @@ export async function extractTopology(
   const coincident: TopologyDebug["coincident"] = [];
   const dbgEdges: TopologyDebug["edges"] = [];
 
+  // Per-stage snapshots for the "stage" scrubber (only when debug is on).
+  const stages: TopologyStage[] = [];
+  const snapNodes = (): Vec3[] => (wantDebug ? NP.map((p) => [p[0], p[1], p[2]]) : []);
+  const adjToEdges = (a: number[][]): { a: Vec3; b: Vec3 }[] => {
+    const out: { a: Vec3; b: Vec3 }[] = [];
+    for (let i = 0; i < a.length; i++) for (const j of a[i]!) if (i < j) out.push({ a: NP[i]!, b: NP[j]! });
+    return out;
+  };
+  const snapSegs = (segs: TopologySegment[]): { polyline: Vec3[] }[] =>
+    segs.map((sg) => ({ polyline: sg.polyline.map((p) => [p[0], p[1], p[2]] as Vec3) }));
+  const pushStage = (
+    name: string,
+    parts: Partial<Omit<TopologyStage, "name">>,
+  ): void => {
+    if (!wantDebug) return;
+    stages.push({
+      name,
+      nodes: parts.nodes ?? [],
+      edges: parts.edges ?? [],
+      segments: parts.segments ?? [],
+      branchPoints: parts.branchPoints ?? [],
+    });
+  };
+
   // 1b. collapse (near-)coincident LEDs into single graph NODES. Two LEDs solved
   //     onto (nearly) the same point are one vertex of the fixture — decisively so
   //     at a SELF-CROSSING, where the strand passes through a point twice: keeping
@@ -352,6 +391,10 @@ export async function extractTopology(
     }
   }
   onProgress?.(1);
+  pushStage("k-NN graph", {
+    nodes: snapNodes(),
+    edges: wantDebug ? [...edgeMap.values()].map((e) => ({ a: NP[e.i]!, b: NP[e.j]! })) : [],
+  });
 
   // 3. minimum spanning FOREST (Kruskal) — one tree per spatial component.
   const edges = [...edgeMap.values()].sort((a, b) => a.d - b.d);
@@ -367,6 +410,7 @@ export async function extractTopology(
       dropped.push(e); // stays length-ascending (edges is sorted)
     }
   }
+  pushStage("MST forest", { nodes: snapNodes(), edges: adjToEdges(adj) });
 
   // 3b. re-add loop-closing chords: a short dropped edge closes a genuine cycle
   //     (a ring in the fixture) ONLY when it joins two STRAND ENDS (the seam the
@@ -396,6 +440,7 @@ export async function extractTopology(
     }
   }
 
+  pushStage("loop chords", { nodes: snapNodes(), edges: adjToEdges(adj) });
   const deg = adj.map((a) => a.length);
 
   // 4. first trace: maximal degree-2 chains between anchors (deg ≠ 2, or a
@@ -460,6 +505,7 @@ export async function extractTopology(
     }
   }
   const deg2 = adj2.map((a) => a.length);
+  pushStage("prune + retrace", { nodes: snapNodes(), edges: adjToEdges(adj2) });
   const isAnchor2 = (i: number): boolean => deg2[i]! !== 0 && (deg2[i]! !== 2 || forced.has(i));
 
   const branchId = new Map<number, number>();
@@ -517,6 +563,7 @@ export async function extractTopology(
     });
     segCum.push(cum);
   });
+  pushStage("segments (raw)", { segments: snapSegs(segments), branchPoints: branchPoints.map((b) => b.xyz) });
 
   // 7b. merge junction clusters. Where one physical junction is over-split into
   //     several branch points a hair apart (e.g. at a self-crossing, where
@@ -593,6 +640,7 @@ export async function extractTopology(
       segCum.push(...rebuiltCum);
     }
   }
+  pushStage("merge junctions", { segments: snapSegs(segsOut), branchPoints: bpsOut.map((b) => b.xyz) });
 
   // 7c. dissolve degree-2 junctions — the invariant that there is NEVER a
   //     degree-2 branch point in the output. A branch point where exactly two
@@ -670,6 +718,7 @@ export async function extractTopology(
     for (let i = 1; i < sg.polyline.length; i++) cum.push(cum[i - 1]! + dist(sg.polyline[i]!, sg.polyline[i - 1]!));
     segCum.push(cum);
   }
+  pushStage("dissolve (final)", { segments: snapSegs(segsOut), branchPoints: bpsOut.map((b) => b.xyz) });
 
   // 8. associate EVERY LED to the nearest segment (no orphans — isolated LEDs
   //    and pruned-spur LEDs snap to the closest surviving segment).
@@ -690,6 +739,6 @@ export async function extractTopology(
     branchPoints: bpsOut,
     segments: segsOut,
     associations,
-    ...(wantDebug ? { debug: { coincident, edges: dbgEdges, spacing: s } } : {}),
+    ...(wantDebug ? { debug: { coincident, edges: dbgEdges, spacing: s, stages } } : {}),
   };
 }
