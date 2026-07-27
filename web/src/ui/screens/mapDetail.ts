@@ -24,7 +24,7 @@ import {
   type MapXform,
 } from "../../geom/mapTransform";
 import { MapView } from "../mapview";
-import { Button, Card, IconButton, Sheet, Slider, toast } from "../kit";
+import { Button, Card, IconButton, Sheet, Slider, toast, icon, type IconName } from "../kit";
 import { mapStore, type StoredMap } from "../../store/mapStore";
 import { appState } from "../app/state";
 import { openDeviceSheet } from "./deviceSheet";
@@ -75,9 +75,16 @@ export function MapDetailScreen(
   const metaStrip = document.createElement("div");
   metaStrip.className = "detail-meta metric";
 
-  // 3D view controls: toggle grid + world triad (owner guidance).
+  // 3D view controls: toggle grid + world triad + camera path. Small round
+  // buttons overlaid in the viewport corner (not eating scroll-column height).
   const viewToggles = document.createElement("div");
   viewToggles.className = "detail-viewtoggles";
+
+  // The viewport "stage": the canvas plus its corner overlay controls. In the
+  // wide layout this sits beside the editor panels (see .detail-main).
+  const stage = document.createElement("div");
+  stage.className = "detail-stage";
+  stage.append(canvas, viewToggles, metaStrip);
 
   const actions = document.createElement("div");
   actions.className = "detail-actions";
@@ -90,7 +97,13 @@ export function MapDetailScreen(
   xformPanel.className = "detail-topo detail-xform";
   xformPanel.style.display = "none";
 
-  el.append(canvas, metaStrip, viewToggles, actions, xformPanel, topoPanel);
+  // Wide layout: viewport (stage) and editor panels side-by-side; narrow: they
+  // wrap to a single column. Flex-wrap does this responsively with no JS.
+  const main = document.createElement("div");
+  main.className = "detail-main";
+  main.append(stage, xformPanel, topoPanel);
+
+  el.append(main, actions);
 
   // The map + topology being edited live on `rec`/`currentTopology` (in memory);
   // transforms mutate those and re-render, and Save persists them. `dirty` gates
@@ -111,6 +124,7 @@ export function MapDetailScreen(
   const debugFlags = { coincident: false, edges: false, chords: false };
   let lastDebug: TopologyDebug | null = null;
 
+  // Text pill toggle (used for in-panel diagnostics layer toggles).
   const setToggle = (label: string, on: boolean, fn: (v: boolean) => void): HTMLElement => {
     const b = document.createElement("button");
     b.type = "button";
@@ -119,6 +133,29 @@ export function MapDetailScreen(
     b.addEventListener("click", () => {
       on = !on;
       b.classList.toggle("toggle-chip--on", on);
+      fn(on);
+    });
+    return b;
+  };
+
+  // Small round overlay toggle (icon + tooltip) for the viewport corner.
+  const iconToggle = (
+    name: IconName,
+    title: string,
+    on: boolean,
+    fn: (v: boolean) => void,
+  ): HTMLElement => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "viewtoggle" + (on ? " viewtoggle--on" : "");
+    b.title = title;
+    b.setAttribute("aria-label", title);
+    b.setAttribute("aria-pressed", String(on));
+    b.appendChild(icon(name));
+    b.addEventListener("click", () => {
+      on = !on;
+      b.classList.toggle("viewtoggle--on", on);
+      b.setAttribute("aria-pressed", String(on));
       fn(on);
     });
     return b;
@@ -139,9 +176,9 @@ export function MapDetailScreen(
       `${map.ledCount} LEDs · rms ${(rec.rmsReprojPx || 0).toFixed(1)} px · ${new Date(rec.updatedAt).toLocaleDateString()}`;
 
     viewToggles.append(
-      setToggle("Grid", false, (v) => setViewFlag("showGrid", v)),
-      setToggle("Triad", false, (v) => setViewFlag("showTriad", v)),
-      setToggle("Camera path", false, (v) => {
+      iconToggle("grid", "Grid", false, (v) => setViewFlag("showGrid", v)),
+      iconToggle("triad", "World triad", false, (v) => setViewFlag("showTriad", v)),
+      iconToggle("camera-path", "Camera path", false, (v) => {
         if (view) view.showTrajectory = v;
       }),
     );

@@ -267,7 +267,27 @@ body.is-locked {
 }
 
 /* --- map detail --- */
+/* Wide layout: viewport (stage) beside the editor panels; narrow: they wrap to
+   a single column. align-items:start so a tall panel doesn't stretch the
+   viewport. */
+.detail-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--sp-3);
+}
+.detail-stage {
+  position: relative;
+  flex: 1 1 360px;
+  min-width: 0;
+}
+/* Editor panels (topology / transform) become the side column when open. */
+.detail-main > .detail-topo {
+  flex: 1 1 300px;
+  min-width: 0;
+}
 .detail-canvas {
+  display: block;
   width: 100%;
   aspect-ratio: 4 / 3;
   border-radius: var(--r-card);
@@ -278,7 +298,45 @@ body.is-locked {
   font-size: var(--f-caption);
   margin: var(--sp-2) 0;
 }
-.detail-viewtoggles,
+/* View toggles: small round buttons overlaid in the viewport's top-right
+   corner (no longer occupying scroll-column height). */
+.detail-viewtoggles {
+  position: absolute;
+  top: var(--sp-2);
+  right: var(--sp-2);
+  z-index: 5;
+  display: flex;
+  gap: var(--sp-1);
+}
+.viewtoggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(10, 10, 14, 0.55);
+  backdrop-filter: blur(6px);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition:
+    background var(--motion-micro) var(--ease),
+    color var(--motion-micro) var(--ease);
+}
+.viewtoggle svg {
+  width: 20px;
+  height: 20px;
+}
+.viewtoggle:hover {
+  color: var(--text);
+}
+.viewtoggle--on {
+  background: var(--accent-quiet);
+  border-color: var(--accent);
+  color: var(--text);
+}
 .detail-actions {
   display: flex;
   flex-wrap: wrap;

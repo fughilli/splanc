@@ -36,7 +36,10 @@ export type IconName =
   | "arrow-up"
   | "folder"
   | "chevron"
-  | "move";
+  | "move"
+  | "grid"
+  | "triad"
+  | "camera-path";
 
 // -- shared fragments for the device-transfer glyphs (24x24, top→bottom layout:
 //    content over a small device pentagon, joined by a direction arrow) --------
@@ -92,6 +95,12 @@ const PATHS: Record<IconName, string> = {
   chevron: `<path d="M9 6l6 6-6 6"/>`,
   // Four-way move arrows (relocate a pane between regions).
   move: `<path d="M12 3v18M3 12h18"/><path d="M12 3l-2.5 2.5M12 3l2.5 2.5"/><path d="M12 21l-2.5-2.5M12 21l2.5-2.5"/><path d="M3 12l2.5-2.5M3 12l2.5 2.5"/><path d="M21 12l-2.5-2.5M21 12l2.5 2.5"/>`,
+  // 3x3 reference grid (floor overlay toggle).
+  grid: `<rect x="4" y="4" width="16" height="16" rx="1"/><path d="M4 9.3h16M4 14.7h16M9.3 4v16M14.7 4v16"/>`,
+  // World triad: three axes radiating from a common origin (XYZ guidance).
+  triad: `<path d="M12 21V8"/><path d="M12 21 4 16.5"/><path d="M12 21 20 16.5"/><path d="M12 8l-1.6 1.8M12 8l1.6 1.8"/>`,
+  // Camera trajectory: an arced path between two marked viewpoints.
+  "camera-path": `<path d="M4.5 18C8 7 16 7 19.5 18"/><circle cx="4.5" cy="18" r="1.6"/><circle cx="19.5" cy="18" r="1.6"/>`,
 };
 
 let installed = false;
