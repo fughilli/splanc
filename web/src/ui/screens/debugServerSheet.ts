@@ -13,8 +13,9 @@ import { Button, Sheet, toast } from "../kit";
 
 const URL_KEY = "ledmapper.debugServer";
 
-/** Open the "send effects library to debug server" sheet. */
-export function openDebugServerSheet(): void {
+/** Open the "send effects library to debug server" sheet. `prefillUrl` (e.g.
+ * from a scanned QR) overrides the remembered URL. */
+export function openDebugServerSheet(prefillUrl?: string): void {
   const sheet = Sheet("Send effects to debug server");
   sheet.body.className = "aikey-sheet";
 
@@ -23,7 +24,8 @@ export function openDebugServerSheet(): void {
   input.type = "url";
   input.autocomplete = "off";
   input.placeholder = "https://192.168.x.x:8093";
-  input.value = localStorage.getItem(URL_KEY) ?? "";
+  input.value = prefillUrl ?? localStorage.getItem(URL_KEY) ?? "";
+  if (prefillUrl) localStorage.setItem(URL_KEY, prefillUrl.replace(/\/+$/, ""));
 
   const note = document.createElement("p");
   note.className = "aikey-note";

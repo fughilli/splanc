@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import html
 import json
 import os
 import socket
@@ -47,6 +48,11 @@ import tempfile
 import threading
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+try:
+    import segno  # QR encoder (pure-Python, vendored dep)
+except ImportError:
+    segno = None  # QR page degrades to a plain URL
 
 CFG: dict = {}
 _LOCK = threading.Lock()  # serialize Chromium launches (one at a time)
@@ -587,6 +593,31 @@ def load_app(app_url: str, wss: str, timeout_ms: int) -> dict:
             browser.close()
 
 
+def _qr_page(intake_url: str) -> str:
+    """A standalone page (shown on the LAPTOP) with a QR encoding the HTTPS
+    effects-intake URL, so the phone app can scan it instead of typing the IP."""
+    if segno is not None and intake_url:
+        qr = segno.make(intake_url, error="m")
+        img = f'<img class="qr" src="{qr.png_data_uri(scale=7, border=3, dark="#111", light="#fff")}" alt="intake QR">'
+        note = "Scan this with the app's “Send library to debug server” button."
+    else:
+        img = ""
+        note = "segno unavailable — type the URL into the app manually."
+    return (
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<title>LEDMapper debug intake</title><style>"
+        "body{font:15px system-ui;background:#0b0b0e;color:#eee;text-align:center;padding:24px}"
+        ".qr{width:min(72vw,340px);height:auto;image-rendering:pixelated;background:#fff;"
+        "border-radius:12px;padding:8px}code{color:#8de}.muted{color:#888}"
+        "</style></head><body><h2>Effects intake</h2>"
+        f"{img}<p>{html.escape(note)}</p>"
+        f"<p class='muted'>URL &rarr; <code>{html.escape(intake_url)}</code></p>"
+        "<p class='muted'>The app will ask you to accept a self-signed certificate — that's expected.</p>"
+        "</body></html>"
+    )
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "browser-driver/1.0"
 
@@ -613,6 +644,18 @@ class Handler(BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length", "0") or "0")
         return self.rfile.read(n) if n > 0 else b""
 
+    def _html(self, body: str, code: int = 200) -> None:
+        b = body.encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Content-Length", str(len(b)))
+        self.end_headers()
+        try:
+            self.wfile.write(b)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+
     def _json(self, obj, code: int = 200) -> None:
         body = json.dumps(obj, indent=2).encode()
         self.send_response(code)
@@ -630,9 +673,15 @@ class Handler(BaseHTTPRequestHandler):
         q = urllib.parse.parse_qs(u.query)
         g = lambda k, d=None: q.get(k, [d])[0]
         route = u.path.rstrip("/") or "/"
+        # The dedicated QR listener (another port) shows the intake QR for any path.
+        if getattr(self.server, "qr_only", False):
+            self._html(_qr_page(CFG.get("intake_url", "")))
+            return
         try:
             if route == "/":
                 self._json({"usage": __doc__, "playwright": _pw_ok()})
+            elif route == "/qr":
+                self._html(_qr_page(CFG.get("intake_url", "")))
             elif route == "/probe":
                 url = g("url")
                 if not url:
@@ -780,12 +829,15 @@ def main() -> int:
     ap.add_argument("--port", type=int, default=8092)
     ap.add_argument("--tls-port", type=int, default=8093,
                     help="HTTPS listener (self-signed) so the app can POST /effects")
+    ap.add_argument("--qr-port", type=int, default=8094,
+                    help="plain-HTTP page showing a QR of the intake URL (open on the laptop)")
     ap.add_argument("--app", default="https://ledmapper.pages.dev/",
                     help="hosted app base URL for /app")
     args = ap.parse_args()
     CFG.update(app=args.app)
 
     lan = _lan_ip() if args.host in ("0.0.0.0", "::") else args.host
+    CFG["intake_url"] = f"https://{lan}:{args.tls_port}"
 
     # HTTPS listener (for the app → /effects POST). Runs in a background thread;
     # the same Handler/routes serve both, so `curl http://host:8092/effects` pulls
@@ -802,6 +854,17 @@ def main() -> int:
                  f"(accept the cert once, then POST the library here)")
         except OSError as e:
             _log(f"  HTTPS listener failed on :{args.tls_port} ({e})")
+
+    # QR page (plain HTTP, another port): open on the laptop; the app scans it to
+    # fill in the intake URL. Encodes CFG["intake_url"] (the HTTPS :tls-port).
+    try:
+        qrd = ThreadingHTTPServer((args.host, args.qr_port), Handler)
+        qrd.qr_only = True  # this listener serves the QR page for every path
+        threading.Thread(target=qrd.serve_forever, daemon=True).start()
+        _log(f"  QR page (OPEN ON THE LAPTOP, scan from the app): http://{lan}:{args.qr_port}/"
+             + ("" if segno is not None else "  [segno missing — shows URL only]"))
+    except OSError as e:
+        _log(f"  QR listener failed on :{args.qr_port} ({e})")
 
     httpd = ThreadingHTTPServer((args.host, args.port), Handler)
     _log(f"browser-driver on http://{args.host}:{args.port}  (LAN: http://{lan}:{args.port})")

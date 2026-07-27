@@ -46,5 +46,8 @@ py_binary(
 py_binary(
     name = "browser_server",
     srcs = ["browser_server.py"],
-    deps = [requirement("playwright")],
+    deps = [
+        requirement("playwright"),
+        requirement("segno"),  # QR page for the effects-intake URL
+    ],
 )
