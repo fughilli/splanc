@@ -287,12 +287,61 @@ export async function extractTopology(
   const coincident: TopologyDebug["coincident"] = [];
   const dbgEdges: TopologyDebug["edges"] = [];
 
-  // 2. k-NN proximity edges within the cap (deduped, min→max).
-  const edgeMap = new Map<string, { i: number; j: number; d: number }>();
+  // 1b. collapse (near-)coincident LEDs into single graph NODES. Two LEDs solved
+  //     onto (nearly) the same point are one vertex of the fixture — decisively so
+  //     at a SELF-CROSSING, where the strand passes through a point twice: keeping
+  //     the pair separate leaves two degree-3 stubs joined by a zero-length edge
+  //     the MST cross-wires, whereas merging them makes ONE node the two strands
+  //     pass through — a clean degree-4 junction. All graph phases below run on
+  //     these nodes; every original LED still associates to a segment (§8).
+  const cuf = new UnionFind(n);
   for (let i = 0; i < n; i++) {
-    await breathe(i, 0.5 + (i / n) * 0.5);
+    await breathe(i, 0.5);
+    for (let j = i + 1; j < n; j++) {
+      const d = dist(P[i]!, P[j]!);
+      if (d <= coincEps) {
+        cuf.union(i, j);
+        if (wantDebug) {
+          const key = `${i}-${j}`;
+          if (!coincSeen.has(key)) {
+            coincSeen.add(key);
+            coincident.push({ a: P[i]!, b: P[j]!, dist: d });
+          }
+        }
+      }
+    }
+  }
+  const nodeOfRoot = new Map<number, number>();
+  const NP: Vec3[] = []; // graph-node positions (cluster centroids)
+  const nodeSum: Vec3[] = [];
+  const nodeCnt: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const r = cuf.find(i);
+    let node = nodeOfRoot.get(r);
+    if (node === undefined) {
+      node = NP.length;
+      nodeOfRoot.set(r, node);
+      NP.push([0, 0, 0]);
+      nodeSum.push([0, 0, 0]);
+      nodeCnt.push(0);
+    }
+    nodeSum[node]![0] += P[i]![0];
+    nodeSum[node]![1] += P[i]![1];
+    nodeSum[node]![2] += P[i]![2];
+    nodeCnt[node]!++;
+  }
+  const nNodes = NP.length;
+  for (let node = 0; node < nNodes; node++) {
+    const c = nodeCnt[node]!;
+    NP[node] = [nodeSum[node]![0] / c, nodeSum[node]![1] / c, nodeSum[node]![2] / c];
+  }
+
+  // 2. k-NN proximity edges within the cap (deduped, min→max) over the NODES.
+  const edgeMap = new Map<string, { i: number; j: number; d: number }>();
+  for (let i = 0; i < nNodes; i++) {
+    await breathe(i, 0.5 + (i / nNodes) * 0.5);
     const ds: { j: number; d: number }[] = [];
-    for (let j = 0; j < n; j++) if (j !== i) ds.push({ j, d: dist(P[i]!, P[j]!) });
+    for (let j = 0; j < nNodes; j++) if (j !== i) ds.push({ j, d: dist(NP[i]!, NP[j]!) });
     ds.sort((a, b) => a.d - b.d);
     for (let t = 0; t < Math.min(k, ds.length); t++) {
       const { j, d } = ds[t]!;
@@ -300,27 +349,20 @@ export async function extractTopology(
       const lo = Math.min(i, j);
       const hi = Math.max(i, j);
       edgeMap.set(`${lo}-${hi}`, { i: lo, j: hi, d });
-      if (wantDebug && d <= coincEps) {
-        const key = `${lo}-${hi}`;
-        if (!coincSeen.has(key)) {
-          coincSeen.add(key);
-          coincident.push({ a: P[lo]!, b: P[hi]!, dist: d });
-        }
-      }
     }
   }
   onProgress?.(1);
 
   // 3. minimum spanning FOREST (Kruskal) — one tree per spatial component.
   const edges = [...edgeMap.values()].sort((a, b) => a.d - b.d);
-  const uf = new UnionFind(n);
-  const adj: number[][] = Array.from({ length: n }, () => []);
+  const uf = new UnionFind(nNodes);
+  const adj: number[][] = Array.from({ length: nNodes }, () => []);
   const dropped: { i: number; j: number; d: number }[] = [];
   for (const e of edges) {
     if (uf.union(e.i, e.j)) {
       adj[e.i]!.push(e.j);
       adj[e.j]!.push(e.i);
-      if (wantDebug) dbgEdges.push({ a: P[e.i]!, b: P[e.j]!, d: e.d, chord: false });
+      if (wantDebug) dbgEdges.push({ a: NP[e.i]!, b: NP[e.j]!, d: e.d, chord: false });
     } else {
       dropped.push(e); // stays length-ascending (edges is sorted)
     }
@@ -349,10 +391,11 @@ export async function extractTopology(
         adj[e.j]!.push(e.i);
         forced.add(e.i);
         forced.add(e.j);
-        if (wantDebug) dbgEdges.push({ a: P[e.i]!, b: P[e.j]!, d: e.d, chord: true });
+        if (wantDebug) dbgEdges.push({ a: NP[e.i]!, b: NP[e.j]!, d: e.d, chord: true });
       }
     }
   }
+
   const deg = adj.map((a) => a.length);
 
   // 4. first trace: maximal degree-2 chains between anchors (deg ≠ 2, or a
@@ -362,7 +405,7 @@ export async function extractTopology(
   const isAnchor = (i: number): boolean => deg[i]! !== 2 || forced.has(i);
   const seen = new Set<string>();
   const chains: number[][] = [];
-  for (let a = 0; a < n; a++) {
+  for (let a = 0; a < nNodes; a++) {
     if (deg[a]! === 0 || !isAnchor(a)) continue;
     for (const start of adj[a]!) {
       if (seen.has(`${a}-${start}`)) continue;
@@ -388,7 +431,7 @@ export async function extractTopology(
   // 6. prune short leaf spurs (an endpoint end + total length below the cap).
   const chainLen = (c: number[]): number => {
     let l = 0;
-    for (let i = 1; i < c.length; i++) l += dist(P[c[i]!]!, P[c[i - 1]!]!);
+    for (let i = 1; i < c.length; i++) l += dist(NP[c[i]!]!, NP[c[i - 1]!]!);
     return l;
   };
   let kept = chains.filter((c) => {
@@ -403,7 +446,7 @@ export async function extractTopology(
   //    (no spurious mid-strand junctions) and drops branch points the prune
   //    orphaned. Branch points are then the surviving deg≥3 nodes plus loop-chord
   //    endpoints that still carry ≥2 edges (they anchor a ring's segments).
-  const adj2: number[][] = Array.from({ length: n }, () => []);
+  const adj2: number[][] = Array.from({ length: nNodes }, () => []);
   const linked = new Set<string>();
   for (const c of kept) {
     for (let i = 1; i < c.length; i++) {
@@ -421,16 +464,16 @@ export async function extractTopology(
 
   const branchId = new Map<number, number>();
   const branchPoints: BranchPoint[] = [];
-  for (let i = 0; i < n; i++) {
+  for (let i = 0; i < nNodes; i++) {
     if (deg2[i]! >= 3 || (forced.has(i) && deg2[i]! >= 2)) {
       branchId.set(i, branchPoints.length);
-      branchPoints.push({ id: branchPoints.length, xyz: P[i]! });
+      branchPoints.push({ id: branchPoints.length, xyz: NP[i]! });
     }
   }
 
   const seen2 = new Set<string>();
   const traced: number[][] = [];
-  for (let a = 0; a < n; a++) {
+  for (let a = 0; a < nNodes; a++) {
     if (!isAnchor2(a)) continue;
     for (const start of adj2[a]!) {
       if (seen2.has(`${a}-${start}`)) continue;
@@ -461,7 +504,7 @@ export async function extractTopology(
   const segments: TopologySegment[] = [];
   const segCum: number[][] = [];
   outChains.forEach((c, idx) => {
-    const path = c.map((i) => P[i]!);
+    const path = c.map((i) => NP[i]!);
     const poly = simplify(path, s * simplifyFrac, maxPolyline).map((i) => path[i]!);
     const cum = [0];
     for (let i = 1; i < poly.length; i++) cum.push(cum[i - 1]! + dist(poly[i]!, poly[i - 1]!));
@@ -549,6 +592,83 @@ export async function extractTopology(
       segCum.length = 0;
       segCum.push(...rebuiltCum);
     }
+  }
+
+  // 7c. dissolve degree-2 junctions — the invariant that there is NEVER a
+  //     degree-2 branch point in the output. A branch point where exactly two
+  //     DISTINCT segments meet is a pass-through, not a junction: splice the two
+  //     segments into one (oriented so they join at the point) and drop the
+  //     point. Iterating collapses whole chains of them. A lone self-loop (both
+  //     ends of ONE segment at the point) is left with its single anchor — a
+  //     ring genuinely has no junction, so it reduces to one closed segment.
+  segsOut = segsOut.slice();
+  for (;;) {
+    const inc = new Map<number, number[]>(); // branch id → incident segment indices
+    segsOut.forEach((sg, si) => {
+      if (sg.a >= 0) {
+        let arr = inc.get(sg.a);
+        if (!arr) inc.set(sg.a, (arr = []));
+        arr.push(si);
+      }
+      if (sg.b >= 0) {
+        let arr = inc.get(sg.b);
+        if (!arr) inc.set(sg.b, (arr = []));
+        arr.push(si);
+      }
+    });
+    let bp = -1;
+    let s1 = -1;
+    let s2 = -1;
+    for (const [id, segs] of inc) {
+      if (segs.length === 2 && segs[0] !== segs[1]) {
+        bp = id;
+        s1 = segs[0]!;
+        s2 = segs[1]!;
+        break;
+      }
+    }
+    if (bp < 0) break;
+    const A = segsOut[s1]!;
+    const B = segsOut[s2]!;
+    // Orient so the shared point `bp` is at A's END and B's START, then splice.
+    const poly1 = A.a === bp ? [...A.polyline].reverse() : A.polyline;
+    const newA = A.a === bp ? A.b : A.a;
+    const poly2 = B.a === bp ? B.polyline : [...B.polyline].reverse();
+    const newB = B.a === bp ? B.b : B.a;
+    const mergedPoly = poly1.concat(poly2.slice(1));
+    let len = 0;
+    for (let i = 1; i < mergedPoly.length; i++) len += dist(mergedPoly[i]!, mergedPoly[i - 1]!);
+    segsOut[s1] = { id: A.id, a: newA, b: newB, polyline: mergedPoly, length: len };
+    segsOut.splice(s2, 1);
+  }
+  // Compact branch points to those still referenced; renumber ids + segment ids.
+  const usedBp = new Set<number>();
+  for (const sg of segsOut) {
+    if (sg.a >= 0) usedBp.add(sg.a);
+    if (sg.b >= 0) usedBp.add(sg.b);
+  }
+  const bpRemap = new Map<number, number>();
+  const compactBps: BranchPoint[] = [];
+  for (const b of bpsOut) {
+    if (usedBp.has(b.id)) {
+      const nid = compactBps.length;
+      bpRemap.set(b.id, nid);
+      compactBps.push({ id: nid, xyz: b.xyz });
+    }
+  }
+  bpsOut = compactBps;
+  segsOut = segsOut.map((sg, i) => ({
+    ...sg,
+    id: i,
+    a: sg.a >= 0 ? bpRemap.get(sg.a)! : -1,
+    b: sg.b >= 0 ? bpRemap.get(sg.b)! : -1,
+  }));
+  // Recompute cumulative arclengths for the final segments (used by §8).
+  segCum.length = 0;
+  for (const sg of segsOut) {
+    const cum = [0];
+    for (let i = 1; i < sg.polyline.length; i++) cum.push(cum[i - 1]! + dist(sg.polyline[i]!, sg.polyline[i - 1]!));
+    segCum.push(cum);
   }
 
   // 8. associate EVERY LED to the nearest segment (no orphans — isolated LEDs

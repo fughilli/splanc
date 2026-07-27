@@ -117,9 +117,13 @@ function hasCycle(t: Awaited<ReturnType<typeof extractTopology>>): boolean {
 
 test("a closed ring keeps its loop (flood can swirl); id-order-independent", async () => {
   const t = await extractTopology(map(ring(16)));
-  assert.equal(t.branchPoints.length, 2, "the ring anchors at the chord's ends");
-  assert.equal(t.segments.length, 2, "two arcs between the anchors");
-  assert.ok(hasCycle(t), "the two arcs form a cycle");
+  // A ring has NO junction, so the degree-2 dissolve reduces it to a single
+  // closed self-loop segment anchored at one seam point (not two degree-2
+  // pass-through anchors).
+  assert.equal(t.branchPoints.length, 1, "one seam anchor, no degree-2 pass-throughs");
+  assert.equal(t.segments.length, 1, "one closed self-loop segment");
+  assert.ok(t.segments[0]!.a === t.segments[0]!.b, "the segment loops back on itself");
+  assert.ok(hasCycle(t), "the self-loop is a cycle");
   assert.equal(t.associations.length, 16, "every LED associated");
 
   // Geometry-only: scrambling ids yields the same cyclic topology.
@@ -281,12 +285,14 @@ function doubleFigureEight(amp = 2, step = 0.5): LedEntry[] {
   return pts.map((p, i) => led(i, p));
 }
 
-// The correct topology has exactly two junctions — the two self-crossings — with
-// the lobes remaining closed loops. The extractor currently mis-solves the
-// coincident crossings into a spray of off-crossing branch points with no cycle
-// (observed: 6 branch points, none at a crossing, 0 cycles). Marked `todo` so it
-// documents the target without failing CI; it should start passing once the
-// crossing/coincident handling is fixed, at which point drop the todo flag.
+// The extractor now yields TWO junctions with the lobes kept as loops
+// (coincidence-merge + degree-2 dissolve took it from a 6-branch-point spray to
+// a clean 2-junction cycle). What is NOT yet solved is LOCALISING those junctions
+// onto the crossings: the spanning tree keeps only a subset of each merged
+// crossing node's edges, so the junctions land off to the side rather than at
+// (2,0)/(4,0). That needs MST re-routing around merged nodes — a deeper change.
+// Kept `todo` (asserting the ideal) to document that remaining gap; drop the flag
+// once the junctions localise to the crossings.
 test("a double figure-8 resolves its two self-crossings as junctions", { todo: true }, async () => {
   const t = await extractTopology(map(doubleFigureEight()), { debug: true });
   const nearCrossing = (xy: Vec3): boolean =>
@@ -297,4 +303,36 @@ test("a double figure-8 resolves its two self-crossings as junctions", { todo: t
   assert.ok(hasCycle(t), "the lobes remain closed loops");
   assert.equal(t.associations.length, 24, "every LED associated");
 });
+
+// The invariant the solver must uphold: NO degree-2 pass-through junction ever
+// survives — a branch point where two DISTINCT segments meet is spliced into one.
+// (A self-loop anchor, both ends of ONE segment, is allowed: a ring needs a seam.)
+function noDegree2PassThrough(t: Awaited<ReturnType<typeof extractTopology>>): boolean {
+  const ends = new Map<number, number[]>(); // branch id → incident segment ids
+  for (const sg of t.segments) {
+    for (const e of [sg.a, sg.b]) {
+      if (e < 0) continue;
+      let arr = ends.get(e);
+      if (!arr) ends.set(e, (arr = []));
+      arr.push(sg.id);
+    }
+  }
+  for (const segs of ends.values()) {
+    if (segs.length === 2 && segs[0] !== segs[1]) return false; // two distinct segments → pass-through
+  }
+  return true;
+}
+
+test("no degree-2 pass-through junctions survive in the output", async () => {
+  // The double figure-8 previously left several degree-2 branch points (loop
+  // anchors that were really pass-throughs); the dissolve pass must remove them.
+  assert.ok(noDegree2PassThrough(await extractTopology(map(doubleFigureEight()))), "double-8: none");
+  assert.ok(noDegree2PassThrough(await extractTopology(map(ring(16)))), "ring: none (self-loop is exempt)");
+  // A Y and a plain strip must stay clean too.
+  const y = await extractTopology(
+    map([[0, 0, 0], [1, 0, 0], [2, 0, 0], [3, 1, 0], [4, 2, 0], [3, -1, 0], [4, -2, 0]].map((p, i) => led(i, p as Vec3))),
+  );
+  assert.ok(noDegree2PassThrough(y), "Y: none");
+});
+
 

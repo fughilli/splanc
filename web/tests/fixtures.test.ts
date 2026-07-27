@@ -21,12 +21,22 @@ test("a strip generates the requested LED count and one segment", async () => {
   assert.equal(topo.branchPoints.length, 0);
 });
 
-test("a ring extracts as a loop (two arcs between two anchors)", async () => {
+test("a ring extracts as a loop (a closed cycle, no degree-2 anchors)", async () => {
   const map = generateFixture("ring", { count: 40, ...opts });
   const topo = await extractTopology(map); // default loopFactor closes the ring
-  assert.equal(topo.branchPoints.length, 2, "the ring anchors at the chord ends");
-  const pairs = new Set(topo.segments.map((s) => [s.a, s.b].sort((x, y) => x - y).join("-")));
-  assert.equal(pairs.size, 1, "both arcs share one endpoint pair → a cycle");
+  // The ring has no junction, so the degree-2 dissolve reduces it to a single
+  // closed self-loop (a === b) — or, with jitter, two arcs sharing one pair.
+  // Either way it must remain a cycle.
+  const selfLoop = topo.segments.some((s) => s.a >= 0 && s.a === s.b);
+  const seen = new Set<string>();
+  let sharedPair = false;
+  for (const s of topo.segments) {
+    if (s.a < 0 || s.b < 0) continue;
+    const key = [s.a, s.b].sort((x, y) => x - y).join("-");
+    if (seen.has(key)) sharedPair = true;
+    seen.add(key);
+  }
+  assert.ok(selfLoop || sharedPair, "the ring stays a cycle");
 });
 
 test("a star extracts a junction", async () => {
