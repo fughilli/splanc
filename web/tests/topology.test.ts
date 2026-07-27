@@ -240,6 +240,36 @@ test("a junction over-split into two nearby branch points merges into one", asyn
   assert.equal(t.associations.length, pts.length, "every LED still associated");
 });
 
+// Every segment must physically reach the branch point it references: its
+// polyline endpoint coincides with that junction's position. (The old merge
+// moved junctions to a centroid but left the segments at their old positions,
+// visibly disconnecting them.)
+function segmentsReachJunctions(t: Awaited<ReturnType<typeof extractTopology>>): boolean {
+  const bp = new Map(t.branchPoints.map((b) => [b.id, b.xyz]));
+  const near = (p: Vec3, q: Vec3): boolean => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]) < 1e-6;
+  for (const sg of t.segments) {
+    if (sg.a >= 0 && !near(sg.polyline[0]!, bp.get(sg.a)!)) return false;
+    if (sg.b >= 0 && !near(sg.polyline[sg.polyline.length - 1]!, bp.get(sg.b)!)) return false;
+  }
+  return true;
+}
+
+test("merged junctions stay connected — segments reach the merged branch point", async () => {
+  // The over-split junction (two degree-3 nodes 0.5 apart) merges into one; every
+  // segment that touched either must physically reach the surviving junction.
+  const pts: LedEntry[] = [
+    [-2, 0, 0], [-1, 0, 0], [0, 0, 0], [1, 0, 0], [2, 0, 0], [2.5, 0, 0],
+    [3.5, 0, 0], [4.5, 0, 0], [5.5, 0, 0], [6.5, 0, 0],
+    [2, 1, 0], [2, 2, 0], [2, 3, 0], [2, 4, 0],
+    [2.5, -1, 0], [2.5, -2, 0], [2.5, -3, 0], [2.5, -4, 0],
+  ].map((p, i) => led(i, p as Vec3));
+  const t = await extractTopology(map(pts));
+  assert.equal(t.branchPoints.length, 1, "merged to one junction");
+  assert.ok(segmentsReachJunctions(t), "every segment reaches the merged junction (no gap)");
+  // And the invariant holds on the crossing-heavy double figure-8 too.
+  assert.ok(segmentsReachJunctions(await extractTopology(map(doubleFigureEight()))), "double-8: connected");
+});
+
 test("mergeFactor keeps a genuine loop (long parallel arc survives as a self-loop)", async () => {
   // A ring's two anchors are joined by two LONG arcs, not a short connector, so
   // the merge must NOT fuse them away — the cycle has to stay a cycle.

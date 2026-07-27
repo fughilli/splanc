@@ -601,10 +601,17 @@ export async function extractTopology(
   //     several branch points a hair apart (e.g. at a self-crossing, where
   //     coincident LEDs spawn a knot of degree-3 nodes), walk each
   //     junction-to-junction segment: if it is shorter than the merge radius,
-  //     contract it — the two branch points fuse into one node at their centroid,
-  //     the short connector is dropped, and LEDs re-associate below. A LONGER
-  //     parallel arc between the same pair (a double edge) survives the remap as
-  //     a self-loop, so real loops are preserved. `mergeFactor` 0 disables.
+  //     contract it. A LONGER parallel arc between the same pair (a double edge)
+  //     survives as a self-loop, so real loops are preserved. `mergeFactor` 0
+  //     disables.
+  //
+  //     The cluster collapses INTO one of its member junctions (not a virtual
+  //     centroid): every segment that touched a member re-points to it AND has its
+  //     endpoint snapped onto its position, so the merged junction still physically
+  //     reaches all its segments (a centroid would leave every segment ending a
+  //     hair away — broken connectivity). We pick the member that MINIMISES the
+  //     total resulting segment length, i.e. the junction that moves its segments
+  //     the least. Only the short internal connectors are dropped.
   let bpsOut = branchPoints;
   let segsOut = segments;
   if (mergeFactor > 0 && branchPoints.length > 1) {
@@ -629,7 +636,6 @@ export async function extractTopology(
       }
     }
     if (anyMerged) {
-      // Compact each cluster root → a new id, positioned at its members' centroid.
       const rootMembers = new Map<number, number[]>();
       for (let i = 0; i < branchPoints.length; i++) {
         const r = bpUf.find(i);
@@ -637,34 +643,67 @@ export async function extractTopology(
         if (!arr) rootMembers.set(r, (arr = []));
         arr.push(i);
       }
+      const polyLen = (poly: Vec3[]): number => {
+        let l = 0;
+        for (let i = 1; i < poly.length; i++) l += dist(poly[i]!, poly[i - 1]!);
+        return l;
+      };
+      // A segment's length with its in-cluster endpoints snapped onto position p.
+      const lenSnapped = (sg: TopologySegment, aIn: boolean, bIn: boolean, p: Vec3): number => {
+        const poly = sg.polyline.slice();
+        if (aIn) poly[0] = p;
+        if (bIn) poly[poly.length - 1] = p;
+        return polyLen(poly);
+      };
       const newId = new Map<number, number>(); // old branch id → merged id
       const merged: BranchPoint[] = [];
+      const mergedPos: Vec3[] = []; // chosen position per merged id
       for (const members of rootMembers.values()) {
-        const id = merged.length;
-        let cx = 0;
-        let cy = 0;
-        let cz = 0;
+        const memberSet = new Set(members);
+        const touching = segments.filter(
+          (sg) => (sg.a >= 0 && memberSet.has(sg.a)) || (sg.b >= 0 && memberSet.has(sg.b)),
+        );
+        // Collapse INTO the member junction that minimises the total resulting
+        // segment length (moves its incident segments the least).
+        let bestPos = branchPoints[members[0]!]!.xyz;
+        let bestTotal = Infinity;
         for (const m of members) {
           const p = branchPoints[m]!.xyz;
-          cx += p[0];
-          cy += p[1];
-          cz += p[2];
-          newId.set(m, id);
+          let total = 0;
+          for (const sg of touching) {
+            const aIn = sg.a >= 0 && memberSet.has(sg.a);
+            const bIn = sg.b >= 0 && memberSet.has(sg.b);
+            if (aIn && bIn && sg.length < mergeRadius) continue; // a dropped connector
+            total += lenSnapped(sg, aIn, bIn, p);
+          }
+          if (total < bestTotal) {
+            bestTotal = total;
+            bestPos = p;
+          }
         }
-        const c = members.length;
-        merged.push({ id, xyz: [cx / c, cy / c, cz / c] });
+        const id = merged.length;
+        for (const m of members) newId.set(m, id);
+        merged.push({ id, xyz: bestPos });
+        mergedPos.push(bestPos);
       }
       const remap = (bp: number): number => (bp >= 0 ? newId.get(bp)! : -1);
       const rebuilt: TopologySegment[] = [];
       const rebuiltCum: number[][] = [];
-      segments.forEach((sg, i) => {
+      segments.forEach((sg) => {
         const a = remap(sg.a);
         const b = remap(sg.b);
         // Drop only the contracted short connectors (both ends now one node AND
         // the segment was short); keep long self-loops (genuine lobes/rings).
         if (a === b && a >= 0 && sg.length < mergeRadius) return;
-        rebuilt.push({ ...sg, id: rebuilt.length, a, b });
-        rebuiltCum.push(segCum[i]!);
+        // Snap merged endpoints onto the chosen junction so the segment still
+        // reaches it (for an unmerged endpoint this is a no-op — same position).
+        const poly = sg.polyline.map((v) => [v[0], v[1], v[2]] as Vec3);
+        if (a >= 0) poly[0] = [mergedPos[a]![0], mergedPos[a]![1], mergedPos[a]![2]];
+        if (b >= 0) poly[poly.length - 1] = [mergedPos[b]![0], mergedPos[b]![1], mergedPos[b]![2]];
+        const cum = [0];
+        for (let i = 1; i < poly.length; i++) cum.push(cum[i - 1]! + dist(poly[i]!, poly[i - 1]!));
+        rebuilt.push({ ...sg, id: rebuilt.length, a, b, polyline: poly, length: cum[cum.length - 1]! });
+        rebuiltCum.push(cum);
       });
       bpsOut = merged;
       segsOut = rebuilt;
