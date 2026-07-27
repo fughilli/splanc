@@ -318,15 +318,24 @@ export async function extractTopology(
     }
   }
 
-  // 3b. re-add loop-closing chords: a short dropped edge whose endpoints are
-  //     still far apart in the graph closes a genuine cycle (a ring in the
-  //     fixture). Its endpoints become anchors so the loop traces as segments.
+  // 3b. re-add loop-closing chords: a short dropped edge closes a genuine cycle
+  //     (a ring in the fixture) ONLY when it joins two STRAND ENDS (the seam the
+  //     MST broke). When the MST spans a cycle it removes one edge, leaving its
+  //     two endpoints at degree 1 — those are the ends to rejoin. Requiring both
+  //     endpoints to be degree-1 rejects the false "mid-loop" bridges that arise
+  //     where a strand folds and two INTERIOR (degree-2) points pass near each
+  //     other — the spurious geodesic shortcuts that made flood pulses jump. The
+  //     `> MIN_LOOP_HOPS` guard keeps a real ring (ends far along the strand)
+  //     from being "closed" over a tiny fold. Endpoints become anchors so the
+  //     loop traces as segments.
   const forced = new Set<number>();
   if (loopFactor > 0) {
     const maxLoopEdge = s * loopFactor;
     for (const e of dropped) {
       if (forced.size / 2 >= MAX_LOOPS) break;
       if (e.d > maxLoopEdge) break; // ascending → the rest are longer too
+      // Only join two current strand ends (degree 1) — not mid-strand interiors.
+      if (adj[e.i]!.length !== 1 || adj[e.j]!.length !== 1) continue;
       if (!reachableWithin(adj, e.i, e.j, MIN_LOOP_HOPS - 1)) {
         adj[e.i]!.push(e.j);
         adj[e.j]!.push(e.i);

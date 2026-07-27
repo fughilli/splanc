@@ -199,3 +199,31 @@ test("debug report flags coincident LEDs (solve degeneracy)", async () => {
   const plain = await extractTopology(map(pts));
   assert.equal((plain as { debug?: unknown }).debug, undefined);
 });
+
+test("a folded strand gets NO false mid-loop chord (only strand ends can close)", async () => {
+  // A hairpin whose two arms run ~1.6 apart (interior points pass near each
+  // other) but whose free ends are far apart. The old rule bridged the interior
+  // approaches (false mid-loop chords → geodesic shortcuts); the fix rejects
+  // them because both endpoints are degree-2, and the ends are too far to close.
+  const pts: LedEntry[] = [];
+  let id = 0;
+  for (let x = 0; x <= 4; x++) pts.push(led(id++, [x, 0, 0])); // arm A, end at x=0
+  pts.push(led(id++, [5, 0.8, 0])); // turn
+  for (let x = 4; x >= 2; x--) pts.push(led(id++, [x, 1.6, 0])); // arm B near arm A
+  pts.push(led(id++, [1, 2.6, 0]));
+  pts.push(led(id++, [0, 3.6, 0])); // arm B end, far from arm A's end
+  const t = await extractTopology(map(pts), { debug: true });
+  assert.equal(t.debug!.edges.filter((e) => e.chord).length, 0, "interior fold must not be chorded");
+  assert.equal(t.branchPoints.length, 0, "still one open strand");
+});
+
+test("a real ring still closes at its strand ends (exactly one loop-chord)", async () => {
+  const N = 16;
+  const R = 2.5;
+  const pts: LedEntry[] = [];
+  for (let k = 0; k < N; k++) {
+    pts.push(led(k, [R * Math.cos((2 * Math.PI * k) / N), R * Math.sin((2 * Math.PI * k) / N), 0]));
+  }
+  const t = await extractTopology(map(pts), { debug: true });
+  assert.equal(t.debug!.edges.filter((e) => e.chord).length, 1, "the ring closes with one chord at its seam");
+});
