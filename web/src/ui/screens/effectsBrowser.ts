@@ -13,6 +13,7 @@
 import { ActionGrid, Button, Chip, EmptyState, HelpTip, IconButton, Sheet, toast, icon } from "../kit";
 import { effectStore, isBuiltinEffect, type StoredEffect } from "../../store/effectStore";
 import { appendGrouped, openFolderPicker } from "./folders";
+import { openDebugServerSheet } from "./debugServerSheet";
 import { openAiKeySheet } from "./aiKeySheet";
 import { getApiKey } from "../../effects/ai/generate";
 import type { Router, Screen } from "../app/router";
@@ -82,7 +83,12 @@ export function EffectsBrowserScreen(router: Router): Screen {
   // Toolbar row: the search field takes the space; the "?" tip floats at its end.
   const toolbar = document.createElement("div");
   toolbar.className = "fxlib-toolbar";
-  toolbar.append(searchWrap, aiHelp);
+  // Debug: ship the whole library to a host-side debug server for analysis.
+  const dbgBtn = IconButton("effect-to-device", {
+    title: "Send library to debug server",
+    onClick: () => openDebugServerSheet(),
+  });
+  toolbar.append(searchWrap, aiHelp, dbgBtn);
 
   const tagRow = document.createElement("div");
   tagRow.className = "maps-tags";

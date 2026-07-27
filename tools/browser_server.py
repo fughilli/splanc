@@ -41,13 +41,20 @@ import os
 import socket
 import ssl
 import struct
+import subprocess
 import sys
+import tempfile
 import threading
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 CFG: dict = {}
 _LOCK = threading.Lock()  # serialize Chromium launches (one at a time)
+
+# Last effects library the app POSTed to /effects (so `curl host:8092/effects`
+# from a debugging container can pull it). Kept in memory + mirrored to a file.
+_EFFECTS_LIB: dict = {"library": None, "at": None}
+_EFFECTS_FILE = os.path.join(tempfile.gettempdir(), "ledmapper-effects-library.json")
 
 # In-page probe: resolve when the socket OPENs (or errors/closes/times out).
 _WS_PROBE = """
@@ -589,8 +596,22 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         self._dispatch()
 
+    def do_OPTIONS(self) -> None:
+        # CORS preflight for the app's JSON POST to /effects.
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Max-Age", "86400")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
     def log_message(self, fmt: str, *a) -> None:
         _log("%s - %s" % (self.address_string(), fmt % a))
+
+    def _read_body(self) -> bytes:
+        n = int(self.headers.get("Content-Length", "0") or "0")
+        return self.rfile.read(n) if n > 0 else b""
 
     def _json(self, obj, code: int = 200) -> None:
         body = json.dumps(obj, indent=2).encode()
@@ -676,6 +697,35 @@ class Handler(BaseHTTPRequestHandler):
                     self._json({"error": "missing ?wss="}, 400)
                     return
                 self._json(load_app(g("app", CFG["app"]), wss, int(g("timeout", "20000"))))
+            elif route == "/effects":
+                # POST (from the app over HTTPS): store the effects library dump.
+                # GET (from a debugging container over HTTP): retrieve it.
+                if self.command == "POST":
+                    raw = self._read_body()
+                    try:
+                        lib = json.loads(raw.decode("utf-8")) if raw else None
+                    except (UnicodeDecodeError, json.JSONDecodeError) as e:
+                        self._json({"error": f"bad JSON body: {e}"}, 400)
+                        return
+                    _EFFECTS_LIB["library"] = lib
+                    _EFFECTS_LIB["at"] = g("at") or ""
+                    try:
+                        with open(_EFFECTS_FILE, "w") as f:
+                            json.dump(lib, f, indent=2)
+                    except OSError:
+                        pass
+                    n = len(lib.get("effects", [])) if isinstance(lib, dict) else 0
+                    _log(f"/effects stored library: {n} effects, {len(raw)} bytes -> {_EFFECTS_FILE}")
+                    self._json({"stored": True, "effects": n, "bytes": len(raw), "file": _EFFECTS_FILE})
+                else:
+                    lib = _EFFECTS_LIB["library"]
+                    if lib is None and os.path.exists(_EFFECTS_FILE):
+                        try:
+                            with open(_EFFECTS_FILE) as f:
+                                lib = json.load(f)
+                        except (OSError, json.JSONDecodeError):
+                            lib = None
+                    self._json({"library": lib, "at": _EFFECTS_LIB["at"]})
             else:
                 self._json({"error": f"no such endpoint: {route}"}, 404)
         except Exception as e:  # noqa: BLE001
@@ -700,17 +750,60 @@ def _lan_ip() -> str:
         s.close()
 
 
+def _ensure_selfsigned_cert(lan: str) -> tuple[str, str] | None:
+    """Self-signed cert+key for the HTTPS listener (so the HTTPS app can POST to
+    /effects without a mixed-content block). Generated once via openssl, with the
+    current LAN IP in the SAN; the browser still shows an "untrusted" warning the
+    user accepts once (same as the device cert). Returns (cert, key) or None."""
+    cert = os.path.join(tempfile.gettempdir(), "ledmapper-debug-cert.pem")
+    key = os.path.join(tempfile.gettempdir(), "ledmapper-debug-key.pem")
+    if os.path.exists(cert) and os.path.exists(key):
+        return cert, key
+    san = f"subjectAltName=IP:{lan},IP:127.0.0.1,DNS:localhost"
+    try:
+        subprocess.run(
+            ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
+             "-keyout", key, "-out", cert, "-days", "3650",
+             "-subj", "/CN=ledmapper-debug", "-addext", san],
+            check=True, capture_output=True,
+        )
+        return cert, key
+    except (OSError, subprocess.CalledProcessError) as e:
+        _log(f"  HTTPS disabled — could not generate a self-signed cert ({e}); "
+             f"install openssl or POST the library over http instead.")
+        return None
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Host headless-browser (Playwright) driver.")
     ap.add_argument("--host", default="0.0.0.0")
     ap.add_argument("--port", type=int, default=8092)
+    ap.add_argument("--tls-port", type=int, default=8093,
+                    help="HTTPS listener (self-signed) so the app can POST /effects")
     ap.add_argument("--app", default="https://ledmapper.pages.dev/",
                     help="hosted app base URL for /app")
     args = ap.parse_args()
     CFG.update(app=args.app)
 
-    httpd = ThreadingHTTPServer((args.host, args.port), Handler)
     lan = _lan_ip() if args.host in ("0.0.0.0", "::") else args.host
+
+    # HTTPS listener (for the app → /effects POST). Runs in a background thread;
+    # the same Handler/routes serve both, so `curl http://host:8092/effects` pulls
+    # what the app POSTed to `https://host:8093/effects`.
+    certkey = _ensure_selfsigned_cert(lan)
+    if certkey is not None:
+        try:
+            httpsd = ThreadingHTTPServer((args.host, args.tls_port), Handler)
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            ctx.load_cert_chain(certkey[0], certkey[1])
+            httpsd.socket = ctx.wrap_socket(httpsd.socket, server_side=True)
+            threading.Thread(target=httpsd.serve_forever, daemon=True).start()
+            _log(f"  effects intake (HTTPS): https://{lan}:{args.tls_port}/effects "
+                 f"(accept the cert once, then POST the library here)")
+        except OSError as e:
+            _log(f"  HTTPS listener failed on :{args.tls_port} ({e})")
+
+    httpd = ThreadingHTTPServer((args.host, args.port), Handler)
     _log(f"browser-driver on http://{args.host}:{args.port}  (LAN: http://{lan}:{args.port})")
     _log(f"  playwright: {_pw_ok()}")
     _log(f"  app: {args.app}")
