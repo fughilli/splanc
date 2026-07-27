@@ -30,6 +30,7 @@ import { extractTopology } from "../../topology/extract";
 import { FxCompilerWorker } from "../../effects/editor/compiler";
 import { UniformPanel } from "../../effects/editor/uniform-panel";
 import { highlight } from "../../effects/editor/highlight";
+import { formatFx } from "../../effects/editor/format";
 import { complete, type CompletionItem } from "../../effects/editor/completions";
 import {
   chatTurn,
@@ -552,6 +553,14 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     syncDisasmLabel();
     closeMenu();
   });
+  const miFormat = document.createElement("button");
+  miFormat.type = "button";
+  miFormat.className = "fxedit-menu-item";
+  miFormat.textContent = "Format code";
+  miFormat.addEventListener("click", () => {
+    formatCode();
+    closeMenu();
+  });
   const miReset = document.createElement("button");
   miReset.type = "button";
   miReset.className = "fxedit-menu-item";
@@ -561,7 +570,41 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     syncDisasmLabel(); // reset re-hides disassembly
     closeMenu();
   });
-  menu.append(miKey, miDisasm, miReset);
+  menu.append(miKey, miFormat, miDisasm, miReset);
+
+  // Auto-format (re-indent) the buffer, keeping the caret at roughly the same
+  // logical spot (measured in non-whitespace characters, which the reformat
+  // preserves). Repaints, recompiles and autosaves like any edit.
+  function formatCode(): void {
+    const old = codeEl.value;
+    const next = formatFx(old);
+    if (next === old) {
+      toast("Already formatted");
+      return;
+    }
+    const caret = codeEl.selectionStart ?? 0;
+    let before = 0;
+    for (let i = 0; i < caret; i++) if (!/\s/.test(old[i]!)) before++;
+    codeEl.value = next;
+    let seen = 0;
+    let pos = next.length;
+    if (before === 0) {
+      pos = 0;
+    } else {
+      for (let i = 0; i < next.length; i++) {
+        if (!/\s/.test(next[i]!) && ++seen === before) {
+          pos = i + 1;
+          break;
+        }
+      }
+    }
+    codeEl.setSelectionRange(pos, pos);
+    paintHighlight();
+    syncScroll();
+    scheduleCompile();
+    scheduleSave();
+    toast("Formatted");
+  }
   floatR.appendChild(menu);
 
   let menuOpen = false;
@@ -1011,6 +1054,12 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     if (popupKeydown(ev)) {
       ev.preventDefault();
       ev.stopPropagation();
+      return;
+    }
+    // Shift+Alt+F → auto-format (VS Code convention).
+    if (ev.altKey && ev.shiftKey && (ev.key === "F" || ev.key === "f")) {
+      ev.preventDefault();
+      formatCode();
     }
   });
   codeEl.addEventListener("keyup", (ev) => {
