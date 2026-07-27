@@ -6,9 +6,9 @@ render loop) AND compiled to wasm for the browser's offline preview, so the two
 render identically. Host-tested with hand-assembled bytecode.
 """
 
+load("@aspect_bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
 load("@rules_rust//rust:defs.bzl", "rust_library", "rust_shared_library", "rust_test")
 load("@rules_rust_wasm_bindgen//:defs.bzl", "rust_wasm_bindgen")
-load("@aspect_bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
 load("//tools/transitions:opt.bzl", "opt_files")
 
 package(default_visibility = ["//visibility:public"])

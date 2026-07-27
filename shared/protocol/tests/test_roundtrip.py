@@ -545,6 +545,8 @@ def test_decode_raw_dict_welcome_message() -> None:
         "type": "welcome",
         "sessionId": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
         "solverBenchMs": None,
+        "mac": "AA:BB:CC:DD:EE:FF",
+        "deviceName": "Led Widget AABBCC",
         "codeParams": {
             "ledCount": 1024,
             "bits": 10,

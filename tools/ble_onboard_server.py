@@ -31,7 +31,6 @@ import json
 import socket
 import sys
 import threading
-import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -44,7 +43,10 @@ CH_RPC_RESULT = "00467768-6228-2272-4663-277478268004"
 
 CMD_WIFI_SETTINGS = 0x01
 ERROR_NAMES = {
-    0: "none", 1: "invalid_rpc", 2: "unknown_command", 3: "unable_to_connect",
+    0: "none",
+    1: "invalid_rpc",
+    2: "unknown_command",
+    3: "unable_to_connect",
 }
 
 CFG: dict = {}
@@ -89,11 +91,14 @@ def scan(seconds: float) -> list[dict]:
             except Exception:
                 continue
             improv = SVC in _svc_uuids(p) or _looks_like_player(name)
-            out.append({
-                "name": name, "address": addr,
-                "rssi": _try(lambda: p.rssi()),
-                "improv": improv,
-            })
+            out.append(
+                {
+                    "name": name,
+                    "address": addr,
+                    "rssi": _try(lambda: p.rssi()),
+                    "improv": improv,
+                }
+            )
         # Improv-looking devices first, then by RSSI.
         out.sort(key=lambda d: (not d["improv"], -(d["rssi"] or -999)))
         return out
@@ -117,12 +122,12 @@ def _parse_result(buf: bytes) -> list[str]:
     if len(buf) < 3:
         return []
     data_len = buf[1]
-    body = buf[2:2 + data_len]
+    body = buf[2 : 2 + data_len]
     strings, i = [], 0
     while i < len(body):
         n = body[i]
         i += 1
-        strings.append(body[i:i + n].decode("utf-8", "replace"))
+        strings.append(body[i : i + n].decode("utf-8", "replace"))
         i += n
     return strings
 
@@ -181,13 +186,23 @@ def provision(ssid: str, pw: str, address: str | None, timeout: float) -> dict:
             _try(lambda: target.disconnect())
 
         if not got:
-            return {"ok": False, "error": "timed out waiting for the player to join",
-                    "device": {"name": name, "address": addr}}
+            return {
+                "ok": False,
+                "error": "timed out waiting for the player to join",
+                "device": {"name": name, "address": addr},
+            }
         if result["error"]:
-            return {"ok": False, "error": result["error"],
-                    "device": {"name": name, "address": addr}}
-        return {"ok": True, "urls": result["urls"], "state": result["state"],
-                "device": {"name": name, "address": addr}}
+            return {
+                "ok": False,
+                "error": result["error"],
+                "device": {"name": name, "address": addr},
+            }
+        return {
+            "ok": True,
+            "urls": result["urls"],
+            "state": result["state"],
+            "device": {"name": name, "address": addr},
+        }
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -217,7 +232,10 @@ class Handler(BaseHTTPRequestHandler):
     def _dispatch(self) -> None:
         u = urllib.parse.urlparse(self.path)
         q = urllib.parse.parse_qs(u.query)
-        g = lambda k, d=None: q.get(k, [d])[0]
+
+        def g(k, d=None):
+            return q.get(k, [d])[0]
+
         route = u.path.rstrip("/") or "/"
         try:
             if route == "/":

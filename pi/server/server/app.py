@@ -263,9 +263,7 @@ def create_app(
     # The wasm effects compiler + preview VM (effects-editor workspace).
     # Mounted before "/" so the app's static mount cannot shadow them.
     if fx_compiler_dir is not None and Path(fx_compiler_dir).is_dir():
-        app.mount(
-            "/fx-compiler", StaticFiles(directory=str(fx_compiler_dir)), name="fx-compiler"
-        )
+        app.mount("/fx-compiler", StaticFiles(directory=str(fx_compiler_dir)), name="fx-compiler")
     if fx_vm_dir is not None and Path(fx_vm_dir).is_dir():
         app.mount("/fx-vm", StaticFiles(directory=str(fx_vm_dir)), name="fx-vm")
 

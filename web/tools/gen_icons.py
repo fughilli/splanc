@@ -11,22 +11,22 @@ Run once and commit the outputs under web/public/icons/:
     python3 web/tools/gen_icons.py
 """
 
-import struct
-import zlib
 import math
 import os
+import struct
+import zlib
 
 # App palette (kit/tokens.css).
-BG_TOP = (0x16, 0x16, 0x1e)
-BG_BOT = (0x0b, 0x0b, 0x0f)
+BG_TOP = (0x16, 0x16, 0x1E)
+BG_BOT = (0x0B, 0x0B, 0x0F)
 DOT_COLORS = [
-    (0x5b, 0x7c, 0xfa),  # accent blue
-    (0x37, 0xc8, 0x71),  # ok green
-    (0xe3, 0xb3, 0x41),  # warn amber
-    (0xf2, 0x55, 0x5a),  # err red
-    (0xe8, 0xe8, 0xea),  # near-white
+    (0x5B, 0x7C, 0xFA),  # accent blue
+    (0x37, 0xC8, 0x71),  # ok green
+    (0xE3, 0xB3, 0x41),  # warn amber
+    (0xF2, 0x55, 0x5A),  # err red
+    (0xE8, 0xE8, 0xEA),  # near-white
 ]
-EDGE_COLOR = (0x3a, 0x40, 0x66)
+EDGE_COLOR = (0x3A, 0x40, 0x66)
 
 # Branching "tree" of nodes in unit coords (0..1), plus the edges between them.
 NODES = [
@@ -169,7 +169,7 @@ def write_png(path, size, rgba):
     stride = size * 4
     for y in range(size):
         raw.append(0)  # filter: none
-        raw += rgba[y * stride:(y + 1) * stride]
+        raw += rgba[y * stride : (y + 1) * stride]
     comp = zlib.compress(bytes(raw), 9)
 
     def chunk(tag, data):

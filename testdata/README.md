@@ -16,5 +16,5 @@ topology rendering, `submit_effect` over a mapped fixture, MapStore import.
   Then open it → Effects to preview, or push to a connected device.
 - **Regenerate:** `python3 tools/gen_synthetic_map.py`
 - **Inspect:** `bazel run //tools/toolchains:protoc -- \
-    --decode=ledmapper.v1.MappingBundle -I shared/protocol/proto \
-    shared/protocol/proto/ledmapper.proto < testdata/synthetic_y_junction.binpb`
+--decode=ledmapper.v1.MappingBundle -I shared/protocol/proto \
+shared/protocol/proto/ledmapper.proto < testdata/synthetic_y_junction.binpb`

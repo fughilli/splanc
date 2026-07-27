@@ -184,9 +184,9 @@ sh_binary(
     srcs = ["serve.sh"],
     data = [
         ":dist",
-        "//fx_compiler:fx_compiler_web",
         "//firmware/fx_vm:fx_vm_web",
         "//firmware/pulse:pulse_web",
+        "//fx_compiler:fx_compiler_web",
         "//pi/server:serve",
         "//solver:solver_web",
     ],
@@ -200,9 +200,9 @@ sh_binary(
     srcs = ["deploy_cloudflare.sh"],
     data = [
         ":dist",
-        "//fx_compiler:fx_compiler_web",
         "//firmware/fx_vm:fx_vm_web",
         "//firmware/pulse:pulse_web",
+        "//fx_compiler:fx_compiler_web",
         "//solver:solver_web",
     ],
 )

@@ -4,9 +4,9 @@ editor compiles live). Tests compile real shaders and run them through the
 actual fx_vm, so the source→bytecode→VM pipeline is verified end-to-end.
 """
 
+load("@aspect_bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_shared_library", "rust_test")
 load("@rules_rust_wasm_bindgen//:defs.bzl", "rust_wasm_bindgen")
-load("@aspect_bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
 load("//tools/transitions:opt.bzl", "opt_files")
 
 package(default_visibility = ["//visibility:public"])

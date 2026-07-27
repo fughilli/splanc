@@ -389,6 +389,3 @@ test("no degree-2 pass-through junctions survive in the output", async () => {
   );
   assert.ok(noDegree2PassThrough(y), "Y: none");
 });
-
-
-

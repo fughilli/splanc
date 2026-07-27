@@ -67,7 +67,10 @@ def ram_sections(readelf: str, elf: str) -> tuple[list[tuple[str, int]], set[int
     sizes: list[tuple[str, int]] = []
     ram_idx: set[int] = set()
     for line in out.splitlines():
-        m = re.match(r"\s*\[\s*(\d+)\]\s+(\S+)\s+(\S+)\s+([0-9a-f]+)\s+[0-9a-f]+\s+([0-9a-f]+)\s+\S+\s+([A-Zpx]*)", line)
+        m = re.match(
+            r"\s*\[\s*(\d+)\]\s+(\S+)\s+(\S+)\s+([0-9a-f]+)\s+[0-9a-f]+\s+([0-9a-f]+)\s+\S+\s+([A-Zpx]*)",
+            line,
+        )
         if not m:
             continue
         idx, name, styp, _addr, size, flags = m.groups()
@@ -83,7 +86,8 @@ def read_symbols(nm: str, elf: str) -> list[tuple[int, int, str, str, str | None
     """(addr,size,type,name,file|None) for every defined RAM symbol."""
     out = subprocess.run(
         [nm, "-SlC", "--defined-only", "--radix=d", elf],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     ).stdout
     syms: list[tuple[int, int, str, str, str | None]] = []
     for line in out.splitlines():
@@ -106,7 +110,8 @@ def addr2line_files(a2l: str, elf: str, addrs: list[int]) -> dict[int, str]:
         return {}
     proc = subprocess.run(
         [a2l, "-e", elf, "-C"] + [hex(a) for a in addrs],
-        capture_output=True, text=True,
+        capture_output=True,
+        text=True,
     )
     res: dict[int, str] = {}
     for addr, line in zip(addrs, proc.stdout.splitlines()):
@@ -144,12 +149,18 @@ def human(n: int) -> str:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--elf", help="firmware ELF (default: auto-locate the built esp32c6.elf)")
     ap.add_argument("--toolchain", help="cross-tool prefix, e.g. riscv32-esp-elf-")
     ap.add_argument("--top", type=int, default=30, help="how many biggest symbols to list")
-    ap.add_argument("--min", type=int, default=256, help="hide symbols/files below N bytes in the tree")
-    ap.add_argument("--depth", type=int, default=2, help="tree depth (1=component, 2=+file, 3=+symbol)")
+    ap.add_argument(
+        "--min", type=int, default=256, help="hide symbols/files below N bytes in the tree"
+    )
+    ap.add_argument(
+        "--depth", type=int, default=2, help="tree depth (1=component, 2=+file, 3=+symbol)"
+    )
     ap.add_argument("--json", action="store_true", help="emit the tree as JSON")
     args = ap.parse_args()
 
@@ -185,11 +196,17 @@ def main() -> int:
                 c: {
                     "bytes": comp_tot[c],
                     "files": {
-                        f: {"bytes": sum(sz for sz, _ in items),
-                            "symbols": [{"name": nm_, "bytes": sz} for sz, nm_ in sorted(items, reverse=True)]}
+                        f: {
+                            "bytes": sum(sz for sz, _ in items),
+                            "symbols": [
+                                {"name": nm_, "bytes": sz}
+                                for sz, nm_ in sorted(items, reverse=True)
+                            ],
+                        }
                         for f, items in files.items()
                     },
-                } for c, files in tree.items()
+                }
+                for c, files in tree.items()
             },
         }
         print(json.dumps(obj, indent=2))
@@ -221,8 +238,9 @@ def main() -> int:
                 print(f"  {human(sz):>8}      {name}")
 
     print(f"\n== {args.top} biggest RAM symbols ==")
-    flat = sorted(((sz, name, src or resolved.get(a) or "?")
-                   for (a, sz, _t, name, src) in syms), reverse=True)
+    flat = sorted(
+        ((sz, name, src or resolved.get(a) or "?") for (a, sz, _t, name, src) in syms), reverse=True
+    )
     for sz, name, src in flat[: args.top]:
         loc = component_of(src if src != "?" else None, name)[0]
         print(f"  {human(sz):>8}  {name}   [{loc}]")

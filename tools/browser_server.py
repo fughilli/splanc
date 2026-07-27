@@ -66,11 +66,17 @@ _EFFECTS_FILE = os.path.join(tempfile.gettempdir(), "ledmapper-effects-library.j
 _WS_PROBE = """
 (url, ms) => new Promise((resolve) => {
   let ws;
-  const t = setTimeout(() => { try { ws && ws.close(); } catch (e) {} resolve({connected:false, error:'timeout'}); }, ms);
+  const t = setTimeout(() => {
+    try { ws && ws.close(); } catch (e) {}
+    resolve({connected:false, error:'timeout'});
+  }, ms);
   try { ws = new WebSocket(url); } catch (e) { clearTimeout(t); return resolve({connected:false, error:'ctor: '+e}); }
   ws.binaryType = 'arraybuffer';
   ws.onopen = () => { clearTimeout(t); resolve({connected:true}); try { ws.close(); } catch (e) {} };
-  ws.onerror = () => { clearTimeout(t); resolve({connected:false, error:'ws error (see /cert — likely untrusted cert)'}); };
+  ws.onerror = () => {
+    clearTimeout(t);
+    resolve({connected:false, error:'ws error (see /cert — likely untrusted cert)'});
+  };
   ws.onclose = (ev) => { clearTimeout(t); resolve({connected:false, error:'closed code '+ev.code}); };
 })
 """
@@ -174,8 +180,14 @@ def _varintf(field: int, val: int) -> bytes:
 def _pb_set_texture(tex: int, fmt: int, w: int, h: int, flags: int, data: bytes) -> bytes:
     # ClientMessage{set_texture=28: SetTexture{tex_index=1, format=2, width=3,
     # height=4, flags=5, data=6}}
-    inner = (_varintf(1, tex) + _varintf(2, fmt) + _varintf(3, w) + _varintf(4, h)
-             + _varintf(5, flags) + _bytesf(6, data))
+    inner = (
+        _varintf(1, tex)
+        + _varintf(2, fmt)
+        + _varintf(3, w)
+        + _varintf(4, h)
+        + _varintf(5, flags)
+        + _bytesf(6, data)
+    )
     return _msgf(28, inner)
 
 
@@ -200,15 +212,15 @@ def _pb_fields(buf: bytes) -> dict:
         field, wire = tag >> 3, tag & 7
         if wire == 2:
             ln = rv()
-            v = buf[i:i + ln]
+            v = buf[i : i + ln]
             i += ln
         elif wire == 0:
             v = rv()
         elif wire == 1:
-            v = buf[i:i + 8]
+            v = buf[i : i + 8]
             i += 8
         elif wire == 5:
-            v = buf[i:i + 4]
+            v = buf[i : i + 4]
             i += 4
         else:
             break
@@ -223,12 +235,13 @@ def _welcome_name(frame: bytes):
         return None
     w = _pb_fields(sm[1][0])
     name = w[5][0].decode() if 5 in w else ""  # Welcome.device_name = 5
-    mac = w[4][0].decode() if 4 in w else ""    # Welcome.mac = 4
+    mac = w[4][0].decode() if 4 in w else ""  # Welcome.mac = 4
     return name, mac
 
 
-def _wss_open(host: str, port: int, path: str, timeout: float,
-              tls_max: str = "", use_sni: bool = True) -> ssl.SSLSocket:
+def _wss_open(
+    host: str, port: int, path: str, timeout: float, tls_max: str = "", use_sni: bool = True
+) -> ssl.SSLSocket:
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
@@ -246,9 +259,13 @@ def _wss_open(host: str, port: int, path: str, timeout: float,
         # Browsers omit SNI for an IP literal; Python sends it unless we pass None.
         s = ctx.wrap_socket(raw, server_hostname=(host if use_sni else None))
         key = base64.b64encode(os.urandom(16)).decode()
-        s.sendall((f"GET {path} HTTP/1.1\r\nHost: {host}\r\nUpgrade: websocket\r\n"
-                   f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\n"
-                   f"Sec-WebSocket-Version: 13\r\n\r\n").encode())
+        s.sendall(
+            (
+                f"GET {path} HTTP/1.1\r\nHost: {host}\r\nUpgrade: websocket\r\n"
+                f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\n"
+                f"Sec-WebSocket-Version: 13\r\n\r\n"
+            ).encode()
+        )
         resp = b""
         while b"\r\n\r\n" not in resp:
             chunk = s.recv(1024)
@@ -337,7 +354,7 @@ def _parse_tls_server_flight(data: bytes) -> dict:
     i = 0
     while i + 5 <= len(data):
         ct, ln = data[i], (data[i + 3] << 8) | data[i + 4]
-        body = data[i + 5:i + 5 + ln]
+        body = data[i + 5 : i + 5 + ln]
         rec = {"type": ct, "len": ln, "complete": len(body) == ln}
         if ct == 21:  # alert
             rec["alert"] = list(body[:2])
@@ -345,19 +362,35 @@ def _parse_tls_server_flight(data: bytes) -> dict:
         if ct == 22:  # handshake
             hs += body
         i += 5 + ln
-    names = {0: "HelloRequest", 2: "ServerHello", 11: "Certificate",
-             12: "ServerKeyExchange", 13: "CertificateRequest",
-             14: "ServerHelloDone"}
+    names = {
+        0: "HelloRequest",
+        2: "ServerHello",
+        11: "Certificate",
+        12: "ServerKeyExchange",
+        13: "CertificateRequest",
+        14: "ServerHelloDone",
+    }
     msgs, j = [], 0
     while j + 4 <= len(hs):
         t = hs[j]
         ln = (hs[j + 1] << 16) | (hs[j + 2] << 8) | hs[j + 3]
         present = len(hs) - (j + 4)
-        msgs.append({"name": names.get(t, str(t)), "declared_len": ln,
-                     "bytes_present": min(ln, present), "truncated": present < ln})
+        msgs.append(
+            {
+                "name": names.get(t, str(t)),
+                "declared_len": ln,
+                "bytes_present": min(ln, present),
+                "truncated": present < ln,
+            }
+        )
         j += 4 + ln
-    return {"raw_bytes": len(data), "records": records, "handshake_bytes": len(hs),
-            "messages": msgs, "server_hello_done": any(m["name"] == "ServerHelloDone" for m in msgs)}
+    return {
+        "raw_bytes": len(data),
+        "records": records,
+        "handshake_bytes": len(hs),
+        "messages": msgs,
+        "server_hello_done": any(m["name"] == "ServerHelloDone" for m in msgs),
+    }
 
 
 def ws_hs_capture(url: str, timeout_ms: float) -> dict:
@@ -399,13 +432,17 @@ def ws_hs_capture(url: str, timeout_ms: float) -> dict:
             inb.write(chunk)
     finally:
         raw.close()
-    return {"url": url, "handshake_complete": done, "stalled": stalled,
-            "error": err, "tls": (obj.version() if done else "TLSv1.2-attempt"),
-            **_parse_tls_server_flight(bytes(server))}
+    return {
+        "url": url,
+        "handshake_complete": done,
+        "stalled": stalled,
+        "error": err,
+        "tls": (obj.version() if done else "TLSv1.2-attempt"),
+        **_parse_tls_server_flight(bytes(server)),
+    }
 
 
-def ws_probe_raw(url: str, timeout_ms: float, tls_max: str = "",
-                 use_sni: bool = True) -> dict:
+def ws_probe_raw(url: str, timeout_ms: float, tls_max: str = "", use_sni: bool = True) -> dict:
     u = urllib.parse.urlparse(url)
     to = timeout_ms / 1000.0
     s = _wss_open(u.hostname, u.port or 443, u.path or "/ws", to, tls_max, use_sni)
@@ -413,14 +450,14 @@ def ws_probe_raw(url: str, timeout_ms: float, tls_max: str = "",
         ver = s.version()
         _ws_send(s, _pb_hello())
         name, mac = _next_welcome(s)
-        return {"url": url, "connected": True, "tls": ver,
-                "device_name": name, "mac": mac}
+        return {"url": url, "connected": True, "tls": ver, "device_name": name, "mac": mac}
     finally:
         _ws_graceful_close(s)
 
 
-def ws_effect_raw(url: str, fxb_hex: str, effect_id: str, activate: bool,
-                  timeout_ms: float) -> dict:
+def ws_effect_raw(
+    url: str, fxb_hex: str, effect_id: str, activate: bool, timeout_ms: float
+) -> dict:
     """Submit a precompiled `.fxb` (hex) to the device and (optionally) activate
     it — the host-side path to load a real effect for hardware validation."""
     u = urllib.parse.urlparse(url)
@@ -438,15 +475,22 @@ def ws_effect_raw(url: str, fxb_hex: str, effect_id: str, activate: bool,
             reply = len(_ws_recv(s))
         except (OSError, ssl.SSLError, ConnectionError):
             pass
-        return {"url": url, "submitted": True, "effect_id": effect_id,
-                "fxb_bytes": len(fxb), "activate": activate,
-                "device_name": name, "reply_bytes": reply}
+        return {
+            "url": url,
+            "submitted": True,
+            "effect_id": effect_id,
+            "fxb_bytes": len(fxb),
+            "activate": activate,
+            "device_name": name,
+            "reply_bytes": reply,
+        }
     finally:
         _ws_graceful_close(s)
 
 
-def ws_texture_raw(url: str, tex: int, fmt: int, w: int, h: int, flags: int,
-                   data_hex: str, timeout_ms: float) -> dict:
+def ws_texture_raw(
+    url: str, tex: int, fmt: int, w: int, h: int, flags: int, data_hex: str, timeout_ms: float
+) -> dict:
     """Send one set_texture frame (fire-and-forget) — hardware smoke test for the
     video-texture decode. The effect with the target texture must be loaded."""
     u = urllib.parse.urlparse(url)
@@ -457,9 +501,17 @@ def ws_texture_raw(url: str, tex: int, fmt: int, w: int, h: int, flags: int,
         _ws_send(s, _pb_hello())
         name, _ = _next_welcome(s)
         _ws_send(s, _pb_set_texture(tex, fmt, w, h, flags, data))
-        return {"url": url, "sent": True, "tex_index": tex, "format": fmt,
-                "w": w, "h": h, "flags": flags, "data_bytes": len(data),
-                "device_name": name}
+        return {
+            "url": url,
+            "sent": True,
+            "tex_index": tex,
+            "format": fmt,
+            "w": w,
+            "h": h,
+            "flags": flags,
+            "data_bytes": len(data),
+            "device_name": name,
+        }
     finally:
         _ws_graceful_close(s)
 
@@ -473,11 +525,18 @@ def ws_rename_raw(url: str, new_name: str, timeout_ms: float) -> dict:
         before, mac = _next_welcome(s)
         _ws_send(s, _pb_setname(new_name))
         after, _ = _next_welcome(s)
-        _ws_send(s, _pb_setname(before))       # restore original
+        _ws_send(s, _pb_setname(before))  # restore original
         restored, _ = _next_welcome(s)
-        return {"url": url, "new_name": new_name, "mac": mac, "before": before,
-                "after": after, "restored": restored,
-                "applied": after == new_name, "restored_ok": restored == before}
+        return {
+            "url": url,
+            "new_name": new_name,
+            "mac": mac,
+            "before": before,
+            "after": after,
+            "restored": restored,
+            "applied": after == new_name,
+            "restored_ok": restored == before,
+        }
     finally:
         _ws_graceful_close(s)
 
@@ -555,9 +614,12 @@ def check_cert(host: str, timeout_ms: int) -> dict:
             page = ctx.new_page()
             try:
                 resp = page.goto(url, timeout=timeout_ms, wait_until="domcontentloaded")
-                return {"url": url, "loaded": True,
-                        "status": resp.status if resp else None,
-                        "title": page.title()}
+                return {
+                    "url": url,
+                    "loaded": True,
+                    "status": resp.status if resp else None,
+                    "title": page.title(),
+                }
             except Exception as e:
                 # Chromium raises with the net error (e.g. ERR_CERT_AUTHORITY_INVALID,
                 # ERR_CERT_COMMON_NAME_INVALID) — exactly the cert verdict we want.
@@ -671,7 +733,10 @@ class Handler(BaseHTTPRequestHandler):
     def _dispatch(self) -> None:
         u = urllib.parse.urlparse(self.path)
         q = urllib.parse.parse_qs(u.query)
-        g = lambda k, d=None: q.get(k, [d])[0]
+
+        def g(k, d=None):
+            return q.get(k, [d])[0]
+
         route = u.path.rstrip("/") or "/"
         # The dedicated QR listener (another port) shows the intake QR for any path.
         if getattr(self.server, "qr_only", False):
@@ -687,15 +752,24 @@ class Handler(BaseHTTPRequestHandler):
                 if not url:
                     self._json({"error": "missing ?url=wss://host/ws"}, 400)
                     return
-                self._json(probe_ws(url, int(g("timeout", "8000")),
-                                    g("ignore_cert", "1") not in ("0", "false")))
+                self._json(
+                    probe_ws(
+                        url, int(g("timeout", "8000")), g("ignore_cert", "1") not in ("0", "false")
+                    )
+                )
             elif route == "/wsprobe":
                 url = g("url")
                 if not url:
                     self._json({"error": "missing ?url=wss://host/ws"}, 400)
                     return
-                self._json(ws_probe_raw(url, int(g("timeout", "8000")),
-                                        g("tls", ""), g("sni", "1") not in ("0", "false")))
+                self._json(
+                    ws_probe_raw(
+                        url,
+                        int(g("timeout", "8000")),
+                        g("tls", ""),
+                        g("sni", "1") not in ("0", "false"),
+                    )
+                )
             elif route == "/hscapture":
                 url = g("url")
                 if not url:
@@ -708,18 +782,32 @@ class Handler(BaseHTTPRequestHandler):
                 if not url or not fxb:
                     self._json({"error": "need ?url=wss://host/ws&fxb=<hex>"}, 400)
                     return
-                self._json(ws_effect_raw(url, fxb, g("id", "hwtest"),
-                                         g("activate", "1") not in ("0", "false"),
-                                         int(g("timeout", "10000"))))
+                self._json(
+                    ws_effect_raw(
+                        url,
+                        fxb,
+                        g("id", "hwtest"),
+                        g("activate", "1") not in ("0", "false"),
+                        int(g("timeout", "10000")),
+                    )
+                )
             elif route == "/wstexture":
                 url = g("url")
                 if not url:
                     self._json({"error": "need ?url=&data=<hex>&w=&h=[&tex=&format=&flags=]"}, 400)
                     return
-                self._json(ws_texture_raw(
-                    url, int(g("tex", "0")), int(g("format", "0")),
-                    int(g("w", "0")), int(g("h", "0")), int(g("flags", "0")),
-                    g("data", ""), int(g("timeout", "10000"))))
+                self._json(
+                    ws_texture_raw(
+                        url,
+                        int(g("tex", "0")),
+                        int(g("format", "0")),
+                        int(g("w", "0")),
+                        int(g("h", "0")),
+                        int(g("flags", "0")),
+                        g("data", ""),
+                        int(g("timeout", "10000")),
+                    )
+                )
             elif route == "/wsrename":
                 url = g("url")
                 name = g("name")
@@ -764,8 +852,12 @@ class Handler(BaseHTTPRequestHandler):
                     except OSError:
                         pass
                     n = len(lib.get("effects", [])) if isinstance(lib, dict) else 0
-                    _log(f"/effects stored library: {n} effects, {len(raw)} bytes -> {_EFFECTS_FILE}")
-                    self._json({"stored": True, "effects": n, "bytes": len(raw), "file": _EFFECTS_FILE})
+                    _log(
+                        f"/effects stored library: {n} effects, {len(raw)} bytes -> {_EFFECTS_FILE}"
+                    )
+                    self._json(
+                        {"stored": True, "effects": n, "bytes": len(raw), "file": _EFFECTS_FILE}
+                    )
                 else:
                     lib = _EFFECTS_LIB["library"]
                     if lib is None and os.path.exists(_EFFECTS_FILE):
@@ -811,15 +903,33 @@ def _ensure_selfsigned_cert(lan: str) -> tuple[str, str] | None:
     san = f"subjectAltName=IP:{lan},IP:127.0.0.1,DNS:localhost"
     try:
         subprocess.run(
-            ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes",
-             "-keyout", key, "-out", cert, "-days", "3650",
-             "-subj", "/CN=ledmapper-debug", "-addext", san],
-            check=True, capture_output=True,
+            [
+                "openssl",
+                "req",
+                "-x509",
+                "-newkey",
+                "rsa:2048",
+                "-nodes",
+                "-keyout",
+                key,
+                "-out",
+                cert,
+                "-days",
+                "3650",
+                "-subj",
+                "/CN=ledmapper-debug",
+                "-addext",
+                san,
+            ],
+            check=True,
+            capture_output=True,
         )
         return cert, key
     except (OSError, subprocess.CalledProcessError) as e:
-        _log(f"  HTTPS disabled — could not generate a self-signed cert ({e}); "
-             f"install openssl or POST the library over http instead.")
+        _log(
+            f"  HTTPS disabled — could not generate a self-signed cert ({e}); "
+            f"install openssl or POST the library over http instead."
+        )
         return None
 
 
@@ -827,12 +937,21 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Host headless-browser (Playwright) driver.")
     ap.add_argument("--host", default="0.0.0.0")
     ap.add_argument("--port", type=int, default=8092)
-    ap.add_argument("--tls-port", type=int, default=8093,
-                    help="HTTPS listener (self-signed) so the app can POST /effects")
-    ap.add_argument("--qr-port", type=int, default=8094,
-                    help="plain-HTTP page showing a QR of the intake URL (open on the laptop)")
-    ap.add_argument("--app", default="https://ledmapper.pages.dev/",
-                    help="hosted app base URL for /app")
+    ap.add_argument(
+        "--tls-port",
+        type=int,
+        default=8093,
+        help="HTTPS listener (self-signed) so the app can POST /effects",
+    )
+    ap.add_argument(
+        "--qr-port",
+        type=int,
+        default=8094,
+        help="plain-HTTP page showing a QR of the intake URL (open on the laptop)",
+    )
+    ap.add_argument(
+        "--app", default="https://ledmapper.pages.dev/", help="hosted app base URL for /app"
+    )
     args = ap.parse_args()
     CFG.update(app=args.app)
 
@@ -850,8 +969,10 @@ def main() -> int:
             ctx.load_cert_chain(certkey[0], certkey[1])
             httpsd.socket = ctx.wrap_socket(httpsd.socket, server_side=True)
             threading.Thread(target=httpsd.serve_forever, daemon=True).start()
-            _log(f"  effects intake (HTTPS): https://{lan}:{args.tls_port}/effects "
-                 f"(accept the cert once, then POST the library here)")
+            _log(
+                f"  effects intake (HTTPS): https://{lan}:{args.tls_port}/effects "
+                f"(accept the cert once, then POST the library here)"
+            )
         except OSError as e:
             _log(f"  HTTPS listener failed on :{args.tls_port} ({e})")
 
@@ -861,8 +982,10 @@ def main() -> int:
         qrd = ThreadingHTTPServer((args.host, args.qr_port), Handler)
         qrd.qr_only = True  # this listener serves the QR page for every path
         threading.Thread(target=qrd.serve_forever, daemon=True).start()
-        _log(f"  QR page (OPEN ON THE LAPTOP, scan from the app): http://{lan}:{args.qr_port}/"
-             + ("" if segno is not None else "  [segno missing — shows URL only]"))
+        _log(
+            f"  QR page (OPEN ON THE LAPTOP, scan from the app): http://{lan}:{args.qr_port}/"
+            + ("" if segno is not None else "  [segno missing — shows URL only]")
+        )
     except OSError as e:
         _log(f"  QR listener failed on :{args.qr_port} ({e})")
 

@@ -47,14 +47,14 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+
 # Repo root to run `bazel` in (overridable with --workspace). Under `bazel run`
 # the launcher sets $BUILD_WORKSPACE_DIRECTORY to the real workspace (this file
 # otherwise lives in the runfiles tree, not the checkout); fall back to the
 # parent of this tools/ dir when run as a plain script.
 def _default_workspace() -> str:
-    return os.environ.get("BUILD_WORKSPACE_DIRECTORY") or str(
-        Path(__file__).resolve().parents[1]
-    )
+    return os.environ.get("BUILD_WORKSPACE_DIRECTORY") or str(Path(__file__).resolve().parents[1])
+
 
 # One user of the serial port at a time; a /flash preempts a live /logs stream.
 _PORT_LOCK = threading.Lock()
@@ -93,8 +93,7 @@ def resolve_port(explicit: str | None) -> str:
     ports = list_ports()
     if not ports:
         raise FileNotFoundError(
-            "no serial port given and none auto-detected "
-            "(pass ?port=/dev/ttyACM0 or --serial)"
+            "no serial port given and none auto-detected " "(pass ?port=/dev/ttyACM0 or --serial)"
         )
     return ports[0]
 
@@ -139,9 +138,7 @@ class _Serial:
 
         baud_const = getattr(termios, f"B{baud}", None)
         if baud_const is None:
-            raise ValueError(
-                f"pyserial not installed and baud {baud} has no termios constant"
-            )
+            raise ValueError(f"pyserial not installed and baud {baud} has no termios constant")
         fd = os.open(port, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
         iflag, oflag, cflag, lflag, ispeed, ospeed, cc = termios.tcgetattr(fd)
         iflag = oflag = lflag = 0  # raw
@@ -276,7 +273,10 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         route = parsed.path.rstrip("/") or "/"
         q = urllib.parse.parse_qs(parsed.query)
-        get = lambda k, d=None: q.get(k, [d])[0]
+
+        def get(k, d=None):
+            return q.get(k, [d])[0]
+
         try:
             if route == "/":
                 self._usage()
@@ -324,7 +324,9 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         self._begin_stream()
-        self._write(f"[flash-server] $ {' '.join(cmd)}\n[flash-server]   cwd={CFG['workspace']}\n\n")
+        self._write(
+            f"[flash-server] $ {' '.join(cmd)}\n[flash-server]   cwd={CFG['workspace']}\n\n"
+        )
         rc = -1
         try:
             try:
@@ -361,9 +363,11 @@ class Handler(BaseHTTPRequestHandler):
         _PREEMPT.clear()
         self._begin_stream()
         which = "pyserial" if "serial" in sys.modules or _has_pyserial() else "termios"
-        self._write(f"[flash-server] reading {dev} @ {baud} ({which})"
-                    f"{' +reset' if reset else ''}"
-                    f"{f', {seconds:g}s' if seconds else ', until you disconnect'}\n\n")
+        self._write(
+            f"[flash-server] reading {dev} @ {baud} ({which})"
+            f"{' +reset' if reset else ''}"
+            f"{f', {seconds:g}s' if seconds else ', until you disconnect'}\n\n"
+        )
         ser = None
         try:
             try:
@@ -406,16 +410,37 @@ def _lan_ip() -> str:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Host flash + serial-log helper.")
-    ap.add_argument("--host", default="0.0.0.0", help="bind address (default 0.0.0.0 so the container can reach it)")
+    ap.add_argument(
+        "--host",
+        default="0.0.0.0",
+        help="bind address (default 0.0.0.0 so the container can reach it)",
+    )
     ap.add_argument("--port", type=int, default=8090, help="HTTP port (default 8090)")
-    ap.add_argument("--serial", default=os.environ.get("FLASH_SERIAL", ""),
-                    help="serial device (default: auto-detect the first USB-serial port)")
-    ap.add_argument("--baud", type=int, default=115200, help="serial console baud for /logs (default 115200)")
-    ap.add_argument("--workspace", default=_default_workspace(), help="repo root to run bazel in (default: $BUILD_WORKSPACE_DIRECTORY under `bazel run`)")
-    ap.add_argument("--target", default="//firmware/player_app:flash_esp32c6", help="bazel flash target")
-    ap.add_argument("--bazel", default=os.environ.get("BAZEL", "bazel"), help="bazel/bazelisk binary")
-    ap.add_argument("--bazel-arg", action="append", default=None,
-                    help="extra bazel arg before the target (repeatable; default: -c opt)")
+    ap.add_argument(
+        "--serial",
+        default=os.environ.get("FLASH_SERIAL", ""),
+        help="serial device (default: auto-detect the first USB-serial port)",
+    )
+    ap.add_argument(
+        "--baud", type=int, default=115200, help="serial console baud for /logs (default 115200)"
+    )
+    ap.add_argument(
+        "--workspace",
+        default=_default_workspace(),
+        help="repo root to run bazel in (default: $BUILD_WORKSPACE_DIRECTORY under `bazel run`)",
+    )
+    ap.add_argument(
+        "--target", default="//firmware/player_app:flash_esp32c6", help="bazel flash target"
+    )
+    ap.add_argument(
+        "--bazel", default=os.environ.get("BAZEL", "bazel"), help="bazel/bazelisk binary"
+    )
+    ap.add_argument(
+        "--bazel-arg",
+        action="append",
+        default=None,
+        help="extra bazel arg before the target (repeatable; default: -c opt)",
+    )
     args = ap.parse_args()
 
     CFG.update(
@@ -435,8 +460,10 @@ def main() -> int:
     _log(f"  serial    {CFG['port'] or '(auto)'} @ {CFG['baud']}   pyserial={_has_pyserial()}")
     _log(f"  ports     {', '.join(list_ports()) or '(none detected)'}")
     if args.host in ("0.0.0.0", "::"):
-        _log("  NOTE: bound to all interfaces so the container can reach it — /flash "
-             "runs a build on this host. Use --host to restrict.")
+        _log(
+            "  NOTE: bound to all interfaces so the container can reach it — /flash "
+            "runs a build on this host. Use --host to restrict."
+        )
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

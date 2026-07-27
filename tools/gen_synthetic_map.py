@@ -17,8 +17,8 @@ Output: testdata/synthetic_y_junction.binpb
 """
 
 import math
-import struct
 import pathlib
+import struct
 
 # ---- minimal proto3 wire encoder ------------------------------------------
 
@@ -71,10 +71,10 @@ def led_entry(led_id, xyz):
     return (
         f_varint(1, led_id)
         + f_packed_double(2, xyz)
-        + f_double(3, 1.0)       # confidence
-        + f_varint(4, 3)         # n_views
-        + f_double(5, 0.2)       # rms_reproj_px
-        + f_double(6, 25.0)      # parallax_deg
+        + f_double(3, 1.0)  # confidence
+        + f_varint(4, 3)  # n_views
+        + f_double(5, 0.2)  # rms_reproj_px
+        + f_double(6, 25.0)  # parallax_deg
     )
 
 
@@ -146,5 +146,7 @@ repo = pathlib.Path(__file__).resolve().parent.parent
 dest = repo / "testdata" / "synthetic_y_junction.binpb"
 dest.parent.mkdir(parents=True, exist_ok=True)
 dest.write_bytes(bundle)
-print(f"wrote {dest} ({len(bundle)} bytes): {led_count} LEDs, 1 branch point, "
-      f"{len(segments)} segments")
+print(
+    f"wrote {dest} ({len(bundle)} bytes): {led_count} LEDs, 1 branch point, "
+    f"{len(segments)} segments"
+)
