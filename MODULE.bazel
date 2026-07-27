@@ -185,10 +185,11 @@ archive_override(
     # handshake OOM, -0x7F00 alloc(17058) failed), and //libs/tls:selfsigned —
     # on-device re-issuance of a SAN cert (browsers reject the SAN-less
     # build-time cert with a fatal alert). Based on the earlier
-    # dynamic-buffers commit (a8259fd).
-    integrity = "sha256-A5rLoiEbzEBU5HkPvcqEZ6z9ti78O6qOjXdKo8gn9Fc=",
-    strip_prefix = "embedded-fa9de07e3a4f9a908955ab9c45699bde17b51f2a",
-    urls = ["https://github.com/fughilli/embedded/archive/fa9de07e3a4f9a908955ab9c45699bde17b51f2a.tar.gz"],
+    # dynamic-buffers commit (a8259fd). 131391c: pin the x86_64-linux
+    # riscv32-esp-elf toolchain hash (was fakeHash → CI hash mismatch) + add CI.
+    integrity = "sha256-NZUVoX9Y5xk8+9aDYBq8xPkcKCCHCFyxTMaAxFzyVMM=",
+    strip_prefix = "embedded-131391c35073bee8ab866b6aca34e6a359cbfa2d",
+    urls = ["https://github.com/fughilli/embedded/archive/131391c35073bee8ab866b6aca34e6a359cbfa2d.tar.gz"],
 )
 
 # ---------------------------------------------------------------------------
