@@ -42,6 +42,7 @@ import { mapStore } from "../../store/mapStore";
 import { appState } from "../app/state";
 import { Button, IconButton, icon, toast } from "../kit";
 import { FxLayout } from "../../effects/editor/layout";
+import { VideoTexturePanel } from "../../effects/editor/videoTexture";
 import { openAiKeySheet } from "./aiKeySheet";
 import type { Router, Screen } from "../app/router";
 
@@ -499,11 +500,16 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   const sendBtn = Button({ label: "Send to device", icon: "effect-to-device", onClick: () => void sendToDevice() });
   const hydrateBtn = Button({ label: "Load uniforms", icon: "effect-from-device", variant: "quiet", onClick: () => void hydrateFromDevice() });
 
+  // Video → device-texture streaming panel (its own pane). It consumes the live
+  // client + the latest compiled bytecode (to discover the effect's textures).
+  const videoPanel = new VideoTexturePanel();
+
   function refreshDevice(): void {
     const connected = appState.client?.isConnected ?? false;
     sendBtn.disabled = !connected;
     hydrateBtn.disabled = !connected;
     if (!connected) devStatus.textContent = "Connect a device (tap the status pill) to send this effect.";
+    videoPanel.setSink(connected ? appState.client : null);
   }
 
   // -- floating chrome + ⋯ overflow menu ------------------------------------
@@ -682,9 +688,11 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
       lastCompileSummary = `ERROR — ${summary}`;
       lastDisassembly = "";
       disasmPre.textContent = "";
+      videoPanel.setBytecode(null);
       return;
     }
     setStatusOk(`compiled · ${r.uniforms.length} uniforms · ${r.bytecode.length} bytes`);
+    videoPanel.setBytecode(r.bytecode);
     lastCompileSummary = `OK — ${r.uniforms.length} uniforms, ${r.bytecode.length} bytes`;
     panel.setManifest(r.uniforms);
     await swapPreview(r.bytecode);
@@ -918,6 +926,7 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
       { id: "diagnostics", title: "Device", node: diagBody },
       { id: "disasm", title: "Disassembly", node: disasmBody },
       { id: "chat", title: "AI chat", node: chatBody },
+      { id: "video", title: "Video", node: videoPanel.node },
     ],
     onRelayout: () => {
       // A resize/relayout changes the canvas box; keep the preview crisp.
@@ -1035,6 +1044,7 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
       if (popupTimer !== null) clearTimeout(popupTimer);
       void effectStore.save(effectId, codeEl.value);
       unsubAppState?.();
+      videoPanel.dispose();
       layout.unmount();
       preview?.dispose();
       worker.dispose();
