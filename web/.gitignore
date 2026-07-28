@@ -1,0 +1,4 @@
+
+# Ad-hoc bazel caches created when running bazel from web/ (see root .bazelrc).
+.bazel-disk-cache/
+.bazelisk/

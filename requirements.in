@@ -38,3 +38,10 @@ protobuf==6.33.5
 # Build tooling: template expansion behind //tools/jinja:jinja_template
 # (bakes build constants into shipped resources with StrictUndefined).
 jinja2
+
+# Host-side hardware-test drivers (run on the machine with the board + BT radio;
+# see tools/ble_onboard_server.py + tools/browser_server.py). SimpleBLE drives
+# the Improv-BLE onboarding; Playwright drives headless Chromium for the wss/cert
+# flow (the browser binary installs separately: `playwright install chromium`).
+simplepyble
+playwright

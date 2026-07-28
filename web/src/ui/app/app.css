@@ -1,0 +1,2118 @@
+/* App shell + screen layout. Complements kit/tokens.css. */
+
+#app {
+  min-height: 100vh;
+}
+
+/* While the editor is mounted the document scroll is frozen so the soft
+ * keyboard overlays (position:fixed root) instead of reflowing the whole app. */
+html.is-locked,
+body.is-locked {
+  overflow: hidden;
+  height: 100%;
+  overscroll-behavior: none;
+}
+
+.shell {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  max-width: 560px;
+  margin: 0 auto;
+}
+
+/* Capture is full-bleed; drop the centered column + chrome. */
+.shell--overlay {
+  max-width: none;
+}
+.shell--overlay .app-bar,
+.shell--overlay .tab-bar {
+  display: none;
+}
+
+/* --- app bar --- */
+.app-bar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  padding-top: calc(env(safe-area-inset-top, 0px) + var(--sp-2));
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+}
+.app-bar-title {
+  margin: 0;
+  font-size: var(--f-title);
+  font-weight: 600;
+}
+
+/* --- tab bar --- */
+.tab-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 50;
+  display: flex;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: var(--sp-2) 0;
+  background: transparent;
+  border: 0;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--f-caption);
+  cursor: pointer;
+}
+.tab--active {
+  color: var(--accent);
+}
+.tab-icon svg {
+  width: 24px;
+  height: 24px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* --- outlet + screens --- */
+.shell-outlet {
+  flex: 1;
+  position: relative;
+  overflow-y: auto;
+}
+.screen {
+  display: block;
+  padding: var(--sp-4);
+  animation: screen-in var(--motion-screen) var(--ease);
+}
+@keyframes screen-in {
+  from {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .screen {
+    animation: none;
+  }
+}
+.screen-headline {
+  font-size: var(--f-display);
+  margin: 0 0 var(--sp-2);
+}
+.screen-sub {
+  color: var(--text-dim);
+  margin: 0 0 var(--sp-4);
+}
+
+/* --- onboarding --- */
+.onboard-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.onboard-or {
+  text-align: center;
+  color: var(--text-dim);
+  font-size: var(--f-caption);
+}
+.onboard-status {
+  margin-top: var(--sp-3);
+  color: var(--text-dim);
+  min-height: 1.4em;
+}
+
+/* --- map browser --- */
+.maps-search {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctrl);
+  padding: 0 var(--sp-2);
+  margin-bottom: var(--sp-3);
+}
+.maps-search svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: var(--text-dim);
+  stroke-width: 1.5;
+  flex-shrink: 0;
+}
+.maps-search input {
+  flex: 1;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  padding: 0.55rem 0;
+  font: inherit;
+}
+.maps-search input:focus {
+  outline: none;
+}
+.maps-sort {
+  background: transparent;
+  color: var(--text-dim);
+  border: 0;
+  font: inherit;
+}
+.maps-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-4);
+}
+.maps-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.map-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  padding: var(--sp-3);
+  cursor: pointer;
+}
+.map-row:active {
+  background: var(--surface-2);
+}
+.map-thumb {
+  width: 56px;
+  height: 56px;
+  border-radius: var(--r-ctrl);
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.map-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.map-thumb svg {
+  width: 28px;
+  height: 28px;
+  fill: none;
+  stroke: var(--text-dim);
+  stroke-width: 1.5;
+}
+.map-info {
+  flex: 1;
+  min-width: 0;
+}
+.map-name {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.map-meta {
+  color: var(--text-dim);
+  font-size: var(--f-caption);
+}
+.map-rowtags {
+  color: var(--accent);
+  font-size: var(--f-caption);
+}
+
+.fab {
+  position: fixed;
+  right: var(--sp-4);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 4.5rem);
+  width: 3.5rem;
+  height: 3.5rem;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  z-index: 40;
+  transition: transform 0.08s var(--ease);
+}
+.fab:active {
+  transform: scale(0.93);
+}
+.fab svg {
+  width: 1.6rem;
+  height: 1.6rem;
+}
+
+/* --- map detail --- */
+/* Wide layout: viewport (stage) beside the editor panels; narrow: they wrap to
+   a single column. align-items:start so a tall panel doesn't stretch the
+   viewport. */
+.detail-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--sp-3);
+}
+.detail-stage {
+  position: relative;
+  flex: 1 1 360px;
+  min-width: 0;
+}
+/* Editor panels (topology / transform) become the side column when open. */
+.detail-main > .detail-topo {
+  flex: 1 1 300px;
+  min-width: 0;
+}
+.detail-canvas {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  border-radius: var(--r-card);
+  background: #000;
+}
+.detail-meta {
+  color: var(--text-dim);
+  font-size: var(--f-caption);
+  margin: var(--sp-2) 0;
+}
+/* View toggles: small round buttons overlaid in the viewport's top-right
+   corner (no longer occupying scroll-column height). */
+.detail-viewtoggles {
+  position: absolute;
+  top: var(--sp-2);
+  right: var(--sp-2);
+  z-index: 5;
+  display: flex;
+  gap: var(--sp-1);
+}
+.viewtoggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(10, 10, 14, 0.55);
+  backdrop-filter: blur(6px);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition:
+    background var(--motion-micro) var(--ease),
+    color var(--motion-micro) var(--ease);
+}
+.viewtoggle svg {
+  width: 20px;
+  height: 20px;
+}
+.viewtoggle:hover {
+  color: var(--text);
+}
+.viewtoggle--on {
+  background: var(--accent-quiet);
+  border-color: var(--accent);
+  color: var(--text);
+}
+.detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-3);
+}
+.detail-overflow {
+  position: absolute;
+  right: var(--sp-2);
+  top: var(--sp-2);
+  z-index: 10;
+  background: rgba(10, 10, 14, 0.5);
+}
+.toggle-chip {
+  background: var(--surface-2);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.3rem 0.8rem;
+  font: inherit;
+  font-size: var(--f-caption);
+  cursor: pointer;
+}
+.toggle-chip--on {
+  background: var(--accent-quiet);
+  color: var(--text);
+  border-color: var(--accent);
+}
+.detail-topo {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  padding: var(--sp-3);
+}
+.topo-head {
+  font-weight: 600;
+  margin-bottom: var(--sp-2);
+}
+.topo-summary {
+  color: var(--accent);
+  font-size: var(--f-caption);
+  margin-bottom: var(--sp-3);
+}
+.topo-disclosure {
+  background: transparent;
+  border: 0;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+  padding: var(--sp-1) 0;
+}
+.topo-progress {
+  color: var(--warn);
+  font-size: var(--f-caption);
+  margin: var(--sp-2) 0;
+}
+.topo-btns {
+  display: flex;
+  gap: var(--sp-2);
+  margin-top: var(--sp-3);
+  align-items: center;
+}
+
+/* --- topology diagnostics (Debug section) --- */
+.topo-debug {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.topo-debug-layers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}
+.topo-debug-layers--off {
+  opacity: 0.5;
+}
+.topo-debug-summary {
+  color: var(--text-dim);
+  font-size: var(--f-caption);
+}
+.topo-debug-summary--warn {
+  color: var(--err);
+  font-weight: 600;
+}
+.topo-debug-hint {
+  color: var(--warn);
+  font-size: var(--f-caption);
+}
+.topo-debug-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+.topo-debug-pair {
+  color: var(--err);
+  font-size: var(--f-caption);
+}
+.topo-debug-pair--more {
+  color: var(--text-dim);
+}
+
+/* --- transform tools --- */
+.detail-xform {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.xform-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.xform-label {
+  color: var(--text-dim);
+  font-size: var(--f-caption);
+  width: 3.5rem;
+  flex: 0 0 auto;
+}
+.xform-btn {
+  min-width: 2.4rem;
+  padding: 0.4rem 0.5rem;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctrl);
+  font: inherit;
+  cursor: pointer;
+}
+.xform-btn:hover {
+  border-color: var(--accent);
+}
+.xform-dirty {
+  color: var(--warn);
+  font-size: var(--f-caption);
+}
+
+/* --- effects --- */
+.effects-canvas {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  border-radius: var(--r-card);
+  background: #000;
+  margin-bottom: var(--sp-3);
+}
+.effects-bar {
+  display: flex;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-3);
+}
+.uniform-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+/* Uniform controls as a tight aligned table: name · control · value. Every
+ * control type shares the same (control) column width, so sliders / color
+ * pickers / toggles / dropdowns all line up vertically. */
+.upanel-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 6.5rem) minmax(0, 1fr) 3.6rem;
+  column-gap: var(--sp-2);
+  row-gap: 6px;
+  align-items: center;
+  width: 100%;
+}
+.upanel-row {
+  display: contents;
+}
+.upanel-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--f-caption);
+  color: var(--text-dim);
+}
+.upanel-ctrl {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.upanel-ctrl input[type="range"] {
+  width: 100%;
+  margin: 0;
+}
+.upanel-ctrl input[type="color"] {
+  width: 100%;
+  height: 1.5rem;
+  padding: 0;
+  border: 1px solid var(--border);
+  background: none;
+}
+.upanel-ctrl select {
+  width: 100%;
+}
+.upanel-ctrl input[type="checkbox"] {
+  width: 1.1rem;
+  height: 1.1rem;
+}
+.upanel-val {
+  font-size: var(--f-caption);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  text-align: right;
+  min-width: 0;
+}
+.upanel-num {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 1px 2px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--f-caption);
+  text-align: right;
+}
+.upanel-num::-webkit-outer-spin-button,
+.upanel-num::-webkit-inner-spin-button {
+  appearance: none;
+  margin: 0;
+}
+.uniform-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+.uniform-row select {
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctrl);
+  padding: 0.35rem 0.5rem;
+  font: inherit;
+}
+
+/* --- effects library (browser) --- */
+/* Toolbar row: the search field flexes to fill; the AI "?" help tip floats at
+ * its trailing edge and collapses to nothing once a key is configured. */
+.fxlib-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-3);
+}
+.fxlib-toolbar .maps-search {
+  flex: 1;
+  margin-bottom: 0;
+}
+.fxlib-aihelp {
+  flex: 0 0 auto;
+}
+.fxlib-aihelp:empty {
+  display: none;
+}
+
+/* --- effect editor (in-shell) --- */
+/* The editor is a full-viewport workspace: it is PINNED to the layout viewport
+ * (fixed; inset:0) so nothing outside it scrolls and the soft keyboard overlays
+ * instead of reflowing the app. Only individual pane bodies scroll internally.
+ * No page padding — panes butt flush to the viewport edges. */
+.screen--fxedit {
+  position: fixed;
+  inset: 0;
+  padding: 0;
+  margin: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
+  background: var(--bg);
+  animation: none;
+  z-index: 40;
+}
+.screen--fxedit .fxlayout {
+  position: absolute;
+  inset: 0;
+  min-height: 0;
+}
+.fxedit-canvas {
+  width: 100%;
+  height: 100%;
+  min-height: 6rem;
+  aspect-ratio: 4 / 3;
+  background: #000;
+}
+/* Inside a pane the canvas fills the body (no forced aspect ratio). */
+.fxpane .fxedit-canvas {
+  aspect-ratio: auto;
+  flex: 1;
+}
+.fxedit-editor {
+  display: flex;
+  flex-direction: column;
+  border: 0;
+  overflow: hidden;
+  background: var(--surface);
+  /* Fill the pane body so the code area gets the majority of the height and
+   * scrolls internally rather than growing the page. */
+  flex: 1;
+  min-height: 0;
+}
+
+/* Highlight overlay: a transparent <textarea> layered exactly over a
+ * <pre><code> backdrop that renders the tokenized HTML. Both share identical
+ * font metrics/padding so glyphs align; the textarea holds the caret + input,
+ * the backdrop paints the colors. */
+.fxedit-codewrap {
+  position: relative;
+  min-height: 8rem;
+  /* Grow to fill the editor column; the textarea + backdrop are inset:0 so they
+   * track this box exactly (keeps the highlight overlay + completion mirror
+   * co-located and scroll-synced). */
+  flex: 1;
+  overflow: hidden;
+}
+.fxedit-code,
+.fxedit-backdrop {
+  margin: 0;
+  box-sizing: border-box;
+  padding: 0.6rem 0.8rem;
+  font: 13px/1.5 var(--font-mono, ui-monospace, monospace);
+  tab-size: 2;
+  white-space: pre;
+  overflow: auto;
+  border: 0;
+}
+.fxedit-backdrop {
+  position: absolute;
+  inset: 0;
+  background: var(--surface);
+  color: var(--text);
+  pointer-events: none;
+  z-index: 0;
+}
+.fxedit-backdrop code {
+  font: inherit;
+}
+.fxedit-code {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  resize: none;
+  background: transparent;
+  /* Text is transparent so the colored backdrop shows through; the caret stays
+   * visible via caret-color. */
+  color: transparent;
+  caret-color: var(--text);
+  outline: none;
+  z-index: 1;
+}
+
+/* Token colors — dark theme via kit tokens. */
+.fxhl-comment { color: var(--text-dim); font-style: italic; }
+.fxhl-str { color: var(--ok); }
+.fxhl-num { color: var(--warn); }
+.fxhl-kw { color: var(--accent); font-weight: 600; }
+.fxhl-type { color: #7fd0ff; }
+.fxhl-fn { color: #c9a3ff; }
+.fxhl-ctx { color: #ff9d7a; }
+
+/* Autocomplete popup — a floating list anchored at the caret with a docstring
+ * line for the highlighted item. Positioned inside .fxedit-codewrap (relative).
+ * The mirror is an off-screen duplicate of the textarea used to measure the
+ * caret's pixel position; it must never be seen. */
+.fxac-mirror {
+  position: absolute;
+  top: 0;
+  left: 0;
+  visibility: hidden;
+  pointer-events: none;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow: hidden;
+  z-index: -1;
+}
+.fxac {
+  position: absolute;
+  z-index: 5;
+  min-width: 15rem;
+  max-width: 24rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctrl);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+  font: 12px/1.4 ui-monospace, monospace;
+}
+.fxac-list {
+  max-height: 13rem;
+  overflow-y: auto;
+}
+.fxac-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 0.2rem 0.5rem;
+  cursor: pointer;
+  color: var(--text);
+}
+.fxac-row--active {
+  background: var(--accent-quiet);
+}
+.fxac-badge {
+  flex: 0 0 auto;
+  min-width: 2.6em;
+  text-align: center;
+  padding: 0 0.3em;
+  border-radius: 3px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--surface);
+  background: var(--text-dim);
+}
+.fxac-badge--func { background: #c9a3ff; }
+.fxac-badge--type { background: #7fd0ff; }
+.fxac-badge--member { background: #ff9d7a; }
+.fxac-badge--context { background: #ff9d7a; }
+.fxac-badge--keyword { background: var(--accent); }
+.fxac-badge--swizzle { background: #7fd0ff; }
+.fxac-badge--uniform { background: var(--ok, #9fe6a0); }
+.fxac-badge--state { background: var(--warn, #e6c56a); }
+.fxac-label {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fxac-detail {
+  flex: 0 1 auto;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 55%;
+}
+.fxac-doc {
+  padding: 0.35rem 0.5rem;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-dim);
+  white-space: normal;
+}
+.fxac-doc:empty {
+  display: none;
+}
+
+.fxedit-status {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 0.35rem 0.8rem;
+  font: 12px/1.4 ui-monospace, monospace;
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+  min-height: 1.8em;
+  color: var(--text-dim);
+}
+.fxedit-status--ok {
+  color: var(--ok, #9fe6a0);
+}
+.fxedit-status--err {
+  color: var(--err, #ff9d9d);
+}
+.fxedit-status--busy {
+  color: var(--text-dim);
+}
+.fxedit-spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  animation: fxedit-spin 0.7s linear infinite;
+}
+@keyframes fxedit-spin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fxedit-spinner { animation: none; }
+}
+
+/* --- floating chrome (overlay controls) + ⋯ overflow menu --- */
+/* Small, subtle, semi-transparent clusters pinned over the workspace corners.
+ * They OVERLAY the panes (no layout push, no bar). Kept clear of the code caret
+ * (top corners only). */
+.fxedit-float {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 4px);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  pointer-events: none;
+}
+.fxedit-float > * {
+  pointer-events: auto;
+}
+.fxedit-float--l {
+  left: 4px;
+}
+.fxedit-float--r {
+  right: 4px;
+}
+.fxedit-floatbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 0;
+  background: color-mix(in srgb, var(--surface-2) 78%, transparent);
+  color: var(--text);
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+}
+.fxedit-floatbtn:hover {
+  background: var(--surface-2);
+}
+.fxedit-floatbtn svg {
+  width: 16px;
+  height: 16px;
+}
+/* Inline-editable name: a compact pill, click → input in place. */
+.fxedit-namepill,
+.fxedit-nameinput {
+  height: 1.9rem;
+  max-width: 40vw;
+  padding: 0 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 0;
+  background: color-mix(in srgb, var(--surface-2) 78%, transparent);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--f-caption);
+  backdrop-filter: blur(6px);
+}
+.fxedit-namepill {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: text;
+  text-align: left;
+}
+.fxedit-namepill:hover {
+  background: var(--surface-2);
+}
+.fxedit-nameinput {
+  outline: none;
+}
+.fxedit-nameinput:focus {
+  border-color: var(--accent);
+}
+.fxedit-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  z-index: 61;
+  min-width: 12rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 0;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+  padding: var(--sp-1);
+  display: flex;
+  flex-direction: column;
+}
+.fxedit-menu-item {
+  text-align: left;
+  background: none;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  padding: 0.5rem 0.7rem;
+  border-radius: 0;
+  cursor: pointer;
+}
+.fxedit-menu-item:hover {
+  background: var(--surface);
+}
+
+/* --- built-in (immutable) effect banner: floats top-center over the editor --- */
+.fxedit-builtin {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 0.4rem);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 0.25rem 0.25rem 0.25rem 0.8rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: var(--f-caption);
+  color: var(--text-dim);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+}
+.fxedit-builtin .k-btn {
+  padding: 0.35rem 0.8rem;
+  font-size: var(--f-caption);
+}
+
+/* --- disassembly panel --- */
+.fxedit-disasm-card {
+  padding: var(--sp-3);
+}
+.fxedit-disasm {
+  margin: 0;
+  max-height: 20rem;
+  overflow: auto;
+  font: 11px/1.4 ui-monospace, monospace;
+  color: var(--text-dim);
+  white-space: pre;
+}
+
+/* --- AI chat --- */
+.fxedit-chatlog {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  max-height: 22rem;
+  overflow-y: auto;
+  margin-bottom: var(--sp-2);
+}
+.fxedit-msg {
+  padding: 0.45rem 0.7rem;
+  border-radius: var(--r-ctrl);
+  font-size: var(--f-body);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.fxedit-msg--user {
+  align-self: flex-end;
+  background: var(--accent-quiet);
+  max-width: 85%;
+}
+.fxedit-msg--assistant {
+  align-self: flex-start;
+  background: var(--surface-2);
+  max-width: 90%;
+}
+.fxedit-msg--tool {
+  align-self: flex-start;
+  color: var(--text-dim);
+  font-size: var(--f-caption);
+  font-style: italic;
+  padding: 0.1rem 0.7rem;
+}
+.fxedit-legend {
+  font-size: var(--f-caption);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  margin-bottom: var(--sp-2);
+}
+.fxedit-muted {
+  color: var(--text-dim);
+  font-size: var(--f-caption);
+  margin: var(--sp-2) 0 0;
+  min-height: 1em;
+}
+.fxedit-fieldrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+.fxedit-mappick,
+.fxedit-ask {
+  width: 100%;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctrl);
+  padding: 0.45rem 0.5rem;
+  font: inherit;
+  box-sizing: border-box;
+}
+.fxedit-ask {
+  margin-bottom: var(--sp-2);
+  resize: vertical;
+}
+
+/* Chat input with an inline up-arrow send button nested at the right. */
+.fxedit-askwrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+.fxedit-askwrap .fxedit-ask {
+  margin-bottom: 0;
+  padding-right: 2.7rem;
+  resize: none;
+  min-height: 3.2rem;
+}
+.fxedit-asksend {
+  position: absolute;
+  right: 0.4rem;
+  bottom: 0.4rem;
+  width: 1.9rem;
+  height: 1.9rem;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+.fxedit-asksend:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.fxedit-asksend svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Live "model is working" indicator: reuses the existing .fxedit-spinner, with
+   a phase label ("Thinking…", "Generating code…", "Inspecting rendered image…"). */
+.fxedit-chatstatus {
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--text-dim);
+  font-size: var(--f-caption);
+  padding: 0.15rem 0.2rem;
+}
+
+/* AI pane: keep the input legible. The chat content has a minimum width and the
+   pane CROPS it (overflow hidden) when the pane is dragged narrower, rather than
+   squishing the text box below readability. */
+.fxedit-chatbody {
+  min-width: 16rem;
+}
+.fxpane[data-pane="chat"] .fxpane-body {
+  overflow: hidden;
+}
+.fxedit-btnrow {
+  display: flex;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+.fxedit-diags {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font: 12px/1.4 ui-monospace, monospace;
+}
+.fxedit-diags li {
+  color: var(--warn, #ff9d9d);
+  margin: 0.15rem 0;
+}
+.fxedit-aihint {
+  color: var(--text-dim);
+  font-size: var(--f-caption);
+  margin-bottom: var(--sp-2);
+}
+.fxedit-link,
+.fxedit-aihint .fxedit-link {
+  background: none;
+  border: 0;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+}
+
+/* ===========================================================================
+   Effect-editor composable workspace (FxLayout). Two modes toggled by a
+   matchMedia at 720px. --fxdiv is the divider thickness (also its hit target).
+   =========================================================================== */
+.fxlayout {
+  /* Visible divider is a hairline (1px); the pointer hit-area is widened via a
+   * transparent ::before overlay, but panes butt directly against the 1px line. */
+  --fxdiv: 1px;
+  display: block;
+  min-height: 0;
+}
+
+/* -- pane wrapper: minimal header (title + controls) over a scrollable body -- */
+.fxpane {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  border: 0;
+  border-radius: 0;
+  background: var(--surface);
+  overflow: hidden;
+}
+.fxpane-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: 0 0 0 0.5rem;
+  min-height: 1.35rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+  flex: 0 0 auto;
+}
+.fxpane-title {
+  flex: 1 1 auto;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fxpane-ctl {
+  display: flex;
+  gap: 0;
+  flex: 0 0 auto;
+}
+.fxpane-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.fxpane-btn:hover {
+  background: var(--surface);
+  color: var(--text);
+}
+.fxpane-btn svg {
+  width: 13px;
+  height: 13px;
+}
+.fxpane-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+  padding: var(--sp-2);
+}
+/* The code pane body holds the editor which supplies its own scroll. */
+.fxpane[data-pane="code"] .fxpane-body {
+  padding: 0;
+  overflow: hidden;
+}
+.fxpane[data-pane="code"] .fxedit-editor {
+  border: 0;
+  border-radius: 0;
+}
+.fxpane[data-pane="preview"] .fxpane-body {
+  padding: var(--sp-2);
+}
+
+/* -- WIDE: the edge-dock grid (center + flush edge strips) -- */
+.fxlayout-dock {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  gap: 0;
+}
+.fxlayout-center {
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.fxlayout-center > .fxpane {
+  flex: 1 1 0;
+}
+/* An edge strip: an optional tab bar over the fronted pane; the pane fills it. */
+.fxlayout-edge {
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--surface);
+}
+.fxlayout-edge > .fxpane {
+  flex: 1 1 0;
+}
+/* Tab strip when >1 pane share an edge. */
+.fxlayout-edgetabs {
+  display: flex;
+  flex: 0 0 auto;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.fxlayout-edgetab {
+  flex: 0 0 auto;
+  background: none;
+  border: 0;
+  border-right: 1px solid var(--border);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 0.2rem 0.5rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.fxlayout-edgetab--active {
+  background: var(--surface);
+  color: var(--text);
+}
+/* On an edge with tabs the fronted pane hides its own redundant title, keeping
+ * only the move/hide controls at the right. */
+.fxlayout-edgetabs + .fxpane .fxpane-title {
+  visibility: hidden;
+  flex: 1 1 auto;
+}
+
+/* -- dividers: hairline + flush, with a widened invisible hit area -- */
+.fxlayout-divider {
+  background: var(--border);
+  position: relative;
+  z-index: 2;
+  flex: 0 0 auto;
+  touch-action: none;
+}
+.fxlayout-divider--v {
+  width: var(--fxdiv);
+  cursor: col-resize;
+}
+.fxlayout-divider--h {
+  height: var(--fxdiv);
+  cursor: row-resize;
+}
+/* Transparent pointer hit-area straddling the 1px line (visible line stays 1px).
+   touch-action is NOT inherited, so it must be set on the pseudo too — otherwise
+   a vertical drag on the ±3px hit area of a horizontal (row-resize) divider is
+   stolen by the browser as a scroll gesture and the divider won't move (the bug
+   only showed on narrow/portrait, where the split divider is horizontal). */
+.fxlayout-divider::before {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  touch-action: none;
+}
+.fxlayout-divider--v::before {
+  top: 0;
+  bottom: 0;
+  left: -7px;
+  right: -7px;
+}
+.fxlayout-divider--h::before {
+  left: 0;
+  right: 0;
+  top: -9px;
+  bottom: -9px;
+}
+.fxlayout-divider:hover {
+  background: var(--accent);
+}
+/* A centered grip so the (1px) divider reads as a grabbable handle — mostly for
+   the narrow split, where a hairline is easy to miss on touch. */
+.fxlayout-divider::after {
+  content: "";
+  position: absolute;
+  z-index: 2;
+  background: var(--text-dim);
+  border-radius: 999px;
+  pointer-events: none;
+}
+.fxlayout-divider--h::after {
+  left: 50%;
+  top: 50%;
+  width: 2rem;
+  height: 3px;
+  transform: translate(-50%, -50%);
+}
+.fxlayout-divider--v::after {
+  top: 50%;
+  left: 50%;
+  width: 3px;
+  height: 2rem;
+  transform: translate(-50%, -50%);
+}
+.fxlayout-divider:hover::after {
+  background: var(--accent);
+}
+
+/* -- drag a pane handle (tab / header title) to a new dock -- */
+.fxlayout-draghandle {
+  touch-action: none; /* let the long-press drag win over browser scroll */
+  cursor: grab;
+}
+.fxlayout-draghandle--active {
+  cursor: grabbing;
+}
+.fxlayout-dropzones {
+  position: absolute;
+  inset: 0;
+  z-index: 90;
+  pointer-events: none;
+}
+.fxlayout-dropzone {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  border: 2px dashed var(--border);
+  border-radius: var(--r-ctrl);
+  background: rgba(14, 14, 18, 0.35);
+  color: var(--text-dim);
+  font-size: var(--f-caption);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  transition:
+    border-color var(--motion-micro) var(--ease),
+    background var(--motion-micro) var(--ease);
+}
+.fxlayout-dropzone--on {
+  border-style: solid;
+  border-color: var(--accent);
+  background: var(--accent-quiet);
+  color: var(--text);
+}
+
+/* -- relocate popover -- */
+.fxlayout-relo {
+  position: absolute;
+  z-index: 30;
+  margin-top: 2px;
+  min-width: 9rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 0;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+  padding: var(--sp-1);
+  display: flex;
+  flex-direction: column;
+}
+.fxlayout-relo-title {
+  font-size: var(--f-caption);
+  color: var(--text-dim);
+  padding: 0.2rem 0.5rem;
+}
+.fxlayout-relo-item {
+  text-align: left;
+  background: none;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  padding: 0.4rem 0.6rem;
+  border-radius: 0;
+  cursor: pointer;
+}
+.fxlayout-relo-item:hover {
+  background: var(--surface);
+}
+.fxlayout-relo-item--cur {
+  color: var(--accent);
+}
+.fxlayout-relo-hide {
+  border-top: 1px solid var(--border);
+  margin-top: 2px;
+  color: var(--text-dim);
+}
+
+/* -- NARROW: vertical top / center / bottom dock stack -- */
+/* Fill the pinned root; leave headroom at the top so the stack doesn't sit under
+ * the floating back/name/⋯ controls. */
+.fxlayout--narrow {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  padding-top: calc(env(safe-area-inset-top, 0px) + 2rem);
+}
+/* The three regions stack vertically; grid-template-rows (fr shares + dividers)
+   is set inline from the persisted region sizes. */
+.fxlayout-nstack {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+}
+.fxlayout-nregion {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.fxlayout-nregion > .fxpane {
+  flex: 1;
+  min-height: 0;
+}
+/* Match the wide edge-tab strip: a flush bar of zero-gap tabs with hairline
+   separators (not floating pills). */
+.fxlayout-tabs {
+  display: flex;
+  overflow-x: auto;
+  flex: 0 0 auto;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+.fxlayout-tab {
+  flex: 0 0 auto;
+  background: none;
+  color: var(--text-dim);
+  border: 0;
+  border-right: 1px solid var(--border);
+  border-radius: 0;
+  padding: 0.35rem 0.7rem;
+  font: inherit;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.fxlayout-tab--active {
+  background: var(--surface);
+  color: var(--text);
+}
+
+/* -- preview pane internals -- */
+.fxedit-previewbody,
+.fxedit-chatbody,
+.fxedit-diagbody,
+.fxedit-disasmbody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-height: 0;
+  flex: 1;
+}
+.fxedit-previewctl {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  flex: 0 0 auto;
+}
+.fxedit-viewtoggles {
+  display: flex;
+  gap: var(--sp-2);
+}
+.fxedit-chatbody .fxedit-chatlog {
+  flex: 1 1 auto;
+  max-height: none;
+  min-height: 6rem;
+}
+.fxedit-disasmbody .fxedit-disasm {
+  flex: 1;
+  max-height: none;
+}
+
+/* --- AI key sheet --- */
+.aikey-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.aikey-status {
+  color: var(--text-dim);
+  font-size: var(--f-caption);
+}
+.aikey-note {
+  color: var(--text-dim);
+  font-size: var(--f-caption);
+  margin: 0 0 var(--sp-2);
+}
+
+/* --- capture (full-screen over the camera video) --- */
+.screen--capture {
+  padding: 0;
+  animation: none;
+}
+.capture-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  pointer-events: none;
+  font-size: 14px;
+}
+.capture-overlay > * {
+  pointer-events: auto;
+}
+.capture-labels {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.capture-topbar {
+  position: absolute;
+  top: env(safe-area-inset-top, 0);
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  background: rgba(10, 10, 14, 0.6);
+  color: #fff;
+}
+.capture-topbar .k-iconbtn {
+  color: #fff;
+}
+.capture-count {
+  font-weight: 600;
+}
+.capture-timer {
+  margin-left: auto;
+  color: #ffd97a;
+}
+.capture-live {
+  position: absolute;
+  right: var(--sp-3);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 5rem);
+  width: 38vw;
+  max-width: 240px;
+  aspect-ratio: 4 / 3;
+  background: rgba(10, 10, 14, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: var(--r-ctrl);
+}
+.capture--livebig .capture-live {
+  width: min(88vw, 480px);
+  max-width: none;
+  bottom: 6rem;
+}
+.capture-guide {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 8.5rem);
+  text-align: center;
+  color: #ffd97a;
+  padding: 0 var(--sp-4);
+}
+.capture-advanced {
+  position: absolute;
+  left: var(--sp-3);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 5rem);
+  width: min(70vw, 340px);
+  background: rgba(10, 10, 14, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: var(--r-card);
+  padding: var(--sp-2) var(--sp-3);
+  color: #fff;
+}
+.capture-adv-toggle {
+  background: transparent;
+  border: 0;
+  color: #9fd8ff;
+  font: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+.capture-adv-body .k-slider-head,
+.capture-adv-body .k-slider-val {
+  color: #d5d5dd;
+}
+.capture-hud {
+  white-space: pre-line;
+  color: #cfcfd6;
+  font-size: 12px;
+  margin-top: var(--sp-2);
+}
+.capture-stop {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 1.2rem);
+  background: var(--err);
+}
+.capture-solveprog {
+  position: absolute;
+  left: var(--sp-4);
+  right: var(--sp-4);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 5rem);
+  background: rgba(10, 10, 14, 0.72);
+  border-radius: var(--r-ctrl);
+  padding: var(--sp-3);
+  color: #fff;
+}
+.capture-solveprog-bar {
+  height: 6px;
+  background: var(--surface-2);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.capture-solveprog-fill {
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  transition: width 0.3s var(--ease);
+}
+.capture-solveprog-text {
+  color: var(--text-dim);
+  font-size: var(--f-caption);
+  margin-top: var(--sp-1);
+}
+
+/* --- device sheet --- */
+.device-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3) 0;
+  border-bottom: 1px solid var(--border);
+}
+.device-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  flex-shrink: 0;
+}
+.device-dot[data-state="connected"] {
+  background: var(--ok);
+}
+.device-dot[data-state="connecting"] {
+  background: var(--warn);
+}
+.device-dot[data-state="error"] {
+  background: var(--err);
+}
+.device-dot[data-state="reachable"] {
+  background: var(--warn);
+}
+
+/* --- device detail popup (long-press) --- */
+.device-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.device-detail-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+.device-detail-cap {
+  font-size: var(--f-caption);
+  color: var(--text-dim);
+}
+.device-detail-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--sp-2);
+}
+.device-detail-val {
+  color: var(--text);
+  word-break: break-all;
+  text-align: right;
+}
+.device-info {
+  flex: 1;
+  min-width: 0;
+}
+.device-name {
+  font-weight: 600;
+}
+.device-url,
+.device-meta {
+  color: var(--text-dim);
+  font-size: var(--f-caption);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.device-btns {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+}
+.device-empty {
+  color: var(--text-dim);
+  text-align: center;
+  padding: var(--sp-4) 0;
+}
+/* Add-device: a divider + section label over a row of compact icon buttons. */
+.device-add {
+  margin-top: var(--sp-4);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border);
+}
+.device-add-label {
+  font-size: var(--f-caption);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  margin-bottom: var(--sp-2);
+}
+.device-add-row {
+  display: flex;
+  gap: var(--sp-2);
+}
+.device-add-row .k-iconbtn {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctrl);
+}
+.device-add-row .k-iconbtn:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+/* --- Wi-Fi picker (add-device flow) --- */
+.wifi-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.wifi-lead {
+  color: var(--text-dim);
+  font-size: var(--f-caption);
+  margin: 0 0 var(--sp-1);
+}
+.wifi-cap {
+  font-size: var(--f-caption);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+.wifi-picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1);
+}
+.wifi-pick {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctrl);
+  color: var(--text);
+  font: inherit;
+  padding: 0.3rem 0.6rem;
+  cursor: pointer;
+}
+.wifi-pick--on {
+  border-color: var(--accent);
+}
+.wifi-status {
+  color: var(--warn);
+  font-size: var(--f-caption);
+  min-height: 1em;
+}
+
+/* Onboarding reuses the device-add row, a touch larger. */
+.onboard-add-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.onboard-add .k-iconbtn {
+  width: 3rem;
+  height: 3rem;
+}
+
+/* --- folders (library grouping + picker) --- */
+/* A collapsible section header. Spans the full row (grid-column: 1/-1) so it
+   works with both the mobile flex list and the wide-screen card grid. */
+.folder-header {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  margin: var(--sp-2) 0 0;
+  padding: 0.3rem 0.2rem;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  font: inherit;
+  font-size: var(--f-caption);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.folder-header:hover {
+  color: var(--text);
+}
+.folder-header svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+.folder-header-name {
+  flex: 1 1 auto;
+  text-align: left;
+}
+.folder-count {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.folder-chevron {
+  transition: transform 0.15s var(--ease);
+  transform: rotate(90deg); /* expanded → points down */
+}
+.folder-header--collapsed .folder-chevron {
+  transform: rotate(0deg); /* collapsed → points right */
+}
+.folder-header--muted {
+  opacity: 0.75;
+}
+/* Items in a collapsed folder — beats the row/card's own `display`. */
+.folder-hidden {
+  display: none !important;
+}
+.folder-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.folder-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+.folder-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctrl);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  padding: 0.5rem 0.7rem;
+  cursor: pointer;
+}
+.folder-row svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+.folder-row--on {
+  border-color: var(--accent);
+}
+.folder-new {
+  display: flex;
+  gap: var(--sp-2);
+}
+.folder-new .sheet-input {
+  margin-bottom: 0;
+}
+
+/* --- context / edit sheets --- */
+.context-sheet {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.sheet-input {
+  width: 100%;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctrl);
+  padding: 0.6rem 0.7rem;
+  font: inherit;
+  margin-bottom: var(--sp-3);
+}
+
+/* ===========================================================================
+   Wide viewports — desktop and unfolded foldables. Use the horizontal space
+   instead of a narrow phone column; dock drawers to the side as a narrow panel
+   with fixed-width (not full-bleed) controls.
+   =========================================================================== */
+@media (min-width: 720px) {
+  .shell:not(.shell--overlay) {
+    max-width: 900px;
+  }
+
+  /* The map library becomes a responsive card grid rather than one tall
+     single column, so a wide screen shows many maps at once. */
+  .maps-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+    gap: var(--sp-3);
+    align-content: start;
+  }
+
+  /* Bottom sheets dock as a right-side drawer: narrower, full-height, sliding
+     in from the edge instead of covering the width. */
+  .k-sheet {
+    left: auto;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(24rem, 92vw);
+    max-height: none;
+    height: 100%;
+    border-top: 0;
+    border-radius: 0;
+    border-left: 1px solid var(--border);
+    transform: translateX(100%);
+    padding-bottom: var(--sp-4);
+  }
+  .k-sheet.k-sheet--in {
+    transform: none;
+  }
+
+  /* In a docked drawer, controls are compact and fixed-width, not full-bleed —
+     full-width buttons look oversized in a narrow side panel. */
+  .k-sheet .k-btn {
+    padding: 0.5rem 0.9rem;
+  }
+}
+
+@media (min-width: 1200px) {
+  .shell:not(.shell--overlay) {
+    max-width: 1040px;
+  }
+}
+
+/* --- app-bar ⋯ overflow menu (PWA install, etc.) --- */
+.appbar-menu-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.appbar-menu {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 4px;
+  z-index: 61;
+  min-width: 12rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+  padding: var(--sp-1);
+  display: flex;
+  flex-direction: column;
+}
+.appbar-menu-item {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  text-align: left;
+  background: none;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  padding: 0.5rem 0.7rem;
+  cursor: pointer;
+}
+.appbar-menu-item:hover {
+  background: var(--surface);
+}
+.appbar-menu-item svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* --- dismissible install banner (first load) --- */
+.pwa-banner {
+  position: fixed;
+  left: 50%;
+  bottom: calc(64px + env(safe-area-inset-bottom, 0px) + var(--sp-2));
+  transform: translate(-50%, 12px);
+  z-index: 55;
+  width: min(92vw, 30rem);
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
+}
+.pwa-banner--in {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+.pwa-banner-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  flex: 0 0 auto;
+}
+.pwa-banner-text {
+  flex: 1;
+  min-width: 0;
+}
+.pwa-banner-title {
+  font-weight: 600;
+  font-size: var(--f-body);
+}
+.pwa-banner-sub {
+  color: var(--text-dim);
+  font-size: var(--f-caption);
+}
+.pwa-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  flex: 0 0 auto;
+}
+
+/* --- iOS Add-to-Home-Screen guide --- */
+.pwa-ios-lead {
+  margin: 0 0 var(--sp-2);
+  color: var(--text-dim);
+}
+.pwa-ios-steps {
+  margin: 0 0 var(--sp-3);
+  padding-left: 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+
+/* --- QR scanner overlay (debug: send library to server) --- */
+.qrscan {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.qrscan-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.qrscan-reticle {
+  position: absolute;
+  width: min(64vw, 64vh);
+  aspect-ratio: 1;
+  border: 3px solid rgba(255, 255, 255, 0.85);
+  border-radius: var(--r-card);
+  box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.45);
+}
+.qrscan-hint {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + var(--sp-4));
+  color: #fff;
+  font-size: var(--f-body);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+}
+.qrscan-bar {
+  position: absolute;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + var(--sp-4));
+  display: flex;
+  gap: var(--sp-3);
+}
+.qrscan-btn {
+  background: rgba(20, 20, 26, 0.7);
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 999px;
+  padding: 0.5rem 1.1rem;
+  font: inherit;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+}

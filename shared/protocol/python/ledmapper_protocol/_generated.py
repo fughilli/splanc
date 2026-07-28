@@ -421,6 +421,8 @@ class WelcomeMessage(_StrictModel):
     sessionId: str
     codeParams: CodeParams
     solverBenchMs: Union[float, None] = None
+    mac: str = ""
+    deviceName: str = ""
 
 
 class MappingStoppedMessage(_StrictModel):

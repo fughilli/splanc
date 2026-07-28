@@ -11,7 +11,17 @@
  */
 
 import type { OutputMap, Topology, Vec3 } from "@ledmapper/protocol";
+import type { TopologyDebug, TopologyStage } from "../topology/extract";
 import { applySimilarity, fitSimilarity, type Similarity } from "../geom/fit";
+import { renderSettings } from "../store/appearance";
+
+/** Which diagnostic overlays to draw over the topology (all off by default —
+ * MapView pays no cost until a layer is switched on from the Debug section). */
+export interface DebugOverlayFlags {
+  coincident: boolean;
+  edges: boolean;
+  chords: boolean;
+}
 
 export interface TruthPoint {
   id: number;
@@ -29,6 +39,15 @@ export class MapView {
   private ac: AbortController | null = null;
   private readonly pointers = new Map<number, { x: number; y: number }>();
 
+  // Backing-store sizing: the canvas is drawn in CSS-pixel units and the 2D
+  // context is scaled by the device pixel ratio, so the backing store matches
+  // the on-screen size at full resolution (crisp in wide/desktop layouts, not
+  // an upscaled fixed-size buffer). Kept in sync via a ResizeObserver.
+  private dpr = 1;
+  private cssW = 0;
+  private cssH = 0;
+  private resizeObs: ResizeObserver | null = null;
+
   // Ground-truth overlay: truth points are aligned to the solve via a
   // similarity fit (truth is only meaningful up to scale/rotation/translation)
   // and rendered with per-point delta vectors + magnitudes.
@@ -40,10 +59,25 @@ export class MapView {
   // LEDs; rendered as a polyline when toggled on.
   private trajectory: Vec3[] | null = null;
   showTrajectory = false;
+  /** Toggle a graduated ground grid (Y=0 plane) and a world coordinate triad. */
+  showGrid = false;
+  showTriad = false;
 
   // Extracted topology overlay: the segment polylines drawn over the LEDs, for
   // live preview while tuning the extraction (topology/extract.ts).
   private topology: Topology | null = null;
+
+  // Diagnostic overlay (topology/extract.ts debug report): (near-)coincident LED
+  // pairs, the raw graph edges, and loop-chords — drawn only for the enabled
+  // flags. Null (the default) draws nothing extra, so normal topology rendering
+  // is untouched unless the user opts in from the Debug section.
+  private debug: TopologyDebug | null = null;
+  private debugFlags: DebugOverlayFlags = { coincident: false, edges: false, chords: false };
+
+  // Pipeline-stage inspector: when set, the overlay draws THIS stage's graph
+  // (nodes/edges/segments/branch points) INSTEAD of the final topology, so the
+  // Debug "stage" scrubber can step through k-NN → MST → … → dissolve.
+  private stage: TopologyStage | null = null;
 
   // Per-LED effect colours (flat RGB, aligned to map.leds order). When set, the
   // LEDs render as glowing lights on black instead of confidence shading — the
@@ -82,6 +116,20 @@ export class MapView {
     this.ledColors = colors;
   }
 
+  /** Set (or clear) the topology-diagnostics overlay + which layers to draw.
+   * Pass `debug = null` to remove it entirely; the enabled `flags` decide which
+   * of coincident pairs / graph edges / loop-chords appear. */
+  setDebugOverlay(debug: TopologyDebug | null, flags?: Partial<DebugOverlayFlags>): void {
+    this.debug = debug;
+    if (flags) this.debugFlags = { ...this.debugFlags, ...flags };
+  }
+
+  /** Show a single pipeline stage's graph instead of the final topology (Debug
+   * "stage" scrubber). Pass `null` to return to the normal topology overlay. */
+  setStage(stage: TopologyStage | null): void {
+    this.stage = stage;
+  }
+
   get hasTrajectory(): boolean {
     return this.trajectory !== null;
   }
@@ -106,6 +154,11 @@ export class MapView {
   start(): void {
     this.stop();
     this.attach();
+    this.resizeToDisplay();
+    // Track the element's displayed size so the backing store always matches it
+    // (wide layouts, splitter drags, orientation changes, DPR shifts on zoom).
+    this.resizeObs = new ResizeObserver(() => this.resizeToDisplay());
+    this.resizeObs.observe(this.canvas);
     const loop = () => {
       this.raf = requestAnimationFrame(loop);
       if (this.autoOrbit) this.yaw += 0.005;
@@ -119,7 +172,26 @@ export class MapView {
     this.raf = 0;
     this.ac?.abort();
     this.ac = null;
+    this.resizeObs?.disconnect();
+    this.resizeObs = null;
     this.pointers.clear();
+  }
+
+  /** Match the canvas backing store to its CSS display size × devicePixelRatio.
+   * Draw code works in CSS px (the context is scaled by dpr in `draw`). */
+  private resizeToDisplay(): void {
+    const c = this.canvas;
+    const cssW = c.clientWidth;
+    const cssH = c.clientHeight;
+    if (cssW === 0 || cssH === 0) return; // not laid out yet
+    const dpr = Math.min(window.devicePixelRatio || 1, 2.5); // cap for fill-rate
+    this.dpr = dpr;
+    this.cssW = cssW;
+    this.cssH = cssH;
+    const bw = Math.round(cssW * dpr);
+    const bh = Math.round(cssH * dpr);
+    if (c.width !== bw) c.width = bw;
+    if (c.height !== bh) c.height = bh;
   }
 
   // -- input ------------------------------------------------------------
@@ -147,8 +219,9 @@ export class MapView {
         const prev = this.pointers.get(e.pointerId);
         if (!prev) return;
         const cur = { x: e.clientX, y: e.clientY };
-        // Pointer deltas are CSS px; pan/zoom work in canvas px.
-        const s = c.clientWidth > 0 ? c.width / c.clientWidth : 1;
+        // Draw space is CSS px (the context is dpr-scaled), so pointer deltas —
+        // also CSS px — map 1:1 for panning.
+        const s = 1;
 
         if (this.pointers.size === 1) {
           const dx = cur.x - prev.x;
@@ -201,9 +274,22 @@ export class MapView {
 
   private draw(): void {
     const ctx = this.canvas.getContext("2d")!;
-    const w = this.canvas.width;
-    const h = this.canvas.height;
-    ctx.fillStyle = "#111";
+    // Draw in CSS px; scale the context by dpr so the backing store renders at
+    // full device resolution. Fall back to raw canvas px before first layout.
+    const laidOut = this.cssW > 0 && this.cssH > 0;
+    const dpr = laidOut ? this.dpr : 1;
+    const w = laidOut ? this.cssW : this.canvas.width;
+    const h = laidOut ? this.cssH : this.canvas.height;
+    // Live appearance knobs (Settings ▸ Appearance) — read each frame so a
+    // change re-themes every open viewport immediately. Instance toggles OR the
+    // configured defaults, so a screen's explicit "Grid"/"Triad" still wins.
+    const rs = renderSettings();
+    const showGrid = this.showGrid || rs.showGrid;
+    const showTriad = this.showTriad || rs.showTriad;
+    const ledScale = rs.ledSize;
+    const glow = rs.glow;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = rs.viewBg;
     ctx.fillRect(0, 0, w, h);
     const leds = this.map.leds;
     if (leds.length === 0) {
@@ -252,6 +338,46 @@ export class MapView {
         depth: tz,
       };
     };
+    // Project a world point given as (x,y,z) — cast keeps the tuple type happy.
+    const pw = (x: number, y: number, z: number): { sx: number; sy: number; depth: number } =>
+      proj([x, y, z] as unknown as Vec3);
+
+    // -- reference grid on the ground (Y=0) plane, with graduations ---------
+    if (showGrid) {
+      const step = niceStep(maxR / 4); // ~8 divisions across the fixture
+      const n = Math.max(2, Math.ceil((maxR * 1.4) / step));
+      const ext = n * step;
+      ctx.lineWidth = 1;
+      for (let i = -n; i <= n; i++) {
+        const t = i * step;
+        ctx.strokeStyle = i === 0 ? "rgb(255 255 255 / 0.28)" : "rgb(255 255 255 / 0.08)";
+        let a = pw(t, 0, -ext);
+        let b = pw(t, 0, ext);
+        ctx.beginPath();
+        ctx.moveTo(a.sx, a.sy);
+        ctx.lineTo(b.sx, b.sy);
+        ctx.stroke();
+        a = pw(-ext, 0, t);
+        b = pw(ext, 0, t);
+        ctx.beginPath();
+        ctx.moveTo(a.sx, a.sy);
+        ctx.lineTo(b.sx, b.sy);
+        ctx.stroke();
+      }
+      // Graduation labels along the X (z=0) and Z (x=0) axes.
+      ctx.font = "10px system-ui";
+      ctx.fillStyle = "rgb(255 255 255 / 0.4)";
+      for (let i = -n; i <= n; i++) {
+        if (i === 0) continue;
+        const t = i * step;
+        const lx = pw(t, 0, 0);
+        ctx.fillText(fmtMeters(t), lx.sx + 2, lx.sy - 2);
+        const lz = pw(0, 0, t);
+        ctx.fillText(fmtMeters(t), lz.sx + 2, lz.sy - 2);
+      }
+      ctx.fillStyle = "rgb(255 255 255 / 0.5)";
+      ctx.fillText(`grid ${fmtMeters(step)}`, 12, 34);
+    }
 
     // -- camera trajectory (under everything else: it is context, not data) --
     if (this.showTrajectory && this.trajectory !== null) {
@@ -360,10 +486,10 @@ export class MapView {
         const g = col[o + 1] ?? 0;
         const b = col[o + 2] ?? 0;
         const bright = (r + g + b) / 3;
-        if (bright > 6) {
-          const rad = 6 + bright / 10;
+        if (bright > 6 && glow > 0) {
+          const rad = (6 + bright / 10) * ledScale;
           const halo = ctx.createRadialGradient(p.sx, p.sy, 0, p.sx, p.sy, rad);
-          halo.addColorStop(0, `rgb(${r} ${g} ${b} / 0.55)`);
+          halo.addColorStop(0, `rgb(${r} ${g} ${b} / ${Math.min(1, 0.55 * glow).toFixed(3)})`);
           halo.addColorStop(1, `rgb(${r} ${g} ${b} / 0)`);
           ctx.fillStyle = halo;
           ctx.beginPath();
@@ -378,7 +504,7 @@ export class MapView {
         const g = col[o + 1] ?? 0;
         const b = col[o + 2] ?? 0;
         ctx.beginPath();
-        ctx.arc(p.sx, p.sy, 2.2, 0, Math.PI * 2);
+        ctx.arc(p.sx, p.sy, 2.2 * ledScale, 0, Math.PI * 2);
         // Unlit LEDs stay a faint grey so the fixture shape is always visible.
         ctx.fillStyle = r + g + b < 12 ? "rgb(60 60 68)" : `rgb(${r} ${g} ${b})`;
         ctx.fill();
@@ -386,7 +512,7 @@ export class MapView {
     } else {
       for (const p of pts) {
         const c = p.led.confidence;
-        const r = 2.5 + 2 * c;
+        const r = (2.5 + 2 * c) * ledScale;
         ctx.beginPath();
         ctx.arc(p.sx, p.sy, r, 0, Math.PI * 2);
         // Confidence: green (high) -> amber -> red (low).
@@ -396,8 +522,68 @@ export class MapView {
       }
     }
 
+    // -- pipeline-stage inspector: draw the selected stage's graph (edges +
+    //    nodes for early stages, polylines + junctions for late ones) and skip
+    //    the normal topology overlay so the two don't overlap.
+    if (this.stage !== null) {
+      const st = this.stage;
+      // Graph edges: thin cyan lines.
+      ctx.strokeStyle = "rgb(80 220 255 / 0.55)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (const e of st.edges) {
+        const a = proj(e.a);
+        const b = proj(e.b);
+        ctx.moveTo(a.sx, a.sy);
+        ctx.lineTo(b.sx, b.sy);
+      }
+      ctx.stroke();
+      // Graph nodes (deduped): small yellow dots (a self-crossing shows one dot
+      // where two strand parts merged).
+      ctx.fillStyle = "rgb(255 210 90 / 0.9)";
+      for (const nd of st.nodes) {
+        const p = proj(nd);
+        ctx.beginPath();
+        ctx.arc(p.sx, p.sy, 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      // Segment polylines (later stages): brighter cyan with vertex rings.
+      ctx.strokeStyle = "rgb(80 220 255 / 0.95)";
+      ctx.lineWidth = 2;
+      ctx.fillStyle = "rgb(80 220 255 / 0.95)";
+      for (const seg of st.segments) {
+        if (seg.polyline.length < 2) continue;
+        ctx.beginPath();
+        seg.polyline.forEach((v, i) => {
+          const p = proj(v);
+          if (i === 0) ctx.moveTo(p.sx, p.sy);
+          else ctx.lineTo(p.sx, p.sy);
+        });
+        ctx.stroke();
+        for (const v of seg.polyline) {
+          const p = proj(v);
+          ctx.beginPath();
+          ctx.arc(p.sx, p.sy, 2.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      // Branch points: magenta rings.
+      ctx.strokeStyle = "rgb(255 90 220 / 0.95)";
+      ctx.lineWidth = 2;
+      for (const bp of st.branchPoints) {
+        const p = proj(bp);
+        ctx.beginPath();
+        ctx.arc(p.sx, p.sy, 6, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      // Stage name, top-left under the hint line.
+      ctx.fillStyle = "rgb(255 210 90 / 0.95)";
+      ctx.font = "bold 12px system-ui";
+      ctx.fillText(`stage: ${st.name}`, 12, 36);
+    }
+
     // -- topology overlay: the extracted skeleton polylines over the LEDs -----
-    if (this.topology !== null) {
+    if (this.stage === null && this.topology !== null) {
       ctx.lineWidth = 2;
       ctx.strokeStyle = "rgb(80 220 255 / 0.9)";
       for (const seg of this.topology.segments) {
@@ -429,6 +615,95 @@ export class MapView {
       }
     }
 
+    // -- diagnostics overlay: raw graph edges, loop-chords, coincident pairs --
+    // Drawn over the skeleton, under the triad. Each layer is independent and
+    // only present when its flag is on (see setDebugOverlay).
+    if (this.debug !== null) {
+      const dbg = this.debug;
+      const f = this.debugFlags;
+      // Raw connectivity: thin faint grey lines a→b (the whole kept graph).
+      if (f.edges) {
+        ctx.strokeStyle = "rgb(200 210 230 / 0.28)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        for (const e of dbg.edges) {
+          const a = proj(e.a);
+          const b = proj(e.b);
+          ctx.moveTo(a.sx, a.sy);
+          ctx.lineTo(b.sx, b.sy);
+        }
+        ctx.stroke();
+      }
+      // Loop-chords: thick orange — the candidate false bridges.
+      if (f.chords) {
+        ctx.strokeStyle = "rgb(255 140 40 / 0.95)";
+        ctx.lineWidth = 3;
+        for (const e of dbg.edges) {
+          if (!e.chord) continue;
+          const a = proj(e.a);
+          const b = proj(e.b);
+          ctx.beginPath();
+          ctx.moveTo(a.sx, a.sy);
+          ctx.lineTo(b.sx, b.sy);
+          ctx.stroke();
+        }
+      }
+      // Coincident pairs: a bright warning marker at each pair's midpoint, plus
+      // a short connector, sized so an overlapping pair is still eyeball-able.
+      if (f.coincident) {
+        ctx.lineWidth = 1.5;
+        for (const c of dbg.coincident) {
+          const a = proj(c.a);
+          const b = proj(c.b);
+          const mx = (a.sx + b.sx) / 2;
+          const my = (a.sy + b.sy) / 2;
+          ctx.strokeStyle = "rgb(242 85 90 / 0.9)";
+          ctx.beginPath();
+          ctx.moveTo(a.sx, a.sy);
+          ctx.lineTo(b.sx, b.sy);
+          ctx.stroke();
+          // Diamond marker (distinct from the round LED/junction dots).
+          const r = 7;
+          ctx.beginPath();
+          ctx.moveTo(mx, my - r);
+          ctx.lineTo(mx + r, my);
+          ctx.lineTo(mx, my + r);
+          ctx.lineTo(mx - r, my);
+          ctx.closePath();
+          ctx.fillStyle = "rgb(242 85 90 / 0.35)";
+          ctx.fill();
+          ctx.strokeStyle = "rgb(255 120 120 / 0.95)";
+          ctx.stroke();
+        }
+      }
+    }
+
+    // -- world coordinate triad (X red, Y green, Z blue), on top -----------
+    if (showTriad) {
+      const L = niceStep(maxR / 2) * 2;
+      const O = pw(0, 0, 0);
+      const axes: [number, number, number, string, string][] = [
+        [L, 0, 0, "rgb(255 90 90 / 0.95)", "X"],
+        [0, L, 0, "rgb(120 230 120 / 0.95)", "Y"],
+        [0, 0, L, "rgb(90 160 255 / 0.95)", "Z"],
+      ];
+      ctx.lineWidth = 2;
+      ctx.font = "bold 11px system-ui";
+      for (const [x, y, z, color, label] of axes) {
+        const e = pw(x, y, z);
+        ctx.strokeStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(O.sx, O.sy);
+        ctx.lineTo(e.sx, e.sy);
+        ctx.stroke();
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(e.sx, e.sy, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillText(label, e.sx + 3, e.sy - 3);
+      }
+    }
+
     ctx.fillStyle = "#aaa";
     ctx.font = "12px system-ui";
     const s = this.map.stats;
@@ -445,4 +720,21 @@ export class MapView {
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
+}
+
+/** Round up to a "nice" 1/2/5×10^k step for grid graduations. */
+function niceStep(x: number): number {
+  if (!(x > 0) || !isFinite(x)) return 1;
+  const p = Math.pow(10, Math.floor(Math.log10(x)));
+  const f = x / p;
+  const m = f < 1.5 ? 1 : f < 3.5 ? 2 : f < 7.5 ? 5 : 10;
+  return m * p;
+}
+
+/** Compact meter/cm/mm label for a signed length. */
+function fmtMeters(m: number): string {
+  const a = Math.abs(m);
+  if (a < 0.01) return `${Math.round(m * 1000)}mm`;
+  if (a < 1) return `${(m * 100).toFixed(a < 0.1 ? 1 : 0)}cm`;
+  return `${m.toFixed(a < 10 ? 1 : 0)}m`;
 }

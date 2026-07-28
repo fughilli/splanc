@@ -40,7 +40,15 @@ import type {
   StoredMapChunkMessage,
   WelcomeMessage,
 } from "@ledmapper/protocol";
-import { decodeMappingBundle, type MappingBundle } from "./proto";
+import {
+  decodeMappingBundle,
+  type EffectUniformsMessage,
+  type MappingBundle,
+  type PerfMode,
+  type PerfReportMessage,
+  type SetTextureMessage,
+  type UniformValueFlat,
+} from "./proto";
 import { bestSample, ServerClock, syncSample, type SyncSample } from "./clocksync";
 import { decodeServer, encodeClient } from "./proto";
 
@@ -75,6 +83,12 @@ export interface ClientOptions {
   connectTimeoutMs?: number;
   appVersion?: string;
   clientName?: string;
+  /** How many times to attempt a socket that has NEVER reached `welcome` before
+   * giving up, when the target needs a self-signed-cert trust (cross-origin
+   * wss). Past this, stop auto-retrying and wait for an explicit reconnect — the
+   * cert won't get trusted without the user, and each doomed handshake burns a
+   * heap-tight TLS slot the cert-approval page needs. Default 1. */
+  coldRetryLimit?: number;
 }
 
 export interface ClientEvents {
@@ -86,6 +100,10 @@ export interface ClientEvents {
   onConnecting?: (attempt: number, url: string) => void;
   /** Any server error message not consumed by a pending request. */
   onServerError?: (code: string, message: string) => void;
+  /** Fired when we stop auto-retrying a never-connected cert-trust target (see
+   * coldRetryLimit): the UI should show the "trust the cert" affordance and wait
+   * for the user rather than expect a background reconnect. */
+  onCertTrustNeeded?: (url: string) => void;
 }
 
 /** Default WebSocket URL for the page's own origin (wss on https pages). */
@@ -105,9 +123,10 @@ export function defaultWsUrl(loc: { protocol: string; host: string } = location)
  */
 export function certApprovalUrl(
   wsUrl: string,
-  loc: { host: string } = location,
+  loc: { host: string } | undefined = typeof location !== "undefined" ? location : undefined,
 ): string | null {
   try {
+    if (!loc) return null; // no page origin (e.g. a unit-test/node context)
     const u = new URL(wsUrl);
     if (u.protocol !== "wss:" || u.host === loc.host) return null;
     return `https://${u.host}/`;
@@ -130,6 +149,13 @@ export class LedMapperClient {
   private closed = false;
   private backoffIdx = 0;
   private attempt = 0;
+  // Whether this client has EVER completed a welcome. Distinguishes a cold
+  // never-connected socket (likely an untrusted cert) from a warm drop (a
+  // genuine disconnect that should reconnect with backoff).
+  private everWelcomed = false;
+  private coldFails = 0;
+  private readonly needsTrust: boolean;
+  private readonly coldRetryLimit: number;
 
   /** Outbound detection batches not yet written to an open socket. */
   private pendingBatches: DetectionRecord[][] = [];
@@ -138,6 +164,11 @@ export class LedMapperClient {
   private waiters = new Map<string, { resolve: (m: ServerMessage) => void; reject: (e: Error) => void }>();
   private pingWaiters = new Map<number, { resolve: (m: ServerMessage) => void; reject: (e: Error) => void }>();
 
+  // Perf-report subscribers: perf_report arrives both as a reply to
+  // set_perf/get_perf_report AND unsolicited while a stream is active, so it
+  // can't be a single-flight waiter. The panel subscribes here for live frames.
+  private perfSubs = new Set<(r: PerfReportMessage) => void>();
+
   readonly clock: ServerClock;
   events: ClientEvents = {};
 
@@ -145,8 +176,15 @@ export class LedMapperClient {
     this.factory = opts.socketFactory ?? ((u) => new WebSocket(u) as unknown as SocketLike);
     this.now = opts.now ?? (() => performance.now());
     this.schedule = opts.schedule ?? ((fn, ms) => setTimeout(fn, ms));
-    this.backoffMs = opts.backoffMs ?? [250, 500, 1000, 2000, 4000];
+    // Gentle by default: a wss player (self-signed cert) rejects the socket
+    // fast until the user accepts the cert, and a heap-tight ESP can only hold
+    // ~2 TLS sessions — hammering every 250 ms fills both slots and starves the
+    // cert-approval page load. Spacing retries out (1–8 s) keeps a slot free for
+    // it and still reconnects within ~8 s once the cert is trusted.
+    this.backoffMs = opts.backoffMs ?? [1000, 2000, 4000, 8000];
     this.connectTimeoutMs = opts.connectTimeoutMs ?? 5000;
+    this.coldRetryLimit = opts.coldRetryLimit ?? 1;
+    this.needsTrust = certApprovalUrl(url) !== null;
     this.appVersion = opts.appVersion ?? "0.1.0";
     this.clientName = opts.clientName ?? "android-web";
     this.clock = new ServerClock({ offsetMs: 0, rttMs: Infinity }, this.now);
@@ -194,6 +232,8 @@ export class LedMapperClient {
           this.welcome_ = msg;
           this.backoffIdx = 0;
           this.attempt = 0;
+          this.everWelcomed = true;
+          this.coldFails = 0;
           welcomed = true;
           this.flushBatches();
           this.events.onConnected?.(msg);
@@ -214,10 +254,24 @@ export class LedMapperClient {
         this.failWaiters(new Error("socket closed"));
         if (hadWelcome) this.events.onDisconnected?.();
         if (!this.closed) {
-          const delay = this.backoffMs[Math.min(this.backoffIdx++, this.backoffMs.length - 1)]!;
-          this.schedule(() => {
-            if (!this.closed) void this.connect().catch(() => undefined);
-          }, delay);
+          // A socket that never reached `welcome` against a cert-trust target is
+          // almost certainly failing on the untrusted self-signed cert. Retrying
+          // is futile (only the user can trust it) and actively harmful on the
+          // heap-tight ESP: every doomed TLS handshake holds one of the player's
+          // two TLS slots, starving BOTH the cert-approval page load and any
+          // concurrent wss. So stop after `coldRetryLimit` and wait for an
+          // explicit reconnect (the user trusts the cert → a fresh connect()).
+          // Warm drops (we were connected) always reconnect with backoff.
+          const coldGiveUp =
+            !this.everWelcomed && this.needsTrust && ++this.coldFails >= this.coldRetryLimit;
+          if (coldGiveUp) {
+            this.events.onCertTrustNeeded?.(this.url);
+          } else {
+            const delay = this.backoffMs[Math.min(this.backoffIdx++, this.backoffMs.length - 1)]!;
+            this.schedule(() => {
+              if (!this.closed) void this.connect().catch(() => undefined);
+            }, delay);
+          }
         }
         if (!settled) {
           settled = true;
@@ -345,6 +399,95 @@ export class LedMapperClient {
     )) as PlaybackStateMessage;
   }
 
+  /** Upload a compiled effect (`.fxb` = bytecode + embedded uniform manifest)
+   * to the connected device. `activate` makes it the running effect on receipt
+   * (the editor's "Send to device" path). Reply: result_ready (id=effectId). */
+  async submitEffect(
+    effectId: string,
+    fxb: Uint8Array,
+    activate = true,
+  ): Promise<ResultReadyMessage> {
+    return (await this.request(
+      { type: "submit_effect", effectId, fxb, activate } as unknown as ClientMessage,
+      "result_ready",
+    )) as ResultReadyMessage;
+  }
+
+  /** Select the active effect by id ("" or "off" clears it). Reply:
+   * playback_state. */
+  async setEffect(effectId: string): Promise<PlaybackStateMessage> {
+    return (await this.request(
+      { type: "set_effect", effectId } as unknown as ClientMessage,
+      "playback_state",
+    )) as PlaybackStateMessage;
+  }
+
+  /** Push live uniform values on the active effect (slider drags). Reply:
+   * playback_state. */
+  async setUniforms(values: UniformValueFlat[]): Promise<PlaybackStateMessage> {
+    return (await this.request(
+      { type: "set_uniforms", values } as unknown as ClientMessage,
+      "playback_state",
+    )) as PlaybackStateMessage;
+  }
+
+  /** Rename the player: sets its display name, which becomes the Bluetooth-
+   * advertised name too and is persisted on the device. Reply: welcome (echoing
+   * the new device_name + mac). */
+  async setDeviceName(name: string): Promise<WelcomeMessage> {
+    return (await this.request(
+      { type: "set_device_name", name } as unknown as ClientMessage,
+      "welcome",
+    )) as unknown as WelcomeMessage;
+  }
+
+  /** Stream a video frame into a loaded effect's 2D texture. Build the message
+   * with the textureCodec (quantize + optional XOR-delta + RLE); fire-and-forget
+   * so a high frame rate isn't gated on a round trip. Returns false if the
+   * socket isn't open (the frame is dropped — video is lossy by nature). */
+  setTexture(msg: SetTextureMessage): boolean {
+    return this.send(msg as unknown as ClientMessage);
+  }
+
+  /** Fetch an effect's uniform manifest + current live values for UI
+   * hydration. Omit `effectId` for the active effect. Reply: effect_uniforms. */
+  async getEffectUniforms(effectId?: string): Promise<EffectUniformsMessage> {
+    return (await this.request(
+      {
+        type: "get_effect_uniforms",
+        ...(effectId !== undefined ? { effectId } : {}),
+      } as unknown as ClientMessage,
+      "effect_uniforms",
+    )) as unknown as EffectUniformsMessage;
+  }
+
+  /** Configure effect perf instrumentation (perf-monitoring.md). `mode` picks
+   * the tier (OFF/BASIC/FULL); `intervalMs` > 0 asks the device to push
+   * perf_report unsolicited (0 = poll-only). Reply: an immediate perf_report
+   * for the current window. */
+  async setPerf(mode: PerfMode, intervalMs = 0): Promise<PerfReportMessage> {
+    return (await this.request(
+      { type: "set_perf", mode, intervalMs } as unknown as ClientMessage,
+      "perf_report",
+    )) as unknown as PerfReportMessage;
+  }
+
+  /** Drain the perf ring + rolling-window summary now (perf-monitoring.md).
+   * Reply: perf_report. Used when interval_ms == 0 (poll-only). */
+  async getPerfReport(): Promise<PerfReportMessage> {
+    return (await this.request(
+      { type: "get_perf_report" } as unknown as ClientMessage,
+      "perf_report",
+    )) as unknown as PerfReportMessage;
+  }
+
+  /** Subscribe to perf_report frames — both replies and unsolicited pushes.
+   * Returns an unsubscribe fn. The perf panel drives its live graph from here. */
+  onPerfReport(fn: (r: PerfReportMessage) => void): () => void {
+    this.perfSubs.add(fn);
+    return () => this.perfSubs.delete(fn);
+  }
+
   /** Pull the player's stored map+topology back off the device — streamed in
    * chunks and decoded as a MappingBundle. Rejects if the player has nothing
    * stored (server error `no_map`). `onProgress(done, total)` tracks assembly. */
@@ -459,6 +602,18 @@ export class LedMapperClient {
       if (w) {
         this.pingWaiters.delete(msg.t0);
         w.resolve(msg);
+      }
+      return;
+    }
+    if ((msg.type as string) === "perf_report") {
+      // Fan out to subscribers (live panel) first, then resolve any pending
+      // set_perf/get_perf_report waiter — the same frame satisfies both.
+      const report = msg as unknown as PerfReportMessage;
+      for (const fn of this.perfSubs) fn(report);
+      const pw = this.waiters.get("perf_report");
+      if (pw) {
+        this.waiters.delete("perf_report");
+        pw.resolve(msg);
       }
       return;
     }

@@ -8,8 +8,9 @@
 
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_player_ffi::{
-    lm_counting_color, lm_envelope_arm, lm_led_count, lm_map_led, lm_map_len, lm_pattern_color,
-    lm_pattern_timing, lm_player_handle, lm_player_init,
+    lm_counting_color, lm_envelope_arm, lm_fx_load, lm_fx_set_active, lm_fx_shade, lm_fx_update,
+    lm_led_count, lm_map_led, lm_map_len, lm_pattern_color, lm_pattern_timing, lm_perf_build_report,
+    lm_perf_interval_ms, lm_perf_mode, lm_perf_push, lm_player_handle, lm_player_init,
 };
 use micropb::{MessageDecode, MessageEncode, PbEncoder};
 use pb::ClientMessage_::Msg as CMsg;
@@ -185,6 +186,133 @@ fn full_device_flow_through_the_c_abi() {
     assert_eq!(bundle.r#map.r#leds.len(), 64);
     assert_eq!(bundle.r#map.r#leds[63].r#id, 63);
 
+    // -- effects: per-LED topology (led.seg / led.s / led.branch) end-to-end ---
+    // Replace the (empty) topology with a real Y-junction: three segments meeting
+    // at branch point 0 (degree 3 -> a junction), so a shader can read a mapped
+    // LED's segment index, normalized arclength and junction flag. A shade() that
+    // returns vec3(led.s, led.seg*0.1, led.branch) surfaces those terms straight
+    // into the RGB the render loop would drive.
+    {
+        let mut topo = pb::Topology::default();
+        topo.r#map_id = "m-ffi".parse().unwrap();
+        for id in 0..4 {
+            let mut bp = pb::BranchPoint::default();
+            bp.r#id = id;
+            bp.r#xyz.extend_from_slice(&[0.0, 0.0, 0.0]).unwrap();
+            topo.r#branch_points.push(bp).unwrap();
+        }
+        // seg ids 10/11/12 -> indices 0/1/2, all rooted at junction bp 0.
+        for (sid, endb) in [(10, 1), (11, 2), (12, 3)] {
+            let mut s = pb::TopologySegment::default();
+            s.r#id = sid;
+            s.r#a = 0; // junction endpoint (degree 3)
+            s.r#b = endb; // terminal (degree 1)
+            s.r#length = 1.0;
+            topo.r#segments.push(s).unwrap();
+        }
+        // LED 0 near the junction (branch=true, s≈0.02, seg idx 0); LED 1 mid
+        // seg 10 (branch=false, s=0.5, seg idx 0); LED 2 near the terminal end of
+        // seg 11 (branch=false, s≈0.99, seg idx 1).
+        let assoc = |led_id, segment_id, foot: f64| {
+            let mut a = pb::LedAssociation::default();
+            a.r#led_id = led_id;
+            a.r#segment_id = segment_id;
+            a.r#foot_arclength = foot;
+            a
+        };
+        topo.r#associations.push(assoc(0, 10, 0.02)).unwrap();
+        topo.r#associations.push(assoc(1, 10, 0.5)).unwrap();
+        topo.r#associations.push(assoc(2, 11, 0.99)).unwrap();
+        let mut submit = pb::SubmitTopology::default();
+        submit.set_topology(topo);
+        let Some(SMsg::ResultReady(_)) = handle(&encode(CMsg::SubmitTopology(submit)), 3700.0)
+        else {
+            panic!("topology result_ready expected");
+        };
+
+        // Compile a shader that surfaces the topology terms into RGB.
+        let src = "vec3 shade(Led led) {\n  \
+                   float b = 0.0;\n  \
+                   if (led.branch) { b = 1.0; }\n  \
+                   return vec3(led.s, led.seg * 0.1, b);\n}\n";
+        let compiled = ledmapper_fx_compiler::compile(src).expect("shader compiles");
+        assert!(unsafe { lm_fx_load(compiled.fxb.as_ptr(), compiled.fxb.len()) });
+        unsafe { lm_fx_set_active(true) };
+        // update() rebuilds the per-LED topology cache the shade sweep reads.
+        assert!(unsafe { lm_fx_update(0.0, 0.033, 0, 64) });
+        let shade = |i: u32| -> [u8; 3] {
+            let mut rgb = [0u8; 3];
+            assert!(unsafe { lm_fx_shade(i, 0.0, 0.0, 0.0, rgb.as_mut_ptr()) });
+            rgb
+        };
+        // LED 0: s≈0.02 -> tiny R, seg idx 0 -> G=0, at the junction -> B=255.
+        let c0 = shade(0);
+        assert!(c0[0] <= 10, "led 0 s≈0.02 -> small R, got {}", c0[0]);
+        assert_eq!(c0[1], 0, "led 0 on segment index 0");
+        assert_eq!(c0[2], 255, "led 0 sits at the junction");
+        // LED 1: s=0.5 -> R≈127, seg idx 0 -> G=0, mid-segment -> B=0.
+        let c1 = shade(1);
+        assert!((120..=135).contains(&c1[0]), "led 1 s=0.5 -> R≈127, got {}", c1[0]);
+        assert_eq!(c1[1], 0);
+        assert_eq!(c1[2], 0, "led 1 mid-segment is not a junction");
+        // LED 2: s≈0.99 -> large R, seg idx 1 -> G≈25, terminal end -> B=0.
+        let c2 = shade(2);
+        assert!(c2[0] >= 245, "led 2 s≈0.99 -> large R, got {}", c2[0]);
+        assert!((20..=30).contains(&c2[1]), "led 2 seg index 1 -> G≈25, got {}", c2[1]);
+        assert_eq!(c2[2], 0, "led 2 near a terminal (degree 1) is not a junction");
+        // An unassociated LED reads seg=-1 (G clamps to 0), s=0, branch=false.
+        assert_eq!(shade(5), [0, 0, 0], "unassociated LED has no topology terms");
+
+        // Park the effect so the rest of the flow (which asserts map wipes) runs
+        // against the built-in playback path, not an active shader.
+        unsafe { lm_fx_set_active(false) };
+    }
+
+    // --- set_texture: stream a video frame into a texture-sampler effect -----
+    // Upload UNIFORM frames so the sampled colour is uv-independent (any led.uv
+    // returns the same texel), making the decode assertions deterministic
+    // regardless of the map bounds. Exercises keyframe, DELTA (XOR-prev) and RLE.
+    {
+        let src = "texture vec3 v(2, 2);\n\
+                   void update() {}\n\
+                   vec3 shade(Led led) { return sample(v, led.uv); }\n";
+        let compiled = ledmapper_fx_compiler::compile(src).expect("texture shader compiles");
+        assert!(unsafe { lm_fx_load(compiled.fxb.as_ptr(), compiled.fxb.len()) });
+        unsafe { lm_fx_set_active(true) };
+        assert!(unsafe { lm_fx_update(0.0, 0.033, 0, 64) });
+        let shade0 = || -> [u8; 3] {
+            let mut rgb = [0u8; 3];
+            assert!(unsafe { lm_fx_shade(0, 0.0, 0.0, 0.0, rgb.as_mut_ptr()) });
+            rgb
+        };
+        let set_tex = |flags: u32, data: &[u8]| {
+            let mut st = pb::SetTexture::default();
+            st.r#tex_index = 0;
+            st.r#format = 0; // RGB888
+            st.r#width = 2;
+            st.r#height = 2;
+            st.r#flags = flags;
+            st.r#data = micropb::heapless::Vec::from_slice(data).unwrap();
+            // Fire-and-forget: no reply.
+            assert!(handle(&encode(CMsg::SetTexture(st)), 4000.0).is_none());
+        };
+
+        // Keyframe (no flags): all-red, 4 texels of RGB888.
+        set_tex(0, &[0xFF, 0, 0, 0xFF, 0, 0, 0xFF, 0, 0, 0xFF, 0, 0]);
+        assert_eq!(shade0(), [255, 0, 0], "keyframe all-red -> sample red");
+
+        // DELTA (bit0): red -> green. delta = new XOR prev = 00FF00 ^ FF0000 = FFFF00.
+        set_tex(0x01, &[0xFF, 0xFF, 0, 0xFF, 0xFF, 0, 0xFF, 0xFF, 0, 0xFF, 0xFF, 0]);
+        assert_eq!(shade0(), [0, 255, 0], "delta XOR -> sample green");
+
+        // RLE keyframe (bit1) back to all-red. Zero-run scheme for FF 00 00 x4:
+        // [z0 l1 FF][z2 l1 FF][z2 l1 FF][z2 l1 FF][z2 l0].
+        set_tex(0x02, &[0, 1, 0xFF, 2, 1, 0xFF, 2, 1, 0xFF, 2, 1, 0xFF, 2, 0]);
+        assert_eq!(shade0(), [255, 0, 0], "RLE keyframe all-red -> sample red");
+
+        unsafe { lm_fx_set_active(false) };
+    }
+
     // A malformed upload (leds without a led_count header) gets a bounded
     // error, and the previously stored map is GONE (the upload reset the
     // arena) — the phone re-uploads.
@@ -208,4 +336,66 @@ fn full_device_flow_through_the_c_abi() {
         panic!("mapping_stopped expected");
     };
     assert!(!unsafe { lm_pattern_timing(&mut epoch, &mut period_us, &mut frames, &mut leds) });
+
+    // -- perf monitoring: set_perf toggles the tier + interval, lm_perf_push
+    // fills the ring, and get_perf_report rolls up the window (min/mean/max)
+    // and drains the tail. Exercises the rollup off-device (the crux logic).
+    let mut sp = pb::SetPerf::default();
+    sp.r#mode = pb::SetPerf_::Mode::Full;
+    sp.r#interval_ms = 250;
+    // set_perf replies with an immediate (empty-window) PerfReport.
+    let Some(SMsg::PerfReport(rep0)) = handle(&encode(CMsg::SetPerf(sp)), 6000.0) else {
+        panic!("perf_report expected from set_perf");
+    };
+    assert_eq!(rep0.r#cpu_hz, 160_000_000);
+    assert_eq!(rep0.r#budget_cycles, (160_000_000 / 1000) * 33);
+    assert_eq!(rep0.r#ticks.len(), 0, "ring empty right after set_perf");
+    assert_eq!(unsafe { lm_perf_mode() }, 2, "FULL latched");
+    assert_eq!(unsafe { lm_perf_interval_ms() }, 250);
+
+    // Push three frames with known frame_cycles {100, 300, 200} → min 100,
+    // max 300, mean 200; one marked overran.
+    unsafe {
+        lm_perf_push(0, 40, 60, 100, 500, 64, false);
+        lm_perf_push(1, 90, 210, 300, 500, 64, true); // overran
+        lm_perf_push(2, 80, 120, 200, 500, 64, false);
+    }
+    let Some(SMsg::PerfReport(rep)) = handle(&encode(CMsg::GetPerfReport(Default::default())), 6300.0)
+    else {
+        panic!("perf_report expected from get_perf_report");
+    };
+    assert_eq!(rep.r#frame_cycles_min, 100);
+    assert_eq!(rep.r#frame_cycles_max, 300);
+    assert_eq!(rep.r#frame_cycles_mean, 200);
+    assert_eq!(rep.r#show_cycles_mean, 500);
+    assert_eq!(rep.r#overruns, 1, "one frame over budget");
+    // Host profile caps ticks generously; all three drained here.
+    assert_eq!(rep.r#ticks.len(), 3);
+    assert_eq!(rep.r#ticks[1].r#frame_cycles, 300);
+    assert_eq!(rep.r#ticks[1].r#seq, 1);
+
+    // A second poll sees the counters reset and the ring drained.
+    let Some(SMsg::PerfReport(rep2)) =
+        handle(&encode(CMsg::GetPerfReport(Default::default())), 6400.0)
+    else {
+        panic!("perf_report expected");
+    };
+    assert_eq!(rep2.r#overruns, 0, "counters reset on drain");
+    assert_eq!(rep2.r#ticks.len(), 0, "ring drained");
+
+    // The unsolicited builder produces the same PerfReport frame shape.
+    let mut buf = vec![0u8; 2048];
+    let n = unsafe { lm_perf_build_report(buf.as_mut_ptr(), buf.len()) };
+    assert!(n > 0, "unsolicited report encodes ({n})");
+    let mut rep3 = pb::ServerMessage::default();
+    rep3.decode_from_bytes(&buf[..n as usize]).expect("decodes");
+    assert!(matches!(rep3.r#msg, Some(SMsg::PerfReport(_))));
+
+    // OFF stops the stream; the builder then returns 0 (nothing to push).
+    let mut off = pb::SetPerf::default();
+    off.r#mode = pb::SetPerf_::Mode::Off;
+    let _ = handle(&encode(CMsg::SetPerf(off)), 6500.0);
+    assert_eq!(unsafe { lm_perf_mode() }, 0);
+    let n_off = unsafe { lm_perf_build_report(buf.as_mut_ptr(), buf.len()) };
+    assert_eq!(n_off, 0, "OFF: unsolicited builder emits nothing");
 }

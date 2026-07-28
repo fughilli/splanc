@@ -45,10 +45,54 @@ export interface ExtractOptions {
    * apart in the graph becomes a chord, so a ring in the fixture stays a ring
    * (the flood effect can then swirl around it). 0 disables (pure forest). */
   loopFactor?: number;
+  /** Merge two branch points joined by a segment shorter than this × the median
+   * spacing into a single junction — collapses a knot of near-coincident branch
+   * points the extractor over-splits one physical junction into (e.g. at a
+   * self-crossing, where coincident LEDs spawn a cluster of degree-3 nodes). A
+   * longer parallel arc between the same pair survives as a (real) loop. 0
+   * disables. */
+  mergeFactor?: number;
   /** Max polyline vertices per segment (firmware footprint; decimated). */
   maxPolyline?: number;
   /** Douglas–Peucker tolerance as a fraction of the median spacing. */
   simplifyFrac?: number;
+  /** Emit a {@link TopologyDebug} report (coincident LEDs + graph edges) for the
+   * diagnostic overlay. Off by default (extra O(n·k) bookkeeping). */
+  debug?: boolean;
+  /** Flag LED pairs closer than this × the median spacing as (near-)coincident
+   * — likely solve degeneracies that create a zero-length graph shortcut. */
+  coincidentFactor?: number;
+}
+
+/** Diagnostic view of the raw graph the topology was extracted from, to reveal
+ * degeneracies (a solve that collapsed distant LEDs onto one point makes a
+ * zero-length shortcut → a false geodesic "bridge"; a stray loop-chord fuses two
+ * strands). Positions are the solved LED coordinates so the overlay can draw
+ * directly. Present only when `ExtractOptions.debug` is set. */
+export interface TopologyDebug {
+  /** (Near-)coincident LED pairs (≤ coincidentFactor × spacing apart) — the most
+   * likely cause of an unexpected bridge; each collapses distant graph regions. */
+  coincident: { a: Vec3; b: Vec3; dist: number }[];
+  /** The kept graph edges (MST + loop-chords); `chord` marks a re-added
+   * loop-closing edge (a candidate false bridge). */
+  edges: { a: Vec3; b: Vec3; d: number; chord: boolean }[];
+  /** Median nearest-neighbour spacing (the length scale for every factor). */
+  spacing: number;
+  /** Per-stage snapshots of the pipeline (k-NN → MST → chords → prune → segments
+   * → merge → dissolve), for the "stage" scrubber that inspects each step's
+   * output. In pipeline order; the last is the final topology. */
+  stages: TopologyStage[];
+}
+
+/** A single pipeline stage's drawable state, for the stage scrubber. Early stages
+ * carry graph `nodes` + `edges`; later stages carry `segments` + `branchPoints`.
+ * Any field may be empty for a stage that doesn't produce it. */
+export interface TopologyStage {
+  name: string;
+  nodes: Vec3[];
+  edges: { a: Vec3; b: Vec3 }[];
+  segments: { polyline: Vec3[] }[];
+  branchPoints: Vec3[];
 }
 
 /** Cooperative-scheduling hooks: the extractor yields to the event loop during
@@ -213,11 +257,12 @@ export async function extractTopology(
   map: OutputMap,
   opts: ExtractOptions = {},
   hooks: ExtractHooks = {},
-): Promise<Topology> {
+): Promise<Topology & { debug?: TopologyDebug }> {
   const k = Math.max(1, opts.k ?? 8);
   const radiusFactor = opts.radiusFactor ?? 2.5;
   const pruneFactor = opts.pruneFactor ?? 3;
   const loopFactor = opts.loopFactor ?? 2;
+  const mergeFactor = opts.mergeFactor ?? 1.5;
   const maxPolyline = Math.max(2, opts.maxPolyline ?? 64);
   const simplifyFrac = opts.simplifyFrac ?? 0.5;
   const { signal, onProgress } = hooks;
@@ -249,12 +294,93 @@ export async function extractTopology(
   const s = median(nnd) || 1e-6;
   const maxEdge = s * radiusFactor;
 
-  // 2. k-NN proximity edges within the cap (deduped, min→max).
-  const edgeMap = new Map<string, { i: number; j: number; d: number }>();
+  // Diagnostic collection (only when opts.debug): (near-)coincident pairs and,
+  // below, the kept graph edges with a loop-chord flag.
+  const wantDebug = opts.debug ?? false;
+  const coincEps = (opts.coincidentFactor ?? 0.2) * s;
+  const coincSeen = new Set<string>();
+  const coincident: TopologyDebug["coincident"] = [];
+  const dbgEdges: TopologyDebug["edges"] = [];
+
+  // Per-stage snapshots for the "stage" scrubber (only when debug is on).
+  const stages: TopologyStage[] = [];
+  const snapNodes = (): Vec3[] => (wantDebug ? NP.map((p) => [p[0], p[1], p[2]]) : []);
+  const adjToEdges = (a: number[][]): { a: Vec3; b: Vec3 }[] => {
+    const out: { a: Vec3; b: Vec3 }[] = [];
+    for (let i = 0; i < a.length; i++) for (const j of a[i]!) if (i < j) out.push({ a: NP[i]!, b: NP[j]! });
+    return out;
+  };
+  const snapSegs = (segs: TopologySegment[]): { polyline: Vec3[] }[] =>
+    segs.map((sg) => ({ polyline: sg.polyline.map((p) => [p[0], p[1], p[2]] as Vec3) }));
+  const pushStage = (
+    name: string,
+    parts: Partial<Omit<TopologyStage, "name">>,
+  ): void => {
+    if (!wantDebug) return;
+    stages.push({
+      name,
+      nodes: parts.nodes ?? [],
+      edges: parts.edges ?? [],
+      segments: parts.segments ?? [],
+      branchPoints: parts.branchPoints ?? [],
+    });
+  };
+
+  // 1b. collapse (near-)coincident LEDs into single graph NODES. Two LEDs solved
+  //     onto (nearly) the same point are one vertex of the fixture — decisively so
+  //     at a SELF-CROSSING, where the strand passes through a point twice: keeping
+  //     the pair separate leaves two degree-3 stubs joined by a zero-length edge
+  //     the MST cross-wires, whereas merging them makes ONE node the two strands
+  //     pass through — a clean degree-4 junction. All graph phases below run on
+  //     these nodes; every original LED still associates to a segment (§8).
+  const cuf = new UnionFind(n);
   for (let i = 0; i < n; i++) {
-    await breathe(i, 0.5 + (i / n) * 0.5);
+    await breathe(i, 0.5);
+    for (let j = i + 1; j < n; j++) {
+      const d = dist(P[i]!, P[j]!);
+      if (d <= coincEps) {
+        cuf.union(i, j);
+        if (wantDebug) {
+          const key = `${i}-${j}`;
+          if (!coincSeen.has(key)) {
+            coincSeen.add(key);
+            coincident.push({ a: P[i]!, b: P[j]!, dist: d });
+          }
+        }
+      }
+    }
+  }
+  const nodeOfRoot = new Map<number, number>();
+  const NP: Vec3[] = []; // graph-node positions (cluster centroids)
+  const nodeSum: Vec3[] = [];
+  const nodeCnt: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const r = cuf.find(i);
+    let node = nodeOfRoot.get(r);
+    if (node === undefined) {
+      node = NP.length;
+      nodeOfRoot.set(r, node);
+      NP.push([0, 0, 0]);
+      nodeSum.push([0, 0, 0]);
+      nodeCnt.push(0);
+    }
+    nodeSum[node]![0] += P[i]![0];
+    nodeSum[node]![1] += P[i]![1];
+    nodeSum[node]![2] += P[i]![2];
+    nodeCnt[node]!++;
+  }
+  const nNodes = NP.length;
+  for (let node = 0; node < nNodes; node++) {
+    const c = nodeCnt[node]!;
+    NP[node] = [nodeSum[node]![0] / c, nodeSum[node]![1] / c, nodeSum[node]![2] / c];
+  }
+
+  // 2. k-NN proximity edges within the cap (deduped, min→max) over the NODES.
+  const edgeMap = new Map<string, { i: number; j: number; d: number }>();
+  for (let i = 0; i < nNodes; i++) {
+    await breathe(i, 0.5 + (i / nNodes) * 0.5);
     const ds: { j: number; d: number }[] = [];
-    for (let j = 0; j < n; j++) if (j !== i) ds.push({ j, d: dist(P[i]!, P[j]!) });
+    for (let j = 0; j < nNodes; j++) if (j !== i) ds.push({ j, d: dist(NP[i]!, NP[j]!) });
     ds.sort((a, b) => a.d - b.d);
     for (let t = 0; t < Math.min(k, ds.length); t++) {
       const { j, d } = ds[t]!;
@@ -265,57 +391,98 @@ export async function extractTopology(
     }
   }
   onProgress?.(1);
+  pushStage("k-NN graph", {
+    nodes: snapNodes(),
+    edges: wantDebug ? [...edgeMap.values()].map((e) => ({ a: NP[e.i]!, b: NP[e.j]! })) : [],
+  });
 
   // 3. minimum spanning FOREST (Kruskal) — one tree per spatial component.
   const edges = [...edgeMap.values()].sort((a, b) => a.d - b.d);
-  const uf = new UnionFind(n);
-  const adj: number[][] = Array.from({ length: n }, () => []);
-  const dropped: { i: number; j: number; d: number }[] = [];
+  const uf = new UnionFind(nNodes);
+  const adj: number[][] = Array.from({ length: nNodes }, () => []);
   for (const e of edges) {
     if (uf.union(e.i, e.j)) {
       adj[e.i]!.push(e.j);
       adj[e.j]!.push(e.i);
-    } else {
-      dropped.push(e); // stays length-ascending (edges is sorted)
+      if (wantDebug) dbgEdges.push({ a: NP[e.i]!, b: NP[e.j]!, d: e.d, chord: false });
     }
   }
+  pushStage("MST forest", { nodes: snapNodes(), edges: adjToEdges(adj) });
 
-  // 3b. re-add loop-closing chords: a short dropped edge whose endpoints are
-  //     still far apart in the graph closes a genuine cycle (a ring in the
-  //     fixture). Its endpoints become anchors so the loop traces as segments.
+  // 3b. reconnect the loose ends the MST created. The MST is a spanning tree, so
+  //     it opens every cycle in the k-NN graph — a real fixture loop is cut at one
+  //     edge, and a self-CROSSING (a coincidence-merged node the strand passes
+  //     through twice) has some of its edges cut too. Both leave degree-1 "loose
+  //     ends". Re-run the nearest-neighbour search (from the first pass) at each
+  //     loose end: rejoin it to the closest node within the cap that is NOT
+  //     already a few hops away — the single shortest candidate per end.
+  //
+  //     Anchoring on genuine loose ends is the whole trick. A fold, where two
+  //     parallel arms pass near each other, is made of degree-2 THROUGH-points,
+  //     never loose ends, so it is never bridged — no tangent/collinearity test
+  //     needed. And a cut crossing arm-neighbour IS a loose end whose nearest
+  //     far-hop node is the crossing itself, so each cut arm rejoins it and the
+  //     crossing is restored to its true (degree-4) degree.
+  //
+  //     For the partner we pick the best strand CONTINUATION, not the nearest
+  //     node: a loose end reconnects to whichever candidate most extends its
+  //     strand's forward direction. Nearest is wrong at a crossing — a cut arm's
+  //     closest node is the adjacent arm 1 spacing away, but the crossing it
+  //     should pass through is collinear with the arm, so the continuation score
+  //     picks the crossing and restores it to degree-4. A fold's parallel arms
+  //     have no forward continuation (they run alongside, not into each other),
+  //     so nothing bridges them — no separate tangent test needed.
+  //
+  //     `reachableWithin` rejects a 2-hop "triangle" to an immediate 2nd-neighbour;
+  //     with loopFactor ≤ radiusFactor the partner is always in the same k-NN
+  //     component, so a reconnect only ever closes a loop, never fuses two strands.
+  const unit = (v: Vec3): Vec3 => {
+    const m = norm(v) || 1;
+    return [v[0] / m, v[1] / m, v[2] / m];
+  };
   const forced = new Set<number>();
   if (loopFactor > 0) {
     const maxLoopEdge = s * loopFactor;
-    for (const e of dropped) {
+    const ends: number[] = [];
+    for (let i = 0; i < nNodes; i++) if (adj[i]!.length === 1) ends.push(i);
+    for (const u of ends) {
       if (forced.size / 2 >= MAX_LOOPS) break;
-      if (e.d > maxLoopEdge) break; // ascending → the rest are longer too
-      if (!reachableWithin(adj, e.i, e.j, MIN_LOOP_HOPS - 1)) {
-        adj[e.i]!.push(e.j);
-        adj[e.j]!.push(e.i);
-        forced.add(e.i);
-        forced.add(e.j);
+      if (adj[u]!.length !== 1) continue; // may have gained an edge as another end's partner
+      const fwd = unit(sub(NP[u]!, NP[adj[u]![0]!]!)); // the loose end's forward direction
+      let best = -1;
+      let bestScore = 0.5; // require a genuine forward continuation
+      for (let v = 0; v < nNodes; v++) {
+        if (v === u || adj[u]!.includes(v)) continue;
+        if (dist(NP[u]!, NP[v]!) > maxLoopEdge) continue;
+        if (reachableWithin(adj, u, v, MIN_LOOP_HOPS - 1)) continue; // no corner-cutting
+        const dir = unit(sub(NP[v]!, NP[u]!));
+        const score = dir[0] * fwd[0] + dir[1] * fwd[1] + dir[2] * fwd[2];
+        if (score > bestScore) {
+          bestScore = score;
+          best = v;
+        }
+      }
+      if (best >= 0) {
+        adj[u]!.push(best);
+        adj[best]!.push(u);
+        forced.add(u);
+        forced.add(best);
+        if (wantDebug) dbgEdges.push({ a: NP[u]!, b: NP[best]!, d: dist(NP[u]!, NP[best]!), chord: true });
       }
     }
   }
+
+  pushStage("loop chords", { nodes: snapNodes(), edges: adjToEdges(adj) });
   const deg = adj.map((a) => a.length);
 
-  // 4. branch points = degree ≥ 3 nodes, plus loop-chord endpoints (which may
-  //    stay degree 2 on a pure ring but must anchor the cycle's segments).
-  const branchId = new Map<number, number>();
-  const branchPoints: BranchPoint[] = [];
-  for (let i = 0; i < n; i++) {
-    if (deg[i]! >= 3 || forced.has(i)) {
-      branchId.set(i, branchPoints.length);
-      branchPoints.push({ id: branchPoints.length, xyz: P[i]! });
-    }
-  }
-
-  // 5. trace segments: maximal degree-2 chains between anchors (deg ≠ 2, or a
-  //    loop-chord endpoint).
+  // 4. first trace: maximal degree-2 chains between anchors (deg ≠ 2, or a
+  //    loop-chord endpoint). This trace only feeds the spur prune (step 5); the
+  //    SURVIVING graph is re-derived + re-traced in step 6 so a junction left
+  //    behind by a pruned spur collapses instead of splitting a strand.
   const isAnchor = (i: number): boolean => deg[i]! !== 2 || forced.has(i);
   const seen = new Set<string>();
   const chains: number[][] = [];
-  for (let a = 0; a < n; a++) {
+  for (let a = 0; a < nNodes; a++) {
     if (deg[a]! === 0 || !isAnchor(a)) continue;
     for (const start of adj[a]!) {
       if (seen.has(`${a}-${start}`)) continue;
@@ -341,7 +508,7 @@ export async function extractTopology(
   // 6. prune short leaf spurs (an endpoint end + total length below the cap).
   const chainLen = (c: number[]): number => {
     let l = 0;
-    for (let i = 1; i < c.length; i++) l += dist(P[c[i]!]!, P[c[i - 1]!]!);
+    for (let i = 1; i < c.length; i++) l += dist(NP[c[i]!]!, NP[c[i - 1]!]!);
     return l;
   };
   let kept = chains.filter((c) => {
@@ -350,11 +517,72 @@ export async function extractTopology(
   });
   if (kept.length === 0) kept = chains; // don't prune the whole fixture away
 
+  // 6. RE-DERIVE the graph from the kept chains and re-trace. Pruning a spur
+  //    leaves the junction it hung off as an effective degree-2 pass-through;
+  //    re-tracing over the pruned graph collapses those into the through-segment
+  //    (no spurious mid-strand junctions) and drops branch points the prune
+  //    orphaned. Branch points are then the surviving deg≥3 nodes plus loop-chord
+  //    endpoints that still carry ≥2 edges (they anchor a ring's segments).
+  const adj2: number[][] = Array.from({ length: nNodes }, () => []);
+  const linked = new Set<string>();
+  for (const c of kept) {
+    for (let i = 1; i < c.length; i++) {
+      const u = c[i - 1]!;
+      const v = c[i]!;
+      const key = u < v ? `${u}-${v}` : `${v}-${u}`;
+      if (linked.has(key)) continue;
+      linked.add(key);
+      adj2[u]!.push(v);
+      adj2[v]!.push(u);
+    }
+  }
+  const deg2 = adj2.map((a) => a.length);
+  pushStage("prune + retrace", { nodes: snapNodes(), edges: adjToEdges(adj2) });
+  const isAnchor2 = (i: number): boolean => deg2[i]! !== 0 && (deg2[i]! !== 2 || forced.has(i));
+
+  const branchId = new Map<number, number>();
+  const branchPoints: BranchPoint[] = [];
+  for (let i = 0; i < nNodes; i++) {
+    if (deg2[i]! >= 3 || (forced.has(i) && deg2[i]! >= 2)) {
+      branchId.set(i, branchPoints.length);
+      branchPoints.push({ id: branchPoints.length, xyz: NP[i]! });
+    }
+  }
+
+  const seen2 = new Set<string>();
+  const traced: number[][] = [];
+  for (let a = 0; a < nNodes; a++) {
+    if (!isAnchor2(a)) continue;
+    for (const start of adj2[a]!) {
+      if (seen2.has(`${a}-${start}`)) continue;
+      const chain = [a];
+      let prev = a;
+      let cur = start;
+      seen2.add(`${a}-${start}`);
+      for (;;) {
+        chain.push(cur);
+        if (isAnchor2(cur)) {
+          seen2.add(`${cur}-${prev}`);
+          break;
+        }
+        const next = adj2[cur]!.find((x) => x !== prev);
+        if (next === undefined) break; // dangling end (shouldn't happen)
+        seen2.add(`${cur}-${next}`);
+        prev = cur;
+        cur = next;
+      }
+      traced.push(chain);
+    }
+  }
+  // A pure ring with no anchor at all (loop-closing disabled) leaves no deg≠2
+  // node — fall back to the kept chains so it still traces as a segment.
+  const outChains = traced.length > 0 ? traced : kept;
+
   // 7. build segments (decimated polylines; a/b from the endpoint branch ids).
   const segments: TopologySegment[] = [];
   const segCum: number[][] = [];
-  kept.forEach((c, idx) => {
-    const path = c.map((i) => P[i]!);
+  outChains.forEach((c, idx) => {
+    const path = c.map((i) => NP[i]!);
     const poly = simplify(path, s * simplifyFrac, maxPolyline).map((i) => path[i]!);
     const cum = [0];
     for (let i = 1; i < poly.length; i++) cum.push(cum[i - 1]! + dist(poly[i]!, poly[i - 1]!));
@@ -367,14 +595,209 @@ export async function extractTopology(
     });
     segCum.push(cum);
   });
+  pushStage("segments (raw)", { segments: snapSegs(segments), branchPoints: branchPoints.map((b) => b.xyz) });
+
+  // 7b. merge junction clusters. Where one physical junction is over-split into
+  //     several branch points a hair apart (e.g. at a self-crossing, where
+  //     coincident LEDs spawn a knot of degree-3 nodes), walk each
+  //     junction-to-junction segment: if it is shorter than the merge radius,
+  //     contract it. A LONGER parallel arc between the same pair (a double edge)
+  //     survives as a self-loop, so real loops are preserved. `mergeFactor` 0
+  //     disables.
+  //
+  //     The cluster collapses INTO one of its member junctions (not a virtual
+  //     centroid): every segment that touched a member re-points to it AND has its
+  //     endpoint snapped onto its position, so the merged junction still physically
+  //     reaches all its segments (a centroid would leave every segment ending a
+  //     hair away — broken connectivity). We pick the member that MINIMISES the
+  //     total resulting segment length, i.e. the junction that moves its segments
+  //     the least. Only the short internal connectors are dropped.
+  let bpsOut = branchPoints;
+  let segsOut = segments;
+  if (mergeFactor > 0 && branchPoints.length > 1) {
+    const mergeRadius = s * mergeFactor;
+    // Count segments between each branch-point pair: a pair joined by MORE than
+    // one segment is a real loop (a short chord + a long arc), not an over-split
+    // junction — contracting its short chord would destroy the cycle, so skip it.
+    const pairKey = (a: number, b: number): string => (a < b ? `${a}-${b}` : `${b}-${a}`);
+    const pairCount = new Map<string, number>();
+    for (const sg of segments) {
+      if (sg.a >= 0 && sg.b >= 0 && sg.a !== sg.b) {
+        const key = pairKey(sg.a, sg.b);
+        pairCount.set(key, (pairCount.get(key) ?? 0) + 1);
+      }
+    }
+    const bpUf = new UnionFind(branchPoints.length);
+    let anyMerged = false;
+    for (const sg of segments) {
+      if (sg.a >= 0 && sg.b >= 0 && sg.a !== sg.b && sg.length < mergeRadius) {
+        if (pairCount.get(pairKey(sg.a, sg.b)) !== 1) continue; // parallel arc → loop, keep it
+        if (bpUf.union(sg.a, sg.b)) anyMerged = true;
+      }
+    }
+    if (anyMerged) {
+      const rootMembers = new Map<number, number[]>();
+      for (let i = 0; i < branchPoints.length; i++) {
+        const r = bpUf.find(i);
+        let arr = rootMembers.get(r);
+        if (!arr) rootMembers.set(r, (arr = []));
+        arr.push(i);
+      }
+      const polyLen = (poly: Vec3[]): number => {
+        let l = 0;
+        for (let i = 1; i < poly.length; i++) l += dist(poly[i]!, poly[i - 1]!);
+        return l;
+      };
+      // A segment's length with its in-cluster endpoints snapped onto position p.
+      const lenSnapped = (sg: TopologySegment, aIn: boolean, bIn: boolean, p: Vec3): number => {
+        const poly = sg.polyline.slice();
+        if (aIn) poly[0] = p;
+        if (bIn) poly[poly.length - 1] = p;
+        return polyLen(poly);
+      };
+      const newId = new Map<number, number>(); // old branch id → merged id
+      const merged: BranchPoint[] = [];
+      const mergedPos: Vec3[] = []; // chosen position per merged id
+      for (const members of rootMembers.values()) {
+        const memberSet = new Set(members);
+        const touching = segments.filter(
+          (sg) => (sg.a >= 0 && memberSet.has(sg.a)) || (sg.b >= 0 && memberSet.has(sg.b)),
+        );
+        // Collapse INTO the member junction that minimises the total resulting
+        // segment length (moves its incident segments the least).
+        let bestPos = branchPoints[members[0]!]!.xyz;
+        let bestTotal = Infinity;
+        for (const m of members) {
+          const p = branchPoints[m]!.xyz;
+          let total = 0;
+          for (const sg of touching) {
+            const aIn = sg.a >= 0 && memberSet.has(sg.a);
+            const bIn = sg.b >= 0 && memberSet.has(sg.b);
+            if (aIn && bIn && sg.length < mergeRadius) continue; // a dropped connector
+            total += lenSnapped(sg, aIn, bIn, p);
+          }
+          if (total < bestTotal) {
+            bestTotal = total;
+            bestPos = p;
+          }
+        }
+        const id = merged.length;
+        for (const m of members) newId.set(m, id);
+        merged.push({ id, xyz: bestPos });
+        mergedPos.push(bestPos);
+      }
+      const remap = (bp: number): number => (bp >= 0 ? newId.get(bp)! : -1);
+      const rebuilt: TopologySegment[] = [];
+      const rebuiltCum: number[][] = [];
+      segments.forEach((sg) => {
+        const a = remap(sg.a);
+        const b = remap(sg.b);
+        // Drop only the contracted short connectors (both ends now one node AND
+        // the segment was short); keep long self-loops (genuine lobes/rings).
+        if (a === b && a >= 0 && sg.length < mergeRadius) return;
+        // Snap merged endpoints onto the chosen junction so the segment still
+        // reaches it (for an unmerged endpoint this is a no-op — same position).
+        const poly = sg.polyline.map((v) => [v[0], v[1], v[2]] as Vec3);
+        if (a >= 0) poly[0] = [mergedPos[a]![0], mergedPos[a]![1], mergedPos[a]![2]];
+        if (b >= 0) poly[poly.length - 1] = [mergedPos[b]![0], mergedPos[b]![1], mergedPos[b]![2]];
+        const cum = [0];
+        for (let i = 1; i < poly.length; i++) cum.push(cum[i - 1]! + dist(poly[i]!, poly[i - 1]!));
+        rebuilt.push({ ...sg, id: rebuilt.length, a, b, polyline: poly, length: cum[cum.length - 1]! });
+        rebuiltCum.push(cum);
+      });
+      bpsOut = merged;
+      segsOut = rebuilt;
+      segCum.length = 0;
+      segCum.push(...rebuiltCum);
+    }
+  }
+  pushStage("merge junctions", { segments: snapSegs(segsOut), branchPoints: bpsOut.map((b) => b.xyz) });
+
+  // 7c. dissolve degree-2 junctions — the invariant that there is NEVER a
+  //     degree-2 branch point in the output. A branch point where exactly two
+  //     DISTINCT segments meet is a pass-through, not a junction: splice the two
+  //     segments into one (oriented so they join at the point) and drop the
+  //     point. Iterating collapses whole chains of them. A lone self-loop (both
+  //     ends of ONE segment at the point) is left with its single anchor — a
+  //     ring genuinely has no junction, so it reduces to one closed segment.
+  segsOut = segsOut.slice();
+  for (;;) {
+    const inc = new Map<number, number[]>(); // branch id → incident segment indices
+    segsOut.forEach((sg, si) => {
+      if (sg.a >= 0) {
+        let arr = inc.get(sg.a);
+        if (!arr) inc.set(sg.a, (arr = []));
+        arr.push(si);
+      }
+      if (sg.b >= 0) {
+        let arr = inc.get(sg.b);
+        if (!arr) inc.set(sg.b, (arr = []));
+        arr.push(si);
+      }
+    });
+    let bp = -1;
+    let s1 = -1;
+    let s2 = -1;
+    for (const [id, segs] of inc) {
+      if (segs.length === 2 && segs[0] !== segs[1]) {
+        bp = id;
+        s1 = segs[0]!;
+        s2 = segs[1]!;
+        break;
+      }
+    }
+    if (bp < 0) break;
+    const A = segsOut[s1]!;
+    const B = segsOut[s2]!;
+    // Orient so the shared point `bp` is at A's END and B's START, then splice.
+    const poly1 = A.a === bp ? [...A.polyline].reverse() : A.polyline;
+    const newA = A.a === bp ? A.b : A.a;
+    const poly2 = B.a === bp ? B.polyline : [...B.polyline].reverse();
+    const newB = B.a === bp ? B.b : B.a;
+    const mergedPoly = poly1.concat(poly2.slice(1));
+    let len = 0;
+    for (let i = 1; i < mergedPoly.length; i++) len += dist(mergedPoly[i]!, mergedPoly[i - 1]!);
+    segsOut[s1] = { id: A.id, a: newA, b: newB, polyline: mergedPoly, length: len };
+    segsOut.splice(s2, 1);
+  }
+  // Compact branch points to those still referenced; renumber ids + segment ids.
+  const usedBp = new Set<number>();
+  for (const sg of segsOut) {
+    if (sg.a >= 0) usedBp.add(sg.a);
+    if (sg.b >= 0) usedBp.add(sg.b);
+  }
+  const bpRemap = new Map<number, number>();
+  const compactBps: BranchPoint[] = [];
+  for (const b of bpsOut) {
+    if (usedBp.has(b.id)) {
+      const nid = compactBps.length;
+      bpRemap.set(b.id, nid);
+      compactBps.push({ id: nid, xyz: b.xyz });
+    }
+  }
+  bpsOut = compactBps;
+  segsOut = segsOut.map((sg, i) => ({
+    ...sg,
+    id: i,
+    a: sg.a >= 0 ? bpRemap.get(sg.a)! : -1,
+    b: sg.b >= 0 ? bpRemap.get(sg.b)! : -1,
+  }));
+  // Recompute cumulative arclengths for the final segments (used by §8).
+  segCum.length = 0;
+  for (const sg of segsOut) {
+    const cum = [0];
+    for (let i = 1; i < sg.polyline.length; i++) cum.push(cum[i - 1]! + dist(sg.polyline[i]!, sg.polyline[i - 1]!));
+    segCum.push(cum);
+  }
+  pushStage("dissolve (final)", { segments: snapSegs(segsOut), branchPoints: bpsOut.map((b) => b.xyz) });
 
   // 8. associate EVERY LED to the nearest segment (no orphans — isolated LEDs
   //    and pruned-spur LEDs snap to the closest surviving segment).
   const associations: LedAssociation[] = [];
   for (let i = 0; i < n; i++) {
     let best = { seg: -1, s: 0, d: Infinity };
-    for (let sg = 0; sg < segments.length; sg++) {
-      const { s: arclen, d } = projectToPolyline(P[i]!, segments[sg]!.polyline, segCum[sg]!);
+    for (let sg = 0; sg < segsOut.length; sg++) {
+      const { s: arclen, d } = projectToPolyline(P[i]!, segsOut[sg]!.polyline, segCum[sg]!);
       if (d < best.d) best = { seg: sg, s: arclen, d };
     }
     if (best.seg >= 0) {
@@ -382,5 +805,11 @@ export async function extractTopology(
     }
   }
 
-  return { mapId: map.mapId, branchPoints, segments, associations };
+  return {
+    mapId: map.mapId,
+    branchPoints: bpsOut,
+    segments: segsOut,
+    associations,
+    ...(wantDebug ? { debug: { coincident, edges: dbgEdges, spacing: s, stages } } : {}),
+  };
 }

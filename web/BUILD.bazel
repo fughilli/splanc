@@ -37,6 +37,11 @@ npm_link_all_packages(name = "node_modules")
 
 SRCS = glob(["src/**/*.ts"])
 
+# Non-TS assets imported for their side effects by the app bundle (the design
+# tokens + app-shell stylesheet). tsc ignores these (they resolve via the
+# `*.css` module declaration in src/env.d.ts); Vite needs the real files.
+CSS = glob(["src/**/*.css"])
+
 TYPE_DEPS = [
     ":node_modules/@bufbuild/protobuf",
     ":node_modules/@ledmapper/protocol",
@@ -82,7 +87,20 @@ ts_project(
             "tests/**/*.ts",
             "tests/**/*.json",
         ],
-        exclude = ["src/solver/spawn.ts"],
+        exclude = [
+            "src/solver/spawn.ts",
+            # Browser-only: import.meta worker URL / `self` — syntax-invalid or
+            # meaningless under the CJS test compile (see their docstrings). The
+            # the in-shell effect editor statically imports the worker client
+            # (import.meta), so it's excluded — as is the page-entry chain that
+            # imports it (main → app/main → effectEditor). These are browser-only
+            # bundle entries, never required by a unit test.
+            "src/effects/editor/compiler.ts",
+            "src/effects/editor/compile-worker.ts",
+            "src/ui/screens/effectEditor.ts",
+            "src/ui/app/main.ts",
+            "src/ui/main.ts",
+        ],
     ),
     declaration = False,
     out_dir = "dist-test",
@@ -140,7 +158,7 @@ js_binary(
 # comment there (rolldown vs sandbox symlinks).
 vite_bin.vite(
     name = "dist",
-    srcs = SRCS + [
+    srcs = SRCS + CSS + glob(["public/**"]) + [
         "effects.html",
         "index.html",
         "package.json",
@@ -166,7 +184,9 @@ sh_binary(
     srcs = ["serve.sh"],
     data = [
         ":dist",
+        "//firmware/fx_vm:fx_vm_web",
         "//firmware/pulse:pulse_web",
+        "//fx_compiler:fx_compiler_web",
         "//pi/server:serve",
         "//solver:solver_web",
     ],
@@ -180,7 +200,9 @@ sh_binary(
     srcs = ["deploy_cloudflare.sh"],
     data = [
         ":dist",
+        "//firmware/fx_vm:fx_vm_web",
         "//firmware/pulse:pulse_web",
+        "//fx_compiler:fx_compiler_web",
         "//solver:solver_web",
     ],
 )

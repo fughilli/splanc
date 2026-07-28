@@ -142,6 +142,44 @@ test("a socket that never opens times out, reports attempts, and retries", async
   assert.deepEqual(attempts, [1, 2], "one onConnecting per attempt");
 });
 
+test("a cert-trust wss that never welcomes stops retrying (no cert-page starvation)", async () => {
+  // Cross-origin wss => certApprovalUrl is non-null => needsTrust. Stub the page
+  // origin so the client sees a different host than the target.
+  const saved = (globalThis as unknown as { location?: unknown }).location;
+  (globalThis as unknown as { location: unknown }).location = { host: "app.test" };
+  try {
+    const sockets: FakeSocket[] = [];
+    const scheduled: Array<() => void> = [];
+    let trustNeeded = 0;
+    const client = new LedMapperClient("wss://device.test/ws", {
+      socketFactory: () => {
+        const s = new FakeSocket();
+        sockets.push(s);
+        return s;
+      },
+      now: () => 1000,
+      schedule: (fn) => {
+        scheduled.push(fn);
+      },
+    });
+    client.events = { onCertTrustNeeded: () => void trustNeeded++ };
+
+    const p = client.connect();
+    p.catch(() => undefined);
+    // Only the open-timeout is queued so far.
+    assert.equal(scheduled.length, 1);
+    // Fire it: the stuck socket is force-closed → onclose runs. Because the
+    // target needs cert trust and never welcomed, it must NOT schedule a
+    // reconnect — it surfaces onCertTrustNeeded and waits for the user.
+    scheduled[0]!();
+    assert.equal(trustNeeded, 1, "surfaced cert-trust-needed");
+    assert.equal(scheduled.length, 1, "no backoff reconnect scheduled");
+    assert.equal(sockets.length, 1, "did not open a second socket");
+  } finally {
+    (globalThis as unknown as { location?: unknown }).location = saved;
+  }
+});
+
 test("the open-timeout is a no-op once welcomed", async () => {
   const { client, sockets, scheduled } = makeClient();
   const p = client.connect();

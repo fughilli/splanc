@@ -375,25 +375,7 @@
     },
     {
       "direction": "server",
-      "frameB64": "Ci0KA3MtMRImCEAQDBoDaHVlIQAAAAAAgFtAKgZvbl9vZmYwCDoGc2VjZGVkQAQ=",
-      "decoded": {
-        "type": "welcome",
-        "sessionId": "s-1",
-        "codeParams": {
-          "ledCount": 64,
-          "bits": 12,
-          "encoding": "hue",
-          "bitPeriodMs": 110.0,
-          "syncPattern": "on_off",
-          "cycleFrames": 8,
-          "fec": "secded",
-          "symbols": 4
-        }
-      }
-    },
-    {
-      "direction": "server",
-      "frameB64": "CjYKA3MtMRImCEAQDBoDaHVlIQAAAAAAgFtAKgZvbl9vZmYwCDoGc2VjZGVkQAQZAAAAAABQakA=",
+      "frameB64": "ClMKA3MtMRImCEAQDBoDaHVlIQAAAAAAgFtAKgZvbl9vZmYwCDoGc2VjZGVkQAQiEUFBOkJCOkNDOkREOkVFOkZGKhFMZWQgV2lkZ2V0IEExQjJDMw==",
       "decoded": {
         "type": "welcome",
         "sessionId": "s-1",
@@ -407,7 +389,29 @@
           "fec": "secded",
           "symbols": 4
         },
-        "solverBenchMs": 210.5
+        "mac": "AA:BB:CC:DD:EE:FF",
+        "deviceName": "Led Widget A1B2C3"
+      }
+    },
+    {
+      "direction": "server",
+      "frameB64": "ClwKA3MtMRImCEAQDBoDaHVlIQAAAAAAgFtAKgZvbl9vZmYwCDoGc2VjZGVkQAQZAAAAAABQakAiEUFBOkJCOkNDOkREOkVFOkZGKhFMZWQgV2lkZ2V0IEExQjJDMw==",
+      "decoded": {
+        "type": "welcome",
+        "sessionId": "s-1",
+        "codeParams": {
+          "ledCount": 64,
+          "bits": 12,
+          "encoding": "hue",
+          "bitPeriodMs": 110.0,
+          "syncPattern": "on_off",
+          "cycleFrames": 8,
+          "fec": "secded",
+          "symbols": 4
+        },
+        "solverBenchMs": 210.5,
+        "mac": "AA:BB:CC:DD:EE:FF",
+        "deviceName": "Led Widget A1B2C3"
       }
     },
     {

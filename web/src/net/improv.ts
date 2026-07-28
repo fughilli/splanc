@@ -94,12 +94,16 @@ export function parseRpcResult(packet: Uint8Array, cmd = CMD_WIFI_SETTINGS): str
 
 /** The player's WS endpoint from Improv's redirect URL (the device answers
  * e.g. "http://192.168.1.50/"): ws on the bring-up port until TLS lands. */
-export function wsUrlFromRedirect(redirect: string, wsPort = 81): string | null {
+export function wsUrlFromRedirect(redirect: string): string | null {
   try {
     const u = new URL(redirect);
     if (u.protocol !== "http:" && u.protocol !== "https:") return null;
-    const scheme = u.protocol === "https:" ? "wss" : "ws";
-    return `${scheme}://${u.hostname}:${wsPort}/ws`;
+    // The player speaks wss on 443 (TLS terminated on-device), so the hosted
+    // https app can reach it directly — no mixed-content wall, no relay. Derive
+    // that from whatever address the device reported (http://<ip>/ over BLE).
+    // A one-time self-signed-cert accept (certApprovalUrl → https://<ip>/) is
+    // handled by the connect flow.
+    return `wss://${u.hostname}/ws`;
   } catch {
     return null;
   }
@@ -111,6 +115,11 @@ export function bleAvailable(): boolean {
 
 /** A picked Improv device (from `requestImprovDevice`). */
 export interface ImprovDevice {
+  /** Stable, origin-scoped id for this physical device (Web Bluetooth). Lets us
+   * tell whether the user re-picked the SAME device when re-discovering. */
+  id?: string;
+  /** Advertised name at pick time (the device's Bluetooth name). */
+  name?: string;
   gatt?: {
     connect(): Promise<{
       getPrimaryService(uuid: string): Promise<{

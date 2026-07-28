@@ -39,7 +39,29 @@ bazelisk run -c opt //firmware/player_app:flash_esp32c6 -- --port /dev/ttyACM0
 
 The image (~2.05 MB at `-c opt` with BLE) needs a large app slot;
 `:flash_esp32c6` writes the 4 MB "huge app" layout (single 3 MB factory
-app + nvs — fits the common 4 MB-flash C6 devkits). Then:
+app + nvs — fits the common 4 MB-flash C6 devkits).
+
+### Flashing from the dev container
+
+The container can't see the board's USB serial port, so run the host helper
+(`//tools:flash_server`, stdlib-only) **on the host** and drive it over HTTP
+from inside the container:
+
+```sh
+# on the host (in the repo checkout):
+bazel run //tools:flash_server                # binds 0.0.0.0:8090
+#   (or, without bazel:  python3 tools/flash_server.py)
+
+# from the container (host = host.docker.internal or the docker gateway IP):
+curl -N host.docker.internal:8090/flash       # build + flash, streams output
+curl -N host.docker.internal:8090/logs        # tail the serial console (^C to stop)
+curl    host.docker.internal:8090/ports       # list candidate serial devices
+```
+
+`/flash` runs `bazel run -c opt //firmware/player_app:flash_esp32c6 -- --port
+<auto>` on the host; `/logs` opens the port and streams what the board prints
+(`?seconds=N`, `?reset=1`, `?port=`, `?baud=`). A `/flash` preempts an active
+`/logs` stream so they never fight over the port. Then:
 
 1. Provision over BLE (above), or join the fallback AP: SSID `ledmapper`,
    password `ledmapper` (device is `192.168.4.1`; serial prints a

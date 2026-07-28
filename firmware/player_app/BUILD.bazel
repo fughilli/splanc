@@ -30,6 +30,7 @@ rust_static_library(
     }),
     deps = [
         "//firmware/arena",
+        "//firmware/fx_vm",
         "//firmware/player:player_fw",
         "//firmware/pulse",
         "//firmware/store",
@@ -47,6 +48,7 @@ rust_library(
     edition = "2021",
     deps = [
         "//firmware/arena",
+        "//firmware/fx_vm",
         "//firmware/player",
         "//firmware/pulse",
         "//firmware/store",
@@ -65,6 +67,7 @@ rust_test(
     },
     deps = [
         ":player_ffi_host",
+        "//fx_compiler",
         "//shared/protocol/rust:ledmapper_pb",
         "@crates//:micropb",
     ],
@@ -114,6 +117,8 @@ cc_binary(
         ":player_ffi",
         ":ws_codec",
         "//firmware/landing:landing_page",
+        "//firmware/player_app/devcert:dev_cert",
+        "@embedded//libs/tls:selfsigned",
         # NOT @embedded//libs/pins: it propagates LED_DATA_PIN=8 (the
         # DevKitC-1 onboard LED); our strip wiring lives in led_config.h.
         "@embedded//libs/board:arduino_core",
@@ -127,9 +132,12 @@ cc_binary(
 
 # opt_mode="opt": the image is unusable unoptimized (fastbuild is far larger and
 # slower), so the target pins -c opt via the board transition — no need to pass
-# `-c opt` on the command line. tags=manual: the image needs the nix-provided
-# toolchains (absent on CI — see .github/workflows); build it explicitly:
-#   bazelisk build //firmware/player_app:esp32c6
+# `-c opt` on the command line. tags=manual keeps it OUT of the `//...` wildcard
+# so routine `bazel test //...` (incl. dev on a small container) stays light —
+# this image compiles mbedtls + the Arduino core FROM SOURCE. CI still builds it,
+# explicitly, in the dedicated `firmware` job (.github/workflows/test.yaml).
+# Build locally with:
+#   bazelisk build -c opt //firmware/player_app:esp32c6
 firmware_binary(
     name = "esp32c6",
     binary = ":player_app",

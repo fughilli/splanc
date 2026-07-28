@@ -179,9 +179,15 @@ use_repo(host_crate, "host_crates")
 bazel_dep(name = "firmware", version = "0.0.0", repo_name = "embedded")
 archive_override(
     module_name = "firmware",
-    integrity = "sha256-a40swrAADjiQatlf2XzVpUF0Rt/EN/ggrz8N20PcWTQ=",
-    strip_prefix = "embedded-a14ef48712b820948f8e1bae28987539a4aa2ff8",
-    urls = ["https://github.com/fughilli/embedded/archive/a14ef48712b820948f8e1bae28987539a4aa2ff8.tar.gz"],
+    # embedded master @e37969f — the mbedtls-8k-record-and-selfsigned-cert work
+    # merged: mbedtls 3.6.5 + IDF v5.5.4 built FROM SOURCE with
+    # CONFIG_MBEDTLS_DYNAMIC_BUFFER (TLS record buffer 16 KB -> 8 KB, fixes the
+    # C6's fragmented-heap wss/cert handshake OOM) + //libs/tls:selfsigned
+    # (on-device SAN-cert re-issuance). Includes the x86_64-linux riscv/xtensa
+    # toolchain hashes (were fakeHash → CI hash mismatch) + the embedded CI.
+    integrity = "sha256-4fbJxxbZUhnHAl1W9W2gOsUzcSOD2mboFRG9kdWp46Q=",
+    strip_prefix = "embedded-e37969f118e4e0380d2fe8d3ae48745cb8e7eaa3",
+    urls = ["https://github.com/fughilli/embedded/archive/e37969f118e4e0380d2fe8d3ae48745cb8e7eaa3.tar.gz"],
 )
 
 # ---------------------------------------------------------------------------

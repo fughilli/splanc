@@ -358,6 +358,100 @@ message GetStoredMap {
   int32 max_len = 2;
 }
 
+// ---------------------------------------------------------------------------
+// Effects (§ effects-runtime): user shader bytecode (.fxb) execution
+// ---------------------------------------------------------------------------
+
+// A single uniform's live value. `slot` indexes the effect's uniform manifest;
+// `value` carries 1..4 floats (scalar or vecN) interpreted per the manifest.
+message UniformValue {
+  uint32 slot = 1;
+  repeated float value = 2 [packed = true];
+}
+
+// Upload a compiled effect: `.fxb` = bytecode + embedded uniform manifest.
+// Stored to LittleFS keyed by `effect_id`, like submit_map. Set `activate` to
+// make it the active effect on receipt. Reply: result_ready (id=effect_id) or
+// error (`effect_too_large`, `bad_fxb`).
+message SubmitEffect {
+  string effect_id = 1;
+  bytes fxb = 2;
+  bool activate = 3;
+}
+
+// Select the active effect by id. "" or "off" clears it (back to the built-in
+// idle/playback). Reply: playback_state.
+message SetEffect {
+  string effect_id = 1;
+}
+
+// Set live uniform values on the active effect (slider drags). Coalesced and
+// persisted like set_playback. Reply: playback_state.
+message SetUniforms {
+  repeated UniformValue values = 1;
+}
+
+// Request an effect's uniform manifest + current live values for UI hydration.
+// Unset `effect_id` = the active effect. Reply: effect_uniforms (or error
+// `no_effect`).
+message GetEffectUniforms {
+  optional string effect_id = 1;
+}
+
+// ---------------------------------------------------------------------------
+// Perf monitoring (§ perf-monitoring): device execution-time/memory telemetry
+// ---------------------------------------------------------------------------
+
+// Toggle perf telemetry. OFF: no stream. BASIC: cheap cycle/heap spans (Tier 0).
+// FULL: also per-opcode instruction counts + stack high-water (Tier 1), only
+// while a perf panel is open. `interval_ms` throttles the push cadence.
+message SetPerf {
+  enum Mode {
+    OFF = 0;
+    BASIC = 1;
+    FULL = 2;
+  }
+  Mode mode = 1;
+  uint32 interval_ms = 2;
+}
+
+// Request the rolled-up perf report for the active effect. Reply: perf_report.
+message GetPerfReport {}
+
+// One rendered frame's timing/memory sample (all integers; cycles at cpu_hz).
+message PerfFrame {
+  uint32 seq = 1;
+  uint32 update_cycles = 2;
+  uint32 shade_cycles = 3;
+  uint32 frame_cycles = 4;
+  uint32 show_cycles = 5;
+  uint32 led_count = 6;
+  uint32 instr_update = 7;   // Tier 1 only (0 otherwise)
+  uint32 instr_shade = 8;    // Tier 1 only
+  uint32 stack_max = 9;      // Tier 1 only
+}
+
+// Rolled-up perf over a recent window + the raw tail. Sent unsolicited while a
+// perf mode is active (throttled) and as the reply to get_perf_report.
+message PerfReport {
+  string effect_id = 1;
+  uint32 fxb_hash = 2;
+  uint32 cpu_hz = 3;
+  uint32 budget_cycles = 4;
+  uint32 frame_cycles_min = 10;
+  uint32 frame_cycles_mean = 11;
+  uint32 frame_cycles_max = 12;
+  uint32 update_cycles_mean = 13;
+  uint32 shade_cycles_mean = 14;
+  uint32 show_cycles_mean = 15;
+  uint32 overruns = 20;
+  uint32 dropped_frames = 21;
+  uint32 samples_dropped = 22;
+  uint32 heap_free = 30;
+  uint32 heap_min_free = 31;
+  repeated PerfFrame ticks = 40;
+}
+
 message ClientMessage {
   // Arm names equal the pre-protobuf "type" discriminator values.
   oneof msg {
@@ -381,6 +475,14 @@ message ClientMessage {
     GetPlayback get_playback = 18;
     GetFrameTiming get_frame_timing = 19;
     GetStoredMap get_stored_map = 20;
+    SubmitEffect submit_effect = 21;
+    SetEffect set_effect = 22;
+    SetUniforms set_uniforms = 23;
+    GetEffectUniforms get_effect_uniforms = 24;
+    SetPerf set_perf = 25;
+    GetPerfReport get_perf_report = 26;
+    SetDeviceName set_device_name = 27;
+    SetTexture set_texture = 28;
   }
 }
 
@@ -393,6 +495,37 @@ message Welcome {
   CodeParams code_params = 2;
   // Host score on the canned solver benchmark (ms); unset while measuring.
   optional double solver_bench_ms = 3;
+  // Stable hardware MAC (factory-programmed; same address the BLE advertisement
+  // uses), colon-separated uppercase hex. Lets the app match a player across the
+  // BLE-onboarding and LAN paths. Empty on older firmware.
+  string mac = 4;
+  // Current display / Bluetooth-advertised name (default "Led Widget <6-hex>"
+  // from the MAC, or a user-customized name). Empty on older firmware.
+  string device_name = 5;
+}
+
+// Stream a frame into a loaded effect's 2D `texture` (video textures). `data` is
+// the frame quantized to `format` (row-major, `width`*`height` texels),
+// optionally XOR-delta'd against the previous frame (flags bit0 = DELTA — the
+// device keeps the last quantized frame; a keyframe with DELTA unset resets that
+// buffer first), then run-length coded (flags bit1 = RLE, a zero-run scheme:
+// repeated [varint zero_run][varint literal_run][literal bytes...]). `tex_index`
+// selects which declared texture (buffer id, kind=1) in the active effect; the
+// texture's w/h/elem must match. No reply (fire-and-forget for high frame rates).
+message SetTexture {
+  uint32 tex_index = 1;
+  uint32 format = 2; // 0 RGB888, 1 RGB565, 2 RGB332, 3 GRAY8, 4 INDEXED8
+  uint32 width = 3;
+  uint32 height = 4;
+  uint32 flags = 5; // bit0 DELTA (XOR vs previous frame), bit1 RLE
+  bytes data = 6;
+  repeated uint32 palette = 7 [packed = true]; // INDEXED8 only: 0x00RRGGBB entries
+}
+
+// Set the player's display name; it becomes the Bluetooth-advertised name too
+// and is persisted on the device. Reply: welcome (echoing the new device_name).
+message SetDeviceName {
+  string name = 1;
 }
 
 // Reply to stop_mapping(solve_on_host=false): stopped + persisted, no host
@@ -518,6 +651,16 @@ message StoredMapChunk {
   bool has_topology = 4;
 }
 
+// The active/named effect's uniform manifest (compiler JSON) plus current live
+// values. Reply to get_effect_uniforms.
+message EffectUniforms {
+  string effect_id = 1;
+  // JSON array: [{name, slot, width, ui:{kind,...}, default:[...]}], exactly
+  // the manifest fx_compiler emits (see docs/design/effects-compiler.md).
+  bytes manifest = 2;
+  repeated UniformValue current = 3;
+}
+
 message ServerMessage {
   oneof msg {
     Welcome welcome = 1;
@@ -535,5 +678,7 @@ message ServerMessage {
     PlaybackState playback_state = 13;
     FrameTiming frame_timing = 14;
     StoredMapChunk stored_map_chunk = 15;
+    EffectUniforms effect_uniforms = 16;
+    PerfReport perf_report = 17;
   }
 }

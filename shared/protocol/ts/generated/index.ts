@@ -415,6 +415,12 @@ export interface WelcomeMessage {
   /** Host score on the canned solver benchmark (ms), for the client's
    * solver-placement decision; null while still measuring. */
   solverBenchMs: number | null;
+  /** Stable hardware MAC (same address the BLE advertisement uses),
+   * colon-separated uppercase hex. Empty on older firmware. */
+  mac: string;
+  /** Current display / Bluetooth name (default "Led Widget <6-hex>" or a
+   * user-customized name). Empty on older firmware. */
+  deviceName: string;
 }
 
 /** Reply to stop_mapping with solveOnHost=false: capture stopped + log

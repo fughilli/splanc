@@ -129,8 +129,22 @@ CLIENT_FLATS = [
 ]
 
 SERVER_FLATS = [
-    {"type": "welcome", "sessionId": "s-1", "codeParams": CODE_PARAMS, "solverBenchMs": None},
-    {"type": "welcome", "sessionId": "s-1", "codeParams": CODE_PARAMS, "solverBenchMs": 210.5},
+    {
+        "type": "welcome",
+        "sessionId": "s-1",
+        "codeParams": CODE_PARAMS,
+        "solverBenchMs": None,
+        "mac": "AA:BB:CC:DD:EE:FF",
+        "deviceName": "Led Widget A1B2C3",
+    },
+    {
+        "type": "welcome",
+        "sessionId": "s-1",
+        "codeParams": CODE_PARAMS,
+        "solverBenchMs": 210.5,
+        "mac": "AA:BB:CC:DD:EE:FF",
+        "deviceName": "Led Widget A1B2C3",
+    },
     {"type": "time_sync_pong", "t0": 1.0, "t1": 2.0, "t2": 3.0},
     {"type": "mapping_started", "patternClockEpoch": 987.5, "codeParams": CODE_PARAMS},
     {"type": "mapping_stopped", "detections": 4200, "imuSamples": 3600},

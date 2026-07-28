@@ -18,6 +18,11 @@
 // initial state (IMPROV_STATE_*).
 void improv_ble_begin(const char *device_name, uint8_t initial_state);
 
+// Rename the advertised device live (after a set_device_name): update the
+// scan-response name shown in the Bluetooth chooser + restart advertising. The
+// GAP name fully re-applies on the next boot via improv_ble_begin.
+void improv_ble_set_name(const char *device_name);
+
 // True exactly once per received (valid) wifi-settings RPC; copies the
 // latched credentials out.
 bool improv_ble_take_credentials(char *ssid, size_t ssid_cap, char *pass, size_t pass_cap);

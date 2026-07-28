@@ -24,7 +24,7 @@
     "Welcome": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["type", "sessionId", "codeParams", "solverBenchMs"],
+      "required": ["type", "sessionId", "codeParams", "solverBenchMs", "mac", "deviceName"],
       "properties": {
         "type": { "const": "welcome" },
         "sessionId": { "type": "string", "description": "UUID for this control session." },
@@ -32,6 +32,14 @@
         "solverBenchMs": {
           "type": ["number", "null"],
           "description": "Host score on the canned solver benchmark, milliseconds (measured once at server startup). The client times the SAME solve in its wasm solver and compares to decide where the final solve runs (solver placement). Null while the host benchmark has not finished."
+        },
+        "mac": {
+          "type": "string",
+          "description": "The player's stable hardware MAC address (factory-programmed, colon-separated uppercase hex, e.g. \"AA:BB:CC:DD:EE:FF\"). The Bluetooth advertisement uses the same address, so the app can match a device across the BLE onboarding and LAN paths. Empty from older firmware."
+        },
+        "deviceName": {
+          "type": "string",
+          "description": "The player's current display / Bluetooth-advertised name (default \"Led Widget <6-hex>\" derived from the MAC, or a user-customized name set via set_device_name). Empty from older firmware."
         }
       }
     },

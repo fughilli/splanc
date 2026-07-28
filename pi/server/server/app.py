@@ -47,6 +47,8 @@ def create_app(
     web_root: Optional[Path] = None,
     solver_dir: Optional[Path] = None,
     pulse_dir: Optional[Path] = None,
+    fx_compiler_dir: Optional[Path] = None,
+    fx_vm_dir: Optional[Path] = None,
     default_led_count: int = 1024,
     bit_period_ms: float = DEFAULT_BIT_PERIOD_MS,
     symbols: int = 2,
@@ -62,7 +64,10 @@ def create_app(
     ``solver_dir`` serves the wasm solver bundle (//solver:solver_wasm_pkg)
     at /solver/ for the phone's in-browser final solve. ``pulse_dir`` serves
     the wasm effects Sim (//firmware/pulse:pulse_web) at /pulse/ for the
-    effects-simulator workspace (effects.html).
+    effects-simulator workspace (effects.html). ``fx_compiler_dir`` and
+    ``fx_vm_dir`` serve the wasm effects compiler (//fx_compiler:fx_compiler_web)
+    at /fx-compiler/ and the preview VM (//firmware/fx_vm:fx_vm_web) at /fx-vm/
+    for the effects-editor workspace (editor.html).
     """
     maps = MapStore(maps_dir)
     if context is None:
@@ -254,6 +259,13 @@ def create_app(
     # The wasm effects Sim (effects-simulator workspace). Mounted before "/".
     if pulse_dir is not None and Path(pulse_dir).is_dir():
         app.mount("/pulse", StaticFiles(directory=str(pulse_dir)), name="pulse")
+
+    # The wasm effects compiler + preview VM (effects-editor workspace).
+    # Mounted before "/" so the app's static mount cannot shadow them.
+    if fx_compiler_dir is not None and Path(fx_compiler_dir).is_dir():
+        app.mount("/fx-compiler", StaticFiles(directory=str(fx_compiler_dir)), name="fx-compiler")
+    if fx_vm_dir is not None and Path(fx_vm_dir).is_dir():
+        app.mount("/fx-vm", StaticFiles(directory=str(fx_vm_dir)), name="fx-vm")
 
     # Static web app last, so the API routes above take precedence. Falls back
     # to a Phase-0 hello page when no built web app is present.

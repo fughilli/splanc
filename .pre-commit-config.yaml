@@ -1,12 +1,17 @@
 # Presubmit hooks (adapted from fughilli/volumetric-display).
 #
 # Generated files are byte-pinned by //shared/protocol:codegen_freshness —
-# formatters must never touch them, hence the global exclude.
+# formatters must never touch them, hence the global exclude. `ledmapper_pb.ts`
+# is likewise generated (protobuf-es, via shared/protocol/proto/gen_ts.sh).
+# docs/design/ are long-form specs (like led-mapper-design.md, already exempt in
+# .markdownlintignore) — kept out of the auto-reflow/line-length hooks.
 exclude: |
   (?x)^(
     \.claude-container-overlay/skills/.*|
     shared/protocol/python/ledmapper_protocol/_generated\.py|
     shared/protocol/ts/generated/.*|
+    web/src/gen/ledmapper_pb\.ts|
+    docs/design/.*\.md|
     web/tests/golden_.*\.json|
     pnpm-lock\.yaml|
     requirements\.lock
