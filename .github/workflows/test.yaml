@@ -66,11 +66,21 @@ jobs:
         uses: bazel-contrib/setup-bazel@0.15.0
         with:
           bazelisk-cache: true
-          disk-cache: ${{ github.workflow }}
           repository-cache: true
 
+      # Bazel's *disk cache* (compiled action outputs) is the dominant cost: the
+      # mbedtls / Arduino-core / firmware cc_library compiles, which setup-bazel
+      # wasn't persisting. Cache it explicitly, keyed on the toolchain inputs so
+      # the (invariant) mbedtls/core objects stay cached across commits.
+      - name: Cache Bazel disk cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/bazel-disk
+          key: bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock') }}
+          restore-keys: bazel-disk-${{ runner.os }}-
+
       - name: Build firmware image (esp32c6)
-        run: bazel build -c opt //firmware/player_app:esp32c6
+        run: bazel build -c opt --disk_cache="$HOME/.cache/bazel-disk" //firmware/player_app:esp32c6
 
   lint:
     runs-on: ubuntu-latest
