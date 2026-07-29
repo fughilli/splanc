@@ -1,10 +1,10 @@
 {
-    "services": {
-        "studio": 8090,
-        "web": 8080,
-        "web-tls": {
-            "port": 8443,
-            "tls": true
-        }
+  "services": {
+    "studio": 8090,
+    "web": 8080,
+    "web-tls": {
+      "port": 8443,
+      "tls": true
     }
+  }
 }
