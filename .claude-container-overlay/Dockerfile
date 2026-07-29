@@ -83,3 +83,10 @@ RUN apt-get update \
 # hooks (.pre-commit-config.yaml) run locally in the container.
 RUN apt-get update -qq && apt-get install -y -qq python3-pip python3-venv && \
     python3 -m pip install --break-system-packages pre-commit
+
+# 2026-07-29: mark /workspace safe for git. The bind mount is owned by the host
+# uid, which can differ from the runtime user's, tripping git's dubious-ownership
+# check. Must be --system (/etc/gitconfig): --global at build time would write
+# /root/.gitconfig, and the runtime `claude` user (created at container start)
+# would never see it.
+RUN git config --system --add safe.directory /workspace
