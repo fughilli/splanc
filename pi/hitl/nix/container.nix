@@ -48,6 +48,31 @@ let
     '';
   };
 
+  # riscv32 GDB client for the C6 (nixpkgs has none; host gdb can't debug it).
+  riscvGdb = import ./riscv-gdb.nix { pkgs = p; };
+
+  # hitl-gdb [elf] [extra gdb args]: start the openocd gdbserver in the background
+  # and attach gdb to it. No extra args → interactive; pass -batch -ex … to script.
+  hitlGdb = p.writeShellApplication {
+    name = "hitl-gdb";
+    text = ''
+      elf=""
+      if [ "$#" -gt 0 ] && [ -f "$1" ]; then elf="$1"; shift; fi
+      log=/tmp/hitl-openocd.log
+      ${openocdEsp}/bin/openocd -s ${openocdEsp}/share/openocd/scripts \
+        -f board/esp32c6-builtin.cfg > "$log" 2>&1 &
+      ocd=$!
+      trap 'kill "$ocd" 2>/dev/null || true' EXIT
+      for _ in $(seq 1 40); do
+        grep -q "Listening on port 3333" "$log" 2>/dev/null && break
+        sleep 0.25
+      done
+      args=(-ex "target remote :3333")
+      if [ -n "$elf" ]; then args=("$elf" "''${args[@]}"); fi
+      exec ${riscvGdb}/bin/riscv32-esp-elf-gdb "''${args[@]}" "$@"
+    '';
+  };
+
   # hitl-flash: flash a bundle (flash.json + bins) with esptool, offsets from the
   # manifest, v4/v5 syntax auto-picked. --monitor reads the serial console after.
   hitlFlash = p.writeTextFile {
@@ -193,6 +218,8 @@ let
     # JTAG/debug over the C6 built-in USB-JTAG (needs the daemon's /dev/bus/usb):
     openocdEsp
     hitlJtag
+    riscvGdb
+    hitlGdb
     # --- next layers (add as exercised) ---
     # linuxPackages.usbip           # attach the dev board inside the container
     # openocd gdb                   # JTAG debug port

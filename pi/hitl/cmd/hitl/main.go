@@ -55,6 +55,8 @@ func main() {
 		err = cmdBle(args)
 	case "jtag":
 		err = cmdJtag(args)
+	case "gdb":
+		err = cmdGdb(args)
 	case "-h", "--help", "help":
 		usage()
 		return
@@ -80,6 +82,7 @@ func usage() {
   hitl monitor [--port DEV] [--id RES] [--keep] [--reset] [--seconds N] [--server URL]
   hitl ble     scan [--name S] [--seconds N] | gatt <address>   [--id RES] [--keep]
   hitl jtag    [--id RES] [--keep] [-- openocd args]            # C6 built-in USB-JTAG
+  hitl gdb     [--elf FILE] [--id RES] [--keep] [-- gdb args]   # attach gdb via openocd
 
 Server URL: --server or $HITL_SERVER (e.g. http://hitl-rig:8087).
 Flash bundle: build one with e.g.
@@ -368,6 +371,46 @@ func cmdJtag(args []string) error {
 
 func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
+// --- gdb ------------------------------------------------------------------
+
+func cmdGdb(args []string) error {
+	fs := newFlags("gdb")
+	server := serverFlag(fs)
+	owner := fs.String("owner", envOr("HITL_OWNER", defaultOwner()), "reservation owner id")
+	keyPath := fs.String("key", "", "public key to authorize (default: dedicated ~/.config/hitl key)")
+	id := fs.String("id", "", "use this already-active reservation instead of making one")
+	keep := fs.Bool("keep", false, "keep the reservation afterward (default: release when we made it)")
+	elf := fs.String("elf", "", "firmware ELF to load symbols from (copied into the container)")
+	_ = fs.Parse(args)
+
+	if *elf != "" {
+		if _, err := os.Stat(*elf); err != nil {
+			return fmt.Errorf("elf: %w", err)
+		}
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	c := client{base: *server}
+	ep, priv, release, err := acquire(ctx, c, *server, *keyPath, *owner, *id, *keep)
+	if err != nil {
+		return err
+	}
+	defer release()
+
+	remote := "hitl-gdb"
+	if *elf != "" {
+		if err := scpTo(ctx, priv, ep, []string{*elf}, "/tmp/"); err != nil {
+			return fmt.Errorf("scp elf: %w", err)
+		}
+		remote += " /tmp/" + filepath.Base(*elf)
+	}
+	// Remaining args pass through to gdb (e.g. -batch -ex "bt"); none → interactive.
+	for _, a := range fs.Args() {
+		remote += " " + shellQuote(a)
+	}
+	return sshRunTTY(ctx, priv, ep, remote)
+}
+
 // acquire yields an active reservation's SSH endpoint (host rewritten to match
 // the server we reached, sshd port waited-on). With id set it reuses that
 // reservation; otherwise it reserves one, heartbeats it, and — unless keep — the
@@ -464,6 +507,14 @@ func scpTo(ctx context.Context, privKey string, ep *api.SSHEndpoint, locals []st
 // sshRun runs one command on the reservation, streaming its output.
 func sshRun(ctx context.Context, privKey string, ep *api.SSHEndpoint, remoteCmd string) error {
 	args := append(sshOpts(privKey, "-p", ep.Port), fmt.Sprintf("%s@%s", ep.User, ep.Host), remoteCmd)
+	cmd := exec.CommandContext(ctx, "ssh", args...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	return cmd.Run()
+}
+
+// sshRunTTY runs a command with a pseudo-tty (for interactive tools like gdb).
+func sshRunTTY(ctx context.Context, privKey string, ep *api.SSHEndpoint, remoteCmd string) error {
+	args := append(sshOpts(privKey, "-p", ep.Port), "-t", fmt.Sprintf("%s@%s", ep.User, ep.Host), remoteCmd)
 	cmd := exec.CommandContext(ctx, "ssh", args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	return cmd.Run()
