@@ -88,9 +88,16 @@ func (p *PodmanRunner) Start(ctx context.Context, id, owner, sshKey string) (*ap
 		args = append(args, "--privileged")
 	}
 	for _, d := range p.cfg.Devices {
-		if d != "" {
-			args = append(args, "--device", d)
+		if d == "" {
+			continue
 		}
+		// Skip devices that aren't present (e.g. the ESP32 isn't plugged in yet),
+		// so a reservation can still come up for non-hardware testing.
+		if _, err := os.Stat(d); err != nil {
+			log.Printf("podman: device %s not present, skipping (%v)", d, err)
+			continue
+		}
+		args = append(args, "--device", d)
 	}
 	args = append(args, p.cfg.Image)
 

@@ -25,9 +25,10 @@ in
   # once by hand (or set services.tailscale.authKeyFile to a provisioned secret).
   services.tailscale.enable = true;
 
-  # USBIP host modules (attach the dev board into the container) — skeleton;
-  # binding the specific bus id is done by a udev rule once known.
-  boot.kernelModules = [ "usbip-host" "vhci-hcd" ];
+  # USBIP host modules (attach the dev board into the container). Deferred to the
+  # USBIP layer — enable once confirmed present in the nixos-raspberrypi kernel;
+  # a missing module here can fail activation.
+  # boot.kernelModules = [ "usbip-host" "vhci-hcd" ];
 
   # The `hitl` CLI is handy on the rig too; usbutils for lsusb/bus ids.
   environment.systemPackages = [ hitl pkgs.usbutils ];
@@ -74,4 +75,7 @@ in
 
   # Reach the daemon API + the published container sshd over the tailnet.
   networking.firewall.trustedInterfaces = [ "tailscale0" ];
+  # MVP/testing: also reach them over the LAN (mDNS). Tighten to tailscale-only
+  # for production by dropping these.
+  networking.firewall.allowedTCPPorts = [ apiPort sshPort ];
 }
