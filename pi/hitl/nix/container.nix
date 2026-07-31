@@ -74,6 +74,12 @@ let
       fi
       # Diagnostics for pubkey-auth issues (StrictModes checks these):
       ls -lad "/home/$user" "/home/$user/.ssh" "/home/$user/.ssh/authorized_keys" >&2 2>/dev/null || true
+      # Make passed-through serial/JTAG nodes usable by the (non-root) agent —
+      # they arrive with the host's root:dialout 660 perms. The container is
+      # ephemeral + single-user, so opening them up is fine.
+      for dev in /dev/ttyACM* /dev/ttyUSB*; do
+        if [ -e "$dev" ]; then chmod a+rw "$dev" 2>/dev/null || true; fi
+      done
       exec ${p.openssh}/bin/sshd -D -e -f ${sshdConfig}
     '';
   };
