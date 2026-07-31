@@ -43,6 +43,11 @@ hitl reserve                                    # drops you in; logout releases
 #    adapter from inside the container).
 hitl ble scan --name "Led Widget"               # find the DUT's address
 hitl ble gatt F0:F5:BD:2C:E6:86                 # dump its services/characteristics
+
+# 6. JTAG: halt/inspect the RISC-V core over the C6's built-in USB-JTAG.
+hitl jtag                                        # halt, print PC, reset-run
+hitl jtag -- -c "init; reset halt; reg; shutdown"   # arbitrary openocd commands
+#   (openocd also opens a gdbserver on :3333 during a session)
 ```
 
 `--id <res>` reuses an existing reservation instead of making a new one;
@@ -96,10 +101,13 @@ with `pyserial`, `picocom`, `coreutils`, `openssh`. The DUT is `/dev/ttyACM0`
 - The lease is heartbeated while a `hitl` command runs; if your process dies the
   lease expires and the next agent is promoted.
 
-## Not yet available
+## USBIP (remote attach)
 
-JTAG/GDB on-chip debugging (needs Espressif's OpenOCD fork — the C6 is RISC-V and
-mainline OpenOCD doesn't support it). Serial + flash + BLE cover most firmware E2E
-today. USBIP device export is available on the rig host (`usbip bind`) for
-attaching the C6 to a remote machine over the tailnet, but there's no `hitl`
-wrapper yet.
+The rig host can export the C6 over the tailnet so a remote machine attaches it as
+a local USB device (no `hitl` wrapper yet — run on the rig host):
+```sh
+usbipd -D && usbip bind -b 1-2      # export; `usbip unbind -b 1-2` to restore
+# on your machine: usbip attach -r hitl-rig -b 1-2
+```
+Note this detaches the device from the rig (its serial tty disappears there) until
+unbound, so it conflicts with reservations using the DUT.
