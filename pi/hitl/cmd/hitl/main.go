@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -106,6 +107,12 @@ func cmdReserve(args []string) error {
 		return err
 	}
 	ep := active.SSH
+	// The container's sshd is published on the same host as the daemon, so reach
+	// it the same way we reached the API (mDNS name, tailnet name, IP — whatever
+	// the caller used) rather than trusting the daemon's advertised hostname.
+	if h := hostFromServer(*server); h != "" {
+		ep.Host = h
+	}
 	fmt.Fprintf(os.Stderr, "active: ssh %s@%s -p %d\n", ep.User, ep.Host, ep.Port)
 
 	if !*keep {
@@ -178,6 +185,9 @@ func cmdSSH(args []string) error {
 	}
 	if res.State != api.StateActive || res.SSH == nil {
 		return fmt.Errorf("reservation %s is %s (not active)", id, res.State)
+	}
+	if h := hostFromServer(*server); h != "" {
+		res.SSH.Host = h
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -322,6 +332,16 @@ func newFlags(name string) *flag.FlagSet { return flag.NewFlagSet(name, flag.Exi
 
 func serverFlag(fs *flag.FlagSet) *string {
 	return fs.String("server", envOr("HITL_SERVER", "http://hitl-rig:8087"), "rig hitl-managerd URL")
+}
+
+// hostFromServer extracts the host (name or IP) from the --server URL, so the
+// SSH connection targets the same machine we reached the API on.
+func hostFromServer(server string) string {
+	u, err := url.Parse(server)
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
 }
 
 func fmtTime(t *time.Time) string {

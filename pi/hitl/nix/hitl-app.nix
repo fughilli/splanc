@@ -58,7 +58,9 @@ in
           "${hitl}/bin/hitl-managerd"
           "--addr :${toString apiPort}"
           "--rig ${config.networking.hostName}"
-          "--host ${config.networking.hostName}"
+          # Advertised host (display/fallback); the CLI overrides it with the
+          # address it actually used to reach the API. `.local` resolves on the LAN.
+          "--host ${config.networking.hostName}.local"
           "--image ${imageRef}"
           "--ssh-port ${toString sshPort}"
           "--podman ${pkgs.podman}/bin/podman"
