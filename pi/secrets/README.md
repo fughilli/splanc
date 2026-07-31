@@ -44,7 +44,7 @@ The rig reads its auth key from `/var/lib/tailscale/authkey` (see
 `/var/lib`**, so after reflashing, re-seed it:
 
 ```sh
-pi/hitl/scripts/seed-tailscale-authkey.sh hitl-rig.local
+bazel run //pi/hitl:seed_tailscale_authkey
 ```
 
 Keep the key here so it isn't lost. It's a reusable, standing secret — rotate it in

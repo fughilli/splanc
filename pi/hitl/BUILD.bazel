@@ -32,3 +32,11 @@ sh_binary(
     data = ["@sbc_deploy//deploy:scripts/seed_wifi.sh"],
     deps = ["@bazel_tools//tools/bash/runfiles"],
 )
+
+# Re-seed the Tailscale auth key onto the rig (needed after a reflash wipes
+# /var/lib). Reads pi/secrets/tailscale-authkey + deploy_key.
+#   bazel run //pi/hitl:seed_tailscale_authkey [-- host]
+sh_binary(
+    name = "seed_tailscale_authkey",
+    srcs = ["scripts/seed-tailscale-authkey.sh"],
+)

@@ -3,12 +3,14 @@
 # reflash (which wipes /var/lib, including /var/lib/tailscale/authkey). The key
 # and deploy SSH key both live gitignored under pi/secrets/.
 #
-#   pi/hitl/scripts/seed-tailscale-authkey.sh [host]   # default hitl-rig.local
+#   bazel run //pi/hitl:seed_tailscale_authkey [-- host]   # default hitl-rig.local
 set -euo pipefail
 
 HOST="${1:-hitl-rig.local}"
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SECRETS="$HERE/../../secrets"
+# Under `bazel run`, secrets live in the operator's checkout ($BUILD_WORKSPACE_DIRECTORY);
+# run directly and we fall back to the repo root relative to this script.
+WS="${BUILD_WORKSPACE_DIRECTORY:-$(git -C "$(dirname "${BASH_SOURCE[0]}")" rev-parse --show-toplevel)}"
+SECRETS="$WS/pi/secrets"
 KEY="$SECRETS/tailscale-authkey"
 DEPLOY_KEY="$SECRETS/deploy_key"
 
