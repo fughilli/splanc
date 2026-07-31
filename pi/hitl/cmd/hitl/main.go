@@ -70,7 +70,7 @@ func usage() {
   hitl status  [--server URL]
   hitl release <id> [--server URL]
   hitl ssh     <id> [--server URL]
-  hitl flash   [--port DEV] [--id RES] [--keep] [--server URL] <bundle.tar>
+  hitl flash   [--port DEV] [--id RES] [--keep] [--monitor] [--server URL] <bundle.tar>
 
 Server URL: --server or $HITL_SERVER (e.g. http://hitl-rig:8087).
 Flash bundle: build one with e.g.
@@ -209,33 +209,6 @@ func cmdSSH(args []string) error {
 
 // --- flash ----------------------------------------------------------------
 
-// hitlFlashPy is the container-side consumer: it unpacks a flash bundle, reads
-// flash.json, and runs esptool with the right per-image offsets — picking v4
-// (write_flash/--flash_mode) vs v5 (write-flash/--flash-mode) syntax at runtime.
-// Shipped over SSH at flash time so no container rebuild is needed.
-const hitlFlashPy = `import argparse, json, os, re, subprocess, sys, tarfile, tempfile
-def syntax():
-    v = subprocess.run(["esptool","version"], capture_output=True, text=True)
-    m = re.search(r"v?(\d+)\.", (v.stdout or "") + (v.stderr or ""))
-    major = int(m.group(1)) if m else 4
-    return ("write-flash","--flash-mode","--flash-freq","--flash-size") if major >= 5 \
-        else ("write_flash","--flash_mode","--flash_freq","--flash_size")
-ap = argparse.ArgumentParser()
-ap.add_argument("bundle"); ap.add_argument("--port", default="/dev/ttyACM0")
-ap.add_argument("--baud", default="460800")
-a = ap.parse_args()
-d = tempfile.mkdtemp(prefix="hitl-flash-")
-with tarfile.open(a.bundle) as t: t.extractall(d)
-m = json.load(open(os.path.join(d, "flash.json")))
-wf, fm, ff, fs = syntax()
-cmd = ["esptool","--chip",m["chip"],"--port",a.port,"--baud",a.baud, wf,
-       fm, m.get("flash_mode","keep"), ff, m.get("flash_freq","keep"), fs, m.get("flash_size","keep")]
-for img in m["images"]:
-    cmd += [img["offset"], os.path.join(d, img["file"])]
-sys.stderr.write("+ " + " ".join(cmd) + "\n")
-sys.exit(subprocess.call(cmd))
-`
-
 func cmdFlash(args []string) error {
 	fs := newFlags("flash")
 	server := serverFlag(fs)
@@ -244,6 +217,8 @@ func cmdFlash(args []string) error {
 	port := fs.String("port", "/dev/ttyACM0", "serial device in the container")
 	id := fs.String("id", "", "flash into this already-active reservation instead of making one")
 	keep := fs.Bool("keep", false, "keep the reservation after flashing (default: release when we made it)")
+	monitor := fs.Bool("monitor", false, "read the serial console after flashing")
+	monSecs := fs.Float64("monitor-seconds", 10, "how long to read serial with --monitor (0 = until Ctrl-C)")
 	_ = fs.Parse(args)
 
 	bundle := fs.Arg(0)
@@ -309,25 +284,18 @@ func cmdFlash(args []string) error {
 		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 	}
 
-	// Ship the bundle + the consumer, then flash.
-	pyFile, err := os.CreateTemp("", "hitl-flash-*.py")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(pyFile.Name())
-	if _, err := pyFile.WriteString(hitlFlashPy); err != nil {
-		return err
-	}
-	pyFile.Close()
-
+	// Ship the bundle and run the container's baked hitl-flash consumer.
 	remoteBundle := "/tmp/" + filepath.Base(bundle)
 	fmt.Fprintf(os.Stderr, "copying %s -> %s:%s\n", filepath.Base(bundle), ep.Host, remoteBundle)
-	if err := scpTo(ctx, priv, ep, []string{bundle, pyFile.Name()}, "/tmp/"); err != nil {
+	if err := scpTo(ctx, priv, ep, []string{bundle}, "/tmp/"); err != nil {
 		return fmt.Errorf("scp: %w", err)
 	}
-	remotePy := "/tmp/" + filepath.Base(pyFile.Name())
+	remoteCmd := fmt.Sprintf("hitl-flash %s --port %s", remoteBundle, *port)
+	if *monitor {
+		remoteCmd += fmt.Sprintf(" --monitor --monitor-seconds %g", *monSecs)
+	}
 	fmt.Fprintf(os.Stderr, "flashing %s on %s...\n", *port, ep.Host)
-	return sshRun(ctx, priv, ep, fmt.Sprintf("python3 %s %s --port %s", remotePy, remoteBundle, *port))
+	return sshRun(ctx, priv, ep, remoteCmd)
 }
 
 // --- ssh + keys -----------------------------------------------------------

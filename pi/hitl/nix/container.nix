@@ -27,6 +27,102 @@ let
     ln -s ${p.esptool}/bin/espsecure.py $out/bin/espsecure
   '';
 
+  # Python with pyserial actually importable (listing python3 + python3Packages.pyserial
+  # separately does NOT put pyserial on sys.path).
+  pyEnv = p.python3.withPackages (ps: with ps; [ pyserial ]);
+
+  # hitl-flash: flash a bundle (flash.json + bins) with esptool, offsets from the
+  # manifest, v4/v5 syntax auto-picked. --monitor reads the serial console after.
+  hitlFlash = p.writeTextFile {
+    name = "hitl-flash";
+    executable = true;
+    destination = "/bin/hitl-flash";
+    text = ''
+      #!${pyEnv}/bin/python3
+      import argparse, json, os, re, subprocess, sys, tarfile, tempfile
+      def syntax():
+          v = subprocess.run(["esptool", "version"], capture_output=True, text=True)
+          m = re.search(r"v?(\d+)\.", (v.stdout or "") + (v.stderr or ""))
+          major = int(m.group(1)) if m else 4
+          return ("write-flash", "--flash-mode", "--flash-freq", "--flash-size") if major >= 5 \
+              else ("write_flash", "--flash_mode", "--flash_freq", "--flash_size")
+      ap = argparse.ArgumentParser()
+      ap.add_argument("bundle"); ap.add_argument("--port", default="/dev/ttyACM0")
+      ap.add_argument("--baud", default="460800")
+      ap.add_argument("--monitor", action="store_true", help="read serial after flashing")
+      ap.add_argument("--monitor-seconds", type=float, default=10.0)
+      a = ap.parse_args()
+      d = tempfile.mkdtemp(prefix="hitl-flash-")
+      with tarfile.open(a.bundle) as t: t.extractall(d)
+      m = json.load(open(os.path.join(d, "flash.json")))
+      wf, fm, ff, fs = syntax()
+      # Flash and hard-reset into the app; the monitor then reads the boot logs
+      # that follow (reopen-on-disconnect survives the native-USB re-enumeration).
+      cmd = ["esptool", "--chip", m["chip"], "--port", a.port, "--baud", a.baud,
+             "--after", "hard_reset", wf, fm, m.get("flash_mode", "keep"),
+             ff, m.get("flash_freq", "keep"), fs, m.get("flash_size", "keep")]
+      for img in m["images"]:
+          cmd += [img["offset"], os.path.join(d, img["file"])]
+      sys.stderr.write("+ " + " ".join(cmd) + "\n")
+      rc = subprocess.call(cmd)
+      if rc or not a.monitor:
+          sys.exit(rc)
+      # No monitor-side reset: the flash already reset into the app.
+      os.execv("${hitlMonitor}/bin/hitl-monitor",
+               ["hitl-monitor", "--port", a.port,
+                "--seconds", str(a.monitor_seconds)])
+    '';
+  };
+
+  # hitl-monitor: robust serial reader for the ESP32-C6's native USB-Serial-JTAG.
+  # Reopens on disconnect (a chip reset re-enumerates the device), so it catches
+  # the boot logs that follow a reset. --reset issues esptool's native-USB reset.
+  hitlMonitor = p.writeTextFile {
+    name = "hitl-monitor";
+    executable = true;
+    destination = "/bin/hitl-monitor";
+    text = ''
+      #!${pyEnv}/bin/python3
+      import argparse, subprocess, sys, time
+      import serial
+      ap = argparse.ArgumentParser()
+      ap.add_argument("--port", default="/dev/ttyACM0")
+      ap.add_argument("--baud", type=int, default=115200)
+      ap.add_argument("--seconds", type=float, default=0.0, help="0 = until interrupted")
+      ap.add_argument("--reset", action="store_true", help="esptool hard-reset first (catch boot logs)")
+      a = ap.parse_args()
+      if a.reset:
+          # esptool knows the native USB-Serial-JTAG reset sequence; a bare RTS
+          # pulse does NOT reset a native-USB C6.
+          subprocess.run(["esptool", "--port", a.port, "--before", "default_reset",
+                          "--after", "hard_reset", "run"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+      deadline = time.time() + a.seconds if a.seconds > 0 else None
+      ser = None
+      try:
+          while deadline is None or time.time() < deadline:
+              if ser is None:
+                  try:
+                      ser = serial.Serial(a.port, a.baud, timeout=0.2)
+                      ser.dtr = False; ser.rts = False
+                  except Exception:
+                      time.sleep(0.1); continue
+              try:
+                  chunk = ser.read(4096)
+                  if chunk:
+                      sys.stdout.buffer.write(chunk); sys.stdout.buffer.flush()
+              except Exception:
+                  try: ser.close()
+                  except Exception: pass
+                  ser = None; time.sleep(0.1)
+      except KeyboardInterrupt:
+          pass
+      finally:
+          if ser is not None:
+              ser.close()
+    '';
+  };
+
   toolbox = with p; [
     bashInteractive
     coreutils
@@ -35,8 +131,9 @@ let
     esptool
     espAliases
     picocom
-    python3
-    python3Packages.pyserial
+    pyEnv
+    hitlFlash
+    hitlMonitor
     # --- next layers (add as exercised) ---
     # linuxPackages.usbip           # attach the dev board inside the container
     # openocd gdb                   # JTAG debug port
