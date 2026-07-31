@@ -212,6 +212,11 @@ jobs:
     concurrency:
       group: gh-pages-deploy
       cancel-in-progress: false
+    # Job-level env so the Cloudflare step's `if:` can test whether the secret
+    # is set (a step can't read its own step-level env in `if:`).
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     steps:
       - name: Setup repository
         uses: actions/checkout@v4
@@ -256,8 +261,8 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
 
+      # Skips cleanly (rather than failing this whole job, which also did the
+      # GitHub Pages deploy above) until the Cloudflare secrets are configured.
       - name: Deploy to Cloudflare Pages (production)
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        if: env.CLOUDFLARE_API_TOKEN != ''
         run: bazel run //web:deploy_cloudflare
