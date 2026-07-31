@@ -12,6 +12,14 @@ py_binary(
     ],
 )
 
+# Package an esptool_flash launcher's images into one self-describing flash bundle
+# (flash.json + bins). Stdlib only. Used by the `*_flashbundle` genrule.
+py_binary(
+    name = "mk_flashbundle",
+    srcs = ["mk_flashbundle.py"],
+    visibility = ["//visibility:public"],
+)
+
 # Standalone CV trace sink — receives ?trace= dumps from the capture page,
 # writes readable JSONL + PNG thumbnails, and hosts a pairing QR (segno).
 py_binary(

@@ -47,6 +47,8 @@ func main() {
 		err = cmdRelease(args)
 	case "ssh":
 		err = cmdSSH(args)
+	case "flash":
+		err = cmdFlash(args)
 	case "-h", "--help", "help":
 		usage()
 		return
@@ -68,8 +70,11 @@ func usage() {
   hitl status  [--server URL]
   hitl release <id> [--server URL]
   hitl ssh     <id> [--server URL]
+  hitl flash   [--port DEV] [--id RES] [--keep] [--server URL] <bundle.tar>
 
 Server URL: --server or $HITL_SERVER (e.g. http://hitl-rig:8087).
+Flash bundle: build one with e.g.
+  bazel build //firmware/player_app:esp32c6_flashbundle
 `)
 }
 
@@ -202,20 +207,167 @@ func cmdSSH(args []string) error {
 	return openSSH(ctx, priv, res.SSH)
 }
 
+// --- flash ----------------------------------------------------------------
+
+// hitlFlashPy is the container-side consumer: it unpacks a flash bundle, reads
+// flash.json, and runs esptool with the right per-image offsets — picking v4
+// (write_flash/--flash_mode) vs v5 (write-flash/--flash-mode) syntax at runtime.
+// Shipped over SSH at flash time so no container rebuild is needed.
+const hitlFlashPy = `import argparse, json, os, re, subprocess, sys, tarfile, tempfile
+def syntax():
+    v = subprocess.run(["esptool","version"], capture_output=True, text=True)
+    m = re.search(r"v?(\d+)\.", (v.stdout or "") + (v.stderr or ""))
+    major = int(m.group(1)) if m else 4
+    return ("write-flash","--flash-mode","--flash-freq","--flash-size") if major >= 5 \
+        else ("write_flash","--flash_mode","--flash_freq","--flash_size")
+ap = argparse.ArgumentParser()
+ap.add_argument("bundle"); ap.add_argument("--port", default="/dev/ttyACM0")
+ap.add_argument("--baud", default="460800")
+a = ap.parse_args()
+d = tempfile.mkdtemp(prefix="hitl-flash-")
+with tarfile.open(a.bundle) as t: t.extractall(d)
+m = json.load(open(os.path.join(d, "flash.json")))
+wf, fm, ff, fs = syntax()
+cmd = ["esptool","--chip",m["chip"],"--port",a.port,"--baud",a.baud, wf,
+       fm, m.get("flash_mode","keep"), ff, m.get("flash_freq","keep"), fs, m.get("flash_size","keep")]
+for img in m["images"]:
+    cmd += [img["offset"], os.path.join(d, img["file"])]
+sys.stderr.write("+ " + " ".join(cmd) + "\n")
+sys.exit(subprocess.call(cmd))
+`
+
+func cmdFlash(args []string) error {
+	fs := newFlags("flash")
+	server := serverFlag(fs)
+	owner := fs.String("owner", envOr("HITL_OWNER", defaultOwner()), "reservation owner id")
+	keyPath := fs.String("key", "", "public key to authorize (default: dedicated ~/.config/hitl key)")
+	port := fs.String("port", "/dev/ttyACM0", "serial device in the container")
+	id := fs.String("id", "", "flash into this already-active reservation instead of making one")
+	keep := fs.Bool("keep", false, "keep the reservation after flashing (default: release when we made it)")
+	_ = fs.Parse(args)
+
+	bundle := fs.Arg(0)
+	if bundle == "" {
+		return fmt.Errorf("usage: hitl flash [flags] <bundle.tar>")
+	}
+	if _, err := os.Stat(bundle); err != nil {
+		return fmt.Errorf("bundle: %w", err)
+	}
+
+	_, priv, err := resolveKeypair(*keyPath)
+	if err != nil {
+		return err
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	c := client{base: *server}
+
+	// Get an active reservation: either the one named, or a fresh one we release.
+	var ep *api.SSHEndpoint
+	if *id != "" {
+		var res api.Reservation
+		if err := c.get("/reservation/"+*id, &res); err != nil {
+			return err
+		}
+		if res.State != api.StateActive || res.SSH == nil {
+			return fmt.Errorf("reservation %s is %s (not active)", *id, res.State)
+		}
+		ep = res.SSH
+	} else {
+		pub, _, err := resolveKeypair(*keyPath)
+		if err != nil {
+			return err
+		}
+		pubBytes, err := os.ReadFile(pub)
+		if err != nil {
+			return fmt.Errorf("read pubkey: %w", err)
+		}
+		var res api.Reservation
+		if err := c.post("/reserve", api.ReserveRequest{Owner: *owner, SSHPublicKey: string(pubBytes)}, &res); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "reserved: id=%s\n", res.ID)
+		active, err := c.waitActive(ctx, res.ID)
+		if err != nil {
+			return err
+		}
+		ep = active.SSH
+		if !*keep {
+			defer func() {
+				_ = c.postRaw(fmt.Sprintf("/reservation/%s/release", res.ID), nil)
+				fmt.Fprintln(os.Stderr, "released")
+			}()
+		}
+		hbCtx, hbStop := context.WithCancel(ctx)
+		defer hbStop()
+		go c.heartbeatLoop(hbCtx, res.ID)
+	}
+	if h := hostFromServer(*server); h != "" {
+		ep.Host = h
+	}
+	if err := waitPort(ctx, ep.Host, ep.Port, 45*time.Second); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+	}
+
+	// Ship the bundle + the consumer, then flash.
+	pyFile, err := os.CreateTemp("", "hitl-flash-*.py")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(pyFile.Name())
+	if _, err := pyFile.WriteString(hitlFlashPy); err != nil {
+		return err
+	}
+	pyFile.Close()
+
+	remoteBundle := "/tmp/" + filepath.Base(bundle)
+	fmt.Fprintf(os.Stderr, "copying %s -> %s:%s\n", filepath.Base(bundle), ep.Host, remoteBundle)
+	if err := scpTo(ctx, priv, ep, []string{bundle, pyFile.Name()}, "/tmp/"); err != nil {
+		return fmt.Errorf("scp: %w", err)
+	}
+	remotePy := "/tmp/" + filepath.Base(pyFile.Name())
+	fmt.Fprintf(os.Stderr, "flashing %s on %s...\n", *port, ep.Host)
+	return sshRun(ctx, priv, ep, fmt.Sprintf("python3 %s %s --port %s", remotePy, remoteBundle, *port))
+}
+
 // --- ssh + keys -----------------------------------------------------------
 
-func openSSH(ctx context.Context, privKey string, ep *api.SSHEndpoint) error {
-	sshArgs := []string{
+// sshOpts are the common non-interactive SSH options (ephemeral known-hosts, our
+// dedicated key only). `portFlag` is "-p" for ssh, "-P" for scp.
+func sshOpts(privKey, portFlag string, port int) []string {
+	o := []string{
 		"-o", "StrictHostKeyChecking=accept-new",
 		"-o", "UserKnownHostsFile=/dev/null",
 		"-o", "LogLevel=ERROR",
-		"-p", fmt.Sprint(ep.Port),
+		portFlag, fmt.Sprint(port),
 	}
 	if privKey != "" {
-		sshArgs = append(sshArgs, "-i", privKey, "-o", "IdentitiesOnly=yes")
+		o = append(o, "-i", privKey, "-o", "IdentitiesOnly=yes")
 	}
-	sshArgs = append(sshArgs, fmt.Sprintf("%s@%s", ep.User, ep.Host))
+	return o
+}
+
+func openSSH(ctx context.Context, privKey string, ep *api.SSHEndpoint) error {
+	sshArgs := append(sshOpts(privKey, "-p", ep.Port), fmt.Sprintf("%s@%s", ep.User, ep.Host))
 	cmd := exec.CommandContext(ctx, "ssh", sshArgs...)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	return cmd.Run()
+}
+
+// scpTo copies local files into remoteDir on the reservation's container.
+func scpTo(ctx context.Context, privKey string, ep *api.SSHEndpoint, locals []string, remoteDir string) error {
+	args := sshOpts(privKey, "-P", ep.Port)
+	args = append(args, locals...)
+	args = append(args, fmt.Sprintf("%s@%s:%s", ep.User, ep.Host, remoteDir))
+	cmd := exec.CommandContext(ctx, "scp", args...)
+	cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
+	return cmd.Run()
+}
+
+// sshRun runs one command on the reservation, streaming its output.
+func sshRun(ctx context.Context, privKey string, ep *api.SSHEndpoint, remoteCmd string) error {
+	args := append(sshOpts(privKey, "-p", ep.Port), fmt.Sprintf("%s@%s", ep.User, ep.Host), remoteCmd)
+	cmd := exec.CommandContext(ctx, "ssh", args...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	return cmd.Run()
 }
