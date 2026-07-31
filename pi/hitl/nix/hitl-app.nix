@@ -21,9 +21,17 @@ in
   virtualisation.podman.enable = true;
   virtualisation.containers.enable = true;
 
-  # Tailscale — agents reach the rig over the tailnet. MVP: run `tailscale up`
-  # once by hand (or set services.tailscale.authKeyFile to a provisioned secret).
-  services.tailscale.enable = true;
+  # Tailscale — agents reach the rig over the tailnet, so a move/reflash can't
+  # strand it (WiFi alone did, once). The auth key is pre-seeded out of band to
+  # authKeyFile (never in git or the nix store, per sbc-base's secrets policy);
+  # tailscaled-autoconnect runs `tailscale up` from it on a fresh state dir (e.g.
+  # after a reflash) and is a no-op once already logged in. --ssh lets agents SSH
+  # to the rig over the tailnet with tailnet identity instead of managed keys.
+  services.tailscale = {
+    enable = true;
+    authKeyFile = "/var/lib/tailscale/authkey";
+    extraUpFlags = [ "--ssh" "--hostname=hitl-rig" ];
+  };
 
   # USBIP host modules (attach the dev board into the container). Deferred to the
   # USBIP layer — enable once confirmed present in the nixos-raspberrypi kernel;
