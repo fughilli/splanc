@@ -192,17 +192,34 @@ sh_binary(
     ],
 )
 
+# The complete publish tree (app bundle + the four wasm bundles) and its data
+# deps, shared by the Cloudflare and GitHub Pages publishers below. The staging
+# layout itself lives in stage_site.lib.sh (sourced by both), so every origin
+# serves a byte-identical tree.
+SITE_DATA = [
+    ":dist",
+    "stage_site.lib.sh",
+    "//firmware/fx_vm:fx_vm_web",
+    "//firmware/pulse:pulse_web",
+    "//fx_compiler:fx_compiler_web",
+    "//solver:solver_web",
+]
+
 # Publish the static artifacts (app bundle + wasm solver) to Cloudflare
 # Pages — the externally-hosted webapp the ESP32 player points phones at.
 # Deploys need CLOUDFLARE_API_TOKEN; `-- --dry-run` stages and prints only.
 sh_binary(
     name = "deploy_cloudflare",
     srcs = ["deploy_cloudflare.sh"],
-    data = [
-        ":dist",
-        "//firmware/fx_vm:fx_vm_web",
-        "//firmware/pulse:pulse_web",
-        "//fx_compiler:fx_compiler_web",
-        "//solver:solver_web",
-    ],
+    data = SITE_DATA,
+)
+
+# Materialize the same publish tree into a directory for the GitHub Pages CI:
+#   bazel run //web:stage_site -- <output-dir>
+# The master-merge job publishes it to the Pages root; the PR job publishes it
+# under pr-preview/pr-N/ (see .github/workflows/deploy-pages.yaml).
+sh_binary(
+    name = "stage_site",
+    srcs = ["stage_site.sh"],
+    data = SITE_DATA,
 )

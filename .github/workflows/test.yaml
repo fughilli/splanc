@@ -1,11 +1,18 @@
 name: Test
 on:
+  # `closed` is needed so the per-PR Pages preview is torn down when the PR is
+  # merged/closed (see the deploy-preview / cleanup-preview jobs). The build
+  # jobs below skip that event.
   pull_request:
+    types: [opened, synchronize, reopened, closed]
   push:
     branches:
       - main
 jobs:
   test:
+    # Don't run the (heavy) build on a PR-close event — that only tears down the
+    # preview (cleanup-preview job).
+    if: github.event.action != 'closed'
     runs-on: ubuntu-latest
     steps:
       - name: Setup repository
@@ -38,6 +45,7 @@ jobs:
   # firmware compile/link breakage is still caught in CI. Needs the same Nix
   # toolchains as the test job.
   firmware:
+    if: github.event.action != 'closed'
     runs-on: ubuntu-latest
     steps:
       - name: Setup repository
@@ -83,6 +91,7 @@ jobs:
         run: bazel build -c opt --disk_cache="$HOME/.cache/bazel-disk" //firmware/player_app:esp32c6
 
   lint:
+    if: github.event.action != 'closed'
     runs-on: ubuntu-latest
     steps:
       - name: Setup repository
@@ -95,3 +104,160 @@ jobs:
 
       - name: Run pre-commit
         uses: pre-commit/action@v3.0.1
+
+  # ---------------------------------------------------------------------------
+  # Deploy the PWA to GitHub Pages (FUG-26).
+  #
+  # Hosting model: the gh-pages branch is the Pages source. The main site lives
+  # at its root (https://fughilli.github.io/splanc/) and every open PR gets a
+  # staging copy under pr-preview/pr-N/. The web bundle is built base-relative
+  # (web/vite.config.ts), so the same tree works at both the root and a subpath.
+  #
+  # Repo setup (one-time): Settings → Pages → "Deploy from a branch" → gh-pages
+  # / (root). Cloudflare secrets: CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID.
+  # ---------------------------------------------------------------------------
+
+  # Build the complete static site tree (app bundle + the solver/pulse/fx-vm/
+  # fx-compiler wasm bundles) once, and hand it to the deploy jobs as an
+  # artifact — so the (heavy) Bazel/wasm build runs a single time per pipeline.
+  # Gated on the tests passing.
+  build-site:
+    if: github.event.action != 'closed'
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup repository
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+
+      - name: Setup Bazel
+        uses: bazel-contrib/setup-bazel@0.15.0
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}
+          repository-cache: true
+
+      # Materialize the publish tree into ./_site (bundle at /, wasm bundles at
+      # /solver /pulse /fx-compiler /fx-vm — same layout Cloudflare/the Pi serve).
+      - name: Stage site
+        run: bazel run //web:stage_site -- "$GITHUB_WORKSPACE/_site"
+
+      - name: Upload site artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: site
+          path: _site
+          retention-days: 3
+          if-no-files-found: error
+
+  # Per-PR staging preview: publish _site under pr-preview/pr-N/ on gh-pages and
+  # drop a sticky comment on the PR with the link. Same-repo PRs only (fork PRs
+  # get a read-only token and can't push gh-pages — the step just no-ops).
+  deploy-preview:
+    if: github.event_name == 'pull_request' && github.event.action != 'closed'
+    needs: build-site
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    # Serialize gh-pages writes across concurrent pipelines so pushes don't race.
+    concurrency:
+      group: gh-pages-deploy
+      cancel-in-progress: false
+    steps:
+      - name: Download site artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: site
+          path: _site
+
+      - name: Deploy PR preview
+        uses: rossjrw/pr-preview-action@v1
+        with:
+          source-dir: _site
+          preview-branch: gh-pages
+          umbrella-dir: pr-preview
+
+  # PR closed/merged: remove its pr-preview/pr-N/ directory and update the
+  # comment. Runs without a build — hence a separate, cheap job.
+  cleanup-preview:
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    concurrency:
+      group: gh-pages-deploy
+      cancel-in-progress: false
+    steps:
+      - name: Remove PR preview
+        uses: rossjrw/pr-preview-action@v1
+        with:
+          preview-branch: gh-pages
+          umbrella-dir: pr-preview
+          action: remove
+
+  # master merge: publish _site to the gh-pages root (the main site), preserving
+  # the pr-preview/ subtree, AND publish the same tree to Cloudflare production.
+  deploy-production:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: build-site
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: gh-pages-deploy
+      cancel-in-progress: false
+    steps:
+      - name: Setup repository
+        uses: actions/checkout@v4
+
+      - name: Download site artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: site
+          path: _site
+
+      # Publish to the gh-pages root. clean-exclude keeps the open PRs' previews
+      # (pr-preview/) from being wiped by the root deploy.
+      - name: Deploy to GitHub Pages (main site)
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          folder: _site
+          branch: gh-pages
+          clean: true
+          clean-exclude: |
+            pr-preview/
+
+      # Cloudflare production deploy via the existing //web:deploy_cloudflare
+      # target. It shells out to `pnpm dlx wrangler@4`, so node + pnpm need to be
+      # on PATH.
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+
+      - name: Setup Bazel
+        uses: bazel-contrib/setup-bazel@0.15.0
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}
+          repository-cache: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Deploy to Cloudflare Pages (production)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: bazel run //web:deploy_cloudflare
