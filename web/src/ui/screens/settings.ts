@@ -145,7 +145,10 @@ export function SettingsScreen(_router: Router): Screen {
           step: 0.05,
           value: s.uiScale,
           format: (v) => `${Math.round(v * 100)}%`,
-          onInput: (v) => set({ uiScale: v }),
+          // UI scale rescales the whole app's root font-size, so applying it on
+          // every `input` reflows the entire UI mid-drag. Commit only on release
+          // (`change`); the readout still previews the target value while dragging.
+          onChange: (v) => set({ uiScale: v }),
         }).el,
       ),
     );
