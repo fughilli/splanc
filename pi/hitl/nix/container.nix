@@ -18,12 +18,22 @@ let
 
   sshUser = "agent";
 
+  # nixpkgs esptool ships esptool.py/espefuse.py/espsecure.py; add no-suffix
+  # aliases so `esptool` etc. (what agents reflexively type) also work.
+  espAliases = p.runCommand "esp-aliases" { } ''
+    mkdir -p $out/bin
+    ln -s ${p.esptool}/bin/esptool.py   $out/bin/esptool
+    ln -s ${p.esptool}/bin/espefuse.py  $out/bin/espefuse
+    ln -s ${p.esptool}/bin/espsecure.py $out/bin/espsecure
+  '';
+
   toolbox = with p; [
     bashInteractive
     coreutils
     openssh
     # ESP flashing + serial (MVP):
     esptool
+    espAliases
     picocom
     python3
     python3Packages.pyserial
