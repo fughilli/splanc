@@ -91,6 +91,15 @@ func (p *PodmanRunner) Start(ctx context.Context, id, owner, sshKey string) (*ap
 	if _, err := os.Stat("/run/dbus/system_bus_socket"); err == nil {
 		args = append(args, "-v", "/run/dbus/system_bus_socket:/run/dbus/system_bus_socket")
 	}
+	// JTAG: give the container raw USB (libusb, for openocd on the C6's built-in
+	// USB-JTAG). Mount the whole bus (survives device re-enumeration) + allow the
+	// USB major (189) through the device cgroup.
+	if _, err := os.Stat("/dev/bus/usb"); err == nil {
+		args = append(args,
+			"-v", "/dev/bus/usb:/dev/bus/usb",
+			"--device-cgroup-rule", "c 189:* rwm",
+		)
+	}
 	if p.cfg.Privileged {
 		args = append(args, "--privileged")
 	}

@@ -53,6 +53,8 @@ func main() {
 		err = cmdMonitor(args)
 	case "ble":
 		err = cmdBle(args)
+	case "jtag":
+		err = cmdJtag(args)
 	case "-h", "--help", "help":
 		usage()
 		return
@@ -77,6 +79,7 @@ func usage() {
   hitl flash   [--port DEV] [--id RES] [--keep] [--monitor] [--server URL] <bundle.tar>
   hitl monitor [--port DEV] [--id RES] [--keep] [--reset] [--seconds N] [--server URL]
   hitl ble     scan [--name S] [--seconds N] | gatt <address>   [--id RES] [--keep]
+  hitl jtag    [--id RES] [--keep] [-- openocd args]            # C6 built-in USB-JTAG
 
 Server URL: --server or $HITL_SERVER (e.g. http://hitl-rig:8087).
 Flash bundle: build one with e.g.
@@ -333,6 +336,37 @@ func cmdBle(args []string) error {
 	defer release()
 	return sshRun(ctx, priv, ep, remote)
 }
+
+// --- jtag -----------------------------------------------------------------
+
+func cmdJtag(args []string) error {
+	fs := newFlags("jtag")
+	server := serverFlag(fs)
+	owner := fs.String("owner", envOr("HITL_OWNER", defaultOwner()), "reservation owner id")
+	keyPath := fs.String("key", "", "public key to authorize (default: dedicated ~/.config/hitl key)")
+	id := fs.String("id", "", "use this already-active reservation instead of making one")
+	keep := fs.Bool("keep", false, "keep the reservation afterward (default: release when we made it)")
+	_ = fs.Parse(args)
+
+	// Any remaining args pass through to openocd (e.g. -c "init; reset halt; ...").
+	// No args → hitl-jtag's default (halt + read pc + reset-run).
+	remote := "hitl-jtag"
+	for _, a := range fs.Args() {
+		remote += " " + shellQuote(a)
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	c := client{base: *server}
+	ep, priv, release, err := acquire(ctx, c, *server, *keyPath, *owner, *id, *keep)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return sshRun(ctx, priv, ep, remote)
+}
+
+func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
 // acquire yields an active reservation's SSH endpoint (host rewritten to match
 // the server we reached, sshd port waited-on). With id set it reuses that

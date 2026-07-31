@@ -31,6 +31,23 @@ let
   # NOT put them on sys.path). bleak = BLE central via the host bluetoothd/D-Bus.
   pyEnv = p.python3.withPackages (ps: with ps; [ pyserial bleak ]);
 
+  # Espressif OpenOCD — the C6's (RISC-V) built-in USB-JTAG (mainline openocd only
+  # covers Xtensa esp32/s2/s3). Needs raw USB (the daemon passes /dev/bus/usb).
+  openocdEsp = import ./openocd-esp32.nix { pkgs = p; };
+
+  # hitl-jtag: openocd against the C6 built-in USB-JTAG. No args → halt + read pc +
+  # reset-run; otherwise pass through openocd -c commands (e.g. a gdbserver).
+  hitlJtag = p.writeShellApplication {
+    name = "hitl-jtag";
+    text = ''
+      cfg=(-s ${openocdEsp}/share/openocd/scripts -f board/esp32c6-builtin.cfg)
+      if [ "$#" -eq 0 ]; then
+        exec ${openocdEsp}/bin/openocd "''${cfg[@]}" -c "init; halt; reg pc; reset run; shutdown"
+      fi
+      exec ${openocdEsp}/bin/openocd "''${cfg[@]}" "$@"
+    '';
+  };
+
   # hitl-flash: flash a bundle (flash.json + bins) with esptool, offsets from the
   # manifest, v4/v5 syntax auto-picked. --monitor reads the serial console after.
   hitlFlash = p.writeTextFile {
@@ -173,6 +190,9 @@ let
     # BLE central (drives the host bluetoothd over the mounted system D-Bus):
     hitlBle
     bluez
+    # JTAG/debug over the C6 built-in USB-JTAG (needs the daemon's /dev/bus/usb):
+    openocdEsp
+    hitlJtag
     # --- next layers (add as exercised) ---
     # linuxPackages.usbip           # attach the dev board inside the container
     # openocd gdb                   # JTAG debug port
