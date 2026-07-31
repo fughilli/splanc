@@ -9,6 +9,7 @@
 #   nix run 'path:pi/hitl#hitl' -- reserve
 # On macOS, start the aarch64-linux builder first: bazel run @sbc_deploy//:linux_builder.
 
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 load("@sbc_deploy//deploy:defs.bzl", "sbc_application")
 
 sbc_application(
@@ -18,4 +19,16 @@ sbc_application(
     # Real SSID/PSKs live in wifi.yaml (gitignored); copy wifi.yaml.example.
     # Without this the rig bakes no wifi profile and gets stranded when moved.
     wifi_config_file = "wifi.yaml",
+)
+
+# Seed persistent (runtime) WiFi networks onto the running rig, composed on top of
+# the baked BigVibes/FugLink without a rebuild:
+#   bazel run //pi/hitl:seed_wifi                       # seed pi/secrets/wifi-seed.yaml
+#   bazel run //pi/hitl:seed_wifi -- --ssid X --psk Y   # one-off
+#   bazel run //pi/hitl:seed_wifi -- --list / --remove SSID
+sh_binary(
+    name = "seed_wifi",
+    srcs = ["scripts/seed-wifi.sh"],
+    data = ["@sbc_deploy//deploy:scripts/seed_wifi.sh"],
+    deps = ["@bazel_tools//tools/bash/runfiles"],
 )

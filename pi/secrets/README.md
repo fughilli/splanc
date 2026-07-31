@@ -28,10 +28,10 @@ survive redeploys — seed them as a persistent layer. Put extra networks here
 Then apply them (composes with the baked set by priority):
 
 ```sh
-pi/hitl/scripts/seed-wifi.sh                     # seed all of wifi-seed.yaml
-pi/hitl/scripts/seed-wifi.sh --ssid X --psk Y    # one-off, no file
-pi/hitl/scripts/seed-wifi.sh --list              # show seeded networks
-pi/hitl/scripts/seed-wifi.sh --remove CoffeeShop
+bazel run //pi/hitl:seed_wifi                        # seed all of wifi-seed.yaml
+bazel run //pi/hitl:seed_wifi -- --ssid X --psk Y    # one-off, no file
+bazel run //pi/hitl:seed_wifi -- --list              # show seeded networks
+bazel run //pi/hitl:seed_wifi -- --remove CoffeeShop
 ```
 
 Seeded networks live in `/etc/NetworkManager/system-connections` on the rig;
