@@ -38,6 +38,11 @@ hitl monitor --reset --seconds 15               # --reset to catch boot logs
 # 4. Interactive shell in the container (esptool, python+pyserial, picocom, the
 #    passed-through /dev/ttyACM0):
 hitl reserve                                    # drops you in; logout releases
+
+# 5. BLE: scan for the DUT and introspect its GATT (drives the rig's Bluetooth
+#    adapter from inside the container).
+hitl ble scan --name "Led Widget"               # find the DUT's address
+hitl ble gatt F0:F5:BD:2C:E6:86                 # dump its services/characteristics
 ```
 
 `--id <res>` reuses an existing reservation instead of making a new one;
@@ -93,6 +98,8 @@ with `pyserial`, `picocom`, `coreutils`, `openssh`. The DUT is `/dev/ttyACM0`
 
 ## Not yet available
 
-JTAG/GDB debugging, BLE central (scan/connect to the DUT's GATT from the rig),
-and USBIP passthrough are planned but not wired up. Serial + flash cover most
-firmware E2E today.
+JTAG/GDB on-chip debugging (needs Espressif's OpenOCD fork — the C6 is RISC-V and
+mainline OpenOCD doesn't support it). Serial + flash + BLE cover most firmware E2E
+today. USBIP device export is available on the rig host (`usbip bind`) for
+attaching the C6 to a remote machine over the tailnet, but there's no `hitl`
+wrapper yet.
