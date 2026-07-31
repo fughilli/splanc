@@ -14,16 +14,16 @@ the container is torn down and the next waiter is promoted.
 
 ## Components
 
-| Component | Where | What |
-| --- | --- | --- |
-| `hitl-managerd` | Pi (systemd) | Reservation queue + container lifecycle; JSON API over the tailnet. Go. |
-| `hitl` CLI | agent container | `reserve` / `status` / `release` / `ssh`. Go, distributed as a nix package. |
-| test container | Pi (podman) | `sshd` + ESP toolbox; the dev board (USBIP) + a BT controller inside. nix `dockerTools`. |
-| Pi NixOS system | Pi | sbc-deploy consumer: Tailscale, Podman, USBIP host, the daemon, the container image. |
+| Component       | Where           | What                                                                                     |
+| --------------- | --------------- | ---------------------------------------------------------------------------------------- |
+| `hitl-managerd` | Pi (systemd)    | Reservation queue + container lifecycle; JSON API over the tailnet. Go.                  |
+| `hitl` CLI      | agent container | `reserve` / `status` / `release` / `ssh`. Go, distributed as a nix package.              |
+| test container  | Pi (podman)     | `sshd` + ESP toolbox; the dev board (USBIP) + a BT controller inside. nix `dockerTools`. |
+| Pi NixOS system | Pi              | sbc-deploy consumer: Tailscale, Podman, USBIP host, the daemon, the container image.     |
 
 ## Flow
 
-```
+```text
 agent> hitl reserve
    └─POST /reserve {owner, ssh_pubkey}────────────► hitl-managerd
         (queued; agent polls /reservation/{id})       │  reconcile: head idle?
@@ -45,7 +45,7 @@ daemon `Cleanup`s stray containers on startup (crash recovery).
 - **Container** → `nix/container.nix` (`dockerTools.buildLayeredImage`), loaded
   into Podman at boot.
 - **Pi system** → `flake.nix` = `sbc-deploy.lib.mkSbcProject { appModules =
-  [ ./nix/hitl-app.nix ]; … }`; Bazel `sbc_application` gives the
+[ ./nix/hitl-app.nix ]; … }`; Bazel `sbc_application` gives the
   image/deploy/ssh targets. The `hitl` CLI is `packages.<system>.hitl` for
   agents to `nix run`/install.
 

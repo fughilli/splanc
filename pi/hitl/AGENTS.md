@@ -89,7 +89,7 @@ with `pyserial`, `picocom`, `coreutils`, `openssh`. The DUT is `/dev/ttyACM0`
 
 - **Boot strapping:** the C6's native USB-Serial-JTAG resets don't override the
   GPIO9/BOOT strapping pin. If every reset lands in `USB_BOOT` / `wait usb
-  download`, the BOOT button is held/stuck — this needs a human to release it and
+download`, the BOOT button is held/stuck — this needs a human to release it and
   tap RESET. Report it in the issue; agents can't fix it.
 - **Console:** the firmware logs over USB-Serial-JTAG (the same `/dev/ttyACM0`
   used to flash) — no separate UART bridge needed.
@@ -108,9 +108,11 @@ with `pyserial`, `picocom`, `coreutils`, `openssh`. The DUT is `/dev/ttyACM0`
 
 The rig host can export the C6 over the tailnet so a remote machine attaches it as
 a local USB device (no `hitl` wrapper yet — run on the rig host):
+
 ```sh
 usbipd -D && usbip bind -b 1-2      # export; `usbip unbind -b 1-2` to restore
 # on your machine: usbip attach -r hitl-rig -b 1-2
 ```
+
 Note this detaches the device from the rig (its serial tty disappears there) until
 unbound, so it conflicts with reservations using the DUT.

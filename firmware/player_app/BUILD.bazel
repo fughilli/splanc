@@ -9,11 +9,11 @@ against the host profile, and the RFC6455 codec is host-tested byte-exactly.
 
 load("@embedded//rules:firmware.bzl", "firmware_binary")
 load("@embedded//rules:flash.bzl", "esptool_flash")
-load("//tools:flash_bundle.bzl", "flash_bundle")
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("@rules_rust//rust:defs.bzl", "rust_library", "rust_static_library", "rust_test")
+load("//tools:flash_bundle.bzl", "flash_bundle")
 
 package(default_visibility = ["//visibility:public"])
 

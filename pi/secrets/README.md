@@ -4,15 +4,15 @@ Everything in this directory is gitignored except this README and `.gitignore`.
 It holds the per-operator, locally-generated/provisioned secrets for the `pi/*`
 rigs. None of it is baked into the nix store or git.
 
-| file                | what it is                                        | how to (re)create |
-|---------------------|---------------------------------------------------|-------------------|
-| `deploy_key[.pub]`  | SSH key for `deploy_live` / `hitl.ssh` (root@rig) | `bazel run //pi/hitl:hitl.keys -- init` |
-| `tailscale-authkey` | Tailscale auth key, pre-seeded to the rig         | mint at https://login.tailscale.com/admin/settings/keys |
-| `wifi-seed.yaml`    | extra WiFi networks seeded onto the rig at runtime| hand-written (schema below) |
+| file                | what it is                                         | how to (re)create                                         |
+| ------------------- | -------------------------------------------------- | --------------------------------------------------------- |
+| `deploy_key[.pub]`  | SSH key for `deploy_live` / `hitl.ssh` (root@rig)  | `bazel run //pi/hitl:hitl.keys -- init`                   |
+| `tailscale-authkey` | Tailscale auth key, pre-seeded to the rig          | mint at <https://login.tailscale.com/admin/settings/keys> |
+| `wifi-seed.yaml`    | extra WiFi networks seeded onto the rig at runtime | hand-written (schema below)                               |
 
 ## Runtime WiFi (`wifi-seed.yaml`)
 
-The rig's *baked* WiFi (BigVibes/FugLink) is in `pi/hitl/wifi.yaml`, compiled into
+The rig's _baked_ WiFi (BigVibes/FugLink) is in `pi/hitl/wifi.yaml`, compiled into
 the image. To add networks to a running rig **without a rebuild** — and have them
 survive redeploys — seed them as a persistent layer. Put extra networks here
 (same schema as `wifi.yaml`):
@@ -21,7 +21,7 @@ survive redeploys — seed them as a persistent layer. Put extra networks here
 - ssid: CoffeeShop
   psk: latte12345
   priority: 25
-- ssid: OpenGuest      # open network — omit psk
+- ssid: OpenGuest # open network — omit psk
   priority: 15
 ```
 

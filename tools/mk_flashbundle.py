@@ -73,8 +73,9 @@ def main():
             info.size = len(data)
             tar.addfile(info, io.BytesIO(data))
 
-    sys.stderr.write("wrote %s: chip=%s %s\n" % (
-        a.out, chip, " ".join("%s->%s" % (o, n) for o, n, _ in images)))
+    sys.stderr.write(
+        "wrote %s: chip=%s %s\n" % (a.out, chip, " ".join("%s->%s" % (o, n) for o, n, _ in images))
+    )
 
 
 if __name__ == "__main__":
