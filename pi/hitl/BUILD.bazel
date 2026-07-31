@@ -1,0 +1,18 @@
+# HITL rig — Pi image + live-deploy, via the sbc-deploy framework.
+#
+#   bazel run //pi/hitl:hitl.keys        -- init
+#   bazel run //pi/hitl:hitl.image_sd    -- --device /dev/sdX   # full: base + HITL app
+#   bazel run //pi/hitl:hitl.deploy_live -- hitl-rig            # push to a running rig
+#   bazel run //pi/hitl:hitl.ssh         -- hitl-rig            # shell into the rig itself
+#
+# The agent-facing CLI is the Nix package `//pi/hitl (flake) #hitl`:
+#   nix run 'path:pi/hitl#hitl' -- reserve
+# On macOS, start the aarch64-linux builder first: bazel run @sbc_deploy//:linux_builder.
+
+load("@sbc_deploy//deploy:defs.bzl", "sbc_application")
+
+sbc_application(
+    name = "hitl",
+    flake = "pi/hitl",
+    hostname = "hitl-rig",
+)
