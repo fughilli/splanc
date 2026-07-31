@@ -47,7 +47,10 @@ hitl ble gatt F0:F5:BD:2C:E6:86                 # dump its services/characterist
 # 6. JTAG: halt/inspect the RISC-V core over the C6's built-in USB-JTAG.
 hitl jtag                                        # halt, print PC, reset-run
 hitl jtag -- -c "init; reset halt; reg; shutdown"   # arbitrary openocd commands
-#   (openocd also opens a gdbserver on :3333 during a session)
+
+# 7. GDB: openocd gdbserver + riscv gdb attached (interactive, or batch -ex).
+hitl gdb --elf bazel-bin/firmware/player_app/player_app   # symbols + interactive
+hitl gdb -- -batch -ex "monitor reset halt" -ex "bt"      # scripted
 ```
 
 `--id <res>` reuses an existing reservation instead of making a new one;
