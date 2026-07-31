@@ -86,6 +86,11 @@ func (p *PodmanRunner) Start(ctx context.Context, id, owner, sshKey string) (*ap
 		"-v", authKeys + ":/run/hitl/authorized_keys:ro",
 		"-e", "HITL_SSH_USER=" + p.cfg.SSHUser,
 	}
+	// BLE: mount the host's system D-Bus socket so bleak in the container can
+	// drive the host bluetoothd (hci0). Present only if hardware.bluetooth is on.
+	if _, err := os.Stat("/run/dbus/system_bus_socket"); err == nil {
+		args = append(args, "-v", "/run/dbus/system_bus_socket:/run/dbus/system_bus_socket")
+	}
 	if p.cfg.Privileged {
 		args = append(args, "--privileged")
 	}

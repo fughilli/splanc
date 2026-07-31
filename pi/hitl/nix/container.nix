@@ -27,9 +27,9 @@ let
     ln -s ${p.esptool}/bin/espsecure.py $out/bin/espsecure
   '';
 
-  # Python with pyserial actually importable (listing python3 + python3Packages.pyserial
-  # separately does NOT put pyserial on sys.path).
-  pyEnv = p.python3.withPackages (ps: with ps; [ pyserial ]);
+  # Python with pyserial + bleak actually importable (listing them separately does
+  # NOT put them on sys.path). bleak = BLE central via the host bluetoothd/D-Bus.
+  pyEnv = p.python3.withPackages (ps: with ps; [ pyserial bleak ]);
 
   # hitl-flash: flash a bundle (flash.json + bins) with esptool, offsets from the
   # manifest, v4/v5 syntax auto-picked. --monitor reads the serial console after.
@@ -123,6 +123,40 @@ let
     '';
   };
 
+  # hitl-ble: BLE central helper (bleak → host bluetoothd over the mounted system
+  # D-Bus socket). Scan for the DUT and dump/read its GATT.
+  hitlBle = p.writeTextFile {
+    name = "hitl-ble";
+    executable = true;
+    destination = "/bin/hitl-ble";
+    text = ''
+      #!${pyEnv}/bin/python3
+      import argparse, asyncio, sys
+      from bleak import BleakScanner, BleakClient
+      async def scan(seconds, name):
+          devs = await BleakScanner.discover(timeout=seconds)
+          for d in sorted(devs, key=lambda x: x.address):
+              if name and name.lower() not in (d.name or "").lower():
+                  continue
+              print("%s  rssi=%s  %s" % (d.address, getattr(d, "rssi", "?"), d.name or ""))
+      async def gatt(address):
+          async with BleakClient(address) as c:
+              for s in c.services:
+                  print("service %s" % s.uuid)
+                  for ch in s.characteristics:
+                      print("  char %s  [%s]" % (ch.uuid, ",".join(ch.properties)))
+      ap = argparse.ArgumentParser(prog="hitl-ble")
+      sub = ap.add_subparsers(dest="cmd", required=True)
+      s = sub.add_parser("scan"); s.add_argument("--seconds", type=float, default=6.0); s.add_argument("--name", default="")
+      g = sub.add_parser("gatt"); g.add_argument("address")
+      a = ap.parse_args()
+      try:
+          asyncio.run(scan(a.seconds, a.name) if a.cmd == "scan" else gatt(a.address))
+      except Exception as e:
+          sys.exit("hitl-ble: %s" % e)
+    '';
+  };
+
   toolbox = with p; [
     bashInteractive
     coreutils
@@ -134,6 +168,9 @@ let
     pyEnv
     hitlFlash
     hitlMonitor
+    # BLE central (drives the host bluetoothd over the mounted system D-Bus):
+    hitlBle
+    bluez
     # --- next layers (add as exercised) ---
     # linuxPackages.usbip           # attach the dev board inside the container
     # openocd gdb                   # JTAG debug port

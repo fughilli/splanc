@@ -17,6 +17,11 @@ let
   devices = [ "/dev/ttyACM0" ];
 in
 {
+  # Headless rig: drop the NixOS manual + man-page closure (groff/texinfo/aspell/…),
+  # which otherwise dominates the image and deploy download.
+  documentation.enable = false;
+  documentation.nixos.enable = false;
+
   # Podman for the per-reservation test containers.
   virtualisation.podman.enable = true;
   virtualisation.containers.enable = true;
@@ -33,13 +38,35 @@ in
     extraUpFlags = [ "--ssh" "--hostname=hitl-rig" ];
   };
 
-  # USBIP host modules (attach the dev board into the container). Deferred to the
-  # USBIP layer — enable once confirmed present in the nixos-raspberrypi kernel;
-  # a missing module here can fail activation.
-  # boot.kernelModules = [ "usbip-host" "vhci-hcd" ];
+  # USBIP host modules (attach the dev board into the container / to a remote).
+  # Confirmed present in the nixos-raspberrypi kernel (usbip-host/vhci-hcd .ko).
+  boot.kernelModules = [ "usbip-host" "vhci-hcd" ];
 
-  # The `hitl` CLI is handy on the rig too; usbutils for lsusb/bus ids.
-  environment.systemPackages = [ hitl pkgs.usbutils ];
+  # Bluetooth controller (hci0) for BLE central: agents scan/connect to the DUT's
+  # GATT from inside the container via bleak, which drives the host bluetoothd
+  # over the system D-Bus socket (mounted into the container by the daemon).
+  hardware.bluetooth.enable = true;
+  hardware.bluetooth.powerOnBoot = true;
+
+  # Let the container (its agent user, over the mounted system D-Bus) drive
+  # org.bluez for BLE central. Permissive, but this is a single-purpose bench.
+  services.dbus.packages = [
+    (pkgs.writeTextDir "share/dbus-1/system.d/hitl-bluetooth.conf" ''
+      <!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-BUS Bus Configuration 1.0//EN"
+       "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+      <busconfig>
+        <policy context="default">
+          <allow send_destination="org.bluez"/>
+          <allow send_destination="org.bluez" send_interface="org.freedesktop.DBus.Properties"/>
+          <allow send_destination="org.bluez" send_interface="org.freedesktop.DBus.ObjectManager"/>
+        </policy>
+      </busconfig>
+    '')
+  ];
+
+  # The `hitl` CLI is handy on the rig too; usbutils for lsusb/bus ids, usbip for
+  # bind/attach.
+  environment.systemPackages = [ hitl pkgs.usbutils pkgs.linuxPackages.usbip ];
 
   # Load the test image into Podman at boot.
   systemd.services.hitl-image-load = {

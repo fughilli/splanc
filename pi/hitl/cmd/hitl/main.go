@@ -51,6 +51,8 @@ func main() {
 		err = cmdFlash(args)
 	case "monitor":
 		err = cmdMonitor(args)
+	case "ble":
+		err = cmdBle(args)
 	case "-h", "--help", "help":
 		usage()
 		return
@@ -74,6 +76,7 @@ func usage() {
   hitl ssh     <id> [--server URL]
   hitl flash   [--port DEV] [--id RES] [--keep] [--monitor] [--server URL] <bundle.tar>
   hitl monitor [--port DEV] [--id RES] [--keep] [--reset] [--seconds N] [--server URL]
+  hitl ble     scan [--name S] [--seconds N] | gatt <address>   [--id RES] [--keep]
 
 Server URL: --server or $HITL_SERVER (e.g. http://hitl-rig:8087).
 Flash bundle: build one with e.g.
@@ -283,6 +286,47 @@ func cmdMonitor(args []string) error {
 		cmd += " --reset"
 	}
 	return sshRun(ctx, priv, ep, cmd)
+}
+
+// --- ble ------------------------------------------------------------------
+
+func cmdBle(args []string) error {
+	fs := newFlags("ble")
+	server := serverFlag(fs)
+	owner := fs.String("owner", envOr("HITL_OWNER", defaultOwner()), "reservation owner id")
+	keyPath := fs.String("key", "", "public key to authorize (default: dedicated ~/.config/hitl key)")
+	id := fs.String("id", "", "use this already-active reservation instead of making one")
+	keep := fs.Bool("keep", false, "keep the reservation afterward (default: release when we made it)")
+	seconds := fs.Float64("seconds", 6, "scan duration")
+	name := fs.String("name", "", "scan: only show devices whose name contains this")
+	_ = fs.Parse(args)
+
+	var remote string
+	switch sub := fs.Arg(0); sub {
+	case "", "scan":
+		remote = fmt.Sprintf("hitl-ble scan --seconds %g", *seconds)
+		if *name != "" {
+			remote += " --name '" + strings.ReplaceAll(*name, "'", "") + "'"
+		}
+	case "gatt":
+		addr := fs.Arg(1)
+		if addr == "" {
+			return fmt.Errorf("usage: hitl ble gatt <address>")
+		}
+		remote = "hitl-ble gatt " + addr
+	default:
+		return fmt.Errorf("hitl ble: unknown subcommand %q (scan|gatt)", sub)
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	c := client{base: *server}
+	ep, priv, release, err := acquire(ctx, c, *server, *keyPath, *owner, *id, *keep)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return sshRun(ctx, priv, ep, remote)
 }
 
 // acquire yields an active reservation's SSH endpoint (host rewritten to match
