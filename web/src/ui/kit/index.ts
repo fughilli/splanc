@@ -135,6 +135,11 @@ export function Slider(opts: {
   value: number;
   format?: (v: number) => string;
   onInput?: (v: number) => void;
+  /** Fired on the native `change` event (drag release / commit), after the last
+   * `input`. Use this for effects that are disruptive to apply continuously
+   * (e.g. reflowing the whole UI) so the value is only committed once the user
+   * settles. The numeric readout still previews live via `input`. */
+  onChange?: (v: number) => void;
 }): SliderHandle {
   const wrap = document.createElement("div");
   wrap.className = "k-slider";
@@ -158,6 +163,9 @@ export function Slider(opts: {
     val.textContent = fmt(v);
     opts.onInput?.(v);
   });
+  if (opts.onChange) {
+    input.addEventListener("change", () => opts.onChange?.(parseFloat(input.value)));
+  }
   wrap.append(head, input);
   return { el: wrap, input, setValueText: (t) => (val.textContent = t) };
 }
