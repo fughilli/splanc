@@ -12,13 +12,21 @@
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 load("@sbc_deploy//deploy:defs.bzl", "sbc_application")
 
+# Default to the tracked placeholder so a fresh checkout / CI builds; a local
+# (gitignored) wifi.yaml with real SSID/PSKs overrides it when present. Without any
+# wifi the rig bakes no profile and gets stranded when moved. The constant glob is
+# intentional — it's a "use this file if it exists" probe, not a pattern match.
+# buildifier: disable=constant-glob
+_wifi_config = (glob(
+    ["wifi.yaml"],
+    allow_empty = True,
+) or ["wifi.yaml.example"])[0]
+
 sbc_application(
     name = "hitl",
     flake = "pi/hitl",
     hostname = "hitl-rig",
-    # Real SSID/PSKs live in wifi.yaml (gitignored); copy wifi.yaml.example.
-    # Without this the rig bakes no wifi profile and gets stranded when moved.
-    wifi_config_file = "wifi.yaml",
+    wifi_config_file = _wifi_config,
 )
 
 # Seed persistent (runtime) WiFi networks onto the running rig, composed on top of
