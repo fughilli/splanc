@@ -117,7 +117,12 @@ function registerServiceWorker(): void {
   if (!("serviceWorker" in navigator)) return;
   if (location.protocol !== "https:") return; // SW needs a secure context
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/sw.js").catch(() => {});
+    // Resolve sw.js against the document so it registers at the deploy root and
+    // its default scope covers exactly this deployment — whether served from an
+    // origin root or a subpath (GitHub Pages project site + per-PR previews). A
+    // leading "/sw.js" would try to control the whole origin, which on Pages is
+    // shared across the main site and every preview.
+    navigator.serviceWorker.register(new URL("sw.js", document.baseURI)).catch(() => {});
   });
 }
 
@@ -151,7 +156,9 @@ function buildBanner(): HTMLElement {
 
   const img = document.createElement("img");
   img.className = "pwa-banner-icon";
-  img.src = "/icons/icon-192.png";
+  // Relative so it resolves against the document at any deploy base (root or a
+  // GitHub Pages subpath); a bare <img> src resolves against document.baseURI.
+  img.src = "icons/icon-192.png";
   img.alt = "";
   img.width = 40;
   img.height = 40;

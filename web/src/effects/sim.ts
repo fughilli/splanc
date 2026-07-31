@@ -10,6 +10,8 @@
 
 import type { OutputMap, Topology } from "@ledmapper/protocol";
 
+import { assetUrl } from "../assetBase";
+
 export interface EffectParams {
   effect: "pulse" | "flood";
   /** [0,1] */ intensity: number;
@@ -67,7 +69,7 @@ interface PulseModule {
 let modP: Promise<PulseModule> | null = null;
 
 /** Load + init the pulse wasm bundle once (cached). */
-export function loadPulseWasm(base = "/pulse"): Promise<PulseModule> {
+export function loadPulseWasm(base = assetUrl("pulse")): Promise<PulseModule> {
   if (modP === null) {
     modP = (async () => {
       const mod = (await import(/* @vite-ignore */ `${base}/pulse_wasm_pkg.js`)) as PulseModule;

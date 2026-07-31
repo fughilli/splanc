@@ -15,6 +15,14 @@ import { defineConfig } from "vite";
 const backend = process.env["LEDMAPPER_BACKEND"] ?? "http://localhost:8080";
 
 export default defineConfig({
+  // Relative base so ONE built bundle works whether it's served from an origin
+  // root (the Pi M2 server, Cloudflare ledmapper.pages.dev) OR from a subpath
+  // (GitHub Pages project site https://fughilli.github.io/splanc/ and its
+  // per-PR previews under /pr-preview/pr-N/). Vite rewrites its own injected
+  // entry/asset URLs relative to each HTML file; the hand-written public-asset
+  // and wasm-bundle references are resolved against the document at runtime
+  // (see index.html, src/assetBase.ts, public/sw.js, public/manifest.webmanifest).
+  base: "./",
   build: {
     rollupOptions: {
       // Relative to the vite root (this directory). MUST stay relative:

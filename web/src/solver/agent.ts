@@ -13,6 +13,8 @@
 
 import type { DetectionRecord, ImuSample, OutputMap, SolveLed } from "@ledmapper/protocol";
 
+import { assetUrl } from "../assetBase";
+
 /** Problem JSON for the Rust solver (solver/src/types.rs). */
 export interface SolveProblem {
   detections: DetectionRecord[];
@@ -44,7 +46,7 @@ export class SolverAgent {
 
   /** Load the wasm solver and run the placement benchmark (~a second on a
    * modern phone). Resolves to true when the solver is usable. */
-  async init(baseUrl = "/solver"): Promise<boolean> {
+  async init(baseUrl = assetUrl("solver")): Promise<boolean> {
     let worker: Worker;
     try {
       // The worker is a plain module file served WITH the wasm bundle from

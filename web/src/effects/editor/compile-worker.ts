@@ -39,7 +39,17 @@ interface CompilerModule {
 
 let modP: Promise<CompilerModule> | null = null;
 
-function loadCompiler(base = "/fx-compiler"): Promise<CompilerModule> {
+// This runs in a Web Worker — there is no `document` to resolve against (unlike
+// src/assetBase.ts). Vite emits this worker chunk at <deploy-root>/assets/<hash>.js
+// (default assetsDir "assets"), so the deploy root — where the fx-compiler
+// bundle is staged next to the app — is one level up from the worker's own URL.
+// Resolving against self.location makes the compiler load whether the app is at
+// an origin root or a subpath (GitHub Pages project site + per-PR previews).
+function fxCompilerBase(): string {
+  return new URL("../fx-compiler", self.location.href).href.replace(/\/+$/, "");
+}
+
+function loadCompiler(base = fxCompilerBase()): Promise<CompilerModule> {
   if (modP === null) {
     modP = (async () => {
       const mod = (await import(
