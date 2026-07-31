@@ -102,6 +102,10 @@
     },
     "root": {
       "inputs": {
+        "nixpkgs": [
+          "sbc-deploy",
+          "nixpkgs"
+        ],
         "sbc-deploy": "sbc-deploy"
       }
     },

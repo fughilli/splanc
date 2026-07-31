@@ -1,0 +1,15 @@
+# Declarative WiFi networks for the HITL rig, most-preferred first (higher
+# `priority` wins). Referenced from BUILD.bazel via the sbc_application
+# `wifi_config_file` arg; converted to JSON at build time and baked into the
+# image (and applied by deploy_live).
+#
+# Copy this to `wifi.yaml` (gitignored) and fill in real credentials — the real
+# file is never committed. Without it the rig bakes NO wifi profile, and
+# `ensureProfiles` drops any profile a previous image left behind, which strands
+# the rig after it's moved. Keep at least one always-reachable network here.
+- ssid: YOUR_PRIMARY_SSID
+  psk: YOUR_PRIMARY_PSK
+  priority: 100
+- ssid: YOUR_FALLBACK_SSID
+  psk: YOUR_FALLBACK_PSK
+  priority: 10

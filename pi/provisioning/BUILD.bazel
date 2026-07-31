@@ -1,61 +1,22 @@
-# M4 — pi/provisioning. Nix-driven Raspberry Pi imaging + live redeploy.
+# LED Mapper — Raspberry Pi image + live-deploy, via the sbc-deploy framework
+# (github.com/fughilli/sbc-deploy). Replaces the former hand-written
+# image_sd/deploy_live/keys sh_binary wrappers.
 #
-# Two runnable targets (design doc / README "Active directives"):
-#   bazel run //pi/provisioning:image_sd    -- [--device /dev/sdX] [--no-write]
-#   bazel run //pi/provisioning:deploy_live -- <host-or-ip> [--user root]
+#   bazel run //pi/provisioning:ledmapper.keys          -- init
+#   bazel run //pi/provisioning:ledmapper.image_sd      -- --device /dev/sdX   # base + app
+#   bazel run //pi/provisioning:ledmapper.image_sd_base -- --device /dev/sdX   # base only
+#   bazel run //pi/provisioning:ledmapper.deploy_live   -- ledmapper.local     # push app
+#   bazel run //pi/provisioning:ledmapper.ssh           -- ledmapper.local     # shell in
 #
-# These are thin sh_binary wrappers that shell out to `nix` / `nixos-rebuild`
-# (nix is a system requirement for this repo — see MODULE.bazel). rules_nixpkgs
-# is also wired into MODULE.bazel and now imports nix-built build tools as
-# Bazel targets (e.g. the HTML minifier); nix-built packages for the
-# provisioning image can be added here the same way if that path is exercised.
-#
-# UNVERIFIED: these targets cannot be `bazel run` to completion in CI without
-# nix; they will print a clear error and exit. See README "Unverified".
+# On macOS, start the aarch64-linux builder first: `bazel run @sbc_deploy//:linux_builder`.
 
-load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+load("@sbc_deploy//deploy:defs.bzl", "sbc_application")
 
-package(default_visibility = ["//visibility:public"])
-
-# Shared source files exposed to the wrapper binaries via runfiles.
-filegroup(
-    name = "nix_srcs",
-    srcs = [
-        "nix/flake.lock",
-        "nix/flake.nix",
-    ] + glob([
-        "nix/modules/*.nix",
-    ]),
-)
-
-filegroup(
-    name = "key_script",
-    srcs = ["scripts/manage_keys.sh"],
-)
-
-# bazel run //pi/provisioning:image_sd
-sh_binary(
-    name = "image_sd",
-    srcs = ["scripts/image_sd.sh"],
-    data = [
-        ":key_script",
-        ":nix_srcs",
-    ],
-)
-
-# bazel run //pi/provisioning:deploy_live
-sh_binary(
-    name = "deploy_live",
-    srcs = ["scripts/deploy_live.sh"],
-    data = [
-        ":key_script",
-        ":nix_srcs",
-    ],
-)
-
-# Convenience: manage the deploy key pair.
-#   bazel run //pi/provisioning:keys -- init|rotate|pub|path
-sh_binary(
-    name = "keys",
-    srcs = ["scripts/manage_keys.sh"],
+sbc_application(
+    name = "ledmapper",
+    flake = "pi/provisioning/nix",
+    hostname = "ledmapper",
+    # Self-contained: the Nix side pins sbc-deploy via the flake input +
+    # pi/provisioning/nix/flake.lock (parallel to the git_override in
+    # //MODULE.bazel), so no in-tree `framework=` injection.
 )

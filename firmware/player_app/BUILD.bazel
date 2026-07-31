@@ -13,6 +13,7 @@ load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("@rules_rust//rust:defs.bzl", "rust_library", "rust_static_library", "rust_test")
+load("//tools:flash_bundle.bzl", "flash_bundle")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -155,5 +156,14 @@ esptool_flash(
     name = "flash_esp32c6",
     app = ":esp32c6",
     partitions = "@embedded//libs/vendor:partitions_huge_app",
+    tags = ["manual"],
+)
+
+# A self-describing flash bundle (flash.json manifest + the four bins) built from
+# the flash launcher — one artifact the HITL rig flashes in a single step, no
+# hand-copied offsets. Consumed by `bazel run //pi/hitl:hitl -- flash …`.
+flash_bundle(
+    name = "esp32c6_flashbundle",
+    flash = ":flash_esp32c6",
     tags = ["manual"],
 )

@@ -1,0 +1,50 @@
+# HITL rig — Pi image + live-deploy, via the sbc-deploy framework.
+#
+#   bazel run //pi/hitl:hitl.keys        -- init
+#   bazel run //pi/hitl:hitl.image_sd    -- --device /dev/sdX   # full: base + HITL app
+#   bazel run //pi/hitl:hitl.deploy_live -- hitl-rig            # push to a running rig
+#   bazel run //pi/hitl:hitl.ssh         -- hitl-rig            # shell into the rig itself
+#
+# The agent-facing CLI is the Nix package `//pi/hitl (flake) #hitl`:
+#   nix run 'path:pi/hitl#hitl' -- reserve
+# On macOS, start the aarch64-linux builder first: bazel run @sbc_deploy//:linux_builder.
+
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+load("@sbc_deploy//deploy:defs.bzl", "sbc_application")
+
+# Default to the tracked placeholder so a fresh checkout / CI builds; a local
+# (gitignored) wifi.yaml with real SSID/PSKs overrides it when present. Without any
+# wifi the rig bakes no profile and gets stranded when moved. The constant glob is
+# intentional — it's a "use this file if it exists" probe, not a pattern match.
+# buildifier: disable=constant-glob
+_wifi_config = (glob(
+    ["wifi.yaml"],
+    allow_empty = True,
+) or ["wifi.yaml.example"])[0]
+
+sbc_application(
+    name = "hitl",
+    flake = "pi/hitl",
+    hostname = "hitl-rig",
+    wifi_config_file = _wifi_config,
+)
+
+# Seed persistent (runtime) WiFi networks onto the running rig, composed on top of
+# the baked BigVibes/FugLink without a rebuild:
+#   bazel run //pi/hitl:seed_wifi                       # seed pi/secrets/wifi-seed.yaml
+#   bazel run //pi/hitl:seed_wifi -- --ssid X --psk Y   # one-off
+#   bazel run //pi/hitl:seed_wifi -- --list / --remove SSID
+sh_binary(
+    name = "seed_wifi",
+    srcs = ["scripts/seed-wifi.sh"],
+    data = ["@sbc_deploy//deploy:scripts/seed_wifi.sh"],
+    deps = ["@bazel_tools//tools/bash/runfiles"],
+)
+
+# Re-seed the Tailscale auth key onto the rig (needed after a reflash wipes
+# /var/lib). Reads pi/secrets/tailscale-authkey + deploy_key.
+#   bazel run //pi/hitl:seed_tailscale_authkey [-- host]
+sh_binary(
+    name = "seed_tailscale_authkey",
+    srcs = ["scripts/seed-tailscale-authkey.sh"],
+)
