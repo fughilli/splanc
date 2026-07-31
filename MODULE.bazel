@@ -190,7 +190,7 @@ bazel_dep(name = "sbc_deploy", version = "0.0.0")
 git_override(
     module_name = "sbc_deploy",
     remote = "https://github.com/fughilli/sbc-deploy.git",
-    commit = "909a6fb22f4786c6bb08ac1b0557ff68e3c3ce39",
+    commit = "4fd5e25361f9a712bb45dcad3834e26f21e85742",
 )
 
 bazel_dep(name = "firmware", version = "0.0.0", repo_name = "embedded")
