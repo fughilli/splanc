@@ -58,9 +58,12 @@ let
       install -d -m700 -o "$user" -g "$user" "/home/$user/.ssh"
       if [ -f /run/hitl/authorized_keys ]; then
         install -m600 -o "$user" -g "$user" /run/hitl/authorized_keys "/home/$user/.ssh/authorized_keys"
+        echo "hitl: installed $(wc -l < "/home/$user/.ssh/authorized_keys") authorized key(s) for $user" >&2
       else
-        echo "WARN: no /run/hitl/authorized_keys mounted" >&2
+        echo "hitl: WARN no /run/hitl/authorized_keys mounted" >&2
       fi
+      # Diagnostics for pubkey-auth issues (StrictModes checks these):
+      ls -lad "/home/$user" "/home/$user/.ssh" "/home/$user/.ssh/authorized_keys" >&2 2>/dev/null || true
       exec ${p.openssh}/bin/sshd -D -e -f ${sshdConfig}
     '';
   };

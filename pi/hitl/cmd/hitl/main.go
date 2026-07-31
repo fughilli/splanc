@@ -77,7 +77,7 @@ func cmdReserve(args []string) error {
 	fs := newFlags("reserve")
 	server := serverFlag(fs)
 	owner := fs.String("owner", envOr("HITL_OWNER", defaultOwner()), "reservation owner id (for logs/status)")
-	keyPath := fs.String("key", "", "SSH public key file to authorize (default: ~/.ssh/id_ed25519.pub, else ephemeral)")
+	keyPath := fs.String("key", "", "public key to authorize (default: a dedicated ~/.config/hitl key)")
 	keep := fs.Bool("keep", false, "keep the reservation after the SSH session exits (default: release)")
 	noShell := fs.Bool("no-shell", false, "just wait until active and print the endpoint; don't open a shell")
 	_ = fs.Parse(args)
@@ -173,7 +173,7 @@ func cmdSSH(args []string) error {
 	id := args[0]
 	fs := newFlags("ssh")
 	server := serverFlag(fs)
-	keyPath := fs.String("key", "", "SSH private key (default: ~/.ssh/id_ed25519)")
+	keyPath := fs.String("key", "", "public key file (default: the dedicated ~/.config/hitl key)")
 	_ = fs.Parse(args[1:])
 	_, priv, err := resolveKeypair(*keyPath)
 	if err != nil {
@@ -212,31 +212,32 @@ func openSSH(ctx context.Context, privKey string, ep *api.SSHEndpoint) error {
 	return cmd.Run()
 }
 
-// resolveKeypair returns (pubkeyPath, privkeyPath). If keyArg is a pubkey path,
-// its sibling (minus .pub) is the private key. Else prefer ~/.ssh/id_ed25519,
-// else generate an ephemeral ed25519 keypair with ssh-keygen.
+// resolveKeypair returns (pubkeyPath, privkeyPath) for a DEDICATED HITL key —
+// not the caller's personal identity. It lives under $XDG_CONFIG_HOME/hitl,
+// is passphrase-less (so reserve/ssh are non-interactive), and is generated once
+// and reused (so `hitl ssh <id>` can reconnect to a reservation made earlier).
+// Pass an explicit pubkey path via --key to override.
 func resolveKeypair(keyArg string) (pub, priv string, err error) {
-	home, _ := os.UserHomeDir()
 	if keyArg != "" {
-		pub = keyArg
-		priv = strings.TrimSuffix(keyArg, ".pub")
-		return pub, priv, nil
+		return keyArg, strings.TrimSuffix(keyArg, ".pub"), nil
 	}
-	def := filepath.Join(home, ".ssh", "id_ed25519")
-	if _, e := os.Stat(def + ".pub"); e == nil {
-		return def + ".pub", def, nil
+	dir := os.Getenv("XDG_CONFIG_HOME")
+	if dir == "" {
+		home, _ := os.UserHomeDir()
+		dir = filepath.Join(home, ".config")
 	}
-	// Ephemeral keypair under a temp dir.
-	dir, e := os.MkdirTemp("", "hitl-key-")
-	if e != nil {
-		return "", "", e
-	}
+	dir = filepath.Join(dir, "hitl")
 	priv = filepath.Join(dir, "id_ed25519")
-	cmd := exec.Command("ssh-keygen", "-t", "ed25519", "-N", "", "-C", "hitl-agent", "-f", priv)
-	if out, e := cmd.CombinedOutput(); e != nil {
-		return "", "", fmt.Errorf("ssh-keygen: %w: %s", e, out)
+	if _, e := os.Stat(priv); e != nil {
+		if e := os.MkdirAll(dir, 0o700); e != nil {
+			return "", "", e
+		}
+		cmd := exec.Command("ssh-keygen", "-t", "ed25519", "-N", "", "-C", "hitl-agent", "-f", priv)
+		if out, e := cmd.CombinedOutput(); e != nil {
+			return "", "", fmt.Errorf("ssh-keygen: %w: %s", e, out)
+		}
+		fmt.Fprintf(os.Stderr, "created dedicated HITL key %s\n", priv)
 	}
-	fmt.Fprintf(os.Stderr, "generated ephemeral key %s\n", priv)
 	return priv + ".pub", priv, nil
 }
 
