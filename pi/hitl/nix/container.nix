@@ -131,14 +131,16 @@ let
     destination = "/bin/hitl-ble";
     text = ''
       #!${pyEnv}/bin/python3
-      import argparse, asyncio, sys
+      import argparse, asyncio, os, sys
+      # The container has no /var/run/dbus; point dbus-fast at the mounted socket.
+      os.environ.setdefault("DBUS_SYSTEM_BUS_ADDRESS", "unix:path=/run/dbus/system_bus_socket")
       from bleak import BleakScanner, BleakClient
       async def scan(seconds, name):
-          devs = await BleakScanner.discover(timeout=seconds)
-          for d in sorted(devs, key=lambda x: x.address):
+          found = await BleakScanner.discover(timeout=seconds, return_adv=True)
+          for addr, (d, adv) in sorted(found.items()):
               if name and name.lower() not in (d.name or "").lower():
                   continue
-              print("%s  rssi=%s  %s" % (d.address, getattr(d, "rssi", "?"), d.name or ""))
+              print("%s  rssi=%s  %s" % (addr, adv.rssi, d.name or ""))
       async def gatt(address):
           async with BleakClient(address) as c:
               for s in c.services:
@@ -187,7 +189,7 @@ let
     AuthorizedKeysFile /home/${sshUser}/.ssh/authorized_keys
     Subsystem sftp ${p.openssh}/libexec/sftp-server
     PidFile /run/sshd.pid
-    SetEnv PATH=${toolPath}:/bin:/usr/bin
+    SetEnv PATH=${toolPath}:/bin:/usr/bin DBUS_SYSTEM_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket
   '';
 
   entrypoint = p.writeShellApplication {
@@ -243,6 +245,11 @@ p.dockerTools.buildLayeredImage {
   config = {
     Cmd = [ "${entrypoint}/bin/hitl-entrypoint" ];
     ExposedPorts = { "22/tcp" = { }; };
-    Env = [ "PATH=${toolPath}:/bin:/usr/bin" ];
+    Env = [
+      "PATH=${toolPath}:/bin:/usr/bin"
+      # bleak/dbus-fast default to /var/run/dbus/... which the container lacks;
+      # point them at the mounted host socket so BLE reaches the host bluetoothd.
+      "DBUS_SYSTEM_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket"
+    ];
   };
 }

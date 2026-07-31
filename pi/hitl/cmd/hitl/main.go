@@ -291,6 +291,11 @@ func cmdMonitor(args []string) error {
 // --- ble ------------------------------------------------------------------
 
 func cmdBle(args []string) error {
+	// Subcommand comes first (hitl ble scan …); the rest are flags/positionals.
+	sub := "scan"
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		sub, args = args[0], args[1:]
+	}
 	fs := newFlags("ble")
 	server := serverFlag(fs)
 	owner := fs.String("owner", envOr("HITL_OWNER", defaultOwner()), "reservation owner id")
@@ -302,16 +307,16 @@ func cmdBle(args []string) error {
 	_ = fs.Parse(args)
 
 	var remote string
-	switch sub := fs.Arg(0); sub {
-	case "", "scan":
+	switch sub {
+	case "scan":
 		remote = fmt.Sprintf("hitl-ble scan --seconds %g", *seconds)
 		if *name != "" {
 			remote += " --name '" + strings.ReplaceAll(*name, "'", "") + "'"
 		}
 	case "gatt":
-		addr := fs.Arg(1)
+		addr := fs.Arg(0)
 		if addr == "" {
-			return fmt.Errorf("usage: hitl ble gatt <address>")
+			return fmt.Errorf("usage: hitl ble gatt [flags] <address>")
 		}
 		remote = "hitl-ble gatt " + addr
 	default:

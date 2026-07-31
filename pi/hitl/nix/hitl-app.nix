@@ -48,6 +48,20 @@ in
   hardware.bluetooth.enable = true;
   hardware.bluetooth.powerOnBoot = true;
 
+  # The container's agent runs as uid 1000; the host needs a matching passwd entry
+  # or the system D-Bus rejects its BLE connections (D-Bus won't accept a uid it
+  # can't resolve). No login — this exists purely for credential resolution.
+  users.groups.hitl-agent.gid = 1000;
+  users.users.hitl-agent = {
+    uid = 1000;
+    group = "hitl-agent";
+    isNormalUser = true;
+    createHome = false;
+    home = "/var/empty";
+    shell = "${pkgs.shadow}/bin/nologin";
+    description = "uid match for the HITL container agent (D-Bus)";
+  };
+
   # Let the container (its agent user, over the mounted system D-Bus) drive
   # org.bluez for BLE central. Permissive, but this is a single-purpose bench.
   services.dbus.packages = [
