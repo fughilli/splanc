@@ -217,7 +217,7 @@ sh_binary(
 # Materialize the same publish tree into a directory for the GitHub Pages CI:
 #   bazel run //web:stage_site -- <output-dir>
 # The master-merge job publishes it to the Pages root; the PR job publishes it
-# under pr-preview/pr-N/ (see .github/workflows/deploy-pages.yaml).
+# under pr-preview/pr-N/ (see the deploy jobs in .github/workflows/test.yaml).
 sh_binary(
     name = "stage_site",
     srcs = ["stage_site.sh"],

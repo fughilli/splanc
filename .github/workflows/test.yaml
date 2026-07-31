@@ -114,7 +114,9 @@ jobs:
   # (web/vite.config.ts), so the same tree works at both the root and a subpath.
   #
   # Repo setup (one-time): Settings → Pages → "Deploy from a branch" → gh-pages
-  # / (root). Cloudflare secrets: CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID.
+  # / (root). Cloudflare secrets (CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID)
+  # live in the "Deploy environment" GitHub Actions environment — the
+  # deploy-production job declares `environment:` so it can read them.
   # ---------------------------------------------------------------------------
 
   # Build the complete static site tree (app bundle + the solver/pulse/fx-vm/
@@ -207,6 +209,11 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: build-site
     runs-on: ubuntu-latest
+    # The Cloudflare secrets live in the "Deploy environment" GitHub Actions
+    # environment; a job only sees environment-scoped secrets if it declares
+    # the environment here (otherwise secrets.CLOUDFLARE_* resolve to empty and
+    # the Cloudflare step below no-ops). GitHub Pages needs no environment.
+    environment: Deploy environment
     permissions:
       contents: write
     concurrency:
