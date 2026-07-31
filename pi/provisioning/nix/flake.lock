@@ -34,10 +34,12 @@
     "nixos-images": {
       "inputs": {
         "nixos-stable": [
+          "sbc-deploy",
           "nixos-raspberrypi",
           "nixpkgs"
         ],
         "nixos-unstable": [
+          "sbc-deploy",
           "nixos-raspberrypi",
           "nixpkgs"
         ]
@@ -63,6 +65,7 @@
         "flake-compat": "flake-compat",
         "nixos-images": "nixos-images",
         "nixpkgs": [
+          "sbc-deploy",
           "nixpkgs"
         ]
       },
@@ -99,8 +102,28 @@
     },
     "root": {
       "inputs": {
+        "sbc-deploy": "sbc-deploy"
+      }
+    },
+    "sbc-deploy": {
+      "inputs": {
         "nixos-raspberrypi": "nixos-raspberrypi",
         "nixpkgs": "nixpkgs"
+      },
+      "locked": {
+        "dir": "nix",
+        "lastModified": 1785468875,
+        "narHash": "sha256-NMCXUc/KO8K0X9dCR2cq7JfhyHisDV7xj6Eo0Zt6Gzc=",
+        "owner": "fughilli",
+        "repo": "sbc-deploy",
+        "rev": "128831a9255a619e8deb47921b3870342315da08",
+        "type": "github"
+      },
+      "original": {
+        "dir": "nix",
+        "owner": "fughilli",
+        "repo": "sbc-deploy",
+        "type": "github"
       }
     }
   },

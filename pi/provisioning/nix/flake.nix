@@ -1,102 +1,32 @@
 {
-  # LED Mapper — Raspberry Pi NixOS provisioning flake.
+  # LED Mapper — Raspberry Pi provisioning, as an sbc-deploy consumer.
   #
-  # This flake defines the NixOS system that runs on the Pi in the field:
-  #   * the LED pattern driver (M1, owns SPI)            -> systemd unit led-driver
-  #   * the FastAPI/uvicorn web server (M2)              -> systemd unit led-server
-  #   * the built web app served as static files (M5-M8)
+  # This used to be a bespoke nixos-raspberrypi flake with hand-written modules
+  # and shell wrappers. That tooling was extracted into the reusable sbc-deploy
+  # framework (github.com/fughilli/sbc-deploy) and this now just consumes it:
+  # `mkSbcProject` builds the base + full images and the deploy config, and
+  # `services.sbcApps` (from sbc-deploy) models the two long-lived Pi processes.
   #
-  # It also produces an SD-card installer image (via the nvmd/nixos-raspberrypi
-  # flake) so a fresh Pi can be flashed and field-deployed, and supports
-  # in-place upgrades via `nixos-rebuild switch --target-host`.
+  # The application packages are still PLACEHOLDERS (see apps.nix) — M1/M2 are
+  # Bazel-built polyglot apps (Python + the Rust solver) not yet packaged for
+  # Nix; only the `package` needs swapping in once they are.
   #
-  # All inputs are PINNED. See ../README.md "Pinned versions" and the repo
-  # docs/decisions.md. To update a pin, bump the ref/rev here and regenerate
-  # flake.lock (`nix flake update` on a machine with nix), then record the
-  # change in the decision log.
-  #
-  # NOTE: This flake has been evaluated AND built on a native aarch64-linux Nix
-  # host (2026-06-19): `nix flake show` and a full `nix build .#images.sdImage`
-  # both succeed. See ../README.md "Verification status". (Real-hardware first
-  # boot and a live `deploy_live` switch remain untested.)
+  # Built via `//pi/provisioning:ledmapper.*`. The sbc-deploy version is pinned
+  # by flake.lock here (Nix side) in parallel with the git_override in
+  # //MODULE.bazel (Bazel side) — keep the two revs in sync. To co-develop
+  # sbc-deploy locally: `--override-input sbc-deploy path:/abs/path/to/nix`.
 
-  description = "LED Mapper — Raspberry Pi NixOS image and live-deploy config";
+  description = "LED Mapper — Raspberry Pi image + live-deploy (sbc-deploy consumer)";
 
-  inputs = {
-    # Pin nixpkgs to a release branch. nixos-raspberrypi tracks its own nixpkgs
-    # internally; we follow it to keep a single coherent package set and avoid
-    # divergent kernel/firmware. Override here only if you need newer userspace.
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.05";
+  inputs.sbc-deploy.url = "github:fughilli/sbc-deploy?dir=nix";
 
-    # Raspberry Pi board support (kernel, firmware, device tree, SD image).
-    # Pinned to a tagged release of nvmd/nixos-raspberrypi.
-    # Tag v1.20260517.0 == commit 06c6e3513e1ee64b651913193fc6ac38aa4963f5.
-    nixos-raspberrypi.url = "github:nvmd/nixos-raspberrypi/v1.20260517.0";
-
-    # Keep nixos-raspberrypi's nixpkgs and ours aligned. (If you intentionally
-    # want a different userspace, drop this `follows` and accept two package
-    # sets.)
-    nixos-raspberrypi.inputs.nixpkgs.follows = "nixpkgs";
-  };
-
-  outputs = { self, nixpkgs, nixos-raspberrypi, ... }@inputs:
-    let
-      # ----------------------------------------------------------------------
-      # Tunables. The Bazel wrappers can override `board` and `hostName` via
-      # `--override-input`-style args or by editing here. Defaults target a Pi 5.
-      # ----------------------------------------------------------------------
-      board = "raspberry-pi-5"; # or "raspberry-pi-4"
+  outputs = { self, sbc-deploy, ... }:
+    sbc-deploy.lib.mkSbcProject {
       hostName = "ledmapper";
-
-      # The system that actually runs on the Pi (aarch64-linux).
-      mkLedMapperSystem = { extraModules ? [ ] }:
-        nixos-raspberrypi.lib.nixosSystem {
-          specialArgs = inputs;
-          modules = [
-            # Board hardware support from the nixos-raspberrypi flake.
-            ({ ... }: {
-              imports = [
-                nixos-raspberrypi.nixosModules.${board}.base
-                nixos-raspberrypi.nixosModules.${board}.display-vc4
-                # Provides config.system.build.sdImage (a directly-bootable
-                # SD image of THIS system — not the live installer; that is
-                # what nixos-raspberrypi.lib.nixosInstaller would add instead).
-                nixos-raspberrypi.nixosModules.sd-image
-              ];
-            })
-
-            # Our application + system config.
-            ./modules/ledmapper.nix
-            ./modules/ssh-deploy.nix
-            ./modules/networking.nix
-            ./modules/spi.nix
-
-            {
-              networking.hostName = hostName;
-              # Turn on our application module (led-driver + led-server units).
-              # Without this the ledmapper.nix config block (lib.mkIf cfg.enable)
-              # is inert and the image ships no LED Mapper services.
-              services.ledMapper.enable = true;
-              # Pin the state version so upgrades are well-defined and the
-              # eval-time "stateVersion not set" warning goes away.
-              system.stateVersion = "25.05";
-            }
-          ] ++ extraModules;
-        };
-    in
-    {
-      # The runtime system closure. Used by `deploy_live` (nixos-rebuild
-      # --target-host reads `.#nixosConfigurations.<host>.config.system.build.toplevel`).
-      nixosConfigurations.${hostName} = mkLedMapperSystem { };
-
-      # SD-card image. `image_sd` builds this and dd's it to a device.
-      # nixos-raspberrypi exposes the image under the system build attrs.
-      images.sdImage =
-        self.nixosConfigurations.${hostName}.config.system.build.sdImage;
-
-      # Convenience alias matching the upstream flake's naming, so
-      # `nix build .#installerImage` also works.
-      packages.aarch64-linux.installerImage =
-        self.nixosConfigurations.${hostName}.config.system.build.sdImage;
+      board = "raspberry-pi-5"; # or "raspberry-pi-4"
+      appModules = [ ./apps.nix ];
+      # Baked into BOTH the base and full images: hardware SPI (SK9822/APA102)
+      # for the driver. WiFi can be added here too (sbcDeploy.wifi.networks).
+      systemModules = [ sbc-deploy.nixosModules.spi ];
     };
 }

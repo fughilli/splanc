@@ -176,6 +176,23 @@ use_repo(host_crate, "host_crates")
 # Its toolchains + Arduino cores come from Nix (the container/host has nix).
 # ---------------------------------------------------------------------------
 
+# sbc-deploy — the reusable Bazel+Nix single-board-computer deploy framework,
+# extracted from this repo's pi/provisioning and developed standalone
+# (github.com/fughilli/sbc-deploy). Consumed here for the Pi image/deploy
+# targets (//pi/provisioning:ledmapper.*). Provides the `sbc_application` macro
+# (deploy/defs.bzl) + `lib.mkSbcProject` (nix/flake.nix). git_override keeps the
+# build self-contained (no local checkout needed); bump the commit to update.
+# The Nix side is pinned in parallel by pi/provisioning/nix/flake.lock — bump
+# both together (bazel commit + `nix flake update` in pi/provisioning/nix).
+# For co-developing sbc-deploy locally: bazel --override_module=sbc_deploy=/path
+# and, on the Nix side, --override-input sbc-deploy path:/path/nix.
+bazel_dep(name = "sbc_deploy", version = "0.0.0")
+git_override(
+    module_name = "sbc_deploy",
+    remote = "https://github.com/fughilli/sbc-deploy.git",
+    commit = "128831a9255a619e8deb47921b3870342315da08",
+)
+
 bazel_dep(name = "firmware", version = "0.0.0", repo_name = "embedded")
 archive_override(
     module_name = "firmware",
