@@ -15,4 +15,7 @@ sbc_application(
     name = "hitl",
     flake = "pi/hitl",
     hostname = "hitl-rig",
+    # Real SSID/PSKs live in wifi.yaml (gitignored); copy wifi.yaml.example.
+    # Without this the rig bakes no wifi profile and gets stranded when moved.
+    wifi_config_file = "wifi.yaml",
 )

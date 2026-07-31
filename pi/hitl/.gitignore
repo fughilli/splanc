@@ -1,0 +1,3 @@
+# Real WiFi credentials — baked into the image at build time, never committed.
+# Copy wifi.yaml.example → wifi.yaml and fill in real SSID/PSK locally.
+wifi.yaml
