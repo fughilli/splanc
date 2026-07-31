@@ -49,6 +49,8 @@ func main() {
 		err = cmdSSH(args)
 	case "flash":
 		err = cmdFlash(args)
+	case "monitor":
+		err = cmdMonitor(args)
 	case "-h", "--help", "help":
 		usage()
 		return
@@ -71,6 +73,7 @@ func usage() {
   hitl release <id> [--server URL]
   hitl ssh     <id> [--server URL]
   hitl flash   [--port DEV] [--id RES] [--keep] [--monitor] [--server URL] <bundle.tar>
+  hitl monitor [--port DEV] [--id RES] [--keep] [--reset] [--seconds N] [--server URL]
 
 Server URL: --server or $HITL_SERVER (e.g. http://hitl-rig:8087).
 Flash bundle: build one with e.g.
@@ -229,60 +232,14 @@ func cmdFlash(args []string) error {
 		return fmt.Errorf("bundle: %w", err)
 	}
 
-	_, priv, err := resolveKeypair(*keyPath)
-	if err != nil {
-		return err
-	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	c := client{base: *server}
-
-	// Get an active reservation: either the one named, or a fresh one we release.
-	var ep *api.SSHEndpoint
-	if *id != "" {
-		var res api.Reservation
-		if err := c.get("/reservation/"+*id, &res); err != nil {
-			return err
-		}
-		if res.State != api.StateActive || res.SSH == nil {
-			return fmt.Errorf("reservation %s is %s (not active)", *id, res.State)
-		}
-		ep = res.SSH
-	} else {
-		pub, _, err := resolveKeypair(*keyPath)
-		if err != nil {
-			return err
-		}
-		pubBytes, err := os.ReadFile(pub)
-		if err != nil {
-			return fmt.Errorf("read pubkey: %w", err)
-		}
-		var res api.Reservation
-		if err := c.post("/reserve", api.ReserveRequest{Owner: *owner, SSHPublicKey: string(pubBytes)}, &res); err != nil {
-			return err
-		}
-		fmt.Fprintf(os.Stderr, "reserved: id=%s\n", res.ID)
-		active, err := c.waitActive(ctx, res.ID)
-		if err != nil {
-			return err
-		}
-		ep = active.SSH
-		if !*keep {
-			defer func() {
-				_ = c.postRaw(fmt.Sprintf("/reservation/%s/release", res.ID), nil)
-				fmt.Fprintln(os.Stderr, "released")
-			}()
-		}
-		hbCtx, hbStop := context.WithCancel(ctx)
-		defer hbStop()
-		go c.heartbeatLoop(hbCtx, res.ID)
+	ep, priv, release, err := acquire(ctx, c, *server, *keyPath, *owner, *id, *keep)
+	if err != nil {
+		return err
 	}
-	if h := hostFromServer(*server); h != "" {
-		ep.Host = h
-	}
-	if err := waitPort(ctx, ep.Host, ep.Port, 45*time.Second); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
-	}
+	defer release()
 
 	// Ship the bundle and run the container's baked hitl-flash consumer.
 	remoteBundle := "/tmp/" + filepath.Base(bundle)
@@ -296,6 +253,95 @@ func cmdFlash(args []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "flashing %s on %s...\n", *port, ep.Host)
 	return sshRun(ctx, priv, ep, remoteCmd)
+}
+
+// --- monitor --------------------------------------------------------------
+
+func cmdMonitor(args []string) error {
+	fs := newFlags("monitor")
+	server := serverFlag(fs)
+	owner := fs.String("owner", envOr("HITL_OWNER", defaultOwner()), "reservation owner id")
+	keyPath := fs.String("key", "", "public key to authorize (default: dedicated ~/.config/hitl key)")
+	port := fs.String("port", "/dev/ttyACM0", "serial device in the container")
+	id := fs.String("id", "", "monitor this already-active reservation instead of making one")
+	keep := fs.Bool("keep", false, "keep the reservation after monitoring (default: release when we made it)")
+	secs := fs.Float64("seconds", 0, "how long to read (0 = until Ctrl-C)")
+	reset := fs.Bool("reset", false, "hard-reset the board first (to catch boot logs)")
+	_ = fs.Parse(args)
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	c := client{base: *server}
+	ep, priv, release, err := acquire(ctx, c, *server, *keyPath, *owner, *id, *keep)
+	if err != nil {
+		return err
+	}
+	defer release()
+
+	cmd := fmt.Sprintf("hitl-monitor --port %s --seconds %g", *port, *secs)
+	if *reset {
+		cmd += " --reset"
+	}
+	return sshRun(ctx, priv, ep, cmd)
+}
+
+// acquire yields an active reservation's SSH endpoint (host rewritten to match
+// the server we reached, sshd port waited-on). With id set it reuses that
+// reservation; otherwise it reserves one, heartbeats it, and — unless keep — the
+// returned release() drops it. release is always non-nil (a no-op when reusing).
+func acquire(ctx context.Context, c client, server, keyPath, owner, id string, keep bool) (*api.SSHEndpoint, string, func(), error) {
+	_, priv, err := resolveKeypair(keyPath)
+	if err != nil {
+		return nil, "", nil, err
+	}
+	release := func() {}
+	var ep *api.SSHEndpoint
+	if id != "" {
+		var res api.Reservation
+		if err := c.get("/reservation/"+id, &res); err != nil {
+			return nil, "", nil, err
+		}
+		if res.State != api.StateActive || res.SSH == nil {
+			return nil, "", nil, fmt.Errorf("reservation %s is %s (not active)", id, res.State)
+		}
+		ep = res.SSH
+	} else {
+		pubBytes, err := os.ReadFile(mustPub(keyPath))
+		if err != nil {
+			return nil, "", nil, fmt.Errorf("read pubkey: %w", err)
+		}
+		var res api.Reservation
+		if err := c.post("/reserve", api.ReserveRequest{Owner: owner, SSHPublicKey: string(pubBytes)}, &res); err != nil {
+			return nil, "", nil, err
+		}
+		fmt.Fprintf(os.Stderr, "reserved: id=%s\n", res.ID)
+		active, err := c.waitActive(ctx, res.ID)
+		if err != nil {
+			return nil, "", nil, err
+		}
+		ep = active.SSH
+		if !keep {
+			release = func() {
+				_ = c.postRaw(fmt.Sprintf("/reservation/%s/release", res.ID), nil)
+				fmt.Fprintln(os.Stderr, "released")
+			}
+		}
+		go c.heartbeatLoop(ctx, res.ID)
+	}
+	if h := hostFromServer(server); h != "" {
+		ep.Host = h
+	}
+	if err := waitPort(ctx, ep.Host, ep.Port, 45*time.Second); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+	}
+	return ep, priv, release, nil
+}
+
+// mustPub returns the public key path for keyPath (resolveKeypair already ran in
+// acquire, so this can't fail in practice).
+func mustPub(keyPath string) string {
+	pub, _, _ := resolveKeypair(keyPath)
+	return pub
 }
 
 // --- ssh + keys -----------------------------------------------------------
