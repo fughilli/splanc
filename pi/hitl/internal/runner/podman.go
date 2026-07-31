@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/fughilli/splanc/pi/hitl/internal/api"
 )
@@ -104,8 +106,34 @@ func (p *PodmanRunner) Start(ctx context.Context, id, owner, sshKey string) (*ap
 	if out, err := p.podman(ctx, args...); err != nil {
 		return nil, fmt.Errorf("start: %w (%s)", err, out)
 	}
+	// Don't report ready until the container's sshd actually accepts connections
+	// (host-key gen + exec sshd takes a couple seconds), so holders don't race it.
+	if err := waitTCP(ctx, fmt.Sprintf("127.0.0.1:%d", p.cfg.SSHPort), 60*time.Second); err != nil {
+		log.Printf("podman: %s sshd not ready: %v (returning endpoint anyway)", name, err)
+	}
 	log.Printf("podman: started %s (owner=%q) sshd on %s:%d", name, owner, p.cfg.Host, p.cfg.SSHPort)
 	return &api.SSHEndpoint{Host: p.cfg.Host, Port: p.cfg.SSHPort, User: p.cfg.SSHUser}, nil
+}
+
+// waitTCP blocks until addr accepts a connection or timeout.
+func waitTCP(ctx context.Context, addr string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		d := net.Dialer{Timeout: 2 * time.Second}
+		conn, err := d.DialContext(ctx, "tcp", addr)
+		if err == nil {
+			_ = conn.Close()
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("no listener on %s after %s: %w", addr, timeout, err)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(500 * time.Millisecond):
+		}
+	}
 }
 
 func (p *PodmanRunner) Stop(ctx context.Context, id string) error {

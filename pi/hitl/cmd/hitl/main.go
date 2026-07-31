@@ -16,9 +16,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
@@ -114,6 +116,12 @@ func cmdReserve(args []string) error {
 		ep.Host = h
 	}
 	fmt.Fprintf(os.Stderr, "active: ssh %s@%s -p %d\n", ep.User, ep.Host, ep.Port)
+
+	// The daemon marks active once the container starts; its sshd takes a moment
+	// to bind. Wait for the port before connecting so we don't race it.
+	if err := waitPort(ctx, ep.Host, ep.Port, 45*time.Second); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
+	}
 
 	if !*keep {
 		defer func() {
@@ -343,6 +351,28 @@ func hostFromServer(server string) string {
 		return ""
 	}
 	return u.Hostname()
+}
+
+// waitPort blocks until host:port accepts a TCP connection or the timeout hits.
+func waitPort(ctx context.Context, host string, port int, timeout time.Duration) error {
+	addr := net.JoinHostPort(host, strconv.Itoa(port))
+	deadline := time.Now().Add(timeout)
+	for {
+		d := net.Dialer{Timeout: 3 * time.Second}
+		conn, err := d.DialContext(ctx, "tcp", addr)
+		if err == nil {
+			_ = conn.Close()
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("sshd at %s not reachable after %s: %w", addr, timeout, err)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(750 * time.Millisecond):
+		}
+	}
 }
 
 func fmtTime(t *time.Time) string {
