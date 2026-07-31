@@ -48,6 +48,12 @@ in
   hardware.bluetooth.enable = true;
   hardware.bluetooth.powerOnBoot = true;
 
+  # Let the container's non-root agent open the C6's raw USB (libusb: openocd/gdb
+  # over the built-in USB-JTAG); the device nodes are otherwise root-only.
+  services.udev.extraRules = ''
+    SUBSYSTEM=="usb", ATTR{idVendor}=="303a", MODE="0666"
+  '';
+
   # The container's agent runs as uid 1000; the host needs a matching passwd entry
   # or the system D-Bus rejects its BLE connections (D-Bus won't accept a uid it
   # can't resolve). No login — this exists purely for credential resolution.

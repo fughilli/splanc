@@ -51,3 +51,9 @@ build --strategy=Vite=local
 # rules_nixpkgs extension usages (its nix attr/file tags are otherwise
 # root-module-only); isolation is experimental in Bazel 7.
 common --experimental_isolated_extension_usages
+
+# --- memory caps (small dev containers OOM the JVM + heavy C++ compiles) ---
+# hitl memory caps
+startup --host_jvm_args=-Xmx1500m
+build --local_ram_resources=2048
+build --jobs=3
