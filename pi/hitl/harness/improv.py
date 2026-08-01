@@ -3,14 +3,15 @@
 This is the same wire the firmware implements (firmware/player_app/improv_codec.h)
 and the host onboarding driver speaks (tools/ble_onboard_server.py): a tiny
 `[cmd, len, data…, checksum]` framing over the Improv GATT characteristics. It
-is dependency-free and pure so the bytes are unit-testable (see test_improv.py),
-mirroring how improv_codec_test.cc and web/tests/improv.test.ts pin the SAME
-vectors — device, app, and this test harness cannot drift.
+is dependency-free and pure so the bytes are unit-testable (see
+tests/test_improv.py), mirroring how improv_codec_test.cc and
+web/tests/improv.test.ts pin the SAME vectors — device, app, and this test
+harness cannot drift.
 
-The bleak-driven transport (scan/connect/write/notify) lives in the container's
-`hitl-improv` tool (pi/hitl/nix/container.nix); it duplicates the few lines of
-_build_wifi_rpc so it stays self-contained in the image, exactly as
-ble_onboard_server.py does. This module is the authoritative, tested copy.
+The bleak-driven transport (scan/connect/write/notify) lives in hitl_improv.py,
+which imports this codec; the e2e ships both into the reservation and runs them
+with the container's python3 (see pi/hitl/harness/hitl_e2e.py improv_provision).
+This module is the authoritative, tested copy of the wire.
 """
 
 from __future__ import annotations

@@ -21,6 +21,7 @@ py_library(
     name = "harness",
     srcs = [
         "hitl_client.py",
+        "hitl_improv.py",
         "hitl_pool.py",
         "improv.py",
         "sync.py",

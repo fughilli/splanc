@@ -84,11 +84,11 @@ with `pyserial`, `picocom`, `coreutils`, `openssh`. The DUT is `/dev/ttyACM0`
 - `hitl-monitor [--reset] [--seconds N] [--port DEV]` — serial reader that
   reopens on disconnect, so it survives the native-USB reset re-enumeration and
   captures boot logs.
-- `hitl-improv provision --ssid S [--pass P] [--address A] [--timeout N]` —
-  drive the DUT's ImprovBLE onboarding: scan for the Improv service, write the
-  WiFi-settings RPC, and wait for the board to join and report its redirect URL.
-  Prints one JSON line (`{ok, urls, error, device}`) on stdout; used by the
-  `//pi/hitl/harness:e2e` harness for the setup phase.
+
+ImprovBLE onboarding isn't a baked tool: the `//pi/hitl/harness:e2e` suite ships
+its own provisioner (`pi/hitl/harness/hitl_improv.py`) into the reservation and
+runs it with the container's `python3` (which has `bleak`), so the test doesn't
+depend on the image being redeployed in lockstep with the harness.
 
 ## Hardware notes
 

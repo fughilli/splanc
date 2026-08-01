@@ -6,8 +6,8 @@ Given a firmware flash-bundle it:
   1. picks a free runner from the pool (HITL_SERVERS) and reserves it;
   2. flashes the bundle and asserts the board boots the app and brings BLE up;
   3. ImprovBLE SETUP — provisions the board onto WiFi over the Improv GATT
-     (the rig's Bluetooth adapter, via the container's `hitl-improv` tool),
-     capturing the device's redirect URL (its address on the joined network);
+     (the rig's Bluetooth adapter; the harness ships hitl_improv.py into the
+     reservation and runs it there), capturing the device's redirect URL;
   4. connects to the player's WebSocket and checks TIME SYNC (sane offset/rtt)
      and RENAME (set_device_name -> welcome echoes the new name);
   5. releases the reservation.
@@ -85,23 +85,35 @@ def flash(res: Reservation, bundle: str, monitor_seconds: float) -> str:
     return log
 
 
+# The BLE provisioner + its wire codec run in the container (which has bleak and
+# the host bluetoothd). We ship them per-reservation rather than baking a tool
+# into the image, so the test doesn't depend on the rig image being redeployed
+# in lockstep. Both live next to this file (harness srcs → e2e runfiles).
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_PROVISIONER = os.path.join(_HERE, "hitl_improv.py")
+_CODEC = os.path.join(_HERE, "improv.py")
+
+
 def improv_provision(res: Reservation, ssid: str, password: str, timeout: float) -> str:
     """Provision the DUT onto WiFi over ImprovBLE; return its redirect URL."""
+    print("[improv] shipping provisioner + provisioning DUT over BLE…", flush=True)
+    res.scp_to([_PROVISIONER, _CODEC], "/tmp/")
+    # Run with the container's python3 (has bleak); PYTHONPATH lets the shipped
+    # hitl_improv import the shipped improv codec.
     cmd = (
-        f"hitl-improv provision --ssid {json.dumps(ssid)} "
-        f"--pass {json.dumps(password)} --timeout {timeout:g}"
+        f"PYTHONPATH=/tmp python3 /tmp/hitl_improv.py provision "
+        f"--ssid {json.dumps(ssid)} --pass {json.dumps(password)} --timeout {timeout:g}"
     )
-    print("[improv] provisioning DUT over BLE…", flush=True)
     proc = res.ssh(cmd, capture=True, timeout=timeout + 60)
     out = (proc.stdout or "").strip()
     if proc.stderr:
         sys.stderr.write(proc.stderr)
     if proc.returncode != 0:
-        raise E2EFailure(f"hitl-improv exited {proc.returncode}: {out}")
+        raise E2EFailure(f"provisioner exited {proc.returncode}: {out}")
     try:
         result = json.loads(out.splitlines()[-1])
     except (ValueError, IndexError) as e:
-        raise E2EFailure(f"hitl-improv gave no JSON result: {out!r}") from e
+        raise E2EFailure(f"provisioner gave no JSON result: {out!r}") from e
     if not result.get("ok"):
         raise E2EFailure(f"ImprovBLE provisioning failed: {result.get('error')}")
     urls = result.get("urls") or []
