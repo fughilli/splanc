@@ -39,13 +39,34 @@ container + sshd bring-up, USBIP passthrough of the dev board, the JTAG/BLE/WiFi
 toolbox layers, and the full Pi image build. MVP uses `--device` tty passthrough
 of the ESP32 until USBIP is wired.
 
+## Tests (FUG-33)
+
+An end-to-end suite drives a **pool** of rigs (the checkout mechanism) and
+checks ImprovBLE setup, rename, and time sync on a real board:
+
+```sh
+bazel test //pi/hitl/tests:hitl_test          # pure-logic units (codec/sync/pool) — CI
+export HITL_SERVERS="hitl-rig-1, hitl-rig-2"   # pool; free runner is auto-picked
+bazel run  //pi/hitl/tests:e2e -- \
+    --bundle bazel-bin/firmware/player_app/esp32c6_flashbundle.tar \
+    --wifi-ssid BigVibes --wifi-pass SECRET    # reserve → flash → improv → ws
+```
+
+`hitl_test` runs under `bazel test //...` so the Improv/sync/pool logic can't
+drift. `e2e` needs a live rig + board; it reserves a **free** rig from
+`$HITL_SERVERS` (else `$HITL_SERVER`, else a specific `--server`), so it never
+queues behind a busy one. The `.github/workflows/hitl.yaml` job runs it on
+demand: it joins the tailnet with a `TS_AUTHKEY` secret and reads the pool from
+the `HITL_SERVERS` repo variable (see that file's header for the full config).
+
 ## Layout
 
 ```text
 pi/hitl/
   cmd/hitl-managerd/   # Pi-side reservation daemon (Go)
   cmd/hitl/            # agent CLI (Go)
-  internal/{api,queue,runner}/
+  internal/{api,queue,runner,pool}/
+  tests/               # e2e suite + pure-logic units (Python; FUG-33)
   nix/
     packages.nix       # buildGoModule -> bin/hitl{,-managerd}
     container.nix      # dockerTools test container (sshd + ESP toolbox)

@@ -1,0 +1,59 @@
+"""HITL end-to-end test suite (FUG-33).
+
+Two audiences:
+
+  * `hitl_test` — the pure-logic unit tests (Improv packet codec, SNTP sync math,
+    runner-pool picker). No hardware, no network; runs under `bazel test //...`
+    so device/app/harness parity is enforced in CI.
+  * `e2e` — the on-hardware orchestrator. It reserves a real rig from the pool
+    (the checkout mechanism), flashes firmware, provisions the DUT onto WiFi over
+    ImprovBLE, then checks time-sync + rename over the player WebSocket. Needs a
+    reachable rig (tailnet) + a board, so it is `bazel run`, never `bazel test`.
+
+`imports = ["."]` makes the sibling modules importable as top-level (hitl_pool,
+hitl_client, sync, improv) the same way the files import each other.
+"""
+
+load("@pypi//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_binary", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# Pure-logic unit tests — the pieces that must not drift from the firmware/app.
+py_test(
+    name = "hitl_test",
+    srcs = [
+        "pytest_main.py",
+        "test_hitl_pool.py",
+        "test_improv.py",
+        "test_sync.py",
+        # modules under test:
+        "hitl_pool.py",
+        "improv.py",
+        "sync.py",
+    ],
+    imports = ["."],
+    legacy_create_init = False,
+    main = "pytest_main.py",
+    deps = [requirement("pytest")],
+)
+
+# On-hardware orchestrator. proto_wire (the §7 WebSocket wire) comes from
+# //pi/server; websockets is the client transport. See the module docstring for
+# invocation and the --skip-*/--server flags.
+py_binary(
+    name = "e2e",
+    srcs = [
+        "hitl_e2e.py",
+        # sibling modules it imports at top level:
+        "hitl_client.py",
+        "hitl_pool.py",
+        "sync.py",
+    ],
+    imports = ["."],
+    main = "hitl_e2e.py",
+    deps = [
+        "//pi/server",
+        requirement("websockets"),
+    ],
+)

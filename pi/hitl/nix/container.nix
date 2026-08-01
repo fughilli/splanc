@@ -201,6 +201,129 @@ let
     '';
   };
 
+  # hitl-improv: drive the DUT's ImprovBLE onboarding — provision it onto WiFi
+  # over the Improv GATT and report back the redirect URL it advertises on the
+  # joined network. bleak central (host bluetoothd over the mounted D-Bus), the
+  # container-side twin of tools/ble_onboard_server.py's provision(); the packet
+  # codec is duplicated here (a few lines) so the image is self-contained, and is
+  # unit-pinned by pi/hitl/tests/improv.py. Prints a single JSON result line on
+  # stdout (logs go to stderr) so the e2e harness can parse it.
+  hitlImprov = p.writeTextFile {
+    name = "hitl-improv";
+    executable = true;
+    destination = "/bin/hitl-improv";
+    text = ''
+      #!${pyEnv}/bin/python3
+      import argparse, asyncio, json, os, sys
+      # The container has no /var/run/dbus; point dbus-fast at the mounted socket.
+      os.environ.setdefault("DBUS_SYSTEM_BUS_ADDRESS", "unix:path=/run/dbus/system_bus_socket")
+      from bleak import BleakScanner, BleakClient
+
+      # Improv WiFi BLE UUIDs — must match firmware/player_app/improv_ble.cpp.
+      SVC = "00467768-6228-2272-4663-277478268000"
+      CH_STATE = "00467768-6228-2272-4663-277478268001"
+      CH_ERROR = "00467768-6228-2272-4663-277478268002"
+      CH_RPC_CMD = "00467768-6228-2272-4663-277478268003"
+      CH_RPC_RESULT = "00467768-6228-2272-4663-277478268004"
+      CMD_WIFI_SETTINGS = 0x01
+      ERROR_NAMES = {0: "none", 1: "invalid_rpc", 2: "unknown_command", 3: "unable_to_connect"}
+
+      def build_wifi_rpc(ssid, pw):
+          data = bytes([len(ssid)]) + ssid.encode() + bytes([len(pw)]) + pw.encode()
+          body = bytes([CMD_WIFI_SETTINGS, len(data)]) + data
+          return body + bytes([sum(body) & 0xFF])
+
+      def parse_result(buf):
+          if len(buf) < 3:
+              return []
+          body = buf[2 : 2 + buf[1]]
+          out, i = [], 0
+          while i < len(body):
+              n = body[i]; i += 1
+              out.append(body[i : i + n].decode("utf-8", "replace")); i += n
+          return out
+
+      def looks_like_player(name):
+          n = (name or "").lower()
+          return "led widget" in n or "ledmapper" in n or "widget" in n
+
+      def log(msg):
+          print(msg, file=sys.stderr, flush=True)
+
+      async def find(address, name_filter, scan_seconds):
+          found = await BleakScanner.discover(timeout=scan_seconds, return_adv=True)
+          for addr, (dev, adv) in found.items():
+              nm = dev.name or ""
+              if address:
+                  if addr.lower() == address.lower():
+                      return dev, nm
+                  continue
+              if name_filter and name_filter.lower() not in nm.lower():
+                  continue
+              if SVC.lower() in [u.lower() for u in (adv.service_uuids or [])] or looks_like_player(nm):
+                  return dev, nm
+          return None, None
+
+      async def provision(ssid, pw, address, name_filter, scan_seconds, timeout):
+          dev, nm = await find(address, name_filter, scan_seconds)
+          if dev is None:
+              return {"ok": False, "error": "no Improv device found in scan"}
+          device = {"name": nm, "address": dev.address}
+          log("[improv] provisioning %s (%s) ssid=%r" % (nm, dev.address, ssid))
+          done = asyncio.Event()
+          state = {"urls": None, "error": None, "state": None}
+
+          def on_result(_s, data):
+              state["urls"] = parse_result(bytes(data)); done.set()
+
+          def on_error(_s, data):
+              code = data[0] if data else 0
+              if code != 0:
+                  state["error"] = ERROR_NAMES.get(code, "error %d" % code); done.set()
+
+          def on_state(_s, data):
+              state["state"] = data[0] if data else None
+
+          async with BleakClient(dev) as client:
+              # Subscribe BEFORE writing so the reply is never missed.
+              await client.start_notify(CH_RPC_RESULT, on_result)
+              await client.start_notify(CH_ERROR, on_error)
+              try:
+                  await client.start_notify(CH_STATE, on_state)
+              except Exception:
+                  pass
+              await client.write_gatt_char(CH_RPC_CMD, build_wifi_rpc(ssid, pw), response=True)
+              try:
+                  await asyncio.wait_for(done.wait(), timeout)
+              except asyncio.TimeoutError:
+                  return {"ok": False, "error": "timed out waiting for the player to join", "device": device}
+          if state["error"]:
+              return {"ok": False, "error": state["error"], "device": device}
+          return {"ok": True, "urls": state["urls"], "state": state["state"], "device": device}
+
+      def main():
+          ap = argparse.ArgumentParser(prog="hitl-improv")
+          sub = ap.add_subparsers(dest="cmd", required=True)
+          pr = sub.add_parser("provision")
+          pr.add_argument("--ssid", required=True)
+          pr.add_argument("--pass", dest="password", default="")
+          pr.add_argument("--address", help="target this BLE address (else scan for the Improv service)")
+          pr.add_argument("--name", default="", help="only match devices whose name contains this")
+          pr.add_argument("--scan-seconds", type=float, default=8.0)
+          pr.add_argument("--timeout", type=float, default=60.0)
+          a = ap.parse_args()
+          try:
+              result = asyncio.run(provision(a.ssid, a.password, a.address, a.name, a.scan_seconds, a.timeout))
+          except Exception as e:
+              result = {"ok": False, "error": "%s: %s" % (type(e).__name__, e)}
+          print(json.dumps(result), flush=True)
+          sys.exit(0 if result.get("ok") else 1)
+
+      if __name__ == "__main__":
+          main()
+    '';
+  };
+
   toolbox = with p; [
     bashInteractive
     coreutils
@@ -214,6 +337,7 @@ let
     hitlMonitor
     # BLE central (drives the host bluetoothd over the mounted system D-Bus):
     hitlBle
+    hitlImprov
     bluez
     # JTAG/debug over the C6 built-in USB-JTAG (needs the daemon's /dev/bus/usb):
     openocdEsp

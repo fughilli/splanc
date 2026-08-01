@@ -1,0 +1,96 @@
+# On-hardware HITL end-to-end test (FUG-33).
+#
+# Opt-in / manual only (workflow_dispatch): it needs a live rig on the tailnet
+# and a real ESP32-C6, so it must never gate normal PR CI. It joins the tailnet
+# with an ephemeral Tailscale auth key, builds the firmware flash-bundle, and
+# runs //pi/hitl/tests:e2e against the runner pool — reserving a FREE rig from
+# $HITL_SERVERS (the checkout mechanism), flashing it, provisioning it onto WiFi
+# over ImprovBLE, then checking time-sync + rename over the player WebSocket.
+#
+# Required repository configuration (Settings → Secrets and variables → Actions):
+#   secrets.TS_AUTHKEY       Tailscale auth key (ephemeral + tagged recommended)
+#                            so the runner can reach the rigs over the tailnet.
+#   secrets.HITL_WIFI_SSID   WiFi network the DUT is provisioned onto.
+#   secrets.HITL_WIFI_PASS   its password (optional; empty ⇒ open network).
+#   vars.HITL_SERVERS        pool of rig base URLs / hostnames, e.g.
+#                            "hitl-rig-1, hitl-rig-2" (comma/space separated).
+name: HITL e2e
+on:
+  workflow_dispatch:
+    inputs:
+      server:
+        description: 'Target a specific rig base URL (else pick a free one from HITL_SERVERS)'
+        required: false
+        default: ''
+      skip_flash:
+        description: 'Skip flashing (test against whatever is already on the board)'
+        type: boolean
+        default: false
+      monitor_seconds:
+        description: 'Seconds of serial to capture after flashing'
+        required: false
+        default: '12'
+jobs:
+  hitl-e2e:
+    runs-on: ubuntu-latest
+    env:
+      HITL_SERVERS: ${{ vars.HITL_SERVERS }}
+      HITL_WIFI_SSID: ${{ secrets.HITL_WIFI_SSID }}
+      HITL_WIFI_PASS: ${{ secrets.HITL_WIFI_PASS }}
+    steps:
+      - name: Setup repository
+        uses: actions/checkout@v4
+
+      # Reach the rigs over the tailnet. Ephemeral so the node self-reaps after
+      # the run; the rigs only accept tailnet peers (DESIGN.md "Security").
+      - name: Join the tailnet
+        uses: tailscale/github-action@v3
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+          args: --accept-routes
+
+      # Same Nix + Bazel toolchain and caching as the firmware job — the
+      # flash-bundle pulls in the esp32c6 image (mbedtls + Arduino core from
+      # source), the dominant cost, so we reuse the firmware disk-cache namespace.
+      - name: Install Nix
+        uses: nixbuild/nix-quick-install-action@v30
+        with:
+          nix_conf: experimental-features = nix-command flakes
+
+      - name: Cache /nix store
+        uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-${{ runner.os }}-firmware-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-firmware-
+          gc-max-store-size-linux: 5G
+
+      - name: Setup Bazel
+        uses: bazel-contrib/setup-bazel@0.15.0
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+
+      - name: Cache Bazel disk cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/bazel-disk
+          key: bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock') }}
+          restore-keys: bazel-disk-${{ runner.os }}-
+
+      - name: Build firmware flash-bundle
+        if: ${{ inputs.skip_flash != true }}
+        run: bazel build -c opt --disk_cache="$HOME/.cache/bazel-disk" //firmware/player_app:esp32c6_flashbundle
+
+      # Reserve a free rig from the pool, flash, ImprovBLE-provision, then check
+      # time-sync + rename over the WebSocket. The e2e reads WiFi creds from the
+      # HITL_WIFI_* env above and the pool from HITL_SERVERS.
+      - name: Run HITL e2e
+        run: |
+          args=(--monitor-seconds "${{ inputs.monitor_seconds }}")
+          if [ -n "${{ inputs.server }}" ]; then args+=(--server "${{ inputs.server }}"); fi
+          if [ "${{ inputs.skip_flash }}" = "true" ]; then
+            args+=(--skip-flash)
+          else
+            args+=(--bundle bazel-bin/firmware/player_app/esp32c6_flashbundle.tar)
+          fi
+          bazel run --disk_cache="$HOME/.cache/bazel-disk" //pi/hitl/tests:e2e -- "${args[@]}"
