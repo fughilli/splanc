@@ -118,11 +118,17 @@ const BASE: Record<ThemeMode, BaseColors> = {
 
 // -- font stacks -------------------------------------------------------------
 
+// The three sans faces below are self-hosted (see ui/kit/fonts.css) because the
+// desktop-only families they used to lead with — Segoe UI, Inter, Avenir Next —
+// aren't installed on Android, so every sans option there collapsed to Roboto
+// (FUG-29). "system" and "serif" stay as pure system stacks: both already
+// render distinctly on Android (Roboto and Noto Serif). The trailing system
+// fonts are kept as fallbacks in case a bundled woff2 fails to load.
 export const FONT_STACKS: Record<FontChoice, string> = {
   system: "system-ui, sans-serif",
-  humanist: "'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+  humanist: "'Open Sans', 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
   grotesk: "'Inter', 'Helvetica Neue', Arial, sans-serif",
-  rounded: "'Avenir Next', 'Segoe UI', system-ui, sans-serif",
+  rounded: "'Nunito', 'Avenir Next', 'Segoe UI', system-ui, sans-serif",
   serif: "Georgia, 'Times New Roman', serif",
 };
 

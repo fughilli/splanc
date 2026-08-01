@@ -7,6 +7,7 @@
  * #/capture. `?url=<wss>` still selects/links a device on load (back-compat).
  */
 
+import "../kit/fonts.css";
 import "../kit/tokens.css";
 import "./app.css";
 

@@ -1,0 +1,66 @@
+/*
+ * Self-hosted workspace fonts.
+ *
+ * The workspace-font picker (Settings ▸ Appearance) used to lean on faces that
+ * only exist on desktop OSes — 'Segoe UI', 'Inter', 'Avenir Next'. On Android
+ * none of those are installed, so "humanist", "grotesk" and "rounded" all fell
+ * through to Roboto and looked identical; only "serif" (which maps to Android's
+ * Noto Serif) stayed distinct. See FUG-29.
+ *
+ * Bundling the three distinctive faces makes every choice render the same on
+ * every platform. Files are latin-subset woff2 (Fontsource builds, OFL/Apache)
+ * under public/fonts/, weights 400 + 600 to match the UI (body + button/title).
+ * font-display: swap draws with the fallback first, then swaps — no blank text.
+ *
+ * "system" (Roboto / SF / Segoe) and "serif" (Noto Serif / Georgia) stay as
+ * system stacks: both already render distinctly on Android, so there's nothing
+ * to bundle for them.
+ */
+
+/* Inter — "grotesk" (SIL Open Font License) */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/inter-latin-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/fonts/inter-latin-600.woff2") format("woff2");
+}
+
+/* Open Sans — "humanist" (SIL Open Font License) */
+@font-face {
+  font-family: "Open Sans";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/open-sans-latin-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Open Sans";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/fonts/open-sans-latin-600.woff2") format("woff2");
+}
+
+/* Nunito — "rounded" (SIL Open Font License) */
+@font-face {
+  font-family: "Nunito";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/nunito-latin-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Nunito";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/fonts/nunito-latin-600.woff2") format("woff2");
+}
