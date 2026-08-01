@@ -346,10 +346,14 @@ jobs:
             bazel-disk-site-${{ runner.os }}-
             bazel-disk-test-${{ runner.os }}-
 
+      # Node 22: package.json pins `packageManager: pnpm@11.8.0`, which
+      # pnpm/action-setup honors, and pnpm 11 needs Node >= 22.13 (it imports the
+      # `node:sqlite` builtin, absent in Node 20). Node 20 here made the deploy
+      # crash with ERR_UNKNOWN_BUILTIN_MODULE: node:sqlite.
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
