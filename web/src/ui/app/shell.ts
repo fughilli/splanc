@@ -92,6 +92,10 @@ export class Shell {
     this.menu.appendChild(
       this.menuItem("settings", "Appearance", () => this.router?.navigate("/settings")),
     );
+    // MIDI controllers (connect + name controls) — always available.
+    this.menu.appendChild(
+      this.menuItem("graph", "MIDI controllers", () => this.router?.navigate("/settings/midi")),
+    );
     const install = installMenuItem(() => this.closeMenu());
     if (install) this.menu.appendChild(install);
     const hasItems = this.menu.childElementCount > 0;

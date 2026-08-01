@@ -27,13 +27,14 @@ class MemStorage {
     this.m.clear();
   }
 }
-(globalThis as { localStorage?: unknown }).localStorage = new MemStorage();
+const mem = new MemStorage();
+(globalThis as { localStorage?: unknown }).localStorage = mem;
 
 const KNOB = { device: "Nano", kind: "cc", channel: 0, number: 74 } as const;
 const FADER = { device: "Nano", kind: "cc", channel: 0, number: 7 } as const;
 
 beforeEach(() => {
-  (globalThis.localStorage as MemStorage).clear();
+  mem.clear();
 });
 
 test("assignSemantic creates, then renames the same control (no dup)", () => {

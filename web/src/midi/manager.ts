@@ -106,23 +106,8 @@ export function parseMidiMessage(
   }
 }
 
-// -- minimal Web MIDI typings (avoids a @types/webmidi dependency) -----------
-interface MidiMessageEvent {
-  data: Uint8Array;
-}
-interface MidiInputPort {
-  id: string;
-  name: string | null;
-  state: string;
-  onmidimessage: ((e: MidiMessageEvent) => void) | null;
-}
-interface MidiAccess {
-  inputs: Map<string, MidiInputPort>;
-  onstatechange: ((e: unknown) => void) | null;
-}
-interface NavigatorWithMidi {
-  requestMIDIAccess?: (opts?: { sysex?: boolean }) => Promise<MidiAccess>;
-}
+// Web MIDI types (MIDIAccess / MIDIInput / MIDIMessageEvent) come from the DOM
+// lib — no extra dependency needed.
 
 /** A connected input device, surfaced to the UI. */
 export interface MidiDeviceInfo {
@@ -135,10 +120,7 @@ type DevicesListener = (devices: MidiDeviceInfo[]) => void;
 
 /** True when this browser exposes the Web MIDI API. */
 export function midiSupported(): boolean {
-  return (
-    typeof navigator !== "undefined" &&
-    typeof (navigator as NavigatorWithMidi).requestMIDIAccess === "function"
-  );
+  return typeof navigator !== "undefined" && "requestMIDIAccess" in navigator;
 }
 
 /**
@@ -149,7 +131,7 @@ export function midiSupported(): boolean {
  * the settings screen and every editor observe the SAME hardware stream.
  */
 export class MidiManager {
-  private access: MidiAccess | null = null;
+  private access: MIDIAccess | null = null;
   private enabling: Promise<boolean> | null = null;
   private readonly controlListeners = new Set<ControlListener>();
   private readonly deviceListeners = new Set<DevicesListener>();
@@ -173,10 +155,9 @@ export class MidiManager {
     if (this.access !== null) return true;
     if (this.enabling !== null) return this.enabling;
     if (!midiSupported()) return false;
-    const nav = navigator as NavigatorWithMidi;
     this.enabling = (async () => {
       try {
-        const access = await nav.requestMIDIAccess!({ sysex: false });
+        const access = await navigator.requestMIDIAccess({ sysex: false });
         this.access = access;
         access.onstatechange = () => this.rewire();
         this.rewire();
@@ -193,14 +174,15 @@ export class MidiManager {
   /** Attach message handlers to all current inputs and publish the device list. */
   private rewire(): void {
     if (this.access === null) return;
-    for (const input of this.access.inputs.values()) {
+    this.access.inputs.forEach((input) => {
       // Reassign unconditionally — cheap and idempotent, covers hot-plug.
-      input.onmidimessage = (e: MidiMessageEvent) => this.onMessage(input, e);
-    }
+      input.onmidimessage = (e: MIDIMessageEvent) => this.onMessage(input, e);
+    });
     this.emitDevices();
   }
 
-  private onMessage(input: MidiInputPort, e: MidiMessageEvent): void {
+  private onMessage(input: MIDIInput, e: MIDIMessageEvent): void {
+    if (e.data === null) return;
     const ev = parseMidiMessage(input.name ?? input.id, e.data);
     if (ev === null) return;
     this.lastEvent = ev;
@@ -210,9 +192,11 @@ export class MidiManager {
   /** Currently connected input devices. */
   devices(): MidiDeviceInfo[] {
     if (this.access === null) return [];
-    return Array.from(this.access.inputs.values())
-      .filter((i) => i.state === "connected")
-      .map((i) => ({ id: i.id, name: i.name ?? i.id }));
+    const out: MidiDeviceInfo[] = [];
+    this.access.inputs.forEach((i) => {
+      if (i.state === "connected") out.push({ id: i.id, name: i.name ?? i.id });
+    });
+    return out;
   }
 
   private emitDevices(): void {
