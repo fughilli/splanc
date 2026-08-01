@@ -212,6 +212,33 @@ class MidiStore {
     write(cfg);
     this.emit();
   }
+
+  /**
+   * Zero-click binding: for each uniform with NO existing binding whose name
+   * matches (loosely) a named control, create a binding to it. This is the
+   * "name a knob 'speed' and every effect with a speed uniform maps to it"
+   * behaviour. Only fills gaps — it never overrides a user/AI binding. Returns
+   * the number of bindings created (0 = nothing to do, no emit).
+   */
+  autoBind(effectId: string, uniformNames: string[]): number {
+    const cfg = read();
+    const list = cfg.bindings[effectId] ?? [];
+    const bound = new Set(list.map((b) => b.uniform));
+    let added = 0;
+    for (const uniform of uniformNames) {
+      if (bound.has(uniform)) continue;
+      const sem = cfg.semantics.find((s) => normName(s.name) === normName(uniform));
+      if (!sem) continue;
+      list.push({ uniform, semantic: sem.name });
+      bound.add(uniform);
+      added++;
+    }
+    if (added === 0) return 0;
+    cfg.bindings[effectId] = list;
+    write(cfg);
+    this.emit();
+    return added;
+  }
 }
 
 export const midiStore = new MidiStore();

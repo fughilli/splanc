@@ -17,9 +17,13 @@
  *  3. A lightweight syntax-highlight overlay (transparent textarea over a
  *     <pre><code> backdrop, see highlight.ts) — no heavy editor dependency.
  *  4. An interactive AI CHAT panel driving a tool-use loop (set_script /
- *     capture_preview vision) against api.anthropic.com (BYO key).
+ *     capture_preview vision + MIDI-mapping tools) against api.anthropic.com
+ *     (BYO key).
  *  5. Key config moved into a ⋯ overflow menu in the
  *     editor header (out of the main body).
+ *  6. A MIDI pane (FUG-9): bind hardware controls to this effect's uniforms via
+ *     the mapping layer (never the source), with a ✨ AI "Remap" button. The
+ *     shared MidiRouter moves the uniform controls live as knobs turn.
  */
 
 import type { OutputMap, Topology } from "@ledmapper/protocol";
@@ -789,6 +793,10 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     panel.setManifest(r.uniforms);
     lastUniforms = r.uniforms;
     midiRouter.setManifest(r.uniforms);
+    // Auto-bind uniforms to like-named controls ("speed" uniform ↔ a knob named
+    // "speed") — fills gaps only, never overrides an explicit binding. Emits, so
+    // the panel re-renders; then refresh its manifest for the drivable list.
+    midiStore.autoBind(effectId, r.uniforms.filter(isDrivable).map((u) => u.name));
     midiPanel.setManifest(r.uniforms);
     await swapPreview(r.bytecode);
 

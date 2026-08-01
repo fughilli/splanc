@@ -91,6 +91,20 @@ test("replaceBindings overwrites the whole effect table", () => {
   );
 });
 
+test("autoBind fills gaps by like-name, never overriding", () => {
+  midiStore.assignSemantic(KNOB, "speed");
+  midiStore.assignSemantic(FADER, "Width"); // loose-matches a "width" uniform
+  // A pre-existing explicit binding must survive untouched.
+  midiStore.setBinding("eff1", { uniform: "speed", semantic: "other", min: 1 });
+  const added = midiStore.autoBind("eff1", ["speed", "width", "tint"]);
+  assert.equal(added, 1); // only "width" is auto-bound; speed already bound, tint unnamed
+  assert.equal(midiStore.bindingFor("eff1", "speed")?.semantic, "other");
+  assert.equal(midiStore.bindingFor("eff1", "width")?.semantic, "Width");
+  assert.equal(midiStore.bindingFor("eff1", "tint"), undefined);
+  // Idempotent: a second pass adds nothing.
+  assert.equal(midiStore.autoBind("eff1", ["speed", "width", "tint"]), 0);
+});
+
 test("bindingFor finds a specific uniform's binding", () => {
   midiStore.setBinding("eff1", { uniform: "speed", semantic: "speed" });
   assert.equal(midiStore.bindingFor("eff1", "speed")?.semantic, "speed");
