@@ -330,10 +330,13 @@ export function HelpTip(opts: {
   btn.setAttribute("aria-expanded", "false");
   btn.appendChild(icon("help"));
 
+  // Visibility is driven entirely by the `.k-helptip--open` class on `el` (see
+  // tokens.css) rather than the `hidden` attribute: the popover's own
+  // `display: flex` would override `[hidden]`, so toggling `hidden` could never
+  // dismiss it. Class-based state also lets the bubble animate in/out.
   const pop = document.createElement("div");
   pop.className = "k-helptip-pop";
   if (opts.align === "left") pop.classList.add("k-helptip-pop--left");
-  pop.hidden = true;
   if (opts.title) {
     const t = document.createElement("div");
     t.className = "k-helptip-title";
@@ -368,7 +371,6 @@ export function HelpTip(opts: {
   }
   function openPop(): void {
     open = true;
-    pop.hidden = false;
     btn.setAttribute("aria-expanded", "true");
     el.classList.add("k-helptip--open");
     setTimeout(() => {
@@ -378,7 +380,6 @@ export function HelpTip(opts: {
   }
   function close(): void {
     open = false;
-    pop.hidden = true;
     btn.setAttribute("aria-expanded", "false");
     el.classList.remove("k-helptip--open");
     document.removeEventListener("click", onDocClick);

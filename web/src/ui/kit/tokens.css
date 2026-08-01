@@ -287,10 +287,36 @@ a {
   border: 1px solid var(--border);
   border-radius: var(--r-card);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  /* Dismissible: hidden + non-interactive until the wrapper gets
+     .k-helptip--open. We drive visibility from a class (not the `hidden`
+     attribute, which `display: flex` above would override) so the popover can
+     actually be dismissed and can animate. The delayed `visibility` keeps the
+     bubble hit-testable during the fade-out, then removes it from the a11y tree
+     and tab order once closed. */
+  opacity: 0;
+  transform: translateY(-6px) scale(0.98);
+  transform-origin: top right;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity var(--motion-micro) var(--ease),
+    transform var(--motion-micro) var(--ease),
+    visibility 0s linear var(--motion-micro);
 }
 .k-helptip-pop--left {
   right: auto;
   left: 0;
+  transform-origin: top left;
+}
+.k-helptip--open .k-helptip-pop {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  visibility: visible;
+  pointer-events: auto;
+  transition:
+    opacity var(--motion-micro) var(--ease),
+    transform var(--motion-micro) var(--ease),
+    visibility 0s;
 }
 .k-helptip-title {
   font-weight: 600;
