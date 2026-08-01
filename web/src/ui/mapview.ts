@@ -59,7 +59,10 @@ export class MapView {
   // LEDs; rendered as a polyline when toggled on.
   private trajectory: Vec3[] | null = null;
   showTrajectory = false;
-  /** Toggle a graduated ground grid (Y=0 plane) and a world coordinate triad. */
+  /** Toggle a graduated ground grid (Y=0 plane) and a world coordinate triad.
+   * Seeded in the constructor from the Appearance defaults (see below) so a
+   * default of "on" makes new views *start* with the overlay, while per-view
+   * toggles can still turn it back off. */
   showGrid = false;
   showTriad = false;
 
@@ -87,7 +90,14 @@ export class MapView {
   constructor(
     private readonly canvas: HTMLCanvasElement,
     private map: OutputMap,
-  ) {}
+  ) {
+    // The Appearance grid/triad settings are *defaults*: they seed the initial
+    // per-view state at construction, after which this.showGrid/showTriad own
+    // the decision (so a per-view toggle can turn an on-by-default overlay off).
+    const rs = renderSettings();
+    this.showGrid = rs.showGrid;
+    this.showTriad = rs.showTriad;
+  }
 
   /** Swap in a newer map (live preview) without resetting the camera. */
   update(map: OutputMap): void {
@@ -281,11 +291,11 @@ export class MapView {
     const w = laidOut ? this.cssW : this.canvas.width;
     const h = laidOut ? this.cssH : this.canvas.height;
     // Live appearance knobs (Settings ▸ Appearance) — read each frame so a
-    // change re-themes every open viewport immediately. Instance toggles OR the
-    // configured defaults, so a screen's explicit "Grid"/"Triad" still wins.
+    // change re-themes every open viewport immediately. Grid/triad are seeded
+    // from the defaults at construction, then owned by the per-view toggles.
     const rs = renderSettings();
-    const showGrid = this.showGrid || rs.showGrid;
-    const showTriad = this.showTriad || rs.showTriad;
+    const showGrid = this.showGrid;
+    const showTriad = this.showTriad;
     const ledScale = rs.ledSize;
     const glow = rs.glow;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
