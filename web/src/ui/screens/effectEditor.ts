@@ -42,7 +42,7 @@ import { effectStore, isBuiltinEffect } from "../../store/effectStore";
 import { mapStore } from "../../store/mapStore";
 import { renderSettings } from "../../store/appearance";
 import { appState } from "../app/state";
-import { Button, IconButton, icon, toast } from "../kit";
+import { Button, IconButton, icon, toast, type IconName } from "../kit";
 import { FxLayout } from "../../effects/editor/layout";
 import { VideoTexturePanel } from "../../effects/editor/videoTexture";
 import { openAiKeySheet } from "./aiKeySheet";
@@ -622,28 +622,65 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   }
 
   // -- map picker -----------------------------------------------------------
-  const mapPicker = document.createElement("select");
-  mapPicker.className = "fxedit-mappick";
+  // A circular overlay button (bottom-right of the preview) opens a dropdown
+  // menu listing the available maps. Mirrors the ⋯ overflow-menu pattern, but
+  // opens UPWARD since it sits at the bottom of the pane.
+  const mapMenu = document.createElement("div");
+  mapMenu.className = "fxedit-menu fxedit-menu--up";
+  mapMenu.style.display = "none";
+
+  let mapMenuOpen = false;
+  function openMapMenu(): void {
+    mapMenuOpen = true;
+    mapMenu.style.display = "";
+    // Defer the outside-click listener so this same click doesn't close it.
+    setTimeout(() => document.addEventListener("click", onMapDocClick), 0);
+  }
+  function closeMapMenu(): void {
+    mapMenuOpen = false;
+    mapMenu.style.display = "none";
+    document.removeEventListener("click", onMapDocClick);
+  }
+  function toggleMapMenu(): void {
+    if (mapMenuOpen) closeMapMenu();
+    else openMapMenu();
+  }
+  function onMapDocClick(ev: MouseEvent): void {
+    const t = ev.target as Node;
+    if (!mapMenu.contains(t) && !mapBtn.contains(t)) closeMapMenu();
+  }
 
   async function populateMapPicker(): Promise<string | null> {
     const maps = await mapStore.list({ sort: "updated" });
-    mapPicker.replaceChildren();
-    const fixtureOpt = document.createElement("option");
-    fixtureOpt.value = "__fixture__";
-    fixtureOpt.textContent = "Sample fixture (tree)";
-    mapPicker.appendChild(fixtureOpt);
-    for (const m of maps) {
-      const o = document.createElement("option");
-      o.value = m.id;
-      o.textContent = m.name;
-      mapPicker.appendChild(o);
+    const opts: { value: string; label: string }[] = [
+      { value: "__fixture__", label: "Sample fixture (tree)" },
+      ...maps.map((m) => ({ value: m.id, label: m.name })),
+    ];
+    mapMenu.replaceChildren();
+    for (const o of opts) {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "fxedit-menu-item";
+      item.dataset.value = o.value;
+      item.textContent = o.label;
+      item.addEventListener("click", () => {
+        closeMapMenu();
+        void selectMap(o.value);
+      });
+      mapMenu.appendChild(item);
     }
     return appState.selectedMapId ?? maps[0]?.id ?? null;
   }
 
-  mapPicker.addEventListener("change", () => void selectMap(mapPicker.value));
+  // Reflect the active map in the menu (a check-marked item).
+  function markSelectedMap(id: string): void {
+    for (const item of Array.from(mapMenu.children) as HTMLButtonElement[]) {
+      item.classList.toggle("fxedit-menu-item--sel", item.dataset["value"] === id);
+    }
+  }
 
   async function selectMap(id: string): Promise<void> {
+    markSelectedMap(id);
     if (id === "__fixture__") {
       loadMap(generateFixture("tree", { count: 160, seed: 3, jitterFrac: 0.06 }));
       return;
@@ -890,60 +927,73 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     return row;
   }
 
-  // Grid / Triad segmented toggle for the preview (same feature Map Detail
-  // exposes). Flips mapView.showGrid / showTriad; safe before mapView exists.
-  // `initial` seeds the pressed state from the Appearance defaults so the chip
-  // matches the MapView, which also starts from those defaults.
-  function viewToggle(
-    label: string,
+  // Circular icon toggle for a preview overlay (grid / triad). Flips
+  // mapView.showGrid / showTriad; safe before mapView exists. `initial` seeds
+  // the pressed state from the Appearance defaults so the button matches the
+  // MapView, which also starts from those defaults.
+  function overlayToggle(
+    iconName: IconName,
+    title: string,
     initial: boolean,
     apply: (on: boolean) => void,
   ): HTMLButtonElement {
     let on = initial;
     const b = document.createElement("button");
     b.type = "button";
-    b.className = "toggle-chip" + (on ? " toggle-chip--on" : "");
-    b.textContent = label;
+    b.title = title;
+    b.setAttribute("aria-pressed", String(on));
+    b.className = "fxedit-ovbtn" + (on ? " fxedit-ovbtn--on" : "");
+    b.appendChild(icon(iconName));
     b.addEventListener("click", () => {
       on = !on;
-      b.classList.toggle("toggle-chip--on", on);
+      b.classList.toggle("fxedit-ovbtn--on", on);
+      b.setAttribute("aria-pressed", String(on));
       apply(on);
     });
     return b;
   }
 
-  const mapRow = document.createElement("label");
-  mapRow.className = "fxedit-fieldrow";
-  const mapCap = document.createElement("span");
-  mapCap.textContent = "Preview map";
-  mapRow.append(mapCap, mapPicker);
-
-  const viewToggles = document.createElement("div");
-  viewToggles.className = "fxedit-viewtoggles";
-  // Seed the chips (and, when it exists, the live view) from the Appearance
-  // grid/triad defaults; thereafter the chips own the preview's overlay state.
+  // Seed the overlay toggles (and, when it exists, the live view) from the
+  // Appearance grid/triad defaults; thereafter the buttons own the preview's
+  // overlay state.
   const viewDefaults = renderSettings();
   previewGrid = viewDefaults.showGrid;
   previewTriad = viewDefaults.showTriad;
-  viewToggles.append(
-    viewToggle("Grid", previewGrid, (v) => {
+
+  // Map-picker button: opens the map dropdown menu (anchored above it).
+  const mapBtn = document.createElement("button");
+  mapBtn.type = "button";
+  mapBtn.title = "Preview map";
+  mapBtn.className = "fxedit-ovbtn";
+  mapBtn.appendChild(icon("map"));
+  mapBtn.addEventListener("click", () => toggleMapMenu());
+  const mapBtnWrap = document.createElement("div");
+  mapBtnWrap.className = "fxedit-ovbtnwrap";
+  mapBtnWrap.append(mapBtn, mapMenu);
+
+  // A cluster of circular graphical buttons overlaid on the lower-right of the
+  // 3D view (grid / triad overlay toggles + map picker), reclaiming the space
+  // the old control strip took up below the canvas.
+  const previewOverlay = document.createElement("div");
+  previewOverlay.className = "fxedit-previewoverlay";
+  previewOverlay.append(
+    overlayToggle("grid", "Toggle floor grid", previewGrid, (v) => {
       previewGrid = v;
       if (mapView) mapView.showGrid = v;
     }),
-    viewToggle("Triad", previewTriad, (v) => {
+    overlayToggle("triad", "Toggle world axes", previewTriad, (v) => {
       previewTriad = v;
       if (mapView) mapView.showTriad = v;
     }),
+    mapBtnWrap,
   );
 
-  // Preview pane content: canvas + its controls. The canvas node is STABLE —
-  // it's created once and only re-parented, so MapView keeps drawing to it.
+  // Preview pane content: the canvas fills the pane and the controls overlay
+  // its lower-right corner. The canvas node is STABLE — it's created once and
+  // only re-parented, so MapView keeps drawing to it.
   const previewBody = document.createElement("div");
   previewBody.className = "fxedit-previewbody";
-  const previewControls = document.createElement("div");
-  previewControls.className = "fxedit-previewctl";
-  previewControls.append(viewToggles, mapRow);
-  previewBody.append(canvas, previewControls);
+  previewBody.append(canvas, previewOverlay);
 
   // Chat pane content.
   const chatBody = document.createElement("div");
@@ -1031,8 +1081,7 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
 
     try {
       const defaultMapId = await populateMapPicker();
-      mapPicker.value = defaultMapId ?? "__fixture__";
-      await selectMap(mapPicker.value);
+      await selectMap(defaultMapId ?? "__fixture__");
     } catch (e) {
       // A preview/map hiccup must not disable the rest of the editor.
       console.error("effect editor: preview/map init failed", e);
