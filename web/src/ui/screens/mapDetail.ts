@@ -183,9 +183,12 @@ export function MapDetailScreen(
     metaStrip.textContent =
       `${map.ledCount} LEDs · rms ${(rec.rmsReprojPx || 0).toFixed(1)} px · ${new Date(rec.updatedAt).toLocaleDateString()}`;
 
+    // Seed the toggle pressed-state from the view's grid/triad, which MapView
+    // initialised from the Appearance defaults — so an on-by-default overlay
+    // shows the button lit and can be toggled back off from here.
     viewToggles.append(
-      iconToggle("grid", "Grid", false, (v) => setViewFlag("showGrid", v)),
-      iconToggle("triad", "World triad", false, (v) => setViewFlag("showTriad", v)),
+      iconToggle("grid", "Grid", view.showGrid, (v) => setViewFlag("showGrid", v)),
+      iconToggle("triad", "World triad", view.showTriad, (v) => setViewFlag("showTriad", v)),
       iconToggle("camera-path", "Camera path", false, (v) => {
         if (view) view.showTrajectory = v;
       }),

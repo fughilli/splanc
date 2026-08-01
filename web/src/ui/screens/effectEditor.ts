@@ -40,6 +40,7 @@ import {
 } from "../../effects/ai/generate";
 import { effectStore, isBuiltinEffect } from "../../store/effectStore";
 import { mapStore } from "../../store/mapStore";
+import { renderSettings } from "../../store/appearance";
 import { appState } from "../app/state";
 import { Button, IconButton, icon, toast } from "../kit";
 import { FxLayout } from "../../effects/editor/layout";
@@ -62,6 +63,10 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   const worker = new FxCompilerWorker();
   let currentMap: OutputMap | null = null;
   let mapView: MapView | null = null;
+  // Preview grid/triad state, seeded from the Appearance defaults and toggled by
+  // the view chips; applied to mapView whenever it's (re)created.
+  let previewGrid = false;
+  let previewTriad = false;
   let positions: Float32Array | null = null;
   let preview: FxPreview | null = null;
   // Per-LED topology (led.seg/s/branch) for the current map, so the preview
@@ -659,6 +664,10 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     }
     if (mapView === null) {
       mapView = new MapView(canvas, map);
+      // Honour any chip toggles made before the view existed (the constructor
+      // seeds from the same defaults, so this only matters after a user change).
+      mapView.showGrid = previewGrid;
+      mapView.showTriad = previewTriad;
       mapView.setLedColors(new Uint8Array(map.leds.length * 3));
       mapView.start();
     } else {
@@ -883,11 +892,17 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
 
   // Grid / Triad segmented toggle for the preview (same feature Map Detail
   // exposes). Flips mapView.showGrid / showTriad; safe before mapView exists.
-  function viewToggle(label: string, apply: (on: boolean) => void): HTMLButtonElement {
-    let on = false;
+  // `initial` seeds the pressed state from the Appearance defaults so the chip
+  // matches the MapView, which also starts from those defaults.
+  function viewToggle(
+    label: string,
+    initial: boolean,
+    apply: (on: boolean) => void,
+  ): HTMLButtonElement {
+    let on = initial;
     const b = document.createElement("button");
     b.type = "button";
-    b.className = "toggle-chip";
+    b.className = "toggle-chip" + (on ? " toggle-chip--on" : "");
     b.textContent = label;
     b.addEventListener("click", () => {
       on = !on;
@@ -905,11 +920,18 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
 
   const viewToggles = document.createElement("div");
   viewToggles.className = "fxedit-viewtoggles";
+  // Seed the chips (and, when it exists, the live view) from the Appearance
+  // grid/triad defaults; thereafter the chips own the preview's overlay state.
+  const viewDefaults = renderSettings();
+  previewGrid = viewDefaults.showGrid;
+  previewTriad = viewDefaults.showTriad;
   viewToggles.append(
-    viewToggle("Grid", (v) => {
+    viewToggle("Grid", previewGrid, (v) => {
+      previewGrid = v;
       if (mapView) mapView.showGrid = v;
     }),
-    viewToggle("Triad", (v) => {
+    viewToggle("Triad", previewTriad, (v) => {
+      previewTriad = v;
       if (mapView) mapView.showTriad = v;
     }),
   );
