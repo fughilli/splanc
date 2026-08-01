@@ -18,7 +18,9 @@ def test_normalize_base_adds_scheme_and_port():
 
 def test_parse_servers_splits_and_dedupes():
     assert parse_servers("a, b  c") == [
-        "http://a:8087", "http://b:8087", "http://c:8087",
+        "http://a:8087",
+        "http://b:8087",
+        "http://c:8087",
     ]
     # Dedupe keeps first-seen order.
     assert parse_servers("a, a, http://a:8087") == ["http://a:8087"]

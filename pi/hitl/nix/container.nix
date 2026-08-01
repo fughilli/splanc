@@ -206,7 +206,7 @@ let
   # joined network. bleak central (host bluetoothd over the mounted D-Bus), the
   # container-side twin of tools/ble_onboard_server.py's provision(); the packet
   # codec is duplicated here (a few lines) so the image is self-contained, and is
-  # unit-pinned by pi/hitl/tests/improv.py. Prints a single JSON result line on
+  # unit-pinned by pi/hitl/harness/improv.py. Prints a single JSON result line on
   # stdout (logs go to stderr) so the e2e harness can parse it.
   hitlImprov = p.writeTextFile {
     name = "hitl-improv";

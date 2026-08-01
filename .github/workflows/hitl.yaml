@@ -3,7 +3,7 @@
 # Opt-in / manual only (workflow_dispatch): it needs a live rig on the tailnet
 # and a real ESP32-C6, so it must never gate normal PR CI. It joins the tailnet
 # with an ephemeral Tailscale auth key, builds the firmware flash-bundle, and
-# runs //pi/hitl/tests:e2e against the runner pool — reserving a FREE rig from
+# runs //pi/hitl/harness:e2e against the runner pool — reserving a FREE rig from
 # $HITL_SERVERS (the checkout mechanism), flashing it, provisioning it onto WiFi
 # over ImprovBLE, then checking time-sync + rename over the player WebSocket.
 #
@@ -100,4 +100,4 @@ jobs:
           else
             args+=(--bundle bazel-bin/firmware/player_app/esp32c6_flashbundle.tar)
           fi
-          bazel run --disk_cache="$HOME/.cache/bazel-disk" //pi/hitl/tests:e2e -- "${args[@]}"
+          bazel run --disk_cache="$HOME/.cache/bazel-disk" //pi/hitl/harness:e2e -- "${args[@]}"

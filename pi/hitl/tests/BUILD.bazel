@@ -1,26 +1,22 @@
-"""HITL end-to-end test suite (FUG-33).
+"""HITL pure-logic unit tests (FUG-33).
 
-Two audiences:
+The Improv packet codec, SNTP sync math, and runner-pool picker — the pieces
+that must not drift from the firmware/app. No hardware, no network. The modules
+under test live in //pi/hitl/harness; this dir holds only tests (the repo's
+name-tests-test convention).
 
-  * `hitl_test` — the pure-logic unit tests (Improv packet codec, SNTP sync math,
-    runner-pool picker). No hardware, no network. Tagged `["manual", "hitl"]`, so
-    it's out of `bazel test //...`; the dedicated `hitl-tests` CI job collects the
-    `hitl` tag by query and runs it, enforcing device/app/harness parity.
-  * `e2e` — the on-hardware orchestrator. It reserves a real rig from the pool
-    (the checkout mechanism), flashes firmware, provisions the DUT onto WiFi over
-    ImprovBLE, then checks time-sync + rename over the player WebSocket. Needs a
-    reachable rig (tailnet) + a board, so it is `bazel run`, never `bazel test`.
-
-`imports = ["."]` makes the sibling modules importable as top-level (hitl_pool,
-hitl_client, sync, improv) the same way the files import each other.
+Tagged `["manual", "hitl"]`, so it's out of `bazel test //...`; the dedicated
+`hitl-tests` CI job (.github/workflows/test.yaml) collects the `hitl` tag with a
+bazel query and runs it, enforcing device/app/harness parity. `imports = ["."]`
++ the harness dep put both the test files and the modules under test on the
+top-level import path.
 """
 
 load("@pypi//:requirements.bzl", "requirement")
-load("@rules_python//python:defs.bzl", "py_binary", "py_test")
+load("@rules_python//python:defs.bzl", "py_test")
 
 package(default_visibility = ["//visibility:public"])
 
-# Pure-logic unit tests — the pieces that must not drift from the firmware/app.
 py_test(
     name = "hitl_test",
     srcs = [
@@ -28,46 +24,16 @@ py_test(
         "test_hitl_pool.py",
         "test_improv.py",
         "test_sync.py",
-        # modules under test:
-        "hitl_pool.py",
-        "improv.py",
-        "sync.py",
     ],
     imports = ["."],
     legacy_create_init = False,
     main = "pytest_main.py",
-    # `manual` keeps the HITL suite out of `bazel test //...`; the dedicated CI
-    # job (.github/workflows/test.yaml `hitl-tests`) collects the `hitl` tag with
-    # a bazel query and runs it explicitly.
-    tags = [
-        "hitl",
-        "manual",
-    ],
-    deps = [requirement("pytest")],
-)
-
-# On-hardware orchestrator. proto_wire (the §7 WebSocket wire) comes from
-# //pi/server; websockets is the client transport. See the module docstring for
-# invocation and the --skip-*/--server flags.
-py_binary(
-    name = "e2e",
-    srcs = [
-        "hitl_e2e.py",
-        # sibling modules it imports at top level:
-        "hitl_client.py",
-        "hitl_pool.py",
-        "sync.py",
-    ],
-    imports = ["."],
-    main = "hitl_e2e.py",
-    # On-hardware; tagged for grouping with the rest of the HITL surface and kept
-    # out of any wildcard build/run. It runs from the manual hitl.yaml workflow.
     tags = [
         "hitl",
         "manual",
     ],
     deps = [
-        "//pi/server",
-        requirement("websockets"),
+        "//pi/hitl/harness",
+        requirement("pytest"),
     ],
 )

@@ -13,7 +13,7 @@ Given a firmware flash-bundle it:
   5. releases the reservation.
 
 Usage:
-    bazel run //pi/hitl/tests:e2e -- \
+    bazel run //pi/hitl/harness:e2e -- \
         --bundle bazel-bin/firmware/player_app/esp32c6_flashbundle.tar \
         --wifi-ssid BigVibes --wifi-pass SECRET
 
@@ -131,7 +131,9 @@ async def _ws_checks(ws_url: str, new_name: str, insecure: bool) -> None:
 
     print(f"[ws] connecting {ws_url}", flush=True)
     async with websockets.connect(ws_url, max_size=2**22, ssl=ssl_ctx) as sock:
-        welcome = await rpc(sock, {"type": "hello", "client": "hitl-e2e", "appVersion": "0"}, "welcome")
+        welcome = await rpc(
+            sock, {"type": "hello", "client": "hitl-e2e", "appVersion": "0"}, "welcome"
+        )
         print(f"[ws] welcome: device_name={welcome.get('deviceName')!r}", flush=True)
 
         # TIME SYNC — three pings, keep the min-RTT sample, assert it's sane.
@@ -144,7 +146,9 @@ async def _ws_checks(ws_url: str, new_name: str, insecure: bool) -> None:
         best = best_sample(samples)
         if not is_sane(best):
             raise E2EFailure(f"time sync produced an implausible sample: {best}")
-        print(f"[ws] TIME SYNC OK — offset~{best.offset_ms:.1f}ms rtt={best.rtt_ms:.1f}ms", flush=True)
+        print(
+            f"[ws] TIME SYNC OK — offset~{best.offset_ms:.1f}ms rtt={best.rtt_ms:.1f}ms", flush=True
+        )
 
         # RENAME — set_device_name replies with a welcome echoing the new name.
         echo = await rpc(sock, {"type": "set_device_name", "name": new_name}, "welcome")
@@ -174,7 +178,9 @@ def run(args: argparse.Namespace) -> int:
         redirect = args.device_url
         if not args.skip_improv:
             if not args.wifi_ssid:
-                raise E2EFailure("--wifi-ssid (or $HITL_WIFI_SSID) is required unless --skip-improv")
+                raise E2EFailure(
+                    "--wifi-ssid (or $HITL_WIFI_SSID) is required unless --skip-improv"
+                )
             redirect = improv_provision(res, args.wifi_ssid, args.wifi_pass, args.improv_timeout)
 
         if not args.skip_ws:
@@ -192,19 +198,39 @@ def run(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--server", help="target a specific rig base URL (else pick from HITL_SERVERS)")
     ap.add_argument("--owner", default=os.environ.get("HITL_OWNER"), help="reservation owner id")
-    ap.add_argument("--bundle", default=os.environ.get("HITL_BUNDLE"), help="firmware flash-bundle .tar")
-    ap.add_argument("--monitor-seconds", type=float, default=12.0, help="serial capture after flashing")
-    ap.add_argument("--wifi-ssid", default=os.environ.get("HITL_WIFI_SSID"), help="WiFi SSID to provision")
-    ap.add_argument("--wifi-pass", default=os.environ.get("HITL_WIFI_PASS", ""), help="WiFi password")
+    ap.add_argument(
+        "--bundle", default=os.environ.get("HITL_BUNDLE"), help="firmware flash-bundle .tar"
+    )
+    ap.add_argument(
+        "--monitor-seconds", type=float, default=12.0, help="serial capture after flashing"
+    )
+    ap.add_argument(
+        "--wifi-ssid", default=os.environ.get("HITL_WIFI_SSID"), help="WiFi SSID to provision"
+    )
+    ap.add_argument(
+        "--wifi-pass", default=os.environ.get("HITL_WIFI_PASS", ""), help="WiFi password"
+    )
     ap.add_argument("--improv-timeout", type=float, default=60.0, help="seconds to await the join")
-    ap.add_argument("--device-url", help="skip provisioning; use this http://<ip>/ redirect directly")
+    ap.add_argument(
+        "--device-url", help="skip provisioning; use this http://<ip>/ redirect directly"
+    )
     ap.add_argument("--device-ws", help="override the derived WS URL entirely (e.g. ws://ip:81/ws)")
-    ap.add_argument("--ws-scheme", choices=["ws", "wss"], default="ws", help="derive ws:81 or wss:443")
-    ap.add_argument("--ws-verify", action="store_true", help="verify the DUT's TLS cert (default: accept self-signed)")
-    ap.add_argument("--rename-to", default=f"HITL Test {int(time.time()) % 100000}", help="name to set")
+    ap.add_argument(
+        "--ws-scheme", choices=["ws", "wss"], default="ws", help="derive ws:81 or wss:443"
+    )
+    ap.add_argument(
+        "--ws-verify",
+        action="store_true",
+        help="verify the DUT's TLS cert (default: accept self-signed)",
+    )
+    ap.add_argument(
+        "--rename-to", default=f"HITL Test {int(time.time()) % 100000}", help="name to set"
+    )
     ap.add_argument("--skip-flash", action="store_true")
     ap.add_argument("--skip-improv", action="store_true")
     ap.add_argument("--skip-ws", action="store_true")

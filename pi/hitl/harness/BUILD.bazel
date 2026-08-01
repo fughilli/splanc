@@ -1,0 +1,52 @@
+"""HITL Python harness — the reservation client + e2e driver (FUG-33).
+
+The library half of the suite: the checkout client (`hitl_client`), the
+free-runner pool picker (`hitl_pool`), and the pure Improv/SNTP codecs
+(`improv`, `sync`) the unit tests in //pi/hitl/tests pin. Kept out of the
+`tests/` directory so that dir holds only tests (the repo's name-tests-test
+convention); the codecs are imported both here and by the container's
+`hitl-improv` tool, which must not drift from them.
+
+`imports = ["."]` puts this directory on the import path so the modules are
+importable as top-level (hitl_pool, hitl_client, sync, improv) the way they
+import each other.
+"""
+
+load("@pypi//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_binary", "py_library")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "harness",
+    srcs = [
+        "hitl_client.py",
+        "hitl_pool.py",
+        "improv.py",
+        "sync.py",
+    ],
+    imports = ["."],
+)
+
+# On-hardware orchestrator: reserve a free rig from the pool (the checkout
+# mechanism), flash, ImprovBLE-provision, then check time-sync + rename over the
+# player WebSocket. proto_wire (the §7 WebSocket wire) comes from //pi/server;
+# websockets is the client transport. Needs a reachable rig + a board, so it is
+# `bazel run`, never `bazel test`. Tagged for grouping with the rest of the HITL
+# surface and kept out of any wildcard build/run; it runs from the manual
+# .github/workflows/hitl.yaml workflow.
+py_binary(
+    name = "e2e",
+    srcs = ["hitl_e2e.py"],
+    imports = ["."],
+    main = "hitl_e2e.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        requirement("websockets"),
+    ],
+)

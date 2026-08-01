@@ -88,7 +88,7 @@ with `pyserial`, `picocom`, `coreutils`, `openssh`. The DUT is `/dev/ttyACM0`
   drive the DUT's ImprovBLE onboarding: scan for the Improv service, write the
   WiFi-settings RPC, and wait for the board to join and report its redirect URL.
   Prints one JSON line (`{ok, urls, error, device}`) on stdout; used by the
-  `//pi/hitl/tests:e2e` harness for the setup phase.
+  `//pi/hitl/harness:e2e` harness for the setup phase.
 
 ## Hardware notes
 

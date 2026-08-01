@@ -47,7 +47,7 @@ checks ImprovBLE setup, rename, and time sync on a real board:
 ```sh
 bazel test //pi/hitl/tests:hitl_test           # pure-logic units (codec/sync/pool)
 export HITL_SERVERS="hitl-rig-1, hitl-rig-2"    # pool; free runner is auto-picked
-bazel run  //pi/hitl/tests:e2e -- \
+bazel run  //pi/hitl/harness:e2e -- \
     --bundle bazel-bin/firmware/player_app/esp32c6_flashbundle.tar \
     --wifi-ssid BigVibes --wifi-pass SECRET     # reserve → flash → improv → ws
 ```
@@ -72,7 +72,8 @@ pi/hitl/
   cmd/hitl-managerd/   # Pi-side reservation daemon (Go)
   cmd/hitl/            # agent CLI (Go)
   internal/{api,queue,runner,pool}/
-  tests/               # e2e suite + pure-logic units (Python; FUG-33)
+  harness/             # Python HITL client + e2e driver (FUG-33)
+  tests/               # pure-logic unit tests (codec/sync/pool)
   nix/
     packages.nix       # buildGoModule -> bin/hitl{,-managerd}
     container.nix      # dockerTools test container (sshd + ESP toolbox)

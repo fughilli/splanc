@@ -163,26 +163,36 @@ class Reservation:
     # --- ssh -------------------------------------------------------------
     def _ssh_opts(self, port_flag: str) -> list[str]:
         return [
-            "-o", "StrictHostKeyChecking=accept-new",
-            "-o", "UserKnownHostsFile=/dev/null",
-            "-o", "LogLevel=ERROR",
-            "-i", self._priv,
-            "-o", "IdentitiesOnly=yes",
-            port_flag, str(self.ssh_ep["port"]),
+            "-o",
+            "StrictHostKeyChecking=accept-new",
+            "-o",
+            "UserKnownHostsFile=/dev/null",
+            "-o",
+            "LogLevel=ERROR",
+            "-i",
+            self._priv,
+            "-o",
+            "IdentitiesOnly=yes",
+            port_flag,
+            str(self.ssh_ep["port"]),
         ]
 
     def _target(self) -> str:
         return f"{self.ssh_ep['user']}@{self.ssh_ep['host']}"
 
-    def ssh(self, remote_cmd: list[str] | str, capture: bool = False,
-            timeout: float | None = None) -> subprocess.CompletedProcess:
+    def ssh(
+        self, remote_cmd: list[str] | str, capture: bool = False, timeout: float | None = None
+    ) -> subprocess.CompletedProcess:
         """Run a command in the reservation's container over ssh."""
         if isinstance(remote_cmd, list):
             remote_cmd = " ".join(remote_cmd)
         argv = ["ssh", *self._ssh_opts("-p"), self._target(), remote_cmd]
         return subprocess.run(
-            argv, check=False, timeout=timeout,
-            capture_output=capture, text=True if capture else None,
+            argv,
+            check=False,
+            timeout=timeout,
+            capture_output=capture,
+            text=True if capture else None,
         )
 
     def scp_to(self, locals_: list[str], remote_dir: str) -> None:
