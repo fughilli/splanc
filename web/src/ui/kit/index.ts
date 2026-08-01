@@ -309,6 +309,8 @@ export function toast(message: string, opts: { error?: boolean; ms?: number } = 
 
 export interface HelpTipHandle {
   el: HTMLElement;
+  /** Reveal the popover (e.g. to start expanded). No-op if already open. */
+  open: () => void;
   close: () => void;
 }
 
@@ -325,6 +327,7 @@ export function HelpTip(opts: {
   action?: { label: string; icon?: IconName; onClick: () => void };
   label?: string; // aria-label for the trigger
   align?: "left" | "right"; // which edge the popover aligns to (default right)
+  defaultOpen?: boolean; // start expanded (e.g. a first-run hint) instead of collapsed
 }): HelpTipHandle {
   const el = document.createElement("div");
   el.className = "k-helptip";
@@ -338,10 +341,13 @@ export function HelpTip(opts: {
   btn.setAttribute("aria-expanded", "false");
   btn.appendChild(icon("help"));
 
+  // Visibility is driven entirely by the `.k-helptip--open` class on `el` (see
+  // tokens.css) rather than the `hidden` attribute: the popover's own
+  // `display: flex` would override `[hidden]`, so toggling `hidden` could never
+  // dismiss it. Class-based state also lets the bubble animate in/out.
   const pop = document.createElement("div");
   pop.className = "k-helptip-pop";
   if (opts.align === "left") pop.classList.add("k-helptip-pop--left");
-  pop.hidden = true;
   if (opts.title) {
     const t = document.createElement("div");
     t.className = "k-helptip-title";
@@ -368,32 +374,46 @@ export function HelpTip(opts: {
   }
 
   let open = false;
-  function onDocClick(ev: MouseEvent): void {
+  // Dismiss on any press outside the tip. Registered in the CAPTURE phase so a
+  // stray `stopPropagation()` on an in-app control (effect rows, editor panes,
+  // the layout drag handles all do this) can't swallow the press before it
+  // reaches us — a bubble-phase listener here would leave the tip stuck open.
+  // `pointerdown` (not `click`) makes the dismissal feel immediate.
+  function onDocPointer(ev: Event): void {
     if (!el.contains(ev.target as Node)) close();
   }
   function onKey(ev: KeyboardEvent): void {
-    if (ev.key === "Escape") close();
+    if (ev.key === "Escape") {
+      close();
+      btn.focus();
+    }
   }
   function openPop(): void {
+    if (open) return;
     open = true;
-    pop.hidden = false;
     btn.setAttribute("aria-expanded", "true");
     el.classList.add("k-helptip--open");
+    // Defer registration so the very press that opened the tip doesn't also
+    // count as an outside press and close it again.
     setTimeout(() => {
-      document.addEventListener("click", onDocClick);
+      document.addEventListener("pointerdown", onDocPointer, true);
       document.addEventListener("keydown", onKey);
     }, 0);
   }
   function close(): void {
+    if (!open) return;
     open = false;
-    pop.hidden = true;
     btn.setAttribute("aria-expanded", "false");
     el.classList.remove("k-helptip--open");
-    document.removeEventListener("click", onDocClick);
+    document.removeEventListener("pointerdown", onDocPointer, true);
     document.removeEventListener("keydown", onKey);
   }
   btn.addEventListener("click", () => (open ? close() : openPop()));
 
   el.append(btn, pop);
-  return { el, close };
+  // Start expanded when asked (e.g. a first-run hint that should be seen without
+  // a click). The wrapper carries `.k-helptip--open` from the outset, so it
+  // mounts already-open; the outside-press/Escape dismissal then applies as usual.
+  if (opts.defaultOpen) openPop();
+  return { el, open: openPop, close };
 }
