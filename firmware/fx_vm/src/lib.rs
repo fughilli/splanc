@@ -122,6 +122,36 @@ pub enum Op {
     // from that node (normalized 0..1 by the reach). Void; call once per cycle in
     // update(). No source set → led.dist stays the map-load root field.
     FloodFrom,
+    // --- reduced-precision fixed-point (Q1.f) fast path (FUG-10) --------------
+    // Narrow fixed-point types `fixed8` (Q1.6, s1.1.6, 8-bit logical) and
+    // `fixed16` (Q1.14, s1.1.14, 16-bit logical) — both range [-2, 2). The value
+    // rides in the low bits of the slot as a scaled integer (like Q16.16); +,-,
+    // neg and compares reuse the integer ops, so only mul/div and the format
+    // boundary need format-aware opcodes. These carry a `frac` operand (bits of
+    // fraction: 6 for Q1.6, 14 for Q1.14, and 16 works for Q16.16 too), so a
+    // single opcode serves every fixed width. All integer-only — no soft-float.
+    MulFixN, // u8 frac : (a*b) >> frac
+    DivFixN, // u8 frac : (a << frac) / b
+    // Reinterpret an integer/fixed value between formats by an arithmetic shift.
+    // Operand is a signed shift (i8 in a u8): >=0 shifts left (more frac bits),
+    // <0 shifts right. int↔fixed8 = ±6, int↔fixed16 = ±14, fixed8↔fixed16 = ±8,
+    // etc. Pure integer; no float involved.
+    FixRescale, // i8 shift
+    // Fixed/int ↔ f32 boundary (the only place soft-float appears for these
+    // types): FixToF pops a scaled int and pushes raw/2^frac; FixFromF pops a
+    // float and pushes trunc(x*2^frac). frac=0 makes them int↔float.
+    FixToF,   // u8 frac
+    FixFromF, // u8 frac
+    // Accelerated reduced-precision transcendentals — the FUG-10 win: sin/cos/exp
+    // evaluated in pure integer arithmetic (LUT + linear interpolation), so an
+    // effect can do trig without dragging in the f32 soft-float path. The operand
+    // is the fixed frac width (6 or 14). sin/cos take the angle in TURNS (1.0 =
+    // one full circle) as Q1.frac and return Q1.frac in [-1, 1] — no range
+    // reduction needed. exp takes Q1.frac and returns Q1.frac, SATURATED to the
+    // ±2 range (so it is meaningful for decay, x ≲ 0.69; larger x pins at +2).
+    SinFix, // u8 frac
+    CosFix, // u8 frac
+    ExpFix, // u8 frac
 }
 
 /// Graph-query kinds (the `GraphQuery` opcode operand).
@@ -137,6 +167,12 @@ pub mod gq {
 }
 
 pub const FIX_ONE: i32 = 1 << 16;
+
+/// Fraction bits for the narrow fixed formats (FUG-10). `fixed8` is Q1.6
+/// (s1.1.6) and `fixed16` is Q1.14 (s1.1.14); both range [-2, 2). These are the
+/// `frac` operand the `*FixN` / transcendental opcodes carry.
+pub const FRAC8: u8 = 6;
+pub const FRAC16: u8 = 14;
 
 /// Default per-invocation instruction budget (one `update()` or one `shade()`).
 /// A pathological loop trips this deterministically on every platform, so the
@@ -213,8 +249,8 @@ pub struct Counters {
 impl Op {
     #[inline]
     fn from_u8(b: u8) -> Option<Op> {
-        // Op is a contiguous enum 0..=FloodFrom; guard the range then transmute.
-        if b <= Op::FloodFrom as u8 {
+        // Op is a contiguous enum 0..=ExpFix; guard the range then transmute.
+        if b <= Op::ExpFix as u8 {
             Some(unsafe { core::mem::transmute::<u8, Op>(b) })
         } else {
             None
@@ -1567,6 +1603,58 @@ fn run(
                     dist.set = true;
                 }
             }
+            // --- reduced-precision fixed-point (FUG-10) ----------------------
+            Op::MulFixN => {
+                let frac = code[pc] as u32;
+                pc += 1;
+                let b = popi!() as i64;
+                let a = popi!() as i64;
+                pushi!(((a * b) >> frac) as i32);
+            }
+            Op::DivFixN => {
+                let frac = code[pc] as u32;
+                pc += 1;
+                let b = popi!() as i64;
+                let a = popi!() as i64;
+                pushi!(if b == 0 { 0 } else { ((a << frac) / b) as i32 });
+            }
+            Op::FixRescale => {
+                let sh = code[pc] as i8;
+                pc += 1;
+                let a = popi!();
+                pushi!(if sh >= 0 { a.wrapping_shl(sh as u32) } else { a >> ((-(sh as i32)) as u32) });
+            }
+            Op::FixToF => {
+                let frac = code[pc] as u32;
+                pc += 1;
+                let a = popi!();
+                push!(a as f32 / (1u32 << frac) as f32);
+            }
+            Op::FixFromF => {
+                let frac = code[pc] as u32;
+                pc += 1;
+                let a = pop!();
+                pushi!((a * (1u32 << frac) as f32) as i32);
+            }
+            Op::SinFix => {
+                let frac = code[pc] as u32;
+                pc += 1;
+                let a = popi!();
+                pushi!(sin_fix(a, frac));
+            }
+            Op::CosFix => {
+                let frac = code[pc] as u32;
+                pc += 1;
+                let a = popi!();
+                // cos(t) = sin(t + quarter turn); one turn = 1<<frac.
+                pushi!(sin_fix(a.wrapping_add(1 << (frac - 2)), frac));
+            }
+            Op::ExpFix => {
+                let frac = code[pc] as u32;
+                pc += 1;
+                let a = popi!();
+                pushi!(exp_fix(a, frac));
+            }
         }
     }
     ([0.0, 0.0, 0.0], outcome, Counters { instrs, stack_max: sp_max as u16 })
@@ -1754,4 +1842,97 @@ fn palette(id: u8, t: f32) -> (f32, f32, f32) {
         // rainbow
         _ => hsv2rgb(t, 1.0, 1.0),
     }
+}
+
+// --- reduced-precision fixed-point transcendentals (FUG-10) ------------------
+// Pure-integer sin/exp for the narrow `fixed8` (Q1.6) / `fixed16` (Q1.14)
+// formats, so transcendental-heavy effects don't drag in the f32 soft-float
+// path. A LUT + linear interpolation; deterministic on host, wasm and device.
+
+/// One full-wave period of sine at 256 samples, Q1.15 (`sin(2π i/256)·32768`).
+static SIN_LUT: [i32; 256] = [
+    0, 804, 1608, 2411, 3212, 4011, 4808, 5602, 6393, 7180, 7962, 8740, 9512, 10279, 11039,
+    11793, 12540, 13279, 14010, 14733, 15447, 16151, 16846, 17531, 18205, 18868, 19520,
+    20160, 20788, 21403, 22006, 22595, 23170, 23732, 24279, 24812, 25330, 25833, 26320,
+    26791, 27246, 27684, 28106, 28511, 28899, 29269, 29622, 29957, 30274, 30572, 30853,
+    31114, 31357, 31581, 31786, 31972, 32138, 32286, 32413, 32522, 32610, 32679, 32729,
+    32758, 32768, 32758, 32729, 32679, 32610, 32522, 32413, 32286, 32138, 31972, 31786,
+    31581, 31357, 31114, 30853, 30572, 30274, 29957, 29622, 29269, 28899, 28511, 28106,
+    27684, 27246, 26791, 26320, 25833, 25330, 24812, 24279, 23732, 23170, 22595, 22006,
+    21403, 20788, 20160, 19520, 18868, 18205, 17531, 16846, 16151, 15447, 14733, 14010,
+    13279, 12540, 11793, 11039, 10279, 9512, 8740, 7962, 7180, 6393, 5602, 4808, 4011,
+    3212, 2411, 1608, 804, 0, -804, -1608, -2411, -3212, -4011, -4808, -5602, -6393, -7180,
+    -7962, -8740, -9512, -10279, -11039, -11793, -12540, -13279, -14010, -14733, -15447,
+    -16151, -16846, -17531, -18205, -18868, -19520, -20160, -20788, -21403, -22006, -22595,
+    -23170, -23732, -24279, -24812, -25330, -25833, -26320, -26791, -27246, -27684, -28106,
+    -28511, -28899, -29269, -29622, -29957, -30274, -30572, -30853, -31114, -31357, -31581,
+    -31786, -31972, -32138, -32286, -32413, -32522, -32610, -32679, -32729, -32758, -32768,
+    -32758, -32729, -32679, -32610, -32522, -32413, -32286, -32138, -31972, -31786, -31581,
+    -31357, -31114, -30853, -30572, -30274, -29957, -29622, -29269, -28899, -28511, -28106,
+    -27684, -27246, -26791, -26320, -25833, -25330, -24812, -24279, -23732, -23170, -22595,
+    -22006, -21403, -20788, -20160, -19520, -18868, -18205, -17531, -16846, -16151, -15447,
+    -14733, -14010, -13279, -12540, -11793, -11039, -10279, -9512, -8740, -7962, -7180,
+    -6393, -5602, -4808, -4011, -3212, -2411, -1608, -804,
+];
+
+/// `e^x` over x ∈ [-2, 2) at 256 samples, Q1.14, clamped to the representable
+/// [-2, 2) range (so exp saturates at +2 for x ≳ 0.69 — it is a decay curve).
+static EXP_LUT: [i32; 256] = [
+    2217, 2252, 2288, 2324, 2360, 2398, 2435, 2474, 2513, 2552, 2592, 2633, 2675, 2717,
+    2760, 2803, 2847, 2892, 2937, 2984, 3031, 3078, 3127, 3176, 3226, 3277, 3329, 3381,
+    3434, 3488, 3543, 3599, 3656, 3713, 3772, 3831, 3892, 3953, 4015, 4078, 4143, 4208,
+    4274, 4341, 4410, 4479, 4550, 4621, 4694, 4768, 4843, 4919, 4997, 5076, 5155, 5237,
+    5319, 5403, 5488, 5574, 5662, 5751, 5842, 5934, 6027, 6122, 6219, 6317, 6416, 6517,
+    6620, 6724, 6830, 6937, 7047, 7158, 7270, 7385, 7501, 7619, 7739, 7861, 7985, 8111,
+    8238, 8368, 8500, 8634, 8770, 8908, 9048, 9191, 9335, 9482, 9632, 9783, 9937, 10094,
+    10253, 10414, 10578, 10745, 10914, 11086, 11261, 11438, 11618, 11801, 11987, 12176,
+    12367, 12562, 12760, 12961, 13165, 13372, 13583, 13797, 14014, 14235, 14459, 14687,
+    14918, 15153, 15391, 15634, 15880, 16130, 16384, 16642, 16904, 17170, 17441, 17715,
+    17994, 18278, 18566, 18858, 19155, 19456, 19763, 20074, 20390, 20711, 21037, 21369,
+    21705, 22047, 22394, 22747, 23105, 23469, 23839, 24214, 24595, 24983, 25376, 25776,
+    26182, 26594, 27013, 27438, 27870, 28309, 28755, 29208, 29668, 30135, 30609, 31091,
+    31581, 32078, 32583, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767,
+    32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767,
+    32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767,
+    32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767,
+    32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767,
+    32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767,
+    32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767,
+    32767, 32767,
+];
+
+/// `sin(turns)` in Q1.`frac` fixed-point. `raw` is the angle in TURNS (1.0 =
+/// 2π) as Q1.`frac`; the result is Q1.`frac` in [-1, 1]. Frac ≤ 15. No range
+/// reduction — the phase wraps by masking the fractional turn (power-of-two).
+fn sin_fix(raw: i32, frac: u32) -> i32 {
+    let one = 1i64 << frac; // 1.0 turn
+    let phase = (raw as i64) & (one - 1); // fractional turn, 0..one
+    let n = SIN_LUT.len() as i64; // 256
+    let pos = phase * n; // in units of `one`
+    let idx = (pos >> frac) as usize & 255;
+    let sub = pos & (one - 1); // 0..one-1
+    let a = SIN_LUT[idx] as i64;
+    let b = SIN_LUT[(idx + 1) & 255] as i64;
+    let q15 = a + (((b - a) * sub) >> frac); // interpolated Q1.15 sine
+    let s = 15i64 - frac as i64;
+    (if s >= 0 { q15 >> s } else { q15 << (-s) }) as i32
+}
+
+/// `e^x` in Q1.`frac`. `raw` is Q1.`frac` in [-2, 2); the result is Q1.`frac`
+/// SATURATED to [-2, 2) (so exp pins at +2 once x ≳ 0.69 — meant for decay).
+/// Frac ≤ 14.
+fn exp_fix(raw: i32, frac: u32) -> i32 {
+    let one = 1i64 << frac;
+    let span = 4 * one; // domain width [-2, 2) in Q1.frac
+    let shifted = ((raw as i64) + 2 * one).clamp(0, span - 1); // (x+2), 0..span
+    let n = EXP_LUT.len() as i64; // 256
+    let pos = shifted * n;
+    let idx = (pos / span) as usize;
+    let sub = pos % span;
+    let a = EXP_LUT[idx] as i64;
+    let b = EXP_LUT[(idx + 1).min(n as usize - 1)] as i64;
+    let q14 = a + ((b - a) * sub) / span; // interpolated Q1.14
+    let s = 14i64 - frac as i64;
+    let v = if s >= 0 { q14 >> s } else { q14 << (-s) };
+    v.clamp(-2 * one, 2 * one - 1) as i32
 }

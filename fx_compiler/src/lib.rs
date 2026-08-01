@@ -20,6 +20,12 @@ pub enum Ty {
     Vec4,
     Int,   // native i32 (fast — no soft-float)
     Fixed, // Q16.16 fixed-point (fast fractional)
+    // Reduced-precision fixed-point (FUG-10): `fixed8` is Q1.6 (s1.1.6) and
+    // `fixed16` is Q1.14 (s1.1.14), both range [-2, 2). They enable the
+    // accelerated integer sin/cos/exp path. Like `fixed`, the value rides in a
+    // slot as a scaled integer, so +/-/neg/compare reuse the integer ops.
+    Fixed8,
+    Fixed16,
     Bool,
     Void,
     // Composite types (aggregate scalar/vec slots). The payload indexes the
@@ -33,7 +39,7 @@ impl Ty {
     /// [`Compiler::ty_width`], which consults the struct/array tables.
     fn width(self) -> u8 {
         match self {
-            Ty::Float | Ty::Int | Ty::Fixed | Ty::Bool => 1,
+            Ty::Float | Ty::Int | Ty::Fixed | Ty::Fixed8 | Ty::Fixed16 | Ty::Bool => 1,
             Ty::Vec2 => 2,
             Ty::Vec3 => 3,
             Ty::Vec4 => 4,
@@ -52,7 +58,18 @@ impl Ty {
         !matches!(self, Ty::Bool | Ty::Void | Ty::Struct(_) | Ty::Array(_))
     }
     fn is_scalar(self) -> bool {
-        matches!(self, Ty::Float | Ty::Int | Ty::Fixed)
+        matches!(self, Ty::Float | Ty::Int | Ty::Fixed | Ty::Fixed8 | Ty::Fixed16)
+    }
+    /// Fraction bits for a fixed-family scalar (Int = 0 frac). `None` for float
+    /// and non-scalars — the boundary that needs a soft-float conversion.
+    fn fixed_frac(self) -> Option<u32> {
+        match self {
+            Ty::Int => Some(0),
+            Ty::Fixed8 => Some(6),
+            Ty::Fixed16 => Some(14),
+            Ty::Fixed => Some(16),
+            _ => None,
+        }
     }
 }
 
@@ -424,6 +441,8 @@ impl Compiler {
             "vec4" => Ty::Vec4,
             "int" => Ty::Int,
             "fixed" => Ty::Fixed,
+            "fixed8" => Ty::Fixed8,
+            "fixed16" => Ty::Fixed16,
             "bool" => Ty::Bool,
             "void" => Ty::Void,
             _ => return None,
@@ -1370,7 +1389,10 @@ impl Compiler {
                 "==" => 4,
                 _ => 5,
             };
-            self.emit(if matches!(p, Ty::Int | Ty::Fixed) { CMP_I } else { CMP });
+            // Fixed-family scalars are scaled integers → the integer compare
+            // gives the right ordering; only true float needs the float compare.
+            let int_cmp = matches!(p, Ty::Int | Ty::Fixed | Ty::Fixed8 | Ty::Fixed16);
+            self.emit(if int_cmp { CMP_I } else { CMP });
             self.emit(kind);
             return Ok(Ty::Bool);
         }
@@ -1386,18 +1408,34 @@ impl Compiler {
         if l.width() > 1 || r.width() > 1 {
             return self.emit_vec_arith(op, l, r);
         }
-        // Scalar arithmetic: promote to a common type, emit the typed op.
+        // Scalar arithmetic: promote to a common type, emit the typed op. Fixed-
+        // family +/-/% reuse the integer ops (the representation is a scaled
+        // integer); * and / are format-aware (shift by the fraction width).
         let p = self.promote_scalars(l, r)?;
+        // Fraction width of the narrow fixed formats for the *FixN mul/div.
+        let frac = match p {
+            Ty::Fixed8 => Some(6u8),
+            Ty::Fixed16 => Some(14),
+            _ => None,
+        };
         match (op, p) {
-            ("+", Ty::Int) | ("+", Ty::Fixed) => self.emit(ADD_I),
-            ("-", Ty::Int) | ("-", Ty::Fixed) => self.emit(SUB_I),
+            ("+", Ty::Int) | ("+", Ty::Fixed) | ("+", Ty::Fixed8) | ("+", Ty::Fixed16) => {
+                self.emit(ADD_I)
+            }
+            ("-", Ty::Int) | ("-", Ty::Fixed) | ("-", Ty::Fixed8) | ("-", Ty::Fixed16) => {
+                self.emit(SUB_I)
+            }
             ("*", Ty::Int) => self.emit(MUL_I),
             ("/", Ty::Int) => self.emit(DIV_I),
-            // Q16.16 remainder is the plain integer remainder of the scaled ints.
-            ("%", Ty::Int) | ("%", Ty::Fixed) => self.emit(MOD_I),
+            // Fixed-point remainder is the plain integer remainder of the scaled ints.
+            ("%", Ty::Int) | ("%", Ty::Fixed) | ("%", Ty::Fixed8) | ("%", Ty::Fixed16) => {
+                self.emit(MOD_I)
+            }
             ("%", Ty::Float) => return self.err("'%' is integer-only; use mod() for floats"),
             ("*", Ty::Fixed) => self.emit(MUL_FIX),
             ("/", Ty::Fixed) => self.emit(DIV_FIX),
+            ("*", Ty::Fixed8) | ("*", Ty::Fixed16) => self.emit2(MUL_FIX_N, frac.unwrap()),
+            ("/", Ty::Fixed8) | ("/", Ty::Fixed16) => self.emit2(DIV_FIX_N, frac.unwrap()),
             ("+", Ty::Float) => self.emit2(ADD, 1),
             ("-", Ty::Float) => self.emit2(SUB, 1),
             ("*", Ty::Float) => self.emit2(MUL, 1),
@@ -1413,17 +1451,19 @@ impl Compiler {
     }
 
     /// Promote the two scalar operands already on the stack (left below, right
-    /// on top) to a common type (Float > Fixed > Int), emitting conversions.
+    /// on top) to a common type, emitting conversions. Widest wins along the
+    /// lattice Int < Fixed8 < Fixed16 < Fixed < Float (more range/precision).
     fn promote_scalars(&mut self, l: Ty, r: Ty) -> Result<Ty, Diagnostic> {
         let asnum = |t: Ty| if t == Ty::Bool { Ty::Int } else { t };
         let (l, r) = (asnum(l), asnum(r));
-        let p = if l == Ty::Float || r == Ty::Float {
-            Ty::Float
-        } else if l == Ty::Fixed || r == Ty::Fixed {
-            Ty::Fixed
-        } else {
-            Ty::Int
+        let rank = |t: Ty| match t {
+            Ty::Int => 0,
+            Ty::Fixed8 => 1,
+            Ty::Fixed16 => 2,
+            Ty::Fixed => 3,
+            _ => 4, // Float
         };
+        let p = if rank(l) >= rank(r) { l } else { r };
         if r != p {
             self.coerce(r, p)?; // top
         }
@@ -1498,7 +1538,7 @@ impl Compiler {
                 self.advance();
                 let t = self.unary()?;
                 match t {
-                    Ty::Int | Ty::Fixed => self.emit(fx_vm_op::NEG_I),
+                    Ty::Int | Ty::Fixed | Ty::Fixed8 | Ty::Fixed16 => self.emit(fx_vm_op::NEG_I),
                     _ => {
                         self.emit(fx_vm_op::NEG);
                         self.emit(t.width());
@@ -1786,6 +1826,28 @@ impl Compiler {
 
     fn emit_builtin(&mut self, name: &str, args: &[Ty]) -> Result<Ty, Diagnostic> {
         use fx_vm_op::*;
+        // Reduced-precision transcendentals (FUG-10): sin/cos/exp on a fixed8 /
+        // fixed16 argument compile to the pure-integer LUT opcodes — no
+        // soft-float. sin/cos take the angle in TURNS (1.0 = 2π); exp saturates
+        // to the ±2 range. Other scalar/vector args stay on the float path below.
+        if matches!(name, "sin" | "cos" | "exp") {
+            let a = self.arg1(args)?;
+            let frac = match a {
+                Ty::Fixed8 => Some(6u8),
+                Ty::Fixed16 => Some(14),
+                _ => None,
+            };
+            if let Some(frac) = frac {
+                let op = match name {
+                    "sin" => SIN_FIX,
+                    "cos" => COS_FIX,
+                    _ => EXP_FIX,
+                };
+                self.emit(op);
+                self.emit(frac);
+                return Ok(a);
+            }
+        }
         let unary = |f: u8| (UN_MATH, f);
         let un = match name {
             "sin" => Some(unary(0)),
@@ -2044,14 +2106,43 @@ impl Compiler {
                 self.emit(o);
                 return Ok(());
             }
+            // Narrow fixed formats (Fixed8/Fixed16) and any other fixed-family
+            // pair not covered above: convert between fraction widths by an
+            // arithmetic shift, or cross the float boundary via FixToF/FixFromF.
+            match (from.fixed_frac(), to.fixed_frac()) {
+                (Some(f), Some(t)) => {
+                    let sh = t as i32 - f as i32;
+                    if sh != 0 {
+                        self.emit(fx_vm_op::FIX_RESCALE);
+                        self.emit(sh as i8 as u8);
+                    }
+                    return Ok(());
+                }
+                (Some(f), None) => {
+                    // fixed-family -> float
+                    self.emit(fx_vm_op::FIX_TO_F);
+                    self.emit(f as u8);
+                    return Ok(());
+                }
+                (None, Some(t)) => {
+                    // float -> fixed-family
+                    self.emit(fx_vm_op::FIX_FROM_F);
+                    self.emit(t as u8);
+                    return Ok(());
+                }
+                (None, None) => {}
+            }
         }
-        // bool <-> {int,float} at the value level (0/1) — allow reading a bool
-        // as a number and vice-versa without an op (both are 0/1 words).
+        // bool <-> {int,float,fixed*} at the value level (0/1) — allow reading a
+        // bool as a number and vice-versa (all are 0/1 words). A bool rides as a
+        // 1.0/0.0 float, so narrowing to a fixed format quantizes it via FixFromF.
         if matches!(from, Ty::Bool) && to.is_scalar() {
-            if to == Ty::Fixed {
-                self.emit(fx_vm_op::F2FIX);
-            } else if to == Ty::Int {
-                self.emit(fx_vm_op::F2I);
+            match to {
+                Ty::Fixed => self.emit(fx_vm_op::F2FIX),
+                Ty::Int => self.emit(fx_vm_op::F2I),
+                Ty::Fixed8 => self.emit2(fx_vm_op::FIX_FROM_F, 6),
+                Ty::Fixed16 => self.emit2(fx_vm_op::FIX_FROM_F, 14),
+                _ => {} // Float: nop
             }
             return Ok(());
         }
@@ -2313,6 +2404,14 @@ fn decode_op(code: &[u8], pc: usize) -> (String, usize) {
         SAMPLE_TEX => (format!("SAMPLE_TEX id={}", b(0)), 2),
         PAINT_TEX => (format!("PAINT_TEX id={}", b(0)), 2),
         FLOOD_FROM => ("FLOOD_FROM".into(), 1),
+        MUL_FIX_N => (format!("MUL_FIX_N frac={}", b(0)), 2),
+        DIV_FIX_N => (format!("DIV_FIX_N frac={}", b(0)), 2),
+        FIX_RESCALE => (format!("FIX_RESCALE shift={}", b(0) as i8), 2),
+        FIX_TO_F => (format!("FIX_TO_F frac={}", b(0)), 2),
+        FIX_FROM_F => (format!("FIX_FROM_F frac={}", b(0)), 2),
+        SIN_FIX => (format!("SIN_FIX frac={}", b(0)), 2),
+        COS_FIX => (format!("COS_FIX frac={}", b(0)), 2),
+        EXP_FIX => (format!("EXP_FIX frac={}", b(0)), 2),
         other => (format!("?? 0x{other:02x}"), 0),
     }
 }
@@ -2422,6 +2521,15 @@ mod fx_vm_op {
     pub const SAMPLE_TEX: u8 = 59;
     pub const PAINT_TEX: u8 = 60;
     pub const FLOOD_FROM: u8 = 61;
+    // Reduced-precision fixed-point (FUG-10). Mirror fx_vm::Op ordering.
+    pub const MUL_FIX_N: u8 = 62;
+    pub const DIV_FIX_N: u8 = 63;
+    pub const FIX_RESCALE: u8 = 64;
+    pub const FIX_TO_F: u8 = 65;
+    pub const FIX_FROM_F: u8 = 66;
+    pub const SIN_FIX: u8 = 67;
+    pub const COS_FIX: u8 = 68;
+    pub const EXP_FIX: u8 = 69;
 }
 
 /// `.fxb` flags bit: a buffer descriptor table follows `code` (mirrors
