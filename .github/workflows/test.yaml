@@ -171,6 +171,13 @@ jobs:
       group: gh-pages-deploy
       cancel-in-progress: false
     steps:
+      # pr-preview-action wraps JamesIves/github-pages-deploy-action, which does
+      # its git work in $GITHUB_WORKSPACE — so the repo must be checked out first.
+      # It MUST precede the artifact download: actions/checkout defaults to
+      # clean:true (git clean -ffdx), which would wipe the untracked _site/.
+      - name: Setup repository
+        uses: actions/checkout@v4
+
       - name: Download site artifact
         uses: actions/download-artifact@v4
         with:
@@ -196,6 +203,11 @@ jobs:
       group: gh-pages-deploy
       cancel-in-progress: false
     steps:
+      # Needs the repo checked out for the same reason as deploy-preview (the
+      # action operates on the git repo in $GITHUB_WORKSPACE). No artifact here.
+      - name: Setup repository
+        uses: actions/checkout@v4
+
       - name: Remove PR preview
         uses: rossjrw/pr-preview-action@v1
         with:
