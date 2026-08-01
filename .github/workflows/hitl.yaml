@@ -102,20 +102,14 @@ jobs:
           key: bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock') }}
           restore-keys: bazel-disk-${{ runner.os }}-
 
-      - name: Build firmware flash-bundle
-        if: env.SKIP_FLASH != 'true'
-        run: bazel build -c opt --disk_cache="$HOME/.cache/bazel-disk" //firmware/player_app:esp32c6_flashbundle
-
       # Reserve a free rig from the pool, flash, ImprovBLE-provision, then check
-      # time-sync + rename over the WebSocket. The e2e reads WiFi creds from the
-      # HITL_WIFI_* env above and the pool from HITL_SERVERS.
+      # time-sync + rename over the WebSocket. `bazel run` builds the flash-bundle
+      # (a runfiles data dep of the e2e) and the harness finds it there — no
+      # --bundle needed. WiFi creds come from the HITL_WIFI_* env, the pool from
+      # HITL_SERVERS. -c opt so the firmware build matches the firmware CI job.
       - name: Run HITL e2e
         run: |
           args=(--monitor-seconds "$MONITOR_SECONDS")
           if [ -n "$SERVER" ]; then args+=(--server "$SERVER"); fi
-          if [ "$SKIP_FLASH" = "true" ]; then
-            args+=(--skip-flash)
-          else
-            args+=(--bundle bazel-bin/firmware/player_app/esp32c6_flashbundle.tar)
-          fi
-          bazel run --disk_cache="$HOME/.cache/bazel-disk" //pi/hitl/harness:e2e -- "${args[@]}"
+          if [ "$SKIP_FLASH" = "true" ]; then args+=(--skip-flash); fi
+          bazel run -c opt --disk_cache="$HOME/.cache/bazel-disk" //pi/hitl/harness:e2e -- "${args[@]}"

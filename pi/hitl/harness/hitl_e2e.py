@@ -176,6 +176,21 @@ def ws_checks(ws_url: str, new_name: str, insecure: bool) -> None:
 
 # --- driver ----------------------------------------------------------------
 
+# The flash-bundle is a data dep of this target, so `bazel run` ships it in
+# runfiles (no separate build / workspace-relative path needed).
+_BUNDLE_RUNFILE = "_main/firmware/player_app/esp32c6_flashbundle.tar"
+
+
+def default_bundle() -> str | None:
+    """Locate the flash-bundle in this binary's runfiles, if present."""
+    try:
+        from python.runfiles import runfiles
+
+        path = runfiles.Create().Rlocation(_BUNDLE_RUNFILE)
+    except Exception:
+        return None
+    return path if path and os.path.exists(path) else None
+
 
 def run(args: argparse.Namespace) -> int:
     base = args.server or hitl_pool.pick()
@@ -183,9 +198,10 @@ def run(args: argparse.Namespace) -> int:
     try:
         res.acquire()
         if not args.skip_flash:
-            if not args.bundle:
-                raise E2EFailure("--bundle is required unless --skip-flash")
-            flash(res, args.bundle, args.monitor_seconds)
+            bundle = args.bundle or default_bundle()
+            if not bundle:
+                raise E2EFailure("no flash-bundle in runfiles; pass --bundle or --skip-flash")
+            flash(res, bundle, args.monitor_seconds)
 
         redirect = args.device_url
         if not args.skip_improv:

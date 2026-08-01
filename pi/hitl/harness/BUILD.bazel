@@ -39,6 +39,10 @@ py_library(
 py_binary(
     name = "e2e",
     srcs = ["hitl_e2e.py"],
+    # The firmware flash-bundle rides in runfiles so `bazel run` finds it without
+    # a separate build step or a workspace-relative path (bazel run's cwd is the
+    # runfiles tree). --bundle still overrides it for a prebuilt tar.
+    data = ["//firmware/player_app:esp32c6_flashbundle"],
     imports = ["."],
     main = "hitl_e2e.py",
     tags = [
@@ -48,6 +52,7 @@ py_binary(
     deps = [
         ":harness",
         "//pi/server",
+        "@rules_python//python/runfiles",
         requirement("websockets"),
     ],
 )
