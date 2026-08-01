@@ -53,6 +53,7 @@ interface FxPreviewWasm {
   set_uniform(slot: number, vals: Float32Array): void;
   set_topology(seg: Int32Array, s: Float32Array, branch: Uint8Array, dist: Float32Array): void;
   set_graph(segLen: Float32Array, segA: Int32Array, segB: Int32Array): void;
+  set_texture(texIndex: number, width: number, height: number, rgba: Uint8Array, ledCount: number): void;
   update(time: number, dt: number, frame: number, ledCount: number): void;
   shade_all(positions: Float32Array): Uint8Array;
   free(): void;
@@ -121,6 +122,23 @@ export class FxPreview {
   setTopology(topo: LedTopology): void {
     this.inner.set_topology(topo.seg, topo.s, topo.branch, topo.dist);
     this.inner.set_graph(topo.segLen, topo.segA, topo.segB);
+  }
+
+  /**
+   * Write a full-resolution RGBA frame (width*height*4 bytes, row-major) into
+   * texture `texIndex`'s buffer, so the offline preview shows live video input
+   * without a device (FUG-39). Frames come from the editor's Video panel; the
+   * dimensions must match the effect's declared `texture` (mismatches are
+   * dropped). `ledCount` must match the value passed to {@link tick}.
+   */
+  setTexture(
+    texIndex: number,
+    width: number,
+    height: number,
+    rgba: Uint8Array,
+    ledCount: number,
+  ): void {
+    this.inner.set_texture(texIndex, width, height, rgba, ledCount);
   }
 
   /** Advance one frame (runs update()). */
