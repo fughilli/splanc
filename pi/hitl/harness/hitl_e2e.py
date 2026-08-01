@@ -8,8 +8,10 @@ Given a firmware flash-bundle it:
   3. ImprovBLE SETUP — provisions the board onto WiFi over the Improv GATT
      (the rig's Bluetooth adapter; the harness ships hitl_improv.py into the
      reservation and runs it there), capturing the device's redirect URL;
-  4. connects to the player's WebSocket and checks TIME SYNC (sane offset/rtt)
-     and RENAME (set_device_name -> welcome echoes the new name);
+  4. checks TIME SYNC (sane offset/rtt) and RENAME (set_device_name -> welcome
+     echoes the new name) over the player's WebSocket — tunneled through the
+     reservation's ssh so the DUT is reached FROM the rig (which shares its WiFi
+     LAN), not from the harness host;
   5. releases the reservation.
 
 Usage:
@@ -20,10 +22,11 @@ Usage:
 Selection: --server picks a specific rig; otherwise HITL_SERVERS / HITL_SERVER
 drive hitl_pool. WiFi creds default to $HITL_WIFI_SSID / $HITL_WIFI_PASS.
 
-The BLE + WebSocket phases need real hardware and network reachability to the
-DUT (the harness host must route to the device's WiFi address — e.g. the rig is
-a tailnet subnet router, or CI joins the test LAN). Each phase fails loudly with
-a diagnostic if it can't reach the board; --skip-* narrows a run while iterating.
+The BLE + WebSocket phases run against the DUT FROM the rig — BLE over the rig's
+Bluetooth adapter, the WebSocket over an ssh tunnel whose far end dials the DUT
+from the rig's container — so the harness host only needs to reach the rig, not
+the DUT's WiFi LAN. Each phase fails loudly with a diagnostic if it can't reach
+the board; --skip-* narrows a run while iterating.
 """
 
 from __future__ import annotations
@@ -50,16 +53,16 @@ class E2EFailure(RuntimeError):
     pass
 
 
-def ws_url_from_redirect(redirect: str, scheme: str) -> str:
-    """Device redirect (http://<ip>/) -> its player WS endpoint.
+def dut_target(redirect: str, scheme: str) -> tuple[str, int]:
+    """Device redirect (http://<ip>/) -> (host, ws_port) for the player socket.
 
     Mirrors web/src/net/improv.ts wsUrlFromRedirect: the TLS app talks
-    wss://<ip>/ws; the bench path is the plain ws://<ip>:81/ws socket.
+    wss://<ip>:443/ws; the bench path is the plain ws://<ip>:81/ws socket.
     """
     host = urlparse(redirect).hostname
     if not host:
         raise E2EFailure(f"could not parse a host from redirect URL {redirect!r}")
-    return f"wss://{host}/ws" if scheme == "wss" else f"ws://{host}:81/ws"
+    return host, (443 if scheme == "wss" else 81)
 
 
 # --- phases ----------------------------------------------------------------
@@ -212,10 +215,21 @@ def run(args: argparse.Namespace) -> int:
             redirect = improv_provision(res, args.wifi_ssid, args.wifi_pass, args.improv_timeout)
 
         if not args.skip_ws:
-            if not redirect:
-                raise E2EFailure("no device URL: provision the DUT or pass --device-url")
-            ws_url = args.device_ws or ws_url_from_redirect(redirect, args.ws_scheme)
-            ws_checks(ws_url, args.rename_to, insecure=not args.ws_verify)
+            if args.device_ws:
+                # Explicit override: connect straight to a reachable ws(s) URL.
+                ws_checks(args.device_ws, args.rename_to, insecure=not args.ws_verify)
+            else:
+                if not redirect:
+                    raise E2EFailure(
+                        "no device URL: provision the DUT or pass --device-url/--device-ws"
+                    )
+                host, port = dut_target(redirect, args.ws_scheme)
+                # The DUT is on the rig's WiFi LAN, not the harness host's network,
+                # so reach it FROM the rig: tunnel the WS through the reservation's
+                # ssh (the far end dials the DUT from the Pi's container).
+                with res.forward(host, port) as local_port:
+                    ws_url = f"{args.ws_scheme}://localhost:{local_port}/ws"
+                    ws_checks(ws_url, args.rename_to, insecure=not args.ws_verify)
     except (E2EFailure, ReserveError) as e:
         print(f"\nFAIL: {e}", file=sys.stderr)
         return 1

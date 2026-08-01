@@ -26,6 +26,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from contextlib import contextmanager
 
 # Where the dedicated (passphrase-less) HITL key lives — same location and
 # rationale as the Go CLI's resolveKeypair (a bench key, never your identity).
@@ -201,3 +202,54 @@ class Reservation:
     def scp_to(self, locals_: list[str], remote_dir: str) -> None:
         argv = ["scp", *self._ssh_opts("-P"), *locals_, f"{self._target()}:{remote_dir}"]
         subprocess.run(argv, check=True)
+
+    @contextmanager
+    def forward(self, remote_host: str, remote_port: int, timeout: float = 20.0):
+        """SSH local-forward a fresh localhost port to remote_host:remote_port.
+
+        The far end of the tunnel is dialed FROM the reservation's container, so
+        the rig (the Pi, on the DUT's WiFi LAN) is what reaches the device — the
+        harness host only needs to reach the rig. Yields the local port.
+        """
+        s = socket.socket()
+        s.bind(("127.0.0.1", 0))
+        local_port = s.getsockname()[1]
+        s.close()
+        spec = f"{local_port}:{remote_host}:{remote_port}"
+        argv = [
+            "ssh",
+            *self._ssh_opts("-p"),
+            "-o",
+            "ExitOnForwardFailure=yes",
+            "-N",
+            "-L",
+            spec,
+            self._target(),
+        ]
+        proc = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        try:
+            deadline = time.time() + timeout
+            while time.time() < deadline:
+                if proc.poll() is not None:
+                    err = (proc.stderr.read() if proc.stderr else "") or ""
+                    raise ReserveError(
+                        f"ssh -L {spec} exited early ({proc.returncode}): {err.strip()}"
+                    )
+                try:
+                    with socket.create_connection(("127.0.0.1", local_port), timeout=1):
+                        break
+                except OSError:
+                    time.sleep(0.3)
+            else:
+                raise ReserveError(f"tunnel {spec} did not come up within {timeout}s")
+            print(
+                f"tunnel: localhost:{local_port} -> (rig) -> {remote_host}:{remote_port}",
+                flush=True,
+            )
+            yield local_port
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                proc.kill()
