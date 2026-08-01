@@ -923,6 +923,22 @@ body.is-locked {
 .fxedit-menu-item:hover {
   background: var(--surface);
 }
+/* Menu that opens UPWARD from a control pinned near the bottom edge. */
+.fxedit-menu--up {
+  top: auto;
+  bottom: 100%;
+  margin-top: 0;
+  margin-bottom: 4px;
+  max-height: 60vh;
+  overflow: auto;
+}
+/* The active map is marked with a leading check. */
+.fxedit-menu-item--sel {
+  color: var(--accent);
+}
+.fxedit-menu-item--sel::before {
+  content: "✓ ";
+}
 
 /* --- built-in (immutable) effect banner: floats top-center over the editor --- */
 .fxedit-builtin {
@@ -1202,8 +1218,11 @@ body.is-locked {
   border: 0;
   border-radius: 0;
 }
+/* The preview pane's 3D view fills its tab edge-to-edge; overlay controls sit
+ * on top of the canvas, so no padding and no scroll. */
 .fxpane[data-pane="preview"] .fxpane-body {
-  padding: var(--sp-2);
+  padding: 0;
+  overflow: hidden;
 }
 
 /* -- WIDE: the edge-dock grid (center + flush edge strips) -- */
@@ -1482,15 +1501,60 @@ body.is-locked {
   min-height: 0;
   flex: 1;
 }
-.fxedit-previewctl {
-  display: flex;
-  flex-direction: column;
-  gap: var(--sp-2);
-  flex: 0 0 auto;
+/* The preview body is the positioning context for its overlay controls, which
+ * float over the canvas rather than pushing layout. */
+.fxedit-previewbody {
+  position: relative;
+  gap: 0;
 }
-.fxedit-viewtoggles {
+/* Cluster of circular graphical buttons overlaid on the lower-right corner of
+ * the 3D view (grid / triad toggles + map picker). */
+.fxedit-previewoverlay {
+  position: absolute;
+  right: var(--sp-2);
+  bottom: var(--sp-2);
+  z-index: 5;
   display: flex;
+  align-items: flex-end;
   gap: var(--sp-2);
+  pointer-events: none;
+}
+.fxedit-previewoverlay > * {
+  pointer-events: auto;
+}
+/* Circular overlay button — matches the app's floating chrome (semi-transparent
+ * surface + backdrop blur), with an accent-quiet "on" state. */
+.fxedit-ovbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.2rem;
+  height: 2.2rem;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--surface-2) 78%, transparent);
+  color: var(--text-dim);
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+}
+.fxedit-ovbtn:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.fxedit-ovbtn--on {
+  background: var(--accent-quiet);
+  color: var(--text);
+  border-color: var(--accent);
+}
+.fxedit-ovbtn svg {
+  width: 18px;
+  height: 18px;
+}
+/* The map button anchors its dropdown menu (which opens upward). */
+.fxedit-ovbtnwrap {
+  position: relative;
+  display: inline-flex;
 }
 .fxedit-chatbody .fxedit-chatlog {
   flex: 1 1 auto;
