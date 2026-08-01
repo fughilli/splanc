@@ -7,13 +7,17 @@
 # $HITL_SERVERS (the checkout mechanism), flashing it, provisioning it onto WiFi
 # over ImprovBLE, then checking time-sync + rename over the player WebSocket.
 #
-# Required repository configuration (Settings → Secrets and variables → Actions):
+# Config lives in the "HITL" GitHub Actions environment (Settings → Environments
+# → HITL). The job declares `environment: HITL` below so these resolve — an
+# environment's secrets/vars are invisible to jobs that don't opt in (same
+# pattern as the deploy-production job's "Deploy environment" in test.yaml):
 #   secrets.TS_AUTHKEY       Tailscale auth key (ephemeral + tagged recommended)
 #                            so the runner can reach the rigs over the tailnet.
-#   secrets.HITL_WIFI_SSID   WiFi network the DUT is provisioned onto.
-#   secrets.HITL_WIFI_PASS   its password (optional; empty ⇒ open network).
 #   vars.HITL_SERVERS        pool of rig base URLs / hostnames, e.g.
 #                            "hitl-rig-1, hitl-rig-2" (comma/space separated).
+#   secrets.HITL_WIFI_SSID   WiFi network the DUT is provisioned onto. If unset,
+#   secrets.HITL_WIFI_PASS   its password.   run with skip_flash/--skip-improv,
+#                            or the improv phase errors (needs a WiFi SSID).
 name: HITL e2e
 on:
   workflow_dispatch:
@@ -33,6 +37,9 @@ on:
 jobs:
   hitl-e2e:
     runs-on: ubuntu-latest
+    # Opt into the "HITL" environment so its TS_AUTHKEY secret + HITL_SERVERS
+    # variable (and the HITL_WIFI_* secrets, if set) are visible to this job.
+    environment: HITL
     env:
       HITL_SERVERS: ${{ vars.HITL_SERVERS }}
       HITL_WIFI_SSID: ${{ secrets.HITL_WIFI_SSID }}
