@@ -774,3 +774,99 @@ fn flood_from_reseats_the_geodesic_source() {
     assert_eq!(d0, 0, "flooding from leafA, leafA is at distance 0");
     assert_eq!(d1, 255, "flooding from leafB, leafA is the far end (dist 1)");
 }
+
+// --- reduced-precision embedded types (FUG-10) -------------------------------
+
+#[test]
+fn fixed16_arithmetic() {
+    // Q1.14 multiply through the language: 0.5 * 1.5 = 0.75 -> 191.
+    let src = r#"
+        vec3 shade(Led led) {
+            fixed16 a = fixed16(0.5);
+            fixed16 b = fixed16(1.5);
+            fixed16 c = a * b;
+            return vec3(float(c), 0.0, 0.0);
+        }
+    "#;
+    let got = run_shade(src, &[], Led::default(), Frame::default()).0;
+    assert!((got as i32 - 191).abs() <= 2, "0.5*1.5 in fixed16: {got}");
+}
+
+#[test]
+fn fixed8_arithmetic() {
+    // Q1.6 add/mul: (0.25 + 0.25) * 1.0 = 0.5 -> ~127 (coarser format).
+    let src = r#"
+        vec3 shade(Led led) {
+            fixed8 a = fixed8(0.25);
+            fixed8 s = (a + a) * fixed8(1.0);
+            return vec3(float(s), 0.0, 0.0);
+        }
+    "#;
+    let got = run_shade(src, &[], Led::default(), Frame::default()).0;
+    assert!((got as i32 - 127).abs() <= 5, "fixed8 arithmetic: {got}");
+}
+
+#[test]
+fn fixed16_sin_dispatches_to_integer_opcode() {
+    // sin on a fixed16 argument must compile to the pure-integer SIN_FIX opcode
+    // (no UN_MATH / soft-float) and produce the right value. sin(0.25 turn)=1.
+    let src = r#"
+        vec3 shade(Led led) {
+            fixed16 phase = fixed16(0.25);
+            fixed16 s = sin(phase);
+            return vec3(float(s), 0.0, 0.0);
+        }
+    "#;
+    let c = compile(src).unwrap_or_else(|d| panic!("compile error: {:?}", d));
+    let dis = ledmapper_fx_compiler::disassemble(&c.fxb);
+    assert!(dis.contains("SIN_FIX frac=14"), "expected SIN_FIX in:\n{dis}");
+    assert!(!dis.contains("UN_MATH sin"), "sin(fixed16) must not use the float path");
+    let got = run_shade(src, &[], Led::default(), Frame::default()).0;
+    assert!((got as i32 - 255).abs() <= 2, "fixed16 sin(90°): {got}");
+}
+
+#[test]
+fn fixed_cos_and_exp_builtins() {
+    // cos(0) = 1 -> 255; exp(0) = 1 -> 255 (both via the integer LUT path).
+    let cos = r#"vec3 shade(Led led) { fixed16 z = fixed16(0.0); return vec3(float(cos(z)), 0.0, 0.0); }"#;
+    assert!((run_shade(cos, &[], Led::default(), Frame::default()).0 as i32 - 255).abs() <= 2);
+    let exp = r#"vec3 shade(Led led) { fixed16 z = fixed16(0.0); return vec3(float(exp(z)), 0.0, 0.0); }"#;
+    assert!((run_shade(exp, &[], Led::default(), Frame::default()).0 as i32 - 255).abs() <= 2);
+    // The float path still works for float args (sin over a float uniform).
+    let f = r#"vec3 shade(Led led) { return vec3(sin(1.5707964), 0.0, 0.0); }"#;
+    let c = compile(f).unwrap();
+    assert!(ledmapper_fx_compiler::disassemble(&c.fxb).contains("UN_MATH sin"));
+}
+
+#[test]
+fn mixed_promotion_widens_to_float() {
+    // fixed16 * float promotes to float (widest wins): 0.5 * 0.5 = 0.25 -> 63.
+    let src = r#"
+        vec3 shade(Led led) {
+            fixed16 a = fixed16(0.5);
+            float r = a * 0.5;
+            return vec3(r, 0.0, 0.0);
+        }
+    "#;
+    assert_eq!(run_shade(src, &[], Led::default(), Frame::default()).0, 63);
+}
+
+#[test]
+fn fixed_moving_band_effect() {
+    // A realistic hot-path shader: a moving sine band along z, all in Q1.14 —
+    // exercises sin, fixed mul/add and the float boundary end to end.
+    let src = r#"
+        uniform float speed : 0.0 .. 2.0 = 0.0;
+        vec3 shade(Led led) {
+            fixed16 z = fixed16(led.pos.z);
+            fixed16 phase = z * fixed16(1.0);
+            fixed16 w = sin(phase);
+            float b = float(w) * 0.5 + 0.5;
+            return vec3(b, b, b);
+        }
+    "#;
+    // pos.z = 0.25 turn -> sin = 1 -> b = 1.0 -> 255.
+    let led = Led { pos: [0.0, 0.0, 0.25], ..Default::default() };
+    let got = run_shade(src, &[], led, Frame::default()).0;
+    assert!((got as i32 - 255).abs() <= 3, "moving band peak: {got}");
+}

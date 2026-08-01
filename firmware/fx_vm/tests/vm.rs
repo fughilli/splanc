@@ -327,3 +327,119 @@ fn update_counted_reports_counters() {
     assert_eq!(c.instrs, 5);
     assert!(vm.state[0] > 0.24 && vm.state[0] < 0.26);
 }
+
+// --- reduced-precision fixed-point / transcendentals (FUG-10) ----------------
+
+/// Push a raw fixed-point word (its i32 bits) onto the const pool. `.fxb` consts
+/// are stored as raw 32-bit words the VM reads back with `to_bits()`, so a
+/// scaled-integer value rides in as `f32::from_bits`.
+fn fx_const(raw: i32) -> f32 {
+    f32::from_bits(raw as u32)
+}
+
+/// Run a scalar-producing program and return its first output channel (0..255).
+/// The `code` must push exactly ONE float in [0,1] then two zeros and `Ret 3`.
+fn run_scalar(consts: &[f32], code: &[u8]) -> u8 {
+    let buf = fxb(0, 0, NO_ENTRY, 0, consts, code);
+    let prog = Program::parse(&buf).expect("parse");
+    Vm::new().run_shade(&prog, &Frame::default(), &Led::default()).0
+}
+
+#[test]
+fn fixed16_sin_cos_match_f32() {
+    // sin/cos in Q1.14, angle in turns. Check a few angles against a soft-float
+    // reference through the 8-bit output channel (tolerance ±2 codes).
+    for &(turn, want) in &[
+        (0.0f32, 0.0f32),   // sin 0
+        (0.25, 1.0),        // sin 90° = 1
+        (0.125, 0.70710677), // sin 45°
+    ] {
+        let raw = (turn * (1 << 14) as f32) as i32;
+        #[rustfmt::skip]
+        let code = [
+            Op::PushConst as u8, 0, 0,   // angle (Q1.14 turns)
+            Op::SinFix as u8, 14,
+            Op::FixToF as u8, 14,        // -> float in [-1,1]
+            Op::PushConst as u8, 1, 0,   // 0.0
+            Op::PushConst as u8, 1, 0,   // 0.0
+            Op::Ret as u8, 3,
+        ];
+        let got = run_scalar(&[fx_const(raw), 0.0], &code);
+        let expect = (want.clamp(0.0, 1.0) * 255.0) as i32;
+        assert!((got as i32 - expect).abs() <= 2, "sin({turn} turn): got {got}, want ~{expect}");
+    }
+    // cos(0) = 1.0 -> 255.
+    #[rustfmt::skip]
+    let code = [
+        Op::PushConst as u8, 0, 0,
+        Op::CosFix as u8, 14,
+        Op::FixToF as u8, 14,
+        Op::PushConst as u8, 0, 0,
+        Op::PushConst as u8, 0, 0,
+        Op::Ret as u8, 3,
+    ];
+    let got = run_scalar(&[fx_const(0)], &code);
+    assert!((got as i32 - 255).abs() <= 2, "cos(0): got {got}");
+}
+
+#[test]
+fn fixed8_sin_coarser_but_correct() {
+    // Same sin(90°)=1 in Q1.6 (frac=6). Coarser quantization, wider tolerance.
+    let raw = (0.25f32 * (1 << 6) as f32) as i32; // 0.25 turn in Q1.6
+    #[rustfmt::skip]
+    let code = [
+        Op::PushConst as u8, 0, 0,
+        Op::SinFix as u8, 6,
+        Op::FixToF as u8, 6,
+        Op::PushConst as u8, 1, 0,
+        Op::PushConst as u8, 1, 0,
+        Op::Ret as u8, 3,
+    ];
+    let got = run_scalar(&[fx_const(raw), 0.0], &code);
+    assert!((got as i32 - 255).abs() <= 6, "fixed8 sin(90°): got {got}");
+}
+
+#[test]
+fn exp_fix_decay_and_saturation() {
+    // exp(0) = 1.0 -> 255; exp(-1) = 0.3679 -> ~93; exp(1) saturates (>= +2) -> 255.
+    let one = (1 << 14) as f32;
+    for &(x, want) in &[(0.0f32, 1.0f32), (-1.0, 0.36787945)] {
+        let raw = (x * one) as i32;
+        #[rustfmt::skip]
+        let code = [
+            Op::PushConst as u8, 0, 0,
+            Op::ExpFix as u8, 14,
+            Op::FixToF as u8, 14,
+            Op::PushConst as u8, 1, 0,
+            Op::PushConst as u8, 1, 0,
+            Op::Ret as u8, 3,
+        ];
+        let got = run_scalar(&[fx_const(raw), 0.0], &code);
+        let expect = (want.clamp(0.0, 1.0) * 255.0) as i32;
+        assert!((got as i32 - expect).abs() <= 3, "exp({x}): got {got}, want ~{expect}");
+    }
+}
+
+#[test]
+fn mul_fix_n_and_rescale() {
+    // Q1.14: 0.5 * 1.5 = 0.75 -> 191. Then rescale that Q1.14 down to Q1.6 and
+    // back up, confirming FixRescale round-trips through the narrower format.
+    let one14 = (1i32 << 14) as f32;
+    let half = (0.5 * one14) as i32;
+    let onefive = (1.5 * one14) as i32;
+    #[rustfmt::skip]
+    let code = [
+        Op::PushConst as u8, 0, 0,   // 0.5  (Q1.14)
+        Op::PushConst as u8, 1, 0,   // 1.5  (Q1.14)
+        Op::MulFixN as u8, 14,       // -> 0.75 (Q1.14)
+        Op::FixRescale as u8, (-8i8) as u8, // Q1.14 -> Q1.6 (>>8)
+        Op::FixRescale as u8, 8u8,          // Q1.6 -> Q1.14 (<<8)
+        Op::FixToF as u8, 14,        // -> 0.75 float
+        Op::PushConst as u8, 2, 0,   // 0.0
+        Op::PushConst as u8, 2, 0,
+        Op::Ret as u8, 3,
+    ];
+    let got = run_scalar(&[fx_const(half), fx_const(onefive), 0.0], &code);
+    // 0.75 * 255 = 191 (round-trip through Q1.6 keeps it within a code or two).
+    assert!((got as i32 - 191).abs() <= 3, "0.5*1.5 via Q1.14: got {got}");
+}
