@@ -35,10 +35,11 @@ export class MidiMapPanel {
   private manifest: FxUniform[] = [];
   private learnUniform: string | null = null;
   private readonly unsubs: (() => void)[] = [];
-  // Live value per control key (for meters) + per-uniform meter fill elements.
+  // Live value per control key (for meters) + meter fills keyed by the SAME
+  // control key so a control event maps straight to its meter(s).
   private readonly liveValues = new Map<string, number>();
-  private meterFills = new Map<string, HTMLElement>();
-  private statusEl: HTMLElement | null = null;
+  private meterFills = new Map<string, HTMLElement[]>();
+  private meterRaf = 0;
 
   constructor(
     private readonly effectId: string,
@@ -63,6 +64,7 @@ export class MidiMapPanel {
   dispose(): void {
     for (const u of this.unsubs) u();
     this.unsubs.length = 0;
+    if (this.meterRaf !== 0) cancelAnimationFrame(this.meterRaf);
   }
 
   // -- events -------------------------------------------------------------
@@ -76,12 +78,21 @@ export class MidiMapPanel {
       this.render();
       return;
     }
-    // Move meters for any uniform bound (via its semantic) to this control.
-    const sem = midiStore.semantics().find((s) => s.id === key);
-    if (sem) {
-      const fill = this.meterFills.get(this.uniformDriKey(sem.name));
-      if (fill) fill.style.width = `${Math.round(e.value * 100)}%`;
-    }
+    // Coalesce meter writes to one animation frame — controllers emit faster
+    // than the display refreshes, and a per-event `width` write (a layout) is
+    // what stuttered. Batching to rAF tracks smoothly, like the preview.
+    this.scheduleMeterFlush();
+  }
+
+  private scheduleMeterFlush(): void {
+    if (this.meterRaf !== 0) return;
+    this.meterRaf = requestAnimationFrame(() => {
+      this.meterRaf = 0;
+      for (const [key, fills] of this.meterFills) {
+        const w = `${Math.round((this.liveValues.get(key) ?? 0) * 100)}%`;
+        for (const fill of fills) fill.style.width = w;
+      }
+    });
   }
 
   /** Learn: bind `uniform` to the moved control, naming it if needed. */
@@ -92,19 +103,9 @@ export class MidiMapPanel {
     midiStore.setBinding(this.effectId, { uniform, semantic: name });
   }
 
-  /** Meter registry key: the FIRST uniform bound to a given semantic. Cheap
-   * approximation — a semantic driving multiple uniforms lights the first row. */
-  private uniformDriKey(semantic: string): string {
-    return `sem:${semantic.toLowerCase()}`;
-  }
-
-  private setStatus(text: string): void {
-    if (this.statusEl) this.statusEl.textContent = text;
-  }
-
   // -- render -------------------------------------------------------------
   private render(): void {
-    this.meterFills = new Map();
+    this.meterFills = new Map<string, HTMLElement[]>();
     this.node.replaceChildren();
 
     // Header: title + Remap.
@@ -151,7 +152,6 @@ export class MidiMapPanel {
       this.learnUniform !== null
         ? `Move a control to bind “${this.learnUniform}”…`
         : "Bind a knob per uniform. Named controls are shared across effects.";
-    this.statusEl = status;
     this.node.appendChild(status);
 
     const grid = document.createElement("div");
@@ -224,7 +224,12 @@ export class MidiMapPanel {
       const sem = midiStore.semanticByName(binding.semantic);
       const v = sem ? (this.liveValues.get(sem.id) ?? 0) : 0;
       fill.style.width = `${Math.round(v * 100)}%`;
-      this.meterFills.set(this.uniformDriKey(binding.semantic), fill);
+      // Key meters by the control id so an event updates every row it drives.
+      if (sem) {
+        const list = this.meterFills.get(sem.id) ?? [];
+        list.push(fill);
+        this.meterFills.set(sem.id, list);
+      }
     }
     meter.appendChild(fill);
 

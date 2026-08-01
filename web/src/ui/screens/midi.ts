@@ -232,12 +232,30 @@ export function MidiScreen(_router: Router): Screen {
     body.replaceChildren(enableSection(), learnSection(), namedSection());
   }
 
+  // Meter writes are coalesced to one animation frame: MIDI controllers emit
+  // events far faster than the display refreshes, and writing `width` per event
+  // caused the observed stutter (each write is a layout). Batch to rAF so a
+  // burst collapses to a single write per frame — smooth, like the preview.
+  let meterRaf = 0;
+  function scheduleMeterFlush(): void {
+    if (meterRaf !== 0) return;
+    meterRaf = requestAnimationFrame(() => {
+      meterRaf = 0;
+      for (const [id, fill] of meterFills) {
+        fill.style.width = `${Math.round((liveValues.get(id) ?? 0) * 100)}%`;
+      }
+    });
+  }
+
   function onControl(e: MidiControlEvent): void {
+    const changed =
+      lastControl === null || controlKey(lastControl.control) !== controlKey(e.control);
     lastControl = e;
     liveValues.set(controlKey(e.control), e.value);
-    const fill = meterFills.get(controlKey(e.control));
-    if (fill) fill.style.width = `${Math.round(e.value * 100)}%`;
-    for (const fn of capturedRefreshers) fn();
+    scheduleMeterFlush();
+    // The captured-control chip only changes when a DIFFERENT control is
+    // touched — refresh it then, not on every value tick.
+    if (changed) for (const fn of capturedRefreshers) fn();
   }
 
   return {
@@ -251,6 +269,7 @@ export function MidiScreen(_router: Router): Screen {
     onUnmount: () => {
       for (const u of unsubs) u();
       unsubs.length = 0;
+      if (meterRaf !== 0) cancelAnimationFrame(meterRaf);
     },
   };
 }
@@ -322,7 +341,10 @@ const CSS = `
   flex: 0 0 80px; height: 6px; border-radius: 3px; overflow: hidden;
   background: var(--surface-2, #1a1a22);
 }
-.midi-meter-fill { height: 100%; background: var(--accent); width: 0; transition: width 60ms linear; }
+/* No CSS transition: meter writes are already coalesced to one per animation
+   frame, so tracking the value exactly (like the sliders) reads smoother than a
+   restart-on-every-event transition, which chases and stutters under MIDI. */
+.midi-meter-fill { height: 100%; background: var(--accent); width: 0; }
 .midi-icon-btn {
   flex: 0 0 auto; background: none; border: none; color: var(--text-dim);
   cursor: pointer; padding: var(--sp-1); border-radius: var(--radius-1, 6px);
