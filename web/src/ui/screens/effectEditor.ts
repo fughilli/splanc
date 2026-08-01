@@ -1089,6 +1089,15 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     }
 
     refreshDevice();
+    // Offline video preview (FUG-39): stream the Video panel's frames into the
+    // live preview VM, so camera/file input maps onto the effect's texture with
+    // no hardware. `preview`/`currentMap` are captured mutably (both are swapped
+    // on recompile / map change), so the adapter always targets the current VM.
+    videoPanel.setPreview({
+      setTexture: (texIndex, w, h, rgba) => {
+        if (preview && currentMap) preview.setTexture(texIndex, w, h, rgba, currentMap.leds.length);
+      },
+    });
     layout.mount();
     resizePreviewCanvas();
     unsubAppState = appState.subscribe(() => refreshDevice());

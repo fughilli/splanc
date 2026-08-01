@@ -66,6 +66,61 @@ impl FxPreview {
         self.vm.set_graph(seg_len, seg_a, seg_b);
     }
 
+    /// Stream a full-resolution RGBA frame into texture `tex_index`'s arena
+    /// slots, so the offline preview shows live video input WITHOUT a device
+    /// (FUG-39). This is the browser mirror of the device's handle_set_texture
+    /// (firmware/player_app/ffi.rs), minus the quantize/XOR-delta/RLE transport:
+    /// the browser already holds raw pixels, so we dequantize-equivalent straight
+    /// from RGBA into f32 slots (same luma rule for a scalar texture). `rgba` is
+    /// width*height*4 bytes, row-major, top-left origin. `led_count` MUST match
+    /// the value passed to update() so the texture's arena base lines up. Silently
+    /// drops on any mismatch, exactly like the firmware.
+    pub fn set_texture(&mut self, tex_index: usize, width: u32, height: u32, rgba: &[u8], led_count: u32) {
+        let Ok(prog) = Program::parse(&self.bytes) else {
+            return;
+        };
+        let Some(d) = prog.buf_desc(tex_index) else {
+            return;
+        };
+        if d.kind != 1 || d.w as u32 != width || d.h as u32 != height {
+            return; // not a texture, or dimensions don't match the declared one
+        }
+        let n_texels = width as usize * height as usize;
+        if rgba.len() < n_texels * 4 {
+            return;
+        }
+        // Size + (re)bind the arena for this led_count, mirroring update(): a
+        // resize preserves other buffers' contents so feedback/textures persist.
+        let need = prog.arena_slots(led_count as usize);
+        if self.arena.len() != need {
+            self.arena.resize(need, 0.0);
+        }
+        let base = prog.buf_base(tex_index, led_count as usize);
+        let elem = d.elem as usize;
+        for t in 0..n_texels {
+            let r = rgba[t * 4] as f32 / 255.0;
+            let g = rgba[t * 4 + 1] as f32 / 255.0;
+            let b = rgba[t * 4 + 2] as f32 / 255.0;
+            let ab = base + t * elem;
+            if elem == 1 {
+                if ab < self.arena.len() {
+                    self.arena[ab] = 0.299 * r + 0.587 * g + 0.114 * b; // luma
+                }
+            } else {
+                let ch = [r, g, b, 1.0];
+                for (k, &c) in ch.iter().enumerate().take(elem.min(4)) {
+                    if ab + k < self.arena.len() {
+                        self.arena[ab + k] = c;
+                    }
+                }
+            }
+        }
+        // A resize above may have moved the backing store; shade_all() reads the
+        // arena via the pointer bound here (it never re-binds itself), so refresh
+        // it now rather than wait for the next update().
+        self.vm.set_arena(&mut self.arena);
+    }
+
     /// Advance one frame: sets time/dt/frame and runs update().
     pub fn update(&mut self, time: f32, dt: f32, frame: u32, led_count: u32) {
         self.frame = Frame {

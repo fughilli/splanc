@@ -22,6 +22,85 @@ fn fxb(n_state: u8, n_uniform_slots: u8, update: u16, shade: u16, consts: &[f32]
     b
 }
 
+/// Like [`fxb`] but with a trailing buffer descriptor table (FLAG_BUFFERS). Each
+/// entry is (kind, elem, w, h): kind 0 = LED-arity buffer, 1 = WxH 2D texture.
+fn fxb_buffers(
+    n_state: u8,
+    n_uniform_slots: u8,
+    update: u16,
+    shade: u16,
+    consts: &[f32],
+    code: &[u8],
+    buffers: &[(u8, u8, u16, u16)],
+) -> Vec<u8> {
+    let mut b = Vec::new();
+    b.extend_from_slice(&MAGIC);
+    b.push(1); // version
+    b.push(FLAG_BUFFERS);
+    b.push(n_state);
+    b.push(n_uniform_slots);
+    b.extend_from_slice(&0u16.to_le_bytes()); // manifest_len
+    b.extend_from_slice(&(consts.len() as u16).to_le_bytes());
+    b.extend_from_slice(&(code.len() as u16).to_le_bytes());
+    b.extend_from_slice(&update.to_le_bytes());
+    b.extend_from_slice(&shade.to_le_bytes());
+    for c in consts {
+        b.extend_from_slice(&c.to_le_bytes());
+    }
+    b.extend_from_slice(code);
+    b.push(buffers.len() as u8);
+    for &(kind, elem, w, h) in buffers {
+        b.push(kind);
+        b.push(elem);
+        b.extend_from_slice(&w.to_le_bytes());
+        b.extend_from_slice(&h.to_le_bytes());
+    }
+    b
+}
+
+#[test]
+fn texture_rgba_written_into_arena_is_sampled() {
+    // The offline video preview (FUG-39) writes a full-res RGBA frame straight
+    // into a texture's arena slots (wasm FxPreview::set_texture), which shade()
+    // then reads via sample(). This locks in the contract that binding sample()
+    // depends on: buf_base/arena_slots line up with SampleTex's indexing, and the
+    // RGBA->f32 conversion round-trips. One vec3 texture, 2x1, no other buffers.
+    //
+    // shade: return sample(tex0, led.uv)
+    #[rustfmt::skip]
+    let code = [
+        Op::LoadCtx as u8, C_LED_UV, // push led.uv (u, v)
+        Op::SampleTex as u8, 0,      // pop uv -> push 3 (bilinear, edge-clamped)
+        Op::Ret as u8, 3,
+    ];
+    let buf = fxb_buffers(0, 0, NO_ENTRY, 0, &[], &code, &[(1, 3, 2, 1)]);
+    let prog = Program::parse(&buf).expect("parse");
+
+    // Texel 0 = red, texel 1 = green — written exactly as set_texture does:
+    // RGBA byte / 255 into consecutive elem slots at buf_base + texel*elem.
+    let led_count = 4usize;
+    let rgba: [u8; 8] = [255, 0, 0, 255, /* */ 0, 255, 0, 255];
+    let mut arena = vec![0.0f32; prog.arena_slots(led_count)];
+    let base = prog.buf_base(0, led_count);
+    assert_eq!(prog.arena_slots(led_count), 6, "2 texels * vec3, led_count-independent");
+    let elem = 3usize;
+    for t in 0..2 {
+        for k in 0..elem {
+            arena[base + t * elem + k] = rgba[t * 4 + k] as f32 / 255.0;
+        }
+    }
+
+    let mut vm = Vm::new();
+    vm.set_arena(&mut arena);
+    let frame = Frame { led_count: led_count as u32, ..Default::default() };
+    let sample = |u: f32, v: f32| vm.run_shade(&prog, &frame, &Led { uv: [u, v], ..Default::default() });
+    assert_eq!(sample(0.0, 0.0), (255, 0, 0), "u=0 samples texel 0 (red)");
+    assert_eq!(sample(1.0, 0.0), (0, 255, 0), "u=1 samples texel 1 (green)");
+    // Midpoint bilinearly blends the two texels (red+green -> ~half each).
+    let (r, g, b) = sample(0.5, 0.0);
+    assert!((r as i32 - 127).abs() <= 1 && (g as i32 - 127).abs() <= 1 && b == 0, "mid blend {r},{g},{b}");
+}
+
 #[test]
 fn parses_and_shades_uniform_const_ctx() {
     // shade: return vec3(uniform0, const0(=0.5), led.pos.x)
