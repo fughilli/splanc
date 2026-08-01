@@ -80,6 +80,9 @@ class Reservation:
         except urllib.error.HTTPError as e:
             detail = e.read().decode("utf-8", "replace")
             raise ReserveError(f"{method} {path}: {e.code}: {detail}") from e
+        except urllib.error.URLError as e:
+            # DNS/connection/timeout — the daemon isn't reachable at this base.
+            raise ReserveError(f"{method} {self.base}{path}: unreachable ({e.reason})") from e
         return json.loads(raw) if raw else None
 
     # --- lifecycle -------------------------------------------------------

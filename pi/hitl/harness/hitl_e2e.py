@@ -38,7 +38,7 @@ import time
 from urllib.parse import urlparse
 
 import hitl_pool
-from hitl_client import Reservation
+from hitl_client import Reservation, ReserveError
 from sync import best_sample, is_sane, sync_sample
 
 # Boot markers the firmware prints (see pi/hitl/AGENTS.md "A typical E2E test").
@@ -216,7 +216,7 @@ def run(args: argparse.Namespace) -> int:
                 raise E2EFailure("no device URL: provision the DUT or pass --device-url")
             ws_url = args.device_ws or ws_url_from_redirect(redirect, args.ws_scheme)
             ws_checks(ws_url, args.rename_to, insecure=not args.ws_verify)
-    except E2EFailure as e:
+    except (E2EFailure, ReserveError) as e:
         print(f"\nFAIL: {e}", file=sys.stderr)
         return 1
     finally:
