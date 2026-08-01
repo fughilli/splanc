@@ -80,6 +80,31 @@ spike in the plan: a self-signed player cert cannot be click-through-trusted
 from a Pages origin, so the WSS trust flow must be resolved before this is
 the primary path.
 
+## Deploying to GitHub Pages (CI, FUG-26)
+
+CI publishes the same static site to GitHub Pages off the `gh-pages` branch
+(repo one-time setup: **Settings → Pages → Deploy from a branch → `gh-pages`
+/(root)**):
+
+- **Every open PR** gets a staging copy under `pr-preview/pr-N/`, and the CI
+  bot posts the link on the PR
+  (`https://fughilli.github.io/splanc/pr-preview/pr-N/`).
+- **Merges to `main`** publish the main site at the Pages root
+  (`https://fughilli.github.io/splanc/`) and also deploy Cloudflare production
+  (`//web:deploy_cloudflare`, creds from the `CLOUDFLARE_API_TOKEN` /
+  `CLOUDFLARE_ACCOUNT_ID` repo secrets).
+
+Because a Pages project site (and each PR preview) is served from a **subpath**,
+the bundle is built **base-relative** (`vite.config.ts` `base: "./"`): Vite
+rewrites the URLs it owns, `src/assetBase.ts` resolves the wasm-bundle URLs
+against the document, and `public/sw.js` + `manifest.webmanifest` are
+scope-relative. The same tree still works when served from an origin **root**
+(the Pi server, Cloudflare), so nothing about the existing flows changes.
+
+The publish tree is staged the same way for both targets — the layout lives in
+`stage_site.lib.sh`, sourced by `//web:deploy_cloudflare` and by
+`//web:stage_site` (`bazel run //web:stage_site -- <dir>`, what CI uploads).
+
 ## Testing with a phone against the virtual wall (no LED hardware)
 
 One command serves everything (M2 + built app, HTTPS with a persistent

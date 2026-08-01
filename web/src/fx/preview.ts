@@ -10,6 +10,8 @@
  * pulse-wasm loading pattern in effects/sim.ts.
  */
 
+import { assetUrl } from "../assetBase";
+
 export type FxUiKind =
   | { kind: "slider"; min: number; max: number; step: number }
   | { kind: "color" }
@@ -63,7 +65,7 @@ interface VmModule {
 let compilerMod: Promise<CompilerModule> | null = null;
 let vmMod: Promise<VmModule> | null = null;
 
-function loadCompiler(base = "/fx-compiler"): Promise<CompilerModule> {
+function loadCompiler(base = assetUrl("fx-compiler")): Promise<CompilerModule> {
   if (compilerMod === null) {
     compilerMod = (async () => {
       const mod = (await import(/* @vite-ignore */ `${base}/fx_compiler_wasm_pkg.js`)) as CompilerModule;
@@ -74,7 +76,7 @@ function loadCompiler(base = "/fx-compiler"): Promise<CompilerModule> {
   return compilerMod;
 }
 
-function loadVm(base = "/fx-vm"): Promise<VmModule> {
+function loadVm(base = assetUrl("fx-vm")): Promise<VmModule> {
   if (vmMod === null) {
     vmMod = (async () => {
       const mod = (await import(/* @vite-ignore */ `${base}/fx_vm_wasm_pkg.js`)) as VmModule;
