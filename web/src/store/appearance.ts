@@ -118,19 +118,30 @@ const BASE: Record<ThemeMode, BaseColors> = {
 
 // -- font stacks -------------------------------------------------------------
 
+// The three sans faces below are self-hosted (see ui/kit/fonts.css) because the
+// desktop-only families they used to lead with — Segoe UI, Inter, Avenir Next —
+// aren't installed on Android, so every sans option there collapsed to Roboto
+// (FUG-29). "system" and "serif" stay as pure system stacks: both already
+// render distinctly on Android (Roboto and Noto Serif). The trailing system
+// fonts are kept as fallbacks in case a bundled woff2 fails to load.
 export const FONT_STACKS: Record<FontChoice, string> = {
   system: "system-ui, sans-serif",
-  humanist: "'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
+  humanist: "'Open Sans', 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif",
   grotesk: "'Inter', 'Helvetica Neue', Arial, sans-serif",
-  rounded: "'Avenir Next', 'Segoe UI', system-ui, sans-serif",
+  rounded: "'Nunito', 'Avenir Next', 'Segoe UI', system-ui, sans-serif",
   serif: "Georgia, 'Times New Roman', serif",
 };
 
+// Same fix as FONT_STACKS: the named mono faces (IBM Plex Mono, Fira Code,
+// Courier New) aren't on Android, so every non-"system" mono choice collapsed
+// to the platform monospace. The first three are self-hosted (see fonts.css;
+// "Courier Prime" is a metric-compatible Courier substitute); "system" stays a
+// system stack. Trailing system fonts remain as fallbacks.
 export const MONO_STACKS: Record<MonoChoice, string> = {
   system: "ui-monospace, monospace",
   "ibm-plex": "'IBM Plex Mono', ui-monospace, monospace",
   fira: "'Fira Code', ui-monospace, monospace",
-  courier: "'Courier New', Courier, monospace",
+  courier: "'Courier Prime', 'Courier New', Courier, monospace",
 };
 
 // -- (de)serialization -------------------------------------------------------

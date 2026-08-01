@@ -1,0 +1,123 @@
+/*
+ * Self-hosted workspace fonts.
+ *
+ * The workspace-font picker (Settings ▸ Appearance) used to lean on faces that
+ * only exist on desktop OSes — 'Segoe UI', 'Inter', 'Avenir Next'. On Android
+ * none of those are installed, so "humanist", "grotesk" and "rounded" all fell
+ * through to Roboto and looked identical; only "serif" (which maps to Android's
+ * Noto Serif) stayed distinct. See FUG-29.
+ *
+ * Bundling the three distinctive faces makes every choice render the same on
+ * every platform. Files are latin-subset woff2 (Fontsource builds, OFL/Apache)
+ * under public/fonts/, weights 400 + 600 to match the UI (body + button/title).
+ * font-display: swap draws with the fallback first, then swaps — no blank text.
+ *
+ * "system" (Roboto / SF / Segoe) and "serif" (Noto Serif / Georgia) stay as
+ * system stacks: both already render distinctly on Android, so there's nothing
+ * to bundle for them.
+ *
+ * The monospace picker (code font, for the effect editor) had the same problem:
+ * IBM Plex Mono, Fira Code and Courier New aren't on Android either, so every
+ * mono choice collapsed to the platform monospace. Those three are bundled too
+ * (Courier is covered by Courier Prime, a metric-compatible OFL substitute);
+ * "System mono" stays a system stack. The editor bolds keywords at weight 600,
+ * so each mono ships a 400 and a bold weight.
+ */
+
+/* Inter — "grotesk" (SIL Open Font License) */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/inter-latin-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/fonts/inter-latin-600.woff2") format("woff2");
+}
+
+/* Open Sans — "humanist" (SIL Open Font License) */
+@font-face {
+  font-family: "Open Sans";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/open-sans-latin-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Open Sans";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/fonts/open-sans-latin-600.woff2") format("woff2");
+}
+
+/* Nunito — "rounded" (SIL Open Font License) */
+@font-face {
+  font-family: "Nunito";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/nunito-latin-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Nunito";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/fonts/nunito-latin-600.woff2") format("woff2");
+}
+
+/* IBM Plex Mono — "ibm-plex" code font (SIL Open Font License) */
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/ibm-plex-mono-latin-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/fonts/ibm-plex-mono-latin-600.woff2") format("woff2");
+}
+
+/* Fira Code — "fira" code font (SIL Open Font License) */
+@font-face {
+  font-family: "Fira Code";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/fira-code-latin-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Fira Code";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/fonts/fira-code-latin-600.woff2") format("woff2");
+}
+
+/* Courier Prime — "courier" code font, a metric-compatible Courier substitute
+   (SIL Open Font License). Only 400 + 700 are published; the editor's 600
+   keyword weight resolves up to 700. */
+@font-face {
+  font-family: "Courier Prime";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/courier-prime-latin-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Courier Prime";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/courier-prime-latin-700.woff2") format("woff2");
+}
