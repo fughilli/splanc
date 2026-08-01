@@ -17,6 +17,7 @@ import {
   getAppearance,
   updateAppearance,
   resetAppearance,
+  resolveAccent,
   ACCENT_HEX,
   type AppearanceSettings,
   type ThemeMode,
@@ -24,6 +25,8 @@ import {
   type MonoChoice,
 } from "../../store/appearance";
 import { installSettingsStyles } from "./settings.css";
+import { MapView } from "../mapview";
+import { generateFixture } from "../../effects/fixtures";
 
 const FONT_LABELS: Record<FontChoice, string> = {
   system: "System",
@@ -59,9 +62,32 @@ export function SettingsScreen(_router: Router): Screen {
     // segmented toggles) so their selected state stays in sync.
     rerender();
   };
+  // Continuous controls (the sliders, the background picker) write through with
+  // `setLive`: it persists + applies the change but does NOT rebuild the
+  // settings DOM. A full rerender (replaceChildren) tears out the <input> the
+  // user is mid-drag on, aborting the gesture after a single step — the bug this
+  // issue fixes. These controls need no structural resync: the Slider updates
+  // its own readout, applyAppearance() re-applies the CSS vars, and the live 3D
+  // preview reads renderSettings() each frame, so the value + preview track the
+  // drag continuously without a rerender.
+  const setLive = (patch: Partial<AppearanceSettings>): void => {
+    s = updateAppearance(patch);
+  };
 
   const body = document.createElement("div");
   el.appendChild(body);
+
+  // -- live 3D preview -----------------------------------------------------
+  // A small looping viewport in the "3D view" group so LED point size + glow
+  // (and background) show their effect as you drag the sliders. It reuses
+  // MapView, which reads renderSettings() every frame, so the render knobs are
+  // honored live with no extra wiring. A ring of LEDs runs a traveling
+  // "ring-pulse" animation tinted with the current accent.
+  //
+  // The canvas + MapView are built ONCE here (not inside rerender): viewGroup()
+  // re-parents this element on each rebuild, so the MapView instance and its
+  // animation survive intact (recreating them would restart/leak the loop).
+  const preview = buildPreview();
 
   function rerender(): void {
     body.replaceChildren(themeGroup(), typeGroup(), viewGroup(), resetRow());
@@ -161,6 +187,7 @@ export function SettingsScreen(_router: Router): Screen {
   // -- 3D view (renderer knobs MapView honors) -----------------------------
   function viewGroup(): HTMLElement {
     const g = group("3D view");
+    g.append(preview.el);
     g.append(
       fullRow(
         Slider({
@@ -170,7 +197,7 @@ export function SettingsScreen(_router: Router): Screen {
           step: 0.1,
           value: s.ledSize,
           format: (v) => `${v.toFixed(1)}×`,
-          onInput: (v) => set({ ledSize: v }),
+          onInput: (v) => setLive({ ledSize: v }),
         }).el,
       ),
       fullRow(
@@ -181,7 +208,7 @@ export function SettingsScreen(_router: Router): Screen {
           step: 0.1,
           value: s.glow,
           format: (v) => `${Math.round(v * 100)}%`,
-          onInput: (v) => set({ glow: v }),
+          onInput: (v) => setLive({ glow: v }),
         }).el,
       ),
     );
@@ -191,7 +218,7 @@ export function SettingsScreen(_router: Router): Screen {
     bg.type = "color";
     bg.className = "settings-color";
     bg.value = s.viewBg === "" ? "#111111" : s.viewBg;
-    bg.addEventListener("input", () => set({ viewBg: bg.value }));
+    bg.addEventListener("input", () => setLive({ viewBg: bg.value }));
     const bgReset = Button({
       label: "Default",
       variant: "quiet",
@@ -250,7 +277,100 @@ export function SettingsScreen(_router: Router): Screen {
   }
 
   rerender();
-  return { el };
+  return {
+    el,
+    onMount: () => preview.start(),
+    onUnmount: () => preview.stop(),
+  };
+}
+
+// -- 3D preview --------------------------------------------------------------
+
+interface PreviewHandle {
+  el: HTMLElement;
+  start: () => void;
+  stop: () => void;
+}
+
+/**
+ * A self-contained looping 3D preview for the Appearance screen: a ring of LEDs
+ * running a traveling "ring-pulse" so the size/glow/background knobs are visible
+ * while you drag their sliders. It hosts a {@link MapView} (which reads the live
+ * renderSettings() each frame, so the knobs apply with no extra plumbing) and
+ * pushes fresh per-LED colours on its own rAF. `start`/`stop` are driven by the
+ * screen's mount/unmount so the loop and canvas listeners don't leak.
+ */
+function buildPreview(): PreviewHandle {
+  const wrap = document.createElement("div");
+  wrap.className = "settings-preview";
+  const canvas = document.createElement("canvas");
+  canvas.className = "settings-preview-canvas";
+  const cap = document.createElement("div");
+  cap.className = "settings-preview-cap";
+  cap.textContent = "Live preview — drag the sliders to see LED size & glow.";
+  wrap.append(canvas, cap);
+
+  const N = 72;
+  const map = generateFixture("ring", { count: N, seed: 1, jitterFrac: 0 });
+  // The fixture rings in the XY plane; MapView auto-orbits about +Y, which would
+  // swing that ring edge-on. Lay it flat in the XZ (ground) plane so the orbit
+  // always reads as a rotating disc.
+  for (const led of map.leds) {
+    const [x, y] = led.xyz;
+    led.xyz = [x, 0, y];
+  }
+  const view = new MapView(canvas, map);
+  view.showStats = false; // solver stats are meaningless for a synthetic preview
+  const colors = new Uint8Array(N * 3);
+  view.setLedColors(colors); // MapView reads this buffer each frame; we mutate in place
+
+  let raf = 0;
+  let t = 0;
+  const paint = (): void => {
+    // Accent-tinted comet chasing around the ring, over a dim base glow so the
+    // whole fixture stays visible. `t` advances ~1/frame; head sweeps 0..1.
+    const [ar, ag, ab] = hexToRgb(resolveAccent(getAppearance()));
+    const head = (t * 0.004) % 1;
+    const sigma = 0.09;
+    for (let i = 0; i < N; i++) {
+      const phase = i / N;
+      let d = Math.abs(phase - head);
+      d = Math.min(d, 1 - d); // wrap-around distance on the ring
+      const pulse = Math.exp(-(d * d) / (2 * sigma * sigma));
+      const level = 0.12 + 0.88 * pulse; // dim baseline → bright comet head
+      colors[i * 3] = Math.round(ar * level);
+      colors[i * 3 + 1] = Math.round(ag * level);
+      colors[i * 3 + 2] = Math.round(ab * level);
+    }
+  };
+
+  const loop = (): void => {
+    raf = requestAnimationFrame(loop);
+    t += 1;
+    paint();
+  };
+
+  return {
+    el: wrap,
+    start: () => {
+      paint();
+      view.start();
+      if (raf === 0) loop();
+    },
+    stop: () => {
+      view.stop();
+      if (raf) cancelAnimationFrame(raf);
+      raf = 0;
+    },
+  };
+}
+
+/** Parse a #rrggbb string to an [r,g,b] triple (0–255); white on any miss. */
+function hexToRgb(hex: string): [number, number, number] {
+  const m = /^#([0-9a-fA-F]{6})$/.exec(hex);
+  if (!m) return [255, 255, 255];
+  const n = parseInt(m[1]!, 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
 
 // -- small local builders ----------------------------------------------------

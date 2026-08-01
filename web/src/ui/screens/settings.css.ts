@@ -104,4 +104,21 @@ const CSS = `
   white-space: pre-wrap;
   overflow-x: auto;
 }
+
+.settings-preview { margin-bottom: var(--sp-3); }
+.settings-preview-canvas {
+  display: block;
+  width: 100%;
+  height: 168px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctrl);
+  background: var(--surface-2);
+  touch-action: none;
+}
+.settings-preview-cap {
+  margin-top: var(--sp-1);
+  color: var(--text-dim);
+  font-size: var(--f-caption);
+  text-align: center;
+}
 `;

@@ -65,6 +65,9 @@ export class MapView {
    * toggles can still turn it back off. */
   showGrid = false;
   showTriad = false;
+  /** Draw the solver-stats footer + interaction hint. Off for small decorative
+   * previews (e.g. Settings' appearance preview) where the numbers are noise. */
+  showStats = true;
 
   // Extracted topology overlay: the segment polylines drawn over the LEDs, for
   // live preview while tuning the extraction (topology/extract.ts).
@@ -714,17 +717,19 @@ export class MapView {
       }
     }
 
-    ctx.fillStyle = "#aaa";
-    ctx.font = "12px system-ui";
-    const s = this.map.stats;
-    ctx.fillText(
-      `${leds.length}/${this.map.ledCount} solved · rms ${s.rmsReprojPxGlobal.toFixed(2)} px · ` +
-        `median parallax ${s.medianParallaxDeg.toFixed(1)}°${deltaSummary}`,
-      12,
-      h - 12,
-    );
-    ctx.fillStyle = "#666";
-    ctx.fillText("drag orbit · 2-finger pan · pinch/scroll zoom", 12, 18);
+    if (this.showStats) {
+      ctx.fillStyle = "#aaa";
+      ctx.font = "12px system-ui";
+      const s = this.map.stats;
+      ctx.fillText(
+        `${leds.length}/${this.map.ledCount} solved · rms ${s.rmsReprojPxGlobal.toFixed(2)} px · ` +
+          `median parallax ${s.medianParallaxDeg.toFixed(1)}°${deltaSummary}`,
+        12,
+        h - 12,
+      );
+      ctx.fillStyle = "#666";
+      ctx.fillText("drag orbit · 2-finger pan · pinch/scroll zoom", 12, 18);
+    }
   }
 }
 
