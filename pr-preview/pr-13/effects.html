@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>LED Mapper — Effects Simulator</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #0c0c10;
+        color: #e8e8ea;
+        font: 14px/1.5 system-ui, sans-serif;
+      }
+      #app {
+        display: flex;
+        height: 100vh;
+        min-height: 0;
+      }
+      #stage {
+        flex: 1 1 auto;
+        position: relative;
+        min-width: 0;
+      }
+      #view {
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+      #hud {
+        position: absolute;
+        top: 10px;
+        left: 12px;
+        font: 12px/1.4 ui-monospace, monospace;
+        color: #9fd8ff;
+        text-shadow: 0 1px 2px #000;
+        pointer-events: none;
+        white-space: pre;
+      }
+      #panel {
+        flex: 0 0 300px;
+        overflow-y: auto;
+        background: #14141a;
+        border-left: 1px solid #26262e;
+        padding: 0.75rem 0.9rem 2rem;
+      }
+      h1 {
+        font-size: 1.05rem;
+        margin: 0 0 0.15rem;
+      }
+      .sub {
+        color: #8a8a94;
+        margin: 0 0 1rem;
+        font-size: 0.82rem;
+      }
+      fieldset {
+        border: 1px solid #26262e;
+        border-radius: 8px;
+        margin: 0 0 0.8rem;
+        padding: 0.5rem 0.7rem 0.7rem;
+      }
+      legend {
+        color: #9fd8ff;
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        padding: 0 0.3rem;
+      }
+      label {
+        display: block;
+        margin: 0.3rem 0;
+        color: #c4c4cc;
+      }
+      label .v {
+        float: right;
+        color: #8a8a94;
+        font-variant-numeric: tabular-nums;
+      }
+      input[type="range"] {
+        width: 100%;
+      }
+      select,
+      input[type="number"] {
+        width: 100%;
+        background: #1d1d25;
+        color: #e8e8ea;
+        border: 1px solid #33333d;
+        border-radius: 5px;
+        padding: 0.25rem 0.4rem;
+        box-sizing: border-box;
+      }
+      button {
+        background: #23232c;
+        color: #e8e8ea;
+        border: 1px solid #3a3a46;
+        border-radius: 6px;
+        padding: 0.4rem 0.7rem;
+        cursor: pointer;
+        font-size: 0.85rem;
+      }
+      button:hover {
+        background: #2c2c38;
+      }
+      button.primary {
+        background: #1c4a6e;
+        border-color: #2a6ea3;
+      }
+      .row {
+        display: flex;
+        gap: 0.4rem;
+        flex-wrap: wrap;
+        align-items: center;
+        margin-top: 0.4rem;
+      }
+      .row > * {
+        flex: 1 1 auto;
+      }
+      .seg {
+        display: flex;
+        gap: 0.3rem;
+        margin-top: 0.4rem;
+      }
+      .seg button {
+        flex: 1;
+      }
+      .seg button.on {
+        background: #1c4a6e;
+        border-color: #2a6ea3;
+      }
+      #err {
+        color: #ff9d9d;
+        font-size: 0.82rem;
+        min-height: 1em;
+        margin-top: 0.3rem;
+      }
+    </style>
+    <script type="module" crossorigin src="./assets/effects-CF8uVg6a.js"></script>
+    <link rel="modulepreload" crossorigin href="./assets/proto-B-Do_6tJ.js">
+    <link rel="modulepreload" crossorigin href="./assets/fixtures-WkE7GIXr.js">
+  </head>
+  <body>
+    <div id="app">
+      <div id="stage">
+        <canvas id="view"></canvas>
+        <div id="hud"></div>
+      </div>
+      <div id="panel">
+        <h1>Effects Simulator</h1>
+        <p class="sub">
+          Experiment with pulse / flood effects on synthetic or real fixtures. Runs the exact
+          firmware Sim (WASM), so what you see is what a player renders.
+        </p>
+
+        <fieldset>
+          <legend>Fixture</legend>
+          <label>shape <select id="fx-kind"></select></label>
+          <label>LED count <span class="v" id="count-v">120</span>
+            <input id="count" type="range" min="4" max="600" step="2" value="120" /></label>
+          <label>seed <span class="v" id="fxseed-v">1</span>
+            <input id="fxseed" type="range" min="1" max="64" step="1" value="1" /></label>
+          <div class="seg">
+            <button id="gen" class="primary">Generate</button>
+            <button id="import">Import .binpb…</button>
+          </div>
+          <input id="file" type="file" accept=".binpb,application/octet-stream" hidden />
+        </fieldset>
+
+        <fieldset>
+          <legend>Topology extraction</legend>
+          <label>neighbour radius <span class="v" id="radius-v">2.5</span>
+            <input id="radius" type="range" min="1.2" max="8" step="0.2" value="2.5" /></label>
+          <label>prune spurs <span class="v" id="prune-v">3.0</span>
+            <input id="prune" type="range" min="0" max="8" step="0.5" value="3" /></label>
+          <label>close loops <span class="v" id="loop-v">2.0</span>
+            <input id="loop" type="range" min="0" max="4" step="0.2" value="2" /></label>
+          <label>simplify <span class="v" id="simplify-v">0.5</span>
+            <input id="simplify" type="range" min="0" max="2" step="0.1" value="0.5" /></label>
+          <label><input id="show-topo" type="checkbox" /> show skeleton overlay</label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Effect</legend>
+          <div class="seg">
+            <button id="fx-pulse" class="on">Pulse</button>
+            <button id="fx-flood">Flood</button>
+          </div>
+          <label>intensity <span class="v" id="intensity-v">1.00</span>
+            <input id="intensity" type="range" min="0" max="1" step="0.02" value="1" /></label>
+          <label>speed (m/s) <span class="v" id="speed-v">0.40</span>
+            <input id="speed" type="range" min="0.05" max="2" step="0.05" value="0.4" /></label>
+          <label>glow radius (m) <span class="v" id="glow-v">0.08</span>
+            <input id="glow" type="range" min="0.01" max="0.5" step="0.01" value="0.08" /></label>
+          <label>agents <span class="v" id="agents-v">2</span>
+            <input id="agents" type="range" min="1" max="12" step="1" value="2" /></label>
+          <label>pulse lead-in (m) <span class="v" id="lead-v">auto</span>
+            <input id="lead" type="range" min="0" max="0.5" step="0.01" value="0" /></label>
+          <label>pulse split prob <span class="v" id="split-v">0.25</span>
+            <input id="split" type="range" min="0" max="1" step="0.05" value="0.25" /></label>
+          <label>flood decay (m) <span class="v" id="decay-v">auto</span>
+            <input id="decay" type="range" min="0" max="2" step="0.05" value="0" /></label>
+          <label>palette <select id="palette"></select></label>
+          <label>sim seed <span class="v" id="seed-v">1</span>
+            <input id="seed" type="range" min="1" max="64" step="1" value="1" /></label>
+        </fieldset>
+
+        <fieldset>
+          <legend>Playback</legend>
+          <label>time scale <span class="v" id="tscale-v">1.0×</span>
+            <input id="tscale" type="range" min="0.1" max="4" step="0.1" value="1" /></label>
+          <div class="seg">
+            <button id="playpause" class="primary">Pause</button>
+            <button id="restart">Restart</button>
+          </div>
+        </fieldset>
+
+        <div id="err"></div>
+      </div>
+    </div>
+  </body>
+</html>
