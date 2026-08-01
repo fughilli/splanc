@@ -92,4 +92,16 @@ const CSS = `
 }
 .settings-full .k-slider { margin-bottom: 0; flex: 1; }
 .settings-reset { margin-top: var(--sp-4); }
+
+.settings-mono-preview {
+  margin: 0 0 var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctrl);
+  color: var(--text-dim);
+  font: var(--f-caption) / 1.6 var(--font-mono);
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
 `;

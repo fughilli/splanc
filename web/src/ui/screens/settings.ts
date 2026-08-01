@@ -135,6 +135,9 @@ export function SettingsScreen(_router: Router): Screen {
         "Monospace, for the effect editor.",
         select<MonoChoice>(MONO_LABELS, s.mono, (v) => set({ mono: v })),
       ),
+      // The code font isn't used anywhere else on this screen, so show a live
+      // sample — otherwise the choice only becomes visible back in the editor.
+      monoPreview(),
     );
     g.append(
       fullRow(
@@ -277,6 +280,18 @@ function row(name: string, hint: string, control: HTMLElement): HTMLElement {
   ctl.appendChild(control);
   r.append(label, ctl);
   return r;
+}
+
+/** A full-width sample of the current code font. Draws from `var(--font-mono)`
+ * (set live on :root by updateAppearance), so it swaps the moment the picker
+ * changes. The snippet packs the glyphs that separate monospace faces apart —
+ * 0/O, 1/l/I, and the `=>`/`==`/`!=` sequences Fira Code renders as ligatures. */
+function monoPreview(): HTMLElement {
+  const pre = document.createElement("pre");
+  pre.className = "settings-mono-preview";
+  pre.setAttribute("aria-hidden", "true");
+  pre.textContent = "// preview 0O o1lI\nfn hue(i) => (i * 137) != 0;";
+  return pre;
 }
 
 /** A full-width row that hosts a slider (which supplies its own label). */

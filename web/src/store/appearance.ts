@@ -132,11 +132,16 @@ export const FONT_STACKS: Record<FontChoice, string> = {
   serif: "Georgia, 'Times New Roman', serif",
 };
 
+// Same fix as FONT_STACKS: the named mono faces (IBM Plex Mono, Fira Code,
+// Courier New) aren't on Android, so every non-"system" mono choice collapsed
+// to the platform monospace. The first three are self-hosted (see fonts.css;
+// "Courier Prime" is a metric-compatible Courier substitute); "system" stays a
+// system stack. Trailing system fonts remain as fallbacks.
 export const MONO_STACKS: Record<MonoChoice, string> = {
   system: "ui-monospace, monospace",
   "ibm-plex": "'IBM Plex Mono', ui-monospace, monospace",
   fira: "'Fira Code', ui-monospace, monospace",
-  courier: "'Courier New', Courier, monospace",
+  courier: "'Courier Prime', 'Courier New', Courier, monospace",
 };
 
 // -- (de)serialization -------------------------------------------------------
