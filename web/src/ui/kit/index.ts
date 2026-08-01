@@ -363,18 +363,28 @@ export function HelpTip(opts: {
   }
 
   let open = false;
-  function onDocClick(ev: MouseEvent): void {
+  // Dismiss on any press outside the tip. Registered in the CAPTURE phase so a
+  // stray `stopPropagation()` on an in-app control (effect rows, editor panes,
+  // the layout drag handles all do this) can't swallow the press before it
+  // reaches us — a bubble-phase listener here would leave the tip stuck open.
+  // `pointerdown` (not `click`) makes the dismissal feel immediate.
+  function onDocPointer(ev: Event): void {
     if (!el.contains(ev.target as Node)) close();
   }
   function onKey(ev: KeyboardEvent): void {
-    if (ev.key === "Escape") close();
+    if (ev.key === "Escape") {
+      close();
+      btn.focus();
+    }
   }
   function openPop(): void {
     open = true;
     btn.setAttribute("aria-expanded", "true");
     el.classList.add("k-helptip--open");
+    // Defer registration so the very press that opened the tip doesn't also
+    // count as an outside press and close it again.
     setTimeout(() => {
-      document.addEventListener("click", onDocClick);
+      document.addEventListener("pointerdown", onDocPointer, true);
       document.addEventListener("keydown", onKey);
     }, 0);
   }
@@ -382,7 +392,7 @@ export function HelpTip(opts: {
     open = false;
     btn.setAttribute("aria-expanded", "false");
     el.classList.remove("k-helptip--open");
-    document.removeEventListener("click", onDocClick);
+    document.removeEventListener("pointerdown", onDocPointer, true);
     document.removeEventListener("keydown", onKey);
   }
   btn.addEventListener("click", () => (open ? close() : openPop()));
