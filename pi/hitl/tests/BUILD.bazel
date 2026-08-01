@@ -3,8 +3,9 @@
 Two audiences:
 
   * `hitl_test` — the pure-logic unit tests (Improv packet codec, SNTP sync math,
-    runner-pool picker). No hardware, no network; runs under `bazel test //...`
-    so device/app/harness parity is enforced in CI.
+    runner-pool picker). No hardware, no network. Tagged `["manual", "hitl"]`, so
+    it's out of `bazel test //...`; the dedicated `hitl-tests` CI job collects the
+    `hitl` tag by query and runs it, enforcing device/app/harness parity.
   * `e2e` — the on-hardware orchestrator. It reserves a real rig from the pool
     (the checkout mechanism), flashes firmware, provisions the DUT onto WiFi over
     ImprovBLE, then checks time-sync + rename over the player WebSocket. Needs a
@@ -35,6 +36,13 @@ py_test(
     imports = ["."],
     legacy_create_init = False,
     main = "pytest_main.py",
+    # `manual` keeps the HITL suite out of `bazel test //...`; the dedicated CI
+    # job (.github/workflows/test.yaml `hitl-tests`) collects the `hitl` tag with
+    # a bazel query and runs it explicitly.
+    tags = [
+        "hitl",
+        "manual",
+    ],
     deps = [requirement("pytest")],
 )
 
@@ -52,6 +60,12 @@ py_binary(
     ],
     imports = ["."],
     main = "hitl_e2e.py",
+    # On-hardware; tagged for grouping with the rest of the HITL surface and kept
+    # out of any wildcard build/run. It runs from the manual hitl.yaml workflow.
+    tags = [
+        "hitl",
+        "manual",
+    ],
     deps = [
         "//pi/server",
         requirement("websockets"),

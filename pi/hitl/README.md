@@ -45,19 +45,25 @@ An end-to-end suite drives a **pool** of rigs (the checkout mechanism) and
 checks ImprovBLE setup, rename, and time sync on a real board:
 
 ```sh
-bazel test //pi/hitl/tests:hitl_test          # pure-logic units (codec/sync/pool) — CI
-export HITL_SERVERS="hitl-rig-1, hitl-rig-2"   # pool; free runner is auto-picked
+bazel test //pi/hitl/tests:hitl_test           # pure-logic units (codec/sync/pool)
+export HITL_SERVERS="hitl-rig-1, hitl-rig-2"    # pool; free runner is auto-picked
 bazel run  //pi/hitl/tests:e2e -- \
     --bundle bazel-bin/firmware/player_app/esp32c6_flashbundle.tar \
-    --wifi-ssid BigVibes --wifi-pass SECRET    # reserve → flash → improv → ws
+    --wifi-ssid BigVibes --wifi-pass SECRET     # reserve → flash → improv → ws
 ```
 
-`hitl_test` runs under `bazel test //...` so the Improv/sync/pool logic can't
-drift. `e2e` needs a live rig + board; it reserves a **free** rig from
-`$HITL_SERVERS` (else `$HITL_SERVER`, else a specific `--server`), so it never
-queues behind a busy one. The `.github/workflows/hitl.yaml` job runs it on
-demand: it joins the tailnet with a `TS_AUTHKEY` secret and reads the pool from
-the `HITL_SERVERS` repo variable (see that file's header for the full config).
+The suite is `tags = ["manual", "hitl"]`, so it stays out of `bazel test //...`
+and gets its own lane: a dedicated `hitl-tests` CI job (in
+`.github/workflows/test.yaml`) collects the `hitl`-tagged test targets with a
+bazel query — `bazel test $(bazel query 'attr(tags, "\bhitl\b", tests(//...))')`
+— and runs the pure-logic units so the Improv/sync/pool code can't drift.
+
+`e2e` needs a live rig + board; it reserves a **free** rig from `$HITL_SERVERS`
+(else `$HITL_SERVER`, else a specific `--server`), so it never queues behind a
+busy one. Being a `py_binary` it's excluded from the `tests(...)` query; the
+`.github/workflows/hitl.yaml` job runs it on demand, joining the tailnet with a
+`TS_AUTHKEY` secret and reading the pool from `HITL_SERVERS` (that file's header
+documents the `HITL` environment config).
 
 ## Layout
 
