@@ -264,10 +264,16 @@ a {
     color var(--motion-micro) var(--ease),
     border-color var(--motion-micro) var(--ease);
 }
-.k-helptip-btn:hover,
+.k-helptip-btn:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+/* Clearly "on" while the tooltip is visible: accent ring + quiet fill, so the
+   trigger reads as an active toggle rather than a plain hover. */
 .k-helptip--open .k-helptip-btn {
   color: var(--text);
   border-color: var(--accent);
+  background: var(--accent-quiet);
 }
 .k-helptip-btn svg {
   width: 18px;
