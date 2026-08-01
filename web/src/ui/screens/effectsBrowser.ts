@@ -11,6 +11,7 @@
  */
 
 import { ActionGrid, Button, Chip, EmptyState, HelpTip, IconButton, Sheet, toast, icon } from "../kit";
+import type { HelpTipHandle } from "../kit";
 import { effectStore, isBuiltinEffect, type StoredEffect } from "../../store/effectStore";
 import { appendGrouped, openFolderPicker } from "./folders";
 import { openDebugServerSheet } from "./debugServerSheet";
@@ -63,7 +64,12 @@ export function EffectsBrowserScreen(router: Router): Screen {
   // hint disappears (managing/clearing the key stays in the editor's ⋯ menu).
   const aiHelp = document.createElement("div");
   aiHelp.className = "fxlib-aihelp";
+  // Track the live tip so we can drop its document-level dismiss listener when
+  // the screen unmounts while it's still expanded (it defaults to open).
+  let aiTip: HelpTipHandle | null = null;
   function renderAiHelp(): void {
+    aiTip?.close();
+    aiTip = null;
     aiHelp.replaceChildren();
     if (getApiKey()) return; // key configured → nothing to prompt
     const tip = HelpTip({
@@ -71,12 +77,16 @@ export function EffectsBrowserScreen(router: Router): Screen {
       title: "AI generation",
       body: "Generate effects from a text prompt with your own Anthropic API key — stored only in this browser and sent directly to Anthropic.",
       align: "right",
+      // First-run hint: no key configured yet, so surface it expanded on arrival
+      // rather than hiding it behind a "?" the user has to discover.
+      defaultOpen: true,
       action: {
         label: "Add AI key",
         icon: "sparkles",
         onClick: () => openAiKeySheet(() => renderAiHelp()),
       },
     });
+    aiTip = tip;
     aiHelp.appendChild(tip.el);
   }
   renderAiHelp();
@@ -301,7 +311,10 @@ export function EffectsBrowserScreen(router: Router): Screen {
       document.body.appendChild(fab);
       void refresh();
     },
-    onUnmount: () => fab.remove(),
+    onUnmount: () => {
+      aiTip?.close();
+      fab.remove();
+    },
   };
 }
 
