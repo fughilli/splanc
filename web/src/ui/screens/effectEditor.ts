@@ -845,6 +845,12 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   async function runChat(): Promise<void> {
     const ask = chatInput.value.trim();
     if (!ask) return;
+    // Keep the typed text if there's no key yet (the sheet opens; sending again
+    // after setting a key preserves the ask).
+    if (!getApiKey()) {
+      openAiKeySheet();
+      return;
+    }
     chatInput.value = "";
     await submitChat(ask);
   }
