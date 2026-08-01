@@ -143,6 +143,8 @@ export const TYPES: { name: string; doc: string }[] = [
   { name: "float", doc: "32-bit floating point (the default numeric type)" },
   { name: "int", doc: "native 32-bit integer — fast, no soft-float" },
   { name: "fixed", doc: "Q16.16 fixed-point number" },
+  { name: "fixed16", doc: "Q1.14 reduced-precision fixed-point, range [-2, 2) — accelerated integer sin/cos/exp (angle in turns), no soft-float" },
+  { name: "fixed8", doc: "Q1.6 reduced-precision fixed-point, range [-2, 2) — accelerated integer sin/cos/exp (angle in turns), no soft-float" },
   { name: "bool", doc: "boolean (true/false)" },
   { name: "vec2", doc: "2-component vector (x, y)" },
   { name: "vec3", doc: "3-component vector (x, y, z / r, g, b)" },

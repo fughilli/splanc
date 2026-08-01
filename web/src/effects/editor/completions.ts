@@ -68,7 +68,8 @@ function scanDeclarations(source: string): CompletionItem[] {
     out.push({ label: name, kind, detail, doc, insertText: name });
   };
 
-  const TYPE = "(?:float|int|fixed|bool|vec2|vec3|vec4)";
+  // Longest-first so `fixed16`/`fixed8` win over the `fixed` prefix.
+  const TYPE = "(?:float|int|fixed16|fixed8|fixed|bool|vec2|vec3|vec4)";
   for (const m of source.matchAll(new RegExp(`\\buniform\\s+(${TYPE})\\s+([A-Za-z_]\\w*)`, "g"))) {
     add(m[2]!, "uniform", m[1]!, "declared uniform");
   }
