@@ -94,7 +94,7 @@ export class Shell {
     );
     // MIDI controllers (connect + name controls) — always available.
     this.menu.appendChild(
-      this.menuItem("graph", "MIDI controllers", () => this.router?.navigate("/settings/midi")),
+      this.menuItem("midi", "MIDI controllers", () => this.router?.navigate("/settings/midi")),
     );
     const install = installMenuItem(() => this.closeMenu());
     if (install) this.menu.appendChild(install);

@@ -39,7 +39,8 @@ export type IconName =
   | "move"
   | "grid"
   | "triad"
-  | "camera-path";
+  | "camera-path"
+  | "midi";
 
 // -- shared fragments for the device-transfer glyphs (24x24, top→bottom layout:
 //    content over a small device pentagon, joined by a direction arrow) --------
@@ -101,6 +102,8 @@ const PATHS: Record<IconName, string> = {
   triad: `<path d="M12 21V8"/><path d="M12 21 4 16.5"/><path d="M12 21 20 16.5"/><path d="M12 8l-1.6 1.8M12 8l1.6 1.8"/>`,
   // Camera trajectory: an arced path between two marked viewpoints.
   "camera-path": `<path d="M4.5 18C8 7 16 7 19.5 18"/><circle cx="4.5" cy="18" r="1.6"/><circle cx="19.5" cy="18" r="1.6"/>`,
+  // MIDI: a DIN-5 connector — outer ring with five pins in the standard arc.
+  midi: `<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="6.2" r="1"/><circle cx="6.7" cy="9.4" r="1"/><circle cx="17.3" cy="9.4" r="1"/><circle cx="8.4" cy="15.4" r="1"/><circle cx="15.6" cy="15.4" r="1"/>`,
 };
 
 let installed = false;
