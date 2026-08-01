@@ -80,13 +80,14 @@ const FX_MAX_BYTES: usize = 4 * 1024;
 static mut FX_BYTES: [u8; FX_MAX_BYTES] = [0; FX_MAX_BYTES];
 static mut FX_LEN: usize = 0;
 static mut FX_VM: Option<FxVm> = None;
-/// Hidden-buffer/texture arena for the fx VM (LoadBuf/StoreBuf). 24 KB of f32
-/// slots — enough for several LED-arity buffers (a vec4 trail on 256 LEDs is
-/// 1024 slots); the VM clamps a program that would need more. Static, so its
-/// pointer is stable for the process; bound once per effect load. Persists
-/// across frames (buffer semantics) and is zeroed on (re)load for a clean start.
-const FX_ARENA_SLOTS: usize = 6 * 1024; // 24 KB
-static mut FX_ARENA: [f32; FX_ARENA_SLOTS] = [0.0; FX_ARENA_SLOTS];
+/// Hidden-buffer/texture arena for the fx VM (LoadBuf/StoreBuf). 24 KB, now
+/// BYTE-addressed (FUG-10 packed storage) so narrow elements pack tightly — a
+/// fixed8 vec4 trail on 256 LEDs is 1 KB, an f32 one 4 KB; the VM clamps a
+/// program that would need more. Static, so its pointer is stable for the
+/// process; bound once per effect load. Persists across frames (buffer
+/// semantics) and is zeroed on (re)load for a clean start.
+const FX_ARENA_BYTES: usize = 24 * 1024; // 24 KB
+static mut FX_ARENA: [u8; FX_ARENA_BYTES] = [0; FX_ARENA_BYTES];
 
 /// Previous quantized video-texture frame, for set_texture DELTA (XOR) decoding.
 /// One buffer — video streams target a single texture at a time. A frame whose
@@ -935,22 +936,29 @@ unsafe fn handle_set_texture(frame: &[u8]) {
             prev[j] ^= data[j];
         }
     }
-    // Dequantize prev -> f32 into the texture's arena region.
+    // Dequantize prev -> the texture's arena region, PACKED at the texture's
+    // declared component precision (FUG-10) so a narrow texture compresses the
+    // stream on-device too. `comp_store_num` quantizes each float channel.
     let arena = &mut (*addr_of_mut!(FX_ARENA))[..];
     let base = prog.buf_base(tex_index as usize, FX_F_LEDS as usize);
     let elem = d.elem as usize;
+    let cb = ledmapper_fx_vm::comp_bytes(d.comp);
+    let eb = d.elem_bytes();
     for t in 0..n_texels {
         let (r, g, b) = dequant_texel(&prev[t * bpt..t * bpt + bpt], format, &palette);
-        let ab = base + t * elem;
+        let ab = base + t * eb;
         if elem == 1 {
-            if ab < arena.len() {
-                arena[ab] = 0.299 * r + 0.587 * g + 0.114 * b; // luma
+            let o = ab;
+            if o + cb <= arena.len() {
+                let luma = 0.299 * r + 0.587 * g + 0.114 * b;
+                ledmapper_fx_vm::comp_store_num(d.comp, luma, &mut arena[o..o + cb]);
             }
         } else {
             let ch = [r, g, b, 1.0];
             for (k, &c) in ch.iter().enumerate().take(elem.min(4)) {
-                if ab + k < arena.len() {
-                    arena[ab + k] = c;
+                let o = ab + k * cb;
+                if o + cb <= arena.len() {
+                    ledmapper_fx_vm::comp_store_num(d.comp, c, &mut arena[o..o + cb]);
                 }
             }
         }
@@ -1665,7 +1673,7 @@ pub unsafe extern "C" fn lm_fx_load(fxb: *const u8, len: usize) -> bool {
     // clean each load; the static memory's pointer is stable so one bind holds).
     {
         let arena = &mut *addr_of_mut!(FX_ARENA);
-        arena.fill(0.0);
+        arena.fill(0);
         if let Some(vm) = (*addr_of_mut!(FX_VM)).as_mut() {
             vm.set_arena(arena);
         }

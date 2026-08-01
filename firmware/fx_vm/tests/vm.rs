@@ -443,3 +443,31 @@ fn mul_fix_n_and_rescale() {
     // 0.75 * 255 = 191 (round-trip through Q1.6 keeps it within a code or two).
     assert!((got as i32 - 191).abs() <= 3, "0.5*1.5 via Q1.14: got {got}");
 }
+
+// --- packed narrow storage helpers (FUG-10) ----------------------------------
+
+#[test]
+fn comp_pack_unpack_round_trips() {
+    let mut b = [0u8; 4];
+    // Raw fixed8: the Q1.6 scaled-int stack word survives 1-byte storage.
+    comp_store(comp::FIX8, f32::from_bits(32u32), &mut b); // 0.5 in Q1.6 = 32
+    assert_eq!(b[0], 32);
+    assert_eq!(comp_load(comp::FIX8, &b).to_bits() as i32, 32);
+    // Raw fixed16: 0.5 in Q1.14 = 8192, stored little-endian in 2 bytes.
+    comp_store(comp::FIX16, f32::from_bits(8192u32), &mut b);
+    assert_eq!(i16::from_le_bytes([b[0], b[1]]), 8192);
+    assert_eq!(comp_load(comp::FIX16, &b).to_bits() as i32, 8192);
+    // Float-presenting FIX8F: 0.75 quantizes to 48 and dequantizes back.
+    comp_store_num(comp::FIX8F, 0.75, &mut b);
+    assert_eq!(b[0] as i8, 48);
+    assert!((comp_load_num(comp::FIX8F, &b) - 0.75).abs() < 1e-6);
+    // Narrow int clamps out-of-range instead of wrapping wildly.
+    comp_store(comp::I8, f32::from_bits(999i32 as u32), &mut b);
+    assert_eq!(b[0] as i8, 127);
+    comp_store(comp::I16, f32::from_bits(-40000i32 as u32), &mut b);
+    assert_eq!(i16::from_le_bytes([b[0], b[1]]), i16::MIN);
+    // f32 stays exact; widths are as declared.
+    comp_store(comp::F32, 0.3, &mut b);
+    assert!((comp_load(comp::F32, &b) - 0.3).abs() < 1e-6);
+    assert_eq!((comp_bytes(comp::F32), comp_bytes(comp::FIX16), comp_bytes(comp::FIX8)), (4, 2, 1));
+}

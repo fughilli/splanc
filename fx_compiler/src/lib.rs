@@ -99,14 +99,32 @@ struct ArrayInfo {
     count: u8,
 }
 
+/// Per-component storage precision codes for packed buffers/textures — mirrors
+/// `fx_vm::comp`. Narrow formats pack a per-LED value into 1–2 bytes instead of a
+/// 4-byte f32 slot (FUG-10). The `*F` variants store a compressed fixed but
+/// present as a dequantized float (for float/vec colours); the plain fixed/int
+/// variants present the raw scaled integer (the narrow first-class types).
+mod comp {
+    pub const F32: u8 = 0;
+    pub const FIX16: u8 = 1;
+    pub const FIX8: u8 = 2;
+    pub const I16: u8 = 3;
+    pub const I8: u8 = 4;
+    pub const FIX16F: u8 = 5;
+    pub const FIX8F: u8 = 6;
+    pub const I32: u8 = 7;
+}
+
 /// A declared hidden buffer / texture. `kind` 0 = LED-arity (one element per
 /// LED; the arena sizes it to led_count at run time), 1 = a WxH 2D texture.
-/// `elem` is the slot width of one element (1 = float … 4 = vec4). Serialized
-/// into the `.fxb` buffer table for the VM's LoadBuf/StoreBuf (see fx_vm).
+/// `elem` is the component count of one element (1 = scalar … 4 = vec4) and
+/// `comp` its per-component storage precision. Serialized into the `.fxb` buffer
+/// table for the VM's LoadBuf/StoreBuf (see fx_vm).
 #[derive(Clone, Copy)]
 struct BufferInfo {
     kind: u8,
     elem: u8,
+    comp: u8,
     w: u16,
     h: u16,
 }
@@ -745,48 +763,85 @@ impl Compiler {
         Ok(())
     }
 
+    /// Resolve a buffer/texture element type name to its on-stack element type,
+    /// component count, and default packed storage precision (FUG-10). Narrow
+    /// element types (`fixed8`/`fixed16`) read back as those first-class types;
+    /// `int8`/`int16` are storage specifiers that read back as `int`. `None` if
+    /// the name isn't a valid element type.
+    fn buffer_elem(name: &str) -> Option<(Ty, u8, u8)> {
+        Some(match name {
+            "float" => (Ty::Float, 1, comp::F32),
+            "vec2" => (Ty::Vec2, 2, comp::F32),
+            "vec3" => (Ty::Vec3, 3, comp::F32),
+            "vec4" => (Ty::Vec4, 4, comp::F32),
+            "int" => (Ty::Int, 1, comp::I32),
+            "fixed" => (Ty::Fixed, 1, comp::I32), // Q16.16 rides in the i32 word
+            "fixed16" => (Ty::Fixed16, 1, comp::FIX16),
+            "fixed8" => (Ty::Fixed8, 1, comp::FIX8),
+            "int16" => (Ty::Int, 1, comp::I16), // narrow storage, int on the stack
+            "int8" => (Ty::Int, 1, comp::I8),
+            _ => return None,
+        })
+    }
+
+    /// Parse an optional `: fixed8` / `: fixed16` storage annotation that
+    /// compresses a float/vec buffer element (default `comp` is `F32`). Only
+    /// valid on a float/vec element — a narrow element type already fixes its
+    /// storage. Returns the (possibly overridden) component precision.
+    fn buffer_storage_annotation(&mut self, elem_ty: Ty, default_comp: u8) -> Result<u8, Diagnostic> {
+        if *self.cur() != Tok::Sym(':') {
+            return Ok(default_comp);
+        }
+        self.advance(); // ':'
+        let ann = self.eat_ident()?;
+        if !matches!(elem_ty, Ty::Float | Ty::Vec2 | Ty::Vec3 | Ty::Vec4) {
+            return self.err("a storage annotation only applies to a float/vec element");
+        }
+        match ann.as_str() {
+            "fixed16" => Ok(comp::FIX16F),
+            "fixed8" => Ok(comp::FIX8F),
+            _ => self.err("storage annotation must be `fixed8` or `fixed16`"),
+        }
+    }
+
     // buffer vec3 trail;   — a hidden LED-arity buffer (one `elem` per LED,
     // persisted across frames in the VM arena; sized to led_count at run time).
-    // Element type is a scalar/vec (float/vec2/vec3/vec4). Access is `trail[i]`
-    // (read) and `trail[i] = v;` (write), i an int LED index.
+    // Element is a scalar/vec, optionally narrow (`buffer fixed8 t;`) or
+    // compressed (`buffer vec3 c : fixed8;` packs vec3 to 3 bytes/LED). Access is
+    // `trail[i]` (read) and `trail[i] = v;` (write), i an int LED index.
     fn buffer_decl(&mut self) -> Result<(), Diagnostic> {
         self.advance(); // 'buffer'
         let tyname = self.eat_ident()?;
-        let elem_ty = Self::ty_from_ident(&tyname).ok_or_else(|| self.mkdiag("unknown type"))?;
-        let elem = elem_ty.width();
-        // Numeric scalar/vector element: float/int/fixed (width 1) or vec2..4.
-        // Excludes bool (width 1 but not numeric), struct/array/void (width 0/>4).
-        if elem == 0 || elem > 4 || matches!(elem_ty, Ty::Bool) {
-            return self.err("buffer element must be numeric: float/int/vec2/vec3/vec4");
-        }
+        let (elem_ty, elem, comp0) =
+            Self::buffer_elem(&tyname).ok_or_else(|| self.mkdiag("buffer element must be numeric: float/int/fixed/fixed8/fixed16/int8/int16/vec2/vec3/vec4"))?;
         let name = self.eat_ident()?;
+        let comp = self.buffer_storage_annotation(elem_ty, comp0)?;
         self.expect_sym(';')?;
         if self.buffers.len() >= 255 {
             return self.err("too many buffers (max 255)");
         }
         let id = self.buffers.len() as u8;
-        self.buffers.push(BufferInfo { kind: 0, elem, w: 0, h: 0 });
+        self.buffers.push(BufferInfo { kind: 0, elem, comp, w: 0, h: 0 });
         self.syms.insert(name, Sym { kind: SymKind::Buffer, slot: id, ty: elem_ty });
         Ok(())
     }
 
     // texture vec3 img(64, 64);  — a hidden WxH 2D texture (kind 1). Read via
-    // sample(img, uv) (bilinear) or flat img[i]; write via paint(img, uv, c) or
-    // flat img[i] = c. Lives in the VM arena (elem*w*h slots).
+    // sample(img, uv) (bilinear, always float) or flat img[i]; write via
+    // paint(img, uv, c) or flat img[i] = c. Element may be narrow/compressed like
+    // a buffer (`texture vec3 img(64,64) : fixed8;` quarters the texture RAM).
     fn texture_decl(&mut self) -> Result<(), Diagnostic> {
         self.advance(); // 'texture'
         let tyname = self.eat_ident()?;
-        let elem_ty = Self::ty_from_ident(&tyname).ok_or_else(|| self.mkdiag("unknown type"))?;
-        let elem = elem_ty.width();
-        if elem == 0 || elem > 4 || matches!(elem_ty, Ty::Bool) {
-            return self.err("texture element must be numeric: float/int/vec2/vec3/vec4");
-        }
+        let (elem_ty, elem, comp0) =
+            Self::buffer_elem(&tyname).ok_or_else(|| self.mkdiag("texture element must be numeric: float/int/fixed/fixed8/fixed16/int8/int16/vec2/vec3/vec4"))?;
         let name = self.eat_ident()?;
         self.expect_sym('(')?;
         let w = self.eat_uint("texture width")?;
         self.expect_sym(',')?;
         let h = self.eat_uint("texture height")?;
         self.expect_sym(')')?;
+        let comp = self.buffer_storage_annotation(elem_ty, comp0)?;
         self.expect_sym(';')?;
         if w == 0 || w > 1024 || h == 0 || h > 1024 {
             return self.err("texture dimensions must be 1..1024");
@@ -795,7 +850,7 @@ impl Compiler {
             return self.err("too many buffers/textures (max 255)");
         }
         let id = self.buffers.len() as u8;
-        self.buffers.push(BufferInfo { kind: 1, elem, w: w as u16, h: h as u16 });
+        self.buffers.push(BufferInfo { kind: 1, elem, comp, w: w as u16, h: h as u16 });
         self.syms.insert(name, Sym { kind: SymKind::Buffer, slot: id, ty: elem_ty });
         Ok(())
     }
@@ -1792,15 +1847,19 @@ impl Compiler {
         self.expect_sym(',')?;
         let uvt = self.expr()?;
         self.coerce(uvt, Ty::Vec2)?;
+        // Sampling always dequantizes to a FLOAT colour (the packed precision is
+        // a storage detail), so the result type is a float scalar/vec of the
+        // element's component count — likewise paint() takes a float colour.
+        let fty = Ty::vec_of(self.buffers[sym.slot as usize].elem);
         if name == "sample" {
             self.expect_sym(')')?;
             self.emit(fx_vm_op::SAMPLE_TEX);
             self.emit(sym.slot);
-            Ok(sym.ty)
+            Ok(fty)
         } else {
             self.expect_sym(',')?;
             let ct = self.expr()?;
-            self.coerce(ct, sym.ty)?;
+            self.coerce(ct, fty)?;
             self.expect_sym(')')?;
             self.emit(fx_vm_op::PAINT_TEX);
             self.emit(sym.slot);
@@ -2179,12 +2238,14 @@ impl Compiler {
         }
         b.extend_from_slice(&self.code);
         // Optional buffer descriptor table (FLAG_BUFFERS): n_buffers, then
-        // n × [kind(u8) elem(u8) w(u16) h(u16)] — mirrors fx_vm::Program::parse.
+        // n × [kind(u8) elem(u8) comp(u8) w(u16) h(u16)] — mirrors
+        // fx_vm::Program::parse.
         if !self.buffers.is_empty() {
             b.push(self.buffers.len() as u8);
             for buf in &self.buffers {
                 b.push(buf.kind);
                 b.push(buf.elem);
+                b.push(buf.comp);
                 b.extend_from_slice(&buf.w.to_le_bytes());
                 b.extend_from_slice(&buf.h.to_le_bytes());
             }
@@ -2534,7 +2595,7 @@ mod fx_vm_op {
 
 /// `.fxb` flags bit: a buffer descriptor table follows `code` (mirrors
 /// fx_vm::FLAG_BUFFERS). One byte `n_buffers`, then n × [kind(u8) elem(u8)
-/// w(u16) h(u16)] (6 bytes each = fx_vm::BUF_DESC_LEN).
+/// comp(u8) w(u16) h(u16)] (7 bytes each = fx_vm::BUF_DESC_LEN).
 const FLAG_BUFFERS: u8 = 0x01;
 mod fx_ctx {
     pub const TIME: u8 = 0;

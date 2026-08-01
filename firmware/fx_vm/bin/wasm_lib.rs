@@ -13,9 +13,10 @@ pub struct FxPreview {
     vm: Vm,
     frame: Frame,
     // Hidden-buffer/texture arena (the browser mirror of the device's fx arena).
-    // Sized to prog.arena_slots(led_count) in update(); resize preserves contents
-    // so buffers persist across frames (only grows/pads when led_count changes).
-    arena: Vec<f32>,
+    // BYTE-addressed (FUG-10 packed storage). Sized to prog.arena_bytes(led_count)
+    // in update(); resize preserves contents so buffers persist across frames
+    // (only grows/pads when led_count changes).
+    arena: Vec<u8>,
     // Per-LED topology (LED order), mirroring the device's FX_LED_TOPO cache so
     // led.seg / led.s / led.branch preview identically to the firmware. Empty
     // until set_topology() is called (then shade() reads seg=-1/s=0/branch=false,
@@ -79,9 +80,9 @@ impl FxPreview {
             // Size + (re)bind the hidden-buffer arena for this led_count. Resize
             // preserves existing contents (persistence); rebind every tick since
             // a resize may move the Vec's backing store.
-            let need = prog.arena_slots(led_count as usize);
+            let need = prog.arena_bytes(led_count as usize);
             if self.arena.len() != need {
-                self.arena.resize(need, 0.0);
+                self.arena.resize(need, 0);
             }
             self.vm.set_arena(&mut self.arena);
             self.vm.run_update(&prog, &self.frame);

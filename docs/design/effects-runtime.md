@@ -116,6 +116,21 @@ vec3 shade(Led led) {
   index clamped in-bounds at runtime). This is what lets a script keep an array
   of agents in `state` and simulate them in `update()`. Slot budgets: `state`
   and locals are each ≤128 slots (`MAX_STATE`/`MAX_LOCALS`).
+- **Packed narrow storage** (FUG-10) — hidden `buffer`s and `texture`s (the
+  per-LED / 2D feedback arrays that dominate the runtime's RAM) store each
+  element at a chosen **component precision**, not a fixed 4-byte f32 slot. The
+  arena is byte-addressed, so an 8-bit component costs one byte:
+  - `buffer fixed8 trail;` — one `fixed8` per LED = **1 B/LED** (a quarter of
+    an f32 buffer). Reads back as `fixed8`. `fixed16`/`int8`/`int16` likewise
+    (`int8`/`int16` read back as `int`).
+  - `buffer vec3 col : fixed8;` — a `: fixed8` / `: fixed16` annotation
+    compresses a float/vec element's storage while reading/writing as float
+    (`vec3` → **3 B/LED** instead of 12). Same annotation on a `texture`.
+  - `sample(tex, uv)` always dequantizes to a **float** colour regardless of the
+    stored precision; flat `buf[i]` reads the declared element type. Default
+    (unannotated) storage is f32, so existing effects are byte-for-byte
+    unchanged. The on-device video `set_texture` path packs frames straight into
+    the target texture's format, so a narrow texture compresses the stream too.
 
 ## Bytecode / VM
 

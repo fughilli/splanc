@@ -570,8 +570,8 @@ fn buffer_trails_persist_per_led() {
     assert_eq!((d.kind, d.elem), (0, 1));
 
     let led_count = 4usize;
-    let mut arena = vec![0.0f32; prog.arena_slots(led_count)];
-    assert_eq!(arena.len(), led_count); // 1 slot/elem * 4 LEDs
+    let mut arena = vec![0u8; prog.arena_bytes(led_count)];
+    assert_eq!(arena.len(), led_count * 4); // 1 f32 component (4 B) * 4 LEDs
 
     let mut vm = Vm::new();
     vm.set_arena(&mut arena);
@@ -620,8 +620,8 @@ fn texture_sample_bilinear() {
     assert_eq!((d.kind, d.elem, d.w, d.h), (1, 1, 2, 1)); // 2D texture, 2x1
 
     let led_count = 4usize;
-    let mut arena = vec![0.0f32; prog.arena_slots(led_count)];
-    assert_eq!(arena.len(), 2); // elem*w*h, independent of led_count
+    let mut arena = vec![0u8; prog.arena_bytes(led_count)];
+    assert_eq!(arena.len(), 2 * 4); // elem*w*h * 4 B (f32), independent of led_count
     let mut vm = Vm::new();
     vm.set_arena(&mut arena);
     let frame = Frame { led_count: led_count as u32, ..Frame::default() };
@@ -649,7 +649,7 @@ fn texture_paint_round_trips() {
     let c = compile(src).unwrap_or_else(|d| panic!("compile error: {:?}", d));
     let prog = Program::parse(&c.fxb).expect("parse fxb");
     assert_eq!(prog.buf_desc(0).unwrap().elem, 3);
-    let mut arena = vec![0.0f32; prog.arena_slots(8)];
+    let mut arena = vec![0u8; prog.arena_bytes(8)];
     let mut vm = Vm::new();
     vm.set_arena(&mut arena);
     let frame = Frame { led_count: 8, ..Frame::default() };
@@ -731,7 +731,7 @@ fn preview_flow_flood_animates_and_texture_lights() {
     for u in &c2.uniforms {
         vm2.set_uniform(u.slot as usize, &u.default);
     }
-    let mut arena = vec![0.0f32; prog2.arena_slots(64)];
+    let mut arena = vec![0u8; prog2.arena_bytes(64)];
     // Mirror the wasm: bind the arena on update, bake on the first frame.
     for f in 0..2u32 {
         let frame = Frame { time: f as f32 * 0.033, dt: 0.033, frame: f, led_count: 64, ..Default::default() };
@@ -869,4 +869,107 @@ fn fixed_moving_band_effect() {
     let led = Led { pos: [0.0, 0.0, 0.25], ..Default::default() };
     let got = run_shade(src, &[], led, Frame::default()).0;
     assert!((got as i32 - 255).abs() <= 3, "moving band peak: {got}");
+}
+
+// --- packed narrow storage (FUG-10) ------------------------------------------
+
+#[test]
+fn packed_fixed8_buffer_quarters_the_ram() {
+    // A per-LED fixed8 trail packs to ONE byte/LED (vs 4 for an f32 slot) — the
+    // "stacking 8-bit values" win — and round-trips through the packed byte.
+    let src = r#"
+        buffer fixed8 trail;
+        void update() { trail[0] = fixed8(0.5); }
+        vec3 shade(Led led) { return vec3(float(trail[led.idx]), 0.0, 0.0); }
+    "#;
+    let c = compile(src).unwrap_or_else(|d| panic!("compile error: {:?}", d));
+    let prog = Program::parse(&c.fxb).expect("parse fxb");
+    let d = prog.buf_desc(0).unwrap();
+    assert_eq!((d.kind, d.elem), (0, 1));
+    let led_count = 8usize;
+    // 1 byte/LED, not 4 — a quarter of the f32 arena.
+    assert_eq!(prog.arena_bytes(led_count), led_count);
+    let mut arena = vec![0u8; prog.arena_bytes(led_count)];
+    let mut vm = Vm::new();
+    vm.set_arena(&mut arena);
+    let frame = Frame { led_count: led_count as u32, ..Frame::default() };
+    vm.run_update(&prog, &frame); // trail[0] = 0.5 (Q1.6)
+    // The stored byte is the Q1.6 scaled integer: 0.5 * 64 = 32.
+    assert_eq!(arena[0], 32);
+    let got = vm.run_shade(&prog, &frame, &Led { idx: 0, ..Default::default() }).0;
+    assert!((got as i32 - 127).abs() <= 2, "fixed8 trail round-trip: {got}");
+}
+
+#[test]
+fn packed_vec3_fixed8_texture_and_buffer() {
+    // `buffer vec3 c : fixed8;` compresses an RGB per-LED buffer to 3 bytes/LED.
+    let src = r#"
+        buffer vec3 col : fixed8;
+        void update() { col[0] = vec3(1.0, 0.5, 0.25); }
+        vec3 shade(Led led) { return col[led.idx]; }
+    "#;
+    let c = compile(src).unwrap_or_else(|d| panic!("compile error: {:?}", d));
+    let prog = Program::parse(&c.fxb).expect("parse fxb");
+    let led_count = 4usize;
+    assert_eq!(prog.arena_bytes(led_count), led_count * 3); // 3 B/LED, not 12
+    let mut arena = vec![0u8; prog.arena_bytes(led_count)];
+    let mut vm = Vm::new();
+    vm.set_arena(&mut arena);
+    let frame = Frame { led_count: led_count as u32, ..Frame::default() };
+    vm.run_update(&prog, &frame);
+    let (r, g, b) = vm.run_shade(&prog, &frame, &Led { idx: 0, ..Default::default() });
+    // Quantized to Q1.6 then dequantized: 1.0, 0.5, 0.25 survive exactly.
+    assert_eq!((r, g, b), (255, 127, 63));
+}
+
+#[test]
+fn packed_fixed8_texture_samples_as_float() {
+    // A narrow texture quarters its RAM; sample() still returns a float colour.
+    let src = r#"
+        texture vec3 img(4, 4) : fixed8;
+        void update() {}
+        vec3 shade(Led led) {
+            paint(img, vec2(0.0, 0.0), vec3(1.0, 0.5, 0.25));
+            return sample(img, vec2(0.0, 0.0));
+        }
+    "#;
+    let c = compile(src).unwrap_or_else(|d| panic!("compile error: {:?}", d));
+    let prog = Program::parse(&c.fxb).expect("parse fxb");
+    // 16 texels * 3 components * 1 byte = 48 B (vs 192 as f32).
+    assert_eq!(prog.arena_bytes(8), 48);
+    let mut arena = vec![0u8; prog.arena_bytes(8)];
+    let mut vm = Vm::new();
+    vm.set_arena(&mut arena);
+    let frame = Frame { led_count: 8, ..Frame::default() };
+    let (r, g, b) = vm.run_shade(&prog, &frame, &Led::default());
+    assert_eq!((r, g, b), (255, 127, 63));
+}
+
+#[test]
+fn packed_int8_buffer_reads_as_int() {
+    // `buffer int8 c;` is a 1-byte-per-LED counter that reads back as `int`.
+    let src = r#"
+        buffer int8 counter;
+        void update() { counter[0] = 100; }
+        vec3 shade(Led led) { return vec3(float(counter[led.idx]) / 200.0, 0.0, 0.0); }
+    "#;
+    let c = compile(src).unwrap_or_else(|d| panic!("compile error: {:?}", d));
+    let prog = Program::parse(&c.fxb).expect("parse fxb");
+    assert_eq!(prog.arena_bytes(4), 4); // 1 B/LED
+    let mut arena = vec![0u8; prog.arena_bytes(4)];
+    let mut vm = Vm::new();
+    vm.set_arena(&mut arena);
+    let frame = Frame { led_count: 4, ..Frame::default() };
+    vm.run_update(&prog, &frame);
+    assert_eq!(arena[0], 100);
+    // 100/200 = 0.5 -> 127.
+    assert_eq!(vm.run_shade(&prog, &frame, &Led { idx: 0, ..Default::default() }).0, 127);
+}
+
+#[test]
+fn packed_storage_annotation_errors() {
+    // Annotation only on float/vec elements.
+    assert!(compile("buffer fixed8 t : fixed8; vec3 shade(Led led){ return vec3(0.0,0.0,0.0); }").is_err());
+    // Annotation must be a fixed width.
+    assert!(compile("buffer vec3 c : int8; vec3 shade(Led led){ return vec3(0.0,0.0,0.0); }").is_err());
 }
