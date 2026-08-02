@@ -43,6 +43,27 @@ export class FxPreview {
         wasm.fxpreview_set_graph(this.__wbg_ptr, ptr0, len0, ptr1, len1, ptr2, len2);
     }
     /**
+     * Stream a full-resolution RGBA frame into texture `tex_index`'s arena
+     * slots, so the offline preview shows live video input WITHOUT a device
+     * (FUG-39). This is the browser mirror of the device's handle_set_texture
+     * (firmware/player_app/ffi.rs), minus the quantize/XOR-delta/RLE transport:
+     * the browser already holds raw pixels, so we dequantize-equivalent straight
+     * from RGBA into f32 slots (same luma rule for a scalar texture). `rgba` is
+     * width*height*4 bytes, row-major, top-left origin. `led_count` MUST match
+     * the value passed to update() so the texture's arena base lines up. Silently
+     * drops on any mismatch, exactly like the firmware.
+     * @param {number} tex_index
+     * @param {number} width
+     * @param {number} height
+     * @param {Uint8Array} rgba
+     * @param {number} led_count
+     */
+    set_texture(tex_index, width, height, rgba, led_count) {
+        const ptr0 = passArray8ToWasm0(rgba, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.fxpreview_set_texture(this.__wbg_ptr, tex_index, width, height, ptr0, len0, led_count);
+    }
+    /**
      * Provide per-LED topology (LED order) so shade() sees led.seg / led.s /
      * led.branch — the browser mirror of the device's FX_LED_TOPO cache. `seg`
      * is the segment index (-1 = none), `s` normalized 0..1, `branch` 0/1. The
