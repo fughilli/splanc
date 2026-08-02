@@ -31,6 +31,13 @@ src/solver/ solver placement: SolverAgent drives the wasm VIO solver (built
             from solver/, served at /solver/ from server runfiles) in a Web
             Worker; placement.ts decides phone-vs-host from the init-time
             benchmarks (phone-first, 4x slowdown margin)
+src/midi/   MIDI input (FUG-9): manager.ts is the Web MIDI hardware pump
+            (raw messages → normalized 0..1 control events); router.ts routes
+            named controls to effect uniforms via the mapping layer. Naming
+            (physical control → semantic name) and per-effect uniform bindings
+            live in src/store/midiStore.ts — a layer OUTSIDE the effect source.
+            Configure hardware/names in Settings ▸ MIDI; bind uniforms (incl. a
+            ✨ AI "Remap" button) in the effect editor's MIDI pane.
 src/wall/   the virtual wall page
 tests/      node:test suites (compiled to CJS, run hermetically under Bazel)
 ```

@@ -17,9 +17,13 @@
  *  3. A lightweight syntax-highlight overlay (transparent textarea over a
  *     <pre><code> backdrop, see highlight.ts) — no heavy editor dependency.
  *  4. An interactive AI CHAT panel driving a tool-use loop (set_script /
- *     capture_preview vision) against api.anthropic.com (BYO key).
+ *     capture_preview vision + MIDI-mapping tools) against api.anthropic.com
+ *     (BYO key).
  *  5. Key config moved into a ⋯ overflow menu in the
  *     editor header (out of the main body).
+ *  6. A MIDI pane (FUG-9): bind hardware controls to this effect's uniforms via
+ *     the mapping layer (never the source), with a ✨ AI "Remap" button. The
+ *     shared MidiRouter moves the uniform controls live as knobs turn.
  */
 
 import type { OutputMap, Topology } from "@ledmapper/protocol";
@@ -37,7 +41,12 @@ import {
   editorContext,
   getApiKey,
   type ChatMessage,
+  type MidiMappingCall,
 } from "../../effects/ai/generate";
+import { MidiRouter, isDrivable } from "../../midi/router";
+import { MidiMapPanel } from "../../effects/editor/midi-panel";
+import { midiStore, type UniformBinding } from "../../store/midiStore";
+import { midiManager, controlLabel } from "../../midi/manager";
 import { effectStore, isBuiltinEffect } from "../../store/effectStore";
 import { mapStore } from "../../store/mapStore";
 import { renderSettings } from "../../store/appearance";
@@ -435,6 +444,16 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     if (c?.isConnected) void c.setUniforms([{ slot, value }]).catch(() => undefined);
   });
 
+  // -- MIDI: route hardware controls into the SAME uniform seam as a manual
+  // drag (moves the panel control → preview + device), plus a per-effect
+  // mapping pane. The router/panel share the app-wide midiManager/midiStore.
+  // Latest compiled uniform manifest, cached so the MIDI tools/panel can list
+  // the effect's drivable uniforms without recompiling.
+  let lastUniforms: FxUniform[] = [];
+  const midiRouter = new MidiRouter((u) => panel.applyExternal(u.slot, u.value));
+  midiRouter.setEffect(effectId);
+  const midiPanel = new MidiMapPanel(effectId, { onRemap: () => void runRemap() });
+
   // -- AI chat panel --------------------------------------------------------
   const chatLog = document.createElement("div");
   chatLog.className = "fxedit-chatlog";
@@ -772,6 +791,13 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     videoPanel.setBytecode(r.bytecode);
     lastCompileSummary = `OK — ${r.uniforms.length} uniforms, ${r.bytecode.length} bytes`;
     panel.setManifest(r.uniforms);
+    lastUniforms = r.uniforms;
+    midiRouter.setManifest(r.uniforms);
+    // Auto-bind uniforms to like-named controls ("speed" uniform ↔ a knob named
+    // "speed") — fills gaps only, never overrides an explicit binding. Emits, so
+    // the panel re-renders; then refresh its manifest for the drivable list.
+    midiStore.autoBind(effectId, r.uniforms.filter(isDrivable).map((u) => u.name));
+    midiPanel.setManifest(r.uniforms);
     await swapPreview(r.bytecode);
 
     // Refresh disassembly (authoritative Rust disassembler via the worker).
@@ -817,16 +843,94 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
 
   // -- AI chat: run one user turn through the tool-use loop ------------------
   async function runChat(): Promise<void> {
+    const ask = chatInput.value.trim();
+    if (!ask) return;
+    // Keep the typed text if there's no key yet (the sheet opens; sending again
+    // after setting a key preserves the ask).
+    if (!getApiKey()) {
+      openAiKeySheet();
+      return;
+    }
+    chatInput.value = "";
+    await submitChat(ask);
+  }
+
+  // The canned "magic remap" prompt (FUG-9): the model reads the effect's
+  // uniforms + the named MIDI controls and wires them via the mapping layer —
+  // never by editing the effect source.
+  const REMAP_PROMPT =
+    "Map my MIDI controls to this effect's uniforms. First call list_midi_controls " +
+    "to see the drivable uniforms and the named controls, then call set_midi_mapping " +
+    "to wire them. Match by meaning (a 'speed'/'rate' knob → a speed uniform, " +
+    "'brightness' → an intensity/gain uniform, etc.) and only map scalar uniforms. " +
+    "Do NOT modify the effect source — the mapping is a separate layer.";
+
+  async function runRemap(): Promise<void> {
+    if (chatBusy) return;
+    // Surface the AI-chat pane so the user sees what the remap is doing.
+    if (!layout.isVisible("chat")) layout.setVisible("chat", true);
+    await submitChat(REMAP_PROMPT, { label: "✨ Remap MIDI controls" });
+  }
+
+  /** Build the always-included MIDI context for the AI: the effect's drivable
+   * uniforms, the globally-named controls, and the current bindings. */
+  function midiListSummary(): string {
+    const uniforms = lastUniforms.filter(isDrivable).map((u) => ({
+      name: u.name,
+      type: u.ui.kind,
+      ...(u.ui.kind === "slider" ? { min: u.ui.min, max: u.ui.max } : {}),
+    }));
+    const controls = midiStore.semantics().map((s) => ({
+      name: s.name,
+      source: `${s.control.device} · ${controlLabel(s.control)}`,
+    }));
+    const current = midiStore.bindings(effectId).map((b) => ({
+      uniform: b.uniform,
+      control: b.semantic,
+      ...(b.min !== undefined ? { min: b.min } : {}),
+      ...(b.max !== undefined ? { max: b.max } : {}),
+      ...(b.invert ? { invert: true } : {}),
+    }));
+    return JSON.stringify(
+      { uniforms, namedControls: controls, currentMappings: current, midiEnabled: midiManager.enabled },
+      null,
+      2,
+    );
+  }
+
+  /** Apply AI-proposed mappings to the mapping layer (never the source). */
+  function applyMidiMappings(mappings: MidiMappingCall[]): string {
+    const drivable = new Set(lastUniforms.filter(isDrivable).map((u) => u.name));
+    const applied: UniformBinding[] = [];
+    const skipped: string[] = [];
+    for (const m of mappings) {
+      if (!drivable.has(m.uniform)) {
+        skipped.push(`${m.uniform} (not a drivable uniform)`);
+        continue;
+      }
+      applied.push({
+        uniform: m.uniform,
+        semantic: m.control,
+        ...(typeof m.min === "number" ? { min: m.min } : {}),
+        ...(typeof m.max === "number" ? { max: m.max } : {}),
+        ...(m.invert ? { invert: true } : {}),
+      });
+    }
+    midiStore.replaceBindings(effectId, applied);
+    return `Applied ${applied.length} mapping(s)${
+      skipped.length ? `; skipped: ${skipped.join(", ")}` : ""
+    }. The effect source was not modified.`;
+  }
+
+  /** Shared body: ground the turn in the editor context, run the tool loop. */
+  async function submitChat(ask: string, opts: { label?: string } = {}): Promise<void> {
     if (chatBusy) return;
     if (!getApiKey()) {
       // No key yet — prompt via the same sheet the ⋯ menu opens.
       openAiKeySheet();
       return;
     }
-    const ask = chatInput.value.trim();
-    if (!ask) return;
-    chatInput.value = "";
-    appendChat("user", ask);
+    appendChat("user", opts.label ?? ask);
 
     // Always ground the turn in the current editor + latest compile (+ disasm).
     const ctx = editorContext(
@@ -858,6 +962,14 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
         onCapturePreview: async () => {
           setChatStatus("Inspecting rendered image…");
           return capturePreviewPng();
+        },
+        onListMidi: async () => {
+          setChatStatus("Reading MIDI controls…");
+          return midiListSummary();
+        },
+        onSetMidiMapping: async (mappings) => {
+          setChatStatus("Mapping MIDI controls…");
+          return applyMidiMappings(mappings);
         },
         onToolUse: () => undefined,
       });
@@ -1029,6 +1141,7 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
       { id: "diagnostics", title: "Device", node: diagBody },
       { id: "disasm", title: "Disassembly", node: disasmBody },
       { id: "chat", title: "AI chat", node: chatBody },
+      { id: "midi", title: "MIDI", node: midiPanel.node },
       { id: "video", title: "Video", node: videoPanel.node },
     ],
     onRelayout: () => {
@@ -1101,6 +1214,9 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     layout.mount();
     resizePreviewCanvas();
     unsubAppState = appState.subscribe(() => refreshDevice());
+    // Start routing MIDI into the uniform seam (moves the panel + preview +
+    // device). Enabling access is a separate, user-gesture step in the MIDI pane.
+    midiRouter.attach();
 
     raf = requestAnimationFrame(tick);
     scheduleCompile();
@@ -1160,6 +1276,8 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
       if (popupTimer !== null) clearTimeout(popupTimer);
       void effectStore.save(effectId, codeEl.value);
       unsubAppState?.();
+      midiRouter.detach();
+      midiPanel.dispose();
       videoPanel.dispose();
       layout.unmount();
       preview?.dispose();

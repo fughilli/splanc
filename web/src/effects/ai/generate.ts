@@ -267,6 +267,18 @@ export interface SetScriptCall {
   source: string;
 }
 
+/** One uniform→MIDI-control mapping the model proposes (set_midi_mapping). */
+export interface MidiMappingCall {
+  /** Uniform name in the effect (must exist in the manifest). */
+  uniform: string;
+  /** Semantic MIDI control name to drive it (from list_midi_controls). */
+  control: string;
+  /** Optional sub-range + direction overriding the uniform's declared range. */
+  min?: number;
+  max?: number;
+  invert?: boolean;
+}
+
 /** Client-side fulfillment of the two tools + streaming hooks. The editor
  * supplies these so the AI can act on the live editor + preview. */
 export interface ChatHooks {
@@ -276,6 +288,13 @@ export interface ChatHooks {
   /** The model asked to see the preview. Return a PNG data URL
    * ("data:image/png;base64,...") of the current live preview canvas. */
   onCapturePreview: () => Promise<string>;
+  /** The model asked what MIDI controls + uniforms are available and how they
+   * are currently mapped. Return a human/JSON text summary. Optional — omit to
+   * disable the MIDI tools for this turn. */
+  onListMidi?: () => Promise<string>;
+  /** The model proposed a set of uniform→control mappings. Apply them to the
+   * mapping layer (NOT the effect source) and return a result summary. */
+  onSetMidiMapping?: (mappings: MidiMappingCall[]) => Promise<string>;
   /** Streamed assistant text (deltas) for the "thinking…"/live panel. */
   onText?: (delta: string) => void;
   /** A model request is starting (the model is reasoning) — drive a spinner. */
@@ -314,12 +333,60 @@ const TOOLS = [
   },
 ] as const;
 
+/** MIDI tools, added to the tool list only when the editor supplies the hooks
+ * (i.e. when a MIDI mapping context exists). Kept separate so a plain effect
+ * chat isn't advertised MIDI it can't fulfill. */
+const MIDI_TOOLS = [
+  {
+    name: "list_midi_controls",
+    description:
+      "List the effect's drivable uniforms (name, type, range), the available " +
+      "named MIDI controls, and the CURRENT uniform→control mappings. Call this " +
+      "before proposing a mapping so you map real uniforms to real controls.",
+    input_schema: { type: "object", additionalProperties: false, properties: {} },
+  },
+  {
+    name: "set_midi_mapping",
+    description:
+      "Replace the effect's MIDI mappings so named controls drive its uniforms. " +
+      "This edits the MAPPING LAYER ONLY — it never changes the effect source. " +
+      "Provide one entry per uniform you want driven; omit a uniform to leave it " +
+      "unmapped. Read the effect's uniforms and pick sensible controls (e.g. a " +
+      "knob named 'speed' → a speed/rate uniform). Use min/max to sweep a " +
+      "sub-range and invert to flip direction.",
+    input_schema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        mappings: {
+          type: "array",
+          description: "Uniform→control mappings to apply (replaces all existing).",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              uniform: { type: "string", description: "Uniform name in the effect." },
+              control: { type: "string", description: "Named MIDI control to drive it." },
+              min: { type: "number" },
+              max: { type: "number" },
+              invert: { type: "boolean" },
+            },
+            required: ["uniform", "control"],
+          },
+        },
+      },
+      required: ["mappings"],
+    },
+  },
+] as const;
+
 const CHAT_SYSTEM = `${SYSTEM_PROMPT}
 
 You are now in an interactive chat with the user inside the effect editor. You can:
 - Answer questions about the current effect program.
 - Call set_script to author or revise the effect; you'll get the compile result back (fix any errors and iterate).
 - Call capture_preview to SEE the live preview rendered to an image — but only when seeing the result actually matters (judging colours/motion/coverage). Skip it when it wouldn't help (e.g. after a compile error, or a purely mechanical edit); capturing every turn is slow and wasteful.
+- When MIDI tools are available: call list_midi_controls to see the effect's uniforms and the named MIDI controls, then set_midi_mapping to wire controls to uniforms. MIDI mapping is a SEPARATE LAYER — never edit the effect source to wire MIDI; use set_midi_mapping. Match by meaning (a 'speed'/'rate' knob → a speed uniform; a 'brightness' knob → an intensity/gain uniform), and only map scalar (slider/toggle) uniforms.
 Keep prose brief. When you change the script, prefer minimal, targeted edits.`;
 
 function dataUrlToImageBlock(dataUrl: string): {
@@ -332,7 +399,11 @@ function dataUrlToImageBlock(dataUrl: string): {
   return { type: "image", source: { type: "base64", media_type, data } };
 }
 
-async function messagesRequest(messages: ChatMessage[], signal?: AbortSignal): Promise<{
+async function messagesRequest(
+  messages: ChatMessage[],
+  tools: readonly unknown[],
+  signal?: AbortSignal,
+): Promise<{
   content: ContentBlock[];
   stop_reason: string | null;
 }> {
@@ -355,7 +426,7 @@ async function messagesRequest(messages: ChatMessage[], signal?: AbortSignal): P
       system: [
         { type: "text", text: CHAT_SYSTEM, cache_control: { type: "ephemeral" } },
       ],
-      tools: TOOLS,
+      tools,
       messages: messages.map((m) => ({ role: m.role, content: m.content })),
     }),
   });
@@ -394,9 +465,12 @@ export function editorContext(opts: {
 export async function chatTurn(history: ChatMessage[], hooks: ChatHooks): Promise<string> {
   let finalText = "";
   const MAX_ROUNDS = 8; // hard cap so a misbehaving loop can't run forever
+  // Advertise the MIDI tools only when the editor can fulfill them.
+  const tools =
+    hooks.onListMidi && hooks.onSetMidiMapping ? [...TOOLS, ...MIDI_TOOLS] : TOOLS;
   for (let round = 0; round < MAX_ROUNDS; round++) {
     hooks.onThinking?.();
-    const { content, stop_reason } = await messagesRequest(history, hooks.signal);
+    const { content, stop_reason } = await messagesRequest(history, tools, hooks.signal);
     history.push({ role: "assistant", content });
 
     // Surface any assistant text.
@@ -434,6 +508,22 @@ export async function chatTurn(history: ChatMessage[], hooks: ChatHooks): Promis
               { type: "text", text: "Live preview rendered:" },
               dataUrlToImageBlock(dataUrl),
             ],
+          });
+        } else if (tu.name === "list_midi_controls" && hooks.onListMidi) {
+          const summary = await hooks.onListMidi();
+          results.push({
+            type: "tool_result",
+            tool_use_id: tu.id,
+            content: [{ type: "text", text: summary }],
+          });
+        } else if (tu.name === "set_midi_mapping" && hooks.onSetMidiMapping) {
+          const raw = (tu.input as { mappings?: unknown }).mappings;
+          const mappings = Array.isArray(raw) ? (raw as MidiMappingCall[]) : [];
+          const summary = await hooks.onSetMidiMapping(mappings);
+          results.push({
+            type: "tool_result",
+            tool_use_id: tu.id,
+            content: [{ type: "text", text: summary }],
           });
         } else {
           results.push({

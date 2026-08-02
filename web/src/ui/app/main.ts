@@ -31,6 +31,7 @@ import { CaptureScreen } from "../screens/capture";
 import { PerfPanelScreen } from "../screens/perfPanel";
 import { CalibrateScreen } from "../screens/calibrate";
 import { SettingsScreen } from "../screens/settings";
+import { MidiScreen } from "../screens/midi";
 import { initAppearance } from "../../store/appearance";
 
 async function main(): Promise<void> {
@@ -103,6 +104,10 @@ async function main(): Promise<void> {
     .add("/settings", () => {
       shell.setChrome({ title: "Appearance", back: true, tabs: true });
       return SettingsScreen(router);
+    })
+    .add("/settings/midi", () => {
+      shell.setChrome({ title: "MIDI", back: true, tabs: true });
+      return MidiScreen(router);
     })
     .add("/capture", () => {
       shell.setChrome({ title: "Capture", back: true, tabs: false, overlay: true });
