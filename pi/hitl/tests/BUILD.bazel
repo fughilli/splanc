@@ -1,0 +1,39 @@
+"""HITL pure-logic unit tests (FUG-33).
+
+The Improv packet codec, SNTP sync math, and runner-pool picker — the pieces
+that must not drift from the firmware/app. No hardware, no network. The modules
+under test live in //pi/hitl/harness; this dir holds only tests (the repo's
+name-tests-test convention).
+
+Tagged `["manual", "hitl"]`, so it's out of `bazel test //...`; the dedicated
+`hitl-tests` CI job (.github/workflows/test.yaml) collects the `hitl` tag with a
+bazel query and runs it, enforcing device/app/harness parity. `imports = ["."]`
++ the harness dep put both the test files and the modules under test on the
+top-level import path.
+"""
+
+load("@pypi//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_test(
+    name = "hitl_test",
+    srcs = [
+        "pytest_main.py",
+        "test_hitl_pool.py",
+        "test_improv.py",
+        "test_sync.py",
+    ],
+    imports = ["."],
+    legacy_create_init = False,
+    main = "pytest_main.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        "//pi/hitl/harness",
+        requirement("pytest"),
+    ],
+)

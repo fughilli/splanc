@@ -85,6 +85,11 @@ with `pyserial`, `picocom`, `coreutils`, `openssh`. The DUT is `/dev/ttyACM0`
   reopens on disconnect, so it survives the native-USB reset re-enumeration and
   captures boot logs.
 
+ImprovBLE onboarding isn't a baked tool: the `//pi/hitl/harness:e2e` suite ships
+its own provisioner (`pi/hitl/harness/hitl_improv.py`) into the reservation and
+runs it with the container's `python3` (which has `bleak`), so the test doesn't
+depend on the image being redeployed in lockstep with the harness.
+
 ## Hardware notes
 
 - **Boot strapping:** the C6's native USB-Serial-JTAG resets don't override the

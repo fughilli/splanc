@@ -156,6 +156,15 @@ static uint32_t fx_sel_dirty_at = 0;
 // STA join in progress: reports success (Improv redirect) / failure.
 static bool sta_joining = false;
 static uint32_t sta_join_started = 0;
+// After a join we notify Improv PROVISIONED and then still owe the soft-AP
+// teardown + cert re-sign. Those churn the radio / block this core long enough
+// to kill an active BLE link, so we DEFER them (see provisioning_poll) until the
+// central has taken the result and disconnected — hence "pending".
+static bool sta_demote_pending = false;
+static uint32_t sta_provisioned_at = 0;
+// Fallback: if the central never disconnects, demote anyway after this long so
+// the wss (which needs the reclaimed heap + LAN cert) still comes up.
+static const uint32_t kProvisionGraceMs = 3000;
 // The soft-AP is up only until we successfully join a LAN — then it is torn
 // down (STA-only) to reclaim its heap for the TLS handshake, which is tight on
 // the C6 (a wss handshake needs a ~17 KB buffer). It comes back on the next
@@ -905,8 +914,29 @@ static void reissue_cert_for_lan() {
   wss_start();
 }
 
+// The :81 ws + :80 http listening sockets are bound to the STA netif. A
+// WiFi.disconnect()/begin() rejoin (what provisioning does) or an AP_STA->STA
+// mode switch tears that netif down and closes the listeners — and they do NOT
+// reopen on their own. Symptom: after provisioning, :81 still SYN-ACKs from the
+// backlog (looks "open") but never accept()s, so the bench ws check times out.
+// Rebind both whenever the STA (re)acquires an IP. The event fires on the WiFi
+// task, so just latch a flag; loop() does the actual (re)bind on its own thread.
+static volatile bool sta_relisten_pending = false;
+
+static void on_sta_got_ip(arduino_event_id_t, arduino_event_info_t) {
+  sta_relisten_pending = true;
+}
+
 void setup() {
   Serial.begin(115200);
+  // Non-blocking logging. Serial is the C6's USB-Serial-JTAG (HWCDC); its
+  // default write BLOCKS until the TX FIFO drains, so when the USB is enumerated
+  // but nothing is reading it (a field device, or the HITL rig between monitor
+  // windows) a full buffer stalls whatever task is logging — including loop(),
+  // which then stops servicing provisioning_poll()/WiFi and never notices a join
+  // completing. A 0 ms tx timeout drops bytes instead of blocking, so logs are
+  // best-effort and the network stacks always run.
+  Serial.setTxTimeoutMs(0);
   FastLED.addLeds<WS2812B, LED_DATA_PIN, GRB>(leds, kMaxLeds);
   FastLED.setBrightness(160);
   fill_solid(leds, kMaxLeds, CRGB::Black);
@@ -927,6 +957,8 @@ void setup() {
   WiFi.mode(WIFI_AP_STA);
   WiFi.softAP(kApSsid, kApPassword);
   softap_up = true;
+  // Rebind the :81/:80 listeners on every STA (re)join — see on_sta_got_ip.
+  WiFi.onEvent(on_sta_got_ip, ARDUINO_EVENT_WIFI_STA_GOT_IP);
   prefs.begin("ledmapper");
   String ssid = prefs.getString("ssid", "");
   if (ssid.length() > 0) {
@@ -980,19 +1012,23 @@ static void provisioning_poll() {
     Log().printf("[player] provisioning: joining \"%s\"\n", ssid);
     prefs.putString("ssid", ssid);
     prefs.putString("pass", pass);
+    // Notify PROVISIONING BEFORE kicking off the join: WiFi.begin() churns the
+    // radio (scan + association) and a BLE notify fired into that churn is prone
+    // to being dropped on the single-core C6's WiFi/BLE coexistence. Report the
+    // state change while the radio is still calm, then start associating.
+    improv_ble_set_state(IMPROV_STATE_PROVISIONING);
     WiFi.disconnect();
     WiFi.begin(ssid, pass);
     sta_joining = true;
     sta_join_started = millis();
-    improv_ble_set_state(IMPROV_STATE_PROVISIONING);
   }
-  if (!sta_joining) return;
-  if (WiFi.status() == WL_CONNECTED) {
-    sta_joining = false;
-    String url = "http://" + WiFi.localIP().toString() + "/";
-    Log().printf("[player] joined, %s\n", url.c_str());
-    improv_ble_set_state(IMPROV_STATE_PROVISIONED);
-    improv_ble_send_redirect(url.c_str());
+  // Deferred post-join demote: reclaim the soft-AP heap and re-sign the wss cert
+  // for the LAN IP. Held off (see the join branch) until the central has taken
+  // the PROVISIONED result and disconnected — or the grace window lapses — so the
+  // BLE-disrupting teardown never races the provisioning notifications.
+  if (sta_demote_pending &&
+      (!improv_ble_central_connected() || millis() - sta_provisioned_at > kProvisionGraceMs)) {
+    sta_demote_pending = false;
     // Now that the LAN is reachable, drop the soft-AP and go STA-only: the AP
     // netif + its buffers are pure overhead once joined, and the C6 needs that
     // heap back for the ~17 KB mbedTLS handshake buffer (wss on :443 was OOMing
@@ -1007,6 +1043,22 @@ static void provisioning_poll() {
     // Re-sign the wss cert with this IP in the SAN so browsers will take the
     // trust exception (the build-time cert has none → fatal alert / ERR_TIMED_OUT).
     reissue_cert_for_lan();
+  }
+  if (!sta_joining) return;
+  if (WiFi.status() == WL_CONNECTED) {
+    sta_joining = false;
+    String url = "http://" + WiFi.localIP().toString() + "/";
+    Log().printf("[player] joined, %s\n", url.c_str());
+    // Improv spec order: publish the RPC result (the redirect URL) FIRST, then
+    // advance Current State to Provisioned — a client that keys on the state
+    // change must find the result already readable.
+    improv_ble_send_redirect(url.c_str());
+    improv_ble_set_state(IMPROV_STATE_PROVISIONED);
+    // We still owe the soft-AP teardown + cert re-sign, but those drop an active
+    // BLE link — do them only once the central has taken the result and left (or
+    // the grace window lapses). Report PROVISIONED now, disrupt BLE later.
+    sta_demote_pending = true;
+    sta_provisioned_at = millis();
   } else if (millis() - sta_join_started > kStaJoinTimeoutMs) {
     sta_joining = false;
     Log().println("[player] STA join failed; clearing stored credentials");
@@ -1023,6 +1075,17 @@ static void provisioning_poll() {
 void loop() {
   // loop() now only services the network stacks; the LEDs are driven by
   // render_task (started in setup), decoupled from this cooperative cycle.
+  if (sta_relisten_pending) {
+    // The STA (re)acquired an IP; the old listeners died with the netif. Rebind
+    // so :81 (bench ws) + :80 (landing/http) accept again after a provisioning
+    // rejoin or an AP_STA->STA demote. Safe to call when already listening.
+    sta_relisten_pending = false;
+    ws_listener.end();
+    ws_listener.begin();
+    http.stop();
+    http.begin();
+    Log().printf("[player] STA got IP; re-listening on :81 + :80\n");
+  }
   http.handleClient();
   ws_poll();
   provisioning_poll();

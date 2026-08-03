@@ -93,6 +93,13 @@ let
       ap.add_argument("--baud", default="460800")
       ap.add_argument("--monitor", action="store_true", help="read serial after flashing")
       ap.add_argument("--monitor-seconds", type=float, default=10.0)
+      # HITL clean-slate: full chip erase before writing, so the DUT comes up with
+      # an empty NVS (no stored WiFi creds -> it does NOT auto-join, it waits in
+      # soft-AP for provisioning) and an empty littlefs (no stale maps). This is a
+      # RIG-ONLY knob: live-device firmware updates use a different path and keep
+      # their stored maps + WiFi config. write_flash still repopulates the 4 images.
+      ap.add_argument("--erase-fs", action="store_true",
+                      help="full chip erase first (wipe NVS creds + littlefs) — HITL clean slate")
       a = ap.parse_args()
       d = tempfile.mkdtemp(prefix="hitl-flash-")
       with tarfile.open(a.bundle) as t: t.extractall(d)
@@ -103,6 +110,8 @@ let
       cmd = ["esptool", "--chip", m["chip"], "--port", a.port, "--baud", a.baud,
              "--after", "hard_reset", wf, fm, m.get("flash_mode", "keep"),
              ff, m.get("flash_freq", "keep"), fs, m.get("flash_size", "keep")]
+      if a.erase_fs:
+          cmd.append("--erase-all")  # erase whole chip before programming
       for img in m["images"]:
           cmd += [img["offset"], os.path.join(d, img["file"])]
       sys.stderr.write("+ " + " ".join(cmd) + "\n")
@@ -212,7 +221,9 @@ let
     pyEnv
     hitlFlash
     hitlMonitor
-    # BLE central (drives the host bluetoothd over the mounted system D-Bus):
+    # BLE central (drives the host bluetoothd over the mounted system D-Bus).
+    # ImprovBLE provisioning isn't a baked tool: the e2e harness ships its own
+    # provisioner (pi/hitl/harness/hitl_improv.py) and runs it with this python3.
     hitlBle
     bluez
     # JTAG/debug over the C6 built-in USB-JTAG (needs the daemon's /dev/bus/usb):

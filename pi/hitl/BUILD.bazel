@@ -9,8 +9,14 @@
 #   nix run 'path:pi/hitl#hitl' -- reserve
 # On macOS, start the aarch64-linux builder first: bazel run @sbc_deploy//:linux_builder.
 
+load("@gazelle//:def.bzl", "gazelle")
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 load("@sbc_deploy//deploy:defs.bzl", "sbc_application")
+
+# Go BUILD files under pi/hitl are gazelle-generated. Regenerate after editing
+# .go sources:  bazel run //pi/hitl:gazelle
+# gazelle:prefix github.com/fughilli/splanc/pi/hitl
+gazelle(name = "gazelle")
 
 # Default to the tracked placeholder so a fresh checkout / CI builds; a local
 # (gitignored) wifi.yaml with real SSID/PSKs overrides it when present. Without any

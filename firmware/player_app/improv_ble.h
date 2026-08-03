@@ -27,6 +27,11 @@ void improv_ble_set_name(const char *device_name);
 // latched credentials out.
 bool improv_ble_take_credentials(char *ssid, size_t ssid_cap, char *pass, size_t pass_cap);
 
+// True while a central (provisioner / web app) is connected over BLE. Lets the
+// app defer BLE-disrupting work (soft-AP teardown, cert re-sign) until the peer
+// has taken the provisioning result and disconnected.
+bool improv_ble_central_connected();
+
 // Update + notify the Improv state / error characteristics.
 void improv_ble_set_state(uint8_t state);
 void improv_ble_set_error(uint8_t error);

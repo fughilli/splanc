@@ -10,6 +10,13 @@ To regenerate the lockfile after editing requirements.in:
     bazel run //:requirements.update
 """
 
+# gazelle:proto disable_global
+# The only Go in this repo is the stdlib-only HITL daemon (pi/hitl); its BUILD
+# files are gazelle-generated (bazel run //pi/hitl:gazelle). Disable gazelle's
+# proto→Go generation repo-wide so a gazelle run does NOT graft go_proto_library
+# rules onto the hand-written proto BUILD (shared/protocol/proto). No target uses
+# Go protobuf bindings.
+
 load("@aspect_rules_ts//ts:defs.bzl", "ts_config")
 load("@npm//:defs.bzl", "npm_link_all_packages")
 load("@rules_python//python:pip.bzl", "compile_pip_requirements")
