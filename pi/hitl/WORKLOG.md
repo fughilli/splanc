@@ -58,36 +58,44 @@ fragile, and the workaround is worth knowing if anyone revisits a WiFi-uplink ri
   (per-reservation AP-per-DUT). The daemon serves creds via `--ap-ssid/--ap-psk`
   independent of that path.
 
-### KNOWN OPEN ITEM: container→DUT unreachable (blocks the e2e WS check + agents poking the DUT)
+### RESOLVED: container→DUT reject (was blocking the e2e WS check + agents poking the DUT)
 
 The e2e's WS check tunnels from the agent's container to the DUT via `hitl forward`
-(ssh -L; the far end dials the DUT **from the reservation container**). Flashing,
-provisioning, and join all work, but **the reservation container cannot reach the
-DUT at all**, so the WS check fails (and agents can't poke the device yet). This is
-NOT the DERP relay (still fails on Ethernet) and NOT the DUT.
+(ssh -L; the far end dials the DUT **from the reservation container**). The
+container could not reach the DUT at all — root-caused with an `nft monitor trace`:
 
-Isolated on hardware (AP always-on, so the DUT stays joined at `10.42.0.138`):
+- **NetworkManager's shared mode** (`ipv4.method=shared`) installs a private
+  native-nft table `nm-shared-<iface>` whose `filter_forward` chain ends in
+  `iifname "wlan0" reject` / `oifname "wlan0" reject`. That catch-all **rejects
+  every NEW connection forwarded INTO the AP subnet** (shared mode expects clients
+  to reach OUT, not to be reached). It's a separate native-nft table, so
+  `iptables -S` never showed it — the SYN was RST'd before egress (0 packets on
+  wlan0). Not the DERP relay, not netavark, not the DUT.
+- **Fix (confirmed on hardware):** allow the rig's podman bridge → the AP iface,
+  inserted **before** the reject inside NM's own chain:
+  `nft insert rule ip nm-shared-wlan0 filter_forward iifname "podman0" oifname "wlan0" accept`
+  → `container→DUT:443` then does a full TLS handshake (`TLSv1.2`).
+- NM regenerates that table only when the **AP connection (re)activates** — NOT on
+  container start/stop or DUT (dis)association (all tested; the rule survives them).
+  So a **NetworkManager dispatcher script** (in `hitl-app.nix`) re-inserts the rule
+  on the AP's `up`/`dhcp4-change`/`connectivity-change` events, idempotently.
+- The DUT serves **wss :443** only (`:80`/`:81` are dead on the STA iface), so the
+  e2e defaults to `--ws-scheme wss`.
 
-- rig host → `10.42.0.138:443` → **HTTP 200** (works; the DUT serves **wss :443**
-  only — `:80`/`:81` are dead, hence the e2e now defaults to `--ws-scheme wss`).
-- reservation container → `10.42.0.1:53` (AP gateway = host's wlan0) → **OK**.
-- reservation container → `10.42.0.138:*` (a _wireless client_ on the AP) →
-  **immediate `ECONNREFUSED`**, and `tcpdump -i wlan0` shows **the SYN never
-  egresses wlan0**. So the host rejects the _forwarded_ container→AP-client path
-  before it hits the air.
-- FORWARD is default-ACCEPT; `NETAVARK_FORWARD` ACCEPTs `-s 10.88.0.0/16`; no
-  REJECT-with-reset is visible — yet the RST is immediate. Suspects:
-  `NETAVARK_ISOLATION_*` (`-o podman0 -j DROP`) on the return path, and/or how
-  netavark masquerades podman→wlan0 into an NM `ipv4.method=shared` subnet.
+Alternative if the dispatcher ever proves flaky: drop `ipv4.method=shared` and run
+our own DHCP (`services.dnsmasq`, port=0) + `networking.nat` on wlan0 → no
+`nm-shared` table, forwarding governed by the (permissive) NixOS FORWARD chain.
 
-Fix directions to try (didn't get to it):
+### KNOWN OPEN ITEM: the DUT doesn't reliably stay associated to the AP
 
-1. Run the reservation container with **host networking** (or attach it to the AP
-   subnet) so it reaches the DUT the way the rig host does — simplest, but changes
-   the container's isolation model (see `internal/runner/podman.go`).
-2. Dial the tunnel's far end from the **host netns** instead of the container.
-3. An explicit podman↔wlan0-AP-subnet ACCEPT/route, if a specific DROP is found
-   (needs a packet-level trace of the RST source; tcpdump is on the rig).
+Separate from the fix above: the ESP32-C6 intermittently **drops off the AP**
+(`iw dev wlan0 station dump` → 0 stations; `rig→DUT` goes dead), and a bare
+`--reset` sometimes lands it in its own soft-AP (`ledmapper`) instead of rejoining.
+This — plus flaky BLE provisioning (wifi+BLE coexistence on the combo chip) — made
+full-e2e verification painful and is likely why some WS runs failed even with the
+forward fix in place. Worth chasing on the firmware/RF side (power-save? fixed
+channel 6 interference?), and it matters for real use (agents need the DUT to stay
+joined). The forward fix itself is verified at the reachability layer regardless.
 
 ### Rig access (for the next agent — this was a time sink)
 

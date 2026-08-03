@@ -143,6 +143,29 @@ in
     ipv6.method = "ignore";
   };
 
+  # Let the rig's reservation containers reach DUTs on the AP. NM's shared mode
+  # (ipv4.method=shared) installs a private nft table `nm-shared-<iface>` whose
+  # filter_forward chain ends in `oifname <iface> reject` — it blocks every NEW
+  # connection forwarded INTO the AP subnet (shared mode expects clients to reach
+  # OUT, not to be reached). That silently drops podman-bridge → wlan0 → DUT, so an
+  # agent's container can't poke the device. NM regenerates that table on every AP
+  # (re)activation, so re-insert an allow for the podman bridge on each `up` via a
+  # dispatcher (idempotent). Scope is the local podman bridge only, not arbitrary
+  # forwarding into the AP.
+  networking.networkmanager.dispatcherScripts = [{
+    type = "basic";
+    source = pkgs.writeShellScript "hitl-ap-container-forward" ''
+      iface="$1"; action="$2"
+      [ "$iface" = "${apIface}" ] || exit 0
+      case "$action" in up | dhcp4-change | connectivity-change) ;; *) exit 0 ;; esac
+      tbl="nm-shared-${apIface}"
+      rule='iifname "podman0" oifname "${apIface}" accept'
+      ${pkgs.nftables}/bin/nft list chain ip "$tbl" filter_forward 2>/dev/null | grep -qF "$rule" \
+        || ${pkgs.nftables}/bin/nft insert rule ip "$tbl" filter_forward \
+             iifname "podman0" oifname "${apIface}" accept 2>/dev/null || true
+    '';
+  }];
+
   # The radio is AP-only. autoconnect-priority=999 above means NM always brings
   # the AP up on wlan0 in preference to any (baked or seeded) STA profile — an AP
   # connection can always activate, so it wins the device over a lower-priority
