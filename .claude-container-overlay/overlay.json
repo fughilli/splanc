@@ -6,5 +6,8 @@
       "port": 8443,
       "tls": true
     }
-  }
+  },
+  "capabilities": ["NET_ADMIN"],
+  "devices": ["/dev/net/tun"],
+  "env": ["TS_AUTHKEY"]
 }

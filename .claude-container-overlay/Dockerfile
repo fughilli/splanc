@@ -90,3 +90,20 @@ RUN apt-get update -qq && apt-get install -y -qq python3-pip python3-venv && \
 # /root/.gitconfig, and the runtime `claude` user (created at container start)
 # would never see it.
 RUN git config --system --add safe.directory /workspace
+
+# 2026-08-02: Tailscale — the HITL rigs (pi/hitl) accept tailnet peers only, so
+# `hitl reserve|flash|monitor` and //pi/hitl/harness:e2e are unreachable from a
+# container that isn't on the tailnet. issuefleet workers run in this container,
+# which is what makes it load-bearing rather than a convenience.
+#
+# Installed here, STARTED per container by ../startup.sh — a daemon can't live
+# in an image layer. The join also needs NET_ADMIN + /dev/net/tun, declared in
+# overlay.json (claude-container >= 1.7.0).
+RUN curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.noarmor.gpg \
+        -o /usr/share/keyrings/tailscale-archive-keyring.gpg \
+    && curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.tailscale-keyring.list \
+        -o /etc/apt/sources.list.d/tailscale.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends tailscale \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /var/lib/tailscale /var/run/tailscale
