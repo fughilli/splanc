@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/fughilli/splanc/pi/hitl/internal/ap"
 	"github.com/fughilli/splanc/pi/hitl/internal/api"
 	"github.com/fughilli/splanc/pi/hitl/internal/queue"
 	"github.com/fughilli/splanc/pi/hitl/internal/runner"
@@ -45,6 +46,18 @@ func main() {
 	privileged := flag.Bool("privileged", true, "run the container privileged (raw USB/JTAG)")
 	var devices stringList
 	flag.Var(&devices, "device", "extra --device mapping for the container (repeatable)")
+	// The rig's self-hosted provisioning AP (NetworkManager connection toggled
+	// per-reservation). With --ap-conn set, the daemon brings it up while a
+	// reservation is active and advertises its creds in /status so the harness
+	// provisions the DUT onto it with no external WiFi.
+	apConn := flag.String("ap-conn", "", "NetworkManager connection id for the provisioning AP (enables AP mode)")
+	apSSID := flag.String("ap-ssid", "", "SSID advertised in /status for the provisioning AP")
+	apPSK := flag.String("ap-psk", "", "passphrase advertised in /status for the provisioning AP")
+	apIface := flag.String("ap-iface", "", "AP virtual interface to create on demand (e.g. ap0); empty = don't manage a vif")
+	apSta := flag.String("ap-sta", "wlan0", "STA interface whose radio hosts the AP vif")
+	nmcli := flag.String("nmcli", "nmcli", "nmcli binary used to toggle the AP connection")
+	iw := flag.String("iw", "iw", "iw binary used to create the AP vif")
+	ipBin := flag.String("ip", "ip", "ip binary used to set the AP vif MAC")
 	flag.Parse()
 
 	run := runner.NewPodman(runner.PodmanConfig{
@@ -57,13 +70,35 @@ func main() {
 		Podman:     *podman,
 		Privileged: *privileged,
 	})
-	mgr := queue.New(*rig, *lease, run)
+	var opts []queue.Option
+	var apCtl *ap.NMController
+	// Advertise the provisioning-AP creds in /status (for `hitl wifi`) whenever an
+	// SSID is configured — independent of whether the daemon toggles the AP.
+	if *apSSID != "" {
+		opts = append(opts, queue.WithWiFi(&api.WiFiInfo{SSID: *apSSID, PSK: *apPSK}))
+		log.Printf("provisioning AP: ssid=%q", *apSSID)
+	}
+	// Per-reservation AP control (create the vif + toggle the NM connection) only
+	// when --ap-conn is set. Unused for an always-on dedicated-radio AP; kept for
+	// the future multi-DUT design.
+	if *apConn != "" {
+		apCtl = ap.New(*nmcli, *apConn, *apIface, *apSta, *iw, *ipBin)
+		opts = append(opts, queue.WithAP(apCtl))
+	}
+	mgr := queue.New(*rig, *lease, run, opts...)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
 	if err := mgr.Recover(ctx); err != nil {
 		log.Printf("startup cleanup: %v", err)
+	}
+	// A crash mid-reservation could leave the AP up; ensure it's down at startup
+	// (idempotent) so a fresh boot is STA-only until a reservation activates.
+	if apCtl != nil {
+		if err := apCtl.Down(ctx); err != nil {
+			log.Printf("startup ap down: %v", err)
+		}
 	}
 
 	// Reap expired leases periodically.

@@ -3,7 +3,7 @@
 Runs against a pool of HITL rigs (the checkout mechanism, pi/hitl/DESIGN.md).
 Given a firmware flash-bundle it:
 
-  1. picks a free runner from the pool (HITL_SERVERS) and reserves it;
+  1. picks a free runner from the pool (via `hitl`) and reserves it;
   2. flashes the bundle and asserts the board boots the app and brings BLE up;
   3. ImprovBLE SETUP — provisions the board onto WiFi over the Improv GATT
      (the rig's Bluetooth adapter; the harness ships hitl_improv.py into the
@@ -19,8 +19,11 @@ Usage:
         --bundle bazel-bin/firmware/player_app/esp32c6_flashbundle.tar \
         --wifi-ssid BigVibes --wifi-pass SECRET
 
-Selection: --server picks a specific rig; otherwise HITL_SERVERS / HITL_SERVER
-drive hitl_pool. WiFi creds default to $HITL_WIFI_SSID / $HITL_WIFI_PASS.
+Selection is delegated to the `hitl` CLI: --server picks a specific rig; otherwise
+`hitl` chooses the shortest-queue rig among the tailnet nodes tagged
+tag:splanc-hitl (or an explicit $HITL_SERVERS list). WiFi defaults to the rig's own
+provisioning AP (creds served by the daemon, `hitl wifi`), so no external network
+is needed; --wifi-ssid / $HITL_WIFI_SSID override it.
 
 The BLE + WebSocket phases run against the DUT FROM the rig — BLE over the rig's
 Bluetooth adapter, the WebSocket over an ssh tunnel whose far end dials the DUT
@@ -40,7 +43,6 @@ import sys
 import time
 from urllib.parse import urlparse
 
-import hitl_pool
 from hitl_client import Reservation, ReserveError
 from sync import best_sample, is_sane, sync_sample
 
@@ -246,10 +248,18 @@ def default_bundle() -> str | None:
 
 
 def run(args: argparse.Namespace) -> int:
-    base = args.server or hitl_pool.pick()
-    res = Reservation(base, owner=args.owner)
+    # server=None lets `hitl` pick a free rig from the pool (tailnet tag discovery
+    # or $HITL_SERVERS); --server pins a specific one.
+    res = Reservation(server=args.server or None, owner=args.owner)
     try:
         res.acquire()
+        # Default WiFi to the rig's own provisioning AP (creds served by the
+        # daemon), so a run needs no external network. Explicit --wifi-ssid wins.
+        if not args.wifi_ssid and not args.skip_improv:
+            creds = res.wifi()
+            if creds:
+                args.wifi_ssid, args.wifi_pass = creds
+                print(f"[improv] provisioning onto the rig AP {args.wifi_ssid!r}", flush=True)
         if not args.skip_flash:
             bundle = args.bundle or default_bundle()
             if not bundle:
@@ -293,7 +303,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    ap.add_argument("--server", help="target a specific rig base URL (else pick from HITL_SERVERS)")
+    ap.add_argument("--server", help="target a specific rig base URL (else `hitl` picks a free one)")
     ap.add_argument("--owner", default=os.environ.get("HITL_OWNER"), help="reservation owner id")
     ap.add_argument(
         "--bundle", default=os.environ.get("HITL_BUNDLE"), help="firmware flash-bundle .tar"
@@ -302,7 +312,9 @@ def main() -> int:
         "--monitor-seconds", type=float, default=12.0, help="serial capture after flashing"
     )
     ap.add_argument(
-        "--wifi-ssid", default=os.environ.get("HITL_WIFI_SSID"), help="WiFi SSID to provision"
+        "--wifi-ssid",
+        default=os.environ.get("HITL_WIFI_SSID"),
+        help="WiFi SSID to provision (default: the rig's own AP, via `hitl wifi`)",
     )
     ap.add_argument(
         "--wifi-pass", default=os.environ.get("HITL_WIFI_PASS", ""), help="WiFi password"
@@ -313,7 +325,10 @@ def main() -> int:
     )
     ap.add_argument("--device-ws", help="override the derived WS URL entirely (e.g. ws://ip:81/ws)")
     ap.add_argument(
-        "--ws-scheme", choices=["ws", "wss"], default="ws", help="derive ws:81 or wss:443"
+        "--ws-scheme",
+        choices=["ws", "wss"],
+        default="wss",
+        help="derive wss:443 (the device's real TLS player socket) or ws:81",
     )
     ap.add_argument(
         "--ws-verify",

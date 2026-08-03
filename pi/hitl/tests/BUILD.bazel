@@ -1,9 +1,10 @@
 """HITL pure-logic unit tests (FUG-33).
 
-The Improv packet codec, SNTP sync math, and runner-pool picker — the pieces
-that must not drift from the firmware/app. No hardware, no network. The modules
-under test live in //pi/hitl/harness; this dir holds only tests (the repo's
-name-tests-test convention).
+The Improv packet codec and SNTP sync math — the pieces that must not drift from
+the firmware/app. No hardware, no network. The modules under test live in
+//pi/hitl/harness; this dir holds only tests (the repo's name-tests-test
+convention). (Runner-pool selection now lives in the Go CLI, tested in
+//pi/hitl/internal/pool and //pi/hitl/internal/tailnet.)
 
 Tagged `["manual", "hitl"]`, so it's out of `bazel test //...`; the dedicated
 `hitl-tests` CI job (.github/workflows/test.yaml) collects the `hitl` tag with a
@@ -21,7 +22,6 @@ py_test(
     name = "hitl_test",
     srcs = [
         "pytest_main.py",
-        "test_hitl_pool.py",
         "test_improv.py",
         "test_sync.py",
     ],

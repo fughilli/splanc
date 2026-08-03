@@ -15,6 +15,19 @@ let
   # ESP32-C6 passthrough (MVP): the serial tty. Hardware-dependent — override to
   # the real node / switch to USBIP once the bus id is known.
   devices = [ "/dev/ttyACM0" ];
+
+  # Provisioning AP: the onboard WiFi radio is a DEDICATED, always-on 2.4 GHz
+  # access point (the rig's uplink is Ethernet, so the radio isn't shared with a
+  # STA). DUTs are ImprovBLE-provisioned onto it — no external WiFi. A dedicated
+  # radio means a fixed 2.4 GHz channel and none of the single-radio AP+STA
+  # co-channel fragility. SSID is unique per rig; the PSK is world-readable in the
+  # store (same posture as wifi.yaml) and the harness fetches both from the daemon
+  # (`hitl wifi`), so it's never typed by hand.
+  apIface = "wlan0";
+  apConn = "hitl-ap";
+  apChannel = 6; # fixed 2.4 GHz channel; the C6 is 2.4-only
+  apSsid = "hitl-${config.networking.hostName}";
+  apPsk = "hitl-${config.networking.hostName}-provision"; # ≥8 chars; override for a fixed one
 in
 {
   # Headless rig: drop the NixOS manual + man-page closure (groff/texinfo/aspell/…),
@@ -100,12 +113,48 @@ in
     };
   };
 
+  # Provisioning AP — an always-on NetworkManager AP on the dedicated WiFi radio
+  # (wlan0). autoconnect=true with a high priority so it owns wlan0 on boot and
+  # stays up (the uplink is Ethernet; nothing else should claim the radio — any
+  # STA profile that could is dropped, see below). A fixed 2.4 GHz channel (the
+  # C6's band) since there's no STA to co-channel with. ipv4.method=shared → NM's
+  # built-in dnsmasq gives DHCP + NAT on 10.42.0.0/24 (gw 10.42.0.1), NAT'd out
+  # via Ethernet.
+  networking.networkmanager.ensureProfiles.profiles.${apConn} = {
+    connection = {
+      id = apConn;
+      type = "wifi";
+      interface-name = apIface;
+      autoconnect = "true";
+      autoconnect-priority = "999";
+    };
+    wifi = {
+      mode = "ap";
+      ssid = apSsid;
+      band = "bg";
+      channel = toString apChannel;
+    };
+    wifi-security = {
+      key-mgmt = "wpa-psk";
+      proto = "rsn";
+      psk = apPsk;
+    };
+    ipv4.method = "shared";
+    ipv6.method = "ignore";
+  };
+
+  # The radio is AP-only. autoconnect-priority=999 above means NM always brings
+  # the AP up on wlan0 in preference to any (baked or seeded) STA profile — an AP
+  # connection can always activate, so it wins the device over a lower-priority
+  # STA. The uplink is Ethernet, so no STA is needed here.
+
   # The reservation daemon.
   systemd.services.hitl-manager = {
     description = "HITL reservation manager";
     wantedBy = [ "multi-user.target" ];
     after = [ "network-online.target" "tailscaled.service" "hitl-image-load.service" ];
     wants = [ "network-online.target" "hitl-image-load.service" ];
+    # networkmanager (nmcli) toggles the AP; iw/iproute2 create the AP vif on demand.
     path = [ pkgs.podman pkgs.iproute2 pkgs.openssh ];
     serviceConfig = {
       ExecStart =
@@ -120,6 +169,12 @@ in
           "--ssh-port ${toString sshPort}"
           "--podman ${pkgs.podman}/bin/podman"
           "--state-dir /var/lib/hitl"
+          # The AP is always-on (NM autoconnect); the daemon only advertises its
+          # creds in /status for the harness (`hitl wifi`). It does NOT toggle the
+          # AP — no --ap-conn — so per-reservation AP control (internal/ap) stays
+          # dormant, ready for the future multi-DUT design.
+          "--ap-ssid ${apSsid}"
+          "--ap-psk ${apPsk}"
         ]
         + lib.concatMapStrings (d: " --device ${d}") devices;
       StateDirectory = "hitl";
@@ -130,8 +185,10 @@ in
     };
   };
 
-  # Reach the daemon API + the published container sshd over the tailnet.
-  networking.firewall.trustedInterfaces = [ "tailscale0" ];
+  # Reach the daemon API + the published container sshd over the tailnet. Trust the
+  # provisioning-AP interface too, so the DUT gets DHCP and the container can reach
+  # it (DHCP/DNS from NM's shared-mode dnsmasq + the ws tunnel to the DUT).
+  networking.firewall.trustedInterfaces = [ "tailscale0" apIface ];
   # MVP/testing: also reach them over the LAN (mDNS). Tighten to tailscale-only
   # for production by dropping these.
   networking.firewall.allowedTCPPorts = [ apiPort sshPort ];

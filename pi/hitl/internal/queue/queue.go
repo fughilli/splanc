@@ -27,16 +27,60 @@ type Manager struct {
 	rig   string
 	lease time.Duration
 	run   runner.Runner
+	wifi  *api.WiFiInfo // rig's provisioning AP creds, advertised in Status (or nil)
+	ap    AP            // brings that AP up/down around the active reservation (or nil)
 
 	mu    sync.Mutex
 	items []*api.Reservation // index 0 is the active holder (once StateActive)
 	keys  map[string]string  // reservation id -> SSH pubkey (not serialized out)
 }
 
+// AP is the rig's provisioning access point: brought up while a reservation holds
+// the rig and down on release (see internal/ap). Both calls must be idempotent.
+type AP interface {
+	Up(context.Context) error
+	Down(context.Context) error
+}
+
+// Option configures a Manager.
+type Option func(*Manager)
+
+// WithWiFi advertises the rig's provisioning-AP creds in Status so the harness can
+// provision the DUT onto it with no out-of-band config.
+func WithWiFi(w *api.WiFiInfo) Option { return func(m *Manager) { m.wifi = w } }
+
+// WithAP wires an access point that the manager toggles around the active
+// reservation (up on activation, down on release/reap).
+func WithAP(ap AP) Option { return func(m *Manager) { m.ap = ap } }
+
 // New creates a Manager. lease is the heartbeat window: an active reservation
 // whose holder stops heartbeating for longer than lease is reaped.
-func New(rig string, lease time.Duration, run runner.Runner) *Manager {
-	return &Manager{rig: rig, lease: lease, run: run, keys: map[string]string{}}
+func New(rig string, lease time.Duration, run runner.Runner, opts ...Option) *Manager {
+	m := &Manager{rig: rig, lease: lease, run: run, keys: map[string]string{}}
+	for _, o := range opts {
+		o(m)
+	}
+	return m
+}
+
+// apUp/apDown are nil-safe and best-effort: AP trouble is logged but never fails a
+// reservation (the test still runs; only WiFi provisioning would be affected).
+func (m *Manager) apUp(ctx context.Context) {
+	if m.ap == nil {
+		return
+	}
+	if err := m.ap.Up(ctx); err != nil {
+		log.Printf("ap: bring up: %v", err)
+	}
+}
+
+func (m *Manager) apDown(ctx context.Context) {
+	if m.ap == nil {
+		return
+	}
+	if err := m.ap.Down(ctx); err != nil {
+		log.Printf("ap: bring down: %v", err)
+	}
 }
 
 func newID() string {
@@ -115,6 +159,9 @@ func (m *Manager) Release(ctx context.Context, id, reason string) error {
 		if err := m.run.Stop(ctx, id); err != nil {
 			log.Printf("release: stop container for %s: %v", id, err)
 		}
+		// Drop the AP with the holder. If a waiter is promoted below, reconcile
+		// brings it back up for the new holder.
+		m.apDown(ctx)
 	}
 	delete(m.keys, id)
 	m.items = append(m.items[:idx], m.items[idx+1:]...)
@@ -126,7 +173,7 @@ func (m *Manager) Release(ctx context.Context, id, reason string) error {
 func (m *Manager) Status() api.Status {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	s := api.Status{Rig: m.rig, LeaseSeconds: int(m.lease.Seconds())}
+	s := api.Status{Rig: m.rig, LeaseSeconds: int(m.lease.Seconds()), WiFi: m.wifi}
 	if len(m.items) > 0 && m.items[0].State == api.StateActive {
 		s.Active = m.viewLocked(m.items[0].ID)
 		s.QueueLength = len(m.items) - 1
@@ -212,4 +259,6 @@ func (m *Manager) reconcileLocked(ctx context.Context) {
 	head.ExpiresAt = &exp
 	head.SSH = ep
 	log.Printf("reconcile: id=%s active ssh=%s:%d", head.ID, ep.Host, ep.Port)
+	// Stand up the provisioning AP for the new holder (best-effort).
+	m.apUp(ctx)
 }

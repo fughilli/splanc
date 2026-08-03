@@ -20,16 +20,17 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"strconv"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/fughilli/splanc/pi/hitl/internal/api"
 	"github.com/fughilli/splanc/pi/hitl/internal/pool"
+	"github.com/fughilli/splanc/pi/hitl/internal/tailnet"
 )
 
 func main() {
@@ -44,6 +45,8 @@ func main() {
 		err = cmdReserve(args)
 	case "status":
 		err = cmdStatus(args)
+	case "wifi":
+		err = cmdWifi(args)
 	case "release":
 		err = cmdRelease(args)
 	case "ssh":
@@ -64,6 +67,8 @@ func main() {
 		err = cmdRun(args)
 	case "cp":
 		err = cmdCp(args)
+	case "forward":
+		err = cmdForward(args)
 	case "-h", "--help", "help":
 		usage()
 		return
@@ -83,6 +88,7 @@ func usage() {
 
   hitl reserve [--owner ID] [--server URL] [--key PUBKEY] [--keep]
   hitl status  [--server URL]
+  hitl wifi    [--server URL]                                  # the rig's provisioning-AP ssid/psk
   hitl release <id> [--server URL]
   hitl ssh     <id> [--server URL]
   hitl flash   [--port DEV] [--id RES] [--keep] [--monitor] [--server URL] <bundle.tar>
@@ -92,10 +98,13 @@ func usage() {
   hitl gdb     [--elf FILE] [--id RES] [--keep] [-- gdb args]   # attach gdb via openocd
   hitl run     [--id RES] [--keep] [--tty] [--server URL] -- <command...>  # run in the reservation
   hitl cp      [--id RES] [--keep] [--server URL] <local...> <remote-dir>  # copy files in
-  hitl pool    [--server-list LIST]                            # status of every runner in the pool
+  hitl forward [--id RES] [--keep] [--local-port N] [--server URL] <host> <port>  # ssh -L via the rig
+  hitl pool    [--server-list LIST] [--tag TAG]                # status of every runner in the pool
 
-Server URL: --server, else $HITL_SERVER, else a free runner from $HITL_SERVERS
-(comma/space list of hosts), else http://hitl-rig:8087.
+Server URL: --server, else $HITL_SERVER, else the shortest-queue runner in the
+pool. The pool is an explicit $HITL_SERVERS list (comma/space hosts) if set,
+otherwise the tailnet nodes tagged $HITL_TAG (default tag:splanc-hitl). Falls
+back to http://hitl-rig:8087 when nothing is discoverable.
 Flash bundle: build one with e.g.
   bazel build //firmware/player_app:esp32c6_flashbundle
 `)
@@ -167,7 +176,13 @@ func cmdReserve(args []string) error {
 	go c.heartbeatLoop(hbCtx, res.ID)
 
 	if *noShell {
-		fmt.Printf("%s@%s:%d\n", ep.User, ep.Host, ep.Port)
+		// Machine-readable so a script (e.g. the e2e harness) can hold the
+		// reservation via this process and drive it with further `hitl` commands
+		// keyed on --id/--server. Printed once active; the process then blocks,
+		// heartbeating, until signalled — at which point it releases (unless --keep).
+		fmt.Printf("id=%s\n", res.ID)
+		fmt.Printf("server=%s\n", *server)
+		fmt.Printf("endpoint=%s@%s:%d\n", ep.User, ep.Host, ep.Port)
 		<-ctx.Done()
 		return nil
 	}
@@ -194,6 +209,31 @@ func cmdStatus(args []string) error {
 		fmt.Println("active: (idle)")
 	}
 	fmt.Printf("queued: %d waiting\n", s.QueueLength)
+	if s.WiFi != nil {
+		fmt.Printf("wifi: ssid=%q (provisioning AP)\n", s.WiFi.SSID)
+	}
+	return nil
+}
+
+// cmdWifi prints the rig's provisioning-AP credentials from /status, machine-
+// readable (ssid=/psk= lines) so the e2e harness can provision the DUT onto the
+// rig's own AP with no external creds. Errors if the rig runs no AP.
+func cmdWifi(args []string) error {
+	fs := newFlags("wifi")
+	server := serverFlag(fs)
+	_ = fs.Parse(args)
+	if err := resolve(server); err != nil {
+		return err
+	}
+	var s api.Status
+	if err := (client{base: *server}).get("/status", &s); err != nil {
+		return err
+	}
+	if s.WiFi == nil {
+		return fmt.Errorf("rig %q has no provisioning AP configured", s.Rig)
+	}
+	fmt.Printf("ssid=%s\n", s.WiFi.SSID)
+	fmt.Printf("psk=%s\n", s.WiFi.PSK)
 	return nil
 }
 
@@ -524,18 +564,112 @@ func cmdCp(args []string) error {
 	return scpTo(ctx, priv, ep, locals, remoteDir)
 }
 
+// --- forward --------------------------------------------------------------
+
+// cmdForward opens an SSH local port-forward through a reservation: a port on
+// this machine tunnels to <remote-host>:<remote-port>, whose far end is dialed
+// FROM the rig's container — so the rig's LAN (e.g. the DUT's WiFi network)
+// reaches the target, not this host. It prints the chosen local port on stdout,
+// then blocks until interrupted (SIGINT/SIGTERM). Used by the e2e harness to
+// reach a DUT that only the rig can see.
+func cmdForward(args []string) error {
+	fs := newFlags("forward")
+	server := serverFlag(fs)
+	owner := fs.String("owner", envOr("HITL_OWNER", defaultOwner()), "reservation owner id")
+	keyPath := fs.String("key", "", "public key to authorize (default: dedicated ~/.config/hitl key)")
+	id := fs.String("id", "", "use this already-active reservation instead of making one")
+	keep := fs.Bool("keep", false, "keep the reservation afterward (default: release when we made it)")
+	localPort := fs.Int("local-port", 0, "local port to bind (0 = pick a free one)")
+	_ = fs.Parse(args)
+	if err := resolve(server); err != nil {
+		return err
+	}
+	rest := fs.Args()
+	if len(rest) != 2 {
+		return fmt.Errorf("usage: hitl forward [flags] <remote-host> <remote-port>")
+	}
+	remoteHost := rest[0]
+	remotePort, err := strconv.Atoi(rest[1])
+	if err != nil {
+		return fmt.Errorf("remote port %q: %w", rest[1], err)
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	c := client{base: *server}
+	ep, priv, release, err := acquire(ctx, c, *server, *keyPath, *owner, *id, *keep)
+	if err != nil {
+		return err
+	}
+	defer release()
+
+	lp := *localPort
+	if lp == 0 {
+		if lp, err = freeLocalPort(); err != nil {
+			return fmt.Errorf("pick local port: %w", err)
+		}
+	}
+	spec := fmt.Sprintf("%d:%s:%d", lp, remoteHost, remotePort)
+	sshArgs := append(sshOpts(priv, "-p", ep.Port),
+		"-o", "ExitOnForwardFailure=yes", "-N", "-L", spec,
+		fmt.Sprintf("%s@%s", ep.User, ep.Host))
+	tunnel := exec.CommandContext(ctx, "ssh", sshArgs...)
+	tunnel.Stderr = os.Stderr
+	if err := tunnel.Start(); err != nil {
+		return fmt.Errorf("start ssh -L %s: %w", spec, err)
+	}
+	// Announce the port only once the local end accepts, so the caller can
+	// connect the instant it reads the line.
+	if err := waitPort(ctx, "127.0.0.1", lp, 20*time.Second); err != nil {
+		_ = tunnel.Process.Kill()
+		return fmt.Errorf("tunnel %s did not come up: %w", spec, err)
+	}
+	fmt.Printf("%d\n", lp)
+	fmt.Fprintf(os.Stderr, "tunnel: localhost:%d -> (rig) -> %s:%d\n", lp, remoteHost, remotePort)
+	if err := tunnel.Wait(); err != nil && ctx.Err() == nil {
+		return err // a real ssh failure, not our own interrupt teardown
+	}
+	return nil
+}
+
+// freeLocalPort asks the OS for an unused loopback TCP port.
+func freeLocalPort() (int, error) {
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	defer l.Close()
+	return l.Addr().(*net.TCPAddr).Port, nil
+}
+
 // --- pool -----------------------------------------------------------------
 
-// cmdPool prints the status of every runner in $HITL_SERVERS (or --server-list)
-// and which one a bare `hitl reserve` would pick. Read-only; makes no reservation.
+// cmdPool prints the status of every runner (discovered from the tailnet tag, or
+// an explicit --server-list/$HITL_SERVERS) and which one a bare `hitl reserve`
+// would pick. Read-only; makes no reservation.
 func cmdPool(args []string) error {
 	fs := newFlags("pool")
-	list := fs.String("server-list", os.Getenv("HITL_SERVERS"), "comma/space list of runner hosts (default $HITL_SERVERS)")
+	list := fs.String("server-list", "", "comma/space list of runner hosts (overrides discovery; default $HITL_SERVERS)")
+	tag := fs.String("tag", envOr("HITL_TAG", tailnet.DefaultTag), "tailnet tag to discover runners by")
 	_ = fs.Parse(args)
-	servers := pool.Normalize(*list)
-	if len(servers) == 0 {
-		return fmt.Errorf("no runners: set $HITL_SERVERS or pass --server-list")
+	var servers []string
+	var source string
+	switch {
+	case strings.TrimSpace(*list) != "":
+		servers, source = pool.Normalize(*list), "--server-list"
+	case strings.TrimSpace(os.Getenv("HITL_SERVERS")) != "":
+		servers, source = pool.Normalize(os.Getenv("HITL_SERVERS")), "$HITL_SERVERS"
+	default:
+		hosts, err := tailnet.Discover(*tag)
+		if err != nil {
+			return fmt.Errorf("discover tailnet tag %q: %w", *tag, err)
+		}
+		servers, source = pool.Normalize(strings.Join(hosts, " ")), "tailnet tag "+*tag
 	}
+	if len(servers) == 0 {
+		return fmt.Errorf("no runners found (%s): tag some rigs, set $HITL_SERVERS, or pass --server-list", source)
+	}
+	fmt.Printf("runners from %s:\n", source)
 	probes := pool.Probes(servers, fetchStatus)
 	for _, p := range probes {
 		if p.Err != nil {
@@ -791,23 +925,44 @@ func serverFlag(fs *flag.FlagSet) *string {
 	return fs.String("server", envOr("HITL_SERVER", ""), "rig hitl-managerd URL (default $HITL_SERVER, or a free runner from $HITL_SERVERS)")
 }
 
+// poolServers returns the runner base URLs to choose among when no explicit
+// --server/$HITL_SERVER is given, and a label describing where they came from.
+// Source precedence: an explicit $HITL_SERVERS list, else the tailnet nodes
+// tagged $HITL_TAG (default tag:splanc-hitl), discovered via `tailscale status`.
+// Returns (nil, "", nil) when there's nothing to go on (no list, discovery empty
+// or unavailable) so the caller can fall back to its static default.
+func poolServers() ([]string, string, error) {
+	if list := os.Getenv("HITL_SERVERS"); strings.TrimSpace(list) != "" {
+		return pool.Normalize(list), "$HITL_SERVERS", nil
+	}
+	tag := envOr("HITL_TAG", tailnet.DefaultTag)
+	hosts, err := tailnet.Discover(tag)
+	if err != nil {
+		// Discovery is best-effort (e.g. no tailscale CLI): let the caller fall
+		// back rather than fail outright, but surface why for the pool command.
+		return nil, "tailnet tag " + tag, err
+	}
+	return pool.Normalize(strings.Join(hosts, " ")), "tailnet tag " + tag, nil
+}
+
 // resolveServer turns the (possibly empty) --server/$HITL_SERVER value into a
-// concrete runner URL. With neither set but $HITL_SERVERS listing a runner pool,
-// it probes every runner's /status and picks a free one (see internal/pool).
+// concrete runner URL. With neither set, it discovers the runner pool (see
+// poolServers), probes every runner's /status, and picks the shortest-queue one
+// (see internal/pool). With no pool discoverable, it falls back to hitl-rig.
 func resolveServer(s string) (string, error) {
 	if strings.TrimSpace(s) != "" {
 		return s, nil
 	}
-	if list := os.Getenv("HITL_SERVERS"); strings.TrimSpace(list) != "" {
-		servers := pool.Normalize(list)
-		picked, err := pool.Pick(pool.Probes(servers, fetchStatus))
-		if err != nil {
-			return "", fmt.Errorf("pool: %w", err)
-		}
-		fmt.Fprintf(os.Stderr, "pool: picked %s (of %d runners)\n", picked, len(servers))
-		return picked, nil
+	servers, source, _ := poolServers()
+	if len(servers) == 0 {
+		return "http://hitl-rig:8087", nil
 	}
-	return "http://hitl-rig:8087", nil
+	picked, err := pool.Pick(pool.Probes(servers, fetchStatus))
+	if err != nil {
+		return "", fmt.Errorf("pool (%s): %w", source, err)
+	}
+	fmt.Fprintf(os.Stderr, "pool: picked %s (of %d runners from %s)\n", picked, len(servers), source)
+	return picked, nil
 }
 
 // fetchStatus queries one runner's /status with a short timeout, so a down

@@ -1,15 +1,16 @@
 """HITL Python harness — the reservation client + e2e driver (FUG-33).
 
-The library half of the suite: the checkout client (`hitl_client`), the
-free-runner pool picker (`hitl_pool`), and the pure Improv/SNTP codecs
+The library half of the suite: the checkout client (`hitl_client`, a thin wrapper
+that shells out to the Go `hitl` CLI — reservation, server selection, and
+tunneling all live there now, not in Python) and the pure Improv/SNTP codecs
 (`improv`, `sync`) the unit tests in //pi/hitl/tests pin. Kept out of the
 `tests/` directory so that dir holds only tests (the repo's name-tests-test
 convention); the codecs are imported both here and by the container's
 `hitl-improv` tool, which must not drift from them.
 
 `imports = ["."]` puts this directory on the import path so the modules are
-importable as top-level (hitl_pool, hitl_client, sync, improv) the way they
-import each other.
+importable as top-level (hitl_client, sync, improv) the way they import each
+other.
 """
 
 load("@pypi//:requirements.bzl", "requirement")
@@ -22,7 +23,6 @@ py_library(
     srcs = [
         "hitl_client.py",
         "hitl_improv.py",
-        "hitl_pool.py",
         "improv.py",
         "sync.py",
     ],
@@ -41,8 +41,13 @@ py_binary(
     srcs = ["hitl_e2e.py"],
     # The firmware flash-bundle rides in runfiles so `bazel run` finds it without
     # a separate build step or a workspace-relative path (bazel run's cwd is the
-    # runfiles tree). --bundle still overrides it for a prebuilt tar.
-    data = ["//firmware/player_app:esp32c6_flashbundle"],
+    # runfiles tree). --bundle still overrides it for a prebuilt tar. The `hitl`
+    # CLI also rides in runfiles: hitl_client shells out to it for the whole
+    # reserve/flash/tunnel flow (default_hitl() resolves it there).
+    data = [
+        "//firmware/player_app:esp32c6_flashbundle",
+        "//pi/hitl/cmd/hitl",
+    ],
     imports = ["."],
     main = "hitl_e2e.py",
     tags = [
