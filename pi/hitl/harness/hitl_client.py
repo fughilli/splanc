@@ -197,7 +197,8 @@ class Reservation:
                 raise ReserveError(f"hitl forward gave no local port (exited {code}), got {line!r}")
             local_port = int(line)
             print(
-                f"tunnel: localhost:{local_port} -> (rig) -> {remote_host}:{remote_port}", flush=True
+                f"tunnel: localhost:{local_port} -> (rig) -> {remote_host}:{remote_port}",
+                flush=True,
             )
             yield local_port
         finally:

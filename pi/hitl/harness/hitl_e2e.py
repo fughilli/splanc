@@ -303,7 +303,9 @@ def main() -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    ap.add_argument("--server", help="target a specific rig base URL (else `hitl` picks a free one)")
+    ap.add_argument(
+        "--server", help="target a specific rig base URL (else `hitl` picks a free one)"
+    )
     ap.add_argument("--owner", default=os.environ.get("HITL_OWNER"), help="reservation owner id")
     ap.add_argument(
         "--bundle", default=os.environ.get("HITL_BUNDLE"), help="firmware flash-bundle .tar"

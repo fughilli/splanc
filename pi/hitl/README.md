@@ -63,7 +63,7 @@ Rig selection is the CLI's (tag discovery, or `$HITL_SERVERS`).
 **No external WiFi.** The rig hosts its own provisioning AP (`hitl-<hostname>`) on
 its onboard radio, concurrently with its STA uplink — a NetworkManager AP profile
 the daemon brings up per-reservation (`ipv4.method=shared` → DHCP + NAT). The DUT
-is ImprovBLE-provisioned onto *that*, and the harness fetches the SSID/PSK from the
+is ImprovBLE-provisioned onto _that_, and the harness fetches the SSID/PSK from the
 daemon (`hitl wifi`), so a run needs no nearby network or creds. `--wifi-ssid`
 still overrides it. The AP is off at boot (`autoconnect=false`), so it can never
 strand the rig — worst case it spoils one reservation.
