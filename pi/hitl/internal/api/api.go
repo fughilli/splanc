@@ -55,10 +55,21 @@ type Reservation struct {
 
 // Status is the daemon's overall view.
 type Status struct {
-	Rig          string       `json:"rig"`           // rig name/hostname
-	Active       *Reservation `json:"active"`        // current holder, or null
-	QueueLength  int          `json:"queue_length"`  // waiters (excludes active)
-	LeaseSeconds int          `json:"lease_seconds"` // heartbeat lease window
+	Rig          string       `json:"rig"`            // rig name/hostname
+	Active       *Reservation `json:"active"`         // current holder, or null
+	QueueLength  int          `json:"queue_length"`   // waiters (excludes active)
+	LeaseSeconds int          `json:"lease_seconds"`  // heartbeat lease window
+	WiFi         *WiFiInfo    `json:"wifi,omitempty"` // the rig's own provisioning AP, if it runs one
+}
+
+// WiFiInfo is the rig's self-hosted provisioning AP: the network a test flow
+// provisions the DUT onto (over ImprovBLE) so the rig can reach it without any
+// external WiFi. Set only when the rig is configured with an AP; the passphrase
+// is returned so the harness needs no out-of-band creds (the tailnet is the trust
+// boundary, same posture as the baked STA profiles).
+type WiFiInfo struct {
+	SSID string `json:"ssid"`
+	PSK  string `json:"psk"`
 }
 
 // Error is the JSON error envelope for non-2xx responses.

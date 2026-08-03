@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//pi/hitl/internal/api",
         "//pi/hitl/internal/pool",
+        "//pi/hitl/internal/tailnet",
     ],
 )
 

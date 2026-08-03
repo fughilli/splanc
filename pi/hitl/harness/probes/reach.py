@@ -6,10 +6,11 @@ then from the rig check TCP :80/:81/:443 and run a real WebSocket upgrade agains
 the ws endpoint healthy?" without a full e2e — useful when a ws/connectivity
 regression shows up.
 
-  HITL_SERVERS=http://<rig>:8087 HITL_BUNDLE=/path/esp32c6_flashbundle.tar \\
-      python3 probes/reach.py
+  HITL_BIN=/path/to/hitl HITL_SERVER=http://<rig>:8087 \\
+      HITL_BUNDLE=/path/esp32c6_flashbundle.tar python3 probes/reach.py
 
-Run from pi/hitl/harness (imports the client libs from the parent dir).
+Run from pi/hitl/harness (imports the client libs from the parent dir). Needs the
+`hitl` binary — via $HITL_BIN or on $PATH — since the client shells out to it.
 """
 
 import os
@@ -20,12 +21,11 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from hitl_client import Reservation  # noqa: E402
-from hitl_pool import parse_servers  # noqa: E402
 
-base = parse_servers(os.environ["HITL_SERVERS"])[0]
+# server=None lets `hitl` pick from the pool; $HITL_SERVER pins one rig.
 bundle = os.environ["HITL_BUNDLE"]
 
-res = Reservation(base)
+res = Reservation(server=os.environ.get("HITL_SERVER"))
 res.acquire()
 print(f"[diag] reserved {res.host}", flush=True)
 try:

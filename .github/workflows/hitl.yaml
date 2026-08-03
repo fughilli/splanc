@@ -15,9 +15,10 @@
 #                            so the runner can reach the rigs over the tailnet.
 #   vars.HITL_SERVERS        pool of rig base URLs / hostnames, e.g.
 #                            "hitl-rig-1, hitl-rig-2" (comma/space separated).
-#   secrets.HITL_WIFI_SSID   WiFi network the DUT is provisioned onto. If unset,
-#   secrets.HITL_WIFI_PASS   its password.   run with skip_flash/--skip-improv,
-#                            or the improv phase errors (needs a WiFi SSID).
+#   secrets.HITL_WIFI_SSID   OPTIONAL override of the network the DUT is
+#   secrets.HITL_WIFI_PASS   provisioned onto. Unset by default: the DUT is
+#                            provisioned onto the rig's OWN AP (creds served by
+#                            the daemon), so no external WiFi is needed.
 name: HITL e2e
 on:
   # Runs on PRs (full flash + improv + ws against a real rig) and on demand. The
@@ -105,8 +106,9 @@ jobs:
       # Reserve a free rig from the pool, flash, ImprovBLE-provision, then check
       # time-sync + rename over the WebSocket. `bazel run` builds the flash-bundle
       # (a runfiles data dep of the e2e) and the harness finds it there — no
-      # --bundle needed. WiFi creds come from the HITL_WIFI_* env, the pool from
-      # HITL_SERVERS. -c opt so the firmware build matches the firmware CI job.
+      # --bundle needed. The DUT is provisioned onto the rig's own AP by default
+      # (HITL_WIFI_* only overrides it); the pool comes from HITL_SERVERS. -c opt
+      # so the firmware build matches the firmware CI job.
       - name: Run HITL e2e
         run: |
           args=(--monitor-seconds "$MONITOR_SECONDS")

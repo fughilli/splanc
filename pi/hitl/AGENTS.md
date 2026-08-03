@@ -9,14 +9,26 @@ This is what you use to run **end-to-end firmware tests on real hardware**.
 
 ## Connect
 
-The rig lives on the tailnet as `hitl-rig`. From a claude-container that's on the
-tailnet:
+The rigs live on the tailnet tagged `tag:splanc-hitl`. From a claude-container
+that's on the tailnet, the CLI finds them automatically — no server to set:
 
 ```sh
-export HITL_SERVER=http://hitl-rig:8087         # the reservation manager
-alias hitl="nix run 'path:/workspace/pi/hitl#hitl' --"
-hitl status                                     # who holds it / queue depth
+alias hitl="bazel run //pi/hitl/cmd/hitl:hitl --"   # the CLI (stdlib-only Go)
+hitl pool                                       # every tagged rig + its queue
+hitl status                                     # the rig a bare command would use
+hitl reserve                                    # picks the shortest-queue rig
 ```
+
+With `--server`/`$HITL_SERVER` unset, `hitl` runs `tailscale status`, takes every
+node tagged `tag:splanc-hitl`, probes each one's queue, and picks the shortest
+(idle rigs first) — so you never queue behind a busy rig while another sits free.
+Overrides, highest precedence first:
+
+- `--server URL` / `$HITL_SERVER` — pin one specific rig.
+- `$HITL_SERVERS` — an explicit comma/space host list, used instead of discovery.
+- `$HITL_TAG` — discover by a different tag (default `tag:splanc-hitl`).
+
+(`nix run 'path:/workspace/pi/hitl#hitl' --` also works if you prefer nix.)
 
 The first `hitl` call mints a dedicated key under `~/.config/hitl/` and enqueues
 it; you never use your personal SSH identity.
@@ -89,6 +101,11 @@ ImprovBLE onboarding isn't a baked tool: the `//pi/hitl/harness:e2e` suite ships
 its own provisioner (`pi/hitl/harness/hitl_improv.py`) into the reservation and
 runs it with the container's `python3` (which has `bleak`), so the test doesn't
 depend on the image being redeployed in lockstep with the harness.
+
+The DUT is provisioned onto the **rig's own AP**, not an external network: the rig
+runs a `hitl-<hostname>` AP on its onboard radio (concurrent with its STA uplink),
+brought up per-reservation, and the daemon serves its creds — `hitl wifi` prints
+`ssid=`/`psk=`, which the e2e uses automatically (no `--wifi-ssid` needed).
 
 ## Hardware notes
 

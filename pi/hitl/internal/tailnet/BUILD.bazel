@@ -1,0 +1,14 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "tailnet",
+    srcs = ["tailnet.go"],
+    importpath = "github.com/fughilli/splanc/pi/hitl/internal/tailnet",
+    visibility = ["//pi/hitl:__subpackages__"],
+)
+
+go_test(
+    name = "tailnet_test",
+    srcs = ["tailnet_test.go"],
+    embed = [":tailnet"],
+)

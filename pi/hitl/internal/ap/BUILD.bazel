@@ -1,0 +1,8 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "ap",
+    srcs = ["ap.go"],
+    importpath = "github.com/fughilli/splanc/pi/hitl/internal/ap",
+    visibility = ["//pi/hitl:__subpackages__"],
+)

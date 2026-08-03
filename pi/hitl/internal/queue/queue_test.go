@@ -27,6 +27,15 @@ func (f *fakeRunner) Stop(_ context.Context, id string) error {
 
 func (f *fakeRunner) Cleanup(_ context.Context) error { return nil }
 
+// fakeAP records the AP up/down toggles the manager makes around a reservation.
+type fakeAP struct {
+	ups   int
+	downs int
+}
+
+func (a *fakeAP) Up(_ context.Context) error   { a.ups++; return nil }
+func (a *fakeAP) Down(_ context.Context) error { a.downs++; return nil }
+
 // expire forces a reservation's lease into the past — simulating a client that
 // stopped heartbeating (its process died).
 func (m *Manager) expire(id string) {
@@ -114,5 +123,56 @@ func TestReapExpiredActiveHeadPromotesNext(t *testing.T) {
 	}
 	if len(fr.stopped) != 1 || fr.stopped[0] != a.ID {
 		t.Errorf("reaped active head should have been Stop()ped once: %v", fr.stopped)
+	}
+}
+
+// The provisioning AP is raised when a reservation activates and dropped on
+// release; a promotion (release active → next waiter) drops it for the old holder
+// and raises it for the new one.
+func TestAPToggledAroundReservation(t *testing.T) {
+	ctx := context.Background()
+	fap := &fakeAP{}
+	m := New("rig", 30*time.Minute, &fakeRunner{}, WithAP(fap))
+
+	a := m.Reserve(ctx, api.ReserveRequest{Owner: "a"}) // active → AP up
+	if fap.ups != 1 || fap.downs != 0 {
+		t.Fatalf("after activate: ups=%d downs=%d, want 1/0", fap.ups, fap.downs)
+	}
+	m.Reserve(ctx, api.ReserveRequest{Owner: "b"}) // queued → no AP change
+	if fap.ups != 1 || fap.downs != 0 {
+		t.Fatalf("queuing a waiter must not toggle the AP: ups=%d downs=%d", fap.ups, fap.downs)
+	}
+	if err := m.Release(ctx, a.ID, "done"); err != nil { // active released → AP down, then up for b
+		t.Fatalf("release: %v", err)
+	}
+	if fap.downs != 1 || fap.ups != 2 {
+		t.Errorf("after promotion: ups=%d downs=%d, want 2/1", fap.ups, fap.downs)
+	}
+}
+
+// A nil AP (rig without one) is a no-op — the reservation lifecycle is unaffected.
+func TestNoAPIsNoOp(t *testing.T) {
+	ctx := context.Background()
+	m := New("rig", 30*time.Minute, &fakeRunner{})
+	a := m.Reserve(ctx, api.ReserveRequest{Owner: "a"})
+	if a.State != api.StateActive {
+		t.Fatalf("reservation should activate without an AP, got %q", a.State)
+	}
+	if err := m.Release(ctx, a.ID, "done"); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+}
+
+// The rig's AP creds are advertised in Status when configured, and absent otherwise.
+func TestStatusAdvertisesWiFi(t *testing.T) {
+	ctx := context.Background()
+	m := New("rig", 30*time.Minute, &fakeRunner{}, WithWiFi(&api.WiFiInfo{SSID: "hitl-rig", PSK: "secretpw"}))
+	m.Reserve(ctx, api.ReserveRequest{Owner: "a"})
+	s := m.Status()
+	if s.WiFi == nil || s.WiFi.SSID != "hitl-rig" || s.WiFi.PSK != "secretpw" {
+		t.Errorf("Status.WiFi = %+v, want ssid=hitl-rig psk=secretpw", s.WiFi)
+	}
+	if bare := New("rig", 30*time.Minute, &fakeRunner{}).Status(); bare.WiFi != nil {
+		t.Errorf("Status.WiFi without an AP should be nil, got %+v", bare.WiFi)
 	}
 }
