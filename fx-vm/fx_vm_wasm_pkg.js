@@ -44,14 +44,14 @@ export class FxPreview {
     }
     /**
      * Stream a full-resolution RGBA frame into texture `tex_index`'s arena
-     * slots, so the offline preview shows live video input WITHOUT a device
+     * region, so the offline preview shows live video input WITHOUT a device
      * (FUG-39). This is the browser mirror of the device's handle_set_texture
      * (firmware/player_app/ffi.rs), minus the quantize/XOR-delta/RLE transport:
-     * the browser already holds raw pixels, so we dequantize-equivalent straight
-     * from RGBA into f32 slots (same luma rule for a scalar texture). `rgba` is
-     * width*height*4 bytes, row-major, top-left origin. `led_count` MUST match
-     * the value passed to update() so the texture's arena base lines up. Silently
-     * drops on any mismatch, exactly like the firmware.
+     * the browser already holds raw pixels, so we write straight from RGBA,
+     * PACKED at the texture's component precision (FUG-10 — same luma rule for a
+     * scalar texture). `rgba` is width*height*4 bytes, row-major, top-left
+     * origin. `led_count` MUST match the value passed to update() so the
+     * texture's arena base lines up. Silently drops on any mismatch.
      * @param {number} tex_index
      * @param {number} width
      * @param {number} height
