@@ -11,6 +11,7 @@ regression shows up.
 
 Run from pi/hitl/harness (imports the client libs from the parent dir).
 """
+
 import os
 import re
 import sys
@@ -43,7 +44,7 @@ try:
     ports = (
         f"echo '-- tcp ports --'; for p in 80 81 443; do "
         f"timeout 5 bash -c 'cat </dev/null >/dev/tcp/{ip}/'$p 2>/dev/null "
-        f"&& echo \"port $p OPEN\" || echo \"port $p unreachable\"; done"
+        f'&& echo "port $p OPEN" || echo "port $p unreachable"; done'
     )
     p = res.ssh(ports, capture=True, timeout=60)
     print(p.stdout or "", flush=True)

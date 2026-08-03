@@ -5,8 +5,10 @@
 Prints whether the DUT completes the handshake (101) or just accepts TCP and
 goes silent (the e2e's "timed out during opening handshake" symptom).
 """
+
 import socket
 import sys
+import time as _t
 
 ip, port = sys.argv[1], int(sys.argv[2])
 req = (
@@ -29,8 +31,6 @@ s.sendall(req.encode())
 # Read until the header terminator \r\n\r\n (what a real client waits for), or
 # time out — the e2e's failure is precisely never seeing that terminator.
 buf = b""
-import time as _t
-
 t0 = _t.time()
 try:
     while b"\r\n\r\n" not in buf and _t.time() - t0 < 10:
