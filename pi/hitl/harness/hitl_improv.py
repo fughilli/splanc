@@ -34,6 +34,7 @@ from improv import (  # noqa: E402
     CH_RPC_CMD,
     CH_RPC_RESULT,
     CH_STATE,
+    STATE_PROVISIONED,
     SVC,
     build_wifi_rpc,
     error_name,
@@ -75,35 +76,58 @@ async def provision(ssid, password, address, name_filter, scan_seconds, timeout)
     state = {"urls": None, "error": None, "state": None}
 
     def on_result(_sender, data):
+        log(f"[improv] <- RPC_RESULT {bytes(data).hex()}")
         state["urls"] = parse_result(bytes(data))
         done.set()
 
     def on_error(_sender, data):
         code = data[0] if data else 0
+        log(f"[improv] <- ERROR {bytes(data).hex()} (code={code})")
         if code != 0:
             state["error"] = error_name(code)
             done.set()
 
     def on_state(_sender, data):
         state["state"] = data[0] if data else None
+        log(f"[improv] <- STATE {bytes(data).hex()}")
+        # PROVISIONED is the spec success signal; the firmware sends it (right
+        # after the RPC result) and then immediately drops BLE to go STA-only, so
+        # completing here — not only on RPC_RESULT — is what makes the join
+        # deterministic instead of racing the disconnect.
+        if state["state"] == STATE_PROVISIONED:
+            done.set()
 
-    async with BleakClient(dev) as client:
-        # Subscribe BEFORE writing so the reply is never missed.
-        await client.start_notify(CH_RPC_RESULT, on_result)
-        await client.start_notify(CH_ERROR, on_error)
-        try:
-            await client.start_notify(CH_STATE, on_state)
-        except Exception:
-            pass
-        await client.write_gatt_char(CH_RPC_CMD, build_wifi_rpc(ssid, password), response=True)
-        try:
-            await asyncio.wait_for(done.wait(), timeout)
-        except asyncio.TimeoutError:
-            return {
-                "ok": False,
-                "error": "timed out waiting for the player to join",
-                "device": device,
-            }
+    try:
+        async with BleakClient(dev) as client:
+            log(f"[improv] connected={client.is_connected}")
+            # Subscribe BEFORE writing so the reply is never missed.
+            await client.start_notify(CH_RPC_RESULT, on_result)
+            await client.start_notify(CH_ERROR, on_error)
+            try:
+                await client.start_notify(CH_STATE, on_state)
+                log("[improv] subscribed STATE/ERROR/RESULT")
+            except Exception as e:
+                log(f"[improv] STATE subscribe failed: {type(e).__name__}: {e}")
+            rpc = build_wifi_rpc(ssid, password)
+            log(f"[improv] -> RPC_CMD {rpc.hex()}")
+            await client.write_gatt_char(CH_RPC_CMD, rpc, response=True)
+            log("[improv] write ack; awaiting join…")
+            try:
+                await asyncio.wait_for(done.wait(), timeout)
+            except asyncio.TimeoutError:
+                if state["state"] != STATE_PROVISIONED:
+                    return {
+                        "ok": False,
+                        "error": "timed out waiting for the player to join",
+                        "device": device,
+                    }
+    except Exception:
+        # The board tears BLE down the instant it joins (soft-AP off, STA-only),
+        # so a disconnect *after* we've seen PROVISIONED (or the redirect URL) is
+        # the normal end of a successful provision — not a failure. Anything else
+        # is a real transport error; re-raise for main() to report.
+        if state["state"] != STATE_PROVISIONED and state["urls"] is None:
+            raise
     if state["error"]:
         return {"ok": False, "error": state["error"], "device": device}
     return {"ok": True, "urls": state["urls"], "state": state["state"], "device": device}

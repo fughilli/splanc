@@ -26,6 +26,13 @@ CH_RPC_RESULT = "00467768-6228-2272-4663-277478268004"
 CMD_WIFI_SETTINGS = 0x01
 CMD_IDENTIFY = 0x02
 
+# Current-state characteristic (CH_STATE) values — must match IMPROV_STATE_* in
+# firmware/player_app/improv_codec.h. PROVISIONED is the device's success signal:
+# it is published right before the board drops BLE to go STA-only.
+STATE_AUTHORIZED = 0x02
+STATE_PROVISIONING = 0x03
+STATE_PROVISIONED = 0x04
+
 ERROR_NAMES = {
     0: "none",
     1: "invalid_rpc",

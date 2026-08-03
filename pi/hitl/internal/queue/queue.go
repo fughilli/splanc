@@ -55,11 +55,16 @@ func (m *Manager) Reserve(ctx context.Context, req api.ReserveRequest) *api.Rese
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	now := time.Now()
+	exp := now.Add(m.lease)
 	r := &api.Reservation{
 		ID:        newID(),
 		Owner:     req.Owner,
 		State:     api.StateQueued,
-		CreatedAt: time.Now(),
+		CreatedAt: now,
+		// Queued waiters carry a lease too, refreshed by their heartbeats — so a
+		// waiter whose client dies is reaped instead of blocking the queue forever.
+		ExpiresAt: &exp,
 	}
 	// Stash the key on the reservation via a side table (not serialized to peers).
 	m.keys[r.ID] = req.SSHPublicKey
@@ -79,7 +84,8 @@ func (m *Manager) Get(id string) (*api.Reservation, error) {
 	return nil, ErrNotFound
 }
 
-// Heartbeat extends the active reservation's lease.
+// Heartbeat extends a reservation's lease — for queued waiters as well as the
+// active holder, so a client that dies (in either state) is eventually reaped.
 func (m *Manager) Heartbeat(id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -87,7 +93,7 @@ func (m *Manager) Heartbeat(id string) error {
 	if r == nil {
 		return ErrNotFound
 	}
-	if r.State == api.StateActive {
+	if r.State == api.StateActive || r.State == api.StateQueued {
 		exp := time.Now().Add(m.lease)
 		r.ExpiresAt = &exp
 	}
@@ -130,20 +136,22 @@ func (m *Manager) Status() api.Status {
 	return s
 }
 
-// ReapExpired releases the active reservation if its lease has passed. Call
-// periodically.
+// ReapExpired releases every reservation whose lease has passed — the active
+// holder (tearing its container down) and any queued waiter (dequeuing it) alike.
+// Call periodically. Sweeping the whole queue, not just the head, is what keeps a
+// dead waiter from stranding its slot indefinitely.
 func (m *Manager) ReapExpired(ctx context.Context) {
 	m.mu.Lock()
-	var expired string
-	if len(m.items) > 0 && m.items[0].State == api.StateActive {
-		r := m.items[0]
-		if r.ExpiresAt != nil && time.Now().After(*r.ExpiresAt) {
-			expired = r.ID
+	now := time.Now()
+	var expired []string
+	for _, r := range m.items {
+		if r.ExpiresAt != nil && now.After(*r.ExpiresAt) {
+			expired = append(expired, r.ID)
 		}
 	}
 	m.mu.Unlock()
-	if expired != "" {
-		_ = m.Release(ctx, expired, "lease expired (no heartbeat)")
+	for _, id := range expired {
+		_ = m.Release(ctx, id, "lease expired (no heartbeat)")
 	}
 }
 

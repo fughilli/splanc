@@ -1,0 +1,18 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "hitl_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/fughilli/splanc/pi/hitl/cmd/hitl",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//pi/hitl/internal/api",
+        "//pi/hitl/internal/pool",
+    ],
+)
+
+go_binary(
+    name = "hitl",
+    embed = [":hitl_lib"],
+    visibility = ["//visibility:public"],
+)

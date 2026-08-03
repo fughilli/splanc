@@ -1,0 +1,12 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "runner",
+    srcs = [
+        "podman.go",
+        "runner.go",
+    ],
+    importpath = "github.com/fughilli/splanc/pi/hitl/internal/runner",
+    visibility = ["//pi/hitl:__subpackages__"],
+    deps = ["//pi/hitl/internal/api"],
+)

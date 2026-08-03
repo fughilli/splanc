@@ -93,12 +93,14 @@ class Reservation:
         res = self._req("POST", "/reserve", {"owner": self.owner, "ssh_public_key": pub})
         self.id = res["id"]
         print(f"reserved: id={self.id} on {self.base}", flush=True)
+        # Heartbeat from the moment we're queued (not just once active), so the
+        # daemon reaps our slot if this process dies while still waiting in line.
+        self._start_heartbeat()
         active = self._wait_active(wait_timeout)
         self.ssh_ep = dict(active["ssh"])
         # Reach the container on the same host we reached the API on (the daemon's
         # advertised host may be an unresolvable internal name) — as the CLI does.
         self.ssh_ep["host"] = self.host
-        self._start_heartbeat()
         self._wait_port(port_timeout)
         print(
             f"active: ssh {self.ssh_ep['user']}@{self.ssh_ep['host']} -p {self.ssh_ep['port']}",

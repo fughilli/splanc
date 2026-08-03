@@ -73,7 +73,10 @@ def flash(res: Reservation, bundle: str, monitor_seconds: float) -> str:
     remote = "/tmp/" + os.path.basename(bundle)
     print(f"[flash] copying {os.path.basename(bundle)} -> {res.host}:{remote}", flush=True)
     res.scp_to([bundle], "/tmp/")
-    cmd = f"hitl-flash {remote} --monitor --monitor-seconds {monitor_seconds:g}"
+    # --erase-fs: full chip erase so the DUT boots with no stored WiFi creds and
+    # exercises the real first-provision path (no auto-join short-circuit) on a
+    # clean littlefs. This is the HITL rig; live-device updates keep their state.
+    cmd = f"hitl-flash {remote} --erase-fs --monitor --monitor-seconds {monitor_seconds:g}"
     print(f"[flash] {cmd}", flush=True)
     proc = res.ssh(cmd, capture=True, timeout=monitor_seconds + 120)
     log = (proc.stdout or "") + (proc.stderr or "")
@@ -97,10 +100,8 @@ _PROVISIONER = os.path.join(_HERE, "hitl_improv.py")
 _CODEC = os.path.join(_HERE, "improv.py")
 
 
-def improv_provision(res: Reservation, ssid: str, password: str, timeout: float) -> str:
-    """Provision the DUT onto WiFi over ImprovBLE; return its redirect URL."""
-    print("[improv] shipping provisioner + provisioning DUT over BLE…", flush=True)
-    res.scp_to([_PROVISIONER, _CODEC], "/tmp/")
+def _run_provisioner(res: Reservation, ssid: str, password: str, timeout: float) -> str:
+    """One ImprovBLE provisioning attempt; returns the redirect URL or raises."""
     # Run with the container's python3 (has bleak); PYTHONPATH lets the shipped
     # hitl_improv import the shipped improv codec.
     cmd = (
@@ -122,8 +123,41 @@ def improv_provision(res: Reservation, ssid: str, password: str, timeout: float)
     urls = result.get("urls") or []
     if not urls:
         raise E2EFailure(f"provisioning reported no redirect URL: {result}")
-    print(f"[improv] OK — DUT joined WiFi, redirect={urls[0]}", flush=True)
     return urls[0]
+
+
+def improv_provision(
+    res: Reservation, ssid: str, password: str, timeout: float, attempts: int = 3
+) -> str:
+    """Provision the DUT onto WiFi over ImprovBLE; return its redirect URL.
+
+    The WiFi association is intermittently flaky on real hardware (RF + the
+    single-core C6's WiFi/BLE coexistence): the board occasionally fails to join
+    within the window. On a join-timeout the firmware clears the just-tried
+    credentials and returns to AUTHORIZED, so re-sending them is a clean retry —
+    bounded, so a genuinely bad credential / unreachable AP still fails.
+    """
+    print("[improv] shipping provisioner + provisioning DUT over BLE…", flush=True)
+    res.scp_to([_PROVISIONER, _CODEC], "/tmp/")
+    last: E2EFailure | None = None
+    for attempt in range(1, attempts + 1):
+        if attempt > 1:
+            # A failed join leaves the WiFi stack wedged (re-sending creds on the
+            # same boot fares worse — the retry often can't even re-advertise
+            # PROVISIONING). A hard reset returns the board to a clean soft-AP
+            # first-join state (creds were cleared on the join-timeout), which is
+            # the reliably-provisionable path. The 4s read lets the boot settle.
+            print(f"[improv] resetting DUT for a clean retry {attempt}/{attempts}…", flush=True)
+            res.ssh("hitl-monitor --reset --seconds 4", capture=True, timeout=30)
+        try:
+            url = _run_provisioner(res, ssid, password, timeout)
+            print(f"[improv] OK — DUT joined WiFi, redirect={url}", flush=True)
+            return url
+        except E2EFailure as e:
+            last = e
+            print(f"[improv] provision attempt {attempt}/{attempts} failed: {e}", flush=True)
+    assert last is not None
+    raise last
 
 
 async def _ws_checks(ws_url: str, new_name: str, insecure: bool) -> None:
@@ -144,8 +178,22 @@ async def _ws_checks(ws_url: str, new_name: str, insecure: bool) -> None:
             raise E2EFailure(f"{flat['type']}: expected {expect}, got {reply}")
         return reply
 
+    # A freshly-provisioned board is still settling its servers: right after it
+    # reports PROVISIONED it drops the soft-AP, goes STA-only and re-signs the wss
+    # cert (a ~1-2s single-core stall), and the LAN/tunnel path is just coming up.
+    # Retry the initial open rather than fail the whole run on that transient.
     print(f"[ws] connecting {ws_url}", flush=True)
-    async with websockets.connect(ws_url, max_size=2**22, ssl=ssl_ctx) as sock:
+    deadline = time.monotonic() + 25.0
+    while True:
+        try:
+            sock = await websockets.connect(ws_url, max_size=2**22, ssl=ssl_ctx, open_timeout=8)
+            break
+        except (OSError, TimeoutError, websockets.exceptions.WebSocketException) as e:
+            if time.monotonic() >= deadline:
+                raise E2EFailure(f"ws never opened at {ws_url}: {type(e).__name__}: {e}")
+            print(f"[ws] not up yet ({type(e).__name__}); retrying…", flush=True)
+            await asyncio.sleep(1.5)
+    try:
         welcome = await rpc(
             sock, {"type": "hello", "client": "hitl-e2e", "appVersion": "0"}, "welcome"
         )
@@ -171,6 +219,8 @@ async def _ws_checks(ws_url: str, new_name: str, insecure: bool) -> None:
         if got != new_name:
             raise E2EFailure(f"rename not echoed: asked {new_name!r}, welcome says {got!r}")
         print(f"[ws] RENAME OK — device reports name={got!r}", flush=True)
+    finally:
+        await sock.close()
 
 
 def ws_checks(ws_url: str, new_name: str, insecure: bool) -> None:
