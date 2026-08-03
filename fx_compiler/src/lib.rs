@@ -20,6 +20,12 @@ pub enum Ty {
     Vec4,
     Int,   // native i32 (fast — no soft-float)
     Fixed, // Q16.16 fixed-point (fast fractional)
+    // Reduced-precision fixed-point (FUG-10): `fixed8` is Q1.6 (s1.1.6) and
+    // `fixed16` is Q1.14 (s1.1.14), both range [-2, 2). They enable the
+    // accelerated integer sin/cos/exp path. Like `fixed`, the value rides in a
+    // slot as a scaled integer, so +/-/neg/compare reuse the integer ops.
+    Fixed8,
+    Fixed16,
     Bool,
     Void,
     // Composite types (aggregate scalar/vec slots). The payload indexes the
@@ -33,7 +39,7 @@ impl Ty {
     /// [`Compiler::ty_width`], which consults the struct/array tables.
     fn width(self) -> u8 {
         match self {
-            Ty::Float | Ty::Int | Ty::Fixed | Ty::Bool => 1,
+            Ty::Float | Ty::Int | Ty::Fixed | Ty::Fixed8 | Ty::Fixed16 | Ty::Bool => 1,
             Ty::Vec2 => 2,
             Ty::Vec3 => 3,
             Ty::Vec4 => 4,
@@ -52,7 +58,18 @@ impl Ty {
         !matches!(self, Ty::Bool | Ty::Void | Ty::Struct(_) | Ty::Array(_))
     }
     fn is_scalar(self) -> bool {
-        matches!(self, Ty::Float | Ty::Int | Ty::Fixed)
+        matches!(self, Ty::Float | Ty::Int | Ty::Fixed | Ty::Fixed8 | Ty::Fixed16)
+    }
+    /// Fraction bits for a fixed-family scalar (Int = 0 frac). `None` for float
+    /// and non-scalars — the boundary that needs a soft-float conversion.
+    fn fixed_frac(self) -> Option<u32> {
+        match self {
+            Ty::Int => Some(0),
+            Ty::Fixed8 => Some(6),
+            Ty::Fixed16 => Some(14),
+            Ty::Fixed => Some(16),
+            _ => None,
+        }
     }
 }
 
@@ -82,14 +99,32 @@ struct ArrayInfo {
     count: u8,
 }
 
+/// Per-component storage precision codes for packed buffers/textures — mirrors
+/// `fx_vm::comp`. Narrow formats pack a per-LED value into 1–2 bytes instead of a
+/// 4-byte f32 slot (FUG-10). The `*F` variants store a compressed fixed but
+/// present as a dequantized float (for float/vec colours); the plain fixed/int
+/// variants present the raw scaled integer (the narrow first-class types).
+mod comp {
+    pub const F32: u8 = 0;
+    pub const FIX16: u8 = 1;
+    pub const FIX8: u8 = 2;
+    pub const I16: u8 = 3;
+    pub const I8: u8 = 4;
+    pub const FIX16F: u8 = 5;
+    pub const FIX8F: u8 = 6;
+    pub const I32: u8 = 7;
+}
+
 /// A declared hidden buffer / texture. `kind` 0 = LED-arity (one element per
 /// LED; the arena sizes it to led_count at run time), 1 = a WxH 2D texture.
-/// `elem` is the slot width of one element (1 = float … 4 = vec4). Serialized
-/// into the `.fxb` buffer table for the VM's LoadBuf/StoreBuf (see fx_vm).
+/// `elem` is the component count of one element (1 = scalar … 4 = vec4) and
+/// `comp` its per-component storage precision. Serialized into the `.fxb` buffer
+/// table for the VM's LoadBuf/StoreBuf (see fx_vm).
 #[derive(Clone, Copy)]
 struct BufferInfo {
     kind: u8,
     elem: u8,
+    comp: u8,
     w: u16,
     h: u16,
 }
@@ -424,6 +459,8 @@ impl Compiler {
             "vec4" => Ty::Vec4,
             "int" => Ty::Int,
             "fixed" => Ty::Fixed,
+            "fixed8" => Ty::Fixed8,
+            "fixed16" => Ty::Fixed16,
             "bool" => Ty::Bool,
             "void" => Ty::Void,
             _ => return None,
@@ -726,48 +763,85 @@ impl Compiler {
         Ok(())
     }
 
+    /// Resolve a buffer/texture element type name to its on-stack element type,
+    /// component count, and default packed storage precision (FUG-10). Narrow
+    /// element types (`fixed8`/`fixed16`) read back as those first-class types;
+    /// `int8`/`int16` are storage specifiers that read back as `int`. `None` if
+    /// the name isn't a valid element type.
+    fn buffer_elem(name: &str) -> Option<(Ty, u8, u8)> {
+        Some(match name {
+            "float" => (Ty::Float, 1, comp::F32),
+            "vec2" => (Ty::Vec2, 2, comp::F32),
+            "vec3" => (Ty::Vec3, 3, comp::F32),
+            "vec4" => (Ty::Vec4, 4, comp::F32),
+            "int" => (Ty::Int, 1, comp::I32),
+            "fixed" => (Ty::Fixed, 1, comp::I32), // Q16.16 rides in the i32 word
+            "fixed16" => (Ty::Fixed16, 1, comp::FIX16),
+            "fixed8" => (Ty::Fixed8, 1, comp::FIX8),
+            "int16" => (Ty::Int, 1, comp::I16), // narrow storage, int on the stack
+            "int8" => (Ty::Int, 1, comp::I8),
+            _ => return None,
+        })
+    }
+
+    /// Parse an optional `: fixed8` / `: fixed16` storage annotation that
+    /// compresses a float/vec buffer element (default `comp` is `F32`). Only
+    /// valid on a float/vec element — a narrow element type already fixes its
+    /// storage. Returns the (possibly overridden) component precision.
+    fn buffer_storage_annotation(&mut self, elem_ty: Ty, default_comp: u8) -> Result<u8, Diagnostic> {
+        if *self.cur() != Tok::Sym(':') {
+            return Ok(default_comp);
+        }
+        self.advance(); // ':'
+        let ann = self.eat_ident()?;
+        if !matches!(elem_ty, Ty::Float | Ty::Vec2 | Ty::Vec3 | Ty::Vec4) {
+            return self.err("a storage annotation only applies to a float/vec element");
+        }
+        match ann.as_str() {
+            "fixed16" => Ok(comp::FIX16F),
+            "fixed8" => Ok(comp::FIX8F),
+            _ => self.err("storage annotation must be `fixed8` or `fixed16`"),
+        }
+    }
+
     // buffer vec3 trail;   — a hidden LED-arity buffer (one `elem` per LED,
     // persisted across frames in the VM arena; sized to led_count at run time).
-    // Element type is a scalar/vec (float/vec2/vec3/vec4). Access is `trail[i]`
-    // (read) and `trail[i] = v;` (write), i an int LED index.
+    // Element is a scalar/vec, optionally narrow (`buffer fixed8 t;`) or
+    // compressed (`buffer vec3 c : fixed8;` packs vec3 to 3 bytes/LED). Access is
+    // `trail[i]` (read) and `trail[i] = v;` (write), i an int LED index.
     fn buffer_decl(&mut self) -> Result<(), Diagnostic> {
         self.advance(); // 'buffer'
         let tyname = self.eat_ident()?;
-        let elem_ty = Self::ty_from_ident(&tyname).ok_or_else(|| self.mkdiag("unknown type"))?;
-        let elem = elem_ty.width();
-        // Numeric scalar/vector element: float/int/fixed (width 1) or vec2..4.
-        // Excludes bool (width 1 but not numeric), struct/array/void (width 0/>4).
-        if elem == 0 || elem > 4 || matches!(elem_ty, Ty::Bool) {
-            return self.err("buffer element must be numeric: float/int/vec2/vec3/vec4");
-        }
+        let (elem_ty, elem, comp0) =
+            Self::buffer_elem(&tyname).ok_or_else(|| self.mkdiag("buffer element must be numeric: float/int/fixed/fixed8/fixed16/int8/int16/vec2/vec3/vec4"))?;
         let name = self.eat_ident()?;
+        let comp = self.buffer_storage_annotation(elem_ty, comp0)?;
         self.expect_sym(';')?;
         if self.buffers.len() >= 255 {
             return self.err("too many buffers (max 255)");
         }
         let id = self.buffers.len() as u8;
-        self.buffers.push(BufferInfo { kind: 0, elem, w: 0, h: 0 });
+        self.buffers.push(BufferInfo { kind: 0, elem, comp, w: 0, h: 0 });
         self.syms.insert(name, Sym { kind: SymKind::Buffer, slot: id, ty: elem_ty });
         Ok(())
     }
 
     // texture vec3 img(64, 64);  — a hidden WxH 2D texture (kind 1). Read via
-    // sample(img, uv) (bilinear) or flat img[i]; write via paint(img, uv, c) or
-    // flat img[i] = c. Lives in the VM arena (elem*w*h slots).
+    // sample(img, uv) (bilinear, always float) or flat img[i]; write via
+    // paint(img, uv, c) or flat img[i] = c. Element may be narrow/compressed like
+    // a buffer (`texture vec3 img(64,64) : fixed8;` quarters the texture RAM).
     fn texture_decl(&mut self) -> Result<(), Diagnostic> {
         self.advance(); // 'texture'
         let tyname = self.eat_ident()?;
-        let elem_ty = Self::ty_from_ident(&tyname).ok_or_else(|| self.mkdiag("unknown type"))?;
-        let elem = elem_ty.width();
-        if elem == 0 || elem > 4 || matches!(elem_ty, Ty::Bool) {
-            return self.err("texture element must be numeric: float/int/vec2/vec3/vec4");
-        }
+        let (elem_ty, elem, comp0) =
+            Self::buffer_elem(&tyname).ok_or_else(|| self.mkdiag("texture element must be numeric: float/int/fixed/fixed8/fixed16/int8/int16/vec2/vec3/vec4"))?;
         let name = self.eat_ident()?;
         self.expect_sym('(')?;
         let w = self.eat_uint("texture width")?;
         self.expect_sym(',')?;
         let h = self.eat_uint("texture height")?;
         self.expect_sym(')')?;
+        let comp = self.buffer_storage_annotation(elem_ty, comp0)?;
         self.expect_sym(';')?;
         if w == 0 || w > 1024 || h == 0 || h > 1024 {
             return self.err("texture dimensions must be 1..1024");
@@ -776,7 +850,7 @@ impl Compiler {
             return self.err("too many buffers/textures (max 255)");
         }
         let id = self.buffers.len() as u8;
-        self.buffers.push(BufferInfo { kind: 1, elem, w: w as u16, h: h as u16 });
+        self.buffers.push(BufferInfo { kind: 1, elem, comp, w: w as u16, h: h as u16 });
         self.syms.insert(name, Sym { kind: SymKind::Buffer, slot: id, ty: elem_ty });
         Ok(())
     }
@@ -1370,7 +1444,10 @@ impl Compiler {
                 "==" => 4,
                 _ => 5,
             };
-            self.emit(if matches!(p, Ty::Int | Ty::Fixed) { CMP_I } else { CMP });
+            // Fixed-family scalars are scaled integers → the integer compare
+            // gives the right ordering; only true float needs the float compare.
+            let int_cmp = matches!(p, Ty::Int | Ty::Fixed | Ty::Fixed8 | Ty::Fixed16);
+            self.emit(if int_cmp { CMP_I } else { CMP });
             self.emit(kind);
             return Ok(Ty::Bool);
         }
@@ -1386,18 +1463,34 @@ impl Compiler {
         if l.width() > 1 || r.width() > 1 {
             return self.emit_vec_arith(op, l, r);
         }
-        // Scalar arithmetic: promote to a common type, emit the typed op.
+        // Scalar arithmetic: promote to a common type, emit the typed op. Fixed-
+        // family +/-/% reuse the integer ops (the representation is a scaled
+        // integer); * and / are format-aware (shift by the fraction width).
         let p = self.promote_scalars(l, r)?;
+        // Fraction width of the narrow fixed formats for the *FixN mul/div.
+        let frac = match p {
+            Ty::Fixed8 => Some(6u8),
+            Ty::Fixed16 => Some(14),
+            _ => None,
+        };
         match (op, p) {
-            ("+", Ty::Int) | ("+", Ty::Fixed) => self.emit(ADD_I),
-            ("-", Ty::Int) | ("-", Ty::Fixed) => self.emit(SUB_I),
+            ("+", Ty::Int) | ("+", Ty::Fixed) | ("+", Ty::Fixed8) | ("+", Ty::Fixed16) => {
+                self.emit(ADD_I)
+            }
+            ("-", Ty::Int) | ("-", Ty::Fixed) | ("-", Ty::Fixed8) | ("-", Ty::Fixed16) => {
+                self.emit(SUB_I)
+            }
             ("*", Ty::Int) => self.emit(MUL_I),
             ("/", Ty::Int) => self.emit(DIV_I),
-            // Q16.16 remainder is the plain integer remainder of the scaled ints.
-            ("%", Ty::Int) | ("%", Ty::Fixed) => self.emit(MOD_I),
+            // Fixed-point remainder is the plain integer remainder of the scaled ints.
+            ("%", Ty::Int) | ("%", Ty::Fixed) | ("%", Ty::Fixed8) | ("%", Ty::Fixed16) => {
+                self.emit(MOD_I)
+            }
             ("%", Ty::Float) => return self.err("'%' is integer-only; use mod() for floats"),
             ("*", Ty::Fixed) => self.emit(MUL_FIX),
             ("/", Ty::Fixed) => self.emit(DIV_FIX),
+            ("*", Ty::Fixed8) | ("*", Ty::Fixed16) => self.emit2(MUL_FIX_N, frac.unwrap()),
+            ("/", Ty::Fixed8) | ("/", Ty::Fixed16) => self.emit2(DIV_FIX_N, frac.unwrap()),
             ("+", Ty::Float) => self.emit2(ADD, 1),
             ("-", Ty::Float) => self.emit2(SUB, 1),
             ("*", Ty::Float) => self.emit2(MUL, 1),
@@ -1413,17 +1506,19 @@ impl Compiler {
     }
 
     /// Promote the two scalar operands already on the stack (left below, right
-    /// on top) to a common type (Float > Fixed > Int), emitting conversions.
+    /// on top) to a common type, emitting conversions. Widest wins along the
+    /// lattice Int < Fixed8 < Fixed16 < Fixed < Float (more range/precision).
     fn promote_scalars(&mut self, l: Ty, r: Ty) -> Result<Ty, Diagnostic> {
         let asnum = |t: Ty| if t == Ty::Bool { Ty::Int } else { t };
         let (l, r) = (asnum(l), asnum(r));
-        let p = if l == Ty::Float || r == Ty::Float {
-            Ty::Float
-        } else if l == Ty::Fixed || r == Ty::Fixed {
-            Ty::Fixed
-        } else {
-            Ty::Int
+        let rank = |t: Ty| match t {
+            Ty::Int => 0,
+            Ty::Fixed8 => 1,
+            Ty::Fixed16 => 2,
+            Ty::Fixed => 3,
+            _ => 4, // Float
         };
+        let p = if rank(l) >= rank(r) { l } else { r };
         if r != p {
             self.coerce(r, p)?; // top
         }
@@ -1498,7 +1593,7 @@ impl Compiler {
                 self.advance();
                 let t = self.unary()?;
                 match t {
-                    Ty::Int | Ty::Fixed => self.emit(fx_vm_op::NEG_I),
+                    Ty::Int | Ty::Fixed | Ty::Fixed8 | Ty::Fixed16 => self.emit(fx_vm_op::NEG_I),
                     _ => {
                         self.emit(fx_vm_op::NEG);
                         self.emit(t.width());
@@ -1752,15 +1847,19 @@ impl Compiler {
         self.expect_sym(',')?;
         let uvt = self.expr()?;
         self.coerce(uvt, Ty::Vec2)?;
+        // Sampling always dequantizes to a FLOAT colour (the packed precision is
+        // a storage detail), so the result type is a float scalar/vec of the
+        // element's component count — likewise paint() takes a float colour.
+        let fty = Ty::vec_of(self.buffers[sym.slot as usize].elem);
         if name == "sample" {
             self.expect_sym(')')?;
             self.emit(fx_vm_op::SAMPLE_TEX);
             self.emit(sym.slot);
-            Ok(sym.ty)
+            Ok(fty)
         } else {
             self.expect_sym(',')?;
             let ct = self.expr()?;
-            self.coerce(ct, sym.ty)?;
+            self.coerce(ct, fty)?;
             self.expect_sym(')')?;
             self.emit(fx_vm_op::PAINT_TEX);
             self.emit(sym.slot);
@@ -1786,6 +1885,28 @@ impl Compiler {
 
     fn emit_builtin(&mut self, name: &str, args: &[Ty]) -> Result<Ty, Diagnostic> {
         use fx_vm_op::*;
+        // Reduced-precision transcendentals (FUG-10): sin/cos/exp on a fixed8 /
+        // fixed16 argument compile to the pure-integer LUT opcodes — no
+        // soft-float. sin/cos take the angle in TURNS (1.0 = 2π); exp saturates
+        // to the ±2 range. Other scalar/vector args stay on the float path below.
+        if matches!(name, "sin" | "cos" | "exp") {
+            let a = self.arg1(args)?;
+            let frac = match a {
+                Ty::Fixed8 => Some(6u8),
+                Ty::Fixed16 => Some(14),
+                _ => None,
+            };
+            if let Some(frac) = frac {
+                let op = match name {
+                    "sin" => SIN_FIX,
+                    "cos" => COS_FIX,
+                    _ => EXP_FIX,
+                };
+                self.emit(op);
+                self.emit(frac);
+                return Ok(a);
+            }
+        }
         let unary = |f: u8| (UN_MATH, f);
         let un = match name {
             "sin" => Some(unary(0)),
@@ -2044,14 +2165,43 @@ impl Compiler {
                 self.emit(o);
                 return Ok(());
             }
+            // Narrow fixed formats (Fixed8/Fixed16) and any other fixed-family
+            // pair not covered above: convert between fraction widths by an
+            // arithmetic shift, or cross the float boundary via FixToF/FixFromF.
+            match (from.fixed_frac(), to.fixed_frac()) {
+                (Some(f), Some(t)) => {
+                    let sh = t as i32 - f as i32;
+                    if sh != 0 {
+                        self.emit(fx_vm_op::FIX_RESCALE);
+                        self.emit(sh as i8 as u8);
+                    }
+                    return Ok(());
+                }
+                (Some(f), None) => {
+                    // fixed-family -> float
+                    self.emit(fx_vm_op::FIX_TO_F);
+                    self.emit(f as u8);
+                    return Ok(());
+                }
+                (None, Some(t)) => {
+                    // float -> fixed-family
+                    self.emit(fx_vm_op::FIX_FROM_F);
+                    self.emit(t as u8);
+                    return Ok(());
+                }
+                (None, None) => {}
+            }
         }
-        // bool <-> {int,float} at the value level (0/1) — allow reading a bool
-        // as a number and vice-versa without an op (both are 0/1 words).
+        // bool <-> {int,float,fixed*} at the value level (0/1) — allow reading a
+        // bool as a number and vice-versa (all are 0/1 words). A bool rides as a
+        // 1.0/0.0 float, so narrowing to a fixed format quantizes it via FixFromF.
         if matches!(from, Ty::Bool) && to.is_scalar() {
-            if to == Ty::Fixed {
-                self.emit(fx_vm_op::F2FIX);
-            } else if to == Ty::Int {
-                self.emit(fx_vm_op::F2I);
+            match to {
+                Ty::Fixed => self.emit(fx_vm_op::F2FIX),
+                Ty::Int => self.emit(fx_vm_op::F2I),
+                Ty::Fixed8 => self.emit2(fx_vm_op::FIX_FROM_F, 6),
+                Ty::Fixed16 => self.emit2(fx_vm_op::FIX_FROM_F, 14),
+                _ => {} // Float: nop
             }
             return Ok(());
         }
@@ -2088,12 +2238,14 @@ impl Compiler {
         }
         b.extend_from_slice(&self.code);
         // Optional buffer descriptor table (FLAG_BUFFERS): n_buffers, then
-        // n × [kind(u8) elem(u8) w(u16) h(u16)] — mirrors fx_vm::Program::parse.
+        // n × [kind(u8) elem(u8) comp(u8) w(u16) h(u16)] — mirrors
+        // fx_vm::Program::parse.
         if !self.buffers.is_empty() {
             b.push(self.buffers.len() as u8);
             for buf in &self.buffers {
                 b.push(buf.kind);
                 b.push(buf.elem);
+                b.push(buf.comp);
                 b.extend_from_slice(&buf.w.to_le_bytes());
                 b.extend_from_slice(&buf.h.to_le_bytes());
             }
@@ -2313,6 +2465,14 @@ fn decode_op(code: &[u8], pc: usize) -> (String, usize) {
         SAMPLE_TEX => (format!("SAMPLE_TEX id={}", b(0)), 2),
         PAINT_TEX => (format!("PAINT_TEX id={}", b(0)), 2),
         FLOOD_FROM => ("FLOOD_FROM".into(), 1),
+        MUL_FIX_N => (format!("MUL_FIX_N frac={}", b(0)), 2),
+        DIV_FIX_N => (format!("DIV_FIX_N frac={}", b(0)), 2),
+        FIX_RESCALE => (format!("FIX_RESCALE shift={}", b(0) as i8), 2),
+        FIX_TO_F => (format!("FIX_TO_F frac={}", b(0)), 2),
+        FIX_FROM_F => (format!("FIX_FROM_F frac={}", b(0)), 2),
+        SIN_FIX => (format!("SIN_FIX frac={}", b(0)), 2),
+        COS_FIX => (format!("COS_FIX frac={}", b(0)), 2),
+        EXP_FIX => (format!("EXP_FIX frac={}", b(0)), 2),
         other => (format!("?? 0x{other:02x}"), 0),
     }
 }
@@ -2422,11 +2582,20 @@ mod fx_vm_op {
     pub const SAMPLE_TEX: u8 = 59;
     pub const PAINT_TEX: u8 = 60;
     pub const FLOOD_FROM: u8 = 61;
+    // Reduced-precision fixed-point (FUG-10). Mirror fx_vm::Op ordering.
+    pub const MUL_FIX_N: u8 = 62;
+    pub const DIV_FIX_N: u8 = 63;
+    pub const FIX_RESCALE: u8 = 64;
+    pub const FIX_TO_F: u8 = 65;
+    pub const FIX_FROM_F: u8 = 66;
+    pub const SIN_FIX: u8 = 67;
+    pub const COS_FIX: u8 = 68;
+    pub const EXP_FIX: u8 = 69;
 }
 
 /// `.fxb` flags bit: a buffer descriptor table follows `code` (mirrors
 /// fx_vm::FLAG_BUFFERS). One byte `n_buffers`, then n × [kind(u8) elem(u8)
-/// w(u16) h(u16)] (6 bytes each = fx_vm::BUF_DESC_LEN).
+/// comp(u8) w(u16) h(u16)] (7 bytes each = fx_vm::BUF_DESC_LEN).
 const FLAG_BUFFERS: u8 = 0x01;
 mod fx_ctx {
     pub const TIME: u8 = 0;

@@ -570,8 +570,8 @@ fn buffer_trails_persist_per_led() {
     assert_eq!((d.kind, d.elem), (0, 1));
 
     let led_count = 4usize;
-    let mut arena = vec![0.0f32; prog.arena_slots(led_count)];
-    assert_eq!(arena.len(), led_count); // 1 slot/elem * 4 LEDs
+    let mut arena = vec![0u8; prog.arena_bytes(led_count)];
+    assert_eq!(arena.len(), led_count * 4); // 1 f32 component (4 B) * 4 LEDs
 
     let mut vm = Vm::new();
     vm.set_arena(&mut arena);
@@ -620,8 +620,8 @@ fn texture_sample_bilinear() {
     assert_eq!((d.kind, d.elem, d.w, d.h), (1, 1, 2, 1)); // 2D texture, 2x1
 
     let led_count = 4usize;
-    let mut arena = vec![0.0f32; prog.arena_slots(led_count)];
-    assert_eq!(arena.len(), 2); // elem*w*h, independent of led_count
+    let mut arena = vec![0u8; prog.arena_bytes(led_count)];
+    assert_eq!(arena.len(), 2 * 4); // elem*w*h * 4 B (f32), independent of led_count
     let mut vm = Vm::new();
     vm.set_arena(&mut arena);
     let frame = Frame { led_count: led_count as u32, ..Frame::default() };
@@ -649,7 +649,7 @@ fn texture_paint_round_trips() {
     let c = compile(src).unwrap_or_else(|d| panic!("compile error: {:?}", d));
     let prog = Program::parse(&c.fxb).expect("parse fxb");
     assert_eq!(prog.buf_desc(0).unwrap().elem, 3);
-    let mut arena = vec![0.0f32; prog.arena_slots(8)];
+    let mut arena = vec![0u8; prog.arena_bytes(8)];
     let mut vm = Vm::new();
     vm.set_arena(&mut arena);
     let frame = Frame { led_count: 8, ..Frame::default() };
@@ -731,7 +731,7 @@ fn preview_flow_flood_animates_and_texture_lights() {
     for u in &c2.uniforms {
         vm2.set_uniform(u.slot as usize, &u.default);
     }
-    let mut arena = vec![0.0f32; prog2.arena_slots(64)];
+    let mut arena = vec![0u8; prog2.arena_bytes(64)];
     // Mirror the wasm: bind the arena on update, bake on the first frame.
     for f in 0..2u32 {
         let frame = Frame { time: f as f32 * 0.033, dt: 0.033, frame: f, led_count: 64, ..Default::default() };
@@ -773,4 +773,203 @@ fn flood_from_reseats_the_geodesic_source() {
     let d1 = vm.run_shade(&prog, &frame, &led_a).0;
     assert_eq!(d0, 0, "flooding from leafA, leafA is at distance 0");
     assert_eq!(d1, 255, "flooding from leafB, leafA is the far end (dist 1)");
+}
+
+// --- reduced-precision embedded types (FUG-10) -------------------------------
+
+#[test]
+fn fixed16_arithmetic() {
+    // Q1.14 multiply through the language: 0.5 * 1.5 = 0.75 -> 191.
+    let src = r#"
+        vec3 shade(Led led) {
+            fixed16 a = fixed16(0.5);
+            fixed16 b = fixed16(1.5);
+            fixed16 c = a * b;
+            return vec3(float(c), 0.0, 0.0);
+        }
+    "#;
+    let got = run_shade(src, &[], Led::default(), Frame::default()).0;
+    assert!((got as i32 - 191).abs() <= 2, "0.5*1.5 in fixed16: {got}");
+}
+
+#[test]
+fn fixed8_arithmetic() {
+    // Q1.6 add/mul: (0.25 + 0.25) * 1.0 = 0.5 -> ~127 (coarser format).
+    let src = r#"
+        vec3 shade(Led led) {
+            fixed8 a = fixed8(0.25);
+            fixed8 s = (a + a) * fixed8(1.0);
+            return vec3(float(s), 0.0, 0.0);
+        }
+    "#;
+    let got = run_shade(src, &[], Led::default(), Frame::default()).0;
+    assert!((got as i32 - 127).abs() <= 5, "fixed8 arithmetic: {got}");
+}
+
+#[test]
+fn fixed16_sin_dispatches_to_integer_opcode() {
+    // sin on a fixed16 argument must compile to the pure-integer SIN_FIX opcode
+    // (no UN_MATH / soft-float) and produce the right value. sin(0.25 turn)=1.
+    let src = r#"
+        vec3 shade(Led led) {
+            fixed16 phase = fixed16(0.25);
+            fixed16 s = sin(phase);
+            return vec3(float(s), 0.0, 0.0);
+        }
+    "#;
+    let c = compile(src).unwrap_or_else(|d| panic!("compile error: {:?}", d));
+    let dis = ledmapper_fx_compiler::disassemble(&c.fxb);
+    assert!(dis.contains("SIN_FIX frac=14"), "expected SIN_FIX in:\n{dis}");
+    assert!(!dis.contains("UN_MATH sin"), "sin(fixed16) must not use the float path");
+    let got = run_shade(src, &[], Led::default(), Frame::default()).0;
+    assert!((got as i32 - 255).abs() <= 2, "fixed16 sin(90°): {got}");
+}
+
+#[test]
+fn fixed_cos_and_exp_builtins() {
+    // cos(0) = 1 -> 255; exp(0) = 1 -> 255 (both via the integer LUT path).
+    let cos = r#"vec3 shade(Led led) { fixed16 z = fixed16(0.0); return vec3(float(cos(z)), 0.0, 0.0); }"#;
+    assert!((run_shade(cos, &[], Led::default(), Frame::default()).0 as i32 - 255).abs() <= 2);
+    let exp = r#"vec3 shade(Led led) { fixed16 z = fixed16(0.0); return vec3(float(exp(z)), 0.0, 0.0); }"#;
+    assert!((run_shade(exp, &[], Led::default(), Frame::default()).0 as i32 - 255).abs() <= 2);
+    // The float path still works for float args (sin over a float uniform).
+    let f = r#"vec3 shade(Led led) { return vec3(sin(1.5707964), 0.0, 0.0); }"#;
+    let c = compile(f).unwrap();
+    assert!(ledmapper_fx_compiler::disassemble(&c.fxb).contains("UN_MATH sin"));
+}
+
+#[test]
+fn mixed_promotion_widens_to_float() {
+    // fixed16 * float promotes to float (widest wins): 0.5 * 0.5 = 0.25 -> 63.
+    let src = r#"
+        vec3 shade(Led led) {
+            fixed16 a = fixed16(0.5);
+            float r = a * 0.5;
+            return vec3(r, 0.0, 0.0);
+        }
+    "#;
+    assert_eq!(run_shade(src, &[], Led::default(), Frame::default()).0, 63);
+}
+
+#[test]
+fn fixed_moving_band_effect() {
+    // A realistic hot-path shader: a moving sine band along z, all in Q1.14 —
+    // exercises sin, fixed mul/add and the float boundary end to end.
+    let src = r#"
+        uniform float speed : 0.0 .. 2.0 = 0.0;
+        vec3 shade(Led led) {
+            fixed16 z = fixed16(led.pos.z);
+            fixed16 phase = z * fixed16(1.0);
+            fixed16 w = sin(phase);
+            float b = float(w) * 0.5 + 0.5;
+            return vec3(b, b, b);
+        }
+    "#;
+    // pos.z = 0.25 turn -> sin = 1 -> b = 1.0 -> 255.
+    let led = Led { pos: [0.0, 0.0, 0.25], ..Default::default() };
+    let got = run_shade(src, &[], led, Frame::default()).0;
+    assert!((got as i32 - 255).abs() <= 3, "moving band peak: {got}");
+}
+
+// --- packed narrow storage (FUG-10) ------------------------------------------
+
+#[test]
+fn packed_fixed8_buffer_quarters_the_ram() {
+    // A per-LED fixed8 trail packs to ONE byte/LED (vs 4 for an f32 slot) — the
+    // "stacking 8-bit values" win — and round-trips through the packed byte.
+    let src = r#"
+        buffer fixed8 trail;
+        void update() { trail[0] = fixed8(0.5); }
+        vec3 shade(Led led) { return vec3(float(trail[led.idx]), 0.0, 0.0); }
+    "#;
+    let c = compile(src).unwrap_or_else(|d| panic!("compile error: {:?}", d));
+    let prog = Program::parse(&c.fxb).expect("parse fxb");
+    let d = prog.buf_desc(0).unwrap();
+    assert_eq!((d.kind, d.elem), (0, 1));
+    let led_count = 8usize;
+    // 1 byte/LED, not 4 — a quarter of the f32 arena.
+    assert_eq!(prog.arena_bytes(led_count), led_count);
+    let mut arena = vec![0u8; prog.arena_bytes(led_count)];
+    let mut vm = Vm::new();
+    vm.set_arena(&mut arena);
+    let frame = Frame { led_count: led_count as u32, ..Frame::default() };
+    vm.run_update(&prog, &frame); // trail[0] = 0.5 (Q1.6)
+    // The stored byte is the Q1.6 scaled integer: 0.5 * 64 = 32.
+    assert_eq!(arena[0], 32);
+    let got = vm.run_shade(&prog, &frame, &Led { idx: 0, ..Default::default() }).0;
+    assert!((got as i32 - 127).abs() <= 2, "fixed8 trail round-trip: {got}");
+}
+
+#[test]
+fn packed_vec3_fixed8_texture_and_buffer() {
+    // `buffer vec3 c : fixed8;` compresses an RGB per-LED buffer to 3 bytes/LED.
+    let src = r#"
+        buffer vec3 col : fixed8;
+        void update() { col[0] = vec3(1.0, 0.5, 0.25); }
+        vec3 shade(Led led) { return col[led.idx]; }
+    "#;
+    let c = compile(src).unwrap_or_else(|d| panic!("compile error: {:?}", d));
+    let prog = Program::parse(&c.fxb).expect("parse fxb");
+    let led_count = 4usize;
+    assert_eq!(prog.arena_bytes(led_count), led_count * 3); // 3 B/LED, not 12
+    let mut arena = vec![0u8; prog.arena_bytes(led_count)];
+    let mut vm = Vm::new();
+    vm.set_arena(&mut arena);
+    let frame = Frame { led_count: led_count as u32, ..Frame::default() };
+    vm.run_update(&prog, &frame);
+    let (r, g, b) = vm.run_shade(&prog, &frame, &Led { idx: 0, ..Default::default() });
+    // Quantized to Q1.6 then dequantized: 1.0, 0.5, 0.25 survive exactly.
+    assert_eq!((r, g, b), (255, 127, 63));
+}
+
+#[test]
+fn packed_fixed8_texture_samples_as_float() {
+    // A narrow texture quarters its RAM; sample() still returns a float colour.
+    let src = r#"
+        texture vec3 img(4, 4) : fixed8;
+        void update() {}
+        vec3 shade(Led led) {
+            paint(img, vec2(0.0, 0.0), vec3(1.0, 0.5, 0.25));
+            return sample(img, vec2(0.0, 0.0));
+        }
+    "#;
+    let c = compile(src).unwrap_or_else(|d| panic!("compile error: {:?}", d));
+    let prog = Program::parse(&c.fxb).expect("parse fxb");
+    // 16 texels * 3 components * 1 byte = 48 B (vs 192 as f32).
+    assert_eq!(prog.arena_bytes(8), 48);
+    let mut arena = vec![0u8; prog.arena_bytes(8)];
+    let mut vm = Vm::new();
+    vm.set_arena(&mut arena);
+    let frame = Frame { led_count: 8, ..Frame::default() };
+    let (r, g, b) = vm.run_shade(&prog, &frame, &Led::default());
+    assert_eq!((r, g, b), (255, 127, 63));
+}
+
+#[test]
+fn packed_int8_buffer_reads_as_int() {
+    // `buffer int8 c;` is a 1-byte-per-LED counter that reads back as `int`.
+    let src = r#"
+        buffer int8 counter;
+        void update() { counter[0] = 100; }
+        vec3 shade(Led led) { return vec3(float(counter[led.idx]) / 200.0, 0.0, 0.0); }
+    "#;
+    let c = compile(src).unwrap_or_else(|d| panic!("compile error: {:?}", d));
+    let prog = Program::parse(&c.fxb).expect("parse fxb");
+    assert_eq!(prog.arena_bytes(4), 4); // 1 B/LED
+    let mut arena = vec![0u8; prog.arena_bytes(4)];
+    let mut vm = Vm::new();
+    vm.set_arena(&mut arena);
+    let frame = Frame { led_count: 4, ..Frame::default() };
+    vm.run_update(&prog, &frame);
+    assert_eq!(arena[0], 100);
+    // 100/200 = 0.5 -> 127.
+    assert_eq!(vm.run_shade(&prog, &frame, &Led { idx: 0, ..Default::default() }).0, 127);
+}
+
+#[test]
+fn packed_storage_annotation_errors() {
+    // Annotation only on float/vec elements.
+    assert!(compile("buffer fixed8 t : fixed8; vec3 shade(Led led){ return vec3(0.0,0.0,0.0); }").is_err());
+    // Annotation must be a fixed width.
+    assert!(compile("buffer vec3 c : int8; vec3 shade(Led led){ return vec3(0.0,0.0,0.0); }").is_err());
 }

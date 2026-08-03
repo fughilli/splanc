@@ -122,6 +122,36 @@ pub enum Op {
     // from that node (normalized 0..1 by the reach). Void; call once per cycle in
     // update(). No source set → led.dist stays the map-load root field.
     FloodFrom,
+    // --- reduced-precision fixed-point (Q1.f) fast path (FUG-10) --------------
+    // Narrow fixed-point types `fixed8` (Q1.6, s1.1.6, 8-bit logical) and
+    // `fixed16` (Q1.14, s1.1.14, 16-bit logical) — both range [-2, 2). The value
+    // rides in the low bits of the slot as a scaled integer (like Q16.16); +,-,
+    // neg and compares reuse the integer ops, so only mul/div and the format
+    // boundary need format-aware opcodes. These carry a `frac` operand (bits of
+    // fraction: 6 for Q1.6, 14 for Q1.14, and 16 works for Q16.16 too), so a
+    // single opcode serves every fixed width. All integer-only — no soft-float.
+    MulFixN, // u8 frac : (a*b) >> frac
+    DivFixN, // u8 frac : (a << frac) / b
+    // Reinterpret an integer/fixed value between formats by an arithmetic shift.
+    // Operand is a signed shift (i8 in a u8): >=0 shifts left (more frac bits),
+    // <0 shifts right. int↔fixed8 = ±6, int↔fixed16 = ±14, fixed8↔fixed16 = ±8,
+    // etc. Pure integer; no float involved.
+    FixRescale, // i8 shift
+    // Fixed/int ↔ f32 boundary (the only place soft-float appears for these
+    // types): FixToF pops a scaled int and pushes raw/2^frac; FixFromF pops a
+    // float and pushes trunc(x*2^frac). frac=0 makes them int↔float.
+    FixToF,   // u8 frac
+    FixFromF, // u8 frac
+    // Accelerated reduced-precision transcendentals — the FUG-10 win: sin/cos/exp
+    // evaluated in pure integer arithmetic (LUT + linear interpolation), so an
+    // effect can do trig without dragging in the f32 soft-float path. The operand
+    // is the fixed frac width (6 or 14). sin/cos take the angle in TURNS (1.0 =
+    // one full circle) as Q1.frac and return Q1.frac in [-1, 1] — no range
+    // reduction needed. exp takes Q1.frac and returns Q1.frac, SATURATED to the
+    // ±2 range (so it is meaningful for decay, x ≲ 0.69; larger x pins at +2).
+    SinFix, // u8 frac
+    CosFix, // u8 frac
+    ExpFix, // u8 frac
 }
 
 /// Graph-query kinds (the `GraphQuery` opcode operand).
@@ -137,6 +167,12 @@ pub mod gq {
 }
 
 pub const FIX_ONE: i32 = 1 << 16;
+
+/// Fraction bits for the narrow fixed formats (FUG-10). `fixed8` is Q1.6
+/// (s1.1.6) and `fixed16` is Q1.14 (s1.1.14); both range [-2, 2). These are the
+/// `frac` operand the `*FixN` / transcendental opcodes carry.
+pub const FRAC8: u8 = 6;
+pub const FRAC16: u8 = 14;
 
 /// Default per-invocation instruction budget (one `update()` or one `shade()`).
 /// A pathological loop trips this deterministically on every platform, so the
@@ -213,8 +249,8 @@ pub struct Counters {
 impl Op {
     #[inline]
     fn from_u8(b: u8) -> Option<Op> {
-        // Op is a contiguous enum 0..=FloodFrom; guard the range then transmute.
-        if b <= Op::FloodFrom as u8 {
+        // Op is a contiguous enum 0..=ExpFix; guard the range then transmute.
+        if b <= Op::ExpFix as u8 {
             Some(unsafe { core::mem::transmute::<u8, Op>(b) })
         } else {
             None
@@ -271,25 +307,149 @@ pub struct Program<'a> {
     /// The raw uniforms manifest (for the app; the VM ignores it).
     pub manifest: &'a [u8],
     /// Buffer descriptor table (present when flags & FLAG_BUFFERS): `n_buffers`
-    /// entries of `BUF_DESC_LEN` bytes each — kind(u8) elem(u8) w(u16) h(u16).
-    /// A buffer of `kind=0` is LED-arity (arity = led_count); `kind=1` is a WxH
-    /// 2D texture (Phase 3). Held raw; [`buf_desc`] decodes an entry.
+    /// entries of `BUF_DESC_LEN` bytes each — kind(u8) elem(u8) comp(u8) w(u16)
+    /// h(u16). A buffer of `kind=0` is LED-arity (arity = led_count); `kind=1` is
+    /// a WxH 2D texture. `comp` is the per-component storage precision (see
+    /// [`comp`]). Held raw; [`buf_desc`] decodes an entry.
     pub n_buffers: u8,
     buffers: &'a [u8],
 }
 
 /// flags bit: a buffer descriptor table follows `code` in the `.fxb`.
 pub const FLAG_BUFFERS: u8 = 0x01;
-/// Bytes per buffer descriptor: kind(u8) elem(u8) w(u16) h(u16).
-pub const BUF_DESC_LEN: usize = 6;
+/// Bytes per buffer descriptor: kind(u8) elem(u8) comp(u8) w(u16) h(u16).
+pub const BUF_DESC_LEN: usize = 7;
+
+/// Component storage precision for a buffer/texture (FUG-10 packed storage). A
+/// buffer element is `elem` components each stored at `comp`'s byte width, so an
+/// 8-bit format packs a per-LED value into ONE byte instead of a 4-byte f32
+/// slot. The `*F` variants store a compressed fixed-point but present as a
+/// dequantized `f32` on the stack (for compressing float/vec colors); the plain
+/// fixed/int variants present the raw scaled integer (the narrow first-class
+/// types). See [`comp_bytes`] / [`comp_load`] / [`comp_store`].
+pub mod comp {
+    pub const F32: u8 = 0; // 4 B, f32
+    pub const FIX16: u8 = 1; // 2 B, Q1.14 raw -> fixed16 on the stack
+    pub const FIX8: u8 = 2; // 1 B, Q1.6 raw -> fixed8 on the stack
+    pub const I16: u8 = 3; // 2 B, i16 -> int on the stack
+    pub const I8: u8 = 4; // 1 B, i8 -> int on the stack
+    pub const FIX16F: u8 = 5; // 2 B, Q1.14 stored, dequantized to f32 on the stack
+    pub const FIX8F: u8 = 6; // 1 B, Q1.6 stored, dequantized to f32 on the stack
+    pub const I32: u8 = 7; // 4 B, i32 -> int on the stack
+}
+
+/// Storage width in bytes of one component of precision `c`.
+pub fn comp_bytes(c: u8) -> usize {
+    match c {
+        comp::F32 | comp::I32 => 4,
+        comp::FIX16 | comp::I16 | comp::FIX16F => 2,
+        comp::FIX8 | comp::I8 | comp::FIX8F => 1,
+        _ => 4,
+    }
+}
+
+/// Unpack one stored component (`b` ≥ [`comp_bytes`] long) into the VM's stack
+/// word (an `f32` slot). Raw fixed/int variants ride their scaled integer in the
+/// f32 bits (`f32::from_bits`); the `*F`/`F32` variants carry a real float.
+#[inline]
+pub fn comp_load(c: u8, b: &[u8]) -> f32 {
+    match c {
+        comp::F32 => f32::from_le_bytes([b[0], b[1], b[2], b[3]]),
+        comp::I32 => f32::from_bits(i32::from_le_bytes([b[0], b[1], b[2], b[3]]) as u32),
+        comp::FIX16 | comp::I16 => f32::from_bits(i16::from_le_bytes([b[0], b[1]]) as i32 as u32),
+        comp::FIX8 | comp::I8 => f32::from_bits((b[0] as i8) as i32 as u32),
+        comp::FIX16F => i16::from_le_bytes([b[0], b[1]]) as f32 / (1 << FRAC16) as f32,
+        comp::FIX8F => (b[0] as i8) as f32 / (1 << FRAC8) as f32,
+        _ => 0.0,
+    }
+}
+
+/// Pack the VM's stack word `v` into `out` (≥ [`comp_bytes`] long) at precision
+/// `c`. Narrow integers/fixed are clamped to their storage range (deterministic,
+/// no wild wrap); the `*F` variants quantize a float with rounding.
+#[inline]
+pub fn comp_store(c: u8, v: f32, out: &mut [u8]) {
+    let clamp16 = |x: i32| x.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+    let clamp8 = |x: i32| x.clamp(i8::MIN as i32, i8::MAX as i32) as i8;
+    match c {
+        comp::F32 => out[..4].copy_from_slice(&v.to_le_bytes()),
+        comp::I32 => out[..4].copy_from_slice(&(v.to_bits() as i32).to_le_bytes()),
+        comp::FIX16 | comp::I16 => {
+            out[..2].copy_from_slice(&clamp16(v.to_bits() as i32).to_le_bytes())
+        }
+        comp::FIX8 | comp::I8 => out[0] = clamp8(v.to_bits() as i32) as u8,
+        comp::FIX16F => {
+            let q = round_f32(v * (1 << FRAC16) as f32) as i32;
+            out[..2].copy_from_slice(&clamp16(q).to_le_bytes());
+        }
+        comp::FIX8F => {
+            let q = round_f32(v * (1 << FRAC8) as f32) as i32;
+            out[0] = clamp8(q) as u8;
+        }
+        _ => {}
+    }
+}
+
+#[inline]
+fn round_f32(x: f32) -> f32 {
+    if x >= 0.0 {
+        floorf(x + 0.5)
+    } else {
+        -floorf(-x + 0.5)
+    }
+}
+
+/// Load one stored component as its NUMERIC float value (raw fixed/int are
+/// dequantized to a real number, not the scaled-int bits). Used by texture
+/// sampling, which interpolates and always yields float colours.
+#[inline]
+pub fn comp_load_num(c: u8, b: &[u8]) -> f32 {
+    match c {
+        comp::F32 => f32::from_le_bytes([b[0], b[1], b[2], b[3]]),
+        comp::I32 => i32::from_le_bytes([b[0], b[1], b[2], b[3]]) as f32,
+        comp::I16 => i16::from_le_bytes([b[0], b[1]]) as f32,
+        comp::I8 => (b[0] as i8) as f32,
+        comp::FIX16 | comp::FIX16F => i16::from_le_bytes([b[0], b[1]]) as f32 / (1 << FRAC16) as f32,
+        comp::FIX8 | comp::FIX8F => (b[0] as i8) as f32 / (1 << FRAC8) as f32,
+        _ => 0.0,
+    }
+}
+
+/// Store a NUMERIC float value into one component (quantizing/rounding to the
+/// component's precision). The paint() counterpart to [`comp_load_num`].
+#[inline]
+pub fn comp_store_num(c: u8, v: f32, out: &mut [u8]) {
+    let clamp16 = |x: f32| round_f32(x).clamp(i16::MIN as f32, i16::MAX as f32) as i16;
+    let clamp8 = |x: f32| round_f32(x).clamp(i8::MIN as f32, i8::MAX as f32) as i8;
+    match c {
+        comp::F32 => out[..4].copy_from_slice(&v.to_le_bytes()),
+        comp::I32 => out[..4].copy_from_slice(&(round_f32(v) as i32).to_le_bytes()),
+        comp::I16 => out[..2].copy_from_slice(&clamp16(v).to_le_bytes()),
+        comp::I8 => out[0] = clamp8(v) as u8,
+        comp::FIX16 | comp::FIX16F => {
+            out[..2].copy_from_slice(&clamp16(v * (1 << FRAC16) as f32).to_le_bytes())
+        }
+        comp::FIX8 | comp::FIX8F => out[0] = clamp8(v * (1 << FRAC8) as f32) as u8,
+        _ => {}
+    }
+}
 
 /// One decoded buffer descriptor.
 #[derive(Clone, Copy, Default)]
 pub struct BufDesc {
-    pub kind: u8,  // 0 = LED-arity, 1 = 2D texture
-    pub elem: u8,  // slots per element (1 = float, 3 = vec3, …)
-    pub w: u16,    // texture width (kind 1); 0 for LED-arity
-    pub h: u16,    // texture height (kind 1); 0 for LED-arity
+    pub kind: u8, // 0 = LED-arity, 1 = 2D texture
+    pub elem: u8, // components per element (1 = scalar, 3 = vec3, …)
+    pub comp: u8, // component storage precision (see [`comp`])
+    pub w: u16,   // texture width (kind 1); 0 for LED-arity
+    pub h: u16,   // texture height (kind 1); 0 for LED-arity
+}
+
+impl BufDesc {
+    /// Storage size in bytes of one element (all `elem` components).
+    #[inline]
+    pub fn elem_bytes(&self) -> usize {
+        self.elem as usize * comp_bytes(self.comp)
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -361,40 +521,43 @@ impl<'a> Program<'a> {
         Some(BufDesc {
             kind: b[0],
             elem: b[1],
-            w: u16::from_le_bytes([b[2], b[3]]),
-            h: u16::from_le_bytes([b[4], b[5]]),
+            comp: b[2],
+            w: u16::from_le_bytes([b[3], b[4]]),
+            h: u16::from_le_bytes([b[5], b[6]]),
         })
     }
 
-    /// Total arena slots the program's buffers need, given `led_count`. Each
-    /// LED-arity buffer is `elem * led_count`; each 2D texture is `elem * w * h`.
-    pub fn arena_slots(&self, led_count: usize) -> usize {
+    /// Number of elements buffer `d` holds (LED-arity buffers scale with the
+    /// live `led_count`; 2D textures are `w*h`).
+    #[inline]
+    fn buf_count(d: &BufDesc, led_count: usize) -> usize {
+        if d.kind == 0 {
+            led_count
+        } else {
+            d.w as usize * d.h as usize
+        }
+    }
+
+    /// Total arena BYTES the program's buffers need, given `led_count` — each
+    /// element is packed at its component precision ([`BufDesc::elem_bytes`]), so
+    /// an 8-bit buffer costs a quarter of an f32 one.
+    pub fn arena_bytes(&self, led_count: usize) -> usize {
         let mut n = 0;
         for i in 0..self.n_buffers as usize {
             if let Some(d) = self.buf_desc(i) {
-                let count = if d.kind == 0 {
-                    led_count
-                } else {
-                    d.w as usize * d.h as usize
-                };
-                n += d.elem as usize * count;
+                n += d.elem_bytes() * Self::buf_count(&d, led_count);
             }
         }
         n
     }
 
-    /// Byte-offset (in slots) of buffer `id`'s region within the arena. Public so
-    /// the host FFI can stream video frames straight into a texture's slots.
+    /// Byte offset of buffer `id`'s region within the (byte-addressed) arena.
+    /// Public so the host FFI can stream video frames straight into a texture.
     pub fn buf_base(&self, id: usize, led_count: usize) -> usize {
         let mut base = 0;
         for i in 0..id.min(self.n_buffers as usize) {
             if let Some(d) = self.buf_desc(i) {
-                let count = if d.kind == 0 {
-                    led_count
-                } else {
-                    d.w as usize * d.h as usize
-                };
-                base += d.elem as usize * count;
+                base += d.elem_bytes() * Self::buf_count(&d, led_count);
             }
         }
         base
@@ -454,9 +617,10 @@ pub struct Vm {
     node_seg: [[i16; MAX_NODE_DEG]; MAX_NODE], // incident segment ids
     node_side: [[u8; MAX_NODE_DEG]; MAX_NODE], // which end (0=a,1=b) of that segment touches the node
     // Buffer arena (LED-arity buffers / textures): external memory bound per
-    // program via set_arena. Raw ptr so Vm needs no lifetime; the caller keeps
+    // program via set_arena. BYTE-addressed (FUG-10 packed storage) so narrow
+    // elements pack tightly. Raw ptr so Vm needs no lifetime; the caller keeps
     // it alive and disjoint from `state`. Null/0 = no buffers.
-    arena_ptr: *mut f32,
+    arena_ptr: *mut u8,
     arena_len: usize,
     // Single-source geodesic field for `flood_from` (see [`DistSrc`]). Persists
     // across frames like `state`; reset when a fresh effect is loaded.
@@ -542,10 +706,11 @@ impl Vm {
         }
     }
 
-    /// Bind the buffer arena (LED-arity buffers / textures). The slice must
-    /// outlive the following run calls and be disjoint from any other access.
-    /// Pass an empty slice to unbind. Size it to `Program::arena_slots(led_count)`.
-    pub fn set_arena(&mut self, arena: &mut [f32]) {
+    /// Bind the buffer arena (LED-arity buffers / textures). BYTE-addressed: size
+    /// it to `Program::arena_bytes(led_count)`. The slice must outlive the
+    /// following run calls and be disjoint from any other access; pass an empty
+    /// slice to unbind.
+    pub fn set_arena(&mut self, arena: &mut [u8]) {
         self.arena_ptr = arena.as_mut_ptr();
         self.arena_len = arena.len();
     }
@@ -591,7 +756,7 @@ impl Vm {
         let mut st = self.state;
         let mut dist = self.dist_src;
         let g = self.graph_ref();
-        let arena: &mut [f32] = if self.arena_ptr.is_null() || self.arena_len == 0 {
+        let arena: &mut [u8] = if self.arena_ptr.is_null() || self.arena_len == 0 {
             &mut []
         } else {
             unsafe { core::slice::from_raw_parts_mut(self.arena_ptr, self.arena_len) }
@@ -645,7 +810,7 @@ impl Vm {
         let mut st = self.state; // copy; shade shouldn't write it, but be safe
         let mut dist = self.dist_src; // read-only in shade (led.dist); not persisted
         let g = self.graph_ref();
-        let arena: &mut [f32] = if self.arena_ptr.is_null() || self.arena_len == 0 {
+        let arena: &mut [u8] = if self.arena_ptr.is_null() || self.arena_len == 0 {
             &mut []
         } else {
             unsafe { core::slice::from_raw_parts_mut(self.arena_ptr, self.arena_len) }
@@ -786,7 +951,7 @@ fn run(
     led: &Led,
     graph: &GraphRef,
     dist: &mut DistSrc,
-    arena: &mut [f32],
+    arena: &mut [u8],
     entry: usize,
     guard: &Budget,
 ) -> ([f32; 3], Outcome, Counters) {
@@ -1423,11 +1588,15 @@ fn run(
                 if let Some(d) = prog.buf_desc(id) {
                     let lc = frame.led_count as usize;
                     let elem = d.elem as usize;
+                    let cb = comp_bytes(d.comp);
                     let count = if d.kind == 0 { lc } else { d.w as usize * d.h as usize };
                     let i = popi!().clamp(0, count.saturating_sub(1) as i32) as usize;
-                    let base = prog.buf_base(id, lc) + i * elem;
+                    // Byte offset of element `i`; unpack each packed component to a
+                    // stack word at its declared precision.
+                    let base = prog.buf_base(id, lc) + i * d.elem_bytes();
                     for k in 0..elem {
-                        push!(arena.get(base + k).copied().unwrap_or(0.0));
+                        let o = base + k * cb;
+                        push!(arena.get(o..o + cb).map(|b| comp_load(d.comp, b)).unwrap_or(0.0));
                     }
                 }
             }
@@ -1437,15 +1606,17 @@ fn run(
                 if let Some(d) = prog.buf_desc(id) {
                     let lc = frame.led_count as usize;
                     let elem = d.elem as usize;
+                    let cb = comp_bytes(d.comp);
                     let count = if d.kind == 0 { lc } else { d.w as usize * d.h as usize };
                     if sp >= elem + 1 {
                         let i = stack[sp - elem - 1].to_bits() as i32;
                         let idx = i.clamp(0, count.saturating_sub(1) as i32) as usize;
-                        let base = prog.buf_base(id, lc) + idx * elem;
+                        let base = prog.buf_base(id, lc) + idx * d.elem_bytes();
                         for k in 0..elem {
                             let v = stack[sp - elem + k];
-                            if base + k < arena.len() {
-                                arena[base + k] = v;
+                            let o = base + k * cb;
+                            if o + cb <= arena.len() {
+                                comp_store(d.comp, v, &mut arena[o..o + cb]);
                             }
                         }
                         sp -= elem + 1;
@@ -1457,6 +1628,7 @@ fn run(
                 pc += 1;
                 let d = prog.buf_desc(id).unwrap_or_default();
                 let elem = d.elem as usize;
+                let cb = comp_bytes(d.comp);
                 // pop uv (2 slots): stack [.., u, v]
                 let (u, v) = if sp >= 2 {
                     let v = stack[sp - 1];
@@ -1470,7 +1642,9 @@ fn run(
                     let w = d.w as usize;
                     let h = d.h as usize;
                     let base = prog.buf_base(id, frame.led_count as usize);
-                    // Bilinear, edge-clamped.
+                    let eb = d.elem_bytes();
+                    // Bilinear, edge-clamped — dequantized to float regardless of
+                    // the stored precision (sampling always yields a float colour).
                     let fx = u.clamp(0.0, 1.0) * (w as f32 - 1.0);
                     let fy = v.clamp(0.0, 1.0) * (h as f32 - 1.0);
                     let x0 = floorf(fx) as usize;
@@ -1481,7 +1655,8 @@ fn run(
                     let ty = fy - y0 as f32;
                     for k in 0..elem {
                         let tap = |x: usize, y: usize| {
-                            arena.get(base + (y * w + x) * elem + k).copied().unwrap_or(0.0)
+                            let o = base + (y * w + x) * eb + k * cb;
+                            arena.get(o..o + cb).map(|b| comp_load_num(d.comp, b)).unwrap_or(0.0)
                         };
                         let a = tap(x0, y0) * (1.0 - tx) + tap(x1, y0) * tx;
                         let b = tap(x0, y1) * (1.0 - tx) + tap(x1, y1) * tx;
@@ -1498,6 +1673,7 @@ fn run(
                 pc += 1;
                 let d = prog.buf_desc(id).unwrap_or_default();
                 let elem = d.elem as usize;
+                let cb = comp_bytes(d.comp);
                 // stack: [.., u, v, c0..c_elem] — uv below the colour slots.
                 if sp >= elem + 2 {
                     let v = stack[sp - elem - 1];
@@ -1506,14 +1682,16 @@ fn run(
                         let w = d.w as usize;
                         let h = d.h as usize;
                         let base = prog.buf_base(id, frame.led_count as usize);
-                        // Nearest texel.
+                        let eb = d.elem_bytes();
+                        // Nearest texel; quantize the float colour to the format.
                         let x = floorf(u.clamp(0.0, 1.0) * (w as f32 - 1.0) + 0.5) as usize;
                         let y = floorf(v.clamp(0.0, 1.0) * (h as f32 - 1.0) + 0.5) as usize;
-                        let off = base + (y.min(h - 1) * w + x.min(w - 1)) * elem;
+                        let off = base + (y.min(h - 1) * w + x.min(w - 1)) * eb;
                         for k in 0..elem {
                             let c = stack[sp - elem + k];
-                            if off + k < arena.len() {
-                                arena[off + k] = c;
+                            let o = off + k * cb;
+                            if o + cb <= arena.len() {
+                                comp_store_num(d.comp, c, &mut arena[o..o + cb]);
                             }
                         }
                     }
@@ -1566,6 +1744,58 @@ fn run(
                     dist.max = if mx > 1e-6 { mx } else { 1.0 };
                     dist.set = true;
                 }
+            }
+            // --- reduced-precision fixed-point (FUG-10) ----------------------
+            Op::MulFixN => {
+                let frac = code[pc] as u32;
+                pc += 1;
+                let b = popi!() as i64;
+                let a = popi!() as i64;
+                pushi!(((a * b) >> frac) as i32);
+            }
+            Op::DivFixN => {
+                let frac = code[pc] as u32;
+                pc += 1;
+                let b = popi!() as i64;
+                let a = popi!() as i64;
+                pushi!(if b == 0 { 0 } else { ((a << frac) / b) as i32 });
+            }
+            Op::FixRescale => {
+                let sh = code[pc] as i8;
+                pc += 1;
+                let a = popi!();
+                pushi!(if sh >= 0 { a.wrapping_shl(sh as u32) } else { a >> ((-(sh as i32)) as u32) });
+            }
+            Op::FixToF => {
+                let frac = code[pc] as u32;
+                pc += 1;
+                let a = popi!();
+                push!(a as f32 / (1u32 << frac) as f32);
+            }
+            Op::FixFromF => {
+                let frac = code[pc] as u32;
+                pc += 1;
+                let a = pop!();
+                pushi!((a * (1u32 << frac) as f32) as i32);
+            }
+            Op::SinFix => {
+                let frac = code[pc] as u32;
+                pc += 1;
+                let a = popi!();
+                pushi!(sin_fix(a, frac));
+            }
+            Op::CosFix => {
+                let frac = code[pc] as u32;
+                pc += 1;
+                let a = popi!();
+                // cos(t) = sin(t + quarter turn); one turn = 1<<frac.
+                pushi!(sin_fix(a.wrapping_add(1 << (frac - 2)), frac));
+            }
+            Op::ExpFix => {
+                let frac = code[pc] as u32;
+                pc += 1;
+                let a = popi!();
+                pushi!(exp_fix(a, frac));
             }
         }
     }
@@ -1754,4 +1984,97 @@ fn palette(id: u8, t: f32) -> (f32, f32, f32) {
         // rainbow
         _ => hsv2rgb(t, 1.0, 1.0),
     }
+}
+
+// --- reduced-precision fixed-point transcendentals (FUG-10) ------------------
+// Pure-integer sin/exp for the narrow `fixed8` (Q1.6) / `fixed16` (Q1.14)
+// formats, so transcendental-heavy effects don't drag in the f32 soft-float
+// path. A LUT + linear interpolation; deterministic on host, wasm and device.
+
+/// One full-wave period of sine at 256 samples, Q1.15 (`sin(2π i/256)·32768`).
+static SIN_LUT: [i32; 256] = [
+    0, 804, 1608, 2411, 3212, 4011, 4808, 5602, 6393, 7180, 7962, 8740, 9512, 10279, 11039,
+    11793, 12540, 13279, 14010, 14733, 15447, 16151, 16846, 17531, 18205, 18868, 19520,
+    20160, 20788, 21403, 22006, 22595, 23170, 23732, 24279, 24812, 25330, 25833, 26320,
+    26791, 27246, 27684, 28106, 28511, 28899, 29269, 29622, 29957, 30274, 30572, 30853,
+    31114, 31357, 31581, 31786, 31972, 32138, 32286, 32413, 32522, 32610, 32679, 32729,
+    32758, 32768, 32758, 32729, 32679, 32610, 32522, 32413, 32286, 32138, 31972, 31786,
+    31581, 31357, 31114, 30853, 30572, 30274, 29957, 29622, 29269, 28899, 28511, 28106,
+    27684, 27246, 26791, 26320, 25833, 25330, 24812, 24279, 23732, 23170, 22595, 22006,
+    21403, 20788, 20160, 19520, 18868, 18205, 17531, 16846, 16151, 15447, 14733, 14010,
+    13279, 12540, 11793, 11039, 10279, 9512, 8740, 7962, 7180, 6393, 5602, 4808, 4011,
+    3212, 2411, 1608, 804, 0, -804, -1608, -2411, -3212, -4011, -4808, -5602, -6393, -7180,
+    -7962, -8740, -9512, -10279, -11039, -11793, -12540, -13279, -14010, -14733, -15447,
+    -16151, -16846, -17531, -18205, -18868, -19520, -20160, -20788, -21403, -22006, -22595,
+    -23170, -23732, -24279, -24812, -25330, -25833, -26320, -26791, -27246, -27684, -28106,
+    -28511, -28899, -29269, -29622, -29957, -30274, -30572, -30853, -31114, -31357, -31581,
+    -31786, -31972, -32138, -32286, -32413, -32522, -32610, -32679, -32729, -32758, -32768,
+    -32758, -32729, -32679, -32610, -32522, -32413, -32286, -32138, -31972, -31786, -31581,
+    -31357, -31114, -30853, -30572, -30274, -29957, -29622, -29269, -28899, -28511, -28106,
+    -27684, -27246, -26791, -26320, -25833, -25330, -24812, -24279, -23732, -23170, -22595,
+    -22006, -21403, -20788, -20160, -19520, -18868, -18205, -17531, -16846, -16151, -15447,
+    -14733, -14010, -13279, -12540, -11793, -11039, -10279, -9512, -8740, -7962, -7180,
+    -6393, -5602, -4808, -4011, -3212, -2411, -1608, -804,
+];
+
+/// `e^x` over x ∈ [-2, 2) at 256 samples, Q1.14, clamped to the representable
+/// [-2, 2) range (so exp saturates at +2 for x ≳ 0.69 — it is a decay curve).
+static EXP_LUT: [i32; 256] = [
+    2217, 2252, 2288, 2324, 2360, 2398, 2435, 2474, 2513, 2552, 2592, 2633, 2675, 2717,
+    2760, 2803, 2847, 2892, 2937, 2984, 3031, 3078, 3127, 3176, 3226, 3277, 3329, 3381,
+    3434, 3488, 3543, 3599, 3656, 3713, 3772, 3831, 3892, 3953, 4015, 4078, 4143, 4208,
+    4274, 4341, 4410, 4479, 4550, 4621, 4694, 4768, 4843, 4919, 4997, 5076, 5155, 5237,
+    5319, 5403, 5488, 5574, 5662, 5751, 5842, 5934, 6027, 6122, 6219, 6317, 6416, 6517,
+    6620, 6724, 6830, 6937, 7047, 7158, 7270, 7385, 7501, 7619, 7739, 7861, 7985, 8111,
+    8238, 8368, 8500, 8634, 8770, 8908, 9048, 9191, 9335, 9482, 9632, 9783, 9937, 10094,
+    10253, 10414, 10578, 10745, 10914, 11086, 11261, 11438, 11618, 11801, 11987, 12176,
+    12367, 12562, 12760, 12961, 13165, 13372, 13583, 13797, 14014, 14235, 14459, 14687,
+    14918, 15153, 15391, 15634, 15880, 16130, 16384, 16642, 16904, 17170, 17441, 17715,
+    17994, 18278, 18566, 18858, 19155, 19456, 19763, 20074, 20390, 20711, 21037, 21369,
+    21705, 22047, 22394, 22747, 23105, 23469, 23839, 24214, 24595, 24983, 25376, 25776,
+    26182, 26594, 27013, 27438, 27870, 28309, 28755, 29208, 29668, 30135, 30609, 31091,
+    31581, 32078, 32583, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767,
+    32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767,
+    32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767,
+    32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767,
+    32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767,
+    32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767,
+    32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767,
+    32767, 32767,
+];
+
+/// `sin(turns)` in Q1.`frac` fixed-point. `raw` is the angle in TURNS (1.0 =
+/// 2π) as Q1.`frac`; the result is Q1.`frac` in [-1, 1]. Frac ≤ 15. No range
+/// reduction — the phase wraps by masking the fractional turn (power-of-two).
+fn sin_fix(raw: i32, frac: u32) -> i32 {
+    let one = 1i64 << frac; // 1.0 turn
+    let phase = (raw as i64) & (one - 1); // fractional turn, 0..one
+    let n = SIN_LUT.len() as i64; // 256
+    let pos = phase * n; // in units of `one`
+    let idx = (pos >> frac) as usize & 255;
+    let sub = pos & (one - 1); // 0..one-1
+    let a = SIN_LUT[idx] as i64;
+    let b = SIN_LUT[(idx + 1) & 255] as i64;
+    let q15 = a + (((b - a) * sub) >> frac); // interpolated Q1.15 sine
+    let s = 15i64 - frac as i64;
+    (if s >= 0 { q15 >> s } else { q15 << (-s) }) as i32
+}
+
+/// `e^x` in Q1.`frac`. `raw` is Q1.`frac` in [-2, 2); the result is Q1.`frac`
+/// SATURATED to [-2, 2) (so exp pins at +2 once x ≳ 0.69 — meant for decay).
+/// Frac ≤ 14.
+fn exp_fix(raw: i32, frac: u32) -> i32 {
+    let one = 1i64 << frac;
+    let span = 4 * one; // domain width [-2, 2) in Q1.frac
+    let shifted = ((raw as i64) + 2 * one).clamp(0, span - 1); // (x+2), 0..span
+    let n = EXP_LUT.len() as i64; // 256
+    let pos = shifted * n;
+    let idx = (pos / span) as usize;
+    let sub = pos % span;
+    let a = EXP_LUT[idx] as i64;
+    let b = EXP_LUT[(idx + 1).min(n as usize - 1)] as i64;
+    let q14 = a + ((b - a) * sub) / span; // interpolated Q1.14
+    let s = 14i64 - frac as i64;
+    let v = if s >= 0 { q14 >> s } else { q14 << (-s) };
+    v.clamp(-2 * one, 2 * one - 1) as i32
 }

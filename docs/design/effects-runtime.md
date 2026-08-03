@@ -67,7 +67,8 @@ vec3 shade(Led led) {
 }
 ```
 
-- **Types**: `float`, `vec2/3/4`, `int`, `fixed`, `bool`. Colors are `vec3`/`vec4`.
+- **Types**: `float`, `vec2/3/4`, `int`, `fixed`, `fixed8`, `fixed16`, `bool`.
+  Colors are `vec3`/`vec4`.
   - `int` is a native 32-bit integer with real integer opcodes (`+ - * / %`),
     not float-emulated — cheap on the FPU-less core.
   - `fixed` is **Q16.16 fixed-point**: use it for the smooth quantities (phase,
@@ -75,9 +76,21 @@ vec3 shade(Led led) {
     are plain integer adds; `*`/`/` use the Q16.16 mul/div opcodes. Literals like
     `0.5` become `fixed` in a `fixed` context; convert explicitly with
     `fixed(x)` / `float(x)` / `int(x)`.
-  - **Mixed-type arithmetic promotes** `int → fixed → float` (widest operand
-    wins), so `fixed * float` yields `float`. Keep a hot expression all-`fixed`
-    (or all-`int`) to stay off soft-float.
+  - **Reduced-precision fixed-point** (FUG-10) — `fixed8` (Q1.6, s1.1.6) and
+    `fixed16` (Q1.14, s1.1.14), both **range [-2, 2)**. Same scaled-integer
+    representation as `fixed` (so `+`/`-`/compare are plain integer ops; `*`/`/`
+    shift by the fraction width), just narrower. Their reason to exist is the
+    **accelerated transcendentals**: `sin`/`cos`/`exp` on a `fixed8`/`fixed16`
+    value compile to a pure-integer LUT (no soft-float at all), so trig-heavy
+    per-LED math stops depending on `f32`. `sin`/`cos` take the angle in **turns**
+    (`1.0` = 2π), so there is no range reduction; they return a value in `[-1, 1]`.
+    `exp` **saturates** at `+2` (it is a decay curve; useful for `x ≲ 0.69`).
+    Convert with `fixed8(x)` / `fixed16(x)` / `float(x)`. The `±2` range means
+    these are for normalized quantities (colors, phases, sensor readings), not
+    world coordinates — reach for `fixed` (Q16.16) when you need range.
+  - **Mixed-type arithmetic promotes** along `int → fixed8 → fixed16 → fixed →
+    float` (widest operand wins), so `fixed16 * float` yields `float`. Keep a hot
+    expression all-`fixed16` (or all-`int`) to stay off soft-float.
 - **Contexts** (built-in reads):
   - global: `time` (s, float), `dt` (s), `frame` (int)
   - `Led led`: `led.pos` (vec3, in the map's gravity-leveled frame, roughly
@@ -103,6 +116,21 @@ vec3 shade(Led led) {
   index clamped in-bounds at runtime). This is what lets a script keep an array
   of agents in `state` and simulate them in `update()`. Slot budgets: `state`
   and locals are each ≤128 slots (`MAX_STATE`/`MAX_LOCALS`).
+- **Packed narrow storage** (FUG-10) — hidden `buffer`s and `texture`s (the
+  per-LED / 2D feedback arrays that dominate the runtime's RAM) store each
+  element at a chosen **component precision**, not a fixed 4-byte f32 slot. The
+  arena is byte-addressed, so an 8-bit component costs one byte:
+  - `buffer fixed8 trail;` — one `fixed8` per LED = **1 B/LED** (a quarter of
+    an f32 buffer). Reads back as `fixed8`. `fixed16`/`int8`/`int16` likewise
+    (`int8`/`int16` read back as `int`).
+  - `buffer vec3 col : fixed8;` — a `: fixed8` / `: fixed16` annotation
+    compresses a float/vec element's storage while reading/writing as float
+    (`vec3` → **3 B/LED** instead of 12). Same annotation on a `texture`.
+  - `sample(tex, uv)` always dequantizes to a **float** colour regardless of the
+    stored precision; flat `buf[i]` reads the declared element type. Default
+    (unannotated) storage is f32, so existing effects are byte-for-byte
+    unchanged. The on-device video `set_texture` path packs frames straight into
+    the target texture's format, so a narrow texture compresses the stream too.
 
 ## Bytecode / VM
 
@@ -118,7 +146,12 @@ Opcode families:
 - **integer** `AddI/SubI/MulI/DivI/ModI/NegI/CmpI` — native RV32IM, no soft-float.
 - **fixed-point (Q16.16)** `MulFix/DivFix` (adds/subs/neg/compares reuse the int
   ops since the representation is a scaled integer).
-- **conversions** `I2F/F2I/Fix2F/F2Fix/I2Fix/Fix2I` — emitted by casts and by
+- **reduced-precision fixed-point (Q1.6 / Q1.14)** `MulFixN/DivFixN` (a `frac`
+  operand selects the fraction width), `FixRescale` (shift between fixed formats),
+  `FixToF/FixFromF` (the `f32` boundary), and the accelerated transcendentals
+  `SinFix/CosFix/ExpFix` — integer LUT + linear interpolation, **no soft-float**.
+- **conversions** `I2F/F2I/Fix2F/F2Fix/I2Fix/Fix2I` (Q16.16/int) and the general
+  `FixRescale/FixToF/FixFromF` (any fixed width) — emitted by casts and by
   mixed-type promotion.
 - data/flow: `PushConst`, `LoadUniform(idx,size)`, `LoadCtx(id)` (time/led.*/imu),
   `LoadState/StoreState(idx,size)`, `LoadLocal/StoreLocal`, `MakeVec(n)`,

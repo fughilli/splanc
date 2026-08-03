@@ -13,9 +13,10 @@ pub struct FxPreview {
     vm: Vm,
     frame: Frame,
     // Hidden-buffer/texture arena (the browser mirror of the device's fx arena).
-    // Sized to prog.arena_slots(led_count) in update(); resize preserves contents
-    // so buffers persist across frames (only grows/pads when led_count changes).
-    arena: Vec<f32>,
+    // BYTE-addressed (FUG-10 packed storage). Sized to prog.arena_bytes(led_count)
+    // in update(); resize preserves contents so buffers persist across frames
+    // (only grows/pads when led_count changes).
+    arena: Vec<u8>,
     // Per-LED topology (LED order), mirroring the device's FX_LED_TOPO cache so
     // led.seg / led.s / led.branch preview identically to the firmware. Empty
     // until set_topology() is called (then shade() reads seg=-1/s=0/branch=false,
@@ -67,14 +68,14 @@ impl FxPreview {
     }
 
     /// Stream a full-resolution RGBA frame into texture `tex_index`'s arena
-    /// slots, so the offline preview shows live video input WITHOUT a device
+    /// region, so the offline preview shows live video input WITHOUT a device
     /// (FUG-39). This is the browser mirror of the device's handle_set_texture
     /// (firmware/player_app/ffi.rs), minus the quantize/XOR-delta/RLE transport:
-    /// the browser already holds raw pixels, so we dequantize-equivalent straight
-    /// from RGBA into f32 slots (same luma rule for a scalar texture). `rgba` is
-    /// width*height*4 bytes, row-major, top-left origin. `led_count` MUST match
-    /// the value passed to update() so the texture's arena base lines up. Silently
-    /// drops on any mismatch, exactly like the firmware.
+    /// the browser already holds raw pixels, so we write straight from RGBA,
+    /// PACKED at the texture's component precision (FUG-10 — same luma rule for a
+    /// scalar texture). `rgba` is width*height*4 bytes, row-major, top-left
+    /// origin. `led_count` MUST match the value passed to update() so the
+    /// texture's arena base lines up. Silently drops on any mismatch.
     pub fn set_texture(&mut self, tex_index: usize, width: u32, height: u32, rgba: &[u8], led_count: u32) {
         let Ok(prog) = Program::parse(&self.bytes) else {
             return;
@@ -91,26 +92,30 @@ impl FxPreview {
         }
         // Size + (re)bind the arena for this led_count, mirroring update(): a
         // resize preserves other buffers' contents so feedback/textures persist.
-        let need = prog.arena_slots(led_count as usize);
+        let need = prog.arena_bytes(led_count as usize);
         if self.arena.len() != need {
-            self.arena.resize(need, 0.0);
+            self.arena.resize(need, 0);
         }
         let base = prog.buf_base(tex_index, led_count as usize);
         let elem = d.elem as usize;
+        let cb = ledmapper_fx_vm::comp_bytes(d.comp);
+        let eb = d.elem_bytes();
         for t in 0..n_texels {
             let r = rgba[t * 4] as f32 / 255.0;
             let g = rgba[t * 4 + 1] as f32 / 255.0;
             let b = rgba[t * 4 + 2] as f32 / 255.0;
-            let ab = base + t * elem;
+            let ab = base + t * eb;
             if elem == 1 {
-                if ab < self.arena.len() {
-                    self.arena[ab] = 0.299 * r + 0.587 * g + 0.114 * b; // luma
+                if ab + cb <= self.arena.len() {
+                    let luma = 0.299 * r + 0.587 * g + 0.114 * b;
+                    ledmapper_fx_vm::comp_store_num(d.comp, luma, &mut self.arena[ab..ab + cb]);
                 }
             } else {
                 let ch = [r, g, b, 1.0];
                 for (k, &c) in ch.iter().enumerate().take(elem.min(4)) {
-                    if ab + k < self.arena.len() {
-                        self.arena[ab + k] = c;
+                    let o = ab + k * cb;
+                    if o + cb <= self.arena.len() {
+                        ledmapper_fx_vm::comp_store_num(d.comp, c, &mut self.arena[o..o + cb]);
                     }
                 }
             }
@@ -134,9 +139,9 @@ impl FxPreview {
             // Size + (re)bind the hidden-buffer arena for this led_count. Resize
             // preserves existing contents (persistence); rebind every tick since
             // a resize may move the Vec's backing store.
-            let need = prog.arena_slots(led_count as usize);
+            let need = prog.arena_bytes(led_count as usize);
             if self.arena.len() != need {
-                self.arena.resize(need, 0.0);
+                self.arena.resize(need, 0);
             }
             self.vm.set_arena(&mut self.arena);
             self.vm.run_update(&prog, &self.frame);

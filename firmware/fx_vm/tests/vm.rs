@@ -23,7 +23,8 @@ fn fxb(n_state: u8, n_uniform_slots: u8, update: u16, shade: u16, consts: &[f32]
 }
 
 /// Like [`fxb`] but with a trailing buffer descriptor table (FLAG_BUFFERS). Each
-/// entry is (kind, elem, w, h): kind 0 = LED-arity buffer, 1 = WxH 2D texture.
+/// entry is (kind, elem, comp, w, h): kind 0 = LED-arity buffer, 1 = WxH 2D
+/// texture; `comp` is the packed component precision (see fx_vm::comp).
 fn fxb_buffers(
     n_state: u8,
     n_uniform_slots: u8,
@@ -31,7 +32,7 @@ fn fxb_buffers(
     shade: u16,
     consts: &[f32],
     code: &[u8],
-    buffers: &[(u8, u8, u16, u16)],
+    buffers: &[(u8, u8, u8, u16, u16)],
 ) -> Vec<u8> {
     let mut b = Vec::new();
     b.extend_from_slice(&MAGIC);
@@ -49,9 +50,10 @@ fn fxb_buffers(
     }
     b.extend_from_slice(code);
     b.push(buffers.len() as u8);
-    for &(kind, elem, w, h) in buffers {
+    for &(kind, elem, comp, w, h) in buffers {
         b.push(kind);
         b.push(elem);
+        b.push(comp);
         b.extend_from_slice(&w.to_le_bytes());
         b.extend_from_slice(&h.to_le_bytes());
     }
@@ -61,10 +63,11 @@ fn fxb_buffers(
 #[test]
 fn texture_rgba_written_into_arena_is_sampled() {
     // The offline video preview (FUG-39) writes a full-res RGBA frame straight
-    // into a texture's arena slots (wasm FxPreview::set_texture), which shade()
+    // into a texture's arena region (wasm FxPreview::set_texture), which shade()
     // then reads via sample(). This locks in the contract that binding sample()
-    // depends on: buf_base/arena_slots line up with SampleTex's indexing, and the
-    // RGBA->f32 conversion round-trips. One vec3 texture, 2x1, no other buffers.
+    // depends on: buf_base/arena_bytes line up with SampleTex's byte indexing,
+    // and the RGBA->packed->sample conversion round-trips. One vec3 F32 texture,
+    // 2x1, no other buffers.
     //
     // shade: return sample(tex0, led.uv)
     #[rustfmt::skip]
@@ -73,20 +76,23 @@ fn texture_rgba_written_into_arena_is_sampled() {
         Op::SampleTex as u8, 0,      // pop uv -> push 3 (bilinear, edge-clamped)
         Op::Ret as u8, 3,
     ];
-    let buf = fxb_buffers(0, 0, NO_ENTRY, 0, &[], &code, &[(1, 3, 2, 1)]);
+    let buf = fxb_buffers(0, 0, NO_ENTRY, 0, &[], &code, &[(1, 3, comp::F32, 2, 1)]);
     let prog = Program::parse(&buf).expect("parse");
 
-    // Texel 0 = red, texel 1 = green — written exactly as set_texture does:
-    // RGBA byte / 255 into consecutive elem slots at buf_base + texel*elem.
+    // Texel 0 = red, texel 1 = green — written exactly as set_texture does now:
+    // each RGBA channel /255, packed at the texture's precision (F32) into the
+    // byte-addressed arena at buf_base + texel*elem_bytes + k*comp_bytes.
     let led_count = 4usize;
     let rgba: [u8; 8] = [255, 0, 0, 255, /* */ 0, 255, 0, 255];
-    let mut arena = vec![0.0f32; prog.arena_slots(led_count)];
+    let mut arena = vec![0u8; prog.arena_bytes(led_count)];
     let base = prog.buf_base(0, led_count);
-    assert_eq!(prog.arena_slots(led_count), 6, "2 texels * vec3, led_count-independent");
-    let elem = 3usize;
+    assert_eq!(prog.arena_bytes(led_count), 6 * 4, "2 texels * vec3 * 4 B (f32), led_count-independent");
+    let d = prog.buf_desc(0).unwrap();
+    let (eb, cb) = (d.elem_bytes(), comp_bytes(d.comp));
     for t in 0..2 {
-        for k in 0..elem {
-            arena[base + t * elem + k] = rgba[t * 4 + k] as f32 / 255.0;
+        for k in 0..3 {
+            let o = base + t * eb + k * cb;
+            comp_store_num(d.comp, rgba[t * 4 + k] as f32 / 255.0, &mut arena[o..o + cb]);
         }
     }
 
@@ -405,4 +411,148 @@ fn update_counted_reports_counters() {
     assert_eq!(outcome, Outcome::Ok);
     assert_eq!(c.instrs, 5);
     assert!(vm.state[0] > 0.24 && vm.state[0] < 0.26);
+}
+
+// --- reduced-precision fixed-point / transcendentals (FUG-10) ----------------
+
+/// Push a raw fixed-point word (its i32 bits) onto the const pool. `.fxb` consts
+/// are stored as raw 32-bit words the VM reads back with `to_bits()`, so a
+/// scaled-integer value rides in as `f32::from_bits`.
+fn fx_const(raw: i32) -> f32 {
+    f32::from_bits(raw as u32)
+}
+
+/// Run a scalar-producing program and return its first output channel (0..255).
+/// The `code` must push exactly ONE float in [0,1] then two zeros and `Ret 3`.
+fn run_scalar(consts: &[f32], code: &[u8]) -> u8 {
+    let buf = fxb(0, 0, NO_ENTRY, 0, consts, code);
+    let prog = Program::parse(&buf).expect("parse");
+    Vm::new().run_shade(&prog, &Frame::default(), &Led::default()).0
+}
+
+#[test]
+fn fixed16_sin_cos_match_f32() {
+    // sin/cos in Q1.14, angle in turns. Check a few angles against a soft-float
+    // reference through the 8-bit output channel (tolerance ±2 codes).
+    for &(turn, want) in &[
+        (0.0f32, 0.0f32),   // sin 0
+        (0.25, 1.0),        // sin 90° = 1
+        (0.125, 0.70710677), // sin 45°
+    ] {
+        let raw = (turn * (1 << 14) as f32) as i32;
+        #[rustfmt::skip]
+        let code = [
+            Op::PushConst as u8, 0, 0,   // angle (Q1.14 turns)
+            Op::SinFix as u8, 14,
+            Op::FixToF as u8, 14,        // -> float in [-1,1]
+            Op::PushConst as u8, 1, 0,   // 0.0
+            Op::PushConst as u8, 1, 0,   // 0.0
+            Op::Ret as u8, 3,
+        ];
+        let got = run_scalar(&[fx_const(raw), 0.0], &code);
+        let expect = (want.clamp(0.0, 1.0) * 255.0) as i32;
+        assert!((got as i32 - expect).abs() <= 2, "sin({turn} turn): got {got}, want ~{expect}");
+    }
+    // cos(0) = 1.0 -> 255.
+    #[rustfmt::skip]
+    let code = [
+        Op::PushConst as u8, 0, 0,
+        Op::CosFix as u8, 14,
+        Op::FixToF as u8, 14,
+        Op::PushConst as u8, 0, 0,
+        Op::PushConst as u8, 0, 0,
+        Op::Ret as u8, 3,
+    ];
+    let got = run_scalar(&[fx_const(0)], &code);
+    assert!((got as i32 - 255).abs() <= 2, "cos(0): got {got}");
+}
+
+#[test]
+fn fixed8_sin_coarser_but_correct() {
+    // Same sin(90°)=1 in Q1.6 (frac=6). Coarser quantization, wider tolerance.
+    let raw = (0.25f32 * (1 << 6) as f32) as i32; // 0.25 turn in Q1.6
+    #[rustfmt::skip]
+    let code = [
+        Op::PushConst as u8, 0, 0,
+        Op::SinFix as u8, 6,
+        Op::FixToF as u8, 6,
+        Op::PushConst as u8, 1, 0,
+        Op::PushConst as u8, 1, 0,
+        Op::Ret as u8, 3,
+    ];
+    let got = run_scalar(&[fx_const(raw), 0.0], &code);
+    assert!((got as i32 - 255).abs() <= 6, "fixed8 sin(90°): got {got}");
+}
+
+#[test]
+fn exp_fix_decay_and_saturation() {
+    // exp(0) = 1.0 -> 255; exp(-1) = 0.3679 -> ~93; exp(1) saturates (>= +2) -> 255.
+    let one = (1 << 14) as f32;
+    for &(x, want) in &[(0.0f32, 1.0f32), (-1.0, 0.36787945)] {
+        let raw = (x * one) as i32;
+        #[rustfmt::skip]
+        let code = [
+            Op::PushConst as u8, 0, 0,
+            Op::ExpFix as u8, 14,
+            Op::FixToF as u8, 14,
+            Op::PushConst as u8, 1, 0,
+            Op::PushConst as u8, 1, 0,
+            Op::Ret as u8, 3,
+        ];
+        let got = run_scalar(&[fx_const(raw), 0.0], &code);
+        let expect = (want.clamp(0.0, 1.0) * 255.0) as i32;
+        assert!((got as i32 - expect).abs() <= 3, "exp({x}): got {got}, want ~{expect}");
+    }
+}
+
+#[test]
+fn mul_fix_n_and_rescale() {
+    // Q1.14: 0.5 * 1.5 = 0.75 -> 191. Then rescale that Q1.14 down to Q1.6 and
+    // back up, confirming FixRescale round-trips through the narrower format.
+    let one14 = (1i32 << 14) as f32;
+    let half = (0.5 * one14) as i32;
+    let onefive = (1.5 * one14) as i32;
+    #[rustfmt::skip]
+    let code = [
+        Op::PushConst as u8, 0, 0,   // 0.5  (Q1.14)
+        Op::PushConst as u8, 1, 0,   // 1.5  (Q1.14)
+        Op::MulFixN as u8, 14,       // -> 0.75 (Q1.14)
+        Op::FixRescale as u8, (-8i8) as u8, // Q1.14 -> Q1.6 (>>8)
+        Op::FixRescale as u8, 8u8,          // Q1.6 -> Q1.14 (<<8)
+        Op::FixToF as u8, 14,        // -> 0.75 float
+        Op::PushConst as u8, 2, 0,   // 0.0
+        Op::PushConst as u8, 2, 0,
+        Op::Ret as u8, 3,
+    ];
+    let got = run_scalar(&[fx_const(half), fx_const(onefive), 0.0], &code);
+    // 0.75 * 255 = 191 (round-trip through Q1.6 keeps it within a code or two).
+    assert!((got as i32 - 191).abs() <= 3, "0.5*1.5 via Q1.14: got {got}");
+}
+
+// --- packed narrow storage helpers (FUG-10) ----------------------------------
+
+#[test]
+fn comp_pack_unpack_round_trips() {
+    let mut b = [0u8; 4];
+    // Raw fixed8: the Q1.6 scaled-int stack word survives 1-byte storage.
+    comp_store(comp::FIX8, f32::from_bits(32u32), &mut b); // 0.5 in Q1.6 = 32
+    assert_eq!(b[0], 32);
+    assert_eq!(comp_load(comp::FIX8, &b).to_bits() as i32, 32);
+    // Raw fixed16: 0.5 in Q1.14 = 8192, stored little-endian in 2 bytes.
+    comp_store(comp::FIX16, f32::from_bits(8192u32), &mut b);
+    assert_eq!(i16::from_le_bytes([b[0], b[1]]), 8192);
+    assert_eq!(comp_load(comp::FIX16, &b).to_bits() as i32, 8192);
+    // Float-presenting FIX8F: 0.75 quantizes to 48 and dequantizes back.
+    comp_store_num(comp::FIX8F, 0.75, &mut b);
+    assert_eq!(b[0] as i8, 48);
+    assert!((comp_load_num(comp::FIX8F, &b) - 0.75).abs() < 1e-6);
+    // Narrow int clamps out-of-range instead of wrapping wildly.
+    comp_store(comp::I8, f32::from_bits(999i32 as u32), &mut b);
+    assert_eq!(b[0] as i8, 127);
+    comp_store(comp::I16, f32::from_bits(-40000i32 as u32), &mut b);
+    assert_eq!(i16::from_le_bytes([b[0], b[1]]), i16::MIN);
+    // f32 stays exact; widths are as declared.
+    comp_store(comp::F32, 0.3, &mut b);
+    assert!((comp_load(comp::F32, &b) - 0.3).abs() < 1e-6);
+    assert_eq!((comp_bytes(comp::F32), comp_bytes(comp::FIX16), comp_bytes(comp::FIX8)), (4, 2, 1));
 }
