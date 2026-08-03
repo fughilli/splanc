@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/fughilli/splanc/pi/hitl/internal/api"
+	"github.com/fughilli/splanc/pi/hitl/internal/pool"
 )
 
 func main() {
@@ -57,6 +58,12 @@ func main() {
 		err = cmdJtag(args)
 	case "gdb":
 		err = cmdGdb(args)
+	case "pool":
+		err = cmdPool(args)
+	case "run":
+		err = cmdRun(args)
+	case "cp":
+		err = cmdCp(args)
 	case "-h", "--help", "help":
 		usage()
 		return
@@ -83,8 +90,12 @@ func usage() {
   hitl ble     scan [--name S] [--seconds N] | gatt <address>   [--id RES] [--keep]
   hitl jtag    [--id RES] [--keep] [-- openocd args]            # C6 built-in USB-JTAG
   hitl gdb     [--elf FILE] [--id RES] [--keep] [-- gdb args]   # attach gdb via openocd
+  hitl run     [--id RES] [--keep] [--tty] [--server URL] -- <command...>  # run in the reservation
+  hitl cp      [--id RES] [--keep] [--server URL] <local...> <remote-dir>  # copy files in
+  hitl pool    [--server-list LIST]                            # status of every runner in the pool
 
-Server URL: --server or $HITL_SERVER (e.g. http://hitl-rig:8087).
+Server URL: --server, else $HITL_SERVER, else a free runner from $HITL_SERVERS
+(comma/space list of hosts), else http://hitl-rig:8087.
 Flash bundle: build one with e.g.
   bazel build //firmware/player_app:esp32c6_flashbundle
 `)
@@ -100,6 +111,9 @@ func cmdReserve(args []string) error {
 	keep := fs.Bool("keep", false, "keep the reservation after the SSH session exits (default: release)")
 	noShell := fs.Bool("no-shell", false, "just wait until active and print the endpoint; don't open a shell")
 	_ = fs.Parse(args)
+	if err := resolve(server); err != nil {
+		return err
+	}
 
 	pub, priv, err := resolveKeypair(*keyPath)
 	if err != nil {
@@ -166,6 +180,9 @@ func cmdStatus(args []string) error {
 	fs := newFlags("status")
 	server := serverFlag(fs)
 	_ = fs.Parse(args)
+	if err := resolve(server); err != nil {
+		return err
+	}
 	var s api.Status
 	if err := (client{base: *server}).get("/status", &s); err != nil {
 		return err
@@ -188,6 +205,9 @@ func cmdRelease(args []string) error {
 	fs := newFlags("release")
 	server := serverFlag(fs)
 	_ = fs.Parse(args[1:])
+	if err := resolve(server); err != nil {
+		return err
+	}
 	return (client{base: *server}).postRaw(fmt.Sprintf("/reservation/%s/release", id), nil)
 }
 
@@ -200,6 +220,9 @@ func cmdSSH(args []string) error {
 	server := serverFlag(fs)
 	keyPath := fs.String("key", "", "public key file (default: the dedicated ~/.config/hitl key)")
 	_ = fs.Parse(args[1:])
+	if err := resolve(server); err != nil {
+		return err
+	}
 	_, priv, err := resolveKeypair(*keyPath)
 	if err != nil {
 		return err
@@ -232,6 +255,9 @@ func cmdFlash(args []string) error {
 	monitor := fs.Bool("monitor", false, "read the serial console after flashing")
 	monSecs := fs.Float64("monitor-seconds", 10, "how long to read serial with --monitor (0 = until Ctrl-C)")
 	_ = fs.Parse(args)
+	if err := resolve(server); err != nil {
+		return err
+	}
 
 	bundle := fs.Arg(0)
 	if bundle == "" {
@@ -277,6 +303,9 @@ func cmdMonitor(args []string) error {
 	secs := fs.Float64("seconds", 0, "how long to read (0 = until Ctrl-C)")
 	reset := fs.Bool("reset", false, "hard-reset the board first (to catch boot logs)")
 	_ = fs.Parse(args)
+	if err := resolve(server); err != nil {
+		return err
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -311,6 +340,9 @@ func cmdBle(args []string) error {
 	seconds := fs.Float64("seconds", 6, "scan duration")
 	name := fs.String("name", "", "scan: only show devices whose name contains this")
 	_ = fs.Parse(args)
+	if err := resolve(server); err != nil {
+		return err
+	}
 
 	var remote string
 	switch sub {
@@ -350,6 +382,9 @@ func cmdJtag(args []string) error {
 	id := fs.String("id", "", "use this already-active reservation instead of making one")
 	keep := fs.Bool("keep", false, "keep the reservation afterward (default: release when we made it)")
 	_ = fs.Parse(args)
+	if err := resolve(server); err != nil {
+		return err
+	}
 
 	// Any remaining args pass through to openocd (e.g. -c "init; reset halt; ...").
 	// No args → hitl-jtag's default (halt + read pc + reset-run).
@@ -382,6 +417,9 @@ func cmdGdb(args []string) error {
 	keep := fs.Bool("keep", false, "keep the reservation afterward (default: release when we made it)")
 	elf := fs.String("elf", "", "firmware ELF to load symbols from (copied into the container)")
 	_ = fs.Parse(args)
+	if err := resolve(server); err != nil {
+		return err
+	}
 
 	if *elf != "" {
 		if _, err := os.Stat(*elf); err != nil {
@@ -409,6 +447,114 @@ func cmdGdb(args []string) error {
 		remote += " " + shellQuote(a)
 	}
 	return sshRunTTY(ctx, priv, ep, remote)
+}
+
+// --- run / cp -------------------------------------------------------------
+
+// cmdRun executes an arbitrary command inside a reservation (reserving one if
+// --id isn't given). It's the generic sibling of flash/monitor/ble — used by the
+// test harness to drive a copied-in test driver against the DUT.
+func cmdRun(args []string) error {
+	fs := newFlags("run")
+	server := serverFlag(fs)
+	owner := fs.String("owner", envOr("HITL_OWNER", defaultOwner()), "reservation owner id")
+	keyPath := fs.String("key", "", "public key to authorize (default: dedicated ~/.config/hitl key)")
+	id := fs.String("id", "", "use this already-active reservation instead of making one")
+	keep := fs.Bool("keep", false, "keep the reservation afterward (default: release when we made it)")
+	tty := fs.Bool("tty", false, "allocate a pseudo-tty (for interactive commands)")
+	_ = fs.Parse(args)
+	if err := resolve(server); err != nil {
+		return err
+	}
+	remoteArgs := fs.Args()
+	if len(remoteArgs) == 0 {
+		return fmt.Errorf("usage: hitl run [flags] -- <command...>")
+	}
+	// Re-quote each arg so a multi-word arg stays one arg on the remote shell.
+	parts := make([]string, len(remoteArgs))
+	for i, a := range remoteArgs {
+		parts[i] = shellQuote(a)
+	}
+	remote := strings.Join(parts, " ")
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	c := client{base: *server}
+	ep, priv, release, err := acquire(ctx, c, *server, *keyPath, *owner, *id, *keep)
+	if err != nil {
+		return err
+	}
+	defer release()
+	if *tty {
+		return sshRunTTY(ctx, priv, ep, remote)
+	}
+	return sshRun(ctx, priv, ep, remote)
+}
+
+// cmdCp copies local files into a reservation's container (a remote directory).
+func cmdCp(args []string) error {
+	fs := newFlags("cp")
+	server := serverFlag(fs)
+	owner := fs.String("owner", envOr("HITL_OWNER", defaultOwner()), "reservation owner id")
+	keyPath := fs.String("key", "", "public key to authorize (default: dedicated ~/.config/hitl key)")
+	id := fs.String("id", "", "use this already-active reservation instead of making one")
+	keep := fs.Bool("keep", false, "keep the reservation afterward (default: release when we made it)")
+	_ = fs.Parse(args)
+	if err := resolve(server); err != nil {
+		return err
+	}
+	rest := fs.Args()
+	if len(rest) < 2 {
+		return fmt.Errorf("usage: hitl cp [flags] <local...> <remote-dir>")
+	}
+	locals, remoteDir := rest[:len(rest)-1], rest[len(rest)-1]
+	for _, l := range locals {
+		if _, err := os.Stat(l); err != nil {
+			return fmt.Errorf("local file: %w", err)
+		}
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	c := client{base: *server}
+	ep, priv, release, err := acquire(ctx, c, *server, *keyPath, *owner, *id, *keep)
+	if err != nil {
+		return err
+	}
+	defer release()
+	return scpTo(ctx, priv, ep, locals, remoteDir)
+}
+
+// --- pool -----------------------------------------------------------------
+
+// cmdPool prints the status of every runner in $HITL_SERVERS (or --server-list)
+// and which one a bare `hitl reserve` would pick. Read-only; makes no reservation.
+func cmdPool(args []string) error {
+	fs := newFlags("pool")
+	list := fs.String("server-list", os.Getenv("HITL_SERVERS"), "comma/space list of runner hosts (default $HITL_SERVERS)")
+	_ = fs.Parse(args)
+	servers := pool.Normalize(*list)
+	if len(servers) == 0 {
+		return fmt.Errorf("no runners: set $HITL_SERVERS or pass --server-list")
+	}
+	probes := pool.Probes(servers, fetchStatus)
+	for _, p := range probes {
+		if p.Err != nil {
+			fmt.Printf("%-32s  DOWN (%v)\n", p.URL, p.Err)
+			continue
+		}
+		st := p.Status
+		who := "idle"
+		if st.Active != nil {
+			who = fmt.Sprintf("busy owner=%q", st.Active.Owner)
+		}
+		fmt.Printf("%-32s  %-28s queue=%d lease=%ds\n", p.URL, who, st.QueueLength, st.LeaseSeconds)
+	}
+	if picked, err := pool.Pick(probes); err == nil {
+		fmt.Printf("\npick: %s\n", picked)
+	} else {
+		fmt.Fprintf(os.Stderr, "\nno pick: %v\n", err)
+	}
+	return nil
 }
 
 // acquire yields an active reservation's SSH endpoint (host rewritten to match
@@ -640,7 +786,54 @@ func (c client) heartbeatLoop(ctx context.Context, id string) {
 func newFlags(name string) *flag.FlagSet { return flag.NewFlagSet(name, flag.ExitOnError) }
 
 func serverFlag(fs *flag.FlagSet) *string {
-	return fs.String("server", envOr("HITL_SERVER", "http://hitl-rig:8087"), "rig hitl-managerd URL")
+	// Default empty so resolveServer can distinguish "unset" (→ $HITL_SERVER, then
+	// pool, then fallback) from an explicit --server / $HITL_SERVER value.
+	return fs.String("server", envOr("HITL_SERVER", ""), "rig hitl-managerd URL (default $HITL_SERVER, or a free runner from $HITL_SERVERS)")
+}
+
+// resolveServer turns the (possibly empty) --server/$HITL_SERVER value into a
+// concrete runner URL. With neither set but $HITL_SERVERS listing a runner pool,
+// it probes every runner's /status and picks a free one (see internal/pool).
+func resolveServer(s string) (string, error) {
+	if strings.TrimSpace(s) != "" {
+		return s, nil
+	}
+	if list := os.Getenv("HITL_SERVERS"); strings.TrimSpace(list) != "" {
+		servers := pool.Normalize(list)
+		picked, err := pool.Pick(pool.Probes(servers, fetchStatus))
+		if err != nil {
+			return "", fmt.Errorf("pool: %w", err)
+		}
+		fmt.Fprintf(os.Stderr, "pool: picked %s (of %d runners)\n", picked, len(servers))
+		return picked, nil
+	}
+	return "http://hitl-rig:8087", nil
+}
+
+// fetchStatus queries one runner's /status with a short timeout, so a down
+// runner in the pool is skipped quickly rather than hanging the whole pick.
+func fetchStatus(base string) (*api.Status, error) {
+	hc := &http.Client{Timeout: 4 * time.Second}
+	resp, err := hc.Get(base + "/status")
+	if err != nil {
+		return nil, err
+	}
+	var s api.Status
+	if err := decode(resp, &s); err != nil {
+		return nil, err
+	}
+	return &s, nil
+}
+
+// resolve replaces *server in place with the concrete runner URL (see
+// resolveServer). Call once, right after fs.Parse.
+func resolve(server *string) error {
+	s, err := resolveServer(*server)
+	if err != nil {
+		return err
+	}
+	*server = s
+	return nil
 }
 
 // hostFromServer extracts the host (name or IP) from the --server URL, so the

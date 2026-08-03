@@ -1,0 +1,19 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "hitl-managerd_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/fughilli/splanc/pi/hitl/cmd/hitl-managerd",
+    visibility = ["//visibility:private"],
+    deps = [
+        "//pi/hitl/internal/api",
+        "//pi/hitl/internal/queue",
+        "//pi/hitl/internal/runner",
+    ],
+)
+
+go_binary(
+    name = "hitl-managerd",
+    embed = [":hitl-managerd_lib"],
+    visibility = ["//visibility:public"],
+)

@@ -39,13 +39,41 @@ container + sshd bring-up, USBIP passthrough of the dev board, the JTAG/BLE/WiFi
 toolbox layers, and the full Pi image build. MVP uses `--device` tty passthrough
 of the ESP32 until USBIP is wired.
 
+## Tests (FUG-33)
+
+An end-to-end suite drives a **pool** of rigs (the checkout mechanism) and
+checks ImprovBLE setup, rename, and time sync on a real board:
+
+```sh
+bazel test //pi/hitl/tests:hitl_test           # pure-logic units (codec/sync/pool)
+export HITL_SERVERS="hitl-rig-1, hitl-rig-2"    # pool; free runner is auto-picked
+bazel run  //pi/hitl/harness:e2e -- \
+    --bundle bazel-bin/firmware/player_app/esp32c6_flashbundle.tar \
+    --wifi-ssid BigVibes --wifi-pass SECRET     # reserve → flash → improv → ws
+```
+
+The suite is `tags = ["manual", "hitl"]`, so it stays out of `bazel test //...`
+and gets its own lane: a dedicated `hitl-tests` CI job (in
+`.github/workflows/test.yaml`) collects the `hitl`-tagged test targets with a
+bazel query — `bazel test $(bazel query 'attr(tags, "\bhitl\b", tests(//...))')`
+— and runs the pure-logic units so the Improv/sync/pool code can't drift.
+
+`e2e` needs a live rig + board; it reserves a **free** rig from `$HITL_SERVERS`
+(else `$HITL_SERVER`, else a specific `--server`), so it never queues behind a
+busy one. Being a `py_binary` it's excluded from the `tests(...)` query; the
+`.github/workflows/hitl.yaml` job runs it on demand, joining the tailnet with a
+`TS_AUTHKEY` secret and reading the pool from `HITL_SERVERS` (that file's header
+documents the `HITL` environment config).
+
 ## Layout
 
 ```text
 pi/hitl/
   cmd/hitl-managerd/   # Pi-side reservation daemon (Go)
   cmd/hitl/            # agent CLI (Go)
-  internal/{api,queue,runner}/
+  internal/{api,queue,runner,pool}/
+  harness/             # Python HITL client + e2e driver (FUG-33)
+  tests/               # pure-logic unit tests (codec/sync/pool)
   nix/
     packages.nix       # buildGoModule -> bin/hitl{,-managerd}
     container.nix      # dockerTools test container (sshd + ESP toolbox)

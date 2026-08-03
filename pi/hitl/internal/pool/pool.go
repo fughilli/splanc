@@ -1,0 +1,138 @@
+// Package pool turns a list of HITL runner endpoints (from $HITL_SERVERS) into a
+// single chosen runner: it queries each runner's /status and picks a FREE one so
+// an agent doesn't queue behind a busy rig when another sits idle.
+//
+// Selection order: prefer a runner with no active holder (idle); if none is
+// idle, prefer the shortest queue (you'll wait the least); ties break by the
+// order the runner appeared in $HITL_SERVERS (stable/deterministic). Runners
+// that fail to answer /status are skipped, but reported so a fully-down pool is
+// an error rather than a silent hang.
+package pool
+
+import (
+	"fmt"
+	"net/url"
+	"sort"
+	"strings"
+
+	"github.com/fughilli/splanc/pi/hitl/internal/api"
+)
+
+// DefaultPort is the daemon API port assumed for bare hostnames in $HITL_SERVERS.
+const DefaultPort = "8087"
+
+// Normalize splits a $HITL_SERVERS value (comma- and/or whitespace-separated)
+// into canonical base URLs. Entries may be a bare host ("hitl-rig"), host:port,
+// or a full URL; bare hosts get http:// and :8087. Order and duplicates from the
+// input are preserved except exact-duplicate URLs, which are dropped.
+func Normalize(list string) []string {
+	fields := strings.FieldsFunc(list, func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\t' || r == '\n'
+	})
+	var out []string
+	seen := map[string]bool{}
+	for _, f := range fields {
+		u := normalizeOne(f)
+		if u == "" || seen[u] {
+			continue
+		}
+		seen[u] = true
+		out = append(out, u)
+	}
+	return out
+}
+
+func normalizeOne(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	if !strings.Contains(s, "://") {
+		s = "http://" + s
+	}
+	u, err := url.Parse(s)
+	if err != nil || u.Hostname() == "" {
+		return ""
+	}
+	if u.Port() == "" {
+		u.Host = u.Hostname() + ":" + DefaultPort
+	}
+	u.Path = strings.TrimSuffix(u.Path, "/")
+	return u.String()
+}
+
+// Probe is one runner's queried state (or the error that querying it produced).
+type Probe struct {
+	URL    string
+	Status *api.Status
+	Err    error
+}
+
+// idle reports whether this runner has no active holder (immediately available).
+func (p Probe) idle() bool {
+	return p.Err == nil && p.Status != nil && p.Status.Active == nil
+}
+
+// queue reports the number of waiters (active excluded); MaxInt for unreachable
+// runners so they sort last.
+func (p Probe) queue() int {
+	if p.Err != nil || p.Status == nil {
+		return int(^uint(0) >> 1)
+	}
+	q := p.Status.QueueLength
+	if p.Status.Active != nil {
+		q++ // an active holder is one more thing ahead of a new reservation
+	}
+	return q
+}
+
+// StatusFn fetches one runner's /status. Injected so Pick is unit-testable
+// without a live daemon.
+type StatusFn func(base string) (*api.Status, error)
+
+// Probes queries every runner in the pool (preserving order).
+func Probes(servers []string, get StatusFn) []Probe {
+	out := make([]Probe, 0, len(servers))
+	for _, s := range servers {
+		st, err := get(s)
+		out = append(out, Probe{URL: s, Status: st, Err: err})
+	}
+	return out
+}
+
+// Pick chooses the best runner from already-collected probes. It returns the
+// chosen base URL, or an error if every runner was unreachable.
+func Pick(probes []Probe) (string, error) {
+	if len(probes) == 0 {
+		return "", fmt.Errorf("no runners in pool")
+	}
+	// Stable sort keeps input order as the tie-break; keys: reachable first,
+	// then idle first, then shortest queue.
+	ordered := make([]Probe, len(probes))
+	copy(ordered, probes)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		a, b := ordered[i], ordered[j]
+		if (a.Err == nil) != (b.Err == nil) {
+			return a.Err == nil // reachable before unreachable
+		}
+		if a.idle() != b.idle() {
+			return a.idle() // idle before busy
+		}
+		return a.queue() < b.queue()
+	})
+	best := ordered[0]
+	if best.Err != nil || best.Status == nil {
+		return "", fmt.Errorf("no reachable runner in pool of %d: %v", len(probes), summarizeErrs(probes))
+	}
+	return best.URL, nil
+}
+
+func summarizeErrs(probes []Probe) string {
+	var parts []string
+	for _, p := range probes {
+		if p.Err != nil {
+			parts = append(parts, fmt.Sprintf("%s: %v", p.URL, p.Err))
+		}
+	}
+	return strings.Join(parts, "; ")
+}

@@ -1,18 +1,22 @@
 /**
- * Video → device-texture streaming panel for the effect editor. Streams frames
- * from a local video/image file OR the device camera into a loaded effect's 2D
- * `texture` on the ESP32 player, over the existing wss control plane.
+ * Video → texture streaming panel for the effect editor. Streams frames from a
+ * local video/image file OR the device camera into a loaded effect's 2D
+ * `texture`, driving TWO consumers:
+ *   - the offline preview VM (FxPreview) — so video input previews in the
+ *     workspace with NO hardware connected (FUG-39); and
+ *   - a connected ESP32 player, over the existing wss control plane.
  *
  * Frames are sized to the TARGET texture's width×height (discovered from the
- * compiled .fxb via parseFxbTextures — never hardcoded; the firmware drops a
- * mismatched frame), drawn object-fit:cover into an offscreen canvas, read back
- * as RGBA, and encoded by a single per-session TextureStreamer (so XOR-delta +
- * RLE work across frames). `client.setTexture` is fire-and-forget.
+ * compiled .fxb via parseFxbTextures — never hardcoded; a mismatched frame is
+ * dropped), drawn object-fit:cover into an offscreen canvas, and read back as
+ * RGBA. The preview VM takes those raw pixels directly; the device path encodes
+ * them with a single per-session TextureStreamer (XOR-delta + RLE across
+ * frames). Both sends are fire-and-forget.
  *
  * It's opt-in and off the hot path: no camera/rAF runs unless streaming. The
  * editor keeps the panel's `node` stable (re-parented by FxLayout, never
- * recreated), feeds it the latest compiled bytecode + connection state, and
- * disposes it on unmount.
+ * recreated), feeds it the latest compiled bytecode, the live preview sink, and
+ * device connection state, and disposes it on unmount.
  */
 
 import { parseFxbTextures, type FxbTexture } from "../../net/fxbTextures";
@@ -24,6 +28,13 @@ import { Button } from "../../ui/kit";
 export interface TextureSink {
   readonly isConnected: boolean;
   setTexture(msg: SetTextureMessage): boolean;
+}
+
+/** The offline preview VM consumer: takes a full-resolution RGBA frame straight
+ * into a texture buffer (no quantize/encode), so video previews with no device
+ * (FUG-39). Backed by FxPreview.setTexture in the editor. */
+export interface PreviewSink {
+  setTexture(texIndex: number, width: number, height: number, rgba: Uint8Array): void;
 }
 
 const FORMATS: { value: TextureFormat; label: string }[] = [
@@ -49,6 +60,7 @@ export class VideoTexturePanel {
   readonly node: HTMLElement;
 
   private sink: TextureSink | null = null;
+  private previewSink: PreviewSink | null = null;
   private textures: FxbTexture[] = [];
   private format: TextureFormat = "rgb565";
   private fps = DEFAULT_FPS;
@@ -221,10 +233,18 @@ export class VideoTexturePanel {
     this.refresh();
   }
 
-  /** Feed the live client (or null when disconnected). */
+  /** Feed the live device client (or null when disconnected). */
   setSink(sink: TextureSink | null): void {
     this.sink = sink;
-    if ((!sink || !sink.isConnected) && this.running) this.stop();
+    if (!this.hasConsumer() && this.running) this.stop();
+    this.refresh();
+  }
+
+  /** Feed the offline preview VM (or null when unavailable). With this set, video
+   * streams into the workspace preview even with no device connected (FUG-39). */
+  setPreview(sink: PreviewSink | null): void {
+    this.previewSink = sink;
+    if (!this.hasConsumer() && this.running) this.stop();
     this.refresh();
   }
 
@@ -248,21 +268,25 @@ export class VideoTexturePanel {
     return this.textures.find((t) => t.index === this.texIndex) ?? this.textures[0] ?? null;
   }
 
-  private ready(): boolean {
-    return (this.sink?.isConnected ?? false) && this.textures.length > 0;
+  /** Is there anywhere to send frames — the offline preview and/or a device? */
+  private hasConsumer(): boolean {
+    return this.previewSink !== null || (this.sink?.isConnected ?? false);
   }
 
-  /** Reflect connection/effect gating: show the hint OR the controls, and enable
-   * Start only when a device is connected, a texture exists, and a source is set. */
+  private ready(): boolean {
+    return this.hasConsumer() && this.textures.length > 0;
+  }
+
+  /** Reflect effect/consumer gating: the panel only needs an effect that
+   * declares a `texture` (it streams into the offline preview with no hardware);
+   * a connected device is an extra consumer, not a requirement. */
   private refresh(): void {
-    const connected = this.sink?.isConnected ?? false;
     const hasTex = this.textures.length > 0;
-    if (!connected || !hasTex) {
+    if (!hasTex) {
       this.controls.style.display = "none";
       this.hint.style.display = "";
-      this.hint.textContent = !hasTex
-        ? "Load an effect that declares a `texture`, then connect a device to stream video into it."
-        : "Connect a device (tap the status pill) to stream video into this effect's texture.";
+      this.hint.textContent =
+        "Load an effect that declares a `texture` to preview video mapped onto it.";
       return;
     }
     this.hint.style.display = "none";
@@ -390,8 +414,10 @@ export class VideoTexturePanel {
 
   private sendFrame(): void {
     const tex = this.target();
-    const sink = this.sink;
-    if (!tex || !sink?.isConnected || !this.streamer) return;
+    if (!tex) return;
+    const deviceOn = this.sink?.isConnected ?? false;
+    const previewOn = this.previewSink !== null;
+    if (!deviceOn && !previewOn) return;
 
     const src = this.currentSource();
     if (!src) return;
@@ -422,10 +448,26 @@ export class VideoTexturePanel {
       return; // source not yet decodable (e.g. video with no data)
     }
     const img = ctx.getImageData(0, 0, tex.width, tex.height);
-    const msg = this.streamer.frame(tex.width, tex.height, img.data);
-    sink.setTexture(msg);
 
-    this.lastBytes = msg.data.length;
+    // Offline preview: hand the VM raw RGBA straight into the texture (no
+    // quantize/encode round-trip — the browser already has the pixels).
+    if (previewOn && this.previewSink) {
+      const rgba = new Uint8Array(img.data.buffer, img.data.byteOffset, img.data.byteLength);
+      this.previewSink.setTexture(tex.index, tex.width, tex.height, rgba);
+    }
+
+    // Device: quantize + XOR-delta + RLE over the wss control plane.
+    let bytes = 0;
+    if (deviceOn && this.sink) {
+      if (!this.streamer) this.rebuildStreamer();
+      if (this.streamer) {
+        const msg = this.streamer.frame(tex.width, tex.height, img.data);
+        this.sink.setTexture(msg);
+        bytes = msg.data.length;
+      }
+    }
+
+    this.lastBytes = bytes;
     this.recordSent();
   }
 
@@ -458,7 +500,10 @@ export class VideoTexturePanel {
     this.sentTimes.push(now);
     while (this.sentTimes.length > 0 && now - this.sentTimes[0]! > 1000) this.sentTimes.shift();
     const fps = this.sentTimes.length;
-    this.stats.textContent = `${fps} fps sent · ${this.lastBytes} B/frame`;
+    const deviceOn = this.sink?.isConnected ?? false;
+    const target = deviceOn ? (this.previewSink ? "preview + device" : "device") : "preview";
+    const bytes = deviceOn ? ` · ${this.lastBytes} B/frame` : "";
+    this.stats.textContent = `${fps} fps · ${target}${bytes}`;
   }
 
   dispose(): void {

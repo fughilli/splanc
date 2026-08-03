@@ -67,13 +67,23 @@ class RpcHandler : public BLECharacteristicCallbacks {
 
 RpcHandler g_rpc_handler;
 
+// Tracks whether a central (the provisioner / web app) is currently connected,
+// so the app can hold off dropping BLE until the peer has taken the provisioning
+// result and left. Written on the BT task, read on the Arduino task.
+static volatile bool g_central_connected = false;
+
 // A BLE peripheral stops advertising once a central connects, and does NOT
 // resume on its own — so after the app provisions and reloads (dropping the
 // link), the device would go silent and never be discoverable again. Resume
 // advertising on every disconnect so re-provisioning always works.
 class ServerHandler : public BLEServerCallbacks {
+  void onConnect(BLEServer *server) override {
+    (void)server;
+    g_central_connected = true;
+  }
   void onDisconnect(BLEServer *server) override {
     (void)server;
+    g_central_connected = false;
     BLEDevice::startAdvertising();
   }
 };
@@ -149,6 +159,8 @@ void improv_ble_set_name(const char *device_name) {
   Log().printf("[ble] renamed advertisement to \"%s\"\n", device_name);
 }
 
+bool improv_ble_central_connected() { return g_central_connected; }
+
 bool improv_ble_take_credentials(char *ssid, size_t ssid_cap, char *pass, size_t pass_cap) {
   if (!g_have_creds) return false;
   g_have_creds = false;
@@ -157,10 +169,23 @@ bool improv_ble_take_credentials(char *ssid, size_t ssid_cap, char *pass, size_t
   return true;
 }
 
+// Notifications raised from the Arduino task (provisioning_poll, in loop()) race
+// the BLE stack: fired immediately after setValue(), the Bluedroid GATT tx isn't
+// ready yet and the packet is silently dropped — so the central never sees
+// PROVISIONING / the redirect / PROVISIONED and the onboarding times out. (The
+// ERROR notify from the BT-task write callback doesn't hit this; it already runs
+// in the stack's own context.) A short yield hands the BT task a slot to settle
+// the value write before we notify, which makes delivery reliable. Verified on
+// the HITL rig: without it the STATE/RESULT notifications were consistently lost.
+static void notify_settled(BLECharacteristic *ch) {
+  delay(20);
+  ch->notify();
+}
+
 void improv_ble_set_state(uint8_t state) {
   if (!g_state) return;
   g_state->setValue(&state, 1);
-  g_state->notify();
+  notify_settled(g_state);
 }
 
 void improv_ble_set_error(uint8_t error) {
@@ -175,5 +200,5 @@ void improv_ble_send_redirect(const char *url) {
   size_t n = improv_build_result(IMPROV_CMD_WIFI_SETTINGS, url, pkt, sizeof pkt);
   if (n == 0) return;
   g_result->setValue(pkt, n);
-  g_result->notify();
+  notify_settled(g_result);
 }

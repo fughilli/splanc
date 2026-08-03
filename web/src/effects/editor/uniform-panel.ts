@@ -24,6 +24,10 @@ function keyOf(u: FxUniform): string {
 
 export class UniformPanel {
   private slots: Slot[] = [];
+  // Per-slot DOM refreshers registered during render(), so an EXTERNAL source
+  // (MIDI) can move a control in place without a full re-render (which would
+  // fight a learn UI and thrash the DOM at MIDI event rates). Keyed by slot.
+  private setters = new Map<number, (value: number[]) => void>();
 
   constructor(
     private readonly root: HTMLElement,
@@ -33,6 +37,20 @@ export class UniformPanel {
   /** Current live values, keyed by manifest slot. */
   values(): { slot: number; value: number[] }[] {
     return this.slots.map((s) => ({ slot: s.uniform.slot, value: s.value.slice() }));
+  }
+
+  /**
+   * Apply a value from an EXTERNAL driver (MIDI) to a slot: update the stored
+   * value, move the on-screen control to match, and fan the change out via
+   * onChange (so preview + device track it — the same seam a manual drag uses).
+   * No-ops for an unknown slot. Does not re-render.
+   */
+  applyExternal(slot: number, value: number[]): void {
+    const s = this.slots.find((x) => x.uniform.slot === slot);
+    if (s === undefined) return;
+    s.value = value.slice();
+    this.setters.get(slot)?.(s.value);
+    this.onChange(slot, s.value);
   }
 
   /** Overwrite live values (e.g. from device getEffectUniforms hydration). */
@@ -63,6 +81,7 @@ export class UniformPanel {
 
   private render(): void {
     this.root.replaceChildren();
+    this.setters.clear();
     if (this.slots.length === 0) {
       const p = document.createElement("p");
       p.className = "muted upanel-empty";
@@ -112,6 +131,10 @@ export class UniformPanel {
       });
       ctrl.appendChild(el);
       value.textContent = el.checked ? "on" : "off";
+      this.setters.set(s.uniform.slot, (v) => {
+        el.checked = (v[0] ?? 0) >= 0.5;
+        value.textContent = el.checked ? "on" : "off";
+      });
       return;
     }
 
@@ -181,6 +204,13 @@ export class UniformPanel {
         commit();
         num.blur();
       }
+    });
+
+    // External (MIDI) driver moves both the slider and the number field.
+    this.setters.set(s.uniform.slot, (v) => {
+      const n = v[0] ?? ui.min;
+      el.value = String(n);
+      num.value = fmtNum(n);
     });
 
     ctrl.appendChild(el);
