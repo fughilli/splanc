@@ -103,6 +103,43 @@ export function budgetConsumption(
   };
 }
 
+/** Display-ready props for the FUG-11 budget progress bar (pure, so the exact
+ * fill width / label / color are unit-testable without the DOM). */
+export interface BudgetBarView {
+  /** Bar fill width, 0..100 (clamped; an overrun pins at 100). */
+  fillPct: number;
+  /** Color band per the FUG-11 spec (<=70 green, >70 yellow, >90 red). */
+  color: BudgetColor;
+  /** Percent-of-available label ("72%", ">budget" when starved). */
+  percentLabel: string;
+  /** Detail line ("8.1 / 11.2 ms of FX budget"). */
+  detail: string;
+  /** Threshold marker positions along the bar (70, 90) for the tick guides. */
+  thresholds: number[];
+  /** True when the effect uses more than the available FX budget. */
+  overrun: boolean;
+}
+
+/** Turn a {@link BudgetStatus} into display props for the progress bar. */
+export function budgetBarView(status: BudgetStatus): BudgetBarView {
+  const { fraction, breakdown, consumedFxMs, starved } = status;
+  const finite = Number.isFinite(fraction);
+  const overrun = !finite || fraction > 1;
+  const fillPct = Math.max(0, Math.min(100, (finite ? fraction : 1) * 100));
+  const percentLabel = finite ? `${Math.round(fraction * 100)}%` : ">budget";
+  const detail = starved
+    ? `no FX budget — transmit + system fill the ${breakdown.frameMs.toFixed(1)} ms frame`
+    : `${consumedFxMs.toFixed(1)} / ${breakdown.availableFxMs.toFixed(1)} ms of FX budget`;
+  return {
+    fillPct,
+    color: status.color,
+    percentLabel,
+    detail,
+    thresholds: [BUDGET_YELLOW_AT * 100, BUDGET_RED_AT * 100],
+    overrun,
+  };
+}
+
 /** Budget status from an offline {@link FrameEstimate} (uses its phase split and
  * the table's budget model, defaulting when the table predates the model). */
 export function budgetFromEstimate(

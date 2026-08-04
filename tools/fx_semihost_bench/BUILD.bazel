@@ -1,0 +1,47 @@
+"""Semihost benchmark for the effects VM (FUG-11: FX engine benchmark tuning).
+
+Runs the real firmware VM (`//firmware/fx_vm`) natively on the host over
+calibration micro-programs, fits a per-opcode cost model, and emits an
+ExecutionProfile in the common profile format (web/src/effects/executionProfile.ts)
+so the browser simulator has a usable device model with no hardware attached.
+
+  bazel run  //tools/fx_semihost_bench -- --out /tmp/profile.json
+  bazel test //tools/fx_semihost_bench:fx_semihost_bench_test
+"""
+
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "fx_semihost_bench_lib",
+    srcs = ["src/lib.rs"],
+    crate_name = "fx_semihost_bench",
+    edition = "2021",
+    deps = [
+        "//firmware/fx_vm",
+        "@crates//:serde",
+        "@crates//:serde_json",
+    ],
+)
+
+rust_binary(
+    name = "fx_semihost_bench",
+    srcs = ["src/main.rs"],
+    edition = "2021",
+    deps = [
+        ":fx_semihost_bench_lib",
+        "//firmware/fx_vm",
+    ],
+)
+
+rust_test(
+    name = "fx_semihost_bench_test",
+    srcs = ["tests/bench.rs"],
+    edition = "2021",
+    deps = [
+        ":fx_semihost_bench_lib",
+        "//firmware/fx_vm",
+        "@crates//:serde_json",
+    ],
+)

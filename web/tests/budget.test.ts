@@ -9,6 +9,7 @@ import { test } from "node:test";
 import {
   BUDGET_RED_AT,
   BUDGET_YELLOW_AT,
+  budgetBarView,
   budgetColor,
   budgetConsumption,
   budgetFromEstimate,
@@ -93,6 +94,30 @@ test("budgetFromEstimate reads an offline estimate", () => {
   assert.equal(s.consumedFxMs, 14);
   assert.equal(s.breakdown.showMs, 6);
   assert.ok(s.fraction > 0);
+});
+
+test("budgetBarView produces clamped, labeled progress-bar props", () => {
+  // in-budget: 50% → green, fill 50, no overrun.
+  const mid = budgetBarView(budgetConsumption(MODEL, computeBudget(MODEL, 5).availableFxMs * 0.5, 5));
+  assert.equal(mid.color, "green");
+  assert.ok(Math.abs(mid.fillPct - 50) < 0.5);
+  assert.equal(mid.percentLabel, "50%");
+  assert.equal(mid.overrun, false);
+  assert.deepEqual(mid.thresholds, [70, 90]);
+  assert.match(mid.detail, /ms of FX budget/);
+
+  // overrun: >budget → fill clamped to 100, overrun flagged.
+  const over = budgetBarView(budgetConsumption(MODEL, computeBudget(MODEL, 5).availableFxMs * 1.5, 5));
+  assert.equal(over.color, "red");
+  assert.equal(over.fillPct, 100);
+  assert.ok(over.overrun);
+
+  // starved: no available budget → ">budget" label, red, overrun.
+  const starved = budgetBarView(budgetConsumption(MODEL, 3, 1000));
+  assert.equal(starved.percentLabel, ">budget");
+  assert.equal(starved.fillPct, 100);
+  assert.ok(starved.overrun);
+  assert.match(starved.detail, /no FX budget/);
 });
 
 test("measureAvailableFraction derives the fraction from other-task time", () => {

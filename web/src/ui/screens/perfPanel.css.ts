@@ -54,4 +54,27 @@ const CSS = `
   max-height:180px; overflow:auto; margin-top:var(--sp-2); white-space:pre-wrap; }
 .calib-accuracy { display:flex; gap:var(--sp-4); margin-top:var(--sp-3); }
 .calib-accuracy .perf-readout-val { font-size:20px; }
+
+/* FUG-11 budget progress bar: fraction of the AVAILABLE FX budget consumed,
+   color-coded <=70% green, >70% yellow, >90% red. */
+.perf-budget { display:flex; flex-direction:column; gap:var(--sp-1); }
+.perf-budget-head { display:flex; justify-content:space-between; align-items:baseline; }
+.perf-budget-title { font-size:12px; color:var(--text-dim); text-transform:uppercase; letter-spacing:.04em; }
+.perf-budget-pct { font-size:15px; font-weight:700; font-variant-numeric:tabular-nums; }
+.perf-budget-track {
+  position:relative; height:14px; border-radius:999px;
+  background:var(--surface-2); overflow:hidden;
+}
+.perf-budget-fill {
+  height:100%; width:0%; border-radius:999px;
+  transition:width .2s ease, background-color .2s ease;
+}
+.perf-budget-tick { position:absolute; top:0; bottom:0; width:1px; background:var(--border); opacity:.7; }
+.perf-budget-detail { font-size:12px; color:var(--text-dim); font-variant-numeric:tabular-nums; }
+.perf-budget[data-color="green"] .perf-budget-fill { background:var(--ok); }
+.perf-budget[data-color="yellow"] .perf-budget-fill { background:var(--warn); }
+.perf-budget[data-color="red"] .perf-budget-fill { background:var(--err); }
+.perf-budget[data-color="green"] .perf-budget-pct { color:var(--ok); }
+.perf-budget[data-color="yellow"] .perf-budget-pct { color:var(--warn); }
+.perf-budget[data-color="red"] .perf-budget-pct { color:var(--err); }
 `;
