@@ -76,7 +76,13 @@ def test_assemble_bundle_schema():
     # required sample fields (match deviceProfile.ts parseDeviceBundle).
     for arr in ("fit", "heldout"):
         for s in bundle[arr]:
-            assert set(s) >= {"label", "fxbBase64", "ledCount", "measuredFrameCycles", "measuredShowCycles"}
+            assert set(s) >= {
+                "label",
+                "fxbBase64",
+                "ledCount",
+                "measuredFrameCycles",
+                "measuredShowCycles",
+            }
 
 
 def test_assemble_bundle_omits_absent_optionals():

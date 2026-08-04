@@ -36,7 +36,9 @@ def stable_cycles(report: dict[str, Any]) -> dict[str, int] | None:
     }
 
 
-def sample_from(label: str, fxb: bytes, led_count: int, report: dict[str, Any]) -> dict[str, Any] | None:
+def sample_from(
+    label: str, fxb: bytes, led_count: int, report: dict[str, Any]
+) -> dict[str, Any] | None:
     """Build one bundle sample from a benchmark's compiled `.fxb` + its
     PerfReport. Returns None if the report had no usable window."""
     stable = stable_cycles(report)

@@ -84,9 +84,9 @@ async def _rpc(sock, flat: dict[str, Any], expect: str, timeout: float = 6.0) ->
 
 async def measure_program(
     sock, label: str, fxb: bytes, settle_ms: int
-) -> dict[str, Any] | None:
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     """Submit a compiled program, enable FULL perf, settle, drain a PerfReport,
-    and map it to a bundle sample. Returns None if no usable window."""
+    and return (bundle sample or None if no usable window, raw report)."""
     from server import proto_wire
 
     await sock.send(
@@ -103,7 +103,6 @@ async def measure_program(
 
 async def run_on_hardware(args) -> dict[str, Any]:
     import websockets
-
     from hitl_client import Reservation
 
     fit_src, held_src = discover_benchmarks(args.benchmarks_dir)
@@ -121,7 +120,10 @@ async def run_on_hardware(args) -> dict[str, Any]:
     try:
         if args.bundle:
             res.scp_to([args.bundle], "/tmp/")
-            res.ssh(f"hitl-flash /tmp/{os.path.basename(args.bundle)} --monitor --monitor-seconds 6", capture=True)
+            res.ssh(
+                f"hitl-flash /tmp/{os.path.basename(args.bundle)} --monitor --monitor-seconds 6",
+                capture=True,
+            )
 
         # The device WS is reached directly (already on the rig LAN) or via a
         # forward tunnel through the rig.
@@ -133,7 +135,10 @@ async def run_on_hardware(args) -> dict[str, Any]:
             from server import proto_wire
 
             await _rpc(sock, {"type": "hello", "client": "fx_bench", "app_version": "1"}, "welcome")
-            for kind, srcs, dest in (("fit", fit_src, fit_samples), ("heldout", held_src, held_samples)):
+            for kind, srcs, dest in (
+                ("fit", fit_src, fit_samples),
+                ("heldout", held_src, held_samples),
+            ):
                 for src in srcs:
                     label = os.path.basename(src).removesuffix(".heldout.fx").removesuffix(".fx")
                     fxb = compile_fx(args.fx_compile, src)
@@ -144,7 +149,9 @@ async def run_on_hardware(args) -> dict[str, Any]:
                         _log(f"  skipped {label}: no perf window")
                         continue
                     dest.append(sample)
-            await sock.send(proto_wire.encode_client({"type": "set_perf", "mode": "OFF", "interval_ms": 0}))
+            await sock.send(
+                proto_wire.encode_client({"type": "set_perf", "mode": "OFF", "interval_ms": 0})
+            )
 
         return assemble_bundle(
             soc=args.soc,
@@ -191,7 +198,9 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="HITL FX benchmark harness (FUG-11)")
     ap.add_argument("--out", required=True, help="output device-measurement bundle JSON")
     ap.add_argument("--replay", help="rebuild from a recorded session JSON (no hardware)")
-    ap.add_argument("--benchmarks-dir", help="directory of .fx programs (*.heldout.fx = validation)")
+    ap.add_argument(
+        "--benchmarks-dir", help="directory of .fx programs (*.heldout.fx = validation)"
+    )
     ap.add_argument("--fx-compile", default="fx_compile", help="fx_compile CLI path")
     ap.add_argument("--device-ws", help="device player WebSocket URL (wss://ip:443/ws)")
     ap.add_argument("--server", help="pin a specific rig (else pool discovery)")

@@ -635,3 +635,71 @@ the perf panel) shows `fraction` with the FUG-11 color bands — **≤70% green,
 >70% yellow, >90% red** — plus 70/90 threshold guides and an overrun state. The
 same bar renders online (device PerfReport phase split) and offline (cost-model
 estimate), since both flow through `budgetConsumption`.
+
+---
+
+## FUG-11 (review): device-measured profiles, validation, management, fleet
+
+Follow-up to the section above, addressing the review: the authoritative model
+must be **measured on real hardware**, profiles must be **manageable**, and
+estimation must span **multiple devices**.
+
+### The host benchmark is a smoke test, not a device model
+
+An FPU host has far too much compute to predict the FPU-less C6 (natively `sin ≈
+add`). So `tools/fx_semihost_bench` now emits `source: "host"` and is documented
+as a pipeline/format smoke test only. It exercises the common format + the fit
+end-to-end in CI with no hardware; it never seeds an authoritative cost table.
+
+### Authoritative measurement via the HITL rig
+
+`pi/hitl/harness/fx_bench.py` runs the benchmark on the **real C6** through the
+HITL rig (pi/hitl): reserve a free rig, flash the firmware flash-bundle, tunnel
+to the device's player WebSocket, and for each calibration micro-program
+`submit_effect` → `set_perf(FULL)` → drain a stable `PerfReport`. It writes a
+**device-measurement bundle** (base64 `.fxb` + cycle-accurate measured cycles).
+The pure perf→sample mapping + bundle schema live in `fx_bench_core.py` and are
+unit-tested (`//pi/hitl/tests`, no hardware); `--replay` rebuilds a bundle from a
+recorded session.
+
+Runbook (on a host that can reach the rig, with a provisioned board):
+
+```
+# 1. build the firmware flash-bundle
+bazel build //firmware/player_app:esp32c6_flashbundle
+# 2. measure on hardware -> a device bundle
+bazel run //pi/hitl/harness:fx_bench -- \
+  --benchmarks-dir <dir-of-.fx>  --device-ws wss://<dut-ip>:443/ws \
+  --fx-compile <fx_compile-path> --bundle bazel-bin/firmware/player_app/esp32c6_flashbundle.tar \
+  --soc esp32c6 --device-key <mac> --device-label "rig-01" --out /tmp/device-bundle.json --insecure
+# 3. in the app: Performance ▸ Manage profiles ▸ "Import device measurements"
+#    → buildDeviceProfile fits + VALIDATES on held-out programs and saves it.
+```
+
+### Validation (predicted vs measured)
+
+`web/src/effects/deviceProfile.ts` `buildDeviceProfile` reuses the calibration
+fit for the cost table, then `web/src/effects/profileValidation.ts`
+`validateCostModel` predicts the **held-out** programs (named `*.heldout.fx`,
+never in the fit) and compares to what the hardware measured — RMS/max relative
+error, R², pass/fail. The RMS is stamped as the profile's `measuredError`: the
+trustworthy accuracy signal (vs `residualError`, an in-sample fit quality).
+
+### Profile management
+
+`web/src/ui/screens/perfProfiles.ts` (route `/perf/profiles`, from the perf
+panel) lists every stored profile ranked device > host > default, with
+provenance, fit residual, held-out `measuredError`, and device identity. It
+supports export (download JSON), import (a profile file OR a raw device bundle to
+fit), and delete. Profiles are keyed per-device (`costTableId` with a
+`deviceKey`) so a heterogeneous fleet each keeps its own measured model;
+`resolveTable(soc, cpuHz, deviceKey?)` resolves most-specific-first.
+
+### Multi-device estimation
+
+`web/src/effects/multiDevice.ts` `estimateAcrossDevices` estimates one compiled
+effect across a set of device targets (each its own profile + LED count),
+returning per-device frame time + budget status, the **binding** device (highest
+budget fraction), and whether all fit. `describeFleet` renders this for the AI
+generator's perf context so it can optimize for the whole heterogeneous fleet,
+not one board.
