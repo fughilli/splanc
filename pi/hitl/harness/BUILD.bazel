@@ -21,6 +21,7 @@ package(default_visibility = ["//visibility:public"])
 py_library(
     name = "harness",
     srcs = [
+        "fx_bench_core.py",
         "hitl_client.py",
         "hitl_improv.py",
         "improv.py",
@@ -50,6 +51,30 @@ py_binary(
     ],
     imports = ["."],
     main = "hitl_e2e.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# On-hardware FX benchmark (FUG-11): reserve a rig, flash, drive the calibration
+# micro-programs on the real C6, and write a device-measurement bundle for the
+# web builder to fit + validate into an authoritative cost profile. Like :e2e it
+# needs a rig + board, so it is `bazel run`, never `bazel test`; the pure logic
+# it depends on (fx_bench_core) is unit-tested in //pi/hitl/tests. --replay
+# rebuilds a bundle from a recorded session with no hardware.
+py_binary(
+    name = "fx_bench",
+    srcs = ["fx_bench.py"],
+    data = ["//pi/hitl/cmd/hitl"],
+    imports = ["."],
+    main = "fx_bench.py",
     tags = [
         "hitl",
         "manual",

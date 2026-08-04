@@ -15,10 +15,13 @@ import { Button, Card, EmptyState, toast } from "../kit";
 import type { Router, Screen } from "../app/router";
 import {
   costTableStore,
+  CURRENT_TABLE_VERSION,
   exportTable,
   importTable,
   type StoredCostTable,
 } from "../../store/costTableStore";
+import { buildDeviceProfile, parseDeviceBundle } from "../../effects/deviceProfile";
+import { profileToStored } from "../../effects/executionProfile";
 import { installPerfStyles } from "./perfPanel.css";
 
 export function PerfProfilesScreen(_router: Router): Screen {
@@ -60,12 +63,46 @@ export function PerfProfilesScreen(_router: Router): Screen {
     reader.readAsText(f);
   });
 
+  // hidden file input for a raw HITL device-measurement bundle → fit + validate.
+  const bundleInput = document.createElement("input");
+  bundleInput.type = "file";
+  bundleInput.accept = "application/json,.json";
+  bundleInput.style.display = "none";
+  bundleInput.addEventListener("change", () => {
+    const f = bundleInput.files?.[0];
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const bundle = parseDeviceBundle(String(reader.result));
+        const { profile } = buildDeviceProfile(bundle);
+        await costTableStore.save(profileToStored(profile, CURRENT_TABLE_VERSION));
+        const err =
+          typeof profile.measuredError === "number"
+            ? ` (validated ±${Math.round(profile.measuredError * 100)}%)`
+            : "";
+        toast(`Fitted device profile for ${profile.deviceLabel || profile.soc}${err}`);
+        await refresh();
+      } catch (e) {
+        toast(`Bundle import failed: ${(e as Error).message}`, { error: true });
+      }
+      bundleInput.value = "";
+    };
+    reader.readAsText(f);
+  });
+
   actions.append(
     Button({
       label: "Import profile",
       icon: "upload",
       variant: "quiet",
       onClick: () => fileInput.click(),
+    }),
+    Button({
+      label: "Import device measurements",
+      icon: "device",
+      variant: "quiet",
+      onClick: () => bundleInput.click(),
     }),
   );
 
@@ -164,7 +201,7 @@ export function PerfProfilesScreen(_router: Router): Screen {
     for (const rec of recs) list.append(row(rec));
   }
 
-  el.append(Card(intro), actions, list, fileInput);
+  el.append(Card(intro), actions, list, fileInput, bundleInput);
 
   return {
     el,
