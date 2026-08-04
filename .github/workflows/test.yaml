@@ -63,7 +63,7 @@ jobs:
         # `--test_output=errors` (not `streamed`): streamed serializes test
         # execution and suppresses caching of test actions; errors still surfaces
         # failing-test logs.
-        run: bazel test //... --disk_cache="$HOME/.cache/bazel-disk" --test_output=errors
+        run: bazel test --config=ci //... --disk_cache="$HOME/.cache/bazel-disk" --test_output=errors
 
   # The HITL suite is tags=["manual","hitl"], so it's kept out of the `//...`
   # wildcard above (the on-hardware e2e can't run here; the unit layer just wants
@@ -113,7 +113,7 @@ jobs:
           targets=$(bazel query 'attr(tags, "\bhitl\b", tests(//...))')
           echo "collected HITL tests:"; echo "$targets"
           if [ -z "$targets" ]; then echo "no HITL-tagged tests found"; exit 1; fi
-          bazel test $targets --disk_cache="$HOME/.cache/bazel-disk" --test_output=errors
+          bazel test --config=ci $targets --disk_cache="$HOME/.cache/bazel-disk" --test_output=errors
 
   # The ESP32-C6 firmware image is tags=manual (kept out of the `//...` wildcard
   # so the `test` job above — and dev on small containers — stays light: it
@@ -164,7 +164,7 @@ jobs:
           restore-keys: bazel-disk-${{ runner.os }}-
 
       - name: Build firmware image (esp32c6)
-        run: bazel build -c opt --disk_cache="$HOME/.cache/bazel-disk" //firmware/player_app:esp32c6
+        run: bazel build --config=ci -c opt --disk_cache="$HOME/.cache/bazel-disk" //firmware/player_app:esp32c6
 
   lint:
     if: github.event.action != 'closed'
@@ -247,7 +247,7 @@ jobs:
       # Materialize the publish tree into ./_site (bundle at /, wasm bundles at
       # /solver /pulse /fx-compiler /fx-vm — same layout Cloudflare/the Pi serve).
       - name: Stage site
-        run: bazel run //web:stage_site --disk_cache="$HOME/.cache/bazel-disk" -- "$GITHUB_WORKSPACE/_site"
+        run: bazel run --config=ci //web:stage_site --disk_cache="$HOME/.cache/bazel-disk" -- "$GITHUB_WORKSPACE/_site"
 
       - name: Upload site artifact
         uses: actions/upload-artifact@v4
@@ -412,4 +412,4 @@ jobs:
       # GitHub Pages deploy above) until the Cloudflare secrets are configured.
       - name: Deploy to Cloudflare Pages (production)
         if: env.CLOUDFLARE_API_TOKEN != ''
-        run: bazel run //web:deploy_cloudflare --disk_cache="$HOME/.cache/bazel-disk"
+        run: bazel run --config=ci //web:deploy_cloudflare --disk_cache="$HOME/.cache/bazel-disk"

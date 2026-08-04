@@ -57,3 +57,12 @@ common --experimental_isolated_extension_usages
 startup --host_jvm_args=-Xmx1500m
 build --local_ram_resources=2048
 build --jobs=3
+
+# CI runs on beefy hosts (GitHub ubuntu-latest: 4 vCPU / 16 GB), so the
+# small-container caps above just throttle it — a 3-wide, ~2 GB build starves
+# the heavy firmware compile (mbedtls + Arduino core) of the runner's cores and
+# RAM. `--config=ci` restores Bazel's defaults (schedule against the real host
+# CPUs/RAM); harmless on a 16 GB runner, and it's how the CI workflows invoke
+# every heavy bazel build/test/run.
+build:ci --jobs=HOST_CPUS
+build:ci --local_ram_resources=HOST_RAM

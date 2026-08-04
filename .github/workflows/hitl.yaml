@@ -96,12 +96,21 @@ jobs:
           bazelisk-cache: true
           repository-cache: true
 
+      # Own disk-cache namespace. The firmware job (test.yaml) writes the *same*
+      # key this job used to (`bazel-disk-<os>-<hash>`), and they run in parallel
+      # — whichever saved first won, so this job's extra outputs (the flash-
+      # bundle wrapper, the Go `hitl` CLI, the python harness) were dropped and
+      # rebuilt every run. Keep our own namespace so those stay warm across HITL
+      # runs, and fall back to the firmware namespace's key for a warm mbedtls /
+      # Arduino-core start when ours is cold.
       - name: Cache Bazel disk cache
         uses: actions/cache@v4
         with:
           path: ~/.cache/bazel-disk
-          key: bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock') }}
-          restore-keys: bazel-disk-${{ runner.os }}-
+          key: bazel-disk-hitl-e2e-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock') }}
+          restore-keys: |
+            bazel-disk-hitl-e2e-${{ runner.os }}-
+            bazel-disk-${{ runner.os }}-
 
       # Reserve a free rig from the pool, flash, ImprovBLE-provision, then check
       # time-sync + rename over the WebSocket. `bazel run` builds the flash-bundle
@@ -114,4 +123,4 @@ jobs:
           args=(--monitor-seconds "$MONITOR_SECONDS")
           if [ -n "$SERVER" ]; then args+=(--server "$SERVER"); fi
           if [ "$SKIP_FLASH" = "true" ]; then args+=(--skip-flash); fi
-          bazel run -c opt --disk_cache="$HOME/.cache/bazel-disk" //pi/hitl/harness:e2e -- "${args[@]}"
+          bazel run --config=ci -c opt --disk_cache="$HOME/.cache/bazel-disk" //pi/hitl/harness:e2e -- "${args[@]}"
