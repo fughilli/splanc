@@ -1,7 +1,7 @@
 /**
  * Common execution-profile format tests (FUG-11). Validates the portable
  * profile schema, its round-trip, conversion to/from the simulator's CostTable,
- * and — crucially — that the golden profile emitted by the Rust semihost
+ * and — crucially — that the golden profile emitted by the Rust host
  * benchmark (tools/fx_semihost_bench) parses and feeds the simulator, pinning
  * the cross-language contract.
  */
@@ -23,9 +23,9 @@ import {
 import { estimateFrameTime, DEFAULT_BUDGET_MODEL } from "../src/effects/costModel";
 import golden from "./testdata/semihost-profile.json";
 
-test("golden semihost profile parses and is well-formed", () => {
+test("golden host profile parses and is well-formed", () => {
   const p = validateProfile(golden);
-  assert.equal(p.source, "semihost");
+  assert.equal(p.source, "host");
   assert.equal(p.unit, "cycles");
   assert.equal(p.kind, "ledmapper-execution-profile");
   assert.ok(p.cpuHz > 0);
@@ -96,17 +96,17 @@ test("defaultProfile is a valid default-source profile covering costs", () => {
   for (const op of cov.covered) assert.ok((CANONICAL_OPCODES as readonly string[]).includes(op));
 });
 
-test("opcodeCoverage reports missing opcodes for a partial (semihost) profile", () => {
+test("opcodeCoverage reports missing opcodes for a partial (host) profile", () => {
   const p = validateProfile(golden);
   const cov = opcodeCoverage(p);
   // the curated benchmark prices only a handful; the rest ride the fallback.
   assert.ok(cov.covered.includes("Add"));
-  assert.ok(cov.missing.length > 0, "semihost profile is intentionally partial");
+  assert.ok(cov.missing.length > 0, "host profile is intentionally partial");
   assert.ok(cov.missing.includes("SampleTex"));
 });
 
 test("profileToStored maps source to the store's origin", () => {
-  assert.equal(profileToStored(validateProfile(golden), 1).origin, "semihost");
+  assert.equal(profileToStored(validateProfile(golden), 1).origin, "host");
   assert.equal(profileToStored(defaultProfile(), 1).origin, "default");
   const dev = costTableToProfile(profileToCostTable(defaultProfile()), {
     source: "device",

@@ -102,9 +102,9 @@ fn fit_splits_dispatch_and_softfloat() {
     assert!((p.fixed.shade_fixed - 60.0).abs() < 0.2, "shade_fixed measured, got {}", p.fixed.shade_fixed);
     // show model carries the host-unmeasurable defaults.
     assert_eq!(p.fixed.show_per_led, 480.0);
-    // semihost profiles are honestly wide.
-    assert!(p.residual_error >= 0.35, "semihost residual wide, got {}", p.residual_error);
-    assert_eq!(p.source, "semihost");
+    // host profiles are honestly wide (non-authoritative).
+    assert!(p.residual_error >= 0.35, "host residual wide, got {}", p.residual_error);
+    assert_eq!(p.source, "host");
 }
 
 #[test]

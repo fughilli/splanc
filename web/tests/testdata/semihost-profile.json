@@ -2,28 +2,28 @@
   "kind": "ledmapper-execution-profile",
   "version": 1,
   "soc": "esp32c6",
-  "source": "semihost",
+  "source": "host",
   "cpuHz": 160000000.0,
   "unit": "cycles",
   "toolVersion": "fx-semihost-bench 0.1.0",
   "timestamp": "",
-  "deviceLabel": "semihost",
+  "deviceLabel": "host",
   "costs": {
     "Add": 16.0,
-    "BinMath": 128.6,
+    "BinMath": 128.5,
     "Div": 46.1,
-    "Hash1": 56.8,
+    "Hash1": 56.2,
     "Mul": 18.1,
     "UnMath": 114.5
   },
   "fixed": {
-    "update_fixed": 102.8,
-    "shade_fixed": 117.7,
+    "update_fixed": 105.3,
+    "shade_fixed": 123.3,
     "show_fixed": 40000.0,
     "show_per_led": 480.0
   },
   "fallbackCost": 4.5,
-  "residualError": 0.353,
+  "residualError": 0.36,
   "budget": {
     "fps": 30.0,
     "cpuAvailableFraction": 0.85,
@@ -35,160 +35,160 @@
       "targetOp": "Add",
       "reps": 32,
       "ledCount": 1,
-      "measured": 309.7,
-      "predicted": 629.7
+      "measured": 315.3,
+      "predicted": 635.3
     },
     {
       "label": "Add x64",
       "targetOp": "Add",
       "reps": 64,
       "ledCount": 1,
-      "measured": 501.7,
-      "predicted": 1141.7
+      "measured": 507.3,
+      "predicted": 1147.3
     },
     {
       "label": "Add x96",
       "targetOp": "Add",
       "reps": 96,
       "ledCount": 1,
-      "measured": 693.7,
-      "predicted": 1653.7
+      "measured": 699.3,
+      "predicted": 1659.3
     },
     {
       "label": "Mul x32",
       "targetOp": "Mul",
       "reps": 32,
       "ledCount": 1,
-      "measured": 312.9,
-      "predicted": 696.9
+      "measured": 318.5,
+      "predicted": 702.5
     },
     {
       "label": "Mul x64",
       "targetOp": "Mul",
       "reps": 64,
       "ledCount": 1,
-      "measured": 508.1,
-      "predicted": 1276.1
+      "measured": 513.7,
+      "predicted": 1281.7
     },
     {
       "label": "Mul x96",
       "targetOp": "Mul",
       "reps": 96,
       "ledCount": 1,
-      "measured": 703.3,
-      "predicted": 1855.3
+      "measured": 708.9,
+      "predicted": 1860.9
     },
     {
       "label": "Div x32",
       "targetOp": "Div",
       "reps": 32,
       "ledCount": 1,
-      "measured": 312.9,
-      "predicted": 1592.9
+      "measured": 318.5,
+      "predicted": 1598.5
     },
     {
       "label": "Div x64",
       "targetOp": "Div",
       "reps": 64,
       "ledCount": 1,
-      "measured": 508.1,
-      "predicted": 3068.1
+      "measured": 513.7,
+      "predicted": 3073.7
     },
     {
       "label": "Div x96",
       "targetOp": "Div",
       "reps": 96,
       "ledCount": 1,
-      "measured": 703.3,
-      "predicted": 4543.3
+      "measured": 708.9,
+      "predicted": 4548.9
     },
     {
       "label": "UnMath x32",
       "targetOp": "UnMath",
       "reps": 32,
       "ledCount": 1,
-      "measured": 261.7,
-      "predicted": 3781.7
+      "measured": 267.3,
+      "predicted": 3787.3
     },
     {
       "label": "UnMath x64",
       "targetOp": "UnMath",
       "reps": 64,
       "ledCount": 1,
-      "measured": 405.7,
-      "predicted": 7445.7
+      "measured": 411.3,
+      "predicted": 7451.3
     },
     {
       "label": "UnMath x96",
       "targetOp": "UnMath",
       "reps": 96,
       "ledCount": 1,
-      "measured": 549.7,
-      "predicted": 11109.7
+      "measured": 555.3,
+      "predicted": 11115.3
     },
     {
       "label": "BinMath x32",
       "targetOp": "BinMath",
       "reps": 32,
       "ledCount": 1,
-      "measured": 392.9,
-      "predicted": 4232.9
+      "measured": 395.3,
+      "predicted": 4235.3
     },
     {
       "label": "BinMath x64",
       "targetOp": "BinMath",
       "reps": 64,
       "ledCount": 1,
-      "measured": 668.1,
-      "predicted": 8348.1
+      "measured": 667.3,
+      "predicted": 8347.3
     },
     {
       "label": "BinMath x96",
       "targetOp": "BinMath",
       "reps": 96,
       "ledCount": 1,
-      "measured": 943.3,
-      "predicted": 12463.3
+      "measured": 939.3,
+      "predicted": 12459.3
     },
     {
       "label": "Hash1 x32",
       "targetOp": "Hash1",
       "reps": 32,
       "ledCount": 1,
-      "measured": 335.3,
-      "predicted": 1935.3
+      "measured": 321.7,
+      "predicted": 1921.7
     },
     {
       "label": "Hash1 x64",
       "targetOp": "Hash1",
       "reps": 64,
       "ledCount": 1,
-      "measured": 552.9,
-      "predicted": 3752.9
+      "measured": 520.1,
+      "predicted": 3720.1
     },
     {
       "label": "Hash1 x96",
       "targetOp": "Hash1",
       "reps": 96,
       "ledCount": 1,
-      "measured": 770.5,
-      "predicted": 5570.5
+      "measured": 718.5,
+      "predicted": 5518.5
     },
     {
       "label": "empty shade",
       "targetOp": null,
       "reps": 0,
       "ledCount": 1,
-      "measured": 117.7,
-      "predicted": 117.7
+      "measured": 123.3,
+      "predicted": 123.3
     },
     {
       "label": "empty update",
       "targetOp": null,
       "reps": 0,
       "ledCount": 1,
-      "measured": 102.8,
-      "predicted": 102.8
+      "measured": 105.3,
+      "predicted": 105.3
     }
   ]
 }

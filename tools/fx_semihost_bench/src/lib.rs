@@ -1,19 +1,24 @@
-//! Semihost benchmark for the effects VM (FUG-11: "benchmarking in-situ …
-//! Export a common profile format so that different execution targets can feed
-//! their profiles into the simulator in a uniform way").
+//! Host benchmark for the effects VM (FUG-11: "Export a common profile format
+//! so that different execution targets can feed their profiles into the
+//! simulator in a uniform way").
 //!
-//! This is the *semihost* leg of that benchmark: it runs the **real firmware
-//! VM** (`ledmapper_fx_vm`) natively on the host over a set of calibration
-//! micro-programs, and fits a per-opcode cost model that the browser's offline
-//! simulator consumes — no hardware required. Because the host executes the
-//! exact same dispatch loop as the C6, the *relative* opcode economics (sin ≫
-//! add) transfer; the absolute scale is pinned to one anchor opcode's assumed
-//! device cost, so the emitted profile is a usable seed with a deliberately
-//! wide residual until an on-device calibration refines it.
+//! This runs the **real firmware VM** (`ledmapper_fx_vm`) natively on the host
+//! and emits a profile with `source: "host"`. IMPORTANT: this is a
+//! pipeline/format SMOKE test, NOT a device performance model — a hardware-FPU
+//! host has far too much compute to predict the FPU-less C6 (on the host `sin ≈
+//! add`). The AUTHORITATIVE per-opcode model comes from the HITL device
+//! benchmark (pi/hitl/harness/fx_bench.py), which flashes the real C6 and
+//! collects cycle-accurate PerfReports into the same [`ExecutionProfile`]
+//! format. This crate exists to exercise that format + the fit end-to-end with
+//! no hardware in CI, and to seed a plausible-shaped profile.
+//!
+//! To keep even the smoke profile from inverting the C6's economics, each cost
+//! is split into a MEASURED dispatch term and a MODELED soft-float weight (see
+//! [`build_profile`]); the residual is deliberately wide.
 //!
 //! The emitted [`ExecutionProfile`] is the common profile format (see
-//! web/src/effects/executionProfile.ts): the same JSON shape that the on-device
-//! calibration and the shipped default also use. This crate splits into:
+//! web/src/effects/executionProfile.ts): the same JSON shape that the device
+//! benchmark and the shipped default also use. This crate splits into:
 //!   - a deterministic, unit-tested core here (program builders, the
 //!     least-squares slope fit, profile assembly + serde), and
 //!   - the timing harness in `main.rs` (wall-clock measurement — non-
@@ -399,20 +404,20 @@ pub fn build_profile(inp: &FitInputs) -> ExecutionProfile {
         predicted: Some(update_fixed),
     });
 
-    // host≠device penalty keeps the band honest (source = semihost).
+    // host≠device penalty keeps the band honest (source = host, non-authoritative).
     let residual_error = round3((resid_max + 0.35).min(0.9));
 
     ExecutionProfile {
         kind: PROFILE_KIND.into(),
         version: PROFILE_VERSION,
         soc: inp.soc.clone(),
-        source: "semihost".into(),
+        source: "host".into(),
         cpu_hz: inp.cpu_hz,
         unit: "cycles".into(),
         tool_version: TOOL_VERSION.into(),
         timestamp: String::new(),
         firmware_build: None,
-        device_label: Some("semihost".into()),
+        device_label: Some("host".into()),
         costs,
         fixed,
         fallback_cost: round1(fallback_cost),

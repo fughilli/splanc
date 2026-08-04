@@ -55,12 +55,18 @@ export interface StoredCostTable {
   observations: CalibObservation[];
   /** Label for the device this was measured on (for the "calibrated on…" badge). */
   deviceLabel: string;
-  /** "default" = the shipped fallback; "calibrated" = fitted on hardware;
-   * "semihost" = measured by the host benchmark over the real VM (no device). */
-  origin: "default" | "calibrated" | "semihost";
+  /** "default" = the shipped fallback; "calibrated" = fitted on real hardware
+   * (HITL/device, authoritative); "host" = the native host smoke benchmark
+   * (never a device model). */
+  origin: "default" | "calibrated" | "host";
   /** Available-execution-budget model (FUG-11). Optional for records persisted
    * before the budget model existed. */
   budget?: BudgetModel;
+  /** Stable device identity (hardware MAC / device id) for a PER-DEVICE profile.
+   * Absent for SoC-wide records. Part of the composite `id` when present. */
+  deviceKey?: string;
+  /** Held-out predicted-vs-measured error (0..1) once validated on hardware. */
+  measuredError?: number;
 }
 
 const DB_NAME = "ledmapper-perf";
@@ -179,8 +185,21 @@ export function toCostTable(rec: StoredCostTable): CostTable {
   };
 }
 
-function keyOf(soc: string, cpuHz: number, tableVersion: number): string {
-  return `${soc}@${cpuHz}#${tableVersion}`;
+/** Composite record key. A `deviceKey` (hardware MAC / device id) makes it a
+ * PER-DEVICE profile; without one it is the SoC-wide table. Per-device profiles
+ * let a heterogeneous fleet each carry its own measured model. */
+export function costTableId(
+  soc: string,
+  cpuHz: number,
+  tableVersion: number,
+  deviceKey?: string,
+): string {
+  const base = `${soc}@${cpuHz}#${tableVersion}`;
+  return deviceKey ? `${base}@${deviceKey}` : base;
+}
+
+function keyOf(soc: string, cpuHz: number, tableVersion: number, deviceKey?: string): string {
+  return costTableId(soc, cpuHz, tableVersion, deviceKey);
 }
 
 type Listener = () => void;
@@ -233,27 +252,35 @@ class CostTableStore {
     this.emit();
   }
 
-  /** Load the stored calibrated table for a SoC+clock (current version), or
+  /** Load a stored table by SoC+clock (+optional device), current version, or
    * null if none — the caller falls back to {@link defaultCostTable}. */
   async load(
     soc = DEFAULT_SOC,
     cpuHz = DEFAULT_CPU_HZ,
     tableVersion = CURRENT_TABLE_VERSION,
+    deviceKey?: string,
   ): Promise<StoredCostTable | null> {
     const db = await this.db();
     const tx = db.transaction(STORE, "readonly");
     const rec = await CostTableStore.req(
-      tx.objectStore(STORE).get(keyOf(soc, cpuHz, tableVersion)),
+      tx.objectStore(STORE).get(keyOf(soc, cpuHz, tableVersion, deviceKey)),
     );
     return (rec as StoredCostTable | undefined) ?? null;
   }
 
-  /** Resolve the best CostTable for a SoC: the calibrated one if present, else
-   * the shipped default. Also returns whether it was calibrated (for the badge). */
+  /** Resolve the best CostTable for a target, most-specific first: the
+   * per-DEVICE calibrated table (if `deviceKey` given and present) → the
+   * SoC-wide calibrated table → the shipped default. Returns the stored record
+   * (if any) for the "calibrated on…" badge. */
   async resolveTable(
     soc = DEFAULT_SOC,
     cpuHz = DEFAULT_CPU_HZ,
+    deviceKey?: string,
   ): Promise<{ table: CostTable; stored: StoredCostTable | null }> {
+    if (deviceKey) {
+      const perDevice = await this.load(soc, cpuHz, CURRENT_TABLE_VERSION, deviceKey).catch(() => null);
+      if (perDevice) return { table: toCostTable(perDevice), stored: perDevice };
+    }
     const stored = await this.load(soc, cpuHz).catch(() => null);
     if (stored) return { table: toCostTable(stored), stored };
     return { table: defaultCostTable(soc, cpuHz), stored: null };
@@ -278,9 +305,14 @@ class CostTableStore {
     this.emit();
   }
 
-  /** Build the composite key for a record (soc/clock/version). */
-  keyFor(soc: string, cpuHz: number, tableVersion = CURRENT_TABLE_VERSION): string {
-    return keyOf(soc, cpuHz, tableVersion);
+  /** Build the composite key for a record (soc/clock/version, optional device). */
+  keyFor(
+    soc: string,
+    cpuHz: number,
+    tableVersion = CURRENT_TABLE_VERSION,
+    deviceKey?: string,
+  ): string {
+    return keyOf(soc, cpuHz, tableVersion, deviceKey);
   }
 }
 

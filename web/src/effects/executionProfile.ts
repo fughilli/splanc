@@ -6,23 +6,27 @@
  * An {@link ExecutionProfile} is the single, versioned, portable artifact that
  * ANY execution target emits and the offline simulator (costModel.ts) consumes:
  *
- *   - the **semihost benchmark** (tools/fx_semihost_bench, a host binary that
- *     runs the real firmware VM over calibration micro-programs) emits one with
- *     `source: "semihost"` — a usable per-opcode cost model with NO hardware;
- *   - the **on-device calibration** flow (calibrate.ts + PerfReport) emits one
- *     with `source: "device"` — cycle-accurate for that board;
+ *   - the **HITL device benchmark** (pi/hitl/harness/fx_bench.py flashes the
+ *     real C6 and collects cycle-accurate PerfReports) emits one with
+ *     `source: "device"` — the AUTHORITATIVE model for that board, validated by
+ *     predicting held-out programs (see `measuredError`);
+ *   - the **host benchmark** (tools/fx_semihost_bench, runs the VM natively)
+ *     emits `source: "host"` — a pipeline/format SMOKE test only. A hardware-FPU
+ *     host has far too much compute to predict the FPU-less C6, so a host
+ *     profile is NEVER an authoritative device model; it exists to exercise the
+ *     toolchain end-to-end without hardware.
  *   - the shipped **default** table is `source: "default"`.
  *
- * All three share this schema, so the estimator, the budget bar, and the AI
- * loop don't care which target produced the numbers. Every profile carries
- * provenance metadata AND the raw experimental OBSERVATIONS, per the
- * perf-monitoring.md multi-SoC DECISION ("save/restore models … including the
- * direct experimental observations so they can be rederived if the modeling
- * approach changes").
+ * They share this schema, so the estimator, the budget bar, and the AI loop
+ * don't care which target produced the numbers — but `source` + `measuredError`
+ * tell them how much to trust it. Every profile carries provenance metadata AND
+ * the raw experimental OBSERVATIONS, per the perf-monitoring.md multi-SoC
+ * DECISION ("save/restore models … including the direct experimental
+ * observations so they can be rederived if the modeling approach changes").
  *
- * The Rust semihost benchmark serializes the identical JSON shape (serde,
- * camelCase top-level + snake_case `fixed` to match {@link FixedOverhead}); see
- * tools/fx_semihost_bench and the golden at web/tests/testdata. Keep the two in
+ * The Rust host benchmark serializes the identical JSON shape (serde, camelCase
+ * top-level + snake_case `fixed` to match {@link FixedOverhead}); see
+ * tools/fx_semihost_bench and the golden at web/tests/testdata. Keep them in
  * sync.
  *
  * Pure + CJS-safe (no DOM / import.meta) so it runs under the node:test build.
@@ -37,6 +41,7 @@ import {
   type FixedOverhead,
 } from "./costModel";
 import {
+  costTableId,
   DEFAULT_COSTS,
   DEFAULT_CPU_HZ,
   DEFAULT_FIXED,
@@ -52,8 +57,9 @@ export const CANONICAL_OPCODES = OPCODE_NAMES;
 
 export type CanonicalOpcode = (typeof CANONICAL_OPCODES)[number];
 
-/** Which kind of target measured a profile. */
-export type ProfileSource = "device" | "semihost" | "default";
+/** Which kind of target measured a profile. `device` (HITL, authoritative) >
+ * `host` (native smoke test, never a device model) / `default` (shipped seed). */
+export type ProfileSource = "device" | "host" | "default";
 
 /** Unit the `costs` are expressed in. `cycles` = target CPU cycles (the
  * simulator converts to ms via `cpuHz`). The semihost benchmark normalizes its
@@ -96,15 +102,24 @@ export interface ExecutionProfile {
   timestamp: string;
   firmwareBuild?: string;
   deviceLabel?: string;
+  /** Stable device identity (hardware MAC or deviceStore id) for per-device
+   * profiles. Absent for SoC-wide (`default`) or host smoke profiles. */
+  deviceKey?: string;
   // -- cost model -----------------------------------------------------------
   /** Per-opcode SCALAR (per-lane) cost, keyed by {@link CANONICAL_OPCODES}. */
   costs: CostMap;
   fixed: FixedOverhead;
   /** Cheap-op fallback cost for opcodes absent from `costs`. */
   fallbackCost: number;
-  /** Fit residual as a fraction (0..1). Semihost profiles carry a wide band
-   * (host != device); device calibration tightens it. */
+  /** Fit residual as a fraction (0..1). Host profiles carry a wide band (host !=
+   * device); device calibration tightens it. */
   residualError: number;
+  /** Held-out predicted-vs-measured error as a fraction (0..1), from validating
+   * the fitted model against programs NOT in the fit (profileValidation.ts).
+   * Present only once a `device` profile has been validated on real hardware —
+   * it is the trustworthy accuracy signal (vs `residualError`, an in-sample fit
+   * quality). Absent on host/default profiles. */
+  measuredError?: number;
   // -- budget model (FUG-11) ------------------------------------------------
   budget: BudgetModel;
   // -- raw observations (re-derivable) --------------------------------------
@@ -177,7 +192,7 @@ export function validateProfile(v: unknown): ExecutionProfile {
   const version = num(v["version"], "version");
   if (version !== PROFILE_VERSION) throw new Error(`profile: unsupported version ${version}`);
   const source = str(v["source"], "source");
-  if (source !== "device" && source !== "semihost" && source !== "default")
+  if (source !== "device" && source !== "host" && source !== "default")
     throw new Error(`profile: bad source ${source}`);
   const unit = str(v["unit"], "unit");
   if (unit !== "cycles") throw new Error(`profile: unsupported unit ${unit}`);
@@ -199,6 +214,8 @@ export function validateProfile(v: unknown): ExecutionProfile {
   };
   if (typeof v["firmwareBuild"] === "string") p.firmwareBuild = v["firmwareBuild"];
   if (typeof v["deviceLabel"] === "string") p.deviceLabel = v["deviceLabel"];
+  if (typeof v["deviceKey"] === "string") p.deviceKey = v["deviceKey"];
+  if (typeof v["measuredError"] === "number") p.measuredError = v["measuredError"];
   return p;
 }
 
@@ -238,6 +255,8 @@ export function costTableToProfile(
     timestamp?: string;
     firmwareBuild?: string;
     deviceLabel?: string;
+    deviceKey?: string;
+    measuredError?: number;
     observations?: ProfileObservation[];
   },
 ): ExecutionProfile {
@@ -259,6 +278,8 @@ export function costTableToProfile(
   };
   if (meta.firmwareBuild !== undefined) p.firmwareBuild = meta.firmwareBuild;
   if (meta.deviceLabel !== undefined) p.deviceLabel = meta.deviceLabel;
+  if (meta.deviceKey !== undefined) p.deviceKey = meta.deviceKey;
+  if (meta.measuredError !== undefined) p.measuredError = meta.measuredError;
   return p;
 }
 
@@ -298,11 +319,12 @@ export function opcodeCoverage(p: ExecutionProfile): { covered: string[]; missin
 // -- bridge to the persisted cost-table store --------------------------------
 
 /** Adapt a profile into a {@link StoredCostTable} record so an imported
- * semihost/device profile persists (and badges) through the existing store. */
+ * host/device profile persists (and badges) through the existing store. A
+ * device profile with a `deviceKey` is keyed per-device; others are SoC-wide. */
 export function profileToStored(p: ExecutionProfile, tableVersion: number): StoredCostTable {
-  const origin = p.source === "default" ? "default" : p.source === "device" ? "calibrated" : "semihost";
-  return {
-    id: `${p.soc}@${p.cpuHz}#${tableVersion}`,
+  const origin = p.source === "default" ? "default" : p.source === "device" ? "calibrated" : "host";
+  const rec: StoredCostTable = {
+    id: costTableId(p.soc, p.cpuHz, tableVersion, p.deviceKey),
     soc: p.soc,
     cpuHz: p.cpuHz,
     tableVersion,
@@ -319,8 +341,11 @@ export function profileToStored(p: ExecutionProfile, tableVersion: number): Stor
       predicted: o.predicted ?? 0,
       measured: o.measured,
     })),
-    deviceLabel: p.deviceLabel ?? (p.source === "semihost" ? "semihost" : ""),
+    deviceLabel: p.deviceLabel ?? (p.source === "host" ? "host" : ""),
     origin,
     budget: { ...p.budget },
   };
+  if (p.deviceKey !== undefined) rec.deviceKey = p.deviceKey;
+  if (p.measuredError !== undefined) rec.measuredError = p.measuredError;
+  return rec;
 }
