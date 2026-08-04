@@ -391,6 +391,12 @@ export function PerfPanelScreen(router: Router): Screen {
       onClick: () => router.navigate("/perf/calibrate"),
     }),
     Button({
+      label: "Manage profiles",
+      icon: "settings",
+      variant: "quiet",
+      onClick: () => router.navigate("/perf/profiles"),
+    }),
+    Button({
       label: "Effect library",
       icon: "sparkles",
       variant: "quiet",

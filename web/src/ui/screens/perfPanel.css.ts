@@ -77,4 +77,8 @@ const CSS = `
 .perf-budget[data-color="green"] .perf-budget-pct { color:var(--ok); }
 .perf-budget[data-color="yellow"] .perf-budget-pct { color:var(--warn); }
 .perf-budget[data-color="red"] .perf-budget-pct { color:var(--err); }
+
+/* Profile manager rows (perfProfiles.ts). */
+.perf-profiles { display:flex; flex-direction:column; gap:var(--sp-2); }
+.perf-profile-head { display:flex; align-items:center; gap:var(--sp-2); margin-bottom:var(--sp-2); }
 `;
