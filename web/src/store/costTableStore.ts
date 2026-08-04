@@ -16,7 +16,13 @@
  * CJS-safe for the node:test unit build.
  */
 
-import type { CostMap, CostTable, FixedOverhead } from "../effects/costModel";
+import {
+  DEFAULT_BUDGET_MODEL,
+  type BudgetModel,
+  type CostMap,
+  type CostTable,
+  type FixedOverhead,
+} from "../effects/costModel";
 
 /** One calibration observation: a benchmark's predicted vs measured cycles. */
 export interface CalibObservation {
@@ -49,8 +55,12 @@ export interface StoredCostTable {
   observations: CalibObservation[];
   /** Label for the device this was measured on (for the "calibrated on…" badge). */
   deviceLabel: string;
-  /** "default" = the shipped fallback; "calibrated" = fitted on hardware. */
-  origin: "default" | "calibrated";
+  /** "default" = the shipped fallback; "calibrated" = fitted on hardware;
+   * "semihost" = measured by the host benchmark over the real VM (no device). */
+  origin: "default" | "calibrated" | "semihost";
+  /** Available-execution-budget model (FUG-11). Optional for records persisted
+   * before the budget model existed. */
+  budget?: BudgetModel;
 }
 
 const DB_NAME = "ledmapper-perf";
@@ -151,6 +161,7 @@ export function defaultCostTable(
     fixed: { ...DEFAULT_FIXED },
     residualError: 0.25,
     fallbackCost: 8,
+    budget: { ...DEFAULT_BUDGET_MODEL },
   };
 }
 
@@ -164,6 +175,7 @@ export function toCostTable(rec: StoredCostTable): CostTable {
     fixed: rec.fixedOverhead,
     residualError: rec.residualError,
     fallbackCost: rec.fallbackCost,
+    budget: rec.budget ?? { ...DEFAULT_BUDGET_MODEL },
   };
 }
 

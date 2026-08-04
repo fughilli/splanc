@@ -89,6 +89,28 @@ export const OPCODE_NAMES = [
   "Fix2I",
   "Call",
   "RetFn",
+  // indexed array/struct access (dynamic index)
+  "LoadStateIdx", // 52
+  "StoreStateIdx",
+  "LoadLocalIdx",
+  "StoreLocalIdx",
+  // topology graph queries
+  "GraphQuery", // 56
+  // declared buffers / textures
+  "LoadBuf", // 57
+  "StoreBuf",
+  "SampleTex",
+  "PaintTex",
+  "FloodFrom", // 61
+  // reduced-precision fixed-point (Q1.f) fast path (FUG-10)
+  "MulFixN", // 62
+  "DivFixN",
+  "FixRescale",
+  "FixToF",
+  "FixFromF",
+  "SinFix", // 67
+  "CosFix",
+  "ExpFix", // 69
 ] as const;
 
 export type OpcodeName = (typeof OPCODE_NAMES)[number];
@@ -178,6 +200,26 @@ const OP_META: Record<string, OpMeta> = {
   Fix2I: { operandBytes: 0, lanesAt: -1 },
   Call: { operandBytes: 2, lanesAt: -1, call: true },
   RetFn: { operandBytes: 0, lanesAt: -1, ret: true },
+  // indexed access: base,stride,off,n,count — n (lane count) at operand offset 3.
+  LoadStateIdx: { operandBytes: 5, lanesAt: 3 },
+  StoreStateIdx: { operandBytes: 5, lanesAt: 3 },
+  LoadLocalIdx: { operandBytes: 5, lanesAt: 3 },
+  StoreLocalIdx: { operandBytes: 5, lanesAt: 3 },
+  GraphQuery: { operandBytes: 1, lanesAt: -1 }, // u8 kind
+  LoadBuf: { operandBytes: 1, lanesAt: -1 }, // u8 id (elem count is dynamic)
+  StoreBuf: { operandBytes: 1, lanesAt: -1 },
+  SampleTex: { operandBytes: 1, lanesAt: -1 },
+  PaintTex: { operandBytes: 1, lanesAt: -1 },
+  FloodFrom: { operandBytes: 0, lanesAt: -1 },
+  // reduced-precision fixed-point (FUG-10): all scalar, u8 frac / i8 shift.
+  MulFixN: { operandBytes: 1, lanesAt: -1 },
+  DivFixN: { operandBytes: 1, lanesAt: -1 },
+  FixRescale: { operandBytes: 1, lanesAt: -1 },
+  FixToF: { operandBytes: 1, lanesAt: -1 },
+  FixFromF: { operandBytes: 1, lanesAt: -1 },
+  SinFix: { operandBytes: 1, lanesAt: -1 },
+  CosFix: { operandBytes: 1, lanesAt: -1 },
+  ExpFix: { operandBytes: 1, lanesAt: -1 },
 };
 
 // -- Cost table -------------------------------------------------------------
@@ -432,6 +474,44 @@ export interface FrameEstimate {
   loopCapped: boolean;
 }
 
+/**
+ * Available-execution-budget model (FUG-11, perf-monitoring.md §"Instruction
+ * budget vs `for` bound" DECISION: "estimate how much of the budget we've
+ * consumed, preferably in wall time"). The *frame period* (1/fps) is not all
+ * available to the FX engine: the LED transmit (`show`) and other system tasks
+ * (wss telemetry, scheduler) eat into it. This model captures what fraction of
+ * each frame the effect's `update()`+`shade()` actually gets.
+ *
+ *   frameMs           = 1000 / fps
+ *   systemReservedMs  = frameMs * (1 - cpuAvailableFraction)   // other tasks
+ *   availableFxMs     = frameMs - systemReservedMs - showMs    // for update+shade
+ *
+ * `cpuAvailableFraction` is modeled offline and *measured* on-device from a
+ * PerfReport (see budget.ts `budgetFromReport`). `transmitReservesCpu` marks
+ * whether `show` burns CPU (bit-banged) or is async DMA/RMT (WS2812) — either
+ * way the serial firmware render task must fit update+shade+show in one frame,
+ * so `show` is subtracted from the FX-engine budget regardless; the flag is
+ * carried for future LED types with CPU-bound transmit (the perf-monitoring
+ * "other LED types" DECISION).
+ */
+export interface BudgetModel {
+  /** Target frame rate (frames/s); the frame period is 1000/fps ms. */
+  fps: number;
+  /** Fraction of each frame's CPU available to the FX engine after other
+   * system tasks (0..1). Measured on-device, modeled offline. */
+  cpuAvailableFraction: number;
+  /** True if the LED transmit burns CPU (bit-banged) rather than async DMA. */
+  transmitReservesCpu: boolean;
+}
+
+/** Default budget model: 30 fps, ~15% of the frame reserved for system tasks,
+ * async (DMA/RMT) transmit. Order-of-magnitude until a device measures it. */
+export const DEFAULT_BUDGET_MODEL: BudgetModel = {
+  fps: 30,
+  cpuAvailableFraction: 0.85,
+  transmitReservesCpu: false,
+};
+
 export interface CostTable {
   soc: string;
   cpuHz: number;
@@ -442,6 +522,10 @@ export interface CostTable {
   residualError: number;
   /** Cheap-op fallback cost (cycles) for opcodes absent from `costs`. */
   fallbackCost: number;
+  /** Available-execution-budget model (FUG-11). Optional for back-compat with
+   * tables persisted before the budget model existed; callers fall back to
+   * {@link DEFAULT_BUDGET_MODEL}. */
+  budget?: BudgetModel;
 }
 
 export interface EstimateInputs {
