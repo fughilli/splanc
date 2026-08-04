@@ -67,17 +67,9 @@ jobs:
       - name: Setup repository
         uses: actions/checkout@v4
 
-      # Reach the rigs over the tailnet. Ephemeral so the node self-reaps after
-      # the run; the rigs only accept tailnet peers (DESIGN.md "Security").
-      - name: Join the tailnet
-        uses: tailscale/github-action@v3
-        with:
-          authkey: ${{ secrets.TS_AUTHKEY }}
-          args: --accept-routes
-
-      # Same Nix + Bazel toolchain and caching as the firmware job — the
-      # flash-bundle pulls in the esp32c6 image (mbedtls + Arduino core from
-      # source), the dominant cost, so we reuse the firmware disk-cache namespace.
+      # Same Nix + Bazel toolchain as the firmware job — the flash-bundle pulls
+      # in the esp32c6 image (mbedtls + Arduino core from source), the dominant
+      # cost, so we share its Nix cache and warm-start off its disk cache.
       - name: Install Nix
         uses: nixbuild/nix-quick-install-action@v30
         with:
@@ -112,10 +104,32 @@ jobs:
             bazel-disk-hitl-e2e-${{ runner.os }}-
             bazel-disk-${{ runner.os }}-
 
+      # Build the whole e2e graph — including the flash-bundle (esp32c6: mbedtls
+      # + Arduino core from source), the dominant cost — BEFORE joining the
+      # tailnet and reserving a rig. The flash-bundle is a runfiles data dep of
+      # the e2e, so building the e2e target builds it too. Doing it here keeps the
+      # firmware graph off the reserved-rig critical path: the `bazel run` below
+      # is then a warm no-op build, so the bench reservation (serialized across
+      # PRs by the concurrency group) covers only the flash + provision + WS
+      # checks, not the multi-minute compile. A firmware/compile break also fails
+      # fast here, before we touch the tailnet or the bench.
+      - name: Build the HITL e2e (incl. flash-bundle)
+        run: bazel build --config=ci -c opt --disk_cache="$HOME/.cache/bazel-disk" //pi/hitl/harness:e2e
+
+      # Reach the rigs over the tailnet. Ephemeral so the node self-reaps after
+      # the run; the rigs only accept tailnet peers (DESIGN.md "Security"). Joined
+      # only now — the build above needs no tailnet, so the node is up just for
+      # the reservation window.
+      - name: Join the tailnet
+        uses: tailscale/github-action@v3
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+          args: --accept-routes
+
       # Reserve a free rig from the pool, flash, ImprovBLE-provision, then check
-      # time-sync + rename over the WebSocket. `bazel run` builds the flash-bundle
-      # (a runfiles data dep of the e2e) and the harness finds it there — no
-      # --bundle needed. The DUT is provisioned onto the rig's own AP by default
+      # time-sync + rename over the WebSocket. The e2e is already built, so this
+      # only reserves + runs (the harness finds the flash-bundle in runfiles — no
+      # --bundle needed). The DUT is provisioned onto the rig's own AP by default
       # (HITL_WIFI_* only overrides it); the pool comes from HITL_SERVERS. -c opt
       # so the firmware build matches the firmware CI job.
       - name: Run HITL e2e
