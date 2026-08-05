@@ -197,7 +197,7 @@ where
 {
     let mut dec = PbDecoder::new(reader);
     let mut map = None;
-    walk(&mut dec, frame_len, |field, wt, dec| match field {
+    walk(&mut dec, frame_len, |field, _wt, dec| match field {
         ARM_SUBMIT_MAP => len_record(dec, |len, dec| {
             // SubmitMap { OutputMap map = 1; }
             walk(dec, len, |f, wt, dec| match f {
@@ -224,7 +224,7 @@ where
 {
     let mut dec = PbDecoder::new(reader);
     let mut topo = None;
-    walk(&mut dec, frame_len, |field, wt, dec| match field {
+    walk(&mut dec, frame_len, |field, _wt, dec| match field {
         ARM_SUBMIT_TOPOLOGY => len_record(dec, |len, dec| {
             walk(dec, len, |f, wt, dec| match f {
                 1 => len_record(dec, |len, dec| {
