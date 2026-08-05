@@ -28,6 +28,41 @@
 
 set -uo pipefail
 
+# ---------------------------------------------------------------------------
+# Presubmit lint gate (FUG-63)
+#
+# Wire the repo's prek hooks into THIS worktree's git before anything else, so
+# every `git commit` runs .pre-commit-config.yaml and fails in-container when a
+# lint is red. Lints were frequently landing broken on proposed PRs because
+# agents never ran them; this makes a failing lint immediate and unmissable —
+# and since the orchestrator only pushes committed work, a commit that succeeds
+# is a commit whose lints passed.
+#
+# Runs FIRST, ahead of the tailnet block below, because that block `exit`s early
+# in the common no-authkey path and would otherwise skip this entirely.
+#
+# `prek install` writes the git shim; `--prepare-hooks` pre-builds every hook's
+# environment so the agent's first commit isn't a slow cold start (and so a
+# missing toolchain surfaces now, not mid-commit). All non-fatal: prek may be
+# absent on an un-rebuilt image, or offline with cold hook caches — neither
+# should abort container startup.
+prek_log() { printf 'prek: %s\n' "$*"; }
+if command -v prek >/dev/null 2>&1; then
+    if git -C /workspace rev-parse --git-dir >/dev/null 2>&1; then
+        prek_log "installing lint hooks into /workspace (every git commit will run the lints)"
+        if prek install --prepare-hooks --allow-missing-config -C /workspace >/tmp/prek-install.log 2>&1; then
+            prek_log "hooks installed and environments prepared"
+        else
+            prek_log "install did not fully succeed (offline? cold caches?) — see /tmp/prek-install.log"
+            prek_log "  the git shim may still be in place; hooks build on first use"
+        fi
+    else
+        prek_log "/workspace is not a git repo — skipping hook install"
+    fi
+else
+    prek_log "prek is not in this image — relaunch claude-container to rebuild the overlay, then hooks won't run on commit"
+fi
+
 TS_SOCK=/var/run/tailscale/tailscaled.sock
 TS_STATE=/var/lib/tailscale/tailscaled.state
 

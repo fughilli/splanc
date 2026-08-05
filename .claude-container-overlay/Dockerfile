@@ -79,10 +79,19 @@ RUN apt-get update \
     && echo 'claude ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/claude \
     && chmod 0440 /etc/sudoers.d/claude
 
-# Presubmit tooling (branch ci-presubmits): pip + pre-commit so the repo's
-# hooks (.pre-commit-config.yaml) run locally in the container.
+# Presubmit tooling (FUG-63): prek — a single-binary, drop-in reimplementation
+# of pre-commit that reads the same .pre-commit-config.yaml. It is the enforced
+# lint gate: ../startup.sh runs `prek install` per container so every `git
+# commit` an agent makes runs the repo's hooks and fails loudly in-container
+# (agents commit early and often, and the orchestrator only pushes committed
+# work — so a green commit means the lints passed). CI runs the same `prek` on
+# the same config, so local and CI verdicts never diverge.
+#
+# Pinned so the container, CI, and the human setup-precommit.sh all agree.
+# python3-pip/venv are kept because prek provisions its Python-language hooks
+# (black, isort, flake8) through them.
 RUN apt-get update -qq && apt-get install -y -qq python3-pip python3-venv && \
-    python3 -m pip install --break-system-packages pre-commit
+    python3 -m pip install --break-system-packages 'prek==0.4.12'
 
 # 2026-07-29: mark /workspace safe for git. The bind mount is owned by the host
 # uid, which can differ from the runtime user's, tripping git's dubious-ownership
