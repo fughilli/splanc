@@ -582,7 +582,31 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     layout.resetLayout();
     closeMenu();
   });
-  menu.append(miKey, miFormat, miReset);
+  // Recall section: one "Show <Pane>" item per closed pane, rebuilt whenever the
+  // menu opens (a pane's hidden state changes as the user closes/reopens panes).
+  const miRecall = document.createElement("div");
+  miRecall.className = "fxedit-menu-recall";
+  function refreshRecall(): void {
+    miRecall.replaceChildren();
+    const hidden = layout.hiddenPanes();
+    if (hidden.length === 0) return;
+    const sep = document.createElement("div");
+    sep.className = "fxedit-menu-sep";
+    sep.textContent = "Closed panes";
+    miRecall.appendChild(sep);
+    for (const pane of hidden) {
+      const it = document.createElement("button");
+      it.type = "button";
+      it.className = "fxedit-menu-item";
+      it.textContent = `Show ${pane.title}`;
+      it.addEventListener("click", () => {
+        layout.setVisible(pane.id, true);
+        closeMenu();
+      });
+      miRecall.appendChild(it);
+    }
+  }
+  menu.append(miKey, miFormat, miReset, miRecall);
 
   // Auto-format (re-indent) the buffer, keeping the caret at roughly the same
   // logical spot (measured in non-whitespace characters, which the reformat
@@ -626,6 +650,7 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   }
   function openMenu(): void {
     menuOpen = true;
+    refreshRecall();
     menu.style.display = "";
     // Defer the outside-click listener so this same click doesn't close it.
     setTimeout(() => document.addEventListener("click", onDocClick), 0);

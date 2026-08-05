@@ -923,6 +923,20 @@ body.is-locked {
 .fxedit-menu-item:hover {
   background: var(--surface);
 }
+/* Section label preceding the recall ("Show <pane>") items for closed panes. */
+.fxedit-menu-recall {
+  display: flex;
+  flex-direction: column;
+}
+.fxedit-menu-sep {
+  border-top: 1px solid var(--border);
+  margin-top: var(--sp-1);
+  padding: 0.4rem 0.7rem 0.2rem;
+  font-size: var(--f-caption);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
 /* Menu that opens UPWARD from a control pinned near the bottom edge. */
 .fxedit-menu--up {
   top: auto;
@@ -1254,13 +1268,29 @@ body.is-locked {
 .fxlayout-edge > .fxpane {
   flex: 1 1 0;
 }
-/* Tab strip when >1 pane share an edge. */
+/* Tab strip: a scrollable list of pane tabs plus a pinned move/hide control
+ * cluster. Always present on a dock (even a lone pane), so the controls live in
+ * the strip and the fronted pane carries no header of its own. */
 .fxlayout-edgetabs {
   display: flex;
+  align-items: stretch;
   flex: 0 0 auto;
-  overflow-x: auto;
   border-bottom: 1px solid var(--border);
   background: var(--surface-2);
+}
+/* The scrollable tab list; the control cluster stays pinned at the right. */
+.fxlayout-tablist {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+}
+/* Move/hide controls pinned to the right end of a dock's tab strip. */
+.fxlayout-tabctl {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  margin-left: auto;
 }
 .fxlayout-edgetab {
   flex: 0 0 auto;
@@ -1279,12 +1309,6 @@ body.is-locked {
 .fxlayout-edgetab--active {
   background: var(--surface);
   color: var(--text);
-}
-/* On an edge with tabs the fronted pane hides its own redundant title, keeping
- * only the move/hide controls at the right. */
-.fxlayout-edgetabs + .fxpane .fxpane-title {
-  visibility: hidden;
-  flex: 1 1 auto;
 }
 
 /* -- dividers: hairline + flush, with a widened invisible hit area -- */
@@ -1394,10 +1418,11 @@ body.is-locked {
 }
 
 /* -- relocate popover -- */
+/* Fixed to the viewport; JS (showRelocate) computes left/top off the button's
+ * rect and flips it to stay fully on-screen near the edges. */
 .fxlayout-relo {
-  position: absolute;
-  z-index: 30;
-  margin-top: 2px;
+  position: fixed;
+  z-index: 61;
   min-width: 9rem;
   background: var(--surface-2);
   border: 1px solid var(--border);
@@ -1465,7 +1490,7 @@ body.is-locked {
    separators (not floating pills). */
 .fxlayout-tabs {
   display: flex;
-  overflow-x: auto;
+  align-items: stretch;
   flex: 0 0 auto;
   background: var(--surface-2);
   border-bottom: 1px solid var(--border);
