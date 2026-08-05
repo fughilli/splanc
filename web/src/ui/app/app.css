@@ -605,6 +605,9 @@ body.is-locked {
   /* Height of the top drawer bar; also the workspace's top inset while the
    * drawer is expanded (collapsing zeroes the inset — see below). */
   --fxdrawer-h: calc(2.2rem + env(safe-area-inset-top, 0px));
+  /* Size of the floating "show" handle shown while the drawer is collapsed;
+   * also drives how far the top-right tab controls are displaced to clear it. */
+  --fxedit-handle-w: 1.9rem;
   position: fixed;
   inset: 0;
   padding: 0;
@@ -898,7 +901,7 @@ body.is-locked {
   display: none;
   align-items: center;
   justify-content: center;
-  width: 1.9rem;
+  width: var(--fxedit-handle-w);
   height: 1.9rem;
   padding: 0;
   border: 1px solid var(--border);
@@ -923,6 +926,28 @@ body.is-locked {
 }
 .fxedit-drawer-collapsed .fxedit-drawer-expand {
   display: inline-flex;
+}
+/* Collapsed: the floating "show" handle sits at the workspace's top-right
+ * corner. Displace the move/hide controls of whichever chrome occupies that
+ * corner so they shift left instead of hiding under the handle. The corner is:
+ *   • the top edge dock's tab strip (spans full width), or
+ *   • the right edge dock's tab strip (when there is no top dock), or
+ *   • the center pane's header (when neither top nor right dock exists), or
+ *   • the topmost region's tab strip in narrow (stacked) mode. */
+.fxedit-drawer-collapsed .fxlayout-edge--top > .fxlayout-edgetabs > .fxlayout-tabctl,
+.fxedit-drawer-collapsed
+  .fxlayout-dock:not(:has(.fxlayout-edge--top))
+  .fxlayout-edge--right
+  > .fxlayout-edgetabs
+  > .fxlayout-tabctl,
+.fxedit-drawer-collapsed
+  .fxlayout-dock:not(:has(.fxlayout-edge--top)):not(:has(.fxlayout-edge--right))
+  .fxlayout-center
+  > .fxpane
+  > .fxpane-head
+  > .fxpane-ctl,
+.fxedit-drawer-collapsed .fxlayout-nstack > .fxlayout-nregion:first-child > .fxlayout-tabs > .fxlayout-tabctl {
+  margin-right: calc(var(--fxedit-handle-w) + 8px);
 }
 /* Inline-editable name: a compact pill, click → input in place. */
 .fxedit-namepill,
