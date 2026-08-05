@@ -452,7 +452,7 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   let lastUniforms: FxUniform[] = [];
   const midiRouter = new MidiRouter((u) => panel.applyExternal(u.slot, u.value));
   midiRouter.setEffect(effectId);
-  const midiPanel = new MidiMapPanel(effectId, { onRemap: () => void runRemap() });
+  const midiPanel = new MidiMapPanel(effectId, { onRemap: () => runRemap() });
 
   // -- AI chat panel --------------------------------------------------------
   const chatLog = document.createElement("div");
