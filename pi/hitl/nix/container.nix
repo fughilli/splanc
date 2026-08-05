@@ -41,6 +41,13 @@ let
     name = "hitl-jtag";
     text = ''
       cfg=(-s ${openocdEsp}/share/openocd/scripts -f board/esp32c6-builtin.cfg)
+      # Multi-DUT: with several identical C6 USB-JTAGs on the same bus, select this
+      # DUT's adapter by serial (the daemon sets HITL_ADAPTER_SERIAL per DUT). Set
+      # before init so the adapter driver binds the right device. Unset (single-DUT)
+      # → openocd auto-picks the sole board, unchanged.
+      if [ -n "''${HITL_ADAPTER_SERIAL:-}" ]; then
+        cfg+=(-c "adapter serial ''${HITL_ADAPTER_SERIAL}")
+      fi
       if [ "$#" -eq 0 ]; then
         exec ${openocdEsp}/bin/openocd "''${cfg[@]}" -c "init; halt; reg pc; reset run; shutdown"
       fi
@@ -59,8 +66,13 @@ let
       elf=""
       if [ "$#" -gt 0 ] && [ -f "$1" ]; then elf="$1"; shift; fi
       log=/tmp/hitl-openocd.log
+      sel=()
+      # Multi-DUT: target this DUT's USB-JTAG by serial when the daemon set it.
+      if [ -n "''${HITL_ADAPTER_SERIAL:-}" ]; then
+        sel=(-c "adapter serial ''${HITL_ADAPTER_SERIAL}")
+      fi
       ${openocdEsp}/bin/openocd -s ${openocdEsp}/share/openocd/scripts \
-        -f board/esp32c6-builtin.cfg > "$log" 2>&1 &
+        -f board/esp32c6-builtin.cfg "''${sel[@]}" > "$log" 2>&1 &
       ocd=$!
       trap 'kill "$ocd" 2>/dev/null || true' EXIT
       for _ in $(seq 1 40); do
