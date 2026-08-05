@@ -305,7 +305,9 @@ async def _measure(ws_url: str, fit_src, held_src, args) -> tuple[list, list, in
     try:
         from server import proto_wire
 
-        await sock.send(proto_wire.encode_client({"type": "set_perf", "mode": "OFF", "interval_ms": 0}))
+        await sock.send(
+            proto_wire.encode_client({"type": "set_perf", "mode": "OFF", "interval_ms": 0})
+        )
         await sock.close()
     except (OSError, websockets.exceptions.WebSocketException):
         pass
@@ -446,7 +448,9 @@ def main() -> None:
         default=os.environ.get("HITL_WIFI_SSID"),
         help="WiFi SSID to provision the DUT onto (default: the rig's own AP)",
     )
-    ap.add_argument("--wifi-pass", default=os.environ.get("HITL_WIFI_PASS", ""), help="WiFi password")
+    ap.add_argument(
+        "--wifi-pass", default=os.environ.get("HITL_WIFI_PASS", ""), help="WiFi password"
+    )
     ap.add_argument("--improv-timeout", type=float, default=75.0, help="seconds to await the join")
     ap.add_argument(
         "--improv-attempts",

@@ -14,7 +14,6 @@ from __future__ import annotations
 import base64
 from typing import Any
 
-
 # The calibration `.fx` sources carry their intended strip length in a header
 # comment ("// Intended LED count: N."), generated from calibrationBenchmarks.ts.
 # Parsing it drives set_led_count so the on-hardware per-LED / transmit sweep
