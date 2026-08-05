@@ -7,6 +7,8 @@
 import { ActionGrid, Button, Chip, EmptyState, IconButton, Sheet, toast, icon } from "../kit";
 import { mapStore, renderThumbnail, type StoredMapSummary } from "../../store/mapStore";
 import { appendGrouped, openFolderPicker } from "./folders";
+import { appState } from "../app/state";
+import { prefs } from "../../store/prefs";
 import type { Router, Screen } from "../app/router";
 
 type Sort = "updated" | "name" | "leds";
@@ -65,7 +67,45 @@ export function MapBrowserScreen(router: Router): Screen {
   fab.title = "New map";
   fab.setAttribute("aria-label", "New map");
   fab.appendChild(icon("plus"));
-  fab.addEventListener("click", () => router.navigate("/capture"));
+  fab.addEventListener("click", () => startNewMap());
+
+  // "New map": confirm the LED count before opening the camera. The strip
+  // length drives the code-book, so it must be right before the flashing
+  // starts — the capture screen has no way to change it mid-walk (FUG-62).
+  function startNewMap(): void {
+    const prefill =
+      prefs.getCaptureLedCount() ?? appState.client?.welcome?.codeParams.ledCount ?? 64;
+    const sheet = Sheet("New map");
+    const label = document.createElement("label");
+    label.className = "k-field";
+    const cap = document.createElement("span");
+    cap.className = "k-field-label";
+    cap.textContent = "Number of LEDs on the fixture";
+    const input = document.createElement("input");
+    input.type = "number";
+    input.min = "1";
+    input.step = "1";
+    input.inputMode = "numeric";
+    input.value = String(prefill);
+    label.append(cap, input);
+    const hint = document.createElement("p");
+    hint.className = "sheet-hint metric";
+    hint.textContent = "This is the strip length the device will flash and map.";
+    const go = Button({
+      label: "Start mapping",
+      icon: "camera",
+      block: true,
+      onClick: () => {
+        const n = Math.max(1, Math.round(parseInt(input.value, 10) || prefill));
+        prefs.setCaptureLedCount(n);
+        sheet.close();
+        router.navigate(`/capture?leds=${n}`);
+      },
+    });
+    sheet.body.append(label, hint, go);
+    input.focus();
+    input.select();
+  }
 
   el.append(searchWrap, tagRow, listEl);
 
@@ -100,7 +140,7 @@ export function MapBrowserScreen(router: Router): Screen {
           title: all.length === 0 ? "No maps yet — map a fixture" : "No maps match your search",
           action:
             all.length === 0
-              ? Button({ label: "New map", icon: "plus", onClick: () => router.navigate("/capture") })
+              ? Button({ label: "New map", icon: "plus", onClick: () => startNewMap() })
               : undefined,
         }),
       );

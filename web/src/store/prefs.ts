@@ -14,6 +14,15 @@ const WIFI_LIST_KEY = "ledmapper.wifiList";
 const K_CACHE_KEY = "ledmapper.calibratedK";
 /** UI theme (reserved; dark-first today). */
 const THEME_KEY = "ledmapper.theme";
+/** Last LED count chosen in the "New map" dialog — prefills the next capture. */
+const LED_COUNT_KEY = "ledmapper.captureLedCount";
+/** Upper bound (ms) of the MANUAL camera-exposure slider. The auto/servo path
+ * stays Nyquist-capped (bitPeriodMs/2) for decode integrity; this only widens
+ * the manual override so the frame can be brought up under artificial light. */
+const EXPOSURE_CEILING_KEY = "ledmapper.manualExposureCeilingMs";
+/** Default manual-exposure ceiling (ms) — generous headroom over a typical
+ * Nyquist cap so a well-lit frame is reachable without changing the setting. */
+export const DEFAULT_MANUAL_EXPOSURE_CEILING_MS = 250;
 
 export interface WifiCreds {
   ssid: string;
@@ -69,6 +78,34 @@ export const prefs = {
   getCalibratedK(): CalibratedK | undefined {
     const raw = readJson<CalibratedK | null>(K_CACHE_KEY, null);
     return raw ?? undefined;
+  },
+  /** Last LED count entered in the New-map dialog, or undefined if never set. */
+  getCaptureLedCount(): number | undefined {
+    const raw = localStorage.getItem(LED_COUNT_KEY);
+    const n = raw === null ? NaN : parseInt(raw, 10);
+    return Number.isFinite(n) && n >= 1 ? n : undefined;
+  },
+  setCaptureLedCount(n: number): void {
+    if (!Number.isFinite(n) || n < 1) return;
+    try {
+      localStorage.setItem(LED_COUNT_KEY, String(Math.round(n)));
+    } catch {
+      /* non-fatal */
+    }
+  },
+  /** Manual-exposure slider ceiling in ms (see EXPOSURE_CEILING_KEY). */
+  getManualExposureCeilingMs(): number {
+    const raw = localStorage.getItem(EXPOSURE_CEILING_KEY);
+    const n = raw === null ? NaN : parseFloat(raw);
+    return Number.isFinite(n) && n > 0 ? n : DEFAULT_MANUAL_EXPOSURE_CEILING_MS;
+  },
+  setManualExposureCeilingMs(ms: number): void {
+    if (!Number.isFinite(ms) || ms <= 0) return;
+    try {
+      localStorage.setItem(EXPOSURE_CEILING_KEY, String(Math.round(ms)));
+    } catch {
+      /* non-fatal */
+    }
   },
   getTheme(): "dark" | "light" {
     return localStorage.getItem(THEME_KEY) === "light" ? "light" : "dark";

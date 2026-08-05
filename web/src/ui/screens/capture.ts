@@ -78,9 +78,17 @@ const forcedExposure = ((): number | null => {
   return Number.isFinite(v) && v >= 0 && v <= 1 ? v : null;
 })();
 
-export function CaptureScreen(router: Router): Screen {
+export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Screen {
   const el = document.createElement("div");
   el.className = "screen screen--capture";
+
+  // The New-map dialog passes the chosen strip length in the hash query
+  // (#/capture?leds=N); it wins over the location.search power-user override,
+  // the device welcome default, and the fallback (FUG-62).
+  const routeLeds = ((): number | null => {
+    const v = parseInt(routeQuery?.get("leds") ?? "", 10);
+    return Number.isFinite(v) && v >= 1 ? v : null;
+  })();
 
   // -- full-screen layout (design doc §4.2). The camera <video> is prepended to
   // <body> by the capture source (fixed, inset:0) as in main.ts; the HUD, live
@@ -251,7 +259,7 @@ export function CaptureScreen(router: Router): Screen {
     }
     const ledCount = Math.max(
       1,
-      parseInt(qs.get("leds") ?? "", 10) || c.welcome?.codeParams.ledCount || 64,
+      routeLeds || parseInt(qs.get("leds") ?? "", 10) || c.welcome?.codeParams.ledCount || 64,
     );
     countEl.textContent = `Map — ${ledCount} LEDs`;
     try {
@@ -480,7 +488,12 @@ export function CaptureScreen(router: Router): Screen {
         applyBrightness: (b01) => applyReconfigure({ brightness: b01 }),
         applyExposure: (e01) => {
           servoedExposure = e01;
-          void ms.setExposure(e01, params.bitPeriodMs / 2);
+          // Manual override widens the range to the user-configured ceiling
+          // (settings) instead of the Nyquist cap, so the frame can be brought
+          // up under artificial light. It can exceed bitPeriodMs/2 and blur the
+          // code across a hue transition — that's the deliberate manual trade
+          // (FUG-62). The auto servo below keeps the Nyquist cap.
+          void ms.setExposure(e01, prefs.getManualExposureCeilingMs());
         },
       };
 

@@ -27,6 +27,7 @@ import {
 import { installSettingsStyles } from "./settings.css";
 import { MapView } from "../mapview";
 import { generateFixture } from "../../effects/fixtures";
+import { prefs } from "../../store/prefs";
 
 const FONT_LABELS: Record<FontChoice, string> = {
   system: "System",
@@ -52,7 +53,7 @@ export function SettingsScreen(_router: Router): Screen {
   head.textContent = "Appearance";
   const sub = document.createElement("p");
   sub.className = "screen-sub";
-  sub.textContent = "Theme, fonts and 3D-view rendering. Saved on this device.";
+  sub.textContent = "Theme, fonts, 3D-view rendering and capture. Saved on this device.";
   el.append(head, sub);
 
   let s = getAppearance();
@@ -90,7 +91,35 @@ export function SettingsScreen(_router: Router): Screen {
   const preview = buildPreview();
 
   function rerender(): void {
-    body.replaceChildren(themeGroup(), typeGroup(), viewGroup(), resetRow());
+    body.replaceChildren(themeGroup(), typeGroup(), viewGroup(), captureGroup(), resetRow());
+  }
+
+  // -- Capture (camera / mapping knobs) ------------------------------------
+  function captureGroup(): HTMLElement {
+    const g = group("Capture");
+    const hint = document.createElement("div");
+    hint.className = "settings-row-hint settings-full";
+    hint.textContent =
+      "The manual exposure slider (Advanced ▸ Manual override, while mapping) " +
+      "ranges from the camera minimum up to this ceiling. Raise it to light the " +
+      "frame under artificial light; the automatic exposure stays capped for " +
+      "decode sharpness.";
+    g.append(
+      fullRow(
+        Slider({
+          label: "Manual exposure ceiling",
+          min: 20,
+          max: 1000,
+          step: 10,
+          value: prefs.getManualExposureCeilingMs(),
+          format: (v) => `${Math.round(v)} ms`,
+          // Not applied to anything on this screen, so commit on release.
+          onChange: (v) => prefs.setManualExposureCeilingMs(v),
+        }).el,
+      ),
+      hint,
+    );
+    return g;
   }
 
   // -- Theme (mode + accent) -----------------------------------------------

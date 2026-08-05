@@ -114,9 +114,9 @@ async function main(): Promise<void> {
       shell.setChrome({ title: "MIDI", back: true, tabs: true });
       return MidiScreen(router);
     })
-    .add("/capture", () => {
+    .add("/capture", (m) => {
       shell.setChrome({ title: "Capture", back: true, tabs: false, overlay: true });
-      return CaptureScreen(router);
+      return CaptureScreen(router, m.query);
     })
     .setFallback(() => {
       // First run with no device and no maps → onboarding; else → maps.
