@@ -654,13 +654,32 @@ end-to-end in CI with no hardware; it never seeds an authoritative cost table.
 ### Authoritative measurement via the HITL rig
 
 `pi/hitl/harness/fx_bench.py` runs the benchmark on the **real C6** through the
-HITL rig (pi/hitl): reserve a free rig, flash the firmware flash-bundle, tunnel
-to the device's player WebSocket, and for each calibration micro-program
-`submit_effect` → `set_perf(FULL)` → drain a stable `PerfReport`. It writes a
-**device-measurement bundle** (base64 `.fxb` + cycle-accurate measured cycles).
-The pure perf→sample mapping + bundle schema live in `fx_bench_core.py` and are
-unit-tested (`//pi/hitl/tests`, no hardware); `--replay` rebuilds a bundle from a
-recorded session.
+HITL rig (pi/hitl). It is fully self-contained — it reaches the board the same
+proven way the e2e does, because the DUT lives on the rig's WiFi LAN, not the
+harness host's network:
+
+1. reserve a free rig from the pool,
+2. flash the firmware flash-bundle with a clean FS (`hitl-flash --erase-fs`),
+3. **ImprovBLE-provision** the DUT onto the rig's own provisioning AP
+   (`provision.py`, shared with the e2e — one implementation of the flaky
+   single-core WiFi/BLE join + reset-and-retry),
+4. **forward-tunnel** to the DUT's player socket through the rig
+   (`hitl forward`; the tunnel's far end dials the DUT from the Pi),
+5. per calibration micro-program: **submit a synthetic linear map** of the
+   program's Intended-LED-count (`set_led_count` + a `submit_map` of that many
+   fixture positions — the shade loop iterates over `lm_map_len()`, so a fresh
+   erase-fs board with no map renders nothing and perf stays empty; a real user
+   device already has a map, the bench must supply one), `submit_effect` (await
+   `result_ready`), `set_perf(FULL)`, settle, drain a stable `PerfReport`.
+
+It writes a **device-measurement bundle** (base64 `.fxb` + cycle-accurate
+measured cycles). The loop is resilient to the DUT dropping the socket mid-sweep
+(a heavy program under FULL perf can trip the watchdog and reboot): it reconnects
+and retries per program, measures the lightest programs first, and keeps partial
+results if the board goes unreachable. The pure perf→sample mapping, bundle
+schema, and LED-hint parse live in `fx_bench_core.py` and are unit-tested
+(`//pi/hitl/tests`, no hardware); `--replay` rebuilds a bundle from a recorded
+session.
 
 The calibration micro-programs are committed as `.fx` under
 `pi/hitl/harness/benchmarks/` (fit programs) + `*.heldout.fx` (validation). They
@@ -668,20 +687,30 @@ are **generated from the in-browser calibration source of truth**
 (`web/src/effects/calibrationBenchmarks.ts` via `benchmarkExport.ts`), so the
 in-browser and on-hardware runs measure the identical programs — a drift test
 (`web/tests/benchmarkExport.test.ts`) pins that, and every file is verified to
-compile under `//fx_compiler`. Both the programs and the `fx_compile` CLI ride
-in the target's runfiles, so a rig run needs only the DUT WebSocket:
+compile under `//fx_compiler`. The programs, the `fx_compile` CLI, the `hitl`
+CLI, and the firmware flash-bundle all ride in runfiles, so a real run is one
+command:
 
 ```
-# measure on real hardware -> a device bundle (reserves a rig; the calibration
-# .fx set + fx_compile come from runfiles). --bundle flashes first (optional if
-# the board already runs the perf-instrumented firmware).
+# measure on real hardware -> a device bundle. Reserves a rig, flashes + BLE-
+# provisions + tunnels automatically; no external network (uses the rig AP).
 bazel run //pi/hitl/harness:fx_bench -- \
-  --device-ws wss://<dut-ip>:443/ws \
-  --soc esp32c6 --device-key <mac> --device-label "rig-01" \
-  --out /tmp/device-bundle.json --insecure
-# then in the app: Performance ▸ Manage profiles ▸ "Import device measurements"
-#   → buildDeviceProfile fits + VALIDATES on held-out programs and saves it.
+  --server http://<rig>:8087 --device-key <mac> --device-label "rig-01" \
+  --out /tmp/device-bundle.json
+
+# fit + VALIDATE the bundle headlessly through the SAME code path the app uses
+# (deviceProfile.buildDeviceProfile) -> an app-importable, authoritative profile.
+# Prints the per-program predicted-vs-measured table; nonzero exit if held-out
+# RMS exceeds tolerance, so it doubles as a regression gate.
+bazel run //web:fit_device_profile -- /tmp/device-bundle.json /tmp/profile.json
+
+# (or, equivalently, in the app: Performance ▸ Manage profiles ▸ "Import device
+#  measurements" -> buildDeviceProfile fits + validates and saves it.)
 ```
+
+Overrides: `--no-bundle` measures whatever is already flashed; `--device-ws
+wss://<ip>/ws` skips the rig when the DUT is already reachable; `--ws-scheme
+wss`, `--wifi-ssid/--wifi-pass`, `--improv-attempts/--improv-timeout`, `--debug`.
 
 ### Validation (predicted vs measured)
 
