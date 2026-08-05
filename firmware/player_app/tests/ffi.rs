@@ -160,7 +160,9 @@ fn full_device_flow_through_the_c_abi() {
     // Dump the stored map+topology back out (get_stored_map), streamed in small
     // windows; reassemble and decode as a MappingBundle.
     let mut assembled: Vec<u8> = Vec::new();
-    let mut total = 0usize;
+    // Set from the first chunk's total_len (every iteration assigns it before
+    // any break), then used after the loop.
+    let mut total: usize;
     loop {
         let mut g = pb::GetStoredMap::default();
         g.r#offset = assembled.len() as i32;

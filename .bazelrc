@@ -55,5 +55,5 @@ common --experimental_isolated_extension_usages
 # --- memory caps (small dev containers OOM the JVM + heavy C++ compiles) ---
 # hitl memory caps
 startup --host_jvm_args=-Xmx1500m
-build --local_ram_resources=2048
+build --local_resources=memory=2048
 build --jobs=3

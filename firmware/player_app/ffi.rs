@@ -777,6 +777,9 @@ unsafe fn handle_submit_effect(frame: &[u8]) -> pb::ServerMessage {
 const TEX_RGB888: u64 = 0;
 const TEX_RGB565: u64 = 1;
 const TEX_RGB332: u64 = 2;
+// GRAY8 folds into the `_ => 1` byte-per-texel / catch-all arms below, so it's
+// never referenced by name — kept to complete the proto-enum mirror.
+#[allow(dead_code)]
 const TEX_GRAY8: u64 = 3;
 const TEX_INDEXED8: u64 = 4;
 const TEX_PAL_MAX: usize = 256;

@@ -34,10 +34,14 @@ rust_binary(
 )
 
 # The generated module content becomes the crate root; the prepended
-# `#![no_std]` keeps the crate buildable for the bare-metal targets. Two
-# profiles from one proto (see gen_main.rs): `host` for conformance tests +
-# fixture building, `firmware` with control-traffic-sized caps (the big
-# uploads take the arena path on players).
+# `#![no_std]` keeps the crate buildable for the bare-metal targets, and
+# `#![allow(warnings)]` silences the lints micropb's generated code trips
+# (unused imports, non-camel-case type params, redundant parens, ...) — we
+# don't own that codegen's style, and it otherwise floods CI with ~770
+# warnings per profile (FUG-65). Two profiles from one proto (see
+# gen_main.rs): `host` for conformance tests + fixture building, `firmware`
+# with control-traffic-sized caps (the big uploads take the arena path on
+# players).
 [
     genrule(
         name = "ledmapper_rs_gen_" + profile,
@@ -45,7 +49,7 @@ rust_binary(
         outs = ["ledmapper_pb_" + profile + ".rs"],
         cmd = "$(execpath :micropb_gen_bin) $(location :ledmapper_fdset) $@.body " +
               profile +
-              " && (echo '#![no_std]'; cat $@.body) > $@ && rm $@.body",
+              " && (echo '#![no_std]'; echo '#![allow(warnings)]'; cat $@.body) > $@ && rm $@.body",
         tools = [":micropb_gen_bin"],
     )
     for profile in [
