@@ -28,8 +28,12 @@ type PodmanConfig struct {
 	StateDir string
 	// Podman is the podman binary (defaults to "podman" on PATH).
 	Podman string
-	// Privileged runs the container privileged (needed for raw USB/JTAG); prefer
-	// dropping this once specific device/cap grants are dialed in.
+	// Privileged runs the container privileged. AVOID on a multi-DUT rig: a
+	// privileged container bind-mounts the whole host /dev, so every DUT's
+	// /dev/ttyACM* leaks into every container — an agent sees its neighbor's board.
+	// With it off, the container is confined to the explicit per-DUT --device (its
+	// own tty as /dev/ttyACM0) plus the USB bus mount + device-cgroup rule below,
+	// which are enough for the C6's serial and USB-JTAG. Kept as an escape hatch.
 	Privileged bool
 }
 

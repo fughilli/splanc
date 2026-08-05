@@ -77,11 +77,18 @@ and the pool picker still work against a multi-DUT rig. Each DUT's serial tty is
 remapped to `/dev/ttyACM0` inside its container, so the toolbox's
 `--port /dev/ttyACM0` defaults hold on every DUT.
 
-Hardware caveats (shared single resources, follow-ups): JTAG uses a whole-bus
-`/dev/bus/usb` mount, so every container can see every board — `hitl-jtag`/`gdb`
-select this DUT's adapter by `HITL_ADAPTER_SERIAL` (set per DUT), but raw-USB
-isolation between concurrent containers is not yet enforced. BLE shares the one
-host Bluetooth radio, and the provisioning AP is still rig-level.
+Per-DUT isolation: containers run **unprivileged** (`sbcDeploy`'s
+`privilegedContainers = false`), so each is confined to its own DUT's tty
+(mounted as `/dev/ttyACM0`) and can't see a neighbour's `/dev/ttyACM*` — a
+privileged container would bind-mount the whole host `/dev` and leak every
+board's serial into every container.
+
+Hardware caveats (shared single resources, follow-ups): JTAG still uses a
+whole-bus `/dev/bus/usb` mount (the per-board USB node moves on re-enumeration),
+so every container can see every board over raw USB — `hitl-jtag`/`gdb` select
+this DUT's adapter by `HITL_ADAPTER_SERIAL` (set per DUT), but raw-USB isolation
+between concurrent containers is not yet enforced. BLE shares the one host
+Bluetooth radio, and the provisioning AP is still rig-level.
 
 ## Packaging
 

@@ -39,6 +39,13 @@ let
   # Ports opened for discovered DUTs (they're assigned at runtime, sequentially
   # from sshPort, so we open a fixed range up front).
   discoverMaxDuts = 8;
+
+  # Run reservation containers UNprivileged so each is confined to its own DUT's
+  # tty (mounted as /dev/ttyACM0) plus the USB bus — a privileged container
+  # bind-mounts the whole host /dev, leaking every DUT's /dev/ttyACM* into every
+  # container. Flip back to true only to debug a device/cap the confined path is
+  # missing. (HARDWARE-GATED: verify sshd + esptool + openocd still work here.)
+  privilegedContainers = false;
   duts = [
     { name = "c6-0"; sshPort = sshPort; devices = devices; }
   ];
@@ -239,6 +246,7 @@ in
           "--host ${config.networking.hostName}.local"
           "--image ${imageRef}"
           "--podman ${pkgs.podman}/bin/podman"
+          "--privileged=${lib.boolToString privilegedContainers}"
           "--state-dir /var/lib/hitl"
           # The AP is always-on (NM autoconnect); the daemon only advertises its
           # creds in /status for the harness (`hitl wifi`). It does NOT toggle the
