@@ -1,9 +1,12 @@
 # HITL rig — agent guide
 
-A **hardware-in-the-loop** bench: a Raspberry Pi with one ESP32-C6 (the player
-firmware DUT) wired over USB. Agents reserve it over Tailscale, get an isolated
-container with the ESP toolbox, flash firmware, and read serial logs — then
-release it for the next agent. One reservation is active at a time (FIFO queue).
+A **hardware-in-the-loop** bench: a Raspberry Pi with one or more ESP32-C6 DUTs
+(the player firmware) wired over USB. Agents reserve one over Tailscale, get an
+isolated container with the ESP toolbox, flash firmware, and read serial logs —
+then release it for the next agent. A shared FIFO admits waiters to whichever DUT
+frees first; each DUT runs its own container concurrently. You normally don't care
+which DUT you get, but `hitl reserve --device <name>` pins a specific one (see
+`hitl status` for the names).
 
 This is what you use to run **end-to-end firmware tests on real hardware**.
 

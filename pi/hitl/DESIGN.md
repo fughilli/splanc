@@ -34,9 +34,36 @@ agent> hitl reserve
    └─(session exits) POST /reservation/{id}/release ─► podman rm; promote next
 ```
 
-One ESP32 == one active reservation. Leases: an active reservation whose holder
-stops heartbeating past the lease window is reaped (container torn down). The
-daemon `Cleanup`s stray containers on startup (crash recovery).
+Leases: an active reservation whose holder stops heartbeating past the lease
+window is reaped (container torn down). The daemon `Cleanup`s stray containers on
+startup (crash recovery).
+
+## Multiple DUTs per rig (FUG-67)
+
+A rig can host several DUTs, each its own container, published sshd port, and
+device nodes, running concurrently. The daemon enumerates DUTs from repeatable
+`--dut '{"name":…,"ssh_port":…,"devices":["host:container",…],"env":{…}}'` flags
+(no `--dut` → a single DUT synthesized from the legacy `--ssh-port`/`--device`,
+i.e. the original behavior). The queue manager keeps one shared FIFO admission
+queue and one active slot per DUT: `reconcile` brings a container up on every
+free DUT, feeding it the earliest queued waiter that's compatible (unpinned, or
+pinned to that DUT via `ReserveRequest.Device`). So a batch of reservations fills
+all DUTs, and a busy DUT never blocks work another DUT could take.
+
+**Client compatibility is preserved.** The client flow is already DUT-agnostic —
+it reads `host:port` out of the reservation response and never assumes a port —
+so distinct per-DUT ports need no client change. The new `device` fields and
+`Status.Devices` are additive; the legacy `Status.Active`/`QueueLength` keep
+their meaning by reporting the rig idle whenever _any_ DUT is free, so old clients
+and the pool picker still work against a multi-DUT rig. Each DUT's serial tty is
+remapped to `/dev/ttyACM0` inside its container, so the toolbox's
+`--port /dev/ttyACM0` defaults hold on every DUT.
+
+Hardware caveats (shared single resources, follow-ups): JTAG uses a whole-bus
+`/dev/bus/usb` mount, so every container can see every board — `hitl-jtag`/`gdb`
+select this DUT's adapter by `HITL_ADAPTER_SERIAL` (set per DUT), but raw-USB
+isolation between concurrent containers is not yet enforced. BLE shares the one
+host Bluetooth radio, and the provisioning AP is still rig-level.
 
 ## Packaging
 
@@ -72,6 +99,9 @@ container is destroyed on release, so state never leaks between holders.
 3. BLE (BlueZ/bleak) scan/connect/command; WiFi provisioning helpers.
 4. Robustness: reservation persistence across daemon restarts, metrics, richer
    status, multi-rig.
+5. Multiple DUTs per rig — done (FUG-67): concurrent per-DUT containers/ports,
+   shared FIFO with per-DUT slots, backward-compatible API. Remaining: raw-USB
+   (JTAG) isolation between concurrent containers; per-DUT BLE radio; per-DUT AP.
 
 ## Open items (need the hardware / decisions)
 
