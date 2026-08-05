@@ -43,6 +43,8 @@ import {
   type ChatMessage,
   type MidiMappingCall,
 } from "../../effects/ai/generate";
+import { resolveFleetTargets } from "../../effects/fleet";
+import { estimateAcrossDevices, describeFleet } from "../../effects/multiDevice";
 import { MidiRouter, isDrivable } from "../../midi/router";
 import { MidiMapPanel } from "../../effects/editor/midi-panel";
 import { midiStore, type UniformBinding } from "../../store/midiStore";
@@ -91,6 +93,7 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   // Latest successful-compile artefacts, fed to the AI as turn context.
   let lastCompileSummary = "not compiled yet";
   let lastDisassembly = "";
+  let lastBytecode: Uint8Array | null = null;
   let chatBusy = false;
   const chatHistory: ChatMessage[] = [];
   let raf = 0;
@@ -783,10 +786,12 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
       setStatusErr(summary);
       lastCompileSummary = `ERROR — ${summary}`;
       lastDisassembly = "";
+      lastBytecode = null;
       disasmPre.textContent = "";
       videoPanel.setBytecode(null);
       return;
     }
+    lastBytecode = r.bytecode;
     setStatusOk(`compiled · ${r.uniforms.length} uniforms · ${r.bytecode.length} bytes`);
     videoPanel.setBytecode(r.bytecode);
     lastCompileSummary = `OK — ${r.uniforms.length} uniforms, ${r.bytecode.length} bytes`;
@@ -922,6 +927,20 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     }. The effect source was not modified.`;
   }
 
+  /** Estimate the current program across the AI estimation fleet and render the
+   * per-device budget report for the AI (FUG-11 feedback signal). Falls back to
+   * the map's LED count for any fleet target and to the active device / default
+   * when no fleet is configured. */
+  async function estimateFleetReport(): Promise<string> {
+    if (lastBytecode === null) {
+      return "No compiled program to estimate — the current source does not compile. Fix the errors (or call set_script) first, then estimate again.";
+    }
+    const fallbackLeds = currentMap ? currentMap.leds.length : 256;
+    const targets = await resolveFleetTargets(fallbackLeds);
+    const fleet = estimateAcrossDevices(lastBytecode, targets);
+    return describeFleet(fleet);
+  }
+
   /** Shared body: ground the turn in the editor context, run the tool loop. */
   async function submitChat(ask: string, opts: { label?: string } = {}): Promise<void> {
     if (chatBusy) return;
@@ -970,6 +989,10 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
         onSetMidiMapping: async (mappings) => {
           setChatStatus("Mapping MIDI controls…");
           return applyMidiMappings(mappings);
+        },
+        onEstimatePerformance: async () => {
+          setChatStatus("Estimating performance…");
+          return estimateFleetReport();
         },
         onToolUse: () => undefined,
       });

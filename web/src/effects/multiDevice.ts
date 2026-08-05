@@ -87,15 +87,30 @@ export function describeFleet(fleet: FleetEstimate): string {
       : ">budget";
     const soc = d.target.table.soc;
     const mhz = (d.target.table.cpuHz / 1e6).toFixed(0);
-    const cal = d.target.calibrated ? "calibrated" : "uncalibrated";
+    const cal = d.target.calibrated ? "calibrated" : "uncalibrated (default model — wide error)";
     const bind = fleet.binding === d ? " ← binding" : "";
     lines.push(
       `- ${d.target.label} (${soc} @ ${mhz} MHz, ${d.target.ledCount} LEDs, ${cal}): ` +
         `${d.estimate.totalMs.toFixed(1)} ms, ${pct} of FX budget [${d.budget.color}]${bind}`,
     );
   }
+
+  // The binding device's hottest opcodes are the most actionable lever — what
+  // the AI should cut to bring the fleet inside budget.
+  const bind = fleet.binding;
+  if (bind && bind.estimate.hotOpcodes.length > 0) {
+    const top = bind.estimate.hotOpcodes
+      .slice(0, 6)
+      .map((h) => `${h.op} (${Math.round(h.fraction * 100)}%)`)
+      .join(", ");
+    lines.push(`Hottest opcodes on the binding device (${bind.target.label}): ${top}.`);
+  }
   if (!fleet.allFit) {
     lines.push("Optimize for the binding device first; it must fit before the others matter.");
   }
+  lines.push(
+    "To cut per-LED cost: hoist loop-invariant work into update(), prefer step/mix/polynomial " +
+      "over sin/pow/exp, and avoid length/normalize/distance (hidden sqrt).",
+  );
   return lines.join("\n");
 }

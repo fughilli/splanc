@@ -22,7 +22,11 @@ import {
 } from "../../store/costTableStore";
 import { buildDeviceProfile, parseDeviceBundle } from "../../effects/deviceProfile";
 import { profileToStored } from "../../effects/executionProfile";
+import { fleetStore } from "../../store/fleetStore";
 import { installPerfStyles } from "./perfPanel.css";
+
+/** Default LED count for a newly-added fleet member (editable per row). */
+const DEFAULT_FLEET_LEDS = 256;
 
 export function PerfProfilesScreen(_router: Router): Screen {
   installPerfStyles();
@@ -32,7 +36,7 @@ export function PerfProfilesScreen(_router: Router): Screen {
   const intro = document.createElement("div");
   intro.className = "perf-gauge-sub";
   intro.textContent =
-    "Learned execution-cost profiles. Device calibrations (from the HITL rig or a connected board) are the authoritative models; host and default profiles are seeds.";
+    "Learned execution-cost profiles. Device calibrations (from the HITL rig or a connected board) are the authoritative models; host and default profiles are seeds. Tick “Use in AI estimates” to add a device to the fleet the AI code generator estimates programs against — mix devices to design for a heterogeneous set at once.";
 
   const list = document.createElement("div");
   list.className = "perf-profiles";
@@ -159,6 +163,7 @@ export function PerfProfilesScreen(_router: Router): Screen {
         variant: "danger",
         disabled: rec.origin === "default",
         onClick: async () => {
+          fleetStore.remove(rec.id);
           await costTableStore.delete(rec.id);
           toast(`Deleted ${rec.deviceLabel || rec.soc}`);
           await refresh();
@@ -166,7 +171,49 @@ export function PerfProfilesScreen(_router: Router): Screen {
       }),
     );
 
-    return Card(head, meta, btns);
+    return Card(head, meta, fleetControl(rec), btns);
+  }
+
+  /** Per-profile "AI estimation fleet" control: a toggle to include the device
+   * in the fleet the AI code generator estimates against, plus its LED count
+   * (heterogeneous fleets run different-sized maps). */
+  function fleetControl(rec: StoredCostTable): HTMLElement {
+    const wrap = document.createElement("label");
+    wrap.className = "perf-fleet";
+
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = fleetStore.has(rec.id);
+
+    const text = document.createElement("span");
+    text.textContent = "Use in AI estimates";
+
+    const leds = document.createElement("input");
+    leds.type = "number";
+    leds.min = "1";
+    leds.className = "perf-fleet-leds";
+    leds.title = "LED count to estimate this device at";
+    const entry = fleetStore.get().find((e) => e.tableId === rec.id);
+    leds.value = String(entry?.ledCount ?? DEFAULT_FLEET_LEDS);
+    leds.disabled = !cb.checked;
+    const suffix = document.createElement("span");
+    suffix.className = "perf-fleet-suffix";
+    suffix.textContent = "LEDs";
+    suffix.style.opacity = cb.checked ? "1" : "0.4";
+
+    cb.addEventListener("change", () => {
+      fleetStore.toggle(rec.id, Math.max(1, Number(leds.value) || DEFAULT_FLEET_LEDS));
+      leds.disabled = !cb.checked;
+      suffix.style.opacity = cb.checked ? "1" : "0.4";
+    });
+    leds.addEventListener("change", () => {
+      const n = Math.max(1, Math.round(Number(leds.value) || DEFAULT_FLEET_LEDS));
+      leds.value = String(n);
+      if (cb.checked) fleetStore.setLedCount(rec.id, n);
+    });
+
+    wrap.append(cb, text, leds, suffix);
+    return wrap;
   }
 
   function readout(label: string, value: string): HTMLElement {

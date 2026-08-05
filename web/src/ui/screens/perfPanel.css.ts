@@ -81,4 +81,10 @@ const CSS = `
 /* Profile manager rows (perfProfiles.ts). */
 .perf-profiles { display:flex; flex-direction:column; gap:var(--sp-2); }
 .perf-profile-head { display:flex; align-items:center; gap:var(--sp-2); margin-bottom:var(--sp-2); }
+.perf-fleet {
+  display:flex; align-items:center; gap:var(--sp-2); margin-top:var(--sp-2);
+  font-size:13px; color:var(--text-dim); cursor:pointer;
+}
+.perf-fleet-leds { width:6.5em; font-variant-numeric:tabular-nums; }
+.perf-fleet-suffix { font-size:12px; }
 `;
