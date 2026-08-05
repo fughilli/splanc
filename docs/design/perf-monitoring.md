@@ -662,18 +662,25 @@ The pure perf→sample mapping + bundle schema live in `fx_bench_core.py` and ar
 unit-tested (`//pi/hitl/tests`, no hardware); `--replay` rebuilds a bundle from a
 recorded session.
 
-Runbook (on a host that can reach the rig, with a provisioned board):
+The calibration micro-programs are committed as `.fx` under
+`pi/hitl/harness/benchmarks/` (fit programs) + `*.heldout.fx` (validation). They
+are **generated from the in-browser calibration source of truth**
+(`web/src/effects/calibrationBenchmarks.ts` via `benchmarkExport.ts`), so the
+in-browser and on-hardware runs measure the identical programs — a drift test
+(`web/tests/benchmarkExport.test.ts`) pins that, and every file is verified to
+compile under `//fx_compiler`. Both the programs and the `fx_compile` CLI ride
+in the target's runfiles, so a rig run needs only the DUT WebSocket:
 
 ```
-# 1. build the firmware flash-bundle
-bazel build //firmware/player_app:esp32c6_flashbundle
-# 2. measure on hardware -> a device bundle
+# measure on real hardware -> a device bundle (reserves a rig; the calibration
+# .fx set + fx_compile come from runfiles). --bundle flashes first (optional if
+# the board already runs the perf-instrumented firmware).
 bazel run //pi/hitl/harness:fx_bench -- \
-  --benchmarks-dir <dir-of-.fx>  --device-ws wss://<dut-ip>:443/ws \
-  --fx-compile <fx_compile-path> --bundle bazel-bin/firmware/player_app/esp32c6_flashbundle.tar \
-  --soc esp32c6 --device-key <mac> --device-label "rig-01" --out /tmp/device-bundle.json --insecure
-# 3. in the app: Performance ▸ Manage profiles ▸ "Import device measurements"
-#    → buildDeviceProfile fits + VALIDATES on held-out programs and saves it.
+  --device-ws wss://<dut-ip>:443/ws \
+  --soc esp32c6 --device-key <mac> --device-label "rig-01" \
+  --out /tmp/device-bundle.json --insecure
+# then in the app: Performance ▸ Manage profiles ▸ "Import device measurements"
+#   → buildDeviceProfile fits + VALIDATES on held-out programs and saves it.
 ```
 
 ### Validation (predicted vs measured)
@@ -700,6 +707,27 @@ fit), and delete. Profiles are keyed per-device (`costTableId` with a
 `web/src/effects/multiDevice.ts` `estimateAcrossDevices` estimates one compiled
 effect across a set of device targets (each its own profile + LED count),
 returning per-device frame time + budget status, the **binding** device (highest
-budget fraction), and whether all fit. `describeFleet` renders this for the AI
-generator's perf context so it can optimize for the whole heterogeneous fleet,
-not one board.
+budget fraction), and whether all fit. `describeFleet` renders this — plus the
+binding device's hottest opcodes and cut-cost guidance — for the AI generator.
+
+The **estimation fleet** is user-selected: `web/src/store/fleetStore.ts`
+persists which stored profiles (+ per-device LED counts) form the fleet, toggled
+per row in the profile manager ("Use in AI estimates"). `web/src/effects/fleet.ts`
+`resolveFleetTargets` bridges that selection and the stored profiles into
+`DeviceTarget`s (self-healing stale ids; falling back to the active device /
+default so there's always ≥1 target).
+
+### Wiring the feedback signal into the AI generator
+
+This is the point of FUG-11: the agent needs a framerate signal while it writes
+effects. The editor's chat loop (`web/src/effects/ai/generate.ts` `chatTurn`)
+exposes a client-fulfilled **`estimate_performance`** tool. The model calls it
+after `set_script` when a framerate/budget/optimization goal is in play; the
+editor (`effectEditor.ts`) resolves the fleet, runs `estimateAcrossDevices` on
+the latest compiled bytecode, and hands back `describeFleet` — each device's
+frame time, % of the FX budget used with the green/yellow/red band, the binding
+device, and the opcodes to cut. The system prompt tells the model to optimize
+for the binding device first, then re-estimate to confirm it fits. Online
+(device PerfReport) and offline (cost model) share one schema, so the same loop
+runs with or without hardware; per-device calibrations make each fleet member's
+estimate as trustworthy as its `measuredError`.
