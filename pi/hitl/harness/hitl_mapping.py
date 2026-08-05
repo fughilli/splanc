@@ -119,7 +119,9 @@ async def _open_ws(ws_url: str, insecure: bool, settle_deadline: float):
     while True:
         try:
             sock = await websockets.connect(ws_url, max_size=2**22, ssl=ssl_ctx, open_timeout=8)
-            await _rpc(sock, {"type": "hello", "client": "hitl_mapping", "app_version": "1"}, "welcome")
+            await _rpc(
+                sock, {"type": "hello", "client": "hitl_mapping", "app_version": "1"}, "welcome"
+            )
             return sock
         except (OSError, TimeoutError, websockets.exceptions.WebSocketException) as e:
             if time.monotonic() >= settle_deadline:
@@ -137,7 +139,9 @@ def _linear_map(n: int) -> dict[str, Any]:
     return {"type": "submit_map", "map": {"map_id": "__fug62", "led_count": n, "leds": leds}}
 
 
-async def _run(ws_url: str, fxb: bytes, led_count: int, poll_ms: int, polls: int, insecure: bool) -> bool:
+async def _run(
+    ws_url: str, fxb: bytes, led_count: int, poll_ms: int, polls: int, insecure: bool
+) -> bool:
     """Drive the mapping-trigger check; return True on PASS. Raises on setup
     failures (which are test errors, distinct from the assertion failing)."""
     import base64
@@ -172,24 +176,30 @@ async def _run(ws_url: str, fxb: bytes, led_count: int, poll_ms: int, polls: int
         started = await _rpc(
             sock, {"type": "start_mapping", "options": {"led_count": led_count}}, "mapping_started"
         )
-        _log(f"[start_mapping] epoch={started.get('patternClockEpoch')} "
-             f"codeParams={started.get('codeParams')}")
+        _log(
+            f"[start_mapping] epoch={started.get('patternClockEpoch')} "
+            f"codeParams={started.get('codeParams')}"
+        )
 
         reports: list[dict[str, Any]] = []
         for i in range(polls):
             await asyncio.sleep(poll_ms / 1000.0)
             ft = await _rpc(sock, {"type": "get_frame_timing"}, "frame_timing")
             reports.append(ft)
-            _log(f"[poll {i + 1}/{polls}] ticks={frame_ticks_in(ft)} "
-                 f"dropped={ft.get('dropped')} epoch={pattern_epoch_of(ft)}")
+            _log(
+                f"[poll {i + 1}/{polls}] ticks={frame_ticks_in(ft)} "
+                f"dropped={ft.get('dropped')} epoch={pattern_epoch_of(ft)}"
+            )
 
         total = sum(frame_ticks_in(r) for r in reports)
         ok = pattern_triggered(reports)
         _log(f"[result] total mapping-pattern frames shown while mapping: {total}")
-        _log("PASS: start_mapping flashed the strip while an effect was active"
-             if ok else
-             "FAIL: capture latched but NO mapping-pattern frames were shown "
-             "(the FUG-62 masking regression)")
+        _log(
+            "PASS: start_mapping flashed the strip while an effect was active"
+            if ok
+            else "FAIL: capture latched but NO mapping-pattern frames were shown "
+            "(the FUG-62 masking regression)"
+        )
         return ok
     finally:
         try:
@@ -278,12 +288,17 @@ def main() -> None:
     )
     ap.add_argument("--led-count", type=int, default=16, help="fixture / capture LED count")
     ap.add_argument("--poll-ms", type=int, default=250, help="get_frame_timing poll interval (ms)")
-    ap.add_argument("--polls", type=int, default=8, help="number of frame-timing polls while mapping")
+    ap.add_argument(
+        "--polls", type=int, default=8, help="number of frame-timing polls while mapping"
+    )
     ap.add_argument("--wifi-ssid", default=os.environ.get("HITL_WIFI_SSID"))
     ap.add_argument("--wifi-pass", default=os.environ.get("HITL_WIFI_PASS", ""))
     ap.add_argument("--ws-scheme", choices=["ws", "wss"], default="ws")
     ap.add_argument(
-        "--insecure", action="store_true", default=True, help="accept the DUT's self-signed wss cert"
+        "--insecure",
+        action="store_true",
+        default=True,
+        help="accept the DUT's self-signed wss cert",
     )
     ap.add_argument("--improv-timeout", type=float, default=90.0)
     ap.add_argument("--improv-attempts", type=int, default=3)
