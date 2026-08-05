@@ -504,7 +504,52 @@ static uint32_t render_once() {
   uint32_t perf_led_count = 0;
 
   xSemaphoreTake(player_mutex, portMAX_DELAY);
-  if (lm_fx_active()) {
+  // An active mapping capture (the gray-code flashing) and the counting probe
+  // are deliberate, transient device takeovers for the phone's camera, so they
+  // MUST preempt whatever show is playing. A persisted effect resumed on boot
+  // (fs_replay of kEffectPath) would otherwise keep rendering and mask the
+  // mapping pattern, so "start mapping" never visibly flashed the strip
+  // (FUG-62). Check them first; when neither is active they fall through to the
+  // effect / playback / idle branches below.
+  if (lm_pattern_timing(&epoch_ms, &bit_period_us, &cycle_frames, &led_count)) {
+    // Integer pattern clock — no f64. Elapsed ms since the epoch, then frames =
+    // elapsed_us / period_us (64-bit product so it can't overflow).
+    int64_t since_ms = (int64_t)millis() - epoch_ms;
+    if (since_ms < 0) since_ms = 0;
+    uint32_t seq = (uint32_t)(((uint64_t)since_ms * 1000ULL) / bit_period_us);
+    uint32_t frame_index = seq % cycle_frames;
+    if (frame_index != last_shown_frame) {
+      uint32_t n = led_count < kMaxLeds ? led_count : kMaxLeds;
+      for (uint32_t i = 0; i < n; i++) {
+        if (lm_pattern_color(i, frame_index, rgb)) {
+          leds[i] = CRGB(rgb[0], rgb[1], rgb[2]);
+        }
+      }
+      for (uint32_t i = n; i < kMaxLeds; i++) leds[i] = CRGB::Black;
+      // Record the render instant (raw micros(), integer µs — no f64) BEFORE
+      // the strip write; consecutive records reveal the true frame cadence,
+      // drained by the phone via get_frame_timing. micros() wraps ~71 min; the
+      // analysis uses only deltas, so the one wrap-straddling gap is ignored.
+      lm_pattern_frame_shown(seq, micros());
+      last_shown_frame = frame_index;
+      show = true;
+    }
+    // Sleep until the NEXT frame boundary (seq+1), so we land on the clock.
+    int64_t next_ms =
+        epoch_ms + (int64_t)(((uint64_t)(seq + 1) * bit_period_us) / 1000ULL);
+    int64_t d = next_ms - (int64_t)millis();
+    next_delay_ms = d <= 1 ? 1 : (d > (int64_t)kStaticPollMs ? kStaticPollMs : (uint32_t)d);
+    was_active = true;
+  } else if (lm_counting_color(0, rgb)) {
+    // Counting probe: static pattern, repaint at the slow static cadence.
+    for (uint32_t i = 0; i < kMaxLeds; i++) {
+      lm_counting_color(i, rgb);
+      leds[i] = CRGB(rgb[0], rgb[1], rgb[2]);
+    }
+    show = true;
+    was_active = true;
+    last_shown_frame = 0xffffffff;
+  } else if (lm_fx_active()) {
     // User effect (.fxb shader) takes priority over the built-in playback:
     // run update() once, then shade() per LED over the stored map position.
     // Bounded execution guards each invocation (instruction budget + wall-time
@@ -582,44 +627,6 @@ static uint32_t render_once() {
     was_active = true;
     last_shown_frame = 0xffffffff;
     next_delay_ms = 33;  // ~30 fps
-  } else if (lm_counting_color(0, rgb)) {
-    // Counting probe: static pattern, repaint at the slow static cadence.
-    for (uint32_t i = 0; i < kMaxLeds; i++) {
-      lm_counting_color(i, rgb);
-      leds[i] = CRGB(rgb[0], rgb[1], rgb[2]);
-    }
-    show = true;
-    was_active = true;
-    last_shown_frame = 0xffffffff;
-  } else if (lm_pattern_timing(&epoch_ms, &bit_period_us, &cycle_frames, &led_count)) {
-    // Integer pattern clock — no f64. Elapsed ms since the epoch, then frames =
-    // elapsed_us / period_us (64-bit product so it can't overflow).
-    int64_t since_ms = (int64_t)millis() - epoch_ms;
-    if (since_ms < 0) since_ms = 0;
-    uint32_t seq = (uint32_t)(((uint64_t)since_ms * 1000ULL) / bit_period_us);
-    uint32_t frame_index = seq % cycle_frames;
-    if (frame_index != last_shown_frame) {
-      uint32_t n = led_count < kMaxLeds ? led_count : kMaxLeds;
-      for (uint32_t i = 0; i < n; i++) {
-        if (lm_pattern_color(i, frame_index, rgb)) {
-          leds[i] = CRGB(rgb[0], rgb[1], rgb[2]);
-        }
-      }
-      for (uint32_t i = n; i < kMaxLeds; i++) leds[i] = CRGB::Black;
-      // Record the render instant (raw micros(), integer µs — no f64) BEFORE
-      // the strip write; consecutive records reveal the true frame cadence,
-      // drained by the phone via get_frame_timing. micros() wraps ~71 min; the
-      // analysis uses only deltas, so the one wrap-straddling gap is ignored.
-      lm_pattern_frame_shown(seq, micros());
-      last_shown_frame = frame_index;
-      show = true;
-    }
-    // Sleep until the NEXT frame boundary (seq+1), so we land on the clock.
-    int64_t next_ms =
-        epoch_ms + (int64_t)(((uint64_t)(seq + 1) * bit_period_us) / 1000ULL);
-    int64_t d = next_ms - (int64_t)millis();
-    next_delay_ms = d <= 1 ? 1 : (d > (int64_t)kStaticPollMs ? kStaticPollMs : (uint32_t)d);
-    was_active = true;
   } else if (lm_playback_active()) {
     // Topology-aware effect (pulse/flood): advance the stateful sim by the real
     // elapsed time, then colour every LED from its stored association. It's an
