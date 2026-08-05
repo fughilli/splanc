@@ -59,6 +59,12 @@ sudo mkdir -p "$(dirname "$TS_SOCK")" "$(dirname "$TS_STATE")"
 
 if ! pgrep -x tailscaled >/dev/null 2>&1; then
     log "starting tailscaled"
+    # SC2024 (sudo doesn't affect redirects) is fine here and the suggested
+    # `| sudo tee` fix would be wrong: /tmp is world-writable, so the invoking
+    # user's shell opens the log itself and tailscaled inherits the fd as root.
+    # Piping instead would put tee at the head of the background job and cost us
+    # the daemon's pid.
+    # shellcheck disable=SC2024
     sudo tailscaled \
         --state="$TS_STATE" \
         --socket="$TS_SOCK" \
@@ -102,6 +108,9 @@ fi
 # — pi/hitl's docs use `export HITL_SERVER=http://hitl-rig:8087`. Rebuilt from
 # live status on every start, so a rig that changes address stays reachable.
 status_file="$(mktemp)"
+# SC2024 again, same reasoning: mktemp created the file as the invoking user, so
+# that user's shell can open it for writing — only `status` itself needs root.
+# shellcheck disable=SC2024
 if sudo tailscale --socket="$TS_SOCK" status --json > "$status_file" 2>/dev/null; then
     sudo python3 - "$status_file" <<'PY'
 import json, pathlib, sys
