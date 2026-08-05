@@ -29,6 +29,7 @@ import sys
 os.environ.setdefault("DBUS_SYSTEM_BUS_ADDRESS", "unix:path=/run/dbus/system_bus_socket")
 
 from bleak import BleakClient, BleakScanner  # noqa: E402 — after the D-Bus env is set
+from bleak.exc import BleakError  # noqa: E402
 from improv import (  # noqa: E402
     CH_ERROR,
     CH_RPC_CMD,
@@ -41,6 +42,12 @@ from improv import (  # noqa: E402
     parse_result,
 )
 
+# Errors that mean "the BLE link/GATT didn't come up" — as opposed to a clean
+# result or the join wait timing out. asyncio.TimeoutError from BleakClient's
+# own connect has an EMPTY message, which is exactly the useless "TimeoutError: "
+# the harness used to surface; we catch it here and retry / report it precisely.
+_TRANSPORT_ERRORS = (BleakError, asyncio.TimeoutError, OSError, EOFError)
+
 
 def looks_like_player(name: str) -> bool:
     n = (name or "").lower()
@@ -51,22 +58,100 @@ def log(msg: str) -> None:
     print(msg, file=sys.stderr, flush=True)
 
 
-async def find(address: str | None, name_filter: str, scan_seconds: float):
-    found = await BleakScanner.discover(timeout=scan_seconds, return_adv=True)
-    for addr, (dev, adv) in found.items():
-        nm = dev.name or ""
-        if address:
-            if addr.lower() == address.lower():
+async def find(address: str | None, name_filter: str, scan_seconds: float, name_wait: float = 8.0):
+    """Scan for the Improv DUT, preferring a fully-advertised (named) device.
+
+    The firmware puts the device NAME in the BLE scan response, while only the
+    flags + 128-bit Improv service UUID ride in the primary advertising packet
+    (firmware/player_app/improv_ble.cpp). So a device we match by service UUID
+    but whose `name` is still empty is one we caught mid-advertise — its scan
+    response hasn't landed yet, i.e. we pounced before it settled. Re-scan for up
+    to `name_wait` seconds to let the name resolve before falling back to a
+    nameless hit, so we connect to a board that is actually up and advertising.
+    """
+    waited = 0.0
+    nameless = None
+    while True:
+        found = await BleakScanner.discover(timeout=scan_seconds, return_adv=True)
+        for addr, (dev, adv) in found.items():
+            nm = dev.name or ""
+            if address:
+                if addr.lower() != address.lower():
+                    continue
+            else:
+                if name_filter and name_filter.lower() not in nm.lower():
+                    continue
+                is_improv = SVC.lower() in [u.lower() for u in (adv.service_uuids or [])]
+                if not (is_improv or looks_like_player(nm)):
+                    continue
+            if nm:
                 return dev, nm
-            continue
-        if name_filter and name_filter.lower() not in nm.lower():
-            continue
-        if SVC.lower() in [u.lower() for u in (adv.service_uuids or [])] or looks_like_player(nm):
-            return dev, nm
-    return None, None
+            nameless = (dev, nm)  # remember, but keep looking for a named sighting
+        waited += scan_seconds
+        if nameless is None or waited >= name_wait:
+            break
+        log("[improv] device seen without a name yet (scan-response race); re-scanning…")
+    return nameless if nameless else (None, None)
 
 
-async def provision(ssid, password, address, name_filter, scan_seconds, timeout):
+async def _connect(dev, tries: int, connect_timeout: float, rescan_timeout: float = 8.0):
+    """Open a BLE link to the DUT, retrying transient connect failures.
+
+    The single-core C6 shares one radio between WiFi and BLE, so the FIRST
+    connect right after a (re)boot frequently times out — the CONNECT_REQ is
+    dropped while the coexistence bring-up hogs the radio. bleak's default 10s
+    connect timeout then gives up, and rebooting the board to try again is both
+    slow and itself a coin flip (observed: 3 reboot-gated retries all lost).
+    Retrying the connect RAPIDLY — same boot, no reboot — rides out that window
+    far more reliably and cheaply. Returns a connected BleakClient or raises the
+    last transport error after `tries` attempts.
+
+    Each retry RE-DISCOVERS the device by address: after a failed connect BlueZ
+    drops the device object from its cache, so reusing the same handle raises
+    "device '…' not found". Re-scanning gets a fresh handle and confirms the
+    board is still advertising before we try again.
+    """
+    address = dev.address
+    last: Exception | None = None
+    for i in range(1, tries + 1):
+        if dev is None:
+            dev = await BleakScanner.find_device_by_address(address, timeout=rescan_timeout)
+            if dev is None:
+                last = BleakError(f"device {address} not advertising on rescan")
+                log(f"[improv] connect {i}/{tries}: {last}")
+                if i < tries:
+                    await asyncio.sleep(1.0)
+                continue
+        client = BleakClient(dev, timeout=connect_timeout)
+        try:
+            await client.connect()
+            if client.is_connected:
+                return client
+            raise BleakError("connect returned but link is not up")
+        except _TRANSPORT_ERRORS as e:
+            last = e
+            msg = str(e) or "(no message — likely a connect timeout)"
+            log(f"[improv] connect {i}/{tries} failed: {type(e).__name__}: {msg}")
+            try:
+                await client.disconnect()  # tear down any half-open link before retrying
+            except Exception:
+                pass
+            dev = None  # BlueZ has dropped it; force a fresh rediscover next try
+            if i < tries:
+                await asyncio.sleep(1.5)
+    raise last if last is not None else BleakError("connect failed")
+
+
+async def provision(
+    ssid,
+    password,
+    address,
+    name_filter,
+    scan_seconds,
+    timeout,
+    connect_tries: int = 5,
+    connect_timeout: float = 12.0,
+):
     dev, nm = await find(address, name_filter, scan_seconds)
     if dev is None:
         return {"ok": False, "error": "no Improv device found in scan"}
@@ -97,37 +182,51 @@ async def provision(ssid, password, address, name_filter, scan_seconds, timeout)
         if state["state"] == STATE_PROVISIONED:
             done.set()
 
+    client = None
     try:
-        async with BleakClient(dev) as client:
-            log(f"[improv] connected={client.is_connected}")
-            # Subscribe BEFORE writing so the reply is never missed.
-            await client.start_notify(CH_RPC_RESULT, on_result)
-            await client.start_notify(CH_ERROR, on_error)
-            try:
-                await client.start_notify(CH_STATE, on_state)
-                log("[improv] subscribed STATE/ERROR/RESULT")
-            except Exception as e:
-                log(f"[improv] STATE subscribe failed: {type(e).__name__}: {e}")
-            rpc = build_wifi_rpc(ssid, password)
-            log(f"[improv] -> RPC_CMD {rpc.hex()}")
-            await client.write_gatt_char(CH_RPC_CMD, rpc, response=True)
-            log("[improv] write ack; awaiting join…")
-            try:
-                await asyncio.wait_for(done.wait(), timeout)
-            except asyncio.TimeoutError:
-                if state["state"] != STATE_PROVISIONED:
-                    return {
-                        "ok": False,
-                        "error": "timed out waiting for the player to join",
-                        "device": device,
-                    }
-    except Exception:
+        client = await _connect(dev, connect_tries, connect_timeout)
+        log(f"[improv] connected={client.is_connected}")
+        # Subscribe BEFORE writing so the reply is never missed.
+        await client.start_notify(CH_RPC_RESULT, on_result)
+        await client.start_notify(CH_ERROR, on_error)
+        try:
+            await client.start_notify(CH_STATE, on_state)
+            log("[improv] subscribed STATE/ERROR/RESULT")
+        except Exception as e:
+            log(f"[improv] STATE subscribe failed: {type(e).__name__}: {e}")
+        rpc = build_wifi_rpc(ssid, password)
+        log(f"[improv] -> RPC_CMD {rpc.hex()}")
+        await client.write_gatt_char(CH_RPC_CMD, rpc, response=True)
+        log("[improv] write ack; awaiting join…")
+        try:
+            await asyncio.wait_for(done.wait(), timeout)
+        except asyncio.TimeoutError:
+            if state["state"] != STATE_PROVISIONED:
+                return {
+                    "ok": False,
+                    "error": "timed out waiting for the player to join",
+                    "device": device,
+                }
+    except _TRANSPORT_ERRORS as e:
         # The board tears BLE down the instant it joins (soft-AP off, STA-only),
         # so a disconnect *after* we've seen PROVISIONED (or the redirect URL) is
         # the normal end of a successful provision — not a failure. Anything else
-        # is a real transport error; re-raise for main() to report.
+        # (notably a connect/GATT timeout, which arrives here as a message-less
+        # TimeoutError) is a real transport error; report it precisely rather
+        # than as a bare "TimeoutError: ".
         if state["state"] != STATE_PROVISIONED and state["urls"] is None:
-            raise
+            msg = str(e) or "(no message — likely a connect/GATT timeout)"
+            return {
+                "ok": False,
+                "error": f"BLE transport failed: {type(e).__name__}: {msg}",
+                "device": device,
+            }
+    finally:
+        if client is not None:
+            try:
+                await client.disconnect()
+            except Exception:
+                pass
     if state["error"]:
         return {"ok": False, "error": state["error"], "device": device}
     return {"ok": True, "urls": state["urls"], "state": state["state"], "device": device}
@@ -143,10 +242,23 @@ def main() -> int:
     pr.add_argument("--name", default="", help="only match devices whose name contains this")
     pr.add_argument("--scan-seconds", type=float, default=8.0)
     pr.add_argument("--timeout", type=float, default=60.0)
+    pr.add_argument(
+        "--connect-tries", type=int, default=5, help="rapid BLE connect retries within one attempt"
+    )
+    pr.add_argument("--connect-timeout", type=float, default=12.0, help="per-connect timeout (s)")
     a = ap.parse_args()
     try:
         result = asyncio.run(
-            provision(a.ssid, a.password, a.address, a.name, a.scan_seconds, a.timeout)
+            provision(
+                a.ssid,
+                a.password,
+                a.address,
+                a.name,
+                a.scan_seconds,
+                a.timeout,
+                a.connect_tries,
+                a.connect_timeout,
+            )
         )
     except Exception as e:  # noqa: BLE001 — report to the harness as a failed result
         result = {"ok": False, "error": f"{type(e).__name__}: {e}"}
