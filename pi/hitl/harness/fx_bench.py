@@ -3,35 +3,41 @@ emit a device-measurement bundle that the web builder fits + validates into an
 authoritative execution-cost profile.
 
 Kevin's point: the host VM has too much compute to predict the C6 — the
-authoritative measurement must come from the actual hardware. This drives it via
-the HITL rig:
+authoritative measurement must come from the actual hardware. This is fully
+self-contained: it reaches the board the same proven way the e2e does (reserve →
+flash → ImprovBLE-provision → tunnel), so from a checkout it is ONE command:
 
   1. reserve a free rig from the pool (hitl_client.Reservation),
-  2. optionally flash the firmware flash-bundle,
-  3. tunnel to the device's player WebSocket (wss) through the rig,
-  4. for each calibration micro-program: compile it (fx_compile), submit_effect,
-     set_perf(FULL), drain a stable PerfReport,
-  5. write a device-measurement bundle (fx_bench_core.assemble_bundle) — base64
+  2. flash the firmware flash-bundle with a clean FS (default: the one in runfiles),
+  3. ImprovBLE-provision the DUT onto the rig's own AP (provision.provision_dut),
+  4. forward-tunnel to the DUT's player WebSocket via the rig (the DUT is on the
+     rig's WiFi LAN, not this host's network),
+  5. for each calibration micro-program: compile it (fx_compile), set the strip
+     length (set_led_count, from the program's Intended-LED-count header — the
+     per-LED / transmit sweep), submit_effect, set_perf(FULL), drain a settled
+     PerfReport,
+  6. write a device-measurement bundle (fx_bench_core.assemble_bundle) — base64
      `.fxb` + cycle-accurate measured cycles per program.
 
 The bundle is then fed to web/src/effects/deviceProfile.ts `buildDeviceProfile`
-(via the app's "Import measurement bundle" action), which reuses the calibration
-fit and VALIDATES it on the held-out programs, stamping measuredError.
+(via the app's "Import measurement bundle" action, or tools/fx_profile_fit.py),
+which reuses the calibration fit and VALIDATES it on the held-out programs,
+stamping measuredError.
 
-Requires a reachable rig + a provisioned board, so it is `bazel run`, never
-`bazel test`. The pure logic (perf→sample, bundle schema) lives in
-fx_bench_core.py and IS unit-tested (//pi/hitl/tests). A --replay path rebuilds a
-bundle from a recorded session with no hardware.
+Requires a reachable rig + a board wired to it, so it is `bazel run`, never
+`bazel test`. The pure logic (perf→sample, bundle schema, LED-hint parse) lives
+in fx_bench_core.py / this module and IS unit-tested (//pi/hitl/tests). A --replay
+path rebuilds a bundle from a recorded session with no hardware.
 
-The calibration `.fx` programs and the fx_compile CLI ride in the target's
-runfiles, so a rig run needs only the device WebSocket (and a device key for a
-per-device profile):
+The calibration `.fx` programs, the fx_compile CLI, the `hitl` CLI, and the
+firmware flash-bundle all ride in runfiles, so a real run is just:
 
   bazel run //pi/hitl/harness:fx_bench -- \
-    --device-ws wss://<dut-ip>:443/ws \
-    --soc esp32c6 --device-key <mac> --out /tmp/device-bundle.json [--bundle <flash.tar>]
+    --device-key <mac> --device-label "C6 #1" --out /tmp/device-bundle.json
 
-Override --benchmarks-dir / --fx-compile to point at a custom set.
+Useful overrides: --no-bundle (measure what's already flashed), --device-ws
+wss://<ip>/ws (skip the rig, device already reachable), --wifi-ssid/--wifi-pass
+(a real AP instead of the rig's), --ws-scheme wss, --benchmarks-dir.
 
 Offline (rebuild a bundle from a recorded session, no rig):
   bazel run //pi/hitl/harness:fx_bench -- --replay session.json --out bundle.json
@@ -41,16 +47,18 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import glob
 import json
 import os
 import ssl
 import subprocess
 import sys
+import tempfile
 import time
 from typing import Any
 
-from fx_bench_core import assemble_bundle, cpu_hz_of, sample_from
+from fx_bench_core import assemble_bundle, cpu_hz_of, intended_led_count, sample_from
 
 
 def _log(msg: str) -> None:
@@ -62,6 +70,7 @@ def _log(msg: str) -> None:
 # path needed. These resolve the defaults so a rig run is just `--device-ws`.
 _FXC_RUNFILE = "_main/fx_compiler/fx_compile"
 _BENCH_RUNFILE = "_main/pi/hitl/harness/benchmarks/empty.fx"
+_BUNDLE_RUNFILE = "_main/firmware/player_app/esp32c6_flashbundle.tar"
 
 
 def _rlocation(rloc: str) -> str | None:
@@ -85,12 +94,27 @@ def default_benchmarks_dir() -> str | None:
     return os.path.dirname(empty) if empty else None
 
 
+def default_flashbundle() -> str | None:
+    """The firmware flash-bundle tar from runfiles, if present (so a run is one
+    command); --bundle overrides it and --no-bundle skips flashing."""
+    return _rlocation(_BUNDLE_RUNFILE)
+
+
 def compile_fx(fx_compile: str, src_path: str) -> bytes:
-    """Compile a `.fx` source file to `.fxb` bytes via the fx_compile CLI."""
-    out = src_path + ".fxb"
-    subprocess.run([fx_compile, src_path, out], check=True)
-    with open(out, "rb") as f:
-        return f.read()
+    """Compile a `.fx` source file to `.fxb` bytes via the fx_compile CLI. Writes
+    the artifact to a temp file (not next to the source — the benchmarks ride in
+    read-only-ish runfiles and we don't want to litter the tree)."""
+    fd, out = tempfile.mkstemp(suffix=".fxb")
+    os.close(fd)
+    try:
+        subprocess.run([fx_compile, src_path, out], check=True)
+        with open(out, "rb") as f:
+            return f.read()
+    finally:
+        try:
+            os.unlink(out)
+        except OSError:
+            pass
 
 
 def discover_benchmarks(bench_dir: str) -> tuple[list[str], list[str]]:
@@ -114,77 +138,196 @@ async def _rpc(sock, flat: dict[str, Any], expect: str, timeout: float = 6.0) ->
         # ignore unsolicited frames (e.g. status/frame_tick) until the reply.
 
 
-async def measure_program(
-    sock, label: str, fxb: bytes, settle_ms: int
-) -> tuple[dict[str, Any] | None, dict[str, Any]]:
-    """Submit a compiled program, enable FULL perf, settle, drain a PerfReport,
-    and return (bundle sample or None if no usable window, raw report)."""
-    from server import proto_wire
+def _linear_map(n: int) -> dict[str, Any]:
+    """A synthetic linear fixture map of `n` LEDs (x spread 0..1, y=z=0). The
+    firmware's shade loop iterates over the MAP (lm_map_len), reading each LED's
+    stored position — a fresh --erase-fs board has none, so nothing renders and
+    perf stays empty. A real user device already has a map; the bench must supply
+    one. `led.pos.x` is what the calibration shaders read."""
+    denom = max(1, n - 1)
+    leds = [{"id": i, "xyz": [i / denom, 0.0, 0.0]} for i in range(n)]
+    return {"type": "submit_map", "map": {"map_id": "__bench", "led_count": n, "leds": leds}}
 
-    await sock.send(
-        proto_wire.encode_client(
-            {"type": "submit_effect", "effect_id": f"__bench_{label}", "fxb": fxb, "activate": True}
-        )
+
+async def measure_program(
+    sock, label: str, fxb: bytes, led_count: int, settle_ms: int, debug: bool = False
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+    """Load a map + strip length, submit a compiled program, enable FULL perf,
+    settle, drain a PerfReport, and return (bundle sample or None if no usable
+    window, raw report). The per-program `led_count` (from the benchmark's
+    Intended-LED-count header) drives the per-LED / transmit sweep the same way
+    the browser calibration does — the shade loop runs once per mapped LED, so the
+    fit can only separate fixed overhead from per-LED cost if the count varies."""
+    if led_count > 0:
+        # Submit a fixture map of led_count LEDs (the shade loop's iteration
+        # domain), then persist the matching strip length (the show path).
+        await _rpc(sock, _linear_map(led_count), "result_ready", timeout=8.0)
+        await _rpc(sock, {"type": "set_led_count", "led_count": led_count}, "led_count_state")
+    # submit_effect validates + persists the .fxb and replies result_ready; wait
+    # for it so the effect is actually loaded before we start timing it.
+    await _rpc(
+        sock,
+        {
+            "type": "submit_effect",
+            "effect_id": f"__bench_{label}",
+            # proto_wire encodes via protobuf json_format, which expects a `bytes`
+            # field as a base64 string (not raw bytes).
+            "fxb": base64.b64encode(fxb).decode("ascii"),
+            "activate": True,
+        },
+        "result_ready",
     )
-    # set_perf(FULL) replies with an immediate perf_report; then drain a settled one.
-    await _rpc(sock, {"type": "set_perf", "mode": "FULL", "interval_ms": 0}, "perf_report")
+    # Throttled FULL perf (250 ms) rather than every-frame pushes, so the tunnel
+    # isn't flooded; the reply is an immediate perf_report. Then settle and poll a
+    # stable window (any settled perf_report — solicited or pushed — carries the
+    # rolling-window means stable_cycles wants).
+    await _rpc(sock, {"type": "set_perf", "mode": "FULL", "interval_ms": 250}, "perf_report")
     await asyncio.sleep(settle_ms / 1000.0)
     report = await _rpc(sock, {"type": "get_perf_report"}, "perf_report")
-    return sample_from(label, fxb, 0, report), report  # led_count comes from the report
+    if debug:
+        keys = ("frame_cycles_mean", "update_cycles_mean", "show_cycles_mean", "cpu_hz")
+        summ = {k: report.get(k) for k in keys}
+        summ["ticks"] = len(report.get("ticks") or [])
+        summ["last_tick"] = (report.get("ticks") or [{}])[-1]
+        _log(f"  [debug] report: {summ}")
+    # Fall back to the requested count if the report omits it (proto3 drops zeros).
+    return sample_from(label, fxb, led_count, report), report
 
 
-async def run_on_hardware(args) -> dict[str, Any]:
+class WsUnavailable(RuntimeError):
+    """The player socket did not come up within the settle window."""
+
+
+async def _open_ws(ws_url: str, args, settle_deadline: float):
+    """Open the player socket + say hello, retrying until settle_deadline. A
+    freshly-provisioned (or just-rebooted) board is still settling its servers
+    (soft-AP teardown, wss cert re-sign, listener rebind on GOT_IP)."""
     import websockets
+
+    ssl_ctx = None
+    if ws_url.startswith("wss:"):
+        ssl_ctx = ssl.create_default_context()
+        if args.insecure:  # the device presents a self-signed cert
+            ssl_ctx.check_hostname = False
+            ssl_ctx.verify_mode = ssl.CERT_NONE
+    while True:
+        try:
+            sock = await websockets.connect(ws_url, max_size=2**22, ssl=ssl_ctx, open_timeout=8)
+            await _rpc(sock, {"type": "hello", "client": "fx_bench", "app_version": "1"}, "welcome")
+            return sock
+        except (OSError, TimeoutError, websockets.exceptions.WebSocketException) as e:
+            if time.monotonic() >= settle_deadline:
+                raise WsUnavailable(f"ws never came up at {ws_url}: {type(e).__name__}: {e}")
+            _log(f"[ws] not up yet ({type(e).__name__}); retrying…")
+            await asyncio.sleep(1.5)
+
+
+async def _measure(ws_url: str, fit_src, held_src, args) -> tuple[list, list, int]:
+    """Drive the calibration programs over the player WebSocket; return
+    (fit_samples, held_samples, cpu_hz). Resilient to the DUT dropping the socket
+    mid-sweep (a heavy program under FULL perf can trip the watchdog and reboot):
+    each program is retried on a fresh connection a bounded number of times, and a
+    persistently-failing program is skipped rather than sinking the whole run."""
+    import websockets
+
+    _log(f"[ws] connecting {ws_url}")
+    try:
+        sock = await _open_ws(ws_url, args, time.monotonic() + 25.0)
+    except WsUnavailable as e:
+        raise SystemExit(str(e))  # nothing measured yet — a hard failure
+
+    # Measure the lightest programs first (empty / sweeps / single-op) so the fit's
+    # fixed-overhead + per-LED anchors land even if a heavy program later wedges
+    # the board.
+    def order(src: str) -> int:
+        return len(compile_fx(args.fx_compile, src))
+
+    cpu_hz = 0
+    fit_samples: list[dict[str, Any]] = []
+    held_samples: list[dict[str, Any]] = []
+    drops = 0
+    aborted = False
+    for kind, srcs, dest in (
+        ("fit", sorted(fit_src, key=order), fit_samples),
+        ("heldout", held_src, held_samples),
+    ):
+        if aborted:
+            break
+        for src in srcs:
+            label = os.path.basename(src).removesuffix(".heldout.fx").removesuffix(".fx")
+            fxb = compile_fx(args.fx_compile, src)
+            leds = intended_led_count(src)
+            _log(f"measuring [{kind}] {label} ({len(fxb)} B) @ {leds or '?'} LEDs…")
+            for attempt in range(1, 4):
+                try:
+                    sample, report = await measure_program(
+                        sock, label, fxb, leds, args.settle_ms, args.debug
+                    )
+                    cpu_hz = cpu_hz or cpu_hz_of(report)
+                    if sample is None:
+                        _log(f"  skipped {label}: no perf window")
+                    else:
+                        _log(
+                            f"  {label}: frame={sample['measuredFrameCycles']} "
+                            f"show={sample['measuredShowCycles']} @ {sample['ledCount']} LEDs"
+                        )
+                        dest.append(sample)
+                    break
+                except (
+                    websockets.exceptions.ConnectionClosed,
+                    OSError,
+                    TimeoutError,
+                    asyncio.IncompleteReadError,
+                ) as e:
+                    drops += 1
+                    _log(f"  [ws] dropped during {label} ({type(e).__name__}); reconnecting…")
+                    try:
+                        await sock.close()
+                    except OSError:
+                        pass
+                    # The board may be rebooting (auto-resuming the persisted
+                    # effect); give it room and re-establish before retrying.
+                    try:
+                        sock = await _open_ws(ws_url, args, time.monotonic() + 45.0)
+                    except WsUnavailable:
+                        # Board isn't coming back (a program may be crash-looping
+                        # via auto-resume). Keep what we measured rather than lose
+                        # the whole sweep.
+                        _log(f"  [ws] board unreachable after {label}; stopping with what we have")
+                        aborted = True
+                        break
+                    if attempt == 3:
+                        _log(f"  giving up on {label} after {attempt} drops")
+            if aborted:
+                break
+    if aborted:
+        return fit_samples, held_samples, cpu_hz
+    try:
+        from server import proto_wire
+
+        await sock.send(proto_wire.encode_client({"type": "set_perf", "mode": "OFF", "interval_ms": 0}))
+        await sock.close()
+    except (OSError, websockets.exceptions.WebSocketException):
+        pass
+    if drops:
+        _log(f"[ws] recovered from {drops} mid-sweep socket drop(s)")
+    return fit_samples, held_samples, cpu_hz
+
+
+def run_on_hardware(args) -> dict[str, Any]:
+    """Reserve a rig, (optionally) flash + ImprovBLE-provision the DUT, tunnel to
+    its player socket through the rig, and drive the calibration sweep on the real
+    board. Mirrors the proven hitl_e2e path so the FX benchmark reaches the board
+    the same way — the DUT lives on the rig's WiFi LAN, not this host's network."""
     from hitl_client import Reservation
+    from provision import dut_target, provision_dut
 
     fit_src, held_src = discover_benchmarks(args.benchmarks_dir)
     if not fit_src:
         raise SystemExit(f"no .fx benchmarks in {args.benchmarks_dir}")
     _log(f"benchmarks: {len(fit_src)} fit, {len(held_src)} held-out")
 
-    ssl_ctx = ssl.create_default_context()
-    if args.insecure:
-        ssl_ctx.check_hostname = False
-        ssl_ctx.verify_mode = ssl.CERT_NONE
-
-    res = Reservation(server=args.server)
-    res.acquire()
-    try:
-        if args.bundle:
-            res.scp_to([args.bundle], "/tmp/")
-            res.ssh(
-                f"hitl-flash /tmp/{os.path.basename(args.bundle)} --monitor --monitor-seconds 6",
-                capture=True,
-            )
-
-        # The device WS is reached directly (already on the rig LAN) or via a
-        # forward tunnel through the rig.
-        ws_url = args.device_ws
-        cpu_hz = 0
-        fit_samples: list[dict[str, Any]] = []
-        held_samples: list[dict[str, Any]] = []
-        async with websockets.connect(ws_url, max_size=2**22, ssl=ssl_ctx, open_timeout=10) as sock:
-            from server import proto_wire
-
-            await _rpc(sock, {"type": "hello", "client": "fx_bench", "app_version": "1"}, "welcome")
-            for kind, srcs, dest in (
-                ("fit", fit_src, fit_samples),
-                ("heldout", held_src, held_samples),
-            ):
-                for src in srcs:
-                    label = os.path.basename(src).removesuffix(".heldout.fx").removesuffix(".fx")
-                    fxb = compile_fx(args.fx_compile, src)
-                    _log(f"measuring [{kind}] {label} ({len(fxb)} B)…")
-                    sample, report = await measure_program(sock, label, fxb, args.settle_ms)
-                    cpu_hz = cpu_hz or cpu_hz_of(report)
-                    if sample is None:
-                        _log(f"  skipped {label}: no perf window")
-                        continue
-                    dest.append(sample)
-            await sock.send(
-                proto_wire.encode_client({"type": "set_perf", "mode": "OFF", "interval_ms": 0})
-            )
-
+    def bundle_from(fit_samples, held_samples, cpu_hz) -> dict[str, Any]:
         return assemble_bundle(
             soc=args.soc,
             cpu_hz=cpu_hz or 160_000_000,
@@ -195,6 +338,44 @@ async def run_on_hardware(args) -> dict[str, Any]:
             firmware_build=args.firmware_build,
             timestamp=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         )
+
+    # An explicit --device-ws that's reachable from here skips the rig entirely.
+    if args.device_ws:
+        return bundle_from(*asyncio.run(_measure(args.device_ws, fit_src, held_src, args)))
+
+    res = Reservation(server=args.server, owner=args.owner)
+    res.acquire()
+    try:
+        # WiFi: default to the rig's own provisioning AP so no external net is
+        # needed (the daemon serves the creds); explicit --wifi-ssid overrides.
+        ssid, password = args.wifi_ssid, args.wifi_pass
+        if not ssid:
+            creds = res.wifi()
+            if creds:
+                ssid, password = creds
+                _log(f"[improv] provisioning onto the rig AP {ssid!r}")
+
+        if args.bundle:
+            _log(f"[flash] {os.path.basename(args.bundle)} → {res.host}")
+            res.scp_to([args.bundle], "/tmp/")
+            # --erase-fs boots the DUT into a clean first-provision state (empty
+            # NVS, no auto-join short-circuit) — the reliably-provisionable path.
+            res.ssh(
+                f"hitl-flash /tmp/{os.path.basename(args.bundle)} --erase-fs "
+                f"--monitor --monitor-seconds {args.monitor_seconds:g}",
+                capture=True,
+                timeout=args.monitor_seconds + 120,
+            )
+
+        # ImprovBLE-provision the DUT onto WiFi, then tunnel to its player socket
+        # via the rig (the rig shares the DUT's LAN; this host only reaches the rig).
+        if not ssid:
+            raise SystemExit("no WiFi: rig serves no AP; pass --wifi-ssid or --device-ws")
+        redirect = provision_dut(res, ssid, password, args.improv_timeout, args.improv_attempts)
+        host, port = dut_target(redirect, args.ws_scheme)
+        with res.forward(host, port) as local_port:
+            ws_url = f"{args.ws_scheme}://localhost:{local_port}/ws"
+            return bundle_from(*asyncio.run(_measure(ws_url, fit_src, held_src, args)))
     finally:
         res.release()
 
@@ -241,23 +422,60 @@ def main() -> None:
         default=default_fx_compile(),
         help="fx_compile CLI path; defaults to the one bundled in runfiles",
     )
-    ap.add_argument("--device-ws", help="device player WebSocket URL (wss://ip:443/ws)")
+    ap.add_argument(
+        "--device-ws",
+        help="connect straight to a reachable player WebSocket (skip reserve/flash/provision)",
+    )
     ap.add_argument("--server", help="pin a specific rig (else pool discovery)")
-    ap.add_argument("--bundle", help="firmware flash-bundle tar to flash first")
+    ap.add_argument("--owner", default=os.environ.get("HITL_OWNER"), help="reservation owner id")
+    ap.add_argument(
+        "--bundle",
+        default=default_flashbundle(),
+        help="firmware flash-bundle tar to flash first (default: the one in runfiles); "
+        "pass --no-bundle to measure whatever is already flashed",
+    )
+    ap.add_argument(
+        "--no-bundle",
+        dest="bundle",
+        action="store_const",
+        const=None,
+        help="don't flash; measure the firmware already on the board",
+    )
+    ap.add_argument(
+        "--wifi-ssid",
+        default=os.environ.get("HITL_WIFI_SSID"),
+        help="WiFi SSID to provision the DUT onto (default: the rig's own AP)",
+    )
+    ap.add_argument("--wifi-pass", default=os.environ.get("HITL_WIFI_PASS", ""), help="WiFi password")
+    ap.add_argument("--improv-timeout", type=float, default=75.0, help="seconds to await the join")
+    ap.add_argument(
+        "--improv-attempts",
+        type=int,
+        default=4,
+        help="ImprovBLE provisioning attempts (WiFi join is flaky on the single-core C6)",
+    )
+    ap.add_argument(
+        "--ws-scheme",
+        choices=["ws", "wss"],
+        default="ws",
+        help="tunnel to the DUT's plain ws:81 (default) or TLS wss:443 player socket",
+    )
+    ap.add_argument("--monitor-seconds", type=float, default=8.0, help="serial capture after flash")
     ap.add_argument("--soc", default="esp32c6")
     ap.add_argument("--device-key", help="stable device identity (MAC/id) for a per-device profile")
     ap.add_argument("--device-label", help="human label for the device")
     ap.add_argument("--firmware-build", help="firmware build id")
-    ap.add_argument("--settle-ms", type=int, default=1200)
+    ap.add_argument("--settle-ms", type=int, default=1500)
     ap.add_argument("--insecure", action="store_true", help="accept the device's self-signed cert")
+    ap.add_argument("--debug", action="store_true", help="log each raw PerfReport summary")
     args = ap.parse_args()
 
     if args.replay:
         bundle = run_replay(args)
     else:
-        if not (args.benchmarks_dir and args.device_ws):
-            ap.error("hardware run needs --benchmarks-dir and --device-ws (or use --replay)")
-        bundle = asyncio.run(run_on_hardware(args))
+        if not args.benchmarks_dir:
+            ap.error("no --benchmarks-dir (and none in runfiles); pass one or use --replay")
+        bundle = run_on_hardware(args)
 
     with open(args.out, "w") as f:
         json.dump(bundle, f, indent=2)

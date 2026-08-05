@@ -152,6 +152,19 @@ js_binary(
     entry_point = ":dist-test/tests/tools/offlineDecode.js",
 )
 
+# Headless fit + validation of a HITL device-measurement bundle (FUG-11) through
+# the same buildDeviceProfile the app uses — so a rig run can fit + validate +
+# commit an authoritative device profile with no browser:
+#   bazelisk run //web:fit_device_profile -- <bundle.json> [out-profile.json]
+js_binary(
+    name = "fit_device_profile",
+    data = [
+        ":dist_test_pkg_json",
+        ":web_tests_js",
+    ],
+    entry_point = ":dist-test/tests/tools/fitDeviceProfile.js",
+)
+
 # Production bundle. vite resolves the config's own `import "vite"` and the
 # workspace protocol package through the linked node_modules. NOTE: the Vite
 # action runs unsandboxed via `--strategy=Vite=local` in .bazelrc — see the

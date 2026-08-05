@@ -25,6 +25,7 @@ py_library(
         "hitl_client.py",
         "hitl_improv.py",
         "improv.py",
+        "provision.py",
         "sync.py",
     ],
     imports = ["."],
@@ -87,6 +88,7 @@ py_binary(
     srcs = ["fx_bench.py"],
     data = [
         ":fx_benchmarks",
+        "//firmware/player_app:esp32c6_flashbundle",
         "//fx_compiler:fx_compile",
         "//pi/hitl/cmd/hitl",
     ],

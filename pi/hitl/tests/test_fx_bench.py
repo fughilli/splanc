@@ -4,8 +4,48 @@ shape is pinned to deviceProfile.ts `parseDeviceBundle` (fit/heldout arrays of
 {label, fxbBase64, ledCount, measuredFrameCycles, measuredShowCycles})."""
 
 import base64
+import os
+import tempfile
 
-from fx_bench_core import assemble_bundle, cpu_hz_of, sample_from, stable_cycles
+from fx_bench_core import (
+    assemble_bundle,
+    cpu_hz_of,
+    intended_led_count,
+    sample_from,
+    stable_cycles,
+)
+
+
+def _write(text: str) -> str:
+    fd, path = tempfile.mkstemp(suffix=".fx")
+    with os.fdopen(fd, "w") as f:
+        f.write(text)
+    return path
+
+
+def test_intended_led_count_parses_header():
+    path = _write(
+        "// FUG-11 calibration micro-program: Add x32 (isolates Add).\n"
+        "// Intended LED count: 256.\n"
+        "vec3 shade(Led led) { return vec3(0.0, 0.0, 0.0); }\n"
+    )
+    try:
+        assert intended_led_count(path) == 256
+    finally:
+        os.unlink(path)
+
+
+def test_intended_led_count_default_when_absent():
+    path = _write("vec3 shade(Led led) { return vec3(0.0); }\n")
+    try:
+        assert intended_led_count(path) == 0
+        assert intended_led_count(path, default=128) == 128
+    finally:
+        os.unlink(path)
+
+
+def test_intended_led_count_missing_file_is_default():
+    assert intended_led_count("/no/such/bench.fx", default=64) == 64
 
 
 def test_stable_cycles_prefers_window_means():

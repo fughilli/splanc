@@ -15,6 +15,33 @@ import base64
 from typing import Any
 
 
+# The calibration `.fx` sources carry their intended strip length in a header
+# comment ("// Intended LED count: N."), generated from calibrationBenchmarks.ts.
+# Parsing it drives set_led_count so the on-hardware per-LED / transmit sweep
+# matches the browser calibration (the shade loop runs once per LED, so the fit
+# can only separate fixed overhead from per-LED cost if the strip length varies).
+_LED_HINT = "Intended LED count:"
+
+
+def intended_led_count(src_path: str, default: int = 0) -> int:
+    """The benchmark's intended strip length from its header comment, or default."""
+    try:
+        with open(src_path) as f:
+            head = f.read(2048)
+    except OSError:
+        return default
+    idx = head.find(_LED_HINT)
+    if idx < 0:
+        return default
+    num = ""
+    for ch in head[idx + len(_LED_HINT) :].strip():
+        if ch.isdigit():
+            num += ch
+        else:
+            break
+    return int(num) if num else default
+
+
 def stable_cycles(report: dict[str, Any]) -> dict[str, int] | None:
     """Extract a stable (frame, show, led) cycle sample from a PerfReport flat
     dict (proto_wire.decode_server output; proto3 omits zero fields). Prefers the
