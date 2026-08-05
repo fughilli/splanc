@@ -23,11 +23,15 @@ Requires a reachable rig + a provisioned board, so it is `bazel run`, never
 fx_bench_core.py and IS unit-tested (//pi/hitl/tests). A --replay path rebuilds a
 bundle from a recorded session with no hardware.
 
-Usage (on-rig):
+The calibration `.fx` programs and the fx_compile CLI ride in the target's
+runfiles, so a rig run needs only the device WebSocket (and a device key for a
+per-device profile):
+
   bazel run //pi/hitl/harness:fx_bench -- \
-    --device-ws wss://<dut-ip>:443/ws --benchmarks-dir <dir-of-.fx> \
-    --fx-compile $(bazel run -c opt //fx_compiler:fx_compile ...) \
+    --device-ws wss://<dut-ip>:443/ws \
     --soc esp32c6 --device-key <mac> --out /tmp/device-bundle.json [--bundle <flash.tar>]
+
+Override --benchmarks-dir / --fx-compile to point at a custom set.
 
 Offline (rebuild a bundle from a recorded session, no rig):
   bazel run //pi/hitl/harness:fx_bench -- --replay session.json --out bundle.json
@@ -51,6 +55,34 @@ from fx_bench_core import assemble_bundle, cpu_hz_of, sample_from
 
 def _log(msg: str) -> None:
     print(msg, file=sys.stderr, flush=True)
+
+
+# The calibration `.fx` programs and the fx_compile CLI are data deps of the
+# fx_bench target, so `bazel run` ships them in runfiles — no workspace-relative
+# path needed. These resolve the defaults so a rig run is just `--device-ws`.
+_FXC_RUNFILE = "_main/fx_compiler/fx_compile"
+_BENCH_RUNFILE = "_main/pi/hitl/harness/benchmarks/empty.fx"
+
+
+def _rlocation(rloc: str) -> str | None:
+    try:
+        from python.runfiles import runfiles
+
+        path = runfiles.Create().Rlocation(rloc)
+    except Exception:
+        return None
+    return path if path and os.path.exists(path) else None
+
+
+def default_fx_compile() -> str:
+    """The fx_compile CLI from runfiles, falling back to $PATH's `fx_compile`."""
+    return _rlocation(_FXC_RUNFILE) or "fx_compile"
+
+
+def default_benchmarks_dir() -> str | None:
+    """The bundled calibration `.fx` directory from runfiles, if present."""
+    empty = _rlocation(_BENCH_RUNFILE)
+    return os.path.dirname(empty) if empty else None
 
 
 def compile_fx(fx_compile: str, src_path: str) -> bytes:
@@ -199,9 +231,16 @@ def main() -> None:
     ap.add_argument("--out", required=True, help="output device-measurement bundle JSON")
     ap.add_argument("--replay", help="rebuild from a recorded session JSON (no hardware)")
     ap.add_argument(
-        "--benchmarks-dir", help="directory of .fx programs (*.heldout.fx = validation)"
+        "--benchmarks-dir",
+        default=default_benchmarks_dir(),
+        help="directory of .fx programs (*.heldout.fx = validation); "
+        "defaults to the bundled calibration set in runfiles",
     )
-    ap.add_argument("--fx-compile", default="fx_compile", help="fx_compile CLI path")
+    ap.add_argument(
+        "--fx-compile",
+        default=default_fx_compile(),
+        help="fx_compile CLI path; defaults to the one bundled in runfiles",
+    )
     ap.add_argument("--device-ws", help="device player WebSocket URL (wss://ip:443/ws)")
     ap.add_argument("--server", help="pin a specific rig (else pool discovery)")
     ap.add_argument("--bundle", help="firmware flash-bundle tar to flash first")
