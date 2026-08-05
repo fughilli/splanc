@@ -370,3 +370,67 @@ func TestStatusAdvertisesWiFi(t *testing.T) {
 		t.Errorf("Status.WiFi without an AP should be nil, got %+v", bare.WiFi)
 	}
 }
+
+// Hot-plug: SyncDevices adds a newly-attached DUT and reconciles a waiting
+// reservation onto it — without a daemon restart.
+func TestSyncDevicesAttachesAndPromotes(t *testing.T) {
+	ctx := context.Background()
+	fr := &fakeRunner{}
+	m := New("rig", 30*time.Minute, fr, WithDevices([]runner.Device{{Name: "c6-a", SSHPort: 2222}}))
+	a := m.Reserve(ctx, api.ReserveRequest{Owner: "a"}) // active on the only DUT
+	b := m.Reserve(ctx, api.ReserveRequest{Owner: "b"}) // queued: no free DUT
+	if a.State != api.StateActive || b.State != api.StateQueued {
+		t.Fatalf("setup: a=%q b=%q", a.State, b.State)
+	}
+
+	// A second board is plugged in live.
+	added, removed := m.SyncDevices(ctx, []runner.Device{
+		{Name: "c6-a", SSHPort: 2222}, {Name: "c6-b", SSHPort: 2223},
+	})
+	if len(added) != 1 || added[0] != "c6-b" || len(removed) != 0 {
+		t.Fatalf("SyncDevices added=%v removed=%v, want added=[c6-b]", added, removed)
+	}
+	if got, _ := m.Get(b.ID); got.State != api.StateActive || got.Device != "c6-b" {
+		t.Errorf("waiter b should be active on the new DUT c6-b, got state=%q dut=%q", got.State, got.Device)
+	}
+	if got, _ := m.Get(a.ID); got.Device != "c6-a" {
+		t.Errorf("existing holder a must stay on c6-a, got %q", got.Device)
+	}
+}
+
+// Hot-unplug: removing a DUT tears down its active reservation (its board is
+// gone) but leaves the other DUT's live session untouched.
+func TestSyncDevicesEvictsRemovedDUT(t *testing.T) {
+	ctx := context.Background()
+	fr := &fakeRunner{}
+	m := New("rig", 30*time.Minute, fr, WithDevices([]runner.Device{
+		{Name: "c6-a", SSHPort: 2222}, {Name: "c6-b", SSHPort: 2223},
+	}))
+	a := m.Reserve(ctx, api.ReserveRequest{Owner: "a", Device: "c6-a"})
+	b := m.Reserve(ctx, api.ReserveRequest{Owner: "b", Device: "c6-b"})
+	if a.State != api.StateActive || b.State != api.StateActive {
+		t.Fatalf("setup: a=%q b=%q (both should be active on their pinned DUTs)", a.State, b.State)
+	}
+
+	// Board A is unplugged.
+	added, removed := m.SyncDevices(ctx, []runner.Device{{Name: "c6-b", SSHPort: 2223}})
+	if len(removed) != 1 || removed[0] != "c6-a" || len(added) != 0 {
+		t.Fatalf("SyncDevices added=%v removed=%v, want removed=[c6-a]", added, removed)
+	}
+	if present(m, a.ID) {
+		t.Error("reservation on the removed DUT c6-a should have been evicted")
+	}
+	if got, _ := m.Get(b.ID); got == nil || got.State != api.StateActive {
+		t.Error("reservation on the surviving DUT c6-b must be untouched")
+	}
+	// Its container was torn down exactly once.
+	var stoppedA int
+	for _, id := range fr.stopped {
+		if id == a.ID {
+			stoppedA++
+		}
+	}
+	if stoppedA != 1 {
+		t.Errorf("evicted DUT's container should be stopped once, got %d", stoppedA)
+	}
+}

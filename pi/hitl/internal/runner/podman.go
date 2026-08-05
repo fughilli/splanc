@@ -84,6 +84,10 @@ func (p *PodmanRunner) Start(ctx context.Context, id, owner, sshKey string, dev 
 		// The holder's key, mounted read-only; the entrypoint installs it.
 		"-v", authKeys + ":/run/hitl/authorized_keys:ro",
 		"-e", "HITL_SSH_USER=" + p.cfg.SSHUser,
+		// Tell the holder which DUT they got, visible in their SSH session (echo
+		// $HITL_DUT). Their board's tty is also pinned to /dev/ttyACM0, so the
+		// toolbox targets it by default without needing the name.
+		"-e", "HITL_DUT=" + dev.Name,
 	}
 	// Per-DUT env (e.g. HITL_ADAPTER_SERIAL so openocd targets this DUT's board).
 	for _, k := range sortedKeys(dev.Env) {

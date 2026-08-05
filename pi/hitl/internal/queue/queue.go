@@ -88,6 +88,79 @@ func (m *Manager) Devices() []string {
 	return out
 }
 
+// SyncDevices reconciles the live DUT set to devs — the hook live discovery uses
+// for hot-plug. It adds newly-attached DUTs, drops detached ones (tearing down
+// any reservation running on a removed DUT), and reconciles so a waiter lands on
+// a freshly-attached board. DUTs present in both sets are matched by name and
+// left untouched — their running container and port are preserved — so unplugging
+// one board never disturbs another's live session. Returns the added/removed
+// names for logging.
+func (m *Manager) SyncDevices(ctx context.Context, devs []runner.Device) (added, removed []string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	next := map[string]bool{}
+	for _, d := range devs {
+		next[d.Name] = true
+	}
+	cur := map[string]bool{}
+	for _, d := range m.devices {
+		cur[d.Name] = true
+	}
+
+	// Keep existing DUTs exactly as they are (preserving any live container/port);
+	// evict the ones that have gone away.
+	var kept []runner.Device
+	for _, d := range m.devices {
+		if next[d.Name] {
+			kept = append(kept, d)
+			continue
+		}
+		removed = append(removed, d.Name)
+		m.evictDeviceLocked(ctx, d.Name)
+	}
+	// Append the newly-attached DUTs.
+	for _, d := range devs {
+		if !cur[d.Name] {
+			kept = append(kept, d)
+			added = append(added, d.Name)
+		}
+	}
+	m.devices = kept
+	if len(added) > 0 || len(removed) > 0 {
+		m.reconcileLocked(ctx)
+	}
+	return added, removed
+}
+
+// evictDeviceLocked tears down whatever is using the named DUT because its board
+// was unplugged: it stops an active holder's container and drops the reservation,
+// and dequeues any waiter pinned to that DUT (an unpinned waiter stays, since
+// another DUT can still serve it).
+func (m *Manager) evictDeviceLocked(ctx context.Context, name string) {
+	var doomed []*api.Reservation
+	for _, r := range m.items {
+		if (r.State == api.StateActive && r.Device == name) ||
+			(r.State == api.StateQueued && m.want[r.ID] == name) {
+			doomed = append(doomed, r)
+		}
+	}
+	for _, r := range doomed {
+		if r.State == api.StateActive {
+			if err := m.run.Stop(ctx, r.ID); err != nil {
+				log.Printf("evict: stop container for %s: %v", r.ID, err)
+			}
+		}
+		log.Printf("evict: reservation %s dropped (DUT %s removed)", r.ID, name)
+		m.removeLocked(r.ID)
+	}
+	// If evicting the last active holder left the rig idle, drop the shared AP;
+	// reconcile brings it back up if it promotes a waiter onto another DUT.
+	if !m.anyOtherActiveLocked("") {
+		m.apDown(ctx)
+	}
+}
+
 // HasDevice reports whether name is one of the rig's DUTs.
 func (m *Manager) HasDevice(name string) bool {
 	for _, d := range m.devices {

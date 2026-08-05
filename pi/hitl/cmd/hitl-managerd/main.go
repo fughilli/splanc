@@ -4,9 +4,15 @@
 // attached and the holder's SSH key authorized, and returns the SSH endpoint.
 //
 // A rig may host several DUTs (each its own port + device nodes, run
-// concurrently): pass one --dut '{"name":…,"ssh_port":…,"devices":[…]}' per DUT.
-// With no --dut flags it falls back to a single DUT built from --ssh-port and
-// --device (the original behavior).
+// concurrently). There are three ways to configure them, in precedence order:
+//
+//   - explicit: one --dut '{"name":…,"ssh_port":…,"devices":[…]}' flag per DUT;
+//   - auto-discovery (--discover): enumerate the ESP32-C6 boards attached to the
+//     host by their stable /dev/serial/by-id/* symlinks and synthesize one DUT
+//     per board (stable serial-derived name, tty pinned to /dev/ttyACM0, JTAG
+//     serial filled in). Discovery is live: the daemon polls and syncs the DUT
+//     set, so boards hot-plugged/removed after boot come and go without a restart;
+//   - legacy fallback (neither flag): a single DUT built from --ssh-port/--device.
 package main
 
 import (
@@ -19,6 +25,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"time"
@@ -54,6 +62,13 @@ func main() {
 	flag.Var(&devices, "device", "extra --device mapping for the single-DUT fallback (repeatable)")
 	var duts stringList
 	flag.Var(&duts, "dut", `a DUT as JSON: {"name":"c6-0","ssh_port":2222,"devices":["/dev/serial/by-id/…:/dev/ttyACM0"],"env":{"HITL_ADAPTER_SERIAL":"…"}} (repeatable; enables multi-DUT)`)
+	// Auto-discovery: when no --dut flags are given, enumerate attached boards by
+	// their stable by-id serial symlinks and build one DUT per board, assigning
+	// ports sequentially from --ssh-port. Ignored if any --dut flag is present.
+	discover := flag.Bool("discover", false, "auto-discover DUTs from --discover-glob (one DUT per attached board), live")
+	discoverGlob := flag.String("discover-glob", "/dev/serial/by-id/*", "glob of DUT serial nodes to auto-discover")
+	discoverMax := flag.Int("discover-max-duts", 8, "max concurrent DUTs (sshd port range from --ssh-port) for --discover")
+	discoverInterval := flag.Duration("discover-interval", 3*time.Second, "how often --discover rescans for hot-plugged/removed DUTs")
 	// The rig's self-hosted provisioning AP (NetworkManager connection toggled
 	// per-reservation). With --ap-conn set, the daemon brings it up while a
 	// reservation is active and advertises its creds in /status so the harness
@@ -77,7 +92,21 @@ func main() {
 		Privileged: *privileged,
 	})
 
-	devs, err := buildDevices(duts, *sshPort, devices)
+	var devs []runner.Device
+	var err error
+	var mon *dutMonitor
+	switch {
+	case len(duts) > 0:
+		devs, err = buildDevices(duts, *sshPort, devices)
+	case *discover:
+		mon = newDUTMonitor(*discoverGlob, *sshPort, *discoverMax)
+		devs, err = mon.scan()
+		if err == nil && len(devs) == 0 {
+			log.Printf("discover: no DUTs matched %q yet; will attach them live as they appear", *discoverGlob)
+		}
+	default:
+		devs, err = buildDevices(nil, *sshPort, devices)
+	}
 	if err != nil {
 		log.Fatalf("dut config: %v", err)
 	}
@@ -115,6 +144,11 @@ func main() {
 		if err := apCtl.Down(ctx); err != nil {
 			log.Printf("startup ap down: %v", err)
 		}
+	}
+
+	// Live DUT discovery: poll for hot-plugged/removed boards and sync them in.
+	if mon != nil {
+		go mon.run(ctx, mgr, *discoverInterval)
 	}
 
 	// Reap expired leases periodically.
@@ -184,6 +218,192 @@ func buildDevices(duts []string, sshPort int, devices []string) ([]runner.Device
 		out = append(out, runner.Device{Name: s.Name, SSHPort: s.SSHPort, Devices: s.Devices, Env: s.Env})
 	}
 	return out, nil
+}
+
+// board is one physical DUT discovered on the host, identified by a stable name
+// derived from its USB serial — so it keeps that identity across re-enumeration
+// and hot-plug, rather than a boot-order slot. Port assignment is the monitor's
+// job (sticky per name), not the board's, so unplugging one board never renames
+// or renumbers another.
+type board struct {
+	name    string
+	devices []string          // --device mappings (tty pinned to /dev/ttyACM0)
+	env     map[string]string // e.g. HITL_ADAPTER_SERIAL for JTAG
+}
+
+// boardsFromByID turns /dev/serial/by-id paths into boards. It keeps only each
+// board's primary CDC-ACM interface (…-if00, or names with no -if token) so a
+// composite device's secondary interfaces don't spawn phantom DUTs, dedupes by
+// the resolved tty (and by derived name), pins each tty to /dev/ttyACM0 in the
+// container (so the toolbox's defaults hold on every DUT), and — for ESP32-C6
+// built-in USB-JTAG boards — lifts HITL_ADAPTER_SERIAL so JTAG selects the
+// matching adapter among identical boards. Sorted by name for deterministic output.
+func boardsFromByID(paths []string) []board {
+	seenTTY, seenName := map[string]bool{}, map[string]bool{}
+	var out []board
+	for _, path := range paths {
+		base := filepath.Base(path)
+		// Skip secondary interfaces of composite USB devices (…-if01/-if02/…);
+		// keep the primary data interface (…-if00) or names with no -if token.
+		if i := strings.Index(base, "-if"); i >= 0 && !strings.HasPrefix(base[i:], "-if00") {
+			continue
+		}
+		// Dedupe by the resolved device node. A dangling symlink (EvalSymlinks
+		// error) falls back to the path itself, which is still unique per entry.
+		target := path
+		if r, err := filepath.EvalSymlinks(path); err == nil {
+			target = r
+		}
+		if seenTTY[target] {
+			continue
+		}
+		name := dutNameFromByID(base)
+		if seenName[name] {
+			continue // serial-tail collision (rare); keep the first, ignore the twin.
+		}
+		seenTTY[target], seenName[name] = true, true
+		b := board{name: name, devices: []string{path + ":/dev/ttyACM0"}}
+		if s := espSerialFromByID(base); s != "" {
+			b.env = map[string]string{"HITL_ADAPTER_SERIAL": s}
+		}
+		out = append(out, b)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].name < out[j].name })
+	return out
+}
+
+// dutNameFromByID derives a stable, shell-safe DUT name from a by-id name: the
+// board's USB serial (a C6's is its MAC), trimmed to a short suffix. Because it's
+// tied to the board, the name follows the physical device across re-enumeration
+// and hot-plug — an agent that pins `--device c6-071234` keeps the same board.
+func dutNameFromByID(base string) string {
+	id := espSerialFromByID(base)
+	if id == "" {
+		// Non-Espressif adapter: fall back to the by-id tail (drop usb-/…-ifXX).
+		id = strings.TrimPrefix(base, "usb-")
+		if i := strings.Index(id, "-if"); i >= 0 {
+			id = id[:i]
+		}
+	}
+	var b strings.Builder
+	for _, r := range id {
+		if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+			b.WriteByte(byte(r))
+		}
+	}
+	s := strings.ToLower(b.String())
+	if len(s) > 6 {
+		s = s[len(s)-6:]
+	}
+	return "c6-" + s
+}
+
+// espSerialFromByID pulls the USB serial out of an ESP32-C6 built-in
+// USB-JTAG/serial by-id name (usb-Espressif_USB_JTAG_serial_debug_unit_<serial>-if00);
+// openocd matches that value via `adapter serial`. Empty for other adapters,
+// whose by-id names don't carry a serial openocd can select on — leaving JTAG to
+// auto-pick the sole board, which is correct for a single-board rig.
+func espSerialFromByID(base string) string {
+	const prefix = "usb-Espressif_USB_JTAG_serial_debug_unit_"
+	if !strings.HasPrefix(base, prefix) {
+		return ""
+	}
+	s := strings.TrimPrefix(base, prefix)
+	if i := strings.Index(s, "-if"); i >= 0 {
+		s = s[:i]
+	}
+	return s
+}
+
+// dutMonitor discovers DUTs from a by-id glob and keeps each board's sshd-port
+// assignment sticky across scans, so a board keeps its port — and its live
+// reservation — even when a different board is unplugged. Driven from a single
+// goroutine; not safe for concurrent use.
+type dutMonitor struct {
+	glob     string
+	basePort int
+	maxDuts  int
+	ports    map[string]int // stable DUT name -> assigned sshd port
+}
+
+func newDUTMonitor(glob string, basePort, maxDuts int) *dutMonitor {
+	return &dutMonitor{glob: glob, basePort: basePort, maxDuts: maxDuts, ports: map[string]int{}}
+}
+
+// scan globs the host and returns the current DUT set with sticky ports. A glob
+// error is returned; an empty match is not one (no board plugged in yet).
+func (dm *dutMonitor) scan() ([]runner.Device, error) {
+	matches, err := filepath.Glob(dm.glob)
+	if err != nil {
+		return nil, fmt.Errorf("discover glob %q: %w", dm.glob, err)
+	}
+	boards := boardsFromByID(matches)
+	// Release the ports of boards that have gone away, so their numbers can be
+	// reused by future boards without disturbing the boards still present.
+	present := map[string]bool{}
+	for _, b := range boards {
+		present[b.name] = true
+	}
+	for name := range dm.ports {
+		if !present[name] {
+			delete(dm.ports, name)
+		}
+	}
+	used := map[int]bool{}
+	for _, p := range dm.ports {
+		used[p] = true
+	}
+	var out []runner.Device
+	for _, b := range boards {
+		port, ok := dm.ports[b.name]
+		if !ok {
+			if port = dm.allocPort(used); port == 0 {
+				log.Printf("discover: %s attached but all %d DUT ports are in use; ignoring", b.name, dm.maxDuts)
+				continue
+			}
+			dm.ports[b.name] = port
+			used[port] = true
+		}
+		out = append(out, runner.Device{Name: b.name, SSHPort: port, Devices: b.devices, Env: b.env})
+	}
+	return out, nil
+}
+
+// allocPort returns the lowest free port in [basePort, basePort+maxDuts), or 0
+// if the range is exhausted.
+func (dm *dutMonitor) allocPort(used map[int]bool) int {
+	for i := 0; i < dm.maxDuts; i++ {
+		if p := dm.basePort + i; !used[p] {
+			return p
+		}
+	}
+	return 0
+}
+
+// run polls the by-id glob every interval and syncs the manager's DUT set, so
+// boards hot-plugged (or unplugged) after boot come and go without a restart.
+func (dm *dutMonitor) run(ctx context.Context, mgr *queue.Manager, interval time.Duration) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			devs, err := dm.scan()
+			if err != nil {
+				log.Printf("discover: %v", err)
+				continue
+			}
+			added, removed := mgr.SyncDevices(ctx, devs)
+			for _, n := range added {
+				log.Printf("discover: DUT %s attached", n)
+			}
+			for _, n := range removed {
+				log.Printf("discover: DUT %s removed", n)
+			}
+		}
+	}
 }
 
 func routes(ctx context.Context, mgr *queue.Manager) http.Handler {

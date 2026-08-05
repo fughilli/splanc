@@ -41,10 +41,28 @@ startup (crash recovery).
 ## Multiple DUTs per rig (FUG-67)
 
 A rig can host several DUTs, each its own container, published sshd port, and
-device nodes, running concurrently. The daemon enumerates DUTs from repeatable
-`--dut '{"name":…,"ssh_port":…,"devices":["host:container",…],"env":{…}}'` flags
-(no `--dut` → a single DUT synthesized from the legacy `--ssh-port`/`--device`,
-i.e. the original behavior). The queue manager keeps one shared FIFO admission
+device nodes, running concurrently. The daemon gets its DUT set one of three
+ways, in precedence order:
+
+- **explicit** — repeatable
+  `--dut '{"name":…,"ssh_port":…,"devices":["host:container",…],"env":{…}}'` flags;
+- **auto-discovery** (`--discover`, the deployed default) — enumerate the boards
+  attached to the host by their stable `/dev/serial/by-id/*` symlinks and build
+  one DUT per board: a **stable name derived from the board's USB serial**
+  (`c6-071234`, a C6's serial is its MAC) so the DUT identity follows the physical
+  board rather than a boot-order slot, tty pinned to `/dev/ttyACM0` in-container,
+  and (for ESP32-C6 built-in USB-JTAG boards) `HITL_ADAPTER_SERIAL` lifted from
+  the by-id name so JTAG selects the right adapter among identical boards. Only
+  each board's primary `-if00` interface is taken. Discovery is **live**: the
+  daemon polls (`--discover-interval`, default 3s) and syncs the DUT set, so a
+  board hot-plugged after boot attaches — and an unplugged board detaches (tearing
+  down any reservation on it) — with no restart. Each DUT's sshd port is **sticky**
+  (assigned once from `--ssh-port`, up to `--discover-max-duts`), so unplugging one
+  board never renumbers another or disturbs its live session;
+- **legacy fallback** (neither flag) — a single DUT synthesized from
+  `--ssh-port`/`--device`, i.e. the original behavior.
+
+The queue manager keeps one shared FIFO admission
 queue and one active slot per DUT: `reconcile` brings a container up on every
 free DUT, feeding it the earliest queued waiter that's compatible (unpinned, or
 pinned to that DUT via `ReserveRequest.Device`). So a batch of reservations fills

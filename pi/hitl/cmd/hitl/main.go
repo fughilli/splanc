@@ -156,7 +156,7 @@ func cmdReserve(args []string) error {
 	if h := hostFromServer(*server); h != "" {
 		ep.Host = h
 	}
-	fmt.Fprintf(os.Stderr, "active: ssh %s@%s -p %d\n", ep.User, ep.Host, ep.Port)
+	fmt.Fprintf(os.Stderr, "active: dut=%s ssh %s@%s -p %d\n", active.Device, ep.User, ep.Host, ep.Port)
 
 	// The daemon marks active once the container starts; its sshd takes a moment
 	// to bind. Wait for the port before connecting so we don't race it.
