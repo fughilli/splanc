@@ -11,9 +11,11 @@
  *   shade_entry u16
  * Then: manifest(manifest_len) · consts(n_consts*4) · code(code_len).
  * If (flags & 0x01) a buffer table follows: n_buffers u8, then n_buffers ×
- *   [kind u8, elem u8, w u16, h u16].
+ *   [kind u8, elem u8, comp u8, w u16, h u16].
  * A TEXTURE is a buffer with kind == 1 (w×h its dims, elem = channels); LED-arity
- * buffers are kind == 0 and are skipped here.
+ * buffers are kind == 0 and are skipped here. `comp` is the per-component storage
+ * precision (FUG-10 packed storage — fx_vm `comp`); this reader doesn't need it,
+ * but it MUST account for the byte or w/h read off by one (see BUF_DESC_LEN=7).
  */
 
 // "FXB1" (bytes 0x46 0x58 0x42 0x31) read as a little-endian u32:
@@ -21,6 +23,9 @@
 const MAGIC = 0x31425846;
 const FLAG_HAS_BUFFERS = 0x01;
 const KIND_TEXTURE = 1;
+// Bytes per buffer descriptor: kind(u8) elem(u8) comp(u8) w(u16) h(u16). Mirrors
+// fx_vm::BUF_DESC_LEN — keep in lockstep with the compiler's serialization.
+const BUF_DESC_LEN = 7;
 
 /** One texture buffer declared by a compiled effect. `index` is its position in
  * the .fxb buffer table (the `texIndex` the firmware's set_texture keys on). */
@@ -55,12 +60,13 @@ export function parseFxbTextures(fxb: Uint8Array): FxbTexture[] {
 
   const out: FxbTexture[] = [];
   for (let i = 0; i < nBuffers; i++) {
-    if (off + 6 > fxb.byteLength) throw new Error("fxb buffer table truncated");
+    if (off + BUF_DESC_LEN > fxb.byteLength) throw new Error("fxb buffer table truncated");
     const kind = dv.getUint8(off);
     const elem = dv.getUint8(off + 1);
-    const w = dv.getUint16(off + 2, true);
-    const h = dv.getUint16(off + 4, true);
-    off += 6;
+    // off + 2 is `comp` (per-component storage precision) — skipped here.
+    const w = dv.getUint16(off + 3, true);
+    const h = dv.getUint16(off + 5, true);
+    off += BUF_DESC_LEN;
     if (kind === KIND_TEXTURE) out.push({ index: i, width: w, height: h, elem });
   }
   return out;

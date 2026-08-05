@@ -26,8 +26,9 @@ import { isDrivable } from "../../midi/router";
 import { installMidiStyles } from "../../ui/screens/midi";
 
 export interface MidiMapPanelOpts {
-  /** Fire the canned AI remap prompt (editor drives the chat turn). */
-  onRemap: () => void;
+  /** Fire the canned AI remap prompt (editor drives the chat turn). The panel
+   * awaits the returned promise to animate the button while the turn runs. */
+  onRemap: () => void | Promise<void>;
 }
 
 export class MidiMapPanel {
@@ -40,6 +41,11 @@ export class MidiMapPanel {
   private readonly liveValues = new Map<string, number>();
   private meterFills = new Map<string, HTMLElement[]>();
   private meterRaf = 0;
+  // Remap button feedback (FUG-51). Held on the instance so the working/done
+  // state survives the re-renders that fire mid-turn when the AI applies
+  // mappings (midiStore change → render()).
+  private remapState: "idle" | "working" | "done" = "idle";
+  private remapDoneTimer = 0;
 
   constructor(
     private readonly effectId: string,
@@ -65,6 +71,7 @@ export class MidiMapPanel {
     for (const u of this.unsubs) u();
     this.unsubs.length = 0;
     if (this.meterRaf !== 0) cancelAnimationFrame(this.meterRaf);
+    if (this.remapDoneTimer !== 0) clearTimeout(this.remapDoneTimer);
   }
 
   // -- events -------------------------------------------------------------
@@ -103,6 +110,60 @@ export class MidiMapPanel {
     midiStore.setBinding(this.effectId, { uniform, semantic: name });
   }
 
+  // -- remap button (FUG-51) ---------------------------------------------
+  /** Build the ✨ Remap button in its current state: idle, a spinner+"Remapping…"
+   * while the AI turn runs, or a brief "✓ Mapped" flash once it finishes. */
+  private remapButton(): HTMLButtonElement {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "midimap-remap";
+    if (this.remapState === "working") {
+      btn.classList.add("working");
+      btn.disabled = true;
+      btn.title = "The AI is mapping your MIDI controls…";
+      const spin = document.createElement("span");
+      spin.className = "midimap-remap-spinner";
+      const label = document.createElement("span");
+      label.textContent = "Remapping…";
+      btn.append(spin, label);
+    } else if (this.remapState === "done") {
+      btn.classList.add("done");
+      btn.textContent = "✓ Mapped";
+      btn.title = "The AI finished mapping your MIDI controls";
+      btn.addEventListener("click", () => void this.runRemapAnimated());
+    } else {
+      btn.textContent = "✨ Remap";
+      btn.title = "Let the AI map MIDI controls to these uniforms";
+      btn.addEventListener("click", () => void this.runRemapAnimated());
+    }
+    return btn;
+  }
+
+  /** Drive the remap turn while reflecting its progress on the button: spin
+   * until the editor's turn settles, then flash "done" for a moment. */
+  private async runRemapAnimated(): Promise<void> {
+    if (this.remapState === "working") return;
+    if (this.remapDoneTimer !== 0) {
+      clearTimeout(this.remapDoneTimer);
+      this.remapDoneTimer = 0;
+    }
+    this.remapState = "working";
+    this.render();
+    try {
+      await this.opts.onRemap();
+    } finally {
+      // The editor swallows AI errors (they surface in the chat pane); reaching
+      // here just means the turn is over — the "done" flash is the completion cue.
+      this.remapState = "done";
+      this.render();
+      this.remapDoneTimer = window.setTimeout(() => {
+        this.remapDoneTimer = 0;
+        this.remapState = "idle";
+        this.render();
+      }, 1600);
+    }
+  }
+
   // -- render -------------------------------------------------------------
   private render(): void {
     this.meterFills = new Map<string, HTMLElement[]>();
@@ -114,13 +175,7 @@ export class MidiMapPanel {
     const title = document.createElement("span");
     title.className = "midimap-title";
     title.textContent = "MIDI mappings";
-    const remap = document.createElement("button");
-    remap.type = "button";
-    remap.className = "midimap-remap";
-    remap.textContent = "✨ Remap";
-    remap.title = "Let the AI map MIDI controls to these uniforms";
-    remap.addEventListener("click", () => this.opts.onRemap());
-    header.append(title, remap);
+    header.append(title, this.remapButton());
     this.node.appendChild(header);
 
     if (!midiSupported()) {
@@ -259,10 +314,24 @@ const CSS = `
 .midimap-header { display: flex; align-items: center; justify-content: space-between; }
 .midimap-title { font-weight: 600; }
 .midimap-remap {
+  display: inline-flex; align-items: center; gap: var(--sp-1);
   background: var(--accent); color: var(--on-accent, #fff); border: none; cursor: pointer;
   border-radius: var(--radius-1, 6px); padding: var(--sp-1) var(--sp-2); font-weight: 600;
+  transition: background 0.2s ease;
 }
 .midimap-remap:hover { filter: brightness(1.08); }
+.midimap-remap.working { cursor: default; opacity: 0.9; }
+.midimap-remap.done { background: var(--ok, #2ea043); }
+.midimap-remap-spinner {
+  width: 12px; height: 12px; border-radius: 50%; flex: none;
+  border: 2px solid rgba(255, 255, 255, 0.4); border-top-color: var(--on-accent, #fff);
+  animation: midimap-remap-spin 0.7s linear infinite;
+}
+@keyframes midimap-remap-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .midimap-remap-spinner { animation: none; }
+  .midimap-remap { transition: none; }
+}
 .midimap-enable {
   align-self: flex-start; background: var(--surface-2, #1a1a22); color: var(--text);
   border: 1px solid var(--border); border-radius: var(--radius-1, 6px);

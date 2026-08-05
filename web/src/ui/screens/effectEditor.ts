@@ -55,6 +55,7 @@ import { Button, IconButton, icon, toast, type IconName } from "../kit";
 import { FxLayout } from "../../effects/editor/layout";
 import { VideoTexturePanel } from "../../effects/editor/videoTexture";
 import { openAiKeySheet } from "./aiKeySheet";
+import { renderMarkdown } from "../markdown";
 import type { Router, Screen } from "../app/router";
 
 const COMPILE_DEBOUNCE_MS = 300;
@@ -452,7 +453,7 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   let lastUniforms: FxUniform[] = [];
   const midiRouter = new MidiRouter((u) => panel.applyExternal(u.slot, u.value));
   midiRouter.setEffect(effectId);
-  const midiPanel = new MidiMapPanel(effectId, { onRemap: () => void runRemap() });
+  const midiPanel = new MidiMapPanel(effectId, { onRemap: () => runRemap() });
 
   // -- AI chat panel --------------------------------------------------------
   const chatLog = document.createElement("div");
@@ -490,7 +491,16 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     if (chatHint.isConnected) chatHint.remove();
     const row = document.createElement("div");
     row.className = `fxedit-msg fxedit-msg--${role}`;
-    row.textContent = text;
+    if (role === "assistant") {
+      // Assistant replies may use markdown (bold/italic/lists/code/links). User
+      // and tool rows stay literal — the user typed theirs, and tool lines are
+      // terse status labels. renderMarkdown builds DOM nodes directly (no
+      // innerHTML), so untrusted model text can't inject markup.
+      row.classList.add("fxedit-md");
+      row.appendChild(renderMarkdown(text));
+    } else {
+      row.textContent = text;
+    }
     chatLog.appendChild(row);
     chatLog.scrollTop = chatLog.scrollHeight;
     return row;
@@ -1230,11 +1240,18 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     if (isBuiltinEffect(effectId)) {
       codeEl.readOnly = true;
       nameInput.readOnly = true;
+      // The banner lives INSIDE the code-wrap (not the screen root) so it's
+      // confined to the Code pane: it grays out the read-only code behind a
+      // centered card and leaves every other control — uniform sliders,
+      // preview, device — reachable. (effectStore.save is a no-op for built-ins
+      // too, as a backstop.)
       const banner = document.createElement("div");
       banner.className = "fxedit-builtin";
+      const card = document.createElement("div");
+      card.className = "fxedit-builtin-card";
       const label = document.createElement("span");
       label.textContent = "Built-in effect — read-only";
-      banner.append(
+      card.append(
         label,
         Button({
           label: "Duplicate to edit",
@@ -1245,7 +1262,8 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
           },
         }),
       );
-      el.appendChild(banner);
+      banner.appendChild(card);
+      codeWrap.appendChild(banner);
     }
 
     try {
