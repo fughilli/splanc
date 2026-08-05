@@ -30,6 +30,7 @@ import { EffectEditorScreen } from "../screens/effectEditor";
 import { CaptureScreen } from "../screens/capture";
 import { PerfPanelScreen } from "../screens/perfPanel";
 import { CalibrateScreen } from "../screens/calibrate";
+import { PerfProfilesScreen } from "../screens/perfProfiles";
 import { SettingsScreen } from "../screens/settings";
 import { MidiScreen } from "../screens/midi";
 import { initAppearance } from "../../store/appearance";
@@ -100,6 +101,10 @@ async function main(): Promise<void> {
     .add("/perf/calibrate", () => {
       shell.setChrome({ title: "Calibrate", back: true, tabs: false });
       return CalibrateScreen(router);
+    })
+    .add("/perf/profiles", () => {
+      shell.setChrome({ title: "Performance profiles", back: true, tabs: true });
+      return PerfProfilesScreen(router);
     })
     .add("/settings", () => {
       shell.setChrome({ title: "Appearance", back: true, tabs: true });

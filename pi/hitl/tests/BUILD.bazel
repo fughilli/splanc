@@ -22,6 +22,7 @@ py_test(
     name = "hitl_test",
     srcs = [
         "pytest_main.py",
+        "test_fx_bench.py",
         "test_improv.py",
         "test_sync.py",
     ],

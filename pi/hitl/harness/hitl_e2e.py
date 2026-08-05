@@ -36,35 +36,19 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import os
 import ssl
 import sys
 import time
-from urllib.parse import urlparse
 
 from hitl_client import Reservation, ReserveError
+from provision import HarnessError as E2EFailure
+from provision import dut_target, provision_dut
 from sync import best_sample, is_sane, sync_sample
 
 # Boot markers the firmware prints (see pi/hitl/AGENTS.md "A typical E2E test").
 BOOT_MARKER = "SPI_FAST_FLASH_BOOT"  # ran the app (not USB download mode)
 BLE_MARKER = "[ble] advertising"  # Improv service is up
-
-
-class E2EFailure(RuntimeError):
-    pass
-
-
-def dut_target(redirect: str, scheme: str) -> tuple[str, int]:
-    """Device redirect (http://<ip>/) -> (host, ws_port) for the player socket.
-
-    Mirrors web/src/net/improv.ts wsUrlFromRedirect: the TLS app talks
-    wss://<ip>:443/ws; the bench path is the plain ws://<ip>:81/ws socket.
-    """
-    host = urlparse(redirect).hostname
-    if not host:
-        raise E2EFailure(f"could not parse a host from redirect URL {redirect!r}")
-    return host, (443 if scheme == "wss" else 81)
 
 
 # --- phases ----------------------------------------------------------------
@@ -91,75 +75,6 @@ def flash(res: Reservation, bundle: str, monitor_seconds: float) -> str:
         raise E2EFailure(f"BLE never came up (no {BLE_MARKER!r} in serial)")
     print("[flash] OK — booted the app and BLE is advertising", flush=True)
     return log
-
-
-# The BLE provisioner + its wire codec run in the container (which has bleak and
-# the host bluetoothd). We ship them per-reservation rather than baking a tool
-# into the image, so the test doesn't depend on the rig image being redeployed
-# in lockstep. Both live next to this file (harness srcs → e2e runfiles).
-_HERE = os.path.dirname(os.path.abspath(__file__))
-_PROVISIONER = os.path.join(_HERE, "hitl_improv.py")
-_CODEC = os.path.join(_HERE, "improv.py")
-
-
-def _run_provisioner(res: Reservation, ssid: str, password: str, timeout: float) -> str:
-    """One ImprovBLE provisioning attempt; returns the redirect URL or raises."""
-    # Run with the container's python3 (has bleak); PYTHONPATH lets the shipped
-    # hitl_improv import the shipped improv codec.
-    cmd = (
-        f"PYTHONPATH=/tmp python3 /tmp/hitl_improv.py provision "
-        f"--ssid {json.dumps(ssid)} --pass {json.dumps(password)} --timeout {timeout:g}"
-    )
-    proc = res.ssh(cmd, capture=True, timeout=timeout + 60)
-    out = (proc.stdout or "").strip()
-    if proc.stderr:
-        sys.stderr.write(proc.stderr)
-    if proc.returncode != 0:
-        raise E2EFailure(f"provisioner exited {proc.returncode}: {out}")
-    try:
-        result = json.loads(out.splitlines()[-1])
-    except (ValueError, IndexError) as e:
-        raise E2EFailure(f"provisioner gave no JSON result: {out!r}") from e
-    if not result.get("ok"):
-        raise E2EFailure(f"ImprovBLE provisioning failed: {result.get('error')}")
-    urls = result.get("urls") or []
-    if not urls:
-        raise E2EFailure(f"provisioning reported no redirect URL: {result}")
-    return urls[0]
-
-
-def improv_provision(
-    res: Reservation, ssid: str, password: str, timeout: float, attempts: int = 3
-) -> str:
-    """Provision the DUT onto WiFi over ImprovBLE; return its redirect URL.
-
-    The WiFi association is intermittently flaky on real hardware (RF + the
-    single-core C6's WiFi/BLE coexistence): the board occasionally fails to join
-    within the window. On a join-timeout the firmware clears the just-tried
-    credentials and returns to AUTHORIZED, so re-sending them is a clean retry —
-    bounded, so a genuinely bad credential / unreachable AP still fails.
-    """
-    print("[improv] shipping provisioner + provisioning DUT over BLE…", flush=True)
-    res.scp_to([_PROVISIONER, _CODEC], "/tmp/")
-    last: E2EFailure | None = None
-    for attempt in range(1, attempts + 1):
-        if attempt > 1:
-            # A failed join leaves the WiFi stack wedged (re-sending creds on the
-            # same boot fares worse — the retry often can't even re-advertise
-            # PROVISIONING). A hard reset returns the board to a clean soft-AP
-            # first-join state (creds were cleared on the join-timeout), which is
-            # the reliably-provisionable path. The 4s read lets the boot settle.
-            print(f"[improv] resetting DUT for a clean retry {attempt}/{attempts}…", flush=True)
-            res.ssh("hitl-monitor --reset --seconds 4", capture=True, timeout=30)
-        try:
-            url = _run_provisioner(res, ssid, password, timeout)
-            print(f"[improv] OK — DUT joined WiFi, redirect={url}", flush=True)
-            return url
-        except E2EFailure as e:
-            last = e
-            print(f"[improv] provision attempt {attempt}/{attempts} failed: {e}", flush=True)
-    assert last is not None
-    raise last
 
 
 async def _ws_checks(ws_url: str, new_name: str, insecure: bool) -> None:
@@ -272,7 +187,7 @@ def run(args: argparse.Namespace) -> int:
                 raise E2EFailure(
                     "--wifi-ssid (or $HITL_WIFI_SSID) is required unless --skip-improv"
                 )
-            redirect = improv_provision(res, args.wifi_ssid, args.wifi_pass, args.improv_timeout)
+            redirect = provision_dut(res, args.wifi_ssid, args.wifi_pass, args.improv_timeout)
 
         if not args.skip_ws:
             if args.device_ws:

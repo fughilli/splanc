@@ -96,6 +96,12 @@ export class Shell {
     this.menu.appendChild(
       this.menuItem("midi", "MIDI controllers", () => this.router?.navigate("/settings/midi")),
     );
+    // Performance (FUG-11): the live/predicted frame-budget panel + budget bar,
+    // and from there device calibration + the profile manager. Always available
+    // so it's discoverable (offline it shows the predicted cost model).
+    this.menu.appendChild(
+      this.menuItem("graph", "Performance", () => this.router?.navigate("/perf")),
+    );
     const install = installMenuItem(() => this.closeMenu());
     if (install) this.menu.appendChild(install);
     const hasItems = this.menu.childElementCount > 0;

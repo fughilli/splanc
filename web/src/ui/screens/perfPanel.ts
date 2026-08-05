@@ -24,10 +24,14 @@ import { mapStore } from "../../store/mapStore";
 import { costTableStore } from "../../store/costTableStore";
 import {
   estimateFrameTime,
+  DEFAULT_BUDGET_MODEL,
+  type BudgetModel,
   type Confidence,
   type CostTable,
   type FrameEstimate,
 } from "../../effects/costModel";
+import { budgetFromEstimate, budgetFromPhases } from "../../effects/budget";
+import { BudgetBar } from "./budgetBar";
 import { installPerfStyles } from "./perfPanel.css";
 
 const RING = 96; // ~3s at 30fps
@@ -59,6 +63,10 @@ export function PerfPanelScreen(router: Router): Screen {
 
   const gauge = document.createElement("div");
   gauge.className = "perf-gauge";
+
+  // FUG-11 available-budget progress bar (fraction of the FX budget consumed).
+  const budgetBar = BudgetBar();
+  let budgetModel: BudgetModel = DEFAULT_BUDGET_MODEL;
 
   const badges = document.createElement("div");
   badges.className = "perf-badges";
@@ -124,6 +132,21 @@ export function PerfPanelScreen(router: Router): Screen {
     const headroomFrac = budgetMs > 0 ? headroomMs / budgetMs : 0;
     renderGauge(headroomMs, headroomFrac);
 
+    // FUG-11 budget bar: FX compute (update+shade) vs the AVAILABLE budget. Use
+    // the device's real frame period so the available budget matches the board.
+    budgetBar.el.style.display = "";
+    const model: BudgetModel = { ...budgetModel, fps: budgetMs > 0 ? 1000 / budgetMs : budgetModel.fps };
+    budgetBar.update(
+      budgetFromPhases(
+        {
+          updateMs: cyc(r.updateCyclesMean),
+          shadeMs: cyc(r.shadeCyclesMean),
+          showMs: cyc(r.showCyclesMean),
+        },
+        model,
+      ),
+    );
+
     // badges
     badges.innerHTML = "";
     badges.append(
@@ -183,6 +206,8 @@ export function PerfPanelScreen(router: Router): Screen {
     }
     const headroomMs = est.budgetMs - est.totalMs;
     const frac = est.budgetMs > 0 ? headroomMs / est.budgetMs : 0;
+    budgetBar.el.style.display = "";
+    budgetBar.update(budgetFromEstimate(est, budgetModel));
     gauge.dataset["conf"] = est.confidence;
     gauge.innerHTML = "";
     const big = document.createElement("div");
@@ -297,6 +322,11 @@ export function PerfPanelScreen(router: Router): Screen {
 
   async function startMeasured(): Promise<void> {
     if (client === null) return;
+    // Source the budget model from the resolved profile (semihost/device/default)
+    // so the available-budget bar reflects the board's economics, not just the
+    // shipped default. The device frame period still overrides fps per report.
+    const { table } = await costTableStore.resolveTable().catch(() => ({ table: null }));
+    if (table?.budget) budgetModel = table.budget;
     unsub = client.onPerfReport((r) => pushReport(r));
     try {
       const mode: PerfMode = "FULL";
@@ -324,11 +354,13 @@ export function PerfPanelScreen(router: Router): Screen {
     // guidance. The editor wires the estimate directly (see perfContext); this
     // screen surfaces the last-known table + a prompt to open the editor.
     const { table, stored } = await costTableStore.resolveTable();
+    if (table.budget) budgetModel = table.budget;
     renderNoBytecode(table, stored !== null, ledCount);
   }
 
   function renderNoBytecode(table: CostTable, calibrated: boolean, ledCount: number): void {
     void estimateFrameTime; // used when an effect is available
+    budgetBar.el.style.display = "none"; // no live effect → no budget bar
     gauge.innerHTML = "";
     gauge.dataset["conf"] = "yellow";
     const msg = document.createElement("div");
@@ -344,6 +376,7 @@ export function PerfPanelScreen(router: Router): Screen {
     Card(header),
     Card(canvas),
     Card(gauge),
+    Card(budgetBar.el),
     Card(badges),
     Card(detail),
     actions,
@@ -356,6 +389,12 @@ export function PerfPanelScreen(router: Router): Screen {
       variant: connected ? "primary" : "quiet",
       disabled: !connected,
       onClick: () => router.navigate("/perf/calibrate"),
+    }),
+    Button({
+      label: "Manage profiles",
+      icon: "settings",
+      variant: "quiet",
+      onClick: () => router.navigate("/perf/profiles"),
     }),
     Button({
       label: "Effect library",
@@ -379,6 +418,14 @@ export function PerfPanelScreen(router: Router): Screen {
   return {
     el,
     onMount: () => {
+      // Resolve the device's budget model (drives the FUG-11 budget bar); fall
+      // back to the default until a calibration/semihost profile is stored.
+      void costTableStore
+        .resolveTable()
+        .then(({ table }) => {
+          budgetModel = table.budget ?? DEFAULT_BUDGET_MODEL;
+        })
+        .catch(() => undefined);
       if (connected) void startMeasured();
       else void startPredicted();
     },

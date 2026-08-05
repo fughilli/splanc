@@ -498,3 +498,279 @@ model** as a side effect.
   linear model still adequate (in-order assumption) or do cached cores need a
   richer model?
   DECISION: other cores might need a richer model. Let's not worry about that for now, we can always revisit when we support other cores. Make sure there's some way to save/restore models and that the save files have some metadata, perhaps even including the direct experimental observations so they can be rederived if the modeling approach changes.
+
+---
+
+## FUG-11: portable profiles, semihost benchmark, and the budget bar
+
+FUG-11 turns the offline model above into a *portable, target-agnostic* pipeline
+and adds an available-budget signal the AI can optimize against.
+
+### Common execution-profile format
+
+Every execution target emits the **same** versioned JSON artifact — an
+`ExecutionProfile` (`web/src/effects/executionProfile.ts`, mirrored by the Rust
+`tools/fx_semihost_bench`): provenance (`source: device|semihost|default`, `soc`,
+`cpuHz`, `unit: cycles`, tool/build/timestamp), the per-opcode `costs` (keyed by
+the canonical VM opcode names, 0..=`ExpFix`), `fixed`/per-LED overheads, the
+`budget` model (below), a `residualError`, and the raw `observations` so the fit
+is re-derivable if the modelling form changes. The simulator consumes any
+profile uniformly (`profileToCostTable`), and a profile persists through the
+existing cost-table store (`profileToStored`, `origin: semihost|calibrated`),
+so a device calibration supersedes a semihost seed for the same SoC.
+
+### Semihost benchmark (no hardware)
+
+`tools/fx_semihost_bench` runs the **real** firmware VM (`ledmapper_fx_vm`)
+natively over single-opcode calibration micro-programs and fits a per-opcode
+cost model via a least-squares slope over multiple rep counts. Because the host
+executes the exact same dispatch loop as the C6, the interpreter **dispatch** and
+fixed **framing** costs are measured directly; the FPU-less C6's **soft-float**
+arithmetic cannot be represented on an FPU host (there `sin ≈ add`), so each
+opcode's cost is split `cost = dispatch(measured) + softfloat(modeled)`, the
+measured host-ns are pinned to device cycles via an anchor opcode, and the
+profile is stamped `source: semihost` with a deliberately wide residual until an
+on-device (or cycle-accurate-emulator) profile refines the arithmetic terms. The
+deterministic core (program builders, fit, serde) is unit-tested; the wall-clock
+timing lives in the CLI.
+
+### Available-execution-budget model + the budget bar
+
+The frame period is not all the FX engine's: transmit (`show`) and other system
+tasks (wss, scheduler) eat into it. The `BudgetModel` (`fps`,
+`cpuAvailableFraction`, `transmitReservesCpu`) yields the CPU actually available
+to `update()`+`shade()`:
+
+```
+frameMs          = 1000 / fps
+systemReservedMs = frameMs * (1 - cpuAvailableFraction)
+availableFxMs    = frameMs - systemReservedMs - showMs
+```
+
+`cpuAvailableFraction` is modeled offline and *measured* on-device
+(`measureAvailableFraction`, from the mean per-frame time spent outside the
+effect+transmit). `budget.ts` turns an offline estimate or an on-device
+PerfReport into the same `BudgetStatus` (consumed FX ms / available ms), so the
+UI reads identically online and offline.
+
+The **budget progress bar** (`web/src/ui/screens/budgetBar.ts`, in the perf
+panel) shows what fraction of the available budget the current program consumes,
+color-coded per the FUG-11 spec: **≤70% green, >70% yellow, >90% red** (an
+overrun or a starved frame pins red). This is distinct from the headroom gauge
+(which colors by whether the *whole* frame fits): the bar is specifically the
+FX-engine-vs-available-CPU signal the AI tunes toward a target framerate.
+
+---
+
+## FUG-11: portable profiles, the semihost benchmark & the budget bar
+
+This section is **implemented**. It closes the loop the sections above left open:
+a single portable profile format across execution targets, a way to produce one
+with no hardware, an *available*-budget model (the frame isn't all the FX
+engine's), and the progress bar the issue asks for.
+
+### Common execution-profile format
+
+Every target — a device calibration, the semihost benchmark, or the shipped
+default — emits the same versioned artifact, so the simulator, the budget bar,
+and the AI loop don't care which produced the numbers. It is the cost table
+above plus provenance and the raw observations (the multi-SoC DECISION:
+save/restore with metadata + experimental observations so a model can be
+re-derived under a new form).
+
+- Schema + (de)serialize + validation: `web/src/effects/executionProfile.ts`
+  (`ExecutionProfile`), mirrored by the Rust `ExecutionProfile` in
+  `tools/fx_semihost_bench` (serde, camelCase top-level + snake_case `fixed` to
+  match `FixedOverhead`). A golden profile at `web/tests/testdata/` pins the
+  cross-language contract.
+- Fields: `soc`, `source` (`device | semihost | default`), `cpuHz`, `unit`
+  (`cycles`), `toolVersion`, `timestamp`, per-opcode `costs`, `fixed`,
+  `fallbackCost`, `residualError`, the `budget` model, and `observations`.
+- Converts to/from the runtime `CostTable` and bridges into the persisted
+  cost-table store (new `semihost` origin).
+
+### Semihost benchmark (no hardware)
+
+`tools/fx_semihost_bench` runs the **real firmware VM** (`ledmapper_fx_vm`)
+natively over the same style of single-opcode micro-programs the device
+calibration uses, and fits a profile — a usable model with nothing plugged in.
+
+The honest catch, and the "tuning" in the issue title: a native host has an FPU,
+so it *cannot* reproduce the FPU-less C6's soft-float economics (on the host
+`sin ≈ add`; on the C6 `sin` is ~10× an `add`). So each opcode cost is split:
+
+```
+cost[op] = dispatch[op]     (MEASURED: host slope × k, ISA-portable interpreter overhead)
+         + softfloat[op]     (MODELED: the C6 soft-float weight the host can't measure)
+```
+
+where `k = dispatch_ref_cycles / slope[anchor]` maps host ns → device dispatch
+cycles via the anchor op (whose host time is ~pure dispatch). The fixed
+per-frame/per-LED overheads are measured directly (empty update/shade). Raw host
+observations are retained; the residual is deliberately wide (`source =
+semihost`) until a device — or a future cycle-accurate emulator target, which
+drops straight into this same format — refines the arithmetic terms. This is why
+the format exists: an emulator or on-device run supersedes the semihost profile
+without any consumer change.
+
+### Available execution budget + the progress bar
+
+The frame period (1/fps) is not all available to the FX engine: the LED transmit
+(`show`) and other system tasks (wss, scheduler, telemetry) eat into it. The
+`BudgetModel` (`fps`, `cpuAvailableFraction`, `transmitReservesCpu`) captures
+this, and `web/src/effects/budget.ts` computes:
+
+```
+frameMs          = 1000 / fps
+systemReservedMs = frameMs * (1 - cpuAvailableFraction)   // other tasks
+availableFxMs    = frameMs - systemReservedMs - showMs     // for update+shade
+consumedFxMs     = updateMs + shadeMs                       // the FX engine
+fraction         = consumedFxMs / availableFxMs
+```
+
+`cpuAvailableFraction` is modeled offline (default 0.85) and can be *measured* on
+a device (`measureAvailableFraction`, from the mean CPU time other tasks spend
+per frame). The **progress bar** (`web/src/ui/screens/budgetBar.ts`, wired into
+the perf panel) shows `fraction` with the FUG-11 color bands — **≤70% green,
+>70% yellow, >90% red** — plus 70/90 threshold guides and an overrun state. The
+same bar renders online (device PerfReport phase split) and offline (cost-model
+estimate), since both flow through `budgetConsumption`.
+
+---
+
+## FUG-11 (review): device-measured profiles, validation, management, fleet
+
+Follow-up to the section above, addressing the review: the authoritative model
+must be **measured on real hardware**, profiles must be **manageable**, and
+estimation must span **multiple devices**.
+
+### The host benchmark is a smoke test, not a device model
+
+An FPU host has far too much compute to predict the FPU-less C6 (natively `sin ≈
+add`). So `tools/fx_semihost_bench` now emits `source: "host"` and is documented
+as a pipeline/format smoke test only. It exercises the common format + the fit
+end-to-end in CI with no hardware; it never seeds an authoritative cost table.
+
+### Authoritative measurement via the HITL rig
+
+`pi/hitl/harness/fx_bench.py` runs the benchmark on the **real C6** through the
+HITL rig (pi/hitl). It is fully self-contained — it reaches the board the same
+proven way the e2e does, because the DUT lives on the rig's WiFi LAN, not the
+harness host's network:
+
+1. reserve a free rig from the pool,
+2. flash the firmware flash-bundle with a clean FS (`hitl-flash --erase-fs`),
+3. **ImprovBLE-provision** the DUT onto the rig's own provisioning AP
+   (`provision.py`, shared with the e2e — one implementation of the flaky
+   single-core WiFi/BLE join + reset-and-retry),
+4. **forward-tunnel** to the DUT's player socket through the rig
+   (`hitl forward`; the tunnel's far end dials the DUT from the Pi),
+5. per calibration micro-program: **submit a synthetic linear map** of the
+   program's Intended-LED-count (`set_led_count` + a `submit_map` of that many
+   fixture positions — the shade loop iterates over `lm_map_len()`, so a fresh
+   erase-fs board with no map renders nothing and perf stays empty; a real user
+   device already has a map, the bench must supply one), `submit_effect` (await
+   `result_ready`), `set_perf(FULL)`, settle, drain a stable `PerfReport`.
+
+It writes a **device-measurement bundle** (base64 `.fxb` + cycle-accurate
+measured cycles). The loop is resilient to the DUT dropping the socket mid-sweep
+(a heavy program under FULL perf can trip the watchdog and reboot): it reconnects
+and retries per program, measures the lightest programs first, and keeps partial
+results if the board goes unreachable. The pure perf→sample mapping, bundle
+schema, and LED-hint parse live in `fx_bench_core.py` and are unit-tested
+(`//pi/hitl/tests`, no hardware); `--replay` rebuilds a bundle from a recorded
+session.
+
+The calibration micro-programs are committed as `.fx` under
+`pi/hitl/harness/benchmarks/` (fit programs) + `*.heldout.fx` (validation). They
+are **generated from the in-browser calibration source of truth**
+(`web/src/effects/calibrationBenchmarks.ts` via `benchmarkExport.ts`), so the
+in-browser and on-hardware runs measure the identical programs — a drift test
+(`web/tests/benchmarkExport.test.ts`) pins that, and every file is verified to
+compile under `//fx_compiler`. The programs, the `fx_compile` CLI, the `hitl`
+CLI, and the firmware flash-bundle all ride in runfiles, so a real run is one
+command:
+
+```
+# measure on real hardware -> a device bundle. Reserves a rig, flashes + BLE-
+# provisions + tunnels automatically; no external network (uses the rig AP).
+bazel run //pi/hitl/harness:fx_bench -- \
+  --server http://<rig>:8087 --device-key <mac> --device-label "rig-01" \
+  --out /tmp/device-bundle.json
+
+# fit + VALIDATE the bundle headlessly through the SAME code path the app uses
+# (deviceProfile.buildDeviceProfile) -> an app-importable, authoritative profile.
+# Prints the per-program predicted-vs-measured table; nonzero exit if held-out
+# RMS exceeds tolerance, so it doubles as a regression gate.
+bazel run //web:fit_device_profile -- /tmp/device-bundle.json /tmp/profile.json
+
+# (or, equivalently, in the app: Performance ▸ Manage profiles ▸ "Import device
+#  measurements" -> buildDeviceProfile fits + validates and saves it.)
+```
+
+Overrides: `--no-bundle` measures whatever is already flashed; `--device-ws
+wss://<ip>/ws` skips the rig when the DUT is already reachable; `--ws-scheme
+wss`, `--wifi-ssid/--wifi-pass`, `--improv-attempts/--improv-timeout`, `--debug`.
+
+### Validation (predicted vs measured)
+
+`web/src/effects/deviceProfile.ts` `buildDeviceProfile` reuses the calibration
+fit for the cost table, then `web/src/effects/profileValidation.ts`
+`validateCostModel` predicts the **held-out** programs (named `*.heldout.fx`,
+never in the fit) and compares to what the hardware measured — RMS/max relative
+error, R², pass/fail. The RMS is stamped as the profile's `measuredError`: the
+trustworthy accuracy signal (vs `residualError`, an in-sample fit quality).
+
+**Measured on a real ESP32-C6.** A full sweep captured over the rig (13
+isolation programs + 1 held-out, `web/tests/testdata/device-bench-esp32c6.json`)
+fits a `source: device` profile whose model predicts the held-out program (a
+sin/mul mix at 200 LEDs) at **65.2 ms vs the 58.1 ms the hardware measured —
++12.2%, inside the 15% tolerance → PASS**. The raw cycles show why the host VM
+can't stand in: at 128 LEDs and equal instruction counts, `sinM` costs ~6.0 M
+cycles vs `addM`'s ~2.4 M — the FPU-less C6 pays dearly for transcendentals that
+are ≈free on the host. `web/tests/deviceProfileHardware.test.ts` pins this
+predicted-vs-measured gate in CI from the committed bundle, so a VM/opcode/
+precision change that breaks the model's real-hardware accuracy fails the build —
+no rig needed to re-check. (The in-sample fit residual is wide, ~29%: a single
+linear per-opcode model over reduced-precision fixed-point ops is approximate;
+the held-out generalization is the number that matters, and it holds.)
+
+### Profile management
+
+`web/src/ui/screens/perfProfiles.ts` (route `/perf/profiles`, from the perf
+panel) lists every stored profile ranked device > host > default, with
+provenance, fit residual, held-out `measuredError`, and device identity. It
+supports export (download JSON), import (a profile file OR a raw device bundle to
+fit), and delete. Profiles are keyed per-device (`costTableId` with a
+`deviceKey`) so a heterogeneous fleet each keeps its own measured model;
+`resolveTable(soc, cpuHz, deviceKey?)` resolves most-specific-first.
+
+### Multi-device estimation
+
+`web/src/effects/multiDevice.ts` `estimateAcrossDevices` estimates one compiled
+effect across a set of device targets (each its own profile + LED count),
+returning per-device frame time + budget status, the **binding** device (highest
+budget fraction), and whether all fit. `describeFleet` renders this — plus the
+binding device's hottest opcodes and cut-cost guidance — for the AI generator.
+
+The **estimation fleet** is user-selected: `web/src/store/fleetStore.ts`
+persists which stored profiles (+ per-device LED counts) form the fleet, toggled
+per row in the profile manager ("Use in AI estimates"). `web/src/effects/fleet.ts`
+`resolveFleetTargets` bridges that selection and the stored profiles into
+`DeviceTarget`s (self-healing stale ids; falling back to the active device /
+default so there's always ≥1 target).
+
+### Wiring the feedback signal into the AI generator
+
+This is the point of FUG-11: the agent needs a framerate signal while it writes
+effects. The editor's chat loop (`web/src/effects/ai/generate.ts` `chatTurn`)
+exposes a client-fulfilled **`estimate_performance`** tool. The model calls it
+after `set_script` when a framerate/budget/optimization goal is in play; the
+editor (`effectEditor.ts`) resolves the fleet, runs `estimateAcrossDevices` on
+the latest compiled bytecode, and hands back `describeFleet` — each device's
+frame time, % of the FX budget used with the green/yellow/red band, the binding
+device, and the opcodes to cut. The system prompt tells the model to optimize
+for the binding device first, then re-estimate to confirm it fits. Online
+(device PerfReport) and offline (cost model) share one schema, so the same loop
+runs with or without hardware; per-device calibrations make each fleet member's
+estimate as trustworthy as its `measuredError`.

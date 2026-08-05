@@ -295,6 +295,11 @@ export interface ChatHooks {
   /** The model proposed a set of uniform→control mappings. Apply them to the
    * mapping layer (NOT the effect source) and return a result summary. */
   onSetMidiMapping?: (mappings: MidiMappingCall[]) => Promise<string>;
+  /** The model asked to estimate the CURRENT program's per-frame cost across the
+   * configured device fleet. Return a text report (per-device budget %/color,
+   * the binding device, and hot opcodes). Optional — omit to disable the perf
+   * tool for this turn (e.g. when nothing compiles). */
+  onEstimatePerformance?: () => Promise<string>;
   /** Streamed assistant text (deltas) for the "thinking…"/live panel. */
   onText?: (delta: string) => void;
   /** A model request is starting (the model is reasoning) — drive a spinner. */
@@ -329,6 +334,25 @@ const TOOLS = [
       "capture after a compile error (there's nothing new to see — fix the code " +
       "first), and don't capture on every change; skipping it when unneeded is " +
       "faster and cheaper.",
+    input_schema: { type: "object", additionalProperties: false, properties: {} },
+  },
+] as const;
+
+/** Perf tool, added only when the editor supplies the hook. Lets the model
+ * check whether the current program fits the frame budget on the target
+ * device(s) — the FUG-11 feedback signal for hitting the desired framerate. */
+const PERF_TOOLS = [
+  {
+    name: "estimate_performance",
+    description:
+      "Estimate the CURRENT effect's per-frame execution cost against the target " +
+      "device fleet (real hardware economics), and get back each device's frame " +
+      "time, fraction of the FX budget used (with a green/yellow/red band: ≤70% " +
+      "green, >70% yellow, >90% red), which device BINDS the design, and the " +
+      "hottest opcodes to cut. Call this after set_script when performance matters " +
+      "(the user asked to hit a framerate, fit a budget, or optimize), to check " +
+      "your change actually fits before finishing. Estimates use the latest " +
+      "compiled program, so set_script first.",
     input_schema: { type: "object", additionalProperties: false, properties: {} },
   },
 ] as const;
@@ -386,6 +410,7 @@ You are now in an interactive chat with the user inside the effect editor. You c
 - Answer questions about the current effect program.
 - Call set_script to author or revise the effect; you'll get the compile result back (fix any errors and iterate).
 - Call capture_preview to SEE the live preview rendered to an image — but only when seeing the result actually matters (judging colours/motion/coverage). Skip it when it wouldn't help (e.g. after a compile error, or a purely mechanical edit); capturing every turn is slow and wasteful.
+- When performance matters (the user wants a target framerate, to fit the budget, or to optimize), call estimate_performance after set_script to check the change against the real device economics: it reports each device's frame time, % of the FX budget used (≤70% green / >70% yellow / >90% red), the binding device, and the hottest opcodes. Optimize for the binding device first, then re-estimate to confirm it fits.
 - When MIDI tools are available: call list_midi_controls to see the effect's uniforms and the named MIDI controls, then set_midi_mapping to wire controls to uniforms. MIDI mapping is a SEPARATE LAYER — never edit the effect source to wire MIDI; use set_midi_mapping. Match by meaning (a 'speed'/'rate' knob → a speed uniform; a 'brightness' knob → an intensity/gain uniform), and only map scalar (slider/toggle) uniforms.
 Keep prose brief. When you change the script, prefer minimal, targeted edits.`;
 
@@ -465,9 +490,12 @@ export function editorContext(opts: {
 export async function chatTurn(history: ChatMessage[], hooks: ChatHooks): Promise<string> {
   let finalText = "";
   const MAX_ROUNDS = 8; // hard cap so a misbehaving loop can't run forever
-  // Advertise the MIDI tools only when the editor can fulfill them.
-  const tools =
-    hooks.onListMidi && hooks.onSetMidiMapping ? [...TOOLS, ...MIDI_TOOLS] : TOOLS;
+  // Advertise the optional tools only when the editor can fulfill them.
+  const tools = [
+    ...TOOLS,
+    ...(hooks.onEstimatePerformance ? PERF_TOOLS : []),
+    ...(hooks.onListMidi && hooks.onSetMidiMapping ? MIDI_TOOLS : []),
+  ];
   for (let round = 0; round < MAX_ROUNDS; round++) {
     hooks.onThinking?.();
     const { content, stop_reason } = await messagesRequest(history, tools, hooks.signal);
@@ -508,6 +536,13 @@ export async function chatTurn(history: ChatMessage[], hooks: ChatHooks): Promis
               { type: "text", text: "Live preview rendered:" },
               dataUrlToImageBlock(dataUrl),
             ],
+          });
+        } else if (tu.name === "estimate_performance" && hooks.onEstimatePerformance) {
+          const summary = await hooks.onEstimatePerformance();
+          results.push({
+            type: "tool_result",
+            tool_use_id: tu.id,
+            content: [{ type: "text", text: summary }],
           });
         } else if (tu.name === "list_midi_controls" && hooks.onListMidi) {
           const summary = await hooks.onListMidi();
