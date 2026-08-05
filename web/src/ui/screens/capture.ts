@@ -677,37 +677,73 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       : setInterval(() => {
           c.getSolveStatus().then(renderSolveSnapshot).catch(() => undefined);
         }, 400);
+    // A phone solve needs only the locally-retained detections; the device
+    // plays no part once capture ends (FUG-69). Factored out so the host-solve
+    // path can fall back to it when the device has dropped mid-capture.
+    const solveOnPhoneNow = async (): Promise<OutputMap> => {
+      const solved = await solverAgent.solve(
+        {
+          detections: localDetections,
+          imu: localImu,
+          ledCount: lastLedCount,
+          mapId: crypto.randomUUID(),
+          createdAt: new Date().toISOString(),
+        },
+        (snap: SolveSnapshot) => renderSolveSnapshot(snap),
+      );
+      // The solve frame is camera-anchored (origin ≈ camera-path end). Recenter
+      // on the LED centroid — the natural fixture origin — before the device
+      // and the library both take it, so they agree.
+      return recenterToCentroid(solved).map;
+    };
     try {
       let map: OutputMap;
+      // Whether the solved map made it back onto the device. Reconstruction no
+      // longer hinges on it: a dropped device socket (e.g. TLS heap exhaustion
+      // on a long capture, FUG-69) must not lose a capture we already hold.
+      let pushedToDevice = false;
       if (solveOnPhone) {
-        await c.stopMappingNoSolve();
-        const solved = await solverAgent.solve(
-          {
-            detections: localDetections,
-            imu: localImu,
-            ledCount: lastLedCount,
-            mapId: crypto.randomUUID(),
-            createdAt: new Date().toISOString(),
-          },
-          (snap: SolveSnapshot) => renderSolveSnapshot(snap),
-        );
-        // The solve frame is camera-anchored (origin ≈ camera-path end). Recenter
-        // on the LED centroid — the natural fixture origin — before the device
-        // and the library both take it, so they agree.
-        map = recenterToCentroid(solved).map;
-        await c.submitMap(map);
+        // Best-effort device bookkeeping only — tell it to stop and hand it the
+        // result if the socket is still up, but never fail the solve on it.
+        await c.stopMappingNoSolve().catch(() => undefined);
+        map = await solveOnPhoneNow();
+        pushedToDevice = await c.submitMap(map).then(() => true).catch(() => false);
       } else {
-        const result = await c.stopMapping();
-        const resp = await fetch(`/maps/${result.mapId}`);
-        if (!resp.ok) throw new Error(`fetching map failed: HTTP ${resp.status}`);
-        map = recenterToCentroid((await resp.json()) as OutputMap).map;
+        try {
+          const result = await c.stopMapping();
+          const resp = await fetch(`/maps/${result.mapId}`);
+          if (!resp.ok) throw new Error(`fetching map failed: HTTP ${resp.status}`);
+          map = recenterToCentroid((await resp.json()) as OutputMap).map;
+          pushedToDevice = true;
+        } catch (hostErr) {
+          // Host solve unreachable — typically the device dropped mid-capture
+          // (FUG-69). We kept every detection locally, so fall back to the
+          // in-browser solver rather than throw the whole capture away.
+          if (localDetections.length === 0) throw hostErr;
+          if (solvePoll !== null) clearInterval(solvePoll);
+          if (!solverAgent.available) {
+            guideEl.textContent = "device lost — solving on your phone…";
+            await solverAgent.init().catch(() => false);
+          }
+          if (!solverAgent.available) throw hostErr;
+          console.warn(
+            `host solve failed (${hostErr instanceof Error ? hostErr.message : hostErr}); ` +
+              "falling back to the phone solver",
+          );
+          map = await solveOnPhoneNow();
+          pushedToDevice = await c.submitMap(map).then(() => true).catch(() => false);
+        }
       }
       preview.view?.stop();
       // New tail: save the solved result as a NEW library map (design doc §4.2)
       // and navigate to Map Detail — the workspace is the result.
       const id = await mapStore.create({ map, source: "capture" });
       appState.setSelectedMap(id);
-      toast(`Saved ${map.leds.length} LEDs`);
+      toast(
+        pushedToDevice
+          ? `Saved ${map.leds.length} LEDs`
+          : `Saved ${map.leds.length} LEDs — device offline, not pushed`,
+      );
       router.navigate(`/map/${id}`);
     } catch (e) {
       toast(`Reconstruction failed: ${e instanceof Error ? e.message : e}`, { error: true });
