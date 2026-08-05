@@ -55,6 +55,7 @@ import { Button, IconButton, icon, toast, type IconName } from "../kit";
 import { FxLayout } from "../../effects/editor/layout";
 import { VideoTexturePanel } from "../../effects/editor/videoTexture";
 import { openAiKeySheet } from "./aiKeySheet";
+import { renderMarkdown } from "../markdown";
 import type { Router, Screen } from "../app/router";
 
 const COMPILE_DEBOUNCE_MS = 300;
@@ -490,7 +491,16 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     if (chatHint.isConnected) chatHint.remove();
     const row = document.createElement("div");
     row.className = `fxedit-msg fxedit-msg--${role}`;
-    row.textContent = text;
+    if (role === "assistant") {
+      // Assistant replies may use markdown (bold/italic/lists/code/links). User
+      // and tool rows stay literal — the user typed theirs, and tool lines are
+      // terse status labels. renderMarkdown builds DOM nodes directly (no
+      // innerHTML), so untrusted model text can't inject markup.
+      row.classList.add("fxedit-md");
+      row.appendChild(renderMarkdown(text));
+    } else {
+      row.textContent = text;
+    }
     chatLog.appendChild(row);
     chatLog.scrollTop = chatLog.scrollHeight;
     return row;
