@@ -177,15 +177,15 @@ async def measure_program(
         },
         "result_ready",
     )
-    # Throttled FULL perf (250 ms) rather than every-frame pushes, so the tunnel
-    # isn't flooded; the reply is an immediate perf_report. Then settle and poll a
-    # stable window (any settled perf_report — solicited or pushed — carries the
-    # rolling-window means stable_cycles wants).
-    await _rpc(sock, {"type": "set_perf", "mode": "FULL", "interval_ms": 250}, "perf_report")
+    # FULL perf, POLL-ONLY (interval_ms=0): with no periodic push draining the
+    # tick ring, get_perf_report returns a settled window with the rolling means
+    # populated (a single tick is noisy — a stray WiFi IRQ skews one frame). The
+    # set_perf reply is an immediate perf_report; then settle and drain the window.
+    await _rpc(sock, {"type": "set_perf", "mode": "FULL", "interval_ms": 0}, "perf_report")
     await asyncio.sleep(settle_ms / 1000.0)
     report = await _rpc(sock, {"type": "get_perf_report"}, "perf_report")
     if debug:
-        keys = ("frame_cycles_mean", "update_cycles_mean", "show_cycles_mean", "cpu_hz")
+        keys = ("frameCyclesMean", "updateCyclesMean", "showCyclesMean", "cpuHz")
         summ = {k: report.get(k) for k in keys}
         summ["ticks"] = len(report.get("ticks") or [])
         summ["last_tick"] = (report.get("ticks") or [{}])[-1]

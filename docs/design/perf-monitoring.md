@@ -721,6 +721,20 @@ never in the fit) and compares to what the hardware measured — RMS/max relativ
 error, R², pass/fail. The RMS is stamped as the profile's `measuredError`: the
 trustworthy accuracy signal (vs `residualError`, an in-sample fit quality).
 
+**Measured on a real ESP32-C6.** A full sweep captured over the rig (13
+isolation programs + 1 held-out, `web/tests/testdata/device-bench-esp32c6.json`)
+fits a `source: device` profile whose model predicts the held-out program (a
+sin/mul mix at 200 LEDs) at **65.2 ms vs the 58.1 ms the hardware measured —
++12.2%, inside the 15% tolerance → PASS**. The raw cycles show why the host VM
+can't stand in: at 128 LEDs and equal instruction counts, `sinM` costs ~6.0 M
+cycles vs `addM`'s ~2.4 M — the FPU-less C6 pays dearly for transcendentals that
+are ≈free on the host. `web/tests/deviceProfileHardware.test.ts` pins this
+predicted-vs-measured gate in CI from the committed bundle, so a VM/opcode/
+precision change that breaks the model's real-hardware accuracy fails the build —
+no rig needed to re-check. (The in-sample fit residual is wide, ~29%: a single
+linear per-opcode model over reduced-precision fixed-point ops is approximate;
+the held-out generalization is the number that matters, and it holds.)
+
 ### Profile management
 
 `web/src/ui/screens/perfProfiles.ts` (route `/perf/profiles`, from the perf

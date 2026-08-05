@@ -42,18 +42,31 @@ def intended_led_count(src_path: str, default: int = 0) -> int:
     return int(num) if num else default
 
 
+def _field(d: dict[str, Any], *names: str) -> int:
+    """First present, nonzero int among `names`. proto_wire.decode_server emits
+    camelCase JSON names (frameCyclesMean, frameCycles, cpuHz), but recorded/
+    hand-authored replay sessions may use the proto snake_case names — accept
+    both so the on-hardware path and the replay/tests agree."""
+    for n in names:
+        v = d.get(n)
+        if v:
+            return int(v)
+    return 0
+
+
 def stable_cycles(report: dict[str, Any]) -> dict[str, int] | None:
     """Extract a stable (frame, show, led) cycle sample from a PerfReport flat
     dict (proto_wire.decode_server output; proto3 omits zero fields). Prefers the
-    rolling-window means, falling back to the newest tick. Mirrors the browser
+    rolling-window means (populated when perf is polled, interval_ms=0, so pushes
+    don't drain the ring), falling back to the newest tick. Mirrors the browser
     calibration's stableCycles(). Returns None if the report looks empty."""
     ticks = report.get("ticks") or []
     last = ticks[-1] if ticks else {}
-    led = int(last.get("led_count", 0) or 0)
-    frame_mean = int(report.get("frame_cycles_mean", 0) or 0)
-    show_mean = int(report.get("show_cycles_mean", 0) or 0)
-    last_frame = int(last.get("frame_cycles", 0) or 0)
-    last_show = int(last.get("show_cycles", 0) or 0)
+    led = _field(last, "ledCount", "led_count")
+    frame_mean = _field(report, "frameCyclesMean", "frame_cycles_mean")
+    show_mean = _field(report, "showCyclesMean", "show_cycles_mean")
+    last_frame = _field(last, "frameCycles", "frame_cycles")
+    last_show = _field(last, "showCycles", "show_cycles")
     if frame_mean == 0 and last_frame == 0:
         return None
     return {
@@ -82,7 +95,7 @@ def sample_from(
 
 
 def cpu_hz_of(report: dict[str, Any], default: int = 160_000_000) -> int:
-    hz = int(report.get("cpu_hz", 0) or 0)
+    hz = _field(report, "cpuHz", "cpu_hz")
     return hz if hz > 0 else default
 
 
