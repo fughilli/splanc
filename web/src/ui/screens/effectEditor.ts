@@ -581,23 +581,47 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     videoPanel.setSink(connected ? appState.client : null);
   }
 
-  // -- floating chrome + ⋯ overflow menu ------------------------------------
+  // -- top drawer: collapsible chrome + ⋯ overflow menu ---------------------
   // The editor route runs under the Shell's OVERLAY chrome (app-bar + tab-bar
-  // hidden), so all controls live in small, semi-transparent clusters that
-  // OVERLAY the workspace corners instead of pushing layout:
-  //   • top-left:  floating Back button + the inline-editable name pill
-  //   • top-right: a floating ⋯ overflow menu (AI key…, Format code, Reset layout)
-  const floatL = document.createElement("div");
-  floatL.className = "fxedit-float fxedit-float--l";
+  // hidden), so all controls live in a single drawer bar pinned across the top
+  // of the workspace:
+  //   • left:  Back button + the inline-editable name pill
+  //   • right: a ⋯ overflow menu (AI key…, Format code, Reset layout) and a
+  //            chevron that COLLAPSES the drawer so the workspace reclaims the
+  //            strip. A small floating handle re-expands it. State persists.
+  const DRAWER_KEY = "fxedit.drawer.collapsed.v1";
+  const drawer = document.createElement("div");
+  drawer.className = "fxedit-drawer";
   const backBtn = IconButton("back", { title: "Back to effects", onClick: () => router.navigate("/effects") });
-  backBtn.classList.add("fxedit-floatbtn");
-  floatL.append(backBtn, nameLabel, nameInput);
+  backBtn.classList.add("fxedit-drawerbtn");
 
-  const floatR = document.createElement("div");
-  floatR.className = "fxedit-float fxedit-float--r";
+  // Right cluster: the ⋯ button anchors the overflow menu (position:relative),
+  // and the collapse chevron sits beside it.
+  const menuWrap = document.createElement("div");
+  menuWrap.className = "fxedit-menuwrap";
   const kebab = IconButton("more", { title: "Editor menu", onClick: () => toggleMenu() });
-  kebab.classList.add("fxedit-floatbtn");
-  floatR.appendChild(kebab);
+  kebab.classList.add("fxedit-drawerbtn");
+  menuWrap.appendChild(kebab);
+
+  const spacer = document.createElement("div");
+  spacer.className = "fxedit-drawer-spacer";
+
+  const collapseBtn = IconButton("chevron", { title: "Collapse toolbar", onClick: () => setDrawerCollapsed(true) });
+  collapseBtn.classList.add("fxedit-drawerbtn", "fxedit-drawer-collapse");
+
+  // Re-expand handle: a small floating chevron shown only while collapsed.
+  const expandHandle = IconButton("chevron", { title: "Show toolbar", onClick: () => setDrawerCollapsed(false) });
+  expandHandle.classList.add("fxedit-drawer-expand");
+
+  function setDrawerCollapsed(collapsed: boolean): void {
+    el.classList.toggle("fxedit-drawer-collapsed", collapsed);
+    if (collapsed) closeMenu();
+    try {
+      localStorage.setItem(DRAWER_KEY, collapsed ? "1" : "0");
+    } catch {
+      /* private-mode / quota — collapse still works for this session */
+    }
+  }
 
   const menu = document.createElement("div");
   menu.className = "fxedit-menu";
@@ -685,7 +709,7 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     scheduleSave();
     toast("Formatted");
   }
-  floatR.appendChild(menu);
+  menuWrap.appendChild(menu);
 
   let menuOpen = false;
   function toggleMenu(): void {
@@ -1240,8 +1264,15 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
       resizePreviewCanvas();
     },
   });
-  // The layout fills the workspace; the floating control clusters overlay it.
-  el.append(layout.root, floatL, floatR);
+  // Assemble the drawer bar (left → right) and pin it above the workspace.
+  drawer.append(backBtn, nameLabel, nameInput, spacer, menuWrap, collapseBtn);
+  el.append(layout.root, drawer, expandHandle);
+  // Restore the persisted collapsed state (defaults to expanded on first visit).
+  try {
+    if (localStorage.getItem(DRAWER_KEY) === "1") el.classList.add("fxedit-drawer-collapsed");
+  } catch {
+    /* ignore storage errors — start expanded */
+  }
 
   let unsubAppState: (() => void) | null = null;
 
