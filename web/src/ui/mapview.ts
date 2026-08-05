@@ -720,10 +720,17 @@ export class MapView {
     if (this.showStats) {
       ctx.fillStyle = "#aaa";
       ctx.font = "12px system-ui";
+      // stats is optional on OutputMap — the reprojection solve summary is only
+      // present on solver output, not on synthetic or imported-without-stats
+      // maps — so fold the rms/parallax fragment in only when it exists.
+      // (Without this guard draw() throws every animation frame, flooding the
+      // console; see FUG-56.)
       const s = this.map.stats;
+      const solveSummary = s
+        ? ` · rms ${s.rmsReprojPxGlobal.toFixed(2)} px · median parallax ${s.medianParallaxDeg.toFixed(1)}°`
+        : "";
       ctx.fillText(
-        `${leds.length}/${this.map.ledCount} solved · rms ${s.rmsReprojPxGlobal.toFixed(2)} px · ` +
-          `median parallax ${s.medianParallaxDeg.toFixed(1)}°${deltaSummary}`,
+        `${leds.length}/${this.map.ledCount} solved${solveSummary}${deltaSummary}`,
         12,
         h - 12,
       );
