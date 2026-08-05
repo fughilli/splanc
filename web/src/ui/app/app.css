@@ -954,16 +954,34 @@ body.is-locked {
   content: "✓ ";
 }
 
-/* --- built-in (immutable) effect banner: floats top-center over the editor --- */
+/* --- built-in (immutable) effect banner ---
+ * Confined to the Code pane (inside .fxedit-codewrap, which is position:
+ * relative): a full-cover scrim lightly grays the read-only code, with a
+ * centered card explaining that editing requires duplicating. It sits above the
+ * textarea/backdrop but below the completion popup; the code stays legible while
+ * every other control (uniform sliders, preview, device) remains accessible. */
 .fxedit-builtin {
   position: absolute;
-  top: calc(env(safe-area-inset-top, 0px) + 0.4rem);
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 40;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-3);
+  /* Translucent scrim over the code — grays it slightly without hiding it. */
+  background: color-mix(in srgb, var(--surface) 60%, transparent);
+  backdrop-filter: blur(1px);
+  /* The scrim is purely visual: let scroll/selection reach the read-only code
+   * beneath it (so long built-ins stay readable). The card re-enables its own
+   * pointer events for the Duplicate button. */
+  pointer-events: none;
+}
+.fxedit-builtin-card {
   display: flex;
   align-items: center;
   gap: var(--sp-2);
+  max-width: 100%;
+  pointer-events: auto;
   padding: 0.25rem 0.25rem 0.25rem 0.8rem;
   background: var(--surface-2);
   border: 1px solid var(--border);
@@ -972,9 +990,10 @@ body.is-locked {
   color: var(--text-dim);
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
 }
-.fxedit-builtin .k-btn {
+.fxedit-builtin-card .k-btn {
   padding: 0.35rem 0.8rem;
   font-size: var(--f-caption);
+  flex: none;
 }
 
 /* --- disassembly panel --- */

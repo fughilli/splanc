@@ -1209,11 +1209,18 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     if (isBuiltinEffect(effectId)) {
       codeEl.readOnly = true;
       nameInput.readOnly = true;
+      // The banner lives INSIDE the code-wrap (not the screen root) so it's
+      // confined to the Code pane: it grays out the read-only code behind a
+      // centered card and leaves every other control — uniform sliders,
+      // preview, device — reachable. (effectStore.save is a no-op for built-ins
+      // too, as a backstop.)
       const banner = document.createElement("div");
       banner.className = "fxedit-builtin";
+      const card = document.createElement("div");
+      card.className = "fxedit-builtin-card";
       const label = document.createElement("span");
       label.textContent = "Built-in effect — read-only";
-      banner.append(
+      card.append(
         label,
         Button({
           label: "Duplicate to edit",
@@ -1224,7 +1231,8 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
           },
         }),
       );
-      el.appendChild(banner);
+      banner.appendChild(card);
+      codeWrap.appendChild(banner);
     }
 
     try {
