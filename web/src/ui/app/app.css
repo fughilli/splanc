@@ -602,6 +602,9 @@ body.is-locked {
  * instead of reflowing the app. Only individual pane bodies scroll internally.
  * No page padding — panes butt flush to the viewport edges. */
 .screen--fxedit {
+  /* Height of the top drawer bar; also the workspace's top inset while the
+   * drawer is expanded (collapsing zeroes the inset — see below). */
+  --fxdrawer-h: calc(2.2rem + env(safe-area-inset-top, 0px));
   position: fixed;
   inset: 0;
   padding: 0;
@@ -614,8 +617,16 @@ body.is-locked {
 }
 .screen--fxedit .fxlayout {
   position: absolute;
-  inset: 0;
+  top: var(--fxdrawer-h);
+  right: 0;
+  bottom: 0;
+  left: 0;
   min-height: 0;
+  transition: top var(--motion-micro, 120ms) var(--ease, ease);
+}
+/* Drawer collapsed: the workspace fills the reclaimed top strip. */
+.screen--fxedit.fxedit-drawer-collapsed .fxlayout {
+  top: 0;
 }
 .fxedit-canvas {
   width: 100%;
@@ -826,26 +837,65 @@ body.is-locked {
 /* Small, subtle, semi-transparent clusters pinned over the workspace corners.
  * They OVERLAY the panes (no layout push, no bar). Kept clear of the code caret
  * (top corners only). */
-.fxedit-float {
+/* Collapsible drawer bar pinned across the top of the editor. Its height feeds
+ * the workspace's top inset (see .screen--fxedit .fxlayout) so collapsing it
+ * hands the strip back to the workspace. */
+.fxedit-drawer {
   position: absolute;
-  top: calc(env(safe-area-inset-top, 0px) + 4px);
+  top: 0;
+  left: 0;
+  right: 0;
   z-index: 60;
+  box-sizing: border-box;
+  height: var(--fxdrawer-h);
+  padding: 0 4px;
+  padding-top: env(safe-area-inset-top, 0px);
   display: flex;
   align-items: center;
   gap: 4px;
-  pointer-events: none;
+  background: color-mix(in srgb, var(--surface-2) 88%, transparent);
+  border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(6px);
+  transition: transform var(--motion-micro, 120ms) var(--ease, ease);
 }
-.fxedit-float > * {
-  pointer-events: auto;
+.fxedit-drawer-spacer {
+  flex: 1 1 auto;
 }
-.fxedit-float--l {
-  left: 4px;
-}
-.fxedit-float--r {
-  right: 4px;
-}
-.fxedit-floatbtn {
+.fxedit-menuwrap {
+  position: relative;
   display: inline-flex;
+}
+.fxedit-drawerbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.9rem;
+  height: 1.9rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+.fxedit-drawerbtn:hover {
+  background: var(--surface);
+}
+.fxedit-drawerbtn svg {
+  width: 16px;
+  height: 16px;
+}
+/* Chevron points up (collapse) by default; the floating handle points down. */
+.fxedit-drawer-collapse svg {
+  transform: rotate(-90deg);
+}
+/* Floating re-expand handle — hidden while expanded, shown when collapsed. */
+.fxedit-drawer-expand {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 4px);
+  right: 4px;
+  z-index: 60;
+  display: none;
   align-items: center;
   justify-content: center;
   width: 1.9rem;
@@ -858,12 +908,21 @@ body.is-locked {
   cursor: pointer;
   backdrop-filter: blur(6px);
 }
-.fxedit-floatbtn:hover {
+.fxedit-drawer-expand:hover {
   background: var(--surface-2);
 }
-.fxedit-floatbtn svg {
+.fxedit-drawer-expand svg {
   width: 16px;
   height: 16px;
+  transform: rotate(90deg);
+}
+/* Collapsed: slide the drawer up out of view, reclaim its strip, reveal handle. */
+.fxedit-drawer-collapsed .fxedit-drawer {
+  transform: translateY(-100%);
+  pointer-events: none;
+}
+.fxedit-drawer-collapsed .fxedit-drawer-expand {
+  display: inline-flex;
 }
 /* Inline-editable name: a compact pill, click → input in place. */
 .fxedit-namepill,
@@ -957,10 +1016,12 @@ body.is-locked {
 /* --- built-in (immutable) effect banner: floats top-center over the editor --- */
 .fxedit-builtin {
   position: absolute;
-  top: calc(env(safe-area-inset-top, 0px) + 0.4rem);
+  /* Below the drawer while expanded so the full-width bar doesn't cover it. */
+  top: calc(var(--fxdrawer-h) + 0.4rem);
   left: 50%;
   transform: translateX(-50%);
   z-index: 40;
+  transition: top var(--motion-micro) var(--ease);
   display: flex;
   align-items: center;
   gap: var(--sp-2);
@@ -971,6 +1032,10 @@ body.is-locked {
   font-size: var(--f-caption);
   color: var(--text-dim);
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+}
+/* Drawer collapsed: the banner slides up into the reclaimed strip. */
+.fxedit-drawer-collapsed .fxedit-builtin {
+  top: calc(env(safe-area-inset-top, 0px) + 0.4rem);
 }
 .fxedit-builtin .k-btn {
   padding: 0.35rem 0.8rem;
