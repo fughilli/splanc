@@ -25,6 +25,7 @@ py_library(
         "hitl_client.py",
         "hitl_improv.py",
         "improv.py",
+        "mapping_trigger_core.py",
         "provision.py",
         "sync.py",
     ],
@@ -52,6 +53,37 @@ py_binary(
     ],
     imports = ["."],
     main = "hitl_e2e.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# On-hardware mapping-sequence-trigger test (FUG-62): reserve a rig, flash,
+# activate an effect, send start_mapping, and assert the device shows
+# mapping-pattern frames (get_frame_timing ticks) — the regression guard for the
+# render_once reorder that lets a capture preempt a resumed effect. Like :e2e /
+# :fx_bench it needs a rig + board, so it is `bazel run`, never `bazel test`; the
+# verdict logic (mapping_trigger_core) is unit-tested in //pi/hitl/tests. It
+# reuses an .fx from the fx benchmarks (compiled via fx_compile) just to obtain a
+# valid active effect, and rides the flash-bundle + hitl CLI in runfiles.
+py_binary(
+    name = "mapping_trigger",
+    srcs = ["hitl_mapping.py"],
+    data = [
+        ":fx_benchmarks",
+        "//firmware/player_app:esp32c6_flashbundle",
+        "//fx_compiler:fx_compile",
+        "//pi/hitl/cmd/hitl",
+    ],
+    imports = ["."],
+    main = "hitl_mapping.py",
     tags = [
         "hitl",
         "manual",
