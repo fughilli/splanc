@@ -2,36 +2,42 @@
 /**
  * Thin WebSerial helpers (FUG-60) — the browser-USB seam the flasher sits on.
  *
- * WebSerial is Chromium-only and needs a secure context + a user gesture to
- * prompt for a port. We keep all of that here so the flasher and UI stay
- * transport-agnostic: request a port, read its USB id, hand the raw SerialPort
- * to a Flasher backend (esptool-js drives it from there).
+ * WebSerial is Chromium-desktop-only and needs a secure context + a user gesture
+ * to prompt for a port. We keep all of that here (plus capability probing for the
+ * diagnostics panel) so the flasher and UI stay transport-agnostic: request a
+ * port, read its USB id, hand the raw SerialPort to a Flasher backend.
  */
 
 import type { UsbId } from "./usb";
+import { summarizeEnv, type FlashEnv } from "./env";
+
+/** Read the browser's flash-relevant capability flags. */
+export function readFlashEnv(): FlashEnv {
+  const nav = typeof navigator !== "undefined" ? navigator : undefined;
+  return {
+    serial: !!nav && "serial" in nav,
+    usb: !!nav && "usb" in nav,
+    // isSecureContext is undefined in non-window contexts; treat that as ok.
+    secureContext: typeof window === "undefined" ? true : window.isSecureContext !== false,
+    userAgent: nav?.userAgent ?? "",
+  };
+}
 
 /** True when this browser exposes the Web Serial API in a usable context. */
 export function webSerialSupported(): boolean {
-  return typeof navigator !== "undefined" && "serial" in navigator;
+  return readFlashEnv().serial;
 }
 
 /** A short reason WebSerial can't be used here, or null if it can. */
 export function webSerialUnavailableReason(): string | null {
-  if (typeof navigator === "undefined") return "Serial access isn't available.";
-  if (!("serial" in navigator)) {
-    return "This browser can't flash over USB — use desktop Chrome, Edge, or another Chromium browser.";
-  }
-  // WebSerial silently requires a secure context (https / localhost).
-  if (typeof window !== "undefined" && window.isSecureContext === false) {
-    return "Flashing needs a secure (https) page.";
-  }
-  return null;
+  return summarizeEnv(readFlashEnv()).reason;
 }
 
 /**
  * Prompt the user to pick a serial port. `filters` narrows the chooser to known
- * vendors but the user can always widen it. Returns null when the user dismisses
- * the picker (a cancel is not an error); throws only on real failures.
+ * vendors but the user can always widen it. Returns null when the picker closes
+ * with no selection (either a user cancel OR no matching device — the Web Serial
+ * API can't distinguish them); throws only on real failures.
  */
 export async function requestSerialPort(
   filters: SerialPortFilter[] = [],
@@ -39,7 +45,7 @@ export async function requestSerialPort(
   try {
     return await navigator.serial.requestPort(filters.length ? { filters } : {});
   } catch (err) {
-    // The chooser throws a NotFoundError when the user closes it without a pick.
+    // NotFoundError: user closed the chooser, or it had nothing to offer.
     if (err instanceof DOMException && err.name === "NotFoundError") return null;
     throw err;
   }
@@ -52,6 +58,29 @@ export function portUsbId(port: SerialPort): UsbId | null {
     return { vid: info.usbVendorId, pid: info.usbProductId };
   }
   return null;
+}
+
+/** USB ids of ports the user has already granted (getPorts needs no gesture).
+ * Not a full device scan — Web Serial can't enumerate without permission — but
+ * it's the one thing we can show under "devices seen" in diagnostics. */
+export async function authorizedPortIds(): Promise<UsbId[]> {
+  if (typeof navigator === "undefined" || !("serial" in navigator)) return [];
+  try {
+    const ports = await navigator.serial.getPorts();
+    return ports.map(portUsbId).filter((x): x is UsbId => x !== null);
+  } catch {
+    return [];
+  }
+}
+
+/** Human description of a filter set (the VIDs applied to the chooser). */
+export function describeFilters(filters: SerialPortFilter[]): string {
+  if (!filters.length) return "none — all serial devices shown";
+  return filters
+    .map((f) =>
+      typeof f.usbVendorId === "number" ? `0x${f.usbVendorId.toString(16).padStart(4, "0")}` : "any",
+    )
+    .join(", ");
 }
 
 /** Vendor filters for the port chooser — the families we know how to flash. */

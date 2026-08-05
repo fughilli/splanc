@@ -1,7 +1,9 @@
 /**
  * Flash / commission a board (FUG-60) — a bottom sheet reached from the Device
  * tab. Flashes the firmware image(s) this build bundles onto a USB-connected
- * board over WebSerial, with live progress and a log.
+ * board over WebSerial, with live progress, a log, and a diagnostics panel so a
+ * failed attempt (e.g. WebSerial unsupported on Android, or the chooser finding
+ * nothing) is self-explaining rather than a dead end.
  *
  * Everything USB/flasher-related is loaded lazily from here (this screen is the
  * only static importer of the flash/ modules, and it's itself dynamically
@@ -19,8 +21,12 @@ import {
   webSerialUnavailableReason,
   requestSerialPort,
   portUsbId,
+  readFlashEnv,
+  authorizedPortIds,
+  describeFilters,
   KNOWN_SERIAL_FILTERS,
 } from "../../flash/webserial";
+import { summarizeEnv } from "../../flash/env";
 import { identifyUsb, formatUsbId } from "../../flash/usb";
 import { getFlasher, type FlashHooks } from "../../flash/flasher";
 import type { FirmwareEntry, FirmwareIndex } from "../../flash/manifest";
@@ -34,7 +40,9 @@ export async function openFlashSheet(): Promise<void> {
 
   const reason = webSerialUnavailableReason();
   if (reason) {
-    sheet.body.append(note(reason), intro(FLASH_HELP));
+    // Unsupported browser (commonly Android/iOS): explain, and show the full
+    // capability report so it's clear WHAT is missing, not just that it failed.
+    sheet.body.append(note(reason), intro(FLASH_HELP), buildDiagnostics({ open: true }));
     return;
   }
 
@@ -47,6 +55,7 @@ export async function openFlashSheet(): Promise<void> {
         "This build doesn't bundle any firmware. Deploy or serve the app with the firmware bundle staged to enable one-tap flashing.",
       ),
       intro(FLASH_HELP),
+      buildDiagnostics(),
     );
     return;
   }
@@ -54,7 +63,7 @@ export async function openFlashSheet(): Promise<void> {
 }
 
 const FLASH_HELP =
-  "Flashing runs entirely in your browser over USB (WebSerial). Connect the board, then keep it plugged in until the write finishes.";
+  "Flashing runs entirely in your browser over USB (WebSerial), which is only available in desktop Chrome/Edge. Connect the board, then keep it plugged in until the write finishes.";
 
 // -- idle: pick an image + flash -------------------------------------------
 
@@ -96,6 +105,39 @@ function renderIdle(sheet: SheetHandle, index: FirmwareIndex, selected: Firmware
       block: true,
       onClick: () => void startFlash(sheet, index, selected),
     }),
+    buildDiagnostics(),
+  );
+}
+
+// -- no device found -------------------------------------------------------
+
+function renderNoDevice(
+  sheet: SheetHandle,
+  index: FirmwareIndex,
+  entry: FirmwareEntry,
+  filters: SerialPortFilter[],
+): void {
+  sheet.body.innerHTML = "";
+  sheet.body.append(
+    note(
+      filters.length
+        ? "No board selected, or none matched the USB vendor filter. If the board is plugged in but didn't appear, try again without the vendor filter to list every serial device."
+        : "No board selected. Plug the board in over USB and try again.",
+    ),
+    buildDiagnostics({ open: true, filters }),
+  );
+  if (filters.length) {
+    sheet.body.append(
+      Button({
+        label: "Try without vendor filter",
+        icon: "chip",
+        block: true,
+        onClick: () => void startFlash(sheet, index, entry, []),
+      }),
+    );
+  }
+  sheet.body.append(
+    Button({ label: "Back", variant: "quiet", block: true, onClick: () => renderIdle(sheet, index, entry) }),
   );
 }
 
@@ -105,12 +147,21 @@ async function startFlash(
   sheet: SheetHandle,
   index: FirmwareIndex,
   entry: FirmwareEntry,
+  filters: SerialPortFilter[] = KNOWN_SERIAL_FILTERS,
 ): Promise<void> {
-  const port = await requestSerialPort(KNOWN_SERIAL_FILTERS).catch((err: unknown) => {
+  let port: SerialPort | null;
+  try {
+    port = await requestSerialPort(filters);
+  } catch (err) {
     toast(errText(err), { error: true });
-    return null;
-  });
-  if (!port) return; // user cancelled the chooser, or it failed (toasted)
+    renderNoDevice(sheet, index, entry, filters);
+    return;
+  }
+  if (!port) {
+    // Cancelled, or the chooser found nothing (Web Serial can't tell them apart).
+    renderNoDevice(sheet, index, entry, filters);
+    return;
+  }
 
   // Switch to the progress view.
   sheet.body.innerHTML = "";
@@ -143,7 +194,7 @@ async function startFlash(
   // from the bootloader self-report. We flash for the selected image's family.
   const usb = portUsbId(port);
   const match = usb ? identifyUsb(usb) : null;
-  if (usb) appendLog(`Port ${formatUsbId(usb)}${match ? ` — ${match.label}` : ""}`);
+  appendLog(usb ? `Port ${formatUsbId(usb)}${match ? ` — ${match.label}` : ""}` : "Port USB id: not reported");
   if (match && match.family !== entry.family) {
     appendLog(`Warning: this port looks like a ${match.family} device, not ${entry.family}.`);
   }
@@ -213,6 +264,38 @@ function renderDone(
     Button({ label: "Flash another", block: true, onClick: () => renderIdle(sheet, index, entry) }),
     Button({ label: "Done", variant: "quiet", block: true, onClick: () => sheet.close() }),
   );
+}
+
+// -- diagnostics -----------------------------------------------------------
+
+/** A collapsible capability/diagnostics report. Populates the "devices seen"
+ * line asynchronously (getPorts needs no gesture). */
+function buildDiagnostics(opts: { open?: boolean; filters?: SerialPortFilter[]; error?: string } = {}): HTMLElement {
+  const env = readFlashEnv();
+  const summary = summarizeEnv(env);
+  const details = document.createElement("details");
+  details.className = "flash-log-details";
+  if (opts.open) details.open = true;
+  const sum = document.createElement("summary");
+  sum.textContent = "Diagnostics";
+  const pre = document.createElement("pre");
+  pre.className = "flash-log";
+
+  const lines = [...summary.lines];
+  lines.push(`Vendor filter: ${describeFilters(opts.filters ?? KNOWN_SERIAL_FILTERS)}`);
+  if (opts.error) lines.push(`Last error: ${opts.error}`);
+  lines.push(`User agent: ${env.userAgent || "unknown"}`);
+  lines.push("Previously granted ports: …");
+  pre.textContent = lines.join("\n");
+  details.append(sum, pre);
+
+  // Fill in the granted-ports line once resolved.
+  void authorizedPortIds().then((ids) => {
+    const seen = ids.length ? ids.map((id) => formatUsbId(id)).join(", ") : "none";
+    pre.textContent = pre.textContent!.replace("Previously granted ports: …", `Previously granted ports: ${seen}`);
+  });
+
+  return details;
 }
 
 // -- small DOM helpers -----------------------------------------------------
