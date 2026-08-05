@@ -116,6 +116,15 @@ func (m *Manager) SyncDevices(ctx context.Context, devs []runner.Device) (added,
 			kept = append(kept, d)
 			continue
 		}
+		// The device is reported gone — but never tear down a live session over
+		// that. A DUT stuck resetting (or any USB blip) drops out of scans
+		// intermittently, and killing its holder would end the agent's reservation
+		// mid-debug. Keep a busy DUT; it's pruned once the holder releases and it's
+		// still gone (a dead lease is still reaped normally).
+		if m.deviceBusyLocked(d.Name) {
+			kept = append(kept, d)
+			continue
+		}
 		removed = append(removed, d.Name)
 		m.evictDeviceLocked(ctx, d.Name)
 	}
@@ -133,10 +142,21 @@ func (m *Manager) SyncDevices(ctx context.Context, devs []runner.Device) (added,
 	return added, removed
 }
 
-// evictDeviceLocked tears down whatever is using the named DUT because its board
-// was unplugged: it stops an active holder's container and drops the reservation,
-// and dequeues any waiter pinned to that DUT (an unpinned waiter stays, since
-// another DUT can still serve it).
+// deviceBusyLocked reports whether the named DUT currently has an active holder.
+func (m *Manager) deviceBusyLocked(name string) bool {
+	for _, r := range m.items {
+		if r.State == api.StateActive && r.Device == name {
+			return true
+		}
+	}
+	return false
+}
+
+// evictDeviceLocked drops what's tied to the named DUT once it's removed while
+// idle: it dequeues any waiter pinned to that DUT (an unpinned waiter stays,
+// since another DUT can still serve it). SyncDevices only calls this for an idle
+// DUT — a busy one is retained until its holder releases — but the active-holder
+// teardown is kept defensively.
 func (m *Manager) evictDeviceLocked(ctx context.Context, name string) {
 	var doomed []*api.Reservation
 	for _, r := range m.items {

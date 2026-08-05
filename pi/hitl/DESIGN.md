@@ -55,10 +55,16 @@ ways, in precedence order:
   the by-id name so JTAG selects the right adapter among identical boards. Only
   each board's primary `-if00` interface is taken. Discovery is **live**: the
   daemon polls (`--discover-interval`, default 3s) and syncs the DUT set, so a
-  board hot-plugged after boot attaches — and an unplugged board detaches (tearing
-  down any reservation on it) — with no restart. Each DUT's sshd port is **sticky**
-  (assigned once from `--ssh-port`, up to `--discover-max-duts`), so unplugging one
-  board never renumbers another or disturbs its live session;
+  board hot-plugged after boot attaches, and an idle board unplugged for
+  `--discover-retention` (default 30s) detaches — with no restart. Two things keep
+  a flapping board (an ESP32-C6 re-enumerates its USB on every reset, so a
+  resetting DUT blinks out of individual scans) from disrupting a session: the
+  retention window means a board seen again within it is never dropped, and a DUT
+  that is **currently held is never torn down by discovery** — it's retained until
+  its holder releases and only then pruned if still gone (a genuinely dead lease
+  is still reaped normally). Each DUT's sshd port is **sticky** (assigned once from
+  `--ssh-port`, up to `--discover-max-duts`), so unplugging one board never
+  renumbers another or disturbs its live session;
 - **legacy fallback** (neither flag) — a single DUT synthesized from
   `--ssh-port`/`--device`, i.e. the original behavior.
 

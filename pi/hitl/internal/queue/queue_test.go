@@ -398,39 +398,70 @@ func TestSyncDevicesAttachesAndPromotes(t *testing.T) {
 	}
 }
 
-// Hot-unplug: removing a DUT tears down its active reservation (its board is
-// gone) but leaves the other DUT's live session untouched.
-func TestSyncDevicesEvictsRemovedDUT(t *testing.T) {
+// A flapping/resetting board that momentarily drops out of discovery must NOT
+// tear down its active holder — the reservation has to survive the DUT
+// disappearing from a sync. (The idle case still evicts; see below.)
+func TestSyncDevicesKeepsBusyDUTWhenReportedGone(t *testing.T) {
 	ctx := context.Background()
 	fr := &fakeRunner{}
 	m := New("rig", 30*time.Minute, fr, WithDevices([]runner.Device{
 		{Name: "c6-a", SSHPort: 2222}, {Name: "c6-b", SSHPort: 2223},
 	}))
 	a := m.Reserve(ctx, api.ReserveRequest{Owner: "a", Device: "c6-a"})
-	b := m.Reserve(ctx, api.ReserveRequest{Owner: "b", Device: "c6-b"})
-	if a.State != api.StateActive || b.State != api.StateActive {
-		t.Fatalf("setup: a=%q b=%q (both should be active on their pinned DUTs)", a.State, b.State)
+	if a.State != api.StateActive {
+		t.Fatalf("a should be active, got %q", a.State)
 	}
 
-	// Board A is unplugged.
+	// Discovery briefly reports only c6-b (c6-a's board blinked out mid-reset).
 	added, removed := m.SyncDevices(ctx, []runner.Device{{Name: "c6-b", SSHPort: 2223}})
-	if len(removed) != 1 || removed[0] != "c6-a" || len(added) != 0 {
-		t.Fatalf("SyncDevices added=%v removed=%v, want removed=[c6-a]", added, removed)
+	if len(added) != 0 || len(removed) != 0 {
+		t.Fatalf("a busy DUT reported gone must be retained, got added=%v removed=%v", added, removed)
 	}
-	if present(m, a.ID) {
-		t.Error("reservation on the removed DUT c6-a should have been evicted")
+	if got, _ := m.Get(a.ID); got == nil || got.State != api.StateActive {
+		t.Error("holder of the flapping DUT must keep its live reservation")
 	}
-	if got, _ := m.Get(b.ID); got == nil || got.State != api.StateActive {
-		t.Error("reservation on the surviving DUT c6-b must be untouched")
-	}
-	// Its container was torn down exactly once.
-	var stoppedA int
 	for _, id := range fr.stopped {
 		if id == a.ID {
-			stoppedA++
+			t.Fatal("busy DUT's container must not be stopped on a transient discovery miss")
 		}
 	}
-	if stoppedA != 1 {
-		t.Errorf("evicted DUT's container should be stopped once, got %d", stoppedA)
+}
+
+// Hot-unplug: an idle removed DUT is dropped immediately; a busy one is retained
+// until its holder releases and only then pruned — and the other DUT's live
+// session is untouched throughout.
+func TestSyncDevicesEvictsIdleButDefersBusyDUT(t *testing.T) {
+	ctx := context.Background()
+	fr := &fakeRunner{}
+	both := []runner.Device{{Name: "c6-a", SSHPort: 2222}, {Name: "c6-b", SSHPort: 2223}}
+	m := New("rig", 30*time.Minute, fr, WithDevices(both))
+	b := m.Reserve(ctx, api.ReserveRequest{Owner: "b", Device: "c6-b"}) // active; c6-a idle
+	if b.State != api.StateActive {
+		t.Fatalf("b should be active, got %q", b.State)
+	}
+
+	// Idle board c6-a is unplugged → dropped at once. c6-b's session is untouched.
+	_, removed := m.SyncDevices(ctx, []runner.Device{{Name: "c6-b", SSHPort: 2223}})
+	if len(removed) != 1 || removed[0] != "c6-a" {
+		t.Fatalf("idle removed DUT should drop, got removed=%v", removed)
+	}
+	if got, _ := m.Get(b.ID); got == nil || got.State != api.StateActive {
+		t.Error("holder of the surviving DUT c6-b must be untouched")
+	}
+
+	// Now c6-b's board goes away while it's busy: retained, container not stopped.
+	if _, removed = m.SyncDevices(ctx, nil); len(removed) != 0 {
+		t.Fatalf("busy DUT must be retained, got removed=%v", removed)
+	}
+	if got, _ := m.Get(b.ID); got == nil || got.State != api.StateActive {
+		t.Error("busy DUT's reservation must survive its board vanishing")
+	}
+
+	// The holder releases; the board is still gone, so the next sync prunes it.
+	if err := m.Release(ctx, b.ID, "done"); err != nil {
+		t.Fatal(err)
+	}
+	if _, removed = m.SyncDevices(ctx, nil); len(removed) != 1 || removed[0] != "c6-b" {
+		t.Fatalf("once released and still gone, c6-b should be pruned, got removed=%v", removed)
 	}
 }

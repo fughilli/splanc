@@ -69,6 +69,7 @@ func main() {
 	discoverGlob := flag.String("discover-glob", "/dev/serial/by-id/*", "glob of DUT serial nodes to auto-discover")
 	discoverMax := flag.Int("discover-max-duts", 8, "max concurrent DUTs (sshd port range from --ssh-port) for --discover")
 	discoverInterval := flag.Duration("discover-interval", 3*time.Second, "how often --discover rescans for hot-plugged/removed DUTs")
+	discoverRetention := flag.Duration("discover-retention", 30*time.Second, "how long a DUT must be continuously absent before --discover treats it as unplugged (tolerates resetting boards)")
 	// The rig's self-hosted provisioning AP (NetworkManager connection toggled
 	// per-reservation). With --ap-conn set, the daemon brings it up while a
 	// reservation is active and advertises its creds in /status so the harness
@@ -99,7 +100,7 @@ func main() {
 	case len(duts) > 0:
 		devs, err = buildDevices(duts, *sshPort, devices)
 	case *discover:
-		mon = newDUTMonitor(*discoverGlob, *sshPort, *discoverMax)
+		mon = newDUTMonitor(*discoverGlob, *sshPort, *discoverMax, *discoverRetention)
 		devs, err = mon.scan()
 		if err == nil && len(devs) == 0 {
 			log.Printf("discover: no DUTs matched %q yet; will attach them live as they appear", *discoverGlob)
@@ -315,56 +316,59 @@ func espSerialFromByID(base string) string {
 	return s
 }
 
-// dutRemoveAfterMisses is how many consecutive scans a board must be absent
-// before it's treated as unplugged. Debouncing matters because an ESP32-C6
-// re-enumerates its USB (e.g. on reset/flash) and a bare glob would blink the
-// board out for a scan or two — without this, that blink would evict the live
-// reservation and kill the agent's session.
-const dutRemoveAfterMisses = 3
-
 // dutMonitor discovers DUTs from a by-id glob and remembers each board across
 // scans: its sshd port is sticky (so a board keeps its port — and its live
-// reservation — even when a different board is unplugged), and a board that
-// vanishes is only dropped after dutRemoveAfterMisses consecutive absences.
-// Driven from a single goroutine; not safe for concurrent use.
+// reservation — even when a different board is unplugged), and a board is only
+// treated as gone once it has been absent continuously for `retention`.
+//
+// Retention is deliberately generous: an ESP32-C6 re-enumerates its USB on every
+// reset, so a DUT that's resetting (even in a tight reboot loop) blinks out of
+// individual scans but is seen again within seconds — far inside the window — so
+// it's never dropped. Only a board truly gone (unplugged) for the whole window is
+// removed. Driven from a single goroutine; not safe for concurrent use.
 type dutMonitor struct {
-	glob     string
-	basePort int
-	maxDuts  int
-	last     map[string]runner.Device // stable name -> last-known DUT (sticky port/spec)
-	miss     map[string]int           // stable name -> consecutive scans absent
+	glob      string
+	basePort  int
+	maxDuts   int
+	retention time.Duration
+	now       func() time.Time         // injectable for tests
+	last      map[string]runner.Device // stable name -> last-known DUT (sticky port/spec)
+	seen      map[string]time.Time     // stable name -> last time the board was present
 }
 
-func newDUTMonitor(glob string, basePort, maxDuts int) *dutMonitor {
+func newDUTMonitor(glob string, basePort, maxDuts int, retention time.Duration) *dutMonitor {
 	return &dutMonitor{
-		glob:     glob,
-		basePort: basePort,
-		maxDuts:  maxDuts,
-		last:     map[string]runner.Device{},
-		miss:     map[string]int{},
+		glob:      glob,
+		basePort:  basePort,
+		maxDuts:   maxDuts,
+		retention: retention,
+		now:       time.Now,
+		last:      map[string]runner.Device{},
+		seen:      map[string]time.Time{},
 	}
 }
 
-// scan globs the host and returns the debounced DUT set with sticky ports. A
-// glob error is returned; an empty match is not one (no board plugged in yet).
+// scan globs the host and returns the retained DUT set with sticky ports. A glob
+// error is returned; an empty match is not one (no board plugged in yet).
 func (dm *dutMonitor) scan() ([]runner.Device, error) {
 	matches, err := filepath.Glob(dm.glob)
 	if err != nil {
 		return nil, fmt.Errorf("discover glob %q: %w", dm.glob, err)
 	}
 	boards := boardsFromByID(matches)
+	now := dm.now()
 
 	used := map[int]bool{}
 	for _, d := range dm.last {
 		used[d.SSHPort] = true
 	}
-	// Present boards: reset the miss counter and, for a newly-seen board, allocate
-	// a sticky port. Existing boards keep their port and by-id spec (the by-id path
+	// Present boards: stamp last-seen and, for a newly-seen board, allocate a
+	// sticky port. Existing boards keep their port and by-id spec (the by-id path
 	// is serial-stable, and the runner re-resolves it to the live node at start).
-	seen := map[string]bool{}
+	present := map[string]bool{}
 	for _, b := range boards {
-		seen[b.name] = true
-		dm.miss[b.name] = 0
+		present[b.name] = true
+		dm.seen[b.name] = now
 		if _, ok := dm.last[b.name]; ok {
 			continue
 		}
@@ -376,15 +380,15 @@ func (dm *dutMonitor) scan() ([]runner.Device, error) {
 		used[port] = true
 		dm.last[b.name] = runner.Device{Name: b.name, SSHPort: port, Devices: b.devices, Env: b.env}
 	}
-	// Absent boards: age them out, dropping (and freeing the port of) only those
-	// gone for dutRemoveAfterMisses scans in a row.
+	// Absent boards: drop (and free the port of) only those gone for the whole
+	// retention window; a briefly-missing board (resetting DUT) is kept.
 	for name := range dm.last {
-		if seen[name] {
+		if present[name] {
 			continue
 		}
-		if dm.miss[name]++; dm.miss[name] >= dutRemoveAfterMisses {
+		if now.Sub(dm.seen[name]) > dm.retention {
 			delete(dm.last, name)
-			delete(dm.miss, name)
+			delete(dm.seen, name)
 		}
 	}
 

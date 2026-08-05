@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/fughilli/splanc/pi/hitl/internal/runner"
 )
@@ -121,11 +122,11 @@ func TestEspSerialFromByID(t *testing.T) {
 	}
 }
 
-// The monitor keeps a board's sshd port sticky across scans and debounces a
-// board's disappearance: a blip (one missed scan) must not drop the DUT (which
-// would tear down its live reservation), but sustained absence eventually does —
-// and either way, unplugging one board never renumbers another.
-func TestDutMonitorStickyPortsAndDebounce(t *testing.T) {
+// The monitor keeps a board's sshd port sticky across scans and retains a board
+// that blinks out (a resetting DUT re-enumerates) until it's been absent for the
+// whole retention window — only then dropping it, while never renumbering the
+// board that stayed.
+func TestDutMonitorStickyPortsAndRetention(t *testing.T) {
 	dir := t.TempDir()
 	linkOf := func(name string) string { return filepath.Join(dir, name) }
 	mk := func(name, target string) {
@@ -141,7 +142,10 @@ func TestDutMonitorStickyPortsAndDebounce(t *testing.T) {
 	mk(nameA, "ttyA")
 	mk("usb-Espressif_USB_JTAG_serial_debug_unit_BBBBBB-if00", "ttyB")
 
-	dm := newDUTMonitor(filepath.Join(dir, "usb-*-if00"), 2222, 8)
+	dm := newDUTMonitor(filepath.Join(dir, "usb-*-if00"), 2222, 8, 30*time.Second)
+	clock := time.Unix(0, 0)
+	dm.now = func() time.Time { return clock }
+
 	first, err := dm.scan()
 	if err != nil {
 		t.Fatal(err)
@@ -150,29 +154,30 @@ func TestDutMonitorStickyPortsAndDebounce(t *testing.T) {
 		t.Fatalf("first scan = %+v", first)
 	}
 
-	// Board A blips out for a single scan: it must still be present (debounced),
-	// so a transient USB re-enumeration can't kill an active reservation.
+	// Board A models a reboot loop: gone for a few short scans well inside the
+	// retention window. It must stay present (its reservation must not drop).
 	if err := os.Remove(linkOf(nameA)); err != nil {
 		t.Fatal(err)
 	}
-	if blip, _ := dm.scan(); len(blip) != 2 {
-		t.Fatalf("a single missed scan must not drop the DUT, got %+v", blip)
+	for i := 0; i < 5; i++ {
+		clock = clock.Add(3 * time.Second) // 15s total, < 30s retention
+		if blip, _ := dm.scan(); len(blip) != 2 {
+			t.Fatalf("resetting board dropped too early at %s: %+v", clock.Sub(time.Unix(0, 0)), blip)
+		}
 	}
-	// It comes back before the miss threshold — fully recovered, no churn.
+	// It re-enumerates (as it does after each reset) and keeps its port.
 	mk(nameA, "ttyA2")
 	if back, _ := dm.scan(); len(back) != 2 || back[0].SSHPort != 2222 {
 		t.Fatalf("recovered board should keep its port, got %+v", back)
 	}
 
-	// Now it's gone for real: absent for dutRemoveAfterMisses scans → dropped,
-	// while B keeps its original port 2223 throughout.
+	// Now truly unplugged: absent past the retention window → dropped, while B
+	// keeps its original port 2223.
 	if err := os.Remove(linkOf(nameA)); err != nil {
 		t.Fatal(err)
 	}
-	var last []runner.Device
-	for i := 0; i < dutRemoveAfterMisses; i++ {
-		last, _ = dm.scan()
-	}
+	clock = clock.Add(31 * time.Second)
+	last, _ := dm.scan()
 	if len(last) != 1 || last[0].Name != "c6-bbbbbb" || last[0].SSHPort != 2223 {
 		t.Fatalf("after sustained absence, scan = %+v (B should remain on 2223)", last)
 	}
