@@ -3,6 +3,42 @@
 Handoff notes alongside git history. Newest first. Read this before touching the
 rig's networking — there's live runtime state that isn't fully declarative yet.
 
+## 2026-08-05 — deflake e2e provisioning (FUG-61): retry the BLE connect
+
+Looping the e2e against the rig reproduced the CI flake at **20% run-level
+failure** (2/10 runs failed outright) with the **first provision attempt failing
+~50% of the time**. Every failure was a message-less `TimeoutError:` at the BLE
+**connect** — the provisioner log never reached `connected=True`. Root cause: the
+single-core C6 shares one radio between WiFi and BLE, so the first `BleakClient`
+connect right after a (re)boot routinely times out during coexistence bring-up.
+
+The old `provision_dut` recovery rebooted the DUT and tried the connect **once**
+per reboot; with the connect flaking independently each try, a run could lose that
+coin-flip on all three reboots (seen twice in ten) — that is the CI "timeout
+during provisioning". The CI "attempt 1 saw only the MAC, no name" is the same
+early-pounce: the firmware advertises the name in the **scan response** (only the
+Improv service UUID rides in the primary ADV, `improv_ble.cpp`), so a name-less
+match means the board was caught mid-advertise.
+
+Fix (`pi/hitl/harness`, no rig redeploy — these files are scp'd per run):
+
+- `hitl_improv.py` `_connect()`: retry the connect up to 5× **within one
+  attempt** (same boot, no reboot; 12 s each + backoff; tear down half-open links
+  between tries). Rapid reconnects ride out the coexistence window far more
+  reliably and cheaply than reboot-gated single tries.
+- `hitl_improv.py` `find()`: prefer a device advertising a resolved **name**,
+  re-scanning briefly for the scan response before falling back to a name-less
+  hit — so we connect to a board that's actually up.
+- Report the real transport error (`BLE transport failed: …`) instead of the
+  bare `TimeoutError:`.
+- `provision.py`: widen the per-attempt ssh budget to cover the in-attempt
+  retries; the outer reset+retry stays as a last-resort backstop.
+
+Method note (for the next agent reproducing on hardware): run the built binary
+directly in a loop rather than `bazel run … | tee | tail` (that pipeline buffers
+and can drop the result). Also, `-c opt` vs a stray non-opt `bazel` command flaps
+the `bazel-bin` convenience symlink — pin the `aarch64-opt/bin/...` path.
+
 ## 2026-08-03 — self-hosted provisioning AP (+ tag discovery, CLI-driven e2e)
 
 ### What this adds

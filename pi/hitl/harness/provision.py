@@ -51,7 +51,12 @@ def _run_provisioner(res, ssid: str, password: str, timeout: float) -> str:
         f"PYTHONPATH=/tmp python3 /tmp/hitl_improv.py provision "
         f"--ssid {json.dumps(ssid)} --pass {json.dumps(password)} --timeout {timeout:g}"
     )
-    proc = res.ssh(cmd, capture=True, timeout=timeout + 60)
+    # The provisioner now retries the BLE connect several times WITHIN one call
+    # (hitl_improv._connect — the first connect to a freshly-booted C6 routinely
+    # times out during WiFi/BLE-coexistence bring-up), so a single call can spend
+    # ~scan + N*connect_timeout + join before it reports. Give the ssh a budget
+    # that comfortably covers that worst case rather than the old timeout+60.
+    proc = res.ssh(cmd, capture=True, timeout=timeout + 180)
     out = (proc.stdout or "").strip()
     if proc.stderr:
         sys.stderr.write(proc.stderr)
