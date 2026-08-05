@@ -15,7 +15,7 @@
     "moduleResolution": "Node10",
     "verbatimModuleSyntax": false,
     "isolatedModules": false,
-    "types": ["node", "webxr"],
+    "types": ["node", "webxr", "w3c-web-serial"],
     "paths": {}
   },
   "include": ["src/**/*.ts", "src/**/*.d.ts", "tests/**/*.ts"]

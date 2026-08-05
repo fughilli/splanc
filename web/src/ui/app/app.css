@@ -2024,6 +2024,82 @@ body.is-locked {
   color: var(--text);
 }
 
+/* --- Flash firmware sheet (FUG-60) --- */
+.flash-intro {
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  line-height: 1.4;
+  margin: 0 0 var(--sp-3);
+}
+.flash-summary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-3);
+}
+.flash-kv {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--sp-3);
+}
+.flash-kv-cap {
+  color: var(--text-dim);
+}
+.flash-status {
+  margin: var(--sp-2) 0;
+  color: var(--text-dim);
+}
+.flash-status--ok {
+  color: var(--ok);
+  font-weight: 600;
+}
+.flash-status--err {
+  color: var(--err);
+}
+.flash-bar {
+  height: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+  margin-bottom: var(--sp-3);
+}
+.flash-bar-fill {
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  transition: width 0.2s ease;
+}
+.flash-bar-fill--done {
+  background: var(--ok);
+}
+.flash-bar-fill--err {
+  background: var(--err);
+}
+.flash-log {
+  max-height: 180px;
+  overflow: auto;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctrl);
+  padding: var(--sp-2);
+  margin: 0 0 var(--sp-3);
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text-dim);
+}
+.flash-log-details {
+  margin-bottom: var(--sp-3);
+}
+.flash-log-details summary {
+  cursor: pointer;
+  color: var(--text-dim);
+  margin-bottom: var(--sp-2);
+}
+
 /* --- Wi-Fi picker (add-device flow) --- */
 .wifi-sheet {
   display: flex;

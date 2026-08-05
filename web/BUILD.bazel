@@ -46,7 +46,11 @@ TYPE_DEPS = [
     ":node_modules/@bufbuild/protobuf",
     ":node_modules/@ledmapper/protocol",
     ":node_modules/@types/node",
+    ":node_modules/@types/w3c-web-serial",
     ":node_modules/@types/webxr",
+    # esptool-js drives the in-browser USB flasher (FUG-60); @types/w3c-web-serial
+    # supplies the Web Serial globals both it and our flash/ code use.
+    ":node_modules/esptool-js",
 ]
 
 ts_config(
@@ -179,6 +183,7 @@ vite_bin.vite(
         "wall.html",
         ":node_modules/@bufbuild/protobuf",
         ":node_modules/@ledmapper/protocol",
+        ":node_modules/esptool-js",
         ":node_modules/vite",
     ],
     args = ["build"],
@@ -216,6 +221,14 @@ SITE_DATA = [
     "//firmware/pulse:pulse_web",
     "//fx_compiler:fx_compiler_web",
     "//solver:solver_web",
+    # The staging tool that lays the firmware image(s) under /firmware/ for
+    # in-browser USB flashing (FUG-60). The flash bundle itself is NOT a data dep
+    # here — building it compiles the esp32c6 image (mbedtls + Arduino core from
+    # source, minutes) and is kept out of routine site builds. stage_site.lib.sh
+    # stages firmware only when handed a prebuilt bundle via $LEDMAPPER_FLASHBUNDLE
+    # (CI's firmware job builds it and passes it to build-site); otherwise the app
+    # simply reports no bundled firmware.
+    "//tools:stage_firmware",
 ]
 
 # Publish the static artifacts (app bundle + wasm solver) to Cloudflare

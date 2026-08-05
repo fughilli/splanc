@@ -56,6 +56,13 @@ def main(argv=None) -> int:
         help="wasm effects preview VM (//firmware/fx_vm:fx_vm_web) to serve at "
         "/fx-vm/ for the effects-editor live preview (editor.html)",
     )
+    parser.add_argument(
+        "--firmware-dir",
+        type=Path,
+        default=None,
+        help="bundled firmware tree (tools/stage_firmware output) to serve at "
+        "/firmware/ for in-browser USB flashing (FUG-60)",
+    )
     parser.add_argument("--session-dir", type=Path, default=Path("/var/lib/ledmapper/sessions"))
     parser.add_argument("--maps-dir", type=Path, default=Path("/var/lib/ledmapper/maps"))
     parser.add_argument("--led-count", type=int, default=1024, help="default code-book LED count")
@@ -104,6 +111,7 @@ def main(argv=None) -> int:
         pulse_dir=args.pulse_dir,
         fx_compiler_dir=args.fx_compiler_dir,
         fx_vm_dir=args.fx_vm_dir,
+        firmware_dir=args.firmware_dir,
         default_led_count=args.led_count,
         bit_period_ms=args.bit_period_ms,
         symbols=args.symbols,
