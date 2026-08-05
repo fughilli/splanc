@@ -121,20 +121,24 @@ func TestEspSerialFromByID(t *testing.T) {
 	}
 }
 
-// The monitor keeps a board's sshd port sticky across scans: unplugging one board
-// must not renumber another (which would tear down its live reservation).
-func TestDutMonitorStickyPorts(t *testing.T) {
+// The monitor keeps a board's sshd port sticky across scans and debounces a
+// board's disappearance: a blip (one missed scan) must not drop the DUT (which
+// would tear down its live reservation), but sustained absence eventually does —
+// and either way, unplugging one board never renumbers another.
+func TestDutMonitorStickyPortsAndDebounce(t *testing.T) {
 	dir := t.TempDir()
+	linkOf := func(name string) string { return filepath.Join(dir, name) }
 	mk := func(name, target string) {
 		tp := filepath.Join(dir, target)
 		if err := os.WriteFile(tp, nil, 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.Symlink(tp, filepath.Join(dir, name)); err != nil {
+		if err := os.Symlink(tp, linkOf(name)); err != nil {
 			t.Fatal(err)
 		}
 	}
-	mk("usb-Espressif_USB_JTAG_serial_debug_unit_AAAAAA-if00", "ttyA")
+	nameA := "usb-Espressif_USB_JTAG_serial_debug_unit_AAAAAA-if00"
+	mk(nameA, "ttyA")
 	mk("usb-Espressif_USB_JTAG_serial_debug_unit_BBBBBB-if00", "ttyB")
 
 	dm := newDUTMonitor(filepath.Join(dir, "usb-*-if00"), 2222, 8)
@@ -146,15 +150,30 @@ func TestDutMonitorStickyPorts(t *testing.T) {
 		t.Fatalf("first scan = %+v", first)
 	}
 
-	// Unplug board A (its symlink disappears). B must keep its original port 2223.
-	if err := os.Remove(filepath.Join(dir, "usb-Espressif_USB_JTAG_serial_debug_unit_AAAAAA-if00")); err != nil {
+	// Board A blips out for a single scan: it must still be present (debounced),
+	// so a transient USB re-enumeration can't kill an active reservation.
+	if err := os.Remove(linkOf(nameA)); err != nil {
 		t.Fatal(err)
 	}
-	second, err := dm.scan()
-	if err != nil {
+	if blip, _ := dm.scan(); len(blip) != 2 {
+		t.Fatalf("a single missed scan must not drop the DUT, got %+v", blip)
+	}
+	// It comes back before the miss threshold — fully recovered, no churn.
+	mk(nameA, "ttyA2")
+	if back, _ := dm.scan(); len(back) != 2 || back[0].SSHPort != 2222 {
+		t.Fatalf("recovered board should keep its port, got %+v", back)
+	}
+
+	// Now it's gone for real: absent for dutRemoveAfterMisses scans → dropped,
+	// while B keeps its original port 2223 throughout.
+	if err := os.Remove(linkOf(nameA)); err != nil {
 		t.Fatal(err)
 	}
-	if len(second) != 1 || second[0].Name != "c6-bbbbbb" || second[0].SSHPort != 2223 {
-		t.Fatalf("after unplugging A, second scan = %+v (B should keep port 2223)", second)
+	var last []runner.Device
+	for i := 0; i < dutRemoveAfterMisses; i++ {
+		last, _ = dm.scan()
+	}
+	if len(last) != 1 || last[0].Name != "c6-bbbbbb" || last[0].SSHPort != 2223 {
+		t.Fatalf("after sustained absence, scan = %+v (B should remain on 2223)", last)
 	}
 }

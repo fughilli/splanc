@@ -118,18 +118,14 @@ func (p *PodmanRunner) Start(ctx context.Context, id, owner, sshKey string, dev 
 		if d == "" {
 			continue
 		}
-		// A mapping is "host" or "host:container"; only the host node has to exist.
-		host := d
-		if i := strings.IndexByte(d, ':'); i >= 0 {
-			host = d[:i]
-		}
-		// Skip devices that aren't present (e.g. the ESP32 isn't plugged in yet),
-		// so a reservation can still come up for non-hardware testing.
-		if _, err := os.Stat(host); err != nil {
-			log.Printf("podman: device %s not present, skipping (%v)", host, err)
+		arg, ok := deviceMapping(d)
+		if !ok {
+			// Skip devices that aren't present (e.g. the ESP32 isn't plugged in yet),
+			// so a reservation can still come up for non-hardware testing.
+			log.Printf("podman: device %q not present, skipping", d)
 			continue
 		}
-		args = append(args, "--device", d)
+		args = append(args, "--device", arg)
 	}
 	args = append(args, p.cfg.Image)
 
@@ -143,6 +139,38 @@ func (p *PodmanRunner) Start(ctx context.Context, id, owner, sshKey string, dev 
 	}
 	log.Printf("podman: started %s (owner=%q dut=%s) sshd on %s:%d", name, owner, dev.Name, p.cfg.Host, dev.SSHPort)
 	return &api.SSHEndpoint{Host: p.cfg.Host, Port: dev.SSHPort, User: p.cfg.SSHUser}, nil
+}
+
+// deviceMapping resolves one "host[:container]" --device spec into a concrete
+// podman --device value, or ok=false if the host device isn't present (so a
+// reservation can still come up with no board attached).
+//
+// Two wrinkles it handles that a naive split can't:
+//   - The host may be a /dev/serial/by-id symlink whose NAME contains colons —
+//     an ESP32-C6's USB serial is its MAC (…_60:55:F9:11:7D:10-if00). Splitting on
+//     the first ':' would truncate the path mid-MAC. We split on the last ":/"
+//     instead (the container path is always absolute), so the colons stay in the
+//     host path.
+//   - podman --device needs a real device node, and would itself mis-parse the
+//     colons, so we resolve the symlink to its target (/dev/ttyACMx) and pass
+//     that. Resolving at start time also tracks a board that re-enumerated to a
+//     different ttyACMx since discovery, while the by-id name stayed stable.
+func deviceMapping(d string) (arg string, ok bool) {
+	host, container := d, ""
+	if i := strings.LastIndex(d, ":/"); i >= 0 {
+		host, container = d[:i], d[i+1:]
+	}
+	real := host
+	if r, err := filepath.EvalSymlinks(host); err == nil {
+		real = r
+	}
+	if _, err := os.Stat(real); err != nil {
+		return "", false
+	}
+	if container != "" {
+		return real + ":" + container, true
+	}
+	return real, true
 }
 
 // sortedKeys returns m's keys in sorted order, for deterministic arg ordering.

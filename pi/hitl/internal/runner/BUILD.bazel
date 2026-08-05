@@ -1,4 +1,4 @@
-load("@rules_go//go:def.bzl", "go_library")
+load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "runner",
@@ -9,4 +9,10 @@ go_library(
     importpath = "github.com/fughilli/splanc/pi/hitl/internal/runner",
     visibility = ["//pi/hitl:__subpackages__"],
     deps = ["//pi/hitl/internal/api"],
+)
+
+go_test(
+    name = "runner_test",
+    srcs = ["podman_test.go"],
+    embed = [":runner"],
 )

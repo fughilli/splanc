@@ -315,57 +315,84 @@ func espSerialFromByID(base string) string {
 	return s
 }
 
-// dutMonitor discovers DUTs from a by-id glob and keeps each board's sshd-port
-// assignment sticky across scans, so a board keeps its port — and its live
-// reservation — even when a different board is unplugged. Driven from a single
-// goroutine; not safe for concurrent use.
+// dutRemoveAfterMisses is how many consecutive scans a board must be absent
+// before it's treated as unplugged. Debouncing matters because an ESP32-C6
+// re-enumerates its USB (e.g. on reset/flash) and a bare glob would blink the
+// board out for a scan or two — without this, that blink would evict the live
+// reservation and kill the agent's session.
+const dutRemoveAfterMisses = 3
+
+// dutMonitor discovers DUTs from a by-id glob and remembers each board across
+// scans: its sshd port is sticky (so a board keeps its port — and its live
+// reservation — even when a different board is unplugged), and a board that
+// vanishes is only dropped after dutRemoveAfterMisses consecutive absences.
+// Driven from a single goroutine; not safe for concurrent use.
 type dutMonitor struct {
 	glob     string
 	basePort int
 	maxDuts  int
-	ports    map[string]int // stable DUT name -> assigned sshd port
+	last     map[string]runner.Device // stable name -> last-known DUT (sticky port/spec)
+	miss     map[string]int           // stable name -> consecutive scans absent
 }
 
 func newDUTMonitor(glob string, basePort, maxDuts int) *dutMonitor {
-	return &dutMonitor{glob: glob, basePort: basePort, maxDuts: maxDuts, ports: map[string]int{}}
+	return &dutMonitor{
+		glob:     glob,
+		basePort: basePort,
+		maxDuts:  maxDuts,
+		last:     map[string]runner.Device{},
+		miss:     map[string]int{},
+	}
 }
 
-// scan globs the host and returns the current DUT set with sticky ports. A glob
-// error is returned; an empty match is not one (no board plugged in yet).
+// scan globs the host and returns the debounced DUT set with sticky ports. A
+// glob error is returned; an empty match is not one (no board plugged in yet).
 func (dm *dutMonitor) scan() ([]runner.Device, error) {
 	matches, err := filepath.Glob(dm.glob)
 	if err != nil {
 		return nil, fmt.Errorf("discover glob %q: %w", dm.glob, err)
 	}
 	boards := boardsFromByID(matches)
-	// Release the ports of boards that have gone away, so their numbers can be
-	// reused by future boards without disturbing the boards still present.
-	present := map[string]bool{}
-	for _, b := range boards {
-		present[b.name] = true
-	}
-	for name := range dm.ports {
-		if !present[name] {
-			delete(dm.ports, name)
-		}
-	}
+
 	used := map[int]bool{}
-	for _, p := range dm.ports {
-		used[p] = true
+	for _, d := range dm.last {
+		used[d.SSHPort] = true
 	}
-	var out []runner.Device
+	// Present boards: reset the miss counter and, for a newly-seen board, allocate
+	// a sticky port. Existing boards keep their port and by-id spec (the by-id path
+	// is serial-stable, and the runner re-resolves it to the live node at start).
+	seen := map[string]bool{}
 	for _, b := range boards {
-		port, ok := dm.ports[b.name]
-		if !ok {
-			if port = dm.allocPort(used); port == 0 {
-				log.Printf("discover: %s attached but all %d DUT ports are in use; ignoring", b.name, dm.maxDuts)
-				continue
-			}
-			dm.ports[b.name] = port
-			used[port] = true
+		seen[b.name] = true
+		dm.miss[b.name] = 0
+		if _, ok := dm.last[b.name]; ok {
+			continue
 		}
-		out = append(out, runner.Device{Name: b.name, SSHPort: port, Devices: b.devices, Env: b.env})
+		port := dm.allocPort(used)
+		if port == 0 {
+			log.Printf("discover: %s attached but all %d DUT ports are in use; ignoring", b.name, dm.maxDuts)
+			continue
+		}
+		used[port] = true
+		dm.last[b.name] = runner.Device{Name: b.name, SSHPort: port, Devices: b.devices, Env: b.env}
 	}
+	// Absent boards: age them out, dropping (and freeing the port of) only those
+	// gone for dutRemoveAfterMisses scans in a row.
+	for name := range dm.last {
+		if seen[name] {
+			continue
+		}
+		if dm.miss[name]++; dm.miss[name] >= dutRemoveAfterMisses {
+			delete(dm.last, name)
+			delete(dm.miss, name)
+		}
+	}
+
+	out := make([]runner.Device, 0, len(dm.last))
+	for _, d := range dm.last {
+		out = append(out, d)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
 }
 
