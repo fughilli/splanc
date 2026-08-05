@@ -753,7 +753,13 @@ static size_t g_wss_cert_len = sizeof kDevCertPem;
 // generously (an earlier RSA-2048 leaf at ~1.4 KB overflowed a 1024 buffer with
 // -0x002A MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL).
 static char g_gen_cert[2048];
-static bool g_cert_reissued = false;
+// STA IP currently baked into the served cert's SAN; 0 == the build-time cert
+// (no SAN), which browsers reject with a fatal alert (-0x7780). We re-issue
+// whenever this stops matching the live STA IP — see reissue_cert_for_lan and
+// the throttled retry in loop(). Not a one-shot: the IP can change (DHCP
+// re-lease / reconnect) and the first attempt can fail under early-boot heap
+// pressure, and either case must self-heal rather than strand the no-SAN cert.
+static uint32_t g_cert_ip = 0;
 
 static esp_err_t wss_ws_handler(httpd_req_t *req) {
   if (req->method == HTTP_GET) return ESP_OK;  // upgrade handshake; nothing to send
@@ -894,22 +900,33 @@ static void wss_start() {
 
 // Re-issue the wss cert with the live STA IP (+ the soft-AP IP + a stable mDNS
 // name) in its SAN, then restart the TLS server so browsers accept it — the
-// build-time cert has no SAN and is rejected with a fatal alert. Same private
-// key, deterministic serial/validity → identical bytes for a given IP, so the
-// phone's stored trust exception survives reboots (only an IP change re-issues).
+// build-time cert has no SAN and is rejected with a fatal alert (-0x7780). Same
+// private key, deterministic serial/validity → identical bytes for a given IP,
+// so the phone's stored trust exception survives reboots.
+//
+// Idempotent and re-runnable: it re-issues iff the live STA IP differs from the
+// one already in the served cert (g_cert_ip), so an unchanged IP is a cheap
+// no-op and a *changed* IP (DHCP re-lease / reconnect) re-issues. On failure it
+// leaves g_cert_ip unchanged and returns WITHOUT swapping the cert, so the
+// throttled retry in loop() tries again once heap recovers rather than silently
+// stranding the no-SAN cert the browser rejects.
 static void reissue_cert_for_lan() {
-  if (g_cert_reissued) return;
+  uint32_t sta_ip = (uint32_t)WiFi.localIP();
+  if (sta_ip == 0) return;         // STA IP not settled yet; a got-IP event retries
+  if (sta_ip == g_cert_ip) return; // served cert already carries this IP
   uint32_t ips[2];
   int n = 0;
-  ips[n++] = (uint32_t)WiFi.localIP();        // STA (LAN) address
+  ips[n++] = sta_ip;                               // STA (LAN) address
   ips[n++] = (uint32_t)IPAddress(192, 168, 4, 1);  // soft-AP address
   int ret = ledmapper_selfsign(kDevKeyPem, g_device_name, ips, n, "ledmapper.local",
                                g_gen_cert, sizeof g_gen_cert);
   if (ret != 0) {
-    Log().printf("[wss] cert re-issue failed: -0x%04X (keeping build-time cert)\n", -ret);
+    Log().printf("[wss] cert re-issue failed: -0x%04X (heap=%u); keeping current "
+                 "cert, will retry\n",
+                 -ret, (unsigned)esp_get_free_heap_size());
     return;
   }
-  g_cert_reissued = true;
+  g_cert_ip = sta_ip;
   g_wss_cert = g_gen_cert;
   g_wss_cert_len = strlen(g_gen_cert) + 1;  // esp-tls wants the NUL in the length
   if (wss) {
@@ -1096,6 +1113,20 @@ void loop() {
   http.handleClient();
   ws_poll();
   provisioning_poll();
+  // Keep the served TLS cert's SAN matching the live STA IP. provisioning_poll's
+  // demote issues the first LAN cert, but that one attempt can fail under
+  // early-boot heap pressure (ledmapper_selfsign needs a few KB free) and the IP
+  // can change later (DHCP re-lease / reconnect) — either leaves a cert the
+  // browser rejects with a fatal alert, breaking connect-by-IP. Reconcile here
+  // so it self-heals once heap recovers or the IP settles. Throttled: on a
+  // persistent failure reissue only retries every few seconds (it returns before
+  // touching the server, so no churn), and once the IP matches it's a no-op.
+  static uint32_t last_cert_reconcile = 0;
+  if (WiFi.status() == WL_CONNECTED && (uint32_t)WiFi.localIP() != g_cert_ip &&
+      millis() - last_cert_reconcile > 5000) {
+    last_cert_reconcile = millis();
+    reissue_cert_for_lan();
+  }
   if (fs_ok) {
     flush_playback_save();
     flush_fx_sel_save();
