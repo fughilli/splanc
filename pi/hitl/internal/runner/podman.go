@@ -8,25 +8,22 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/fughilli/splanc/pi/hitl/internal/api"
 )
 
-// PodmanConfig configures how test containers are launched.
+// PodmanConfig configures how test containers are launched. Per-DUT settings
+// (ssh port, device nodes, env) live on runner.Device, passed to Start.
 type PodmanConfig struct {
 	// Image is the OCI image reference for the test environment.
 	Image string
 	// Host is the address holders use to reach this machine (its tailnet name).
 	Host string
-	// SSHPort is the host port published to the container's sshd (:22).
-	SSHPort int
 	// SSHUser is the login user inside the container.
 	SSHUser string
-	// Devices are extra `--device` mappings (e.g. the ESP32 serial + JTAG nodes,
-	// a BT hci). USBIP attach is handled out of band; see the NixOS module.
-	Devices []string
 	// StateDir is a writable dir for per-reservation scratch (authorized_keys).
 	StateDir string
 	// Podman is the podman binary (defaults to "podman" on PATH).
@@ -61,7 +58,7 @@ func (p *PodmanRunner) podman(ctx context.Context, args ...string) (string, erro
 	return string(out), nil
 }
 
-func (p *PodmanRunner) Start(ctx context.Context, id, owner, sshKey string) (*api.SSHEndpoint, error) {
+func (p *PodmanRunner) Start(ctx context.Context, id, owner, sshKey string, dev Device) (*api.SSHEndpoint, error) {
 	name := containerName(id)
 	// Fresh start: remove any stale container with this name.
 	_, _ = p.podman(ctx, "rm", "-f", name)
@@ -80,11 +77,17 @@ func (p *PodmanRunner) Start(ctx context.Context, id, owner, sshKey string) (*ap
 		"run", "-d", "--name", name,
 		"--label", "hitl=1",
 		"--label", "hitl.owner=" + owner,
-		// Publish the container sshd on the host's SSHPort.
-		"-p", fmt.Sprintf("%d:22", p.cfg.SSHPort),
+		"--label", "hitl.device=" + dev.Name,
+		// Publish the container sshd on this DUT's host port (distinct per DUT so
+		// several containers coexist).
+		"-p", fmt.Sprintf("%d:22", dev.SSHPort),
 		// The holder's key, mounted read-only; the entrypoint installs it.
 		"-v", authKeys + ":/run/hitl/authorized_keys:ro",
 		"-e", "HITL_SSH_USER=" + p.cfg.SSHUser,
+	}
+	// Per-DUT env (e.g. HITL_ADAPTER_SERIAL so openocd targets this DUT's board).
+	for _, k := range sortedKeys(dev.Env) {
+		args = append(args, "-e", k+"="+dev.Env[k])
 	}
 	// BLE: mount the host's system D-Bus socket so bleak in the container can
 	// drive the host bluetoothd (hci0). Present only if hardware.bluetooth is on.
@@ -103,14 +106,19 @@ func (p *PodmanRunner) Start(ctx context.Context, id, owner, sshKey string) (*ap
 	if p.cfg.Privileged {
 		args = append(args, "--privileged")
 	}
-	for _, d := range p.cfg.Devices {
+	for _, d := range dev.Devices {
 		if d == "" {
 			continue
 		}
+		// A mapping is "host" or "host:container"; only the host node has to exist.
+		host := d
+		if i := strings.IndexByte(d, ':'); i >= 0 {
+			host = d[:i]
+		}
 		// Skip devices that aren't present (e.g. the ESP32 isn't plugged in yet),
 		// so a reservation can still come up for non-hardware testing.
-		if _, err := os.Stat(d); err != nil {
-			log.Printf("podman: device %s not present, skipping (%v)", d, err)
+		if _, err := os.Stat(host); err != nil {
+			log.Printf("podman: device %s not present, skipping (%v)", host, err)
 			continue
 		}
 		args = append(args, "--device", d)
@@ -122,11 +130,21 @@ func (p *PodmanRunner) Start(ctx context.Context, id, owner, sshKey string) (*ap
 	}
 	// Don't report ready until the container's sshd actually accepts connections
 	// (host-key gen + exec sshd takes a couple seconds), so holders don't race it.
-	if err := waitTCP(ctx, fmt.Sprintf("127.0.0.1:%d", p.cfg.SSHPort), 60*time.Second); err != nil {
+	if err := waitTCP(ctx, fmt.Sprintf("127.0.0.1:%d", dev.SSHPort), 60*time.Second); err != nil {
 		log.Printf("podman: %s sshd not ready: %v (returning endpoint anyway)", name, err)
 	}
-	log.Printf("podman: started %s (owner=%q) sshd on %s:%d", name, owner, p.cfg.Host, p.cfg.SSHPort)
-	return &api.SSHEndpoint{Host: p.cfg.Host, Port: p.cfg.SSHPort, User: p.cfg.SSHUser}, nil
+	log.Printf("podman: started %s (owner=%q dut=%s) sshd on %s:%d", name, owner, dev.Name, p.cfg.Host, dev.SSHPort)
+	return &api.SSHEndpoint{Host: p.cfg.Host, Port: dev.SSHPort, User: p.cfg.SSHUser}, nil
+}
+
+// sortedKeys returns m's keys in sorted order, for deterministic arg ordering.
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // waitTCP blocks until addr accepts a connection or timeout.

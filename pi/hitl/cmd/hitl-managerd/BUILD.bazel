@@ -1,4 +1,4 @@
-load("@rules_go//go:def.bzl", "go_binary", "go_library")
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
 
 go_library(
     name = "hitl-managerd_lib",
@@ -17,4 +17,11 @@ go_binary(
     name = "hitl-managerd",
     embed = [":hitl-managerd_lib"],
     visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "hitl-managerd_test",
+    srcs = ["main_test.go"],
+    embed = [":hitl-managerd_lib"],
+    deps = ["//pi/hitl/internal/runner"],
 )

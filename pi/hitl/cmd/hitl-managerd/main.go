@@ -1,7 +1,12 @@
 // Command hitl-managerd is the Pi-side HITL reservation daemon. It exposes a
 // small JSON API (over the tailnet) that agents use to queue for the rig; when
-// a reservation reaches the head it starts a test container with the ESP32-C6
+// a reservation reaches the head it starts a test container with an ESP32-C6 DUT
 // attached and the holder's SSH key authorized, and returns the SSH endpoint.
+//
+// A rig may host several DUTs (each its own port + device nodes, run
+// concurrently): pass one --dut '{"name":…,"ssh_port":…,"devices":[…]}' per DUT.
+// With no --dut flags it falls back to a single DUT built from --ssh-port and
+// --device (the original behavior).
 package main
 
 import (
@@ -9,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -45,7 +51,9 @@ func main() {
 	podman := flag.String("podman", "podman", "podman binary")
 	privileged := flag.Bool("privileged", true, "run the container privileged (raw USB/JTAG)")
 	var devices stringList
-	flag.Var(&devices, "device", "extra --device mapping for the container (repeatable)")
+	flag.Var(&devices, "device", "extra --device mapping for the single-DUT fallback (repeatable)")
+	var duts stringList
+	flag.Var(&duts, "dut", `a DUT as JSON: {"name":"c6-0","ssh_port":2222,"devices":["/dev/serial/by-id/…:/dev/ttyACM0"],"env":{"HITL_ADAPTER_SERIAL":"…"}} (repeatable; enables multi-DUT)`)
 	// The rig's self-hosted provisioning AP (NetworkManager connection toggled
 	// per-reservation). With --ap-conn set, the daemon brings it up while a
 	// reservation is active and advertises its creds in /status so the harness
@@ -63,14 +71,22 @@ func main() {
 	run := runner.NewPodman(runner.PodmanConfig{
 		Image:      *image,
 		Host:       *host,
-		SSHPort:    *sshPort,
 		SSHUser:    *sshUser,
-		Devices:    devices,
 		StateDir:   *stateDir,
 		Podman:     *podman,
 		Privileged: *privileged,
 	})
+
+	devs, err := buildDevices(duts, *sshPort, devices)
+	if err != nil {
+		log.Fatalf("dut config: %v", err)
+	}
+	for _, d := range devs {
+		log.Printf("dut: name=%s ssh-port=%d devices=%v", d.Name, d.SSHPort, d.Devices)
+	}
+
 	var opts []queue.Option
+	opts = append(opts, queue.WithDevices(devs))
 	var apCtl *ap.NMController
 	// Advertise the provisioning-AP creds in /status (for `hitl wifi`) whenever an
 	// SSID is configured — independent of whether the daemon toggles the AP.
@@ -129,6 +145,47 @@ func main() {
 	}
 }
 
+// dutSpec is the JSON shape of a --dut flag value.
+type dutSpec struct {
+	Name    string            `json:"name"`
+	SSHPort int               `json:"ssh_port"`
+	Devices []string          `json:"devices"`
+	Env     map[string]string `json:"env"`
+}
+
+// buildDevices turns the --dut flags into runner.Devices. With no --dut flags it
+// synthesizes a single DUT from the legacy --ssh-port/--device flags, preserving
+// the original single-DUT behavior. It rejects duplicate names and ports so a
+// misconfiguration can't collide two DUTs onto one container port.
+func buildDevices(duts []string, sshPort int, devices []string) ([]runner.Device, error) {
+	if len(duts) == 0 {
+		return []runner.Device{{Name: "dut0", SSHPort: sshPort, Devices: devices}}, nil
+	}
+	var out []runner.Device
+	names, ports := map[string]bool{}, map[int]bool{}
+	for i, raw := range duts {
+		var s dutSpec
+		if err := json.Unmarshal([]byte(raw), &s); err != nil {
+			return nil, fmt.Errorf("--dut #%d %q: %w", i+1, raw, err)
+		}
+		if s.Name == "" {
+			return nil, fmt.Errorf("--dut #%d: name is required", i+1)
+		}
+		if s.SSHPort == 0 {
+			return nil, fmt.Errorf("--dut %q: ssh_port is required", s.Name)
+		}
+		if names[s.Name] {
+			return nil, fmt.Errorf("--dut %q: duplicate name", s.Name)
+		}
+		if ports[s.SSHPort] {
+			return nil, fmt.Errorf("--dut %q: ssh_port %d already used by another DUT", s.Name, s.SSHPort)
+		}
+		names[s.Name], ports[s.SSHPort] = true, true
+		out = append(out, runner.Device{Name: s.Name, SSHPort: s.SSHPort, Devices: s.Devices, Env: s.Env})
+	}
+	return out, nil
+}
+
 func routes(ctx context.Context, mgr *queue.Manager) http.Handler {
 	mux := http.NewServeMux()
 
@@ -148,6 +205,10 @@ func routes(ctx context.Context, mgr *queue.Manager) http.Handler {
 		}
 		if strings.TrimSpace(req.SSHPublicKey) == "" {
 			writeErr(w, http.StatusBadRequest, "ssh_public_key is required")
+			return
+		}
+		if req.Device != "" && !mgr.HasDevice(req.Device) {
+			writeErr(w, http.StatusBadRequest, fmt.Sprintf("unknown device %q; rig has %v", req.Device, mgr.Devices()))
 			return
 		}
 		writeJSON(w, http.StatusAccepted, mgr.Reserve(ctx, req))
