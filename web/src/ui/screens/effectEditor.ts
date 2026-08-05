@@ -45,6 +45,10 @@ import {
 } from "../../effects/ai/generate";
 import { resolveFleetTargets } from "../../effects/fleet";
 import { estimateAcrossDevices, describeFleet } from "../../effects/multiDevice";
+import { estimateFrameTime, DEFAULT_BUDGET_MODEL, type BudgetModel } from "../../effects/costModel";
+import { budgetFromEstimate } from "../../effects/budget";
+import { costTableStore } from "../../store/costTableStore";
+import { BudgetBar } from "./budgetBar";
 import { MidiRouter, isDrivable } from "../../midi/router";
 import { MidiMapPanel } from "../../effects/editor/midi-panel";
 import { midiStore, type UniformBinding } from "../../store/midiStore";
@@ -405,7 +409,34 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   // -- compile status chip --------------------------------------------------
   const statusEl = document.createElement("div");
   statusEl.className = "fxedit-status";
-  editorWrap.append(codeWrap, statusEl);
+
+  // -- FUG-11 budget bar ----------------------------------------------------
+  // The color-coded fraction of the frame budget the current program consumes,
+  // estimated OFFLINE from the resolved device cost model (real-C6-calibrated
+  // when a device profile is stored, else the shipped default) for the active
+  // map's LED count. Shown right under the compile status so the "will this hit
+  // framerate?" signal is visible while authoring — no device required.
+  const budgetBar = BudgetBar();
+  budgetBar.el.classList.add("fxedit-budget");
+  budgetBar.el.style.display = "none";
+  editorWrap.append(codeWrap, statusEl, budgetBar.el);
+
+  async function updateBudgetBar(bytecode: Uint8Array | null): Promise<void> {
+    if (bytecode === null) {
+      budgetBar.el.style.display = "none";
+      return;
+    }
+    try {
+      const { table } = await costTableStore.resolveTable();
+      const model: BudgetModel = table.budget ?? DEFAULT_BUDGET_MODEL;
+      const ledCount = currentMap ? currentMap.leds.length : 256;
+      const est = estimateFrameTime({ bytecode, ledCount, table });
+      budgetBar.update(budgetFromEstimate(est, model));
+      budgetBar.el.style.display = "";
+    } catch {
+      budgetBar.el.style.display = "none";
+    }
+  }
 
   function setStatusCompiling(): void {
     statusEl.className = "fxedit-status fxedit-status--busy";
@@ -789,10 +820,12 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
       lastBytecode = null;
       disasmPre.textContent = "";
       videoPanel.setBytecode(null);
+      void updateBudgetBar(null);
       return;
     }
     lastBytecode = r.bytecode;
     setStatusOk(`compiled · ${r.uniforms.length} uniforms · ${r.bytecode.length} bytes`);
+    void updateBudgetBar(r.bytecode);
     videoPanel.setBytecode(r.bytecode);
     lastCompileSummary = `OK — ${r.uniforms.length} uniforms, ${r.bytecode.length} bytes`;
     panel.setManifest(r.uniforms);

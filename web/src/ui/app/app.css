@@ -807,6 +807,12 @@ body.is-locked {
 .fxedit-status--busy {
   color: var(--text-dim);
 }
+/* FUG-11 budget bar under the compile status (offline frame-budget estimate). */
+.fxedit-budget {
+  padding: 0.5rem 0.8rem 0.6rem;
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+}
 .fxedit-spinner {
   width: 12px;
   height: 12px;
