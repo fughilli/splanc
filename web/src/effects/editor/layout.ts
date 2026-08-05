@@ -300,6 +300,14 @@ export class FxLayout {
     return !this.state.hidden.includes(id);
   }
 
+  /** Panes currently hidden (closed), in declaration order — drives the "recall
+   * closed pane" menu. Restore one with `setVisible(id, true)`. */
+  hiddenPanes(): { id: string; title: string }[] {
+    return this.order
+      .filter((id) => !this.isVisible(id))
+      .map((id) => ({ id, title: this.panes.get(id)!.title }));
+  }
+
   setVisible(id: string, on: boolean): void {
     const has = this.state.hidden.includes(id);
     if (on && has) this.state.hidden = this.state.hidden.filter((x) => x !== id);
@@ -416,11 +424,14 @@ export class FxLayout {
     requestAnimationFrame(() => this.opts.onRelayout());
   }
 
-  /** Detach a pane's content into its wrapper body and return the wrapper. */
-  private wrapped(id: string, showControls: boolean): HTMLElement {
+  /** Detach a pane's content into its wrapper body and return the wrapper. The
+   * fronted pane of a dock is rendered header-less (`showHeader` false) — its
+   * title and move/hide controls live in the dock's tab strip instead. Only the
+   * center pane, which has no tab strip, still carries its own header. */
+  private wrapped(id: string, showHeader: boolean): HTMLElement {
     const w = this.wrappers.get(id)!;
-    w.setControlsVisible(showControls);
-    w.setHeaderVisible(true);
+    w.setHeaderVisible(showHeader);
+    w.setControlsVisible(showHeader);
     return w.attach();
   }
 
@@ -514,34 +525,73 @@ export class FxLayout {
     return clamp(this.state.edgeSizes[edge] || 0.28, MIN_EDGE, MAX_EDGE);
   }
 
-  /** An edge strip: an optional tab bar (when >1 pane) over the fronted pane. */
+  /** An edge strip: a tab bar (tabs + move/hide controls) over the fronted pane.
+   * The strip is ALWAYS rendered — even for a lone pane — so the controls live in
+   * the strip and the fronted pane needs no header of its own. */
   private renderEdge(edge: Exclude<Dock, "center">): HTMLElement {
     const strip = document.createElement("div");
     strip.className = `fxlayout-edge fxlayout-edge--${edge}`;
     const vis = this.visibleAt(edge);
-    if (vis.length > 1) {
-      const tabs = document.createElement("div");
-      tabs.className = "fxlayout-edgetabs";
-      const activeId = this.state.active[edge] ?? vis[0]!;
-      for (const id of vis) {
-        const spec = this.panes.get(id)!;
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "fxlayout-edgetab" + (id === activeId ? " fxlayout-edgetab--active" : "");
-        btn.textContent = spec.title;
-        btn.addEventListener("click", () => {
+    const cur = this.state.active[edge];
+    const activeId = cur && vis.includes(cur) ? cur : vis[0];
+    if (activeId) {
+      strip.appendChild(
+        this.tabStrip("fxlayout-edgetabs", "fxlayout-edgetab", "fxlayout-edgetab--active", vis, activeId, (id) => {
           this.state.active[edge] = id;
           this.persist();
           this.render();
-        });
-        this.attachDragHandle(btn, id); // long-press → drag to re-dock
-        tabs.appendChild(btn);
-      }
-      strip.appendChild(tabs);
+        }),
+      );
+      strip.appendChild(this.wrapped(activeId, false));
     }
-    const activeId = vis.length > 1 ? (this.state.active[edge] ?? vis[0]!) : vis[0];
-    if (activeId) strip.appendChild(this.wrapped(activeId, true));
     return strip;
+  }
+
+  /** Build a dock's tab strip: a scrollable list of pane tabs plus a right-aligned
+   * move/hide control cluster acting on the fronted pane. Shared by wide edges and
+   * narrow regions (they differ only in CSS class names). */
+  private tabStrip(
+    stripClass: string,
+    tabClass: string,
+    activeClass: string,
+    vis: string[],
+    activeId: string,
+    onPick: (id: string) => void,
+  ): HTMLElement {
+    const strip = document.createElement("div");
+    strip.className = stripClass;
+    const list = document.createElement("div");
+    list.className = "fxlayout-tablist";
+    for (const id of vis) {
+      const spec = this.panes.get(id)!;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = tabClass + (id === activeId ? " " + activeClass : "");
+      btn.textContent = spec.title;
+      btn.addEventListener("click", () => onPick(id));
+      this.attachDragHandle(btn, id); // long-press → drag to re-dock
+      list.appendChild(btn);
+    }
+    strip.appendChild(list);
+    strip.appendChild(this.stripControls(activeId));
+    return strip;
+  }
+
+  /** A move + hide control cluster for the fronted pane, pinned to the right end
+   * of a dock's tab strip. */
+  private stripControls(id: string): HTMLElement {
+    const ctl = document.createElement("div");
+    ctl.className = "fxlayout-tabctl";
+    const move = iconBtn("move", "Move pane", (ev) => {
+      ev.stopPropagation();
+      this.showRelocate(move, id);
+    });
+    const close = iconBtn("close", "Hide pane", (ev) => {
+      ev.stopPropagation();
+      this.setVisible(id, false);
+    });
+    ctl.append(move, close);
+    return ctl;
   }
 
   private dockDivider(edge: Exclude<Dock, "center">, col: string, row: string): HTMLElement {
@@ -645,33 +695,23 @@ export class FxLayout {
     return rows.join(" ");
   }
 
-  /** A narrow region: an optional tab bar (when >1 pane) over the fronted pane. */
+  /** A narrow region: a tab bar (tabs + move/hide controls) over the fronted pane.
+   * Always rendered so the controls live in the strip (see renderEdge). */
   private renderNRegion(r: NRegion): HTMLElement {
     const cell = document.createElement("div");
     cell.className = `fxlayout-nregion fxlayout-nregion--${r}`;
     const vis = this.nvisibleAt(r);
-    if (vis.length > 1) {
-      const tabs = document.createElement("div");
-      tabs.className = "fxlayout-tabs";
-      const activeId = this.nActiveOf(r);
-      for (const id of vis) {
-        const spec = this.panes.get(id)!;
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = "fxlayout-tab" + (id === activeId ? " fxlayout-tab--active" : "");
-        btn.textContent = spec.title;
-        btn.addEventListener("click", () => {
+    const activeId = this.nActiveOf(r);
+    if (activeId) {
+      cell.appendChild(
+        this.tabStrip("fxlayout-tabs", "fxlayout-tab", "fxlayout-tab--active", vis, activeId, (id) => {
           this.state.nactive[r] = id;
           this.persist();
           this.render();
-        });
-        this.attachDragHandle(btn, id); // long-press → drag to another region
-        tabs.appendChild(btn);
-      }
-      cell.appendChild(tabs);
+        }),
+      );
+      cell.appendChild(this.wrapped(activeId, false));
     }
-    const activeId = this.nActiveOf(r);
-    if (activeId) cell.appendChild(this.wrapped(activeId, true));
     return cell;
   }
 
@@ -767,7 +807,26 @@ export class FxLayout {
       pop.appendChild(hide);
     }
 
-    anchor.parentElement?.appendChild(pop);
+    // Position fixed off the button's rect, flipping so the menu stays fully
+    // on-screen when the button sits near the right/bottom edges (the old absolute
+    // anchor pinned the menu's top-left to the button, so it clipped off those
+    // edges). Measure hidden, then place.
+    pop.style.position = "fixed";
+    pop.style.visibility = "hidden";
+    document.body.appendChild(pop);
+    const a = anchor.getBoundingClientRect();
+    const m = 4;
+    const pw = pop.offsetWidth;
+    const ph = pop.offsetHeight;
+    let left = a.left;
+    if (left + pw > window.innerWidth - m) left = a.right - pw; // right-align to button
+    left = clamp(left, m, Math.max(m, window.innerWidth - pw - m));
+    let top = a.bottom + 2;
+    if (top + ph > window.innerHeight - m) top = a.top - ph - 2; // flip above the button
+    top = clamp(top, m, Math.max(m, window.innerHeight - ph - m));
+    pop.style.left = `${left}px`;
+    pop.style.top = `${top}px`;
+    pop.style.visibility = "";
     const onDoc = (ev: MouseEvent) => {
       if (!pop.contains(ev.target as Node) && ev.target !== anchor) this.closeRelocate();
     };
