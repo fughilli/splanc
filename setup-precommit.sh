@@ -1,21 +1,38 @@
 #!/bin/bash
 
-# Setup script for pre-commit hooks (see .pre-commit-config.yaml).
+# Setup script for the presubmit lint hooks (see .pre-commit-config.yaml).
+#
+# The lint gate is run by prek — a single-binary, drop-in reimplementation of
+# pre-commit that reads the same .pre-commit-config.yaml. Agent containers
+# install it automatically (.claude-container-overlay/), and CI runs the same
+# binary (.github/workflows/test.yaml); this script is for humans setting up a
+# local checkout. Once installed, the hooks run on every `git commit`.
 set -e
 
-if ! command -v python3 &> /dev/null; then
-    echo "Error: Python 3 is required but not installed."
-    exit 1
+PREK_VERSION=0.4.12
+
+if command -v prek &> /dev/null; then
+    echo "prek already installed: $(prek --version)"
+else
+    echo "Installing prek ${PREK_VERSION}..."
+    if command -v uv &> /dev/null; then
+        uv tool install "prek==${PREK_VERSION}"
+    elif command -v pipx &> /dev/null; then
+        pipx install "prek==${PREK_VERSION}"
+    elif command -v pip3 &> /dev/null; then
+        pip3 install "prek==${PREK_VERSION}"
+    else
+        echo "Error: need one of uv, pipx, or pip3 to install prek."
+        echo "See https://github.com/j178/prek for other install methods."
+        exit 1
+    fi
 fi
 
-echo "Installing pre-commit..."
-pip3 install pre-commit
-
 echo "Installing git hooks..."
-pre-commit install
+prek install --prepare-hooks
 
-echo "Running pre-commit on all files..."
-pre-commit run --all-files
+echo "Running lints on all files..."
+prek run --all-files
 
-echo "Pre-commit setup complete. Hooks run on every commit;"
-echo "run manually with: pre-commit run --all-files"
+echo "Presubmit setup complete. Hooks run on every commit;"
+echo "run manually with: prek run --all-files"
