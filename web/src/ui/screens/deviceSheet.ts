@@ -310,7 +310,12 @@ function trustCert(certUrl: string): void {
     } catch {
       /* cross-origin close may be refused — the reconnect covers it */
     }
-    if (wssUrl) appState.connect(wssUrl); // fresh client, cert now trusted
+    // Retry over the backoff (not the default single cold attempt): the cert is
+    // trusted now, so a failure here is a transient — the player freeing the TLS
+    // slot the socket we just closed still holds — that clears within seconds.
+    // Without this the one attempt often lands mid-linger and the user is bounced
+    // back to "trust needed", having to reconnect by hand.
+    if (wssUrl) appState.connect(wssUrl, undefined, { coldRetryLimit: 6 });
     toast("Certificate trusted — connecting…");
   };
   window.addEventListener("message", (ev: MessageEvent): void => {

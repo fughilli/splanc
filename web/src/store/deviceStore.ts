@@ -154,16 +154,41 @@ class DeviceStore {
 
   /** Fold a device's `welcome` (mac + device name) into its record: adopt the
    * MAC and, unless a rename is queued, the device's own name as the display
-   * name. */
+   * name. Also collapses any OTHER record for the same physical device.
+   *
+   * The store dedups by URL string (idForUrl), but the same player is reachable
+   * under different URL spellings — BLE-onboarding registers wss://ledmapper.local/ws
+   * while "add device by address" adds wss://<ip>, and a manual entry can differ
+   * from a prior one only by an added port/path. Each spelling is a distinct id,
+   * so the same device shows up twice. The `welcome` MAC is the true hardware
+   * identity, so once we learn it we merge any duplicate that shares it into THIS
+   * record — the freshly-connected one, whose URL we know is reachable — folding
+   * the absorbed record's user-set fields (folder, BLE id, a queued rename, a
+   * user-given name) in so nothing is lost. */
   applyWelcome(id: string, welcome: { mac?: string; deviceName?: string }): void {
-    this.mutate(id, (d) => {
-      if (welcome.mac) d.bleMac = welcome.mac;
-      if (welcome.deviceName && !d.pendingName) {
-        d.label = welcome.deviceName;
+    const list = read();
+    const d = list.find((x) => x.id === id);
+    if (!d) return;
+    if (welcome.mac) d.bleMac = welcome.mac;
+    if (welcome.deviceName && !d.pendingName) {
+      d.label = welcome.deviceName;
+      d.named = true;
+    }
+    d.lastSeen = new Date().toISOString();
+    const dups = welcome.mac ? list.filter((x) => x.id !== id && x.bleMac === welcome.mac) : [];
+    for (const dup of dups) {
+      if (!d.folder && dup.folder) d.folder = dup.folder;
+      if (!d.bleId && dup.bleId) d.bleId = dup.bleId;
+      if (!d.pendingName && dup.pendingName) d.pendingName = dup.pendingName;
+      if (!d.named && dup.named) {
+        d.label = dup.label;
         d.named = true;
       }
-      d.lastSeen = new Date().toISOString();
-    });
+    }
+    write(dups.length ? list.filter((x) => !dups.includes(x)) : list);
+    const active = this.activeId();
+    if (active && dups.some((x) => x.id === active)) this.setActive(id);
+    this.emit();
   }
 
   /** Record the Web Bluetooth device id captured during BLE provisioning, keyed

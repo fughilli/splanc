@@ -49,11 +49,20 @@ class AppState {
   /** Connect to a device by wss URL, tearing down any current client. Records
    * it in the known-devices list and marks it active. Reconnect + cert-trust
    * are handled here so the pill/sheet reflect them everywhere. */
-  connect(wssUrl: string, label?: string): void {
+  connect(wssUrl: string, label?: string, opts?: { coldRetryLimit?: number }): void {
     this.disconnect();
     const dev = deviceStore.upsert(wssUrl, label);
     deviceStore.setActive(dev.id);
-    const client = new LedMapperClient(wssUrl);
+    // coldRetryLimit defaults to 1 (give up fast on an untrusted cert so we don't
+    // starve the cert-approval page's TLS slot). The trust flow passes a higher
+    // value: once the user has accepted the cert the only thing left that can
+    // fail is a transient — the player freeing a TLS slot the just-closed socket
+    // still holds — so retry over the backoff instead of dumping the user back to
+    // "trust needed" and making them reconnect by hand.
+    const client = new LedMapperClient(
+      wssUrl,
+      opts?.coldRetryLimit !== undefined ? { coldRetryLimit: opts.coldRetryLimit } : {},
+    );
     this.client = client;
     client.events = {
       onConnecting: (attempt, url) =>
