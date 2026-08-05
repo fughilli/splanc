@@ -197,10 +197,12 @@ func (m *Manager) Release(ctx context.Context, id, reason string) error {
 		if err := m.run.Stop(ctx, id); err != nil {
 			log.Printf("release: stop container for %s: %v", id, err)
 		}
-		// Drop the AP with the holder. If a waiter is promoted below, reconcile
-		// brings it back up for the new holder. (Idempotent, so with several DUTs
-		// active the shared AP simply stays up.)
-		m.apDown(ctx)
+		// Drop the shared AP only when no other DUT stays active — otherwise a
+		// concurrent holder would lose it. If a waiter is promoted below, reconcile
+		// brings it back up. (Single-DUT: releasing the sole holder always drops it.)
+		if !m.anyOtherActiveLocked(id) {
+			m.apDown(ctx)
+		}
 	}
 	delete(m.keys, id)
 	delete(m.want, id)
@@ -307,13 +309,9 @@ func (m *Manager) viewLocked(id string) *api.Reservation {
 // failed start doesn't strand the rest.
 func (m *Manager) reconcileLocked(ctx context.Context) {
 	for {
-		dev := m.freeDeviceLocked()
+		dev, head := m.nextAssignmentLocked()
 		if dev == nil {
-			return // every DUT busy
-		}
-		head := m.nextWaiterForLocked(dev.Name)
-		if head == nil {
-			return // no waiter wants a free DUT
+			return // no free DUT has a compatible waiter
 		}
 		ep, err := m.run.Start(ctx, head.ID, head.Owner, m.keys[head.ID], *dev)
 		if err != nil {
@@ -337,9 +335,22 @@ func (m *Manager) reconcileLocked(ctx context.Context) {
 	}
 }
 
-// freeDeviceLocked returns a DUT with no active holder, in configured order, or
-// nil if all are busy.
-func (m *Manager) freeDeviceLocked() *runner.Device {
+// anyOtherActiveLocked reports whether any reservation other than exceptID is
+// currently active (i.e. another DUT is still held).
+func (m *Manager) anyOtherActiveLocked(exceptID string) bool {
+	for _, r := range m.items {
+		if r.ID != exceptID && r.State == api.StateActive {
+			return true
+		}
+	}
+	return false
+}
+
+// nextAssignmentLocked finds a free DUT paired with the earliest queued waiter
+// that can run on it, or (nil, nil) if no such pair exists. It scans every free
+// DUT — not just the first — so a waiter pinned to a later DUT still activates
+// while an earlier DUT sits free with no compatible work.
+func (m *Manager) nextAssignmentLocked() (*runner.Device, *api.Reservation) {
 	busy := map[string]bool{}
 	for _, r := range m.items {
 		if r.State == api.StateActive {
@@ -347,11 +358,14 @@ func (m *Manager) freeDeviceLocked() *runner.Device {
 		}
 	}
 	for i := range m.devices {
-		if !busy[m.devices[i].Name] {
-			return &m.devices[i]
+		if busy[m.devices[i].Name] {
+			continue
+		}
+		if head := m.nextWaiterForLocked(m.devices[i].Name); head != nil {
+			return &m.devices[i], head
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 // nextWaiterForLocked returns the earliest queued reservation that can run on the

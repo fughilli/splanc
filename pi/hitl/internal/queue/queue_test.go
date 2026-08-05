@@ -261,6 +261,49 @@ func TestPinnedDeviceRouting(t *testing.T) {
 	}
 }
 
+// With several DUTs active, the shared provisioning AP stays up until the LAST
+// one releases — releasing one concurrent holder must not drop it on the other.
+func TestAPStaysUpWhileAnyDUTActive(t *testing.T) {
+	ctx := context.Background()
+	fap := &fakeAP{}
+	m := New("rig", 30*time.Minute, &fakeRunner{}, WithDevices([]runner.Device{
+		{Name: "c6-0", SSHPort: 2222},
+		{Name: "c6-1", SSHPort: 2223},
+	}), WithAP(fap))
+
+	a := m.Reserve(ctx, api.ReserveRequest{Owner: "a"}) // dut up → AP up
+	b := m.Reserve(ctx, api.ReserveRequest{Owner: "b"}) // second dut up
+	if fap.ups == 0 {
+		t.Fatalf("AP should be up with DUTs active: ups=%d", fap.ups)
+	}
+	if err := m.Release(ctx, a.ID, "done"); err != nil {
+		t.Fatalf("release a: %v", err)
+	}
+	if fap.downs != 0 {
+		t.Errorf("AP must stay up while b is still active, got downs=%d", fap.downs)
+	}
+	if err := m.Release(ctx, b.ID, "done"); err != nil {
+		t.Fatalf("release b: %v", err)
+	}
+	if fap.downs != 1 {
+		t.Errorf("AP should drop once the last DUT releases, got downs=%d", fap.downs)
+	}
+}
+
+// A waiter pinned to the SECOND DUT must activate on it even while the first DUT
+// sits free with no compatible work — reconcile has to scan every free DUT, not
+// just the first, or the pin strands forever.
+func TestPinnedToSecondDUTActivatesWhileFirstFree(t *testing.T) {
+	ctx := context.Background()
+	fr := &fakeRunner{}
+	m := twoDUTs(fr)
+
+	r := m.Reserve(ctx, api.ReserveRequest{Owner: "a", Device: "c6-1"})
+	if r.State != api.StateActive || r.Device != "c6-1" {
+		t.Fatalf("pin to the second DUT should activate on c6-1 (c6-0 free), got state=%q dev=%q", r.State, r.Device)
+	}
+}
+
 // Status keeps the legacy summary usable by old clients: while a DUT is free the
 // rig reports idle (Active=nil, queue 0); once every DUT is busy it names a holder
 // and counts the still-unassigned waiters. The per-DUT breakdown is always present.

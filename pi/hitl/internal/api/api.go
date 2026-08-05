@@ -76,12 +76,12 @@ type Reservation struct {
 // count the unassigned waiters. Devices carries the full per-DUT breakdown for
 // newer clients.
 type Status struct {
-	Rig          string         `json:"rig"`              // rig name/hostname
-	Active       *Reservation   `json:"active"`           // a busy DUT's holder, or null if any DUT is free
-	QueueLength  int            `json:"queue_length"`     // waiters not yet assigned a DUT (0 while any DUT is free)
+	Rig          string         `json:"rig"`               // rig name/hostname
+	Active       *Reservation   `json:"active"`            // a busy DUT's holder, or null if any DUT is free
+	QueueLength  int            `json:"queue_length"`      // waiters not yet assigned a DUT (0 while any DUT is free)
 	Devices      []DeviceStatus `json:"devices,omitempty"` // per-DUT state (newer clients)
-	LeaseSeconds int            `json:"lease_seconds"`    // heartbeat lease window
-	WiFi         *WiFiInfo      `json:"wifi,omitempty"`   // the rig's own provisioning AP, if it runs one
+	LeaseSeconds int            `json:"lease_seconds"`     // heartbeat lease window
+	WiFi         *WiFiInfo      `json:"wifi,omitempty"`    // the rig's own provisioning AP, if it runs one
 }
 
 // DeviceStatus is one DUT's slice of the rig's Status.
