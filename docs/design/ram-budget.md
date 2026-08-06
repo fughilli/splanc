@@ -89,6 +89,21 @@ draws, paired with the device's `esp_get_free_heap_size()`:
    drop: loopTask 24 → 18 KiB, `httpd_ssl` 28 → 20 KiB** (~14 KiB of heap back),
    sized ~1.5× over the objdump-measured deepest handler chain (~11–12 KiB) and
    watched live by the `[stack]` high-water log. *(done)*
-4. **Ruthless static cuts**: right-size `rx` (stream the upload instead of
-   reassembling 32 KiB), `FX_ARENA`/`FX_TEX_PREV`. *(follow-up)*
+4. **Lazily heap-allocate the FX buffers** (`FX_ARENA` 24 K + `FX_TEX_PREV` 8 K +
+   `FX_BYTES` 4 K ≈ **36 KiB**): these are `static mut` arrays reserved for the
+   whole process, but no effect is loaded during a *capture* — exactly the
+   TLS-heavy window — so they are pure dead weight there. Allocate on
+   `lm_fx_load` / first `set_texture`, free on clear. Blocker: the FFI crate is
+   `#![no_std]` with no allocator, so this needs a `#[global_allocator]` (an
+   ESP-IDF `malloc`/`free` wrapper, cfg-gated so the host test keeps std's).
+   `ffi_test` already exercises `lm_fx_load`/`update`/`shade`, so the lifecycle
+   is host-verifiable. *(follow-up — highest-value remaining reclaim)*
+5. **Right-size `rx` (32 KiB)**: sized for a full 256-LED `submit_map`, but the
+   phone uploads the fat `OutputMap` (trajectory + per-LED confidence/n_views/
+   rms/parallax) that the device *skips* — it only reads `id`+`xyz` (~26 B/LED,
+   ~7 KiB for 256). Have the phone send a lean `submit_map` (strip the ignored
+   fields in `client.submitMap`), then drop `rx`. Faster uploads too — directly
+   the long-capture path. Caveat: reduce `rx` and the leaner wire together, and
+   mind version skew (a stale cached app sending a fat map to a small `rx` would
+   hit the 1009 "too big" close). *(follow-up)*
 
