@@ -468,6 +468,18 @@ pub unsafe extern "C" fn lm_color_correction_params(out: *mut f32) -> i32 {
     0
 }
 
+/// Whether the latest color-correction update should be committed to flash
+/// (returns 1) or applied from RAM only (0, live preview). The firmware reads
+/// this alongside `lm_color_correction_params` when the generation changes.
+#[no_mangle]
+pub unsafe extern "C" fn lm_color_correction_commit() -> i32 {
+    if player().color_correction_commit() {
+        1
+    } else {
+        0
+    }
+}
+
 fn encode_reply(reply: &pb::ServerMessage, out: *mut u8, out_cap: usize) -> i32 {
     let mut enc = PbEncoder::new(micropb::heapless::Vec::<u8, REPLY_CAP>::new());
     if reply.encode(&mut enc).is_err() {

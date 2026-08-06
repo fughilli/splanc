@@ -130,19 +130,23 @@ export function ColorCorrectionScreen(_router: Router): Screen {
     }
   }
 
-  // Debounced, fire-and-forget push so a drag doesn't thrash the device flash.
+  // Debounced, fire-and-forget push. Live edits go with commit=false so the
+  // device applies the LUT from RAM (a drag doesn't thrash flash); the profile is
+  // committed to flash once — on an explicit push or when the screen closes.
   let pushTimer = 0;
-  function pushNow(): void {
+  let pendingCommit = false; // a RAM-only preview is on the device, not persisted
+  function pushNow(commit: boolean): void {
     const c = appState.client;
     if (!c?.isConnected) return;
     void c
-      .setColorCorrection({ gamma: profile.gamma, luminance: profile.luminance })
+      .setColorCorrection({ gamma: profile.gamma, luminance: profile.luminance, commit })
       .catch(() => undefined);
+    pendingCommit = !commit;
   }
   function schedulePush(): void {
     if (!live) return;
     window.clearTimeout(pushTimer);
-    pushTimer = window.setTimeout(pushNow, PUSH_DEBOUNCE_MS);
+    pushTimer = window.setTimeout(() => pushNow(false), PUSH_DEBOUNCE_MS);
   }
 
   // Called whenever the profile changes: repaint the plot + simulator, persist,
@@ -297,19 +301,19 @@ export function ColorCorrectionScreen(_router: Router): Screen {
       onClick: () => {
         live = !live;
         rebuildControls();
-        if (live) pushNow();
+        if (live) pushNow(false);
       },
     });
     const pushBtn = Button({
-      label: connected ? "Push to device" : "Connect a device to push",
+      label: connected ? "Push & save to device" : "Connect a device to push",
       block: true,
       onClick: () => {
         if (!appState.client?.isConnected) {
           toast("No device connected", { error: true });
           return;
         }
-        pushNow();
-        toast("Curves pushed");
+        pushNow(true);
+        toast("Curves pushed & saved");
       },
     });
     const ctl = document.createElement("div");
@@ -340,7 +344,11 @@ export function ColorCorrectionScreen(_router: Router): Screen {
 
   return {
     el,
-    onUnmount: () => window.clearTimeout(pushTimer),
+    onUnmount: () => {
+      window.clearTimeout(pushTimer);
+      // Commit whatever was being previewed live (device RAM) to flash on close.
+      if (pendingCommit) pushNow(true);
+    },
   };
 }
 

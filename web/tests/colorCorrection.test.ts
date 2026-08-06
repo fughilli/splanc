@@ -94,17 +94,20 @@ test("set_color_correction round-trips through the wire (explicit params)", () =
     lumR: 1,
     lumG: 1,
     lumB: 1,
+    commit: false,
   } as unknown as Parameters<typeof encodeClient>[0];
   const back = decodeClient(encodeClient(msg)) as unknown as {
     type: string;
     gammaR: number;
     gammaG: number;
     lumB: number;
+    commit: boolean;
   };
   assert.equal(back.type, "set_color_correction");
   assert.ok(Math.abs(back.gammaR - 2.2) < 1e-4);
   assert.ok(Math.abs(back.gammaG - 2.8) < 1e-4);
   assert.equal(back.lumB, 1);
+  assert.equal(back.commit, false);
 });
 
 test("set_color_correction round-trips a named profile", () => {

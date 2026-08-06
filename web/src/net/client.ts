@@ -460,6 +460,9 @@ export class LedMapperClient {
     profile?: string;
     gamma?: [number, number, number];
     luminance?: [number, number, number];
+    /** Persist to flash (default). Pass false for live preview so a rapid drag
+     * stream stays in device RAM; send one commit:true when done. */
+    commit?: boolean;
   }): Promise<WelcomeMessage> {
     const msg: Record<string, unknown> = { type: "set_color_correction" };
     if (cc.profile !== undefined) msg.profile = cc.profile;
@@ -473,6 +476,7 @@ export class LedMapperClient {
       msg.lumG = cc.luminance[1];
       msg.lumB = cc.luminance[2];
     }
+    if (cc.commit !== undefined) msg.commit = cc.commit;
     return (await this.request(
       msg as unknown as ClientMessage,
       "welcome",

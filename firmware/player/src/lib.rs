@@ -234,6 +234,10 @@ pub struct Player {
     /// set_device_name) to regenerate and re-persist the flash LUT on a change.
     color_correction: ColorCorrection,
     color_correction_gen: u32,
+    /// Whether the latest color-correction update should be committed to flash
+    /// (true) or applied from RAM only (false, live preview) — see the `commit`
+    /// field on `set_color_correction`.
+    color_correction_commit: bool,
 }
 
 impl Player {
@@ -252,6 +256,7 @@ impl Player {
             playback_gen: 0,
             color_correction: ColorCorrection::WS2812B,
             color_correction_gen: 0,
+            color_correction_commit: true,
         }
     }
 
@@ -349,6 +354,9 @@ impl Player {
             // per-channel LUTs, and persists them to flash.
             CMsg::SetColorCorrection(m) => {
                 self.color_correction = color_correction_from(&m);
+                // Unset commit defaults to true (persist); a live-preview stream
+                // sends commit=false to stay in RAM until the UI settles.
+                self.color_correction_commit = m.r#commit().copied().unwrap_or(true);
                 self.color_correction_gen = self.color_correction_gen.wrapping_add(1);
                 Some(self.welcome())
             }
@@ -624,6 +632,12 @@ impl Player {
     /// which the firmware turns into the flash LUTs.
     pub fn color_correction(&self) -> ([f32; 3], [f32; 3]) {
         (self.color_correction.gamma, self.color_correction.luminance)
+    }
+
+    /// Whether the latest color-correction update should be committed to flash
+    /// (true) or applied from RAM only (false — live preview).
+    pub fn color_correction_commit(&self) -> bool {
+        self.color_correction_commit
     }
 
     fn welcome(&self) -> pb::ServerMessage {

@@ -338,6 +338,14 @@ static void lut_generate_and_store(const cc::GammaProfile &profile) {
   g_lut = g_lut_ram;  // no filesystem / mapping failed — serve from RAM
 }
 
+// Live preview: build the LUT into RAM and point the render path at it WITHOUT
+// touching flash, so a rapid stream of updates (dragging curves in the UI)
+// doesn't hammer littlefs. The next commit (or a reboot) reconciles flash.
+static void lut_apply_ram(const cc::GammaProfile &profile) {
+  cc::build_lut(profile, g_lut_ram);
+  g_lut = g_lut_ram;
+}
+
 // Boot: use the LUT already in flash if present, else generate + persist the
 // default WS2812B table. Runs after fs_begin_and_restore, but works even when
 // the littlefs mount failed (it maps the raw partition / falls back to RAM), so
@@ -359,9 +367,16 @@ static void poll_color_correction() {
   float p[6];
   if (lm_color_correction_params(p) != 0) return;
   cc::GammaProfile prof = {{p[0], p[1], p[2]}, {p[3], p[4], p[5]}};
-  lut_generate_and_store(prof);
-  Log().printf("[cc] updated gamma=%.2f/%.2f/%.2f lum=%.0f/%.0f/%.0f (gen=%u)\n",
-               p[0], p[1], p[2], p[3], p[4], p[5], gen);
+  // commit=true persists to flash; commit=false is a live preview kept in RAM
+  // (the UI streams previews while dragging, then commits once when it closes).
+  bool commit = lm_color_correction_commit() != 0;
+  if (commit) {
+    lut_generate_and_store(prof);
+  } else {
+    lut_apply_ram(prof);
+  }
+  Log().printf("[cc] updated gamma=%.2f/%.2f/%.2f lum=%.0f/%.0f/%.0f commit=%d (gen=%u)\n",
+               p[0], p[1], p[2], p[3], p[4], p[5], (int)commit, gen);
 }
 
 // Map an 8-bit RGB triple through the active per-channel LUT (indexed directly

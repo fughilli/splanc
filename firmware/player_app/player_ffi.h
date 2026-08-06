@@ -32,6 +32,9 @@ int32_t lm_device_name(uint8_t *out, size_t cap);
 // success, -1 if out is null.
 uint32_t lm_color_correction_gen(void);
 int32_t lm_color_correction_params(float *out);
+// 1 = commit the latest color-correction update to flash; 0 = apply from RAM
+// only (live preview). Read alongside lm_color_correction_params on a change.
+int32_t lm_color_correction_commit(void);
 
 // Handle one received protocol frame (a binary WebSocket message).
 // recv_ms/send_ms are the player clock (millis()) at receive / reply time,
