@@ -57,3 +57,22 @@ common --experimental_isolated_extension_usages
 startup --host_jvm_args=-Xmx1500m
 build --local_resources=memory=2048
 build --jobs=3
+
+# --- TouchDesigner Custom OP plugins (//tools/touchdesigner) ------------------
+# The plugin/.tox targets build only on macOS/Windows (TD is not on Linux) and
+# rely on two external toolchains that can't be vendored into the workspace:
+#
+#   * Apple's toolchain (Xcode Command Line Tools) to compile the C++ shim and
+#     emit a loadable macOS bundle. Bazel's apple cc toolchain autodetects it;
+#     point at a specific Xcode with `DEVELOPER_DIR=/Applications/Xcode.app/...`
+#     or `xcode-select -s`. `--config=td` pins the deployment target to match
+#     the bundle's Info.plist (LSMinimumSystemVersion 10.14).
+#   * The Derivative TD SDK headers, fetched by default as @touchdesigner_sdk.
+#     To build against a local checkout instead of the network archive, bring
+#     it into the workspace with:
+#       bazel build --config=td \
+#         --override_repository=touchdesigner_sdk=/path/to/CustomOperatorSamples \
+#         //tools/touchdesigner/plugin:ledmapper_texture
+#     (The override dir must have the CustomOperatorSamples layout referenced by
+#     //third_party/touchdesigner:sdk.BUILD.)
+build:td --macos_minimum_os=10.14

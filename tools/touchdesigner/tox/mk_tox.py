@@ -44,8 +44,10 @@ def main():
 
     with tarfile.open(args.out, "w:gz") as tar:
         for p in args.plugins:
-            # Only ship the loadable shared library, not import/archive stubs.
-            if p.endswith((".so", ".dylib", ".dll")) or "." not in os.path.basename(p):
+            # macOS ships a `<Name>.plugin` bundle (a directory); Windows ships a
+            # bare `.dll`. Add the bundle whole, the .dll on its own, and skip
+            # import/archive stubs (.lib/.a/.exp) that ride along on Windows.
+            if os.path.isdir(p) or p.endswith((".plugin", ".dll")):
                 tar.add(p, arcname=f"plugin/{os.path.basename(p)}")
         tar.add(args.finalizer, arcname="build_tox.py")
         notes = INSTALL.format(optype=args.optype).encode()
