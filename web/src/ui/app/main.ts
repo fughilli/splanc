@@ -33,6 +33,7 @@ import { CalibrateScreen } from "../screens/calibrate";
 import { PerfProfilesScreen } from "../screens/perfProfiles";
 import { SettingsScreen } from "../screens/settings";
 import { MidiScreen } from "../screens/midi";
+import { ColorCorrectionScreen } from "../screens/colorCorrection";
 import { initAppearance } from "../../store/appearance";
 
 async function main(): Promise<void> {
@@ -113,6 +114,10 @@ async function main(): Promise<void> {
     .add("/settings/midi", () => {
       shell.setChrome({ title: "MIDI", back: true, tabs: true });
       return MidiScreen(router);
+    })
+    .add("/settings/color-correction", () => {
+      shell.setChrome({ title: "Color correction", back: true, tabs: true });
+      return ColorCorrectionScreen(router);
     })
     .add("/capture", (m) => {
       shell.setChrome({ title: "Capture", back: true, tabs: false, overlay: true });
