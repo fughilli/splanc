@@ -139,6 +139,12 @@ body.is-locked {
 }
 
 /* --- map browser --- */
+.maps-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-2);
+}
 .maps-search {
   display: flex;
   align-items: center;

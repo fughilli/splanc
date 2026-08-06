@@ -11,6 +11,15 @@
 
 import type { OutputMap, Topology } from "@ledmapper/protocol";
 import { decodeMappingBundle, encodeMappingBundle } from "../net/proto";
+import {
+  base64ToBytes,
+  bytesToBase64,
+  decodeLibraryBundle,
+  encodeLibraryBundle,
+  planImport,
+  type ConflictMode,
+  type LibraryBundleEntry,
+} from "./mapBundle";
 import { MapView } from "../ui/mapview";
 
 /** Denormalized summary for the browser list (design doc §5.2). */
@@ -414,14 +423,103 @@ class MapStore {
   async exportBundle(id: string): Promise<Uint8Array> {
     const rec = await this.get(id);
     if (!rec) throw new Error("no such map");
-    const topology: Topology = rec.topology ?? {
-      mapId: rec.map.mapId,
-      branchPoints: [],
-      segments: [],
-      associations: [],
-    };
-    return encodeMappingBundle({ map: rec.map, topology });
+    return encodeMappingBundle({ map: rec.map, topology: rec.topology ?? emptyTopology(rec.map.mapId) });
   }
+
+  /** Export every map (or the given subset) into a single portable library
+   * bundle (FUG-77) — each map's .binpb payload plus its library metadata
+   * (name, description, tags, folder). Round-trips through
+   * {@link importLibraryBundle}. */
+  async exportLibraryBundle(ids?: string[]): Promise<Uint8Array> {
+    const summaries = await this.list();
+    const want = ids ? summaries.filter((s) => ids.includes(s.id)) : summaries;
+    const entries: LibraryBundleEntry[] = [];
+    for (const s of want) {
+      const rec = await this.get(s.id);
+      if (!rec) continue;
+      const binpb = encodeMappingBundle({
+        map: rec.map,
+        topology: rec.topology ?? emptyTopology(rec.map.mapId),
+      });
+      const entry: LibraryBundleEntry = {
+        name: s.name,
+        description: s.description,
+        tags: s.tags,
+        bundle: bytesToBase64(binpb),
+      };
+      if (s.folder) entry.folder = s.folder;
+      if (s.deviceMapId) entry.deviceMapId = s.deviceMapId;
+      entries.push(entry);
+    }
+    return encodeLibraryBundle(entries);
+  }
+
+  /** Import a library bundle (FUG-77), resolving same-name collisions per
+   * `opts.mode` (see {@link planImport}). Returns how many maps were added vs
+   * overwritten in place. */
+  async importLibraryBundle(
+    bytes: Uint8Array,
+    opts: { mode: ConflictMode; folder?: string },
+  ): Promise<{ imported: number; overwritten: number }> {
+    const entries = decodeLibraryBundle(bytes);
+    const summaries = await this.list();
+    const plan = planImport(
+      summaries.map((s) => ({ id: s.id, name: s.name, folder: s.folder ?? "" })),
+      entries,
+      opts,
+    );
+    // Track device-map ids already spoken for, so a created copy never claims
+    // an identity another library entry already holds (would break pull dedup).
+    const usedDeviceIds = new Set(
+      summaries.map((s) => s.deviceMapId).filter((x): x is string => !!x),
+    );
+
+    let imported = 0;
+    let overwritten = 0;
+    for (const p of plan) {
+      const decoded = decodeMappingBundle(base64ToBytes(p.entry.bundle));
+      if (!decoded.map || decoded.map.leds.length === 0) continue; // skip empty
+      const hasTopo = !!decoded.topology && decoded.topology.segments.length > 0;
+      const topology = hasTopo ? decoded.topology : emptyTopology(decoded.map.mapId);
+
+      if (p.overwriteId !== undefined) {
+        // Full replace in place (topology too — even to empty), keeping the id.
+        await this.setMap(p.overwriteId, decoded.map, topology);
+        const patch: Partial<StoredMapSummary> = {
+          name: p.name,
+          description: p.entry.description,
+          tags: normTags(p.entry.tags),
+          folder: p.folder,
+        };
+        if (p.entry.deviceMapId) patch.deviceMapId = p.entry.deviceMapId;
+        await this.patchSummary(p.overwriteId, patch);
+        overwritten++;
+        continue;
+      }
+
+      const input: CreateInput = { map: decoded.map, source: "import", name: p.name };
+      if (hasTopo) input.topology = topology;
+      let dev = p.entry.deviceMapId;
+      if (dev && usedDeviceIds.has(dev)) dev = undefined;
+      if (dev) {
+        input.deviceMapId = dev;
+        usedDeviceIds.add(dev);
+      }
+      const id = await this.create(input);
+      await this.patchSummary(id, {
+        description: p.entry.description,
+        tags: normTags(p.entry.tags),
+        folder: p.folder,
+      });
+      imported++;
+    }
+    return { imported, overwritten };
+  }
+}
+
+/** Empty topology skeleton keyed to a map (unset-topology placeholder). */
+function emptyTopology(mapId: string): Topology {
+  return { mapId, branchPoints: [], segments: [], associations: [] };
 }
 
 /** Off-screen MapView snapshot → dataURL (design doc §5.4). Fixed orbit, LEDs
