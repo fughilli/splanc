@@ -38,7 +38,7 @@ symbols:
 
 | bytes | symbol | notes |
 |------:|--------|-------|
-| 32 KiB | `rx` | WS reassembly buffer, sized for a full 256-LED `submit_map` (~96 B/LED over the wire). |
+| 32 KiB | `rx` | WS reassembly buffer (baseline; now 12 KiB — large uploads stream to flash, #46). |
 | 24 KiB | `FX_ARENA` | fx VM hidden-buffer/texture arena. |
 | 16 KiB | `ARENA_MEM` | map+topology decode arena. |
 |  8 KiB | `FX_TEX_PREV` | previous video-texture frame (delta decode). |
@@ -98,12 +98,9 @@ draws, paired with the device's `esp_get_free_heap_size()`:
    ESP-IDF `malloc`/`free` wrapper, cfg-gated so the host test keeps std's).
    `ffi_test` already exercises `lm_fx_load`/`update`/`shade`, so the lifecycle
    is host-verifiable. *(follow-up — highest-value remaining reclaim)*
-5. **Right-size `rx` (32 KiB)**: sized for a full 256-LED `submit_map`, but the
-   phone uploads the fat `OutputMap` (trajectory + per-LED confidence/n_views/
-   rms/parallax) that the device *skips* — it only reads `id`+`xyz` (~26 B/LED,
-   ~7 KiB for 256). Have the phone send a lean `submit_map` (strip the ignored
-   fields in `client.submitMap`), then drop `rx`. Faster uploads too — directly
-   the long-capture path. Caveat: reduce `rx` and the leaner wire together, and
-   mind version skew (a stale cached app sending a fat map to a small `rx` would
-   hit the 1009 "too big" close). *(follow-up)*
+5. **`rx` reassembly buffer (32 KiB)** — *done upstream in #46 (FUG-74):* large
+   map/topology uploads are now sharded into `UploadChunk` windows streamed to
+   `/lfs/upload.tmp` and decoded straight off flash, so `rx` only holds a whole
+   non-sharded message and dropped to **12 KiB** (~20 KiB reclaimed). This branch
+   rebases on top of that. *(done — #46)*
 
