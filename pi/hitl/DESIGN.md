@@ -89,12 +89,33 @@ Per-DUT isolation: containers run **unprivileged** (`sbcDeploy`'s
 privileged container would bind-mount the whole host `/dev` and leak every
 board's serial into every container.
 
-Hardware caveats (shared single resources, follow-ups): JTAG still uses a
-whole-bus `/dev/bus/usb` mount (the per-board USB node moves on re-enumeration),
-so every container can see every board over raw USB — `hitl-jtag`/`gdb` select
-this DUT's adapter by `HITL_ADAPTER_SERIAL` (set per DUT), but raw-USB isolation
-between concurrent containers is not yet enforced. BLE shares the one host
-Bluetooth radio, and the provisioning AP is still rig-level.
+Raw-USB isolation (FUG-73): JTAG/flash go over libusb (`/dev/bus/usb`), not the
+serial tty, so the tty pinning above isn't enough on its own. Each container gets
+a **private `/dev/bus/usb` tree holding only its own board's node** instead of the
+host-wide bus, so `ls /dev/bus/usb` shows just the reserved board and — the point
+of the ticket — `hitl jtag`/`gdb`/`flash` in one reservation **cannot open, reset,
+or flash a neighbour's DUT**: every libusb access ends at `open("/dev/bus/usb/
+<bus>/<dev>")`, and a neighbour's node simply isn't there (ENOENT). (A subtlety:
+libusb-1.0 _enumerates_ from sysfs, and the kernel's `/sys/bus/usb` is one shared
+view podman can't filter per-container, so `lsusb` may still _list_ a neighbour —
+but listing is harmless; the node it would open doesn't exist. Fully hiding it
+from enumeration too would need usbip-style per-container host controllers, which
+a shared kernel can't give.)
+
+The tricky part is that `/dev/bus/usb/<bus>/<devnum>` and the node's major:minor
+move on **every** re-enumeration, and a C6 re-enumerates on every reset; a static
+per-devnum mount goes stale instantly. So the runner keys on the board's **stable
+physical USB port** (resolved from the tty's sysfs, e.g. `1-2`) and a per-DUT
+refresher re-syncs the single node whenever the board resets — isolation survives
+re-enumeration. The device-cgroup still allows the whole USB major (the minor also
+moves on reset); that's safe because visibility is gated by which nodes exist in
+the private tree (one), and the container is unprivileged with `CAP_MKNOD` dropped,
+so it can't fabricate a node for a neighbour. When the port can't be resolved (no
+board attached, or a non-USB tty) the runner falls back to the whole-bus mount so
+non-hardware reservations still come up. See `internal/runner/usbport.go`.
+
+Remaining hardware caveats (shared single resources, follow-ups): BLE shares the
+one host Bluetooth radio, and the provisioning AP is still rig-level.
 
 ## Packaging
 
@@ -131,8 +152,10 @@ container is destroyed on release, so state never leaks between holders.
 4. Robustness: reservation persistence across daemon restarts, metrics, richer
    status, multi-rig.
 5. Multiple DUTs per rig — done (FUG-67): concurrent per-DUT containers/ports,
-   shared FIFO with per-DUT slots, backward-compatible API. Remaining: raw-USB
-   (JTAG) isolation between concurrent containers; per-DUT BLE radio; per-DUT AP.
+   shared FIFO with per-DUT slots, backward-compatible API. Raw-USB (JTAG/flash)
+   isolation between concurrent containers — done (FUG-73): per-DUT private
+   `/dev/bus/usb`, keyed on the stable physical port, refreshed across
+   re-enumeration. Remaining: per-DUT BLE radio; per-DUT AP.
 
 ## Open items (need the hardware / decisions)
 

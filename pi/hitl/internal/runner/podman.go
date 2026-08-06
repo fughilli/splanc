@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/fughilli/splanc/pi/hitl/internal/api"
@@ -32,13 +33,21 @@ type PodmanConfig struct {
 	// privileged container bind-mounts the whole host /dev, so every DUT's
 	// /dev/ttyACM* leaks into every container — an agent sees its neighbor's board.
 	// With it off, the container is confined to the explicit per-DUT --device (its
-	// own tty as /dev/ttyACM0) plus the USB bus mount + device-cgroup rule below,
-	// which are enough for the C6's serial and USB-JTAG. Kept as an escape hatch.
+	// own tty as /dev/ttyACM0) plus its own board's node in a private /dev/bus/usb
+	// (see isolateUSB), which are enough for the C6's serial and USB-JTAG while
+	// keeping raw USB isolated per DUT. Kept as an escape hatch.
 	Privileged bool
 }
 
 // PodmanRunner implements Runner by shelling out to podman.
-type PodmanRunner struct{ cfg PodmanConfig }
+type PodmanRunner struct {
+	cfg PodmanConfig
+	// usbSync holds the cancel func for each reservation's raw-USB refresher, which
+	// keeps that container's private /dev/bus/usb node current across the board's
+	// re-enumerations. Cancelled on Stop/Cleanup.
+	mu      sync.Mutex
+	usbSync map[string]func()
+}
 
 func NewPodman(cfg PodmanConfig) *PodmanRunner {
 	if cfg.Podman == "" {
@@ -47,7 +56,7 @@ func NewPodman(cfg PodmanConfig) *PodmanRunner {
 	if cfg.SSHUser == "" {
 		cfg.SSHUser = "agent"
 	}
-	return &PodmanRunner{cfg: cfg}
+	return &PodmanRunner{cfg: cfg, usbSync: map[string]func(){}}
 }
 
 // containerName is deterministic per reservation so Stop/Cleanup can find it.
@@ -103,14 +112,9 @@ func (p *PodmanRunner) Start(ctx context.Context, id, owner, sshKey string, dev 
 		args = append(args, "-v", "/run/dbus/system_bus_socket:/run/dbus/system_bus_socket")
 	}
 	// JTAG: give the container raw USB (libusb, for openocd on the C6's built-in
-	// USB-JTAG). Mount the whole bus (survives device re-enumeration) + allow the
-	// USB major (189) through the device cgroup.
-	if _, err := os.Stat("/dev/bus/usb"); err == nil {
-		args = append(args,
-			"-v", "/dev/bus/usb:/dev/bus/usb",
-			"--device-cgroup-rule", "c 189:* rwm",
-		)
-	}
+	// USB-JTAG, and esptool's native-USB reset). Isolated to this DUT's board where
+	// we can resolve it (see isolateUSB), else the whole bus as a fallback.
+	args = append(args, p.isolateUSB(id, dev)...)
 	if p.cfg.Privileged {
 		args = append(args, "--privileged")
 	}
@@ -139,6 +143,139 @@ func (p *PodmanRunner) Start(ctx context.Context, id, owner, sshKey string, dev 
 	}
 	log.Printf("podman: started %s (owner=%q dut=%s) sshd on %s:%d", name, owner, dev.Name, p.cfg.Host, dev.SSHPort)
 	return &api.SSHEndpoint{Host: p.cfg.Host, Port: dev.SSHPort, User: p.cfg.SSHUser}, nil
+}
+
+// isolateUSB returns the podman args exposing raw USB to this reservation, and —
+// when it can — starts a background refresher so the container sees ONLY its own
+// board over libusb, surviving the board's re-enumerations.
+//
+// Isolation works by giving the container a private /dev/bus/usb tree holding a
+// single node (the reserved board's), instead of the host-wide bus. We can't pin
+// the devnum — it moves on every reset — so we key on the board's stable physical
+// USB port and re-sync the node whenever it re-enumerates (refreshUSBNodes). The
+// device-cgroup rule still allows the whole USB major because the current minor
+// also moves on reset; that's safe here because visibility is gated by which
+// nodes exist in the private tree (only one), and an unprivileged container with
+// CAP_MKNOD dropped can't create others to reach a neighbour.
+//
+// Falls back to the whole-bus mount when the board's port can't be resolved (e.g.
+// no board attached, or a non-USB tty), so non-hardware reservations still start.
+func (p *PodmanRunner) isolateUSB(id string, dev Device) []string {
+	if _, err := os.Stat("/dev/bus/usb"); err != nil {
+		return nil // no raw USB on this host at all
+	}
+	wholeBus := []string{"-v", "/dev/bus/usb:/dev/bus/usb", "--device-cgroup-rule", "c 189:* rwm"}
+
+	tty := reservedTTYNode(dev)
+	if tty == "" {
+		return wholeBus
+	}
+	portDir, portID, err := resolveUSBPort(tty)
+	if err != nil {
+		log.Printf("podman: %s raw-USB isolation unavailable (%v); falling back to whole-bus mount", dev.Name, err)
+		return wholeBus
+	}
+	node, err := readUSBNode(portDir)
+	if err != nil {
+		log.Printf("podman: %s raw-USB isolation unavailable (port %s: %v); whole-bus fallback", dev.Name, portID, err)
+		return wholeBus
+	}
+	destDir := filepath.Join(p.cfg.StateDir, id, "usb", "bus", "usb")
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		log.Printf("podman: %s raw-USB isolation dir: %v; whole-bus fallback", dev.Name, err)
+		return wholeBus
+	}
+	if err := syncUSBNodes(destDir, node); err != nil {
+		log.Printf("podman: %s raw-USB node seed: %v; whole-bus fallback", dev.Name, err)
+		return wholeBus
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	p.mu.Lock()
+	if prev := p.usbSync[id]; prev != nil {
+		prev() // a stale refresher from a prior Start of this id
+	}
+	p.usbSync[id] = cancel
+	p.mu.Unlock()
+	go refreshUSBNodes(ctx, dev.Name, portDir, destDir)
+
+	log.Printf("podman: %s raw USB isolated to port %s -> %s", dev.Name, portID, destDir)
+	return []string{
+		"-v", destDir + ":/dev/bus/usb",
+		"--device-cgroup-rule", "c 189:* rwm",
+		// Belt-and-suspenders: the container can't mknod a node for a neighbour's
+		// board (unprivileged podman drops MKNOD already; make it explicit so the
+		// isolation guarantee doesn't depend on host containers.conf).
+		"--cap-drop", "mknod",
+	}
+}
+
+// reservedTTYNode returns the host /dev node backing this DUT's serial tty (the
+// device it pins to /dev/ttyACM0), resolved through any by-id symlink, or "" if
+// the DUT has no tty mapping. That node is the anchor we resolve to a USB port.
+func reservedTTYNode(dev Device) string {
+	for _, d := range dev.Devices {
+		host, container := d, ""
+		if i := strings.LastIndex(d, ":/"); i >= 0 {
+			host, container = d[:i], d[i+1:]
+		}
+		if container != "/dev/ttyACM0" && container != "" {
+			continue // not the pinned serial tty
+		}
+		if r, err := filepath.EvalSymlinks(host); err == nil {
+			return r
+		}
+		return host
+	}
+	return ""
+}
+
+// refreshUSBNodes keeps destDir's single node current for the container's
+// lifetime. A C6 re-enumerates on every reset (devnum + node minor change), so we
+// poll the board's stable port and re-sync. While the port is briefly absent
+// (mid-reset), we hold the last node — a resetting board blinks out for well under
+// a second, and clearing it would race a reboot loop. Only once the board has been
+// gone past a grace window (genuinely unplugged) do we clear the tree, so a stale
+// node can't later point at a minor the kernel reassigns to a different device.
+func refreshUSBNodes(ctx context.Context, dutName, portDir, destDir string) {
+	const interval = 1 * time.Second
+	const grace = 5 * time.Second
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	var absentSince time.Time
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-t.C:
+			node, err := readUSBNode(portDir)
+			if err != nil {
+				if absentSince.IsZero() {
+					absentSince = now
+				}
+				if now.Sub(absentSince) >= grace {
+					if err := clearUSBNodes(destDir); err != nil {
+						log.Printf("podman: %s raw-USB clear: %v", dutName, err)
+					}
+				}
+				continue
+			}
+			absentSince = time.Time{}
+			if err := syncUSBNodes(destDir, node); err != nil {
+				log.Printf("podman: %s raw-USB refresh: %v", dutName, err)
+			}
+		}
+	}
+}
+
+// stopUSBSync cancels and forgets a reservation's raw-USB refresher, if any.
+func (p *PodmanRunner) stopUSBSync(id string) {
+	p.mu.Lock()
+	if cancel := p.usbSync[id]; cancel != nil {
+		cancel()
+		delete(p.usbSync, id)
+	}
+	p.mu.Unlock()
 }
 
 // deviceMapping resolves one "host[:container]" --device spec into a concrete
@@ -205,6 +342,7 @@ func waitTCP(ctx context.Context, addr string, timeout time.Duration) error {
 }
 
 func (p *PodmanRunner) Stop(ctx context.Context, id string) error {
+	p.stopUSBSync(id)
 	name := containerName(id)
 	_, err := p.podman(ctx, "rm", "-f", "-t", "5", name)
 	// Best-effort scratch cleanup.
@@ -217,6 +355,14 @@ func (p *PodmanRunner) Stop(ctx context.Context, id string) error {
 
 // Cleanup removes every container we labeled, e.g. after a daemon crash.
 func (p *PodmanRunner) Cleanup(ctx context.Context) error {
+	// Stop any raw-USB refreshers this process still owns (Start without a Stop).
+	p.mu.Lock()
+	for id, cancel := range p.usbSync {
+		cancel()
+		delete(p.usbSync, id)
+	}
+	p.mu.Unlock()
+
 	out, err := p.podman(ctx, "ps", "-aq", "--filter", "label=hitl=1")
 	if err != nil {
 		return err
