@@ -51,15 +51,20 @@
 
 // The player protocol handler (lm_player_handle -> Player::handle) decodes a
 // ClientMessage and builds a ServerMessage as by-value protobuf structs on the
-// caller's stack, and this path runs in loopTask (ws_poll). Measured frames on
-// the -c opt image are large (micropb by-value): lm_player_handle ~4.6 KB +
-// Player::handle ~12.5 KB ⇒ a ~17-18 KB peak, so the arduino-esp32 default
-// 8 KB loopTask stack overflows (observed: Stack protection fault in
-// Player::handle). Size loopTask well above the measured peak. Must be at
-// global scope (overrides a weak core getter). If the protobuf frames ever
-// grow, re-measure with objdump on the .elf prologues. (The render task has
-// its own stack; it only calls the small pure-read accessors + FastLED.show.)
-SET_LOOP_TASK_STACK_SIZE(24 * 1024);
+// caller's stack, and this path runs in loopTask (ws_poll on the plain :81
+// socket). This stack was once 24 KB, sized for a ~17-18 KB peak back when the
+// micropb by-value frames were huge (Player::handle ~12.5 KB). The firmware
+// capacity profile has since been tightened (//shared/protocol/rust:gen_main.rs)
+// and the frames are now MUCH smaller — measured on the -c opt .elf prologues
+// (objdump `addi sp,sp,-N`): lm_player_handle 5.1 KB, the deepest sub-handler
+// handle_get_stored_map 4.6 KB, Player::handle 2.6 KB ⇒ a real deepest chain of
+// ~11-12 KB. 18 KB keeps ~1.5x margin over that while handing 6 KB of heap
+// (loopTask's stack is heap-allocated) back to the TLS pool (FUG-71). The
+// //firmware/player_app:size_probe test guards the envelope sizes this assumes,
+// and the periodic `[stack]` log reports loopTask's live high-water. Must be at
+// global scope (overrides a weak core getter). (The render task has its own,
+// tighter stack; it only calls the pure-read accessors + FastLED.show.)
+SET_LOOP_TASK_STACK_SIZE(18 * 1024);
 
 static const char *kApPassword = "ledmapper";
 static const uint16_t kWsPort = 81;
@@ -93,6 +98,7 @@ static CRGB leds[kMaxLeds];
 static SemaphoreHandle_t player_mutex = nullptr;
 static const UBaseType_t kRenderTaskPrio = 10;   // tune on-device if needed
 static const uint32_t kRenderTaskStack = 8192;   // FastLED.show() needs headroom
+static TaskHandle_t g_render_task = nullptr;      // for stack high-water reporting
 
 // Largest inbound protocol message: a full submit_map for kMaxLeds (~96 B/LED,
 // so 256 LEDs ≈ 25 KB; 32 KB leaves headroom). Sized to the LED cap rather than
@@ -1262,12 +1268,15 @@ static void wss_start() {
   // wss retries against a not-yet-trusted cert) exhaust the heap and every
   // session fails with -0x7F00. LRU-purge the oldest rather than reject a
   // reconnecting phone. The handler task runs lm_player_handle, whose micropb
-  // by-value structs need a big stack (the loop task is 24 KB for exactly this),
-  // so give the httpd task the same budget plus TLS-record margin or it
-  // overflows on the first message. Two sessions is deliberate: the phone loads
-  // the status/landing page over one while the app's wss holds the other.
+  // by-value structs run on this task's stack (same path as loopTask). Sized to
+  // the measured deepest handler chain (~11-12 KB, see SET_LOOP_TASK_STACK_SIZE)
+  // plus mbedTLS's own handshake-time stack, with margin. Was 28 KB for the
+  // stale ~18 KB-frame era; 20 KB keeps ~1.6x margin over the current peak and
+  // returns 8 KB of heap (this stack is heap-allocated) to the TLS pool (FUG-71).
+  // Two sessions is deliberate: the phone loads the status/landing page over one
+  // while the app's wss holds the other.
   cfg.httpd.max_open_sockets = 2;
-  cfg.httpd.stack_size = 28 * 1024;
+  cfg.httpd.stack_size = 20 * 1024;
   cfg.httpd.lru_purge_enable = true;
   // Reclaim dead/half-open sessions so this single-task server can't wedge under
   // connection churn. With only 2 slots, a client that vanishes mid-handshake or
@@ -1475,7 +1484,7 @@ void setup() {
   // Drive the LEDs from a dedicated high-priority task so the pattern cadence
   // no longer rides on loop()'s cooperative WiFi/HTTP/BLE servicing.
   xTaskCreate(render_task, "render", kRenderTaskStack, nullptr, kRenderTaskPrio,
-              nullptr);
+              &g_render_task);
 }
 
 // Improv provisioning state machine (Arduino task; BLE callbacks only latch).
@@ -1645,6 +1654,15 @@ void loop() {
                                           : "idle",
         map_leds, (unsigned)esp_get_free_heap_size(),
         (unsigned)esp_get_minimum_free_heap_size());
+    // Stack high-water = the SMALLEST free-stack the task ever reached (bytes on
+    // ESP-IDF). The heap-allocated task stacks (loop 24K, httpd_ssl 28K, render
+    // 8K) are the biggest single heap draws we control, so track how much of each
+    // is actually used vs reserved — the headroom is reclaimable heap (FUG-71).
+    TaskHandle_t httpd_task = xTaskGetHandle("httpd");
+    Log().printf("[stack] free-hw loop=%u render=%u httpd=%u\n",
+                 (unsigned)uxTaskGetStackHighWaterMark(nullptr),
+                 g_render_task ? (unsigned)uxTaskGetStackHighWaterMark(g_render_task) : 0u,
+                 httpd_task ? (unsigned)uxTaskGetStackHighWaterMark(httpd_task) : 0u);
   }
   delay(1);
 }
