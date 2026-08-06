@@ -1,0 +1,53 @@
+"""TouchDesigner custom operator plugins (FUG-78).
+
+Two shared libraries — a TOP that streams video to a fixture's texture ports and
+a CHOP that drives shader uniforms — each a thin C++ shim over the Rust core
+(//tools/touchdesigner/core). Both link the same C-ABI static library.
+
+TouchDesigner only runs on macOS and Windows, so these targets are
+platform-gated: on Linux (CI, this container) they resolve as incompatible and
+are skipped by `//...`. Build them on a macOS/Windows box that has the
+TouchDesigner SDK reachable (fetched via @touchdesigner_sdk):
+
+    bazel build //tools/touchdesigner/plugin:ledmapper_texture
+    bazel build //tools/touchdesigner/plugin:ledmapper_uniforms
+"""
+
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+# Only macOS/Windows can build a loadable TouchDesigner plugin.
+_TD_PLATFORMS = select({
+    "@platforms//os:osx": [],
+    "@platforms//os:windows": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+
+cc_binary(
+    name = "ledmapper_texture",
+    srcs = [
+        "ledmapper_ffi.h",
+        "ledmapper_top.cpp",
+    ],
+    linkshared = True,
+    target_compatible_with = _TD_PLATFORMS,
+    deps = [
+        "//tools/touchdesigner/core:td_ledmapper_ffi",
+        "@touchdesigner_sdk//:sdk",
+    ],
+)
+
+cc_binary(
+    name = "ledmapper_uniforms",
+    srcs = [
+        "ledmapper_chop.cpp",
+        "ledmapper_ffi.h",
+    ],
+    linkshared = True,
+    target_compatible_with = _TD_PLATFORMS,
+    deps = [
+        "//tools/touchdesigner/core:td_ledmapper_ffi",
+        "@touchdesigner_sdk//:sdk",
+    ],
+)

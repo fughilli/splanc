@@ -152,6 +152,36 @@ pub unsafe extern "C" fn tdlm_commit_uniforms(h: *mut Handle) {
     }
 }
 
+/// Drive uniforms from named channel values in one call: `names[i]` is a
+/// channel name and `values[i]` its current value. The Rust core maps them onto
+/// uniform slots via the fixture manifest (or `slotN` fallback) and pushes the
+/// result (change-detected). This keeps all mapping logic testable in Rust.
+///
+/// # Safety
+/// `names` must point to `count` NUL-terminated C strings and `values` to
+/// `count` readable floats.
+#[no_mangle]
+pub unsafe extern "C" fn tdlm_drive_uniforms(
+    h: *mut Handle,
+    names: *const *const c_char,
+    values: *const f32,
+    count: u32,
+) {
+    let Some(h) = h.as_mut() else { return };
+    if names.is_null() || values.is_null() {
+        return;
+    }
+    let mut map = std::collections::HashMap::new();
+    for i in 0..count as usize {
+        let name_ptr = *names.add(i);
+        let name = cstr(name_ptr);
+        if !name.is_empty() {
+            map.insert(name.to_string(), *values.add(i));
+        }
+    }
+    h.session.drive_uniforms(&map);
+}
+
 /// Write a JSON status snapshot into `out`. Returns the full payload length.
 ///
 /// # Safety

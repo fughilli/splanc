@@ -1,0 +1,3 @@
+# Makes `sdk.BUILD` referenceable as the build_file for the @touchdesigner_sdk
+# http_archive declared in MODULE.bazel.
+exports_files(["sdk.BUILD"])

@@ -10,7 +10,9 @@
 //! The CHOP operator uses this to map its input channels onto uniform slots and
 //! to pick a native type (float / bool / vecN) per the issue's requirement.
 
+use crate::proto::UniformValue;
 use serde_json::Value;
+use std::collections::HashMap;
 
 /// How a uniform is driven from TouchDesigner.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,6 +86,55 @@ fn parse_one(v: &Value) -> Option<UniformPort> {
     Some(UniformPort { name, slot, width, kind, default })
 }
 
+/// Map a set of named channel values onto uniform-slot writes using a fixture's
+/// manifest. A scalar/bool port consumes the channel named exactly after the
+/// uniform; a vecN port consumes `name:x`, `name:y`, ... A port is emitted only
+/// when *all* of its channels are present, so partially-driven vectors are left
+/// untouched. Booleans are thresholded at 0.5 to a clean 0.0/1.0.
+pub fn map_channels(ports: &[UniformPort], values: &HashMap<String, f32>) -> Vec<UniformValue> {
+    let mut out = Vec::new();
+    for port in ports {
+        let names = port.channel_names();
+        let mut vals = Vec::with_capacity(names.len());
+        let mut all_present = true;
+        for n in &names {
+            match values.get(n) {
+                Some(v) => vals.push(*v),
+                None => {
+                    all_present = false;
+                    break;
+                }
+            }
+        }
+        if !all_present {
+            continue;
+        }
+        if port.kind == UniformKind::Bool {
+            vals = vals.iter().map(|v| if *v >= 0.5 { 1.0 } else { 0.0 }).collect();
+        }
+        out.push(UniformValue { slot: port.slot, values: vals });
+    }
+    out
+}
+
+/// Fallback mapping used when the device advertises no manifest (current
+/// firmware): a channel named `slotN`, `sN` or a bare integer `N` drives scalar
+/// uniform slot `N` directly.
+pub fn fallback_map(values: &HashMap<String, f32>) -> Vec<UniformValue> {
+    let mut out = Vec::new();
+    for (name, v) in values {
+        let digits = name
+            .strip_prefix("slot")
+            .or_else(|| name.strip_prefix('s'))
+            .unwrap_or(name);
+        if let Ok(slot) = digits.parse::<u32>() {
+            out.push(UniformValue { slot, values: vec![*v] });
+        }
+    }
+    out.sort_by_key(|u| u.slot);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -116,5 +167,44 @@ mod tests {
         assert!(parse(b"").is_empty());
         assert!(parse(b"   ").is_empty());
         assert!(parse(b"not json").is_empty());
+    }
+
+    #[test]
+    fn maps_scalar_bool_and_vec_channels() {
+        let ports = parse(SAMPLE.as_bytes());
+        let mut vals = HashMap::new();
+        vals.insert("speed".to_string(), 2.5);
+        vals.insert("tint:x".to_string(), 1.0);
+        vals.insert("tint:y".to_string(), 0.0);
+        vals.insert("tint:z".to_string(), 0.5);
+        vals.insert("mirror".to_string(), 0.9); // -> bool 1.0
+        let uvs = map_channels(&ports, &vals);
+        assert_eq!(uvs.len(), 3);
+        let by_slot = |s: u32| uvs.iter().find(|u| u.slot == s).unwrap();
+        assert_eq!(by_slot(0).values, vec![2.5]);
+        assert_eq!(by_slot(1).values, vec![1.0, 0.0, 0.5]);
+        assert_eq!(by_slot(2).values, vec![1.0]);
+    }
+
+    #[test]
+    fn partial_vec_is_skipped() {
+        let ports = parse(SAMPLE.as_bytes());
+        let mut vals = HashMap::new();
+        vals.insert("tint:x".to_string(), 1.0); // missing y,z
+        assert!(map_channels(&ports, &vals).iter().all(|u| u.slot != 1));
+    }
+
+    #[test]
+    fn fallback_parses_slot_names() {
+        let mut vals = HashMap::new();
+        vals.insert("slot0".to_string(), 1.0);
+        vals.insert("s2".to_string(), 3.0);
+        vals.insert("5".to_string(), 9.0);
+        vals.insert("speed".to_string(), 7.0); // no numeric slot -> ignored
+        let uvs = fallback_map(&vals);
+        assert_eq!(uvs.len(), 3);
+        assert_eq!(uvs[0].slot, 0);
+        assert_eq!(uvs[1].slot, 2);
+        assert_eq!(uvs[2].slot, 5);
     }
 }

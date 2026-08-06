@@ -98,6 +98,19 @@ impl Session {
         g.pending_pixels = Some((pixels.to_vec(), w, h));
     }
 
+    /// Map named channel values onto uniform slots via the fixture's manifest
+    /// (falling back to `slotN`-style names when the device advertises none) and
+    /// push the result. Change-detected like [`Self::push_uniforms`].
+    pub fn drive_uniforms(&self, channels: &std::collections::HashMap<String, f32>) {
+        let ports = self.inner.lock().unwrap().ports.clone();
+        let values = if ports.is_empty() {
+            manifest::fallback_map(channels)
+        } else {
+            manifest::map_channels(&ports, channels)
+        };
+        self.push_uniforms(values);
+    }
+
     /// Push uniform values. Only transmitted when they differ from the last
     /// values sent (avoids flooding the device at cook rate).
     pub fn push_uniforms(&self, values: Vec<UniformValue>) {
