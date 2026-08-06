@@ -361,6 +361,76 @@ These ship as data (part of the app), pushed to the device with the normal
 `submit_effect` path, selected with `set_effect`, and measured via the same
 `PerfReport` stream — no special firmware mode beyond FULL instrumentation.
 
+### Opcode coverage (FUG-79)
+
+The first cut fit only five opcodes (`Mul/Add/Div/UnMath/BinMath`) from
+straight-line `sin`/`mul` chains, so every other opcode kept its shipped default
+forever and the held-out check (also a `sin`/`mul` chain) validated nothing
+about them. The concrete failure: a "lava lamp" effect built almost entirely
+from `hash()` and `normalize(vec3)` — opcodes calibration never measured — was
+predicted at ~61% of budget while the device measured a ~630% overrun (~10×
+low). Calibration now targets **100% of the opcodes an effect can emit.**
+
+**The partition (source of truth: `calibrationBenchmarks.ts`, enforced by
+`calibrationCoverage.test.ts`).** Every opcode `walkEntry` can produce is
+exactly one of:
+
+- **FITTED** — has a branch-free isolating micro-benchmark (M/2M rep points) and
+  a per-opcode fitted cost: the float ALU (`Add/Sub/Mul/Div/Neg`), the full
+  `UnMath`/`BinMath` fn sets (see sub-keying below), the vector ops
+  (`Clamp/Mix/Smoothstep/Dot/Cross/Length/Normalize/Distance`), and the specials
+  (`Hash1/Hash3/Hsv2Rgb/Palette`). Vector benches run at a fixed 3-lane width so
+  the scalar-cost×lanes convention stays clean.
+- **BUCKETED** — reachable but not independently fittable, with a documented
+  reason; rides `shade_fixed`/`update_fixed` + the fallback cost. Three groups:
+  (a) *structural* stack/load/store/control-flow ops that appear at a fixed
+  ratio in every program (collinear, so the fit cannot separate them);
+  (b) *cheap integer* ALU + *type-conversion* ops (integer-domain; conversions
+  only ever appear as collinear round-trip pairs, so a single one is
+  unidentifiable); (c) *resource-dependent* ops (`*Idx`, `LoadBuf/StoreBuf`,
+  `SampleTex/PaintTex`, `GraphQuery`, `FloodFrom`) and the FUG-10 fixed-point
+  fast path (`*FixN`, `SinFix/CosFix/ExpFix`, …), which need a declared
+  array/buffer/texture/graph to run meaningfully — a follow-up device-resource
+  bench tier; until then they keep seeded defaults.
+- **EXCLUDED** — the VM defines it but the compiler never emits it from surface
+  source, so it can't appear in a user effect: `Scale` (vec×scalar lowers to a
+  broadcast + `Mul`) and `Pop` (`_POP`, never emitted).
+
+**UnMath/BinMath sub-keying — the load-bearing modeling decision.** `UnMath`
+collapses 11 fns (`sin cos abs floor ceil fract sqrt exp log sign tan`) and
+`BinMath` 6 (`min max pow mod step atan2`) onto ONE opcode each, but on the C6's
+soft-float their costs differ by an order of magnitude (`sqrt/exp/log/pow` ≫
+`abs/floor/sign`). Keying cost by opcode name alone therefore *cannot* reach
+true per-builtin accuracy — fitting "UnMath" to `sin` mis-costs `exp`/`sqrt`. We
+adopt the **preferred** fix: the abstract interpreter (`costModel.ts`
+`mathFeature`) reads the fn-id operand byte and sub-keys the histogram + cost
+map per fn (`"UnMath:sqrt"`, `"BinMath:pow"`, …), and there is one isolating
+bench per fn. Cost lookup (`costFor`) resolves a sub-key → its family base
+(`"UnMath"`) → the global fallback, so a device calibration prices each fn
+individually while older/host tables keyed only by the bare family (e.g. the
+semihost profile) still price every fn through the base tier — no schema break,
+so the Rust semihost bench + its golden are unchanged. `DEFAULT_COSTS` seeds
+each fn per the soft-float economics and keeps the bare `UnMath`/`BinMath` keys
+as the fallback tier. The fn-id decoding is kept in lockstep with
+`firmware/fx_vm/src/lib.rs` (`F_*`/`B_*` + the `[fn, n]` operand layout).
+
+**Identifiability.** The fit runs only on the features a run actually measured
+(`presentFeatures`), and the merge is presence-aware in both `calibration.ts`
+and `deviceProfile.ts`: an opcode a run did not exercise keeps its seeded
+default rather than being driven to ~0 by the ridge term. This also lets a
+faster `core` tier (the cost-dominant ops) override only what it measured; the
+DEFAULT run is the FULL suite → 100% coverage (no silent subsetting).
+
+**Runtime.** The full sweep is ~34 ops × 2 rep points + overhead ≈ 71 uploads
+(a few minutes), up from ~30 s. The UI can offer the `core` tier as a quick
+pass, but "Calibrate this device" defaults to the full suite and surfaces
+per-benchmark progress; a subset run is never reported as full coverage.
+
+**Held-out validation** now uses the lava-lamp program above (hash + normalize +
+dot + a bounded loop with a data-dependent `if (i < n)` guard), kept OUT of the
+fit, so the reported before/after residual is an honest, board-wide accuracy
+number rather than a `sin`-chain self-check.
+
 ### Fit
 
 For each benchmark the app collects a stable window (mean over ~1 s, discarding
