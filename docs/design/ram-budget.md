@@ -78,11 +78,17 @@ draws, paired with the device's `esp_get_free_heap_size()`:
    re-arms it (soft-AP + BLE) if the LAN is lost for good, so the device stays
    re-provisionable without a power cycle. *Measured on the rig: post-provision
    free heap ~48 KiB → ~82 KiB.* *(done)*
-3. **Zero-copy protobuf envelopes**: decode/encode `ClientMessage`/`ServerMessage`
-   through the streaming arena walker (as the map/topology uploads already do)
-   instead of materializing by-value micropb structs, shrinking `Player::handle`'s
-   frame and letting the loop-task (24 KiB) + `httpd_ssl` (28 KiB) stacks drop —
-   a further heap reclaim. *(follow-up)*
+3. **Zero-copy protobuf envelopes**: the two fat arms that sized every by-value
+   envelope on the handler stacks are now walked/encoded zero-copy (like the
+   arena/effects arms), and the firmware profile stubs them:
+   - `StoredMapChunk.data` (1 KiB) — encoded straight to the output in
+     `handle_get_stored_map`; **`ServerMessage` 1048 → 496 B**.
+   - `SetCountingPattern.blocks` (32 × f64-rgb) — walked in
+     `handle_set_counting_pattern`; **`ClientMessage` 1560 → 472 B**.
+   `envelope_size_test` pins both. This let the **heap-allocated task stacks
+   drop: loopTask 24 → 18 KiB, `httpd_ssl` 28 → 20 KiB** (~14 KiB of heap back),
+   sized ~1.5× over the objdump-measured deepest handler chain (~11–12 KiB) and
+   watched live by the `[stack]` high-water log. *(done)*
 4. **Ruthless static cuts**: right-size `rx` (stream the upload instead of
    reassembling 32 KiB), `FX_ARENA`/`FX_TEX_PREV`. *(follow-up)*
 
