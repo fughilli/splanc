@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "podman.go",
         "runner.go",
+        "usbport.go",
     ],
     importpath = "github.com/fughilli/splanc/pi/hitl/internal/runner",
     visibility = ["//pi/hitl:__subpackages__"],
@@ -13,6 +14,9 @@ go_library(
 
 go_test(
     name = "runner_test",
-    srcs = ["podman_test.go"],
+    srcs = [
+        "podman_test.go",
+        "usbport_test.go",
+    ],
     embed = [":runner"],
 )
