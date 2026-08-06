@@ -438,6 +438,34 @@ pub unsafe extern "C" fn lm_device_name(out: *mut u8, cap: usize) -> i32 {
     name.len() as i32
 }
 
+/// Generation counter for the active color-correction profile, bumped on every
+/// `set_color_correction`. The firmware polls this after each `lm_player_handle`
+/// (like `lm_device_name`) to notice a change and regenerate + re-persist the
+/// per-channel flash LUTs.
+#[no_mangle]
+pub unsafe extern "C" fn lm_color_correction_gen() -> u32 {
+    player().color_correction_gen()
+}
+
+/// Copy the active color-correction profile into `out` as six `f32`:
+/// `gamma[0..3]` then `luminance[0..3]` (channel order R, G, B). Returns 0 on
+/// success, -1 if `out` is null. The firmware builds the LUTs from these.
+///
+/// # Safety
+/// `out` must point to at least six writable `f32`.
+#[no_mangle]
+pub unsafe extern "C" fn lm_color_correction_params(out: *mut f32) -> i32 {
+    if out.is_null() {
+        return -1;
+    }
+    let (gamma, luminance) = player().color_correction();
+    let vals = [
+        gamma[0], gamma[1], gamma[2], luminance[0], luminance[1], luminance[2],
+    ];
+    core::ptr::copy_nonoverlapping(vals.as_ptr(), out, vals.len());
+    0
+}
+
 fn encode_reply(reply: &pb::ServerMessage, out: *mut u8, out_cap: usize) -> i32 {
     let mut enc = PbEncoder::new(micropb::heapless::Vec::<u8, REPLY_CAP>::new());
     if reply.encode(&mut enc).is_err() {

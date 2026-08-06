@@ -27,16 +27,20 @@
 #include <esp_https_server.h>
 #include <esp_mac.h>
 #include <esp_littlefs.h>
+#include <esp_partition.h>
+#include <esp_rom_crc.h>
 #include <esp_system.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 
 #include "firmware/landing/landing_page.h"
 #include "firmware/player_app/improv_ble.h"
 #include "selfsigned.h"  // @embedded//libs/tls: on-device cert re-issuance
+#include "firmware/player_app/color_correction.h"
 #include "firmware/player_app/improv_codec.h"
 #include "firmware/player_app/led_config.h"
 #include "firmware/player_app/player_ffi.h"
@@ -206,6 +210,152 @@ static void fs_write_file(const char *path, const uint8_t *data, size_t len) {
   fclose(f);
 }
 
+// -- color correction ---------------------------------------------------------
+// LEDs render washed out without gamma compensation. We build 3x256 per-channel
+// LUTs from the active profile (default WS2812B; reconfigurable via
+// set_color_correction), persist them to littlefs, and — to keep them OUT of the
+// heap the TLS handshake fights over — index them straight from a memory-mapped
+// view of the flash data partition on the render hot path. g_lut points into
+// that mmap; a small RAM fallback covers the case where mapping can't be set up.
+static const char *kLutPath = "/lfs/colorcorr.lut";
+static const uint32_t kLutMagic = 0x544C4343;  // "CCLT" little-endian
+static const uint32_t kLutVersion = 1;
+
+// On-flash record: header fields bracket the 3x256 table so the reader can find
+// the newest valid copy by scanning the mmap'd partition (littlefs may leave
+// stale copies until it garbage-collects). At >512 B the record is stored in a
+// littlefs data block (contiguous in flash), not inlined in its metadata log.
+struct LutRecord {
+  uint32_t magic;
+  uint32_t version;
+  uint32_t seq;  // increments per write; newest valid seq wins the scan
+  uint8_t lut[3][256];
+  uint32_t crc;  // esp_rom_crc32_le over magic..lut
+};
+
+static uint8_t g_lut_ram[3][256];                // fallback + write scratch
+static const uint8_t (*g_lut)[256] = nullptr;    // active table (flash or RAM)
+static const uint8_t *g_lut_map_base = nullptr;  // mmap'd data-partition base
+static esp_partition_mmap_handle_t g_lut_map_handle = 0;
+static const esp_partition_t *g_fs_part = nullptr;
+static uint32_t g_lut_seq = 0;
+static uint32_t g_cc_gen = 0;  // last color_correction_gen the poll acted on
+
+static uint32_t lut_crc(const LutRecord *r) {
+  return esp_rom_crc32_le(0, reinterpret_cast<const uint8_t *>(r),
+                          offsetof(LutRecord, crc));
+}
+
+// Map the flash data partition once (read-only). Returns the mmap base, or
+// nullptr if the partition/mapping is unavailable.
+static const uint8_t *lut_mmap_base() {
+  if (g_lut_map_base != nullptr) return g_lut_map_base;
+  if (g_fs_part == nullptr) {
+    g_fs_part = esp_partition_find_first(ESP_PARTITION_TYPE_DATA,
+                                         ESP_PARTITION_SUBTYPE_ANY, kFsPartition);
+    if (g_fs_part == nullptr) return nullptr;
+  }
+  const void *base = nullptr;
+  esp_partition_mmap_handle_t h = 0;
+  if (esp_partition_mmap(g_fs_part, 0, g_fs_part->size, ESP_PARTITION_MMAP_DATA,
+                         &base, &h) != ESP_OK) {
+    return nullptr;
+  }
+  g_lut_map_base = static_cast<const uint8_t *>(base);
+  g_lut_map_handle = h;
+  return g_lut_map_base;
+}
+
+// Scan the mmap'd partition for the newest valid LUT record and point g_lut at
+// its table IN FLASH. Returns true on success. The flash write path keeps the
+// cache coherent, so re-scanning the same mapping after a rewrite is safe.
+static bool lut_point_at_flash() {
+  const uint8_t *base = lut_mmap_base();
+  if (base == nullptr || g_fs_part == nullptr) return false;
+  const uint8_t magic[4] = {
+      (uint8_t)kLutMagic, (uint8_t)(kLutMagic >> 8), (uint8_t)(kLutMagic >> 16),
+      (uint8_t)(kLutMagic >> 24)};
+  bool found = false;
+  size_t best_off = 0;
+  uint32_t best_seq = 0;
+  const size_t limit = g_fs_part->size - sizeof(LutRecord);
+  for (size_t off = 0; off <= limit; off++) {
+    if (memcmp(base + off, magic, sizeof magic) != 0) continue;
+    LutRecord rec;  // aligned copy for the header reads + crc
+    memcpy(&rec, base + off, sizeof rec);
+    if (rec.version != kLutVersion || lut_crc(&rec) != rec.crc) continue;
+    if (!found || rec.seq > best_seq) {
+      found = true;
+      best_seq = rec.seq;
+      best_off = off;
+    }
+  }
+  if (!found) return false;
+  g_lut = reinterpret_cast<const uint8_t (*)[256]>(base + best_off +
+                                                   offsetof(LutRecord, lut));
+  g_lut_seq = best_seq;
+  return true;
+}
+
+// Build the LUT for `profile`, persist it to littlefs (unless the bytes already
+// match what's mapped — deterministic profiles reproduce identical bytes on
+// reboot, so this avoids needless flash wear), and repoint g_lut at the flash
+// copy. Falls back to the RAM copy if there's no filesystem / mapping.
+static void lut_generate_and_store(const cc::GammaProfile &profile) {
+  cc::build_lut(profile, g_lut_ram);
+  if (g_lut != nullptr && g_lut != g_lut_ram &&
+      memcmp(g_lut, g_lut_ram, sizeof g_lut_ram) == 0) {
+    return;  // flash already holds exactly this table
+  }
+  if (fs_ok) {
+    LutRecord rec;
+    rec.magic = kLutMagic;
+    rec.version = kLutVersion;
+    rec.seq = g_lut_seq + 1;
+    memcpy(rec.lut, g_lut_ram, sizeof rec.lut);
+    rec.crc = lut_crc(&rec);
+    fs_write_file(kLutPath, reinterpret_cast<const uint8_t *>(&rec), sizeof rec);
+    if (lut_point_at_flash()) return;  // now indexing straight from flash
+  }
+  g_lut = g_lut_ram;  // no filesystem / mapping failed — serve from RAM
+}
+
+// Boot: use the LUT already in flash if present, else generate + persist the
+// default WS2812B table. Runs after fs_begin_and_restore, but works even when
+// the littlefs mount failed (it maps the raw partition / falls back to RAM), so
+// g_lut is always valid before the render task starts.
+static void color_correction_begin() {
+  if (!lut_point_at_flash()) {
+    lut_generate_and_store(cc::kWs2812b);
+  }
+  Log().printf("[cc] LUT ready (seq=%u, %s)\n", g_lut_seq,
+               g_lut == g_lut_ram ? "RAM" : "flash");
+}
+
+// Poll after each handled message (like poll_device_rename): a set_color_correction
+// bumps the generation; regenerate + re-persist the LUT when it changes.
+static void poll_color_correction() {
+  uint32_t gen = lm_color_correction_gen();
+  if (gen == g_cc_gen) return;
+  g_cc_gen = gen;
+  float p[6];
+  if (lm_color_correction_params(p) != 0) return;
+  cc::GammaProfile prof = {{p[0], p[1], p[2]}, {p[3], p[4], p[5]}};
+  lut_generate_and_store(prof);
+  Log().printf("[cc] updated gamma=%.2f/%.2f/%.2f lum=%.0f/%.0f/%.0f (gen=%u)\n",
+               p[0], p[1], p[2], p[3], p[4], p[5], gen);
+}
+
+// Map an 8-bit RGB triple through the active per-channel LUT (indexed directly
+// from flash). Used on the CONTENT render paths (effects / playback); the camera
+// calibration patterns (mapping gray-code, counting probe) stay uncorrected so
+// their known signal values reach the camera unchanged.
+static inline CRGB cc_apply(const uint8_t rgb[3]) {
+  const uint8_t (*lut)[256] = g_lut;
+  if (lut == nullptr) return CRGB(rgb[0], rgb[1], rgb[2]);
+  return CRGB(lut[0][rgb[0]], lut[1][rgb[1]], lut[2][rgb[2]]);
+}
+
 // Stash the latest playback selection to flush once live tuning goes quiet.
 static void queue_playback_save(const uint8_t *data, size_t len) {
   if (len > sizeof pending_playback) return;  // too big to persist (bounded)
@@ -343,6 +493,7 @@ static void ws_dispatch_message() {
     persist_if_upload(rx, rx_len, tx, (size_t)n);
   }
   poll_device_rename();
+  poll_color_correction();
   rx_len = 0;
 }
 
@@ -587,7 +738,7 @@ static uint32_t render_once() {
         // Shade over the stored fixture position (map order == LED order here).
         if (lm_map_led(i, &id, xyz)) {
           if (lm_fx_shade(i, xyz[0], xyz[1], xyz[2], rgb)) {
-            leds[i] = CRGB(rgb[0], rgb[1], rgb[2]);
+            leds[i] = cc_apply(rgb);
           } else {
             leds[i] = CRGB::Black;  // a cancelled/timed-out shade
             shade_bad++;
@@ -639,7 +790,7 @@ static uint32_t render_once() {
     if (lm_playback_step(dt)) {
       for (uint32_t i = 0; i < kMaxLeds; i++) {
         if (lm_playback_color(i, rgb)) {
-          leds[i] = CRGB(rgb[0], rgb[1], rgb[2]);
+          leds[i] = cc_apply(rgb);
         } else {
           leds[i] = CRGB::Black;
         }
@@ -972,6 +1123,9 @@ void setup() {
   lm_player_init(NUM_LEDS);
   // Restore a previously-mapped fixture from flash (LittleFS) before serving.
   fs_begin_and_restore();
+  // Bring up the color-correction LUT (from flash if present, else the default)
+  // before the render task starts, so the first frame is already corrected.
+  color_correction_begin();
 
   // WiFi: AP+STA. The soft-AP is always up (bench access + the fallback
   // when no LAN is joined); stored credentials (BLE-provisioned via

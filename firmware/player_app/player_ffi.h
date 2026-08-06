@@ -24,6 +24,15 @@ void lm_player_set_identity(const uint8_t *mac, size_t mac_len,
 // lm_player_handle so a set_device_name is persisted + reflected to BLE.
 int32_t lm_device_name(uint8_t *out, size_t cap);
 
+// Color correction: generation counter bumped on every set_color_correction,
+// and the active per-channel profile. The app polls the generation after each
+// lm_player_handle (like lm_device_name); on a change it reads the six params
+// (gamma[0..3] then luminance[0..3], channel order R,G,B) into `out`, rebuilds
+// the flash LUTs, and re-persists them. lm_color_correction_params returns 0 on
+// success, -1 if out is null.
+uint32_t lm_color_correction_gen(void);
+int32_t lm_color_correction_params(float *out);
+
 // Handle one received protocol frame (a binary WebSocket message).
 // recv_ms/send_ms are the player clock (millis()) at receive / reply time,
 // integer milliseconds. Returns: >0 = reply length written to out; 0 = no
