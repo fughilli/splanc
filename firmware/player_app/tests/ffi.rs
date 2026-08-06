@@ -8,9 +8,11 @@
 
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_player_ffi::{
-    lm_counting_color, lm_envelope_arm, lm_fx_load, lm_fx_set_active, lm_fx_shade, lm_fx_update,
-    lm_led_count, lm_map_led, lm_map_len, lm_pattern_color, lm_pattern_timing, lm_perf_build_report,
-    lm_perf_interval_ms, lm_perf_mode, lm_perf_push, lm_player_handle, lm_player_init,
+    lm_color_correction_commit, lm_color_correction_gen, lm_color_correction_params,
+    lm_counting_color, lm_envelope_arm,
+    lm_fx_load, lm_fx_set_active, lm_fx_shade, lm_fx_update, lm_led_count, lm_map_led, lm_map_len,
+    lm_pattern_color, lm_pattern_timing, lm_perf_build_report, lm_perf_interval_ms, lm_perf_mode,
+    lm_perf_push, lm_player_handle, lm_player_init,
 };
 use micropb::{MessageDecode, MessageEncode, PbEncoder};
 use pb::ClientMessage_::Msg as CMsg;
@@ -400,4 +402,47 @@ fn full_device_flow_through_the_c_abi() {
     assert_eq!(unsafe { lm_perf_mode() }, 0);
     let n_off = unsafe { lm_perf_build_report(buf.as_mut_ptr(), buf.len()) };
     assert_eq!(n_off, 0, "OFF: unsolicited builder emits nothing");
+
+    // Color correction: no request yet -> generation still 0.
+    assert_eq!(unsafe { lm_color_correction_gen() }, 0);
+
+    // A named profile resolves to the WS2812B defaults, bumps the generation
+    // (the firmware polls this to regenerate the flash LUT), and replies welcome.
+    let mut cc = pb::SetColorCorrection::default();
+    cc.set_profile(micropb::heapless::String::try_from("ws2812b").unwrap());
+    let Some(SMsg::Welcome(_)) = handle(&encode(CMsg::SetColorCorrection(cc)), 7000.0) else {
+        panic!("set_color_correction -> welcome");
+    };
+    assert_eq!(unsafe { lm_color_correction_gen() }, 1);
+    let mut params = [0.0f32; 6];
+    assert_eq!(unsafe { lm_color_correction_params(params.as_mut_ptr()) }, 0);
+    assert_eq!(&params[0..3], &[2.8, 2.8, 2.8]); // gamma R,G,B
+    assert_eq!(&params[3..6], &[625.0, 1250.0, 300.0]); // luminance R,G,B
+    // commit unset -> defaults to true (persist to flash).
+    assert_eq!(unsafe { lm_color_correction_commit() }, 1);
+
+    // A live-preview update sets commit=false: the firmware applies from RAM only.
+    let mut ccl = pb::SetColorCorrection::default();
+    ccl.set_gamma_r(2.0);
+    ccl.set_commit(false);
+    let Some(SMsg::Welcome(_)) = handle(&encode(CMsg::SetColorCorrection(ccl)), 7050.0) else {
+        panic!("set_color_correction (live) -> welcome");
+    };
+    assert_eq!(unsafe { lm_color_correction_gen() }, 2);
+    assert_eq!(unsafe { lm_color_correction_commit() }, 0);
+
+    // Explicit per-channel fields override the default; the generation advances.
+    let mut cc2 = pb::SetColorCorrection::default();
+    cc2.set_gamma_r(2.2);
+    cc2.set_lum_b(500.0);
+    cc2.set_commit(true);
+    let Some(SMsg::Welcome(_)) = handle(&encode(CMsg::SetColorCorrection(cc2)), 7100.0) else {
+        panic!("set_color_correction (explicit) -> welcome");
+    };
+    assert_eq!(unsafe { lm_color_correction_gen() }, 3);
+    assert_eq!(unsafe { lm_color_correction_params(params.as_mut_ptr()) }, 0);
+    assert_eq!(params[0], 2.2); // gamma_r overridden
+    assert_eq!(params[1], 2.8); // gamma_g still default
+    assert_eq!(params[5], 500.0); // lum_b overridden
+    assert_eq!(unsafe { lm_color_correction_commit() }, 1);
 }

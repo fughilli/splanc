@@ -264,6 +264,16 @@ function openDeviceDetail(dev: KnownDevice): void {
     rowFor("Folder", cur.folder || "Ungrouped"),
     save,
     Button({
+      label: "Color correction…",
+      icon: "sparkles",
+      variant: "quiet",
+      block: true,
+      onClick: () => {
+        sheet.close();
+        location.hash = "#/settings/color-correction";
+      },
+    }),
+    Button({
       label: "Move to folder…",
       icon: "folder",
       variant: "quiet",

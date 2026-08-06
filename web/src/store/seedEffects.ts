@@ -10,8 +10,10 @@
  */
 
 import { effectStore, type StoredEffect } from "./effectStore";
+import { COLOR_TEST_ID, COLOR_TEST_NAME, COLOR_TEST_SOURCE } from "../color/colorTestEffect";
 
-const SEED_FLAG = "ledmapper.seededEffects.v5";
+// Bumped v5 -> v6 to seed the built-in "Color test" gradient (FUG-75).
+const SEED_FLAG = "ledmapper.seededEffects.v6";
 
 interface Starter {
   id: string;
@@ -21,6 +23,12 @@ interface Starter {
 }
 
 const STARTERS: Starter[] = [
+  {
+    id: COLOR_TEST_ID,
+    name: COLOR_TEST_NAME,
+    tags: ["starter", "test"],
+    source: COLOR_TEST_SOURCE,
+  },
   {
     id: "builtin-rainbow-sweep",
     name: "Rainbow sweep",

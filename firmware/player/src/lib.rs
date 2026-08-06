@@ -157,6 +157,57 @@ struct CountingBlock {
 
 type CountingBlocks = micropb::heapless::Vec<CountingBlock, MAX_COUNTING_BLOCKS>;
 
+/// Per-channel color-correction profile. The firmware turns this into 3x256
+/// LUTs (gamma curve + white balance to the dimmest channel) it applies on the
+/// strip write path, so LEDs render with proper contrast instead of washed out.
+/// `luminance` is a relative datasheet figure (mcd) — only the ratios matter.
+#[derive(Clone, Copy)]
+struct ColorCorrection {
+    gamma: [f32; 3],
+    luminance: [f32; 3],
+}
+
+impl ColorCorrection {
+    /// WS2812B datasheet defaults: gamma 2.8, per-channel luminance R/G/B taken
+    /// at the middle of the datasheet's min..max bins (mcd).
+    const WS2812B: ColorCorrection = ColorCorrection {
+        gamma: [2.8, 2.8, 2.8],
+        luminance: [625.0, 1250.0, 300.0],
+    };
+}
+
+/// Resolve a `set_color_correction` request to a concrete profile: a recognized
+/// `profile` name wins outright; otherwise start from the WS2812B default and
+/// override whichever explicit per-channel fields are present.
+fn color_correction_from(m: &pb::SetColorCorrection) -> ColorCorrection {
+    if let Some(p) = m.r#profile() {
+        match p.as_str() {
+            "ws2812" | "ws2812b" => return ColorCorrection::WS2812B,
+            _ => {}
+        }
+    }
+    let mut cc = ColorCorrection::WS2812B;
+    if let Some(&v) = m.r#gamma_r() {
+        cc.gamma[0] = v;
+    }
+    if let Some(&v) = m.r#gamma_g() {
+        cc.gamma[1] = v;
+    }
+    if let Some(&v) = m.r#gamma_b() {
+        cc.gamma[2] = v;
+    }
+    if let Some(&v) = m.r#lum_r() {
+        cc.luminance[0] = v;
+    }
+    if let Some(&v) = m.r#lum_g() {
+        cc.luminance[1] = v;
+    }
+    if let Some(&v) = m.r#lum_b() {
+        cc.luminance[2] = v;
+    }
+    cc
+}
+
 /// The protocol session core. One per WSS connection (like the Pi's
 /// ConnectionHandler), with the persisted bits (led_counts, stored map)
 /// living for the player's lifetime in the real firmware.
@@ -179,6 +230,14 @@ pub struct Player {
     /// Bumped on every set_playback so the render side can rebuild its sim when
     /// the effect/params change.
     playback_gen: u32,
+    /// Active color-correction profile + a generation the firmware polls (like
+    /// set_device_name) to regenerate and re-persist the flash LUT on a change.
+    color_correction: ColorCorrection,
+    color_correction_gen: u32,
+    /// Whether the latest color-correction update should be committed to flash
+    /// (true) or applied from RAM only (false, live preview) — see the `commit`
+    /// field on `set_color_correction`.
+    color_correction_commit: bool,
 }
 
 impl Player {
@@ -195,6 +254,9 @@ impl Player {
             frame_log: FrameLog::new(),
             playback: None,
             playback_gen: 0,
+            color_correction: ColorCorrection::WS2812B,
+            color_correction_gen: 0,
+            color_correction_commit: true,
         }
     }
 
@@ -285,6 +347,17 @@ impl Player {
             // BLE advertisement.
             CMsg::SetDeviceName(m) => {
                 self.device_name = s64(m.r#name.as_str());
+                Some(self.welcome())
+            }
+            // Color correction: store the resolved profile and bump the gen. The
+            // firmware notices the change (like the rename above), regenerates the
+            // per-channel LUTs, and persists them to flash.
+            CMsg::SetColorCorrection(m) => {
+                self.color_correction = color_correction_from(&m);
+                // Unset commit defaults to true (persist); a live-preview stream
+                // sends commit=false to stay in RAM until the UI settles.
+                self.color_correction_commit = m.r#commit().copied().unwrap_or(true);
+                self.color_correction_gen = self.color_correction_gen.wrapping_add(1);
                 Some(self.welcome())
             }
             CMsg::SubmitEffect(_)
@@ -547,6 +620,24 @@ impl Player {
     /// firmware can persist it + rename the BLE advertisement.
     pub fn device_name(&self) -> &str {
         self.device_name.as_str()
+    }
+
+    /// Generation counter bumped on every `set_color_correction`; the firmware
+    /// polls it (like the device name) to notice a profile change.
+    pub fn color_correction_gen(&self) -> u32 {
+        self.color_correction_gen
+    }
+
+    /// The active color-correction profile as `(gamma, luminance)` per channel,
+    /// which the firmware turns into the flash LUTs.
+    pub fn color_correction(&self) -> ([f32; 3], [f32; 3]) {
+        (self.color_correction.gamma, self.color_correction.luminance)
+    }
+
+    /// Whether the latest color-correction update should be committed to flash
+    /// (true) or applied from RAM only (false — live preview).
+    pub fn color_correction_commit(&self) -> bool {
+        self.color_correction_commit
     }
 
     fn welcome(&self) -> pb::ServerMessage {

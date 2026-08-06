@@ -90,6 +90,17 @@ cc_library(
     hdrs = ["improv_codec.h"],
 )
 
+cc_library(
+    name = "color_correction",
+    hdrs = ["color_correction.h"],
+)
+
+cc_test(
+    name = "color_correction_test",
+    srcs = ["color_correction_test.cc"],
+    deps = [":color_correction"],
+)
+
 cc_test(
     name = "improv_codec_test",
     srcs = ["improv_codec_test.cc"],
@@ -114,6 +125,7 @@ cc_binary(
         "//conditions:default": ["@platforms//:incompatible"],
     }),
     deps = [
+        ":color_correction",
         ":improv_codec",
         ":player_ffi",
         ":ws_codec",

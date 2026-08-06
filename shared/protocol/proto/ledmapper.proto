@@ -506,6 +506,7 @@ message ClientMessage {
     SetDeviceName set_device_name = 27;
     SetTexture set_texture = 28;
     UploadChunk upload_chunk = 29;
+    SetColorCorrection set_color_correction = 30;
   }
 }
 
@@ -549,6 +550,32 @@ message SetTexture {
 // and is persisted on the device. Reply: welcome (echoing the new device_name).
 message SetDeviceName {
   string name = 1;
+}
+
+// Configure per-channel color correction. LEDs render washed out without gamma
+// compensation; the player builds per-channel LUTs (gamma curve + white balance
+// to the dimmest channel), persists them to flash, and applies them on the
+// strip write path. Either name a built-in profile, or give explicit per-channel
+// gamma + relative luminance. Reply: welcome.
+message SetColorCorrection {
+  // Built-in profile name (e.g. "ws2812b"). When set, the explicit fields below
+  // are ignored. Empty/unset -> use the explicit gamma/luminance fields.
+  optional string profile = 1;
+  // Per-channel gamma exponent (WS2812B datasheet-typical is 2.8).
+  optional float gamma_r = 2;
+  optional float gamma_g = 3;
+  optional float gamma_b = 4;
+  // Per-channel relative luminance for white balance (datasheet mcd; only the
+  // ratios matter). The brightest channels are scaled down so full-white renders
+  // neutral.
+  optional float lum_r = 5;
+  optional float lum_g = 6;
+  optional float lum_b = 7;
+  // Whether to persist the generated LUT to flash. Unset/true commits (writes
+  // littlefs); false applies from RAM only — used for live preview while the UI
+  // drags curves, so a rapid stream of updates doesn't hammer the flash. The UI
+  // sends one commit=true when it's done (e.g. the panel closes).
+  optional bool commit = 8;
 }
 
 // Reply to stop_mapping(solve_on_host=false): stopped + persisted, no host

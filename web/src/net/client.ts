@@ -451,6 +451,38 @@ export class LedMapperClient {
     )) as unknown as WelcomeMessage;
   }
 
+  /** Configure the LED strip's per-channel color correction: either a built-in
+   * profile name (e.g. "ws2812b") or explicit per-channel gamma + relative
+   * luminance. The device rebuilds its flash LUTs and applies them to the
+   * running effect immediately, so this can be pushed live while dialing in
+   * curves. Reply: welcome. */
+  async setColorCorrection(cc: {
+    profile?: string;
+    gamma?: [number, number, number];
+    luminance?: [number, number, number];
+    /** Persist to flash (default). Pass false for live preview so a rapid drag
+     * stream stays in device RAM; send one commit:true when done. */
+    commit?: boolean;
+  }): Promise<WelcomeMessage> {
+    const msg: Record<string, unknown> = { type: "set_color_correction" };
+    if (cc.profile !== undefined) msg.profile = cc.profile;
+    if (cc.gamma) {
+      msg.gammaR = cc.gamma[0];
+      msg.gammaG = cc.gamma[1];
+      msg.gammaB = cc.gamma[2];
+    }
+    if (cc.luminance) {
+      msg.lumR = cc.luminance[0];
+      msg.lumG = cc.luminance[1];
+      msg.lumB = cc.luminance[2];
+    }
+    if (cc.commit !== undefined) msg.commit = cc.commit;
+    return (await this.request(
+      msg as unknown as ClientMessage,
+      "welcome",
+    )) as unknown as WelcomeMessage;
+  }
+
   /** Stream a video frame into a loaded effect's 2D texture. Build the message
    * with the textureCodec (quantize + optional XOR-delta + RLE); fire-and-forget
    * so a high frame rate isn't gated on a round trip. Returns false if the
