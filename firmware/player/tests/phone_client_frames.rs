@@ -75,8 +75,9 @@ fn reply_allowed(req: &CMsg, reply: &Option<SMsg>) -> bool {
         | CMsg::SetTexture(_) => reply.is_none(),
         // Pi-only request arms: bounded refusal.
         CMsg::GetStatus(_) | CMsg::GetLiveMap(_) | CMsg::GetSolveStatus(_) => is_err("unsupported"),
-        // The map dump is handled by the ffi arena layer, not the session core.
-        CMsg::GetStoredMap(_) => is_err("unsupported"),
+        // The map dump and sharded uploads are handled by the ffi arena /
+        // transport layer, not the session core.
+        CMsg::GetStoredMap(_) | CMsg::UploadChunk(_) => is_err("unsupported"),
         // Effects arms are handled by the ffi fx layer, not the session core;
         // perf arms are not implemented on this player.
         CMsg::SubmitEffect(_)
@@ -120,6 +121,7 @@ fn arm_name(req: &CMsg) -> &'static str {
         CMsg::GetPerfReport(_) => "get_perf_report",
         CMsg::SetDeviceName(_) => "set_device_name",
         CMsg::SetTexture(_) => "set_texture",
+        CMsg::UploadChunk(_) => "upload_chunk",
     }
 }
 

@@ -16,6 +16,8 @@
 
 #![no_std]
 
+use core::convert::Infallible;
+use core::ffi::c_void;
 use core::ptr::{addr_of, addr_of_mut};
 
 use core::sync::atomic::AtomicBool;
@@ -28,10 +30,10 @@ use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_player::{upload_malformed, upload_too_large, Player};
 use ledmapper_pulse::{Graph, Sim, MAX_SEGMENTS};
 use ledmapper_store::{
-    decode_submit_map, decode_submit_topology, dump, envelope_arm, StoreError, StoredMap,
-    StoredTopology, ARM_GET_STORED_MAP, ARM_SUBMIT_MAP, ARM_SUBMIT_TOPOLOGY,
+    decode_submit_map, decode_submit_topology, dump, envelope_arm, parse_upload_chunk, BlockReader,
+    StoreError, StoredMap, StoredTopology, ARM_GET_STORED_MAP, ARM_SUBMIT_MAP, ARM_SUBMIT_TOPOLOGY,
 };
-use micropb::{MessageDecode, MessageEncode, PbDecoder, PbEncoder};
+use micropb::{MessageDecode, MessageEncode, PbDecoder, PbEncoder, PbRead};
 
 /// Storage for the decoded map + topology (Phase 3 arena). Reset wholesale per
 /// upload, so it only holds ONE map+topology at a time. Sized to the firmware's
@@ -471,8 +473,8 @@ pub unsafe extern "C" fn lm_player_handle(
     }
     let frame = core::slice::from_raw_parts(data, len);
     let reply = match envelope_arm(frame) {
-        Some(ARM_SUBMIT_MAP) => handle_map_upload(frame),
-        Some(ARM_SUBMIT_TOPOLOGY) => handle_topology_upload(frame),
+        Some(ARM_SUBMIT_MAP) => handle_map_upload(frame, frame.len()),
+        Some(ARM_SUBMIT_TOPOLOGY) => handle_topology_upload(frame, frame.len()),
         // Dump the stored map+topology (it lives in the arena, not the session
         // core) back out to the phone, one MappingBundle byte-window per call.
         Some(ARM_GET_STORED_MAP) => handle_get_stored_map(frame),
@@ -513,13 +515,16 @@ pub unsafe extern "C" fn lm_player_handle(
 
 /// A map upload replaces the stored map AND its topology (a topology is
 /// meaningless against a different solve), so the arena resets wholesale.
-unsafe fn handle_map_upload(frame: &[u8]) -> pb::ServerMessage {
+unsafe fn handle_map_upload<R: PbRead<Error = Infallible>>(
+    reader: R,
+    total: usize,
+) -> pb::ServerMessage {
     *addr_of_mut!(MAP) = None;
     *addr_of_mut!(TOPO) = None;
     *addr_of_mut!(SIM) = None;
     FX_TOPO_READY = false; // map replaced → per-LED topology cache is stale
     arena_mut().reset();
-    match decode_submit_map(frame, frame.len(), arena_ref()) {
+    match decode_submit_map(reader, total, arena_ref()) {
         Ok(map) => {
             let reply = player().map_stored(map.map_id.as_str());
             *addr_of_mut!(MAP) = Some(map);
@@ -533,12 +538,15 @@ unsafe fn handle_map_upload(frame: &[u8]) -> pb::ServerMessage {
 }
 
 /// Topology appends after the map; a failed decode rolls back to the map.
-unsafe fn handle_topology_upload(frame: &[u8]) -> pb::ServerMessage {
+unsafe fn handle_topology_upload<R: PbRead<Error = Infallible>>(
+    reader: R,
+    total: usize,
+) -> pb::ServerMessage {
     *addr_of_mut!(TOPO) = None;
     *addr_of_mut!(SIM) = None;
     FX_TOPO_READY = false; // topology replaced → per-LED topology cache is stale
     let cp = arena_ref().checkpoint();
-    match decode_submit_topology(frame, frame.len(), arena_ref()) {
+    match decode_submit_topology(reader, total, arena_ref()) {
         Ok(topo) => {
             let reply = player().topology_stored(topo.map_id.as_str());
             if matches!(
@@ -624,6 +632,118 @@ pub unsafe extern "C" fn lm_envelope_arm(data: *const u8, len: usize) -> i32 {
     }
     let s = core::slice::from_raw_parts(data, len);
     envelope_arm(s).map(|a| a as i32).unwrap_or(-1)
+}
+
+/// Header fields of one sharded-upload window, filled by [`lm_parse_upload_chunk`].
+/// `payload_off`/`payload_len` locate the window's bytes WITHIN the frame the
+/// caller passed, so the transport copies `data[payload_off .. +payload_len]`
+/// into its reassembly buffer without this layer owning any storage.
+#[repr(C)]
+pub struct LmUploadChunk {
+    pub upload_id: u32,
+    pub seq: u32,
+    pub payload_off: u32,
+    pub payload_len: u32,
+    pub kind: u32, // 0 = MAP (submit_map), 1 = TOPOLOGY (submit_topology)
+    pub last: u8,
+}
+
+/// Parse a `ClientMessage{upload_chunk}` frame into `out` without decoding the
+/// (bytes-capped) generated bindings. Returns: 1 = parsed an upload_chunk (out
+/// filled); 0 = a well-formed frame that is NOT an upload_chunk (handle it as an
+/// ordinary message); -1 = bad args; -2 = malformed frame.
+///
+/// # Safety
+/// `data` must point to `len` readable bytes; `out` must be a valid pointer.
+#[no_mangle]
+pub unsafe extern "C" fn lm_parse_upload_chunk(
+    data: *const u8,
+    len: usize,
+    out: *mut LmUploadChunk,
+) -> i32 {
+    if data.is_null() || out.is_null() || len == 0 {
+        return -1;
+    }
+    let frame = core::slice::from_raw_parts(data, len);
+    match parse_upload_chunk(frame) {
+        Ok(Some(v)) => {
+            // payload is a sub-slice of `frame`; recover its offset by address.
+            let off = (v.payload.as_ptr() as usize).wrapping_sub(frame.as_ptr() as usize);
+            *out = LmUploadChunk {
+                upload_id: v.upload_id,
+                seq: v.seq,
+                payload_off: off as u32,
+                payload_len: v.payload.len() as u32,
+                kind: v.kind,
+                last: v.last as u8,
+            };
+            1
+        }
+        Ok(None) => 0,
+        Err(_) => -2,
+    }
+}
+
+/// Encode a `ServerMessage{chunk_ack{upload_id, seq}}` reply into `out`. Returns
+/// the encoded length, or -2 if it doesn't fit (a firmware bug — ChunkAck is two
+/// varints). The transport sends this after each non-final window so the browser
+/// flushes one small TLS record per send.
+///
+/// # Safety
+/// `out` must point to `out_cap` writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn lm_encode_chunk_ack(
+    upload_id: u32,
+    seq: u32,
+    out: *mut u8,
+    out_cap: usize,
+) -> i32 {
+    if out.is_null() {
+        return -1;
+    }
+    let mut m = pb::ChunkAck::default();
+    m.r#upload_id = upload_id;
+    m.r#seq = seq;
+    let reply = pb::ServerMessage { r#msg: Some(pb::ServerMessage_::Msg::ChunkAck(m)) };
+    encode_reply(&reply, out, out_cap)
+}
+
+/// Refill callback for [`lm_decode_upload_stream`]: fill up to `cap` bytes at
+/// `buf` from the caller's source (a LittleFS read), returning the count, or 0
+/// at EOF. Never called again after it returns 0.
+pub type LmRefill = extern "C" fn(ctx: *mut c_void, buf: *mut u8, cap: usize) -> usize;
+
+/// Decode a reassembled upload frame that the caller streams in block-by-block
+/// via `refill` — so a whole ~15 KB submit_map is never resident (the C6 keeps
+/// it on flash, not in a big static buffer). `arm` selects the decoder
+/// (ARM_SUBMIT_MAP / ARM_SUBMIT_TOPOLOGY); `total_len` is the frame's exact byte
+/// length. Populates MAP/TOPO exactly like the in-RAM path and returns the
+/// encoded reply (result_ready / error) in `out`.
+///
+/// # Safety
+/// `refill` must write ≤ `cap` bytes; `out` must point to `out_cap` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn lm_decode_upload_stream(
+    arm: i32,
+    refill: LmRefill,
+    ctx: *mut c_void,
+    total_len: usize,
+    out: *mut u8,
+    out_cap: usize,
+) -> i32 {
+    if out.is_null() {
+        return -1;
+    }
+    let mut block = [0u8; 512];
+    let reader = BlockReader::new(&mut block, |b: &mut [u8]| {
+        refill(ctx, b.as_mut_ptr(), b.len())
+    });
+    let reply = match arm as u32 {
+        ARM_SUBMIT_MAP => handle_map_upload(reader, total_len),
+        ARM_SUBMIT_TOPOLOGY => handle_topology_upload(reader, total_len),
+        _ => upload_malformed(),
+    };
+    encode_reply(&reply, out, out_cap)
 }
 
 // -- effects protocol dispatch (submit_effect / set_effect / set_uniforms /

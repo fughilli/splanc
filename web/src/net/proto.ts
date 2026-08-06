@@ -52,6 +52,7 @@ const CLIENT_ARMS: Record<string, string> = {
   get_perf_report: "getPerfReport",
   set_device_name: "setDeviceName",
   set_texture: "setTexture",
+  upload_chunk: "uploadChunk",
 };
 const SERVER_ARMS: Record<string, string> = {
   welcome: "welcome",
@@ -71,6 +72,7 @@ const SERVER_ARMS: Record<string, string> = {
   stored_map_chunk: "storedMapChunk",
   effect_uniforms: "effectUniforms",
   perf_report: "perfReport",
+  chunk_ack: "chunkAck",
 };
 const CLIENT_TYPES: Record<string, string> = Object.fromEntries(
   Object.entries(CLIENT_ARMS).map(([snake, camel]) => [camel, snake]),
@@ -105,8 +107,8 @@ const BYTES_KEYS = new Set(["fxb", "manifest"]);
 // `data` is a bytes field on both SetTexture (outbound, a Uint8Array we send)
 // and StoredMapChunk (inbound, kept as a base64 string the map decoder unpacks
 // itself). So convert it on ENCODE only, leaving the inbound StoredMapChunk.data
-// as-is.
-const BYTES_KEYS_OUT = new Set([...BYTES_KEYS, "data"]);
+// as-is. `payload` is UploadChunk's outbound byte-window (same encode-only need).
+const BYTES_KEYS_OUT = new Set([...BYTES_KEYS, "data", "payload"]);
 
 function bytesToB64(bytes: Uint8Array): string {
   let bin = "";
@@ -313,6 +315,32 @@ export interface EffectUniformsMessage {
   effectId: string;
   manifest: Uint8Array;
   current: UniformValueFlat[];
+}
+
+// -- Chunked-upload arms (flat shapes) --------------------------------------
+// Shard a large submit_map / submit_topology across several small frames so no
+// single one forces the player's mbedtls to allocate a big contiguous TLS
+// record buffer (the C6 OOMs its handshake trying to alloc a ~15 KB record for
+// a full map). The client slices the encoded envelope into `payload` windows;
+// the player reassembles + decodes on `last`. See client.ts sendChunked().
+
+/** One byte-window of a sharded upload (proto UploadChunk). `payload` is a
+ * slice of the encoded submit_map / submit_topology frame, in `seq` order. */
+export interface UploadChunkMessage {
+  type: "upload_chunk";
+  uploadId: number;
+  seq: number;
+  last: boolean;
+  kind: "MAP" | "TOPOLOGY"; // proto enum rides the JSON boundary as its name
+  payload: Uint8Array;
+}
+
+/** Reply to a non-final UploadChunk (proto ChunkAck): the player has the
+ * window and is ready for the next; echoes upload_id/seq for pacing. */
+export interface ChunkAckMessage {
+  type: "chunk_ack";
+  uploadId: number;
+  seq: number;
 }
 
 // -- Perf arms (flat shapes) ------------------------------------------------

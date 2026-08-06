@@ -13,8 +13,8 @@ use base64::Engine;
 use ledmapper_arena::Arena;
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_store::{
-    decode_submit_map, decode_submit_topology, envelope_arm, BlobStore, ChunkedReader, StoreError,
-    StoredLed, ARM_SUBMIT_MAP, ARM_SUBMIT_TOPOLOGY,
+    decode_submit_map, decode_submit_topology, envelope_arm, parse_upload_chunk, BlobStore,
+    BlockReader, ChunkedReader, StoreError, StoredLed, ARM_SUBMIT_MAP, ARM_SUBMIT_TOPOLOGY,
 };
 use micropb::{MessageEncode, PbEncoder};
 use std::collections::HashMap;
@@ -112,6 +112,55 @@ fn chunks(bytes: &[u8], size: usize) -> Vec<&[u8]> {
     bytes.chunks(size).collect()
 }
 
+/// Wrap `payload` (a slice of an encoded submit_* frame) as one UploadChunk
+/// ClientMessage window — exactly what the web client puts on the wire.
+fn upload_chunk_frame(
+    upload_id: u32,
+    seq: u32,
+    last: bool,
+    kind: pb::UploadChunk_::Kind,
+    payload: &[u8],
+) -> Vec<u8> {
+    let mut c = pb::UploadChunk::default();
+    c.r#upload_id = upload_id;
+    c.r#seq = seq;
+    c.r#last = last;
+    c.r#kind = kind;
+    c.r#payload
+        .extend_from_slice(payload)
+        .expect("window within host payload cap");
+    encode_client(pb::ClientMessage_::Msg::UploadChunk(c))
+}
+
+/// The exact round trip the wss transport performs: slice `frame` into `win`
+/// windows, wrap each as an UploadChunk, parse it back with the firmware's
+/// parser, and copy the payloads into one accumulation buffer.
+fn reassemble_via_chunks(frame: &[u8], win: usize, kind: pb::UploadChunk_::Kind) -> Vec<u8> {
+    let mut acc = Vec::new();
+    let mut seq = 0u32;
+    let mut off = 0usize;
+    loop {
+        let end = (off + win).min(frame.len());
+        let last = end >= frame.len();
+        let wire = upload_chunk_frame(7, seq, last, kind, &frame[off..end]);
+        let v = parse_upload_chunk(&wire)
+            .expect("well-formed frame")
+            .expect("is an upload_chunk");
+        assert_eq!(v.upload_id, 7);
+        assert_eq!(v.seq, seq);
+        assert_eq!(v.last, last);
+        assert_eq!(v.kind, kind.0 as u32);
+        assert_eq!(v.payload, &frame[off..end], "payload slice round-trips");
+        acc.extend_from_slice(v.payload);
+        if last {
+            break;
+        }
+        off = end;
+        seq += 1;
+    }
+    acc
+}
+
 fn golden_client_frames() -> Vec<Vec<u8>> {
     let path = std::env::var("GOLDEN_PROTO_FRAMES").unwrap();
     let json: serde_json::Value =
@@ -153,6 +202,74 @@ fn chunked_map_upload_decodes_into_the_arena() {
         1024 * core::mem::size_of::<StoredLed>(),
         "leds must land in one exactly-sized region"
     );
+}
+
+#[test]
+fn sharded_map_upload_reassembles_and_decodes_identically() {
+    // A ~150-LED map is the size that OOMed the wss handshake as one record
+    // (FUG-74); the client shards it and the transport reassembles the windows.
+    let frame = submit_map_frame(150);
+    assert_eq!(envelope_arm(&frame), Some(ARM_SUBMIT_MAP));
+    let acc = reassemble_via_chunks(&frame, 4096, pb::UploadChunk_::Kind::Map);
+    assert_eq!(acc, frame, "reassembled bytes are byte-identical to the frame");
+
+    let mut buf = vec![0u8; 16 * 1024];
+    let arena = Arena::new(&mut buf);
+    let map = decode_submit_map(acc.as_slice(), acc.len(), &arena).expect("decodes");
+    assert_eq!(map.map_id.as_str(), "m-test");
+    assert_eq!(map.led_count, 150);
+    assert_eq!(map.leds.len(), 150);
+    assert_eq!(map.leds[149].id, 149);
+}
+
+#[test]
+fn sharded_topology_upload_reassembles_and_decodes_identically() {
+    let frame = submit_topology_frame(150, 12, 20, 12);
+    assert_eq!(envelope_arm(&frame), Some(ARM_SUBMIT_TOPOLOGY));
+    let acc = reassemble_via_chunks(&frame, 4096, pb::UploadChunk_::Kind::Topology);
+    assert_eq!(acc, frame);
+
+    let mut buf = vec![0u8; 16 * 1024];
+    let arena = Arena::new(&mut buf);
+    let topo = decode_submit_topology(acc.as_slice(), acc.len(), &arena).expect("decodes");
+    assert_eq!(topo.map_id.as_str(), "m-test");
+    assert_eq!(topo.associations.len(), 150);
+    assert_eq!(topo.segments.len(), 12);
+}
+
+#[test]
+fn block_reader_decodes_a_frame_fed_in_small_blocks() {
+    // The flash-streaming decode path: pull the frame one small block at a time
+    // (a whole submit_map never resident) — 100-byte blocks straddle varints,
+    // doubles, and LedEntry boundaries, the same way LittleFS block reads do.
+    let frame = submit_map_frame(150);
+    let mut buf = vec![0u8; 16 * 1024];
+    let arena = Arena::new(&mut buf);
+    let mut pos = 0usize;
+    let mut block = [0u8; 100];
+    let reader = BlockReader::new(&mut block, |b: &mut [u8]| {
+        let n = (frame.len() - pos).min(b.len());
+        b[..n].copy_from_slice(&frame[pos..pos + n]);
+        pos += n;
+        n
+    });
+    let map = decode_submit_map(reader, frame.len(), &arena).expect("streams + decodes");
+    assert_eq!(map.map_id.as_str(), "m-test");
+    assert_eq!(map.led_count, 150);
+    assert_eq!(map.leds.len(), 150);
+    assert_eq!(map.leds[149].id, 149);
+    assert_eq!(map.leds[0], StoredLed { id: 0, xyz: [0.0; 3] });
+}
+
+#[test]
+fn parse_upload_chunk_classifies_and_guards() {
+    // A real submit_map frame is well-formed protobuf but not an upload_chunk.
+    let not_chunk = submit_map_frame(1);
+    assert_eq!(parse_upload_chunk(&not_chunk), Ok(None));
+    // A truncated window (payload length prefix says more than is present).
+    let mut wire = upload_chunk_frame(1, 0, true, pb::UploadChunk_::Kind::Map, &[1, 2, 3, 4]);
+    wire.truncate(wire.len() - 2);
+    assert_eq!(parse_upload_chunk(&wire), Err(StoreError::Decode));
 }
 
 #[test]
