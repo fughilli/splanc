@@ -67,6 +67,15 @@ jobs:
       - name: Setup repository
         uses: actions/checkout@v4
 
+      # Free ~20-30GB of runner disk before the heavy Nix/Bazel build (FUG-76):
+      # ubuntu-latest gives only ~14GB free on /, but the flash-bundle build pulls
+      # in the esp32c6 image (mbedtls + Arduino core from source) which — with the
+      # /nix store + Bazel disk cache — exhausts it. Deletes the ~25GB of unused
+      # preinstalled SDKs (Android, .NET, GHC, …) in place; caches under ~/.cache
+      # are untouched. Same step as the test.yaml jobs.
+      - name: Free runner disk space
+        uses: justinthelaw/maximize-github-runner-space@v0.10.0
+
       # Reach the rigs over the tailnet. Ephemeral so the node self-reaps after
       # the run; the rigs only accept tailnet peers (DESIGN.md "Security").
       - name: Join the tailnet
