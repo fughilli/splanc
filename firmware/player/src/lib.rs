@@ -331,6 +331,9 @@ impl Player {
             // The map dump lives in the arena layer (ffi), which intercepts this
             // arm before the session core ever sees it; unreachable here.
             CMsg::GetStoredMap(_) => Some(error("unsupported", "map dump handled by the arena layer")),
+            // Sharded uploads are reassembled + decoded by the transport/arena
+            // layer, which intercepts this arm before the core sees it.
+            CMsg::UploadChunk(_) => Some(error("unsupported", "upload_chunk handled by the transport")),
             // Effects arms are intercepted by the fx layer (ffi) before the
             // session core sees them (the firmware profile can't decode a full
             // .fxb / uniform set); unreachable here.

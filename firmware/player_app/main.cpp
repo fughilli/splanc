@@ -92,10 +92,28 @@ static const uint32_t kRenderTaskStack = 8192;   // FastLED.show() needs headroo
 // so 256 LEDs ≈ 25 KB; 32 KB leaves headroom). Sized to the LED cap rather than
 // the old 1024-LED assumption — the reclaimed static RAM is headroom the
 // heap-hungry TLS (wss) handshake needs. Shared by the ws:81 and wss:443 paths.
-static const size_t kRxCap = 32768;
-static uint8_t rx[kRxCap];      // reassembled message payload
+// Single-frame message buffer: control traffic, one set_texture video frame
+// (its quantized cap is 8 KB), or a small unsharded upload. Large map/topology
+// uploads do NOT live here — they arrive as UploadChunk windows streamed to a
+// temp file (see process_upload_chunk) and decode straight off flash — so this
+// shrank 32 KB -> 12 KB (FUG-74 Phase B), handing ~20 KB back to the heap the
+// wss TLS handshake needs. Shared by the ws:81 and wss:443 paths.
+static const size_t kRxCap = 12288;
+static uint8_t rx[kRxCap];      // one whole (non-sharded) message
 static size_t rx_len = 0;
 static uint8_t tx[2048];        // encoded reply frames are control-sized
+
+// Sharded upload (proto UploadChunk): each window's payload is appended to this
+// temp file as it arrives; on the last window the reassembled frame is decoded
+// straight off flash (Rust BlockReader) and renamed into place — so neither a
+// whole upload nor a second copy is ever resident, and persistence is free (the
+// file IS the frame). Windows arrive in seq order over one connection; a fresh
+// upload (seq 0) or any seq gap resets the accumulator.
+static const char *kUploadTmp = "/lfs/upload.tmp";
+static uint32_t upload_next_seq = 0;  // expected seq of the next window
+static int upload_kind = 0;           // 0 = map (submit_map), 1 = topology
+static size_t upload_total = 0;       // bytes written to the temp file so far
+static bool upload_active = false;    // a window sequence is in progress
 static uint8_t hs[1024];        // handshake request accumulator
 static size_t hs_len = 0;
 static uint8_t hdr[16];         // in-progress frame header accumulator
@@ -417,18 +435,37 @@ static void persist_if_upload(const uint8_t *req, size_t req_len,
   }
 }
 
-// Replay a persisted upload frame through the session core on boot — the SAME
-// decode path a live upload takes — to repopulate the arena.
+// Refill callback for lm_decode_upload_stream: pull the next block straight off
+// the open LittleFS file (ctx is the FILE*). 0 = EOF.
+static size_t upload_refill(void *ctx, uint8_t *buf, size_t cap) {
+  return fread(buf, 1, cap, static_cast<FILE *>(ctx));
+}
+
+// Replay a persisted frame through the session core on boot — the SAME decode a
+// live upload takes. map/topology can be big, so they stream off flash block by
+// block (no whole-frame buffer); everything else (playback, effect, uniforms)
+// is control-sized and decodes in one pass through rx.
 static void fs_replay(const char *path) {
   FILE *f = fopen(path, "rb");
   if (f == nullptr) return;
   fseek(f, 0, SEEK_END);
   long n = ftell(f);
   fseek(f, 0, SEEK_SET);
-  if (n > 0 && (size_t)n <= (long)kRxCap) {
+  if (n <= 0) {
+    fclose(f);
+    return;
+  }
+  uint8_t hdr[8];
+  size_t hn = fread(hdr, 1, sizeof hdr, f);
+  fseek(f, 0, SEEK_SET);
+  const int32_t arm = lm_envelope_arm(hdr, hn);
+  int64_t now = (int64_t)millis();
+  if (arm == kArmSubmitMap || arm == kArmSubmitTopology) {
+    lm_decode_upload_stream(arm, upload_refill, f, (size_t)n, tx, sizeof tx);  // reply discarded
+    Log().printf("littlefs: restored %s (%ld B, streamed)\n", path, n);
+  } else if ((size_t)n <= kRxCap) {
     size_t got = fread(rx, 1, (size_t)n, f);
     if (got == (size_t)n) {
-      int64_t now = (int64_t)millis();
       lm_player_handle(rx, got, now, now, tx, sizeof tx);  // reply discarded
       Log().printf("littlefs: restored %s (%ld B)\n", path, n);
     }
@@ -480,7 +517,93 @@ static void poll_device_rename() {
   Log().printf("[player] renamed to \"%s\"\n", g_device_name);
 }
 
+// Handle one sharded-upload window (proto UploadChunk), shared by the wss and
+// ws:81 paths. `payload` points at the window's bytes (inside the caller's rx).
+// Each window is appended to the temp file; the last one is decoded straight
+// off flash and, on success, renamed into place (persistence is free — the file
+// IS the frame). Fills `tx` with the reply to send and returns its length, or
+// -1 to drop the socket (fs error / out-of-order window / decode failure).
+static int32_t process_upload_chunk(const LmUploadChunk *ch, const uint8_t *payload) {
+  if (!fs_ok) return -1;  // uploads need the fs (stream-decode + persistence)
+
+  if (ch->seq == 0) {
+    upload_active = false;
+    FILE *f = fopen(kUploadTmp, "wb");
+    if (f == nullptr) return -1;
+    size_t w = fwrite(payload, 1, ch->payload_len, f);
+    fclose(f);
+    if (w != ch->payload_len) return -1;
+    upload_active = true;
+    upload_kind = (int)ch->kind;
+    upload_total = ch->payload_len;
+    upload_next_seq = 1;
+  } else {
+    if (!upload_active || ch->seq != upload_next_seq) {
+      upload_active = false;
+      return -1;  // out-of-order / stale window → drop; the client retries
+    }
+    FILE *f = fopen(kUploadTmp, "ab");
+    if (f == nullptr) {
+      upload_active = false;
+      return -1;
+    }
+    size_t w = fwrite(payload, 1, ch->payload_len, f);
+    fclose(f);
+    if (w != ch->payload_len) {
+      upload_active = false;
+      return -1;
+    }
+    upload_total += ch->payload_len;
+    upload_next_seq = ch->seq + 1;
+  }
+
+  if (!ch->last) {
+    return lm_encode_chunk_ack(ch->upload_id, ch->seq, tx, sizeof tx);
+  }
+
+  // Final window: decode the reassembled frame straight off flash, then persist
+  // by renaming the temp file into place (a new map invalidates the topology).
+  upload_active = false;
+  FILE *f = fopen(kUploadTmp, "rb");
+  if (f == nullptr) return -1;
+  const int32_t arm = (upload_kind == 1) ? kArmSubmitTopology : kArmSubmitMap;
+  int64_t now = (int64_t)millis();
+  xSemaphoreTake(player_mutex, portMAX_DELAY);
+  int32_t n = lm_decode_upload_stream(arm, upload_refill, f, upload_total, tx, sizeof tx);
+  xSemaphoreGive(player_mutex);
+  fclose(f);
+  poll_device_rename();
+
+  const bool ok = n > 0 && lm_envelope_arm(tx, (size_t)n) == kArmResultReady;
+  if (ok) {
+    const char *dest = (upload_kind == 1) ? kTopoPath : kMapPath;
+    remove(dest);
+    if (rename(kUploadTmp, dest) != 0) {
+      Log().printf("littlefs: rename %s -> %s failed\n", kUploadTmp, dest);
+      remove(kUploadTmp);
+    } else if (upload_kind == 0) {
+      remove(kTopoPath);  // the previous topology no longer matches this map
+    }
+  } else {
+    remove(kUploadTmp);
+  }
+  return n;
+}
+
 static void ws_dispatch_message() {
+  // Sharded upload window? Stream it to flash — the ws:81 mirror of the wss
+  // path (process_upload_chunk handles the ack / final-decode / persist).
+  LmUploadChunk ch;
+  if (lm_parse_upload_chunk(rx, rx_len, &ch) == 1) {
+    int32_t n = process_upload_chunk(&ch, rx + ch.payload_off);
+    if (n > 0) {
+      ws_send_frame(WS_OP_BINARY, tx, (size_t)n);
+    } else if (n < 0) {
+      ws_drop(1011);  // fs error / out-of-order window → drop; the client retries
+    }
+    rx_len = 0;
+    return;
+  }
   // Integer player clock (millis()) — no f64: the session core does its time
   // arithmetic in integers and widens to the wire's double only at encode.
   int64_t now = (int64_t)millis();
@@ -924,9 +1047,9 @@ static esp_err_t wss_ws_handler(httpd_req_t *req) {
   if (frame.len == 0) return ESP_OK;
   if (frame.len > kRxCap) return ESP_FAIL;  // too big → drop the socket
 
-  // Read into the shared reassembly buffer OUTSIDE player_mutex, so a slow TLS
-  // read of a big submit_map doesn't stall the render task; only the
-  // single-threaded core call is serialized (mirrors ws_dispatch_message).
+  // Receive the whole frame into rx (a window is small; a single-frame message
+  // is capped at kRxCap above). Read OUTSIDE player_mutex so a slow TLS read
+  // doesn't stall the render task; only the core call is serialized.
   frame.payload = rx;
   err = httpd_ws_recv_frame(req, &frame, kRxCap);
   if (err != ESP_OK) {
@@ -934,11 +1057,32 @@ static esp_err_t wss_ws_handler(httpd_req_t *req) {
                  (unsigned)frame.len);
     return err;
   }
-  rx_len = frame.len;
 
+  // Sharded upload window? Stream it to flash — ack each window, and on the last
+  // decode straight off flash + persist by rename (shared with the ws:81 path).
+  LmUploadChunk ch;
+  if (lm_parse_upload_chunk(rx, frame.len, &ch) == 1) {
+    int32_t n = process_upload_chunk(&ch, rx + ch.payload_off);
+    if (n < 0) return ESP_FAIL;  // fs error / out-of-order window → drop socket
+    if (n > 0) {
+      httpd_ws_frame_t out = {};
+      out.type = HTTPD_WS_TYPE_BINARY;
+      out.payload = tx;
+      out.len = (size_t)n;
+      esp_err_t serr = httpd_ws_send_frame(req, &out);
+      if (serr != ESP_OK) {
+        Log().printf("[wss] send_frame failed: %d (reply=%d B, heap=%u)\n",
+                     (int)serr, (int)n, (unsigned)esp_get_free_heap_size());
+      }
+    }
+    return ESP_OK;
+  }
+
+  // Ordinary single-frame message (control traffic, set_texture, or a small
+  // unsharded submit_*). rx holds the whole frame.
   int64_t now = (int64_t)millis();
   xSemaphoreTake(player_mutex, portMAX_DELAY);
-  int32_t n = lm_player_handle(rx, rx_len, now, now, tx, sizeof tx);
+  int32_t n = lm_player_handle(rx, frame.len, now, now, tx, sizeof tx);
   xSemaphoreGive(player_mutex);
   poll_device_rename();
   if (n > 0) {
@@ -951,9 +1095,8 @@ static esp_err_t wss_ws_handler(httpd_req_t *req) {
       Log().printf("[wss] send_frame failed: %d (reply=%d B, heap=%u)\n",
                    (int)serr, (int)n, (unsigned)esp_get_free_heap_size());
     }
-    persist_if_upload(rx, rx_len, tx, (size_t)n);
+    persist_if_upload(rx, frame.len, tx, (size_t)n);
   }
-  rx_len = 0;
   return ESP_OK;
 }
 

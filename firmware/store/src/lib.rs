@@ -119,6 +119,99 @@ pub const ARM_SUBMIT_TOPOLOGY: u32 = 16;
 /// ClientMessage arm the ffi intercepts to stream the stored map+topology
 /// back out (it lives in the arena, not the session core).
 pub const ARM_GET_STORED_MAP: u32 = 20;
+/// ClientMessage arm carrying one window of a sharded submit_map /
+/// submit_topology (the transport reassembles the windows and decodes the
+/// concatenation through the normal arena path).
+pub const ARM_UPLOAD_CHUNK: u32 = 29;
+
+/// A parsed `UploadChunk` window: header fields plus the payload byte slice
+/// (a sub-slice of the frame that was walked — the reassembler copies it into
+/// the accumulation buffer, in `seq` order).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UploadChunkView<'a> {
+    pub upload_id: u32,
+    pub seq: u32,
+    pub last: bool,
+    /// 0 = MAP (reassembles a submit_map frame), 1 = TOPOLOGY.
+    pub kind: u32,
+    pub payload: &'a [u8],
+}
+
+/// Read a base-128 varint out of `buf` at `*p`, advancing `*p`.
+fn read_varint(buf: &[u8], p: &mut usize) -> Result<u64, StoreError> {
+    let mut val: u64 = 0;
+    let mut shift: u32 = 0;
+    loop {
+        let b = *buf.get(*p).ok_or(StoreError::Decode)?;
+        *p += 1;
+        val |= u64::from(b & 0x7f) << shift;
+        if b & 0x80 == 0 {
+            return Ok(val);
+        }
+        shift += 7;
+        if shift >= 64 {
+            return Err(StoreError::Decode);
+        }
+    }
+}
+
+/// Parse a `ClientMessage{ upload_chunk }` frame into its header fields and the
+/// payload slice, WITHOUT touching the (bytes-capped) generated bindings — the
+/// player intercepts this arm and copies the payload straight into the
+/// reassembly buffer, exactly like the arena upload arms. Hand-walks the
+/// contiguous frame so it can hand back a borrow of the payload bytes.
+///
+/// `Ok(None)` means the frame is well-formed protobuf but not an upload_chunk
+/// (the caller handles it as an ordinary message); `Err` is a malformed frame.
+pub fn parse_upload_chunk(frame: &[u8]) -> Result<Option<UploadChunkView<'_>>, StoreError> {
+    let mut p = 0usize;
+    let tag = read_varint(frame, &mut p)?;
+    if (tag & 0x7) != u64::from(WIRE_TYPE_LEN) || (tag >> 3) as u32 != ARM_UPLOAD_CHUNK {
+        return Ok(None);
+    }
+    let inner_len = read_varint(frame, &mut p)? as usize;
+    let inner_end = p.checked_add(inner_len).ok_or(StoreError::Decode)?;
+    if inner_end > frame.len() {
+        return Err(StoreError::Decode);
+    }
+
+    let mut v = UploadChunkView { upload_id: 0, seq: 0, last: false, kind: 0, payload: &[] };
+    while p < inner_end {
+        let tag = read_varint(frame, &mut p)?;
+        let field = (tag >> 3) as u32;
+        let wt = (tag & 0x7) as u8;
+        match (field, wt) {
+            (1, 0) => v.upload_id = read_varint(frame, &mut p)? as u32,
+            (2, 0) => v.seq = read_varint(frame, &mut p)? as u32,
+            (3, 0) => v.last = read_varint(frame, &mut p)? != 0,
+            (4, 0) => v.kind = read_varint(frame, &mut p)? as u32,
+            (5, wt) if wt == WIRE_TYPE_LEN => {
+                let n = read_varint(frame, &mut p)? as usize;
+                let end = p.checked_add(n).ok_or(StoreError::Decode)?;
+                if end > inner_end {
+                    return Err(StoreError::Decode);
+                }
+                v.payload = &frame[p..end];
+                p = end;
+            }
+            // Skip unknown fields to stay forward-compatible.
+            (_, 0) => {
+                read_varint(frame, &mut p)?;
+            }
+            (_, wt) if wt == WIRE_TYPE_LEN => {
+                let n = read_varint(frame, &mut p)? as usize;
+                p = p.checked_add(n).ok_or(StoreError::Decode)?;
+            }
+            (_, 5) => p = p.checked_add(4).ok_or(StoreError::Decode)?,
+            (_, 1) => p = p.checked_add(8).ok_or(StoreError::Decode)?,
+            _ => return Err(StoreError::Decode),
+        }
+        if p > inner_end {
+            return Err(StoreError::Decode);
+        }
+    }
+    Ok(Some(v))
+}
 
 /// Peek the envelope's oneof arm (the first tag's field number) from the
 /// frame's first buffered bytes, so the transport can route arena uploads
@@ -173,6 +266,45 @@ impl PbRead for ChunkedReader<'_> {
         } else {
             &[]
         })
+    }
+
+    fn pb_advance(&mut self, bytes: usize) {
+        self.off += bytes;
+    }
+}
+
+/// [`PbRead`] that pulls the upload one BLOCK at a time from a fill callback
+/// into a small reused buffer — so a large upload decodes with no contiguous
+/// copy of it in RAM (the firmware backs `fill` with a LittleFS read, letting
+/// the reassembly buffer shrink to one block instead of a whole frame). Safe
+/// with a reused buffer because the decoder copies each primitive out via
+/// `pb_read_exact` before the next refill (multi-byte values that straddle a
+/// block boundary are stitched, not held as a borrow).
+///
+/// `fill(buf) -> n` writes up to `buf.len()` bytes and returns how many; `0`
+/// means EOF (an early EOF surfaces as a decode error via the length checks).
+pub struct BlockReader<'b, F> {
+    fill: F,
+    buf: &'b mut [u8],
+    len: usize,
+    off: usize,
+}
+
+impl<'b, F: FnMut(&mut [u8]) -> usize> BlockReader<'b, F> {
+    pub fn new(buf: &'b mut [u8], fill: F) -> Self {
+        BlockReader { fill, buf, len: 0, off: 0 }
+    }
+}
+
+impl<F: FnMut(&mut [u8]) -> usize> PbRead for BlockReader<'_, F> {
+    type Error = Infallible;
+
+    fn pb_read_chunk(&mut self) -> Result<&[u8], Infallible> {
+        if self.off >= self.len {
+            self.len = (self.fill)(self.buf);
+            self.off = 0;
+        }
+        Ok(&self.buf[self.off..self.len])
     }
 
     fn pb_advance(&mut self, bytes: usize) {

@@ -358,6 +358,28 @@ message GetStoredMap {
   int32 max_len = 2;
 }
 
+// Sharded upload of a large submit_map / submit_topology, so no single frame
+// forces the player's mbedtls to allocate a big contiguous TLS record buffer
+// on its fragmented heap (a full ~150-LED map is one ~15 KB record; the C6
+// OOMs the handshake/read trying to alloc it — see docs). The client slices
+// the encoded frame into `payload` windows and streams them in `seq` order;
+// the player reassembles and decodes on `last`. Each non-final chunk is
+// ack'd with chunk_ack so the browser flushes one small TLS record per send
+// (queued writes would otherwise re-coalesce into a big record). `upload_id`
+// groups one sequence — a new id resets the player's accumulator.
+// Reply: chunk_ack per chunk; result_ready (or error) on the last.
+message UploadChunk {
+  enum Kind {
+    MAP = 0;       // payload windows reassemble a SubmitMap frame
+    TOPOLOGY = 1;  // payload windows reassemble a SubmitTopology frame
+  }
+  uint32 upload_id = 1;
+  uint32 seq = 2;     // 0-based; strictly increasing within an upload_id
+  bool last = 3;      // the final window — reassemble + decode after this one
+  Kind kind = 4;
+  bytes payload = 5;  // a byte slice of the encoded frame (order = seq)
+}
+
 // ---------------------------------------------------------------------------
 // Effects (§ effects-runtime): user shader bytecode (.fxb) execution
 // ---------------------------------------------------------------------------
@@ -483,7 +505,8 @@ message ClientMessage {
     GetPerfReport get_perf_report = 26;
     SetDeviceName set_device_name = 27;
     SetTexture set_texture = 28;
-    SetColorCorrection set_color_correction = 29;
+    UploadChunk upload_chunk = 29;
+    SetColorCorrection set_color_correction = 30;
   }
 }
 
@@ -599,6 +622,14 @@ message ResultReady {
   string map_id = 1;
 }
 
+// Reply to a non-final UploadChunk: the player has accumulated `seq` and is
+// ready for the next window. Echoes `upload_id`/`seq` so the client can pace
+// its sends (one small TLS record each) and detect a lost/stale sequence.
+message ChunkAck {
+  uint32 upload_id = 1;
+  uint32 seq = 2;
+}
+
 message Error {
   string code = 1;
   string message = 2;
@@ -702,5 +733,6 @@ message ServerMessage {
     StoredMapChunk stored_map_chunk = 15;
     EffectUniforms effect_uniforms = 16;
     PerfReport perf_report = 17;
+    ChunkAck chunk_ack = 18;
   }
 }

@@ -46,6 +46,46 @@ int32_t lm_player_handle(const uint8_t *data, size_t len, int64_t recv_ms,
 // successful uploads to LittleFS.
 int32_t lm_envelope_arm(const uint8_t *data, size_t len);
 
+// One window of a sharded submit_map / submit_topology (proto UploadChunk),
+// filled by lm_parse_upload_chunk. payload_off/payload_len locate the window's
+// bytes within the frame passed to that call.
+typedef struct {
+  uint32_t upload_id;
+  uint32_t seq;
+  uint32_t payload_off;
+  uint32_t payload_len;
+  uint32_t kind;  // 0 = MAP (submit_map), 1 = TOPOLOGY (submit_topology)
+  uint8_t last;
+} LmUploadChunk;
+
+// Parse a ClientMessage{upload_chunk} frame into *out. Returns: 1 = parsed an
+// upload_chunk; 0 = a well-formed frame that is NOT an upload_chunk (handle it
+// as a normal message); -1 = bad args; -2 = malformed. The transport copies
+// data[out->payload_off .. +payload_len] into its reassembly buffer, then on
+// out->last feeds the reassembled frame to lm_player_handle.
+int32_t lm_parse_upload_chunk(const uint8_t *data, size_t len,
+                              LmUploadChunk *out);
+
+// Encode a ServerMessage{chunk_ack{upload_id, seq}} into out (cap bytes),
+// returning its length (-2 if it doesn't fit). Sent after each non-final
+// window so the client paces one small TLS record per send.
+int32_t lm_encode_chunk_ack(uint32_t upload_id, uint32_t seq, uint8_t *out,
+                            size_t out_cap);
+
+// Refill callback for lm_decode_upload_stream: write up to `cap` bytes at `buf`
+// from the caller's source (a LittleFS read of the reassembled upload) and
+// return how many; 0 signals EOF. Not called again after returning 0.
+typedef size_t (*LmRefill)(void *ctx, uint8_t *buf, size_t cap);
+
+// Decode a reassembled upload frame streamed in block-by-block via `refill`, so
+// a whole ~15 KB submit_map is never resident (the player keeps it on flash).
+// `arm` selects the decoder (13 = submit_map, 16 = submit_topology);
+// `total_len` is the frame's exact length. Populates the stored map/topology
+// exactly like the in-RAM path; returns the encoded reply (result_ready/error)
+// in out, its length, or -2 if the reply doesn't fit.
+int32_t lm_decode_upload_stream(int32_t arm, LmRefill refill, void *ctx,
+                                size_t total_len, uint8_t *out, size_t out_cap);
+
 // Render-side accessors (pure reads, polled by the LED frame loop). All
 // integer so the loop touches no f64 (the C6 RISC-V FPU is single-precision
 // only): absolute frame index at player-clock ms `t` is

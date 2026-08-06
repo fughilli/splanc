@@ -41,6 +41,7 @@ import type {
   WelcomeMessage,
 } from "@ledmapper/protocol";
 import {
+  type ChunkAckMessage,
   decodeMappingBundle,
   type EffectUniformsMessage,
   type MappingBundle,
@@ -67,6 +68,12 @@ export interface SocketLike {
 export type SocketFactory = (url: string) => SocketLike;
 
 const SOCKET_OPEN = 1; // WebSocket.OPEN
+
+// Byte-window size for sharded uploads (submit_map / submit_topology). Kept
+// well under a TLS record so the player's mbedtls allocates a small (~this-big)
+// record buffer per window on its fragmented heap, instead of one ~15 KB block
+// that OOMs the C6's handshake. A whole frame <= this is sent as one window.
+const CHUNK_BYTES = 4096;
 
 export interface ClientOptions {
   socketFactory?: SocketFactory;
@@ -159,6 +166,9 @@ export class LedMapperClient {
 
   /** Outbound detection batches not yet written to an open socket. */
   private pendingBatches: DetectionRecord[][] = [];
+
+  // Monotonic id grouping the frames of one sharded upload (see sendChunked).
+  private uploadSeq = 0;
 
   // Single-flight response waiters, keyed by the reply's message type.
   private waiters = new Map<string, { resolve: (m: ServerMessage) => void; reject: (e: Error) => void }>();
@@ -375,18 +385,18 @@ export class LedMapperClient {
     return reply as MappingStoppedMessage;
   }
 
-  /** Upload a phone-solved OutputMap; the server persists it and acks. */
+  /** Upload a phone-solved OutputMap; the server persists it and acks. Large
+   * maps are sharded (see {@link sendChunked}) so the player's mbedtls never
+   * has to allocate a big contiguous TLS record buffer on its fragmented heap. */
   async submitMap(map: OutputMap): Promise<ResultReadyMessage> {
-    return (await this.request({ type: "submit_map", map }, "result_ready")) as ResultReadyMessage;
+    return this.sendChunked("MAP", { type: "submit_map", map });
   }
 
   /** Upload the extracted graph topology for an already-submitted map; the
-   * player persists it (keyed to map_id) for the pulse engine. */
+   * player persists it (keyed to map_id) for the pulse engine. Sharded like
+   * {@link submitMap}. */
   async submitTopology(topology: Topology): Promise<ResultReadyMessage> {
-    return (await this.request(
-      { type: "submit_topology", topology },
-      "result_ready",
-    )) as ResultReadyMessage;
+    return this.sendChunked("TOPOLOGY", { type: "submit_topology", topology });
   }
 
   /** Start/stop a topology-aware playback effect (`"off"`, `"pulse"`, or
@@ -645,6 +655,61 @@ export class LedMapperClient {
       }
       this.pingWaiters.set(t0, { resolve, reject });
     });
+  }
+
+  /** Upload a large control frame (submit_map / submit_topology) as a stream of
+   * small UploadChunk windows, so no single frame makes the player's mbedtls
+   * allocate a big contiguous TLS record buffer on its fragmented heap (the C6
+   * OOMs its handshake/read trying to alloc a ~15 KB record for a whole map).
+   *
+   * We encode the full envelope once, then send it in <=CHUNK_BYTES slices. Each
+   * non-final window is awaited to a chunk_ack BEFORE the next send: the await
+   * lets the browser's TLS layer flush one small record per window instead of
+   * re-coalescing queued writes back into one big record (which would defeat the
+   * whole point). The device reassembles the identical bytes and decodes them
+   * through the normal submit_map / submit_topology path on `last`.
+   *
+   * Small frames (<= CHUNK_BYTES) still go as a single window — one send, one
+   * result_ready — so the common case keeps its single round trip. */
+  private async sendChunked(
+    kind: "MAP" | "TOPOLOGY",
+    msg: ClientMessage,
+  ): Promise<ResultReadyMessage> {
+    // Shard anything past one window. On wss this dodges the big contiguous TLS
+    // record that OOMs the C6's fragmented heap; on both transports it lets the
+    // player stream the upload to flash instead of holding a whole frame in RAM.
+    // A frame that already fits one window takes the ordinary single-frame path.
+    const frame = encodeClient(msg);
+    if (frame.length <= CHUNK_BYTES) {
+      return (await this.request(msg, "result_ready")) as ResultReadyMessage;
+    }
+    const uploadId = (this.uploadSeq = (this.uploadSeq + 1) >>> 0);
+    let seq = 0;
+    for (let off = 0; off < frame.length; off += CHUNK_BYTES) {
+      const end = Math.min(off + CHUNK_BYTES, frame.length);
+      const last = end >= frame.length;
+      // Copy the slice: encodeClient's bytes-field path base64s the payload, and
+      // a subarray view would keep the whole frame's backing buffer alive.
+      const payload = frame.slice(off, end);
+      const chunk = {
+        type: "upload_chunk",
+        uploadId,
+        seq,
+        last,
+        kind,
+        payload,
+      } as unknown as ClientMessage;
+      if (last) {
+        return (await this.request(chunk, "result_ready")) as ResultReadyMessage;
+      }
+      const ack = (await this.request(chunk, "chunk_ack")) as unknown as ChunkAckMessage;
+      if (ack.uploadId !== uploadId || ack.seq !== seq) {
+        throw new Error(`chunk_ack mismatch: got ${ack.uploadId}/${ack.seq}, want ${uploadId}/${seq}`);
+      }
+      seq++;
+    }
+    // Unreachable: the loop always sends a `last` window and returns from it.
+    throw new Error("chunked upload produced no final frame");
   }
 
   private request(msg: ClientMessage, replyType: string): Promise<ServerMessage> {
