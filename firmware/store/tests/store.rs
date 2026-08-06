@@ -13,8 +13,8 @@ use base64::Engine;
 use ledmapper_arena::Arena;
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_store::{
-    decode_submit_map, decode_submit_topology, envelope_arm, BlobStore, ChunkedReader, StoreError,
-    StoredLed, ARM_SUBMIT_MAP, ARM_SUBMIT_TOPOLOGY,
+    decode_submit_map, decode_submit_topology, envelope_arm, parse_upload_chunk, BlobStore,
+    BlockReader, ChunkedReader, StoreError, StoredLed, ARM_SUBMIT_MAP, ARM_SUBMIT_TOPOLOGY,
 };
 use micropb::{MessageEncode, PbEncoder};
 use std::collections::HashMap;
@@ -60,8 +60,105 @@ fn submit_map_frame(n: usize) -> Vec<u8> {
     encode_client(pb::ClientMessage_::Msg::SubmitMap(submit))
 }
 
+/// A submit_topology frame for an `n_leds`-LED fixture: one association per LED
+/// spread across `n_segments` segments, each carrying a `pts_per_seg`-point
+/// polyline, plus `n_branch` branch points. This is the shape a real solver
+/// emits for a scan of this size — the growable topology lists (associations,
+/// per-segment polylines) are what churn the decode arena (FUG-74).
+fn submit_topology_frame(
+    n_leds: usize,
+    n_segments: usize,
+    pts_per_seg: usize,
+    n_branch: usize,
+) -> Vec<u8> {
+    let mut topo = Box::new(pb::Topology::default());
+    topo.r#map_id = "m-test".parse().unwrap();
+    for i in 0..n_branch {
+        let mut bp = pb::BranchPoint::default();
+        bp.r#id = i as i32;
+        bp.r#xyz
+            .extend_from_slice(&[i as f64 * 0.01, 0.1, -(i as f64) * 0.01])
+            .unwrap();
+        topo.r#branch_points.push(bp).expect("within generated caps");
+    }
+    for s in 0..n_segments {
+        let mut seg = pb::TopologySegment::default();
+        seg.r#id = s as i32;
+        seg.r#a = s as i32;
+        seg.r#b = if s + 1 < n_segments { s as i32 + 1 } else { -1 };
+        seg.r#length = 1.0;
+        for p in 0..pts_per_seg {
+            let mut v = pb::Vec3::default();
+            let t = p as f64 / pts_per_seg as f64;
+            v.r#v.extend_from_slice(&[t, 0.02 * s as f64, -t]).unwrap();
+            seg.r#polyline.push(v).expect("within generated caps");
+        }
+        topo.r#segments.push(seg).expect("within generated caps");
+    }
+    for i in 0..n_leds {
+        let mut a = pb::LedAssociation::default();
+        a.r#led_id = i as i32;
+        a.r#segment_id = (i % n_segments.max(1)) as i32;
+        a.r#foot_arclength = i as f64 * 0.001;
+        a.r#d_perp = 0.003;
+        topo.r#associations.push(a).expect("within generated caps");
+    }
+    let mut submit = pb::SubmitTopology::default();
+    submit.set_topology(*topo);
+    encode_client(pb::ClientMessage_::Msg::SubmitTopology(submit))
+}
+
 fn chunks(bytes: &[u8], size: usize) -> Vec<&[u8]> {
     bytes.chunks(size).collect()
+}
+
+/// Wrap `payload` (a slice of an encoded submit_* frame) as one UploadChunk
+/// ClientMessage window — exactly what the web client puts on the wire.
+fn upload_chunk_frame(
+    upload_id: u32,
+    seq: u32,
+    last: bool,
+    kind: pb::UploadChunk_::Kind,
+    payload: &[u8],
+) -> Vec<u8> {
+    let mut c = pb::UploadChunk::default();
+    c.r#upload_id = upload_id;
+    c.r#seq = seq;
+    c.r#last = last;
+    c.r#kind = kind;
+    c.r#payload
+        .extend_from_slice(payload)
+        .expect("window within host payload cap");
+    encode_client(pb::ClientMessage_::Msg::UploadChunk(c))
+}
+
+/// The exact round trip the wss transport performs: slice `frame` into `win`
+/// windows, wrap each as an UploadChunk, parse it back with the firmware's
+/// parser, and copy the payloads into one accumulation buffer.
+fn reassemble_via_chunks(frame: &[u8], win: usize, kind: pb::UploadChunk_::Kind) -> Vec<u8> {
+    let mut acc = Vec::new();
+    let mut seq = 0u32;
+    let mut off = 0usize;
+    loop {
+        let end = (off + win).min(frame.len());
+        let last = end >= frame.len();
+        let wire = upload_chunk_frame(7, seq, last, kind, &frame[off..end]);
+        let v = parse_upload_chunk(&wire)
+            .expect("well-formed frame")
+            .expect("is an upload_chunk");
+        assert_eq!(v.upload_id, 7);
+        assert_eq!(v.seq, seq);
+        assert_eq!(v.last, last);
+        assert_eq!(v.kind, kind.0 as u32);
+        assert_eq!(v.payload, &frame[off..end], "payload slice round-trips");
+        acc.extend_from_slice(v.payload);
+        if last {
+            break;
+        }
+        off = end;
+        seq += 1;
+    }
+    acc
 }
 
 fn golden_client_frames() -> Vec<Vec<u8>> {
@@ -105,6 +202,74 @@ fn chunked_map_upload_decodes_into_the_arena() {
         1024 * core::mem::size_of::<StoredLed>(),
         "leds must land in one exactly-sized region"
     );
+}
+
+#[test]
+fn sharded_map_upload_reassembles_and_decodes_identically() {
+    // A ~150-LED map is the size that OOMed the wss handshake as one record
+    // (FUG-74); the client shards it and the transport reassembles the windows.
+    let frame = submit_map_frame(150);
+    assert_eq!(envelope_arm(&frame), Some(ARM_SUBMIT_MAP));
+    let acc = reassemble_via_chunks(&frame, 4096, pb::UploadChunk_::Kind::Map);
+    assert_eq!(acc, frame, "reassembled bytes are byte-identical to the frame");
+
+    let mut buf = vec![0u8; 16 * 1024];
+    let arena = Arena::new(&mut buf);
+    let map = decode_submit_map(acc.as_slice(), acc.len(), &arena).expect("decodes");
+    assert_eq!(map.map_id.as_str(), "m-test");
+    assert_eq!(map.led_count, 150);
+    assert_eq!(map.leds.len(), 150);
+    assert_eq!(map.leds[149].id, 149);
+}
+
+#[test]
+fn sharded_topology_upload_reassembles_and_decodes_identically() {
+    let frame = submit_topology_frame(150, 12, 20, 12);
+    assert_eq!(envelope_arm(&frame), Some(ARM_SUBMIT_TOPOLOGY));
+    let acc = reassemble_via_chunks(&frame, 4096, pb::UploadChunk_::Kind::Topology);
+    assert_eq!(acc, frame);
+
+    let mut buf = vec![0u8; 16 * 1024];
+    let arena = Arena::new(&mut buf);
+    let topo = decode_submit_topology(acc.as_slice(), acc.len(), &arena).expect("decodes");
+    assert_eq!(topo.map_id.as_str(), "m-test");
+    assert_eq!(topo.associations.len(), 150);
+    assert_eq!(topo.segments.len(), 12);
+}
+
+#[test]
+fn block_reader_decodes_a_frame_fed_in_small_blocks() {
+    // The flash-streaming decode path: pull the frame one small block at a time
+    // (a whole submit_map never resident) — 100-byte blocks straddle varints,
+    // doubles, and LedEntry boundaries, the same way LittleFS block reads do.
+    let frame = submit_map_frame(150);
+    let mut buf = vec![0u8; 16 * 1024];
+    let arena = Arena::new(&mut buf);
+    let mut pos = 0usize;
+    let mut block = [0u8; 100];
+    let reader = BlockReader::new(&mut block, |b: &mut [u8]| {
+        let n = (frame.len() - pos).min(b.len());
+        b[..n].copy_from_slice(&frame[pos..pos + n]);
+        pos += n;
+        n
+    });
+    let map = decode_submit_map(reader, frame.len(), &arena).expect("streams + decodes");
+    assert_eq!(map.map_id.as_str(), "m-test");
+    assert_eq!(map.led_count, 150);
+    assert_eq!(map.leds.len(), 150);
+    assert_eq!(map.leds[149].id, 149);
+    assert_eq!(map.leds[0], StoredLed { id: 0, xyz: [0.0; 3] });
+}
+
+#[test]
+fn parse_upload_chunk_classifies_and_guards() {
+    // A real submit_map frame is well-formed protobuf but not an upload_chunk.
+    let not_chunk = submit_map_frame(1);
+    assert_eq!(parse_upload_chunk(&not_chunk), Ok(None));
+    // A truncated window (payload length prefix says more than is present).
+    let mut wire = upload_chunk_frame(1, 0, true, pb::UploadChunk_::Kind::Map, &[1, 2, 3, 4]);
+    wire.truncate(wire.len() - 2);
+    assert_eq!(parse_upload_chunk(&wire), Err(StoreError::Decode));
 }
 
 #[test]
@@ -193,6 +358,49 @@ fn golden_topology_frame_decodes_into_the_arena() {
     assert_eq!(topo.associations.len(), 1);
     assert!((topo.associations[0].foot_arclength - 0.25).abs() < 1e-6);
     assert!((topo.associations[0].d_perp - 0.003).abs() < 1e-6);
+}
+
+#[test]
+fn large_topology_fits_the_firmware_arena() {
+    // The firmware's real budget (player_app/ffi.rs ARENA_BYTES): map AND
+    // topology share ONE 16 KB arena, decoded like the transport does — map
+    // first, then a checkpoint, then topology appended (FUG-74). A ~150-LED
+    // scan's LIVE footprint is ~10 KB and fits comfortably; it only overflowed
+    // because the growable topology lists reallocated-and-leaked while growing.
+    const ARENA_BYTES: usize = 16 * 1024;
+    let mut buf = vec![0u8; ARENA_BYTES];
+    let arena = Arena::new(&mut buf);
+
+    let map_frame = submit_map_frame(150);
+    {
+        let segs = chunks(&map_frame, 512);
+        let map = decode_submit_map(ChunkedReader::new(&segs), map_frame.len(), &arena)
+            .expect("150-LED map fits");
+        assert_eq!(map.leds.len(), 150);
+    }
+
+    // Topology appended after the map (mirrors handle_topology_upload): 150
+    // associations, 12 segments × 20 polyline points, 12 branch points.
+    let topo_frame = submit_topology_frame(150, 12, 20, 12);
+    let cp = arena.checkpoint();
+    {
+        let segs = chunks(&topo_frame, 512);
+        let topo = decode_submit_topology(ChunkedReader::new(&segs), topo_frame.len(), &arena)
+            .expect("150-LED topology must fit the 16 KB arena beside its map");
+        assert_eq!(topo.associations.len(), 150);
+        assert_eq!(topo.segments.len(), 12);
+        assert_eq!(topo.segments[0].polyline.len(), 20);
+        assert_eq!(topo.branch_points.len(), 12);
+    }
+    let _ = cp;
+    // Live map + topology together stay well under the arena cap — the failure
+    // was churn, not size.
+    assert!(
+        arena.used() < ARENA_BYTES,
+        "map+topology live footprint {} must fit {}",
+        arena.used(),
+        ARENA_BYTES
+    );
 }
 
 // -- persistence (the NVS model) ---------------------------------------------

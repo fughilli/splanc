@@ -48,6 +48,16 @@ fn main() -> std::io::Result<()> {
     // chunk (the phone caps its request to this). 1 KiB fits the reply cap.
     g.configure(".ledmapper.v1.StoredMapChunk.data", Config::new().max_bytes(1024));
 
+    // Sharded upload window. On firmware the player NEVER decodes UploadChunk
+    // through the generated bindings — the transport intercepts the arm and
+    // hand-walks the payload straight into the reassembly buffer (like the
+    // arena upload arms), so the generated field shrinks to 1. The host
+    // profile sizes it for the conformance/golden encode of a real window.
+    g.configure(
+        ".ledmapper.v1.UploadChunk.payload",
+        Config::new().max_bytes(if firmware { 1 } else { 8192 }),
+    );
+
     // Batched telemetry (Pi-profile arms; players silently drop them).
     g.configure(
         ".ledmapper.v1.Detections.batch",

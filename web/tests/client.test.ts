@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { DetectionRecord, ServerMessage } from "@ledmapper/protocol";
 import { certApprovalUrl, LedMapperClient, type SocketLike } from "../src/net/client";
-import { decodeClient, encodeServer } from "../src/net/proto";
+import { decodeClient, encodeClient, encodeServer } from "../src/net/proto";
 
 class FakeSocket implements SocketLike {
   readyState = 0; // CONNECTING
@@ -463,6 +463,88 @@ test("submitMap uploads a phone-solved map and resolves on result_ready", async 
   s.receive({ type: "result_ready", mapId: "phone-map-1" });
   const ack = await submitP;
   assert.equal(ack.mapId, "phone-map-1");
+});
+
+test("submitMap over wss shards a large map into UploadChunk windows the device can reassemble", async () => {
+  // wss is the transport where a big TLS record OOMs the C6; the client shards
+  // there (and only there). Drain all microtasks between windows so the awaited
+  // per-window chunk_ack -> next-send chain settles.
+  const tick = () => new Promise((r) => setImmediate(r));
+  const sockets: FakeSocket[] = [];
+  const client = new LedMapperClient("wss://device.test/ws", {
+    socketFactory: () => {
+      const s = new FakeSocket();
+      sockets.push(s);
+      return s;
+    },
+    now: () => 1000,
+    schedule: () => {},
+    coldRetryLimit: 1_000_000, // never give up on cert-trust during the test
+  });
+  const p = client.connect();
+  const s = sockets[0]!;
+  s.open();
+  s.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS, solverBenchMs: null });
+  await p;
+
+  // Big enough that the encoded submit_map exceeds CHUNK_BYTES (4096) -> many
+  // windows.
+  const leds = Array.from({ length: 200 }, (_, i) => ({
+    id: i,
+    xyz: [i * 0.001, i * 0.002, -i * 0.001] as [number, number, number],
+    confidence: 0.9,
+    nViews: 12,
+    rmsReprojPx: 0.5,
+    parallaxDeg: 10,
+  }));
+  const map = {
+    mapId: "big-map",
+    createdAt: "2026-07-09T00:00:00Z",
+    units: "meters" as const,
+    frame: "gravity_leveled" as const,
+    ledCount: 200,
+    leds,
+    unmapped: [] as number[],
+    trajectory: [] as [number, number, number][],
+    stats: { rmsReprojPxGlobal: 0.7, medianParallaxDeg: 19 },
+  };
+
+  const submitP = client.submitMap(map);
+  // The client sends one window, awaits its chunk_ack, then sends the next.
+  for (let guard = 0; ; guard++) {
+    assert.ok(guard < 100, "runaway window loop");
+    await tick();
+    const last = s.lastSent() as { type: string; last?: boolean; uploadId: number; seq: number };
+    assert.equal(last.type, "upload_chunk");
+    if (last.last === true) break;
+    s.receive({ type: "chunk_ack", uploadId: last.uploadId, seq: last.seq });
+  }
+  s.receive({ type: "result_ready", mapId: "big-map" });
+  assert.equal((await submitP).mapId, "big-map");
+
+  // Every data frame was a window; seq is dense, kind is MAP, only the last is
+  // flagged, and the reassembled payloads are byte-identical to the one-shot
+  // submit_map frame the device would otherwise have received.
+  const windows = s.allSent().filter((m) => m.type === "upload_chunk") as unknown as Array<{
+    seq: number;
+    last: boolean;
+    kind: string;
+    payload: string; // decodeClient leaves bytes fields as base64 (not fxb/manifest)
+  }>;
+  assert.ok(windows.length >= 2, "large map sharded into multiple windows");
+  windows.forEach((w, i) => {
+    assert.equal(w.seq, i);
+    assert.equal(w.kind, "MAP");
+    assert.equal(w.last, i === windows.length - 1);
+  });
+  const parts = windows.map((w) => Uint8Array.from(atob(w.payload), (c) => c.charCodeAt(0)));
+  const acc = new Uint8Array(parts.reduce((n, b) => n + b.length, 0));
+  let o = 0;
+  for (const b of parts) {
+    acc.set(b, o);
+    o += b.length;
+  }
+  assert.deepEqual(acc, encodeClient({ type: "submit_map", map } as unknown as Parameters<typeof encodeClient>[0]));
 });
 
 test("certApprovalUrl points cross-origin wss targets at the player origin", () => {
