@@ -12,6 +12,8 @@ import {
   walkEntry,
   confidenceOf,
   histCycles,
+  costFor,
+  mathFeature,
   OPCODE_NAMES,
   type CostTable,
 } from "../src/effects/costModel";
@@ -88,14 +90,56 @@ test("walkEntry produces a min/max band across a forward BrFalse", () => {
   const p = parseFxb(buf);
   const w = walkEntry(p.code, p.shadeEntry);
   assert.equal(w.branched, true);
-  // max arm runs UnMath; min arm skips it.
-  assert.equal(w.max["UnMath"] ?? 0, 1);
-  assert.equal(w.min["UnMath"] ?? 0, 0);
+  // max arm runs UnMath(sin); min arm skips it. The histogram is sub-keyed by
+  // the fn-id operand byte (fn=0 -> sin), not the bare opcode name.
+  assert.equal(w.max["UnMath:sin"] ?? 0, 1);
+  assert.equal(w.min["UnMath:sin"] ?? 0, 0);
 });
 
 test("histCycles sums count*cost with a fallback", () => {
   const c = histCycles({ Mul: 3, Add: 2 }, { Mul: 10 }, 5);
   assert.equal(c, 3 * 10 + 2 * 5);
+});
+
+test("walkEntry sub-keys UnMath/BinMath by fn id", () => {
+  // shade: UnMath fn=6 (sqrt) n=1 ; BinMath fn=2 (pow) n=1 ; Ret
+  const code = [
+    CODE["UnMath"]!, 6, 1,
+    CODE["BinMath"]!, 2, 1,
+    CODE["Ret"]!, 3,
+  ];
+  const w = walkEntry(parseFxb(fxb(code, 0xffff, 0)).code, 0);
+  assert.equal(w.max["UnMath:sqrt"], 1);
+  assert.equal(w.max["BinMath:pow"], 1);
+  // the bare family names are NOT used as histogram keys.
+  assert.equal(w.max["UnMath"], undefined);
+  assert.equal(w.max["BinMath"], undefined);
+});
+
+test("mathFeature maps fn ids to sub-keys and other opcodes to themselves", () => {
+  assert.equal(mathFeature("UnMath", 0), "UnMath:sin");
+  assert.equal(mathFeature("UnMath", 6), "UnMath:sqrt");
+  assert.equal(mathFeature("BinMath", 2), "BinMath:pow");
+  assert.equal(mathFeature("Mul", undefined), "Mul");
+  // an unknown/out-of-range fn id falls back to the bare family name.
+  assert.equal(mathFeature("UnMath", 99), "UnMath");
+});
+
+test("costFor resolves sub-key -> family base -> fallback", () => {
+  const costs = { "UnMath:sqrt": 60, UnMath: 120, Mul: 14 };
+  assert.equal(costFor(costs, "UnMath:sqrt", 8), 60, "exact sub-key wins");
+  assert.equal(costFor(costs, "UnMath:exp", 8), 120, "unpriced fn falls to family base");
+  assert.equal(costFor(costs, "Mul", 8), 14, "plain opcode");
+  assert.equal(costFor(costs, "Normalize", 8), 8, "absent -> fallback");
+  // a table with no base tier: sub-key falls straight through to the fallback.
+  assert.equal(costFor({ Mul: 14 }, "BinMath:pow", 7), 7);
+});
+
+test("histCycles honors the family fallback for math sub-keys", () => {
+  // sqrt priced exactly; exp rides the family base; tan hits the global fallback.
+  const costs = { "UnMath:sqrt": 60, UnMath: 120 };
+  const c = histCycles({ "UnMath:sqrt": 2, "UnMath:exp": 1, "UnMath:tan": 0 }, costs, 5);
+  assert.equal(c, 2 * 60 + 1 * 120);
 });
 
 test("estimateFrameTime scales shade cost by led_count and reports a budget fraction", () => {

@@ -11,7 +11,7 @@
  * generator writes the files, and the drift test pins the output.
  */
 
-import { BENCHMARKS, HELDOUT, type Benchmark } from "./calibrationBenchmarks";
+import { BENCHMARKS, HELDOUTS, type Benchmark } from "./calibrationBenchmarks";
 
 export interface BenchmarkFile {
   /** File name within the benchmarks dir (`*.heldout.fx` = validation set). */
@@ -39,10 +39,12 @@ export function benchmarkFxFiles(): BenchmarkFile[] {
     source: `${header(b, false)}${b.source}\n`,
     heldout: false,
   }));
-  files.push({
-    filename: `${HELDOUT.id}.heldout.fx`,
-    source: `${header(HELDOUT, true)}${HELDOUT.source}\n`,
-    heldout: true,
-  });
+  for (const h of HELDOUTS) {
+    files.push({
+      filename: `${h.id}.heldout.fx`,
+      source: `${header(h, true)}${h.source}\n`,
+      heldout: true,
+    });
+  }
   return files;
 }

@@ -127,6 +127,43 @@ const UN_MATH_NAMES = [
 const BIN_MATH_NAMES = ["min", "max", "pow", "mod", "step", "atan2"];
 
 /**
+ * The histogram/cost-map feature name for an opcode. Most opcodes are keyed by
+ * their name; the two math-dispatch opcodes UnMath/BinMath are sub-keyed by the
+ * fn-id operand byte (`"UnMath:sin"`, `"BinMath:pow"`, …) so per-builtin costs
+ * — which differ by an order of magnitude on the C6's soft-float — are modeled
+ * separately. An unknown fn id falls back to the bare family name. Keep the
+ * fn-id decoding in lockstep with firmware/fx_vm/src/lib.rs (the F_ and B_
+ * constants + the UnMath/BinMath operand layout [fn, n]). */
+export function mathFeature(opName: string, fnId: number | undefined): string {
+  if (opName === "UnMath") {
+    const fn = UN_MATH_NAMES[fnId ?? -1];
+    return fn ? `UnMath:${fn}` : "UnMath";
+  }
+  if (opName === "BinMath") {
+    const fn = BIN_MATH_NAMES[fnId ?? -1];
+    return fn ? `BinMath:${fn}` : "BinMath";
+  }
+  return opName;
+}
+
+/**
+ * Look up an opcode's cost with a family fallback: an exact sub-keyed entry
+ * (`"UnMath:sqrt"`) wins; else the family base (`"UnMath"`); else `fallback`.
+ * This lets a device calibration price each math fn individually while older
+ * tables / the host smoke profile — keyed only by the bare family — still
+ * resolve every fn through the base tier. */
+export function costFor(costs: CostMap, name: string, fallback: number): number {
+  const exact = costs[name];
+  if (exact !== undefined) return exact;
+  const colon = name.indexOf(":");
+  if (colon > 0) {
+    const base = costs[name.slice(0, colon)];
+    if (base !== undefined) return base;
+  }
+  return fallback;
+}
+
+/**
  * Operand-byte width for each opcode, so the interpreter can advance the PC
  * exactly like the VM. `lanes` marks the byte offset (into the operand) that
  * holds the vector lane count (the size operand) — used for scalar×lanes cost.
@@ -347,8 +384,14 @@ export function walkEntry(code: Uint8Array, entry: number): WalkResult {
         const n = code[operandStart + meta.lanesAt] ?? 1;
         weight = Math.max(1, n);
       }
-      addOp(min, name, weight);
-      addOp(max, name, weight);
+      // UnMath/BinMath collapse many math fns onto one opcode whose per-fn
+      // costs differ by an order of magnitude on soft-float (sqrt/exp/log/pow
+      // ≫ abs/floor/sign). Sub-key the histogram by the fn-id operand byte so
+      // the cost map can price each builtin individually. `costFor` falls the
+      // sub-key back to the family base for tables that only price the family.
+      const histName = mathFeature(name, code[operandStart]);
+      addOp(min, histName, weight);
+      addOp(max, histName, weight);
 
       // advance PC past operands
       let next = operandStart + meta.operandBytes;
@@ -425,7 +468,7 @@ function costOf(h: OpHistogram): number {
 export function histCycles(h: OpHistogram, costs: CostMap, fallback: number): number {
   let c = 0;
   for (const [name, count] of Object.entries(h)) {
-    c += count * (costs[name] ?? fallback);
+    c += count * costFor(costs, name, fallback);
   }
   return c;
 }
@@ -661,10 +704,10 @@ function hotOpcodesOf(
   const contrib: Record<string, number> = {};
   const fb = table.fallbackCost;
   for (const [op, n] of Object.entries(updateHist)) {
-    contrib[op] = (contrib[op] ?? 0) + n * (table.costs[op] ?? fb);
+    contrib[op] = (contrib[op] ?? 0) + n * costFor(table.costs, op, fb);
   }
   for (const [op, n] of Object.entries(shadePerLedHist)) {
-    contrib[op] = (contrib[op] ?? 0) + n * (table.costs[op] ?? fb) * ledCount;
+    contrib[op] = (contrib[op] ?? 0) + n * costFor(table.costs, op, fb) * ledCount;
   }
   const denom = totalCycles > 0 ? totalCycles : 1;
   return Object.entries(contrib)
