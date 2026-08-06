@@ -18,6 +18,15 @@ jobs:
       - name: Setup repository
         uses: actions/checkout@v4
 
+      # Free ~20-30GB of runner disk before the heavy Nix/Bazel build (FUG-76):
+      # ubuntu-latest gives only ~14GB free on /, but the /nix store + Bazel disk
+      # cache exhaust it. This deletes the ~25GB of preinstalled SDKs we never use
+      # (Android, .NET, GHC, browsers, …) in place — no remount — so the caches
+      # under ~/.cache keep working unchanged. Every toolchain we do need (Nix,
+      # Bazel) is installed by the steps below, after this cleanup.
+      - name: Free runner disk space
+        uses: justinthelaw/maximize-github-runner-space@v0.10.0
+
       # Nix is a system requirement for this repo (see MODULE.bazel): the M4
       # provisioning targets shell out to it and `bazel test //...` realizes
       # nixpkgs-provided build tools (e.g. the HTML minifier). Single-user nix
@@ -78,6 +87,11 @@ jobs:
       - name: Setup repository
         uses: actions/checkout@v4
 
+      # Free runner disk before the heavy Nix/Bazel build — see the `test` job
+      # above (FUG-76).
+      - name: Free runner disk space
+        uses: justinthelaw/maximize-github-runner-space@v0.10.0
+
       - name: Install Nix
         uses: nixbuild/nix-quick-install-action@v30
         with:
@@ -126,6 +140,12 @@ jobs:
     steps:
       - name: Setup repository
         uses: actions/checkout@v4
+
+      # Free runner disk before the heavy Nix/Bazel build — see the `test` job
+      # above (FUG-76). This job compiles mbedtls + the Arduino core from source,
+      # the most disk-hungry of the lot.
+      - name: Free runner disk space
+        uses: justinthelaw/maximize-github-runner-space@v0.10.0
 
       # Single-user nix install so the whole /nix store is cacheable below. This
       # job realizes the ESP32-C6 toolchain + mbedtls + the Arduino core from
@@ -224,6 +244,11 @@ jobs:
     steps:
       - name: Setup repository
         uses: actions/checkout@v4
+
+      # Free runner disk before the heavy Nix/Bazel build — see the `test` job
+      # above (FUG-76). This job also builds the wasm bundles.
+      - name: Free runner disk space
+        uses: justinthelaw/maximize-github-runner-space@v0.10.0
 
       # Same caching rationale as the `test` job: cache /nix so the pinned
       # nixpkgs snapshot + build tools aren't re-realized every run. This job is
@@ -358,6 +383,11 @@ jobs:
     steps:
       - name: Setup repository
         uses: actions/checkout@v4
+
+      # Free runner disk before the heavy Nix/Bazel build — see the `test` job
+      # above (FUG-76). This job runs the //web:deploy_cloudflare Bazel build.
+      - name: Free runner disk space
+        uses: justinthelaw/maximize-github-runner-space@v0.10.0
 
       - name: Download site artifact
         uses: actions/download-artifact@v4
