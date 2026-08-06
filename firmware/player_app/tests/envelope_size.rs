@@ -17,10 +17,12 @@ fn server_message_stays_lean() {
 }
 
 #[test]
-fn client_message_bound() {
-    // ClientMessage's ceiling is SetCountingPattern.blocks (Vec<ColorBlock, 32>).
-    // Pinned so a new arm with a bigger inline buffer is a visible, deliberate
-    // change rather than silent stack growth.
+fn client_message_stays_lean() {
+    // SetCountingPattern.blocks (Vec<ColorBlock, 32>, each with an inline
+    // Vec<f64,4>) used to make this ~1.5 KiB; the firmware decodes that arm
+    // zero-copy (ffi.rs handle_set_counting_pattern) and stubs the field, so a
+    // control-frame arm is the ceiling. A regression toward ~1.5 KiB means an arm
+    // regained a fat inline buffer that should be walked instead.
     let sz = core::mem::size_of::<pb::ClientMessage>();
-    assert!(sz <= 1600, "ClientMessage grew to {sz} B (expected <= 1600)");
+    assert!(sz <= 560, "ClientMessage grew to {sz} B (expected <= 560)");
 }

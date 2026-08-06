@@ -126,11 +126,15 @@ fn main() -> std::io::Result<()> {
         Config::new().max_len(if firmware { 24 } else { 128 }),
     );
 
-    // Counting + playback control: REAL firmware traffic — full size in
-    // both profiles.
+    // Counting pattern: on HOST the generated decoder is driven by the session
+    // test / conformance, so keep 32 blocks. On FIRMWARE the player decodes this
+    // arm ZERO-COPY (ffi.rs handle_set_counting_pattern) into pre-reduced blocks
+    // and never touches the generated struct, whose Vec<ColorBlock, 32> (each an
+    // inline Vec<f64, 4>) is the ~1.5 KiB arm that sizes every ClientMessage —
+    // shrink it to a stub so ClientMessage collapses to a control-frame size.
     g.configure(
         ".ledmapper.v1.SetCountingPattern.blocks",
-        Config::new().max_len(32),
+        Config::new().max_len(if firmware { 1 } else { 32 }),
     );
     g.configure(".ledmapper.v1.PlaybackParams.palette", Config::new().max_len(16));
 

@@ -58,6 +58,46 @@ fn full_device_flow_through_the_c_abi() {
     assert!(!w._has.r#solver_bench_ms());
     assert_eq!(w.r#code_params.r#led_count, 64);
 
+    // set_counting_pattern rides the ZERO-COPY ffi walker (not the generated
+    // decode): two [0,1]-rgb blocks reduce to 8-bit and drive lm_counting_color.
+    {
+        let mut b0 = pb::ColorBlock::default();
+        b0.r#start = 2;
+        b0.r#count = 3; // LEDs 2..5
+        for c in [1.0, 0.0, 0.0] {
+            b0.r#rgb.push(c).unwrap();
+        }
+        let mut b1 = pb::ColorBlock::default();
+        b1.r#start = 10;
+        b1.r#count = 1; // LED 10
+        for c in [0.0, 1.0, 0.0] {
+            b1.r#rgb.push(c).unwrap();
+        }
+        let mut cp = pb::SetCountingPattern::default();
+        cp.r#blocks.push(b0).unwrap();
+        cp.r#blocks.push(b1).unwrap();
+        let Some(SMsg::CountingState(cs)) = handle(&encode(CMsg::SetCountingPattern(cp)), 5000.0)
+        else {
+            panic!("counting_state expected");
+        };
+        assert!(cs.r#active);
+        let mut rgb = [9u8; 3];
+        assert!(unsafe { lm_counting_color(3, rgb.as_mut_ptr()) }); // inside block 0
+        assert_eq!(rgb, [255, 0, 0]);
+        assert!(unsafe { lm_counting_color(10, rgb.as_mut_ptr()) }); // block 1
+        assert_eq!(rgb, [0, 255, 0]);
+        assert!(unsafe { lm_counting_color(7, rgb.as_mut_ptr()) }); // no block -> off
+        assert_eq!(rgb, [0, 0, 0]);
+        // Empty blocks clears the pattern (active=false -> no counting color).
+        let Some(SMsg::CountingState(cs)) =
+            handle(&encode(CMsg::SetCountingPattern(pb::SetCountingPattern::default())), 5001.0)
+        else {
+            panic!("counting_state expected");
+        };
+        assert!(!cs.r#active);
+        assert!(!unsafe { lm_counting_color(3, rgb.as_mut_ptr()) });
+    }
+
     // start_mapping 16 LEDs -> pattern timing + frame colors line up.
     let mut opts = pb::StartMappingOptions::default();
     opts.r#led_count = 16;

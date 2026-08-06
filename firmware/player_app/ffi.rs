@@ -528,6 +528,9 @@ pub unsafe extern "C" fn lm_player_handle(
         // cadence, or drain the ring into a rolled-up PerfReport.
         Some(ARM_SET_PERF) => handle_set_perf(frame),
         Some(ARM_GET_PERF_REPORT) => handle_get_perf_report(),
+        // Counting pattern: walk the ColorBlock array zero-copy (its 32 × f64-rgb
+        // is the fat arm of ClientMessage) and install pre-reduced 8-bit blocks.
+        Some(ARM_SET_COUNTING_PATTERN) => handle_set_counting_pattern(frame, send_ms),
         // Video-texture frame: decode into the active effect's texture arena.
         // Fire-and-forget (no reply) so high frame rates aren't gated on a round
         // trip — a malformed/oversized frame is silently dropped.
@@ -733,6 +736,92 @@ fn wr_varint(buf: &mut [u8], p: &mut usize, mut v: u64) {
     *p += 1;
 }
 
+/// set_counting_pattern, decoded ZERO-COPY: walk the repeated `ColorBlock`
+/// (field 1) — `{ start:1, count:2, rgb:3 (repeated double) }` — reducing each
+/// `[0,1]` rgb to 8-bit, and install via the player. Avoids a by-value
+/// `pb::SetCountingPattern`, whose `Vec<ColorBlock, 32>` (each with an inline
+/// `Vec<f64, 4>`) is the ~1.5 KiB arm that sizes every `ClientMessage`. Reply:
+/// counting_state.
+unsafe fn handle_set_counting_pattern(frame: &[u8], now_ms: i64) -> pb::ServerMessage {
+    let Some(body) = unwrap_arm(frame, ARM_SET_COUNTING_PATTERN) else {
+        return upload_malformed();
+    };
+    // Pre-reduced blocks (start, count, 8-bit rgb) — 12 B each vs the ~48 B wire
+    // ColorBlock, and only as many as actually arrive.
+    let mut blocks: micropb::heapless::Vec<(u32, u32, (u8, u8, u8)), 32> =
+        micropb::heapless::Vec::new();
+    let mut o = 0;
+    while o < body.len() {
+        let Some(key) = rd_varint(body, &mut o) else { break };
+        let (field, wire) = ((key >> 3) as u32, (key & 7) as u8);
+        if field == 1 && wire == 2 {
+            let Some(len) = rd_varint(body, &mut o) else { break };
+            let end = o + len as usize;
+            let Some(blk) = body.get(o..end) else { break };
+            o = end;
+            if blocks.len() < blocks.capacity() {
+                let _ = blocks.push(parse_color_block(blk));
+            }
+        } else if !skip_field(body, &mut o, wire) {
+            break;
+        }
+    }
+    player().set_counting_blocks(now_ms, &blocks)
+}
+
+/// Parse one `ColorBlock { start:1, count:2, rgb:3 }` → (start, count, 8-bit
+/// rgb). `rgb` is `repeated double` — packed (LEN, the default proto3 encoding)
+/// or, defensively, unpacked (one 64-bit field each), taken in order as r,g,b.
+fn parse_color_block(blk: &[u8]) -> (u32, u32, (u8, u8, u8)) {
+    let (mut start, mut count) = (0u32, 0u32);
+    let mut rgb = [0u8; 3];
+    let mut ci = 0usize; // next rgb channel to fill (unpacked case)
+    let mut bo = 0;
+    let reduce = |v: f64| -> u8 { (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8 };
+    while bo < blk.len() {
+        let Some(bk) = rd_varint(blk, &mut bo) else { break };
+        let (bf, bw) = ((bk >> 3) as u32, (bk & 7) as u8);
+        match (bf, bw) {
+            (1, 0) => start = rd_varint(blk, &mut bo).unwrap_or(0) as i32 as u32,
+            (2, 0) => count = rd_varint(blk, &mut bo).unwrap_or(0) as i32 as u32,
+            (3, 2) => {
+                // packed doubles: [len][f64 ...]
+                let Some(plen) = rd_varint(blk, &mut bo) else { break };
+                let pend = (bo + plen as usize).min(blk.len());
+                let mut c = 0;
+                while bo + 8 <= pend && c < 3 {
+                    let mut a = [0u8; 8];
+                    a.copy_from_slice(&blk[bo..bo + 8]);
+                    rgb[c] = reduce(f64::from_le_bytes(a));
+                    bo += 8;
+                    c += 1;
+                }
+                bo = pend;
+            }
+            (3, 1) => {
+                // unpacked double (one field per channel), taken in order.
+                if bo + 8 <= blk.len() {
+                    if ci < 3 {
+                        let mut a = [0u8; 8];
+                        a.copy_from_slice(&blk[bo..bo + 8]);
+                        rgb[ci] = reduce(f64::from_le_bytes(a));
+                        ci += 1;
+                    }
+                    bo += 8;
+                } else {
+                    break;
+                }
+            }
+            _ => {
+                if !skip_field(blk, &mut bo, bw) {
+                    break;
+                }
+            }
+        }
+    }
+    (start, count, (rgb[0], rgb[1], rgb[2]))
+}
+
 fn dump_error(code: &str, message: &str) -> pb::ServerMessage {
     let mut e = pb::Error::default();
     let _ = e.r#code.push_str(code);
@@ -886,6 +975,7 @@ const ARM_GET_EFFECT_UNIFORMS: u32 = 24;
 const ARM_SET_PERF: u32 = 25;
 const ARM_GET_PERF_REPORT: u32 = 26;
 const ARM_SET_TEXTURE: u32 = 28;
+const ARM_SET_COUNTING_PATTERN: u32 = 14;
 
 /// Read a base-128 varint at `buf[*o..]`, advancing `*o`. None on truncation.
 fn rd_varint(buf: &[u8], o: &mut usize) -> Option<u64> {
