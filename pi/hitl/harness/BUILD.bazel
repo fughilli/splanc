@@ -25,6 +25,7 @@ py_library(
         "hitl_client.py",
         "hitl_improv.py",
         "improv.py",
+        "map_upload_core.py",
         "mapping_trigger_core.py",
         "provision.py",
         "sync.py",
@@ -126,6 +127,34 @@ py_binary(
     ],
     imports = ["."],
     main = "fx_bench.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# On-hardware large-map upload test (FUG-74): reserve a rig, flash, then shard a
+# ~14 KB submit_map + a multi-KB submit_topology into UploadChunk windows over
+# the player WebSocket and assert they upload, decode, and round-trip via
+# get_stored_map — the regression guard for the wss OOM ("Send failed: socket
+# closed") on a big map. Like :e2e it needs a rig + board, so it is `bazel run`,
+# never `bazel test`; the chunking/fixture logic (map_upload_core) is unit-tested
+# in //pi/hitl/tests. --device-ws hits an already-reachable board directly.
+py_binary(
+    name = "map_upload",
+    srcs = ["hitl_map_upload.py"],
+    data = [
+        "//firmware/player_app:esp32c6_flashbundle",
+        "//pi/hitl/cmd/hitl",
+    ],
+    imports = ["."],
+    main = "hitl_map_upload.py",
     tags = [
         "hitl",
         "manual",
