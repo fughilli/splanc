@@ -32,6 +32,9 @@ import {
   type GammaProfile,
 } from "../../color/correction";
 import { installColorCorrectionStyles } from "./colorCorrection.css";
+import { compileScript } from "../../fx/preview";
+import { UniformPanel } from "../../effects/editor/uniform-panel";
+import { COLOR_TEST_ID, COLOR_TEST_SOURCE } from "../../color/colorTestEffect";
 
 const CHANNELS = ["R", "G", "B"] as const;
 const CH_COLOR = ["#ff5d5d", "#57d16a", "#5d8bff"];
@@ -91,6 +94,42 @@ export function ColorCorrectionScreen(_router: Router): Screen {
   plot.className = "cc-plot";
   const sim = new PaletteSim();
 
+  // Persistent "color test" uniform panel: loading the effect fills it, and each
+  // control pushes setUniforms live (the same seam the effect editor uses).
+  const testHost = document.createElement("div");
+  let testLoaded = false;
+  const testPanel = new UniformPanel(testHost, (slot, value) => {
+    const c = appState.client;
+    if (c?.isConnected) void c.setUniforms([{ slot, value }]).catch(() => undefined);
+  });
+
+  async function loadColorTest(btn: HTMLButtonElement): Promise<void> {
+    const c = appState.client;
+    if (!c?.isConnected) {
+      toast("Connect a device first", { error: true });
+      return;
+    }
+    btn.disabled = true;
+    try {
+      const compiled = await compileScript(COLOR_TEST_SOURCE);
+      if (!compiled.ok) {
+        toast("Color test failed to compile", { error: true });
+        return;
+      }
+      await c.submitEffect(COLOR_TEST_ID, compiled.bytecode, true);
+      testPanel.setManifest(compiled.uniforms);
+      testLoaded = true;
+      const vals = testPanel.values();
+      if (vals.length) await c.setUniforms(vals);
+      rebuildControls();
+      toast("Color test loaded — tune the gradient below");
+    } catch {
+      toast("Couldn't load the color test", { error: true });
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
   // Debounced, fire-and-forget push so a drag doesn't thrash the device flash.
   let pushTimer = 0;
   function pushNow(): void {
@@ -121,7 +160,37 @@ export function ColorCorrectionScreen(_router: Router): Screen {
   const controls = document.createElement("div");
 
   function rebuildControls(): void {
-    controls.replaceChildren(presetGroup(), curveGroup(), whiteBalanceGroup(), pushGroup());
+    controls.replaceChildren(
+      presetGroup(),
+      curveGroup(),
+      whiteBalanceGroup(),
+      colorTestGroup(),
+      pushGroup(),
+    );
+  }
+
+  function colorTestGroup(): HTMLElement {
+    const g = group("Color test");
+    const hint = document.createElement("div");
+    hint.className = "cc-hint";
+    hint.textContent =
+      "Load a two-tone gradient onto the strip to check color reproduction under " +
+      "the current curves. Set the endpoint colors, the span length (e.g. 10 vs " +
+      "100 LEDs), and where it starts — to probe voltage droop along the run.";
+    g.append(hint);
+    const btn = Button({
+      label: testLoaded ? "Reload color test" : "Load color test",
+      block: true,
+      onClick: () => void loadColorTest(btn),
+    });
+    g.append(btn, testHost);
+    if (!testLoaded) {
+      const note = document.createElement("div");
+      note.className = "cc-hint";
+      note.textContent = "The gradient controls appear here once loaded.";
+      g.append(note);
+    }
+    return g;
   }
 
   function presetGroup(): HTMLElement {
