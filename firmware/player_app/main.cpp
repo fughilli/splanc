@@ -26,6 +26,7 @@
 #include <esp_cpu.h>
 #include <esp_https_server.h>
 #include <esp_mac.h>
+#include <mdns.h>
 #include <esp_littlefs.h>
 #include <esp_partition.h>
 #include <esp_rom_crc.h>
@@ -60,7 +61,6 @@
 // its own stack; it only calls the small pure-read accessors + FastLED.show.)
 SET_LOOP_TASK_STACK_SIZE(24 * 1024);
 
-static const char *kApSsid = "ledmapper";
 static const char *kApPassword = "ledmapper";
 static const uint16_t kWsPort = 81;
 
@@ -68,6 +68,12 @@ static const uint16_t kWsPort = 81;
 // persisted custom name, or a "Led Widget <6-hex>" default derived from the MAC.
 // Reflected to BLE + persisted whenever the app sends set_device_name.
 static char g_device_name[33] = "Led Widget";
+// The soft-AP SSID and mDNS/DHCP hostname, both derived from g_device_name
+// (see names_from_identity): SSID is "<name>-AP"; the hostname is a DNS-label-
+// safe slug of the name so that <hostname>.local resolves over mDNS. Recomputed
+// on every rename so the AP + hostname track the configured name.
+static char g_ap_ssid[33] = "ledmapper-AP";
+static char g_hostname[33] = "ledmapper";
 // STA join budget before a provisioning attempt is reported failed.
 static const uint32_t kStaJoinTimeoutMs = 20000;
 
@@ -192,6 +198,9 @@ static const uint32_t kProvisionGraceMs = 3000;
 // the C6 (a wss handshake needs a ~17 KB buffer). It comes back on the next
 // boot if no STA join is stored/succeeds, so the device stays re-provisionable.
 static bool softap_up = false;
+// STA IP currently baked into the served wss cert's SAN; 0 == the build-time
+// cert (no SAN) or "re-issue needed". Full rationale at reissue_cert_for_lan.
+static uint32_t g_cert_ip = 0;
 enum class WsState { kIdle, kHandshake, kOpen };
 static WsState ws_state = WsState::kIdle;
 
@@ -514,6 +523,69 @@ static void fs_begin_and_restore() {
   fs_replay(kEffectSelPath);
 }
 
+// Derive a DNS-label-safe hostname from the display name: keep [A-Za-z0-9],
+// collapse any run of other bytes (spaces, punctuation) into a single '-', and
+// trim leading/trailing '-'. A name of only-invalid chars (or empty) falls back
+// to "ledmapper". e.g. "Led Widget A1B2C3" -> "Led-Widget-A1B2C3",
+// "TestWidget" -> "TestWidget". Caps at outsz-1 (device names are <=32 anyway).
+static void sanitize_hostname(const char *name, char *out, size_t outsz) {
+  size_t o = 0;
+  bool prev_hyphen = false;
+  for (const char *p = name; *p && o + 1 < outsz; ++p) {
+    unsigned char c = (unsigned char)*p;
+    bool alnum = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                 (c >= '0' && c <= '9');
+    if (alnum) {
+      out[o++] = (char)c;
+      prev_hyphen = false;
+    } else if (o > 0 && !prev_hyphen) {  // collapse runs; never a leading '-'
+      out[o++] = '-';
+      prev_hyphen = true;
+    }
+  }
+  while (o > 0 && out[o - 1] == '-') o--;  // trim a trailing '-'
+  out[o] = 0;
+  if (o == 0) {
+    strncpy(out, "ledmapper", outsz - 1);
+    out[outsz - 1] = 0;
+  }
+}
+
+// Recompute g_ap_ssid ("<name>-AP", capped to the 32-byte SSID limit — SSIDs
+// allow spaces so the display name is used verbatim) and g_hostname (the
+// sanitized slug) from the current g_device_name.
+static void names_from_identity() {
+  // Reserve room for the "-AP" suffix + NUL within the 32-byte SSID limit.
+  snprintf(g_ap_ssid, sizeof g_ap_ssid, "%.*s-AP",
+           (int)(sizeof g_ap_ssid - 4), g_device_name);
+  sanitize_hostname(g_device_name, g_hostname, sizeof g_hostname);
+}
+
+// Bring up (or, once up, rename) the mDNS responder so <hostname>.local
+// resolves to the device. First call inits the responder, sets the hostname +
+// instance name (the friendly display name) and advertises a lightweight
+// _http._tcp service (the :80 landing page) for discovery; later calls just
+// re-point the hostname/instance at the renamed value.
+static bool g_mdns_up = false;
+static void mdns_begin_or_update() {
+  if (!g_mdns_up) {
+    esp_err_t err = mdns_init();
+    if (err != ESP_OK) {
+      Log().printf("[mdns] init failed: %d\n", (int)err);
+      return;
+    }
+    g_mdns_up = true;
+    mdns_hostname_set(g_hostname);
+    mdns_instance_name_set(g_device_name);
+    mdns_service_add(nullptr, "_http", "_tcp", 80, nullptr, 0);
+    Log().printf("[mdns] up: %s.local (\"%s\")\n", g_hostname, g_device_name);
+  } else {
+    mdns_hostname_set(g_hostname);
+    mdns_instance_name_set(g_device_name);
+    Log().printf("[mdns] renamed: %s.local (\"%s\")\n", g_hostname, g_device_name);
+  }
+}
+
 // After handling a message, pick up a set_device_name rename: read the player's
 // current name (under the lock), and if it changed, persist it to NVS and rename
 // the BLE advertisement (both outside the lock — they're heavy and rare).
@@ -530,6 +602,18 @@ static void poll_device_rename() {
   prefs.putString("name", g_device_name);
   improv_ble_set_name(g_device_name);
   Log().printf("[player] renamed to \"%s\"\n", g_device_name);
+  // Track the new name across the AP SSID, the STA/AP + mDNS hostnames, and the
+  // wss cert. The soft-AP is reconfigured live only while it's still up (it's
+  // torn down once a LAN is joined). Zeroing g_cert_ip forces reissue_cert_for_lan
+  // to re-sign with the new <hostname>.local in the SAN on the next loop().
+  names_from_identity();
+  WiFi.setHostname(g_hostname);
+  if (softap_up) {
+    WiFi.softAPsetHostname(g_hostname);
+    WiFi.softAP(g_ap_ssid, kApPassword);
+  }
+  mdns_begin_or_update();
+  g_cert_ip = 0;
 }
 
 // Handle one sharded-upload window (proto UploadChunk), shared by the wss and
@@ -1048,7 +1132,8 @@ static char g_gen_cert[2048];
 // the throttled retry in loop(). Not a one-shot: the IP can change (DHCP
 // re-lease / reconnect) and the first attempt can fail under early-boot heap
 // pressure, and either case must self-heal rather than strand the no-SAN cert.
-static uint32_t g_cert_ip = 0;
+// (Defined near the top so poll_device_rename can zero it — a rename forces a
+// re-issue so the new <hostname>.local lands in the SAN.)
 
 static esp_err_t wss_ws_handler(httpd_req_t *req) {
   if (req->method == HTTP_GET) return ESP_OK;  // upgrade handshake; nothing to send
@@ -1227,7 +1312,10 @@ static void reissue_cert_for_lan() {
   int n = 0;
   ips[n++] = sta_ip;                               // STA (LAN) address
   ips[n++] = (uint32_t)IPAddress(192, 168, 4, 1);  // soft-AP address
-  int ret = ledmapper_selfsign(kDevKeyPem, g_device_name, ips, n, "ledmapper.local",
+  // SAN mDNS name tracks the configured hostname so https://<name>.local matches.
+  char fqdn[40];
+  snprintf(fqdn, sizeof fqdn, "%s.local", g_hostname);
+  int ret = ledmapper_selfsign(kDevKeyPem, g_device_name, ips, n, fqdn,
                                g_gen_cert, sizeof g_gen_cert);
   if (ret != 0) {
     Log().printf("[wss] cert re-issue failed: -0x%04X (heap=%u); keeping current "
@@ -1285,27 +1373,12 @@ void setup() {
   // before the render task starts, so the first frame is already corrected.
   color_correction_begin();
 
-  // WiFi: AP+STA. The soft-AP is always up (bench access + the fallback
-  // when no LAN is joined); stored credentials (BLE-provisioned via
-  // Improv) additionally join the user's network so the HOSTED app can
-  // reach the player (the AP-only onboarding was a dead end: a phone on
-  // the AP routes everything there and the hosted app can never load).
-  WiFi.mode(WIFI_AP_STA);
-  WiFi.softAP(kApSsid, kApPassword);
-  softap_up = true;
-  // Rebind the :81/:80 listeners on every STA (re)join — see on_sta_got_ip.
-  WiFi.onEvent(on_sta_got_ip, ARDUINO_EVENT_WIFI_STA_GOT_IP);
   prefs.begin("ledmapper");
-  String ssid = prefs.getString("ssid", "");
-  if (ssid.length() > 0) {
-    WiFi.begin(ssid.c_str(), prefs.getString("pass", "").c_str());
-    sta_joining = true;
-    sta_join_started = millis();
-  }
 
   // Device identity: factory MAC (the same address the BLE advertisement uses)
   // + a display/BLE name. The default name "Led Widget <6-hex>" comes from an
   // FNV-1a hash of the MAC; a user-set name persisted in NVS overrides it.
+  // Resolved BEFORE WiFi comes up so the AP SSID + hostname derive from it.
   uint8_t macb[6] = {0};
   esp_read_mac(macb, ESP_MAC_BT);
   char macstr[18];
@@ -1319,9 +1392,37 @@ void setup() {
   const char *name = stored.length() > 0 ? stored.c_str() : defname;
   strncpy(g_device_name, name, sizeof g_device_name - 1);
   g_device_name[sizeof g_device_name - 1] = 0;
+  // AP SSID "<name>-AP" + the DNS-safe <hostname> for mDNS/DHCP, both derived
+  // from the configured name (FUG-83).
+  names_from_identity();
+
+  // WiFi: AP+STA. The soft-AP is always up (bench access + the fallback
+  // when no LAN is joined); stored credentials (BLE-provisioned via
+  // Improv) additionally join the user's network so the HOSTED app can
+  // reach the player (the AP-only onboarding was a dead end: a phone on
+  // the AP routes everything there and the hosted app can never load).
+  String ssid = prefs.getString("ssid", "");
+  WiFi.mode(WIFI_AP_STA);
+  // Set both hostnames before the netifs come up: STA before begin() (the DHCP
+  // client name the router shows), AP before softAP().
+  WiFi.setHostname(g_hostname);
+  WiFi.softAPsetHostname(g_hostname);
+  WiFi.softAP(g_ap_ssid, kApPassword);
+  softap_up = true;
+  // Rebind the :81/:80 listeners on every STA (re)join — see on_sta_got_ip.
+  WiFi.onEvent(on_sta_got_ip, ARDUINO_EVENT_WIFI_STA_GOT_IP);
+  if (ssid.length() > 0) {
+    WiFi.begin(ssid.c_str(), prefs.getString("pass", "").c_str());
+    sta_joining = true;
+    sta_join_started = millis();
+  }
+  // mDNS responder: makes <hostname>.local resolve to the device (STA + AP).
+  mdns_begin_or_update();
+
   lm_player_set_identity(reinterpret_cast<const uint8_t *>(macstr), strlen(macstr),
                          reinterpret_cast<const uint8_t *>(g_device_name), strlen(g_device_name));
-  Log().printf("[player] identity %s / \"%s\"\n", macstr, g_device_name);
+  Log().printf("[player] identity %s / \"%s\" ap \"%s\" host %s.local\n", macstr,
+               g_device_name, g_ap_ssid, g_hostname);
 
   improv_ble_begin(g_device_name,
                    ssid.length() > 0 ? IMPROV_STATE_PROVISIONING : IMPROV_STATE_AUTHORIZED);
@@ -1454,7 +1555,7 @@ void loop() {
     String sta = WiFi.status() == WL_CONNECTED
                      ? "sta " + WiFi.localIP().toString()
                      : (sta_joining ? String("sta joining…") : String("sta off"));
-    String ap = softap_up ? String("AP \"") + kApSsid + "\" " +
+    String ap = softap_up ? String("AP \"") + g_ap_ssid + "\" " +
                                 (unsigned)WiFi.softAPgetStationNum() + " sta http://" +
                                 WiFi.softAPIP().toString() + "/"
                           : String("AP off");
