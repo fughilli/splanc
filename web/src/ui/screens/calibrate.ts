@@ -36,7 +36,7 @@ export function CalibrateScreen(router: Router): Screen {
   const sub = document.createElement("p");
   sub.className = "screen-sub";
   sub.textContent = connected
-    ? "Runs ~30 s of tiny test effects to learn how fast this board is. Your current effect resumes afterward."
+    ? "Runs a sweep of tiny test effects to learn how fast this board is — one per opcode, so every builtin is measured. Your current effect resumes afterward."
     : "No device connected. The offline model will use its shipped defaults until you calibrate on hardware.";
 
   el.append(headline, sub);
@@ -66,6 +66,14 @@ export function CalibrateScreen(router: Router): Screen {
 
   const accuracy = document.createElement("div");
   accuracy.className = "calib-accuracy";
+
+  // Tier toggle: default (unchecked) runs the FULL sweep → 100% opcode
+  // coverage; "Quick" runs only the cost-dominant core ops for a faster pass.
+  const tierLabel = document.createElement("label");
+  tierLabel.className = "calib-tier";
+  const tierToggle = document.createElement("input");
+  tierToggle.type = "checkbox";
+  tierLabel.append(tierToggle, document.createTextNode(" Quick pass (cost-dominant ops only; full sweep covers every opcode)"));
 
   let running = false;
 
@@ -118,6 +126,7 @@ export function CalibrateScreen(router: Router): Screen {
       result = await runCalibration(clientDevice(client), {
         deviceLabel: String(label),
         firmwareBuild: build,
+        tier: tierToggle.checked ? "core" : "full",
         onProgress: (p) => {
           fill.style.width = `${Math.round((p.step / p.total) * 100)}%`;
           appendLog(p.detail ? `${p.label} — ${p.detail}` : p.label);
@@ -175,7 +184,7 @@ export function CalibrateScreen(router: Router): Screen {
     onClick: () => void calibrate(),
   });
 
-  el.append(Card(progressWrap), Card(accuracy), startBtn);
+  el.append(Card(progressWrap), Card(accuracy), tierLabel, startBtn);
 
   void parseFxb;
   void walkEntry;

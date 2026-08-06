@@ -15,14 +15,15 @@
  */
 
 import { compileScript } from "../fx/preview";
-import { parseFxb, walkEntry, OPCODE_NAMES } from "./costModel";
+import { parseFxb, walkEntry, costFor, OPCODE_NAMES } from "./costModel";
 import type { OpHistogram } from "./costModel";
 import {
-  BENCHMARKS,
+  benchmarksForTier,
   FITTED_OPCODES,
   type Benchmark,
+  type BenchTier,
 } from "./calibrationBenchmarks";
-import { fitCosts, type BenchSample } from "./calibrationFit";
+import { fitCosts, presentFeatures, type BenchSample } from "./calibrationFit";
 import {
   BUDGET_MS,
   CURRENT_TABLE_VERSION,
@@ -119,16 +120,20 @@ export async function runCalibration(
     firmwareBuild?: string;
     onProgress?: (p: CalibProgress) => void;
     settleMs?: number;
+    /** Which benchmark tier to run. `full` (default) sweeps every opcode →
+     * 100% coverage; `core` is a faster cost-dominant subset. */
+    tier?: BenchTier;
   },
 ): Promise<CalibrationResult> {
   const settleMs = opts.settleMs ?? 800;
-  const total = BENCHMARKS.length;
+  const benchmarks = benchmarksForTier(opts.tier ?? "full");
+  const total = benchmarks.length;
   const samples: BenchSample[] = [];
   const observations: CalibObservation[] = [];
   let cpuHz = DEFAULT_CPU_HZ;
 
-  for (let i = 0; i < BENCHMARKS.length; i++) {
-    const b: Benchmark = BENCHMARKS[i]!;
+  for (let i = 0; i < benchmarks.length; i++) {
+    const b: Benchmark = benchmarks[i]!;
     opts.onProgress?.({ step: i, total, label: `measuring ${b.label}…` });
 
     const compiled = await compileScript(b.source);
@@ -183,10 +188,14 @@ export async function runCalibration(
 
   await device.setPerf("OFF", 0);
 
-  const fit = fitCosts(samples, FITTED_OPCODES);
-  // Merge: fitted opcodes override the default table; unfit opcodes keep defaults.
+  // Fit only the opcodes this run actually measured (presence-aware), so a
+  // partial/`core` run never zeroes an op it didn't exercise.
+  const fitted = presentFeatures(samples, FITTED_OPCODES);
+  const fit = fitCosts(samples, fitted);
+  // Merge: measured opcodes override the default table; everything else
+  // (unfit + not-measured) keeps its seeded default.
   const costs: Record<string, number> = { ...DEFAULT_COSTS };
-  for (const op of FITTED_OPCODES) {
+  for (const op of fitted) {
     if (op in fit.costs && Number.isFinite(fit.costs[op])) costs[op] = fit.costs[op]!;
   }
   const fixed = {
@@ -222,7 +231,8 @@ function pickFinite(v: number, fallback: number): number {
 
 function predictWithDefault(hist: OpHistogram, ledCount: number): number {
   let perLed = 0;
-  for (const [op, n] of Object.entries(hist)) perLed += n * (DEFAULT_COSTS[op] ?? 8);
+  // costFor resolves math sub-keys (UnMath:sqrt) through the family base.
+  for (const [op, n] of Object.entries(hist)) perLed += n * costFor(DEFAULT_COSTS, op, 8);
   return DEFAULT_FIXED.update_fixed + ledCount * (DEFAULT_FIXED.shade_fixed + perLed);
 }
 

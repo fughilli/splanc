@@ -30,6 +30,23 @@ export interface BenchSample {
   bytecodeHash: number;
 }
 
+/**
+ * The subset of `candidates` (fitted opcode features) that actually carry
+ * signal in `samples` — i.e. appear with a nonzero count in at least one
+ * benchmark. Fitting only these keeps every column identifiable (an op that
+ * never runs has an all-zero column that ridge would drive to ~0), and — with
+ * the presence-aware merge in calibration.ts / deviceProfile.ts — ensures an
+ * op a run did NOT measure keeps its seeded default instead of being zeroed.
+ * Used so a partial (e.g. `core`-tier) run only overrides what it measured.
+ */
+export function presentFeatures(samples: BenchSample[], candidates: string[]): string[] {
+  const seen = new Set<string>();
+  for (const s of samples) {
+    for (const [op, n] of Object.entries(s.opCounts)) if (n > 0) seen.add(op);
+  }
+  return candidates.filter((c) => seen.has(c));
+}
+
 /** Synthetic overhead feature names (not opcodes). */
 export const FIXED_FEATURES = [
   "@update_fixed",

@@ -138,9 +138,32 @@ export const DEFAULT_COSTS: CostMap = {
   Length: 90,
   Normalize: 110,
   Distance: 100,
-  // transcendentals / specials — dear
-  UnMath: 120, // sin/cos/exp/log/sqrt/tan — dominant; refined per-fn by fit
-  BinMath: 130, // pow/atan2/min/max/step/mod
+  // transcendentals / specials — dear. UnMath/BinMath are dispatch opcodes that
+  // collapse many fns of very different cost, so the model keys them per-fn
+  // (`UnMath:sqrt`, `BinMath:pow`, …) — see costModel.ts `mathFeature`/`costFor`.
+  // The bare `UnMath`/`BinMath` keys below are the family FALLBACK tier: any fn
+  // a calibration didn't price (or an old/host table that only priced the
+  // family) resolves through them. The per-fn seeds reflect the C6's soft-float
+  // economics (bit-twiddling abs/floor/sign cheap; poly transcendentals dear).
+  UnMath: 120,
+  "UnMath:abs": 10,
+  "UnMath:sign": 10,
+  "UnMath:floor": 16,
+  "UnMath:ceil": 16,
+  "UnMath:fract": 20,
+  "UnMath:sqrt": 60,
+  "UnMath:sin": 120,
+  "UnMath:cos": 120,
+  "UnMath:tan": 160,
+  "UnMath:exp": 140,
+  "UnMath:log": 140,
+  BinMath: 130,
+  "BinMath:min": 14,
+  "BinMath:max": 14,
+  "BinMath:step": 18,
+  "BinMath:mod": 45,
+  "BinMath:atan2": 180,
+  "BinMath:pow": 180,
   Hash1: 60,
   Hash3: 120,
   Hsv2Rgb: 90,

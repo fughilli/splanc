@@ -20,7 +20,7 @@
  */
 
 import { parseFxb, walkEntry, type OpHistogram } from "./costModel";
-import { fitCosts, type BenchSample } from "./calibrationFit";
+import { fitCosts, presentFeatures, type BenchSample } from "./calibrationFit";
 import { FITTED_OPCODES } from "./calibrationBenchmarks";
 import {
   costTableToProfile,
@@ -120,10 +120,13 @@ export function buildDeviceProfile(
     };
   });
 
-  const fit = fitCosts(samples, FITTED_OPCODES);
-  // Fitted opcodes override the default table; unfit opcodes keep defaults.
+  // Fit only opcodes the bundle actually measured (presence-aware), so an op a
+  // run didn't exercise keeps its seeded default rather than being zeroed.
+  const fitted = presentFeatures(samples, FITTED_OPCODES);
+  const fit = fitCosts(samples, fitted);
+  // Measured opcodes override the default table; everything else keeps defaults.
   const costs: Record<string, number> = { ...DEFAULT_COSTS };
-  for (const op of FITTED_OPCODES) {
+  for (const op of fitted) {
     if (op in fit.costs && Number.isFinite(fit.costs[op]!)) costs[op] = fit.costs[op]!;
   }
   const budget: BudgetModel = bundle.budget ?? { ...DEFAULT_BUDGET_MODEL };
