@@ -1,0 +1,38 @@
+"""Native core for the TouchDesigner custom operators (FUG-78).
+
+All protocol/codec/discovery/networking logic lives here so it can be
+unit-tested on the host with no TouchDesigner SDK. `td_ledmapper_ffi` is the
+C-ABI static library the C++ plugin shim (//tools/touchdesigner/plugin) links.
+"""
+
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_static_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+_SRCS = glob(["src/**/*.rs"])
+
+_DEPS = ["@crates//:serde_json"]
+
+rust_library(
+    name = "td_ledmapper",
+    srcs = _SRCS,
+    crate_name = "td_ledmapper",
+    edition = "2021",
+    deps = _DEPS,
+)
+
+# C-ABI static library (crate_type = staticlib) for the C++ plugin to link.
+# Same sources; the #[no_mangle] exports live in src/ffi.rs.
+rust_static_library(
+    name = "td_ledmapper_ffi",
+    srcs = _SRCS,
+    crate_name = "td_ledmapper",
+    edition = "2021",
+    deps = _DEPS,
+)
+
+rust_test(
+    name = "td_ledmapper_test",
+    crate = ":td_ledmapper",
+    edition = "2021",
+)
