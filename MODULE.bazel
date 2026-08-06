@@ -318,3 +318,21 @@ rules_ts_ext.deps(
     ts_version_from = "//:package.json",
 )
 use_repo(rules_ts_ext, "npm_typescript")
+
+# ---------------------------------------------------------------------------
+# TouchDesigner custom operators (FUG-78, //tools/touchdesigner).
+# The Derivative C++ SDK headers ship inside the public CustomOperatorSamples
+# repo. We fetch them at build time so the plugin build is self-contained on a
+# developer's macOS/Windows box (TouchDesigner is not available on Linux, so
+# the plugin/.tox targets are platform-gated and skipped in Linux CI).
+# TODO(maintainer): pin `commit` + add an `integrity`/`sha256` for a fully
+# reproducible fetch (left unpinned here as the fetch needs network access).
+# ---------------------------------------------------------------------------
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+http_archive(
+    name = "touchdesigner_sdk",
+    build_file = "//third_party/touchdesigner:sdk.BUILD",
+    strip_prefix = "CustomOperatorSamples-main",
+    urls = ["https://github.com/TouchDesigner/CustomOperatorSamples/archive/refs/heads/main.tar.gz"],
+)

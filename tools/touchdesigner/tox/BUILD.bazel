@@ -1,0 +1,51 @@
+"""Package the built TouchDesigner plugins into distributable bundles.
+
+A genuine `.tox` is TouchDesigner's own component format and can only be written
+by TouchDesigner, so the Bazel build produces a bundle (plugin + the in-TD
+finalizer `build_tox.py` + install notes); the final `.tox` is produced in
+TouchDesigner (see build_tox.py) or the plugin is dropped into the Plugins
+folder directly. Platform-gated to macOS/Windows like the plugin targets.
+"""
+
+load("@rules_python//python:defs.bzl", "py_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+_TD_PLATFORMS = select({
+    "@platforms//os:osx": [],
+    "@platforms//os:windows": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+
+py_binary(
+    name = "mk_tox",
+    srcs = ["mk_tox.py"],
+)
+
+genrule(
+    name = "ledmapper_texture_tox",
+    srcs = [
+        "build_tox.py",
+        "//tools/touchdesigner/plugin:ledmapper_texture",
+    ],
+    outs = ["ledmapper_texture_tox.tar.gz"],
+    cmd = "$(execpath :mk_tox) --out $@ --optype Ledmappertexture " +
+          "--finalizer $(location build_tox.py) " +
+          "$(locations //tools/touchdesigner/plugin:ledmapper_texture)",
+    target_compatible_with = _TD_PLATFORMS,
+    tools = [":mk_tox"],
+)
+
+genrule(
+    name = "ledmapper_uniforms_tox",
+    srcs = [
+        "build_tox.py",
+        "//tools/touchdesigner/plugin:ledmapper_uniforms",
+    ],
+    outs = ["ledmapper_uniforms_tox.tar.gz"],
+    cmd = "$(execpath :mk_tox) --out $@ --optype Ledmapperuniforms " +
+          "--finalizer $(location build_tox.py) " +
+          "$(locations //tools/touchdesigner/plugin:ledmapper_uniforms)",
+    target_compatible_with = _TD_PLATFORMS,
+    tools = [":mk_tox"],
+)

@@ -1,0 +1,55 @@
+"""TouchDesigner custom operator plugins (FUG-78).
+
+Two Custom OPs — a TOP that streams video to a fixture's texture ports and a
+CHOP that drives shader uniforms — each a thin C++ shim over the Rust core
+(//tools/touchdesigner/core). Both statically link the same C-ABI static library
+and link no TouchDesigner library (the SDK is header-only for building an OP).
+
+`td_plugin` packages each shim into the format its host TD loads: a `.plugin`
+bundle on macOS, a bare `.dll` on Windows (see td_plugin.bzl). TouchDesigner
+runs only on macOS/Windows, so the targets are platform-gated: on Linux (CI,
+this container) the public alias resolves as incompatible and is skipped by
+`//...`. Build them on a macOS/Windows box with the TD SDK reachable:
+
+    bazel build //tools/touchdesigner/plugin:ledmapper_texture     # .plugin / .dll
+    bazel build //tools/touchdesigner/plugin:ledmapper_uniforms
+
+To build against a local SDK checkout instead of the fetched archive:
+
+    bazel build --override_repository=touchdesigner_sdk=/path/to/CustomOperatorSamples \\
+        //tools/touchdesigner/plugin:ledmapper_texture
+"""
+
+load(":td_plugin.bzl", "td_plugin")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["Info.plist.tpl"])
+
+td_plugin(
+    name = "ledmapper_texture",
+    srcs = [
+        "ledmapper_ffi.h",
+        "ledmapper_top.cpp",
+    ],
+    bundle_id = "com.ledmapper.texture",
+    bundle_name = "LedMapperTexture",
+    deps = [
+        "//tools/touchdesigner/core:td_ledmapper_ffi",
+        "@touchdesigner_sdk//:sdk",
+    ],
+)
+
+td_plugin(
+    name = "ledmapper_uniforms",
+    srcs = [
+        "ledmapper_chop.cpp",
+        "ledmapper_ffi.h",
+    ],
+    bundle_id = "com.ledmapper.uniforms",
+    bundle_name = "LedMapperUniforms",
+    deps = [
+        "//tools/touchdesigner/core:td_ledmapper_ffi",
+        "@touchdesigner_sdk//:sdk",
+    ],
+)
