@@ -189,3 +189,13 @@ flash_bundle(
     flash = ":flash_esp32c6",
     tags = ["manual"],
 )
+
+# Regression guard on the firmware-profile envelope struct sizes (they sit on
+# the heap-allocated task stacks; FUG-71). Host-profile crate, but the sizes it
+# asserts are the firmware ones.
+rust_test(
+    name = "envelope_size_test",
+    srcs = ["tests/envelope_size.rs"],
+    edition = "2021",
+    deps = ["//shared/protocol/rust:ledmapper_pb_fw"],
+)

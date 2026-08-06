@@ -44,9 +44,16 @@ fn main() -> std::io::Result<()> {
     g.configure(".ledmapper.v1.Error.message", Config::new().max_bytes(128));
 
     // Stored-map dump chunk: the player streams its map+topology back to the
-    // phone a slice at a time; the payload must hold a control-frame-sized
-    // chunk (the phone caps its request to this). 1 KiB fits the reply cap.
-    g.configure(".ledmapper.v1.StoredMapChunk.data", Config::new().max_bytes(1024));
+    // phone a slice at a time; the payload holds a control-frame-sized chunk (the
+    // phone caps its request to this). On HOST the generated encoder builds it, so
+    // it needs the full 1 KiB. On FIRMWARE the player encodes this reply ZERO-COPY
+    // straight to the output (ffi.rs handle_get_stored_map) and never materializes
+    // the struct, so the inline buffer is dead weight that would size every
+    // ServerMessage temporary to ~1 KiB — shrink it to a stub.
+    g.configure(
+        ".ledmapper.v1.StoredMapChunk.data",
+        Config::new().max_bytes(if firmware { 8 } else { 1024 }),
+    );
 
     // Sharded upload window. On firmware the player NEVER decodes UploadChunk
     // through the generated bindings — the transport intercepts the arm and

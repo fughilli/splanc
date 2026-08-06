@@ -517,7 +517,7 @@ pub unsafe extern "C" fn lm_player_handle(
         Some(ARM_SUBMIT_TOPOLOGY) => handle_topology_upload(frame, frame.len()),
         // Dump the stored map+topology (it lives in the arena, not the session
         // core) back out to the phone, one MappingBundle byte-window per call.
-        Some(ARM_GET_STORED_MAP) => handle_get_stored_map(frame),
+        Some(ARM_GET_STORED_MAP) => return handle_get_stored_map(frame, out, out_cap),
         // Effects arms: decoded by a hand-rolled walker (the firmware profile
         // caps SubmitEffect.fxb at 64 B), then loaded/selected/tuned on the VM.
         Some(ARM_SUBMIT_EFFECT) => handle_submit_effect(frame),
@@ -615,27 +615,44 @@ fn upload_error(e: StoreError) -> pb::ServerMessage {
 }
 
 /// Stream a byte window of the stored map+topology re-encoded as a
-/// MappingBundle. The phone requests [offset, offset+max_len) repeatedly until
-/// it has `total_len` bytes. `no_map` when nothing is stored.
-unsafe fn handle_get_stored_map(frame: &[u8]) -> pb::ServerMessage {
-    let mut env = pb::ClientMessage::default();
-    let mut dec = PbDecoder::new(frame);
-    dec.ignore_repeated_cap_err = true;
-    let (offset, max_len) = match env.decode(&mut dec, frame.len()) {
-        Ok(()) => match env.r#msg {
-            Some(pb::ClientMessage_::Msg::GetStoredMap(g)) => {
-                (g.r#offset.max(0) as usize, g.r#max_len.max(1) as usize)
-            }
-            _ => return upload_malformed(),
-        },
-        Err(_) => return upload_malformed(),
+/// MappingBundle, wrapped in a `ServerMessage{stored_map_chunk}`. The phone
+/// requests [offset, offset+max_len) repeatedly until it has `total_len` bytes;
+/// `no_map` when nothing is stored.
+///
+/// Encoded ZERO-COPY, straight into `out` — never through a by-value
+/// `pb::StoredMapChunk`. That struct carries a `Vec<u8, 1024>` inline, so
+/// materializing it would bloat EVERY `pb::ServerMessage` temporary in the
+/// handler to ~1 KiB (the oneof is sized to its largest arm). The firmware
+/// profile therefore shrinks `StoredMapChunk.data` to a stub (gen_main.rs) —
+/// this is the only place the message is produced, and only the phone decodes
+/// it. Returns the encoded length (or an encoded error / `-2` if `out` is small).
+unsafe fn handle_get_stored_map(frame: &[u8], out: *mut u8, out_cap: usize) -> i32 {
+    // Hand-rolled request decode (avoids a ~1.5 KiB by-value ClientMessage on
+    // this path too): GetStoredMap = { offset:1, max_len:2 }, both int32/varint.
+    let Some(inner) = unwrap_arm(frame, ARM_GET_STORED_MAP) else {
+        return encode_reply(&upload_malformed(), out, out_cap);
     };
+    let (mut offset, mut max_len) = (0usize, 1usize);
+    let mut o = 0;
+    while o < inner.len() {
+        let Some(key) = rd_varint(inner, &mut o) else { break };
+        let (field, wire) = ((key >> 3) as u32, (key & 7) as u8);
+        match (field, wire) {
+            (1, 0) => offset = rd_varint(inner, &mut o).unwrap_or(0) as i32 as usize,
+            (2, 0) => max_len = ((rd_varint(inner, &mut o).unwrap_or(1) as i32).max(1)) as usize,
+            _ => {
+                if !skip_field(inner, &mut o, wire) {
+                    break;
+                }
+            }
+        }
+    }
+
     let Some(map) = (*addr_of!(MAP)).as_ref() else {
-        return dump_error("no_map", "no stored map to dump");
+        return encode_reply(&dump_error("no_map", "no stored map to dump"), out, out_cap);
     };
     let topo = (*addr_of!(TOPO)).as_ref();
     let total = dump::bundle_len(map, topo);
-    // Bound the chunk by the reply field capacity (StoredMapChunk.data).
     let cap = max_len.min(1024);
     let mut chunk = [0u8; 1024];
     let n = if offset < total {
@@ -643,12 +660,77 @@ unsafe fn handle_get_stored_map(frame: &[u8]) -> pb::ServerMessage {
     } else {
         0
     };
-    let mut m = pb::StoredMapChunk::default();
-    m.r#total_len = total as i32;
-    m.r#offset = offset as i32;
-    let _ = m.r#data.extend_from_slice(&chunk[..n]);
-    m.r#has_topology = topo.is_some();
-    pb::ServerMessage { r#msg: Some(pb::ServerMessage_::Msg::StoredMapChunk(m)) }
+    let has_topo = topo.is_some();
+
+    // ServerMessage{ stored_map_chunk=15 { total_len=1, offset=2, data=3,
+    // has_topology=4 } }. Proto3 implicit presence: omit fields at default.
+    let mut inner_len = 0usize;
+    if total > 0 {
+        inner_len += 1 + varint_len(total as u64);
+    }
+    if offset > 0 {
+        inner_len += 1 + varint_len(offset as u64);
+    }
+    if n > 0 {
+        inner_len += 1 + varint_len(n as u64) + n;
+    }
+    if has_topo {
+        inner_len += 2;
+    }
+    let need = 1 + varint_len(inner_len as u64) + inner_len;
+    if need > out_cap {
+        return -2;
+    }
+    let ob = core::slice::from_raw_parts_mut(out, out_cap);
+    let mut p = 0usize;
+    ob[p] = (15 << 3) | 2;
+    p += 1;
+    wr_varint(ob, &mut p, inner_len as u64);
+    if total > 0 {
+        ob[p] = 1 << 3;
+        p += 1;
+        wr_varint(ob, &mut p, total as u64);
+    }
+    if offset > 0 {
+        ob[p] = 2 << 3;
+        p += 1;
+        wr_varint(ob, &mut p, offset as u64);
+    }
+    if n > 0 {
+        ob[p] = (3 << 3) | 2;
+        p += 1;
+        wr_varint(ob, &mut p, n as u64);
+        ob[p..p + n].copy_from_slice(&chunk[..n]);
+        p += n;
+    }
+    if has_topo {
+        ob[p] = 4 << 3;
+        p += 1;
+        ob[p] = 1;
+        p += 1;
+    }
+    p as i32
+}
+
+/// Bytes a base-128 varint of `v` occupies.
+fn varint_len(mut v: u64) -> usize {
+    let mut n = 1;
+    while v >= 0x80 {
+        v >>= 7;
+        n += 1;
+    }
+    n
+}
+
+/// Write `v` as a base-128 varint into `buf[*p..]`, advancing `*p`.
+fn wr_varint(buf: &mut [u8], p: &mut usize, mut v: u64) {
+    while v >= 0x80 {
+        buf[*p] = (v as u8) | 0x80;
+        *p += 1;
+        v >>= 7;
+    }
+    buf[*p] = v as u8;
+    *p += 1;
 }
 
 fn dump_error(code: &str, message: &str) -> pb::ServerMessage {
