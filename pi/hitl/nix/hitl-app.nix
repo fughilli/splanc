@@ -10,11 +10,67 @@ let
   imageRef = "hitl-test:latest"; # matches container.nix name:tag
 
   apiPort = 8087; # daemon API (reached over the tailnet)
-  sshPort = 2222; # published container sshd port
+  sshPort = 2222; # published container sshd port for the first DUT
 
   # ESP32-C6 passthrough (MVP): the serial tty. Hardware-dependent — override to
   # the real node / switch to USBIP once the bus id is known.
   devices = [ "/dev/ttyACM0" ];
+
+  # DUTs on this rig. Each DUT gets its own container, published sshd port, and
+  # /dev nodes, run concurrently. A node mapping is "host" or "host:container";
+  # pin each DUT's serial tty to /dev/ttyACM0 inside the container so the toolbox
+  # (hitl-flash/monitor, which default to /dev/ttyACM0) works on every DUT.
+  #
+  # Default: auto-discover. The daemon enumerates the ESP32-C6 boards attached to
+  # the host by their stable /dev/serial/by-id/* symlinks and builds one DUT per
+  # board (sequential name/port from sshPort, tty pinned to /dev/ttyACM0, JTAG
+  # serial filled in) — so plugging in a second board Just Works with no config.
+  #
+  # To pin an explicit set instead, set autoDiscover = false and list each board
+  # by its stable by-id path on a distinct port, e.g.:
+  #   duts = [
+  #     { name = "c6-0"; sshPort = 2222;
+  #       devices = [ "/dev/serial/by-id/usb-1a86_…-if00:/dev/ttyACM0" ];
+  #       env = { HITL_ADAPTER_SERIAL = "…"; }; }  # optional: select this board's USB-JTAG
+  #     { name = "c6-1"; sshPort = 2223;
+  #       devices = [ "/dev/serial/by-id/usb-1a86_…-if00:/dev/ttyACM0" ]; }
+  #   ];
+  autoDiscover = true;
+  # Ports opened for discovered DUTs (they're assigned at runtime, sequentially
+  # from sshPort, so we open a fixed range up front).
+  discoverMaxDuts = 8;
+
+  # Run reservation containers UNprivileged so each is confined to its own DUT's
+  # tty (mounted as /dev/ttyACM0) plus the USB bus — a privileged container
+  # bind-mounts the whole host /dev, leaking every DUT's /dev/ttyACM* into every
+  # container. Flip back to true only to debug a device/cap the confined path is
+  # missing. (HARDWARE-GATED: verify sshd + esptool + openocd still work here.)
+  privilegedContainers = false;
+  duts = [
+    { name = "c6-0"; sshPort = sshPort; devices = devices; }
+  ];
+
+  # One --dut JSON flag per DUT for the daemon; a distinct sshd port each.
+  dutFlags = lib.concatMapStringsSep " "
+    (d: "--dut " + lib.escapeShellArg (builtins.toJSON {
+      name = d.name;
+      ssh_port = d.sshPort;
+      devices = d.devices;
+      env = d.env or { };
+    }))
+    duts;
+  # DUT config passed to the daemon: live discovery, or the explicit --dut list.
+  # Discovery polls /dev/serial/by-id, so boards hot-plugged after boot attach
+  # without a restart; --discover-max-duts must match the opened port range below.
+  dutArgs =
+    if autoDiscover
+    then "--discover --ssh-port ${toString sshPort} --discover-max-duts ${toString discoverMaxDuts}"
+    else dutFlags;
+  # sshd ports to open in the firewall: the discovery range, or the explicit ports.
+  dutPorts =
+    if autoDiscover
+    then lib.genList (i: sshPort + i) discoverMaxDuts
+    else map (d: d.sshPort) duts;
 
   # Provisioning AP: the onboard WiFi radio is a DEDICATED, always-on 2.4 GHz
   # access point (the rig's uplink is Ethernet, so the radio isn't shared with a
@@ -189,8 +245,8 @@ in
           # address it actually used to reach the API. `.local` resolves on the LAN.
           "--host ${config.networking.hostName}.local"
           "--image ${imageRef}"
-          "--ssh-port ${toString sshPort}"
           "--podman ${pkgs.podman}/bin/podman"
+          "--privileged=${lib.boolToString privilegedContainers}"
           "--state-dir /var/lib/hitl"
           # The AP is always-on (NM autoconnect); the daemon only advertises its
           # creds in /status for the harness (`hitl wifi`). It does NOT toggle the
@@ -198,8 +254,8 @@ in
           # dormant, ready for the future multi-DUT design.
           "--ap-ssid ${apSsid}"
           "--ap-psk ${apPsk}"
-        ]
-        + lib.concatMapStrings (d: " --device ${d}") devices;
+          dutArgs
+        ];
       StateDirectory = "hitl";
       Restart = "on-failure";
       RestartSec = 3;
@@ -213,6 +269,6 @@ in
   # it (DHCP/DNS from NM's shared-mode dnsmasq + the ws tunnel to the DUT).
   networking.firewall.trustedInterfaces = [ "tailscale0" apIface ];
   # MVP/testing: also reach them over the LAN (mDNS). Tighten to tailscale-only
-  # for production by dropping these.
-  networking.firewall.allowedTCPPorts = [ apiPort sshPort ];
+  # for production by dropping these. One published sshd port per DUT.
+  networking.firewall.allowedTCPPorts = [ apiPort ] ++ dutPorts;
 }

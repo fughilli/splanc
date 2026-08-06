@@ -86,8 +86,8 @@ func main() {
 func usage() {
 	fmt.Fprint(os.Stderr, `hitl — reserve and use the HITL rig
 
-  hitl reserve [--owner ID] [--server URL] [--key PUBKEY] [--keep]
-  hitl status  [--server URL]
+  hitl reserve [--owner ID] [--server URL] [--key PUBKEY] [--device NAME] [--keep]
+  hitl status  [--server URL]                                  # per-DUT queue / active holders
   hitl wifi    [--server URL]                                  # the rig's provisioning-AP ssid/psk
   hitl release <id> [--server URL]
   hitl ssh     <id> [--server URL]
@@ -117,6 +117,7 @@ func cmdReserve(args []string) error {
 	server := serverFlag(fs)
 	owner := fs.String("owner", envOr("HITL_OWNER", defaultOwner()), "reservation owner id (for logs/status)")
 	keyPath := fs.String("key", "", "public key to authorize (default: a dedicated ~/.config/hitl key)")
+	device := deviceFlag(fs)
 	keep := fs.Bool("keep", false, "keep the reservation after the SSH session exits (default: release)")
 	noShell := fs.Bool("no-shell", false, "just wait until active and print the endpoint; don't open a shell")
 	_ = fs.Parse(args)
@@ -135,7 +136,7 @@ func cmdReserve(args []string) error {
 
 	c := client{base: *server}
 	var res api.Reservation
-	if err := c.post("/reserve", api.ReserveRequest{Owner: *owner, SSHPublicKey: string(pubBytes)}, &res); err != nil {
+	if err := c.post("/reserve", api.ReserveRequest{Owner: *owner, SSHPublicKey: string(pubBytes), Device: *device}, &res); err != nil {
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "reserved: id=%s\n", res.ID)
@@ -155,7 +156,7 @@ func cmdReserve(args []string) error {
 	if h := hostFromServer(*server); h != "" {
 		ep.Host = h
 	}
-	fmt.Fprintf(os.Stderr, "active: ssh %s@%s -p %d\n", ep.User, ep.Host, ep.Port)
+	fmt.Fprintf(os.Stderr, "active: dut=%s ssh %s@%s -p %d\n", active.Device, ep.User, ep.Host, ep.Port)
 
 	// The daemon marks active once the container starts; its sshd takes a moment
 	// to bind. Wait for the port before connecting so we don't race it.
@@ -203,7 +204,17 @@ func cmdStatus(args []string) error {
 		return err
 	}
 	fmt.Printf("rig: %s   lease: %ds\n", s.Rig, s.LeaseSeconds)
-	if s.Active != nil {
+	// Multi-DUT rig: one line per DUT. Older single-DUT daemons send no Devices,
+	// so fall back to the legacy active/queue summary.
+	if len(s.Devices) > 0 {
+		for _, d := range s.Devices {
+			if d.Active != nil {
+				fmt.Printf("dut %-8s busy: id=%s owner=%q since=%s\n", d.Name, d.Active.ID, d.Active.Owner, fmtTime(d.Active.StartedAt))
+			} else {
+				fmt.Printf("dut %-8s (idle)\n", d.Name)
+			}
+		}
+	} else if s.Active != nil {
 		fmt.Printf("active: id=%s owner=%q since=%s\n", s.Active.ID, s.Active.Owner, fmtTime(s.Active.StartedAt))
 	} else {
 		fmt.Println("active: (idle)")
@@ -291,6 +302,7 @@ func cmdFlash(args []string) error {
 	keyPath := fs.String("key", "", "public key to authorize (default: dedicated ~/.config/hitl key)")
 	port := fs.String("port", "/dev/ttyACM0", "serial device in the container")
 	id := fs.String("id", "", "flash into this already-active reservation instead of making one")
+	device := deviceFlag(fs)
 	keep := fs.Bool("keep", false, "keep the reservation after flashing (default: release when we made it)")
 	monitor := fs.Bool("monitor", false, "read the serial console after flashing")
 	monSecs := fs.Float64("monitor-seconds", 10, "how long to read serial with --monitor (0 = until Ctrl-C)")
@@ -310,7 +322,7 @@ func cmdFlash(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	c := client{base: *server}
-	ep, priv, release, err := acquire(ctx, c, *server, *keyPath, *owner, *id, *keep)
+	ep, priv, release, err := acquire(ctx, c, *server, *keyPath, *owner, *id, *device, *keep)
 	if err != nil {
 		return err
 	}
@@ -339,6 +351,7 @@ func cmdMonitor(args []string) error {
 	keyPath := fs.String("key", "", "public key to authorize (default: dedicated ~/.config/hitl key)")
 	port := fs.String("port", "/dev/ttyACM0", "serial device in the container")
 	id := fs.String("id", "", "monitor this already-active reservation instead of making one")
+	device := deviceFlag(fs)
 	keep := fs.Bool("keep", false, "keep the reservation after monitoring (default: release when we made it)")
 	secs := fs.Float64("seconds", 0, "how long to read (0 = until Ctrl-C)")
 	reset := fs.Bool("reset", false, "hard-reset the board first (to catch boot logs)")
@@ -350,7 +363,7 @@ func cmdMonitor(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	c := client{base: *server}
-	ep, priv, release, err := acquire(ctx, c, *server, *keyPath, *owner, *id, *keep)
+	ep, priv, release, err := acquire(ctx, c, *server, *keyPath, *owner, *id, *device, *keep)
 	if err != nil {
 		return err
 	}
@@ -376,6 +389,7 @@ func cmdBle(args []string) error {
 	owner := fs.String("owner", envOr("HITL_OWNER", defaultOwner()), "reservation owner id")
 	keyPath := fs.String("key", "", "public key to authorize (default: dedicated ~/.config/hitl key)")
 	id := fs.String("id", "", "use this already-active reservation instead of making one")
+	device := deviceFlag(fs)
 	keep := fs.Bool("keep", false, "keep the reservation afterward (default: release when we made it)")
 	seconds := fs.Float64("seconds", 6, "scan duration")
 	name := fs.String("name", "", "scan: only show devices whose name contains this")
@@ -404,7 +418,7 @@ func cmdBle(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	c := client{base: *server}
-	ep, priv, release, err := acquire(ctx, c, *server, *keyPath, *owner, *id, *keep)
+	ep, priv, release, err := acquire(ctx, c, *server, *keyPath, *owner, *id, *device, *keep)
 	if err != nil {
 		return err
 	}
@@ -420,6 +434,7 @@ func cmdJtag(args []string) error {
 	owner := fs.String("owner", envOr("HITL_OWNER", defaultOwner()), "reservation owner id")
 	keyPath := fs.String("key", "", "public key to authorize (default: dedicated ~/.config/hitl key)")
 	id := fs.String("id", "", "use this already-active reservation instead of making one")
+	device := deviceFlag(fs)
 	keep := fs.Bool("keep", false, "keep the reservation afterward (default: release when we made it)")
 	_ = fs.Parse(args)
 	if err := resolve(server); err != nil {
@@ -436,7 +451,7 @@ func cmdJtag(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	c := client{base: *server}
-	ep, priv, release, err := acquire(ctx, c, *server, *keyPath, *owner, *id, *keep)
+	ep, priv, release, err := acquire(ctx, c, *server, *keyPath, *owner, *id, *device, *keep)
 	if err != nil {
 		return err
 	}
@@ -454,6 +469,7 @@ func cmdGdb(args []string) error {
 	owner := fs.String("owner", envOr("HITL_OWNER", defaultOwner()), "reservation owner id")
 	keyPath := fs.String("key", "", "public key to authorize (default: dedicated ~/.config/hitl key)")
 	id := fs.String("id", "", "use this already-active reservation instead of making one")
+	device := deviceFlag(fs)
 	keep := fs.Bool("keep", false, "keep the reservation afterward (default: release when we made it)")
 	elf := fs.String("elf", "", "firmware ELF to load symbols from (copied into the container)")
 	_ = fs.Parse(args)
@@ -469,7 +485,7 @@ func cmdGdb(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	c := client{base: *server}
-	ep, priv, release, err := acquire(ctx, c, *server, *keyPath, *owner, *id, *keep)
+	ep, priv, release, err := acquire(ctx, c, *server, *keyPath, *owner, *id, *device, *keep)
 	if err != nil {
 		return err
 	}
@@ -500,6 +516,7 @@ func cmdRun(args []string) error {
 	owner := fs.String("owner", envOr("HITL_OWNER", defaultOwner()), "reservation owner id")
 	keyPath := fs.String("key", "", "public key to authorize (default: dedicated ~/.config/hitl key)")
 	id := fs.String("id", "", "use this already-active reservation instead of making one")
+	device := deviceFlag(fs)
 	keep := fs.Bool("keep", false, "keep the reservation afterward (default: release when we made it)")
 	tty := fs.Bool("tty", false, "allocate a pseudo-tty (for interactive commands)")
 	_ = fs.Parse(args)
@@ -520,7 +537,7 @@ func cmdRun(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	c := client{base: *server}
-	ep, priv, release, err := acquire(ctx, c, *server, *keyPath, *owner, *id, *keep)
+	ep, priv, release, err := acquire(ctx, c, *server, *keyPath, *owner, *id, *device, *keep)
 	if err != nil {
 		return err
 	}
@@ -538,6 +555,7 @@ func cmdCp(args []string) error {
 	owner := fs.String("owner", envOr("HITL_OWNER", defaultOwner()), "reservation owner id")
 	keyPath := fs.String("key", "", "public key to authorize (default: dedicated ~/.config/hitl key)")
 	id := fs.String("id", "", "use this already-active reservation instead of making one")
+	device := deviceFlag(fs)
 	keep := fs.Bool("keep", false, "keep the reservation afterward (default: release when we made it)")
 	_ = fs.Parse(args)
 	if err := resolve(server); err != nil {
@@ -556,7 +574,7 @@ func cmdCp(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	c := client{base: *server}
-	ep, priv, release, err := acquire(ctx, c, *server, *keyPath, *owner, *id, *keep)
+	ep, priv, release, err := acquire(ctx, c, *server, *keyPath, *owner, *id, *device, *keep)
 	if err != nil {
 		return err
 	}
@@ -578,6 +596,7 @@ func cmdForward(args []string) error {
 	owner := fs.String("owner", envOr("HITL_OWNER", defaultOwner()), "reservation owner id")
 	keyPath := fs.String("key", "", "public key to authorize (default: dedicated ~/.config/hitl key)")
 	id := fs.String("id", "", "use this already-active reservation instead of making one")
+	device := deviceFlag(fs)
 	keep := fs.Bool("keep", false, "keep the reservation afterward (default: release when we made it)")
 	localPort := fs.Int("local-port", 0, "local port to bind (0 = pick a free one)")
 	_ = fs.Parse(args)
@@ -597,7 +616,7 @@ func cmdForward(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	c := client{base: *server}
-	ep, priv, release, err := acquire(ctx, c, *server, *keyPath, *owner, *id, *keep)
+	ep, priv, release, err := acquire(ctx, c, *server, *keyPath, *owner, *id, *device, *keep)
 	if err != nil {
 		return err
 	}
@@ -681,6 +700,15 @@ func cmdPool(args []string) error {
 		if st.Active != nil {
 			who = fmt.Sprintf("busy owner=%q", st.Active.Owner)
 		}
+		if len(st.Devices) > 0 {
+			free := 0
+			for _, d := range st.Devices {
+				if d.Active == nil {
+					free++
+				}
+			}
+			who = fmt.Sprintf("%d/%d DUTs free", free, len(st.Devices))
+		}
 		fmt.Printf("%-32s  %-28s queue=%d lease=%ds\n", p.URL, who, st.QueueLength, st.LeaseSeconds)
 	}
 	if picked, err := pool.Pick(probes); err == nil {
@@ -695,7 +723,7 @@ func cmdPool(args []string) error {
 // the server we reached, sshd port waited-on). With id set it reuses that
 // reservation; otherwise it reserves one, heartbeats it, and — unless keep — the
 // returned release() drops it. release is always non-nil (a no-op when reusing).
-func acquire(ctx context.Context, c client, server, keyPath, owner, id string, keep bool) (*api.SSHEndpoint, string, func(), error) {
+func acquire(ctx context.Context, c client, server, keyPath, owner, id, device string, keep bool) (*api.SSHEndpoint, string, func(), error) {
 	_, priv, err := resolveKeypair(keyPath)
 	if err != nil {
 		return nil, "", nil, err
@@ -717,7 +745,7 @@ func acquire(ctx context.Context, c client, server, keyPath, owner, id string, k
 			return nil, "", nil, fmt.Errorf("read pubkey: %w", err)
 		}
 		var res api.Reservation
-		if err := c.post("/reserve", api.ReserveRequest{Owner: owner, SSHPublicKey: string(pubBytes)}, &res); err != nil {
+		if err := c.post("/reserve", api.ReserveRequest{Owner: owner, SSHPublicKey: string(pubBytes), Device: device}, &res); err != nil {
 			return nil, "", nil, err
 		}
 		fmt.Fprintf(os.Stderr, "reserved: id=%s\n", res.ID)
@@ -923,6 +951,12 @@ func serverFlag(fs *flag.FlagSet) *string {
 	// Default empty so resolveServer can distinguish "unset" (→ $HITL_SERVER, then
 	// pool, then fallback) from an explicit --server / $HITL_SERVER value.
 	return fs.String("server", envOr("HITL_SERVER", ""), "rig hitl-managerd URL (default $HITL_SERVER, or a free runner from $HITL_SERVERS)")
+}
+
+// deviceFlag pins a reservation to a named DUT on the rig (see `hitl status` for
+// the names). Empty (the default) lets the rig pick any free DUT.
+func deviceFlag(fs *flag.FlagSet) *string {
+	return fs.String("device", envOr("HITL_DEVICE", ""), "pin to a specific DUT by name (default: any free DUT)")
 }
 
 // poolServers returns the runner base URLs to choose among when no explicit

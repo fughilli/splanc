@@ -39,6 +39,32 @@ directly in a loop rather than `bazel run … | tee | tail` (that pipeline buffe
 and can drop the result). Also, `-c opt` vs a stray non-opt `bazel` command flaps
 the `bazel-bin` convenience symlink — pin the `aarch64-opt/bin/...` path.
 
+## 2026-08-05 — multiple DUTs per rig (FUG-67)
+
+The queue manager now hands out **N DUTs concurrently**, each its own container +
+sshd port + device nodes, from **one shared FIFO** with a per-DUT active slot
+(`internal/queue`). `reconcile` fills every free DUT with the earliest compatible
+waiter; a reservation can pin a DUT (`ReserveRequest.Device` / `hitl reserve
+--device <name>`) or take any free one (default, and what old clients send).
+
+- **Config:** `nix/hitl-app.nix` has a `duts` list (default = the one MVP DUT);
+  it generates one `--dut '{"name","ssh_port","devices":["host:container"],"env"}'`
+  flag per DUT and opens each port. Each DUT's tty is remapped to `/dev/ttyACM0`
+  in-container so `hitl flash/monitor --port` defaults hold everywhere. To add a
+  second board: give it a distinct `sshPort` and its stable `/dev/serial/by-id/…`
+  path (find with `ls -l /dev/serial/by-id/`), mapped to `:/dev/ttyACM0`.
+- **API stayed backward-compatible** — no client rebase. `Status.Active`/
+  `queue_length` report the rig idle while _any_ DUT is free (so old clients +
+  the pool picker still work); `Status.Devices` is the new per-DUT breakdown.
+- **Hardware follow-ups (single shared resources, not yet split per DUT):** JTAG
+  raw-USB isolation (all containers see the whole `/dev/bus/usb`; boards are
+  selected by `HITL_ADAPTER_SERIAL`, wired into `hitl-jtag`/`hitl-gdb` — set the
+  per-DUT `env` and verify openocd's `adapter serial` picks the right C6 on real
+  hardware); one BT radio shared for BLE; rig-level provisioning AP. Filed as
+  follow-ups if the humans want them tracked.
+- Verified: `bazel test //pi/hitl/...` (queue routing/concurrency/pin, Status
+  compat, `--dut` parsing, pool packing). Not run on real multi-DUT hardware yet.
+
 ## 2026-08-03 — self-hosted provisioning AP (+ tag discovery, CLI-driven e2e)
 
 ### What this adds

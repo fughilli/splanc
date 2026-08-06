@@ -8,31 +8,32 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/fughilli/splanc/pi/hitl/internal/api"
 )
 
-// PodmanConfig configures how test containers are launched.
+// PodmanConfig configures how test containers are launched. Per-DUT settings
+// (ssh port, device nodes, env) live on runner.Device, passed to Start.
 type PodmanConfig struct {
 	// Image is the OCI image reference for the test environment.
 	Image string
 	// Host is the address holders use to reach this machine (its tailnet name).
 	Host string
-	// SSHPort is the host port published to the container's sshd (:22).
-	SSHPort int
 	// SSHUser is the login user inside the container.
 	SSHUser string
-	// Devices are extra `--device` mappings (e.g. the ESP32 serial + JTAG nodes,
-	// a BT hci). USBIP attach is handled out of band; see the NixOS module.
-	Devices []string
 	// StateDir is a writable dir for per-reservation scratch (authorized_keys).
 	StateDir string
 	// Podman is the podman binary (defaults to "podman" on PATH).
 	Podman string
-	// Privileged runs the container privileged (needed for raw USB/JTAG); prefer
-	// dropping this once specific device/cap grants are dialed in.
+	// Privileged runs the container privileged. AVOID on a multi-DUT rig: a
+	// privileged container bind-mounts the whole host /dev, so every DUT's
+	// /dev/ttyACM* leaks into every container — an agent sees its neighbor's board.
+	// With it off, the container is confined to the explicit per-DUT --device (its
+	// own tty as /dev/ttyACM0) plus the USB bus mount + device-cgroup rule below,
+	// which are enough for the C6's serial and USB-JTAG. Kept as an escape hatch.
 	Privileged bool
 }
 
@@ -61,7 +62,7 @@ func (p *PodmanRunner) podman(ctx context.Context, args ...string) (string, erro
 	return string(out), nil
 }
 
-func (p *PodmanRunner) Start(ctx context.Context, id, owner, sshKey string) (*api.SSHEndpoint, error) {
+func (p *PodmanRunner) Start(ctx context.Context, id, owner, sshKey string, dev Device) (*api.SSHEndpoint, error) {
 	name := containerName(id)
 	// Fresh start: remove any stale container with this name.
 	_, _ = p.podman(ctx, "rm", "-f", name)
@@ -80,11 +81,21 @@ func (p *PodmanRunner) Start(ctx context.Context, id, owner, sshKey string) (*ap
 		"run", "-d", "--name", name,
 		"--label", "hitl=1",
 		"--label", "hitl.owner=" + owner,
-		// Publish the container sshd on the host's SSHPort.
-		"-p", fmt.Sprintf("%d:22", p.cfg.SSHPort),
+		"--label", "hitl.device=" + dev.Name,
+		// Publish the container sshd on this DUT's host port (distinct per DUT so
+		// several containers coexist).
+		"-p", fmt.Sprintf("%d:22", dev.SSHPort),
 		// The holder's key, mounted read-only; the entrypoint installs it.
 		"-v", authKeys + ":/run/hitl/authorized_keys:ro",
 		"-e", "HITL_SSH_USER=" + p.cfg.SSHUser,
+		// Tell the holder which DUT they got, visible in their SSH session (echo
+		// $HITL_DUT). Their board's tty is also pinned to /dev/ttyACM0, so the
+		// toolbox targets it by default without needing the name.
+		"-e", "HITL_DUT=" + dev.Name,
+	}
+	// Per-DUT env (e.g. HITL_ADAPTER_SERIAL so openocd targets this DUT's board).
+	for _, k := range sortedKeys(dev.Env) {
+		args = append(args, "-e", k+"="+dev.Env[k])
 	}
 	// BLE: mount the host's system D-Bus socket so bleak in the container can
 	// drive the host bluetoothd (hci0). Present only if hardware.bluetooth is on.
@@ -103,17 +114,18 @@ func (p *PodmanRunner) Start(ctx context.Context, id, owner, sshKey string) (*ap
 	if p.cfg.Privileged {
 		args = append(args, "--privileged")
 	}
-	for _, d := range p.cfg.Devices {
+	for _, d := range dev.Devices {
 		if d == "" {
 			continue
 		}
-		// Skip devices that aren't present (e.g. the ESP32 isn't plugged in yet),
-		// so a reservation can still come up for non-hardware testing.
-		if _, err := os.Stat(d); err != nil {
-			log.Printf("podman: device %s not present, skipping (%v)", d, err)
+		arg, ok := deviceMapping(d)
+		if !ok {
+			// Skip devices that aren't present (e.g. the ESP32 isn't plugged in yet),
+			// so a reservation can still come up for non-hardware testing.
+			log.Printf("podman: device %q not present, skipping", d)
 			continue
 		}
-		args = append(args, "--device", d)
+		args = append(args, "--device", arg)
 	}
 	args = append(args, p.cfg.Image)
 
@@ -122,11 +134,53 @@ func (p *PodmanRunner) Start(ctx context.Context, id, owner, sshKey string) (*ap
 	}
 	// Don't report ready until the container's sshd actually accepts connections
 	// (host-key gen + exec sshd takes a couple seconds), so holders don't race it.
-	if err := waitTCP(ctx, fmt.Sprintf("127.0.0.1:%d", p.cfg.SSHPort), 60*time.Second); err != nil {
+	if err := waitTCP(ctx, fmt.Sprintf("127.0.0.1:%d", dev.SSHPort), 60*time.Second); err != nil {
 		log.Printf("podman: %s sshd not ready: %v (returning endpoint anyway)", name, err)
 	}
-	log.Printf("podman: started %s (owner=%q) sshd on %s:%d", name, owner, p.cfg.Host, p.cfg.SSHPort)
-	return &api.SSHEndpoint{Host: p.cfg.Host, Port: p.cfg.SSHPort, User: p.cfg.SSHUser}, nil
+	log.Printf("podman: started %s (owner=%q dut=%s) sshd on %s:%d", name, owner, dev.Name, p.cfg.Host, dev.SSHPort)
+	return &api.SSHEndpoint{Host: p.cfg.Host, Port: dev.SSHPort, User: p.cfg.SSHUser}, nil
+}
+
+// deviceMapping resolves one "host[:container]" --device spec into a concrete
+// podman --device value, or ok=false if the host device isn't present (so a
+// reservation can still come up with no board attached).
+//
+// Two wrinkles it handles that a naive split can't:
+//   - The host may be a /dev/serial/by-id symlink whose NAME contains colons —
+//     an ESP32-C6's USB serial is its MAC (…_60:55:F9:11:7D:10-if00). Splitting on
+//     the first ':' would truncate the path mid-MAC. We split on the last ":/"
+//     instead (the container path is always absolute), so the colons stay in the
+//     host path.
+//   - podman --device needs a real device node, and would itself mis-parse the
+//     colons, so we resolve the symlink to its target (/dev/ttyACMx) and pass
+//     that. Resolving at start time also tracks a board that re-enumerated to a
+//     different ttyACMx since discovery, while the by-id name stayed stable.
+func deviceMapping(d string) (arg string, ok bool) {
+	host, container := d, ""
+	if i := strings.LastIndex(d, ":/"); i >= 0 {
+		host, container = d[:i], d[i+1:]
+	}
+	real := host
+	if r, err := filepath.EvalSymlinks(host); err == nil {
+		real = r
+	}
+	if _, err := os.Stat(real); err != nil {
+		return "", false
+	}
+	if container != "" {
+		return real + ":" + container, true
+	}
+	return real, true
+}
+
+// sortedKeys returns m's keys in sorted order, for deterministic arg ordering.
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // waitTCP blocks until addr accepts a connection or timeout.

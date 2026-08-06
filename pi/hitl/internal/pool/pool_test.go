@@ -122,3 +122,56 @@ func TestPickEmpty(t *testing.T) {
 		t.Fatal("expected an error for an empty pool")
 	}
 }
+
+// mkMultiDUT builds a multi-DUT status: `free` idle DUTs and `busy` busy ones.
+// A multi-DUT daemon reports Active=nil (idle) whenever any DUT is free.
+func mkMultiDUT(free, busy int) *api.Status {
+	s := &api.Status{}
+	for i := 0; i < free; i++ {
+		s.Devices = append(s.Devices, api.DeviceStatus{Name: fmt.Sprintf("d%d", i)})
+	}
+	for i := 0; i < busy; i++ {
+		s.Devices = append(s.Devices, api.DeviceStatus{
+			Name:   fmt.Sprintf("b%d", i),
+			Active: &api.Reservation{ID: "x", State: api.StateActive},
+		})
+	}
+	if free == 0 {
+		s.Active = &api.Reservation{ID: "x", State: api.StateActive}
+	}
+	return s
+}
+
+// Among idle rigs, prefer the one with more free DUTs so load spreads and no
+// single rig's spare capacity is exhausted first.
+func TestPickPrefersMoreFreeDUTs(t *testing.T) {
+	servers := []string{"http://a:8087", "http://b:8087"}
+	states := map[string]*api.Status{
+		"http://a:8087": mkMultiDUT(1, 3), // 1 of 4 free
+		"http://b:8087": mkMultiDUT(3, 1), // 3 of 4 free
+	}
+	got, err := Pick(Probes(servers, fakeGet(states, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "http://b:8087" {
+		t.Errorf("Pick = %q, want b (more free DUTs)", got)
+	}
+}
+
+// A single-DUT (legacy) daemon sends no Devices; it must still be treated as one
+// free slot and win over a fully-busy multi-DUT rig.
+func TestPickLegacyIdleBeatsBusyMultiDUT(t *testing.T) {
+	servers := []string{"http://busy:8087", "http://legacy:8087"}
+	states := map[string]*api.Status{
+		"http://busy:8087":   mkMultiDUT(0, 4), // all busy
+		"http://legacy:8087": mkStatus(false, 0),
+	}
+	got, err := Pick(Probes(servers, fakeGet(states, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "http://legacy:8087" {
+		t.Errorf("Pick = %q, want the idle legacy runner", got)
+	}
+}

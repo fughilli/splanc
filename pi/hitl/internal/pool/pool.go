@@ -68,9 +68,34 @@ type Probe struct {
 	Err    error
 }
 
-// idle reports whether this runner has no active holder (immediately available).
+// idle reports whether this runner can take a reservation right now. A multi-DUT
+// rig reports Active==nil whenever any DUT is free, so this holds for both the
+// legacy single-DUT summary and the newer per-DUT breakdown.
 func (p Probe) idle() bool {
 	return p.Err == nil && p.Status != nil && p.Status.Active == nil
+}
+
+// freeSlots is how many DUTs are immediately available (0 if busy/unreachable).
+// Used to prefer a rig with more spare capacity when several are idle. A legacy
+// daemon sends no Devices, so fall back to 1 when idle, 0 otherwise — preserving
+// the old idle-first ordering.
+func (p Probe) freeSlots() int {
+	if p.Err != nil || p.Status == nil {
+		return 0
+	}
+	if len(p.Status.Devices) == 0 {
+		if p.Status.Active == nil {
+			return 1
+		}
+		return 0
+	}
+	free := 0
+	for _, d := range p.Status.Devices {
+		if d.Active == nil {
+			free++
+		}
+	}
+	return free
 }
 
 // queue reports the number of waiters (active excluded); MaxInt for unreachable
@@ -117,6 +142,11 @@ func Pick(probes []Probe) (string, error) {
 		}
 		if a.idle() != b.idle() {
 			return a.idle() // idle before busy
+		}
+		// Among idle rigs, prefer the one with more free DUTs (spreads load and
+		// keeps more capacity open on any single rig).
+		if fa, fb := a.freeSlots(), b.freeSlots(); fa != fb {
+			return fa > fb
 		}
 		return a.queue() < b.queue()
 	})

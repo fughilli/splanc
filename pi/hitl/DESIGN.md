@@ -34,9 +34,67 @@ agent> hitl reserve
    └─(session exits) POST /reservation/{id}/release ─► podman rm; promote next
 ```
 
-One ESP32 == one active reservation. Leases: an active reservation whose holder
-stops heartbeating past the lease window is reaped (container torn down). The
-daemon `Cleanup`s stray containers on startup (crash recovery).
+Leases: an active reservation whose holder stops heartbeating past the lease
+window is reaped (container torn down). The daemon `Cleanup`s stray containers on
+startup (crash recovery).
+
+## Multiple DUTs per rig (FUG-67)
+
+A rig can host several DUTs, each its own container, published sshd port, and
+device nodes, running concurrently. The daemon gets its DUT set one of three
+ways, in precedence order:
+
+- **explicit** — repeatable
+  `--dut '{"name":…,"ssh_port":…,"devices":["host:container",…],"env":{…}}'` flags;
+- **auto-discovery** (`--discover`, the deployed default) — enumerate the boards
+  attached to the host by their stable `/dev/serial/by-id/*` symlinks and build
+  one DUT per board: a **stable name derived from the board's USB serial**
+  (`c6-071234`, a C6's serial is its MAC) so the DUT identity follows the physical
+  board rather than a boot-order slot, tty pinned to `/dev/ttyACM0` in-container,
+  and (for ESP32-C6 built-in USB-JTAG boards) `HITL_ADAPTER_SERIAL` lifted from
+  the by-id name so JTAG selects the right adapter among identical boards. Only
+  each board's primary `-if00` interface is taken. Discovery is **live**: the
+  daemon polls (`--discover-interval`, default 3s) and syncs the DUT set, so a
+  board hot-plugged after boot attaches, and an idle board unplugged for
+  `--discover-retention` (default 30s) detaches — with no restart. Two things keep
+  a flapping board (an ESP32-C6 re-enumerates its USB on every reset, so a
+  resetting DUT blinks out of individual scans) from disrupting a session: the
+  retention window means a board seen again within it is never dropped, and a DUT
+  that is **currently held is never torn down by discovery** — it's retained until
+  its holder releases and only then pruned if still gone (a genuinely dead lease
+  is still reaped normally). Each DUT's sshd port is **sticky** (assigned once from
+  `--ssh-port`, up to `--discover-max-duts`), so unplugging one board never
+  renumbers another or disturbs its live session;
+- **legacy fallback** (neither flag) — a single DUT synthesized from
+  `--ssh-port`/`--device`, i.e. the original behavior.
+
+The queue manager keeps one shared FIFO admission
+queue and one active slot per DUT: `reconcile` brings a container up on every
+free DUT, feeding it the earliest queued waiter that's compatible (unpinned, or
+pinned to that DUT via `ReserveRequest.Device`). So a batch of reservations fills
+all DUTs, and a busy DUT never blocks work another DUT could take.
+
+**Client compatibility is preserved.** The client flow is already DUT-agnostic —
+it reads `host:port` out of the reservation response and never assumes a port —
+so distinct per-DUT ports need no client change. The new `device` fields and
+`Status.Devices` are additive; the legacy `Status.Active`/`QueueLength` keep
+their meaning by reporting the rig idle whenever _any_ DUT is free, so old clients
+and the pool picker still work against a multi-DUT rig. Each DUT's serial tty is
+remapped to `/dev/ttyACM0` inside its container, so the toolbox's
+`--port /dev/ttyACM0` defaults hold on every DUT.
+
+Per-DUT isolation: containers run **unprivileged** (`sbcDeploy`'s
+`privilegedContainers = false`), so each is confined to its own DUT's tty
+(mounted as `/dev/ttyACM0`) and can't see a neighbour's `/dev/ttyACM*` — a
+privileged container would bind-mount the whole host `/dev` and leak every
+board's serial into every container.
+
+Hardware caveats (shared single resources, follow-ups): JTAG still uses a
+whole-bus `/dev/bus/usb` mount (the per-board USB node moves on re-enumeration),
+so every container can see every board over raw USB — `hitl-jtag`/`gdb` select
+this DUT's adapter by `HITL_ADAPTER_SERIAL` (set per DUT), but raw-USB isolation
+between concurrent containers is not yet enforced. BLE shares the one host
+Bluetooth radio, and the provisioning AP is still rig-level.
 
 ## Packaging
 
@@ -72,6 +130,9 @@ container is destroyed on release, so state never leaks between holders.
 3. BLE (BlueZ/bleak) scan/connect/command; WiFi provisioning helpers.
 4. Robustness: reservation persistence across daemon restarts, metrics, richer
    status, multi-rig.
+5. Multiple DUTs per rig — done (FUG-67): concurrent per-DUT containers/ports,
+   shared FIFO with per-DUT slots, backward-compatible API. Remaining: raw-USB
+   (JTAG) isolation between concurrent containers; per-DUT BLE radio; per-DUT AP.
 
 ## Open items (need the hardware / decisions)
 
