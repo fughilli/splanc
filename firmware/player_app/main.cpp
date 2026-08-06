@@ -60,7 +60,7 @@
 // handle_get_stored_map 4.6 KB, Player::handle 2.6 KB ⇒ a real deepest chain of
 // ~11-12 KB. 18 KB keeps ~1.5x margin over that while handing 6 KB of heap
 // (loopTask's stack is heap-allocated) back to the TLS pool (FUG-71). The
-// //firmware/player_app:size_probe test guards the envelope sizes this assumes,
+// //firmware/player_app:envelope_size_test guards the envelope sizes this assumes,
 // and the periodic `[stack]` log reports loopTask's live high-water. Must be at
 // global scope (overrides a weak core getter). (The render task has its own,
 // tighter stack; it only calls the pure-read accessors + FastLED.show.)
