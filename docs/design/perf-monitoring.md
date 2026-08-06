@@ -414,7 +414,24 @@ each fn per the soft-float economics and keeps the bare `UnMath`/`BinMath` keys
 as the fallback tier. The fn-id decoding is kept in lockstep with
 `firmware/fx_vm/src/lib.rs` (`F_*`/`B_*` + the `[fn, n]` operand layout).
 
-**Identifiability.** The fit runs only on the features a run actually measured
+**Identifiability (FUG-79 item 5).** The old chains put one op per statement and
+took the M→2M slope over the *statement count*, so the slope cancelled only the
+per-LED/per-shade fixed overhead — the per-statement structural framing
+(`LoadLocal`/`StoreLocal`/`PushConst`) still scaled with reps and was silently
+absorbed into the fitted op cost. A real effect computes on the stack with far
+less per-op framing, so those inflated costs over-predicted it. The fix: for the
+**nestable** ops (all the unary math + the vector ops whose output type equals
+their input) both rep points run the SAME number of statements and vary the op
+count by NESTING (`sin(a)` vs `sin(sin(a))`). The structural framing is then
+identical across the two points, so the slope cancels it and recovers the PURE
+op cost — the transcendentals (the ops that dominate a frame) now recover to
+<1%. The few **non-nestable** ops (reductions `Dot`/`Length`/`Distance`,
+`Hash3`, `Palette` — output type ≠ input) keep the classic statement-count slope
+and carry a small, documented structural bias. Structural ops stay BUCKETED and
+priced from the (cheap) defaults — which is now *correct* rather than
+double-counting, because the fitted op costs no longer include that framing.
+
+The fit also runs only on the features a run actually measured
 (`presentFeatures`), and the merge is presence-aware in both `calibration.ts`
 and `deviceProfile.ts`: an opcode a run did not exercise keeps its seeded
 default rather than being driven to ~0 by the ridge term. This also lets a

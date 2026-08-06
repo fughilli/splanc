@@ -53,88 +53,105 @@ export interface Benchmark {
 
 export type BenchTier = "core" | "full";
 
-const M = 32; // base rep count; the 2M variant doubles it for the slope.
+const S = 32; // statements per isolation chain (held FIXED across the two points).
 const CHAIN_LEDS = 128; // fixed LED count for every isolation chain.
 
 /**
  * A branch-free isolation shade(): a vec3 `v` and scalar `a` seeded positive
- * from `led.s`, then `reps` copies of `step` (a full statement over `v`/`a`),
- * returning `v * a` so neither accumulator is dead. `step` must be straight-line
+ * from `led.s`, then `S` copies of `stmt` (a full statement over `v`/`a`),
+ * returning `v * a` so neither accumulator is dead. `stmt` must be straight-line
  * (no if/for) so the op count is exact.
  */
-function isoShade(reps: number, step: string): string {
+function isoShade(stmt: string): string {
   const lines: string[] = [
     "vec3 shade(Led led) {",
     "  vec3 v = vec3(led.s + 0.3, led.s + 0.5, led.s + 0.7);",
     "  float a = led.s * 0.6 + 0.3;",
   ];
-  for (let i = 0; i < reps; i++) lines.push(`  ${step}`);
+  for (let i = 0; i < S; i++) lines.push(`  ${stmt}`);
   lines.push("  return v * a;", "}");
   return lines.join("\n");
 }
 
-/** One isolable opcode/feature: its target feature name, the per-rep statement,
- * and the tier it belongs to. */
+/** One isolable opcode/feature and how to build its two-point isolation. */
 interface OpBench {
   /** histogram/cost feature name (sub-keyed for UnMath/BinMath). */
   op: string;
   /** short id stem for the generated `.fx` files. */
   id: string;
-  /** a straight-line statement that emits predominantly `op`. */
-  step: string;
   tier: BenchTier;
+  /**
+   * NESTABLE ops (preferred): `apply(x)` wraps the accumulator expression in one
+   * more application of the op. Both rep points run the SAME number of
+   * statements (S); point 2 nests the op TWICE per statement. Because the
+   * statement/structural framing (LoadLocal/StoreLocal/PushConst) is IDENTICAL
+   * across the two points, the M→2M slope cancels it and isolates the PURE op
+   * cost — fixing the pre-existing bias where the fitted cost absorbed its
+   * per-statement Load/Store framing (FUG-79 item 5). `acc` is which
+   * accumulator it threads (`a` scalar or `v` vec3, for a fixed lane count).
+   */
+  apply?: (x: string) => string;
+  acc?: "a" | "v";
+  /**
+   * NON-NESTABLE ops (output type ≠ input, e.g. reductions vec3→float, palette
+   * float→vec3): fall back to the classic two-point design — S vs 2S copies of
+   * `step`. The slope still cancels per-LED fixed overhead, but the fitted cost
+   * carries the (cheap, bucketed) per-statement structural framing; documented
+   * as a small known bias for these few ops.
+   */
+  step?: string;
 }
 
 /**
- * The isolable float / vector / math / special opcodes, each with a branch-free
- * chain. Math ops are sub-keyed by fn. Domain-guarded fns keep their argument in
- * range (sqrt/log/pow via `led.s`-seeded positives) so they measure the normal
- * path. A few benches deliberately carry a second FITTED op (e.g. `log` rides an
- * `Add` to stay positive) — that op is separately isolated by its own chain, so
- * the least-squares system stays identifiable.
+ * The isolable float / vector / math / special opcodes. Math ops are sub-keyed
+ * by fn. Domain-guarded fns keep their argument in range (sqrt/log/pow via
+ * `led.s`-seeded positives) so they measure the normal path, not an early-out.
+ * A few benches carry a second FITTED op (e.g. `log` rides an `Add` to stay
+ * positive) — separately isolated by its own chain, so the fit stays
+ * identifiable.
  */
 const OP_BENCHES: OpBench[] = [
   // -- float element-wise ALU (scalar, 1 lane) ------------------------------
-  { op: "Add", id: "add", step: "a = a + 0.0001;", tier: "full" },
-  { op: "Sub", id: "sub", step: "a = a - 0.0001;", tier: "full" },
-  { op: "Mul", id: "mul", step: "a = a * 1.0001;", tier: "full" },
-  { op: "Div", id: "div", step: "a = a / 1.0001;", tier: "core" },
-  { op: "Neg", id: "neg", step: "a = -a;", tier: "full" },
+  { op: "Add", id: "add", acc: "a", apply: (x) => `(${x} + 0.0001)`, tier: "full" },
+  { op: "Sub", id: "sub", acc: "a", apply: (x) => `(${x} - 0.0001)`, tier: "full" },
+  { op: "Mul", id: "mul", acc: "a", apply: (x) => `(${x} * 1.0001)`, tier: "full" },
+  { op: "Div", id: "div", acc: "a", apply: (x) => `(${x} / 1.0001)`, tier: "core" },
+  { op: "Neg", id: "neg", acc: "a", apply: (x) => `(-(${x}))`, tier: "full" }, // pure: no const
   // -- UnMath (per fn) ------------------------------------------------------
-  { op: "UnMath:sin", id: "sin", step: "a = sin(a);", tier: "core" },
-  { op: "UnMath:cos", id: "cos", step: "a = cos(a);", tier: "core" },
-  { op: "UnMath:tan", id: "tan", step: "a = tan(a);", tier: "core" },
-  { op: "UnMath:abs", id: "absf", step: "a = abs(a);", tier: "full" },
-  { op: "UnMath:floor", id: "floorf", step: "a = floor(a);", tier: "full" },
-  { op: "UnMath:ceil", id: "ceilf", step: "a = ceil(a);", tier: "full" },
-  { op: "UnMath:fract", id: "fractf", step: "a = fract(a);", tier: "full" },
-  { op: "UnMath:sign", id: "signf", step: "a = sign(a);", tier: "full" },
-  { op: "UnMath:sqrt", id: "sqrtf", step: "a = sqrt(a);", tier: "core" },
-  // exp: tame the argument (a*0.01) so it stays ~1 rather than diverging to inf
-  // (a soft-float inf path would mis-measure). Rides one Mul (separately fit).
-  { op: "UnMath:exp", id: "expf", step: "a = exp(a * 0.01);", tier: "core" },
+  { op: "UnMath:sin", id: "sin", acc: "a", apply: (x) => `sin(${x})`, tier: "core" },
+  { op: "UnMath:cos", id: "cos", acc: "a", apply: (x) => `cos(${x})`, tier: "core" },
+  { op: "UnMath:tan", id: "tan", acc: "a", apply: (x) => `tan(${x})`, tier: "core" },
+  { op: "UnMath:abs", id: "absf", acc: "a", apply: (x) => `abs(${x})`, tier: "full" },
+  { op: "UnMath:floor", id: "floorf", acc: "a", apply: (x) => `floor(${x})`, tier: "full" },
+  { op: "UnMath:ceil", id: "ceilf", acc: "a", apply: (x) => `ceil(${x})`, tier: "full" },
+  { op: "UnMath:fract", id: "fractf", acc: "a", apply: (x) => `fract(${x})`, tier: "full" },
+  { op: "UnMath:sign", id: "signf", acc: "a", apply: (x) => `sign(${x})`, tier: "full" },
+  { op: "UnMath:sqrt", id: "sqrtf", acc: "a", apply: (x) => `sqrt(${x})`, tier: "core" },
+  // exp: tame the argument (·0.01) so it stays ~1 rather than diverging to inf
+  // (a soft-float inf path would mis-measure). Each nesting rides one Mul.
+  { op: "UnMath:exp", id: "expf", acc: "a", apply: (x) => `exp((${x}) * 0.01)`, tier: "core" },
   // log: +2.0 keeps the argument positive (never the x<=0 early-out). Rides Add.
-  { op: "UnMath:log", id: "logf", step: "a = log(a) + 2.0;", tier: "core" },
+  { op: "UnMath:log", id: "logf", acc: "a", apply: (x) => `(log(${x}) + 2.0)`, tier: "core" },
   // -- BinMath (per fn) -----------------------------------------------------
-  { op: "BinMath:min", id: "minf", step: "a = min(a, 0.9);", tier: "full" },
-  { op: "BinMath:max", id: "maxf", step: "a = max(a, 0.1);", tier: "full" },
-  { op: "BinMath:pow", id: "powf", step: "a = pow(a, 0.5);", tier: "core" },
-  { op: "BinMath:mod", id: "modf", step: "a = mod(a, 0.7);", tier: "core" },
-  { op: "BinMath:step", id: "stepf", step: "a = step(0.3, a);", tier: "full" },
-  { op: "BinMath:atan2", id: "atan2f", step: "a = atan2(a, 0.5);", tier: "core" },
-  // -- vector shaping / reductions (fixed 3 lanes) --------------------------
-  { op: "Clamp", id: "clamp3", step: "v = clamp(v, vec3(0.1,0.1,0.1), vec3(0.9,0.9,0.9));", tier: "core" },
-  { op: "Mix", id: "mix3", step: "v = mix(v, vec3(0.2,0.4,0.6), 0.5);", tier: "core" },
-  { op: "Smoothstep", id: "smoothstep3", step: "v = smoothstep(vec3(0.0,0.0,0.0), vec3(1.0,1.0,1.0), v);", tier: "core" },
+  { op: "BinMath:min", id: "minf", acc: "a", apply: (x) => `min(${x}, 0.9)`, tier: "full" },
+  { op: "BinMath:max", id: "maxf", acc: "a", apply: (x) => `max(${x}, 0.1)`, tier: "full" },
+  { op: "BinMath:pow", id: "powf", acc: "a", apply: (x) => `pow(${x}, 0.5)`, tier: "core" },
+  { op: "BinMath:mod", id: "modf", acc: "a", apply: (x) => `mod(${x}, 0.7)`, tier: "core" },
+  { op: "BinMath:step", id: "stepf", acc: "a", apply: (x) => `step(0.3, ${x})`, tier: "full" },
+  { op: "BinMath:atan2", id: "atan2f", acc: "a", apply: (x) => `atan2(${x}, 0.5)`, tier: "core" },
+  // -- vector shaping (fixed 3 lanes; nestable — output type == input) ------
+  { op: "Clamp", id: "clamp3", acc: "v", apply: (x) => `clamp(${x}, vec3(0.1,0.1,0.1), vec3(0.9,0.9,0.9))`, tier: "core" },
+  { op: "Mix", id: "mix3", acc: "v", apply: (x) => `mix(${x}, vec3(0.2,0.4,0.6), 0.5)`, tier: "core" },
+  { op: "Smoothstep", id: "smoothstep3", acc: "v", apply: (x) => `smoothstep(vec3(0.0,0.0,0.0), vec3(1.0,1.0,1.0), ${x})`, tier: "core" },
+  { op: "Cross", id: "cross3", acc: "v", apply: (x) => `cross(${x}, vec3(0.2,0.5,0.9))`, tier: "core" },
+  { op: "Normalize", id: "normalize3", acc: "v", apply: (x) => `normalize(${x})`, tier: "core" },
+  { op: "Hsv2Rgb", id: "hsv2rgb", acc: "v", apply: (x) => `hsv2rgb(${x})`, tier: "core" },
+  { op: "Hash1", id: "hash1", acc: "a", apply: (x) => `hash(${x})`, tier: "core" },
+  // -- non-nestable (output type ≠ input): classic S / 2S two-point ---------
   { op: "Dot", id: "dot3", step: "a = dot(v, v);", tier: "core" },
-  { op: "Cross", id: "cross3", step: "v = cross(v, vec3(0.2,0.5,0.9));", tier: "core" },
   { op: "Length", id: "length3", step: "a = length(v);", tier: "core" },
-  { op: "Normalize", id: "normalize3", step: "v = normalize(v);", tier: "core" },
   { op: "Distance", id: "distance3", step: "a = distance(v, vec3(0.5,0.5,0.5));", tier: "core" },
-  // -- specials -------------------------------------------------------------
-  { op: "Hash1", id: "hash1", step: "a = hash(a);", tier: "core" },
   { op: "Hash3", id: "hash3", step: "a = hash(v);", tier: "core" },
-  { op: "Hsv2Rgb", id: "hsv2rgb", step: "v = hsv2rgb(v);", tier: "core" },
   { op: "Palette", id: "palette", step: "v = palette0(a);", tier: "core" },
 ];
 
@@ -145,12 +162,27 @@ export const FITTED_OPCODES: string[] = OP_BENCHES.map((b) => b.op);
 function opBenchmarks(): Benchmark[] {
   const out: Benchmark[] = [];
   for (const b of OP_BENCHES) {
-    for (const mult of [1, 2]) {
-      const reps = mult * M;
+    // Two points. Nestable: SAME S statements, 1 vs 2 op applications (slope
+    // cancels the per-statement structural framing → pure op cost). Non-nestable:
+    // S vs 2S copies of a fixed statement (classic slope; small structural bias).
+    const points: { id: string; source: string; ops: number }[] = b.apply
+      ? [1, 2].map((k) => {
+          const acc = b.acc ?? "a";
+          let expr: string = acc;
+          for (let i = 0; i < k; i++) expr = b.apply!(expr);
+          return { id: k === 1 ? "M" : "2M", source: isoShade(`${acc} = ${expr};`), ops: k * S };
+        })
+      : [1, 2].map((mult) => {
+          const lines = ["vec3 shade(Led led) {", "  vec3 v = vec3(led.s + 0.3, led.s + 0.5, led.s + 0.7);", "  float a = led.s * 0.6 + 0.3;"];
+          for (let i = 0; i < mult * S; i++) lines.push(`  ${b.step!}`);
+          lines.push("  return v * a;", "}");
+          return { id: mult === 1 ? "M" : "2M", source: lines.join("\n"), ops: mult * S };
+        });
+    for (const p of points) {
       out.push({
-        id: `${b.id}${mult === 1 ? "M" : "2M"}`,
-        label: `${b.op} ×${reps}`,
-        source: isoShade(reps, b.step),
+        id: `${b.id}${p.id}`,
+        label: `${b.op} ×${p.ops}`,
+        source: p.source,
         targetOp: b.op,
         ledCount: CHAIN_LEDS,
         tier: b.tier,

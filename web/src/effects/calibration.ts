@@ -15,7 +15,7 @@
  */
 
 import { compileScript } from "../fx/preview";
-import { parseFxb, walkEntry, OPCODE_NAMES } from "./costModel";
+import { parseFxb, walkEntry, costFor, OPCODE_NAMES } from "./costModel";
 import type { OpHistogram } from "./costModel";
 import {
   benchmarksForTier,
@@ -231,7 +231,8 @@ function pickFinite(v: number, fallback: number): number {
 
 function predictWithDefault(hist: OpHistogram, ledCount: number): number {
   let perLed = 0;
-  for (const [op, n] of Object.entries(hist)) perLed += n * (DEFAULT_COSTS[op] ?? 8);
+  // costFor resolves math sub-keys (UnMath:sqrt) through the family base.
+  for (const [op, n] of Object.entries(hist)) perLed += n * costFor(DEFAULT_COSTS, op, 8);
   return DEFAULT_FIXED.update_fixed + ledCount * (DEFAULT_FIXED.shade_fixed + perLed);
 }
 
