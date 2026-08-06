@@ -209,10 +209,15 @@ body.is-locked {
   overflow: hidden;
   flex-shrink: 0;
 }
-.map-thumb img {
+.map-thumb img,
+.map-thumb .fx-thumb-video {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+/* 64×64 effect preview: keep the per-pixel detail crisp when upscaled to 56px. */
+.map-thumb .fx-thumb-video {
+  image-rendering: pixelated;
 }
 .map-thumb svg {
   width: 28px;
