@@ -197,7 +197,7 @@ def print_compare(cur: dict, baseline_path: str) -> int:
     b_tot, c_tot = base.get("total_ram_bytes", 0), cur["total_ram_bytes"]
     print(f"baseline: {baseline_path}")
     print(f"current:  {cur['elf']}")
-    print(f"\n== SRAM total ==")
+    print("\n== SRAM total ==")
     print(f"  {human(b_tot):>9}  baseline")
     print(f"  {human(c_tot):>9}  current")
     print(f"  {signed(c_tot - b_tot):>9}  delta")
@@ -211,7 +211,7 @@ def print_compare(cur: dict, baseline_path: str) -> int:
     if not deltas:
         print("\n(no per-symbol change)")
         return 0
-    print(f"\n== per-symbol movers (current − baseline) ==")
+    print("\n== per-symbol movers (current − baseline) ==")
     for d, name in sorted(deltas, key=lambda x: x[0]):  # reclaimed (neg) first
         tag = "new" if name not in bs else ("gone" if name not in cs else "")
         print(f"  {signed(d):>9}  {name}  {tag}".rstrip())
@@ -298,12 +298,14 @@ def main() -> int:
     # measurement of it — pair it with the device's esp_get_free_heap_size().
     C6_HP_SRAM = 512 * 1024
     print(f"ELF: {elf}")
-    print(f"\n== Internal SRAM (heap-eating static) ==")
+    print("\n== Internal SRAM (heap-eating static) ==")
     print(f"  {human(total_ram):>8}  static SRAM footprint (.bss + .data)")
     print(f"  {human(C6_HP_SRAM):>8}  C6 HP SRAM total")
-    print(f"  {human(C6_HP_SRAM - total_ram):>8}  ceiling on runtime heap (before WiFi/BLE/TLS/stacks)")
+    print(
+        f"  {human(C6_HP_SRAM - total_ram):>8}  ceiling on runtime heap (before WiFi/BLE/TLS/stacks)"
+    )
 
-    print(f"\n== SRAM sections ==")
+    print("\n== SRAM sections ==")
     for n, s in sorted(sections, key=lambda x: -x[1]):
         print(f"  {human(s):>8}  {n}")
 
