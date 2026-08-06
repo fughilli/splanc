@@ -5,6 +5,7 @@
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
+#include <esp_system.h>  // esp_get_free_heap_size (release diagnostics)
 
 #include "firmware/player_app/improv_codec.h"
 #include "firmware/player_app/serial_log.h"
@@ -90,9 +91,14 @@ class ServerHandler : public BLEServerCallbacks {
 
 ServerHandler g_server_handler;
 
+// Whether the Bluedroid stack is currently initialized. Gates re-entry
+// (begin/end) and makes the set_* helpers safe to call after a release.
+bool g_ble_up = false;
+
 }  // namespace
 
 void improv_ble_begin(const char *device_name, uint8_t initial_state) {
+  if (g_ble_up) return;
   BLEDevice::init(device_name);
   BLEServer *server = BLEDevice::createServer();
   server->setCallbacks(&g_server_handler);
@@ -143,14 +149,37 @@ void improv_ble_begin(const char *device_name, uint8_t initial_state) {
   adv->setScanResponseData(scanResp);
 
   BLEDevice::startAdvertising();
+  g_ble_up = true;
   Log().printf("[ble] advertising \"%s\" as %s (Improv service %s)\n", device_name,
                 BLEDevice::getAddress().toString().c_str(), kServiceUuid);
 }
 
+void improv_ble_end() {
+  if (!g_ble_up) return;
+  unsigned before = esp_get_free_heap_size();
+  // deinit(release=true) tears down the host + controller AND hands their heap
+  // arenas back (esp_bt_controller_mem_release), which the plain deinit does
+  // not. The characteristic pointers dangle after this; null them so the set_*
+  // helpers (guarded on g_state/g_error/g_result) no-op until the next begin.
+  BLEDevice::deinit(true);
+  g_state = g_error = g_result = nullptr;
+  g_central_connected = false;
+  g_have_creds = false;
+  g_ble_up = false;
+  Log().printf("[ble] released; heap %u -> %u (+%u)\n", before,
+               (unsigned)esp_get_free_heap_size(),
+               (unsigned)(esp_get_free_heap_size() - before));
+}
+
+bool improv_ble_active() { return g_ble_up; }
+
 void improv_ble_set_name(const char *device_name) {
   // The scan-response name is what the Web Bluetooth chooser shows; refresh it
   // and restart advertising so the rename takes effect without a reboot. The
-  // primary packet (Improv service UUID) is left intact.
+  // primary packet (Improv service UUID) is left intact. When BLE has been
+  // released (provisioned, STA-only) there is nothing to rename — the new name
+  // persists in NVS and re-applies on the next improv_ble_begin.
+  if (!g_ble_up) return;
   BLEDevice::stopAdvertising();
   BLEAdvertisementData scanResp;
   scanResp.setName(device_name);

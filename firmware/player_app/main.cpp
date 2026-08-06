@@ -197,10 +197,21 @@ static const uint32_t kProvisionGraceMs = 3000;
 // down (STA-only) to reclaim its heap for the TLS handshake, which is tight on
 // the C6 (a wss handshake needs a ~17 KB buffer). It comes back on the next
 // boot if no STA join is stored/succeeds, so the device stays re-provisionable.
+// The onboarding surfaces (soft-AP + Improv BLE) travel together: both up while
+// unprovisioned, both released once STA-only.
 static bool softap_up = false;
 // STA IP currently baked into the served wss cert's SAN; 0 == the build-time
 // cert (no SAN) or "re-issue needed". Full rationale at reissue_cert_for_lan.
 static uint32_t g_cert_ip = 0;
+// STA-only re-onboarding watchdog: once we have released the onboarding surfaces
+// (soft-AP + BLE) and later lose the LAN for good, bring them back so the device
+// can be re-provisioned without a power cycle. `sta_lost_at` stamps when a
+// STA-only device first went offline (0 = connected / not applicable); after
+// kReonboardMs of sustained loss we re-enter onboarding. Generous, so a transient
+// blip (arduino auto-reconnect heals those) doesn't needlessly re-raise BLE and
+// interrupt the offline pattern the device keeps rendering.
+static uint32_t sta_lost_at = 0;
+static const uint32_t kReonboardMs = 60000;
 enum class WsState { kIdle, kHandshake, kOpen };
 static WsState ws_state = WsState::kIdle;
 
@@ -1502,6 +1513,12 @@ static void provisioning_poll() {
       Log().printf("[player] soft-AP down; STA-only, heap=%u\n",
                    (unsigned)esp_get_free_heap_size());
     }
+    // Release the Improv BLE stack now that we are provisioned + STA-only: it is
+    // the single largest heap draw (~33 KiB reclaimed on the C6) and pure
+    // overhead here — nothing provisions over BLE while we are on the LAN. Done
+    // BEFORE the cert re-sign so ledmapper_selfsign runs with the reclaimed
+    // headroom. The re-onboarding watchdog (loop) re-arms it if the LAN is lost.
+    improv_ble_end();
     // Re-sign the wss cert with this IP in the SAN so browsers will take the
     // trust exception (the build-time cert has none → fatal alert / ERR_TIMED_OUT).
     reissue_cert_for_lan();
@@ -1534,6 +1551,20 @@ static void provisioning_poll() {
   }
 }
 
+// Re-raise the onboarding surfaces (soft-AP + Improv BLE) on a provisioned but
+// now-offline device, so it can be re-provisioned onto a new network without a
+// power cycle. The inverse of the demote in provisioning_poll; a subsequent STA
+// (re)join demotes again and re-releases BLE.
+static void enter_onboarding() {
+  if (softap_up) return;
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.softAP(kApSsid, kApPassword);
+  softap_up = true;
+  improv_ble_begin(g_device_name, IMPROV_STATE_AUTHORIZED);
+  Log().printf("[player] LAN lost; re-onboarding (soft-AP + BLE up), heap=%u\n",
+               (unsigned)esp_get_free_heap_size());
+}
+
 void loop() {
   // loop() now only services the network stacks; the LEDs are driven by
   // render_task (started in setup), decoupled from this cooperative cycle.
@@ -1551,6 +1582,26 @@ void loop() {
   http.handleClient();
   ws_poll();
   provisioning_poll();
+
+  // Onboarding-surface lifecycle for the provisioned steady state.
+  bool connected = WiFi.status() == WL_CONNECTED;
+  if (!softap_up) {
+    // STA-only (BLE released). If the LAN stays down long enough, re-onboard so
+    // the device is reachable/re-provisionable again; arduino auto-reconnect
+    // heals transient drops before the timer elapses.
+    if (connected) {
+      sta_lost_at = 0;
+    } else if (sta_lost_at == 0) {
+      sta_lost_at = millis();
+    } else if (millis() - sta_lost_at > kReonboardMs) {
+      enter_onboarding();
+    }
+  } else if (connected && !sta_joining && !sta_demote_pending) {
+    // Re-onboarded, then the STA reconnected on its own (or was re-provisioned):
+    // demote back to STA-only and re-release BLE via the shared path above.
+    sta_demote_pending = true;
+    sta_provisioned_at = millis();
+  }
   // Keep the served TLS cert's SAN matching the live STA IP. provisioning_poll's
   // demote issues the first LAN cert, but that one attempt can fail under
   // early-boot heap pressure (ledmapper_selfsign needs a few KB free) and the IP

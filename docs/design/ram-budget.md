@@ -56,9 +56,12 @@ owns ~2/3 of the static footprint — that's the reclaimable part.
 The static chart is a *ceiling* on free heap, not a measurement. The big runtime
 draws, paired with the device's `esp_get_free_heap_size()`:
 
-- **BLE (Bluedroid)** — brought up at boot for Improv onboarding and *never torn
-  down*; the controller + host stack hold tens of KiB permanently, even long
-  after provisioning, straight out of the pool the TLS handshake needs.
+- **BLE (Bluedroid)** — brought up at boot for Improv onboarding and (before
+  FUG-71) *never torn down*; the controller + host stack held ~43 KiB
+  permanently, even long after provisioning, straight out of the pool the TLS
+  handshake needs. **This was the dominant cause of the exhaustion.** Measured on
+  the C6: BLE init drew 43 KiB (heap 125.7K→82.3K); `BLEDevice::deinit(true)`
+  hands ~33 KiB back. See the fix below.
 - **Heap-allocated task stacks** — the loop task is 24 KiB (sized for the
   by-value micropb `ClientMessage`/`ServerMessage` frame in `Player::handle`),
   the `httpd_ssl` task 28 KiB, render 8 KiB. `xTaskCreate` allocates these from
@@ -68,13 +71,18 @@ draws, paired with the device's `esp_get_free_heap_size()`:
 
 ## Reduction roadmap
 
-1. **Tooling** (this PR): `.ram_chart` + the audit above.
-2. **Zero-copy protobuf envelopes**: decode/encode `ClientMessage`/`ServerMessage`
+1. **Tooling**: `.ram_chart` + the audit above. *(done)*
+2. **Release BLE once provisioned** — the big one. `improv_ble_end()` tears down
+   Bluedroid and returns ~33 KiB to the heap the moment the device is
+   provisioned + STA-only, where BLE is pure overhead. A re-onboarding watchdog
+   re-arms it (soft-AP + BLE) if the LAN is lost for good, so the device stays
+   re-provisionable without a power cycle. *Measured on the rig: post-provision
+   free heap ~48 KiB → ~82 KiB.* *(done)*
+3. **Zero-copy protobuf envelopes**: decode/encode `ClientMessage`/`ServerMessage`
    through the streaming arena walker (as the map/topology uploads already do)
    instead of materializing by-value micropb structs, shrinking `Player::handle`'s
-   frame and letting the loop-task stack drop well under 24 KiB — a direct heap
-   reclaim.
-3. **Ruthless static cuts**: right-size `rx` (stream the upload instead of
-   reassembling 32 KiB), `FX_ARENA`/`FX_TEX_PREV`; release BLE memory once the
-   device is on WiFi (re-init on demand for re-provisioning).
+   frame and letting the loop-task (24 KiB) + `httpd_ssl` (28 KiB) stacks drop —
+   a further heap reclaim. *(follow-up)*
+4. **Ruthless static cuts**: right-size `rx` (stream the upload instead of
+   reassembling 32 KiB), `FX_ARENA`/`FX_TEX_PREV`. *(follow-up)*
 
