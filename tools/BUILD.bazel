@@ -3,6 +3,11 @@
 load("@pypi//:requirements.bzl", "requirement")
 load("@rules_python//python:defs.bzl", "py_binary")
 
+# Static RAM auditor for a firmware ELF (stdlib only; shells to host nm/readelf).
+# Exported so the `ram_chart` macro (//tools:ram_chart.bzl) can build a
+# per-image `.ram_chart` run target in the firmware package.
+exports_files(["fw_memaudit.py"])
+
 py_binary(
     name = "player_probe",
     srcs = ["player_probe.py"],

@@ -14,6 +14,7 @@ load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("@rules_rust//rust:defs.bzl", "rust_library", "rust_static_library", "rust_test")
 load("//tools:flash_bundle.bzl", "flash_bundle")
+load("//tools:ram_chart.bzl", "ram_chart")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -157,6 +158,15 @@ firmware_binary(
     board = "esp32c6",
     opt_mode = "opt",
     tags = ["manual"],
+)
+
+# Static RAM auditor sibling: `bazel run //firmware/player_app:esp32c6.ram_chart`
+# charts where the image's .bss/.data (internal SRAM — the heap the TLS/BLE/WiFi
+# pools draw from) goes, per symbol/component. `-- --json` snapshots it and
+# `-- --compare before.json` diffs a cut. See //tools:ram_chart.bzl.
+ram_chart(
+    name = "esp32c6.ram_chart",
+    binary = ":esp32c6",
 )
 
 # The image (~2.05 MB at -c opt: WiFi + BLE + webserver + FastLED + the
