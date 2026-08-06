@@ -523,13 +523,15 @@ function emptyTopology(mapId: string): Topology {
 }
 
 /** Off-screen MapView snapshot → dataURL (design doc §5.4). Fixed orbit, LEDs
- * on black. Renders a couple frames so the scene settles, then reads back. */
+ * on black. Renders a couple frames so the scene settles, then reads back.
+ * Thumbnail framing strips the grid/triad/stats overlays (regardless of the
+ * user's Appearance defaults) and fits the fixture tight to the frame. */
 async function renderThumbnail(map: OutputMap, size = 128): Promise<string> {
   if (map.leds.length === 0) return "";
   const canvas = document.createElement("canvas");
   canvas.width = size;
   canvas.height = size;
-  const view = new MapView(canvas, map);
+  const view = new MapView(canvas, map).useThumbnailFraming();
   view.setLedColors(new Uint8Array(map.leds.length * 3)); // emissive dots on black
   view.start();
   await new Promise((r) => setTimeout(r, 120));

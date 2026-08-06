@@ -68,6 +68,10 @@ export class MapView {
   /** Draw the solver-stats footer + interaction hint. Off for small decorative
    * previews (e.g. Settings' appearance preview) where the numbers are noise. */
   showStats = true;
+  /** Tight, pose-aware framing: scale to the LEDs' projected extent in the
+   * current orbit pose (rather than the conservative 3D bounding sphere) so the
+   * fixture fills the frame. Used for thumbnails; see useThumbnailFraming(). */
+  fitTight = false;
 
   // Extracted topology overlay: the segment polylines drawn over the LEDs, for
   // live preview while tuning the extraction (topology/extract.ts).
@@ -105,6 +109,20 @@ export class MapView {
   /** Swap in a newer map (live preview) without resetting the camera. */
   update(map: OutputMap): void {
     this.map = map;
+  }
+
+  /** Configure this view as a Maps-tab thumbnail: strip the diagnostic overlays
+   * (grid, world triad, solver-stats footer) *regardless* of the Appearance
+   * defaults the constructor seeded, and frame tight so the fixture fills the
+   * snapshot. A thumbnail is a decorative "what does this map look like" icon,
+   * not an inspection tool, so the overlays are pure noise at 128px. Returns
+   * `this` for chaining (see mapStore.renderThumbnail). */
+  useThumbnailFraming(): this {
+    this.showGrid = false;
+    this.showTriad = false;
+    this.showStats = false;
+    this.fitTight = true;
+    return this;
   }
 
   /** Set (or clear) the ground-truth layout to compare against. */
@@ -330,12 +348,38 @@ export class MapView {
       const r = Math.hypot(p[0] - cx, p[1] - cy, p[2] - cz);
       if (r > maxR) maxR = r;
     }
-    const scale = ((Math.min(w, h) * 0.42) / maxR) * this.zoom;
 
     const sinA = Math.sin(this.yaw);
     const cosA = Math.cos(this.yaw);
     const sinP = Math.sin(this.pitch);
     const cosP = Math.cos(this.pitch);
+
+    // Framing radius. The default fit uses the 3D bounding-sphere radius (maxR),
+    // which is rotation-invariant and stable while orbiting but leaves margin —
+    // it reserves room for the fixture's deepest axis even when that axis points
+    // at the camera. Thumbnails instead fit the *projected* extent in this pose
+    // (dropping the depth axis) so the fixture fills the frame — a real
+    // zoom-to-fit. maxR itself is left untouched: the grid/triad sizing below
+    // still keys off the world-space radius.
+    let fitR = maxR;
+    if (this.fitTight) {
+      let pr = 1e-6;
+      for (const l of leds) {
+        const x = l.xyz[0] - cx;
+        const y = l.xyz[1] - cy;
+        const z = l.xyz[2] - cz;
+        const rx = x * cosA + z * sinA;
+        const rz = -x * sinA + z * cosA;
+        const ty = y * cosP - rz * sinP;
+        const r = Math.hypot(rx, ty);
+        if (r > pr) pr = r;
+      }
+      fitR = pr;
+    }
+    // Fill fraction of the min viewport dimension. A touch more of the frame for
+    // the tight thumbnail fit (which already sheds the depth-axis margin).
+    const fill = this.fitTight ? 0.46 : 0.42;
+    const scale = ((Math.min(w, h) * fill) / fitR) * this.zoom;
     // Orbit about the +Y (up) axis, then pitch about the view's x axis.
     const proj = (p: Vec3): { sx: number; sy: number; depth: number } => {
       const x = p[0] - cx;
