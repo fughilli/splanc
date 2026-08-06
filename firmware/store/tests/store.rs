@@ -60,6 +60,54 @@ fn submit_map_frame(n: usize) -> Vec<u8> {
     encode_client(pb::ClientMessage_::Msg::SubmitMap(submit))
 }
 
+/// A submit_topology frame for an `n_leds`-LED fixture: one association per LED
+/// spread across `n_segments` segments, each carrying a `pts_per_seg`-point
+/// polyline, plus `n_branch` branch points. This is the shape a real solver
+/// emits for a scan of this size — the growable topology lists (associations,
+/// per-segment polylines) are what churn the decode arena (FUG-74).
+fn submit_topology_frame(
+    n_leds: usize,
+    n_segments: usize,
+    pts_per_seg: usize,
+    n_branch: usize,
+) -> Vec<u8> {
+    let mut topo = Box::new(pb::Topology::default());
+    topo.r#map_id = "m-test".parse().unwrap();
+    for i in 0..n_branch {
+        let mut bp = pb::BranchPoint::default();
+        bp.r#id = i as i32;
+        bp.r#xyz
+            .extend_from_slice(&[i as f64 * 0.01, 0.1, -(i as f64) * 0.01])
+            .unwrap();
+        topo.r#branch_points.push(bp).expect("within generated caps");
+    }
+    for s in 0..n_segments {
+        let mut seg = pb::TopologySegment::default();
+        seg.r#id = s as i32;
+        seg.r#a = s as i32;
+        seg.r#b = if s + 1 < n_segments { s as i32 + 1 } else { -1 };
+        seg.r#length = 1.0;
+        for p in 0..pts_per_seg {
+            let mut v = pb::Vec3::default();
+            let t = p as f64 / pts_per_seg as f64;
+            v.r#v.extend_from_slice(&[t, 0.02 * s as f64, -t]).unwrap();
+            seg.r#polyline.push(v).expect("within generated caps");
+        }
+        topo.r#segments.push(seg).expect("within generated caps");
+    }
+    for i in 0..n_leds {
+        let mut a = pb::LedAssociation::default();
+        a.r#led_id = i as i32;
+        a.r#segment_id = (i % n_segments.max(1)) as i32;
+        a.r#foot_arclength = i as f64 * 0.001;
+        a.r#d_perp = 0.003;
+        topo.r#associations.push(a).expect("within generated caps");
+    }
+    let mut submit = pb::SubmitTopology::default();
+    submit.set_topology(*topo);
+    encode_client(pb::ClientMessage_::Msg::SubmitTopology(submit))
+}
+
 fn chunks(bytes: &[u8], size: usize) -> Vec<&[u8]> {
     bytes.chunks(size).collect()
 }
@@ -193,6 +241,49 @@ fn golden_topology_frame_decodes_into_the_arena() {
     assert_eq!(topo.associations.len(), 1);
     assert!((topo.associations[0].foot_arclength - 0.25).abs() < 1e-6);
     assert!((topo.associations[0].d_perp - 0.003).abs() < 1e-6);
+}
+
+#[test]
+fn large_topology_fits_the_firmware_arena() {
+    // The firmware's real budget (player_app/ffi.rs ARENA_BYTES): map AND
+    // topology share ONE 16 KB arena, decoded like the transport does — map
+    // first, then a checkpoint, then topology appended (FUG-74). A ~150-LED
+    // scan's LIVE footprint is ~10 KB and fits comfortably; it only overflowed
+    // because the growable topology lists reallocated-and-leaked while growing.
+    const ARENA_BYTES: usize = 16 * 1024;
+    let mut buf = vec![0u8; ARENA_BYTES];
+    let arena = Arena::new(&mut buf);
+
+    let map_frame = submit_map_frame(150);
+    {
+        let segs = chunks(&map_frame, 512);
+        let map = decode_submit_map(ChunkedReader::new(&segs), map_frame.len(), &arena)
+            .expect("150-LED map fits");
+        assert_eq!(map.leds.len(), 150);
+    }
+
+    // Topology appended after the map (mirrors handle_topology_upload): 150
+    // associations, 12 segments × 20 polyline points, 12 branch points.
+    let topo_frame = submit_topology_frame(150, 12, 20, 12);
+    let cp = arena.checkpoint();
+    {
+        let segs = chunks(&topo_frame, 512);
+        let topo = decode_submit_topology(ChunkedReader::new(&segs), topo_frame.len(), &arena)
+            .expect("150-LED topology must fit the 16 KB arena beside its map");
+        assert_eq!(topo.associations.len(), 150);
+        assert_eq!(topo.segments.len(), 12);
+        assert_eq!(topo.segments[0].polyline.len(), 20);
+        assert_eq!(topo.branch_points.len(), 12);
+    }
+    let _ = cp;
+    // Live map + topology together stay well under the arena cap — the failure
+    // was churn, not size.
+    assert!(
+        arena.used() < ARENA_BYTES,
+        "map+topology live footprint {} must fit {}",
+        arena.used(),
+        ARENA_BYTES
+    );
 }
 
 // -- persistence (the NVS model) ---------------------------------------------
