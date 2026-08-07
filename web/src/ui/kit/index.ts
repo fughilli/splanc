@@ -40,11 +40,11 @@ export function Button(opts: ButtonOpts): HTMLButtonElement {
 
 export function IconButton(
   name: IconName,
-  opts: { title?: string; onClick?: () => void } = {},
+  opts: { title?: string; onClick?: () => void; className?: string } = {},
 ): HTMLButtonElement {
   const b = document.createElement("button");
   b.type = "button";
-  b.className = "k-iconbtn";
+  b.className = opts.className ? `k-iconbtn ${opts.className}` : "k-iconbtn";
   if (opts.title) {
     b.title = opts.title;
     b.setAttribute("aria-label", opts.title);

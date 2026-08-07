@@ -1998,6 +1998,39 @@ body.is-locked {
   align-items: center;
   gap: var(--sp-1);
 }
+/* Connect = plug on blue; Disconnect = slashed plug on red. */
+.k-iconbtn.device-connect {
+  background: var(--accent);
+  color: #fff;
+}
+.k-iconbtn.device-connect:hover {
+  background: var(--accent);
+  filter: brightness(1.12);
+}
+.k-iconbtn.device-disconnect {
+  background: var(--err);
+  color: #fff;
+}
+.k-iconbtn.device-disconnect:hover {
+  background: var(--err);
+  filter: brightness(1.12);
+}
+
+/* Pull-to-refresh indicator: collapsed to 0 height, grown as the list is pulled
+   down (see attachPullToRefresh). */
+.device-ptr {
+  height: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  font-size: var(--f-caption);
+  transition: height var(--motion-micro) var(--ease);
+}
+.device-ptr--active {
+  transition: none; /* track the finger 1:1 while dragging */
+}
 .device-empty {
   color: var(--text-dim);
   text-align: center;

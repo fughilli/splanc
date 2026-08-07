@@ -47,6 +47,87 @@ export function openDeviceSheet(): void {
   unsubProbe = deviceProber.subscribe(rerender);
   deviceProber.refresh();
   rerender();
+  // Pull down on the list for a one-shot poll of every device's reachability.
+  attachPullToRefresh(sheet.body, () => deviceProber.probeAllNow());
+}
+
+/** Pull-to-refresh on the sheet's scroll container: dragging down while scrolled
+ * to the top, past a threshold, fires a one-shot poll. The indicator lives
+ * between the head and the list, so the pull reveals it in place. Touch-only —
+ * desktop uses the auto-poll + reopening the sheet (which calls refresh()). */
+function attachPullToRefresh(body: HTMLElement, onRefresh: () => Promise<void>): void {
+  const scroller = body.parentElement; // .k-sheet (overflow-y: auto)
+  if (!scroller) return;
+  const ind = document.createElement("div");
+  ind.className = "device-ptr";
+  const label = document.createElement("span");
+  ind.append(label);
+  scroller.insertBefore(ind, body);
+
+  const THRESHOLD = 60;
+  const MAX = 90;
+  let startY = 0;
+  let pulling = false;
+  let busy = false;
+  let pull = 0;
+
+  const setPull = (px: number): void => {
+    pull = px;
+    ind.style.height = `${px}px`;
+    label.textContent = px >= THRESHOLD ? "Release to refresh" : "Pull to refresh";
+  };
+  const reset = (): void => {
+    ind.classList.remove("device-ptr--active", "device-ptr--busy");
+    ind.style.height = "";
+    pull = 0;
+    pulling = false;
+    busy = false;
+  };
+
+  scroller.addEventListener(
+    "touchstart",
+    (e) => {
+      if (busy) return;
+      pulling = scroller.scrollTop <= 0 && e.touches.length === 1;
+      startY = e.touches[0]!.clientY;
+    },
+    { passive: true },
+  );
+  scroller.addEventListener(
+    "touchmove",
+    (e) => {
+      if (!pulling || busy) return;
+      if (scroller.scrollTop > 0) {
+        setPull(0);
+        pulling = false;
+        return;
+      }
+      const dy = e.touches[0]!.clientY - startY;
+      if (dy <= 0) {
+        setPull(0);
+        return;
+      }
+      e.preventDefault(); // take over from native overscroll while pulling
+      ind.classList.add("device-ptr--active");
+      setPull(Math.min(MAX, dy * 0.5));
+    },
+    { passive: false },
+  );
+  const end = (): void => {
+    if (!pulling || busy) return;
+    ind.classList.remove("device-ptr--active");
+    if (pull >= THRESHOLD) {
+      busy = true;
+      ind.classList.add("device-ptr--busy");
+      ind.style.height = `${THRESHOLD}px`;
+      label.textContent = "Refreshing…";
+      void onRefresh().finally(reset);
+    } else {
+      reset();
+    }
+  };
+  scroller.addEventListener("touchend", end);
+  scroller.addEventListener("touchcancel", end);
 }
 
 function render(): HTMLElement {
@@ -158,9 +239,21 @@ function deviceRow(
   const btns = document.createElement("div");
   btns.className = "device-btns";
   if (isActive) {
-    btns.append(Button({ label: "Disconnect", variant: "quiet", onClick: () => appState.disconnect() }));
+    btns.append(
+      IconButton("plug-off", {
+        title: "Disconnect",
+        className: "device-disconnect",
+        onClick: () => appState.disconnect(),
+      }),
+    );
   } else if (isReachable) {
-    btns.append(Button({ label: "Connect", onClick: () => appState.connect(dev.wssUrl, dev.label) }));
+    btns.append(
+      IconButton("plug", {
+        title: "Connect",
+        className: "device-connect",
+        onClick: () => appState.connect(dev.wssUrl, dev.label),
+      }),
+    );
   } else {
     // Unreachable on the LAN: the connect affordance opens the BLE picker
     // directly to re-discover / re-provision the device (Improv flow).

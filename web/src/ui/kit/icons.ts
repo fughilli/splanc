@@ -30,6 +30,8 @@ export type IconName =
   | "close"
   | "bluetooth"
   | "ble-search"
+  | "plug"
+  | "plug-off"
   | "sparkles"
   | "alert"
   | "help"
@@ -87,6 +89,10 @@ const PATHS: Record<IconName, string> = {
   plus: `<path d="M12 5v14M5 12h14"/>`,
   close: `<path d="M6 6l12 12M18 6L6 18"/>`,
   bluetooth: `<path d="M7 8l10 8-5 4V4l5 4-10 8"/>`,
+  // Power plug: two prongs up, the plug head, a cord down.
+  plug: `<path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/>`,
+  // Same plug with a slash through it — disconnect.
+  "plug-off": `<path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/><path d="M3 3l18 18"/>`,
   // Bluetooth rune (upper-left) under a magnifier — "discover over Bluetooth".
   "ble-search": `<path d="M5 5 10 9 7.5 11 7.5 3 10 5 5 9"/><circle cx="15.5" cy="15.5" r="3.5"/><path d="M18 18l3.6 3.6"/>`,
   sparkles: `<path d="M12 4l1.6 4.4L18 10l-4.4 1.6L12 16l-1.6-4.4L6 10l4.4-1.6z"/><path d="M18 15l.8 2 2 .8-2 .8L18 21l-.8-2-2-.8 2-.8z"/>`,
