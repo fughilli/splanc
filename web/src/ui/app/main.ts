@@ -34,6 +34,7 @@ import { SettingsScreen } from "../screens/settings";
 import { MidiScreen } from "../screens/midi";
 import { ColorCorrectionScreen } from "../screens/colorCorrection";
 import { AboutScreen } from "../screens/about";
+import { AiSettingsScreen } from "../screens/aiSettings";
 import { initAppearance } from "../../store/appearance";
 import { maybeShowSplash } from "./splash";
 
@@ -119,6 +120,10 @@ async function main(): Promise<void> {
     .add("/settings/color-correction", () => {
       shell.setChrome({ title: "Color correction", back: true, tabs: true });
       return ColorCorrectionScreen(router);
+    })
+    .add("/settings/ai", () => {
+      shell.setChrome({ title: "AI provider", back: true, tabs: true });
+      return AiSettingsScreen(router);
     })
     .add("/capture", (m) => {
       shell.setChrome({ title: "Capture", back: true, tabs: false, overlay: true });

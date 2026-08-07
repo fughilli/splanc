@@ -39,10 +39,10 @@ import { complete, type CompletionItem } from "../../effects/editor/completions"
 import {
   chatTurn,
   editorContext,
-  getApiKey,
   type ChatMessage,
   type MidiMappingCall,
 } from "../../effects/ai/generate";
+import { isAiConfigured } from "../../effects/ai/provider";
 import { resolveFleetTargets } from "../../effects/fleet";
 import { estimateAcrossDevices, describeFleet } from "../../effects/multiDevice";
 import { estimateFrameTime, DEFAULT_BUDGET_MODEL, type BudgetModel } from "../../effects/costModel";
@@ -61,7 +61,6 @@ import { appState } from "../app/state";
 import { Button, IconButton, icon, toast, type IconName } from "../kit";
 import { FxLayout } from "../../effects/editor/layout";
 import { VideoTexturePanel } from "../../effects/editor/videoTexture";
-import { openAiKeySheet } from "./aiKeySheet";
 import { renderMarkdown } from "../markdown";
 import type { Router, Screen } from "../app/router";
 
@@ -692,10 +691,10 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   const miKey = document.createElement("button");
   miKey.type = "button";
   miKey.className = "fxedit-menu-item";
-  miKey.textContent = "AI key…";
+  miKey.textContent = "AI settings…";
   miKey.addEventListener("click", () => {
     closeMenu();
-    openAiKeySheet();
+    location.hash = "#/settings/ai";
   });
   const miFormat = document.createElement("button");
   miFormat.type = "button";
@@ -1005,10 +1004,10 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   async function runChat(): Promise<void> {
     const ask = chatInput.value.trim();
     if (!ask) return;
-    // Keep the typed text if there's no key yet (the sheet opens; sending again
-    // after setting a key preserves the ask).
-    if (!getApiKey()) {
-      openAiKeySheet();
+    // Keep the typed text if AI isn't set up yet (settings open; sending again
+    // after configuring a provider preserves the ask).
+    if (!isAiConfigured()) {
+      location.hash = "#/settings/ai";
       return;
     }
     chatInput.value = "";
@@ -1099,9 +1098,9 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   /** Shared body: ground the turn in the editor context, run the tool loop. */
   async function submitChat(ask: string, opts: { label?: string } = {}): Promise<void> {
     if (chatBusy) return;
-    if (!getApiKey()) {
-      // No key yet — prompt via the same sheet the ⋯ menu opens.
-      openAiKeySheet();
+    if (!isAiConfigured()) {
+      // AI not set up yet — send them to the provider settings the ⋯ menu opens.
+      location.hash = "#/settings/ai";
       return;
     }
     appendChat("user", opts.label ?? ask);
