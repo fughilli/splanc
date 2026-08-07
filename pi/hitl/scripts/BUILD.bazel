@@ -1,0 +1,16 @@
+"""HITL host-side helper scripts."""
+
+load("@rules_python//python:defs.bzl", "py_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+# HTTP-driven runner for the on-hardware HITL suite. Run it on a tailnet host
+# where the rigs work (a laptop), then curl it to run the harness py_tests one at
+# a time — some need arguments the plain `bazel test` lane can't pass per-target.
+#   bazel run //pi/hitl/scripts:hitl_shim          # or: python3 <this file>
+#   curl -N http://<host>:8091/run?target=e2e
+# Stdlib only; it shells back out to `bazel` under $BUILD_WORKSPACE_DIRECTORY.
+py_binary(
+    name = "hitl_shim",
+    srcs = ["hitl_shim.py"],
+)
