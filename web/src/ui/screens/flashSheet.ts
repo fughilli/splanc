@@ -1,9 +1,11 @@
 /**
- * Flash / commission a board (FUG-60) — a bottom sheet reached from the Device
- * tab. Flashes the firmware image(s) this build bundles onto a USB-connected
- * board over WebSerial, with live progress, a log, and a diagnostics panel so a
- * failed attempt (e.g. WebSerial unsupported on Android, or the chooser finding
- * nothing) is self-explaining rather than a dead end.
+ * Flash / commission a board (FUG-60; FUG-85 Android/WebUSB) — a bottom sheet
+ * reached from the Device tab. Flashes the firmware image(s) this build bundles
+ * onto a USB-connected board over Web Serial (native on desktop Chromium, or via
+ * the WebUSB polyfill on Android Chrome — see flash/webserial.ts), with live
+ * progress, a log, and a diagnostics panel so a failed attempt (e.g. neither API
+ * present on iOS, or the chooser finding nothing) is self-explaining rather than
+ * a dead end.
  *
  * Everything USB/flasher-related is loaded lazily from here (this screen is the
  * only static importer of the flash/ modules, and it's itself dynamically
@@ -63,13 +65,18 @@ export async function openFlashSheet(): Promise<void> {
 }
 
 const FLASH_HELP =
-  "Flashing runs entirely in your browser over USB (WebSerial), which is only available in desktop Chrome/Edge. Connect the board, then keep it plugged in until the write finishes.";
+  "Flashing runs entirely in your browser over USB — desktop Chrome/Edge (Web Serial) or Chrome on Android (WebUSB). Connect the board with a data-capable cable, then keep it plugged in until the write finishes.";
 
 // -- idle: pick an image + flash -------------------------------------------
 
 function renderIdle(sheet: SheetHandle, index: FirmwareIndex, selected: FirmwareEntry): void {
   sheet.body.innerHTML = "";
   sheet.body.append(intro(FLASH_HELP));
+
+  // On the WebUSB (Android) path there's a caveat worth stating up front — the
+  // board is picked from the WebUSB prompt, and the OS may have claimed it.
+  const envNote = summarizeEnv(readFlashEnv()).note;
+  if (envNote) sheet.body.append(note(envNote));
 
   // Firmware picker (only shown when there's a real choice).
   if (index.entries.length > 1) {

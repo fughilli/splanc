@@ -47,10 +47,15 @@ TYPE_DEPS = [
     ":node_modules/@ledmapper/protocol",
     ":node_modules/@types/node",
     ":node_modules/@types/w3c-web-serial",
+    ":node_modules/@types/w3c-web-usb",
     ":node_modules/@types/webxr",
     # esptool-js drives the in-browser USB flasher (FUG-60); @types/w3c-web-serial
     # supplies the Web Serial globals both it and our flash/ code use.
     ":node_modules/esptool-js",
+    # web-serial-polyfill (FUG-85): a Web Serial implementation over WebUSB, so
+    # the flasher works on Android Chrome (which has WebUSB but not Web Serial).
+    # @types/w3c-web-usb types the WebUSB globals the polyfill's .d.ts references.
+    ":node_modules/web-serial-polyfill",
 ]
 
 ts_config(
@@ -185,6 +190,7 @@ vite_bin.vite(
         ":node_modules/@ledmapper/protocol",
         ":node_modules/esptool-js",
         ":node_modules/vite",
+        ":node_modules/web-serial-polyfill",
     ],
     args = ["build"],
     chdir = package_name(),
