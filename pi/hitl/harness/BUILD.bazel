@@ -166,3 +166,27 @@ py_binary(
         requirement("websockets"),
     ],
 )
+
+# On-hardware rename -> wss-wedge repro (FUG-85 follow-up): reserve, flash,
+# provision, then rename the device and probe whether its TLS server recovers,
+# capturing the serial `[wss]`/heap lines. `bazel run`, never `bazel test`.
+py_binary(
+    name = "rename_wss",
+    srcs = ["hitl_rename_wss.py"],
+    data = [
+        "//firmware/player_app:esp32c6_flashbundle",
+        "//pi/hitl/cmd/hitl",
+    ],
+    imports = ["."],
+    main = "hitl_rename_wss.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
