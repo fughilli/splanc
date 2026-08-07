@@ -1992,10 +1992,20 @@ body.is-locked {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  /* Match .sheet-input's box exactly (transparent border + same padding +
+     line-height) so toggling edit mode keeps the row the same height — the
+     content below doesn't shift and the pencil/floppy stays centered. */
+  padding: 0.6rem 0.7rem;
+  border: 1px solid transparent;
+  line-height: 1.4;
 }
 .device-name-input {
   flex: 1;
   min-width: 0;
+  line-height: 1.4;
+  /* .sheet-input carries a margin-bottom that would only appear in edit mode,
+     nudging the rows below down. */
+  margin-bottom: 0;
 }
 .device-detail-divider {
   width: 100%;
