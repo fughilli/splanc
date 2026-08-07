@@ -603,9 +603,8 @@ static void poll_device_rename() {
   improv_ble_set_name(g_device_name);
   Log().printf("[player] renamed to \"%s\"\n", g_device_name);
   // Track the new name across the AP SSID, the STA/AP + mDNS hostnames, and the
-  // wss cert. The soft-AP is reconfigured live only while it's still up (it's
-  // torn down once a LAN is joined). Zeroing g_cert_ip forces reissue_cert_for_lan
-  // to re-sign with the new <hostname>.local in the SAN on the next loop().
+  // BLE advertisement. The soft-AP is reconfigured live only while it's still up
+  // (it's torn down once a LAN is joined).
   names_from_identity();
   WiFi.setHostname(g_hostname);
   if (softap_up) {
@@ -613,7 +612,16 @@ static void poll_device_rename() {
     WiFi.softAP(g_ap_ssid, kApPassword);
   }
   mdns_begin_or_update();
-  g_cert_ip = 0;
+  // Deliberately do NOT re-issue the wss cert here. The rename changes only the
+  // hostname (cert CN + the <hostname>.local DNS SAN); the STA IP — the SAN the
+  // app actually connects by — is unchanged, so the served cert stays valid.
+  // Forcing a re-issue used to tear the TLS server down and restart it, and that
+  // restart routinely failed (httpd_ssl_start -> ESP_ERR_HTTPD_TASK 0xb008: no
+  // contiguous 28 KB for the server task's stack on a fragmented heap), leaving
+  // :443 dead until reboot. It also rotated the cert bytes, forcing the browser
+  // to re-accept the self-signed cert. Skipping it keeps wss up AND trusted
+  // across a rename; the hostname lands in the SAN on the next genuine IP change
+  // or reboot (reissue_cert_for_lan), which is all the DNS SAN is used for.
 }
 
 // Handle one sharded-upload window (proto UploadChunk), shared by the wss and
@@ -1323,16 +1331,33 @@ static void reissue_cert_for_lan() {
                  -ret, (unsigned)esp_get_free_heap_size());
     return;
   }
-  g_cert_ip = sta_ip;
   g_wss_cert = g_gen_cert;
   g_wss_cert_len = strlen(g_gen_cert) + 1;  // esp-tls wants the NUL in the length
   if (wss) {
     httpd_ssl_stop(wss);
     wss = nullptr;
+    // The stopped server task's 28 KB stack (cfg.httpd.stack_size) is reclaimed
+    // by the idle task ASYNCHRONOUSLY, not by httpd_ssl_stop() itself. An
+    // immediate wss_start() therefore races that reclaim and its xTaskCreate can
+    // fail with ESP_ERR_HTTPD_TASK (0xb008) for want of a CONTIGUOUS 28 KB block
+    // even with 70+ KB free (the heap is fragmented by the TLS handshakes that
+    // ran on the old cert). Yield so the idle task frees that stack first,
+    // reopening the hole the new task reuses.
+    delay(200);
   }
-  Log().printf("[wss] re-issued cert with SAN IP:%s (heap=%u); restarting TLS\n",
+  Log().printf("[wss] re-issuing cert with SAN IP:%s (heap=%u); restarting TLS\n",
                WiFi.localIP().toString().c_str(), (unsigned)esp_get_free_heap_size());
   wss_start();
+  if (wss) {
+    // Commit the served IP only on a CONFIRMED restart. If wss_start() still
+    // failed, leave g_cert_ip stale so loop()'s reconcile retries every few
+    // seconds (by then the freed stack + coalesced heap usually admit the 28 KB
+    // task) instead of stranding :443 down until the next reboot.
+    g_cert_ip = sta_ip;
+  } else {
+    Log().printf("[wss] TLS restart failed (heap=%u); will retry from loop()\n",
+                 (unsigned)esp_get_free_heap_size());
+  }
 }
 
 // The :81 ws + :80 http listening sockets are bound to the STA netif. A
