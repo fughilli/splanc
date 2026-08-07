@@ -20,6 +20,11 @@ import { appendGrouped, openFolderPicker } from "./folders";
 
 let openHandle: { close: () => void } | null = null;
 
+// Connecting-plug animation period (ms). The button is recreated on every
+// re-render (one per status change while connecting), so its animation is phase-
+// synced to a global clock via the --conn-phase delay to avoid restarting.
+const CONN_ANIM_MS = 1200;
+
 export function openDeviceSheet(): void {
   if (openHandle) return; // already open — don't stack
   let unsubDev: () => void = () => {};
@@ -60,8 +65,9 @@ function attachPullToRefresh(body: HTMLElement, onRefresh: () => Promise<void>):
   if (!scroller) return;
   const ind = document.createElement("div");
   ind.className = "device-ptr";
-  const label = document.createElement("span");
-  ind.append(label);
+  const spin = document.createElement("div");
+  spin.className = "device-ptr-spin"; // frozen while pulling, spins on release
+  ind.append(spin);
   scroller.insertBefore(ind, body);
 
   const THRESHOLD = 60;
@@ -74,11 +80,14 @@ function attachPullToRefresh(body: HTMLElement, onRefresh: () => Promise<void>):
   const setPull = (px: number): void => {
     pull = px;
     ind.style.height = `${px}px`;
-    label.textContent = px >= THRESHOLD ? "Release to refresh" : "Pull to refresh";
+    // The spinner rides the bottom edge (flex-end) — it slides in from the fold —
+    // and fades up to full as the pull clears the threshold.
+    spin.style.opacity = `${Math.min(1, px / THRESHOLD)}`;
   };
   const reset = (): void => {
-    ind.classList.remove("device-ptr--active", "device-ptr--busy");
+    ind.classList.remove("device-ptr--active", "device-ptr--busy", "device-ptr--done");
     ind.style.height = "";
+    spin.style.opacity = "";
     pull = 0;
     pulling = false;
     busy = false;
@@ -117,11 +126,17 @@ function attachPullToRefresh(body: HTMLElement, onRefresh: () => Promise<void>):
     if (!pulling || busy) return;
     ind.classList.remove("device-ptr--active");
     if (pull >= THRESHOLD) {
+      // Release past the threshold: settle to the threshold height and start the
+      // spinner spinning; when the poll resolves, pop it out, then collapse.
       busy = true;
       ind.classList.add("device-ptr--busy");
       ind.style.height = `${THRESHOLD}px`;
-      label.textContent = "Refreshing…";
-      void onRefresh().finally(reset);
+      spin.style.opacity = "1";
+      void onRefresh().finally(() => {
+        ind.classList.remove("device-ptr--busy");
+        ind.classList.add("device-ptr--done"); // spinner pops out
+        window.setTimeout(reset, 240);
+      });
     } else {
       reset();
     }
@@ -213,11 +228,14 @@ function deviceRow(
   const row = document.createElement("div");
   row.className = "device-row";
 
-  const connected = isActive && (appState.client?.isConnected ?? false);
+  // Fully connected only once the handshake AND clock sync are done (status
+  // "connected"). "connecting…" and "syncing clock…" both report state
+  // "connecting", so both keep the in-progress affordance below.
+  const fullyConnected = isActive && status.state === "connected";
   const dot = document.createElement("span");
   dot.className = "device-dot";
-  dot.dataset["state"] = connected
-    ? status.state // connected/connecting/error
+  dot.dataset["state"] = isActive
+    ? status.state // connecting (incl. syncing) / connected / error / offline
     : isReachable
       ? "reachable" // on the LAN, MAC known — yellow
       : "offline";
@@ -238,7 +256,7 @@ function deviceRow(
 
   const btns = document.createElement("div");
   btns.className = "device-btns";
-  if (connected) {
+  if (fullyConnected) {
     btns.append(
       IconButton("plug-off", {
         title: "Disconnect",
@@ -247,16 +265,18 @@ function deviceRow(
       }),
     );
   } else if (isActive) {
-    // Active but the handshake isn't done yet (connecting / awaiting cert trust):
-    // a gray, pulsing plug so it reads as in-progress rather than connected. Tap
-    // cancels the attempt.
-    btns.append(
-      IconButton("plug", {
-        title: "Connecting… (tap to cancel)",
-        className: "device-connecting",
-        onClick: () => appState.disconnect(),
-      }),
-    );
+    // Active but not fully connected yet (connecting, syncing clock, or awaiting
+    // cert trust): a gray, pulsing plug so it reads as in-progress. Tap cancels.
+    // Phase-sync the animation to a global clock so the re-render on each status
+    // change doesn't restart it (negative delay = current phase of a 1.2s cycle).
+    const connectingBtn = IconButton("plug", {
+      title: "Connecting… (tap to cancel)",
+      className: "device-connecting",
+      onClick: () => appState.disconnect(),
+    });
+    const nowMs = typeof performance !== "undefined" ? performance.now() : 0;
+    connectingBtn.style.setProperty("--conn-phase", `-${nowMs % CONN_ANIM_MS}ms`);
+    btns.append(connectingBtn);
   } else if (isReachable) {
     btns.append(
       IconButton("plug", {

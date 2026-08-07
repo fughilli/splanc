@@ -2029,6 +2029,9 @@ body.is-locked {
 }
 .k-iconbtn.device-connecting svg {
   animation: plug-pulse 1.2s ease-in-out infinite;
+  /* Negative delay = current phase of the global cycle (set per-render in JS), so
+     re-rendering the button mid-connect doesn't restart the animation. */
+  animation-delay: var(--conn-phase, 0ms);
 }
 .k-iconbtn.device-connecting::after {
   content: "";
@@ -2040,6 +2043,7 @@ body.is-locked {
   background: var(--text);
   transform: rotate(-45deg);
   animation: plug-slash-wave 1.2s ease-in-out infinite;
+  animation-delay: var(--conn-phase, 0ms);
 }
 @keyframes plug-pulse {
   0%,
@@ -2076,20 +2080,62 @@ body.is-locked {
   }
 }
 
-/* Pull-to-refresh indicator: collapsed to 0 height, grown as the list is pulled
-   down (see attachPullToRefresh). */
+/* Pull-to-refresh: collapsed to 0 height, grown as the list is pulled down (see
+   attachPullToRefresh). A spinner rides the bottom edge — sliding in from the
+   fold, frozen while pulling, spinning once released, popping out when done. */
 .device-ptr {
   height: 0;
   overflow: hidden;
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: center;
-  color: var(--text-dim);
-  font-size: var(--f-caption);
   transition: height var(--motion-micro) var(--ease);
 }
 .device-ptr--active {
   transition: none; /* track the finger 1:1 while dragging */
+}
+.device-ptr-spin {
+  width: 22px;
+  height: 22px;
+  margin-bottom: 10px;
+  border: 2.5px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  opacity: 0;
+}
+.device-ptr--busy .device-ptr-spin {
+  animation: ptr-spin 0.7s linear infinite;
+}
+.device-ptr--done .device-ptr-spin {
+  animation: ptr-pop 0.24s ease forwards;
+}
+@keyframes ptr-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes ptr-pop {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  45% {
+    transform: scale(1.3);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(0.3);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .device-ptr--busy .device-ptr-spin {
+    animation: none;
+  }
+  .device-ptr--done .device-ptr-spin {
+    animation: none;
+    opacity: 0;
+  }
 }
 .device-empty {
   color: var(--text-dim);
