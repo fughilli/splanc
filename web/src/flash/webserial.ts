@@ -1,34 +1,81 @@
 /// <reference types="w3c-web-serial" />
 /**
- * Thin WebSerial helpers (FUG-60) — the browser-USB seam the flasher sits on.
+ * Thin WebSerial helpers (FUG-60; FUG-85 WebUSB polyfill) — the browser-USB seam
+ * the flasher sits on.
  *
- * WebSerial is Chromium-desktop-only and needs a secure context + a user gesture
- * to prompt for a port. We keep all of that here (plus capability probing for the
- * diagnostics panel) so the flasher and UI stay transport-agnostic: request a
- * port, read its USB id, hand the raw SerialPort to a Flasher backend.
+ * Web Serial needs a secure context + a user gesture to prompt for a port. On
+ * desktop Chromium it's native; on Android Chrome it's absent but WebUSB is, so
+ * we install Google's web-serial-polyfill (Web Serial implemented over WebUSB)
+ * as `navigator.serial`. Everything downstream — requestPort, getInfo, the raw
+ * SerialPort handed to esptool-js — is identical, so the flasher and UI stay
+ * transport-agnostic and none of the flash backends change.
  */
 
+import { serial as webUsbSerial } from "web-serial-polyfill";
 import type { UsbId } from "./usb";
-import { summarizeEnv, type FlashEnv } from "./env";
+import { isAndroidUserAgent, summarizeEnv, type FlashEnv } from "./env";
 
-/** Read the browser's flash-relevant capability flags. */
+// Snapshot the browser's NATIVE capabilities once, before installing anything,
+// so diagnostics report what the platform really offers (and env.ts can tell the
+// native path from the polyfill one — installing the polyfill makes
+// `"serial" in navigator` true, which would otherwise mask the WebUSB fallback).
+const NATIVE_SERIAL = typeof navigator !== "undefined" && "serial" in navigator;
+const HAS_WEBUSB = typeof navigator !== "undefined" && "usb" in navigator;
+const IS_ANDROID =
+  typeof navigator !== "undefined" && isAndroidUserAgent(navigator.userAgent ?? "");
+
+// Install the WebUSB-backed polyfill so the identical flash path works over
+// WebUSB. It's needed whenever native Web Serial is absent (older Android Chrome)
+// AND on Android even when navigator.serial IS present: Android's native Web
+// Serial (Chrome 138+) only enumerates Bluetooth serial ports, never the USB
+// board we're flashing, so the native picker would show phones/speakers but not
+// the ESP. Desktop keeps its native Web Serial; iOS (neither API) is untouched.
+//
+// navigator.serial is a read-only accessor (getter, no setter) once it exists
+// natively, so a plain `navigator.serial = …` throws in strict/module code (and,
+// running at import time, would take the whole flashSheet chunk down with it).
+// defineProperty installs an own data property that shadows the inherited getter;
+// the try/catch degrades to the native path instead of a dead flow if a browser
+// ever refuses the redefinition.
+const POLYFILL_ACTIVE = ((): boolean => {
+  if (!HAS_WEBUSB || (NATIVE_SERIAL && !IS_ANDROID)) return false;
+  try {
+    Object.defineProperty(navigator, "serial", {
+      value: webUsbSerial as unknown as Serial,
+      configurable: true,
+      writable: true,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
+/** True when the WebUSB Web Serial polyfill actually took over navigator.serial
+ * (so the port chooser is the WebUSB one, not the OS/Bluetooth serial picker).
+ * Surfaced in diagnostics because a failed install is otherwise invisible. */
+export function isPolyfillActive(): boolean {
+  return POLYFILL_ACTIVE;
+}
+
+/** Read the browser's flash-relevant capability flags (native, pre-polyfill). */
 export function readFlashEnv(): FlashEnv {
   const nav = typeof navigator !== "undefined" ? navigator : undefined;
   return {
-    serial: !!nav && "serial" in nav,
-    usb: !!nav && "usb" in nav,
+    serial: NATIVE_SERIAL,
+    usb: HAS_WEBUSB,
     // isSecureContext is undefined in non-window contexts; treat that as ok.
     secureContext: typeof window === "undefined" ? true : window.isSecureContext !== false,
     userAgent: nav?.userAgent ?? "",
   };
 }
 
-/** True when this browser exposes the Web Serial API in a usable context. */
+/** True when flashing can be attempted here (native Web Serial or WebUSB). */
 export function webSerialSupported(): boolean {
-  return readFlashEnv().serial;
+  return summarizeEnv(readFlashEnv()).ok;
 }
 
-/** A short reason WebSerial can't be used here, or null if it can. */
+/** A short reason flashing can't be used here, or null if it can. */
 export function webSerialUnavailableReason(): string | null {
   return summarizeEnv(readFlashEnv()).reason;
 }

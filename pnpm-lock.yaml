@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  web-serial-polyfill@1.0.15: de2e1d095816f71b772ecafcf08cdc2dbb5d84382713d66508c9785917fb88df
+
 importers:
 
   .:
@@ -31,6 +34,9 @@ importers:
       esptool-js:
         specifier: ^0.6.0
         version: 0.6.0
+      web-serial-polyfill:
+        specifier: ^1.0.15
+        version: 1.0.15(patch_hash=de2e1d095816f71b772ecafcf08cdc2dbb5d84382713d66508c9785917fb88df)
     devDependencies:
       '@bufbuild/buf':
         specifier: ^1.71.0
@@ -44,6 +50,9 @@ importers:
       '@types/w3c-web-serial':
         specifier: ^1.0.8
         version: 1.0.8
+      '@types/w3c-web-usb':
+        specifier: ^1.0.10
+        version: 1.0.14
       '@types/webxr':
         specifier: 0.5.24
         version: 0.5.24
@@ -256,6 +265,9 @@ packages:
 
   '@types/w3c-web-serial@1.0.8':
     resolution: {integrity: sha512-QQOT+bxQJhRGXoZDZGLs3ksLud1dMNnMiSQtBA0w8KXvLpXX4oM4TZb6J0GgJ8UbCaHo5s9/4VQT8uXy9JER2A==}
+
+  '@types/w3c-web-usb@1.0.14':
+    resolution: {integrity: sha512-Qu3Nn6JFuF4+sHKYl+IcX9vYiI40ogleXzFFSxoE1W94rG98o/kXs8uJ0QSfFzuwBCZWlGfUGpPkgwuuX4PchA==}
 
   '@types/webxr@0.5.24':
     resolution: {integrity: sha512-h8fgEd/DpoS9CBrjEQXR+dIDraopAEfu4wYVNY2tEPwk60stPWhvZMf4Foo5FakuQ7HFZoa8WceaWFervK2Ovg==}
@@ -497,6 +509,9 @@ packages:
       yaml:
         optional: true
 
+  web-serial-polyfill@1.0.15:
+    resolution: {integrity: sha512-usZN7kGRkEWr8DzRWxW+og55L1fHo4hNIwxCSCfWKpM+i0L+2AwzupMvkDFxnJNqUFOhLaD3PlgAOJxUOUrAoA==}
+
 snapshots:
 
   '@apidevtools/json-schema-ref-parser@11.9.3':
@@ -646,6 +661,8 @@ snapshots:
       undici-types: 7.16.0
 
   '@types/w3c-web-serial@1.0.8': {}
+
+  '@types/w3c-web-usb@1.0.14': {}
 
   '@types/webxr@0.5.24': {}
 
@@ -818,3 +835,5 @@ snapshots:
     optionalDependencies:
       '@types/node': 24.10.9
       fsevents: 2.3.3
+
+  web-serial-polyfill@1.0.15(patch_hash=de2e1d095816f71b772ecafcf08cdc2dbb5d84382713d66508c9785917fb88df): {}
