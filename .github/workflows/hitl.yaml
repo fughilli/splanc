@@ -119,8 +119,27 @@ jobs:
       # (HITL_WIFI_* only overrides it); the pool comes from HITL_SERVERS. -c opt
       # so the firmware build matches the firmware CI job.
       - name: Run HITL e2e
+        # FUG-84: serialize Bazel's repository-rule evaluation for this build.
+        # The flash-bundle realizes several Nix-provided toolchains (ESP32-C6 +
+        # Arduino core) through rules_nixpkgs *repository rules*, each of which
+        # shells out to `nix build`. CI installs Nix single-user (see "Install
+        # Nix" above — nix-quick-install-action, no daemon), so nothing
+        # serializes writes to the store's SQLite DB. Bazel 7's default async
+        # repo fetching (--experimental_worker_for_repo_fetching=auto) runs those
+        # repo rules concurrently, so multiple `nix build`s write
+        # /nix/var/nix/db/db.sqlite at once and one loses the lock:
+        #   error: SQLite database '/nix/var/nix/db/db.sqlite' is busy
+        # `=off` makes each fetch block its Skyframe thread, and
+        # --loading_phase_threads=1 pins that pool to one thread, so the Nix
+        # toolchains realize one at a time — a single writer, no contention. Only
+        # the (fast, no-compile) loading/fetch phase is serialized; the firmware
+        # *compile* still runs in parallel (execution phase, --jobs=3).
         run: |
           args=(--monitor-seconds "$MONITOR_SECONDS")
           if [ -n "$SERVER" ]; then args+=(--server "$SERVER"); fi
           if [ "$SKIP_FLASH" = "true" ]; then args+=(--skip-flash); fi
-          bazel run -c opt --disk_cache="$HOME/.cache/bazel-disk" //pi/hitl/harness:e2e -- "${args[@]}"
+          bazel run -c opt \
+            --experimental_worker_for_repo_fetching=off \
+            --loading_phase_threads=1 \
+            --disk_cache="$HOME/.cache/bazel-disk" \
+            //pi/hitl/harness:e2e -- "${args[@]}"
