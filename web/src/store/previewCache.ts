@@ -18,6 +18,14 @@
 export const PREVIEW_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 /** Hard cap on cached clips; oldest are evicted past this. */
 export const MAX_ENTRIES = 60;
+/**
+ * Bump when the render PIPELINE changes (not the effect source) — e.g. adding
+ * the virtual-tree path — so already-cached clips rendered by the old pipeline
+ * are invalidated even though their source (and thus source hash) is unchanged.
+ *   v1: flat 64×64 grid only.
+ *   v2: topology-aware effects render on a virtual tree.
+ */
+export const RENDER_VERSION = 2;
 
 export interface PreviewRecord {
   id: string;
@@ -38,6 +46,15 @@ export function hashSource(source: string): string {
 
 export function isExpired(createdAt: number, now: number, ttlMs = PREVIEW_TTL_MS): boolean {
   return now - createdAt >= ttlMs;
+}
+
+/**
+ * The stored cache key: the source hash tagged with the render-pipeline version.
+ * A clip is only reused when BOTH the source AND the pipeline that produced it
+ * match, so bumping {@link RENDER_VERSION} re-renders every effect.
+ */
+export function cacheKey(source: string): string {
+  return `${RENDER_VERSION}:${hashSource(source)}`;
 }
 
 /**
@@ -140,7 +157,7 @@ class PreviewCache {
         reqP(s.get(id) as IDBRequest<PreviewRecord | undefined>),
       );
       if (!rec) return null;
-      if (rec.hash !== hashSource(source)) return null;
+      if (rec.hash !== cacheKey(source)) return null; // source or pipeline changed
       if (isExpired(rec.createdAt, Date.now())) return null;
       return rec.blob;
     } catch {
@@ -149,7 +166,7 @@ class PreviewCache {
   }
 
   async put(id: string, source: string, blob: Blob): Promise<void> {
-    const rec: PreviewRecord = { id, hash: hashSource(source), blob, createdAt: Date.now() };
+    const rec: PreviewRecord = { id, hash: cacheKey(source), blob, createdAt: Date.now() };
     try {
       await tx("readwrite", (s) => s.put(rec));
     } catch {
