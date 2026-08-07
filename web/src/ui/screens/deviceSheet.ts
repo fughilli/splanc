@@ -5,9 +5,10 @@
  * uses — a device answers `welcome` with its MAC + name), and lets the user
  * connect, re-discover over Bluetooth when unreachable, rename, and forget.
  *
- * Long-pressing (or right-clicking) a row opens a detail popup with the recorded
- * LAN address, MAC, Bluetooth name, and the editable display name (which is
- * reflected to the device — and its Bluetooth advertisement — on connect).
+ * Each row's 3-dots (⋮) menu opens a detail popup with the recorded LAN address,
+ * MAC, Bluetooth name, the editable display name (reflected to the device — and
+ * its Bluetooth advertisement — on connect), and Forget. Delete lives in there,
+ * not as a one-tap top-level button, so it can't be hit by accident.
  */
 
 import { Button, IconButton, Sheet, toast } from "../kit";
@@ -170,31 +171,12 @@ function deviceRow(
       }),
     );
   }
-  btns.append(IconButton("trash", { title: "Forget", onClick: () => deviceStore.forget(dev.id) }));
+  // The 3-dots menu opens the device config (rename, folder, color correction,
+  // and Forget). Delete lives in there rather than as a top-level trash button,
+  // so it isn't a one-tap action next to Connect.
+  btns.append(IconButton("more", { title: "Options", onClick: () => openDeviceDetail(dev) }));
 
   row.append(dot, info, btns);
-
-  // Long-press (or right-click) opens the device detail popup. Ignore presses
-  // that start on a button so Connect/Forget still work normally.
-  let pressTimer: number | null = null;
-  const startPress = (ev: PointerEvent): void => {
-    if ((ev.target as HTMLElement).closest(".device-btns")) return;
-    pressTimer = window.setTimeout(() => openDeviceDetail(dev), 500);
-  };
-  const cancelPress = (): void => {
-    if (pressTimer !== null) {
-      clearTimeout(pressTimer);
-      pressTimer = null;
-    }
-  };
-  row.addEventListener("pointerdown", startPress);
-  row.addEventListener("pointerup", cancelPress);
-  row.addEventListener("pointermove", cancelPress);
-  row.addEventListener("pointerleave", cancelPress);
-  row.addEventListener("contextmenu", (ev) => {
-    ev.preventDefault();
-    openDeviceDetail(dev);
-  });
   return row;
 }
 
