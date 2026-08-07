@@ -183,8 +183,23 @@ jobs:
           key: bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock') }}
           restore-keys: bazel-disk-${{ runner.os }}-
 
-      - name: Build firmware image (esp32c6)
-        run: bazel build -c opt --disk_cache="$HOME/.cache/bazel-disk" //firmware/player_app:esp32c6
+      # Build the image AND the self-describing flash bundle (flash.json + bins).
+      # The bundle is the same-revision firmware the webapp flashes over USB
+      # (FUG-60); build-site downloads this artifact and stages it under
+      # /firmware/, so the heavy ESP toolchain lives only in this job.
+      - name: Build firmware image + flash bundle (esp32c6)
+        run: |
+          bazel build -c opt --disk_cache="$HOME/.cache/bazel-disk" \
+            //firmware/player_app:esp32c6 \
+            //firmware/player_app:esp32c6_flashbundle
+
+      - name: Upload flash bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: esp32c6-flashbundle
+          path: bazel-bin/firmware/player_app/esp32c6_flashbundle.tar
+          retention-days: 3
+          if-no-files-found: error
 
   lint:
     if: github.event.action != 'closed'
@@ -239,7 +254,9 @@ jobs:
   # Gated on the tests passing.
   build-site:
     if: github.event.action != 'closed'
-    needs: test
+    # Also needs `firmware`: the site bundles that job's same-revision flash
+    # bundle under /firmware/ for in-browser USB flashing (FUG-60).
+    needs: [test, firmware]
     runs-on: ubuntu-latest
     steps:
       - name: Setup repository
@@ -249,6 +266,13 @@ jobs:
       # above (FUG-76). This job also builds the wasm bundles.
       - name: Free runner disk space
         uses: justinthelaw/maximize-github-runner-space@v0.10.0
+
+      # The esp32c6 flash bundle built by the `firmware` job (same revision).
+      - name: Download flash bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: esp32c6-flashbundle
+          path: ${{ github.workspace }}/_flashbundle
 
       # Same caching rationale as the `test` job: cache /nix so the pinned
       # nixpkgs snapshot + build tools aren't re-realized every run. This job is
@@ -290,6 +314,10 @@ jobs:
       # Materialize the publish tree into ./_site (bundle at /, wasm bundles at
       # /solver /pulse /fx-compiler /fx-vm — same layout Cloudflare/the Pi serve).
       - name: Stage site
+        # LEDMAPPER_FLASHBUNDLE points stage_site.lib.sh at the downloaded flash
+        # bundle so it's staged under /firmware/ (FUG-60).
+        env:
+          LEDMAPPER_FLASHBUNDLE: ${{ github.workspace }}/_flashbundle/esp32c6_flashbundle.tar
         run: bazel run //web:stage_site --disk_cache="$HOME/.cache/bazel-disk" -- "$GITHUB_WORKSPACE/_site"
 
       - name: Upload site artifact
@@ -395,6 +423,14 @@ jobs:
           name: site
           path: _site
 
+      # The Cloudflare deploy re-stages the site from source (below), so it needs
+      # the same-revision flash bundle to bundle firmware under /firmware/ too.
+      - name: Download flash bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: esp32c6-flashbundle
+          path: ${{ github.workspace }}/_flashbundle
+
       # Publish to the gh-pages root. clean-exclude keeps the open PRs' previews
       # (pr-preview/) from being wiped by the root deploy.
       - name: Deploy to GitHub Pages (main site)
@@ -460,4 +496,6 @@ jobs:
       # GitHub Pages deploy above) until the Cloudflare secrets are configured.
       - name: Deploy to Cloudflare Pages (production)
         if: env.CLOUDFLARE_API_TOKEN != ''
+        env:
+          LEDMAPPER_FLASHBUNDLE: ${{ github.workspace }}/_flashbundle/esp32c6_flashbundle.tar
         run: bazel run //web:deploy_cloudflare --disk_cache="$HOME/.cache/bazel-disk"

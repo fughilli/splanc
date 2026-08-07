@@ -49,6 +49,7 @@ def create_app(
     pulse_dir: Optional[Path] = None,
     fx_compiler_dir: Optional[Path] = None,
     fx_vm_dir: Optional[Path] = None,
+    firmware_dir: Optional[Path] = None,
     default_led_count: int = 1024,
     bit_period_ms: float = DEFAULT_BIT_PERIOD_MS,
     symbols: int = 2,
@@ -67,7 +68,9 @@ def create_app(
     effects-simulator workspace (effects.html). ``fx_compiler_dir`` and
     ``fx_vm_dir`` serve the wasm effects compiler (//fx_compiler:fx_compiler_web)
     at /fx-compiler/ and the preview VM (//firmware/fx_vm:fx_vm_web) at /fx-vm/
-    for the effects-editor workspace (editor.html).
+    for the effects-editor workspace (editor.html). ``firmware_dir`` serves the
+    bundled firmware tree (tools/stage_firmware output) at /firmware/ for the
+    webapp's in-browser USB flasher (FUG-60).
     """
     maps = MapStore(maps_dir)
     if context is None:
@@ -266,6 +269,11 @@ def create_app(
         app.mount("/fx-compiler", StaticFiles(directory=str(fx_compiler_dir)), name="fx-compiler")
     if fx_vm_dir is not None and Path(fx_vm_dir).is_dir():
         app.mount("/fx-vm", StaticFiles(directory=str(fx_vm_dir)), name="fx-vm")
+
+    # Bundled firmware image(s) for in-browser USB flashing (FUG-60). Mounted
+    # before "/" so the app can fetch /firmware/manifest.json + the flash bins.
+    if firmware_dir is not None and Path(firmware_dir).is_dir():
+        app.mount("/firmware", StaticFiles(directory=str(firmware_dir)), name="firmware")
 
     # Static web app last, so the API routes above take precedence. Falls back
     # to a Phase-0 hello page when no built web app is present.

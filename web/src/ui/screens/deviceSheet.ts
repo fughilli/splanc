@@ -110,6 +110,12 @@ function render(): HTMLElement {
       title: "Enter address manually",
       onClick: () => openAddDevice("manual"),
     }),
+    // Flash a new/blank board over USB (WebSerial). The whole flasher — esptool-js
+    // and the USB code — is loaded lazily so it never weighs on the main bundle.
+    IconButton("chip", {
+      title: "Flash firmware (USB)",
+      onClick: () => void import("./flashSheet").then((m) => m.openFlashSheet()),
+    }),
   );
   addSection.append(addLabel, addRow);
   wrap.append(addSection);

@@ -40,7 +40,8 @@ export type IconName =
   | "grid"
   | "triad"
   | "camera-path"
-  | "midi";
+  | "midi"
+  | "chip";
 
 // -- shared fragments for the device-transfer glyphs (24x24, top→bottom layout:
 //    content over a small device pentagon, joined by a direction arrow) --------
@@ -104,6 +105,8 @@ const PATHS: Record<IconName, string> = {
   "camera-path": `<path d="M4.5 18C8 7 16 7 19.5 18"/><circle cx="4.5" cy="18" r="1.6"/><circle cx="19.5" cy="18" r="1.6"/>`,
   // MIDI: a DIN-5 connector — outer ring with five pins in the standard arc.
   midi: `<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="6.2" r="1"/><circle cx="6.7" cy="9.4" r="1"/><circle cx="17.3" cy="9.4" r="1"/><circle cx="8.4" cy="15.4" r="1"/><circle cx="15.6" cy="15.4" r="1"/>`,
+  // Microcontroller: a chip die with pins on all four sides (flash/commission).
+  chip: `<rect x="8" y="8" width="8" height="8" rx="1"/><path d="M10 8V5M14 8V5M10 19v-3M14 19v-3M8 10H5M8 14H5M19 10h-3M19 14h-3"/>`,
 };
 
 let installed = false;

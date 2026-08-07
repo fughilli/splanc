@@ -26,6 +26,20 @@ stage_site() {
   mkdir -p "$out/pulse" && cp -RL firmware/pulse/pulse_web/. "$out/pulse/"
   mkdir -p "$out/fx-compiler" && cp -RL fx_compiler/fx_compiler_web/. "$out/fx-compiler/"
   mkdir -p "$out/fx-vm" && cp -RL firmware/fx_vm/fx_vm_web/. "$out/fx-vm/"
+  # Firmware image(s) for in-browser USB flashing (FUG-60), staged at /firmware/
+  # (the webapp fetches /firmware/manifest.json). The flash bundle is NOT built
+  # here — it compiles the esp32c6 image from source. CI's firmware job builds it
+  # and hands the tar path in $LEDMAPPER_FLASHBUNDLE; when it's absent (a plain
+  # dev/site build) we skip firmware and the app reports "no bundled firmware".
+  if [[ -n "${LEDMAPPER_FLASHBUNDLE:-}" && -f "${LEDMAPPER_FLASHBUNDLE}" ]]; then
+    local rev="${LEDMAPPER_FLASHBUNDLE_REV:-}"
+    if [[ -z "$rev" && -n "${BUILD_WORKSPACE_DIRECTORY:-}" ]]; then
+      rev="$(git -C "$BUILD_WORKSPACE_DIRECTORY" rev-parse --short HEAD 2>/dev/null || true)"
+    fi
+    tools/stage_firmware --out "$out/firmware" \
+      ${rev:+--revision "$rev"} \
+      --image "esp32c6=${LEDMAPPER_FLASHBUNDLE}"
+  fi
   # Bazel outputs arrive read-only; the staging copy is ours to prune.
   chmod -R u+w "$out"
   # Dev-only artifacts that have no business on a CDN.

@@ -20,6 +20,15 @@ py_binary(
     visibility = ["//visibility:public"],
 )
 
+# Stage flash bundle(s) into the web publish tree (<out>/<id>/ + manifest.json)
+# so the webapp can flash boards over USB (FUG-60). Stdlib only; invoked from
+# web/stage_site.lib.sh and web/serve.sh with the flashbundle tar in runfiles.
+py_binary(
+    name = "stage_firmware",
+    srcs = ["stage_firmware.py"],
+    visibility = ["//visibility:public"],
+)
+
 # Standalone CV trace sink — receives ?trace= dumps from the capture page,
 # writes readable JSONL + PNG thumbnails, and hosts a pairing QR (segno).
 py_binary(
