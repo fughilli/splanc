@@ -238,11 +238,22 @@ function deviceRow(
 
   const btns = document.createElement("div");
   btns.className = "device-btns";
-  if (isActive) {
+  if (connected) {
     btns.append(
       IconButton("plug-off", {
         title: "Disconnect",
         className: "device-disconnect",
+        onClick: () => appState.disconnect(),
+      }),
+    );
+  } else if (isActive) {
+    // Active but the handshake isn't done yet (connecting / awaiting cert trust):
+    // a gray, pulsing plug so it reads as in-progress rather than connected. Tap
+    // cancels the attempt.
+    btns.append(
+      IconButton("plug", {
+        title: "Connecting… (tap to cancel)",
+        className: "device-connecting",
         onClick: () => appState.disconnect(),
       }),
     );

@@ -2015,6 +2015,66 @@ body.is-locked {
   background: var(--err);
   filter: brightness(1.12);
 }
+/* Connecting: gray plug that breathes, with a slash "wave" sweeping across —
+   reads as in-progress, before it settles to the red disconnect. */
+.k-iconbtn.device-connecting {
+  background: var(--surface-2);
+  color: var(--text-dim);
+  position: relative;
+  overflow: hidden;
+  cursor: progress;
+}
+.k-iconbtn.device-connecting:hover {
+  background: var(--surface-2);
+}
+.k-iconbtn.device-connecting svg {
+  animation: plug-pulse 1.2s ease-in-out infinite;
+}
+.k-iconbtn.device-connecting::after {
+  content: "";
+  position: absolute;
+  top: -20%;
+  left: -30%;
+  width: 2px;
+  height: 140%;
+  background: var(--text);
+  transform: rotate(-45deg);
+  animation: plug-slash-wave 1.2s ease-in-out infinite;
+}
+@keyframes plug-pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+/* Static -45° rotation; sweep horizontally by animating `left` so the slash
+   travels straight across (translateX would move along the rotated axis). */
+@keyframes plug-slash-wave {
+  0% {
+    left: -30%;
+    opacity: 0;
+  }
+  35%,
+  65% {
+    opacity: 0.55;
+  }
+  100% {
+    left: 130%;
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .k-iconbtn.device-connecting svg {
+    animation: none;
+    opacity: 0.6;
+  }
+  .k-iconbtn.device-connecting::after {
+    display: none;
+  }
+}
 
 /* Pull-to-refresh indicator: collapsed to 0 height, grown as the list is pulled
    down (see attachPullToRefresh). */
