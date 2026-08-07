@@ -1567,11 +1567,16 @@ static void provisioning_poll() {
 static void enter_onboarding() {
   if (softap_up) return;
   WiFi.mode(WIFI_AP_STA);
-  WiFi.softAP(kApSsid, kApPassword);
+  // Mirror the initial bring-up (setup): derived-name AP SSID + hostnames + mDNS
+  // (FUG-83), so a re-provisioning surface looks identical to a fresh boot's.
+  WiFi.setHostname(g_hostname);
+  WiFi.softAPsetHostname(g_hostname);
+  WiFi.softAP(g_ap_ssid, kApPassword);
   softap_up = true;
+  mdns_begin_or_update();
   improv_ble_begin(g_device_name, IMPROV_STATE_AUTHORIZED);
-  Log().printf("[player] LAN lost; re-onboarding (soft-AP + BLE up), heap=%u\n",
-               (unsigned)esp_get_free_heap_size());
+  Log().printf("[player] LAN lost; re-onboarding (soft-AP \"%s\" + BLE up), heap=%u\n",
+               g_ap_ssid, (unsigned)esp_get_free_heap_size());
 }
 
 void loop() {
