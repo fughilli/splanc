@@ -6,6 +6,11 @@
 
 import { ActionGrid, Button, Chip, EmptyState, IconButton, Sheet, toast, icon } from "../kit";
 import { mapStore, renderThumbnail, type StoredMapSummary } from "../../store/mapStore";
+import {
+  decodeLibraryBundle,
+  looksLikeLibraryBundle,
+  type ConflictMode,
+} from "../../store/mapBundle";
 import { appendGrouped, openFolderPicker } from "./folders";
 import { appState } from "../app/state";
 import { prefs } from "../../store/prefs";
@@ -20,6 +25,24 @@ export function MapBrowserScreen(router: Router): Screen {
   let search = "";
   let activeTags: string[] = [];
   let sort: Sort = "updated";
+
+  // -- library actions (import / export-all) — reachable even when empty.
+  const actions = document.createElement("div");
+  actions.className = "maps-actions";
+  actions.append(
+    Button({
+      label: "Import",
+      icon: "upload",
+      variant: "quiet",
+      onClick: () => void importFromFile(),
+    }),
+    Button({
+      label: "Export library",
+      icon: "download",
+      variant: "quiet",
+      onClick: () => void exportLibrary(),
+    }),
+  );
 
   // -- search + sort controls
   const searchWrap = document.createElement("div");
@@ -107,7 +130,97 @@ export function MapBrowserScreen(router: Router): Screen {
     input.select();
   }
 
-  el.append(searchWrap, tagRow, listEl);
+  // Prompt for a file, then route it: a multi-map library bundle opens the
+  // conflict-mode chooser; a single-map .binpb imports straight into the
+  // library (same store path as a device pull) and opens.
+  async function importFromFile(): Promise<void> {
+    const file = await pickFile(".binpb,.mapbundle,application/octet-stream");
+    if (!file) return;
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      if (looksLikeLibraryBundle(bytes)) {
+        openImportSheet(bytes);
+        return;
+      }
+      const id = await mapStore.importBundle(bytes, { source: "import" });
+      toast("Map imported");
+      await refresh();
+      router.navigate(`/map/${id}`);
+    } catch (e) {
+      toast(`Import failed: ${e instanceof Error ? e.message : e}`, { error: true });
+    }
+  }
+
+  // Ask how same-name collisions should be handled, then import the bundle.
+  function openImportSheet(bytes: Uint8Array): void {
+    let count = 0;
+    try {
+      count = decodeLibraryBundle(bytes).length;
+    } catch (e) {
+      toast(`Import failed: ${e instanceof Error ? e.message : e}`, { error: true });
+      return;
+    }
+    const sheet = Sheet(`Import ${count} map${count === 1 ? "" : "s"}`);
+    const run = async (mode: ConflictMode, folder?: string): Promise<void> => {
+      sheet.close();
+      try {
+        const opts = folder === undefined ? { mode } : { mode, folder };
+        const r = await mapStore.importLibraryBundle(bytes, opts);
+        const bits = [];
+        if (r.imported) bits.push(`${r.imported} added`);
+        if (r.overwritten) bits.push(`${r.overwritten} overwritten`);
+        toast(bits.length ? `Imported (${bits.join(", ")})` : "Nothing to import");
+        await refresh();
+      } catch (e) {
+        toast(`Import failed: ${e instanceof Error ? e.message : e}`, { error: true });
+      }
+    };
+    sheet.body.append(
+      ActionGrid([
+        {
+          label: "Overwrite same-name",
+          icon: "download",
+          onClick: () => void run("overwrite"),
+        },
+        {
+          label: "Keep both (rename)",
+          icon: "map",
+          onClick: () => void run("rename"),
+        },
+        {
+          label: "Into new folder…",
+          icon: "folder",
+          onClick: () => {
+            sheet.close();
+            void mapStore.folders().then((existing) =>
+              openFolderPicker({
+                title: "Import into folder",
+                current: "",
+                existing,
+                onPick: (folder) => void run("folder", folder),
+              }),
+            );
+          },
+        },
+      ]),
+    );
+  }
+
+  async function exportLibrary(): Promise<void> {
+    try {
+      const all = await mapStore.list();
+      if (all.length === 0) {
+        toast("No maps to export", { error: true });
+        return;
+      }
+      const bytes = await mapStore.exportLibraryBundle();
+      downloadBytes(bytes, "maps.mapbundle");
+    } catch (e) {
+      toast(`Export failed: ${e instanceof Error ? e.message : e}`, { error: true });
+    }
+  }
+
+  el.append(actions, searchWrap, tagRow, listEl);
 
   async function refresh(): Promise<void> {
     const all = await mapStore.list();
@@ -294,6 +407,32 @@ async function exportMap(m: StoredMapSummary): Promise<void> {
   } catch (e) {
     toast(`Export failed: ${e instanceof Error ? e.message : e}`, { error: true });
   }
+}
+
+/** Open the OS file picker and resolve with the chosen file (or null). */
+function pickFile(accept: string): Promise<File | null> {
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = accept;
+    input.style.display = "none";
+    let settled = false;
+    const done = (f: File | null): void => {
+      if (settled) return;
+      settled = true;
+      input.remove();
+      resolve(f);
+    };
+    input.addEventListener("change", () => done(input.files?.[0] ?? null));
+    // Cancelling the dialog fires no 'change'; window regains focus instead.
+    window.addEventListener(
+      "focus",
+      () => setTimeout(() => done(input.files?.[0] ?? null), 300),
+      { once: true },
+    );
+    document.body.append(input);
+    input.click();
+  });
 }
 
 export function downloadBytes(bytes: Uint8Array, name: string): void {
