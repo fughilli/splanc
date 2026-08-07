@@ -35,14 +35,6 @@ on:
         description: 'Target a specific rig base URL (else pick a free one from HITL_SERVERS)'
         required: false
         default: ''
-      skip_flash:
-        description: 'Skip flashing (test against whatever is already on the board)'
-        type: boolean
-        default: false
-      monitor_seconds:
-        description: 'Seconds of serial to capture after flashing'
-        required: false
-        default: '12'
 # One rig, one reservation at a time: serialize HITL runs so concurrent PRs
 # queue instead of colliding on the bench.
 concurrency:
@@ -62,10 +54,8 @@ jobs:
       HITL_SERVERS: ${{ vars.HITL_SERVERS }}
       HITL_WIFI_SSID: ${{ secrets.HITL_WIFI_SSID }}
       HITL_WIFI_PASS: ${{ secrets.HITL_WIFI_PASS }}
-      # Inputs only exist on workflow_dispatch; fall back for pull_request.
+      # `server` input only exists on workflow_dispatch; empty on pull_request.
       SERVER: ${{ github.event.inputs.server }}
-      SKIP_FLASH: ${{ github.event.inputs.skip_flash }}
-      MONITOR_SECONDS: ${{ github.event.inputs.monitor_seconds || '12' }}
     steps:
       - name: Setup repository
         uses: actions/checkout@v4
@@ -115,15 +105,20 @@ jobs:
           key: bazel-disk-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock') }}
           restore-keys: bazel-disk-${{ runner.os }}-
 
-      # Run the whole on-hardware harness suite. Each target reserves a free rig
-      # from the pool, flashes it (the flash-bundle rides in each binary's
-      # runfiles — no --bundle needed), ImprovBLE-provisions onto the rig's own AP
-      # (HITL_WIFI_* only overrides it), and exercises its slice over the player
-      # WebSocket. Every target accepts --server; e2e also takes the flash-monitor
-      # window + --skip-flash debug knobs. Runs are sequential (the concurrency
-      # group already serializes the bench) so a failure names the culprit target.
+      # Discover the on-hardware suite the same way the unit lane once did — query
+      # the `hitl` tag over tests(//...) — and `bazel test` the set. The targets
+      # are py_tests tagged ["manual","hitl"] (//pi/hitl/harness), each of which
+      # reserves a free rig from the pool, flashes it (the flash-bundle rides in
+      # its runfiles), ImprovBLE-provisions onto the rig's own AP (HITL_WIFI_* only
+      # overrides it), and exercises its slice over the player WebSocket.
+      #   - --test_output=streamed runs them one at a time (the shared bench can't
+      #     take parallel reservations) with live output — best for watching a
+      #     flash — and surfaces each target's log.
+      #   - Tests get a hermetic env, so forward the HITL knobs with --test_env;
+      #     --test_arg passes a pinned --server (all targets accept it) through.
+      #   - timeout=eternal on the targets covers the multi-minute flash+provision.
       # -c opt so the firmware build matches the firmware CI job.
-      - name: Run HITL harness suite
+      - name: Discover and run the HITL test suite
         # FUG-84: serialize Bazel's repository-rule evaluation for this build.
         # The flash-bundle realizes several Nix-provided toolchains (ESP32-C6 +
         # Arduino core) through rules_nixpkgs *repository rules*, each of which
@@ -140,23 +135,19 @@ jobs:
         # the (fast, no-compile) loading/fetch phase is serialized; the firmware
         # *compile* still runs in parallel (execution phase, --jobs=3).
         run: |
-          bflags=(-c opt
-            --experimental_worker_for_repo_fetching=off
-            --loading_phase_threads=1
-            --disk_cache="$HOME/.cache/bazel-disk")
+          targets=$(bazel query 'attr(tags, "\bhitl\b", tests(//...))')
+          echo "collected HITL tests:"; echo "$targets"
+          if [ -z "$targets" ]; then echo "no HITL-tagged tests found"; exit 1; fi
           server_arg=()
-          if [ -n "$SERVER" ]; then server_arg=(--server "$SERVER"); fi
-
-          # e2e keeps its debug knobs (serial-capture window; skip-flash).
-          e2e_args=(--monitor-seconds "$MONITOR_SECONDS" "${server_arg[@]}")
-          if [ "$SKIP_FLASH" = "true" ]; then e2e_args+=(--skip-flash); fi
-
-          echo "::group::e2e"
-          bazel run "${bflags[@]}" //pi/hitl/harness:e2e -- "${e2e_args[@]}"
-          echo "::endgroup::"
-
-          for t in map_upload mapping_trigger fx_bench rename_wss; do
-            echo "::group::$t"
-            bazel run "${bflags[@]}" "//pi/hitl/harness:$t" -- "${server_arg[@]}"
-            echo "::endgroup::"
-          done
+          if [ -n "$SERVER" ]; then server_arg=("--test_arg=--server=$SERVER"); fi
+          bazel test $targets \
+            -c opt \
+            --experimental_worker_for_repo_fetching=off \
+            --loading_phase_threads=1 \
+            --disk_cache="$HOME/.cache/bazel-disk" \
+            --test_output=streamed \
+            --test_env=HITL_SERVERS \
+            --test_env=HITL_WIFI_SSID \
+            --test_env=HITL_WIFI_PASS \
+            --test_env=HITL_OWNER \
+            "${server_arg[@]}"
