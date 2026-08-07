@@ -1978,6 +1978,31 @@ body.is-locked {
   word-break: break-all;
   text-align: right;
 }
+/* Inline-editable display name: value/label with a pencil, or input with a
+   floppy, sharing one row. */
+.device-name-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.device-name-val {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.device-name-input {
+  flex: 1;
+  min-width: 0;
+}
+.device-detail-divider {
+  width: 100%;
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: var(--sp-1) 0;
+}
 .device-info {
   flex: 1;
   min-width: 0;

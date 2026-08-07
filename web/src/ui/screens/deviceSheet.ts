@@ -11,7 +11,7 @@
  * not as a one-tap top-level button, so it can't be hit by accident.
  */
 
-import { Button, IconButton, Sheet, toast } from "../kit";
+import { ActionGrid, Button, IconButton, Sheet, toast } from "../kit";
 import { appState } from "../app/state";
 import { deviceProber } from "../../net/deviceProber";
 import { deviceStore, deviceHost, type KnownDevice } from "../../store/deviceStore";
@@ -310,22 +310,14 @@ function connectedMeta(status = appState.status): string {
   return status.text;
 }
 
-/** Detail popup: recorded LAN address, MAC, Bluetooth name + editable display
- * name (reflected to the device on connect). */
+/** Detail popup: an inline-editable display name, quick actions, and the recorded
+ * LAN address / MAC / folder. */
 function openDeviceDetail(dev: KnownDevice): void {
   const cur = deviceStore.get(dev.id) ?? dev;
   const sheet = Sheet("Device");
   sheet.body.className = "device-detail";
-
-  const nameLabel = document.createElement("label");
-  nameLabel.className = "device-detail-field";
-  const nameCap = document.createElement("span");
-  nameCap.className = "device-detail-cap";
-  nameCap.textContent = "Display name (also the Bluetooth name)";
-  const input = document.createElement("input");
-  input.className = "sheet-input";
-  input.value = cur.label;
-  nameLabel.append(nameCap, input);
+  const isActive = deviceStore.activeId() === dev.id && (appState.client?.isConnected ?? false);
+  let currentLabel = cur.label;
 
   const rowFor = (cap: string, value: string): HTMLElement => {
     const r = document.createElement("div");
@@ -340,77 +332,118 @@ function openDeviceDetail(dev: KnownDevice): void {
     return r;
   };
 
-  const isActive = deviceStore.activeId() === dev.id && (appState.client?.isConnected ?? false);
-  const save = Button({
-    label: "Save name",
-    block: true,
-    onClick: () => {
+  // -- display name: a label with a pencil; tapping swaps in an input + floppy.
+  const nameField = document.createElement("div");
+  nameField.className = "device-detail-field";
+  const nameCap = document.createElement("span");
+  nameCap.className = "device-detail-cap";
+  nameCap.textContent = "Display name (also the Bluetooth name)";
+  const nameRow = document.createElement("div");
+  nameRow.className = "device-name-row";
+  nameField.append(nameCap, nameRow);
+
+  const commit = (name: string): void => {
+    // Optimistic + queued for next connect; push live if connected now.
+    deviceStore.rename(dev.id, name);
+    if (isActive && appState.client) {
+      void appState.client
+        .setDeviceName(name)
+        .then((w) => {
+          deviceStore.applyWelcome(dev.id, { mac: w.mac, deviceName: w.deviceName });
+          deviceStore.takePending(dev.id);
+          toast("Device renamed");
+        })
+        .catch(() => toast("Rename will apply on next connection"));
+    } else {
+      toast("Name saved — applies on next connection");
+    }
+  };
+
+  const showLabel = (): void => {
+    const val = document.createElement("span");
+    val.className = "device-name-val";
+    val.textContent = currentLabel;
+    const edit = IconButton("edit", { title: "Rename", onClick: () => showEditor() });
+    nameRow.replaceChildren(val, edit);
+  };
+
+  const showEditor = (): void => {
+    const input = document.createElement("input");
+    input.className = "sheet-input device-name-input";
+    input.value = currentLabel;
+    const saveBtn = IconButton("save", { title: "Save", onClick: () => finish(true) });
+    // Keep the input focused when the floppy is tapped, so its blur (= tap away
+    // = cancel) doesn't fire first and swallow the save.
+    saveBtn.addEventListener("pointerdown", (e) => e.preventDefault());
+    let done = false;
+    const finish = (save: boolean): void => {
+      if (done) return;
+      done = true;
       const name = input.value.trim();
-      if (!name || name === cur.label) {
-        sheet.close();
-        return;
+      if (save && name && name !== currentLabel) {
+        currentLabel = name;
+        commit(name);
       }
-      // Optimistic + queued for next connect; push live if connected now.
-      deviceStore.rename(dev.id, name);
-      if (isActive && appState.client) {
-        void appState.client
-          .setDeviceName(name)
-          .then((w) => {
-            deviceStore.applyWelcome(dev.id, { mac: w.mac, deviceName: w.deviceName });
-            deviceStore.takePending(dev.id);
-            toast("Device renamed");
-          })
-          .catch(() => toast("Rename will apply on next connection"));
-      } else {
-        toast("Name saved — applies on next connection");
+      showLabel();
+    };
+    input.addEventListener("blur", () => finish(false)); // tap away cancels
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        finish(true);
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        finish(false);
       }
-      sheet.close();
-    },
-  });
+    });
+    nameRow.replaceChildren(input, saveBtn);
+    input.focus();
+    input.select();
+  };
+
+  showLabel();
+
+  const divider = document.createElement("hr");
+  divider.className = "device-detail-divider";
 
   sheet.body.append(
-    nameLabel,
+    nameField,
+    ActionGrid([
+      {
+        label: "Color correction",
+        icon: "sparkles",
+        onClick: () => {
+          sheet.close();
+          location.hash = "#/settings/color-correction";
+        },
+      },
+      {
+        label: "Move to folder",
+        icon: "folder",
+        onClick: () => {
+          sheet.close();
+          openFolderPicker({
+            current: cur.folder ?? "",
+            existing: deviceStore.folders(),
+            onPick: (folder) => deviceStore.setFolder(dev.id, folder),
+          });
+        },
+      },
+      {
+        label: "Forget",
+        icon: "trash",
+        variant: "danger",
+        onClick: () => {
+          deviceStore.forget(dev.id);
+          sheet.close();
+        },
+      },
+    ]),
+    divider,
     rowFor("LAN address", deviceHost(cur)),
     rowFor("MAC address", cur.bleMac || "unknown (connect once)"),
-    rowFor("Bluetooth name", cur.label),
     rowFor("Folder", cur.folder || "Ungrouped"),
-    save,
-    Button({
-      label: "Color correction…",
-      icon: "sparkles",
-      variant: "quiet",
-      block: true,
-      onClick: () => {
-        sheet.close();
-        location.hash = "#/settings/color-correction";
-      },
-    }),
-    Button({
-      label: "Move to folder…",
-      icon: "folder",
-      variant: "quiet",
-      block: true,
-      onClick: () => {
-        sheet.close();
-        openFolderPicker({
-          current: cur.folder ?? "",
-          existing: deviceStore.folders(),
-          onPick: (folder) => deviceStore.setFolder(dev.id, folder),
-        });
-      },
-    }),
-    Button({
-      label: "Forget device",
-      icon: "trash",
-      variant: "danger",
-      block: true,
-      onClick: () => {
-        deviceStore.forget(dev.id);
-        sheet.close();
-      },
-    }),
   );
-  input.focus();
 }
 
 /**

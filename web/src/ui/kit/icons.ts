@@ -23,6 +23,7 @@ export type IconName =
   | "tag"
   | "trash"
   | "edit"
+  | "save"
   | "back"
   | "more"
   | "settings"
@@ -83,6 +84,8 @@ const PATHS: Record<IconName, string> = {
   tag: `<path d="M4 4h7l9 9-7 7-9-9z"/><circle cx="8.5" cy="8.5" r="1.2"/>`,
   trash: `<path d="M4 7h16"/><path d="M9 7V5h6v2"/><path d="M6 7l1 13h10l1-13"/>`,
   edit: `<path d="M4 20h4l10-10-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>`,
+  // Floppy disk (save): notched body, bottom label, top shutter.
+  save: `<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/>`,
   back: `<path d="M15 5l-7 7 7 7"/>`,
   more: `<circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/>`,
   settings: `<circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/>`,
