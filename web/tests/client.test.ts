@@ -115,6 +115,40 @@ test("connect sends hello and resolves on welcome", async () => {
   assert.ok(client.isConnected);
 });
 
+test("a re-welcome (set_device_name reply) resolves the request, doesn't re-connect", async () => {
+  // After the firmware stopped restarting wss on rename, the socket stays up and
+  // the device echoes a fresh `welcome` as the set_device_name REPLY. That must
+  // resolve the pending request WITHOUT re-firing onConnected (which drives the
+  // pill to "syncing clock…" with no follow-up back to "connected").
+  const { client, sockets } = makeClient();
+  let connectedCount = 0;
+  client.events = { onConnected: () => void connectedCount++ };
+
+  const p = client.connect();
+  const s = sockets[0]!;
+  s.open();
+  s.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS, solverBenchMs: null });
+  await p;
+  assert.equal(connectedCount, 1);
+  assert.ok(client.isConnected);
+
+  // Rename over the live socket; the device replies with a fresh welcome.
+  const renameP = client.setDeviceName("LilBuddy");
+  assert.equal(s.lastSent().type, "set_device_name");
+  s.receive({
+    type: "welcome",
+    sessionId: "s-1",
+    codeParams: CODE_PARAMS,
+    solverBenchMs: null,
+    deviceName: "LilBuddy",
+    mac: "8c:fd:49:12:21:ce",
+  });
+  const w = (await renameP) as unknown as { deviceName?: string };
+  assert.equal(w.deviceName, "LilBuddy", "setDeviceName resolves with the reply welcome");
+  assert.equal(connectedCount, 1, "a re-welcome must not re-fire onConnected");
+  assert.ok(client.isConnected, "still connected after the rename");
+});
+
 test("a socket that never opens times out, reports attempts, and retries", async () => {
   const { client, sockets, scheduled } = makeClient();
   const attempts: number[] = [];

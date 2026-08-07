@@ -252,6 +252,17 @@ export class LedMapperClient {
         if (msg === null) return;
         if (msg.type === "welcome") {
           this.welcome_ = msg;
+          if (welcomed) {
+            // A re-welcome on an already-connected socket: the device echoes a
+            // fresh welcome (updated identity) as the REPLY to set_device_name /
+            // set_color_correction. Resolve that pending request, but do NOT
+            // re-run the connect handshake — onConnected drives the UI to
+            // "syncing clock…", and nothing follows up to put it back to
+            // "connected" (that only happens in the initial connect() chain), so
+            // firing it again would strand the pill mid-sync after a rename.
+            this.dispatch(msg);
+            return;
+          }
           this.backoffIdx = 0;
           this.attempt = 0;
           this.everWelcomed = true;
