@@ -15,6 +15,7 @@ export type IconName =
   | "camera"
   | "map"
   | "graph"
+  | "gamma"
   | "play"
   | "pause"
   | "upload"
@@ -76,6 +77,8 @@ const PATHS: Record<IconName, string> = {
   camera: `<path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>`,
   map: `<path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2z"/><path d="M9 4v14M15 6v14"/>`,
   graph: `<circle cx="6" cy="18" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="18" cy="18" r="2"/><path d="M8 17l8-9M8 18h8"/>`,
+  // Gamma/exponential curve on axes (color-correction curve).
+  gamma: `<path d="M5 3v16h16"/><path d="M5 19c6 0 10-3 14-14"/>`,
   play: `<path d="M8 5v14l11-7z"/>`,
   pause: `<rect x="7" y="5" width="3" height="14"/><rect x="14" y="5" width="3" height="14"/>`,
   upload: `<path d="M12 16V5"/><path d="M7 9l5-5 5 5"/><path d="M5 19h14"/>`,

@@ -410,15 +410,15 @@ function openDeviceDetail(dev: KnownDevice): void {
     nameField,
     ActionGrid([
       {
-        label: "Color correction",
-        icon: "sparkles",
+        label: "Gamma",
+        icon: "gamma",
         onClick: () => {
           sheet.close();
           location.hash = "#/settings/color-correction";
         },
       },
       {
-        label: "Move to folder",
+        label: "Move",
         icon: "folder",
         onClick: () => {
           sheet.close();
