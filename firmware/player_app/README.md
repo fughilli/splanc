@@ -95,9 +95,13 @@ curl    host.docker.internal:8090/ports       # list candidate serial devices
   ~1024-LED `submit_map` is ~45 KB; bigger gets close code 1009. The arena
   (96 KB) then bounds what a decoded map+topology may occupy
   (`error{map_too_large}` beyond).
-- **AP+STA**: the soft-AP stays up always (bench + re-provisioning
-  reachability); STA joins the BLE-provisioned network. mDNS naming comes
-  with M11.
+- **AP+STA**: the soft-AP stays up until a LAN is joined (bench + re-provisioning
+  reachability); STA joins the BLE-provisioned network. The AP SSID, the mDNS
+  hostname and the DHCP hostname all derive from the configured device name — a
+  device named `Foo` advertises the `Foo-AP` soft-AP and answers to `Foo.local`
+  (the name is slugified for the hostname: `[A-Za-z0-9]` kept, other runs → `-`).
+  The wss cert's SAN carries that same `<name>.local` so `https://<name>.local`
+  validates. A rename retargets all of them (and re-issues the cert) live.
 - Memory: the generated protobuf links in the FIRMWARE capacity profile
   (control-traffic-sized; uploads bypass it through the arena decoder), so
   the envelope statics are ~2 KB instead of ~230 KB.
