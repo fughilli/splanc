@@ -11,8 +11,11 @@
  * is inherent to projecting onto a flat texture.
  */
 
-import { compileScript, FxPreview } from "./preview";
+import { compileScript, FxPreview, deriveLedTopology } from "./preview";
 import { encodeWebmVideo } from "./videoEncode";
+import { isTopologyAware } from "./effectTopology";
+import { buildVirtualTree } from "./treeGeometry";
+import { makeGlowKernel, rasterizeLeds } from "./rasterize";
 
 export const PREVIEW_SIZE = 64;
 export const PREVIEW_FPS = 60;
@@ -50,7 +53,12 @@ export function rgbToRgba(rgb: Uint8Array, out: Uint8Array): void {
 }
 
 /**
- * Compile + run an effect over the grid and encode a looping preview .webm.
+ * Compile + run an effect and encode a looping preview .webm. Spatial effects
+ * render one-LED-per-pixel over a flat 64×64 XY grid; TOPOLOGY-AWARE effects
+ * (flood/pulse/comet/agentic — see {@link isTopologyAware}) instead run on a
+ * virtual tree with real topology so wavefronts travel the strands and fork at
+ * junctions, then rasterize into the same 64×64 frame.
+ *
  * Returns null when the source doesn't compile (nothing worth previewing).
  * `onProgress` (0..1) is called occasionally so callers can yield / show state.
  */
@@ -65,23 +73,16 @@ export async function renderEffectPreview(
   try {
     for (const u of compiled.uniforms) preview.setUniform(u.slot, u.default);
 
-    const positions = buildGridPositions(PREVIEW_SIZE);
-    const ledCount = PREVIEW_SIZE * PREVIEW_SIZE;
-    const rgba = new Uint8Array(ledCount * 4);
-    const dt = 1 / PREVIEW_FPS;
+    const frame = isTopologyAware(source)
+      ? treeFrameProducer(preview)
+      : gridFrameProducer(preview);
 
     const blob = await encodeWebmVideo({
       width: PREVIEW_SIZE,
       height: PREVIEW_SIZE,
       fps: PREVIEW_FPS,
       frameCount: PREVIEW_FRAMES,
-      frame: (i) => {
-        const time = i * dt;
-        preview.tick(time, dt, i, ledCount);
-        const rgb = preview.shadeAll(positions);
-        rgbToRgba(rgb, rgba);
-        return rgba;
-      },
+      frame,
       onProgress: async (i) => {
         onProgress?.(i / PREVIEW_FRAMES);
         // Yield a macrotask so scrolling stays responsive during the render.
@@ -92,4 +93,34 @@ export async function renderEffectPreview(
   } finally {
     preview.dispose();
   }
+}
+
+/** Flat 64×64 XY grid, one LED per pixel — for position/uv/time effects. */
+function gridFrameProducer(preview: FxPreview): (i: number) => Uint8Array {
+  const positions = buildGridPositions(PREVIEW_SIZE);
+  const ledCount = PREVIEW_SIZE * PREVIEW_SIZE;
+  const rgba = new Uint8Array(ledCount * 4);
+  const dt = 1 / PREVIEW_FPS;
+  return (i) => {
+    preview.tick(i * dt, dt, i, ledCount);
+    rgbToRgba(preview.shadeAll(positions), rgba);
+    return rgba;
+  };
+}
+
+/** Virtual tree with real topology, LEDs rasterized as glow — for topology effects. */
+function treeFrameProducer(preview: FxPreview): (i: number) => Uint8Array {
+  const tree = buildVirtualTree({ size: PREVIEW_SIZE });
+  preview.setTopology(deriveLedTopology(tree.map, tree.topology));
+  const ledCount = tree.ledIds.length;
+  const kernel = makeGlowKernel(1.5);
+  const accum = new Float32Array(PREVIEW_SIZE * PREVIEW_SIZE * 3);
+  const rgba = new Uint8Array(PREVIEW_SIZE * PREVIEW_SIZE * 4);
+  const dt = 1 / PREVIEW_FPS;
+  return (i) => {
+    preview.tick(i * dt, dt, i, ledCount);
+    const rgb = preview.shadeAll(tree.positions);
+    rasterizeLeds(PREVIEW_SIZE, tree.coords2d, rgb, kernel, accum, rgba);
+    return rgba;
+  };
 }
