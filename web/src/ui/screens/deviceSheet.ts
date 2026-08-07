@@ -306,8 +306,13 @@ function deviceRow(
 
 function connectedMeta(status = appState.status): string {
   const c = appState.client;
-  if (c?.isConnected) return `${status.text} · offset ${c.clock.offsetMs.toFixed(1)}ms`;
-  return status.text;
+  if (!c?.isConnected) return status.text;
+  // NOT the clock offset: that's device-uptime minus tab-uptime — two unrelated
+  // monotonic epochs, so it's huge (hours in ms) and meaningless to a user. Show
+  // the round-trip latency (the kept min-RTT sample) instead: small, and an
+  // actual connection-quality signal. Infinity until the first clock sync lands.
+  const rtt = c.clock.rttMs;
+  return Number.isFinite(rtt) ? `${status.text} · ${Math.round(rtt)} ms RTT` : status.text;
 }
 
 /** Detail popup: an inline-editable display name, quick actions, and the recorded
