@@ -16,3 +16,6 @@ packages:
 # Note: pnpm itself accepts a list here, but aspect_rules_js parses this as a
 # map of {package: bool}. We use the map form so both tools accept the file.
 allowBuilds: { '@bufbuild/buf': set this to true or false }
+
+patchedDependencies:
+  web-serial-polyfill@1.0.15: patches/web-serial-polyfill@1.0.15.patch

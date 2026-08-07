@@ -26,6 +26,7 @@ import {
   readFlashEnv,
   authorizedPortIds,
   describeFilters,
+  isPolyfillActive,
   KNOWN_SERIAL_FILTERS,
 } from "../../flash/webserial";
 import { summarizeEnv } from "../../flash/env";
@@ -289,6 +290,7 @@ function buildDiagnostics(opts: { open?: boolean; filters?: SerialPortFilter[]; 
   pre.className = "flash-log";
 
   const lines = [...summary.lines];
+  lines.push(`WebUSB polyfill installed: ${isPolyfillActive() ? "yes" : "no"}`);
   lines.push(`Vendor filter: ${describeFilters(opts.filters ?? KNOWN_SERIAL_FILTERS)}`);
   if (opts.error) lines.push(`Last error: ${opts.error}`);
   lines.push(`User agent: ${env.userAgent || "unknown"}`);

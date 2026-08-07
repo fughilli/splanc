@@ -41,15 +41,23 @@ export function isMobileUserAgent(ua: string): boolean {
   return /Android|iPhone|iPad|iPod|Mobile|Silk|Kindle/i.test(ua);
 }
 
+/** True for Android, where native Web Serial (Chrome 138+) is Bluetooth-only and
+ * can't reach a USB board — so we flash over the WebUSB polyfill instead. */
+export function isAndroidUserAgent(ua: string): boolean {
+  return /Android/i.test(ua);
+}
+
 /** Diagnose the environment: is flashing possible, and if not, precisely why. */
 export function summarizeEnv(env: FlashEnv): EnvSummary {
-  // With no native Web Serial but WebUSB present (Android Chrome), webserial.ts
-  // installs the WebUSB-backed polyfill and the same flash path runs over it.
-  const viaPolyfill = !env.serial && env.usb;
-  const transport = env.serial
-    ? "native Web Serial"
-    : viaPolyfill
-      ? "WebUSB (Web Serial polyfill)"
+  // The WebUSB-backed polyfill (installed in webserial.ts) carries the flash when
+  // there's no native Web Serial — and ALSO on Android, whose native Web Serial is
+  // Bluetooth-only (Chrome 138+) and can't see a USB board, so we run over WebUSB
+  // there even though navigator.serial exists.
+  const viaPolyfill = env.usb && (!env.serial || isAndroidUserAgent(env.userAgent));
+  const transport = viaPolyfill
+    ? "WebUSB (Web Serial polyfill)"
+    : env.serial
+      ? "native Web Serial"
       : "none";
   const lines = [
     `Web Serial API: ${env.serial ? "available" : "not available"}`,
@@ -69,7 +77,7 @@ export function summarizeEnv(env: FlashEnv): EnvSummary {
     reason = "Flashing needs a secure (https) page — open the app over https and retry.";
   } else if (viaPolyfill) {
     note =
-      "This browser has no native Web Serial, so flashing runs over WebUSB. Pick the board from the WebUSB prompt (not the OS chooser). If it doesn't appear, another app may have it open, or the OS has already claimed it.";
+      "On this device flashing runs over WebUSB (Android's native serial port picker only lists Bluetooth devices, not USB boards). Pick the board from the WebUSB prompt. If it doesn't appear, use a data-capable cable, tap “allow” on any Android USB permission prompt, and make sure no other app has the port open.";
   }
   return { ok: reason === null, reason, note, lines };
 }

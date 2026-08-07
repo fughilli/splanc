@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  web-serial-polyfill@1.0.15: de2e1d095816f71b772ecafcf08cdc2dbb5d84382713d66508c9785917fb88df
+
 importers:
 
   .:
@@ -33,7 +36,7 @@ importers:
         version: 0.6.0
       web-serial-polyfill:
         specifier: ^1.0.15
-        version: 1.0.15
+        version: 1.0.15(patch_hash=de2e1d095816f71b772ecafcf08cdc2dbb5d84382713d66508c9785917fb88df)
     devDependencies:
       '@bufbuild/buf':
         specifier: ^1.71.0
@@ -833,4 +836,4 @@ snapshots:
       '@types/node': 24.10.9
       fsevents: 2.3.3
 
-  web-serial-polyfill@1.0.15: {}
+  web-serial-polyfill@1.0.15(patch_hash=de2e1d095816f71b772ecafcf08cdc2dbb5d84382713d66508c9785917fb88df): {}

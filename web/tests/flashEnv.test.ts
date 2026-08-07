@@ -2,7 +2,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { summarizeEnv, isMobileUserAgent, type FlashEnv } from "../src/flash/env";
+import { summarizeEnv, isMobileUserAgent, isAndroidUserAgent, type FlashEnv } from "../src/flash/env";
 
 const DESKTOP_UA =
   "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36";
@@ -28,6 +28,12 @@ test("a capable desktop is ok with no reason (native Web Serial)", () => {
   assert.ok(s.lines.some((l) => l.includes("Flash transport: native Web Serial")));
 });
 
+test("isAndroidUserAgent flags Android only, not other mobiles/desktop", () => {
+  assert.equal(isAndroidUserAgent(ANDROID_UA), true);
+  assert.equal(isAndroidUserAgent(IOS_UA), false);
+  assert.equal(isAndroidUserAgent(DESKTOP_UA), false);
+});
+
 test("Android (WebUSB, no Web Serial) is ok via the polyfill, with a note", () => {
   const s = summarizeEnv({ serial: false, usb: true, secureContext: true, userAgent: ANDROID_UA });
   assert.equal(s.ok, true);
@@ -37,6 +43,18 @@ test("Android (WebUSB, no Web Serial) is ok via the polyfill, with a note", () =
   assert.ok(s.lines.some((l) => l.includes("Flash transport: WebUSB")));
   assert.ok(s.lines.some((l) => l.includes("WebUSB API: available")));
   assert.ok(s.lines.some((l) => l.includes("Web Serial API: not available")));
+});
+
+// Regression (FUG-85 follow-up): Chrome for Android 138+ ships Web Serial, but
+// only over Bluetooth — it can't see a USB board. So even with navigator.serial
+// present we must route over the WebUSB polyfill, not report the native path.
+test("Android with native Web Serial still flashes via the WebUSB polyfill", () => {
+  const s = summarizeEnv({ serial: true, usb: true, secureContext: true, userAgent: ANDROID_UA });
+  assert.equal(s.ok, true);
+  assert.equal(s.reason, null);
+  assert.ok(s.note, "expected a WebUSB-path note on Android");
+  assert.match(s.note, /WebUSB/i);
+  assert.ok(s.lines.some((l) => l.includes("Flash transport: WebUSB")));
 });
 
 test("iOS (neither Web Serial nor WebUSB) reports a mobile-specific reason", () => {

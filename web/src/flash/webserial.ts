@@ -13,7 +13,7 @@
 
 import { serial as webUsbSerial } from "web-serial-polyfill";
 import type { UsbId } from "./usb";
-import { summarizeEnv, type FlashEnv } from "./env";
+import { isAndroidUserAgent, summarizeEnv, type FlashEnv } from "./env";
 
 // Snapshot the browser's NATIVE capabilities once, before installing anything,
 // so diagnostics report what the platform really offers (and env.ts can tell the
@@ -21,12 +21,41 @@ import { summarizeEnv, type FlashEnv } from "./env";
 // `"serial" in navigator` true, which would otherwise mask the WebUSB fallback).
 const NATIVE_SERIAL = typeof navigator !== "undefined" && "serial" in navigator;
 const HAS_WEBUSB = typeof navigator !== "undefined" && "usb" in navigator;
+const IS_ANDROID =
+  typeof navigator !== "undefined" && isAndroidUserAgent(navigator.userAgent ?? "");
 
-// Android Chrome exposes WebUSB but not Web Serial. Install the WebUSB-backed
-// polyfill so the identical flash path works there. Native Web Serial always
-// wins; iOS (neither API) is left untouched and reported as unsupported.
-if (!NATIVE_SERIAL && HAS_WEBUSB) {
-  (navigator as unknown as { serial: Serial }).serial = webUsbSerial as unknown as Serial;
+// Install the WebUSB-backed polyfill so the identical flash path works over
+// WebUSB. It's needed whenever native Web Serial is absent (older Android Chrome)
+// AND on Android even when navigator.serial IS present: Android's native Web
+// Serial (Chrome 138+) only enumerates Bluetooth serial ports, never the USB
+// board we're flashing, so the native picker would show phones/speakers but not
+// the ESP. Desktop keeps its native Web Serial; iOS (neither API) is untouched.
+//
+// navigator.serial is a read-only accessor (getter, no setter) once it exists
+// natively, so a plain `navigator.serial = …` throws in strict/module code (and,
+// running at import time, would take the whole flashSheet chunk down with it).
+// defineProperty installs an own data property that shadows the inherited getter;
+// the try/catch degrades to the native path instead of a dead flow if a browser
+// ever refuses the redefinition.
+const POLYFILL_ACTIVE = ((): boolean => {
+  if (!HAS_WEBUSB || (NATIVE_SERIAL && !IS_ANDROID)) return false;
+  try {
+    Object.defineProperty(navigator, "serial", {
+      value: webUsbSerial as unknown as Serial,
+      configurable: true,
+      writable: true,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
+/** True when the WebUSB Web Serial polyfill actually took over navigator.serial
+ * (so the port chooser is the WebUSB one, not the OS/Bluetooth serial picker).
+ * Surfaced in diagnostics because a failed install is otherwise invisible. */
+export function isPolyfillActive(): boolean {
+  return POLYFILL_ACTIVE;
 }
 
 /** Read the browser's flash-relevant capability flags (native, pre-polyfill). */

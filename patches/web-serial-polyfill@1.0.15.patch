@@ -1,0 +1,13 @@
+diff --git a/dist/serial.js b/dist/serial.js
+index 1741b7ddd0927dd1dda0fa8c17df1352306cf085..315e8c5c2acdedfa43911c61cde8db62ad7683c9 100644
+--- a/dist/serial.js
++++ b/dist/serial.js
+@@ -115,7 +115,7 @@ class UsbEndpointUnderlyingSource {
+                     controller.error(`USB error: ${result.status}`);
+                     this.onError_();
+                 }
+-                if ((_a = result.data) === null || _a === void 0 ? void 0 : _a.buffer) {
++                if (((_a = result.data) === null || _a === void 0 ? void 0 : _a.buffer) && result.data.byteLength > 0) {
+                     const chunk = new Uint8Array(result.data.buffer, result.data.byteOffset, result.data.byteLength);
+                     controller.enqueue(chunk);
+                 }
