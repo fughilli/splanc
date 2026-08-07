@@ -6,11 +6,13 @@ the firmware/app. No hardware, no network. The modules under test live in
 convention). (Runner-pool selection now lives in the Go CLI, tested in
 //pi/hitl/internal/pool and //pi/hitl/internal/tailnet.)
 
-Tagged `["manual", "hitl"]`, so it's out of `bazel test //...`; the dedicated
-`hitl-tests` CI job (.github/workflows/test.yaml) collects the `hitl` tag with a
-bazel query and runs it, enforcing device/app/harness parity. `imports = ["."]`
-+ the harness dep put both the test files and the modules under test on the
-top-level import path.
+These are pure-logic units (no hardware, no network), so they run in the normal
+`bazel test //...` suite on every build, enforcing device/app/harness parity.
+(The on-hardware harness binaries — e2e, map_upload, mapping_trigger, fx_bench,
+rename_wss — are separate `manual` py_binaries, run by the dedicated
+.github/workflows/hitl.yaml workflow against a real rig.) `imports = ["."]` + the
+harness dep put both the test files and the modules under test on the top-level
+import path.
 """
 
 load("@pypi//:requirements.bzl", "requirement")
@@ -31,10 +33,6 @@ py_test(
     imports = ["."],
     legacy_create_init = False,
     main = "pytest_main.py",
-    tags = [
-        "hitl",
-        "manual",
-    ],
     deps = [
         "//pi/hitl/harness",
         requirement("pytest"),
