@@ -1999,12 +1999,13 @@ body.is-locked {
   border: 1px solid transparent;
   line-height: 1.4;
 }
-.device-name-input {
+/* `input.` (type + class) outranks the plain `.sheet-input` rule that comes later
+   in the file — otherwise its margin-bottom (edit-mode-only nudge) and `font:
+   inherit` (which resets line-height) win and the row still grows/shifts. */
+input.device-name-input {
   flex: 1;
   min-width: 0;
   line-height: 1.4;
-  /* .sheet-input carries a margin-bottom that would only appear in edit mode,
-     nudging the rows below down. */
   margin-bottom: 0;
 }
 .device-detail-divider {
