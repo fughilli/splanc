@@ -6,6 +6,9 @@ quality metrics → OutputMap (design doc §7.5/§8.3). Library + CLI.
 `imports = ["."]` puts this directory on the import path so the nested
 `reconstruction/` package is importable as `reconstruction` (and runnable as
 `python -m reconstruction`).
+
+
+Requirements (PRs implemented here; see requirements/requirements.yaml): PR-2, PR-3, PR-4, PR-32
 """
 
 load("@pypi//:requirements.bzl", "requirement")

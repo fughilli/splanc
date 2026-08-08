@@ -12,6 +12,9 @@ Targets:
   :dist                    production bundle (vite build)
   :serve                   M2 server + built web app, HTTPS by default
                            (bazelisk run //web:serve)
+
+
+Requirements (PRs implemented here; see requirements/requirements.yaml): PR-1, PR-5, PR-6, PR-8, PR-9, PR-10, PR-12, PR-13, PR-14, PR-30, PR-31, PR-32, PR-33, PR-35, PR-37, PR-38
 """
 
 load("@aspect_rules_js//js:defs.bzl", "js_binary", "js_test")

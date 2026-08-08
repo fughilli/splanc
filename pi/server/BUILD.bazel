@@ -6,6 +6,9 @@ Library + CLI (`serve`).
 
 `imports = ["."]` puts this directory on the import path so the nested
 `server/` package is importable as `server` (and runnable as `python -m server`).
+
+
+Requirements (PRs implemented here; see requirements/requirements.yaml): PR-5, PR-6, PR-12, PR-13, PR-30, PR-35, PR-37
 """
 
 load("@pypi//:requirements.bzl", "requirement")

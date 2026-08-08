@@ -7,6 +7,9 @@ sink; `spidev` is imported lazily and is only present on the Pi.
 
 `imports = ["."]` exposes the nested `led_driver/` package as `led_driver` (and
 runnable as `python -m led_driver`).
+
+
+Requirements (PRs implemented here; see requirements/requirements.yaml): PR-1, PR-30, PR-31, PR-33
 """
 
 load("@pypi//:requirements.bzl", "requirement")
