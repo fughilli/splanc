@@ -36,8 +36,18 @@ means different things on different hardware:
    Weights are fetched from HuggingFace on first use and cached in the browser;
    inference runs on the GPU with nothing installed and nothing leaving the
    device. This is the truest pocketpal analog. It is best-effort: it needs
-   WebGPU and a first-run download (hundreds of MB to a few GB), and small
-   models do tool-calling less reliably than the cloud model.
+   WebGPU and a first-run download (hundreds of MB to a few GB).
+
+   **Tool-calling is per-model.** web-llm only implements function calling for a
+   fixed allow-list (currently the Hermes family); it *throws* if `tools` is sent
+   to any other model. Our AI features are entirely tool-driven, so
+   `webllm.modelSupportsTools(id)` gates the provider's `tools` capability — a
+   non-tool model is never sent tools (no crash) and the loop degrades to plain
+   chat. Because a chat-only model can't author effects or map MIDI, the model
+   browser defaults to a **"Tool-calling only" filter**, badges tool-capable
+   models, and warns when a non-tool model is selected. To run an arbitrary
+   HuggingFace GGUF instead, use the local-server (Ollama) path, which pulls any
+   `hf.co/user/repo:quant` reference.
 
 ## Architecture: a thin provider interface
 
@@ -108,8 +118,12 @@ route here):
 - Local server: base URL, optional key, model (free-text + a "List" button that
   reads `/v1/models`), a vision toggle, and an Ollama "Download a model" field
   with a progress bar;
-- In-browser: a WebGPU support check, a model picker (from web-llm's prebuilt
-  list), and a "Download / load model" button with init progress.
+- In-browser: a WebGPU support check and a **model browser** — cards from
+  web-llm's prebuilt (HuggingFace-hosted MLC) list with a HuggingFace link,
+  VRAM / low-resource / "Tools" badges, a search box, a "Tool-calling only"
+  filter (default on), a custom MLC-model-id field, and a "Download / load
+  model" button with init progress; plus a warning when the selected model
+  can't tool-call.
 
 The effects-browser first-run hint and the editor gating now check
 `isAiConfigured()` (any provider ready) rather than "has an Anthropic key," so a
@@ -133,6 +147,9 @@ and both are then cached. A future change could vendor web-llm behind the same
   folding + ordering, tool-call parsing, `finish_reason` mapping, URL helpers).
 - `web/tests/aiProvider.test.ts` — config defaults, tolerant merge of stored /
   partial config, and the `isAiConfigured` gate per provider.
+- `web/tests/webllmProvider.test.ts` — the per-model tool-calling gate
+  (`modelSupportsTools`), so we never send `tools` to a model web-llm can't
+  tool-call for.
 
 The network paths (server `fetch`, Ollama pull, the CDN import + GPU init) are
 browser/runtime-only and are exercised manually against a real Ollama / WebGPU
