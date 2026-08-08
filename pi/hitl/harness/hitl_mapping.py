@@ -53,14 +53,22 @@ def _rlocation(rloc: str) -> str | None:
     try:
         from python.runfiles import runfiles
 
-        return runfiles.Create().Rlocation(rloc)
+        path = runfiles.Create().Rlocation(rloc)
     except Exception:
         return None
+    # Rlocation() returns a CONSTRUCTED path even when the file is absent, so
+    # check existence — otherwise a wrong candidate masks the real one (this bit
+    # default_fx_compile: the bad `_/fx_compile` guess won, and compile_fx then
+    # hit FileNotFoundError).
+    return path if path and os.path.exists(path) else None
 
 
 def default_fx_compile() -> str | None:
-    return _rlocation("_main/fx_compiler/fx_compile_/fx_compile") or _rlocation(
-        "_main/fx_compiler/fx_compile"
+    # `//fx_compiler:fx_compile` lands at `_main/fx_compiler/fx_compile` in
+    # runfiles (the target name); the `_/fx_compile` internal output path is a
+    # fallback for layouts that expose it. Both are existence-checked above.
+    return _rlocation("_main/fx_compiler/fx_compile") or _rlocation(
+        "_main/fx_compiler/fx_compile_/fx_compile"
     )
 
 
