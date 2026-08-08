@@ -78,8 +78,10 @@ def _log(msg: str) -> None:
 _FXC_RUNFILE = "_main/fx_compiler/fx_compile"
 _BENCH_RUNFILE = "_main/pi/hitl/harness/benchmarks/empty.fx"
 _BUNDLE_RUNFILE = "_main/firmware/player_app/esp32c6_flashbundle.tar"
-# Per-effect frame-cycle reference for the margin check; one per SoC.
-_GOLDEN_RUNFILE = "_main/pi/hitl/harness/goldens/fx_bench.{soc}.json"
+# The unified golden — a full device-measurement bundle + fxBenchMargins, shared
+# with the web estimator test (web/tests/testdata/device-bench-<soc>.json). One
+# per SoC; regenerate with `fx_bench --emit-golden <that path>`.
+_GOLDEN_RUNFILE = "_main/web/tests/testdata/device-bench-{soc}.json"
 # The two tiniest programs have higher RELATIVE measurement noise (a fixed
 # absolute jitter is a big % of a ~100 K–500 K-cycle program), so the golden
 # stamps them a looser margin — the ~70 real compute effects hold ≤2.3% run to

@@ -104,46 +104,39 @@ def bundle_to_golden(
     default_margin: float = 0.05,
     per_label_margin: dict[str, float] | None = None,
 ) -> dict[str, Any]:
-    """Reduce a measured bundle to a compact golden reference (per-label frame/
-    show cycles + ledCount), for `fx_bench --emit-golden`. `per_label_margin`
-    stamps a looser margin on specific labels (e.g. the tiny `empty` program)."""
-    per_label_margin = per_label_margin or {}
-    samples: dict[str, Any] = {}
-    for s in (bundle.get("fit") or []) + (bundle.get("heldout") or []):
-        entry: dict[str, Any] = {
-            "ledCount": s["ledCount"],
-            "frameCycles": s["measuredFrameCycles"],
-            "showCycles": s["measuredShowCycles"],
-        }
-        if s["label"] in per_label_margin:
-            entry["margin"] = per_label_margin[s["label"]]
-        samples[s["label"]] = entry
-    return {
-        "kind": "ledmapper-fx-bench-golden",
-        "soc": bundle.get("soc", "esp32c6"),
-        "cpuHz": bundle.get("cpuHz"),
-        "defaultMargin": default_margin,
-        "samples": samples,
+    """Turn a measured bundle into the unified golden = the full device-measurement
+    bundle (kept verbatim, incl. each sample's fxbBase64 so the web estimator can
+    fit + validate on it) plus an `fxBenchMargins` block the HITL frame-cycle check
+    reads. `per_label_margin` stamps a looser margin on specific labels (the tiny
+    empty/sweep programs). For `fx_bench --emit-golden`."""
+    golden = dict(bundle)
+    golden["fxBenchMargins"] = {
+        "default": default_margin,
+        "perLabel": dict(per_label_margin or {}),
     }
+    return golden
 
 
 def compare_to_golden(
     bundle: dict[str, Any], golden: dict[str, Any], margin: float | None = None
 ) -> dict[str, Any]:
-    """Compare a measured bundle's per-effect FRAME cycles to a golden reference.
+    """Compare a measured bundle's per-effect FRAME cycles to the golden bundle.
     Frame cycles are the FX-VM execution cost the device profile is fit from; show
-    cycles (the transmit path) are noisier and NOT gated. Each label uses its
-    golden `margin` if set, else the `margin` arg, else golden `defaultMargin`.
+    cycles (the transmit path) are noisier and NOT gated. The golden is a full
+    device-measurement bundle; margins come from its `fxBenchMargins` block
+    (per-label override, else the `margin` arg, else its `default`, else 5%).
     Returns {ok, checked, missing, offenders:[{label, measured, golden, ratio,
     margin}], defaultMargin}."""
-    default_margin = margin if margin is not None else float(golden.get("defaultMargin", 0.05))
-    gsamples: dict[str, Any] = golden.get("samples", {})
+    margins = golden.get("fxBenchMargins", {}) or {}
+    default_margin = margin if margin is not None else float(margins.get("default", 0.05))
+    per_label = margins.get("perLabel", {}) or {}
+    gmap = {s["label"]: s for s in (golden.get("fit") or []) + (golden.get("heldout") or [])}
     measured = {s["label"]: s for s in (bundle.get("fit") or []) + (bundle.get("heldout") or [])}
     offenders: list[dict[str, Any]] = []
     missing: list[str] = []
     checked = 0
-    for label, g in gsamples.items():
-        gv = int(g.get("frameCycles", 0))
+    for label, g in gmap.items():
+        gv = int(g.get("measuredFrameCycles", 0))
         if gv <= 0:
             continue
         m = measured.get(label)
@@ -151,7 +144,7 @@ def compare_to_golden(
             missing.append(label)
             continue
         mv = int(m.get("measuredFrameCycles", 0))
-        eff = float(g.get("margin", default_margin))
+        eff = float(per_label.get(label, default_margin))
         checked += 1
         ratio = mv / gv
         if abs(ratio - 1.0) > eff:

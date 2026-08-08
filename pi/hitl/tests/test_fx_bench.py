@@ -145,14 +145,13 @@ def _bundle(fit_samples, held_samples=()):
     return {"fit": [s(*t) for t in fit_samples], "heldout": [s(*t) for t in held_samples]}
 
 
+# The golden is a full device-measurement bundle + an fxBenchMargins block.
 _GOLDEN = {
-    "kind": "ledmapper-fx-bench-golden",
+    "kind": "ledmapper-device-benchmark",
     "soc": "esp32c6",
-    "defaultMargin": 0.05,
-    "samples": {
-        "empty": {"ledCount": 128, "frameCycles": 500_000, "showCycles": 1_000_000, "margin": 0.10},
-        "big": {"ledCount": 128, "frameCycles": 10_000_000, "showCycles": 1_000_000},
-    },
+    "fit": _bundle([("empty", 500_000, 1_000_000), ("big", 10_000_000, 1_000_000)])["fit"],
+    "heldout": [],
+    "fxBenchMargins": {"default": 0.05, "perLabel": {"empty": 0.10}},
 }
 
 
@@ -199,10 +198,10 @@ def test_bundle_to_golden_roundtrips():
         heldout=[],
     )
     golden = bundle_to_golden(bundle, default_margin=0.05, per_label_margin={"empty": 0.10})
-    assert golden["kind"] == "ledmapper-fx-bench-golden"
-    assert golden["defaultMargin"] == 0.05
-    assert golden["samples"]["empty"]["margin"] == 0.10
-    assert golden["samples"]["empty"]["frameCycles"] == 5
+    # The golden IS the bundle (fxbBase64 kept for the web estimator) + margins.
+    assert golden["kind"] == "ledmapper-device-benchmark"
+    assert golden["fxBenchMargins"] == {"default": 0.05, "perLabel": {"empty": 0.10}}
+    assert golden["fit"][0]["fxbBase64"] == bundle["fit"][0]["fxbBase64"]
     # A bundle round-trips through its own golden with room to spare.
     assert compare_to_golden(bundle, golden)["ok"]
 

@@ -128,7 +128,10 @@ py_test(
         "//firmware/player_app:esp32c6_flashbundle",
         "//fx_compiler:fx_compile",
         "//pi/hitl/cmd/hitl",
-    ] + glob(["goldens/*.json"]),  # per-SoC golden refs for the margin check
+        # The unified golden (full bundle + margins), shared with the web
+        # estimator test — the margin check reads it from runfiles.
+        "//web:tests/testdata/device-bench-esp32c6.json",
+    ],
     imports = ["."],
     main = "fx_bench.py",
     tags = [
