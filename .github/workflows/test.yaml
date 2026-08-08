@@ -180,6 +180,97 @@ jobs:
         run: prek run --all-files --show-diff-on-failure --color=always
 
   # ---------------------------------------------------------------------------
+  # Requirements traceability report (FUG-89).
+  #
+  # The final action in the requirements-driven-development workflow: run the
+  # software test suites (which emit jUnit XML with per-testcase requirement
+  # tags), then aggregate every jUnit XML in bazel-testlogs into an HTML report
+  # that shows PASS/FAIL validation (user needs) + verification (requirements) +
+  # mitigation (risks) for the whole UN/PR/RISK listing. Uploaded as an artifact.
+  #
+  # Self-contained (its own runner ⇒ can't reuse the test job's testlogs): it
+  # re-runs the suites, but with the `test` job's disk cache as a restore key so
+  # the test actions are warm cache hits and only the report is computed. Tests
+  # run with `|| true` so a genuine failure still yields a report that shows it —
+  # the `test` / `hitl-tests` jobs remain the pass/fail gate. `check_annotations`
+  # DOES gate: it fails if any source/test/module references an unknown PR id.
+  # ---------------------------------------------------------------------------
+  traceability-report:
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup repository
+        uses: actions/checkout@v4
+
+      - name: Free runner disk space
+        uses: justinthelaw/maximize-github-runner-space@v0.10.0
+
+      - name: Install Nix
+        uses: nixbuild/nix-quick-install-action@v30
+        with:
+          nix_conf: experimental-features = nix-command flakes
+
+      - name: Cache /nix store
+        uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-${{ runner.os }}-test-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-test-
+          gc-max-store-size-linux: 5G
+
+      - name: Setup Bazel
+        uses: bazel-contrib/setup-bazel@0.15.0
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+
+      - name: Cache Bazel disk cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/bazel-disk
+          key: bazel-disk-trace-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock') }}
+          restore-keys: |
+            bazel-disk-trace-${{ runner.os }}-
+            bazel-disk-test-${{ runner.os }}-
+
+      # Fail early if any source/test/module references an undefined PR id, and
+      # confirm the committed requirements model itself is valid.
+      - name: Check requirement annotations + model
+        run: |
+          bazel test //requirements:requirements_valid_test \
+            --disk_cache="$HOME/.cache/bazel-disk" --test_output=errors
+          bazel run //requirements:check_annotations \
+            --disk_cache="$HOME/.cache/bazel-disk"
+
+      # Run the software suites to populate bazel-testlogs with tagged jUnit XML.
+      # `|| true`: a failing test must still produce a report (it shows the FAIL),
+      # the dedicated test jobs are the gate.
+      - name: Run test suites (populate jUnit)
+        run: |
+          bazel test //... --disk_cache="$HOME/.cache/bazel-disk" \
+            --test_output=errors || true
+          hitl=$(bazel query 'attr(tags, "\bhitl\b", tests(//...))' || true)
+          if [ -n "$hitl" ]; then
+            bazel test $hitl --disk_cache="$HOME/.cache/bazel-disk" \
+              --test_output=errors || true
+          fi
+
+      - name: Aggregate jUnit XML into the HTML traceability report
+        run: |
+          bazel run //tools/traceability:aggregate \
+            --disk_cache="$HOME/.cache/bazel-disk" -- \
+            --requirements "$GITHUB_WORKSPACE/requirements/requirements.yaml" \
+            --junit "$(readlink -f bazel-testlogs)" \
+            --out "$GITHUB_WORKSPACE/traceability-report.html"
+
+      - name: Upload traceability report
+        uses: actions/upload-artifact@v4
+        with:
+          name: traceability-report
+          path: traceability-report.html
+          retention-days: 14
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
   # Deploy the PWA to GitHub Pages (FUG-26).
   #
   # Hosting model: the gh-pages branch is the Pages source. The main site lives

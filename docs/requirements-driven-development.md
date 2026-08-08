@@ -1,0 +1,176 @@
+# Requirements-driven development
+
+This repo practises **requirements-driven development (RDD)**: every requirement
+is written down in a machine-readable model, every module documents the
+requirements it implements, every test declares the requirements it verifies,
+and a CI action aggregates the test results into a report that shows, for the
+whole listing, whether each user need is **validated** and each requirement
+**verified**.
+
+This closes the loop end to end — a requirement with no verifying test, a test
+referencing a requirement that no longer exists, or a risk with no working
+mitigation all surface automatically (FUG-89).
+
+## The entity model
+
+The source of truth is [`requirements/requirements.yaml`](../requirements/requirements.yaml),
+validated against [`requirements/schema.json`](../requirements/schema.json).
+
+| Kind                          | Prefix  | Meaning                                                     | Status question                           |
+| ----------------------------- | ------- | ----------------------------------------------------------- | ----------------------------------------- |
+| User need                     | `UN-`   | What a user must be able to do.                             | **Validated?** (rolls up its PRs)         |
+| Product requirement (direct)  | `PR-`   | `satisfies` one or more user needs.                         | **Verified?** (its tests pass)            |
+| Risk                          | `RISK-` | A hazard or failure mode.                                   | **Mitigated?** (rolls up its derived PRs) |
+| Product requirement (derived) | `PR-`   | `mitigates` one or more risks (and may also satisfy needs). | **Verified?**                             |
+
+The traces are bidirectional and validated: a derived PR's `mitigates` must name
+the risk, and the risk's `mitigated_by` must name the derived PR. A direct PR
+must satisfy at least one user need; a derived PR must mitigate at least one
+risk; every user need must be satisfied by at least one PR. Broken or dangling
+traces fail [`//requirements:requirements_valid_test`](../requirements/validate_test.py).
+
+```yaml
+product_requirements:
+  - id: PR-30
+    title: SEC-DED FEC on the blink code corrects singles, rejects doubles
+    kind: derived
+    satisfies: [UN-3]
+    mitigates: [RISK-1]
+    modules: [pi/led_driver, pi/server, web]
+    verified_by: ['//web:fec_test'] # coarse, per-target traceability (see below)
+risks:
+  - id: RISK-1
+    title: Decode collisions mis-identify LEDs and poison the solve
+    severity: high
+    mitigated_by: [PR-30, PR-31, PR-32]
+```
+
+> The initial model was seeded from the repo's design docs
+> (`led-mapper-design.md`, `docs/decisions.md`, `docs/design/*`), which encode
+> the same acceptance criteria and risks drafted in FUG-88.
+
+## Documenting a module
+
+Each module's `BUILD.bazel` docstring carries a line naming the PRs it
+implements:
+
+```python
+"""pi/led_driver — SK9822/APA102 Gray-code pattern driver.
+
+Requirements (PRs implemented here; see requirements/requirements.yaml): PR-1, PR-30, PR-31, PR-33
+"""
+```
+
+Python modules in the traceability toolkit also use an inline `Requirements: PR-…`
+line in their docstring. Any file with such a line (source, test, or `BUILD`) is
+scanned by `//requirements:check_annotations`, which fails if a referenced id is
+not defined in the model.
+
+## Annotating a test
+
+Tests declare the requirements they verify with the `@requirements` marker. For
+a whole test module, use a module-level `pytestmark`:
+
+```python
+import pytest
+
+# Traceability: PR(s) this suite verifies.
+pytestmark = pytest.mark.requirements("PR-5", "PR-35")
+```
+
+Per-test is also fine:
+
+```python
+@pytest.mark.requirements("PR-42")
+def test_junit_tag_extraction():
+    ...
+```
+
+The [`traceability.pytest_requirements`](../tools/traceability/traceability/pytest_requirements.py)
+plugin turns each marker into a jUnit tag on that test case:
+
+```xml
+<testcase name="test_junit_tag_extraction" ...>
+  <properties>
+    <property name="requirement" value="PR-42"/>
+  </properties>
+</testcase>
+```
+
+Python suites route their `pytest_main.py` through the shared runner
+([`traceability.pytest_runner`](../tools/traceability/traceability/pytest_runner.py)),
+which registers the plugin and writes jUnit to `$XML_OUTPUT_FILE` — the file
+Bazel captures under `bazel-testlogs/<pkg>/<name>/test.xml`. So every
+traceability-enabled `py_test` carries its tags into CI with no extra flags:
+
+```python
+from traceability.pytest_runner import main
+
+if __name__ == "__main__":
+    raise SystemExit(main(__file__))
+```
+
+Add `//tools/traceability` to the `py_test`'s `deps` for the import to resolve.
+
+## Two traceability mechanisms
+
+Verification evidence for a PR is the union of:
+
+1. **Per-testcase tags** (preferred) — the `<property name="requirement">` tags
+   above, giving test-case-level traceability. Used by all Python suites,
+   including HITL.
+2. **Per-target `verified_by`** — a PR may list Bazel test _target_ labels in
+   `verified_by`. Every `bazel test` writes a `bazel-testlogs/<pkg>/<name>/test.xml`
+   whose path maps back to its target, so the _whole target's_ pass/fail
+   contributes to those PRs. This is how C++, Rust, Go and TypeScript suites
+   trace today, without per-case tags.
+
+### Extending per-case tags to other languages
+
+The mechanism is language-agnostic: a test runner writes jUnit to
+`$XML_OUTPUT_FILE` with a `<property name="requirement" value="PR-…"/>` inside
+each `<testcase>`'s `<properties>`. To upgrade a suite from coarse to per-case
+traceability, have its runner (or a small jUnit post-processor) emit those tags —
+e.g. Go via `go test -json` → a jUnit converter that injects properties from a
+`// requirements: PR-…` comment; TS/`node:test` via a reporter that reads a
+`requirements` annotation. The aggregator already reads the tags; nothing else
+changes.
+
+## The report
+
+The final workflow action aggregates every jUnit XML into a single HTML report:
+
+```sh
+bazel run //tools/traceability:aggregate -- \
+  --requirements requirements/requirements.yaml \
+  --junit "$(readlink -f bazel-testlogs)" \
+  --out traceability-report.html
+```
+
+In CI this is the `traceability-report` job in
+[`.github/workflows/test.yaml`](../.github/workflows/test.yaml): it runs the
+suites, aggregates their jUnit, and uploads `traceability-report.html` as an
+artifact. The report lists all user needs, product requirements and risks with a
+status badge each:
+
+| Status       | Applies to     | Meaning                                        |
+| ------------ | -------------- | ---------------------------------------------- |
+| `VERIFIED`   | PR             | ≥1 referencing test passed, none failed        |
+| `FAILED`     | PR / UN / RISK | a referencing/rolled-up test failed or errored |
+| `UNVERIFIED` | PR             | no test references it                          |
+| `VALIDATED`  | UN             | all satisfying PRs verified                    |
+| `PARTIAL`    | UN / RISK      | some (not all) rolled-up PRs verified          |
+| `MITIGATED`  | RISK           | all mitigating derived PRs verified            |
+| `OPEN`       | RISK           | no mitigating PR verified                      |
+
+## Recipes
+
+- **Add a requirement:** add a `PR-…` entry (with `satisfies`, and `modules`);
+  document it in the implementing module's `BUILD`; annotate its tests. Run
+  `bazel test //requirements:requirements_valid_test` and
+  `bazel run //requirements:check_annotations`.
+- **Add a risk + mitigation:** add the `RISK-…` with `mitigated_by: [PR-…]` and
+  a `kind: derived` PR whose `mitigates` names the risk back; annotate the tests
+  that verify the mitigation.
+- **Find gaps:** open the report — `UNVERIFIED` PRs and `OPEN` risks are the
+  work list.
