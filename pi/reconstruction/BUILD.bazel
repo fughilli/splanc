@@ -54,6 +54,7 @@ py_test(
     deps = [
         ":reconstruction",
         requirement("numpy"),
+        "//tools/traceability",
         requirement("pytest"),
     ],
 )
@@ -79,6 +80,7 @@ py_test(
         ":reconstruction",
         "@rules_python//python/runfiles",
         requirement("numpy"),
+        "//tools/traceability",
         requirement("pytest"),
         requirement("scipy"),
     ],
@@ -97,6 +99,7 @@ py_test(
     deps = [
         ":reconstruction",
         requirement("numpy"),
+        "//tools/traceability",
         requirement("pytest"),
         requirement("scipy"),
     ],

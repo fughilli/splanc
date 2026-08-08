@@ -64,6 +64,7 @@ py_test(
     deps = [
         ":server",
         "//shared/protocol",
+        "//tools/traceability",
         requirement("pytest"),
     ],
 )
@@ -86,6 +87,7 @@ py_test(
         "//pi/reconstruction",
         "//shared/protocol",
         "//shared/simulator",
+        "//tools/traceability",
         requirement("pytest"),
         requirement("scipy"),
         requirement("websockets"),

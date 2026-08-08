@@ -1,10 +1,12 @@
-"""Pytest entry point for Bazel py_test targets (see shared/protocol/tests)."""
+"""Pytest entry point — traceability-enabled shared runner.
 
-import os
-import sys
+Requirements: PR-41
 
-import pytest
+Delegates to //tools/traceability so this suite writes jUnit XML to
+$XML_OUTPUT_FILE with the @requirements markers emitted as traceability tags.
+"""
+
+from traceability.pytest_runner import main
 
 if __name__ == "__main__":
-    here = os.path.dirname(os.path.abspath(__file__))
-    sys.exit(pytest.main([here, "-vv", "-p", "no:cacheprovider", *sys.argv[1:]]))
+    raise SystemExit(main(__file__))

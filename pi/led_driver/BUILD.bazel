@@ -55,6 +55,7 @@ py_test(
     deps = [
         ":led_driver",
         "//shared/protocol",
+        "//tools/traceability",
         requirement("pytest"),
     ],
 )
