@@ -6,7 +6,7 @@ on-hardware suite is flaky there. Run THIS on a machine where the rigs work (a
 laptop on the tailnet), and curl it from anywhere to run the tests one at a time:
 
     python3 pi/hitl/scripts/hitl_shim.py           # binds 0.0.0.0:8091
-    #   (or:  bazel run //pi/hitl/scripts:hitl_shim )
+    #   (or:  bazel run //pi/hitl:hitl_shim )
 
     curl        http://<host>:8091/                # usage + targets + defaults
     curl -N     http://<host>:8091/run?target=e2e  # run one, stream output
