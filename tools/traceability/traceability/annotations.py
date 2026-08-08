@@ -30,7 +30,10 @@ _MODULE_RE = re.compile(r"Requirements:\s*([A-Z0-9,\s\-]+)")
 _MARKER_RE = re.compile(r"requirements\(\s*([^)]*)\)")
 _PR_RE = re.compile(r"PR-\d+")
 
-_SCAN_EXTENSIONS = (".py", ".ts", ".rs", ".cc", ".c", ".h", ".hpp", ".go")
+_SCAN_EXTENSIONS = (".py", ".ts", ".rs", ".cc", ".c", ".h", ".hpp", ".go", ".bzl")
+# Bazel package files are the uniform, cross-language home for a module's
+# "Requirements: PR-…" documentation line, so scan them too.
+_SCAN_NAMES = ("BUILD", "BUILD.bazel")
 _SKIP_DIRS = {
     ".git",
     "node_modules",
@@ -69,7 +72,7 @@ def scan_tree(root: str) -> list[Reference]:
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in _SKIP_DIRS and not d.startswith("bazel-")]
         for name in filenames:
-            if not name.endswith(_SCAN_EXTENSIONS):
+            if not (name.endswith(_SCAN_EXTENSIONS) or name in _SCAN_NAMES):
                 continue
             full = os.path.join(dirpath, name)
             try:

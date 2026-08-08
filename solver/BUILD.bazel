@@ -4,6 +4,9 @@
   :solver_cli        host binary the Pi server runs as a subprocess
   :solver_wasm       wasm32 cdylib with wasm-bindgen exports for the phone
   :solver_wasm_pkg   wasm-bindgen JS glue + .wasm, served under /solver/
+
+
+Requirements (PRs implemented here; see requirements/requirements.yaml): PR-2, PR-3, PR-38
 """
 
 load("@aspect_bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
