@@ -97,10 +97,12 @@ async def _ws_checks(ws_url: str, new_name: str, insecure: bool) -> None:
 
     # A freshly-provisioned board is still settling its servers: right after it
     # reports PROVISIONED it drops the soft-AP, goes STA-only and re-signs the wss
-    # cert (a ~1-2s single-core stall), and the LAN/tunnel path is just coming up.
-    # Retry the initial open rather than fail the whole run on that transient.
+    # cert, and the LAN/tunnel path is just coming up. After a cold --erase-fs
+    # flash it also reformats littlefs first, so this can run well past the old
+    # 25s window (that race reddened map_upload in CI). Retry the initial open
+    # rather than fail the whole run on that transient; 60s is pure slack.
     print(f"[ws] connecting {ws_url}", flush=True)
-    deadline = time.monotonic() + 25.0
+    deadline = time.monotonic() + 60.0
     while True:
         try:
             sock = await websockets.connect(ws_url, max_size=2**22, ssl=ssl_ctx, open_timeout=8)

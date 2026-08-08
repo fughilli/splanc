@@ -264,7 +264,9 @@ async def _measure(ws_url: str, fit_src, held_src, args) -> tuple[list, list, in
 
     _log(f"[ws] connecting {ws_url}")
     try:
-        sock = await _open_ws(ws_url, args, time.monotonic() + 25.0)
+        # 60s: a cold --erase-fs flash + LAN-cert reissue can be slow to bring
+        # up the socket. Slack only — a warm DUT answers on the first attempt.
+        sock = await _open_ws(ws_url, args, time.monotonic() + 60.0)
     except WsUnavailable as e:
         raise SystemExit(str(e))  # nothing measured yet — a hard failure
 

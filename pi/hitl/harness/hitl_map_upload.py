@@ -161,7 +161,11 @@ async def _run(ws_url: str, n_leds: int, insecure: bool) -> bool:
     map_flat = synth_output_map(n_leds, map_id)
     topo_flat = synth_topology(n_leds, map_id)
 
-    sock = await _open_ws(ws_url, insecure, time.monotonic() + 25.0)
+    # A freshly-provisioned board is still bringing up wss:443: after a cold
+    # --erase-fs flash it reformats littlefs, joins WiFi, re-issues the LAN cert
+    # and restarts the TLS server, which occasionally exceeds 25s (that race is
+    # what reddened CI). 60s is pure slack — a warm DUT answers on the first try.
+    sock = await _open_ws(ws_url, insecure, time.monotonic() + 60.0)
     try:
         # (1) + (2): the uploads themselves. A dropped socket / OOM raises here.
         got_map_id = await _submit_chunked(sock, map_flat, "MAP", 1, "map")

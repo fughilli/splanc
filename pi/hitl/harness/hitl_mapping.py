@@ -154,7 +154,9 @@ async def _run(
     failures (which are test errors, distinct from the assertion failing)."""
     import base64
 
-    sock = await _open_ws(ws_url, insecure, time.monotonic() + 25.0)
+    # 60s (not 25s): a cold --erase-fs flash + LAN-cert reissue can be slow to
+    # bring up wss:443. Slack only — a warm DUT answers on the first attempt.
+    sock = await _open_ws(ws_url, insecure, time.monotonic() + 60.0)
     try:
         # (1) Reproduce the boot-resume state: a map + an ACTIVE effect.
         await _rpc(sock, _linear_map(led_count), "result_ready")
