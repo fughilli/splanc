@@ -1,6 +1,6 @@
 """Emit traceability-tagged jUnit XML from non-pytest test runners.
 
-Requirements: PR-41
+Requirements: PR-25
 
 The pytest plugin covers software-only Python suites, but on-hardware HITL tests
 are driven by a plain ``py_binary`` (e.g. ``//pi/hitl/harness:e2e``). This writer

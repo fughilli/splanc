@@ -10,7 +10,8 @@ cached. The hand-curated `__init__.py` and `index.ts` re-export the generated
 symbols, giving consumers a stable import surface.
 
 
-Requirements (PRs implemented here; see requirements/requirements.yaml): PR-12, PR-37
+
+Requirements (PRs implemented here; see requirements/requirements.yaml): PR-34
 """
 
 load("@pypi//:requirements.bzl", "requirement")

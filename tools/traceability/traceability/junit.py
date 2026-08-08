@@ -1,6 +1,6 @@
 """Parse jUnit XML (including the traceability tags) into test results.
 
-Requirements: PR-42
+Requirements: PR-25
 
 Two sources of test->requirement traceability are supported:
 
@@ -104,11 +104,12 @@ def target_from_path(path: str, workspace_root: str = "") -> str:
 
 
 def parse_file(path: str) -> list[CaseResult]:
-    """Parse one jUnit XML file into its test cases."""
+    """Parse one jUnit XML file into its test cases (never raises)."""
     target = target_from_path(path)
     try:
         tree = ET.parse(path)
-    except ET.ParseError:
+    except (ET.ParseError, OSError):
+        # Malformed, missing, or unreadable file — contributes nothing.
         return []
     root = tree.getroot()
     suites = [root] if root.tag == "testsuite" else root.findall(".//testsuite")
@@ -145,11 +146,13 @@ def collect(paths: list[str]) -> JUnitResults:
 def _expand(paths: list[str]) -> list[str]:
     out: list[str] = []
     for path in paths:
+        if not path:
+            continue  # empty arg (e.g. readlink of a missing bazel-testlogs)
         if os.path.isdir(path):
             out.extend(sorted(glob.glob(os.path.join(path, "**", "*.xml"), recursive=True)))
         elif any(ch in path for ch in "*?["):
             out.extend(sorted(glob.glob(path, recursive=True)))
-        else:
+        elif os.path.isfile(path):
             out.append(path)
     # De-dup, keep order.
     seen: set[str] = set()

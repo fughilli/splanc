@@ -1,6 +1,6 @@
 """Pytest entry point — traceability-enabled shared runner.
 
-Requirements: PR-41
+Requirements: PR-25
 
 Delegates to //tools/traceability so this suite writes jUnit XML to
 $XML_OUTPUT_FILE with the @requirements markers emitted as traceability tags.

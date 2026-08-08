@@ -32,7 +32,7 @@ from simulator import generate_log
 from websockets.sync.client import connect
 
 # Traceability: PR(s) this suite verifies (see requirements/requirements.yaml).
-pytestmark = pytest.mark.requirements("PR-2", "PR-6", "PR-12")
+pytestmark = pytest.mark.requirements("PR-11", "PR-13")
 
 
 def _free_port() -> int:

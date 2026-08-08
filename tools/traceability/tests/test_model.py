@@ -1,6 +1,6 @@
 """Tests for the requirements model loader/validator.
 
-Requirements: PR-40, PR-44
+Requirements: PR-23, PR-25
 """
 
 import pytest
@@ -21,7 +21,7 @@ GOOD = {
 }
 
 
-@pytest.mark.requirements("PR-40")
+@pytest.mark.requirements("PR-23")
 def test_valid_model_parses_clean():
     model, errors = parse_model(GOOD)
     assert errors == []
@@ -31,7 +31,7 @@ def test_valid_model_parses_clean():
     assert model.requirements_for_need("UN-1")[0].id == "PR-1"
 
 
-@pytest.mark.requirements("PR-44")
+@pytest.mark.requirements("PR-25")
 def test_direct_pr_must_satisfy_a_need():
     data = {
         "user_needs": [{"id": "UN-1", "title": "Need"}],
@@ -44,7 +44,7 @@ def test_direct_pr_must_satisfy_a_need():
     assert any("not satisfied by any product requirement" in e for e in errors)
 
 
-@pytest.mark.requirements("PR-44")
+@pytest.mark.requirements("PR-25")
 def test_derived_pr_must_mitigate_a_risk():
     data = {
         "user_needs": [],
@@ -55,7 +55,7 @@ def test_derived_pr_must_mitigate_a_risk():
     assert any("must mitigate at least one risk" in e for e in errors)
 
 
-@pytest.mark.requirements("PR-44")
+@pytest.mark.requirements("PR-25")
 def test_mitigation_trace_must_be_bidirectional():
     data = {
         "user_needs": [],
@@ -69,7 +69,7 @@ def test_mitigation_trace_must_be_bidirectional():
     assert any("mitigation trace must be bidirectional" in e for e in errors)
 
 
-@pytest.mark.requirements("PR-44")
+@pytest.mark.requirements("PR-25")
 def test_risk_mitigated_by_must_be_derived():
     data = {
         "user_needs": [{"id": "UN-1", "title": "n"}],
@@ -81,7 +81,7 @@ def test_risk_mitigated_by_must_be_derived():
     assert any("not a derived requirement" in e for e in errors)
 
 
-@pytest.mark.requirements("PR-40")
+@pytest.mark.requirements("PR-23")
 def test_bad_ids_are_rejected():
     data = {
         "user_needs": [{"id": "U1", "title": "n"}],
@@ -92,7 +92,7 @@ def test_bad_ids_are_rejected():
     assert any("id must match UN-<n>" in e for e in errors)
 
 
-@pytest.mark.requirements("PR-40")
+@pytest.mark.requirements("PR-23")
 def test_validation_error_carries_all_problems():
     with pytest.raises(ValidationError) as exc:
         import io

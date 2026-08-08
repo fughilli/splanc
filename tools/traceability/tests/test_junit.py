@@ -1,6 +1,6 @@
 """Tests for jUnit XML parsing + traceability-tag extraction.
 
-Requirements: PR-42
+Requirements: PR-25
 """
 
 import os
@@ -35,7 +35,7 @@ def _write(text: str, path: str) -> str:
     return path
 
 
-@pytest.mark.requirements("PR-42")
+@pytest.mark.requirements("PR-25")
 def test_extracts_per_case_requirement_tags():
     with tempfile.TemporaryDirectory() as d:
         p = _write(XUNIT2, os.path.join(d, "test.xml"))
@@ -47,7 +47,7 @@ def test_extracts_per_case_requirement_tags():
     assert by_name["test_untagged"].requirements == ()
 
 
-@pytest.mark.requirements("PR-42")
+@pytest.mark.requirements("PR-25")
 def test_target_derived_from_bazel_testlogs_path():
     assert (
         junit.target_from_path("x/bazel-testlogs/pi/hitl/tests/hitl_test/test.xml")
@@ -56,7 +56,7 @@ def test_target_derived_from_bazel_testlogs_path():
     assert junit.target_from_path("/tmp/random/test.xml") == ""
 
 
-@pytest.mark.requirements("PR-41", "PR-42")
+@pytest.mark.requirements("PR-25", "PR-25")
 def test_junit_writer_roundtrips_through_parser():
     # HITL-style non-pytest runner: phases emit tagged jUnit that the parser
     # reads back byte-faithfully.
@@ -78,7 +78,7 @@ def test_junit_writer_roundtrips_through_parser():
     assert by_name["improv_provision"].requirements == ("PR-9",)
 
 
-@pytest.mark.requirements("PR-42")
+@pytest.mark.requirements("PR-25")
 def test_collect_merges_target_status_worst_wins():
     with tempfile.TemporaryDirectory() as d:
         logs = os.path.join(d, "bazel-testlogs", "pi", "hitl", "tests", "hitl_test")

@@ -22,7 +22,7 @@ from reconstruction.vio import G_WORLD, similarity_align, so3_log
 from reconstruction.vio_api import reconstruct_vio
 
 # Traceability: PR(s) this suite verifies (see requirements/requirements.yaml).
-pytestmark = pytest.mark.requirements("PR-3")
+pytestmark = pytest.mark.requirements("PR-11", "PR-34")
 
 RNG = np.random.default_rng(23)
 

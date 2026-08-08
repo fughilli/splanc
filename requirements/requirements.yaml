@@ -1,4 +1,4 @@
-# splanc — machine-readable requirements & risk model.
+# Splanc — machine-readable requirements & risk model.
 #
 # This is the single source of truth for the requirements-driven-development
 # workflow (see docs/requirements-driven-development.md). It is validated by
@@ -6,429 +6,564 @@
 # tooling in //tools/traceability to build the HTML verification/validation
 # report.
 #
+# Content is the FUG-88 "Draft requirements and risk assessment for Splanc"
+# baseline, translated verbatim (UN-1..8, PR-1..25, RISK-1..12). FUG-88 states
+# each risk's mitigation as prose; per FUG-89 those mitigations are captured as
+# DERIVED product requirements (PR-26..37, kind: derived) that `mitigates` the
+# risk, with the risk's `mitigated_by` naming the derived PR back.
+#
 # Entity kinds:
-#   * user_needs (UN)         — what a user must be able to do. VALIDATED by the
-#                               verification of the PRs that satisfy them.
-#   * product_requirements    — direct PRs `satisfies` user needs; derived PRs
-#     (PR)                      `mitigates` risks (and may also satisfy needs).
-#                               VERIFIED by the tests that reference them.
-#   * risks (RISK)            — hazards/failure modes. MITIGATED when the derived
-#                               PRs that mitigate them are verified.
+#   * user_needs (UN)      — what a user must be able to do. VALIDATED by the
+#                            verification of the PRs that satisfy them.
+#   * product_requirements — direct PRs `satisfies` user needs; derived PRs
+#     (PR)                   `mitigates` risks (and may also satisfy needs).
+#                            VERIFIED by the tests that reference them.
+#   * risks (RISK)         — failure modes. MITIGATED when the derived PRs that
+#                            mitigate them are verified.
 #
 # Traceability from a PR to its tests comes from either per-testcase
 # `@requirements("PR-…")` markers (emitted as jUnit tags) or the `verified_by`
-# Bazel target list below (whole-target pass/fail, for languages without
-# per-case tags yet).
+# Bazel target list (whole-target pass/fail, for languages without per-case
+# tags yet). Requirements that describe product areas not implemented in this
+# repository yet (e.g. AI workflow surfaces) are intentionally left without
+# verifying tests and surface as UNVERIFIED in the report.
 
 meta:
   project: splanc
   source: >-
-    Seeded (FUG-89) from led-mapper-design.md, docs/decisions.md and
-    docs/design/*, which encode the same acceptance criteria and risks drafted
-    in FUG-88. Reconcile the exact UN/PR/RISK wording against the FUG-88 Linear
-    analysis in review.
+    FUG-88 "Draft requirements and risk assessment for Splanc" baseline
+    (UN-1..8, PR-1..25, RISK-1..12), verbatim. Derived PRs PR-26..37 capture the
+    per-risk mitigations FUG-88 states as prose (FUG-89).
 
 # --------------------------------------------------------------------------- #
-# User needs                                                                  #
+# User needs (FUG-88)                                                         #
 # --------------------------------------------------------------------------- #
 user_needs:
   - id: UN-1
-    title: Map a fixture by walking around it
+    title: Create, preview and tune effects quickly on desktop and mobile
     description: >-
-      A user can map a fixture of up to 1024 LEDs by walking around it for
-      <= 2 minutes, offline, from an Android phone (Pi is its own Wi-Fi AP).
+      Users need to create, preview, and tune effects quickly on desktop and
+      mobile with responsive controls and efficient layouts.
 
   - id: UN-2
-    title: Get an accurate map
+    title: Understandable, non-blocking, trustworthy AI + remapping workflows
     description: >-
-      On the bench golden fixture, reconstructed positions have RMS error
-      <= 2% of the longest dimension with >= 95% of LEDs identified, and
-      shape-consistency (collinear/coplanar) checks pass.
+      Users need AI-assisted workflows and control remapping that are
+      understandable, non-blocking, and trustworthy.
 
   - id: UN-3
-    title: Identify LEDs reliably in imperfect lighting
+    title: Drive effects from external inputs without extra hardware
     description: >-
-      Each detected blob is labelled with the correct LED index even in a lit
-      room or with auto-exposure pumping — no systematic mis-identification.
+      Users need to drive effects from external inputs such as cameras and
+      TouchDesigner without unnecessary hardware dependencies.
 
   - id: UN-4
-    title: Export and re-use the map and effect library
+    title: Reliably manage LED topology maps
     description: >-
-      The output map is a documented JSON + CSV artifact, and effect/map
-      library bundles can be exported and imported.
+      Users need to create, reconstruct, import, export, and manage LED topology
+      maps reliably, including larger installations.
 
   - id: UN-5
-    title: Author and run light-show effects
+    title: Commission and update devices from the browser
     description: >-
-      A user can author effects and run them on the fixture through the effects
-      compiler and on-device runtime.
+      Users need to commission, name, discover, connect to, and update devices
+      from the browser with minimal setup friction.
 
   - id: UN-6
-    title: Set up a device with no special tools
+    title: Acceptable quality and predictable performance on device
     description: >-
-      A user can flash firmware from the browser and provision the device onto
-      Wi-Fi over BLE (Improv), with no desktop toolchain.
+      Users need acceptable visual quality and predictable runtime performance
+      on constrained device hardware.
 
   - id: UN-7
-    title: Name devices and reach them by name
+    title: Stability during long sessions and networking/memory pressure
     description: >-
-      A configured device name drives its Wi-Fi AP SSID and its mDNS/DHCP
-      hostname so the device is reachable by a memorable name.
+      Users need the device and app to remain stable during long sessions,
+      networking transitions, and memory pressure.
 
   - id: UN-8
-    title: Keep phone and device clocks in sync
+    title: Fast, reliable, representative automated validation
     description: >-
-      The phone and device agree on a clock precise enough to decode the blink
-      code, over the LAN, without internet.
-
-  - id: UN-9
-    title: Trust the software through a requirements-driven process
-    description: >-
-      Every module traces to the requirements it satisfies and every
-      requirement traces to the tests that verify it, aggregated into a report
-      that shows PASS/FAIL validation and verification of the whole listing.
+      Users need automated validation that is fast, reliable, and representative
+      of real device behavior.
 
 # --------------------------------------------------------------------------- #
-# Product requirements                                                        #
+# Product requirements (FUG-88 PR-1..25, direct)                             #
 # --------------------------------------------------------------------------- #
 product_requirements:
-  # --- direct requirements ------------------------------------------------- #
   - id: PR-1
-    title: Temporal blink code labels each blob with its LED index
+    title: Apply display scaling consistently across control types and views
     description: >-
-      LEDs blink a known temporal (hue) code so each detected blob announces its
-      own index; the driver frame plan and the phone decoder agree on it.
-    satisfies: [UN-1, UN-3]
-    modules: [firmware, pi/led_driver, web]
-    verified_by: ['//web:gray_test']
+      The UI shall apply display scaling consistently across supported control
+      types and views.
+    satisfies: [UN-1]
+    modules: [web]
 
   - id: PR-2
-    title: Reconstruction triangulates and bundle-adjusts to a metric map
+    title: Immediate feedback with bounded expensive recompute during drag
     description: >-
-      Labelled, posed views triangulate + globally refine (Huber BA) to metric
-      LED positions meeting the accuracy bar on the golden fixture.
-    satisfies: [UN-2]
-    modules: [pi/reconstruction, solver]
+      The UI shall provide immediate perceptual feedback during continuous
+      adjustments while avoiding excessive expensive recomputation during active
+      drag interactions.
+    satisfies: [UN-1]
+    modules: [web]
 
   - id: PR-3
-    title: Rust solver matches the Python reference solver
+    title: Preserve per-view settings; defaults never override explicit settings
     description: >-
-      The Rust solver and the Python reference agree < 3 mm / < 2% scale after
-      similarity alignment on one synthetic session.
-    satisfies: [UN-2]
-    modules: [solver, pi/reconstruction]
-    verified_by: ['//solver:solver_test']
+      The workspace shall preserve per-view settings and prevent default view
+      modes from overriding explicit user settings.
+    satisfies: [UN-1]
+    modules: [web]
 
   - id: PR-4
-    title: Simulator round-trip meets the noise-model accuracy bar
+    title: Efficient use of screen space on desktop and mobile
     description: >-
-      A zero-noise detection log reconstructs to < 1 mm RMS; at nominal noise
-      RMS <= 1% of the fixture span with >= 99% of LEDs solved.
-    satisfies: [UN-2]
-    modules: [shared/simulator, pi/reconstruction]
+      The workspace shall make efficient use of screen space on desktop and
+      mobile, including 3D previews, panes, menus, and workspace controls.
+    satisfies: [UN-1]
+    modules: [web]
 
   - id: PR-5
-    title: SNTP offset/RTT clock-sync math
+    title: Informational UI elements never obstruct primary workflows
     description: >-
-      Offset and round-trip are computed from four timestamps; the lowest-RTT
-      sample is chosen; implausible samples are rejected.
-    satisfies: [UN-8]
-    modules: [pi/hitl, pi/server, web]
-    verified_by: ['//web:clocksync_test']
+      Informational UI elements such as banners and tooltips shall not obstruct
+      primary workflows and shall be dismissible or self-clearing when
+      appropriate.
+    satisfies: [UN-1, UN-2]
+    modules: [web]
 
   - id: PR-6
-    title: Documented map output + library bundle export/import
+    title: AI workflow surfaces render responses and progress clearly
     description: >-
-      Capture sessions persist to a documented JSON/CSV map (§7.5); effect/map
-      library bundles round-trip through export/import.
-    satisfies: [UN-4]
-    modules: [pi/server, web]
-    verified_by: ['//web:mapBundle_test']
+      AI workflow surfaces shall render responses clearly, including Markdown
+      where applicable, and shall expose useful progress and completion feedback
+      to the user.
+    satisfies: [UN-2]
+    modules: [web]
 
   - id: PR-7
-    title: On-device effects runtime executes bytecode effects
+    title: Control remapping to semantic effect inputs without editing source
     description: >-
-      The firmware effects VM runs compiled bytecode effects deterministically
-      and within the device performance budget.
-    satisfies: [UN-5]
-    modules: [firmware, fx_compiler]
-    verified_by: ['//firmware/player_app:ffi_test']
+      Control remapping shall let users map hardware controls to semantic effect
+      inputs without rewriting effect source code.
+    satisfies: [UN-2]
+    modules: [web]
+    verified_by: ['//web:midi_test', '//web:midiStore_test']
 
   - id: PR-8
-    title: Effects compiler lowers .fx source to bytecode
+    title: Support local / on-device model workflows where documented
     description: >-
-      The effects compiler compiles effect source into the bytecode/textures the
-      on-device runtime consumes.
-    satisfies: [UN-5]
-    modules: [fx_compiler, web]
-    verified_by: ['//web:fxTopology_test', '//web:fxbTextures_test']
+      The system shall support local or on-device model workflows where
+      documented capabilities call for them.
+    satisfies: [UN-2]
+    modules: [web]
 
   - id: PR-9
-    title: BLE Improv provisioning onboards the device onto Wi-Fi
+    title: Preview effects from camera/video inputs without dedicated hardware
     description: >-
-      The Improv-over-BLE GATT flow provisions the device onto a Wi-Fi network
-      from the browser.
-    satisfies: [UN-6]
-    modules: [firmware, pi/hitl, web]
+      The workspace shall support previewing effects from camera or
+      video-derived inputs even when dedicated hardware is not connected, where
+      feasible.
+    satisfies: [UN-3]
+    modules: [web]
+
+  - id: PR-10
+    title: TouchDesigner texture/uniform-driven effect integration
+    description: >-
+      The system shall support TouchDesigner integration for texture and
+      uniform-driven effect workflows.
+    satisfies: [UN-3]
+    modules: [tools, web]
+
+  - id: PR-11
+    title: Capture, reconstruct, upload, import/export and conflict handling
+    description: >-
+      The mapping workflow shall support capture, reconstruction, upload,
+      import, export, and conflict handling for topology maps.
+    satisfies: [UN-4]
+    modules: [pi/reconstruction, pi/server, pi/led_driver, solver, shared/simulator, web]
+    verified_by:
+      - '//solver:solver_test'
+      - '//web:mapBundle_test'
+      - '//web:pinhole_test'
+      - '//web:placement_test'
+      - '//web:exposure_test'
+      - '//web:intrinsics_test'
+      - '//web:mapTransform_test'
+
+  - id: PR-12
+    title: Tolerate larger installations (batching, scale-aware, recovery)
+    description: >-
+      The mapping workflow shall tolerate larger installations through batching,
+      scale-aware upload behavior, and recovery-oriented handling of
+      reconstruction interruptions.
+    satisfies: [UN-4, UN-7]
+    modules: [pi/server, web, pi/hitl]
+
+  - id: PR-13
+    title: Browser provisioning, rename, discovery, LAN and direct connection
+    description: >-
+      The browser experience shall support device provisioning, rename,
+      discovery, LAN connection, and direct connection by available connection
+      modes.
+    satisfies: [UN-5]
+    modules: [firmware, pi/server, pi/hitl, web]
     verified_by:
       - '//firmware/player_app:improv_codec_test'
+      - '//firmware/player_app:ws_codec_test'
+      - '//web:clocksync_test'
       - '//web:improv_test'
       - '//web:improv_provision_test'
 
-  - id: PR-10
-    title: Flash firmware directly from the browser
+  - id: PR-14
+    title: Consistent device-visible identity across name/AP/hostname
     description: >-
-      Firmware flashes from Chrome via WebSerial/WebUSB with a manifest-driven
-      bundle, no desktop tooling.
-    satisfies: [UN-6]
-    modules: [web, tools]
-    verified_by: ['//web:flashUsb_test', '//web:flashManifest_test', '//web:flashEnv_test']
+      The system shall derive or maintain device-visible identity consistently
+      across configured name, AP name, hostname, and related discovery surfaces.
+    satisfies: [UN-5]
+    modules: [firmware]
 
-  - id: PR-11
-    title: Derive AP SSID and mDNS/DHCP hostname from the device name
+  - id: PR-15
+    title: Browser firmware update detects hardware and flashes compatible image
     description: >-
-      The configured device name determines the Wi-Fi AP SSID and the
-      mDNS/DHCP hostname (FUG-83).
+      The browser-based firmware update flow shall detect hardware appropriately
+      and flash compatible firmware images for the detected target.
+    satisfies: [UN-5]
+    modules: [web]
+    verified_by: ['//web:flashManifest_test', '//web:flashUsb_test']
+
+  - id: PR-16
+    title: Cross-platform browser flashing with safe fallback
+    description: >-
+      The product shall support browser-based flashing across supported client
+      platforms and provide safe fallback behavior where support is limited.
+    satisfies: [UN-5]
+    modules: [web]
+    verified_by: ['//web:flashEnv_test', '//web:flashUsb_test']
+
+  - id: PR-17
+    title: Effect runtime capability + calibrated performance-estimation inputs
+    description: >-
+      The runtime shall support effect execution features needed by the
+      documented effect system, including embedded/runtime type support and
+      calibrated performance estimation inputs.
+    satisfies: [UN-6]
+    modules: [firmware, fx_compiler]
+    verified_by:
+      - '//firmware/player_app:ffi_test'
+      - '//web:fxTopology_test'
+      - '//web:fxbTextures_test'
+
+  - id: PR-18
+    title: Performance visibility against device budget
+    description: >-
+      The system shall provide users with performance visibility sufficient to
+      understand whether an effect is likely to run within device budget.
+    satisfies: [UN-6]
+    modules: [web, firmware]
+    verified_by:
+      - '//web:costModel_test'
+      - '//web:budget_test'
+      - '//web:executionProfile_test'
+      - '//web:profileValidation_test'
+
+  - id: PR-19
+    title: Adapt playback/execution rate to preserve stability
+    description: >-
+      The system shall adapt effect playback rate or execution rate to preserve
+      system stability when performance headroom becomes insufficient.
+    satisfies: [UN-6, UN-7]
+    modules: [firmware]
+
+  - id: PR-20
+    title: Visual output calibration (color correction)
+    description: >-
+      The product shall support visual output calibration features such as color
+      correction where documented.
+    satisfies: [UN-6]
+    modules: [firmware, web]
+    verified_by:
+      - '//firmware/player_app:color_correction_test'
+      - '//web:colorCorrection_test'
+
+  - id: PR-21
+    title: Careful device memory management for networking/control/effects
+    description: >-
+      The device firmware and associated protocols shall manage memory carefully
+      enough to support intended networking, control, and effect workloads on
+      target hardware.
     satisfies: [UN-7]
     modules: [firmware]
 
-  - id: PR-12
-    title: WebSocket §7 control protocol over binary protobuf frames
+  - id: PR-22
+    title: Preserve user work across transient disconnects
     description: >-
-      The §7 capture-control protocol is carried over binary ledmapper.v1
-      protobuf frames both directions, with a codec on each end.
-    satisfies: [UN-1, UN-4]
-    modules: [shared/protocol, pi/server, web, firmware]
-    verified_by: ['//firmware/player_app:ws_codec_test', '//web:proto_test']
+      The system shall preserve important user work products, such as captures
+      or map data, across transient disconnects whenever practical.
+    satisfies: [UN-4, UN-7]
+    modules: [pi/server, web]
 
-  - id: PR-13
-    title: Large maps upload in chunks over the socket
+  - id: PR-23
+    title: HITL + CI infrastructure validates representative operational flows
     description: >-
-      A large map + topology (~14 KB) uploads in bounded chunks over the
-      WebSocket without exceeding frame limits.
-    satisfies: [UN-4]
-    modules: [pi/server, web, pi/hitl]
+      HITL and CI infrastructure shall validate provisioning, flashing,
+      connectivity, mapping, and representative operational flows.
+    satisfies: [UN-8]
+    modules: [pi/hitl, tools/traceability, requirements]
 
-  - id: PR-14
-    title: Exposure/encoding auto-negotiation adapts the code to lighting
+  - id: PR-24
+    title: Multi-DUT validation isolates test resources safely
     description: >-
-      The client measures scene stats and negotiates encoding, bit period and
-      detector threshold to keep the code decodable as lighting changes.
-    satisfies: [UN-3]
-    modules: [web]
-    verified_by: ['//web:exposure_test', '//web:exposureControl_test']
+      The validation system shall support multiple DUTs safely and isolate test
+      resources well enough to prevent cross-device interference.
+    satisfies: [UN-8]
+    modules: [pi/hitl]
 
-  # --- requirements-driven-development workflow (this issue) --------------- #
-  - id: PR-40
-    title: Machine-readable requirements model with validated cross-references
+  - id: PR-25
+    title: CI enforces quality gates under routine infrastructure constraints
     description: >-
-      UN/PR/RISK and derived-PR mitigations are captured in a machine-readable
-      YAML model whose cross-references (satisfies/mitigates/mitigated_by) are
-      loadable and internally consistent.
-    satisfies: [UN-9]
-    modules: [requirements, tools/traceability]
+      CI shall enforce quality gates and remain operable under routine
+      infrastructure constraints such as noisy builds, storage pressure, and
+      shared-resource contention.
+    satisfies: [UN-8]
+    modules: [tools/traceability, requirements]
 
-  - id: PR-41
-    title: Tests declare the requirements they verify as jUnit traceability tags
+  # ------------------------------------------------------------------------- #
+  # Derived requirements — risk mitigations (FUG-89, one per FUG-88 risk).    #
+  # ------------------------------------------------------------------------- #
+  - id: PR-26
+    title: Bound device allocation pressure and abort unsafe workloads
     description: >-
-      A `@requirements("PR-…")` test marker emits, per testcase, jUnit
-      `<property name="requirement">` tags; the shared runner writes that jUnit
-      to $XML_OUTPUT_FILE so every test carries its traceability into CI.
-    satisfies: [UN-9]
-    modules: [tools/traceability]
-
-  - id: PR-42
-    title: jUnit XML (with traceability tags) is parsed back to per-test results
-    description: >-
-      The aggregator parses jUnit XML from all suites, extracting per-testcase
-      requirement tags and per-target pass/fail.
-    satisfies: [UN-9]
-    modules: [tools/traceability]
-
-  - id: PR-43
-    title: Aggregated HTML report shows PASS/FAIL for the whole UN/PR listing
-    description: >-
-      A final workflow action joins the model with the test results and renders
-      an HTML report showing validation (UN), verification (PR) and mitigation
-      (RISK) status for the entire listing.
-    satisfies: [UN-9]
-    modules: [tools/traceability]
-
-  # --- derived requirements (risk mitigations) ----------------------------- #
-  - id: PR-30
-    title: SEC-DED FEC on the blink code corrects singles, rejects doubles
-    description: >-
-      Extended-Hamming (distance-4) SEC-DED parity on the Gray data word
-      corrects single bit-window errors and detects+rejects doubles, so a wrong
-      window can no longer decode to a valid wrong id. Codebook emits fec=secded.
+      Reduce allocation pressure, prefer zero-copy or streamed handling where
+      possible, store large static data efficiently, monitor memory budgets, and
+      abort unsafe workloads (mitigates device heap exhaustion/fragmentation).
     kind: derived
-    satisfies: [UN-3]
+    satisfies: [UN-7]
     mitigates: [RISK-1]
-    modules: [pi/led_driver, pi/server, web]
-    verified_by: ['//web:fec_test']
+    modules: [firmware]
 
-  - id: PR-31
-    title: id+1 codewords reserve the all-zero data word as invalid
+  - id: PR-27
+    title: Calibrate and cover the effect performance model
     description: >-
-      Codewords carry id+1 so id 0's raw Gray word is not all-dark; a dark-data
-      observation decodes to the reserved-invalid word and is rejected rather
-      than becoming a decode magnet.
+      Expand coverage of modeled operations, calibrate the cost model, validate
+      against held-out workloads, and expose budget visibility so the model does
+      not give false confidence.
     kind: derived
-    satisfies: [UN-3]
-    mitigates: [RISK-1]
-    modules: [pi/led_driver, web]
-    verified_by: ['//web:gray_test']
-
-  - id: PR-32
-    title: Confidence gate, per-cycle dedup and consensus pre-filter
-    description: >-
-      A decoder minConfidence gate, per-cycle brightest-anchor dedup, and M3's
-      mode-seeking consensus pre-filter reject majority-bad observation sets.
-    kind: derived
-    mitigates: [RISK-1]
-    modules: [web, pi/reconstruction]
-    verified_by: ['//web:pipeline_synthetic_test']
-
-  - id: PR-33
-    title: Hue carrier with relative decoding and SNR-adaptive alphabet
-    description: >-
-      A constant-brightness hue carrier decoded relative to each track's own
-      white window (cancels white balance; static-hue clutter reads neutral and
-      fails the green sync), with a 2/4-symbol alphabet chosen from measured SNR.
-    kind: derived
-    satisfies: [UN-3]
+    satisfies: [UN-6]
     mitigates: [RISK-2]
-    modules: [pi/led_driver, web]
-    verified_by: ['//web:gray_test', '//firmware/player_app:color_correction_test']
+    modules: [firmware, fx_compiler, web]
+    verified_by: ['//web:costModel_test']
 
-  - id: PR-34
-    title: Release Bluedroid after provisioning to reclaim device heap
+  - id: PR-28
+    title: Autoscale frame rate and enforce headroom
     description: >-
-      The firmware releases the BLE (Bluedroid) stack once provisioning is done,
-      reclaiming ~33 KB of heap so TLS/WebSocket allocation does not starve.
+      Autoscale frame rate, enforce headroom targets, and notify or abort when
+      safe operation cannot be maintained, so expensive effects cannot starve
+      the runtime.
     kind: derived
+    satisfies: [UN-6, UN-7]
     mitigates: [RISK-3]
     modules: [firmware]
 
-  - id: PR-35
-    title: Monotonic clock sync rejects backward/implausible samples
+  - id: PR-29
+    title: Readiness-aware, reconnect-hardened provisioning
     description: >-
-      Sync uses a monotonic clock and rejects negative-RTT (backward-stepping)
-      or implausibly large-RTT samples, so a bad sample cannot corrupt code
-      alignment.
+      Improve readiness checks, investigate coexistence/reconnect behavior,
+      perform repeated provisioning validation, and harden naming/discovery so
+      provisioning/association is reliable.
+    kind: derived
+    satisfies: [UN-5]
+    mitigates: [RISK-4]
+    modules: [firmware, pi/hitl, web]
+    verified_by: ['//web:improv_provision_test', '//web:clocksync_test']
+
+  - id: PR-30
+    title: Isolate per-DUT USB/serial/debug by stable physical identity
+    description: >-
+      Isolate USB/serial/debug resources by stable physical identity while
+      preserving compatibility, so multi-DUT runs never flash/reset/inspect the
+      wrong board.
     kind: derived
     satisfies: [UN-8]
-    mitigates: [RISK-4]
-    modules: [pi/hitl, web, pi/server]
-    verified_by: ['//web:clocksync_test']
+    mitigates: [RISK-5]
+    modules: [pi/hitl]
+
+  - id: PR-31
+    title: Recover mapping from large or interrupted captures
+    description: >-
+      Preserve capture data locally, decouple reconstruction from transient
+      device presence, batch uploads, and scale-test the workflow so large or
+      interrupted captures do not lose user work.
+    kind: derived
+    satisfies: [UN-4, UN-7]
+    mitigates: [RISK-6]
+    modules: [pi/reconstruction, pi/server, web, pi/hitl]
+
+  - id: PR-32
+    title: Detect flashing capability and provide fallback transports
+    description: >-
+      Detect platform capability, support alternate transport strategies where
+      feasible, and provide clear fallback behavior so browser flashing is
+      usable across client platforms.
+    kind: derived
+    satisfies: [UN-5]
+    mitigates: [RISK-7]
+    modules: [web]
+    verified_by: ['//web:flashEnv_test', '//web:flashUsb_test']
+
+  - id: PR-33
+    title: Bound preview/thumbnail rendering cost and cache growth
+    description: >-
+      Lazy rendering, bounded cache/TTL policies, and preview performance
+      budgets so media-driven preview and animated thumbnails cannot collapse
+      performance or grow storage unbounded.
+    kind: derived
+    satisfies: [UN-1, UN-3, UN-6]
+    mitigates: [RISK-8]
+    modules: [web]
+
+  - id: PR-34
+    title: Pin the wire schema with cross-language conformance tests
+    description: >-
+      Strengthen schema ownership and compatibility tests, validate payload
+      dimensions/boundaries, and add cross-language conformance tests so binary
+      schema/protocol drift cannot cause catastrophic allocations or corruption.
+    kind: derived
+    satisfies: [UN-3, UN-4, UN-6, UN-7]
+    mitigates: [RISK-9]
+    modules: [shared/protocol, pi/server, pi/reconstruction, web, solver]
+    verified_by:
+      - '//web:proto_test'
+      - '//web:pinhole_test'
+      - '//web:fec_test'
+      - '//web:gray_test'
+
+  - id: PR-35
+    title: Reconcile device identity on stable attributes
+    description: >-
+      Reconcile identity on stable hardware attributes where possible, keep
+      naming surfaces consistent, and refresh network-facing identity correctly
+      after changes so IP/hostname/AP/device-record confusion is avoided.
+    kind: derived
+    satisfies: [UN-5]
+    mitigates: [RISK-10]
+    modules: [firmware, web]
 
   - id: PR-36
-    title: 'Mapping-trigger guard: start_mapping never preempts an active render'
+    title: Readiness-aware HITL/CI orchestration with contention control
     description: >-
-      A regression guard verifies that starting a mapping sequence does not
-      preempt an already-active effect render.
+      Replace timing assumptions with readiness-aware orchestration, control
+      shared-resource contention, manage runner storage, and enforce cleaner
+      quality gates so HITL/CI flakiness does not erode trust in results.
     kind: derived
-    mitigates: [RISK-5]
-    modules: [firmware, pi/hitl]
+    satisfies: [UN-8]
+    mitigates: [RISK-11]
+    modules: [pi/hitl, tools/traceability, requirements]
 
   - id: PR-37
-    title: Cross-language goldens pin the wire format and shared types
+    title: UI regression coverage for state, visibility and layout
     description: >-
-      Python-generated golden fixtures + generated-binding freshness checks pin
-      the protobuf wire frames and shared code/geometry conventions so the
-      Python, TS, Rust and Go halves cannot silently drift.
+      Regression coverage for settings persistence, visibility, focus,
+      tooltip/banner behavior, and responsive layout so UI state inconsistency
+      or obstruction cannot block primary tasks.
     kind: derived
-    mitigates: [RISK-6]
-    modules: [shared/protocol, pi/server, web]
-    verified_by: ['//web:proto_test', '//web:pinhole_test']
-
-  - id: PR-38
-    title: Init-time benchmark places the solve phone-first with a margin
-    description: >-
-      Host and phone run the same canned Rust solve at init; the phone keeps the
-      solve locally unless it is decisively (4x) slower, so placement never
-      offloads to a worse location.
-    kind: derived
-    mitigates: [RISK-7]
-    modules: [solver, web]
-    verified_by: ['//web:placement_test']
-
-  - id: PR-44
-    title: Requirements validator fails CI on broken traces or dangling tags
-    description: >-
-      A validator checks the model's structure and bidirectional cross-references
-      and fails when a test references a requirement id that does not exist,
-      closing the loop against requirements/tests drift.
-    kind: derived
-    satisfies: [UN-9]
-    mitigates: [RISK-8]
-    modules: [tools/traceability, requirements]
+    satisfies: [UN-1, UN-2]
+    mitigates: [RISK-12]
+    modules: [web]
+    verified_by: ['//web:appearance_test']
 
 # --------------------------------------------------------------------------- #
-# Risks                                                                       #
+# Risks (FUG-88 RISK-1..12)                                                   #
 # --------------------------------------------------------------------------- #
 risks:
   - id: RISK-1
-    title: Decode collisions mis-identify LEDs and poison the solve
+    title: Device heap exhaustion or fragmentation during runtime workloads
     description: >-
-      The raw codebook has minimum Hamming distance 1, so a single decisively
-      wrong bit window decodes to a valid WRONG id; window voting cannot see it
-      and floods of wrong decodes collapse the reconstruction.
+      Undermines UN-5, UN-6, UN-7 by causing disconnects, instability, or
+      inability to complete operations during networking/control workloads.
     severity: high
-    mitigated_by: [PR-30, PR-31, PR-32]
+    mitigated_by: [PR-26]
 
   - id: RISK-2
-    title: Lit-room / static-hue clutter defeats identification
+    title: Effect performance model gives false confidence
     description: >-
-      In a lit room intensity coding sees hundreds of scene blobs and dots dim
-      under auto-exposure; static coloured clutter can masquerade as code.
+      The model allows effects that exceed realistic runtime budget, undermining
+      UN-6 and indirectly threatening UN-7.
     severity: high
-    mitigated_by: [PR-33]
+    mitigated_by: [PR-27]
 
   - id: RISK-3
-    title: Device heap exhaustion breaks TLS/WebSocket
+    title: Runtime starvation from expensive effects
     description: >-
-      If the BLE stack is never released, the device runs out of heap and TLS /
-      WebSocket allocation fails after provisioning.
+      Expensive effects cause unstable frame rate or harm other firmware
+      responsibilities, undermining UN-6 and UN-7.
+    severity: high
+    mitigated_by: [PR-28]
+
+  - id: RISK-4
+    title: Provisioning or wireless association is unreliable
+    description: >-
+      Directly harms UN-5 and weakens UN-8 when HITL depends on it.
+    severity: high
+    mitigated_by: [PR-29]
+
+  - id: RISK-5
+    title: Cross-device interference in multi-DUT environments
+    description: >-
+      The wrong board is flashed, reset, or inspected, harming UN-8 and
+      invalidating automation confidence.
+    severity: high
+    mitigated_by: [PR-30]
+
+  - id: RISK-6
+    title: Mapping reconstruction or upload fails for large/interrupted captures
+    description: >-
+      Harms UN-4 and UN-7 by risking loss of user work or inability to complete
+      installations.
+    severity: medium
+    mitigated_by: [PR-31]
+
+  - id: RISK-7
+    title: Browser flashing unavailable/unreliable on important platforms
+    description: >-
+      Harms UN-5 (e.g. Android browser flashing).
+    severity: medium
+    mitigated_by: [PR-32]
+
+  - id: RISK-8
+    title: Media preview/thumbnail causes perf collapse or cache growth
+    description: >-
+      Harms UN-1, UN-3, UN-6 through performance collapse or unbounded
+      cache/storage growth.
+    severity: medium
+    mitigated_by: [PR-33]
+
+  - id: RISK-9
+    title: Binary schema or protocol drift across components
+    description: >-
+      Causes catastrophic allocations or corrupted behavior, harming UN-3, UN-4,
+      UN-6, UN-7.
     severity: high
     mitigated_by: [PR-34]
 
-  - id: RISK-4
-    title: Clock offset/step corrupts blink-code alignment
+  - id: RISK-10
+    title: Device identity inconsistencies across IP/hostname/AP/records
     description: >-
-      A stepped or wildly-off clock sample misaligns the decoder against the
-      pattern and produces garbage identification.
+      Cause connection confusion, harming UN-5.
     severity: medium
     mitigated_by: [PR-35]
 
-  - id: RISK-5
-    title: Mapping preempts an active effect render
+  - id: RISK-11
+    title: HITL and CI infrastructure flakiness reduces trust in validation
     description: >-
-      Starting a mapping sequence could interrupt an in-progress light-show
-      render (observed regression class).
+      Harms UN-8 through unreliable validation results.
     severity: medium
     mitigated_by: [PR-36]
 
-  - id: RISK-6
-    title: Cross-language protocol/type drift
+  - id: RISK-12
+    title: UI state inconsistency or obstruction blocks primary tasks
     description: >-
-      The Python, TypeScript, Rust and Go halves can silently diverge on the
-      wire format or shared conventions, corrupting interop.
-    severity: medium
-    mitigated_by: [PR-37]
-
-  - id: RISK-7
-    title: Solve placed on the slower machine
-    description: >-
-      Offloading the solve to the Pi when the phone is faster (or vice-versa)
-      wastes time and ties up shared hardware.
+      Confuses users and blocks primary tasks, harming UN-1 and UN-2.
     severity: low
-    mitigated_by: [PR-38]
-
-  - id: RISK-8
-    title: Requirements and tests drift apart
-    description: >-
-      Code satisfies no stated requirement, a requirement has no verifying test,
-      or a test references a requirement id that no longer exists.
-    severity: high
-    mitigated_by: [PR-44]
+    mitigated_by: [PR-37]

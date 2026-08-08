@@ -12,7 +12,7 @@ from mapping_trigger_core import (
 )
 
 # Traceability: PR(s) this suite verifies (see requirements/requirements.yaml).
-pytestmark = pytest.mark.requirements("PR-36")
+pytestmark = pytest.mark.requirements("PR-12", "PR-31")
 
 
 def _ft(epoch=0, ticks=0, dropped=0):

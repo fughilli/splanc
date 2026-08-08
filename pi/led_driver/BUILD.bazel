@@ -9,7 +9,8 @@ sink; `spidev` is imported lazily and is only present on the Pi.
 runnable as `python -m led_driver`).
 
 
-Requirements (PRs implemented here; see requirements/requirements.yaml): PR-1, PR-30, PR-31, PR-33
+
+Requirements (PRs implemented here; see requirements/requirements.yaml): PR-11
 """
 
 load("@pypi//:requirements.bzl", "requirement")

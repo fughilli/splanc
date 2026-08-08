@@ -31,23 +31,24 @@ traces fail [`//requirements:requirements_valid_test`](../requirements/validate_
 
 ```yaml
 product_requirements:
-  - id: PR-30
-    title: SEC-DED FEC on the blink code corrects singles, rejects doubles
+  - id: PR-34
+    title: Pin the wire schema with cross-language conformance tests
     kind: derived
-    satisfies: [UN-3]
-    mitigates: [RISK-1]
-    modules: [pi/led_driver, pi/server, web]
-    verified_by: ['//web:fec_test'] # coarse, per-target traceability (see below)
+    satisfies: [UN-3, UN-4, UN-6, UN-7]
+    mitigates: [RISK-9]
+    modules: [shared/protocol, pi/server, web]
+    verified_by: ['//web:proto_test'] # coarse, per-target traceability (see below)
 risks:
-  - id: RISK-1
-    title: Decode collisions mis-identify LEDs and poison the solve
+  - id: RISK-9
+    title: Binary schema or protocol drift across components
     severity: high
-    mitigated_by: [PR-30, PR-31, PR-32]
+    mitigated_by: [PR-34]
 ```
 
-> The initial model was seeded from the repo's design docs
-> (`led-mapper-design.md`, `docs/decisions.md`, `docs/design/*`), which encode
-> the same acceptance criteria and risks drafted in FUG-88.
+> The model content is the FUG-88 "Draft requirements and risk assessment for
+> Splanc" baseline (UN-1..8, PR-1..25, RISK-1..12), translated verbatim. The
+> per-risk mitigations FUG-88 states as prose are captured here as derived PRs
+> (PR-26..37).
 
 ## Documenting a module
 
@@ -57,7 +58,7 @@ implements:
 ```python
 """pi/led_driver — SK9822/APA102 Gray-code pattern driver.
 
-Requirements (PRs implemented here; see requirements/requirements.yaml): PR-1, PR-30, PR-31, PR-33
+Requirements (PRs implemented here; see requirements/requirements.yaml): PR-11
 """
 ```
 
@@ -75,13 +76,13 @@ a whole test module, use a module-level `pytestmark`:
 import pytest
 
 # Traceability: PR(s) this suite verifies.
-pytestmark = pytest.mark.requirements("PR-5", "PR-35")
+pytestmark = pytest.mark.requirements("PR-13", "PR-29")
 ```
 
 Per-test is also fine:
 
 ```python
-@pytest.mark.requirements("PR-42")
+@pytest.mark.requirements("PR-25")
 def test_junit_tag_extraction():
     ...
 ```
@@ -92,7 +93,7 @@ plugin turns each marker into a jUnit tag on that test case:
 ```xml
 <testcase name="test_junit_tag_extraction" ...>
   <properties>
-    <property name="requirement" value="PR-42"/>
+    <property name="requirement" value="PR-25"/>
   </properties>
 </testcase>
 ```

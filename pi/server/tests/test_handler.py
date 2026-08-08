@@ -10,7 +10,7 @@ from server.reconstruct import LiveSolver, _decimate_per_led
 from server.session import SessionManager
 
 # Traceability: PR(s) this suite verifies (see requirements/requirements.yaml).
-pytestmark = pytest.mark.requirements("PR-12")
+pytestmark = pytest.mark.requirements("PR-11", "PR-13")
 
 
 def _stub_map() -> OutputMap:

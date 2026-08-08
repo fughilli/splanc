@@ -1,6 +1,6 @@
 """Load and validate the machine-readable requirements model.
 
-Requirements: PR-40
+Requirements: PR-23
 
 The model (``requirements/requirements.yaml``) is the single source of truth for
 the requirements-driven-development workflow. It holds four entity kinds:

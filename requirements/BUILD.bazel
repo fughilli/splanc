@@ -1,6 +1,6 @@
 """requirements/ — the machine-readable requirements & risk model (FUG-89).
 
-Requirements: PR-40, PR-44
+Requirements: PR-23, PR-25
 
 Holds requirements.yaml (the UN/PR/RISK source of truth), its JSON schema, the
 validator test, and the annotation checker that guards against requirements

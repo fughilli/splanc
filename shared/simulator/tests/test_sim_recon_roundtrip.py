@@ -13,7 +13,7 @@ from reconstruction import reconstruct
 from simulator import NOMINAL, NONE, generate_log
 
 # Traceability: PR(s) this suite verifies (see requirements/requirements.yaml).
-pytestmark = pytest.mark.requirements("PR-4")
+pytestmark = pytest.mark.requirements("PR-11")
 
 
 def _errors_mm(out, truth):

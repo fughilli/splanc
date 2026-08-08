@@ -1,6 +1,6 @@
 """``aggregate`` — turn the model + jUnit XMLs into the HTML traceability report.
 
-Requirements: PR-43
+Requirements: PR-25
 
 This is the final action in the requirements-driven-development workflow. CI runs
 the test suites (each emitting jUnit XML with traceability tags), then::
