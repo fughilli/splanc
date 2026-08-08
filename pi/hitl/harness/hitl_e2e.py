@@ -45,6 +45,7 @@ from hitl_client import Reservation, ReserveError
 from provision import HarnessError as E2EFailure
 from provision import dut_target, provision_dut
 from sync import best_sample, is_sane, sync_sample
+from traceability.junit_writer import JUnitWriter
 
 # Boot markers the firmware prints (see pi/hitl/AGENTS.md "A typical E2E test").
 BOOT_MARKER = "SPI_FAST_FLASH_BOOT"  # ran the app (not USB download mode)
@@ -168,6 +169,10 @@ def run(args: argparse.Namespace) -> int:
     # server=None lets `hitl` pick a free rig from the pool (tailnet tag discovery
     # or $HITL_SERVERS); --server pins a specific one.
     res = Reservation(server=args.server or None, owner=args.owner, device=args.device or None)
+    # Traceability: each phase is a jUnit testcase tagged with the PRs it verifies,
+    # so the on-hardware HITL run feeds the same requirements report as the
+    # software suites (see docs/requirements-driven-development.md).
+    report = JUnitWriter("hitl_e2e")
     try:
         res.acquire()
         # Default WiFi to the rig's own provisioning AP (creds served by the
@@ -181,7 +186,9 @@ def run(args: argparse.Namespace) -> int:
             bundle = args.bundle or default_bundle()
             if not bundle:
                 raise E2EFailure("no flash-bundle in runfiles; pass --bundle or --skip-flash")
-            flash(res, bundle, args.monitor_seconds)
+            # Boots the app and brings the Improv BLE service up (heap not starved).
+            with report.case("flash_boot", ["PR-9", "PR-34"]):
+                flash(res, bundle, args.monitor_seconds)
 
         redirect = args.device_url
         if not args.skip_improv:
@@ -189,12 +196,16 @@ def run(args: argparse.Namespace) -> int:
                 raise E2EFailure(
                     "--wifi-ssid (or $HITL_WIFI_SSID) is required unless --skip-improv"
                 )
-            redirect = provision_dut(res, args.wifi_ssid, args.wifi_pass, args.improv_timeout)
+            with report.case("improv_provision", ["PR-9"]):
+                redirect = provision_dut(res, args.wifi_ssid, args.wifi_pass, args.improv_timeout)
 
         if not args.skip_ws:
+            # WS connect (TLS heap) + time sync + rename over the §7 protobuf protocol.
+            ws_prs = ["PR-5", "PR-35", "PR-11", "PR-12", "PR-34"]
             if args.device_ws:
                 # Explicit override: connect straight to a reachable ws(s) URL.
-                ws_checks(args.device_ws, args.rename_to, insecure=not args.ws_verify)
+                with report.case("websocket_checks", ws_prs):
+                    ws_checks(args.device_ws, args.rename_to, insecure=not args.ws_verify)
             else:
                 if not redirect:
                     raise E2EFailure(
@@ -206,14 +217,32 @@ def run(args: argparse.Namespace) -> int:
                 # ssh (the far end dials the DUT from the Pi's container).
                 with res.forward(host, port) as local_port:
                     ws_url = f"{args.ws_scheme}://localhost:{local_port}/ws"
-                    ws_checks(ws_url, args.rename_to, insecure=not args.ws_verify)
+                    with report.case("websocket_checks", ws_prs):
+                        ws_checks(ws_url, args.rename_to, insecure=not args.ws_verify)
     except (E2EFailure, ReserveError) as e:
         print(f"\nFAIL: {e}", file=sys.stderr)
         return 1
     finally:
         res.release()
+        _write_report(report, args)
     print("\nPASS — ImprovBLE setup, rename, and time sync all checked out", flush=True)
     return 0
+
+
+def _write_report(report: JUnitWriter, args: argparse.Namespace) -> None:
+    """Write the phase jUnit (with requirement tags) if a destination is set.
+
+    Defaults to Bazel's ``$XML_OUTPUT_FILE`` so ``bazel run`` / ``bazel test``
+    captures it; ``--junit-xml`` overrides.
+    """
+    path = args.junit_xml or os.environ.get("XML_OUTPUT_FILE")
+    if not path or not report.cases:
+        return
+    try:
+        report.write(path)
+        print(f"[junit] wrote {len(report.cases)} phase result(s) -> {path}", flush=True)
+    except OSError as e:
+        print(f"[junit] could not write {path}: {e}", file=sys.stderr)
 
 
 def main() -> int:
@@ -265,6 +294,11 @@ def main() -> int:
     ap.add_argument("--skip-flash", action="store_true")
     ap.add_argument("--skip-improv", action="store_true")
     ap.add_argument("--skip-ws", action="store_true")
+    ap.add_argument(
+        "--junit-xml",
+        default=None,
+        help="write per-phase jUnit (with requirement tags) here " "(default: $XML_OUTPUT_FILE)",
+    )
     return run(ap.parse_args())
 
 
