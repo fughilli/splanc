@@ -25,7 +25,13 @@ import {
   type ProviderId,
 } from "../../effects/ai/provider";
 import { listOpenAiModels, pullOllamaModel } from "../../effects/ai/providers/openaiCompat";
-import { isWebLlmSupported, listWebLlmModels, loadWebLlmModel } from "../../effects/ai/providers/webllm";
+import {
+  isWebLlmSupported,
+  listWebLlmModelCards,
+  loadWebLlmModel,
+  modelSupportsTools,
+  type WebLlmModelCard,
+} from "../../effects/ai/providers/webllm";
 
 const PROVIDERS: ProviderId[] = ["anthropic", "openai", "webllm"];
 
@@ -197,7 +203,10 @@ function openAiPanel(cfg: AiConfig, set: (p: Partial<AiConfig>) => void): HTMLEl
   );
 
   // Ollama pull: download a model into the server with a progress bar.
-  const pullField = field({ label: "Download a model (Ollama)", placeholder: "e.g. llama3.1:8b" });
+  const pullField = field({
+    label: "Download a model (Ollama)",
+    placeholder: "llama3.1:8b or hf.co/user/repo:Q4_K_M",
+  });
   const bar = progressBar();
   const pullBtn = Button({
     label: "Download",
@@ -235,8 +244,10 @@ function openAiPanel(cfg: AiConfig, set: (p: Partial<AiConfig>) => void): HTMLEl
     note(
       "Run a local model server and point the app at it. Ollama exposes " +
         "http://localhost:11434/v1; LM Studio and llama.cpp use their own ports. " +
-        "For Ollama you can download a model right here; other runtimes manage " +
-        "models themselves.",
+        "For Ollama you can download a model right here — including any " +
+        "HuggingFace GGUF via an hf.co/user/repo:quant reference; other runtimes " +
+        "manage models themselves. Pick an instruct model that supports tool " +
+        "calling so effect generation and MIDI mapping work.",
     ),
   );
   return g;
@@ -244,11 +255,9 @@ function openAiPanel(cfg: AiConfig, set: (p: Partial<AiConfig>) => void): HTMLEl
 
 // -- In-browser WebGPU (web-llm) ---------------------------------------------
 
-function webLlmPanel(cfg: AiConfig, set: (p: Partial<AiConfig>) => void): HTMLElement {
+function webLlmPanel(_cfg: AiConfig, _set: (p: Partial<AiConfig>) => void): HTMLElement {
   const g = group("In-browser (WebGPU)");
-  const supported = isWebLlmSupported();
-
-  if (!supported) {
+  if (!isWebLlmSupported()) {
     g.append(
       note(
         "This browser doesn't expose WebGPU, so in-browser inference isn't " +
@@ -258,45 +267,126 @@ function webLlmPanel(cfg: AiConfig, set: (p: Partial<AiConfig>) => void): HTMLEl
     return g;
   }
 
-  const modelField = field({
-    label: "Model",
-    value: cfg.webllm.model,
-    placeholder: "e.g. Llama-3.1-8B-Instruct-q4f32_1-MLC",
-    onInput: (v) => set({ webllm: { ...getAiConfig().webllm, model: v.trim() } }),
-  });
-  const picker = document.createElement("select");
-  picker.className = "aiset-field";
-  picker.style.display = "none";
-  picker.addEventListener("change", () => {
-    if (picker.value) set({ webllm: { ...getAiConfig().webllm, model: picker.value } });
-  });
-  const browseBtn = Button({
-    label: "Browse",
-    variant: "quiet",
-    onClick: async () => {
-      browseBtn.disabled = true;
-      try {
-        const models = await listWebLlmModels();
-        fillSelect(picker, models, getAiConfig().webllm.model);
-        picker.style.display = models.length ? "block" : "none";
-      } catch (e) {
-        toast(`Couldn't load model list: ${msg(e)}`, { error: true });
-      } finally {
-        browseBtn.disabled = false;
-      }
+  // Local browser state — selection/search/filter update in place (no full
+  // panel rebuild) so the list doesn't reset while the user browses.
+  let toolsOnly = true;
+  let query = "";
+  let cards: WebLlmModelCard[] = [];
+  const current = (): string => getAiConfig().webllm.model;
+
+  // Warn when the selected model can't tool-call: our features need tools, so
+  // it would only chat (this is exactly the Qwen case from review).
+  const warn = note("");
+  warn.classList.add("aiset-warn");
+  function refreshWarn(): void {
+    const m = current();
+    const bad = m !== "" && !modelSupportsTools(m);
+    warn.style.display = bad ? "block" : "none";
+    if (bad) {
+      warn.textContent =
+        `⚠ ${m} can't use tools, so it can't generate effects or map MIDI — ` +
+        `it will only chat. Pick a model with the “Tools” badge.`;
+    }
+  }
+
+  const search = field({
+    label: "Search models",
+    placeholder: "e.g. Hermes, Llama, Phi",
+    onInput: (v) => {
+      query = v.trim().toLowerCase();
+      renderCards();
     },
   });
-  const modelRow = document.createElement("div");
-  modelRow.className = "aiset-row";
-  modelRow.append(modelField, browseBtn);
+  const filterRow = settingsRow(
+    "Tool-calling only",
+    "Only show models that can drive effect generation & MIDI mapping.",
+    onOff(toolsOnly, (on) => {
+      toolsOnly = on;
+      renderCards();
+    }),
+  );
+
+  const cardsEl = document.createElement("div");
+  cardsEl.className = "aiset-cards";
+  const listStatus = document.createElement("div");
+  listStatus.className = "aiset-progress-text";
+  listStatus.textContent = "Loading model list…";
+
+  function renderCards(): void {
+    const sel = current();
+    const filtered = cards.filter(
+      (c) => (!toolsOnly || c.tools) && c.id.toLowerCase().includes(query),
+    );
+    cardsEl.replaceChildren();
+    if (cards.length && !filtered.length) {
+      const e = document.createElement("div");
+      e.className = "aiset-progress-text";
+      e.textContent = "No models match this filter.";
+      cardsEl.append(e);
+    }
+    for (const c of filtered) cardsEl.append(cardEl(c, sel));
+  }
+
+  function cardEl(c: WebLlmModelCard, selected: string): HTMLElement {
+    const el = document.createElement("div");
+    el.className = "aiset-card" + (c.id === selected ? " on" : "");
+    const name = document.createElement("div");
+    name.className = "aiset-card-name";
+    name.textContent = c.id;
+    const badges = document.createElement("div");
+    badges.className = "aiset-badges";
+    if (c.tools) badges.append(badge("Tools", "tools"));
+    if (c.vramMB) badges.append(badge(`${(c.vramMB / 1024).toFixed(1)} GB VRAM`));
+    if (c.lowResource) badges.append(badge("Low-resource"));
+    el.append(name, badges);
+    if (c.hfUrl) {
+      const a = document.createElement("a");
+      a.href = c.hfUrl;
+      a.target = "_blank";
+      a.rel = "noopener";
+      a.textContent = "View on HuggingFace ↗";
+      a.addEventListener("click", (ev) => ev.stopPropagation()); // link, not a select
+      el.append(a);
+    }
+    el.addEventListener("click", () => selectModel(c.id));
+    return el;
+  }
+
+  function selectModel(id: string): void {
+    updateAiConfig({ webllm: { ...getAiConfig().webllm, model: id } });
+    renderCards();
+    refreshWarn();
+  }
+
+  // Custom / paste path: an MLC model id not in the browsable list.
+  const customField = field({
+    label: "Custom MLC model id",
+    placeholder: "e.g. Hermes-3-Llama-3.1-8B-q4f16_1-MLC",
+  });
+  const useBtn = Button({
+    label: "Use",
+    variant: "quiet",
+    onClick: () => {
+      const v = customField.querySelector("input")?.value.trim() ?? "";
+      if (!v) {
+        toast("Enter a model id", { error: true });
+        return;
+      }
+      selectModel(v);
+      toast(`Selected ${v}`);
+    },
+  });
+  const customRow = document.createElement("div");
+  customRow.className = "aiset-row";
+  customRow.append(customField, useBtn);
 
   const bar = progressBar();
   const loadBtn = Button({
-    label: "Download / load model",
+    label: "Download / load selected model",
     icon: "sparkles",
     block: true,
     onClick: async () => {
-      const model = getAiConfig().webllm.model;
+      const model = current();
       if (!model) {
         toast("Pick a model first", { error: true });
         return;
@@ -317,16 +407,34 @@ function webLlmPanel(cfg: AiConfig, set: (p: Partial<AiConfig>) => void): HTMLEl
   });
 
   g.append(
-    modelRow,
-    picker,
+    warn,
+    search,
+    filterRow,
+    cardsEl,
+    listStatus,
+    customRow,
     loadBtn,
     bar.wrap,
     note(
-      "The model runs entirely in your browser on the GPU. Weights download " +
-        "from HuggingFace on first use (hundreds of MB to a few GB) and are cached " +
-        "locally, so later runs are offline. Larger models need more GPU memory.",
+      "Models run entirely in your browser on the GPU; weights download from " +
+        "HuggingFace on first use and cache locally. Only listed MLC-compiled " +
+        "models work here — to run an arbitrary HuggingFace GGUF, use the local " +
+        "server provider (Ollama) instead. Tool-calling (needed to generate " +
+        "effects and map MIDI) is limited to the models with a “Tools” badge.",
     ),
   );
+
+  refreshWarn();
+  listWebLlmModelCards()
+    .then((cs) => {
+      cards = cs;
+      listStatus.textContent = `${cs.length} models available`;
+      renderCards();
+    })
+    .catch((e) => {
+      listStatus.textContent = `Couldn't load model list: ${msg(e)}`;
+    });
+
   return g;
 }
 
@@ -368,6 +476,13 @@ function note(text: string): HTMLElement {
   p.className = "aiset-note";
   p.textContent = text;
   return p;
+}
+
+function badge(text: string, kind?: string): HTMLElement {
+  const b = document.createElement("span");
+  b.className = "aiset-badge" + (kind ? ` ${kind}` : "");
+  b.textContent = text;
+  return b;
 }
 
 function settingsRow(name: string, hint: string, control: HTMLElement): HTMLElement {

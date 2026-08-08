@@ -63,4 +63,38 @@ const CSS = `
   transition: width 0.2s ease;
 }
 .aiset-progress-text { font-size: var(--f-caption); color: var(--text-dim); margin-top: 4px; }
+.aiset-warn {
+  color: #f0b429;
+  border: 1px solid color-mix(in srgb, #f0b429 40%, transparent);
+  border-radius: var(--radius, 8px);
+  padding: var(--sp-2);
+  margin: var(--sp-2) 0;
+}
+.aiset-cards {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  margin: var(--sp-2) 0;
+  max-height: 340px;
+  overflow: auto;
+}
+.aiset-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius, 8px);
+  padding: var(--sp-2);
+  cursor: pointer;
+}
+.aiset-card:hover { border-color: var(--text-dim); }
+.aiset-card.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.aiset-card-name { font-weight: 600; word-break: break-all; }
+.aiset-card a { display: inline-block; margin-top: 4px; font-size: var(--f-caption); color: var(--text-dim); }
+.aiset-badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.aiset-badge {
+  font-size: var(--f-caption);
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--border);
+  color: var(--text-dim);
+}
+.aiset-badge.tools { background: var(--accent); color: #000; font-weight: 600; }
 `;
