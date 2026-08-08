@@ -13,7 +13,8 @@ importable as top-level (hitl_client, sync, improv) the way they import each
 other.
 
 
-Requirements (PRs implemented here; see requirements/requirements.yaml): PR-5, PR-9, PR-13, PR-35, PR-36
+
+Requirements (PRs implemented here; see requirements/requirements.yaml): PR-12, PR-13, PR-23, PR-24, PR-29, PR-30, PR-31, PR-36
 """
 
 load("@pypi//:requirements.bzl", "requirement")

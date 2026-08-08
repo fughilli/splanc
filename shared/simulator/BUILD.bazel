@@ -8,7 +8,8 @@ guaranteed in-distribution for the solver.
 `imports = ["."]` exposes the nested `simulator/` package as `simulator`.
 
 
-Requirements (PRs implemented here; see requirements/requirements.yaml): PR-4
+
+Requirements (PRs implemented here; see requirements/requirements.yaml): PR-11
 """
 
 load("@pypi//:requirements.bzl", "requirement")

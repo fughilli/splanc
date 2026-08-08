@@ -29,7 +29,7 @@ from reconstruction.vio import (
 )
 
 # Traceability: PR(s) this suite verifies (see requirements/requirements.yaml).
-pytestmark = pytest.mark.requirements("PR-2")
+pytestmark = pytest.mark.requirements("PR-11")
 
 RNG = np.random.default_rng(11)
 

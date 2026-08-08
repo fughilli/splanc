@@ -1,6 +1,6 @@
 """Pytest plugin: annotate tests with the requirements they verify.
 
-Requirements: PR-41
+Requirements: PR-25
 
 Usage in a test module::
 

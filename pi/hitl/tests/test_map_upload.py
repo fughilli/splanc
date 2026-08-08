@@ -15,7 +15,7 @@ from map_upload_core import (
 )
 
 # Traceability: PR(s) this suite verifies (see requirements/requirements.yaml).
-pytestmark = pytest.mark.requirements("PR-13")
+pytestmark = pytest.mark.requirements("PR-12", "PR-31")
 
 
 def _slice(frame: bytes) -> list[bytes]:

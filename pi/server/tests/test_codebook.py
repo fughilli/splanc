@@ -7,7 +7,7 @@ from ledmapper_protocol.fec import secded_total_bits
 from server.codebook import DEFAULT_BIT_PERIOD_MS, code_params_for, data_bits_for
 
 # Traceability: PR(s) this suite verifies (see requirements/requirements.yaml).
-pytestmark = pytest.mark.requirements("PR-1", "PR-30")
+pytestmark = pytest.mark.requirements("PR-11")
 
 
 # Codewords carry id + 1 (the all-zero word is reserved-invalid, see

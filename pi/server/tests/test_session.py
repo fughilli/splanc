@@ -14,7 +14,7 @@ from server.codebook import code_params_for
 from server.session import MapStore, SessionManager
 
 # Traceability: PR(s) this suite verifies (see requirements/requirements.yaml).
-pytestmark = pytest.mark.requirements("PR-6")
+pytestmark = pytest.mark.requirements("PR-11", "PR-22")
 
 
 def _det(led_id: int, u: float = 100.0, v: float = 100.0) -> DetectionRecord:

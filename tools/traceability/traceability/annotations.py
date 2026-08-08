@@ -1,6 +1,6 @@
 """Scan the source tree for requirement annotations and check them.
 
-Requirements: PR-44
+Requirements: PR-25
 
 Two annotation styles carry traceability in the source:
 

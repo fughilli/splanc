@@ -19,7 +19,7 @@ from fx_bench_core import (
 )
 
 # Traceability: PR(s) this suite verifies (see requirements/requirements.yaml).
-pytestmark = pytest.mark.requirements("PR-7")
+pytestmark = pytest.mark.requirements("PR-17", "PR-27")
 
 
 def _write(text: str) -> str:

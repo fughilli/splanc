@@ -1,6 +1,6 @@
 """Tests for the source annotation scanner.
 
-Requirements: PR-41, PR-44
+Requirements: PR-23, PR-25
 """
 
 import pytest
@@ -23,7 +23,7 @@ MODEL, _ = parse_model(
 )
 
 
-@pytest.mark.requirements("PR-41")
+@pytest.mark.requirements("PR-23")
 def test_extracts_module_and_test_references():
     text = f'''
 """A module.
@@ -43,7 +43,7 @@ def test_x():
     assert ("PR-3", "test") in got
 
 
-@pytest.mark.requirements("PR-44")
+@pytest.mark.requirements("PR-25")
 def test_unknown_references_flagged_against_model():
     text = f'{REQ_KW} PR-1, PR-99\n{MARK}("PR-42")'
     refs = annotations.extract_from_text(text, "m.py")

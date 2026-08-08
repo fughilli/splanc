@@ -1,6 +1,6 @@
 """Tests for the traceability matrix + HTML report.
 
-Requirements: PR-43
+Requirements: PR-25
 """
 
 import pytest
@@ -41,7 +41,7 @@ def _results():
     return r
 
 
-@pytest.mark.requirements("PR-43")
+@pytest.mark.requirements("PR-25")
 def test_matrix_verification_status():
     m = report.build_matrix(MODEL, _results())
     assert m.pr_status["PR-1"].status == report.VERIFIED
@@ -52,7 +52,7 @@ def test_matrix_verification_status():
     assert "//pkg:target (target)" in m.pr_status["PR-9"].passed
 
 
-@pytest.mark.requirements("PR-43")
+@pytest.mark.requirements("PR-25")
 def test_user_need_validation_rolls_up():
     m = report.build_matrix(MODEL, _results())
     # UN-1 has a failing PR -> FAILED; UN-2's only PR is unverified.
@@ -60,13 +60,13 @@ def test_user_need_validation_rolls_up():
     assert m.un_status["UN-2"] == report.UNVERIFIED
 
 
-@pytest.mark.requirements("PR-43")
+@pytest.mark.requirements("PR-25")
 def test_risk_mitigation_rolls_up():
     m = report.build_matrix(MODEL, _results())
     assert m.risk_status["RISK-1"] == report.MITIGATED
 
 
-@pytest.mark.requirements("PR-43")
+@pytest.mark.requirements("PR-25")
 def test_render_html_is_self_contained_and_lists_entities():
     m = report.build_matrix(MODEL, _results())
     html = report.render_html(m)

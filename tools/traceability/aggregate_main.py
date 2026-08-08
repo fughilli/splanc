@@ -1,6 +1,6 @@
 """Entry point for the //tools/traceability:aggregate binary.
 
-Requirements: PR-43
+Requirements: PR-25
 """
 
 from traceability.cli import main

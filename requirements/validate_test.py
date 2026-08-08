@@ -1,6 +1,6 @@
 """The committed requirements model is structurally and referentially valid.
 
-Requirements: PR-40, PR-44
+Requirements: PR-23, PR-25
 
 This is the guard that keeps requirements/requirements.yaml honest: it fails the
 build on any malformed entity, bad id, dangling reference, or non-bidirectional
@@ -18,7 +18,7 @@ def _model_path() -> str:
     return os.path.join(here, "requirements.yaml")
 
 
-@pytest.mark.requirements("PR-40", "PR-44")
+@pytest.mark.requirements("PR-23", "PR-25")
 def test_requirements_model_is_valid():
     # load_model raises ValidationError (with the full problem list) on any issue.
     model = load_model(_model_path())
@@ -27,7 +27,7 @@ def test_requirements_model_is_valid():
     assert model.risks, "expected at least one risk"
 
 
-@pytest.mark.requirements("PR-44")
+@pytest.mark.requirements("PR-25")
 def test_every_risk_has_a_mitigation():
     model = load_model(_model_path())
     for risk in model.risks.values():

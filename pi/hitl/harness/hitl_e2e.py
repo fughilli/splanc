@@ -187,7 +187,7 @@ def run(args: argparse.Namespace) -> int:
             if not bundle:
                 raise E2EFailure("no flash-bundle in runfiles; pass --bundle or --skip-flash")
             # Boots the app and brings the Improv BLE service up (heap not starved).
-            with report.case("flash_boot", ["PR-9", "PR-34"]):
+            with report.case("flash_boot", ["PR-13", "PR-21", "PR-26"]):
                 flash(res, bundle, args.monitor_seconds)
 
         redirect = args.device_url
@@ -196,12 +196,12 @@ def run(args: argparse.Namespace) -> int:
                 raise E2EFailure(
                     "--wifi-ssid (or $HITL_WIFI_SSID) is required unless --skip-improv"
                 )
-            with report.case("improv_provision", ["PR-9"]):
+            with report.case("improv_provision", ["PR-13", "PR-29"]):
                 redirect = provision_dut(res, args.wifi_ssid, args.wifi_pass, args.improv_timeout)
 
         if not args.skip_ws:
             # WS connect (TLS heap) + time sync + rename over the §7 protobuf protocol.
-            ws_prs = ["PR-5", "PR-35", "PR-11", "PR-12", "PR-34"]
+            ws_prs = ["PR-13", "PR-22", "PR-35"]
             if args.device_ws:
                 # Explicit override: connect straight to a reachable ws(s) URL.
                 with report.case("websocket_checks", ws_prs):

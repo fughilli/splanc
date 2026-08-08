@@ -1,6 +1,6 @@
 """Fail if any source annotation references a requirement id that doesn't exist.
 
-Requirements: PR-44
+Requirements: PR-25
 
 Run over the whole workspace (``bazel run //requirements:check_annotations``):
 scans the tree for ``Requirements: PR-…`` module docs and ``@requirements("PR-…")``

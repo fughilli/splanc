@@ -1,6 +1,6 @@
 """Shared pytest entry point for traceability-enabled Bazel ``py_test`` targets.
 
-Requirements: PR-41
+Requirements: PR-25
 
 Bazel sets ``$XML_OUTPUT_FILE`` for every test and picks up whatever jUnit XML
 the test writes there (falling back to a synthetic one-testcase file otherwise).

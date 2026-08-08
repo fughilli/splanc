@@ -1,6 +1,6 @@
 """Join the requirements model with test results and render the HTML report.
 
-Requirements: PR-43
+Requirements: PR-25
 
 The report answers, for the whole UN/PR/RISK listing:
 

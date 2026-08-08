@@ -4,7 +4,7 @@ import pytest
 from improv import build_wifi_rpc, error_name, parse_result
 
 # Traceability: PR(s) this suite verifies (see requirements/requirements.yaml).
-pytestmark = pytest.mark.requirements("PR-9")
+pytestmark = pytest.mark.requirements("PR-13", "PR-29")
 
 
 def test_build_wifi_rpc_layout_and_checksum():

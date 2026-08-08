@@ -4,7 +4,7 @@ import pytest
 from sync import SyncSample, best_sample, is_sane, sync_sample
 
 # Traceability: PR(s) this suite verifies (see requirements/requirements.yaml).
-pytestmark = pytest.mark.requirements("PR-5", "PR-35")
+pytestmark = pytest.mark.requirements("PR-13", "PR-29")
 
 
 def test_sync_sample_offset_and_rtt():
