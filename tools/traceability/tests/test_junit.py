@@ -8,6 +8,7 @@ import tempfile
 
 import pytest
 from traceability import junit
+from traceability.junit_writer import JUnitWriter
 
 XUNIT2 = """<?xml version="1.0"?>
 <testsuites>
@@ -53,6 +54,28 @@ def test_target_derived_from_bazel_testlogs_path():
         == "//pi/hitl/tests:hitl_test"
     )
     assert junit.target_from_path("/tmp/random/test.xml") == ""
+
+
+@pytest.mark.requirements("PR-41", "PR-42")
+def test_junit_writer_roundtrips_through_parser():
+    # HITL-style non-pytest runner: phases emit tagged jUnit that the parser
+    # reads back byte-faithfully.
+    w = JUnitWriter("hitl_e2e")
+    w.add("flash_boot", ["PR-9", "PR-34"], "passed", duration=1.2)
+    try:
+        with w.case("improv_provision", ["PR-9"]):
+            raise RuntimeError("no join")
+    except RuntimeError:
+        pass
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "test.xml")
+        w.write(p)
+        cases = junit.parse_file(p)
+    by_name = {c.name: c for c in cases}
+    assert by_name["flash_boot"].requirements == ("PR-9", "PR-34")
+    assert by_name["flash_boot"].status == "passed"
+    assert by_name["improv_provision"].status == "failed"
+    assert by_name["improv_provision"].requirements == ("PR-9",)
 
 
 @pytest.mark.requirements("PR-42")
