@@ -1,0 +1,40 @@
+"""tools/traceability — requirements-driven-development traceability toolkit.
+
+Requirements: PR-40, PR-41, PR-42, PR-43, PR-44
+
+Loads/validates the requirements model, provides the pytest `@requirements`
+marker + shared runner that stamp jUnit traceability tags, parses that jUnit XML
+back, and aggregates it all into the HTML verification/validation report.
+"""
+
+load("@pypi//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "traceability",
+    srcs = glob(["traceability/*.py"]),
+    imports = ["."],
+    deps = [requirement("pyyaml")],
+)
+
+# Final workflow action: model + jUnit XMLs -> HTML traceability report.
+py_binary(
+    name = "aggregate",
+    srcs = ["aggregate_main.py"],
+    main = "aggregate_main.py",
+    deps = [":traceability"],
+)
+
+py_test(
+    name = "traceability_test",
+    srcs = glob(["tests/*.py"]),
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/pytest_main.py",
+    deps = [
+        ":traceability",
+        requirement("pytest"),
+    ],
+)
