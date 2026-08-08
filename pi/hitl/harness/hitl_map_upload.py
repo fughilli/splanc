@@ -22,7 +22,7 @@ board lives on the rig's WiFi LAN, tunneled through the reservation.
     bazel run //pi/hitl/harness:map_upload -- \
         [--server http://<rig>:8087] [--wifi-ssid SSID --wifi-pass PSK]
     # or, against an already-reachable board (skip reserve/flash/provision):
-    bazel run //pi/hitl/harness:map_upload -- --device-ws wss://<ip>/ws --insecure
+    bazel run //pi/hitl/harness:map_upload -- --device-ws wss://<ip>/ws
 """
 
 from __future__ import annotations
@@ -272,15 +272,15 @@ def main() -> None:
     ap.add_argument("--wifi-pass", default=os.environ.get("HITL_WIFI_PASS", ""))
     ap.add_argument("--ws-scheme", choices=["ws", "wss"], default="wss")
     ap.add_argument(
-        "--insecure",
+        "--ws-verify",
         action="store_true",
-        default=True,
-        help="accept the DUT's self-signed wss cert",
+        help="verify the DUT's TLS cert (default: accept the self-signed cert)",
     )
     ap.add_argument("--improv-timeout", type=float, default=90.0)
     ap.add_argument("--improv-attempts", type=int, default=3)
     ap.add_argument("--monitor-seconds", type=float, default=25.0)
     args = ap.parse_args()
+    args.insecure = not args.ws_verify
 
     ok = run_on_hardware(args)
     sys.exit(0 if ok else 1)

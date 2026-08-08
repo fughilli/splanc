@@ -15,7 +15,7 @@ free heap) is dumped at the end so we can read the allocation state directly.
 Like the other on-hardware drivers this is `bazel run`, never `bazel test`.
 
     bazel run //pi/hitl/harness:rename_wss
-    bazel run //pi/hitl/harness:rename_wss -- --device-ws wss://<ip>/ws --insecure
+    bazel run //pi/hitl/harness:rename_wss -- --device-ws wss://<ip>/ws
 """
 
 from __future__ import annotations
@@ -323,7 +323,11 @@ def main() -> None:
     ap.add_argument(
         "--settle", type=float, default=90.0, help="seconds to wait for wss to first come up"
     )
-    ap.add_argument("--insecure", action="store_true", default=True)
+    ap.add_argument(
+        "--ws-verify",
+        action="store_true",
+        help="verify the DUT's TLS cert (default: accept the self-signed cert)",
+    )
     ap.add_argument(
         "--monitor", action="store_true", help="capture serial (resets the C6 once on attach)"
     )
@@ -339,6 +343,7 @@ def main() -> None:
     ap.add_argument("--improv-timeout", type=float, default=90.0)
     ap.add_argument("--improv-attempts", type=int, default=3)
     args = ap.parse_args()
+    args.insecure = not args.ws_verify
     raise SystemExit(run_on_hardware(args))
 
 

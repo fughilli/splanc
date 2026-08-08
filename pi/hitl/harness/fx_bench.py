@@ -58,7 +58,14 @@ import tempfile
 import time
 from typing import Any
 
-from fx_bench_core import assemble_bundle, cpu_hz_of, intended_led_count, sample_from
+from fx_bench_core import (
+    assemble_bundle,
+    bundle_to_golden,
+    compare_to_golden,
+    cpu_hz_of,
+    intended_led_count,
+    sample_from,
+)
 
 
 def _log(msg: str) -> None:
@@ -71,6 +78,14 @@ def _log(msg: str) -> None:
 _FXC_RUNFILE = "_main/fx_compiler/fx_compile"
 _BENCH_RUNFILE = "_main/pi/hitl/harness/benchmarks/empty.fx"
 _BUNDLE_RUNFILE = "_main/firmware/player_app/esp32c6_flashbundle.tar"
+# Per-effect frame-cycle reference for the margin check; one per SoC.
+_GOLDEN_RUNFILE = "_main/pi/hitl/harness/goldens/fx_bench.{soc}.json"
+# The two tiniest programs have higher RELATIVE measurement noise (a fixed
+# absolute jitter is a big % of a ~100 K–500 K-cycle program), so the golden
+# stamps them a looser margin — the ~70 real compute effects hold ≤2.3% run to
+# run and keep the tight 5% default (see the golden's per-sample `margin`).
+_GOLDEN_PER_LABEL_MARGIN = {"empty": 0.10, "sweep16": 0.15}
+_GOLDEN_DEFAULT_MARGIN = 0.05
 
 
 def _rlocation(rloc: str) -> str | None:
@@ -98,6 +113,21 @@ def default_flashbundle() -> str | None:
     """The firmware flash-bundle tar from runfiles, if present (so a run is one
     command); --bundle overrides it and --no-bundle skips flashing."""
     return _rlocation(_BUNDLE_RUNFILE)
+
+
+def default_golden(soc: str) -> str | None:
+    """The committed golden reference for this SoC from runfiles, if present."""
+    return _rlocation(_GOLDEN_RUNFILE.format(soc=soc))
+
+
+def resolve_out(explicit: str | None) -> str:
+    """Where to write the bundle. An explicit --out goes to the user's path; with
+    none, dump into the test sandbox ($TEST_UNDECLARED_OUTPUTS_DIR under `bazel
+    test`, so it's captured as a test output) or a tempdir."""
+    if explicit:
+        return explicit
+    outdir = os.environ.get("TEST_UNDECLARED_OUTPUTS_DIR") or tempfile.gettempdir()
+    return os.path.join(outdir, "fx_bench_bundle.json")
 
 
 def compile_fx(fx_compile: str, src_path: str) -> bytes:
@@ -207,7 +237,7 @@ async def _open_ws(ws_url: str, args, settle_deadline: float):
     ssl_ctx = None
     if ws_url.startswith("wss:"):
         ssl_ctx = ssl.create_default_context()
-        if args.insecure:  # the device presents a self-signed cert
+        if not args.ws_verify:  # the device presents a self-signed cert (default)
             ssl_ctx.check_hostname = False
             ssl_ctx.verify_mode = ssl.CERT_NONE
     while True:
@@ -411,7 +441,12 @@ def run_replay(args) -> dict[str, Any]:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="HITL FX benchmark harness (FUG-11)")
-    ap.add_argument("--out", required=True, help="output device-measurement bundle JSON")
+    ap.add_argument(
+        "--out",
+        default=None,
+        help="write the device-measurement bundle JSON here (default: the test "
+        "sandbox — $TEST_UNDECLARED_OUTPUTS_DIR or a tempdir)",
+    )
     ap.add_argument("--replay", help="rebuild from a recorded session JSON (no hardware)")
     ap.add_argument(
         "--benchmarks-dir",
@@ -470,7 +505,34 @@ def main() -> None:
     ap.add_argument("--device-label", help="human label for the device")
     ap.add_argument("--firmware-build", help="firmware build id")
     ap.add_argument("--settle-ms", type=int, default=1500)
-    ap.add_argument("--insecure", action="store_true", help="accept the device's self-signed cert")
+    ap.add_argument(
+        "--ws-verify",
+        action="store_true",
+        help="verify the device's TLS cert (default: accept the self-signed cert)",
+    )
+    ap.add_argument(
+        "--golden",
+        default=None,
+        help="golden reference JSON for the pass/fail margin check "
+        "(default: the committed goldens/fx_bench.<soc>.json in runfiles)",
+    )
+    ap.add_argument(
+        "--margin",
+        type=float,
+        default=None,
+        help="override the golden's default per-effect frame-cycle margin "
+        "(per-label margins in the golden still win)",
+    )
+    ap.add_argument(
+        "--no-golden-check",
+        action="store_true",
+        help="just measure + write the bundle; skip the golden margin check",
+    )
+    ap.add_argument(
+        "--emit-golden",
+        default=None,
+        help="write a golden reference (from this run) to PATH instead of checking",
+    )
     ap.add_argument("--debug", action="store_true", help="log each raw PerfReport summary")
     args = ap.parse_args()
 
@@ -481,9 +543,54 @@ def main() -> None:
             ap.error("no --benchmarks-dir (and none in runfiles); pass one or use --replay")
         bundle = run_on_hardware(args)
 
-    with open(args.out, "w") as f:
+    out = resolve_out(args.out)
+    with open(out, "w") as f:
         json.dump(bundle, f, indent=2)
-    _log(f"wrote {args.out}: {len(bundle['fit'])} fit, {len(bundle['heldout'])} held-out samples")
+    _log(f"wrote {out}: {len(bundle['fit'])} fit, {len(bundle['heldout'])} held-out samples")
+
+    # Regenerate the golden from this run instead of checking against it.
+    if args.emit_golden:
+        golden = bundle_to_golden(
+            bundle,
+            default_margin=_GOLDEN_DEFAULT_MARGIN,
+            per_label_margin=_GOLDEN_PER_LABEL_MARGIN,
+        )
+        with open(args.emit_golden, "w") as f:
+            json.dump(golden, f, indent=2)
+            f.write("\n")
+        _log(f"wrote golden {args.emit_golden}: {len(golden['samples'])} samples")
+        return
+
+    # Pass/fail check: a profiling run on known hardware must match the golden
+    # per-effect frame cycles within margin (else the FX VM / firmware perf, or
+    # the run itself, regressed).
+    if args.no_golden_check:
+        return
+    golden_path = args.golden or default_golden(args.soc)
+    if not golden_path:
+        _log(f"[golden] no golden for soc={args.soc!r}; skipping the margin check")
+        return
+    with open(golden_path) as f:
+        golden = json.load(f)
+    result = compare_to_golden(bundle, golden, args.margin)
+    _log(
+        f"[golden] {golden_path}: checked {result['checked']} effect(s), "
+        f"default margin ±{result['defaultMargin'] * 100:g}%"
+    )
+    for o in result["offenders"]:
+        _log(
+            f"  OFF  {o['label']:<14} frame={o['measured']} vs golden {o['golden']} "
+            f"({(o['ratio'] - 1) * 100:+.1f}%, margin ±{o['margin'] * 100:g}%)"
+        )
+    if result["missing"]:
+        _log(f"  MISSING (not measured this run): {', '.join(result['missing'])}")
+    if result["ok"]:
+        _log("PASS: profiling run matches the golden within margin")
+    else:
+        raise SystemExit(
+            f"FAIL: {len(result['offenders'])} effect(s) off-margin, "
+            f"{len(result['missing'])} missing vs golden"
+        )
 
 
 if __name__ == "__main__":

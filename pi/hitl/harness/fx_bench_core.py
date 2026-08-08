@@ -98,6 +98,75 @@ def cpu_hz_of(report: dict[str, Any], default: int = 160_000_000) -> int:
     return hz if hz > 0 else default
 
 
+def bundle_to_golden(
+    bundle: dict[str, Any],
+    *,
+    default_margin: float = 0.05,
+    per_label_margin: dict[str, float] | None = None,
+) -> dict[str, Any]:
+    """Reduce a measured bundle to a compact golden reference (per-label frame/
+    show cycles + ledCount), for `fx_bench --emit-golden`. `per_label_margin`
+    stamps a looser margin on specific labels (e.g. the tiny `empty` program)."""
+    per_label_margin = per_label_margin or {}
+    samples: dict[str, Any] = {}
+    for s in (bundle.get("fit") or []) + (bundle.get("heldout") or []):
+        entry: dict[str, Any] = {
+            "ledCount": s["ledCount"],
+            "frameCycles": s["measuredFrameCycles"],
+            "showCycles": s["measuredShowCycles"],
+        }
+        if s["label"] in per_label_margin:
+            entry["margin"] = per_label_margin[s["label"]]
+        samples[s["label"]] = entry
+    return {
+        "kind": "ledmapper-fx-bench-golden",
+        "soc": bundle.get("soc", "esp32c6"),
+        "cpuHz": bundle.get("cpuHz"),
+        "defaultMargin": default_margin,
+        "samples": samples,
+    }
+
+
+def compare_to_golden(
+    bundle: dict[str, Any], golden: dict[str, Any], margin: float | None = None
+) -> dict[str, Any]:
+    """Compare a measured bundle's per-effect FRAME cycles to a golden reference.
+    Frame cycles are the FX-VM execution cost the device profile is fit from; show
+    cycles (the transmit path) are noisier and NOT gated. Each label uses its
+    golden `margin` if set, else the `margin` arg, else golden `defaultMargin`.
+    Returns {ok, checked, missing, offenders:[{label, measured, golden, ratio,
+    margin}], defaultMargin}."""
+    default_margin = margin if margin is not None else float(golden.get("defaultMargin", 0.05))
+    gsamples: dict[str, Any] = golden.get("samples", {})
+    measured = {s["label"]: s for s in (bundle.get("fit") or []) + (bundle.get("heldout") or [])}
+    offenders: list[dict[str, Any]] = []
+    missing: list[str] = []
+    checked = 0
+    for label, g in gsamples.items():
+        gv = int(g.get("frameCycles", 0))
+        if gv <= 0:
+            continue
+        m = measured.get(label)
+        if m is None:
+            missing.append(label)
+            continue
+        mv = int(m.get("measuredFrameCycles", 0))
+        eff = float(g.get("margin", default_margin))
+        checked += 1
+        ratio = mv / gv
+        if abs(ratio - 1.0) > eff:
+            offenders.append(
+                {"label": label, "measured": mv, "golden": gv, "ratio": ratio, "margin": eff}
+            )
+    return {
+        "ok": not offenders and not missing,
+        "checked": checked,
+        "missing": sorted(missing),
+        "offenders": offenders,
+        "defaultMargin": default_margin,
+    }
+
+
 def assemble_bundle(
     *,
     soc: str,

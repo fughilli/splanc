@@ -11,14 +11,13 @@ laptop on the tailnet), and curl it from anywhere to run the tests one at a time
     curl        http://<host>:8091/                # usage + targets + defaults
     curl -N     http://<host>:8091/run?target=e2e  # run one, stream output
     curl -N    'http://<host>:8091/run?target=map_upload&server=hitl-rig-1'
-    curl -N    'http://<host>:8091/run?target=rename_wss&args=--device-ws wss://10.0.0.5/ws --insecure'
+    curl -N    'http://<host>:8091/run?target=rename_wss&args=--device-ws wss://10.0.0.5/ws'
     curl -N     http://<host>:8091/runall          # every target, in order
 
 Each /run shells out to `bazel run -c opt //pi/hitl/harness:<target> -- <args>`
 in the repo, streaming combined stdout/stderr and finishing with the exit code
-(0 = pass). Targets are the five harness py_tests; some don't complete without
-arguments (fx_bench needs --out; the wss ones want --insecure), so each carries a
-default arg set — overridable per request:
+(0 = pass). The five harness py_tests all run bare now; args are overridable per
+request:
 
     ?target=  short name (e2e) or a full //label
     ?args=    shell-split; REPLACES the target's defaults (appended after `--`)
@@ -42,16 +41,18 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-# Short name -> the harness label + the default args that make it run to
-# completion on a working rig. Everything is overridable per request; these are
-# just so a bare `?target=X` does something useful.
+# Short name -> the harness label + any default args. All five run bare now (the
+# wss tests default to accepting the self-signed cert; fx_bench defaults its
+# output to the sandbox and checks against its golden), so these are empty —
+# kept as the hook for per-target defaults, and everything is overridable per
+# request anyway.
 HARNESS = "//pi/hitl/harness"
 TARGETS: dict[str, list[str]] = {
-    "e2e": [],  # reserve -> flash -> improv -> time-sync + rename; fine bare
-    "map_upload": ["--insecure"],  # wss sharded upload; accept the self-signed cert
+    "e2e": [],  # reserve -> flash -> improv -> time-sync + rename
+    "map_upload": [],  # wss sharded upload + read-back
     "mapping_trigger": [],  # reserve -> flash -> mapping-sequence trigger
-    "fx_bench": ["--out", "/tmp/hitl_fx_bench.json", "--insecure"],  # --out is required
-    "rename_wss": [],  # rename -> wss stays up; --insecure defaults on already
+    "fx_bench": [],  # calibration sweep + golden margin check
+    "rename_wss": [],  # rename -> wss stays up
 }
 # The order /runall uses (fast/foundational first).
 ORDER = ["e2e", "map_upload", "mapping_trigger", "rename_wss", "fx_bench"]
