@@ -39,6 +39,7 @@ py_test(
     main = "pytest_main.py",
     deps = [
         "//pi/hitl/harness",
+        "//tools/traceability",
         requirement("pytest"),
     ],
 )

@@ -7,6 +7,7 @@ import base64
 import os
 import tempfile
 
+import pytest
 from fx_bench_core import (
     assemble_bundle,
     bundle_to_golden,
@@ -16,6 +17,9 @@ from fx_bench_core import (
     sample_from,
     stable_cycles,
 )
+
+# Traceability: PR(s) this suite verifies (see requirements/requirements.yaml).
+pytestmark = pytest.mark.requirements("PR-7")
 
 
 def _write(text: str) -> str:

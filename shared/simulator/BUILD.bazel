@@ -44,6 +44,7 @@ py_test(
         ":simulator",
         "//pi/reconstruction",
         requirement("numpy"),
+        "//tools/traceability",
         requirement("pytest"),
         requirement("scipy"),
     ],

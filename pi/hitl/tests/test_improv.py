@@ -1,6 +1,10 @@
 """Unit tests for the Improv packet codec (device/app/harness parity)."""
 
+import pytest
 from improv import build_wifi_rpc, error_name, parse_result
+
+# Traceability: PR(s) this suite verifies (see requirements/requirements.yaml).
+pytestmark = pytest.mark.requirements("PR-9")
 
 
 def test_build_wifi_rpc_layout_and_checksum():

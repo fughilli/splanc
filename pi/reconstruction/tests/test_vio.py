@@ -28,6 +28,9 @@ from reconstruction.vio import (
     solve_vio,
 )
 
+# Traceability: PR(s) this suite verifies (see requirements/requirements.yaml).
+pytestmark = pytest.mark.requirements("PR-2")
+
 RNG = np.random.default_rng(11)
 
 IMG_W, IMG_H = 1280, 720

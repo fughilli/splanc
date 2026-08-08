@@ -14,6 +14,9 @@ from ledmapper_protocol import ClientMessage, ServerMessage
 from server import proto_wire
 from server.proto_examples import CLIENT_FLATS, OUTPUT_MAP, POSELESS, SERVER_FLATS
 
+# Traceability: PR(s) this suite verifies (see requirements/requirements.yaml).
+pytestmark = pytest.mark.requirements("PR-12", "PR-37")
+
 
 def _normalize(flat):
     """Decode-side equivalences: absent == null; nullable repeated == []."""

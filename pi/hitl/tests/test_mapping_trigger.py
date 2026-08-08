@@ -3,12 +3,16 @@ frame_timing → triggered/not-triggered verdict, with no hardware. Pins the exa
 distinction the on-hardware guard relies on — a latched capture that shows ZERO
 frames (the masking bug) must read as NOT triggered."""
 
+import pytest
 from mapping_trigger_core import (
     frame_ticks_in,
     pattern_epoch_of,
     pattern_triggered,
     total_frame_ticks,
 )
+
+# Traceability: PR(s) this suite verifies (see requirements/requirements.yaml).
+pytestmark = pytest.mark.requirements("PR-36")
 
 
 def _ft(epoch=0, ticks=0, dropped=0):
