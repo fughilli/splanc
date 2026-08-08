@@ -1,0 +1,44 @@
+"""requirements/ — the machine-readable requirements & risk model (FUG-89).
+
+Requirements: PR-40, PR-44
+
+Holds requirements.yaml (the UN/PR/RISK source of truth), its JSON schema, the
+validator test, and the annotation checker that guards against requirements
+drift. See docs/requirements-driven-development.md.
+"""
+
+load("@pypi//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_binary", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "requirements.yaml",
+    "schema.json",
+])
+
+# Structural + referential validation of the committed requirements model.
+py_test(
+    name = "requirements_valid_test",
+    srcs = [
+        "pytest_main.py",
+        "validate_test.py",
+    ],
+    data = ["requirements.yaml"],
+    imports = ["."],
+    legacy_create_init = False,
+    main = "pytest_main.py",
+    deps = [
+        "//tools/traceability",
+        requirement("pytest"),
+    ],
+)
+
+# `bazel run //requirements:check_annotations` — fail on any source annotation
+# that references a requirement id not defined in requirements.yaml.
+py_binary(
+    name = "check_annotations",
+    srcs = ["check_annotations.py"],
+    main = "check_annotations.py",
+    deps = ["//tools/traceability"],
+)

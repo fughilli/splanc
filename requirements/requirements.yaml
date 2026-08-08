@@ -1,0 +1,434 @@
+# splanc — machine-readable requirements & risk model.
+#
+# This is the single source of truth for the requirements-driven-development
+# workflow (see docs/requirements-driven-development.md). It is validated by
+# //requirements:requirements_valid_test and consumed by the traceability
+# tooling in //tools/traceability to build the HTML verification/validation
+# report.
+#
+# Entity kinds:
+#   * user_needs (UN)         — what a user must be able to do. VALIDATED by the
+#                               verification of the PRs that satisfy them.
+#   * product_requirements    — direct PRs `satisfies` user needs; derived PRs
+#     (PR)                      `mitigates` risks (and may also satisfy needs).
+#                               VERIFIED by the tests that reference them.
+#   * risks (RISK)            — hazards/failure modes. MITIGATED when the derived
+#                               PRs that mitigate them are verified.
+#
+# Traceability from a PR to its tests comes from either per-testcase
+# `@requirements("PR-…")` markers (emitted as jUnit tags) or the `verified_by`
+# Bazel target list below (whole-target pass/fail, for languages without
+# per-case tags yet).
+
+meta:
+  project: splanc
+  source: >-
+    Seeded (FUG-89) from led-mapper-design.md, docs/decisions.md and
+    docs/design/*, which encode the same acceptance criteria and risks drafted
+    in FUG-88. Reconcile the exact UN/PR/RISK wording against the FUG-88 Linear
+    analysis in review.
+
+# --------------------------------------------------------------------------- #
+# User needs                                                                  #
+# --------------------------------------------------------------------------- #
+user_needs:
+  - id: UN-1
+    title: Map a fixture by walking around it
+    description: >-
+      A user can map a fixture of up to 1024 LEDs by walking around it for
+      <= 2 minutes, offline, from an Android phone (Pi is its own Wi-Fi AP).
+
+  - id: UN-2
+    title: Get an accurate map
+    description: >-
+      On the bench golden fixture, reconstructed positions have RMS error
+      <= 2% of the longest dimension with >= 95% of LEDs identified, and
+      shape-consistency (collinear/coplanar) checks pass.
+
+  - id: UN-3
+    title: Identify LEDs reliably in imperfect lighting
+    description: >-
+      Each detected blob is labelled with the correct LED index even in a lit
+      room or with auto-exposure pumping — no systematic mis-identification.
+
+  - id: UN-4
+    title: Export and re-use the map and effect library
+    description: >-
+      The output map is a documented JSON + CSV artifact, and effect/map
+      library bundles can be exported and imported.
+
+  - id: UN-5
+    title: Author and run light-show effects
+    description: >-
+      A user can author effects and run them on the fixture through the effects
+      compiler and on-device runtime.
+
+  - id: UN-6
+    title: Set up a device with no special tools
+    description: >-
+      A user can flash firmware from the browser and provision the device onto
+      Wi-Fi over BLE (Improv), with no desktop toolchain.
+
+  - id: UN-7
+    title: Name devices and reach them by name
+    description: >-
+      A configured device name drives its Wi-Fi AP SSID and its mDNS/DHCP
+      hostname so the device is reachable by a memorable name.
+
+  - id: UN-8
+    title: Keep phone and device clocks in sync
+    description: >-
+      The phone and device agree on a clock precise enough to decode the blink
+      code, over the LAN, without internet.
+
+  - id: UN-9
+    title: Trust the software through a requirements-driven process
+    description: >-
+      Every module traces to the requirements it satisfies and every
+      requirement traces to the tests that verify it, aggregated into a report
+      that shows PASS/FAIL validation and verification of the whole listing.
+
+# --------------------------------------------------------------------------- #
+# Product requirements                                                        #
+# --------------------------------------------------------------------------- #
+product_requirements:
+  # --- direct requirements ------------------------------------------------- #
+  - id: PR-1
+    title: Temporal blink code labels each blob with its LED index
+    description: >-
+      LEDs blink a known temporal (hue) code so each detected blob announces its
+      own index; the driver frame plan and the phone decoder agree on it.
+    satisfies: [UN-1, UN-3]
+    modules: [firmware, pi/led_driver, web]
+    verified_by: ['//web:gray_test']
+
+  - id: PR-2
+    title: Reconstruction triangulates and bundle-adjusts to a metric map
+    description: >-
+      Labelled, posed views triangulate + globally refine (Huber BA) to metric
+      LED positions meeting the accuracy bar on the golden fixture.
+    satisfies: [UN-2]
+    modules: [pi/reconstruction, solver]
+
+  - id: PR-3
+    title: Rust solver matches the Python reference solver
+    description: >-
+      The Rust solver and the Python reference agree < 3 mm / < 2% scale after
+      similarity alignment on one synthetic session.
+    satisfies: [UN-2]
+    modules: [solver, pi/reconstruction]
+    verified_by: ['//solver:solver_test']
+
+  - id: PR-4
+    title: Simulator round-trip meets the noise-model accuracy bar
+    description: >-
+      A zero-noise detection log reconstructs to < 1 mm RMS; at nominal noise
+      RMS <= 1% of the fixture span with >= 99% of LEDs solved.
+    satisfies: [UN-2]
+    modules: [shared/simulator, pi/reconstruction]
+
+  - id: PR-5
+    title: SNTP offset/RTT clock-sync math
+    description: >-
+      Offset and round-trip are computed from four timestamps; the lowest-RTT
+      sample is chosen; implausible samples are rejected.
+    satisfies: [UN-8]
+    modules: [pi/hitl, pi/server, web]
+    verified_by: ['//web:clocksync_test']
+
+  - id: PR-6
+    title: Documented map output + library bundle export/import
+    description: >-
+      Capture sessions persist to a documented JSON/CSV map (§7.5); effect/map
+      library bundles round-trip through export/import.
+    satisfies: [UN-4]
+    modules: [pi/server, web]
+    verified_by: ['//web:mapBundle_test']
+
+  - id: PR-7
+    title: On-device effects runtime executes bytecode effects
+    description: >-
+      The firmware effects VM runs compiled bytecode effects deterministically
+      and within the device performance budget.
+    satisfies: [UN-5]
+    modules: [firmware, fx_compiler]
+    verified_by: ['//firmware/player_app:ffi_test']
+
+  - id: PR-8
+    title: Effects compiler lowers .fx source to bytecode
+    description: >-
+      The effects compiler compiles effect source into the bytecode/textures the
+      on-device runtime consumes.
+    satisfies: [UN-5]
+    modules: [fx_compiler, web]
+    verified_by: ['//web:fxTopology_test', '//web:fxbTextures_test']
+
+  - id: PR-9
+    title: BLE Improv provisioning onboards the device onto Wi-Fi
+    description: >-
+      The Improv-over-BLE GATT flow provisions the device onto a Wi-Fi network
+      from the browser.
+    satisfies: [UN-6]
+    modules: [firmware, pi/hitl, web]
+    verified_by:
+      - '//firmware/player_app:improv_codec_test'
+      - '//web:improv_test'
+      - '//web:improv_provision_test'
+
+  - id: PR-10
+    title: Flash firmware directly from the browser
+    description: >-
+      Firmware flashes from Chrome via WebSerial/WebUSB with a manifest-driven
+      bundle, no desktop tooling.
+    satisfies: [UN-6]
+    modules: [web, tools]
+    verified_by: ['//web:flashUsb_test', '//web:flashManifest_test', '//web:flashEnv_test']
+
+  - id: PR-11
+    title: Derive AP SSID and mDNS/DHCP hostname from the device name
+    description: >-
+      The configured device name determines the Wi-Fi AP SSID and the
+      mDNS/DHCP hostname (FUG-83).
+    satisfies: [UN-7]
+    modules: [firmware]
+
+  - id: PR-12
+    title: WebSocket §7 control protocol over binary protobuf frames
+    description: >-
+      The §7 capture-control protocol is carried over binary ledmapper.v1
+      protobuf frames both directions, with a codec on each end.
+    satisfies: [UN-1, UN-4]
+    modules: [shared/protocol, pi/server, web, firmware]
+    verified_by: ['//firmware/player_app:ws_codec_test', '//web:proto_test']
+
+  - id: PR-13
+    title: Large maps upload in chunks over the socket
+    description: >-
+      A large map + topology (~14 KB) uploads in bounded chunks over the
+      WebSocket without exceeding frame limits.
+    satisfies: [UN-4]
+    modules: [pi/server, web, pi/hitl]
+
+  - id: PR-14
+    title: Exposure/encoding auto-negotiation adapts the code to lighting
+    description: >-
+      The client measures scene stats and negotiates encoding, bit period and
+      detector threshold to keep the code decodable as lighting changes.
+    satisfies: [UN-3]
+    modules: [web]
+    verified_by: ['//web:exposure_test', '//web:exposureControl_test']
+
+  # --- requirements-driven-development workflow (this issue) --------------- #
+  - id: PR-40
+    title: Machine-readable requirements model with validated cross-references
+    description: >-
+      UN/PR/RISK and derived-PR mitigations are captured in a machine-readable
+      YAML model whose cross-references (satisfies/mitigates/mitigated_by) are
+      loadable and internally consistent.
+    satisfies: [UN-9]
+    modules: [requirements, tools/traceability]
+
+  - id: PR-41
+    title: Tests declare the requirements they verify as jUnit traceability tags
+    description: >-
+      A `@requirements("PR-…")` test marker emits, per testcase, jUnit
+      `<property name="requirement">` tags; the shared runner writes that jUnit
+      to $XML_OUTPUT_FILE so every test carries its traceability into CI.
+    satisfies: [UN-9]
+    modules: [tools/traceability]
+
+  - id: PR-42
+    title: jUnit XML (with traceability tags) is parsed back to per-test results
+    description: >-
+      The aggregator parses jUnit XML from all suites, extracting per-testcase
+      requirement tags and per-target pass/fail.
+    satisfies: [UN-9]
+    modules: [tools/traceability]
+
+  - id: PR-43
+    title: Aggregated HTML report shows PASS/FAIL for the whole UN/PR listing
+    description: >-
+      A final workflow action joins the model with the test results and renders
+      an HTML report showing validation (UN), verification (PR) and mitigation
+      (RISK) status for the entire listing.
+    satisfies: [UN-9]
+    modules: [tools/traceability]
+
+  # --- derived requirements (risk mitigations) ----------------------------- #
+  - id: PR-30
+    title: SEC-DED FEC on the blink code corrects singles, rejects doubles
+    description: >-
+      Extended-Hamming (distance-4) SEC-DED parity on the Gray data word
+      corrects single bit-window errors and detects+rejects doubles, so a wrong
+      window can no longer decode to a valid wrong id. Codebook emits fec=secded.
+    kind: derived
+    satisfies: [UN-3]
+    mitigates: [RISK-1]
+    modules: [pi/led_driver, pi/server, web]
+    verified_by: ['//web:fec_test']
+
+  - id: PR-31
+    title: id+1 codewords reserve the all-zero data word as invalid
+    description: >-
+      Codewords carry id+1 so id 0's raw Gray word is not all-dark; a dark-data
+      observation decodes to the reserved-invalid word and is rejected rather
+      than becoming a decode magnet.
+    kind: derived
+    satisfies: [UN-3]
+    mitigates: [RISK-1]
+    modules: [pi/led_driver, web]
+    verified_by: ['//web:gray_test']
+
+  - id: PR-32
+    title: Confidence gate, per-cycle dedup and consensus pre-filter
+    description: >-
+      A decoder minConfidence gate, per-cycle brightest-anchor dedup, and M3's
+      mode-seeking consensus pre-filter reject majority-bad observation sets.
+    kind: derived
+    mitigates: [RISK-1]
+    modules: [web, pi/reconstruction]
+    verified_by: ['//web:pipeline_synthetic_test']
+
+  - id: PR-33
+    title: Hue carrier with relative decoding and SNR-adaptive alphabet
+    description: >-
+      A constant-brightness hue carrier decoded relative to each track's own
+      white window (cancels white balance; static-hue clutter reads neutral and
+      fails the green sync), with a 2/4-symbol alphabet chosen from measured SNR.
+    kind: derived
+    satisfies: [UN-3]
+    mitigates: [RISK-2]
+    modules: [pi/led_driver, web]
+    verified_by: ['//web:gray_test', '//firmware/player_app:color_correction_test']
+
+  - id: PR-34
+    title: Release Bluedroid after provisioning to reclaim device heap
+    description: >-
+      The firmware releases the BLE (Bluedroid) stack once provisioning is done,
+      reclaiming ~33 KB of heap so TLS/WebSocket allocation does not starve.
+    kind: derived
+    mitigates: [RISK-3]
+    modules: [firmware]
+
+  - id: PR-35
+    title: Monotonic clock sync rejects backward/implausible samples
+    description: >-
+      Sync uses a monotonic clock and rejects negative-RTT (backward-stepping)
+      or implausibly large-RTT samples, so a bad sample cannot corrupt code
+      alignment.
+    kind: derived
+    satisfies: [UN-8]
+    mitigates: [RISK-4]
+    modules: [pi/hitl, web, pi/server]
+    verified_by: ['//web:clocksync_test']
+
+  - id: PR-36
+    title: 'Mapping-trigger guard: start_mapping never preempts an active render'
+    description: >-
+      A regression guard verifies that starting a mapping sequence does not
+      preempt an already-active effect render.
+    kind: derived
+    mitigates: [RISK-5]
+    modules: [firmware, pi/hitl]
+
+  - id: PR-37
+    title: Cross-language goldens pin the wire format and shared types
+    description: >-
+      Python-generated golden fixtures + generated-binding freshness checks pin
+      the protobuf wire frames and shared code/geometry conventions so the
+      Python, TS, Rust and Go halves cannot silently drift.
+    kind: derived
+    mitigates: [RISK-6]
+    modules: [shared/protocol, pi/server, web]
+    verified_by: ['//web:proto_test', '//web:pinhole_test']
+
+  - id: PR-38
+    title: Init-time benchmark places the solve phone-first with a margin
+    description: >-
+      Host and phone run the same canned Rust solve at init; the phone keeps the
+      solve locally unless it is decisively (4x) slower, so placement never
+      offloads to a worse location.
+    kind: derived
+    mitigates: [RISK-7]
+    modules: [solver, web]
+    verified_by: ['//web:placement_test']
+
+  - id: PR-44
+    title: Requirements validator fails CI on broken traces or dangling tags
+    description: >-
+      A validator checks the model's structure and bidirectional cross-references
+      and fails when a test references a requirement id that does not exist,
+      closing the loop against requirements/tests drift.
+    kind: derived
+    satisfies: [UN-9]
+    mitigates: [RISK-8]
+    modules: [tools/traceability, requirements]
+
+# --------------------------------------------------------------------------- #
+# Risks                                                                       #
+# --------------------------------------------------------------------------- #
+risks:
+  - id: RISK-1
+    title: Decode collisions mis-identify LEDs and poison the solve
+    description: >-
+      The raw codebook has minimum Hamming distance 1, so a single decisively
+      wrong bit window decodes to a valid WRONG id; window voting cannot see it
+      and floods of wrong decodes collapse the reconstruction.
+    severity: high
+    mitigated_by: [PR-30, PR-31, PR-32]
+
+  - id: RISK-2
+    title: Lit-room / static-hue clutter defeats identification
+    description: >-
+      In a lit room intensity coding sees hundreds of scene blobs and dots dim
+      under auto-exposure; static coloured clutter can masquerade as code.
+    severity: high
+    mitigated_by: [PR-33]
+
+  - id: RISK-3
+    title: Device heap exhaustion breaks TLS/WebSocket
+    description: >-
+      If the BLE stack is never released, the device runs out of heap and TLS /
+      WebSocket allocation fails after provisioning.
+    severity: high
+    mitigated_by: [PR-34]
+
+  - id: RISK-4
+    title: Clock offset/step corrupts blink-code alignment
+    description: >-
+      A stepped or wildly-off clock sample misaligns the decoder against the
+      pattern and produces garbage identification.
+    severity: medium
+    mitigated_by: [PR-35]
+
+  - id: RISK-5
+    title: Mapping preempts an active effect render
+    description: >-
+      Starting a mapping sequence could interrupt an in-progress light-show
+      render (observed regression class).
+    severity: medium
+    mitigated_by: [PR-36]
+
+  - id: RISK-6
+    title: Cross-language protocol/type drift
+    description: >-
+      The Python, TypeScript, Rust and Go halves can silently diverge on the
+      wire format or shared conventions, corrupting interop.
+    severity: medium
+    mitigated_by: [PR-37]
+
+  - id: RISK-7
+    title: Solve placed on the slower machine
+    description: >-
+      Offloading the solve to the Pi when the phone is faster (or vice-versa)
+      wastes time and ties up shared hardware.
+    severity: low
+    mitigated_by: [PR-38]
+
+  - id: RISK-8
+    title: Requirements and tests drift apart
+    description: >-
+      Code satisfies no stated requirement, a requirement has no verifying test,
+      or a test references a requirement id that no longer exists.
+    severity: high
+    mitigated_by: [PR-44]
