@@ -41,6 +41,10 @@ export interface StoredMapSummary {
   folder?: string;
   /** dataURL — small MapView snapshot; may be "" until first browser view. */
   thumbnail: string;
+  /** Which thumbnail engine rendered `thumbnail` (see THUMBNAIL_ENGINE_VERSION).
+   * Absent = a pre-versioning render (the old grid/triad framing); such
+   * thumbnails are treated as stale and re-rendered lazily on next view. */
+  thumbnailVersion?: number;
 }
 
 /** Full record = summary + payload. */
@@ -267,6 +271,7 @@ class MapStore {
     // Off-screen thumbnail render (design doc §5.4). Best-effort — a WebGL
     // failure just leaves an empty thumbnail (regenerated lazily on view).
     summary.thumbnail = await renderThumbnail(input.map).catch(() => "");
+    if (summary.thumbnail) summary.thumbnailVersion = THUMBNAIL_ENGINE_VERSION;
     const payload: { id: string; map: OutputMap; topology?: Topology } = { id, map: input.map };
     if (input.topology) payload.topology = input.topology;
     await this.tx([IDX, PAYLOAD], "readwrite", (tx) => {
@@ -346,7 +351,10 @@ class MapStore {
       const s = await MapStore.req(iStore.get(id) as IDBRequest<StoredMapSummary | undefined>);
       if (s) {
         const ns: StoredMapSummary = { ...s, updatedAt: new Date().toISOString() };
-        if (thumbnail) ns.thumbnail = thumbnail;
+        if (thumbnail) {
+          ns.thumbnail = thumbnail;
+          ns.thumbnailVersion = THUMBNAIL_ENGINE_VERSION;
+        }
         if (topology !== undefined) ns.hasTopology = topology.segments.length > 0;
         iStore.put(ns);
       }
@@ -354,12 +362,14 @@ class MapStore {
     this.emit();
   }
 
-  /** Store a freshly-rendered thumbnail (lazy replacement on first view). */
+  /** Store a freshly-rendered thumbnail (lazy replacement on first view),
+   * stamped with the current engine version so it is no longer considered
+   * stale. */
   async setThumbnail(id: string, dataUrl: string): Promise<void> {
     await this.tx([IDX], "readwrite", async (tx) => {
       const store = tx.objectStore(IDX);
       const cur = await MapStore.req(store.get(id) as IDBRequest<StoredMapSummary | undefined>);
-      if (cur) store.put({ ...cur, thumbnail: dataUrl });
+      if (cur) store.put({ ...cur, thumbnail: dataUrl, thumbnailVersion: THUMBNAIL_ENGINE_VERSION });
     });
     this.emit();
   }
@@ -520,6 +530,19 @@ class MapStore {
 /** Empty topology skeleton keyed to a map (unset-topology placeholder). */
 function emptyTopology(mapId: string): Topology {
   return { mapId, branchPoints: [], segments: [], associations: [] };
+}
+
+/** Thumbnail engine version. Bump whenever renderThumbnail's output changes in
+ * a way that should retire already-cached thumbnails: a stored thumbnail whose
+ * `thumbnailVersion` differs (including absent, the pre-versioning grid/triad
+ * era) is treated as stale and re-rendered on next view. v1 = grid/triad-free,
+ * zoomed-to-fit framing (FUG-81). */
+export const THUMBNAIL_ENGINE_VERSION = 1;
+
+/** Does this summary's cached thumbnail predate the current engine (or is it
+ * missing)? Stale thumbnails are re-rendered lazily by the map browser. */
+export function isThumbnailStale(m: Pick<StoredMapSummary, "thumbnailVersion">): boolean {
+  return m.thumbnailVersion !== THUMBNAIL_ENGINE_VERSION;
 }
 
 /** Off-screen MapView snapshot → dataURL (design doc §5.4). Fixed orbit, LEDs

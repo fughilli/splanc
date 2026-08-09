@@ -5,7 +5,7 @@
  */
 
 import { ActionGrid, Button, Chip, EmptyState, IconButton, Sheet, toast, icon } from "../kit";
-import { mapStore, renderThumbnail, type StoredMapSummary } from "../../store/mapStore";
+import { mapStore, renderThumbnail, isThumbnailStale, type StoredMapSummary } from "../../store/mapStore";
 import {
   decodeLibraryBundle,
   looksLikeLibraryBundle,
@@ -269,15 +269,20 @@ export function MapBrowserScreen(router: Router): Screen {
 
     const thumb = document.createElement("div");
     thumb.className = "map-thumb";
+    // Show the cached image immediately when present (even if stale, to avoid an
+    // icon flash), otherwise a placeholder icon.
     if (m.thumbnail) {
       const img = document.createElement("img");
       img.src = m.thumbnail;
       thumb.appendChild(img);
     } else {
       thumb.appendChild(icon("map"));
-      // Lazy thumbnail: render a fresh one on first view (design doc §5.4/§9.7).
-      void lazyThumb(m.id, thumb);
     }
+    // (Re-)render lazily on first view when the thumbnail is missing or was
+    // produced by an older engine (design doc §5.4/§9.7) — so a framing change
+    // like FUG-81 retroactively refreshes thumbnails cached by the old grid/
+    // triad renderer.
+    if (isThumbnailStale(m)) void lazyThumb(m.id, thumb);
 
     const info = document.createElement("div");
     info.className = "map-info";
