@@ -24,12 +24,16 @@ bazelisk run //tools/sim_studio:serve   # binds 0.0.0.0:8090 by default
 
 ### Reaching it from your host (claude-container)
 
-`.claude-container-overlay` declares `# claude-container:port 127.0.0.1:8090:8090`,
-so after a **container restart** the studio is reachable at `http://localhost:8090`
-on the host machine. The server defaults to binding `0.0.0.0` (required for the
-Docker port mapping to reach it); pass `--host 127.0.0.1` to keep it
-container-local. To reach it from another device on your LAN (e.g. a phone), drop
-the `127.0.0.1:` prefix on the port directive in the overlay.
+`.claude-container-overlay/overlay.json` declares the studio as a named service
+(`"services": {"studio": 8090, ...}`), so once the server is running it is
+reachable from the host at `http://studio.<instance>.claude.localhost/` (or
+`http://studio.<instance>.claude.localhost:8484/` if the router doesn't hold
+port 80) — no container restart needed, and no host-port collisions when
+several containers (one per worktree) run at once. `<instance>` is the
+workspace directory's basename (`led-mapper` for the main checkout); run
+`claude-container --services` on the host to list every instance with working
+URLs. The service mux connects from inside the container, so binding
+`localhost` is fine; `0.0.0.0` remains the default for non-container use.
 
 The Python API is fully local; the front-end loads Three.js from a CDN, so the
 **browser** needs internet access. (To vendor Three.js for offline use, drop the
