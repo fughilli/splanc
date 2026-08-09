@@ -24,6 +24,12 @@ f32 is soft-float). Measured on the real rig via the fx_bench HITL.
 - **LUT float sin/cos** (`fx_vm`) — compile-time f32 table in flash, 0 RAM.
   Measured cos −46%/op; cascades to tan + hash.
 - **Integer bit-mix hash** replacing `fract(sin())` — measured −47…−68%.
+- **Native int/fixed builtins.** `min`/`max`/`abs`/`clamp`/`mod` used to lower to
+  the FLOAT ops, which reinterpret an int/fixed scaled-integer stack word as f32
+  (wrong for negatives + all fixed formats). Added VM `AbsI`/`MinI`/`MaxI`/`ClampI`
+  (one integer opcode serves int + every fixed format); `mod`→`ModI`; `floor`/
+  `ceil`(int)→identity; float-only unary builtins now convert (not reinterpret)
+  an int/fixed arg. No golden impact (float calibration set unchanged).
 - Golden (`web/tests/testdata/device-bench-esp32c6.json`) regenerated from a
   full rig sweep after each firmware change; default cost model refreshed to match.
 
@@ -47,6 +53,13 @@ lever for the loop-heavy / cheap-op-heavy programs.
    for hot basic blocks. High cost/risk and it fights the "RAM is scarce" constraint
    (executable code buffer lives in RAM/IRAM) — spike a microbench + feasibility
    check before committing. Likely last / may not be justified.
+
+Remaining builtin int/fixed gaps (still on the float / reinterpret path): `sign`
+(add native `SignI`), `step`, fixed `floor`/`ceil`/`fract` (need a frac-mask
+opcode), and int/fixed args to the BINARY/ternary float builtins
+`pow`/`atan2`/`mix`/`smoothstep` (needs per-arg coercion, e.g. coerce during
+`call_args` from a declared builtin signature). `sin`/`cos`/`exp` on a `fixed`
+(Q16.16) arg go to float too — only `fixed8`/`fixed16` hit the LUT path.
 
 Other candidates if wanted: LUT `exp` (untouched, still soft-float poly), SWAR
 "vectorization" of narrow fixed8/fixed16 lanes, `Normalize` reciprocal-multiply.
