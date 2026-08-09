@@ -1434,7 +1434,7 @@ fn run(
                 let z = pop!();
                 let y = pop!();
                 let x = pop!();
-                push!(hash1(x * 127.1 + y * 311.7 + z * 74.7));
+                push!(hash3(x, y, z));
             }
             Op::Hsv2Rgb => {
                 let v = pop!();
@@ -2058,9 +2058,39 @@ fn atan2f(y: f32, x: f32) -> f32 {
     r
 }
 
-fn hash1(x: f32) -> f32 {
-    // fract(sin(x)*k) style, but with our sinf; deterministic.
-    fractf(sinf(x * 12.9898) * 43758.547)
+/// Integer avalanche finalizer (Hash Prospector "lowbias32"): near-minimal bias,
+/// excellent distribution, ALL integer. RV32IMAC has a hardware multiply, so the
+/// two mults are cheap — replacing the old `fract(sin(x)*k)` GLSL hash, which
+/// dragged the soft-float `sin` into every `hash()` on the FPU-less C6.
+#[inline]
+fn mix32(mut h: u32) -> u32 {
+    h ^= h >> 16;
+    h = h.wrapping_mul(0x7feb_352d);
+    h ^= h >> 15;
+    h = h.wrapping_mul(0x846c_a68b);
+    h ^= h >> 16;
+    h
+}
+
+/// Map a mixed 32-bit hash to a float in [0, 1) (top 24 bits → an exact f32).
+#[inline]
+fn unit_from_hash(h: u32) -> f32 {
+    (h >> 8) as f32 * (1.0 / 16_777_216.0)
+}
+
+/// Deterministic `hash(x) -> [0, 1)`. Seeds off the input's bit pattern XOR the
+/// golden-ratio constant so `hash(0.0)` isn't a fixed point. Exposed for tests.
+pub fn hash1(x: f32) -> f32 {
+    unit_from_hash(mix32(x.to_bits() ^ 0x9e37_79b9))
+}
+
+/// Deterministic 3-input `hash(x, y, z) -> [0, 1)`. Folds the three bit patterns
+/// through the mixer (no soft-float dot product). Exposed for tests.
+pub fn hash3(x: f32, y: f32, z: f32) -> f32 {
+    let mut h = mix32(x.to_bits() ^ 0x9e37_79b9);
+    h = mix32(h ^ y.to_bits().wrapping_add(0x85eb_ca6b));
+    h = mix32(h ^ z.to_bits().wrapping_add(0xc2b2_ae35));
+    unit_from_hash(h)
 }
 
 fn hsv2rgb(h: f32, s: f32, v: f32) -> (f32, f32, f32) {

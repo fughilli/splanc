@@ -570,3 +570,24 @@ fn lut_sin_cos_match_libm_within_tolerance() {
     }
     assert!(max_err < 2.0e-3, "LUT trig error {max_err} too large");
 }
+
+#[test]
+fn integer_hash_uniform_and_no_fixed_point() {
+    // No soft-float sin, no 0->0 fixed point, output in [0,1), roughly uniform.
+    assert!(hash1(0.0) > 0.0, "hash(0) must not be a fixed point");
+    let mut buckets = [0u32; 10];
+    let mut i = 0;
+    while i < 10_000 {
+        let h = hash1(i as f32 * 0.123 - 500.0);
+        assert!((0.0..1.0).contains(&h), "hash out of range: {h}");
+        buckets[((h * 10.0) as usize).min(9)] += 1;
+        i += 1;
+    }
+    for b in buckets {
+        assert!(b > 700 && b < 1300, "hash decile non-uniform: {b}");
+    }
+    // hash3 in range and sensitive to each argument.
+    assert!((0.0..1.0).contains(&hash3(0.5, 0.25, 0.75)));
+    assert!(hash3(1.0, 2.0, 3.0) != hash3(1.0, 2.0, 4.0));
+    assert!(hash3(1.0, 2.0, 3.0) != hash3(2.0, 1.0, 3.0));
+}
