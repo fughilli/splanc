@@ -112,7 +112,10 @@ translate at each provider's edge.
   `chat.completions.create`, reusing the same translators. web-llm is imported
   **lazily from a CDN ESM URL**, so it adds no npm/lockfile dependency and no
   weight to the base bundle — it's fetched only when the user selects this
-  provider. Capabilities: tools; vision off (prebuilt models are text-only).
+  provider. Inference runs in a **Web Worker** (`CreateWebWorkerMLCEngine` over a
+  blob module worker) so GPU compile/inference don't stutter the main-thread UI
+  (falls back to the main-thread engine if unavailable). Capabilities: tools
+  (per-model, see below); vision off (prebuilt models are text-only).
 
 `generate.ts` keeps its public surface (`chatTurn`, `editorContext`,
 `getApiKey`/`setApiKey` back-compat) and just routes through `activeProvider()`.
@@ -187,7 +190,12 @@ localStorage): both the API `history` (so the model continues where it left off)
 and the visible `transcript` (so the log redraws). It's restored on mount and
 saved after every turn; only the chat pane's **"New chat"** button clears it.
 Captured preview images are stripped before saving, and history is trimmed at
-round boundaries to bound storage without corrupting the conversation.
+round boundaries to bound storage without corrupting the conversation. "New chat"
+lives in the editor's ⋯ overflow menu (not a chat-pane header).
+
+Note: the OpenAI translation emits `content: ""` (never `null`) for
+tool-calls-only assistant turns — web-llm rejects `null` ("assistant's message
+should have string content"), and OpenAI accepts `""` alongside `tool_calls`.
 
 The network paths (server `fetch`, Ollama pull, the CDN import + GPU init) are
 browser/runtime-only and are exercised manually against a real Ollama / WebGPU
