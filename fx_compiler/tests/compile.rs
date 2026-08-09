@@ -973,3 +973,59 @@ fn packed_storage_annotation_errors() {
     // Annotation must be a fixed width.
     assert!(compile("buffer vec3 c : int8; vec3 shade(Led led){ return vec3(0.0,0.0,0.0); }").is_err());
 }
+
+#[test]
+fn int_min_max_abs_clamp_are_native_and_correct_on_negatives() {
+    // The old path lowered min/max/abs/clamp to the FLOAT ops, which reinterpret
+    // an int's bit pattern as f32 (NaN for negatives) → wrong. The native integer
+    // ops must be exact. shade returns white (all 255) iff all four are correct.
+    let src = r#"
+        void update() {}
+        vec3 shade(Led led) {
+          int a = -5;
+          int b = -2;
+          float ok = 0.0;
+          if (min(a, b) == -5) { ok = ok + 0.25; }
+          if (max(a, b) == -2) { ok = ok + 0.25; }
+          if (abs(a) == 5) { ok = ok + 0.25; }
+          if (clamp(7, a, b) == -2) { ok = ok + 0.25; }
+          return vec3(ok, ok, ok);
+        }
+    "#;
+    assert_eq!(run_shade(src, &[], Led::default(), Frame::default()), (255, 255, 255));
+}
+
+#[test]
+fn fixed_min_max_abs_are_native_and_correct_on_negatives() {
+    // Fixed values ride a scaled integer; the float ops mangle negatives. Convert
+    // back to float and threshold (float compares are fine) → white iff correct.
+    let src = r#"
+        void update() {}
+        vec3 shade(Led led) {
+          fixed a = fixed(-0.7);
+          fixed b = fixed(-0.3);
+          float ok = 0.0;
+          if (float(min(a, b)) < -0.6) { ok = ok + 0.4; }
+          if (float(max(a, b)) > -0.4) { ok = ok + 0.3; }
+          if (float(abs(a)) > 0.6) { ok = ok + 0.3; }
+          return vec3(ok, ok, ok);
+        }
+    "#;
+    assert_eq!(run_shade(src, &[], Led::default(), Frame::default()), (255, 255, 255));
+}
+
+#[test]
+fn float_only_unary_converts_int_fixed_args_not_reinterprets() {
+    // sqrt of an int must convert (I2F), not reinterpret the bits as f32.
+    // sqrt(9) = 3 -> 3/10 = 0.3; the old reinterpret path gave garbage.
+    let src = r#"
+        void update() {}
+        vec3 shade(Led led) {
+          int n = 9;
+          float ok = 0.0;
+          if (sqrt(n) > 2.9) { if (sqrt(n) < 3.1) { ok = 1.0; } }
+          return vec3(ok, ok, ok);
+        }
+    "#;
+    assert_eq!(run_shade(src, &[], Led::default(), Frame::default()), (255, 255, 255));
+}

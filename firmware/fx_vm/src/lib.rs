@@ -204,6 +204,14 @@ pub enum Op {
     SinFix, // u8 frac
     CosFix, // u8 frac
     ExpFix, // u8 frac
+    // Integer/fixed compare + select + abs. The stack word already rides a scaled
+    // integer for `int` AND every fixed format (Q16.16/Q1.14/Q1.6), and these ops
+    // are monotonic on that representation, so ONE integer opcode each serves all
+    // of them — no soft-float, no reinterpreting the bits as f32.
+    AbsI,   // |x|
+    MinI,   // min(a, b)
+    MaxI,   // max(a, b)
+    ClampI, // clamp(x, lo, hi)
 }
 
 /// Graph-query kinds (the `GraphQuery` opcode operand).
@@ -301,8 +309,8 @@ pub struct Counters {
 impl Op {
     #[inline]
     pub fn from_u8(b: u8) -> Option<Op> {
-        // Op is a contiguous enum 0..=ExpFix; guard the range then transmute.
-        if b <= Op::ExpFix as u8 {
+        // Op is a contiguous enum 0..=ClampI; guard the range then transmute.
+        if b <= Op::ClampI as u8 {
             Some(unsafe { core::mem::transmute::<u8, Op>(b) })
         } else {
             None
@@ -1855,6 +1863,34 @@ fn run(
                 pc += 1;
                 let a = popi!();
                 pushi!(exp_fix(a, frac));
+            }
+            // Integer/fixed abs/min/max/clamp — operate on the scaled-integer stack
+            // word directly (correct for int + every fixed format, no soft-float).
+            Op::AbsI => {
+                let a = popi!();
+                pushi!(a.wrapping_abs());
+            }
+            Op::MinI => {
+                let b = popi!();
+                let a = popi!();
+                pushi!(if a < b { a } else { b });
+            }
+            Op::MaxI => {
+                let b = popi!();
+                let a = popi!();
+                pushi!(if a > b { a } else { b });
+            }
+            Op::ClampI => {
+                let hi = popi!();
+                let lo = popi!();
+                let x = popi!();
+                pushi!(if x < lo {
+                    lo
+                } else if x > hi {
+                    hi
+                } else {
+                    x
+                });
             }
         }
     }

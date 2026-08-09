@@ -1907,6 +1907,21 @@ impl Compiler {
                 return Ok(a);
             }
         }
+        // Native integer/fixed unary — no soft-float, no reinterpreting the
+        // scaled-integer stack word as f32. `abs` works on int + every fixed
+        // format (integer abs of the scaled value); floor/ceil of an `int` is the
+        // value itself. (Fixed floor/ceil/fract still take the float path below —
+        // a masking opcode is a follow-up.)
+        if name == "abs" {
+            let a = self.arg1(args)?;
+            if a.width() == 1 && a.fixed_frac().is_some() {
+                self.emit(ABS_I);
+                return Ok(a);
+            }
+        }
+        if matches!(name, "floor" | "ceil") && self.arg1(args)? == Ty::Int {
+            return Ok(Ty::Int); // floor/ceil of an integer is a no-op
+        }
         let unary = |f: u8| (UN_MATH, f);
         let un = match name {
             "sin" => Some(unary(0)),
@@ -1923,7 +1938,15 @@ impl Compiler {
             _ => None,
         };
         if let Some((opc, f)) = un {
-            let a = self.arg1(args)?;
+            let mut a = self.arg1(args)?;
+            // These are float-only (sqrt/log/tan/sign/fract/…, and sin/cos/exp on
+            // a non-fixed8/16 arg). A scalar int/fixed arg must be CONVERTED to
+            // float (not reinterpreted bit-for-bit), which the native abs/floor/
+            // ceil handled above already avoided.
+            if a.width() == 1 && a.fixed_frac().is_some() {
+                self.coerce(a, Ty::Float)?;
+                a = Ty::Float;
+            }
             self.emit(opc);
             self.emit(f);
             self.emit(a.width());
@@ -1944,6 +1967,21 @@ impl Compiler {
             if args[1].width() != w {
                 return self.err(format!("{name}() width mismatch"));
             }
+            // Native integer/fixed compare/select/modulo — both args must be the
+            // SAME int/fixed type (same scale) so the integer op is exact. pow/
+            // step/atan2 have no integer path and stay on the float BinMath.
+            if args[0] == args[1] && w == 1 && args[0].fixed_frac().is_some() {
+                let iop = match name {
+                    "min" => Some(MIN_I),
+                    "max" => Some(MAX_I),
+                    "mod" => Some(MOD_I),
+                    _ => None,
+                };
+                if let Some(op) = iop {
+                    self.emit(op);
+                    return Ok(args[0]);
+                }
+            }
             self.emit(BIN_MATH);
             self.emit(f);
             self.emit(w);
@@ -1953,6 +1991,13 @@ impl Compiler {
             "clamp" => {
                 self.need(args, 3)?;
                 let w = args[0].width();
+                // Native int/fixed clamp when x, lo, hi are all the same int/fixed
+                // scalar type (compare/select on the scaled integer word).
+                if args[0] == args[1] && args[1] == args[2] && w == 1 && args[0].fixed_frac().is_some()
+                {
+                    self.emit(CLAMP_I);
+                    return Ok(args[0]);
+                }
                 self.emit(CLAMP);
                 self.emit(w);
                 Ok(Ty::vec_of(w))
@@ -2591,6 +2636,11 @@ mod fx_vm_op {
     pub const SIN_FIX: u8 = 67;
     pub const COS_FIX: u8 = 68;
     pub const EXP_FIX: u8 = 69;
+    // Integer/fixed abs/min/max/clamp (serve int + every fixed format).
+    pub const ABS_I: u8 = 70;
+    pub const MIN_I: u8 = 71;
+    pub const MAX_I: u8 = 72;
+    pub const CLAMP_I: u8 = 73;
 }
 
 /// `.fxb` flags bit: a buffer descriptor table follows `code` (mirrors
