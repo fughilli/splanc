@@ -89,7 +89,10 @@ exercised end-to-end today:
 1. Deploy the app: `bazelisk run //web:deploy_cloudflare` (see
    `web/README.md` for the token setup).
 2. Start the stand-in player: `bazelisk run //web:serve` (self-signed HTTPS
-   on `:8443`).
+   on `:8443`). If the server runs inside claude-container, `:8443` is the
+   named service `web-tls` (no fixed host port), so expose it on the LAN
+   from the host first:
+   `socat TCP-LISTEN:8443,fork,reuseaddr TCP:127.0.0.1:$(claude-container --service-port <instance>/web-tls)`.
 3. On the phone, open
    `https://<project>.pages.dev/?url=wss://<laptop-LAN-IP>:8443/ws` in a
    FRESH browser profile. Expected: connection fails; the app's error hint
