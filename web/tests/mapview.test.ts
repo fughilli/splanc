@@ -50,3 +50,16 @@ test("flipping the default does not reach into already-constructed views", () =>
   assert.equal(next.showGrid, true);
   resetAppearance();
 });
+
+test("useThumbnailFraming strips overlays regardless of the defaults (FUG-81)", () => {
+  resetAppearance();
+  // Worst case: the user has both diagnostic overlays defaulted on, so a plain
+  // new view would seed them on and the thumbnail would render grid + triad.
+  updateAppearance({ showGrid: true, showTriad: true });
+  const view = new MapView(fakeCanvas, fakeMap).useThumbnailFraming();
+  assert.equal(view.showGrid, false);
+  assert.equal(view.showTriad, false);
+  assert.equal(view.showStats, false);
+  assert.equal(view.fitTight, true);
+  resetAppearance();
+});
