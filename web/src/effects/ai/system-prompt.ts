@@ -85,19 +85,26 @@ ${typeTable}
 
 PERFORMANCE — READ THIS, IT DECIDES WHETHER AN EFFECT FITS THE FRAME BUDGET.
 The target is a tiny microcontroller with NO hardware floating-point unit: every
-\`float\` operation is software-emulated and costs ~10–50× an integer op, and the
-costliest are \`sin/cos/tan/exp/log/pow/sqrt/atan2\`. \`shade(Led)\` runs once PER LED
-(often 60–512×) every frame; \`update()\` runs once. So:
+\`float\` operation is software-emulated (~10–50× an integer op). \`shade(Led)\` runs
+once PER LED (often 60–512×) every frame; \`update()\` runs once. So the biggest win
+is doing hot per-LED math in \`int\`/\`fixed\` on operations that have a native
+integer path — those cost essentially nothing. So:
 - Prefer \`int\` for indices/counters/modes and \`fixed\`/\`fixed16\`/\`fixed8\` for smooth
-  per-LED quantities (phase, brightness, positions, 1-D colour ramps). These run in
-  native integer arithmetic — NO soft-float. \`fixed16\`/\`fixed8\` additionally get
-  accelerated integer \`sin\`/\`cos\`/\`exp\` from lookup tables (angle in TURNS, not
-  radians) — trig with zero soft-float. Reach for these in hot per-LED math.
+  per-LED quantities (phase, brightness, positions, colour ramps). \`int\`/\`fixed\`
+  arithmetic (\`+ - * / %\`) runs natively — NO soft-float.
+- These builtins run NATIVELY on \`int\`/\`fixed\` args (no soft-float, so keep hot
+  math in these + fixed types): \`min max abs clamp mod sign step floor ceil fract mix\`.
+  And \`sin\`/\`cos\`/\`exp\` are native on a \`fixed\`/\`fixed16\`/\`fixed8\` arg (integer LUT;
+  angle in TURNS, 1.0 = one full circle) — this is how you do trig with zero
+  soft-float. (Given a \`float\` arg, all of the above use the float path instead.)
+- These builtins are FLOAT-ONLY — an \`int\`/\`fixed\` arg is CONVERTED to float first,
+  and the op is soft-float: \`sqrt log tan pow atan2 smoothstep dot cross length
+  normalize distance hsv2rgb palette\`. Avoid them in hot per-LED code: compare
+  squared distances (\`dot(d,d)\`) instead of \`length\`/\`distance\`, use fixed \`sin\`/\`cos\`
+  + polynomials instead of \`pow\`/\`exp\`, and hoist any that must run into \`update()\`.
 - Hoist everything that isn't per-LED into \`update()\` (runs 1×) and stash it in
   \`state\`; keep \`shade()\` lean. A \`sin(time)\` belongs in update(), not shade().
-- In \`shade()\` prefer cheap builtins — \`step/mix/clamp/smoothstep\`, polynomials,
-  \`abs/floor/fract\` — over \`sin/cos/exp/pow/log/sqrt\`. Reuse subexpressions; avoid
-  redundant vec constructions and swizzles.
+  Reuse subexpressions; avoid redundant vec constructions and swizzles.
 - RAM is the scarcest resource. Narrow the storage of \`buffer\`/\`texture\` elements
   with a \`: fixed8\` (1 byte/component) or \`: fixed16\` (2 bytes) annotation instead
   of the default f32 (4 bytes): \`buffer vec3 trail : fixed8;\`,
