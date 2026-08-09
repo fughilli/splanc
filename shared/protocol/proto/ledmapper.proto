@@ -709,6 +709,19 @@ message StoredMapChunk {
   bool has_topology = 4;
 }
 
+// A declared 2D texture input (buffer kind=1) of the active effect. Lets a
+// texture source (e.g. the TouchDesigner TOP) learn the exact dimensions it
+// must send: set_texture silently drops any frame whose width/height don't
+// match the declared texture, so a client with no way to read these back is
+// left guessing. `elem` is the shader's components-per-texel (1=scalar,
+// 3=vec3, …); the wire `format` in set_texture is independent of it.
+message TexturePort {
+  uint32 index = 1;  // tex_index used in set_texture
+  uint32 width = 2;  // declared texture width (texels)
+  uint32 height = 3; // declared texture height (texels)
+  uint32 elem = 4;   // components per texel the shader samples
+}
+
 // The active/named effect's uniform manifest (compiler JSON) plus current live
 // values. Reply to get_effect_uniforms.
 message EffectUniforms {
@@ -717,6 +730,8 @@ message EffectUniforms {
   // the manifest fx_compiler emits (see docs/design/effects-compiler.md).
   bytes manifest = 2;
   repeated UniformValue current = 3;
+  // Declared 2D texture inputs of the active effect (empty on older firmware).
+  repeated TexturePort textures = 4;
 }
 
 message ServerMessage {

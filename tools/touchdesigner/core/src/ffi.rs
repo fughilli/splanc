@@ -182,6 +182,69 @@ pub unsafe extern "C" fn tdlm_drive_uniforms(
     h.session.drive_uniforms(&map);
 }
 
+/// Set the manual fallback target size the streamer rescales frames to when the
+/// device advertises no texture for the configured `tex_index` (older firmware).
+/// `0, 0` disables it (pass source frames through). Does not reconnect.
+///
+/// # Safety
+/// `h` must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn tdlm_set_target(h: *mut Handle, w: u32, height: u32) {
+    if let Some(h) = h.as_mut() {
+        h.session.set_manual_target(w, height);
+    }
+}
+
+/// A fixed-layout status snapshot for the plugin's INFO surfaces (avoids JSON
+/// parsing on the C++ side). Strings are NUL-terminated and truncated to fit.
+#[repr(C)]
+pub struct TdlmStatus {
+    pub connected: i32,
+    pub frames_sent: u32,
+    /// Device-declared texture size for the configured index (0,0 = unknown).
+    pub device_tex_w: u32,
+    pub device_tex_h: u32,
+    /// Size the streamer actually rescales to before sending (0,0 = none yet).
+    pub target_w: u32,
+    pub target_h: u32,
+    pub name: [c_char; 64],
+    pub mac: [c_char; 32],
+    pub error: [c_char; 128],
+}
+
+unsafe fn copy_cstr(dst: *mut c_char, cap: usize, s: &str) {
+    if dst.is_null() || cap == 0 {
+        return;
+    }
+    let bytes = s.as_bytes();
+    let n = bytes.len().min(cap - 1);
+    for i in 0..n {
+        *dst.add(i) = bytes[i] as c_char;
+    }
+    *dst.add(n) = 0;
+}
+
+/// Fill a [`TdlmStatus`] snapshot. Returns 1 on success, 0 on a null argument.
+///
+/// # Safety
+/// `out` must point to a writable `TdlmStatus`.
+#[no_mangle]
+pub unsafe extern "C" fn tdlm_status(h: *mut Handle, out: *mut TdlmStatus) -> i32 {
+    let Some(h) = h.as_mut() else { return 0 };
+    let Some(out) = out.as_mut() else { return 0 };
+    let s = h.session.status();
+    out.connected = s.connected as i32;
+    out.frames_sent = s.frames_sent as u32;
+    out.device_tex_w = s.device_tex.0;
+    out.device_tex_h = s.device_tex.1;
+    out.target_w = s.target.0;
+    out.target_h = s.target.1;
+    copy_cstr(out.name.as_mut_ptr(), out.name.len(), &s.name);
+    copy_cstr(out.mac.as_mut_ptr(), out.mac.len(), &s.mac);
+    copy_cstr(out.error.as_mut_ptr(), out.error.len(), &s.error);
+    1
+}
+
 /// Write a JSON status snapshot into `out`. Returns the full payload length.
 ///
 /// # Safety
@@ -196,6 +259,10 @@ pub unsafe extern "C" fn tdlm_status_json(h: *mut Handle, out: *mut u8, cap: usi
         "mac": s.mac,
         "error": s.error,
         "framesSent": s.frames_sent,
+        "deviceTexW": s.device_tex.0,
+        "deviceTexH": s.device_tex.1,
+        "targetW": s.target.0,
+        "targetH": s.target.1,
     })
     .to_string();
     write_out(json.as_bytes(), out, cap)

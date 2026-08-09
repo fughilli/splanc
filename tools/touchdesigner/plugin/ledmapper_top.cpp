@@ -14,6 +14,8 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "CPlusPlus_Common.h"
 #include "TOP_CPlusPlusBase.h"
@@ -45,7 +47,11 @@ class LedMapperTOP : public TOP_CPlusPlusBase {
     applyConfig(inputs);
 
     const OP_TOPInput* top = inputs->getInputTOP(0);
-    if (!top) return;
+    if (!top) {
+      in_w_ = in_h_ = 0;
+      tdlm_status(handle_, &status_);
+      return;
+    }
 
     OP_TOPInputDownloadOptions opts;
     opts.verticalFlip = true;                        // TD textures are y-up
@@ -58,10 +64,19 @@ class LedMapperTOP : public TOP_CPlusPlusBase {
     const uint8_t* pixels = static_cast<const uint8_t*>(down->getData());
     const size_t len = static_cast<size_t>(width) * height * 4;
 
+    // Cache the source dimensions for the INFO surfaces (which get no inputs).
+    in_w_ = width;
+    in_h_ = height;
+
     if (inputs->getParInt("Active") != 0 && pixels && width > 0 && height > 0) {
+      // Push at the source resolution; the core rescales to the device's
+      // declared texture size (or the manual fallback) before sending.
       tdlm_push_texture(handle_, pixels, len, static_cast<uint32_t>(width),
                         static_cast<uint32_t>(height));
     }
+
+    // Refresh the status snapshot the INFO DAT/CHOP read back.
+    tdlm_status(handle_, &status_);
 
     passthrough(output, down, width, height);
   }
@@ -97,6 +112,26 @@ class LedMapperTOP : public TOP_CPlusPlusBase {
       np.defaultValues[0] = 1;
       manager->appendToggle(np);
     }
+    // Fallback texture size, used only when the device advertises no texture
+    // dimensions for the configured port (older firmware). 0 = auto/pass-through.
+    {
+      OP_NumericParameter np("Devwidth");
+      np.label = "Fallback Width";
+      np.page = "LedMapper";
+      np.defaultValues[0] = 0;
+      np.minValues[0] = 0;
+      np.clampMins[0] = true;
+      manager->appendInt(np);
+    }
+    {
+      OP_NumericParameter np("Devheight");
+      np.label = "Fallback Height";
+      np.page = "LedMapper";
+      np.defaultValues[0] = 0;
+      np.minValues[0] = 0;
+      np.clampMins[0] = true;
+      manager->appendInt(np);
+    }
     {
       OP_StringParameter sp("Effect");
       sp.label = "Activate Effect";
@@ -113,7 +148,103 @@ class LedMapperTOP : public TOP_CPlusPlusBase {
     }
   }
 
+  // --- INFO surfaces -------------------------------------------------------
+  // These callbacks receive no OP_Inputs, so they read the snapshot cached by
+  // the most recent execute() (status_ + in_w_/in_h_).
+
+  void getWarningString(OP_String* warning, void*) override {
+    if (mismatch()) {
+      const std::string w = "Input " + dim(in_w_, in_h_) +
+                            " != device texture " +
+                            dim(status_.device_tex_w, status_.device_tex_h) +
+                            " — rescaling (nearest-neighbour).";
+      warning->setString(w.c_str());
+    }
+  }
+
+  int32_t getNumInfoCHOPChans(void*) override {
+    return static_cast<int32_t>(infoChans().size());
+  }
+
+  void getInfoCHOPChan(int32_t index, OP_InfoCHOPChan* chan, void*) override {
+    const std::vector<Chan> chans = infoChans();
+    if (index < 0 || index >= static_cast<int32_t>(chans.size())) return;
+    chan->name->setString(chans[index].name);
+    chan->value = chans[index].value;
+  }
+
+  bool getInfoDATSize(OP_InfoDATSize* size, void*) override {
+    size->rows = static_cast<int32_t>(infoRows().size());
+    size->cols = 2;
+    size->byColumn = false;
+    return true;
+  }
+
+  void getInfoDATEntries(int32_t index, int32_t nEntries,
+                         OP_InfoDATEntries* entries, void*) override {
+    const std::vector<std::pair<std::string, std::string>> rows = infoRows();
+    if (index < 0 || index >= static_cast<int32_t>(rows.size())) return;
+    entries->values[0]->setString(rows[index].first.c_str());
+    if (nEntries > 1) entries->values[1]->setString(rows[index].second.c_str());
+  }
+
  private:
+  struct Chan {
+    const char* name;
+    float value;
+  };
+
+  static std::string dim(int w, int h) {
+    return std::to_string(w) + "x" + std::to_string(h);
+  }
+
+  // A warning-worthy mismatch: the device declares a texture size and the input
+  // TOP doesn't match it (the core is silently rescaling to compensate).
+  bool mismatch() const {
+    return status_.device_tex_w > 0 && status_.device_tex_h > 0 &&
+           (static_cast<int>(status_.device_tex_w) != in_w_ ||
+            static_cast<int>(status_.device_tex_h) != in_h_);
+  }
+
+  std::string statusTag() const {
+    if (!status_.connected) return "not connected";
+    if (status_.device_tex_w == 0 || status_.device_tex_h == 0)
+      return "device size unknown (fallback/pass-through)";
+    if (mismatch())
+      return "MISMATCH: rescaling " + dim(in_w_, in_h_) + " -> " +
+             dim(status_.device_tex_w, status_.device_tex_h);
+    return "OK (match)";
+  }
+
+  std::vector<std::pair<std::string, std::string>> infoRows() const {
+    std::vector<std::pair<std::string, std::string>> r;
+    r.emplace_back("connected", status_.connected ? "true" : "false");
+    r.emplace_back("device_name", status_.name);
+    r.emplace_back("input_res", dim(in_w_, in_h_));
+    r.emplace_back("device_res", (status_.device_tex_w && status_.device_tex_h)
+                                     ? dim(status_.device_tex_w, status_.device_tex_h)
+                                     : std::string("unknown"));
+    r.emplace_back("target_res", dim(status_.target_w, status_.target_h));
+    r.emplace_back("status", statusTag());
+    r.emplace_back("frames_sent", std::to_string(status_.frames_sent));
+    if (status_.error[0] != '\0') r.emplace_back("error", status_.error);
+    return r;
+  }
+
+  std::vector<Chan> infoChans() const {
+    return {
+        {"connected", status_.connected ? 1.0f : 0.0f},
+        {"frames_sent", static_cast<float>(status_.frames_sent)},
+        {"device_w", static_cast<float>(status_.device_tex_w)},
+        {"device_h", static_cast<float>(status_.device_tex_h)},
+        {"input_w", static_cast<float>(in_w_)},
+        {"input_h", static_cast<float>(in_h_)},
+        {"target_w", static_cast<float>(status_.target_w)},
+        {"target_h", static_cast<float>(status_.target_h)},
+        {"mismatch", mismatch() ? 1.0f : 0.0f},
+    };
+  }
+
   void applyConfig(const OP_Inputs* inputs) {
     std::string host = str(inputs->getParString("Host"));
     int fmt_idx = inputs->getParInt("Format");
@@ -130,6 +261,13 @@ class LedMapperTOP : public TOP_CPlusPlusBase {
                      kFormats[fmt_idx], /*order=BGRA*/ 1, rle, effect.c_str());
       last_config_ = sig;
     }
+
+    // Manual fallback size (no reconnect): only used when the device reports no
+    // texture dimensions for this port. 0 leaves the core in pass-through.
+    const int dev_w = inputs->getParInt("Devwidth");
+    const int dev_h = inputs->getParInt("Devheight");
+    tdlm_set_target(handle_, static_cast<uint32_t>(dev_w > 0 ? dev_w : 0),
+                    static_cast<uint32_t>(dev_h > 0 ? dev_h : 0));
   }
 
   // Re-upload the downloaded pixels so the node's output mirrors its input.
@@ -156,6 +294,11 @@ class LedMapperTOP : public TOP_CPlusPlusBase {
   TOP_Context* context_ = nullptr;
   Handle* handle_ = nullptr;
   std::string last_config_;
+
+  // Snapshot cached each cook for the INFO callbacks (no OP_Inputs there).
+  int in_w_ = 0;
+  int in_h_ = 0;
+  TdlmStatus status_{};
 };
 
 }  // namespace

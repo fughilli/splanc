@@ -125,7 +125,31 @@ to wrap the operator in a COMP, embed the plugin via VFS, and save the `.tox`.
 ## Parameters
 
 **LedMapper Texture (TOP):** `Host`, `Texture Port` (tex_index), `Format`
-(RGB565/RGB888/RGB332/Gray8), `RLE Compress`, `Activate Effect`, `Active`.
+(RGB565/RGB888/RGB332/Gray8), `RLE Compress`, `Fallback Width`/`Fallback
+Height`, `Activate Effect`, `Active`.
+
+### Texture size: auto-probe + rescale
+
+The firmware **silently drops** any `set_texture` frame whose width/height don't
+match the effect's declared texture (`firmware/player_app/ffi.rs`), so sending a
+1280×720 TOP into a 24×24 effect shows nothing with no error. To make this
+visible and automatic:
+
+- On connect (and after `Activate Effect`), the core reads the active effect's
+  declared textures from the `effect_uniforms` reply (`TexturePort{index, width,
+height, elem}`, added to `ledmapper.proto`) and picks the one matching the
+  configured `Texture Port`.
+- Each frame is **nearest-neighbour rescaled** to that size before it's
+  quantized/sent — so any input TOP resolution "just works".
+- If the device advertises no size (older firmware), the core falls back to the
+  `Fallback Width`/`Fallback Height` params; `0` leaves frames pass-through.
+
+The node's **Info DAT** (`connected`, `device_name`, `input_res`, `device_res`,
+`target_res`, `status`, `frames_sent`, `error`) and **Info CHOP**
+(`device_w/h`, `input_w/h`, `target_w/h`, `mismatch`, `frames_sent`,
+`connected`) report all of this, and the node raises a **warning** when the
+input resolution doesn't match the device's declared texture (it's being
+rescaled).
 
 **LedMapper Uniforms (CHOP):** `Host`, `Activate Effect`, `Active`.
 
@@ -143,11 +167,15 @@ to wrap the operator in a COMP, embed the plugin via VFS, and save the `.tox`.
   both, so the `.plugin` directory + `Info.plist` is the part that matters — but
   if a specific TD build rejects the dylib filetype, switch the `cc_binary` to a
   `-bundle` link (drop `linkshared`, add `linkopts = ["-bundle"]`).
-- **Device-side enumeration depends on the fixture embedding a uniform
-  manifest.** Current firmware leaves the embedded manifest empty (and caps the
-  `effect_uniforms.manifest` field at 64 bytes), so auto-enumeration returns
-  nothing and the CHOP falls back to `slotN` channel names. Populating the
-  manifest end-to-end (fx_compiler + a larger firmware cap) is a follow-up —
-  kept out of this change to avoid a hardware-untestable core/runtime change.
+- **Uniform enumeration depends on the fixture embedding a uniform manifest.**
+  Current firmware leaves the embedded manifest empty (and caps the
+  `effect_uniforms.manifest` field at 64 bytes), so uniform auto-enumeration
+  returns nothing and the CHOP falls back to `slotN` channel names. Populating
+  the manifest end-to-end (fx_compiler + a larger firmware cap) is a follow-up.
+  Note the **texture** dimensions (`effect_uniforms.textures`) do NOT depend on
+  the manifest — the firmware derives them from the program's buffer descriptor
+  table, so the TOP's size auto-probe works on firmware built with that field
+  even while the uniform manifest is still empty. Older firmware that predates
+  the field reports no textures; the TOP then uses its `Fallback Width/Height`.
 - `@touchdesigner_sdk` is fetched unpinned (no `sha256`); pin a commit +
   integrity for a reproducible SDK fetch.

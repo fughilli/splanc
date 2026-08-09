@@ -314,6 +314,21 @@ fn full_device_flow_through_the_c_abi() {
         set_tex(0x02, &[0, 1, 0xFF, 2, 1, 0xFF, 2, 1, 0xFF, 2, 1, 0xFF, 2, 0]);
         assert_eq!(shade0(), [255, 0, 0], "RLE keyframe all-red -> sample red");
 
+        // get_effect_uniforms advertises the declared 2x2 vec3 texture (index 0)
+        // so a texture source can size its stream to match (a mismatched
+        // set_texture is silently dropped).
+        let Some(SMsg::EffectUniforms(eu)) = handle(
+            &encode(CMsg::GetEffectUniforms(pb::GetEffectUniforms::default())),
+            4000.0,
+        ) else {
+            panic!("effect_uniforms expected");
+        };
+        assert_eq!(eu.r#textures.len(), 1, "one declared texture");
+        assert_eq!(eu.r#textures[0].r#index, 0);
+        assert_eq!(eu.r#textures[0].r#width, 2);
+        assert_eq!(eu.r#textures[0].r#height, 2);
+        assert_eq!(eu.r#textures[0].r#elem, 3, "vec3 sampler -> 3 components");
+
         unsafe { lm_fx_set_active(false) };
     }
 

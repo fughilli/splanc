@@ -63,6 +63,34 @@ fn rgb(px: &[u8], i: usize, order: ChannelOrder) -> (u8, u8, u8) {
     }
 }
 
+/// Nearest-neighbour resample a 4-byte-per-pixel (row-major) frame from
+/// `sw`x`sh` to `dw`x`dh`. Used to fit a source frame to the device's declared
+/// texture size — the firmware silently drops any frame whose dimensions don't
+/// match. Channel order is preserved (it operates on whole 4-byte texels). A
+/// no-op fast path returns the input unchanged when the sizes already match.
+pub fn nn_rescale(px: &[u8], sw: usize, sh: usize, dw: usize, dh: usize) -> Vec<u8> {
+    if (sw, sh) == (dw, dh) {
+        return px.to_vec();
+    }
+    let mut out = vec![0u8; dw * dh * 4];
+    if sw == 0 || sh == 0 || dw == 0 || dh == 0 {
+        return out;
+    }
+    for y in 0..dh {
+        // Map the destination centre back to the nearest source texel.
+        let sy = ((y * sh) / dh).min(sh - 1);
+        for x in 0..dw {
+            let sx = ((x * sw) / dw).min(sw - 1);
+            let si = (sy * sw + sx) * 4;
+            let di = (y * dw + x) * 4;
+            if si + 4 <= px.len() {
+                out[di..di + 4].copy_from_slice(&px[si..si + 4]);
+            }
+        }
+    }
+    out
+}
+
 /// Quantize a 4-byte-per-pixel frame (row-major) to packed `format` bytes.
 pub fn quantize(px: &[u8], w: usize, h: usize, format: Format, order: ChannelOrder) -> Vec<u8> {
     let n = w * h;
@@ -207,6 +235,44 @@ mod tests {
     #[test]
     fn rle_all_zero() {
         assert_eq!(rle_encode(&[0, 0, 0, 0]), vec![4, 0]);
+    }
+
+    #[test]
+    fn nn_rescale_noop_when_sizes_match() {
+        let px: Vec<u8> = (0..2 * 2 * 4).map(|i| i as u8).collect();
+        assert_eq!(nn_rescale(&px, 2, 2, 2, 2), px);
+    }
+
+    #[test]
+    fn nn_rescale_downscale_picks_nearest_texels() {
+        // 2x2 with four distinct pixels -> 1x1 must take the top-left texel
+        // (dest (0,0) maps to source (0,0)).
+        let px = vec![
+            10, 10, 10, 255, // (0,0)
+            20, 20, 20, 255, // (1,0)
+            30, 30, 30, 255, // (0,1)
+            40, 40, 40, 255, // (1,1)
+        ];
+        assert_eq!(nn_rescale(&px, 2, 2, 1, 1), vec![10, 10, 10, 255]);
+    }
+
+    #[test]
+    fn nn_rescale_upscale_duplicates() {
+        // 1x1 -> 2x2 must replicate the single texel to all four.
+        let px = vec![7, 8, 9, 255];
+        let out = nn_rescale(&px, 1, 1, 2, 2);
+        assert_eq!(out.len(), 2 * 2 * 4);
+        for chunk in out.chunks(4) {
+            assert_eq!(chunk, &[7, 8, 9, 255]);
+        }
+    }
+
+    #[test]
+    fn nn_rescale_preserves_bgra_order() {
+        // The resample must not reorder channels — a BGRA texel survives intact.
+        let px = vec![0, 0, 255, 255]; // BGRA red
+        let out = nn_rescale(&px, 1, 1, 3, 3);
+        assert!(out.chunks(4).all(|c| c == [0, 0, 255, 255]));
     }
 
     #[test]

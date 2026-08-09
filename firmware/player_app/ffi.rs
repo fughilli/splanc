@@ -1252,6 +1252,24 @@ unsafe fn handle_get_effect_uniforms(_frame: &[u8]) -> pb::ServerMessage {
     };
     let mut m = pb::EffectUniforms::default();
     let _ = m.r#manifest.extend_from_slice(prog.manifest);
+    // Advertise the declared 2D textures (buffer kind=1) so a texture source
+    // can learn the exact dimensions set_texture requires — a mismatch is
+    // silently dropped, so without this a client is left guessing.
+    for i in 0..prog.n_buffers as usize {
+        if m.r#textures.len() >= m.r#textures.capacity() {
+            break;
+        }
+        if let Some(d) = prog.buf_desc(i) {
+            if d.kind == 1 {
+                let mut t = pb::TexturePort::default();
+                t.r#index = i as u32;
+                t.r#width = d.w as u32;
+                t.r#height = d.h as u32;
+                t.r#elem = d.elem as u32;
+                let _ = m.r#textures.push(t);
+            }
+        }
+    }
     pb::ServerMessage { r#msg: Some(pb::ServerMessage_::Msg::EffectUniforms(m)) }
 }
 

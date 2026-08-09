@@ -253,6 +253,17 @@ pub struct Welcome {
     pub device_name: String,
 }
 
+/// A declared 2D texture input of the active effect (from `effect_uniforms`).
+/// The device silently drops any `set_texture` frame whose dimensions don't
+/// match one of these, so a texture source uses them to size its stream.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct TexturePort {
+    pub index: u32,
+    pub width: u32,
+    pub height: u32,
+    pub elem: u32,
+}
+
 /// A decoded `effect_uniforms` reply.
 #[derive(Debug, Default, Clone)]
 pub struct EffectUniforms {
@@ -260,6 +271,9 @@ pub struct EffectUniforms {
     /// Raw manifest JSON bytes (see [`crate::manifest`]). Empty on current
     /// firmware (the compiler leaves the embedded manifest empty).
     pub manifest: Vec<u8>,
+    /// Declared 2D texture inputs (empty on older firmware that predates the
+    /// `textures` field).
+    pub textures: Vec<TexturePort>,
 }
 
 /// The subset of `ServerMessage` arms the operators act on.
@@ -387,10 +401,32 @@ fn decode_effect_uniforms(body: &[u8]) -> Option<EffectUniforms> {
                 let n = r.varint()? as usize;
                 e.manifest = r.take(n)?.to_vec();
             }
+            (4, WT_LEN) => {
+                let n = r.varint()? as usize;
+                if let Some(t) = decode_texture_port(r.take(n)?) {
+                    e.textures.push(t);
+                }
+            }
             (_, wire) => r.skip(wire)?,
         }
     }
     Some(e)
+}
+
+fn decode_texture_port(body: &[u8]) -> Option<TexturePort> {
+    let mut r = Reader::new(body);
+    let mut t = TexturePort::default();
+    while !r.eof() {
+        let (f, wire) = r.tag()?;
+        match (f, wire) {
+            (1, WT_VARINT) => t.index = r.varint()? as u32,
+            (2, WT_VARINT) => t.width = r.varint()? as u32,
+            (3, WT_VARINT) => t.height = r.varint()? as u32,
+            (4, WT_VARINT) => t.elem = r.varint()? as u32,
+            (_, wire) => r.skip(wire)?,
+        }
+    }
+    Some(t)
 }
 
 #[cfg(test)]
@@ -478,6 +514,51 @@ mod tests {
                 assert_eq!(w.device_name, "Led Widget abcdef");
             }
             other => panic!("expected welcome, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decode_effect_uniforms_textures() {
+        // Build an EffectUniforms server frame carrying two TexturePort entries
+        // (field 4) plus a manifest (field 2), and decode them back.
+        let tex = |index: u32, w: u32, h: u32, elem: u32| {
+            let mut b = Writer::default();
+            b.field_varint(1, index as u64);
+            b.field_varint(2, w as u64);
+            b.field_varint(3, h as u64);
+            b.field_varint(4, elem as u64);
+            b.buf
+        };
+        let mut inner = Writer::default();
+        inner.field_str(1, "sparkle"); // effect_id
+        inner.field_str(2, "[]"); // manifest
+        inner.field_len(4, &tex(0, 24, 24, 3));
+        inner.field_len(4, &tex(2, 8, 8, 1));
+        let mut w = Writer::default();
+        w.field_len(S_EFFECT_UNIFORMS, &inner.buf);
+
+        match decode_server(&w.buf).unwrap() {
+            ServerMsg::EffectUniforms(e) => {
+                assert_eq!(e.effect_id, "sparkle");
+                assert_eq!(e.textures.len(), 2);
+                assert_eq!(e.textures[0], TexturePort { index: 0, width: 24, height: 24, elem: 3 });
+                assert_eq!(e.textures[1], TexturePort { index: 2, width: 8, height: 8, elem: 1 });
+            }
+            other => panic!("expected effect_uniforms, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn decode_effect_uniforms_without_textures_is_empty() {
+        // Older firmware omits field 4 entirely -> textures decode to empty.
+        let mut inner = Writer::default();
+        inner.field_str(1, "old");
+        inner.field_str(2, "[]");
+        let mut w = Writer::default();
+        w.field_len(S_EFFECT_UNIFORMS, &inner.buf);
+        match decode_server(&w.buf).unwrap() {
+            ServerMsg::EffectUniforms(e) => assert!(e.textures.is_empty()),
+            other => panic!("expected effect_uniforms, got {other:?}"),
         }
     }
 
