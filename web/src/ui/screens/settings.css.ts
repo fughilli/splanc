@@ -17,6 +17,25 @@ export function installSettingsStyles(): void {
 const CSS = `
 .screen--settings .settings-group { margin-bottom: var(--sp-4); }
 .settings-group + .settings-group { margin-top: var(--sp-4); }
+
+.settings-tabs {
+  display: flex;
+  gap: var(--sp-2);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--sp-4);
+}
+.settings-tab {
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-weight: 600;
+  padding: var(--sp-2) var(--sp-3);
+  margin-bottom: -1px;
+  cursor: pointer;
+}
+.settings-tab.on { color: var(--text); border-bottom-color: var(--accent); }
 .settings-legend {
   font-size: var(--f-caption);
   text-transform: uppercase;

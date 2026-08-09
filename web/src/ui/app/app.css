@@ -121,6 +121,64 @@ body.is-locked {
   margin: 0 0 var(--sp-4);
 }
 
+/* --- first-run splash (src/ui/app/splash.ts) --- */
+.splash {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-6);
+  background: var(--bg);
+  opacity: 1;
+  transition: opacity 420ms var(--ease);
+}
+.splash--out {
+  opacity: 0;
+  pointer-events: none;
+}
+.splash-logo {
+  width: 128px;
+  height: 128px;
+  border-radius: 28px;
+  animation: splash-pop 520ms var(--ease) both;
+}
+.splash-word {
+  font-size: 2rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text);
+  animation: splash-rise 520ms var(--ease) both;
+}
+@keyframes splash-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.86);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes splash-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .splash-logo,
+  .splash-word {
+    animation: none;
+  }
+}
+
 /* --- onboarding --- */
 .onboard-form {
   display: flex;

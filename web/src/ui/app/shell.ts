@@ -67,7 +67,7 @@ export class Shell {
     this.backBtn.style.display = "none";
     this.titleEl = document.createElement("h1");
     this.titleEl.className = "app-bar-title";
-    this.titleEl.textContent = "LED Mapper";
+    this.titleEl.textContent = "Splanc";
     const spacer = document.createElement("div");
     spacer.style.flex = "1";
     this.pill = StatusPill(() => openDeviceSheet());
@@ -88,9 +88,9 @@ export class Shell {
   /** Repopulate the ⋯ menu and hide the whole affordance when it's empty. */
   private rebuildMenu(): void {
     this.menu.replaceChildren();
-    // Appearance (theme / fonts / 3D view) — always available.
+    // Settings (Appearance + Capture tabs) — always available.
     this.menu.appendChild(
-      this.menuItem("settings", "Appearance", () => this.router?.navigate("/settings")),
+      this.menuItem("settings", "Settings", () => this.router?.navigate("/settings")),
     );
     // MIDI controllers (connect + name controls) — always available.
     this.menu.appendChild(

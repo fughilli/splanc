@@ -5,7 +5,8 @@
     "web-tls": {
       "port": 8443,
       "tls": true
-    }
+    },
+    "dev": 5173
   },
   "capabilities": ["NET_ADMIN"],
   "devices": ["/dev/net/tun"],

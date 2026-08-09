@@ -46,6 +46,9 @@ export interface AppearanceSettings {
   /** Root font-size multiplier, 0.85–1.4. */
   uiScale: number;
 
+  /** Show the branded startup splash on each launch (see ui/app/splash.ts). */
+  splash: boolean;
+
   // -- 3D renderer knobs (honored by MapView) --
   /** LED point radius multiplier, 0.5–2.5 (1 = today's sizes). */
   ledSize: number;
@@ -66,6 +69,7 @@ export const DEFAULTS: Readonly<AppearanceSettings> = {
   font: "system",
   mono: "system",
   uiScale: 1,
+  splash: true,
   ledSize: 1,
   viewBg: "",
   glow: 1,
@@ -174,6 +178,8 @@ export function normalizeSettings(raw: unknown): AppearanceSettings {
     font: oneOf<FontChoice>(o["font"], ["system", "humanist", "grotesk", "rounded", "serif"], DEFAULTS.font),
     mono: oneOf<MonoChoice>(o["mono"], ["system", "ibm-plex", "fira", "courier"], DEFAULTS.mono),
     uiScale: clampNum(o["uiScale"], 0.85, 1.4, DEFAULTS.uiScale),
+    // Default on: only an explicit `false` disables the startup splash.
+    splash: o["splash"] !== false,
     ledSize: clampNum(o["ledSize"], 0.5, 2.5, DEFAULTS.ledSize),
     viewBg: typeof o["viewBg"] === "string" && (o["viewBg"] === "" || HEX_RE.test(o["viewBg"])) ? o["viewBg"] : DEFAULTS.viewBg,
     glow: clampNum(o["glow"], 0, 2, DEFAULTS.glow),

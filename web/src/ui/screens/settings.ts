@@ -27,7 +27,9 @@ import {
 import { installSettingsStyles } from "./settings.css";
 import { MapView } from "../mapview";
 import { generateFixture } from "../../effects/fixtures";
-import { prefs } from "../../store/prefs";
+import { prefs, DEFAULT_MANUAL_EXPOSURE_CEILING_MS } from "../../store/prefs";
+
+type SettingsTab = "appearance" | "capture";
 
 const FONT_LABELS: Record<FontChoice, string> = {
   system: "System",
@@ -50,11 +52,15 @@ export function SettingsScreen(_router: Router): Screen {
 
   const head = document.createElement("h1");
   head.className = "screen-headline";
-  head.textContent = "Appearance";
+  head.textContent = "Settings";
   const sub = document.createElement("p");
   sub.className = "screen-sub";
   sub.textContent = "Theme, fonts, 3D-view rendering and capture. Saved on this device.";
   el.append(head, sub);
+
+  // Two tabs — Appearance (theme / fonts / 3D / startup) and Capture (the camera
+  // mapping knobs). Each panel ends with its own "Reset to defaults".
+  let tab: SettingsTab = "appearance";
 
   let s = getAppearance();
   const set = (patch: Partial<AppearanceSettings>): void => {
@@ -91,7 +97,57 @@ export function SettingsScreen(_router: Router): Screen {
   const preview = buildPreview();
 
   function rerender(): void {
-    body.replaceChildren(themeGroup(), typeGroup(), viewGroup(), captureGroup(), resetRow());
+    const panels =
+      tab === "appearance"
+        ? [themeGroup(), typeGroup(), viewGroup(), startupGroup(), appearanceResetRow()]
+        : [captureGroup(), captureResetRow()];
+    body.replaceChildren(tabBar(), ...panels);
+  }
+
+  // Switch tabs. The 3D preview only lives in the Appearance panel, so pause its
+  // render loop while it's off-screen (Capture) and resume when it's back.
+  function setTab(next: SettingsTab): void {
+    if (next === tab) return;
+    tab = next;
+    rerender();
+    if (next === "appearance") preview.start();
+    else preview.stop();
+  }
+
+  function tabBar(): HTMLElement {
+    const bar = document.createElement("div");
+    bar.className = "settings-tabs";
+    const mk = (id: SettingsTab, label: string): HTMLButtonElement => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "settings-tab" + (tab === id ? " on" : "");
+      b.textContent = label;
+      b.setAttribute("aria-selected", String(tab === id));
+      b.addEventListener("click", () => setTab(id));
+      return b;
+    };
+    bar.append(mk("appearance", "Appearance"), mk("capture", "Capture"));
+    return bar;
+  }
+
+  // -- Startup (launch behavior) -------------------------------------------
+  function startupGroup(): HTMLElement {
+    const g = group("Startup");
+    g.append(
+      row(
+        "Splash screen",
+        "Show the Splanc splash each time the app launches.",
+        segmented<"on" | "off">(
+          [
+            ["off", "Off"],
+            ["on", "On"],
+          ],
+          s.splash ? "on" : "off",
+          (v) => set({ splash: v === "on" }),
+        ),
+      ),
+    );
+    return g;
   }
 
   // -- Capture (camera / mapping knobs) ------------------------------------
@@ -287,7 +343,24 @@ export function SettingsScreen(_router: Router): Screen {
     return g;
   }
 
-  function resetRow(): HTMLElement {
+  function appearanceResetRow(): HTMLElement {
+    return resetRow("Reset all appearance settings (theme, fonts, 3D view, startup) to their defaults?", () => {
+      s = resetAppearance();
+      rerender();
+      toast("Appearance reset");
+    });
+  }
+
+  function captureResetRow(): HTMLElement {
+    return resetRow("Reset capture settings to their defaults?", () => {
+      prefs.setManualExposureCeilingMs(DEFAULT_MANUAL_EXPOSURE_CEILING_MS);
+      rerender();
+      toast("Capture settings reset");
+    });
+  }
+
+  /** A block "Reset to defaults" button that confirms before running `apply`. */
+  function resetRow(confirmMsg: string, apply: () => void): HTMLElement {
     const wrap = document.createElement("div");
     wrap.className = "settings-reset";
     wrap.append(
@@ -296,9 +369,8 @@ export function SettingsScreen(_router: Router): Screen {
         variant: "quiet",
         block: true,
         onClick: () => {
-          s = resetAppearance();
-          rerender();
-          toast("Appearance reset");
+          if (!confirm(confirmMsg)) return;
+          apply();
         },
       }),
     );

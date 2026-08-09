@@ -35,11 +35,16 @@ import { SettingsScreen } from "../screens/settings";
 import { MidiScreen } from "../screens/midi";
 import { ColorCorrectionScreen } from "../screens/colorCorrection";
 import { initAppearance } from "../../store/appearance";
+import { maybeShowSplash } from "./splash";
 
 async function main(): Promise<void> {
   // Apply the saved appearance (theme / fonts / scale) before the shell mounts
   // so there's no flash of the default palette.
   initAppearance();
+
+  // First-run welcome splash (no-op after the first launch). Shown over the
+  // shell as it boots behind it, then fades itself out.
+  maybeShowSplash();
 
   installIconSprite();
 
@@ -108,7 +113,7 @@ async function main(): Promise<void> {
       return PerfProfilesScreen(router);
     })
     .add("/settings", () => {
-      shell.setChrome({ title: "Appearance", back: true, tabs: true });
+      shell.setChrome({ title: "Settings", back: true, tabs: true });
       return SettingsScreen(router);
     })
     .add("/settings/midi", () => {

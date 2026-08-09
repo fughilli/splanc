@@ -237,10 +237,10 @@ export async function provisionViaBle(
   // seconds after the write, so attaching listeners here misses nothing. This
   // is NOT a GATT flake, so it is not wrapped in the BLE retry — just a
   // generous timeout.
-  onStatus("Waiting for the player to join the network…");
+  onStatus("Waiting for the device to join the network…");
   return new Promise<string[]>((resolve, reject) => {
     const timer = setTimeout(
-      () => reject(new Error("timed out waiting for the player to join the network")),
+      () => reject(new Error("timed out waiting for the device to join the network")),
       45_000,
     );
     rpcResult.addEventListener("characteristicvaluechanged", (ev) => {

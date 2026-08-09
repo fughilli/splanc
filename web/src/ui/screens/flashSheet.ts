@@ -266,7 +266,7 @@ function renderDone(
     ok,
     card,
     intro(
-      "The board reboots into the player and starts advertising over Bluetooth. Provision it onto Wi-Fi from “Add device”, then connect.",
+      "The board reboots into the device firmware and starts advertising over Bluetooth. Provision it onto Wi-Fi from “Add device”, then connect.",
     ),
     details,
     Button({ label: "Flash another", block: true, onClick: () => renderIdle(sheet, index, entry) }),
