@@ -29,6 +29,7 @@ py_library(
         "mapping_trigger_core.py",
         "provision.py",
         "sync.py",
+        "video_bench_core.py",
     ],
     imports = ["."],
 )
@@ -213,6 +214,38 @@ py_test(
     ],
     imports = ["."],
     main = "hitl_rename_wss.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# On-hardware video-streaming performance test: reserve, flash, provision, load a
+# WxH texture effect, then stream a scrolling-bars pattern into it and assert the
+# device sustains >=10 FPS. The frame encoding + FPS measurement run in the Rust
+# stream_bench binary, built on the TouchDesigner plugin's OWN encoder/transport
+# (//tools/touchdesigner/core), so a PASS certifies the real plugin path. Like
+# :fx_bench it compiles the effect with fx_compile and rides the flash-bundle +
+# `hitl` CLI in runfiles; the pure logic (video_bench_core) is unit-tested in
+# //pi/hitl/tests. --device-ws ws://<ip>:81/ws hits a reachable board directly.
+py_test(
+    name = "video_stream",
+    timeout = "eternal",
+    srcs = ["hitl_video_stream.py"],
+    data = [
+        "//firmware/player_app:esp32c6_flashbundle",
+        "//fx_compiler:fx_compile",
+        "//pi/hitl/cmd/hitl",
+        "//tools/touchdesigner/stream_bench",
+    ],
+    imports = ["."],
+    main = "hitl_video_stream.py",
     tags = [
         "hitl",
         "manual",
