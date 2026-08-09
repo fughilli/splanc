@@ -1974,6 +1974,12 @@ body.is-locked {
   min-height: 0;
   flex: 1;
 }
+/* Chat pane header: the "New chat" action, aligned to the right above the log. */
+.fxedit-chathead {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: flex-end;
+}
 /* The preview body is the positioning context for its overlay controls, which
  * float over the canvas rather than pushing layout. */
 .fxedit-previewbody {

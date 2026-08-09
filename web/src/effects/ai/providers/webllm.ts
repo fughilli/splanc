@@ -70,12 +70,12 @@ let engine: MlcEngine | null = null;
 let engineModel = "";
 
 /**
- * web-llm only implements function calling for a fixed set of models (the engine
- * throws for any other model when `tools` is present). Our AI features
- * (set_script effect generation + MIDI mapping) are entirely tool-driven, so we
- * gate on this: non-tool models are never sent tools (no crash), and the UI
- * steers the user to a tool-capable one. Kept as an explicit allow-list (from
- * web-llm's own supported set) plus a Hermes name heuristic for forward-compat.
+ * web-llm only implements function calling for a FIXED, enumerated set of models
+ * (the engine throws for any other model when `tools` is present — e.g. even
+ * Hermes-3-Llama-3.2-3B is unsupported; only the 3.1-8B Hermes-3 variants are).
+ * A name heuristic is therefore wrong: this must be the exact allow-list web-llm
+ * publishes. Our AI features are tool-driven, so we never send tools to a model
+ * outside this set (no crash) and the UI steers the user to a supported one.
  */
 export const WEBLLM_TOOL_MODELS = new Set<string>([
   "Hermes-2-Pro-Llama-3-8B-q4f16_1-MLC",
@@ -85,9 +85,9 @@ export const WEBLLM_TOOL_MODELS = new Set<string>([
   "Hermes-3-Llama-3.1-8B-q4f16_1-MLC",
 ]);
 
-/** Whether web-llm can do tool/function calling for this model id. */
+/** Whether web-llm can do tool/function calling for this exact model id. */
 export function modelSupportsTools(id: string): boolean {
-  return WEBLLM_TOOL_MODELS.has(id) || /hermes/i.test(id);
+  return WEBLLM_TOOL_MODELS.has(id);
 }
 
 /** True when the browser exposes WebGPU (required for in-browser inference). */
@@ -242,14 +242,20 @@ export function makeWebLlmProvider(cfg: WebLlmConfig): AiProvider {
       }
       await loadWebLlmModel(cfg.model);
       if (!engine) throw new Error("in-browser model failed to load");
+      const useTools = opts.tools.length > 0 && modelSupportsTools(cfg.model);
+      // web-llm's Hermes function-calling path injects its OWN system prompt and
+      // rejects a custom `system` message ("cannot specify customized system
+      // prompt"). So when sending tools, don't emit a system role — fold our
+      // system prompt into the first user turn instead. Without tools, a normal
+      // system message is fine.
+      const oaiMessages = toOpenAiMessages(useTools ? "" : opts.system, messages);
+      if (useTools && opts.system) foldSystemIntoFirstUser(oaiMessages, opts.system);
       const req: Record<string, unknown> = {
-        messages: toOpenAiMessages(opts.system, messages),
+        messages: oaiMessages,
         max_tokens: opts.maxTokens ?? 4000,
         stream: false,
       };
-      // Defensive: only ever send tools to a model web-llm can tool-call for
-      // (the loop already gates on capabilities, but this model may differ).
-      if (opts.tools.length && modelSupportsTools(cfg.model)) {
+      if (useTools) {
         req.tools = toOpenAiTools(opts.tools);
         req.tool_choice = "auto";
       }
@@ -262,4 +268,14 @@ export function makeWebLlmProvider(cfg: WebLlmConfig): AiProvider {
       };
     },
   };
+}
+
+/** Prepend `system` to the first string-content user message (or insert one). */
+function foldSystemIntoFirstUser(messages: OaiMessage[], system: string): void {
+  const first = messages.find((m) => m.role === "user" && typeof m.content === "string");
+  if (first && typeof first.content === "string") {
+    first.content = `${system}\n\n${first.content}`;
+  } else {
+    messages.unshift({ role: "user", content: system });
+  }
 }

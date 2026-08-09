@@ -62,6 +62,7 @@ import { Button, IconButton, icon, toast, type IconName } from "../kit";
 import { FxLayout } from "../../effects/editor/layout";
 import { VideoTexturePanel } from "../../effects/editor/videoTexture";
 import { renderMarkdown } from "../markdown";
+import { loadChat, saveChat, clearChat, type ChatTranscriptEntry } from "../../store/chatStore";
 import type { Router, Screen } from "../app/router";
 
 const COMPILE_DEBOUNCE_MS = 300;
@@ -100,7 +101,12 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   let lastDisassembly = "";
   let lastBytecode: Uint8Array | null = null;
   let chatBusy = false;
-  const chatHistory: ChatMessage[] = [];
+  // Chat persists per effect across navigation (restored below; saved each turn;
+  // cleared only via "New chat"). `history` is the API conversation; `transcript`
+  // is the visible bubble log.
+  const chatSnapshot = loadChat(effectId);
+  const chatHistory: ChatMessage[] = chatSnapshot.history;
+  const transcript: ChatTranscriptEntry[] = chatSnapshot.transcript;
   let raf = 0;
   let disposed = false;
 
@@ -545,7 +551,8 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     }
   });
 
-  function appendChat(role: "user" | "assistant" | "tool", text: string): HTMLElement {
+  /** Render one bubble into the log (no persistence — used for live + replay). */
+  function renderMsg(role: "user" | "assistant" | "tool", text: string): HTMLElement {
     if (chatHint.isConnected) chatHint.remove();
     const row = document.createElement("div");
     row.className = `fxedit-msg fxedit-msg--${role}`;
@@ -563,6 +570,30 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     chatLog.scrollTop = chatLog.scrollHeight;
     return row;
   }
+
+  /** Append a bubble AND record it in the persisted transcript. */
+  function appendChat(role: "user" | "assistant" | "tool", text: string): HTMLElement {
+    transcript.push({ role, text });
+    return renderMsg(role, text);
+  }
+
+  /** Persist the running conversation + visible transcript for this effect. */
+  function persistChat(): void {
+    saveChat(effectId, { history: chatHistory, transcript });
+  }
+
+  /** Clear the conversation (in memory, on screen, and in storage). */
+  function resetChat(): void {
+    if (chatBusy) return;
+    chatHistory.length = 0;
+    transcript.length = 0;
+    clearChatStatus();
+    chatLog.replaceChildren(chatHint); // restore the first-run hint
+    clearChat(effectId);
+  }
+
+  // Restore any saved transcript for this effect (chat survives navigation).
+  for (const entry of transcript) renderMsg(entry.role, entry.text);
 
   // A live "what the model is doing" indicator (spinner + phase label), shown at
   // the foot of the log while a turn runs and updated as phases change.
@@ -1173,6 +1204,7 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
       chatBusy = false;
       chatSend.disabled = false;
       chatLog.scrollTop = chatLog.scrollHeight;
+      persistChat(); // survive navigation; only "New chat" clears it
     }
   }
 
@@ -1302,10 +1334,20 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   previewBody.className = "fxedit-previewbody";
   previewBody.append(canvas, previewOverlay);
 
-  // Chat pane content.
+  // Chat pane content. A slim header carries a "New chat" action (the ONLY way
+  // to clear the persisted conversation); the log + input fill the rest.
   const chatBody = document.createElement("div");
   chatBody.className = "fxedit-chatbody";
-  chatBody.append(chatLog, chatInputWrap);
+  const chatHeader = document.createElement("div");
+  chatHeader.className = "fxedit-chathead";
+  const newChatBtn = Button({
+    label: "New chat",
+    icon: "plus",
+    variant: "quiet",
+    onClick: () => resetChat(),
+  });
+  chatHeader.appendChild(newChatBtn);
+  chatBody.append(chatHeader, chatLog, chatInputWrap);
 
   // "Device" pane content: the upload/download (send/hydrate) controls are the
   // primary surface; the compiler diagnostics list lives below under its own
