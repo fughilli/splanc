@@ -9,9 +9,12 @@
  * in `messages`, after this cached prefix.
  */
 
-import { BUILTINS, CONTEXTS, KEYWORDS } from "../editor/lang-spec";
+import { BUILTINS, CONTEXTS, TYPES } from "../editor/lang-spec";
 
 const builtinTable = BUILTINS.map((b) => `  ${b.sig}  — ${b.doc}`).join("\n");
+const typeTable = TYPES.filter((t) => t.name !== "void" && t.name !== "Led")
+  .map((t) => `  ${t.name} — ${t.doc}`)
+  .join("\n");
 const contextTable = CONTEXTS.map(
   (c) =>
     `  ${c.name}${c.members.length ? ` (.${c.members.map((m) => m.name).join(", .")})` : ""} — ${c.doc}`,
@@ -76,7 +79,33 @@ export const SYSTEM_PROMPT = `You write effects for an LED-mapping runtime. Outp
 HARD CONSTRAINTS:
 - Two entry points: \`void update()\` runs once per frame; \`vec3 shade(Led led)\` runs per-LED and returns linear RGB in 0..1.
 - No recursion. \`for\` loops must have compile-time-bounded trip counts (there is a per-frame instruction budget).
-- All values are 32-bit floats. Types: ${KEYWORDS.join(" ")}.
+
+TYPES:
+${typeTable}
+
+PERFORMANCE — READ THIS, IT DECIDES WHETHER AN EFFECT FITS THE FRAME BUDGET.
+The target is a tiny microcontroller with NO hardware floating-point unit: every
+\`float\` operation is software-emulated and costs ~10–50× an integer op, and the
+costliest are \`sin/cos/tan/exp/log/pow/sqrt/atan2\`. \`shade(Led)\` runs once PER LED
+(often 60–512×) every frame; \`update()\` runs once. So:
+- Prefer \`int\` for indices/counters/modes and \`fixed\`/\`fixed16\`/\`fixed8\` for smooth
+  per-LED quantities (phase, brightness, positions, 1-D colour ramps). These run in
+  native integer arithmetic — NO soft-float. \`fixed16\`/\`fixed8\` additionally get
+  accelerated integer \`sin\`/\`cos\`/\`exp\` from lookup tables (angle in TURNS, not
+  radians) — trig with zero soft-float. Reach for these in hot per-LED math.
+- Hoist everything that isn't per-LED into \`update()\` (runs 1×) and stash it in
+  \`state\`; keep \`shade()\` lean. A \`sin(time)\` belongs in update(), not shade().
+- In \`shade()\` prefer cheap builtins — \`step/mix/clamp/smoothstep\`, polynomials,
+  \`abs/floor/fract\` — over \`sin/cos/exp/pow/log/sqrt\`. Reuse subexpressions; avoid
+  redundant vec constructions and swizzles.
+- RAM is the scarcest resource. Narrow the storage of \`buffer\`/\`texture\` elements
+  with a \`: fixed8\` (1 byte/component) or \`: fixed16\` (2 bytes) annotation instead
+  of the default f32 (4 bytes): \`buffer vec3 trail : fixed8;\`,
+  \`texture vec3 img(64, 64) : fixed16;\`. That quarters/halves the RAM (and the
+  device decodes them without per-texel float). Use \`fixed8\` for colours and other
+  0..1 values, \`fixed16\` when you need more precision.
+When performance matters, don't guess — measure with the estimate_performance tool
+(see the optimization workflow) and cut the hottest opcodes it reports.
 
 CONTEXTS (read-only globals):
 ${contextTable}
