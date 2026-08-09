@@ -727,6 +727,14 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     closeMenu();
     location.hash = "#/settings/ai";
   });
+  const miNewChat = document.createElement("button");
+  miNewChat.type = "button";
+  miNewChat.className = "fxedit-menu-item";
+  miNewChat.textContent = "New chat";
+  miNewChat.addEventListener("click", () => {
+    resetChat();
+    closeMenu();
+  });
   const miFormat = document.createElement("button");
   miFormat.type = "button";
   miFormat.className = "fxedit-menu-item";
@@ -767,7 +775,7 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
       miRecall.appendChild(it);
     }
   }
-  menu.append(miKey, miFormat, miReset, miRecall);
+  menu.append(miKey, miNewChat, miFormat, miReset, miRecall);
 
   // Auto-format (re-indent) the buffer, keeping the caret at roughly the same
   // logical spot (measured in non-whitespace characters, which the reformat
@@ -1334,20 +1342,11 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   previewBody.className = "fxedit-previewbody";
   previewBody.append(canvas, previewOverlay);
 
-  // Chat pane content. A slim header carries a "New chat" action (the ONLY way
-  // to clear the persisted conversation); the log + input fill the rest.
+  // Chat pane content. "New chat" (clear the persisted conversation) lives in the
+  // ⋯ overflow menu rather than taking vertical space here.
   const chatBody = document.createElement("div");
   chatBody.className = "fxedit-chatbody";
-  const chatHeader = document.createElement("div");
-  chatHeader.className = "fxedit-chathead";
-  const newChatBtn = Button({
-    label: "New chat",
-    icon: "plus",
-    variant: "quiet",
-    onClick: () => resetChat(),
-  });
-  chatHeader.appendChild(newChatBtn);
-  chatBody.append(chatHeader, chatLog, chatInputWrap);
+  chatBody.append(chatLog, chatInputWrap);
 
   // "Device" pane content: the upload/download (send/hydrate) controls are the
   // primary surface; the compiler diagnostics list lives below under its own

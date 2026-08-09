@@ -52,11 +52,15 @@ interface ModelRecord {
   low_resource_required?: boolean;
 }
 type AppConfig = { model_list?: ModelRecord[] };
+type EngineOpts = { initProgressCallback?: (r: { progress?: number; text?: string }) => void };
 interface WebLlmModule {
   prebuiltAppConfig?: AppConfig;
-  CreateMLCEngine: (
+  CreateMLCEngine: (model: string, opts?: EngineOpts) => Promise<MlcEngine>;
+  /** Off-main-thread engine (runs inference in a Web Worker; no UI stutter). */
+  CreateWebWorkerMLCEngine?: (
+    worker: Worker,
     model: string,
-    opts?: { initProgressCallback?: (r: { progress?: number; text?: string }) => void },
+    opts?: EngineOpts,
   ) => Promise<MlcEngine>;
   /** Whether the model's weights are already cached in the browser. */
   hasModelInCache?: (modelId: string, appConfig?: AppConfig) => Promise<boolean>;
@@ -68,6 +72,46 @@ interface WebLlmModule {
 let modulePromise: Promise<WebLlmModule> | null = null;
 let engine: MlcEngine | null = null;
 let engineModel = "";
+/** The worker backing the active engine (terminated on unload). */
+let engineWorker: Worker | null = null;
+
+/**
+ * Spawn a module Web Worker that hosts a web-llm engine handler, so inference
+ * runs off the main thread (fixes UI stutter). The worker imports web-llm from
+ * the same CDN and installs its `WebWorkerMLCEngineHandler`; we build it from a
+ * blob so there's no separate worker asset to bundle.
+ */
+function makeWorker(): Worker {
+  const src =
+    `import * as webllm from ${JSON.stringify(CDN_URL)};\n` +
+    `const handler = new webllm.WebWorkerMLCEngineHandler();\n` +
+    `self.onmessage = (m) => handler.onmessage(m);\n`;
+  const url = URL.createObjectURL(new Blob([src], { type: "text/javascript" }));
+  return new Worker(url, { type: "module" });
+}
+
+/** Create an engine, preferring the Web Worker variant when available. Returns
+ * the engine and its worker (null for the main-thread fallback). */
+async function createEngine(
+  m: WebLlmModule,
+  model: string,
+  onProgress?: (p: InitProgress) => void,
+): Promise<{ engine: MlcEngine; worker: Worker | null }> {
+  const opts: EngineOpts = {
+    initProgressCallback: (r) => onProgress?.({ progress: r.progress ?? 0, text: r.text ?? "" }),
+  };
+  if (typeof m.CreateWebWorkerMLCEngine === "function") {
+    const worker = makeWorker();
+    try {
+      const eng = await m.CreateWebWorkerMLCEngine(worker, model, opts);
+      return { engine: eng, worker };
+    } catch (e) {
+      worker.terminate();
+      throw e;
+    }
+  }
+  return { engine: await m.CreateMLCEngine(model, opts), worker: null };
+}
 
 /**
  * web-llm only implements function calling for a FIXED, enumerated set of models
@@ -155,10 +199,11 @@ export async function loadWebLlmModel(
   onProgress?: (p: InitProgress) => void,
 ): Promise<void> {
   if (engine && engineModel === model) return;
+  await unloadWebLlmModel(); // drop any previous engine + worker first
   const m = await loadModule();
-  engine = await m.CreateMLCEngine(model, {
-    initProgressCallback: (r) => onProgress?.({ progress: r.progress ?? 0, text: r.text ?? "" }),
-  });
+  const created = await createEngine(m, model, onProgress);
+  engine = created.engine;
+  engineWorker = created.worker;
   engineModel = model;
 }
 
@@ -175,6 +220,14 @@ export async function unloadWebLlmModel(): Promise<void> {
     } catch {
       // best-effort — drop the reference regardless
     }
+  }
+  if (engineWorker) {
+    try {
+      engineWorker.terminate();
+    } catch {
+      // ignore
+    }
+    engineWorker = null;
   }
   engine = null;
   engineModel = "";
@@ -204,13 +257,15 @@ export async function downloadWebLlmModel(
 ): Promise<void> {
   if (isModelLoaded(model)) return; // already loaded ⇒ already downloaded
   const m = await loadModule();
-  const tmp = await m.CreateMLCEngine(model, {
-    initProgressCallback: (r) => onProgress?.({ progress: r.progress ?? 0, text: r.text ?? "" }),
-  });
+  // Use a THROWAWAY (worker) engine so the active engine is untouched and the
+  // compile doesn't stutter the UI; unload + terminate once cached.
+  const { engine: tmp, worker } = await createEngine(m, model, onProgress);
   try {
     await tmp.unload?.();
   } catch {
     // best-effort
+  } finally {
+    worker?.terminate();
   }
 }
 

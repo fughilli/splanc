@@ -88,7 +88,10 @@ export function toOpenAiMessages(system: string, messages: ChatMessage[]): OaiMe
           type: "function",
           function: { name: b.name, arguments: JSON.stringify(b.input ?? {}) },
         }));
-      const msg: OaiMessage = { role: "assistant", content: text || null };
+      // Always a string ("" when the turn is tool-calls only): some runtimes —
+      // notably web-llm — reject `content: null` ("assistant's message should
+      // have string content"), and OpenAI accepts "" alongside tool_calls.
+      const msg: OaiMessage = { role: "assistant", content: text };
       if (toolCalls.length) msg.tool_calls = toolCalls;
       out.push(msg);
       continue;

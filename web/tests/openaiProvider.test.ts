@@ -57,6 +57,21 @@ test("toOpenAiMessages maps assistant text + tool_use to content + tool_calls", 
   ]);
 });
 
+test("assistant tool-call-only turns use empty-string content (not null)", () => {
+  // Regression: web-llm rejects `content: null` ("assistant's message should
+  // have string content"). A tool-calls-only assistant turn must serialize with
+  // content "".
+  const history: ChatMessage[] = [
+    {
+      role: "assistant",
+      content: [{ type: "tool_use", id: "t", name: "f", input: {} }],
+    },
+  ];
+  const out = toOpenAiMessages("", history);
+  assert.equal(out[0]!.content, "");
+  assert.equal(out[0]!.tool_calls?.[0]?.function.name, "f");
+});
+
 test("toOpenAiMessages turns tool_result blocks into tool messages", () => {
   const history: ChatMessage[] = [
     {
