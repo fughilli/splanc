@@ -347,7 +347,7 @@ def main() -> None:
     ap.add_argument(
         "--format",
         default="rgb565",
-        choices=["rgb565", "rgb888", "rgb332", "gray8"],
+        choices=["rgb565", "rgb888", "rgb332", "gray8", "gray4", "mono"],
         help="texture quantization format (TouchDesigner default: rgb565)",
     )
     ap.add_argument("--no-rle", dest="rle", action="store_false", help="disable RLE (default: on)")

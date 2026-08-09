@@ -7,23 +7,30 @@
 
 use crate::proto::{encode_set_texture, SetTexture};
 
-/// `SetTexture.format` codes (mirror `ffi.rs` `TEX_*`).
+/// `SetTexture.format` codes (mirror `ffi.rs` `TEX_*` and `web`'s `FORMAT_CODE`).
+/// (4 = INDEXED8, handled by the web codec's palette path, is not produced here.)
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Format {
     Rgb888 = 0,
     Rgb565 = 1,
     Rgb332 = 2,
     Gray8 = 3,
+    /// 4-bit grayscale, 2 texels per byte (the low nibble is the even texel).
+    Gray4 = 5,
+    /// 1-bit mono, 8 texels per byte (bit `i & 7` is texel `i`, LSB first).
+    Mono = 6,
 }
 
 impl Format {
-    /// Packed bytes per texel.
-    pub fn bpt(self) -> usize {
+    /// Packed length in bytes of a frame of `n` texels. Sub-byte formats round up
+    /// to whole bytes (a partial trailing byte is zero-padded).
+    pub fn packed_len(self, n: usize) -> usize {
         match self {
-            Format::Rgb888 => 3,
-            Format::Rgb565 => 2,
-            Format::Rgb332 => 1,
-            Format::Gray8 => 1,
+            Format::Rgb888 => n * 3,
+            Format::Rgb565 => n * 2,
+            Format::Rgb332 | Format::Gray8 => n,
+            Format::Gray4 => n.div_ceil(2),
+            Format::Mono => n.div_ceil(8),
         }
     }
 
@@ -33,9 +40,18 @@ impl Format {
             "rgb888" => Format::Rgb888,
             "rgb332" => Format::Rgb332,
             "gray8" => Format::Gray8,
+            "gray4" => Format::Gray4,
+            "mono" => Format::Mono,
             _ => Format::Rgb565,
         }
     }
+}
+
+/// Rec.601 luma of an 8-bit RGB texel, rounded to `u8` — the shared basis for all
+/// grayscale formats so gray8/gray4/mono agree on brightness.
+#[inline]
+fn luma8(r: u8, g: u8, b: u8) -> u8 {
+    (0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32).round().clamp(0.0, 255.0) as u8
 }
 
 /// Byte order of the incoming 4-byte-per-pixel buffer. TouchDesigner's CPU
@@ -94,28 +110,49 @@ pub fn nn_rescale(px: &[u8], sw: usize, sh: usize, dw: usize, dh: usize) -> Vec<
 /// Quantize a 4-byte-per-pixel frame (row-major) to packed `format` bytes.
 pub fn quantize(px: &[u8], w: usize, h: usize, format: Format, order: ChannelOrder) -> Vec<u8> {
     let n = w * h;
-    let bpt = format.bpt();
-    let mut out = vec![0u8; n * bpt];
-    for i in 0..n {
-        let (r, g, b) = rgb(px, i, order);
-        let o = i * bpt;
-        match format {
-            Format::Rgb888 => {
-                out[o] = r;
-                out[o + 1] = g;
-                out[o + 2] = b;
+    let mut out = vec![0u8; format.packed_len(n)];
+    match format {
+        // Sub-byte formats OR the packed byte per texel into `out` (which starts
+        // zeroed, so partial trailing bytes are padded).
+        Format::Gray4 => {
+            for i in 0..n {
+                let (r, g, b) = rgb(px, i, order);
+                let nib = (luma8(r, g, b) >> 4) & 0x0f; // top 4 bits of the luma
+                out[i >> 1] |= if i & 1 == 0 { nib } else { nib << 4 };
             }
-            Format::Rgb565 => {
-                let v: u16 = (((r >> 3) as u16) << 11) | (((g >> 2) as u16) << 5) | (b >> 3) as u16;
-                out[o] = (v & 0xff) as u8; // little-endian, matching the firmware read
-                out[o + 1] = (v >> 8) as u8;
+        }
+        Format::Mono => {
+            for i in 0..n {
+                let (r, g, b) = rgb(px, i, order);
+                if luma8(r, g, b) >= 128 {
+                    out[i >> 3] |= 1 << (i & 7);
+                }
             }
-            Format::Rgb332 => {
-                out[o] = (r & 0xe0) | ((g >> 3) & 0x1c) | (b >> 6);
-            }
-            Format::Gray8 => {
-                let y = 0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32;
-                out[o] = y.round().clamp(0.0, 255.0) as u8;
+        }
+        // Whole-byte formats: one texel writes `bpt` contiguous bytes.
+        _ => {
+            let bpt = format.packed_len(1);
+            for i in 0..n {
+                let (r, g, b) = rgb(px, i, order);
+                let o = i * bpt;
+                match format {
+                    Format::Rgb888 => {
+                        out[o] = r;
+                        out[o + 1] = g;
+                        out[o + 2] = b;
+                    }
+                    Format::Rgb565 => {
+                        let v: u16 =
+                            (((r >> 3) as u16) << 11) | (((g >> 2) as u16) << 5) | (b >> 3) as u16;
+                        out[o] = (v & 0xff) as u8; // little-endian, matching the firmware read
+                        out[o + 1] = (v >> 8) as u8;
+                    }
+                    Format::Rgb332 => {
+                        out[o] = (r & 0xe0) | ((g >> 3) & 0x1c) | (b >> 6);
+                    }
+                    // Gray8 (and any not handled above).
+                    _ => out[o] = luma8(r, g, b),
+                }
             }
         }
     }
@@ -271,6 +308,43 @@ mod tests {
         let bgra = [0u8, 0, 255, 255];
         let q = quantize(&bgra, 1, 1, Format::Rgb565, ChannelOrder::Bgra);
         assert_eq!(q, vec![0x00, 0xf8]);
+    }
+
+    #[test]
+    fn packed_len_rounds_sub_byte_up() {
+        assert_eq!(Format::Rgb888.packed_len(4), 12);
+        assert_eq!(Format::Gray8.packed_len(4), 4);
+        assert_eq!(Format::Gray4.packed_len(3), 2); // ceil(3/2)
+        assert_eq!(Format::Gray4.packed_len(4), 2);
+        assert_eq!(Format::Mono.packed_len(8), 1);
+        assert_eq!(Format::Mono.packed_len(9), 2); // ceil(9/8)
+    }
+
+    #[test]
+    fn gray4_packs_two_texels_per_byte_low_nibble_first() {
+        let white = [255u8, 255, 255, 255];
+        let black = [0u8, 0, 0, 255];
+        let px: Vec<u8> = [white, black].concat();
+        // texel 0 (white) -> low nibble 0xF; texel 1 (black) -> high nibble 0x0.
+        assert_eq!(quantize(&px, 2, 1, Format::Gray4, ChannelOrder::Rgba), vec![0x0f]);
+        let px2: Vec<u8> = [black, white].concat();
+        assert_eq!(quantize(&px2, 2, 1, Format::Gray4, ChannelOrder::Rgba), vec![0xf0]);
+        // Odd texel count pads the trailing nibble with zero.
+        assert_eq!(quantize(&white, 1, 1, Format::Gray4, ChannelOrder::Rgba), vec![0x0f]);
+    }
+
+    #[test]
+    fn mono_packs_eight_texels_per_byte_lsb_first() {
+        let white = [255u8, 255, 255, 255];
+        let black = [0u8, 0, 0, 255];
+        // white, black, white -> bits 0 and 2 set -> 0b0000_0101.
+        let px: Vec<u8> = [white, black, white].concat();
+        assert_eq!(quantize(&px, 3, 1, Format::Mono, ChannelOrder::Rgba), vec![0b0000_0101]);
+        // A mid-gray (128) crosses the threshold; 127 does not.
+        let g128 = [128u8, 128, 128, 255];
+        let g127 = [127u8, 127, 127, 255];
+        assert_eq!(quantize(&g128, 1, 1, Format::Mono, ChannelOrder::Rgba), vec![0x01]);
+        assert_eq!(quantize(&g127, 1, 1, Format::Mono, ChannelOrder::Rgba), vec![0x00]);
     }
 
     #[test]

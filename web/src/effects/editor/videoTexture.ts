@@ -42,6 +42,8 @@ const FORMATS: { value: TextureFormat; label: string }[] = [
   { value: "rgb888", label: "RGB888" },
   { value: "rgb332", label: "RGB332" },
   { value: "gray8", label: "Gray 8" },
+  { value: "gray4", label: "Gray 4" },
+  { value: "mono", label: "Mono (1-bit)" },
 ];
 const FPS_CHOICES = [10, 15, 20, 30];
 const DEFAULT_FPS = 15;

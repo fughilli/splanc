@@ -119,16 +119,18 @@ fn main() {
 fn sweep_points() -> Vec<SweepPoint> {
     use Format::*;
     let p = |label, format, rle, kf| SweepPoint { label, format, rle, keyframe_interval: kf };
+    // The adaptive keyframe fallback self-selects keyframes, so kf=0 already
+    // captures the drop-resilient case for 1-byte-and-narrower formats — no need
+    // to sweep explicit kf=1. This axis is now purely format × RLE by bit depth.
     vec![
-        p("rgb565+rle", Rgb565, true, 0), // TD default (color, 2 B/texel)
-        p("rgb565+rle kf=1", Rgb565, true, 1), // color, every frame self-contained
-        p("rgb565+rle kf=30", Rgb565, true, 30),
-        p("rgb888+rle", Rgb888, true, 0), // full color, 3 B/texel
-        p("rgb332+rle", Rgb332, true, 0), // low-color, 1 B/texel
-        p("rgb332+rle kf=1", Rgb332, true, 1), // 1 B color, every frame keyframe
-        p("gray8", Gray8, false, 0),   // fastest (mono, 1 B/texel)
-        p("gray8 kf=1", Gray8, false, 1), // fastest + fully drop-resilient
-        p("gray8+rle", Gray8, true, 0),
+        p("rgb888+rle", Rgb888, true, 0), // 3 B/texel, full color
+        p("rgb565+rle", Rgb565, true, 0), // 2 B/texel, TD default
+        p("rgb332+rle", Rgb332, true, 0), // 1 B/texel, low color
+        p("gray8+rle", Gray8, true, 0),   // 1 B/texel, mono
+        p("gray4+rle", Gray4, true, 0),   // 0.5 B/texel
+        p("gray4", Gray4, false, 0),
+        p("mono+rle", Mono, true, 0), // 0.125 B/texel
+        p("mono", Mono, false, 0),
     ]
 }
 

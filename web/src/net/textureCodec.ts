@@ -9,7 +9,14 @@
 
 import type { SetTextureMessage } from "./proto";
 
-export type TextureFormat = "rgb888" | "rgb565" | "rgb332" | "gray8" | "indexed8";
+export type TextureFormat =
+  | "rgb888"
+  | "rgb565"
+  | "rgb332"
+  | "gray8"
+  | "indexed8"
+  | "gray4"
+  | "mono";
 
 /** proto SetTexture.format codes (mirror ffi.rs TEX_*). */
 export const FORMAT_CODE: Record<TextureFormat, number> = {
@@ -18,15 +25,32 @@ export const FORMAT_CODE: Record<TextureFormat, number> = {
   rgb332: 2,
   gray8: 3,
   indexed8: 4,
+  gray4: 5,
+  mono: 6,
 };
-/** Packed bytes per texel for each format. */
-export const FORMAT_BPT: Record<TextureFormat, number> = {
-  rgb888: 3,
-  rgb565: 2,
-  rgb332: 1,
-  gray8: 1,
-  indexed8: 1,
-};
+
+/** Packed length in bytes of a frame of `n` texels. Sub-byte formats round up
+ * (matches firmware `tex_packed_len` / host `Format::packed_len`). */
+export function packedLen(format: TextureFormat, n: number): number {
+  switch (format) {
+    case "rgb888":
+      return n * 3;
+    case "rgb565":
+      return n * 2;
+    case "gray4":
+      return Math.ceil(n / 2);
+    case "mono":
+      return Math.ceil(n / 8);
+    default:
+      return n; // rgb332, gray8, indexed8
+  }
+}
+
+/** Rec.601 luma of an 8-bit RGB texel, rounded + clamped to 0..255 — the shared
+ * basis for all grayscale formats (gray8/gray4/mono agree on brightness). */
+function luma8(r: number, g: number, b: number): number {
+  return Math.min(255, Math.max(0, Math.round(0.299 * r + 0.587 * g + 0.114 * b)));
+}
 
 /** Median-cut palette quantizer for INDEXED8: pick ≤`maxColors` representative
  * colors and map each texel to its box's index. Returns row-major `indices`
@@ -110,8 +134,24 @@ export function quantize(
   format: TextureFormat,
 ): Uint8Array {
   const n = w * h;
-  const bpt = FORMAT_BPT[format];
-  const out = new Uint8Array(n * bpt);
+  const out = new Uint8Array(packedLen(format, n));
+  // Sub-byte formats OR the packed value into `out` (starts zeroed, so a partial
+  // trailing byte is padded).
+  if (format === "gray4") {
+    for (let i = 0; i < n; i++) {
+      const nib = (luma8(rgba[i * 4] ?? 0, rgba[i * 4 + 1] ?? 0, rgba[i * 4 + 2] ?? 0) >> 4) & 0x0f;
+      out[i >> 1] = (out[i >> 1] ?? 0) | ((i & 1) === 0 ? nib : nib << 4);
+    }
+    return out;
+  }
+  if (format === "mono") {
+    for (let i = 0; i < n; i++) {
+      if (luma8(rgba[i * 4] ?? 0, rgba[i * 4 + 1] ?? 0, rgba[i * 4 + 2] ?? 0) >= 128)
+        out[i >> 3] = (out[i >> 3] ?? 0) | (1 << (i & 7));
+    }
+    return out;
+  }
+  const bpt = packedLen(format, 1); // whole-byte formats: 1..3
   for (let i = 0; i < n; i++) {
     const r = rgba[i * 4] ?? 0;
     const g = rgba[i * 4 + 1] ?? 0;
@@ -133,7 +173,7 @@ export function quantize(
         out[o] = (r & 0xe0) | ((g >> 3) & 0x1c) | (b >> 6);
         break;
       case "gray8":
-        out[o] = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+        out[o] = luma8(r, g, b);
         break;
     }
   }
@@ -245,7 +285,7 @@ export class TextureStreamer {
     height: number,
     rgba: Uint8Array | Uint8ClampedArray,
   ): SetTextureMessage {
-    const need = width * height * FORMAT_BPT[this.format];
+    const need = packedLen(this.format, width * height);
     const prev = this.prev && this.prev.length === need ? this.prev : null;
     const { message, quant } = encodeTextureFrame({
       texIndex: this.texIndex,
