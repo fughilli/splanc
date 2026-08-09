@@ -1890,17 +1890,63 @@ fn fractf(x: f32) -> f32 {
 const PI: f32 = core::f32::consts::PI;
 const TAU: f32 = 2.0 * PI;
 
-fn sinf(x: f32) -> f32 {
-    // range-reduce to [-PI,PI], then a 5th-order minimax-ish poly.
-    let mut a = x - TAU * floorf(x / TAU + 0.5);
-    // a in [-PI, PI]
-    if a > PI {
-        a -= TAU;
-    }
+/// 5th-order minimax-ish sine poly, accurate on `a ∈ [-PI/2, PI/2]` (its error
+/// blows up to ~0.04 toward ±PI). Used only to BAKE the flash LUT at compile
+/// time — never on the hot path.
+const fn sin_poly(a: f32) -> f32 {
     let a2 = a * a;
     a * (0.9999966 + a2 * (-0.16664824 + a2 * (0.00830629 + a2 * -0.00018363)))
 }
-fn cosf(x: f32) -> f32 {
+
+/// `sin(turn * 2PI)` for `turn ∈ [0, 1]`, folded into `[-PI/2, PI/2]` (where the
+/// poly is accurate) via `sin(PI - a) = sin(a)`. Compile-time only.
+const fn sin_turn(turn: f32) -> f32 {
+    let mut a = turn * TAU; // [0, TAU]
+    if a > PI {
+        a -= TAU; // [-PI, PI]
+    }
+    if a > PI * 0.5 {
+        a = PI - a; // (PI/2, PI] -> [0, PI/2)
+    } else if a < -PI * 0.5 {
+        a = -PI - a; // [-PI, -PI/2) -> (-PI/2, 0]
+    }
+    sin_poly(a)
+}
+
+/// Flash-resident sine table: `SINF_LUT[i] = sin(i/256 turns)`, one full period
+/// plus a wrap entry so interpolation never needs a bounds branch. Baked at
+/// compile time → lives in flash (0 RAM), which is exactly the RAM-for-flash
+/// trade we want on the C6. 257 × 4 B ≈ 1 KB flash.
+static SINF_LUT: [f32; 257] = {
+    let mut t = [0.0f32; 257];
+    let mut i = 0;
+    while i <= 256 {
+        t[i] = sin_turn(i as f32 / 256.0);
+        i += 1;
+    }
+    t
+};
+
+/// Radians → a 32-bit phase where a full turn is 2^32 (wrapping). f32→i64→u32:
+/// the i64 hop keeps the product in range, the u32 truncation wraps mod 2^32 —
+/// so no `floorf` range reduction is needed.
+const SIN_PHASE_SCALE: f32 = 4_294_967_296.0 / TAU;
+
+/// LUT sine (linear-interpolated). On the FPU-less C6 this replaces the poly's
+/// ~13 soft-float ops with a table lookup + one lerp: the top 8 phase bits index
+/// the table, the low 24 are the interpolation fraction. Matches the poly to
+/// ~1e-4 (≪ 1/255, invisible on 8-bit LEDs); device + wasm preview share this
+/// code so they can't drift.
+pub fn sinf(x: f32) -> f32 {
+    let phase = (x * SIN_PHASE_SCALE) as i64 as u32;
+    let idx = (phase >> 24) as usize; // 0..=255
+    let frac = (phase & 0x00ff_ffff) as f32 * (1.0 / 16_777_216.0);
+    let a = SINF_LUT[idx];
+    let b = SINF_LUT[idx + 1]; // idx+1 ≤ 256; the wrap entry avoids a branch
+    a + (b - a) * frac
+}
+
+pub fn cosf(x: f32) -> f32 {
     sinf(x + PI * 0.5)
 }
 fn expf(x: f32) -> f32 {

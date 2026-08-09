@@ -556,3 +556,17 @@ fn comp_pack_unpack_round_trips() {
     assert!((comp_load(comp::F32, &b) - 0.3).abs() < 1e-6);
     assert_eq!((comp_bytes(comp::F32), comp_bytes(comp::FIX16), comp_bytes(comp::FIX8)), (4, 2, 1));
 }
+
+#[test]
+fn lut_sin_cos_match_libm_within_tolerance() {
+    // The flash-LUT sinf/cosf must track the real trig closely enough to be
+    // invisible on 8-bit LEDs (< ~1/255). Sweep a few periods, incl. negatives.
+    let mut max_err = 0.0f32;
+    let mut x = -20.0f32;
+    while x < 20.0 {
+        max_err = max_err.max((sinf(x) - x.sin()).abs());
+        max_err = max_err.max((cosf(x) - x.cos()).abs());
+        x += 0.001;
+    }
+    assert!(max_err < 2.0e-3, "LUT trig error {max_err} too large");
+}
