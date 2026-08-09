@@ -15,8 +15,6 @@
   <a href="https://bazel.build"><img
     src="https://img.shields.io/badge/built%20with-Bazel-43a047"
     alt="Built with Bazel" /></a>
-  <img src="https://img.shields.io/badge/controller-ESP32--C6%20%2F%20Pi-informational"
-    alt="Controller: ESP32-C6 / Pi" />
 </p>
 
 **Map every LED in an addressable-LED installation in 3D — with just a phone —
@@ -32,6 +30,33 @@ a guessed layout.
 No ARCore, no LiDAR, no depth sensor — capture runs in any modern phone browser
 (rear camera + motion sensors), and a visual-inertial solver estimates the
 camera path and the LED positions together.
+
+## Getting started
+
+The app is a PWA — nothing to install:
+
+**→ <https://ledmapper.pages.dev>**
+
+1. **Onboard your controller.** Starting from a brand-new ESP32-C6 dev board?
+   Flash the firmware onto it straight from the PWA over USB (desktop
+   Chrome/Edge via Web Serial, or Android Chrome via WebUSB) — no toolchain
+   needed. Then put it on your WiFi over Bluetooth and connect to it on your LAN
+   (you accept its self-signed certificate once).
+2. **Capture a map.** Start a mapping session and walk a slow arc around the lit
+   fixture until the live preview converges, then save the map.
+3. **Clean it up.** In the mapping workspace, tidy the recovered topology
+   (skeleton extraction, junction cleanup) and send the map to the device.
+4. **Design effects.** Open the effects editor, pick or write an effect, preview
+   it against your map, and send it to the controller to play for real.
+
+## Hardware
+
+- **Controller:** an **ESP32-C6** running the firmware in [`firmware/`](./firmware),
+  or a **Raspberry Pi** (see [`pi/`](./pi)). The controller drives the LEDs, runs
+  the effects VM, and serves the secure control channel.
+- **LEDs:** addressable strips or pixels (SK9822 / APA102 / WS2812-family).
+- **Capture device:** any phone with a rear camera and motion sensors
+  (Android / Chrome is the primary target).
 
 ## How it works
 
@@ -50,30 +75,6 @@ camera path and the LED positions together.
    compiler emits compact bytecode.
 6. **Play.** The bytecode runs on the controller's effects VM, streamed over a
    secure WebSocket — so what you see in the editor is what lights up.
-
-## Getting started
-
-The app is a PWA — nothing to install:
-
-**→ <https://ledmapper.pages.dev>**
-
-1. **Onboard your controller.** Put it on your WiFi over Bluetooth, then connect
-   to it on your LAN (you accept its self-signed certificate once).
-2. **Capture a map.** Start a mapping session and walk a slow arc around the lit
-   fixture until the live preview converges, then save the map.
-3. **Clean it up.** In the mapping workspace, tidy the recovered topology
-   (skeleton extraction, junction cleanup) and send the map to the device.
-4. **Design effects.** Open the effects editor, pick or write an effect, preview
-   it against your map, and send it to the controller to play for real.
-
-## Hardware
-
-- **Controller:** an **ESP32-C6** running the firmware in [`firmware/`](./firmware),
-  or a **Raspberry Pi** (see [`pi/`](./pi)). The controller drives the LEDs, runs
-  the effects VM, and serves the secure control channel.
-- **LEDs:** addressable strips or pixels (SK9822 / APA102 / WS2812-family).
-- **Capture device:** any phone with a rear camera and motion sensors
-  (Android / Chrome is the primary target).
 
 ## Learn more
 
