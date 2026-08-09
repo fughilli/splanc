@@ -164,13 +164,14 @@ pub struct TextureStreamer {
     order: ChannelOrder,
     rle: bool,
     prev: Option<Vec<u8>>,
-    /// Emit a full keyframe every `keyframe_interval` frames (0 = only the
-    /// initial keyframe, and one after any size change). A delta-coded frame is
-    /// an XOR against the *previous* frame, so on a lossy transport a single
-    /// dropped frame corrupts every frame after it until the raster is fully
-    /// re-sent. A periodic keyframe bounds that damage to at most
-    /// `keyframe_interval` frames — the cost is one large frame per period, which
-    /// is the FPS/jitter trade the caller dials in.
+    /// Emit a *forced* keyframe every `keyframe_interval` frames (0 = never force
+    /// one beyond the initial frame / a size change). A delta-coded frame is an
+    /// XOR against the *previous* frame, so on a lossy transport a single dropped
+    /// frame corrupts every frame after it until the raster is fully re-sent. A
+    /// periodic keyframe bounds that damage to at most `keyframe_interval` frames.
+    /// Independently, [`Self::encode_frame`] always falls back to a keyframe when
+    /// a delta wouldn't be smaller, so the *sent* frame never exceeds the keyframe
+    /// size and drop-recovery happens for free whenever it costs nothing.
     keyframe_interval: u32,
     /// Frames emitted in the current group (1 = the keyframe itself).
     since_keyframe: u32,
@@ -203,27 +204,41 @@ impl TextureStreamer {
     }
 
     /// Encode the next frame into a ready-to-send `set_texture` protobuf frame.
+    ///
+    /// The frame is a keyframe when there's no usable previous frame (first frame
+    /// or a size change) or the periodic interval is due. Otherwise the encoder
+    /// bounds the delta's worst case: it encodes *both* the keyframe and the XOR
+    /// delta and sends the keyframe whenever the delta isn't strictly smaller — a
+    /// delta bigger than a full frame is pointless (and on a lossy path strictly
+    /// worse, since it can't self-recover). Any keyframe sent — forced or this
+    /// fallback — restarts the keyframe interval.
     pub fn encode_frame(&mut self, px: &[u8], w: usize, h: usize) -> Vec<u8> {
         let quant = quantize(px, w, h, self.format, self.order);
         let size_changed = self.prev.as_ref().map(|p| p.len() != quant.len()).unwrap_or(true);
         let periodic = self.keyframe_interval != 0 && self.since_keyframe >= self.keyframe_interval;
-        let keyframe = self.prev.is_none() || size_changed || periodic;
+        let must_key = self.prev.is_none() || size_changed || periodic;
 
-        let mut flags = 0u32;
-        let mut payload = if keyframe {
-            self.since_keyframe = 1;
-            quant.clone()
+        let rle_flag = if self.rle { FLAG_RLE } else { 0 };
+        let maybe_rle = |bytes: Vec<u8>| if self.rle { rle_encode(&bytes) } else { bytes };
+        let key_payload = maybe_rle(quant.clone());
+
+        let (flags, payload) = if must_key {
+            (rle_flag, key_payload)
         } else {
-            flags |= FLAG_DELTA;
-            self.since_keyframe += 1;
-            // Safe: `keyframe` is true whenever prev is None or a size mismatch.
+            // Safe: `must_key` is true whenever prev is None or a size mismatch.
             let prev = self.prev.as_ref().unwrap();
-            quant.iter().zip(prev).map(|(a, b)| a ^ b).collect::<Vec<u8>>()
+            let delta = quant.iter().zip(prev).map(|(a, b)| a ^ b).collect::<Vec<u8>>();
+            let delta_payload = maybe_rle(delta);
+            if key_payload.len() < delta_payload.len() {
+                (rle_flag, key_payload) // adaptive fallback: keyframe is smaller
+            } else {
+                (FLAG_DELTA | rle_flag, delta_payload)
+            }
         };
-        if self.rle {
-            flags |= FLAG_RLE;
-            payload = rle_encode(&payload);
-        }
+
+        // A keyframe (forced or fallback) has the DELTA bit clear; it restarts
+        // the interval so the next forced keyframe is `keyframe_interval` later.
+        self.since_keyframe = if flags & FLAG_DELTA == 0 { 1 } else { self.since_keyframe + 1 };
         self.prev = Some(quant);
         encode_set_texture(&SetTexture {
             tex_index: self.tex_index,
@@ -369,6 +384,33 @@ mod tests {
             .map(|i| flags_of(&s.encode_frame(&[i, 0, 0, 255], 1, 1)) & FLAG_DELTA != 0)
             .collect();
         assert_eq!(is_delta, vec![false, true, true, true, true]);
+    }
+
+    #[test]
+    fn adaptive_keyframe_when_delta_would_blow_up() {
+        // 8x8 rgb332 + RLE. A keyframe of a flat frame RLEs tiny; the XOR delta
+        // between white and black is all-0xFF and RLEs large. The encoder must
+        // fall back to the (smaller) keyframe on the white->black frame even
+        // though no periodic keyframe is due, and use the delta when it IS
+        // smaller (a static repeat).
+        let (w, h) = (8usize, 8usize);
+        let white = vec![255u8; w * h * 4];
+        let black: Vec<u8> = (0..w * h).flat_map(|_| [0u8, 0, 0, 255]).collect();
+        let is_delta = |f: &[u8]| flags_of(f) & FLAG_DELTA != 0;
+
+        let mut s = TextureStreamer::new(0, Format::Rgb332, ChannelOrder::Rgba, true);
+        let f0 = s.encode_frame(&white, w, h); // initial keyframe
+        let f1 = s.encode_frame(&white, w, h); // static -> delta (all-zero) is tiny
+        let f2 = s.encode_frame(&black, w, h); // delta blows up -> fall back to keyframe
+        let f3 = s.encode_frame(&black, w, h); // static again -> delta
+
+        assert_eq!(
+            [is_delta(&f0), is_delta(&f1), is_delta(&f2), is_delta(&f3)],
+            [false, true, false, true]
+        );
+        // The bound: the fallback keyframe (f2) is far smaller than the blown-up
+        // delta would have been (which is ~the size of the white keyframe f0).
+        assert!(f2.len() < f0.len());
     }
 
     #[test]

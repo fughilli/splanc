@@ -31,46 +31,62 @@ The plugin streams with no barriers, so it sees the higher, window-independent
 throughput. Use a large window (default 30) for a throughput number; a small
 window only to resolve per-frame jitter finer.
 
-## Hill-climb findings (24×24 scrolling bars, C6, window=30)
+## Hill-climb findings (24×24 scrolling bars, C6, window=30, adaptive fallback on)
 
-| config                    | FPS    | jitter σ   | max   | B/frame |
-| ------------------------- | ------ | ---------- | ----- | ------- |
-| rgb565+rle _(TD default)_ | 74     | 1.3 ms     | 15 ms | 786     |
-| rgb888+rle                | 56     | 1.3 ms     | 20 ms | 978     |
-| rgb332+rle                | 79     | 2.2 ms     | 18 ms | 594     |
-| **rgb332+rle kf=1**       | **87** | 1.4 ms     | 14 ms | **499** |
-| gray8                     | 84     | **1.1 ms** | 12 ms | 593     |
-| gray8 kf=1                | 87     | 2.8 ms     | 18 ms | 593     |
+| config                    | FPS     | jitter σ | max   | B/frame |
+| ------------------------- | ------- | -------- | ----- | ------- |
+| rgb565+rle _(TD default)_ | 74      | 1.4 ms   | 16 ms | 786     |
+| rgb888+rle                | 62      | 3.2 ms   | 22 ms | 978     |
+| rgb332+rle                | 84      | 1.6 ms   | 14 ms | **499** |
+| **gray8+rle**             | **100** | 2.0 ms   | 14 ms | **499** |
+| gray8 (no RLE)            | 96      | 1.6 ms   | 13 ms | 593     |
+
+(±10% run-to-run from WiFi/thermal; the B/frame column is deterministic.)
 
 Takeaways:
 
 - **Bytes/texel is the dominant FPS lever** — device cost scales with payload
   (transfer + dequant): rgb888 (3 B) < rgb565 (2 B) < 1-byte formats.
-- **`gray8` is fastest + smoothest** where color isn't needed (grayscale dequant
-  is `(g,g,g)`; no per-channel bit math like rgb332). For **color**, `rgb332`
-  (1 B) leads; `rgb565` is the quality/speed default.
-- **RLE only helps `rgb565`** here (786 vs 1169 B/frame). For 1-byte formats the
-  horizontally-scrolling vertical-bar XOR delta scatters changed bytes across the
-  row-major raster, so zero-run RLE can't coalesce them — its decode cost then
-  makes `gray8` _without_ RLE faster than with.
+- **`gray8`/`rgb332` + RLE win** because the adaptive fallback (below) ships
+  RLE-compressed keyframes at ~499 B/frame instead of full 593 B deltas — smaller
+  _and_ self-contained. `gray8` leads where color isn't needed (grayscale dequant
+  is `(g,g,g)`, no per-channel bit math); `rgb332` is the 1-byte color option;
+  `rgb565` is the quality/speed default.
+- **RLE only helps if a run structure exists.** For 1-byte formats the
+  horizontally-scrolling vertical-bar _delta_ scatters changed bytes across the
+  row-major raster, so zero-run RLE can't coalesce it — but the _keyframe_ (whole
+  bars) RLEs well, which is why the adaptive fallback prefers it there. For
+  `rgb565` the 2-byte delta still RLEs smaller than its keyframe, so deltas stay.
 
 ## Keyframes for drop-resilience
 
 An XOR-delta frame is coded against the _previous_ frame, so on a **lossy**
 transport one dropped frame corrupts every frame after it until the raster is
-re-sent. `--keyframe-interval N` (and `TextureStreamer::with_keyframe_interval`)
-emits a full keyframe every N frames, bounding that damage to ≤ N frames.
+re-sent. Two mechanisms guard this:
+
+1. **Adaptive fallback (always on).** `encode_frame` encodes both the keyframe and
+   the delta every frame and sends the keyframe whenever the delta isn't strictly
+   smaller. This _bounds the delta blowup_: the sent frame never exceeds the
+   keyframe size, and drop-recovery happens for free whenever a keyframe is no
+   larger than the delta (a keyframe restarts the interval too).
+2. **Periodic keyframes.** `--keyframe-interval N` (and
+   `TextureStreamer::with_keyframe_interval`) forces a keyframe every N frames as a
+   guaranteed refresh — needed for content whose deltas _do_ stay smaller for long
+   stretches (real video), where the adaptive path alone would rarely keyframe.
 
 Cost of keyframes depends on the format:
 
-- **1-byte formats: free — often a net win.** `rgb332+rle kf=1` (a self-contained
-  keyframe _every_ frame) is the fastest config _and_ the smallest (499 vs 594
-  B/frame): the raw bar pattern RLE-compresses better than the scattered delta. So
-  a fully drop-resilient stream costs nothing here.
-- **`rgb565`: ~9%.** kf=1 dropped it from 74 → 67 FPS (a keyframe is larger than
-  its delta), so use a periodic interval rather than every frame.
+- **1-byte formats: free — often a net win.** For scrolling bars the raw pattern
+  RLE-compresses better than the scattered delta, so with the adaptive fallback
+  `rgb332+rle` (no forced interval) already sends keyframes on its own and matches
+  the explicit every-frame case: fastest (~87 FPS) _and_ smallest (~499 B/frame),
+  fully drop-resilient at no cost.
+- **`rgb565`: deltas usually win**, so the adaptive path keeps sending deltas
+  (~74 FPS) and only forced keyframes (a periodic interval) cost ~9%.
 
-Recommendation for a lossy codec: **`rgb332` (or `gray8`) with RLE and a short
-keyframe interval** — self-contained-ish frames, smallest payload, highest FPS.
-Over the current lossless TCP/WebSocket transport keyframes aren't needed, so the
-plugin default is `keyframe_interval = 0`.
+Recommendation for a lossy codec: **`rgb332` (or `gray8`) with RLE** — the
+adaptive fallback self-selects keyframes, so payloads stay small and most frames
+are self-contained; add a short `keyframe-interval` as a belt-and-braces refresh.
+Over the current lossless TCP/WebSocket transport a forced interval isn't needed,
+so the plugin default is `keyframe_interval = 0` (the adaptive fallback still
+applies).
