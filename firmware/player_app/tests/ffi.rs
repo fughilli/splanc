@@ -314,6 +314,30 @@ fn full_device_flow_through_the_c_abi() {
         set_tex(0x02, &[0, 1, 0xFF, 2, 1, 0xFF, 2, 1, 0xFF, 2, 1, 0xFF, 2, 0]);
         assert_eq!(shade0(), [255, 0, 0], "RLE keyframe all-red -> sample red");
 
+        // Sub-byte grayscale formats decode into the vec3 sampler (g,g,g). Use
+        // uniform frames so the sample is uv-independent.
+        let set_tex_fmt = |format: u32, flags: u32, data: &[u8]| {
+            let mut st = pb::SetTexture::default();
+            st.r#tex_index = 0;
+            st.r#format = format;
+            st.r#width = 2;
+            st.r#height = 2;
+            st.r#flags = flags;
+            st.r#data = micropb::heapless::Vec::from_slice(data).unwrap();
+            assert!(handle(&encode(CMsg::SetTexture(st)), 4000.0).is_none());
+        };
+        // gray4 (5): 4 bits/texel, 2 texels/byte. 4 texels -> 2 bytes; 0xFF fills
+        // both nibbles white, 0x00 black.
+        set_tex_fmt(5, 0, &[0xFF, 0xFF]);
+        assert_eq!(shade0(), [255, 255, 255], "gray4 all-white -> sample white");
+        set_tex_fmt(5, 0, &[0x00, 0x00]);
+        assert_eq!(shade0(), [0, 0, 0], "gray4 all-black -> sample black");
+        // mono (6): 1 bit/texel. 4 texels -> 1 byte; low 4 bits set = all white.
+        set_tex_fmt(6, 0, &[0x0F]);
+        assert_eq!(shade0(), [255, 255, 255], "mono all-white -> sample white");
+        set_tex_fmt(6, 0, &[0x00]);
+        assert_eq!(shade0(), [0, 0, 0], "mono all-black -> sample black");
+
         // get_effect_uniforms advertises the declared 2x2 vec3 texture (index 0)
         // so a texture source can size its stream to match (a mismatched
         // set_texture is silently dropped).

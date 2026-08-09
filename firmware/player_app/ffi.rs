@@ -933,32 +933,63 @@ unsafe fn handle_submit_effect(frame: &[u8]) -> pb::ServerMessage {
     pb::ServerMessage { r#msg: Some(pb::ServerMessage_::Msg::ResultReady(r)) }
 }
 
-// SetTexture.format values (mirror the .proto / web encoder).
+// SetTexture.format values (mirror the .proto / web encoder / td_ledmapper).
 const TEX_RGB888: u64 = 0;
 const TEX_RGB565: u64 = 1;
 const TEX_RGB332: u64 = 2;
-// GRAY8 folds into the `_ => 1` byte-per-texel / catch-all arms below, so it's
-// never referenced by name — kept to complete the proto-enum mirror.
-#[allow(dead_code)]
 const TEX_GRAY8: u64 = 3;
 const TEX_INDEXED8: u64 = 4;
+const TEX_GRAY4: u64 = 5; // 4 bits/texel, 2 texels/byte (low nibble = even texel)
+const TEX_MONO: u64 = 6; // 1 bit/texel, 8 texels/byte (bit i&7 = texel i, LSB first)
 const TEX_PAL_MAX: usize = 256;
 
-fn tex_bytes_per_texel(format: u64) -> usize {
+/// Packed length in bytes of a frame of `n` texels. Sub-byte formats round up
+/// (matches the host `Format::packed_len` and the web codec).
+fn tex_packed_len(format: u64, n: usize) -> usize {
     match format {
-        TEX_RGB888 => 3,
-        TEX_RGB565 => 2,
-        _ => 1, // RGB332 / GRAY8 / INDEXED8 — 1 byte/texel
+        TEX_RGB888 => n * 3,
+        TEX_RGB565 => n * 2,
+        TEX_GRAY4 => n.div_ceil(2),
+        TEX_MONO => n.div_ceil(8),
+        _ => n, // RGB332 / GRAY8 / INDEXED8
     }
 }
 
-/// Dequantize one texel's `bpt` bytes to linear RGB in 0..1. `palette` (0x00RRGGBB
-/// entries) is used only for INDEXED8.
-fn dequant_texel(b: &[u8], format: u64, palette: &[u32]) -> (f32, f32, f32) {
+/// `i as f32 / 255.0` as little-endian bytes for every byte value, built once.
+/// The C6 has no FPU, so decoding an 8-bit texture channel into an f32 arena via
+/// this table (a load + copy) instead of a per-texel software-float divide is the
+/// streaming decoder's biggest per-texel win. Serves gray8/rgb888 directly and
+/// gray4/mono by scaling their level to the 0..255 index.
+fn tex_f32_lut255() -> &'static [[u8; 4]; 256] {
+    static mut LUT: [[u8; 4]; 256] = [[0; 4]; 256];
+    static mut READY: bool = false;
+    unsafe {
+        if !READY {
+            let mut i = 0usize;
+            while i < 256 {
+                LUT[i] = (i as f32 / 255.0).to_le_bytes();
+                i += 1;
+            }
+            READY = true;
+        }
+        &*addr_of!(LUT)
+    }
+}
+
+/// Dequantize texel `t` from the packed `prev` buffer to linear RGB in 0..1.
+/// `palette` (0x00RRGGBB entries) is used only for INDEXED8. Grayscale formats
+/// return `(g, g, g)`. Used by the general (non-f32-arena) store path; the f32
+/// fast path in `handle_set_texture` bypasses this with byte-LUTs.
+#[inline]
+fn dequant_at(prev: &[u8], t: usize, format: u64, palette: &[u32]) -> (f32, f32, f32) {
     match format {
-        TEX_RGB888 => (b[0] as f32 / 255.0, b[1] as f32 / 255.0, b[2] as f32 / 255.0),
+        TEX_RGB888 => {
+            let o = t * 3;
+            (prev[o] as f32 / 255.0, prev[o + 1] as f32 / 255.0, prev[o + 2] as f32 / 255.0)
+        }
         TEX_RGB565 => {
-            let v = (b[0] as u16) | ((b[1] as u16) << 8); // little-endian
+            let o = t * 2;
+            let v = (prev[o] as u16) | ((prev[o + 1] as u16) << 8); // little-endian
             (
                 ((v >> 11) & 0x1f) as f32 / 31.0,
                 ((v >> 5) & 0x3f) as f32 / 63.0,
@@ -966,19 +997,29 @@ fn dequant_texel(b: &[u8], format: u64, palette: &[u32]) -> (f32, f32, f32) {
             )
         }
         TEX_RGB332 => {
-            let v = b[0];
+            let v = prev[t];
             (((v >> 5) & 7) as f32 / 7.0, ((v >> 2) & 7) as f32 / 7.0, (v & 3) as f32 / 3.0)
         }
         TEX_INDEXED8 => {
-            let v = palette.get(b[0] as usize).copied().unwrap_or(0);
+            let v = palette.get(prev[t] as usize).copied().unwrap_or(0);
             (
                 ((v >> 16) & 0xff) as f32 / 255.0,
                 ((v >> 8) & 0xff) as f32 / 255.0,
                 (v & 0xff) as f32 / 255.0,
             )
         }
+        TEX_GRAY4 => {
+            let byte = prev[t >> 1];
+            let nib = if t & 1 == 0 { byte & 0x0f } else { byte >> 4 };
+            let g = nib as f32 * (1.0 / 15.0);
+            (g, g, g)
+        }
+        TEX_MONO => {
+            let g = ((prev[t >> 3] >> (t & 7)) & 1) as f32;
+            (g, g, g)
+        }
         _ => {
-            let g = b[0] as f32 / 255.0; // GRAY8
+            let g = prev[t] as f32 / 255.0; // GRAY8
             (g, g, g)
         }
     }
@@ -1063,9 +1104,8 @@ unsafe fn handle_set_texture(frame: &[u8]) {
     if d.kind != 1 || d.w as u64 != width || d.h as u64 != height {
         return; // not a texture, or dimensions don't match the declared texture
     }
-    let bpt = tex_bytes_per_texel(format);
     let n_texels = (width * height) as usize;
-    let total = n_texels * bpt;
+    let total = tex_packed_len(format, n_texels);
     if total == 0 || total > FX_TEX_PREV_MAX {
         return;
     }
@@ -1107,22 +1147,133 @@ unsafe fn handle_set_texture(frame: &[u8]) {
     let elem = d.elem as usize;
     let cb = ledmapper_fx_vm::comp_bytes(d.comp);
     let eb = d.elem_bytes();
+    let comp = d.comp;
+    // Hoist the arena bounds check out of the hot loop: every texel writes within
+    // [base, base + n_texels*eb), so validate that span once, then write unchecked
+    // per texel (this is the streaming decode's inner loop, run w*h times/frame).
+    let end = base + n_texels * eb;
+    if eb == 0 || end > arena.len() {
+        return;
+    }
+    let gray = matches!(format, TEX_GRAY8 | TEX_GRAY4 | TEX_MONO);
+    let chans = elem.min(4);
+
+    // Fast path: an f32 arena (the default for `texture vecN`) stores raw f32 LE
+    // bytes, so we precompute each channel level's 4-byte form ONCE and copy it
+    // per texel — no per-texel software-float on the FPU-less C6. Byte-identical
+    // to the general path below (same f32 values), so decode is unchanged. Skips
+    // INDEXED8 (palette) and colour-into-scalar (needs a luma dot product).
+    let f32_fast = comp == ledmapper_fx_vm::comp::F32
+        && (elem != 1 || gray)
+        && matches!(
+            format,
+            TEX_GRAY8 | TEX_GRAY4 | TEX_MONO | TEX_RGB888 | TEX_RGB565 | TEX_RGB332
+        );
+    if f32_fast {
+        let lut8 = tex_f32_lut255();
+        let alpha4 = 1.0f32.to_le_bytes();
+        // Reduced-bit colour channels get their own small LE tables (built once
+        // per frame; only the active format's are populated).
+        let mut l31 = [[0u8; 4]; 32];
+        let mut l63 = [[0u8; 4]; 64];
+        let mut l7 = [[0u8; 4]; 8];
+        let mut l3 = [[0u8; 4]; 4];
+        match format {
+            TEX_RGB565 => {
+                for i in 0..32 {
+                    l31[i] = (i as f32 / 31.0).to_le_bytes();
+                }
+                for i in 0..64 {
+                    l63[i] = (i as f32 / 63.0).to_le_bytes();
+                }
+            }
+            TEX_RGB332 => {
+                for i in 0..8 {
+                    l7[i] = (i as f32 / 7.0).to_le_bytes();
+                }
+                for i in 0..4 {
+                    l3[i] = (i as f32 / 3.0).to_le_bytes();
+                }
+            }
+            _ => {}
+        }
+        for t in 0..n_texels {
+            let ab = base + t * eb;
+            let (rb, gb, bb): (&[u8; 4], &[u8; 4], &[u8; 4]) = match format {
+                TEX_GRAY4 => {
+                    let byte = prev[t >> 1];
+                    let nib = if t & 1 == 0 { byte & 0x0f } else { byte >> 4 };
+                    let p = &lut8[nib as usize * 17]; // nib/15 == (nib*17)/255
+                    (p, p, p)
+                }
+                TEX_MONO => {
+                    let p = &lut8[((prev[t >> 3] >> (t & 7)) & 1) as usize * 255];
+                    (p, p, p)
+                }
+                TEX_RGB888 => {
+                    let o = t * 3;
+                    (&lut8[prev[o] as usize], &lut8[prev[o + 1] as usize], &lut8[prev[o + 2] as usize])
+                }
+                TEX_RGB565 => {
+                    let o = t * 2;
+                    let v = (prev[o] as u16) | ((prev[o + 1] as u16) << 8);
+                    (
+                        &l31[((v >> 11) & 0x1f) as usize],
+                        &l63[((v >> 5) & 0x3f) as usize],
+                        &l31[(v & 0x1f) as usize],
+                    )
+                }
+                TEX_RGB332 => {
+                    let v = prev[t];
+                    (&l7[((v >> 5) & 7) as usize], &l7[((v >> 2) & 7) as usize], &l3[(v & 3) as usize])
+                }
+                _ => {
+                    let p = &lut8[prev[t] as usize]; // GRAY8
+                    (p, p, p)
+                }
+            };
+            for k in 0..chans {
+                let o = ab + k * 4;
+                let src: &[u8; 4] = match k {
+                    0 => rb,
+                    1 => gb,
+                    2 => bb,
+                    _ => &alpha4,
+                };
+                arena.get_unchecked_mut(o..o + 4).copy_from_slice(src);
+            }
+        }
+        return;
+    }
+
+    // General path: any component precision. `comp_store_num` quantizes each float
+    // channel to the arena's storage precision.
+    // A vec4 texture's 4th channel is a constant 1.0 — quantize it once.
+    let mut alpha = [0u8; 4];
+    ledmapper_fx_vm::comp_store_num(comp, 1.0, &mut alpha[..cb]);
     for t in 0..n_texels {
-        let (r, g, b) = dequant_texel(&prev[t * bpt..t * bpt + bpt], format, &palette);
+        let (r, g, b) = dequant_at(prev, t, format, &palette);
         let ab = base + t * eb;
         if elem == 1 {
-            let o = ab;
-            if o + cb <= arena.len() {
-                let luma = 0.299 * r + 0.587 * g + 0.114 * b;
-                ledmapper_fx_vm::comp_store_num(d.comp, luma, &mut arena[o..o + cb]);
+            // Scalar texture stores the luma; a grayscale source already carries
+            // it (r==g==b==g), so skip the Rec.601 dot product there.
+            let luma = if gray { g } else { 0.299 * r + 0.587 * g + 0.114 * b };
+            ledmapper_fx_vm::comp_store_num(comp, luma, arena.get_unchecked_mut(ab..ab + cb));
+        } else if gray {
+            // Grayscale: all colour channels are equal, so quantize once and
+            // replicate the packed bytes; the alpha channel is the const stamp.
+            let mut stamp = [0u8; 4];
+            ledmapper_fx_vm::comp_store_num(comp, g, &mut stamp[..cb]);
+            for k in 0..chans {
+                let o = ab + k * cb;
+                let src = if k < 3 { &stamp[..cb] } else { &alpha[..cb] };
+                arena.get_unchecked_mut(o..o + cb).copy_from_slice(src);
             }
         } else {
             let ch = [r, g, b, 1.0];
-            for (k, &c) in ch.iter().enumerate().take(elem.min(4)) {
+            for k in 0..chans {
                 let o = ab + k * cb;
-                if o + cb <= arena.len() {
-                    ledmapper_fx_vm::comp_store_num(d.comp, c, &mut arena[o..o + cb]);
-                }
+                ledmapper_fx_vm::comp_store_num(comp, ch[k], arena.get_unchecked_mut(o..o + cb));
             }
         }
     }

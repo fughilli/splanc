@@ -31,32 +31,65 @@ The plugin streams with no barriers, so it sees the higher, window-independent
 throughput. Use a large window (default 30) for a throughput number; a small
 window only to resolve per-frame jitter finer.
 
-## Hill-climb findings (24×24 scrolling bars, C6, window=30, adaptive fallback on)
+## Formats
 
-| config                    | FPS     | jitter σ | max   | B/frame |
-| ------------------------- | ------- | -------- | ----- | ------- |
-| rgb565+rle _(TD default)_ | 74      | 1.4 ms   | 16 ms | 786     |
-| rgb888+rle                | 62      | 3.2 ms   | 22 ms | 978     |
-| rgb332+rle                | 84      | 1.6 ms   | 14 ms | **499** |
-| **gray8+rle**             | **100** | 2.0 ms   | 14 ms | **499** |
-| gray8 (no RLE)            | 96      | 1.6 ms   | 13 ms | 593     |
+`SetTexture.format` (mirrored in the host `Format`, firmware `TEX_*`, and web
+`FORMAT_CODE`): `rgb888`=0, `rgb565`=1, `rgb332`=2, `gray8`=3, `indexed8`=4,
+`gray4`=5 (4-bit, 2 texels/byte), `mono`=6 (1-bit, 8 texels/byte). `gray4`/`mono`
+are grayscale (Rec.601 luma), sub-byte packed LSB-first.
 
-(±10% run-to-run from WiFi/thermal; the B/frame column is deterministic.)
+## Hill-climb findings (24×24 scrolling bars, C6, window=30, f32 texture)
+
+| config     | FPS  | jitter σ | B/frame | notes                          |
+| ---------- | ---- | -------- | ------- | ------------------------------ |
+| **mono**   | ~104 | 1.2 ms   | **87**  | 1-bit; fastest, smallest       |
+| **gray4**  | ~104 | 2.3 ms   | 305     | 4-bit gray; mono speed, 16 lvl |
+| gray8+rle  | ~94  | 2.2 ms   | 499     | 8-bit gray                     |
+| rgb332+rle | ~90  | 2.2 ms   | 499     | 8-bit color                    |
+| rgb888+rle | ~66  | 3.6 ms   | 978     | full color                     |
+| rgb565+rle | ~60  | 3.5 ms   | 786     | 2-byte color                   |
+
+(±10–15% run-to-run from WiFi/thermal; compare within one sweep, not across.
+B/frame is deterministic.)
 
 Takeaways:
 
-- **Bytes/texel is the dominant FPS lever** — device cost scales with payload
-  (transfer + dequant): rgb888 (3 B) < rgb565 (2 B) < 1-byte formats.
-- **`gray8`/`rgb332` + RLE win** because the adaptive fallback (below) ships
-  RLE-compressed keyframes at ~499 B/frame instead of full 593 B deltas — smaller
-  _and_ self-contained. `gray8` leads where color isn't needed (grayscale dequant
-  is `(g,g,g)`, no per-channel bit math); `rgb332` is the 1-byte color option;
-  `rgb565` is the quality/speed default.
-- **RLE only helps if a run structure exists.** For 1-byte formats the
-  horizontally-scrolling vertical-bar _delta_ scatters changed bytes across the
-  row-major raster, so zero-run RLE can't coalesce it — but the _keyframe_ (whole
-  bars) RLEs well, which is why the adaptive fallback prefers it there. For
-  `rgb565` the 2-byte delta still RLEs smaller than its keyframe, so deltas stay.
+- **Bytes/texel is the top FPS lever** — device cost scales with payload
+  (transfer + prev-buffer XOR/fill): rgb888 (3 B) → rgb565 (2 B) → 1-byte →
+  gray4 (½ B) → mono (⅛ B). `mono` at 87 B/frame is ~9× smaller than rgb565.
+- **`gray4` is the sweet spot for grayscale video** — mono's speed at 16 grey
+  levels instead of 2, at a third of gray8's bytes.
+- **After the decoder LUT fix (below), color formats no longer pay a float tax**
+  — `rgb332` sits within ~4% of `gray8` at the same 499 B/frame (was ~17% behind).
+- **RLE only helps if a run structure exists.** For 1-byte-and-narrower formats
+  the horizontally-scrolling vertical-bar _delta_ scatters changed bytes across
+  the row-major raster, so zero-run RLE can't coalesce it — the adaptive fallback
+  then prefers the (RLE-friendly, whole-bar) keyframe. For `rgb565` the 2-byte
+  delta still RLEs smaller than its keyframe, so deltas stay.
+
+## Decoder efficiency (firmware)
+
+The ESP32-C6 has **no FPU**, so every `channel / 255.0`-style dequant in
+`handle_set_texture` was a software-float divide, run `w·h·channels` times per
+frame. Measured cost: at an identical 499 B/frame, `gray8` (1 divide/texel) ran
+82 FPS while `rgb332` (3 divides + bit math) ran 69 — a 17% gap that was pure
+decode compute, not payload.
+
+The decoder now:
+
+- **Precomputes the byte→f32 lookup** (`i/255` LE bytes, and the reduced-bit
+  `/31`, `/63`, `/7`, `/3` tables) and copies the packed bytes per texel — zero
+  per-texel software-float for the default f32 texture arena. This closed the
+  gray8↔rgb332 gap to ~4% (both are now table-lookup + copy).
+- **Hoists the arena bounds check** out of the per-texel loop (one span check,
+  then unchecked writes bounded by it).
+- **Replicates grayscale once** (all colour channels equal → quantize/look-up
+  once, copy to each) and skips the luma dot-product for grayscale sources.
+- Handles sub-byte `gray4`/`mono` by bit-unpacking per texel.
+
+The f32 fast path is byte-identical to the general `comp_store_num` path (same
+float values), so decode output is unchanged; non-f32 texture arenas and
+`indexed8` use the general path.
 
 ## Keyframes for drop-resilience
 
