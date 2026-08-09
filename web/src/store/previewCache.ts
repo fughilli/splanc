@@ -24,8 +24,9 @@ export const MAX_ENTRIES = 60;
  * are invalidated even though their source (and thus source hash) is unchanged.
  *   v1: flat 64×64 grid only.
  *   v2: topology-aware effects render on a virtual tree.
+ *   v3: VP8 encode (v2 clips could decode black on some browsers).
  */
-export const RENDER_VERSION = 2;
+export const RENDER_VERSION = 3;
 
 export interface PreviewRecord {
   id: string;

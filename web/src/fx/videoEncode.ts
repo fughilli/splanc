@@ -44,9 +44,13 @@ interface Candidate {
   codec: string; // WebCodecs codec string
   webm: WebmCodec; // Matroska CodecID
 }
+// VP8 first: it's the most universally decodable WebM codec, needs no codec
+// config / profile bytes, and sidesteps the VP9 pitfalls (a clip that "loads
+// but plays black" because the profile/level/color config doesn't match). At
+// 64×64 the quality difference is invisible. VP9 stays as a fallback.
 const CANDIDATES: Candidate[] = [
-  { codec: "vp09.00.10.08", webm: "V_VP9" },
   { codec: "vp8", webm: "V_VP8" },
+  { codec: "vp09.00.10.08", webm: "V_VP9" },
 ];
 
 async function pickCodec(width: number, height: number, framerate: number): Promise<Candidate | null> {
@@ -92,7 +96,9 @@ async function encodeWebCodecs(spec: EncodeSpec, cand: Candidate): Promise<Blob>
     height,
     bitrate: BITRATE,
     framerate: fps,
-    latencyMode: "quality",
+    // "realtime" emits exactly one chunk per encode() with no reordering or
+    // buffering, so the in-order muxing below is always correct.
+    latencyMode: "realtime",
   });
 
   const frameDurUs = 1_000_000 / fps;

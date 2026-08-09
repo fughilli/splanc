@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { buildGridPositions, rgbToRgba } from "../src/fx/previewVideo";
+import { buildGridPositions, rgbToRgba } from "../src/fx/previewGrid";
 
 test("buildGridPositions lays a flat XY unit grid, row-major, z=0", () => {
   const size = 4;
