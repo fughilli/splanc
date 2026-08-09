@@ -1,17 +1,20 @@
 /**
  * AI settings (FUG-87) — pick where the editor's AI runs, and manage on-device
- * models. Three providers:
- *   - Anthropic (cloud, BYO key) — the default;
- *   - a local OpenAI-compatible server (Ollama / LM Studio / llama.cpp / vLLM),
- *     including downloading a model into Ollama with live progress;
- *   - an in-browser WebGPU model (web-llm), downloaded from HuggingFace and
- *     cached locally, à la pocketpal-ai.
+ * models. Three top-level categories (3 buttons):
+ *   - Cloud — a vendor (Anthropic / OpenAI / Gemini / Grok / OpenRouter /
+ *     Custom) + that vendor's API key. Anthropic uses its native API; the rest
+ *     go through the OpenAI-compatible client pointed at the vendor's endpoint.
+ *   - Local server (OpenAI-compatible) — Ollama / LM Studio / llama.cpp, with
+ *     model listing and an Ollama model download (incl. HuggingFace GGUFs).
+ *   - In-browser (WebGPU) — web-llm; a model browser where each model can be
+ *     downloaded, loaded, and deleted (weights cache in the browser).
  *
- * Every control writes straight through {@link updateAiConfig} (localStorage);
- * the active provider is read fresh on the next AI turn, so changes apply live.
+ * Text inputs write through {@link setLive} (persist, no rebuild) so typing
+ * doesn't lose focus; structural changes (category / vendor) rebuild via
+ * {@link set}.
  */
 
-import { Button, Card, toast } from "../kit";
+import { Button, Card, icon, toast, type IconName } from "../kit";
 import type { Router, Screen } from "../app/router";
 import { installSettingsStyles } from "./settings.css";
 import { installAiSettingsStyles } from "./aiSettings.css";
@@ -19,21 +22,29 @@ import {
   getAiConfig,
   updateAiConfig,
   isAiConfigured,
-  providerLabel,
+  kindLabel,
+  CLOUD_VENDORS,
   DEFAULT_OPENAI_BASE_URL,
   type AiConfig,
-  type ProviderId,
+  type ProviderKind,
+  type CloudVendor,
 } from "../../effects/ai/provider";
 import { listOpenAiModels, pullOllamaModel } from "../../effects/ai/providers/openaiCompat";
 import {
   isWebLlmSupported,
   listWebLlmModelCards,
   loadWebLlmModel,
+  unloadWebLlmModel,
+  downloadWebLlmModel,
+  deleteWebLlmModel,
+  isModelDownloaded,
+  isModelLoaded,
   modelSupportsTools,
   type WebLlmModelCard,
 } from "../../effects/ai/providers/webllm";
 
-const PROVIDERS: ProviderId[] = ["anthropic", "openai", "webllm"];
+const KINDS: ProviderKind[] = ["cloud", "local", "webllm"];
+const VENDORS = Object.keys(CLOUD_VENDORS) as CloudVendor[];
 
 export function AiSettingsScreen(_router: Router): Screen {
   installSettingsStyles();
@@ -58,118 +69,218 @@ export function AiSettingsScreen(_router: Router): Screen {
   const body = document.createElement("div");
   el.appendChild(body);
 
+  /** Persist + rebuild (category / vendor switches). */
   function set(patch: Partial<AiConfig>): void {
     updateAiConfig(patch);
     rerender();
+  }
+  /** Persist without rebuilding (text inputs) — keeps focus, updates status. */
+  function setLive(patch: Partial<AiConfig>): void {
+    updateAiConfig(patch);
+    syncStatus();
   }
 
   function syncStatus(): void {
     const cfg = getAiConfig();
     const ok = isAiConfigured(cfg);
     status.classList.toggle("ok", ok);
-    status.textContent = ok
-      ? `Ready — using ${providerLabel(cfg.provider)}.`
-      : `${providerLabel(cfg.provider)} is not configured yet.`;
+    let where = kindLabel(cfg.kind);
+    if (cfg.kind === "cloud") where += ` · ${CLOUD_VENDORS[cfg.cloud.vendor].label}`;
+    status.textContent = ok ? `Ready — using ${where}.` : `${where} is not configured yet.`;
   }
 
   function rerender(): void {
     const cfg = getAiConfig();
     syncStatus();
     let panel: HTMLElement;
-    switch (cfg.provider) {
-      case "openai":
-        panel = openAiPanel(cfg, set);
+    switch (cfg.kind) {
+      case "local":
+        panel = localPanel(cfg, setLive);
         break;
       case "webllm":
-        panel = webLlmPanel(cfg, set);
+        panel = webLlmPanel();
         break;
-      case "anthropic":
+      case "cloud":
       default:
-        panel = anthropicPanel(cfg, set);
+        panel = cloudPanel(cfg, set, setLive);
         break;
     }
-    body.replaceChildren(providerGroup(cfg.provider, (p) => set({ provider: p })), panel);
+    body.replaceChildren(kindGroup(cfg.kind, (k) => set({ kind: k })), panel);
   }
 
   rerender();
   return { el };
 }
 
-// -- provider chooser --------------------------------------------------------
+// -- category chooser (3 buttons) --------------------------------------------
 
-function providerGroup(active: ProviderId, onPick: (p: ProviderId) => void): HTMLElement {
+function kindGroup(active: ProviderKind, onPick: (k: ProviderKind) => void): HTMLElement {
   const g = group("Provider");
   const seg = document.createElement("div");
   seg.className = "settings-seg";
-  for (const p of PROVIDERS) {
+  for (const k of KINDS) {
     const b = document.createElement("button");
     b.type = "button";
-    b.textContent = providerLabel(p);
-    if (p === active) b.classList.add("on");
-    b.addEventListener("click", () => onPick(p));
+    b.textContent = kindLabel(k);
+    if (k === active) b.classList.add("on");
+    b.addEventListener("click", () => onPick(k));
     seg.appendChild(b);
   }
   g.append(seg);
   return g;
 }
 
-// -- Anthropic ---------------------------------------------------------------
+// -- Cloud -------------------------------------------------------------------
 
-function anthropicPanel(cfg: AiConfig, set: (p: Partial<AiConfig>) => void): HTMLElement {
-  const g = group("Anthropic (cloud)");
+function cloudPanel(
+  cfg: AiConfig,
+  set: (p: Partial<AiConfig>) => void,
+  setLive: (p: Partial<AiConfig>) => void,
+): HTMLElement {
+  const g = group("Cloud");
+  const vendor = cfg.cloud.vendor;
+  const meta = CLOUD_VENDORS[vendor];
+  const v = cfg.cloud.vendors[vendor];
+
+  // Patch just the active vendor's settings.
+  const setVendor = (
+    patch: Partial<{ key: string; model: string; baseUrl: string }>,
+    live: boolean,
+  ): void => {
+    const c = getAiConfig();
+    const vendors = { ...c.cloud.vendors, [vendor]: { ...c.cloud.vendors[vendor], ...patch } };
+    (live ? setLive : set)({ cloud: { ...c.cloud, vendors } });
+  };
+
+  // Vendor picker (rebuilds to show that vendor's fields).
+  g.append(
+    labeledSelect<CloudVendor>(
+      "Provider",
+      Object.fromEntries(VENDORS.map((x) => [x, CLOUD_VENDORS[x].label])) as Record<
+        CloudVendor,
+        string
+      >,
+      vendor,
+      (x) => set({ cloud: { ...getAiConfig().cloud, vendor: x } }),
+    ),
+  );
+
+  // Custom endpoint (only for the "custom" vendor; others are fixed).
+  if (vendor === "custom") {
+    g.append(
+      field({
+        label: "Server URL",
+        value: v.baseUrl,
+        placeholder: "https://…/v1",
+        onInput: (val) => setVendor({ baseUrl: val.trim() }, true),
+      }),
+    );
+  }
+
   g.append(
     field({
       label: "API key",
       type: "password",
-      value: cfg.anthropic.key,
-      placeholder: "sk-ant-…",
-      onInput: (v) => set({ anthropic: { ...getAiConfig().anthropic, key: v.trim() } }),
+      value: v.key,
+      placeholder: meta.keyHint,
+      onInput: (val) => setVendor({ key: val.trim() }, true),
     }),
-    field({
-      label: "Model",
-      value: cfg.anthropic.model,
-      placeholder: "claude-opus-4-8",
-      onInput: (v) => set({ anthropic: { ...getAiConfig().anthropic, model: v.trim() } }),
-    }),
-    note("Used only in your browser, sent directly to Anthropic. Never uploaded to any server."),
+  );
+
+  // Model row: free-text + a "List" button (skipped for Anthropic, which has no
+  // OpenAI-style /models endpoint).
+  const modelField = field({
+    label: "Model",
+    value: v.model,
+    placeholder: meta.modelPlaceholder,
+    onInput: (val) => setVendor({ model: val.trim() }, true),
+  });
+  if (meta.native) {
+    g.append(modelField);
+  } else {
+    const picker = document.createElement("select");
+    picker.className = "aiset-field";
+    picker.style.display = "none";
+    picker.addEventListener("change", () => {
+      if (picker.value) set({ cloud: mergeVendor(vendor, { model: picker.value }) });
+    });
+    const listBtn = Button({
+      label: "List",
+      variant: "quiet",
+      onClick: async () => {
+        listBtn.disabled = true;
+        try {
+          const cur = getAiConfig().cloud.vendors[vendor];
+          const models = await listOpenAiModels({
+            baseUrl: cur.baseUrl,
+            key: cur.key,
+            model: cur.model,
+            vision: false,
+          });
+          fillSelect(picker, models, cur.model);
+          picker.style.display = models.length ? "block" : "none";
+          toast(models.length ? `${models.length} model(s)` : "No models returned");
+        } catch (e) {
+          toast(`List failed: ${msg(e)}`, { error: true });
+        } finally {
+          listBtn.disabled = false;
+        }
+      },
+    });
+    const row = document.createElement("div");
+    row.className = "aiset-row";
+    row.append(modelField, listBtn);
+    g.append(row, picker);
+  }
+
+  g.append(
+    note(
+      `Used only in your browser, sent directly to ${meta.label}. Never uploaded ` +
+        `to any server. Pick a model that supports tool calling so effect ` +
+        `generation and MIDI mapping work.`,
+    ),
   );
   return g;
 }
 
+/** Build a full cloud patch that merges a change into one vendor. */
+function mergeVendor(vendor: CloudVendor, patch: Partial<{ model: string }>): AiConfig["cloud"] {
+  const c = getAiConfig().cloud;
+  return { ...c, vendors: { ...c.vendors, [vendor]: { ...c.vendors[vendor], ...patch } } };
+}
+
 // -- Local OpenAI-compatible server ------------------------------------------
 
-function openAiPanel(cfg: AiConfig, set: (p: Partial<AiConfig>) => void): HTMLElement {
+function localPanel(cfg: AiConfig, setLive: (p: Partial<AiConfig>) => void): HTMLElement {
   const g = group("Local server (OpenAI-compatible)");
 
   g.append(
     field({
       label: "Server URL",
-      value: cfg.openai.baseUrl,
+      value: cfg.local.baseUrl,
       placeholder: DEFAULT_OPENAI_BASE_URL,
-      onInput: (v) => set({ openai: { ...getAiConfig().openai, baseUrl: v.trim() } }),
+      onInput: (v) => setLive({ local: { ...getAiConfig().local, baseUrl: v.trim() } }),
     }),
     field({
       label: "API key (optional)",
       type: "password",
-      value: cfg.openai.key,
+      value: cfg.local.key,
       placeholder: "usually blank for local servers",
-      onInput: (v) => set({ openai: { ...getAiConfig().openai, key: v.trim() } }),
+      onInput: (v) => setLive({ local: { ...getAiConfig().local, key: v.trim() } }),
     }),
   );
 
-  // Model row: a free-text field (servers name models differently) plus a
-  // "List" button that fetches the server's installed models into a picker.
   const modelField = field({
     label: "Model",
-    value: cfg.openai.model,
+    value: cfg.local.model,
     placeholder: "e.g. llama3.1:8b",
-    onInput: (v) => set({ openai: { ...getAiConfig().openai, model: v.trim() } }),
+    onInput: (v) => setLive({ local: { ...getAiConfig().local, model: v.trim() } }),
   });
   const picker = document.createElement("select");
   picker.className = "aiset-field";
   picker.style.display = "none";
   picker.addEventListener("change", () => {
-    if (picker.value) set({ openai: { ...getAiConfig().openai, model: picker.value } });
+    if (picker.value) setLive({ local: { ...getAiConfig().local, model: picker.value } });
   });
   const listBtn = Button({
     label: "List",
@@ -177,8 +288,8 @@ function openAiPanel(cfg: AiConfig, set: (p: Partial<AiConfig>) => void): HTMLEl
     onClick: async () => {
       listBtn.disabled = true;
       try {
-        const models = await listOpenAiModels(getAiConfig().openai);
-        fillSelect(picker, models, getAiConfig().openai.model);
+        const models = await listOpenAiModels(getAiConfig().local);
+        fillSelect(picker, models, getAiConfig().local.model);
         picker.style.display = models.length ? "block" : "none";
         toast(models.length ? `${models.length} model(s) available` : "No models installed");
       } catch (e) {
@@ -193,16 +304,14 @@ function openAiPanel(cfg: AiConfig, set: (p: Partial<AiConfig>) => void): HTMLEl
   modelRow.append(modelField, listBtn);
   g.append(modelRow, picker);
 
-  // Vision toggle — advertise the preview-image tool only if this model sees.
   g.append(
     settingsRow(
       "Vision",
       "Does this model accept images? Enables the AI to see the live preview.",
-      onOff(cfg.openai.vision, (on) => set({ openai: { ...getAiConfig().openai, vision: on } })),
+      onOff(cfg.local.vision, (on) => setLive({ local: { ...getAiConfig().local, vision: on } })),
     ),
   );
 
-  // Ollama pull: download a model into the server with a progress bar.
   const pullField = field({
     label: "Download a model (Ollama)",
     placeholder: "llama3.1:8b or hf.co/user/repo:Q4_K_M",
@@ -210,7 +319,7 @@ function openAiPanel(cfg: AiConfig, set: (p: Partial<AiConfig>) => void): HTMLEl
   const bar = progressBar();
   const pullBtn = Button({
     label: "Download",
-    icon: "sparkles",
+    icon: "download",
     onClick: async () => {
       const name = pullField.querySelector("input")?.value.trim() ?? "";
       if (!name) {
@@ -220,13 +329,13 @@ function openAiPanel(cfg: AiConfig, set: (p: Partial<AiConfig>) => void): HTMLEl
       pullBtn.disabled = true;
       bar.wrap.style.display = "block";
       try {
-        await pullOllamaModel(getAiConfig().openai, name, (p) => {
+        await pullOllamaModel(getAiConfig().local, name, (p) => {
           const pct = p.total ? Math.round(((p.completed ?? 0) / p.total) * 100) : 0;
           bar.set(pct, `${p.status}${p.total ? ` — ${pct}%` : ""}`);
         });
         bar.set(100, "Done");
         toast(`Downloaded ${name}`);
-        set({ openai: { ...getAiConfig().openai, model: name } });
+        setLive({ local: { ...getAiConfig().local, model: name } });
       } catch (e) {
         bar.set(0, `Failed: ${msg(e)}`);
         toast(`Download failed: ${msg(e)}`, { error: true });
@@ -245,17 +354,16 @@ function openAiPanel(cfg: AiConfig, set: (p: Partial<AiConfig>) => void): HTMLEl
       "Run a local model server and point the app at it. Ollama exposes " +
         "http://localhost:11434/v1; LM Studio and llama.cpp use their own ports. " +
         "For Ollama you can download a model right here — including any " +
-        "HuggingFace GGUF via an hf.co/user/repo:quant reference; other runtimes " +
-        "manage models themselves. Pick an instruct model that supports tool " +
-        "calling so effect generation and MIDI mapping work.",
+        "HuggingFace GGUF via an hf.co/user/repo:quant reference. Pick an instruct " +
+        "model that supports tool calling so effect generation and MIDI mapping work.",
     ),
   );
   return g;
 }
 
-// -- In-browser WebGPU (web-llm) ---------------------------------------------
+// -- In-browser WebGPU (web-llm) — the model browser -------------------------
 
-function webLlmPanel(_cfg: AiConfig, _set: (p: Partial<AiConfig>) => void): HTMLElement {
+function webLlmPanel(): HTMLElement {
   const g = group("In-browser (WebGPU)");
   if (!isWebLlmSupported()) {
     g.append(
@@ -267,19 +375,20 @@ function webLlmPanel(_cfg: AiConfig, _set: (p: Partial<AiConfig>) => void): HTML
     return g;
   }
 
-  // Local browser state — selection/search/filter update in place (no full
-  // panel rebuild) so the list doesn't reset while the user browses.
+  // Local state — chips update in place; only the list rebuilds (not this whole
+  // panel), so search focus and in-flight operations survive.
   let toolsOnly = true;
   let query = "";
   let cards: WebLlmModelCard[] = [];
-  const current = (): string => getAiConfig().webllm.model;
+  const downloaded = new Map<string, boolean>();
+  const busy = new Map<string, "download" | "load" | "delete">();
+  const active = (): string => getAiConfig().webllm.model;
+  const pinned = (): string[] => getAiConfig().webllm.pinned;
 
-  // Warn when the selected model can't tool-call: our features need tools, so
-  // it would only chat (this is exactly the Qwen case from review).
   const warn = note("");
   warn.classList.add("aiset-warn");
   function refreshWarn(): void {
-    const m = current();
+    const m = active();
     const bad = m !== "" && !modelSupportsTools(m);
     warn.style.display = bad ? "block" : "none";
     if (bad) {
@@ -312,99 +421,222 @@ function webLlmPanel(_cfg: AiConfig, _set: (p: Partial<AiConfig>) => void): HTML
   listStatus.className = "aiset-progress-text";
   listStatus.textContent = "Loading model list…";
 
+  /** Resolve a model id to a card (synthesizing one for pinned/custom ids). */
+  function cardFor(id: string): WebLlmModelCard {
+    const found = cards.find((c) => c.id === id);
+    if (found) return found;
+    return {
+      id,
+      vramMB: null,
+      lowResource: false,
+      tools: modelSupportsTools(id),
+      hfUrl: `https://huggingface.co/mlc-ai/${id}`,
+    };
+  }
+
   function renderCards(): void {
-    const sel = current();
-    const filtered = cards.filter(
-      (c) => (!toolsOnly || c.tools) && c.id.toLowerCase().includes(query),
-    );
+    const pins = pinned();
+    const shown: WebLlmModelCard[] = [
+      ...pins.map(cardFor),
+      ...cards.filter(
+        (c) =>
+          !pins.includes(c.id) &&
+          (!toolsOnly || c.tools) &&
+          c.id.toLowerCase().includes(query),
+      ),
+    ];
     cardsEl.replaceChildren();
-    if (cards.length && !filtered.length) {
+    if (cards.length && !shown.length) {
       const e = document.createElement("div");
       e.className = "aiset-progress-text";
       e.textContent = "No models match this filter.";
       cardsEl.append(e);
     }
-    for (const c of filtered) cardsEl.append(cardEl(c, sel));
+    for (const c of shown) cardsEl.append(chipEl(c));
   }
 
-  function cardEl(c: WebLlmModelCard, selected: string): HTMLElement {
+  function chipEl(card: WebLlmModelCard): HTMLElement {
+    const id = card.id;
     const el = document.createElement("div");
-    el.className = "aiset-card" + (c.id === selected ? " on" : "");
+    el.className = "aiset-card" + (id === active() ? " on" : "");
+
+    const nameRow = document.createElement("div");
+    nameRow.className = "aiset-card-head";
     const name = document.createElement("div");
     name.className = "aiset-card-name";
-    name.textContent = c.id;
+    name.textContent = id;
+
+    // Controls: download (↓ / ✓ / bar), delete (trash), load (</>).
+    const controls = document.createElement("div");
+    controls.className = "aiset-card-ctrls";
+    const dlBtn = ctrl("download", "Download");
+    const trashBtn = ctrl("trash", "Delete downloaded model", "red");
+    const loadBtn = ctrl("code", "Load model");
+    controls.append(dlBtn, trashBtn, loadBtn);
+    nameRow.append(name, controls);
+
+    const chipBar = progressBar();
+    chipBar.wrap.classList.add("aiset-chip-progress");
+
     const badges = document.createElement("div");
     badges.className = "aiset-badges";
-    if (c.tools) badges.append(badge("Tools", "tools"));
-    if (c.vramMB) badges.append(badge(`${(c.vramMB / 1024).toFixed(1)} GB VRAM`));
-    if (c.lowResource) badges.append(badge("Low-resource"));
-    el.append(name, badges);
-    if (c.hfUrl) {
+    if (card.tools) badges.append(badge("Tools", "tools"));
+    if (card.vramMB) badges.append(badge(`${(card.vramMB / 1024).toFixed(1)} GB VRAM`));
+    if (card.lowResource) badges.append(badge("Low-resource"));
+
+    el.append(nameRow, chipBar.wrap, badges);
+    if (card.hfUrl) {
       const a = document.createElement("a");
-      a.href = c.hfUrl;
+      a.href = card.hfUrl;
       a.target = "_blank";
       a.rel = "noopener";
       a.textContent = "View on HuggingFace ↗";
-      a.addEventListener("click", (ev) => ev.stopPropagation()); // link, not a select
       el.append(a);
     }
-    el.addEventListener("click", () => selectModel(c.id));
+
+    // -- visual state application -------------------------------------------
+    function applyDownload(): void {
+      const isDl = downloaded.get(id) === true;
+      const b = busy.get(id);
+      dlBtn.classList.toggle("green", isDl && b !== "download");
+      dlBtn.classList.toggle("blue", !isDl && b !== "download");
+      dlBtn.classList.toggle("busy", b === "download");
+      setIcon(dlBtn, isDl && b !== "download" ? "check" : "download");
+      dlBtn.disabled = b !== undefined;
+      trashBtn.style.display = isDl && b === undefined ? "" : "none";
+      if (b !== "download") chipBar.wrap.style.display = "none";
+    }
+    function applyLoad(): void {
+      const loaded = isModelLoaded(id);
+      const b = busy.get(id);
+      loadBtn.classList.toggle("yellow", loaded && b !== "load");
+      loadBtn.classList.toggle("gray", !loaded && b !== "load");
+      loadBtn.classList.toggle("busy", b === "load");
+      loadBtn.disabled = b !== undefined && b !== "load";
+    }
+    applyDownload();
+    applyLoad();
+
+    // Reflect the cached state asynchronously (once per chip).
+    if (!downloaded.has(id)) {
+      void isModelDownloaded(id).then((d) => {
+        downloaded.set(id, d);
+        applyDownload();
+      });
+    }
+
+    // -- handlers ------------------------------------------------------------
+    dlBtn.addEventListener("click", async () => {
+      if (busy.get(id)) return;
+      busy.set(id, "download");
+      chipBar.wrap.style.display = "block";
+      chipBar.set(0, "Starting…");
+      applyDownload();
+      try {
+        await downloadWebLlmModel(id, (p) =>
+          chipBar.set(Math.round(p.progress * 100), p.text || "Downloading…"),
+        );
+        downloaded.set(id, true);
+        toast(`Downloaded ${id}`);
+      } catch (e) {
+        toast(`Download failed: ${msg(e)}`, { error: true });
+      } finally {
+        busy.delete(id);
+        applyDownload();
+      }
+    });
+
+    trashBtn.addEventListener("click", async () => {
+      if (busy.get(id)) return;
+      if (!confirm(`Delete downloaded model?\n\n${id}\n\nThis frees its cached weights.`)) return;
+      busy.set(id, "delete");
+      applyDownload();
+      try {
+        await deleteWebLlmModel(id);
+        downloaded.set(id, false);
+        if (active() === id) {
+          updateAiConfig({ webllm: { ...getAiConfig().webllm, model: "" } });
+          refreshWarn();
+        }
+        toast(`Deleted ${id}`);
+      } catch (e) {
+        toast(`Delete failed: ${msg(e)}`, { error: true });
+      } finally {
+        busy.delete(id);
+        applyDownload();
+        applyLoad();
+        el.classList.toggle("on", id === active());
+      }
+    });
+
+    loadBtn.addEventListener("click", async () => {
+      if (busy.get(id) && busy.get(id) !== "load") return;
+      const wasLoaded = isModelLoaded(id);
+      busy.set(id, "load");
+      applyLoad();
+      try {
+        if (wasLoaded) {
+          await unloadWebLlmModel();
+          updateAiConfig({ webllm: { ...getAiConfig().webllm, model: "" } });
+          toast("Model unloaded");
+        } else {
+          await loadWebLlmModel(id, (p) =>
+            chipBar.set(Math.round(p.progress * 100), p.text || "Loading…"),
+          );
+          downloaded.set(id, true);
+          updateAiConfig({ webllm: { ...getAiConfig().webllm, model: id } });
+          toast(`Loaded ${id}`);
+        }
+      } catch (e) {
+        toast(`${wasLoaded ? "Unload" : "Load"} failed: ${msg(e)}`, { error: true });
+      } finally {
+        busy.delete(id);
+        applyLoad();
+        applyDownload();
+        refreshWarn();
+        // Refresh the "active" highlight across chips.
+        for (const other of cardsEl.querySelectorAll(".aiset-card")) {
+          other.classList.remove("on");
+        }
+        el.classList.toggle("on", id === active());
+      }
+    });
+
     return el;
   }
 
-  function selectModel(id: string): void {
-    updateAiConfig({ webllm: { ...getAiConfig().webllm, model: id } });
-    renderCards();
-    refreshWarn();
-  }
-
-  // Custom / paste path: an MLC model id not in the browsable list.
-  const customField = field({
-    label: "Custom MLC model id",
+  // Add a model by id (pins it so its chip shows). Validated against the catalog
+  // — only listed MLC models can actually run in-browser.
+  const addField = field({
+    label: "Add a model by id",
     placeholder: "e.g. Hermes-3-Llama-3.1-8B-q4f16_1-MLC",
   });
-  const useBtn = Button({
-    label: "Use",
+  const addBtn = Button({
+    label: "Add",
     variant: "quiet",
     onClick: () => {
-      const v = customField.querySelector("input")?.value.trim() ?? "";
-      if (!v) {
+      const id = addField.querySelector("input")?.value.trim() ?? "";
+      if (!id) {
         toast("Enter a model id", { error: true });
         return;
       }
-      selectModel(v);
-      toast(`Selected ${v}`);
-    },
-  });
-  const customRow = document.createElement("div");
-  customRow.className = "aiset-row";
-  customRow.append(customField, useBtn);
-
-  const bar = progressBar();
-  const loadBtn = Button({
-    label: "Download / load selected model",
-    icon: "sparkles",
-    block: true,
-    onClick: async () => {
-      const model = current();
-      if (!model) {
-        toast("Pick a model first", { error: true });
+      if (!cards.some((c) => c.id === id)) {
+        toast(`“${id}” isn't in web-llm's catalog`, { error: true });
         return;
       }
-      loadBtn.disabled = true;
-      bar.wrap.style.display = "block";
-      try {
-        await loadWebLlmModel(model, (p) => bar.set(Math.round(p.progress * 100), p.text));
-        bar.set(100, "Ready");
-        toast("Model loaded");
-      } catch (e) {
-        bar.set(0, `Failed: ${msg(e)}`);
-        toast(`Load failed: ${msg(e)}`, { error: true });
-      } finally {
-        loadBtn.disabled = false;
+      const pins = pinned();
+      if (!pins.includes(id)) {
+        updateAiConfig({ webllm: { ...getAiConfig().webllm, pinned: [...pins, id] } });
       }
+      const input = addField.querySelector("input");
+      if (input) input.value = "";
+      renderCards();
+      toast(`Added ${id}`);
     },
   });
+  const addRow = document.createElement("div");
+  addRow.className = "aiset-row";
+  addRow.append(addField, addBtn);
 
   g.append(
     warn,
@@ -412,15 +644,14 @@ function webLlmPanel(_cfg: AiConfig, _set: (p: Partial<AiConfig>) => void): HTML
     filterRow,
     cardsEl,
     listStatus,
-    customRow,
-    loadBtn,
-    bar.wrap,
+    addRow,
     note(
       "Models run entirely in your browser on the GPU; weights download from " +
-        "HuggingFace on first use and cache locally. Only listed MLC-compiled " +
+        "HuggingFace on first use and cache locally. Use ↓ to download, </> to " +
+        "load/unload, and the trash icon to delete. Only listed MLC-compiled " +
         "models work here — to run an arbitrary HuggingFace GGUF, use the local " +
-        "server provider (Ollama) instead. Tool-calling (needed to generate " +
-        "effects and map MIDI) is limited to the models with a “Tools” badge.",
+        "server (Ollama). Tool-calling (needed to generate effects and map MIDI) " +
+        "is limited to models with a “Tools” badge.",
     ),
   );
 
@@ -485,6 +716,22 @@ function badge(text: string, kind?: string): HTMLElement {
   return b;
 }
 
+/** A small round icon-button used for the per-chip download/load/delete actions. */
+function ctrl(iconName: IconName, title: string, kind?: string): HTMLButtonElement {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "aiset-ctrl" + (kind ? ` ${kind}` : "");
+  b.title = title;
+  b.setAttribute("aria-label", title);
+  b.appendChild(icon(iconName));
+  return b;
+}
+
+/** Swap the glyph inside a ctrl button. */
+function setIcon(btn: HTMLButtonElement, iconName: IconName): void {
+  btn.replaceChildren(icon(iconName));
+}
+
 function settingsRow(name: string, hint: string, control: HTMLElement): HTMLElement {
   const r = document.createElement("div");
   r.className = "settings-row";
@@ -519,6 +766,30 @@ function onOff(value: boolean, onPick: (on: boolean) => void): HTMLElement {
     seg.appendChild(b);
   }
   return seg;
+}
+
+/** A labeled <select> (used for the cloud vendor picker). */
+function labeledSelect<T extends string>(
+  label: string,
+  labels: Record<T, string>,
+  value: T,
+  onPick: (v: T) => void,
+): HTMLElement {
+  const wrap = document.createElement("label");
+  wrap.className = "aiset-field";
+  const cap = document.createElement("span");
+  cap.textContent = label;
+  const sel = document.createElement("select");
+  for (const key of Object.keys(labels) as T[]) {
+    const opt = document.createElement("option");
+    opt.value = key;
+    opt.textContent = labels[key];
+    if (key === value) opt.selected = true;
+    sel.appendChild(opt);
+  }
+  sel.addEventListener("change", () => onPick(sel.value as T));
+  wrap.append(cap, sel);
+  return wrap;
 }
 
 function fillSelect(sel: HTMLSelectElement, options: string[], current: string): void {

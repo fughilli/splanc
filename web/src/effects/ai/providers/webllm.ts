@@ -41,6 +41,8 @@ interface MlcEngine {
       ) => Promise<{ choices?: { message?: OaiMessage; finish_reason?: string }[] }>;
     };
   };
+  /** Free the model from GPU memory (weights stay in the browser cache). */
+  unload?: () => Promise<void>;
 }
 interface ModelRecord {
   model_id?: string;
@@ -49,12 +51,18 @@ interface ModelRecord {
   vram_required_MB?: number;
   low_resource_required?: boolean;
 }
+type AppConfig = { model_list?: ModelRecord[] };
 interface WebLlmModule {
-  prebuiltAppConfig?: { model_list?: ModelRecord[] };
+  prebuiltAppConfig?: AppConfig;
   CreateMLCEngine: (
     model: string,
     opts?: { initProgressCallback?: (r: { progress?: number; text?: string }) => void },
   ) => Promise<MlcEngine>;
+  /** Whether the model's weights are already cached in the browser. */
+  hasModelInCache?: (modelId: string, appConfig?: AppConfig) => Promise<boolean>;
+  /** Evict a model's cached weights + metadata from the browser. */
+  deleteModelAllInfoInCache?: (modelId: string, appConfig?: AppConfig) => Promise<void>;
+  deleteModelInCache?: (modelId: string, appConfig?: AppConfig) => Promise<void>;
 }
 
 let modulePromise: Promise<WebLlmModule> | null = null;
@@ -152,6 +160,69 @@ export async function loadWebLlmModel(
     initProgressCallback: (r) => onProgress?.({ progress: r.progress ?? 0, text: r.text ?? "" }),
   });
   engineModel = model;
+}
+
+/** Is this model the one currently loaded into the active engine (this tab)? */
+export function isModelLoaded(model: string): boolean {
+  return engine !== null && engineModel === model;
+}
+
+/** Free the loaded model from GPU memory (weights stay cached in the browser). */
+export async function unloadWebLlmModel(): Promise<void> {
+  if (engine) {
+    try {
+      await engine.unload?.();
+    } catch {
+      // best-effort — drop the reference regardless
+    }
+  }
+  engine = null;
+  engineModel = "";
+}
+
+/** Whether the model's weights are already downloaded (cached) in the browser. */
+export async function isModelDownloaded(model: string): Promise<boolean> {
+  const m = await loadModule();
+  if (typeof m.hasModelInCache !== "function") return false;
+  try {
+    return await m.hasModelInCache(model, m.prebuiltAppConfig);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Download + cache a model's weights WITHOUT keeping it loaded on the GPU. web-llm
+ * has no pure-download API, so we spin up a throwaway engine to fetch/compile
+ * (populating the browser cache) and immediately unload it — leaving the weights
+ * cached for a fast later load. If this model happens to be the active one, the
+ * active engine is left intact.
+ */
+export async function downloadWebLlmModel(
+  model: string,
+  onProgress?: (p: InitProgress) => void,
+): Promise<void> {
+  if (isModelLoaded(model)) return; // already loaded ⇒ already downloaded
+  const m = await loadModule();
+  const tmp = await m.CreateMLCEngine(model, {
+    initProgressCallback: (r) => onProgress?.({ progress: r.progress ?? 0, text: r.text ?? "" }),
+  });
+  try {
+    await tmp.unload?.();
+  } catch {
+    // best-effort
+  }
+}
+
+/** Delete a model's cached weights from the browser (unloads it first if active). */
+export async function deleteWebLlmModel(model: string): Promise<void> {
+  if (engineModel === model) await unloadWebLlmModel();
+  const m = await loadModule();
+  const del = m.deleteModelAllInfoInCache ?? m.deleteModelInCache;
+  if (typeof del !== "function") {
+    throw new Error("this web-llm build can't delete cached models");
+  }
+  await del(model, m.prebuiltAppConfig);
 }
 
 /** Build an in-browser WebGPU provider from its config. */

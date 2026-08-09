@@ -38,25 +38,30 @@ const MODEL = DEFAULT_ANTHROPIC_MODEL;
  */
 export function activeProvider(): AiProvider {
   const cfg = getAiConfig();
-  switch (cfg.provider) {
-    case "openai":
-      return makeOpenAiProvider(cfg.openai);
-    case "webllm":
-      return makeWebLlmProvider(cfg.webllm);
-    case "anthropic":
-    default:
-      return makeAnthropicProvider(cfg.anthropic);
+  if (cfg.kind === "local") return makeOpenAiProvider(cfg.local);
+  if (cfg.kind === "webllm") return makeWebLlmProvider(cfg.webllm);
+  // cloud: Anthropic uses its native API; every other vendor is served through
+  // the OpenAI-compatible client pointed at that vendor's endpoint.
+  const v = cfg.cloud.vendors[cfg.cloud.vendor];
+  if (cfg.cloud.vendor === "anthropic") {
+    return makeAnthropicProvider({ key: v.key, model: v.model });
   }
+  return makeOpenAiProvider({ baseUrl: v.baseUrl, key: v.key, model: v.model, vision: false });
 }
 
-/** Read/write the BYO Anthropic key. Kept for back-compat (the effects browser
- * hint + editor gating still call these); now backed by the unified AI config. */
+/** Read/write the BYO Anthropic key. Kept for back-compat (older callers); now
+ * backed by the unified AI config (the cloud "anthropic" vendor). */
 export function getApiKey(): string | null {
-  const k = getAiConfig().anthropic.key;
+  const k = getAiConfig().cloud.vendors.anthropic.key;
   return k ? k : null;
 }
 export function setApiKey(key: string): void {
-  updateAiConfig({ anthropic: { ...getAiConfig().anthropic, key } });
+  const cfg = getAiConfig();
+  const vendors = {
+    ...cfg.cloud.vendors,
+    anthropic: { ...cfg.cloud.vendors.anthropic, key },
+  };
+  updateAiConfig({ cloud: { ...cfg.cloud, vendors } });
 }
 
 /** One conversation turn kept in the workspace so follow-ups refine. */

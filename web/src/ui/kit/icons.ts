@@ -50,7 +50,9 @@ export type IconName =
   | "triad"
   | "camera-path"
   | "midi"
-  | "chip";
+  | "chip"
+  | "check"
+  | "code";
 
 // -- shared fragments for the device-transfer glyphs (24x24, top→bottom layout:
 //    content (map / sparkle) over a device pentagon, joined by a "cut" arrow) --
@@ -140,6 +142,10 @@ const PATHS: Record<IconName, string> = {
   midi: `<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="6.2" r="1"/><circle cx="6.7" cy="9.4" r="1"/><circle cx="17.3" cy="9.4" r="1"/><circle cx="8.4" cy="15.4" r="1"/><circle cx="15.6" cy="15.4" r="1"/>`,
   // Microcontroller: a chip die with pins on all four sides (flash/commission).
   chip: `<rect x="8" y="8" width="8" height="8" rx="1"/><path d="M10 8V5M14 8V5M10 19v-3M14 19v-3M8 10H5M8 14H5M19 10h-3M19 14h-3"/>`,
+  // Checkmark (download complete).
+  check: `<path d="M5 12.5 10 17.5 19 7"/>`,
+  // Angle brackets </> (load model).
+  code: `<path d="M9 8 5 12 9 16"/><path d="M15 8 19 12 15 16"/>`,
 };
 
 let installed = false;

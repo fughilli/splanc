@@ -103,14 +103,84 @@ export interface OpenAiConfig {
   vision: boolean;
 }
 export interface WebLlmConfig {
-  /** A web-llm prebuilt model id (see the models list in the AI settings). */
+  /** The active (loaded) web-llm prebuilt model id, or "". */
   model: string;
+  /** Extra model ids the user has pinned via "Add" (custom / off-filter). */
+  pinned: string[];
 }
 
+/**
+ * The top-level provider category the user picks (3 buttons). "cloud" fans out
+ * to a specific vendor (see {@link CloudVendor}); "local" is a self-hosted
+ * OpenAI-compatible server; "webllm" is in-browser WebGPU.
+ */
+export type ProviderKind = "cloud" | "local" | "webllm";
+
+/** Cloud vendors offered under the "Cloud" category. */
+export type CloudVendor = "anthropic" | "openai" | "gemini" | "grok" | "openrouter" | "custom";
+
+/** Per-vendor cloud settings (each vendor keeps its own key + model). */
+export interface CloudVendorConfig {
+  key: string;
+  model: string;
+  /** Endpoint. Fixed for known vendors; user-set for "custom". Empty for the
+   * native Anthropic API (which isn't OpenAI-compatible). */
+  baseUrl: string;
+}
+
+/** Static metadata per cloud vendor: label, endpoint, and UI hints. */
+export const CLOUD_VENDORS: Record<
+  CloudVendor,
+  { label: string; baseUrl: string; native: boolean; modelPlaceholder: string; keyHint: string }
+> = {
+  anthropic: {
+    label: "Anthropic",
+    baseUrl: "",
+    native: true, // uses the native Messages API, not /chat/completions
+    modelPlaceholder: "claude-opus-4-8",
+    keyHint: "sk-ant-…",
+  },
+  openai: {
+    label: "OpenAI",
+    baseUrl: "https://api.openai.com/v1",
+    native: false,
+    modelPlaceholder: "gpt-4o",
+    keyHint: "sk-…",
+  },
+  gemini: {
+    label: "Gemini",
+    baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+    native: false,
+    modelPlaceholder: "gemini-2.0-flash",
+    keyHint: "AIza…",
+  },
+  grok: {
+    label: "Grok (xAI)",
+    baseUrl: "https://api.x.ai/v1",
+    native: false,
+    modelPlaceholder: "grok-2-latest",
+    keyHint: "xai-…",
+  },
+  openrouter: {
+    label: "OpenRouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    native: false,
+    modelPlaceholder: "anthropic/claude-3.5-sonnet",
+    keyHint: "sk-or-…",
+  },
+  custom: {
+    label: "Custom",
+    baseUrl: "",
+    native: false,
+    modelPlaceholder: "model id",
+    keyHint: "API key",
+  },
+};
+
 export interface AiConfig {
-  provider: ProviderId;
-  anthropic: AnthropicConfig;
-  openai: OpenAiConfig;
+  kind: ProviderKind;
+  cloud: { vendor: CloudVendor; vendors: Record<CloudVendor, CloudVendorConfig> };
+  local: OpenAiConfig;
   webllm: WebLlmConfig;
 }
 
@@ -123,32 +193,97 @@ export const DEFAULT_ANTHROPIC_MODEL = "claude-opus-4-8";
 /** A sensible Ollama default; the user picks a real one in AI settings. */
 export const DEFAULT_OPENAI_BASE_URL = "http://localhost:11434/v1";
 
+function isCloudVendor(v: unknown): v is CloudVendor {
+  return typeof v === "string" && v in CLOUD_VENDORS;
+}
+
+function emptyVendors(): Record<CloudVendor, CloudVendorConfig> {
+  const out = {} as Record<CloudVendor, CloudVendorConfig>;
+  for (const v of Object.keys(CLOUD_VENDORS) as CloudVendor[]) {
+    out[v] = {
+      key: "",
+      model: v === "anthropic" ? DEFAULT_ANTHROPIC_MODEL : "",
+      baseUrl: CLOUD_VENDORS[v].baseUrl,
+    };
+  }
+  return out;
+}
+
 export function defaultConfig(): AiConfig {
   return {
-    provider: "anthropic",
-    anthropic: { key: "", model: DEFAULT_ANTHROPIC_MODEL },
-    openai: { baseUrl: DEFAULT_OPENAI_BASE_URL, key: "", model: "", vision: false },
-    webllm: { model: "" },
+    kind: "cloud",
+    cloud: { vendor: "anthropic", vendors: emptyVendors() },
+    local: { baseUrl: DEFAULT_OPENAI_BASE_URL, key: "", model: "", vision: false },
+    webllm: { model: "", pinned: [] },
   };
 }
 
 /** Merge a parsed (possibly partial / older-shape) config over the defaults so
- * added fields always have a value and hand-edited storage can't crash us. */
+ * added fields always have a value and hand-edited storage can't crash us. Also
+ * migrates the pre-"3-button" shape ({provider, anthropic, openai, webllm}). */
 export function normalizeConfig(raw: unknown): AiConfig {
   const d = defaultConfig();
   if (raw === null || typeof raw !== "object") return d;
-  const r = raw as Partial<AiConfig>;
-  const provider: ProviderId =
-    r.provider === "openai" || r.provider === "webllm" ? r.provider : "anthropic";
+  const r = raw as Record<string, unknown>;
+
+  // -- migrate the earlier {provider, anthropic, openai, webllm} shape --------
+  if (typeof r["provider"] === "string" && r["kind"] === undefined) {
+    const provider = r["provider"];
+    const anth = (r["anthropic"] ?? {}) as Partial<AnthropicConfig>;
+    d.cloud.vendors.anthropic = {
+      key: typeof anth.key === "string" ? anth.key : "",
+      model: typeof anth.model === "string" && anth.model ? anth.model : DEFAULT_ANTHROPIC_MODEL,
+      baseUrl: "",
+    };
+    const oai = (r["openai"] ?? {}) as Partial<OpenAiConfig>;
+    d.local = { ...d.local, ...oai };
+    const wl = (r["webllm"] ?? {}) as { model?: unknown };
+    if (typeof wl.model === "string") d.webllm.model = wl.model;
+    d.kind = provider === "openai" ? "local" : provider === "webllm" ? "webllm" : "cloud";
+    d.cloud.vendor = "anthropic";
+    return d;
+  }
+
+  // -- current shape ----------------------------------------------------------
+  const kind: ProviderKind =
+    r["kind"] === "local" || r["kind"] === "webllm" ? r["kind"] : "cloud";
+  const cloud = (r["cloud"] ?? {}) as { vendor?: unknown; vendors?: unknown };
+  const vendors = emptyVendors();
+  if (cloud.vendors && typeof cloud.vendors === "object") {
+    const stored = cloud.vendors as Record<string, Partial<CloudVendorConfig>>;
+    for (const v of Object.keys(vendors) as CloudVendor[]) {
+      const cv = stored[v];
+      if (cv && typeof cv === "object") {
+        vendors[v] = {
+          key: typeof cv.key === "string" ? cv.key : "",
+          model: typeof cv.model === "string" ? cv.model : vendors[v].model,
+          baseUrl: typeof cv.baseUrl === "string" ? cv.baseUrl : vendors[v].baseUrl,
+        };
+      }
+    }
+  }
+  const vendor: CloudVendor = isCloudVendor(cloud.vendor) ? cloud.vendor : "anthropic";
+  const local = (r["local"] ?? {}) as Partial<OpenAiConfig>;
+  const webllm = (r["webllm"] ?? {}) as { model?: unknown; pinned?: unknown };
   return {
-    provider,
-    anthropic: { ...d.anthropic, ...(r.anthropic ?? {}) },
-    openai: { ...d.openai, ...(r.openai ?? {}) },
-    webllm: { ...d.webllm, ...(r.webllm ?? {}) },
+    kind,
+    cloud: { vendor, vendors },
+    local: { ...d.local, ...local },
+    webllm: {
+      model: typeof webllm.model === "string" ? webllm.model : "",
+      pinned: Array.isArray(webllm.pinned)
+        ? webllm.pinned.filter((x): x is string => typeof x === "string")
+        : [],
+    },
   };
 }
 
 let cache: AiConfig | null = null;
+
+/** The Anthropic key (cloud vendor "anthropic"), for the legacy-key mirror. */
+function anthropicKey(cfg: AiConfig): string {
+  return cfg.cloud.vendors.anthropic.key;
+}
 
 /** Read the AI config, migrating the legacy single-key storage on first use. */
 export function getAiConfig(): AiConfig {
@@ -161,7 +296,7 @@ export function getAiConfig(): AiConfig {
     } else {
       // Migrate a legacy Anthropic key so existing users keep working.
       const legacy = localStorage.getItem(LEGACY_KEY);
-      if (legacy) cfg.anthropic.key = legacy;
+      if (legacy) cfg.cloud.vendors.anthropic.key = legacy;
     }
   } catch {
     // storage unavailable / corrupt — fall back to defaults
@@ -177,7 +312,8 @@ export function updateAiConfig(patch: Partial<AiConfig>): AiConfig {
   try {
     localStorage.setItem(CONFIG_STORAGE, JSON.stringify(next));
     // Keep the legacy key mirror in sync so a downgrade still finds the key.
-    if (next.anthropic.key) localStorage.setItem(LEGACY_KEY, next.anthropic.key);
+    const key = anthropicKey(next);
+    if (key) localStorage.setItem(LEGACY_KEY, key);
     else localStorage.removeItem(LEGACY_KEY);
   } catch {
     // storage unavailable — the in-memory cache still reflects the change
@@ -187,22 +323,26 @@ export function updateAiConfig(patch: Partial<AiConfig>): AiConfig {
 
 /** Is the ACTIVE provider ready to run (key/endpoint/model as required)? */
 export function isAiConfigured(cfg: AiConfig = getAiConfig()): boolean {
-  switch (cfg.provider) {
-    case "anthropic":
-      return cfg.anthropic.key.trim() !== "";
-    case "openai":
-      return cfg.openai.baseUrl.trim() !== "" && cfg.openai.model.trim() !== "";
+  switch (cfg.kind) {
+    case "cloud": {
+      const v = cfg.cloud.vendors[cfg.cloud.vendor];
+      const meta = CLOUD_VENDORS[cfg.cloud.vendor];
+      const hasEndpoint = meta.native || v.baseUrl.trim() !== "";
+      return v.key.trim() !== "" && v.model.trim() !== "" && hasEndpoint;
+    }
+    case "local":
+      return cfg.local.baseUrl.trim() !== "" && cfg.local.model.trim() !== "";
     case "webllm":
       return cfg.webllm.model.trim() !== "";
   }
 }
 
-/** Human label for a provider id (menus, hints). */
-export function providerLabel(id: ProviderId): string {
-  switch (id) {
-    case "anthropic":
-      return "Anthropic (cloud)";
-    case "openai":
+/** Human label for a provider category (the 3 buttons + status line). */
+export function kindLabel(kind: ProviderKind): string {
+  switch (kind) {
+    case "cloud":
+      return "Cloud";
+    case "local":
       return "Local server (OpenAI-compatible)";
     case "webllm":
       return "In-browser (WebGPU)";

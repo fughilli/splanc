@@ -97,4 +97,51 @@ const CSS = `
   color: var(--text-dim);
 }
 .aiset-badge.tools { background: var(--accent); color: #000; font-weight: 600; }
+
+/* Per-chip download/load/delete controls */
+.aiset-card-head { display: flex; align-items: center; gap: var(--sp-2); }
+.aiset-card-head .aiset-card-name { flex: 1 1 auto; }
+.aiset-card-ctrls { flex: 0 0 auto; display: flex; gap: 6px; }
+.aiset-ctrl {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.aiset-ctrl svg { width: 18px; height: 18px; }
+.aiset-ctrl:disabled { cursor: default; opacity: 0.9; }
+.aiset-ctrl.blue { color: #4a9eff; border-color: color-mix(in srgb, #4a9eff 45%, var(--border)); }
+.aiset-ctrl.green { color: #2fbf5f; border-color: color-mix(in srgb, #2fbf5f 55%, var(--border)); }
+.aiset-ctrl.red { color: #e5484d; border-color: color-mix(in srgb, #e5484d 45%, var(--border)); }
+.aiset-ctrl.gray { color: var(--text-dim); }
+.aiset-ctrl.yellow { color: #f0b429; border-color: color-mix(in srgb, #f0b429 55%, var(--border)); }
+.aiset-ctrl.busy {
+  position: relative;
+  overflow: hidden;
+  color: var(--text-dim);
+}
+.aiset-ctrl.busy::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 20%,
+    color-mix(in srgb, var(--accent) 45%, transparent) 50%,
+    transparent 80%
+  );
+  transform: translateX(-100%);
+  animation: aiset-shimmer 1.1s ease-in-out infinite;
+}
+@keyframes aiset-shimmer {
+  to { transform: translateX(100%); }
+}
+.aiset-chip-progress { margin: 6px 0 0; }
+.aiset-chip-progress .aiset-progress > i { background: #4a9eff; }
 `;
