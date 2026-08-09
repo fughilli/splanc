@@ -219,6 +219,12 @@ archive_override(
     # toolchain hashes (were fakeHash → CI hash mismatch) + the embedded CI.
     # (569102d is e37969f with a commit-message-only rewrite; identical tree.)
     integrity = "sha256-7Ueh/m+aZh+HszxgLoBTcTbKyiGKN1jMTOY19XjrASc=",
+    patch_strip = 1,
+    # FUG-90: add ledmapper_gen_key() to //libs/tls:selfsigned so the player
+    # generates a per-device EC key on-device instead of baking one shared key
+    # into every firmware image. Additive-only patch (a new function in the
+    # existing TU); fold it upstream and drop this on the next embedded bump.
+    patches = ["//patches:embedded-fug90-gen-key.patch"],
     strip_prefix = "embedded-569102d541664d790fc708206f450dce477ca220",
     urls = ["https://github.com/fughilli/embedded/archive/569102d541664d790fc708206f450dce477ca220.tar.gz"],
 )

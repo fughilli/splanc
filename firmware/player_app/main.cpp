@@ -40,14 +40,13 @@
 
 #include "firmware/landing/landing_page.h"
 #include "firmware/player_app/improv_ble.h"
-#include "selfsigned.h"  // @embedded//libs/tls: on-device cert re-issuance
+#include "selfsigned.h"  // @embedded//libs/tls: on-device keygen + cert re-issuance
 #include "firmware/player_app/color_correction.h"
 #include "firmware/player_app/improv_codec.h"
 #include "firmware/player_app/led_config.h"
 #include "firmware/player_app/player_ffi.h"
 #include "firmware/player_app/serial_log.h"
 #include "firmware/player_app/ws_codec.h"
-#include "firmware/player_app/devcert/dev_cert.h"
 
 // The player protocol handler (lm_player_handle -> Player::handle) decodes a
 // ClientMessage and builds a ServerMessage as by-value protobuf structs on the
@@ -1123,14 +1122,21 @@ static void emit_perf_report_if_due() {
 // client (ws OR wss) is meant to be active at a time.
 static httpd_handle_t wss = nullptr;
 
-// The cert the wss server presents. Defaults to the build-time dev cert (no SAN,
-// used only pre-join / AP mode); after a LAN join we re-issue one carrying the
-// live STA IP in its SAN (see reissue_cert_for_lan) so browsers accept it. The
-// PRIVATE KEY is always the build-time kDevKeyPem — we only re-sign a new cert
-// for it, avoiding slow on-device keygen.
-static const char *g_wss_cert = kDevCertPem;
-static size_t g_wss_cert_len = sizeof kDevCertPem;
-// PEM of the re-issued SAN cert. An EC P-256 leaf is ~600 B in PEM; sized
+// The per-device wss PRIVATE KEY (EC P-256, PEM incl. trailing NUL), generated
+// on first boot and persisted in NVS (see load_or_gen_dev_key). Formerly a single
+// key baked into every firmware image — a fatal leak once the .bin ships publicly
+// (FUG-90); now each device holds its own. All certs (the boot cert and every
+// reissue) are re-signed for THIS key, so it never leaves the device. An EC
+// P-256 private key is ~230 B in PEM; sized generously.
+static char g_dev_key[512];
+static size_t g_dev_key_len = 0;
+// The cert the wss server presents — always re-signed on-device for g_dev_key.
+// The boot cert (issue_boot_cert) carries the soft-AP IP + <hostname>.local SAN;
+// after a LAN join we re-issue one carrying the live STA IP too (see
+// reissue_cert_for_lan) so browsers accept it by IP.
+static const char *g_wss_cert = nullptr;
+static size_t g_wss_cert_len = 0;
+// PEM of the (re-)issued SAN cert. An EC P-256 leaf is ~600 B in PEM; sized
 // generously (an earlier RSA-2048 leaf at ~1.4 KB overflowed a 1024 buffer with
 // -0x002A MBEDTLS_ERR_BASE64_BUFFER_TOO_SMALL).
 static char g_gen_cert[2048];
@@ -1239,12 +1245,70 @@ static esp_err_t wss_health_handler(httpd_req_t *req) {
   return httpd_resp_send(req, "ok", 2);
 }
 
+// Load this device's persisted wss private key from NVS, or generate one on the
+// first ever boot and store it (FUG-90: no key is baked into the firmware image).
+// EC P-256 keygen is a one-time few-hundred-ms cost; thereafter it's an NVS read.
+// Returns true once g_dev_key/g_dev_key_len hold a usable PEM key. On a keygen
+// failure it returns false WITHOUT persisting, so the next boot retries rather
+// than caching a broken key; :443 stays down until then (browsers can't reach a
+// keyless TLS server anyway).
+static bool load_or_gen_dev_key() {
+  String stored = prefs.getString("devkey", "");
+  if (stored.length() > 0 && stored.length() < sizeof g_dev_key) {
+    memcpy(g_dev_key, stored.c_str(), stored.length() + 1);  // include NUL
+    g_dev_key_len = stored.length() + 1;  // esp-tls / mbedtls want the NUL counted
+    return true;
+  }
+  int ret = ledmapper_gen_key(g_dev_key, sizeof g_dev_key);
+  if (ret != 0) {
+    Log().printf("[wss] device key generation failed: -0x%04X (heap=%u); will "
+                 "retry next boot\n",
+                 -ret, (unsigned)esp_get_free_heap_size());
+    g_dev_key_len = 0;
+    return false;
+  }
+  g_dev_key_len = strlen(g_dev_key) + 1;  // include the terminating NUL
+  prefs.putString("devkey", g_dev_key);
+  Log().printf("[wss] generated per-device key (%u B PEM); persisted to NVS\n",
+               (unsigned)(g_dev_key_len - 1));
+  return true;
+}
+
+// Issue the initial wss cert (self-signed for g_dev_key) with the soft-AP IP +
+// <hostname>.local in its SAN, so the AP-mode cert-approval page loads. The live
+// STA IP is added later once joined (reissue_cert_for_lan). Returns true and
+// points g_wss_cert at g_gen_cert on success; on failure leaves the cert unset so
+// the caller skips wss_start() — reissue_cert_for_lan retries after the join.
+static bool issue_boot_cert() {
+  char fqdn[40];
+  snprintf(fqdn, sizeof fqdn, "%s.local", g_hostname);
+  uint32_t ap_ip = (uint32_t)IPAddress(192, 168, 4, 1);  // soft-AP address
+  int ret = ledmapper_selfsign(g_dev_key, g_device_name, &ap_ip, 1, fqdn,
+                               g_gen_cert, sizeof g_gen_cert);
+  if (ret != 0) {
+    Log().printf("[wss] boot cert issue failed: -0x%04X (heap=%u); will issue on "
+                 "LAN join\n",
+                 -ret, (unsigned)esp_get_free_heap_size());
+    return false;
+  }
+  g_wss_cert = g_gen_cert;
+  g_wss_cert_len = strlen(g_gen_cert) + 1;  // esp-tls wants the NUL in the length
+  return true;
+}
+
 static void wss_start() {
+  if (!g_wss_cert || g_dev_key_len == 0) {
+    Log().printf("[wss] no cert/key yet; TLS server not started (heap=%u)\n",
+                 (unsigned)esp_get_free_heap_size());
+    return;
+  }
   httpd_ssl_config_t cfg = HTTPD_SSL_CONFIG_DEFAULT();
   cfg.servercert = (const uint8_t *)g_wss_cert;
   cfg.servercert_len = g_wss_cert_len;
-  cfg.prvtkey_pem = (const uint8_t *)kDevKeyPem;
-  cfg.prvtkey_len = sizeof kDevKeyPem;
+  cfg.prvtkey_pem = (const uint8_t *)g_dev_key;
+  cfg.prvtkey_len = g_dev_key_len;
+  cfg.prvtkey_pem = (const uint8_t *)g_dev_key;
+  cfg.prvtkey_len = g_dev_key_len;
   // TLS is heap-heavy on the C6: each mbedtls session is ~28 KB (the 16 KB
   // record buffer + context), so cap concurrency hard — 2 sessions ≈ 56 KB
   // leaves headroom, while 3+ (a browser's parallel connections plus the app's
@@ -1301,17 +1365,19 @@ static void wss_start() {
 }
 
 // Re-issue the wss cert with the live STA IP (+ the soft-AP IP + a stable mDNS
-// name) in its SAN, then restart the TLS server so browsers accept it — the
-// build-time cert has no SAN and is rejected with a fatal alert (-0x7780). Same
-// private key, deterministic serial/validity → identical bytes for a given IP,
-// so the phone's stored trust exception survives reboots.
+// name) in its SAN, then restart the TLS server so browsers accept it by IP — the
+// boot cert (issue_boot_cert) carries only the soft-AP IP, so a browser reaching
+// the device at its LAN address rejects it with a fatal alert (-0x7780) until the
+// STA IP is added here. Same per-device private key (g_dev_key), deterministic
+// serial/validity → identical bytes for a given IP, so the phone's stored trust
+// exception survives reboots.
 //
 // Idempotent and re-runnable: it re-issues iff the live STA IP differs from the
 // one already in the served cert (g_cert_ip), so an unchanged IP is a cheap
 // no-op and a *changed* IP (DHCP re-lease / reconnect) re-issues. On failure it
 // leaves g_cert_ip unchanged and returns WITHOUT swapping the cert, so the
 // throttled retry in loop() tries again once heap recovers rather than silently
-// stranding the no-SAN cert the browser rejects.
+// stranding a cert the browser rejects.
 static void reissue_cert_for_lan() {
   uint32_t sta_ip = (uint32_t)WiFi.localIP();
   if (sta_ip == 0) return;         // STA IP not settled yet; a got-IP event retries
@@ -1323,7 +1389,7 @@ static void reissue_cert_for_lan() {
   // SAN mDNS name tracks the configured hostname so https://<name>.local matches.
   char fqdn[40];
   snprintf(fqdn, sizeof fqdn, "%s.local", g_hostname);
-  int ret = ledmapper_selfsign(kDevKeyPem, g_device_name, ips, n, fqdn,
+  int ret = ledmapper_selfsign(g_dev_key, g_device_name, ips, n, fqdn,
                                g_gen_cert, sizeof g_gen_cert);
   if (ret != 0) {
     Log().printf("[wss] cert re-issue failed: -0x%04X (heap=%u); keeping current "
@@ -1459,7 +1525,14 @@ void setup() {
   http.on("/healthz", []() { http.send(200, "text/plain", "ok"); });
   http.begin();
   ws_listener.begin();
-  wss_start();  // TLS player on :443 for the hosted https app (direct, no relay)
+  // Bring up TLS on :443 with this device's OWN key: load-or-generate the
+  // per-device key (NVS-persisted; FUG-90 — nothing secret ships in the .bin),
+  // self-sign a boot cert for it, then start the server. If either step fails
+  // under early-boot heap pressure, :443 stays down and reissue_cert_for_lan
+  // brings it up after the LAN join (loop()'s reconcile retries).
+  if (load_or_gen_dev_key() && issue_boot_cert()) {
+    wss_start();  // TLS player on :443 for the hosted https app (direct, no relay)
+  }
 
   // Drive the LEDs from a dedicated high-priority task so the pattern cadence
   // no longer rides on loop()'s cooperative WiFi/HTTP/BLE servicing.

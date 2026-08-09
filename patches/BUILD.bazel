@@ -1,0 +1,5 @@
+# Patch files applied to external modules via *_override(patches=...) in
+# //MODULE.bazel. Exported so those labels resolve.
+package(default_visibility = ["//visibility:public"])
+
+exports_files(glob(["*.patch"]))
