@@ -20,6 +20,18 @@ rust_library(
     edition = "2021",
 )
 
+# The VM with the host-only dynamic opcode profiler compiled in (feature
+# `profile`). Used by //tools/fx_profile to gather the runtime op-mix + adjacent
+# -pair histogram that guides the VM hill-climb. NEVER a firmware/wasm dep — the
+# feature adds a static histogram + per-instruction counter increments.
+rust_library(
+    name = "fx_vm_profile",
+    srcs = ["src/lib.rs"],
+    crate_features = ["profile"],
+    crate_name = "ledmapper_fx_vm",
+    edition = "2021",
+)
+
 rust_test(
     name = "fx_vm_test",
     srcs = ["tests/vm.rs"],

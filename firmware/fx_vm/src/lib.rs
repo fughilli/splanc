@@ -25,6 +25,58 @@ pub const MAX_SEG: usize = 64;
 pub const MAX_NODE: usize = 96;
 pub const MAX_NODE_DEG: usize = 6;
 
+/// Dynamic opcode-execution profiler — HOST-ONLY, compiled in only under the
+/// `profile` cargo feature (so the shipped firmware/wasm build carries zero extra
+/// code or RAM). Single-threaded use only: the host profiler (tools/fx_profile)
+/// runs effects serially, resets between them, and reads the histogram out. It
+/// records both per-opcode execution counts and adjacent-pair counts (the latter
+/// picks superinstruction fusion candidates).
+#[cfg(feature = "profile")]
+pub mod profile {
+    /// Opcodes fit in a u8, so 256 buckets cover every possible value.
+    pub const N_OPS: usize = 256;
+    static mut OP_COUNTS: [u64; N_OPS] = [0; N_OPS];
+    static mut PAIR_COUNTS: [u32; N_OPS * N_OPS] = [0; N_OPS * N_OPS];
+
+    /// Record one executed opcode `op`, following `prev` (`usize::MAX` = none).
+    #[inline]
+    pub(crate) fn record(prev: usize, op: usize) {
+        unsafe {
+            (*core::ptr::addr_of_mut!(OP_COUNTS))[op] += 1;
+            if prev < N_OPS {
+                (*core::ptr::addr_of_mut!(PAIR_COUNTS))[prev * N_OPS + op] += 1;
+            }
+        }
+    }
+
+    /// Zero all counters (call before running an effect to profile).
+    pub fn reset() {
+        unsafe {
+            for c in (*core::ptr::addr_of_mut!(OP_COUNTS)).iter_mut() {
+                *c = 0;
+            }
+            for c in (*core::ptr::addr_of_mut!(PAIR_COUNTS)).iter_mut() {
+                *c = 0;
+            }
+        }
+    }
+
+    /// Total instructions executed since the last [`reset`].
+    pub fn total() -> u64 {
+        unsafe { (*core::ptr::addr_of!(OP_COUNTS)).iter().sum() }
+    }
+
+    /// Execution count for opcode `op`.
+    pub fn op_count(op: u8) -> u64 {
+        unsafe { (*core::ptr::addr_of!(OP_COUNTS))[op as usize] }
+    }
+
+    /// Execution count for the adjacent pair `a` then `b`.
+    pub fn pair_count(a: u8, b: u8) -> u32 {
+        unsafe { (*core::ptr::addr_of!(PAIR_COUNTS))[a as usize * N_OPS + b as usize] }
+    }
+}
+
 /// Opcodes. Operands follow inline in the code stream (little-endian).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
@@ -248,7 +300,7 @@ pub struct Counters {
 
 impl Op {
     #[inline]
-    fn from_u8(b: u8) -> Option<Op> {
+    pub fn from_u8(b: u8) -> Option<Op> {
         // Op is a contiguous enum 0..=ExpFix; guard the range then transmute.
         if b <= Op::ExpFix as u8 {
             Some(unsafe { core::mem::transmute::<u8, Op>(b) })
@@ -1001,6 +1053,8 @@ fn run(
         }};
     }
 
+    #[cfg(feature = "profile")]
+    let mut prof_prev: usize = usize::MAX;
     while pc < code.len() {
         if budget == 0 {
             outcome = Outcome::Budget;
@@ -1031,6 +1085,11 @@ fn run(
             None => break,
         };
         pc += 1;
+        #[cfg(feature = "profile")]
+        {
+            profile::record(prof_prev, op as usize);
+            prof_prev = op as usize;
+        }
         match op {
             Op::PushConst => {
                 let idx = rd_u16(code, pc) as usize;
