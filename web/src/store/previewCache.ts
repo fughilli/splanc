@@ -30,7 +30,12 @@ export const RENDER_VERSION = 2;
 export interface PreviewRecord {
   id: string;
   hash: string;
-  blob: Blob;
+  /**
+   * The .webm as raw bytes, NOT a Blob. Some WebKit/Safari versions fail to
+   * round-trip a Blob stored in IndexedDB (it reads back empty after a reload),
+   * which silently defeats persistence; an ArrayBuffer always survives.
+   */
+  bytes: ArrayBuffer;
   createdAt: number; // epoch ms
 }
 
@@ -134,11 +139,22 @@ class PreviewCache {
     if (this.swept) return;
     this.swept = true;
     try {
-      const all = await tx("readonly", (s) =>
-        reqP(s.getAll() as IDBRequest<PreviewRecord[]>),
-      );
-      const now = Date.now();
-      const evict = selectEvictions(all, now);
+      // Read only (id, createdAt) via a key cursor on the createdAt index — never
+      // loads the (large) webm bytes, so the sweep stays cheap even when full.
+      const meta = await tx("readonly", (s) => {
+        return new Promise<{ id: string; createdAt: number }[]>((resolve, reject) => {
+          const out: { id: string; createdAt: number }[] = [];
+          const cur = s.index("createdAt").openKeyCursor();
+          cur.onsuccess = () => {
+            const c = cur.result;
+            if (!c) return resolve(out);
+            out.push({ id: String(c.primaryKey), createdAt: Number(c.key) });
+            c.continue();
+          };
+          cur.onerror = () => reject(cur.error);
+        });
+      });
+      const evict = selectEvictions(meta, Date.now());
       if (evict.length > 0) {
         await tx("readwrite", (s) => {
           for (const id of evict) s.delete(id);
@@ -159,15 +175,16 @@ class PreviewCache {
       if (!rec) return null;
       if (rec.hash !== cacheKey(source)) return null; // source or pipeline changed
       if (isExpired(rec.createdAt, Date.now())) return null;
-      return rec.blob;
+      return new Blob([rec.bytes], { type: "video/webm" });
     } catch {
       return null;
     }
   }
 
   async put(id: string, source: string, blob: Blob): Promise<void> {
-    const rec: PreviewRecord = { id, hash: cacheKey(source), blob, createdAt: Date.now() };
     try {
+      const bytes = await blob.arrayBuffer();
+      const rec: PreviewRecord = { id, hash: cacheKey(source), bytes, createdAt: Date.now() };
       await tx("readwrite", (s) => s.put(rec));
     } catch {
       // Non-fatal: the clip is still shown this session, just not persisted.

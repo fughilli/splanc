@@ -58,6 +58,52 @@ test("muxWebm emits a well-formed EBML/webm container", () => {
   assert.ok(indexOf(bytes, [5, 6, 7, 8]) >= 0, "delta payload");
 });
 
+test("muxWebm sizes nest exactly — a recursive EBML walk consumes the whole buffer", () => {
+  const frames = Array.from({ length: 120 }, (_, i) => ({
+    data: new Uint8Array([1, 2, 3, 4, 5]),
+    timestampMs: Math.round((i * 1000) / 60),
+    key: i % 60 === 0,
+  }));
+  const b = muxWebm({ width: 64, height: 64, codec: "V_VP9", durationMs: 2000, frames });
+
+  // Minimal EBML reader: element = id (vint) + size (vint) + data.
+  const readVint = (off: number): { val: number; len: number } => {
+    let mask = 0x80;
+    let len = 1;
+    while (!(b[off]! & mask) && len <= 8) ((mask >>= 1), len++);
+    let val = b[off]! & (mask - 1);
+    for (let i = 1; i < len; i++) val = val * 256 + b[off + i]!;
+    return { val, len };
+  };
+  const readId = (off: number): { id: number; len: number } => {
+    let mask = 0x80;
+    let len = 1;
+    while (!(b[off]! & mask) && len <= 4) ((mask >>= 1), len++);
+    let id = 0;
+    for (let i = 0; i < len; i++) id = id * 256 + b[off + i]!;
+    return { id, len };
+  };
+  // Master elements whose bodies are themselves elements (must recurse).
+  const MASTERS = new Set([
+    0x1a45dfa3, 0x18538067, 0x1549a966, 0x1654ae6b, 0xae, 0xe0, 0x1f43b675,
+  ]);
+  const walk = (start: number, end: number): void => {
+    let off = start;
+    while (off < end) {
+      const { id, len: il } = readId(off);
+      off += il;
+      const { val: size, len: sl } = readVint(off);
+      off += sl;
+      const cend = off + size;
+      assert.ok(cend <= end, `element 0x${id.toString(16)} overruns its parent`);
+      if (MASTERS.has(id)) walk(off, cend);
+      off = cend;
+    }
+    assert.equal(off, end, "children consume their parent exactly");
+  };
+  walk(0, b.length);
+});
+
 test("muxWebm keyframe SimpleBlock carries the keyframe flag", () => {
   const bytes = muxWebm({
     width: 2,

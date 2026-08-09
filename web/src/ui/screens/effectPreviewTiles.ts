@@ -2,19 +2,24 @@
  * Lazy 64×64 preview-video tiles for the effects browser (FUG-80). Each effect
  * row registers its thumbnail element here; when it scrolls into view we fetch a
  * cached clip (or render one via the WASM VM) and swap the placeholder icon for
- * a looping <video>. Renders run ONE AT A TIME (single-flight queue) so the
- * WASM render never fights the scroll for the main thread.
+ * a looping <video>. Renders run through a small CONCURRENCY POOL so several
+ * tiles fill in at once (overlapping the async encode/flush waits) without
+ * spawning an unbounded number of WASM VMs / encoders at once.
  */
 
 import { previewCache } from "../../store/previewCache";
 import { renderEffectPreview } from "../../fx/previewVideo";
+
+/** How many previews render concurrently. Small: each still does main-thread VM
+ * work, so this mainly overlaps the async encode/flush waits between them. */
+const RENDER_CONCURRENCY = 3;
 
 export class EffectPreviewTiles {
   private readonly observer: IntersectionObserver | null;
   private readonly tiles = new Map<HTMLElement, { id: string; source: string }>();
   private readonly urls = new Set<string>();
   private queue: HTMLElement[] = [];
-  private running = false;
+  private active = 0;
 
   constructor() {
     this.observer =
@@ -39,21 +44,20 @@ export class EffectPreviewTiles {
     if (!this.tiles.has(el)) return;
     this.observer?.unobserve(el);
     if (!this.queue.includes(el)) this.queue.push(el);
-    void this.drain();
+    this.pump();
   }
 
-  private async drain(): Promise<void> {
-    if (this.running) return;
-    this.running = true;
-    try {
-      while (this.queue.length > 0) {
-        const el = this.queue.shift()!;
-        const t = this.tiles.get(el);
-        if (!t || !el.isConnected) continue;
-        await this.renderTile(el, t.id, t.source);
-      }
-    } finally {
-      this.running = false;
+  /** Start renders up to the concurrency limit; each frees its slot on finish. */
+  private pump(): void {
+    while (this.active < RENDER_CONCURRENCY && this.queue.length > 0) {
+      const el = this.queue.shift()!;
+      const t = this.tiles.get(el);
+      if (!t || !el.isConnected) continue;
+      this.active++;
+      void this.renderTile(el, t.id, t.source).finally(() => {
+        this.active--;
+        this.pump();
+      });
     }
   }
 
