@@ -15,6 +15,10 @@ export type IconName =
   | "camera"
   | "map"
   | "graph"
+  | "tree"
+  | "autoscale"
+  | "center"
+  | "reset"
   | "gamma"
   | "play"
   | "pause"
@@ -49,16 +53,29 @@ export type IconName =
 
 // -- shared fragments for the device-transfer glyphs (24x24, top→bottom layout:
 //    content over a small device pentagon, joined by a direction arrow) --------
-/** Small device pentagon at the bottom (the transfer target). */
+/** Small device pentagon at the bottom (the transfer target — effect glyphs). */
 const DEVICE_SMALL = `<path d="M12 14.5 16 17.4 14.5 22.1 9.5 22.1 8 17.4Z"/>`;
-/** Folded map, compact, at the top. */
-const MAP_TOP = `<path d="M6 3.6 10 3 14 3.6 18 3 18 7.4 14 8 10 7.4 6 8Z"/><path d="M10 3V7.4"/><path d="M14 3.6V8"/>`;
+/** Bigger device pentagon for the MAP glyphs (centre ≈ y17.8). */
+const DEVICE_MAP = `<path d="M12 13 17 16.4 15 21.6 9 21.6 7 16.4Z"/>`;
+/** Folded map at the top — tall enough to read clearly (centre ≈ y6). */
+const MAP_TOP = `<path d="M6 3 10 2 14 3 18 2 18 9 14 10 10 9 6 10Z"/><path d="M10 2V9"/><path d="M14 3V10"/>`;
 /** Four-point sparkle, compact, at the top. */
 const SPARK_TOP = `<path d="M12 1.9 12.78 4.32 15.2 5.1 12.78 5.88 12 8.3 11.22 5.88 8.8 5.1 11.22 4.32Z"/>`;
 /** Arrow pointing DOWN into the device (send). */
 const ARROW_DOWN = `<path d="M12 8.6V13.9"/><path d="M9.7 11.6 12 13.9 14.3 11.6"/>`;
 /** Arrow pointing UP out of the device (pull). */
 const ARROW_UP = `<path d="M12 13.9V8.6"/><path d="M9.7 10.9 12 8.6 14.3 10.9"/>`;
+
+// Map transfer arrows run centre-to-centre — from the map's centre (≈y6) to the
+// device's centre (≈y17.8) — so the arrow visually links the two pictograms.
+const MAP_ARROW_DOWN = `M12 6V17.8M9.6 15.4 12 17.8 14.4 15.4`;
+const MAP_ARROW_UP = `M12 17.8V6M9.6 8.4 12 6 14.4 8.4`;
+// Draw the arrow twice: first a fat stroke in the surface colour (a "cut" halo
+// that carves a gap where the shaft crosses the map/device outlines), then the
+// arrow itself on top. `--icon-cut` lets each surface set the halo to its own
+// background (defaults to --surface-2, the tile/sheet colour these sit on).
+const cut = (d: string): string =>
+  `<path style="stroke:var(--icon-cut,var(--surface-2));stroke-width:3.6;fill:none" d="${d}"/><path d="${d}"/>`;
 
 // Each entry is the inner markup of a 24x24 <symbol> (currentColor stroke).
 const PATHS: Record<IconName, string> = {
@@ -68,8 +85,8 @@ const PATHS: Record<IconName, string> = {
   // Transfer glyphs: content (map / sparkle) over the device pentagon, with a
   // vertical arrow — pointing DOWN into the device (send) or UP out of it
   // (pull). One consistent design language for send/pull across maps + effects.
-  "map-to-device": `${MAP_TOP}${ARROW_DOWN}${DEVICE_SMALL}`,
-  "map-from-device": `${MAP_TOP}${ARROW_UP}${DEVICE_SMALL}`,
+  "map-to-device": `${MAP_TOP}${DEVICE_MAP}${cut(MAP_ARROW_DOWN)}`,
+  "map-from-device": `${MAP_TOP}${DEVICE_MAP}${cut(MAP_ARROW_UP)}`,
   "effect-to-device": `${SPARK_TOP}${ARROW_DOWN}${DEVICE_SMALL}`,
   "effect-from-device": `${SPARK_TOP}${ARROW_UP}${DEVICE_SMALL}`,
   link: `<path d="M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1"/>`,
@@ -77,6 +94,14 @@ const PATHS: Record<IconName, string> = {
   camera: `<path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>`,
   map: `<path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2z"/><path d="M9 4v14M15 6v14"/>`,
   graph: `<circle cx="6" cy="18" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="18" cy="18" r="2"/><path d="M8 17l8-9M8 18h8"/>`,
+  // Four diagonal arrows to the corners (fit / autoscale to bounds).
+  autoscale: `<path d="M9 9 4 4M4 4h4M4 4v4M15 9 20 4M20 4h-4M20 4v4M9 15 4 20M4 20h4M4 20v-4M15 15 20 20M20 20h-4M20 20v-4"/>`,
+  // Bullseye (center on origin): concentric rings + a filled centre dot.
+  center: `<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.5"/><circle cx="12" cy="12" r="1.1" fill="currentColor" stroke="none"/>`,
+  // Counter-clockwise circular arrow (reset / revert).
+  reset: `<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>`,
+  // 3-tier binary tree (topology): root → 2 → 4, nodes as small filled dots.
+  tree: `<path d="M12 4 6.5 12M12 4 17.5 12M6.5 12 4 20M6.5 12 9 20M17.5 12 15 20M17.5 12 20 20"/><g fill="currentColor" stroke="none"><circle cx="12" cy="4" r="1.3"/><circle cx="6.5" cy="12" r="1.3"/><circle cx="17.5" cy="12" r="1.3"/><circle cx="4" cy="20" r="1.3"/><circle cx="9" cy="20" r="1.3"/><circle cx="15" cy="20" r="1.3"/><circle cx="20" cy="20" r="1.3"/></g>`,
   // Gamma/exponential curve on axes (color-correction curve).
   gamma: `<path d="M5 3v16h16"/><path d="M5 19c6 0 10-3 14-14"/>`,
   play: `<path d="M8 5v14l11-7z"/>`,
@@ -108,7 +133,7 @@ const PATHS: Record<IconName, string> = {
   folder: `<path d="M3 7a2 2 0 0 1 2-2h3.5l2 2H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>`,
   chevron: `<path d="M9 6l6 6-6 6"/>`,
   // Four-way move arrows (relocate a pane between regions).
-  move: `<path d="M12 3v18M3 12h18"/><path d="M12 3l-2.5 2.5M12 3l2.5 2.5"/><path d="M12 21l-2.5-2.5M12 21l2.5-2.5"/><path d="M3 12l2.5-2.5M3 12l2.5 2.5"/><path d="M21 12l-2.5-2.5M21 12l2.5 2.5"/>`,
+  move: `<path d="M12 3v18M3 12h18"/><path d="M12 3l-2.5 2.5M12 3l2.5 2.5"/><path d="M12 21l-2.5-2.5M12 21l2.5-2.5"/><path d="M3 12l2.5-2.5M3 12l2.5 2.5"/><path d="M21 12l-2.5-2.5M21 12l-2.5 2.5"/>`,
   // 3x3 reference grid (floor overlay toggle).
   grid: `<rect x="4" y="4" width="16" height="16" rx="1"/><path d="M4 9.3h16M4 14.7h16M9.3 4v16M14.7 4v16"/>`,
   // World triad: three axes radiating from a common origin (XYZ guidance).

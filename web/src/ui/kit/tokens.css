@@ -81,6 +81,7 @@ a {
   justify-content: center;
   gap: var(--sp-2);
   background: var(--accent);
+  --icon-cut: var(--accent); /* transfer-icon "cut" halo matches the button bg */
   color: #fff;
   border: 0;
   border-radius: var(--r-ctrl);
@@ -102,10 +103,12 @@ a {
 }
 .k-btn--quiet {
   background: var(--surface-2);
+  --icon-cut: var(--surface-2);
   color: var(--text);
 }
 .k-btn--danger {
   background: var(--err);
+  --icon-cut: var(--err);
   color: #fff;
 }
 .k-btn--block {
@@ -176,6 +179,11 @@ a {
 .k-slider {
   display: block;
   margin-bottom: var(--sp-3);
+}
+/* Greyed out (e.g. Cleanup while Fine-tune drives the extraction directly). */
+.k-slider--disabled {
+  opacity: 0.4;
+  pointer-events: none;
 }
 .k-slider .k-slider-head {
   display: flex;
@@ -527,4 +535,15 @@ a {
 }
 .k-actiontile--danger:hover {
   border-color: var(--err);
+}
+/* Toggle tiles (e.g. map-detail Transform / Topology) light up when active. */
+.k-actiontile--on {
+  border-color: var(--accent);
+  background: var(--accent-quiet);
+  color: var(--text);
+}
+/* Greyed-out tile (e.g. Save with no pending edits). */
+.k-actiontile--disabled {
+  opacity: 0.4;
+  pointer-events: none;
 }

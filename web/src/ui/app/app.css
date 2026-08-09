@@ -16,7 +16,11 @@ body.is-locked {
 .shell {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  /* Definite viewport height (not just min-height) so the scrollable outlet has
+     a resolvable height — lets a screen use height:100% to fit without scroll
+     (e.g. the map detail 3D view). Falls back to vh where dvh is unsupported. */
+  height: 100vh;
+  height: 100dvh;
   max-width: 560px;
   margin: 0 auto;
 }
@@ -401,17 +405,102 @@ body.is-locked {
   color: var(--text);
 }
 .detail-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-2);
   margin-bottom: var(--sp-3);
 }
-.detail-overflow {
+
+/* Fit the 3D view + action tiles into the viewport (no scroll) while no editor
+   panel is open: the screen fills the outlet as a column and the canvas flexes
+   to take whatever height the tiles/meta leave. When a panel opens there's much
+   more content, so these rules drop out and the screen scrolls normally. */
+/* Map detail is a flex column. CLOSED: the 3D view flexes to fill and the whole
+   screen fits the viewport (no scroll). OPEN: the 3D view is frozen at its fill
+   height (JS sets an inline height) and the panel + tiles push the screen taller,
+   so the outlet scrolls — the 3D view keeps its size instead of shrinking. */
+.screen--detail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.screen--detail:not(.detail--panel-open) {
+  height: 100%;
+}
+.screen--detail.detail--panel-open {
+  min-height: 100%;
+}
+.screen--detail .detail-main {
+  min-height: 0;
+  /* Column (not the base row): main holds only the stage now, so the stage's
+     flex governs its HEIGHT and its width just stretches. In a row flex, a
+     flex:0 0 auto stage shrink-wraps its width, which feeds back into the
+     canvas's intrinsic width (MapView rewrites it each frame) and explodes. */
+  flex-direction: column;
+  align-items: stretch;
+}
+.screen--detail:not(.detail--panel-open) .detail-main {
+  flex: 1 1 auto;
+}
+.screen--detail.detail--panel-open .detail-main {
+  flex: 0 0 auto; /* natural height = the frozen stage */
+}
+.screen--detail .detail-stage {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.screen--detail:not(.detail--panel-open) .detail-stage {
+  flex: 1 1 auto;
+}
+.screen--detail.detail--panel-open .detail-stage {
+  flex: 0 0 auto; /* holds the inline (frozen) height */
+}
+.screen--detail .detail-canvas {
+  /* basis 0 (not auto) so the canvas's own backing-store size — which MapView's
+     ResizeObserver rewrites each frame — can't feed back into the flex sizing
+     (that caused a ResizeObserver resize loop). */
+  flex: 1 1 0;
+  min-height: 140px;
+  aspect-ratio: auto;
+}
+.screen--detail .detail-actions {
+  flex: 0 0 auto;
+  /* Even spacing above (from the divider) and below (from the tab strip = the
+     screen's bottom padding). */
+  margin-top: var(--sp-4);
+  margin-bottom: 0;
+}
+
+/* Collapsible editor-panel region between the 3D view and the tiles. A "split"
+   divider — a top border always, a bottom border once open — rolls apart as the
+   height animates; the two panels crossfade; tall content scrolls inside. */
+.detail-panelregion {
+  flex: 0 0 auto;
+  position: relative;
+  height: 0;
+  /* Clip while rolling; the region grows to the panel's full height (no internal
+     scroll) — the overall screen scrolls instead. */
+  overflow: hidden;
+  border-top: 1px solid var(--border);
+  transition: height var(--motion-screen) var(--ease);
+}
+.detail-panelregion--open {
+  border-bottom: 1px solid var(--border);
+}
+.detail-panelregion .detail-panel {
   position: absolute;
-  right: var(--sp-2);
-  top: var(--sp-2);
-  z-index: 10;
-  background: rgba(10, 10, 14, 0.5);
+  top: 0;
+  left: 0;
+  right: 0;
+  /* Flat inside the region (the region + its split divider are the container). */
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-screen) var(--ease);
+}
+.detail-panelregion .detail-panel--show {
+  opacity: 1;
+  pointer-events: auto;
 }
 .toggle-chip {
   background: var(--surface-2);
@@ -444,12 +533,27 @@ body.is-locked {
   margin-bottom: var(--sp-3);
 }
 .topo-disclosure {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
   background: transparent;
   border: 0;
-  color: var(--accent);
+  border-top: 1px solid var(--border);
+  color: var(--text);
   font: inherit;
+  font-weight: 600;
   cursor: pointer;
-  padding: var(--sp-1) 0;
+  padding: var(--sp-2) 0;
+}
+.topo-disclosure svg {
+  width: 16px;
+  height: 16px;
+  color: var(--text-dim);
+  transition: transform var(--motion-micro) var(--ease);
+}
+.topo-disclosure--open svg {
+  transform: rotate(90deg);
 }
 .topo-progress {
   color: var(--warn);
@@ -520,22 +624,38 @@ body.is-locked {
   width: 3.5rem;
   flex: 0 0 auto;
 }
-.xform-btn {
-  min-width: 2.4rem;
-  padding: 0.4rem 0.5rem;
+.xform-fields {
+  display: flex;
+  gap: var(--sp-2);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.xform-field {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  flex: 1 1 0;
+  min-width: 0;
+}
+.xform-field > span {
+  color: var(--text-dim);
+  font-size: var(--f-caption);
+}
+.xform-field input {
+  width: 100%;
+  min-width: 0;
   background: var(--surface-2);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: var(--r-ctrl);
+  padding: 0.35rem 0.4rem;
   font: inherit;
-  cursor: pointer;
 }
-.xform-btn:hover {
-  border-color: var(--accent);
+.xform-row .k-btn {
+  flex: 0 0 auto;
 }
-.xform-dirty {
-  color: var(--warn);
-  font-size: var(--f-caption);
+.xform-tools {
+  margin-top: var(--sp-3);
 }
 
 /* --- effects --- */
