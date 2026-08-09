@@ -48,6 +48,7 @@ import { estimateAcrossDevices, describeFleet } from "../../effects/multiDevice"
 import { estimateFrameTime, DEFAULT_BUDGET_MODEL, type BudgetModel } from "../../effects/costModel";
 import { budgetFromEstimate } from "../../effects/budget";
 import { costTableStore } from "../../store/costTableStore";
+import { builtinCostsToPrompt } from "../../effects/perfContext";
 import { BudgetBar } from "./budgetBar";
 import { MidiRouter, isDrivable } from "../../midi/router";
 import { MidiMapPanel } from "../../effects/editor/midi-panel";
@@ -1117,8 +1118,20 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     chatSend.disabled = true;
     setChatStatus("Thinking…");
 
+    // Per-device builtin cost listing (from the user's calibrated board if any,
+    // else the default model) so the model knows the relative cost of each fn.
+    let deviceCosts: string | undefined;
     try {
-      const finalText = await chatTurn(chatHistory, {
+      const { table, stored } = await costTableStore.resolveTable();
+      deviceCosts = builtinCostsToPrompt(table, stored !== null);
+    } catch {
+      deviceCosts = undefined;
+    }
+
+    try {
+      const finalText = await chatTurn(
+        chatHistory,
+        {
         onThinking: () => setChatStatus("Thinking…"),
         onSetScript: async (source) => {
           setChatStatus("Generating code…");
@@ -1149,7 +1162,9 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
           return estimateFleetReport();
         },
         onToolUse: () => undefined,
-      });
+        },
+        deviceCosts,
+      );
       clearChatStatus();
       appendChat("assistant", finalText || "(done)");
     } catch (e) {

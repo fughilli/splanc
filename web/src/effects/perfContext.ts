@@ -15,7 +15,72 @@ import type {
   FrameEstimate,
   HotOpcode,
 } from "./costModel";
+import { costFor } from "./costModel";
 import type { PerfReportMessage } from "../net/proto";
+
+/** Language builtin → cost-table key (mirrors the compiler's opcode lowering).
+ * Math fns sub-key their dispatch opcode (`UnMath:sin`); the rest are 1:1. */
+const BUILTIN_COST_KEY: Record<string, string> = {
+  mul: "Mul",
+  add: "Add",
+  sub: "Sub",
+  div: "Div",
+  sin: "UnMath:sin",
+  cos: "UnMath:cos",
+  tan: "UnMath:tan",
+  abs: "UnMath:abs",
+  floor: "UnMath:floor",
+  ceil: "UnMath:ceil",
+  fract: "UnMath:fract",
+  sqrt: "UnMath:sqrt",
+  exp: "UnMath:exp",
+  log: "UnMath:log",
+  sign: "UnMath:sign",
+  min: "BinMath:min",
+  max: "BinMath:max",
+  pow: "BinMath:pow",
+  mod: "BinMath:mod",
+  step: "BinMath:step",
+  atan2: "BinMath:atan2",
+  clamp: "Clamp",
+  mix: "Mix",
+  smoothstep: "Smoothstep",
+  dot: "Dot",
+  cross: "Cross",
+  length: "Length",
+  distance: "Distance",
+  normalize: "Normalize",
+  hash: "Hash1",
+  hsv2rgb: "Hsv2Rgb",
+  palette0: "Palette",
+};
+
+/**
+ * A compact per-builtin cost listing for the effect-AI, GENERATED FROM THE USER'S
+ * DEVICE benchmark (or the shipped default model when the board isn't calibrated).
+ * Costs are shown relative to a float multiply so the model can rank tradeoffs
+ * regardless of clock — and `shade()` runs each builtin once PER LED, so the
+ * ranking is what keeps an effect inside the frame budget. Dynamic per-device:
+ * inject it as an UNcached block, never in the frozen system prefix.
+ */
+export function builtinCostsToPrompt(table: CostTable, calibrated: boolean): string {
+  const fb = table.fallbackCost;
+  const anchor = Math.max(1, costFor(table.costs, "Mul", fb));
+  const fmt = (m: number): string => (m < 9.95 ? m.toFixed(1) : Math.round(m).toString());
+  const list = Object.entries(BUILTIN_COST_KEY)
+    .map(([name, key]) => [name, costFor(table.costs, key, fb) / anchor] as const)
+    .sort((a, b) => a[1] - b[1])
+    .map(([name, mult]) => `${name} ${fmt(mult)}x`)
+    .join(", ");
+  const mhz = (table.cpuHz / 1e6).toFixed(0);
+  return [
+    `BUILTIN COSTS on this device (${table.soc} @ ${mhz} MHz, ${
+      calibrated ? "measured on your board" : "default model"
+    }) — per call, relative to a float multiply. shade() runs each ONCE PER LED, so favor the cheap ones:`,
+    `  ${list}`,
+    "Hoist the pricey builtins (pow/atan2/log/exp/length/normalize/distance/smoothstep) out of shade() into update() or precompute into state; swap sin/cos/pow for fixed16/fixed8 (LUT trig, no soft-float) or step/mix/polynomials; avoid length/normalize where a squared distance works (hidden sqrt).",
+  ].join("\n");
+}
 
 /** The normalized metrics block shared by measured + predicted sources. */
 export interface PerfMetrics {

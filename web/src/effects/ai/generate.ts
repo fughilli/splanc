@@ -435,12 +435,20 @@ async function messagesRequest(
   messages: ChatMessage[],
   tools: readonly unknown[],
   signal?: AbortSignal,
+  deviceCosts?: string,
 ): Promise<{
   content: ContentBlock[];
   stop_reason: string | null;
 }> {
   const key = getApiKey();
   if (!key) throw new Error("no Anthropic API key set (add one in AI settings)");
+  // Frozen cacheable prefix first (caching engages across turns), then an
+  // UNcached per-device builtin-cost block so it can vary by board without
+  // busting the cache.
+  const system: unknown[] = [
+    { type: "text", text: CHAT_SYSTEM, cache_control: { type: "ephemeral" } },
+  ];
+  if (deviceCosts) system.push({ type: "text", text: deviceCosts });
   const resp = await fetch(API_URL, {
     method: "POST",
     headers: {
@@ -454,10 +462,7 @@ async function messagesRequest(
       model: MODEL,
       max_tokens: 4000,
       thinking: { type: "adaptive" },
-      // Frozen, cacheable system prefix so caching engages across turns.
-      system: [
-        { type: "text", text: CHAT_SYSTEM, cache_control: { type: "ephemeral" } },
-      ],
+      system,
       tools,
       messages: messages.map((m) => ({ role: m.role, content: m.content })),
     }),
@@ -494,7 +499,11 @@ export function editorContext(opts: {
  * text. Executes set_script / capture_preview locally; a few rounds of
  * auto-iteration are natural since the model gets compile results back.
  */
-export async function chatTurn(history: ChatMessage[], hooks: ChatHooks): Promise<string> {
+export async function chatTurn(
+  history: ChatMessage[],
+  hooks: ChatHooks,
+  deviceCosts?: string,
+): Promise<string> {
   let finalText = "";
   const MAX_ROUNDS = 8; // hard cap so a misbehaving loop can't run forever
   // Advertise the optional tools only when the editor can fulfill them.
@@ -505,7 +514,12 @@ export async function chatTurn(history: ChatMessage[], hooks: ChatHooks): Promis
   ];
   for (let round = 0; round < MAX_ROUNDS; round++) {
     hooks.onThinking?.();
-    const { content, stop_reason } = await messagesRequest(history, tools, hooks.signal);
+    const { content, stop_reason } = await messagesRequest(
+      history,
+      tools,
+      hooks.signal,
+      deviceCosts,
+    );
     history.push({ role: "assistant", content });
 
     // Surface any assistant text.

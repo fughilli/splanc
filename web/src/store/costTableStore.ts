@@ -152,9 +152,11 @@ export const DEFAULT_COSTS: CostMap = {
   "UnMath:ceil": 16,
   "UnMath:fract": 20,
   "UnMath:sqrt": 60,
-  "UnMath:sin": 120,
-  "UnMath:cos": 120,
-  "UnMath:tan": 160,
+  // sin/cos/tan are LUT-accelerated (flash table + interp, no soft-float poly) —
+  // ~half their old cost; tan is sin/cos + a divide.
+  "UnMath:sin": 65,
+  "UnMath:cos": 65,
+  "UnMath:tan": 100,
   "UnMath:exp": 140,
   "UnMath:log": 140,
   BinMath: 130,
@@ -164,8 +166,9 @@ export const DEFAULT_COSTS: CostMap = {
   "BinMath:mod": 45,
   "BinMath:atan2": 180,
   "BinMath:pow": 180,
-  Hash1: 60,
-  Hash3: 120,
+  // Integer bit-mix hash (no fract(sin)) — cheap: a few int ops + one f32 convert.
+  Hash1: 30,
+  Hash3: 42,
   Hsv2Rgb: 90,
   Palette: 70,
 };
