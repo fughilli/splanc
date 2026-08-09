@@ -24,12 +24,14 @@ f32 is soft-float). Measured on the real rig via the fx_bench HITL.
 - **LUT float sin/cos** (`fx_vm`) — compile-time f32 table in flash, 0 RAM.
   Measured cos −46%/op; cascades to tan + hash.
 - **Integer bit-mix hash** replacing `fract(sin())` — measured −47…−68%.
-- **Native int/fixed builtins.** `min`/`max`/`abs`/`clamp`/`mod` used to lower to
-  the FLOAT ops, which reinterpret an int/fixed scaled-integer stack word as f32
-  (wrong for negatives + all fixed formats). Added VM `AbsI`/`MinI`/`MaxI`/`ClampI`
-  (one integer opcode serves int + every fixed format); `mod`→`ModI`; `floor`/
-  `ceil`(int)→identity; float-only unary builtins now convert (not reinterpret)
-  an int/fixed arg. No golden impact (float calibration set unchanged).
+- **Native int/fixed builtins — full audit, no silent float reinterpret.**
+  `min`/`max`/`abs`/`clamp`/`mod`/`sign`/`step`/`floor`/`ceil`/`fract`/`mix` all run
+  natively on int + every fixed format (VM `AbsI`/`MinI`/`MaxI`/`ClampI` + frac-
+  operand `SignI`/`StepI`/`FloorFix`/`CeilFix`/`FractFix`/`MixFix`; `mod`→`ModI`);
+  `sin`/`cos`/`exp` extended to Q16.16 `fixed` (LUT). Everything that stays
+  float-valued now CONVERTS its int/fixed args (never reinterprets the bits) — via
+  arg coercion, incl. non-top args rotated with `Swap` (`floaten_args`). No golden
+  impact (float calibration set unchanged).
 - Golden (`web/tests/testdata/device-bench-esp32c6.json`) regenerated from a
   full rig sweep after each firmware change; default cost model refreshed to match.
 
@@ -54,12 +56,12 @@ lever for the loop-heavy / cheap-op-heavy programs.
    (executable code buffer lives in RAM/IRAM) — spike a microbench + feasibility
    check before committing. Likely last / may not be justified.
 
-Remaining builtin int/fixed gaps (still on the float / reinterpret path): `sign`
-(add native `SignI`), `step`, fixed `floor`/`ceil`/`fract` (need a frac-mask
-opcode), and int/fixed args to the BINARY/ternary float builtins
-`pow`/`atan2`/`mix`/`smoothstep` (needs per-arg coercion, e.g. coerce during
-`call_args` from a declared builtin signature). `sin`/`cos`/`exp` on a `fixed`
-(Q16.16) arg go to float too — only `fixed8`/`fixed16` hit the LUT path.
+Builtin int/fixed audit is COMPLETE — every native-capable builtin runs natively.
+The only remaining arg conversions are for genuinely float-valued functions
+(`sqrt`/`log`/`tan`/`pow`/`atan2`/`smoothstep`/`dot`/`cross`/`length`/`normalize`/
+`distance`/`hsv2rgb`/`palette`), and those convert correctly (no bit reinterpret).
+Optional future: a native fixed `smoothstep` (polynomial) and fixed
+`sqrt`/`pow`/`log`/`atan2` if a use case wants zero float there too.
 
 Other candidates if wanted: LUT `exp` (untouched, still soft-float poly), SWAR
 "vectorization" of narrow fixed8/fixed16 lanes, `Normalize` reciprocal-multiply.
