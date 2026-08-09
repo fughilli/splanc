@@ -212,6 +212,15 @@ pub enum Op {
     MinI,   // min(a, b)
     MaxI,   // max(a, b)
     ClampI, // clamp(x, lo, hi)
+    // More int/fixed-native builtins. Those that yield a "1" (sign/step) or round
+    // to whole units (floor/ceil/fract) or interpolate (mix) take a u8 `frac`
+    // operand so one opcode covers int (frac 0) AND every fixed format.
+    SignI,   // u8 frac : -1/0/+1 in the arg's units (±(1<<frac))
+    StepI,   // u8 frac : x >= edge ? (1<<frac) : 0
+    FloorFix, // u8 frac : round toward -inf to a whole unit (frac 0 = identity)
+    CeilFix,  // u8 frac : round toward +inf to a whole unit
+    FractFix, // u8 frac : x - floor(x), in [0,1) units (frac 0 = 0)
+    MixFix,   // u8 frac : a + ((b-a)*t >> frac)  (fixed lerp)
 }
 
 /// Graph-query kinds (the `GraphQuery` opcode operand).
@@ -309,8 +318,8 @@ pub struct Counters {
 impl Op {
     #[inline]
     pub fn from_u8(b: u8) -> Option<Op> {
-        // Op is a contiguous enum 0..=ClampI; guard the range then transmute.
-        if b <= Op::ClampI as u8 {
+        // Op is a contiguous enum 0..=MixFix; guard the range then transmute.
+        if b <= Op::MixFix as u8 {
             Some(unsafe { core::mem::transmute::<u8, Op>(b) })
         } else {
             None
@@ -1891,6 +1900,53 @@ fn run(
                 } else {
                     x
                 });
+            }
+            Op::SignI => {
+                let frac = code[pc] as u32;
+                pc += 1;
+                let x = popi!();
+                let one = 1i32 << frac;
+                pushi!(if x > 0 {
+                    one
+                } else if x < 0 {
+                    -one
+                } else {
+                    0
+                });
+            }
+            Op::StepI => {
+                let frac = code[pc] as u32;
+                pc += 1;
+                let x = popi!(); // second arg (top)
+                let edge = popi!(); // first arg
+                pushi!(if x >= edge { 1i32 << frac } else { 0 });
+            }
+            Op::FloorFix => {
+                let frac = code[pc] as u32;
+                pc += 1;
+                let x = popi!();
+                pushi!((x >> frac) << frac); // arithmetic shift rounds toward -inf
+            }
+            Op::CeilFix => {
+                let frac = code[pc] as u32;
+                pc += 1;
+                let x = popi!();
+                let fl = (x >> frac) << frac;
+                pushi!(if fl != x { fl.wrapping_add(1i32 << frac) } else { fl });
+            }
+            Op::FractFix => {
+                let frac = code[pc] as u32;
+                pc += 1;
+                let x = popi!();
+                pushi!(x & ((1i32 << frac) - 1)); // frac 0 -> mask 0 -> 0
+            }
+            Op::MixFix => {
+                let frac = code[pc] as u32;
+                pc += 1;
+                let t = popi!() as i64;
+                let b = popi!() as i64;
+                let a = popi!() as i64;
+                pushi!((a + (((b - a) * t) >> frac)) as i32);
             }
         }
     }

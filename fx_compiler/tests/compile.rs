@@ -1029,3 +1029,74 @@ fn float_only_unary_converts_int_fixed_args_not_reinterprets() {
     "#;
     assert_eq!(run_shade(src, &[], Led::default(), Frame::default()), (255, 255, 255));
 }
+
+#[test]
+fn int_sign_step_floor_native_on_negatives() {
+    let src = r#"
+        void update() {}
+        vec3 shade(Led led) {
+          int n = -3;
+          float ok = 0.0;
+          if (sign(n) == -1) { ok = ok + 0.25; }
+          if (step(0, n) == 0) { ok = ok + 0.25; }    // -3 >= 0 ? no
+          if (step(-5, n) == 1) { ok = ok + 0.25; }   // -3 >= -5 ? yes
+          if (floor(n) == -3) { ok = ok + 0.25; }     // identity for int
+          return vec3(ok, ok, ok);
+        }
+    "#;
+    assert_eq!(run_shade(src, &[], Led::default(), Frame::default()), (255, 255, 255));
+}
+
+#[test]
+fn fixed_floor_ceil_fract_sign_mix_native() {
+    let src = r#"
+        void update() {}
+        vec3 shade(Led led) {
+          fixed a = fixed(-1.25);
+          float ok = 0.0;
+          if (float(floor(a)) < -1.9) { ok = ok + 0.2; }  // -2
+          if (float(ceil(a)) > -1.1) { ok = ok + 0.2; }   // -1
+          if (float(fract(a)) > 0.7) { ok = ok + 0.2; }   // 0.75 in [0,1)
+          if (float(sign(a)) < -0.9) { ok = ok + 0.2; }   // -1
+          fixed m = mix(fixed(0.0), fixed(1.0), fixed(0.25));
+          if (float(m) > 0.2) { if (float(m) < 0.3) { ok = ok + 0.2; } }
+          return vec3(ok, ok, ok);
+        }
+    "#;
+    assert_eq!(run_shade(src, &[], Led::default(), Frame::default()), (255, 255, 255));
+}
+
+#[test]
+fn mixed_type_builtins_convert_not_reinterpret() {
+    // Mixed int/fixed + float args to min/clamp/pow must CONVERT (not reinterpret
+    // the scaled-int bits). Negatives would go NaN on the old path.
+    let src = r#"
+        void update() {}
+        vec3 shade(Led led) {
+          int n = -3;
+          fixed p = fixed(-0.5);
+          float ok = 0.0;
+          if (min(n, 2.5) < -2.9) { ok = ok + 0.34; }       // -3.0
+          if (clamp(p, 0.0, 1.0) < 0.01) { ok = ok + 0.33; } // -0.5 -> 0
+          if (pow(4.0, 0.5) > 1.9) { ok = ok + 0.33; }       // sanity: 2.0
+          return vec3(ok, ok, ok);
+        }
+    "#;
+    assert_eq!(run_shade(src, &[], Led::default(), Frame::default()), (255, 255, 255));
+}
+
+#[test]
+fn fixed_q16_16_trig_uses_lut() {
+    // sin on a Q16.16 `fixed` (angle in turns) now takes the LUT path.
+    // sin(0.25 turns) = sin(pi/2) = 1.
+    let src = r#"
+        void update() {}
+        vec3 shade(Led led) {
+          fixed s = sin(fixed(0.25));
+          float ok = 0.0;
+          if (float(s) > 0.99) { ok = 1.0; }
+          return vec3(ok, ok, ok);
+        }
+    "#;
+    assert_eq!(run_shade(src, &[], Led::default(), Frame::default()), (255, 255, 255));
+}
