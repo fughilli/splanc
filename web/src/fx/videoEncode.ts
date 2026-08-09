@@ -34,7 +34,9 @@ export function webCodecsAvailable(): boolean {
 
 // A generous bitrate for a 64×64 clip — trivially small in absolute terms but
 // high enough that VP9 keeps the fine per-pixel detail the effects produce.
-const BITRATE = 2_000_000;
+// (64×64 is tiny, so even this is visually lossless while keeping each cached
+// clip small — a few hundred KB — so the IndexedDB cache stays light.)
+const BITRATE = 800_000;
 /** Periodic keyframes so the looping <video> can seek/restart cleanly. */
 const KEYFRAME_INTERVAL = 60;
 
