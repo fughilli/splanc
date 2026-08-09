@@ -25,6 +25,58 @@ pub const MAX_SEG: usize = 64;
 pub const MAX_NODE: usize = 96;
 pub const MAX_NODE_DEG: usize = 6;
 
+/// Dynamic opcode-execution profiler — HOST-ONLY, compiled in only under the
+/// `profile` cargo feature (so the shipped firmware/wasm build carries zero extra
+/// code or RAM). Single-threaded use only: the host profiler (tools/fx_profile)
+/// runs effects serially, resets between them, and reads the histogram out. It
+/// records both per-opcode execution counts and adjacent-pair counts (the latter
+/// picks superinstruction fusion candidates).
+#[cfg(feature = "profile")]
+pub mod profile {
+    /// Opcodes fit in a u8, so 256 buckets cover every possible value.
+    pub const N_OPS: usize = 256;
+    static mut OP_COUNTS: [u64; N_OPS] = [0; N_OPS];
+    static mut PAIR_COUNTS: [u32; N_OPS * N_OPS] = [0; N_OPS * N_OPS];
+
+    /// Record one executed opcode `op`, following `prev` (`usize::MAX` = none).
+    #[inline]
+    pub(crate) fn record(prev: usize, op: usize) {
+        unsafe {
+            (*core::ptr::addr_of_mut!(OP_COUNTS))[op] += 1;
+            if prev < N_OPS {
+                (*core::ptr::addr_of_mut!(PAIR_COUNTS))[prev * N_OPS + op] += 1;
+            }
+        }
+    }
+
+    /// Zero all counters (call before running an effect to profile).
+    pub fn reset() {
+        unsafe {
+            for c in (*core::ptr::addr_of_mut!(OP_COUNTS)).iter_mut() {
+                *c = 0;
+            }
+            for c in (*core::ptr::addr_of_mut!(PAIR_COUNTS)).iter_mut() {
+                *c = 0;
+            }
+        }
+    }
+
+    /// Total instructions executed since the last [`reset`].
+    pub fn total() -> u64 {
+        unsafe { (*core::ptr::addr_of!(OP_COUNTS)).iter().sum() }
+    }
+
+    /// Execution count for opcode `op`.
+    pub fn op_count(op: u8) -> u64 {
+        unsafe { (*core::ptr::addr_of!(OP_COUNTS))[op as usize] }
+    }
+
+    /// Execution count for the adjacent pair `a` then `b`.
+    pub fn pair_count(a: u8, b: u8) -> u32 {
+        unsafe { (*core::ptr::addr_of!(PAIR_COUNTS))[a as usize * N_OPS + b as usize] }
+    }
+}
+
 /// Opcodes. Operands follow inline in the code stream (little-endian).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
@@ -152,6 +204,23 @@ pub enum Op {
     SinFix, // u8 frac
     CosFix, // u8 frac
     ExpFix, // u8 frac
+    // Integer/fixed compare + select + abs. The stack word already rides a scaled
+    // integer for `int` AND every fixed format (Q16.16/Q1.14/Q1.6), and these ops
+    // are monotonic on that representation, so ONE integer opcode each serves all
+    // of them — no soft-float, no reinterpreting the bits as f32.
+    AbsI,   // |x|
+    MinI,   // min(a, b)
+    MaxI,   // max(a, b)
+    ClampI, // clamp(x, lo, hi)
+    // More int/fixed-native builtins. Those that yield a "1" (sign/step) or round
+    // to whole units (floor/ceil/fract) or interpolate (mix) take a u8 `frac`
+    // operand so one opcode covers int (frac 0) AND every fixed format.
+    SignI,   // u8 frac : -1/0/+1 in the arg's units (±(1<<frac))
+    StepI,   // u8 frac : x >= edge ? (1<<frac) : 0
+    FloorFix, // u8 frac : round toward -inf to a whole unit (frac 0 = identity)
+    CeilFix,  // u8 frac : round toward +inf to a whole unit
+    FractFix, // u8 frac : x - floor(x), in [0,1) units (frac 0 = 0)
+    MixFix,   // u8 frac : a + ((b-a)*t >> frac)  (fixed lerp)
 }
 
 /// Graph-query kinds (the `GraphQuery` opcode operand).
@@ -248,9 +317,9 @@ pub struct Counters {
 
 impl Op {
     #[inline]
-    fn from_u8(b: u8) -> Option<Op> {
-        // Op is a contiguous enum 0..=ExpFix; guard the range then transmute.
-        if b <= Op::ExpFix as u8 {
+    pub fn from_u8(b: u8) -> Option<Op> {
+        // Op is a contiguous enum 0..=MixFix; guard the range then transmute.
+        if b <= Op::MixFix as u8 {
             Some(unsafe { core::mem::transmute::<u8, Op>(b) })
         } else {
             None
@@ -1001,6 +1070,8 @@ fn run(
         }};
     }
 
+    #[cfg(feature = "profile")]
+    let mut prof_prev: usize = usize::MAX;
     while pc < code.len() {
         if budget == 0 {
             outcome = Outcome::Budget;
@@ -1031,6 +1102,11 @@ fn run(
             None => break,
         };
         pc += 1;
+        #[cfg(feature = "profile")]
+        {
+            profile::record(prof_prev, op as usize);
+            prof_prev = op as usize;
+        }
         match op {
             Op::PushConst => {
                 let idx = rd_u16(code, pc) as usize;
@@ -1375,7 +1451,7 @@ fn run(
                 let z = pop!();
                 let y = pop!();
                 let x = pop!();
-                push!(hash1(x * 127.1 + y * 311.7 + z * 74.7));
+                push!(hash3(x, y, z));
             }
             Op::Hsv2Rgb => {
                 let v = pop!();
@@ -1797,6 +1873,81 @@ fn run(
                 let a = popi!();
                 pushi!(exp_fix(a, frac));
             }
+            // Integer/fixed abs/min/max/clamp — operate on the scaled-integer stack
+            // word directly (correct for int + every fixed format, no soft-float).
+            Op::AbsI => {
+                let a = popi!();
+                pushi!(a.wrapping_abs());
+            }
+            Op::MinI => {
+                let b = popi!();
+                let a = popi!();
+                pushi!(if a < b { a } else { b });
+            }
+            Op::MaxI => {
+                let b = popi!();
+                let a = popi!();
+                pushi!(if a > b { a } else { b });
+            }
+            Op::ClampI => {
+                let hi = popi!();
+                let lo = popi!();
+                let x = popi!();
+                pushi!(if x < lo {
+                    lo
+                } else if x > hi {
+                    hi
+                } else {
+                    x
+                });
+            }
+            Op::SignI => {
+                let frac = code[pc] as u32;
+                pc += 1;
+                let x = popi!();
+                let one = 1i32 << frac;
+                pushi!(if x > 0 {
+                    one
+                } else if x < 0 {
+                    -one
+                } else {
+                    0
+                });
+            }
+            Op::StepI => {
+                let frac = code[pc] as u32;
+                pc += 1;
+                let x = popi!(); // second arg (top)
+                let edge = popi!(); // first arg
+                pushi!(if x >= edge { 1i32 << frac } else { 0 });
+            }
+            Op::FloorFix => {
+                let frac = code[pc] as u32;
+                pc += 1;
+                let x = popi!();
+                pushi!((x >> frac) << frac); // arithmetic shift rounds toward -inf
+            }
+            Op::CeilFix => {
+                let frac = code[pc] as u32;
+                pc += 1;
+                let x = popi!();
+                let fl = (x >> frac) << frac;
+                pushi!(if fl != x { fl.wrapping_add(1i32 << frac) } else { fl });
+            }
+            Op::FractFix => {
+                let frac = code[pc] as u32;
+                pc += 1;
+                let x = popi!();
+                pushi!(x & ((1i32 << frac) - 1)); // frac 0 -> mask 0 -> 0
+            }
+            Op::MixFix => {
+                let frac = code[pc] as u32;
+                pc += 1;
+                let t = popi!() as i64;
+                let b = popi!() as i64;
+                let a = popi!() as i64;
+                pushi!((a + (((b - a) * t) >> frac)) as i32);
+            }
         }
     }
     ([0.0, 0.0, 0.0], outcome, Counters { instrs, stack_max: sp_max as u16 })
@@ -1831,17 +1982,63 @@ fn fractf(x: f32) -> f32 {
 const PI: f32 = core::f32::consts::PI;
 const TAU: f32 = 2.0 * PI;
 
-fn sinf(x: f32) -> f32 {
-    // range-reduce to [-PI,PI], then a 5th-order minimax-ish poly.
-    let mut a = x - TAU * floorf(x / TAU + 0.5);
-    // a in [-PI, PI]
-    if a > PI {
-        a -= TAU;
-    }
+/// 5th-order minimax-ish sine poly, accurate on `a ∈ [-PI/2, PI/2]` (its error
+/// blows up to ~0.04 toward ±PI). Used only to BAKE the flash LUT at compile
+/// time — never on the hot path.
+const fn sin_poly(a: f32) -> f32 {
     let a2 = a * a;
     a * (0.9999966 + a2 * (-0.16664824 + a2 * (0.00830629 + a2 * -0.00018363)))
 }
-fn cosf(x: f32) -> f32 {
+
+/// `sin(turn * 2PI)` for `turn ∈ [0, 1]`, folded into `[-PI/2, PI/2]` (where the
+/// poly is accurate) via `sin(PI - a) = sin(a)`. Compile-time only.
+const fn sin_turn(turn: f32) -> f32 {
+    let mut a = turn * TAU; // [0, TAU]
+    if a > PI {
+        a -= TAU; // [-PI, PI]
+    }
+    if a > PI * 0.5 {
+        a = PI - a; // (PI/2, PI] -> [0, PI/2)
+    } else if a < -PI * 0.5 {
+        a = -PI - a; // [-PI, -PI/2) -> (-PI/2, 0]
+    }
+    sin_poly(a)
+}
+
+/// Flash-resident sine table: `SINF_LUT[i] = sin(i/256 turns)`, one full period
+/// plus a wrap entry so interpolation never needs a bounds branch. Baked at
+/// compile time → lives in flash (0 RAM), which is exactly the RAM-for-flash
+/// trade we want on the C6. 257 × 4 B ≈ 1 KB flash.
+static SINF_LUT: [f32; 257] = {
+    let mut t = [0.0f32; 257];
+    let mut i = 0;
+    while i <= 256 {
+        t[i] = sin_turn(i as f32 / 256.0);
+        i += 1;
+    }
+    t
+};
+
+/// Radians → a 32-bit phase where a full turn is 2^32 (wrapping). f32→i64→u32:
+/// the i64 hop keeps the product in range, the u32 truncation wraps mod 2^32 —
+/// so no `floorf` range reduction is needed.
+const SIN_PHASE_SCALE: f32 = 4_294_967_296.0 / TAU;
+
+/// LUT sine (linear-interpolated). On the FPU-less C6 this replaces the poly's
+/// ~13 soft-float ops with a table lookup + one lerp: the top 8 phase bits index
+/// the table, the low 24 are the interpolation fraction. Matches the poly to
+/// ~1e-4 (≪ 1/255, invisible on 8-bit LEDs); device + wasm preview share this
+/// code so they can't drift.
+pub fn sinf(x: f32) -> f32 {
+    let phase = (x * SIN_PHASE_SCALE) as i64 as u32;
+    let idx = (phase >> 24) as usize; // 0..=255
+    let frac = (phase & 0x00ff_ffff) as f32 * (1.0 / 16_777_216.0);
+    let a = SINF_LUT[idx];
+    let b = SINF_LUT[idx + 1]; // idx+1 ≤ 256; the wrap entry avoids a branch
+    a + (b - a) * frac
+}
+
+pub fn cosf(x: f32) -> f32 {
     sinf(x + PI * 0.5)
 }
 fn expf(x: f32) -> f32 {
@@ -1953,9 +2150,39 @@ fn atan2f(y: f32, x: f32) -> f32 {
     r
 }
 
-fn hash1(x: f32) -> f32 {
-    // fract(sin(x)*k) style, but with our sinf; deterministic.
-    fractf(sinf(x * 12.9898) * 43758.547)
+/// Integer avalanche finalizer (Hash Prospector "lowbias32"): near-minimal bias,
+/// excellent distribution, ALL integer. RV32IMAC has a hardware multiply, so the
+/// two mults are cheap — replacing the old `fract(sin(x)*k)` GLSL hash, which
+/// dragged the soft-float `sin` into every `hash()` on the FPU-less C6.
+#[inline]
+fn mix32(mut h: u32) -> u32 {
+    h ^= h >> 16;
+    h = h.wrapping_mul(0x7feb_352d);
+    h ^= h >> 15;
+    h = h.wrapping_mul(0x846c_a68b);
+    h ^= h >> 16;
+    h
+}
+
+/// Map a mixed 32-bit hash to a float in [0, 1) (top 24 bits → an exact f32).
+#[inline]
+fn unit_from_hash(h: u32) -> f32 {
+    (h >> 8) as f32 * (1.0 / 16_777_216.0)
+}
+
+/// Deterministic `hash(x) -> [0, 1)`. Seeds off the input's bit pattern XOR the
+/// golden-ratio constant so `hash(0.0)` isn't a fixed point. Exposed for tests.
+pub fn hash1(x: f32) -> f32 {
+    unit_from_hash(mix32(x.to_bits() ^ 0x9e37_79b9))
+}
+
+/// Deterministic 3-input `hash(x, y, z) -> [0, 1)`. Folds the three bit patterns
+/// through the mixer (no soft-float dot product). Exposed for tests.
+pub fn hash3(x: f32, y: f32, z: f32) -> f32 {
+    let mut h = mix32(x.to_bits() ^ 0x9e37_79b9);
+    h = mix32(h ^ y.to_bits().wrapping_add(0x85eb_ca6b));
+    h = mix32(h ^ z.to_bits().wrapping_add(0xc2b2_ae35));
+    unit_from_hash(h)
 }
 
 fn hsv2rgb(h: f32, s: f32, v: f32) -> (f32, f32, f32) {

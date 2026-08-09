@@ -41,17 +41,24 @@ test("fitted model predicts held-out cost on the real C6 within tolerance", () =
   assert.equal(profile.source, "device");
   assert.equal(profile.deviceKey, bundle.deviceKey);
 
-  // The raw measurement shows the FPU-less C6 pays far more for a transcendental
-  // than for a cheap ALU op AT THE SAME instruction count — exactly why the host
-  // VM (where sin ≈ add) can't stand in for it. (We assert on the measured cycles
-  // rather than the fitted per-opcode costs, which the least-squares decomposition
-  // can distribute in non-obvious ways.)
-  const sinM = bundle.fit.find((s) => s.label === "sinM");
-  const addM = bundle.fit.find((s) => s.label === "addM");
-  assert.ok(sinM && addM, "expected the sinM + addM isolation programs");
+  // The raw measurement shows the FPU-less C6 pays more for a transcendental than
+  // for a cheap ALU op AT THE SAME instruction count — exactly why the host VM
+  // (where sin ≈ add) can't stand in for it. We compare the per-op SLOPE (the
+  // M→2M delta, which cancels the shared fixed per-frame/per-LED overhead) rather
+  // than the raw frame totals: `sin` is now LUT-accelerated on the device, so its
+  // frame total is closer to `add`'s, but per invocation it still costs ~2× — and
+  // the slope is what the least-squares fit actually keys on.
+  const cyc = (label: string) => bundle.fit.find((s) => s.label === label)?.measuredFrameCycles;
+  const [sinM, sin2M, addM, add2M] = [cyc("sinM"), cyc("sin2M"), cyc("addM"), cyc("add2M")];
   assert.ok(
-    sinM!.measuredFrameCycles > 2 * addM!.measuredFrameCycles,
-    `sin should dominate add on real hardware (sinM ${sinM!.measuredFrameCycles} vs addM ${addM!.measuredFrameCycles})`,
+    sinM && sin2M && addM && add2M,
+    "expected the sinM/sin2M + addM/add2M isolation programs",
+  );
+  const sinCost = sin2M! - sinM!; // per-M-reps cost, fixed overhead cancelled
+  const addCost = add2M! - addM!;
+  assert.ok(
+    sinCost > 1.5 * addCost,
+    `sin should cost more per op than add on real hardware (sin slope ${sinCost} vs add slope ${addCost})`,
   );
 
   // The gate: held-out predicted-vs-measured RMS is within the model tolerance.

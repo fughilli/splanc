@@ -9,9 +9,12 @@
  * in `messages`, after this cached prefix.
  */
 
-import { BUILTINS, CONTEXTS, KEYWORDS } from "../editor/lang-spec";
+import { BUILTINS, CONTEXTS, TYPES } from "../editor/lang-spec";
 
 const builtinTable = BUILTINS.map((b) => `  ${b.sig}  — ${b.doc}`).join("\n");
+const typeTable = TYPES.filter((t) => t.name !== "void" && t.name !== "Led")
+  .map((t) => `  ${t.name} — ${t.doc}`)
+  .join("\n");
 const contextTable = CONTEXTS.map(
   (c) =>
     `  ${c.name}${c.members.length ? ` (.${c.members.map((m) => m.name).join(", .")})` : ""} — ${c.doc}`,
@@ -76,7 +79,40 @@ export const SYSTEM_PROMPT = `You write effects for an LED-mapping runtime. Outp
 HARD CONSTRAINTS:
 - Two entry points: \`void update()\` runs once per frame; \`vec3 shade(Led led)\` runs per-LED and returns linear RGB in 0..1.
 - No recursion. \`for\` loops must have compile-time-bounded trip counts (there is a per-frame instruction budget).
-- All values are 32-bit floats. Types: ${KEYWORDS.join(" ")}.
+
+TYPES:
+${typeTable}
+
+PERFORMANCE — READ THIS, IT DECIDES WHETHER AN EFFECT FITS THE FRAME BUDGET.
+The target is a tiny microcontroller with NO hardware floating-point unit: every
+\`float\` operation is software-emulated (~10–50× an integer op). \`shade(Led)\` runs
+once PER LED (often 60–512×) every frame; \`update()\` runs once. So the biggest win
+is doing hot per-LED math in \`int\`/\`fixed\` on operations that have a native
+integer path — those cost essentially nothing. So:
+- Prefer \`int\` for indices/counters/modes and \`fixed\`/\`fixed16\`/\`fixed8\` for smooth
+  per-LED quantities (phase, brightness, positions, colour ramps). \`int\`/\`fixed\`
+  arithmetic (\`+ - * / %\`) runs natively — NO soft-float.
+- These builtins run NATIVELY on \`int\`/\`fixed\` args (no soft-float, so keep hot
+  math in these + fixed types): \`min max abs clamp mod sign step floor ceil fract mix\`.
+  And \`sin\`/\`cos\`/\`exp\` are native on a \`fixed\`/\`fixed16\`/\`fixed8\` arg (integer LUT;
+  angle in TURNS, 1.0 = one full circle) — this is how you do trig with zero
+  soft-float. (Given a \`float\` arg, all of the above use the float path instead.)
+- These builtins are FLOAT-ONLY — an \`int\`/\`fixed\` arg is CONVERTED to float first,
+  and the op is soft-float: \`sqrt log tan pow atan2 smoothstep dot cross length
+  normalize distance hsv2rgb palette\`. Avoid them in hot per-LED code: compare
+  squared distances (\`dot(d,d)\`) instead of \`length\`/\`distance\`, use fixed \`sin\`/\`cos\`
+  + polynomials instead of \`pow\`/\`exp\`, and hoist any that must run into \`update()\`.
+- Hoist everything that isn't per-LED into \`update()\` (runs 1×) and stash it in
+  \`state\`; keep \`shade()\` lean. A \`sin(time)\` belongs in update(), not shade().
+  Reuse subexpressions; avoid redundant vec constructions and swizzles.
+- RAM is the scarcest resource. Narrow the storage of \`buffer\`/\`texture\` elements
+  with a \`: fixed8\` (1 byte/component) or \`: fixed16\` (2 bytes) annotation instead
+  of the default f32 (4 bytes): \`buffer vec3 trail : fixed8;\`,
+  \`texture vec3 img(64, 64) : fixed16;\`. That quarters/halves the RAM (and the
+  device decodes them without per-texel float). Use \`fixed8\` for colours and other
+  0..1 values, \`fixed16\` when you need more precision.
+When performance matters, don't guess — measure with the estimate_performance tool
+(see the optimization workflow) and cut the hottest opcodes it reports.
 
 CONTEXTS (read-only globals):
 ${contextTable}

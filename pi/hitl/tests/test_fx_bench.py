@@ -50,7 +50,19 @@ def test_intended_led_count_missing_file_is_default():
     assert intended_led_count("/no/such/bench.fx", default=64) == 64
 
 
-def test_stable_cycles_prefers_window_means():
+def test_stable_cycles_prefers_frame_window_min():
+    # Frame uses the window MIN (interrupt-free frame); show uses the mean.
+    report = {
+        "frame_cycles_min": 4700,
+        "frame_cycles_mean": 5000,
+        "show_cycles_mean": 2000,
+        "ticks": [{"led_count": 128, "frame_cycles": 4900, "show_cycles": 1900}],
+    }
+    s = stable_cycles(report)
+    assert s == {"frame": 4700, "show": 2000, "led": 128}
+
+
+def test_stable_cycles_frame_falls_back_to_mean_without_min():
     report = {
         "frame_cycles_mean": 5000,
         "show_cycles_mean": 2000,

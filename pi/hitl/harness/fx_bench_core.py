@@ -55,21 +55,28 @@ def _field(d: dict[str, Any], *names: str) -> int:
 
 def stable_cycles(report: dict[str, Any]) -> dict[str, int] | None:
     """Extract a stable (frame, show, led) cycle sample from a PerfReport flat
-    dict (proto_wire.decode_server output; proto3 omits zero fields). Prefers the
-    rolling-window means (populated when perf is polled, interval_ms=0, so pushes
-    don't drain the ring), falling back to the newest tick. Mirrors the browser
+    dict (proto_wire.decode_server output; proto3 omits zero fields). Uses the
+    window MINIMUM for frame cycles, not the mean: the VM is deterministic, so
+    interrupts (WiFi/BLE coexistence, the TLS task, timers on the single-core C6)
+    only ADD cycles — the min frame is the interrupt-free one, i.e. the true
+    compute cost, with far lower variance (a single ~0.2 ms IRQ was +32% on the
+    tiny sweep16 mean — the flake this fixes). show/update report only a mean, so
+    those keep it. Falls back to mean, then the newest tick. Mirrors the browser
     calibration's stableCycles(). Returns None if the report looks empty."""
     ticks = report.get("ticks") or []
     last = ticks[-1] if ticks else {}
     led = _field(last, "ledCount", "led_count")
+    frame_min = _field(report, "frameCyclesMin", "frame_cycles_min")
     frame_mean = _field(report, "frameCyclesMean", "frame_cycles_mean")
     show_mean = _field(report, "showCyclesMean", "show_cycles_mean")
     last_frame = _field(last, "frameCycles", "frame_cycles")
     last_show = _field(last, "showCycles", "show_cycles")
     if frame_mean == 0 and last_frame == 0:
         return None
+    # frame_cycles_min == u32::MAX means the window caught no frames — ignore it.
+    frame_min = frame_min if 0 < frame_min < 0xFFFFFFFF else 0
     return {
-        "frame": frame_mean or last_frame,
+        "frame": frame_min or frame_mean or last_frame,
         "show": show_mean or last_show,
         "led": led,
     }

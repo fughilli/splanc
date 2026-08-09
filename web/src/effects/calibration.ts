@@ -81,7 +81,13 @@ function hashFxb(fxb: Uint8Array): number {
   return h >>> 0;
 }
 
-/** Average a PerfReport's window means; returns null if the report looks empty. */
+/** A stable per-frame cycle sample from a PerfReport window; null if empty.
+ * Uses the window MINIMUM for frame cycles, not the mean: the VM is deterministic,
+ * so interrupts (WiFi/BLE coexistence, the TLS task, timers on the single core)
+ * only ADD cycles — the min frame is the interrupt-free one, i.e. the true
+ * compute cost, with far lower run-to-run variance (this is why the tiny sweep16
+ * bench used to flake, its ~100k base being swamped by a single ~0.2 ms IRQ).
+ * (show/update report only a mean, so those keep it.) */
 function stableCycles(r: PerfReportMessage): {
   frame: number;
   show: number;
@@ -94,7 +100,11 @@ function stableCycles(r: PerfReportMessage): {
   const stackMax = r.ticks.length > 0 ? r.ticks[r.ticks.length - 1]!.stackMax : 0;
   if (r.frameCyclesMean === 0 && (r.ticks.length === 0 || r.ticks[r.ticks.length - 1]!.frameCycles === 0))
     return null;
-  const frame = r.frameCyclesMean || (r.ticks.length > 0 ? r.ticks[r.ticks.length - 1]!.frameCycles : 0);
+  // frame_cycles_min == u32::MAX means the window caught no frames — ignore it.
+  const min = r.frameCyclesMin;
+  const frameMin = min > 0 && min < 0xffffffff ? min : 0;
+  const frame =
+    frameMin || r.frameCyclesMean || (r.ticks.length > 0 ? r.ticks[r.ticks.length - 1]!.frameCycles : 0);
   const show = r.showCyclesMean || (r.ticks.length > 0 ? r.ticks[r.ticks.length - 1]!.showCycles : 0);
   return { frame, show, led, instrShade, stackMax };
 }

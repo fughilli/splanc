@@ -411,6 +411,13 @@ You are now in an interactive chat with the user inside the effect editor. You c
 - Call set_script to author or revise the effect; you'll get the compile result back (fix any errors and iterate).
 - Call capture_preview to SEE the live preview rendered to an image — but only when seeing the result actually matters (judging colours/motion/coverage). Skip it when it wouldn't help (e.g. after a compile error, or a purely mechanical edit); capturing every turn is slow and wasteful.
 - When performance matters (the user wants a target framerate, to fit the budget, or to optimize), call estimate_performance after set_script to check the change against the real device economics: it reports each device's frame time, % of the FX budget used (≤70% green / >70% yellow / >90% red), the binding device, and the hottest opcodes. Optimize for the binding device first, then re-estimate to confirm it fits.
+- OPTIMIZE requests ("make this faster", "fit 60fps", "reduce RAM", "optimize this program") are a MEASURED, MULTI-TURN loop — never a one-shot guess:
+  1. estimate_performance on the current script to get a BASELINE (frame time, % of budget on the binding device, phase split update-vs-shade, and the hottest opcodes). State it briefly.
+  2. Form ONE hypothesis from that data. Typical wins, in order of impact: move per-LED / loop-invariant work from shade() into update(); replace soft-float in hot per-LED math with int/fixed/fixed16 (fixed16/fixed8 sin/cos/exp are LUT-based, no soft-float); replace sin/pow/exp/sqrt with step/mix/polynomial approximations; narrow buffer/texture storage to : fixed8 / : fixed16 to cut RAM.
+  3. Apply that ONE change with set_script (keep every uniform/behaviour the user cares about).
+  4. re-estimate. Keep the change only if it improved AND still compiles (and, if visuals could shift, capture_preview to confirm it still looks right); otherwise revert and try the next hypothesis.
+  5. Repeat until it fits the budget or stops improving (diminishing returns / a few rounds).
+  6. Report back concisely: baseline → final (frame time and % budget on the binding device, plus RAM if that was the goal), and the specific changes that moved the needle with their numbers. Be honest if a target wasn't reachable and say what's binding.
 - When MIDI tools are available: call list_midi_controls to see the effect's uniforms and the named MIDI controls, then set_midi_mapping to wire controls to uniforms. MIDI mapping is a SEPARATE LAYER — never edit the effect source to wire MIDI; use set_midi_mapping. Match by meaning (a 'speed'/'rate' knob → a speed uniform; a 'brightness' knob → an intensity/gain uniform), and only map scalar (slider/toggle) uniforms.
 Keep prose brief. When you change the script, prefer minimal, targeted edits.`;
 
@@ -428,12 +435,20 @@ async function messagesRequest(
   messages: ChatMessage[],
   tools: readonly unknown[],
   signal?: AbortSignal,
+  deviceCosts?: string,
 ): Promise<{
   content: ContentBlock[];
   stop_reason: string | null;
 }> {
   const key = getApiKey();
   if (!key) throw new Error("no Anthropic API key set (add one in AI settings)");
+  // Frozen cacheable prefix first (caching engages across turns), then an
+  // UNcached per-device builtin-cost block so it can vary by board without
+  // busting the cache.
+  const system: unknown[] = [
+    { type: "text", text: CHAT_SYSTEM, cache_control: { type: "ephemeral" } },
+  ];
+  if (deviceCosts) system.push({ type: "text", text: deviceCosts });
   const resp = await fetch(API_URL, {
     method: "POST",
     headers: {
@@ -447,10 +462,7 @@ async function messagesRequest(
       model: MODEL,
       max_tokens: 4000,
       thinking: { type: "adaptive" },
-      // Frozen, cacheable system prefix so caching engages across turns.
-      system: [
-        { type: "text", text: CHAT_SYSTEM, cache_control: { type: "ephemeral" } },
-      ],
+      system,
       tools,
       messages: messages.map((m) => ({ role: m.role, content: m.content })),
     }),
@@ -487,7 +499,11 @@ export function editorContext(opts: {
  * text. Executes set_script / capture_preview locally; a few rounds of
  * auto-iteration are natural since the model gets compile results back.
  */
-export async function chatTurn(history: ChatMessage[], hooks: ChatHooks): Promise<string> {
+export async function chatTurn(
+  history: ChatMessage[],
+  hooks: ChatHooks,
+  deviceCosts?: string,
+): Promise<string> {
   let finalText = "";
   const MAX_ROUNDS = 8; // hard cap so a misbehaving loop can't run forever
   // Advertise the optional tools only when the editor can fulfill them.
@@ -498,7 +514,12 @@ export async function chatTurn(history: ChatMessage[], hooks: ChatHooks): Promis
   ];
   for (let round = 0; round < MAX_ROUNDS; round++) {
     hooks.onThinking?.();
-    const { content, stop_reason } = await messagesRequest(history, tools, hooks.signal);
+    const { content, stop_reason } = await messagesRequest(
+      history,
+      tools,
+      hooks.signal,
+      deviceCosts,
+    );
     history.push({ role: "assistant", content });
 
     // Surface any assistant text.

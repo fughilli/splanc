@@ -1,0 +1,24 @@
+"""Dynamic opcode profiler for the effects VM (VM hill-climb, step 0).
+
+Runs the real firmware VM (built with the host-only `profile` feature) over a
+corpus of representative effects and reports the runtime op-mix + hottest adjacent
+pairs + a coarse soft-float/cheap split — the data that decides which VM
+optimizations pay off (LUTs/fixed-point for math-bound, superinstructions for
+dispatch-bound). Host-only; not a firmware dep.
+
+  bazel run //tools/fx_profile
+"""
+
+load("@rules_rust//rust:defs.bzl", "rust_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_binary(
+    name = "fx_profile",
+    srcs = ["src/main.rs"],
+    edition = "2021",
+    deps = [
+        "//firmware/fx_vm:fx_vm_profile",
+        "//fx_compiler",
+    ],
+)

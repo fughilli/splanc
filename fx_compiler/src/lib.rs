@@ -1883,8 +1883,50 @@ impl Compiler {
         Ok(args)
     }
 
+    /// Convert every scalar int/fixed arg already on the stack (in call order,
+    /// last = top) to float IN PLACE, so a float-only builtin never reinterprets a
+    /// scaled-integer word as f32. Scalar coercion doesn't change slot width, so
+    /// coercing from the top down keeps the depths valid; a non-top arg is rotated
+    /// up with Swap, coerced, and rotated back.
+    fn floaten_args(&mut self, tys: &[Ty]) -> Result<(), Diagnostic> {
+        for i in (0..tys.len()).rev() {
+            let t = tys[i];
+            if t.width() == 1 && t.fixed_frac().is_some() {
+                let above: u8 = tys[i + 1..].iter().map(|a| a.width()).sum();
+                if above == 0 {
+                    self.coerce(t, Ty::Float)?;
+                } else {
+                    self.emit2(fx_vm_op::SWAP, 1);
+                    self.emit(above);
+                    self.coerce(t, Ty::Float)?;
+                    self.emit2(fx_vm_op::SWAP, above);
+                    self.emit(1);
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn emit_builtin(&mut self, name: &str, args: &[Ty]) -> Result<Ty, Diagnostic> {
         use fx_vm_op::*;
+        // Float-only builtins: an int/fixed arg is CONVERTED to float (never
+        // reinterpreted). Unary sqrt/log/tan and sin/cos/exp are handled below
+        // (the latter with a fixed LUT); these are the multi-arg / vector ones.
+        if matches!(
+            name,
+            "smoothstep"
+                | "dot"
+                | "cross"
+                | "length"
+                | "normalize"
+                | "distance"
+                | "hsv2rgb"
+                | "palette0"
+                | "palette1"
+                | "palette2"
+        ) {
+            self.floaten_args(args)?;
+        }
         // Reduced-precision transcendentals (FUG-10): sin/cos/exp on a fixed8 /
         // fixed16 argument compile to the pure-integer LUT opcodes — no
         // soft-float. sin/cos take the angle in TURNS (1.0 = 2π); exp saturates
@@ -1894,6 +1936,7 @@ impl Compiler {
             let frac = match a {
                 Ty::Fixed8 => Some(6u8),
                 Ty::Fixed16 => Some(14),
+                Ty::Fixed => Some(16),
                 _ => None,
             };
             if let Some(frac) = frac {
@@ -1904,6 +1947,23 @@ impl Compiler {
                 };
                 self.emit(op);
                 self.emit(frac);
+                return Ok(a);
+            }
+        }
+        // Native integer/fixed unary — operate on the scaled-integer stack word
+        // directly (no soft-float, no reinterpreting the bits as f32). abs works on
+        // int + every fixed format; sign/floor/ceil/fract carry a `frac` operand
+        // (frac 0 makes floor/ceil identity and fract 0, exactly int semantics).
+        if matches!(name, "abs" | "sign" | "floor" | "ceil" | "fract") {
+            let a = self.arg1(args)?;
+            if let (1, Some(frac)) = (a.width(), a.fixed_frac()) {
+                match name {
+                    "abs" => self.emit(ABS_I),
+                    "sign" => self.emit2(SIGN_I, frac as u8),
+                    "floor" => self.emit2(FLOOR_FIX, frac as u8),
+                    "ceil" => self.emit2(CEIL_FIX, frac as u8),
+                    _ => self.emit2(FRACT_FIX, frac as u8),
+                }
                 return Ok(a);
             }
         }
@@ -1923,7 +1983,15 @@ impl Compiler {
             _ => None,
         };
         if let Some((opc, f)) = un {
-            let a = self.arg1(args)?;
+            let mut a = self.arg1(args)?;
+            // These are float-only (sqrt/log/tan/sign/fract/…, and sin/cos/exp on
+            // a non-fixed8/16 arg). A scalar int/fixed arg must be CONVERTED to
+            // float (not reinterpreted bit-for-bit), which the native abs/floor/
+            // ceil handled above already avoided.
+            if a.width() == 1 && a.fixed_frac().is_some() {
+                self.coerce(a, Ty::Float)?;
+                a = Ty::Float;
+            }
             self.emit(opc);
             self.emit(f);
             self.emit(a.width());
@@ -1944,6 +2012,33 @@ impl Compiler {
             if args[1].width() != w {
                 return self.err(format!("{name}() width mismatch"));
             }
+            // Native integer/fixed compare/select/modulo/step — both args must be
+            // the SAME int/fixed type (same scale) so the integer op is exact.
+            if args[0] == args[1] && w == 1 && args[0].fixed_frac().is_some() {
+                let frac = args[0].fixed_frac().unwrap() as u8;
+                match name {
+                    "min" => {
+                        self.emit(MIN_I);
+                        return Ok(args[0]);
+                    }
+                    "max" => {
+                        self.emit(MAX_I);
+                        return Ok(args[0]);
+                    }
+                    "mod" => {
+                        self.emit(MOD_I);
+                        return Ok(args[0]);
+                    }
+                    "step" => {
+                        self.emit2(STEP_I, frac);
+                        return Ok(args[0]);
+                    }
+                    _ => {} // pow/atan2: no integer path — fall to the float BinMath
+                }
+            }
+            // Float path (all-float, mixed types, or pow/atan2): convert any
+            // int/fixed arg to float first — never reinterpret its bits.
+            self.floaten_args(args)?;
             self.emit(BIN_MATH);
             self.emit(f);
             self.emit(w);
@@ -1953,6 +2048,15 @@ impl Compiler {
             "clamp" => {
                 self.need(args, 3)?;
                 let w = args[0].width();
+                // Native int/fixed clamp when x, lo, hi are all the same int/fixed
+                // scalar type (compare/select on the scaled integer word).
+                if args[0] == args[1] && args[1] == args[2] && w == 1 && args[0].fixed_frac().is_some()
+                {
+                    self.emit(CLAMP_I);
+                    return Ok(args[0]);
+                }
+                // Mixed / float: convert any int/fixed arg to float, never reinterpret.
+                self.floaten_args(args)?;
                 self.emit(CLAMP);
                 self.emit(w);
                 Ok(Ty::vec_of(w))
@@ -1963,6 +2067,16 @@ impl Compiler {
                 if args[2].width() != 1 {
                     return self.err("mix(a,b,t): t must be scalar");
                 }
+                // Native fixed lerp when a, b, t are all the same fixed type
+                // (frac > 0 — an int `t` isn't a fraction). a + ((b-a)*t >> frac).
+                if args[0] == args[1]
+                    && args[1] == args[2]
+                    && matches!(args[0], Ty::Fixed8 | Ty::Fixed16 | Ty::Fixed)
+                {
+                    self.emit2(MIX_FIX, args[0].fixed_frac().unwrap() as u8);
+                    return Ok(args[0]);
+                }
+                self.floaten_args(args)?;
                 self.emit(MIX);
                 self.emit(w);
                 Ok(Ty::vec_of(w))
@@ -2591,6 +2705,18 @@ mod fx_vm_op {
     pub const SIN_FIX: u8 = 67;
     pub const COS_FIX: u8 = 68;
     pub const EXP_FIX: u8 = 69;
+    // Integer/fixed abs/min/max/clamp (serve int + every fixed format).
+    pub const ABS_I: u8 = 70;
+    pub const MIN_I: u8 = 71;
+    pub const MAX_I: u8 = 72;
+    pub const CLAMP_I: u8 = 73;
+    // sign/step/floor/ceil/fract/mix with a u8 frac operand (int = frac 0).
+    pub const SIGN_I: u8 = 74;
+    pub const STEP_I: u8 = 75;
+    pub const FLOOR_FIX: u8 = 76;
+    pub const CEIL_FIX: u8 = 77;
+    pub const FRACT_FIX: u8 = 78;
+    pub const MIX_FIX: u8 = 79;
 }
 
 /// `.fxb` flags bit: a buffer descriptor table follows `code` (mirrors
