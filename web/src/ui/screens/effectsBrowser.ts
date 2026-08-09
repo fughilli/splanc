@@ -13,6 +13,7 @@
 import { ActionGrid, Button, Chip, EmptyState, HelpTip, IconButton, Sheet, toast, icon } from "../kit";
 import type { HelpTipHandle } from "../kit";
 import { effectStore, isBuiltinEffect, type StoredEffect } from "../../store/effectStore";
+import { EffectPreviewTiles } from "./effectPreviewTiles";
 import { appendGrouped, openFolderPicker } from "./folders";
 import { openDebugServerSheet } from "./debugServerSheet";
 import { scanQr, qrScanSupported } from "./qrScan";
@@ -29,6 +30,10 @@ export function EffectsBrowserScreen(router: Router): Screen {
   let search = "";
   let activeTags: string[] = [];
   let sort: Sort = "updated";
+
+  // Lazily renders each effect's 64×64 preview clip into its thumbnail when the
+  // row scrolls into view, one render at a time (FUG-80).
+  const tiles = new EffectPreviewTiles();
 
   // -- search + sort --------------------------------------------------------
   const searchWrap = document.createElement("div");
@@ -172,6 +177,8 @@ export function EffectsBrowserScreen(router: Router): Screen {
     }
 
     const rows = await effectStore.list({ search, tags: activeTags, sort });
+    // Rebuilding the list: drop the old tiles' observers/URLs before re-observing.
+    tiles.reset();
     listEl.replaceChildren();
     // Built-in pulse/flood preview always available at the top (only when not
     // filtering, so it doesn't fight a #tag / search query).
@@ -202,6 +209,8 @@ export function EffectsBrowserScreen(router: Router): Screen {
     const thumb = document.createElement("div");
     thumb.className = "map-thumb";
     thumb.appendChild(icon("sparkles"));
+    // Lazily swap the placeholder icon for a looping 64×64 preview clip.
+    tiles.observe(thumb, e.id, e.source);
 
     const info = document.createElement("div");
     info.className = "map-info";
@@ -314,6 +323,7 @@ export function EffectsBrowserScreen(router: Router): Screen {
     onUnmount: () => {
       aiTip?.close();
       fab.remove();
+      tiles.dispose();
     },
   };
 }
