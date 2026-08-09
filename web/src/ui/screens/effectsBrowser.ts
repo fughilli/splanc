@@ -10,7 +10,7 @@
  * discoverable "AI key" affordance that opens the BYO-key sheet.
  */
 
-import { ActionGrid, Button, Chip, EmptyState, HelpTip, IconButton, Sheet, toast, icon } from "../kit";
+import { ActionGrid, Button, Chip, EmptyState, HelpTip, IconButton, Sheet, confirmDialog, toast, icon } from "../kit";
 import type { HelpTipHandle } from "../kit";
 import { effectStore, isBuiltinEffect, type StoredEffect } from "../../store/effectStore";
 import { EffectPreviewTiles } from "./effectPreviewTiles";
@@ -19,6 +19,9 @@ import { openDebugServerSheet } from "./debugServerSheet";
 import { scanQr, qrScanSupported } from "./qrScan";
 import { openAiKeySheet } from "./aiKeySheet";
 import { getApiKey } from "../../effects/ai/generate";
+import { setTabMenuItems } from "../app/tabMenu";
+import { prefs } from "../../store/prefs";
+import { getAppearance } from "../../store/appearance";
 import type { Router, Screen } from "../app/router";
 
 type Sort = "updated" | "name";
@@ -77,6 +80,7 @@ export function EffectsBrowserScreen(router: Router): Screen {
     aiTip = null;
     aiHelp.replaceChildren();
     if (getApiKey()) return; // key configured → nothing to prompt
+    if (prefs.getAiHintDismissed()) return; // user dismissed it once → gone for good
     const tip = HelpTip({
       label: "About AI generation",
       title: "AI generation",
@@ -85,6 +89,12 @@ export function EffectsBrowserScreen(router: Router): Screen {
       // First-run hint: no key configured yet, so surface it expanded on arrival
       // rather than hiding it behind a "?" the user has to discover.
       defaultOpen: true,
+      // Once the user dismisses it (outside tap / Escape / tapping "?"), record
+      // that and drop the affordance for good — it won't pop again.
+      onDismiss: () => {
+        prefs.setAiHintDismissed();
+        renderAiHelp();
+      },
       action: {
         label: "Add AI key",
         icon: "sparkles",
@@ -101,16 +111,20 @@ export function EffectsBrowserScreen(router: Router): Screen {
   toolbar.className = "fxlib-toolbar";
   // Debug: ship the whole library to a host-side debug server for analysis. Tap
   // opens the camera to scan the server's QR (fills the URL); no camera / no scan
-  // falls back to manual entry in the sheet.
-  const dbgBtn = IconButton("effect-to-device", {
-    title: "Send library to debug server",
-    onClick: () => void sendLibraryFlow(),
-  });
+  // falls back to manual entry in the sheet. Lives in the app-bar ⋯ menu (below
+  // the divider, as a tab-context action).
   async function sendLibraryFlow(): Promise<void> {
     const scanned = qrScanSupported() ? await scanQr() : null;
     openDebugServerSheet(scanned ?? undefined);
   }
-  toolbar.append(searchWrap, aiHelp, dbgBtn);
+  const tabMenuItems = [
+    {
+      icon: "effect-to-device" as const,
+      label: "Send library to debug server",
+      onClick: () => void sendLibraryFlow(),
+    },
+  ];
+  toolbar.append(searchWrap, aiHelp);
 
   const tagRow = document.createElement("div");
   tagRow.className = "maps-tags";
@@ -209,8 +223,10 @@ export function EffectsBrowserScreen(router: Router): Screen {
     const thumb = document.createElement("div");
     thumb.className = "map-thumb";
     thumb.appendChild(icon("sparkles"));
-    // Lazily swap the placeholder icon for a looping 64×64 preview clip.
-    tiles.observe(thumb, e.id, e.source);
+    // Lazily swap the placeholder icon for a looping 64×64 preview clip — gated
+    // behind the experimental "Render FX previews" flag (off by default: the
+    // preview rendering is slow/buggy on mobile). Off keeps the static icon.
+    if (getAppearance().renderFxPreviews) tiles.observe(thumb, e.id, e.source);
 
     const info = document.createElement("div");
     info.className = "map-info";
@@ -302,11 +318,18 @@ export function EffectsBrowserScreen(router: Router): Screen {
           icon: "trash",
           variant: "danger",
           onClick: () => {
-            if (!confirm(`Delete "${e.name}"? This cannot be undone.`)) return;
-            sheet.close();
-            void effectStore.delete(e.id).then(() => {
-              toast("Deleted");
-              void refresh();
+            void confirmDialog({
+              title: "Delete effect",
+              message: `Delete "${e.name}"? This cannot be undone.`,
+              confirmLabel: "Delete",
+              danger: true,
+            }).then((ok) => {
+              if (!ok) return;
+              sheet.close();
+              void effectStore.delete(e.id).then(() => {
+                toast("Deleted");
+                void refresh();
+              });
             });
           },
         },
@@ -318,12 +341,14 @@ export function EffectsBrowserScreen(router: Router): Screen {
     el,
     onMount: () => {
       document.body.appendChild(fab);
+      setTabMenuItems(tabMenuItems);
       void refresh();
     },
     onUnmount: () => {
       aiTip?.close();
       fab.remove();
       tiles.dispose();
+      setTabMenuItems([]);
     },
   };
 }

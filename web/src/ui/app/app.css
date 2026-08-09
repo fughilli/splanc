@@ -197,12 +197,6 @@ body.is-locked {
 }
 
 /* --- map browser --- */
-.maps-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--sp-2);
-  margin-bottom: var(--sp-2);
-}
 .maps-search {
   display: flex;
   align-items: center;
@@ -2592,6 +2586,11 @@ input.device-name-input {
 .appbar-menu-item svg {
   width: 18px;
   height: 18px;
+}
+.appbar-menu-divider {
+  height: 1px;
+  margin: var(--sp-1) 0;
+  background: var(--border);
 }
 
 /* --- dismissible install banner (first load) --- */

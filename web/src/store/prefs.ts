@@ -20,6 +20,9 @@ const LED_COUNT_KEY = "ledmapper.captureLedCount";
  * stays Nyquist-capped (bitPeriodMs/2) for decode integrity; this only widens
  * the manual override so the frame can be brought up under artificial light. */
 const EXPOSURE_CEILING_KEY = "ledmapper.manualExposureCeilingMs";
+
+/** Set once the user dismisses the Effects-tab AI-generation hint. */
+const AI_HINT_KEY = "ledmapper.aiHintDismissed";
 /** Default manual-exposure ceiling (ms) — generous headroom over a typical
  * Nyquist cap so a well-lit frame is reachable without changing the setting. */
 export const DEFAULT_MANUAL_EXPOSURE_CEILING_MS = 250;
@@ -113,6 +116,18 @@ export const prefs = {
   setTheme(theme: "dark" | "light"): void {
     try {
       localStorage.setItem(THEME_KEY, theme);
+    } catch {
+      /* non-fatal */
+    }
+  },
+  /** Whether the user has dismissed the first-run "configure AI generation"
+   * hint on the Effects tab. Once dismissed it never shows again. */
+  getAiHintDismissed(): boolean {
+    return localStorage.getItem(AI_HINT_KEY) === "1";
+  },
+  setAiHintDismissed(): void {
+    try {
+      localStorage.setItem(AI_HINT_KEY, "1");
     } catch {
       /* non-fatal */
     }

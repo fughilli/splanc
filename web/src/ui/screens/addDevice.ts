@@ -12,7 +12,7 @@
  * prompt/await) — see net/improv.ts.
  */
 
-import { Button, Sheet, toast } from "../kit";
+import { Button, Sheet, confirmDialog, toast } from "../kit";
 import {
   provisionViaBle,
   requestImprovDevice,
@@ -134,11 +134,15 @@ export function bleRediscover(known?: KnownDevice, onDone?: () => void): void {
       return;
     }
     if (known?.bleId && device.id && device.id !== known.bleId) {
-      const ok = window.confirm(
-        `The device you picked${device.name ? ` ("${device.name}")` : ""} doesn't look ` +
+      const ok = await confirmDialog({
+        title: "Different device?",
+        message:
+          `The device you picked${device.name ? ` ("${device.name}")` : ""} doesn't look ` +
           `like "${known.label}" — it's a different Bluetooth device. Setting it up will ` +
           `connect to it and may overwrite "${known.label}"'s name. Continue?`,
-      );
+        confirmLabel: "Continue",
+        danger: true,
+      });
       if (!ok) return;
     }
     const creds = prefs.getWifiList()[0];

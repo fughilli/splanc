@@ -279,6 +279,83 @@ export function Sheet(title: string, opts: { onClose?: () => void } = {}): Sheet
   return { body, close };
 }
 
+// -- Confirm dialog ----------------------------------------------------------
+
+/**
+ * A centered modal confirmation in the app design language — a replacement for
+ * the browser's `confirm()`. Dims + blurs the app behind it, animates in like a
+ * Sheet, and resolves `true` (confirmed) / `false` (cancelled, scrim tap, ✕-less
+ * Escape). Set `danger` for destructive actions (red confirm button).
+ */
+export function confirmDialog(opts: {
+  message: string;
+  title?: string;
+  confirmLabel?: string;
+  cancelLabel?: string;
+  danger?: boolean;
+}): Promise<boolean> {
+  return new Promise((resolve) => {
+    const scrim = document.createElement("div");
+    scrim.className = "k-confirm-scrim";
+    const dialog = document.createElement("div");
+    dialog.className = "k-confirm";
+    dialog.setAttribute("role", "alertdialog");
+    dialog.setAttribute("aria-modal", "true");
+
+    if (opts.title) {
+      const h = document.createElement("h2");
+      h.className = "k-confirm-title";
+      h.textContent = opts.title;
+      dialog.appendChild(h);
+    }
+    const msg = document.createElement("p");
+    msg.className = "k-confirm-msg";
+    msg.textContent = opts.message;
+    dialog.appendChild(msg);
+
+    const actions = document.createElement("div");
+    actions.className = "k-confirm-actions";
+    const cancelBtn = Button({
+      label: opts.cancelLabel ?? "Cancel",
+      variant: "quiet",
+      onClick: () => done(false),
+    });
+    const confirmBtn = Button({
+      label: opts.confirmLabel ?? "Confirm",
+      variant: opts.danger ? "danger" : "primary",
+      onClick: () => done(true),
+    });
+    actions.append(cancelBtn, confirmBtn);
+    dialog.appendChild(actions);
+
+    document.body.append(scrim, dialog);
+    requestAnimationFrame(() => {
+      scrim.classList.add("k-confirm--in");
+      dialog.classList.add("k-confirm--in");
+      confirmBtn.focus();
+    });
+
+    let closed = false;
+    function done(result: boolean): void {
+      if (closed) return;
+      closed = true;
+      document.removeEventListener("keydown", onKey);
+      scrim.classList.remove("k-confirm--in");
+      dialog.classList.remove("k-confirm--in");
+      setTimeout(() => {
+        scrim.remove();
+        dialog.remove();
+      }, 200);
+      resolve(result);
+    }
+    function onKey(ev: KeyboardEvent): void {
+      if (ev.key === "Escape") done(false);
+    }
+    document.addEventListener("keydown", onKey);
+    scrim.addEventListener("click", () => done(false));
+  });
+}
+
 // -- Toast -------------------------------------------------------------------
 
 let toastHost: HTMLElement | null = null;
@@ -328,6 +405,10 @@ export function HelpTip(opts: {
   label?: string; // aria-label for the trigger
   align?: "left" | "right"; // which edge the popover aligns to (default right)
   defaultOpen?: boolean; // start expanded (e.g. a first-run hint) instead of collapsed
+  // Fired when the USER dismisses an open tip (outside press / Escape / tapping
+  // the trigger) — NOT on a programmatic `close()` (teardown, the action button).
+  // Lets a first-run hint record that it's been acknowledged.
+  onDismiss?: () => void;
 }): HelpTipHandle {
   const el = document.createElement("div");
   el.className = "k-helptip";
@@ -380,11 +461,11 @@ export function HelpTip(opts: {
   // reaches us — a bubble-phase listener here would leave the tip stuck open.
   // `pointerdown` (not `click`) makes the dismissal feel immediate.
   function onDocPointer(ev: Event): void {
-    if (!el.contains(ev.target as Node)) close();
+    if (!el.contains(ev.target as Node)) dismiss();
   }
   function onKey(ev: KeyboardEvent): void {
     if (ev.key === "Escape") {
-      close();
+      dismiss();
       btn.focus();
     }
   }
@@ -408,7 +489,14 @@ export function HelpTip(opts: {
     document.removeEventListener("pointerdown", onDocPointer, true);
     document.removeEventListener("keydown", onKey);
   }
-  btn.addEventListener("click", () => (open ? close() : openPop()));
+  // User-initiated close (vs. the programmatic `close()` used for teardown / the
+  // action button): collapse, then notify so a first-run hint can be recorded.
+  function dismiss(): void {
+    if (!open) return;
+    close();
+    opts.onDismiss?.();
+  }
+  btn.addEventListener("click", () => (open ? dismiss() : openPop()));
 
   el.append(btn, pop);
   // Start expanded when asked (e.g. a first-run hint that should be seen without

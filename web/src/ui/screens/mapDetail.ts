@@ -24,7 +24,7 @@ import {
   type MapXform,
 } from "../../geom/mapTransform";
 import { MapView } from "../mapview";
-import { Button, Card, IconButton, Sheet, Slider, toast, icon, type IconName } from "../kit";
+import { Button, Card, IconButton, Sheet, Slider, confirmDialog, toast, icon, type IconName } from "../kit";
 import { mapStore, type StoredMap } from "../../store/mapStore";
 import { appState } from "../app/state";
 import { openDeviceSheet } from "./deviceSheet";
@@ -776,10 +776,17 @@ export function MapDetailScreen(
         variant: "danger",
         block: true,
         onClick: () => {
-          if (!confirm(`Delete "${cur.name}"?`)) return;
-          void mapStore.delete(mapId).then(() => {
-            sheet.close();
-            router.navigate("/maps");
+          void confirmDialog({
+            title: "Delete map",
+            message: `Delete "${cur.name}"? This cannot be undone.`,
+            confirmLabel: "Delete",
+            danger: true,
+          }).then((ok) => {
+            if (!ok) return;
+            void mapStore.delete(mapId).then(() => {
+              sheet.close();
+              router.navigate("/maps");
+            });
           });
         },
       }),
