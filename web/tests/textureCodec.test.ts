@@ -5,7 +5,7 @@ import {
   quantize,
   encodeTextureFrame,
   TextureStreamer,
-  FORMAT_BPT,
+  packedLen,
 } from "../src/net/textureCodec";
 import { encodeClient, decodeClient } from "../src/net/proto";
 
@@ -76,7 +76,7 @@ test("delta + RLE reconstructs the frame device-side", () => {
     red[i * 4 + 3] = 255;
   }
   const s = new TextureStreamer(0, "rgb888", true);
-  const prev = new Uint8Array(w * h * FORMAT_BPT.rgb888);
+  const prev = new Uint8Array(packedLen("rgb888", w * h));
 
   const m1 = s.frame(w, h, black); // keyframe (all black)
   decodeInto(prev, m1.data, (m1.flags & 1) !== 0, (m1.flags & 2) !== 0);
@@ -108,6 +108,29 @@ test("set_texture round-trips through encodeClient/decodeClient", () => {
   assert.equal(back.texIndex, 2);
   assert.equal(back.width, 2);
   assert.deepEqual([...Buffer.from(back.data, "base64")], [...message.data]);
+});
+
+test("gray4 packs two texels per byte (low nibble first)", () => {
+  const white = [255, 255, 255, 255];
+  const black = [0, 0, 0, 255];
+  // texel 0 (white) -> low nibble 0xF; texel 1 (black) -> high nibble 0x0.
+  assert.deepEqual([...quantize(new Uint8Array([...white, ...black]), 2, 1, "gray4")], [0x0f]);
+  assert.deepEqual([...quantize(new Uint8Array([...black, ...white]), 2, 1, "gray4")], [0xf0]);
+  // Odd count rounds up and zero-pads the trailing nibble.
+  assert.equal(packedLen("gray4", 3), 2);
+  assert.deepEqual([...quantize(new Uint8Array(white), 1, 1, "gray4")], [0x0f]);
+});
+
+test("mono packs eight texels per byte (LSB first)", () => {
+  const white = [255, 255, 255, 255];
+  const black = [0, 0, 0, 255];
+  // white, black, white -> bits 0 and 2 -> 0b0000_0101.
+  const px = new Uint8Array([...white, ...black, ...white]);
+  assert.deepEqual([...quantize(px, 3, 1, "mono")], [0b0000_0101]);
+  assert.equal(packedLen("mono", 9), 2);
+  // 128 crosses the mono threshold; 127 does not (matches firmware).
+  assert.deepEqual([...quantize(new Uint8Array([128, 128, 128, 255]), 1, 1, "mono")], [0x01]);
+  assert.deepEqual([...quantize(new Uint8Array([127, 127, 127, 255]), 1, 1, "mono")], [0x00]);
 });
 
 test("indexed8 builds an adaptive palette and reconstructs via lookup", () => {

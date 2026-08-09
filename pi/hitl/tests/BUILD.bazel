@@ -9,7 +9,7 @@ convention). (Runner-pool selection now lives in the Go CLI, tested in
 These are pure-logic units (no hardware, no network), so they run in the normal
 `bazel test //...` suite on every build, enforcing device/app/harness parity.
 (The on-hardware harness binaries — e2e, map_upload, mapping_trigger, fx_bench,
-rename_wss — are separate `manual` py_binaries, run by the dedicated
+rename_wss, video_stream — are separate `manual` py_binaries, run by the dedicated
 .github/workflows/hitl.yaml workflow against a real rig.) `imports = ["."]` + the
 harness dep put both the test files and the modules under test on the top-level
 import path.
@@ -29,6 +29,7 @@ py_test(
         "test_map_upload.py",
         "test_mapping_trigger.py",
         "test_sync.py",
+        "test_video_bench.py",
     ],
     imports = ["."],
     legacy_create_init = False,

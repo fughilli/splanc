@@ -1,0 +1,37 @@
+"""Video-streaming performance probe (used by the //pi/hitl/harness:video_stream
+HITL test). Streams a scrolling-bars test pattern into a player's texture port
+using the TouchDesigner plugin's OWN encoder + WebSocket + protocol core
+(//tools/touchdesigner/core) and reports the sustained applied-frame rate, so a
+PASS certifies the real plugin's streaming path — not a re-encoded stand-in.
+
+The pure logic (bars pattern, FPS math) is unit-tested in :stream_bench_test; the
+end-to-end streaming needs a real device, driven by the HITL harness.
+"""
+
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "stream_bench_lib",
+    srcs = ["src/lib.rs"],
+    crate_name = "ledmapper_stream_bench",
+    edition = "2021",
+    deps = ["//tools/touchdesigner/core:td_ledmapper"],
+)
+
+rust_binary(
+    name = "stream_bench",
+    srcs = ["src/main.rs"],
+    edition = "2021",
+    deps = [
+        ":stream_bench_lib",
+        "//tools/touchdesigner/core:td_ledmapper",
+    ],
+)
+
+rust_test(
+    name = "stream_bench_test",
+    crate = ":stream_bench_lib",
+    edition = "2021",
+)
