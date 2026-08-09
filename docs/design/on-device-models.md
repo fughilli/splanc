@@ -53,14 +53,18 @@ the always-available default (and now spans more than Anthropic).
    WebGPU and a first-run download (hundreds of MB to a few GB).
 
    **Tool-calling is per-model.** web-llm only implements function calling for a
-   fixed allow-list (currently the Hermes family); it *throws* if `tools` is sent
-   to any other model. Our AI features are entirely tool-driven, so
-   `webllm.modelSupportsTools(id)` gates the provider's `tools` capability — a
+   fixed, *enumerated* allow-list (specific Hermes-2-Pro + Hermes-3-8B builds); it
+   *throws* for any other model when `tools` is present — even Hermes-3-Llama-3.2-3B
+   is unsupported, so a name heuristic is wrong. `webllm.modelSupportsTools(id)` is
+   therefore the exact set, and it gates the provider's `tools` capability — a
    non-tool model is never sent tools (no crash) and the loop degrades to plain
-   chat. Because a chat-only model can't author effects or map MIDI, the model
-   browser defaults to a **"Tool-calling only" filter**, badges tool-capable
-   models, and warns when a non-tool model is selected. To run an arbitrary
-   HuggingFace GGUF instead, use the local-server (Ollama) path, which pulls any
+   chat. Additionally, web-llm's Hermes function-calling path injects its own
+   system prompt and *rejects a custom one*, so when sending tools the provider
+   omits the system role and folds our system prompt into the first user turn.
+   Because a chat-only model can't author effects or map MIDI, the model browser
+   defaults to a **"Tool-calling only" filter**, badges tool-capable models, and
+   warns when a non-tool model is selected. To run an arbitrary HuggingFace GGUF
+   instead, use the local-server (Ollama) path, which pulls any
    `hf.co/user/repo:quant` reference.
 
 ## Architecture: a thin provider interface
@@ -169,8 +173,21 @@ and both are then cached. A future change could vendor web-llm behind the same
 - `web/tests/aiProvider.test.ts` — config defaults, tolerant merge of stored /
   partial config, and the `isAiConfigured` gate per provider.
 - `web/tests/webllmProvider.test.ts` — the per-model tool-calling gate
-  (`modelSupportsTools`), so we never send `tools` to a model web-llm can't
-  tool-call for.
+  (`modelSupportsTools`) is an exact allow-list (incl. the reported
+  Hermes-3-Llama-3.2-3B rejection), so we never send `tools` to a model web-llm
+  can't tool-call for.
+- `web/tests/chatStore.test.ts` — chat persistence sanitization: preview images
+  are stripped before saving, and history is trimmed only at safe round
+  boundaries (never begins on a dangling tool result).
+
+## Chat persistence
+
+The editor's AI chat is persisted per effect (`store/chatStore.ts`,
+localStorage): both the API `history` (so the model continues where it left off)
+and the visible `transcript` (so the log redraws). It's restored on mount and
+saved after every turn; only the chat pane's **"New chat"** button clears it.
+Captured preview images are stripped before saving, and history is trimmed at
+round boundaries to bound storage without corrupting the conversation.
 
 The network paths (server `fetch`, Ollama pull, the CDN import + GPU init) are
 browser/runtime-only and are exercised manually against a real Ollama / WebGPU
