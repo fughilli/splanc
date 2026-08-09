@@ -69,6 +69,7 @@ export function OnboardingScreen(router: Router): Screen {
   // button into so a fresh/recalled connection flips "Skip" → accent "Continue"
   // without rebuilding the screen.
   const ctaWrap = document.createElement("div");
+  ctaWrap.className = "onboard-cta";
   const renderCta = (): void => {
     const connected = appState.status.state === "connected";
     ctaWrap.replaceChildren(

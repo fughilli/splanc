@@ -417,14 +417,38 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   // when a device profile is stored, else the shipped default) for the active
   // map's LED count. Shown right under the compile status so the "will this hit
   // framerate?" signal is visible while authoring — no device required.
+  const PERF_COLLAPSE_KEY = "fxedit.perf.collapsed.v1";
   const budgetBar = BudgetBar();
   budgetBar.el.classList.add("fxedit-budget");
-  budgetBar.el.style.display = "none";
-  editorWrap.append(codeWrap, statusEl, budgetBar.el);
+  // Collapsible perf meter: an arrow tab collapses the full bar down to a thin
+  // colored strip at the bottom of the code tab (under the compile output). The
+  // strip keeps its budget color, so the "am I over budget?" signal survives.
+  const perfWrap = document.createElement("div");
+  perfWrap.className = "fxedit-perf";
+  perfWrap.style.display = "none";
+  const perfToggle = document.createElement("button");
+  perfToggle.type = "button";
+  perfToggle.className = "fxedit-perf-toggle";
+  perfToggle.title = "Collapse / expand the performance meter";
+  perfToggle.setAttribute("aria-label", "Toggle performance meter");
+  perfToggle.append(icon("chevron"));
+  if (localStorage.getItem(PERF_COLLAPSE_KEY) === "1") {
+    perfWrap.classList.add("fxedit-perf--collapsed");
+  }
+  perfToggle.addEventListener("click", () => {
+    const collapsed = perfWrap.classList.toggle("fxedit-perf--collapsed");
+    try {
+      localStorage.setItem(PERF_COLLAPSE_KEY, collapsed ? "1" : "0");
+    } catch {
+      /* storage blocked — non-fatal */
+    }
+  });
+  perfWrap.append(perfToggle, budgetBar.el);
+  editorWrap.append(codeWrap, statusEl, perfWrap);
 
   async function updateBudgetBar(bytecode: Uint8Array | null): Promise<void> {
     if (bytecode === null) {
-      budgetBar.el.style.display = "none";
+      perfWrap.style.display = "none";
       return;
     }
     try {
@@ -433,9 +457,9 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
       const ledCount = currentMap ? currentMap.leds.length : 256;
       const est = estimateFrameTime({ bytecode, ledCount, table });
       budgetBar.update(budgetFromEstimate(est, model));
-      budgetBar.el.style.display = "";
+      perfWrap.style.display = "";
     } catch {
-      budgetBar.el.style.display = "none";
+      perfWrap.style.display = "none";
     }
   }
 
@@ -566,19 +590,57 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   // -- device section -------------------------------------------------------
   const devStatus = document.createElement("div");
   devStatus.className = "fxedit-muted";
-  const sendBtn = Button({ label: "Send to device", icon: "effect-to-device", onClick: () => void sendToDevice() });
-  const hydrateBtn = Button({ label: "Load uniforms", icon: "effect-from-device", variant: "quiet", onClick: () => void hydrateFromDevice() });
+  // Push (send this effect) / Pull (load the RUNNING effect's uniforms) — icon+
+  // label tiles, matching the map-detail treatment.
+  const deviceTile = (ic: IconName, label: string, onClick: () => void): HTMLButtonElement => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "k-actiontile";
+    b.append(icon(ic));
+    const s = document.createElement("span");
+    s.textContent = label;
+    b.append(s);
+    b.addEventListener("click", onClick);
+    return b;
+  };
+  const sendBtn = deviceTile("effect-to-device", "Push", () => void sendToDevice());
+  const hydrateBtn = deviceTile("effect-from-device", "Pull", () => void hydrateFromDevice());
+  const devTiles = document.createElement("div");
+  devTiles.className = "k-actiongrid fxedit-devtiles";
+  devTiles.append(sendBtn, hydrateBtn);
+
+  // Corner warning: shown when the effect running on the device isn't this one.
+  const mismatchWarn = document.createElement("div");
+  mismatchWarn.className = "fxedit-mismatch";
+  mismatchWarn.append(icon("alert"));
+  mismatchWarn.title = "The device is running a different effect than this workspace.";
+  mismatchWarn.style.display = "none";
+  // The effect id last reported as running on the device (null = unknown).
+  let runningEffectId: string | null = null;
+  function refreshMismatch(): void {
+    mismatchWarn.style.display =
+      runningEffectId !== null && runningEffectId !== effectId ? "" : "none";
+  }
 
   // Video → device-texture streaming panel (its own pane). It consumes the live
   // client + the latest compiled bytecode (to discover the effect's textures).
   const videoPanel = new VideoTexturePanel();
 
+  let prevConnected = false;
   function refreshDevice(): void {
     const connected = appState.client?.isConnected ?? false;
     sendBtn.disabled = !connected;
     hydrateBtn.disabled = !connected;
     if (!connected) devStatus.textContent = "Connect a device (tap the status pill) to send this effect.";
     videoPanel.setSink(connected ? appState.client : null);
+    // Newly connected → automatically pull whatever effect is running so its
+    // uniforms hydrate and any mismatch surfaces without a manual tap.
+    if (connected && !prevConnected) void hydrateFromDevice();
+    if (!connected) {
+      runningEffectId = null;
+      refreshMismatch();
+    }
+    prevConnected = connected;
   }
 
   // -- top drawer: collapsible chrome + ⋯ overflow menu ---------------------
@@ -1127,33 +1189,37 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     try {
       await c.submitEffect(effectId, r.bytecode, true);
       if (panel.values().length > 0) await c.setUniforms(panel.values());
-      devStatus.textContent = "Sent · effect active.";
+      // This effect is now the one running on the device → clears any mismatch.
+      runningEffectId = effectId;
+      refreshMismatch();
+      devStatus.textContent = "Pushed · effect active.";
     } catch (e) {
-      devStatus.textContent = `upload failed: ${msg(e)}`;
+      devStatus.textContent = `push failed: ${msg(e)}`;
     }
   }
 
+  // Pull the uniforms of whatever effect is CURRENTLY RUNNING on the device
+  // (get_effect_uniforms with no id → the active effect). If that isn't this
+  // workspace's effect, flag the mismatch in the corner.
   async function hydrateFromDevice(): Promise<void> {
     const c = appState.client;
     if (!c?.isConnected) return;
     try {
       const r = await c.getEffectUniforms();
+      runningEffectId = r.effectId;
+      refreshMismatch();
       panel.hydrate(r.current.map((x) => ({ slot: x.slot, value: x.value })));
       for (const { slot, value } of r.current) preview?.setUniform(slot, value);
-      devStatus.textContent = "Loaded uniforms from device.";
+      devStatus.textContent =
+        r.effectId === effectId
+          ? "Pulled uniforms from device."
+          : "Pulled uniforms — device is running a different effect.";
     } catch (e) {
-      devStatus.textContent = `load failed: ${msg(e)}`;
+      devStatus.textContent = `pull failed: ${msg(e)}`;
     }
   }
 
   // -- layout ---------------------------------------------------------------
-  function buttonRow(...btns: HTMLElement[]): HTMLElement {
-    const row = document.createElement("div");
-    row.className = "fxedit-btnrow";
-    row.append(...btns);
-    return row;
-  }
-
   // Circular icon toggle for a preview overlay (grid / triad). Flips
   // mapView.showGrid / showTriad; safe before mapView exists. `initial` seeds
   // the pressed state from the Appearance defaults so the button matches the
@@ -1235,7 +1301,7 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   const diagsLegend = document.createElement("div");
   diagsLegend.className = "fxedit-legend";
   diagsLegend.textContent = "Diagnostics";
-  diagBody.append(buttonRow(sendBtn, hydrateBtn), devStatus, diagsLegend, diagsEl);
+  diagBody.append(devTiles, devStatus, diagsLegend, diagsEl);
 
   // Disassembly pane content (the .fxedit-disasm <pre>).
   const disasmBody = document.createElement("div");
@@ -1266,7 +1332,7 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   });
   // Assemble the drawer bar (left → right) and pin it above the workspace.
   drawer.append(backBtn, nameLabel, nameInput, spacer, menuWrap, collapseBtn);
-  el.append(layout.root, drawer, expandHandle);
+  el.append(layout.root, drawer, expandHandle, mismatchWarn);
   // Restore the persisted collapsed state (defaults to expanded on first visit).
   try {
     if (localStorage.getItem(DRAWER_KEY) === "1") el.classList.add("fxedit-drawer-collapsed");

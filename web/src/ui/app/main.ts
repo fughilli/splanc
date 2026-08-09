@@ -24,7 +24,6 @@ import { deviceStore } from "../../store/deviceStore";
 import { OnboardingScreen } from "../screens/onboarding";
 import { MapBrowserScreen } from "../screens/mapBrowser";
 import { MapDetailScreen } from "../screens/mapDetail";
-import { EffectsScreen } from "../screens/effects";
 import { EffectsBrowserScreen } from "../screens/effectsBrowser";
 import { EffectEditorScreen } from "../screens/effectEditor";
 import { CaptureScreen } from "../screens/capture";
@@ -89,10 +88,6 @@ async function main(): Promise<void> {
     .add("/effects", () => {
       shell.setChrome({ title: "Effects", tabs: true });
       return EffectsBrowserScreen(router);
-    })
-    .add("/effects/pulse", () => {
-      shell.setChrome({ title: "Pulse / Flood", back: true, tabs: true });
-      return EffectsScreen(router);
     })
     .add("/effects/edit/:id", (m) => {
       // Overlay chrome: hide the app-bar + tab-bar so the editor owns the whole

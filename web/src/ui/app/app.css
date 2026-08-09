@@ -21,7 +21,9 @@ body.is-locked {
      (e.g. the map detail 3D view). Falls back to vh where dvh is unsupported. */
   height: 100vh;
   height: 100dvh;
-  max-width: 560px;
+  /* Fill the viewport width (a phone column left dead space on wide screens);
+     content grids inside are responsive and pick up the extra columns. */
+  width: 100%;
   margin: 0 auto;
 }
 
@@ -1010,6 +1012,77 @@ body.is-locked {
   border-top: 1px solid var(--border);
   background: var(--surface-2);
 }
+
+/* Collapsible perf meter (arrow tab collapses the bar to a thin colored strip). */
+.fxedit-perf {
+  position: relative;
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.fxedit-perf .fxedit-budget {
+  border-top: 0;
+}
+.fxedit-perf-toggle {
+  position: absolute;
+  top: 3px;
+  right: 5px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  background: var(--surface-2);
+  border: 0;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.fxedit-perf-toggle svg {
+  width: 14px;
+  height: 14px;
+  transition: transform var(--motion-micro) var(--ease);
+  transform: rotate(90deg); /* expanded → points down */
+}
+.fxedit-perf--collapsed .fxedit-perf-toggle svg {
+  transform: rotate(0deg); /* collapsed → points right */
+}
+.fxedit-perf--collapsed {
+  min-height: 18px;
+}
+.fxedit-perf--collapsed .perf-budget-head,
+.fxedit-perf--collapsed .perf-budget-detail {
+  display: none;
+}
+.fxedit-perf--collapsed .fxedit-budget {
+  padding: 0;
+}
+.fxedit-perf--collapsed .perf-budget-track {
+  height: 6px;
+  border-radius: 0;
+}
+
+/* Running-effect mismatch badge (device is running a different effect). */
+.fxedit-mismatch {
+  position: fixed;
+  right: var(--sp-3);
+  bottom: var(--sp-3);
+  z-index: 60;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  border: 1px solid var(--warn);
+  color: var(--warn);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+}
+.fxedit-mismatch svg {
+  width: 20px;
+  height: 20px;
+}
 .fxedit-spinner {
   width: 12px;
   height: 12px;
@@ -1744,10 +1817,14 @@ body.is-locked {
 
 /* -- drag a pane handle (tab / header title) to a new dock -- */
 .fxlayout-draghandle {
-  touch-action: none; /* let the long-press drag win over browser scroll */
+  /* Allow horizontal panning so a crowded tab strip still scrolls; the
+     long-press drag needs a HOLD (not a swipe), and once it engages it sets
+     touch-action:none via --active below to own the gesture. */
+  touch-action: pan-x;
   cursor: grab;
 }
 .fxlayout-draghandle--active {
+  touch-action: none;
   cursor: grabbing;
 }
 .fxlayout-dropzones {
@@ -2499,6 +2576,9 @@ input.device-name-input {
 }
 
 /* Onboarding reuses the device-add row, a touch larger. */
+.onboard-cta {
+  margin-top: var(--sp-4);
+}
 .onboard-add-card {
   display: flex;
   flex-direction: column;

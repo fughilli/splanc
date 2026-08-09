@@ -542,8 +542,9 @@ a {
   background: var(--accent-quiet);
   color: var(--text);
 }
-/* Greyed-out tile (e.g. Save with no pending edits). */
-.k-actiontile--disabled {
+/* Greyed-out tile (e.g. Save with no pending edits, or a disabled action). */
+.k-actiontile--disabled,
+.k-actiontile:disabled {
   opacity: 0.4;
   pointer-events: none;
 }

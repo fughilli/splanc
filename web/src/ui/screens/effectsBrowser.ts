@@ -1,8 +1,7 @@
 /**
  * Effects browser (the #/effects tab) — the effect library workspace: browse,
- * create, edit, and test shader effects. Replaces the old Effects tab (which was
- * only the pulse/flood simulator; that lives on as a "Built-in: Pulse/Flood"
- * entry that opens the preserved sim at #/effects/pulse).
+ * create, edit, and test shader effects. Replaces the old pulse/flood-simulator
+ * Effects tab.
  *
  * Mirrors the map browser: a search box, tag chips, a list of saved effects
  * (tap → open the in-shell editor at #/effects/edit/:id), a circular "+" FAB to
@@ -132,28 +131,6 @@ export function EffectsBrowserScreen(router: Router): Screen {
   const listEl = document.createElement("div");
   listEl.className = "maps-list";
 
-  // -- built-in pulse/flood entry (preserves the old Effects-tab sim) -------
-  function builtinRow(): HTMLElement {
-    const r = document.createElement("div");
-    r.className = "map-row";
-    r.addEventListener("click", () => router.navigate("/effects/pulse"));
-    const thumb = document.createElement("div");
-    thumb.className = "map-thumb";
-    thumb.appendChild(icon("sparkles"));
-    const info = document.createElement("div");
-    info.className = "map-info";
-    const name = document.createElement("div");
-    name.className = "map-name";
-    name.textContent = "Built-in: Pulse / Flood";
-    const meta = document.createElement("div");
-    meta.className = "map-meta metric";
-    meta.textContent = "Offline preview over a selected map";
-    info.append(name, meta);
-    const go = IconButton("play", { title: "Preview" });
-    r.append(thumb, info, go);
-    return r;
-  }
-
   // -- FAB (body-mounted, exactly like the map browser) ---------------------
   const fab = document.createElement("button");
   fab.type = "button";
@@ -194,9 +171,6 @@ export function EffectsBrowserScreen(router: Router): Screen {
     // Rebuilding the list: drop the old tiles' observers/URLs before re-observing.
     tiles.reset();
     listEl.replaceChildren();
-    // Built-in pulse/flood preview always available at the top (only when not
-    // filtering, so it doesn't fight a #tag / search query).
-    if (!search && activeTags.length === 0) listEl.appendChild(builtinRow());
 
     if (rows.length === 0 && all.length === 0) {
       listEl.append(

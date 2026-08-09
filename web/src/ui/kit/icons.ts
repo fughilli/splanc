@@ -52,21 +52,15 @@ export type IconName =
   | "chip";
 
 // -- shared fragments for the device-transfer glyphs (24x24, top→bottom layout:
-//    content over a small device pentagon, joined by a direction arrow) --------
-/** Small device pentagon at the bottom (the transfer target — effect glyphs). */
-const DEVICE_SMALL = `<path d="M12 14.5 16 17.4 14.5 22.1 9.5 22.1 8 17.4Z"/>`;
-/** Bigger device pentagon for the MAP glyphs (centre ≈ y17.8). */
+//    content (map / sparkle) over a device pentagon, joined by a "cut" arrow) --
+/** Device pentagon (the transfer target — centre ≈ y17.8). */
 const DEVICE_MAP = `<path d="M12 13 17 16.4 15 21.6 9 21.6 7 16.4Z"/>`;
 /** Folded map at the top — tall enough to read clearly (centre ≈ y6). */
 const MAP_TOP = `<path d="M6 3 10 2 14 3 18 2 18 9 14 10 10 9 6 10Z"/><path d="M10 2V9"/><path d="M14 3V10"/>`;
 /** Four-point sparkle, compact, at the top. */
 const SPARK_TOP = `<path d="M12 1.9 12.78 4.32 15.2 5.1 12.78 5.88 12 8.3 11.22 5.88 8.8 5.1 11.22 4.32Z"/>`;
-/** Arrow pointing DOWN into the device (send). */
-const ARROW_DOWN = `<path d="M12 8.6V13.9"/><path d="M9.7 11.6 12 13.9 14.3 11.6"/>`;
-/** Arrow pointing UP out of the device (pull). */
-const ARROW_UP = `<path d="M12 13.9V8.6"/><path d="M9.7 10.9 12 8.6 14.3 10.9"/>`;
 
-// Map transfer arrows run centre-to-centre — from the map's centre (≈y6) to the
+// Transfer arrows run centre-to-centre — from the content's centre (≈y6) to the
 // device's centre (≈y17.8) — so the arrow visually links the two pictograms.
 const MAP_ARROW_DOWN = `M12 6V17.8M9.6 15.4 12 17.8 14.4 15.4`;
 const MAP_ARROW_UP = `M12 17.8V6M9.6 8.4 12 6 14.4 8.4`;
@@ -87,8 +81,8 @@ const PATHS: Record<IconName, string> = {
   // (pull). One consistent design language for send/pull across maps + effects.
   "map-to-device": `${MAP_TOP}${DEVICE_MAP}${cut(MAP_ARROW_DOWN)}`,
   "map-from-device": `${MAP_TOP}${DEVICE_MAP}${cut(MAP_ARROW_UP)}`,
-  "effect-to-device": `${SPARK_TOP}${ARROW_DOWN}${DEVICE_SMALL}`,
-  "effect-from-device": `${SPARK_TOP}${ARROW_UP}${DEVICE_SMALL}`,
+  "effect-to-device": `${SPARK_TOP}${DEVICE_MAP}${cut(MAP_ARROW_DOWN)}`,
+  "effect-from-device": `${SPARK_TOP}${DEVICE_MAP}${cut(MAP_ARROW_UP)}`,
   link: `<path d="M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1"/>`,
   "link-off": `<path d="M9 15l6-6"/><path d="M11 6l1-1a5 5 0 0 1 7 7l-1 1"/><path d="M13 18l-1 1a5 5 0 0 1-7-7l1-1"/><path d="M3 3l18 18"/>`,
   camera: `<path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>`,
