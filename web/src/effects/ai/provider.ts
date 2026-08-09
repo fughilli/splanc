@@ -107,6 +107,10 @@ export interface WebLlmConfig {
   model: string;
   /** Extra model ids the user has pinned via "Add" (custom / off-filter). */
   pinned: string[];
+  /** web-llm context window in tokens. web-llm's per-model default (often 4096)
+   * is too small for our grounded prompts, so this is user-configurable; must
+   * not exceed what the model was trained for. */
+  contextWindowSize: number;
 }
 
 /**
@@ -192,6 +196,9 @@ const LEGACY_KEY = "ledmapper.anthropicKey";
 export const DEFAULT_ANTHROPIC_MODEL = "claude-opus-4-8";
 /** A sensible Ollama default; the user picks a real one in AI settings. */
 export const DEFAULT_OPENAI_BASE_URL = "http://localhost:11434/v1";
+/** Default in-browser context window (tokens): fits our grounded prompts, and is
+ * within the 8K trained context of the Llama-3-8B-based tool models. */
+export const DEFAULT_WEBLLM_CONTEXT = 8192;
 
 function isCloudVendor(v: unknown): v is CloudVendor {
   return typeof v === "string" && v in CLOUD_VENDORS;
@@ -214,7 +221,7 @@ export function defaultConfig(): AiConfig {
     kind: "cloud",
     cloud: { vendor: "anthropic", vendors: emptyVendors() },
     local: { baseUrl: DEFAULT_OPENAI_BASE_URL, key: "", model: "", vision: false },
-    webllm: { model: "", pinned: [] },
+    webllm: { model: "", pinned: [], contextWindowSize: DEFAULT_WEBLLM_CONTEXT },
   };
 }
 
@@ -264,7 +271,11 @@ export function normalizeConfig(raw: unknown): AiConfig {
   }
   const vendor: CloudVendor = isCloudVendor(cloud.vendor) ? cloud.vendor : "anthropic";
   const local = (r["local"] ?? {}) as Partial<OpenAiConfig>;
-  const webllm = (r["webllm"] ?? {}) as { model?: unknown; pinned?: unknown };
+  const webllm = (r["webllm"] ?? {}) as {
+    model?: unknown;
+    pinned?: unknown;
+    contextWindowSize?: unknown;
+  };
   return {
     kind,
     cloud: { vendor, vendors },
@@ -274,6 +285,10 @@ export function normalizeConfig(raw: unknown): AiConfig {
       pinned: Array.isArray(webllm.pinned)
         ? webllm.pinned.filter((x): x is string => typeof x === "string")
         : [],
+      contextWindowSize:
+        typeof webllm.contextWindowSize === "number" && webllm.contextWindowSize > 0
+          ? Math.floor(webllm.contextWindowSize)
+          : DEFAULT_WEBLLM_CONTEXT,
     },
   };
 }

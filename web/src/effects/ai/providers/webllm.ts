@@ -53,14 +53,17 @@ interface ModelRecord {
 }
 type AppConfig = { model_list?: ModelRecord[] };
 type EngineOpts = { initProgressCallback?: (r: { progress?: number; text?: string }) => void };
+/** Per-chat overrides — notably the context window (web-llm's default is small). */
+type ChatOpts = { context_window_size?: number; sliding_window_size?: number };
 interface WebLlmModule {
   prebuiltAppConfig?: AppConfig;
-  CreateMLCEngine: (model: string, opts?: EngineOpts) => Promise<MlcEngine>;
+  CreateMLCEngine: (model: string, opts?: EngineOpts, chatOpts?: ChatOpts) => Promise<MlcEngine>;
   /** Off-main-thread engine (runs inference in a Web Worker; no UI stutter). */
   CreateWebWorkerMLCEngine?: (
     worker: Worker,
     model: string,
     opts?: EngineOpts,
+    chatOpts?: ChatOpts,
   ) => Promise<MlcEngine>;
   /** Whether the model's weights are already cached in the browser. */
   hasModelInCache?: (modelId: string, appConfig?: AppConfig) => Promise<boolean>;
@@ -72,8 +75,17 @@ interface WebLlmModule {
 let modulePromise: Promise<WebLlmModule> | null = null;
 let engine: MlcEngine | null = null;
 let engineModel = "";
+/** Context window the active engine was created with (reload if it changes). */
+let engineContext = 0;
 /** The worker backing the active engine (terminated on unload). */
 let engineWorker: Worker | null = null;
+
+/** web-llm chat overrides for a context window (0 ⇒ leave the model default). */
+function chatOptsFor(contextWindowSize?: number): ChatOpts | undefined {
+  return contextWindowSize && contextWindowSize > 0
+    ? { context_window_size: contextWindowSize }
+    : undefined;
+}
 
 /**
  * Spawn a module Web Worker that hosts a web-llm engine handler, so inference
@@ -96,6 +108,7 @@ async function createEngine(
   m: WebLlmModule,
   model: string,
   onProgress?: (p: InitProgress) => void,
+  chatOpts?: ChatOpts,
 ): Promise<{ engine: MlcEngine; worker: Worker | null }> {
   const opts: EngineOpts = {
     initProgressCallback: (r) => onProgress?.({ progress: r.progress ?? 0, text: r.text ?? "" }),
@@ -103,14 +116,14 @@ async function createEngine(
   if (typeof m.CreateWebWorkerMLCEngine === "function") {
     const worker = makeWorker();
     try {
-      const eng = await m.CreateWebWorkerMLCEngine(worker, model, opts);
+      const eng = await m.CreateWebWorkerMLCEngine(worker, model, opts, chatOpts);
       return { engine: eng, worker };
     } catch (e) {
       worker.terminate();
       throw e;
     }
   }
-  return { engine: await m.CreateMLCEngine(model, opts), worker: null };
+  return { engine: await m.CreateMLCEngine(model, opts, chatOpts), worker: null };
 }
 
 /**
@@ -192,19 +205,23 @@ export interface InitProgress {
 
 /**
  * Ensure the given model is loaded (downloading + caching its weights on first
- * use). Safe to call repeatedly; only reloads when the model changes.
+ * use). Safe to call repeatedly; reloads when the model OR the context window
+ * changes.
  */
 export async function loadWebLlmModel(
   model: string,
   onProgress?: (p: InitProgress) => void,
+  contextWindowSize?: number,
 ): Promise<void> {
-  if (engine && engineModel === model) return;
+  const ctx = contextWindowSize ?? 0;
+  if (engine && engineModel === model && engineContext === ctx) return;
   await unloadWebLlmModel(); // drop any previous engine + worker first
   const m = await loadModule();
-  const created = await createEngine(m, model, onProgress);
+  const created = await createEngine(m, model, onProgress, chatOptsFor(ctx));
   engine = created.engine;
   engineWorker = created.worker;
   engineModel = model;
+  engineContext = ctx;
 }
 
 /** Is this model the one currently loaded into the active engine (this tab)? */
@@ -231,6 +248,7 @@ export async function unloadWebLlmModel(): Promise<void> {
   }
   engine = null;
   engineModel = "";
+  engineContext = 0;
 }
 
 /** Whether the model's weights are already downloaded (cached) in the browser. */
@@ -295,7 +313,7 @@ export function makeWebLlmProvider(cfg: WebLlmConfig): AiProvider {
       if (!isWebLlmSupported()) {
         throw new Error("WebGPU is not available in this browser");
       }
-      await loadWebLlmModel(cfg.model);
+      await loadWebLlmModel(cfg.model, undefined, cfg.contextWindowSize);
       if (!engine) throw new Error("in-browser model failed to load");
       const useTools = opts.tools.length > 0 && modelSupportsTools(cfg.model);
       // web-llm's Hermes function-calling path injects its OWN system prompt and

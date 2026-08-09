@@ -10,6 +10,7 @@ import {
   CLOUD_VENDORS,
   DEFAULT_ANTHROPIC_MODEL,
   DEFAULT_OPENAI_BASE_URL,
+  DEFAULT_WEBLLM_CONTEXT,
   defaultConfig,
   isAiConfigured,
   kindLabel,
@@ -22,7 +23,24 @@ test("defaultConfig is Cloud▸Anthropic with the historical model", () => {
   assert.equal(d.cloud.vendor, "anthropic");
   assert.equal(d.cloud.vendors.anthropic.model, DEFAULT_ANTHROPIC_MODEL);
   assert.equal(d.local.baseUrl, DEFAULT_OPENAI_BASE_URL);
-  assert.deepEqual(d.webllm, { model: "", pinned: [] });
+  assert.deepEqual(d.webllm, {
+    model: "",
+    pinned: [],
+    contextWindowSize: DEFAULT_WEBLLM_CONTEXT,
+  });
+});
+
+test("normalizeConfig defaults + clamps the web-llm context window", () => {
+  assert.equal(normalizeConfig({ kind: "webllm" }).webllm.contextWindowSize, DEFAULT_WEBLLM_CONTEXT);
+  assert.equal(
+    normalizeConfig({ kind: "webllm", webllm: { contextWindowSize: 16384 } }).webllm.contextWindowSize,
+    16384,
+  );
+  // Non-positive / garbage falls back to the default.
+  assert.equal(
+    normalizeConfig({ kind: "webllm", webllm: { contextWindowSize: 0 } }).webllm.contextWindowSize,
+    DEFAULT_WEBLLM_CONTEXT,
+  );
 });
 
 test("known cloud vendors carry fixed endpoints; anthropic is native", () => {

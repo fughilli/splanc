@@ -25,6 +25,7 @@ import {
   kindLabel,
   CLOUD_VENDORS,
   DEFAULT_OPENAI_BASE_URL,
+  DEFAULT_WEBLLM_CONTEXT,
   type AiConfig,
   type ProviderKind,
   type CloudVendor,
@@ -415,6 +416,25 @@ function webLlmPanel(): HTMLElement {
     }),
   );
 
+  // Context window (tokens). web-llm's per-model default (often 4096) is too
+  // small for our grounded prompts (ContextWindowSizeExceededError); configurable
+  // here. Takes effect on the next load (the engine reloads if it changed).
+  const ctxField = field({
+    label: "Context window (tokens)",
+    type: "number",
+    value: String(getAiConfig().webllm.contextWindowSize),
+    placeholder: String(DEFAULT_WEBLLM_CONTEXT),
+    onInput: (v) => {
+      const n = parseInt(v, 10);
+      updateAiConfig({
+        webllm: {
+          ...getAiConfig().webllm,
+          contextWindowSize: Number.isFinite(n) && n > 0 ? n : DEFAULT_WEBLLM_CONTEXT,
+        },
+      });
+    },
+  });
+
   const cardsEl = document.createElement("div");
   cardsEl.className = "aiset-cards";
   const listStatus = document.createElement("div");
@@ -580,8 +600,10 @@ function webLlmPanel(): HTMLElement {
           updateAiConfig({ webllm: { ...getAiConfig().webllm, model: "" } });
           toast("Model unloaded");
         } else {
-          await loadWebLlmModel(id, (p) =>
-            chipBar.set(Math.round(p.progress * 100), p.text || "Loading…"),
+          await loadWebLlmModel(
+            id,
+            (p) => chipBar.set(Math.round(p.progress * 100), p.text || "Loading…"),
+            getAiConfig().webllm.contextWindowSize,
           );
           downloaded.set(id, true);
           updateAiConfig({ webllm: { ...getAiConfig().webllm, model: id } });
@@ -640,6 +662,7 @@ function webLlmPanel(): HTMLElement {
 
   g.append(
     warn,
+    ctxField,
     search,
     filterRow,
     cardsEl,
