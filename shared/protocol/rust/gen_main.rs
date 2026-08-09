@@ -127,5 +127,11 @@ fn main() -> std::io::Result<()> {
     );
     g.configure(".ledmapper.v1.PlaybackParams.palette", Config::new().max_len(16));
 
+    // Declared texture inputs echoed in the effect_uniforms reply: REAL
+    // firmware traffic (the player ENCODES this). An effect declares only a
+    // handful of texture buffers; 8 covers any realistic effect in both
+    // profiles.
+    g.configure(".ledmapper.v1.EffectUniforms.textures", Config::new().max_len(8));
+
     g.compile_fdset_file(&args[1], &args[2])
 }

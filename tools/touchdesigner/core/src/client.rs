@@ -11,9 +11,9 @@ use crate::discovery::{DEFAULT_WS_PORT, WS_PATH};
 use crate::manifest::{self, UniformPort};
 use crate::proto::{
     decode_server, encode_get_effect_uniforms, encode_hello, encode_set_effect,
-    encode_set_uniforms, ServerMsg, UniformValue,
+    encode_set_uniforms, ServerMsg, TexturePort, UniformValue,
 };
-use crate::texture::{ChannelOrder, Format, TextureStreamer};
+use crate::texture::{nn_rescale, ChannelOrder, Format, TextureStreamer};
 use crate::ws::WsClient;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -52,6 +52,14 @@ pub struct Status {
     pub mac: String,
     pub error: String,
     pub frames_sent: u64,
+    /// Declared texture size for the configured `tex_index`, as probed from the
+    /// device's active effect. `(0, 0)` when the device advertises none (older
+    /// firmware) or the index isn't a declared texture.
+    pub device_tex: (u32, u32),
+    /// The size the streamer actually rescales frames to before sending:
+    /// the probed device size, else the manual fallback, else `(0, 0)` for
+    /// pass-through (send the source frame as-is).
+    pub target: (u32, u32),
 }
 
 #[derive(Default)]
@@ -64,6 +72,15 @@ struct Inner {
     mac: String,
     frames_sent: u64,
     ports: Vec<UniformPort>,
+    /// Declared texture inputs of the connected effect (empty on older firmware).
+    textures: Vec<TexturePort>,
+    /// Manual target size used only when the device advertises no texture for
+    /// the configured index (`(0, 0)` = unset). Set out-of-band, no reconnect.
+    manual_target: (u32, u32),
+    /// Device texture size for the configured index / effective target,
+    /// republished by the worker for status readout.
+    device_tex: (u32, u32),
+    target: (u32, u32),
     pending_pixels: Option<(Vec<u8>, usize, usize)>,
     pending_uniforms: Option<Vec<UniformValue>>,
     last_uniforms: Vec<UniformValue>,
@@ -92,10 +109,19 @@ impl Session {
     }
 
     /// Push the most recent frame (4 bytes/pixel). Coalesced: only the latest
-    /// frame between worker sends is transmitted.
+    /// frame between worker sends is transmitted. The worker rescales it to the
+    /// effective target size (probed device size, else manual fallback) before
+    /// encoding, so callers push the source frame at its native resolution.
     pub fn push_texture(&self, pixels: &[u8], w: usize, h: usize) {
         let mut g = self.inner.lock().unwrap();
         g.pending_pixels = Some((pixels.to_vec(), w, h));
+    }
+
+    /// Set the manual fallback target size used when the device advertises no
+    /// texture for the configured index (`(0, 0)` disables it). Does not
+    /// reconnect — it only affects how the next frame is rescaled.
+    pub fn set_manual_target(&self, w: u32, h: u32) {
+        self.inner.lock().unwrap().manual_target = (w, h);
     }
 
     /// Map named channel values onto uniform slots via the fixture's manifest
@@ -129,7 +155,15 @@ impl Session {
             mac: g.mac.clone(),
             error: g.error.clone(),
             frames_sent: g.frames_sent,
+            device_tex: g.device_tex,
+            target: g.target,
         }
+    }
+
+    /// The declared texture inputs of the connected effect (empty when the
+    /// device advertises none — older firmware).
+    pub fn textures(&self) -> Vec<TexturePort> {
+        self.inner.lock().unwrap().textures.clone()
     }
 
     /// The uniform ports advertised by the connected fixture's active effect
@@ -198,11 +232,8 @@ fn run_connection(
     ws.set_read_timeout(Some(timeout)).ok();
     let welcome = read_until_welcome(&mut ws)?;
 
-    // Fetch the uniform manifest (best effort; empty on current firmware).
-    ws.send_binary(&encode_get_effect_uniforms(None)).ok();
-    let ports = read_manifest(&mut ws, timeout);
-
-    // Optionally activate an effect.
+    // Activate the requested effect FIRST, so the manifest/texture query below
+    // describes the effect we're about to stream into (not the previous one).
     if let Some(id) = &cfg.effect_id {
         if !id.is_empty() {
             ws.send_binary(&encode_set_effect(id)).ok();
@@ -211,6 +242,19 @@ fn run_connection(
         }
     }
 
+    // Fetch the active effect's uniform manifest + declared textures (best
+    // effort; both empty on current firmware).
+    ws.send_binary(&encode_get_effect_uniforms(None)).ok();
+    let (ports, textures) = read_effect_uniforms(&mut ws, timeout);
+
+    // The declared size of the texture port we stream into (0,0 when the device
+    // advertises none — older firmware, or a non-texture index).
+    let device_tex = textures
+        .iter()
+        .find(|t| t.index == cfg.tex_index)
+        .map(|t| (t.width, t.height))
+        .unwrap_or((0, 0));
+
     {
         let mut g = inner.lock().unwrap();
         g.connected = true;
@@ -218,6 +262,8 @@ fn run_connection(
         g.name = welcome.1;
         g.mac = welcome.0;
         g.ports = ports;
+        g.textures = textures;
+        g.device_tex = device_tex;
         g.last_uniforms.clear();
     }
 
@@ -244,7 +290,25 @@ fn run_connection(
             did_work = true;
         }
         if let Some((px, w, h)) = pixels {
-            let frame = streamer.encode_frame(&px, w, h);
+            // Resolve the effective target size: the device's declared size
+            // wins; else the manual fallback; else pass the frame through at
+            // its source size. Republish it for status readout.
+            let manual = inner.lock().unwrap().manual_target;
+            let target = if device_tex.0 > 0 && device_tex.1 > 0 {
+                device_tex
+            } else if manual.0 > 0 && manual.1 > 0 {
+                manual
+            } else {
+                (w as u32, h as u32)
+            };
+            inner.lock().unwrap().target = target;
+            let (tw, th) = (target.0 as usize, target.1 as usize);
+            let frame = if (tw, th) != (w, h) {
+                let scaled = nn_rescale(&px, w, h, tw, th);
+                streamer.encode_frame(&scaled, tw, th)
+            } else {
+                streamer.encode_frame(&px, w, h)
+            };
             ws.send_binary(&frame).map_err(|e| format!("set_texture: {e}"))?;
             inner.lock().unwrap().frames_sent += 1;
             did_work = true;
@@ -268,20 +332,26 @@ fn read_until_welcome(ws: &mut WsClient) -> Result<(String, String), String> {
     Err("no welcome received".into())
 }
 
-/// Read the `effect_uniforms` reply (if any) and parse its manifest.
-fn read_manifest(ws: &mut WsClient, timeout: Duration) -> Vec<UniformPort> {
+/// Read the `effect_uniforms` reply (if any) and parse its uniform manifest +
+/// declared texture ports. Both empty on current firmware / on any error.
+fn read_effect_uniforms(
+    ws: &mut WsClient,
+    timeout: Duration,
+) -> (Vec<UniformPort>, Vec<TexturePort>) {
     ws.set_read_timeout(Some(timeout)).ok();
     for _ in 0..4 {
         match ws.recv_message() {
             Ok(frame) => match decode_server(&frame) {
-                Some(ServerMsg::EffectUniforms(e)) => return manifest::parse(&e.manifest),
-                Some(ServerMsg::Error { .. }) => return Vec::new(),
+                Some(ServerMsg::EffectUniforms(e)) => {
+                    return (manifest::parse(&e.manifest), e.textures);
+                }
+                Some(ServerMsg::Error { .. }) => return (Vec::new(), Vec::new()),
                 _ => continue,
             },
-            Err(_) => return Vec::new(),
+            Err(_) => return (Vec::new(), Vec::new()),
         }
     }
-    Vec::new()
+    (Vec::new(), Vec::new())
 }
 
 // host:port helpers ---------------------------------------------------------
