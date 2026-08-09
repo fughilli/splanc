@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from urllib.parse import urlparse
 
@@ -43,14 +44,24 @@ _PROVISIONER = os.path.join(_HERE, "hitl_improv.py")
 _CODEC = os.path.join(_HERE, "improv.py")
 
 
-def _run_provisioner(res, ssid: str, password: str, timeout: float) -> str:
-    """One ImprovBLE provisioning attempt; returns the redirect URL or raises."""
+def _run_provisioner(
+    res, ssid: str, password: str, timeout: float, address: str | None = None
+) -> str:
+    """One ImprovBLE provisioning attempt; returns the redirect URL or raises.
+
+    When `address` is set, the scan pins that exact BLE MAC — so a stray Improv
+    board in RF range (another rig's DUT, a bench spare) can never be provisioned
+    in place of the board we actually flashed. Without it, the scan takes whatever
+    named Improv device answers first, which is how a renamed stray got picked.
+    """
     # Run with the container's python3 (has bleak); PYTHONPATH lets the shipped
     # hitl_improv import the shipped improv codec.
     cmd = (
         f"PYTHONPATH=/tmp python3 /tmp/hitl_improv.py provision "
         f"--ssid {json.dumps(ssid)} --pass {json.dumps(password)} --timeout {timeout:g}"
     )
+    if address:
+        cmd += f" --address {address}"
     # The provisioner now retries the BLE connect several times WITHIN one call
     # (hitl_improv._connect — the first connect to a freshly-booted C6 routinely
     # times out during WiFi/BLE-coexistence bring-up), so a single call can spend
@@ -74,7 +85,37 @@ def _run_provisioner(res, ssid: str, password: str, timeout: float) -> str:
     return urls[0]
 
 
-def provision_dut(res, ssid: str, password: str, timeout: float, attempts: int = 3) -> str:
+# The DUT prints its BLE advertising address on boot, e.g.
+#   [ble] advertising "Led Widget CA2BFE" as 8c:fd:49:12:31:72 (Improv service …)
+#   [player] identity 8C:FD:49:12:31:72 / "Led Widget CA2BFE" …
+_BLE_MAC_RE = re.compile(r"advertising\b.*?\bas\s+([0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5})")
+_IDENTITY_MAC_RE = re.compile(r"identity\s+([0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5})")
+
+
+def reserved_board_ble_mac(res, seconds: float = 6.0) -> str | None:
+    """Reset the reserved DUT and read its BLE advertising MAC off its OWN serial.
+
+    Because `hitl-monitor` reads the specific USB port of the board this
+    reservation holds, the MAC we parse is guaranteed to be the board we flashed
+    — not some other Improv device in RF range. The reset also drops it to a
+    clean soft-AP first-join state (the reliably-provisionable path). Returns the
+    MAC, or None if the boot banner didn't surface one in the window.
+    """
+    try:
+        proc = res.ssh(
+            f"hitl-monitor --reset --seconds {seconds:g}", capture=True, timeout=seconds + 40
+        )
+    except Exception as e:  # noqa: BLE001 — best-effort; fall back to a name scan
+        print(f"[improv] could not read board serial for MAC ({e}); scanning by name", flush=True)
+        return None
+    text = (proc.stdout or "") + (proc.stderr or "")
+    m = _BLE_MAC_RE.search(text) or _IDENTITY_MAC_RE.search(text)
+    return m.group(1).lower() if m else None
+
+
+def provision_dut(
+    res, ssid: str, password: str, timeout: float, attempts: int = 3, address: str | None = None
+) -> str:
     """Provision the DUT onto WiFi over ImprovBLE; return its redirect URL.
 
     The WiFi association is intermittently flaky on real hardware (RF + the
@@ -82,9 +123,24 @@ def provision_dut(res, ssid: str, password: str, timeout: float, attempts: int =
     within the window. On a join-timeout the firmware clears the just-tried
     credentials and returns to AUTHORIZED, so re-sending them is a clean retry —
     bounded, so a genuinely bad credential / unreachable AP still fails.
+
+    We pin the scan to the reserved board's BLE MAC (read from its own serial)
+    so provisioning can never latch onto a stray Improv board in RF range — a
+    real failure mode on a multi-rig bench that manifested as flaky wss (we'd
+    flash one board and then talk to a different, drifting one). Pass `address`
+    to override; None auto-derives it, and a failed read falls back to name scan.
     """
     print("[improv] shipping provisioner + provisioning DUT over BLE…", flush=True)
     res.scp_to([_PROVISIONER, _CODEC], "/tmp/")
+    if address is None:
+        address = reserved_board_ble_mac(res)
+        if address:
+            print(f"[improv] pinning provisioning to reserved board {address}", flush=True)
+        else:
+            print(
+                "[improv] WARN: no reserved-board MAC; scanning by name (stray-board risk)",
+                flush=True,
+            )
     last: HarnessError | None = None
     for attempt in range(1, attempts + 1):
         if attempt > 1:
@@ -96,7 +152,7 @@ def provision_dut(res, ssid: str, password: str, timeout: float, attempts: int =
             print(f"[improv] resetting DUT for a clean retry {attempt}/{attempts}…", flush=True)
             res.ssh("hitl-monitor --reset --seconds 4", capture=True, timeout=30)
         try:
-            url = _run_provisioner(res, ssid, password, timeout)
+            url = _run_provisioner(res, ssid, password, timeout, address=address)
             print(f"[improv] OK — DUT joined WiFi, redirect={url}", flush=True)
             return url
         except HarnessError as e:

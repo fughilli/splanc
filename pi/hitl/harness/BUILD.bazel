@@ -14,7 +14,7 @@ other.
 """
 
 load("@pypi//:requirements.bzl", "requirement")
-load("@rules_python//python:defs.bzl", "py_library", "py_test")
+load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -63,6 +63,30 @@ py_test(
     deps = [
         ":harness",
         "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# Serial-console diagnostic (not a test) for the post-provision wss wedge: flash,
+# stream the DUT serial from the rig while provisioning + hammering the wss open,
+# so the trace spans the LAN-cert reissue / httpd_ssl restart where the resets
+# start. Run via the shim as a full label: //pi/hitl/harness:serial_probe.
+py_binary(
+    name = "serial_probe",
+    srcs = ["hitl_serial_probe.py"],
+    data = [
+        "//firmware/player_app:esp32c6_flashbundle",
+        "//pi/hitl/cmd/hitl",
+    ],
+    imports = ["."],
+    main = "hitl_serial_probe.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
         "@rules_python//python/runfiles",
         requirement("websockets"),
     ],
