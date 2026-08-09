@@ -11,7 +11,7 @@
  */
 
 import { LedMapperClient } from "./client";
-import { deviceStore } from "../store/deviceStore";
+import { deviceStore, type KnownDevice } from "../store/deviceStore";
 
 const MIN_INTERVAL = 60_000; // one request / minute
 const MAX_INTERVAL = 600_000; // backs off to one / ten minutes
@@ -83,6 +83,27 @@ class DeviceProber {
     this.schedule(400);
   }
 
+  /** Probe ONE known device right now (bypassing the round-robin + backoff) and
+   * notify listeners. Called on disconnect so the row reflects LAN reachability
+   * immediately, instead of waiting up to a full interval for the loop to reach
+   * the just-freed device. */
+  async probeNow(id: string): Promise<void> {
+    const dev = deviceStore.list().find((d) => d.id === id);
+    if (!dev) return;
+    await this.probeOne(dev);
+    this.interval = MIN_INTERVAL; // stay brisk after a manual poke
+    this.emit();
+  }
+
+  /** One-shot poll of every known non-active device (pull-to-refresh). */
+  async probeAllNow(): Promise<void> {
+    const activeId = deviceStore.activeId();
+    const devices = deviceStore.list().filter((d) => d.id !== activeId);
+    await Promise.all(devices.map((d) => this.probeOne(d)));
+    this.interval = MIN_INTERVAL;
+    this.emit();
+  }
+
   private schedule(delay: number): void {
     if (this.timer !== null) clearTimeout(this.timer);
     this.timer = window.setTimeout(() => this.onTimer(), delay);
@@ -100,6 +121,24 @@ class DeviceProber {
     else run();
   }
 
+  /** Probe one device: update reachability + folded-in identity; return whether
+   * anything changed. Shared by the background tick and the on-demand probes. */
+  private async probeOne(dev: KnownDevice): Promise<boolean> {
+    const was = this.reachable.get(dev.id);
+    const info = await probeDevice(dev.wssUrl);
+    if (info) {
+      const changed = !was || was.mac !== info.mac || was.deviceName !== info.deviceName;
+      this.reachable.set(dev.id, info);
+      deviceStore.applyWelcome(dev.id, info);
+      return changed;
+    }
+    if (was) {
+      this.reachable.delete(dev.id);
+      return true;
+    }
+    return false;
+  }
+
   private async tick(): Promise<void> {
     const activeId = deviceStore.activeId();
     const devices = deviceStore.list().filter((d) => d.id !== activeId);
@@ -109,17 +148,7 @@ class DeviceProber {
     }
     const dev = devices[this.idx % devices.length]!;
     this.idx++;
-    const was = this.reachable.get(dev.id);
-    const info = await probeDevice(dev.wssUrl);
-    let changed = false;
-    if (info) {
-      if (!was || was.mac !== info.mac || was.deviceName !== info.deviceName) changed = true;
-      this.reachable.set(dev.id, info);
-      deviceStore.applyWelcome(dev.id, info);
-    } else if (was) {
-      this.reachable.delete(dev.id);
-      changed = true;
-    }
+    const changed = await this.probeOne(dev);
     // A change means the picture is moving — poll briskly again; otherwise ease
     // off toward the 10-minute cadence.
     this.interval = changed ? MIN_INTERVAL : Math.min(MAX_INTERVAL, this.interval * 2);

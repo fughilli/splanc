@@ -53,14 +53,22 @@ def _rlocation(rloc: str) -> str | None:
     try:
         from python.runfiles import runfiles
 
-        return runfiles.Create().Rlocation(rloc)
+        path = runfiles.Create().Rlocation(rloc)
     except Exception:
         return None
+    # Rlocation() returns a CONSTRUCTED path even when the file is absent, so
+    # check existence — otherwise a wrong candidate masks the real one (this bit
+    # default_fx_compile: the bad `_/fx_compile` guess won, and compile_fx then
+    # hit FileNotFoundError).
+    return path if path and os.path.exists(path) else None
 
 
 def default_fx_compile() -> str | None:
-    return _rlocation("_main/fx_compiler/fx_compile_/fx_compile") or _rlocation(
-        "_main/fx_compiler/fx_compile"
+    # `//fx_compiler:fx_compile` lands at `_main/fx_compiler/fx_compile` in
+    # runfiles (the target name); the `_/fx_compile` internal output path is a
+    # fallback for layouts that expose it. Both are existence-checked above.
+    return _rlocation("_main/fx_compiler/fx_compile") or _rlocation(
+        "_main/fx_compiler/fx_compile_/fx_compile"
     )
 
 
@@ -146,7 +154,9 @@ async def _run(
     failures (which are test errors, distinct from the assertion failing)."""
     import base64
 
-    sock = await _open_ws(ws_url, insecure, time.monotonic() + 25.0)
+    # 60s (not 25s): a cold --erase-fs flash + LAN-cert reissue can be slow to
+    # bring up wss:443. Slack only — a warm DUT answers on the first attempt.
+    sock = await _open_ws(ws_url, insecure, time.monotonic() + 60.0)
     try:
         # (1) Reproduce the boot-resume state: a map + an ACTIVE effect.
         await _rpc(sock, _linear_map(led_count), "result_ready")
@@ -295,15 +305,15 @@ def main() -> None:
     ap.add_argument("--wifi-pass", default=os.environ.get("HITL_WIFI_PASS", ""))
     ap.add_argument("--ws-scheme", choices=["ws", "wss"], default="ws")
     ap.add_argument(
-        "--insecure",
+        "--ws-verify",
         action="store_true",
-        default=True,
-        help="accept the DUT's self-signed wss cert",
+        help="verify the DUT's TLS cert (default: accept the self-signed cert)",
     )
     ap.add_argument("--improv-timeout", type=float, default=90.0)
     ap.add_argument("--improv-attempts", type=int, default=3)
     ap.add_argument("--monitor-seconds", type=float, default=25.0)
     args = ap.parse_args()
+    args.insecure = not args.ws_verify
 
     ok = run_on_hardware(args)
     sys.exit(0 if ok else 1)

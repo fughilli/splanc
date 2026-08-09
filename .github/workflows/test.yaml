@@ -74,61 +74,6 @@ jobs:
         # failing-test logs.
         run: bazel test //... --disk_cache="$HOME/.cache/bazel-disk" --test_output=errors
 
-  # The HITL suite is tags=["manual","hitl"], so it's kept out of the `//...`
-  # wildcard above (the on-hardware e2e can't run here; the unit layer just wants
-  # its own lane). Collect the `hitl`-tagged *test* targets with a bazel query
-  # and run them explicitly — the pure-logic ones (Improv codec / SNTP sync /
-  # runner-pool picker) run fine in CI; the on-hardware e2e is a py_binary, so
-  # `tests(...)` filters it out and it stays in the manual hitl.yaml workflow.
-  hitl-tests:
-    if: github.event.action != 'closed'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Setup repository
-        uses: actions/checkout@v4
-
-      # Free runner disk before the heavy Nix/Bazel build — see the `test` job
-      # above (FUG-76).
-      - name: Free runner disk space
-        uses: justinthelaw/maximize-github-runner-space@v0.10.0
-
-      - name: Install Nix
-        uses: nixbuild/nix-quick-install-action@v30
-        with:
-          nix_conf: experimental-features = nix-command flakes
-
-      # Share the `test` job's /nix cache — same MODULE-keyed toolchains.
-      - name: Cache /nix store
-        uses: nix-community/cache-nix-action@v6
-        with:
-          primary-key: nix-${{ runner.os }}-test-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock') }}
-          restore-prefixes-first-match: nix-${{ runner.os }}-test-
-          gc-max-store-size-linux: 5G
-
-      - name: Setup Bazel
-        uses: bazel-contrib/setup-bazel@0.15.0
-        with:
-          bazelisk-cache: true
-          repository-cache: true
-
-      # Own disk-cache namespace, falling back to the `test` job's (shared action
-      # graph) for a warm start.
-      - name: Cache Bazel disk cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/bazel-disk
-          key: bazel-disk-hitl-${{ runner.os }}-${{ hashFiles('MODULE.bazel.lock') }}
-          restore-keys: |
-            bazel-disk-hitl-${{ runner.os }}-
-            bazel-disk-test-${{ runner.os }}-
-
-      - name: Run HITL-tagged tests
-        run: |
-          targets=$(bazel query 'attr(tags, "\bhitl\b", tests(//...))')
-          echo "collected HITL tests:"; echo "$targets"
-          if [ -z "$targets" ]; then echo "no HITL-tagged tests found"; exit 1; fi
-          bazel test $targets --disk_cache="$HOME/.cache/bazel-disk" --test_output=errors
-
   # The ESP32-C6 firmware image is tags=manual (kept out of the `//...` wildcard
   # so the `test` job above — and dev on small containers — stays light: it
   # compiles mbedtls + the Arduino core from source). Build it explicitly here so

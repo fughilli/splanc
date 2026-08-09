@@ -96,6 +96,12 @@ export interface ClientOptions {
    * cert won't get trusted without the user, and each doomed handshake burns a
    * heap-tight TLS slot the cert-approval page needs. Default 1. */
   coldRetryLimit?: number;
+  /** Like coldRetryLimit but for a target we HAD welcomed on, whose reconnects
+   * then keep failing without re-welcoming — the tell-tale of a rotated cert (a
+   * rename regenerates the device's self-signed cert; FUG-83). Higher than the
+   * cold limit so an ordinary reboot (same cert) reconnects within the backoff
+   * instead of prematurely dropping the user to "trust needed". Default 4. */
+  warmRetryLimit?: number;
 }
 
 export interface ClientEvents {
@@ -160,9 +166,14 @@ export class LedMapperClient {
   // never-connected socket (likely an untrusted cert) from a warm drop (a
   // genuine disconnect that should reconnect with backoff).
   private everWelcomed = false;
-  private coldFails = 0;
+  // Consecutive reconnects that closed without reaching welcome (reset on every
+  // welcome). On a cert-trust target a run of these means the TLS handshake can't
+  // complete without the user — the cert was never trusted (cold) OR it rotated
+  // under us (warm; e.g. a rename regenerates the device's self-signed cert).
+  private failsSinceWelcome = 0;
   private readonly needsTrust: boolean;
   private readonly coldRetryLimit: number;
+  private readonly warmRetryLimit: number;
 
   /** Outbound detection batches not yet written to an open socket. */
   private pendingBatches: DetectionRecord[][] = [];
@@ -194,6 +205,7 @@ export class LedMapperClient {
     this.backoffMs = opts.backoffMs ?? [1000, 2000, 4000, 8000];
     this.connectTimeoutMs = opts.connectTimeoutMs ?? 5000;
     this.coldRetryLimit = opts.coldRetryLimit ?? 1;
+    this.warmRetryLimit = opts.warmRetryLimit ?? 4;
     this.needsTrust = certApprovalUrl(url) !== null;
     this.appVersion = opts.appVersion ?? "0.1.0";
     this.clientName = opts.clientName ?? "android-web";
@@ -240,10 +252,21 @@ export class LedMapperClient {
         if (msg === null) return;
         if (msg.type === "welcome") {
           this.welcome_ = msg;
+          if (welcomed) {
+            // A re-welcome on an already-connected socket: the device echoes a
+            // fresh welcome (updated identity) as the REPLY to set_device_name /
+            // set_color_correction. Resolve that pending request, but do NOT
+            // re-run the connect handshake — onConnected drives the UI to
+            // "syncing clock…", and nothing follows up to put it back to
+            // "connected" (that only happens in the initial connect() chain), so
+            // firing it again would strand the pill mid-sync after a rename.
+            this.dispatch(msg);
+            return;
+          }
           this.backoffIdx = 0;
           this.attempt = 0;
           this.everWelcomed = true;
-          this.coldFails = 0;
+          this.failsSinceWelcome = 0;
           welcomed = true;
           this.flushBatches();
           this.events.onConnected?.(msg);
@@ -264,17 +287,23 @@ export class LedMapperClient {
         this.failWaiters(new Error("socket closed"));
         if (hadWelcome) this.events.onDisconnected?.();
         if (!this.closed) {
-          // A socket that never reached `welcome` against a cert-trust target is
-          // almost certainly failing on the untrusted self-signed cert. Retrying
+          // A run of reconnects that never reach `welcome` against a cert-trust
+          // target is almost certainly failing on the self-signed cert: retrying
           // is futile (only the user can trust it) and actively harmful on the
-          // heap-tight ESP: every doomed TLS handshake holds one of the player's
+          // heap-tight ESP — every doomed TLS handshake holds one of the player's
           // two TLS slots, starving BOTH the cert-approval page load and any
-          // concurrent wss. So stop after `coldRetryLimit` and wait for an
-          // explicit reconnect (the user trusts the cert → a fresh connect()).
-          // Warm drops (we were connected) always reconnect with backoff.
-          const coldGiveUp =
-            !this.everWelcomed && this.needsTrust && ++this.coldFails >= this.coldRetryLimit;
-          if (coldGiveUp) {
+          // concurrent wss. So past a limit, surface the trust affordance and stop
+          // (a fresh connect() resumes once the user accepts).
+          //
+          // A cold client (never welcomed) is untrusted from the start → give up
+          // fast (coldRetryLimit, default 1). A warm client that starts failing is
+          // the rotated-cert case (a rename regenerates the device cert; FUG-83) —
+          // but an ordinary reboot brings the SAME cert back, so allow more
+          // attempts (warmRetryLimit) to reconnect within the backoff before we
+          // conclude the cert changed and ask the user to re-trust.
+          const limit = this.everWelcomed ? this.warmRetryLimit : this.coldRetryLimit;
+          const certGiveUp = this.needsTrust && ++this.failsSinceWelcome >= limit;
+          if (certGiveUp) {
             this.events.onCertTrustNeeded?.(this.url);
           } else {
             const delay = this.backoffMs[Math.min(this.backoffIdx++, this.backoffMs.length - 1)]!;

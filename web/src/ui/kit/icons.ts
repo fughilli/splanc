@@ -15,6 +15,7 @@ export type IconName =
   | "camera"
   | "map"
   | "graph"
+  | "gamma"
   | "play"
   | "pause"
   | "upload"
@@ -23,6 +24,7 @@ export type IconName =
   | "tag"
   | "trash"
   | "edit"
+  | "save"
   | "back"
   | "more"
   | "settings"
@@ -30,6 +32,8 @@ export type IconName =
   | "close"
   | "bluetooth"
   | "ble-search"
+  | "plug"
+  | "plug-off"
   | "sparkles"
   | "alert"
   | "help"
@@ -73,6 +77,8 @@ const PATHS: Record<IconName, string> = {
   camera: `<path d="M4 8h3l1.5-2h7L17 8h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>`,
   map: `<path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2z"/><path d="M9 4v14M15 6v14"/>`,
   graph: `<circle cx="6" cy="18" r="2"/><circle cx="18" cy="6" r="2"/><circle cx="18" cy="18" r="2"/><path d="M8 17l8-9M8 18h8"/>`,
+  // Gamma/exponential curve on axes (color-correction curve).
+  gamma: `<path d="M5 3v16h16"/><path d="M5 19c6 0 10-3 14-14"/>`,
   play: `<path d="M8 5v14l11-7z"/>`,
   pause: `<rect x="7" y="5" width="3" height="14"/><rect x="14" y="5" width="3" height="14"/>`,
   upload: `<path d="M12 16V5"/><path d="M7 9l5-5 5 5"/><path d="M5 19h14"/>`,
@@ -81,12 +87,18 @@ const PATHS: Record<IconName, string> = {
   tag: `<path d="M4 4h7l9 9-7 7-9-9z"/><circle cx="8.5" cy="8.5" r="1.2"/>`,
   trash: `<path d="M4 7h16"/><path d="M9 7V5h6v2"/><path d="M6 7l1 13h10l1-13"/>`,
   edit: `<path d="M4 20h4l10-10-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>`,
+  // Floppy disk (save): notched body, bottom label, top shutter.
+  save: `<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/>`,
   back: `<path d="M15 5l-7 7 7 7"/>`,
   more: `<circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/>`,
   settings: `<circle cx="12" cy="12" r="3"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/>`,
   plus: `<path d="M12 5v14M5 12h14"/>`,
   close: `<path d="M6 6l12 12M18 6L6 18"/>`,
   bluetooth: `<path d="M7 8l10 8-5 4V4l5 4-10 8"/>`,
+  // Power plug: two prongs up, the plug head, a cord down.
+  plug: `<path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/>`,
+  // Same plug with a slash through it — disconnect.
+  "plug-off": `<path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/><path d="M3 3l18 18"/>`,
   // Bluetooth rune (upper-left) under a magnifier — "discover over Bluetooth".
   "ble-search": `<path d="M5 5 10 9 7.5 11 7.5 3 10 5 5 9"/><circle cx="15.5" cy="15.5" r="3.5"/><path d="M18 18l3.6 3.6"/>`,
   sparkles: `<path d="M12 4l1.6 4.4L18 10l-4.4 1.6L12 16l-1.6-4.4L6 10l4.4-1.6z"/><path d="M18 15l.8 2 2 .8-2 .8L18 21l-.8-2-2-.8 2-.8z"/>`,

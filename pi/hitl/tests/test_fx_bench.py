@@ -9,6 +9,8 @@ import tempfile
 
 from fx_bench_core import (
     assemble_bundle,
+    bundle_to_golden,
+    compare_to_golden,
     cpu_hz_of,
     intended_led_count,
     sample_from,
@@ -123,6 +125,85 @@ def test_assemble_bundle_schema():
                 "measuredFrameCycles",
                 "measuredShowCycles",
             }
+
+
+# -- golden margin check ---------------------------------------------------- #
+
+
+def _bundle(fit_samples, held_samples=()):
+    """A minimal measured bundle from (label, frame, show) tuples."""
+
+    def s(label, frame, show):
+        return {
+            "label": label,
+            "fxbBase64": "",
+            "ledCount": 128,
+            "measuredFrameCycles": frame,
+            "measuredShowCycles": show,
+        }
+
+    return {"fit": [s(*t) for t in fit_samples], "heldout": [s(*t) for t in held_samples]}
+
+
+# The golden is a full device-measurement bundle + an fxBenchMargins block.
+_GOLDEN = {
+    "kind": "ledmapper-device-benchmark",
+    "soc": "esp32c6",
+    "fit": _bundle([("empty", 500_000, 1_000_000), ("big", 10_000_000, 1_000_000)])["fit"],
+    "heldout": [],
+    "fxBenchMargins": {"default": 0.05, "perLabel": {"empty": 0.10}},
+}
+
+
+def test_golden_within_margin_passes():
+    # empty +8% (< its 0.10), big +4% (< default 0.05) -> ok.
+    res = compare_to_golden(_bundle([("empty", 540_000, 1e6), ("big", 10_400_000, 1e6)]), _GOLDEN)
+    assert res["ok"] and not res["offenders"] and not res["missing"]
+    assert res["checked"] == 2
+
+
+def test_golden_default_margin_offender():
+    # big +7% exceeds the 0.05 default margin -> off.
+    res = compare_to_golden(_bundle([("empty", 500_000, 1e6), ("big", 10_700_000, 1e6)]), _GOLDEN)
+    assert not res["ok"]
+    assert [o["label"] for o in res["offenders"]] == ["big"]
+
+
+def test_golden_per_label_margin_is_looser_for_empty():
+    # empty +8% would fail the 0.05 default but passes its own 0.10 margin.
+    res = compare_to_golden(_bundle([("empty", 540_000, 1e6), ("big", 10_000_000, 1e6)]), _GOLDEN)
+    assert res["ok"]
+
+
+def test_golden_missing_label_fails():
+    res = compare_to_golden(_bundle([("empty", 500_000, 1e6)]), _GOLDEN)
+    assert not res["ok"]
+    assert res["missing"] == ["big"]
+
+
+def test_golden_margin_override():
+    # A generous --margin override lets a +7% big through (per-label margins still
+    # apply, but big has none so it uses the override).
+    res = compare_to_golden(
+        _bundle([("empty", 500_000, 1e6), ("big", 10_700_000, 1e6)]), _GOLDEN, margin=0.10
+    )
+    assert res["ok"]
+
+
+def test_bundle_to_golden_roundtrips():
+    bundle = assemble_bundle(
+        soc="esp32c6",
+        cpu_hz=160_000_000,
+        fit=[sample_from("empty", b"\x00", 128, {"frame_cycles_mean": 5, "ticks": [{}]})],
+        heldout=[],
+    )
+    golden = bundle_to_golden(bundle, default_margin=0.05, per_label_margin={"empty": 0.10})
+    # The golden IS the bundle (fxbBase64 kept for the web estimator) + margins.
+    assert golden["kind"] == "ledmapper-device-benchmark"
+    assert golden["fxBenchMargins"] == {"default": 0.05, "perLabel": {"empty": 0.10}}
+    assert golden["fit"][0]["fxbBase64"] == bundle["fit"][0]["fxbBase64"]
+    # A bundle round-trips through its own golden with room to spare.
+    assert compare_to_golden(bundle, golden)["ok"]
 
 
 def test_assemble_bundle_omits_absent_optionals():

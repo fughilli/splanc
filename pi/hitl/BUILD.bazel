@@ -10,6 +10,7 @@
 # On macOS, start the aarch64-linux builder first: bazel run @sbc_deploy//:linux_builder.
 
 load("@gazelle//:def.bzl", "gazelle")
+load("@rules_python//python:defs.bzl", "py_binary")
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 load("@sbc_deploy//deploy:defs.bzl", "sbc_application")
 
@@ -53,4 +54,16 @@ sh_binary(
 sh_binary(
     name = "seed_tailscale_authkey",
     srcs = ["scripts/seed-tailscale-authkey.sh"],
+)
+
+# HTTP-driven runner for the on-hardware HITL suite (see the file's docstring).
+# Run it on a tailnet host where the rigs work, then curl it to run the harness
+# py_tests one at a time. Lives in //pi/hitl (not a scripts/ subpackage) so the
+# scripts/*.sh seed targets above stay valid. Stdlib only; shells back out to
+# `bazel` under $BUILD_WORKSPACE_DIRECTORY.
+#   bazel run //pi/hitl:hitl_shim          # or: python3 pi/hitl/scripts/hitl_shim.py
+py_binary(
+    name = "hitl_shim",
+    srcs = ["scripts/hitl_shim.py"],
+    visibility = ["//visibility:public"],
 )

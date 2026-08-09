@@ -20,7 +20,8 @@
 
 import * as fs from "node:fs";
 import { parseDeviceBundle, buildDeviceProfile } from "../../src/effects/deviceProfile";
-import { profileToStored } from "../../src/effects/executionProfile";
+import { profileToStored, profileToCostTable } from "../../src/effects/executionProfile";
+import { validateCostModel } from "../../src/effects/profileValidation";
 import { CURRENT_TABLE_VERSION, exportTable } from "../../src/store/costTableStore";
 
 function main(): number {
@@ -64,6 +65,34 @@ function main(): number {
     )}% vs tolerance ${(validation.tolerance * 100).toFixed(0)}%)`,
   );
   process.stderr.write(lines.join("\n") + "\n");
+
+  // FIT_DEBUG: dump per-program predicted-vs-measured (fit programs too) via the
+  // exact same estimator path, sorted by |error| — to see which programs the
+  // linear opcode model mis-predicts.
+  if (process.env.FIT_DEBUG) {
+    const table = profileToCostTable(profile);
+    const all = [...bundle.fit, ...bundle.heldout].map((s) => ({
+      label: s.label,
+      bytecode: s.fxb,
+      ledCount: s.ledCount,
+      measuredMs: ((s.measuredFrameCycles + s.measuredShowCycles) / profile.cpuHz) * 1000,
+    }));
+    const v = validateCostModel(table, all, 999);
+    const rows = v.samples.slice().sort((a, b) => b.absRelError - a.absRelError);
+    process.stderr.write("\n  per-program |error| (all programs, fit path):\n");
+    for (const r of rows) {
+      process.stderr.write(
+        "  " +
+          r.label.padEnd(16) +
+          String(r.ledCount).padStart(4) +
+          `  meas ${r.measuredMs.toFixed(2)}`.padStart(13) +
+          `  pred ${r.predictedMs.toFixed(2)}`.padStart(13) +
+          `  ${(r.relError * 100 >= 0 ? "+" : "") + (r.relError * 100).toFixed(1)}%`.padStart(9) +
+          "\n",
+      );
+    }
+    process.stderr.write(`  in-sample RMS over all ${all.length}: ${(v.rmsError * 100).toFixed(1)}%\n`);
+  }
 
   // The app-importable artifact: the same {kind, version, table} export the
   // profiles screen writes, so it round-trips through "Import profile".

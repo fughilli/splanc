@@ -14,7 +14,7 @@ other.
 """
 
 load("@pypi//:requirements.bzl", "requirement")
-load("@rules_python//python:defs.bzl", "py_binary", "py_library")
+load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -36,12 +36,14 @@ py_library(
 # On-hardware orchestrator: reserve a free rig from the pool (the checkout
 # mechanism), flash, ImprovBLE-provision, then check time-sync + rename over the
 # player WebSocket. proto_wire (the §7 WebSocket wire) comes from //pi/server;
-# websockets is the client transport. Needs a reachable rig + a board, so it is
-# `bazel run`, never `bazel test`. Tagged for grouping with the rest of the HITL
-# surface and kept out of any wildcard build/run; it runs from the manual
-# .github/workflows/hitl.yaml workflow.
-py_binary(
+# websockets is the client transport. Needs a reachable rig + a board, so it's a
+# py_test tagged ["manual", "hitl"]: `manual` keeps it out of `bazel test //...`,
+# and the .github/workflows/hitl.yaml workflow discovers the `hitl`-tagged tests
+# by query and `bazel test`s them against a real rig (timeout=eternal — a
+# flash+provision cycle runs minutes). Still `bazel run`-able for a local one-off.
+py_test(
     name = "e2e",
+    timeout = "eternal",
     srcs = ["hitl_e2e.py"],
     # The firmware flash-bundle rides in runfiles so `bazel run` finds it without
     # a separate build step or a workspace-relative path (bazel run's cwd is the
@@ -66,16 +68,41 @@ py_binary(
     ],
 )
 
+# Serial-console diagnostic (not a test) for the post-provision wss wedge: flash,
+# stream the DUT serial from the rig while provisioning + hammering the wss open,
+# so the trace spans the LAN-cert reissue / httpd_ssl restart where the resets
+# start. Run via the shim as a full label: //pi/hitl/harness:serial_probe.
+py_binary(
+    name = "serial_probe",
+    srcs = ["hitl_serial_probe.py"],
+    data = [
+        "//firmware/player_app:esp32c6_flashbundle",
+        "//pi/hitl/cmd/hitl",
+    ],
+    imports = ["."],
+    main = "hitl_serial_probe.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
 # On-hardware mapping-sequence-trigger test (FUG-62): reserve a rig, flash,
 # activate an effect, send start_mapping, and assert the device shows
 # mapping-pattern frames (get_frame_timing ticks) — the regression guard for the
 # render_once reorder that lets a capture preempt a resumed effect. Like :e2e /
-# :fx_bench it needs a rig + board, so it is `bazel run`, never `bazel test`; the
-# verdict logic (mapping_trigger_core) is unit-tested in //pi/hitl/tests. It
+# :fx_bench it's a manual+hitl py_test (needs a rig + board); the verdict logic
+# (mapping_trigger_core) is unit-tested in //pi/hitl/tests. It
 # reuses an .fx from the fx benchmarks (compiled via fx_compile) just to obtain a
 # valid active effect, and rides the flash-bundle + hitl CLI in runfiles.
-py_binary(
+py_test(
     name = "mapping_trigger",
+    timeout = "eternal",
     srcs = ["hitl_mapping.py"],
     data = [
         ":fx_benchmarks",
@@ -110,20 +137,24 @@ filegroup(
 
 # On-hardware FX benchmark (FUG-11): reserve a rig, flash, drive the calibration
 # micro-programs on the real C6, and write a device-measurement bundle for the
-# web builder to fit + validate into an authoritative cost profile. Like :e2e it
-# needs a rig + board, so it is `bazel run`, never `bazel test`; the pure logic
-# it depends on (fx_bench_core) is unit-tested in //pi/hitl/tests. --replay
+# web builder to fit + validate into an authoritative cost profile. Like :e2e
+# it's a manual+hitl py_test (needs a rig + board); the pure logic it depends on
+# (fx_bench_core) is unit-tested in //pi/hitl/tests. --replay
 # rebuilds a bundle from a recorded session with no hardware. The calibration
 # `.fx` programs and the fx_compile CLI ride in runfiles so `bazel run` finds
 # them without a workspace-relative path (default --benchmarks-dir/--fx-compile).
-py_binary(
+py_test(
     name = "fx_bench",
+    timeout = "eternal",
     srcs = ["fx_bench.py"],
     data = [
         ":fx_benchmarks",
         "//firmware/player_app:esp32c6_flashbundle",
         "//fx_compiler:fx_compile",
         "//pi/hitl/cmd/hitl",
+        # The unified golden (full bundle + margins), shared with the web
+        # estimator test — the margin check reads it from runfiles.
+        "//web:tests/testdata/device-bench-esp32c6.json",
     ],
     imports = ["."],
     main = "fx_bench.py",
@@ -143,11 +174,12 @@ py_binary(
 # ~14 KB submit_map + a multi-KB submit_topology into UploadChunk windows over
 # the player WebSocket and assert they upload, decode, and round-trip via
 # get_stored_map — the regression guard for the wss OOM ("Send failed: socket
-# closed") on a big map. Like :e2e it needs a rig + board, so it is `bazel run`,
-# never `bazel test`; the chunking/fixture logic (map_upload_core) is unit-tested
-# in //pi/hitl/tests. --device-ws hits an already-reachable board directly.
-py_binary(
+# closed") on a big map. Like :e2e it's a manual+hitl py_test (needs a rig +
+# board); the chunking/fixture logic (map_upload_core) is unit-tested in
+# //pi/hitl/tests. --device-ws hits an already-reachable board directly.
+py_test(
     name = "map_upload",
+    timeout = "eternal",
     srcs = ["hitl_map_upload.py"],
     data = [
         "//firmware/player_app:esp32c6_flashbundle",
@@ -155,6 +187,32 @@ py_binary(
     ],
     imports = ["."],
     main = "hitl_map_upload.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# On-hardware rename -> wss-wedge repro (FUG-85 follow-up): reserve, flash,
+# provision, then rename the device and probe whether its TLS server recovers,
+# capturing the serial `[wss]`/heap lines. A manual+hitl py_test; --device-ws
+# hits a reachable board directly (how the fix was verified against lilbuddy).
+py_test(
+    name = "rename_wss",
+    timeout = "eternal",
+    srcs = ["hitl_rename_wss.py"],
+    data = [
+        "//firmware/player_app:esp32c6_flashbundle",
+        "//pi/hitl/cmd/hitl",
+    ],
+    imports = ["."],
+    main = "hitl_rename_wss.py",
     tags = [
         "hitl",
         "manual",

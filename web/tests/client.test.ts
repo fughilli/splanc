@@ -115,6 +115,40 @@ test("connect sends hello and resolves on welcome", async () => {
   assert.ok(client.isConnected);
 });
 
+test("a re-welcome (set_device_name reply) resolves the request, doesn't re-connect", async () => {
+  // After the firmware stopped restarting wss on rename, the socket stays up and
+  // the device echoes a fresh `welcome` as the set_device_name REPLY. That must
+  // resolve the pending request WITHOUT re-firing onConnected (which drives the
+  // pill to "syncing clock…" with no follow-up back to "connected").
+  const { client, sockets } = makeClient();
+  let connectedCount = 0;
+  client.events = { onConnected: () => void connectedCount++ };
+
+  const p = client.connect();
+  const s = sockets[0]!;
+  s.open();
+  s.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS, solverBenchMs: null });
+  await p;
+  assert.equal(connectedCount, 1);
+  assert.ok(client.isConnected);
+
+  // Rename over the live socket; the device replies with a fresh welcome.
+  const renameP = client.setDeviceName("LilBuddy");
+  assert.equal(s.lastSent().type, "set_device_name");
+  s.receive({
+    type: "welcome",
+    sessionId: "s-1",
+    codeParams: CODE_PARAMS,
+    solverBenchMs: null,
+    deviceName: "LilBuddy",
+    mac: "8c:fd:49:12:21:ce",
+  });
+  const w = (await renameP) as unknown as { deviceName?: string };
+  assert.equal(w.deviceName, "LilBuddy", "setDeviceName resolves with the reply welcome");
+  assert.equal(connectedCount, 1, "a re-welcome must not re-fire onConnected");
+  assert.ok(client.isConnected, "still connected after the rename");
+});
+
 test("a socket that never opens times out, reports attempts, and retries", async () => {
   const { client, sockets, scheduled } = makeClient();
   const attempts: number[] = [];
@@ -175,6 +209,64 @@ test("a cert-trust wss that never welcomes stops retrying (no cert-page starvati
     assert.equal(trustNeeded, 1, "surfaced cert-trust-needed");
     assert.equal(scheduled.length, 1, "no backoff reconnect scheduled");
     assert.equal(sockets.length, 1, "did not open a second socket");
+  } finally {
+    (globalThis as unknown as { location?: unknown }).location = saved;
+  }
+});
+
+test("a warm wss whose reconnects keep failing surfaces cert-trust (rotated cert)", async () => {
+  // Reproduces the rename bug: renaming a device regenerates its self-signed
+  // cert (FUG-83) and reboots it, so a client that HAD welcomed drops and then
+  // can never re-handshake. It must not retry forever ("connecting (N)…") — after
+  // warmRetryLimit failed reconnects it surfaces the trust affordance so the user
+  // can re-accept the new cert.
+  const saved = (globalThis as unknown as { location?: unknown }).location;
+  (globalThis as unknown as { location: unknown }).location = { host: "app.test" };
+  try {
+    const sockets: FakeSocket[] = [];
+    const scheduled: Array<() => void> = [];
+    let trustNeeded = 0;
+    const client = new LedMapperClient("wss://device.test/ws", {
+      socketFactory: () => {
+        const s = new FakeSocket();
+        sockets.push(s);
+        return s;
+      },
+      now: () => 1000,
+      schedule: (fn) => {
+        scheduled.push(fn);
+      },
+      warmRetryLimit: 3,
+    });
+    client.events = { onCertTrustNeeded: () => void trustNeeded++ };
+
+    // Warm connect: open + welcome (everWelcomed = true).
+    const p = client.connect();
+    sockets[0]!.open();
+    sockets[0]!.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS, solverBenchMs: null });
+    await p;
+    assert.ok(client.isConnected);
+
+    // The rename reboot drops the live socket — a single warm drop just reconnects.
+    sockets[0]!.close();
+    assert.equal(trustNeeded, 0, "one warm drop must not cry cert-trust yet");
+
+    // Drive reconnects that never welcome (the rotated cert is untrusted). Each
+    // round: fire the backoff to open the next socket, then its open-timeout to
+    // close the never-welcomed socket. The 3rd such close hits warmRetryLimit.
+    const fireLast = (): void => scheduled[scheduled.length - 1]!();
+    fireLast(); // backoff -> connect() opens socket[1]
+    fireLast(); // open-timeout -> closes socket[1] (fail #2)
+    assert.equal(trustNeeded, 0, "still retrying below the warm limit");
+    fireLast(); // backoff -> connect() opens socket[2]
+    const socketsBefore = sockets.length;
+    const scheduledBefore = scheduled.length;
+    fireLast(); // open-timeout -> closes socket[2] (fail #3 == warmRetryLimit)
+
+    assert.equal(trustNeeded, 1, "surfaced cert-trust after warmRetryLimit fails");
+    // And it STOPPED: the give-up scheduled no backoff, so nothing reconnects.
+    assert.equal(scheduled.length, scheduledBefore, "no backoff scheduled after give-up");
+    assert.equal(sockets.length, socketsBefore, "no reconnect after cert-trust give-up");
   } finally {
     (globalThis as unknown as { location?: unknown }).location = saved;
   }

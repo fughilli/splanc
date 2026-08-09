@@ -8,6 +8,7 @@
 import type { WelcomeMessage } from "@ledmapper/protocol";
 import { certApprovalUrl, LedMapperClient } from "../../net/client";
 import { deviceStore } from "../../store/deviceStore";
+import { deviceProber } from "../../net/deviceProber";
 import type { PillState } from "../kit";
 
 export interface ConnStatus {
@@ -153,8 +154,13 @@ class AppState {
     this.clearReconnectWatch();
     this.client?.close();
     this.client = null;
+    const wasActive = deviceStore.activeId();
     deviceStore.setActive(null);
     this.setStatus({ state: "offline", text: "offline", certUrl: null, error: null });
+    // While connected the prober skips the active device; now that it's freed,
+    // probe it immediately so its row flips to reachable/offline right away
+    // instead of after up to a full poll interval.
+    if (wasActive) void deviceProber.probeNow(wasActive);
   }
 
   /** Restore the previously-active device on boot (back-compat with ?url=). */
