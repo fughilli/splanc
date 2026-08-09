@@ -14,6 +14,10 @@ def test_bars_effect_src_declares_texture_and_samples_it():
     assert "sample(vid, led.uv)" in src
     # A different size is reflected verbatim (the device accepts only exact match).
     assert "texture vec3 vid(32, 8);" in bars_effect_src(32, 8)
+    # A narrow arena precision is emitted as a `: fixed8`/`: fixed16` annotation.
+    assert "texture vec3 vid(24, 24) : fixed8;" in bars_effect_src(24, 24, comp="fixed8")
+    assert "texture vec3 vid(24, 24) : fixed16;" in bars_effect_src(24, 24, comp="fixed16")
+    assert " : " not in bars_effect_src(24, 24, comp="f32")  # f32 = no annotation
 
 
 def test_parse_result_extracts_and_coerces_fields():

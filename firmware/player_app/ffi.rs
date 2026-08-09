@@ -955,22 +955,29 @@ fn tex_packed_len(format: u64, n: usize) -> usize {
     }
 }
 
-/// `i as f32 / 255.0` as little-endian bytes for every byte value, built once.
-/// The C6 has no FPU, so decoding an 8-bit texture channel into an f32 arena via
-/// this table (a load + copy) instead of a per-texel software-float divide is the
-/// streaming decoder's biggest per-texel win. Serves gray8/rgb888 directly and
-/// gray4/mono by scaling their level to the 0..255 index.
-fn tex_f32_lut255() -> &'static [[u8; 4]; 256] {
+/// The packed bytes an 8-bit channel value (`i`, meaning colour `i/255`) stores
+/// as for component precision `comp` — for every byte value, cached and rebuilt
+/// only when `comp` changes (a texture's comp is fixed per effect). The C6 has no
+/// FPU, so decoding a texture channel via this table (a load + copy) instead of a
+/// per-texel software-float dequant+requantize is the streaming decoder's biggest
+/// per-texel win. Works for ANY comp — f32 OR a narrow fixed8/fixed16 arena — so
+/// a `texture … : fixed8` decodes with zero per-texel float too. Serves
+/// gray8/rgb888 directly and gray4/mono by scaling their level onto the 0..255
+/// index. Each entry holds up to 4 bytes; callers copy `comp_bytes(comp)` of it.
+fn tex_comp_lut8(comp: u8) -> &'static [[u8; 4]; 256] {
     static mut LUT: [[u8; 4]; 256] = [[0; 4]; 256];
-    static mut READY: bool = false;
+    static mut BUILT_FOR: i32 = -1;
     unsafe {
-        if !READY {
+        if BUILT_FOR != comp as i32 {
+            let cb = ledmapper_fx_vm::comp_bytes(comp);
             let mut i = 0usize;
             while i < 256 {
-                LUT[i] = (i as f32 / 255.0).to_le_bytes();
+                let mut b = [0u8; 4];
+                ledmapper_fx_vm::comp_store_num(comp, i as f32 / 255.0, &mut b[..cb]);
+                LUT[i] = b;
                 i += 1;
             }
-            READY = true;
+            BUILT_FOR = comp as i32;
         }
         &*addr_of!(LUT)
     }
@@ -1158,42 +1165,40 @@ unsafe fn handle_set_texture(frame: &[u8]) {
     let gray = matches!(format, TEX_GRAY8 | TEX_GRAY4 | TEX_MONO);
     let chans = elem.min(4);
 
-    // Fast path: an f32 arena (the default for `texture vecN`) stores raw f32 LE
-    // bytes, so we precompute each channel level's 4-byte form ONCE and copy it
-    // per texel — no per-texel software-float on the FPU-less C6. Byte-identical
-    // to the general path below (same f32 values), so decode is unchanged. Skips
-    // INDEXED8 (palette) and colour-into-scalar (needs a luma dot product).
-    let f32_fast = comp == ledmapper_fx_vm::comp::F32
-        && (elem != 1 || gray)
+    // Fast path (any comp): precompute each channel level's packed `cb` bytes ONCE
+    // and copy it per texel — no per-texel software-float on the FPU-less C6. The
+    // LUTs are built with `comp_store_num`, so this is byte-identical to the
+    // general path below for EVERY component precision, including a narrow
+    // `: fixed8`/`: fixed16` arena (which decodes with zero per-texel float too).
+    // Skips INDEXED8 (palette) and colour-into-scalar (needs a luma dot product).
+    let lut_fast = (elem != 1 || gray)
         && matches!(
             format,
             TEX_GRAY8 | TEX_GRAY4 | TEX_MONO | TEX_RGB888 | TEX_RGB565 | TEX_RGB332
         );
-    if f32_fast {
-        let lut8 = tex_f32_lut255();
-        let alpha4 = 1.0f32.to_le_bytes();
-        // Reduced-bit colour channels get their own small LE tables (built once
-        // per frame; only the active format's are populated).
+    if lut_fast {
+        let lut8 = tex_comp_lut8(comp); // 8-bit-channel levels -> packed `cb` bytes
+        let mut alpha = [0u8; 4];
+        ledmapper_fx_vm::comp_store_num(comp, 1.0, &mut alpha[..cb]);
+        // Reduced-bit colour channels get their own small tables (built once per
+        // frame via comp_store_num; only the active format's are populated).
         let mut l31 = [[0u8; 4]; 32];
         let mut l63 = [[0u8; 4]; 64];
         let mut l7 = [[0u8; 4]; 8];
         let mut l3 = [[0u8; 4]; 4];
+        let build = |lut: &mut [[u8; 4]], denom: f32| {
+            for (i, e) in lut.iter_mut().enumerate() {
+                ledmapper_fx_vm::comp_store_num(comp, i as f32 / denom, &mut e[..cb]);
+            }
+        };
         match format {
             TEX_RGB565 => {
-                for i in 0..32 {
-                    l31[i] = (i as f32 / 31.0).to_le_bytes();
-                }
-                for i in 0..64 {
-                    l63[i] = (i as f32 / 63.0).to_le_bytes();
-                }
+                build(&mut l31, 31.0);
+                build(&mut l63, 63.0);
             }
             TEX_RGB332 => {
-                for i in 0..8 {
-                    l7[i] = (i as f32 / 7.0).to_le_bytes();
-                }
-                for i in 0..4 {
-                    l3[i] = (i as f32 / 3.0).to_le_bytes();
-                }
+                build(&mut l7, 7.0);
+                build(&mut l3, 3.0);
             }
             _ => {}
         }
@@ -1233,14 +1238,14 @@ unsafe fn handle_set_texture(frame: &[u8]) {
                 }
             };
             for k in 0..chans {
-                let o = ab + k * 4;
+                let o = ab + k * cb;
                 let src: &[u8; 4] = match k {
                     0 => rb,
                     1 => gb,
                     2 => bb,
-                    _ => &alpha4,
+                    _ => &alpha,
                 };
-                arena.get_unchecked_mut(o..o + 4).copy_from_slice(src);
+                arena.get_unchecked_mut(o..o + cb).copy_from_slice(&src[..cb]);
             }
         }
         return;

@@ -77,19 +77,31 @@ decode compute, not payload.
 
 The decoder now:
 
-- **Precomputes the byte→f32 lookup** (`i/255` LE bytes, and the reduced-bit
-  `/31`, `/63`, `/7`, `/3` tables) and copies the packed bytes per texel — zero
-  per-texel software-float for the default f32 texture arena. This closed the
-  gray8↔rgb332 gap to ~4% (both are now table-lookup + copy).
+- **Precomputes a channel-level → packed-bytes lookup** (via `comp_store_num`,
+  keyed by the arena's component precision and cached until it changes; plus the
+  reduced-bit `/31`, `/63`, `/7`, `/3` tables) and copies the packed bytes per
+  texel — **zero per-texel software-float for _any_ texture arena precision**, f32
+  or a narrow `fixed8`/`fixed16`. This closed the gray8↔rgb332 gap to ~4% (both
+  are now table-lookup + copy).
 - **Hoists the arena bounds check** out of the per-texel loop (one span check,
   then unchecked writes bounded by it).
-- **Replicates grayscale once** (all colour channels equal → quantize/look-up
-  once, copy to each) and skips the luma dot-product for grayscale sources.
+- **Replicates grayscale once** (all colour channels equal → look up once, copy
+  to each) and skips the luma dot-product for grayscale sources.
 - Handles sub-byte `gray4`/`mono` by bit-unpacking per texel.
 
-The f32 fast path is byte-identical to the general `comp_store_num` path (same
-float values), so decode output is unchanged; non-f32 texture arenas and
-`indexed8` use the general path.
+The LUT fast path is byte-identical to the general `comp_store_num` path (same
+values), so decode output is unchanged; only `indexed8` and colour-into-scalar
+textures use the general path.
+
+### Narrow texture arenas (`: fixed8` / `: fixed16`)
+
+A texture can declare a narrow component precision — `texture vec3 v(w,h) :
+fixed8;` (Q1.6, 1 B/component) or `: fixed16;` (Q1.14, 2 B) — which quarters or
+halves both its on-device RAM and its per-frame store bandwidth. With the LUT the
+decode stays float-free, so a narrow arena is a near-pure win. Measured (24×24,
+window=30), `fixed8` vs `f32` arena lifted most formats **+20–36% FPS** (rgb565
+60→82, rgb332 90→110, gray4 104→**137**, mono+rle 92→124) at ¼ the texture RAM.
+Drive it from the HITL harness with `--tex-comp fixed8`.
 
 ## Keyframes for drop-resilience
 

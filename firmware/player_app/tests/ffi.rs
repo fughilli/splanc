@@ -356,6 +356,45 @@ fn full_device_flow_through_the_c_abi() {
         unsafe { lm_fx_set_active(false) };
     }
 
+    // A NARROW texture (`: fixed8`, Q1.6, 1 byte/component) decodes through the
+    // same float-free LUT path — no per-texel software float, and byte-exact for
+    // 0/1-valued channels (64/64 == 1.0 in Q1.6). Confirms `texture … : fixed8`
+    // both compiles and streams.
+    {
+        let src = "texture vec3 v(2, 2) : fixed8;\n\
+                   void update() {}\n\
+                   vec3 shade(Led led) { return sample(v, led.uv); }\n";
+        let compiled = ledmapper_fx_compiler::compile(src).expect("fixed8 texture compiles");
+        assert!(unsafe { lm_fx_load(compiled.fxb.as_ptr(), compiled.fxb.len()) });
+        unsafe { lm_fx_set_active(true) };
+        assert!(unsafe { lm_fx_update(0.0, 0.033, 0, 64) });
+        let shade0 = || -> [u8; 3] {
+            let mut rgb = [0u8; 3];
+            assert!(unsafe { lm_fx_shade(0, 0.0, 0.0, 0.0, rgb.as_mut_ptr()) });
+            rgb
+        };
+        let set_tex_fmt = |format: u32, data: &[u8]| {
+            let mut st = pb::SetTexture::default();
+            st.r#tex_index = 0;
+            st.r#format = format;
+            st.r#width = 2;
+            st.r#height = 2;
+            st.r#flags = 0;
+            st.r#data = micropb::heapless::Vec::from_slice(data).unwrap();
+            assert!(handle(&encode(CMsg::SetTexture(st)), 4000.0).is_none());
+        };
+        // rgb888 all-red -> (1,0,0), exact in Q1.6.
+        set_tex_fmt(0, &[0xFF, 0, 0, 0xFF, 0, 0, 0xFF, 0, 0, 0xFF, 0, 0]);
+        assert_eq!(shade0(), [255, 0, 0], "fixed8 arena, rgb888 red -> red");
+        // gray8 all-white -> (1,1,1).
+        set_tex_fmt(3, &[0xFF, 0xFF, 0xFF, 0xFF]);
+        assert_eq!(shade0(), [255, 255, 255], "fixed8 arena, gray8 white -> white");
+        // mono all-black -> (0,0,0).
+        set_tex_fmt(6, &[0x00]);
+        assert_eq!(shade0(), [0, 0, 0], "fixed8 arena, mono black -> black");
+        unsafe { lm_fx_set_active(false) };
+    }
+
     // A malformed upload (leds without a led_count header) gets a bounded
     // error, and the previously stored map is GONE (the upload reset the
     // arena) — the phone re-uploads.

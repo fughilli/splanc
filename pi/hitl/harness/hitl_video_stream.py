@@ -298,7 +298,9 @@ def run_on_hardware(args) -> bool:
     from hitl_client import Reservation
     from provision import dut_target, provision_dut
 
-    fxb = compile_fx_src(args.fx_compile, bars_effect_src(args.width, args.height))
+    fxb = compile_fx_src(
+        args.fx_compile, bars_effect_src(args.width, args.height, comp=args.tex_comp)
+    )
     _log(f"[fx] compiled {args.width}x{args.height} texture effect ({len(fxb)} B .fxb)")
 
     # An explicit --device-ws that's reachable from here skips the rig entirely.
@@ -374,6 +376,13 @@ def main() -> None:
     )
     ap.add_argument("--min-fps", type=float, default=10.0, help="acceptance floor (PASS iff >=)")
     ap.add_argument("--tex-index", type=int, default=0)
+    ap.add_argument(
+        "--tex-comp",
+        default="f32",
+        choices=["f32", "fixed8", "fixed16"],
+        help="on-device texture arena precision (fixed8/fixed16 quarter/halve its "
+        "RAM + store bandwidth; decode is float-free either way)",
+    )
     ap.add_argument("--effect-id", dest="effect_id", default="__vidbench")
     ap.add_argument(
         "--led-count", type=int, default=256, help="strip length to render while streaming"

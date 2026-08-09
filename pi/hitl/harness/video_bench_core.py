@@ -12,16 +12,23 @@ from __future__ import annotations
 from typing import Any
 
 
-def bars_effect_src(width: int, height: int, tex_name: str = "vid") -> str:
+def bars_effect_src(width: int, height: int, tex_name: str = "vid", comp: str = "f32") -> str:
     """A minimal effect that declares a `width`x`height` 2D texture and samples it
     per-LED. The scrolling-bars frames are streamed in over set_texture (the host
     generates + encodes them with the TouchDesigner codec), so the shader only has
     to sample the texture — its declared size is what makes the device accept our
     frames: the firmware silently drops any set_texture whose dimensions don't
     match a declared texture port. Mirrors the `texture …; sample(t, led.uv)` form
-    the fx_compiler tests exercise."""
+    the fx_compiler tests exercise.
+
+    `comp` picks the on-device arena precision: "f32" (4 B/component, default) or a
+    narrow "fixed8" (Q1.6, 1 B) / "fixed16" (Q1.14, 2 B) annotation, which quarters
+    or halves the texture's RAM and store bandwidth. The wire format (set_texture)
+    is independent of this; the firmware decodes into whichever precision the
+    texture declares (float-free either way)."""
+    annot = "" if comp in ("", "f32") else f" : {comp}"
     return (
-        f"texture vec3 {tex_name}({width}, {height});\n"
+        f"texture vec3 {tex_name}({width}, {height}){annot};\n"
         "void update() {}\n"
         f"vec3 shade(Led led) {{ return sample({tex_name}, led.uv); }}\n"
     )
