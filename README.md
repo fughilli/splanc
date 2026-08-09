@@ -1,4 +1,8 @@
-# LED Mapper
+<p align="center">
+  <img src="web/public/icons/splanc-banner.svg" alt="Splanc" width="520" />
+</p>
+
+# Splanc
 
 Recover the 3D position of every LED in an installed addressable-LED fixture
 by walking around it with a phone. A Raspberry Pi drives the LEDs through a

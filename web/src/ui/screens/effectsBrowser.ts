@@ -1,8 +1,7 @@
 /**
  * Effects browser (the #/effects tab) — the effect library workspace: browse,
- * create, edit, and test shader effects. Replaces the old Effects tab (which was
- * only the pulse/flood simulator; that lives on as a "Built-in: Pulse/Flood"
- * entry that opens the preserved sim at #/effects/pulse).
+ * create, edit, and test shader effects. Replaces the old pulse/flood-simulator
+ * Effects tab.
  *
  * Mirrors the map browser: a search box, tag chips, a list of saved effects
  * (tap → open the in-shell editor at #/effects/edit/:id), a circular "+" FAB to
@@ -10,7 +9,7 @@
  * discoverable "AI key" affordance that opens the BYO-key sheet.
  */
 
-import { ActionGrid, Button, Chip, EmptyState, HelpTip, IconButton, Sheet, toast, icon } from "../kit";
+import { ActionGrid, Button, Chip, EmptyState, HelpTip, IconButton, Sheet, confirmDialog, toast, icon } from "../kit";
 import type { HelpTipHandle } from "../kit";
 import { effectStore, isBuiltinEffect, type StoredEffect } from "../../store/effectStore";
 import { EffectPreviewTiles } from "./effectPreviewTiles";
@@ -19,6 +18,9 @@ import { openDebugServerSheet } from "./debugServerSheet";
 import { scanQr, qrScanSupported } from "./qrScan";
 import { openAiKeySheet } from "./aiKeySheet";
 import { getApiKey } from "../../effects/ai/generate";
+import { setTabMenuItems } from "../app/tabMenu";
+import { prefs } from "../../store/prefs";
+import { getAppearance } from "../../store/appearance";
 import type { Router, Screen } from "../app/router";
 
 type Sort = "updated" | "name";
@@ -77,6 +79,7 @@ export function EffectsBrowserScreen(router: Router): Screen {
     aiTip = null;
     aiHelp.replaceChildren();
     if (getApiKey()) return; // key configured → nothing to prompt
+    if (prefs.getAiHintDismissed()) return; // user dismissed it once → gone for good
     const tip = HelpTip({
       label: "About AI generation",
       title: "AI generation",
@@ -85,6 +88,12 @@ export function EffectsBrowserScreen(router: Router): Screen {
       // First-run hint: no key configured yet, so surface it expanded on arrival
       // rather than hiding it behind a "?" the user has to discover.
       defaultOpen: true,
+      // Once the user dismisses it (outside tap / Escape / tapping "?"), record
+      // that and drop the affordance for good — it won't pop again.
+      onDismiss: () => {
+        prefs.setAiHintDismissed();
+        renderAiHelp();
+      },
       action: {
         label: "Add AI key",
         icon: "sparkles",
@@ -101,44 +110,26 @@ export function EffectsBrowserScreen(router: Router): Screen {
   toolbar.className = "fxlib-toolbar";
   // Debug: ship the whole library to a host-side debug server for analysis. Tap
   // opens the camera to scan the server's QR (fills the URL); no camera / no scan
-  // falls back to manual entry in the sheet.
-  const dbgBtn = IconButton("effect-to-device", {
-    title: "Send library to debug server",
-    onClick: () => void sendLibraryFlow(),
-  });
+  // falls back to manual entry in the sheet. Lives in the app-bar ⋯ menu (below
+  // the divider, as a tab-context action).
   async function sendLibraryFlow(): Promise<void> {
     const scanned = qrScanSupported() ? await scanQr() : null;
     openDebugServerSheet(scanned ?? undefined);
   }
-  toolbar.append(searchWrap, aiHelp, dbgBtn);
+  const tabMenuItems = [
+    {
+      icon: "effect-to-device" as const,
+      label: "Send library to debug server",
+      onClick: () => void sendLibraryFlow(),
+    },
+  ];
+  toolbar.append(searchWrap, aiHelp);
 
   const tagRow = document.createElement("div");
   tagRow.className = "maps-tags";
 
   const listEl = document.createElement("div");
   listEl.className = "maps-list";
-
-  // -- built-in pulse/flood entry (preserves the old Effects-tab sim) -------
-  function builtinRow(): HTMLElement {
-    const r = document.createElement("div");
-    r.className = "map-row";
-    r.addEventListener("click", () => router.navigate("/effects/pulse"));
-    const thumb = document.createElement("div");
-    thumb.className = "map-thumb";
-    thumb.appendChild(icon("sparkles"));
-    const info = document.createElement("div");
-    info.className = "map-info";
-    const name = document.createElement("div");
-    name.className = "map-name";
-    name.textContent = "Built-in: Pulse / Flood";
-    const meta = document.createElement("div");
-    meta.className = "map-meta metric";
-    meta.textContent = "Offline preview over a selected map";
-    info.append(name, meta);
-    const go = IconButton("play", { title: "Preview" });
-    r.append(thumb, info, go);
-    return r;
-  }
 
   // -- FAB (body-mounted, exactly like the map browser) ---------------------
   const fab = document.createElement("button");
@@ -180,9 +171,6 @@ export function EffectsBrowserScreen(router: Router): Screen {
     // Rebuilding the list: drop the old tiles' observers/URLs before re-observing.
     tiles.reset();
     listEl.replaceChildren();
-    // Built-in pulse/flood preview always available at the top (only when not
-    // filtering, so it doesn't fight a #tag / search query).
-    if (!search && activeTags.length === 0) listEl.appendChild(builtinRow());
 
     if (rows.length === 0 && all.length === 0) {
       listEl.append(
@@ -209,8 +197,10 @@ export function EffectsBrowserScreen(router: Router): Screen {
     const thumb = document.createElement("div");
     thumb.className = "map-thumb";
     thumb.appendChild(icon("sparkles"));
-    // Lazily swap the placeholder icon for a looping 64×64 preview clip.
-    tiles.observe(thumb, e.id, e.source);
+    // Lazily swap the placeholder icon for a looping 64×64 preview clip — gated
+    // behind the experimental "Render FX previews" flag (off by default: the
+    // preview rendering is slow/buggy on mobile). Off keeps the static icon.
+    if (getAppearance().renderFxPreviews) tiles.observe(thumb, e.id, e.source);
 
     const info = document.createElement("div");
     info.className = "map-info";
@@ -302,11 +292,18 @@ export function EffectsBrowserScreen(router: Router): Screen {
           icon: "trash",
           variant: "danger",
           onClick: () => {
-            if (!confirm(`Delete "${e.name}"? This cannot be undone.`)) return;
-            sheet.close();
-            void effectStore.delete(e.id).then(() => {
-              toast("Deleted");
-              void refresh();
+            void confirmDialog({
+              title: "Delete effect",
+              message: `Delete "${e.name}"? This cannot be undone.`,
+              confirmLabel: "Delete",
+              danger: true,
+            }).then((ok) => {
+              if (!ok) return;
+              sheet.close();
+              void effectStore.delete(e.id).then(() => {
+                toast("Deleted");
+                void refresh();
+              });
             });
           },
         },
@@ -318,12 +315,14 @@ export function EffectsBrowserScreen(router: Router): Screen {
     el,
     onMount: () => {
       document.body.appendChild(fab);
+      setTabMenuItems(tabMenuItems);
       void refresh();
     },
     onUnmount: () => {
       aiTip?.close();
       fab.remove();
       tiles.dispose();
+      setTabMenuItems([]);
     },
   };
 }

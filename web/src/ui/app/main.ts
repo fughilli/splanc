@@ -24,7 +24,6 @@ import { deviceStore } from "../../store/deviceStore";
 import { OnboardingScreen } from "../screens/onboarding";
 import { MapBrowserScreen } from "../screens/mapBrowser";
 import { MapDetailScreen } from "../screens/mapDetail";
-import { EffectsScreen } from "../screens/effects";
 import { EffectsBrowserScreen } from "../screens/effectsBrowser";
 import { EffectEditorScreen } from "../screens/effectEditor";
 import { CaptureScreen } from "../screens/capture";
@@ -35,11 +34,16 @@ import { SettingsScreen } from "../screens/settings";
 import { MidiScreen } from "../screens/midi";
 import { ColorCorrectionScreen } from "../screens/colorCorrection";
 import { initAppearance } from "../../store/appearance";
+import { maybeShowSplash } from "./splash";
 
 async function main(): Promise<void> {
   // Apply the saved appearance (theme / fonts / scale) before the shell mounts
   // so there's no flash of the default palette.
   initAppearance();
+
+  // First-run welcome splash (no-op after the first launch). Shown over the
+  // shell as it boots behind it, then fades itself out.
+  maybeShowSplash();
 
   installIconSprite();
 
@@ -85,10 +89,6 @@ async function main(): Promise<void> {
       shell.setChrome({ title: "Effects", tabs: true });
       return EffectsBrowserScreen(router);
     })
-    .add("/effects/pulse", () => {
-      shell.setChrome({ title: "Pulse / Flood", back: true, tabs: true });
-      return EffectsScreen(router);
-    })
     .add("/effects/edit/:id", (m) => {
       // Overlay chrome: hide the app-bar + tab-bar so the editor owns the whole
       // viewport and supplies its own floating back/⋯/name controls.
@@ -108,7 +108,7 @@ async function main(): Promise<void> {
       return PerfProfilesScreen(router);
     })
     .add("/settings", () => {
-      shell.setChrome({ title: "Appearance", back: true, tabs: true });
+      shell.setChrome({ title: "Settings", back: true, tabs: true });
       return SettingsScreen(router);
     })
     .add("/settings/midi", () => {

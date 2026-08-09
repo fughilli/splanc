@@ -12,6 +12,7 @@ import { IconButton, StatusPill, icon, type IconName, type PillHandle } from "..
 import { openDeviceSheet } from "../screens/deviceSheet";
 import { installMenuItem, onInstallChange } from "./pwa";
 import { appState } from "./state";
+import { subscribeTabMenu, type TabMenuItem } from "./tabMenu";
 import type { Router } from "./router";
 
 interface Tab {
@@ -41,6 +42,8 @@ export class Shell {
   private kebab!: HTMLButtonElement;
   private menu!: HTMLElement;
   private menuOpen = false;
+  // Context-relevant ⋯ items for the current tab (below the divider).
+  private tabItems: TabMenuItem[] = [];
 
   constructor() {
     this.root = document.createElement("div");
@@ -67,7 +70,7 @@ export class Shell {
     this.backBtn.style.display = "none";
     this.titleEl = document.createElement("h1");
     this.titleEl.className = "app-bar-title";
-    this.titleEl.textContent = "LED Mapper";
+    this.titleEl.textContent = "Splanc";
     const spacer = document.createElement("div");
     spacer.style.flex = "1";
     this.pill = StatusPill(() => openDeviceSheet());
@@ -83,14 +86,19 @@ export class Shell {
     this.appBar.append(this.backBtn, this.titleEl, spacer, this.pill.el, this.menuWrap);
     this.rebuildMenu();
     onInstallChange(() => this.rebuildMenu());
+    // Screens register/clear their tab-specific items; reflect them live.
+    subscribeTabMenu((items) => {
+      this.tabItems = items;
+      this.rebuildMenu();
+    });
   }
 
   /** Repopulate the ⋯ menu and hide the whole affordance when it's empty. */
   private rebuildMenu(): void {
     this.menu.replaceChildren();
-    // Appearance (theme / fonts / 3D view) — always available.
+    // Settings (Appearance + Capture tabs) — always available.
     this.menu.appendChild(
-      this.menuItem("settings", "Appearance", () => this.router?.navigate("/settings")),
+      this.menuItem("settings", "Settings", () => this.router?.navigate("/settings")),
     );
     // MIDI controllers (connect + name controls) — always available.
     this.menu.appendChild(
@@ -104,6 +112,16 @@ export class Shell {
     );
     const install = installMenuItem(() => this.closeMenu());
     if (install) this.menu.appendChild(install);
+    // Below the divider: actions relevant to the current tab (Maps import/export,
+    // Effects "send library to debug server"), registered by the mounted screen.
+    if (this.tabItems.length > 0) {
+      const divider = document.createElement("div");
+      divider.className = "appbar-menu-divider";
+      this.menu.appendChild(divider);
+      for (const it of this.tabItems) {
+        this.menu.appendChild(this.menuItem(it.icon, it.label, it.onClick));
+      }
+    }
     const hasItems = this.menu.childElementCount > 0;
     this.menuWrap.style.display = hasItems ? "" : "none";
     if (!hasItems) this.closeMenu();

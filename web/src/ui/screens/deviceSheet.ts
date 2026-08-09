@@ -178,7 +178,7 @@ function render(): HTMLElement {
   if (devices.length === 0) {
     const empty = document.createElement("div");
     empty.className = "device-empty";
-    empty.textContent = "No devices yet. Add one to control a player.";
+    empty.textContent = "No devices yet. Add one to get started.";
     wrap.append(empty);
   }
 

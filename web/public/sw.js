@@ -26,9 +26,9 @@ const BASE = new URL(self.registration.scope).pathname;
 
 // Bump on any change that must invalidate the old cache (esp. the fixed-name
 // wasm bundles) — `activate` deletes every cache that isn't the current one.
-const VERSION = "v3";
+const VERSION = "v4";
 const CACHE = `ledmapper-${VERSION}`;
-const SHELL = [BASE, BASE + "index.html", BASE + "manifest.webmanifest", BASE + "icons/icon-192.png"];
+const SHELL = [BASE, BASE + "index.html", BASE + "manifest.webmanifest", BASE + "icons/app-icon.svg"];
 
 // Deploy-root-relative request path (BASE stripped, no leading slash), e.g.
 // "maps/xyz" or "solver/worker.js" — what the regexes below match against.

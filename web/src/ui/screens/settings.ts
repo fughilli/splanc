@@ -11,13 +11,14 @@
  * reproduce today's look, so this screen is purely opt-in.
  */
 
-import { Card, Slider, Button, icon, toast } from "../kit";
+import { Card, Slider, Button, confirmDialog, icon, toast } from "../kit";
 import type { Router, Screen } from "../app/router";
 import {
   getAppearance,
   updateAppearance,
   resetAppearance,
   resolveAccent,
+  renderSettings,
   ACCENT_HEX,
   type AppearanceSettings,
   type ThemeMode,
@@ -27,7 +28,9 @@ import {
 import { installSettingsStyles } from "./settings.css";
 import { MapView } from "../mapview";
 import { generateFixture } from "../../effects/fixtures";
-import { prefs } from "../../store/prefs";
+import { prefs, DEFAULT_MANUAL_EXPOSURE_CEILING_MS } from "../../store/prefs";
+
+type SettingsTab = "appearance" | "behavior";
 
 const FONT_LABELS: Record<FontChoice, string> = {
   system: "System",
@@ -48,13 +51,10 @@ export function SettingsScreen(_router: Router): Screen {
   const el = document.createElement("div");
   el.className = "screen screen--settings";
 
-  const head = document.createElement("h1");
-  head.className = "screen-headline";
-  head.textContent = "Appearance";
-  const sub = document.createElement("p");
-  sub.className = "screen-sub";
-  sub.textContent = "Theme, fonts, 3D-view rendering and capture. Saved on this device.";
-  el.append(head, sub);
+  // The app bar already reads "Settings", so the body leads straight with the
+  // tabs — Appearance (theme / fonts / 3D / startup) and Behavior (capture and,
+  // later, other behavioural knobs). Each panel ends with its own "Reset".
+  let tab: SettingsTab = "appearance";
 
   let s = getAppearance();
   const set = (patch: Partial<AppearanceSettings>): void => {
@@ -91,7 +91,77 @@ export function SettingsScreen(_router: Router): Screen {
   const preview = buildPreview();
 
   function rerender(): void {
-    body.replaceChildren(themeGroup(), typeGroup(), viewGroup(), captureGroup(), resetRow());
+    const panels =
+      tab === "appearance"
+        ? [themeGroup(), typeGroup(), viewGroup(), startupGroup(), experimentalGroup(), appearanceResetRow()]
+        : [captureGroup(), captureResetRow()];
+    body.replaceChildren(tabBar(), ...panels);
+  }
+
+  // Switch tabs. The 3D preview only lives in the Appearance panel, so pause its
+  // render loop while it's off-screen (Capture) and resume when it's back.
+  function setTab(next: SettingsTab): void {
+    if (next === tab) return;
+    tab = next;
+    rerender();
+    if (next === "appearance") preview.start();
+    else preview.stop();
+  }
+
+  function tabBar(): HTMLElement {
+    const bar = document.createElement("div");
+    bar.className = "settings-tabs";
+    const mk = (id: SettingsTab, label: string): HTMLButtonElement => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "settings-tab" + (tab === id ? " on" : "");
+      b.textContent = label;
+      b.setAttribute("aria-selected", String(tab === id));
+      b.addEventListener("click", () => setTab(id));
+      return b;
+    };
+    bar.append(mk("appearance", "Appearance"), mk("behavior", "Behavior"));
+    return bar;
+  }
+
+  // -- Startup (launch behavior) -------------------------------------------
+  function startupGroup(): HTMLElement {
+    const g = group("Startup");
+    g.append(
+      row(
+        "Splash screen",
+        "Show the Splanc splash each time the app launches.",
+        segmented<"on" | "off">(
+          [
+            ["off", "Off"],
+            ["on", "On"],
+          ],
+          s.splash ? "on" : "off",
+          (v) => set({ splash: v === "on" }),
+        ),
+      ),
+    );
+    return g;
+  }
+
+  // -- Experimental (feature-flagged, off by default) ----------------------
+  function experimentalGroup(): HTMLElement {
+    const g = group("Experimental");
+    g.append(
+      row(
+        "Render FX previews",
+        "Animated effect previews in the library. Slow on mobile, YMMV.",
+        segmented<"on" | "off">(
+          [
+            ["off", "Off"],
+            ["on", "On"],
+          ],
+          s.renderFxPreviews ? "on" : "off",
+          (v) => set({ renderFxPreviews: v === "on" }),
+        ),
+      ),
+    );
+    return g;
   }
 
   // -- Capture (camera / mapping knobs) ------------------------------------
@@ -136,7 +206,9 @@ export function SettingsScreen(_router: Router): Screen {
             ["light", "Light"],
           ],
           s.mode,
-          (v) => set({ mode: v }),
+          // setLive (no rerender) so the whole screen recolors together via the
+          // theme transition, instead of the cards snapping while the chrome fades.
+          (v) => setLive({ mode: v }),
         ),
       ),
     );
@@ -287,7 +359,24 @@ export function SettingsScreen(_router: Router): Screen {
     return g;
   }
 
-  function resetRow(): HTMLElement {
+  function appearanceResetRow(): HTMLElement {
+    return resetRow("Reset all appearance settings (theme, fonts, 3D view, startup) to their defaults?", () => {
+      s = resetAppearance();
+      rerender();
+      toast("Appearance reset");
+    });
+  }
+
+  function captureResetRow(): HTMLElement {
+    return resetRow("Reset capture settings to their defaults?", () => {
+      prefs.setManualExposureCeilingMs(DEFAULT_MANUAL_EXPOSURE_CEILING_MS);
+      rerender();
+      toast("Capture settings reset");
+    });
+  }
+
+  /** A block "Reset to defaults" button that confirms before running `apply`. */
+  function resetRow(confirmMsg: string, apply: () => void): HTMLElement {
     const wrap = document.createElement("div");
     wrap.className = "settings-reset";
     wrap.append(
@@ -296,9 +385,13 @@ export function SettingsScreen(_router: Router): Screen {
         variant: "quiet",
         block: true,
         onClick: () => {
-          s = resetAppearance();
-          rerender();
-          toast("Appearance reset");
+          void confirmDialog({
+            title: "Reset to defaults",
+            message: confirmMsg,
+            confirmLabel: "Reset",
+          }).then((ok) => {
+            if (ok) apply();
+          });
         },
       }),
     );
@@ -356,6 +449,13 @@ function buildPreview(): PreviewHandle {
   let raf = 0;
   let t = 0;
   const paint = (): void => {
+    // MapView only *seeds* grid/triad visibility from the Appearance defaults at
+    // construction (per-view state owns it afterward), so drive them from the
+    // live settings each frame here — that's what makes the two toggles show up
+    // in this preview. ledSize/glow/background are already read live by MapView.
+    const rs = renderSettings();
+    view.showGrid = rs.showGrid;
+    view.showTriad = rs.showTriad;
     // Accent-tinted comet chasing around the ring, over a dim base glow so the
     // whole fixture stays visible. `t` advances ~1/frame; head sweeps 0..1.
     const [ar, ag, ab] = hexToRgb(resolveAccent(getAppearance()));
@@ -466,7 +566,13 @@ function segmented<T extends string>(
     b.type = "button";
     b.textContent = label;
     if (v === value) b.classList.add("on");
-    b.addEventListener("click", () => onPick(v));
+    b.addEventListener("click", () => {
+      // Reflect the choice immediately so callers that skip a full rerender (e.g.
+      // the theme toggle, which animates instead) still show the selection.
+      for (const sib of seg.children) sib.classList.remove("on");
+      b.classList.add("on");
+      onPick(v);
+    });
     seg.appendChild(b);
   }
   return seg;

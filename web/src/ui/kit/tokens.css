@@ -81,6 +81,7 @@ a {
   justify-content: center;
   gap: var(--sp-2);
   background: var(--accent);
+  --icon-cut: var(--accent); /* transfer-icon "cut" halo matches the button bg */
   color: #fff;
   border: 0;
   border-radius: var(--r-ctrl);
@@ -102,14 +103,23 @@ a {
 }
 .k-btn--quiet {
   background: var(--surface-2);
+  --icon-cut: var(--surface-2);
   color: var(--text);
 }
 .k-btn--danger {
   background: var(--err);
+  --icon-cut: var(--err);
   color: #fff;
 }
 .k-btn--block {
   width: 100%;
+}
+/* Icon inside a labelled button (Button({icon})). Every other button variant
+   sizes its svg explicitly; k-btn was missing it, so icons rendered unsized. */
+.k-btn svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
 }
 
 .k-iconbtn {
@@ -176,6 +186,11 @@ a {
 .k-slider {
   display: block;
   margin-bottom: var(--sp-3);
+}
+/* Greyed out (e.g. Cleanup while Fine-tune drives the extraction directly). */
+.k-slider--disabled {
+  opacity: 0.4;
+  pointer-events: none;
 }
 .k-slider .k-slider-head {
   display: flex;
@@ -424,9 +439,73 @@ a {
   font-size: var(--f-title);
 }
 
+/* -- Confirm dialog: centered modal + dimmed/blurred backdrop -- */
+.k-confirm-scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  opacity: 0;
+  transition: opacity var(--motion-sheet) var(--ease);
+  z-index: 320;
+}
+.k-confirm-scrim.k-confirm--in {
+  opacity: 1;
+}
+.k-confirm {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) scale(0.96);
+  width: min(92vw, 22rem);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  padding: var(--sp-4);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  transition: opacity var(--motion-sheet) var(--ease), transform var(--motion-sheet) var(--ease);
+  z-index: 321;
+}
+.k-confirm.k-confirm--in {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+.k-confirm-title {
+  margin: 0 0 var(--sp-2);
+  font-size: var(--f-title);
+}
+.k-confirm-msg {
+  margin: 0 0 var(--sp-4);
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+.k-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+}
+
+/* -- Theme (dark/light) crossfade: applied only while switching (the store adds
+   `.theme-animating` on :root before swapping the palette vars, then removes it).
+   Transitioning the resolved colour values eases the whole app between palettes
+   instead of flipping. -- */
+.theme-animating,
+.theme-animating * {
+  /* ~3x --motion-screen (220ms): a slow, deliberate palette crossfade. */
+  transition: background-color 660ms var(--ease), color 660ms var(--ease),
+    border-color 660ms var(--ease), fill 660ms var(--ease), box-shadow 660ms var(--ease);
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     transition-duration: 1ms !important;
+  }
+  /* Respect the preference: no crossfade, just switch. */
+  .theme-animating,
+  .theme-animating * {
+    transition: none;
   }
 }
 
@@ -463,4 +542,16 @@ a {
 }
 .k-actiontile--danger:hover {
   border-color: var(--err);
+}
+/* Toggle tiles (e.g. map-detail Transform / Topology) light up when active. */
+.k-actiontile--on {
+  border-color: var(--accent);
+  background: var(--accent-quiet);
+  color: var(--text);
+}
+/* Greyed-out tile (e.g. Save with no pending edits, or a disabled action). */
+.k-actiontile--disabled,
+.k-actiontile:disabled {
+  opacity: 0.4;
+  pointer-events: none;
 }

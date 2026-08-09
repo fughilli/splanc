@@ -16,8 +16,14 @@ body.is-locked {
 .shell {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
-  max-width: 560px;
+  /* Definite viewport height (not just min-height) so the scrollable outlet has
+     a resolvable height — lets a screen use height:100% to fit without scroll
+     (e.g. the map detail 3D view). Falls back to vh where dvh is unsupported. */
+  height: 100vh;
+  height: 100dvh;
+  /* Fill the viewport width (a phone column left dead space on wide screens);
+     content grids inside are responsive and pick up the extra columns. */
+  width: 100%;
   margin: 0 auto;
 }
 
@@ -121,6 +127,64 @@ body.is-locked {
   margin: 0 0 var(--sp-4);
 }
 
+/* --- first-run splash (src/ui/app/splash.ts) --- */
+.splash {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-6);
+  background: var(--bg);
+  opacity: 1;
+  transition: opacity 420ms var(--ease);
+}
+.splash--out {
+  opacity: 0;
+  pointer-events: none;
+}
+.splash-logo {
+  width: 128px;
+  height: 128px;
+  border-radius: 28px;
+  animation: splash-pop 520ms var(--ease) both;
+}
+.splash-word {
+  font-size: 2rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--text);
+  animation: splash-rise 520ms var(--ease) both;
+}
+@keyframes splash-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.86);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes splash-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .splash-logo,
+  .splash-word {
+    animation: none;
+  }
+}
+
 /* --- onboarding --- */
 .onboard-form {
   display: flex;
@@ -139,12 +203,6 @@ body.is-locked {
 }
 
 /* --- map browser --- */
-.maps-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--sp-2);
-  margin-bottom: var(--sp-2);
-}
 .maps-search {
   display: flex;
   align-items: center;
@@ -349,17 +407,102 @@ body.is-locked {
   color: var(--text);
 }
 .detail-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-2);
   margin-bottom: var(--sp-3);
 }
-.detail-overflow {
+
+/* Fit the 3D view + action tiles into the viewport (no scroll) while no editor
+   panel is open: the screen fills the outlet as a column and the canvas flexes
+   to take whatever height the tiles/meta leave. When a panel opens there's much
+   more content, so these rules drop out and the screen scrolls normally. */
+/* Map detail is a flex column. CLOSED: the 3D view flexes to fill and the whole
+   screen fits the viewport (no scroll). OPEN: the 3D view is frozen at its fill
+   height (JS sets an inline height) and the panel + tiles push the screen taller,
+   so the outlet scrolls — the 3D view keeps its size instead of shrinking. */
+.screen--detail {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.screen--detail:not(.detail--panel-open) {
+  height: 100%;
+}
+.screen--detail.detail--panel-open {
+  min-height: 100%;
+}
+.screen--detail .detail-main {
+  min-height: 0;
+  /* Column (not the base row): main holds only the stage now, so the stage's
+     flex governs its HEIGHT and its width just stretches. In a row flex, a
+     flex:0 0 auto stage shrink-wraps its width, which feeds back into the
+     canvas's intrinsic width (MapView rewrites it each frame) and explodes. */
+  flex-direction: column;
+  align-items: stretch;
+}
+.screen--detail:not(.detail--panel-open) .detail-main {
+  flex: 1 1 auto;
+}
+.screen--detail.detail--panel-open .detail-main {
+  flex: 0 0 auto; /* natural height = the frozen stage */
+}
+.screen--detail .detail-stage {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.screen--detail:not(.detail--panel-open) .detail-stage {
+  flex: 1 1 auto;
+}
+.screen--detail.detail--panel-open .detail-stage {
+  flex: 0 0 auto; /* holds the inline (frozen) height */
+}
+.screen--detail .detail-canvas {
+  /* basis 0 (not auto) so the canvas's own backing-store size — which MapView's
+     ResizeObserver rewrites each frame — can't feed back into the flex sizing
+     (that caused a ResizeObserver resize loop). */
+  flex: 1 1 0;
+  min-height: 140px;
+  aspect-ratio: auto;
+}
+.screen--detail .detail-actions {
+  flex: 0 0 auto;
+  /* Even spacing above (from the divider) and below (from the tab strip = the
+     screen's bottom padding). */
+  margin-top: var(--sp-4);
+  margin-bottom: 0;
+}
+
+/* Collapsible editor-panel region between the 3D view and the tiles. A "split"
+   divider — a top border always, a bottom border once open — rolls apart as the
+   height animates; the two panels crossfade; tall content scrolls inside. */
+.detail-panelregion {
+  flex: 0 0 auto;
+  position: relative;
+  height: 0;
+  /* Clip while rolling; the region grows to the panel's full height (no internal
+     scroll) — the overall screen scrolls instead. */
+  overflow: hidden;
+  border-top: 1px solid var(--border);
+  transition: height var(--motion-screen) var(--ease);
+}
+.detail-panelregion--open {
+  border-bottom: 1px solid var(--border);
+}
+.detail-panelregion .detail-panel {
   position: absolute;
-  right: var(--sp-2);
-  top: var(--sp-2);
-  z-index: 10;
-  background: rgba(10, 10, 14, 0.5);
+  top: 0;
+  left: 0;
+  right: 0;
+  /* Flat inside the region (the region + its split divider are the container). */
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-screen) var(--ease);
+}
+.detail-panelregion .detail-panel--show {
+  opacity: 1;
+  pointer-events: auto;
 }
 .toggle-chip {
   background: var(--surface-2);
@@ -392,12 +535,27 @@ body.is-locked {
   margin-bottom: var(--sp-3);
 }
 .topo-disclosure {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
   background: transparent;
   border: 0;
-  color: var(--accent);
+  border-top: 1px solid var(--border);
+  color: var(--text);
   font: inherit;
+  font-weight: 600;
   cursor: pointer;
-  padding: var(--sp-1) 0;
+  padding: var(--sp-2) 0;
+}
+.topo-disclosure svg {
+  width: 16px;
+  height: 16px;
+  color: var(--text-dim);
+  transition: transform var(--motion-micro) var(--ease);
+}
+.topo-disclosure--open svg {
+  transform: rotate(90deg);
 }
 .topo-progress {
   color: var(--warn);
@@ -468,22 +626,38 @@ body.is-locked {
   width: 3.5rem;
   flex: 0 0 auto;
 }
-.xform-btn {
-  min-width: 2.4rem;
-  padding: 0.4rem 0.5rem;
+.xform-fields {
+  display: flex;
+  gap: var(--sp-2);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.xform-field {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  flex: 1 1 0;
+  min-width: 0;
+}
+.xform-field > span {
+  color: var(--text-dim);
+  font-size: var(--f-caption);
+}
+.xform-field input {
+  width: 100%;
+  min-width: 0;
   background: var(--surface-2);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: var(--r-ctrl);
+  padding: 0.35rem 0.4rem;
   font: inherit;
-  cursor: pointer;
 }
-.xform-btn:hover {
-  border-color: var(--accent);
+.xform-row .k-btn {
+  flex: 0 0 auto;
 }
-.xform-dirty {
-  color: var(--warn);
-  font-size: var(--f-caption);
+.xform-tools {
+  margin-top: var(--sp-3);
 }
 
 /* --- effects --- */
@@ -838,6 +1012,77 @@ body.is-locked {
   border-top: 1px solid var(--border);
   background: var(--surface-2);
 }
+
+/* Collapsible perf meter (arrow tab collapses the bar to a thin colored strip). */
+.fxedit-perf {
+  position: relative;
+  border-top: 1px solid var(--border);
+  background: var(--surface-2);
+}
+.fxedit-perf .fxedit-budget {
+  border-top: 0;
+}
+.fxedit-perf-toggle {
+  position: absolute;
+  top: 3px;
+  right: 5px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  background: var(--surface-2);
+  border: 0;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.fxedit-perf-toggle svg {
+  width: 14px;
+  height: 14px;
+  transition: transform var(--motion-micro) var(--ease);
+  transform: rotate(90deg); /* expanded → points down */
+}
+.fxedit-perf--collapsed .fxedit-perf-toggle svg {
+  transform: rotate(0deg); /* collapsed → points right */
+}
+.fxedit-perf--collapsed {
+  min-height: 18px;
+}
+.fxedit-perf--collapsed .perf-budget-head,
+.fxedit-perf--collapsed .perf-budget-detail {
+  display: none;
+}
+.fxedit-perf--collapsed .fxedit-budget {
+  padding: 0;
+}
+.fxedit-perf--collapsed .perf-budget-track {
+  height: 6px;
+  border-radius: 0;
+}
+
+/* Running-effect mismatch badge (device is running a different effect). */
+.fxedit-mismatch {
+  position: fixed;
+  right: var(--sp-3);
+  bottom: var(--sp-3);
+  z-index: 60;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--surface-2);
+  border: 1px solid var(--warn);
+  color: var(--warn);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+}
+.fxedit-mismatch svg {
+  width: 20px;
+  height: 20px;
+}
 .fxedit-spinner {
   width: 12px;
   height: 12px;
@@ -1086,10 +1331,20 @@ body.is-locked {
   padding: 0.25rem 0.25rem 0.25rem 0.8rem;
   background: var(--surface-2);
   border: 1px solid var(--border);
-  border-radius: 999px;
+  /* Rounded rectangle (not a capsule) so the rounded-rect Duplicate button nests
+     cleanly: card radius ≈ button radius + the 0.25rem inset around it. */
+  border-radius: var(--r-card);
   font-size: var(--f-caption);
   color: var(--text-dim);
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+}
+/* Hairline divider between the "Built-in effect" label and the Duplicate button. */
+.fxedit-builtin-sep {
+  align-self: stretch;
+  flex: none;
+  width: 1px;
+  margin: 0.15rem 0;
+  background: var(--border);
 }
 .fxedit-builtin-card .k-btn {
   padding: 0.35rem 0.8rem;
@@ -1572,10 +1827,14 @@ body.is-locked {
 
 /* -- drag a pane handle (tab / header title) to a new dock -- */
 .fxlayout-draghandle {
-  touch-action: none; /* let the long-press drag win over browser scroll */
+  /* Allow horizontal panning so a crowded tab strip still scrolls; the
+     long-press drag needs a HOLD (not a swipe), and once it engages it sets
+     touch-action:none via --active below to own the gesture. */
+  touch-action: pan-x;
   cursor: grab;
 }
 .fxlayout-draghandle--active {
+  touch-action: none;
   cursor: grabbing;
 }
 .fxlayout-dropzones {
@@ -2327,6 +2586,9 @@ input.device-name-input {
 }
 
 /* Onboarding reuses the device-add row, a touch larger. */
+.onboard-cta {
+  margin-top: var(--sp-4);
+}
 .onboard-add-card {
   display: flex;
   flex-direction: column;
@@ -2534,6 +2796,11 @@ input.device-name-input {
 .appbar-menu-item svg {
   width: 18px;
   height: 18px;
+}
+.appbar-menu-divider {
+  height: 1px;
+  margin: var(--sp-1) 0;
+  background: var(--border);
 }
 
 /* --- dismissible install banner (first load) --- */

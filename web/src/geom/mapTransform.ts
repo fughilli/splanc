@@ -50,10 +50,11 @@ export function mapBounds(map: OutputMap): MapBounds | null {
   return { min, max, center, size, maxDim, centroid };
 }
 
-/** A composed transform: rotate then scale about `pivot`, then translate. */
+/** A composed transform: rotate then scale about `pivot`, then translate.
+ * `scale` may be uniform (a number) or per-axis (a Vec3, for non-uniform stretch). */
 export interface MapXform {
   translate?: Vec3;
-  scale?: number;
+  scale?: number | Vec3;
   rot?: { axis: "x" | "y" | "z"; deg: number };
   /** Pivot for rotation/scale (default origin). */
   pivot?: Vec3;
@@ -66,7 +67,14 @@ export function transformMap(
   x: MapXform,
 ): { map: OutputMap; topology?: Topology } {
   const pivot = x.pivot ?? [0, 0, 0];
-  const s = x.scale ?? 1;
+  const sc = x.scale ?? 1;
+  const sx = typeof sc === "number" ? sc : sc[0];
+  const sy = typeof sc === "number" ? sc : sc[1];
+  const sz = typeof sc === "number" ? sc : sc[2];
+  // Scalar used for the length-valued topology fields. Uniform scale multiplies
+  // lengths by `s`; for a non-uniform scale there's no single factor, so use the
+  // geometric mean as a reasonable approximation.
+  const sLen = typeof sc === "number" ? sc : Math.cbrt(Math.abs(sx * sy * sz)) || 1;
   const t = x.translate ?? [0, 0, 0];
   const rot = x.rot;
   const rad = rot ? (rot.deg * Math.PI) / 180 : 0;
@@ -95,7 +103,7 @@ export function transformMap(
         y0 = y1;
       }
     }
-    return [x0 * s + pivot[0] + t[0], y0 * s + pivot[1] + t[1], z0 * s + pivot[2] + t[2]];
+    return [x0 * sx + pivot[0] + t[0], y0 * sy + pivot[1] + t[1], z0 * sz + pivot[2] + t[2]];
   };
 
   const newMap: OutputMap = { ...map, leds: map.leds.map((l) => ({ ...l, xyz: f(l.xyz) })) };
@@ -108,12 +116,12 @@ export function transformMap(
     segments: topology.segments.map((seg) => ({
       ...seg,
       polyline: seg.polyline.map(f),
-      length: seg.length * s,
+      length: seg.length * sLen,
     })),
     associations: topology.associations.map((a) => ({
       ...a,
-      footArclength: a.footArclength * s,
-      dPerp: a.dPerp * s,
+      footArclength: a.footArclength * sLen,
+      dPerp: a.dPerp * sLen,
     })),
   };
   return { map: newMap, topology: newTopo };

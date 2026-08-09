@@ -583,7 +583,7 @@ export class LedMapperClient {
       onProgress?.(assembled.length, total);
       if (assembled.length >= total) break;
     }
-    if (total === 0 || assembled.length === 0) throw new Error("player has no stored map");
+    if (total === 0 || assembled.length === 0) throw new Error("device has no stored map");
     return decodeMappingBundle(assembled);
   }
 

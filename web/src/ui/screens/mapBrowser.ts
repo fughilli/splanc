@@ -4,7 +4,7 @@
  * NEW screen (no equivalent in main.ts).
  */
 
-import { ActionGrid, Button, Chip, EmptyState, IconButton, Sheet, toast, icon } from "../kit";
+import { ActionGrid, Button, Chip, EmptyState, IconButton, Sheet, confirmDialog, toast, icon } from "../kit";
 import { mapStore, renderThumbnail, isThumbnailStale, type StoredMapSummary } from "../../store/mapStore";
 import {
   decodeLibraryBundle,
@@ -13,6 +13,7 @@ import {
 } from "../../store/mapBundle";
 import { appendGrouped, openFolderPicker } from "./folders";
 import { appState } from "../app/state";
+import { setTabMenuItems } from "../app/tabMenu";
 import { prefs } from "../../store/prefs";
 import type { Router, Screen } from "../app/router";
 
@@ -26,23 +27,12 @@ export function MapBrowserScreen(router: Router): Screen {
   let activeTags: string[] = [];
   let sort: Sort = "updated";
 
-  // -- library actions (import / export-all) — reachable even when empty.
-  const actions = document.createElement("div");
-  actions.className = "maps-actions";
-  actions.append(
-    Button({
-      label: "Import",
-      icon: "upload",
-      variant: "quiet",
-      onClick: () => void importFromFile(),
-    }),
-    Button({
-      label: "Export library",
-      icon: "download",
-      variant: "quiet",
-      onClick: () => void exportLibrary(),
-    }),
-  );
+  // Library import / export-all live in the app-bar ⋯ menu (below the divider,
+  // as tab-context actions); registered on mount, cleared on unmount.
+  const tabMenuItems = [
+    { icon: "upload" as const, label: "Import…", onClick: () => void importFromFile() },
+    { icon: "download" as const, label: "Export library", onClick: () => void exportLibrary() },
+  ];
 
   // -- search + sort controls
   const searchWrap = document.createElement("div");
@@ -220,7 +210,7 @@ export function MapBrowserScreen(router: Router): Screen {
     }
   }
 
-  el.append(actions, searchWrap, tagRow, listEl);
+  el.append(searchWrap, tagRow, listEl);
 
   async function refresh(): Promise<void> {
     const all = await mapStore.list();
@@ -371,11 +361,18 @@ export function MapBrowserScreen(router: Router): Screen {
           icon: "trash",
           variant: "danger",
           onClick: () => {
-            if (!confirm(`Delete "${m.name}"? This cannot be undone.`)) return;
-            sheet.close();
-            void mapStore.delete(m.id).then(() => {
-              toast("Deleted");
-              void refresh();
+            void confirmDialog({
+              title: "Delete map",
+              message: `Delete "${m.name}"? This cannot be undone.`,
+              confirmLabel: "Delete",
+              danger: true,
+            }).then((ok) => {
+              if (!ok) return;
+              sheet.close();
+              void mapStore.delete(m.id).then(() => {
+                toast("Deleted");
+                void refresh();
+              });
             });
           },
         },
@@ -387,9 +384,13 @@ export function MapBrowserScreen(router: Router): Screen {
     el,
     onMount: () => {
       document.body.appendChild(fab);
+      setTabMenuItems(tabMenuItems);
       void refresh();
     },
-    onUnmount: () => fab.remove(),
+    onUnmount: () => {
+      fab.remove();
+      setTabMenuItems([]);
+    },
   };
 }
 

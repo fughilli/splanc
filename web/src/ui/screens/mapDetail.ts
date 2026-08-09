@@ -24,11 +24,10 @@ import {
   type MapXform,
 } from "../../geom/mapTransform";
 import { MapView } from "../mapview";
-import { Button, Card, IconButton, Sheet, Slider, toast, icon, type IconName } from "../kit";
+import { Button, Card, Slider, toast, icon, type IconName } from "../kit";
 import { mapStore, type StoredMap } from "../../store/mapStore";
 import { appState } from "../app/state";
 import { openDeviceSheet } from "./deviceSheet";
-import { downloadBytes } from "./mapBrowser";
 import type { Router, Screen } from "../app/router";
 
 // The five raw ExtractOptions and the single-knob "Cleanup" curve over them.
@@ -89,21 +88,33 @@ export function MapDetailScreen(
   const actions = document.createElement("div");
   actions.className = "detail-actions";
 
+  // Editor panels live stacked (absolutely) inside a collapsible region between
+  // the 3D view and the action tiles. The region's split divider rolls the active
+  // panel out/up (animated height); the two panels crossfade when switching.
   const topoPanel = document.createElement("div");
-  topoPanel.className = "detail-topo";
-  topoPanel.style.display = "none";
+  topoPanel.className = "detail-topo detail-panel";
 
   const xformPanel = document.createElement("div");
-  xformPanel.className = "detail-topo detail-xform";
-  xformPanel.style.display = "none";
+  xformPanel.className = "detail-topo detail-xform detail-panel";
 
-  // Wide layout: viewport (stage) and editor panels side-by-side; narrow: they
-  // wrap to a single column. Flex-wrap does this responsively with no JS.
+  const panelRegion = document.createElement("div");
+  panelRegion.className = "detail-panelregion";
+  panelRegion.append(xformPanel, topoPanel);
+  // Once the region has fully rolled up (height reached 0), drop scroll mode and
+  // release the frozen 3D-view height — deferred to here (not on the toggle) so
+  // closing rolls up cleanly instead of the view snapping back mid-animation.
+  panelRegion.addEventListener("transitionend", (e) => {
+    if (e.propertyName === "height" && activePanel === "none") {
+      el.classList.remove("detail--panel-open");
+      stage.style.height = "";
+    }
+  });
+
   const main = document.createElement("div");
   main.className = "detail-main";
-  main.append(stage, xformPanel, topoPanel);
+  main.append(stage);
 
-  el.append(main, actions);
+  el.append(main, panelRegion, actions);
 
   // The map + topology being edited live on `rec`/`currentTopology` (in memory);
   // transforms mutate those and re-render, and Save persists them. `dirty` gates
@@ -117,6 +128,21 @@ export function MapDetailScreen(
   let fineTune = false;
   let cleanup = 0.5;
   const raw = { ...DEFAULTS };
+
+  // The Transform / Topology action tiles double as mutually-exclusive toggles:
+  // the open panel's tile lights up (accent), and opening one closes the other.
+  let xformTile: HTMLElement | null = null;
+  let topoTile: HTMLElement | null = null;
+  // Topology "Save" (floppy) — greyed until the working topology differs from the
+  // one stored in the record. `storedTopoSig` is that record's signature.
+  let topoSaveBtn: HTMLButtonElement | null = null;
+  let storedTopoSig = "";
+  // Transform "Save" tile — greyed until there are unsaved transform edits.
+  let xformSaveTile: HTMLElement | null = null;
+  // Cleanup slider (the all-in-one) — greyed while the Fine-tune section is open,
+  // since fine-tune drives the extraction directly then.
+  let cleanupSliderEl: HTMLElement | null = null;
+  let cleanupInput: HTMLInputElement | null = null;
 
   // Diagnostics (Debug section): master toggle gates the extra `debug: true`
   // compute; the three layer flags drive the MapView overlay. All off ⇒ no cost.
@@ -169,6 +195,54 @@ export function MapDetailScreen(
     return b;
   };
 
+  // An icon+label action tile (shared `.k-actiontile` look). Toggle tiles get
+  // their `--on` (accent) state driven by setActivePanel().
+  const actionTile = (name: IconName, label: string, onClick: () => void): HTMLElement => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "k-actiontile";
+    b.append(icon(name));
+    const s = document.createElement("span");
+    s.textContent = label;
+    b.appendChild(s);
+    b.addEventListener("click", onClick);
+    return b;
+  };
+
+  // A collapsible-section header: a chevron (rotates when open) + a label. The
+  // caller wires the click to toggle its body and the `--open` class.
+  const collapsibleHeader = (label: string, open: boolean): HTMLButtonElement => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "topo-disclosure" + (open ? " topo-disclosure--open" : "");
+    b.append(icon("chevron"));
+    const s = document.createElement("span");
+    s.textContent = label;
+    b.appendChild(s);
+    return b;
+  };
+
+  // Signature of a topology (cheap content fingerprint) so "Save" can grey out
+  // when the working topology already matches the one stored on the record.
+  const topoSig = (t: Topology | null): string => {
+    if (!t || t.segments.length === 0) return "none";
+    let verts = 0;
+    let len = 0;
+    for (const s of t.segments) {
+      verts += s.polyline.length;
+      len += s.length;
+    }
+    return `${t.segments.length}|${t.branchPoints.length}|${verts}|${len.toFixed(4)}|${t.associations.length}`;
+  };
+  const refreshTopoSave = (): void => {
+    if (!topoSaveBtn) return;
+    const cur = topoSig(currentTopology);
+    topoSaveBtn.disabled = cur === "none" || cur === storedTopoSig;
+  };
+  const refreshXformSave = (): void => {
+    xformSaveTile?.classList.toggle("k-actiontile--disabled", !dirty);
+  };
+
   async function load(): Promise<void> {
     rec = (await mapStore.get(mapId)) ?? null;
     if (rec === null) {
@@ -194,19 +268,21 @@ export function MapDetailScreen(
       }),
     );
 
-    // Primary paths.
-    actions.append(
-      Button({ label: "Transform", icon: "move", variant: "quiet", onClick: toggleXform }),
-      Button({ label: "Topology", icon: "graph", variant: "quiet", onClick: toggleTopo }),
-      Button({ label: "Effects", icon: "sparkles", variant: "quiet", onClick: () => router.navigate("/effects") }),
-      Button({ label: "Send to device", icon: "map-to-device", onClick: () => void sendToDevice() }),
-      Button({
-        label: "Pull from device",
-        icon: "map-from-device",
-        variant: "quiet",
-        onClick: () => void pullFromDevice(),
-      }),
+    // Primary paths — icon+label tiles (like the app's other action grids).
+    // Transform / Topology are toggles (light up when their panel is open);
+    // Push / Pull are one-shot actions. Effects navigation lives in the bottom
+    // tab strip, so it's not repeated here.
+    const grid = document.createElement("div");
+    grid.className = "k-actiongrid";
+    xformTile = actionTile("move", "Transform", toggleXform);
+    topoTile = actionTile("tree", "Topology", toggleTopo);
+    grid.append(
+      xformTile,
+      topoTile,
+      actionTile("map-to-device", "Push", () => void sendToDevice()),
+      actionTile("map-from-device", "Pull", () => void pullFromDevice()),
     );
+    actions.append(grid);
 
     // Seed topology: prefer a stored one (pulled/imported maps carry it) over
     // re-extraction, matching §4.3 "skip re-extraction unless the user opts to".
@@ -214,6 +290,7 @@ export function MapDetailScreen(
       currentTopology = rec.topology;
       view.setTopology(currentTopology);
     }
+    storedTopoSig = topoSig(rec.topology ?? null);
     buildTopoPanel();
     // Deep-linked / remounted onto the topology route: open the panel WITHOUT
     // navigating — navigating to the route we're already on would re-resolve the
@@ -227,25 +304,57 @@ export function MapDetailScreen(
     if (view) (view as unknown as Record<string, boolean>)[flag] = v;
   }
 
-  // Open the topology panel (DOM state only — no routing). Safe to call on mount.
+  // Only one editor panel is open at a time. Switching crossfades the panels
+  // while the region's split divider animates to the new height (roll out / up).
+  let activePanel: "none" | "xform" | "topo" = "none";
+
+  // Set the region to the active panel's full natural height (absolute panels
+  // size to their content) — the region never scrolls internally; the overall
+  // screen scrolls. Open/close/switch and in-panel expansions animate the height.
+  function refreshPanelHeight(): void {
+    if (activePanel === "none") {
+      panelRegion.style.height = "0px";
+      return;
+    }
+    const panel = activePanel === "xform" ? xformPanel : topoPanel;
+    panelRegion.style.height = `${panel.scrollHeight}px`;
+  }
+
+  function setActivePanel(which: "none" | "xform" | "topo"): void {
+    const wasOpen = activePanel !== "none";
+    activePanel = which;
+    if (which === "xform" && !xformBuilt) {
+      buildTransformPanel();
+      xformBuilt = true;
+    }
+    // On first open: freeze the 3D view at its current fill height and switch to
+    // scroll mode, so the view keeps its size and the tiles displace downward
+    // instead of the view shrinking. Released once the region fully rolls up
+    // (finalizeClose, on the height transition end) so closing doesn't jump.
+    if (which !== "none" && !wasOpen) {
+      stage.style.height = `${stage.offsetHeight}px`;
+      el.classList.add("detail--panel-open");
+    }
+    // Crossfade to the active panel; roll the divider to the new height.
+    xformPanel.classList.toggle("detail-panel--show", which === "xform");
+    topoPanel.classList.toggle("detail-panel--show", which === "topo");
+    panelRegion.classList.toggle("detail-panelregion--open", which !== "none");
+    refreshPanelHeight();
+    // Light up the active toggle tile (Transform / Topology are mutually exclusive).
+    xformTile?.classList.toggle("k-actiontile--on", which === "xform");
+    topoTile?.classList.toggle("k-actiontile--on", which === "topo");
+  }
+
+  // Open the topology panel (no routing — the /topology route deep-links it on
+  // mount via opts.topologyOpen). Opening it closes the Transform panel.
   function openTopoPanel(): void {
-    topoPanel.style.display = "";
+    setActivePanel("topo");
     if (currentTopology === null) void previewTopology();
   }
 
-  // User action (the "Topology" button): flip the panel AND reflect it in the
-  // route so it's deep-linkable / survives back. The navigation remounts the
-  // screen, which re-opens the panel via openTopoPanel (never toggleTopo — that
-  // would navigate to the current route again and loop).
   function toggleTopo(): void {
-    const willOpen = topoPanel.style.display === "none";
-    if (willOpen) {
-      openTopoPanel();
-      router.navigate(`/map/${mapId}/topology`);
-    } else {
-      topoPanel.style.display = "none";
-      router.navigate(`/map/${mapId}`);
-    }
+    if (activePanel === "topo") setActivePanel("none");
+    else openTopoPanel();
   }
 
   // -- transform tools (translate / rotate / scale + auto-fixes) --------------
@@ -255,17 +364,14 @@ export function MapDetailScreen(
   const xformDirty = document.createElement("span");
 
   function toggleXform(): void {
-    const open = xformPanel.style.display === "none";
-    xformPanel.style.display = open ? "" : "none";
-    if (open && !xformBuilt) {
-      buildTransformPanel();
-      xformBuilt = true;
-    }
+    setActivePanel(activePanel === "xform" ? "none" : "xform");
   }
 
   function markDirty(): void {
     dirty = true;
     xformDirty.textContent = "• unsaved";
+    refreshTopoSave(); // a transform also moves/scales the topology
+    refreshXformSave();
   }
 
   /** Apply a transform to the working map (and topology) and re-render. */
@@ -279,9 +385,26 @@ export function MapDetailScreen(
     markDirty();
   }
 
-  function nudgeStep(): number {
-    const b = rec ? mapBounds(rec.map) : null;
-    return Math.max(0.01, (b?.maxDim ?? 1) * 0.05); // 5% of the map's extent
+  /** Compose per-axis rotations (degrees) about the map centroid and apply. */
+  function applyRotateXYZ(deg: [number, number, number]): void {
+    if (rec === null) return;
+    const pivot = pivotCentroid();
+    let map = rec.map;
+    let topo: Topology | undefined = currentTopology ?? undefined;
+    let changed = false;
+    (["x", "y", "z"] as const).forEach((axis, i) => {
+      if (!deg[i]) return;
+      const out = transformMap(map, topo, { rot: { axis, deg: deg[i]! }, pivot });
+      map = out.map;
+      topo = out.topology;
+      changed = true;
+    });
+    if (!changed) return;
+    rec.map = map;
+    if (topo) currentTopology = topo;
+    view?.update(rec.map);
+    if (currentTopology) view?.setTopology(currentTopology);
+    markDirty();
   }
 
   function pivotCentroid(): [number, number, number] {
@@ -321,6 +444,8 @@ export function MapDetailScreen(
     view?.setTopology(currentTopology);
     dirty = false;
     xformDirty.textContent = "";
+    refreshTopoSave();
+    refreshXformSave();
     toast("Reverted edits");
   }
 
@@ -329,77 +454,73 @@ export function MapDetailScreen(
     await mapStore.setMap(mapId, rec.map, currentTopology ?? undefined);
     dirty = false;
     xformDirty.textContent = "";
+    refreshXformSave();
+    // The record now holds these edits, so the topology matches too.
+    storedTopoSig = topoSig(currentTopology);
+    refreshTopoSave();
     toast("Transform saved");
   }
 
   function buildTransformPanel(): void {
-    xformDirty.className = "xform-dirty metric";
-
-    const mkRow = (label: string, ...btns: HTMLElement[]): HTMLElement => {
+    // A labelled X/Y/Z entry row with an Apply button. `def` is the identity value
+    // (0 for move/rotate deltas, 1 for scale) the fields reset to after applying.
+    const xyzRow = (
+      label: string,
+      def: number,
+      onApply: (v: [number, number, number]) => void,
+    ): HTMLElement => {
       const row = document.createElement("div");
       row.className = "xform-row";
       const l = document.createElement("span");
       l.className = "xform-label";
       l.textContent = label;
-      row.append(l, ...btns);
+      const fields = document.createElement("div");
+      fields.className = "xform-fields";
+      const inputs: HTMLInputElement[] = [];
+      for (const axis of ["X", "Y", "Z"]) {
+        const field = document.createElement("label");
+        field.className = "xform-field";
+        const cap = document.createElement("span");
+        cap.textContent = axis;
+        const inp = document.createElement("input");
+        inp.type = "number";
+        inp.step = "any";
+        inp.inputMode = "decimal";
+        inp.value = String(def);
+        field.append(cap, inp);
+        fields.append(field);
+        inputs.push(inp);
+      }
+      const apply = Button({
+        label: "Apply",
+        onClick: () => {
+          const v = inputs.map((i) => parseFloat(i.value) || def) as [number, number, number];
+          onApply(v);
+          inputs.forEach((i) => (i.value = String(def)));
+        },
+      });
+      row.append(l, fields, apply);
       return row;
     };
-    const tiny = (label: string, title: string, fn: () => void): HTMLButtonElement => {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.className = "xform-btn";
-      b.textContent = label;
-      b.title = title;
-      b.addEventListener("click", fn);
-      return b;
-    };
 
-    // Auto-fixes.
-    const auto = document.createElement("div");
-    auto.className = "xform-row";
-    auto.append(
-      Button({ label: "Snap to origin", icon: "move", variant: "quiet", onClick: autoSnap }),
-      Button({ label: "Autoscale to unit box", variant: "quiet", onClick: autoScale }),
+    // Move / Rotate (deg, about the centroid) / Scale (per-axis, about the centroid).
+    const move = xyzRow("Move", 0, (v) => applyXform({ translate: v }));
+    const rotate = xyzRow("Rotate", 0, (v) => applyRotateXYZ(v));
+    const scale = xyzRow("Scale", 1, (v) => applyXform({ scale: v, pivot: pivotCentroid() }));
+
+    // Icon+label tools: Center (bullseye), Autoscale (fit-to-bounds), Reset, Save.
+    xformSaveTile = actionTile("save", "Save", () => void saveEdits());
+    const tools = document.createElement("div");
+    tools.className = "k-actiongrid xform-tools";
+    tools.append(
+      actionTile("center", "Center", autoSnap),
+      actionTile("autoscale", "Autoscale", autoScale),
+      actionTile("reset", "Reset", () => void resetEdits()),
+      xformSaveTile,
     );
 
-    // Translate — Y is up in the viewer.
-    const move = mkRow(
-      "Move",
-      tiny("X−", "Move −X", () => applyXform({ translate: [-nudgeStep(), 0, 0] })),
-      tiny("X+", "Move +X", () => applyXform({ translate: [nudgeStep(), 0, 0] })),
-      tiny("Y−", "Move down", () => applyXform({ translate: [0, -nudgeStep(), 0] })),
-      tiny("Y+", "Move up", () => applyXform({ translate: [0, nudgeStep(), 0] })),
-      tiny("Z−", "Move −Z", () => applyXform({ translate: [0, 0, -nudgeStep()] })),
-      tiny("Z+", "Move +Z", () => applyXform({ translate: [0, 0, nudgeStep()] })),
-    );
-
-    // Rotate about the map centroid; Y is the up axis (yaw) — most useful first.
-    const rotate = mkRow(
-      "Rotate",
-      tiny("⟲Y", "Yaw −15°", () => applyXform({ rot: { axis: "y", deg: -15 }, pivot: pivotCentroid() })),
-      tiny("⟳Y", "Yaw +15°", () => applyXform({ rot: { axis: "y", deg: 15 }, pivot: pivotCentroid() })),
-      tiny("⟲X", "Pitch −15°", () => applyXform({ rot: { axis: "x", deg: -15 }, pivot: pivotCentroid() })),
-      tiny("⟳X", "Pitch +15°", () => applyXform({ rot: { axis: "x", deg: 15 }, pivot: pivotCentroid() })),
-      tiny("⟲Z", "Roll −15°", () => applyXform({ rot: { axis: "z", deg: -15 }, pivot: pivotCentroid() })),
-      tiny("⟳Z", "Roll +15°", () => applyXform({ rot: { axis: "z", deg: 15 }, pivot: pivotCentroid() })),
-    );
-
-    // Uniform scale about the centroid.
-    const scale = mkRow(
-      "Scale",
-      tiny("÷", "Shrink 10%", () => applyXform({ scale: 1 / 1.1, pivot: pivotCentroid() })),
-      tiny("×", "Grow 10%", () => applyXform({ scale: 1.1, pivot: pivotCentroid() })),
-    );
-
-    const btns = document.createElement("div");
-    btns.className = "topo-btns";
-    btns.append(
-      Button({ label: "Reset", variant: "quiet", onClick: () => void resetEdits() }),
-      Button({ label: "Save", onClick: () => void saveEdits() }),
-      xformDirty,
-    );
-
-    xformPanel.append(auto, move, rotate, scale, btns);
+    xformPanel.append(move, rotate, scale, tools);
+    refreshXformSave();
   }
 
   const summaryEl = document.createElement("div");
@@ -477,19 +598,27 @@ export function MapDetailScreen(
       },
     });
     topoPanel.append(cleanupSlider.el);
+    cleanupSliderEl = cleanupSlider.el;
+    cleanupInput = cleanupSlider.input;
 
-    // Fine-tune disclosure: the full five ExtractOptions.
-    const disclosure = document.createElement("button");
-    disclosure.type = "button";
-    disclosure.className = "topo-disclosure";
-    disclosure.textContent = fineTune ? "Hide fine-tune" : "Fine-tune ▸";
+    // Fine-tune collapsible section: the full five ExtractOptions. While it's
+    // open it drives the extraction directly, so the all-in-one Cleanup slider is
+    // greyed out.
+    const disclosure = collapsibleHeader("Fine-tune", fineTune);
     const fine = document.createElement("div");
     fine.className = "topo-fine";
     fine.style.display = fineTune ? "" : "none";
+    const syncCleanup = (): void => {
+      cleanupSliderEl?.classList.toggle("k-slider--disabled", fineTune);
+      if (cleanupInput) cleanupInput.disabled = fineTune;
+    };
+    syncCleanup();
     disclosure.addEventListener("click", () => {
       fineTune = !fineTune;
       fine.style.display = fineTune ? "" : "none";
-      disclosure.textContent = fineTune ? "Hide fine-tune" : "Fine-tune ▸";
+      disclosure.classList.toggle("topo-disclosure--open", fineTune);
+      syncCleanup();
+      refreshPanelHeight();
     });
     const addRaw = (
       key: keyof RawOpts,
@@ -520,19 +649,17 @@ export function MapDetailScreen(
     addRaw("maxPolyline", "max verts/segment", 4, 128, 4);
     topoPanel.append(disclosure, fine, progressEl);
 
-    // -- Debug disclosure: diagnostics master + overlay layer toggles ---------
-    const dbgDisclosure = document.createElement("button");
-    dbgDisclosure.type = "button";
-    dbgDisclosure.className = "topo-disclosure";
+    // -- Debug collapsible section: diagnostics master + overlay layer toggles -
+    const dbgDisclosure = collapsibleHeader("Debug", false);
     let dbgOpen = false;
     const dbgBody = document.createElement("div");
     dbgBody.className = "topo-fine topo-debug";
     dbgBody.style.display = "none";
-    dbgDisclosure.textContent = "Debug ▸";
     dbgDisclosure.addEventListener("click", () => {
       dbgOpen = !dbgOpen;
       dbgBody.style.display = dbgOpen ? "" : "none";
-      dbgDisclosure.textContent = dbgOpen ? "Hide debug" : "Debug ▸";
+      dbgDisclosure.classList.toggle("topo-disclosure--open", dbgOpen);
+      refreshPanelHeight();
     });
 
     // Layer sub-toggles live in their own row; disabled visually until the
@@ -600,6 +727,7 @@ export function MapDetailScreen(
         view?.setStage(null);
         view?.setDebugOverlay(null, debugFlags);
         refreshDebugReport();
+        refreshPanelHeight();
       }
     });
 
@@ -607,20 +735,14 @@ export function MapDetailScreen(
     topoPanel.append(dbgDisclosure, dbgBody);
     refreshDebugReport();
 
-    const applyBtn = Button({
-      label: "Apply to device",
-      icon: "map-to-device",
-      onClick: () => void uploadTopology(),
-    });
-    const saveBtn = Button({
-      label: "Save topology",
-      variant: "quiet",
-      onClick: () => void saveTopology(),
-    });
+    // Just a Save (floppy) — pushing to the device is the top-level "Push" tile.
+    // Greyed until the working topology differs from the one stored on the record.
+    topoSaveBtn = Button({ label: "Save", icon: "save", onClick: () => void saveTopology() });
     const btns = document.createElement("div");
     btns.className = "topo-btns";
-    btns.append(saveBtn, applyBtn);
+    btns.append(topoSaveBtn);
     topoPanel.append(btns);
+    refreshTopoSave();
   }
 
   async function previewTopology(useFine = false): Promise<void> {
@@ -650,6 +772,8 @@ export function MapDetailScreen(
       view.setDebugOverlay(lastDebug, debugFlags);
       applyStage(); // refresh the stage overlay against the new report
       refreshDebugReport();
+      refreshTopoSave();
+      refreshPanelHeight(); // summary/diagnostics may have changed the panel height
       const verts = topo.segments.reduce((n, s) => n + s.polyline.length, 0);
       const lenM = topo.segments.reduce((a, s) => a + s.length, 0);
       summaryEl.textContent =
@@ -674,6 +798,9 @@ export function MapDetailScreen(
       return;
     }
     await mapStore.setTopology(mapId, currentTopology);
+    if (rec) rec.topology = currentTopology; // record now matches → Save greys out
+    storedTopoSig = topoSig(currentTopology);
+    refreshTopoSave();
     toast("Topology saved");
   }
 
@@ -715,86 +842,21 @@ export function MapDetailScreen(
     }
   }
 
-  async function uploadTopology(): Promise<void> {
-    const client = appState.client;
-    if (client === null || !client.isConnected) {
-      toast("No device connected", { error: true });
-      openDeviceSheet();
-      return;
-    }
-    if (currentTopology === null || currentTopology.segments.length === 0) {
-      toast("Extract a topology first", { error: true });
-      return;
-    }
-    try {
-      await client.submitTopology(currentTopology);
-      toast("Topology applied to device");
-    } catch (e) {
-      toast(`Upload failed: ${e instanceof Error ? e.message : e}`, { error: true });
-    }
-  }
+  // (No in-body ⋯ menu: metadata/duplicate/export/delete live in the per-map ⋯
+  // in the Maps tab, so they aren't duplicated here.)
 
-  // Overflow (⋯): rename, description, tags, duplicate, export, delete.
-  function openOverflow(): void {
-    if (rec === null) return;
-    const cur = rec;
-    const sheet = Sheet(cur.name);
-    sheet.body.className = "context-sheet";
-    const item = (
-      label: string,
-      ic: Parameters<typeof Button>[0]["icon"] & string,
-      fn: () => void,
-    ): HTMLElement => Button({ label, icon: ic, variant: "quiet", block: true, onClick: fn });
-    sheet.body.append(
-      item("Rename", "edit", () => {
-        const v = prompt("Name:", cur.name);
-        if (v) void mapStore.rename(mapId, v.trim()).then(() => sheet.close());
-      }),
-      item("Edit description", "edit", () => {
-        const v = prompt("Description:", cur.description);
-        if (v !== null) void mapStore.setDescription(mapId, v).then(() => sheet.close());
-      }),
-      item("Tags", "tag", () => {
-        const v = prompt("Tags (space-separated):", cur.tags.join(" "));
-        if (v !== null) void mapStore.setTags(mapId, v.split(/\s+/)).then(() => sheet.close());
-      }),
-      item("Duplicate", "map", () => {
-        void mapStore.duplicate(mapId).then(() => {
-          toast("Duplicated");
-          sheet.close();
-        });
-      }),
-      item("Export .binpb", "download", () => {
-        void mapStore.exportBundle(mapId).then((b) => {
-          downloadBytes(b, `${cur.name.replace(/[^\w.-]+/g, "_") || "map"}.binpb`);
-          sheet.close();
-        });
-      }),
-      Button({
-        label: "Delete",
-        icon: "trash",
-        variant: "danger",
-        block: true,
-        onClick: () => {
-          if (!confirm(`Delete "${cur.name}"?`)) return;
-          void mapStore.delete(mapId).then(() => {
-            sheet.close();
-            router.navigate("/maps");
-          });
-        },
-      }),
-    );
-  }
-
-  // Expose overflow via a header button appended at mount.
-  const overflowBtn = IconButton("more", { title: "More", onClick: openOverflow });
-  overflowBtn.classList.add("detail-overflow");
-  el.prepend(overflowBtn);
+  // Keep the rolled-out region sized correctly across viewport changes (the cap
+  // and the panel's wrapped height both depend on the viewport).
+  const onResize = (): void => refreshPanelHeight();
 
   return {
     el,
-    onMount: () => void load(),
+    onMount: () => {
+      window.addEventListener("resize", onResize);
+      void load();
+    },
     onUnmount: () => {
+      window.removeEventListener("resize", onResize);
       topoAbort?.abort();
       view?.stop();
       view = null;

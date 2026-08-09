@@ -12,7 +12,7 @@
  * prompt/await) — see net/improv.ts.
  */
 
-import { Button, Sheet, toast } from "../kit";
+import { Button, Sheet, confirmDialog, toast } from "../kit";
 import {
   provisionViaBle,
   requestImprovDevice,
@@ -37,8 +37,8 @@ export function openAddDevice(method: AddMethod, onDone?: () => void): void {
   lead.className = "wifi-lead";
   lead.textContent =
     method === "ble"
-      ? "Choose the Wi-Fi network the player should join, then pick it in the Bluetooth chooser."
-      : "Choose the Wi-Fi network the player is on, then enter its address.";
+      ? "Choose the Wi-Fi network the device should join, then pick it in the Bluetooth chooser."
+      : "Choose the Wi-Fi network the device is on, then enter its address.";
 
   // Saved-network pick list (tap to fill the fields below).
   const picks = document.createElement("div");
@@ -134,11 +134,15 @@ export function bleRediscover(known?: KnownDevice, onDone?: () => void): void {
       return;
     }
     if (known?.bleId && device.id && device.id !== known.bleId) {
-      const ok = window.confirm(
-        `The device you picked${device.name ? ` ("${device.name}")` : ""} doesn't look ` +
+      const ok = await confirmDialog({
+        title: "Different device?",
+        message:
+          `The device you picked${device.name ? ` ("${device.name}")` : ""} doesn't look ` +
           `like "${known.label}" — it's a different Bluetooth device. Setting it up will ` +
           `connect to it and may overwrite "${known.label}"'s name. Continue?`,
-      );
+        confirmLabel: "Continue",
+        danger: true,
+      });
       if (!ok) return;
     }
     const creds = prefs.getWifiList()[0];
@@ -194,7 +198,7 @@ async function provisionWithDevice(
   const urls = await provisionViaBle(device, creds.ssid, creds.password, setStatus);
   prefs.addWifi(creds); // only after the device reports it JOINED
   const target = urls.map((u) => wsUrlFromRedirect(u)).find((u) => u !== null);
-  if (!target) throw new Error(`player joined but sent no usable address (${urls})`);
+  if (!target) throw new Error(`device joined but sent no usable address (${urls})`);
   setStatus(`Provisioned at ${target} — connecting…`);
   appState.connect(target);
   // Remember which physical Bluetooth device this record is, so a later
@@ -204,7 +208,7 @@ async function provisionWithDevice(
 }
 
 function promptManualAddress(): void {
-  const url = prompt("Player address (wss://host:port):", "wss://");
+  const url = prompt("Device address (wss://host:port):", "wss://");
   if (!url) return;
   if (!/^wss?:\/\//.test(url)) {
     toast("Address must start with ws:// or wss://", { error: true });

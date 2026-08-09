@@ -103,7 +103,7 @@ export function initPwa(): void {
     localStorage.setItem(DISMISS_KEY, "1");
     dismissBanner();
     notify();
-    toast("LED Mapper installed");
+    toast("Splanc installed");
   });
 
   // iOS never fires beforeinstallprompt — offer the banner directly, after the
@@ -152,13 +152,13 @@ function buildBanner(): HTMLElement {
   const wrap = document.createElement("div");
   wrap.className = "pwa-banner";
   wrap.setAttribute("role", "dialog");
-  wrap.setAttribute("aria-label", "Install LED Mapper");
+  wrap.setAttribute("aria-label", "Install Splanc");
 
   const img = document.createElement("img");
   img.className = "pwa-banner-icon";
   // Relative so it resolves against the document at any deploy base (root or a
   // GitHub Pages subpath); a bare <img> src resolves against document.baseURI.
-  img.src = "icons/icon-192.png";
+  img.src = "icons/app-icon.svg";
   img.alt = "";
   img.width = 40;
   img.height = 40;
@@ -167,7 +167,7 @@ function buildBanner(): HTMLElement {
   text.className = "pwa-banner-text";
   const title = document.createElement("div");
   title.className = "pwa-banner-title";
-  title.textContent = "Install LED Mapper";
+  title.textContent = "Install Splanc";
   const sub = document.createElement("div");
   sub.className = "pwa-banner-sub";
   sub.textContent = isIosSafari()
@@ -197,7 +197,7 @@ function buildBanner(): HTMLElement {
 // -- iOS "Add to Home Screen" guide ------------------------------------------
 
 function showIosSheet(): void {
-  const sheet = Sheet("Install LED Mapper");
+  const sheet = Sheet("Install Splanc");
   const p = document.createElement("p");
   p.className = "pwa-ios-lead";
   p.textContent = "iOS installs web apps from Safari's Share menu:";
@@ -206,7 +206,7 @@ function showIosSheet(): void {
   for (const step of [
     "Tap the Share button in Safari's toolbar.",
     "Choose “Add to Home Screen”.",
-    "Tap “Add” — LED Mapper appears on your home screen.",
+    "Tap “Add” — Splanc appears on your home screen.",
   ]) {
     const li = document.createElement("li");
     li.textContent = step;

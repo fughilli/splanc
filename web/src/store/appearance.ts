@@ -46,6 +46,14 @@ export interface AppearanceSettings {
   /** Root font-size multiplier, 0.85–1.4. */
   uiScale: number;
 
+  /** Show the branded startup splash on each launch (see ui/app/splash.ts). */
+  splash: boolean;
+
+  // -- experimental (feature-flagged, off by default) --
+  /** Render animated FX preview clips in the Effects library (slow/buggy on
+   * mobile for now — see EffectPreviewTiles). Off keeps the static icon. */
+  renderFxPreviews: boolean;
+
   // -- 3D renderer knobs (honored by MapView) --
   /** LED point radius multiplier, 0.5–2.5 (1 = today's sizes). */
   ledSize: number;
@@ -66,6 +74,8 @@ export const DEFAULTS: Readonly<AppearanceSettings> = {
   font: "system",
   mono: "system",
   uiScale: 1,
+  splash: true,
+  renderFxPreviews: false,
   ledSize: 1,
   viewBg: "",
   glow: 1,
@@ -174,6 +184,10 @@ export function normalizeSettings(raw: unknown): AppearanceSettings {
     font: oneOf<FontChoice>(o["font"], ["system", "humanist", "grotesk", "rounded", "serif"], DEFAULTS.font),
     mono: oneOf<MonoChoice>(o["mono"], ["system", "ibm-plex", "fira", "courier"], DEFAULTS.mono),
     uiScale: clampNum(o["uiScale"], 0.85, 1.4, DEFAULTS.uiScale),
+    // Default on: only an explicit `false` disables the startup splash.
+    splash: o["splash"] !== false,
+    // Experimental, default off: only an explicit `true` enables it.
+    renderFxPreviews: o["renderFxPreviews"] === true,
     ledSize: clampNum(o["ledSize"], 0.5, 2.5, DEFAULTS.ledSize),
     viewBg: typeof o["viewBg"] === "string" && (o["viewBg"] === "" || HEX_RE.test(o["viewBg"])) ? o["viewBg"] : DEFAULTS.viewBg,
     glow: clampNum(o["glow"], 0, 2, DEFAULTS.glow),
@@ -302,11 +316,38 @@ export function getAppearance(): AppearanceSettings {
 
 /** Merge a partial update, persist, apply, and notify subscribers. */
 export function updateAppearance(patch: Partial<AppearanceSettings>): AppearanceSettings {
+  const prevMode = current.mode;
   current = normalizeSettings({ ...current, ...patch });
   writeStored(current);
+  // A light/dark switch swaps the whole palette; ease it in (the class must be on
+  // BEFORE the vars change so elements transition from their painted colour).
+  if (current.mode !== prevMode) animateThemeTransition();
   applyAppearance(current);
   for (const cb of listeners) cb(current);
   return current;
+}
+
+// Must outlast the CSS transition on `.theme-animating` in tokens.css (660ms).
+const THEME_ANIM_MS = 720;
+let themeAnimTimer: number | null = null;
+
+/** Briefly apply a color/background/border transition to the whole app so a
+ * dark/light switch fades rather than flips. Self-clearing so the transition
+ * doesn't linger and affect unrelated hover/state changes. No-op without a DOM
+ * or under prefers-reduced-motion (the CSS opts out there too). */
+function animateThemeTransition(): void {
+  if (typeof document === "undefined") return;
+  const root = document.documentElement;
+  root.classList.add("theme-animating");
+  // Flush style/layout so the transition is registered with the CURRENT (pre-
+  // switch) colours before the palette vars change — otherwise adding the
+  // transition and swapping the vars in one recalc can skip the animation.
+  void root.offsetWidth;
+  if (themeAnimTimer !== null) clearTimeout(themeAnimTimer);
+  themeAnimTimer = window.setTimeout(() => {
+    root.classList.remove("theme-animating");
+    themeAnimTimer = null;
+  }, THEME_ANIM_MS);
 }
 
 /** Reset every appearance setting back to the shipped defaults. */
