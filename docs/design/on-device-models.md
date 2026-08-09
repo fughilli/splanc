@@ -151,7 +151,10 @@ route here):
   green ✓, with a red trash to delete, confirm-gated) and a **load** control
   (`</>`: gray → shimmer while (un)loading → yellow when loaded); a warning
   shows when the active model can't tool-call. Download caches weights without
-  keeping the model on the GPU; load/unload toggles the active engine.
+  keeping the model on the GPU; load/unload toggles the active engine. A
+  **"Context window (tokens)"** field sets web-llm's `context_window_size` — its
+  per-model default (often 4096) is too small for our grounded prompts
+  (`ContextWindowSizeExceededError`); default 8192, applied on the next load.
 
 The effects-browser first-run hint and the editor gating now check
 `isAiConfigured()` (any provider ready) rather than "has an Anthropic key," so a
