@@ -1331,10 +1331,20 @@ body.is-locked {
   padding: 0.25rem 0.25rem 0.25rem 0.8rem;
   background: var(--surface-2);
   border: 1px solid var(--border);
-  border-radius: 999px;
+  /* Rounded rectangle (not a capsule) so the rounded-rect Duplicate button nests
+     cleanly: card radius ≈ button radius + the 0.25rem inset around it. */
+  border-radius: var(--r-card);
   font-size: var(--f-caption);
   color: var(--text-dim);
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+}
+/* Hairline divider between the "Built-in effect" label and the Duplicate button. */
+.fxedit-builtin-sep {
+  align-self: stretch;
+  flex: none;
+  width: 1px;
+  margin: 0.15rem 0;
+  background: var(--border);
 }
 .fxedit-builtin-card .k-btn {
   padding: 0.35rem 0.8rem;

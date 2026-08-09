@@ -1372,11 +1372,14 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
       const card = document.createElement("div");
       card.className = "fxedit-builtin-card";
       const label = document.createElement("span");
-      label.textContent = "Built-in effect — read-only";
+      label.textContent = "Built-in effect";
+      const sep = document.createElement("span");
+      sep.className = "fxedit-builtin-sep";
       card.append(
         label,
+        sep,
         Button({
-          label: "Duplicate to edit",
+          label: "Duplicate",
           icon: "sparkles",
           onClick: async () => {
             const nid = await effectStore.duplicate(effectId);

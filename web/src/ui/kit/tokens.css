@@ -114,6 +114,13 @@ a {
 .k-btn--block {
   width: 100%;
 }
+/* Icon inside a labelled button (Button({icon})). Every other button variant
+   sizes its svg explicitly; k-btn was missing it, so icons rendered unsized. */
+.k-btn svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
 
 .k-iconbtn {
   display: inline-flex;
