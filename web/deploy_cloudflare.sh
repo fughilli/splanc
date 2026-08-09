@@ -18,10 +18,13 @@
 #
 # Auth (deploys only): CLOUDFLARE_API_TOKEN (Pages:Edit) and
 # CLOUDFLARE_ACCOUNT_ID in the environment. First deploy of a new project:
-#   pnpm dlx wrangler@4 pages project create "$LEDMAPPER_CF_PROJECT" \
+#   pnpm dlx wrangler@4 pages project create "<project>" \
 #       --production-branch main
 #
-# Config: LEDMAPPER_CF_PROJECT (default "ledmapper"),
+# Config: LEDMAPPER_CF_PROJECTS (space-separated list of Cloudflare Pages
+# projects to publish the same tree to; default "ledmapper splanc" — both
+# ledmapper.pages.dev and splanc.pages.dev, FUG-91). LEDMAPPER_CF_PROJECT is
+# still honored as a single-project override for the legacy callers/env.
 # LEDMAPPER_CF_BRANCH (default "main" = the production deployment).
 set -euo pipefail
 
@@ -30,7 +33,9 @@ if [[ -z "${BUILD_WORKSPACE_DIRECTORY:-}" ]]; then
   exit 1
 fi
 
-PROJECT="${LEDMAPPER_CF_PROJECT:-ledmapper}"
+# Deploy the one staged tree to every listed project. LEDMAPPER_CF_PROJECT (the
+# old single-project knob) wins when set so existing callers keep working.
+read -r -a PROJECTS <<< "${LEDMAPPER_CF_PROJECTS:-${LEDMAPPER_CF_PROJECT:-ledmapper splanc}}"
 BRANCH="${LEDMAPPER_CF_BRANCH:-main}"
 DRY_RUN=0
 if [[ "${1:-}" == "--dry-run" ]]; then
@@ -52,15 +57,20 @@ echo "staged $(find "$STAGE" -type f | wc -l) files:"
 (cd "$STAGE" && find . -type f | sort | sed 's/^/  /')
 
 # wrangler pinned to the 4.x line; dlx keeps the deploy toolchain out of the
-# repo's dependency graph (it needs network + credentials anyway).
-CMD=(pnpm dlx wrangler@4 pages deploy "$STAGE"
-  --project-name "$PROJECT"
-  --branch "$BRANCH"
-  --commit-dirty=true)
+# repo's dependency graph (it needs network + credentials anyway). The staged
+# tree is byte-identical across projects, so we deploy it to each in turn.
+deploy_cmd() {  # <project>
+  echo pnpm dlx wrangler@4 pages deploy "$STAGE" \
+    --project-name "$1" \
+    --branch "$BRANCH" \
+    --commit-dirty=true
+}
 
 if [[ "$DRY_RUN" == "1" ]]; then
   echo "dry run — would execute:"
-  echo "  ${CMD[*]}"
+  for project in "${PROJECTS[@]}"; do
+    echo "  $(deploy_cmd "$project")"
+  done
   exit 0
 fi
 
@@ -70,4 +80,11 @@ if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then
   exit 1
 fi
 
-exec "${CMD[@]}"
+# Deploy to every project; -e (set above) aborts the job if any one fails.
+for project in "${PROJECTS[@]}"; do
+  echo "deploying to Cloudflare Pages project: $project"
+  pnpm dlx wrangler@4 pages deploy "$STAGE" \
+    --project-name "$project" \
+    --branch "$BRANCH" \
+    --commit-dirty=true
+done
