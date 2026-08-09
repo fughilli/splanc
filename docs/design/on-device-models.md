@@ -19,10 +19,24 @@ The deployed webapp is a static site with no server (`effects-compiler.md` §4).
 Every option here honors that: inference happens either in the browser or on a
 server the *user* runs; the webapp only ever makes client-side `fetch`/GPU calls.
 
-## Two on-device paths (and one cloud default)
+## Three categories (the top-level choice)
 
-We keep Anthropic as the default and add two local paths, because "on-device"
-means different things on different hardware:
+The user picks one of three categories (`AiConfig.kind`):
+
+- **Cloud** — a vendor sub-selection (`CloudVendor`): Anthropic, OpenAI, Gemini,
+  Grok, OpenRouter, or Custom, each with its own key + model. Anthropic uses its
+  native Messages API; every other vendor reuses the OpenAI-compatible client
+  pointed at that vendor's fixed endpoint (user-set for Custom). This is `kind:
+  "cloud"`.
+- **Local server (OpenAI-compatible)** — `kind: "local"`.
+- **In-browser (WebGPU)** — `kind: "webllm"`.
+
+The two on-device paths below are the point of the ticket; the cloud category is
+the always-available default (and now spans more than Anthropic).
+
+## Two on-device paths (and the cloud default)
+
+"On-device" means different things on different hardware:
 
 1. **Local OpenAI-compatible server** — Ollama, LM Studio, llama.cpp's
    `server`, vLLM, etc. The user installs one of these, pulls a GGUF from
@@ -118,12 +132,19 @@ route here):
 - Local server: base URL, optional key, model (free-text + a "List" button that
   reads `/v1/models`), a vision toggle, and an Ollama "Download a model" field
   with a progress bar;
-- In-browser: a WebGPU support check and a **model browser** — cards from
-  web-llm's prebuilt (HuggingFace-hosted MLC) list with a HuggingFace link,
-  VRAM / low-resource / "Tools" badges, a search box, a "Tool-calling only"
-  filter (default on), a custom MLC-model-id field, and a "Download / load
-  model" button with init progress; plus a warning when the selected model
-  can't tool-call.
+- Cloud: a vendor picker + that vendor's API key + model (a "List" button reads
+  `/v1/models` for the OpenAI-compatible vendors; Anthropic has no such
+  endpoint). Text inputs persist without rebuilding the panel so typing keeps
+  focus.
+- In-browser: a WebGPU support check and a **model manager** — cards from
+  web-llm's prebuilt (HuggingFace-hosted MLC) list with a HuggingFace link and
+  VRAM / low-resource / "Tools" badges, a search box, and a "Tool-calling only"
+  filter (default on). An **"Add"** field pins a model by id (validated against
+  the catalog). Each chip has a **download** control (↓ → inline progress bar →
+  green ✓, with a red trash to delete, confirm-gated) and a **load** control
+  (`</>`: gray → shimmer while (un)loading → yellow when loaded); a warning
+  shows when the active model can't tool-call. Download caches weights without
+  keeping the model on the GPU; load/unload toggles the active engine.
 
 The effects-browser first-run hint and the editor gating now check
 `isAiConfigured()` (any provider ready) rather than "has an Anthropic key," so a
