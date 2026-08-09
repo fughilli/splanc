@@ -90,6 +90,7 @@ pub unsafe extern "C" fn tdlm_configure(
         format: Format::from_name(cstr(format)),
         order: order_from(order),
         rle,
+        keyframe_interval: 0,
         effect_id: if effect.is_empty() { None } else { Some(effect.to_string()) },
     };
     h.session.reconfigure(cfg);

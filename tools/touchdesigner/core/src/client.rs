@@ -28,6 +28,10 @@ pub struct Config {
     pub format: Format,
     pub order: ChannelOrder,
     pub rle: bool,
+    /// Emit a full keyframe every N frames (0 = only the initial one). Guards a
+    /// lossy path: a dropped delta frame corrupts the raster only until the next
+    /// keyframe. See [`crate::texture::TextureStreamer`].
+    pub keyframe_interval: u32,
     /// If set, the effect to activate on connect.
     pub effect_id: Option<String>,
 }
@@ -40,6 +44,7 @@ impl Default for Config {
             format: Format::Rgb565,
             order: ChannelOrder::Bgra,
             rle: true,
+            keyframe_interval: 0,
             effect_id: None,
         }
     }
@@ -267,7 +272,8 @@ fn run_connection(
         g.last_uniforms.clear();
     }
 
-    let mut streamer = TextureStreamer::new(cfg.tex_index, cfg.format, cfg.order, cfg.rle);
+    let mut streamer = TextureStreamer::new(cfg.tex_index, cfg.format, cfg.order, cfg.rle)
+        .with_keyframe_interval(cfg.keyframe_interval);
 
     while run.load(Ordering::SeqCst) {
         // Config changed under us -> reconnect with the new settings.

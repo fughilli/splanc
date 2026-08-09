@@ -145,51 +145,71 @@ async def _open_ws(ws_url: str, insecure: bool, settle_deadline: float):
             await asyncio.sleep(1.5)
 
 
+async def _setup_effect_once(sock, args, fxb: bytes) -> None:
+    """One attempt at loading the effect + map/strip length and confirming the
+    device declares the WxH texture. Raises SystemExit on a texture mismatch (a
+    real failure — the device would silently drop every frame)."""
+    if args.led_count > 0:
+        await _rpc(sock, _linear_map(args.led_count), "result_ready", timeout=10.0)
+        await _rpc(sock, {"type": "set_led_count", "led_count": args.led_count}, "led_count_state")
+    await _rpc(
+        sock,
+        {
+            "type": "submit_effect",
+            "effect_id": args.effect_id,
+            "fxb": base64.b64encode(fxb).decode("ascii"),
+            "activate": True,
+        },
+        "result_ready",
+    )
+    eu = await _rpc(sock, {"type": "get_effect_uniforms"}, "effect_uniforms")
+    textures = eu.get("textures") or []
+    tex = next((t for t in textures if int(t.get("index", 0)) == args.tex_index), None)
+    if (
+        tex is None
+        or int(tex.get("width", 0)) != args.width
+        or int(tex.get("height", 0)) != args.height
+    ):
+        raise SystemExit(
+            f"FAIL: active effect declares no {args.width}x{args.height} texture at index "
+            f"{args.tex_index}; got {textures}. Cannot stream (the device drops "
+            f"dimension-mismatched set_texture frames)."
+        )
+    _log(
+        f"[setup] effect {args.effect_id!r} active with a {args.width}x{args.height} "
+        f"texture at index {args.tex_index}, {args.led_count} LEDs mapped"
+    )
+
+
 async def _setup_effect(ws_url: str, args, fxb: bytes) -> None:
     """Load the texture effect + a map/strip length onto the device and confirm it
-    declares the WxH texture we're about to stream into. Raises SystemExit on a
-    setup failure (a mismatch would mean the device silently drops every frame)."""
-    # 60s slack: a cold --erase-fs flash + LAN-cert reissue can be slow to bring
-    # the socket up. A warm DUT answers on the first attempt.
-    sock = await _open_ws(ws_url, not args.ws_verify, time.monotonic() + 60.0)
-    try:
-        if args.led_count > 0:
-            await _rpc(sock, _linear_map(args.led_count), "result_ready", timeout=10.0)
-            await _rpc(
-                sock, {"type": "set_led_count", "led_count": args.led_count}, "led_count_state"
-            )
-        await _rpc(
-            sock,
-            {
-                "type": "submit_effect",
-                "effect_id": args.effect_id,
-                "fxb": base64.b64encode(fxb).decode("ascii"),
-                "activate": True,
-            },
-            "result_ready",
-        )
-        eu = await _rpc(sock, {"type": "get_effect_uniforms"}, "effect_uniforms")
-        textures = eu.get("textures") or []
-        tex = next((t for t in textures if int(t.get("index", 0)) == args.tex_index), None)
-        if (
-            tex is None
-            or int(tex.get("width", 0)) != args.width
-            or int(tex.get("height", 0)) != args.height
-        ):
-            raise SystemExit(
-                f"FAIL: active effect declares no {args.width}x{args.height} texture at index "
-                f"{args.tex_index}; got {textures}. Cannot stream (the device drops "
-                f"dimension-mismatched set_texture frames)."
-            )
-        _log(
-            f"[setup] effect {args.effect_id!r} active with a {args.width}x{args.height} "
-            f"texture at index {args.tex_index}, {args.led_count} LEDs mapped"
-        )
-    finally:
+    declares the WxH texture we're about to stream into.
+
+    A freshly-provisioned board can drop the socket mid-setup (a `1001 going away`
+    as it finishes bringing up its servers / briefly reboots), so the whole setup
+    is retried on a fresh connection a bounded number of times — mirroring the
+    fx_bench resilience. A texture mismatch (SystemExit) is a real failure and is
+    not retried."""
+    import websockets
+
+    last: Exception | None = None
+    for attempt in range(1, 4):
+        # 60s slack: a cold --erase-fs flash + LAN-cert reissue can be slow to
+        # bring the socket up. A warm DUT answers on the first attempt.
+        sock = await _open_ws(ws_url, not args.ws_verify, time.monotonic() + 60.0)
         try:
-            await sock.close()
-        except OSError:
-            pass
+            await _setup_effect_once(sock, args, fxb)
+            return
+        except (websockets.exceptions.ConnectionClosed, OSError, asyncio.TimeoutError) as e:
+            last = e
+            _log(f"[setup] socket dropped ({type(e).__name__}); attempt {attempt}/3, retrying…")
+            await asyncio.sleep(2.0)
+        finally:
+            try:
+                await sock.close()
+            except OSError:
+                pass
+    raise SystemExit(f"FAIL: effect setup never completed after retries: {last}")
 
 
 def _run_stream_bench(addr: str, host_header: str, args) -> tuple[dict[str, Any], int]:
@@ -213,6 +233,8 @@ def _run_stream_bench(addr: str, host_header: str, args) -> tuple[dict[str, Any]
         str(args.bar_width),
         "--format",
         args.format,
+        "--keyframe-interval",
+        str(args.keyframe_interval),
         "--seconds",
         str(args.seconds),
         "--sync-every",
@@ -222,10 +244,15 @@ def _run_stream_bench(addr: str, host_header: str, args) -> tuple[dict[str, Any]
     ]
     if not args.rle:
         argv.append("--no-rle")
+    if args.sweep:
+        argv.append("--sweep")
     _log(f"[stream] {' '.join(argv)}")
     proc = subprocess.run(argv, capture_output=True, text=True)
     if proc.stderr:
         sys.stderr.write(proc.stderr)
+    # The sweep emits many SWEEP/BEST machine lines on stdout; surface them.
+    if args.sweep and proc.stdout:
+        sys.stdout.write(proc.stdout)
     return parse_result(proc.stdout), proc.returncode
 
 
@@ -233,6 +260,12 @@ def _drive(setup_ws_url: str, stream_addr: str, host_header: str, args, fxb: byt
     """Set the effect up over the player socket, then stream + measure via the
     TouchDesigner encoder. Returns True on PASS."""
     asyncio.run(_setup_effect(setup_ws_url, args, fxb))
+    if args.sweep:
+        # The sweep's table + BEST picks are relayed (stderr) and the SWEEP/BEST
+        # machine lines surfaced (stdout) by _run_stream_bench.
+        _, rc = _run_stream_bench(stream_addr, host_header, args)
+        _log("[sweep] done" if rc == 0 else f"[sweep] stream_bench errored (rc={rc})")
+        return rc == 0
     result, rc = _run_stream_bench(stream_addr, host_header, args)
     fps = result.get("fps")
     if rc == 0:
@@ -318,8 +351,27 @@ def main() -> None:
         help="texture quantization format (TouchDesigner default: rgb565)",
     )
     ap.add_argument("--no-rle", dest="rle", action="store_false", help="disable RLE (default: on)")
+    ap.add_argument(
+        "--keyframe-interval",
+        type=int,
+        default=0,
+        help="emit a full keyframe every N frames (0 = only the initial one); "
+        "bounds raster corruption from a dropped frame on a lossy transport",
+    )
+    ap.add_argument(
+        "--sweep",
+        action="store_true",
+        help="hill-climb: run a curated (format x RLE x keyframe) matrix over one "
+        "connection and print a results table + BEST picks instead of a single verdict",
+    )
     ap.add_argument("--seconds", type=float, default=3.0, help="stream duration to measure over")
-    ap.add_argument("--sync-every", type=int, default=8, help="barrier round-trip every N frames")
+    ap.add_argument(
+        "--sync-every",
+        type=int,
+        default=30,
+        help="barrier round-trip every N frames; larger amortizes the barrier RTT "
+        "so the measured rate tracks true device throughput (smaller resolves jitter finer)",
+    )
     ap.add_argument("--min-fps", type=float, default=10.0, help="acceptance floor (PASS iff >=)")
     ap.add_argument("--tex-index", type=int, default=0)
     ap.add_argument("--effect-id", dest="effect_id", default="__vidbench")

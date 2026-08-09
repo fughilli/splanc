@@ -164,28 +164,61 @@ pub struct TextureStreamer {
     order: ChannelOrder,
     rle: bool,
     prev: Option<Vec<u8>>,
+    /// Emit a full keyframe every `keyframe_interval` frames (0 = only the
+    /// initial keyframe, and one after any size change). A delta-coded frame is
+    /// an XOR against the *previous* frame, so on a lossy transport a single
+    /// dropped frame corrupts every frame after it until the raster is fully
+    /// re-sent. A periodic keyframe bounds that damage to at most
+    /// `keyframe_interval` frames — the cost is one large frame per period, which
+    /// is the FPS/jitter trade the caller dials in.
+    keyframe_interval: u32,
+    /// Frames emitted in the current group (1 = the keyframe itself).
+    since_keyframe: u32,
 }
 
 impl TextureStreamer {
     pub fn new(tex_index: u32, format: Format, order: ChannelOrder, rle: bool) -> Self {
-        TextureStreamer { tex_index, format, order, rle, prev: None }
+        TextureStreamer {
+            tex_index,
+            format,
+            order,
+            rle,
+            prev: None,
+            keyframe_interval: 0,
+            since_keyframe: 0,
+        }
+    }
+
+    /// Set the periodic keyframe interval (frames between forced keyframes; 0
+    /// disables periodic keyframes — only the initial frame is a keyframe).
+    pub fn with_keyframe_interval(mut self, interval: u32) -> Self {
+        self.keyframe_interval = interval;
+        self
     }
 
     /// Force the next frame to be a keyframe (e.g. after a reconnect).
     pub fn reset(&mut self) {
         self.prev = None;
+        self.since_keyframe = 0;
     }
 
     /// Encode the next frame into a ready-to-send `set_texture` protobuf frame.
     pub fn encode_frame(&mut self, px: &[u8], w: usize, h: usize) -> Vec<u8> {
         let quant = quantize(px, w, h, self.format, self.order);
+        let size_changed = self.prev.as_ref().map(|p| p.len() != quant.len()).unwrap_or(true);
+        let periodic = self.keyframe_interval != 0 && self.since_keyframe >= self.keyframe_interval;
+        let keyframe = self.prev.is_none() || size_changed || periodic;
+
         let mut flags = 0u32;
-        let mut payload = match &self.prev {
-            Some(prev) if prev.len() == quant.len() => {
-                flags |= FLAG_DELTA;
-                quant.iter().zip(prev).map(|(a, b)| a ^ b).collect::<Vec<u8>>()
-            }
-            _ => quant.clone(),
+        let mut payload = if keyframe {
+            self.since_keyframe = 1;
+            quant.clone()
+        } else {
+            flags |= FLAG_DELTA;
+            self.since_keyframe += 1;
+            // Safe: `keyframe` is true whenever prev is None or a size mismatch.
+            let prev = self.prev.as_ref().unwrap();
+            quant.iter().zip(prev).map(|(a, b)| a ^ b).collect::<Vec<u8>>()
         };
         if self.rle {
             flags |= FLAG_RLE;
@@ -273,6 +306,69 @@ mod tests {
         let px = vec![0, 0, 255, 255]; // BGRA red
         let out = nn_rescale(&px, 1, 1, 3, 3);
         assert!(out.chunks(4).all(|c| c == [0, 0, 255, 255]));
+    }
+
+    /// Read the `flags` field (number 5) out of an encoded `set_texture` frame.
+    fn flags_of(frame: &[u8]) -> u32 {
+        let rdv = |b: &[u8], i: &mut usize| -> u64 {
+            let mut shift = 0;
+            let mut out = 0u64;
+            loop {
+                let byte = b[*i];
+                *i += 1;
+                out |= ((byte & 0x7f) as u64) << shift;
+                if byte & 0x80 == 0 {
+                    return out;
+                }
+                shift += 7;
+            }
+        };
+        let mut i = 0usize;
+        rdv(frame, &mut i); // envelope tag (arm 28, LEN)
+        rdv(frame, &mut i); // body length
+        while i < frame.len() {
+            let key = rdv(frame, &mut i);
+            let (field, wire) = (key >> 3, key & 7);
+            if wire == 0 {
+                let v = rdv(frame, &mut i);
+                if field == 5 {
+                    return v as u32;
+                }
+            } else if wire == 2 {
+                let n = rdv(frame, &mut i) as usize;
+                i += n;
+            }
+        }
+        0
+    }
+
+    #[test]
+    fn periodic_keyframes_land_on_the_interval() {
+        // interval 3 -> keyframes at frames 0, 3, 6 (DELTA flag clear); the two
+        // frames between each are deltas (DELTA set). Content changes every frame
+        // so a delta is genuinely chosen when allowed.
+        let mut s = TextureStreamer::new(0, Format::Rgb565, ChannelOrder::Rgba, false)
+            .with_keyframe_interval(3);
+        let is_delta: Vec<bool> = (0..7u8)
+            .map(|i| {
+                let px = [i.wrapping_mul(37), 0, 0, 255];
+                flags_of(&s.encode_frame(&px, 1, 1)) & FLAG_DELTA != 0
+            })
+            .collect();
+        assert_eq!(
+            is_delta,
+            vec![false, true, true, false, true, true, false],
+            "keyframes must recur every `interval` frames"
+        );
+    }
+
+    #[test]
+    fn zero_interval_keeps_a_single_keyframe() {
+        let mut s = TextureStreamer::new(0, Format::Rgb565, ChannelOrder::Rgba, false);
+        let is_delta: Vec<bool> = (0..5u8)
+            .map(|i| flags_of(&s.encode_frame(&[i, 0, 0, 255], 1, 1)) & FLAG_DELTA != 0)
+            .collect();
+        assert_eq!(is_delta, vec![false, true, true, true, true]);
     }
 
     #[test]

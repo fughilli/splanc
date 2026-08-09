@@ -40,7 +40,15 @@ def parse_result(stdout: str) -> dict[str, Any]:
             key, _, val = tok.partition("=")
             if key:
                 fields[key] = val
-        for num in ("fps", "seconds", "min_fps"):
+        for num in (
+            "fps",
+            "seconds",
+            "min_fps",
+            "jitter_ms",
+            "p99_ms",
+            "max_ms",
+            "bytes_per_frame",
+        ):
             if num in fields:
                 try:
                     fields[num] = float(fields[num])
