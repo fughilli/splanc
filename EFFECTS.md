@@ -96,9 +96,14 @@ Math (`sin cos abs floor ceil fract sqrt exp log sign tan`, `min max pow mod ste
 atan2`), vector ops (`clamp mix smoothstep dot cross length normalize distance`),
 color (`hsv2rgb`, `palette0/1/2`), noise (`hash`), texture (`sample`, `paint`),
 and topology graph queries (`seg_count seg_len seg_node node_deg node_seg
-node_side term_count term`, plus `flood_from(node)` to re-root `led.dist`). Calling
-`sin`/`cos`/`exp` on a `fixed8`/`fixed16` argument emits the integer-LUT opcodes
-(angle in **turns**) instead of the soft-float path.
+node_side term_count term`, plus `flood_from(node)` to re-root `led.dist`).
+
+On `int` and fixed-point (`fixed`/`fixed16`/`fixed8`) arguments, the arithmetic
+builtins run **natively** — `min max abs clamp mod sign step floor ceil fract mix`
+each have integer/fixed opcodes, and `sin`/`cos`/`exp` use a compile-time LUT
+(angle in **turns**) — instead of coercing to soft-float. Everything that stays
+float-valued converts its int/fixed args (never reinterpreting the bits). This is
+the main lever for keeping hot paths off the FPU-less C6's soft-float.
 
 ### Example
 
@@ -155,56 +160,58 @@ The VM (`firmware/fx_vm/src/lib.rs`) is a **stack machine over `f32` slots** —
 
 ## Opcode reference
 
-The authoritative enum is `Op` (`#[repr(u8)]`, contiguous `0..=69`) in
+The authoritative enum is `Op` (`#[repr(u8)]`, contiguous `0..=79`) in
 `firmware/fx_vm/src/lib.rs`; the compiler mirrors and asserts these discriminants.
 Operands follow inline in the code stream, little-endian.
 
-| #     | Opcode                                                        | Operands                | Semantics                                     |
-| ----- | ------------------------------------------------------------- | ----------------------- | --------------------------------------------- |
-| 0     | `PushConst`                                                   | u16 idx                 | push `consts[idx]`                            |
-| 1     | `LoadUniform`                                                 | u8 slot, u8 n           | push n uniform slots                          |
-| 2     | `LoadState`                                                   | u8 slot, u8 n           | push n state slots                            |
-| 3     | `StoreState`                                                  | u8 slot, u8 n           | pop n into state                              |
-| 4     | `LoadLocal`                                                   | u8 slot, u8 n           | push n locals                                 |
-| 5     | `StoreLocal`                                                  | u8 slot, u8 n           | pop n into locals                             |
-| 6     | `LoadCtx`                                                     | u8 id                   | push a context value (see context ids)        |
-| 7–10  | `Add` `Sub` `Mul` `Div`                                       | u8 n                    | element-wise arithmetic over n (÷0 → 0)       |
-| 11    | `Neg`                                                         | u8 n                    | negate n components                           |
-| 12    | `Scale`                                                       | u8 n                    | n-vec × scalar                                |
-| 13    | `UnMath`                                                      | u8 fn, u8 n             | unary math per component                      |
-| 14    | `BinMath`                                                     | u8 fn, u8 n             | binary math per component                     |
-| 15    | `Clamp`                                                       | u8 n                    | clamp(x, lo, hi)                              |
-| 16    | `Mix`                                                         | u8 n                    | a + (b − a)·t                                 |
-| 17    | `Smoothstep`                                                  | u8 n                    | smoothstep(e0, e1, x)                         |
-| 18    | `Dot`                                                         | u8 n                    | → scalar                                      |
-| 19    | `Cross`                                                       | u8 (=3)                 | vec3 × vec3                                   |
-| 20    | `Length`                                                      | u8 n                    | → scalar                                      |
-| 21    | `Normalize`                                                   | u8 n                    | normalize (no-op if len < 1e-9)               |
-| 22    | `Distance`                                                    | u8 n                    | → scalar                                      |
-| 23    | `Swizzle`                                                     | u8 srcN, u8 dstN, idx…  | reorder components                            |
-| 24    | `Cmp`                                                         | u8 kind                 | scalar compare → bool (lt/le/gt/ge/eq/ne)     |
-| 25    | `Logic`                                                       | u8 kind                 | and/or/not                                    |
-| 26    | `BrFalse`                                                     | i16 rel                 | pop bool; branch if 0                         |
-| 27    | `Jmp`                                                         | i16 rel                 | relative jump                                 |
-| 28    | `Hash1`                                                       | —                       | scalar → [0,1)                                |
-| 29    | `Hash3`                                                       | —                       | vec3 → scalar                                 |
-| 30    | `Hsv2Rgb`                                                     | —                       | vec3(h,s,v) → vec3 rgb                        |
-| 31    | `Palette`                                                     | u8 id                   | scalar t → vec3 (0 fire, 1 ice, else rainbow) |
-| 32    | `Pop`                                                         | u8 n                    | drop n slots                                  |
-| 33    | `Ret`                                                         | u8 n                    | return n slots (0 update, 3 shade)            |
-| 34    | `Swap`                                                        | u8 an, u8 bn            | swap top bn with the an below                 |
-| 35–41 | `AddI`…`CmpI`                                                 | (`CmpI` u8 kind)        | i32 add/sub/mul/div/mod/neg/compare           |
-| 42–43 | `MulFix` `DivFix`                                             | —                       | Q16.16 multiply / divide                      |
-| 44–49 | `I2F` `F2I` `Fix2F` `F2Fix` `I2Fix` `Fix2I`                   | —                       | numeric conversions                           |
-| 50    | `Call`                                                        | u16 target              | push return pc, jump                          |
-| 51    | `RetFn`                                                       | —                       | return from a user function                   |
-| 52–55 | `LoadStateIdx` `StoreStateIdx` `LoadLocalIdx` `StoreLocalIdx` | base,stride,off,n,count | indexed array access (clamped)                |
-| 56    | `GraphQuery`                                                  | u8 kind                 | topology query (seg/node/term kinds)          |
-| 57–58 | `LoadBuf` `StoreBuf`                                          | u8 id                   | per-LED buffer element read/write             |
-| 59–60 | `SampleTex` `PaintTex`                                        | u8 id                   | 2D texture bilinear sample / nearest write    |
-| 61    | `FloodFrom`                                                   | —                       | re-root the geodesic field at a node id       |
-| 62–66 | `MulFixN` `DivFixN` `FixRescale` `FixToF` `FixFromF`          | u8/i8 frac              | narrow fixed-point scaling/conversion         |
-| 67–69 | `SinFix` `CosFix` `ExpFix`                                    | u8 frac                 | integer-LUT sin/cos/exp (angle in turns)      |
+| #     | Opcode                                                        | Operands                | Semantics                                          |
+| ----- | ------------------------------------------------------------- | ----------------------- | -------------------------------------------------- |
+| 0     | `PushConst`                                                   | u16 idx                 | push `consts[idx]`                                 |
+| 1     | `LoadUniform`                                                 | u8 slot, u8 n           | push n uniform slots                               |
+| 2     | `LoadState`                                                   | u8 slot, u8 n           | push n state slots                                 |
+| 3     | `StoreState`                                                  | u8 slot, u8 n           | pop n into state                                   |
+| 4     | `LoadLocal`                                                   | u8 slot, u8 n           | push n locals                                      |
+| 5     | `StoreLocal`                                                  | u8 slot, u8 n           | pop n into locals                                  |
+| 6     | `LoadCtx`                                                     | u8 id                   | push a context value (see context ids)             |
+| 7–10  | `Add` `Sub` `Mul` `Div`                                       | u8 n                    | element-wise arithmetic over n (÷0 → 0)            |
+| 11    | `Neg`                                                         | u8 n                    | negate n components                                |
+| 12    | `Scale`                                                       | u8 n                    | n-vec × scalar                                     |
+| 13    | `UnMath`                                                      | u8 fn, u8 n             | unary math per component                           |
+| 14    | `BinMath`                                                     | u8 fn, u8 n             | binary math per component                          |
+| 15    | `Clamp`                                                       | u8 n                    | clamp(x, lo, hi)                                   |
+| 16    | `Mix`                                                         | u8 n                    | a + (b − a)·t                                      |
+| 17    | `Smoothstep`                                                  | u8 n                    | smoothstep(e0, e1, x)                              |
+| 18    | `Dot`                                                         | u8 n                    | → scalar                                           |
+| 19    | `Cross`                                                       | u8 (=3)                 | vec3 × vec3                                        |
+| 20    | `Length`                                                      | u8 n                    | → scalar                                           |
+| 21    | `Normalize`                                                   | u8 n                    | normalize (no-op if len < 1e-9)                    |
+| 22    | `Distance`                                                    | u8 n                    | → scalar                                           |
+| 23    | `Swizzle`                                                     | u8 srcN, u8 dstN, idx…  | reorder components                                 |
+| 24    | `Cmp`                                                         | u8 kind                 | scalar compare → bool (lt/le/gt/ge/eq/ne)          |
+| 25    | `Logic`                                                       | u8 kind                 | and/or/not                                         |
+| 26    | `BrFalse`                                                     | i16 rel                 | pop bool; branch if 0                              |
+| 27    | `Jmp`                                                         | i16 rel                 | relative jump                                      |
+| 28    | `Hash1`                                                       | —                       | scalar → [0,1)                                     |
+| 29    | `Hash3`                                                       | —                       | vec3 → scalar                                      |
+| 30    | `Hsv2Rgb`                                                     | —                       | vec3(h,s,v) → vec3 rgb                             |
+| 31    | `Palette`                                                     | u8 id                   | scalar t → vec3 (0 fire, 1 ice, else rainbow)      |
+| 32    | `Pop`                                                         | u8 n                    | drop n slots                                       |
+| 33    | `Ret`                                                         | u8 n                    | return n slots (0 update, 3 shade)                 |
+| 34    | `Swap`                                                        | u8 an, u8 bn            | swap top bn with the an below                      |
+| 35–41 | `AddI`…`CmpI`                                                 | (`CmpI` u8 kind)        | i32 add/sub/mul/div/mod/neg/compare                |
+| 42–43 | `MulFix` `DivFix`                                             | —                       | Q16.16 multiply / divide                           |
+| 44–49 | `I2F` `F2I` `Fix2F` `F2Fix` `I2Fix` `Fix2I`                   | —                       | numeric conversions                                |
+| 50    | `Call`                                                        | u16 target              | push return pc, jump                               |
+| 51    | `RetFn`                                                       | —                       | return from a user function                        |
+| 52–55 | `LoadStateIdx` `StoreStateIdx` `LoadLocalIdx` `StoreLocalIdx` | base,stride,off,n,count | indexed array access (clamped)                     |
+| 56    | `GraphQuery`                                                  | u8 kind                 | topology query (seg/node/term kinds)               |
+| 57–58 | `LoadBuf` `StoreBuf`                                          | u8 id                   | per-LED buffer element read/write                  |
+| 59–60 | `SampleTex` `PaintTex`                                        | u8 id                   | 2D texture bilinear sample / nearest write         |
+| 61    | `FloodFrom`                                                   | —                       | re-root the geodesic field at a node id            |
+| 62–66 | `MulFixN` `DivFixN` `FixRescale` `FixToF` `FixFromF`          | u8/i8 frac              | narrow fixed-point scaling/conversion              |
+| 67–69 | `SinFix` `CosFix` `ExpFix`                                    | u8 frac                 | integer-LUT sin/cos/exp (angle in turns)           |
+| 70–73 | `AbsI` `MinI` `MaxI` `ClampI`                                 | —                       | native integer abs / min / max / clamp             |
+| 74–79 | `SignI` `StepI` `FloorFix` `CeilFix` `FractFix` `MixFix`      | u8 frac                 | native fixed-point sign/step/floor/ceil/fract/lerp |
 
 Function ids for `UnMath`: `sin cos abs floor ceil fract sqrt exp log sign tan`
 (0–10). For `BinMath`: `min max pow mod step atan2` (0–5). Context ids for
@@ -330,16 +337,17 @@ for how to run it.
 
 Representative measured frame-cycle costs at 160 MHz (full set in the golden):
 
-| Program                         | Frame cycles              | Notes                           |
-| ------------------------------- | ------------------------- | ------------------------------- |
-| `empty`                         | ~0.49 M                   | per-frame overhead floor        |
-| `sweep16` / `sweep256`          | ~0.11 M / ~0.97 M         | per-LED anchors (16 / 256 LEDs) |
-| `addM` / `mulM` / `negM`        | ~2.6 M / ~2.6 M / ~1.8 M  | cheap arithmetic                |
-| `sinM` / `cosM` / `tanM`        | ~6.3 M / ~6.6 M / ~11.6 M | soft-float transcendentals      |
-| `expfM` / `powfM`               | ~6.3 M / ~9.2 M           |                                 |
-| `hash12M` / `hash32M`           | ~15.8 M / ~19.6 M         | heaviest ops                    |
-| `hsv2rgbM` / `mix3M` (held-out) | ~7.3 M / ~6.9 M           | validation set                  |
-| `lavalamp` (held-out)           | ~3.7 M                    | a realistic 200-LED effect      |
+| Program                         | Frame cycles             | Notes                            |
+| ------------------------------- | ------------------------ | -------------------------------- |
+| `empty`                         | ~0.49 M                  | per-frame overhead floor         |
+| `sweep16` / `sweep256`          | ~0.10 M / ~0.97 M        | per-LED anchors (16 / 256 LEDs)  |
+| `addM` / `mulM` / `negM`        | ~2.5 M / ~2.5 M / ~1.8 M | cheap arithmetic                 |
+| `sinM` / `cosM` / `tanM`        | ~3.9 M / ~4.1 M / ~6.8 M | LUT sin/cos (see the hill-climb) |
+| `expfM` / `powfM`               | ~6.2 M / ~9.1 M          | exp still soft-float poly        |
+| `hash12M` / `hash32M`           | ~2.9 M / ~4.2 M          | integer bit-mix hash             |
+| `smoothstep32M` / `distance32M` | ~21.4 M / ~14.4 M        | heaviest float ops               |
+| `hsv2rgbM` / `mix3M` (held-out) | ~7.1 M / ~6.7 M          | validation set                   |
+| `lavalamp` (held-out)           | ~3.6 M                   | a realistic 200-LED effect       |
 
 `show_cycles` cluster tightly at ~1.0–1.1 M across programs (transmit-bound, not
 FX-bound). These numbers back the browser-side cost model
@@ -351,9 +359,12 @@ over-predicts the cheapest ones; the software estimator test
 the calibration methodology live in
 [`docs/design/perf-monitoring.md`](./docs/design/perf-monitoring.md).
 
-A practical consequence of the FPU-less C6: hoist per-frame constants out of the
-per-LED `shade()` into `update()`/uniforms, and prefer the narrow fixed-point ops
-(`fixed8`/`fixed16` + `SinFix`/`CosFix`) for hot paths.
+These costs are the target of an ongoing FX-VM hill-climb (see `WORKLOG.md`):
+sin/cos are now compile-time LUTs and `hash` is an integer bit-mix, which is why
+they land far below the other transcendentals. A practical consequence of the
+FPU-less C6: hoist per-frame constants out of the per-LED `shade()` into
+`update()`/uniforms, and prefer int/fixed types (`fixed8`/`fixed16`) on hot paths
+so the arithmetic builtins take their native opcodes instead of soft-float.
 
 ## AI effect generation
 
@@ -372,7 +383,10 @@ constraints (two entry points, no recursion, bounded loops, all values f32),
 documents uniform syntax, `state`, structs/arrays, buffers, topology sources, and
 textures, includes four worked examples, and ends with a repair directive ("given
 a previous script and compiler diagnostics, return a corrected script that fixes
-every error; change as little else as possible").
+every error; change as little else as possible"). It is also **perf-aware**: the
+prompt teaches the fixed-point types and soft-float cost model, and the agent is
+fed the binding device's per-builtin cost table (`builtinCostsToPrompt` in
+`web/src/effects/perfContext.ts`) so it can optimize toward a real budget.
 
 There are two call paths:
 
