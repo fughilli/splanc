@@ -66,8 +66,7 @@ def _run_provisioner(
     # (hitl_improv._connect — the first connect to a freshly-booted C6 fails ~half
     # the time with a per-attempt connect timeout; see FUG-94), so a single call
     # can spend ~scan + N*connect_timeout + join before it reports. Give the ssh a
-    # budget
-    # that comfortably covers that worst case rather than the old timeout+60.
+    # budget that comfortably covers that worst case rather than the old timeout+60.
     proc = res.ssh(cmd, capture=True, timeout=timeout + 180)
     out = (proc.stdout or "").strip()
     if proc.stderr:
