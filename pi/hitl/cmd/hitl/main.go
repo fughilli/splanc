@@ -69,6 +69,8 @@ func main() {
 		err = cmdCp(args)
 	case "forward":
 		err = cmdForward(args)
+	case "btmon":
+		err = cmdBtmon(args)
 	case "-h", "--help", "help":
 		usage()
 		return
@@ -99,6 +101,9 @@ func usage() {
   hitl run     [--id RES] [--keep] [--tty] [--server URL] -- <command...>  # run in the reservation
   hitl cp      [--id RES] [--keep] [--server URL] <local...> <remote-dir>  # copy files in
   hitl forward [--id RES] [--keep] [--local-port N] [--server URL] <host> <port>  # ssh -L via the rig
+  hitl btmon   start|stop|status --id RES                       # per-reservation BLE HCI (btmon) capture
+  hitl btmon   fetch  --id RES [--mac AA:..] <out.btsnoop>      # pull the trace out of the reservation
+  hitl btmon   capture [--id RES] [--keep] [--mac AA:..] [--out F] -- <cmd>  # start→run→stop→fetch
   hitl pool    [--server-list LIST] [--tag TAG]                # status of every runner in the pool
 
 Server URL: --server, else $HITL_SERVER, else the shortest-queue runner in the
@@ -328,7 +333,7 @@ func cmdFlash(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	c := client{base: *server}
-	ep, priv, release, err := acquire(ctx, c, *server, *keyPath, *owner, *id, *device, *keep)
+	ep, priv, _, release, err := acquire(ctx, c, *server, *keyPath, *owner, *id, *device, *keep)
 	if err != nil {
 		return err
 	}
@@ -369,7 +374,7 @@ func cmdMonitor(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	c := client{base: *server}
-	ep, priv, release, err := acquire(ctx, c, *server, *keyPath, *owner, *id, *device, *keep)
+	ep, priv, _, release, err := acquire(ctx, c, *server, *keyPath, *owner, *id, *device, *keep)
 	if err != nil {
 		return err
 	}
@@ -424,7 +429,7 @@ func cmdBle(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	c := client{base: *server}
-	ep, priv, release, err := acquire(ctx, c, *server, *keyPath, *owner, *id, *device, *keep)
+	ep, priv, _, release, err := acquire(ctx, c, *server, *keyPath, *owner, *id, *device, *keep)
 	if err != nil {
 		return err
 	}
@@ -457,7 +462,7 @@ func cmdJtag(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	c := client{base: *server}
-	ep, priv, release, err := acquire(ctx, c, *server, *keyPath, *owner, *id, *device, *keep)
+	ep, priv, _, release, err := acquire(ctx, c, *server, *keyPath, *owner, *id, *device, *keep)
 	if err != nil {
 		return err
 	}
@@ -491,7 +496,7 @@ func cmdGdb(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	c := client{base: *server}
-	ep, priv, release, err := acquire(ctx, c, *server, *keyPath, *owner, *id, *device, *keep)
+	ep, priv, _, release, err := acquire(ctx, c, *server, *keyPath, *owner, *id, *device, *keep)
 	if err != nil {
 		return err
 	}
@@ -548,7 +553,7 @@ func cmdRun(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	c := client{base: *server}
-	ep, priv, release, err := acquire(ctx, c, *server, *keyPath, *owner, *id, *device, *keep)
+	ep, priv, _, release, err := acquire(ctx, c, *server, *keyPath, *owner, *id, *device, *keep)
 	if err != nil {
 		return err
 	}
@@ -585,7 +590,7 @@ func cmdCp(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	c := client{base: *server}
-	ep, priv, release, err := acquire(ctx, c, *server, *keyPath, *owner, *id, *device, *keep)
+	ep, priv, _, release, err := acquire(ctx, c, *server, *keyPath, *owner, *id, *device, *keep)
 	if err != nil {
 		return err
 	}
@@ -627,7 +632,7 @@ func cmdForward(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	c := client{base: *server}
-	ep, priv, release, err := acquire(ctx, c, *server, *keyPath, *owner, *id, *device, *keep)
+	ep, priv, _, release, err := acquire(ctx, c, *server, *keyPath, *owner, *id, *device, *keep)
 	if err != nil {
 		return err
 	}
@@ -670,6 +675,179 @@ func freeLocalPort() (int, error) {
 	}
 	defer l.Close()
 	return l.Addr().(*net.TCPAddr).Port, nil
+}
+
+// --- btmon (BLE HCI capture) ----------------------------------------------
+
+// cmdBtmon controls per-reservation BLE HCI (btmon) capture on the rig. The
+// capture runs HOST-side (the unprivileged container can't open an HCI monitor
+// socket) and its btsnoop is exposed read-only inside the reservation container;
+// `fetch` pulls it out. Subcommands: start | stop | status | fetch | capture
+// (the windowed start→run→stop→fetch convenience). See pi/hitl/README.md for the
+// shared-adapter caveat.
+func cmdBtmon(args []string) error {
+	sub := "status"
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		sub, args = args[0], args[1:]
+	}
+	fs := newFlags("btmon")
+	server := serverFlag(fs)
+	owner := fs.String("owner", envOr("HITL_OWNER", defaultOwner()), "reservation owner id")
+	keyPath := fs.String("key", "", "public key to authorize (default: dedicated ~/.config/hitl key)")
+	id := fs.String("id", "", "reservation id (required for start/stop/status/fetch)")
+	device := deviceFlag(fs)
+	keep := fs.Bool("keep", false, "keep the reservation afterward (capture form; default: release when we made it)")
+	mac := fs.String("mac", "", "DUT BLE MAC to annotate the trace by (the rig adapter is shared; see the note)")
+	out := fs.String("out", "hci.btsnoop", "output btsnoop file (fetch/capture)")
+	_ = fs.Parse(args)
+	if err := resolve(server); err != nil {
+		return err
+	}
+	c := client{base: *server}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	switch sub {
+	case "start", "stop", "status":
+		if *id == "" {
+			return fmt.Errorf("hitl btmon %s needs --id RES (an active reservation)", sub)
+		}
+		var st api.CaptureStatus
+		var err error
+		switch sub {
+		case "start":
+			err = c.post(fmt.Sprintf("/reservation/%s/btmon/start", *id), nil, &st)
+		case "stop":
+			err = c.post(fmt.Sprintf("/reservation/%s/btmon/stop", *id), nil, &st)
+		default: // status
+			err = c.get(fmt.Sprintf("/reservation/%s/btmon", *id), &st)
+		}
+		if err != nil {
+			return err
+		}
+		printCaptureStatus(&st)
+		return nil
+
+	case "fetch":
+		if *id == "" {
+			return fmt.Errorf("hitl btmon fetch needs --id RES")
+		}
+		outFile := *out
+		if a := fs.Arg(0); a != "" {
+			outFile = a
+		}
+		var st api.CaptureStatus
+		if err := c.get(fmt.Sprintf("/reservation/%s/btmon", *id), &st); err != nil {
+			return err
+		}
+		ep, priv, _, release, err := acquire(ctx, c, *server, *keyPath, *owner, *id, *device, true)
+		if err != nil {
+			return err
+		}
+		defer release()
+		if err := scpFrom(ctx, priv, ep, captureContainerPath(&st), outFile); err != nil {
+			return fmt.Errorf("fetch trace: %w", err)
+		}
+		annotateCapture(outFile, *mac)
+		if st.Running {
+			fmt.Fprintln(os.Stderr, "note: capture is still running; fetched a snapshot (stop it with `hitl btmon stop --id …`)")
+		}
+		return nil
+
+	case "capture":
+		remoteArgs := fs.Args()
+		if len(remoteArgs) == 0 {
+			return fmt.Errorf("usage: hitl btmon capture [flags] -- <command...>")
+		}
+		parts := make([]string, len(remoteArgs))
+		for i, a := range remoteArgs {
+			parts[i] = shellQuote(a)
+		}
+		remote := strings.Join(parts, " ")
+
+		ep, priv, resID, release, err := acquire(ctx, c, *server, *keyPath, *owner, *id, *device, *keep)
+		if err != nil {
+			return err
+		}
+		defer release()
+
+		var st api.CaptureStatus
+		if err := c.post(fmt.Sprintf("/reservation/%s/btmon/start", resID), nil, &st); err != nil {
+			return fmt.Errorf("start capture: %w", err)
+		}
+		fmt.Fprintln(os.Stderr, "btmon: capturing…")
+		runErr := sshRun(ctx, priv, ep, remote)
+		var stopped api.CaptureStatus
+		if err := c.post(fmt.Sprintf("/reservation/%s/btmon/stop", resID), nil, &stopped); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: stop capture: %v\n", err)
+		}
+		// Fetch even if the command failed — the trace is the point of debugging it.
+		if err := scpFrom(ctx, priv, ep, captureContainerPath(&st), *out); err != nil {
+			return fmt.Errorf("fetch trace: %w (command error: %v)", err, runErr)
+		}
+		annotateCapture(*out, *mac)
+		return runErr
+
+	default:
+		return fmt.Errorf("hitl btmon: unknown subcommand %q (start|stop|status|fetch|capture)", sub)
+	}
+}
+
+// captureContainerPath is where the trace is readable inside the container,
+// from the status if the daemon reported it, else the well-known default.
+func captureContainerPath(st *api.CaptureStatus) string {
+	if st.ContainerPath != "" {
+		return st.ContainerPath
+	}
+	return "/run/hitl/capture/hci.btsnoop"
+}
+
+func printCaptureStatus(st *api.CaptureStatus) {
+	state := "stopped"
+	if st.Running {
+		state = "running"
+	}
+	fmt.Printf("capture: %s  size=%s", state, humanBytes(st.SizeBytes))
+	if st.StartedAt != nil {
+		fmt.Printf("  since=%s", st.StartedAt.Format(time.Kitchen))
+	}
+	if st.Reason != "" {
+		fmt.Printf("  (%s)", st.Reason)
+	}
+	fmt.Println()
+	if st.ContainerPath != "" {
+		fmt.Printf("in-container: %s  (read with `btmon -r`, or `hitl btmon fetch --id …`)\n", st.ContainerPath)
+	}
+}
+
+// annotateCapture prints the shared-adapter caveat and, given the DUT's BLE MAC,
+// the exact Wireshark filter to isolate it — the trace is annotated, not
+// isolated (the rig has one controller shared by all DUTs).
+func annotateCapture(outFile, mac string) {
+	fmt.Fprintf(os.Stderr, "saved %s — opens in `btmon -r %s` and Wireshark.\n", outFile, outFile)
+	fmt.Fprintln(os.Stderr, "NOTE: the rig has ONE Bluetooth controller shared by every DUT, so this trace")
+	fmt.Fprintln(os.Stderr, "      contains other reservations' BLE traffic during the capture window —")
+	fmt.Fprintln(os.Stderr, "      it is annotated by your DUT's BLE MAC, not isolated to it.")
+	if mac != "" {
+		fmt.Fprintf(os.Stderr, "      isolate your DUT in Wireshark with:  bluetooth.addr == %s\n", strings.ToLower(mac))
+	} else {
+		fmt.Fprintln(os.Stderr, "      pass --mac <DUT BLE MAC> to print the display filter for your DUT.")
+	}
+}
+
+// humanBytes renders a byte count as a compact human-readable size.
+func humanBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%dB", n)
+	}
+	div, exp := int64(unit), 0
+	for x := n / unit; x >= unit; x /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f%ciB", float64(n)/float64(div), "KMGT"[exp])
 }
 
 // --- pool -----------------------------------------------------------------
@@ -734,37 +912,39 @@ func cmdPool(args []string) error {
 // the server we reached, sshd port waited-on). With id set it reuses that
 // reservation; otherwise it reserves one, heartbeats it, and — unless keep — the
 // returned release() drops it. release is always non-nil (a no-op when reusing).
-func acquire(ctx context.Context, c client, server, keyPath, owner, id, device string, keep bool) (*api.SSHEndpoint, string, func(), error) {
+func acquire(ctx context.Context, c client, server, keyPath, owner, id, device string, keep bool) (*api.SSHEndpoint, string, string, func(), error) {
 	_, priv, err := resolveKeypair(keyPath)
 	if err != nil {
-		return nil, "", nil, err
+		return nil, "", "", nil, err
 	}
 	release := func() {}
 	var ep *api.SSHEndpoint
+	resID := id
 	if id != "" {
 		var res api.Reservation
 		if err := c.get("/reservation/"+id, &res); err != nil {
-			return nil, "", nil, err
+			return nil, "", "", nil, err
 		}
 		if res.State != api.StateActive || res.SSH == nil {
-			return nil, "", nil, fmt.Errorf("reservation %s is %s (not active)", id, res.State)
+			return nil, "", "", nil, fmt.Errorf("reservation %s is %s (not active)", id, res.State)
 		}
 		ep = res.SSH
 	} else {
 		pubBytes, err := os.ReadFile(mustPub(keyPath))
 		if err != nil {
-			return nil, "", nil, fmt.Errorf("read pubkey: %w", err)
+			return nil, "", "", nil, fmt.Errorf("read pubkey: %w", err)
 		}
 		var res api.Reservation
 		if err := c.post("/reserve", api.ReserveRequest{Owner: owner, SSHPublicKey: string(pubBytes), Device: device}, &res); err != nil {
-			return nil, "", nil, err
+			return nil, "", "", nil, err
 		}
 		fmt.Fprintf(os.Stderr, "reserved: id=%s\n", res.ID)
 		active, err := c.waitActive(ctx, res.ID)
 		if err != nil {
-			return nil, "", nil, err
+			return nil, "", "", nil, err
 		}
 		ep = active.SSH
+		resID = res.ID
 		if !keep {
 			release = func() {
 				_ = c.postRaw(fmt.Sprintf("/reservation/%s/release", res.ID), nil)
@@ -779,7 +959,7 @@ func acquire(ctx context.Context, c client, server, keyPath, owner, id, device s
 	if err := waitPort(ctx, ep.Host, ep.Port, 45*time.Second); err != nil {
 		fmt.Fprintf(os.Stderr, "warning: %v\n", err)
 	}
-	return ep, priv, release, nil
+	return ep, priv, resID, release, nil
 }
 
 // mustPub returns the public key path for keyPath (resolveKeypair already ran in
@@ -818,6 +998,16 @@ func scpTo(ctx context.Context, privKey string, ep *api.SSHEndpoint, locals []st
 	args := sshOpts(privKey, "-P", ep.Port)
 	args = append(args, locals...)
 	args = append(args, fmt.Sprintf("%s@%s:%s", ep.User, ep.Host, remoteDir))
+	cmd := exec.CommandContext(ctx, "scp", args...)
+	cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
+	return cmd.Run()
+}
+
+// scpFrom copies a single remote file out of the reservation's container to a
+// local path.
+func scpFrom(ctx context.Context, privKey string, ep *api.SSHEndpoint, remotePath, localPath string) error {
+	args := sshOpts(privKey, "-P", ep.Port)
+	args = append(args, fmt.Sprintf("%s@%s:%s", ep.User, ep.Host, remotePath), localPath)
 	cmd := exec.CommandContext(ctx, "scp", args...)
 	cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
 	return cmd.Run()

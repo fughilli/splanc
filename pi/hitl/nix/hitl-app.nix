@@ -269,8 +269,9 @@ in
   ];
 
   # The `hitl` CLI is handy on the rig too; usbutils for lsusb/bus ids, usbip for
-  # bind/attach.
-  environment.systemPackages = [ hitl pkgs.usbutils pkgs.linuxPackages.usbip ]
+  # bind/attach; bluez for btmon (the daemon runs it for per-reservation BLE HCI
+  # capture, and a human on the rig can `btmon -r` a fetched trace).
+  environment.systemPackages = [ hitl pkgs.usbutils pkgs.linuxPackages.usbip pkgs.bluez ]
     # sigrok-cli + fx2lafw firmware for the analyzer; usb-modeswitch for the dongle.
     ++ lib.optionals isAnalyzerRig sigrok.packages
     ++ lib.optionals useApDongle [ pkgs.usb-modeswitch ];
@@ -386,6 +387,12 @@ in
           # Reservation containers reach the daemon's shared analyzer over the
           # podman host gateway; keep the port in sync with --addr above.
           "--container-capture-url http://host.containers.internal:${toString apiPort}"
+          # Per-reservation BLE HCI capture. btmon runs host-side (as the daemon's
+          # root, which has the HCI monitor socket + CAP_NET_RAW the unprivileged
+          # container lacks) and its btsnoop is bind-mounted read-only into the
+          # reservation container; `hitl btmon` drives it. Bounded (size + time
+          # caps) so it can't fill the rig disk; off until an agent starts it.
+          "--btmon ${pkgs.bluez}/bin/btmon"
           # The AP is always-on (NM autoconnect); the daemon only advertises its
           # creds in /status for the harness (`hitl wifi`). It does NOT toggle the
           # AP — no --ap-conn — so per-reservation AP control (internal/ap) stays

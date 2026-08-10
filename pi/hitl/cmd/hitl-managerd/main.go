@@ -61,6 +61,13 @@ func main() {
 	stateDir := flag.String("state-dir", "/var/lib/hitl", "writable scratch dir")
 	podman := flag.String("podman", "podman", "podman binary")
 	privileged := flag.Bool("privileged", true, "run the container privileged (raw USB/JTAG)")
+	// BLE HCI capture (btmon). Runs host-side (the daemon is root; btmon needs an
+	// HCI monitor socket the unprivileged container lacks) and bind-mounts its
+	// btsnoop read-only into the reservation container. Bounded so it can't fill
+	// the rig disk. --btmon="" (or an empty path) disables it.
+	btmonBin := flag.String("btmon", "btmon", "btmon binary for per-reservation BLE HCI capture (empty disables capture)")
+	btmonSize := flag.Int64("btmon-size-bytes", 64<<20, "hard size cap for a capture's btsnoop file, in bytes")
+	btmonMax := flag.Duration("btmon-max", 30*time.Minute, "max wall-clock for a single BLE HCI capture")
 	var devices stringList
 	flag.Var(&devices, "device", "extra --device mapping for the single-DUT fallback (repeatable)")
 	var duts stringList
@@ -101,13 +108,16 @@ func main() {
 	flag.Parse()
 
 	run := runner.NewPodman(runner.PodmanConfig{
-		Image:      *image,
-		Host:       *host,
-		SSHUser:    *sshUser,
-		StateDir:   *stateDir,
-		Podman:     *podman,
-		Privileged: *privileged,
-		CaptureURL: *containerCaptureURL,
+		Image:           *image,
+		Host:            *host,
+		SSHUser:         *sshUser,
+		StateDir:        *stateDir,
+		Podman:          *podman,
+		Privileged:      *privileged,
+		CaptureURL:      *containerCaptureURL,
+		Btmon:           *btmonBin,
+		CaptureMaxBytes: *btmonSize,
+		CaptureMaxDur:   *btmonMax,
 	})
 
 	channelMap, err := analyzer.ParseChannelMap(*analyzerMap)
@@ -627,6 +637,36 @@ func routes(ctx context.Context, mgr *queue.Manager, brk *analyzer.Broker) http.
 		w.WriteHeader(http.StatusNoContent)
 	})
 
+	// BLE HCI (btmon) capture for a reservation's own BLE session. start/stop
+	// require an active reservation; the btsnoop is read back from the container's
+	// read-only mount (see the `hitl btmon` CLI), not streamed through the API.
+	mux.HandleFunc("POST /reservation/{id}/btmon/start", func(w http.ResponseWriter, r *http.Request) {
+		st, err := mgr.StartCapture(ctx, r.PathValue("id"))
+		if err != nil {
+			writeCaptureErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, st)
+	})
+
+	mux.HandleFunc("POST /reservation/{id}/btmon/stop", func(w http.ResponseWriter, r *http.Request) {
+		st, err := mgr.StopCapture(ctx, r.PathValue("id"))
+		if err != nil {
+			writeCaptureErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, st)
+	})
+
+	mux.HandleFunc("GET /reservation/{id}/btmon", func(w http.ResponseWriter, r *http.Request) {
+		st, err := mgr.CaptureStatus(r.PathValue("id"))
+		if err != nil {
+			writeCaptureErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, st)
+	})
+
 	return logging(mux)
 }
 
@@ -691,4 +731,15 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 
 func writeErr(w http.ResponseWriter, code int, msg string) {
 	writeJSON(w, code, api.Error{Error: msg})
+}
+
+// writeCaptureErr maps a capture control error to a status: an unknown
+// reservation is 404; a known-but-not-active one (or a disabled/failed capture)
+// is 409 Conflict.
+func writeCaptureErr(w http.ResponseWriter, err error) {
+	if errors.Is(err, queue.ErrNotFound) {
+		writeErr(w, http.StatusNotFound, err.Error())
+		return
+	}
+	writeErr(w, http.StatusConflict, err.Error())
 }

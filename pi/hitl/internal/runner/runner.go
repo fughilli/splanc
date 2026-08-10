@@ -39,4 +39,13 @@ type Runner interface {
 	// Cleanup removes any leftover environments (e.g. on daemon startup after a
 	// crash) so a fresh queue starts from a clean slate.
 	Cleanup(ctx context.Context) error
+
+	// StartCapture begins a bounded BLE HCI (btmon) capture for the reservation
+	// and returns its status. Idempotent: calling it again while a capture runs
+	// is a no-op that returns the running capture's status.
+	StartCapture(ctx context.Context, id string) (*api.CaptureStatus, error)
+	// StopCapture ends the reservation's capture (a no-op error if none runs).
+	StopCapture(ctx context.Context, id string) (*api.CaptureStatus, error)
+	// CaptureStatus reports the reservation's capture state (running, size, path).
+	CaptureStatus(id string) (*api.CaptureStatus, error)
 }

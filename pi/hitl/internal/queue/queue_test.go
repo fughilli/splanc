@@ -2,6 +2,7 @@ package queue
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -13,9 +14,11 @@ import (
 // endpoint carrying the assigned DUT's port, so queue tests don't need a real
 // container backend and can assert which DUT a reservation landed on.
 type fakeRunner struct {
-	started []string
-	stopped []string
-	onDev   map[string]string // reservation id -> DUT name it started on
+	started    []string
+	stopped    []string
+	capStarted []string
+	capStopped []string
+	onDev      map[string]string // reservation id -> DUT name it started on
 }
 
 func (f *fakeRunner) Start(_ context.Context, id, _, _ string, dev runner.Device) (*api.SSHEndpoint, error) {
@@ -37,6 +40,20 @@ func (f *fakeRunner) Stop(_ context.Context, id string) error {
 }
 
 func (f *fakeRunner) Cleanup(_ context.Context) error { return nil }
+
+func (f *fakeRunner) StartCapture(_ context.Context, id string) (*api.CaptureStatus, error) {
+	f.capStarted = append(f.capStarted, id)
+	return &api.CaptureStatus{Running: true, ContainerPath: "/run/hitl/capture/hci.btsnoop"}, nil
+}
+
+func (f *fakeRunner) StopCapture(_ context.Context, id string) (*api.CaptureStatus, error) {
+	f.capStopped = append(f.capStopped, id)
+	return &api.CaptureStatus{Running: false, Reason: "stopped by request"}, nil
+}
+
+func (f *fakeRunner) CaptureStatus(_ string) (*api.CaptureStatus, error) {
+	return &api.CaptureStatus{ContainerPath: "/run/hitl/capture/hci.btsnoop"}, nil
+}
 
 // fakeAP records the AP up/down toggles the manager makes around a reservation.
 type fakeAP struct {
@@ -528,5 +545,42 @@ func TestMetricsSnapshot(t *testing.T) {
 	}
 	if s.DUTsBusy != 0 || s.ActiveTotal != 0 {
 		t.Errorf("after reaping all: busy %d active %d; want 0/0", s.DUTsBusy, s.ActiveTotal)
+	}
+}
+
+// Capture control is gated on an active reservation and delegates to the runner:
+// start/stop only work on an active id, and a queued or unknown id is rejected
+// before the runner is touched.
+func TestCaptureRequiresActiveReservation(t *testing.T) {
+	ctx := context.Background()
+	fr := &fakeRunner{}
+	m := New("rig", 30*time.Minute, fr)
+	a := m.Reserve(ctx, api.ReserveRequest{Owner: "a"}) // head → active
+	b := m.Reserve(ctx, api.ReserveRequest{Owner: "b"}) // queued behind a
+
+	if _, err := m.StartCapture(ctx, a.ID); err != nil {
+		t.Fatalf("StartCapture on active reservation: %v", err)
+	}
+	if _, err := m.StopCapture(ctx, a.ID); err != nil {
+		t.Fatalf("StopCapture on active reservation: %v", err)
+	}
+	if len(fr.capStarted) != 1 || fr.capStarted[0] != a.ID {
+		t.Errorf("runner should have started capture for %s, got %v", a.ID, fr.capStarted)
+	}
+	if len(fr.capStopped) != 1 || fr.capStopped[0] != a.ID {
+		t.Errorf("runner should have stopped capture for %s, got %v", a.ID, fr.capStopped)
+	}
+
+	// A queued waiter has no container/adapter — capture must be refused without
+	// reaching the runner.
+	if _, err := m.StartCapture(ctx, b.ID); err == nil {
+		t.Error("StartCapture on a queued reservation should error")
+	}
+	// An unknown id is ErrNotFound.
+	if _, err := m.CaptureStatus("nope"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("CaptureStatus unknown id: want ErrNotFound, got %v", err)
+	}
+	if len(fr.capStarted) != 1 {
+		t.Errorf("runner capture must not be touched for a non-active id, got %v", fr.capStarted)
 	}
 }

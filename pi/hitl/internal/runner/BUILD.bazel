@@ -3,6 +3,7 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "runner",
     srcs = [
+        "capture.go",
         "podman.go",
         "runner.go",
         "usbport.go",
@@ -15,6 +16,7 @@ go_library(
 go_test(
     name = "runner_test",
     srcs = [
+        "capture_test.go",
         "podman_test.go",
         "usbport_test.go",
     ],

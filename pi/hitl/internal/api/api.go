@@ -113,6 +113,29 @@ type WiFiInfo struct {
 	PSK  string `json:"psk"`
 }
 
+// CaptureStatus is the state of a reservation's BLE HCI (btmon) capture.
+//
+// The rig has ONE Bluetooth controller shared by every DUT, so a capture
+// records all HCI monitor traffic on that controller — including other
+// concurrent reservations' BLE — for the window it runs. It is annotated by the
+// DUT's BLE MAC, not isolated to it (see pi/hitl/DESIGN.md). The capture is
+// bounded (SizeBytes is stopped at the rig's size cap, and it auto-stops after
+// the rig's max duration) and torn down when the reservation is released.
+type CaptureStatus struct {
+	// Running is true while btmon is actively capturing.
+	Running bool `json:"running"`
+	// Reason is why a stopped capture ended (e.g. "size cap reached",
+	// "max duration reached", "stopped by request", "reservation released").
+	Reason string `json:"reason,omitempty"`
+	// SizeBytes is the current btsnoop file size.
+	SizeBytes int64 `json:"size_bytes"`
+	// StartedAt is when the current/last capture began.
+	StartedAt *time.Time `json:"started_at,omitempty"`
+	// ContainerPath is where the btsnoop file is readable INSIDE the reservation
+	// container (a read-only bind mount), e.g. /run/hitl/capture/hci.btsnoop.
+	ContainerPath string `json:"container_path,omitempty"`
+}
+
 // Error is the JSON error envelope for non-2xx responses.
 type Error struct {
 	Error string `json:"error"`

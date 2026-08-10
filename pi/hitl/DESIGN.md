@@ -184,6 +184,35 @@ pieces close that gap:
   to the board" across reboots with no redeploy. `GET /analyzer/channel-map` reads
   it back. POST rejects any key that isn't a real DUT on the rig.
 
+## BLE HCI capture (btmon, FUG-93)
+
+An agent debugging BLE can capture an HCI trace of its DUT's session (`hitl btmon
+start|stop|status|fetch|capture`), read back as a btsnoop file that opens in
+`btmon -r` and Wireshark.
+
+`btmon` needs an `AF_BLUETOOTH` HCI monitor socket (`HCI_CHANNEL_MONITOR`) plus
+`CAP_NET_RAW`/`CAP_NET_ADMIN`, none of which the unprivileged reservation
+container has (and which we don't want to grant — containers are handed to
+agents). So capture runs **host-side**: the daemon (already root) runs
+`btmon -w` per reservation into that reservation's state dir, and the runner
+bind-mounts the capture dir **read-only** into the container at
+`/run/hitl/capture`. The agent reads/pulls the file over its existing SSH path;
+start/stop go through the daemon API (`POST /reservation/{id}/btmon/{start,stop}`,
+`GET …/btmon`). No capability changes anywhere.
+
+Lifecycle mirrors the rest of per-reservation state: off until `start`, bounded
+by a **size cap and a max-duration auto-stop** (a watchdog stops btmon at either,
+so it can never fill the rig disk), and **torn down on release / lease expiry**
+(the btmon process is killed and the file removed with the state dir in
+`runner.Stop`). Concurrent DUTs each get their own capture — the kernel HCI
+monitor channel is a broadcast channel, so several `btmon` readers coexist.
+
+**Shared adapter — annotated, not isolated.** Because all DUTs share the one host
+controller (below), a capture contains every DUT's BLE traffic for its window.
+This is documented plainly and the trace is **annotated** by the DUT's BLE MAC
+(`hitl btmon fetch --mac …` prints the `bluetooth.addr == <mac>` filter), not
+isolated to it. The real fix is the per-DUT BLE radio open item.
+
 ## Packaging
 
 - **Go** → `nix/packages.nix` (`buildGoModule`, `vendorHash = null` since
@@ -233,7 +262,10 @@ container is destroyed on release, so state never leaks between holders.
    shared FIFO with per-DUT slots, backward-compatible API. Raw-USB (JTAG/flash)
    isolation between concurrent containers — done (FUG-73): per-DUT private
    `/dev/bus/usb`, keyed on the stable physical port, refreshed across
-   re-enumeration. Remaining: per-DUT BLE radio; per-DUT AP.
+   re-enumeration. Host-side BLE HCI (btmon) capture per reservation — done
+   (FUG-93): bounded, torn down on release, read back as btsnoop, annotated by
+   the DUT BLE MAC (the adapter is still shared — see the caveat above).
+   Remaining: per-DUT BLE radio; per-DUT AP.
 
 ## Open items (need the hardware / decisions)
 

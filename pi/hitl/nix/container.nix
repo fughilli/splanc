@@ -288,6 +288,9 @@ let
     # ImprovBLE provisioning isn't a baked tool: the e2e harness ships its own
     # provisioner (pi/hitl/harness/hitl_improv.py) and runs it with this python3.
     hitlBle
+    # bluez also brings `btmon`: the daemon captures BLE HCI host-side and mounts
+    # the btsnoop read-only at /run/hitl/capture/hci.btsnoop, so `btmon -r` reads
+    # a live/finished capture in-container (`hitl btmon fetch` pulls it out).
     bluez
     # JTAG/debug over the C6 built-in USB-JTAG (needs the daemon's /dev/bus/usb):
     openocdEsp
