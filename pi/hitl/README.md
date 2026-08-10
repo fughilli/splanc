@@ -50,7 +50,7 @@ prints it).
 
 **Shared adapter — the trace is annotated, not isolated.** The rig has **one
 Bluetooth controller shared by every DUT** (see DESIGN.md "Open items": per-DUT
-BLE radio). A capture therefore contains *every* DUT's BLE traffic for the window
+BLE radio). A capture therefore contains _every_ DUT's BLE traffic for the window
 it runs, not just yours. `--mac` prints the Wireshark filter
 (`bluetooth.addr == <mac>`) to isolate your DUT; do not read conclusions off
 unfiltered traffic. Real isolation needs a per-DUT USB BT dongle (FUG-73-style
