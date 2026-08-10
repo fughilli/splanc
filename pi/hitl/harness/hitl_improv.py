@@ -68,6 +68,13 @@ async def find(address: str | None, name_filter: str, scan_seconds: float, name_
     response hasn't landed yet, i.e. we pounced before it settled. Re-scan for up
     to `name_wait` seconds to let the name resolve before falling back to a
     nameless hit, so we connect to a board that is actually up and advertising.
+
+    NOTE (FUG-94): this name-wait gate is defence-in-depth, NOT the deflaker. The
+    connect flake is independent of whether the name had resolved (it fails at the
+    same ~50% rate on a fully-named, settled advertisement), and in practice the
+    scan-response name resolves within ~200 ms so a name-less match is rare. The
+    `_connect` rapid-retry loop is what actually deflaked provisioning. Keep this
+    gate anyway — it's cheap and still avoids pouncing on a half-advertised board.
     """
     waited = 0.0
     nameless = None
@@ -97,14 +104,23 @@ async def find(address: str | None, name_filter: str, scan_seconds: float, name_
 async def _connect(dev, tries: int, connect_timeout: float, rescan_timeout: float = 8.0):
     """Open a BLE link to the DUT, retrying transient connect failures.
 
-    The single-core C6 shares one radio between WiFi and BLE, so the FIRST
-    connect right after a (re)boot frequently times out — the CONNECT_REQ is
-    dropped while the coexistence bring-up hogs the radio. bleak's default 10s
-    connect timeout then gives up, and rebooting the board to try again is both
-    slow and itself a coin flip (observed: 3 reboot-gated retries all lost).
-    Retrying the connect RAPIDLY — same boot, no reboot — rides out that window
-    far more reliably and cheaply. Returns a connected BleakClient or raises the
-    last transport error after `tries` attempts.
+    The FIRST connect to a freshly-(re)booted C6 fails ~half the time with a
+    message-less connect timeout (bleak gives up after `connect_timeout` and the
+    link never reaches connected=True). This is a TRANSIENT, PER-ATTEMPT BLE
+    connection-establishment failure — NOT a WiFi/BLE-coexistence effect. Measured
+    on the erase-fs first-provision boot (FUG-94), where there is NO WiFi
+    association to contend with (`WiFi.begin` is gated off with no stored creds —
+    only an idle soft-AP beacons): the failure rate is ~50% AND is independent of
+    how long the board has been advertising — a fully-settled, name-resolved board
+    at ~8 s post-advertising still fails at the same rate. So retrying RAPIDLY
+    within one boot rides it out, while reboot-gated single tries do not (a reboot
+    just re-rolls the same per-attempt coin; observed originally: 3 reboot-gated
+    retries all lost). THIS RETRY LOOP is the load-bearing half of the FUG-61 fix —
+    find()'s name-wait gate is cheap defence-in-depth, not the deflaker, so don't
+    "simplify" this loop away. Returns a connected BleakClient or raises the last
+    transport error after `tries` attempts. The link-level mechanism (peripheral
+    CONNECT_IND unanswered vs a central/BlueZ stall on the shared host adapter) is
+    unconfirmed pending HCI capture — see the FUG-94 entry in pi/hitl/WORKLOG.md.
 
     Each retry RE-DISCOVERS the device by address: after a failed connect BlueZ
     drops the device object from its cache, so reusing the same handle raises

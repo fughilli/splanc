@@ -63,9 +63,10 @@ def _run_provisioner(
     if address:
         cmd += f" --address {address}"
     # The provisioner now retries the BLE connect several times WITHIN one call
-    # (hitl_improv._connect — the first connect to a freshly-booted C6 routinely
-    # times out during WiFi/BLE-coexistence bring-up), so a single call can spend
-    # ~scan + N*connect_timeout + join before it reports. Give the ssh a budget
+    # (hitl_improv._connect — the first connect to a freshly-booted C6 fails ~half
+    # the time with a per-attempt connect timeout; see FUG-94), so a single call
+    # can spend ~scan + N*connect_timeout + join before it reports. Give the ssh a
+    # budget
     # that comfortably covers that worst case rather than the old timeout+60.
     proc = res.ssh(cmd, capture=True, timeout=timeout + 180)
     out = (proc.stdout or "").strip()
@@ -118,11 +119,17 @@ def provision_dut(
 ) -> str:
     """Provision the DUT onto WiFi over ImprovBLE; return its redirect URL.
 
-    The WiFi association is intermittently flaky on real hardware (RF + the
-    single-core C6's WiFi/BLE coexistence): the board occasionally fails to join
-    within the window. On a join-timeout the firmware clears the just-tried
-    credentials and returns to AUTHORIZED, so re-sending them is a clean retry —
-    bounded, so a genuinely bad credential / unreachable AP still fails.
+    Two distinct flakes are bounded here. (1) The BLE CONNECT itself is
+    intermittently unreliable on a freshly-booted C6 — a transient, per-attempt
+    connection-establishment failure (NOT WiFi/BLE coexistence: on the erase-fs
+    first-provision boot there is no WiFi association at all, only an idle soft-AP;
+    measured ~50% first-connect timeouts, independent of advertising-settle time —
+    see FUG-94 in WORKLOG.md). That is absorbed by hitl_improv._connect's rapid
+    in-attempt retries; the reset+retry loop below is the last-resort backstop.
+    (2) The WiFi ASSOCIATION is separately flaky on real RF: the board occasionally
+    fails to join within the window. On a join-timeout the firmware clears the
+    just-tried credentials and returns to AUTHORIZED, so re-sending them is a clean
+    retry — bounded, so a genuinely bad credential / unreachable AP still fails.
 
     We pin the scan to the reserved board's BLE MAC (read from its own serial)
     so provisioning can never latch onto a stray Improv board in RF range — a
