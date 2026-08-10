@@ -13,6 +13,7 @@ exclude: |
     web/src/gen/ledmapper_pb\.ts|
     docs/design/.*\.md|
     web/tests/golden_.*\.json|
+    patches/.*\.patch|
     pnpm-lock\.yaml|
     requirements\.lock
   )$
