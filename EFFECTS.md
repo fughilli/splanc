@@ -359,6 +359,12 @@ over-predicts the cheapest ones; the software estimator test
 the calibration methodology live in
 [`docs/design/perf-monitoring.md`](./docs/design/perf-monitoring.md).
 
+The full per-platform numbers — fitted opcode costs (cycles + ns), the estimator's
+held-out predicted-vs-measured accuracy, and every raw measured benchmark — are
+auto-generated from the goldens into
+[`docs/fx-vm-performance.md`](./docs/fx-vm-performance.md) and pinned by a CI freshness
+gate (`bazel run //web:gen_fx_vm_perf_doc` to regenerate).
+
 These costs are the target of an ongoing FX-VM hill-climb (see `WORKLOG.md`):
 sin/cos are now compile-time LUTs and `hash` is an integer bit-mix, which is why
 they land far below the other transcendentals. A practical consequence of the
