@@ -175,6 +175,7 @@ product_requirements:
       uniform-driven effect workflows.
     satisfies: [UN-3]
     modules: [tools, web]
+    verified_by: ['//tools/touchdesigner/stream_bench:stream_bench_test']
 
   - id: PR-11
     title: Capture, reconstruct, upload, import/export and conflict handling
