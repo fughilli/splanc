@@ -53,3 +53,7 @@ venv/
 .idea/
 .vscode/
 /traces/
+
+# --- Site Docs -----------------------------------------------------------
+# Generated site docs (bazel run //docs:build)
+/docs/site/
