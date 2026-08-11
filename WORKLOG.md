@@ -30,9 +30,22 @@ A single-target, regenerable Sphinx site for the whole project.
   `myst-parser`, `furo`, `sphinx-copybutton`, `sphinx-design`,
   `sphinxcontrib-mermaid`, `matplotlib`. Recorded in `docs/decisions.md`.
 
-**Note for the maintainer:** the built site lands in `docs/site/` (untracked,
-generated). It should be added to `.gitignore` — the fleet worker isn't permitted
-to edit `.gitignore`, so that one line is left for a human.
+**Review round 2 (Kevin) — publish + in-app entry:**
+
+- **Published on the deployed sites.** `web/stage_site.lib.sh` now stages the
+  Sphinx site at `/docs/` (env-driven via `LEDMAPPER_DOCS_SITE`, exactly like the
+  firmware bundle). CI (`.github/workflows/test.yaml`) runs `bazel run
+//docs:build` and points staging at it in the `build-site` job (covers the
+  GitHub Pages preview + prod via the shared `_site` artifact) and again in
+  `deploy-production` for the Cloudflare re-stage. Verified locally: `stage_site`
+  produces `_site/docs/index.html` + figures alongside the app.
+- **In-app entry.** The About screen is now tabbed (`web/src/ui/screens/about.ts`):
+  an **About** tab (existing content) and a **Documentation** tab with two links —
+  the developer docs (Sphinx, linked via `assetUrl("docs/index.html")` so it
+  resolves at every origin) and a "Coming soon" placeholder for the user guide
+  (FUG-103). A new **Docs** entry in the ⋯ menu deep-links to that tab
+  (`/about?tab=docs`). `bazel test //...` green (99/99).
+- Kevin pushed the `.gitignore` entry for `/docs/site/` (merged in).
 
 ## FX VM hill-climb + effects-AI (branch `kbalke/vm-hill-climb`)
 
