@@ -24,5 +24,5 @@ bazel build //fx_compiler:fx_compiler_web
 The language, the `.fxb` container format, the opcode set, and the VM that runs
 the output are all documented in {doc}`../EFFECTS`. The design rationale — why a
 single-pass compiler, how types and uniforms are handled — is in
-{doc}`../design/effects-compiler`, and the execution model it targets in
-{doc}`../design/effects-runtime`.
+{doc}`../docs/design/effects-compiler`, and the execution model it targets in
+{doc}`../docs/design/effects-runtime`.

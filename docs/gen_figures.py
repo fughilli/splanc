@@ -65,9 +65,8 @@ def fixtures_gallery(out: Path) -> Path:
         _style_3d(ax, pts)
         ax.view_init(elev=22, azim=-60)
     fig.suptitle("Built-in fixtures — the shapes reconstruction must recover", y=0.98)
-    fig.tight_layout(rect=(0, 0, 1, 0.97))
     path = out / "fixtures.png"
-    fig.savefig(path, dpi=130)
+    fig.savefig(path, dpi=130, bbox_inches="tight")
     plt.close(fig)
     return path
 
@@ -167,9 +166,8 @@ def reconstruction_accuracy(out: Path) -> Path:
     ax2.spines[["top", "right"]].set_visible(False)
 
     fig.suptitle("Reconstruction accuracy on synthetic ground truth", y=1.0)
-    fig.tight_layout()
     path = out / "reconstruction.png"
-    fig.savefig(path, dpi=130)
+    fig.savefig(path, dpi=130, bbox_inches="tight")
     plt.close(fig)
     return path
 

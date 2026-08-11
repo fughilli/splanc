@@ -48,4 +48,4 @@ bazel test //firmware/fx_vm:fx_vm_test
 ```
 
 Flashing runs from a host with the board attached — see {doc}`../DEVELOPERS`
-(HITL) and the on-device details in {doc}`../design/mbedtls-dynamic-buffers`.
+(HITL) and the on-device details in {doc}`../docs/design/mbedtls-dynamic-buffers`.

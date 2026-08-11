@@ -16,17 +16,17 @@ solver, and the original **Raspberry Pi** path that the design grew out of.
 ```{mermaid}
 flowchart LR
     subgraph Phone["📱 Phone — the PWA (web/)"]
-        cam["Camera + IMU\n(getUserMedia + DeviceMotion)"]
-        cv["CV pipeline\ndetect · track · decode"]
-        editor["Effects editor\n+ in-browser VM preview"]
+        cam["Camera + IMU<br/>(getUserMedia + DeviceMotion)"]
+        cv["CV pipeline<br/>detect · track · decode"]
+        editor["Effects editor<br/>+ in-browser VM preview"]
         cam --> cv
     end
 
     subgraph Ctrl["🔌 Controller — firmware (firmware/)"]
-        pat["Hue-code pattern\ngenerator"]
-        leds["WS2812B LEDs\n(RMT peripheral)"]
-        vm["Effects VM\n(fx_vm)"]
-        wss["Control server\nws:// + wss://"]
+        pat["Hue-code pattern<br/>generator"]
+        leds["WS2812B LEDs<br/>(RMT peripheral)"]
+        vm["Effects VM<br/>(fx_vm)"]
+        wss["Control server<br/>ws:// + wss://"]
         pat --> leds
         vm --> leds
         wss --> vm
@@ -36,7 +36,7 @@ flowchart LR
     cv -- "detection records (wss)" --> wss
     editor -- ".fxb bytecode + uniforms (wss)" --> wss
 
-    solve["Solver\n(reconstruction / VIO)"]
+    solve["Solver<br/>(reconstruction / VIO)"]
     cv --> solve
     solve -- "per-LED xyz map" --> editor
 ```
@@ -137,22 +137,23 @@ places: on the ESP32-C6, as wasm in the browser preview, and in the host tests.
 
 ```{mermaid}
 flowchart LR
-    src["effect source\n(.fx, GLSL-ish)"]
-    comp["fx_compiler\n(single-pass → .fxb)"]
-    fxb[".fxb container\nbytecode + uniform manifest"]
+    src["effect source<br/>(.fx, GLSL-ish)"]
+    comp["fx_compiler<br/>(single-pass → .fxb)"]
+    fxb[".fxb container<br/>bytecode + uniform manifest"]
     subgraph vm["fx_vm — one VM, three hosts"]
-        c6["ESP32-C6\n(on device)"]
-        wasm["wasm\n(browser preview)"]
-        host["host\n(golden tests)"]
+        c6["ESP32-C6<br/>(on device)"]
+        wasm["wasm<br/>(browser preview)"]
+        host["host<br/>(golden tests)"]
     end
     map["per-LED xyz map"]
     src --> comp --> fxb --> vm
     map --> vm
-    vm --> out["per-LED RGB\nevery frame"]
+    vm --> out["per-LED RGB<br/>every frame"]
 ```
 
 The compiler and VM are covered in depth in {doc}`EFFECTS`, with the design
-rationale in {doc}`design/effects-runtime` and {doc}`design/effects-compiler`,
+rationale in {doc}`docs/design/effects-runtime` and
+{doc}`docs/design/effects-compiler`,
 and measured on-device numbers in {doc}`docs/fx-vm-performance`.
 
 ## Where to go next

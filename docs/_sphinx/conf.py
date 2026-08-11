@@ -30,7 +30,6 @@ myst_enable_extensions = [
     "deflist",
     "fieldlist",
     "html_image",  # <img ...> in the existing README/design docs
-    "linkify",  # bare URLs -> links
     "substitution",
     "tasklist",
 ]

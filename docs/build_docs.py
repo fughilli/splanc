@@ -24,8 +24,12 @@ import sys
 import tempfile
 from pathlib import Path
 
-import gen_figures
-from sphinx.cmd.build import main as sphinx_main
+# ``gen_figures`` is a sibling src; make it importable regardless of how the
+# py_binary lays out runfiles.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import gen_figures  # noqa: E402
+from sphinx.cmd.build import main as sphinx_main  # noqa: E402
 
 # Root markdown folded into the site as-is (staged at the mirror root).
 ROOT_MD = [
