@@ -22,6 +22,10 @@ Start with the durable design and reference docs before changing subsystems:
     language and compiler.
   - [`perf-monitoring.md`](./docs/design/perf-monitoring.md) — the performance
     model, calibration, and how device profiles are fit.
+  - [`fx-vm-performance.md`](./docs/fx-vm-performance.md) — **auto-generated**
+    per-platform FX-VM performance (fitted opcode costs, estimator accuracy, raw
+    measured cycles) from the HITL goldens; regenerate with
+    `bazel run //web:gen_fx_vm_perf_doc` (CI freshness-gates it — never edit by hand).
   - [`mbedtls-dynamic-buffers.md`](./docs/design/mbedtls-dynamic-buffers.md) — the
     TLS-on-C6 memory work (dynamic record buffers, EC cert).
   - [`app-ux-overhaul.md`](./docs/design/app-ux-overhaul.md) — the PWA UX design.
@@ -266,6 +270,12 @@ The measured bundle also feeds the browser device-profile fit
 [`EFFECTS.md → Performance`](./EFFECTS.md#performance-on-the-esp32-c6) for the
 representative numbers and [`docs/design/perf-monitoring.md`](./docs/design/perf-monitoring.md)
 for methodology.
+
+The same bundle also generates [`docs/fx-vm-performance.md`](./docs/fx-vm-performance.md)
+(fitted opcode costs + estimator accuracy per platform). Regenerating a golden — or any
+change that moves the fitted numbers — requires re-pinning that doc with
+`bazel run //web:gen_fx_vm_perf_doc`, or `bazel test //...` fails on the freshness gate
+(`//web:fx_vm_perf_doc_freshness`, mirroring `//shared/protocol:codegen_freshness`).
 
 ### CI wiring
 

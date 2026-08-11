@@ -177,6 +177,49 @@ js_binary(
     entry_point = ":dist-test/tests/tools/fitDeviceProfile.js",
 )
 
+# Auto-generate docs/fx-vm-performance.md from the golden HITL benchmark bundles
+# (FUG-95), reusing the same buildDeviceProfile + validateCostModel cost model
+# the app and the hardware-validation test use. Regenerate the checked-in doc:
+#   bazel run //web:gen_fx_vm_perf_doc
+# (writes into the source tree via $BUILD_WORKSPACE_DIRECTORY). The freshness
+# genrule below runs it with --check under `bazel test //...`.
+js_binary(
+    name = "gen_fx_vm_perf_doc",
+    data = [
+        ":dist_test_pkg_json",
+        ":web_tests_js",
+    ],
+    entry_point = ":dist-test/tests/tools/genFxVmPerfDoc.js",
+)
+
+# The golden HITL benchmark bundles the perf doc is generated from (one per
+# platform; only esp32c6 today). A filegroup so the freshness genrule can pass
+# every bundle to the generator regardless of how many platforms exist.
+filegroup(
+    name = "device_bench_goldens",
+    srcs = glob(["tests/testdata/device-bench-*.json"]),
+)
+
+# Freshness gate mirroring //shared/protocol:codegen_freshness: regenerate the
+# perf doc in memory and diff it against the checked-in copy, failing the build
+# if a VM/cost-model/golden change moved the numbers without a re-pin. `bazel
+# test //...` (and CI) builds this, so the doc can't silently drift.
+genrule(
+    name = "fx_vm_perf_doc_freshness",
+    srcs = [
+        ":device_bench_goldens",
+        "//:docs/fx-vm-performance.md",
+    ],
+    outs = ["fx_vm_perf_doc_freshness.stamp"],
+    # BAZEL_BINDIR=. lets the aspect_rules_js js_binary launcher run out of the
+    # execroot root inside this build action (it otherwise refuses); see the
+    # rules_js note the launcher prints without it.
+    cmd = "BAZEL_BINDIR=. $(execpath :gen_fx_vm_perf_doc) --check " +
+          "--out $(location //:docs/fx-vm-performance.md) " +
+          "$(locations :device_bench_goldens) && touch $@",
+    tools = [":gen_fx_vm_perf_doc"],
+)
+
 # Production bundle. vite resolves the config's own `import "vite"` and the
 # workspace protocol package through the linked node_modules. NOTE: the Vite
 # action runs unsandboxed via `--strategy=Vite=local` in .bazelrc — see the
