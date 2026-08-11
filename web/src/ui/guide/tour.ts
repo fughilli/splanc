@@ -121,6 +121,9 @@ export function maybeShowFirstRunHint(router: Router): void {
     body: "Take a 60-second tour of the main features. You can restart it any time from Settings.",
     label: "Take a tour",
     align: "left",
+    // The anchor sits just above the tab bar at the bottom of the viewport, so
+    // open the bubble upward — otherwise it renders off the bottom edge.
+    direction: "up",
     defaultOpen: true,
     action: {
       label: "Take a tour",
