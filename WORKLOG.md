@@ -5,6 +5,35 @@ scan back for context. The dated sections toward the bottom were migrated out of
 `README.md` (now a user-facing intro; see `DEVELOPERS.md` for contributing) and
 are kept as historical record.
 
+## Developer docs — Sphinx site (FUG-104, branch `agent/fug-104-build-out-developer-docs`)
+
+A single-target, regenerable Sphinx site for the whole project.
+
+**Done (committed, `bazel run //docs:build` verified clean — 0 warnings):**
+
+- **`//docs:build`** (`docs/build_docs.py`) regenerates _everything_ in one shot:
+  it renders the figures/animations from the real `shared/simulator` →
+  `pi/reconstruction` code path, then runs Sphinx into `docs/site/html/`. It
+  stages a source tree that **mirrors the repo layout** so the relative links
+  between the existing markdown docs keep resolving, and reads doc content live
+  from `$BUILD_WORKSPACE_DIRECTORY` (same idiom as `//web:gen_fx_vm_perf_doc`).
+  `//docs:serve` previews it; `//docs:gen_figures` renders figures standalone.
+- **Content**: MyST folds the existing markdown in as-is (`README`, `DEVELOPERS`,
+  `EFFECTS`, `led-mapper-design`, all of `docs/`, and the `web`/`solver`/
+  `sim_studio` READMEs). New hand-written pages under `docs/_sphinx/`: a landing
+  page (sphinx-design cards), an **architecture** page with mermaid dataflow /
+  sequence / effects diagrams, and a per-subsystem tour (`subsystems/*`).
+- **Generated visuals** (`docs/gen_figures.py`, deterministic, no browser): the
+  fixture gallery, a synthetic camera-walk **GIF**, and a reconstruction-accuracy
+  figure (96/96 LEDs, ~2mm RMS on a helix) — all from the real solver path.
+- **Toolchain** added to `requirements.in`/`.lock` (relocked): `sphinx`,
+  `myst-parser`, `furo`, `sphinx-copybutton`, `sphinx-design`,
+  `sphinxcontrib-mermaid`, `matplotlib`. Recorded in `docs/decisions.md`.
+
+**Note for the maintainer:** the built site lands in `docs/site/` (untracked,
+generated). It should be added to `.gitignore` — the fleet worker isn't permitted
+to edit `.gitignore`, so that one line is left for a human.
+
 ## FX VM hill-climb + effects-AI (branch `kbalke/vm-hill-climb`)
 
 Making effect programs cheaper on the FPU-less ESP32-C6 (RV32IMAC, no FPU → all
