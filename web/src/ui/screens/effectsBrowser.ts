@@ -16,8 +16,7 @@ import { EffectPreviewTiles } from "./effectPreviewTiles";
 import { appendGrouped, openFolderPicker } from "./folders";
 import { openDebugServerSheet } from "./debugServerSheet";
 import { scanQr, qrScanSupported } from "./qrScan";
-import { openAiKeySheet } from "./aiKeySheet";
-import { getApiKey } from "../../effects/ai/generate";
+import { isAiConfigured } from "../../effects/ai/provider";
 import { setTabMenuItems } from "../app/tabMenu";
 import { prefs } from "../../store/prefs";
 import { getAppearance } from "../../store/appearance";
@@ -78,14 +77,14 @@ export function EffectsBrowserScreen(router: Router): Screen {
     aiTip?.close();
     aiTip = null;
     aiHelp.replaceChildren();
-    if (getApiKey()) return; // key configured → nothing to prompt
+    if (isAiConfigured()) return; // a provider configured → nothing to prompt
     if (prefs.getAiHintDismissed()) return; // user dismissed it once → gone for good
     const tip = HelpTip({
       label: "About AI generation",
       title: "AI generation",
-      body: "Generate effects from a text prompt with your own Anthropic API key — stored only in this browser and sent directly to Anthropic.",
+      body: "Generate effects and map MIDI from a text prompt. Use your own Anthropic API key, a local model server (Ollama/LM Studio), or an in-browser WebGPU model — everything runs on your device.",
       align: "right",
-      // First-run hint: no key configured yet, so surface it expanded on arrival
+      // First-run hint: nothing configured yet, so surface it expanded on arrival
       // rather than hiding it behind a "?" the user has to discover.
       defaultOpen: true,
       // Once the user dismisses it (outside tap / Escape / tapping "?"), record
@@ -95,9 +94,11 @@ export function EffectsBrowserScreen(router: Router): Screen {
         renderAiHelp();
       },
       action: {
-        label: "Add AI key",
+        label: "Set up AI",
         icon: "sparkles",
-        onClick: () => openAiKeySheet(() => renderAiHelp()),
+        onClick: () => {
+          location.hash = "#/settings/ai";
+        },
       },
     });
     aiTip = tip;

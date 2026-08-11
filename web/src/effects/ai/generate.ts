@@ -13,26 +13,55 @@
 
 import type { FxDiagnostic } from "../../fx/preview";
 import { OUTPUT_SCHEMA, SYSTEM_PROMPT } from "./system-prompt";
+import {
+  getAiConfig,
+  updateAiConfig,
+  DEFAULT_ANTHROPIC_MODEL,
+  type AiProvider,
+  type ChatMessage,
+  type ContentBlock,
+} from "./provider";
+import { makeAnthropicProvider } from "./providers/anthropic";
+import { makeOpenAiProvider } from "./providers/openaiCompat";
+import { makeWebLlmProvider } from "./providers/webllm";
+
+// Re-export the neutral wire types so existing importers keep their paths.
+export type { ChatMessage, ContentBlock } from "./provider";
 
 const API_URL = "https://api.anthropic.com/v1/messages";
-const MODEL = "claude-opus-4-8";
-const KEY_STORAGE = "ledmapper.anthropicKey";
+const MODEL = DEFAULT_ANTHROPIC_MODEL;
 
-/** Read/write the BYO Anthropic key (localStorage; single-user self-host). */
-export function getApiKey(): string | null {
-  try {
-    return localStorage.getItem(KEY_STORAGE);
-  } catch {
-    return null;
+/**
+ * Build the provider selected in the AI config (FUG-87). Instantiated per call
+ * so config edits — switching provider, changing key/endpoint/model — take
+ * effect on the very next turn with no extra wiring.
+ */
+export function activeProvider(): AiProvider {
+  const cfg = getAiConfig();
+  if (cfg.kind === "local") return makeOpenAiProvider(cfg.local);
+  if (cfg.kind === "webllm") return makeWebLlmProvider(cfg.webllm);
+  // cloud: Anthropic uses its native API; every other vendor is served through
+  // the OpenAI-compatible client pointed at that vendor's endpoint.
+  const v = cfg.cloud.vendors[cfg.cloud.vendor];
+  if (cfg.cloud.vendor === "anthropic") {
+    return makeAnthropicProvider({ key: v.key, model: v.model });
   }
+  return makeOpenAiProvider({ baseUrl: v.baseUrl, key: v.key, model: v.model, vision: false });
+}
+
+/** Read/write the BYO Anthropic key. Kept for back-compat (older callers); now
+ * backed by the unified AI config (the cloud "anthropic" vendor). */
+export function getApiKey(): string | null {
+  const k = getAiConfig().cloud.vendors.anthropic.key;
+  return k ? k : null;
 }
 export function setApiKey(key: string): void {
-  try {
-    if (key) localStorage.setItem(KEY_STORAGE, key);
-    else localStorage.removeItem(KEY_STORAGE);
-  } catch {
-    // storage unavailable — generation just won't have a key
-  }
+  const cfg = getAiConfig();
+  const vendors = {
+    ...cfg.cloud.vendors,
+    anthropic: { ...cfg.cloud.vendors.anthropic, key },
+  };
+  updateAiConfig({ cloud: { ...cfg.cloud, vendors } });
 }
 
 /** One conversation turn kept in the workspace so follow-ups refine. */
@@ -242,25 +271,8 @@ function parseResult(json: string): GenerateResult {
 // direct-browser CORS, BYO key).
 // =============================================================================
 
-/** A content block in an Anthropic message (the subset we produce/consume). */
-export type ContentBlock =
-  | { type: "text"; text: string }
-  | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> }
-  | {
-      type: "tool_result";
-      tool_use_id: string;
-      content: (
-        | { type: "text"; text: string }
-        | { type: "image"; source: { type: "base64"; media_type: string; data: string } }
-      )[];
-      is_error?: boolean;
-    };
-
-/** A full conversation message (chat history is an array of these). */
-export interface ChatMessage {
-  role: "user" | "assistant";
-  content: string | ContentBlock[];
-}
+// ContentBlock + ChatMessage — the neutral wire types — now live in provider.ts
+// (shared by every provider) and are re-exported from this module's top.
 
 /** The tool the model calls to replace the editor script. */
 export interface SetScriptCall {
@@ -431,53 +443,6 @@ function dataUrlToImageBlock(dataUrl: string): {
   return { type: "image", source: { type: "base64", media_type, data } };
 }
 
-async function messagesRequest(
-  messages: ChatMessage[],
-  tools: readonly unknown[],
-  signal?: AbortSignal,
-  deviceCosts?: string,
-): Promise<{
-  content: ContentBlock[];
-  stop_reason: string | null;
-}> {
-  const key = getApiKey();
-  if (!key) throw new Error("no Anthropic API key set (add one in AI settings)");
-  // Frozen cacheable prefix first (caching engages across turns), then an
-  // UNcached per-device builtin-cost block so it can vary by board without
-  // busting the cache.
-  const system: unknown[] = [
-    { type: "text", text: CHAT_SYSTEM, cache_control: { type: "ephemeral" } },
-  ];
-  if (deviceCosts) system.push({ type: "text", text: deviceCosts });
-  const resp = await fetch(API_URL, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      "x-api-key": key,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true",
-    },
-    signal: signal ?? null,
-    body: JSON.stringify({
-      model: MODEL,
-      max_tokens: 4000,
-      thinking: { type: "adaptive" },
-      system,
-      tools,
-      messages: messages.map((m) => ({ role: m.role, content: m.content })),
-    }),
-  });
-  if (!resp.ok) {
-    const body = await resp.text().catch(() => "");
-    throw new Error(`Anthropic API ${resp.status}: ${body.slice(0, 300)}`);
-  }
-  const json = (await resp.json()) as {
-    content?: ContentBlock[];
-    stop_reason?: string | null;
-  };
-  return { content: json.content ?? [], stop_reason: json.stop_reason ?? null };
-}
-
 /** Assemble the always-included editor context block for a user turn: the
  * current source + latest compile result (+ disassembly when present). */
 export function editorContext(opts: {
@@ -506,20 +471,31 @@ export async function chatTurn(
 ): Promise<string> {
   let finalText = "";
   const MAX_ROUNDS = 8; // hard cap so a misbehaving loop can't run forever
-  // Advertise the optional tools only when the editor can fulfill them.
-  const tools = [
-    ...TOOLS,
-    ...(hooks.onEstimatePerformance ? PERF_TOOLS : []),
-    ...(hooks.onListMidi && hooks.onSetMidiMapping ? MIDI_TOOLS : []),
-  ];
+  const provider = activeProvider();
+  const caps = provider.capabilities;
+  // Advertise only tools the active provider can fulfill: withhold the vision
+  // `capture_preview` when the model can't see images, and every tool when the
+  // provider has no tool-calling at all (the chat then runs plain-text only).
+  const baseTools = caps.vision
+    ? TOOLS
+    : TOOLS.filter((t) => t.name !== "capture_preview");
+  const tools = caps.tools
+    ? [
+        ...baseTools,
+        ...(hooks.onEstimatePerformance ? PERF_TOOLS : []),
+        ...(hooks.onListMidi && hooks.onSetMidiMapping ? MIDI_TOOLS : []),
+      ]
+    : [];
   for (let round = 0; round < MAX_ROUNDS; round++) {
     hooks.onThinking?.();
-    const { content, stop_reason } = await messagesRequest(
-      history,
+    const { content, stop_reason } = await provider.send(history, {
+      // #65: append the per-device builtin-cost block (effects-AI perf awareness)
+      // to the system prompt. Kept as one string so every provider carries it
+      // (the Anthropic provider still caches the whole system block).
+      system: deviceCosts ? `${CHAT_SYSTEM}\n\n${deviceCosts}` : CHAT_SYSTEM,
       tools,
-      hooks.signal,
-      deviceCosts,
-    );
+      signal: hooks.signal,
+    });
     history.push({ role: "assistant", content });
 
     // Surface any assistant text.

@@ -39,10 +39,10 @@ import { complete, type CompletionItem } from "../../effects/editor/completions"
 import {
   chatTurn,
   editorContext,
-  getApiKey,
   type ChatMessage,
   type MidiMappingCall,
 } from "../../effects/ai/generate";
+import { isAiConfigured } from "../../effects/ai/provider";
 import { resolveFleetTargets } from "../../effects/fleet";
 import { estimateAcrossDevices, describeFleet } from "../../effects/multiDevice";
 import { estimateFrameTime, DEFAULT_BUDGET_MODEL, type BudgetModel } from "../../effects/costModel";
@@ -61,8 +61,8 @@ import { appState } from "../app/state";
 import { Button, IconButton, icon, toast, type IconName } from "../kit";
 import { FxLayout } from "../../effects/editor/layout";
 import { VideoTexturePanel } from "../../effects/editor/videoTexture";
-import { openAiKeySheet } from "./aiKeySheet";
 import { renderMarkdown } from "../markdown";
+import { loadChat, saveChat, clearChat, type ChatTranscriptEntry } from "../../store/chatStore";
 import type { Router, Screen } from "../app/router";
 
 const COMPILE_DEBOUNCE_MS = 300;
@@ -101,7 +101,12 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   let lastDisassembly = "";
   let lastBytecode: Uint8Array | null = null;
   let chatBusy = false;
-  const chatHistory: ChatMessage[] = [];
+  // Chat persists per effect across navigation (restored below; saved each turn;
+  // cleared only via "New chat"). `history` is the API conversation; `transcript`
+  // is the visible bubble log.
+  const chatSnapshot = loadChat(effectId);
+  const chatHistory: ChatMessage[] = chatSnapshot.history;
+  const transcript: ChatTranscriptEntry[] = chatSnapshot.transcript;
   let raf = 0;
   let disposed = false;
 
@@ -546,7 +551,8 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     }
   });
 
-  function appendChat(role: "user" | "assistant" | "tool", text: string): HTMLElement {
+  /** Render one bubble into the log (no persistence — used for live + replay). */
+  function renderMsg(role: "user" | "assistant" | "tool", text: string): HTMLElement {
     if (chatHint.isConnected) chatHint.remove();
     const row = document.createElement("div");
     row.className = `fxedit-msg fxedit-msg--${role}`;
@@ -564,6 +570,30 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     chatLog.scrollTop = chatLog.scrollHeight;
     return row;
   }
+
+  /** Append a bubble AND record it in the persisted transcript. */
+  function appendChat(role: "user" | "assistant" | "tool", text: string): HTMLElement {
+    transcript.push({ role, text });
+    return renderMsg(role, text);
+  }
+
+  /** Persist the running conversation + visible transcript for this effect. */
+  function persistChat(): void {
+    saveChat(effectId, { history: chatHistory, transcript });
+  }
+
+  /** Clear the conversation (in memory, on screen, and in storage). */
+  function resetChat(): void {
+    if (chatBusy) return;
+    chatHistory.length = 0;
+    transcript.length = 0;
+    clearChatStatus();
+    chatLog.replaceChildren(chatHint); // restore the first-run hint
+    clearChat(effectId);
+  }
+
+  // Restore any saved transcript for this effect (chat survives navigation).
+  for (const entry of transcript) renderMsg(entry.role, entry.text);
 
   // A live "what the model is doing" indicator (spinner + phase label), shown at
   // the foot of the log while a turn runs and updated as phases change.
@@ -692,10 +722,18 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   const miKey = document.createElement("button");
   miKey.type = "button";
   miKey.className = "fxedit-menu-item";
-  miKey.textContent = "AI key…";
+  miKey.textContent = "AI settings…";
   miKey.addEventListener("click", () => {
     closeMenu();
-    openAiKeySheet();
+    location.hash = "#/settings/ai";
+  });
+  const miNewChat = document.createElement("button");
+  miNewChat.type = "button";
+  miNewChat.className = "fxedit-menu-item";
+  miNewChat.textContent = "New chat";
+  miNewChat.addEventListener("click", () => {
+    resetChat();
+    closeMenu();
   });
   const miFormat = document.createElement("button");
   miFormat.type = "button";
@@ -737,7 +775,7 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
       miRecall.appendChild(it);
     }
   }
-  menu.append(miKey, miFormat, miReset, miRecall);
+  menu.append(miKey, miNewChat, miFormat, miReset, miRecall);
 
   // Auto-format (re-indent) the buffer, keeping the caret at roughly the same
   // logical spot (measured in non-whitespace characters, which the reformat
@@ -1005,10 +1043,10 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   async function runChat(): Promise<void> {
     const ask = chatInput.value.trim();
     if (!ask) return;
-    // Keep the typed text if there's no key yet (the sheet opens; sending again
-    // after setting a key preserves the ask).
-    if (!getApiKey()) {
-      openAiKeySheet();
+    // Keep the typed text if AI isn't set up yet (settings open; sending again
+    // after configuring a provider preserves the ask).
+    if (!isAiConfigured()) {
+      location.hash = "#/settings/ai";
       return;
     }
     chatInput.value = "";
@@ -1099,9 +1137,9 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   /** Shared body: ground the turn in the editor context, run the tool loop. */
   async function submitChat(ask: string, opts: { label?: string } = {}): Promise<void> {
     if (chatBusy) return;
-    if (!getApiKey()) {
-      // No key yet — prompt via the same sheet the ⋯ menu opens.
-      openAiKeySheet();
+    if (!isAiConfigured()) {
+      // AI not set up yet — send them to the provider settings the ⋯ menu opens.
+      location.hash = "#/settings/ai";
       return;
     }
     appendChat("user", opts.label ?? ask);
@@ -1174,6 +1212,7 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
       chatBusy = false;
       chatSend.disabled = false;
       chatLog.scrollTop = chatLog.scrollHeight;
+      persistChat(); // survive navigation; only "New chat" clears it
     }
   }
 
@@ -1303,7 +1342,8 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   previewBody.className = "fxedit-previewbody";
   previewBody.append(canvas, previewOverlay);
 
-  // Chat pane content.
+  // Chat pane content. "New chat" (clear the persisted conversation) lives in the
+  // ⋯ overflow menu rather than taking vertical space here.
   const chatBody = document.createElement("div");
   chatBody.className = "fxedit-chatbody";
   chatBody.append(chatLog, chatInputWrap);
