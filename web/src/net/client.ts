@@ -512,6 +512,22 @@ export class LedMapperClient {
     )) as unknown as WelcomeMessage;
   }
 
+  /** Set the global output brightness — a single scale (0..1) applied to every
+   * rendered LED just before the strip write (1.0 = the effect's own output).
+   * Runtime-only on the device (a reboot returns to full brightness). Used as a
+   * master dimmer and by the performance-measurement driver, which sets it to 0
+   * while it runs the calibration effects (so a fixture on a low-ampacity supply
+   * doesn't brown out and drop its link) and restores the user setpoint after.
+   * Reply: welcome (echoes the applied brightness). */
+  async setBrightness(brightness: number): Promise<WelcomeMessage> {
+    const b = Math.min(1, Math.max(0, brightness));
+    const msg: Record<string, unknown> = { type: "set_brightness", brightness: b };
+    return (await this.request(
+      msg as unknown as ClientMessage,
+      "welcome",
+    )) as unknown as WelcomeMessage;
+  }
+
   /** Stream a video frame into a loaded effect's 2D texture. Build the message
    * with the textureCodec (quantize + optional XOR-delta + RLE); fire-and-forget
    * so a high frame rate isn't gated on a round trip. Returns false if the

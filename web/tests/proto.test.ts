@@ -132,6 +132,22 @@ test("get_stored_map / stored_map_chunk round-trip (incl. bytes as base64)", () 
   assert.equal(back.hasTopology, true);
 });
 
+test("set_brightness round-trips + welcome carries the brightness echo", () => {
+  // The performance-measurement driver sends this to blank the strip (0) and
+  // restore the user setpoint; the master-dimmer UI sends fractional values.
+  for (const brightness of [0, 0.42, 1]) {
+    const req = { type: "set_brightness", brightness };
+    // set_brightness isn't in the flat schema-generated union (the client casts
+    // the same way it does for set_color_correction), so cast at the boundary.
+    assert.deepEqual(decodeClient(encodeClient(req as never)), req);
+  }
+  // Welcome echoes the applied brightness (optional double), so the app can
+  // hydrate its dimmer on connect.
+  const w = { type: "welcome", sessionId: "s", brightness: 0.5 };
+  const back = decodeServer(encodeServer(w as never)) as { brightness?: number };
+  assert.equal(back.brightness, 0.5);
+});
+
 test("TS re-encode of every golden decodes back to the same object", () => {
   for (const f of frames) {
     if (f.direction === "client") {

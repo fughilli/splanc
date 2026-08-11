@@ -32,6 +32,7 @@ import {
   type GammaProfile,
 } from "../../color/correction";
 import { installColorCorrectionStyles } from "./colorCorrection.css";
+import { loadBrightness, saveBrightness } from "../../store/brightnessSetpoint";
 import { compileScript } from "../../fx/preview";
 import { UniformPanel } from "../../effects/editor/uniform-panel";
 import { COLOR_TEST_ID, COLOR_TEST_SOURCE } from "../../color/colorTestEffect";
@@ -73,6 +74,7 @@ export function ColorCorrectionScreen(_router: Router): Screen {
 
   const deviceId = deviceStore.activeId();
   let profile = loadProfile(deviceId);
+  let brightness = loadBrightness(deviceId);
   let live = true;
 
   const el = document.createElement("div");
@@ -149,6 +151,18 @@ export function ColorCorrectionScreen(_router: Router): Screen {
     pushTimer = window.setTimeout(() => pushNow(false), PUSH_DEBOUNCE_MS);
   }
 
+  // Global output brightness — a separate master dimmer (not part of the gamma
+  // profile). Debounced + fire-and-forget like the curves; runtime-only on the
+  // device, so the app is the source of truth and (re)asserts it on connect.
+  let brightnessTimer = 0;
+  function pushBrightness(): void {
+    window.clearTimeout(brightnessTimer);
+    brightnessTimer = window.setTimeout(() => {
+      const c = appState.client;
+      if (c?.isConnected) void c.setBrightness(brightness).catch(() => undefined);
+    }, PUSH_DEBOUNCE_MS);
+  }
+
   // Called whenever the profile changes: repaint the plot + simulator, persist,
   // and (if live) push. `structural` also rebuilds the value controls so their
   // positions reflect a change that came from elsewhere (preset, plot drag).
@@ -166,11 +180,41 @@ export function ColorCorrectionScreen(_router: Router): Screen {
   function rebuildControls(): void {
     controls.replaceChildren(
       presetGroup(),
+      brightnessGroup(),
       curveGroup(),
       whiteBalanceGroup(),
       colorTestGroup(),
       pushGroup(),
     );
+  }
+
+  function brightnessGroup(): HTMLElement {
+    const g = group("Brightness");
+    const hint = document.createElement("div");
+    hint.className = "cc-hint";
+    hint.textContent =
+      "Master output dimmer for the whole strip, applied after the curves below. " +
+      "Runtime only — a device reboot returns to full brightness. The performance " +
+      "test also drops this to 0 while it measures, then restores your level.";
+    g.append(hint);
+    g.append(
+      fullRow(
+        Slider({
+          label: "Output level",
+          min: 0,
+          max: 1,
+          step: 0.01,
+          value: brightness,
+          format: (v) => `${Math.round(v * 100)}%`,
+          onInput: (v) => {
+            brightness = v;
+            saveBrightness(deviceId, v);
+            pushBrightness();
+          },
+        }).el,
+      ),
+    );
+    return g;
   }
 
   function colorTestGroup(): HTMLElement {
@@ -341,11 +385,17 @@ export function ColorCorrectionScreen(_router: Router): Screen {
   rebuildControls();
   drawPlot(plot, profile);
   sim.draw(profile);
+  // Assert the saved brightness setpoint on open: the device holds brightness
+  // only at runtime (full after a reboot), so re-push the user's level now.
+  if (appState.client?.isConnected) {
+    void appState.client.setBrightness(brightness).catch(() => undefined);
+  }
 
   return {
     el,
     onUnmount: () => {
       window.clearTimeout(pushTimer);
+      window.clearTimeout(brightnessTimer);
       // Commit whatever was being previewed live (device RAM) to flash on close.
       if (pendingCommit) pushNow(true);
     },

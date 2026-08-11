@@ -507,6 +507,7 @@ message ClientMessage {
     SetTexture set_texture = 28;
     UploadChunk upload_chunk = 29;
     SetColorCorrection set_color_correction = 30;
+    SetBrightness set_brightness = 31;
   }
 }
 
@@ -526,6 +527,10 @@ message Welcome {
   // Current display / Bluetooth-advertised name (default "Led Widget <6-hex>"
   // from the MAC, or a user-customized name). Empty on older firmware.
   string device_name = 5;
+  // Current global output brightness (0.0 .. 1.0), so the app can hydrate its
+  // master-dimmer control on connect. Runtime-only on the device (defaults to
+  // 1.0 after a reboot); unset on older firmware.
+  optional double brightness = 6;
 }
 
 // Stream a frame into a loaded effect's 2D `texture` (video textures). `data` is
@@ -576,6 +581,21 @@ message SetColorCorrection {
   // drags curves, so a rapid stream of updates doesn't hammer the flash. The UI
   // sends one commit=true when it's done (e.g. the panel closes).
   optional bool commit = 8;
+}
+
+// Global output brightness — a single scalar applied to every LED's rendered
+// colour just before the strip write (0.0 = fully dark, 1.0 = the effect's own
+// output, the default). Runtime-only (NOT persisted): a reboot returns to full
+// brightness, so a device can never get stuck dark. Two uses: a user "master
+// dimmer" in the device settings, and the phone's performance-measurement
+// driver, which sets it to 0 while it runs the calibration effects (so a fixture
+// on a low-ampacity supply — e.g. USB from the phone — doesn't brown out and
+// drop its wireless link on the changing pattern) and restores the user setpoint
+// when done. Does NOT affect the camera-calibration patterns (gray-code /
+// counting probe), which must reach the camera unscaled.
+message SetBrightness {
+  // Output scale in 0.0 .. 1.0 (clamped by the player). 1.0 is unattenuated.
+  double brightness = 1;
 }
 
 // Reply to stop_mapping(solve_on_host=false): stopped + persisted, no host

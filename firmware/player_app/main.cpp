@@ -266,6 +266,8 @@ static esp_partition_mmap_handle_t g_lut_map_handle = 0;
 static const esp_partition_t *g_fs_part = nullptr;
 static uint32_t g_lut_seq = 0;
 static uint32_t g_cc_gen = 0;  // last color_correction_gen the poll acted on
+static uint32_t g_brightness_gen = 0;  // last brightness_gen the poll acted on
+static uint8_t g_brightness = 255;     // global output scale (255 = unattenuated)
 
 static uint32_t lut_crc(const LutRecord *r) {
   return esp_rom_crc32_le(0, reinterpret_cast<const uint8_t *>(r),
@@ -387,14 +389,28 @@ static void poll_color_correction() {
                p[0], p[1], p[2], p[3], p[4], p[5], (int)commit, gen);
 }
 
+// Poll after each handled message (like poll_color_correction): a set_brightness
+// bumps the generation; re-read the global output scale when it changes. Runtime
+// only — nothing is persisted, so a reboot returns to full brightness.
+static void poll_brightness() {
+  uint32_t gen = lm_brightness_gen();
+  if (gen == g_brightness_gen) return;
+  g_brightness_gen = gen;
+  g_brightness = lm_brightness_u8();
+  Log().printf("[bright] output scale = %u/255 (gen=%u)\n", g_brightness, gen);
+}
+
 // Map an 8-bit RGB triple through the active per-channel LUT (indexed directly
-// from flash). Used on the CONTENT render paths (effects / playback); the camera
-// calibration patterns (mapping gray-code, counting probe) stay uncorrected so
-// their known signal values reach the camera unchanged.
+// from flash), then scale by the global output brightness. Used on the CONTENT
+// render paths (effects / playback); the camera calibration patterns (mapping
+// gray-code, counting probe) stay uncorrected AND unscaled so their known signal
+// values reach the camera unchanged.
 static inline CRGB cc_apply(const uint8_t rgb[3]) {
   const uint8_t (*lut)[256] = g_lut;
-  if (lut == nullptr) return CRGB(rgb[0], rgb[1], rgb[2]);
-  return CRGB(lut[0][rgb[0]], lut[1][rgb[1]], lut[2][rgb[2]]);
+  CRGB c = (lut == nullptr) ? CRGB(rgb[0], rgb[1], rgb[2])
+                            : CRGB(lut[0][rgb[0]], lut[1][rgb[1]], lut[2][rgb[2]]);
+  if (g_brightness < 255) c.nscale8(g_brightness);
+  return c;
 }
 
 // Stash the latest playback selection to flush once live tuning goes quiet.
@@ -723,6 +739,7 @@ static void ws_dispatch_message() {
   }
   poll_device_rename();
   poll_color_correction();
+  poll_brightness();
   rx_len = 0;
 }
 
