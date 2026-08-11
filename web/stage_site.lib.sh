@@ -9,6 +9,7 @@
 #   /pulse/       the effects Sim wasm     (//firmware/pulse:pulse_web)
 #   /fx-compiler/ the effect compiler wasm (//fx_compiler:fx_compiler_web)
 #   /fx-vm/       the effect preview VM     (//firmware/fx_vm:fx_vm_web)
+#   /docs/        the developer docs site   (//docs:build, when staged in)
 #
 # Sourced by both deploy_cloudflare.sh (Cloudflare Pages) and stage_site.sh
 # (GitHub Pages CI) so both publish a byte-identical tree. Both are `bazel run`
@@ -39,6 +40,15 @@ stage_site() {
     tools/stage_firmware --out "$out/firmware" \
       ${rev:+--revision "$rev"} \
       --image "esp32c6=${LEDMAPPER_FLASHBUNDLE}"
+  fi
+  # Developer documentation (Sphinx site) at /docs/, so the app's About >
+  # Documentation tab can link to ./docs/ from every origin. Like the firmware
+  # bundle above, it's built separately (`bazel run //docs:build`) and handed in
+  # via $LEDMAPPER_DOCS_SITE (an absolute path to the built HTML tree); when it's
+  # absent (a plain dev build) we skip it and the app's docs link 404s until a
+  # full site build stages it. CI sets it in the build-site + deploy jobs.
+  if [[ -n "${LEDMAPPER_DOCS_SITE:-}" && -d "${LEDMAPPER_DOCS_SITE}" ]]; then
+    mkdir -p "$out/docs" && cp -RL "${LEDMAPPER_DOCS_SITE}/." "$out/docs/"
   fi
   # Bazel outputs arrive read-only; the staging copy is ours to prune.
   chmod -R u+w "$out"

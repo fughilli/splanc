@@ -10,6 +10,7 @@
  * shipped dependencies in web/package.json or the bundled fonts change.
  */
 
+import { assetUrl } from "../../assetBase";
 import { Card } from "../kit";
 import { installAboutStyles } from "./about.css";
 import type { Router, Screen } from "../app/router";
@@ -17,6 +18,14 @@ import type { Router, Screen } from "../app/router";
 const GITHUB_URL = "https://github.com/fughilli/splanc";
 const STUDIO_URL = "https://fug.studio";
 const COPYRIGHT = "© Fughilli Industries, LLC 2026";
+
+/** Which tab the About screen opens on (⋯ menu → "About" vs "Docs"). */
+export type AboutTab = "about" | "docs";
+
+// The developer docs (Sphinx) are published alongside the app at /docs/ on every
+// origin (Cloudflare + GitHub Pages + PR previews); assetUrl resolves that
+// sibling path against the current document, exactly like the wasm bundles.
+const DEV_DOCS_PATH = "docs/index.html";
 
 interface Contributor {
   name: string;
@@ -96,18 +105,83 @@ function para(text: string): HTMLElement {
   return p;
 }
 
-export function AboutScreen(_router: Router): Screen {
+export function AboutScreen(_router: Router, initialTab: AboutTab = "about"): Screen {
   installAboutStyles();
   const el = document.createElement("div");
   el.className = "screen screen--about";
 
-  // Wordmark + one-line description.
+  // Wordmark + one-line description (shown above the tabs, on every tab).
   const wordmark = document.createElement("h1");
   wordmark.className = "about-wordmark";
   wordmark.textContent = "Splanc";
   const tagline = document.createElement("p");
   tagline.className = "about-tagline";
   tagline.textContent = "Map, drive, and animate LED installations from your phone.";
+
+  // Tabs: "About" (project/license/credits) and "Documentation" (links out to
+  // the published docs sites). The ⋯ menu's "Docs" entry deep-links to the
+  // Documentation tab via ?tab=docs.
+  let tab: AboutTab = initialTab;
+  const body = document.createElement("div");
+  body.className = "about-body";
+
+  const tabs = document.createElement("div");
+  tabs.className = "about-tabs";
+  const mkTab = (id: AboutTab, label: string): HTMLButtonElement => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "about-tab" + (tab === id ? " on" : "");
+    b.textContent = label;
+    b.setAttribute("aria-selected", String(tab === id));
+    b.addEventListener("click", () => {
+      if (tab === id) return;
+      tab = id;
+      for (const child of Array.from(tabs.children)) {
+        const isOn = (child as HTMLElement).textContent === label;
+        child.classList.toggle("on", isOn);
+        child.setAttribute("aria-selected", String(isOn));
+      }
+      render();
+    });
+    return b;
+  };
+  tabs.append(mkTab("about", "About"), mkTab("docs", "Documentation"));
+
+  const render = (): void => {
+    body.replaceChildren(tab === "docs" ? docsBody() : aboutBody());
+  };
+
+  el.append(wordmark, tagline, tabs, body);
+  render();
+  return { el };
+}
+
+/** The "Documentation" tab: links to the published docs sites. */
+function docsBody(): HTMLElement {
+  const frag = document.createElement("div");
+  frag.append(
+    para("Guides and reference for splanc, published alongside the app:"),
+    Card(
+      docLink(
+        "Developer documentation",
+        "Architecture, subsystems, the effects engine, and the design notes " +
+          "(the Sphinx site).",
+        assetUrl(DEV_DOCS_PATH),
+      ),
+      docLink(
+        "User guide",
+        "An interactive, step-by-step guide to mapping and lighting a fixture.",
+        null,
+        "Coming soon",
+      ),
+    ),
+  );
+  return frag;
+}
+
+/** The "About" tab: project description, links, contributors, and licensing. */
+function aboutBody(): HTMLElement {
+  const el = document.createElement("div");
 
   const about = para(
     "Splanc turns a phone into the control surface for addressable-LED art: " +
@@ -193,8 +267,6 @@ export function AboutScreen(_router: Router): Screen {
   }
 
   el.append(
-    wordmark,
-    tagline,
     Card(about),
     heading("Links"),
     Card(links),
@@ -205,7 +277,41 @@ export function AboutScreen(_router: Router): Screen {
     heading("Open-source acknowledgements"),
     Card(disclosures),
   );
-  return { el };
+  return el;
+}
+
+/**
+ * A documentation entry: a bold title + one-line description. When `href` is
+ * set it's a link (new tab); otherwise it renders as a disabled placeholder with
+ * a small badge (e.g. the user guide, landing in FUG-103).
+ */
+function docLink(
+  title: string,
+  desc: string,
+  href: string | null,
+  badge?: string,
+): HTMLElement {
+  const row = document.createElement(href ? "a" : "div");
+  row.className = "about-doc" + (href ? "" : " is-disabled");
+  const head = document.createElement("span");
+  head.className = "about-doc-title";
+  head.textContent = title;
+  if (badge) {
+    const b = document.createElement("span");
+    b.className = "about-doc-badge";
+    b.textContent = badge;
+    head.appendChild(b);
+  }
+  const d = document.createElement("span");
+  d.className = "about-doc-desc";
+  d.textContent = desc;
+  row.append(head, d);
+  if (href && row instanceof HTMLAnchorElement) {
+    row.href = href;
+    row.target = "_blank";
+    row.rel = "noopener noreferrer";
+  }
+  return row;
 }
 
 /** A label + value row inside the Links card. */

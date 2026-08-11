@@ -124,9 +124,9 @@ async function main(): Promise<void> {
       shell.setChrome({ title: "Capture", back: true, tabs: false, overlay: true });
       return CaptureScreen(router, m.query);
     })
-    .add("/about", () => {
+    .add("/about", (m) => {
       shell.setChrome({ title: "About", back: true, tabs: true });
-      return AboutScreen(router);
+      return AboutScreen(router, m.query.get("tab") === "docs" ? "docs" : "about");
     })
     .setFallback(() => {
       // First run with no device and no maps → onboarding; else → maps.
