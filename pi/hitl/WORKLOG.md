@@ -3,6 +3,121 @@
 Handoff notes alongside git history. Newest first. Read this before touching the
 rig's networking — there's live runtime state that isn't fully declarative yet.
 
+## 2026-08-10 — FUG-94: the FUG-61 provisioning flake is a per-connect BLE failure, not coexistence
+
+The FUG-61 fix works; its recorded root cause (WiFi/BLE **coexistence** starves the
+first BLE connect) was wrong and was repeated in three places. Re-measured on the rig
+(DUT `c6-2ce684`, board `f0:f5:bd:2c:e6:86`, driven from the container over the LAN)
+to settle the mechanism empirically. **Behaviour is unchanged** — this was a diagnosis
+exercise, not a behaviour change.
+
+### Method
+
+An experiment-only instrument (`fug94_measure.py`; not committed — this is a
+diagnosis, not a shipped tool). The board is held **cred-less** (never write the WiFi
+RPC), so every reset reboots into the **erase-fs first-provision state**: `setup()`
+runs `WiFi.mode(WIFI_AP_STA)`+`softAP()` unconditionally but `WiFi.begin()` is gated
+behind `if (ssid.length() > 0)`, so there is **no STA association** — only an idle
+soft-AP beacon (verified in the boot banner: `sta off`, AP `192.168.4.1`);
+`improv_ble_begin()` runs last. So the ticket's premise holds: there is no WiFi
+association on the failing boot to "coexist" with. Per sample the instrument
+hard-resets the DUT, stamps the `[ble] advertising …` serial line (t_adv), then does a
+harness-faithful scan+single-connect (`tries=1` — fix disabled) recording whether the
+match had a **resolved name**, **ms since advertising start** at connect, connect
+latency, and the exact error.
+
+Rig time was heavily contended (the neighbouring DUT was held by another reservation
+on the **same shared host BLE adapter** throughout — itself relevant to H3, below), so
+samples were gathered across many short reservations streamed to a durable local file.
+
+### Data (Wilson 95% CI)
+
+Every failure is the FUG-61 symptom: a message-less `TimeoutError` at
+`BleakClient.connect()`, never reaching `connected=True`. **All arms are the same
+no-creds soft-AP-only board** — I did not have an uncontended window to reflash a
+WiFi-off variant or provision a stored-creds arm (see H1 below).
+
+**Fix DISABLED (`tries=1`, one connect per reboot):**
+
+| arm                                | scan / connect timing       | n      | connect FAIL | rate (95% CI)    | named     |
+| ---------------------------------- | --------------------------- | ------ | ------------ | ---------------- | --------- |
+| baseline_softap (harness-faithful) | discover 8 s, ~8 s post-adv | 19     | 10           | **53% (32–73%)** | 19/19     |
+| delay sweep                        | fast scan, 0–5 s post-adv   | 28     | 13           | **46% (30–64%)** | 28/28     |
+| **pooled `tries=1`**               | 88 ms – 8.1 s post-adv      | **47** | **23**       | **49% (35–63%)** | **47/47** |
+
+Delay-sweep per pre-connect delay (fail/n): 0 s → 3/6, 0.5 s → 1/6, 1 s → 4/6,
+2 s → 2/5, 5 s → 3/5 — **flat ~50%, no monotonic trend**. In the discover arm every
+match is fully settled (~8 s advertising, name resolved) and still ~half time out.
+Across all 47 samples the scan-response name resolved within ~200 ms — **0 name-less
+matches** — even at a 0 s delay.
+
+**Fix ENABLED (`tries=5`, rapid same-boot retries; discover 8 s):**
+
+| arm        | n   | RUN FAIL (all 5 tries lost) | rate (95% CI)  | runs a retry rescued (try>1 won) |
+| ---------- | --- | --------------------------- | -------------- | -------------------------------- |
+| fix_tries5 | 12  | 0                           | **0% (0–24%)** | 5/12                             |
+
+5/12 runs had a first-connect failure that a later try rescued, and 0/12 runs failed
+overall — with each try failing ~independently ~50%, five tries predict a run-level
+failure of ~0.5⁵ ≈ 3%, consistent with 0/12. Rapid same-boot retries ride out the
+per-attempt failure; that is exactly what the fix does and why it works.
+
+### Which hypothesis the evidence supports
+
+- **H2 (peripheral readiness / name-less early-pounce) — RULED OUT.** Two independent
+  signals: the connect-failure rate is **independent of time-since-advertising** (flat
+  ~50% across the whole 88 ms → 8.1 s range; the discover arm connects only after a
+  full 8 s scan, fully settled, and still fails at the same rate), and the match had a
+  **resolved name in 47/47** samples (0 name-less — the scan-response name resolves in
+  ~200 ms). A readiness/early-pounce race predicts the opposite; connecting _later_
+  does not help.
+- **H1 (WiFi/BLE coexistence) — the recorded mechanism is FALSIFIED.** The failing
+  erase-fs boot has **no STA association at all** (`WiFi.begin` gated off, only an idle
+  soft-AP), so there is no "coexistence bring-up during association" to drop the
+  CONNECT*REQ — which is exactly what the docs claimed. A \_residual* H1 (does the idle
+  soft-AP beacon / BT-controller-beside-the-WiFi-stack itself perturb BLE connect?) is
+  **not separable here from H3** and was **not** isolated: that needs the WiFi-off
+  firmware arm (Arm B in the ticket), which I could not run for lack of an uncontended
+  window to build+flash a variant. Honest status: coexistence-during-association is
+  ruled out; a residual soft-AP-beacon H1 is untested.
+- **H3 (central-side / BlueZ / shared adapter) — the leading candidate, unconfirmed.**
+  The failure is a **transient, ~per-attempt-independent** connection-establishment
+  timeout (~0.5 each), which is exactly why _rapid_ retries within one boot work
+  (≈0.5^tries) while reboot-gated single tries don't (a reboot re-rolls the same coin).
+  The rig's BLE radio is a **single shared host adapter, not isolated per DUT**
+  (DESIGN.md open item), and the neighbouring DUT was held by another reservation
+  scanning/connecting on that same host `bluetoothd` throughout my window — a live
+  contention source consistent with the signature. Two checks remain outstanding: the
+  cheap both-DUTs-held control (no neighbour on the adapter — no uncontended window to
+  run it), and the decisive link-level HCI/btmon capture inside the reservation
+  (**FUG-93**, not yet landed) that would separate "peripheral never answers
+  CONNECT_IND" from "central never issues / BlueZ stalls".
+
+### Which half of the fix is load-bearing
+
+The **`_connect` rapid-retry loop** (`hitl_improv._connect`, `tries>1`) — the OPPOSITE
+of the ticket's H2-wins hypothesis. Because the per-attempt failures are ~independent
+at ~50%, retrying within one boot drives the compound failure to ≈0.5^tries (five
+tries → ~3%, observed 0/12); a single try — or one try per slow reboot — cannot. The
+`find()` **name-wait gate** is cheap defence-in-depth (avoids pouncing on a
+half-advertised board), **not** the deflaker — a name-less match does not predict
+connect failure (it never even occurred). Keep both; the docstrings now say so, and
+`pi/hitl/tests/test_improv_find.py` guards both (the retry default stays > 1 and rides
+out transient failures; the name gate never hands a name-less advertisement to the
+connect path un-waited) so neither is "simplified" away on the wrong premise.
+
+### Bottom line
+
+The flake is a **transient, per-attempt BLE connection-establishment failure on a
+freshly-booted C6** (~49% per connect, n=47 `tries=1` samples — clears the n≥30 bar
+for the pooled rate), independent of advertising-settle time and of any WiFi
+association (there is none). **H2 ruled out; the recorded coexistence-during-
+association story falsified; H3 (shared-adapter / central-side) strongly indicated but
+unconfirmed at packet level (FUG-93).** The un-run controls (WiFi-off firmware arm for
+a residual H1; both-DUTs-held and HCI capture for H3) are the acknowledged gaps. The
+coexistence explanation is corrected here, in the 2026-08-05 entry below, and in the
+`_connect` / `provision_dut` / `find` docstrings.
+
 ## 2026-08-08 — FOLLOW-UP: tighten the FX cost-model estimator (~10% → ~5%)
 
 `fx_bench` now has two tests off one golden (`web/tests/testdata/device-bench-esp32c6.json`):
@@ -43,6 +158,19 @@ The offline loop (`//web:fit_device_profile`, no hardware) makes fit/model
 iteration fast; only _new_ microbenchmarks need a rig re-measure.
 
 ## 2026-08-05 — deflake e2e provisioning (FUG-61): retry the BLE connect
+
+> **CORRECTION (2026-08-10, FUG-94):** the _fix_ below is correct and stays, but
+> the **root-cause explanation in this entry is wrong**. The "single-core C6 shares
+> one radio between WiFi and BLE, so the first connect times out during coexistence
+> bring-up" story does not hold: on the erase-fs failing boot there is **no WiFi
+> association** (WiFi.begin is gated off with no stored creds — only an idle
+> soft-AP), so there is no coexistence bring-up to contend with. Re-measurement
+> shows the failure is a **transient, per-attempt BLE connection-establishment
+> failure** (~50% of first connects), **independent of advertising-settle time and
+> of whether the name had resolved** — which rules out the readiness-race reading
+> too. The load-bearing half of the fix is therefore the `_connect` **rapid-retry
+> loop**, not the `find()` name gate. See the FUG-94 findings entry at the top of
+> this file for the arms, n, and confidence intervals.
 
 Looping the e2e against the rig reproduced the CI flake at **20% run-level
 failure** (2/10 runs failed outright) with the **first provision attempt failing
