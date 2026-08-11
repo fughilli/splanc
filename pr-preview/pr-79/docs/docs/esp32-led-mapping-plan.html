@@ -1,0 +1,861 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="Index" href="../genindex.html"><link rel="search" title="Search" href="../search.html"><link rel="next" title="Design: MbedTLS from source with dynamic buffers (@embedded)" href="design/mbedtls-dynamic-buffers.html"><link rel="prev" title="Blob-detection optimization playbook" href="blob-detection-playbook.html">
+        <link rel="prefetch" href="../_static/splanc-icon.svg" as="image">
+
+    <link rel="shortcut icon" href="../_static/splanc-icon.svg"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
+        <title>ESP32-based LED Mapping + Playback — Build Plan - splanc developer docs</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/furo.css?v=7bdb33bb" />
+    <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=36188834" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  --color-brand-primary: #084de7;
+  --color-brand-content: #084de7;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation" aria-label="Toggle site navigation sidebar">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc" aria-label="Toggle table of contents sidebar">
+<label class="overlay sidebar-overlay" for="__navigation"></label>
+<label class="overlay toc-overlay" for="__toc"></label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <span class="icon"><svg><use href="#svg-menu"></use></svg></span>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../index.html"><div class="brand">splanc developer docs</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../index.html">
+  <div class="sidebar-logo-container">
+    <img class="sidebar-logo" src="../_static/splanc-icon.svg" alt="Logo"/>
+  </div>
+  
+  <span class="sidebar-brand-text">splanc developer docs</span>
+  
+</a><form class="sidebar-search-container" method="get" action="../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../architecture.html">Architecture</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../subsystems/index.html">Subsystems</a><input aria-label="Toggle navigation of Subsystems" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/web.html">The PWA (<code class="docutils literal notranslate"><span class="pre">web/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/firmware.html">The firmware (<code class="docutils literal notranslate"><span class="pre">firmware/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/fx-compiler.html">The effects compiler (<code class="docutils literal notranslate"><span class="pre">fx_compiler/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/solver.html">The solver (<code class="docutils literal notranslate"><span class="pre">solver/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/reconstruction.html">Reconstruction (<code class="docutils literal notranslate"><span class="pre">pi/reconstruction/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/protocol.html">The wire protocol (<code class="docutils literal notranslate"><span class="pre">shared/protocol/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/simulator.html">The simulator (<code class="docutils literal notranslate"><span class="pre">shared/simulator/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/hitl.html">HITL &amp; tooling (<code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code>, <code class="docutils literal notranslate"><span class="pre">tools/</span></code>)</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Guides</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../DEVELOPERS.html">Developing splanc</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html#hardware">Hardware</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html#how-it-works">How it works</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html#learn-more">Learn more</a></li>
+<li class="toctree-l1"><a class="reference internal" href="runbook.html">Runbook</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../next_steps.html">APP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../next_steps.html#firmware">FIRMWARE</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../next_steps.html#effects-compiler">EFFECTS COMPILER</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../next_steps.html#performance-monitoring">PERFORMANCE MONITORING</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Effects</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../EFFECTS.html">The splanc effects engine</a></li>
+<li class="toctree-l1"><a class="reference internal" href="fx-vm-performance.html">FX-VM performance</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../led-mapper-design.html">LED Mapper — Design Doc (Android-first)</a></li>
+<li class="toctree-l1 current has-children"><a class="reference internal" href="../design/index.html">Design notes</a><input aria-label="Toggle navigation of Design notes" checked="" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="design/effects-runtime.html">The effects runtime</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/effects-compiler.html">The effects compiler</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/perf-monitoring.html">Performance monitoring</a></li>
+<li class="toctree-l2"><a class="reference internal" href="vio-exploration.html">VIO solver exploration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blob-detection-playbook.html">Blob-detection playbook</a></li>
+<li class="toctree-l2 current current-page"><a class="current reference internal" href="#">ESP32 LED-mapping plan</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/app-ux-overhaul.html">App UX overhaul</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="decisions.html">Decision log</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Meta</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../about-these-docs.html">How these docs are built</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="view-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/blob/main/docs/_sphinx/docs/esp32-led-mapping-plan.md?plain=true" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div><div class="edit-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/edit/main/docs/_sphinx/docs/esp32-led-mapping-plan.md" rel="edit" title="Edit this page">
+    <svg><use href="#svg-pencil"></use></svg>
+    <span class="visually-hidden">Edit this page</span>
+  </a>
+</div><div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <section id="esp32-based-led-mapping-playback-build-plan">
+<h1>ESP32-based LED Mapping + Playback — Build Plan<a class="headerlink" href="#esp32-based-led-mapping-playback-build-plan" title="Link to this heading">¶</a></h1>
+<blockquote>
+<div><p>Status: <strong>approved, unblocked.</strong> Originally blocked on an in-flight protobuf
+port + solver work; that stack has LANDED (branches <code class="docutils literal notranslate"><span class="pre">proto-comms</span></code> →
+<code class="docutils literal notranslate"><span class="pre">rust-wasm-solver</span></code> → <code class="docutils literal notranslate"><span class="pre">hue-only-signaling</span></code>, on which this branch now sits) and
+delivered more than the blockers: the wire is already binary protobuf, the
+VIO solver is already Rust with a wasm phone-side deployment + <code class="docutils literal notranslate"><span class="pre">submit_map</span></code>
+upload, and the blink code is now a hue-only carrier with an adaptive symbol
+alphabet. Phases below are re-scoped against that reality — several are
+<strong>done</strong> or shrank to deltas. Source spec: <code class="docutils literal notranslate"><span class="pre">embedded/spec</span></code>.</p>
+</div></blockquote>
+<section id="reference-repos-private">
+<h2>Reference repos (private)<a class="headerlink" href="#reference-repos-private" title="Link to this heading">¶</a></h2>
+<p>Two private repos are referenced; clone with the personal GitHub SSH key
+(<code class="docutils literal notranslate"><span class="pre">credentials/id_ed25519_personal_github</span></code>, never commit it):</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">git&#64;github.com:fughilli/embedded.git</span></code> — the ESP32-C6 + RP2350 firmware monorepo
+(Bazel, no_std Rust + Arduino/FastLED). <strong>Vendored</strong> into this repo at
+<code class="docutils literal notranslate"><span class="pre">third_party/embedded</span></code> (Phase 0a).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">git&#64;github.com:fughilli/graph-extractor.git</span></code> — point-cloud → topology
+(skeletonization). The <strong>pulse reference</strong> lives on branch <code class="docutils literal notranslate"><span class="pre">viz-offline-render</span></code>
+at <code class="docutils literal notranslate"><span class="pre">viz/static/index.html</span></code> (agent-based sim). <code class="docutils literal notranslate"><span class="pre">main</span></code> is topology-only.</p></li>
+</ul>
+</section>
+<section id="context">
+<h2>Context<a class="headerlink" href="#context" title="Link to this heading">¶</a></h2>
+<p>Today the LED-mapper is <strong>Pi-centric</strong>: a Pi drives a strip through the hue
+code (constant-brightness color code — the intensity blink was removed because
+its dark frames broke track association), a phone decodes it, and the final
+solve runs wherever the init-time placement benchmark says (phone wasm vs Pi
+native — <code class="docutils literal notranslate"><span class="pre">web/src/solver/placement.ts</span></code>). The spec asks to make an <strong>ESP32-C6</strong>
+a first-class player and push all heavy compute to the phone, keeping the
+<strong>Pi as a second player target</strong> for large fixtures (GPU-accelerated playback).</p>
+<p>The end-state has <strong>one phone “brain”</strong> (capture → CV → counting → VIO
+reconstruction → optional skeletonization) and <strong>two player targets</strong> behind
+<strong>one stable protobuf protocol</strong>: an ESP32-C6 (RMT LED output, WSS, no_std
+Rust playback, arena-allocated) and a Pi (serves the full webapp, CPU→GPU
+playback, reuses existing SPI driver).</p>
+<p>Confirmed decisions, annotated with what already landed:</p>
+<ul class="simple">
+<li><p><strong>Wire format = protobuf. ✅ LANDED</strong> (<code class="docutils literal notranslate"><span class="pre">proto-comms</span></code>): the WebSocket carries
+binary <code class="docutils literal notranslate"><span class="pre">ledmapper.v1</span></code> frames (<code class="docutils literal notranslate"><span class="pre">shared/protocol/proto/ledmapper.proto</span></code>);
+TS = protobuf-es (checked-in <code class="docutils literal notranslate"><span class="pre">web/src/gen/</span></code>), Python = protobuf via a
+hermetic toolchains_protoc. <strong>Delta for this plan:</strong> the <strong>micropb (no_std
+Rust) backend</strong> for firmware, and reshaping the message set into the player
+protocol (below). Note the landed design keeps the JSON schemas as the §7
+source of truth with a JSON-parity proto + thin boundary converters
+(<code class="docutils literal notranslate"><span class="pre">pi/server/server/proto_wire.py</span></code>, <code class="docutils literal notranslate"><span class="pre">web/src/net/proto.ts</span></code>) — the original
+idea of deleting <code class="docutils literal notranslate"><span class="pre">codegen.py</span></code> outright is deferred; firmware only needs the
+proto file, which already exists.</p></li>
+<li><p><strong>Vendor</strong> the <code class="docutils literal notranslate"><span class="pre">embedded</span></code> repo as a Bazel module. <code class="docutils literal notranslate"><span class="pre">rules_rust</span></code> <strong>is already
+in MODULE.bazel</strong> (0.71.3, with a wasm32 target + crate_universe) — vendoring
+now only needs to reconcile versions, not introduce the rules.</p></li>
+<li><p><strong>Reconstruction → Rust→WASM on the phone. ✅ LANDED</strong> (<code class="docutils literal notranslate"><span class="pre">rust-wasm-solver</span></code>):
+the full VIO pipeline is ported (<code class="docutils literal notranslate"><span class="pre">solver/</span></code> crate — hand-rolled sparse
+LM/LSMR, zero external math deps; parity vs the Python reference pinned by
+<code class="docutils literal notranslate"><span class="pre">//pi/reconstruction:rust_parity_test</span></code> at &lt;3 mm / &lt;2 % scale), deployed as
+<code class="docutils literal notranslate"><span class="pre">//solver:solver_web</span></code> (wasm + worker, served at <code class="docutils literal notranslate"><span class="pre">/solver/</span></code>), with
+<code class="docutils literal notranslate"><span class="pre">stop_mapping{solveOnHost:false}</span></code> → local solve → <code class="docutils literal notranslate"><span class="pre">submit_map</span></code> upload
+already on the wire. <strong>WebXR deprecation remains open</strong> (M6): capture is
+already getUserMedia + IMU on the fallback path; the WebXR path still
+exists and should be deleted.</p></li>
+<li><p><strong>Pi playback = CPU illuminate first, GPU (GLES) later.</strong></p></li>
+<li><p><strong>Firmware memory = arena allocator</strong> (no general heap; statically bound what
+can be; total LED count flexible up to arena capacity; deterministic OOM).</p></li>
+<li><p><strong>ESP32 transport = WSS</strong> (RFC6455 over <code class="docutils literal notranslate"><span class="pre">esp_https_server</span></code> + mbedtls, self-signed).</p></li>
+</ul>
+</section>
+<section id="target-architecture">
+<h2>Target architecture<a class="headerlink" href="#target-architecture" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p><strong>Phone brain (<code class="docutils literal notranslate"><span class="pre">web/</span></code>):</strong> getUserMedia + IMU capture → optical decode
+(<code class="docutils literal notranslate"><span class="pre">web/src/cv</span></code>, <code class="docutils literal notranslate"><span class="pre">web/src/code</span></code>) → color-block LED counting → <strong>VIO solver
+(Rust→WASM — exists)</strong> → OutputMap → optional <strong>skeletonization (WASM)</strong> →
+upload map+topology to a player. Against an ESP32 there is NO host solve:
+the player never advertises <code class="docutils literal notranslate"><span class="pre">solverBenchMs</span></code>, and
+<code class="docutils literal notranslate"><span class="pre">chooseSolvePlacement(phone,</span> <span class="pre">null)</span></code> already answers “phone” — only the
+wasm-unavailable fallback needs an explicit “no solver on this player” error
+path.</p></li>
+<li><p><strong>Stable player protocol (protobuf/WSS):</strong> clock-sync (SNTP — exists),
+CodeParams start/stop (exists), <strong>counting handshake (new)</strong>, map upload
+(<code class="docutils literal notranslate"><span class="pre">submit_map</span></code> — exists) <strong>+ topology (new)</strong>, <strong>playback control (new)</strong>.
+Detection/IMU upload and <code class="docutils literal notranslate"><span class="pre">get_solve_status</span></code>/<code class="docutils literal notranslate"><span class="pre">get_live_map</span></code> polling exist
+only on the Pi profile (they serve the host-solve + live-map paths); the
+ESP32 profile drops them.</p></li>
+<li><p><strong>ESP32-C6 player:</strong> RMT WS2812 output; WSS server; micropb decode into
+arena; no_std Rust pulse/WLED engine; <strong>hue-code pattern gen</strong> (per-LED
+colors — the carrier has no on/off sets anymore, which the RMT path needs
+anyway); points phone at an externally-hosted webapp — publish it with
+<code class="docutils literal notranslate"><span class="pre">bazelisk</span> <span class="pre">run</span> <span class="pre">//web:deploy_cloudflare</span></code> (Cloudflare Pages: the vite bundle
+at <code class="docutils literal notranslate"><span class="pre">/</span></code> + the wasm solver at <code class="docutils literal notranslate"><span class="pre">/solver/</span></code>, same layout the Pi serves; the
+phone then selects its player via <code class="docutils literal notranslate"><span class="pre">?url=wss://&lt;player&gt;/ws</span></code>).</p></li>
+<li><p><strong>Pi player:</strong> serves the whole webapp (reuse <code class="docutils literal notranslate"><span class="pre">pi/server</span></code>); same
+protobuf/WSS API; CPU illuminate first, GLES shader later; drives existing
+<code class="docutils literal notranslate"><span class="pre">pi/led_driver</span></code> SPI sink (already renders per-LED colors —
+<code class="docutils literal notranslate"><span class="pre">frame_bytes_colors</span></code>). <code class="docutils literal notranslate"><span class="pre">pi/reconstruction</span></code> is <strong>NOT dead code</strong>: it is the
+parity reference for the Rust solver (<code class="docutils literal notranslate"><span class="pre">rust_parity_test</span></code>), the automatic
+fallback when the native binary is absent, and the replay-tooling engine
+(<code class="docutils literal notranslate"><span class="pre">vio_replay.py</span></code>). Keep it.</p></li>
+</ul>
+</section>
+<section id="protocol-design-protobuf">
+<h2>Protocol design (protobuf)<a class="headerlink" href="#protocol-design-protobuf" title="Link to this heading">¶</a></h2>
+<p><strong>Base exists</strong>: <code class="docutils literal notranslate"><span class="pre">shared/protocol/proto/ledmapper.proto</span></code> (package
+<code class="docutils literal notranslate"><span class="pre">ledmapper.v1</span></code>) already carries the full §7 set as a oneof envelope — Hello,
+TimeSyncPing/Pong, StartMapping/Configure (CodeParams with the hue <code class="docutils literal notranslate"><span class="pre">symbols</span></code>
+alphabet), StopMapping(+solveOnHost)/MappingStopped, Detections/ImuBatch,
+ExposureReport, status/pattern/live-map/solve-status polls, SubmitMap,
+ResultReady, Error. Cross-language byte-parity is pinned by
+<code class="docutils literal notranslate"><span class="pre">web/tests/golden_proto_frames.json</span></code> (Python-generated, TS-verified).</p>
+<p>Remaining protocol work:</p>
+<ul class="simple">
+<li><p>~~<strong>Counting handshake</strong>~~ <strong>landed</strong> (Phase 1): <code class="docutils literal notranslate"><span class="pre">set_counting_pattern</span></code>
+(ColorBlock list + channel; painting past the strip end IS the length
+probe) → <code class="docutils literal notranslate"><span class="pre">counting_state</span></code>, and <code class="docutils literal notranslate"><span class="pre">set_led_count</span></code> → <code class="docutils literal notranslate"><span class="pre">led_count_state</span></code>
+persisting the detected count per output channel. The Pi latches the
+pattern as protocol state; the display path lands with Phase 5.</p></li>
+<li><p>~~<strong>Topology</strong>~~ <strong>landed</strong> (Phase 1): sibling message, not OutputMap
+fields — <code class="docutils literal notranslate"><span class="pre">Topology{map_id,</span> <span class="pre">branch_points,</span> <span class="pre">segments,</span> <span class="pre">associations}</span></code> with
+the per-LED <code class="docutils literal notranslate"><span class="pre">(segment_id,</span> <span class="pre">foot_arclength,</span> <span class="pre">d_perp)</span></code> association, uploaded
+via <code class="docutils literal notranslate"><span class="pre">submit_topology</span></code> → <code class="docutils literal notranslate"><span class="pre">result_ready</span></code> (mirrors submit_map; the Pi
+persists <code class="docutils literal notranslate"><span class="pre">&lt;map_id&gt;.topology.json</span></code> next to the map).</p></li>
+<li><p>~~<strong>Playback control</strong>~~ <strong>landed</strong> (Phase 1): <code class="docutils literal notranslate"><span class="pre">set_playback{effect,</span> <span class="pre">PlaybackParams,</span> <span class="pre">map_id}</span></code> / <code class="docutils literal notranslate"><span class="pre">get_playback</span></code> → <code class="docutils literal notranslate"><span class="pre">playback_state</span></code>.
+PlaybackParams mirrors the pulse tunables (intensity, glow_radius/<code class="docutils literal notranslate"><span class="pre">soft</span></code>,
+agent_count, speed, palette as 0xRRGGBB ints) as optional overlays. “off”
+is universal; unsupported effects reply <code class="docutils literal notranslate"><span class="pre">error{unsupported_effect}</span></code> (what
+the Pi does until Phase G).</p></li>
+<li><p>~~<strong>Player profiles</strong>~~ <strong>landed</strong> (Phase 1): documented in the
+ledmapper.proto header (CORE vs PI-ONLY arm sets); unknown-arm handling on
+firmware = bounded <code class="docutils literal notranslate"><span class="pre">error{unsupported}</span></code> for request arms, silent drop
+allowed for fire-and-forget arms.</p></li>
+<li><p>~~<strong>micropb backend + cross-target conformance</strong>~~ <strong>landed</strong> (Phase 1):
+<code class="docutils literal notranslate"><span class="pre">//shared/protocol/rust</span></code> generates no_std Rust from the descriptor set at
+build time (micropb-gen 0.5.1 in an ISOLATED host crate universe — its
+std-micropb must not feature-unify onto the firmware’s); heapless
+containers with the capacity table in gen_main.rs (Phase 3 re-binds the
+big collections to the arena). <code class="docutils literal notranslate"><span class="pre">conformance_test</span></code> requires every golden
+frame to decode AND re-encode byte-identically — which caught micropb-gen
+ignoring proto3 implicit packing (fixed by explicit <code class="docutils literal notranslate"><span class="pre">[packed</span> <span class="pre">=</span> <span class="pre">true]</span></code>
+on every repeated scalar; same wire as before).</p></li>
+</ul>
+<p><strong>Keep <code class="docutils literal notranslate"><span class="pre">shared/protocol/fec.py</span></code></strong> — it is optical-channel FEC, not transport.</p>
+</section>
+<section id="phases-dependency-ordered-each-has-a-testable-artifact">
+<h2>Phases (dependency-ordered; each has a testable artifact)<a class="headerlink" href="#phases-dependency-ordered-each-has-a-testable-artifact" title="Link to this heading">¶</a></h2>
+<p><strong>Phase 0 — Bazel foundations.</strong> (a) Vendor embedded (<code class="docutils literal notranslate"><span class="pre">local_path_override</span></code> +
+submodule at <code class="docutils literal notranslate"><span class="pre">third_party/embedded</span></code>); <strong>accept:</strong> <code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">build</span> <span class="pre">&#64;embedded//apps/blink:esp32c6</span></code> green from workspace root. Reconcile its
+<code class="docutils literal notranslate"><span class="pre">rules_rust</span></code> with the workspace pin (0.71.3). (b) ~~Add rules_proto/protobuf +
+rules_rust crate_universe~~ <strong>done</strong> (proto-comms/rust-wasm-solver) — remaining:
+add the <code class="docutils literal notranslate"><span class="pre">riscv32imac-unknown-none-elf</span></code> triple to the existing rust toolchain
+and <code class="docutils literal notranslate"><span class="pre">heapless</span></code>/<code class="docutils literal notranslate"><span class="pre">micropb</span></code> to the existing crate_universe; <strong>accept:</strong> resolve
+<code class="docutils literal notranslate"><span class="pre">heapless</span></code> for the C6 triple. (c) Wire the micropb codegen backend (TS/Python
+backends already exist). Use the <strong>bazel-polyglot-nix</strong> skill.</p>
+<p><strong>Phase 1 — Protocol reshaping. ✅ DONE.</strong> ~~Migrate the wire from JSON to
+binary proto~~ (proto-comms; the 4 seams listed in the original plan are
+already binary); counting/topology/playback additions and player profiles
+(see “Remaining protocol work” above — schemas, codegen, proto, both
+boundary converters, Pi handler, goldens: 42 cross-language golden frames);
+micropb Bazel backend and the Rust conformance leg
+(<code class="docutils literal notranslate"><span class="pre">//shared/protocol/rust:conformance_test</span></code>, byte-identical re-encode of all
+42 frames). <strong>Accepted:</strong> cross-target conformance green; existing mapping
+flow unchanged (suite grew 30 → 34 targets, all green).</p>
+<p><strong>Phase 1½ — Player core + pattern gen (host-side pulls from Phases 3/4a).</strong>
+Landed alongside Phase 1 so the firmware protocol/pattern logic is testable
+before any hardware exists:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">//firmware/pattern</span></code> (<code class="docutils literal notranslate"><span class="pre">ledmapper_pattern</span></code>): no_std, zero-dep port of the
+hue-code generator, SEC-DED FEC, and the code-book derivation
+(graycode.py, fec.py and codebook.py in one crate). Golden test pins it to
+<code class="docutils literal notranslate"><span class="pre">web/tests/golden_secded16{,_sym4}.json</span></code> — the same fixtures the phone
+decoder is verified against — plus exhaustive single-flip-corrects /
+double-flip-rejects FEC property checks. <strong>Phase 4a’s remaining scope is
+the RMT/driver integration, not the pattern math.</strong></p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">//firmware/player</span></code> (<code class="docutils literal notranslate"><span class="pre">ledmapper_player</span></code>): no_std, transport-free session
+state machine implementing the CORE player profile (welcome WITHOUT
+solverBenchMs; stop_mapping without solveOnHost=false refused with
+error{unsupported} — no solver here; counting latch with driver-facing
+<code class="docutils literal notranslate"><span class="pre">counting_color</span></code>/<code class="docutils literal notranslate"><span class="pre">pattern_color</span></code> hooks; Pi-only arms bounded per the
+profile rules). Tests: a scripted full phone session (mapping_started
+CodeParams == golden header, emitted pattern == golden colorPlan), and
+every golden CLIENT frame — real phone wire bytes — driven through the
+handler with the reply arm checked against the profile contract and every
+reply required to encode.</p></li>
+<li><p>All three crates (<code class="docutils literal notranslate"><span class="pre">ledmapper_pb</span></code>, pattern, player) <strong>build for
+<code class="docutils literal notranslate"><span class="pre">riscv32imac-unknown-none-elf</span></code></strong> (<code class="docutils literal notranslate"><span class="pre">--platforms=&#64;embedded//platforms:esp32c6</span></code>),
+resolving the software half of <strong>R3</strong> (micropb + heapless, no_std, no
+alloc, on the C6 triple); the remaining R3 scope is panic=abort and
+on-device footprint.</p></li>
+</ul>
+<p><strong>Phase 2 — RMT LED output.</strong> ~~Port FastLED output from bit-bang to the C6
+RMT peripheral~~ <strong>de-scoped by decision (2026-07-12): FastLED is assumed
+fine under CPU/WiFi load</strong> (bench: wifi_ap color picker verified; the
+player app + <code class="docutils literal notranslate"><span class="pre">//tools:player_probe</span></code> is the sustained-load test). The RMT
+port returns only if the bench shows glitches. The R1 60-second
+LEDs-while-connection-live acceptance moves onto the player app bench.</p>
+<p><strong>Phase 2½ — Player firmware app (bring-up). ✅ BUILT + PROTOCOL
+BENCH-PASSED on hardware</strong> (2026-07-12: <code class="docutils literal notranslate"><span class="pre">//tools:player_probe</span></code> against the
+flashed C6 over the soft-AP — every CORE-profile reply contract-clean,
+including the arena map+topology uploads and the solverless stop
+semantics; clock sync bridged the ~12 h monotonic-domain gap as designed).
+<code class="docutils literal notranslate"><span class="pre">//firmware/player_app</span></code> (<code class="docutils literal notranslate"><span class="pre">bazelisk</span> <span class="pre">run</span> <span class="pre">-c</span> <span class="pre">opt</span> <span class="pre">//firmware/player_app:flash_esp32c6</span></code>): WiFi soft-AP (<code class="docutils literal notranslate"><span class="pre">ledmapper</span></code>/
+<code class="docutils literal notranslate"><span class="pre">ledmapper</span></code>), HTTP :80 (the R2 landing page, scheme/port-aware bounce), the
+full CORE player protocol over plain WS :81, FastLED strip render of the
+counting + hue mapping patterns, uploads through the arena. The protocol
+brain is the host-tested Rust stack behind a C ABI (<code class="docutils literal notranslate"><span class="pre">player_ffi.h</span></code>; the
+device flow is host-tested end-to-end through the same extern “C” surface),
+and the RFC 6455 codec is host-tested byte-exactly against the RFC vectors.
+Bench it with <code class="docutils literal notranslate"><span class="pre">//tools:player_probe</span></code> (contract-checks every reply;
+validated live against the Pi player). <strong>Onboarding pivot (2026-07-12
+bench finding): the soft-AP + landing-bounce flow cannot onboard a phone —
+a phone joined to the device’s AP routes ALL traffic there, so the hosted
+app never loads. Primary onboarding is now BLE provisioning (Improv
+Wi-Fi BLE, the ESPHome standard): the HOSTED app (Web Bluetooth — Chrome
+Android/desktop; iOS has none and keeps manual <code class="docutils literal notranslate"><span class="pre">?url=</span></code>) sends WiFi
+credentials over GATT, the device stores them in NVS, joins the LAN in
+AP+STA mode (soft-AP stays as the bench fallback), and returns its address
+over BLE; the app reloads pointed at it. Both codec ends are pinned to the
+SAME test vectors (web/tests/improv.test.ts ==
+firmware/player_app/improv_codec_test.cc). Mixed content still gates the
+hosted app’s actual WS connection until Phase 4c TLS.</strong> Bring-up scope + the Phase 4c
+hardening list (TLS/wss, multi-client, STA) in
+<code class="docutils literal notranslate"><span class="pre">firmware/player_app/README.md</span></code>. Ships with the <code class="docutils literal notranslate"><span class="pre">no_ota</span></code> partition table
+(the image outgrows the default 1.25 MB slot; upstream provides
+<code class="docutils literal notranslate"><span class="pre">partitions_no_ota</span></code>).</p>
+<p><strong>Phase 3 — Arena allocator + micropb data model. ✅ DONE (host-side).</strong>
+<code class="docutils literal notranslate"><span class="pre">//firmware/arena</span></code> (<code class="docutils literal notranslate"><span class="pre">ledmapper_arena</span></code>): bump arena over a caller-owned
+buffer, deterministic <code class="docutils literal notranslate"><span class="pre">ArenaFull</span></code>, checkpoint/rollback (borrow-checked:
+<code class="docutils literal notranslate"><span class="pre">reset*</span></code> needs <code class="docutils literal notranslate"><span class="pre">&amp;mut</span></code>, allocations borrow <code class="docutils literal notranslate"><span class="pre">&amp;self</span></code>), plus <code class="docutils literal notranslate"><span class="pre">ArenaVec</span></code>
+(grow-and-leak for headerless lists, <code class="docutils literal notranslate"><span class="pre">with_exact_capacity</span></code> for header-sized
+ones). <code class="docutils literal notranslate"><span class="pre">//firmware/store</span></code> (<code class="docutils literal notranslate"><span class="pre">ledmapper_store</span></code>): <strong>decode-into-arena</strong> for the
+two variable-size uploads — hand-walked field decoders over <code class="docutils literal notranslate"><span class="pre">micropb</span></code>’s
+<code class="docutils literal notranslate"><span class="pre">PbDecoder</span></code> (a delta from the original “bind micropb container traits” idea:
+generated containers are constructed by <code class="docutils literal notranslate"><span class="pre">Default</span></code>, which cannot reach an
+arena without global state; walking exactly OutputMap/Topology is smaller
+and keeps the generated bindings for control messages) — LED list pre-sized
+from the upload’s own <code class="docutils literal notranslate"><span class="pre">led_count</span></code> header, <code class="docutils literal notranslate"><span class="pre">ChunkedReader</span></code> decodes straight
+from a WSS fragment list with no contiguous frame buffer, positions stored
+as <code class="docutils literal notranslate"><span class="pre">f32</span></code>. <code class="docutils literal notranslate"><span class="pre">envelope_arm</span></code> peeks the oneof arm so the transport routes arms
+13/16 around the generated envelope; the player replies <code class="docutils literal notranslate"><span class="pre">result_ready</span></code> /
+<code class="docutils literal notranslate"><span class="pre">error{map_too_large}</span></code> (<code class="docutils literal notranslate"><span class="pre">map_stored</span></code>/<code class="docutils literal notranslate"><span class="pre">topology_stored</span></code>/<code class="docutils literal notranslate"><span class="pre">upload_too_large</span></code>).
+Persistence: <code class="docutils literal notranslate"><span class="pre">BlobStore</span></code> trait (NVS = opaque upload blob keyed by map id);
+reload runs the SAME decoder, re-running the OOM check. <strong>Accepted:</strong> host
+std tests decode a chunked 1024-LED upload into one exactly-sized region,
+hit clean OOM at capacity+1 with rollback, and round-trip through the blob
+store (incl. the OOM re-check on a shrunken arena); golden topology frame
+decodes value-exact; everything builds for the C6 triple. Remaining for
+hardware: the esp-idf NVS <code class="docutils literal notranslate"><span class="pre">BlobStore</span></code> impl + panic=abort footprint (R3
+tail).</p>
+<p><strong>Phase 4 — Pattern-gen + clock + WSS on ESP32.</strong></p>
+<ul class="simple">
+<li><p>4a <strong>Pattern generator</strong>: port the HUE code plan —
+<code class="docutils literal notranslate"><span class="pre">pi/led_driver/led_driver/graycode.py</span></code> (<code class="docutils literal notranslate"><span class="pre">color_plan</span></code>/<code class="docutils literal notranslate"><span class="pre">symbol_at</span></code>/<code class="docutils literal notranslate"><span class="pre">codeword</span></code></p>
+<ul>
+<li><p>FEC, <code class="docutils literal notranslate"><span class="pre">symbols</span></code> = 2 and 4) → no_std Rust. Every frame is per-LED RGB
+(white/green sync + the Gray-ordered symbol palette); there are no on/off
+sets anymore, which is exactly the shape the RMT path wants. <strong>Accept:</strong>
+frame-for-frame match vs the Python goldens
+(<code class="docutils literal notranslate"><span class="pre">web/tests/golden_secded16.json</span></code> AND <code class="docutils literal notranslate"><span class="pre">golden_secded16_sym4.json</span></code>).</p></li>
+</ul>
+</li>
+<li><p>4b <strong>SNTP clock</strong> on <code class="docutils literal notranslate"><span class="pre">esp_timer</span></code> (SDK bundles lwip SNTP); <strong>accept:</strong> offset
+convergence + a <strong>documented drift bound / re-sync cadence</strong>.</p></li>
+<li><p>4c <strong>WSS transport</strong>: RFC6455 over <code class="docutils literal notranslate"><span class="pre">esp_https_server</span></code> + mbedtls. SDK has
+<strong>no WebSocket lib</strong> — use <code class="docutils literal notranslate"><span class="pre">httpd_ws_*</span></code> if the Arduino-merged tree exposes
+it, else vendor a minimal frame codec. <strong>Accept:</strong> browser opens a WSS session
+to the self-signed endpoint and exchanges one proto message each way.
+<strong>De-risked upstream</strong> (embedded &#64; 9f91e12, hardware-verified): WiFi
+soft-AP + HTTP webserver work on the C6 (<code class="docutils literal notranslate"><span class="pre">&#64;embedded//apps/wifi_ap</span></code> —
+arduino-esp32 WiFi/WebServer wired into Bazel), and <code class="docutils literal notranslate"><span class="pre">c_resource_library</span></code>
+embeds served pages as C arrays — <code class="docutils literal notranslate"><span class="pre">//firmware/landing:landing_page</span></code>
+already packages the R2 landing page that way (<code class="docutils literal notranslate"><span class="pre">landing_html[]</span></code>, app
+origin baked to the deployed <a class="reference external" href="https://ledmapper.pages.dev">https://ledmapper.pages.dev</a>). Remaining 4c
+scope: TLS (mbedtls/esp_https_server) + the RFC6455 codec + proto framing.</p></li>
+</ul>
+<p><strong>Phase 5 — LED counting.</strong> Firmware displays commanded color-block/spatial-
+binary patterns; phone CV detects blocks and binary-searches strip length;
+counting handshake messages. The hue palette’s classification machinery
+(white-normalized nearest-palette matching in <code class="docutils literal notranslate"><span class="pre">web/src/cv/decoder.ts</span></code>) is
+directly reusable for block-color detection. <strong>Accept:</strong> arbitrary soldered
+length → correct count.</p>
+<p><strong>Phase E — ~~VIO solver Rust→WASM~~ ✅ LANDED + WebXR removal.</strong> The solver
+port is done and exceeds the original spec of this phase: <code class="docutils literal notranslate"><span class="pre">solver/</span></code> crate
+(so3/preintegration/LSMR/LM/pipeline, no faer/nalgebra needed — hand-rolled
+numerics kept the wasm small), <code class="docutils literal notranslate"><span class="pre">//pi/reconstruction:rust_parity_test</span></code> pins
+solution-space parity vs <code class="docutils literal notranslate"><span class="pre">vio.py</span></code>, the wasm ships as <code class="docutils literal notranslate"><span class="pre">//solver:solver_web</span></code>
+with a worker + <code class="docutils literal notranslate"><span class="pre">SolverAgent</span></code>, the placement benchmark runs at init on both
+ends, and phone-solved maps upload via <code class="docutils literal notranslate"><span class="pre">submit_map</span></code>. A Rust synthetic fixture
+also exists (<code class="docutils literal notranslate"><span class="pre">solver/src/synth.rs</span></code> — the canned benchmark scene). Remaining
+in this phase:</p>
+<ul class="simple">
+<li><p>~~<strong>WebXR removal</strong> (M6)~~ <strong>done</strong>: <code class="docutils literal notranslate"><span class="pre">webxrCapture.ts</span></code>, the
+<code class="docutils literal notranslate"><span class="pre">webxr-camera.d.ts</span></code> shims and the XR-layer GL renderers (<code class="docutils literal notranslate"><span class="pre">points3d.ts</span></code>,
+MarkerRenderer) are deleted; <code class="docutils literal notranslate"><span class="pre">mediaStreamCapture.ts</span></code> (now THE capture
+path), <code class="docutils literal notranslate"><span class="pre">imu.ts</span></code> and <code class="docutils literal notranslate"><span class="pre">intrinsics.ts</span></code> (tested; PnP/calibration will want it)
+stay; <code class="docutils literal notranslate"><span class="pre">tls.py</span></code> now justifies TLS by getUserMedia/DeviceMotion secure
+contexts + WSS. The calibrated-K localStorage cache is still READ (legacy
+XR-era calibrations keep their scale) but nothing writes it until the
+phase-4.5 calibration flow.</p></li>
+<li><p>~~<strong>ESP32 solve flow</strong>~~ <strong>done</strong>: on stop, a player that never advertised
+<code class="docutils literal notranslate"><span class="pre">solverBenchMs</span></code> + an unavailable wasm solver now produces a clear error
+(capture stopped with <code class="docutils literal notranslate"><span class="pre">solveOnHost=false</span></code>, nothing solved) instead of a
+doomed host-solve request.</p></li>
+<li><p><strong><em>(Optional, later)</em></strong> move the TS↔wasm boundary from JSON strings to proto
+bytes (<code class="docutils literal notranslate"><span class="pre">observation.proto</span></code> idea) — pure optimization; the JSON boundary is
+landed and tested.</p></li>
+</ul>
+<p><strong>Phase F — Skeletonization + association export.</strong> Port <code class="docutils literal notranslate"><span class="pre">skelgraph</span></code>
+(reduce/neighbors/cleanup/topology) to WASM (Rust, consistent with the solver
+— confirm at impl; TS/Pyodide are fallbacks). <strong>Net-new upstream work</strong>: write
+the per-LED <code class="docutils literal notranslate"><span class="pre">(segment_id,</span> <span class="pre">foot_arclength,</span> <span class="pre">d_perp)</span></code> <strong>association exporter</strong>
+(graph-extractor marks it “still TODO”). <strong>Accept:</strong> WASM skelgraph matches
+Python on the test datasets; association reproduces the naive illuminate.</p>
+<p><strong>Phase G — Playback engines.</strong> Shared Rust <strong>pulse sim</strong> crate from the
+reference (<code class="docutils literal notranslate"><span class="pre">graph-extractor</span></code> <code class="docutils literal notranslate"><span class="pre">viz/static/index.html</span></code>: <code class="docutils literal notranslate"><span class="pre">pulseBuildModel</span></code>/
+<code class="docutils literal notranslate"><span class="pre">pulseStep</span></code>/<code class="docutils literal notranslate"><span class="pre">pulseWorldPos</span></code>/<code class="docutils literal notranslate"><span class="pre">pulseIlluminate</span></code>). Two illuminate backends: ESP32
+no_std (arena-backed, O(N) via the association export), Pi CPU (then GLES).
+Plus WLED-like generic effects + the effect-param model/config UI. <strong>Accept:</strong>
+identical pulse frames across the Rust reference and both targets on a fixed
+seed; ESP32 sustains target FPS within arena bounds.</p>
+</section>
+<section id="arena-micropb-detail-phase-3">
+<h2>Arena / micropb detail (Phase 3)<a class="headerlink" href="#arena-micropb-detail-phase-3" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p><strong>Static (<code class="docutils literal notranslate"><span class="pre">heapless</span></code>):</strong> color-plan buffers, proto decode scratch, WSS
+reassembly, SNTP state, NVS keys, <code class="docutils literal notranslate"><span class="pre">CodeParams</span></code>.</p></li>
+<li><p><strong>Arena (bump):</strong> LED xyz map, topology (branch points + segments), per-LED
+association. LED count flexible up to arena capacity.</p></li>
+<li><p><strong>Binding:</strong> implement micropb container traits over <code class="docutils literal notranslate"><span class="pre">&amp;'arena</span> <span class="pre">mut</span> <span class="pre">[T]</span></code>
+cursors; streaming decode bump-appends chunked <code class="docutils literal notranslate"><span class="pre">LedEntry</span></code>s into a region
+sized from the upload header. <code class="docutils literal notranslate"><span class="pre">ArenaFull</span></code> → micropb decode error → bounded
+“map too large” reply + cursor reset (no alloc, no panic, no partial-write
+UB).</p></li>
+<li><p><strong>Persistence:</strong> store the decoded map as an opaque proto blob in NVS keyed
+by map-id/hash; reload decodes via the <strong>same</strong> micropb path (one format);
+re-runs the OOM check.</p></li>
+<li><p><strong>Verify:</strong> confirm micropb compiles no_std + <code class="docutils literal notranslate"><span class="pre">-Cpanic=abort</span></code> + no <code class="docutils literal notranslate"><span class="pre">alloc</span></code>
+feature for the C6 triple (R3 spike).</p></li>
+</ul>
+</section>
+<section id="missing-work-folded-in">
+<h2>Missing work folded in<a class="headerlink" href="#missing-work-folded-in" title="Link to this heading">¶</a></h2>
+<p>M1 ESP32 self-signed cert provisioning (build-time bake or first-boot mbedtls
+into NVS; stable SAN = mDNS name). M2 <strong>secure-context/mixed-content spike</strong>
+(below). M3 effect-param proto + config UI. M4 <code class="docutils literal notranslate"><span class="pre">esp_timer</span></code> drift budget +
+re-sync cadence. M5 Pi player reuse boundary — but <strong>keep</strong>
+<code class="docutils literal notranslate"><span class="pre">pi/reconstruction</span></code> and the server solve path: they are the Rust solver’s
+parity reference, fallback, and the placement benchmark’s host side on the Pi
+profile. M6 WebXR cleanup (see Phase E). M7 ~~confirm the optical decode runs
+on the phone~~ confirmed — it always has (<code class="docutils literal notranslate"><span class="pre">web/src/cv</span></code>, <code class="docutils literal notranslate"><span class="pre">web/src/code</span></code>), and
+the hue-only carrier removed its dependence on blob on/off tracking. M8
+extend the M9 simulator to emit IMU + real timestamps (note
+<code class="docutils literal notranslate"><span class="pre">solver/src/synth.rs</span></code> + <code class="docutils literal notranslate"><span class="pre">test_rust_parity.py::synth_session</span></code> already provide
+synthetic IMU fixtures — the M9 gap is only for simulator-driven flows). M9
+build/vendor the RFC6455 codec. M10 ~~cross-target proto conformance test~~
+done (extend <code class="docutils literal notranslate"><span class="pre">golden_proto_frames.json</span></code> to a Rust/micropb leg —
+<code class="docutils literal notranslate"><span class="pre">//shared/protocol/rust:conformance_test</span></code>).</p>
+<p><strong>M11 — legitimate player certificates via DNS-01 ACME (deferred by choice;
+punts the whole R2 cert-exception dance for online installs).</strong> The owner
+has a domain and can create A records; when picked up:</p>
+<ol class="arabic simple">
+<li><p><strong>DNS</strong>: put the domain’s zone on the existing Cloudflare account; give
+each player a DHCP reservation and a public A record to its PRIVATE LAN
+IP (allowed and standard for this), e.g. <code class="docutils literal notranslate"><span class="pre">pi.leds.&lt;domain&gt;</span></code>,
+<code class="docutils literal notranslate"><span class="pre">esp32-&lt;id&gt;.leds.&lt;domain&gt;</span></code> — per-device names, not a wildcard, so one
+leaked device key can’t impersonate the rest.</p></li>
+<li><p><strong>Token</strong>: a SECOND Cloudflare API token with Zone → DNS → Edit on that
+zone only (keep the Pages deploy token separate), dropped under
+<code class="docutils literal notranslate"><span class="pre">credentials/</span></code> like the others.</p></li>
+<li><p><strong>Issue/renew tooling</strong>: <code class="docutils literal notranslate"><span class="pre">lego</span></code> (or certbot) with the CF DNS provider —
+DNS-01 needs no inbound reachability, so it works for LAN-only devices.
+A <code class="docutils literal notranslate"><span class="pre">tools/</span></code> script + docs; certs renew every ≤90 days.</p></li>
+<li><p><strong>Pi integration</strong>: trivial — the server already takes cert/key files
+(<code class="docutils literal notranslate"><span class="pre">tls.py</span></code> / <code class="docutils literal notranslate"><span class="pre">--ssl-dir</span></code>); run the renewal on the Pi itself (systemd
+timer, fold into pi/provisioning) and point the server at lego’s output.</p></li>
+<li><p><strong>ESP32 integration</strong>: the C6 cannot run ACME but can HOLD a cert+key —
+this upgrades M1 from “bake self-signed” to “push a real cert at
+provisioning, re-push on renewal” (provisioning tool or a
+<code class="docutils literal notranslate"><span class="pre">set_certificate</span></code> protocol arm in Phase 4c; key material only ever over
+an already-authenticated link).</p></li>
+<li><p><strong>Fallback stays</strong>: capture must work on offline/venue LANs with no
+public DNS, so self-signed + the landing-page trust flow
+(<code class="docutils literal notranslate"><span class="pre">firmware/landing/</span></code>) remain the fallback path; the app already handles
+both (<code class="docutils literal notranslate"><span class="pre">certApprovalUrl</span></code> hint fires only when needed).</p></li>
+</ol>
+</section>
+<section id="risks-first-spikes-run-before-committing-the-dependent-phase">
+<h2>Risks &amp; first spikes (run before committing the dependent phase)<a class="headerlink" href="#risks-first-spikes-run-before-committing-the-dependent-phase" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p><strong>R1</strong> RMT-while-WiFi coexistence on single-core C6 — <em>existence proof for
+the whole ESP32 target.</em> Spike a throwaway RMT+WSS-ping app first.
+<strong>Partially validated on hardware</strong> (2026-07-12, <code class="docutils literal notranslate"><span class="pre">&#64;embedded//apps/wifi_ap</span></code>
+flashed from this repo’s vendored pin): soft-AP + webserver + onboard-LED
+color updates work together. Still owed before Phase 2 is committed: a
+SUSTAINED animation on a real strip under concurrent request load for
+~60 s with no frame glitches (the color picker exercises sparse one-shot
+updates, not continuous signal generation).</p></li>
+<li><p><strong>R2</strong> Self-signed WSS from an <strong>externally-hosted</strong> origin has no
+background trust path. <strong>Spike apparatus built and core flow
+bench-validated</strong> (2026-07-12: the app served from
+<a class="reference external" href="https://ledmapper.pages.dev">https://ledmapper.pages.dev</a> connected to the container-hosted self-signed
+stand-in player and drove the virtual-wall flow — the stored cert
+exception does unlock cross-origin WSS). (<code class="docutils literal notranslate"><span class="pre">firmware/landing/</span></code>):
+the resolution is committed to the landing-page design — the ESP32 serves
+ONE same-origin page (<code class="docutils literal notranslate"><span class="pre">index.html</span></code>, <code class="docutils literal notranslate"><span class="pre">%%APP_ORIGIN%%</span></code> baked by firmware
+config) whose load forces the one-tap cert approval, probes its own
+<code class="docutils literal notranslate"><span class="pre">wss://…/ws</span></code> to prove the exception stuck, and bounces to the hosted app
+with <code class="docutils literal notranslate"><span class="pre">?url=</span></code> pre-filled; the app side surfaces the matching recovery hint
+(<code class="docutils literal notranslate"><span class="pre">certApprovalUrl</span></code> in <code class="docutils literal notranslate"><span class="pre">web/src/net/client.ts</span></code>) when a cross-origin <code class="docutils literal notranslate"><span class="pre">wss:</span></code>
+target won’t connect. WS-vs-WSS is settled by platform rules: the app
+origin is <code class="docutils literal notranslate"><span class="pre">https:</span></code> (Pages + getUserMedia), and mixed-content blocks <code class="docutils literal notranslate"><span class="pre">ws://</span></code>
+from secure origins — WSS stays. <strong>Remaining bench validation</strong> (real
+Chrome-for-Android + iOS Safari; runbook in <code class="docutils literal notranslate"><span class="pre">firmware/landing/README.md</span></code>,
+Pi stands in as the self-signed player): exception scope + lifetime after
+the interstitial, and Chrome <strong>Private Network Access</strong> enforcement (a
+public→private-network WSS may come to require a PNA preflight —
+<code class="docutils literal notranslate"><span class="pre">Access-Control-Allow-Private-Network</span></code> — independent of cert trust).</p></li>
+<li><p><strong>R3</strong> micropb + heapless + arena on <code class="docutils literal notranslate"><span class="pre">riscv32imac-none</span></code>, panic=abort, no
+alloc. <strong>Half-resolved</strong> (Phase 1½): micropb + heapless + the generated
+bindings + player core build no_std/no-alloc for the C6 triple; remaining
+is panic=abort linkage + on-device footprint (with the arena, Phase 3).</p></li>
+<li><p>~~<strong>R4</strong> VIO estimator harness doesn’t exist~~ — resolved: the Rust port
+landed with a parity harness.</p></li>
+<li><p>~~<strong>R5</strong> Sparse-LM numerical parity Rust↔scipy~~ — resolved: parity is
+asserted in solution space (&lt;3 mm cross-solver agreement), which proved
+sufficient; no bit-level scipy matching was needed.</p></li>
+<li><p><strong>R6</strong> graph-extractor association exporter is unwritten — prototype vs one
+<code class="docutils literal notranslate"><span class="pre">viz/trace.py</span></code> fixture before the O(N) illuminate.</p></li>
+<li><p><strong>R7</strong> Clock drift across esp_timer + Pi + phone — measure raw vs SNTP drift.</p></li>
+<li><p>~~<strong>R8</strong> Protocol cutover touches 4 seams / 3 languages~~ — resolved: the
+TS/Python cutover landed (proto-comms); the remaining leg is firmware-only
+and additive.</p></li>
+</ul>
+</section>
+<section id="key-files">
+<h2>Key files<a class="headerlink" href="#key-files" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p>Protocol: <code class="docutils literal notranslate"><span class="pre">shared/protocol/proto/ledmapper.proto</span></code> (the wire),
+<code class="docutils literal notranslate"><span class="pre">shared/protocol/{schemas/*.json,codegen.py}</span></code> (§7 source of truth + internal
+bindings), boundary converters <code class="docutils literal notranslate"><span class="pre">pi/server/server/proto_wire.py</span></code> +
+<code class="docutils literal notranslate"><span class="pre">web/src/net/proto.ts</span></code>, golden <code class="docutils literal notranslate"><span class="pre">web/tests/golden_proto_frames.json</span></code>,
+<code class="docutils literal notranslate"><span class="pre">shared/protocol/fec.py</span></code></p></li>
+<li><p>Solver (landed): <code class="docutils literal notranslate"><span class="pre">solver/src/{vio.rs,pipeline.rs,lm.rs,sparse.rs,imu.rs,</span> <span class="pre">synth.rs}</span></code>, <code class="docutils literal notranslate"><span class="pre">solver/worker.js</span></code>, <code class="docutils literal notranslate"><span class="pre">web/src/solver/{agent.ts,placement.ts}</span></code>,
+parity <code class="docutils literal notranslate"><span class="pre">pi/reconstruction/tests/test_rust_parity.py</span></code></p></li>
+<li><p>Pattern gen (hue): <code class="docutils literal notranslate"><span class="pre">pi/led_driver/led_driver/{graycode.py,driver.py,spi.py,</span> <span class="pre">clock.py}</span></code>, <code class="docutils literal notranslate"><span class="pre">gen_golden.py</span></code>, TS mirror <code class="docutils literal notranslate"><span class="pre">web/src/code/gray.ts</span></code>, goldens
+<code class="docutils literal notranslate"><span class="pre">web/tests/golden_secded16{,_sym4}.json</span></code></p></li>
+<li><p>Wire seams: <code class="docutils literal notranslate"><span class="pre">web/src/net/client.ts</span></code>, <code class="docutils literal notranslate"><span class="pre">pi/server/server/{app.py,handler.py}</span></code></p></li>
+<li><p>Firmware (vendored): <code class="docutils literal notranslate"><span class="pre">third_party/embedded/{MODULE.bazel,rules/firmware.bzl,</span> <span class="pre">apps/rainbow/rainbow.cpp,rust/blink_timing/,libs/{board,pins}/,nix/arduino_esp32.BUILD}</span></code></p></li>
+<li><p>Pulse ref: graph-extractor <code class="docutils literal notranslate"><span class="pre">viz/static/index.html</span></code>, <code class="docutils literal notranslate"><span class="pre">skelgraph/</span></code>,
+<code class="docutils literal notranslate"><span class="pre">viz/trace.py</span></code> (branch <code class="docutils literal notranslate"><span class="pre">viz-offline-render</span></code>)</p></li>
+<li><p>Bazel: <code class="docutils literal notranslate"><span class="pre">MODULE.bazel</span></code> (rules_rust + crate_universe + toolchains_protoc
+already present), <code class="docutils literal notranslate"><span class="pre">web/BUILD.bazel</span></code>, <code class="docutils literal notranslate"><span class="pre">requirements.in</span></code>, <code class="docutils literal notranslate"><span class="pre">pnpm-workspace.yaml</span></code></p></li>
+</ul>
+</section>
+<section id="verification">
+<h2>Verification<a class="headerlink" href="#verification" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p><strong>Per phase:</strong> the acceptance artifact above (Bazel builds, golden matches,
+round-trip/conformance tests, the RMT+WSS 60s coexistence bench).</p></li>
+<li><p><strong>Firmware (no hardware):</strong> <code class="docutils literal notranslate"><span class="pre">esptool</span> <span class="pre">image-info</span></code> on the <code class="docutils literal notranslate"><span class="pre">.bin</span></code>;
+<code class="docutils literal notranslate"><span class="pre">riscv…-nm</span></code> resolves the Rust pulse/pattern symbols; host <code class="docutils literal notranslate"><span class="pre">std</span></code> tests for
+arena + micropb.</p></li>
+<li><p><strong>Firmware (hardware):</strong> <code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//…:flash_esp32c6</span></code>; WSS handshake from a
+phone; visual hue-code cadence via high-FPS camera (colors, not blinks);
+pulse animation on a strip.</p></li>
+<li><p><strong>Solver:</strong> already verified — <code class="docutils literal notranslate"><span class="pre">rust_parity_test</span></code> + the 17-test Rust suite;
+keep them green.</p></li>
+<li><p><strong>End-to-end:</strong> phone captures → solves in-browser → uploads to a bench
+ESP32 and the Pi → both play the pulse; <code class="docutils literal notranslate"><span class="pre">bazelisk</span> <span class="pre">build</span> <span class="pre">//...</span></code> and
+<code class="docutils literal notranslate"><span class="pre">bazelisk</span> <span class="pre">test</span> <span class="pre">//...</span></code> green.</p></li>
+<li><p>Existing suite (<strong>30</strong> targets) stays green through the remaining protocol
+additions.</p></li>
+</ul>
+</section>
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          <a class="next-page" href="design/mbedtls-dynamic-buffers.html">
+              <div class="page-info">
+                <div class="context">
+                  <span>Next</span>
+                </div>
+                <div class="title">Design: MbedTLS from source with dynamic buffers (<code class="docutils literal notranslate"><span class="pre">&#64;embedded</span></code>)</div>
+              </div>
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+            </a>
+          <a class="prev-page" href="blob-detection-playbook.html">
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+              <div class="page-info">
+                <div class="context">
+                  <span>Previous</span>
+                </div>
+                
+                <div class="title">Blob-detection optimization playbook</div>
+                
+              </div>
+            </a>
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; Kevin Balke and the splanc contributors — AGPL-3.0-or-later
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">ESP32-based LED Mapping + Playback — Build Plan</a><ul>
+<li><a class="reference internal" href="#reference-repos-private">Reference repos (private)</a></li>
+<li><a class="reference internal" href="#context">Context</a></li>
+<li><a class="reference internal" href="#target-architecture">Target architecture</a></li>
+<li><a class="reference internal" href="#protocol-design-protobuf">Protocol design (protobuf)</a></li>
+<li><a class="reference internal" href="#phases-dependency-ordered-each-has-a-testable-artifact">Phases (dependency-ordered; each has a testable artifact)</a></li>
+<li><a class="reference internal" href="#arena-micropb-detail-phase-3">Arena / micropb detail (Phase 3)</a></li>
+<li><a class="reference internal" href="#missing-work-folded-in">Missing work folded in</a></li>
+<li><a class="reference internal" href="#risks-first-spikes-run-before-committing-the-dependent-phase">Risks &amp; first spikes (run before committing the dependent phase)</a></li>
+<li><a class="reference internal" href="#key-files">Key files</a></li>
+<li><a class="reference internal" href="#verification">Verification</a></li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="../_static/documentation_options.js?v=8a448e45"></script>
+    <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../_static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../_static/copybutton.js?v=fd10adb8"></script>
+    <script src="../_static/design-tabs.js?v=f930bc37"></script>
+    </body>
+</html>

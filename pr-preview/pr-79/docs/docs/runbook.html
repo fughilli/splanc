@@ -1,0 +1,590 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="Index" href="../genindex.html"><link rel="search" title="Search" href="../search.html"><link rel="next" title="APP" href="../next_steps.html"><link rel="prev" title="Getting started" href="../README.html">
+        <link rel="prefetch" href="../_static/splanc-icon.svg" as="image">
+
+    <link rel="shortcut icon" href="../_static/splanc-icon.svg"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
+        <title>Runbook - splanc developer docs</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/furo.css?v=7bdb33bb" />
+    <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=36188834" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  --color-brand-primary: #084de7;
+  --color-brand-content: #084de7;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation" aria-label="Toggle site navigation sidebar">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc" aria-label="Toggle table of contents sidebar">
+<label class="overlay sidebar-overlay" for="__navigation"></label>
+<label class="overlay toc-overlay" for="__toc"></label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <span class="icon"><svg><use href="#svg-menu"></use></svg></span>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../index.html"><div class="brand">splanc developer docs</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../index.html">
+  <div class="sidebar-logo-container">
+    <img class="sidebar-logo" src="../_static/splanc-icon.svg" alt="Logo"/>
+  </div>
+  
+  <span class="sidebar-brand-text">splanc developer docs</span>
+  
+</a><form class="sidebar-search-container" method="get" action="../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../architecture.html">Architecture</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../subsystems/index.html">Subsystems</a><input aria-label="Toggle navigation of Subsystems" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/web.html">The PWA (<code class="docutils literal notranslate"><span class="pre">web/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/firmware.html">The firmware (<code class="docutils literal notranslate"><span class="pre">firmware/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/fx-compiler.html">The effects compiler (<code class="docutils literal notranslate"><span class="pre">fx_compiler/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/solver.html">The solver (<code class="docutils literal notranslate"><span class="pre">solver/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/reconstruction.html">Reconstruction (<code class="docutils literal notranslate"><span class="pre">pi/reconstruction/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/protocol.html">The wire protocol (<code class="docutils literal notranslate"><span class="pre">shared/protocol/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/simulator.html">The simulator (<code class="docutils literal notranslate"><span class="pre">shared/simulator/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/hitl.html">HITL &amp; tooling (<code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code>, <code class="docutils literal notranslate"><span class="pre">tools/</span></code>)</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Guides</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../DEVELOPERS.html">Developing splanc</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html#hardware">Hardware</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html#how-it-works">How it works</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html#learn-more">Learn more</a></li>
+<li class="toctree-l1 current current-page"><a class="current reference internal" href="#">Runbook</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../next_steps.html">APP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../next_steps.html#firmware">FIRMWARE</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../next_steps.html#effects-compiler">EFFECTS COMPILER</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../next_steps.html#performance-monitoring">PERFORMANCE MONITORING</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Effects</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../EFFECTS.html">The splanc effects engine</a></li>
+<li class="toctree-l1"><a class="reference internal" href="fx-vm-performance.html">FX-VM performance</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../led-mapper-design.html">LED Mapper — Design Doc (Android-first)</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../design/index.html">Design notes</a><input aria-label="Toggle navigation of Design notes" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="design/effects-runtime.html">The effects runtime</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/effects-compiler.html">The effects compiler</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/perf-monitoring.html">Performance monitoring</a></li>
+<li class="toctree-l2"><a class="reference internal" href="vio-exploration.html">VIO solver exploration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blob-detection-playbook.html">Blob-detection playbook</a></li>
+<li class="toctree-l2"><a class="reference internal" href="esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/app-ux-overhaul.html">App UX overhaul</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="decisions.html">Decision log</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Meta</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../about-these-docs.html">How these docs are built</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="view-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/blob/main/docs/_sphinx/docs/runbook.md?plain=true" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div><div class="edit-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/edit/main/docs/_sphinx/docs/runbook.md" rel="edit" title="Edit this page">
+    <svg><use href="#svg-pencil"></use></svg>
+    <span class="visually-hidden">Edit this page</span>
+  </a>
+</div><div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <section id="runbook">
+<h1>Runbook<a class="headerlink" href="#runbook" title="Link to this heading">¶</a></h1>
+<p>Operational steps for building, testing, and deploying LED Mapper. The durable
+design lives in <a class="reference internal" href="../led-mapper-design.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">led-mapper-design.md</span></code></span></a>; version
+rationale lives in <a class="reference internal" href="decisions.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">decisions.md</span></code></span></a>.</p>
+<section id="prerequisites">
+<h2>Prerequisites<a class="headerlink" href="#prerequisites" title="Link to this heading">¶</a></h2>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Tool</p></th>
+<th class="head"><p>Version</p></th>
+<th class="head"><p>Why</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><a class="reference external" href="https://github.com/bazelbuild/bazelisk">Bazelisk</a></p></td>
+<td><p>any (pins Bazel via <code class="docutils literal notranslate"><span class="pre">.bazelversion</span></code> → 7.7.1)</p></td>
+<td><p>The only build entry point. Invoke as <code class="docutils literal notranslate"><span class="pre">bazelisk</span></code>.</p></td>
+</tr>
+<tr class="row-odd"><td><p>pnpm</p></td>
+<td><p>11+</p></td>
+<td><p>TypeScript workspace (<code class="docutils literal notranslate"><span class="pre">web/</span></code>, <code class="docutils literal notranslate"><span class="pre">shared/protocol/ts/</span></code>).</p></td>
+</tr>
+<tr class="row-even"><td><p>Node</p></td>
+<td><p>20+</p></td>
+<td><p>Runs <code class="docutils literal notranslate"><span class="pre">tsc</span></code> / the web toolchain.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Nix</p></td>
+<td><p>(only for M4)</p></td>
+<td><p>Building/deploying the Pi image. See <code class="docutils literal notranslate"><span class="pre">pi/provisioning/README.md</span></code>. Not needed for the rest of the build.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>A hermetic Python 3.11 and TypeScript come from Bazel; you do <strong>not</strong> need a
+system Python or a global <code class="docutils literal notranslate"><span class="pre">tsc</span></code> for <code class="docutils literal notranslate"><span class="pre">bazelisk</span></code> builds.</p>
+</section>
+<section id="bootstrap">
+<h2>Bootstrap<a class="headerlink" href="#bootstrap" title="Link to this heading">¶</a></h2>
+<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>bazelisk<span class="w"> </span>build<span class="w"> </span>//...<span class="w">        </span><span class="c1"># build every target</span>
+bazelisk<span class="w"> </span><span class="nb">test</span><span class="w">  </span>//...<span class="w">        </span><span class="c1"># run every test</span>
+</pre></div>
+</div>
+<p>Scoped equivalents while iterating:</p>
+<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>bazelisk<span class="w"> </span><span class="nb">test</span><span class="w"> </span>//shared/protocol:roundtrip_test<span class="w">          </span><span class="c1"># M10 wire-protocol acceptance</span>
+bazelisk<span class="w"> </span><span class="nb">test</span><span class="w"> </span>//shared/protocol/ts:protocol_ts_typecheck_test<span class="w">   </span><span class="c1"># generated TS type-checks</span>
+bazelisk<span class="w"> </span>build<span class="w"> </span>//shared/protocol:codegen_freshness<span class="w">      </span><span class="c1"># fail if generated bindings drift</span>
+bazelisk<span class="w"> </span><span class="nb">test</span><span class="w"> </span>//pi/reconstruction:reconstruct_test<span class="w">      </span><span class="c1"># M3 unit + solver tests</span>
+bazelisk<span class="w"> </span><span class="nb">test</span><span class="w"> </span>//shared/simulator:sim_recon_roundtrip_test<span class="w">   </span><span class="c1"># M9→M3 Phase-2 acceptance</span>
+</pre></div>
+</div>
+</section>
+<section id="the-wire-protocol-m10">
+<h2>The wire protocol (M10)<a class="headerlink" href="#the-wire-protocol-m10" title="Link to this heading">¶</a></h2>
+<p>The JSON Schemas under <code class="docutils literal notranslate"><span class="pre">shared/protocol/schemas/*.json</span></code> are the single source of
+truth. The Pydantic models (<code class="docutils literal notranslate"><span class="pre">python/ledmapper_protocol/_generated.py</span></code>) and the
+TypeScript types (<code class="docutils literal notranslate"><span class="pre">ts/generated/index.ts</span></code>) are <strong>generated from the schemas and
+checked in</strong> (so non-Bazel consumers — <code class="docutils literal notranslate"><span class="pre">tsc</span></code>, plain <code class="docutils literal notranslate"><span class="pre">python</span></code> imports — see them
+on disk).</p>
+<p>After editing a schema, regenerate the bindings:</p>
+<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>python3<span class="w"> </span>shared/protocol/codegen.py<span class="w">            </span><span class="c1"># rewrites the two generated files</span>
+python3<span class="w"> </span>shared/protocol/codegen.py<span class="w"> </span>--check<span class="w">    </span><span class="c1"># CI/local: exit 1 if they&#39;re stale</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">bazelisk</span> <span class="pre">build</span> <span class="pre">//shared/protocol:codegen_freshness</span></code> runs the <code class="docutils literal notranslate"><span class="pre">--check</span></code> form and
+fails the build if you forgot to regenerate. Run the codegen with <code class="docutils literal notranslate"><span class="pre">python3</span></code>
+directly (not <code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span></code>) so it writes into the source tree rather than a
+sandbox.</p>
+</section>
+<section id="the-led-driver-m1">
+<h2>The LED driver (M1)<a class="headerlink" href="#the-led-driver-m1" title="Link to this heading">¶</a></h2>
+<p>The real-time driver process owns the SPI bus and the pattern clock, running the
+Gray-code cycle and exposing a Unix-socket control plane for M2.</p>
+<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span><span class="c1"># On the Pi (real hardware):</span>
+bazelisk<span class="w"> </span>run<span class="w"> </span>//pi/led_driver:drive<span class="w"> </span>--<span class="w"> </span>--socket<span class="w"> </span>/run/ledmapper/control.sock
+
+<span class="c1"># Hardware-free dry run (in-memory sink), lighting a 16-LED cycle:</span>
+bazelisk<span class="w"> </span>run<span class="w"> </span>//pi/led_driver:drive<span class="w"> </span>--<span class="w"> </span>--dry-run<span class="w"> </span>--socket<span class="w"> </span>/tmp/control.sock<span class="w"> </span>--start<span class="w"> </span><span class="m">16</span>
+</pre></div>
+</div>
+<p>The control commands (<code class="docutils literal notranslate"><span class="pre">start</span></code>/<code class="docutils literal notranslate"><span class="pre">stop</span></code>/<code class="docutils literal notranslate"><span class="pre">get_clock</span></code>/<code class="docutils literal notranslate"><span class="pre">set_debug</span></code>) and the wire format
+are documented in <a class="reference internal" href="#../pi/led_driver/README.md"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">pi/led_driver/README.md</span></code></span></a>. Real
+cadence verification (±10% per §9 Phase 1) needs a logic analyzer on a bench and
+is not covered by CI.</p>
+</section>
+<section id="the-pi-server-m2">
+<h2>The Pi server (M2)<a class="headerlink" href="#the-pi-server-m2" title="Link to this heading">¶</a></h2>
+<p>The FastAPI/uvicorn server hosts the web app and the §7 WebSocket control plane,
+persists a capture to a session log, runs reconstruction when the capture ends,
+and serves the maps.</p>
+<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span><span class="c1"># Run locally on a high port (port 80 needs root):</span>
+bazelisk<span class="w"> </span>run<span class="w"> </span>//pi/server:serve<span class="w"> </span>--<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--host<span class="w"> </span><span class="m">127</span>.0.0.1<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--session-dir<span class="w"> </span>/tmp/ledmapper/sessions<span class="w"> </span>--maps-dir<span class="w"> </span>/tmp/ledmapper/maps
+
+curl<span class="w"> </span>-s<span class="w"> </span>http://127.0.0.1:8080/healthz<span class="w">            </span><span class="c1"># {&quot;status&quot;:&quot;ok&quot;}</span>
+curl<span class="w"> </span>-s<span class="w"> </span>http://127.0.0.1:8080/maps/&lt;id&gt;<span class="w">          </span><span class="c1"># reconstructed OutputMap JSON</span>
+curl<span class="w"> </span>-s<span class="w"> </span>http://127.0.0.1:8080/maps/&lt;id&gt;.csv<span class="w">      </span><span class="c1"># id,x,y,z,confidence,n_views</span>
+</pre></div>
+</div>
+<p>Endpoints and the full WebSocket message flow are documented in
+<a class="reference internal" href="#../pi/server/README.md"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">pi/server/README.md</span></code></span></a>. The
+<code class="docutils literal notranslate"><span class="pre">//pi/server:server_integration_test</span></code> target boots a real server and drives the
+whole flow (hello → clock sync → start → detections → stop → reconstruct →
+serve) using M9 simulator data — the §6 M2 acceptance.</p>
+</section>
+<section id="the-web-app-m5m8-phone-testing-against-the-virtual-led-wall">
+<h2>The web app (M5–M8) + phone testing against the virtual LED wall<a class="headerlink" href="#the-web-app-m5m8-phone-testing-against-the-virtual-led-wall" title="Link to this heading">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">bazelisk</span> <span class="pre">run</span> <span class="pre">//web:serve</span></code> serves the built web app through M2 over <strong>HTTPS</strong>
+(getUserMedia/DeviceMotion need a secure context; self-signed cert persisted
+under <code class="docutils literal notranslate"><span class="pre">.ledmapper/</span></code>). Open <code class="docutils literal notranslate"><span class="pre">/wall.html</span></code> fullscreen on a laptop — a flat grid
+of virtual LEDs blinking the M1 hue code against the server’s pattern clock —
+and run a capture from a phone pointed at the screen: the full live
+pipeline with no LED hardware. The step-by-step runbook (ports, permissions,
+tuning query params) is in <a class="reference internal" href="../web/README.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">web/README.md</span></code></span></a>.</p>
+</section>
+<section id="reconstruction-m3-from-a-session-log">
+<h2>Reconstruction (M3) from a session log<a class="headerlink" href="#reconstruction-m3-from-a-session-log" title="Link to this heading">¶</a></h2>
+<p>The Pi server (M2) persists a capture as a <strong>detection log</strong> — a JSON file of
+the form <code class="docutils literal notranslate"><span class="pre">{</span> <span class="pre">&quot;ledCount&quot;:</span> <span class="pre">N,</span> <span class="pre">&quot;detections&quot;:</span> <span class="pre">[</span> <span class="pre">DetectionRecord,</span> <span class="pre">...</span> <span class="pre">]</span> <span class="pre">}</span></code> (each record
+per design doc §7.4). Turn one into an output map (§7.5):</p>
+<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span><span class="c1"># Via the Bazel-built CLI (recommended; brings its own deps):</span>
+bazelisk<span class="w"> </span>run<span class="w"> </span>//pi/reconstruction:reconstruct<span class="w"> </span>--<span class="w"> </span>/abs/path/session_log.json<span class="w"> </span>-o<span class="w"> </span>/abs/path/map.json
+
+<span class="c1"># Or directly with Python on the Pi:</span>
+<span class="nv">PYTHONPATH</span><span class="o">=</span>pi/reconstruction<span class="w"> </span>python3<span class="w"> </span>-m<span class="w"> </span>reconstruction<span class="w"> </span>session_log.json<span class="w"> </span>-o<span class="w"> </span>map.json
+</pre></div>
+</div>
+<p>Output is an <code class="docutils literal notranslate"><span class="pre">OutputMap</span></code> JSON; add <code class="docutils literal notranslate"><span class="pre">--csv</span> <span class="pre">map.csv</span></code> for the <code class="docutils literal notranslate"><span class="pre">id,x,y,z,confidence,n_views</span></code>
+export. The CLI prints global stats (RMS reprojection px, median parallax,
+solved/unmapped counts).</p>
+</section>
+<section id="simulator-m9-synthetic-detection-logs">
+<h2>Simulator (M9) — synthetic detection logs<a class="headerlink" href="#simulator-m9-synthetic-detection-logs" title="Link to this heading">¶</a></h2>
+<p>Generate a deterministic detection log for a known fixture and virtual walk, with
+no phone and no hardware (design doc §10.1). Defaults are the nominal-noise point
+from <a class="reference internal" href="decisions.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">decisions.md</span></code></span></a>.</p>
+<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span><span class="c1"># Zero-noise line fixture → log, then reconstruct and compare:</span>
+bazelisk<span class="w"> </span>run<span class="w"> </span>//shared/simulator:simulate<span class="w"> </span>--<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--fixture<span class="w"> </span>line<span class="w"> </span>--leds<span class="w"> </span><span class="m">64</span><span class="w"> </span>--noise<span class="w"> </span>none<span class="w"> </span>--seed<span class="w"> </span><span class="m">0</span><span class="w"> </span>-o<span class="w"> </span>/tmp/log.json
+bazelisk<span class="w"> </span>run<span class="w"> </span>//pi/reconstruction:reconstruct<span class="w"> </span>--<span class="w"> </span>/tmp/log.json<span class="w"> </span>-o<span class="w"> </span>/tmp/map.json
+
+<span class="c1"># Fixtures: line | grid | cube | helix.  Noise: none | nominal  (or per-knob flags).</span>
+</pre></div>
+</div>
+<p>The <code class="docutils literal notranslate"><span class="pre">//shared/simulator:sim_recon_roundtrip_test</span></code> target wires these together
+and asserts the Phase-2 acceptance (zero-noise → &lt; 1 mm RMS).</p>
+</section>
+<section id="sim-studio-interactive-solver-debugging">
+<h2>Sim Studio — interactive solver debugging<a class="headerlink" href="#sim-studio-interactive-solver-debugging" title="Link to this heading">¶</a></h2>
+<p>An interactive 3D tool to generate a fixture, fly a camera around to synthesize
+captures, and watch the <strong>real M3 solver</strong> converge against ground truth (per-LED
+error, parallax, reprojection RMS update live). It reuses M9 + the shared camera
+model + M3, so it debugs the actual algorithm.</p>
+<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>bazelisk<span class="w"> </span>run<span class="w"> </span>//tools/sim_studio:serve<span class="w">   </span><span class="c1"># binds 0.0.0.0:8090 by default</span>
+<span class="c1"># then open http://localhost:8090  (front-end loads Three.js from a CDN)</span>
+</pre></div>
+</div>
+<p>In <code class="docutils literal notranslate"><span class="pre">claude-container</span></code>, the overlay maps <code class="docutils literal notranslate"><span class="pre">127.0.0.1:8090:8090</span></code> (and <code class="docutils literal notranslate"><span class="pre">:8080</span></code> for
+M2) to the host, so after a container <strong>restart</strong> <code class="docutils literal notranslate"><span class="pre">http://localhost:8090</span></code> works
+from your host browser. The server must bind <code class="docutils literal notranslate"><span class="pre">0.0.0.0</span></code> (the studio default) for
+the mapping to reach it.</p>
+<p>New scene → orbit &amp; <em>Capture</em> (or <em>Auto-arc</em>) → <em>Solve</em>; toggle auto-solve to
+watch the fit tighten as coverage grows, and dial in pixel/pose/dropout noise to
+stress the solver. Full guide in <a class="reference internal" href="../tools/sim_studio/README.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">tools/sim_studio/README.md</span></code></span></a>.</p>
+</section>
+<section id="updating-dependencies">
+<h2>Updating dependencies<a class="headerlink" href="#updating-dependencies" title="Link to this heading">¶</a></h2>
+<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span><span class="c1"># Python: edit requirements.in, then regenerate the lockfile</span>
+bazelisk<span class="w"> </span>run<span class="w"> </span>//:requirements.update
+
+<span class="c1"># TypeScript/JS: edit the relevant package.json, then</span>
+pnpm<span class="w"> </span>install<span class="w">                 </span><span class="c1"># updates pnpm-lock.yaml</span>
+</pre></div>
+</div>
+<p>Whenever a pinned version changes, update <a class="reference internal" href="decisions.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">decisions.md</span></code></span></a> in the
+same commit.</p>
+</section>
+<section id="provisioning-the-pi-m4">
+<h2>Provisioning the Pi (M4)<a class="headerlink" href="#provisioning-the-pi-m4" title="Link to this heading">¶</a></h2>
+<p>Full details and the current UNVERIFIED list are in
+<a class="reference internal" href="#../pi/provisioning/README.md"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">pi/provisioning/README.md</span></code></span></a>. In brief (requires
+Nix on the build host):</p>
+<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>bazelisk<span class="w"> </span>run<span class="w"> </span>//pi/provisioning:image_sd<span class="w">   </span>--<span class="w"> </span>--device<span class="w"> </span>/dev/sdX<span class="w">   </span><span class="c1"># build + flash an SD image</span>
+bazelisk<span class="w"> </span>run<span class="w"> </span>//pi/provisioning:deploy_live<span class="w"> </span>--<span class="w"> </span>ledmapper.local<span class="w">    </span><span class="c1"># in-place nixos-rebuild switch</span>
+bazelisk<span class="w"> </span>run<span class="w"> </span>//pi/provisioning:keys<span class="w">        </span>--<span class="w"> </span>rotate<span class="w">             </span><span class="c1"># rotate the deploy SSH key</span>
+</pre></div>
+</div>
+<p>The deploy SSH key pair lives gitignored under <code class="docutils literal notranslate"><span class="pre">pi/provisioning/secrets/</span></code> (or
+<code class="docutils literal notranslate"><span class="pre">$LEDMAPPER_DEPLOY_KEY_DIR</span></code>); the public half is baked into the image’s
+<code class="docutils literal notranslate"><span class="pre">authorized_keys</span></code> for passwordless first-boot SSH.</p>
+</section>
+<section id="hardware-notes-fill-in-before-bench-testing-phase-4">
+<h2>Hardware notes (fill in before bench testing — Phase 4)<a class="headerlink" href="#hardware-notes-fill-in-before-bench-testing-phase-4" title="Link to this heading">¶</a></h2>
+<blockquote>
+<div><p>Per design doc §13: the fixture’s LED power supply, level-shifting/logic wiring,
+and SPI pin map are out of software scope but <strong>must</strong> be specified here before
+the bench end-to-end run. TODO once Phase 1 (M1 LED driver) lands.</p>
+</div></blockquote>
+</section>
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          <a class="next-page" href="../next_steps.html">
+              <div class="page-info">
+                <div class="context">
+                  <span>Next</span>
+                </div>
+                <div class="title">APP</div>
+              </div>
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+            </a>
+          <a class="prev-page" href="../README.html">
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+              <div class="page-info">
+                <div class="context">
+                  <span>Previous</span>
+                </div>
+                
+                <div class="title">Getting started</div>
+                
+              </div>
+            </a>
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; Kevin Balke and the splanc contributors — AGPL-3.0-or-later
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">Runbook</a><ul>
+<li><a class="reference internal" href="#prerequisites">Prerequisites</a></li>
+<li><a class="reference internal" href="#bootstrap">Bootstrap</a></li>
+<li><a class="reference internal" href="#the-wire-protocol-m10">The wire protocol (M10)</a></li>
+<li><a class="reference internal" href="#the-led-driver-m1">The LED driver (M1)</a></li>
+<li><a class="reference internal" href="#the-pi-server-m2">The Pi server (M2)</a></li>
+<li><a class="reference internal" href="#the-web-app-m5m8-phone-testing-against-the-virtual-led-wall">The web app (M5–M8) + phone testing against the virtual LED wall</a></li>
+<li><a class="reference internal" href="#reconstruction-m3-from-a-session-log">Reconstruction (M3) from a session log</a></li>
+<li><a class="reference internal" href="#simulator-m9-synthetic-detection-logs">Simulator (M9) — synthetic detection logs</a></li>
+<li><a class="reference internal" href="#sim-studio-interactive-solver-debugging">Sim Studio — interactive solver debugging</a></li>
+<li><a class="reference internal" href="#updating-dependencies">Updating dependencies</a></li>
+<li><a class="reference internal" href="#provisioning-the-pi-m4">Provisioning the Pi (M4)</a></li>
+<li><a class="reference internal" href="#hardware-notes-fill-in-before-bench-testing-phase-4">Hardware notes (fill in before bench testing — Phase 4)</a></li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="../_static/documentation_options.js?v=8a448e45"></script>
+    <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../_static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../_static/copybutton.js?v=fd10adb8"></script>
+    <script src="../_static/design-tabs.js?v=f930bc37"></script>
+    </body>
+</html>

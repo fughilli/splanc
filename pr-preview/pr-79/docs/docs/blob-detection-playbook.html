@@ -1,0 +1,558 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="Index" href="../genindex.html"><link rel="search" title="Search" href="../search.html"><link rel="next" title="ESP32-based LED Mapping + Playback — Build Plan" href="esp32-led-mapping-plan.html"><link rel="prev" title="Eliminating WebXR: joint pose + LED optimization with IMU dead reckoning" href="vio-exploration.html">
+        <link rel="prefetch" href="../_static/splanc-icon.svg" as="image">
+
+    <link rel="shortcut icon" href="../_static/splanc-icon.svg"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
+        <title>Blob-detection optimization playbook - splanc developer docs</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/furo.css?v=7bdb33bb" />
+    <link rel="stylesheet" type="text/css" href="../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../_static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="../_static/custom.css?v=36188834" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  --color-brand-primary: #084de7;
+  --color-brand-content: #084de7;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation" aria-label="Toggle site navigation sidebar">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc" aria-label="Toggle table of contents sidebar">
+<label class="overlay sidebar-overlay" for="__navigation"></label>
+<label class="overlay toc-overlay" for="__toc"></label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <span class="icon"><svg><use href="#svg-menu"></use></svg></span>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../index.html"><div class="brand">splanc developer docs</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../index.html">
+  <div class="sidebar-logo-container">
+    <img class="sidebar-logo" src="../_static/splanc-icon.svg" alt="Logo"/>
+  </div>
+  
+  <span class="sidebar-brand-text">splanc developer docs</span>
+  
+</a><form class="sidebar-search-container" method="get" action="../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../architecture.html">Architecture</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../subsystems/index.html">Subsystems</a><input aria-label="Toggle navigation of Subsystems" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/web.html">The PWA (<code class="docutils literal notranslate"><span class="pre">web/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/firmware.html">The firmware (<code class="docutils literal notranslate"><span class="pre">firmware/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/fx-compiler.html">The effects compiler (<code class="docutils literal notranslate"><span class="pre">fx_compiler/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/solver.html">The solver (<code class="docutils literal notranslate"><span class="pre">solver/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/reconstruction.html">Reconstruction (<code class="docutils literal notranslate"><span class="pre">pi/reconstruction/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/protocol.html">The wire protocol (<code class="docutils literal notranslate"><span class="pre">shared/protocol/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/simulator.html">The simulator (<code class="docutils literal notranslate"><span class="pre">shared/simulator/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/hitl.html">HITL &amp; tooling (<code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code>, <code class="docutils literal notranslate"><span class="pre">tools/</span></code>)</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Guides</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../DEVELOPERS.html">Developing splanc</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html#hardware">Hardware</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html#how-it-works">How it works</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html#learn-more">Learn more</a></li>
+<li class="toctree-l1"><a class="reference internal" href="runbook.html">Runbook</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../next_steps.html">APP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../next_steps.html#firmware">FIRMWARE</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../next_steps.html#effects-compiler">EFFECTS COMPILER</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../next_steps.html#performance-monitoring">PERFORMANCE MONITORING</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Effects</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../EFFECTS.html">The splanc effects engine</a></li>
+<li class="toctree-l1"><a class="reference internal" href="fx-vm-performance.html">FX-VM performance</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../led-mapper-design.html">LED Mapper — Design Doc (Android-first)</a></li>
+<li class="toctree-l1 current has-children"><a class="reference internal" href="../design/index.html">Design notes</a><input aria-label="Toggle navigation of Design notes" checked="" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="design/effects-runtime.html">The effects runtime</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/effects-compiler.html">The effects compiler</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/perf-monitoring.html">Performance monitoring</a></li>
+<li class="toctree-l2"><a class="reference internal" href="vio-exploration.html">VIO solver exploration</a></li>
+<li class="toctree-l2 current current-page"><a class="current reference internal" href="#">Blob-detection playbook</a></li>
+<li class="toctree-l2"><a class="reference internal" href="esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/app-ux-overhaul.html">App UX overhaul</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="decisions.html">Decision log</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Meta</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../about-these-docs.html">How these docs are built</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="view-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/blob/main/docs/_sphinx/docs/blob-detection-playbook.md?plain=true" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div><div class="edit-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/edit/main/docs/_sphinx/docs/blob-detection-playbook.md" rel="edit" title="Edit this page">
+    <svg><use href="#svg-pencil"></use></svg>
+    <span class="visually-hidden">Edit this page</span>
+  </a>
+</div><div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <section id="blob-detection-optimization-playbook">
+<h1>Blob-detection optimization playbook<a class="headerlink" href="#blob-detection-optimization-playbook" title="Link to this heading">¶</a></h1>
+<p>Written 2026-07-17, after the first clean 64/64 solve (session
+<code class="docutils literal notranslate"><span class="pre">1784272462556</span></code>). This is a “revisit later” plan: what we know, the hard
+constraints, the tool to build, and the ranked avenues — each with the metric
+to watch so a change can be judged, not guessed.</p>
+<section id="baseline-where-we-are">
+<h2>Baseline (where we are)<a class="headerlink" href="#baseline-where-we-are" title="Link to this heading">¶</a></h2>
+<p>Locking the camera exposure to the Nyquist-capped sweet spot
+(<code class="docutils literal notranslate"><span class="pre">?exposure=servo</span></code>, capped at <code class="docutils literal notranslate"><span class="pre">bitPeriodMs/2</span></code>, see <code class="docutils literal notranslate"><span class="pre">cv/exposure.ts</span></code>
+<code class="docutils literal notranslate"><span class="pre">planExposureServo</span></code> + <code class="docutils literal notranslate"><span class="pre">xr/exposureControl.ts</span></code>) transformed detection:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>metric (per frame, 64-LED strip)</p></th>
+<th class="head"><p>before (bloom/banding)</p></th>
+<th class="head"><p>now (exposure servo)</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>blobs / frame (median)</p></td>
+<td><p>~120</p></td>
+<td><p><strong>66</strong> (≈ 64)</p></td>
+</tr>
+<tr class="row-odd"><td><p>chroma spread (cr..cb)</p></td>
+<td><p>~0.44</p></td>
+<td><p><strong>0.70</strong> (vividly decodable)</p></td>
+</tr>
+<tr class="row-even"><td><p>blob satFrac (clipping)</p></td>
+<td><p>p90 0.66</p></td>
+<td><p><strong>0.15</strong></p></td>
+</tr>
+<tr class="row-odd"><td><p>solve</p></td>
+<td><p>“No LEDs solved”</p></td>
+<td><p><strong>64/64, matches the physical layout</strong></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Detection is now <em>good</em>. Two residual problems remain, both visible in the
+success trace:</p>
+<ol class="arabic simple">
+<li><p><strong>~2 extra blobs</strong> (66 vs 64) — residual bloom-halo fragments / speckle.</p></li>
+<li><p><strong>Neighbor confusion</strong> — the one LED that solved into a gap. In
+<code class="docutils literal notranslate"><span class="pre">1784272462556</span></code>: <strong>24.7 % of blobs have a neighbour within 15 px</strong>, nearest-
+neighbour distance p10 = 8 px / median = 22 px, while a blob’s effective
+radius is only ~4.5 px (p90 8.4 px). So the closest pairs overlap, and the
+tracker’s association gate (<code class="docutils literal notranslate"><span class="pre">cv/tracker.ts</span></code> <code class="docutils literal notranslate"><span class="pre">gatePx</span> <span class="pre">=</span> <span class="pre">60</span></code>) is <strong>~3× the
+inter-LED spacing</strong> — a track can grab a neighbour’s blob, so one LED never
+accumulates its own decode (the gap) and its neighbour’s position is pulled.</p></li>
+</ol>
+</section>
+<section id="hard-constraints-do-not-regress">
+<h2>Hard constraints (do not regress)<a class="headerlink" href="#hard-constraints-do-not-regress" title="Link to this heading">¶</a></h2>
+<ul>
+<li><p><strong>Frame rate is sacred.</strong> This is the sharpest lesson from the two latest
+traces. Both had the SAME detection quality (66 blobs, chroma 0.70), but:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">1784272462556</span></code> (no frame capture): <strong>30 fps</strong> (33 ms/frame) → 64/64.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">1784272339037</span></code> (frame capture on): <strong>8.7 fps</strong> (114 ms/frame, p90 208 ms)
+→ unreliable, no clean solve.</p></li>
+</ul>
+<p>Decoding needs several camera samples per pattern frame. At <code class="docutils literal notranslate"><span class="pre">bitPeriodMs</span></code>
+90–110 and <code class="docutils literal notranslate"><span class="pre">cycleFrames</span></code> 8 a full cycle is ~0.7–0.9 s; 30 fps gives ~3
+samples/frame, 8.7 fps gives &lt;1 → the self-clocking decoder can’t read the
+sequence. <strong>Any detector change that costs fps is a net loss.</strong> The current
+<code class="docutils literal notranslate"><span class="pre">?frames=1</span></code> path pays this because <code class="docutils literal notranslate"><span class="pre">DetectorGL.grabFrame</span></code> (full-res
+<code class="docutils literal notranslate"><span class="pre">readPixels</span></code>) + gzip run on the capture thread — see “capture without the fps
+hit” below.</p>
+</li>
+<li><p><strong>Exposure ≤ <code class="docutils literal notranslate"><span class="pre">bitPeriodMs/2</span></code></strong> (Nyquist — a longer exposure integrates across
+a hue transition and blurs the code). Enforced in <code class="docutils literal notranslate"><span class="pre">planExposure</span></code>.</p></li>
+<li><p><strong>Don’t over-dim / over-shorten</strong> — banding (WS2812 PWM × rolling shutter)
+returns and re-fragments every LED.</p></li>
+</ul>
+</section>
+<section id="the-tool-to-build-first-offline-replay-harness">
+<h2>The tool to build first: offline replay harness<a class="headerlink" href="#the-tool-to-build-first-offline-replay-harness" title="Link to this heading">¶</a></h2>
+<p>We can now capture the detector’s byte-exact input (<code class="docutils literal notranslate"><span class="pre">?frames=1</span></code> →
+<code class="docutils literal notranslate"><span class="pre">frames/&lt;seq&gt;.rgba.gz</span></code>) alongside the LIVE blobs (<code class="docutils literal notranslate"><span class="pre">frames.jsonl</span></code>) and IMU. Build
+a harness (<code class="docutils literal notranslate"><span class="pre">//web:offline_pipeline</span></code>, next to <code class="docutils literal notranslate"><span class="pre">//web:offline_decode</span></code>) that
+re-runs the whole CV stack on captured frames:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>raw frame → detectCpu (mirror of the detect.ts threshold/downsample shader)
+          → connectedComponents (ccl.ts, unchanged)
+          → Tracker → Decoder (pipeline.ts, unchanged)
+</pre></div>
+</div>
+<p>Why: every avenue below can then be A/B’d offline against real frames, with <strong>no
+re-capture and no fps penalty</strong>. Two freebies fall out:</p>
+<ul class="simple">
+<li><p><strong>Fidelity check:</strong> the offline detector on a captured frame must reproduce
+the live blobs at the same params. If it doesn’t, the CPU mirror is wrong.</p></li>
+<li><p><strong>Ground-truth-ish:</strong> a clean 64/64 capture’s decoded map is a reference to
+score detector changes against (position RMS, decode yield).</p></li>
+</ul>
+<p>Per-param-set metrics to emit: blobs/frame vs ledCount, nearest-neighbour merge
+rate, decode yield (unique IDs / ledCount), and position RMS vs the reference
+solve.</p>
+</section>
+<section id="avenues-ranked">
+<h2>Avenues, ranked<a class="headerlink" href="#avenues-ranked" title="Link to this heading">¶</a></h2>
+<section id="neighbour-separation-the-gap-you-saw-highest-value">
+<h3>1. Neighbour separation — the gap you saw (highest value)<a class="headerlink" href="#neighbour-separation-the-gap-you-saw-highest-value" title="Link to this heading">¶</a></h3>
+<p>Symptom: LEDs 8–15 px apart merge into one blob or the tracker mis-associates.</p>
+<ul class="simple">
+<li><p><strong>a. Detection resolution.</strong> <code class="docutils literal notranslate"><span class="pre">DetectorGL.downscale</span></code> is 2 (detect at 640×360).
+Try 1.5 or 1 so close LEDs separate before CCL. Cost is CPU/readback at
+detection-res (not full-res) — measure the fps hit; it must stay 30 fps.
+Metric: does p10 NN distance grow past a blob diameter (splits the merges)?</p></li>
+<li><p><strong>b. Split merged neighbours.</strong> <code class="docutils literal notranslate"><span class="pre">splitOversized</span></code> (ccl.ts) only fires above
+<code class="docutils literal notranslate"><span class="pre">maxArea</span></code> — in the trace <code class="docutils literal notranslate"><span class="pre">splitFrac</span> <span class="pre">=</span> <span class="pre">0</span></code>, so merged-neighbour blobs (small,
+under maxArea) are NOT being split. Add a <strong>local-maxima / watershed</strong> split:
+a blob with two intensity peaks a blob-diameter apart is two LEDs. Metric:
+merged-pair rate; blobs/frame → 64 without dropping decode yield.</p></li>
+<li><p><strong>c. Tracker gate + appearance.</strong> <code class="docutils literal notranslate"><span class="pre">gatePx</span> <span class="pre">=</span> <span class="pre">60</span></code> ≫ the 22 px spacing. Either
+tighten it toward the inter-LED distance (watch for lost tracks under fast
+motion — the gate is around the <em>predicted</em> position, so it interacts with
+the coasting model), or better, <strong>add hue to the association cost</strong> so a
+track prefers the blob matching its colour and won’t steal a differently-hued
+neighbour even inside the gate. Metric: track-swap rate; count of LEDs that
+never decode (the gaps).</p></li>
+<li><p><strong>d. Decoder confidence near neighbours.</strong> When two tracks are within a
+blob-diameter, require a higher decode margin before committing an ID, so a
+neighbour’s code isn’t assigned during an ambiguous frame.</p></li>
+</ul>
+</section>
+<section id="residual-over-detection-66-64">
+<h3>2. Residual over-detection (66 → 64)<a class="headerlink" href="#residual-over-detection-66-64" title="Link to this heading">¶</a></h3>
+<p>The extra ~2 blobs are bloom-halo fragments / gray speckle (they carry little
+chroma; real LEDs sit at chroma ~0.70). Levers, cheapest first: nudge
+<code class="docutils literal notranslate"><span class="pre">minArea</span></code> up; <strong>chroma-gate</strong> (drop near-gray blobs — an LED carries hue, a
+bloom fragment/noise doesn’t); or a morphological open. Metric: blobs/frame →
+64 while decode yield stays 64/64 (don’t cull real LEDs).</p>
+</section>
+<section id="servo-robustness-margins">
+<h3>3. Servo &amp; robustness margins<a class="headerlink" href="#servo-robustness-margins" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>The exposure servo converges but oscillates ±1 step around the sweet spot.
+Add a deadband or EMA on the signals to cut applyConstraints churn.</p></li>
+<li><p>symbols=4 worked with chroma margin 0.70 — comfortable headroom; leave it,
+but the offline harness can confirm the per-symbol margins.</p></li>
+</ul>
+</section>
+</section>
+<section id="capture-without-the-fps-hit-unblocks-continuous-tuning">
+<h2>Capture WITHOUT the fps hit (unblocks continuous tuning)<a class="headerlink" href="#capture-without-the-fps-hit-unblocks-continuous-tuning" title="Link to this heading">¶</a></h2>
+<p>Today you must choose: a good solve (frames off) OR offline data (frames on,
+but 8.7 fps ruins that run’s decode). Close the gap so every capture is a
+tuning dataset:</p>
+<ul class="simple">
+<li><p>Move <code class="docutils literal notranslate"><span class="pre">grabFrame</span></code> off the hot path with an <strong>async PBO readback</strong>
+(<code class="docutils literal notranslate"><span class="pre">PIXEL_PACK_BUFFER</span></code> + fence) instead of the synchronous <code class="docutils literal notranslate"><span class="pre">readPixels</span></code>.</p></li>
+<li><p>Move gzip into a <strong>Web Worker</strong> (transfer the RGBA <code class="docutils literal notranslate"><span class="pre">ArrayBuffer</span></code>, zero-copy),
+so the capture thread only does the readback kick-off.</p></li>
+<li><p>Target: <code class="docutils literal notranslate"><span class="pre">?frames=1</span></code> holds ~30 fps. Then a single <code class="docutils literal notranslate"><span class="pre">?exposure=servo&amp;frames=1</span></code>
+run yields both a clean solve and the frames to tune against.</p></li>
+</ul>
+</section>
+<section id="suggested-order-of-work">
+<h2>Suggested order of work<a class="headerlink" href="#suggested-order-of-work" title="Link to this heading">¶</a></h2>
+<ol class="arabic simple">
+<li><p>Fix frame capture fps (async readback + worker gzip) — so tuning data and a
+good solve come from one capture.</p></li>
+<li><p>Build the offline replay harness + metrics.</p></li>
+<li><p>Attack avenue 1 (neighbour separation) — it’s the observed failure.</p></li>
+<li><p>Then avenue 2 (trim 66→64) and 3 (servo polish).</p></li>
+<li><p>Promote a change only if, on the captured frames, it keeps 64/64 and, live,
+holds 30 fps.</p></li>
+</ol>
+</section>
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          <a class="next-page" href="esp32-led-mapping-plan.html">
+              <div class="page-info">
+                <div class="context">
+                  <span>Next</span>
+                </div>
+                <div class="title">ESP32-based LED Mapping + Playback — Build Plan</div>
+              </div>
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+            </a>
+          <a class="prev-page" href="vio-exploration.html">
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+              <div class="page-info">
+                <div class="context">
+                  <span>Previous</span>
+                </div>
+                
+                <div class="title">Eliminating WebXR: joint pose + LED optimization with IMU dead reckoning</div>
+                
+              </div>
+            </a>
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; Kevin Balke and the splanc contributors — AGPL-3.0-or-later
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">Blob-detection optimization playbook</a><ul>
+<li><a class="reference internal" href="#baseline-where-we-are">Baseline (where we are)</a></li>
+<li><a class="reference internal" href="#hard-constraints-do-not-regress">Hard constraints (do not regress)</a></li>
+<li><a class="reference internal" href="#the-tool-to-build-first-offline-replay-harness">The tool to build first: offline replay harness</a></li>
+<li><a class="reference internal" href="#avenues-ranked">Avenues, ranked</a><ul>
+<li><a class="reference internal" href="#neighbour-separation-the-gap-you-saw-highest-value">1. Neighbour separation — the gap you saw (highest value)</a></li>
+<li><a class="reference internal" href="#residual-over-detection-66-64">2. Residual over-detection (66 → 64)</a></li>
+<li><a class="reference internal" href="#servo-robustness-margins">3. Servo &amp; robustness margins</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#capture-without-the-fps-hit-unblocks-continuous-tuning">Capture WITHOUT the fps hit (unblocks continuous tuning)</a></li>
+<li><a class="reference internal" href="#suggested-order-of-work">Suggested order of work</a></li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="../_static/documentation_options.js?v=8a448e45"></script>
+    <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../_static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../_static/copybutton.js?v=fd10adb8"></script>
+    <script src="../_static/design-tabs.js?v=f930bc37"></script>
+    </body>
+</html>

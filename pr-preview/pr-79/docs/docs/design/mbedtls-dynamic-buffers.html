@@ -1,0 +1,642 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="Index" href="../../genindex.html"><link rel="search" title="Search" href="../../search.html"><link rel="next" title="LED-Mapper App — UI/UX Overhaul (Design Doc)" href="app-ux-overhaul.html"><link rel="prev" title="ESP32-based LED Mapping + Playback — Build Plan" href="../esp32-led-mapping-plan.html">
+        <link rel="prefetch" href="../../_static/splanc-icon.svg" as="image">
+
+    <link rel="shortcut icon" href="../../_static/splanc-icon.svg"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
+        <title>Design: MbedTLS from source with dynamic buffers (@embedded) - splanc developer docs</title>
+      <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../../_static/styles/furo.css?v=7bdb33bb" />
+    <link rel="stylesheet" type="text/css" href="../../_static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../_static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../_static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="../../_static/custom.css?v=36188834" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  --color-brand-primary: #084de7;
+  --color-brand-content: #084de7;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation" aria-label="Toggle site navigation sidebar">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc" aria-label="Toggle table of contents sidebar">
+<label class="overlay sidebar-overlay" for="__navigation"></label>
+<label class="overlay toc-overlay" for="__toc"></label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <span class="icon"><svg><use href="#svg-menu"></use></svg></span>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../../index.html"><div class="brand">splanc developer docs</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../../index.html">
+  <div class="sidebar-logo-container">
+    <img class="sidebar-logo" src="../../_static/splanc-icon.svg" alt="Logo"/>
+  </div>
+  
+  <span class="sidebar-brand-text">splanc developer docs</span>
+  
+</a><form class="sidebar-search-container" method="get" action="../../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../architecture.html">Architecture</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../subsystems/index.html">Subsystems</a><input aria-label="Toggle navigation of Subsystems" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/web.html">The PWA (<code class="docutils literal notranslate"><span class="pre">web/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/firmware.html">The firmware (<code class="docutils literal notranslate"><span class="pre">firmware/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/fx-compiler.html">The effects compiler (<code class="docutils literal notranslate"><span class="pre">fx_compiler/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/solver.html">The solver (<code class="docutils literal notranslate"><span class="pre">solver/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/reconstruction.html">Reconstruction (<code class="docutils literal notranslate"><span class="pre">pi/reconstruction/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/protocol.html">The wire protocol (<code class="docutils literal notranslate"><span class="pre">shared/protocol/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/simulator.html">The simulator (<code class="docutils literal notranslate"><span class="pre">shared/simulator/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/hitl.html">HITL &amp; tooling (<code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code>, <code class="docutils literal notranslate"><span class="pre">tools/</span></code>)</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Guides</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../DEVELOPERS.html">Developing splanc</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#hardware">Hardware</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#how-it-works">How it works</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#learn-more">Learn more</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../runbook.html">Runbook</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html">APP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#firmware">FIRMWARE</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#effects-compiler">EFFECTS COMPILER</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#performance-monitoring">PERFORMANCE MONITORING</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Effects</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../EFFECTS.html">The splanc effects engine</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../fx-vm-performance.html">FX-VM performance</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../../led-mapper-design.html">LED Mapper — Design Doc (Android-first)</a></li>
+<li class="toctree-l1 current has-children"><a class="reference internal" href="../../design/index.html">Design notes</a><input aria-label="Toggle navigation of Design notes" checked="" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul class="current">
+<li class="toctree-l2"><a class="reference internal" href="effects-runtime.html">The effects runtime</a></li>
+<li class="toctree-l2"><a class="reference internal" href="effects-compiler.html">The effects compiler</a></li>
+<li class="toctree-l2"><a class="reference internal" href="perf-monitoring.html">Performance monitoring</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../vio-exploration.html">VIO solver exploration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../blob-detection-playbook.html">Blob-detection playbook</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
+<li class="toctree-l2 current current-page"><a class="current reference internal" href="#">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="app-ux-overhaul.html">App UX overhaul</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../decisions.html">Decision log</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Meta</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../about-these-docs.html">How these docs are built</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="view-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/blob/main/docs/_sphinx/docs/design/mbedtls-dynamic-buffers.md?plain=true" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div><div class="edit-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/edit/main/docs/_sphinx/docs/design/mbedtls-dynamic-buffers.md" rel="edit" title="Edit this page">
+    <svg><use href="#svg-pencil"></use></svg>
+    <span class="visually-hidden">Edit this page</span>
+  </a>
+</div><div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <section id="design-mbedtls-from-source-with-dynamic-buffers-embedded">
+<h1>Design: MbedTLS from source with dynamic buffers (<code class="docutils literal notranslate"><span class="pre">&#64;embedded</span></code>)<a class="headerlink" href="#design-mbedtls-from-source-with-dynamic-buffers-embedded" title="Link to this heading">¶</a></h1>
+<p>Status: <strong>proposed</strong> (Cleanup 1 of <code class="docutils literal notranslate"><span class="pre">next_steps.md</span></code>). Implementation lands in the
+<code class="docutils literal notranslate"><span class="pre">&#64;embedded</span></code> framework (github.com/fughilli/embedded), consumed by <code class="docutils literal notranslate"><span class="pre">led_mapper</span></code>
+via <code class="docutils literal notranslate"><span class="pre">archive_override</span></code>.</p>
+<section id="goal">
+<h2>Goal<a class="headerlink" href="#goal" title="Link to this heading">¶</a></h2>
+<p>Let the ESP32-C6 hold <strong>many</strong> concurrent TLS sessions instead of ~2, and cut
+its idle-TLS RAM footprint, by building MbedTLS from source with ESP-IDF’s
+<strong>dynamic buffer</strong> feature enabled.</p>
+</section>
+<section id="problem-motivation">
+<h2>Problem / motivation<a class="headerlink" href="#problem-motivation" title="Link to this heading">¶</a></h2>
+<p>The wss player (<code class="docutils literal notranslate"><span class="pre">//firmware/player_app</span></code>, port :443) works, but each mbedtls TLS
+session statically allocates its record buffers at <code class="docutils literal notranslate"><span class="pre">mbedtls_ssl_setup()</span></code>:
+<code class="docutils literal notranslate"><span class="pre">MBEDTLS_SSL_IN_CONTENT_LEN</span></code> (16 KB) + <code class="docutils literal notranslate"><span class="pre">OUT_CONTENT_LEN</span></code> (~4 KB) ≈ <strong>~28 KB per
+session</strong>, held for the session’s whole lifetime. On the heap-tight C6 (~95 KB
+free after boot) that caps us at ~2–3 concurrent sessions; a browser’s parallel
+connections or a couple of stray tabs exhaust the heap and new sessions fail
+with <code class="docutils literal notranslate"><span class="pre">-0x7F00</span></code> (<code class="docutils literal notranslate"><span class="pre">MBEDTLS_ERR_SSL_ALLOC_FAILED</span></code>). We currently paper over this
+with <code class="docutils literal notranslate"><span class="pre">max_open_sockets=2</span></code>, a gentle client backoff, <code class="docutils literal notranslate"><span class="pre">Connection:</span> <span class="pre">close</span></code>, and
+“keep it to one tab” — mitigations, not a fix.</p>
+<p>Root cause: the record buffers are compile-time-sized and resident. We can’t
+shrink <code class="docutils literal notranslate"><span class="pre">IN_CONTENT_LEN</span></code> below 16 KB (browsers legitimately send 16 KB TLS
+records, e.g. a 25 KB <code class="docutils literal notranslate"><span class="pre">submit_map</span></code>), and we can’t reduce the buffer at runtime.</p>
+</section>
+<section id="why-dynamic-buffers">
+<h2>Why dynamic buffers<a class="headerlink" href="#why-dynamic-buffers" title="Link to this heading">¶</a></h2>
+<p><code class="docutils literal notranslate"><span class="pre">CONFIG_MBEDTLS_DYNAMIC_BUFFER</span></code> is an <strong>ESP-IDF port feature</strong> (not stock
+mbedtls, <code class="docutils literal notranslate"><span class="pre">components/mbedtls/port/dynamic/</span></code>). It hooks the record I/O so the
+large RX/TX content buffers are allocated <strong>on demand</strong> while a record is being
+processed and <strong>freed between records</strong>. An <em>idle</em> session then holds only its
+small state (~2 KB) instead of ~28 KB. During an actual 16 KB record it still
+needs 16 KB transiently — but only one connection is mid-record at a time in
+practice, so total resident RAM scales with <em>active</em> transfers, not <em>open</em>
+sessions. Net: dozens of idle wss/https connections become affordable, which is
+what lifts the ceiling (and unblocks later serving the app bundle over https).</p>
+</section>
+<section id="current-provisioning-what-we-re-overriding">
+<h2>Current provisioning (what we’re overriding)<a class="headerlink" href="#current-provisioning-what-we-re-overriding" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">&#64;embedded/nix/esp32_arduino_libs.nix</span></code> fetches the <strong>precompiled</strong>
+<code class="docutils literal notranslate"><span class="pre">esp32-arduino-libs</span></code> zip (ESP-IDF <code class="docutils literal notranslate"><span class="pre">release_v5.5</span></code>, <code class="docutils literal notranslate"><span class="pre">73550728-v6</span></code>). It ships
+<code class="docutils literal notranslate"><span class="pre">libmbedtls.a</span></code> / <code class="docutils literal notranslate"><span class="pre">libmbedcrypto.a</span></code> / <code class="docutils literal notranslate"><span class="pre">libmbedx509.a</span></code> + headers, <strong>no source</strong>,
+built with <code class="docutils literal notranslate"><span class="pre">DYNAMIC_BUFFER</span></code> OFF (verified: 0 <code class="docutils literal notranslate"><span class="pre">esp_mbedtls_*</span></code> dynamic symbols
+in <code class="docutils literal notranslate"><span class="pre">libmbedtls.a</span></code>).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">&#64;embedded/nix/arduino_esp32.BUILD</span></code> exposes those as <code class="docutils literal notranslate"><span class="pre">filegroup</span> <span class="pre">:sdk_libs</span></code>
+(<code class="docutils literal notranslate"><span class="pre">glob([&quot;sdk/esp32c6/lib/*.a&quot;,</span> <span class="pre">...])</span></code>) and links them into <code class="docutils literal notranslate"><span class="pre">:core</span></code> inside a
+<code class="docutils literal notranslate"><span class="pre">-Wl,--start-group</span> <span class="pre">…</span> <span class="pre">--end-group</span></code>.</p></li>
+<li><p>mbedtls is <strong>3.6.5</strong> (<code class="docutils literal notranslate"><span class="pre">MBEDTLS_VERSION_STRING</span></code>).</p></li>
+</ul>
+</section>
+<section id="approach-chosen-build-mbedtls-only-from-source-override-the-prebuilt-lib">
+<h2>Approach (chosen: build mbedtls-only from source, override the prebuilt lib)<a class="headerlink" href="#approach-chosen-build-mbedtls-only-from-source-override-the-prebuilt-lib" title="Link to this heading">¶</a></h2>
+<p>Rebuilding the entire SDK via <code class="docutils literal notranslate"><span class="pre">esp32-arduino-lib-builder</span></code> is out of scope
+(compiles all of IDF). Instead, in <code class="docutils literal notranslate"><span class="pre">&#64;embedded</span></code>:</p>
+<ol class="arabic simple">
+<li><p><strong>Fetch source</strong> matching the SDK exactly, as new nix/Bazel inputs:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">espressif/mbedtls</span></code> at the tag/commit used by IDF <code class="docutils literal notranslate"><span class="pre">release_v5.5</span></code> (mbedtls
+3.6.5 + Espressif patches).</p></li>
+<li><p>The ESP-IDF <code class="docutils literal notranslate"><span class="pre">components/mbedtls/port/</span></code> tree at <code class="docutils literal notranslate"><span class="pre">release_v5.5</span></code>: <code class="docutils literal notranslate"><span class="pre">esp_config.h</span></code>,
+the RISC-V <strong>hardware crypto</strong> drivers (AES/SHA/bignum via the C6 crypto
+peripherals + their <code class="docutils literal notranslate"><span class="pre">esp_*</span></code> glue), and crucially <code class="docutils literal notranslate"><span class="pre">port/dynamic/*</span></code> (the
+dynamic-buffer implementation).</p></li>
+</ul>
+</li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">cc_library(name=&quot;mbedtls_src&quot;)</span></code></strong> in a new <code class="docutils literal notranslate"><span class="pre">&#64;embedded</span></code> package
+(<code class="docutils literal notranslate"><span class="pre">libs/vendor/mbedtls/</span></code> or <code class="docutils literal notranslate"><span class="pre">nix/…</span></code>): compile the mbedtls <code class="docutils literal notranslate"><span class="pre">library/*.c</span></code> + the
+IDF port <code class="docutils literal notranslate"><span class="pre">.c</span></code> for the <code class="docutils literal notranslate"><span class="pre">riscv32</span></code> toolchain, include paths mirroring the SDK.</p></li>
+<li><p><strong>Config</strong>: reuse the SDK’s exact <code class="docutils literal notranslate"><span class="pre">sdkconfig.h</span></code> + <code class="docutils literal notranslate"><span class="pre">esp_config.h</span></code> (extract from
+the fetched SDK so struct layouts match the precompiled <code class="docutils literal notranslate"><span class="pre">libesp-tls.a</span></code> /
+<code class="docutils literal notranslate"><span class="pre">libesp_https_server.a</span></code> that call into mbedtls) and add:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">CONFIG_MBEDTLS_DYNAMIC_BUFFER=y</span></code></p></li>
+<li><p>keep <code class="docutils literal notranslate"><span class="pre">IN_CONTENT_LEN=16384</span></code> (browser records) — dynamic buffer makes it
+cheap when idle, not smaller when active.</p></li>
+</ul>
+</li>
+<li><p><strong>Override the prebuilt lib</strong>: drop <code class="docutils literal notranslate"><span class="pre">libmbedtls*.a</span></code> from the <code class="docutils literal notranslate"><span class="pre">:sdk_libs</span></code> glob
+and make <code class="docutils literal notranslate"><span class="pre">:core</span></code> depend on <code class="docutils literal notranslate"><span class="pre">:mbedtls_src</span></code>, linked so <strong>our</strong> symbols win
+(e.g. <code class="docutils literal notranslate"><span class="pre">mbedtls_src</span></code> before the <code class="docutils literal notranslate"><span class="pre">--start-group</span></code> prebuilt block, or
+<code class="docutils literal notranslate"><span class="pre">alwayslink</span></code>). <code class="docutils literal notranslate"><span class="pre">libesp-tls.a</span></code> / <code class="docutils literal notranslate"><span class="pre">libesp_https_server.a</span></code> (which reference the
+dynamic-buffer symbols only when the config macro is set — they’re already
+compiled without them) still link; the dynamic path is engaged from <em>our</em>
+mbedtls <code class="docutils literal notranslate"><span class="pre">ssl_setup</span></code>, so esp-tls doesn’t need recompiling. <strong>(Validate this
+assumption early — see Risks.)</strong></p></li>
+</ol>
+</section>
+<section id="abi-compatibility-resolved-2026-07-22-dynamic-buffers-are-link-wrapped">
+<h2>ABI-compatibility — RESOLVED (2026-07-22): dynamic buffers are link-wrapped<a class="headerlink" href="#abi-compatibility-resolved-2026-07-22-dynamic-buffers-are-link-wrapped" title="Link to this heading">¶</a></h2>
+<p>The open question below is now answered by inspecting the IDF v5.5.4 port and
+the shipped <code class="docutils literal notranslate"><span class="pre">esp_mbedtls_dynamic.h</span></code>: <strong><code class="docutils literal notranslate"><span class="pre">CONFIG_MBEDTLS_DYNAMIC_BUFFER</span></code> does NOT
+change any mbedtls struct.</strong> The feature is implemented entirely at link time —
+the port compiles <code class="docutils literal notranslate"><span class="pre">components/mbedtls/port/dynamic/*.c</span></code> and links with
+<code class="docutils literal notranslate"><span class="pre">-Wl,--wrap=mbedtls_ssl_setup</span></code> (plus <code class="docutils literal notranslate"><span class="pre">ssl_read</span></code>/<code class="docutils literal notranslate"><span class="pre">ssl_write</span></code>/<code class="docutils literal notranslate"><span class="pre">ssl_free</span></code>/
+<code class="docutils literal notranslate"><span class="pre">ssl_session_reset</span></code>/<code class="docutils literal notranslate"><span class="pre">mbedtls_ssl_send_alert_message</span></code>/…). The <code class="docutils literal notranslate"><span class="pre">__wrap_*</span></code> shims
+reallocate <code class="docutils literal notranslate"><span class="pre">ssl-&gt;in_buf</span></code> / <code class="docutils literal notranslate"><span class="pre">ssl-&gt;out_buf</span></code> between records using fields that
+already exist on <code class="docutils literal notranslate"><span class="pre">mbedtls_ssl_context</span></code>. No field is added or resized.</p>
+<p>Consequences:</p>
+<ul class="simple">
+<li><p>The precompiled <code class="docutils literal notranslate"><span class="pre">libesp-tls.a</span></code> / <code class="docutils literal notranslate"><span class="pre">libesp_https_server.a</span></code> stay ABI-compatible —
+their calls to <code class="docutils literal notranslate"><span class="pre">mbedtls_ssl_*</span></code> are simply redirected to the wrappers at the
+final link. <strong>They do not need rebuilding.</strong> (So we keep them precompiled,
+which also satisfies “no precompiled ESP libs where avoidable” for the crypto
+core we actually care about — mbedtls itself is what goes to source.)</p></li>
+<li><p>The struct-layout config-parity concern still applies to <em>our</em> mbedtls build:
+compile it with the SDK’s exact <code class="docutils literal notranslate"><span class="pre">esp_config.h</span></code> + <code class="docutils literal notranslate"><span class="pre">mbedtls_config.h</span></code>, adding
+only <code class="docutils literal notranslate"><span class="pre">CONFIG_MBEDTLS_DYNAMIC_BUFFER=y</span></code> (a port knob, not a <code class="docutils literal notranslate"><span class="pre">mbedtls_config.h</span></code>
+struct macro), so our <code class="docutils literal notranslate"><span class="pre">mbedtls_ssl_context</span></code> matches what esp-tls was built
+against.</p></li>
+</ul>
+</section>
+<section id="chosen-approach-locked-2026-07-22">
+<h2>Chosen approach (locked 2026-07-22)<a class="headerlink" href="#chosen-approach-locked-2026-07-22" title="Link to this heading">¶</a></h2>
+<p>Build <strong>mbedtls from source</strong> (<code class="docutils literal notranslate"><span class="pre">library/*.c</span></code> + IDF <code class="docutils literal notranslate"><span class="pre">port/*.c</span></code> incl. the HW-crypto
+<code class="docutils literal notranslate"><span class="pre">*_alt</span></code> drivers + <code class="docutils literal notranslate"><span class="pre">port/dynamic/*.c</span></code>) as an <code class="docutils literal notranslate"><span class="pre">&#64;embedded</span></code> <code class="docutils literal notranslate"><span class="pre">cc_library</span></code>
+(<code class="docutils literal notranslate"><span class="pre">alwayslink</span></code>), linked ahead of / replacing the precompiled
+<code class="docutils literal notranslate"><span class="pre">libmbedtls*.a</span></code>/<code class="docutils literal notranslate"><span class="pre">libmbedcrypto.a</span></code>/<code class="docutils literal notranslate"><span class="pre">libmbedx509.a</span></code>, with the <code class="docutils literal notranslate"><span class="pre">--wrap</span></code> link flags
+and <code class="docutils literal notranslate"><span class="pre">DYNAMIC_BUFFER=y</span></code>. Keep <code class="docutils literal notranslate"><span class="pre">libesp-tls.a</span></code>/<code class="docutils literal notranslate"><span class="pre">libesp_https_server.a</span></code> precompiled
+(ABI-safe per above). This honors “from-source mbedtls” while not rebuilding the
+whole IDF.</p>
+</section>
+<section id="turnkey-build-spec-pins-exact-c6-sources-gathered-2026-07-22">
+<h2>Turnkey build spec (pins + exact C6 sources, gathered 2026-07-22)<a class="headerlink" href="#turnkey-build-spec-pins-exact-c6-sources-gathered-2026-07-22" title="Link to this heading">¶</a></h2>
+<p>Everything below is extracted from the frozen SDK’s <code class="docutils literal notranslate"><span class="pre">versions.txt</span></code> and esp-idf
+v5.5.4’s <code class="docutils literal notranslate"><span class="pre">components/mbedtls/CMakeLists.txt</span></code> — enough to write the <code class="docutils literal notranslate"><span class="pre">&#64;embedded</span></code>
+targets without further spelunking.</p>
+<p><strong>Source pins (nix <code class="docutils literal notranslate"><span class="pre">fetchFromGitHub</span></code>):</strong></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">espressif/mbedtls</span></code> rev <code class="docutils literal notranslate"><span class="pre">ffb280bb63c78bfec1e1ab55040671768c85c923</span></code> (mbedtls
+3.6.5 + esp patches), <code class="docutils literal notranslate"><span class="pre">hash</span> <span class="pre">=</span> <span class="pre">&quot;sha256-671VYuTxMOLF90UXnBofct5jBQZuBJUoBVueMP3vVUQ=&quot;</span></code>.
+Provides <code class="docutils literal notranslate"><span class="pre">library/*.c</span></code> (108), <code class="docutils literal notranslate"><span class="pre">include/</span></code>, <code class="docutils literal notranslate"><span class="pre">library/*.h</span></code> (internal), and
+<code class="docutils literal notranslate"><span class="pre">3rdparty/{everest,p256-m}</span></code> (ECC — compile these too).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">espressif/esp-idf</span></code> rev <code class="docutils literal notranslate"><span class="pre">v5.5.4</span></code>, <code class="docutils literal notranslate"><span class="pre">hash</span> <span class="pre">=</span> <span class="pre">&quot;sha256-6p+4DO2/KjOel+vLQbbJH7xFNIYAwymKbxepQx3towI=&quot;</span></code> — only for
+<code class="docutils literal notranslate"><span class="pre">components/mbedtls/port/**</span></code> (assemble a small tree in a <code class="docutils literal notranslate"><span class="pre">runCommand</span></code>; don’t
+ship all of IDF). All <em>headers</em> the port needs already live in the prebuilt
+SDK’s <code class="docutils literal notranslate"><span class="pre">include/</span></code> tree (reuse <code class="docutils literal notranslate"><span class="pre">&#64;arduino_esp32//:sdk_hdrs</span></code>).</p></li>
+</ul>
+<p><strong>mbedtls core:</strong> compile <code class="docutils literal notranslate"><span class="pre">mbedtls/library/*.c</span></code> + <code class="docutils literal notranslate"><span class="pre">3rdparty/everest/library/*.c</span></code></p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">3rdparty/p256-m/**/p256-m.c</span></code>. Include dirs: <code class="docutils literal notranslate"><span class="pre">port/include</span></code>, <code class="docutils literal notranslate"><span class="pre">mbedtls/include</span></code>,
+<code class="docutils literal notranslate"><span class="pre">mbedtls/library</span></code> (+ the SDK’s <code class="docutils literal notranslate"><span class="pre">mbedtls/port/include</span></code> for <code class="docutils literal notranslate"><span class="pre">esp_config.h</span></code>).</p></li>
+</ul>
+<p><strong>IDF port sources for the C6</strong> (SHA/AES use <strong>GDMA</strong>; MPI/SHA/AES/ECC HW on;
+HMAC + DIG_SIGN present; LWIP on):</p>
+<ul class="simple">
+<li><p>base: <code class="docutils literal notranslate"><span class="pre">port/mbedtls_debug.c</span></code>, <code class="docutils literal notranslate"><span class="pre">port/esp_platform_time.c</span></code>, <code class="docutils literal notranslate"><span class="pre">port/net_sockets.c</span></code>,
+<code class="docutils literal notranslate"><span class="pre">port/esp_hardware.c</span></code>, <code class="docutils literal notranslate"><span class="pre">port/esp_mem.c</span></code>, <code class="docutils literal notranslate"><span class="pre">port/esp_timing.c</span></code>,
+<code class="docutils literal notranslate"><span class="pre">port/esp_hmac_pbkdf2.c</span></code></p></li>
+<li><p>SHA: <code class="docutils literal notranslate"><span class="pre">port/sha/esp_sha.c</span></code>, <code class="docutils literal notranslate"><span class="pre">port/sha/core/sha.c</span></code>, <code class="docutils literal notranslate"><span class="pre">port/sha/core/esp_sha_gdma_impl.c</span></code>,
+<code class="docutils literal notranslate"><span class="pre">port/sha/core/esp_sha1.c</span></code>, <code class="docutils literal notranslate"><span class="pre">.../esp_sha256.c</span></code>, <code class="docutils literal notranslate"><span class="pre">.../esp_sha512.c</span></code></p></li>
+<li><p>AES: <code class="docutils literal notranslate"><span class="pre">port/aes/esp_aes_common.c</span></code>, <code class="docutils literal notranslate"><span class="pre">port/aes/esp_aes_xts.c</span></code>,
+<code class="docutils literal notranslate"><span class="pre">port/aes/esp_aes_gcm.c</span></code>, <code class="docutils literal notranslate"><span class="pre">port/aes/dma/esp_aes.c</span></code>,
+<code class="docutils literal notranslate"><span class="pre">port/aes/dma/esp_aes_gdma_impl.c</span></code>, <code class="docutils literal notranslate"><span class="pre">port/aes/dma/esp_aes_dma_core.c</span></code></p></li>
+<li><p>shared DMA: <code class="docutils literal notranslate"><span class="pre">port/crypto_shared_gdma/esp_crypto_shared_gdma.c</span></code></p></li>
+<li><p>MPI: <code class="docutils literal notranslate"><span class="pre">port/bignum/esp_bignum.c</span></code>, <code class="docutils literal notranslate"><span class="pre">port/bignum/bignum_alt.c</span></code></p></li>
+<li><p>ECC: <code class="docutils literal notranslate"><span class="pre">port/ecc/esp_ecc.c</span></code>, <code class="docutils literal notranslate"><span class="pre">port/ecc/ecc_alt.c</span></code></p></li>
+<li><p>DIG_SIGN (esp_ds): <code class="docutils literal notranslate"><span class="pre">port/esp_ds/esp_rsa_sign_alt.c</span></code>, <code class="docutils literal notranslate"><span class="pre">.../esp_rsa_dec_alt.c</span></code>,
+<code class="docutils literal notranslate"><span class="pre">.../esp_ds_common.c</span></code></p></li>
+<li><p>extra port include dirs: <code class="docutils literal notranslate"><span class="pre">port/aes/include</span></code>, <code class="docutils literal notranslate"><span class="pre">port/aes/dma/include</span></code>,
+<code class="docutils literal notranslate"><span class="pre">port/sha/core/include</span></code></p></li>
+<li><p><strong>dynamic buffers (the feature):</strong> add <code class="docutils literal notranslate"><span class="pre">port/dynamic/esp_mbedtls_dynamic_impl.c</span></code>,
+<code class="docutils literal notranslate"><span class="pre">esp_ssl_cli.c</span></code>, <code class="docutils literal notranslate"><span class="pre">esp_ssl_srv.c</span></code>, <code class="docutils literal notranslate"><span class="pre">esp_ssl_tls.c</span></code></p></li>
+<li><p>(ECDSA-HW <code class="docutils literal notranslate"><span class="pre">port/ecdsa/ecdsa_alt.c</span></code> + its own wrap set — optional; only if
+<code class="docutils literal notranslate"><span class="pre">MBEDTLS_HARDWARE_ECDSA_*</span></code>. Our RSA cert path doesn’t need it; skip for v1.)</p></li>
+</ul>
+<p><strong>Config:</strong> compile every TU with <code class="docutils literal notranslate"><span class="pre">-DMBEDTLS_CONFIG_FILE='&quot;mbedtls/esp_config.h&quot;'</span></code>
+(the SDK’s) and a <code class="docutils literal notranslate"><span class="pre">sdkconfig.h</span></code> on the include path identical to the SDK’s plus
+<code class="docutils literal notranslate"><span class="pre">#define</span> <span class="pre">CONFIG_MBEDTLS_DYNAMIC_BUFFER</span> <span class="pre">1</span></code>. Change <strong>only</strong> that knob — no
+<code class="docutils literal notranslate"><span class="pre">mbedtls_config.h</span></code> struct macro moves (ABI parity with precompiled esp-tls).</p>
+<p><strong>Link flags</strong> (add to <code class="docutils literal notranslate"><span class="pre">:core</span></code>’s linkopts, <code class="docutils literal notranslate"><span class="pre">INTERFACE</span></code>-style, when DYNAMIC_BUFFER
+is on) — the 11 wraps that engage the dynamic path:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="o">-</span><span class="n">Wl</span><span class="p">,</span><span class="o">--</span><span class="n">wrap</span><span class="o">=</span><span class="n">mbedtls_ssl_write_client_hello</span>
+<span class="o">-</span><span class="n">Wl</span><span class="p">,</span><span class="o">--</span><span class="n">wrap</span><span class="o">=</span><span class="n">mbedtls_ssl_handshake_client_step</span>
+<span class="o">-</span><span class="n">Wl</span><span class="p">,</span><span class="o">--</span><span class="n">wrap</span><span class="o">=</span><span class="n">mbedtls_ssl_tls13_handshake_client_step</span>
+<span class="o">-</span><span class="n">Wl</span><span class="p">,</span><span class="o">--</span><span class="n">wrap</span><span class="o">=</span><span class="n">mbedtls_ssl_handshake_server_step</span>
+<span class="o">-</span><span class="n">Wl</span><span class="p">,</span><span class="o">--</span><span class="n">wrap</span><span class="o">=</span><span class="n">mbedtls_ssl_read</span>
+<span class="o">-</span><span class="n">Wl</span><span class="p">,</span><span class="o">--</span><span class="n">wrap</span><span class="o">=</span><span class="n">mbedtls_ssl_write</span>
+<span class="o">-</span><span class="n">Wl</span><span class="p">,</span><span class="o">--</span><span class="n">wrap</span><span class="o">=</span><span class="n">mbedtls_ssl_session_reset</span>
+<span class="o">-</span><span class="n">Wl</span><span class="p">,</span><span class="o">--</span><span class="n">wrap</span><span class="o">=</span><span class="n">mbedtls_ssl_free</span>
+<span class="o">-</span><span class="n">Wl</span><span class="p">,</span><span class="o">--</span><span class="n">wrap</span><span class="o">=</span><span class="n">mbedtls_ssl_setup</span>
+<span class="o">-</span><span class="n">Wl</span><span class="p">,</span><span class="o">--</span><span class="n">wrap</span><span class="o">=</span><span class="n">mbedtls_ssl_send_alert_message</span>
+<span class="o">-</span><span class="n">Wl</span><span class="p">,</span><span class="o">--</span><span class="n">wrap</span><span class="o">=</span><span class="n">mbedtls_ssl_close_notify</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">__real_*</span></code> resolve from our from-source mbedtls; <code class="docutils literal notranslate"><span class="pre">__wrap_*</span></code> come from the
+<code class="docutils literal notranslate"><span class="pre">port/dynamic/*.c</span></code> above.</p>
+<p><strong>Wiring:</strong> drop <code class="docutils literal notranslate"><span class="pre">libmbedtls*.a</span></code> / <code class="docutils literal notranslate"><span class="pre">libmbedtls_2.a</span></code> / <code class="docutils literal notranslate"><span class="pre">libmbedcrypto.a</span></code> /
+<code class="docutils literal notranslate"><span class="pre">libmbedx509.a</span></code> from <code class="docutils literal notranslate"><span class="pre">:sdk_libs</span></code> (arduino_esp32.BUILD glob) and depend <code class="docutils literal notranslate"><span class="pre">:core</span></code>
+on the new <code class="docutils literal notranslate"><span class="pre">mbedtls_src</span></code> (<code class="docutils literal notranslate"><span class="pre">alwayslink</span> <span class="pre">=</span> <span class="pre">True</span></code>, ahead of the <code class="docutils literal notranslate"><span class="pre">--start-group</span></code>), so
+our symbols satisfy the precompiled <code class="docutils literal notranslate"><span class="pre">libesp-tls.a</span></code> / <code class="docutils literal notranslate"><span class="pre">libesp_https_server.a</span></code>.</p>
+<p><strong>Build-through PASSED in-container (2026-07-22).</strong> <code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">build</span> <span class="pre">-c</span> <span class="pre">opt</span> <span class="pre">//firmware/player_app:esp32c6</span></code> links against the from-source mbedtls with <strong>HW
+crypto</strong> (GDMA SHA/AES, HW MPI/ECC, esp_ds) — no software-crypto fallback
+needed. Verified on the ELF via <code class="docutils literal notranslate"><span class="pre">nm</span></code>: all 8 <code class="docutils literal notranslate"><span class="pre">__wrap_mbedtls_ssl_*</span></code> shims + 24
+<code class="docutils literal notranslate"><span class="pre">esp_mbedtls_*</span></code> dynamic-buffer symbols present, and the link params carry <strong>zero</strong>
+<code class="docutils literal notranslate"><span class="pre">-lmbedtls/-lmbedcrypto/-lmbedx509</span></code> (prebuilt archives fully excluded; our
+symbols satisfy the precompiled esp-tls/https_server). Five follow-on fixes were
+needed on the <code class="docutils literal notranslate"><span class="pre">&#64;embedded</span></code> branch beyond the initial scaffold: (1) <code class="docutils literal notranslate"><span class="pre">mbedtls_src.nix</span></code>
+must <code class="docutils literal notranslate"><span class="pre">import</span> <span class="pre">&lt;nixpkgs&gt;</span></code> and return an attrset for <code class="docutils literal notranslate"><span class="pre">nix_pkg.file</span> <span class="pre">-A</span></code>; (2) port
+include dirs must precede <code class="docutils literal notranslate"><span class="pre">mbedtls/include</span></code> (the port ships <code class="docutils literal notranslate"><span class="pre">#include_next</span></code>
+wrapper headers); (3) everest — compile only the 3 CMake-listed files (the
+<code class="docutils literal notranslate"><span class="pre">_joined.c</span></code> includes the rest) + its private include dirs; (4) strip the stale
+<code class="docutils literal notranslate"><span class="pre">-lmbedtls*</span></code> tokens from the SDK’s <code class="docutils literal notranslate"><span class="pre">ld_libs</span></code> response file; (5) add
+<code class="docutils literal notranslate"><span class="pre">port/md/esp_md.c</span></code> (SDK sets <code class="docutils literal notranslate"><span class="pre">MBEDTLS_MD5_ALT</span></code> via <code class="docutils literal notranslate"><span class="pre">CONFIG_MBEDTLS_ROM_MD5</span></code>).</p>
+<p><strong>What still needs hardware:</strong> the feature is a <em>runtime RAM</em> behavior, so the
+payoff is only observable on the device — see Verification (8 parallel https,
+idle-per-session ~2 KB, healthy min-heap). In-container we’ve confirmed it
+<strong>builds + links</strong>; the RAM win is the remaining on-device check.</p>
+</section>
+<section id="integration-in-led-mapper">
+<h2>Integration in <code class="docutils literal notranslate"><span class="pre">led_mapper</span></code><a class="headerlink" href="#integration-in-led-mapper" title="Link to this heading">¶</a></h2>
+<p>No firmware code changes expected — <code class="docutils literal notranslate"><span class="pre">//firmware/player_app</span></code> keeps using
+<code class="docutils literal notranslate"><span class="pre">esp_https_server</span></code>. Once <code class="docutils literal notranslate"><span class="pre">&#64;embedded</span></code> builds mbedtls-with-dynamic-buffers:</p>
+<ul class="simple">
+<li><p>bump <code class="docutils literal notranslate"><span class="pre">max_open_sockets</span></code> back up (e.g. 7) and relax the client backoff;</p></li>
+<li><p>the cert-popup <code class="docutils literal notranslate"><span class="pre">client.close()</span></code> workaround can stay (harmless) or be removed.</p></li>
+</ul>
+</section>
+<section id="verification">
+<h2>Verification<a class="headerlink" href="#verification" title="Link to this heading">¶</a></h2>
+<ol class="arabic simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">build</span> <span class="pre">-c</span> <span class="pre">opt</span> <span class="pre">//firmware/player_app:esp32c6</span></code> links (ours wins).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">player_probe</span> <span class="pre">wss://&lt;dev&gt;/ws</span></code> still green (protocol intact over TLS).</p></li>
+<li><p><strong>8 parallel</strong> <code class="docutils literal notranslate"><span class="pre">curl</span> <span class="pre">-k</span> <span class="pre">https://&lt;dev&gt;/</span></code> all succeed (was 1/8) — no <code class="docutils literal notranslate"><span class="pre">-0x7F00</span></code>.</p></li>
+<li><p>Serial heap telemetry: idle-per-session cost ~2 KB, <code class="docutils literal notranslate"><span class="pre">min</span></code> heap stays healthy
+under concurrent load and a live <code class="docutils literal notranslate"><span class="pre">submit_map</span></code>.</p></li>
+</ol>
+</section>
+<section id="cross-repo-workflow">
+<h2>Cross-repo workflow<a class="headerlink" href="#cross-repo-workflow" title="Link to this heading">¶</a></h2>
+<ol class="arabic simple">
+<li><p>Implement in <code class="docutils literal notranslate"><span class="pre">&#64;embedded</span></code> on a branch.</p></li>
+<li><p>In <code class="docutils literal notranslate"><span class="pre">led_mapper</span></code> <code class="docutils literal notranslate"><span class="pre">MODULE.bazel</span></code>, temporarily <code class="docutils literal notranslate"><span class="pre">local_path_override</span></code> <code class="docutils literal notranslate"><span class="pre">&#64;embedded</span></code>
+→ the local clone to iterate + verify against the device.</p></li>
+<li><p>When green, push <code class="docutils literal notranslate"><span class="pre">&#64;embedded</span></code>, cut an archive, re-pin <code class="docutils literal notranslate"><span class="pre">archive_override</span></code>
+(url + <code class="docutils literal notranslate"><span class="pre">integrity</span></code>) in <code class="docutils literal notranslate"><span class="pre">led_mapper</span></code>.</p></li>
+</ol>
+</section>
+<section id="risks">
+<h2>Risks<a class="headerlink" href="#risks" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p><strong>ABI/config mismatch</strong> with precompiled esp-tls (see above) — the make-or-break
+item; validate before deep work. Fallback: also build esp-tls +
+esp_https_server from source (larger).</p></li>
+<li><p><strong>HW crypto port</strong>: the C6 AES/SHA/bignum drivers pull peripheral + DMA headers;
+getting include paths / linkage right is fiddly. Fallback: software crypto
+(slower handshake, but the ~2 s RSA handshake is already the cost) to de-risk
+v1, then add HW crypto.</p></li>
+<li><p><strong>Toolchain flags</strong>: must match the SDK’s <code class="docutils literal notranslate"><span class="pre">c_flags</span></code> for the mbedtls TU so codegen/
+ABI agree.</p></li>
+</ul>
+</section>
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          <a class="next-page" href="app-ux-overhaul.html">
+              <div class="page-info">
+                <div class="context">
+                  <span>Next</span>
+                </div>
+                <div class="title">LED-Mapper App — UI/UX Overhaul (Design Doc)</div>
+              </div>
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+            </a>
+          <a class="prev-page" href="../esp32-led-mapping-plan.html">
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+              <div class="page-info">
+                <div class="context">
+                  <span>Previous</span>
+                </div>
+                
+                <div class="title">ESP32-based LED Mapping + Playback — Build Plan</div>
+                
+              </div>
+            </a>
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; Kevin Balke and the splanc contributors — AGPL-3.0-or-later
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">Design: MbedTLS from source with dynamic buffers (<code class="docutils literal notranslate"><span class="pre">&#64;embedded</span></code>)</a><ul>
+<li><a class="reference internal" href="#goal">Goal</a></li>
+<li><a class="reference internal" href="#problem-motivation">Problem / motivation</a></li>
+<li><a class="reference internal" href="#why-dynamic-buffers">Why dynamic buffers</a></li>
+<li><a class="reference internal" href="#current-provisioning-what-we-re-overriding">Current provisioning (what we’re overriding)</a></li>
+<li><a class="reference internal" href="#approach-chosen-build-mbedtls-only-from-source-override-the-prebuilt-lib">Approach (chosen: build mbedtls-only from source, override the prebuilt lib)</a></li>
+<li><a class="reference internal" href="#abi-compatibility-resolved-2026-07-22-dynamic-buffers-are-link-wrapped">ABI-compatibility — RESOLVED (2026-07-22): dynamic buffers are link-wrapped</a></li>
+<li><a class="reference internal" href="#chosen-approach-locked-2026-07-22">Chosen approach (locked 2026-07-22)</a></li>
+<li><a class="reference internal" href="#turnkey-build-spec-pins-exact-c6-sources-gathered-2026-07-22">Turnkey build spec (pins + exact C6 sources, gathered 2026-07-22)</a></li>
+<li><a class="reference internal" href="#integration-in-led-mapper">Integration in <code class="docutils literal notranslate"><span class="pre">led_mapper</span></code></a></li>
+<li><a class="reference internal" href="#verification">Verification</a></li>
+<li><a class="reference internal" href="#cross-repo-workflow">Cross-repo workflow</a></li>
+<li><a class="reference internal" href="#risks">Risks</a></li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="../../_static/documentation_options.js?v=8a448e45"></script>
+    <script src="../../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../_static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../../_static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../_static/copybutton.js?v=fd10adb8"></script>
+    <script src="../../_static/design-tabs.js?v=f930bc37"></script>
+    </body>
+</html>
