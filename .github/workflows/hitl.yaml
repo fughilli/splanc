@@ -35,11 +35,23 @@ on:
         description: 'Target a specific rig base URL (else pick a free one from HITL_SERVERS)'
         required: false
         default: ''
-# One rig, one reservation at a time: serialize HITL runs so concurrent PRs
-# queue instead of colliding on the bench.
+# Run HITL in parallel across PRs (FUG-102). The fleet opens many PRs at once,
+# and there are enough runners + Actions minutes to service them, so don't gate
+# HITL runs against each other at the CI layer. Bench contention is resolved a
+# layer down: each target `hitl reserve`s a FREE DUT from the pool
+# ($HITL_SERVERS), and the managerd FIFO queue (with heartbeat-lease reaping)
+# makes any surplus runs wait their turn instead of colliding on the bench.
+#
+# A single global `group: hitl-tests` (the old value) instead serialized every
+# run to one at a time AND — because cancel-in-progress:false keeps only the
+# newest pending run per group — silently canceled the HITL check on
+# intermediate PRs whenever several queued at once. Scope the group to the
+# PR/ref so different PRs run concurrently; a new push to the SAME PR supersedes
+# its own in-flight run (the abandoned reservation's lease expires and managerd
+# reclaims the rig) rather than spending a bench slot on a stale commit.
 concurrency:
-  group: hitl-tests
-  cancel-in-progress: false
+  group: hitl-tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 jobs:
   hitl_tests:
     # Skip on fork PRs (no access to the HITL environment secrets / tailnet).
