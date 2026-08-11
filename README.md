@@ -31,6 +31,15 @@ No ARCore, no LiDAR, no depth sensor — capture runs in any modern phone browse
 (rear camera + motion sensors), and a visual-inertial solver estimates the
 camera path and the LED positions together.
 
+<p align="center">
+  <a href="https://youtu.be/JQkMB3vFYJg">
+    <img src="https://img.youtube.com/vi/JQkMB3vFYJg/maxresdefault.jpg"
+      alt="Watch the splanc intro video" width="640" />
+  </a>
+  <br />
+  <em>▶ Watch the intro video</em>
+</p>
+
 ## Getting started
 
 The app is a PWA — nothing to install:
