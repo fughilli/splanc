@@ -33,6 +33,7 @@ import { PerfProfilesScreen } from "../screens/perfProfiles";
 import { SettingsScreen } from "../screens/settings";
 import { MidiScreen } from "../screens/midi";
 import { ColorCorrectionScreen } from "../screens/colorCorrection";
+import { AboutScreen } from "../screens/about";
 import { initAppearance } from "../../store/appearance";
 import { maybeShowSplash } from "./splash";
 
@@ -122,6 +123,10 @@ async function main(): Promise<void> {
     .add("/capture", (m) => {
       shell.setChrome({ title: "Capture", back: true, tabs: false, overlay: true });
       return CaptureScreen(router, m.query);
+    })
+    .add("/about", () => {
+      shell.setChrome({ title: "About", back: true, tabs: true });
+      return AboutScreen(router);
     })
     .setFallback(() => {
       // First run with no device and no maps → onboarding; else → maps.

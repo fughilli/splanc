@@ -41,6 +41,7 @@ export type IconName =
   | "sparkles"
   | "alert"
   | "help"
+  | "info"
   | "arrow-up"
   | "folder"
   | "chevron"
@@ -123,6 +124,7 @@ const PATHS: Record<IconName, string> = {
   sparkles: `<path d="M12 4l1.6 4.4L18 10l-4.4 1.6L12 16l-1.6-4.4L6 10l4.4-1.6z"/><path d="M18 15l.8 2 2 .8-2 .8L18 21l-.8-2-2-.8 2-.8z"/>`,
   alert: `<path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17h.01"/>`,
   help: `<circle cx="12" cy="12" r="9"/><path d="M9.2 9.3a2.8 2.8 0 0 1 5.3 1.2c0 1.9-2.6 2.3-2.6 4"/><path d="M12 17.5h.01"/>`,
+  info: `<circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/>`,
   "arrow-up": `<path d="M12 19V5"/><path d="M6 11l6-6 6 6"/>`,
   folder: `<path d="M3 7a2 2 0 0 1 2-2h3.5l2 2H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>`,
   chevron: `<path d="M9 6l6 6-6 6"/>`,

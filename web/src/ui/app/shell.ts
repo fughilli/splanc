@@ -112,6 +112,11 @@ export class Shell {
     );
     const install = installMenuItem(() => this.closeMenu());
     if (install) this.menu.appendChild(install);
+    // About: project description, licensing/copyright, and open-source
+    // disclosures (FUG-96). Always available.
+    this.menu.appendChild(
+      this.menuItem("info", "About", () => this.router?.navigate("/about")),
+    );
     // Below the divider: actions relevant to the current tab (Maps import/export,
     // Effects "send library to debug server"), registered by the mounted screen.
     if (this.tabItems.length > 0) {
