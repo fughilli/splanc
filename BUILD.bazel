@@ -45,9 +45,6 @@ exports_files([
     "package.json",
     "pnpm-lock.yaml",
     "tsconfig.base.json",
-    # The generated FX-VM performance doc (FUG-95). Exported so the web
-    # freshness genrule (//web:fx_vm_perf_doc_freshness) can $(location) it.
-    "docs/fx-vm-performance.md",
 ])
 
 compile_pip_requirements(

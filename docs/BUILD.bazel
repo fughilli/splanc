@@ -16,6 +16,11 @@ load("@rules_python//python:defs.bzl", "py_binary")
 
 package(default_visibility = ["//visibility:public"])
 
+# The generated FX-VM performance doc (FUG-95) lives in this directory, which is
+# now its own Bazel package. Export it so the web freshness genrule
+# (//web:fx_vm_perf_doc_freshness) can still $(location) it.
+exports_files(["fx-vm-performance.md"])
+
 # The figures + animations, rendered from the real simulator -> reconstruction
 # path. Runnable on its own (writes to the given dir); also imported by :build.
 py_binary(
