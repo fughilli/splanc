@@ -18,6 +18,7 @@ the repo's existing ``bazel run //web:gen_fx_vm_perf_doc`` convention.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -120,6 +121,50 @@ def _stage(ws: Path, stage: Path) -> None:
         shutil.copytree(icons, stage / "_assets" / ICONS_DIR, dirs_exist_ok=True)
 
 
+# Sphinx emits ``_``-prefixed asset dirs (_static, _images, _sources, and
+# sphinx-design's _sphinx_design_static). GitHub Pages runs Jekyll, which drops
+# every ``_``-prefixed path — so on Pages the CSS/JS/images all 404 (giant icons,
+# fallback font). A ``.nojekyll`` only helps at the *site root*, which a
+# ``pr-preview/pr-N/`` subdirectory can't set. So instead we make the output
+# Jekyll-safe: rename those dirs and rewrite the references, so the site is served
+# verbatim on any static host (Pages root, Pages PR previews, Cloudflare, the Pi).
+# Order matters — ``_sphinx_design_static`` contains ``_static`` — so the regexes
+# use a leading-boundary lookbehind and are applied longest-first.
+_UNDERSCORE_DIRS = [
+    ("_sphinx_design_static", "sphinx_design_static"),
+    ("_static", "static"),
+    ("_images", "images"),
+    ("_sources", "sources"),
+    ("_downloads", "downloads"),
+]
+
+
+def _make_jekyll_safe(out_dir: Path) -> None:
+    # Rename the top-level asset directories.
+    for old, new in _UNDERSCORE_DIRS:
+        src = out_dir / old
+        if src.is_dir():
+            shutil.move(str(src), str(out_dir / new))
+    # Rewrite references in every text asset. The lookbehind ``(?<![\w])`` keeps
+    # ``design_static`` (inside the already-renamed sphinx_design_static) from
+    # matching the ``_static`` rule.
+    subs = [
+        (re.compile(r"(?<![\w])" + re.escape(old) + r"\b"), new) for old, new in _UNDERSCORE_DIRS
+    ]
+    for path in out_dir.rglob("*"):
+        if not path.is_file() or path.suffix.lower() not in {".html", ".js", ".css"}:
+            continue
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        new_text = text
+        for pat, new in subs:
+            new_text = pat.sub(new, new_text)
+        if new_text != text:
+            path.write_text(new_text, encoding="utf-8")
+    # Belt and suspenders: a .nojekyll so the tree is also correct if it ever
+    # becomes the Pages site root, at no cost.
+    (out_dir / ".nojekyll").write_text("", encoding="utf-8")
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     ws = _workspace_root()
@@ -140,6 +185,7 @@ def main(argv: list[str] | None = None) -> int:
         if rc != 0:
             print(f"Sphinx build failed (rc={rc})", file=sys.stderr)
             return rc
+        _make_jekyll_safe(out_dir)
     finally:
         shutil.rmtree(stage, ignore_errors=True)
 
