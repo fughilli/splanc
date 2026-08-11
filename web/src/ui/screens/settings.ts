@@ -29,6 +29,8 @@ import { installSettingsStyles } from "./settings.css";
 import { MapView } from "../mapview";
 import { generateFixture } from "../../effects/fixtures";
 import { prefs, DEFAULT_MANUAL_EXPOSURE_CEILING_MS } from "../../store/prefs";
+import { startTour } from "../guide/tour";
+import { resetTour } from "../guide/tourStore";
 
 type SettingsTab = "appearance" | "behavior";
 
@@ -46,7 +48,7 @@ const MONO_LABELS: Record<MonoChoice, string> = {
   courier: "Courier",
 };
 
-export function SettingsScreen(_router: Router): Screen {
+export function SettingsScreen(router: Router): Screen {
   installSettingsStyles();
   const el = document.createElement("div");
   el.className = "screen screen--settings";
@@ -94,7 +96,7 @@ export function SettingsScreen(_router: Router): Screen {
     const panels =
       tab === "appearance"
         ? [themeGroup(), typeGroup(), viewGroup(), startupGroup(), experimentalGroup(), appearanceResetRow()]
-        : [captureGroup(), captureResetRow()];
+        : [captureGroup(), helpGroup(), captureResetRow()];
     body.replaceChildren(tabBar(), ...panels);
   }
 
@@ -188,6 +190,52 @@ export function SettingsScreen(_router: Router): Screen {
         }).el,
       ),
       hint,
+    );
+    return g;
+  }
+
+  // -- Help & tutorial (FUG-103) -------------------------------------------
+  // The interactive tutorial is dismissible and never nags after that, so this
+  // is where it's re-launchable — plus a link to the full generated user guide
+  // and a reset that lets the first-run hint appear again.
+  function helpGroup(): HTMLElement {
+    const g = group("Help & tutorial");
+    g.append(
+      row(
+        "Interactive tutorial",
+        "Take a guided tour of the app's main features.",
+        Button({
+          label: "Start tutorial",
+          variant: "primary",
+          icon: "sparkles",
+          onClick: () => startTour(router),
+        }),
+      ),
+    );
+    // Full documentation site (generated from the same catalog as the tour). It
+    // ships at /user-guide/ on the deployed site; open in a new tab.
+    const guideLink = document.createElement("a");
+    guideLink.href = "user-guide/";
+    guideLink.target = "_blank";
+    guideLink.rel = "noopener";
+    guideLink.className = "k-btn k-btn--quiet";
+    const guideSpan = document.createElement("span");
+    guideSpan.textContent = "Open user guide";
+    guideLink.appendChild(guideSpan);
+    g.append(row("User guide", "Browse the full documentation with screenshots.", guideLink));
+    g.append(
+      row(
+        "Reset tutorial",
+        "Show the first-run tutorial hint again on next launch.",
+        Button({
+          label: "Reset",
+          variant: "quiet",
+          onClick: () => {
+            resetTour();
+            toast("Tutorial reset — the hint will show again");
+          },
+        }),
+      ),
     );
     return g;
   }

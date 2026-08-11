@@ -36,6 +36,7 @@ import { ColorCorrectionScreen } from "../screens/colorCorrection";
 import { AboutScreen } from "../screens/about";
 import { initAppearance } from "../../store/appearance";
 import { maybeShowSplash } from "./splash";
+import { maybeShowFirstRunHint } from "../guide/tour";
 
 async function main(): Promise<void> {
   // Apply the saved appearance (theme / fonts / scale) before the shell mounts
@@ -145,6 +146,11 @@ async function main(): Promise<void> {
   await seedBuiltinEffects();
 
   router.start();
+
+  // First-run tutorial hint (FUG-103): a dismissible "?" affordance offering the
+  // guided tour. No-op once the tutorial has been taken or dismissed; always
+  // recallable from Settings ▸ Help & tutorial.
+  maybeShowFirstRunHint(router);
 }
 
 void main();

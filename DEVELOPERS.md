@@ -28,6 +28,13 @@ Start with the durable design and reference docs before changing subsystems:
 - **[`EFFECTS.md`](./EFFECTS.md)** — the effects engine: language, bytecode VM,
   opcodes, `.fxb` format, uniform/texture/MIDI plumbing, ESP32-C6 performance, and
   AI generation.
+- **[`docs/user-guide.md`](./docs/user-guide.md)** — the end-user guide to every
+  user-facing feature. **Auto-generated** (with a static site at `docs/user-guide/`,
+  published to `/user-guide/`) from the in-app tutorial catalog
+  (`web/src/ui/guide/catalog.ts`); regenerate both with `bazel run //web:gen_user_guide`
+  (CI freshness-gates it via `//web:user_guide_freshness` — never edit by hand). The
+  same catalog drives the app's interactive tutorial (Settings ▸ Help & tutorial), so
+  the docs and the in-app tour can't drift.
 - **`docs/design/`** — subsystem design notes:
   - [`effects-runtime.md`](./docs/design/effects-runtime.md) — the on-device VM and
     render loop.

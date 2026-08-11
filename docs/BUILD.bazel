@@ -21,6 +21,14 @@ package(default_visibility = ["//visibility:public"])
 # (//web:fx_vm_perf_doc_freshness) can still $(location) it.
 exports_files(["fx-vm-performance.md"])
 
+# The generated user guide (FUG-103): the Markdown doc and the static site's
+# index. Exported so the web freshness genrule (//web:user_guide_freshness) can
+# $(location) them and //web:stage_site can publish the site under /user-guide/.
+exports_files([
+    "user-guide.md",
+    "user-guide/index.html",
+])
+
 # The figures + animations, rendered from the real simulator -> reconstruction
 # path. Runnable on its own (writes to the given dir); also imported by :build.
 py_binary(
