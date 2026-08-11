@@ -378,3 +378,12 @@ pool by carrying the tailnet tag.
 - **Decisions & runbook:** `docs/decisions.md`, `docs/runbook.md`.
 - **HITL:** `pi/hitl/README.md`, `pi/hitl/DESIGN.md`.
 - **Project history:** `WORKLOG.md`; roadmap: `next_steps.md`.
+
+## License & contributing
+
+Splanc is licensed under **AGPL-3.0-only**, with `shared/protocol/` and
+`tools/touchdesigner/` carved out under the **MIT License** so third parties can
+build compatible clients against the wire protocol. See
+[`LICENSING.md`](./LICENSING.md) for the map. Contributions require agreeing to
+the [Contributor License Agreement](./CLA.md); see
+[`CONTRIBUTING.md`](./CONTRIBUTING.md) for the process.

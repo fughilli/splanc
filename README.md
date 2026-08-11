@@ -82,3 +82,18 @@ The app is a PWA — nothing to install:
 - **Design & architecture:** [`led-mapper-design.md`](./led-mapper-design.md) —
   the durable spec — plus [`docs/`](./docs)
 - **Project history / build log:** [`WORKLOG.md`](./WORKLOG.md)
+
+## License
+
+Splanc is free and open-source software, licensed under the
+**[GNU Affero General Public License v3.0](./LICENSE)** (AGPL-3.0). Two subtrees
+are carved out under the permissive **MIT License** so anyone can build
+compatible projects against the wire protocol:
+
+- **`shared/protocol/`** — the LED Mapper wire protocol (schemas, `.proto`, and
+  the generated TypeScript/Python/Rust bindings).
+- **`tools/touchdesigner/`** — the TouchDesigner client binding.
+
+See [`LICENSING.md`](./LICENSING.md) for the full map. Contributions are welcome
+under a [Contributor License Agreement](./CLA.md); start with
+[`CONTRIBUTING.md`](./CONTRIBUTING.md).

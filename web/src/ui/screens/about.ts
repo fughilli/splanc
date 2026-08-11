@@ -1,7 +1,8 @@
 /**
  * About screen (FUG-96) — reachable from the system-wide ⋯ menu. Describes the
- * project, states the license (AGPL-3.0) and copyright, links out to the source
- * and the studio, credits contributors, and gives the open-source licensing
+ * project, states the license (AGPL-3.0, with the wire protocol and
+ * TouchDesigner binding carved out under MIT) and copyright, links out to the
+ * source and the studio, credits contributors, and gives the open-source licensing
  * disclosures for every third-party dependency the web app ships.
  *
  * Content is static and offline-friendly: no network calls, links open in a new
@@ -146,10 +147,15 @@ export function AboutScreen(_router: Router): Screen {
     })(),
     ".",
   );
+  const protoLine = para(
+    "Its wire protocol and the TouchDesigner client binding are carved out " +
+      "under the permissive MIT License, so anyone can build compatible " +
+      "projects against them.",
+  );
   const copyright = document.createElement("p");
   copyright.className = "about-copyright";
   copyright.textContent = COPYRIGHT;
-  license.append(licLine, copyright);
+  license.append(licLine, protoLine, copyright);
 
   // Open-source disclosures.
   const disclosures = document.createElement("div");
