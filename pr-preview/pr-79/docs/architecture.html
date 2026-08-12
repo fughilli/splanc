@@ -4,16 +4,16 @@
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
 <link rel="index" title="Index" href="genindex.html"><link rel="search" title="Search" href="search.html"><link rel="next" title="Subsystems" href="subsystems/index.html"><link rel="prev" title="splanc developer documentation" href="index.html">
-        <link rel="prefetch" href="_static/splanc-icon.svg" as="image">
+        <link rel="prefetch" href="static/splanc-icon.svg" as="image">
 
-    <link rel="shortcut icon" href="_static/splanc-icon.svg"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
+    <link rel="shortcut icon" href="static/splanc-icon.svg"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
         <title>Architecture - splanc developer docs</title>
-      <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=d111a655" />
-    <link rel="stylesheet" type="text/css" href="_static/styles/furo.css?v=7bdb33bb" />
-    <link rel="stylesheet" type="text/css" href="_static/copybutton.css?v=76b2166b" />
-    <link rel="stylesheet" type="text/css" href="_static/sphinx-design.min.css?v=95c83b7e" />
-    <link rel="stylesheet" type="text/css" href="_static/styles/furo-extensions.css?v=8dab3a3b" />
-    <link rel="stylesheet" type="text/css" href="_static/custom.css?v=36188834" />
+      <link rel="stylesheet" type="text/css" href="static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="static/styles/furo.css?v=7bdb33bb" />
+    <link rel="stylesheet" type="text/css" href="static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="static/custom.css?v=36188834" />
     
     
 
@@ -192,7 +192,7 @@
       
       <div class="sidebar-sticky"><a class="sidebar-brand" href="index.html">
   <div class="sidebar-logo-container">
-    <img class="sidebar-logo" src="_static/splanc-icon.svg" alt="Logo"/>
+    <img class="sidebar-logo" src="static/splanc-icon.svg" alt="Logo"/>
   </div>
   
   <span class="sidebar-brand-text">splanc developer docs</span>
@@ -376,7 +376,7 @@ tree. The synthetic <a class="reference internal" href="subsystems/simulator.htm
 shapes the reconstruction has to recover; these are rendered straight from
 <code class="docutils literal notranslate"><span class="pre">shared/simulator</span></code>:</p>
 <figure class="align-default" id="id1">
-<a class="reference internal image-reference" href="_images/fixtures.png"><img alt="Line, grid, cube, and helix LED fixtures in 3D" src="_images/fixtures.png" style="width: 100%;" />
+<a class="reference internal image-reference" href="images/fixtures.png"><img alt="Line, grid, cube, and helix LED fixtures in 3D" src="images/fixtures.png" style="width: 100%;" />
 </a>
 <figcaption>
 <p><span class="caption-text">The four built-in ground-truth fixtures (<code class="docutils literal notranslate"><span class="pre">line</span></code>, <code class="docutils literal notranslate"><span class="pre">grid</span></code>, <code class="docutils literal notranslate"><span class="pre">cube</span></code>, <code class="docutils literal notranslate"><span class="pre">helix</span></code>) — the
@@ -390,7 +390,7 @@ known geometries the solver is tested against.</span><a class="headerlink" href=
 contributes a camera pose and a set of 2D LED detections; parallax between views
 is what makes the depth solvable.</p>
 <figure class="align-default" id="id2">
-<a class="reference internal image-reference" href="_images/camera_walk.gif"><img alt="Animation of a camera walking an arc around a helix fixture" src="_images/camera_walk.gif" style="width: 90%;" />
+<a class="reference internal image-reference" href="images/camera_walk.gif"><img alt="Animation of a camera walking an arc around a helix fixture" src="images/camera_walk.gif" style="width: 90%;" />
 </a>
 <figcaption>
 <p><span class="caption-text">A synthetic capture walk: the camera (viewpoints in orange) arcs around a helix
@@ -402,7 +402,7 @@ positions jointly with a robust (Huber) bundle adjustment, and rejects outliers.
 Run against synthetic ground truth we can measure exactly how well it recovers
 the shape:</p>
 <figure class="align-default" id="id3">
-<a class="reference internal image-reference" href="_images/reconstruction.png"><img alt="Ground-truth vs reconstructed LED positions with per-LED error" src="_images/reconstruction.png" style="width: 100%;" />
+<a class="reference internal image-reference" href="images/reconstruction.png"><img alt="Ground-truth vs reconstructed LED positions with per-LED error" src="images/reconstruction.png" style="width: 100%;" />
 </a>
 <figcaption>
 <p><span class="caption-text">Ground truth (hollow) vs the reconstructed positions (filled, colored by error)
@@ -526,13 +526,13 @@ hardware).</p></li>
       
     </aside>
   </div>
-</div><script src="_static/documentation_options.js?v=8a448e45"></script>
-    <script src="_static/doctools.js?v=fd6eb6e6"></script>
-    <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
-    <script src="_static/scripts/furo.js?v=46bd48cc"></script>
-    <script src="_static/clipboard.min.js?v=a7894cd8"></script>
-    <script src="_static/copybutton.js?v=fd10adb8"></script>
-    <script src="_static/design-tabs.js?v=f930bc37"></script>
+</div><script src="static/documentation_options.js?v=8a448e45"></script>
+    <script src="static/doctools.js?v=fd6eb6e6"></script>
+    <script src="static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="static/copybutton.js?v=fd10adb8"></script>
+    <script src="static/design-tabs.js?v=f930bc37"></script>
     <script type="module">import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs";
 
 
