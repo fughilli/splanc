@@ -480,6 +480,25 @@ pub unsafe extern "C" fn lm_color_correction_commit() -> i32 {
     }
 }
 
+/// Generation counter for the global output brightness, bumped on every
+/// `set_brightness`. The firmware polls this after each `lm_player_handle` (like
+/// `lm_color_correction_gen`) to notice a change and re-apply the scale.
+#[no_mangle]
+pub unsafe extern "C" fn lm_brightness_gen() -> u32 {
+    player().output_brightness_gen()
+}
+
+/// The active global output brightness as an 8-bit scale (0..=255, where 255 is
+/// unattenuated) — the form FastLED's `nscale8` wants. The firmware multiplies
+/// every rendered LED by this just before the strip write.
+#[no_mangle]
+pub unsafe extern "C" fn lm_brightness_u8() -> u8 {
+    // Round 0.0..=1.0 to 0..=255; clamp defends against any out-of-range value
+    // that slipped past the core's clamp.
+    let b = player().output_brightness().clamp(0.0, 1.0);
+    (b * 255.0 + 0.5) as u8
+}
+
 fn encode_reply(reply: &pb::ServerMessage, out: *mut u8, out_cap: usize) -> i32 {
     let mut enc = PbEncoder::new(micropb::heapless::Vec::<u8, REPLY_CAP>::new());
     if reply.encode(&mut enc).is_err() {

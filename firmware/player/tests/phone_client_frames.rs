@@ -86,8 +86,8 @@ fn reply_allowed(req: &CMsg, reply: &Option<SMsg>) -> bool {
         | CMsg::GetEffectUniforms(_)
         | CMsg::SetPerf(_)
         | CMsg::GetPerfReport(_) => is_err("unsupported"),
-        // Rename + color correction both reply welcome.
-        CMsg::SetDeviceName(_) | CMsg::SetColorCorrection(_) => {
+        // Rename, color correction, and output brightness all reply welcome.
+        CMsg::SetDeviceName(_) | CMsg::SetColorCorrection(_) | CMsg::SetBrightness(_) => {
             matches!(reply, Some(SMsg::Welcome(_)))
         }
     }
@@ -125,6 +125,7 @@ fn arm_name(req: &CMsg) -> &'static str {
         CMsg::SetTexture(_) => "set_texture",
         CMsg::UploadChunk(_) => "upload_chunk",
         CMsg::SetColorCorrection(_) => "set_color_correction",
+        CMsg::SetBrightness(_) => "set_brightness",
     }
 }
 

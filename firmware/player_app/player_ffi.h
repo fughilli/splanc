@@ -36,6 +36,15 @@ int32_t lm_color_correction_params(float *out);
 // only (live preview). Read alongside lm_color_correction_params on a change.
 int32_t lm_color_correction_commit(void);
 
+// Global output brightness: a generation counter bumped on every set_brightness,
+// and the active scale as an 8-bit value (0..=255, 255 = unattenuated) suitable
+// for FastLED nscale8. The app polls the generation after each lm_player_handle
+// (like lm_color_correction_gen); on a change it re-reads the scale and applies
+// it to every rendered LED just before the strip write. Runtime-only on the
+// device (defaults to 255 after a reboot).
+uint32_t lm_brightness_gen(void);
+uint8_t lm_brightness_u8(void);
+
 // Handle one received protocol frame (a binary WebSocket message).
 // recv_ms/send_ms are the player clock (millis()) at receive / reply time,
 // integer milliseconds. Returns: >0 = reply length written to out; 0 = no

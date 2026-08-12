@@ -238,6 +238,13 @@ pub struct Player {
     /// (true) or applied from RAM only (false, live preview) — see the `commit`
     /// field on `set_color_correction`.
     color_correction_commit: bool,
+    /// Global output brightness in 0.0..=1.0 applied to every rendered LED just
+    /// before the strip write (1.0 = unattenuated). RUNTIME-ONLY (not persisted):
+    /// a reboot returns to 1.0, so a device can never get stuck dark. Set by
+    /// `set_brightness` — a user master dimmer and the perf-measurement blanking
+    /// hook. The firmware polls `output_brightness_gen` to notice a change.
+    output_brightness: f32,
+    output_brightness_gen: u32,
 }
 
 impl Player {
@@ -257,6 +264,8 @@ impl Player {
             color_correction: ColorCorrection::WS2812B,
             color_correction_gen: 0,
             color_correction_commit: true,
+            output_brightness: 1.0,
+            output_brightness_gen: 0,
         }
     }
 
@@ -358,6 +367,14 @@ impl Player {
                 // sends commit=false to stay in RAM until the UI settles.
                 self.color_correction_commit = m.r#commit().copied().unwrap_or(true);
                 self.color_correction_gen = self.color_correction_gen.wrapping_add(1);
+                Some(self.welcome())
+            }
+            // Global output brightness: store the clamped scale and bump the gen.
+            // The firmware polls the gen (like color correction) to apply it to
+            // the strip write. Runtime-only, so nothing is persisted.
+            CMsg::SetBrightness(m) => {
+                self.output_brightness = (m.r#brightness as f32).clamp(0.0, 1.0);
+                self.output_brightness_gen = self.output_brightness_gen.wrapping_add(1);
                 Some(self.welcome())
             }
             CMsg::SubmitEffect(_)
@@ -640,11 +657,23 @@ impl Player {
         self.color_correction_commit
     }
 
+    /// Generation counter bumped on every `set_brightness`; the firmware polls it
+    /// (like color correction) to notice a change to the global output scale.
+    pub fn output_brightness_gen(&self) -> u32 {
+        self.output_brightness_gen
+    }
+
+    /// The active global output brightness in 0.0..=1.0 (1.0 = unattenuated).
+    pub fn output_brightness(&self) -> f32 {
+        self.output_brightness
+    }
+
     fn welcome(&self) -> pb::ServerMessage {
         let mut w = pb::Welcome::default();
         w.r#session_id = self.session_id.clone();
         w.r#mac = self.mac.clone();
         w.r#device_name = self.device_name.clone();
+        w.set_brightness(self.output_brightness as f64);
         let spec = CodeSpec::derive(self.default_led_count, DEFAULT_SYMBOLS, true);
         w.set_code_params(code_params_msg(&spec, DEFAULT_BIT_PERIOD_MS, 1.0));
         // NO solver_bench_ms: chooseSolvePlacement(phone, null) == "phone".

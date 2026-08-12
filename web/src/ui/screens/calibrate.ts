@@ -11,6 +11,8 @@ import { Button, Card, EmptyState, toast } from "../kit";
 import { appState } from "../app/state";
 import type { Router, Screen } from "../app/router";
 import { clientDevice, runCalibration } from "../../effects/calibration";
+import { deviceStore } from "../../store/deviceStore";
+import { loadBrightness } from "../../store/brightnessSetpoint";
 import { compileScript } from "../../fx/preview";
 import { HELDOUT } from "../../effects/calibrationBenchmarks";
 import { estimateFrameTime, parseFxb, walkEntry } from "../../effects/costModel";
@@ -117,51 +119,64 @@ export function CalibrateScreen(router: Router): Screen {
 
     const label = appState.welcome()?.sessionId ?? "device";
     const build = "unknown";
-    // before-accuracy (default table)
-    appendLog("Measuring held-out benchmark with the default model…");
-    const beforeErr = await heldoutError(null, HELDOUT.ledCount).catch(() => null);
-
-    let result;
+    // Blank the strip for the whole measurement procedure (before-probe →
+    // calibration sweep → after-probe): rendering + the perf counters still run,
+    // but the output is driven to 0 so the rapidly changing benchmark patterns
+    // can't brown out a low-ampacity supply (e.g. a fixture on USB from the
+    // phone) and drop the device's wireless link mid-run. Restored to the user's
+    // brightness setpoint in the `finally`, no matter how the run ends.
+    const setpoint = loadBrightness(deviceStore.activeId());
     try {
-      result = await runCalibration(clientDevice(client), {
-        deviceLabel: String(label),
-        firmwareBuild: build,
-        tier: tierToggle.checked ? "core" : "full",
-        onProgress: (p) => {
-          fill.style.width = `${Math.round((p.step / p.total) * 100)}%`;
-          appendLog(p.detail ? `${p.label} — ${p.detail}` : p.label);
-        },
-      });
-    } catch (e) {
-      toast("Calibration failed", { error: true });
-      appendLog(`error: ${(e as Error).message}`);
+      await client.setBrightness(0).catch(() => undefined);
+
+      // before-accuracy (default table)
+      appendLog("Measuring held-out benchmark with the default model…");
+      const beforeErr = await heldoutError(null, HELDOUT.ledCount).catch(() => null);
+
+      let result;
+      try {
+        result = await runCalibration(clientDevice(client), {
+          deviceLabel: String(label),
+          firmwareBuild: build,
+          tier: tierToggle.checked ? "core" : "full",
+          onProgress: (p) => {
+            fill.style.width = `${Math.round((p.step / p.total) * 100)}%`;
+            appendLog(p.detail ? `${p.label} — ${p.detail}` : p.label);
+          },
+        });
+      } catch (e) {
+        toast("Calibration failed", { error: true });
+        appendLog(`error: ${(e as Error).message}`);
+        return;
+      }
+
+      await costTableStore.save(result.table);
+      fill.style.width = "100%";
+      appendLog(`Fit residual: ±${(result.table.residualError * 100).toFixed(1)}%`);
+
+      // after-accuracy (calibrated table)
+      appendLog("Re-measuring held-out benchmark with the calibrated model…");
+      const afterErr = await heldoutError(result.table, HELDOUT.ledCount).catch(() => null);
+
+      accuracy.append(
+        accCol("before", beforeErr),
+        accCol("after", afterErr),
+        accCol("fit residual", result.table.residualError),
+      );
+
+      // restore the user's effect
+      if (priorEffect) {
+        await client.setEffect(priorEffect).catch(() => undefined);
+        appendLog(`Restored effect ${priorEffect}.`);
+      }
+      toast(`Calibrated ${result.table.soc} @ ${(result.cpuHz / 1e6).toFixed(0)} MHz`);
+    } finally {
+      // Unblank: restore the user's brightness setpoint (default full) whether
+      // the run finished, failed, or threw.
+      await client.setBrightness(setpoint).catch(() => undefined);
       running = false;
       startBtn.disabled = false;
-      return;
     }
-
-    await costTableStore.save(result.table);
-    fill.style.width = "100%";
-    appendLog(`Fit residual: ±${(result.table.residualError * 100).toFixed(1)}%`);
-
-    // after-accuracy (calibrated table)
-    appendLog("Re-measuring held-out benchmark with the calibrated model…");
-    const afterErr = await heldoutError(result.table, HELDOUT.ledCount).catch(() => null);
-
-    accuracy.append(
-      accCol("before", beforeErr),
-      accCol("after", afterErr),
-      accCol("fit residual", result.table.residualError),
-    );
-
-    // restore the user's effect
-    if (priorEffect) {
-      await client.setEffect(priorEffect).catch(() => undefined);
-      appendLog(`Restored effect ${priorEffect}.`);
-    }
-    toast(`Calibrated ${result.table.soc} @ ${(result.cpuHz / 1e6).toFixed(0)} MHz`);
-    running = false;
-    startBtn.disabled = false;
   }
 
   function accCol(label: string, err: number | null): HTMLElement {

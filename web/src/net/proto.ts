@@ -54,6 +54,7 @@ const CLIENT_ARMS: Record<string, string> = {
   set_texture: "setTexture",
   upload_chunk: "uploadChunk",
   set_color_correction: "setColorCorrection",
+  set_brightness: "setBrightness",
 };
 const SERVER_ARMS: Record<string, string> = {
   welcome: "welcome",
