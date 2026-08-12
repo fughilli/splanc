@@ -33,10 +33,12 @@ import { MediaStreamCaptureSource } from "../../xr/mediaStreamCapture";
 import { SolverAgent, type SolveSnapshot } from "../../solver/agent";
 import { chooseSolvePlacement } from "../../solver/placement";
 import { LabelOverlay } from "../labels";
+import { ProjectionOverlay, type Registration } from "../projectionOverlay";
 import { MapView } from "../mapview";
 import { prefs } from "../../store/prefs";
-import { mapStore } from "../../store/mapStore";
+import { mapStore, type CaptureObservations } from "../../store/mapStore";
 import { recenterToCentroid } from "../../geom/mapTransform";
+import { fuseMaps } from "../../geom/fuseMaps";
 import { appState } from "../app/state";
 import { Button, IconButton, Slider, toast } from "../kit";
 import type { Router, Screen } from "../app/router";
@@ -90,6 +92,13 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     return Number.isFinite(v) && v >= 1 ? v : null;
   })();
 
+  // Supplemental capture (FUG-112): when set, this session is fused into the
+  // named library map instead of creating a new one. The prior map + its
+  // observations are loaded at mount.
+  const supplementId = routeQuery?.get("supplement") ?? null;
+  let priorMap: OutputMap | null = null;
+  let priorObs: CaptureObservations | null = null;
+
   // -- full-screen layout (design doc §4.2). The camera <video> is prepended to
   // <body> by the capture source (fixed, inset:0) as in main.ts; the HUD, live
   // inset, advanced controls and stop button live in this overlay.
@@ -98,6 +107,11 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
 
   const labelsCanvas = document.createElement("canvas");
   labelsCanvas.className = "capture-labels";
+
+  // The registered 3D layer: solved LED positions projected into the viewport
+  // (FUG-112). Sits over the video alongside the 2D-track labels.
+  const projCanvas = document.createElement("canvas");
+  projCanvas.className = "capture-proj";
 
   const topBar = document.createElement("div");
   topBar.className = "capture-topbar";
@@ -118,6 +132,58 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
   const guideEl = document.createElement("div");
   guideEl.className = "capture-guide metric";
   guideEl.textContent = "Walk a slow arc around the fixture — sideways steps, not toward it.";
+
+  // -- layer toggles + pose-reacquisition chip (FUG-112). The two viewport
+  // layers (2D tracks, registered 3D solve) can each be isolated during the
+  // scan; the chip reports whether client-side PnP has locked onto the map.
+  let showTracks = true;
+  let showSolved = true;
+  const layerBar = document.createElement("div");
+  layerBar.className = "capture-layers";
+  const layerToggle = (label: string, on: boolean, onChange: (v: boolean) => void): HTMLButtonElement => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "capture-layerbtn";
+    b.textContent = label;
+    const set = (v: boolean): void => {
+      b.classList.toggle("capture-layerbtn--on", v);
+      b.setAttribute("aria-pressed", String(v));
+    };
+    set(on);
+    b.addEventListener("click", () => {
+      const v = !b.classList.contains("capture-layerbtn--on");
+      set(v);
+      onChange(v);
+    });
+    return b;
+  };
+  const regChip = document.createElement("span");
+  regChip.className = "capture-regchip";
+  regChip.style.display = "none";
+  layerBar.append(
+    layerToggle("Tracks", showTracks, (v) => {
+      showTracks = v;
+      labelsCanvas.style.display = v ? "" : "none";
+      if (!v) labels.clear();
+    }),
+    layerToggle("Solved", showSolved, (v) => {
+      showSolved = v;
+      projCanvas.style.display = v ? "" : "none";
+      if (!v) projOverlay.clear();
+    }),
+    regChip,
+  );
+
+  // -- supplemental review panel (FUG-112): after the fused solve, the user
+  // sees the result in the live inset and Accepts or Rejects it.
+  const reviewPanel = document.createElement("div");
+  reviewPanel.className = "capture-review";
+  reviewPanel.style.display = "none";
+  const reviewText = document.createElement("div");
+  reviewText.className = "capture-review-text metric";
+  const reviewBtns = document.createElement("div");
+  reviewBtns.className = "capture-review-btns";
+  reviewPanel.append(reviewText, reviewBtns);
 
   // Advanced disclosure: manual exposure / brightness override (was cap-controls)
   // and the dense HUD line, collapsed by default (design doc §2.7).
@@ -155,7 +221,19 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
   progBar.append(progFill);
   progWrap.append(progBar, progText);
 
-  overlay.append(labelsCanvas, topBar, liveCanvas, advWrap, hudStats, guideEl, progWrap, stopBtn);
+  overlay.append(
+    labelsCanvas,
+    projCanvas,
+    topBar,
+    layerBar,
+    liveCanvas,
+    advWrap,
+    hudStats,
+    guideEl,
+    reviewPanel,
+    progWrap,
+    stopBtn,
+  );
   el.append(overlay);
 
   // -- manual exposure/brightness override (in-capture). Same semantics as
@@ -219,6 +297,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
 
   // -- session state ---------------------------------------------------------
   const labels = new LabelOverlay(labelsCanvas);
+  const projOverlay = new ProjectionOverlay(projCanvas);
   const solverAgent = new SolverAgent();
   const solverReady: Promise<boolean> = solverAgent.init().then((ok) => {
     if (ok) console.info(`wasm solver ready: benchmark ${solverAgent.benchMs?.toFixed(0)} ms`);
@@ -248,6 +327,16 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     liveSolvedText = "";
     liveCanvas.style.display = "none";
     labels.clear();
+    projOverlay.clear();
+    regChip.style.display = "none";
+  }
+
+  /** Reflect the pose-reacquisition state in the HUD chip (FUG-112). */
+  function updateRegChip(reg: Registration): void {
+    regChip.style.display = "";
+    regChip.textContent = reg.label;
+    regChip.classList.remove("capture-regchip--locked", "capture-regchip--weak", "capture-regchip--lost");
+    regChip.classList.add(`capture-regchip--${reg.tone}`);
   }
 
   async function startCapture(): Promise<void> {
@@ -257,11 +346,31 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       router.navigate("/maps");
       return;
     }
+    // Supplemental capture: load the prior map + its observations up front, so
+    // the projection overlay can register against it from the first frame and
+    // the strip length is inherited (FUG-112).
+    if (supplementId !== null) {
+      const rec = await mapStore.get(supplementId);
+      const obs = await mapStore.getObservations(supplementId);
+      if (!rec || !obs) {
+        toast("This map has no capture data to supplement.", { error: true });
+        router.navigate(`/map/${supplementId}`);
+        return;
+      }
+      priorMap = rec.map;
+      priorObs = obs;
+      projOverlay.setSolved(priorMap.leds);
+      guideEl.textContent = "Supplemental scan — cover the gaps and low-confidence LEDs.";
+    }
     const ledCount = Math.max(
       1,
-      routeLeds || parseInt(qs.get("leds") ?? "", 10) || c.welcome?.codeParams.ledCount || 64,
+      priorObs?.ledCount ||
+        routeLeds ||
+        parseInt(qs.get("leds") ?? "", 10) ||
+        c.welcome?.codeParams.ledCount ||
+        64,
     );
-    countEl.textContent = `Map — ${ledCount} LEDs`;
+    countEl.textContent = supplementId !== null ? `Supplement — ${ledCount} LEDs` : `Map — ${ledCount} LEDs`;
     try {
       lastLedCount = ledCount;
       localDetections = [];
@@ -372,7 +481,16 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           imgH: f.imgH,
         });
 
-        labels.draw(pipeline.lastBlobStatus, f.imgW, f.imgH);
+        if (showTracks) labels.draw(pipeline.lastBlobStatus, f.imgW, f.imgH);
+        // Registered 3D layer: recover the pose from the decoded-LED
+        // correspondences and project the solved map into the viewport. Also
+        // drives the reacquisition chip. Only meaningful once we have a solved
+        // set to register against (prior map in supplement mode, or the live
+        // solve otherwise).
+        if (projOverlay.solvedCount > 0) {
+          const reg = projOverlay.draw(pipeline.lastBlobStatus, f.K, f.imgW, f.imgH, showSolved);
+          updateRegChip(reg);
+        }
 
         if (++frameCount % 15 === 0) {
           const s = pipeline.stats;
@@ -432,6 +550,10 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
             if (!capturing || lm.map === null) return;
             liveLeds = lm.map.leds;
             pipeline.updateSolved(liveLeds);
+            // A first-time capture registers against its own live solve; a
+            // supplemental scan keeps registering against the prior map (seeded
+            // at start, a different frame), so don't overwrite it here.
+            if (supplementId === null) projOverlay.setSolved(liveLeds);
             liveSolvedText = ` · solved ${lm.map.leds.length}/${lm.map.ledCount}`;
             liveCanvas.style.display = "block";
             if (liveView === null) {
@@ -707,7 +829,10 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         // result if the socket is still up, but never fail the solve on it.
         await c.stopMappingNoSolve().catch(() => undefined);
         map = await solveOnPhoneNow();
-        pushedToDevice = await c.submitMap(map).then(() => true).catch(() => false);
+        // A supplemental scan's raw solve is not the map — the fused result is,
+        // and it isn't pushed until the user accepts — so skip the device push.
+        pushedToDevice =
+          supplementId !== null ? false : await c.submitMap(map).then(() => true).catch(() => false);
       } else {
         try {
           const result = await c.stopMapping();
@@ -731,20 +856,36 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
               "falling back to the phone solver",
           );
           map = await solveOnPhoneNow();
-          pushedToDevice = await c.submitMap(map).then(() => true).catch(() => false);
+          // A supplemental scan's raw solve is not the map — the fused result is,
+        // and it isn't pushed until the user accepts — so skip the device push.
+        pushedToDevice =
+          supplementId !== null ? false : await c.submitMap(map).then(() => true).catch(() => false);
         }
       }
       preview.view?.stop();
-      // New tail: save the solved result as a NEW library map (design doc §4.2)
-      // and navigate to Map Detail — the workspace is the result.
-      const id = await mapStore.create({ map, source: "capture" });
-      appState.setSelectedMap(id);
-      toast(
-        pushedToDevice
-          ? `Saved ${map.leds.length} LEDs`
-          : `Saved ${map.leds.length} LEDs — device offline, not pushed`,
-      );
-      router.navigate(`/map/${id}`);
+      if (solvePoll !== null) clearInterval(solvePoll);
+      if (supplementId !== null && priorMap !== null && priorObs !== null) {
+        // Supplemental: register + fuse into the prior map, then let the user
+        // accept or reject the fused result before it is committed (FUG-112).
+        await reviewSupplement(map);
+      } else {
+        // First-time capture: save the solved result as a NEW library map
+        // (design doc §4.2) — keeping the raw observations so it can later be
+        // supplemented — and navigate to Map Detail.
+        const observations: CaptureObservations = {
+          detections: localDetections,
+          imu: localImu,
+          ledCount: lastLedCount,
+        };
+        const id = await mapStore.create({ map, source: "capture", observations });
+        appState.setSelectedMap(id);
+        toast(
+          pushedToDevice
+            ? `Saved ${map.leds.length} LEDs`
+            : `Saved ${map.leds.length} LEDs — device offline, not pushed`,
+        );
+        router.navigate(`/map/${id}`);
+      }
     } catch (e) {
       toast(`Reconstruction failed: ${e instanceof Error ? e.message : e}`, { error: true });
       router.navigate("/maps");
@@ -753,6 +894,69 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       progWrap.style.display = "none";
       stopBtn.disabled = false;
     }
+  }
+
+  /**
+   * Fuse the supplemental scan `newMap` into the prior map, show the fused
+   * result in the live inset, and let the user accept or reject it (FUG-112).
+   * On accept the prior library map is replaced in place and its observations
+   * are extended so it can be supplemented again; on reject nothing changes.
+   */
+  async function reviewSupplement(newMap: OutputMap): Promise<void> {
+    const prior = priorMap;
+    const obs = priorObs;
+    if (prior === null || obs === null || supplementId === null) {
+      router.navigate("/maps");
+      return;
+    }
+    const fusion = fuseMaps(prior, newMap);
+    progWrap.style.display = "none";
+    guideEl.style.display = "none";
+    layerBar.style.display = "none";
+
+    // Show the outcome big: the fused map when it registered, else the prior
+    // (unchanged) so the user can see what they still have.
+    el.classList.add("capture--livebig");
+    liveCanvas.style.display = "block";
+    const reviewView = new MapView(liveCanvas, fusion.report.registered ? fusion.map : prior);
+    reviewView.start();
+
+    const choice = await new Promise<"accept" | "reject">((resolve) => {
+      reviewText.textContent = fusion.report.registered
+        ? fusion.report.summary
+        : `Couldn't register this scan into the map — ${fusion.report.summary} ` +
+          `The fixture's orientation may have changed since the original capture. Try again from a different arc.`;
+      reviewBtns.replaceChildren();
+      if (fusion.report.registered) {
+        reviewBtns.append(
+          Button({ label: "Reject", variant: "quiet", onClick: () => resolve("reject") }),
+          Button({ label: "Accept & merge", variant: "primary", onClick: () => resolve("accept") }),
+        );
+      } else {
+        reviewBtns.append(
+          Button({ label: "Discard", variant: "quiet", onClick: () => resolve("reject") }),
+        );
+      }
+      reviewPanel.style.display = "";
+    });
+
+    reviewPanel.style.display = "none";
+    reviewView.stop();
+    el.classList.remove("capture--livebig");
+
+    if (choice === "accept" && fusion.report.registered) {
+      const merged: CaptureObservations = {
+        detections: obs.detections.concat(localDetections),
+        imu: obs.imu.concat(localImu),
+        ledCount: obs.ledCount,
+      };
+      await mapStore.setMap(supplementId, fusion.map, undefined, merged);
+      appState.setSelectedMap(supplementId);
+      toast(`Merged — +${fusion.report.added} LEDs, ${fusion.report.improved} improved`);
+    } else {
+      toast("Supplemental scan discarded — map unchanged");
+    }
+    router.navigate(`/map/${supplementId}`);
   }
 
   return {
