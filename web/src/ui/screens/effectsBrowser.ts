@@ -127,6 +127,11 @@ export function EffectsBrowserScreen(router: Router): Screen {
   const tabMenuItems = [
     {
       icon: "effect-to-device" as const,
+      label: "Show mode (cue + crossfade)",
+      onClick: () => router.navigate("/show"),
+    },
+    {
+      icon: "effect-to-device" as const,
       label: "Send library to debug server",
       onClick: () => void sendLibraryFlow(),
     },

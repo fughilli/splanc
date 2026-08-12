@@ -113,6 +113,9 @@ ts_project(
             # Acid mode (FUG-106) also statically imports the worker compiler, so
             # it's a browser-only bundle entry too (reached only via app/main).
             "src/ui/screens/acidMode.ts",
+            # Show mode (FUG-110) statically imports the worker compiler too
+            # (cueing compiles effects to .fxb); reached only via app/main.
+            "src/ui/screens/showMode.ts",
             "src/ui/app/main.ts",
             "src/ui/main.ts",
         ],

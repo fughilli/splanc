@@ -813,6 +813,162 @@ body.is-locked {
   color: var(--text-dim);
 }
 
+/* --- FUG-110: Show mode workspace --- */
+.show-screen {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.show-header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.show-title {
+  font-size: 1.1em;
+  font-weight: 600;
+  flex: 1;
+}
+.show-offline {
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--alert, #e0533d) 15%, transparent);
+  color: var(--text-dim);
+  font-size: 0.85em;
+}
+.show-decks {
+  display: flex;
+  gap: var(--sp-3);
+}
+.show-deck {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  min-width: 0;
+}
+.show-deck[data-deck="0"] {
+  border-left: 3px solid var(--accent);
+}
+.show-deck[data-deck="1"] {
+  border-right: 3px solid var(--ok);
+}
+.show-deck-label {
+  font-size: 0.8em;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.show-deck-name {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.show-deck-name--empty {
+  color: var(--text-dim);
+  font-weight: 400;
+}
+.show-deck-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-top: auto;
+}
+.show-xfader {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: var(--sp-3);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.show-xfader-labels {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 600;
+}
+.show-xfader-readout {
+  color: var(--text-dim);
+  font-weight: 400;
+}
+.show-xfader-input {
+  width: 100%;
+}
+.show-mode-btn {
+  align-self: flex-end;
+}
+.show-list-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-height: 0;
+}
+.show-list-head {
+  font-size: 0.8em;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.show-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  overflow-y: auto;
+}
+.show-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.show-row:hover {
+  background: var(--surface-2, var(--surface));
+}
+.show-row--focus {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.show-row-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.show-cue-a {
+  color: var(--accent);
+}
+.show-cue-b {
+  color: var(--ok);
+}
+.show-midi-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) 0;
+}
+.show-midi-label {
+  flex: 1;
+}
+.show-midi-val {
+  color: var(--text-dim);
+  font-size: 0.85em;
+}
+.show-midi-row--learn .show-midi-val {
+  color: var(--accent);
+}
+
 /* --- effect editor (in-shell) --- */
 /* The editor is a full-viewport workspace: it is PINNED to the layout viewport
  * (fixed; inset:0) so nothing outside it scrolls and the soft keyboard overlays

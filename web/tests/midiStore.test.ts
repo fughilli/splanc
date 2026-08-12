@@ -110,3 +110,24 @@ test("bindingFor finds a specific uniform's binding", () => {
   assert.equal(midiStore.bindingFor("eff1", "speed")?.semantic, "speed");
   assert.equal(midiStore.bindingFor("eff1", "nope"), undefined);
 });
+
+// -- Show-Mode action bindings (FUG-110) -------------------------------------
+
+test("show binding: set, look up, reverse-resolve, and clear", () => {
+  midiStore.setShowBinding("crossfade", FADER);
+  midiStore.setShowBinding("deckA.playPause", KNOB);
+  assert.equal(controlKey(midiStore.showBindingFor("crossfade")!), controlKey(FADER));
+  assert.equal(midiStore.showActionForControl(controlKey(FADER)), "crossfade");
+  assert.equal(midiStore.showActionForControl(controlKey(KNOB)), "deckA.playPause");
+  midiStore.clearShowBinding("crossfade");
+  assert.equal(midiStore.showBindingFor("crossfade"), undefined);
+  // The other binding is untouched.
+  assert.equal(midiStore.showActionForControl(controlKey(KNOB)), "deckA.playPause");
+});
+
+test("show binding: a control moves to its newest action (one control, one action)", () => {
+  midiStore.setShowBinding("list.next", FADER);
+  midiStore.setShowBinding("list.prev", FADER); // same control, new action
+  assert.equal(midiStore.showBindingFor("list.next"), undefined);
+  assert.equal(controlKey(midiStore.showBindingFor("list.prev")!), controlKey(FADER));
+});
