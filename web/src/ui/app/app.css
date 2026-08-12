@@ -1149,9 +1149,6 @@ body.is-locked {
   backdrop-filter: blur(6px);
   transition: transform var(--motion-micro, 120ms) var(--ease, ease);
 }
-.fxedit-drawer-spacer {
-  flex: 1 1 auto;
-}
 .fxedit-menuwrap {
   position: relative;
   display: inline-flex;
@@ -1199,8 +1196,10 @@ body.is-locked {
 /* Inline-editable name: a compact pill, click → input in place. */
 .fxedit-namepill,
 .fxedit-nameinput {
+  /* Fill the space between the back button and the ⋯ menu. */
+  flex: 1 1 auto;
+  min-width: 0;
   height: 1.9rem;
-  max-width: 40vw;
   padding: 0 0.5rem;
   border: 1px solid var(--border);
   border-radius: 0;
@@ -1843,6 +1842,13 @@ body.is-locked {
 }
 .fxlayout--dragging .fxpane-body {
   pointer-events: none;
+}
+/* The drawer (back / name box / ⋯) is a sibling of the layout, so cover it too —
+ * otherwise a drag begun on the top tab row can still select the name box. */
+.fxlayout--dragging ~ .fxedit-drawer {
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
 }
 .fxlayout-dropzones {
   position: absolute;
