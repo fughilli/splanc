@@ -107,16 +107,15 @@ def _stage(ws: Path, stage: Path) -> None:
         if src.exists():
             _copy(src, stage / rel)
 
-    # 5. Icons: into _static (theme logo) and _assets mirror (raw-HTML refs).
+    # 5. Icons: the theme logo + landing banner use the same asset the README and
+    #    the app navbar use (splanc.svg — the full wordmark). The _assets mirror
+    #    keeps the raw-HTML banner refs in README/design docs resolving.
     icons = ws / ICONS_DIR
     static = stage / "_static"
     static.mkdir(parents=True, exist_ok=True)
     logo = icons / "splanc.svg"
-    banner = icons / "splanc-banner.svg"
     if logo.exists():
         _copy(logo, static / "splanc-icon.svg")
-    if banner.exists():
-        _copy(banner, static / "splanc-banner.svg")
     if icons.is_dir():
         shutil.copytree(icons, stage / "_assets" / ICONS_DIR, dirs_exist_ok=True)
 

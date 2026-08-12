@@ -4,18 +4,10 @@ sd_hide_title: true
 
 # splanc developer documentation
 
-```{image} _static/splanc-banner.svg
+```{image} _static/splanc-icon.svg
 :alt: splanc
-:width: 460px
+:width: 440px
 :align: center
-:class: only-light
-```
-
-```{image} _static/splanc-banner.svg
-:alt: splanc
-:width: 460px
-:align: center
-:class: only-dark
 ```
 
 <p style="text-align:center; font-size:1.15rem; margin-top:0.5rem;">
