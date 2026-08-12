@@ -47,6 +47,12 @@ CSS = glob(["src/**/*.css"])
 
 TYPE_DEPS = [
     ":node_modules/@bufbuild/protobuf",
+    # Capacitor native-wrapper (iOS) types (docs/design/ios-support.md §4.2):
+    # net/capacitorImprov.ts type-imports the BLE plugin (and its types reference
+    # @capacitor/core). Runtime code loads the plugin via a lazy dynamic import,
+    # so these are type-only for the app + test compiles; no test requires them.
+    ":node_modules/@capacitor-community/bluetooth-le",
+    ":node_modules/@capacitor/core",
     ":node_modules/@ledmapper/protocol",
     ":node_modules/@types/node",
     ":node_modules/@types/w3c-web-serial",

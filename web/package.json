@@ -12,13 +12,18 @@
   },
   "dependencies": {
     "@bufbuild/protobuf": "^2.12.1",
+    "@capacitor-community/bluetooth-le": "^8.2.0",
+    "@capacitor/core": "^8.5.0",
+    "@capacitor/ios": "^8.5.0",
     "@ledmapper/protocol": "workspace:*",
+    "@splanc/wss-bridge": "link:./native-plugins/wss-bridge",
     "esptool-js": "^0.6.0",
     "web-serial-polyfill": "^1.0.15"
   },
   "devDependencies": {
     "@bufbuild/buf": "^1.71.0",
     "@bufbuild/protoc-gen-es": "^2.12.1",
+    "@capacitor/cli": "^8.5.0",
     "@types/node": "24.10.9",
     "@types/w3c-web-serial": "^1.0.8",
     "@types/w3c-web-usb": "^1.0.10",
