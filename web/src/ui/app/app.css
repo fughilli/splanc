@@ -781,6 +781,38 @@ body.is-locked {
   display: none;
 }
 
+/* --- FUG-110: "on device" badge + ephemeral device section --- */
+.fx-device-badge {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-left: var(--sp-2);
+  border-radius: 50%;
+  background: var(--ok);
+  vertical-align: middle;
+  flex: 0 0 auto;
+}
+.fxlib-devsection {
+  margin-bottom: var(--sp-3);
+}
+.fxlib-devsection-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-2) var(--sp-1);
+  font-size: 0.85em;
+  font-weight: 600;
+  color: var(--ok);
+}
+.fxlib-devsection-head svg {
+  width: 16px;
+  height: 16px;
+}
+.fxlib-devsection-count {
+  margin-left: auto;
+  color: var(--text-dim);
+}
+
 /* --- effect editor (in-shell) --- */
 /* The editor is a full-viewport workspace: it is PINNED to the layout viewport
  * (fixed; inset:0) so nothing outside it scrolls and the soft keyboard overlays

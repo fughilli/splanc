@@ -55,6 +55,8 @@ import { MidiMapPanel } from "../../effects/editor/midi-panel";
 import { midiStore, type UniformBinding } from "../../store/midiStore";
 import { midiManager, controlLabel } from "../../midi/manager";
 import { effectStore, isBuiltinEffect } from "../../store/effectStore";
+import { deviceEffects } from "../../store/deviceEffects";
+import { deviceStore } from "../../store/deviceStore";
 import { mapStore } from "../../store/mapStore";
 import { renderSettings } from "../../store/appearance";
 import { appState } from "../app/state";
@@ -1204,6 +1206,9 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     try {
       await c.submitEffect(effectId, r.bytecode, true);
       if (panel.values().length > 0) await c.setUniforms(panel.values());
+      // Remember this effect now lives on the connected device (green badge +
+      // the "On <device>" folder in the effects browser, FUG-110).
+      deviceEffects.markSent(deviceStore.activeId(), effectId);
       // This effect is now the one running on the device → clears any mismatch.
       runningEffectId = effectId;
       refreshMismatch();
