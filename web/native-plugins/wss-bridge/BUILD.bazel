@@ -1,0 +1,21 @@
+"""web/native-plugins/wss-bridge — Native WebSocket bridge plugin.
+
+This is a Capacitor native plugin (iOS-only) that pins/trusts a Splanc
+device's self-signed wss:// certificate. It ships no JavaScript sources of
+its own; this BUILD file exists solely so that aspect_rules_js can resolve
+the pnpm workspace link declared in web/package.json as:
+
+    "@splanc/wss-bridge": "link:./native-plugins/wss-bridge"
+
+The `npm_package` target named `pkg` is the naming convention that
+aspect_rules_js uses to locate workspace-local packages.
+"""
+
+load("@aspect_rules_js//npm:defs.bzl", "npm_package")
+
+package(default_visibility = ["//visibility:public"])
+
+npm_package(
+    name = "pkg",
+    srcs = ["package.json"],
+)
