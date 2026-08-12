@@ -51,11 +51,15 @@ export function buildCorrespondences(
   return out;
 }
 
-/** Map a PnP result + correspondence count to the reacquisition chip. Pure. */
+/** Map a PnP result + correspondence count to the reacquisition chip. Pure.
+ * `supplement` distinguishes a supplemental scan (where a persistent failure to
+ * lock means the fixture's gravity-relative transform likely changed) from a
+ * first-time capture (where it just means the solve is still converging). */
 export function classifyRegistration(
   res: PnpResult | null,
   corrCount: number,
   onGrace: boolean,
+  supplement: boolean,
 ): Registration {
   if (res && res.ok) {
     return {
@@ -69,18 +73,21 @@ export function classifyRegistration(
   if (onGrace) {
     return {
       tone: "weak",
-      label: "Re-acquiring pose…",
+      label: supplement ? "Re-acquiring pose…" : "Aligning…",
       inliers: res?.inliers ?? 0,
       total: res?.total ?? corrCount,
       rmsPx: res?.rmsPx ?? Infinity,
     };
   }
+  const label =
+    corrCount < 4
+      ? "Not registered — few known LEDs in view"
+      : supplement
+        ? "Not registered — fixture may have moved"
+        : "Aligning to the solve…";
   return {
-    tone: "lost",
-    label:
-      corrCount < 4
-        ? "Not registered — few known LEDs in view"
-        : "Not registered — fixture may have moved",
+    tone: corrCount < 4 || supplement ? "lost" : "weak",
+    label,
     inliers: res?.inliers ?? 0,
     total: corrCount,
     rmsPx: res?.rmsPx ?? Infinity,
@@ -101,6 +108,9 @@ export class ProjectionOverlay {
   /** Draw the numeric confidence next to each dot (busier, but the point of a
    * supplemental scan is to see which LEDs are weak). */
   showScores = true;
+  /** Registering against a prior map (supplement) vs the live solve (fresh) —
+   * only changes the chip wording. */
+  supplement = false;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     this.ctx = canvas.getContext("2d")!;
@@ -156,7 +166,7 @@ export class ProjectionOverlay {
     const pose = res && res.ok ? res.pose : onGrace ? this.lastPose : null;
     if (render && pose !== null && imgW > 0 && imgH > 0) this.render(pose, K, imgW, imgH);
 
-    return classifyRegistration(res, corrs.length, onGrace);
+    return classifyRegistration(res, corrs.length, onGrace, this.supplement);
   }
 
   clear(): void {
