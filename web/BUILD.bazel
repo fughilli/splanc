@@ -110,6 +110,9 @@ ts_project(
             "src/effects/editor/compiler.ts",
             "src/effects/editor/compile-worker.ts",
             "src/ui/screens/effectEditor.ts",
+            # Acid mode (FUG-106) also statically imports the worker compiler, so
+            # it's a browser-only bundle entry too (reached only via app/main).
+            "src/ui/screens/acidMode.ts",
             "src/ui/app/main.ts",
             "src/ui/main.ts",
         ],

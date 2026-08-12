@@ -34,6 +34,10 @@ import { SettingsScreen } from "../screens/settings";
 import { MidiScreen } from "../screens/midi";
 import { ColorCorrectionScreen } from "../screens/colorCorrection";
 import { AboutScreen } from "../screens/about";
+import { AcidModeScreen } from "../screens/acidMode";
+import { installShakeToEnter } from "../acid/shake";
+import { shakeConfirmLine, SHAKE_CONFIRM_LINES } from "../acid/narrate";
+import { confirmDialog } from "../kit";
 import { initAppearance } from "../../store/appearance";
 import { maybeShowSplash } from "./splash";
 
@@ -128,6 +132,11 @@ async function main(): Promise<void> {
       shell.setChrome({ title: "About", back: true, tabs: true });
       return AboutScreen(router, m.query.get("tab") === "docs" ? "docs" : "about");
     })
+    .add("/acid", () => {
+      // Overlay chrome: the mode owns the whole viewport (its own pill + exit).
+      shell.setChrome({ title: "Acid mode", tabs: false, overlay: true });
+      return AcidModeScreen(router);
+    })
     .setFallback(() => {
       // First run with no device and no maps → onboarding; else → maps.
       const hasDevices = deviceStore.list().length > 0;
@@ -145,6 +154,28 @@ async function main(): Promise<void> {
   await seedBuiltinEffects();
 
   router.start();
+
+  // Shake-to-enter Acid Mode (FUG-106): a vigorous side-to-side shake pops a
+  // (humorous) confirmation; on OK we drop into the hands-free mode. Guarded so
+  // it can't fire while already there or while the confirm is up. No-op where
+  // DeviceMotion is unavailable (desktop).
+  let shakePrompting = false;
+  installShakeToEnter(() => {
+    const path = location.hash.replace(/^#/, "").split("?")[0];
+    if (shakePrompting || path === "/acid") return;
+    shakePrompting = true;
+    // Rotate the line so repeat shakers don't see the same quip every time.
+    const line = shakeConfirmLine(Math.floor(Date.now() / 1000) % SHAKE_CONFIRM_LINES.length);
+    void confirmDialog({
+      title: "🫨 Acid Mode?",
+      message: line,
+      confirmLabel: "Let's go 🌀",
+      cancelLabel: "Nope",
+    }).then((ok) => {
+      shakePrompting = false;
+      if (ok) router.navigate("/acid");
+    });
+  });
 }
 
 void main();
