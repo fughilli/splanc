@@ -112,6 +112,11 @@ export class Shell {
     );
     const install = installMenuItem(() => this.closeMenu());
     if (install) this.menu.appendChild(install);
+    // Docs: deep-links to the About screen's Documentation tab, which links out
+    // to the published developer docs (and, soon, the user guide) — FUG-104.
+    this.menu.appendChild(
+      this.menuItem("help", "Docs", () => this.router?.navigate("/about?tab=docs")),
+    );
     // About: project description, licensing/copyright, and open-source
     // disclosures (FUG-96). Always available.
     this.menu.appendChild(

@@ -1,0 +1,63 @@
+"""Developer documentation — the Sphinx site (FUG-104).
+
+One target regenerates everything (figures + HTML):
+
+    bazel run //docs:build      # -> docs/site/html/index.html
+    bazel run //docs:serve      # preview it over HTTP
+
+The doc *content* (the markdown under docs/ and the repo root, plus the
+hand-written pages in docs/_sphinx/) is read live from the working tree at build
+time, matching the repo's `bazel run //web:gen_fx_vm_perf_doc` convention — so
+the pip toolchain is the only thing Bazel needs to provide here.
+"""
+
+load("@pypi//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+# The generated FX-VM performance doc (FUG-95) lives in this directory, which is
+# now its own Bazel package. Export it so the web freshness genrule
+# (//web:fx_vm_perf_doc_freshness) can still $(location) it.
+exports_files(["fx-vm-performance.md"])
+
+# The figures + animations, rendered from the real simulator -> reconstruction
+# path. Runnable on its own (writes to the given dir); also imported by :build.
+py_binary(
+    name = "gen_figures",
+    srcs = ["gen_figures.py"],
+    main = "gen_figures.py",
+    deps = [
+        "//shared/simulator",
+        requirement("matplotlib"),
+        requirement("numpy"),
+    ],
+)
+
+# The single entry point: regenerate figures, stage the sources, build the site.
+py_binary(
+    name = "build",
+    srcs = [
+        "build_docs.py",
+        "gen_figures.py",
+    ],
+    main = "build_docs.py",
+    deps = [
+        "//shared/simulator",
+        requirement("furo"),
+        requirement("matplotlib"),
+        requirement("myst-parser"),
+        requirement("numpy"),
+        requirement("sphinx"),
+        requirement("sphinx-copybutton"),
+        requirement("sphinx-design"),
+        requirement("sphinxcontrib-mermaid"),
+    ],
+)
+
+# Preview the built site over HTTP.
+py_binary(
+    name = "serve",
+    srcs = ["serve.py"],
+    main = "serve.py",
+)

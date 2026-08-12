@@ -7,6 +7,19 @@ see [`README.md`](./README.md); for the effects engine specifically, see
 
 ## Design & architecture docs
 
+All of the docs below are also published as a single browsable **Sphinx site**
+(architecture overview with diagrams, generated figures/animations, and a
+per-subsystem tour). Build and preview it with one target each:
+
+```sh
+bazel run //docs:build      # regenerate figures + HTML -> docs/site/html/
+bazel run //docs:serve      # preview at http://localhost:8000
+```
+
+See [`docs/_sphinx/about-these-docs.md`](./docs/_sphinx/about-these-docs.md) for
+how the site is assembled. The individual source docs below remain the source of
+truth — editing them updates the site.
+
 Start with the durable design and reference docs before changing subsystems:
 
 - **[`led-mapper-design.md`](./led-mapper-design.md)** — the durable spec. Read §0

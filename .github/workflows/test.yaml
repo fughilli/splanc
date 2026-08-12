@@ -256,13 +256,22 @@ jobs:
             bazel-disk-site-${{ runner.os }}-
             bazel-disk-test-${{ runner.os }}-
 
+      # Build the developer docs (Sphinx) so the publish tree can carry them at
+      # /docs/ (FUG-104). `bazel run` sets BUILD_WORKSPACE_DIRECTORY to the
+      # checkout, so the site lands at $GITHUB_WORKSPACE/docs/site/html.
+      - name: Build developer docs
+        run: bazel run //docs:build --disk_cache="$HOME/.cache/bazel-disk"
+
       # Materialize the publish tree into ./_site (bundle at /, wasm bundles at
-      # /solver /pulse /fx-compiler /fx-vm — same layout Cloudflare/the Pi serve).
+      # /solver /pulse /fx-compiler /fx-vm, docs at /docs — same layout
+      # Cloudflare/the Pi serve).
       - name: Stage site
         # LEDMAPPER_FLASHBUNDLE points stage_site.lib.sh at the downloaded flash
-        # bundle so it's staged under /firmware/ (FUG-60).
+        # bundle so it's staged under /firmware/ (FUG-60); LEDMAPPER_DOCS_SITE
+        # points it at the docs built above so they're staged under /docs/.
         env:
           LEDMAPPER_FLASHBUNDLE: ${{ github.workspace }}/_flashbundle/esp32c6_flashbundle.tar
+          LEDMAPPER_DOCS_SITE: ${{ github.workspace }}/docs/site/html
         run: bazel run //web:stage_site --disk_cache="$HOME/.cache/bazel-disk" -- "$GITHUB_WORKSPACE/_site"
 
       - name: Upload site artifact
@@ -437,10 +446,18 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
 
+      # The Cloudflare deploy re-stages from source, so build the developer docs
+      # here too (the GitHub Pages deploy above already carries them via the
+      # _site artifact). FUG-104.
+      - name: Build developer docs
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        run: bazel run //docs:build --disk_cache="$HOME/.cache/bazel-disk"
+
       # Skips cleanly (rather than failing this whole job, which also did the
       # GitHub Pages deploy above) until the Cloudflare secrets are configured.
       - name: Deploy to Cloudflare Pages (production)
         if: env.CLOUDFLARE_API_TOKEN != ''
         env:
           LEDMAPPER_FLASHBUNDLE: ${{ github.workspace }}/_flashbundle/esp32c6_flashbundle.tar
+          LEDMAPPER_DOCS_SITE: ${{ github.workspace }}/docs/site/html
         run: bazel run //web:deploy_cloudflare --disk_cache="$HOME/.cache/bazel-disk"

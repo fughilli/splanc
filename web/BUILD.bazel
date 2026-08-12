@@ -208,14 +208,14 @@ genrule(
     name = "fx_vm_perf_doc_freshness",
     srcs = [
         ":device_bench_goldens",
-        "//:docs/fx-vm-performance.md",
+        "//docs:fx-vm-performance.md",
     ],
     outs = ["fx_vm_perf_doc_freshness.stamp"],
     # BAZEL_BINDIR=. lets the aspect_rules_js js_binary launcher run out of the
     # execroot root inside this build action (it otherwise refuses); see the
     # rules_js note the launcher prints without it.
     cmd = "BAZEL_BINDIR=. $(execpath :gen_fx_vm_perf_doc) --check " +
-          "--out $(location //:docs/fx-vm-performance.md) " +
+          "--out $(location //docs:fx-vm-performance.md) " +
           "$(locations :device_bench_goldens) && touch $@",
     tools = [":gen_fx_vm_perf_doc"],
 )

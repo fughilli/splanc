@@ -451,3 +451,30 @@ log2(symbols))` — a 64-LED SEC-DED cycle is 14 windows at 2 symbols,
 - **The M1 driver now renders per-LED colors** (`frame_bytes_colors`,
   APA102 B,G,R order; `graycode.color_plan` replaces the binary
   `frame_plan`) — the hue carrier is no longer wall-only.
+
+## Developer documentation — Sphinx site (FUG-104, pinned 2026-08-11)
+
+The developer docs are a **Sphinx** site (`//docs:build`) rather than a hand-kept
+HTML tree or a wiki. Rationale:
+
+- **Fold in, don't fork.** MyST-parser renders the existing markdown
+  (`README.md`, `DEVELOPERS.md`, `EFFECTS.md`, `led-mapper-design.md`, everything
+  under `docs/`, and the subsystem READMEs) as-is, so the source docs stay the
+  single source of truth and editing them updates the site. No content is
+  duplicated into a docs-only format.
+- **One regenerable target.** `bazel run //docs:build` regenerates _everything_
+  in one shot — it renders the figures/animations from the real
+  `shared/simulator` → `pi/reconstruction` code path (so the visuals can't drift
+  from the code) and then runs Sphinx. This mirrors the repo's existing
+  `bazel run //web:gen_fx_vm_perf_doc` convention (write into the working tree
+  from `$BUILD_WORKSPACE_DIRECTORY`).
+- **Toolchain (pinned in `requirements.lock`, added to `requirements.in`):**
+  `sphinx`, `myst-parser`, `furo` (theme), `sphinx-copybutton`, `sphinx-design`
+  (landing/subsystem cards), `sphinxcontrib-mermaid` (architecture + dataflow
+  diagrams, rendered client-side, `mermaid_version` pinned in `conf.py`), and
+  `matplotlib` (the generated figures). All bumped the usual way via
+  `bazel run //:requirements.update`.
+- **Generated output is not committed.** The built site lands in `docs/site/`
+  (like other `bazel run` outputs); only the sources under `docs/_sphinx/`, the
+  generators (`docs/build_docs.py`, `docs/gen_figures.py`), and the folded-in
+  markdown are tracked. `docs/site/` should be git-ignored.
