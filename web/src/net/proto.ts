@@ -55,6 +55,7 @@ const CLIENT_ARMS: Record<string, string> = {
   upload_chunk: "uploadChunk",
   set_color_correction: "setColorCorrection",
   set_brightness: "setBrightness",
+  set_crossfade: "setCrossfade",
 };
 const SERVER_ARMS: Record<string, string> = {
   welcome: "welcome",
@@ -270,12 +271,14 @@ export interface UniformValueFlat {
   value: number[];
 }
 
-/** Upload a compiled effect (proto SubmitEffect). */
+/** Upload a compiled effect (proto SubmitEffect). `deck` (FUG-110): 0 = A
+ * (default), 1 = B — which of the two concurrent FX decks to load onto. */
 export interface SubmitEffectMessage {
   type: "submit_effect";
   effectId: string;
   fxb: Uint8Array;
   activate: boolean;
+  deck?: number;
 }
 
 /** Stream a video frame into a loaded effect's 2D texture (proto SetTexture).
@@ -292,31 +295,48 @@ export interface SetTextureMessage {
   palette?: number[];
 }
 
-/** Select the active effect by id (proto SetEffect). */
+/** Select the active effect by id (proto SetEffect). `deck` (FUG-110): 0 = A
+ * (default), 1 = B. */
 export interface SetEffectMessage {
   type: "set_effect";
   effectId: string;
+  deck?: number;
 }
 
-/** Push live uniform values on the active effect (proto SetUniforms). */
+/** Push live uniform values on a deck's effect (proto SetUniforms). `deck`
+ * (FUG-110): 0 = A (default), 1 = B. */
 export interface SetUniformsMessage {
   type: "set_uniforms";
   values: UniformValueFlat[];
+  deck?: number;
 }
 
-/** Request an effect's manifest + current values (proto GetEffectUniforms). */
+/** Request an effect's manifest + current values (proto GetEffectUniforms).
+ * `deck` (FUG-110): 0 = A (default), 1 = B. */
 export interface GetEffectUniformsMessage {
   type: "get_effect_uniforms";
   effectId?: string;
+  deck?: number;
 }
 
 /** Reply to get_effect_uniforms (proto EffectUniforms). `manifest` is the raw
- * compiler-emitted uniform-manifest JSON bytes. */
+ * compiler-emitted uniform-manifest JSON bytes. `deck` (FUG-110) echoes which
+ * deck it describes. */
 export interface EffectUniformsMessage {
   type: "effect_uniforms";
   effectId: string;
   manifest: Uint8Array;
   current: UniformValueFlat[];
+  deck?: number;
+}
+
+/** Set the global FX crossfade (proto SetCrossfade, FUG-110). `position` is
+ * 0.0 (all deck A) .. 1.0 (all deck B); `mode` is 0 = linear RGB, 1 = linear
+ * HSV. Reply: welcome. */
+export interface SetCrossfadeMessage {
+  type: "set_crossfade";
+  position: number;
+  mode: number;
 }
 
 // -- Chunked-upload arms (flat shapes) --------------------------------------

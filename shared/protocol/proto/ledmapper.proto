@@ -393,31 +393,55 @@ message UniformValue {
 
 // Upload a compiled effect: `.fxb` = bytecode + embedded uniform manifest.
 // Stored to LittleFS keyed by `effect_id`, like submit_map. Set `activate` to
-// make it the active effect on receipt. Reply: result_ready (id=effect_id) or
-// error (`effect_too_large`, `bad_fxb`).
+// make it the active effect on receipt. `deck` (FUG-110) selects which of the
+// two concurrent FX decks it loads onto (0 = A, the default/legacy deck; 1 = B)
+// so the app can cue two effects and crossfade between them. Reply: result_ready
+// (id=effect_id) or error (`effect_too_large`, `bad_fxb`).
 message SubmitEffect {
   string effect_id = 1;
   bytes fxb = 2;
   bool activate = 3;
+  // FX deck to load onto: 0 = A (default), 1 = B. See SetCrossfade.
+  uint32 deck = 4;
 }
 
 // Select the active effect by id. "" or "off" clears it (back to the built-in
-// idle/playback). Reply: playback_state.
+// idle/playback). `deck` (FUG-110) targets deck A (0, default) or B (1); "" on a
+// deck parks that deck without disturbing the other. Reply: playback_state.
 message SetEffect {
   string effect_id = 1;
+  // FX deck to target: 0 = A (default), 1 = B.
+  uint32 deck = 2;
 }
 
-// Set live uniform values on the active effect (slider drags). Coalesced and
-// persisted like set_playback. Reply: playback_state.
+// Set live uniform values on a deck's effect (slider drags). Coalesced and
+// persisted like set_playback. `deck` (FUG-110) targets deck A (0, default) or
+// B (1). Reply: playback_state.
 message SetUniforms {
   repeated UniformValue values = 1;
+  // FX deck whose uniforms to set: 0 = A (default), 1 = B.
+  uint32 deck = 2;
 }
 
 // Request an effect's uniform manifest + current live values for UI hydration.
-// Unset `effect_id` = the active effect. Reply: effect_uniforms (or error
-// `no_effect`).
+// Unset `effect_id` = the active effect. `deck` (FUG-110) targets deck A (0,
+// default) or B (1). Reply: effect_uniforms (or error `no_effect`).
 message GetEffectUniforms {
   optional string effect_id = 1;
+  // FX deck to describe: 0 = A (default), 1 = B.
+  uint32 deck = 2;
+}
+
+// Global FX crossfade (FUG-110). The device runs two effect decks (A and B)
+// concurrently and blends their per-LED output. `position` is the blend
+// position 0.0 (all deck A) .. 1.0 (all deck B); `mode` selects the colour
+// space the blend happens in: 0 = linear RGB, 1 = linear HSV (shortest-hue
+// path). Runtime-only, echoed back in `welcome` for UI hydration on connect.
+// Reply: welcome.
+message SetCrossfade {
+  double position = 1;
+  // 0 = linear RGB, 1 = linear HSV.
+  uint32 mode = 2;
 }
 
 // ---------------------------------------------------------------------------
@@ -508,6 +532,7 @@ message ClientMessage {
     UploadChunk upload_chunk = 29;
     SetColorCorrection set_color_correction = 30;
     SetBrightness set_brightness = 31;
+    SetCrossfade set_crossfade = 32;
   }
 }
 
@@ -531,6 +556,12 @@ message Welcome {
   // master-dimmer control on connect. Runtime-only on the device (defaults to
   // 1.0 after a reboot); unset on older firmware.
   optional double brightness = 6;
+  // Current global FX crossfade position (0.0 .. 1.0) and mode (0 = linear RGB,
+  // 1 = linear HSV), so the app can hydrate its Show-Mode crossfader on connect
+  // (FUG-110). Runtime-only (defaults to 0.0 / RGB after a reboot); unset on
+  // older firmware.
+  optional double crossfade = 7;
+  optional uint32 crossfade_mode = 8;
 }
 
 // Stream a frame into a loaded effect's 2D `texture` (video textures). `data` is
@@ -752,6 +783,8 @@ message EffectUniforms {
   repeated UniformValue current = 3;
   // Declared 2D texture inputs of the active effect (empty on older firmware).
   repeated TexturePort textures = 4;
+  // FX deck this manifest describes: 0 = A (default), 1 = B (FUG-110).
+  uint32 deck = 5;
 }
 
 message ServerMessage {

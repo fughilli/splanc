@@ -440,34 +440,48 @@ export class LedMapperClient {
 
   /** Upload a compiled effect (`.fxb` = bytecode + embedded uniform manifest)
    * to the connected device. `activate` makes it the running effect on receipt
-   * (the editor's "Send to device" path). Reply: result_ready (id=effectId). */
+   * (the editor's "Send to device" path). `deck` (FUG-110) cues it onto FX deck
+   * A (0, default) or B (1) for crossfading. Reply: result_ready (id=effectId). */
   async submitEffect(
     effectId: string,
     fxb: Uint8Array,
     activate = true,
+    deck = 0,
   ): Promise<ResultReadyMessage> {
     return (await this.request(
-      { type: "submit_effect", effectId, fxb, activate } as unknown as ClientMessage,
+      { type: "submit_effect", effectId, fxb, activate, deck } as unknown as ClientMessage,
       "result_ready",
     )) as ResultReadyMessage;
   }
 
-  /** Select the active effect by id ("" or "off" clears it). Reply:
-   * playback_state. */
-  async setEffect(effectId: string): Promise<PlaybackStateMessage> {
+  /** Select the active effect by id ("" or "off" clears it). `deck` (FUG-110)
+   * targets deck A (0, default) or B (1). Reply: playback_state. */
+  async setEffect(effectId: string, deck = 0): Promise<PlaybackStateMessage> {
     return (await this.request(
-      { type: "set_effect", effectId } as unknown as ClientMessage,
+      { type: "set_effect", effectId, deck } as unknown as ClientMessage,
       "playback_state",
     )) as PlaybackStateMessage;
   }
 
-  /** Push live uniform values on the active effect (slider drags). Reply:
-   * playback_state. */
-  async setUniforms(values: UniformValueFlat[]): Promise<PlaybackStateMessage> {
+  /** Push live uniform values on a deck's effect (slider drags). `deck`
+   * (FUG-110) targets deck A (0, default) or B (1). Reply: playback_state. */
+  async setUniforms(values: UniformValueFlat[], deck = 0): Promise<PlaybackStateMessage> {
     return (await this.request(
-      { type: "set_uniforms", values } as unknown as ClientMessage,
+      { type: "set_uniforms", values, deck } as unknown as ClientMessage,
       "playback_state",
     )) as PlaybackStateMessage;
+  }
+
+  /** Set the global FX crossfade (FUG-110): `position` 0.0 (all deck A) .. 1.0
+   * (all deck B), `mode` 0 = linear RGB, 1 = linear HSV. The device blends the
+   * two decks' per-LED output. Runtime-only (a reboot returns to 0.0 / RGB).
+   * Reply: welcome (echoes the applied crossfade). */
+  async setCrossfade(position: number, mode = 0): Promise<WelcomeMessage> {
+    const p = Math.min(1, Math.max(0, position));
+    return (await this.request(
+      { type: "set_crossfade", position: p, mode } as unknown as ClientMessage,
+      "welcome",
+    )) as unknown as WelcomeMessage;
   }
 
   /** Rename the player: sets its display name, which becomes the Bluetooth-
@@ -537,12 +551,14 @@ export class LedMapperClient {
   }
 
   /** Fetch an effect's uniform manifest + current live values for UI
-   * hydration. Omit `effectId` for the active effect. Reply: effect_uniforms. */
-  async getEffectUniforms(effectId?: string): Promise<EffectUniformsMessage> {
+   * hydration. Omit `effectId` for the active effect. `deck` (FUG-110) targets
+   * deck A (0, default) or B (1). Reply: effect_uniforms. */
+  async getEffectUniforms(effectId?: string, deck = 0): Promise<EffectUniformsMessage> {
     return (await this.request(
       {
         type: "get_effect_uniforms",
         ...(effectId !== undefined ? { effectId } : {}),
+        deck,
       } as unknown as ClientMessage,
       "effect_uniforms",
     )) as unknown as EffectUniformsMessage;
