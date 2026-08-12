@@ -43,6 +43,10 @@ export interface PnpOptions {
   minInliers?: number;
   /** Max reprojection RMS over inliers to accept a lock, px (default 4). */
   maxRmsPx?: number;
+  /** Refine from `seed` only — skip the (costlier) from-scratch multi-start.
+   * For per-frame tracking where a warm seed is available and the full search
+   * is throttled to occasional frames. Returns null when no seed is given. */
+  refineOnly?: boolean;
 }
 
 export interface PnpResult {
@@ -348,19 +352,24 @@ export function estimatePose(
     }
   };
 
+  const finalize = (): PnpResult | null => {
+    const b = best;
+    if (b === null) return null;
+    const ok = b.inliers >= minInliers && b.rmsPx <= maxRmsPx;
+    return { pose: b.pose, rmsPx: b.rmsPx, inliers: b.inliers, total: corrs.length, ok };
+  };
+
   // Warm start: a few iterations from the caller's seed. If it already locks
   // well, skip the (much costlier) multi-start entirely.
   if (opts.seed) {
     const std = poseToStd(opts.seed);
     const r = refineStd(std.R, std.t, corrs, K, 8);
-    const pose = stdToPose(r.R, r.t);
-    consider(pose);
-    if (best !== null && (best as { inliers: number }).inliers >= minInliers &&
-        (best as { rmsPx: number }).rmsPx <= maxRmsPx) {
-      const b = best as { pose: Pose; inliers: number; rmsPx: number };
-      return { pose: b.pose, rmsPx: b.rmsPx, inliers: b.inliers, total: corrs.length, ok: true };
-    }
+    consider(stdToPose(r.R, r.t));
+    const warm = finalize();
+    if (warm !== null && warm.ok) return warm;
   }
+  // Fast path: refine-only tracking never runs the from-scratch search.
+  if (opts.refineOnly) return opts.seed ? finalize() : null;
 
   for (const seed of seedPoses(corrs)) {
     const std = poseToStd(seed);
@@ -368,8 +377,5 @@ export function estimatePose(
     consider(stdToPose(r.R, r.t));
   }
 
-  if (best === null) return null;
-  const b = best as { pose: Pose; inliers: number; rmsPx: number };
-  const ok = b.inliers >= minInliers && b.rmsPx <= maxRmsPx;
-  return { pose: b.pose, rmsPx: b.rmsPx, inliers: b.inliers, total: corrs.length, ok };
+  return finalize();
 }
