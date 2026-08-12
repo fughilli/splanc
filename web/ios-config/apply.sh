@@ -16,6 +16,17 @@ pb=/usr/libexec/PlistBuddy
 [ -f "$plist" ] || { echo "no Info.plist at $plist — run 'cap add ios' first" >&2; exit 1; }
 [ -x "$pb" ]    || { echo "PlistBuddy not found — this must run on macOS" >&2; exit 1; }
 
+# --- App icon: overwrite Capacitor's default with the Splanc logo (same as the
+# PWA). The asset catalog uses one universal 1024×1024 image (AppIcon-512@2x.png,
+# per Contents.json); iOS applies its own rounded-corner mask, so AppIcon-1024.png
+# is a full square (no baked rounding). Regenerate it from the SVG with:
+#   npx @resvg/resvg-js ... (see web/ios-config/README.md).
+appicon_dst="${here}/../ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-512@2x.png"
+if [ -d "$(dirname "$appicon_dst")" ]; then
+  cp "${here}/AppIcon-1024.png" "$appicon_dst"
+  echo "app icon → $appicon_dst"
+fi
+
 # Set (or overwrite) a string key. PlistBuddy has no upsert, so try Set then Add.
 set_str() {
   local key="$1" val="$2"
