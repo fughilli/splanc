@@ -359,6 +359,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       }
       priorMap = rec.map;
       priorObs = obs;
+      projOverlay.supplement = true;
       projOverlay.setSolved(priorMap.leds);
       guideEl.textContent = "Supplemental scan — cover the gaps and low-confidence LEDs.";
     }
@@ -888,7 +889,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       }
     } catch (e) {
       toast(`Reconstruction failed: ${e instanceof Error ? e.message : e}`, { error: true });
-      router.navigate("/maps");
+      router.navigate(supplementId !== null ? `/map/${supplementId}` : "/maps");
     } finally {
       if (solvePoll !== null) clearInterval(solvePoll);
       progWrap.style.display = "none";
