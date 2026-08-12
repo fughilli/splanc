@@ -1406,21 +1406,20 @@ fn read_effect_id(body: &[u8]) -> Option<&str> {
     None
 }
 
-/// set_effect: "" / "off" clears the targeted deck's effect; any other id keeps
-/// that deck's loaded effect active (one effect per deck). `deck` (field 2)
-/// selects deck A (0, default) or B (1). Reply: playback_state (via the session
-/// core, so the app's playback UI stays consistent).
+/// set_effect: "" / "off" PARKS the targeted deck (keeps its cued effect loaded
+/// but stops rendering it — so Show-Mode play/pause round-trips); any other id
+/// re-activates that deck's loaded effect (one effect per deck). A parked deck
+/// isn't drawn, so with deck A parked and nothing else active the render loop
+/// falls back to the built-in idle exactly as a legacy `set_effect("off")` did.
+/// `deck` (field 2) selects deck A (0, default) or B (1). Reply: playback_state
+/// (via the session core, so the app's playback UI stays consistent).
 unsafe fn handle_set_effect(frame: &[u8]) -> pb::ServerMessage {
     let body = unwrap_arm(frame, ARM_SET_EFFECT);
     let id = body.and_then(read_effect_id).unwrap_or("");
     let deck = body.map(|b| read_deck(b, 2)).unwrap_or(DECK_A);
-    if id.is_empty() || id == "off" {
-        lm_fx_clear_deck(deck as u32);
-    } else {
-        // Select the (single) loaded effect on this deck as active. One effect
-        // per deck, so any non-empty id activates whatever that deck holds.
-        lm_fx_set_deck_active(deck as u32, true);
-    }
+    // Park (false) on "", else activate (true). Parking keeps the effect + its
+    // VM state so a later set_effect(id) resumes it instantly.
+    lm_fx_set_deck_active(deck as u32, !(id.is_empty() || id == "off"));
     // Ack with the session's playback state so the app's playback UI stays put.
     player().playback_reply()
 }
