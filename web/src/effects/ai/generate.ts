@@ -436,6 +436,7 @@ async function messagesRequest(
   tools: readonly unknown[],
   signal?: AbortSignal,
   deviceCosts?: string,
+  systemExtra?: string,
 ): Promise<{
   content: ContentBlock[];
   stop_reason: string | null;
@@ -444,11 +445,13 @@ async function messagesRequest(
   if (!key) throw new Error("no Anthropic API key set (add one in AI settings)");
   // Frozen cacheable prefix first (caching engages across turns), then an
   // UNcached per-device builtin-cost block so it can vary by board without
-  // busting the cache.
+  // busting the cache, and finally an optional caller persona block (e.g. the
+  // hands-free "acid mode" framing) — also uncached since it varies by surface.
   const system: unknown[] = [
     { type: "text", text: CHAT_SYSTEM, cache_control: { type: "ephemeral" } },
   ];
   if (deviceCosts) system.push({ type: "text", text: deviceCosts });
+  if (systemExtra) system.push({ type: "text", text: systemExtra });
   const resp = await fetch(API_URL, {
     method: "POST",
     headers: {
@@ -503,6 +506,7 @@ export async function chatTurn(
   history: ChatMessage[],
   hooks: ChatHooks,
   deviceCosts?: string,
+  systemExtra?: string,
 ): Promise<string> {
   let finalText = "";
   const MAX_ROUNDS = 8; // hard cap so a misbehaving loop can't run forever
@@ -519,6 +523,7 @@ export async function chatTurn(
       tools,
       hooks.signal,
       deviceCosts,
+      systemExtra,
     );
     history.push({ role: "assistant", content });
 
