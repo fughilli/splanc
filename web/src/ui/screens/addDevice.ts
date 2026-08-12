@@ -22,6 +22,20 @@ import {
 import { prefs, type WifiCreds } from "../../store/prefs";
 import { deviceStore, type KnownDevice } from "../../store/deviceStore";
 import { appState } from "../app/state";
+import { isNativePlatform } from "../../net/native";
+
+/** Get an Improv device to provision: the browser's Web Bluetooth chooser, or —
+ * in the native wrapper — our own named scan+picker (the plugin's built-in
+ * chooser shows devices as "Unknown" on iOS). On web this stays the FIRST async
+ * call in the click handler so the user gesture that Web Bluetooth requires is
+ * still unconsumed; the native scan has no such gesture requirement. */
+async function chooseImprovDevice(): Promise<ImprovDevice> {
+  if (isNativePlatform()) {
+    const { pickImprovDeviceNative } = await import("./blePicker");
+    return pickImprovDeviceNative();
+  }
+  return requestImprovDevice();
+}
 
 export type AddMethod = "ble" | "manual";
 
@@ -128,7 +142,7 @@ export function bleRediscover(known?: KnownDevice, onDone?: () => void): void {
   void (async () => {
     let device: ImprovDevice;
     try {
-      device = await requestImprovDevice(); // FIRST — preserve the gesture
+      device = await chooseImprovDevice(); // FIRST — preserve the (web) gesture
     } catch (e) {
       if (!isCancel(e)) toast(`Bluetooth: ${msg(e)}`, { error: true });
       return;
@@ -170,7 +184,7 @@ async function runBleProvision(
 ): Promise<boolean> {
   let device: ImprovDevice;
   try {
-    device = await requestImprovDevice();
+    device = await chooseImprovDevice();
   } catch (e) {
     if (!isCancel(e)) setStatus(`Bluetooth: ${msg(e)}`);
     return false;

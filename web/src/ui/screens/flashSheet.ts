@@ -32,12 +32,39 @@ import {
 import { summarizeEnv } from "../../flash/env";
 import { identifyUsb, formatUsbId } from "../../flash/usb";
 import { getFlasher, type FlashHooks } from "../../flash/flasher";
+import { isNativePlatform } from "../../net/native";
 import type { FirmwareEntry, FirmwareIndex } from "../../flash/manifest";
 
 let openHandle: SheetHandle | null = null;
 
 export async function openFlashSheet(): Promise<void> {
   if (openHandle) return;
+
+  // iOS gives third-party apps no USB-serial access at all (no Web Serial, no
+  // WebUSB, and no native serial to an unlisted board — docs/design/ios-support.md
+  // §3.1), so first-flash of a blank board can't happen on iPhone/iPad by any
+  // path. Rather than open the flasher into a dead end, point the user to the
+  // desktop web app, where Web Serial/WebUSB flashing works.
+  if (isNativePlatform()) {
+    const sheet = Sheet("Set up a new device", { onClose: () => (openHandle = null) });
+    openHandle = sheet;
+    sheet.body.append(
+      note("Flashing a brand-new device over USB isn't supported on iPhone or iPad."),
+      intro(
+        "To provision a board for the first time, open splanc.pages.dev on a desktop or laptop " +
+          "computer (Chrome or Edge) and use its flash tool. Once the device has joined your " +
+          "Wi-Fi, you can add and control it here.",
+      ),
+      Button({
+        label: "Got it",
+        variant: "primary",
+        block: true,
+        onClick: () => sheet.close(),
+      }),
+    );
+    return;
+  }
+
   const sheet = Sheet("Flash firmware", { onClose: () => (openHandle = null) });
   openHandle = sheet;
 

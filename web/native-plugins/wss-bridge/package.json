@@ -1,0 +1,16 @@
+{
+  "name": "@splanc/wss-bridge",
+  "version": "0.0.1",
+  "description": "Native WebSocket bridge that pins/trusts a Splanc device's self-signed wss:// cert (docs/design/ios-support.md §4.3).",
+  "license": "UNLICENSED",
+  "private": true,
+  "capacitor": {
+    "ios": {
+      "src": "ios"
+    }
+  },
+  "files": [
+    "ios/Sources",
+    "Package.swift"
+  ]
+}

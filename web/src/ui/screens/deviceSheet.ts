@@ -377,9 +377,17 @@ function openDeviceDetail(dev: KnownDevice): void {
     input.className = "sheet-input device-name-input";
     input.value = currentLabel;
     const saveBtn = IconButton("save", { title: "Save", onClick: () => finish(true) });
-    // Keep the input focused when the floppy is tapped, so its blur (= tap away
-    // = cancel) doesn't fire first and swallow the save.
-    saveBtn.addEventListener("pointerdown", (e) => e.preventDefault());
+    // Save on pointerdown, which fires BEFORE the input's blur. On iOS WKWebView
+    // the pointerdown preventDefault doesn't reliably keep the input focused, so
+    // tapping the floppy blurs first → the blur's cancel (finish(false)) runs and
+    // swallows the save (the rename "flips back" to the old name). Committing in
+    // pointerdown guarantees the save lands regardless of blur/click ordering;
+    // preventDefault still suppresses the focus flicker. (The click handler stays
+    // as a harmless no-op fallback via the `done` guard.)
+    saveBtn.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      finish(true);
+    });
     let done = false;
     const finish = (save: boolean): void => {
       if (done) return;
