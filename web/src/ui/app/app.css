@@ -709,12 +709,33 @@ body.is-locked {
   width: 100%;
   margin: 0;
 }
-.upanel-ctrl input[type="color"] {
+/* Colour control: a styled swatch (consistent on iOS + Android) with the native
+ * <input type="color"> overlaid invisibly so tapping still opens the OS picker. */
+.upanel-color {
+  position: relative;
+  display: block;
   width: 100%;
   height: 1.5rem;
-  padding: 0;
+  cursor: pointer;
+}
+.upanel-color-swatch {
+  display: block;
+  width: 100%;
+  height: 100%;
   border: 1px solid var(--border);
-  background: none;
+  border-radius: var(--r-ctrl);
+  box-sizing: border-box;
+}
+.upanel-color input[type="color"] {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  cursor: pointer;
 }
 .upanel-ctrl select {
   width: 100%;
@@ -790,9 +811,6 @@ body.is-locked {
   /* Height of the top drawer bar; also the workspace's top inset while the
    * drawer is expanded (collapsing zeroes the inset — see below). */
   --fxdrawer-h: calc(2.2rem + env(safe-area-inset-top, 0px));
-  /* Size of the floating "show" handle shown while the drawer is collapsed;
-   * also drives how far the top-right tab controls are displaced to clear it. */
-  --fxedit-handle-w: 1.9rem;
   position: fixed;
   inset: 0;
   padding: 0;
@@ -1022,35 +1040,43 @@ body.is-locked {
 .fxedit-perf .fxedit-budget {
   border-top: 0;
 }
+/* Compiler-output line text takes the row; the budget collapse arrow docks right. */
+.fxedit-status-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Collapse/expand arrow for the budget drawer, at the right of the status line. */
 .fxedit-perf-toggle {
-  position: absolute;
-  top: 3px;
-  right: 5px;
-  z-index: 1;
+  flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
+  margin: -2px -4px -2px 0;
   padding: 0;
-  background: var(--surface-2);
+  background: none;
   border: 0;
   color: var(--text-dim);
   cursor: pointer;
+}
+.fxedit-perf-toggle:hover {
+  color: var(--text);
 }
 .fxedit-perf-toggle svg {
   width: 14px;
   height: 14px;
   transition: transform var(--motion-micro) var(--ease);
-  transform: rotate(90deg); /* expanded → points down */
+  transform: rotate(-90deg); /* expanded → points up (tap to collapse) */
 }
-.fxedit-perf--collapsed .fxedit-perf-toggle svg {
-  transform: rotate(0deg); /* collapsed → points right */
+.fxedit-perf-toggle--collapsed svg {
+  transform: rotate(90deg); /* collapsed → points down (tap to reveal) */
 }
-.fxedit-perf--collapsed {
-  min-height: 18px;
-}
-.fxedit-perf--collapsed .perf-budget-head,
+/* Collapsed: just the colored strip — hide the percent + ms detail, no padding. */
+.fxedit-perf--collapsed .perf-budget-pct,
 .fxedit-perf--collapsed .perf-budget-detail {
   display: none;
 }
@@ -1062,26 +1088,26 @@ body.is-locked {
   border-radius: 0;
 }
 
-/* Running-effect mismatch badge (device is running a different effect). */
-.fxedit-mismatch {
-  position: fixed;
-  right: var(--sp-3);
-  bottom: var(--sp-3);
-  z-index: 60;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  background: var(--surface-2);
-  border: 1px solid var(--warn);
+/* Attention tab: e.g. the Device tab when the device runs a different effect
+ * than the workspace — a warn tint prompts the user to open it and push. */
+.fxlayout-tab--attn {
   color: var(--warn);
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
 }
-.fxedit-mismatch svg {
-  width: 20px;
-  height: 20px;
+/* Auto-push toggle in the Device pane (push every clean compile to the device). */
+.fxedit-autopush {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 0.15rem 0.1rem;
+  font-size: 13px;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.fxedit-autopush input {
+  width: 1.05rem;
+  height: 1.05rem;
+  accent-color: var(--accent);
 }
 .fxedit-spinner {
   width: 12px;
@@ -1150,66 +1176,25 @@ body.is-locked {
   width: 16px;
   height: 16px;
 }
-/* Chevron points up (collapse) by default; the floating handle points down. */
+/* Drawer collapse chevron points up. */
 .fxedit-drawer-collapse svg {
   transform: rotate(-90deg);
 }
-/* Floating re-expand handle — hidden while expanded, shown when collapsed. */
-.fxedit-drawer-expand {
-  position: absolute;
-  top: calc(env(safe-area-inset-top, 0px) + 4px);
-  right: 4px;
-  z-index: 60;
+/* No panes open: the drawer stays expanded (forced in JS) and its collapse
+ * control is hidden, so Back / the ⋯ recall-pane menu remain reachable. */
+.fxedit-no-panes .fxedit-drawer-collapse {
   display: none;
-  align-items: center;
-  justify-content: center;
-  width: var(--fxedit-handle-w);
-  height: 1.9rem;
-  padding: 0;
-  border: 1px solid var(--border);
-  border-radius: 0;
-  background: color-mix(in srgb, var(--surface-2) 78%, transparent);
-  color: var(--text);
-  cursor: pointer;
-  backdrop-filter: blur(6px);
 }
-.fxedit-drawer-expand:hover {
-  background: var(--surface-2);
-}
-.fxedit-drawer-expand svg {
-  width: 16px;
-  height: 16px;
-  transform: rotate(90deg);
-}
-/* Collapsed: slide the drawer up out of view, reclaim its strip, reveal handle. */
+/* Collapsed: slide the drawer up out of view. The workspace reclaims its strip
+ * and the re-expand toggle is rendered INSIDE the top-right corner tab strip's
+ * control cluster (see FxLayout.collapseToggle) — no floating handle. */
 .fxedit-drawer-collapsed .fxedit-drawer {
   transform: translateY(-100%);
   pointer-events: none;
 }
-.fxedit-drawer-collapsed .fxedit-drawer-expand {
-  display: inline-flex;
-}
-/* Collapsed: the floating "show" handle sits at the workspace's top-right
- * corner. Displace the move/hide controls of whichever chrome occupies that
- * corner so they shift left instead of hiding under the handle. The corner is:
- *   • the top edge dock's tab strip (spans full width), or
- *   • the right edge dock's tab strip (when there is no top dock), or
- *   • the center pane's header (when neither top nor right dock exists), or
- *   • the topmost region's tab strip in narrow (stacked) mode. */
-.fxedit-drawer-collapsed .fxlayout-edge--top > .fxlayout-edgetabs > .fxlayout-tabctl,
-.fxedit-drawer-collapsed
-  .fxlayout-dock:not(:has(.fxlayout-edge--top))
-  .fxlayout-edge--right
-  > .fxlayout-edgetabs
-  > .fxlayout-tabctl,
-.fxedit-drawer-collapsed
-  .fxlayout-dock:not(:has(.fxlayout-edge--top)):not(:has(.fxlayout-edge--right))
-  .fxlayout-center
-  > .fxpane
-  > .fxpane-head
-  > .fxpane-ctl,
-.fxedit-drawer-collapsed .fxlayout-nstack > .fxlayout-nregion:first-child > .fxlayout-tabs > .fxlayout-tabctl {
-  margin-right: calc(var(--fxedit-handle-w) + 8px);
+/* The in-strip expand toggle's chevron points down (tap to show the toolbar). */
+.fxlayout-expand-toggle svg {
+  transform: rotate(90deg);
 }
 /* Inline-editable name: a compact pill, click → input in place. */
 .fxedit-namepill,
@@ -1729,6 +1714,18 @@ body.is-locked {
   min-width: 0;
   overflow-x: auto;
 }
+/* Tab strips scroll horizontally when tabs overflow, but the transient scrollbar
+ * (visible on iOS/WKWebView + desktop) is noise on a control strip — hide it and
+ * keep the scroll. */
+.fxlayout-tablist,
+.fxlayout-tabs {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* legacy Edge */
+}
+.fxlayout-tablist::-webkit-scrollbar,
+.fxlayout-tabs::-webkit-scrollbar {
+  display: none; /* WebKit — iOS Safari/WKWebView + Chrome */
+}
 /* Move/hide controls pinned to the right end of a dock's tab strip. */
 .fxlayout-tabctl {
   display: flex;
@@ -1837,6 +1834,16 @@ body.is-locked {
   touch-action: none;
   cursor: grabbing;
 }
+/* While a tab is being dragged, don't let pane content grab the pointer or start
+ * a text selection under the drag (the tab handle owns the gesture via pointer
+ * capture; the drop zones read coordinates, not events). */
+.fxlayout--dragging {
+  user-select: none;
+  -webkit-user-select: none;
+}
+.fxlayout--dragging .fxpane-body {
+  pointer-events: none;
+}
 .fxlayout-dropzones {
   position: absolute;
   inset: 0;
@@ -1908,14 +1915,22 @@ body.is-locked {
 }
 
 /* -- NARROW: vertical top / center / bottom dock stack -- */
-/* Fill the pinned root; leave headroom at the top so the stack doesn't sit under
- * the floating back/name/⋯ controls. */
 .fxlayout--narrow {
   position: absolute;
   inset: 0;
   display: flex;
   flex-direction: column;
-  padding-top: calc(env(safe-area-inset-top, 0px) + 2rem);
+}
+/* When the drawer is COLLAPSED the stack sits at top:0 (see
+ * `.screen--fxedit.fxedit-drawer-collapsed .fxlayout`), so it needs just enough
+ * headroom to clear the status bar — the tab strip then rises into the reclaimed
+ * drawer space. The floating expand handle lives in the top-RIGHT corner and the
+ * tab strip's controls are shifted left to clear it (see the collapsed
+ * `.fxlayout-tabctl` rules), so no extra vertical headroom is needed for it.
+ * While the drawer is EXPANDED the layout already starts below it
+ * (top: --fxdrawer-h), so no padding here — that was the app-background gap. */
+.screen--fxedit.fxedit-drawer-collapsed .fxlayout--narrow {
+  padding-top: env(safe-area-inset-top, 0px);
 }
 /* The three regions stack vertically; grid-template-rows (fr shares + dividers)
    is set inline from the persisted region sizes. */
@@ -1940,6 +1955,8 @@ body.is-locked {
   display: flex;
   align-items: stretch;
   flex: 0 0 auto;
+  min-width: 0;
+  overflow-x: auto; /* scroll when tabs overflow; scrollbar hidden above */
   background: var(--surface-2);
   border-bottom: 1px solid var(--border);
 }
