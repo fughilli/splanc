@@ -25,15 +25,6 @@ export function BudgetBar(): BudgetBar {
   const el = document.createElement("div");
   el.className = "perf-budget";
 
-  const head = document.createElement("div");
-  head.className = "perf-budget-head";
-  const title = document.createElement("span");
-  title.className = "perf-budget-title";
-  title.textContent = "Budget used";
-  const pct = document.createElement("span");
-  pct.className = "perf-budget-pct";
-  head.append(title, pct);
-
   const track = document.createElement("div");
   track.className = "perf-budget-track";
   const fill = document.createElement("div");
@@ -47,10 +38,17 @@ export function BudgetBar(): BudgetBar {
     track.append(tick);
   }
 
+  // Percent reads inline to the RIGHT of the (shortened) bar — no separate label.
+  const pct = document.createElement("span");
+  pct.className = "perf-budget-pct";
+  const row = document.createElement("div");
+  row.className = "perf-budget-row";
+  row.append(track, pct);
+
   const detail = document.createElement("div");
   detail.className = "perf-budget-detail";
 
-  el.append(head, track, detail);
+  el.append(row, detail);
 
   function update(status: BudgetStatus): void {
     const v = budgetBarView(status);

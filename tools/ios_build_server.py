@@ -41,6 +41,7 @@ Named tasks:
     web-build      `pnpm --dir web build` — produce web/dist (the WKWebView payload)
     cap-add-ios    `cap add ios` — ONE-TIME: generate web/ios/App (native project)
     ios-config     apply web/ios-config/apply.sh (Info.plist usage strings)
+    stage-wasm     build + stage solver/pulse/fx-compiler/fx-vm WASM into web/dist
     cap-sync       `cap sync ios` — copy web/dist + resolve plugins (SPM in Cap 8)
     pod-install    `pod install` (only for a CocoaPods setup; Cap 8 uses SPM)
     ios-build      `xcodebuild build` for the simulator (SPM or Pods; no launch)
@@ -51,9 +52,9 @@ Named tasks:
 
 Convenience chains (each is just the tasks above, in order, stop-on-failure):
 
-    bootstrap      install → web-build → cap-add-ios → ios-config → cap-sync
-    rebuild        web-build → cap-sync → ios-build
-    launch         web-build → cap-sync → ios-run
+    bootstrap      install → web-build → stage-wasm → cap-add-ios → ios-config → cap-sync
+    rebuild        web-build → stage-wasm → cap-sync → ios-build
+    launch         web-build → stage-wasm → cap-sync → ios-run
 
 Nothing here is macOS-specific in the server itself; it simply shells out to the
 host's tools. On a non-mac host the Xcode tasks fail cleanly (command not found),
@@ -173,6 +174,12 @@ def _tasks() -> dict:
             "needs_ios": True,
             "desc": "apply hand-maintained Info.plist usage strings to the fresh project",
         },
+        "stage-wasm": {
+            "argv": ["bash", "tools/stage_ios_wasm.sh"],
+            "cwd": ".",
+            "desc": "build + stage the solver/pulse/fx-compiler/fx-vm WASM into web/dist "
+            "(the wrapper has no backend to serve them). Run AFTER web-build.",
+        },
         "cap-sync": {
             "argv": [*CAP, "sync", "ios"],
             "cwd": ".",
@@ -241,9 +248,9 @@ def _tasks() -> dict:
 # No pod-install: Capacitor 8 resolves iOS deps via Swift Package Manager, so
 # `cap sync` is the whole story (pod-install stays available for Pods setups).
 CHAINS = {
-    "bootstrap": ["install", "web-build", "cap-add-ios", "ios-config", "cap-sync"],
-    "rebuild": ["web-build", "cap-sync", "ios-build"],
-    "launch": ["web-build", "cap-sync", "ios-run"],
+    "bootstrap": ["install", "web-build", "stage-wasm", "cap-add-ios", "ios-config", "cap-sync"],
+    "rebuild": ["web-build", "stage-wasm", "cap-sync", "ios-build"],
+    "launch": ["web-build", "stage-wasm", "cap-sync", "ios-run"],
 }
 
 # Query params we allow into argv templates, with the pattern each must match.
