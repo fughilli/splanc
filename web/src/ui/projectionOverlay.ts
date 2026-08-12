@@ -118,8 +118,16 @@ export class ProjectionOverlay {
     return this.solvedById.size;
   }
 
-  /** Recover the pose, draw the registered LEDs, and return the chip state. */
-  draw(blobs: readonly BlobStatus[], K: Intrinsics, imgW: number, imgH: number): Registration {
+  /** Recover the pose, (optionally) draw the registered LEDs, and return the
+   * chip state. `render=false` still computes registration — so the chip stays
+   * live when the user has isolated the tracks layer — but draws nothing. */
+  draw(
+    blobs: readonly BlobStatus[],
+    K: Intrinsics,
+    imgW: number,
+    imgH: number,
+    render = true,
+  ): Registration {
     this.frame++;
     const solvedXyz = new Map<number, Vec3>();
     for (const [id, v] of this.solvedById) solvedXyz.set(id, v.xyz);
@@ -146,7 +154,7 @@ export class ProjectionOverlay {
     this.resize();
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     const pose = res && res.ok ? res.pose : onGrace ? this.lastPose : null;
-    if (pose !== null && imgW > 0 && imgH > 0) this.render(pose, K, imgW, imgH);
+    if (render && pose !== null && imgW > 0 && imgH > 0) this.render(pose, K, imgW, imgH);
 
     return classifyRegistration(res, corrs.length, onGrace);
   }
