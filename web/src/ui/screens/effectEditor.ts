@@ -704,9 +704,6 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   kebab.classList.add("fxedit-drawerbtn");
   menuWrap.appendChild(kebab);
 
-  const spacer = document.createElement("div");
-  spacer.className = "fxedit-drawer-spacer";
-
   const collapseBtn = IconButton("chevron", { title: "Collapse toolbar", onClick: () => setDrawerCollapsed(true) });
   collapseBtn.classList.add("fxedit-drawerbtn", "fxedit-drawer-collapse");
 
@@ -1415,7 +1412,7 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     },
   });
   // Assemble the drawer bar (left → right) and pin it above the workspace.
-  drawer.append(backBtn, nameLabel, nameInput, spacer, menuWrap, collapseBtn);
+  drawer.append(backBtn, nameLabel, nameInput, menuWrap, collapseBtn);
   el.append(layout.root, drawer);
   // Restore the persisted collapsed state (defaults to expanded on first visit).
   try {
