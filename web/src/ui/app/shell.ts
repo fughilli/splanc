@@ -117,6 +117,10 @@ export class Shell {
     this.menu.appendChild(
       this.menuItem("info", "About", () => this.router?.navigate("/about")),
     );
+    // Acid mode (FUG-106): the hands-free "just talk to your lights" surface.
+    this.menu.appendChild(
+      this.menuItem("mic", "Acid mode", () => this.router?.navigate("/acid")),
+    );
     // Below the divider: actions relevant to the current tab (Maps import/export,
     // Effects "send library to debug server"), registered by the mounted screen.
     if (this.tabItems.length > 0) {

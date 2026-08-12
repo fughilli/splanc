@@ -50,7 +50,8 @@ export type IconName =
   | "triad"
   | "camera-path"
   | "midi"
-  | "chip";
+  | "chip"
+  | "mic";
 
 // -- shared fragments for the device-transfer glyphs (24x24, top→bottom layout:
 //    content (map / sparkle) over a device pentagon, joined by a "cut" arrow) --
@@ -140,6 +141,8 @@ const PATHS: Record<IconName, string> = {
   midi: `<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="6.2" r="1"/><circle cx="6.7" cy="9.4" r="1"/><circle cx="17.3" cy="9.4" r="1"/><circle cx="8.4" cy="15.4" r="1"/><circle cx="15.6" cy="15.4" r="1"/>`,
   // Microcontroller: a chip die with pins on all four sides (flash/commission).
   chip: `<rect x="8" y="8" width="8" height="8" rx="1"/><path d="M10 8V5M14 8V5M10 19v-3M14 19v-3M8 10H5M8 14H5M19 10h-3M19 14h-3"/>`,
+  // Microphone: a rounded capsule over a stand — the voice-input affordance.
+  mic: `<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6 11a6 6 0 0 0 12 0"/><path d="M12 17v4M9 21h6"/>`,
 };
 
 let installed = false;
