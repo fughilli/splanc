@@ -2185,6 +2185,71 @@ pub fn hash3(x: f32, y: f32, z: f32) -> f32 {
     unit_from_hash(h)
 }
 
+/// Convert an 8-bit sRGB triple to HSV (all components 0..1; hue wraps at 1.0).
+/// Used by the FX crossfader's HSV blend. A grey input (max == min) reports
+/// hue 0, saturation 0 — its hue is undefined but never read at S = 0.
+fn rgb2hsv(c: (u8, u8, u8)) -> (f32, f32, f32) {
+    let r = c.0 as f32 / 255.0;
+    let g = c.1 as f32 / 255.0;
+    let b = c.2 as f32 / 255.0;
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let d = max - min;
+    let v = max;
+    let s = if max <= 0.0 { 0.0 } else { d / max };
+    let h = if d <= 0.0 {
+        0.0
+    } else if max == r {
+        (((g - b) / d) % 6.0) / 6.0
+    } else if max == g {
+        (((b - r) / d) + 2.0) / 6.0
+    } else {
+        (((r - g) / d) + 4.0) / 6.0
+    };
+    (fractf(h), s, v)
+}
+
+/// Quantize a 0..1 float channel to 0..=255 (rounded, clamped).
+fn f32_to_u8(v: f32) -> u8 {
+    (clamp01(v) * 255.0 + 0.5) as u8
+}
+
+/// Blend two 8-bit RGB colours by `t` (0 = all `a`, 1 = all `b`) for the FX
+/// crossfader (FUG-110). `mode` 0 = linear RGB (per-channel lerp); 1 = linear
+/// HSV — lerp hue along the SHORTEST path around the colour wheel, plus a linear
+/// lerp of saturation and value. Exact at the `t=0`/`t=1` endpoints (returns the
+/// input triple unchanged, so a parked crossfader never perturbs a deck).
+pub fn blend_rgb8(a: Rgb, b: Rgb, t: f32, mode: u32) -> Rgb {
+    let t = clamp01(t);
+    if t <= 0.0 {
+        return a;
+    }
+    if t >= 1.0 {
+        return b;
+    }
+    if mode == 1 {
+        let (ha, sa, va) = rgb2hsv(a);
+        let (hb, sb, vb) = rgb2hsv(b);
+        // Shortest hue path around the [0,1) circle.
+        let mut dh = hb - ha;
+        if dh > 0.5 {
+            dh -= 1.0;
+        } else if dh < -0.5 {
+            dh += 1.0;
+        }
+        let h = fractf(ha + t * dh);
+        let s = sa + t * (sb - sa);
+        let v = va + t * (vb - va);
+        let (r, g, bl) = hsv2rgb(h, s, v);
+        (f32_to_u8(r), f32_to_u8(g), f32_to_u8(bl))
+    } else {
+        let lerp = |x: u8, y: u8| -> u8 {
+            (x as f32 + t * (y as f32 - x as f32) + 0.5) as u8
+        };
+        (lerp(a.0, b.0), lerp(a.1, b.1), lerp(a.2, b.2))
+    }
+}
+
 fn hsv2rgb(h: f32, s: f32, v: f32) -> (f32, f32, f32) {
     let h6 = fractf(h) * 6.0;
     let c = v * s;

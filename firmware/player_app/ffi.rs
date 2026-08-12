@@ -72,34 +72,45 @@ static mut SIM_GEN: u32 = u32::MAX;
 // instruction budget (primary) and a wall-time deadline flag a hardware timer
 // raises (secondary).
 
-/// Max `.fxb` the player will hold. A compiled effect is small (bytecode +
+/// FX decks (FUG-110): the device runs two effect programs concurrently — deck
+/// A (0, the legacy/primary deck) and deck B (1) — and the render loop blends
+/// their per-LED output by the global `crossfade`. All per-deck state below is a
+/// `[_; N_DECKS]` array; deck 0 is what the legacy single-effect path drives.
+const N_DECKS: usize = 2;
+/// Deck A: the legacy/primary deck a bare `submit_effect` (deck unset = 0) loads.
+const DECK_A: usize = 0;
+/// Deck B: the crossfade target deck.
+const DECK_B: usize = 1;
+
+/// Max `.fxb` a single deck will hold. A compiled effect is small (bytecode +
 /// manifest) — a rich shader is well under 2 KiB. Keep this tight: it is static
 /// RAM out of the heap pool the TLS record buffers need (mbedtls_ssl_setup
 /// fails with -0x7F00 when the heap can't spare ~28 KiB for a session).
 /// submit_effect rejects a larger upload with `effect_too_large`.
 const FX_MAX_BYTES: usize = 4 * 1024;
 
-static mut FX_BYTES: [u8; FX_MAX_BYTES] = [0; FX_MAX_BYTES];
-static mut FX_LEN: usize = 0;
-static mut FX_VM: Option<FxVm> = None;
-/// Hidden-buffer/texture arena for the fx VM (LoadBuf/StoreBuf). 24 KB, now
-/// BYTE-addressed (FUG-10 packed storage) so narrow elements pack tightly — a
-/// fixed8 vec4 trail on 256 LEDs is 1 KB, an f32 one 4 KB; the VM clamps a
-/// program that would need more. Static, so its pointer is stable for the
-/// process; bound once per effect load. Persists across frames (buffer
-/// semantics) and is zeroed on (re)load for a clean start.
-const FX_ARENA_BYTES: usize = 24 * 1024; // 24 KB
-static mut FX_ARENA: [u8; FX_ARENA_BYTES] = [0; FX_ARENA_BYTES];
+static mut FX_BYTES: [[u8; FX_MAX_BYTES]; N_DECKS] = [[0; FX_MAX_BYTES]; N_DECKS];
+static mut FX_LEN: [usize; N_DECKS] = [0; N_DECKS];
+static mut FX_VM: [Option<FxVm>; N_DECKS] = [None, None];
+/// Hidden-buffer/texture arena for the fx VM (LoadBuf/StoreBuf), PER DECK. Now
+/// 12 KB each (was a single 24 KB arena) so two decks keep the total static RAM
+/// flat — no new TLS heap pressure (FUG-71). BYTE-addressed (FUG-10 packed
+/// storage) so narrow elements pack tightly — a fixed8 vec4 trail on 256 LEDs is
+/// 1 KB, an f32 one 4 KB; the VM clamps a program that would need more. Static,
+/// so each deck's pointer is stable for the process; bound once per effect load.
+/// Persists across frames (buffer semantics) and is zeroed on (re)load.
+const FX_ARENA_BYTES: usize = 12 * 1024; // 12 KB per deck (24 KB total)
+static mut FX_ARENA: [[u8; FX_ARENA_BYTES]; N_DECKS] = [[0; FX_ARENA_BYTES]; N_DECKS];
 
 /// Previous quantized video-texture frame, for set_texture DELTA (XOR) decoding.
 /// One buffer — video streams target a single texture at a time. A frame whose
 /// quantized byte size exceeds this is dropped (keep the transport small).
 const FX_TEX_PREV_MAX: usize = 8 * 1024;
 static mut FX_TEX_PREV: [u8; FX_TEX_PREV_MAX] = [0; FX_TEX_PREV_MAX];
-/// Whether the loaded effect is the ACTIVE one the render loop drives. An
+/// Whether each deck's loaded effect is ACTIVE (the render loop drives it). An
 /// upload with `activate=false` parks the effect (loaded, validated) without
 /// taking over rendering; set_effect can activate it, or clear it.
-static mut FX_ACTIVE: bool = false;
+static mut FX_ACTIVE: [bool; N_DECKS] = [false; N_DECKS];
 /// Wall-time cancel flag, raised by the C++ hardware-timer callback at a
 /// frame-relative deadline; the VM loop polls it and unwinds to a timeout.
 static FX_DEADLINE: AtomicBool = AtomicBool::new(false);
@@ -499,6 +510,27 @@ pub unsafe extern "C" fn lm_brightness_u8() -> u8 {
     (b * 255.0 + 0.5) as u8
 }
 
+/// Generation counter for the global FX crossfade (FUG-110), bumped on every
+/// `set_crossfade`. The firmware polls this after each `lm_player_handle` (like
+/// `lm_brightness_gen`) to notice a change and feed it to the fx blend.
+#[no_mangle]
+pub unsafe extern "C" fn lm_crossfade_gen() -> u32 {
+    player().crossfade_gen()
+}
+
+/// The active FX crossfade position in 0.0..=1.0 (0.0 = all deck A, 1.0 = all
+/// deck B).
+#[no_mangle]
+pub unsafe extern "C" fn lm_crossfade_pos() -> f32 {
+    player().crossfade().clamp(0.0, 1.0)
+}
+
+/// The active FX crossfade mode (0 = linear RGB, 1 = linear HSV).
+#[no_mangle]
+pub unsafe extern "C" fn lm_crossfade_mode() -> u32 {
+    player().crossfade_mode()
+}
+
 fn encode_reply(reply: &pb::ServerMessage, out: *mut u8, out_cap: usize) -> i32 {
     let mut enc = PbEncoder::new(micropb::heapless::Vec::<u8, REPLY_CAP>::new());
     if reply.encode(&mut enc).is_err() {
@@ -888,9 +920,11 @@ unsafe fn handle_submit_effect(frame: &[u8]) -> pb::ServerMessage {
     let Some(body) = unwrap_arm(frame, ARM_SUBMIT_EFFECT) else {
         return fx_error("bad_fxb", "submit_effect is malformed");
     };
-    // SubmitEffect { string effect_id = 1; bytes fxb = 2; bool activate = 3; }
+    // SubmitEffect { string effect_id = 1; bytes fxb = 2; bool activate = 3;
+    //                uint32 deck = 4; }
     let mut fxb: Option<&[u8]> = None;
     let mut activate = false;
+    let deck = read_deck(body, 4);
     let mut o = 0;
     while o < body.len() {
         let Some(key) = rd_varint(body, &mut o) else {
@@ -929,7 +963,7 @@ unsafe fn handle_submit_effect(frame: &[u8]) -> pb::ServerMessage {
     if fxb.len() > FX_MAX_BYTES {
         return fx_error("effect_too_large", "fxb exceeds this player's effect buffer");
     }
-    let ok = lm_fx_load(fxb.as_ptr(), fxb.len());
+    let ok = lm_fx_load_deck(deck as u32, fxb.as_ptr(), fxb.len());
     if !ok {
         // Distinguish size (bounded) from a parse failure.
         if fxb.len() > FX_MAX_BYTES {
@@ -939,17 +973,39 @@ unsafe fn handle_submit_effect(frame: &[u8]) -> pb::ServerMessage {
     }
     // activate=true takes over rendering now; false parks it (loaded + valid,
     // set_effect can activate later).
-    lm_fx_set_active(activate);
+    lm_fx_set_deck_active(deck as u32, activate);
     let mut r = pb::ResultReady::default();
-    // effect_id echoes back so the app can correlate the ack; also latch it so
-    // the PerfReport can pin its metrics to this effect (perf-monitoring.md).
+    // effect_id echoes back so the app can correlate the ack. For deck A (the
+    // perf-profiled deck) also latch it so the PerfReport can pin its metrics to
+    // this effect (perf-monitoring.md); deck B doesn't drive perf attribution.
     if let Some(id) = read_effect_id(body) {
         let _ = r.r#map_id.push_str(id);
-        perf_set_effect_id(id);
-    } else {
+        if deck == DECK_A {
+            perf_set_effect_id(id);
+        }
+    } else if deck == DECK_A {
         FX_ID_LEN = 0;
     }
     pb::ServerMessage { r#msg: Some(pb::ServerMessage_::Msg::ResultReady(r)) }
+}
+
+/// The `deck` a raw submit_effect frame targets (FUG-110): unwraps the
+/// ClientMessage envelope + reads the deck field (4), defaulting to deck A (0).
+/// Lets the C++ persistence layer resume only the deck-A effect on boot (the
+/// crossfade resets to 0 on reboot, so deck A is the only visible deck then).
+///
+/// # Safety
+/// `data` must point to `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_frame_deck(data: *const u8, len: usize) -> u32 {
+    if data.is_null() || len == 0 {
+        return DECK_A as u32;
+    }
+    let frame = core::slice::from_raw_parts(data, len);
+    match unwrap_arm(frame, ARM_SUBMIT_EFFECT) {
+        Some(body) => read_deck(body, 4) as u32,
+        None => DECK_A as u32,
+    }
 }
 
 // SetTexture.format values (mirror the .proto / web encoder / td_ledmapper).
@@ -1119,8 +1175,9 @@ unsafe fn handle_set_texture(frame: &[u8]) {
             }
         }
     }
-    // Resolve the target texture in the active program.
-    let bytes = &(*addr_of!(FX_BYTES))[..FX_LEN];
+    // Resolve the target texture in the active program. Video textures target
+    // deck A (the primary deck — a texture source streams to one effect).
+    let bytes = &(*addr_of!(FX_BYTES))[DECK_A][..FX_LEN[DECK_A]];
     let Ok(prog) = Program::parse(bytes) else {
         return;
     };
@@ -1168,7 +1225,7 @@ unsafe fn handle_set_texture(frame: &[u8]) {
     // Dequantize prev -> the texture's arena region, PACKED at the texture's
     // declared component precision (FUG-10) so a narrow texture compresses the
     // stream on-device too. `comp_store_num` quantizes each float channel.
-    let arena = &mut (*addr_of_mut!(FX_ARENA))[..];
+    let arena = &mut (*addr_of_mut!(FX_ARENA))[DECK_A][..];
     let base = prog.buf_base(tex_index as usize, FX_F_LEDS as usize);
     let elem = d.elem as usize;
     let cb = ledmapper_fx_vm::comp_bytes(d.comp);
@@ -1303,6 +1360,33 @@ unsafe fn handle_set_texture(frame: &[u8]) {
     }
 }
 
+/// Read a varint field (`field_num`, wire type 0) from a message body, if
+/// present. Used for the FUG-110 `deck` selector on the effect arms.
+fn read_varint_field(body: &[u8], field_num: u32) -> Option<u64> {
+    let mut o = 0;
+    while o < body.len() {
+        let key = rd_varint(body, &mut o)?;
+        let field = (key >> 3) as u32;
+        let wire = (key & 7) as u8;
+        if field == field_num && wire == 0 {
+            return rd_varint(body, &mut o);
+        }
+        if !skip_field(body, &mut o, wire) {
+            return None;
+        }
+    }
+    None
+}
+
+/// The `deck` a message body selects (FUG-110), clamped to a valid deck index.
+/// Absent / out-of-range → deck A (0), the legacy default.
+fn read_deck(body: &[u8], field_num: u32) -> usize {
+    match read_varint_field(body, field_num) {
+        Some(d) if (d as usize) < N_DECKS => d as usize,
+        _ => DECK_A,
+    }
+}
+
 /// Read a message's `effect_id` (field 1, string) if present.
 fn read_effect_id(body: &[u8]) -> Option<&str> {
     let mut o = 0;
@@ -1322,18 +1406,20 @@ fn read_effect_id(body: &[u8]) -> Option<&str> {
     None
 }
 
-/// set_effect: "" / "off" clears the active effect; any other id keeps the
-/// loaded effect active (a single effect is held at a time, matching the arena
-/// map). Reply: playback_state (via the session core, so the app's playback UI
-/// stays consistent). We just clear/keep and echo the current playback state.
+/// set_effect: "" / "off" clears the targeted deck's effect; any other id keeps
+/// that deck's loaded effect active (one effect per deck). `deck` (field 2)
+/// selects deck A (0, default) or B (1). Reply: playback_state (via the session
+/// core, so the app's playback UI stays consistent).
 unsafe fn handle_set_effect(frame: &[u8]) -> pb::ServerMessage {
-    let id = unwrap_arm(frame, ARM_SET_EFFECT).and_then(read_effect_id).unwrap_or("");
+    let body = unwrap_arm(frame, ARM_SET_EFFECT);
+    let id = body.and_then(read_effect_id).unwrap_or("");
+    let deck = body.map(|b| read_deck(b, 2)).unwrap_or(DECK_A);
     if id.is_empty() || id == "off" {
-        lm_fx_clear();
+        lm_fx_clear_deck(deck as u32);
     } else {
-        // Select the (single) loaded effect as active. One effect is held at a
-        // time, so any non-empty id activates whatever is loaded.
-        lm_fx_set_active(true);
+        // Select the (single) loaded effect on this deck as active. One effect
+        // per deck, so any non-empty id activates whatever that deck holds.
+        lm_fx_set_deck_active(deck as u32, true);
     }
     // Ack with the session's playback state so the app's playback UI stays put.
     player().playback_reply()
@@ -1343,7 +1429,8 @@ unsafe fn handle_set_effect(frame: &[u8]) -> pb::ServerMessage {
 /// playback_state.
 unsafe fn handle_set_uniforms(frame: &[u8]) -> pb::ServerMessage {
     if let Some(body) = unwrap_arm(frame, ARM_SET_UNIFORMS) {
-        // SetUniforms { repeated UniformValue values = 1; }
+        // SetUniforms { repeated UniformValue values = 1; uint32 deck = 2; }
+        let deck = read_deck(body, 2);
         let mut o = 0;
         while o < body.len() {
             let Some(key) = rd_varint(body, &mut o) else { break };
@@ -1353,7 +1440,7 @@ unsafe fn handle_set_uniforms(frame: &[u8]) -> pb::ServerMessage {
                 let Some(len) = rd_varint(body, &mut o) else { break };
                 let len = len as usize;
                 let Some(uv) = body.get(o..o + len) else { break };
-                apply_uniform_value(uv);
+                apply_uniform_value(deck, uv);
                 o += len;
             } else if !skip_field(body, &mut o, wire) {
                 break;
@@ -1364,9 +1451,9 @@ unsafe fn handle_set_uniforms(frame: &[u8]) -> pb::ServerMessage {
 }
 
 /// Decode one UniformValue{ uint32 slot = 1; repeated float value = 2; } and
-/// push it into the VM. `value` may arrive packed (a single LEN field of f32s)
-/// or unpacked (repeated fixed32) — handle both.
-unsafe fn apply_uniform_value(uv: &[u8]) {
+/// push it into deck `deck`'s VM. `value` may arrive packed (a single LEN field
+/// of f32s) or unpacked (repeated fixed32) — handle both.
+unsafe fn apply_uniform_value(deck: usize, uv: &[u8]) {
     let mut slot: u32 = 0;
     let mut vals = [0.0f32; 4];
     let mut n = 0usize;
@@ -1410,23 +1497,28 @@ unsafe fn apply_uniform_value(uv: &[u8]) {
         }
     }
     if n > 0 {
-        lm_fx_set_uniform(slot, vals.as_ptr(), n);
+        lm_fx_set_uniform_deck(deck as u32, slot, vals.as_ptr(), n);
     }
 }
 
-/// get_effect_uniforms: build an EffectUniforms reply carrying the active
-/// effect's manifest bytes. `current` uniform values aren't tracked back out
-/// (the app holds them); left empty. Error `no_effect` when nothing is loaded.
-unsafe fn handle_get_effect_uniforms(_frame: &[u8]) -> pb::ServerMessage {
-    if !lm_fx_active() {
+/// get_effect_uniforms: build an EffectUniforms reply carrying the selected
+/// deck's manifest bytes. `current` uniform values aren't tracked back out (the
+/// app holds them); left empty. Error `no_effect` when that deck has nothing
+/// loaded. `deck` (field 2) selects deck A (0, default) or B (1).
+unsafe fn handle_get_effect_uniforms(frame: &[u8]) -> pb::ServerMessage {
+    let deck = unwrap_arm(frame, ARM_GET_EFFECT_UNIFORMS)
+        .map(|b| read_deck(b, 2))
+        .unwrap_or(DECK_A);
+    if !lm_fx_deck_active(deck as u32) {
         return fx_error("no_effect", "no active effect to describe");
     }
-    let bytes = &(*addr_of!(FX_BYTES))[..FX_LEN];
+    let bytes = &(*addr_of!(FX_BYTES))[deck][..FX_LEN[deck]];
     let Ok(prog) = Program::parse(bytes) else {
         return fx_error("no_effect", "no active effect to describe");
     };
     let mut m = pb::EffectUniforms::default();
     let _ = m.r#manifest.extend_from_slice(prog.manifest);
+    m.r#deck = deck as u32;
     // Advertise the declared 2D textures (buffer kind=1) so a texture source
     // can learn the exact dimensions set_texture requires — a mismatch is
     // silently dropped, so without this a client is left guessing.
@@ -1959,37 +2051,40 @@ unsafe fn fx_rebuild_topo() {
         }
     }
 
-    // Push the topology graph to the active VM for the graph-query intrinsics
+    // Push the topology graph to BOTH decks' VMs for the graph-query intrinsics
     // (agentic effects). Compact node ids: a real branch point keeps its index,
     // each free end gets a fresh id after the branch points (kept small so it
     // stays under fx_vm::MAX_NODE). Segment index i matches led.seg / ag.seg.
-    if let Some(vm) = (*addr_of_mut!(FX_VM)).as_mut() {
-        const G: usize = 64; // fx_vm::MAX_SEG
-        let mut seg_len = [0.0f32; G];
-        let mut seg_a = [-1i32; G];
-        let mut seg_b = [-1i32; G];
-        let ng = n_seg.min(G);
-        let node_id = |bp: i32, next_free: &mut i32| -> i32 {
-            if bp >= 0 {
-                topo.branch_points
-                    .iter()
-                    .position(|b| b.id as i32 == bp)
-                    .map(|i| i as i32)
-                    .unwrap_or(-1)
-            } else {
-                let id = *next_free;
-                *next_free += 1;
-                id
-            }
-        };
-        let mut next_free = n_bp as i32;
-        for i in 0..ng {
-            let seg = &topo.segments[i];
-            seg_len[i] = seg.length;
-            seg_a[i] = node_id(seg.a, &mut next_free);
-            seg_b[i] = node_id(seg.b, &mut next_free);
+    // Computed once; the same graph binds to whichever decks are loaded.
+    const G: usize = 64; // fx_vm::MAX_SEG
+    let mut seg_len = [0.0f32; G];
+    let mut seg_a = [-1i32; G];
+    let mut seg_b = [-1i32; G];
+    let ng = n_seg.min(G);
+    let node_id = |bp: i32, next_free: &mut i32| -> i32 {
+        if bp >= 0 {
+            topo.branch_points
+                .iter()
+                .position(|b| b.id as i32 == bp)
+                .map(|i| i as i32)
+                .unwrap_or(-1)
+        } else {
+            let id = *next_free;
+            *next_free += 1;
+            id
         }
-        vm.set_graph(&seg_len[..ng], &seg_a[..ng], &seg_b[..ng]);
+    };
+    let mut next_free = n_bp as i32;
+    for i in 0..ng {
+        let seg = &topo.segments[i];
+        seg_len[i] = seg.length;
+        seg_a[i] = node_id(seg.a, &mut next_free);
+        seg_b[i] = node_id(seg.b, &mut next_free);
+    }
+    for d in 0..N_DECKS {
+        if let Some(vm) = (*addr_of_mut!(FX_VM))[d].as_mut() {
+            vm.set_graph(&seg_len[..ng], &seg_a[..ng], &seg_b[..ng]);
+        }
     }
 }
 
@@ -2002,35 +2097,28 @@ unsafe fn fx_budget() -> Budget {
     }
 }
 
-/// Load (parse + hold) a `.fxb` effect, copying `len` bytes into the static
-/// buffer. Resets the VM's state (fresh effect). Returns false if the bytes
-/// don't fit or don't parse as a valid `.fxb`. After a successful load the
-/// effect is HELD but not necessarily active (see lm_fx_active is a pure read
-/// of "is a program loaded").
-///
-/// # Safety
-/// `fxb` must point to `len` readable bytes.
-#[no_mangle]
-pub unsafe extern "C" fn lm_fx_load(fxb: *const u8, len: usize) -> bool {
-    if fxb.is_null() || len == 0 || len > FX_MAX_BYTES {
+/// Load (parse + hold) a `.fxb` effect onto deck `d`, copying it into that
+/// deck's static buffer and resetting its VM. Returns false if the bytes don't
+/// fit or don't parse. The effect is HELD but not necessarily active.
+unsafe fn fx_load_deck(d: usize, src: &[u8]) -> bool {
+    if src.is_empty() || src.len() > FX_MAX_BYTES {
         return false;
     }
-    let src = core::slice::from_raw_parts(fxb, len);
     // Validate before committing: reject a malformed .fxb so a bad upload can't
     // wedge the render loop on garbage.
     if Program::parse(src).is_err() {
         return false;
     }
-    let buf = &mut *addr_of_mut!(FX_BYTES);
-    buf[..len].copy_from_slice(src);
-    FX_LEN = len;
-    *addr_of_mut!(FX_VM) = Some(FxVm::new());
-    // Bind + zero the hidden-buffer arena for the fresh effect (buffers start
-    // clean each load; the static memory's pointer is stable so one bind holds).
+    let buf = &mut (*addr_of_mut!(FX_BYTES))[d];
+    buf[..src.len()].copy_from_slice(src);
+    FX_LEN[d] = src.len();
+    (*addr_of_mut!(FX_VM))[d] = Some(FxVm::new());
+    // Bind + zero this deck's hidden-buffer arena for the fresh effect (buffers
+    // start clean each load; the static memory's pointer is stable).
     {
-        let arena = &mut *addr_of_mut!(FX_ARENA);
+        let arena = &mut (*addr_of_mut!(FX_ARENA))[d];
         arena.fill(0);
-        if let Some(vm) = (*addr_of_mut!(FX_VM)).as_mut() {
+        if let Some(vm) = (*addr_of_mut!(FX_VM))[d].as_mut() {
             vm.set_arena(arena);
         }
     }
@@ -2040,43 +2128,111 @@ pub unsafe extern "C" fn lm_fx_load(fxb: *const u8, len: usize) -> bool {
     FX_DEADLINE.store(false, core::sync::atomic::Ordering::Relaxed);
     // A fresh effect (re)stamps the perf identity and resets the ring/window so
     // metrics can't be mis-attributed across a hot-reload (perf-monitoring.md).
-    FX_HASH = fxb_hash(src);
-    perf_reset_ring();
+    // Perf attribution tracks deck A only.
+    if d == DECK_A {
+        FX_HASH = fxb_hash(src);
+        perf_reset_ring();
+    }
     true
 }
 
-/// Clear the loaded effect (back to the built-in playback/idle). Frees nothing
-/// (the buffer is static) but marks no program loaded and not active.
+/// Load a `.fxb` onto deck `deck` (0 = A, 1 = B). See `fx_load_deck`.
+///
+/// # Safety
+/// `fxb` must point to `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_load_deck(deck: u32, fxb: *const u8, len: usize) -> bool {
+    if fxb.is_null() || len == 0 || (deck as usize) >= N_DECKS {
+        return false;
+    }
+    let src = core::slice::from_raw_parts(fxb, len);
+    fx_load_deck(deck as usize, src)
+}
+
+/// Legacy single-effect load → deck A. Kept for the ffi tests and any bare
+/// caller; `submit_effect` with a deck field takes the deck-aware path.
+///
+/// # Safety
+/// `fxb` must point to `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_load(fxb: *const u8, len: usize) -> bool {
+    lm_fx_load_deck(DECK_A as u32, fxb, len)
+}
+
+/// Clear deck `d`'s effect. Frees nothing (the buffer is static) but marks no
+/// program loaded and not active on that deck.
+unsafe fn fx_clear_deck(d: usize) {
+    FX_LEN[d] = 0;
+    FX_ACTIVE[d] = false;
+    (*addr_of_mut!(FX_VM))[d] = None;
+    if d == DECK_A {
+        FX_HASH = 0;
+        FX_ID_LEN = 0;
+        perf_reset_ring();
+    }
+}
+
+/// Clear deck `deck` (0 = A, 1 = B).
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_clear_deck(deck: u32) {
+    if (deck as usize) < N_DECKS {
+        fx_clear_deck(deck as usize);
+    }
+}
+
+/// Legacy clear → deck A (back to the built-in playback/idle).
 #[no_mangle]
 pub unsafe extern "C" fn lm_fx_clear() {
-    FX_LEN = 0;
-    FX_ACTIVE = false;
-    *addr_of_mut!(FX_VM) = None;
-    FX_HASH = 0;
-    FX_ID_LEN = 0;
-    perf_reset_ring();
+    fx_clear_deck(DECK_A);
 }
 
-/// Whether an effect is loaded, ACTIVE, and renderable — the render loop gates
-/// on this, taking priority over the built-in pulse/flood playback.
+/// Whether deck `deck` has an effect loaded, ACTIVE, and renderable.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_deck_active(deck: u32) -> bool {
+    let d = deck as usize;
+    d < N_DECKS && FX_ACTIVE[d] && FX_LEN[d] > 0 && (*addr_of!(FX_VM))[d].is_some()
+}
+
+/// Legacy: whether deck A is active. Retained for callers that predate decks.
 #[no_mangle]
 pub unsafe extern "C" fn lm_fx_active() -> bool {
-    FX_ACTIVE && FX_LEN > 0 && (*addr_of!(FX_VM)).is_some()
+    lm_fx_deck_active(DECK_A as u32)
 }
 
-/// Whether an effect is loaded at all (active or parked). Used by persistence.
+/// Whether ANY deck is active — the render loop's fx gate (FUG-110), taking
+/// priority over the built-in pulse/flood playback.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_any_active() -> bool {
+    (0..N_DECKS).any(|d| FX_ACTIVE[d] && FX_LEN[d] > 0 && (*addr_of!(FX_VM))[d].is_some())
+}
+
+/// Whether deck A has an effect loaded at all (active or parked). Used by
+/// persistence.
 #[no_mangle]
 pub unsafe extern "C" fn lm_fx_loaded() -> bool {
-    FX_LEN > 0 && (*addr_of!(FX_VM)).is_some()
+    FX_LEN[DECK_A] > 0 && (*addr_of!(FX_VM))[DECK_A].is_some()
 }
 
-/// Mark the loaded effect active (true) or parked (false). No-op with nothing
-/// loaded.
+/// Mark deck `d`'s loaded effect active (true) or parked (false). No-op with
+/// nothing loaded on that deck.
+unsafe fn fx_set_deck_active(d: usize, active: bool) {
+    if FX_LEN[d] > 0 && (*addr_of!(FX_VM))[d].is_some() {
+        FX_ACTIVE[d] = active;
+    }
+}
+
+/// Mark deck `deck` (0 = A, 1 = B) active/parked.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_set_deck_active(deck: u32, active: bool) {
+    if (deck as usize) < N_DECKS {
+        fx_set_deck_active(deck as usize, active);
+    }
+}
+
+/// Legacy set-active → deck A.
 #[no_mangle]
 pub unsafe extern "C" fn lm_fx_set_active(active: bool) {
-    if FX_LEN > 0 && (*addr_of!(FX_VM)).is_some() {
-        FX_ACTIVE = active;
-    }
+    fx_set_deck_active(DECK_A, active);
 }
 
 /// Set the max instruction count for one update()/shade() invocation (bounded
@@ -2107,35 +2263,49 @@ pub unsafe extern "C" fn lm_fx_last_update_outcome() -> u32 {
     FX_LAST_UPDATE_OUTCOME
 }
 
-/// Apply a uniform value (`vals` = its slot count, 1..4) to the active VM.
+/// Apply a uniform value (`vals` = its slot count, 1..4) to deck `deck`'s VM.
 ///
 /// # Safety
 /// `vals` must point to `n` readable f32.
 #[no_mangle]
-pub unsafe extern "C" fn lm_fx_set_uniform(slot: u32, vals: *const f32, n: usize) {
-    if vals.is_null() || n == 0 {
+pub unsafe extern "C" fn lm_fx_set_uniform_deck(deck: u32, slot: u32, vals: *const f32, n: usize) {
+    if vals.is_null() || n == 0 || (deck as usize) >= N_DECKS {
         return;
     }
-    if let Some(vm) = (*addr_of_mut!(FX_VM)).as_mut() {
+    if let Some(vm) = (*addr_of_mut!(FX_VM))[deck as usize].as_mut() {
         let s = core::slice::from_raw_parts(vals, n);
         vm.set_uniform(slot as usize, s);
     }
 }
 
-/// Run `update()` once for this frame (before the per-LED shade sweep). Clears
-/// the wall-time deadline flag first (a fresh frame gets the full budget).
-/// Returns false when no effect is loaded. A cancelled update (budget/timeout)
-/// still returns true — a partial state advance is harmless.
+/// Legacy uniform apply → deck A.
+///
+/// # Safety
+/// `vals` must point to `n` readable f32.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_set_uniform(slot: u32, vals: *const f32, n: usize) {
+    lm_fx_set_uniform_deck(DECK_A as u32, slot, vals, n);
+}
+
+/// Run `update()` once this frame for EVERY active deck (before the per-LED
+/// shade sweep). Clears the wall-time deadline flag and latches the shared frame
+/// context so both decks' shade() sweeps see the same time/dt/frame. Returns
+/// true if any deck advanced. Perf counting (instr/stack) tracks deck A only.
 #[no_mangle]
 pub unsafe extern "C" fn lm_fx_update(time_s: f32, dt_s: f32, frame: u32, led_count: u32) -> bool {
     FX_DEADLINE.store(false, core::sync::atomic::Ordering::Relaxed);
-    let Some(vm) = (*addr_of_mut!(FX_VM)).as_mut() else {
-        return false;
-    };
-    let bytes = &(*addr_of!(FX_BYTES))[..FX_LEN];
-    let Ok(prog) = Program::parse(bytes) else {
-        return false;
-    };
+    // Capture the frame context so the per-LED shade() sweep sees the same
+    // time/dt/frame on both decks (shaders animate off `time` in shade()).
+    FX_F_TIME = time_s;
+    FX_F_DT = dt_s;
+    FX_F_FRAME = frame;
+    FX_F_LEDS = led_count;
+    // Refresh the per-LED topology cache if a map/topology upload invalidated it,
+    // so the coming shade() sweep sees current led.seg / led.s / led.branch. This
+    // also (re)pushes the graph to both decks' VMs.
+    if !FX_TOPO_READY {
+        fx_rebuild_topo();
+    }
     let f = FxFrame {
         time: time_s,
         dt: dt_s,
@@ -2143,61 +2313,48 @@ pub unsafe extern "C" fn lm_fx_update(time_s: f32, dt_s: f32, frame: u32, led_co
         led_count,
         ..Default::default()
     };
-    // Capture the frame context so the per-LED shade() sweep sees the same
-    // time/dt/frame (shaders animate off `time` in shade()).
-    FX_F_TIME = time_s;
-    FX_F_DT = dt_s;
-    FX_F_FRAME = frame;
-    FX_F_LEDS = led_count;
-    // Refresh the per-LED topology cache if a map/topology upload invalidated it,
-    // so the coming shade() sweep sees current led.seg / led.s / led.branch.
-    if !FX_TOPO_READY {
-        fx_rebuild_topo();
-    }
-    // A new frame: reset the per-frame Tier-1 shade accumulators (they sum over
-    // the coming per-LED sweep). update()'s own counts are latched here.
+    // A new frame: reset the per-frame Tier-1 accumulators (they sum over the
+    // coming per-LED sweep). update()'s own counts are latched here (deck A).
     FX_INSTR_SHADE = 0;
     FX_STACK_MAX = 0;
-    let outcome = if PERF_MODE == PERF_FULL {
-        // FULL: pay the counted VM path so instr_update / stack_max are real.
-        let (oc, c) = vm.run_update_counted(&prog, &f, &fx_budget());
-        FX_INSTR_UPDATE = c.instrs;
-        FX_STACK_MAX = c.stack_max;
-        oc
-    } else {
-        // BASIC/OFF: the plain path — no per-opcode counting overhead.
-        FX_INSTR_UPDATE = 0;
-        vm.run_update_bounded(&prog, &f, &fx_budget())
-    };
-    FX_LAST_UPDATE_OUTCOME = outcome as u32;
-    true
+    FX_INSTR_UPDATE = 0;
+    let mut any = false;
+    for d in 0..N_DECKS {
+        if !(FX_ACTIVE[d] && FX_LEN[d] > 0) {
+            continue;
+        }
+        let bytes = &(*addr_of!(FX_BYTES))[d][..FX_LEN[d]];
+        let Ok(prog) = Program::parse(bytes) else {
+            continue;
+        };
+        let Some(vm) = (*addr_of_mut!(FX_VM))[d].as_mut() else {
+            continue;
+        };
+        let outcome = if d == DECK_A && PERF_MODE == PERF_FULL {
+            // FULL: pay the counted VM path so instr_update / stack_max are real.
+            let (oc, c) = vm.run_update_counted(&prog, &f, &fx_budget());
+            FX_INSTR_UPDATE = c.instrs;
+            FX_STACK_MAX = c.stack_max;
+            oc
+        } else {
+            // BASIC/OFF (or deck B): the plain path — no per-opcode counting.
+            vm.run_update_bounded(&prog, &f, &fx_budget())
+        };
+        if d == DECK_A {
+            FX_LAST_UPDATE_OUTCOME = outcome as u32;
+        }
+        any = true;
+    }
+    any
 }
 
-/// Shade one LED: run `shade(led)` → rgb (3 bytes). `x`,`y`,`z` are the LED's
-/// position (the render loop passes the stored map position via lm_map_led).
-/// Returns false when no effect is loaded OR the invocation was cancelled by a
-/// bounded-execution guard (budget/timeout) — the caller then holds last/black
-/// for that LED rather than hanging the render task.
-///
-/// # Safety
-/// `rgb` must point to 3 writable bytes.
-#[no_mangle]
-pub unsafe extern "C" fn lm_fx_shade(
-    idx: u32,
-    x: f32,
-    y: f32,
-    z: f32,
-    rgb: *mut u8,
-) -> bool {
-    let Some(vm) = (*addr_of!(FX_VM)).as_ref() else {
-        return false;
-    };
-    let bytes = &(*addr_of!(FX_BYTES))[..FX_LEN];
-    let Ok(prog) = Program::parse(bytes) else {
-        return false;
-    };
-    // Reuse the frame context captured by lm_fx_update so `time`/`dt`/`frame`
-    // are the same as update() — shaders animate off `time` in shade().
+/// Shade one LED on deck `d`. None when that deck has no program or the shade
+/// was cancelled by a bounded-execution guard (budget/timeout). Reuses the frame
+/// context captured by lm_fx_update. Deck A counts opcodes under PERF_FULL.
+unsafe fn fx_shade_one(d: usize, idx: u32, x: f32, y: f32, z: f32) -> Option<(u8, u8, u8)> {
+    let bytes = &(*addr_of!(FX_BYTES))[d][..FX_LEN[d]];
+    let prog = Program::parse(bytes).ok()?;
+    let vm = (*addr_of!(FX_VM))[d].as_ref()?;
     let f = FxFrame {
         time: FX_F_TIME,
         dt: FX_F_DT,
@@ -2207,7 +2364,6 @@ pub unsafe extern "C" fn lm_fx_shade(
     };
     // Per-LED topology (led.seg / led.s / led.branch) from the cache the last
     // lm_fx_update refreshed. `idx` is the map index — exactly this cache's key.
-    // No association (or no topology stored) → seg = -1, s = 0, branch = false.
     let t = (*addr_of!(FX_LED_TOPO)).get(idx as usize).copied().unwrap_or(FxLedTopo::NONE);
     let uv = [
         ((x - FX_UV_MIN[0]) * FX_UV_INV[0]).clamp(0.0, 1.0),
@@ -2222,32 +2378,78 @@ pub unsafe extern "C" fn lm_fx_shade(
         dist: t.dist,
         uv,
     };
-    let outcome = if PERF_MODE == PERF_FULL {
+    if d == DECK_A && PERF_MODE == PERF_FULL {
         // FULL: count this LED's opcodes into the per-frame shade accumulator
-        // and lift the stack high-water. This is the hottest path, so the
-        // counting is gated behind FULL exactly as perf-monitoring.md requires.
+        // and lift the stack high-water (perf attribution tracks deck A).
         let ((r, g, b), outcome, c): ((u8, u8, u8), Outcome, FxCounters) =
             vm.run_shade_counted(&prog, &f, &led, &fx_budget());
         FX_INSTR_SHADE = FX_INSTR_SHADE.saturating_add(c.instrs);
         if c.stack_max > FX_STACK_MAX {
             FX_STACK_MAX = c.stack_max;
         }
-        if outcome == Outcome::Ok {
-            *rgb = r;
-            *rgb.add(1) = g;
-            *rgb.add(2) = b;
-        }
-        outcome
+        (outcome == Outcome::Ok).then_some((r, g, b))
     } else {
         let ((r, g, b), outcome) = vm.run_shade_bounded(&prog, &f, &led, &fx_budget());
-        if outcome == Outcome::Ok {
+        (outcome == Outcome::Ok).then_some((r, g, b))
+    }
+}
+
+/// Shade one LED across the active decks and blend by the crossfader (FUG-110).
+/// `x`,`y`,`z` are the LED's stored map position; `crossfade` (0 = all deck A,
+/// 1 = all deck B) and `mode` (0 = linear RGB, 1 = linear HSV) come from the
+/// global set_crossfade. Writes rgb (3 bytes). Returns false when NO deck
+/// produced a colour (nothing active, or every active shade was cancelled) — the
+/// caller then holds black. With one deck it's that deck; with both it's the
+/// blend, short-circuiting the fully-faded-out deck at the endpoints so a
+/// single-deck show pays no second-deck cost.
+///
+/// # Safety
+/// `rgb` must point to 3 writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_shade_blended(
+    idx: u32,
+    x: f32,
+    y: f32,
+    z: f32,
+    crossfade: f32,
+    mode: u32,
+    rgb: *mut u8,
+) -> bool {
+    let t = crossfade.clamp(0.0, 1.0);
+    let a_on = FX_ACTIVE[DECK_A] && FX_LEN[DECK_A] > 0;
+    let b_on = FX_ACTIVE[DECK_B] && FX_LEN[DECK_B] > 0;
+    // Skip the fully-faded-out deck at the endpoints.
+    let ca = if a_on && t < 1.0 { fx_shade_one(DECK_A, idx, x, y, z) } else { None };
+    let cb = if b_on && t > 0.0 { fx_shade_one(DECK_B, idx, x, y, z) } else { None };
+    let out = match (ca, cb) {
+        (Some(a), Some(b)) => ledmapper_fx_vm::blend_rgb8(a, b, t, mode),
+        (Some(a), None) => a,
+        (None, Some(b)) => b,
+        (None, None) => return false,
+    };
+    *rgb = out.0;
+    *rgb.add(1) = out.1;
+    *rgb.add(2) = out.2;
+    true
+}
+
+/// Legacy single-LED shade → deck A (the ffi tests + any bare caller). Writes
+/// rgb (3 bytes). Returns false when deck A has no effect or the shade was
+/// cancelled.
+///
+/// # Safety
+/// `rgb` must point to 3 writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_shade(idx: u32, x: f32, y: f32, z: f32, rgb: *mut u8) -> bool {
+    match fx_shade_one(DECK_A, idx, x, y, z) {
+        Some((r, g, b)) => {
             *rgb = r;
             *rgb.add(1) = g;
             *rgb.add(2) = b;
+            true
         }
-        outcome
-    };
-    outcome == Outcome::Ok
+        None => false,
+    }
 }
 
 /// Copy the active effect's uniforms manifest into `out` (cap `cap`). Returns
@@ -2258,10 +2460,10 @@ pub unsafe extern "C" fn lm_fx_shade(
 /// `out` must point to `cap` writable bytes.
 #[no_mangle]
 pub unsafe extern "C" fn lm_fx_manifest(out: *mut u8, cap: usize) -> i32 {
-    if FX_LEN == 0 {
+    if FX_LEN[DECK_A] == 0 {
         return -1;
     }
-    let bytes = &(*addr_of!(FX_BYTES))[..FX_LEN];
+    let bytes = &(*addr_of!(FX_BYTES))[DECK_A][..FX_LEN[DECK_A]];
     let Ok(prog) = Program::parse(bytes) else {
         return -1;
     };

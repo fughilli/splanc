@@ -45,6 +45,16 @@ int32_t lm_color_correction_commit(void);
 uint32_t lm_brightness_gen(void);
 uint8_t lm_brightness_u8(void);
 
+// Global FX crossfade (FUG-110): the device runs two effect decks (A and B) and
+// blends their per-LED output. The app polls the generation after each
+// lm_player_handle (like lm_brightness_gen); on a change it re-reads the blend
+// position (0.0 = all deck A .. 1.0 = all deck B) and mode (0 = linear RGB,
+// 1 = linear HSV) and feeds them to lm_fx_shade_blended. Runtime-only (defaults
+// to 0.0 / linear RGB after a reboot).
+uint32_t lm_crossfade_gen(void);
+float lm_crossfade_pos(void);
+uint32_t lm_crossfade_mode(void);
+
 // Handle one received protocol frame (a binary WebSocket message).
 // recv_ms/send_ms are the player clock (millis()) at receive / reply time,
 // integer milliseconds. Returns: >0 = reply length written to out; 0 = no
@@ -137,36 +147,55 @@ bool lm_map_led(uint32_t index, uint32_t *id, float xyz[3]);
 // Load (parse + hold) a .fxb, copying len bytes into a static buffer and
 // resetting VM state. False if it doesn't fit or fails to parse. Loading does
 // NOT activate — use lm_fx_set_active (the protocol arms do this).
-bool lm_fx_load(const uint8_t *fxb, size_t len);
-// Clear the loaded effect (back to built-in playback/idle).
-void lm_fx_clear(void);
-// True when an effect is loaded AND active (the render loop gate).
-bool lm_fx_active(void);
-// True when an effect is loaded at all (active or parked) — for persistence.
+// FX decks (FUG-110): the device runs two effect programs concurrently — deck
+// A (0, the legacy/primary deck) and deck B (1) — and the render loop blends
+// their per-LED output by the global crossfade. The bare lm_fx_* functions
+// below operate on deck A for backward compatibility; the lm_fx_*_deck variants
+// address a specific deck.
+bool lm_fx_load(const uint8_t *fxb, size_t len);          // deck A
+bool lm_fx_load_deck(uint32_t deck, const uint8_t *fxb, size_t len);
+// Clear a deck's effect (back to built-in playback/idle when both are clear).
+void lm_fx_clear(void);                                   // deck A
+void lm_fx_clear_deck(uint32_t deck);
+// True when the given deck is loaded AND active.
+bool lm_fx_active(void);                                  // deck A
+bool lm_fx_deck_active(uint32_t deck);
+// True when ANY deck is active — the render loop's fx gate.
+bool lm_fx_any_active(void);
+// True when deck A is loaded at all (active or parked) — for persistence.
 bool lm_fx_loaded(void);
-// Activate (true) / park (false) the loaded effect.
-void lm_fx_set_active(bool active);
-// Per-invocation instruction cap for update()/shade() (0 = default).
+// Activate (true) / park (false) a deck's loaded effect.
+void lm_fx_set_active(bool active);                       // deck A
+void lm_fx_set_deck_active(uint32_t deck, bool active);
+// Per-invocation instruction cap for update()/shade() (0 = default). Shared.
 void lm_fx_set_budget(uint32_t instructions);
 // Raise/lower the wall-time deadline flag (the hardware-timer callback raises
 // it at the frame deadline; the render loop clears it each frame). TODO(hw):
 // arm an esp_timer/systimer one-shot per frame to call this at the deadline.
 void lm_fx_set_deadline(bool hit);
-// Last update() bounded-exec outcome: 0=Ok, 1=budget exceeded, 2=wall-time
-// timeout. For the rate-limited [fx] diagnostic log.
+// Last update() bounded-exec outcome for deck A: 0=Ok, 1=budget, 2=timeout.
 uint32_t lm_fx_last_update_outcome(void);
-// Apply a uniform value (n = its width, 1..4) to the active VM.
-void lm_fx_set_uniform(uint32_t slot, const float *vals, size_t n);
-// Run update() once for this frame (clears the deadline flag first). False when
-// no effect is loaded. A cancelled update still returns true (partial state is
-// harmless).
+// Apply a uniform value (n = its width, 1..4) to a deck's VM.
+void lm_fx_set_uniform(uint32_t slot, const float *vals, size_t n);  // deck A
+void lm_fx_set_uniform_deck(uint32_t deck, uint32_t slot, const float *vals, size_t n);
+// Run update() once this frame for EVERY active deck (clears the deadline flag
+// first, latches the shared frame context). True if any deck advanced.
 bool lm_fx_update(float time_s, float dt_s, uint32_t frame, uint32_t led_count);
-// Shade one LED at position (x,y,z) into rgb[3]. False when no effect is loaded
-// or the invocation was cancelled by a bounded-execution guard.
+// Shade one LED (deck A only) at position (x,y,z) into rgb[3]. False when deck A
+// has no effect or the invocation was cancelled by a bounded-execution guard.
 bool lm_fx_shade(uint32_t idx, float x, float y, float z, uint8_t rgb[3]);
-// Copy the active effect's uniform manifest into out (cap bytes). Returns the
-// length written, -1 when no effect is loaded, -2 when it doesn't fit cap.
+// Shade one LED across the active decks and BLEND by the crossfader: `crossfade`
+// (0 = deck A .. 1 = deck B) and `mode` (0 = linear RGB, 1 = linear HSV). Writes
+// rgb[3]. False when no deck produced a colour (hold black). The render loop
+// calls this per LED instead of lm_fx_shade.
+bool lm_fx_shade_blended(uint32_t idx, float x, float y, float z, float crossfade,
+                         uint32_t mode, uint8_t rgb[3]);
+// Copy deck A's uniform manifest into out (cap bytes). Returns the length
+// written, -1 when no effect is loaded, -2 when it doesn't fit cap.
 int32_t lm_fx_manifest(uint8_t *out, size_t cap);
+// The deck a raw submit_effect frame targets (0 = A, 1 = B; default 0). Lets the
+// persistence layer resume only the deck-A effect on boot (FUG-110).
+uint32_t lm_fx_frame_deck(const uint8_t *data, size_t len);
 
 // -- Perf monitoring (docs/design/perf-monitoring.md) -------------------------
 // The set_perf / get_perf_report protocol arms are handled inside
