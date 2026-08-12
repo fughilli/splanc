@@ -90,6 +90,9 @@ export class Router {
     }
     this.current = screen;
     this.outlet.appendChild(screen.el);
+    // Fresh screen starts at the top: don't inherit the previous screen's scroll
+    // offset (or its in-flight momentum/smooth scroll) through the shared outlet.
+    this.outlet.scrollTop = 0;
     screen.onMount?.();
   }
 }
