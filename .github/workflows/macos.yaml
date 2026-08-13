@@ -141,6 +141,10 @@ jobs:
       # that specific, sole error — exactly as tools/ios_build_server.py does.
       - name: Install JS deps
         run: |
+          # GitHub runs `run:` with `bash -eo pipefail`; -e would abort at the
+          # (expected-nonzero) pnpm line before the guard below. Disable it so we
+          # can inspect the exit code ourselves.
+          set +e
           set -o pipefail
           log="$(mktemp)"
           pnpm --config.verify-deps-before-run=false --config.confirm-modules-purge=false install 2>&1 | tee "$log"
@@ -152,7 +156,9 @@ jobs:
           exit "$rc"
 
       - name: Build web bundle (vite)
-        run: pnpm --dir web build
+        # verify-deps-before-run=false: pnpm 11's pre-`run` deps check otherwise
+        # shells out to install and dies on the @bufbuild/buf ignored build.
+        run: pnpm --config.verify-deps-before-run=false --dir web build
 
       # Build + copy the solver/pulse/fx-compiler/fx-vm WASM into web/dist so the
       # wrapper (which has no backend) can load them from capacitor://localhost.
@@ -295,6 +301,10 @@ jobs:
 
       - name: Install JS deps
         run: |
+          # GitHub runs `run:` with `bash -eo pipefail`; -e would abort at the
+          # (expected-nonzero) pnpm line before the guard below. Disable it so we
+          # can inspect the exit code ourselves.
+          set +e
           set -o pipefail
           log="$(mktemp)"
           pnpm --config.verify-deps-before-run=false --config.confirm-modules-purge=false install 2>&1 | tee "$log"
@@ -306,7 +316,9 @@ jobs:
           exit "$rc"
 
       - name: Build web bundle (vite)
-        run: pnpm --dir web build
+        # verify-deps-before-run=false: pnpm 11's pre-`run` deps check otherwise
+        # shells out to install and dies on the @bufbuild/buf ignored build.
+        run: pnpm --config.verify-deps-before-run=false --dir web build
 
       - name: Stage WASM bundles
         run: bash tools/stage_ios_wasm.sh
