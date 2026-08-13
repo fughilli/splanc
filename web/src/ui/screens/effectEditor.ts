@@ -74,6 +74,14 @@ function msg(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+/** Byte-for-byte equality of two (possibly null) buffers. */
+function bytesEqual(a: Uint8Array | null, b: Uint8Array | null): boolean {
+  if (a === b) return true;
+  if (a === null || b === null || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
 export function EffectEditorScreen(router: Router, effectId: string): Screen {
   const el = document.createElement("div");
   el.className = "screen screen--fxedit";
@@ -102,6 +110,10 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   let lastCompileSummary = "not compiled yet";
   let lastDisassembly = "";
   let lastBytecode: Uint8Array | null = null;
+  // The .fxb last successfully pushed to the device — auto-push skips a compile
+  // whose bytecode is byte-identical (e.g. a whitespace edit) so it doesn't
+  // needlessly re-flash the device.
+  let lastPushedFxb: Uint8Array | null = null;
   let chatBusy = false;
   const chatHistory: ChatMessage[] = [];
   let raf = 0;
@@ -411,8 +423,13 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   }
 
   // -- compile status chip --------------------------------------------------
+  // The line holds the compile status (a text span that's rewritten on each
+  // compile) plus a persistent collapse/expand arrow for the budget drawer.
   const statusEl = document.createElement("div");
   statusEl.className = "fxedit-status";
+  const statusText = document.createElement("span");
+  statusText.className = "fxedit-status-text";
+  statusEl.append(statusText);
 
   // -- FUG-11 budget bar ----------------------------------------------------
   // The color-coded fraction of the frame budget the current program consumes,
@@ -429,24 +446,29 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   const perfWrap = document.createElement("div");
   perfWrap.className = "fxedit-perf";
   perfWrap.style.display = "none";
+  // Collapse/expand arrow, docked at the right end of the compiler-output line:
+  // it opens/closes the verbose budget drawer (percent + ms), leaving just the
+  // colored strip when collapsed.
   const perfToggle = document.createElement("button");
   perfToggle.type = "button";
   perfToggle.className = "fxedit-perf-toggle";
-  perfToggle.title = "Collapse / expand the performance meter";
-  perfToggle.setAttribute("aria-label", "Toggle performance meter");
+  perfToggle.title = "Show / hide budget details";
+  perfToggle.setAttribute("aria-label", "Toggle budget details");
   perfToggle.append(icon("chevron"));
-  if (localStorage.getItem(PERF_COLLAPSE_KEY) === "1") {
-    perfWrap.classList.add("fxedit-perf--collapsed");
-  }
-  perfToggle.addEventListener("click", () => {
-    const collapsed = perfWrap.classList.toggle("fxedit-perf--collapsed");
+  const isPerfCollapsed = (): boolean => perfWrap.classList.contains("fxedit-perf--collapsed");
+  const setPerfCollapsed = (collapsed: boolean): void => {
+    perfWrap.classList.toggle("fxedit-perf--collapsed", collapsed);
+    perfToggle.classList.toggle("fxedit-perf-toggle--collapsed", collapsed);
     try {
       localStorage.setItem(PERF_COLLAPSE_KEY, collapsed ? "1" : "0");
     } catch {
       /* storage blocked — non-fatal */
     }
-  });
-  perfWrap.append(perfToggle, budgetBar.el);
+  };
+  setPerfCollapsed(localStorage.getItem(PERF_COLLAPSE_KEY) === "1");
+  perfToggle.addEventListener("click", () => setPerfCollapsed(!isPerfCollapsed()));
+  statusEl.append(perfToggle);
+  perfWrap.append(budgetBar.el);
   editorWrap.append(codeWrap, statusEl, perfWrap);
 
   async function updateBudgetBar(bytecode: Uint8Array | null): Promise<void> {
@@ -468,20 +490,20 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
 
   function setStatusCompiling(): void {
     statusEl.className = "fxedit-status fxedit-status--busy";
-    statusEl.replaceChildren();
+    statusText.replaceChildren();
     const spin = document.createElement("span");
     spin.className = "fxedit-spinner";
     const txt = document.createElement("span");
     txt.textContent = "compiling…";
-    statusEl.append(spin, txt);
+    statusText.append(spin, txt);
   }
   function setStatusOk(text: string): void {
     statusEl.className = "fxedit-status fxedit-status--ok";
-    statusEl.textContent = `✓ ${text}`;
+    statusText.textContent = `✓ ${text}`;
   }
   function setStatusErr(text: string): void {
     statusEl.className = "fxedit-status fxedit-status--err";
-    statusEl.textContent = `✕ ${text}`;
+    statusText.textContent = `✕ ${text}`;
   }
 
   // -- disassembly panel ----------------------------------------------------
@@ -612,17 +634,33 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   devTiles.className = "k-actiongrid fxedit-devtiles";
   devTiles.append(sendBtn, hydrateBtn);
 
-  // Corner warning: shown when the effect running on the device isn't this one.
-  const mismatchWarn = document.createElement("div");
-  mismatchWarn.className = "fxedit-mismatch";
-  mismatchWarn.append(icon("alert"));
-  mismatchWarn.title = "The device is running a different effect than this workspace.";
-  mismatchWarn.style.display = "none";
-  // The effect id last reported as running on the device (null = unknown).
+  // Auto-push: when on, every successful compile is sent to the device.
+  const AUTOPUSH_KEY = "fxedit.autopush.v1";
+  const autoPushRow = document.createElement("label");
+  autoPushRow.className = "fxedit-autopush";
+  const autoPushCb = document.createElement("input");
+  autoPushCb.type = "checkbox";
+  autoPushCb.checked = localStorage.getItem(AUTOPUSH_KEY) === "1";
+  const autoPushTxt = document.createElement("span");
+  autoPushTxt.textContent = "Auto-push on compile";
+  autoPushRow.append(autoPushCb, autoPushTxt);
+  autoPushCb.addEventListener("change", () => {
+    try {
+      localStorage.setItem(AUTOPUSH_KEY, autoPushCb.checked ? "1" : "0");
+    } catch {
+      /* storage blocked — non-fatal */
+    }
+    // Just enabled with a program already compiled → push it right away.
+    if (autoPushCb.checked && lastBytecode) void pushBytecode(lastBytecode);
+  });
+
+  // The effect id last reported as running on the device (null = unknown). When
+  // it isn't this workspace's effect, the Device tab lights up (a warn tint) to
+  // prompt the user to open it and push — instead of a floating pill.
   let runningEffectId: string | null = null;
   function refreshMismatch(): void {
-    mismatchWarn.style.display =
-      runningEffectId !== null && runningEffectId !== effectId ? "" : "none";
+    const mismatch = runningEffectId !== null && runningEffectId !== effectId;
+    layout.setPaneAttention("diagnostics", mismatch);
   }
 
   // Video → device-texture streaming panel (its own pane). It consumes the live
@@ -668,19 +706,18 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   kebab.classList.add("fxedit-drawerbtn");
   menuWrap.appendChild(kebab);
 
-  const spacer = document.createElement("div");
-  spacer.className = "fxedit-drawer-spacer";
-
   const collapseBtn = IconButton("chevron", { title: "Collapse toolbar", onClick: () => setDrawerCollapsed(true) });
   collapseBtn.classList.add("fxedit-drawerbtn", "fxedit-drawer-collapse");
 
-  // Re-expand handle: a small floating chevron shown only while collapsed.
-  const expandHandle = IconButton("chevron", { title: "Show toolbar", onClick: () => setDrawerCollapsed(false) });
-  expandHandle.classList.add("fxedit-drawer-expand");
-
+  // While collapsed, the re-expand toggle lives INSIDE the top-right corner tab
+  // strip's control cluster (see FxLayout.collapseToggle), not floating over it.
   function setDrawerCollapsed(collapsed: boolean): void {
+    // Never collapse with no panes open: the expand toggle lives in a tab strip,
+    // and with no tabs there'd be nothing to bring the drawer back with.
+    if (collapsed && !layout.anyVisible()) return;
     el.classList.toggle("fxedit-drawer-collapsed", collapsed);
     if (collapsed) closeMenu();
+    layout.refresh(); // re-render strips so the in-strip expand toggle toggles
     try {
       localStorage.setItem(DRAWER_KEY, collapsed ? "1" : "0");
     } catch {
@@ -954,6 +991,15 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     lastCompileSummary = `OK — ${r.uniforms.length} uniforms, ${r.bytecode.length} bytes`;
     panel.setManifest(r.uniforms);
     lastUniforms = r.uniforms;
+    // Auto-push: a clean compile goes straight to the connected device — but only
+    // when the .fxb actually changed, so a whitespace-only edit doesn't re-flash.
+    if (
+      autoPushCb.checked &&
+      appState.client?.isConnected &&
+      !bytesEqual(r.bytecode, lastPushedFxb)
+    ) {
+      void pushBytecode(r.bytecode);
+    }
     midiRouter.setManifest(r.uniforms);
     // Auto-bind uniforms to like-named controls ("speed" uniform ↔ a knob named
     // "speed") — fills gaps only, never overrides an explicit binding. Emits, so
@@ -1194,17 +1240,15 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   }
 
   // -- device ---------------------------------------------------------------
-  async function sendToDevice(): Promise<void> {
+  // Upload already-compiled bytecode + the current uniforms to the device. Shared
+  // by the manual Push button and the auto-push-on-compile path.
+  async function pushBytecode(bytecode: Uint8Array): Promise<void> {
     const c = appState.client;
     if (!c?.isConnected) return;
-    const r = await worker.compile(codeEl.value);
-    if (!r.ok) {
-      devStatus.textContent = "Fix compile errors before sending.";
-      return;
-    }
     devStatus.textContent = "Uploading…";
     try {
-      await c.submitEffect(effectId, r.bytecode, true);
+      await c.submitEffect(effectId, bytecode, true);
+      lastPushedFxb = bytecode; // flashed — auto-push dedupes against this
       if (panel.values().length > 0) await c.setUniforms(panel.values());
       // Remember this effect now lives on the connected device (green badge +
       // the "On <device>" folder in the effects browser, FUG-110).
@@ -1216,6 +1260,17 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     } catch (e) {
       devStatus.textContent = `push failed: ${msg(e)}`;
     }
+  }
+
+  async function sendToDevice(): Promise<void> {
+    const c = appState.client;
+    if (!c?.isConnected) return;
+    const r = await worker.compile(codeEl.value);
+    if (!r.ok) {
+      devStatus.textContent = "Fix compile errors before sending.";
+      return;
+    }
+    await pushBytecode(r.bytecode);
   }
 
   // Pull the uniforms of whatever effect is CURRENTLY RUNNING on the device
@@ -1321,7 +1376,7 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   const diagsLegend = document.createElement("div");
   diagsLegend.className = "fxedit-legend";
   diagsLegend.textContent = "Diagnostics";
-  diagBody.append(devTiles, devStatus, diagsLegend, diagsEl);
+  diagBody.append(devTiles, autoPushRow, devStatus, diagsLegend, diagsEl);
 
   // Disassembly pane content (the .fxedit-disasm <pre>).
   const disasmBody = document.createElement("div");
@@ -1348,11 +1403,22 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     onRelayout: () => {
       // A resize/relayout changes the canvas box; keep the preview crisp.
       resizePreviewCanvas();
+      // With every tab closed the workspace has no strip to host the expand
+      // toggle, so force the drawer expanded (and hide its collapse control via
+      // .fxedit-no-panes) — Back / ⋯ stay reachable to recover a pane.
+      const empty = !layout.anyVisible();
+      el.classList.toggle("fxedit-no-panes", empty);
+      if (empty && el.classList.contains("fxedit-drawer-collapsed")) setDrawerCollapsed(false);
+    },
+    // Collapsed: render the expand toggle in the corner strip's control cluster.
+    collapseToggle: {
+      collapsed: () => el.classList.contains("fxedit-drawer-collapsed"),
+      onExpand: () => setDrawerCollapsed(false),
     },
   });
   // Assemble the drawer bar (left → right) and pin it above the workspace.
-  drawer.append(backBtn, nameLabel, nameInput, spacer, menuWrap, collapseBtn);
-  el.append(layout.root, drawer, expandHandle, mismatchWarn);
+  drawer.append(backBtn, nameLabel, nameInput, menuWrap, collapseBtn);
+  el.append(layout.root, drawer);
   // Restore the persisted collapsed state (defaults to expanded on first visit).
   try {
     if (localStorage.getItem(DRAWER_KEY) === "1") el.classList.add("fxedit-drawer-collapsed");

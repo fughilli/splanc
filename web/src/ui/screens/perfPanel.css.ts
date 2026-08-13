@@ -58,10 +58,11 @@ const CSS = `
 /* FUG-11 budget progress bar: fraction of the AVAILABLE FX budget consumed,
    color-coded <=70% green, >70% yellow, >90% red. */
 .perf-budget { display:flex; flex-direction:column; gap:var(--sp-1); }
-.perf-budget-head { display:flex; justify-content:space-between; align-items:baseline; }
-.perf-budget-title { font-size:12px; color:var(--text-dim); text-transform:uppercase; letter-spacing:.04em; }
-.perf-budget-pct { font-size:15px; font-weight:700; font-variant-numeric:tabular-nums; }
+/* Bar + inline percent on one row; the bar flexes so the percent sits to its right. */
+.perf-budget-row { display:flex; align-items:center; gap:var(--sp-2); }
+.perf-budget-pct { flex:0 0 auto; font-size:14px; font-weight:700; font-variant-numeric:tabular-nums; }
 .perf-budget-track {
+  flex:1 1 auto;
   position:relative; height:14px; border-radius:999px;
   background:var(--surface-2); overflow:hidden;
 }
