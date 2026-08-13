@@ -136,7 +136,7 @@ func TestSyncUSBNodesReenumerates(t *testing.T) {
 // /dev/ttyACM0) and resolves it through the by-id symlink — that node is what we
 // anchor the USB-port lookup on.
 func TestReservedTTYNode(t *testing.T) {
-	dir := t.TempDir()
+	dir := resolvedTempDir(t)
 	node := filepath.Join(dir, "ttyACM3")
 	if err := os.WriteFile(node, nil, 0o600); err != nil {
 		t.Fatal(err)

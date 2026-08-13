@@ -1,6 +1,9 @@
 """M1↔M2 control socket (design doc §3)."""
 
 import json
+import os
+import shutil
+import tempfile
 
 from led_driver.control import ControlClient, ControlServer, handle_line
 from led_driver.driver import LedDriver
@@ -21,8 +24,12 @@ def test_handle_line_dispatch_and_errors():
     assert malformed["ok"] is False
 
 
-def test_control_server_roundtrip(tmp_path):
-    sock_path = str(tmp_path / "control.sock")
+def test_control_server_roundtrip():
+    # AF_UNIX socket paths are capped (~104 bytes on macOS); pytest's tmp_path
+    # (…/pytest-of-<user>/pytest-N/<test-name>/) can exceed that, so bind in a
+    # short-named temp dir instead.
+    sockdir = tempfile.mkdtemp()
+    sock_path = os.path.join(sockdir, "c.sock")
     driver = LedDriver(RecordingSink(), clock=lambda: 7000.0)
     server = ControlServer(driver, sock_path)
     server.start()
@@ -56,3 +63,4 @@ def test_control_server_roundtrip(tmp_path):
     finally:
         driver.stop()
         server.stop()
+        shutil.rmtree(sockdir, ignore_errors=True)
