@@ -10,6 +10,7 @@
  * `onFinal` (also on `stop()`/end).
  */
 
+import { registerPlugin } from "@capacitor/core";
 import { isIosNative } from "../../net/native";
 
 interface SpeechRecognitionAlternative {
@@ -157,29 +158,37 @@ interface SpeechBridgePlugin {
   addListener(event: "listeningState", cb: (data: { status: "started" | "stopped" }) => void): Promise<Sub>;
 }
 
-// Bind the plugin lazily through @capacitor/core's registerPlugin, dynamically
-// imported so Capacitor never enters the browser PWA bundle — the same approach
-// as net/nativeSocket.ts. Cached once resolved.
-let bridgeP: Promise<SpeechBridgePlugin> | null = null;
-function speechBridge(): Promise<SpeechBridgePlugin> {
-  if (!bridgeP) {
-    bridgeP = import("@capacitor/core").then(({ registerPlugin }) =>
-      registerPlugin<SpeechBridgePlugin>("SpeechBridge"),
-    );
-  }
-  return bridgeP;
+// Bind the plugin through @capacitor/core's registerPlugin. voice.ts is reached
+// ONLY via the lazy Acid Mode chunk, so this static import keeps @capacitor/core
+// in that chunk — never the browser PWA main bundle. (A *dynamic* import here
+// deadlocks: a nested lazy-chunk fetch under capacitor://localhost never resolves,
+// verified on-device — the mic hung at "getting bridge".) registerPlugin returns
+// a synchronous proxy, cached here.
+let srPlugin: SpeechBridgePlugin | null = null;
+function speechBridge(): SpeechBridgePlugin {
+  if (!srPlugin) srPlugin = registerPlugin<SpeechBridgePlugin>("SpeechBridge");
+  return srPlugin;
 }
+
+/** Auto-stop after this much silence once the user has started speaking. */
+const END_SILENCE_MS = 1400;
+/** Auto-stop if the user never speaks at all (mic opened, nothing heard). */
+const NO_SPEECH_MS = 5000;
 
 /**
  * iOS native voice session (docs/design/ios-support.md §4.4). WKWebView's Web
  * Speech API aborts with no transcript, so on iOS we drive the native
  * SFSpeechRecognizer through the @splanc/speech-bridge plugin, adapted to the
  * SAME VoiceSession seam the web path uses — so acidMode.ts is unchanged.
+ * End-of-speech is auto-detected (armSilence) so the user needn't tap to stop,
+ * matching the Android/web path's silence-based end.
  */
 class NativeVoiceSession implements VoiceSession {
   private active = false;
   private subs: Sub[] = [];
   private lastPartial = "";
+  private heardSpeech = false;
+  private silenceTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(private readonly hooks: VoiceHooks) {}
 
@@ -191,41 +200,62 @@ class NativeVoiceSession implements VoiceSession {
     if (this.active) return;
     this.active = true;
     this.lastPartial = "";
+    this.heardSpeech = false;
     void this.run();
+  }
+
+  // End-of-speech auto-stop. SFSpeechRecognizer in buffer mode doesn't end on
+  // silence the way the web SpeechRecognition does on Android, so we detect it:
+  // (re)arm a timer on start and on every partial, and stop when it lapses —
+  // END_SILENCE_MS after the last word, or NO_SPEECH_MS if nothing was said.
+  private armSilence(): void {
+    if (this.silenceTimer !== null) clearTimeout(this.silenceTimer);
+    this.silenceTimer = setTimeout(
+      () => {
+        this.silenceTimer = null;
+        this.stop(); // → native stop → "stopped" → finish() → onFinal(transcript)
+      },
+      this.heardSpeech ? END_SILENCE_MS : NO_SPEECH_MS,
+    );
   }
 
   private async run(): Promise<void> {
     try {
-      const bridge = await speechBridge();
+      const bridge = speechBridge();
       const perm = await bridge.requestPermissions();
       if (perm.speechRecognition !== "granted") {
         this.fail("not-allowed");
         return;
       }
       // Interim transcripts stream as the user speaks; keep the best match as the
-      // running result so there's a final even if start() resolves empty.
+      // running result and re-arm the end-of-speech timer on each one.
       this.subs.push(
         await bridge.addListener("partialResults", (data) => {
           const t = data.matches?.[0] ?? "";
           if (t) {
+            this.heardSpeech = true;
             this.lastPartial = t;
             this.hooks.onPartial?.(t);
           }
+          if (this.active) this.armSilence();
         }),
       );
-      // Belt-and-suspenders: finalize on whichever fires first — the explicit
-      // "stopped" state or start()'s resolution. finish() is idempotent, so the
-      // second is a no-op.
+      // finish() is driven by the "stopped" event — the silence auto-stop, the
+      // user tapping stop, or a final SFSpeechRecognizer result (native emits
+      // "stopped" for all).
       this.subs.push(
         await bridge.addListener("listeningState", (data) => {
           if (data.status === "stopped") this.finish(this.lastPartial);
         }),
       );
-      const res = await bridge.start({
+      // With partialResults, start() resolves as soon as the engine is RUNNING
+      // (not at end), so we must NOT finalize on its resolution — the session
+      // stays live until "stopped". (Its value is undefined; don't read it.)
+      await bridge.start({
         language: typeof navigator !== "undefined" ? navigator.language || "en-US" : "en-US",
         partialResults: true,
       });
-      this.finish(res.matches?.[0] ?? this.lastPartial);
+      if (this.active) this.armSilence(); // start the no-speech countdown
     } catch (e) {
       this.fail(e instanceof Error ? e.message : String(e));
     }
@@ -234,15 +264,21 @@ class NativeVoiceSession implements VoiceSession {
   stop(): void {
     if (!this.active) return;
     // Ending the engine drives "stopped"/start()-resolution → finish().
-    void speechBridge()
-      .then((b) => b.stop())
-      .catch(() => undefined);
+    void speechBridge().stop().catch(() => undefined);
   }
 
   private cleanup(): void {
+    if (this.silenceTimer !== null) {
+      clearTimeout(this.silenceTimer);
+      this.silenceTimer = null;
+    }
     const subs = this.subs;
     this.subs = [];
     for (const s of subs) void s.remove();
+    // Always stop the native engine when the JS session ends (finish OR fail) —
+    // otherwise a JS-side error leaves SFSpeechRecognizer running and the next
+    // start() rejects with "Ongoing speech recognition". stop() is idempotent.
+    void speechBridge().stop().catch(() => undefined);
   }
 
   private finish(text: string): void {
