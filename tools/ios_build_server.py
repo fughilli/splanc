@@ -33,6 +33,7 @@ Endpoints (GET or POST):
                                               name, or device UDID (list-devices)
                        &configuration=Debug   xcodebuild configuration
                        &scheme=App            xcodebuild scheme
+                       &bundle=dev.splanc.app app id (device-launch / device-log)
 
 Named tasks:
 
@@ -45,16 +46,26 @@ Named tasks:
     cap-sync       `cap sync ios` — copy web/dist + resolve plugins (SPM in Cap 8)
     pod-install    `pod install` (only for a CocoaPods setup; Cap 8 uses SPM)
     ios-build      `xcodebuild build` for the simulator (SPM or Pods; no launch)
-    ios-run        `cap run ios --target …` — build + launch on a sim OR device
+    ios-run        `cap run ios --target …` — build + launch on a sim OR device (USB)
+    device-build   `xcodebuild` a signed device .app (iphoneos SDK; no launch)
+    device-install `devicectl device install` the .app on a device (USB or Wi-Fi)
+    device-launch  `devicectl device process launch` — start the app on a device
     open-xcode     `cap open ios` — open the project in Xcode on the host
     list-sims      `xcrun simctl list devices available`
     list-devices   `xcrun xctrace list devices` — real devices + sims with UDIDs
+
+The device-* tasks go through devicectl (CoreDevice), so they reach a device
+over USB *or* Wi-Fi — unlike ios-run (`cap run`/native-run), which only sees
+USB-attached devices. Enable Wi-Fi once in Xcode → Devices and Simulators →
+"Connect via network".
 
 Convenience chains (each is just the tasks above, in order, stop-on-failure):
 
     bootstrap      install → web-build → stage-wasm → cap-add-ios → ios-config → cap-sync
     rebuild        web-build → stage-wasm → cap-sync → ios-build
-    launch         web-build → stage-wasm → cap-sync → ios-run
+    launch         web-build → stage-wasm → cap-sync → ios-run          (USB device/sim)
+    deploy-device  web-build → stage-wasm → cap-sync → device-build →
+                   device-install → device-launch  (wireless-capable; needs &target=UDID)
 
 Nothing here is macOS-specific in the server itself; it simply shells out to the
 host's tools. On a non-mac host the Xcode tasks fail cleanly (command not found),
@@ -150,6 +161,22 @@ _IOS_BUILD_SH = (
     '-sdk iphonesimulator -destination "generic/platform=iOS Simulator" build'
 )
 
+# Device build (a real iPhone) — mirrors _IOS_BUILD_SH but targets the iphoneos
+# SDK and writes to a fixed -derivedDataPath so `device-install` can find the
+# signed .app. `generic/platform=iOS` builds WITHOUT the device attached (only
+# install + launch need it), which keeps this robust over a flaky Wi-Fi link;
+# `-allowProvisioningUpdates` lets automatic signing register/refresh the
+# provisioning profile — the same signing `cap run` already set up over USB.
+_DEVICE_BUILD_SH = (
+    "set -e; "
+    'if [ -e App.xcworkspace ]; then C="-workspace App.xcworkspace"; '
+    'else C="-project App.xcodeproj"; fi; '
+    'echo "[device-build] xcodebuild $C -scheme {scheme} -configuration {configuration} -sdk iphoneos"; '
+    "xcodebuild $C -scheme {scheme} -configuration {configuration} "
+    '-sdk iphoneos -destination "generic/platform=iOS" '
+    "-derivedDataPath build -allowProvisioningUpdates build"
+)
+
 
 def _tasks() -> dict:
     return {
@@ -206,6 +233,47 @@ def _tasks() -> dict:
             "needs_ios": True,
             "desc": "cap run ios — build + launch on --target (sim name, device name, or UDID)",
         },
+        # Wireless device deploy (device-build → device-install → device-launch,
+        # or the `deploy-device` chain). These go through devicectl (CoreDevice),
+        # which reaches a device over USB *or* Wi-Fi — unlike `cap run`/native-run
+        # (ios-run), whose device discovery can't see network-connected devices.
+        "device-build": {
+            "argv": ["bash", "-c", _DEVICE_BUILD_SH],
+            "cwd": "web/ios/App",
+            "needs_ios": True,
+            "desc": "xcodebuild a signed device .app (iphoneos SDK) for wireless deploy",
+        },
+        "device-install": {
+            # Product path matches device-build's -derivedDataPath (relative to cwd).
+            "argv": [
+                "xcrun",
+                "devicectl",
+                "device",
+                "install",
+                "app",
+                "--device",
+                "{target}",
+                "build/Build/Products/{configuration}-iphoneos/App.app",
+            ],
+            "cwd": "web/ios/App",
+            "needs_ios": True,
+            "desc": "install the device .app on {target} over USB/Wi-Fi (devicectl)",
+        },
+        "device-launch": {
+            "argv": [
+                "xcrun",
+                "devicectl",
+                "device",
+                "process",
+                "launch",
+                "--terminate-existing",
+                "--device",
+                "{target}",
+                "{bundle}",
+            ],
+            "cwd": ".",
+            "desc": "launch {bundle} on {target} over USB/Wi-Fi (devicectl; no console)",
+        },
         "list-devices": {
             "argv": ["xcrun", "xctrace", "list", "devices"],
             "cwd": ".",
@@ -251,6 +319,17 @@ CHAINS = {
     "bootstrap": ["install", "web-build", "stage-wasm", "cap-add-ios", "ios-config", "cap-sync"],
     "rebuild": ["web-build", "stage-wasm", "cap-sync", "ios-build"],
     "launch": ["web-build", "stage-wasm", "cap-sync", "ios-run"],
+    # Wireless-capable device deploy: like `launch` but the last three steps go
+    # through devicectl (USB or Wi-Fi) instead of `cap run` (USB only). Needs
+    # &target=<device UDID>.
+    "deploy-device": [
+        "web-build",
+        "stage-wasm",
+        "cap-sync",
+        "device-build",
+        "device-install",
+        "device-launch",
+    ],
 }
 
 # Query params we allow into argv templates, with the pattern each must match.
