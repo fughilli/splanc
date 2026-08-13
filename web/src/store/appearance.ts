@@ -65,6 +65,10 @@ export interface AppearanceSettings {
   showGrid: boolean;
   /** World coordinate triad visible by default. */
   showTriad: boolean;
+  /** Solver-stats footer + interaction hint ("drag orbit …") visible by
+   * default in the 3D view. Off declutters every viewport (Acid Mode forces it
+   * off regardless). */
+  showStats: boolean;
 }
 
 export const DEFAULTS: Readonly<AppearanceSettings> = {
@@ -81,6 +85,7 @@ export const DEFAULTS: Readonly<AppearanceSettings> = {
   glow: 1,
   showGrid: false,
   showTriad: false,
+  showStats: true,
 };
 
 // -- palettes ----------------------------------------------------------------
@@ -193,6 +198,8 @@ export function normalizeSettings(raw: unknown): AppearanceSettings {
     glow: clampNum(o["glow"], 0, 2, DEFAULTS.glow),
     showGrid: o["showGrid"] === true,
     showTriad: o["showTriad"] === true,
+    // Default on: only an explicit `false` hides the viewport labels.
+    showStats: o["showStats"] !== false,
   };
 }
 
@@ -246,6 +253,7 @@ export interface RenderSettings {
   glow: number;
   showGrid: boolean;
   showTriad: boolean;
+  showStats: boolean;
 }
 
 /** MapView's original background (kept as the default so nothing changes). */
@@ -258,6 +266,7 @@ export function resolveRenderSettings(s: AppearanceSettings): RenderSettings {
     glow: s.glow,
     showGrid: s.showGrid,
     showTriad: s.showTriad,
+    showStats: s.showStats,
   };
 }
 

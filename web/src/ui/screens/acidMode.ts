@@ -442,6 +442,9 @@ export function AcidModeScreen(router: Router): Screen {
     }
     if (mapView === null) {
       mapView = new MapView(canvas, map);
+      // Acid Mode is a full-screen immersive visual — drop the solver-stats
+      // footer + "drag orbit …" hint regardless of the Appearance default.
+      mapView.showStats = false;
       mapView.setLedColors(new Uint8Array(map.leds.length * 3));
       mapView.start();
     } else {
