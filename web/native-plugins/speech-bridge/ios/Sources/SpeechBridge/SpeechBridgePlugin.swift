@@ -3,6 +3,13 @@ import Capacitor
 import Foundation
 import Speech
 
+// print() lands on the process stdout, which `devicectl process launch --console`
+// streams back (tools/iosctl device-log) — so these show up live while
+// investigating the mic on-device. Mirrors @splanc/wss-bridge's wlog.
+private func slog(_ s: String) {
+    print("[speech-bridge] \(s)")
+}
+
 /// Native speech-recognition bridge for Acid Mode voice input
 /// (docs/design/ios-support.md §4.4).
 ///
@@ -65,6 +72,7 @@ public class SpeechBridge: CAPPlugin, CAPBridgedPlugin {
             let language: String = call.getString("language") ?? "en-US"
             let maxResults: Int = call.getInt("maxResults") ?? self.defaultMatches
             let partialResults: Bool = call.getBool("partialResults") ?? false
+            slog("start language=\(language) partialResults=\(partialResults)")
 
             self.recognitionTask?.cancel()
             self.recognitionTask = nil
@@ -101,6 +109,8 @@ public class SpeechBridge: CAPPlugin, CAPBridgedPlugin {
                             counter += 1
                         }
 
+                        let best = matches.firstObject as? String ?? ""
+                        slog("result partial=\(!result.isFinal) best=\"\(best)\"")
                         if partialResults {
                             self.notifyListeners("partialResults", data: ["matches": matches])
                         } else {
@@ -113,7 +123,8 @@ public class SpeechBridge: CAPPlugin, CAPBridgedPlugin {
                         }
                     }
 
-                    if error != nil {
+                    if let error = error {
+                        slog("recognition error: \(error.localizedDescription)")
                         self.teardown()
                         self.notifyListeners("listeningState", data: ["status": "stopped"])
                         if partialResults {
@@ -143,6 +154,7 @@ public class SpeechBridge: CAPPlugin, CAPBridgedPlugin {
     @objc func stop(_ call: CAPPluginCall) {
         DispatchQueue.global(qos: .default).async {
             if let engine = self.audioEngine, engine.isRunning {
+                slog("stop")
                 engine.stop()
                 self.recognitionRequest?.endAudio()
                 self.notifyListeners("listeningState", data: ["status": "stopped"])
@@ -182,6 +194,7 @@ public class SpeechBridge: CAPPlugin, CAPBridgedPlugin {
                 switch status {
                 case .authorized:
                     AVAudioSession.sharedInstance().requestRecordPermission { (granted) in
+                        slog("requestPermissions speech=granted mic=\(granted ? "granted" : "denied")")
                         call.resolve(["speechRecognition": granted ? "granted" : "denied"])
                     }
                 default:
