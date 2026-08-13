@@ -139,15 +139,27 @@ export class UniformPanel {
     }
 
     if (ui.kind === "color") {
+      // A native <input type="color"> renders inconsistently across platforms —
+      // a full-width swatch on Android/Chrome but a small fixed circle on iOS
+      // WKWebView (it ignores width/height). Wrap it: a styled swatch we control
+      // for the visuals, with the native input overlaid invisibly so a tap still
+      // opens each platform's colour picker.
+      const wrap = document.createElement("label");
+      wrap.className = "upanel-color";
+      const swatch = document.createElement("span");
+      swatch.className = "upanel-color-swatch";
       const el = document.createElement("input");
       el.type = "color";
       el.value = rgbToHex(s.value);
+      swatch.style.background = el.value;
       value.textContent = el.value;
       el.addEventListener("input", () => {
         this.set(i, hexToRgb(el.value, s.uniform.width));
+        swatch.style.background = el.value;
         value.textContent = el.value;
       });
-      ctrl.appendChild(el);
+      wrap.append(swatch, el);
+      ctrl.appendChild(wrap);
       return;
     }
 

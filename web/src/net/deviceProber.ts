@@ -11,6 +11,7 @@
  */
 
 import { LedMapperClient } from "./client";
+import { nativeSocketFactory } from "./nativeSocket";
 import { deviceStore, type KnownDevice } from "../store/deviceStore";
 
 const MIN_INTERVAL = 60_000; // one request / minute
@@ -25,7 +26,10 @@ export interface ProbeInfo {
 /** Open a transient wss to read a device's welcome (MAC + name), then close.
  * Null if it can't be reached (untrusted cert, offline, timeout). */
 export async function probeDevice(wssUrl: string): Promise<ProbeInfo | null> {
-  const client = new LedMapperClient(wssUrl);
+  // Native wrapper: probe through the cert-pinning bridge too (same self-signed
+  // wss:// trust as the main client), else the browser WebSocket.
+  const factory = nativeSocketFactory();
+  const client = new LedMapperClient(wssUrl, factory ? { socketFactory: factory } : {});
   try {
     const timeout = new Promise<never>((_, rej) =>
       setTimeout(() => rej(new Error("probe timeout")), PROBE_TIMEOUT),

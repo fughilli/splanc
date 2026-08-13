@@ -15,7 +15,15 @@
  *
  * The byte-level codec is pure and unit-tested (improv.test.ts); only
  * `provisionViaBle` touches navigator.bluetooth.
+ *
+ * Native wrapper: inside Capacitor (iOS/Android) there IS a BLE path —
+ * CoreBluetooth via a plugin — so `bleAvailable()` returns true and
+ * `requestImprovDevice()` routes to net/capacitorImprov.ts, which adapts the
+ * plugin to the same device seam. The codec and `provisionViaBle` below are
+ * shared unchanged (docs/design/ios-support.md §4.2).
  */
+
+import { isNativePlatform } from "./native";
 
 // Improv BLE service + characteristic UUIDs (spec constants).
 export const IMPROV_SERVICE = "00467768-6228-2272-4663-277478268000";
@@ -110,6 +118,10 @@ export function wsUrlFromRedirect(redirect: string): string | null {
 }
 
 export function bleAvailable(): boolean {
+  // In the native wrapper the Capacitor BLE plugin provisions over CoreBluetooth
+  // (iOS) / the Android BLE stack, so BLE is available regardless of WebKit's
+  // missing Web Bluetooth. In a plain browser it's gated on Web Bluetooth.
+  if (isNativePlatform()) return true;
   return typeof navigator !== "undefined" && "bluetooth" in navigator;
 }
 
@@ -172,6 +184,10 @@ export async function retryGatt<T>(
  * ask for credentials after.
  */
 export async function requestImprovDevice(): Promise<ImprovDevice> {
+  // Web Bluetooth path only. The native wrapper doesn't come through here — it
+  // runs its own named scan + picker (ui/screens/blePicker.ts via
+  // net/capacitorImprov.ts), since the plugin's built-in chooser can't show
+  // device names on iOS. Callers branch on isNativePlatform() (see addDevice.ts).
   const bt = (navigator as { bluetooth?: { requestDevice(o: unknown): Promise<unknown> } })
     .bluetooth;
   if (!bt) throw new Error("Web Bluetooth is unavailable in this browser");

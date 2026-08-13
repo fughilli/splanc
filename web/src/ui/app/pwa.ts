@@ -12,6 +12,7 @@
  */
 
 import { Button, IconButton, Sheet, icon, toast } from "../kit";
+import { isNativePlatform } from "../../net/native";
 
 /** The non-standard (but widely shipped) Chromium install-prompt event. */
 interface BeforeInstallPromptEvent extends Event {
@@ -49,6 +50,9 @@ function isIosSafari(): boolean {
 
 /** True when the app is already running as an installed PWA. */
 export function isInstalled(): boolean {
+  // The Capacitor native wrapper IS the installed app — treat it as installed so
+  // no install UX is ever offered (canInstall/menu item/banner all gate on this).
+  if (isNativePlatform()) return true;
   return installed || isStandalone();
 }
 
@@ -88,6 +92,12 @@ export async function promptInstall(): Promise<void> {
 
 /** Wire up service worker + install events, and offer the first-load banner. */
 export function initPwa(): void {
+  // Inside the native wrapper there's nothing to install and no service worker to
+  // register (assets are bundled in the app) — skip the entire PWA path. Without
+  // this, isIosSafari() is true in the iOS WKWebView and the "Add to Home Screen"
+  // banner would show inside the already-native app.
+  if (isNativePlatform()) return;
+
   registerServiceWorker();
 
   window.addEventListener("beforeinstallprompt", (e) => {
