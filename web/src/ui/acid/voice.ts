@@ -10,6 +10,8 @@
  * `onFinal` (also on `stop()`/end).
  */
 
+import { isIosNative } from "../../net/native";
+
 interface SpeechRecognitionAlternative {
   transcript: string;
 }
@@ -50,6 +52,13 @@ function recognitionCtor(): SpeechRecognitionCtor | null {
 
 /** True when the browser can do speech recognition (else use the text box). */
 export function voiceSupported(): boolean {
+  // iOS WKWebView exposes `webkitSpeechRecognition`, but it aborts immediately
+  // with no transcript (verified on-device: onaudiostart → onerror "aborted" →
+  // onend, no result) — the Web Speech API only functions in Safari proper, not
+  // a WKWebView. Report unsupported there so Acid Mode uses its text box instead
+  // of a mic that does nothing. (Real native iOS voice needs a Capacitor speech
+  // plugin — a follow-up.)
+  if (isIosNative()) return false;
   return recognitionCtor() !== null;
 }
 
