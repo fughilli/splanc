@@ -13,7 +13,6 @@
  * returns undefined off-native, and `LedMapperClient` falls back to `WebSocket`.
  */
 
-import { registerPlugin } from "@capacitor/core";
 import { isNativePlatform } from "./native";
 import type { SocketFactory, SocketLike } from "./client";
 
@@ -33,10 +32,23 @@ interface WssBridgePlugin {
   addListener(event: "wssEvent", cb: (e: WssEvent) => void): Promise<{ remove(): Promise<void> }>;
 }
 
-// Bind to the native plugin. registerPlugin returns a proxy backed by the global
-// Capacitor bridge (window.Capacitor), so this is fine to evaluate at module load
-// on any platform — it only dispatches to native when a method is actually called.
-const WssBridge = registerPlugin<WssBridgePlugin>("WssBridge");
+// Bind to the native plugin lazily. `@capacitor/core` is dynamically imported so
+// it never enters the PWA bundle (this file is reached only when the factory is
+// used on-native); registerPlugin returns a proxy backed by the global Capacitor
+// bridge that only dispatches to native when a method is actually called. The
+// proxy is cached in `bridge` once resolved, so the synchronous send()/close()
+// paths (only reached after a socket has connected) can use it directly.
+let bridgeP: Promise<WssBridgePlugin> | null = null;
+let bridge: WssBridgePlugin | null = null;
+function getBridge(): Promise<WssBridgePlugin> {
+  if (!bridgeP) {
+    bridgeP = import("@capacitor/core").then(({ registerPlugin }) => {
+      bridge = registerPlugin<WssBridgePlugin>("WssBridge");
+      return bridge;
+    });
+  }
+  return bridgeP;
+}
 
 // One shared event listener dispatches `wssEvent`s by socket id. Events can arrive
 // before connect() resolves and we map the id, so buffer any for unknown ids and
@@ -46,15 +58,19 @@ const buffered = new Map<string, WssEvent[]>();
 let listenP: Promise<void> | null = null;
 function ensureListener(): Promise<void> {
   if (!listenP) {
-    listenP = WssBridge.addListener("wssEvent", (e) => {
-      const s = sockets.get(e.id);
-      if (s) s.handle(e);
-      else {
-        const q = buffered.get(e.id) ?? [];
-        q.push(e);
-        buffered.set(e.id, q);
-      }
-    }).then(() => undefined);
+    listenP = getBridge()
+      .then((b) =>
+        b.addListener("wssEvent", (e) => {
+          const s = sockets.get(e.id);
+          if (s) s.handle(e);
+          else {
+            const q = buffered.get(e.id) ?? [];
+            q.push(e);
+            buffered.set(e.id, q);
+          }
+        }),
+      )
+      .then(() => undefined);
   }
   return listenP;
 }
@@ -85,12 +101,13 @@ class NativeSocket implements SocketLike {
   constructor(url: string) {
     void (async () => {
       try {
+        const b = await getBridge();
         await ensureListener();
-        const { id } = await WssBridge.connect({ url });
+        const { id } = await b.connect({ url });
         this.id = id;
         if (this.closed) {
           // close() was called while connecting — tear the native socket down.
-          void WssBridge.close({ id });
+          void b.close({ id });
           return;
         }
         registerSocket(id, this);
@@ -126,18 +143,19 @@ class NativeSocket implements SocketLike {
   }
 
   send(data: string | Uint8Array): void {
-    if (this.id == null) return; // the client only sends after onopen, so id is set
-    if (typeof data === "string") void WssBridge.send({ id: this.id, data, binary: false });
-    else void WssBridge.send({ id: this.id, data: bytesToB64(data), binary: true });
+    // The client only sends after onopen, so id (and thus the bridge) is set.
+    if (this.id == null || !bridge) return;
+    if (typeof data === "string") void bridge.send({ id: this.id, data, binary: false });
+    else void bridge.send({ id: this.id, data: bytesToB64(data), binary: true });
   }
 
   close(): void {
     this.closed = true;
     this.readyState = SOCK_CLOSED;
-    if (this.id) {
+    if (this.id && bridge) {
       const id = this.id;
       sockets.delete(id);
-      void WssBridge.close({ id });
+      void bridge.close({ id });
     }
   }
 }
