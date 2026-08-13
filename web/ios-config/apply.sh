@@ -73,5 +73,13 @@ set_str NSBluetoothPeripheralUsageDescription \
 # gates all local-network traffic behind this prompt).
 set_str NSLocalNetworkUsageDescription \
   "Splanc talks to your Splanc device directly on your local network to map fixtures and drive effects."
+# Microphone + speech recognition: Acid Mode's voice control (ui/acid/voice.ts)
+# drives the Web Speech API. In a WKWebView both strings are REQUIRED — without
+# them iOS denies the mic and SpeechRecognition errors with "not-allowed" (the
+# "Mic permission denied" the user sees), rather than prompting.
+set_str NSMicrophoneUsageDescription \
+  "Splanc uses the microphone so you can control lights hands-free with your voice in Acid Mode."
+set_str NSSpeechRecognitionUsageDescription \
+  "Splanc turns your spoken commands into lighting changes in Acid Mode."
 
 echo "ios-config applied."
