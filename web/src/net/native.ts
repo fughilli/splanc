@@ -17,10 +17,26 @@
 interface CapacitorGlobal {
   isNativePlatform?: () => boolean;
   getPlatform?: () => string;
+  // The runtime's registerPlugin (same function @capacitor/core exports). Reading
+  // it off the global — rather than `import("@capacitor/core")` — is deliberate:
+  // besides keeping the plugin out of the web bundle, a dynamic import of
+  // @capacitor/core DEADLOCKS in the WKWebView (its chunk fetch under
+  // capacitor://localhost never resolves — this broke both the wss bridge and
+  // Acid Mode voice until they stopped dynamically importing it).
+  registerPlugin?: <T>(name: string) => T;
 }
 
 function cap(): CapacitorGlobal | undefined {
   return (globalThis as { Capacitor?: CapacitorGlobal }).Capacitor;
+}
+
+/** Bind a native Capacitor plugin proxy by name via the injected global runtime
+ * (no @capacitor/core import). Only valid on-native — callers gate on
+ * isNativePlatform()/isIosNative() first. */
+export function registerNativePlugin<T>(name: string): T {
+  const rp = cap()?.registerPlugin;
+  if (!rp) throw new Error(`Capacitor.registerPlugin unavailable (plugin ${name})`);
+  return rp<T>(name);
 }
 
 /** True only inside the Capacitor native wrapper (iOS/Android), never in a
