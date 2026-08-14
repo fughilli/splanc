@@ -84,6 +84,36 @@ let
   apChannel = 6; # fixed 2.4 GHz channel; the C6 is 2.4-only
   apSsid = "hitl-${config.networking.hostName}";
   apPsk = "hitl-${config.networking.hostName}-provision"; # ≥8 chars; override for a fixed one
+
+  # Shared logic analyzer (an FX2/fx2lafw "Saleae clone") — present only on the Pi
+  # 3 logic-analyzer rig variant. sbc-deploy injects the board via $SBC_BOARD at
+  # (impure) eval, so this single appModule yields BOTH a lean Pi 5 rig image (no
+  # sigrok closure, capture broker dormant) and a Pi 3 image with capture wired —
+  # no second flake. Fail-safe: an unset/other board leaves the analyzer off.
+  #
+  # The FX2 is a RIG-LEVEL instrument the daemon owns (never passed into a
+  # container): the daemon serves captures over POST /capture, mapping each DUT to
+  # its channel subset so one 8-channel analyzer taps several DUTs (a couple of
+  # channels each). See internal/analyzer and DESIGN.md.
+  sigrok = import ./sigrok.nix { inherit pkgs; };
+  isAnalyzerRig = builtins.getEnv "SBC_BOARD" == "raspberry-pi-3";
+  # DUT → analyzer channels. The sole DUT's WS2812 DIN (the C6's GPIO20 / PIN20)
+  # is wired to the analyzer's CH6 = D6 on hitl-rig-la-1. Add per-DUT entries
+  # (keyed by the discovered c6-<serial> name, e.g. "c6-1a2b3c" = { channels =
+  # [ "D1" ]; ... }) as boards are wired to more channels.
+  analyzerChannelMap = builtins.toJSON {
+    "default" = { channels = [ "D6" ]; protocol = "ws2812"; };
+  };
+  analyzerArgs = lib.optionals isAnalyzerRig [
+    "--analyzer-driver"
+    "fx2lafw"
+    "--analyzer-sigrok"
+    sigrok.cli
+    "--analyzer-samplerate"
+    "24m"
+    "--analyzer-channel-map"
+    (lib.escapeShellArg analyzerChannelMap)
+  ];
 in
 {
   # Headless rig: drop the NixOS manual + man-page closure (groff/texinfo/aspell/…),
@@ -121,6 +151,12 @@ in
   # over the built-in USB-JTAG); the device nodes are otherwise root-only.
   services.udev.extraRules = ''
     SUBSYSTEM=="usb", ATTR{idVendor}=="303a", MODE="0666"
+  '' + lib.optionalString isAnalyzerRig ''
+    # FX2/fx2lafw logic analyzer, both the bare-clone VID:PID and the fx2lafw one
+    # it re-enumerates to after firmware upload. World-writable on this
+    # single-purpose bench; the daemon (root) owns it, this is belt-and-suspenders.
+    SUBSYSTEM=="usb", ATTR{idVendor}=="0925", ATTR{idProduct}=="3881", MODE="0666"
+    SUBSYSTEM=="usb", ATTR{idVendor}=="1d50", ATTR{idProduct}=="608c", MODE="0666"
   '';
 
   # The container's agent runs as uid 1000; the host needs a matching passwd entry
@@ -155,7 +191,8 @@ in
 
   # The `hitl` CLI is handy on the rig too; usbutils for lsusb/bus ids, usbip for
   # bind/attach.
-  environment.systemPackages = [ hitl pkgs.usbutils pkgs.linuxPackages.usbip ];
+  environment.systemPackages = [ hitl pkgs.usbutils pkgs.linuxPackages.usbip ]
+    ++ lib.optionals isAnalyzerRig sigrok.packages; # sigrok-cli + fx2lafw firmware
 
   # Load the test image into Podman at boot.
   systemd.services.hitl-image-load = {
@@ -233,11 +270,13 @@ in
     wantedBy = [ "multi-user.target" ];
     after = [ "network-online.target" "tailscaled.service" "hitl-image-load.service" ];
     wants = [ "network-online.target" "hitl-image-load.service" ];
-    # networkmanager (nmcli) toggles the AP; iw/iproute2 create the AP vif on demand.
-    path = [ pkgs.podman pkgs.iproute2 pkgs.openssh ];
+    # networkmanager (nmcli) toggles the AP; iw/iproute2 create the AP vif on
+    # demand; sigrok-cli (analyzer rig only) captures the DUT's tapped LED line.
+    path = [ pkgs.podman pkgs.iproute2 pkgs.openssh ]
+      ++ lib.optionals isAnalyzerRig sigrok.packages;
     serviceConfig = {
       ExecStart =
-        lib.concatStringsSep " " [
+        lib.concatStringsSep " " ([
           "${hitl}/bin/hitl-managerd"
           "--addr :${toString apiPort}"
           "--rig ${config.networking.hostName}"
@@ -248,6 +287,9 @@ in
           "--podman ${pkgs.podman}/bin/podman"
           "--privileged=${lib.boolToString privilegedContainers}"
           "--state-dir /var/lib/hitl"
+          # Reservation containers reach the daemon's shared analyzer over the
+          # podman host gateway; keep the port in sync with --addr above.
+          "--container-capture-url http://host.containers.internal:${toString apiPort}"
           # The AP is always-on (NM autoconnect); the daemon only advertises its
           # creds in /status for the harness (`hitl wifi`). It does NOT toggle the
           # AP — no --ap-conn — so per-reservation AP control (internal/ap) stays
@@ -255,7 +297,9 @@ in
           "--ap-ssid ${apSsid}"
           "--ap-psk ${apPsk}"
           dutArgs
-        ];
+        ] ++ analyzerArgs); # --analyzer-* only on the logic-analyzer rig
+      # libsigrok uploads fx2lafw firmware to the bare FX2 from here (analyzer rig).
+      Environment = lib.optionals isAnalyzerRig [ "SIGROK_FIRMWARE_DIR=${sigrok.firmwareDir}" ];
       StateDirectory = "hitl";
       Restart = "on-failure";
       RestartSec = 3;

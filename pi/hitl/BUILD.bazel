@@ -36,6 +36,27 @@ sbc_application(
     wifi_config_file = _wifi_config,
 )
 
+# Logic-analyzer rig variant: the SAME flake + config built for a Raspberry Pi 3B.
+# sbc-deploy injects the board via $SBC_BOARD at eval, so no flake/nix fork is
+# needed — nix/hitl-app.nix keys its sigrok/capture additions on
+# $SBC_BOARD == "raspberry-pi-3", yielding a lean Pi 5 image for :hitl and a
+# capture-enabled Pi 3 image here. Gives //pi/hitl:hitl_la.{image_sd,deploy_live,
+# ssh,keys}. This rig hosts an FX2/fx2lafw logic analyzer tapping the DUT's WS2812
+# DIN; see DESIGN.md "Shared logic analyzer" and internal/analyzer.
+#
+# hostname = "hitl-rig" is the nixosConfigurations attr the flake exposes
+# (mkSbcProject { hostName = "hitl-rig"; }), which deploy_live/ssh select — NOT the
+# deployed machine name. The LA rig's own identity is set per-deploy via
+# $SBC_HOSTNAME_OVERRIDE (the same knob used at flash time), e.g.
+#   SBC_HOSTNAME_OVERRIDE=hitl-rig-la-1 bazel run //pi/hitl:hitl_la.deploy_live -- <host>
+sbc_application(
+    name = "hitl_la",
+    board = "@sbc_deploy//deploy/boards:raspberry-pi-3",
+    flake = "pi/hitl",
+    hostname = "hitl-rig",
+    wifi_config_file = _wifi_config,
+)
+
 # Seed persistent (runtime) WiFi networks onto the running rig, composed on top of
 # the baked BigVibes/FugLink without a rebuild:
 #   bazel run //pi/hitl:seed_wifi                       # seed pi/secrets/wifi-seed.yaml
