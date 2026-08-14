@@ -523,7 +523,7 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   const panel = new UniformPanel(uniformsHost, (slot, value) => {
     preview?.setUniform(slot, value);
     const c = appState.client;
-    if (c?.isConnected) void c.setUniforms([{ slot, value }]).catch(() => undefined);
+    if (c?.isConnected) c.setUniforms([{ slot, value }]);
   });
 
   // -- MIDI: route hardware controls into the SAME uniform seam as a manual
@@ -1247,7 +1247,7 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     try {
       await c.submitEffect(effectId, bytecode, true);
       lastPushedFxb = bytecode; // flashed — auto-push dedupes against this
-      if (panel.values().length > 0) await c.setUniforms(panel.values());
+      if (panel.values().length > 0) c.setUniforms(panel.values());
       // This effect is now the one running on the device → clears any mismatch.
       runningEffectId = effectId;
       refreshMismatch();

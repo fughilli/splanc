@@ -88,6 +88,61 @@ Assert on the serial log the firmware prints (identity, `[ble]`, `[wss]`,
 `USB_BOOT` / `wait usb download` means the board is strapped into download mode
 (see Hardware notes).
 
+## Adding an on-hardware test
+
+The CI HITL lane (`.github/workflows/hitl.yaml`) doesn't hard-code a list of
+tests — it discovers the whole set by tag and runs it:
+
+```sh
+bazel test $(bazel query 'attr(tags, "\bhitl\b", tests(//...))') --test_output=streamed
+```
+
+So a new test **joins the lane just by carrying the `hitl` tag** — nothing else
+to register. (To list the current set, run that query.) Author one as a
+`py_test` under `//pi/hitl/harness`:
+
+```starlark
+py_test(
+    name = "my_bench",
+    timeout = "eternal",                 # a flash + provision cycle runs minutes
+    srcs = ["my_bench.py"],
+    data = [
+        "//firmware/player_app:esp32c6_flashbundle",  # flashed onto the DUT
+        "//pi/hitl/cmd/hitl",                         # the reserve/flash/tunnel CLI
+        # + any effect .fx / fx_compile / fixtures your test drives
+    ],
+    imports = ["."],
+    main = "my_bench.py",
+    tags = ["manual", "hitl"],           # `manual` keeps it out of `bazel test //...`;
+    deps = [                             # `hitl` puts it in the lane above
+        ":harness",       # Reservation + provision + the runfiles helpers
+        "//pi/server",    # server.proto_wire — the player-socket wire codec
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+```
+
+In the test body, reuse the harness rather than reimplementing the rig dance
+(see `fx_bench.py` / `uniform_bench.py` for the full shape):
+
+- `hitl_client.Reservation(server, owner).acquire()` reserves a **free** rig from
+  the pool (owner defaults to `$HITL_OWNER`; rig selection is automatic via
+  tailnet tag discovery). Always `release()` in a `finally`.
+- flash the bundle (`res.scp_to` + `res.ssh("hitl-flash …")`), then
+  `provision.provision_dut(res, ssid, password, …)` (SSID/PSK default to the
+  rig's own AP via `res.wifi()`), then `res.forward(host, port)` to tunnel the
+  DUT's player socket to a localhost port.
+- drive it over the WebSocket with `server.proto_wire.encode_client` /
+  `decode_server`; retry the initial connect+hello until a settle deadline (a
+  just-provisioned board drops the first socket while its servers rebind).
+- exit non-zero to fail. Keep the pass/fail + math **pure** in a `_core.py`
+  module and unit-test it in `//pi/hitl/tests` (globbed into `hitl_test`), so the
+  verdict logic is covered without hardware.
+
+Accept a `--device-ws` override to skip reserve/flash/provision and hit an
+already-reachable board directly — handy for a fast local one-off.
+
 ## What's in the container
 
 `esptool` (+ `espefuse`/`espsecure`), `hitl-flash`, `hitl-monitor`, `python3`
