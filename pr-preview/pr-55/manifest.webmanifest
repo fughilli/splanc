@@ -1,6 +1,6 @@
 {
-  "name": "LED Mapper",
-  "short_name": "LED Mapper",
+  "name": "Splanc",
+  "short_name": "Splanc",
   "description": "Map, control, and animate addressable LED fixtures from your phone.",
   "id": "./",
   "start_url": "./?source=pwa",
@@ -13,21 +13,15 @@
   "categories": ["utilities", "productivity"],
   "icons": [
     {
-      "src": "./icons/icon-192.png",
-      "sizes": "192x192",
-      "type": "image/png",
+      "src": "./icons/app-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
       "purpose": "any"
     },
     {
-      "src": "./icons/icon-512.png",
-      "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any"
-    },
-    {
-      "src": "./icons/icon-maskable-512.png",
-      "sizes": "512x512",
-      "type": "image/png",
+      "src": "./icons/app-icon-maskable.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
       "purpose": "maskable"
     }
   ]
