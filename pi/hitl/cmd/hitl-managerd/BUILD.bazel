@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/fughilli/splanc/pi/hitl/cmd/hitl-managerd",
     visibility = ["//visibility:private"],
     deps = [
+        "//pi/hitl/internal/analyzer",
         "//pi/hitl/internal/ap",
         "//pi/hitl/internal/api",
         "//pi/hitl/internal/queue",

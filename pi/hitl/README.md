@@ -31,6 +31,31 @@ bazel run //pi/hitl:hitl.deploy_live -- hitl-rig              # or push to a run
 
 (On macOS, start the builder first: `bazel run @sbc_deploy//:linux_builder`.)
 
+### Logic-analyzer rig variant (Pi 3 + shared FX2)
+
+`//pi/hitl:hitl_la.*` is the same rig built for a **Raspberry Pi 3B**
+(`hitl-la-rig`) with an FX2/fx2lafw logic analyzer tapping the DUT's WS2812 DIN,
+for LED-driver correctness / latency tests. Same targets, `hitl_la` instead of
+`hitl`:
+
+```sh
+bazel run //pi/hitl:hitl_la.image_sd    -- --device /dev/diskN
+bazel run //pi/hitl:hitl_la.deploy_live -- hitl-la-rig
+```
+
+The FX2 is a **shared, daemon-owned instrument** (its channels tap a couple per
+DUT), so inside a reservation you capture + decode the wire with:
+
+```sh
+hitl-capture               # decode this DUT's LED line -> "idx: #rrggbb"
+hitl-capture --json --sr /tmp/cap.sr   # raw pixels + a .sr for PulseView
+```
+
+Wiring: share ground, and tap the **3.3 V** side of the DIN (or level-shift) — the
+FX2 clone's inputs aren't reliably 5 V tolerant. See DESIGN.md "Logic-analyzer
+rig". The correctness suite is `//pi/hitl/harness:led_capture` (manual+hitl); the
+pattern/pixel + WS2812 decode contracts are unit-tested off hardware.
+
 ## Status — MVP scaffold
 
 Working & verified here: the Go daemon + CLI (compile, vet), the reservation
@@ -99,12 +124,16 @@ pi/hitl/
   cmd/hitl-managerd/   # Pi-side reservation daemon (Go)
   cmd/hitl/            # agent CLI (Go)
   internal/{api,queue,runner,pool,tailnet}/
+  internal/analyzer/   # shared logic-analyzer broker (sigrok capture + decode)
   harness/             # Python e2e driver + thin hitl-CLI client (FUG-33)
-  tests/               # pure-logic unit tests (codec/sync)
+    led_pattern.py     # known-pattern + expected-pixel helpers (pure)
+    hitl_led_capture.py# on-hardware LED correctness test (manual+hitl)
+  tests/               # pure-logic unit tests (codec/sync/led-pattern)
   nix/
     packages.nix       # buildGoModule -> bin/hitl{,-managerd}
-    container.nix      # dockerTools test container (sshd + ESP toolbox)
-    hitl-app.nix       # NixOS: podman, tailscale, usbip, the daemon
+    container.nix      # dockerTools test container (sshd + ESP toolbox + hitl-capture)
+    hitl-app.nix       # NixOS: podman, tailscale, usbip, the daemon, (Pi3) sigrok
+    sigrok.nix         # host sigrok-cli + fx2lafw firmware (logic-analyzer rig)
   flake.nix            # mkSbcProject + packages.<system>.hitl
-  BUILD.bazel          # sbc_application(name = "hitl", …)
+  BUILD.bazel          # sbc_application "hitl" (Pi 5) + "hitl_la" (Pi 3 + FX2)
 ```

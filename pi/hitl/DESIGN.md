@@ -117,6 +117,46 @@ non-hardware reservations still come up. See `internal/runner/usbport.go`.
 Remaining hardware caveats (shared single resources, follow-ups): BLE shares the
 one host Bluetooth radio, and the provisioning AP is still rig-level.
 
+## Logic-analyzer rig (shared FX2 capture)
+
+A second rig **variant** adds LED-wire correctness/latency testing: a Raspberry
+Pi 3B (`//pi/hitl:hitl_la`, `board = raspberry-pi-3`, hostname `hitl-la-rig`) with
+an **FX2/fx2lafw "Saleae clone"** 24 MHz logic analyzer tapping the DUT's WS2812
+DIN. It closes the gap flagged in `pi/led_driver/README.md`, `docs/decisions.md`,
+and `docs/runbook.md`: real cadence/wire correctness "needs a logic analyzer on a
+bench — cannot be done in CI."
+
+The analyzer is a **rig-level SHARED instrument**, not a per-container device — so
+one cheap FX2 (8 channels) taps a couple of channels on each of several DUTs
+instead of one-analyzer-per-DUT:
+
+- **The daemon owns the FX2** (`internal/analyzer`). It never enters a container.
+  A `Broker` serializes captures on the single instrument (one `sync.Mutex`) and
+  maps each DUT name → its channel subset + wire protocol (a `--analyzer-channel-map`
+  JSON). So `internal/runner`'s per-DUT raw-USB isolation is **unchanged**.
+- **Container agents request captures over the API.** `POST /capture {device}`
+  runs a triggered `sigrok-cli` capture scoped to that DUT's channels, decodes it
+  (`rgb_led_ws281x` for WS2812, `rgb_led_spi` stacked on `spi` for APA102/SK9822 —
+  both mainline decoders in libsigrokdecode ≥0.5.3), and returns the pixels. The
+  `hitl-capture` toolbox tool is a thin client to it (`$HITL_CAPTURE_SERVER` =
+  `host.containers.internal:<apiPort>`, injected by the runner).
+- **One flake, two boards.** sbc-deploy injects the board via `$SBC_BOARD` at eval,
+  so `nix/hitl-app.nix` keys its sigrok closure + capture flags + FX2 udev rules on
+  `$SBC_BOARD == "raspberry-pi-3"` (`lib.optionals isAnalyzerRig …`). The Pi 5 rig
+  image stays lean (no sigrok); the same appModule yields the capture-enabled Pi 3.
+
+Decode is verified with **no hardware**: `internal/analyzer` synthesizes a WS2812
+`.sr` and runs the real `sigrok-cli` decode path over it in a Go test (skips if
+`sigrok-cli` is absent). The drive/expected-pixel contract is a pure unit test
+(`//pi/hitl/tests:hitl_test` `test_led_pattern.py`); the on-hardware
+reserve→flash→drive→capture→assert loop is `//pi/hitl/harness:led_capture`
+(`manual`+`hitl`). Wiring caveat: the FX2 clone's inputs aren't reliably 5 V
+tolerant — tap the 3.3 V side of the DIN or level-shift, and share ground.
+
+Latency is scaffolded (`CaptureResult.TriggerSample`/`SampleRate`); a full E2E
+number needs the stimulus and the capture co-timed in one clock (route the "show
+pattern" command through the daemon) — a hardware-gated follow-up.
+
 ## Packaging
 
 - **Go** → `nix/packages.nix` (`buildGoModule`, `vendorHash = null` since
