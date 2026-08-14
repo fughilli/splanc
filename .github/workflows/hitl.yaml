@@ -68,6 +68,12 @@ jobs:
       HITL_WIFI_PASS: ${{ secrets.HITL_WIFI_PASS }}
       # `server` input only exists on workflow_dispatch; empty on pull_request.
       SERVER: ${{ github.event.inputs.server }}
+      # Optional Grafana Cloud Loki push of the run's pass/fail (FUG-117). Unset
+      # in the HITL environment = the push step no-ops; see
+      # pi/hitl/observability/README.md ("Reporting from GitHub").
+      GRAFANA_CLOUD_LOKI_URL: ${{ secrets.GRAFANA_CLOUD_LOKI_URL }}
+      GRAFANA_CLOUD_LOKI_USER: ${{ secrets.GRAFANA_CLOUD_LOKI_USER }}
+      GRAFANA_CLOUD_LOKI_KEY: ${{ secrets.GRAFANA_CLOUD_LOKI_KEY }}
     steps:
       - name: Setup repository
         uses: actions/checkout@v4
@@ -136,6 +142,7 @@ jobs:
       #   - timeout=eternal on the targets covers the multi-minute flash+provision.
       # -c opt so the firmware build matches the firmware CI job.
       - name: Discover and run the HITL test suite
+        id: run_hitl
         # FUG-84: serialize Bazel's repository-rule evaluation for this build.
         # The flash-bundle realizes several Nix-provided toolchains (ESP32-C6 +
         # Arduino core) through rules_nixpkgs *repository rules*, each of which
@@ -171,3 +178,16 @@ jobs:
             --test_env=HITL_WIFI_PASS \
             --test_env=HITL_OWNER \
             "${server_arg[@]}"
+
+      # Report the run's pass/fail to Grafana Cloud (optional; no-op without the
+      # GRAFANA_CLOUD_LOKI_* secrets). always() so a failed suite is reported too.
+      - name: Report result to Grafana
+        if: always()
+        run: |
+          result=pass
+          [ "${{ steps.run_hitl.outcome }}" = "success" ] || result=fail
+          pi/hitl/observability/push-ci-metrics.sh \
+            --result "$result" \
+            --job hitl-suite \
+            --pr "${{ github.event.pull_request.number }}" \
+            --commit "${{ github.sha }}"
