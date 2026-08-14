@@ -8,12 +8,13 @@
  * `SocketFactory`, so the whole client state machine runs unchanged — only the
  * transport underneath changes, exactly like the BLE Improv path.
  *
- * `@capacitor/core` and the plugin are loaded lazily (dynamic import inside the
- * factory), so the browser PWA bundle pulls in none of this; `nativeSocketFactory`
- * returns undefined off-native, and `LedMapperClient` falls back to `WebSocket`.
+ * The plugin is bound through the injected Capacitor global (registerNativePlugin,
+ * no @capacitor/core import), so the browser PWA bundle pulls in none of this;
+ * `nativeSocketFactory` returns undefined off-native, and `LedMapperClient` falls
+ * back to `WebSocket`.
  */
 
-import { isNativePlatform } from "./native";
+import { isNativePlatform, registerNativePlugin } from "./native";
 import type { SocketFactory, SocketLike } from "./client";
 
 interface WssEvent {
@@ -32,22 +33,15 @@ interface WssBridgePlugin {
   addListener(event: "wssEvent", cb: (e: WssEvent) => void): Promise<{ remove(): Promise<void> }>;
 }
 
-// Bind to the native plugin lazily. `@capacitor/core` is dynamically imported so
-// it never enters the PWA bundle (this file is reached only when the factory is
-// used on-native); registerPlugin returns a proxy backed by the global Capacitor
-// bridge that only dispatches to native when a method is actually called. The
-// proxy is cached in `bridge` once resolved, so the synchronous send()/close()
-// paths (only reached after a socket has connected) can use it directly.
-let bridgeP: Promise<WssBridgePlugin> | null = null;
+// Bind to the native plugin via the injected Capacitor global (see
+// registerNativePlugin) — synchronously, and cached. registerPlugin returns a
+// proxy that only dispatches to native when a method is actually called, so this
+// is cheap. (Reached only on-native: nativeSocketFactory gates on
+// isNativePlatform.)
 let bridge: WssBridgePlugin | null = null;
-function getBridge(): Promise<WssBridgePlugin> {
-  if (!bridgeP) {
-    bridgeP = import("@capacitor/core").then(({ registerPlugin }) => {
-      bridge = registerPlugin<WssBridgePlugin>("WssBridge");
-      return bridge;
-    });
-  }
-  return bridgeP;
+function wssBridge(): WssBridgePlugin {
+  if (!bridge) bridge = registerNativePlugin<WssBridgePlugin>("WssBridge");
+  return bridge;
 }
 
 // One shared event listener dispatches `wssEvent`s by socket id. Events can arrive
@@ -58,18 +52,16 @@ const buffered = new Map<string, WssEvent[]>();
 let listenP: Promise<void> | null = null;
 function ensureListener(): Promise<void> {
   if (!listenP) {
-    listenP = getBridge()
-      .then((b) =>
-        b.addListener("wssEvent", (e) => {
-          const s = sockets.get(e.id);
-          if (s) s.handle(e);
-          else {
-            const q = buffered.get(e.id) ?? [];
-            q.push(e);
-            buffered.set(e.id, q);
-          }
-        }),
-      )
+    listenP = wssBridge()
+      .addListener("wssEvent", (e) => {
+        const s = sockets.get(e.id);
+        if (s) s.handle(e);
+        else {
+          const q = buffered.get(e.id) ?? [];
+          q.push(e);
+          buffered.set(e.id, q);
+        }
+      })
       .then(() => undefined);
   }
   return listenP;
@@ -101,7 +93,7 @@ class NativeSocket implements SocketLike {
   constructor(url: string) {
     void (async () => {
       try {
-        const b = await getBridge();
+        const b = wssBridge();
         await ensureListener();
         const { id } = await b.connect({ url });
         this.id = id;
@@ -143,19 +135,20 @@ class NativeSocket implements SocketLike {
   }
 
   send(data: string | Uint8Array): void {
-    // The client only sends after onopen, so id (and thus the bridge) is set.
-    if (this.id == null || !bridge) return;
-    if (typeof data === "string") void bridge.send({ id: this.id, data, binary: false });
-    else void bridge.send({ id: this.id, data: bytesToB64(data), binary: true });
+    // The client only sends after onopen, so id is set.
+    if (this.id == null) return;
+    const b = wssBridge();
+    if (typeof data === "string") void b.send({ id: this.id, data, binary: false });
+    else void b.send({ id: this.id, data: bytesToB64(data), binary: true });
   }
 
   close(): void {
     this.closed = true;
     this.readyState = SOCK_CLOSED;
-    if (this.id && bridge) {
+    if (this.id) {
       const id = this.id;
       sockets.delete(id);
-      void bridge.close({ id });
+      void wssBridge().close({ id });
     }
   }
 }
