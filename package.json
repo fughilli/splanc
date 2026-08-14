@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "LED Mapper — pnpm workspace root.",
-  "license": "UNLICENSED",
+  "license": "AGPL-3.0-only",
   "engines": {
     "node": ">=20",
     "pnpm": ">=10"
