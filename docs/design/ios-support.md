@@ -148,7 +148,26 @@ network stack and can do better:
   viable "program the device from an iPhone" path given §3.1. This is primarily a **firmware**
   feature; file it as its own track and treat the app side as a thin uploader.
 
-### 4.4 Distribution & CI
+### 4.4 Native voice input (Acid Mode)
+
+Acid Mode (`ui/acid/`) is voice-driven, but WKWebView is a dead end for the Web Speech API:
+`webkitSpeechRecognition` exists yet aborts immediately with no transcript (verified on-device:
+`onaudiostart` → `onerror "aborted"` → `onend`, no result) — it only works in Safari proper. So
+on iOS the mic runs natively:
+
+- A first-party Capacitor plugin **`@splanc/speech-bridge`** (`web/native-plugins/speech-bridge/`,
+  same SPM shape as the cert bridge) wraps `SFSpeechRecognizer`, streaming interim transcripts
+  back to JS via `partialResults` / `listeningState` events. Its recognition core is adapted from
+  the MIT `@capacitor-community/speech-recognition`, which ships only a CocoaPods podspec and so
+  can't join our SPM-based project.
+- `ui/acid/voice.ts` binds it through `registerPlugin("SpeechBridge")` and adapts it to the SAME
+  `VoiceSession` seam the browser path uses, so Acid Mode's UI is unchanged. `voiceSupported()` is
+  true on iOS native (plugin) and on browsers with the Web Speech API; elsewhere Acid Mode falls
+  back to its text box.
+- Needs `NSMicrophoneUsageDescription` + `NSSpeechRecognitionUsageDescription` (applied by
+  `ios-config/apply.sh`).
+
+### 4.5 Distribution & CI
 
 - Apple Developer Program account; app signing; TestFlight for beta, App Store for GA.
 - Xcode build in CI (the web build stays Bazel/Vite; the iOS wrap is a separate lane).

@@ -132,32 +132,42 @@ export function installShakeToEnter(
     if (detector.update({ x: a.x, y: a.y, z: a.z }, t)) onShake();
   };
 
-  const addListener = (): void => {
-    if (!disposed) window.addEventListener("devicemotion", onMotion);
+  let attached = false;
+  const attach = (): void => {
+    if (disposed || attached) return;
+    attached = true;
+    window.addEventListener("devicemotion", onMotion);
   };
 
-  // iOS gates the sensor behind a permission that can only be requested from a
-  // user gesture — hook the first interaction, ask, and attach on grant.
+  // iOS 13+ gates the sensor behind DeviceMotionEvent.requestPermission(), which
+  // must be called from a user gesture. WebKit only accepts a `click` here — a
+  // `pointerdown`/`touchstart` throws NotAllowedError ("Requesting device motion
+  // access requires a user gesture to prompt"), which is why the earlier
+  // pointerdown wiring silently never attached (verified on-device). Ask on each
+  // click and stop once granted; a dismissed/denied prompt must NOT permanently
+  // kill detection, so keep listening for the next click rather than giving up.
   const perm = window.DeviceMotionEvent as unknown as MotionPermission;
   if (typeof perm.requestPermission === "function") {
-    const onFirstGesture = (): void => {
-      window.removeEventListener("pointerdown", onFirstGesture);
+    const onGesture = (): void => {
       perm
         .requestPermission!()
         .then((res) => {
-          if (res === "granted") addListener();
+          if (res === "granted") {
+            window.removeEventListener("click", onGesture);
+            attach();
+          }
         })
-        .catch(() => undefined);
+        .catch(() => undefined); // not a valid gesture / dismissed — retry next click
     };
-    window.addEventListener("pointerdown", onFirstGesture, { once: true });
+    window.addEventListener("click", onGesture);
     return () => {
       disposed = true;
-      window.removeEventListener("pointerdown", onFirstGesture);
+      window.removeEventListener("click", onGesture);
       window.removeEventListener("devicemotion", onMotion);
     };
   }
 
-  addListener();
+  attach();
   return () => {
     disposed = true;
     window.removeEventListener("devicemotion", onMotion);
