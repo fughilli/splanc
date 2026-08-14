@@ -47,6 +47,13 @@ const CSS = `
 .perf-readout-label { font-size:11px; color:var(--text-dim); }
 .perf-readout-val { font-size:15px; font-weight:600; font-variant-numeric:tabular-nums; }
 .perf-actions { display:flex; gap:var(--sp-2); margin-top:var(--sp-2); }
+.perf-fps { display:flex; align-items:center; gap:var(--sp-2); }
+.perf-fps-label { font-size:13px; color:var(--text-dim); }
+.perf-fps-select { font-size:14px; padding:4px 8px; border-radius:var(--radius-2,6px);
+  background:var(--surface-2); color:var(--text); border:1px solid var(--border,transparent); }
+.perf-fps-select:disabled { opacity:.5; }
+.perf-fps-now { margin-left:auto; font-size:14px; font-weight:600;
+  font-variant-numeric:tabular-nums; color:var(--text-dim); }
 .calib-progress { margin:var(--sp-3) 0; }
 .calib-bar { height:8px; border-radius:999px; background:var(--surface-2); overflow:hidden; }
 .calib-bar-fill { height:100%; background:var(--accent); transition:width .2s var(--ease,ease); }

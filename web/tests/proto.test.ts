@@ -148,6 +148,52 @@ test("set_brightness round-trips + welcome carries the brightness echo", () => {
   assert.equal(back.brightness, 0.5);
 });
 
+test("set_fps / fps_state round-trip (FUG-82 autoscaler arms)", () => {
+  // These arms aren't in the checked-in @ledmapper/protocol flat union yet (like
+  // the perf arms), so the encode/decode helpers are reached through `unknown`.
+  type CMsg = Parameters<typeof encodeClient>[0];
+  type SMsg = Parameters<typeof encodeServer>[0];
+
+  // Client override: pin a rate.
+  const pin = { type: "set_fps", targetFps: 60 } as const;
+  assert.deepEqual(decodeClient(encodeClient(pin as unknown as CMsg)), pin);
+  // Back to autoscale (targetFps 0). proto3 zeroes are implicit on the wire, so
+  // decode fills the default 0 back in.
+  const auto = { type: "set_fps", targetFps: 0 } as const;
+  assert.deepEqual(decodeClient(encodeClient(auto as unknown as CMsg)), auto);
+
+  // Server fps_state (reply + unsolicited abort push).
+  const state = {
+    type: "fps_state",
+    targetFps: 0,
+    currentFps: 45,
+    minFps: 25,
+    maxFps: 80,
+    auto: true,
+    aborted: false,
+  } as const;
+  const back = decodeServer(encodeServer(state as unknown as SMsg)) as unknown as typeof state;
+  assert.equal(back.currentFps, 45);
+  assert.equal(back.minFps, 25);
+  assert.equal(back.maxFps, 80);
+  assert.equal(back.auto, true);
+  assert.equal(back.aborted, false);
+
+  const aborted = {
+    type: "fps_state",
+    targetFps: 70,
+    currentFps: 25,
+    minFps: 25,
+    maxFps: 80,
+    auto: false,
+    aborted: true,
+  } as const;
+  const back2 = decodeServer(encodeServer(aborted as unknown as SMsg)) as unknown as typeof aborted;
+  assert.equal(back2.targetFps, 70);
+  assert.equal(back2.aborted, true);
+  assert.equal(back2.auto, false);
+});
+
 test("TS re-encode of every golden decodes back to the same object", () => {
   for (const f of frames) {
     if (f.direction === "client") {
