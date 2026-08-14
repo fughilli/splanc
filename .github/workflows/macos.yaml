@@ -70,7 +70,21 @@ jobs:
           restore-keys: bazel-disk-macos-test-
 
       - name: Test
-        run: bazel test //... --disk_cache="$HOME/.cache/bazel-disk" --test_output=errors
+        # Serialize Bazel's repo-rule evaluation (FUG-84): `//...` realizes
+        # nixpkgs-provided toolchains (e.g. the HTML minifier for
+        # //firmware/landing) through rules_nixpkgs *repository rules*, each
+        # shelling out to `nix build`. Nix is installed single-user (no daemon),
+        # so nothing serializes store writes; Bazel's default async repo fetching
+        # runs those concurrently and they collide on the store's SQLite lock
+        # ("database … is busy"). `=off` + one loading thread realize them one at
+        # a time (the compile/execution phase still parallelizes). Same fix the
+        # firmware + HITL lanes use.
+        run: |
+          bazel test //... \
+            --experimental_worker_for_repo_fetching=off \
+            --loading_phase_threads=1 \
+            --disk_cache="$HOME/.cache/bazel-disk" \
+            --test_output=errors
 
   ios-build:
     runs-on: macos-latest
