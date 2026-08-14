@@ -94,7 +94,7 @@ export function AcidModeScreen(router: Router): Screen {
   const midiRouter = new MidiRouter((u) => {
     preview?.setUniform(u.slot, u.value);
     const c = appState.client;
-    if (c?.isConnected) void c.setUniforms([{ slot: u.slot, value: u.value }]).catch(() => undefined);
+    if (c?.isConnected) c.setUniforms([{ slot: u.slot, value: u.value }]);
   });
   midiRouter.setEffect(ACID_EFFECT_ID);
 
@@ -321,7 +321,7 @@ export function AcidModeScreen(router: Router): Screen {
       try {
         await c.submitEffect(ACID_EFFECT_ID, r.bytecode, true);
         const defaults = r.uniforms.map((u) => ({ slot: u.slot, value: u.default }));
-        if (defaults.length > 0) await c.setUniforms(defaults);
+        if (defaults.length > 0) c.setUniforms(defaults);
         deviceNote = "uploaded + now playing on your device";
         appendMsg("think", "📤 Sent it to your lights");
       } catch (e) {
@@ -442,6 +442,9 @@ export function AcidModeScreen(router: Router): Screen {
     }
     if (mapView === null) {
       mapView = new MapView(canvas, map);
+      // Acid Mode is a full-screen immersive visual — drop the solver-stats
+      // footer + "drag orbit …" hint regardless of the Appearance default.
+      mapView.showStats = false;
       mapView.setLedColors(new Uint8Array(map.leds.length * 3));
       mapView.start();
     } else {

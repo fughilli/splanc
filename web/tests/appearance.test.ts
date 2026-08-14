@@ -41,6 +41,7 @@ test("default render settings match MapView's original constants", () => {
     glow: 1,
     showGrid: false,
     showTriad: false,
+    showStats: true,
   });
 });
 

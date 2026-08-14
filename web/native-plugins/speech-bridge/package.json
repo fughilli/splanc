@@ -1,0 +1,16 @@
+{
+  "name": "@splanc/speech-bridge",
+  "version": "0.0.1",
+  "description": "Native SFSpeechRecognizer bridge for Acid Mode voice input (docs/design/ios-support.md §4.4).",
+  "license": "UNLICENSED",
+  "private": true,
+  "capacitor": {
+    "ios": {
+      "src": "ios"
+    }
+  },
+  "files": [
+    "ios/Sources",
+    "Package.swift"
+  ]
+}

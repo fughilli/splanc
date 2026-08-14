@@ -18,6 +18,13 @@ Idempotently sets the `Info.plist` permission usage strings via `PlistBuddy`:
 
 …and overwrites Capacitor's default app icon with the Splanc logo.
 
+It also patches the generated `AppDelegate.swift` to set
+`application.applicationSupportsShakeToEdit = false`, disabling iOS's system
+"Shake to Undo" gesture — otherwise a shake pops the Undo/Redo alert and hijacks
+Acid Mode's own shake-to-enter gesture (`web/src/ui/acid/shake.ts`). The patch is
+idempotent and warns (rather than silently no-op) if the
+`didFinishLaunchingWithOptions` anchor isn't found after a Capacitor upgrade.
+
 Run automatically as the `ios-config` step of the `bootstrap` chain, right after
 `cap add ios`. To re-apply by hand on the host:
 

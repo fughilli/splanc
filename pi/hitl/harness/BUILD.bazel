@@ -29,6 +29,7 @@ py_library(
         "mapping_trigger_core.py",
         "provision.py",
         "sync.py",
+        "uniform_bench_core.py",
         "video_bench_core.py",
     ],
     imports = ["."],
@@ -246,6 +247,38 @@ py_test(
     ],
     imports = ["."],
     main = "hitl_video_stream.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# Uniform-update drop-rate / bandwidth bench (FUG: slider drags losing the final
+# value). Reserves a rig, flashes + provisions the DUT, then blasts N set_uniforms
+# and confirms the device processed all of them (playback_state reply per message
+# + an ordered get_effect_uniforms barrier) while measuring bandwidth — proving
+# the transport isn't the loss. Like :e2e / :fx_bench it's a manual+hitl py_test
+# (needs a rig + board); the pure summary/verdict logic (uniform_bench_core) is
+# unit-tested in //pi/hitl/tests. --device-ws hits an already-reachable board
+# directly. Rides the flash-bundle + hitl CLI + probe .fx + fx_compile in runfiles.
+py_test(
+    name = "uniform_bench",
+    timeout = "eternal",
+    srcs = ["uniform_bench.py"],
+    data = [
+        "uniform_bench_probe.fx",
+        "//firmware/player_app:esp32c6_flashbundle",
+        "//fx_compiler:fx_compile",
+        "//pi/hitl/cmd/hitl",
+    ],
+    imports = ["."],
+    main = "uniform_bench.py",
     tags = [
         "hitl",
         "manual",

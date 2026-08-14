@@ -51,6 +51,8 @@ TYPE_DEPS = [
     # net/capacitorImprov.ts type-imports the BLE plugin (and its types reference
     # @capacitor/core). Runtime code loads the plugin via a lazy dynamic import,
     # so these are type-only for the app + test compiles; no test requires them.
+    # (The first-party wss-bridge / speech-bridge plugins carry no TS — they're
+    # bound at runtime via @capacitor/core's registerPlugin.)
     ":node_modules/@capacitor-community/bluetooth-le",
     ":node_modules/@capacitor/core",
     ":node_modules/@ledmapper/protocol",
@@ -250,14 +252,16 @@ vite_bin.vite(
         ":node_modules/vite",
         ":node_modules/web-serial-polyfill",
         # Capacitor native-wrapper packages (docs/design/ios-support.md §4.2–4.3).
-        # net/nativeSocket.ts + net/capacitorImprov.ts reach these ONLY through
-        # `await import(...)`, so Rolldown emits them as separate chunks that the
-        # browser PWA never loads (the importers are guarded by isNativePlatform).
-        # They must still be present here for Rolldown to resolve + bundle those
-        # chunks — the WKWebView loads them off the packaged dist on native, where
-        # bare specifiers wouldn't resolve. Without them the eager import graph
-        # (state.ts → nativeSocket) can't resolve @capacitor/core and the build
-        # fails outright.
+        # net/nativeSocket.ts + net/capacitorImprov.ts + ui/acid/voice.ts reach
+        # these ONLY through `await import(...)`, so Rolldown emits them as
+        # separate chunks that the browser PWA never loads (the importers are
+        # guarded by isNativePlatform/isIosNative). They must still be present
+        # here for Rolldown to resolve + bundle those chunks — the WKWebView loads
+        # them off the packaged dist on native, where bare specifiers wouldn't
+        # resolve. Without them the eager import graph (state.ts → nativeSocket)
+        # can't resolve @capacitor/core and the build fails outright. (The
+        # first-party wss-bridge / speech-bridge plugins are bound via @capacitor/
+        # core's registerPlugin, so they need no entry of their own here.)
         ":node_modules/@capacitor-community/bluetooth-le",
         ":node_modules/@capacitor/core",
     ],

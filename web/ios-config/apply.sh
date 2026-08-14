@@ -11,10 +11,30 @@ set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
 plist="${here}/../ios/App/App/Info.plist"
+appdelegate="${here}/../ios/App/App/AppDelegate.swift"
 pb=/usr/libexec/PlistBuddy
 
 [ -f "$plist" ] || { echo "no Info.plist at $plist — run 'cap add ios' first" >&2; exit 1; }
 [ -x "$pb" ]    || { echo "PlistBuddy not found — this must run on macOS" >&2; exit 1; }
+
+# --- Disable the system "Shake to Undo" gesture. iOS binds a device shake to the
+# Undo/Redo alert, which hijacks Acid Mode's own shake-to-enter gesture
+# (web/src/ui/acid/shake.ts). Setting applicationSupportsShakeToEdit = false in
+# didFinishLaunchingWithOptions turns the system gesture off app-wide, leaving our
+# devicemotion handler as the sole responder. The ios/ tree is regenerated, so we
+# patch the fresh AppDelegate here (idempotently) rather than committing it.
+if [ -f "$appdelegate" ]; then
+  if grep -q applicationSupportsShakeToEdit "$appdelegate"; then
+    echo "AppDelegate: shake-to-undo already disabled"
+  else
+    perl -0pi -e 's/(func application\(_ application: UIApplication, didFinishLaunchingWithOptions[^\n]*\{\n)/$1        application.applicationSupportsShakeToEdit = false  \/\/ Splanc: keep Acid Mode shake gesture from triggering system Undo\n/' "$appdelegate"
+    if grep -q applicationSupportsShakeToEdit "$appdelegate"; then
+      echo "AppDelegate: disabled shake-to-undo"
+    else
+      echo "WARNING: could not patch $appdelegate — didFinishLaunchingWithOptions signature not found; shake-to-undo left enabled" >&2
+    fi
+  fi
+fi
 
 # --- App icon: overwrite Capacitor's default with the Splanc logo (same as the
 # PWA). The asset catalog uses one universal 1024×1024 image (AppIcon-512@2x.png,
@@ -53,5 +73,13 @@ set_str NSBluetoothPeripheralUsageDescription \
 # gates all local-network traffic behind this prompt).
 set_str NSLocalNetworkUsageDescription \
   "Splanc talks to your Splanc device directly on your local network to map fixtures and drive effects."
+# Microphone + speech recognition: Acid Mode's voice control (ui/acid/voice.ts)
+# drives the Web Speech API. In a WKWebView both strings are REQUIRED — without
+# them iOS denies the mic and SpeechRecognition errors with "not-allowed" (the
+# "Mic permission denied" the user sees), rather than prompting.
+set_str NSMicrophoneUsageDescription \
+  "Splanc uses the microphone so you can control lights hands-free with your voice in Acid Mode."
+set_str NSSpeechRecognitionUsageDescription \
+  "Splanc turns your spoken commands into lighting changes in Acid Mode."
 
 echo "ios-config applied."

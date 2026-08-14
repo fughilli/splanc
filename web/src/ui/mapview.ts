@@ -98,12 +98,14 @@ export class MapView {
     private readonly canvas: HTMLCanvasElement,
     private map: OutputMap,
   ) {
-    // The Appearance grid/triad settings are *defaults*: they seed the initial
-    // per-view state at construction, after which this.showGrid/showTriad own
-    // the decision (so a per-view toggle can turn an on-by-default overlay off).
+    // The Appearance grid/triad/stats settings are *defaults*: they seed the
+    // initial per-view state at construction, after which this.showGrid/
+    // showTriad/showStats own the decision (so a per-view toggle can turn an
+    // on-by-default overlay off — e.g. Acid Mode forces showStats off).
     const rs = renderSettings();
     this.showGrid = rs.showGrid;
     this.showTriad = rs.showTriad;
+    this.showStats = rs.showStats;
   }
 
   /** Swap in a newer map (live preview) without resetting the camera. */

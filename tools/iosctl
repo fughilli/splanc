@@ -12,7 +12,8 @@
 #   tools/iosctl rebuild                # web build → cap sync → xcodebuild
 #   tools/iosctl devices                # list connected devices + sims (UDIDs)
 #   tools/iosctl launch --target "iPhone 17"        # build + boot in the Simulator
-#   tools/iosctl launch --target 00008130-0011...   # build + install on your iPhone
+#   tools/iosctl launch --target 00008130-0011...   # build + install on your iPhone (USB)
+#   tools/iosctl deploy-device --target 00008130-0011...  # wireless: build+install+launch over Wi-Fi
 #   tools/iosctl run cap-sync,ios-build      # run specific task(s), in order
 #   tools/iosctl open                   # open the project in Xcode on the host
 #
@@ -65,7 +66,7 @@ case "$cmd" in
   run)    curl -fsSN "http://${server}/run?task=${task}${qs:+&$qs}" ;;
   devices) curl -fsSN "http://${server}/run?task=list-devices${qs:+&$qs}" ;;
   device-log|log) curl -fsSN "http://${server}/run?task=device-log${qs:+&$qs}" ;;
-  bootstrap|rebuild|launch|install|web-build|cap-add-ios|cap-sync|pod-install|ios-build|ios-run|list-sims|list-devices)
+  bootstrap|rebuild|launch|deploy-device|install|web-build|cap-add-ios|cap-sync|pod-install|ios-build|ios-run|device-build|device-install|device-launch|list-sims|list-devices)
           curl -fsSN "http://${server}/run?task=${cmd}${qs:+&$qs}" ;;
   *) echo "unknown command: $cmd" >&2; usage; exit 2 ;;
 esac

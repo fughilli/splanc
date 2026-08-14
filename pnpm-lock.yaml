@@ -40,6 +40,9 @@ importers:
       '@ledmapper/protocol':
         specifier: workspace:*
         version: link:../shared/protocol/ts
+      '@splanc/speech-bridge':
+        specifier: link:./native-plugins/speech-bridge
+        version: link:native-plugins/speech-bridge
       '@splanc/wss-bridge':
         specifier: link:./native-plugins/wss-bridge
         version: link:native-plugins/wss-bridge
