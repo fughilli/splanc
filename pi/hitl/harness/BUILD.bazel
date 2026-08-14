@@ -25,6 +25,7 @@ py_library(
         "hitl_client.py",
         "hitl_improv.py",
         "improv.py",
+        "led_pattern.py",
         "map_upload_core.py",
         "mapping_trigger_core.py",
         "provision.py",
@@ -58,6 +59,35 @@ py_test(
     ],
     imports = ["."],
     main = "hitl_e2e.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# On-hardware LED-driver correctness test (logic-analyzer rig): reserve, flash,
+# provision, drive a static counting pattern over the player WebSocket, then
+# `hitl-capture` the WS2812 wire via the rig's shared FX2 and assert the decoded
+# pixels match. Needs a logic-analyzer rig (Pi 3 + FX2 tapping the DUT's DIN), so
+# it's manual+hitl like :e2e; the pattern/pixel contract is unit-tested off
+# hardware in //pi/hitl/tests:hitl_test (test_led_pattern.py). The `hitl-capture`
+# tool itself is baked into the reservation container (nix/container.nix).
+py_test(
+    name = "led_capture",
+    timeout = "eternal",
+    srcs = ["hitl_led_capture.py"],
+    data = [
+        "//firmware/player_app:esp32c6_flashbundle",
+        "//pi/hitl/cmd/hitl",
+    ],
+    imports = ["."],
+    main = "hitl_led_capture.py",
     tags = [
         "hitl",
         "manual",
