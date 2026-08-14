@@ -115,6 +115,29 @@ test("connect sends hello and resolves on welcome", async () => {
   assert.ok(client.isConnected);
 });
 
+test("rapid setUniforms are all sent (fire-and-forget, not dropped by single-flight)", () => {
+  // Regression (uniform-drop bug): a slider drag fires many setUniforms before the
+  // device's playback_state reply arrives. setUniforms must be fire-and-forget —
+  // the old request()-based path REJECTED (and never sent) every call while a
+  // prior playback_state waiter was pending, so a drag lost all-but-the-first-per-
+  // reply-window, frequently including the final value. Fire several back-to-back
+  // with NO reply in between and assert every one reaches the wire, last value last.
+  const { client, sockets } = makeClient();
+  void client.connect();
+  const s = sockets[0]!;
+  s.open();
+  s.receive({ type: "welcome", sessionId: "s-1", codeParams: CODE_PARAMS, solverBenchMs: null });
+
+  const values = [0.1, 0.4, 0.7, 0.9, 0.734];
+  for (const v of values) client.setUniforms([{ slot: 3, value: [v] }]);
+
+  const sent = s.allSent().filter((m) => m.type === "set_uniforms");
+  assert.equal(sent.length, values.length, "every setUniforms reaches the socket");
+  const last = sent[sent.length - 1] as unknown as { values: Array<{ slot: number; value: number[] }> };
+  assert.equal(last.values[0]!.slot, 3);
+  assert.ok(Math.abs(last.values[0]!.value[0]! - 0.734) < 1e-4, "final value is sent last");
+});
+
 test("a re-welcome (set_device_name reply) resolves the request, doesn't re-connect", async () => {
   // After the firmware stopped restarting wss on rename, the socket stays up and
   // the device echoes a fresh `welcome` as the set_device_name REPLY. That must
