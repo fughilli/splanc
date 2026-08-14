@@ -465,3 +465,68 @@ func TestSyncDevicesEvictsIdleButDefersBusyDUT(t *testing.T) {
 		t.Fatalf("once released and still gone, c6-b should be pruned, got removed=%v", removed)
 	}
 }
+
+// Metrics reflects true per-DUT occupancy and queue depth (not the legacy
+// "idle whenever any DUT is free" summary), and its lifecycle counters advance
+// as reservations are enqueued, activated, released, and lease-expired.
+func TestMetricsSnapshot(t *testing.T) {
+	ctx := context.Background()
+	fr := &fakeRunner{}
+	m := New("rig", 30*time.Minute, fr, WithDevices([]runner.Device{
+		{Name: "c6-a", SSHPort: 2222},
+		{Name: "c6-b", SSHPort: 2223},
+	}))
+
+	// Three reservations: two fill both DUTs, the third queues behind them.
+	a := m.Reserve(ctx, api.ReserveRequest{Owner: "a", SSHPublicKey: "k"})
+	m.Reserve(ctx, api.ReserveRequest{Owner: "b", SSHPublicKey: "k"})
+	m.Reserve(ctx, api.ReserveRequest{Owner: "c", SSHPublicKey: "k"})
+
+	s := m.Metrics()
+	if s.DUTsTotal != 2 || s.DUTsBusy != 2 || s.ActiveTotal != 2 {
+		t.Errorf("occupancy = total %d busy %d active %d; want 2/2/2", s.DUTsTotal, s.DUTsBusy, s.ActiveTotal)
+	}
+	if s.QueueDepth != 1 {
+		t.Errorf("QueueDepth = %d, want 1 (the third, unassigned waiter)", s.QueueDepth)
+	}
+	if s.Reservations != 3 || s.Activations != 2 {
+		t.Errorf("counters: reservations %d activations %d; want 3/2", s.Reservations, s.Activations)
+	}
+	busy := map[string]bool{}
+	for _, d := range s.Devices {
+		busy[d.Name] = d.Busy
+	}
+	if !busy["c6-a"] || !busy["c6-b"] || len(s.Devices) != 2 {
+		t.Errorf("per-DUT busy = %+v, want both busy", s.Devices)
+	}
+
+	// Release one holder: the queued waiter is promoted onto the freed DUT, so the
+	// rig stays full but releases/activations advance.
+	if err := m.Release(ctx, a.ID, "done"); err != nil {
+		t.Fatal(err)
+	}
+	s = m.Metrics()
+	if s.DUTsBusy != 2 || s.QueueDepth != 0 {
+		t.Errorf("after release+promote: busy %d queue %d; want 2/0", s.DUTsBusy, s.QueueDepth)
+	}
+	if s.Releases != 1 || s.Activations != 3 {
+		t.Errorf("after release: releases %d activations %d; want 1/3", s.Releases, s.Activations)
+	}
+
+	// A lapsed lease is counted as both a release and a lease expiry: expire every
+	// active holder and reap.
+	m.mu.Lock()
+	for _, r := range m.items {
+		past := time.Now().Add(-time.Minute)
+		r.ExpiresAt = &past
+	}
+	m.mu.Unlock()
+	m.ReapExpired(ctx)
+	s = m.Metrics()
+	if s.LeaseExpiries != 2 {
+		t.Errorf("LeaseExpiries = %d, want 2", s.LeaseExpiries)
+	}
+	if s.DUTsBusy != 0 || s.ActiveTotal != 0 {
+		t.Errorf("after reaping all: busy %d active %d; want 0/0", s.DUTsBusy, s.ActiveTotal)
+	}
+}
