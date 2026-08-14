@@ -195,6 +195,17 @@ pieces close that gap:
   image/deploy/ssh targets. The `hitl` CLI is `packages.<system>.hitl` for
   agents to `nix run`/install.
 
+## Observability (FUG-117)
+
+`hitl-managerd` serves Prometheus metrics at `GET /metrics` (same port as the
+API): reservation-queue depth, per-DUT occupancy, reservation-lifecycle
+counters, and host CPU/memory/temperature. Because the rigs are tailnet-only
+(no inbound), a **Grafana Alloy** agent runs on each Pi and `remote_write`s the
+metrics _out_ to Grafana Cloud (free tier), where dashboards — kept as code in
+the repo and CI-synced — plot the fleet. CI job pass/fail is reported alongside
+(Grafana Cloud GitHub integration and/or an optional Loki push). Full design,
+metric catalog, and setup: [`observability/README.md`](./observability/README.md).
+
 ## USBIP (dev board → container)
 
 The ESP32-C6's USB is exported by `usbipd` on the Pi (`usbip-host`) and attached
