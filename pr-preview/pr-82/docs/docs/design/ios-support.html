@@ -490,8 +490,28 @@ viable “program the device from an iPhone” path given §3.1. This is primari
 feature; file it as its own track and treat the app side as a thin uploader.</p></li>
 </ul>
 </section>
+<section id="native-voice-input-acid-mode">
+<h3>4.4 Native voice input (Acid Mode)<a class="headerlink" href="#native-voice-input-acid-mode" title="Link to this heading">¶</a></h3>
+<p>Acid Mode (<code class="docutils literal notranslate"><span class="pre">ui/acid/</span></code>) is voice-driven, but WKWebView is a dead end for the Web Speech API:
+<code class="docutils literal notranslate"><span class="pre">webkitSpeechRecognition</span></code> exists yet aborts immediately with no transcript (verified on-device:
+<code class="docutils literal notranslate"><span class="pre">onaudiostart</span></code> → <code class="docutils literal notranslate"><span class="pre">onerror</span> <span class="pre">&quot;aborted&quot;</span></code> → <code class="docutils literal notranslate"><span class="pre">onend</span></code>, no result) — it only works in Safari proper. So
+on iOS the mic runs natively:</p>
+<ul class="simple">
+<li><p>A first-party Capacitor plugin <strong><code class="docutils literal notranslate"><span class="pre">&#64;splanc/speech-bridge</span></code></strong> (<code class="docutils literal notranslate"><span class="pre">web/native-plugins/speech-bridge/</span></code>,
+same SPM shape as the cert bridge) wraps <code class="docutils literal notranslate"><span class="pre">SFSpeechRecognizer</span></code>, streaming interim transcripts
+back to JS via <code class="docutils literal notranslate"><span class="pre">partialResults</span></code> / <code class="docutils literal notranslate"><span class="pre">listeningState</span></code> events. Its recognition core is adapted from
+the MIT <code class="docutils literal notranslate"><span class="pre">&#64;capacitor-community/speech-recognition</span></code>, which ships only a CocoaPods podspec and so
+can’t join our SPM-based project.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">ui/acid/voice.ts</span></code> binds it through <code class="docutils literal notranslate"><span class="pre">registerPlugin(&quot;SpeechBridge&quot;)</span></code> and adapts it to the SAME
+<code class="docutils literal notranslate"><span class="pre">VoiceSession</span></code> seam the browser path uses, so Acid Mode’s UI is unchanged. <code class="docutils literal notranslate"><span class="pre">voiceSupported()</span></code> is
+true on iOS native (plugin) and on browsers with the Web Speech API; elsewhere Acid Mode falls
+back to its text box.</p></li>
+<li><p>Needs <code class="docutils literal notranslate"><span class="pre">NSMicrophoneUsageDescription</span></code> + <code class="docutils literal notranslate"><span class="pre">NSSpeechRecognitionUsageDescription</span></code> (applied by
+<code class="docutils literal notranslate"><span class="pre">ios-config/apply.sh</span></code>).</p></li>
+</ul>
+</section>
 <section id="distribution-ci">
-<h3>4.4 Distribution &amp; CI<a class="headerlink" href="#distribution-ci" title="Link to this heading">¶</a></h3>
+<h3>4.5 Distribution &amp; CI<a class="headerlink" href="#distribution-ci" title="Link to this heading">¶</a></h3>
 <ul class="simple">
 <li><p>Apple Developer Program account; app signing; TestFlight for beta, App Store for GA.</p></li>
 <li><p>Xcode build in CI (the web build stays Bazel/Vite; the iOS wrap is a separate lane).</p></li>
@@ -610,7 +630,8 @@ path, with a thin app-side uploader.</p></li>
 <li><a class="reference internal" href="#why-capacitor-wkwebview-not-react-native-or-a-from-scratch-native-app">4.1 Why Capacitor (WKWebView), not React Native or a from-scratch native app</a></li>
 <li><a class="reference internal" href="#native-ble-improv-plugin">4.2 Native BLE Improv plugin</a></li>
 <li><a class="reference internal" href="#native-cert-bridge-removes-the-manual-cert-dance-ota-hook">4.3 Native cert bridge (removes the manual cert dance) + OTA hook</a></li>
-<li><a class="reference internal" href="#distribution-ci">4.4 Distribution &amp; CI</a></li>
+<li><a class="reference internal" href="#native-voice-input-acid-mode">4.4 Native voice input (Acid Mode)</a></li>
+<li><a class="reference internal" href="#distribution-ci">4.5 Distribution &amp; CI</a></li>
 </ul>
 </li>
 <li><a class="reference internal" href="#tier-0-ship-the-pwa-now-recommended-immediate-step">5. Tier 0 — ship the PWA now (recommended immediate step)</a></li>

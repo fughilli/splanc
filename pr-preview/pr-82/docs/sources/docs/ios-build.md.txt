@@ -108,4 +108,4 @@ a lazy dynamic import that only fires inside the native wrapper
   self-signed-cert accept; drops in behind `SocketFactory` in `net/client.ts`.
 - **OTA firmware update** (§4.3 / firmware track) — the only "program the device
   from an iPhone" path, since USB flashing is impossible on iOS (§3.1).
-- **Android wrapper + CI lane + TestFlight/App Store distribution** (§4.4).
+- **Android wrapper + CI lane + TestFlight/App Store distribution** (§4.5).
