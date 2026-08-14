@@ -57,3 +57,6 @@ venv/
 # --- Site Docs -----------------------------------------------------------
 # Generated site docs (bazel run //docs:build)
 /docs/site/
+
+# sbc-deploy local build gc-roots/logs (consumer side)
+.sbc-build/
