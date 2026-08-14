@@ -9,11 +9,11 @@
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_player_ffi::{
     FX_TOPO_CAP, lm_color_correction_commit, lm_color_correction_gen, lm_color_correction_params,
-    lm_counting_color, lm_envelope_arm,
-    lm_fx_load, lm_fx_set_active, lm_fx_shade, lm_fx_update, lm_led_count, lm_map_led, lm_map_len,
-    lm_osc_ingest, lm_osc_set_by_name, lm_pattern_color, lm_pattern_timing, lm_perf_build_report,
-    lm_perf_interval_ms, lm_perf_mode,
-    lm_perf_push, lm_player_handle, lm_player_init, lm_player_set_build_info,
+    lm_counting_color, lm_envelope_arm, lm_fps_build_state, lm_fps_current_fps, lm_fps_on_frame,
+    lm_fps_take_abort_notify, lm_fx_load, lm_fx_set_active, lm_fx_shade, lm_fx_update, lm_led_count,
+    lm_map_led, lm_map_len, lm_osc_ingest, lm_osc_set_by_name, lm_pattern_color, lm_pattern_timing,
+    lm_perf_build_report, lm_perf_interval_ms, lm_perf_mode, lm_perf_push, lm_player_handle,
+    lm_player_init, lm_player_set_build_info,
 };
 use micropb::{MessageDecode, MessageEncode, PbEncoder};
 use pb::ClientMessage_::Msg as CMsg;
@@ -442,7 +442,11 @@ fn full_device_flow_through_the_c_abi() {
         panic!("perf_report expected from set_perf");
     };
     assert_eq!(rep0.r#cpu_hz, 160_000_000);
-    assert_eq!(rep0.r#budget_cycles, (160_000_000 / 1000) * 33);
+    // FUG-82: budget_cycles now tracks the autoscaler's live target FPS
+    // (cpu_hz / current_fps), which defaults to 30 fps for a fresh controller,
+    // and current_fps is surfaced alongside it.
+    assert_eq!(rep0.r#current_fps, 30);
+    assert_eq!(rep0.r#budget_cycles, 160_000_000 / 30);
     assert_eq!(rep0.r#ticks.len(), 0, "ring empty right after set_perf");
     assert_eq!(unsafe { lm_perf_mode() }, 2, "FULL latched");
     assert_eq!(unsafe { lm_perf_interval_ms() }, 250);
@@ -593,4 +597,62 @@ fn full_device_flow_through_the_c_abi() {
     assert_eq!(ingest(b"not-osc"), 0, "garbage datagram dropped");
     unsafe { lm_fx_set_active(false) };
     assert_eq!(ingest(&osc_msg("/k", "f", &0.5f32.to_be_bytes())), 0, "no active effect -> inert");
+
+    // -- fps autoscaler override (FUG-82): set_fps pins/unpins the target and
+    // replies fps_state; the render-side accessors drive the controller. -----
+
+    // Pin to 60 fps (an exact ladder rung). Reply echoes the snapped target,
+    // the ladder bounds, and auto=false.
+    let mut sf = pb::SetFps::default();
+    sf.r#target_fps = 60;
+    let Some(SMsg::FpsState(fs)) = handle(&encode(CMsg::SetFps(sf)), 8000.0) else {
+        panic!("fps_state expected from set_fps");
+    };
+    assert_eq!(fs.r#target_fps, 60);
+    assert_eq!(fs.r#current_fps, 60);
+    assert_eq!(fs.r#min_fps, 25);
+    assert_eq!(fs.r#max_fps, 80);
+    assert!(!fs.r#auto, "a pinned target is not auto");
+    assert!(!fs.r#aborted);
+    assert_eq!(unsafe { lm_fps_current_fps() }, 60);
+
+    // An off-grid value snaps to the nearest rung (58 -> 60).
+    let mut sf58 = pb::SetFps::default();
+    sf58.r#target_fps = 58;
+    let Some(SMsg::FpsState(fs58)) = handle(&encode(CMsg::SetFps(sf58)), 8010.0) else {
+        panic!("fps_state expected");
+    };
+    assert_eq!(fs58.r#target_fps, 60);
+
+    // A pinned rate that keeps missing must ABORT (not step down): drive frames
+    // whose cost blows the 60-fps budget and confirm the notify latches.
+    let mut aborted = false;
+    for _ in 0..200 {
+        // ~20 ms/frame >> 60-fps period (16.6 ms) -> every frame misses.
+        let _delay = unsafe { lm_fps_on_frame(20_000) };
+        if unsafe { lm_fps_take_abort_notify() } {
+            aborted = true;
+            break;
+        }
+    }
+    assert!(aborted, "pinned 60 fps it can't hold aborts + notifies");
+    // The unsolicited builder emits an fps_state{aborted=true}.
+    let mut fbuf = vec![0u8; 512];
+    let n = unsafe { lm_fps_build_state(fbuf.as_mut_ptr(), fbuf.len(), true) };
+    assert!(n > 0, "fps_state encodes");
+    let mut fmsg = pb::ServerMessage::default();
+    fmsg.decode_from_bytes(&fbuf[..n as usize]).expect("decodes");
+    let Some(SMsg::FpsState(fab)) = fmsg.r#msg else {
+        panic!("fps_state expected");
+    };
+    assert!(fab.r#aborted);
+
+    // Back to autoscale: target_fps=0 -> auto=true.
+    let Some(SMsg::FpsState(fauto)) =
+        handle(&encode(CMsg::SetFps(pb::SetFps::default())), 8100.0)
+    else {
+        panic!("fps_state expected");
+    };
+    assert_eq!(fauto.r#target_fps, 0);
+    assert!(fauto.r#auto);
 }

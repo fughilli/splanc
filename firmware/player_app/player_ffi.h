@@ -232,6 +232,31 @@ void lm_perf_note_dropped(void);
 // at lm_perf_interval_ms() cadence over the active socket.
 int32_t lm_perf_build_report(uint8_t *out, size_t out_cap);
 
+// -- Framerate autoscaler (FUG-82; docs/design/perf-monitoring.md) ------------
+// The render loop keeps effects at a CONSISTENT FPS by picking the target from
+// a 5-fps ladder (25..80) and adapting it to the effect's real per-frame cost:
+// it insists on >=5% headroom and, if too many frames in a window miss that, it
+// steps the target down; a clean window with room to spare steps it up. If even
+// 25 fps (or an app-pinned rate) can't hold, the effect is parked (freeing the
+// CPU for WiFi/BLE) and the app is notified. Call under player_mutex.
+
+// Account for one rendered effect frame whose measured cost (update + shade +
+// show) was cost_us; returns how many ms the render task should sleep before
+// the next frame (period - work, so the frame INTERVAL tracks the target).
+// Parks the effect + latches an app-notify request if the target is unachievable.
+uint32_t lm_fps_on_frame(uint32_t cost_us);
+// The autoscaler's current target FPS (the rate the effect runs at now).
+uint32_t lm_fps_current_fps(void);
+// Per-frame overrun budget in CPU cycles for the current target (cpu_hz /
+// current_fps); the render loop flags a perf-ring overrun against this.
+uint32_t lm_fps_budget_cycles(void);
+// Read + clear the abort-notify flag; loop() ships an fps_state{aborted=true}
+// so the app can tell the user the effect was stopped (too slow to render).
+bool lm_fps_take_abort_notify(void);
+// Encode an FpsState frame (aborted set as given) into out for the unsolicited
+// abort push. Returns the encoded length, -1 bad args, -2 out_cap too small.
+int32_t lm_fps_build_state(uint8_t *out, size_t out_cap, bool aborted);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif
