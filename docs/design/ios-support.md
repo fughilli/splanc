@@ -174,6 +174,31 @@ on iOS the mic runs natively:
 - App Store review notes: camera + Bluetooth usage strings, and a reviewer path that doesn't
   require physical hardware (a simulator/mock device or a screencast).
 
+### 4.6 Native exposure control (FUG-120)
+
+The capture path is `getUserMedia` + `MediaStreamTrack.applyConstraints` (`xr/mediaStreamCapture.ts`),
+and `exposureControl.ts` locks the camera exposure DOWN so auto-exposure stops blowing the LEDs
+out in the dark. But WebKit implements none of the MediaStream Image-Capture exposure extensions
+(`exposureMode` / `exposureTime` / `exposureCompensation` / `iso`): on iOS `getCapabilities()`
+returns nothing for exposure, so `planExposure()` finds no control and the manual slider + the
+auto servo are silently no-ops — the reported bug.
+
+- Exposure is a property of the physical `AVCaptureDevice`, not of a capture session, and WebKit's
+  `getUserMedia` opens the back **wide-angle** camera (the only device type its `AVVideoCaptureSource`
+  uses). So a first-party Capacitor plugin **`@splanc/exposure-bridge`**
+  (`web/native-plugins/exposure-bridge/`, same SPM shape as the cert/voice bridges) configures that
+  same shared device with `setExposureModeCustom(duration:iso:)` — no second capture session, no
+  ownership of WebKit's — and the lock applies to the frames the WebView is already rendering.
+- Semantics mirror `planExposure`: `target` in [0,1] maps 0 = shortest (darkest, least bloom) → 1 =
+  longest, ISO pins to the sensor minimum to hold gain down, and `maxExposureMs` (Nyquist for the
+  servo, the user ceiling for manual override) caps the longest exposure. `xr/nativeExposure.ts`
+  binds it via `registerPlugin("ExposureBridge")` and `MediaStreamCaptureSource.setExposure` routes
+  there on iOS (gated on `isIosNative()`), falling back to the web `applyConstraints` path elsewhere;
+  `stop()` restores continuous auto-exposure. No UI change — the existing slider/servo just start
+  working on iOS.
+- No new Info.plist string: camera access is already granted via `getUserMedia`
+  (`NSCameraUsageDescription`), and reading/writing device exposure needs no extra entitlement.
+
 ---
 
 ## 5. Tier 0 — ship the PWA now (recommended immediate step)

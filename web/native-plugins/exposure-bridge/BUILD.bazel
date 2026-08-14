@@ -1,0 +1,15 @@
+# Local Capacitor plugin (@splanc/exposure-bridge), a first-party `link:` dependency
+# of web/. aspect_rules_js links workspace/link packages through an `npm_package`
+# target named `pkg`, so this must exist even though the Bazel web build never uses
+# the plugin: the app reaches it at runtime via Capacitor's registerPlugin
+# (compiled natively by `cap sync`, outside Bazel), never as a TS import.
+load("@aspect_rules_js//npm:defs.bzl", "npm_package")
+
+npm_package(
+    name = "pkg",
+    srcs = [
+        "Package.swift",
+        "package.json",
+    ] + glob(["ios/**"]),
+    visibility = ["//visibility:public"],
+)

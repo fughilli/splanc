@@ -192,7 +192,7 @@ jobs:
         run: bash web/ios-config/apply.sh
 
       # Copy web/dist in and resolve the SPM plugins (BLE, wss-bridge,
-      # speech-bridge).
+      # speech-bridge, exposure-bridge).
       - name: Sync iOS (cap sync)
         run: pnpm --config.verify-deps-before-run=false --dir web exec cap sync ios
 
