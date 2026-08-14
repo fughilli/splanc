@@ -14,6 +14,7 @@ load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("@rules_rust//rust:defs.bzl", "rust_library", "rust_static_library", "rust_test")
 load("//tools:flash_bundle.bzl", "flash_bundle")
+load("//tools:ram_chart.bzl", "ram_chart")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -158,6 +159,15 @@ firmware_binary(
     tags = ["manual"],
 )
 
+# Static RAM auditor sibling: `bazel run //firmware/player_app:esp32c6.ram_chart`
+# charts where the image's .bss/.data (internal SRAM — the heap the TLS/BLE/WiFi
+# pools draw from) goes, per symbol/component. `-- --json` snapshots it and
+# `-- --compare before.json` diffs a cut. See //tools:ram_chart.bzl.
+ram_chart(
+    name = "esp32c6.ram_chart",
+    binary = ":esp32c6",
+)
+
 # The image (~2.05 MB at -c opt: WiFi + BLE + webserver + FastLED + the
 # protocol stack) exceeds default.csv's 1.25 MB app slot and just misses
 # no_ota's 2 MB — flash the 4 MB "huge app" layout (single 3 MB factory
@@ -177,4 +187,14 @@ flash_bundle(
     name = "esp32c6_flashbundle",
     flash = ":flash_esp32c6",
     tags = ["manual"],
+)
+
+# Regression guard on the firmware-profile envelope struct sizes (they sit on
+# the heap-allocated task stacks; FUG-71). Host-profile crate, but the sizes it
+# asserts are the firmware ones.
+rust_test(
+    name = "envelope_size_test",
+    srcs = ["tests/envelope_size.rs"],
+    edition = "2021",
+    deps = ["//shared/protocol/rust:ledmapper_pb_fw"],
 )

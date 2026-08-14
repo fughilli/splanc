@@ -141,8 +141,10 @@ fn brightness_to_q8(v: f64) -> u16 {
     q.clamp(0, BRIGHTNESS_ONE_Q8 as i32) as u16
 }
 
-/// Counting-pattern block capacity (matches SetCountingPattern.blocks in the
-/// firmware micropb profile, //shared/protocol/rust:gen_main.rs).
+/// Counting-pattern block capacity the player stores. Matches the HOST wire cap
+/// (SetCountingPattern.blocks); the firmware decodes that arm zero-copy (ffi.rs)
+/// straight into this, so it is the real decode capacity, not the (stubbed)
+/// firmware micropb profile.
 const MAX_COUNTING_BLOCKS: usize = 32;
 
 /// A counting-pattern block with its color pre-reduced to 8-bit RGB. The wire
@@ -528,29 +530,51 @@ impl Player {
         m: pb::SetCountingPattern,
         now_ms: i64,
     ) -> pb::ServerMessage {
+        // Reduce each block's [0,1] wire color to 8-bit, then install via the
+        // shared path. This generated-decode path serves the host tests /
+        // conformance; on firmware the arm is decoded ZERO-COPY in ffi.rs and
+        // calls set_counting_blocks directly (so the fat 32×f64-rgb wire array
+        // never lands on the task stack).
+        let mut reduced: micropb::heapless::Vec<(u32, u32, Rgb), MAX_COUNTING_BLOCKS> =
+            micropb::heapless::Vec::new();
+        for b in m.r#blocks.iter() {
+            let ch = |i: usize| -> u8 {
+                let v = b.r#rgb.get(i).copied().unwrap_or(0.0);
+                (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8
+            };
+            let _ = reduced.push((
+                b.r#start.max(0) as u32,
+                b.r#count.max(0) as u32,
+                (ch(0), ch(1), ch(2)),
+            ));
+        }
+        self.set_counting_blocks(now_ms, &reduced)
+    }
+
+    /// Install a counting pattern from pre-reduced 8-bit blocks (empty = clear
+    /// it). Shared by the generated-decode path above and the firmware's
+    /// zero-copy ffi walker, so neither materializes the wire ColorBlock array.
+    /// Colors are pre-reduced by the caller so `counting_color` (polled per-LED
+    /// every render pass) stays pure-integer.
+    pub fn set_counting_blocks(
+        &mut self,
+        now_ms: i64,
+        blocks: &[(u32, u32, Rgb)],
+    ) -> pb::ServerMessage {
         let mut state = pb::CountingState::default();
-        if m.r#blocks.is_empty() {
+        if blocks.is_empty() {
             self.counting = None;
             state.r#active = false;
         } else {
             state.r#active = true;
             state.set_epoch_ms(now_ms as f64); // integer clock → wire ms double
-            // Pre-reduce each block's [0,1] wire color to 8-bit RGB now (cold),
-            // so the per-LED counting_color polled every render pass is integer.
-            let mut blocks = CountingBlocks::new();
-            for b in m.r#blocks.iter() {
-                let ch = |i: usize| -> u8 {
-                    let v = b.r#rgb.get(i).copied().unwrap_or(0.0);
-                    (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8
-                };
-                // blocks capacity == the wire block cap, so push cannot fail.
-                let _ = blocks.push(CountingBlock {
-                    start: b.r#start.max(0) as u32,
-                    count: b.r#count.max(0) as u32,
-                    rgb: (ch(0), ch(1), ch(2)),
-                });
+            let mut cb = CountingBlocks::new();
+            for &(start, count, rgb) in blocks.iter().take(MAX_COUNTING_BLOCKS) {
+                // capacity == MAX_COUNTING_BLOCKS, and we cap the iterator, so
+                // push cannot fail.
+                let _ = cb.push(CountingBlock { start, count, rgb });
             }
-            self.counting = Some((now_ms, blocks));
+            self.counting = Some((now_ms, cb));
         }
         reply(SMsg::CountingState(state))
     }

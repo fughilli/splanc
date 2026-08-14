@@ -50,15 +50,20 @@
 
 // The player protocol handler (lm_player_handle -> Player::handle) decodes a
 // ClientMessage and builds a ServerMessage as by-value protobuf structs on the
-// caller's stack, and this path runs in loopTask (ws_poll). Measured frames on
-// the -c opt image are large (micropb by-value): lm_player_handle ~4.6 KB +
-// Player::handle ~12.5 KB ⇒ a ~17-18 KB peak, so the arduino-esp32 default
-// 8 KB loopTask stack overflows (observed: Stack protection fault in
-// Player::handle). Size loopTask well above the measured peak. Must be at
-// global scope (overrides a weak core getter). If the protobuf frames ever
-// grow, re-measure with objdump on the .elf prologues. (The render task has
-// its own stack; it only calls the small pure-read accessors + FastLED.show.)
-SET_LOOP_TASK_STACK_SIZE(24 * 1024);
+// caller's stack, and this path runs in loopTask (ws_poll on the plain :81
+// socket). This stack was once 24 KB, sized for a ~17-18 KB peak back when the
+// micropb by-value frames were huge (Player::handle ~12.5 KB). The firmware
+// capacity profile has since been tightened (//shared/protocol/rust:gen_main.rs)
+// and the frames are now MUCH smaller — measured on the -c opt .elf prologues
+// (objdump `addi sp,sp,-N`): lm_player_handle 5.1 KB, the deepest sub-handler
+// handle_get_stored_map 4.6 KB, Player::handle 2.6 KB ⇒ a real deepest chain of
+// ~11-12 KB. 18 KB keeps ~1.5x margin over that while handing 6 KB of heap
+// (loopTask's stack is heap-allocated) back to the TLS pool (FUG-71). The
+// //firmware/player_app:envelope_size_test guards the envelope sizes this assumes,
+// and the periodic `[stack]` log reports loopTask's live high-water. Must be at
+// global scope (overrides a weak core getter). (The render task has its own,
+// tighter stack; it only calls the pure-read accessors + FastLED.show.)
+SET_LOOP_TASK_STACK_SIZE(18 * 1024);
 
 static const char *kApPassword = "ledmapper";
 static const uint16_t kWsPort = 81;
@@ -92,6 +97,7 @@ static CRGB leds[kMaxLeds];
 static SemaphoreHandle_t player_mutex = nullptr;
 static const UBaseType_t kRenderTaskPrio = 10;   // tune on-device if needed
 static const uint32_t kRenderTaskStack = 8192;   // FastLED.show() needs headroom
+static TaskHandle_t g_render_task = nullptr;      // for stack high-water reporting
 
 // Largest inbound protocol message: a full submit_map for kMaxLeds (~96 B/LED,
 // so 256 LEDs ≈ 25 KB; 32 KB leaves headroom). Sized to the LED cap rather than
@@ -196,10 +202,21 @@ static const uint32_t kProvisionGraceMs = 3000;
 // down (STA-only) to reclaim its heap for the TLS handshake, which is tight on
 // the C6 (a wss handshake needs a ~17 KB buffer). It comes back on the next
 // boot if no STA join is stored/succeeds, so the device stays re-provisionable.
+// The onboarding surfaces (soft-AP + Improv BLE) travel together: both up while
+// unprovisioned, both released once STA-only.
 static bool softap_up = false;
 // STA IP currently baked into the served wss cert's SAN; 0 == the build-time
 // cert (no SAN) or "re-issue needed". Full rationale at reissue_cert_for_lan.
 static uint32_t g_cert_ip = 0;
+// STA-only re-onboarding watchdog: once we have released the onboarding surfaces
+// (soft-AP + BLE) and later lose the LAN for good, bring them back so the device
+// can be re-provisioned without a power cycle. `sta_lost_at` stamps when a
+// STA-only device first went offline (0 = connected / not applicable); after
+// kReonboardMs of sustained loss we re-enter onboarding. Generous, so a transient
+// blip (arduino auto-reconnect heals those) doesn't needlessly re-raise BLE and
+// interrupt the offline pattern the device keeps rendering.
+static uint32_t sta_lost_at = 0;
+static const uint32_t kReonboardMs = 60000;
 enum class WsState { kIdle, kHandshake, kOpen };
 static WsState ws_state = WsState::kIdle;
 
@@ -1332,12 +1349,15 @@ static void wss_start() {
   // wss retries against a not-yet-trusted cert) exhaust the heap and every
   // session fails with -0x7F00. LRU-purge the oldest rather than reject a
   // reconnecting phone. The handler task runs lm_player_handle, whose micropb
-  // by-value structs need a big stack (the loop task is 24 KB for exactly this),
-  // so give the httpd task the same budget plus TLS-record margin or it
-  // overflows on the first message. Two sessions is deliberate: the phone loads
-  // the status/landing page over one while the app's wss holds the other.
+  // by-value structs run on this task's stack (same path as loopTask). Sized to
+  // the measured deepest handler chain (~11-12 KB, see SET_LOOP_TASK_STACK_SIZE)
+  // plus mbedTLS's own handshake-time stack, with margin. Was 28 KB for the
+  // stale ~18 KB-frame era; 20 KB keeps ~1.6x margin over the current peak and
+  // returns 8 KB of heap (this stack is heap-allocated) to the TLS pool (FUG-71).
+  // Two sessions is deliberate: the phone loads the status/landing page over one
+  // while the app's wss holds the other.
   cfg.httpd.max_open_sockets = 2;
-  cfg.httpd.stack_size = 28 * 1024;
+  cfg.httpd.stack_size = 20 * 1024;
   cfg.httpd.lru_purge_enable = true;
   // Reclaim dead/half-open sessions so this single-task server can't wedge under
   // connection churn. With only 2 slots, a client that vanishes mid-handshake or
@@ -1554,7 +1574,7 @@ void setup() {
   // Drive the LEDs from a dedicated high-priority task so the pattern cadence
   // no longer rides on loop()'s cooperative WiFi/HTTP/BLE servicing.
   xTaskCreate(render_task, "render", kRenderTaskStack, nullptr, kRenderTaskPrio,
-              nullptr);
+              &g_render_task);
 }
 
 // Improv provisioning state machine (Arduino task; BLE callbacks only latch).
@@ -1592,6 +1612,12 @@ static void provisioning_poll() {
       Log().printf("[player] soft-AP down; STA-only, heap=%u\n",
                    (unsigned)esp_get_free_heap_size());
     }
+    // Release the Improv BLE stack now that we are provisioned + STA-only: it is
+    // the single largest heap draw (~33 KiB reclaimed on the C6) and pure
+    // overhead here — nothing provisions over BLE while we are on the LAN. Done
+    // BEFORE the cert re-sign so ledmapper_selfsign runs with the reclaimed
+    // headroom. The re-onboarding watchdog (loop) re-arms it if the LAN is lost.
+    improv_ble_end();
     // Re-sign the wss cert with this IP in the SAN so browsers will take the
     // trust exception (the build-time cert has none → fatal alert / ERR_TIMED_OUT).
     reissue_cert_for_lan();
@@ -1624,6 +1650,25 @@ static void provisioning_poll() {
   }
 }
 
+// Re-raise the onboarding surfaces (soft-AP + Improv BLE) on a provisioned but
+// now-offline device, so it can be re-provisioned onto a new network without a
+// power cycle. The inverse of the demote in provisioning_poll; a subsequent STA
+// (re)join demotes again and re-releases BLE.
+static void enter_onboarding() {
+  if (softap_up) return;
+  WiFi.mode(WIFI_AP_STA);
+  // Mirror the initial bring-up (setup): derived-name AP SSID + hostnames + mDNS
+  // (FUG-83), so a re-provisioning surface looks identical to a fresh boot's.
+  WiFi.setHostname(g_hostname);
+  WiFi.softAPsetHostname(g_hostname);
+  WiFi.softAP(g_ap_ssid, kApPassword);
+  softap_up = true;
+  mdns_begin_or_update();
+  improv_ble_begin(g_device_name, IMPROV_STATE_AUTHORIZED);
+  Log().printf("[player] LAN lost; re-onboarding (soft-AP \"%s\" + BLE up), heap=%u\n",
+               g_ap_ssid, (unsigned)esp_get_free_heap_size());
+}
+
 void loop() {
   // loop() now only services the network stacks; the LEDs are driven by
   // render_task (started in setup), decoupled from this cooperative cycle.
@@ -1641,6 +1686,26 @@ void loop() {
   http.handleClient();
   ws_poll();
   provisioning_poll();
+
+  // Onboarding-surface lifecycle for the provisioned steady state.
+  bool connected = WiFi.status() == WL_CONNECTED;
+  if (!softap_up) {
+    // STA-only (BLE released). If the LAN stays down long enough, re-onboard so
+    // the device is reachable/re-provisionable again; arduino auto-reconnect
+    // heals transient drops before the timer elapses.
+    if (connected) {
+      sta_lost_at = 0;
+    } else if (sta_lost_at == 0) {
+      sta_lost_at = millis();
+    } else if (millis() - sta_lost_at > kReonboardMs) {
+      enter_onboarding();
+    }
+  } else if (connected && !sta_joining && !sta_demote_pending) {
+    // Re-onboarded, then the STA reconnected on its own (or was re-provisioned):
+    // demote back to STA-only and re-release BLE via the shared path above.
+    sta_demote_pending = true;
+    sta_provisioned_at = millis();
+  }
   // Keep the served TLS cert's SAN matching the live STA IP. provisioning_poll's
   // demote issues the first LAN cert, but that one attempt can fail under
   // early-boot heap pressure (ledmapper_selfsign needs a few KB free) and the IP
@@ -1684,6 +1749,15 @@ void loop() {
                                           : "idle",
         map_leds, (unsigned)esp_get_free_heap_size(),
         (unsigned)esp_get_minimum_free_heap_size());
+    // Stack high-water = the SMALLEST free-stack the task ever reached (bytes on
+    // ESP-IDF). The heap-allocated task stacks (loop 24K, httpd_ssl 28K, render
+    // 8K) are the biggest single heap draws we control, so track how much of each
+    // is actually used vs reserved — the headroom is reclaimable heap (FUG-71).
+    TaskHandle_t httpd_task = xTaskGetHandle("httpd");
+    Log().printf("[stack] free-hw loop=%u render=%u httpd=%u\n",
+                 (unsigned)uxTaskGetStackHighWaterMark(nullptr),
+                 g_render_task ? (unsigned)uxTaskGetStackHighWaterMark(g_render_task) : 0u,
+                 httpd_task ? (unsigned)uxTaskGetStackHighWaterMark(httpd_task) : 0u);
   }
   delay(1);
 }
