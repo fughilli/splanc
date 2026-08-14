@@ -3,6 +3,96 @@
 Handoff notes alongside git history. Newest first. Read this before touching the
 rig's networking — there's live runtime state that isn't fully declarative yet.
 
+## 2026-08-14 — LA rig confirmed on real hardware (`hitl-rig-2` / `hitl-rig-la-1`)
+
+The logic-analyzer rig is **hardware-verified end-to-end**: drove a known
+`set_counting_pattern` (2×red/2×green/4×blue) on the ESP32-C6 DUT and the FX2 on
+**D6** captured + decoded it via the daemon `/capture` — decoded pattern matches
+(GRB→RGB, correct positions/order). Pin bumped to sbc-deploy `18a5346` (auto-managed
+macOS builder for external consumers, PRs #4/#5).
+
+Key facts learned + fixes:
+
+- **Analyzer channel is D6, not D0.** PIN20/GPIO20 (the C6's WS2812 DIN) is wired to
+  the FX2's CH6. `hitl-app.nix` `analyzerChannelMap` now defaults to `D6`. (Was D0.)
+- **`hitl_la` `hostname` must be the flake's nixosConfigurations attr (`hitl-rig`),**
+  not a novel name — `deploy_live`'s `--hostname` is the attr selector, not the
+  machine name. Per-rig identity is `SBC_HOSTNAME_OVERRIDE` at deploy/flash time
+  (this rig runs as `hitl-rig-la-1`; deploy with
+  `SBC_HOSTNAME_OVERRIDE=hitl-rig-la-1 bazel run //pi/hitl:hitl_la.deploy_live -- hitl-rig-2`).
+- **Firmware scales the wire**: full-scale 255 reaches the WS2812 as ~160 (color-
+  correction/gamma+brightness). The correctness test asserts lit-channel STRUCTURE
+  (`led_pattern.diff_structure`), not exact bytes.
+- **Bugs fixed this pass**: broker returned a cryptic "No such file" when the tapped
+  line is idle (trigger never fires → sigrok writes no `.sr`) — now a clear "no data
+  captured" (`internal/analyzer`); and 4 in the harness (`CompletedProcess` vs str
+  ×2, stale `_drive_pattern` signature, missing rig-AP cred resolution). Added a
+  `--device-ws` harness mode (drive a reachable ws URL + capture via the daemon, no
+  reservation).
+
+**⚠️ Open rig-networking issues (BLOCK the normal container-based `led_capture` flow):**
+
+1. **The Pi 3 can't host the provisioning AP.** `wlan0: AP-DISABLED` /
+   `hostapd… interface wasn't started` — brcmfmac AP mode won't start, so NM falls
+   back to the STA (`BigVibes`). The single-radio AP design that works on the Pi 5
+   doesn't here. **Fix: a dedicated USB Wi-Fi dongle for the AP** (DESIGN already
+   anticipates this), or debug brcmfmac/hostapd AP mode.
+2. **Container can't reach a DUT on an external LAN.** With the AP down, provisioning
+   onto `BigVibes` gives the DUT a link-local `169.254.x` addr and the reservation
+   container routes via Ethernet, so it can't reach the DUT's WSS. The **rig host**
+   can (same `wlan0` subnet). The hardware-confirming run therefore drove the DUT via
+   an **ssh tunnel through the rig host** (`ssh -L …:169.254.x:81 root@hitl-rig-2`) +
+   `--device-ws`, capturing via the daemon. Until (1) is fixed, `led_capture`'s
+   reservation flow won't pass on this rig; use `--device-ws`.
+
+Also: the DUT needed a **physical power-cycle** twice — a latched USB-download strap
+(`boot:0x10 (USB_BOOT)`) and then flash flakiness (`esptool: chip stopped responding`).
+Watch for probes/ground loading GPIO8/9/15 or the reset/EN line.
+
+## 2026-08-12 — Logic-analyzer rig variant (Pi 3 + shared FX2/sigrok)
+
+New rig **variant** for LED-driver correctness/latency: a Raspberry Pi 3B
+(`//pi/hitl:hitl_la`, `board = raspberry-pi-3`, hostname `hitl-la-rig`) with an
+FX2/fx2lafw "Saleae clone" 24 MHz logic analyzer tapping the ESP32-C6 DUT's WS2812
+DIN. Closes the "needs a logic analyzer on a bench" gap flagged in
+`pi/led_driver/README.md` + `docs/{decisions,runbook}.md`. Built on the FUG-105 pin
+that added first-class Pi 3B (`@sbc_deploy//deploy/boards:raspberry-pi-3`).
+
+**The FX2 is a rig-level SHARED instrument** (per the ask: wire 1–2 channels to each
+DUT to save analyzer hardware), so the design differs from passing a DUT into a
+container:
+
+- `internal/analyzer` — the daemon owns the one FX2; a `Broker` serializes captures
+  (mutex) and maps DUT→channels/protocol (`--analyzer-channel-map` JSON). New
+  `POST /capture {device}` runs a triggered `sigrok-cli` capture scoped to that DUT
+  and decodes it. Because the FX2 never enters a container, **`internal/runner`
+  raw-USB isolation is untouched**.
+- `nix/container.nix` — `hitl-capture` thin client (POSTs `/capture` via
+  `$HITL_CAPTURE_SERVER = host.containers.internal:<apiPort>`, injected by the
+  runner's new `PodmanConfig.CaptureURL`). No sigrok/raw-USB in the container.
+- `nix/{sigrok,hitl-app}.nix` — sigrok closure + capture flags + FX2 udev rules are
+  board-gated (`builtins.getEnv "SBC_BOARD" == "raspberry-pi-3"`), so the **same
+  appModule** yields a lean Pi 5 image and a capture-enabled Pi 3 image — no flake
+  fork. `sbc_application(board=…)` swaps the board via `$SBC_BOARD` at eval.
+
+**Decoders:** `rgb_led_ws281x` (WS2812) and `rgb_led_spi`+`spi` (future APA102) are
+BUILT IN to libsigrokdecode ≥0.5.3 — no vendored decoder. The ws281x decoder emits
+`#rrggbb` in logical RGB (it un-GRBs the wire).
+
+**Verified (no hardware):** `internal/analyzer` synthesizes a WS2812 `.sr` and runs
+the real `sigrok-cli` decode over it — `go test` PASS (ran, not skipped, with
+sigrok-cli installed in-container via the overlay). Pure pattern/pixel contract in
+`//pi/hitl/tests:hitl_test` (`test_led_pattern.py`). `bazel build` of daemon/CLI/
+`led_capture` + all 6 Go test targets PASS; `hitl_la.image_sd` resolves with the
+Pi 3 board wired in (build eval, not a full aarch64 image — that OOMs here).
+
+**Not yet on hardware (follow-ups):** the reserve→flash→drive→`hitl-capture`→assert
+loop (`//pi/hitl/harness:led_capture`, manual+hitl) against a real Pi3+FX2+board;
+full E2E latency (needs stimulus+capture co-timed — `CaptureResult.TriggerSample`/
+`SampleRate` are the hooks); confirm the 3.3 V DIN tap / level-shift + common ground.
+sbc-deploy's `$SBC_BOARD` eval-gating of appModule config should be re-confirmed on
+the real image build (fail-safe: unset board ⇒ analyzer off).
+
 ## 2026-08-10 — FUG-94: the FUG-61 provisioning flake is a per-connect BLE failure, not coexistence
 
 The FUG-61 fix works; its recorded root cause (WiFi/BLE **coexistence** starves the

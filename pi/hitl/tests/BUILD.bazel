@@ -27,6 +27,7 @@ py_test(
         "test_fx_bench.py",
         "test_improv.py",
         "test_improv_find.py",
+        "test_led_pattern.py",
         "test_map_upload.py",
         "test_mapping_trigger.py",
         "test_sync.py",
