@@ -5,24 +5,37 @@ scan back for context. The dated sections toward the bottom were migrated out of
 `README.md` (now a user-facing intro; see `DEVELOPERS.md` for contributing) and
 are kept as historical record.
 
-## OSC input → uniforms (FUG-121, branch `agent/fug-121-feature-osc-input`)
+## OSC input → uniforms — NATIVE firmware (FUG-121, branch `agent/fug-121-feature-osc-input`)
 
-New tool `//tools/osc_bridge`: receives OSC over UDP from any OSC source
-(TouchDesigner, Ableton/M4L, TouchOSC, Max, scripts) and drives live shader
-uniforms on a `ledmapper.v1` fixture. Reuses the TD plugin's protocol core
-(`//tools/touchdesigner/core:td_ledmapper`) — `Session::drive_uniforms` maps
-named channels → uniform slots via the device's own manifest (vec fan-out,
-bool threshold, change-detection), so the only new code is a hand-rolled OSC 1.0
-parser (`src/osc.rs`, no crate dep — same style as the repo's protobuf/WS) and
-the address→channel mapping + last-value table (`src/lib.rs`).
+The device receives OSC directly over UDP (:9000) and drives live uniforms — no
+host bridge (an earlier `//tools/osc_bridge` host-side approach was replaced at
+Kevin's steer: "can't the firmware receive OSC natively?").
 
-- Address convention: strip a configurable prefix (default `/`), map `/tint/x`
-  → channel `tint:x`, `/speed` → `speed`; first numeric/bool arg is the value.
-  Falls back to `slotN` when firmware advertises no manifest.
-- CLI `src/main.rs`: `--addr host:81 --listen 0.0.0.0:9000 [--prefix --effect -v]`.
-- `bazel test //tools/osc_bridge:osc_bridge_test` — 12 pure tests (parser +
-  mapping) green; binary builds; live UDP recv/parse smoke-tested. End-to-end
-  drive against a real fixture is manual/HITL (no OSC device in CI).
+- **`//firmware/osc`** — `no_std`, zero-dep: OSC 1.0 parser (messages + nested
+  bundles), a `name→(slot,width)` `PortTable` built from the effect manifest, and
+  `ingest()` (datagram → `set(slot, values)` callbacks) with a per-slot value
+  `Shadow` so per-axis vec messages (`/tint/x`) patch one component. Config
+  toggles name resolution vs slot-index-only. 12 host tests; builds for C6.
+- **`fx_compiler`** — now embeds the uniform-manifest JSON in the `.fxb` (was
+  empty), so the device knows uniform names; `get_effect_uniforms` returns a real
+  manifest too. The web uses its own local-compile copy, so this only grows the
+  on-wire `.fxb`.
+- **`ffi.rs`** — builds the `PortTable`/`Shadow` once per `lm_fx_load` (off the
+  render path); `lm_osc_ingest(data,len)` applies a datagram via the existing
+  `set_uniform` seam; `lm_osc_set_by_name` toggles addressing. Cleared on
+  `lm_fx_clear`. End-to-end in the ffi host test.
+- **`main.cpp`** — a low-prio UDP task on :9000 feeds `lm_osc_ingest` under
+  `player_mutex` (the only state shared with the render task). Full `esp32c6`
+  firmware builds.
+- **Perf** (`//firmware/osc:osc_bench`, host): by-name ingest 70 ns/packet vs
+  slot 21 ns (3.35× but trivial); manifest parse 1.9 µs once per effect load; a
+  200 Hz knob = 0.0014% of a core. Ingest is off the render task, so the render
+  loop is unaffected either way. On-device C6 cycle counts via HITL are the next
+  step if hard numbers are wanted (host≠C6, but the ratio + off-render-path
+  design carry over).
+
+Address convention: `/speed` (scalar), `/tint/x|y|z|w` (vec component) or `/tint`
+`,fff` (whole vector); `/slotN` when no manifest. Configurable prefix.
 
 ## iOS support — Capacitor scaffold + host build server (branch `agent/fug-92-ios-support`)
 
