@@ -24,7 +24,8 @@ use core::sync::atomic::AtomicBool;
 
 use ledmapper_arena::Arena;
 use ledmapper_fx_vm::{
-    Budget, Counters as FxCounters, Frame as FxFrame, Led as FxLed, Outcome, Program, Vm as FxVm,
+    Budget, Counters as FxCounters, Frame as FxFrame, I2cBus, Led as FxLed, Outcome, Program,
+    Vm as FxVm, NO_ENTRY,
 };
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_player::{upload_malformed, upload_too_large, Player};
@@ -554,6 +555,11 @@ pub unsafe extern "C" fn lm_player_handle(
             handle_set_texture(frame);
             return 0;
         }
+        // Auto hardware discovery (FUG-107): enumerate the qwiic bus, and
+        // load/clear a sensor driver whose poll() feeds effect uniforms.
+        Some(ARM_SCAN_I2C) => handle_scan_i2c(),
+        Some(ARM_SUBMIT_DRIVER) => handle_submit_driver(frame),
+        Some(ARM_REMOVE_DRIVER) => handle_remove_driver(),
         _ => {
             let mut env = pb::ClientMessage::default();
             let mut dec = PbDecoder::new(frame);
@@ -823,6 +829,10 @@ const ARM_GET_EFFECT_UNIFORMS: u32 = 24;
 const ARM_SET_PERF: u32 = 25;
 const ARM_GET_PERF_REPORT: u32 = 26;
 const ARM_SET_TEXTURE: u32 = 28;
+/// Auto hardware discovery arms (FUG-107).
+const ARM_SCAN_I2C: u32 = 32;
+const ARM_SUBMIT_DRIVER: u32 = 33;
+const ARM_REMOVE_DRIVER: u32 = 34;
 
 /// Read a base-128 varint at `buf[*o..]`, advancing `*o`. None on truncation.
 fn rd_varint(buf: &[u8], o: &mut usize) -> Option<u64> {
@@ -1453,6 +1463,275 @@ fn fx_error(code: &str, message: &str) -> pb::ServerMessage {
     let _ = e.r#code.push_str(code);
     let _ = e.r#message.push_str(message);
     pb::ServerMessage { r#msg: Some(pb::ServerMessage_::Msg::Error(e)) }
+}
+
+// -- sensor drivers / auto hardware discovery (FUG-107) -----------------------
+// A sensor driver is a `.fxb` with a `poll()` entry that reads a qwiic module
+// over I2C and writes `export`s. It runs in its OWN fx_vm instance, off the
+// render loop, every `DRV_INTERVAL_MS`; each poll's export values are copied
+// into the active effect's uniforms per the app-supplied bindings — the same
+// slot path set_uniforms uses, so a live sensor drives an effect exactly like a
+// slider does. The C++ side owns the qwiic bus and provides the lm_i2c_* hooks.
+
+/// Max driver `.fxb` held (same budget as an effect; a driver is tiny).
+const DRV_MAX_BYTES: usize = 4 * 1024;
+static mut DRV_BYTES: [u8; DRV_MAX_BYTES] = [0; DRV_MAX_BYTES];
+static mut DRV_LEN: usize = 0;
+static mut DRV_VM: Option<FxVm> = None;
+/// Whether the driver is actively polling.
+static mut DRV_RUNNING: bool = false;
+/// poll() cadence in ms (clamped to a sane floor on load).
+static mut DRV_INTERVAL_MS: u32 = 100;
+/// Monotonic ms of the last poll (0 = never), so lm_drv_poll self-paces.
+static mut DRV_LAST_POLL_MS: i64 = 0;
+/// Last poll outcome: 0=Ok 1=Budget 2=Timeout 3=never-run.
+static mut DRV_LAST_OUTCOME: u32 = 3;
+/// n_state slots the driver declares (reported to the app as export_count).
+static mut DRV_STATE_SLOTS: u32 = 0;
+
+/// One export→uniform binding. Slots are u8 (the VM's slot space is < 256).
+#[derive(Clone, Copy, Default)]
+struct DrvBinding {
+    export_slot: u8,
+    width: u8,
+    uniform_slot: u8,
+}
+const DRV_MAX_BINDINGS: usize = 32;
+static mut DRV_BINDINGS: [DrvBinding; DRV_MAX_BINDINGS] =
+    [DrvBinding { export_slot: 0, width: 0, uniform_slot: 0 }; DRV_MAX_BINDINGS];
+static mut DRV_N_BINDINGS: usize = 0;
+
+extern "C" {
+    /// Write `n` bytes to 7-bit `addr` on the qwiic bus. True on ACK.
+    fn lm_i2c_write(addr: u8, bytes: *const u8, n: usize) -> bool;
+    /// Read `n` bytes from 7-bit `addr` after writing register pointer `reg`.
+    fn lm_i2c_read(addr: u8, reg: u8, out: *mut u8, n: usize) -> bool;
+    /// Probe 0x08..0x77; write the ACKing 7-bit addresses into `out` (up to
+    /// `cap`), returning the count.
+    fn lm_i2c_scan(out: *mut u8, cap: usize) -> usize;
+}
+
+/// [`I2cBus`] backed by the C++ qwiic hooks. Zero-sized; one per poll call.
+struct FfiI2c;
+impl I2cBus for FfiI2c {
+    fn write(&mut self, addr: u8, bytes: &[u8]) -> bool {
+        unsafe { lm_i2c_write(addr, bytes.as_ptr(), bytes.len()) }
+    }
+    fn read_reg(&mut self, addr: u8, reg: u8, out: &mut [u8]) -> bool {
+        unsafe { lm_i2c_read(addr, reg, out.as_mut_ptr(), out.len()) }
+    }
+}
+
+/// scan_i2c: probe the bus and reply with the responding addresses.
+unsafe fn handle_scan_i2c() -> pb::ServerMessage {
+    let mut buf = [0u8; 128];
+    let n = lm_i2c_scan(buf.as_mut_ptr(), buf.len()).min(buf.len());
+    let mut r = pb::I2cScanResult::default();
+    for &a in &buf[..n] {
+        let _ = r.r#addresses.push(a as u32);
+    }
+    pb::ServerMessage { r#msg: Some(pb::ServerMessage_::Msg::I2CScanResult(r)) }
+}
+
+/// The current driver runtime status (reply to submit_driver / remove_driver).
+unsafe fn driver_state_reply() -> pb::ServerMessage {
+    let mut ds = pb::DriverState::default();
+    ds.r#running = DRV_RUNNING && DRV_LEN > 0;
+    ds.r#poll_interval_ms = DRV_INTERVAL_MS;
+    ds.r#export_count = DRV_STATE_SLOTS;
+    ds.r#binding_count = DRV_N_BINDINGS as u32;
+    let _ = ds.r#last_poll.push_str(match DRV_LAST_OUTCOME {
+        0 => "ok",
+        1 => "budget",
+        2 => "timeout",
+        _ => "",
+    });
+    pb::ServerMessage { r#msg: Some(pb::ServerMessage_::Msg::DriverState(ds)) }
+}
+
+/// Parse one DriverBinding submessage (`export_slot` f1, `width` f2,
+/// `uniform_slot` f3 — all varint). Best-effort: unknown fields are skipped.
+fn parse_binding(sub: &[u8]) -> DrvBinding {
+    let mut b = DrvBinding::default();
+    let mut p = 0;
+    while p < sub.len() {
+        let Some(key) = rd_varint(sub, &mut p) else { break };
+        let field = (key >> 3) as u32;
+        let wire = (key & 7) as u8;
+        match (field, wire) {
+            (1, 0) => match rd_varint(sub, &mut p) {
+                Some(v) => b.export_slot = v as u8,
+                None => break,
+            },
+            (2, 0) => match rd_varint(sub, &mut p) {
+                Some(v) => b.width = v as u8,
+                None => break,
+            },
+            (3, 0) => match rd_varint(sub, &mut p) {
+                Some(v) => b.uniform_slot = v as u8,
+                None => break,
+            },
+            _ => {
+                if !skip_field(sub, &mut p, wire) {
+                    break;
+                }
+            }
+        }
+    }
+    b
+}
+
+/// submit_driver: hand-walk fxb (f1) / poll_interval_ms (f2) / bindings (f3,
+/// repeated message) / activate (f4), like handle_submit_effect (the firmware
+/// micropb profile caps the generated fields). Load the driver VM and, if
+/// `activate`, start polling. Reply driver_state, or error (bad_fxb /
+/// driver_too_large / no_poll).
+unsafe fn handle_submit_driver(frame: &[u8]) -> pb::ServerMessage {
+    let Some(body) = unwrap_arm(frame, ARM_SUBMIT_DRIVER) else {
+        return fx_error("bad_fxb", "submit_driver is malformed");
+    };
+    let mut fxb: Option<&[u8]> = None;
+    let mut interval: u32 = 100;
+    let mut activate = false;
+    let mut binds: [DrvBinding; DRV_MAX_BINDINGS] = [DrvBinding::default(); DRV_MAX_BINDINGS];
+    let mut nb = 0usize;
+    let mut o = 0;
+    while o < body.len() {
+        let Some(key) = rd_varint(body, &mut o) else {
+            return fx_error("bad_fxb", "submit_driver is malformed");
+        };
+        let field = (key >> 3) as u32;
+        let wire = (key & 7) as u8;
+        match (field, wire) {
+            (1, 2) => {
+                let Some(len) = rd_varint(body, &mut o) else {
+                    return fx_error("bad_fxb", "submit_driver is malformed");
+                };
+                let len = len as usize;
+                let Some(s) = body.get(o..o + len) else {
+                    return fx_error("bad_fxb", "submit_driver is malformed");
+                };
+                fxb = Some(s);
+                o += len;
+            }
+            (2, 0) => {
+                let Some(v) = rd_varint(body, &mut o) else {
+                    return fx_error("bad_fxb", "submit_driver is malformed");
+                };
+                interval = v as u32;
+            }
+            (3, 2) => {
+                let Some(len) = rd_varint(body, &mut o) else {
+                    return fx_error("bad_fxb", "submit_driver is malformed");
+                };
+                let len = len as usize;
+                let Some(sub) = body.get(o..o + len) else {
+                    return fx_error("bad_fxb", "submit_driver is malformed");
+                };
+                o += len;
+                if nb < DRV_MAX_BINDINGS {
+                    binds[nb] = parse_binding(sub);
+                    nb += 1;
+                }
+            }
+            (4, 0) => {
+                let Some(v) = rd_varint(body, &mut o) else {
+                    return fx_error("bad_fxb", "submit_driver is malformed");
+                };
+                activate = v != 0;
+            }
+            _ => {
+                if !skip_field(body, &mut o, wire) {
+                    return fx_error("bad_fxb", "submit_driver is malformed");
+                }
+            }
+        }
+    }
+    let Some(fxb) = fxb else {
+        return fx_error("bad_fxb", "submit_driver without fxb");
+    };
+    if fxb.len() > DRV_MAX_BYTES {
+        return fx_error("driver_too_large", "fxb exceeds this player's driver buffer");
+    }
+    let Ok(prog) = Program::parse(fxb) else {
+        return fx_error("bad_fxb", "fxb failed to parse");
+    };
+    if prog.poll_entry == NO_ENTRY {
+        return fx_error("no_poll", "driver .fxb has no poll() entry");
+    }
+    let buf = &mut *addr_of_mut!(DRV_BYTES);
+    buf[..fxb.len()].copy_from_slice(fxb);
+    DRV_LEN = fxb.len();
+    DRV_STATE_SLOTS = prog.n_state as u32;
+    *addr_of_mut!(DRV_VM) = Some(FxVm::new());
+    DRV_INTERVAL_MS = interval.max(10); // floor: never busy-poll the bus
+    let dst = &mut *addr_of_mut!(DRV_BINDINGS);
+    dst[..nb].copy_from_slice(&binds[..nb]);
+    DRV_N_BINDINGS = nb;
+    DRV_LAST_OUTCOME = 3;
+    DRV_LAST_POLL_MS = 0;
+    DRV_RUNNING = activate;
+    driver_state_reply()
+}
+
+/// remove_driver: stop polling and clear the driver.
+unsafe fn handle_remove_driver() -> pb::ServerMessage {
+    DRV_LEN = 0;
+    DRV_RUNNING = false;
+    *addr_of_mut!(DRV_VM) = None;
+    DRV_N_BINDINGS = 0;
+    DRV_STATE_SLOTS = 0;
+    DRV_LAST_OUTCOME = 3;
+    driver_state_reply()
+}
+
+/// Run the driver's poll() if it's due (self-paced against `now_ms`), then copy
+/// its exports into the active effect's uniforms per the bindings. The C++
+/// render/service loop calls this every iteration under `player_mutex`; it's a
+/// cheap early-return when no driver is running or the interval hasn't elapsed.
+/// Returns true iff poll() actually ran this call.
+///
+/// # Safety
+/// Single-threaded like the rest of this module (called under player_mutex).
+#[no_mangle]
+pub unsafe extern "C" fn lm_drv_poll(now_ms: i64) -> bool {
+    if !DRV_RUNNING || DRV_LEN == 0 {
+        return false;
+    }
+    if DRV_LAST_POLL_MS != 0 && now_ms.wrapping_sub(DRV_LAST_POLL_MS) < DRV_INTERVAL_MS as i64 {
+        return false; // not due yet
+    }
+    DRV_LAST_POLL_MS = now_ms;
+    let bytes = &(*addr_of!(DRV_BYTES))[..DRV_LEN];
+    let Ok(prog) = Program::parse(bytes) else {
+        return false;
+    };
+    let f = FxFrame { time: now_ms as f32 / 1000.0, ..Default::default() };
+    let mut bus = FfiI2c;
+    let outcome = {
+        let Some(vm) = (*addr_of_mut!(DRV_VM)).as_mut() else {
+            return false;
+        };
+        vm.run_poll(&prog, &f, &mut bus, &Budget::instructions(ledmapper_fx_vm::DEFAULT_BUDGET))
+    };
+    DRV_LAST_OUTCOME = outcome as u32;
+    // Bridge exports → active effect uniforms (same path as set_uniforms).
+    if let Some(dvm) = (*addr_of!(DRV_VM)).as_ref() {
+        let n = DRV_N_BINDINGS;
+        for b in &(*addr_of!(DRV_BINDINGS))[..n] {
+            let w = (b.width as usize).clamp(1, 4);
+            let mut vals = [0.0f32; 4];
+            dvm.export(b.export_slot as usize, &mut vals[..w]);
+            lm_fx_set_uniform(b.uniform_slot as u32, vals.as_ptr(), w);
+        }
+    }
+    true
+}
+
+/// Whether a driver is currently loaded + polling (persistence / diagnostics).
+#[no_mangle]
+pub unsafe extern "C" fn lm_drv_running() -> bool {
+    DRV_RUNNING && DRV_LEN > 0
 }
 
 // -- perf-monitoring protocol handlers ---------------------------------------
