@@ -46,7 +46,10 @@ def main() -> int:
         sys.exit("run via `bazel run //docs:build_user_guide`")
     gen = find_generator()
     print("[build_user_guide] regenerating Markdown + site + manifest…", file=sys.stderr)
-    subprocess.run([gen], check=True, cwd=ws, env=dict(os.environ, BUILD_WORKSPACE_DIRECTORY=ws))
+    # BAZEL_BINDIR="." lets the aspect_rules_js launcher run outside a build
+    # action (it otherwise refuses); gen writes via absolute BUILD_WORKSPACE_DIRECTORY.
+    env = dict(os.environ, BUILD_WORKSPACE_DIRECTORY=ws, BAZEL_BINDIR=".")
+    subprocess.run([gen], check=True, cwd=ws, env=env)
     print("[build_user_guide] capturing app screenshots…", file=sys.stderr)
     return capture_user_guide.main()
 
