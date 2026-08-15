@@ -1145,10 +1145,16 @@ static void emit_perf_report_if_due() {
 #endif
 
 static constexpr i2c_port_t kQwiicPort = I2C_NUM_0;
-static bool g_i2c_ready = false;
+// 0 = not yet attempted, 1 = up, -1 = install failed (don't retry every call).
+static int g_i2c_state = 0;
 static constexpr TickType_t kI2cTimeout = pdMS_TO_TICKS(50);
 
-static void i2c_init() {
+// Bring the qwiic bus up LAZILY, on first use — installing the I2C master driver
+// allocates heap, and boot/TLS-handshake heap headroom on the C6 is tight (see
+// the arena/.bss notes in ffi.rs), so a device with no sensor in use must pay
+// nothing. Idempotent; all callers hold player_mutex, so no init race.
+static bool i2c_ensure() {
+  if (g_i2c_state != 0) return g_i2c_state > 0;
   i2c_config_t cfg = {};
   cfg.mode = I2C_MODE_MASTER;
   cfg.sda_io_num = QWIIC_SDA_PIN;
@@ -1156,16 +1162,20 @@ static void i2c_init() {
   cfg.sda_pullup_en = GPIO_PULLUP_ENABLE;
   cfg.scl_pullup_en = GPIO_PULLUP_ENABLE;
   cfg.master.clk_speed = QWIIC_I2C_HZ;
-  if (i2c_param_config(kQwiicPort, &cfg) != ESP_OK) return;
-  if (i2c_driver_install(kQwiicPort, I2C_MODE_MASTER, 0, 0, 0) != ESP_OK) return;
-  g_i2c_ready = true;
+  if (i2c_param_config(kQwiicPort, &cfg) != ESP_OK ||
+      i2c_driver_install(kQwiicPort, I2C_MODE_MASTER, 0, 0, 0) != ESP_OK) {
+    g_i2c_state = -1;
+    return false;
+  }
+  g_i2c_state = 1;
   Log().printf("[i2c] qwiic bus up: SDA=%d SCL=%d @%d Hz\n", QWIIC_SDA_PIN,
                QWIIC_SCL_PIN, QWIIC_I2C_HZ);
+  return true;
 }
 
 // Write `n` bytes to 7-bit `addr`. Backs the driver VM's i2c_write.
 extern "C" bool lm_i2c_write(uint8_t addr, const uint8_t *bytes, size_t n) {
-  if (!g_i2c_ready || bytes == nullptr || n == 0) return false;
+  if (bytes == nullptr || n == 0 || !i2c_ensure()) return false;
   i2c_cmd_handle_t cmd = i2c_cmd_link_create();
   i2c_master_start(cmd);
   i2c_master_write_byte(cmd, (uint8_t)((addr << 1) | I2C_MASTER_WRITE), true);
@@ -1178,7 +1188,7 @@ extern "C" bool lm_i2c_write(uint8_t addr, const uint8_t *bytes, size_t n) {
 
 // Write register pointer `reg`, then repeated-start read `n` bytes into `out`.
 extern "C" bool lm_i2c_read(uint8_t addr, uint8_t reg, uint8_t *out, size_t n) {
-  if (!g_i2c_ready || out == nullptr || n == 0) return false;
+  if (out == nullptr || n == 0 || !i2c_ensure()) return false;
   i2c_cmd_handle_t cmd = i2c_cmd_link_create();
   i2c_master_start(cmd);
   i2c_master_write_byte(cmd, (uint8_t)((addr << 1) | I2C_MASTER_WRITE), true);
@@ -1195,7 +1205,7 @@ extern "C" bool lm_i2c_read(uint8_t addr, uint8_t reg, uint8_t *out, size_t n) {
 
 // Probe 0x08..0x77; record the addresses that ACK a zero-length write.
 extern "C" size_t lm_i2c_scan(uint8_t *out, size_t cap) {
-  if (!g_i2c_ready || out == nullptr || cap == 0) return 0;
+  if (out == nullptr || cap == 0 || !i2c_ensure()) return 0;
   size_t count = 0;
   for (uint8_t addr = 0x08; addr <= 0x77 && count < cap; ++addr) {
     i2c_cmd_handle_t cmd = i2c_cmd_link_create();
@@ -1633,9 +1643,8 @@ void setup() {
     wss_start();  // TLS player on :443 for the hosted https app (direct, no relay)
   }
 
-  // Bring up the qwiic I2C bus so scan_i2c + sensor drivers (FUG-107) can reach
-  // a plugged-in module. Harmless if nothing is connected.
-  i2c_init();
+  // The qwiic I2C bus is brought up lazily on first scan/driver use (i2c_ensure)
+  // so a device with no sensor pays no boot-time heap/.bss for it (FUG-107).
 
   // Drive the LEDs from a dedicated high-priority task so the pattern cadence
   // no longer rides on loop()'s cooperative WiFi/HTTP/BLE servicing.

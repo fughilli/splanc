@@ -1473,8 +1473,11 @@ fn fx_error(code: &str, message: &str) -> pb::ServerMessage {
 // slot path set_uniforms uses, so a live sensor drives an effect exactly like a
 // slider does. The C++ side owns the qwiic bus and provides the lm_i2c_* hooks.
 
-/// Max driver `.fxb` held (same budget as an effect; a driver is tiny).
-const DRV_MAX_BYTES: usize = 4 * 1024;
+/// Max driver `.fxb` held. A driver is tiny (a few reads + arithmetic → a few
+/// hundred bytes of bytecode), so 1 KiB is generous — kept tight because this is
+/// static .bss out of the same pool the TLS handshake's record buffer needs (see
+/// the FX/arena sizing notes above). submit_driver rejects a larger upload.
+const DRV_MAX_BYTES: usize = 1024;
 static mut DRV_BYTES: [u8; DRV_MAX_BYTES] = [0; DRV_MAX_BYTES];
 static mut DRV_LEN: usize = 0;
 static mut DRV_VM: Option<FxVm> = None;
