@@ -160,37 +160,17 @@ struct FxLedTopo {
     s: f32,
     branch: bool,
     dist: f32,
-    // Fixed mirrors cached ONCE at map/topology rebuild (FUG-122) so a fixed-only
-    // shader reads them via LoadCtxFix with zero per-frame soft-float. Positions
-    // need range → Q16.16; the 0..1 quantities pack into Q1.14 i16 to keep the
-    // cache small (20 B/LED added).
-    pos_fix: [i32; 3], // Q16.16 world coords
-    uv_fix: [i16; 2],  // Q1.14 (0..1)
-    s_fix: i16,        // Q1.14
-    dist_fix: i16,     // Q1.14
 }
 impl FxLedTopo {
-    const NONE: FxLedTopo = FxLedTopo {
-        seg: -1,
-        s: 0.0,
-        branch: false,
-        dist: 0.0,
-        pos_fix: [0; 3],
-        uv_fix: [0; 2],
-        s_fix: 0,
-        dist_fix: 0,
-    };
+    const NONE: FxLedTopo = FxLedTopo { seg: -1, s: 0.0, branch: false, dist: 0.0 };
 }
 
-/// Convert a float to Q16.16 (positions; range-safe).
+/// Convert a float to Q16.16 (the canonical fixed context width, CTX_FIX_FRAC).
+/// Used to build the per-LED/-frame fixed mirrors for LoadCtxFix on demand (only
+/// when the loaded effect reads them), so this never grows the resident cache.
 #[inline]
 fn q16_16(x: f32) -> i32 {
     (x * 65536.0) as i32
-}
-/// Convert a 0..1 float to Q1.14 i16 (uv/s/dist; clamped to the format range).
-#[inline]
-fn q1_14(x: f32) -> i16 {
-    (x * 16384.0).clamp(i16::MIN as f32, i16::MAX as f32) as i16
 }
 
 static mut FX_LED_TOPO: [FxLedTopo; FX_TOPO_CAP] = [FxLedTopo::NONE; FX_TOPO_CAP];
@@ -1861,17 +1841,6 @@ unsafe fn fx_rebuild_topo() {
             FX_UV_MIN[k] = if range.is_finite() { mn[k] } else { 0.0 };
             FX_UV_INV[k] = if range > 1e-6 { 1.0 / range } else { 0.0 };
         }
-        // Cache each LED's fixed position + uv ONCE (independent of topology), so
-        // LoadCtxFix never re-converts on the hot path (FUG-122). Keyed by map
-        // index, exactly as lm_map_led / lm_fx_shade address the cache.
-        for (i, led) in map.leds.iter().enumerate().take(FX_TOPO_CAP) {
-            cache[i].pos_fix = [q16_16(led.xyz[0]), q16_16(led.xyz[1]), q16_16(led.xyz[2])];
-            let uv = [
-                ((led.xyz[0] - FX_UV_MIN[0]) * FX_UV_INV[0]).clamp(0.0, 1.0),
-                ((led.xyz[1] - FX_UV_MIN[1]) * FX_UV_INV[1]).clamp(0.0, 1.0),
-            ];
-            cache[i].uv_fix = [q1_14(uv[0]), q1_14(uv[1])];
-        }
     }
     let (Some(map), Some(topo)) = ((*addr_of!(MAP)).as_ref(), (*addr_of!(TOPO)).as_ref()) else {
         return;
@@ -2005,21 +1974,12 @@ unsafe fn fx_rebuild_topo() {
         if geo > max_geo {
             max_geo = geo;
         }
-        // Update the topology fields in place — pos_fix/uv_fix were already cached
-        // in the map loop above and must be preserved (FUG-122). dist_fix is set
-        // after the 0..1 normalization below.
-        let e = &mut cache[i];
-        e.seg = seg_idx as i16;
-        e.s = s_norm;
-        e.branch = branch;
-        e.dist = geo;
-        e.s_fix = q1_14(s_norm);
+        cache[i] = FxLedTopo { seg: seg_idx as i16, s: s_norm, branch, dist: geo };
     }
     // Normalize the raw geodesic distances to 0..1 (unassociated LEDs stay 0).
     if max_geo > 1e-6 {
         for e in cache.iter_mut() {
             e.dist /= max_geo;
-            e.dist_fix = q1_14(e.dist);
         }
     }
 
@@ -2334,16 +2294,15 @@ pub unsafe extern "C" fn lm_fx_shade(
         uv,
         ..Default::default()
     };
-    // Fixed mirrors read by LoadCtxFix — taken straight from the cache filled once
-    // at map/topology rebuild (FUG-122). Built ONLY when the effect uses them so
-    // an all-float shader pays zero per-LED overhead. No soft-float: the 0..1
-    // quantities are stored Q1.14 and widened to the Q16.16 canonical the opcode
-    // expects with a cheap integer shift (16 - 14 = 2).
+    // Fixed (Q16.16) mirrors read by LoadCtxFix — built ONLY when the loaded
+    // effect actually reads them (FUG-122), so an all-float shader pays zero
+    // per-LED overhead and the resident cache never grows. Positions come from
+    // this frame's map fetch; uv/s/dist from the already-derived values.
     if FX_USES_CTXFIX {
-        led.pos_fix = t.pos_fix;
-        led.uv_fix = [(t.uv_fix[0] as i32) << 2, (t.uv_fix[1] as i32) << 2];
-        led.s_fix = (t.s_fix as i32) << 2;
-        led.dist_fix = (t.dist_fix as i32) << 2;
+        led.pos_fix = [q16_16(x), q16_16(y), q16_16(z)];
+        led.uv_fix = [q16_16(uv[0]), q16_16(uv[1])];
+        led.s_fix = q16_16(t.s);
+        led.dist_fix = q16_16(t.dist);
     }
     let outcome = if PERF_MODE == PERF_FULL {
         // FULL: count this LED's opcodes into the per-frame shade accumulator
