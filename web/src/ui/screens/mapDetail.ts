@@ -39,6 +39,8 @@ interface RawOpts {
   loopFactor: number;
   simplifyFrac: number;
   maxPolyline: number;
+  /** Tubiform contraction passes (0 = off); see topology/relax.ts. */
+  relaxIterations: number;
 }
 
 const DEFAULTS: RawOpts = {
@@ -47,6 +49,7 @@ const DEFAULTS: RawOpts = {
   loopFactor: 2,
   simplifyFrac: 0.5,
   maxPolyline: 64,
+  relaxIterations: 0,
 };
 
 function cleanupToOptions(cleanup: number, base: RawOpts): RawOpts {
@@ -647,6 +650,7 @@ export function MapDetailScreen(
     addRaw("loopFactor", "close loops", 0, 4, 0.2);
     addRaw("simplifyFrac", "simplify", 0, 2, 0.1);
     addRaw("maxPolyline", "max verts/segment", 4, 128, 4);
+    addRaw("relaxIterations", "tube relax", 0, 20, 1);
     topoPanel.append(disclosure, fine, progressEl);
 
     // -- Debug collapsible section: diagnostics master + overlay layer toggles -
