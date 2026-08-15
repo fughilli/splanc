@@ -1,0 +1,1412 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="Index" href="../genindex.html"><link rel="search" title="Search" href="../search.html"><link rel="next" title="LED Mapper — Design Doc (Android-first)" href="../led-mapper-design.html"><link rel="prev" title="The splanc effects engine" href="../EFFECTS.html">
+        <link rel="prefetch" href="../static/splanc-icon.svg" as="image">
+
+    <link rel="shortcut icon" href="../static/splanc-icon.svg"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
+        <title>FX-VM performance - splanc developer docs</title>
+      <link rel="stylesheet" type="text/css" href="../static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../static/styles/furo.css?v=7bdb33bb" />
+    <link rel="stylesheet" type="text/css" href="../static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="../static/custom.css?v=36188834" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  --color-brand-primary: #084de7;
+  --color-brand-content: #084de7;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation" aria-label="Toggle site navigation sidebar">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc" aria-label="Toggle table of contents sidebar">
+<label class="overlay sidebar-overlay" for="__navigation"></label>
+<label class="overlay toc-overlay" for="__toc"></label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <span class="icon"><svg><use href="#svg-menu"></use></svg></span>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../index.html"><div class="brand">splanc developer docs</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../index.html">
+  <div class="sidebar-logo-container">
+    <img class="sidebar-logo" src="../static/splanc-icon.svg" alt="Logo"/>
+  </div>
+  
+  <span class="sidebar-brand-text">splanc developer docs</span>
+  
+</a><form class="sidebar-search-container" method="get" action="../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../architecture.html">Architecture</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../subsystems/index.html">Subsystems</a><input aria-label="Toggle navigation of Subsystems" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/web.html">The PWA (<code class="docutils literal notranslate"><span class="pre">web/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/firmware.html">The firmware (<code class="docutils literal notranslate"><span class="pre">firmware/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/fx-compiler.html">The effects compiler (<code class="docutils literal notranslate"><span class="pre">fx_compiler/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/solver.html">The solver (<code class="docutils literal notranslate"><span class="pre">solver/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/reconstruction.html">Reconstruction (<code class="docutils literal notranslate"><span class="pre">pi/reconstruction/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/protocol.html">The wire protocol (<code class="docutils literal notranslate"><span class="pre">shared/protocol/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/simulator.html">The simulator (<code class="docutils literal notranslate"><span class="pre">shared/simulator/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../subsystems/hitl.html">HITL &amp; tooling (<code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code>, <code class="docutils literal notranslate"><span class="pre">tools/</span></code>)</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Guides</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../DEVELOPERS.html">Developing splanc</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html#hardware">Hardware</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html#how-it-works">How it works</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../README.html#learn-more">Learn more</a></li>
+<li class="toctree-l1"><a class="reference internal" href="runbook.html">Runbook</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../next_steps.html">APP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../next_steps.html#firmware">FIRMWARE</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../next_steps.html#effects-compiler">EFFECTS COMPILER</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../next_steps.html#performance-monitoring">PERFORMANCE MONITORING</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Effects</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="../EFFECTS.html">The splanc effects engine</a></li>
+<li class="toctree-l1 current current-page"><a class="current reference internal" href="#">FX-VM performance</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../led-mapper-design.html">LED Mapper — Design Doc (Android-first)</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../design/index.html">Design notes</a><input aria-label="Toggle navigation of Design notes" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="design/effects-runtime.html">The effects runtime</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/effects-compiler.html">The effects compiler</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/perf-monitoring.html">Performance monitoring</a></li>
+<li class="toctree-l2"><a class="reference internal" href="vio-exploration.html">VIO solver exploration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="blob-detection-playbook.html">Blob-detection playbook</a></li>
+<li class="toctree-l2"><a class="reference internal" href="esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="design/app-ux-overhaul.html">App UX overhaul</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="decisions.html">Decision log</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Meta</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../about-these-docs.html">How these docs are built</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="view-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/blob/main/docs/_sphinx/docs/fx-vm-performance.md?plain=true" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div><div class="edit-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/edit/main/docs/_sphinx/docs/fx-vm-performance.md" rel="edit" title="Edit this page">
+    <svg><use href="#svg-pencil"></use></svg>
+    <span class="visually-hidden">Edit this page</span>
+  </a>
+</div><div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <!-- Generated by web/tests/tools/genFxVmPerfDoc.ts. DO NOT EDIT BY HAND. -->
+<section id="fx-vm-performance">
+<h1>FX-VM performance<a class="headerlink" href="#fx-vm-performance" title="Link to this heading">¶</a></h1>
+<p>Measured FX-VM performance across hardware platforms, fitted from the golden HITL
+benchmark bundles (<code class="docutils literal notranslate"><span class="pre">web/tests/testdata/device-bench-*.json</span></code>) captured on real devices
+over the rig. This file is <strong>auto-generated</strong> and pinned by CI — regenerate it with:</p>
+<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>bazel<span class="w"> </span>run<span class="w"> </span>//web:gen_fx_vm_perf_doc
+</pre></div>
+</div>
+<p>The numbers come from the same cost model the app and CI use: <code class="docutils literal notranslate"><span class="pre">buildDeviceProfile</span></code>
+(<code class="docutils literal notranslate"><span class="pre">web/src/effects/deviceProfile.ts</span></code>) fits the per-opcode table and validates it against
+held-out programs (<code class="docutils literal notranslate"><span class="pre">profileValidation.ts</span></code>), gated at the same tolerance as
+<code class="docutils literal notranslate"><span class="pre">web/tests/deviceProfileHardware.test.ts</span></code>. See
+<a class="reference internal" href="design/perf-monitoring.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">docs/design/perf-monitoring.md</span></code></span></a> for the methodology and
+<a class="reference internal" href="../EFFECTS.html#performance-on-the-esp32-c6"><span class="std std-ref"><code class="docutils literal notranslate"><span class="pre">EFFECTS.md</span></code></span></a> for the narrative.</p>
+<section id="platforms">
+<h2>Platforms<a class="headerlink" href="#platforms" title="Link to this heading">¶</a></h2>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>SoC</p></th>
+<th class="head"><p>Device</p></th>
+<th class="head"><p>MHz</p></th>
+<th class="head"><p>Fit</p></th>
+<th class="head"><p>Held-out</p></th>
+<th class="head"><p>RMS</p></th>
+<th class="head"><p>Max</p></th>
+<th class="head"><p>Tolerance</p></th>
+<th class="head"><p>Verdict</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>esp32c6</p></td>
+<td><p>HITL rig ESP32-C6 (golden)</p></td>
+<td><p>160</p></td>
+<td><p>65</p></td>
+<td><p>7</p></td>
+<td><p>5.7%</p></td>
+<td><p>10.7%</p></td>
+<td><p>13%</p></td>
+<td><p>PASS</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="esp32c6-hitl-rig-esp32-c6-golden">
+<h2>esp32c6 — HITL rig ESP32-C6 (golden)<a class="headerlink" href="#esp32c6-hitl-rig-esp32-c6-golden" title="Link to this heading">¶</a></h2>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Field</p></th>
+<th class="head"><p>Value</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>SoC</p></td>
+<td><p>esp32c6</p></td>
+</tr>
+<tr class="row-odd"><td><p>Device</p></td>
+<td><p>HITL rig ESP32-C6 (golden)</p></td>
+</tr>
+<tr class="row-even"><td><p>deviceKey</p></td>
+<td><p>esp32c6-hitl-golden</p></td>
+</tr>
+<tr class="row-odd"><td><p>CPU clock</p></td>
+<td><p>160 MHz (160,000,000 Hz)</p></td>
+</tr>
+<tr class="row-even"><td><p>Programs</p></td>
+<td><p>65 fit + 7 held-out</p></td>
+</tr>
+<tr class="row-odd"><td><p>Regression margins</p></td>
+<td><p>default 10%, sweep16 15%</p></td>
+</tr>
+<tr class="row-even"><td><p>Fit residual</p></td>
+<td><p>±35.0%</p></td>
+</tr>
+<tr class="row-odd"><td><p>Held-out accuracy</p></td>
+<td><p>RMS 5.7% · mean 5.0% · max 10.7% · R² 0.984</p></td>
+</tr>
+<tr class="row-even"><td><p>Verdict</p></td>
+<td><p>PASS (RMS 5.7% vs 13% tolerance)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<section id="fixed-overheads">
+<h3>Fixed overheads<a class="headerlink" href="#fixed-overheads" title="Link to this heading">¶</a></h3>
+<p>Per-phase framing costs the fit isolates from the per-opcode slopes.</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Overhead</p></th>
+<th class="head"><p>Cycles</p></th>
+<th class="head"><p>ns</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>update_fixed</p></td>
+<td><p>426831.5</p></td>
+<td><p>2667697.1</p></td>
+</tr>
+<tr class="row-odd"><td><p>shade_fixed</p></td>
+<td><p>3451.8</p></td>
+<td><p>21573.8</p></td>
+</tr>
+<tr class="row-even"><td><p>show_fixed</p></td>
+<td><p>1039048.7</p></td>
+<td><p>6494054.6</p></td>
+</tr>
+<tr class="row-odd"><td><p>show_per_led</p></td>
+<td><p>56.7</p></td>
+<td><p>354.2</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="fitted-per-opcode-cost">
+<h3>Fitted per-opcode cost<a class="headerlink" href="#fitted-per-opcode-cost" title="Link to this heading">¶</a></h3>
+<p>Per-lane opcode cost from the least-squares fit. <strong>Fitted</strong> rows were measured on this
+device; the rest keep the shipped default seed (the fit only overrides opcodes a
+benchmark actually exercised). Sorted by cost.</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Opcode</p></th>
+<th class="head"><p>Cycles</p></th>
+<th class="head"><p>ns</p></th>
+<th class="head"><p>Fitted</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>BinMath:pow</p></td>
+<td><p>1917.23</p></td>
+<td><p>11982.67</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-odd"><td><p>Hsv2Rgb</p></td>
+<td><p>1380.52</p></td>
+<td><p>8628.26</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-even"><td><p>UnMath:tan</p></td>
+<td><p>1355.03</p></td>
+<td><p>8468.92</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-odd"><td><p>BinMath:atan2</p></td>
+<td><p>1154.05</p></td>
+<td><p>7212.83</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-even"><td><p>Cross</p></td>
+<td><p>1009.67</p></td>
+<td><p>6310.41</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-odd"><td><p>UnMath:exp</p></td>
+<td><p>910.61</p></td>
+<td><p>5691.32</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-even"><td><p>UnMath:log</p></td>
+<td><p>853.61</p></td>
+<td><p>5335.07</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-odd"><td><p>Smoothstep</p></td>
+<td><p>828.48</p></td>
+<td><p>5178.00</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-even"><td><p>UnMath:sqrt</p></td>
+<td><p>735.03</p></td>
+<td><p>4593.96</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-odd"><td><p>BinMath:mod</p></td>
+<td><p>704.83</p></td>
+<td><p>4405.20</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-even"><td><p>UnMath:cos</p></td>
+<td><p>697.11</p></td>
+<td><p>4356.91</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-odd"><td><p>Palette</p></td>
+<td><p>638.12</p></td>
+<td><p>3988.28</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-even"><td><p>UnMath:sin</p></td>
+<td><p>625.65</p></td>
+<td><p>3910.34</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-odd"><td><p>Normalize</p></td>
+<td><p>560.72</p></td>
+<td><p>3504.47</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-even"><td><p>Distance</p></td>
+<td><p>531.92</p></td>
+<td><p>3324.47</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-odd"><td><p>UnMath:ceil</p></td>
+<td><p>463.38</p></td>
+<td><p>2896.13</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-even"><td><p>Div</p></td>
+<td><p>454.26</p></td>
+<td><p>2839.10</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-odd"><td><p>Mix</p></td>
+<td><p>419.63</p></td>
+<td><p>2622.68</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-even"><td><p>UnMath:fract</p></td>
+<td><p>386.42</p></td>
+<td><p>2415.09</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-odd"><td><p>Length</p></td>
+<td><p>385.77</p></td>
+<td><p>2411.08</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-even"><td><p>Clamp</p></td>
+<td><p>383.69</p></td>
+<td><p>2398.04</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-odd"><td><p>Hash3</p></td>
+<td><p>361.02</p></td>
+<td><p>2256.37</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-even"><td><p>Mul</p></td>
+<td><p>310.02</p></td>
+<td><p>1937.63</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-odd"><td><p>Add</p></td>
+<td><p>309.10</p></td>
+<td><p>1931.87</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-even"><td><p>Sub</p></td>
+<td><p>308.39</p></td>
+<td><p>1927.41</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-odd"><td><p>UnMath:floor</p></td>
+<td><p>302.10</p></td>
+<td><p>1888.11</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-even"><td><p>BinMath:step</p></td>
+<td><p>295.70</p></td>
+<td><p>1848.12</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-odd"><td><p>BinMath:min</p></td>
+<td><p>293.66</p></td>
+<td><p>1835.40</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-even"><td><p>BinMath:max</p></td>
+<td><p>292.69</p></td>
+<td><p>1829.31</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-odd"><td><p>Dot</p></td>
+<td><p>239.84</p></td>
+<td><p>1499.02</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-even"><td><p>Hash1</p></td>
+<td><p>218.79</p></td>
+<td><p>1367.46</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-odd"><td><p>UnMath:sign</p></td>
+<td><p>183.93</p></td>
+<td><p>1149.56</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-even"><td><p>UnMath:abs</p></td>
+<td><p>159.48</p></td>
+<td><p>996.76</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-odd"><td><p>Neg</p></td>
+<td><p>144.33</p></td>
+<td><p>902.05</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-even"><td><p>BinMath</p></td>
+<td><p>130.00</p></td>
+<td><p>812.50</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p>UnMath</p></td>
+<td><p>120.00</p></td>
+<td><p>750.00</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p>DivFix</p></td>
+<td><p>24.00</p></td>
+<td><p>150.00</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p>DivI</p></td>
+<td><p>20.00</p></td>
+<td><p>125.00</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p>ModI</p></td>
+<td><p>20.00</p></td>
+<td><p>125.00</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p>Scale</p></td>
+<td><p>14.00</p></td>
+<td><p>87.50</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p>F2Fix</p></td>
+<td><p>10.00</p></td>
+<td><p>62.50</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p>Fix2F</p></td>
+<td><p>10.00</p></td>
+<td><p>62.50</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p>F2I</p></td>
+<td><p>8.00</p></td>
+<td><p>50.00</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p>I2F</p></td>
+<td><p>8.00</p></td>
+<td><p>50.00</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p>Call</p></td>
+<td><p>6.00</p></td>
+<td><p>37.50</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p>MulFix</p></td>
+<td><p>6.00</p></td>
+<td><p>37.50</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p>MulI</p></td>
+<td><p>4.00</p></td>
+<td><p>25.00</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p>Ret</p></td>
+<td><p>4.00</p></td>
+<td><p>25.00</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p>RetFn</p></td>
+<td><p>4.00</p></td>
+<td><p>25.00</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p>Swizzle</p></td>
+<td><p>4.00</p></td>
+<td><p>25.00</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p>BrFalse</p></td>
+<td><p>3.00</p></td>
+<td><p>18.75</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p>Cmp</p></td>
+<td><p>3.00</p></td>
+<td><p>18.75</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p>LoadCtx</p></td>
+<td><p>3.00</p></td>
+<td><p>18.75</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p>LoadLocal</p></td>
+<td><p>3.00</p></td>
+<td><p>18.75</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p>LoadState</p></td>
+<td><p>3.00</p></td>
+<td><p>18.75</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p>LoadUniform</p></td>
+<td><p>3.00</p></td>
+<td><p>18.75</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p>StoreLocal</p></td>
+<td><p>3.00</p></td>
+<td><p>18.75</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p>StoreState</p></td>
+<td><p>3.00</p></td>
+<td><p>18.75</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p>Swap</p></td>
+<td><p>3.00</p></td>
+<td><p>18.75</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p>AddI</p></td>
+<td><p>2.00</p></td>
+<td><p>12.50</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p>CmpI</p></td>
+<td><p>2.00</p></td>
+<td><p>12.50</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p>Fix2I</p></td>
+<td><p>2.00</p></td>
+<td><p>12.50</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p>I2Fix</p></td>
+<td><p>2.00</p></td>
+<td><p>12.50</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p>Jmp</p></td>
+<td><p>2.00</p></td>
+<td><p>12.50</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p>Logic</p></td>
+<td><p>2.00</p></td>
+<td><p>12.50</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p>NegI</p></td>
+<td><p>2.00</p></td>
+<td><p>12.50</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p>PushConst</p></td>
+<td><p>2.00</p></td>
+<td><p>12.50</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p>SubI</p></td>
+<td><p>2.00</p></td>
+<td><p>12.50</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p>Pop</p></td>
+<td><p>1.00</p></td>
+<td><p>6.25</p></td>
+<td><p></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="builtin-costs-effects-ai-ranking">
+<h3>Builtin costs (effects-AI ranking)<a class="headerlink" href="#builtin-costs-effects-ai-ranking" title="Link to this heading">¶</a></h3>
+<p>Rendered verbatim from <code class="docutils literal notranslate"><span class="pre">builtinCostsToPrompt</span></code> — the per-builtin ranking the
+in-editor AI is fed, relative to a float multiply (each runs once per LED in
+<code class="docutils literal notranslate"><span class="pre">shade()</span></code>):</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>BUILTIN COSTS on this device (esp32c6 @ 160 MHz, measured on your board) — per call, relative to a float multiply. shade() runs each ONCE PER LED, so favor the cheap ones:
+  abs 0.5x, sign 0.6x, hash 0.7x, dot 0.8x, max 0.9x, min 0.9x, step 1.0x, floor 1.0x, sub 1.0x, add 1.0x, mul 1.0x, clamp 1.2x, length 1.2x, fract 1.2x, mix 1.4x, div 1.5x, ceil 1.5x, distance 1.7x, normalize 1.8x, sin 2.0x, palette0 2.1x, cos 2.2x, mod 2.3x, sqrt 2.4x, smoothstep 2.7x, log 2.8x, exp 2.9x, cross 3.3x, atan2 3.7x, tan 4.4x, hsv2rgb 4.5x, pow 6.2x
+Hoist the pricey builtins (pow/atan2/log/exp/length/normalize/distance/smoothstep) out of shade() into update() or precompute into state; swap sin/cos/pow for fixed16/fixed8 (LUT trig, no soft-float) or step/mix/polynomials; avoid length/normalize where a squared distance works (hidden sqrt).
+</pre></div>
+</div>
+</section>
+<section id="estimator-accuracy-held-out">
+<h3>Estimator accuracy (held-out)<a class="headerlink" href="#estimator-accuracy-held-out" title="Link to this heading">¶</a></h3>
+<p>Predicted-vs-measured total frame time (FX-VM frame + LED transmit) for the held-out
+programs the fit never saw. Cycles are the wall-time re-expressed at the device clock.</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Program</p></th>
+<th class="head"><p>LEDs</p></th>
+<th class="head"><p>Measured (ms)</p></th>
+<th class="head"><p>Predicted (ms)</p></th>
+<th class="head"><p>Error</p></th>
+<th class="head"><p>Measured cyc</p></th>
+<th class="head"><p>Predicted cyc</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>hsv2rgbM</p></td>
+<td><p>128</p></td>
+<td><p>51.09</p></td>
+<td><p>49.80</p></td>
+<td><p>-2.5%</p></td>
+<td><p>8.17M</p></td>
+<td><p>7.97M</p></td>
+</tr>
+<tr class="row-odd"><td><p>neg2M</p></td>
+<td><p>128</p></td>
+<td><p>19.45</p></td>
+<td><p>21.54</p></td>
+<td><p>+10.7%</p></td>
+<td><p>3.11M</p></td>
+<td><p>3.45M</p></td>
+</tr>
+<tr class="row-even"><td><p>dot3M</p></td>
+<td><p>128</p></td>
+<td><p>31.56</p></td>
+<td><p>32.95</p></td>
+<td><p>+4.4%</p></td>
+<td><p>5.05M</p></td>
+<td><p>5.27M</p></td>
+</tr>
+<tr class="row-odd"><td><p>mix3M</p></td>
+<td><p>128</p></td>
+<td><p>48.40</p></td>
+<td><p>46.89</p></td>
+<td><p>-3.1%</p></td>
+<td><p>7.74M</p></td>
+<td><p>7.50M</p></td>
+</tr>
+<tr class="row-even"><td><p>expf2M</p></td>
+<td><p>128</p></td>
+<td><p>74.70</p></td>
+<td><p>76.75</p></td>
+<td><p>+2.7%</p></td>
+<td><p>11.95M</p></td>
+<td><p>12.28M</p></td>
+</tr>
+<tr class="row-odd"><td><p>clamp32M</p></td>
+<td><p>128</p></td>
+<td><p>68.97</p></td>
+<td><p>74.00</p></td>
+<td><p>+7.3%</p></td>
+<td><p>11.04M</p></td>
+<td><p>11.84M</p></td>
+</tr>
+<tr class="row-even"><td><p>lavalamp</p></td>
+<td><p>200</p></td>
+<td><p>28.82</p></td>
+<td><p>27.55</p></td>
+<td><p>-4.4%</p></td>
+<td><p>4.61M</p></td>
+<td><p>4.41M</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Held-out <strong>RMS 5.7%</strong>, mean 5.0%, max 10.7% against the <strong>13%</strong> tolerance — <strong>PASS</strong>.</p>
+<p>Outliers (|error| &gt; 10%): <code class="docutils literal notranslate"><span class="pre">neg2M</span></code> +10.7%. The linear sum-of-op-costs model over-predicts the
+cheapest real effects.</p>
+</section>
+<section id="raw-measured-costs">
+<h3>Raw measured costs<a class="headerlink" href="#raw-measured-costs" title="Link to this heading">¶</a></h3>
+<p>Every measured micro-program from the golden bundle: cycle-accurate frame cycles
+(the FX-VM execution cost, which the regression gate compares) and show cycles (the
+LED transmit path, excluded from the gate as transmit-bound noise).</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Program</p></th>
+<th class="head"><p>Set</p></th>
+<th class="head"><p>LEDs</p></th>
+<th class="head"><p>Frame cycles</p></th>
+<th class="head"><p>Show cycles</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>empty</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>490,734</p></td>
+<td><p>1,041,484</p></td>
+</tr>
+<tr class="row-odd"><td><p>sweep16</p></td>
+<td><p>fit</p></td>
+<td><p>16</p></td>
+<td><p>98,582</p></td>
+<td><p>1,038,535</p></td>
+</tr>
+<tr class="row-even"><td><p>sweep256</p></td>
+<td><p>fit</p></td>
+<td><p>256</p></td>
+<td><p>974,524</p></td>
+<td><p>1,051,276</p></td>
+</tr>
+<tr class="row-odd"><td><p>hash1M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>2,201,594</p></td>
+<td><p>1,033,326</p></td>
+</tr>
+<tr class="row-even"><td><p>hash3M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>2,499,500</p></td>
+<td><p>1,041,366</p></td>
+</tr>
+<tr class="row-odd"><td><p>hash12M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>2,918,124</p></td>
+<td><p>1,039,000</p></td>
+</tr>
+<tr class="row-even"><td><p>hsv2rgb2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>12,494,880</p></td>
+<td><p>1,052,251</p></td>
+</tr>
+<tr class="row-odd"><td><p>length3M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>5,761,442</p></td>
+<td><p>1,032,188</p></td>
+</tr>
+<tr class="row-even"><td><p>negM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>1,776,820</p></td>
+<td><p>1,052,263</p></td>
+</tr>
+<tr class="row-odd"><td><p>normalize3M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>8,319,600</p></td>
+<td><p>1,041,694</p></td>
+</tr>
+<tr class="row-even"><td><p>paletteM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>3,629,622</p></td>
+<td><p>1,028,591</p></td>
+</tr>
+<tr class="row-odd"><td><p>absfM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>1,960,186</p></td>
+<td><p>1,036,408</p></td>
+</tr>
+<tr class="row-even"><td><p>ceilfM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>3,195,986</p></td>
+<td><p>1,035,355</p></td>
+</tr>
+<tr class="row-odd"><td><p>cosM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>4,143,678</p></td>
+<td><p>1,029,053</p></td>
+</tr>
+<tr class="row-even"><td><p>floorfM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>2,535,618</p></td>
+<td><p>1,036,795</p></td>
+</tr>
+<tr class="row-odd"><td><p>fractfM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>2,889,420</p></td>
+<td><p>1,039,066</p></td>
+</tr>
+<tr class="row-even"><td><p>signfM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>2,059,064</p></td>
+<td><p>1,045,828</p></td>
+</tr>
+<tr class="row-odd"><td><p>sinM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>3,926,730</p></td>
+<td><p>1,047,642</p></td>
+</tr>
+<tr class="row-even"><td><p>sqrtfM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>4,309,066</p></td>
+<td><p>1,034,632</p></td>
+</tr>
+<tr class="row-odd"><td><p>tanM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>6,840,186</p></td>
+<td><p>1,033,321</p></td>
+</tr>
+<tr class="row-even"><td><p>normalize32M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>14,843,874</p></td>
+<td><p>1,043,251</p></td>
+</tr>
+<tr class="row-odd"><td><p>addM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>2,543,104</p></td>
+<td><p>1,067,236</p></td>
+</tr>
+<tr class="row-even"><td><p>divM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>3,161,998</p></td>
+<td><p>1,029,433</p></td>
+</tr>
+<tr class="row-odd"><td><p>mulM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>2,546,572</p></td>
+<td><p>1,030,066</p></td>
+</tr>
+<tr class="row-even"><td><p>subM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>2,568,416</p></td>
+<td><p>1,033,397</p></td>
+</tr>
+<tr class="row-odd"><td><p>absf2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>2,431,476</p></td>
+<td><p>1,029,742</p></td>
+</tr>
+<tr class="row-even"><td><p>atan2fM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>5,979,462</p></td>
+<td><p>1,041,768</p></td>
+</tr>
+<tr class="row-odd"><td><p>ceilf2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>4,925,512</p></td>
+<td><p>1,049,000</p></td>
+</tr>
+<tr class="row-even"><td><p>cos2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>6,845,002</p></td>
+<td><p>1,039,486</p></td>
+</tr>
+<tr class="row-odd"><td><p>floorf2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>3,604,146</p></td>
+<td><p>1,076,130</p></td>
+</tr>
+<tr class="row-even"><td><p>fractf2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>4,290,660</p></td>
+<td><p>1,036,735</p></td>
+</tr>
+<tr class="row-odd"><td><p>modfM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>4,193,258</p></td>
+<td><p>1,046,172</p></td>
+</tr>
+<tr class="row-even"><td><p>powfM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>9,112,778</p></td>
+<td><p>1,059,798</p></td>
+</tr>
+<tr class="row-odd"><td><p>signf2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>2,632,388</p></td>
+<td><p>1,052,129</p></td>
+</tr>
+<tr class="row-even"><td><p>sin2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>6,221,814</p></td>
+<td><p>1,056,307</p></td>
+</tr>
+<tr class="row-odd"><td><p>sqrtf2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>7,150,688</p></td>
+<td><p>1,059,044</p></td>
+</tr>
+<tr class="row-even"><td><p>stepfM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>2,516,622</p></td>
+<td><p>1,036,878</p></td>
+</tr>
+<tr class="row-odd"><td><p>tan2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>12,233,870</p></td>
+<td><p>1,046,445</p></td>
+</tr>
+<tr class="row-even"><td><p>maxfM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>2,504,168</p></td>
+<td><p>1,034,654</p></td>
+</tr>
+<tr class="row-odd"><td><p>minfM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>2,508,080</p></td>
+<td><p>1,042,249</p></td>
+</tr>
+<tr class="row-even"><td><p>hash32M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>4,225,566</p></td>
+<td><p>1,030,316</p></td>
+</tr>
+<tr class="row-odd"><td><p>expfM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>6,185,362</p></td>
+<td><p>1,059,330</p></td>
+</tr>
+<tr class="row-even"><td><p>logfM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>6,041,392</p></td>
+<td><p>1,052,733</p></td>
+</tr>
+<tr class="row-odd"><td><p>length32M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>10,748,712</p></td>
+<td><p>1,038,264</p></td>
+</tr>
+<tr class="row-even"><td><p>palette2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>6,498,066</p></td>
+<td><p>1,035,152</p></td>
+</tr>
+<tr class="row-odd"><td><p>add2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>3,603,498</p></td>
+<td><p>1,043,009</p></td>
+</tr>
+<tr class="row-even"><td><p>div2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>4,849,066</p></td>
+<td><p>1,055,655</p></td>
+</tr>
+<tr class="row-odd"><td><p>mul2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>3,611,188</p></td>
+<td><p>1,039,853</p></td>
+</tr>
+<tr class="row-even"><td><p>sub2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>3,652,144</p></td>
+<td><p>1,052,758</p></td>
+</tr>
+<tr class="row-odd"><td><p>distance3M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>7,529,060</p></td>
+<td><p>1,054,937</p></td>
+</tr>
+<tr class="row-even"><td><p>cross3M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>5,565,976</p></td>
+<td><p>1,051,304</p></td>
+</tr>
+<tr class="row-odd"><td><p>atan2f2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>10,606,256</p></td>
+<td><p>1,071,828</p></td>
+</tr>
+<tr class="row-even"><td><p>modf2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>6,899,328</p></td>
+<td><p>1,060,555</p></td>
+</tr>
+<tr class="row-odd"><td><p>powf2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>16,854,498</p></td>
+<td><p>1,079,506</p></td>
+</tr>
+<tr class="row-even"><td><p>stepf2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>3,548,120</p></td>
+<td><p>1,046,344</p></td>
+</tr>
+<tr class="row-odd"><td><p>maxf2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>3,523,542</p></td>
+<td><p>1,036,635</p></td>
+</tr>
+<tr class="row-even"><td><p>minf2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>3,531,558</p></td>
+<td><p>1,043,120</p></td>
+</tr>
+<tr class="row-odd"><td><p>dot32M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>7,080,024</p></td>
+<td><p>1,050,638</p></td>
+</tr>
+<tr class="row-even"><td><p>logf2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>10,663,946</p></td>
+<td><p>1,064,070</p></td>
+</tr>
+<tr class="row-odd"><td><p>clamp3M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>5,900,390</p></td>
+<td><p>1,061,879</p></td>
+</tr>
+<tr class="row-even"><td><p>smoothstep3M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>11,702,712</p></td>
+<td><p>1,046,365</p></td>
+</tr>
+<tr class="row-odd"><td><p>cross32M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>9,334,462</p></td>
+<td><p>1,060,495</p></td>
+</tr>
+<tr class="row-even"><td><p>distance32M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>14,354,396</p></td>
+<td><p>1,046,408</p></td>
+</tr>
+<tr class="row-odd"><td><p>mix32M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>11,498,456</p></td>
+<td><p>1,056,380</p></td>
+</tr>
+<tr class="row-even"><td><p>smoothstep32M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>21,378,030</p></td>
+<td><p>1,074,138</p></td>
+</tr>
+<tr class="row-odd"><td><p>hsv2rgbM</p></td>
+<td><p>held-out</p></td>
+<td><p>128</p></td>
+<td><p>7,130,884</p></td>
+<td><p>1,042,874</p></td>
+</tr>
+<tr class="row-even"><td><p>neg2M</p></td>
+<td><p>held-out</p></td>
+<td><p>128</p></td>
+<td><p>2,065,392</p></td>
+<td><p>1,047,248</p></td>
+</tr>
+<tr class="row-odd"><td><p>dot3M</p></td>
+<td><p>held-out</p></td>
+<td><p>128</p></td>
+<td><p>3,981,590</p></td>
+<td><p>1,068,535</p></td>
+</tr>
+<tr class="row-even"><td><p>mix3M</p></td>
+<td><p>held-out</p></td>
+<td><p>128</p></td>
+<td><p>6,700,322</p></td>
+<td><p>1,043,786</p></td>
+</tr>
+<tr class="row-odd"><td><p>expf2M</p></td>
+<td><p>held-out</p></td>
+<td><p>128</p></td>
+<td><p>10,913,136</p></td>
+<td><p>1,038,267</p></td>
+</tr>
+<tr class="row-even"><td><p>clamp32M</p></td>
+<td><p>held-out</p></td>
+<td><p>128</p></td>
+<td><p>9,991,632</p></td>
+<td><p>1,043,654</p></td>
+</tr>
+<tr class="row-odd"><td><p>lavalamp</p></td>
+<td><p>held-out</p></td>
+<td><p>200</p></td>
+<td><p>3,561,006</p></td>
+<td><p>1,050,251</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+</section>
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          <a class="next-page" href="../led-mapper-design.html">
+              <div class="page-info">
+                <div class="context">
+                  <span>Next</span>
+                </div>
+                <div class="title">LED Mapper — Design Doc (Android-first)</div>
+              </div>
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+            </a>
+          <a class="prev-page" href="../EFFECTS.html">
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+              <div class="page-info">
+                <div class="context">
+                  <span>Previous</span>
+                </div>
+                
+                <div class="title">The splanc effects engine</div>
+                
+              </div>
+            </a>
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; Kevin Balke and the splanc contributors — AGPL-3.0-or-later
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">FX-VM performance</a><ul>
+<li><a class="reference internal" href="#platforms">Platforms</a></li>
+<li><a class="reference internal" href="#esp32c6-hitl-rig-esp32-c6-golden">esp32c6 — HITL rig ESP32-C6 (golden)</a><ul>
+<li><a class="reference internal" href="#fixed-overheads">Fixed overheads</a></li>
+<li><a class="reference internal" href="#fitted-per-opcode-cost">Fitted per-opcode cost</a></li>
+<li><a class="reference internal" href="#builtin-costs-effects-ai-ranking">Builtin costs (effects-AI ranking)</a></li>
+<li><a class="reference internal" href="#estimator-accuracy-held-out">Estimator accuracy (held-out)</a></li>
+<li><a class="reference internal" href="#raw-measured-costs">Raw measured costs</a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="../static/documentation_options.js?v=8a448e45"></script>
+    <script src="../static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../static/copybutton.js?v=fd10adb8"></script>
+    <script src="../static/design-tabs.js?v=f930bc37"></script>
+    </body>
+</html>
