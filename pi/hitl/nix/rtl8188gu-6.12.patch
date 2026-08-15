@@ -1,0 +1,282 @@
+diff -ruN a/include/ieee80211.h b/include/ieee80211.h
+--- a/include/ieee80211.h	2026-08-15 23:39:00.479165000 +0000
++++ b/include/ieee80211.h	2026-08-15 23:39:00.603165000 +0000
+@@ -1478,18 +1478,18 @@
+ 	(((Addr[2]) & 0xff) == 0xff) && (((Addr[3]) & 0xff) == 0xff) && (((Addr[4]) & 0xff) == 0xff) && \
+ 				     (((Addr[5]) & 0xff) == 0xff))
+ #else
+-extern __inline int is_multicast_mac_addr(const u8 *addr)
++static __inline int is_multicast_mac_addr(const u8 *addr)
+ {
+ 	return (addr[0] != 0xff) && (0x01 & addr[0]);
+ }
+ 
+-extern __inline int is_broadcast_mac_addr(const u8 *addr)
++static __inline int is_broadcast_mac_addr(const u8 *addr)
+ {
+ 	return ((addr[0] == 0xff) && (addr[1] == 0xff) && (addr[2] == 0xff) &&   \
+ 		(addr[3] == 0xff) && (addr[4] == 0xff) && (addr[5] == 0xff));
+ }
+ 
+-extern __inline int is_zero_mac_addr(const u8 *addr)
++static __inline int is_zero_mac_addr(const u8 *addr)
+ {
+ 	return ((addr[0] == 0x00) && (addr[1] == 0x00) && (addr[2] == 0x00) &&   \
+ 		(addr[3] == 0x00) && (addr[4] == 0x00) && (addr[5] == 0x00));
+diff -ruN a/os_dep/linux/ioctl_cfg80211.c b/os_dep/linux/ioctl_cfg80211.c
+--- a/os_dep/linux/ioctl_cfg80211.c	2026-08-15 23:39:00.487165000 +0000
++++ b/os_dep/linux/ioctl_cfg80211.c	2026-08-15 23:39:00.605165000 +0000
+@@ -393,7 +393,7 @@
+ 	if (ret != _SUCCESS)
+ 		goto exit;
+ 
+-	cfg80211_ch_switch_notify(adapter->pnetdev, &chdef);
++	cfg80211_ch_switch_notify(adapter->pnetdev, &chdef, 0);
+ 
+ #else
+ 	int freq = rtw_ch2freq(ch);
+@@ -979,7 +979,7 @@
+ 		#endif
+ 
+ 		#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 12, 0)
+-		roam_info.bssid = cur_network->network.MacAddress;
++		roam_info.links[0].bssid = cur_network->network.MacAddress;
+ 		roam_info.req_ie = pmlmepriv->assoc_req + sizeof(struct rtw_ieee80211_hdr_3addr) + 2;
+ 		roam_info.req_ie_len = pmlmepriv->assoc_req_len - sizeof(struct rtw_ieee80211_hdr_3addr) - 2;
+ 		roam_info.resp_ie = pmlmepriv->assoc_rsp + sizeof(struct rtw_ieee80211_hdr_3addr) + 6;
+@@ -1620,7 +1620,7 @@
+ 	return ret;
+ }
+ 
+-static int cfg80211_rtw_add_key(struct wiphy *wiphy, struct net_device *ndev,
++static int cfg80211_rtw_add_key(struct wiphy *wiphy, struct net_device *ndev, int link_id,
+ #if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 37)) || defined(COMPAT_KERNEL_RELEASE)
+ 	u8 key_index, bool pairwise, const u8 *mac_addr,
+ #else	/* (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 37)) */
+@@ -1757,7 +1757,7 @@
+ 
+ }
+ 
+-static int cfg80211_rtw_get_key(struct wiphy *wiphy, struct net_device *ndev,
++static int cfg80211_rtw_get_key(struct wiphy *wiphy, struct net_device *ndev, int link_id,
+ #if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 37)) || defined(COMPAT_KERNEL_RELEASE)
+ 	u8 key_index, bool pairwise, const u8 *mac_addr,
+ #else	/* (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 37)) */
+@@ -1789,7 +1789,7 @@
+ 	return 0;
+ }
+ 
+-static int cfg80211_rtw_del_key(struct wiphy *wiphy, struct net_device *ndev,
++static int cfg80211_rtw_del_key(struct wiphy *wiphy, struct net_device *ndev, int link_id,
+ #if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 37)) || defined(COMPAT_KERNEL_RELEASE)
+ 				u8 key_index, bool pairwise, const u8 *mac_addr)
+ #else	/* (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 37)) */
+@@ -1810,7 +1810,7 @@
+ }
+ 
+ static int cfg80211_rtw_set_default_key(struct wiphy *wiphy,
+-	struct net_device *ndev, u8 key_index
++	struct net_device *ndev, int link_id, u8 key_index
+ 	#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 38)) || defined(COMPAT_KERNEL_RELEASE)
+ 	, bool unicast, bool multicast
+ 	#endif
+@@ -4382,7 +4382,7 @@
+ 	_adapter *adapter = (_adapter *)rtw_netdev_priv(ndev);
+ 
+ 	RTW_INFO(FUNC_NDEV_FMT"\n", FUNC_NDEV_ARG(ndev));
+-	ret = rtw_add_beacon(adapter, info->head, info->head_len, info->tail, info->tail_len);
++	ret = rtw_add_beacon(adapter, info->beacon.head, info->beacon.head_len, info->beacon.tail, info->beacon.tail_len);
+ 
+ 	return ret;
+ }
+@@ -4447,19 +4447,19 @@
+ }
+ 
+ static int cfg80211_rtw_change_beacon(struct wiphy *wiphy, struct net_device *ndev,
+-		struct cfg80211_beacon_data *info)
++		struct cfg80211_ap_update *info)
+ {
+ 	int ret = 0;
+ 	_adapter *adapter = (_adapter *)rtw_netdev_priv(ndev);
+ 
+ 	RTW_INFO(FUNC_NDEV_FMT"\n", FUNC_NDEV_ARG(ndev));
+ 
+-	ret = rtw_add_beacon(adapter, info->head, info->head_len, info->tail, info->tail_len);
++	ret = rtw_add_beacon(adapter, info->beacon.head, info->beacon.head_len, info->beacon.tail, info->beacon.tail_len);
+ 
+ 	return ret;
+ }
+ 
+-static int cfg80211_rtw_stop_ap(struct wiphy *wiphy, struct net_device *ndev)
++static int cfg80211_rtw_stop_ap(struct wiphy *wiphy, struct net_device *ndev, unsigned int link_id)
+ {
+ 	RTW_INFO(FUNC_NDEV_FMT"\n", FUNC_NDEV_ARG(ndev));
+ 	return 0;
+@@ -7713,7 +7713,7 @@
+ 	rtw_cfg80211_indicate_scan_done(adapter, _TRUE);
+ 
+ 	#if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)) || defined(COMPAT_KERNEL_RELEASE)
+-	if (wdev->current_bss) {
++	if (wdev->connected) {
+ 		RTW_INFO(FUNC_ADPT_FMT" clear current_bss by cfg80211_disconnected\n", FUNC_ADPT_ARG(adapter));
+ 		rtw_cfg80211_indicate_disconnect(adapter, 0, 1);
+ 	}
+diff -ruN a/os_dep/linux/os_intfs.c b/os_dep/linux/os_intfs.c
+--- a/os_dep/linux/os_intfs.c	2026-08-15 23:39:00.488165000 +0000
++++ b/os_dep/linux/os_intfs.c	2026-08-15 23:39:00.606165000 +0000
+@@ -1594,7 +1594,7 @@
+ 	u8 rtnl_lock_needed = rtw_rtnl_lock_needed(dvobj);
+ 
+ #ifdef CONFIG_RTW_NAPI
+-	netif_napi_add(ndev, &adapter->napi, rtw_recv_napi_poll, RTL_NAPI_WEIGHT);
++	netif_napi_add_weight(ndev, &adapter->napi, rtw_recv_napi_poll, RTL_NAPI_WEIGHT);
+ #endif /* CONFIG_RTW_NAPI */
+ 
+ #if defined(CONFIG_IOCTL_CFG80211)
+diff -ruN a/os_dep/linux/rtw_proc.c b/os_dep/linux/rtw_proc.c
+--- a/os_dep/linux/rtw_proc.c	2026-08-15 23:39:00.488165000 +0000
++++ b/os_dep/linux/rtw_proc.c	2026-08-15 23:39:00.606165000 +0000
+@@ -37,7 +37,7 @@
+ #endif
+ 
+ #if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 10, 0))
+-#define PDE_DATA(inode) PDE((inode))->data
++#define pde_data(inode) PDE((inode))->data
+ #define proc_get_parent_data(inode) PDE((inode))->parent->data
+ #endif
+ 
+@@ -205,7 +205,7 @@
+ static int rtw_drv_proc_open(struct inode *inode, struct file *file)
+ {
+ 	/* struct net_device *dev = proc_get_parent_data(inode); */
+-	ssize_t index = (ssize_t)PDE_DATA(inode);
++	ssize_t index = (ssize_t)pde_data(inode);
+ 	const struct rtw_proc_hdl *hdl = drv_proc_hdls + index;
+ 	void *private = NULL;
+ 
+@@ -227,7 +227,7 @@
+ 
+ static ssize_t rtw_drv_proc_write(struct file *file, const char __user *buffer, size_t count, loff_t *pos)
+ {
+-	ssize_t index = (ssize_t)PDE_DATA(file_inode(file));
++	ssize_t index = (ssize_t)pde_data(file_inode(file));
+ 	const struct rtw_proc_hdl *hdl = drv_proc_hdls + index;
+ 	ssize_t (*write)(struct file *, const char __user *, size_t, loff_t *, void *) = hdl->write;
+ 
+@@ -2979,7 +2979,7 @@
+ 
+ static int rtw_adapter_proc_open(struct inode *inode, struct file *file)
+ {
+-	ssize_t index = (ssize_t)PDE_DATA(inode);
++	ssize_t index = (ssize_t)pde_data(inode);
+ 	const struct rtw_proc_hdl *hdl = adapter_proc_hdls + index;
+ 	void *private = proc_get_parent_data(inode);
+ 
+@@ -3001,7 +3001,7 @@
+ 
+ static ssize_t rtw_adapter_proc_write(struct file *file, const char __user *buffer, size_t count, loff_t *pos)
+ {
+-	ssize_t index = (ssize_t)PDE_DATA(file_inode(file));
++	ssize_t index = (ssize_t)pde_data(file_inode(file));
+ 	const struct rtw_proc_hdl *hdl = adapter_proc_hdls + index;
+ 	ssize_t (*write)(struct file *, const char __user *, size_t, loff_t *, void *) = hdl->write;
+ 
+@@ -3173,7 +3173,7 @@
+ 
+ static int rtw_odm_proc_open(struct inode *inode, struct file *file)
+ {
+-	ssize_t index = (ssize_t)PDE_DATA(inode);
++	ssize_t index = (ssize_t)pde_data(inode);
+ 	const struct rtw_proc_hdl *hdl = odm_proc_hdls + index;
+ 	void *private = proc_get_parent_data(inode);
+ 
+@@ -3195,7 +3195,7 @@
+ 
+ static ssize_t rtw_odm_proc_write(struct file *file, const char __user *buffer, size_t count, loff_t *pos)
+ {
+-	ssize_t index = (ssize_t)PDE_DATA(file_inode(file));
++	ssize_t index = (ssize_t)pde_data(file_inode(file));
+ 	const struct rtw_proc_hdl *hdl = odm_proc_hdls + index;
+ 	ssize_t (*write)(struct file *, const char __user *, size_t, loff_t *, void *) = hdl->write;
+ 
+@@ -3335,7 +3335,7 @@
+ 
+ static int rtw_mcc_proc_open(struct inode *inode, struct file *file)
+ {
+-	ssize_t index = (ssize_t)PDE_DATA(inode);
++	ssize_t index = (ssize_t)pde_data(inode);
+ 	const struct rtw_proc_hdl *hdl = mcc_proc_hdls + index;
+ 	void *private = proc_get_parent_data(inode);
+ 
+@@ -3357,7 +3357,7 @@
+ 
+ static ssize_t rtw_mcc_proc_write(struct file *file, const char __user *buffer, size_t count, loff_t *pos)
+ {
+-	ssize_t index = (ssize_t)PDE_DATA(file_inode(file));
++	ssize_t index = (ssize_t)pde_data(file_inode(file));
+ 	const struct rtw_proc_hdl *hdl = mcc_proc_hdls + index;
+ 	ssize_t (*write)(struct file *, const char __user *, size_t, loff_t *, void *) = hdl->write;
+ 
+diff -ruN a/os_dep/linux/usb_intf.c b/os_dep/linux/usb_intf.c
+--- a/os_dep/linux/usb_intf.c	2026-08-15 23:39:00.488165000 +0000
++++ b/os_dep/linux/usb_intf.c	2026-08-15 23:39:00.606165000 +0000
+@@ -317,7 +317,7 @@
+ #endif
+ 
+ #if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 19))
+-	.usbdrv.drvwrap.driver.shutdown = rtw_dev_shutdown,
++	.usbdrv.driver.shutdown = rtw_dev_shutdown,
+ #else
+ 	.usbdrv.driver.shutdown = rtw_dev_shutdown,
+ #endif
+diff -ruN a/os_dep/osdep_service.c b/os_dep/osdep_service.c
+--- a/os_dep/osdep_service.c	2026-08-15 23:39:00.488165000 +0000
++++ b/os_dep/osdep_service.c	2026-08-15 23:39:00.618165000 +0000
+@@ -1207,7 +1207,7 @@
+ inline void thread_exit(_completion *comp)
+ {
+ #ifdef PLATFORM_LINUX
+-	complete_and_exit(comp, 0);
++	kthread_complete_and_exit(comp, 0);
+ #endif
+ 
+ #ifdef PLATFORM_FREEBSD
+@@ -2082,7 +2082,9 @@
+ {
+ 	struct file *fp;
+ 	int ret = 0;
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
+ 	mm_segment_t oldfs;
++#endif
+ 	char buf;
+ 
+ 	fp = filp_open(path, O_RDONLY, 0);
+@@ -2122,7 +2124,9 @@
+ static int retriveFromFile(const char *path, u8 *buf, u32 sz)
+ {
+ 	int ret = -1;
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
+ 	mm_segment_t oldfs;
++#endif
+ 	struct file *fp;
+ 
+ 	if (path && buf) {
+@@ -2161,7 +2165,9 @@
+ static int storeToFile(const char *path, u8 *buf, u32 sz)
+ {
+ 	int ret = 0;
++#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
+ 	mm_segment_t oldfs;
++#endif
+ 	struct file *fp;
+ 
+ 	if (path && buf) {
+@@ -2496,7 +2502,7 @@
+ {
+ #ifdef PLATFORM_LINUX
+ #if (LINUX_VERSION_CODE >= KERNEL_VERSION(3, 8, 0))
+-	return prandom_u32();
++	return get_random_u32();
+ #elif (LINUX_VERSION_CODE <= KERNEL_VERSION(2, 6, 18))
+ 	u32 random_int;
+ 	get_random_bytes(&random_int , 4);
