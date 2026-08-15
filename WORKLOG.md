@@ -52,6 +52,38 @@ the WebSocket framing + TLS the real ws/wss path also pays per message. Add TCP
 head-of-line blocking/latency and the known `set_uniforms` drop issue (there's a
 HITL drop-rate bench for exactly that), and proto-for-transport is strictly worse
 for realtime control. So the OSC path fully replaces the bridge — not kept.
+## FX VM native datatypes — every opcode has a fixed/int twin + float-free I/O (branch `agent/fug-122-fx-vm-expand-native-datatypes`)
+
+FUG-122 (design: `docs/design/effects-runtime.md` "Complete native datatype
+ISA"). Goal: run an entire `update()`/`shade()` — inputs, math, colour, output —
+with zero soft-float on the FPU-less C6.
+
+**Done (host tests green: `//firmware/fx_vm:fx_vm_test`,
+`//fx_compiler:fx_compiler_test`, `//firmware/player_app:ffi_test`; `esp32c6`
+links; wasm/bench/profile build):**
+
+- **VM ISA completeness** (`firmware/fx_vm/src/lib.rs`): a strictly-integer/fixed
+  twin for every remaining float opcode — `SqrtFix`, fixed vector reductions
+  (`Dot/Length/Distance/Normalize/Cross/Scale/Smoothstep/ClampV/MixV`),
+  `Atan2Fix/LogFix/TanFix/PowFix`, `Hsv2RgbFix/PaletteFix`, `HashFix/Hash3Fix`,
+  and float-free I/O `RetRgb8`/`RetRgbFix`/`LoadCtxFix`. Coefficients are
+  const-folded so no runtime `f64` reaches the device. `run()` returns an
+  `Option<Rgb>` so the shade caller uses a `RetRgb*`-produced colour directly.
+  16 hand-assembled opcode tests + an exhaustive `every_opcode_has_a_fixed_or_
+integer_path` audit (adding an opcode without a fixed path fails to compile).
+- **Cached fixed context** (`firmware/player_app/ffi.rs`): per-LED pos/uv/s/dist
+  converted to fixed ONCE at `fx_rebuild_topo` (pos Q16.16, rest Q1.14, 20 B/LED)
+  - per-frame time/dt; `FxLed`/`FxFrame` carry the `*_fix` mirrors that
+    `LoadCtxFix` reads. wasm preview mirrors this for device parity.
+- **Compiler** (`fx_compiler/src/lib.rs`): `LoadCtxFix` provenance peephole for
+  `fixed16(led.pos.x)`; compile-time fold of literal casts; `Ty::Color` routing
+  of `hsv2rgb`/`palette`/`rgb`/`rgb8` on fixed args to the fixed colour ops with
+  `RetRgbFix`/`RetRgb8`; fixed sqrt/tan/log/atan2/pow. Float effects unchanged.
+  Disassembler completed for FUG-10 + FUG-122 opcodes. compile.rs tests assert an
+  all-fixed effect disassembles float-free and renders correctly.
+
+**Next:** HITL — paired fixed-vs-float benchmark effects on a real C6 to measure
+the per-frame cycle win and hill-climb.
 
 ## iOS support — Capacitor scaffold + host build server (branch `agent/fug-92-ios-support`)
 

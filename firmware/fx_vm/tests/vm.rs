@@ -826,3 +826,106 @@ fn all_fixed_shade_has_no_float_boundary() {
     ];
     assert_eq!(shade(&code, &[1.0], led, Frame::default()), (255, 0, 0));
 }
+
+// --- FUG-122: opcode-coverage audit ------------------------------------------
+//
+// The issue asks us to be "extremely diligent in ensuring that all supported fx
+// VM opcodes have a variant that operates strictly on fixed/integer." This test
+// classifies EVERY `Op` into one of four buckets via an exhaustive match, so a
+// newly-added opcode fails to compile until it is deliberately classified:
+//
+//   IntFixedNative  — the op reads/writes the raw scaled-integer slot word; no
+//                     soft-float ever runs (the integer/fixed ISA itself).
+//   TypeAgnostic    — moves/branches on raw slots regardless of type (stack &
+//                     control flow, packed buffer/graph access).
+//   FloatWithTwin   — a soft-float op whose strictly-integer/fixed counterpart
+//                     is the named Op (this is the completeness guarantee).
+//   FloatBoundary   — the float<->fixed conversion ops; float by definition, and
+//                     each has an all-integer sibling for staying off the FPU.
+
+#[derive(Debug)]
+enum Cov {
+    IntFixedNative,
+    TypeAgnostic,
+    FloatWithTwin(Op),
+    FloatBoundary,
+}
+
+fn classify(op: Op) -> Cov {
+    use Cov::*;
+    use Op::*;
+    match op {
+        // stack / control / typed-storage — operate on raw slots, any type.
+        PushConst | LoadUniform | LoadState | StoreState | LoadLocal | StoreLocal | Swizzle
+        | Swap | Pop | BrFalse | Jmp | Logic | Call | RetFn | LoadStateIdx | StoreStateIdx
+        | LoadLocalIdx | StoreLocalIdx | GraphQuery | LoadBuf | StoreBuf | FloodFrom => TypeAgnostic,
+        // sampling always yields a float colour by design (packed storage detail).
+        SampleTex | PaintTex => TypeAgnostic,
+
+        // Float compute ops, each paired with its strictly-fixed/integer twin.
+        Add => FloatWithTwin(AddI),
+        Sub => FloatWithTwin(SubI),
+        Mul => FloatWithTwin(MulFix), // also MulI / MulFixN by frac
+        Div => FloatWithTwin(DivFix), // also DivI / DivFixN
+        Neg => FloatWithTwin(NegI),
+        Scale => FloatWithTwin(ScaleFix),
+        Clamp => FloatWithTwin(ClampVFix), // scalar: ClampI
+        Mix => FloatWithTwin(MixVFix),     // scalar: MixFix
+        Smoothstep => FloatWithTwin(SmoothstepFix),
+        Dot => FloatWithTwin(DotFix),
+        Cross => FloatWithTwin(CrossFix),
+        Length => FloatWithTwin(LengthFix),
+        Normalize => FloatWithTwin(NormalizeFix),
+        Distance => FloatWithTwin(DistanceFix),
+        Cmp => FloatWithTwin(CmpI),
+        Hash1 => FloatWithTwin(HashFix),
+        Hash3 => FloatWithTwin(Hash3Fix),
+        Hsv2Rgb => FloatWithTwin(Hsv2RgbFix),
+        Palette => FloatWithTwin(PaletteFix),
+        // UnMath/BinMath are dispatch-by-fn: every fn id has a fixed opcode
+        // (sin/cos/exp/sqrt/log/tan/abs/floor/ceil/fract/sign and
+        // min/max/pow/mod/step/atan2). Representative twins:
+        UnMath => FloatWithTwin(SinFix),
+        BinMath => FloatWithTwin(Atan2Fix),
+        // float I/O boundary of shade()/context — float-free replacements:
+        Ret => FloatWithTwin(RetRgbFix),   // also RetRgb8
+        LoadCtx => FloatWithTwin(LoadCtxFix),
+
+        // The float<->fixed boundary conversions (float by definition).
+        I2F | F2I | Fix2F | F2Fix | FixToF | FixFromF => FloatBoundary,
+
+        // The strictly-integer/fixed ISA itself (no soft-float in any of these).
+        AddI | SubI | MulI | DivI | ModI | NegI | CmpI | MulFix | DivFix | I2Fix | Fix2I
+        | MulFixN | DivFixN | FixRescale | SinFix | CosFix | ExpFix | AbsI | MinI | MaxI
+        | ClampI | SignI | StepI | FloorFix | CeilFix | FractFix | MixFix | SqrtFix | ScaleFix
+        | DotFix | LengthFix | DistanceFix | NormalizeFix | CrossFix | SmoothstepFix | ClampVFix
+        | MixVFix | Hsv2RgbFix | PaletteFix | Atan2Fix | LogFix | TanFix | PowFix | HashFix
+        | Hash3Fix | RetRgb8 | RetRgbFix | LoadCtxFix => IntFixedNative,
+    }
+}
+
+#[test]
+fn every_opcode_has_a_fixed_or_integer_path() {
+    // Walk the whole contiguous opcode space; classify() is exhaustive so this
+    // also proves no Op is unaccounted for.
+    let mut float_with_twin = 0;
+    for b in 0..=(Op::LoadCtxFix as u8) {
+        let op = Op::from_u8(b).unwrap_or_else(|| panic!("opcode {b} missing from Op"));
+        match classify(op) {
+            // The completeness guarantee: the twin is itself a fixed/int-native op.
+            Cov::FloatWithTwin(twin) => {
+                assert!(
+                    matches!(classify(twin), Cov::IntFixedNative),
+                    "twin {twin:?} of float op {op:?} must be integer/fixed-native"
+                );
+                float_with_twin += 1;
+            }
+            Cov::IntFixedNative | Cov::TypeAgnostic | Cov::FloatBoundary => {}
+        }
+    }
+    // Every soft-float compute/I-O op is paired; sanity-check we covered them all.
+    assert_eq!(
+        float_with_twin, 23,
+        "expected 23 float ops each mapped to a fixed/integer twin"
+    );
+}

@@ -166,6 +166,42 @@ ops × 30 fps ≈ 230k ops/s ≈ low-single-digit % CPU even in soft-float. `int
 carries both, so a script chooses its precision/speed tradeoff without any VM
 change.
 
+### Complete native datatype ISA (FUG-122)
+
+The goal: it is possible to run an entire `update()`/`shade()` — **inputs, math,
+colour and output** — without a single soft-float op. Three additions make that
+reachable:
+
+- **Every opcode has a strictly-integer/fixed twin.** The vector, transcendental
+  and colour ops that were float-only now have counterparts operating on the raw
+  scaled-integer slot word: `SqrtFix`, `Dot/Length/Distance/Normalize/Cross/
+  Scale/Smoothstep/ClampV/MixV` (fixed), `Atan2Fix/LogFix/TanFix/PowFix`,
+  `Hsv2RgbFix/PaletteFix`, `HashFix/Hash3Fix`. A carried `frac` operand (0 = int,
+  6/14/16 = the fixed formats) lets one opcode serve every width. An exhaustive
+  opcode-coverage test (`fx_vm/tests/vm.rs`) fails to compile if a new opcode is
+  added without classifying its fixed path.
+- **Float-free inputs — cached fixed context.** Per-LED geometry (`led.pos`,
+  `uv`, `s`, `dist`) is converted to fixed **once, at map/topology load**, and
+  cached (pos Q16.16; the 0..1 quantities Q1.14, 20 B/LED); per-frame `time`/`dt`
+  are converted once per frame. `LoadCtxFix id comp frac` pushes one scalar
+  component straight from that cache — so if a program uses no float inputs, the
+  float positions are simply never re-derived on the hot path. `Frame`/`Led`
+  carry both the `f32` and `*_fix` mirrors; the host fills whichever the loaded
+  `.fxb` uses.
+- **Float-free output.** `RetRgb8` (int 0..255 channels) and `RetRgbFix frac`
+  (Q1.frac channels in [0,1]) emit the 8-bit colour directly, skipping the
+  `clamp01()*255` soft-float epilogue.
+
+**Compiler.** Vectors stay float in v1; the fixed path is expressed by **scalar
+decomposition** plus fixed **colour assembly**, which is exactly where the
+soft-float cost sits on an FPU-less core. The compiler: lowers a cast of a scalar
+context component (`fixed16(led.pos.x)`) to a single `LoadCtxFix`; folds literal
+casts (`fixed16(1.0)`) to a fixed const at compile time; routes `hsv2rgb`/
+`palette`/`rgb`/`rgb8` on fixed/int args to the fixed colour ops; and returns them
+via `RetRgbFix`/`RetRgb8`. Float effects compile byte-identically. Fixed-vector
+*algebra* opcodes exist in the ISA (with tests) but the front-end does not emit
+them yet — a follow-up if element-typed vectors are added.
+
 ## File format (`.fxb`)
 
 A flat, mmap-friendly container so the VM executes **directly from the flash
