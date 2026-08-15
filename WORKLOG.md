@@ -94,11 +94,14 @@ dominated by per-LED FRAMING, not shader compute — `run_shade` copied/zeroed
 ~2.5 KB of fixed arrays PER LED (uniforms by value, state/dist copied,
 stack/locals/call_stack zeroed) + a soft-float uv projection every LED. Cut it:
 resident VM scratch reused across calls (run_shade/update take `&mut self`, pass
-state/dist/uniforms by ref; stack/call_stack need no clearing, locals still
-zeroed for array/struct locals); uv projection gated on `FLAG_USES_UV`. Measured:
-`empty` 490 k → 366 k (−25 %), benefiting EVERY effect, and undiluting the
-datatype win (plasma was −17.8 %, now −46 %). Golden + `docs/fx-vm-performance.md`
-regenerated for the faster firmware.
+state/dist/uniforms by ref; stack/call_stack need no clearing); uv projection
+gated on `FLAG_USES_UV`; and the locals blanket-clear removed too — a new
+`FillLocal` opcode zeroes only the array/struct locals that need it, so the
+common scalar-only effect pays no locals-init on the hot path. Measured (before
+FillLocal): `empty` 490 k → 366 k (−25 %), benefiting EVERY effect, and
+undiluting the datatype win — the compute-heavy **swirl (6 sin/cos + hsv) is
+4.8× faster** in fixed (4.08 M → 0.85 M cyc), plasma −46 %. Golden +
+`docs/fx-vm-performance.md` regenerated for the faster firmware.
 
 **Gotcha fixed on-hardware:** the per-LED `FxFrame` build must NOT recompute
 `q16_16(time)`/`q16_16(dt)` — two soft-float muls per LED inflated the framing
