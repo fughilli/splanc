@@ -282,6 +282,16 @@ export function MapDetailScreen(
       actionTile("map-to-device", "Push", () => void sendToDevice()),
       actionTile("map-from-device", "Pull", () => void pullFromDevice()),
     );
+    // Supplemental capture (FUG-112): re-scan and fuse into this map to fill
+    // gaps / raise confidence. Only offered for maps that kept their raw
+    // observations (a captured map with the FUG-112 payload).
+    if (rec.supplementable) {
+      grid.append(
+        actionTile("camera", "Supplement", () =>
+          router.navigate(`/capture?supplement=${encodeURIComponent(mapId)}`),
+        ),
+      );
+    }
     actions.append(grid);
 
     // Seed topology: prefer a stored one (pulled/imported maps carry it) over
