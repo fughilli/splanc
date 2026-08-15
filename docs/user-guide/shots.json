@@ -1,0 +1,34 @@
+[
+  {
+    "id": "welcome",
+    "route": "#/onboard"
+  },
+  {
+    "id": "maps-library",
+    "route": "#/maps"
+  },
+  {
+    "id": "effects-library",
+    "route": "#/effects"
+  },
+  {
+    "id": "color-correction",
+    "route": "#/settings/color-correction"
+  },
+  {
+    "id": "performance",
+    "route": "#/perf"
+  },
+  {
+    "id": "midi",
+    "route": "#/settings/midi"
+  },
+  {
+    "id": "appearance",
+    "route": "#/settings"
+  },
+  {
+    "id": "help",
+    "route": "#/about"
+  }
+]

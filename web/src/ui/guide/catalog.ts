@@ -65,6 +65,12 @@ export interface GuideTopic {
   /** Optional interactive coach-mark steps. Topics with no steps are
    * documentation-only (they appear on the site but the tour skips them). */
   steps?: GuideStep[];
+  /** Optional hash route (e.g. `"#/maps"`) to capture a REAL app screenshot for
+   * this topic. The Playwright capturer (`docs/capture_user_guide.py`) writes
+   * `docs/user-guide/img/<id>.png`, which the site and the Markdown guide embed in
+   * place of the schematic figure. Only set it for screens that render standalone
+   * headless (no live device / camera / specific record id). */
+  screenshot?: string;
 }
 
 /** Human labels for each tab/area, used as section headers in both outputs. */
@@ -91,6 +97,7 @@ export const GUIDE_TOPICS: GuideTopic[] = [
     tab: "start",
     route: "/onboard",
     summary: "Map, control, and animate addressable LED fixtures from your phone.",
+screenshot: "#/onboard",
     sections: [
       {
         body: [
@@ -193,6 +200,7 @@ export const GUIDE_TOPICS: GuideTopic[] = [
     tab: "maps",
     route: "/maps",
     summary: "Browse, search, organize, import, and export your captured fixtures.",
+screenshot: "#/maps",
     sections: [
       {
         body: [
@@ -307,6 +315,7 @@ export const GUIDE_TOPICS: GuideTopic[] = [
     tab: "effects",
     route: "/effects",
     summary: "Browse, create, tag, and test the shader effects that drive your LEDs.",
+screenshot: "#/effects",
     sections: [
       {
         body: [
@@ -437,6 +446,7 @@ export const GUIDE_TOPICS: GuideTopic[] = [
     tab: "device",
     route: "/settings/color-correction",
     summary: "Tune per-device gamma and white balance so colors read true.",
+screenshot: "#/settings/color-correction",
     sections: [
       {
         body: [
@@ -462,6 +472,7 @@ export const GUIDE_TOPICS: GuideTopic[] = [
     tab: "device",
     route: "/perf",
     summary: "Watch the live frame budget and calibrate a device's cost model.",
+screenshot: "#/perf",
     sections: [
       {
         body: [
@@ -490,6 +501,7 @@ export const GUIDE_TOPICS: GuideTopic[] = [
     tab: "settings",
     route: "/settings/midi",
     summary: "Name physical knobs and bind them to effect parameters.",
+screenshot: "#/settings/midi",
     sections: [
       {
         body: [
@@ -513,6 +525,7 @@ export const GUIDE_TOPICS: GuideTopic[] = [
     tab: "settings",
     route: "/settings",
     summary: "Theme the app, pick fonts, and tune the 3D view and capture defaults.",
+screenshot: "#/settings",
     sections: [
       {
         body: [
@@ -548,6 +561,7 @@ export const GUIDE_TOPICS: GuideTopic[] = [
     tab: "settings",
     route: "/settings",
     summary: "Restart this tutorial any time, and find licensing and credits.",
+screenshot: "#/about",
     sections: [
       {
         body: [

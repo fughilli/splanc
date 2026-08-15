@@ -27,6 +27,7 @@ exports_files(["fx-vm-performance.md"])
 exports_files([
     "user-guide.md",
     "user-guide/index.html",
+    "user-guide/shots.json",
 ])
 
 # The figures + animations, rendered from the real simulator -> reconstruction

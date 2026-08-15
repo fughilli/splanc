@@ -41,6 +41,13 @@ import {
 const MD_REL_PATH = "docs/user-guide.md";
 const HTML_REL_PATH = "docs/user-guide/index.html";
 const REGEN_CMD = "bazel run //web:gen_user_guide";
+const SHOTS_REL_PATH = "docs/user-guide/shots.json";
+
+/** Where captured screenshots live and how each guide references them. The
+ * HTML site (`docs/user-guide/index.html`) sits beside the `img/` subdir; the
+ * Markdown (`docs/user-guide.md`, one level up) prefixes `user-guide/`. */
+const IMG_DIR = "img";
+const MD_IMG_DIR = "user-guide/img";
 
 // -- shared helpers ----------------------------------------------------------
 
@@ -161,6 +168,12 @@ function renderMarkdown(): string {
       doc.push("");
       doc.push(`_${t.summary}_`);
       doc.push("");
+      // A real captured app screenshot for topics that have one. Byte-varying
+      // PNGs aren't freshness-gated; only the stable reference to them is.
+      if (t.screenshot) {
+        doc.push(`![${t.title} — Splanc app screen](${MD_IMG_DIR}/${t.id}.png)`);
+        doc.push("");
+      }
       for (const sec of t.sections) {
         // Nudge the section sub-headings one level deeper than the topic (####).
         const rendered = renderMarkdownSection(sec).map((l) =>
@@ -261,7 +274,13 @@ function figureSummary(summary: string): string {
 function renderHtmlTopic(topic: GuideTopic): string {
   const parts: string[] = [];
   parts.push(`<article class="topic" id="${esc(topic.id)}">`);
-  parts.push(`<div class="topic-figure">${figureSvg(topic)}</div>`);
+  // A real captured app screenshot when the topic has one; otherwise the
+  // schematic figure generated from the catalog (screens that can't render
+  // standalone headless — live device / camera / a specific record).
+  const figure = topic.screenshot
+    ? `<img class="shot" src="${IMG_DIR}/${esc(topic.id)}.png" alt="${esc(topic.title)} screen" loading="lazy" />`
+    : figureSvg(topic);
+  parts.push(`<div class="topic-figure">${figure}</div>`);
   parts.push(`<div class="topic-body">`);
   parts.push(`<h3>${esc(topic.title)}</h3>`);
   parts.push(`<p class="summary">${esc(topic.summary)}</p>`);
@@ -397,9 +416,25 @@ const HTML_CSS = `      :root {
       }
       .topic-figure { position: sticky; top: 16px; align-self: start; }
       .figure-svg { width: 100%; height: auto; }
+      .shot {
+        width: 100%;
+        height: auto;
+        border-radius: 20px;
+        border: 1px solid #2a2a33;
+        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
+        display: block;
+      }
       .topic-body h3 { margin: 0 0 4px; font-size: 1.2rem; }
       .topic-body h4 { margin: 20px 0 6px; font-size: 0.95rem; color: #c8c8d0; }
       .summary { color: #9a9aa2; font-style: italic; margin: 0 0 12px; }
+      .shot {
+        width: 100%;
+        height: auto;
+        border-radius: 18px;
+        border: 1px solid #2a2a33;
+        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
+        display: block;
+      }
       .topic-body p { margin: 0 0 12px; }
       .topic-body ul { margin: 0 0 12px; padding-left: 20px; }
       .topic-body li { margin: 4px 0; }
@@ -426,23 +461,37 @@ const HTML_CSS = `      :root {
         .topic-figure { max-width: 220px; }
       }`;
 
+/** The screenshot manifest the Playwright capturer consumes: the ordered list
+ * of {id, route} for every topic with a `screenshot`. Deterministic (stable
+ * order, 2-space JSON) so it's a freshness-gated output like the md/html. */
+function renderShotsManifest(): string {
+  const shots = GUIDE_TOPICS.filter((t) => t.screenshot).map((t) => ({
+    id: t.id,
+    route: t.screenshot as string,
+  }));
+  return JSON.stringify(shots, null, 2) + "\n";
+}
+
 // -- CLI ---------------------------------------------------------------------
 
 interface Args {
   check: boolean;
   mdOut: string;
   htmlOut: string;
+  shotsOut: string;
 }
 
 function resolveArgs(argv: string[]): Args {
   let check = false;
   let mdOut = "";
   let htmlOut = "";
+  let shotsOut = "";
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     if (a === "--check") check = true;
     else if (a === "--md-out") mdOut = argv[++i]!;
     else if (a === "--html-out") htmlOut = argv[++i]!;
+    else if (a === "--shots-out") shotsOut = argv[++i]!;
   }
   const ws = process.env["BUILD_WORKSPACE_DIRECTORY"];
   if (!mdOut) {
@@ -453,14 +502,19 @@ function resolveArgs(argv: string[]): Args {
     if (!ws) throw new Error("no --html-out and no BUILD_WORKSPACE_DIRECTORY; pass --html-out <path>");
     htmlOut = path.join(ws, HTML_REL_PATH);
   }
-  return { check, mdOut, htmlOut };
+  if (!shotsOut) {
+    if (!ws) throw new Error("no --shots-out and no BUILD_WORKSPACE_DIRECTORY; pass --shots-out <path>");
+    shotsOut = path.join(ws, SHOTS_REL_PATH);
+  }
+  return { check, mdOut, htmlOut, shotsOut };
 }
 
 function main(): number {
-  const { check, mdOut, htmlOut } = resolveArgs(process.argv.slice(2));
+  const { check, mdOut, htmlOut, shotsOut } = resolveArgs(process.argv.slice(2));
   const outputs: { rel: string; out: string; content: string }[] = [
     { rel: MD_REL_PATH, out: mdOut, content: renderMarkdown() },
     { rel: HTML_REL_PATH, out: htmlOut, content: renderHtml() },
+    { rel: SHOTS_REL_PATH, out: shotsOut, content: renderShotsManifest() },
   ];
 
   if (check) {

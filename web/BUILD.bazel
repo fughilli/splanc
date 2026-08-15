@@ -227,11 +227,13 @@ genrule(
     srcs = [
         "//docs:user-guide.md",
         "//docs:user-guide/index.html",
+        "//docs:user-guide/shots.json",
     ],
     outs = ["user_guide_freshness.stamp"],
     cmd = "BAZEL_BINDIR=. $(execpath :gen_user_guide) --check " +
           "--md-out $(location //docs:user-guide.md) " +
-          "--html-out $(location //docs:user-guide/index.html) && touch $@",
+          "--html-out $(location //docs:user-guide/index.html) " +
+          "--shots-out $(location //docs:user-guide/shots.json) && touch $@",
     tools = [":gen_user_guide"],
 )
 
