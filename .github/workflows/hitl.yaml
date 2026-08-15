@@ -123,11 +123,17 @@ jobs:
       # reserves a free rig from the pool, flashes it (the flash-bundle rides in
       # its runfiles), ImprovBLE-provisions onto the rig's own AP (HITL_WIFI_* only
       # overrides it), and exercises its slice over the player WebSocket.
-      #   - We fire the whole set off in parallel (--local_test_jobs sized to the
-      #     target count) and let the bench sort out contention: each target
-      #     `hitl reserve`s a free DUT, and managerd's FIFO queue makes any
-      #     surplus runs wait their turn instead of colliding (see the top-of-file
-      #     note). --test_output=streamed can't be used here — it implies
+      #   - We fire the whole set off in parallel and let the bench sort out
+      #     contention: each target `hitl reserve`s a free DUT, and managerd's FIFO
+      #     queue makes any surplus runs wait their turn instead of colliding (see
+      #     the top-of-file note). Bazel caps concurrent tests at min(--jobs,
+      #     --local_test_jobs), so we raise BOTH to the target count — the repo-wide
+      #     `--jobs=3` (.bazelrc, a dev-container memory guard) would otherwise pin
+      #     us to 3 and leave most of the bench idle. Surplus test jobs just block
+      #     in `hitl reserve` (I/O-bound, not CPU), and the flash-bundle compile is
+      #     a disk-cache hit from the `firmware` job, so the higher --jobs doesn't
+      #     add real compile pressure here.
+      #     --test_output=streamed can't be used here — it implies
       #     --test_strategy=exclusive, which pins Bazel to one test at a time — so
       #     we use --test_output=all, which surfaces each target's full log once
       #     it finishes.
@@ -148,9 +154,10 @@ jobs:
         #   error: SQLite database '/nix/var/nix/db/db.sqlite' is busy
         # `=off` makes each fetch block its Skyframe thread, and
         # --loading_phase_threads=1 pins that pool to one thread, so the Nix
-        # toolchains realize one at a time — a single writer, no contention. Only
-        # the (fast, no-compile) loading/fetch phase is serialized; the firmware
-        # *compile* still runs in parallel (execution phase, --jobs=3).
+        # toolchains realize one at a time — a single writer, no contention. That
+        # serializes only the (fast, no-compile) loading/fetch phase, independent
+        # of --jobs; the execution phase (compile + tests) still runs in parallel
+        # at the --jobs we raise below.
         run: |
           targets=$(bazel query 'attr(tags, "\bhitl\b", tests(//...))')
           echo "collected HITL tests:"; echo "$targets"
@@ -165,6 +172,7 @@ jobs:
             --loading_phase_threads=1 \
             --disk_cache="$HOME/.cache/bazel-disk" \
             --test_output=all \
+            --jobs="$ntargets" \
             --local_test_jobs="$ntargets" \
             --test_env=HITL_SERVERS \
             --test_env=HITL_WIFI_SSID \
