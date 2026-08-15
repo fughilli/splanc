@@ -79,7 +79,12 @@ let
   # co-channel fragility. SSID is unique per rig; the PSK is world-readable in the
   # store (same posture as wifi.yaml) and the harness fetches both from the daemon
   # (`hitl wifi`), so it's never typed by hand.
-  apIface = "wlan0";
+  # AP interface. On the analyzer rig it's a DEDICATED USB WiFi radio (RTL8188GU),
+  # renamed to ap0 by the systemd .link below — the Pi 3's onboard brcmfmac can't
+  # reliably host an AP, so the USB radio owns the AP and wlan0 is free for STA.
+  # The Pi 5 rig keeps its single-radio wlan0 AP. (isAnalyzerRig is defined below;
+  # nix `let` bindings are order-independent.)
+  apIface = if isAnalyzerRig then "ap0" else "wlan0";
   apConn = "hitl-ap";
   apChannel = 6; # fixed 2.4 GHz channel; the C6 is 2.4-only
   apSsid = "hitl-${config.networking.hostName}";
@@ -97,6 +102,10 @@ let
   # channels each). See internal/analyzer and DESIGN.md.
   sigrok = import ./sigrok.nix { inherit pkgs; };
   isAnalyzerRig = builtins.getEnv "SBC_BOARD" == "raspberry-pi-3";
+  # Dedicated USB AP radio for the analyzer rig: the out-of-tree RTL8188GU driver
+  # built against this kernel (see rtl8188gu.nix). Paired with usb_modeswitch (the
+  # dongle boots as a CD-ROM) and a .link that renames it to ap0.
+  rtl8188gu = config.boot.kernelPackages.callPackage ./rtl8188gu.nix { };
   # DUT → analyzer channels. The sole DUT's WS2812 DIN (the C6's GPIO20 / PIN20)
   # is wired to the analyzer's CH6 = D6 on hitl-rig-la-1. Add per-DUT entries
   # (keyed by the discovered c6-<serial> name, e.g. "c6-1a2b3c" = { channels =
@@ -139,7 +148,23 @@ in
 
   # USBIP host modules (attach the dev board into the container / to a remote).
   # Confirmed present in the nixos-raspberrypi kernel (usbip-host/vhci-hcd .ko).
-  boot.kernelModules = [ "usbip-host" "vhci-hcd" ];
+  boot.kernelModules = [ "usbip-host" "vhci-hcd" ]
+    ++ lib.optionals isAnalyzerRig [ "8188gu" ];
+
+  # Dedicated USB AP radio (RTL8188GU) on the analyzer rig. A post-boot module
+  # (not initrd/kernel), so it rides the deploy_live layer — no SD reimage. udev
+  # autoloads it once usb_modeswitch flips the dongle into WiFi mode.
+  boot.extraModulePackages = lib.optionals isAnalyzerRig [ rtl8188gu ];
+
+  # Stable name for the USB AP radio: rename the RTL8188GU (driver 8188gu) to ap0
+  # so the AP profile targets it regardless of wlanN enumeration order. Applied by
+  # systemd-udevd (no networkd needed).
+  systemd.network.links = lib.optionalAttrs isAnalyzerRig {
+    "10-hitl-ap" = {
+      matchConfig.Driver = "8188gu";
+      linkConfig.Name = "ap0";
+    };
+  };
 
   # Bluetooth controller (hci0) for BLE central: agents scan/connect to the DUT's
   # GATT from inside the container via bleak, which drives the host bluetoothd
@@ -157,6 +182,10 @@ in
     # single-purpose bench; the daemon (root) owns it, this is belt-and-suspenders.
     SUBSYSTEM=="usb", ATTR{idVendor}=="0925", ATTR{idProduct}=="3881", MODE="0666"
     SUBSYSTEM=="usb", ATTR{idVendor}=="1d50", ATTR{idProduct}=="608c", MODE="0666"
+    # Dedicated USB AP dongle (RTL8188GU): it enumerates as a CD-ROM (0bda:1a2b);
+    # StandardEject flips it into WiFi mode (re-enumerates as 0bda:b711) so the
+    # 8188gu driver binds and the .link renames it to ap0.
+    ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="0bda", ATTR{idProduct}=="1a2b", RUN+="${pkgs.usb-modeswitch}/bin/usb_modeswitch -v 0bda -p 1a2b -K"
   '';
 
   # The container's agent runs as uid 1000; the host needs a matching passwd entry
@@ -192,7 +221,8 @@ in
   # The `hitl` CLI is handy on the rig too; usbutils for lsusb/bus ids, usbip for
   # bind/attach.
   environment.systemPackages = [ hitl pkgs.usbutils pkgs.linuxPackages.usbip ]
-    ++ lib.optionals isAnalyzerRig sigrok.packages; # sigrok-cli + fx2lafw firmware
+    # sigrok-cli + fx2lafw firmware, and usb-modeswitch for the USB AP dongle.
+    ++ lib.optionals isAnalyzerRig (sigrok.packages ++ [ pkgs.usb-modeswitch ]);
 
   # Load the test image into Podman at boot.
   systemd.services.hitl-image-load = {
