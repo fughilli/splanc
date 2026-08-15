@@ -1230,3 +1230,44 @@ fn all_fixed_animated_plasma_is_float_free() {
     "#;
     assert_no_float_ops(src);
 }
+
+/// Count static occurrences of the soft-float compute/colour opcodes in a
+/// program's disassembly (the ops that hit the FPU-less C6's soft-float path).
+fn softfloat_op_count(src: &str) -> usize {
+    let c = compile(src).unwrap_or_else(|d| panic!("compile error: {:?}", d));
+    let asm = disassemble(&c.fxb);
+    let mnem = [
+        "ADD n=", "SUB n=", "MUL n=", "DIV n=", "NEG n=", "SCALE n=", "UN_MATH", "BIN_MATH",
+        "CLAMP n=", "MIX n=", "SMOOTHSTEP n=", "DOT n=", "CROSS n=", "LENGTH n=", "NORMALIZE n=",
+        "DISTANCE n=", "HSV2RGB\n", "PALETTE id=", "FIX_TO_F", "FIX_FROM_F", "I2F", "F2I",
+        "FIX2F", "F2FIX",
+    ];
+    // Count substring occurrences over the whole disassembly (the "\n" in
+    // "HSV2RGB\n" is what distinguishes it from "HSV2RGB_FIX").
+    mnem.iter().map(|m| asm.matches(m).count()).sum()
+}
+
+#[test]
+fn ab_plasma_fixed_twin_is_softfloat_free() {
+    // The FUG-122 HITL A/B pair (also in tools/fx_profile + pi/hitl/harness/
+    // ab_demo): the SAME hue plasma, float baseline vs the fully-fixed native
+    // path. The fixed twin must carry ZERO soft-float ops; the float one many.
+    let float_src = r#"
+        void update() {}
+        vec3 shade(Led led) {
+          float h = fract(led.pos.x + time);
+          return hsv2rgb(h, 1.0, 1.0);
+        }
+    "#;
+    let fixed_src = r#"
+        void update() {}
+        vec3 shade(Led led) {
+          fixed16 h = fract(fixed16(led.pos.x) + fixed16(time));
+          return hsv2rgb(h, fixed16(1.0), fixed16(1.0));
+        }
+    "#;
+    let float_ops = softfloat_op_count(float_src);
+    let fixed_ops = softfloat_op_count(fixed_src);
+    assert!(float_ops >= 3, "float baseline should be soft-float heavy, got {float_ops}");
+    assert_eq!(fixed_ops, 0, "fixed twin must be soft-float free, got {fixed_ops}");
+}
