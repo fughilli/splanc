@@ -34,6 +34,8 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
+#include <errno.h>
+#include <lwip/sockets.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
@@ -1091,6 +1093,53 @@ static uint32_t render_once() {
   return next_delay_ms;
 }
 
+// -- Native OSC input (FUG-121) ----------------------------------------------
+// A UDP listener that maps OSC messages onto the active effect's live uniforms,
+// so a DAW / VJ tool (TouchDesigner, Ableton, TouchOSC, …) can drive uniforms in
+// real time with no host bridge. All the parsing / name→slot resolution lives in
+// the Rust core (//firmware/osc, via lm_osc_ingest); this task just owns the
+// socket. Address convention: `/uniform` (scalar), `/uniform/x|y|z|w` (vector
+// component), or `/slotN` when the effect advertises no manifest.
+static constexpr uint16_t kOscPort = 9000;
+static constexpr uint32_t kOscTaskStack = 4096;  // recv buffer is static, not here
+static constexpr size_t kOscRxCap = 1472;        // one Ethernet-MTU UDP payload
+
+static void osc_task(void *) {
+  int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  if (sock < 0) {
+    Log().printf("[osc] socket() failed (errno=%d); OSC input disabled\n", errno);
+    vTaskDelete(nullptr);
+    return;
+  }
+  sockaddr_in addr = {};
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_ANY);
+  addr.sin_port = htons(kOscPort);
+  if (bind(sock, reinterpret_cast<sockaddr *>(&addr), sizeof addr) < 0) {
+    Log().printf("[osc] bind(:%u) failed (errno=%d); OSC input disabled\n", kOscPort, errno);
+    close(sock);
+    vTaskDelete(nullptr);
+    return;
+  }
+  Log().printf("[osc] listening for OSC on udp/%u\n", kOscPort);
+
+  // Static so the datagram buffer stays off this task's modest stack.
+  static uint8_t rx[kOscRxCap];
+  for (;;) {
+    ssize_t n = recvfrom(sock, rx, sizeof rx, 0, nullptr, nullptr);
+    if (n <= 0) {
+      if (n < 0) vTaskDelay(pdMS_TO_TICKS(10));  // transient error → brief back-off
+      continue;
+    }
+    // Apply under player_mutex: lm_osc_ingest mutates the uniforms the render
+    // task reads. It's cheap (parse + a table scan, resolution was done once at
+    // effect load), so the frame path is barely contended.
+    xSemaphoreTake(player_mutex, portMAX_DELAY);
+    lm_osc_ingest(rx, static_cast<size_t>(n));
+    xSemaphoreGive(player_mutex);
+  }
+}
+
 // The render task: forever, render one frame then sleep until the next is due.
 static void render_task(void *) {
   for (;;) {
@@ -1555,6 +1604,10 @@ void setup() {
   // no longer rides on loop()'s cooperative WiFi/HTTP/BLE servicing.
   xTaskCreate(render_task, "render", kRenderTaskStack, nullptr, kRenderTaskPrio,
               nullptr);
+  // Native OSC input: a low-priority UDP listener that drives live uniforms
+  // (FUG-121). Independent of the WS/TLS player path; binds now and receives
+  // once the LAN is up.
+  xTaskCreate(osc_task, "osc", kOscTaskStack, nullptr, tskIDLE_PRIORITY + 1, nullptr);
 }
 
 // Improv provisioning state machine (Arduino task; BLE callbacks only latch).

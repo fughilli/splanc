@@ -32,6 +32,7 @@ rust_static_library(
     deps = [
         "//firmware/arena",
         "//firmware/fx_vm",
+        "//firmware/osc",
         "//firmware/player:player_fw",
         "//firmware/pulse",
         "//firmware/store",
@@ -50,6 +51,7 @@ rust_library(
     deps = [
         "//firmware/arena",
         "//firmware/fx_vm",
+        "//firmware/osc",
         "//firmware/player",
         "//firmware/pulse",
         "//firmware/store",
