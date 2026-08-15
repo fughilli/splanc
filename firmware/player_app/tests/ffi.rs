@@ -9,7 +9,7 @@
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_player_ffi::{
     lm_color_correction_commit, lm_color_correction_gen, lm_color_correction_params,
-    lm_counting_color, lm_envelope_arm,
+    lm_counting_color, lm_drv_poll, lm_drv_running, lm_envelope_arm,
     lm_fx_load, lm_fx_set_active, lm_fx_shade, lm_fx_update, lm_led_count, lm_map_led, lm_map_len,
     lm_pattern_color, lm_pattern_timing, lm_perf_build_report, lm_perf_interval_ms, lm_perf_mode,
     lm_perf_push, lm_player_handle, lm_player_init,
@@ -17,6 +17,22 @@ use ledmapper_player_ffi::{
 use micropb::{MessageDecode, MessageEncode, PbEncoder};
 use pb::ClientMessage_::Msg as CMsg;
 use pb::ServerMessage_::Msg as SMsg;
+
+// The qwiic I2C hooks are provided by the C++ app (main.cpp) on-device; the
+// host test stubs them (no bus off-device) so the driver dispatch links. The
+// stub reads NACK, so a driver's i2c_read8 sees -1 — poll() still runs.
+#[no_mangle]
+extern "C" fn lm_i2c_write(_addr: u8, _bytes: *const u8, _n: usize) -> bool {
+    false
+}
+#[no_mangle]
+extern "C" fn lm_i2c_read(_addr: u8, _reg: u8, _out: *mut u8, _n: usize) -> bool {
+    false
+}
+#[no_mangle]
+extern "C" fn lm_i2c_scan(_out: *mut u8, _cap: usize) -> usize {
+    0
+}
 
 fn encode(msg: CMsg) -> Vec<u8> {
     let env = pb::ClientMessage { r#msg: Some(msg) };
@@ -523,4 +539,46 @@ fn full_device_flow_through_the_c_abi() {
     assert_eq!(params[1], 2.8); // gamma_g still default
     assert_eq!(params[5], 500.0); // lum_b overridden
     assert_eq!(unsafe { lm_color_correction_commit() }, 1);
+
+    // -- auto hardware discovery (FUG-107) ---------------------------------
+    // scan_i2c: no bus on the host (stub returns 0) → empty address list.
+    let Some(SMsg::I2CScanResult(scan)) = handle(&encode(CMsg::ScanI2C(pb::ScanI2c::default())), 7200.0)
+    else {
+        panic!("scan_i2c -> i2c_scan_result");
+    };
+    assert_eq!(scan.r#addresses.len(), 0);
+
+    // submit_driver: a driver reads a byte (host stub NACKs → -1) and exports it.
+    let drv_src = r#"
+        export int raw;
+        void poll() { raw = i2c_read8(72, 0); }
+    "#;
+    let drv = ledmapper_fx_compiler::compile(drv_src).expect("driver compiles");
+    let mut sd = pb::SubmitDriver::default();
+    sd.r#fxb = drv.fxb.iter().copied().collect();
+    sd.r#poll_interval_ms = 50;
+    sd.r#activate = true;
+    let mut b = pb::DriverBinding::default();
+    b.r#export_slot = 0;
+    b.r#width = 1;
+    b.r#uniform_slot = 3;
+    sd.r#bindings.push(b).unwrap();
+    let Some(SMsg::DriverState(st)) = handle(&encode(CMsg::SubmitDriver(sd)), 7300.0) else {
+        panic!("submit_driver -> driver_state");
+    };
+    assert!(st.r#running, "driver should be running after activate");
+    assert_eq!(st.r#binding_count, 1);
+    assert!(unsafe { lm_drv_running() });
+    // Poll once: the bus stub NACKs, so poll() runs and writes raw = -1. It
+    // returns true (poll actually ran). A second immediate poll is throttled.
+    assert!(unsafe { lm_drv_poll(7400) });
+    assert!(!unsafe { lm_drv_poll(7401) }, "second poll within the interval is throttled");
+
+    // remove_driver: stops + clears it.
+    let Some(SMsg::DriverState(off)) = handle(&encode(CMsg::RemoveDriver(pb::RemoveDriver::default())), 7500.0)
+    else {
+        panic!("remove_driver -> driver_state");
+    };
+    assert!(!off.r#running);
+    assert!(!unsafe { lm_drv_running() });
 }

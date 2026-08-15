@@ -146,6 +146,13 @@ fn main() -> std::io::Result<()> {
         ".ledmapper.v1.SubmitDriver.bindings",
         Config::new().max_len(if firmware { 1 } else { 64 }),
     );
+    // Driver .fxb: firmware hand-walks the arm past the generated field (cap 1),
+    // like UploadChunk.payload; the host profile sizes it for the conformance /
+    // ffi test to encode a real driver.
+    g.configure(
+        ".ledmapper.v1.SubmitDriver.fxb",
+        Config::new().max_bytes(if firmware { 1 } else { 8192 }),
+    );
 
     g.compile_fdset_file(&args[1], &args[2])
 }

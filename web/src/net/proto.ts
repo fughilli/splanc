@@ -55,6 +55,9 @@ const CLIENT_ARMS: Record<string, string> = {
   upload_chunk: "uploadChunk",
   set_color_correction: "setColorCorrection",
   set_brightness: "setBrightness",
+  scan_i2c: "scanI2c",
+  submit_driver: "submitDriver",
+  remove_driver: "removeDriver",
 };
 const SERVER_ARMS: Record<string, string> = {
   welcome: "welcome",
@@ -75,6 +78,8 @@ const SERVER_ARMS: Record<string, string> = {
   effect_uniforms: "effectUniforms",
   perf_report: "perfReport",
   chunk_ack: "chunkAck",
+  i2c_scan_result: "i2cScanResult",
+  driver_state: "driverState",
 };
 const CLIENT_TYPES: Record<string, string> = Object.fromEntries(
   Object.entries(CLIENT_ARMS).map(([snake, camel]) => [camel, snake]),
@@ -317,6 +322,51 @@ export interface EffectUniformsMessage {
   effectId: string;
   manifest: Uint8Array;
   current: UniformValueFlat[];
+}
+
+// -- Auto hardware discovery arms (FUG-107, flat shapes) --------------------
+
+/** Probe the qwiic I2C bus (proto ScanI2c). Reply: i2c_scan_result. */
+export interface ScanI2cMessage {
+  type: "scan_i2c";
+}
+
+/** Result of a bus scan (proto I2cScanResult): responding 7-bit addresses. */
+export interface I2cScanResultMessage {
+  type: "i2c_scan_result";
+  addresses: number[];
+}
+
+/** One driver export→uniform binding (proto DriverBinding). */
+export interface DriverBindingFlat {
+  exportSlot: number;
+  width: number;
+  uniformSlot: number;
+}
+
+/** Upload a compiled sensor driver (proto SubmitDriver). `fxb` is a driver
+ * (has a poll() entry); `bindings` map its exports to effect uniform slots. */
+export interface SubmitDriverMessage {
+  type: "submit_driver";
+  fxb: Uint8Array;
+  pollIntervalMs: number;
+  bindings: DriverBindingFlat[];
+  activate: boolean;
+}
+
+/** Stop polling and clear the active driver (proto RemoveDriver). */
+export interface RemoveDriverMessage {
+  type: "remove_driver";
+}
+
+/** Driver runtime status (proto DriverState). Reply to submit/remove_driver. */
+export interface DriverStateMessage {
+  type: "driver_state";
+  running: boolean;
+  pollIntervalMs: number;
+  exportCount: number;
+  bindingCount: number;
+  lastPoll: string;
 }
 
 // -- Chunked-upload arms (flat shapes) --------------------------------------

@@ -32,10 +32,21 @@ export interface FxDiagnostic {
   msg: string;
 }
 
+/** A sensor driver's export (FUG-107): a `poll()` output written to a state
+ * slot, which the device bridges into a same-named effect uniform. */
+export interface FxExport {
+  name: string;
+  slot: number;
+  width: number;
+  unit: string;
+}
+
 export interface FxCompiled {
   ok: boolean;
   bytecode: Uint8Array;
   uniforms: FxUniform[];
+  /** Driver exports; empty for a plain effect. */
+  exports: FxExport[];
   diagnostics: FxDiagnostic[];
 }
 
@@ -43,6 +54,7 @@ interface CompilerResult {
   readonly ok: boolean;
   readonly bytecode: Uint8Array;
   readonly manifest: string;
+  readonly exports: string;
   readonly diagnostics: string;
 }
 interface CompilerModule {
@@ -96,6 +108,7 @@ export async function compileScript(src: string): Promise<FxCompiled> {
     ok: r.ok,
     bytecode: r.bytecode,
     uniforms: r.ok ? (JSON.parse(r.manifest) as FxUniform[]) : [],
+    exports: r.ok ? (JSON.parse(r.exports) as FxExport[]) : [],
     diagnostics: JSON.parse(r.diagnostics) as FxDiagnostic[],
   };
 }

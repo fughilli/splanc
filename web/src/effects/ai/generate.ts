@@ -300,6 +300,16 @@ export interface ChatHooks {
    * the binding device, and hot opcodes). Optional — omit to disable the perf
    * tool for this turn (e.g. when nothing compiles). */
   onEstimatePerformance?: () => Promise<string>;
+  /** The model asked to enumerate the qwiic I2C bus (FUG-107). Return a text
+   * summary of the responding addresses and the candidate sensors the address
+   * database matches. Optional — omit to disable the driver tools for this turn
+   * (e.g. no device connected). */
+  onScanBus?: () => Promise<string>;
+  /** The model proposed a sensor-driver program. Compile it as a driver,
+   * validate it (poll() + exports), bind its exports to the active effect's
+   * uniforms by name, install it on the device, and return the outcome
+   * (diagnostics, exports, bindings, and the first poll result). */
+  onSetDriver?: (source: string) => Promise<string>;
   /** Streamed assistant text (deltas) for the "thinking…"/live panel. */
   onText?: (delta: string) => void;
   /** A model request is starting (the model is reasoning) — drive a spinner. */
@@ -354,6 +364,44 @@ const PERF_TOOLS = [
       "your change actually fits before finishing. Estimates use the latest " +
       "compiled program, so set_script first.",
     input_schema: { type: "object", additionalProperties: false, properties: {} },
+  },
+] as const;
+
+/** Sensor-driver tools (FUG-107), added only when the editor supplies the
+ * hooks (a device is connected so the bus can be scanned + a driver installed).
+ * A driver is a `.fxb` with a poll() entry that reads a qwiic module over I2C
+ * and writes `export`s the device bridges into effect uniforms. */
+const DRIVER_TOOLS = [
+  {
+    name: "scan_bus",
+    description:
+      "Enumerate the qwiic I2C bus on the connected device: returns the 7-bit " +
+      "addresses that responded and, for each, the candidate sensors the address " +
+      "database matches. Call this FIRST when the user wants to use a plugged-in " +
+      "sensor, so you know what is on the bus and can identify the part (ask the " +
+      "user to confirm when an address matches several parts, or is unknown).",
+    input_schema: { type: "object", additionalProperties: false, properties: {} },
+  },
+  {
+    name: "set_driver",
+    description:
+      "Write/replace the sensor DRIVER program and install it. A driver defines " +
+      "`void poll()` (no `shade`) that reads the sensor over I2C — i2c_read8(addr, " +
+      "reg), i2c_read16(addr, reg) (big-endian, -1 on bus error), i2c_write(addr, " +
+      "reg, val) — and assigns the readings to `export`s. Addresses/registers are " +
+      "DECIMAL ints (0x48 = 72). Name each export to MATCH the effect uniform it " +
+      "should drive (export float temperature → uniform float temperature); the " +
+      "device copies exports into same-named uniforms every poll. The compile + " +
+      "install outcome (diagnostics, exports, bindings, first poll result) is " +
+      "returned so you can iterate.",
+    input_schema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        source: { type: "string", description: "The complete driver source (poll() + exports)." },
+      },
+      required: ["source"],
+    },
   },
 ] as const;
 
@@ -514,6 +562,7 @@ export async function chatTurn(
   const tools = [
     ...TOOLS,
     ...(hooks.onEstimatePerformance ? PERF_TOOLS : []),
+    ...(hooks.onScanBus && hooks.onSetDriver ? DRIVER_TOOLS : []),
     ...(hooks.onListMidi && hooks.onSetMidiMapping ? MIDI_TOOLS : []),
   ];
   for (let round = 0; round < MAX_ROUNDS; round++) {
@@ -565,6 +614,21 @@ export async function chatTurn(
           });
         } else if (tu.name === "estimate_performance" && hooks.onEstimatePerformance) {
           const summary = await hooks.onEstimatePerformance();
+          results.push({
+            type: "tool_result",
+            tool_use_id: tu.id,
+            content: [{ type: "text", text: summary }],
+          });
+        } else if (tu.name === "scan_bus" && hooks.onScanBus) {
+          const summary = await hooks.onScanBus();
+          results.push({
+            type: "tool_result",
+            tool_use_id: tu.id,
+            content: [{ type: "text", text: summary }],
+          });
+        } else if (tu.name === "set_driver" && hooks.onSetDriver) {
+          const source = String((tu.input as { source?: unknown }).source ?? "");
+          const summary = await hooks.onSetDriver(source);
           results.push({
             type: "tool_result",
             tool_use_id: tu.id,
