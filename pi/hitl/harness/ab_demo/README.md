@@ -46,4 +46,27 @@ framing + the FastLED transmit, shared by both.
 
 (For reference, before the framing cut the fixed path was diluted: plasma was
 only −17.8 %. The framing hill-climb — resident scratch, no per-LED state/uniform
-copies, uv gating — dropped the pure-overhead floor ~25 %: `empty` 490 k → 366 k.)
+copies, uv gating, no locals clear — dropped the pure-overhead floor ~28 %:
+`empty` 490 k → 366 k → 330 k.)
+
+### Async transmit — frame period, not just compute (esp32c6, 256 LEDs)
+
+The WS2812 strip write is ~6.5 ms (`show` ≈ 1.03 M cyc) and used to BLOCK the
+render task, so the frame period was `compute + transmit`. With the async
+double-buffered transmit (a dedicated task pushes the previous frame while the
+render task computes the next), the period drops to `max(compute, transmit)`:
+
+| effect (256 LEDs) | compute (frame) | transmit (show) | period blocking | period async | max FPS blocking → async |
+| ----------------- | --------------- | --------------- | --------------- | ------------ | ------------------------ |
+| `swirlFloat`      | 4,065,980       | 1,044,367       | 5.11 M          | 4.07 M       | 31 → 39                  |
+| `swirlFixed`      | 849,202         | 1,033,722       | 1.88 M          | 1.03 M       | **85 → 155 (1.8×)**      |
+| `plasmaHueFixed`  | 849,960         | 1,024,634       | 1.87 M          | 1.02 M       | 85 → 156                 |
+| `plasmaHueF32`    | 1,573,264       | 1,071,091       | 2.64 M          | 1.57 M       | 60 → 102                 |
+
+Fixed/light effects fully hide their compute behind the transmit → transmit-bound
+at ~155 FPS (the WS2812 protocol ceiling for 256 LEDs). End to end, the
+compute-heavy **swirl goes ~31 FPS (float, blocking) → ~155 FPS (fixed native,
+async) ≈ 5×** from the combined native-datatype + framing + async-transmit work.
+(The player currently paces fx at 30 FPS; the async removes the transmit from the
+render critical path — freeing the core and preventing heavy-effect frame drops —
+so lifting that cap realizes the full rate.)
