@@ -5,6 +5,54 @@ scan back for context. The dated sections toward the bottom were migrated out of
 `README.md` (now a user-facing intro; see `DEVELOPERS.md` for contributing) and
 are kept as historical record.
 
+## OSC input → uniforms — NATIVE firmware (FUG-121, branch `agent/fug-121-feature-osc-input`)
+
+The device receives OSC directly over UDP (:9000) and drives live uniforms — no
+host bridge (an earlier `//tools/osc_bridge` host-side approach was replaced at
+Kevin's steer: "can't the firmware receive OSC natively?").
+
+- **`//firmware/osc`** — `no_std`, zero-dep: OSC 1.0 parser (messages + nested
+  bundles), a `name→(slot,width)` `PortTable` built from the effect manifest, and
+  `ingest()` (datagram → `set(slot, values)` callbacks) with a per-slot value
+  `Shadow` so per-axis vec messages (`/tint/x`) patch one component. Config
+  toggles name resolution vs slot-index-only. 12 host tests; builds for C6.
+- **`fx_compiler`** — now embeds the uniform-manifest JSON in the `.fxb` (was
+  empty), so the device knows uniform names; `get_effect_uniforms` returns a real
+  manifest too. The web uses its own local-compile copy, so this only grows the
+  on-wire `.fxb`.
+- **`ffi.rs`** — builds the `PortTable`/`Shadow` once per `lm_fx_load` (off the
+  render path); `lm_osc_ingest(data,len)` applies a datagram via the existing
+  `set_uniform` seam; `lm_osc_set_by_name` toggles addressing. Cleared on
+  `lm_fx_clear`. End-to-end in the ffi host test.
+- **`main.cpp`** — a low-prio UDP task on :9000 feeds `lm_osc_ingest` under
+  `player_mutex` (the only state shared with the render task). Full `esp32c6`
+  firmware builds.
+- **Perf — REAL C6 numbers** (HITL, `:esp32c6_oscbench` boot self-bench, 160 MHz):
+  - osc by-name: **1282 cyc / 8.0 µs** per update
+  - osc by-slot: **1186 cyc / 7.4 µs** — so **by-name costs only +96 cyc / +0.6 µs
+    (~8%)**, NOT the 3.35× the host bench predicted (host int-parse was so cheap it
+    skewed the ratio). Names are effectively free on-device → keep by-name.
+  - proto set_uniforms: **3568 cyc / 22.3 µs**, and that EXCLUDES the WS/TLS the
+    real path pays — ~2.8× OSC on-device (plus TCP latency), so OSC/UDP stays the
+    right transport.
+  - one-time effect load incl. table build: 18900 cyc / 118 µs.
+  - Both transports functionally verified on the DUT (`/k=0.5 → red=127`). At
+    8 µs, a 200 Hz knob = 0.16% of a core; ingest is off the render task anyway.
+    (Host `//firmware/osc:osc_bench` + `:transport_bench` remain for quick host
+    iteration; the C6 figures above are the design authority.)
+
+Address convention: `/speed` (scalar), `/tint/x|y|z|w` (vec component) or `/tint`
+`,fff` (whole vector); `/slotN` when no manifest. Configurable prefix.
+
+**Bridge dropped (profiled).** `//firmware/player_app:transport_bench` compares
+the device-side cost of one uniform update via the proto `set_uniforms` path
+(`lm_player_handle`: envelope scan + micropb decode + dispatch + reply encode)
+vs native OSC ingest: **858 ns vs 22 ns — ~38×**, and the proto figure EXCLUDES
+the WebSocket framing + TLS the real ws/wss path also pays per message. Add TCP
+head-of-line blocking/latency and the known `set_uniforms` drop issue (there's a
+HITL drop-rate bench for exactly that), and proto-for-transport is strictly worse
+for realtime control. So the OSC path fully replaces the bridge — not kept.
+
 ## iOS support — Capacitor scaffold + host build server (branch `agent/fug-92-ios-support`)
 
 First implementation pass on FUG-92 (design: `docs/design/ios-support.md`; how-to:
