@@ -1100,3 +1100,164 @@ fn fixed_q16_16_trig_uses_lut() {
     "#;
     assert_eq!(run_shade(src, &[], Led::default(), Frame::default()), (255, 255, 255));
 }
+
+// ---------------------------------------------------------------------------
+// FUG-107: sensor drivers — `poll()` + `export` + i2c_* intrinsics run in the
+// same VM as effects, against a mock I2C register map.
+// ---------------------------------------------------------------------------
+
+use ledmapper_fx_compiler::exports_manifest_json;
+use ledmapper_fx_vm::{Budget, I2cBus};
+use std::collections::HashMap;
+
+/// A mock qwiic module: a per-(addr,reg) byte register map. Records writes so a
+/// test can assert the driver configured the sensor.
+#[derive(Default)]
+struct MockI2c {
+    regs: HashMap<(u8, u8), u8>,
+    writes: Vec<(u8, Vec<u8>)>,
+    /// addresses that NACK (absent on the bus).
+    absent: Vec<u8>,
+}
+impl MockI2c {
+    fn set(&mut self, addr: u8, reg: u8, val: u8) {
+        self.regs.insert((addr, reg), val);
+    }
+}
+impl I2cBus for MockI2c {
+    fn write(&mut self, addr: u8, bytes: &[u8]) -> bool {
+        if self.absent.contains(&addr) {
+            return false;
+        }
+        self.writes.push((addr, bytes.to_vec()));
+        if bytes.len() == 2 {
+            self.regs.insert((addr, bytes[0]), bytes[1]);
+        }
+        true
+    }
+    fn read_reg(&mut self, addr: u8, reg: u8, out: &mut [u8]) -> bool {
+        if self.absent.contains(&addr) {
+            return false;
+        }
+        for (i, o) in out.iter_mut().enumerate() {
+            *o = *self.regs.get(&(addr, reg + i as u8)).unwrap_or(&0);
+        }
+        true
+    }
+}
+
+fn run_poll(src: &str, bus: &mut MockI2c) -> (Vm, Vec<ledmapper_fx_compiler::ExportInfo>) {
+    let c = compile(src).unwrap_or_else(|d| panic!("compile error: {:?}", d));
+    let prog = Program::parse(&c.fxb).expect("parse fxb");
+    assert_ne!(prog.poll_entry, 0xFFFF, "driver should have a poll entry");
+    let mut vm = Vm::new();
+    let out = vm.run_poll(&prog, &Frame::default(), bus, &Budget::default());
+    assert!(!out.timed_out(), "poll timed out: {:?}", out);
+    (vm, c.exports)
+}
+
+#[test]
+fn driver_reads_i2c_into_exports() {
+    // An LM75-style temp sensor at 0x48: reg 0 = 16-bit temperature (big-endian).
+    // temp_c = raw16 * 0.0625 (using the top-byte convention here for a clean
+    // number). We read the two bytes as a big-endian u16.
+    let src = r#"
+        export int raw;
+        export float celsius "°C";
+        void poll() {
+            raw = i2c_read16(72, 0);       // 0x48, reg 0
+            celsius = float(raw) * 0.0625;
+        }
+    "#;
+    let mut bus = MockI2c::default();
+    bus.set(0x48, 0, 0x01); // hi
+    bus.set(0x48, 1, 0x02); // lo  -> 0x0102 = 258
+    let (vm, exports) = run_poll(src, &mut bus);
+
+    // exports manifest: names/slots/units line up.
+    assert_eq!(exports.len(), 2);
+    assert_eq!(exports[0].name, "raw");
+    assert_eq!(exports[1].name, "celsius");
+    assert_eq!(exports[1].unit, "°C");
+
+    let mut raw = [0.0f32];
+    vm.export(exports[0].slot as usize, &mut raw);
+    assert_eq!(raw[0].to_bits() as i32, 258, "big-endian u16 readback");
+
+    let mut celsius = [0.0f32];
+    vm.export(exports[1].slot as usize, &mut celsius);
+    assert_eq!(celsius[0], 258.0 * 0.0625); // 16.125, exact in f32
+
+    let json = exports_manifest_json(&exports);
+    assert!(json.contains("\"name\":\"celsius\""), "{json}");
+    assert!(json.contains("\"unit\":\"°C\""), "{json}");
+}
+
+#[test]
+fn driver_writes_config_register() {
+    // Driver configures the sensor (write reg 0x01 = 0x60) then reads back.
+    let src = r#"
+        export int cfg;
+        void poll() {
+            int ok = i2c_write(72, 1, 96);   // write 0x60 to reg 0x01
+            cfg = i2c_read8(72, 1);
+        }
+    "#;
+    let mut bus = MockI2c::default();
+    let (vm, exports) = run_poll(src, &mut bus);
+    assert_eq!(bus.writes, vec![(0x48u8, vec![0x01u8, 0x60u8])]);
+    let mut cfg = [0.0f32];
+    vm.export(exports[0].slot as usize, &mut cfg);
+    assert_eq!(cfg[0].to_bits() as i32, 0x60);
+}
+
+#[test]
+fn driver_read_reports_bus_error() {
+    // A missing/NACKing device: i2c_read8 returns -1, i2c_write returns 0.
+    let src = r#"
+        export int present;
+        export int value;
+        void poll() {
+            present = i2c_write(72, 0, 0);   // 0 on NACK
+            value = i2c_read8(72, 0);        // -1 on NACK
+        }
+    "#;
+    let mut bus = MockI2c { absent: vec![0x48], ..Default::default() };
+    let (vm, exports) = run_poll(src, &mut bus);
+    let mut present = [0.0f32];
+    vm.export(exports[0].slot as usize, &mut present);
+    assert_eq!(present[0].to_bits() as i32, 0);
+    let mut value = [0.0f32];
+    vm.export(exports[1].slot as usize, &mut value);
+    assert_eq!(value[0].to_bits() as i32, -1);
+}
+
+#[test]
+fn effect_and_driver_are_mutually_exclusive() {
+    // shade + poll in one program is rejected.
+    let both = r#"
+        void poll() {}
+        vec3 shade(Led led) { return vec3(0.0, 0.0, 0.0); }
+    "#;
+    assert!(compile(both).is_err());
+    // export without poll is rejected.
+    let orphan = r#"
+        export float x;
+        vec3 shade(Led led) { return vec3(0.0, 0.0, 0.0); }
+    "#;
+    assert!(compile(orphan).is_err());
+}
+
+#[test]
+fn v2_fxb_back_compat_effect_has_no_poll() {
+    // A plain effect now emits a v2 .fxb whose poll_entry is NO_ENTRY, and
+    // run_shade still works exactly as before.
+    let src = r#"
+        vec3 shade(Led led) { return vec3(led.pos.x, 0.0, 0.0); }
+    "#;
+    let c = compile(src).unwrap();
+    assert_eq!(c.fxb[4], 2, "version bumped to 2");
+    let prog = Program::parse(&c.fxb).unwrap();
+    assert_eq!(prog.poll_entry, 0xFFFF);
+    assert_ne!(prog.shade_entry, 0xFFFF);
+}

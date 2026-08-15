@@ -221,6 +221,28 @@ pub enum Op {
     CeilFix,  // u8 frac : round toward +inf to a whole unit
     FractFix, // u8 frac : x - floor(x), in [0,1) units (frac 0 = 0)
     MixFix,   // u8 frac : a + ((b-a)*t >> frac)  (fixed lerp)
+    // --- I2C sensor-driver intrinsics (FUG-107 auto hardware discovery) -------
+    // A sensor driver is ordinary .fxb bytecode with a `poll()` entry that talks
+    // to a qwiic module over the VM's [`I2cBus`] and writes the readings into
+    // `export` state slots (which the firmware then bridges into an effect's
+    // uniforms). Only reachable when the run is given a bus (poll()); in
+    // shade()/update() there is no bus, so both ops become inert (write→0 ack,
+    // read→ -1). Args ride the operand stack as ints; results push an int.
+    I2cWrite, // pop val,reg,addr -> write [reg,val] to addr ; push ack (1 ok / 0 fail)
+    I2cRead,  // u8 n(1..2): pop reg,addr -> read n bytes big-endian ; push int (-1 fail)
+}
+
+/// A byte-oriented I2C master for sensor drivers (FUG-107). The VM's I2C opcodes
+/// call through this; the firmware backs it with the ESP-IDF I2C master on the
+/// qwiic bus, while the host/browser back it with a mock register map so drivers
+/// can be authored, previewed, and unit-tested with no hardware. Register-
+/// oriented (the qwiic convention): write a register pointer then read/write.
+pub trait I2cBus {
+    /// Write `bytes` to 7-bit device `addr`. Returns true on ACK/success.
+    fn write(&mut self, addr: u8, bytes: &[u8]) -> bool;
+    /// Read `out.len()` bytes from 7-bit device `addr` after writing the one-byte
+    /// register pointer `reg`. Returns true on success (`out` untouched on fail).
+    fn read_reg(&mut self, addr: u8, reg: u8, out: &mut [u8]) -> bool;
 }
 
 /// Graph-query kinds (the `GraphQuery` opcode operand).
@@ -318,8 +340,8 @@ pub struct Counters {
 impl Op {
     #[inline]
     pub fn from_u8(b: u8) -> Option<Op> {
-        // Op is a contiguous enum 0..=MixFix; guard the range then transmute.
-        if b <= Op::MixFix as u8 {
+        // Op is a contiguous enum 0..=I2cRead; guard the range then transmute.
+        if b <= Op::I2cRead as u8 {
             Some(unsafe { core::mem::transmute::<u8, Op>(b) })
         } else {
             None
@@ -373,6 +395,9 @@ pub struct Program<'a> {
     pub n_uniform_slots: u8,
     pub update_entry: u16, // NO_ENTRY if absent
     pub shade_entry: u16,
+    /// Sensor-driver `poll()` entry (FUG-107); NO_ENTRY for a plain effect or a
+    /// v1 `.fxb`. Present only in v2+ headers (appended, back-compatible).
+    pub poll_entry: u16,
     /// The raw uniforms manifest (for the app; the VM ignores it).
     pub manifest: &'a [u8],
     /// Buffer descriptor table (present when flags & FLAG_BUFFERS): `n_buffers`
@@ -535,6 +560,7 @@ fn rd_u16(b: &[u8], o: usize) -> u16 {
 impl<'a> Program<'a> {
     /// Header: magic(4) ver(1) flags(1) n_state(1) n_uniform_slots(1)
     /// manifest_len(2) n_consts(2) code_len(2) update_entry(2) shade_entry(2)
+    /// [v2+: poll_entry(2)]. v1 headers are 18 bytes (no poll_entry); v2 are 20.
     pub fn parse(buf: &'a [u8]) -> Result<Program<'a>, ParseErr> {
         if buf.len() < 18 {
             return Err(ParseErr::TooShort);
@@ -542,7 +568,8 @@ impl<'a> Program<'a> {
         if buf[0..4] != MAGIC {
             return Err(ParseErr::BadMagic);
         }
-        if buf[4] != 1 {
+        let ver = buf[4];
+        if ver != 1 && ver != 2 {
             return Err(ParseErr::BadVersion);
         }
         let flags = buf[5];
@@ -553,7 +580,15 @@ impl<'a> Program<'a> {
         let code_len = rd_u16(buf, 12) as usize;
         let update_entry = rd_u16(buf, 14);
         let shade_entry = rd_u16(buf, 16);
-        let mut o = 18;
+        // v2 appends poll_entry to the fixed header; v1 has none.
+        let (poll_entry, mut o) = if ver >= 2 {
+            if buf.len() < 20 {
+                return Err(ParseErr::TooShort);
+            }
+            (rd_u16(buf, 18), 20usize)
+        } else {
+            (NO_ENTRY, 18usize)
+        };
         let manifest = buf.get(o..o + manifest_len).ok_or(ParseErr::TooShort)?;
         o += manifest_len;
         let consts = buf.get(o..o + n_consts * 4).ok_or(ParseErr::TooShort)?;
@@ -578,6 +613,7 @@ impl<'a> Program<'a> {
             n_uniform_slots,
             update_entry,
             shade_entry,
+            poll_entry,
             manifest,
             n_buffers,
             buffers,
@@ -839,6 +875,7 @@ impl Vm {
             &g,
             &mut dist,
             arena,
+            None, // no I2C bus for update()
             prog.update_entry as usize,
             budget,
         );
@@ -893,6 +930,7 @@ impl Vm {
             &g,
             &mut dist,
             arena,
+            None, // no I2C bus for shade()
             prog.shade_entry as usize,
             budget,
         );
@@ -907,6 +945,57 @@ impl Vm {
             outcome,
             counters,
         )
+    }
+
+    /// Run a sensor driver's `poll()` (FUG-107), giving the bytecode an
+    /// [`I2cBus`] so its `i2c_read`/`i2c_write` intrinsics reach real hardware.
+    /// `poll()` reads the qwiic module and writes the values into `export` state
+    /// slots; this commits `state` so a subsequent [`Vm::export`] (or the
+    /// firmware's uniform bridge) can read them. No-op / [`Outcome::Ok`] when the
+    /// program has no `poll()`. `state` is committed even on a budget/timeout
+    /// cancel — a partial reading is harmless (the next poll refreshes it).
+    pub fn run_poll(
+        &mut self,
+        prog: &Program,
+        frame: &Frame,
+        bus: &mut dyn I2cBus,
+        budget: &Budget,
+    ) -> Outcome {
+        if prog.poll_entry == NO_ENTRY {
+            return Outcome::Ok;
+        }
+        let led = Led::default();
+        let mut st = self.state;
+        let mut dist = self.dist_src;
+        let g = self.graph_ref();
+        let arena: &mut [u8] = if self.arena_ptr.is_null() || self.arena_len == 0 {
+            &mut []
+        } else {
+            unsafe { core::slice::from_raw_parts_mut(self.arena_ptr, self.arena_len) }
+        };
+        let (_out, outcome, _counters) = run(
+            prog,
+            self.uniforms,
+            &mut st,
+            frame,
+            &led,
+            &g,
+            &mut dist,
+            arena,
+            Some(bus),
+            prog.poll_entry as usize,
+            budget,
+        );
+        self.state = st;
+        outcome
+    }
+
+    /// Read a driver export back out of `state` (`slot..slot+n`), the values
+    /// `poll()` last wrote. `out` receives up to `out.len()` slots.
+    pub fn export(&self, slot: usize, out: &mut [f32]) {
+        for (i, o) in out.iter_mut().enumerate() {
+            *o = *self.state.get(slot + i).unwrap_or(&0.0);
+        }
     }
 }
 
@@ -1021,6 +1110,7 @@ fn run(
     graph: &GraphRef,
     dist: &mut DistSrc,
     arena: &mut [u8],
+    mut i2c: Option<&mut dyn I2cBus>,
     entry: usize,
     guard: &Budget,
 ) -> ([f32; 3], Outcome, Counters) {
@@ -1947,6 +2037,37 @@ fn run(
                 let b = popi!() as i64;
                 let a = popi!() as i64;
                 pushi!((a + (((b - a) * t) >> frac)) as i32);
+            }
+            Op::I2cWrite => {
+                let val = popi!();
+                let reg = popi!();
+                let addr = popi!();
+                let ok = match i2c.as_deref_mut() {
+                    Some(bus) => bus.write(addr as u8, &[reg as u8, val as u8]),
+                    None => false,
+                };
+                pushi!(if ok { 1 } else { 0 });
+            }
+            Op::I2cRead => {
+                let n = (code[pc] as usize).clamp(1, 2);
+                pc += 1;
+                let reg = popi!();
+                let addr = popi!();
+                let mut buf = [0u8; 2];
+                let ok = match i2c.as_deref_mut() {
+                    Some(bus) => bus.read_reg(addr as u8, reg as u8, &mut buf[..n]),
+                    None => false,
+                };
+                if ok {
+                    // big-endian: first byte is most significant (qwiic convention)
+                    let mut v: i32 = 0;
+                    for &byte in &buf[..n] {
+                        v = (v << 8) | byte as i32;
+                    }
+                    pushi!(v);
+                } else {
+                    pushi!(-1);
+                }
             }
         }
     }
