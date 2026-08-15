@@ -5,6 +5,25 @@ scan back for context. The dated sections toward the bottom were migrated out of
 `README.md` (now a user-facing intro; see `DEVELOPERS.md` for contributing) and
 are kept as historical record.
 
+## OSC input → uniforms (FUG-121, branch `agent/fug-121-feature-osc-input`)
+
+New tool `//tools/osc_bridge`: receives OSC over UDP from any OSC source
+(TouchDesigner, Ableton/M4L, TouchOSC, Max, scripts) and drives live shader
+uniforms on a `ledmapper.v1` fixture. Reuses the TD plugin's protocol core
+(`//tools/touchdesigner/core:td_ledmapper`) — `Session::drive_uniforms` maps
+named channels → uniform slots via the device's own manifest (vec fan-out,
+bool threshold, change-detection), so the only new code is a hand-rolled OSC 1.0
+parser (`src/osc.rs`, no crate dep — same style as the repo's protobuf/WS) and
+the address→channel mapping + last-value table (`src/lib.rs`).
+
+- Address convention: strip a configurable prefix (default `/`), map `/tint/x`
+  → channel `tint:x`, `/speed` → `speed`; first numeric/bool arg is the value.
+  Falls back to `slotN` when firmware advertises no manifest.
+- CLI `src/main.rs`: `--addr host:81 --listen 0.0.0.0:9000 [--prefix --effect -v]`.
+- `bazel test //tools/osc_bridge:osc_bridge_test` — 12 pure tests (parser +
+  mapping) green; binary builds; live UDP recv/parse smoke-tested. End-to-end
+  drive against a real fixture is manual/HITL (no OSC device in CI).
+
 ## iOS support — Capacitor scaffold + host build server (branch `agent/fug-92-ios-support`)
 
 First implementation pass on FUG-92 (design: `docs/design/ios-support.md`; how-to:
