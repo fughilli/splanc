@@ -591,3 +591,238 @@ fn integer_hash_uniform_and_no_fixed_point() {
     assert!(hash3(1.0, 2.0, 3.0) != hash3(1.0, 2.0, 4.0));
     assert!(hash3(1.0, 2.0, 3.0) != hash3(2.0, 1.0, 3.0));
 }
+
+// --- FUG-122: fixed/int variants of the vector/transcendental/colour/I/O ops --
+//
+// These hand-assembled programs exercise each new opcode. Where a program's
+// result is a fixed value we convert it back to float (Fix2F, Q16.16) before the
+// float Ret so the shade RGB reflects the number; the RetRgb8/RetRgbFix and
+// LoadCtxFix tests exercise the strictly-integer I/O path directly.
+
+const F16: u8 = 16; // Q16.16 frac operand
+
+/// Run a shade program returning its (r,g,b).
+fn shade(code: &[u8], consts: &[f32], led: Led, frame: Frame) -> Rgb {
+    let buf = fxb(0, 0, NO_ENTRY, 0, consts, code);
+    let prog = Program::parse(&buf).expect("parse");
+    let vm = Vm::new();
+    vm.run_shade(&prog, &frame, &led)
+}
+
+#[test]
+fn sqrt_fix_matches_float() {
+    // sqrt(0.25) = 0.5 -> R = 127. Build 0.25 as Q16.16, SqrtFix, back to float.
+    #[rustfmt::skip]
+    let code = [
+        Op::PushConst as u8, 0, 0,   // 0.25 (float)
+        Op::F2Fix as u8,             // -> Q16.16 0.25
+        Op::SqrtFix as u8, F16,      // -> Q16.16 0.5
+        Op::Fix2F as u8,             // -> 0.5 float
+        Op::Swizzle as u8, 1, 3, 0, 0, 0, // broadcast to vec3
+        Op::Ret as u8, 3,
+    ];
+    let (r, g, b) = shade(&code, &[0.25], Led::default(), Frame::default());
+    assert_eq!((r, g, b), (127, 127, 127));
+}
+
+#[test]
+fn length_fix_matches_float() {
+    // |(0.6, 0.8, 0)| = 1.0 -> R = 255.
+    #[rustfmt::skip]
+    let code = [
+        Op::PushConst as u8, 0, 0, Op::F2Fix as u8, // 0.6
+        Op::PushConst as u8, 1, 0, Op::F2Fix as u8, // 0.8
+        Op::PushConst as u8, 2, 0, Op::F2Fix as u8, // 0.0
+        Op::LengthFix as u8, F16, 3,                // -> Q16.16 1.0
+        Op::Fix2F as u8,
+        Op::Swizzle as u8, 1, 3, 0, 0, 0,
+        Op::Ret as u8, 3,
+    ];
+    let (r, _, _) = shade(&code, &[0.6, 0.8, 0.0], Led::default(), Frame::default());
+    assert!((r as i32 - 255).abs() <= 1, "|(0.6,0.8,0)|=1 -> ~255, got {r}");
+}
+
+#[test]
+fn dot_and_distance_fix() {
+    // dot((0.5,0,0),(0.5,0,0)) = 0.25 -> 63 ; distance((0.6,0,0),(0,0.8,0)) = 1.0.
+    #[rustfmt::skip]
+    let dot = [
+        Op::PushConst as u8, 0, 0, Op::F2Fix as u8, // 0.5
+        Op::PushConst as u8, 1, 0, Op::F2Fix as u8, // 0
+        Op::PushConst as u8, 1, 0, Op::F2Fix as u8, // 0
+        Op::PushConst as u8, 0, 0, Op::F2Fix as u8, // 0.5
+        Op::PushConst as u8, 1, 0, Op::F2Fix as u8, // 0
+        Op::PushConst as u8, 1, 0, Op::F2Fix as u8, // 0
+        Op::DotFix as u8, F16, 3,
+        Op::Fix2F as u8,
+        Op::Swizzle as u8, 1, 3, 0, 0, 0,
+        Op::Ret as u8, 3,
+    ];
+    assert_eq!(shade(&dot, &[0.5, 0.0], Led::default(), Frame::default()).0, 63);
+
+    #[rustfmt::skip]
+    let dist = [
+        Op::PushConst as u8, 0, 0, Op::F2Fix as u8, // a=(0.6,0,0)
+        Op::PushConst as u8, 2, 0, Op::F2Fix as u8,
+        Op::PushConst as u8, 2, 0, Op::F2Fix as u8,
+        Op::PushConst as u8, 2, 0, Op::F2Fix as u8, // b=(0,0.8,0)
+        Op::PushConst as u8, 1, 0, Op::F2Fix as u8,
+        Op::PushConst as u8, 2, 0, Op::F2Fix as u8,
+        Op::DistanceFix as u8, F16, 3,
+        Op::Fix2F as u8,
+        Op::Swizzle as u8, 1, 3, 0, 0, 0,
+        Op::Ret as u8, 3,
+    ];
+    let dr = shade(&dist, &[0.6, 0.8, 0.0], Led::default(), Frame::default()).0;
+    assert!((dr as i32 - 255).abs() <= 1, "distance=1 -> ~255, got {dr}");
+}
+
+#[test]
+fn normalize_fix_unit_length() {
+    // normalize((3,4,0)).x = 0.6 -> 153. Uses Q16.16 range (values > 1).
+    #[rustfmt::skip]
+    let code = [
+        Op::PushConst as u8, 0, 0, Op::F2Fix as u8, // 3
+        Op::PushConst as u8, 1, 0, Op::F2Fix as u8, // 4
+        Op::PushConst as u8, 2, 0, Op::F2Fix as u8, // 0
+        Op::NormalizeFix as u8, F16, 3,
+        Op::Swizzle as u8, 3, 1, 0,   // take .x
+        Op::Fix2F as u8,
+        Op::Swizzle as u8, 1, 3, 0, 0, 0,
+        Op::Ret as u8, 3,
+    ];
+    let (r, _, _) = shade(&code, &[3.0, 4.0, 0.0], Led::default(), Frame::default());
+    assert!((r as i32 - 153).abs() <= 1, "normalize .x = 0.6 -> ~153, got {r}");
+}
+
+#[test]
+fn hsv2rgb_fix_red() {
+    // hsv(h=0, s=1, v=1) = pure red, via the strictly-integer path + RetRgbFix.
+    #[rustfmt::skip]
+    let code = [
+        Op::PushConst as u8, 0, 0, Op::F2Fix as u8, // h=0
+        Op::PushConst as u8, 1, 0, Op::F2Fix as u8, // s=1
+        Op::PushConst as u8, 1, 0, Op::F2Fix as u8, // v=1
+        Op::Hsv2RgbFix as u8, F16,
+        Op::RetRgbFix as u8, F16,
+    ];
+    assert_eq!(shade(&code, &[0.0, 1.0], Led::default(), Frame::default()), (255, 0, 0));
+}
+
+#[test]
+fn palette_fix_rainbow_t0_is_red() {
+    #[rustfmt::skip]
+    let code = [
+        Op::PushConst as u8, 0, 0, Op::F2Fix as u8, // t=0
+        Op::PaletteFix as u8, 2, F16,               // rainbow
+        Op::RetRgbFix as u8, F16,
+    ];
+    assert_eq!(shade(&code, &[0.0], Led::default(), Frame::default()), (255, 0, 0));
+}
+
+#[test]
+fn atan2_fix_quarter_turn() {
+    // atan2(1, 0) = 0.25 turn -> 0.25 * 255 = 63.
+    #[rustfmt::skip]
+    let code = [
+        Op::PushConst as u8, 0, 0, Op::F2Fix as u8, // y = 1
+        Op::PushConst as u8, 1, 0, Op::F2Fix as u8, // x = 0
+        Op::Atan2Fix as u8, F16,
+        Op::Fix2F as u8,
+        Op::Swizzle as u8, 1, 3, 0, 0, 0,
+        Op::Ret as u8, 3,
+    ];
+    let (r, _, _) = shade(&code, &[1.0, 0.0], Led::default(), Frame::default());
+    assert!((r as i32 - 63).abs() <= 2, "atan2(1,0)=0.25turn -> ~63, got {r}");
+}
+
+#[test]
+fn tan_log_pow_fix_smoke() {
+    // tan(0.125 turn) = tan(45deg) = 1.0.
+    #[rustfmt::skip]
+    let tan = [
+        Op::PushConst as u8, 0, 0, Op::F2Fix as u8, // 0.125 turn
+        Op::TanFix as u8, F16,
+        Op::Fix2F as u8, Op::Swizzle as u8, 1, 3, 0, 0, 0, Op::Ret as u8, 3,
+    ];
+    let (r, _, _) = shade(&tan, &[0.125], Led::default(), Frame::default());
+    assert!((r as i32 - 255).abs() <= 3, "tan(45deg)=1 -> ~255, got {r}");
+
+    // pow(0.5, 2) = 0.25 -> 63.
+    #[rustfmt::skip]
+    let pow = [
+        Op::PushConst as u8, 0, 0, Op::F2Fix as u8, // base 0.5
+        Op::PushConst as u8, 1, 0, Op::F2Fix as u8, // exp 2
+        Op::PowFix as u8, F16,
+        Op::Fix2F as u8, Op::Swizzle as u8, 1, 3, 0, 0, 0, Op::Ret as u8, 3,
+    ];
+    let (r, _, _) = shade(&pow, &[0.5, 2.0], Led::default(), Frame::default());
+    assert!((r as i32 - 63).abs() <= 4, "pow(0.5,2)=0.25 -> ~63, got {r}");
+}
+
+#[test]
+fn ret_rgb8_direct() {
+    // int channels 255, 0, 128 -> RGB directly (float-free output).
+    #[rustfmt::skip]
+    let code = [
+        Op::PushConst as u8, 0, 0, Op::F2I as u8, // 255
+        Op::PushConst as u8, 1, 0, Op::F2I as u8, // 0
+        Op::PushConst as u8, 2, 0, Op::F2I as u8, // 128
+        Op::RetRgb8 as u8,
+    ];
+    assert_eq!(shade(&code, &[255.0, 0.0, 128.0], Led::default(), Frame::default()), (255, 0, 128));
+}
+
+#[test]
+fn ret_rgb_fix_scales() {
+    // Q16.16 channels 1.0, 0.5, 0.25 -> 255, 127, 63.
+    #[rustfmt::skip]
+    let code = [
+        Op::PushConst as u8, 0, 0, Op::F2Fix as u8,
+        Op::PushConst as u8, 1, 0, Op::F2Fix as u8,
+        Op::PushConst as u8, 2, 0, Op::F2Fix as u8,
+        Op::RetRgbFix as u8, F16,
+    ];
+    assert_eq!(shade(&code, &[1.0, 0.5, 0.25], Led::default(), Frame::default()), (255, 127, 63));
+}
+
+#[test]
+fn load_ctx_fix_reads_cache_and_rescales() {
+    // led.pos.x cached as Q16.16 0.5 -> loaded as Q16.16 (frac 16) then Q1.14
+    // (frac 14) both yield 0.5 after FixToF; proves the cache read + rescale.
+    let led = Led { pos_fix: [(0.5 * 65536.0) as i32, 0, 0], ..Default::default() };
+
+    #[rustfmt::skip]
+    let q16 = [
+        Op::LoadCtxFix as u8, C_LED_POS, 0, F16, // pos.x as Q16.16
+        Op::FixToF as u8, F16,
+        Op::Swizzle as u8, 1, 3, 0, 0, 0,
+        Op::Ret as u8, 3,
+    ];
+    assert_eq!(shade(&q16, &[], led, Frame::default()).0, 127);
+
+    #[rustfmt::skip]
+    let q14 = [
+        Op::LoadCtxFix as u8, C_LED_POS, 0, 14, // pos.x rescaled to Q1.14
+        Op::FixToF as u8, 14,
+        Op::Swizzle as u8, 1, 3, 0, 0, 0,
+        Op::Ret as u8, 3,
+    ];
+    assert_eq!(shade(&q14, &[], led, Frame::default()).0, 127);
+}
+
+#[test]
+fn all_fixed_shade_has_no_float_boundary() {
+    // A shade() written end-to-end in fixed: read led.pos.x from the fixed cache,
+    // hue = pos.x, hsv->rgb, output — no LoadCtx/Ret float epilogue anywhere.
+    let led = Led { pos_fix: [(0.0 * 65536.0) as i32, 0, 0], ..Default::default() };
+    #[rustfmt::skip]
+    let code = [
+        Op::LoadCtxFix as u8, C_LED_POS, 0, F16, // h = pos.x (0)
+        Op::PushConst as u8, 0, 0, Op::F2Fix as u8, // s = 1
+        Op::PushConst as u8, 0, 0, Op::F2Fix as u8, // v = 1
+        Op::Hsv2RgbFix as u8, F16,
+        Op::RetRgbFix as u8, F16,
+    ];
+    assert_eq!(shade(&code, &[1.0], led, Frame::default()), (255, 0, 0));
+}

@@ -2272,6 +2272,10 @@ pub unsafe extern "C" fn lm_fx_shade(
         branch: t.branch,
         dist: t.dist,
         uv,
+        // Fixed mirrors for LoadCtxFix are filled from the per-LED cache below
+        // (FUG-122); default 0 here, overwritten before run when the effect uses
+        // the fixed input path.
+        ..Default::default()
     };
     let outcome = if PERF_MODE == PERF_FULL {
         // FULL: count this LED's opcodes into the per-frame shade accumulator

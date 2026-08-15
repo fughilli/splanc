@@ -221,6 +221,39 @@ pub enum Op {
     CeilFix,  // u8 frac : round toward +inf to a whole unit
     FractFix, // u8 frac : x - floor(x), in [0,1) units (frac 0 = 0)
     MixFix,   // u8 frac : a + ((b-a)*t >> frac)  (fixed lerp)
+    // --- fixed/int variants of the remaining vector + transcendental + color +
+    // I/O opcodes (FUG-122). These complete the native-datatype ISA: EVERY float
+    // opcode now has a strictly-integer/fixed counterpart, so a program can run
+    // update()+shade() — inputs and output included — with zero soft-float. The
+    // `frac` operand (0 = int, 6/14/16 = the fixed formats) makes one opcode
+    // serve every width, matching the existing *FixN convention.
+    SqrtFix,      // u8 frac : integer sqrt of a Q1.frac value -> Q1.frac
+    ScaleFix,     // u8 frac, u8 n : n-vec(fixed) * scalar(fixed), (a*s)>>frac per comp
+    DotFix,       // u8 frac, u8 n : pop a(n),b(n) -> scalar fixed (sum (a*b)>>frac)
+    LengthFix,    // u8 frac, u8 n : pop v(n) -> scalar fixed sqrt(sum v^2)
+    DistanceFix,  // u8 frac, u8 n : pop a(n),b(n) -> scalar fixed
+    NormalizeFix, // u8 frac, u8 n : pop v(n) -> v(n) / |v|
+    CrossFix,     // u8 frac : n=3 fixed cross product
+    SmoothstepFix, // u8 frac, u8 n : pop e0(n),e1(n),x(n)
+    ClampVFix,    // u8 n : vector clamp on fixed/int (pop x(n),lo(n),hi(n)); frac-free
+    MixVFix,      // u8 frac, u8 n : pop a(n),b(n),t(1) -> n-vec fixed lerp
+    Hsv2RgbFix,   // u8 frac : pop h,s,v (fixed; h in turns, s/v in [0,1]) -> r,g,b fixed
+    PaletteFix,   // u8 id, u8 frac : pop t (fixed [0,1]) -> r,g,b fixed
+    Atan2Fix,     // u8 frac : pop y,x (fixed) -> angle in TURNS, Q1.frac in [-0.5,0.5)
+    LogFix,       // u8 frac : natural log of a Q1.frac value -> Q1.frac (x>0)
+    TanFix,       // u8 frac : tan(turns) = sin/cos in fixed
+    PowFix,       // u8 frac : a^b via exp(b*log(a)) in fixed
+    HashFix,      // u8 frac : pop x (int/fixed bits) -> fixed [0,1) in Q1.frac
+    Hash3Fix,     // u8 frac : pop x,y,z -> fixed [0,1) in Q1.frac
+    // Float-free output: read the top 3 slots as a colour and emit RGB directly,
+    // skipping the shade() epilogue's clamp01()*255 soft-float. RetRgb8 reads
+    // int 0..255 channels; RetRgbFix reads Q1.frac channels in [0,1].
+    RetRgb8,      // (no operand) top 3 slots = int r,g,b (0..255)
+    RetRgbFix,    // u8 frac : top 3 slots = fixed r,g,b in [0,1]
+    // Float-free input: push ONE scalar context component already converted to
+    // Q1.frac fixed (or int, frac 0), read from the host-provided per-LED fixed
+    // cache (positions/uv/s/dist converted once at map-load, not per frame).
+    LoadCtxFix,   // u8 id, u8 comp, u8 frac
 }
 
 /// Graph-query kinds (the `GraphQuery` opcode operand).
@@ -318,8 +351,8 @@ pub struct Counters {
 impl Op {
     #[inline]
     pub fn from_u8(b: u8) -> Option<Op> {
-        // Op is a contiguous enum 0..=MixFix; guard the range then transmute.
-        if b <= Op::MixFix as u8 {
+        // Op is a contiguous enum 0..=LoadCtxFix; guard the range then transmute.
+        if b <= Op::LoadCtxFix as u8 {
             Some(unsafe { core::mem::transmute::<u8, Op>(b) })
         } else {
             None
@@ -645,6 +678,12 @@ impl<'a> Program<'a> {
 }
 
 /// Per-frame context (constant across all LEDs of one frame).
+///
+/// Each continuous quantity carries BOTH an `f32` and a pre-converted Q16.16
+/// `*_fix` form. A program that only touches fixed/int context (via `LoadCtxFix`)
+/// reads the `*_fix` fields and never triggers a soft-float conversion; the host
+/// fills whichever representation the loaded `.fxb` actually uses (FUG-122). The
+/// fixed forms are computed ONCE per frame in `update()`, not per LED.
 #[derive(Clone, Copy, Default)]
 pub struct Frame {
     pub time: f32,
@@ -653,6 +692,11 @@ pub struct Frame {
     pub led_count: u32,
     pub imu_accel: [f32; 3],
     pub imu_gyro: [f32; 3],
+    /// Q16.16 fixed mirrors (see struct doc). Filled by the host FFI.
+    pub time_fix: i32,
+    pub dt_fix: i32,
+    pub imu_accel_fix: [i32; 3],
+    pub imu_gyro_fix: [i32; 3],
 }
 
 /// Per-LED context.
@@ -671,7 +715,20 @@ pub struct Led {
     /// the map's bounding box (a top-down projection of the gravity-leveled
     /// frame). Feeds `led.uv` for texture-mapped effects (`sample(tex, led.uv)`).
     pub uv: [f32; 2],
+    /// Q16.16 fixed mirrors of the per-LED geometry (FUG-122). These are the
+    /// "convert LED positions to fixed ONCE and cache" fields: the host computes
+    /// them at map/topology load, not per frame, so a fixed-only shader reads
+    /// them via `LoadCtxFix` with zero soft-float on the hot path.
+    pub pos_fix: [i32; 3],
+    pub uv_fix: [i32; 2],
+    pub s_fix: i32,
+    pub dist_fix: i32,
 }
+
+/// Canonical fraction width the `*_fix` context fields are cached in (Q16.16).
+/// `LoadCtxFix` rescales from this to the shader's requested `frac` with a cheap
+/// integer shift.
+pub const CTX_FIX_FRAC: u32 = 16;
 
 /// Persistent VM state across frames: uniform values + `state` vars + the
 /// topology graph tables (for graph-walking effects — see [`Vm::set_graph`]).
@@ -830,7 +887,7 @@ impl Vm {
         } else {
             unsafe { core::slice::from_raw_parts_mut(self.arena_ptr, self.arena_len) }
         };
-        let (_out, outcome, counters) = run(
+        let (_out, _rgb, outcome, counters) = run(
             prog,
             self.uniforms,
             &mut st,
@@ -884,7 +941,7 @@ impl Vm {
         } else {
             unsafe { core::slice::from_raw_parts_mut(self.arena_ptr, self.arena_len) }
         };
-        let (out, outcome, counters) = run(
+        let (out, rgb, outcome, counters) = run(
             prog,
             self.uniforms,
             &mut st,
@@ -898,6 +955,11 @@ impl Vm {
         );
         if outcome.timed_out() {
             return ((0, 0, 0), outcome, counters);
+        }
+        // A `RetRgb8`/`RetRgbFix` shader already produced the 8-bit colour with no
+        // soft-float — skip the clamp01()*255 epilogue entirely (FUG-122).
+        if let Some(rgb) = rgb {
+            return (rgb, outcome, counters);
         }
         let r = clamp01(out[0]);
         let g = clamp01(out[1]);
@@ -1023,7 +1085,7 @@ fn run(
     arena: &mut [u8],
     entry: usize,
     guard: &Budget,
-) -> ([f32; 3], Outcome, Counters) {
+) -> ([f32; 3], Option<Rgb>, Outcome, Counters) {
     use core::sync::atomic::Ordering;
     let code = prog.code;
     let mut stack = [0.0f32; MAX_STACK];
@@ -1486,7 +1548,7 @@ fn run(
                 if sp > sp_max {
                     sp_max = sp;
                 }
-                return (out, Outcome::Ok, Counters { instrs, stack_max: sp_max as u16 });
+                return (out, None, Outcome::Ok, Counters { instrs, stack_max: sp_max as u16 });
             }
             Op::Swap => {
                 let an = code[pc] as usize;
@@ -1948,9 +2010,293 @@ fn run(
                 let a = popi!() as i64;
                 pushi!((a + (((b - a) * t) >> frac)) as i32);
             }
+            // --- FUG-122: fixed/int variants of the vector, transcendental,
+            // colour and I/O opcodes (complete the native-datatype ISA). All read
+            // and write the raw scaled integer in the slot word — no soft-float.
+            Op::SqrtFix => {
+                let frac = code[pc] as u32;
+                pc += 1;
+                let a = popi!();
+                pushi!(sqrt_fix(a, frac));
+            }
+            Op::ScaleFix => {
+                let frac = code[pc] as u32;
+                let n = code[pc + 1] as usize;
+                pc += 2;
+                let s = popi!() as i64;
+                for i in 0..n {
+                    let a = stack[sp - n + i].to_bits() as i32 as i64;
+                    stack[sp - n + i] = f32::from_bits((((a * s) >> frac) as i32) as u32);
+                }
+            }
+            Op::DotFix => {
+                let frac = code[pc] as u32;
+                let n = code[pc + 1] as usize;
+                pc += 2;
+                let base = sp - 2 * n;
+                let mut acc: i64 = 0;
+                for i in 0..n {
+                    let a = stack[base + i].to_bits() as i32 as i64;
+                    let b = stack[base + n + i].to_bits() as i32 as i64;
+                    acc += (a * b) >> frac;
+                }
+                sp = base;
+                pushi!(acc as i32);
+            }
+            Op::LengthFix => {
+                let frac = code[pc] as u32;
+                let n = code[pc + 1] as usize;
+                pc += 2;
+                let base = sp - n;
+                let mut acc: i64 = 0;
+                for i in 0..n {
+                    let a = stack[base + i].to_bits() as i32 as i64;
+                    acc += (a * a) >> frac;
+                }
+                sp = base;
+                pushi!(sqrt_fix_i64(acc, frac) as i32);
+            }
+            Op::DistanceFix => {
+                let frac = code[pc] as u32;
+                let n = code[pc + 1] as usize;
+                pc += 2;
+                let base = sp - 2 * n;
+                let mut acc: i64 = 0;
+                for i in 0..n {
+                    let d = (stack[base + i].to_bits() as i32 as i64)
+                        - (stack[base + n + i].to_bits() as i32 as i64);
+                    acc += (d * d) >> frac;
+                }
+                sp = base;
+                pushi!(sqrt_fix_i64(acc, frac) as i32);
+            }
+            Op::NormalizeFix => {
+                let frac = code[pc] as u32;
+                let n = code[pc + 1] as usize;
+                pc += 2;
+                let base = sp - n;
+                let mut acc: i64 = 0;
+                for i in 0..n {
+                    let a = stack[base + i].to_bits() as i32 as i64;
+                    acc += (a * a) >> frac;
+                }
+                let len = sqrt_fix_i64(acc, frac);
+                if len > 0 {
+                    for i in 0..n {
+                        let a = stack[base + i].to_bits() as i32 as i64;
+                        let v = ((a << frac) / len) as i32;
+                        stack[base + i] = f32::from_bits(v as u32);
+                    }
+                }
+            }
+            Op::CrossFix => {
+                let frac = code[pc] as u32;
+                pc += 1; // n operand (always 3), folded into the fixed math below
+                let base = sp - 6;
+                let a = [
+                    stack[base].to_bits() as i32 as i64,
+                    stack[base + 1].to_bits() as i32 as i64,
+                    stack[base + 2].to_bits() as i32 as i64,
+                ];
+                let b = [
+                    stack[base + 3].to_bits() as i32 as i64,
+                    stack[base + 4].to_bits() as i32 as i64,
+                    stack[base + 5].to_bits() as i32 as i64,
+                ];
+                let cx = ((a[1] * b[2] - a[2] * b[1]) >> frac) as i32;
+                let cy = ((a[2] * b[0] - a[0] * b[2]) >> frac) as i32;
+                let cz = ((a[0] * b[1] - a[1] * b[0]) >> frac) as i32;
+                stack[base] = f32::from_bits(cx as u32);
+                stack[base + 1] = f32::from_bits(cy as u32);
+                stack[base + 2] = f32::from_bits(cz as u32);
+                sp = base + 3;
+            }
+            Op::SmoothstepFix => {
+                let frac = code[pc] as u32;
+                let n = code[pc + 1] as usize;
+                pc += 2;
+                let one = 1i64 << frac;
+                let base = sp - 3 * n;
+                for i in 0..n {
+                    let e0 = stack[base + i].to_bits() as i32 as i64;
+                    let e1 = stack[base + n + i].to_bits() as i32 as i64;
+                    let x = stack[base + 2 * n + i].to_bits() as i32 as i64;
+                    let t = if e1 == e0 {
+                        0
+                    } else {
+                        (((x - e0) << frac) / (e1 - e0)).clamp(0, one)
+                    };
+                    let t2 = (t * t) >> frac;
+                    let val = (t2 * (3 * one - 2 * t)) >> frac; // t²(3−2t)
+                    stack[base + i] = f32::from_bits((val as i32) as u32);
+                }
+                sp = base + n;
+            }
+            Op::ClampVFix => {
+                let n = code[pc] as usize;
+                pc += 1;
+                let base = sp - 3 * n;
+                for i in 0..n {
+                    let x = stack[base + i].to_bits() as i32;
+                    let lo = stack[base + n + i].to_bits() as i32;
+                    let hi = stack[base + 2 * n + i].to_bits() as i32;
+                    let v = if x < lo {
+                        lo
+                    } else if x > hi {
+                        hi
+                    } else {
+                        x
+                    };
+                    stack[base + i] = f32::from_bits(v as u32);
+                }
+                sp = base + n;
+            }
+            Op::MixVFix => {
+                let frac = code[pc] as u32;
+                let n = code[pc + 1] as usize;
+                pc += 2;
+                let t = popi!() as i64;
+                let base = sp - 2 * n;
+                for i in 0..n {
+                    let a = stack[base + i].to_bits() as i32 as i64;
+                    let b = stack[base + n + i].to_bits() as i32 as i64;
+                    let v = (a + (((b - a) * t) >> frac)) as i32;
+                    stack[base + i] = f32::from_bits(v as u32);
+                }
+                sp = base + n;
+            }
+            Op::Hsv2RgbFix => {
+                let frac = code[pc] as u32;
+                pc += 1;
+                let v = popi!();
+                let s = popi!();
+                let h = popi!();
+                let (r, g, b) = hsv2rgb_fix(h, s, v, frac);
+                pushi!(r);
+                pushi!(g);
+                pushi!(b);
+            }
+            Op::PaletteFix => {
+                let id = code[pc];
+                let frac = code[pc + 1] as u32;
+                pc += 2;
+                let t = popi!();
+                let (r, g, b) = palette_fix(id, t, frac);
+                pushi!(r);
+                pushi!(g);
+                pushi!(b);
+            }
+            Op::Atan2Fix => {
+                let frac = code[pc] as u32;
+                pc += 1;
+                let x = popi!();
+                let y = popi!();
+                pushi!(atan2_fix(y, x, frac));
+            }
+            Op::LogFix => {
+                let frac = code[pc] as u32;
+                pc += 1;
+                let a = popi!();
+                pushi!(log_fix(a, frac));
+            }
+            Op::TanFix => {
+                let frac = code[pc] as u32;
+                pc += 1;
+                let a = popi!();
+                pushi!(tan_fix(a, frac));
+            }
+            Op::PowFix => {
+                let frac = code[pc] as u32;
+                pc += 1;
+                let b = popi!();
+                let a = popi!();
+                pushi!(pow_fix(a, b, frac));
+            }
+            Op::HashFix => {
+                let frac = code[pc] as u32;
+                pc += 1;
+                let x = pop!().to_bits();
+                pushi!(hash_fix(x, frac));
+            }
+            Op::Hash3Fix => {
+                let frac = code[pc] as u32;
+                pc += 1;
+                let z = pop!().to_bits();
+                let y = pop!().to_bits();
+                let x = pop!().to_bits();
+                pushi!(hash3_fix(x, y, z, frac));
+            }
+            Op::RetRgb8 => {
+                // top 3 slots are int channels 0..255 — emit RGB, no soft-float.
+                let base = sp.saturating_sub(3);
+                let ch = |v: i32| v.clamp(0, 255) as u8;
+                let r = ch(stack[base].to_bits() as i32);
+                let g = ch(stack.get(base + 1).map(|s| s.to_bits() as i32).unwrap_or(0));
+                let b = ch(stack.get(base + 2).map(|s| s.to_bits() as i32).unwrap_or(0));
+                if sp > sp_max {
+                    sp_max = sp;
+                }
+                return (
+                    [0.0; 3],
+                    Some((r, g, b)),
+                    Outcome::Ok,
+                    Counters { instrs, stack_max: sp_max as u16 },
+                );
+            }
+            Op::RetRgbFix => {
+                let frac = code[pc] as u32;
+                // (returns immediately; no pc advance needed for the frac operand)
+                // top 3 slots are Q1.frac channels in [0,1] — scale to 0..255 in
+                // integer ((v*255)>>frac), no clamp01()*255 soft-float.
+                let base = sp.saturating_sub(3);
+                let to8 = |v: i64| ((v * 255) >> frac).clamp(0, 255) as u8;
+                let r = to8(stack[base].to_bits() as i32 as i64);
+                let g = to8(stack.get(base + 1).map(|s| s.to_bits() as i32 as i64).unwrap_or(0));
+                let b = to8(stack.get(base + 2).map(|s| s.to_bits() as i32 as i64).unwrap_or(0));
+                if sp > sp_max {
+                    sp_max = sp;
+                }
+                return (
+                    [0.0; 3],
+                    Some((r, g, b)),
+                    Outcome::Ok,
+                    Counters { instrs, stack_max: sp_max as u16 },
+                );
+            }
+            Op::LoadCtxFix => {
+                let id = code[pc];
+                let comp = code[pc + 1] as usize;
+                let frac = code[pc + 2] as u32;
+                pc += 3;
+                // Canonical cache form is Q16.16 for continuous quantities, raw
+                // int (frac 0) for counters/indices; rescale to the shader's frac.
+                let (raw, canon): (i32, u32) = match id {
+                    C_TIME => (frame.time_fix, CTX_FIX_FRAC),
+                    C_DT => (frame.dt_fix, CTX_FIX_FRAC),
+                    C_FRAME => (frame.frame as i32, 0),
+                    C_LED_POS => (led.pos_fix[comp.min(2)], CTX_FIX_FRAC),
+                    C_LED_IDX => (led.idx as i32, 0),
+                    C_LED_COUNT => (frame.led_count as i32, 0),
+                    C_LED_SEG => (led.seg, 0),
+                    C_LED_S => (led.s_fix, CTX_FIX_FRAC),
+                    C_LED_BRANCH => (if led.branch { 1 } else { 0 }, 0),
+                    C_IMU_ACCEL => (frame.imu_accel_fix[comp.min(2)], CTX_FIX_FRAC),
+                    C_IMU_GYRO => (frame.imu_gyro_fix[comp.min(2)], CTX_FIX_FRAC),
+                    C_LED_DIST => (led.dist_fix, CTX_FIX_FRAC),
+                    C_LED_UV => (led.uv_fix[comp.min(1)], CTX_FIX_FRAC),
+                    _ => (0, 0),
+                };
+                let sh = frac as i32 - canon as i32;
+                let v = if sh >= 0 {
+                    raw.wrapping_shl(sh as u32)
+                } else {
+                    raw >> ((-sh) as u32)
+                };
+                pushi!(v);
+            }
         }
     }
-    ([0.0, 0.0, 0.0], outcome, Counters { instrs, stack_max: sp_max as u16 })
+    ([0.0, 0.0, 0.0], None, outcome, Counters { instrs, stack_max: sp_max as u16 })
 }
 
 // --- soft-float helpers (no libm dependency; small polynomial approximations
@@ -2304,4 +2650,208 @@ fn exp_fix(raw: i32, frac: u32) -> i32 {
     let s = 14i64 - frac as i64;
     let v = if s >= 0 { q14 >> s } else { q14 << (-s) };
     v.clamp(-2 * one, 2 * one - 1) as i32
+}
+
+// --- FUG-122: fixed/int helpers for the remaining opcodes ---------------------
+// All strictly integer arithmetic (i32/i64), no soft-float, deterministic across
+// host/wasm/device. `frac` is the Q1.frac fraction width (0 = int).
+
+/// `cos(turns)` in Q1.`frac`: sin shifted a quarter turn (matches the CosFix op).
+#[inline]
+fn cos_fix(raw: i32, frac: u32) -> i32 {
+    sin_fix(raw.wrapping_add(1 << (frac.saturating_sub(2))), frac)
+}
+
+/// Integer square root of a non-negative i64 (floor). Newton's method seeded from
+/// the bit length; converges in a few iterations, all integer.
+#[inline]
+fn isqrt_i64(v: i64) -> i64 {
+    if v <= 0 {
+        return 0;
+    }
+    let mut x = 1i64 << ((64 - v.leading_zeros() as i64 + 1) / 2); // ~2^(ceil(bits/2))
+    // A handful of Newton steps; guard the divide.
+    for _ in 0..8 {
+        let nx = (x + v / x) >> 1;
+        if nx >= x {
+            break;
+        }
+        x = nx;
+    }
+    // x is now floor(sqrt) or one above; correct down.
+    while x * x > v {
+        x -= 1;
+    }
+    x
+}
+
+/// `sqrt(x)` in Q1.`frac` for an i64 operand (used by the vector length ops,
+/// whose sum-of-squares can exceed i32). `sqrt(x)·2^frac = sqrt(raw·2^frac)`.
+fn sqrt_fix_i64(raw: i64, frac: u32) -> i64 {
+    if raw <= 0 {
+        return 0;
+    }
+    isqrt_i64(raw << frac)
+}
+
+/// `sqrt(x)` in Q1.`frac` for a scalar slot word.
+fn sqrt_fix(raw: i32, frac: u32) -> i32 {
+    sqrt_fix_i64(raw as i64, frac) as i32
+}
+
+/// `tan(turns)` in Q1.`frac` = sin/cos. Guards a near-zero cosine (returns 0).
+fn tan_fix(raw: i32, frac: u32) -> i32 {
+    let c = cos_fix(raw, frac);
+    if c == 0 {
+        return 0;
+    }
+    let s = sin_fix(raw, frac);
+    (((s as i64) << frac) / c as i64) as i32
+}
+
+/// `atan2(y, x)` as a fraction of a TURN in Q1.`frac`, range [-0.5, 0.5). Uses
+/// the same minimax atan poly as the float path, evaluated in Q30 fixed then
+/// rescaled and converted radians→turns (·1/2π) — all integer.
+fn atan2_fix(y: i32, x: i32, frac: u32) -> i32 {
+    if x == 0 && y == 0 {
+        return 0;
+    }
+    const Q: u32 = 30;
+    const ONE: i64 = 1 << Q;
+    // Coefficients baked at COMPILE time (const eval — no runtime float).
+    const C1: i64 = -((0.0464964749f64 * ONE as f64) as i64);
+    const C2: i64 = (0.15931422f64 * ONE as f64) as i64;
+    const C3: i64 = -((0.327622764f64 * ONE as f64) as i64);
+    const HALF_PI: i64 = (core::f64::consts::FRAC_PI_2 * ONE as f64) as i64;
+    const PI_Q: i64 = (core::f64::consts::PI * ONE as f64) as i64;
+    const INV_TAU: i64 = (ONE as f64 / core::f64::consts::TAU) as i64;
+    let ax = (x as i64).unsigned_abs() as i64;
+    let ay = (y as i64).unsigned_abs() as i64;
+    let (num, den) = if ax >= ay { (ay, ax) } else { (ax, ay) };
+    let a = if den == 0 { 0 } else { (num << Q) / den }; // ratio in [0,1] Q30
+    let s = (a * a) >> Q;
+    let mut r = ((C1 * s) >> Q) + C2;
+    r = ((r * s) >> Q) + C3;
+    r = (r * s) >> Q;
+    r = ((r * a) >> Q) + a; // atan(ratio) in radians, Q30, range [0, π/4]
+    if ay > ax {
+        r = HALF_PI - r;
+    }
+    if x < 0 {
+        r = PI_Q - r;
+    }
+    if y < 0 {
+        r = -r;
+    }
+    let turns_q30 = (r * INV_TAU) >> Q; // radians → turns
+    let sh = Q as i32 - frac as i32;
+    (if sh >= 0 { turns_q30 >> sh } else { turns_q30 << (-sh) }) as i32
+}
+
+/// `ln(x)` in Q1.`frac` for `x = raw/2^frac > 0`. Decomposes x = m·2^e with the
+/// mantissa m ∈ [1,2), so ln(x) = e·ln2 + ln(m); ln(m) via a short minimax poly.
+/// All integer (Q30 intermediate). Returns 0 for x ≤ 0.
+fn log_fix(raw: i32, frac: u32) -> i32 {
+    if raw <= 0 {
+        return 0;
+    }
+    const Q: u32 = 30;
+    const ONE: i64 = 1 << Q;
+    // x = raw / 2^frac. Find e so that m = x / 2^e ∈ [1,2). The MSB index of raw
+    // relative to the frac point gives e directly.
+    let msb = 31 - (raw as u32).leading_zeros() as i32; // index of top set bit
+    let e = msb - frac as i32; // exponent of x
+    // mantissa m in Q30: shift raw so the top bit lands at bit Q.
+    let shift = Q as i32 - msb;
+    let m = if shift >= 0 {
+        (raw as i64) << shift
+    } else {
+        (raw as i64) >> (-shift)
+    }; // m ∈ [2^Q, 2^(Q+1)) → represents [1,2) in Q30
+    let mf = m - ONE; // (m-1) ∈ [0,1) Q30
+    // ln(1+f) ≈ f - f^2/2 + f^3/3 - f^4/4  (f ∈ [0,1))
+    let f = mf;
+    let f2 = (f * f) >> Q;
+    let f3 = (f2 * f) >> Q;
+    let f4 = (f3 * f) >> Q;
+    let ln_m = f - f2 / 2 + f3 / 3 - f4 / 4; // Q30
+    const LN2: i64 = (core::f64::consts::LN_2 * ONE as f64) as i64;
+    let r = (e as i64) * LN2 + ln_m; // ln(x) in Q30
+    let sh = Q as i32 - frac as i32;
+    (if sh >= 0 { r >> sh } else { r << (-sh) }) as i32
+}
+
+/// `a^b` in Q1.`frac` via `exp(b·ln a)`, both LUT/poly-based (integer). Uses the
+/// bounded [-2,2) `exp_fix`, so large results saturate — adequate for effect
+/// shaping curves. `a ≤ 0` returns 0.
+fn pow_fix(a: i32, b: i32, frac: u32) -> i32 {
+    if a <= 0 {
+        return 0;
+    }
+    let la = log_fix(a, frac) as i64; // Q1.frac
+    let prod = ((b as i64) * la) >> frac; // b·ln a, Q1.frac
+    exp_fix(prod.clamp(i32::MIN as i64, i32::MAX as i64) as i32, frac)
+}
+
+/// Deterministic `hash -> [0,1)` in Q1.`frac` from a raw 32-bit slot word (the
+/// int/fixed bits). Reuses the integer avalanche mixer — no soft-float, unlike
+/// the f32 `hash1`. The top `frac` bits of the mixed value form the fraction.
+fn hash_fix(bits: u32, frac: u32) -> i32 {
+    let h = mix32(bits ^ 0x9e37_79b9);
+    (h >> (32 - frac)) as i32
+}
+
+/// 3-input fixed hash -> [0,1) in Q1.`frac` (folds three slot words).
+fn hash3_fix(x: u32, y: u32, z: u32, frac: u32) -> i32 {
+    let mut h = mix32(x ^ 0x9e37_79b9);
+    h = mix32(h ^ y.wrapping_add(0x85eb_ca6b));
+    h = mix32(h ^ z.wrapping_add(0xc2b2_ae35));
+    (h >> (32 - frac)) as i32
+}
+
+/// `hsv2rgb` entirely in Q1.`frac`. `h` is in TURNS (wrapped), `s`,`v` in [0,1];
+/// returns `(r,g,b)` each Q1.frac in [0,1]. Mirrors the float `hsv2rgb` using
+/// only integer arithmetic (the ±chroma ramp is a fixed abs/sub).
+fn hsv2rgb_fix(h: i32, s: i32, v: i32, frac: u32) -> (i32, i32, i32) {
+    let one = 1i64 << frac;
+    let mulf = |a: i64, b: i64| (a * b) >> frac;
+    // hue sextant: h6 = frac_of(h) * 6
+    let hfrac = (h as i64) & (one - 1); // [0,1) turn
+    let h6 = hfrac * 6; // Q1.frac scaled by 6 → range [0,6) in Q1.frac units
+    let sextant = (h6 >> frac) as i32; // 0..5
+    let c = mulf(v as i64, s as i64); // chroma
+    // x = c * (1 - |(_h6 mod 2) - 1|), where _h6 in [0,6)
+    let h6mod2 = h6 % (2 * one);
+    let ramp = (h6mod2 - one).abs(); // |frac(h6/2)*2 - 1| scaled: in [0,1]
+    let xx = mulf(c, one - ramp);
+    let m = v as i64 - c;
+    let (r, g, b) = match sextant {
+        0 => (c, xx, 0),
+        1 => (xx, c, 0),
+        2 => (0, c, xx),
+        3 => (0, xx, c),
+        4 => (xx, 0, c),
+        _ => (c, 0, xx),
+    };
+    ((r + m) as i32, (g + m) as i32, (b + m) as i32)
+}
+
+/// Fixed-point palette lookup (mirrors the float `palette`), Q1.`frac` in/out.
+fn palette_fix(id: u8, t: i32, frac: u32) -> (i32, i32, i32) {
+    let one = 1i64 << frac;
+    let clamp01f = |x: i64| x.clamp(0, one);
+    let t = clamp01f(t as i64);
+    let mul = |a: i64, k: i64| clamp01f(a * k >> frac); // a·k with clamp
+    let msub = |a: i64, k: i64, sub: i64| clamp01f((a * k >> frac) - sub);
+    match id {
+        // fire: black -> red -> orange -> yellow -> white
+        0 => (mul(t, 3 * one) as i32, msub(t, 3 * one, one) as i32, msub(t, 3 * one, 2 * one) as i32),
+        // ice: black -> blue -> cyan -> white
+        1 => (msub(t, 3 * one, 2 * one) as i32, msub(t, 3 * one, one) as i32, mul(t, 2 * one) as i32),
+        // rainbow
+        _ => {
+            let one_i = (1i64 << frac) as i32;
+            hsv2rgb_fix(t as i32, one_i, one_i, frac)
+        }
+    }
 }
