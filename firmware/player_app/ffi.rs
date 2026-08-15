@@ -127,6 +127,10 @@ static mut FX_F_TIME: f32 = 0.0;
 static mut FX_F_DT: f32 = 0.0;
 static mut FX_F_FRAME: u32 = 0;
 static mut FX_F_LEDS: u32 = 0;
+// Q16.16 mirrors of time/dt, converted ONCE per frame in lm_fx_update so the
+// per-LED shade sweep copies them (no soft-float per LED) — FUG-122.
+static mut FX_F_TIME_FIX: i32 = 0;
+static mut FX_F_DT_FIX: i32 = 0;
 /// Last update() bounded-exec outcome (0=Ok, 1=Budget, 2=Timeout) — surfaced to
 /// C++ for the rate-limited `[fx]` diagnostic log.
 static mut FX_LAST_UPDATE_OUTCOME: u32 = 0;
@@ -2218,6 +2222,11 @@ pub unsafe extern "C" fn lm_fx_update(time_s: f32, dt_s: f32, frame: u32, led_co
     FX_F_DT = dt_s;
     FX_F_FRAME = frame;
     FX_F_LEDS = led_count;
+    // Convert the frame's fixed mirrors ONCE here (not per LED) so lm_fx_shade
+    // just copies the ints — a fixed-only shader pays no per-LED soft-float, and
+    // an all-float shader pays nothing at all (FUG-122).
+    FX_F_TIME_FIX = q16_16(time_s);
+    FX_F_DT_FIX = q16_16(dt_s);
     // Refresh the per-LED topology cache if a map/topology upload invalidated it,
     // so the coming shade() sweep sees current led.seg / led.s / led.branch.
     if !FX_TOPO_READY {
@@ -2272,8 +2281,10 @@ pub unsafe extern "C" fn lm_fx_shade(
         dt: FX_F_DT,
         frame: FX_F_FRAME,
         led_count: FX_F_LEDS,
-        time_fix: q16_16(FX_F_TIME),
-        dt_fix: q16_16(FX_F_DT),
+        // Cheap int copies of the once-per-frame conversions — NO per-LED
+        // soft-float (FUG-122; this was the fx_bench overhead regression).
+        time_fix: FX_F_TIME_FIX,
+        dt_fix: FX_F_DT_FIX,
         ..Default::default()
     };
     // Per-LED topology (led.seg / led.s / led.branch) from the cache the last
