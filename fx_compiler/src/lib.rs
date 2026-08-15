@@ -583,6 +583,17 @@ impl Compiler {
         Ok(slot)
     }
 
+    /// Emit a `FillLocal` to zero-initialize `w` local slots at `slot` (array /
+    /// struct locals; the VM no longer blanket-clears the scratch). `w ≤
+    /// MAX_LOCALS ≤ 255`, so one op always suffices.
+    fn fill_local(&mut self, slot: u8, w: u8) {
+        if w > 0 {
+            self.emit(fx_vm_op::FILL_LOCAL);
+            self.emit(slot);
+            self.emit(w);
+        }
+    }
+
     fn program(&mut self) -> Result<(), Diagnostic> {
         loop {
             match self.cur().clone() {
@@ -1088,8 +1099,9 @@ impl Compiler {
 
     /// A local variable declaration, `base_ty` + `name` already consumed. Handles
     /// scalar/vec `= expr` initializers, zero-initialized `struct`/array locals,
-    /// and array suffixes. Locals start zeroed (the VM clears them at entry), so
-    /// composite decls emit no init code.
+    /// and array suffixes. The VM no longer blanket-clears the locals scratch
+    /// (FUG-122 framing hill-climb), so composite decls emit an explicit
+    /// `FillLocal` to zero their slots; scalar/vec decls are initialized by `=`.
     fn local_decl(&mut self, base_ty: Ty, name: String) -> Result<(), Diagnostic> {
         // Array: `T name[N];`
         if *self.cur() == Tok::Sym('[') {
@@ -1097,6 +1109,7 @@ impl Compiler {
             self.expect_sym(';')?;
             let w = self.ty_width(ty);
             let slot = self.alloc_local(w)?;
+            self.fill_local(slot, w);
             self.syms.insert(name, Sym { kind: SymKind::Local, slot, ty });
             return Ok(());
         }
@@ -1105,6 +1118,7 @@ impl Compiler {
             self.advance();
             let w = self.ty_width(base_ty);
             let slot = self.alloc_local(w)?;
+            self.fill_local(slot, w);
             self.syms.insert(name, Sym { kind: SymKind::Local, slot, ty: base_ty });
             return Ok(());
         }
@@ -2837,6 +2851,7 @@ fn decode_op(code: &[u8], pc: usize) -> (String, usize) {
         RET_RGB8 => ("RET_RGB8".into(), 1),
         RET_RGB_FIX => (format!("RET_RGB_FIX frac={}", b(0)), 2),
         LOAD_CTX_FIX => (format!("LOAD_CTX_FIX {} comp={} frac={}", ctx_name(b(0)), b(1), b(2)), 4),
+        FILL_LOCAL => (format!("FILL_LOCAL slot={} n={}", b(0), b(1)), 3),
         other => (format!("?? 0x{other:02x}"), 0),
     }
 }
@@ -2994,6 +3009,7 @@ mod fx_vm_op {
     pub const RET_RGB8: u8 = 98;
     pub const RET_RGB_FIX: u8 = 99;
     pub const LOAD_CTX_FIX: u8 = 100;
+    pub const FILL_LOCAL: u8 = 101;
 }
 
 /// `.fxb` flags bit: a buffer descriptor table follows `code` (mirrors

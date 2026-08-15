@@ -254,6 +254,12 @@ pub enum Op {
     // Q1.frac fixed (or int, frac 0), read from the host-provided per-LED fixed
     // cache (positions/uv/s/dist converted once at map-load, not per frame).
     LoadCtxFix,   // u8 id, u8 comp, u8 frac
+    // Zero `n` local slots at `slot`. The VM no longer blanket-clears the locals
+    // scratch every invocation (it's resident and reused); scalar locals are
+    // always initialized by their declaration, so only array/struct locals — the
+    // ones the compiler used to lean on the blanket zeroing for — emit this. A
+    // big slice of the per-LED framing cost for the common effect that has none.
+    FillLocal,    // u8 slot, u8 n
 }
 
 /// Graph-query kinds (the `GraphQuery` opcode operand).
@@ -352,7 +358,7 @@ impl Op {
     #[inline]
     pub fn from_u8(b: u8) -> Option<Op> {
         // Op is a contiguous enum 0..=LoadCtxFix; guard the range then transmute.
-        if b <= Op::LoadCtxFix as u8 {
+        if b <= Op::FillLocal as u8 {
             Some(unsafe { core::mem::transmute::<u8, Op>(b) })
         } else {
             None
@@ -1148,15 +1154,12 @@ fn run(
 ) -> ([f32; 3], Option<Rgb>, Outcome, Counters) {
     use core::sync::atomic::Ordering;
     let code = prog.code;
-    // `stack` and `call_stack` need NO clearing — the VM only reads a slot it
-    // wrote earlier in THIS invocation (push-before-pop; Call-before-RetFn), so
-    // stale contents are never observed. `locals` MUST be zeroed, though: array/
-    // struct locals carry no init code and rely on it (see fx_compiler
-    // local_decl). That leaves just this one clear on the hot path; the per-LED
-    // state/uniform/dist copies are gone entirely (FUG-122 framing hill-climb).
-    for l in locals.iter_mut() {
-        *l = 0.0;
-    }
+    // NONE of the scratch is cleared per invocation: the VM only reads a slot it
+    // wrote earlier in THIS invocation. Stack/call-stack are push-before-pop;
+    // scalar locals are initialized by their declaration; array/struct locals are
+    // explicitly zeroed by a `FillLocal` the compiler emits at their declaration.
+    // So the whole per-LED clear is gone (FUG-122 framing hill-climb).
+    let _ = &locals; // (written via StoreLocal / FillLocal; never blanket-cleared)
     let mut sp: usize = 0;
     let mut pc: usize = entry;
     let mut budget: u32 = guard.instructions; // instructions per invocation
@@ -2359,6 +2362,16 @@ fn run(
                     raw >> ((-sh) as u32)
                 };
                 pushi!(v);
+            }
+            Op::FillLocal => {
+                let slot = code[pc] as usize;
+                let n = code[pc + 1] as usize;
+                pc += 2;
+                for i in 0..n {
+                    if slot + i < MAX_LOCALS {
+                        locals[slot + i] = 0.0;
+                    }
+                }
             }
         }
     }

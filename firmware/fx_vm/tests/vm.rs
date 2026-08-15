@@ -858,7 +858,8 @@ fn classify(op: Op) -> Cov {
         // stack / control / typed-storage — operate on raw slots, any type.
         PushConst | LoadUniform | LoadState | StoreState | LoadLocal | StoreLocal | Swizzle
         | Swap | Pop | BrFalse | Jmp | Logic | Call | RetFn | LoadStateIdx | StoreStateIdx
-        | LoadLocalIdx | StoreLocalIdx | GraphQuery | LoadBuf | StoreBuf | FloodFrom => TypeAgnostic,
+        | LoadLocalIdx | StoreLocalIdx | GraphQuery | LoadBuf | StoreBuf | FloodFrom
+        | FillLocal => TypeAgnostic,
         // sampling always yields a float colour by design (packed storage detail).
         SampleTex | PaintTex => TypeAgnostic,
 
@@ -909,7 +910,7 @@ fn every_opcode_has_a_fixed_or_integer_path() {
     // Walk the whole contiguous opcode space; classify() is exhaustive so this
     // also proves no Op is unaccounted for.
     let mut float_with_twin = 0;
-    for b in 0..=(Op::LoadCtxFix as u8) {
+    for b in 0..=(Op::FillLocal as u8) {
         let op = Op::from_u8(b).unwrap_or_else(|| panic!("opcode {b} missing from Op"));
         match classify(op) {
             // The completeness guarantee: the twin is itself a fixed/int-native op.
@@ -931,17 +932,18 @@ fn every_opcode_has_a_fixed_or_integer_path() {
 }
 
 #[test]
-fn resident_scratch_zeros_locals_each_invocation() {
+fn fill_local_zeros_locals_each_invocation() {
     // FUG-122 framing hill-climb reuses the Vm's stack/locals scratch across
-    // shade() calls instead of re-allocating. `locals` must still read as ZERO at
-    // the start of every invocation (array/struct locals rely on it), even after a
-    // prior invocation wrote them. shade: r = local[0] (uninit); then local[0]=1.0.
-    // A second call on the SAME Vm must still see local[0]==0.
+    // shade() calls WITHOUT the old per-invocation blanket clear. Array/struct
+    // locals (which used to rely on that clear) are now zeroed by an explicit
+    // FillLocal the compiler emits at their declaration. Verify FillLocal reads
+    // back as 0 even after a prior invocation wrote the slot to 1.0.
     #[rustfmt::skip]
     let code = [
-        Op::LoadLocal as u8, 0, 1,   // push local[0] (must be 0 at entry)
+        Op::FillLocal as u8, 0, 1,   // local[0] = 0 (the compiler's array/struct init)
+        Op::LoadLocal as u8, 0, 1,   // push local[0] (must be 0)
         Op::PushConst as u8, 1, 0,   // 1.0
-        Op::StoreLocal as u8, 0, 1,  // local[0] = 1.0 (persists in the scratch)
+        Op::StoreLocal as u8, 0, 1,  // local[0] = 1.0 (persists in the resident scratch)
         Op::PushConst as u8, 0, 0,   // 0.0
         Op::PushConst as u8, 0, 0,   // 0.0
         Op::Ret as u8, 3,            // vec3(loaded, 0, 0)
@@ -951,7 +953,7 @@ fn resident_scratch_zeros_locals_each_invocation() {
     let mut vm = Vm::new();
     let frame = Frame::default();
     let led = Led::default();
-    assert_eq!(vm.run_shade(&prog, &frame, &led), (0, 0, 0), "1st: local[0] zeroed");
-    // If the scratch weren't re-zeroed, this would read the stale 1.0 -> (255,0,0).
-    assert_eq!(vm.run_shade(&prog, &frame, &led), (0, 0, 0), "2nd: local[0] re-zeroed");
+    assert_eq!(vm.run_shade(&prog, &frame, &led), (0, 0, 0), "1st: FillLocal zeroed");
+    // Without FillLocal re-zeroing, this would read the stale 1.0 -> (255,0,0).
+    assert_eq!(vm.run_shade(&prog, &frame, &led), (0, 0, 0), "2nd: FillLocal re-zeroed");
 }
