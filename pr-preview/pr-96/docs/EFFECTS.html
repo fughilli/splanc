@@ -1,0 +1,1148 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="./">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="Index" href="genindex.html"><link rel="search" title="Search" href="search.html"><link rel="next" title="FX-VM performance" href="docs/fx-vm-performance.html"><link rel="prev" title="APP" href="next_steps.html">
+        <link rel="prefetch" href="static/splanc-icon.svg" as="image">
+
+    <link rel="shortcut icon" href="static/splanc-icon.svg"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
+        <title>The splanc effects engine - splanc developer docs</title>
+      <link rel="stylesheet" type="text/css" href="static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="static/styles/furo.css?v=7bdb33bb" />
+    <link rel="stylesheet" type="text/css" href="static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="static/custom.css?v=36188834" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  --color-brand-primary: #084de7;
+  --color-brand-content: #084de7;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation" aria-label="Toggle site navigation sidebar">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc" aria-label="Toggle table of contents sidebar">
+<label class="overlay sidebar-overlay" for="__navigation"></label>
+<label class="overlay toc-overlay" for="__toc"></label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <span class="icon"><svg><use href="#svg-menu"></use></svg></span>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="index.html"><div class="brand">splanc developer docs</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="index.html">
+  <div class="sidebar-logo-container">
+    <img class="sidebar-logo" src="static/splanc-icon.svg" alt="Logo"/>
+  </div>
+  
+  <span class="sidebar-brand-text">splanc developer docs</span>
+  
+</a><form class="sidebar-search-container" method="get" action="search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="architecture.html">Architecture</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="subsystems/index.html">Subsystems</a><input aria-label="Toggle navigation of Subsystems" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="subsystems/web.html">The PWA (<code class="docutils literal notranslate"><span class="pre">web/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="subsystems/firmware.html">The firmware (<code class="docutils literal notranslate"><span class="pre">firmware/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="subsystems/fx-compiler.html">The effects compiler (<code class="docutils literal notranslate"><span class="pre">fx_compiler/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="subsystems/solver.html">The solver (<code class="docutils literal notranslate"><span class="pre">solver/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="subsystems/reconstruction.html">Reconstruction (<code class="docutils literal notranslate"><span class="pre">pi/reconstruction/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="subsystems/protocol.html">The wire protocol (<code class="docutils literal notranslate"><span class="pre">shared/protocol/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="subsystems/simulator.html">The simulator (<code class="docutils literal notranslate"><span class="pre">shared/simulator/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="subsystems/hitl.html">HITL &amp; tooling (<code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code>, <code class="docutils literal notranslate"><span class="pre">tools/</span></code>)</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Guides</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="DEVELOPERS.html">Developing splanc</a></li>
+<li class="toctree-l1"><a class="reference internal" href="README.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="README.html#hardware">Hardware</a></li>
+<li class="toctree-l1"><a class="reference internal" href="README.html#how-it-works">How it works</a></li>
+<li class="toctree-l1"><a class="reference internal" href="README.html#learn-more">Learn more</a></li>
+<li class="toctree-l1"><a class="reference internal" href="docs/runbook.html">Runbook</a></li>
+<li class="toctree-l1"><a class="reference internal" href="next_steps.html">APP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="next_steps.html#firmware">FIRMWARE</a></li>
+<li class="toctree-l1"><a class="reference internal" href="next_steps.html#effects-compiler">EFFECTS COMPILER</a></li>
+<li class="toctree-l1"><a class="reference internal" href="next_steps.html#performance-monitoring">PERFORMANCE MONITORING</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Effects</span></p>
+<ul class="current">
+<li class="toctree-l1 current current-page"><a class="current reference internal" href="#">The splanc effects engine</a></li>
+<li class="toctree-l1"><a class="reference internal" href="docs/fx-vm-performance.html">FX-VM performance</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="led-mapper-design.html">LED Mapper — Design Doc (Android-first)</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="design/index.html">Design notes</a><input aria-label="Toggle navigation of Design notes" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/effects-runtime.html">The effects runtime</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/effects-compiler.html">The effects compiler</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/perf-monitoring.html">Performance monitoring</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/vio-exploration.html">VIO solver exploration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/blob-detection-playbook.html">Blob-detection playbook</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="docs/design/app-ux-overhaul.html">App UX overhaul</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="docs/decisions.html">Decision log</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Meta</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="about-these-docs.html">How these docs are built</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="view-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/blob/main/docs/_sphinx/EFFECTS.md?plain=true" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div><div class="edit-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/edit/main/docs/_sphinx/EFFECTS.md" rel="edit" title="Edit this page">
+    <svg><use href="#svg-pencil"></use></svg>
+    <span class="visually-hidden">Edit this page</span>
+  </a>
+</div><div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <section id="the-splanc-effects-engine">
+<h1>The splanc effects engine<a class="headerlink" href="#the-splanc-effects-engine" title="Link to this heading">¶</a></h1>
+<p>Effects are small GLSL-ish shader programs that run <strong>per-LED</strong> across a fixture’s
+real 3D geometry. This document is the reference for the whole effects stack: the
+language, the bytecode VM, the <code class="docutils literal notranslate"><span class="pre">.fxb</span></code> container, uniform/texture/MIDI plumbing,
+measured performance on the ESP32-C6, and how the built-in AI writes effects.</p>
+<p>For narrative design rationale see <a class="reference internal" href="docs/design/effects-runtime.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">docs/design/effects-runtime.md</span></code></span></a>
+and <a class="reference internal" href="docs/design/effects-compiler.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">docs/design/effects-compiler.md</span></code></span></a>; for the
+perf model see <a class="reference internal" href="docs/design/perf-monitoring.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">docs/design/perf-monitoring.md</span></code></span></a>.</p>
+<section id="overview">
+<h2>Overview<a class="headerlink" href="#overview" title="Link to this heading">¶</a></h2>
+<p>Two Rust crates make up the engine:</p>
+<ul class="simple">
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">fx_compiler/</span></code></strong> (<code class="docutils literal notranslate"><span class="pre">ledmapper_fx_compiler</span></code>) — a single-pass, type-checking
+compiler from the source language to <code class="docutils literal notranslate"><span class="pre">.fxb</span></code> bytecode. Recursive-descent parse →
+precedence-climbing expression codegen, emitting bytecode directly with no AST.</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">firmware/fx_vm/</span></code></strong> (<code class="docutils literal notranslate"><span class="pre">ledmapper_fx_vm</span></code>) — a <code class="docutils literal notranslate"><span class="pre">no_std</span></code>, no-alloc stack machine
+that executes <code class="docutils literal notranslate"><span class="pre">.fxb</span></code>. <strong>The same crate is what runs on the ESP32-C6 and what
+compiles to wasm for the browser preview</strong>, so the editor preview and the
+device render bit-for-bit identically.</p></li>
+</ul>
+<p>Both compile to wasm (<code class="docutils literal notranslate"><span class="pre">fx_compile(src)</span></code> and the <code class="docutils literal notranslate"><span class="pre">FxPreview</span></code> class) and are loaded
+by the web app at runtime. The authoring/preview/upload flow:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>source ──fx_compiler(wasm)──▶ .fxb ──┬─▶ FxPreview (fx_vm wasm)  → live preview in the editor
+                                      └─▶ submit_effect over wss  → fx_vm on the ESP32-C6
+</pre></div>
+</div>
+</section>
+<section id="the-language">
+<h2>The language<a class="headerlink" href="#the-language" title="Link to this heading">¶</a></h2>
+<p>A program is plain text with two entry points:</p>
+<div class="highlight-glsl notranslate"><div class="highlight"><pre><span></span><span class="kt">void</span><span class="w"> </span><span class="n">update</span><span class="p">();</span><span class="w">            </span><span class="c1">// runs once per frame; may write `state`</span>
+<span class="kt">vec3</span><span class="w"> </span><span class="n">shade</span><span class="p">(</span><span class="n">Led</span><span class="w"> </span><span class="n">led</span><span class="p">);</span><span class="w">      </span><span class="c1">// runs once per LED; returns linear RGB in 0..1</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">shade</span></code> is required; <code class="docutils literal notranslate"><span class="pre">update</span></code> is optional. There is no recursion, and every <code class="docutils literal notranslate"><span class="pre">for</span></code>
+loop must have a compile-time-bounded trip count (the VM enforces a per-frame
+instruction budget — see <a class="reference internal" href="#execution-model">Execution model</a>).</p>
+<section id="types">
+<h3>Types<a class="headerlink" href="#types" title="Link to this heading">¶</a></h3>
+<p><code class="docutils literal notranslate"><span class="pre">float</span></code>, <code class="docutils literal notranslate"><span class="pre">vec2</span></code>, <code class="docutils literal notranslate"><span class="pre">vec3</span></code>, <code class="docutils literal notranslate"><span class="pre">vec4</span></code>, <code class="docutils literal notranslate"><span class="pre">int</span></code>, <code class="docutils literal notranslate"><span class="pre">bool</span></code>, plus fixed-point <code class="docutils literal notranslate"><span class="pre">fixed</span></code> (Q16.16),
+<code class="docutils literal notranslate"><span class="pre">fixed16</span></code> (Q1.14) and <code class="docutils literal notranslate"><span class="pre">fixed8</span></code> (Q1.6), and user <code class="docutils literal notranslate"><span class="pre">struct</span></code>s and fixed-size arrays
+(<code class="docutils literal notranslate"><span class="pre">Type</span> <span class="pre">name[N]</span></code>). At runtime everything is an <code class="docutils literal notranslate"><span class="pre">f32</span></code> slot; the compiler types every
+operation so the VM stays untyped (integers and fixed-point values ride in the f32
+slot bit-for-bit).</p>
+</section>
+<section id="read-only-contexts">
+<h3>Read-only contexts<a class="headerlink" href="#read-only-contexts" title="Link to this heading">¶</a></h3>
+<p>Per-frame and per-LED inputs are exposed as globals (each compiles to a <code class="docutils literal notranslate"><span class="pre">LoadCtx</span></code>
+opcode):</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Identifier</p></th>
+<th class="head"><p>Type</p></th>
+<th class="head"><p>Meaning</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">time</span></code>, <code class="docutils literal notranslate"><span class="pre">dt</span></code>, <code class="docutils literal notranslate"><span class="pre">frame</span></code></p></td>
+<td><p>float</p></td>
+<td><p>seconds, delta seconds, frame counter</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">led.pos</span></code></p></td>
+<td><p>vec3</p></td>
+<td><p>LED position (x, y, z)</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">led.idx</span></code>, <code class="docutils literal notranslate"><span class="pre">led.count</span></code></p></td>
+<td><p>int/float</p></td>
+<td><p>LED index, total live LED count</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">led.seg</span></code>, <code class="docutils literal notranslate"><span class="pre">led.s</span></code>, <code class="docutils literal notranslate"><span class="pre">led.branch</span></code></p></td>
+<td><p>int/float</p></td>
+<td><p>segment id, position along segment, branch id</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">led.dist</span></code></p></td>
+<td><p>float</p></td>
+<td><p>geodesic distance 0..1 from the topology root (or a <code class="docutils literal notranslate"><span class="pre">flood_from</span></code> source)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">led.uv</span></code></p></td>
+<td><p>vec2</p></td>
+<td><p>per-LED texture coordinate (top-down projection to 0..1)</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">imu.accel</span></code>, <code class="docutils literal notranslate"><span class="pre">imu.gyro</span></code></p></td>
+<td><p>vec3</p></td>
+<td><p>device IMU (when driven)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="declarations">
+<h3>Declarations<a class="headerlink" href="#declarations" title="Link to this heading">¶</a></h3>
+<ul>
+<li><p><strong>Uniforms</strong> — live-tunable parameters with UI hints:</p>
+<div class="highlight-glsl notranslate"><div class="highlight"><pre><span></span><span class="k">uniform</span><span class="w"> </span><span class="kt">float</span><span class="w"> </span><span class="n">speed</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mf">0.0</span><span class="w"> </span><span class="p">..</span><span class="w"> </span><span class="mf">5.0</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">1.0</span><span class="p">;</span><span class="w">      </span><span class="c1">// slider</span>
+<span class="k">uniform</span><span class="w"> </span><span class="kt">vec3</span><span class="w">  </span><span class="n">tint</span><span class="w">  </span><span class="o">:</span><span class="w"> </span><span class="n">color</span><span class="w">      </span><span class="o">=</span><span class="w"> </span><span class="mf">0.2</span><span class="p">,</span><span class="w"> </span><span class="mf">0.6</span><span class="p">,</span><span class="w"> </span><span class="mf">1.0</span><span class="p">;</span><span class="w">   </span><span class="c1">// color picker</span>
+<span class="k">uniform</span><span class="w"> </span><span class="kt">int</span><span class="w">   </span><span class="n">mode</span><span class="w">  </span><span class="o">:</span><span class="w"> </span><span class="p">{</span><span class="err">&quot;</span><span class="n">fire</span><span class="err">&quot;</span><span class="p">,</span><span class="err">&quot;</span><span class="n">ice</span><span class="err">&quot;</span><span class="p">}</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mo">0</span><span class="p">;</span><span class="w">    </span><span class="c1">// dropdown</span>
+<span class="k">uniform</span><span class="w"> </span><span class="kt">bool</span><span class="w">  </span><span class="n">invert</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">false</span><span class="p">;</span><span class="w">                </span><span class="c1">// toggle</span>
+</pre></div>
+</div>
+</li>
+<li><p><strong>State</strong> — <code class="docutils literal notranslate"><span class="pre">state</span></code> variables persist across frames; written by <code class="docutils literal notranslate"><span class="pre">update()</span></code>,
+read-only in <code class="docutils literal notranslate"><span class="pre">shade()</span></code>. Good for phases/integrators.</p></li>
+<li><p><strong>Buffers</strong> — <code class="docutils literal notranslate"><span class="pre">buffer</span> <span class="pre">vec3</span> <span class="pre">trail;</span></code> is a hidden per-LED buffer (one element per
+LED) that persists across frames. Indexed <code class="docutils literal notranslate"><span class="pre">trail[led.idx]</span></code>; unlike <code class="docutils literal notranslate"><span class="pre">state</span></code> it
+<em>may</em> be written from <code class="docutils literal notranslate"><span class="pre">shade()</span></code> (each LED owns its slot). Ideal for
+trails/persistence-of-vision feedback.</p></li>
+<li><p><strong>Textures</strong> — <code class="docutils literal notranslate"><span class="pre">texture</span> <span class="pre">vec3</span> <span class="pre">img(64,</span> <span class="pre">64);</span></code> is a hidden W×H 2D texture. Sample
+with <code class="docutils literal notranslate"><span class="pre">sample(img,</span> <span class="pre">uv)</span></code> (bilinear, edge-clamped) and write with
+<code class="docutils literal notranslate"><span class="pre">paint(img,</span> <span class="pre">uv,</span> <span class="pre">color)</span></code> (nearest texel). This is the target for
+<a class="reference internal" href="#textures-and-video-texture-streaming">video-texture streaming</a>.</p></li>
+</ul>
+<p>A <code class="docutils literal notranslate"><span class="pre">:</span> <span class="pre">fixed8</span></code> / <code class="docutils literal notranslate"><span class="pre">:</span> <span class="pre">fixed16</span></code> annotation on a buffer/texture element compresses its
+storage (dequantized to float on access) to save arena bytes on-device.</p>
+</section>
+<section id="built-in-functions">
+<h3>Built-in functions<a class="headerlink" href="#built-in-functions" title="Link to this heading">¶</a></h3>
+<p>Math (<code class="docutils literal notranslate"><span class="pre">sin</span> <span class="pre">cos</span> <span class="pre">abs</span> <span class="pre">floor</span> <span class="pre">ceil</span> <span class="pre">fract</span> <span class="pre">sqrt</span> <span class="pre">exp</span> <span class="pre">log</span> <span class="pre">sign</span> <span class="pre">tan</span></code>, <code class="docutils literal notranslate"><span class="pre">min</span> <span class="pre">max</span> <span class="pre">pow</span> <span class="pre">mod</span> <span class="pre">step</span> <span class="pre">atan2</span></code>), vector ops (<code class="docutils literal notranslate"><span class="pre">clamp</span> <span class="pre">mix</span> <span class="pre">smoothstep</span> <span class="pre">dot</span> <span class="pre">cross</span> <span class="pre">length</span> <span class="pre">normalize</span> <span class="pre">distance</span></code>),
+color (<code class="docutils literal notranslate"><span class="pre">hsv2rgb</span></code>, <code class="docutils literal notranslate"><span class="pre">palette0/1/2</span></code>), noise (<code class="docutils literal notranslate"><span class="pre">hash</span></code>), texture (<code class="docutils literal notranslate"><span class="pre">sample</span></code>, <code class="docutils literal notranslate"><span class="pre">paint</span></code>),
+and topology graph queries (<code class="docutils literal notranslate"><span class="pre">seg_count</span> <span class="pre">seg_len</span> <span class="pre">seg_node</span> <span class="pre">node_deg</span> <span class="pre">node_seg</span> <span class="pre">node_side</span> <span class="pre">term_count</span> <span class="pre">term</span></code>, plus <code class="docutils literal notranslate"><span class="pre">flood_from(node)</span></code> to re-root <code class="docutils literal notranslate"><span class="pre">led.dist</span></code>).</p>
+<p>On <code class="docutils literal notranslate"><span class="pre">int</span></code> and fixed-point (<code class="docutils literal notranslate"><span class="pre">fixed</span></code>/<code class="docutils literal notranslate"><span class="pre">fixed16</span></code>/<code class="docutils literal notranslate"><span class="pre">fixed8</span></code>) arguments, the arithmetic
+builtins run <strong>natively</strong> — <code class="docutils literal notranslate"><span class="pre">min</span> <span class="pre">max</span> <span class="pre">abs</span> <span class="pre">clamp</span> <span class="pre">mod</span> <span class="pre">sign</span> <span class="pre">step</span> <span class="pre">floor</span> <span class="pre">ceil</span> <span class="pre">fract</span> <span class="pre">mix</span></code>
+each have integer/fixed opcodes, and <code class="docutils literal notranslate"><span class="pre">sin</span></code>/<code class="docutils literal notranslate"><span class="pre">cos</span></code>/<code class="docutils literal notranslate"><span class="pre">exp</span></code> use a compile-time LUT
+(angle in <strong>turns</strong>) — instead of coercing to soft-float. Everything that stays
+float-valued converts its int/fixed args (never reinterpreting the bits). This is
+the main lever for keeping hot paths off the FPU-less C6’s soft-float.</p>
+</section>
+<section id="example">
+<h3>Example<a class="headerlink" href="#example" title="Link to this heading">¶</a></h3>
+<p>A decaying comet chasing the geodesic distance field, with live controls:</p>
+<div class="highlight-glsl notranslate"><div class="highlight"><pre><span></span><span class="k">uniform</span><span class="w"> </span><span class="kt">float</span><span class="w"> </span><span class="n">decay</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mf">0.5</span><span class="w"> </span><span class="p">..</span><span class="w"> </span><span class="mf">0.98</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.85</span><span class="p">;</span>
+<span class="k">uniform</span><span class="w"> </span><span class="kt">float</span><span class="w"> </span><span class="n">speed</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mf">0.0</span><span class="w"> </span><span class="p">..</span><span class="w"> </span><span class="mf">4.0</span><span class="w">  </span><span class="o">=</span><span class="w"> </span><span class="mf">1.2</span><span class="p">;</span>
+<span class="k">uniform</span><span class="w"> </span><span class="kt">float</span><span class="w"> </span><span class="n">width</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mf">0.02</span><span class="w"> </span><span class="p">..</span><span class="w"> </span><span class="mf">0.3</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.08</span><span class="p">;</span>
+<span class="k">uniform</span><span class="w"> </span><span class="kt">vec3</span><span class="w">  </span><span class="n">tint</span><span class="w">  </span><span class="o">:</span><span class="w"> </span><span class="n">color</span><span class="w">       </span><span class="o">=</span><span class="w"> </span><span class="mf">0.2</span><span class="p">,</span><span class="w"> </span><span class="mf">0.8</span><span class="p">,</span><span class="w"> </span><span class="mf">1.0</span><span class="p">;</span>
+<span class="k">uniform</span><span class="w"> </span><span class="kt">float</span><span class="w"> </span><span class="n">rainbow</span><span class="w"> </span><span class="o">:</span><span class="w"> </span><span class="mf">0.0</span><span class="w"> </span><span class="p">..</span><span class="w"> </span><span class="mf">1.0</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mf">0.6</span><span class="p">;</span>
+<span class="k">buffer</span><span class="w"> </span><span class="kt">float</span><span class="w"> </span><span class="n">trail</span><span class="p">;</span>
+<span class="n">state</span><span class="w">  </span><span class="kt">float</span><span class="w"> </span><span class="n">head</span><span class="p">;</span>
+
+<span class="kt">void</span><span class="w"> </span><span class="n">update</span><span class="p">()</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">head</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">fract</span><span class="p">(</span><span class="n">time</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">speed</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mf">0.2</span><span class="p">);</span><span class="w"> </span><span class="p">}</span>
+
+<span class="kt">vec3</span><span class="w"> </span><span class="n">shade</span><span class="p">(</span><span class="n">Led</span><span class="w"> </span><span class="n">led</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<span class="w">  </span><span class="kt">float</span><span class="w"> </span><span class="n">spark</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">smoothstep</span><span class="p">(</span><span class="n">width</span><span class="p">,</span><span class="w"> </span><span class="mf">0.0</span><span class="p">,</span><span class="w"> </span><span class="n">abs</span><span class="p">(</span><span class="n">led</span><span class="p">.</span><span class="n">dist</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">head</span><span class="p">));</span>
+<span class="w">  </span><span class="kt">float</span><span class="w"> </span><span class="n">v</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">max</span><span class="p">(</span><span class="n">trail</span><span class="p">[</span><span class="n">led</span><span class="p">.</span><span class="n">idx</span><span class="p">]</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">decay</span><span class="p">,</span><span class="w"> </span><span class="n">spark</span><span class="p">);</span>
+<span class="w">  </span><span class="n">trail</span><span class="p">[</span><span class="n">led</span><span class="p">.</span><span class="n">idx</span><span class="p">]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">v</span><span class="p">;</span>
+<span class="w">  </span><span class="kt">vec3</span><span class="w"> </span><span class="n">hue</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">hsv2rgb</span><span class="p">(</span><span class="n">led</span><span class="p">.</span><span class="n">dist</span><span class="p">,</span><span class="w"> </span><span class="mf">0.85</span><span class="p">,</span><span class="w"> </span><span class="mf">1.0</span><span class="p">);</span>
+<span class="w">  </span><span class="kt">vec3</span><span class="w"> </span><span class="n">col</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">tint</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="p">(</span><span class="mf">1.0</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">rainbow</span><span class="p">)</span><span class="w"> </span><span class="o">+</span><span class="w"> </span><span class="n">hue</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">rainbow</span><span class="p">;</span>
+<span class="w">  </span><span class="k">return</span><span class="w"> </span><span class="n">col</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="n">v</span><span class="p">;</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>The compiler entry point is <code class="docutils literal notranslate"><span class="pre">compile(src)</span> <span class="pre">-&gt;</span> <span class="pre">Result&lt;Compiled,</span> <span class="pre">Vec&lt;Diagnostic&gt;&gt;</span></code>
+where <code class="docutils literal notranslate"><span class="pre">Compiled</span> <span class="pre">{</span> <span class="pre">fxb:</span> <span class="pre">Vec&lt;u8&gt;,</span> <span class="pre">uniforms:</span> <span class="pre">Vec&lt;UniformInfo&gt;</span> <span class="pre">}</span></code>; <code class="docutils literal notranslate"><span class="pre">disassemble(fxb)</span></code>
+produces a readable op listing (exposed to the editor as <code class="docutils literal notranslate"><span class="pre">fx_disassemble</span></code>).</p>
+</section>
+</section>
+<section id="execution-model">
+<h2>Execution model<a class="headerlink" href="#execution-model" title="Link to this heading">¶</a></h2>
+<p>The VM (<code class="docutils literal notranslate"><span class="pre">firmware/fx_vm/src/lib.rs</span></code>) is a <strong>stack machine over <code class="docutils literal notranslate"><span class="pre">f32</span></code> slots</strong> — a
+<code class="docutils literal notranslate"><span class="pre">vecN</span></code> is N contiguous slots. Everything is fixed-size and allocation-free:
+<code class="docutils literal notranslate"><span class="pre">MAX_STACK</span> <span class="pre">=</span> <span class="pre">MAX_STATE</span> <span class="pre">=</span> <span class="pre">MAX_LOCALS</span> <span class="pre">=</span> <span class="pre">MAX_UNIFORM_SLOTS</span> <span class="pre">=</span> <span class="pre">128</span></code>, call stack depth 16.</p>
+<ul class="simple">
+<li><p>A compiled <code class="docutils literal notranslate"><span class="pre">Program</span></code> carries an <code class="docutils literal notranslate"><span class="pre">update_entry</span></code> and a <code class="docutils literal notranslate"><span class="pre">shade_entry</span></code>
+(<code class="docutils literal notranslate"><span class="pre">0xFFFF</span></code> = absent). <code class="docutils literal notranslate"><span class="pre">run_update</span></code> executes <code class="docutils literal notranslate"><span class="pre">update()</span></code> once per frame, evolving
+<code class="docutils literal notranslate"><span class="pre">state</span></code>; <code class="docutils literal notranslate"><span class="pre">run_shade</span></code> executes <code class="docutils literal notranslate"><span class="pre">shade(led)</span></code> per LED and returns <code class="docutils literal notranslate"><span class="pre">Rgb</span></code>. <code class="docutils literal notranslate"><span class="pre">shade</span></code>
+runs against a copy of <code class="docutils literal notranslate"><span class="pre">state</span></code>, so it can’t mutate frame state.</p></li>
+<li><p>Per-LED/per-frame inputs come from <code class="docutils literal notranslate"><span class="pre">Frame</span></code> (time, dt, frame, led_count, imu) and
+<code class="docutils literal notranslate"><span class="pre">Led</span></code> (pos, idx, seg, s, branch, dist, uv) structs, read via <code class="docutils literal notranslate"><span class="pre">LoadCtx</span></code>.</p></li>
+<li><p><strong>No libm.</strong> Transcendentals use small polynomial approximations (deterministic
+across host/wasm/device); the narrow-fixed <code class="docutils literal notranslate"><span class="pre">SinFix</span></code>/<code class="docutils literal notranslate"><span class="pre">CosFix</span></code>/<code class="docutils literal notranslate"><span class="pre">ExpFix</span></code> ops use
+256-entry LUTs with linear interpolation.</p></li>
+<li><p><strong>Bounded execution.</strong> Every invocation runs under a <code class="docutils literal notranslate"><span class="pre">Budget</span></code>: a hard
+instruction count (<code class="docutils literal notranslate"><span class="pre">DEFAULT_BUDGET</span> <span class="pre">=</span> <span class="pre">100_000</span></code>) plus an optional wall-time
+deadline flag a hardware timer raises (polled every 1024 ops). Outcomes are
+<code class="docutils literal notranslate"><span class="pre">Ok</span></code>/<code class="docutils literal notranslate"><span class="pre">Budget</span></code>/<code class="docutils literal notranslate"><span class="pre">Timeout</span></code>; a timed-out <code class="docutils literal notranslate"><span class="pre">shade</span></code> returns black. <code class="docutils literal notranslate"><span class="pre">Counters</span></code> (instrs
+retired, stack high-water) feed the perf stream.</p></li>
+<li><p><strong>Topology tables</strong> (<code class="docutils literal notranslate"><span class="pre">MAX_SEG</span> <span class="pre">=</span> <span class="pre">64</span></code>, <code class="docutils literal notranslate"><span class="pre">MAX_NODE</span> <span class="pre">=</span> <span class="pre">96</span></code>, <code class="docutils literal notranslate"><span class="pre">MAX_NODE_DEG</span> <span class="pre">=</span> <span class="pre">6</span></code>) are
+populated by <code class="docutils literal notranslate"><span class="pre">set_graph</span></code> and read by <code class="docutils literal notranslate"><span class="pre">GraphQuery</span></code>; <code class="docutils literal notranslate"><span class="pre">FloodFrom</span></code> runs a
+single-source geodesic (Bellman-Ford) sweep whose result persists across frames.</p></li>
+</ul>
+</section>
+<section id="opcode-reference">
+<h2>Opcode reference<a class="headerlink" href="#opcode-reference" title="Link to this heading">¶</a></h2>
+<p>The authoritative enum is <code class="docutils literal notranslate"><span class="pre">Op</span></code> (<code class="docutils literal notranslate"><span class="pre">#[repr(u8)]</span></code>, contiguous <code class="docutils literal notranslate"><span class="pre">0..=79</span></code>) in
+<code class="docutils literal notranslate"><span class="pre">firmware/fx_vm/src/lib.rs</span></code>; the compiler mirrors and asserts these discriminants.
+Operands follow inline in the code stream, little-endian.</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>#</p></th>
+<th class="head"><p>Opcode</p></th>
+<th class="head"><p>Operands</p></th>
+<th class="head"><p>Semantics</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>0</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">PushConst</span></code></p></td>
+<td><p>u16 idx</p></td>
+<td><p>push <code class="docutils literal notranslate"><span class="pre">consts[idx]</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p>1</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">LoadUniform</span></code></p></td>
+<td><p>u8 slot, u8 n</p></td>
+<td><p>push n uniform slots</p></td>
+</tr>
+<tr class="row-even"><td><p>2</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">LoadState</span></code></p></td>
+<td><p>u8 slot, u8 n</p></td>
+<td><p>push n state slots</p></td>
+</tr>
+<tr class="row-odd"><td><p>3</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">StoreState</span></code></p></td>
+<td><p>u8 slot, u8 n</p></td>
+<td><p>pop n into state</p></td>
+</tr>
+<tr class="row-even"><td><p>4</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">LoadLocal</span></code></p></td>
+<td><p>u8 slot, u8 n</p></td>
+<td><p>push n locals</p></td>
+</tr>
+<tr class="row-odd"><td><p>5</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">StoreLocal</span></code></p></td>
+<td><p>u8 slot, u8 n</p></td>
+<td><p>pop n into locals</p></td>
+</tr>
+<tr class="row-even"><td><p>6</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">LoadCtx</span></code></p></td>
+<td><p>u8 id</p></td>
+<td><p>push a context value (see context ids)</p></td>
+</tr>
+<tr class="row-odd"><td><p>7–10</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Add</span></code> <code class="docutils literal notranslate"><span class="pre">Sub</span></code> <code class="docutils literal notranslate"><span class="pre">Mul</span></code> <code class="docutils literal notranslate"><span class="pre">Div</span></code></p></td>
+<td><p>u8 n</p></td>
+<td><p>element-wise arithmetic over n (÷0 → 0)</p></td>
+</tr>
+<tr class="row-even"><td><p>11</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Neg</span></code></p></td>
+<td><p>u8 n</p></td>
+<td><p>negate n components</p></td>
+</tr>
+<tr class="row-odd"><td><p>12</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Scale</span></code></p></td>
+<td><p>u8 n</p></td>
+<td><p>n-vec × scalar</p></td>
+</tr>
+<tr class="row-even"><td><p>13</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">UnMath</span></code></p></td>
+<td><p>u8 fn, u8 n</p></td>
+<td><p>unary math per component</p></td>
+</tr>
+<tr class="row-odd"><td><p>14</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">BinMath</span></code></p></td>
+<td><p>u8 fn, u8 n</p></td>
+<td><p>binary math per component</p></td>
+</tr>
+<tr class="row-even"><td><p>15</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Clamp</span></code></p></td>
+<td><p>u8 n</p></td>
+<td><p>clamp(x, lo, hi)</p></td>
+</tr>
+<tr class="row-odd"><td><p>16</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Mix</span></code></p></td>
+<td><p>u8 n</p></td>
+<td><p>a + (b − a)·t</p></td>
+</tr>
+<tr class="row-even"><td><p>17</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Smoothstep</span></code></p></td>
+<td><p>u8 n</p></td>
+<td><p>smoothstep(e0, e1, x)</p></td>
+</tr>
+<tr class="row-odd"><td><p>18</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Dot</span></code></p></td>
+<td><p>u8 n</p></td>
+<td><p>→ scalar</p></td>
+</tr>
+<tr class="row-even"><td><p>19</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Cross</span></code></p></td>
+<td><p>u8 (=3)</p></td>
+<td><p>vec3 × vec3</p></td>
+</tr>
+<tr class="row-odd"><td><p>20</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Length</span></code></p></td>
+<td><p>u8 n</p></td>
+<td><p>→ scalar</p></td>
+</tr>
+<tr class="row-even"><td><p>21</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Normalize</span></code></p></td>
+<td><p>u8 n</p></td>
+<td><p>normalize (no-op if len &lt; 1e-9)</p></td>
+</tr>
+<tr class="row-odd"><td><p>22</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Distance</span></code></p></td>
+<td><p>u8 n</p></td>
+<td><p>→ scalar</p></td>
+</tr>
+<tr class="row-even"><td><p>23</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Swizzle</span></code></p></td>
+<td><p>u8 srcN, u8 dstN, idx…</p></td>
+<td><p>reorder components</p></td>
+</tr>
+<tr class="row-odd"><td><p>24</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Cmp</span></code></p></td>
+<td><p>u8 kind</p></td>
+<td><p>scalar compare → bool (lt/le/gt/ge/eq/ne)</p></td>
+</tr>
+<tr class="row-even"><td><p>25</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Logic</span></code></p></td>
+<td><p>u8 kind</p></td>
+<td><p>and/or/not</p></td>
+</tr>
+<tr class="row-odd"><td><p>26</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">BrFalse</span></code></p></td>
+<td><p>i16 rel</p></td>
+<td><p>pop bool; branch if 0</p></td>
+</tr>
+<tr class="row-even"><td><p>27</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Jmp</span></code></p></td>
+<td><p>i16 rel</p></td>
+<td><p>relative jump</p></td>
+</tr>
+<tr class="row-odd"><td><p>28</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Hash1</span></code></p></td>
+<td><p>—</p></td>
+<td><p>scalar → [0,1)</p></td>
+</tr>
+<tr class="row-even"><td><p>29</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Hash3</span></code></p></td>
+<td><p>—</p></td>
+<td><p>vec3 → scalar</p></td>
+</tr>
+<tr class="row-odd"><td><p>30</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Hsv2Rgb</span></code></p></td>
+<td><p>—</p></td>
+<td><p>vec3(h,s,v) → vec3 rgb</p></td>
+</tr>
+<tr class="row-even"><td><p>31</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Palette</span></code></p></td>
+<td><p>u8 id</p></td>
+<td><p>scalar t → vec3 (0 fire, 1 ice, else rainbow)</p></td>
+</tr>
+<tr class="row-odd"><td><p>32</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Pop</span></code></p></td>
+<td><p>u8 n</p></td>
+<td><p>drop n slots</p></td>
+</tr>
+<tr class="row-even"><td><p>33</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Ret</span></code></p></td>
+<td><p>u8 n</p></td>
+<td><p>return n slots (0 update, 3 shade)</p></td>
+</tr>
+<tr class="row-odd"><td><p>34</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Swap</span></code></p></td>
+<td><p>u8 an, u8 bn</p></td>
+<td><p>swap top bn with the an below</p></td>
+</tr>
+<tr class="row-even"><td><p>35–41</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">AddI</span></code>…<code class="docutils literal notranslate"><span class="pre">CmpI</span></code></p></td>
+<td><p>(<code class="docutils literal notranslate"><span class="pre">CmpI</span></code> u8 kind)</p></td>
+<td><p>i32 add/sub/mul/div/mod/neg/compare</p></td>
+</tr>
+<tr class="row-odd"><td><p>42–43</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">MulFix</span></code> <code class="docutils literal notranslate"><span class="pre">DivFix</span></code></p></td>
+<td><p>—</p></td>
+<td><p>Q16.16 multiply / divide</p></td>
+</tr>
+<tr class="row-even"><td><p>44–49</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">I2F</span></code> <code class="docutils literal notranslate"><span class="pre">F2I</span></code> <code class="docutils literal notranslate"><span class="pre">Fix2F</span></code> <code class="docutils literal notranslate"><span class="pre">F2Fix</span></code> <code class="docutils literal notranslate"><span class="pre">I2Fix</span></code> <code class="docutils literal notranslate"><span class="pre">Fix2I</span></code></p></td>
+<td><p>—</p></td>
+<td><p>numeric conversions</p></td>
+</tr>
+<tr class="row-odd"><td><p>50</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">Call</span></code></p></td>
+<td><p>u16 target</p></td>
+<td><p>push return pc, jump</p></td>
+</tr>
+<tr class="row-even"><td><p>51</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">RetFn</span></code></p></td>
+<td><p>—</p></td>
+<td><p>return from a user function</p></td>
+</tr>
+<tr class="row-odd"><td><p>52–55</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">LoadStateIdx</span></code> <code class="docutils literal notranslate"><span class="pre">StoreStateIdx</span></code> <code class="docutils literal notranslate"><span class="pre">LoadLocalIdx</span></code> <code class="docutils literal notranslate"><span class="pre">StoreLocalIdx</span></code></p></td>
+<td><p>base,stride,off,n,count</p></td>
+<td><p>indexed array access (clamped)</p></td>
+</tr>
+<tr class="row-even"><td><p>56</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">GraphQuery</span></code></p></td>
+<td><p>u8 kind</p></td>
+<td><p>topology query (seg/node/term kinds)</p></td>
+</tr>
+<tr class="row-odd"><td><p>57–58</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">LoadBuf</span></code> <code class="docutils literal notranslate"><span class="pre">StoreBuf</span></code></p></td>
+<td><p>u8 id</p></td>
+<td><p>per-LED buffer element read/write</p></td>
+</tr>
+<tr class="row-even"><td><p>59–60</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">SampleTex</span></code> <code class="docutils literal notranslate"><span class="pre">PaintTex</span></code></p></td>
+<td><p>u8 id</p></td>
+<td><p>2D texture bilinear sample / nearest write</p></td>
+</tr>
+<tr class="row-odd"><td><p>61</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">FloodFrom</span></code></p></td>
+<td><p>—</p></td>
+<td><p>re-root the geodesic field at a node id</p></td>
+</tr>
+<tr class="row-even"><td><p>62–66</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">MulFixN</span></code> <code class="docutils literal notranslate"><span class="pre">DivFixN</span></code> <code class="docutils literal notranslate"><span class="pre">FixRescale</span></code> <code class="docutils literal notranslate"><span class="pre">FixToF</span></code> <code class="docutils literal notranslate"><span class="pre">FixFromF</span></code></p></td>
+<td><p>u8/i8 frac</p></td>
+<td><p>narrow fixed-point scaling/conversion</p></td>
+</tr>
+<tr class="row-odd"><td><p>67–69</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">SinFix</span></code> <code class="docutils literal notranslate"><span class="pre">CosFix</span></code> <code class="docutils literal notranslate"><span class="pre">ExpFix</span></code></p></td>
+<td><p>u8 frac</p></td>
+<td><p>integer-LUT sin/cos/exp (angle in turns)</p></td>
+</tr>
+<tr class="row-even"><td><p>70–73</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">AbsI</span></code> <code class="docutils literal notranslate"><span class="pre">MinI</span></code> <code class="docutils literal notranslate"><span class="pre">MaxI</span></code> <code class="docutils literal notranslate"><span class="pre">ClampI</span></code></p></td>
+<td><p>—</p></td>
+<td><p>native integer abs / min / max / clamp</p></td>
+</tr>
+<tr class="row-odd"><td><p>74–79</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">SignI</span></code> <code class="docutils literal notranslate"><span class="pre">StepI</span></code> <code class="docutils literal notranslate"><span class="pre">FloorFix</span></code> <code class="docutils literal notranslate"><span class="pre">CeilFix</span></code> <code class="docutils literal notranslate"><span class="pre">FractFix</span></code> <code class="docutils literal notranslate"><span class="pre">MixFix</span></code></p></td>
+<td><p>u8 frac</p></td>
+<td><p>native fixed-point sign/step/floor/ceil/fract/lerp</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Function ids for <code class="docutils literal notranslate"><span class="pre">UnMath</span></code>: <code class="docutils literal notranslate"><span class="pre">sin</span> <span class="pre">cos</span> <span class="pre">abs</span> <span class="pre">floor</span> <span class="pre">ceil</span> <span class="pre">fract</span> <span class="pre">sqrt</span> <span class="pre">exp</span> <span class="pre">log</span> <span class="pre">sign</span> <span class="pre">tan</span></code>
+(0–10). For <code class="docutils literal notranslate"><span class="pre">BinMath</span></code>: <code class="docutils literal notranslate"><span class="pre">min</span> <span class="pre">max</span> <span class="pre">pow</span> <span class="pre">mod</span> <span class="pre">step</span> <span class="pre">atan2</span></code> (0–5). Context ids for
+<code class="docutils literal notranslate"><span class="pre">LoadCtx</span></code>: time, dt, frame, led.pos(3), led.idx, led.count, led.seg, led.s,
+led.branch, imu.accel(3), imu.gyro(3), led.dist, led.uv(2).</p>
+</section>
+<section id="the-fxb-container">
+<h2>The <code class="docutils literal notranslate"><span class="pre">.fxb</span></code> container<a class="headerlink" href="#the-fxb-container" title="Link to this heading">¶</a></h2>
+<p>Magic <code class="docutils literal notranslate"><span class="pre">&quot;FXB1&quot;</span></code>, version 1. An 18-byte fixed header followed by variable sections
+(all multi-byte fields little-endian):</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Offset</p></th>
+<th class="head"><p>Field</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>0</p></td>
+<td><p>magic <code class="docutils literal notranslate"><span class="pre">&quot;FXB1&quot;</span></code> (4)</p></td>
+</tr>
+<tr class="row-odd"><td><p>4</p></td>
+<td><p>version = 1 (u8)</p></td>
+</tr>
+<tr class="row-even"><td><p>5</p></td>
+<td><p>flags (u8; <code class="docutils literal notranslate"><span class="pre">FLAG_BUFFERS</span> <span class="pre">=</span> <span class="pre">0x01</span></code>)</p></td>
+</tr>
+<tr class="row-odd"><td><p>6</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">n_state</span></code> (u8)</p></td>
+</tr>
+<tr class="row-even"><td><p>7</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">n_uniform_slots</span></code> (u8)</p></td>
+</tr>
+<tr class="row-odd"><td><p>8</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">manifest_len</span></code> (u16)</p></td>
+</tr>
+<tr class="row-even"><td><p>10</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">n_consts</span></code> (u16)</p></td>
+</tr>
+<tr class="row-odd"><td><p>12</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">code_len</span></code> (u16)</p></td>
+</tr>
+<tr class="row-even"><td><p>14</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">update_entry</span></code> (u16, 0xFFFF = none)</p></td>
+</tr>
+<tr class="row-odd"><td><p>16</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">shade_entry</span></code> (u16)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Then: the manifest bytes (in practice <strong>empty</strong> — the uniform manifest travels
+out-of-band as JSON), the constant pool (<code class="docutils literal notranslate"><span class="pre">n_consts</span> <span class="pre">×</span> <span class="pre">4</span></code> bytes), the code stream
+(<code class="docutils literal notranslate"><span class="pre">code_len</span></code> bytes), and — only if <code class="docutils literal notranslate"><span class="pre">FLAG_BUFFERS</span></code> is set — one <code class="docutils literal notranslate"><span class="pre">n_buffers</span></code> byte
+followed by 7-byte descriptors <code class="docutils literal notranslate"><span class="pre">[kind:u8,</span> <span class="pre">elem:u8,</span> <span class="pre">comp:u8,</span> <span class="pre">w:u16,</span> <span class="pre">h:u16]</span></code>.
+<code class="docutils literal notranslate"><span class="pre">kind</span> <span class="pre">=</span> <span class="pre">0</span></code> is an LED-arity buffer (count = live LED count); <code class="docutils literal notranslate"><span class="pre">kind</span> <span class="pre">=</span> <span class="pre">1</span></code> is a W×H
+texture. <code class="docutils literal notranslate"><span class="pre">comp</span></code> selects component storage precision (<code class="docutils literal notranslate"><span class="pre">F32</span></code>, <code class="docutils literal notranslate"><span class="pre">FIX16</span></code>, <code class="docutils literal notranslate"><span class="pre">FIX8</span></code>,
+<code class="docutils literal notranslate"><span class="pre">I16</span></code>, <code class="docutils literal notranslate"><span class="pre">I8</span></code>, <code class="docutils literal notranslate"><span class="pre">FIX16F</span></code>, <code class="docutils literal notranslate"><span class="pre">FIX8F</span></code>, <code class="docutils literal notranslate"><span class="pre">I32</span></code>) so 8-bit formats cost one byte per
+component instead of a 4-byte slot.</p>
+</section>
+<section id="uniform-plumbing">
+<h2>Uniform plumbing<a class="headerlink" href="#uniform-plumbing" title="Link to this heading">¶</a></h2>
+<p>Uniforms are addressed by <strong>numeric slot</strong>, not name (a <code class="docutils literal notranslate"><span class="pre">vec3</span></code> consumes 3 slots;
+the compiler assigns slots sequentially by width). The name↔slot mapping is <em>not</em>
+in the <code class="docutils literal notranslate"><span class="pre">.fxb</span></code>; the compiler returns it as <code class="docutils literal notranslate"><span class="pre">Vec&lt;UniformInfo&gt;</span></code> and serializes it to
+JSON via <code class="docutils literal notranslate"><span class="pre">manifest_json</span></code> (fields per uniform: <code class="docutils literal notranslate"><span class="pre">name</span></code>, <code class="docutils literal notranslate"><span class="pre">slot</span></code>, <code class="docutils literal notranslate"><span class="pre">width</span></code>, <code class="docutils literal notranslate"><span class="pre">ui</span></code>,
+<code class="docutils literal notranslate"><span class="pre">default</span></code>). The web app parses that JSON to build the control panel.</p>
+<ul class="simple">
+<li><p><strong>VM:</strong> <code class="docutils literal notranslate"><span class="pre">Vm::set_uniform(slot,</span> <span class="pre">vals)</span></code> writes <code class="docutils literal notranslate"><span class="pre">vals.len()</span></code> slots; programs read
+via <code class="docutils literal notranslate"><span class="pre">LoadUniform</span> <span class="pre">slot,</span> <span class="pre">n</span></code>.</p></li>
+<li><p><strong>Web:</strong> the editor’s slider/color/dropdown widgets call
+<code class="docutils literal notranslate"><span class="pre">FxPreview.setUniform(slot,</span> <span class="pre">vals)</span></code> (offline preview) and
+<code class="docutils literal notranslate"><span class="pre">client.setUniforms(...)</span></code> (to the device) — a knob move updates both identically.</p></li>
+<li><p><strong>Firmware:</strong> a <code class="docutils literal notranslate"><span class="pre">SetUniforms</span></code> control message carries <code class="docutils literal notranslate"><span class="pre">UniformValue</span> <span class="pre">{</span> <span class="pre">slot,</span> <span class="pre">repeated</span> <span class="pre">float</span> <span class="pre">value</span> <span class="pre">}</span></code> records; <code class="docutils literal notranslate"><span class="pre">firmware/player_app/ffi.rs</span></code> decodes them and
+calls <code class="docutils literal notranslate"><span class="pre">lm_fx_set_uniform(slot,</span> <span class="pre">vals,</span> <span class="pre">n)</span></code>. <code class="docutils literal notranslate"><span class="pre">get_effect_uniforms</span></code> returns the
+manifest bytes to the app.</p></li>
+</ul>
+</section>
+<section id="textures-and-video-texture-streaming">
+<h2>Textures and video-texture streaming<a class="headerlink" href="#textures-and-video-texture-streaming" title="Link to this heading">¶</a></h2>
+<p>Textures are backed by an external byte arena bound per-program via <code class="docutils literal notranslate"><span class="pre">set_arena</span></code>
+(size it to <code class="docutils literal notranslate"><span class="pre">Program::arena_bytes(led_count)</span></code>). <code class="docutils literal notranslate"><span class="pre">buf_base(id,</span> <span class="pre">led_count)</span></code> gives a
+buffer’s byte offset — deliberately public so the host can stream video frames
+straight into a texture. Shaders read via <code class="docutils literal notranslate"><span class="pre">sample(tex,</span> <span class="pre">led.uv)</span></code>.</p>
+<p>The web app can stream live video (a clip, a canvas, a camera) into a texture
+uniform on the device:</p>
+<ol class="arabic simple">
+<li><p><strong>Encode (browser).</strong> <code class="docutils literal notranslate"><span class="pre">effects/editor/videoTexture.ts</span></code> draws the source into a
+canvas at the texture’s declared W×H, reads back RGBA, and quantizes it with the
+codec in <code class="docutils literal notranslate"><span class="pre">net/textureCodec.ts</span></code>. Supported formats: <code class="docutils literal notranslate"><span class="pre">rgb888</span></code>, <code class="docutils literal notranslate"><span class="pre">rgb565</span></code> (default),
+<code class="docutils literal notranslate"><span class="pre">rgb332</span></code>, <code class="docutils literal notranslate"><span class="pre">gray8</span></code>, <code class="docutils literal notranslate"><span class="pre">indexed8</span></code>, <code class="docutils literal notranslate"><span class="pre">gray4</span></code>, <code class="docutils literal notranslate"><span class="pre">mono</span></code>. Grayscale uses Rec.601 luma;
+<code class="docutils literal notranslate"><span class="pre">gray4</span></code> packs two texels per byte, <code class="docutils literal notranslate"><span class="pre">mono</span></code> eight per byte (LSB-first). Two
+compression flags apply: <code class="docutils literal notranslate"><span class="pre">FLAG_DELTA</span></code> (XOR against the previous quantized
+frame) and <code class="docutils literal notranslate"><span class="pre">FLAG_RLE</span></code> (zero-run/literal-run). <code class="docutils literal notranslate"><span class="pre">TextureStreamer</span></code> keeps the
+previous frame and emits deltas.</p></li>
+<li><p><strong>Transport.</strong> A fire-and-forget <code class="docutils literal notranslate"><span class="pre">set_texture</span></code> message
+(<code class="docutils literal notranslate"><span class="pre">{</span> <span class="pre">texIndex,</span> <span class="pre">format,</span> <span class="pre">width,</span> <span class="pre">height,</span> <span class="pre">flags,</span> <span class="pre">data,</span> <span class="pre">palette?</span> <span class="pre">}</span></code>) goes over the
+wss control channel. Texture geometry is discovered by parsing the <code class="docutils literal notranslate"><span class="pre">.fxb</span></code>
+buffer table (<code class="docutils literal notranslate"><span class="pre">net/fxbTextures.ts</span></code>).</p></li>
+<li><p><strong>Decode (device).</strong> <code class="docutils literal notranslate"><span class="pre">firmware/player_app/ffi.rs</span> <span class="pre">handle_set_texture</span></code> reverses
+keyframe/XOR-delta/RLE and dequantizes packed bytes into the arena at the
+texture’s precision using precomputed byte LUTs — <strong>no per-texel float</strong> on the
+FPU-less C6 (the “narrow arena” work). The region is then addressable as the
+texture uniform.</p></li>
+</ol>
+<p>The gray4/mono formats and the delta/RLE codec came out of a codec/decoder
+hill-climb for narrow arenas (see the WORKLOG entries and the <code class="docutils literal notranslate"><span class="pre">video_stream</span></code> HITL
+test, which asserts a sustained ≥10 FPS on hardware).</p>
+</section>
+<section id="midi">
+<h2>MIDI<a class="headerlink" href="#midi" title="Link to this heading">¶</a></h2>
+<p><strong>MIDI is a web-app feature; the VM and firmware are MIDI-agnostic.</strong> A MIDI
+control simply drives <code class="docutils literal notranslate"><span class="pre">set_uniform(slot,</span> <span class="pre">…)</span></code> like any other input. There are no
+MIDI opcodes, uniforms, or context ids.</p>
+<p>The web layer (<code class="docutils literal notranslate"><span class="pre">web/src/midi/</span></code>) wraps the Web MIDI API and maps controls to
+uniforms in two layers (persisted in <code class="docutils literal notranslate"><span class="pre">store/midiStore.ts</span></code>):</p>
+<ul class="simple">
+<li><p><strong>Semantic (global):</strong> a physical control (CC / note / pitch-bend, keyed by
+device+channel+number) is named once (“speed”, “hue”), matched loosely by
+normalized name.</p></li>
+<li><p><strong>Binding (per-effect):</strong> a <code class="docutils literal notranslate"><span class="pre">UniformBinding</span> <span class="pre">{</span> <span class="pre">uniform,</span> <span class="pre">semantic,</span> <span class="pre">min?,</span> <span class="pre">max?,</span> <span class="pre">invert?</span> <span class="pre">}</span></code> wires a named control to a uniform, with optional sub-range and
+invert.</p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">midi/router.ts</span> <span class="pre">resolveControlUpdates(...)</span></code> is a pure function turning a physical
+event into scaled <code class="docutils literal notranslate"><span class="pre">UniformUpdate</span></code>s (only scalar slider/toggle uniforms are
+drivable; toggles threshold at 0.5). In the editor the resulting updates fork to
+both the offline preview and the device. The AI can set MIDI bindings via its
+<code class="docutils literal notranslate"><span class="pre">list_midi_controls</span></code> / <code class="docutils literal notranslate"><span class="pre">set_midi_mapping</span></code> tools without touching effect source.</p>
+</section>
+<section id="performance-on-the-esp32-c6">
+<h2>Performance on the ESP32-C6<a class="headerlink" href="#performance-on-the-esp32-c6" title="Link to this heading">¶</a></h2>
+<p>The FX-VM is profiled on real hardware with the SoC’s cycle counters, not FPS. The
+<code class="docutils literal notranslate"><span class="pre">PerfReport</span></code> protobuf reports <code class="docutils literal notranslate"><span class="pre">frame_cycles_{min,mean,max}</span></code> (the FX-VM execution
+cost) and <code class="docutils literal notranslate"><span class="pre">show_cycles_mean</span></code> (the LED transmit path). The HITL <code class="docutils literal notranslate"><span class="pre">fx_bench</span></code> harness
+(<code class="docutils literal notranslate"><span class="pre">pi/hitl/harness/fx_bench.py</span></code>) runs a suite of calibration micro-programs on a
+reserved rig and compares measured <strong>frame cycles</strong> to a committed golden. See
+<a class="reference internal" href="DEVELOPERS.html#hardware-in-the-loop-hitl-testing"><span class="std std-ref">DEVELOPERS.md → HITL testing</span></a>
+for how to run it.</p>
+<ul class="simple">
+<li><p><strong>Golden baseline:</strong> <code class="docutils literal notranslate"><span class="pre">web/tests/testdata/device-bench-esp32c6.json</span></code>
+(<code class="docutils literal notranslate"><span class="pre">deviceKey:</span> <span class="pre">esp32c6-hitl-golden</span></code>, <code class="docutils literal notranslate"><span class="pre">cpuHz:</span> <span class="pre">160_000_000</span></code>; 65 fit programs + 7
+held-out). Regenerate with <code class="docutils literal notranslate"><span class="pre">fx_bench</span> <span class="pre">--emit-golden</span> <span class="pre">&lt;path&gt;</span></code>.</p></li>
+<li><p><strong>Regression gate:</strong> a program fails if <code class="docutils literal notranslate"><span class="pre">abs(measured/golden</span> <span class="pre">−</span> <span class="pre">1)</span></code> exceeds its
+margin — default <strong>10%</strong>, with <code class="docutils literal notranslate"><span class="pre">sweep16</span></code> at 15% (a deliberately safe band until
+per-effect run-to-run variance is characterized). <strong>Only frame cycles are
+gated</strong>; show cycles (transmit) are noisier and excluded.</p></li>
+</ul>
+<p>Representative measured frame-cycle costs at 160 MHz (full set in the golden):</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Program</p></th>
+<th class="head"><p>Frame cycles</p></th>
+<th class="head"><p>Notes</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">empty</span></code></p></td>
+<td><p>~0.49 M</p></td>
+<td><p>per-frame overhead floor</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">sweep16</span></code> / <code class="docutils literal notranslate"><span class="pre">sweep256</span></code></p></td>
+<td><p>~0.10 M / ~0.97 M</p></td>
+<td><p>per-LED anchors (16 / 256 LEDs)</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">addM</span></code> / <code class="docutils literal notranslate"><span class="pre">mulM</span></code> / <code class="docutils literal notranslate"><span class="pre">negM</span></code></p></td>
+<td><p>~2.5 M / ~2.5 M / ~1.8 M</p></td>
+<td><p>cheap arithmetic</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">sinM</span></code> / <code class="docutils literal notranslate"><span class="pre">cosM</span></code> / <code class="docutils literal notranslate"><span class="pre">tanM</span></code></p></td>
+<td><p>~3.9 M / ~4.1 M / ~6.8 M</p></td>
+<td><p>LUT sin/cos (see the hill-climb)</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">expfM</span></code> / <code class="docutils literal notranslate"><span class="pre">powfM</span></code></p></td>
+<td><p>~6.2 M / ~9.1 M</p></td>
+<td><p>exp still soft-float poly</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">hash12M</span></code> / <code class="docutils literal notranslate"><span class="pre">hash32M</span></code></p></td>
+<td><p>~2.9 M / ~4.2 M</p></td>
+<td><p>integer bit-mix hash</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">smoothstep32M</span></code> / <code class="docutils literal notranslate"><span class="pre">distance32M</span></code></p></td>
+<td><p>~21.4 M / ~14.4 M</p></td>
+<td><p>heaviest float ops</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">hsv2rgbM</span></code> / <code class="docutils literal notranslate"><span class="pre">mix3M</span></code> (held-out)</p></td>
+<td><p>~7.1 M / ~6.7 M</p></td>
+<td><p>validation set</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">lavalamp</span></code> (held-out)</p></td>
+<td><p>~3.6 M</p></td>
+<td><p>a realistic 200-LED effect</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">show_cycles</span></code> cluster tightly at ~1.0–1.1 M across programs (transmit-bound, not
+FX-bound). These numbers back the browser-side cost model
+(<code class="docutils literal notranslate"><span class="pre">web/src/effects/costModel.ts</span></code>, <code class="docutils literal notranslate"><span class="pre">deviceProfile.ts</span></code>): a linear sum-of-op-costs fit
+that predicts an effect’s device budget headroom (green ≤70% / yellow / red &gt;90%)
+without a device present. The fit tracks expensive programs to ±3–7% but
+over-predicts the cheapest ones; the software estimator test
+(<code class="docutils literal notranslate"><span class="pre">web/tests/deviceProfileHardware.test.ts</span></code>) gates at 13%. Perf-model rationale and
+the calibration methodology live in
+<a class="reference internal" href="docs/design/perf-monitoring.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">docs/design/perf-monitoring.md</span></code></span></a>.</p>
+<p>The full per-platform numbers — fitted opcode costs (cycles + ns), the estimator’s
+held-out predicted-vs-measured accuracy, and every raw measured benchmark — are
+auto-generated from the goldens into
+<a class="reference internal" href="docs/fx-vm-performance.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">docs/fx-vm-performance.md</span></code></span></a> and pinned by a CI freshness
+gate (<code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//web:gen_fx_vm_perf_doc</span></code> to regenerate).</p>
+<p>These costs are the target of an ongoing FX-VM hill-climb (see <code class="docutils literal notranslate"><span class="pre">WORKLOG.md</span></code>):
+sin/cos are now compile-time LUTs and <code class="docutils literal notranslate"><span class="pre">hash</span></code> is an integer bit-mix, which is why
+they land far below the other transcendentals. A practical consequence of the
+FPU-less C6: hoist per-frame constants out of the per-LED <code class="docutils literal notranslate"><span class="pre">shade()</span></code> into
+<code class="docutils literal notranslate"><span class="pre">update()</span></code>/uniforms, and prefer int/fixed types (<code class="docutils literal notranslate"><span class="pre">fixed8</span></code>/<code class="docutils literal notranslate"><span class="pre">fixed16</span></code>) on hot paths
+so the arithmetic builtins take their native opcodes instead of soft-float.</p>
+</section>
+<section id="ai-effect-generation">
+<h2>AI effect generation<a class="headerlink" href="#ai-effect-generation" title="Link to this heading">¶</a></h2>
+<p>The editor can write and iterate on effects with Claude. The integration is a
+<strong>direct, keyless-server browser → Anthropic</strong> call (BYO key): the request goes
+straight to <code class="docutils literal notranslate"><span class="pre">https://api.anthropic.com/v1/messages</span></code> with the user’s key from
+<code class="docutils literal notranslate"><span class="pre">localStorage</span></code> (<code class="docutils literal notranslate"><span class="pre">ledmapper.anthropicKey</span></code>, set via the AI-key sheet) and the
+<code class="docutils literal notranslate"><span class="pre">anthropic-dangerous-direct-browser-access</span></code> header. The model is <strong><code class="docutils literal notranslate"><span class="pre">claude-opus-4-8</span></code></strong>
+(<code class="docutils literal notranslate"><span class="pre">web/src/effects/ai/generate.ts</span></code>).</p>
+<p>The system prompt (<code class="docutils literal notranslate"><span class="pre">web/src/effects/ai/system-prompt.ts</span></code>) is <strong>assembled from the
+language spec at load time</strong> — the built-in table, context table, and keyword list
+are interpolated from the same <code class="docutils literal notranslate"><span class="pre">BUILTINS</span></code>/<code class="docutils literal notranslate"><span class="pre">CONTEXTS</span></code>/<code class="docutils literal notranslate"><span class="pre">KEYWORDS</span></code> the compiler uses,
+so the prompt can never advertise a builtin the compiler lacks. It states the hard
+constraints (two entry points, no recursion, bounded loops, all values f32),
+documents uniform syntax, <code class="docutils literal notranslate"><span class="pre">state</span></code>, structs/arrays, buffers, topology sources, and
+textures, includes four worked examples, and ends with a repair directive (“given
+a previous script and compiler diagnostics, return a corrected script that fixes
+every error; change as little else as possible”). It is also <strong>perf-aware</strong>: the
+prompt teaches the fixed-point types and soft-float cost model, and the agent is
+fed the binding device’s per-builtin cost table (<code class="docutils literal notranslate"><span class="pre">builtinCostsToPrompt</span></code> in
+<code class="docutils literal notranslate"><span class="pre">web/src/effects/perfContext.ts</span></code>) so it can optimize toward a real budget.</p>
+<p>There are two call paths:</p>
+<ul class="simple">
+<li><p><strong>One-shot generation</strong> — a streaming request with
+<code class="docutils literal notranslate"><span class="pre">output_config:</span> <span class="pre">json_schema</span></code> constraining the reply to <code class="docutils literal notranslate"><span class="pre">{</span> <span class="pre">script,</span> <span class="pre">notes</span> <span class="pre">}</span></code>; the
+in-progress <code class="docutils literal notranslate"><span class="pre">script</span></code> field is surfaced live into the editor as it streams.</p></li>
+<li><p><strong>Interactive chat</strong> (<code class="docutils literal notranslate"><span class="pre">chatTurn</span></code>, up to 8 rounds) — a tool-use loop where the
+model calls client-fulfilled tools: <code class="docutils literal notranslate"><span class="pre">set_script</span></code> (replace the editor content,
+compile, and return the compile result — ok/diagnostics/uniforms/disassembly so
+the model can self-repair), <code class="docutils literal notranslate"><span class="pre">capture_preview</span></code> (render the live <code class="docutils literal notranslate"><span class="pre">FxPreview</span></code> canvas
+to a PNG returned as a vision block), <code class="docutils literal notranslate"><span class="pre">estimate_performance</span></code> (run the cost model
+and report headroom), and <code class="docutils literal notranslate"><span class="pre">list_midi_controls</span></code> / <code class="docutils literal notranslate"><span class="pre">set_midi_mapping</span></code>. Each user
+turn includes the current source and the latest compile summary as context.</p></li>
+</ul>
+<p>So every AI-authored effect is compiled by the real wasm compiler and (optionally)
+previewed by the real VM before it ever reaches the device — the same path a
+hand-written effect takes.</p>
+</section>
+<section id="sensor-drivers-auto-hardware-discovery-fug-107">
+<h2>Sensor drivers (auto hardware discovery, FUG-107)<a class="headerlink" href="#sensor-drivers-auto-hardware-discovery-fug-107" title="Link to this heading">¶</a></h2>
+<p>Plug any qwiic/I2C sensor into the device and a <strong>sensor driver</strong> turns its
+readings into effect uniforms. A driver is <strong>the same bytecode and VM as an
+effect</strong> — no second interpreter — with three additions:</p>
+<ul class="simple">
+<li><p>a <strong><code class="docutils literal notranslate"><span class="pre">void</span> <span class="pre">poll()</span></code></strong> entry instead of <code class="docutils literal notranslate"><span class="pre">shade()</span></code> (a program is an effect XOR a
+driver). <code class="docutils literal notranslate"><span class="pre">poll()</span></code> runs periodically on the device (default every 100 ms).</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">export</span> <span class="pre">&lt;type&gt;</span> <span class="pre">name</span> <span class="pre">&quot;unit&quot;;</span></code></strong> declarations — the values <code class="docutils literal notranslate"><span class="pre">poll()</span></code> writes
+(scalar/vecN, state-backed). The <code class="docutils literal notranslate"><span class="pre">&quot;unit&quot;</span></code> is an optional display hint.</p></li>
+<li><p><strong>I2C intrinsics</strong> (all args <code class="docutils literal notranslate"><span class="pre">int</span></code>): <code class="docutils literal notranslate"><span class="pre">i2c_write(addr,</span> <span class="pre">reg,</span> <span class="pre">val)</span></code> → <code class="docutils literal notranslate"><span class="pre">1</span></code>/<code class="docutils literal notranslate"><span class="pre">0</span></code>
+ack, <code class="docutils literal notranslate"><span class="pre">i2c_read8(addr,</span> <span class="pre">reg)</span></code> → byte or <code class="docutils literal notranslate"><span class="pre">-1</span></code>, <code class="docutils literal notranslate"><span class="pre">i2c_read16(addr,</span> <span class="pre">reg)</span></code> →
+big-endian u16 or <code class="docutils literal notranslate"><span class="pre">-1</span></code>. Addresses/registers are decimal (<code class="docutils literal notranslate"><span class="pre">0x48</span></code> = <code class="docutils literal notranslate"><span class="pre">72</span></code>); there
+are no hex literals or bitwise operators (combine bytes with <code class="docutils literal notranslate"><span class="pre">hi*256</span> <span class="pre">+</span> <span class="pre">lo</span></code>).</p></li>
+</ul>
+<p>On the device each poll’s exports are copied into the <strong>active effect’s uniform
+of the same name and width</strong> — the exact <code class="docutils literal notranslate"><span class="pre">set_uniforms</span></code> slot path a slider uses —
+so a driver and effect authored independently line up automatically. In the VM
+the intrinsics call an <a class="reference internal" href="#firmware/fx_vm/src/lib.rs"><span class="xref myst"><code class="docutils literal notranslate"><span class="pre">I2cBus</span></code></span></a> trait: the firmware
+backs it with the ESP-IDF qwiic master, and the host/browser back it with a mock
+register map, so drivers are authored, unit-tested, and (soon) previewed with no
+hardware. The <code class="docutils literal notranslate"><span class="pre">.fxb</span></code> header is <strong>v2</strong> (adds <code class="docutils literal notranslate"><span class="pre">poll_entry</span></code>; v1 effects still
+parse).</p>
+<p>The wire path is <code class="docutils literal notranslate"><span class="pre">scan_i2c</span></code> → <code class="docutils literal notranslate"><span class="pre">i2c_scan_result{addresses}</span></code> (enumerate the bus),
+then <code class="docutils literal notranslate"><span class="pre">submit_driver{fxb,</span> <span class="pre">poll_interval_ms,</span> <span class="pre">bindings,</span> <span class="pre">activate}</span></code> →
+<code class="docutils literal notranslate"><span class="pre">driver_state</span></code>, and <code class="docutils literal notranslate"><span class="pre">remove_driver</span></code>. The firmware runs the driver in a second
+<code class="docutils literal notranslate"><span class="pre">fx_vm</span></code> off the render loop (<code class="docutils literal notranslate"><span class="pre">lm_drv_poll</span></code>).</p>
+<p>The editor’s AI can drive the whole flow when a device is connected: two extra
+tools — <strong><code class="docutils literal notranslate"><span class="pre">scan_bus</span></code></strong> (enumerate + match the responding addresses against the
+qwiic sensor database in <code class="docutils literal notranslate"><span class="pre">web/src/hardware/sensorDb.ts</span></code>, asking the user when an
+address is ambiguous or unknown) and <strong><code class="docutils literal notranslate"><span class="pre">set_driver</span></code></strong> (compile the driver, bind
+its exports to the effect’s uniforms by name, install it) — plus a driver-dialect
+system-prompt addendum. So the model can enumerate the bus, identify the part,
+write a driver from the sensor’s register map, and install it, iterating on the
+first poll’s result.</p>
+</section>
+<section id="build-targets">
+<h2>Build targets<a class="headerlink" href="#build-targets" title="Link to this heading">¶</a></h2>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Target</p></th>
+<th class="head"><p>What</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">//fx_compiler:fx_compiler</span></code></p></td>
+<td><p>compiler library (<code class="docutils literal notranslate"><span class="pre">ledmapper_fx_compiler</span></code>)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">//fx_compiler:fx_compile</span></code></p></td>
+<td><p>CLI compiler</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">//fx_compiler:fx_compiler_web</span></code></p></td>
+<td><p>wasm bundle consumed by the web editor (<code class="docutils literal notranslate"><span class="pre">/fx-compiler</span></code>)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">//firmware/fx_vm:fx_vm</span></code></p></td>
+<td><p>the VM library (also linked into the firmware)</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">//firmware/fx_vm:fx_vm_web</span></code></p></td>
+<td><p>VM wasm bundle for the browser preview (<code class="docutils literal notranslate"><span class="pre">/fx-vm</span></code>)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">//firmware/fx_vm:fx_vm_test</span></code>, <code class="docutils literal notranslate"><span class="pre">//fx_compiler:fx_compiler_test</span></code></p></td>
+<td><p>unit tests (host)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The web app loads <code class="docutils literal notranslate"><span class="pre">fx_compiler_wasm_pkg.js</span></code> and <code class="docutils literal notranslate"><span class="pre">fx_vm_wasm_pkg.js</span></code> dynamically
+(<code class="docutils literal notranslate"><span class="pre">web/src/fx/preview.ts</span></code>, <code class="docutils literal notranslate"><span class="pre">web/src/effects/editor/compile-worker.ts</span></code>).</p>
+</section>
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          <a class="next-page" href="docs/fx-vm-performance.html">
+              <div class="page-info">
+                <div class="context">
+                  <span>Next</span>
+                </div>
+                <div class="title">FX-VM performance</div>
+              </div>
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+            </a>
+          <a class="prev-page" href="next_steps.html">
+              <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
+              <div class="page-info">
+                <div class="context">
+                  <span>Previous</span>
+                </div>
+                
+                <div class="title">APP</div>
+                
+              </div>
+            </a>
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; Kevin Balke and the splanc contributors — AGPL-3.0-or-later
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">The splanc effects engine</a><ul>
+<li><a class="reference internal" href="#overview">Overview</a></li>
+<li><a class="reference internal" href="#the-language">The language</a><ul>
+<li><a class="reference internal" href="#types">Types</a></li>
+<li><a class="reference internal" href="#read-only-contexts">Read-only contexts</a></li>
+<li><a class="reference internal" href="#declarations">Declarations</a></li>
+<li><a class="reference internal" href="#built-in-functions">Built-in functions</a></li>
+<li><a class="reference internal" href="#example">Example</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#execution-model">Execution model</a></li>
+<li><a class="reference internal" href="#opcode-reference">Opcode reference</a></li>
+<li><a class="reference internal" href="#the-fxb-container">The <code class="docutils literal notranslate"><span class="pre">.fxb</span></code> container</a></li>
+<li><a class="reference internal" href="#uniform-plumbing">Uniform plumbing</a></li>
+<li><a class="reference internal" href="#textures-and-video-texture-streaming">Textures and video-texture streaming</a></li>
+<li><a class="reference internal" href="#midi">MIDI</a></li>
+<li><a class="reference internal" href="#performance-on-the-esp32-c6">Performance on the ESP32-C6</a></li>
+<li><a class="reference internal" href="#ai-effect-generation">AI effect generation</a></li>
+<li><a class="reference internal" href="#sensor-drivers-auto-hardware-discovery-fug-107">Sensor drivers (auto hardware discovery, FUG-107)</a></li>
+<li><a class="reference internal" href="#build-targets">Build targets</a></li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="static/documentation_options.js?v=8a448e45"></script>
+    <script src="static/doctools.js?v=fd6eb6e6"></script>
+    <script src="static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="static/copybutton.js?v=fd10adb8"></script>
+    <script src="static/design-tabs.js?v=f930bc37"></script>
+    </body>
+</html>
