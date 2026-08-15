@@ -83,6 +83,27 @@ static const uint32_t kStaJoinTimeoutMs = 20000;
 static const uint32_t kMaxLeds = 256;
 static CRGB leds[kMaxLeds];
 
+// --- async LED transmit (FUG-122 hill-climb) --------------------------------
+// The WS2812 strip write is ~30 µs/LED (256 LEDs ≈ 7.7 ms), and FastLED.show()
+// BLOCKS until the RMT/DMA push completes — that used to stall the render task
+// for the whole transmit, serializing compute and I/O (frame period = render +
+// transmit). The RMT peripheral clocks the bits by DMA/interrupt with the CPU
+// idle, and FastLED's wait YIELDS, so we move show() to a dedicated higher-
+// priority task: the render task snapshots its frame into `show_buf`, kicks the
+// transmit task, and immediately renders the NEXT frame WHILE the current one
+// clocks out. Net frame period drops to max(render, transmit). We keep FastLED's
+// exact, field-proven WS2812 timing/colour path (rig has no camera to validate a
+// hand-rolled driver) — FastLED is bound to `show_buf`, never to the live `leds`.
+static CRGB show_buf[kMaxLeds];
+static TaskHandle_t xmit_task_handle = nullptr;
+// Given when a transmit completes (and once at boot); the render task takes it
+// before overwriting `show_buf`, so a snapshot never races an in-flight push.
+static SemaphoreHandle_t xmit_done = nullptr;
+// Latest transmit span (cycles), written by the transmit task, read for perf.
+static volatile uint32_t g_show_c = 0;
+static volatile bool g_show_timed = false;
+static void led_show_async(bool timed);  // defined below render_once
+
 // LED rendering is decoupled from loop() (which cooperatively services WiFi,
 // HTTP and BLE and can stall for milliseconds during a burst): it runs in its
 // own high-priority FreeRTOS task woken close to each frame boundary, so the
@@ -1069,13 +1090,15 @@ static uint32_t render_once() {
   }
   xSemaphoreGive(player_mutex);
 
-  // Time FastLED.show() (DMA/RMT push) as its own span — it runs outside the
-  // Player lock, so it's measured here, not folded into frame_cycles.
+  // Hand the frame to the async transmit task (see led_show_async): the render
+  // task returns immediately and computes the next frame while this one clocks
+  // out on the RMT/DMA engine. `show_c` is the transmit span the task measured
+  // for the PREVIOUS frame — the two now overlap, so the effective frame period
+  // is max(frame_c, show_c), not their sum.
   uint32_t show_c = 0;
   if (show) {
-    uint32_t c_show_start = fx_frame_rendered ? esp_cpu_get_cycle_count() : 0;
-    FastLED.show();  // long strip write kept outside the Player lock
-    if (fx_frame_rendered) show_c = esp_cpu_get_cycle_count() - c_show_start;
+    led_show_async(fx_frame_rendered);
+    if (fx_frame_rendered) show_c = g_show_c;
   }
 
   // Push this effect frame's Tier-0 sample into the perf ring (drained by the
@@ -1083,7 +1106,10 @@ static uint32_t render_once() {
   if (fx_frame_rendered) {
     // budget_cycles = 33 ms * 160 MHz; kept in sync with ffi.rs PERF_BUDGET.
     const uint32_t kBudgetCycles = (160000000u / 1000u) * 33u;
-    bool overran = (perf_frame_c + show_c) > kBudgetCycles;
+    // Render and transmit now OVERLAP (async show), so the frame-rate limiter is
+    // whichever is longer, not their sum.
+    uint32_t period_c = perf_frame_c > show_c ? perf_frame_c : show_c;
+    bool overran = period_c > kBudgetCycles;
     xSemaphoreTake(player_mutex, portMAX_DELAY);
     lm_perf_set_heap(esp_get_free_heap_size(), esp_get_minimum_free_heap_size());
     lm_perf_push(perf_seq, perf_update_c, perf_shade_c, perf_frame_c, show_c,
@@ -1141,6 +1167,38 @@ static void osc_task(void *) {
 }
 
 // The render task: forever, render one frame then sleep until the next is due.
+// Dedicated LED transmit task (higher priority than render). Sleeps until the
+// render task kicks it, pushes `show_buf` via FastLED's RMT/DMA driver (blocking,
+// but this wait YIELDS the single core back to the render task for the whole
+// ~7.7 ms transmit), then signals completion. Owns the RMT from one task.
+static void xmit_task(void *) {
+  for (;;) {
+    ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    uint32_t c0 = g_show_timed ? esp_cpu_get_cycle_count() : 0;
+    FastLED.show();
+    if (g_show_timed) g_show_c = esp_cpu_get_cycle_count() - c0;
+    xSemaphoreGive(xmit_done);
+  }
+}
+
+// Hand the just-rendered `leds` frame to the transmit task without blocking the
+// render task on the strip write. Waits only for the PREVIOUS push to finish
+// (instant once rendering out-runs the transmit), snapshots into `show_buf`, and
+// kicks the higher-priority transmit task — which preempts, starts the DMA, and
+// yields straight back so the render task can compute the next frame in parallel.
+static void led_show_async(bool timed) {
+  if (xmit_task_handle == nullptr) {
+    FastLED.show();  // pre-task fallback (setup): synchronous
+    return;
+  }
+  xSemaphoreTake(xmit_done, portMAX_DELAY);  // previous transmit fully drained
+  // `::memcpy` — FastLED also declares a memcpy overload, which makes the bare
+  // call ambiguous.
+  ::memcpy(show_buf, leds, kMaxLeds * sizeof(CRGB));
+  g_show_timed = timed;
+  xTaskNotifyGive(xmit_task_handle);
+}
+
 static void render_task(void *) {
   for (;;) {
     uint32_t delay_ms = render_once();
@@ -1589,10 +1647,20 @@ void setup() {
   // completing. A 0 ms tx timeout drops bytes instead of blocking, so logs are
   // best-effort and the network stacks always run.
   Serial.setTxTimeoutMs(0);
-  FastLED.addLeds<WS2812B, LED_DATA_PIN, GRB>(leds, kMaxLeds);
+  // FastLED drives `show_buf` (the transmit snapshot), never the live `leds` —
+  // the async transmit task pushes show_buf while the render task fills leds.
+  FastLED.addLeds<WS2812B, LED_DATA_PIN, GRB>(show_buf, kMaxLeds);
   FastLED.setBrightness(160);
   fill_solid(leds, kMaxLeds, CRGB::Black);
-  FastLED.show();
+  fill_solid(show_buf, kMaxLeds, CRGB::Black);
+  FastLED.show();  // synchronous here (xmit task not yet up)
+  // Bring up the async transmit task + its completion gate (starts "available"
+  // so the first led_show_async proceeds without waiting). Priority one above
+  // the render task so a kick preempts, starts the DMA, and yields right back.
+  xmit_done = xSemaphoreCreateBinary();
+  xSemaphoreGive(xmit_done);
+  xTaskCreate(xmit_task, "xmit", kRenderTaskStack, nullptr, kRenderTaskPrio + 1,
+              &xmit_task_handle);
 
   // Guards every call into the single-threaded Rust core; must exist before
   // either the message handler or the render task can touch it.
