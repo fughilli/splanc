@@ -111,6 +111,29 @@ async def _drive_pattern(ws_url: str, insecure: bool) -> None:
     _log("[drive] pattern latched")
 
 
+def require_analyzer(server: str) -> None:
+    """Fail early unless the daemon at `server` advertises a logic analyzer.
+
+    Pool selection can already require the capability (Reservation(require=...)),
+    but an explicit --server / --device-ws pins a rig directly, so assert here too
+    — a clear message beats a mid-run capture failure on a non-analyzer rig.
+    """
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(server.rstrip("/") + "/status", timeout=10) as r:
+            st = json.loads(r.read())
+    except Exception as e:
+        raise SystemExit(f"[capture] can't read {server}/status: {e}")
+    a = st.get("analyzer")
+    if not (a and a.get("present")):
+        raise SystemExit(
+            f"[capture] rig {st.get('rig', server)!r} has no logic analyzer — this "
+            f"test needs one. Pin an analyzer rig with --server, or drop --server to "
+            f"let pool selection require it."
+        )
+
+
 def capture_via_daemon(server: str, device: str, samples: int) -> List[Tuple[int, int, int]]:
     """POST /capture to the daemon directly (over the tailnet) and return pixels.
 
@@ -170,6 +193,7 @@ def run(args: argparse.Namespace) -> int:
     # through a side channel (e.g. an ssh tunnel via the rig host) rather than a
     # reservation container.
     if args.device_ws:
+        require_analyzer(args.server)  # capture goes via the daemon; it must have one
         _log(f"[drive] {args.device_ws} (no reservation; capturing via daemon {args.server})")
         asyncio.run(_drive_pattern(args.device_ws, insecure=not args.ws_verify))
         time.sleep(0.5)
@@ -183,12 +207,15 @@ def run(args: argparse.Namespace) -> int:
         _log(f"[PASS] {n} pixels match the driven pattern on the wire: {got}")
         return 0
 
-    res = Reservation(server=args.server or None, owner=args.owner)
+    # require="analyzer" makes pool selection pick an analyzer-capable rig (not
+    # whichever frees first); with an explicit --server we assert it below.
+    res = Reservation(server=args.server or None, owner=args.owner, require="analyzer")
     try:
         res.acquire()
     except ReserveError as e:
         _log(f"[reserve] {e}")
         return 2
+    require_analyzer(res.server)
     try:
         # Default WiFi to the rig's own provisioning AP (creds served by the
         # daemon), so a run needs no external network. Explicit --wifi-ssid wins.

@@ -70,6 +70,32 @@ func TestParseSampleRate(t *testing.T) {
 	}
 }
 
+func TestDescribe(t *testing.T) {
+	// Disabled broker (no driver) advertises nothing.
+	if got := New(Config{}).Describe(); got != nil {
+		t.Errorf("Describe() on disabled broker = %+v, want nil", got)
+	}
+	// Enabled broker reports present + driver + distinct protocols/channels.
+	b := New(Config{Driver: "fx2lafw", Map: map[string]DUTMap{
+		"":       {Channels: []string{"D6"}, Protocol: ProtocolWS2812},
+		"c6-abc": {Channels: []string{"D0", "D1"}, Protocol: ProtocolSPI},
+	}})
+	got := b.Describe()
+	if got == nil || !got.Present || got.Driver != "fx2lafw" {
+		t.Fatalf("Describe() = %+v, want present fx2lafw", got)
+	}
+	if join(got.Protocols) != "spi ws2812" { // sorted, deduped
+		t.Errorf("protocols = %v, want [spi ws2812]", got.Protocols)
+	}
+	if join(got.Channels) != "D0 D1 D6" {
+		t.Errorf("channels = %v, want [D0 D1 D6]", got.Channels)
+	}
+	// Enabled with an empty map -> the fallback tap (D0/ws2812).
+	if d := New(Config{Driver: "fx2lafw"}).Describe(); d == nil || join(d.Channels) != "D0" || join(d.Protocols) != "ws2812" {
+		t.Errorf("fallback Describe() = %+v", d)
+	}
+}
+
 func TestParseChannelMap(t *testing.T) {
 	m, err := ParseChannelMap(`{"default":{"channels":["D0"],"protocol":"ws2812"},"c6-abc":{"channels":["D1","D2"],"protocol":"spi"}}`)
 	if err != nil {

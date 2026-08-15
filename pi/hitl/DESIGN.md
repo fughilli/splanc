@@ -153,6 +153,14 @@ reserve→flash→drive→capture→assert loop is `//pi/hitl/harness:led_captur
 (`manual`+`hitl`). Wiring caveat: the FX2 clone's inputs aren't reliably 5 V
 tolerant — tap the 3.3 V side of the DIN or level-shift, and share ground.
 
+**Capability-based rig selection.** A rig with an analyzer advertises it in
+`/status` (`Analyzer{present, driver, protocols, channels}`), so a test picks a
+rig by CAPABILITY, not by name or tag (tags are too coarse). `hitl reserve/run
+--require analyzer` filters pool selection to analyzer-capable rigs
+(`pool.Require`), and `led_capture` sets `require="analyzer"` + asserts the chosen
+rig's `/status` before driving — so an analyzer test can never silently land on an
+ESP-toolbox rig and fail at capture.
+
 Latency is scaffolded (`CaptureResult.TriggerSample`/`SampleRate`); a full E2E
 number needs the stimulus and the capture co-timed in one clock (route the "show
 pattern" command through the daemon) — a hardware-gated follow-up.

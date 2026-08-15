@@ -146,6 +146,11 @@ func main() {
 
 	var opts []queue.Option
 	opts = append(opts, queue.WithDevices(devs))
+	// Advertise the shared logic-analyzer capability in /status so clients can
+	// select this rig by capability (e.g. `hitl reserve --require analyzer`).
+	if brk.Enabled() {
+		opts = append(opts, queue.WithAnalyzer(brk.Describe()))
+	}
 	var apCtl *ap.NMController
 	// Advertise the provisioning-AP creds in /status (for `hitl wifi`) whenever an
 	// SSID is configured — independent of whether the daemon toggles the AP.
