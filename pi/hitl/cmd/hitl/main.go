@@ -120,8 +120,13 @@ func cmdReserve(args []string) error {
 	device := deviceFlag(fs)
 	keep := fs.Bool("keep", false, "keep the reservation after the SSH session exits (default: release)")
 	noShell := fs.Bool("no-shell", false, "just wait until active and print the endpoint; don't open a shell")
+	require := requireFlag(fs)
 	_ = fs.Parse(args)
-	if err := resolve(server); err != nil {
+	req, err := parseRequire(*require)
+	if err != nil {
+		return err
+	}
+	if err := resolve(server, req); err != nil {
 		return err
 	}
 
@@ -519,8 +524,13 @@ func cmdRun(args []string) error {
 	device := deviceFlag(fs)
 	keep := fs.Bool("keep", false, "keep the reservation afterward (default: release when we made it)")
 	tty := fs.Bool("tty", false, "allocate a pseudo-tty (for interactive commands)")
+	require := requireFlag(fs)
 	_ = fs.Parse(args)
-	if err := resolve(server); err != nil {
+	req, err := parseRequire(*require)
+	if err != nil {
+		return err
+	}
+	if err := resolve(server, req); err != nil {
 		return err
 	}
 	remoteArgs := fs.Args()
@@ -983,15 +993,15 @@ func poolServers() ([]string, string, error) {
 // concrete runner URL. With neither set, it discovers the runner pool (see
 // poolServers), probes every runner's /status, and picks the shortest-queue one
 // (see internal/pool). With no pool discoverable, it falls back to hitl-rig.
-func resolveServer(s string) (string, error) {
+func resolveServer(s string, req ...pool.Require) (string, error) {
 	if strings.TrimSpace(s) != "" {
-		return s, nil
+		return s, nil // explicit --server/$HITL_SERVER: trust the operator's pick
 	}
 	servers, source, _ := poolServers()
 	if len(servers) == 0 {
 		return "http://hitl-rig:8087", nil
 	}
-	picked, err := pool.Pick(pool.Probes(servers, fetchStatus))
+	picked, err := pool.Pick(pool.Probes(servers, fetchStatus), req...)
 	if err != nil {
 		return "", fmt.Errorf("pool (%s): %w", source, err)
 	}
@@ -1016,13 +1026,30 @@ func fetchStatus(base string) (*api.Status, error) {
 
 // resolve replaces *server in place with the concrete runner URL (see
 // resolveServer). Call once, right after fs.Parse.
-func resolve(server *string) error {
-	s, err := resolveServer(*server)
+func resolve(server *string, req ...pool.Require) error {
+	s, err := resolveServer(*server, req...)
 	if err != nil {
 		return err
 	}
 	*server = s
 	return nil
+}
+
+// requireFlag registers a --require capability filter for pool selection.
+func requireFlag(fs *flag.FlagSet) *string {
+	return fs.String("require", "", "only pick a rig with this capability (e.g. analyzer)")
+}
+
+// parseRequire maps the --require value to a pool.Require.
+func parseRequire(s string) (pool.Require, error) {
+	switch strings.TrimSpace(s) {
+	case "":
+		return pool.Require{}, nil
+	case "analyzer":
+		return pool.Require{Analyzer: true}, nil
+	default:
+		return pool.Require{}, fmt.Errorf("unknown --require %q (known: analyzer)", s)
+	}
 }
 
 // hostFromServer extracts the host (name or IP) from the --server URL, so the

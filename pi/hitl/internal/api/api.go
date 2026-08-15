@@ -76,12 +76,25 @@ type Reservation struct {
 // count the unassigned waiters. Devices carries the full per-DUT breakdown for
 // newer clients.
 type Status struct {
-	Rig          string         `json:"rig"`               // rig name/hostname
-	Active       *Reservation   `json:"active"`            // a busy DUT's holder, or null if any DUT is free
-	QueueLength  int            `json:"queue_length"`      // waiters not yet assigned a DUT (0 while any DUT is free)
-	Devices      []DeviceStatus `json:"devices,omitempty"` // per-DUT state (newer clients)
-	LeaseSeconds int            `json:"lease_seconds"`     // heartbeat lease window
-	WiFi         *WiFiInfo      `json:"wifi,omitempty"`    // the rig's own provisioning AP, if it runs one
+	Rig          string         `json:"rig"`                // rig name/hostname
+	Active       *Reservation   `json:"active"`             // a busy DUT's holder, or null if any DUT is free
+	QueueLength  int            `json:"queue_length"`       // waiters not yet assigned a DUT (0 while any DUT is free)
+	Devices      []DeviceStatus `json:"devices,omitempty"`  // per-DUT state (newer clients)
+	LeaseSeconds int            `json:"lease_seconds"`      // heartbeat lease window
+	WiFi         *WiFiInfo      `json:"wifi,omitempty"`     // the rig's own provisioning AP, if it runs one
+	Analyzer     *AnalyzerInfo  `json:"analyzer,omitempty"` // the rig's shared logic analyzer, if any
+}
+
+// AnalyzerInfo advertises a rig's shared logic analyzer so clients can select a
+// rig by CAPABILITY rather than by name — a test that needs to capture the DUT's
+// wire (LED-driver correctness, latency) can require an analyzer-capable rig
+// instead of hoping the pool hands it one. Nil/omitted on rigs without one (the
+// ESP-toolbox rigs). Tags are too coarse to model this; capabilities self-describe.
+type AnalyzerInfo struct {
+	Present   bool     `json:"present"`             // true when the rig has a working analyzer
+	Driver    string   `json:"driver,omitempty"`    // sigrok capture driver, e.g. "fx2lafw"
+	Protocols []string `json:"protocols,omitempty"` // wire protocols it can decode (e.g. "ws2812")
+	Channels  []string `json:"channels,omitempty"`  // mapped analyzer channels (e.g. "D6"), for display
 }
 
 // DeviceStatus is one DUT's slice of the rig's Status.

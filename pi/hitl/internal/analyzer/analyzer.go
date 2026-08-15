@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -75,6 +76,42 @@ func New(cfg Config) *Broker {
 
 // Enabled reports whether an analyzer is configured on this rig.
 func (b *Broker) Enabled() bool { return b != nil && b.cfg.Driver != "" }
+
+// Describe returns the rig's analyzer capability for /status, or nil when there
+// is no analyzer — so clients can select a rig by capability. Protocols/channels
+// are the distinct values across the DUT channel map (for display + matching).
+func (b *Broker) Describe() *api.AnalyzerInfo {
+	if !b.Enabled() {
+		return nil
+	}
+	protoSeen, chSeen := map[string]bool{}, map[string]bool{}
+	var protocols, channels []string
+	add := func(m DUTMap) {
+		p := string(m.Protocol)
+		if p == "" {
+			p = string(ProtocolWS2812)
+		}
+		if !protoSeen[p] {
+			protoSeen[p] = true
+			protocols = append(protocols, p)
+		}
+		for _, c := range m.Channels {
+			if !chSeen[c] {
+				chSeen[c] = true
+				channels = append(channels, c)
+			}
+		}
+	}
+	for _, m := range b.cfg.Map {
+		add(m)
+	}
+	if len(protocols) == 0 { // no explicit map: the broker's fallback tap
+		add(DUTMap{Channels: []string{"D0"}, Protocol: ProtocolWS2812})
+	}
+	sort.Strings(protocols)
+	sort.Strings(channels)
+	return &api.AnalyzerInfo{Present: true, Driver: b.cfg.Driver, Protocols: protocols, Channels: channels}
+}
 
 // SampleRateHz parses the configured samplerate (e.g. "24m") to Hz, for latency
 // math on sample offsets. Returns 0 if it can't be parsed.

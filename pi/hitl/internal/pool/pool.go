@@ -125,11 +125,40 @@ func Probes(servers []string, get StatusFn) []Probe {
 	return out
 }
 
+// Require is an optional capability filter for Pick: only rigs whose /status
+// advertises the required capability are considered.
+type Require struct {
+	Analyzer bool // require a shared logic analyzer (Status.Analyzer.Present)
+}
+
+// hasAnalyzer reports whether a reachable probe advertises a logic analyzer.
+func hasAnalyzer(p Probe) bool {
+	return p.Err == nil && p.Status != nil && p.Status.Analyzer != nil && p.Status.Analyzer.Present
+}
+
 // Pick chooses the best runner from already-collected probes. It returns the
-// chosen base URL, or an error if every runner was unreachable.
-func Pick(probes []Probe) (string, error) {
+// chosen base URL, or an error if every runner was unreachable. An optional
+// Require narrows the pool to capability-matching rigs first, so a test that
+// needs to capture the wire gets an analyzer rig, not whichever frees first.
+func Pick(probes []Probe, req ...Require) (string, error) {
 	if len(probes) == 0 {
 		return "", fmt.Errorf("no runners in pool")
+	}
+	var r Require
+	if len(req) > 0 {
+		r = req[0]
+	}
+	if r.Analyzer {
+		var capable []Probe
+		for _, p := range probes {
+			if hasAnalyzer(p) {
+				capable = append(capable, p)
+			}
+		}
+		if len(capable) == 0 {
+			return "", fmt.Errorf("no logic-analyzer rig in pool of %d: %s", len(probes), summarizeErrs(probes))
+		}
+		probes = capable
 	}
 	// Stable sort keeps input order as the tie-break; keys: reachable first,
 	// then idle first, then shortest queue.
