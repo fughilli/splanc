@@ -16,16 +16,26 @@ test enforces the fixed twin stays soft-float-free.
 ## On-device measurement (HITL)
 
 Needs the tailnet + a free rig (see the `hitl` skill / `pi/hitl`). `fx_bench`
-reserves a rig, flashes the current firmware, provisions, and reports
-`measuredFrameCycles` per effect:
+reserves a rig, flashes the current firmware, provisions, and reports the frame
+cycles per effect (pass an ABSOLUTE `--benchmarks-dir`; the sandbox cwd is not
+the source tree):
 
 ```sh
 bazel run //pi/hitl/harness:fx_bench -- \
-  --benchmarks-dir pi/hitl/harness/ab_demo \
+  --benchmarks-dir "$PWD/pi/hitl/harness/ab_demo" \
   --out /tmp/fug122-ab.json
 ```
 
-Then compare `measuredFrameCycles` for `plasmaHueF32` vs `plasmaHueFixed` in the
-bundle (the fixed twin should be markedly lower — it runs no soft-float). To
-measure against firmware already on the board, add `--no-bundle`; to target a
+To measure against firmware already on the board, add `--no-bundle`; to target a
 reachable player socket directly, `--device-ws ws://<dut>/ws`.
+
+### Measured result (esp32c6 @ 160 MHz, 256 LEDs)
+
+| effect                          | frame cycles | vs float                        |
+| ------------------------------- | ------------ | ------------------------------- |
+| `plasmaHueF32` (float)          | 1,603,536    | —                               |
+| `plasmaHueFixed` (fixed native) | 1,318,320    | **−17.8 %** (~10.0 ms → 8.2 ms) |
+
+~285 k cycles / frame (~1114 cycles / LED) saved — the shader's soft-float
+`sin` + `hsv2rgb` + output, removed by the fixed path. The residual frame cost is
+the per-LED framing and the FastLED transmit, shared by both.

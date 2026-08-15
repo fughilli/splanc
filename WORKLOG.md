@@ -71,10 +71,10 @@ links; wasm/bench/profile build):**
   `Option<Rgb>` so the shade caller uses a `RetRgb*`-produced colour directly.
   16 hand-assembled opcode tests + an exhaustive `every_opcode_has_a_fixed_or_
 integer_path` audit (adding an opcode without a fixed path fails to compile).
-- **Cached fixed context** (`firmware/player_app/ffi.rs`): per-LED pos/uv/s/dist
-  converted to fixed ONCE at `fx_rebuild_topo` (pos Q16.16, rest Q1.14, 20 B/LED)
-  - per-frame time/dt; `FxLed`/`FxFrame` carry the `*_fix` mirrors that
-    `LoadCtxFix` reads. wasm preview mirrors this for device parity.
+- **Fixed context, VM-side** (`firmware/player_app/ffi.rs`): `LoadCtxFix` reads
+  `FxLed`/`FxFrame` `*_fix` mirrors. Built ONLY when the `.fxb` sets
+  `FLAG_USES_CTXFIX` (all-float effects pay nothing) and the frame's fixed
+  time/dt are converted ONCE per frame, not per LED. wasm preview mirrors this.
 - **Compiler** (`fx_compiler/src/lib.rs`): `LoadCtxFix` provenance peephole for
   `fixed16(led.pos.x)`; compile-time fold of literal casts; `Ty::Color` routing
   of `hsv2rgb`/`palette`/`rgb`/`rgb8` on fixed args to the fixed colour ops with
@@ -82,8 +82,16 @@ integer_path` audit (adding an opcode without a fixed path fails to compile).
   Disassembler completed for FUG-10 + FUG-122 opcodes. compile.rs tests assert an
   all-fixed effect disassembles float-free and renders correctly.
 
-**Next:** HITL — paired fixed-vs-float benchmark effects on a real C6 to measure
-the per-frame cycle win and hill-climb.
+**HITL-validated on hitl-rig (esp32c6):** `//pi/hitl/harness:fx_bench` PASSES the
+golden within ±10%. The fixed-vs-float A/B (`pi/hitl/harness/ab_demo/`, hue
+plasma @ 256 LEDs): float **1,603,536** vs fixed-native **1,318,320** frame
+cycles — **−17.8%** (~10.0 → 8.2 ms), the shader soft-float removed end to end.
+
+**Gotcha fixed on-hardware:** the per-LED `FxFrame` build must NOT recompute
+`q16_16(time)`/`q16_16(dt)` — two soft-float muls per LED inflated the framing
+~12% and tripped the empty/sweep256 goldens. Convert once per frame in
+`lm_fx_update` (statics), copy the ints per LED. This is exactly the trap this
+ticket is about: a stray soft-float op on the FPU-less hot path is expensive.
 
 ## iOS support — Capacitor scaffold + host build server (branch `agent/fug-92-ios-support`)
 
