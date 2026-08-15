@@ -329,7 +329,11 @@ published to <code class="docutils literal notranslate"><span class="pre">/user-
 (<code class="docutils literal notranslate"><span class="pre">web/src/ui/guide/catalog.ts</span></code>); regenerate both with <code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//web:gen_user_guide</span></code>
 (CI freshness-gates it via <code class="docutils literal notranslate"><span class="pre">//web:user_guide_freshness</span></code> — never edit by hand). The
 same catalog drives the app’s interactive tutorial (Settings ▸ Help &amp; tutorial), so
-the docs and the in-app tour can’t drift.</p></li>
+the docs and the in-app tour can’t drift. Real app screenshots come from Playwright +
+headless Chromium (<code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//docs:capture_user_guide</span></code>, writing
+<code class="docutils literal notranslate"><span class="pre">docs/user-guide/img/</span></code>); <code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//docs:build_user_guide</span></code> is the one-target rebuild
+(regenerate text + manifest, then recapture). Both are <code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span></code> tools — never part
+of <code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">test</span> <span class="pre">//...</span></code>, so CI needs no browser; the PNGs are checked-in, not gated.</p></li>
 <li><p><strong><code class="docutils literal notranslate"><span class="pre">docs/design/</span></code></strong> — subsystem design notes:</p>
 <ul>
 <li><p><a class="reference internal" href="docs/design/effects-runtime.html"><span class="std std-doc"><code class="docutils literal notranslate"><span class="pre">effects-runtime.md</span></code></span></a> — the on-device VM and

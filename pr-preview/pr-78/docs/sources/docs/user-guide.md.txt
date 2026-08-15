@@ -56,6 +56,8 @@ static site at `/user-guide/` on the deployed app.
 
 _Map, control, and animate addressable LED fixtures from your phone._
 
+![Welcome to Splanc — Splanc app screen](user-guide/img/welcome.png)
+
 Splanc turns a phone into the control surface for addressable LED art. You point the camera at a
 running fixture, the app watches the LEDs blink out their addresses, and it reconstructs where every
 LED sits in 3D space. That map then drives real-time effects on the fixture — authored on the phone
@@ -78,6 +80,8 @@ The bottom bar is the whole app in miniature:
 ### The maps library
 
 _Browse, search, organize, import, and export your captured fixtures._
+
+![The maps library — Splanc app screen](user-guide/img/maps-library.png)
 
 The Maps tab is your library of captured fixtures. Each row is one map — a solved 3D reconstruction
 of a fixture's LEDs. Search by name, filter by tag, and group maps into folders for larger
@@ -138,6 +142,8 @@ grid, and axes triad).
 ### The effects library
 
 _Browse, create, tag, and test the shader effects that drive your LEDs._
+
+![The effects library — Splanc app screen](user-guide/img/effects-library.png)
 
 The Effects tab is a library of animations, mirroring the maps browser: a search box, tag chips,
 folders, and a row per saved effect. Tap one to open the editor; the + button creates a new effect
@@ -229,6 +235,8 @@ build bundles over Web Serial, with live progress, a log, and a diagnostics pane
 
 _Tune per-device gamma and white balance so colors read true._
 
+![Color correction — Splanc app screen](user-guide/img/color-correction.png)
+
 Different LED strips render color differently. Color correction is a per-device surface for the
 strip's gamma and white-balance curves: pick a built-in profile, tune per-channel gamma and white
 balance by value or by dragging the transfer curve, and preview the effect on real colors before
@@ -240,6 +248,8 @@ actually shows.
 ### Performance & calibration
 
 _Watch the live frame budget and calibrate a device's cost model._
+
+![Performance & calibration — Splanc app screen](user-guide/img/performance.png)
 
 Effects have to fit inside the device's per-frame time budget. The Performance panel (from the ⋯
 menu) shows the running effect's frame budget live when a device is connected: a
@@ -258,6 +268,8 @@ frame-time-vs-budget graph, a per-phase breakdown (update / shade / show), and a
 
 _Name physical knobs and bind them to effect parameters._
 
+![MIDI controllers — Splanc app screen](user-guide/img/midi.png)
+
 Splanc can drive effect parameters from a hardware MIDI controller. Under Settings ▸ MIDI you enable
 Web MIDI, see connected devices, and give physical controls semantic names: wiggle a knob, type
 "speed", assign.
@@ -268,6 +280,8 @@ binding itself lives in the effect editor's Uniforms pane.
 ### Appearance & behavior
 
 _Theme the app, pick fonts, and tune the 3D view and capture defaults._
+
+![Appearance & behavior — Splanc app screen](user-guide/img/appearance.png)
 
 Settings is split into Appearance and Behavior. Every control writes through immediately and
 persists across reloads, with a live 3D preview so the render knobs show their effect as you drag.
@@ -288,6 +302,8 @@ persists across reloads, with a live 3D preview so the render knobs show their e
 ### Help, tutorial & about
 
 _Restart this tutorial any time, and find licensing and credits._
+
+![Help, tutorial & about — Splanc app screen](user-guide/img/help.png)
 
 The interactive tutorial you can launch in the app is dismissible — once you skip or finish it, it
 won't nag you again. You can restart it any time from **Settings ▸ Help & tutorial**, which also
