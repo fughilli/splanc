@@ -30,6 +30,8 @@ stage_site() {
   # The generated static user guide (FUG-103), served at /user-guide/. Generated
   # from the in-app guide catalog and pinned fresh by //web:user_guide_freshness.
   mkdir -p "$out/user-guide" && cp -L docs/user-guide/index.html "$out/user-guide/index.html"
+  # Captured app screenshots the guide embeds (may be absent on a bare build).
+  if [ -d docs/user-guide/img ]; then cp -RL docs/user-guide/img "$out/user-guide/img"; fi
   # Firmware image(s) for in-browser USB flashing (FUG-60), staged at /firmware/
   # (the webapp fetches /firmware/manifest.json). The flash bundle is NOT built
   # here — it compiles the esp32c6 image from source. CI's firmware job builds it

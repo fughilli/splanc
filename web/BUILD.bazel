@@ -327,8 +327,10 @@ sh_binary(
 SITE_DATA = [
     ":dist",
     "stage_site.lib.sh",
-    # The generated static user guide (FUG-103), published at /user-guide/.
+    # The generated static user guide (FUG-103), published at /user-guide/,
+    # plus its captured screenshots.
     "//docs:user-guide/index.html",
+    "//docs:user_guide_img",
     "//firmware/fx_vm:fx_vm_web",
     "//firmware/pulse:pulse_web",
     "//fx_compiler:fx_compiler_web",
