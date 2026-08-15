@@ -27,12 +27,19 @@ Kevin's steer: "can't the firmware receive OSC natively?").
 - **`main.cpp`** — a low-prio UDP task on :9000 feeds `lm_osc_ingest` under
   `player_mutex` (the only state shared with the render task). Full `esp32c6`
   firmware builds.
-- **Perf** (`//firmware/osc:osc_bench`, host): by-name ingest 70 ns/packet vs
-  slot 21 ns (3.35× but trivial); manifest parse 1.9 µs once per effect load; a
-  200 Hz knob = 0.0014% of a core. Ingest is off the render task, so the render
-  loop is unaffected either way. On-device C6 cycle counts via HITL are the next
-  step if hard numbers are wanted (host≠C6, but the ratio + off-render-path
-  design carry over).
+- **Perf — REAL C6 numbers** (HITL, `:esp32c6_oscbench` boot self-bench, 160 MHz):
+  - osc by-name: **1282 cyc / 8.0 µs** per update
+  - osc by-slot: **1186 cyc / 7.4 µs** — so **by-name costs only +96 cyc / +0.6 µs
+    (~8%)**, NOT the 3.35× the host bench predicted (host int-parse was so cheap it
+    skewed the ratio). Names are effectively free on-device → keep by-name.
+  - proto set_uniforms: **3568 cyc / 22.3 µs**, and that EXCLUDES the WS/TLS the
+    real path pays — ~2.8× OSC on-device (plus TCP latency), so OSC/UDP stays the
+    right transport.
+  - one-time effect load incl. table build: 18900 cyc / 118 µs.
+  - Both transports functionally verified on the DUT (`/k=0.5 → red=127`). At
+    8 µs, a 200 Hz knob = 0.16% of a core; ingest is off the render task anyway.
+    (Host `//firmware/osc:osc_bench` + `:transport_bench` remain for quick host
+    iteration; the C6 figures above are the design authority.)
 
 Address convention: `/speed` (scalar), `/tint/x|y|z|w` (vec component) or `/tint`
 `,fff` (whole vector); `/slotN` when no manifest. Configurable prefix.
