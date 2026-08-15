@@ -421,6 +421,57 @@ message GetEffectUniforms {
 }
 
 // ---------------------------------------------------------------------------
+// Auto hardware discovery (FUG-107): qwiic/I2C sensor enumeration + drivers
+// ---------------------------------------------------------------------------
+
+// Probe the qwiic I2C bus (addresses 0x08..0x77). Reply: i2c_scan_result.
+message ScanI2c {}
+
+// Result of a bus scan: the 7-bit addresses that ACKed, ascending. The app
+// cross-references these against its known-sensor database to identify the
+// module (or asks the user when unknown).
+message I2cScanResult {
+  repeated uint32 addresses = 1 [packed = true];
+}
+
+// Bind one driver export (a poll() output — `width` slots at `export_slot` in
+// the driver's state) to the active effect's uniform at `uniform_slot`. After
+// each poll the firmware copies the export value into that uniform, so a sensor
+// reading drives an effect the same way a slider does. The app computes these
+// by matching export names to uniform names.
+message DriverBinding {
+  uint32 export_slot = 1;
+  uint32 width = 2; // 1..4
+  uint32 uniform_slot = 3;
+}
+
+// Upload a compiled sensor driver: `.fxb` (v2, with a poll() entry) that reads a
+// qwiic module over I2C and writes `export`s. The firmware runs poll() every
+// `poll_interval_ms` and applies `bindings` to the active effect's uniforms.
+// `activate` starts polling on receipt. Stored like submit_effect (hand-walked
+// past the firmware's 64 B field cap). Reply: driver_state (or error `bad_fxb`,
+// `driver_too_large`, `no_poll`).
+message SubmitDriver {
+  bytes fxb = 1;
+  uint32 poll_interval_ms = 2;
+  repeated DriverBinding bindings = 3;
+  bool activate = 4;
+}
+
+// Stop polling and clear the active driver. Reply: driver_state.
+message RemoveDriver {}
+
+// Reply to submit_driver / remove_driver: the driver runtime status.
+message DriverState {
+  bool running = 1;
+  uint32 poll_interval_ms = 2;
+  uint32 export_count = 3;
+  uint32 binding_count = 4;
+  // Last poll outcome: "ok" | "budget" | "timeout" | "" (never run).
+  string last_poll = 5;
+}
+
+// ---------------------------------------------------------------------------
 // Perf monitoring (§ perf-monitoring): device execution-time/memory telemetry
 // ---------------------------------------------------------------------------
 
@@ -508,6 +559,9 @@ message ClientMessage {
     UploadChunk upload_chunk = 29;
     SetColorCorrection set_color_correction = 30;
     SetBrightness set_brightness = 31;
+    ScanI2c scan_i2c = 32;
+    SubmitDriver submit_driver = 33;
+    RemoveDriver remove_driver = 34;
   }
 }
 
@@ -774,5 +828,7 @@ message ServerMessage {
     EffectUniforms effect_uniforms = 16;
     PerfReport perf_report = 17;
     ChunkAck chunk_ack = 18;
+    I2cScanResult i2c_scan_result = 19;
+    DriverState driver_state = 20;
   }
 }

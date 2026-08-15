@@ -133,5 +133,19 @@ fn main() -> std::io::Result<()> {
     // profiles.
     g.configure(".ledmapper.v1.EffectUniforms.textures", Config::new().max_len(8));
 
+    // I2C bus scan result (FUG-107): REAL firmware traffic (the player ENCODES
+    // this reply). The 7-bit qwiic address space is 0x08..0x77 = 112 slots;
+    // round to 128 so a fully-populated bus never truncates. SubmitDriver is
+    // hand-walked past the generated bindings on firmware (like SubmitEffect),
+    // so its fxb/bindings keep the default caps here.
+    g.configure(
+        ".ledmapper.v1.I2cScanResult.addresses",
+        Config::new().max_len(128),
+    );
+    g.configure(
+        ".ledmapper.v1.SubmitDriver.bindings",
+        Config::new().max_len(if firmware { 1 } else { 64 }),
+    );
+
     g.compile_fdset_file(&args[1], &args[2])
 }

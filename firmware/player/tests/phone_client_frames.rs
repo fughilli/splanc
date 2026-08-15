@@ -85,7 +85,12 @@ fn reply_allowed(req: &CMsg, reply: &Option<SMsg>) -> bool {
         | CMsg::SetUniforms(_)
         | CMsg::GetEffectUniforms(_)
         | CMsg::SetPerf(_)
-        | CMsg::GetPerfReport(_) => is_err("unsupported"),
+        | CMsg::GetPerfReport(_)
+        // Auto hardware discovery (FUG-107): handled by the fx layer; this
+        // bare Player replies unsupported.
+        | CMsg::ScanI2C(_)
+        | CMsg::SubmitDriver(_)
+        | CMsg::RemoveDriver(_) => is_err("unsupported"),
         // Rename, color correction, and output brightness all reply welcome.
         CMsg::SetDeviceName(_) | CMsg::SetColorCorrection(_) | CMsg::SetBrightness(_) => {
             matches!(reply, Some(SMsg::Welcome(_)))
@@ -126,6 +131,9 @@ fn arm_name(req: &CMsg) -> &'static str {
         CMsg::UploadChunk(_) => "upload_chunk",
         CMsg::SetColorCorrection(_) => "set_color_correction",
         CMsg::SetBrightness(_) => "set_brightness",
+        CMsg::ScanI2C(_) => "scan_i2c",
+        CMsg::SubmitDriver(_) => "submit_driver",
+        CMsg::RemoveDriver(_) => "remove_driver",
     }
 }
 
