@@ -482,14 +482,16 @@ scaled-integer slot word: <code class="docutils literal notranslate"><span class
 6/14/16 = the fixed formats) lets one opcode serve every width. An exhaustive
 opcode-coverage test (<code class="docutils literal notranslate"><span class="pre">fx_vm/tests/vm.rs</span></code>) fails to compile if a new opcode is
 added without classifying its fixed path.</p></li>
-<li><p><strong>Float-free inputs — cached fixed context.</strong> Per-LED geometry (<code class="docutils literal notranslate"><span class="pre">led.pos</span></code>,
-<code class="docutils literal notranslate"><span class="pre">uv</span></code>, <code class="docutils literal notranslate"><span class="pre">s</span></code>, <code class="docutils literal notranslate"><span class="pre">dist</span></code>) is converted to fixed <strong>once, at map/topology load</strong>, and
-cached (pos Q16.16; the 0..1 quantities Q1.14, 20 B/LED); per-frame <code class="docutils literal notranslate"><span class="pre">time</span></code>/<code class="docutils literal notranslate"><span class="pre">dt</span></code>
-are converted once per frame. <code class="docutils literal notranslate"><span class="pre">LoadCtxFix</span> <span class="pre">id</span> <span class="pre">comp</span> <span class="pre">frac</span></code> pushes one scalar
-component straight from that cache — so if a program uses no float inputs, the
-float positions are simply never re-derived on the hot path. <code class="docutils literal notranslate"><span class="pre">Frame</span></code>/<code class="docutils literal notranslate"><span class="pre">Led</span></code>
-carry both the <code class="docutils literal notranslate"><span class="pre">f32</span></code> and <code class="docutils literal notranslate"><span class="pre">*_fix</span></code> mirrors; the host fills whichever the loaded
-<code class="docutils literal notranslate"><span class="pre">.fxb</span></code> uses.</p></li>
+<li><p><strong>Float-free inputs — fixed context, VM-side.</strong> <code class="docutils literal notranslate"><span class="pre">LoadCtxFix</span> <span class="pre">id</span> <span class="pre">comp</span> <span class="pre">frac</span></code>
+pushes one scalar context component already in Q16.16 fixed/int, so no float
+op runs inside the VM for <code class="docutils literal notranslate"><span class="pre">led.pos</span></code>/<code class="docutils literal notranslate"><span class="pre">uv</span></code>/<code class="docutils literal notranslate"><span class="pre">s</span></code>/<code class="docutils literal notranslate"><span class="pre">dist</span></code>/<code class="docutils literal notranslate"><span class="pre">time</span></code>. <code class="docutils literal notranslate"><span class="pre">Frame</span></code>/<code class="docutils literal notranslate"><span class="pre">Led</span></code> carry
+both the <code class="docutils literal notranslate"><span class="pre">f32</span></code> and <code class="docutils literal notranslate"><span class="pre">*_fix</span></code> mirrors. The compiler sets a <code class="docutils literal notranslate"><span class="pre">.fxb</span></code> flag
+(<code class="docutils literal notranslate"><span class="pre">FLAG_USES_CTXFIX</span></code>) when it emits <code class="docutils literal notranslate"><span class="pre">LoadCtxFix</span></code>; the host builds the fixed
+mirrors <strong>only for those programs</strong> (all-float effects pay zero hot-path
+overhead and the resident cache is unchanged). The mirrors are derived from the
+per-frame map fetch — a small footprint on the FPU-less core, and a natural
+place to fold in a precomputed per-map fixed-position table later if profiling
+wants it.</p></li>
 <li><p><strong>Float-free output.</strong> <code class="docutils literal notranslate"><span class="pre">RetRgb8</span></code> (int 0..255 channels) and <code class="docutils literal notranslate"><span class="pre">RetRgbFix</span> <span class="pre">frac</span></code>
 (Q1.frac channels in [0,1]) emit the 8-bit colour directly, skipping the
 <code class="docutils literal notranslate"><span class="pre">clamp01()*255</span></code> soft-float epilogue.</p></li>

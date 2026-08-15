@@ -180,14 +180,16 @@ reachable:
   6/14/16 = the fixed formats) lets one opcode serve every width. An exhaustive
   opcode-coverage test (`fx_vm/tests/vm.rs`) fails to compile if a new opcode is
   added without classifying its fixed path.
-- **Float-free inputs — cached fixed context.** Per-LED geometry (`led.pos`,
-  `uv`, `s`, `dist`) is converted to fixed **once, at map/topology load**, and
-  cached (pos Q16.16; the 0..1 quantities Q1.14, 20 B/LED); per-frame `time`/`dt`
-  are converted once per frame. `LoadCtxFix id comp frac` pushes one scalar
-  component straight from that cache — so if a program uses no float inputs, the
-  float positions are simply never re-derived on the hot path. `Frame`/`Led`
-  carry both the `f32` and `*_fix` mirrors; the host fills whichever the loaded
-  `.fxb` uses.
+- **Float-free inputs — fixed context, VM-side.** `LoadCtxFix id comp frac`
+  pushes one scalar context component already in Q16.16 fixed/int, so no float
+  op runs inside the VM for `led.pos`/`uv`/`s`/`dist`/`time`. `Frame`/`Led` carry
+  both the `f32` and `*_fix` mirrors. The compiler sets a `.fxb` flag
+  (`FLAG_USES_CTXFIX`) when it emits `LoadCtxFix`; the host builds the fixed
+  mirrors **only for those programs** (all-float effects pay zero hot-path
+  overhead and the resident cache is unchanged). The mirrors are derived from the
+  per-frame map fetch — a small footprint on the FPU-less core, and a natural
+  place to fold in a precomputed per-map fixed-position table later if profiling
+  wants it.
 - **Float-free output.** `RetRgb8` (int 0..255 channels) and `RetRgbFix frac`
   (Q1.frac channels in [0,1]) emit the 8-bit colour directly, skipping the
   `clamp01()*255` soft-float epilogue.
