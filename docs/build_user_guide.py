@@ -15,7 +15,11 @@ import os
 import subprocess
 import sys
 
-import capture_user_guide
+# Ensure the sibling capture module (same py_binary srcs) is importable
+# regardless of how Bazel lays out sys.path under the _main repo.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import capture_user_guide  # noqa: E402
 
 
 def find_generator() -> str:
