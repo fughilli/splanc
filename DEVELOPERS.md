@@ -34,7 +34,11 @@ Start with the durable design and reference docs before changing subsystems:
   (`web/src/ui/guide/catalog.ts`); regenerate both with `bazel run //web:gen_user_guide`
   (CI freshness-gates it via `//web:user_guide_freshness` — never edit by hand). The
   same catalog drives the app's interactive tutorial (Settings ▸ Help & tutorial), so
-  the docs and the in-app tour can't drift.
+  the docs and the in-app tour can't drift. Real app screenshots come from Playwright +
+  headless Chromium (`bazel run //docs:capture_user_guide`, writing
+  `docs/user-guide/img/`); `bazel run //docs:build_user_guide` is the one-target rebuild
+  (regenerate text + manifest, then recapture). Both are `bazel run` tools — never part
+  of `bazel test //...`, so CI needs no browser; the PNGs are checked-in, not gated.
 - **`docs/design/`** — subsystem design notes:
   - [`effects-runtime.md`](./docs/design/effects-runtime.md) — the on-device VM and
     render loop.
