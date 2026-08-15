@@ -179,6 +179,45 @@ class Reservation:
         ssid = fields.get("ssid")
         return (ssid, fields.get("psk", "")) if ssid else None
 
+    def assert_reachable(
+        self,
+        host: str,
+        ports: tuple[int, ...] = (80, 81, 443),
+        tries: int = 3,
+        connect_timeout: int = 2,
+    ) -> None:
+        """Fail fast if the DUT isn't reachable from the rig before we tunnel to it.
+
+        A board that associated with a *foreign* rig's AP (e.g. two co-located rigs
+        sharing a provisioning SSID) provisions fine and reports an IP, but that IP
+        lives on the other rig's LAN — every forward through THIS rig then dials into
+        the void and the test dies much later with a vague "ws never came up". Probe
+        the DUT's TCP ports from the rig's own network so that case fails immediately
+        with an actionable message. A DUT on the right AP answers (open) or RSTs
+        (closed) instantly, so this only spends real time when the board is genuinely
+        unreachable (the connect hangs to the timeout). Any open port proves the DUT
+        is on this rig's LAN — we don't require the player socket specifically, so
+        this never races the WebSocket server's boot.
+        """
+        portlist = " ".join(str(p) for p in ports)
+        # POSIX sh (no `seq`); /dev/tcp is a bash feature, so the connect is bash -c.
+        probe = (
+            f"n=0; while [ $n -lt {tries} ]; do for p in {portlist}; do "
+            f'timeout {connect_timeout} bash -c "exec 3<>/dev/tcp/{host}/$p" 2>/dev/null '
+            f"&& exit 0; done; n=$((n+1)); sleep 2; done; exit 7"
+        )
+        proc = self.ssh(
+            probe, capture=True, timeout=tries * (len(ports) * connect_timeout + 3) + 30
+        )
+        if proc.returncode == 0:
+            return
+        raise ReserveError(
+            f"DUT {host} is unreachable from the rig (no TCP on {portlist} after "
+            f"{tries} tries). The board most likely joined a foreign AP — check for a "
+            f"duplicate provisioning SSID across rigs (`hitl wifi`) — or never joined "
+            f"WiFi. Failing here instead of a later, vaguer WebSocket timeout."
+        )
+
     @contextmanager
     def forward(self, remote_host: str, remote_port: int):
         """Local-forward a fresh localhost port to remote_host:remote_port via the rig.
@@ -186,7 +225,12 @@ class Reservation:
         The tunnel's far end is dialed FROM the reservation's container, so the
         rig reaches the device; this host only needs to reach the rig. Yields the
         local port (chosen by `hitl forward`, printed on its first stdout line).
+
+        Preflight: assert the target is reachable from the rig first (all forwards
+        in this harness target a just-provisioned DUT), turning a stray-board
+        association into a clear error rather than a downstream socket timeout.
         """
+        self.assert_reachable(remote_host)
         argv = [*self._hitl, "forward", *self._attach(), remote_host, str(remote_port)]
         proc = subprocess.Popen(argv, stdout=subprocess.PIPE, text=True, bufsize=1)
         try:
