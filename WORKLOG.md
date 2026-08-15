@@ -83,9 +83,22 @@ integer_path` audit (adding an opcode without a fixed path fails to compile).
   all-fixed effect disassembles float-free and renders correctly.
 
 **HITL-validated on hitl-rig (esp32c6):** `//pi/hitl/harness:fx_bench` PASSES the
-golden within ±10%. The fixed-vs-float A/B (`pi/hitl/harness/ab_demo/`, hue
-plasma @ 256 LEDs): float **1,603,536** vs fixed-native **1,318,320** frame
-cycles — **−17.8%** (~10.0 → 8.2 ms), the shader soft-float removed end to end.
+golden. Fixed-vs-float A/B @ 256 LEDs (`pi/hitl/harness/ab_demo/`):
+
+- **swirl** (6 sin/cos + hsv, compute-heavy): float **4,077,126** vs fixed
+  **848,034** — **4.8×** faster (the soft-float trig+hsv → integer LUTs).
+- plasma (fract + hsv): float **1,571,722** vs fixed **848,942** — **1.85×**.
+
+**Framing hill-climb (Kevin's review — "why only ~18%?"):** the frame was
+dominated by per-LED FRAMING, not shader compute — `run_shade` copied/zeroed
+~2.5 KB of fixed arrays PER LED (uniforms by value, state/dist copied,
+stack/locals/call_stack zeroed) + a soft-float uv projection every LED. Cut it:
+resident VM scratch reused across calls (run_shade/update take `&mut self`, pass
+state/dist/uniforms by ref; stack/call_stack need no clearing, locals still
+zeroed for array/struct locals); uv projection gated on `FLAG_USES_UV`. Measured:
+`empty` 490 k → 366 k (−25 %), benefiting EVERY effect, and undiluting the
+datatype win (plasma was −17.8 %, now −46 %). Golden + `docs/fx-vm-performance.md`
+regenerated for the faster firmware.
 
 **Gotcha fixed on-hardware:** the per-LED `FxFrame` build must NOT recompute
 `q16_16(time)`/`q16_16(dt)` — two soft-float muls per LED inflated the framing

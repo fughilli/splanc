@@ -31,11 +31,19 @@ reachable player socket directly, `--device-ws ws://<dut>/ws`.
 
 ### Measured result (esp32c6 @ 160 MHz, 256 LEDs)
 
-| effect                          | frame cycles | vs float                        |
-| ------------------------------- | ------------ | ------------------------------- |
-| `plasmaHueF32` (float)          | 1,603,536    | —                               |
-| `plasmaHueFixed` (fixed native) | 1,318,320    | **−17.8 %** (~10.0 ms → 8.2 ms) |
+After cutting the per-LED framing overhead (resident VM scratch + uv gating), the
+datatype win is no longer diluted by fixed framing:
 
-~285 k cycles / frame (~1114 cycles / LED) saved — the shader's soft-float
-`sin` + `hsv2rgb` + output, removed by the fixed path. The residual frame cost is
-the per-LED framing and the FastLED transmit, shared by both.
+| effect                                          | float (frame cyc) | fixed native | speedup           |
+| ----------------------------------------------- | ----------------- | ------------ | ----------------- |
+| `swirlF32` / `swirlFixed` (6 sin/cos + hsv)     | 4,077,126         | 848,034      | **4.8×** (−79 %)  |
+| `plasmaHueF32` / `plasmaHueFixed` (fract + hsv) | 1,571,722         | 848,942      | **1.85×** (−46 %) |
+
+The compute-heavy swirl is **4.8× faster** in fixed — its six soft-float
+`sin`/`cos` + `hsv2rgb` collapse to integer LUT ops. Light effects (plasma) are
+framing-bound (both ~848 k), so ~1.85×. The residual ~848 k floor is the per-LED
+framing + the FastLED transmit, shared by both.
+
+(For reference, before the framing cut the fixed path was diluted: plasma was
+only −17.8 %. The framing hill-climb — resident scratch, no per-LED state/uniform
+copies, uv gating — dropped the pure-overhead floor ~25 %: `empty` 490 k → 366 k.)
