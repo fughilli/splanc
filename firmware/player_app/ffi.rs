@@ -27,6 +27,7 @@ use ledmapper_fx_vm::{
     Budget, Counters as FxCounters, Frame as FxFrame, I2cBus, Led as FxLed, Outcome, Program,
     Vm as FxVm, NO_ENTRY,
 };
+use ledmapper_osc::{self as osc, Config as OscConfig, PortTable, Shadow};
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_player::{upload_malformed, upload_too_large, Player};
 use ledmapper_pulse::{Graph, Sim, MAX_SEGMENTS};
@@ -83,6 +84,17 @@ const FX_MAX_BYTES: usize = 4 * 1024;
 static mut FX_BYTES: [u8; FX_MAX_BYTES] = [0; FX_MAX_BYTES];
 static mut FX_LEN: usize = 0;
 static mut FX_VM: Option<FxVm> = None;
+
+/// Native OSC control (FUG-121). The active effect's uniform manifest reduced to
+/// a `name -> (slot, width)` table, rebuilt once per `lm_fx_load` so the UDP
+/// task's per-packet path is a table scan, not a JSON parse. `OSC_SHADOW` retains
+/// each slot's last values so per-axis vector messages (`/tint/x`) patch one
+/// component without clobbering the others. `OSC_BY_NAME` toggles name
+/// resolution vs raw slot-index addressing (`false` = the slot-only fallback /
+/// the A-B benchmark leg).
+static mut OSC_TABLE: PortTable = PortTable::empty();
+static mut OSC_SHADOW: Shadow = Shadow::new();
+static mut OSC_BY_NAME: bool = true;
 /// Hidden-buffer/texture arena for the fx VM (LoadBuf/StoreBuf). 24 KB, now
 /// BYTE-addressed (FUG-10 packed storage) so narrow elements pack tightly — a
 /// fixed8 vec4 trail on 256 LEDs is 1 KB, an f32 one 4 KB; the VM clamps a
@@ -2300,9 +2312,14 @@ pub unsafe extern "C" fn lm_fx_load(fxb: *const u8, len: usize) -> bool {
     let src = core::slice::from_raw_parts(fxb, len);
     // Validate before committing: reject a malformed .fxb so a bad upload can't
     // wedge the render loop on garbage.
-    if Program::parse(src).is_err() {
+    let Ok(prog) = Program::parse(src) else {
         return false;
-    }
+    };
+    // Build the OSC name->slot table for the fresh effect (once, off the render
+    // path) and clear the per-slot value shadow so no stale vector component
+    // leaks across a hot-reload.
+    *addr_of_mut!(OSC_TABLE) = osc::parse_manifest(prog.manifest);
+    (*addr_of_mut!(OSC_SHADOW)).reset();
     let buf = &mut *addr_of_mut!(FX_BYTES);
     buf[..len].copy_from_slice(src);
     FX_LEN = len;
@@ -2336,6 +2353,8 @@ pub unsafe extern "C" fn lm_fx_clear() {
     *addr_of_mut!(FX_VM) = None;
     FX_HASH = 0;
     FX_ID_LEN = 0;
+    *addr_of_mut!(OSC_TABLE) = PortTable::empty();
+    (*addr_of_mut!(OSC_SHADOW)).reset();
     perf_reset_ring();
 }
 
@@ -2402,6 +2421,38 @@ pub unsafe extern "C" fn lm_fx_set_uniform(slot: u32, vals: *const f32, n: usize
         let s = core::slice::from_raw_parts(vals, n);
         vm.set_uniform(slot as usize, s);
     }
+}
+
+/// Select OSC addressing mode: `true` (default) resolves uniform names via the
+/// active effect's manifest (falling back to slot index for unknown names);
+/// `false` treats every address as a raw slot number. Exposed so the app / a
+/// bench can A-B the name-lookup cost and so slot-only can be forced.
+#[no_mangle]
+pub unsafe extern "C" fn lm_osc_set_by_name(by_name: bool) {
+    OSC_BY_NAME = by_name;
+}
+
+/// Ingest one OSC datagram and drive the active effect's uniforms from it.
+/// Returns the number of uniform writes applied (0 if no effect is active, the
+/// datagram isn't valid OSC, or nothing matched). Meant to be called from the
+/// UDP receive task — it never blocks and never allocates.
+///
+/// # Safety
+/// `data` must point to `len` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn lm_osc_ingest(data: *const u8, len: usize) -> u32 {
+    if data.is_null() || len == 0 || !lm_fx_active() {
+        return 0;
+    }
+    let bytes = core::slice::from_raw_parts(data, len);
+    let cfg = OscConfig { prefix: "/", by_name: OSC_BY_NAME };
+    let table = &*addr_of!(OSC_TABLE);
+    let shadow = &mut *addr_of_mut!(OSC_SHADOW);
+    osc::ingest(bytes, &cfg, table, shadow, &mut |slot, vals| {
+        if let Some(vm) = (*addr_of_mut!(FX_VM)).as_mut() {
+            vm.set_uniform(slot as usize, vals);
+        }
+    }) as u32
 }
 
 /// Run `update()` once for this frame (before the per-LED shade sweep). Clears

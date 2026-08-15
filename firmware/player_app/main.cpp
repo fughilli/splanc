@@ -35,6 +35,8 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
+#include <errno.h>
+#include <lwip/sockets.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
@@ -1092,6 +1094,53 @@ static uint32_t render_once() {
   return next_delay_ms;
 }
 
+// -- Native OSC input (FUG-121) ----------------------------------------------
+// A UDP listener that maps OSC messages onto the active effect's live uniforms,
+// so a DAW / VJ tool (TouchDesigner, Ableton, TouchOSC, …) can drive uniforms in
+// real time with no host bridge. All the parsing / name→slot resolution lives in
+// the Rust core (//firmware/osc, via lm_osc_ingest); this task just owns the
+// socket. Address convention: `/uniform` (scalar), `/uniform/x|y|z|w` (vector
+// component), or `/slotN` when the effect advertises no manifest.
+static constexpr uint16_t kOscPort = 9000;
+static constexpr uint32_t kOscTaskStack = 4096;  // recv buffer is static, not here
+static constexpr size_t kOscRxCap = 1472;        // one Ethernet-MTU UDP payload
+
+static void osc_task(void *) {
+  int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  if (sock < 0) {
+    Log().printf("[osc] socket() failed (errno=%d); OSC input disabled\n", errno);
+    vTaskDelete(nullptr);
+    return;
+  }
+  sockaddr_in addr = {};
+  addr.sin_family = AF_INET;
+  addr.sin_addr.s_addr = htonl(INADDR_ANY);
+  addr.sin_port = htons(kOscPort);
+  if (bind(sock, reinterpret_cast<sockaddr *>(&addr), sizeof addr) < 0) {
+    Log().printf("[osc] bind(:%u) failed (errno=%d); OSC input disabled\n", kOscPort, errno);
+    close(sock);
+    vTaskDelete(nullptr);
+    return;
+  }
+  Log().printf("[osc] listening for OSC on udp/%u\n", kOscPort);
+
+  // Static so the datagram buffer stays off this task's modest stack.
+  static uint8_t rx[kOscRxCap];
+  for (;;) {
+    ssize_t n = recvfrom(sock, rx, sizeof rx, 0, nullptr, nullptr);
+    if (n <= 0) {
+      if (n < 0) vTaskDelay(pdMS_TO_TICKS(10));  // transient error → brief back-off
+      continue;
+    }
+    // Apply under player_mutex: lm_osc_ingest mutates the uniforms the render
+    // task reads. It's cheap (parse + a table scan, resolution was done once at
+    // effect load), so the frame path is barely contended.
+    xSemaphoreTake(player_mutex, portMAX_DELAY);
+    lm_osc_ingest(rx, static_cast<size_t>(n));
+    xSemaphoreGive(player_mutex);
+  }
+}
+
 // The render task: forever, render one frame then sleep until the next is due.
 static void render_task(void *) {
   for (;;) {
@@ -1548,6 +1597,80 @@ static void on_sta_got_ip(arduino_event_id_t, arduino_event_info_t) {
   sta_relisten_pending = true;
 }
 
+#ifdef LM_OSC_BENCH
+#include "firmware/player_app/osc_bench_fxb_res.h"
+
+// On-device micro-benchmark (FUG-121): real C6 cycle counts for one uniform
+// update via each path, so the transport decision rests on hardware numbers, not
+// host extrapolation. Built into a dedicated bench image (`:esp32c6_oscbench`,
+// -DLM_OSC_BENCH); it runs once at boot, logs `[oscbench]` lines, then halts (no
+// WiFi/BLE). Read it over HITL: `hitl flash --monitor …_oscbench_flashbundle.tar`.
+static constexpr uint32_t kBenchCpuHz = 160000000;  // C6 core clock (perf uses the same)
+
+static uint32_t cyc_to_ns(uint32_t cyc_per_op) {
+  return (uint32_t)((uint64_t)cyc_per_op * 1000000000ull / kBenchCpuHz);
+}
+
+static void run_osc_bench() {
+  // Canned inputs (see firmware/osc): OSC is big-endian, 4-byte aligned.
+  static const uint8_t osc_name[] = {'/', 'k', 0, 0, ',', 'f', 0, 0, 0x3f, 0x00, 0x00, 0x00};
+  static const uint8_t osc_slot[] = {'/', '0', 0, 0, ',', 'f', 0, 0, 0x3f, 0x00, 0x00, 0x00};
+  // Byte-identical to the host encoder's set_uniforms(slot=0, 0.5) envelope.
+  static const uint8_t proto_frame[] = {0xba, 0x01, 0x08, 0x0a, 0x06, 0x12, 0x04, 0x00, 0x00, 0x00, 0x3f};
+  uint8_t out[128];
+
+  lm_fx_load((const uint8_t *)osc_bench_fxb, osc_bench_fxb_len);
+  lm_fx_set_active(true);
+  lm_fx_update(0.0f, 0.033f, 0, NUM_LEDS);
+
+  // Functional check: each transport should drive k (=red). k=0.5 -> ~127.
+  uint8_t rgb[3] = {0, 0, 0};
+  lm_osc_ingest(osc_name, sizeof osc_name);
+  lm_fx_shade(0, 0.0f, 0.0f, 0.0f, rgb);
+  Log().printf("[oscbench] functional: osc /k=0.5 -> red=%u (expect 127)\n", rgb[0]);
+  lm_player_handle(proto_frame, sizeof proto_frame, 1, 1, out, sizeof out);
+  lm_fx_shade(0, 0.0f, 0.0f, 0.0f, rgb);
+  Log().printf("[oscbench] functional: proto set_uniforms(0,0.5) -> red=%u (expect 127)\n", rgb[0]);
+
+  const uint32_t N = 4000;
+  volatile uint32_t sink = 0;
+
+  lm_osc_set_by_name(true);
+  uint32_t t0 = esp_cpu_get_cycle_count();
+  for (uint32_t i = 0; i < N; i++) sink += lm_osc_ingest(osc_name, sizeof osc_name);
+  uint32_t name_cyc = (esp_cpu_get_cycle_count() - t0) / N;
+
+  lm_osc_set_by_name(false);
+  t0 = esp_cpu_get_cycle_count();
+  for (uint32_t i = 0; i < N; i++) sink += lm_osc_ingest(osc_slot, sizeof osc_slot);
+  uint32_t slot_cyc = (esp_cpu_get_cycle_count() - t0) / N;
+  lm_osc_set_by_name(true);
+
+  t0 = esp_cpu_get_cycle_count();
+  for (uint32_t i = 0; i < N; i++)
+    sink += lm_player_handle(proto_frame, sizeof proto_frame, i, i, out, sizeof out);
+  uint32_t proto_cyc = (esp_cpu_get_cycle_count() - t0) / N;
+
+  // One-time effect (re)load, which builds the OSC name->slot table.
+  const uint32_t L = 200;
+  t0 = esp_cpu_get_cycle_count();
+  for (uint32_t i = 0; i < L; i++) sink += lm_fx_load((const uint8_t *)osc_bench_fxb, osc_bench_fxb_len);
+  uint32_t load_cyc = (esp_cpu_get_cycle_count() - t0) / L;
+
+  Log().printf("[oscbench] cpu_hz=%u iters=%u manifest=%u bytes\n", kBenchCpuHz, N,
+               (unsigned)osc_bench_fxb_len);
+  Log().printf("[oscbench] per uniform update (device):\n");
+  Log().printf("[oscbench]   osc by-name : %6u cyc  %6u ns\n", name_cyc, cyc_to_ns(name_cyc));
+  Log().printf("[oscbench]   osc by-slot : %6u cyc  %6u ns\n", slot_cyc, cyc_to_ns(slot_cyc));
+  Log().printf("[oscbench]   proto sunif : %6u cyc  %6u ns  (+ ws/tls on the real path)\n",
+               proto_cyc, cyc_to_ns(proto_cyc));
+  Log().printf("[oscbench] effect load (once, builds table): %u cyc  %u us\n", load_cyc,
+               cyc_to_ns(load_cyc) / 1000);
+  Log().printf("[oscbench] DONE (sink=%u) — halting\n", (unsigned)sink);
+  for (;;) vTaskDelay(pdMS_TO_TICKS(2000));
+}
+#endif  // LM_OSC_BENCH
+
 void setup() {
   Serial.begin(115200);
   // Non-blocking logging. Serial is the C6's USB-Serial-JTAG (HWCDC); its
@@ -1567,6 +1690,10 @@ void setup() {
   // either the message handler or the render task can touch it.
   player_mutex = xSemaphoreCreateMutex();
   lm_player_init(NUM_LEDS);
+#ifdef LM_OSC_BENCH
+  // Bench image: measure on-device, log, and halt — never brings up the radios.
+  run_osc_bench();
+#endif
   // Restore a previously-mapped fixture from flash (LittleFS) before serving.
   fs_begin_and_restore();
   // Bring up the color-correction LUT (from flash if present, else the default)
@@ -1650,6 +1777,10 @@ void setup() {
   // no longer rides on loop()'s cooperative WiFi/HTTP/BLE servicing.
   xTaskCreate(render_task, "render", kRenderTaskStack, nullptr, kRenderTaskPrio,
               nullptr);
+  // Native OSC input: a low-priority UDP listener that drives live uniforms
+  // (FUG-121). Independent of the WS/TLS player path; binds now and receives
+  // once the LAN is up.
+  xTaskCreate(osc_task, "osc", kOscTaskStack, nullptr, tskIDLE_PRIORITY + 1, nullptr);
 }
 
 // Improv provisioning state machine (Arduino task; BLE callbacks only latch).

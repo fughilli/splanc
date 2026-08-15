@@ -157,6 +157,15 @@ void lm_fx_set_deadline(bool hit);
 uint32_t lm_fx_last_update_outcome(void);
 // Apply a uniform value (n = its width, 1..4) to the active VM.
 void lm_fx_set_uniform(uint32_t slot, const float *vals, size_t n);
+// Ingest one OSC datagram (from the UDP task) and drive the active effect's
+// uniforms from it. Returns the number of uniform writes applied (0 when no
+// effect is active, the datagram isn't OSC, or nothing matched). Non-blocking,
+// no allocation. Call under the same lock as lm_fx_set_uniform.
+uint32_t lm_osc_ingest(const uint8_t *data, size_t len);
+// Select OSC addressing: true (default) resolves uniform names via the active
+// effect's manifest (unknown names fall back to slot index); false treats every
+// address as a raw slot number.
+void lm_osc_set_by_name(bool by_name);
 // Run update() once for this frame (clears the deadline flag first). False when
 // no effect is loaded. A cancelled update still returns true (partial state is
 // harmless).

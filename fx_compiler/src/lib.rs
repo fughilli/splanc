@@ -2428,9 +2428,12 @@ impl Compiler {
         b.push(flags); // flags
         b.push(self.n_state);
         b.push(self.n_uniform_slots);
-        // manifest: a compact encoding (VM skips it; the app decodes via the
-        // returned Vec<UniformInfo>, so keep the on-wire manifest minimal here).
-        let manifest: Vec<u8> = Vec::new();
+        // manifest: the uniform-manifest JSON, embedded so the DEVICE knows each
+        // uniform's name/slot/width (the VM skips it; get_effect_uniforms echoes
+        // it, and native OSC input resolves addresses against it — FUG-121). The
+        // web app carries its own copy from the local compile, so this only adds
+        // to the on-wire .fxb; slot count still bounds the render path.
+        let manifest: Vec<u8> = manifest_json(&self.uniforms).into_bytes();
         b.extend_from_slice(&(manifest.len() as u16).to_le_bytes());
         b.extend_from_slice(&(self.consts.len() as u16).to_le_bytes());
         b.extend_from_slice(&(self.code.len() as u16).to_le_bytes());
