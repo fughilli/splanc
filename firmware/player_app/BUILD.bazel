@@ -9,10 +9,11 @@ against the host profile, and the RFC6455 codec is host-tested byte-exactly.
 
 load("@embedded//rules:firmware.bzl", "firmware_binary")
 load("@embedded//rules:flash.bzl", "esptool_flash")
+load("@embedded//rules:resources.bzl", "c_resource_library")
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
-load("@rules_rust//rust:defs.bzl", "rust_library", "rust_static_library", "rust_test")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_static_library", "rust_test")
 load("//tools:flash_bundle.bzl", "flash_bundle")
 
 package(default_visibility = ["//visibility:public"])
@@ -32,6 +33,7 @@ rust_static_library(
     deps = [
         "//firmware/arena",
         "//firmware/fx_vm",
+        "//firmware/osc",
         "//firmware/player:player_fw",
         "//firmware/pulse",
         "//firmware/store",
@@ -50,6 +52,7 @@ rust_library(
     deps = [
         "//firmware/arena",
         "//firmware/fx_vm",
+        "//firmware/osc",
         "//firmware/player",
         "//firmware/pulse",
         "//firmware/store",
@@ -68,6 +71,23 @@ rust_test(
     },
     deps = [
         ":player_ffi_host",
+        "//fx_compiler",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+    ],
+)
+
+# Transport profile (FUG-121): per-uniform-update device-CPU cost of the proto
+# `set_uniforms` path vs native OSC ingest, to decide whether a proto-transport
+# bridge is worth keeping. `bazel run //firmware/player_app:transport_bench`.
+rust_binary(
+    name = "transport_bench",
+    srcs = ["bench/transport.rs"],
+    edition = "2021",
+    deps = [
+        ":player_ffi_host",
+        "//firmware/fx_vm",
+        "//firmware/osc",
         "//fx_compiler",
         "//shared/protocol/rust:ledmapper_pb",
         "@crates//:micropb",
@@ -155,6 +175,79 @@ firmware_binary(
     binary = ":player_app",
     board = "esp32c6",
     opt_mode = "opt",
+    tags = ["manual"],
+)
+
+# -- On-device OSC bench image (FUG-121) -------------------------------------
+# A dedicated -DLM_OSC_BENCH build that, at boot, times one uniform update via
+# each transport with the C6 cycle counter, logs `[oscbench]` lines and halts.
+# Read it over HITL: `hitl flash --monitor …:esp32c6_oscbench_flashbundle`.
+# tags=manual keeps this heavy image out of the wildcard.
+genrule(
+    name = "osc_bench_fxb_file",
+    srcs = ["bench/osc_bench.fx"],
+    outs = ["osc_bench.fxb"],
+    cmd = "$(execpath //fx_compiler:fx_compile) $(execpath bench/osc_bench.fx) $(execpath osc_bench.fxb)",
+    tools = ["//fx_compiler:fx_compile"],
+)
+
+# -> osc_bench_fxb[] / osc_bench_fxb_len (symbols from the file basename).
+c_resource_library(
+    name = "osc_bench_fxb_res",
+    srcs = [":osc_bench_fxb_file"],
+)
+
+cc_binary(
+    name = "player_app_oscbench",
+    srcs = [
+        "improv_ble.cpp",
+        "improv_ble.h",
+        "led_config.h",
+        "main.cpp",
+        "player_ffi.h",
+        "serial_log.h",
+    ],
+    copts = ["-fno-rtti"],
+    local_defines = ["LM_OSC_BENCH"],
+    target_compatible_with = select({
+        "@embedded//platforms:is_esp32c6": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        ":color_correction",
+        ":improv_codec",
+        ":osc_bench_fxb_res",
+        ":player_ffi",
+        ":ws_codec",
+        "//firmware/landing:landing_page",
+        "@embedded//libs/board:arduino_core",
+        "@embedded//libs/tls:selfsigned",
+        "@embedded//libs/vendor:ble",
+        "@embedded//libs/vendor:fastled",
+        "@embedded//libs/vendor:preferences",
+        "@embedded//libs/vendor:webserver",
+        "@embedded//libs/vendor:wifi",
+    ],
+)
+
+firmware_binary(
+    name = "esp32c6_oscbench",
+    binary = ":player_app_oscbench",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "flash_esp32c6_oscbench",
+    app = ":esp32c6_oscbench",
+    partitions = "@embedded//libs/vendor:partitions_huge_app",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "esp32c6_oscbench_flashbundle",
+    flash = ":flash_esp32c6_oscbench",
     tags = ["manual"],
 )
 

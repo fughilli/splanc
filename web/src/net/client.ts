@@ -461,13 +461,19 @@ export class LedMapperClient {
     )) as PlaybackStateMessage;
   }
 
-  /** Push live uniform values on the active effect (slider drags). Reply:
-   * playback_state. */
-  async setUniforms(values: UniformValueFlat[]): Promise<PlaybackStateMessage> {
-    return (await this.request(
-      { type: "set_uniforms", values } as unknown as ClientMessage,
-      "playback_state",
-    )) as PlaybackStateMessage;
+  /**
+   * Push live uniform values on the active effect (slider drags). Fire-and-forget
+   * on purpose: a live push has no reply worth awaiting, and — crucially — it must
+   * NOT go through the single-flight request() path. request() rejects (and never
+   * sends) a second call while a prior reply of the same type is still pending, so
+   * a rapid drag (many set_uniforms, each awaiting one ~50-200ms playback_state)
+   * had all-but-the-first-per-window SILENTLY DROPPED before hitting the wire —
+   * frequently including the final value the user let go on. The device applies
+   * each set_uniforms it receives in order (TCP, no coalescing), so just send them
+   * all and the last one wins. Returns false if the socket isn't open.
+   */
+  setUniforms(values: UniformValueFlat[]): boolean {
+    return this.send({ type: "set_uniforms", values } as unknown as ClientMessage);
   }
 
   /** Rename the player: sets its display name, which becomes the Bluetooth-

@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+#
+# iosctl — thin container-side client for tools/ios_build_server.py (FUG-92).
+#
+# Xcode/CocoaPods/Simulator run only on the macOS host, so the iOS build server
+# runs there and this script drives it over HTTP. It's just a curl wrapper with
+# streaming output; nothing here needs the host toolchain.
+#
+#   tools/iosctl doctor                 # what's installed on the host?
+#   tools/iosctl tasks                  # list the allowlisted tasks (JSON)
+#   tools/iosctl bootstrap              # one-time: deps + generate web/ios/App
+#   tools/iosctl rebuild                # web build → cap sync → xcodebuild
+#   tools/iosctl devices                # list connected devices + sims (UDIDs)
+#   tools/iosctl launch --target "iPhone 17"        # build + boot in the Simulator
+#   tools/iosctl launch --target 00008130-0011...   # build + install on your iPhone (USB)
+#   tools/iosctl deploy-device --target 00008130-0011...  # wireless: build+install+launch over Wi-Fi
+#   tools/iosctl run cap-sync,ios-build      # run specific task(s), in order
+#   tools/iosctl open                   # open the project in Xcode on the host
+#
+# Config (env):
+#   IOS_BUILD_SERVER   host:port of the server   (default host.docker.internal:8099)
+#   IOS_BUILD_TOKEN    shared secret, if the server was started with --token
+#
+# Options: --target NAME|UDID (sim/device; --sim/--device alias)
+#          --configuration Debug|Release   --scheme App
+set -euo pipefail
+
+server="${IOS_BUILD_SERVER:-host.docker.internal:8099}"
+token="${IOS_BUILD_TOKEN:-}"
+
+usage() { sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; }
+
+# Split a leading subcommand off, then parse the remaining --k v options into a
+# query string. Positional arg after `run` is the task list.
+[ $# -ge 1 ] || { usage; exit 2; }
+cmd="$1"; shift
+
+task=""
+qs=""
+add_param() { qs="${qs}${qs:+&}$1=$(printf '%s' "$2" | tr ' ' '+' )"; }
+
+# For `run`, the next positional is the comma task list.
+if [ "$cmd" = "run" ]; then
+  [ $# -ge 1 ] || { echo "usage: iosctl run <task[,task...]> [--sim ..]" >&2; exit 2; }
+  task="$1"; shift
+fi
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --target|--sim|--device) add_param target "$2"; shift 2 ;;  # sim name, device name, or UDID
+    --bundle)                add_param bundle "$2"; shift 2 ;;   # app bundle id (device-log)
+    --configuration)         add_param configuration "$2"; shift 2 ;;
+    --scheme)                add_param scheme "$2"; shift 2 ;;
+    -h|--help)               usage; exit 0 ;;
+    *) echo "unknown option: $1" >&2; exit 2 ;;
+  esac
+done
+
+[ -n "$token" ] && qs="${qs}${qs:+&}token=${token}"
+
+case "$cmd" in
+  -h|--help|help) usage; exit 0 ;;
+  tasks)  curl -fsS "http://${server}/tasks"; echo ;;
+  doctor) curl -fsSN "http://${server}/doctor${qs:+?$qs}" ;;
+  open)   curl -fsSN "http://${server}/run?task=open-xcode${qs:+&$qs}" ;;
+  run)    curl -fsSN "http://${server}/run?task=${task}${qs:+&$qs}" ;;
+  devices) curl -fsSN "http://${server}/run?task=list-devices${qs:+&$qs}" ;;
+  device-log|log) curl -fsSN "http://${server}/run?task=device-log${qs:+&$qs}" ;;
+  bootstrap|rebuild|launch|deploy-device|install|web-build|cap-add-ios|cap-sync|pod-install|ios-build|ios-run|device-build|device-install|device-launch|list-sims|list-devices)
+          curl -fsSN "http://${server}/run?task=${cmd}${qs:+&$qs}" ;;
+  *) echo "unknown command: $cmd" >&2; usage; exit 2 ;;
+esac

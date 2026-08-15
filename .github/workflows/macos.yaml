@@ -1,0 +1,417 @@
+name: macOS
+
+# macOS CI: keep the repo building/testing on Apple silicon (the dev + on-device
+# iOS platform), split into two jobs so a failure points at the right layer:
+#   - test-macos  : `bazel test //...` on macOS (mirrors the ubuntu `test` job in
+#                   test.yaml, but on macos-latest — the FUG-92 iOS work runs here)
+#   - ios-build   : the Capacitor/Xcode wrapper build, compiled for the iOS
+#                   Simulator (no code signing → NO credentials needed; see below)
+#
+# Signing / credentials: the ios-build job compiles for the **Simulator**, which
+# needs no Apple Developer account, certificate, or provisioning profile. A real
+# **device** archive / TestFlight upload WOULD need signing secrets — a base64
+# .p12 + its password, a provisioning profile, and the Team ID — imported into a
+# temporary keychain. That's intentionally out of scope here; add it as a
+# separate device-archive job wired to repo/environment secrets when we want
+# distribution.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches:
+      - main
+  # Manual "ship a dev build to TestFlight" trigger (the testflight job below).
+  workflow_dispatch:
+
+# macOS runner minutes are ~10× Linux — cancel superseded runs on the same ref.
+concurrency:
+  group: macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Setup repository
+        uses: actions/checkout@v4
+
+      # Nix is a system requirement for this repo (see MODULE.bazel): `bazel test
+      # //...` realizes nixpkgs-provided build tools. Single-user install so the
+      # whole /nix store is cacheable below (same rationale as the ubuntu job).
+      - name: Install Nix
+        uses: nixbuild/nix-quick-install-action@v30
+        with:
+          nix_conf: experimental-features = nix-command flakes
+
+      - name: Cache /nix store
+        uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-${{ runner.os }}-test-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-test-
+          gc-max-store-size-macos: 5G
+          purge: true
+          purge-prefixes: nix-${{ runner.os }}-test-
+          purge-created: 0
+          purge-primary-key: never
+
+      - name: Setup Bazel
+        uses: bazel-contrib/setup-bazel@0.15.0
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+
+      # Explicit disk cache (compiled action outputs), keyed per-OS so macOS gets
+      # its own namespace and never shares Linux-built artifacts.
+      - name: Cache Bazel disk cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/bazel-disk
+          key: bazel-disk-macos-test-${{ hashFiles('MODULE.bazel.lock') }}
+          restore-keys: bazel-disk-macos-test-
+
+      - name: Test
+        # Serialize Bazel's repo-rule evaluation (FUG-84): `//...` realizes
+        # nixpkgs-provided toolchains (e.g. the HTML minifier for
+        # //firmware/landing) through rules_nixpkgs *repository rules*, each
+        # shelling out to `nix build`. Nix is installed single-user (no daemon),
+        # so nothing serializes store writes; Bazel's default async repo fetching
+        # runs those concurrently and they collide on the store's SQLite lock
+        # ("database … is busy"). `=off` + one loading thread realize them one at
+        # a time (the compile/execution phase still parallelizes). Same fix the
+        # firmware + HITL lanes use.
+        run: |
+          bazel test //... \
+            --experimental_worker_for_repo_fetching=off \
+            --loading_phase_threads=1 \
+            --disk_cache="$HOME/.cache/bazel-disk" \
+            --test_output=errors
+
+  ios-build:
+    runs-on: macos-latest
+    # WKWebView wrapper build. Compiles the web bundle + WASM, generates the
+    # native project (cap add ios), applies our native config, and xcodebuilds
+    # for the Simulator — the same chain tools/ios_build_server.py runs on a dev
+    # Mac (docs/ios-build.md), so wrapper/plugin breakage is caught in CI.
+    steps:
+      - name: Setup repository
+        uses: actions/checkout@v4
+
+      # Bazel builds the four runtime WASM bundles staged into web/dist
+      # (tools/stage_ios_wasm.sh); Nix backs some of that toolchain, same as the
+      # test job.
+      - name: Install Nix
+        uses: nixbuild/nix-quick-install-action@v30
+        with:
+          nix_conf: experimental-features = nix-command flakes
+
+      - name: Cache /nix store
+        uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-${{ runner.os }}-ios-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-ios-
+          gc-max-store-size-macos: 5G
+          purge: true
+          purge-prefixes: nix-${{ runner.os }}-ios-
+          purge-created: 0
+          purge-primary-key: never
+
+      - name: Setup Bazel
+        uses: bazel-contrib/setup-bazel@0.15.0
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+
+      - name: Cache Bazel disk cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/bazel-disk
+          key: bazel-disk-macos-ios-${{ hashFiles('MODULE.bazel.lock') }}
+          restore-keys: |
+            bazel-disk-macos-ios-
+            bazel-disk-macos-test-
+
+      # tools/stage_ios_wasm.sh invokes `bazelisk`; setup-bazel provides `bazel`
+      # (itself Bazelisk). Shim `bazelisk` → that binary so the script resolves it.
+      - name: Provide a bazelisk shim
+        run: |
+          mkdir -p "$HOME/bin"
+          ln -sf "$(command -v bazel)" "$HOME/bin/bazelisk"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+      # pnpm 11 needs Node >= 22.13 (imports node:sqlite); package.json pins
+      # pnpm@11.8.0, which pnpm/action-setup honors.
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      # `pnpm install` always exits non-zero with ERR_PNPM_IGNORED_BUILDS because
+      # pnpm-workspace.yaml deliberately leaves @bufbuild/buf's build script
+      # un-approved (its allowBuilds entry is a placeholder aspect_rules_js needs;
+      # buf is a Bazel-side codegen tool the iOS build never runs). Swallow ONLY
+      # that specific, sole error — exactly as tools/ios_build_server.py does.
+      - name: Install JS deps
+        run: |
+          # GitHub runs `run:` with `bash -eo pipefail`; -e would abort at the
+          # (expected-nonzero) pnpm line before the guard below. Disable it so we
+          # can inspect the exit code ourselves.
+          set +e
+          set -o pipefail
+          log="$(mktemp)"
+          pnpm --config.verify-deps-before-run=false --config.confirm-modules-purge=false install 2>&1 | tee "$log"
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ] && grep -q ERR_PNPM_IGNORED_BUILDS "$log" && [ "$(grep -c ERR_PNPM "$log")" -eq 1 ]; then
+            echo "install: sole error is ERR_PNPM_IGNORED_BUILDS (@bufbuild/buf, unused by iOS) — treating as success"
+            rc=0
+          fi
+          exit "$rc"
+
+      - name: Build web bundle (vite)
+        # verify-deps-before-run=false: pnpm 11's pre-`run` deps check otherwise
+        # shells out to install and dies on the @bufbuild/buf ignored build.
+        run: pnpm --config.verify-deps-before-run=false --dir web build
+
+      # Build + copy the solver/pulse/fx-compiler/fx-vm WASM into web/dist so the
+      # wrapper (which has no backend) can load them from capacitor://localhost.
+      - name: Stage WASM bundles
+        run: bash tools/stage_ios_wasm.sh
+
+      # Generate the native project (web/ios is gitignored). CAP_DISABLE_TELEMETRY
+      # keeps the Capacitor CLI from prompting on first run.
+      - name: Generate iOS project (cap add ios)
+        env:
+          CAP_DISABLE_TELEMETRY: 'true'
+        run: pnpm --config.verify-deps-before-run=false --dir web exec cap add ios
+
+      # Apply our hand-maintained native config (Info.plist usage strings, app
+      # icon, shake-to-undo off) to the fresh project.
+      - name: Apply native config (ios-config)
+        run: bash web/ios-config/apply.sh
+
+      # Copy web/dist in and resolve the SPM plugins (BLE, wss-bridge,
+      # speech-bridge).
+      - name: Sync iOS (cap sync)
+        run: pnpm --config.verify-deps-before-run=false --dir web exec cap sync ios
+
+      # Compile for the Simulator: no code signing, so no Apple credentials are
+      # needed. `generic/platform=iOS Simulator` compiles without booting a
+      # device. Mirrors the `ios-build` task in tools/ios_build_server.py.
+      - name: Xcodebuild (iOS Simulator)
+        working-directory: web/ios/App
+        run: |
+          if [ -e App.xcworkspace ]; then C=(-workspace App.xcworkspace); else C=(-project App.xcodeproj); fi
+          xcodebuild "${C[@]}" -scheme App -configuration Debug \
+            -sdk iphonesimulator -destination "generic/platform=iOS Simulator" \
+            build
+
+  # ---------------------------------------------------------------------------
+  # TestFlight — ship a signed dev build for testers to install.
+  #
+  # Triggers: manual (workflow_dispatch) or a push to main. Never on PRs (each
+  # upload burns a TestFlight build number). Skips cleanly until the signing
+  # secrets are configured (the `testflight-check` gate below), so it's safe to
+  # merge before then.
+  #
+  # ONE-TIME setup on Apple's side (this pipeline can't do it):
+  #   1. Apple Developer Program membership; register the App ID `dev.splanc.app`.
+  #   2. Create the app record in App Store Connect (uploads 404 without it).
+  #   3. App Store Connect API key (Users and Access -> Integrations), role
+  #      "App Manager". Note the Issuer ID + Key ID, download the .p8.
+  #   4. An "Apple Distribution" certificate exported as a .p12 (with a password).
+  #
+  # GitHub secrets (in the `iOS distribution` environment — Settings ->
+  # Environments). Binary/multiline values are base64 so they survive as secrets:
+  #   APP_STORE_CONNECT_KEY_ID          the API key's Key ID
+  #   APP_STORE_CONNECT_ISSUER_ID       the API key's Issuer ID
+  #   APP_STORE_CONNECT_KEY_P8_BASE64   base64 of the AuthKey_XXXX.p8
+  #   APPLE_DIST_CERT_P12_BASE64        base64 of the distribution .p12
+  #   APPLE_DIST_CERT_PASSWORD          the .p12 export password
+  #   APPLE_TEAM_ID                     the 10-char Developer Team ID
+  #
+  # Signing model: automatic signing driven by the API key
+  # (`-allowProvisioningUpdates` creates/downloads the App Store provisioning
+  # profile), with the distribution cert supplied via the .p12 (Xcode won't mint
+  # a distribution cert in CI, and reusing one avoids Apple's cert cap).
+  # ---------------------------------------------------------------------------
+  testflight-check:
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    environment: iOS distribution
+    outputs:
+      configured: ${{ steps.c.outputs.configured }}
+    steps:
+      - id: c
+        env:
+          ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          DIST_CERT_P12: ${{ secrets.APPLE_DIST_CERT_P12_BASE64 }}
+        run: |
+          if [ -n "$ASC_KEY_ID" ] && [ -n "$DIST_CERT_P12" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::TestFlight signing secrets not set — skipping the upload job. See .github/workflows/macos.yaml for setup."
+          fi
+
+  testflight:
+    needs: testflight-check
+    if: needs.testflight-check.outputs.configured == 'true'
+    runs-on: macos-latest
+    environment: iOS distribution
+    env:
+      ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+      ASC_KEY_P8_BASE64: ${{ secrets.APP_STORE_CONNECT_KEY_P8_BASE64 }}
+      DIST_CERT_P12_BASE64: ${{ secrets.APPLE_DIST_CERT_P12_BASE64 }}
+      DIST_CERT_PASSWORD: ${{ secrets.APPLE_DIST_CERT_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+    steps:
+      - name: Setup repository
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: nixbuild/nix-quick-install-action@v30
+        with:
+          nix_conf: experimental-features = nix-command flakes
+
+      - name: Cache /nix store
+        uses: nix-community/cache-nix-action@v6
+        with:
+          primary-key: nix-${{ runner.os }}-ios-${{ hashFiles('MODULE.bazel', 'MODULE.bazel.lock') }}
+          restore-prefixes-first-match: nix-${{ runner.os }}-ios-
+          gc-max-store-size-macos: 5G
+          purge: false
+
+      - name: Setup Bazel
+        uses: bazel-contrib/setup-bazel@0.15.0
+        with:
+          bazelisk-cache: true
+          repository-cache: true
+
+      - name: Cache Bazel disk cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/bazel-disk
+          key: bazel-disk-macos-ios-${{ hashFiles('MODULE.bazel.lock') }}
+          restore-keys: |
+            bazel-disk-macos-ios-
+            bazel-disk-macos-test-
+
+      - name: Provide a bazelisk shim
+        run: |
+          mkdir -p "$HOME/bin"
+          ln -sf "$(command -v bazel)" "$HOME/bin/bazelisk"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install JS deps
+        run: |
+          # GitHub runs `run:` with `bash -eo pipefail`; -e would abort at the
+          # (expected-nonzero) pnpm line before the guard below. Disable it so we
+          # can inspect the exit code ourselves.
+          set +e
+          set -o pipefail
+          log="$(mktemp)"
+          pnpm --config.verify-deps-before-run=false --config.confirm-modules-purge=false install 2>&1 | tee "$log"
+          rc=${PIPESTATUS[0]}
+          if [ "$rc" -ne 0 ] && grep -q ERR_PNPM_IGNORED_BUILDS "$log" && [ "$(grep -c ERR_PNPM "$log")" -eq 1 ]; then
+            echo "install: sole error is ERR_PNPM_IGNORED_BUILDS (@bufbuild/buf, unused by iOS) — treating as success"
+            rc=0
+          fi
+          exit "$rc"
+
+      - name: Build web bundle (vite)
+        # verify-deps-before-run=false: pnpm 11's pre-`run` deps check otherwise
+        # shells out to install and dies on the @bufbuild/buf ignored build.
+        run: pnpm --config.verify-deps-before-run=false --dir web build
+
+      - name: Stage WASM bundles
+        run: bash tools/stage_ios_wasm.sh
+
+      - name: Generate iOS project (cap add ios)
+        env:
+          CAP_DISABLE_TELEMETRY: 'true'
+        run: pnpm --config.verify-deps-before-run=false --dir web exec cap add ios
+
+      - name: Apply native config (ios-config)
+        run: bash web/ios-config/apply.sh
+
+      # TestFlight requires a unique, monotonically increasing build number per
+      # upload; the run number is monotonic per workflow. (Marketing version /
+      # CFBundleShortVersionString is left as-is.)
+      - name: Set build number
+        run: /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${{ github.run_number }}" web/ios/App/App/Info.plist
+
+      - name: Sync iOS (cap sync)
+        run: pnpm --config.verify-deps-before-run=false --dir web exec cap sync ios
+
+      # Import the distribution cert into a throwaway keychain and drop the ASC
+      # API key where xcodebuild + altool look for it (~/.private_keys).
+      - name: Prepare signing
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/app-signing.keychain-db"
+          KEYCHAIN_PW="$(openssl rand -base64 24)"
+          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          echo "$DIST_CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/dist.p12"
+          security import "$RUNNER_TEMP/dist.p12" -P "$DIST_CERT_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PW" "$KEYCHAIN" >/dev/null
+          # Put our keychain first in the search list so xcodebuild finds the cert.
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | sed s/\"//g)
+          mkdir -p "$HOME/.private_keys"
+          echo "$ASC_KEY_P8_BASE64" | base64 --decode > "$HOME/.private_keys/AuthKey_${ASC_KEY_ID}.p8"
+
+      - name: Archive (Release, device)
+        working-directory: web/ios/App
+        run: |
+          xcodebuild -project App.xcodeproj -scheme App -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath "$RUNNER_TEMP/App.xcarchive" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$HOME/.private_keys/AuthKey_${ASC_KEY_ID}.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" CODE_SIGN_STYLE=Automatic \
+            archive
+
+      - name: Export .ipa
+        working-directory: web/ios/App
+        run: |
+          cat > "$RUNNER_TEMP/exportOptions.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>teamID</key><string>${APPLE_TEAM_ID}</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>destination</key><string>export</string>
+          </dict>
+          </plist>
+          PLIST
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/App.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/exportOptions.plist" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$HOME/.private_keys/AuthKey_${ASC_KEY_ID}.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+
+      - name: Upload to TestFlight
+        run: |
+          IPA="$(ls "$RUNNER_TEMP"/export/*.ipa | head -1)"
+          echo "Uploading $IPA"
+          xcrun altool --upload-app -f "$IPA" -t ios \
+            --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"

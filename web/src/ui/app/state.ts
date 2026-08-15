@@ -6,7 +6,8 @@
  */
 
 import type { WelcomeMessage } from "@ledmapper/protocol";
-import { certApprovalUrl, LedMapperClient } from "../../net/client";
+import { certApprovalUrl, LedMapperClient, type ClientOptions } from "../../net/client";
+import { nativeSocketFactory } from "../../net/nativeSocket";
 import { deviceStore } from "../../store/deviceStore";
 import { deviceProber } from "../../net/deviceProber";
 import type { PillState } from "../kit";
@@ -60,10 +61,14 @@ class AppState {
     // fail is a transient — the player freeing a TLS slot the just-closed socket
     // still holds — so retry over the backoff instead of dumping the user back to
     // "trust needed" and making them reconnect by hand.
-    const client = new LedMapperClient(
-      wssUrl,
-      opts?.coldRetryLimit !== undefined ? { coldRetryLimit: opts.coldRetryLimit } : {},
-    );
+    const clientOpts: ClientOptions = {};
+    if (opts?.coldRetryLimit !== undefined) clientOpts.coldRetryLimit = opts.coldRetryLimit;
+    // In the native wrapper, route the socket through the cert-pinning bridge so
+    // the device's self-signed wss:// is trusted (no manual cert accept). Off
+    // native this is undefined and the client uses the browser WebSocket.
+    const factory = nativeSocketFactory();
+    if (factory) clientOpts.socketFactory = factory;
+    const client = new LedMapperClient(wssUrl, clientOpts);
     this.client = client;
     client.events = {
       onConnecting: (attempt, url) =>

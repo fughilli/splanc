@@ -6,13 +6,27 @@ import (
 	"testing"
 )
 
+// resolvedTempDir is t.TempDir() with symlinks resolved. deviceMapping /
+// reservedTTYNode resolve their device paths through filepath.EvalSymlinks, and
+// on macOS the temp root (/var/folders/…) is itself a symlink to /private/var/…,
+// so comparing against the raw temp path would spuriously mismatch. On Linux the
+// temp root has no symlinks, so this is a no-op.
+func resolvedTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
 // The by-id path of an ESP32-C6 embeds its MAC (…_60:55:F9:11:7D:10-if00), so the
 // --device host path contains colons. deviceMapping must split on the container
 // path (not the first colon), resolve the symlink to the real /dev node, and keep
 // the requested in-container path — otherwise podman gets a truncated, non-device
 // path and the board silently never appears in the container.
 func TestDeviceMappingResolvesColonByIDSymlink(t *testing.T) {
-	dir := t.TempDir()
+	dir := resolvedTempDir(t)
 	node := filepath.Join(dir, "ttyACM0") // stand-in for the real /dev node
 	if err := os.WriteFile(node, nil, 0o600); err != nil {
 		t.Fatal(err)
@@ -34,7 +48,7 @@ func TestDeviceMappingResolvesColonByIDSymlink(t *testing.T) {
 // A bare device path (no container mapping) resolves through, and a missing
 // device is skipped so a reservation can still come up with no board attached.
 func TestDeviceMappingBareAndMissing(t *testing.T) {
-	dir := t.TempDir()
+	dir := resolvedTempDir(t)
 	node := filepath.Join(dir, "ttyACM0")
 	if err := os.WriteFile(node, nil, 0o600); err != nil {
 		t.Fatal(err)

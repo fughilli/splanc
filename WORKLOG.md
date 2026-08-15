@@ -5,6 +5,101 @@ scan back for context. The dated sections toward the bottom were migrated out of
 `README.md` (now a user-facing intro; see `DEVELOPERS.md` for contributing) and
 are kept as historical record.
 
+## OSC input → uniforms — NATIVE firmware (FUG-121, branch `agent/fug-121-feature-osc-input`)
+
+The device receives OSC directly over UDP (:9000) and drives live uniforms — no
+host bridge (an earlier `//tools/osc_bridge` host-side approach was replaced at
+Kevin's steer: "can't the firmware receive OSC natively?").
+
+- **`//firmware/osc`** — `no_std`, zero-dep: OSC 1.0 parser (messages + nested
+  bundles), a `name→(slot,width)` `PortTable` built from the effect manifest, and
+  `ingest()` (datagram → `set(slot, values)` callbacks) with a per-slot value
+  `Shadow` so per-axis vec messages (`/tint/x`) patch one component. Config
+  toggles name resolution vs slot-index-only. 12 host tests; builds for C6.
+- **`fx_compiler`** — now embeds the uniform-manifest JSON in the `.fxb` (was
+  empty), so the device knows uniform names; `get_effect_uniforms` returns a real
+  manifest too. The web uses its own local-compile copy, so this only grows the
+  on-wire `.fxb`.
+- **`ffi.rs`** — builds the `PortTable`/`Shadow` once per `lm_fx_load` (off the
+  render path); `lm_osc_ingest(data,len)` applies a datagram via the existing
+  `set_uniform` seam; `lm_osc_set_by_name` toggles addressing. Cleared on
+  `lm_fx_clear`. End-to-end in the ffi host test.
+- **`main.cpp`** — a low-prio UDP task on :9000 feeds `lm_osc_ingest` under
+  `player_mutex` (the only state shared with the render task). Full `esp32c6`
+  firmware builds.
+- **Perf — REAL C6 numbers** (HITL, `:esp32c6_oscbench` boot self-bench, 160 MHz):
+  - osc by-name: **1282 cyc / 8.0 µs** per update
+  - osc by-slot: **1186 cyc / 7.4 µs** — so **by-name costs only +96 cyc / +0.6 µs
+    (~8%)**, NOT the 3.35× the host bench predicted (host int-parse was so cheap it
+    skewed the ratio). Names are effectively free on-device → keep by-name.
+  - proto set_uniforms: **3568 cyc / 22.3 µs**, and that EXCLUDES the WS/TLS the
+    real path pays — ~2.8× OSC on-device (plus TCP latency), so OSC/UDP stays the
+    right transport.
+  - one-time effect load incl. table build: 18900 cyc / 118 µs.
+  - Both transports functionally verified on the DUT (`/k=0.5 → red=127`). At
+    8 µs, a 200 Hz knob = 0.16% of a core; ingest is off the render task anyway.
+    (Host `//firmware/osc:osc_bench` + `:transport_bench` remain for quick host
+    iteration; the C6 figures above are the design authority.)
+
+Address convention: `/speed` (scalar), `/tint/x|y|z|w` (vec component) or `/tint`
+`,fff` (whole vector); `/slotN` when no manifest. Configurable prefix.
+
+**Bridge dropped (profiled).** `//firmware/player_app:transport_bench` compares
+the device-side cost of one uniform update via the proto `set_uniforms` path
+(`lm_player_handle`: envelope scan + micropb decode + dispatch + reply encode)
+vs native OSC ingest: **858 ns vs 22 ns — ~38×**, and the proto figure EXCLUDES
+the WebSocket framing + TLS the real ws/wss path also pays per message. Add TCP
+head-of-line blocking/latency and the known `set_uniforms` drop issue (there's a
+HITL drop-rate bench for exactly that), and proto-for-transport is strictly worse
+for realtime control. So the OSC path fully replaces the bridge — not kept.
+
+## iOS support — Capacitor scaffold + host build server (branch `agent/fug-92-ios-support`)
+
+First implementation pass on FUG-92 (design: `docs/design/ios-support.md`; how-to:
+`docs/ios-build.md`). Tier 1 groundwork — the Capacitor WKWebView wrapper — plus
+the build plumbing that lets the container drive Xcode on the macOS host.
+
+**Done (committed-ready; typecheck + `//web:improv_test`/`improv_provision_test` +
+`web_ts_typecheck_test` green, `vite build` green, all prek hooks pass):**
+
+- **Host build server** `tools/ios_build_server.py` (+ `//tools:ios_build_server`) —
+  stdlib HTTP server, same pattern as `flash_server.py`. Runs on the Mac, driven
+  from the container over `host.docker.internal:8099`. Fixed task ALLOWLIST
+  (install / web-build / cap-add-ios / ios-config / cap-sync / pod-install /
+  ios-build / ios-run / open-xcode / list-sims) + chains (bootstrap/rebuild/launch),
+  streams each task's output, stop-on-failure, validated `{sim}`/`{scheme}`/
+  `{configuration}` params, optional `--token`. pnpm tasks pass
+  `--config.verify-deps-before-run=false` (repo's @bufbuild/buf ignored-build trips
+  pnpm 11's pre-run check otherwise).
+- **`tools/iosctl`** — container-side curl wrapper (`IOS_BUILD_SERVER` /
+  `IOS_BUILD_TOKEN`). Verified end-to-end in-container: `iosctl run web-build`
+  builds through the server; needs-ios guard + param validation exercised.
+- **Capacitor config** `web/capacitor.config.ts` (appId `dev.splanc.app`, webDir
+  `dist`) + deps added to `web/package.json` (`@capacitor/core|ios|cli`,
+  `@capacitor-community/bluetooth-le` — Capacitor 8.5). `web/ios/` is gitignored
+  (regenerated by `cap add ios`); hand-maintained native config lives in tracked
+  `web/ios-config/apply.sh` (Info.plist usage strings via PlistBuddy), re-applied
+  by the `ios-config` task.
+- **Native BLE Improv seam** (design §4.2): `net/native.ts` (`isNativePlatform()`
+  reads the injected Capacitor global — zero imports, PWA bundle unchanged);
+  `net/capacitorImprov.ts` adapts `@capacitor-community/bluetooth-le` to the
+  existing `ImprovDevice`/`gatt`/char shape, so the pure codec + `provisionViaBle`
+  are reused verbatim. `improv.ts` `bleAvailable()`/`requestImprovDevice()` now
+  route to native when in the wrapper; plugin loaded via lazy dynamic import
+  (out of the browser bundle). Added the two Capacitor pkgs to `web/BUILD.bazel`
+  `TYPE_DEPS`.
+
+**Next (not started, from design §7):** native cert-pinning WS bridge behind
+`SocketFactory` in `net/client.ts` (kills the manual self-signed-cert accept); OTA
+firmware update (the only iPhone "device programming" path); Android lane + CI +
+TestFlight/App Store. Tier 0 PWA polish (`navigator.storage.persist()` already in
+`mapStore.ts`; onboarding copy audit for iPhone-only users) is independent and
+still worth doing.
+
+**Can't be done in-container:** anything Xcode/CocoaPods/Simulator — run
+`tools/iosctl bootstrap` on the Mac to generate `web/ios/` and prove the native
+build. The on-hardware verification list is design doc §6.
+
 ## Developer docs — Sphinx site (FUG-104, branch `agent/fug-104-build-out-developer-docs`)
 
 A single-target, regenerable Sphinx site for the whole project.

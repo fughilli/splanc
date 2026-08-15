@@ -47,6 +47,16 @@ py_binary(
     srcs = ["flash_server.py"],
 )
 
+# Host-side Capacitor/Xcode build helper for the Splanc iOS wrapper (FUG-92).
+# Xcode/CocoaPods/Simulator only exist on the macOS host, so run this there
+# (`bazel run //tools:ios_build_server`, or `python3 tools/ios_build_server.py`)
+# and drive it from the container with `tools/iosctl`. Stdlib-only; it shells
+# out to the host's node/pnpm/cap/xcodebuild for an allowlisted set of tasks.
+py_binary(
+    name = "ios_build_server",
+    srcs = ["ios_build_server.py"],
+)
+
 # Host-side Improv-BLE onboarding driver — provisions the player onto WiFi via a
 # real Bluetooth radio (SimpleBLE), replacing the phone's Web Bluetooth step
 # (which can't be automated). Run on the host: `bazel run //tools:ble_onboard_server`.

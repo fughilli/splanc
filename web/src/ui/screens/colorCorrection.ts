@@ -102,7 +102,7 @@ export function ColorCorrectionScreen(_router: Router): Screen {
   let testLoaded = false;
   const testPanel = new UniformPanel(testHost, (slot, value) => {
     const c = appState.client;
-    if (c?.isConnected) void c.setUniforms([{ slot, value }]).catch(() => undefined);
+    if (c?.isConnected) c.setUniforms([{ slot, value }]);
   });
 
   async function loadColorTest(btn: HTMLButtonElement): Promise<void> {
@@ -122,7 +122,7 @@ export function ColorCorrectionScreen(_router: Router): Screen {
       testPanel.setManifest(compiled.uniforms);
       testLoaded = true;
       const vals = testPanel.values();
-      if (vals.length) await c.setUniforms(vals);
+      if (vals.length) c.setUniforms(vals);
       rebuildControls();
       toast("Color test loaded — tune the gradient below");
     } catch {

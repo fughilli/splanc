@@ -74,18 +74,23 @@ so the AP — and therefore the uplink — must be 2.4 GHz. The rig's STA SSID m
 have a 2.4 GHz BSS. (For a 5 GHz uplink you'd need a second radio for the AP — a
 USB dongle or Ethernet uplink.)
 
-The suite is `tags = ["manual", "hitl"]`, so it stays out of `bazel test //...`
-and gets its own lane: a dedicated `hitl-tests` CI job (in
-`.github/workflows/test.yaml`) collects the `hitl`-tagged test targets with a
-bazel query — `bazel test $(bazel query 'attr(tags, "\bhitl\b", tests(//...))')`
-— and runs the pure-logic units so the Improv/sync/pool code can't drift.
+The pure-logic units (`//pi/hitl/tests:hitl_test`) run in the normal
+`bazel test //...` lane so the Improv/sync/pool codecs can't drift. The
+**on-hardware** tests are `py_test`s tagged `["manual", "hitl"]` — `manual` keeps
+them out of `bazel test //...`, and `hitl` puts them in their own lane
+(`.github/workflows/hitl.yaml`), which joins the tailnet with a `TS_AUTHKEY`
+secret and runs the whole set one at a time against a free rig from the pool
+(each reserves via the `hitl` CLI, so it never queues behind a busy one).
 
-`e2e` needs a live rig + board; via the `hitl` CLI it reserves a **free** rig
-(tag discovery, or `$HITL_SERVERS`, or a specific `--server`), so it never queues
-behind a busy one. Being a `py_binary` it's excluded from the `tests(...)` query;
-the `.github/workflows/hitl.yaml` job runs it on demand, joining the tailnet with
-a `TS_AUTHKEY` secret and setting `HITL_SERVERS` (that file's header documents the
-`HITL` environment config).
+The lane is **not a maintained list** — it collects every `hitl`-tagged target by
+query, so a new test joins just by carrying the tag:
+
+```sh
+bazel test $(bazel query 'attr(tags, "\bhitl\b", tests(//...))') --test_output=streamed
+```
+
+See AGENTS.md "Adding an on-hardware test" for the `py_test` pattern (reserve →
+flash → provision → tunnel → drive the player socket).
 
 ## Layout
 

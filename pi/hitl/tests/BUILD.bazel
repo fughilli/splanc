@@ -30,6 +30,7 @@ py_test(
         "test_map_upload.py",
         "test_mapping_trigger.py",
         "test_sync.py",
+        "test_uniform_bench.py",
         "test_video_bench.py",
     ],
     imports = ["."],

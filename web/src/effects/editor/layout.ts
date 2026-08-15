@@ -186,6 +186,14 @@ interface Opts {
   /** Called after any relayout (DOM re-parent) or viewport resize, so the screen
    * can recompute the MapView canvas backing store. */
   onRelayout: () => void;
+  /** Optional drawer collapse/expand toggle. When `collapsed()` is true, an
+   * expand button is rendered INTO the top-right corner strip's control cluster
+   * (alongside move/hide) rather than floating over the tabs; clicking it calls
+   * `onExpand`. Call {@link FxLayout.refresh} after toggling so it re-renders. */
+  collapseToggle?: {
+    collapsed: () => boolean;
+    onExpand: () => void;
+  };
 }
 
 export class FxLayout {
@@ -203,6 +211,9 @@ export class FxLayout {
   // Reusable pane-wrapper nodes (one per pane id, stable across relayouts).
   private readonly wrappers = new Map<string, PaneWrap>();
   private openRelocate: (() => void) | null = null;
+  // Pane ids whose tab should draw attention (a warn tint) — e.g. the Device tab
+  // when the device is running a different effect than the workspace.
+  private readonly attention = new Set<string>();
 
   constructor(opts: Opts) {
     this.opts = opts;
@@ -298,6 +309,24 @@ export class FxLayout {
 
   isVisible(id: string): boolean {
     return !this.state.hidden.includes(id);
+  }
+
+  /** True while at least one pane is open (not closed). When false the workspace
+   * is empty and its tab strips are gone — the editor keeps the drawer expanded
+   * so Back / the ⋯ "recall closed pane" menu stay reachable. */
+  anyVisible(): boolean {
+    return this.order.some((id) => this.isVisible(id));
+  }
+
+  /** Flag/unflag a pane's tab for attention (a warn-colored tint), so the user
+   * knows to visit it. Updates any live tab buttons and persists across renders. */
+  setPaneAttention(id: string, on: boolean): void {
+    if (on === this.attention.has(id)) return;
+    if (on) this.attention.add(id);
+    else this.attention.delete(id);
+    for (const btn of this.root.querySelectorAll(`[data-pane="${id}"]`)) {
+      btn.classList.toggle("fxlayout-tab--attn", on);
+    }
   }
 
   /** Panes currently hidden (closed), in declaration order — drives the "recall
@@ -420,8 +449,45 @@ export class FxLayout {
     this.root.classList.toggle("fxlayout--wide", !narrow);
     if (narrow) this.renderNarrow();
     else this.renderWide();
+    this.placeCollapseToggle();
     // Panes moved DOM parents — recompute canvas + notify the screen.
     requestAnimationFrame(() => this.opts.onRelayout());
+  }
+
+  /** Re-render (e.g. after the drawer collapse state changed, so the in-strip
+   * expand toggle appears/disappears). Safe to call before mount (no-op). */
+  refresh(): void {
+    this.render();
+  }
+
+  /** When collapsed, drop the drawer's expand toggle into the control cluster of
+   * whichever chrome owns the top-right corner — the same target the collapsed
+   * `.fxlayout-tabctl` displacement CSS used to shift aside for the old floating
+   * handle. Built with the strip's own button styling so it reads as a sibling
+   * of move/hide. */
+  private placeCollapseToggle(): void {
+    const cfg = this.opts.collapseToggle;
+    if (!cfg || !cfg.collapsed()) return;
+    const r = this.root;
+    const host =
+      r.querySelector<HTMLElement>(
+        ".fxlayout-nstack > .fxlayout-nregion:first-child > .fxlayout-tabs > .fxlayout-tabctl",
+      ) ||
+      r.querySelector<HTMLElement>(".fxlayout-edge--top > .fxlayout-edgetabs > .fxlayout-tabctl") ||
+      r.querySelector<HTMLElement>(".fxlayout-edge--right > .fxlayout-edgetabs > .fxlayout-tabctl") ||
+      r.querySelector<HTMLElement>(".fxlayout-center > .fxpane > .fxpane-head > .fxpane-ctl");
+    if (!host) return;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "fxpane-btn fxlayout-expand-toggle";
+    btn.title = "Show toolbar";
+    btn.setAttribute("aria-label", "Show toolbar");
+    btn.appendChild(icon("chevron"));
+    btn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      cfg.onExpand();
+    });
+    host.appendChild(btn);
   }
 
   /** Detach a pane's content into its wrapper body and return the wrapper. The
@@ -566,7 +632,11 @@ export class FxLayout {
       const spec = this.panes.get(id)!;
       const btn = document.createElement("button");
       btn.type = "button";
-      btn.className = tabClass + (id === activeId ? " " + activeClass : "");
+      btn.className =
+        tabClass +
+        (id === activeId ? " " + activeClass : "") +
+        (this.attention.has(id) ? " fxlayout-tab--attn" : "");
+      btn.dataset["pane"] = id;
       btn.textContent = spec.title;
       btn.addEventListener("click", () => onPick(id));
       this.attachDragHandle(btn, id); // long-press → drag to re-dock
@@ -924,6 +994,9 @@ export class FxLayout {
     }
     this.root.appendChild(overlay);
     handle.classList.add("fxlayout-draghandle--active");
+    // Suppress text selection + pointer hits on pane content while dragging a tab
+    // (otherwise dragging over the code pane highlights its text).
+    this.root.classList.add("fxlayout--dragging");
 
     const zoneFor = (x: number, y: number): string => {
       const fx = (x - rect.left) / Math.max(1, rect.width);
@@ -965,6 +1038,7 @@ export class FxLayout {
       handle.removeEventListener("pointercancel", end);
       overlay.remove();
       handle.classList.remove("fxlayout-draghandle--active");
+      this.root.classList.remove("fxlayout--dragging");
       // relocate*/re-render only when the pane actually changes home.
       if (narrow) {
         if (zone !== this.state.ndock[id]) this.relocateNarrow(id, zone as NRegion);

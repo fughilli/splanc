@@ -162,6 +162,12 @@ const CSS = `
   box-shadow: 0 10px 40px rgba(124,107,255,0.45);
   transition: transform var(--motion-micro) var(--ease);
   flex: none;
+  /* iOS: a press-and-hold on the button otherwise selects the icon glyph / pops
+   * the callout menu instead of registering as a button hold. */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: manipulation;
 }
 .acid-mic:active { transform: scale(0.96); }
 .acid-mic svg { width: 44px; height: 44px; }

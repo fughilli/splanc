@@ -11,7 +11,8 @@ use ledmapper_player_ffi::{
     lm_color_correction_commit, lm_color_correction_gen, lm_color_correction_params,
     lm_counting_color, lm_envelope_arm,
     lm_fx_load, lm_fx_set_active, lm_fx_shade, lm_fx_update, lm_led_count, lm_map_led, lm_map_len,
-    lm_pattern_color, lm_pattern_timing, lm_perf_build_report, lm_perf_interval_ms, lm_perf_mode,
+    lm_osc_ingest, lm_osc_set_by_name, lm_pattern_color, lm_pattern_timing, lm_perf_build_report,
+    lm_perf_interval_ms, lm_perf_mode,
     lm_perf_push, lm_player_handle, lm_player_init,
 };
 use micropb::{MessageDecode, MessageEncode, PbEncoder};
@@ -523,4 +524,62 @@ fn full_device_flow_through_the_c_abi() {
     assert_eq!(params[1], 2.8); // gamma_g still default
     assert_eq!(params[5], 500.0); // lum_b overridden
     assert_eq!(unsafe { lm_color_correction_commit() }, 1);
+
+    // -- native OSC input (FUG-121): drive a uniform through lm_osc_ingest, the
+    // same entry the UDP task feeds, and confirm it moves the rendered pixel.
+    fn osc_str(s: &str) -> Vec<u8> {
+        let mut v = s.as_bytes().to_vec();
+        v.push(0);
+        while v.len() % 4 != 0 {
+            v.push(0);
+        }
+        v
+    }
+    fn osc_msg(addr: &str, tags: &str, body: &[u8]) -> Vec<u8> {
+        let mut v = osc_str(addr);
+        v.extend(osc_str(&format!(",{tags}")));
+        v.extend_from_slice(body);
+        v
+    }
+    let ingest = |pkt: &[u8]| -> u32 { unsafe { lm_osc_ingest(pkt.as_ptr(), pkt.len()) } };
+
+    let src = "uniform float k : 0.0 .. 1.0 = 0.5;\n\
+               vec3 shade(Led led) { return vec3(k, 0.0, 0.0); }\n";
+    let compiled = ledmapper_fx_compiler::compile(src).expect("uniform shader compiles");
+    assert!(unsafe { lm_fx_load(compiled.fxb.as_ptr(), compiled.fxb.len()) });
+    unsafe { lm_fx_set_active(true) };
+    assert!(unsafe { lm_fx_update(0.0, 0.033, 0, 8) });
+    let shade_r = || -> u8 {
+        let mut rgb = [0u8; 3];
+        assert!(unsafe { lm_fx_shade(0, 0.0, 0.0, 0.0, rgb.as_mut_ptr()) });
+        rgb[0]
+    };
+
+    // By name: /k = 1.0 -> red 255; /k = 0.0 -> red 0 (the manifest maps k->slot0).
+    assert_eq!(ingest(&osc_msg("/k", "f", &1.0f32.to_be_bytes())), 1);
+    assert_eq!(shade_r(), 255, "OSC /k=1.0 drives uniform k by name");
+    assert_eq!(ingest(&osc_msg("/k", "f", &0.0f32.to_be_bytes())), 1);
+    assert_eq!(shade_r(), 0, "OSC /k=0.0 by name");
+    // An unknown name is dropped in name mode (pixel unchanged).
+    assert_eq!(ingest(&osc_msg("/nope", "f", &1.0f32.to_be_bytes())), 0);
+    assert_eq!(shade_r(), 0, "unknown OSC name is dropped");
+    // A bundle carrying the named message applies too.
+    {
+        let m = osc_msg("/k", "f", &1.0f32.to_be_bytes());
+        let mut b = b"#bundle\0".to_vec();
+        b.extend_from_slice(&1u64.to_be_bytes());
+        b.extend_from_slice(&(m.len() as i32).to_be_bytes());
+        b.extend_from_slice(&m);
+        assert_eq!(ingest(&b), 1);
+        assert_eq!(shade_r(), 255, "OSC bundle drives the uniform");
+    }
+    // Slot-index mode: address is the raw slot. /0 = 0.0 -> red 0.
+    unsafe { lm_osc_set_by_name(false) };
+    assert_eq!(ingest(&osc_msg("/0", "f", &0.0f32.to_be_bytes())), 1);
+    assert_eq!(shade_r(), 0, "slot-index mode drives slot 0");
+    unsafe { lm_osc_set_by_name(true) };
+    // Garbage is dropped, and ingest is inert with no active effect.
+    assert_eq!(ingest(b"not-osc"), 0, "garbage datagram dropped");
+    unsafe { lm_fx_set_active(false) };
+    assert_eq!(ingest(&osc_msg("/k", "f", &0.5f32.to_be_bytes())), 0, "no active effect -> inert");
 }

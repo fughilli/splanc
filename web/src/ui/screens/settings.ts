@@ -403,6 +403,18 @@ export function SettingsScreen(router: Router): Screen {
           (v) => set({ showTriad: v === "on" }),
         ),
       ),
+      row(
+        "Viewport labels",
+        "Show the solve stats and control hints in the 3D view.",
+        segmented<"on" | "off">(
+          [
+            ["off", "Off"],
+            ["on", "On"],
+          ],
+          s.showStats ? "on" : "off",
+          (v) => set({ showStats: v === "on" }),
+        ),
+      ),
     );
     return g;
   }
