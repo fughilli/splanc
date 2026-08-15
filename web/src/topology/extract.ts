@@ -68,7 +68,9 @@ export interface ExtractOptions {
    * passes before building the graph (see topology/relax.ts). 0 (default)
    * disables it — a thin fixture (strip/ring/tree) needs none. Turn it up when
    * the LEDs wrap a tube whose diameter is ≳ their spacing, so the raw k-NN
-   * graph is a surface mesh rather than a 1-D chain. */
+   * graph is a surface mesh rather than a 1-D chain. A tubiform JUNCTION also
+   * wants a wider `mergeFactor` (~tube diameter / spacing): the junction blob is
+   * tube-radius-sized, larger than the thin-strip default collapses. */
   relaxIterations?: number;
   /** Neighbourhood radius for the tubiform contraction, as a multiple of the
    * median spacing — should span the tube cross-section (a few × spacing). */
