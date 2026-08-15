@@ -411,6 +411,44 @@ So every AI-authored effect is compiled by the real wasm compiler and (optionall
 previewed by the real VM before it ever reaches the device — the same path a
 hand-written effect takes.
 
+## Sensor drivers (auto hardware discovery, FUG-107)
+
+Plug any qwiic/I2C sensor into the device and a **sensor driver** turns its
+readings into effect uniforms. A driver is **the same bytecode and VM as an
+effect** — no second interpreter — with three additions:
+
+- a **`void poll()`** entry instead of `shade()` (a program is an effect XOR a
+  driver). `poll()` runs periodically on the device (default every 100 ms).
+- **`export <type> name "unit";`** declarations — the values `poll()` writes
+  (scalar/vecN, state-backed). The `"unit"` is an optional display hint.
+- **I2C intrinsics** (all args `int`): `i2c_write(addr, reg, val)` → `1`/`0`
+  ack, `i2c_read8(addr, reg)` → byte or `-1`, `i2c_read16(addr, reg)` →
+  big-endian u16 or `-1`. Addresses/registers are decimal (`0x48` = `72`); there
+  are no hex literals or bitwise operators (combine bytes with `hi*256 + lo`).
+
+On the device each poll's exports are copied into the **active effect's uniform
+of the same name and width** — the exact `set_uniforms` slot path a slider uses —
+so a driver and effect authored independently line up automatically. In the VM
+the intrinsics call an [`I2cBus`](firmware/fx_vm/src/lib.rs) trait: the firmware
+backs it with the ESP-IDF qwiic master, and the host/browser back it with a mock
+register map, so drivers are authored, unit-tested, and (soon) previewed with no
+hardware. The `.fxb` header is **v2** (adds `poll_entry`; v1 effects still
+parse).
+
+The wire path is `scan_i2c` → `i2c_scan_result{addresses}` (enumerate the bus),
+then `submit_driver{fxb, poll_interval_ms, bindings, activate}` →
+`driver_state`, and `remove_driver`. The firmware runs the driver in a second
+`fx_vm` off the render loop (`lm_drv_poll`).
+
+The editor's AI can drive the whole flow when a device is connected: two extra
+tools — **`scan_bus`** (enumerate + match the responding addresses against the
+qwiic sensor database in `web/src/hardware/sensorDb.ts`, asking the user when an
+address is ambiguous or unknown) and **`set_driver`** (compile the driver, bind
+its exports to the effect's uniforms by name, install it) — plus a driver-dialect
+system-prompt addendum. So the model can enumerate the bus, identify the part,
+write a driver from the sensor's register map, and install it, iterating on the
+first poll's result.
+
 ## Build targets
 
 | Target                                                          | What                                                    |
