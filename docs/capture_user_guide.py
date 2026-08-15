@@ -84,7 +84,10 @@ def ensure_browser():
     except Exception:
         pass
     print("Installing Chromium for Playwright (one-time)…", file=sys.stderr)
-    subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
+    # The toolchain python that runs `-m playwright` needs playwright on its
+    # path — carry this process's sys.path through so it can import it.
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join(x for x in sys.path if x))
+    subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True, env=env)
 
 
 def capture(dist: Path, shots: list[dict], out_dir: Path) -> None:
