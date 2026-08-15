@@ -14,7 +14,24 @@ fn run_shade(src: &str, uniforms: &[(u8, &[f32])], led: Led, frame: Frame) -> (u
     for (slot, vals) in uniforms {
         vm.set_uniform(*slot as usize, vals);
     }
+    // Populate the Q16.16 fixed mirrors from the float context, exactly as the
+    // device FFI / wasm preview do (FUG-122), so LoadCtxFix reads the same values
+    // a float LoadCtx would. Tests set the float fields; derive the fixed ones.
+    let (led, frame) = seed_fixed_mirrors(led, frame);
     vm.run_shade(&prog, &frame, &led)
+}
+
+/// Fill the Q16.16 `*_fix` mirrors on `Led`/`Frame` from their float fields
+/// (device-parity for LoadCtxFix in tests).
+fn seed_fixed_mirrors(mut led: Led, mut frame: Frame) -> (Led, Frame) {
+    let q16 = |x: f32| (x * 65536.0) as i32;
+    led.pos_fix = [q16(led.pos[0]), q16(led.pos[1]), q16(led.pos[2])];
+    led.uv_fix = [q16(led.uv[0]), q16(led.uv[1])];
+    led.s_fix = q16(led.s);
+    led.dist_fix = q16(led.dist);
+    frame.time_fix = q16(frame.time);
+    frame.dt_fix = q16(frame.dt);
+    (led, frame)
 }
 
 #[test]
@@ -1099,4 +1116,117 @@ fn fixed_q16_16_trig_uses_lut() {
         }
     "#;
     assert_eq!(run_shade(src, &[], Led::default(), Frame::default()), (255, 255, 255));
+}
+
+// --- FUG-122: fixed I/O + colour routing --------------------------------------
+
+use ledmapper_fx_compiler::disassemble;
+
+/// Every opcode mnemonic the disassembly of an all-fixed program must NOT
+/// contain — the float element-wise ops, soft-float math, float colour, the
+/// float context load, and the float↔fixed boundary conversions.
+// (The compiler always appends an unreachable epilogue `RET n=3` after a
+// terminating return, so `RET n=` is intentionally NOT forbidden — it never
+// executes; each test positively asserts the real return is RET_RGB8/RET_RGB_FIX.)
+const FLOAT_OPS: &[&str] = &[
+    "ADD n=", "SUB n=", "MUL n=", "DIV n=", "NEG n=", "SCALE n=", "UN_MATH", "BIN_MATH",
+    "CLAMP n=", "MIX n=", "SMOOTHSTEP n=", "DOT n=", "CROSS n=", "LENGTH n=", "NORMALIZE n=",
+    "DISTANCE n=", "HSV2RGB\n", "PALETTE id=", "FIX_TO_F", "FIX_FROM_F", "I2F", "F2I",
+    "FIX2F", "F2FIX", "LOAD_CTX ",
+];
+
+fn assert_no_float_ops(src: &str) -> String {
+    let c = compile(src).unwrap_or_else(|d| panic!("compile error: {:?}", d));
+    let asm = disassemble(&c.fxb);
+    for op in FLOAT_OPS {
+        assert!(!asm.contains(op), "expected no `{op}` in all-fixed program:\n{asm}");
+    }
+    asm
+}
+
+#[test]
+fn fixed_ctx_input_lowers_to_load_ctx_fix() {
+    // fixed16(led.pos.x) must become a single LOAD_CTX_FIX (no LOAD_CTX + swizzle
+    // + FIX_FROM_F), and fixed16(time) likewise.
+    let src = r#"
+        vec3 shade(Led led) {
+          fixed16 x = fixed16(led.pos.x);
+          fixed16 t = fixed16(time);
+          return rgb(x, t, fixed16(0.0));
+        }
+    "#;
+    let asm = assert_no_float_ops(src);
+    assert!(asm.contains("LOAD_CTX_FIX led.pos comp=0 frac=14"), "{asm}");
+    assert!(asm.contains("LOAD_CTX_FIX time comp=0 frac=14"), "{asm}");
+    assert!(asm.contains("RET_RGB_FIX frac=14"), "{asm}");
+}
+
+#[test]
+fn fixed_hsv_output_is_float_free_and_correct() {
+    // hue = pos.x (cached fixed), s = v = 1 -> hsv2rgb fixed -> RetRgbFix. No f32.
+    let src = r#"
+        vec3 shade(Led led) {
+          fixed16 h = fixed16(led.pos.x);
+          return hsv2rgb(h, fixed16(1.0), fixed16(1.0));
+        }
+    "#;
+    let asm = assert_no_float_ops(src);
+    assert!(asm.contains("HSV2RGB_FIX frac=14"), "{asm}");
+    assert!(asm.contains("RET_RGB_FIX frac=14"), "{asm}");
+    // pos.x = 0 -> hue 0 -> red. Cache the fixed pos the way the device does.
+    let led = Led { pos_fix: [0, 0, 0], ..Default::default() };
+    assert_eq!(run_shade(src, &[], led, Frame::default()), (255, 0, 0));
+}
+
+#[test]
+fn rgb8_direct_int_output() {
+    let src = r#"
+        vec3 shade(Led led) {
+          int r = 255; int g = 0; int b = 128;
+          return rgb8(r, g, b);
+        }
+    "#;
+    let asm = assert_no_float_ops(src);
+    assert!(asm.contains("RET_RGB8"), "{asm}");
+    assert_eq!(run_shade(src, &[], Led::default(), Frame::default()), (255, 0, 128));
+}
+
+#[test]
+fn fixed_palette_output() {
+    // rainbow palette at t=0 -> red, entirely fixed.
+    let src = r#"
+        vec3 shade(Led led) {
+          return palette2(fixed16(0.0));
+        }
+    "#;
+    let asm = assert_no_float_ops(src);
+    assert!(asm.contains("PALETTE_FIX id=2 frac=14"), "{asm}");
+    assert_eq!(run_shade(src, &[], Led::default(), Frame::default()), (255, 0, 0));
+}
+
+#[test]
+fn float_effect_unchanged_by_fixed_paths() {
+    // A plain float effect must still emit the float ops (no accidental routing).
+    let src = r#"
+        vec3 shade(Led led) {
+          return hsv2rgb(led.pos.x, 1.0, 1.0);
+        }
+    "#;
+    let c = compile(src).unwrap();
+    let asm = disassemble(&c.fxb);
+    assert!(asm.contains("HSV2RGB\n"), "float hsv2rgb still float: {asm}");
+    assert!(asm.contains("RET n=3"), "{asm}");
+}
+
+#[test]
+fn all_fixed_animated_plasma_is_float_free() {
+    // A realistic animated effect: hue = pos.x + time (all fixed), full sat/val.
+    // This is the fixed twin used in the HITL benchmark.
+    let src = r#"
+        vec3 shade(Led led) {
+          fixed16 hue = fixed16(led.pos.x) + fixed16(time);
+          return hsv2rgb(hue, fixed16(1.0), fixed16(1.0));
+        }
+    "#;
+    assert_no_float_ops(src);
 }

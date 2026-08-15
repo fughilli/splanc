@@ -33,7 +33,17 @@ pub enum Ty {
     // `Compiler::ty_width` (NOT `Ty::width`, which only knows the primitives).
     Struct(u16),
     Array(u16),
+    // A float-free colour result (FUG-122): 3 channel slots holding scaled
+    // integers, produced by the fixed colour builtins (`hsv2rgb`/`palette`/`rgb`
+    // on fixed args, or `rgb8`) and consumed ONLY by a `shade()` return, which
+    // emits RetRgbFix / RetRgb8 (no clamp01()*255 soft-float). The payload is the
+    // Q1.frac fraction width; the sentinel [`COLOR_I8`] means int 0..255 channels.
+    Color(u8),
 }
+
+/// `Ty::Color` payload sentinel: channels are int 0..255 (→ RetRgb8) rather than
+/// Q1.frac in [0,1] (→ RetRgbFix).
+const COLOR_I8: u8 = 0xFF;
 impl Ty {
     /// Primitive slot width. Composites return 0 here — use
     /// [`Compiler::ty_width`], which consults the struct/array tables.
@@ -43,6 +53,7 @@ impl Ty {
             Ty::Vec2 => 2,
             Ty::Vec3 => 3,
             Ty::Vec4 => 4,
+            Ty::Color(_) => 3, // r, g, b channel slots
             Ty::Void | Ty::Struct(_) | Ty::Array(_) => 0,
         }
     }
@@ -55,7 +66,7 @@ impl Ty {
         }
     }
     fn is_num(self) -> bool {
-        !matches!(self, Ty::Bool | Ty::Void | Ty::Struct(_) | Ty::Array(_))
+        !matches!(self, Ty::Bool | Ty::Void | Ty::Struct(_) | Ty::Array(_) | Ty::Color(_))
     }
     fn is_scalar(self) -> bool {
         matches!(self, Ty::Float | Ty::Int | Ty::Fixed | Ty::Fixed8 | Ty::Fixed16)
@@ -346,7 +357,36 @@ pub struct Compiler {
     code: Vec<u8>,
     update_entry: u16,
     shade_entry: u16,
+    // FUG-122: provenance of the most recent scalar context load, so a cast of it
+    // to a fixed/int type can be lowered to a single LoadCtxFix (reading the
+    // per-LED fixed cache) instead of LoadCtx + a soft-float FixFromF. Valid only
+    // while `end == code.len()` (any later emit invalidates it). See `coerce`.
+    ctx_prov: Option<CtxProv>,
+    // FUG-122: the numeric literal most recently emitted (a PushConst), so a cast
+    // of it to fixed/int folds at COMPILE time into a fixed/int const rather than
+    // a per-iteration soft-float FixFromF/F2Fix. Valid while `pos+3 == code.len()`.
+    last_const: Option<ConstProv>,
 }
+
+/// A just-emitted numeric literal, for the constant-cast fold (FUG-122).
+#[derive(Clone, Copy)]
+struct ConstProv {
+    pos: usize,
+    bits: u32,
+    is_int: bool,
+}
+
+/// Where in the code stream a context value was just loaded, for the LoadCtxFix
+/// peephole (FUG-122). `comp` is the swizzled scalar component, or [`CTX_WHOLE`]
+/// for an un-swizzled vector (not yet reducible to a fixed scalar).
+#[derive(Clone, Copy)]
+struct CtxProv {
+    id: u8,
+    comp: u8,
+    start: usize,
+    end: usize,
+}
+const CTX_WHOLE: u8 = 0xFF;
 
 /// Compile GLSL-ish source to `.fxb` + manifest, or a list of diagnostics.
 pub fn compile(src: &str) -> Result<Compiled, Vec<Diagnostic>> {
@@ -382,6 +422,8 @@ pub fn compile(src: &str) -> Result<Compiled, Vec<Diagnostic>> {
         code: Vec::new(),
         update_entry: 0xFFFF,
         shade_entry: 0xFFFF,
+        ctx_prov: None,
+        last_const: None,
     };
     match c.program() {
         Ok(()) => Ok(c.finish()),
@@ -983,6 +1025,20 @@ impl Compiler {
                     }
                 } else {
                     let t = self.expr()?;
+                    // A fixed colour (FUG-122) returns straight from shade() via
+                    // the float-free RetRgbFix / RetRgb8 — no coerce to Vec3.
+                    if let Ty::Color(frac) = t {
+                        if !self.cur_fn_is_entry {
+                            return self.err("a fixed colour can only be returned from shade()");
+                        }
+                        if frac == COLOR_I8 {
+                            self.emit(fx_vm_op::RET_RGB8);
+                        } else {
+                            self.emit2(fx_vm_op::RET_RGB_FIX, frac);
+                        }
+                        self.expect_sym(';')?;
+                        return Ok(());
+                    }
                     self.coerce(t, ret)?;
                     self.expect_sym(';')?;
                     if self.cur_fn_is_entry {
@@ -1645,11 +1701,23 @@ impl Compiler {
             }
             comps.push(i);
         }
+        // If this swizzle picks a SINGLE component straight off an un-swizzled
+        // context vector (e.g. `led.pos.x`), carry the provenance through so the
+        // component can still lower to LoadCtxFix (FUG-122). Capture before emit.
+        let ctx_vec = match self.ctx_prov {
+            Some(p) if p.comp == CTX_WHOLE && p.end == self.code.len() && comps.len() == 1 => {
+                Some((p.id, p.start))
+            }
+            _ => None,
+        };
         self.emit(fx_vm_op::SWIZZLE);
         self.emit(src_w);
         self.emit(comps.len() as u8);
         for c in &comps {
             self.emit(*c);
+        }
+        if let Some((id, start)) = ctx_vec {
+            self.ctx_prov = Some(CtxProv { id, comp: comps[0], start, end: self.code.len() });
         }
         Ok(Ty::vec_of(comps.len() as u8))
     }
@@ -1658,13 +1726,12 @@ impl Compiler {
         match self.cur().clone() {
             Tok::Num(v, is_int) => {
                 self.advance();
-                if is_int {
-                    self.push_const(v as i32 as u32);
-                    Ok(Ty::Int)
-                } else {
-                    self.push_const(v.to_bits());
-                    Ok(Ty::Float)
-                }
+                let pos = self.code.len();
+                let bits = if is_int { v as i32 as u32 } else { v.to_bits() };
+                self.push_const(bits);
+                // Record for the constant-cast fold (FUG-122).
+                self.last_const = Some(ConstProv { pos, bits, is_int });
+                Ok(if is_int { Ty::Int } else { Ty::Float })
             }
             Tok::Ident(id) if id == "true" || id == "false" => {
                 self.advance();
@@ -1732,19 +1799,16 @@ impl Compiler {
     fn load_ident(&mut self, id: &str) -> Result<Ty, Diagnostic> {
         // context globals
         match id {
-            "time" => {
+            "time" | "dt" | "frame" => {
+                let cid = match id {
+                    "time" => fx_ctx::TIME,
+                    "dt" => fx_ctx::DT,
+                    _ => fx_ctx::FRAME,
+                };
+                let start = self.code.len();
                 self.emit(fx_vm_op::LOAD_CTX);
-                self.emit(fx_ctx::TIME);
-                return Ok(Ty::Float);
-            }
-            "dt" => {
-                self.emit(fx_vm_op::LOAD_CTX);
-                self.emit(fx_ctx::DT);
-                return Ok(Ty::Float);
-            }
-            "frame" => {
-                self.emit(fx_vm_op::LOAD_CTX);
-                self.emit(fx_ctx::FRAME);
+                self.emit(cid);
+                self.ctx_prov = Some(CtxProv { id: cid, comp: 0, start, end: self.code.len() });
                 return Ok(Ty::Float);
             }
             _ => {}
@@ -1909,6 +1973,84 @@ impl Compiler {
 
     fn emit_builtin(&mut self, name: &str, args: &[Ty]) -> Result<Ty, Diagnostic> {
         use fx_vm_op::*;
+        // FUG-122 — strictly-integer/fixed colour output. `rgb`/`rgb8` and
+        // `hsv2rgb`/`palette*` on fixed args produce a `Ty::Color` (3 channel
+        // slots holding scaled integers) that shade()'s return lowers to
+        // RetRgbFix/RetRgb8 — no clamp01()*255 soft-float. Intercepted before the
+        // float floaten_args path so a fixed colour never round-trips through f32.
+        let same_fixed = |a: &[Ty]| -> Option<u8> {
+            match a.first().and_then(|t| t.fixed_frac()) {
+                Some(f) if f > 0 && a.iter().all(|t| t.width() == 1 && *t == a[0]) => Some(f as u8),
+                _ => None,
+            }
+        };
+        if name == "rgb8" {
+            if args.len() != 3 || !args.iter().all(|a| matches!(a, Ty::Int | Ty::Bool)) {
+                return self.err("rgb8(r, g, b): 3 int channels in 0..255");
+            }
+            return Ok(Ty::Color(COLOR_I8));
+        }
+        if name == "rgb" {
+            let Some(_frac) = same_fixed(args) else {
+                return self.err("rgb(r, g, b): 3 channels of the same fixed type (e.g. fixed16)");
+            };
+            if args.len() != 3 {
+                return self.err("rgb(r, g, b) takes 3 channels");
+            }
+            return Ok(Ty::Color(same_fixed(args).unwrap()));
+        }
+        if matches!(name, "hsv2rgb" | "palette0" | "palette1" | "palette2") {
+            if let Some(frac) = same_fixed(args) {
+                match name {
+                    "hsv2rgb" => {
+                        if args.len() != 3 {
+                            return self.err("hsv2rgb(h, s, v) — pass 3 fixed scalars for the fixed path");
+                        }
+                        self.emit2(HSV2RGB_FIX, frac);
+                    }
+                    _ => {
+                        if args.len() != 1 {
+                            return self.err("palette expects 1 arg");
+                        }
+                        let id = name.as_bytes()[7] - b'0';
+                        self.emit(PALETTE_FIX);
+                        self.emit(id);
+                        self.emit(frac);
+                    }
+                }
+                return Ok(Ty::Color(frac));
+            }
+            // else: not all-fixed → fall through to the float path below.
+        }
+        // Fixed scalar transcendentals with no earlier native handler: sqrt/tan/
+        // log (unary) and atan2/pow (binary) on a fixed arg use the integer LUT
+        // opcodes instead of the soft-float UN_MATH/BIN_MATH path.
+        if matches!(name, "sqrt" | "tan" | "log") {
+            if let (Some(&a), true) = (args.first(), args.len() == 1) {
+                if let (1, Some(frac)) = (a.width(), a.fixed_frac()) {
+                    if frac > 0 {
+                        let op = match name {
+                            "sqrt" => SQRT_FIX,
+                            "tan" => TAN_FIX,
+                            _ => LOG_FIX,
+                        };
+                        self.emit2(op, frac as u8);
+                        return Ok(a);
+                    }
+                }
+            }
+        }
+        if matches!(name, "atan2" | "pow") {
+            if args.len() == 2 && args[0] == args[1] && args[0].width() == 1 {
+                if let Some(frac) = args[0].fixed_frac() {
+                    if frac > 0 {
+                        let op = if name == "atan2" { ATAN2_FIX } else { POW_FIX };
+                        self.emit2(op, frac as u8);
+                        return Ok(args[0]);
+                    }
+                }
+            }
+        }
         // Float-only builtins: an int/fixed arg is CONVERTED to float (never
         // reinterpreted). Unary sqrt/log/tan and sin/cos/exp are handled below
         // (the latter with a fixed LUT); these are the multi-arg / vector ones.
@@ -2254,8 +2396,13 @@ impl Compiler {
             ("imu", "gyro") => (fx_ctx::IMU_GYRO, Ty::Vec3),
             _ => return self.err(format!("no field {ns}.{field}")),
         };
+        let start = self.code.len();
         self.emit(fx_vm_op::LOAD_CTX);
         self.emit(id);
+        // Record provenance for the LoadCtxFix peephole. A scalar field is already
+        // reducible (comp 0); a vector waits for a `.x/.y/.z` swizzle to pin comp.
+        let comp = if ty.is_scalar() || ty == Ty::Bool { 0 } else { CTX_WHOLE };
+        self.ctx_prov = Some(CtxProv { id, comp, start, end: self.code.len() });
         Ok(ty)
     }
 
@@ -2264,6 +2411,55 @@ impl Compiler {
     fn coerce(&mut self, from: Ty, to: Ty) -> Result<(), Diagnostic> {
         if from == to {
             return Ok(());
+        }
+        // A fixed colour must be returned straight from shade(); it can't be
+        // mixed back into scalar/vector math (FUG-122).
+        if matches!(from, Ty::Color(_)) {
+            return self.err(
+                "a fixed colour (rgb()/rgb8()/hsv2rgb()/palette on fixed args) must be returned \
+                 directly from shade()",
+            );
+        }
+        // Constant-cast fold: converting a just-pushed numeric literal to a
+        // fixed/int type is done at compile time (rewrite the const) so no
+        // per-iteration soft-float conversion runs (FUG-122).
+        if let Some(k) = self.last_const {
+            let want = to.fixed_frac(); // Some(frac) for int/fixed targets
+            if k.pos + 3 == self.code.len() && from.is_scalar() {
+                if let Some(frac) = want {
+                    let val = if k.is_int {
+                        k.bits as i32 as f64
+                    } else {
+                        f32::from_bits(k.bits) as f64
+                    };
+                    let folded = (val * (1u64 << frac) as f64) as i32 as u32;
+                    let idx = self.const_word(folded);
+                    self.code[k.pos + 1..k.pos + 3].copy_from_slice(&idx.to_le_bytes());
+                    self.last_const = None;
+                    return Ok(());
+                } else if to == Ty::Float && k.is_int {
+                    // int literal -> float: fold to the float bit pattern.
+                    let folded = (k.bits as i32 as f32).to_bits();
+                    let idx = self.const_word(folded);
+                    self.code[k.pos + 1..k.pos + 3].copy_from_slice(&idx.to_le_bytes());
+                    self.last_const = None;
+                    return Ok(());
+                }
+            }
+        }
+        // LoadCtxFix peephole: casting a just-loaded scalar context component to a
+        // fixed/int type reads the per-LED fixed cache with zero soft-float —
+        // replace the emitted LoadCtx(+swizzle)+FixFromF with one LoadCtxFix.
+        if let (Some(p), Some(frac)) = (self.ctx_prov, to.fixed_frac()) {
+            if from == Ty::Float && p.comp != CTX_WHOLE && p.end == self.code.len() {
+                self.code.truncate(p.start);
+                self.emit(fx_vm_op::LOAD_CTX_FIX);
+                self.emit(p.id);
+                self.emit(p.comp);
+                self.emit(frac as u8);
+                self.ctx_prov = None;
+                return Ok(());
+            }
         }
         if from.is_scalar() && to.is_scalar() {
             let op = match (from, to) {
@@ -2590,6 +2786,38 @@ fn decode_op(code: &[u8], pc: usize) -> (String, usize) {
         SIN_FIX => (format!("SIN_FIX frac={}", b(0)), 2),
         COS_FIX => (format!("COS_FIX frac={}", b(0)), 2),
         EXP_FIX => (format!("EXP_FIX frac={}", b(0)), 2),
+        ABS_I => ("ABS_I".into(), 1),
+        MIN_I => ("MIN_I".into(), 1),
+        MAX_I => ("MAX_I".into(), 1),
+        CLAMP_I => ("CLAMP_I".into(), 1),
+        SIGN_I => (format!("SIGN_I frac={}", b(0)), 2),
+        STEP_I => (format!("STEP_I frac={}", b(0)), 2),
+        FLOOR_FIX => (format!("FLOOR_FIX frac={}", b(0)), 2),
+        CEIL_FIX => (format!("CEIL_FIX frac={}", b(0)), 2),
+        FRACT_FIX => (format!("FRACT_FIX frac={}", b(0)), 2),
+        MIX_FIX => (format!("MIX_FIX frac={}", b(0)), 2),
+        // FUG-122 fixed vector/transcendental/colour/I/O ops.
+        SQRT_FIX => (format!("SQRT_FIX frac={}", b(0)), 2),
+        SCALE_FIX => (format!("SCALE_FIX frac={} n={}", b(0), b(1)), 3),
+        DOT_FIX => (format!("DOT_FIX frac={} n={}", b(0), b(1)), 3),
+        LENGTH_FIX => (format!("LENGTH_FIX frac={} n={}", b(0), b(1)), 3),
+        DISTANCE_FIX => (format!("DISTANCE_FIX frac={} n={}", b(0), b(1)), 3),
+        NORMALIZE_FIX => (format!("NORMALIZE_FIX frac={} n={}", b(0), b(1)), 3),
+        CROSS_FIX => (format!("CROSS_FIX frac={}", b(0)), 2),
+        SMOOTHSTEP_FIX => (format!("SMOOTHSTEP_FIX frac={} n={}", b(0), b(1)), 3),
+        CLAMP_V_FIX => (format!("CLAMP_V_FIX n={}", b(0)), 2),
+        MIX_V_FIX => (format!("MIX_V_FIX frac={} n={}", b(0), b(1)), 3),
+        HSV2RGB_FIX => (format!("HSV2RGB_FIX frac={}", b(0)), 2),
+        PALETTE_FIX => (format!("PALETTE_FIX id={} frac={}", b(0), b(1)), 3),
+        ATAN2_FIX => (format!("ATAN2_FIX frac={}", b(0)), 2),
+        LOG_FIX => (format!("LOG_FIX frac={}", b(0)), 2),
+        TAN_FIX => (format!("TAN_FIX frac={}", b(0)), 2),
+        POW_FIX => (format!("POW_FIX frac={}", b(0)), 2),
+        HASH_FIX => (format!("HASH_FIX frac={}", b(0)), 2),
+        HASH3_FIX => (format!("HASH3_FIX frac={}", b(0)), 2),
+        RET_RGB8 => ("RET_RGB8".into(), 1),
+        RET_RGB_FIX => (format!("RET_RGB_FIX frac={}", b(0)), 2),
+        LOAD_CTX_FIX => (format!("LOAD_CTX_FIX {} comp={} frac={}", ctx_name(b(0)), b(1), b(2)), 4),
         other => (format!("?? 0x{other:02x}"), 0),
     }
 }
@@ -2636,6 +2864,10 @@ pub fn manifest_json(uniforms: &[UniformInfo]) -> String {
 
 // Opcode constants mirroring fx_vm::Op discriminants (kept in sync by the
 // fx_vm crate order; a test asserts they match).
+// A complete mirror of the fx_vm::Op discriminants. Some (the fixed vector
+// reductions) exist in the VM ISA + its tests but the compiler front-end does
+// not emit them yet (vectors are float in v1), so allow the unused mirrors.
+#[allow(dead_code)]
 mod fx_vm_op {
     pub const PUSH_CONST: u8 = 0;
     pub const LOAD_UNIFORM: u8 = 1;
@@ -2720,6 +2952,29 @@ mod fx_vm_op {
     pub const CEIL_FIX: u8 = 77;
     pub const FRACT_FIX: u8 = 78;
     pub const MIX_FIX: u8 = 79;
+    // FUG-122: fixed/int variants of the vector/transcendental/colour/I/O ops.
+    // Mirror fx_vm::Op ordering exactly (80..=100).
+    pub const SQRT_FIX: u8 = 80;
+    pub const SCALE_FIX: u8 = 81;
+    pub const DOT_FIX: u8 = 82;
+    pub const LENGTH_FIX: u8 = 83;
+    pub const DISTANCE_FIX: u8 = 84;
+    pub const NORMALIZE_FIX: u8 = 85;
+    pub const CROSS_FIX: u8 = 86;
+    pub const SMOOTHSTEP_FIX: u8 = 87;
+    pub const CLAMP_V_FIX: u8 = 88;
+    pub const MIX_V_FIX: u8 = 89;
+    pub const HSV2RGB_FIX: u8 = 90;
+    pub const PALETTE_FIX: u8 = 91;
+    pub const ATAN2_FIX: u8 = 92;
+    pub const LOG_FIX: u8 = 93;
+    pub const TAN_FIX: u8 = 94;
+    pub const POW_FIX: u8 = 95;
+    pub const HASH_FIX: u8 = 96;
+    pub const HASH3_FIX: u8 = 97;
+    pub const RET_RGB8: u8 = 98;
+    pub const RET_RGB_FIX: u8 = 99;
+    pub const LOAD_CTX_FIX: u8 = 100;
 }
 
 /// `.fxb` flags bit: a buffer descriptor table follows `code` (mirrors
