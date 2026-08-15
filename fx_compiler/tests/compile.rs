@@ -1271,3 +1271,14 @@ fn ab_plasma_fixed_twin_is_softfloat_free() {
     assert!(float_ops >= 3, "float baseline should be soft-float heavy, got {float_ops}");
     assert_eq!(fixed_ops, 0, "fixed twin must be soft-float free, got {fixed_ops}");
 }
+
+#[test]
+fn ctxfix_flag_gates_per_led_fixed_build() {
+    // FLAG_USES_CTXFIX (0x02 in the .fxb header flags byte) is set iff the program
+    // reads the fixed context cache — the device uses it to skip the per-LED fixed
+    // mirror build for all-float effects (zero hot-path overhead).
+    let fixed = compile("vec3 shade(Led led){ return rgb(fixed16(led.pos.x), fixed16(0.0), fixed16(0.0)); }").unwrap();
+    assert_ne!(fixed.fxb[5] & 0x02, 0, "fixed-context program must set FLAG_USES_CTXFIX");
+    let float = compile("vec3 shade(Led led){ return vec3(led.pos.x, 0.0, 0.0); }").unwrap();
+    assert_eq!(float.fxb[5] & 0x02, 0, "all-float program must NOT set FLAG_USES_CTXFIX");
+}

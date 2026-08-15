@@ -415,10 +415,18 @@ pub struct Program<'a> {
     /// [`comp`]). Held raw; [`buf_desc`] decodes an entry.
     pub n_buffers: u8,
     buffers: &'a [u8],
+    /// The `.fxb` header flags byte (FLAG_*), retained so the host can cheaply
+    /// query program capabilities without re-scanning the code.
+    pub flags: u8,
 }
 
 /// flags bit: a buffer descriptor table follows `code` in the `.fxb`.
 pub const FLAG_BUFFERS: u8 = 0x01;
+/// flags bit: the program uses `LoadCtxFix` (reads the per-LED fixed context
+/// cache). Lets the host skip building the fixed mirrors per LED for the common
+/// all-float program — zero hot-path overhead for effects that don't need them
+/// (FUG-122).
+pub const FLAG_USES_CTXFIX: u8 = 0x02;
 /// Bytes per buffer descriptor: kind(u8) elem(u8) comp(u8) w(u16) h(u16).
 pub const BUF_DESC_LEN: usize = 7;
 
@@ -614,7 +622,16 @@ impl<'a> Program<'a> {
             manifest,
             n_buffers,
             buffers,
+            flags,
         })
+    }
+
+    /// Whether the program reads the per-LED fixed context cache (`LoadCtxFix`).
+    /// The host uses this to skip building the fixed mirrors for all-float
+    /// programs (FUG-122).
+    #[inline]
+    pub fn uses_ctxfix(&self) -> bool {
+        self.flags & FLAG_USES_CTXFIX != 0
     }
 
     /// Decode buffer descriptor `i` (or `None`).

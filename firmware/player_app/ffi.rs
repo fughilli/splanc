@@ -203,6 +203,10 @@ static mut FX_UV_INV: [f32; 2] = [0.0, 0.0];
 /// False when the cache is stale (a map/topology upload cleared it); rebuilt
 /// lazily at the top of the next lm_fx_update frame.
 static mut FX_TOPO_READY: bool = false;
+/// True when the loaded effect reads the per-LED fixed context cache
+/// (`LoadCtxFix`). All-float effects leave this false and skip the per-LED
+/// fixed-mirror build entirely — zero hot-path overhead (FUG-122).
+static mut FX_USES_CTXFIX: bool = false;
 
 // -- perf monitoring (docs/design/perf-monitoring.md) -------------------------
 // A small perf ring the render task fills (one PerfFrame per rendered effect
@@ -2086,6 +2090,9 @@ pub unsafe extern "C" fn lm_fx_load(fxb: *const u8, len: usize) -> bool {
     // leaks across a hot-reload.
     *addr_of_mut!(OSC_TABLE) = osc::parse_manifest(prog.manifest);
     (*addr_of_mut!(OSC_SHADOW)).reset();
+    // Only build the per-LED fixed context mirrors on the hot path when the
+    // program actually reads them (FUG-122) — an all-float effect pays nothing.
+    FX_USES_CTXFIX = prog.uses_ctxfix();
     let buf = &mut *addr_of_mut!(FX_BYTES);
     buf[..len].copy_from_slice(src);
     FX_LEN = len;
@@ -2317,7 +2324,7 @@ pub unsafe extern "C" fn lm_fx_shade(
         ((x - FX_UV_MIN[0]) * FX_UV_INV[0]).clamp(0.0, 1.0),
         ((y - FX_UV_MIN[1]) * FX_UV_INV[1]).clamp(0.0, 1.0),
     ];
-    let led = FxLed {
+    let mut led = FxLed {
         pos: [x, y, z],
         idx,
         seg: t.seg as i32,
@@ -2325,15 +2332,19 @@ pub unsafe extern "C" fn lm_fx_shade(
         branch: t.branch,
         dist: t.dist,
         uv,
-        // Fixed mirrors read by LoadCtxFix — taken straight from the cache filled
-        // once at map/topology rebuild (FUG-122). No soft-float on this path: the
-        // 0..1 quantities are stored Q1.14 and widened to the Q16.16 canonical the
-        // opcode expects with a cheap integer shift (16 - 14 = 2).
-        pos_fix: t.pos_fix,
-        uv_fix: [(t.uv_fix[0] as i32) << 2, (t.uv_fix[1] as i32) << 2],
-        s_fix: (t.s_fix as i32) << 2,
-        dist_fix: (t.dist_fix as i32) << 2,
+        ..Default::default()
     };
+    // Fixed mirrors read by LoadCtxFix — taken straight from the cache filled once
+    // at map/topology rebuild (FUG-122). Built ONLY when the effect uses them so
+    // an all-float shader pays zero per-LED overhead. No soft-float: the 0..1
+    // quantities are stored Q1.14 and widened to the Q16.16 canonical the opcode
+    // expects with a cheap integer shift (16 - 14 = 2).
+    if FX_USES_CTXFIX {
+        led.pos_fix = t.pos_fix;
+        led.uv_fix = [(t.uv_fix[0] as i32) << 2, (t.uv_fix[1] as i32) << 2];
+        led.s_fix = (t.s_fix as i32) << 2;
+        led.dist_fix = (t.dist_fix as i32) << 2;
+    }
     let outcome = if PERF_MODE == PERF_FULL {
         // FULL: count this LED's opcodes into the per-frame shade accumulator
         // and lift the stack high-water. This is the hottest path, so the

@@ -366,6 +366,10 @@ pub struct Compiler {
     // of it to fixed/int folds at COMPILE time into a fixed/int const rather than
     // a per-iteration soft-float FixFromF/F2Fix. Valid while `pos+3 == code.len()`.
     last_const: Option<ConstProv>,
+    // FUG-122: set once the program emits a LoadCtxFix, so `.fxb` carries
+    // FLAG_USES_CTXFIX and the host can skip building the per-LED fixed context
+    // mirrors for all-float programs.
+    emitted_ctxfix: bool,
 }
 
 /// A just-emitted numeric literal, for the constant-cast fold (FUG-122).
@@ -424,6 +428,7 @@ pub fn compile(src: &str) -> Result<Compiled, Vec<Diagnostic>> {
         shade_entry: 0xFFFF,
         ctx_prov: None,
         last_const: None,
+        emitted_ctxfix: false,
     };
     match c.program() {
         Ok(()) => Ok(c.finish()),
@@ -2458,6 +2463,7 @@ impl Compiler {
                 self.emit(p.comp);
                 self.emit(frac as u8);
                 self.ctx_prov = None;
+                self.emitted_ctxfix = true;
                 return Ok(());
             }
         }
@@ -2528,7 +2534,10 @@ impl Compiler {
 
     fn finish(self) -> Compiled {
         let mut b = Vec::new();
-        let flags = if self.buffers.is_empty() { 0 } else { FLAG_BUFFERS };
+        let mut flags = if self.buffers.is_empty() { 0 } else { FLAG_BUFFERS };
+        if self.emitted_ctxfix {
+            flags |= FLAG_USES_CTXFIX;
+        }
         b.extend_from_slice(b"FXB1");
         b.push(1); // version
         b.push(flags); // flags
@@ -2981,6 +2990,9 @@ mod fx_vm_op {
 /// fx_vm::FLAG_BUFFERS). One byte `n_buffers`, then n × [kind(u8) elem(u8)
 /// comp(u8) w(u16) h(u16)] (7 bytes each = fx_vm::BUF_DESC_LEN).
 const FLAG_BUFFERS: u8 = 0x01;
+/// `.fxb` flags bit (mirrors fx_vm::FLAG_USES_CTXFIX): the program reads the
+/// per-LED fixed context cache via LoadCtxFix.
+const FLAG_USES_CTXFIX: u8 = 0x02;
 mod fx_ctx {
     pub const TIME: u8 = 0;
     pub const DT: u8 = 1;
