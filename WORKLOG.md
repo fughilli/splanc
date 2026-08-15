@@ -37,6 +37,15 @@ Kevin's steer: "can't the firmware receive OSC natively?").
 Address convention: `/speed` (scalar), `/tint/x|y|z|w` (vec component) or `/tint`
 `,fff` (whole vector); `/slotN` when no manifest. Configurable prefix.
 
+**Bridge dropped (profiled).** `//firmware/player_app:transport_bench` compares
+the device-side cost of one uniform update via the proto `set_uniforms` path
+(`lm_player_handle`: envelope scan + micropb decode + dispatch + reply encode)
+vs native OSC ingest: **858 ns vs 22 ns — ~38×**, and the proto figure EXCLUDES
+the WebSocket framing + TLS the real ws/wss path also pays per message. Add TCP
+head-of-line blocking/latency and the known `set_uniforms` drop issue (there's a
+HITL drop-rate bench for exactly that), and proto-for-transport is strictly worse
+for realtime control. So the OSC path fully replaces the bridge — not kept.
+
 ## iOS support — Capacitor scaffold + host build server (branch `agent/fug-92-ios-support`)
 
 First implementation pass on FUG-92 (design: `docs/design/ios-support.md`; how-to:

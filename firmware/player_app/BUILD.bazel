@@ -12,7 +12,7 @@ load("@embedded//rules:flash.bzl", "esptool_flash")
 load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
-load("@rules_rust//rust:defs.bzl", "rust_library", "rust_static_library", "rust_test")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_static_library", "rust_test")
 load("//tools:flash_bundle.bzl", "flash_bundle")
 
 package(default_visibility = ["//visibility:public"])
@@ -70,6 +70,23 @@ rust_test(
     },
     deps = [
         ":player_ffi_host",
+        "//fx_compiler",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+    ],
+)
+
+# Transport profile (FUG-121): per-uniform-update device-CPU cost of the proto
+# `set_uniforms` path vs native OSC ingest, to decide whether a proto-transport
+# bridge is worth keeping. `bazel run //firmware/player_app:transport_bench`.
+rust_binary(
+    name = "transport_bench",
+    srcs = ["bench/transport.rs"],
+    edition = "2021",
+    deps = [
+        ":player_ffi_host",
+        "//firmware/fx_vm",
+        "//firmware/osc",
         "//fx_compiler",
         "//shared/protocol/rust:ledmapper_pb",
         "@crates//:micropb",
