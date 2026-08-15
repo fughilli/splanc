@@ -5,10 +5,10 @@
  * you send MUST match a texture's width×height or the device drops it, so the
  * dimensions are read from the compiled buffer rather than hardcoded.
  *
- * `.fxb` layout (little-endian). Header (18 bytes):
- *   magic "FXB1"(4) · version u8 · flags u8 · n_state u8 · n_uniform_slots u8 ·
- *   manifest_len u16 · n_consts u16 · code_len u16 · update_entry u16 ·
- *   shade_entry u16
+ * `.fxb` layout (little-endian). Header: magic "FXB1"(4) · version u8 · flags u8
+ *   · n_state u8 · n_uniform_slots u8 · manifest_len u16 · n_consts u16 ·
+ *   code_len u16 · update_entry u16 · shade_entry u16 — 18 bytes for v1, and v2
+ *   (FUG-107) appends poll_entry u16 for a 20-byte header.
  * Then: manifest(manifest_len) · consts(n_consts*4) · code(code_len).
  * If (flags & 0x01) a buffer table follows: n_buffers u8, then n_buffers ×
  *   [kind u8, elem u8, comp u8, w u16, h u16].
@@ -51,8 +51,12 @@ export function parseFxbTextures(fxb: Uint8Array): FxbTexture[] {
   const nConsts = dv.getUint16(10, true);
   const codeLen = dv.getUint16(12, true);
 
+  // v2 (FUG-107) appends poll_entry to the fixed header (18 → 20 bytes); the
+  // manifest/consts/code follow it. Read the version to place the buffer table.
+  const headerLen = dv.getUint8(4) >= 2 ? 20 : 18;
+
   // Buffer table starts right after header + manifest + consts + code.
-  let off = 18 + manifestLen + nConsts * 4 + codeLen;
+  let off = headerLen + manifestLen + nConsts * 4 + codeLen;
   if (off + 1 > fxb.byteLength) throw new Error("fxb missing buffer table");
 
   const nBuffers = dv.getUint8(off);
