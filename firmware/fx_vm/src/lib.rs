@@ -427,6 +427,10 @@ pub const FLAG_BUFFERS: u8 = 0x01;
 /// all-float program — zero hot-path overhead for effects that don't need them
 /// (FUG-122).
 pub const FLAG_USES_CTXFIX: u8 = 0x02;
+/// flags bit: the program reads `led.uv` (float or fixed). Lets the host skip the
+/// per-LED soft-float uv projection (2 sub + 2 mul + clamp) for the many effects
+/// that never touch uv — a chunk of the per-LED framing floor (FUG-122).
+pub const FLAG_USES_UV: u8 = 0x04;
 /// Bytes per buffer descriptor: kind(u8) elem(u8) comp(u8) w(u16) h(u16).
 pub const BUF_DESC_LEN: usize = 7;
 
@@ -634,6 +638,13 @@ impl<'a> Program<'a> {
         self.flags & FLAG_USES_CTXFIX != 0
     }
 
+    /// Whether the program reads `led.uv`. The host skips the per-LED soft-float
+    /// uv projection when this is false (FUG-122).
+    #[inline]
+    pub fn uses_uv(&self) -> bool {
+        self.flags & FLAG_USES_UV != 0
+    }
+
     /// Decode buffer descriptor `i` (or `None`).
     pub fn buf_desc(&self, i: usize) -> Option<BufDesc> {
         let b = self.buffers.get(i * BUF_DESC_LEN..i * BUF_DESC_LEN + BUF_DESC_LEN)?;
@@ -768,6 +779,16 @@ pub struct Vm {
     // Single-source geodesic field for `flood_from` (see [`DistSrc`]). Persists
     // across frames like `state`; reset when a fresh effect is loaded.
     dist_src: DistSrc,
+    // Resident execution scratch (operand stack, locals, call-return stack).
+    // Kept on the Vm and REUSED across invocations instead of being re-zeroed on
+    // every shade()/update() call — the per-LED array zeroing was a large slice
+    // of the framing cost. Sound because the VM only ever reads a slot it wrote
+    // earlier in the SAME invocation (a stack machine pushes before it pops; the
+    // compiler stores a local before loading it), so stale contents are never
+    // observed. `sp`/`csp` reset to 0 each run.
+    stack: [f32; MAX_STACK],
+    locals: [f32; MAX_LOCALS],
+    call_stack: [usize; 16],
 }
 
 /// Single-source geodesic node-distance field, filled by the `flood_from`
@@ -802,6 +823,9 @@ impl Default for Vm {
             arena_ptr: core::ptr::null_mut(),
             arena_len: 0,
             dist_src: DistSrc::default(),
+            stack: [0.0; MAX_STACK],
+            locals: [0.0; MAX_LOCALS],
+            call_stack: [0; 16],
         }
     }
 }
@@ -858,17 +882,6 @@ impl Vm {
         self.arena_len = arena.len();
     }
 
-    fn graph_ref(&self) -> GraphRef<'_> {
-        GraphRef {
-            n_seg: self.n_seg,
-            seg_len: &self.seg_len,
-            seg_node: &self.seg_node,
-            node_deg: &self.node_deg,
-            node_seg: &self.node_seg,
-            node_side: &self.node_side,
-        }
-    }
-
     /// Run `update()` (if present), evolving `state`. Uses the default budget.
     pub fn run_update(&mut self, prog: &Program, frame: &Frame) {
         self.run_update_bounded(prog, frame, &Budget::default());
@@ -896,34 +909,46 @@ impl Vm {
             return (Outcome::Ok, Counters::default());
         }
         let led = Led::default();
-        let mut st = self.state;
-        let mut dist = self.dist_src;
-        let g = self.graph_ref();
-        let arena: &mut [u8] = if self.arena_ptr.is_null() || self.arena_len == 0 {
+        // Copy the raw arena ptr/len out first so building the slice doesn't hold
+        // a borrow of `self` (lets the disjoint field borrows below coexist).
+        let (arena_ptr, arena_len) = (self.arena_ptr, self.arena_len);
+        let arena: &mut [u8] = if arena_ptr.is_null() || arena_len == 0 {
             &mut []
         } else {
-            unsafe { core::slice::from_raw_parts_mut(self.arena_ptr, self.arena_len) }
+            unsafe { core::slice::from_raw_parts_mut(arena_ptr, arena_len) }
         };
+        // Inline the graph borrow (disjoint fields) so `state`/`dist`/scratch can
+        // be borrowed mutably at the same time — no per-invocation copies.
+        let g = GraphRef {
+            n_seg: self.n_seg,
+            seg_len: &self.seg_len,
+            seg_node: &self.seg_node,
+            node_deg: &self.node_deg,
+            node_seg: &self.node_seg,
+            node_side: &self.node_side,
+        };
+        // update() writes `state`/`dist_src` in place — the intended persistence.
         let (_out, _rgb, outcome, counters) = run(
             prog,
-            self.uniforms,
-            &mut st,
+            &self.uniforms,
+            &mut self.state,
             frame,
             &led,
             &g,
-            &mut dist,
+            &mut self.dist_src,
             arena,
+            &mut self.stack,
+            &mut self.locals,
+            &mut self.call_stack,
             prog.update_entry as usize,
             budget,
         );
-        self.state = st;
-        self.dist_src = dist; // persist a flood_from source across frames
         (outcome, counters)
     }
 
     /// Run `shade(led)` → RGB. Does not mutate `state` (read-only in shade).
     /// Uses the default budget.
-    pub fn run_shade(&self, prog: &Program, frame: &Frame, led: &Led) -> Rgb {
+    pub fn run_shade(&mut self, prog: &Program, frame: &Frame, led: &Led) -> Rgb {
         self.run_shade_bounded(prog, frame, led, &Budget::default()).0
     }
 
@@ -931,7 +956,7 @@ impl Vm {
     /// (budget/timeout) the returned RGB is black — the caller may instead hold
     /// the LED's previous colour. Returns `(rgb, outcome)`.
     pub fn run_shade_bounded(
-        &self,
+        &mut self,
         prog: &Program,
         frame: &Frame,
         led: &Led,
@@ -944,29 +969,42 @@ impl Vm {
     /// Like [`run_shade_bounded`], additionally returning Tier-1 [`Counters`]
     /// (opcodes retired + stack high-water) for the perf stream.
     pub fn run_shade_counted(
-        &self,
+        &mut self,
         prog: &Program,
         frame: &Frame,
         led: &Led,
         budget: &Budget,
     ) -> (Rgb, Outcome, Counters) {
-        let mut st = self.state; // copy; shade shouldn't write it, but be safe
-        let mut dist = self.dist_src; // read-only in shade (led.dist); not persisted
-        let g = self.graph_ref();
-        let arena: &mut [u8] = if self.arena_ptr.is_null() || self.arena_len == 0 {
+        // shade() is read-only on `state` (the compiler never emits StoreState in
+        // shade), so we pass `state`/`dist_src` by mutable ref WITHOUT the old
+        // per-LED copy — the values are unchanged on return. This was ~900 B of
+        // copying per LED (FUG-122 hill-climb).
+        let (arena_ptr, arena_len) = (self.arena_ptr, self.arena_len);
+        let arena: &mut [u8] = if arena_ptr.is_null() || arena_len == 0 {
             &mut []
         } else {
-            unsafe { core::slice::from_raw_parts_mut(self.arena_ptr, self.arena_len) }
+            unsafe { core::slice::from_raw_parts_mut(arena_ptr, arena_len) }
+        };
+        let g = GraphRef {
+            n_seg: self.n_seg,
+            seg_len: &self.seg_len,
+            seg_node: &self.seg_node,
+            node_deg: &self.node_deg,
+            node_seg: &self.node_seg,
+            node_side: &self.node_side,
         };
         let (out, rgb, outcome, counters) = run(
             prog,
-            self.uniforms,
-            &mut st,
+            &self.uniforms,
+            &mut self.state,
             frame,
             led,
             &g,
-            &mut dist,
+            &mut self.dist_src,
             arena,
+            &mut self.stack,
+            &mut self.locals,
+            &mut self.call_stack,
             prog.shade_entry as usize,
             budget,
         );
@@ -1091,22 +1129,34 @@ impl GraphRef<'_> {
 /// [`Budget`]): a per-invocation instruction budget (primary, deterministic)
 /// and an optional wall-time deadline flag raised by a hardware timer
 /// (secondary). Either firing unwinds to the caller with a timeout outcome.
+#[allow(clippy::too_many_arguments)]
 fn run(
     prog: &Program,
-    uniforms: [f32; MAX_UNIFORM_SLOTS],
+    uniforms: &[f32; MAX_UNIFORM_SLOTS],
     state: &mut [f32; MAX_STATE],
     frame: &Frame,
     led: &Led,
     graph: &GraphRef,
     dist: &mut DistSrc,
     arena: &mut [u8],
+    // Resident scratch, reused across invocations (see [`Vm`]); NOT re-zeroed.
+    stack: &mut [f32; MAX_STACK],
+    locals: &mut [f32; MAX_LOCALS],
+    call_stack: &mut [usize; 16],
     entry: usize,
     guard: &Budget,
 ) -> ([f32; 3], Option<Rgb>, Outcome, Counters) {
     use core::sync::atomic::Ordering;
     let code = prog.code;
-    let mut stack = [0.0f32; MAX_STACK];
-    let mut locals = [0.0f32; MAX_LOCALS];
+    // `stack` and `call_stack` need NO clearing — the VM only reads a slot it
+    // wrote earlier in THIS invocation (push-before-pop; Call-before-RetFn), so
+    // stale contents are never observed. `locals` MUST be zeroed, though: array/
+    // struct locals carry no init code and rely on it (see fx_compiler
+    // local_decl). That leaves just this one clear on the hot path; the per-LED
+    // state/uniform/dist copies are gone entirely (FUG-122 framing hill-climb).
+    for l in locals.iter_mut() {
+        *l = 0.0;
+    }
     let mut sp: usize = 0;
     let mut pc: usize = entry;
     let mut budget: u32 = guard.instructions; // instructions per invocation
@@ -1117,7 +1167,6 @@ fn run(
     // Poll the wall-time flag every N ops (an atomic load per op would dominate
     // the tiny opcodes); the instruction budget bounds the slop between polls.
     const DEADLINE_POLL_MASK: u32 = 0x3FF;
-    let mut call_stack = [0usize; 16];
     let mut csp: usize = 0;
     let mut outcome = Outcome::Ok;
 

@@ -99,7 +99,7 @@ fn texture_rgba_written_into_arena_is_sampled() {
     let mut vm = Vm::new();
     vm.set_arena(&mut arena);
     let frame = Frame { led_count: led_count as u32, ..Default::default() };
-    let sample = |u: f32, v: f32| vm.run_shade(&prog, &frame, &Led { uv: [u, v], ..Default::default() });
+    let mut sample = |u: f32, v: f32| vm.run_shade(&prog, &frame, &Led { uv: [u, v], ..Default::default() });
     assert_eq!(sample(0.0, 0.0), (255, 0, 0), "u=0 samples texel 0 (red)");
     assert_eq!(sample(1.0, 0.0), (0, 255, 0), "u=1 samples texel 1 (green)");
     // Midpoint bilinearly blends the two texels (red+green -> ~half each).
@@ -220,7 +220,7 @@ fn math_and_palette() {
     ];
     let buf = fxb(0, 0, NO_ENTRY, 0, &[], &code);
     let prog = Program::parse(&buf).expect("parse");
-    let vm = Vm::new();
+    let mut vm = Vm::new();
     let frame = Frame::default();
     // t=0 rainbow (hsv h=0) => pure red
     let led = Led { pos: [0.0, 0.0, 0.0], ..Default::default() };
@@ -285,7 +285,7 @@ fn budget_trips_on_pathological_loop() {
     code.extend_from_slice(&(-3i16).to_le_bytes());
     let buf = fxb(0, 0, NO_ENTRY, 0, &[], &code);
     let prog = Program::parse(&buf).expect("parse");
-    let vm = Vm::new();
+    let mut vm = Vm::new();
     let frame = Frame::default();
     let led = Led::default();
 
@@ -315,7 +315,7 @@ fn budget_leaves_normal_programs_untouched() {
     ];
     let buf = fxb(0, 0, NO_ENTRY, 0, &[1.0, 0.0], &code);
     let prog = Program::parse(&buf).expect("parse");
-    let vm = Vm::new();
+    let mut vm = Vm::new();
     let frame = Frame::default();
     let led = Led::default();
     let (rgb, outcome) = vm.run_shade_bounded(&prog, &frame, &led, &Budget::instructions(1000));
@@ -333,7 +333,7 @@ fn deadline_flag_cancels_execution() {
     code.extend_from_slice(&(-3i16).to_le_bytes());
     let buf = fxb(0, 0, NO_ENTRY, 0, &[], &code);
     let prog = Program::parse(&buf).expect("parse");
-    let vm = Vm::new();
+    let mut vm = Vm::new();
     let frame = Frame::default();
     let led = Led::default();
 
@@ -365,7 +365,7 @@ fn counters_report_instr_and_stack_high_water() {
     ];
     let buf = fxb(0, 0, NO_ENTRY, 0, &[0.25], &code);
     let prog = Program::parse(&buf).expect("parse");
-    let vm = Vm::new();
+    let mut vm = Vm::new();
     let frame = Frame::default();
     let led = Led { pos: [0.5, 0.1, 0.2], ..Default::default() };
     let (_rgb, outcome, c) =
@@ -386,7 +386,7 @@ fn counters_count_budget_exhaustion() {
     code.extend_from_slice(&(-3i16).to_le_bytes());
     let buf = fxb(0, 0, NO_ENTRY, 0, &[], &code);
     let prog = Program::parse(&buf).expect("parse");
-    let vm = Vm::new();
+    let mut vm = Vm::new();
     let (_rgb, outcome, c) =
         vm.run_shade_counted(&prog, &Frame::default(), &Led::default(), &Budget::instructions(50));
     assert_eq!(outcome, Outcome::Budget);
@@ -605,7 +605,7 @@ const F16: u8 = 16; // Q16.16 frac operand
 fn shade(code: &[u8], consts: &[f32], led: Led, frame: Frame) -> Rgb {
     let buf = fxb(0, 0, NO_ENTRY, 0, consts, code);
     let prog = Program::parse(&buf).expect("parse");
-    let vm = Vm::new();
+    let mut vm = Vm::new();
     vm.run_shade(&prog, &frame, &led)
 }
 
@@ -928,4 +928,30 @@ fn every_opcode_has_a_fixed_or_integer_path() {
         float_with_twin, 23,
         "expected 23 float ops each mapped to a fixed/integer twin"
     );
+}
+
+#[test]
+fn resident_scratch_zeros_locals_each_invocation() {
+    // FUG-122 framing hill-climb reuses the Vm's stack/locals scratch across
+    // shade() calls instead of re-allocating. `locals` must still read as ZERO at
+    // the start of every invocation (array/struct locals rely on it), even after a
+    // prior invocation wrote them. shade: r = local[0] (uninit); then local[0]=1.0.
+    // A second call on the SAME Vm must still see local[0]==0.
+    #[rustfmt::skip]
+    let code = [
+        Op::LoadLocal as u8, 0, 1,   // push local[0] (must be 0 at entry)
+        Op::PushConst as u8, 1, 0,   // 1.0
+        Op::StoreLocal as u8, 0, 1,  // local[0] = 1.0 (persists in the scratch)
+        Op::PushConst as u8, 0, 0,   // 0.0
+        Op::PushConst as u8, 0, 0,   // 0.0
+        Op::Ret as u8, 3,            // vec3(loaded, 0, 0)
+    ];
+    let buf = fxb(0, 0, NO_ENTRY, 0, &[0.0, 1.0], &code);
+    let prog = Program::parse(&buf).expect("parse");
+    let mut vm = Vm::new();
+    let frame = Frame::default();
+    let led = Led::default();
+    assert_eq!(vm.run_shade(&prog, &frame, &led), (0, 0, 0), "1st: local[0] zeroed");
+    // If the scratch weren't re-zeroed, this would read the stale 1.0 -> (255,0,0).
+    assert_eq!(vm.run_shade(&prog, &frame, &led), (0, 0, 0), "2nd: local[0] re-zeroed");
 }

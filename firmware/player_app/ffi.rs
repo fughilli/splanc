@@ -191,6 +191,9 @@ static mut FX_TOPO_READY: bool = false;
 /// (`LoadCtxFix`). All-float effects leave this false and skip the per-LED
 /// fixed-mirror build entirely — zero hot-path overhead (FUG-122).
 static mut FX_USES_CTXFIX: bool = false;
+/// True when the loaded effect reads `led.uv`. Effects that don't skip the
+/// per-LED soft-float uv projection entirely — a chunk of the framing floor.
+static mut FX_USES_UV: bool = false;
 
 // -- perf monitoring (docs/design/perf-monitoring.md) -------------------------
 // A small perf ring the render task fills (one PerfFrame per rendered effect
@@ -2057,6 +2060,8 @@ pub unsafe extern "C" fn lm_fx_load(fxb: *const u8, len: usize) -> bool {
     // Only build the per-LED fixed context mirrors on the hot path when the
     // program actually reads them (FUG-122) — an all-float effect pays nothing.
     FX_USES_CTXFIX = prog.uses_ctxfix();
+    // Likewise skip the per-LED soft-float uv projection unless led.uv is read.
+    FX_USES_UV = prog.uses_uv();
     let buf = &mut *addr_of_mut!(FX_BYTES);
     buf[..len].copy_from_slice(src);
     FX_LEN = len;
@@ -2267,7 +2272,9 @@ pub unsafe extern "C" fn lm_fx_shade(
     z: f32,
     rgb: *mut u8,
 ) -> bool {
-    let Some(vm) = (*addr_of!(FX_VM)).as_ref() else {
+    // &mut: run_shade now writes the VM's resident scratch (stack/locals) in
+    // place instead of allocating per LED (FUG-122 framing hill-climb).
+    let Some(vm) = (*addr_of_mut!(FX_VM)).as_mut() else {
         return false;
     };
     let bytes = &(*addr_of!(FX_BYTES))[..FX_LEN];
@@ -2291,10 +2298,17 @@ pub unsafe extern "C" fn lm_fx_shade(
     // lm_fx_update refreshed. `idx` is the map index — exactly this cache's key.
     // No association (or no topology stored) → seg = -1, s = 0, branch = false.
     let t = (*addr_of!(FX_LED_TOPO)).get(idx as usize).copied().unwrap_or(FxLedTopo::NONE);
-    let uv = [
-        ((x - FX_UV_MIN[0]) * FX_UV_INV[0]).clamp(0.0, 1.0),
-        ((y - FX_UV_MIN[1]) * FX_UV_INV[1]).clamp(0.0, 1.0),
-    ];
+    // The uv projection is per-LED soft-float; skip it entirely unless the effect
+    // reads led.uv (FUG-122) — a chunk of the framing floor for the many effects
+    // that don't use it.
+    let uv = if FX_USES_UV {
+        [
+            ((x - FX_UV_MIN[0]) * FX_UV_INV[0]).clamp(0.0, 1.0),
+            ((y - FX_UV_MIN[1]) * FX_UV_INV[1]).clamp(0.0, 1.0),
+        ]
+    } else {
+        [0.0, 0.0]
+    };
     let mut led = FxLed {
         pos: [x, y, z],
         idx,

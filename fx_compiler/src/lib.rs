@@ -370,6 +370,9 @@ pub struct Compiler {
     // FLAG_USES_CTXFIX and the host can skip building the per-LED fixed context
     // mirrors for all-float programs.
     emitted_ctxfix: bool,
+    // FUG-122: set once the program references `led.uv` (float or fixed), so the
+    // host can skip the per-LED soft-float uv projection when it's unset.
+    uses_uv: bool,
 }
 
 /// A just-emitted numeric literal, for the constant-cast fold (FUG-122).
@@ -429,6 +432,7 @@ pub fn compile(src: &str) -> Result<Compiled, Vec<Diagnostic>> {
         ctx_prov: None,
         last_const: None,
         emitted_ctxfix: false,
+        uses_uv: false,
     };
     match c.program() {
         Ok(()) => Ok(c.finish()),
@@ -2404,6 +2408,9 @@ impl Compiler {
         let start = self.code.len();
         self.emit(fx_vm_op::LOAD_CTX);
         self.emit(id);
+        if id == fx_ctx::LED_UV {
+            self.uses_uv = true; // host must compute the per-LED uv projection
+        }
         // Record provenance for the LoadCtxFix peephole. A scalar field is already
         // reducible (comp 0); a vector waits for a `.x/.y/.z` swizzle to pin comp.
         let comp = if ty.is_scalar() || ty == Ty::Bool { 0 } else { CTX_WHOLE };
@@ -2537,6 +2544,9 @@ impl Compiler {
         let mut flags = if self.buffers.is_empty() { 0 } else { FLAG_BUFFERS };
         if self.emitted_ctxfix {
             flags |= FLAG_USES_CTXFIX;
+        }
+        if self.uses_uv {
+            flags |= FLAG_USES_UV;
         }
         b.extend_from_slice(b"FXB1");
         b.push(1); // version
@@ -2993,6 +3003,9 @@ const FLAG_BUFFERS: u8 = 0x01;
 /// `.fxb` flags bit (mirrors fx_vm::FLAG_USES_CTXFIX): the program reads the
 /// per-LED fixed context cache via LoadCtxFix.
 const FLAG_USES_CTXFIX: u8 = 0x02;
+/// `.fxb` flags bit (mirrors fx_vm::FLAG_USES_UV): the program reads `led.uv`, so
+/// the host must compute the per-LED uv projection.
+const FLAG_USES_UV: u8 = 0x04;
 mod fx_ctx {
     pub const TIME: u8 = 0;
     pub const DT: u8 = 1;

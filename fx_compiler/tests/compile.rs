@@ -644,7 +644,7 @@ fn texture_sample_bilinear() {
     let frame = Frame { led_count: led_count as u32, ..Frame::default() };
     vm.run_update(&prog, &frame); // grad = [0, 1]
 
-    let at = |ux: f32| {
+    let mut at = |ux: f32| {
         vm.run_shade(&prog, &frame, &Led { uv: [ux, 0.0], ..Led::default() }).0
     };
     assert_eq!(at(0.0), 0); // edge -> texel 0

@@ -155,7 +155,7 @@ impl FxPreview {
 
     /// Shade all LEDs. `positions` is flat xyz (len = 3*N); returns flat RGB
     /// u8 (len = 3*N) aligned to the map's LED order.
-    pub fn shade_all(&self, positions: &[f32]) -> Vec<u8> {
+    pub fn shade_all(&mut self, positions: &[f32]) -> Vec<u8> {
         let n = positions.len() / 3;
         let mut out = Vec::with_capacity(n * 3);
         // Map XY bounds for led.uv (mirrors the device's fx_rebuild_topo): a
