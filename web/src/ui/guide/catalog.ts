@@ -105,7 +105,7 @@ export const GUIDE_TOPICS: GuideTopic[] = [
     tab: "start",
     route: "/onboard",
     summary: "Map, control, and animate addressable LED fixtures from your phone.",
-screenshot: "#/onboard",
+    screenshot: "#/onboard",
     sections: [
       {
         body: [
@@ -155,6 +155,7 @@ screenshot: "#/onboard",
     tab: "device",
     route: "/onboard",
     summary: "Link a controller over Bluetooth or by address — or start offline.",
+    screenshot: "#/onboard",
     sections: [
       {
         body: [
@@ -208,7 +209,7 @@ screenshot: "#/onboard",
     tab: "maps",
     route: "/maps",
     summary: "Browse, search, organize, import, and export your captured fixtures.",
-screenshot: "#/maps",
+    screenshot: "#/maps",
     sections: [
       {
         body: [
@@ -326,7 +327,7 @@ screenshot: "#/maps",
     tab: "effects",
     route: "/effects",
     summary: "Browse, create, tag, and test the shader effects that drive your LEDs.",
-screenshot: "#/effects",
+    screenshot: "#/effects",
     sections: [
       {
         body: [
@@ -463,7 +464,7 @@ screenshot: "#/effects",
     tab: "device",
     route: "/settings/color-correction",
     summary: "Tune per-device gamma and white balance so colors read true.",
-screenshot: "#/settings/color-correction",
+    screenshot: "#/settings/color-correction",
     sections: [
       {
         body: [
@@ -489,7 +490,7 @@ screenshot: "#/settings/color-correction",
     tab: "device",
     route: "/perf",
     summary: "Watch the live frame budget and calibrate a device's cost model.",
-screenshot: "#/perf",
+    screenshot: "#/perf",
     sections: [
       {
         body: [
@@ -518,7 +519,7 @@ screenshot: "#/perf",
     tab: "settings",
     route: "/settings/midi",
     summary: "Name physical knobs and bind them to effect parameters.",
-screenshot: "#/settings/midi",
+    screenshot: "#/settings/midi",
     sections: [
       {
         body: [
@@ -542,7 +543,7 @@ screenshot: "#/settings/midi",
     tab: "settings",
     route: "/settings",
     summary: "Theme the app, pick fonts, and tune the 3D view and capture defaults.",
-screenshot: "#/settings",
+    screenshot: "#/settings",
     sections: [
       {
         body: [
@@ -578,7 +579,7 @@ screenshot: "#/settings",
     tab: "settings",
     route: "/settings",
     summary: "Restart this tutorial any time, and find licensing and credits.",
-screenshot: "#/about",
+    screenshot: "#/about",
     sections: [
       {
         body: [

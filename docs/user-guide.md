@@ -187,6 +187,8 @@ firmware runs — so what you see is what the fixture will do. Edits autosave ba
 
 _Link a controller over Bluetooth or by address — or start offline._
 
+![Connecting a device — Splanc app screen](user-guide/img/connect-device.png)
+
 A Splanc device is an ESP32 controller running the player firmware. The app talks to it over a
 secure WebSocket on your local network; to get there it first has to learn the device's Wi-Fi and
 address.

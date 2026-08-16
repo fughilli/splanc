@@ -4,6 +4,10 @@
     "route": "#/onboard"
   },
   {
+    "id": "connect-device",
+    "route": "#/onboard"
+  },
+  {
     "id": "maps-library",
     "route": "#/maps"
   },
