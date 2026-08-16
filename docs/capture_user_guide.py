@@ -46,6 +46,9 @@ SCALE = 2
 # overlay the shot), and let the app's own built-in sample maps/effects seed.
 SEED_JS = """
 localStorage.setItem('ledmapper.tour', JSON.stringify({dismissed:true, hintSeen:true, completed:[]}));
+// Suppress the effects-library 'AI generation' hint bubble — it auto-opens and
+// covers the first effect row (blocking the editor-open click) and the shot.
+localStorage.setItem('ledmapper.aiHintDismissed', '1');
 try {
   const a = JSON.parse(localStorage.getItem('ledmapper.appearance') || '{}');
   a.splash = false;
