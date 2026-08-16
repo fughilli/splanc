@@ -8,7 +8,8 @@
  *   - `docs/user-guide.md`         a GitHub-rendered Markdown guide (canonical).
  *   - `docs/user-guide/index.html` a self-contained static site (deployed at
  *                                  `/user-guide/`; see web/stage_site.lib.sh),
- *                                  with a generated schematic figure per topic.
+ *                                  with a real app screenshot (Playwright) per topic,
+ *                                  or a schematic figure where one can't be captured.
  *
  * Because both come from the one catalog, the tutorial and the website stay in
  * lockstep: document a feature once (in the catalog) and it appears in both.
@@ -416,14 +417,6 @@ const HTML_CSS = `      :root {
       }
       .topic-figure { position: sticky; top: 16px; align-self: start; }
       .figure-svg { width: 100%; height: auto; }
-      .shot {
-        width: 100%;
-        height: auto;
-        border-radius: 20px;
-        border: 1px solid #2a2a33;
-        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
-        display: block;
-      }
       .topic-body h3 { margin: 0 0 4px; font-size: 1.2rem; }
       .topic-body h4 { margin: 20px 0 6px; font-size: 0.95rem; color: #c8c8d0; }
       .summary { color: #9a9aa2; font-style: italic; margin: 0 0 12px; }
@@ -457,18 +450,29 @@ const HTML_CSS = `      :root {
       @media (max-width: 760px) {
         .layout { grid-template-columns: 1fr; }
         .toc { position: static; max-height: none; }
-        .topic { grid-template-columns: 1fr; }
-        .topic-figure { max-width: 220px; }
+        /* Single column: figure becomes a normal block ABOVE the text (not
+           sticky), so it can't float over the prose. */
+        .topic { grid-template-columns: 1fr; gap: 12px; }
+        .topic-figure {
+          position: static;
+          max-width: 230px;
+          margin: 0 0 4px;
+        }
       }`;
 
 /** The screenshot manifest the Playwright capturer consumes: the ordered list
  * of {id, route} for every topic with a `screenshot`. Deterministic (stable
  * order, 2-space JSON) so it's a freshness-gated output like the md/html. */
 function renderShotsManifest(): string {
-  const shots = GUIDE_TOPICS.filter((t) => t.screenshot).map((t) => ({
-    id: t.id,
-    route: t.screenshot as string,
-  }));
+  const shots = GUIDE_TOPICS.filter((t) => t.screenshot).map((t) => {
+    const shot: { id: string; route: string; click?: string; waitMs?: number } = {
+      id: t.id,
+      route: t.screenshot as string,
+    };
+    if (t.screenshotClick) shot.click = t.screenshotClick;
+    if (t.screenshotWaitMs) shot.waitMs = t.screenshotWaitMs;
+    return shot;
+  });
   return JSON.stringify(shots, null, 2) + "\n";
 }
 

@@ -122,6 +122,8 @@ automatically.
 
 _Inspect the 3D solve, clean up topology, and push maps to a device._
 
+![The mapping workspace — Splanc app screen](user-guide/img/map-workspace.png)
+
 Opening a map lands you in its workspace — an orbitable 3D view of the solved LEDs plus the tools to
 refine and use the map.
 
@@ -161,6 +163,8 @@ from a starter template.
 ### The effect editor
 
 _Write, preview, and push shader effects with the exact on-device VM._
+
+![The effect editor — Splanc app screen](user-guide/img/effect-editor.png)
 
 The editor is a full-screen workspace for one effect. You write the effect's source, and the app
 compiles it off-thread and previews it live over a map using the EXACT same virtual machine the
@@ -203,6 +207,8 @@ the Device tab) any time to reopen the device sheet.
 ### Managing devices
 
 _Connect, rename, re-discover, and forget the controllers you know._
+
+![Managing devices — Splanc app screen](user-guide/img/device-management.png)
 
 The device sheet — reachable from the app-bar pill and the Device tab on every screen — lists the
 controllers you've added, each with a live reachability indicator probed over the same WebSocket the

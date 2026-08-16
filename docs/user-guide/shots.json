@@ -8,8 +8,26 @@
     "route": "#/maps"
   },
   {
+    "id": "map-workspace",
+    "route": "#/maps",
+    "click": ".map-row",
+    "waitMs": 2000
+  },
+  {
     "id": "effects-library",
     "route": "#/effects"
+  },
+  {
+    "id": "effect-editor",
+    "route": "#/effects",
+    "click": ".map-row",
+    "waitMs": 2800
+  },
+  {
+    "id": "device-management",
+    "route": "#/maps",
+    "click": ".tab[data-tab='device']",
+    "waitMs": 700
   },
   {
     "id": "color-correction",

@@ -71,6 +71,14 @@ export interface GuideTopic {
    * place of the schematic figure. Only set it for screens that render standalone
    * headless (no live device / camera / specific record id). */
   screenshot?: string;
+  /** Optional CSS selector the capturer clicks after loading `screenshot`, for
+   * screens reached by interaction rather than a direct route — e.g. the mapping
+   * workspace and the effect editor open by tapping a library `.map-row`, and the
+   * device sheet opens from the Device tab. */
+  screenshotClick?: string;
+  /** Optional extra settle time (ms) before the shot, for screens with a heavier
+   * mount (3D solve, editor compile). */
+  screenshotWaitMs?: number;
 }
 
 /** Human labels for each tab/area, used as section headers in both outputs. */
@@ -281,6 +289,9 @@ screenshot: "#/maps",
     tab: "maps",
     route: "/maps",
     summary: "Inspect the 3D solve, clean up topology, and push maps to a device.",
+    screenshot: "#/maps",
+    screenshotClick: ".map-row",
+    screenshotWaitMs: 2000,
     sections: [
       {
         body: [
@@ -358,6 +369,9 @@ screenshot: "#/effects",
     tab: "effects",
     route: "/effects",
     summary: "Write, preview, and push shader effects with the exact on-device VM.",
+    screenshot: "#/effects",
+    screenshotClick: ".map-row",
+    screenshotWaitMs: 2800,
     sections: [
       {
         body: [
@@ -389,6 +403,9 @@ screenshot: "#/effects",
     tab: "device",
     route: "/maps",
     summary: "Connect, rename, re-discover, and forget the controllers you know.",
+    screenshot: "#/maps",
+    screenshotClick: ".tab[data-tab='device']",
+    screenshotWaitMs: 700,
     sections: [
       {
         body: [

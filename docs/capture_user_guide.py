@@ -111,9 +111,20 @@ def capture(dist: Path, shots: list[dict], out_dir: Path) -> None:
                     page.goto(url, timeout=15000)
                 # Let the SPA mount + seed its sample library and settle transitions.
                 page.wait_for_timeout(1400)
+                # Some screens open by interaction (a library row -> workspace/
+                # editor, the Device tab -> device sheet). Tap the selector, then
+                # let the target mount + render (3D / WebGL / sheet transitions).
+                click = shot.get("click")
+                if click:
+                    try:
+                        page.locator(click).first.click(timeout=8000)
+                        page.wait_for_timeout(2200)
+                    except Exception as e:  # best-effort; fall back to the route
+                        print(f"    (click {click!r} failed: {e})", file=sys.stderr)
                 dst = out_dir / f"{sid}.png"
                 page.screenshot(path=str(dst))
-                print(f"  captured {sid} <- {route}", file=sys.stderr)
+                suffix = f" + {click}" if click else ""
+                print(f"  captured {sid} <- {route}{suffix}", file=sys.stderr)
             browser.close()
     finally:
         httpd.shutdown()
