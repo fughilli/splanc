@@ -54,6 +54,18 @@ test("generation is deterministic for a given seed", async () => {
   assert.notDeepEqual(a.leds.map((l) => l.xyz), c.leds.map((l) => l.xyz));
 });
 
+test("the tube fixture needs relax: messy raw, one clean centreline with it on", async () => {
+  const m = generateFixture("tube", { count: 180, ...opts });
+  // Raw (no relax) mis-extracts the surface mesh into more than one strand.
+  const raw = await extractTopology(m);
+  assert.ok(raw.segments.length > 1 || raw.branchPoints.length > 0, "raw tube is not a clean strand");
+  // Relaxation contracts it onto its centreline → a single segment.
+  const t = await extractTopology(m, { relaxIterations: 14 });
+  assert.equal(t.segments.length, 1, "one centreline segment");
+  assert.equal(t.branchPoints.length, 0, "no false junctions");
+  assert.equal(t.associations.length, m.leds.length, "every LED associated");
+});
+
 test("every LED gets an effect-ready association", async () => {
   for (const kind of ["strip", "ring", "helix", "grid", "tree"] as const) {
     const map = generateFixture(kind, { count: 50, ...opts });
