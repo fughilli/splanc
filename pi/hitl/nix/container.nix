@@ -311,11 +311,16 @@ let
     Subsystem sftp ${p.openssh}/libexec/sftp-server
     PidFile /run/sshd.pid
     SetEnv PATH=${toolPath}:/bin:/usr/bin DBUS_SYSTEM_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket
+    # The daemon injects per-reservation HITL_* env (HITL_DUT, HITL_CAPTURE_SERVER,
+    # HITL_ADAPTER_SERIAL) via `podman -e`; that reaches sshd's process but not the
+    # session it spawns. Read them from ~/.ssh/environment (written by the entrypoint)
+    # so both interactive shells and `ssh host cmd` (the harness capture path) see them.
+    PermitUserEnvironment yes
   '';
 
   entrypoint = p.writeShellApplication {
     name = "hitl-entrypoint";
-    runtimeInputs = [ p.openssh p.coreutils ];
+    runtimeInputs = [ p.openssh p.coreutils p.gnugrep ];
     text = ''
       user="''${HITL_SSH_USER:-${sshUser}}"
       mkdir -p /run /etc/ssh
@@ -331,6 +336,13 @@ let
       fi
       # Diagnostics for pubkey-auth issues (StrictModes checks these):
       ls -lad "/home/$user" "/home/$user/.ssh" "/home/$user/.ssh/authorized_keys" >&2 2>/dev/null || true
+      # Expose the per-reservation HITL_* env (set on this process by `podman -e`) to
+      # SSH sessions. sshd doesn't pass its own env to sessions; PermitUserEnvironment
+      # + ~/.ssh/environment does, for both interactive shells and `ssh host cmd`
+      # (e.g. the harness running hitl-capture, which defaults to $HITL_CAPTURE_SERVER).
+      printenv | grep -E '^HITL_[A-Za-z0-9_]+=' > "/home/$user/.ssh/environment" || true
+      chown "$user":"$user" "/home/$user/.ssh/environment" 2>/dev/null || true
+      chmod 600 "/home/$user/.ssh/environment" 2>/dev/null || true
       # Make passed-through serial/JTAG nodes usable by the (non-root) agent —
       # they arrive with the host's root:dialout 660 perms. The container is
       # ephemeral + single-user, so opening them up is fine.
