@@ -60,3 +60,6 @@ venv/
 
 # sbc-deploy local build gc-roots/logs (consumer side)
 .sbc-build/
+
+# hostdeploy runtime mailbox (container<->host deploy driver)
+.hostdeploy/
