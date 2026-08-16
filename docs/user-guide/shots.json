@@ -22,12 +22,6 @@
     "route": "#/effects"
   },
   {
-    "id": "effect-editor",
-    "route": "#/effects",
-    "click": ".map-row",
-    "waitMs": 2800
-  },
-  {
     "id": "device-management",
     "route": "#/maps",
     "click": ".tab[data-tab='device']",

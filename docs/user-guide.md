@@ -164,8 +164,6 @@ from a starter template.
 
 _Write, preview, and push shader effects with the exact on-device VM._
 
-![The effect editor — Splanc app screen](user-guide/img/effect-editor.png)
-
 The editor is a full-screen workspace for one effect. You write the effect's source, and the app
 compiles it off-thread and previews it live over a map using the EXACT same virtual machine the
 firmware runs — so what you see is what the fixture will do. Edits autosave back to the library.
