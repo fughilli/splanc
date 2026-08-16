@@ -99,6 +99,8 @@ installations.
 
 _Point the camera at a running fixture to reconstruct its LEDs in 3D._
 
+![Mapping a fixture with the camera — Splanc app screen](user-guide/img/capture.png)
+
 Capture is where a physical fixture becomes a map. The connected device runs a special addressing
 pattern — each LED blinks out its own index in a gray-coded sequence — and the phone camera decodes
 those blinks frame by frame, building up a per-LED position estimate as you move the phone around

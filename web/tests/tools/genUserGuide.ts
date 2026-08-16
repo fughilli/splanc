@@ -465,12 +465,13 @@ const HTML_CSS = `      :root {
  * order, 2-space JSON) so it's a freshness-gated output like the md/html. */
 function renderShotsManifest(): string {
   const shots = GUIDE_TOPICS.filter((t) => t.screenshot).map((t) => {
-    const shot: { id: string; route: string; click?: string; waitMs?: number } = {
+    const shot: { id: string; route: string; click?: string; waitMs?: number; demo?: string } = {
       id: t.id,
       route: t.screenshot as string,
     };
     if (t.screenshotClick) shot.click = t.screenshotClick;
     if (t.screenshotWaitMs) shot.waitMs = t.screenshotWaitMs;
+    if (t.screenshotDemo) shot.demo = t.screenshotDemo;
     return shot;
   });
   return JSON.stringify(shots, null, 2) + "\n";

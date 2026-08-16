@@ -38,6 +38,9 @@ function setupConnectedDevice(): void {
   deviceStore.setActive(dev.id);
   const client = new LedMapperClient(dev.wssUrl);
   client.clock.update({ offsetMs: 0, rttMs: 24 });
+  // The device sheet only shows the RTT when the active client reports connected
+  // (connectedMeta in deviceSheet.ts). There's no real socket here, so force it.
+  Object.defineProperty(client, "isConnected", { configurable: true, get: () => true });
   appState.setDemoConnection(client, {
     state: "connected",
     text: "connected",

@@ -5,11 +5,17 @@
   },
   {
     "id": "connect-device",
-    "route": "#/onboard"
+    "route": "#/onboard",
+    "demo": "bluetooth"
   },
   {
     "id": "maps-library",
     "route": "#/maps"
+  },
+  {
+    "id": "capture",
+    "route": "#/capture",
+    "demo": "device,camera"
   },
   {
     "id": "map-workspace",
@@ -25,7 +31,8 @@
     "id": "device-management",
     "route": "#/maps",
     "click": ".tab[data-tab='device']",
-    "waitMs": 700
+    "waitMs": 700,
+    "demo": "device"
   },
   {
     "id": "color-correction",

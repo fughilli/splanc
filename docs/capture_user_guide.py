@@ -111,7 +111,11 @@ def capture(dist: Path, shots: list[dict], out_dir: Path) -> None:
                 ctx.add_init_script(SEED_JS)
                 page = ctx.new_page()
                 sid, route = shot["id"], shot["route"]
-                url = base + (route if route.startswith("#") else "#" + route.lstrip("/"))
+                hashpart = route if route.startswith("#") else "#" + route.lstrip("/")
+                # A `demo` scenario drives the app's ?demo= capture seam (mocked
+                # hardware: connected device + RTT, camera frame, Bluetooth).
+                demo = shot.get("demo")
+                url = base + (f"?demo={demo}" if demo else "") + hashpart
                 try:
                     page.goto(url, wait_until="networkidle", timeout=15000)
                 except Exception:

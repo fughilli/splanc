@@ -79,6 +79,10 @@ export interface GuideTopic {
   /** Optional extra settle time (ms) before the shot, for screens with a heavier
    * mount (3D solve, editor compile). */
   screenshotWaitMs?: number;
+  /** Optional demo/capture scenario (see src/demo/init.ts) to activate via
+   * `?demo=` before the shot — mocks hardware so panes that need a device /
+   * camera / Bluetooth render: "device", "camera", "bluetooth". */
+  screenshotDemo?: string;
 }
 
 /** Human labels for each tab/area, used as section headers in both outputs. */
@@ -156,6 +160,7 @@ export const GUIDE_TOPICS: GuideTopic[] = [
     route: "/onboard",
     summary: "Link a controller over Bluetooth or by address — or start offline.",
     screenshot: "#/onboard",
+    screenshotDemo: "bluetooth",
     sections: [
       {
         body: [
@@ -251,6 +256,8 @@ export const GUIDE_TOPICS: GuideTopic[] = [
     tab: "maps",
     route: "/capture",
     summary: "Point the camera at a running fixture to reconstruct its LEDs in 3D.",
+    screenshot: "#/capture",
+    screenshotDemo: "device,camera",
     sections: [
       {
         body: [
@@ -404,6 +411,7 @@ export const GUIDE_TOPICS: GuideTopic[] = [
     summary: "Connect, rename, re-discover, and forget the controllers you know.",
     screenshot: "#/maps",
     screenshotClick: ".tab[data-tab='device']",
+    screenshotDemo: "device",
     screenshotWaitMs: 700,
     sections: [
       {
