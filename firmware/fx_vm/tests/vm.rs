@@ -859,7 +859,7 @@ fn classify(op: Op) -> Cov {
         PushConst | LoadUniform | LoadState | StoreState | LoadLocal | StoreLocal | Swizzle
         | Swap | Pop | BrFalse | Jmp | Logic | Call | RetFn | LoadStateIdx | StoreStateIdx
         | LoadLocalIdx | StoreLocalIdx | GraphQuery | LoadBuf | StoreBuf | FloodFrom
-        | FillLocal => TypeAgnostic,
+        | FillLocal | I2cWrite | I2cRead => TypeAgnostic,
         // sampling always yields a float colour by design (packed storage detail).
         SampleTex | PaintTex => TypeAgnostic,
 
