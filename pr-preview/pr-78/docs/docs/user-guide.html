@@ -476,6 +476,12 @@ they’re heavy on mobile).</p></li>
 <h3>The effect editor<a class="headerlink" href="#the-effect-editor" title="Link to this heading">¶</a></h3>
 <p><em>Write, preview, and push shader effects with the exact on-device VM.</em></p>
 <p><img alt="The effect editor — Splanc app screen" src="docs/user-guide/img/effect-editor.png" /></p>
+<p><img alt="The effect editor: disassembly" src="docs/user-guide/img/effect-editor-disassembly.png" /></p>
+<p>Disassembly — the compiled <code class="docutils literal notranslate"><span class="pre">.fxb</span></code> bytecode as a readable op listing, straight from the Rust
+disassembler the device uses.</p>
+<p><img alt="The effect editor: device" src="docs/user-guide/img/effect-editor-device.png" /></p>
+<p>Device — with a controller connected, push the compiled effect and drive its live uniforms straight
+onto the fixture.</p>
 <p>The editor is a full-screen workspace for one effect. You write the effect’s source, and the app
 compiles it off-thread and previews it live over a map using the EXACT same virtual machine the
 firmware runs — so what you see is what the fixture will do. Edits autosave back to the library.</p>
