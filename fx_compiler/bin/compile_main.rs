@@ -8,6 +8,21 @@ use std::io::{Read, Write};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    // `--disasm <src.fx>` prints the human-readable disassembly (verifies an
+    // effect is soft-float-free); handled before the normal source read.
+    if args.get(1).map(|s| s == "--disasm").unwrap_or(false) {
+        let src2 = std::fs::read_to_string(&args[2]).expect("read source file");
+        match ledmapper_fx_compiler::compile(&src2) {
+            Ok(c) => {
+                print!("{}", ledmapper_fx_compiler::disassemble(&c.fxb));
+                return;
+            }
+            Err(diags) => {
+                eprintln!("compile error: {diags:?}");
+                std::process::exit(1);
+            }
+        }
+    }
     let src = if args.len() > 1 {
         std::fs::read_to_string(&args[1]).expect("read source file")
     } else {

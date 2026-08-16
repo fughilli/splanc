@@ -127,6 +127,10 @@ static mut FX_F_TIME: f32 = 0.0;
 static mut FX_F_DT: f32 = 0.0;
 static mut FX_F_FRAME: u32 = 0;
 static mut FX_F_LEDS: u32 = 0;
+// Q16.16 mirrors of time/dt, converted ONCE per frame in lm_fx_update so the
+// per-LED shade sweep copies them (no soft-float per LED) — FUG-122.
+static mut FX_F_TIME_FIX: i32 = 0;
+static mut FX_F_DT_FIX: i32 = 0;
 /// Last update() bounded-exec outcome (0=Ok, 1=Budget, 2=Timeout) — surfaced to
 /// C++ for the rate-limited `[fx]` diagnostic log.
 static mut FX_LAST_UPDATE_OUTCOME: u32 = 0;
@@ -165,6 +169,14 @@ impl FxLedTopo {
     const NONE: FxLedTopo = FxLedTopo { seg: -1, s: 0.0, branch: false, dist: 0.0 };
 }
 
+/// Convert a float to Q16.16 (the canonical fixed context width, CTX_FIX_FRAC).
+/// Used to build the per-LED/-frame fixed mirrors for LoadCtxFix on demand (only
+/// when the loaded effect reads them), so this never grows the resident cache.
+#[inline]
+fn q16_16(x: f32) -> i32 {
+    (x * 65536.0) as i32
+}
+
 static mut FX_LED_TOPO: [FxLedTopo; FX_TOPO_CAP] = [FxLedTopo::NONE; FX_TOPO_CAP];
 
 /// Map XY bounding box for `led.uv` (a top-down projection of the map to 0..1):
@@ -175,6 +187,13 @@ static mut FX_UV_INV: [f32; 2] = [0.0, 0.0];
 /// False when the cache is stale (a map/topology upload cleared it); rebuilt
 /// lazily at the top of the next lm_fx_update frame.
 static mut FX_TOPO_READY: bool = false;
+/// True when the loaded effect reads the per-LED fixed context cache
+/// (`LoadCtxFix`). All-float effects leave this false and skip the per-LED
+/// fixed-mirror build entirely — zero hot-path overhead (FUG-122).
+static mut FX_USES_CTXFIX: bool = false;
+/// True when the loaded effect reads `led.uv`. Effects that don't skip the
+/// per-LED soft-float uv projection entirely — a chunk of the framing floor.
+static mut FX_USES_UV: bool = false;
 
 // -- perf monitoring (docs/design/perf-monitoring.md) -------------------------
 // A small perf ring the render task fills (one PerfFrame per rendered effect
@@ -2038,6 +2057,11 @@ pub unsafe extern "C" fn lm_fx_load(fxb: *const u8, len: usize) -> bool {
     // leaks across a hot-reload.
     *addr_of_mut!(OSC_TABLE) = osc::parse_manifest(prog.manifest);
     (*addr_of_mut!(OSC_SHADOW)).reset();
+    // Only build the per-LED fixed context mirrors on the hot path when the
+    // program actually reads them (FUG-122) — an all-float effect pays nothing.
+    FX_USES_CTXFIX = prog.uses_ctxfix();
+    // Likewise skip the per-LED soft-float uv projection unless led.uv is read.
+    FX_USES_UV = prog.uses_uv();
     let buf = &mut *addr_of_mut!(FX_BYTES);
     buf[..len].copy_from_slice(src);
     FX_LEN = len;
@@ -2192,6 +2216,9 @@ pub unsafe extern "C" fn lm_fx_update(time_s: f32, dt_s: f32, frame: u32, led_co
         dt: dt_s,
         frame,
         led_count,
+        // Q16.16 mirrors for LoadCtxFix (computed once per frame, not per LED).
+        time_fix: q16_16(time_s),
+        dt_fix: q16_16(dt_s),
         ..Default::default()
     };
     // Capture the frame context so the per-LED shade() sweep sees the same
@@ -2200,6 +2227,11 @@ pub unsafe extern "C" fn lm_fx_update(time_s: f32, dt_s: f32, frame: u32, led_co
     FX_F_DT = dt_s;
     FX_F_FRAME = frame;
     FX_F_LEDS = led_count;
+    // Convert the frame's fixed mirrors ONCE here (not per LED) so lm_fx_shade
+    // just copies the ints — a fixed-only shader pays no per-LED soft-float, and
+    // an all-float shader pays nothing at all (FUG-122).
+    FX_F_TIME_FIX = q16_16(time_s);
+    FX_F_DT_FIX = q16_16(dt_s);
     // Refresh the per-LED topology cache if a map/topology upload invalidated it,
     // so the coming shade() sweep sees current led.seg / led.s / led.branch.
     if !FX_TOPO_READY {
@@ -2240,7 +2272,9 @@ pub unsafe extern "C" fn lm_fx_shade(
     z: f32,
     rgb: *mut u8,
 ) -> bool {
-    let Some(vm) = (*addr_of!(FX_VM)).as_ref() else {
+    // &mut: run_shade now writes the VM's resident scratch (stack/locals) in
+    // place instead of allocating per LED (FUG-122 framing hill-climb).
+    let Some(vm) = (*addr_of_mut!(FX_VM)).as_mut() else {
         return false;
     };
     let bytes = &(*addr_of!(FX_BYTES))[..FX_LEN];
@@ -2254,17 +2288,28 @@ pub unsafe extern "C" fn lm_fx_shade(
         dt: FX_F_DT,
         frame: FX_F_FRAME,
         led_count: FX_F_LEDS,
+        // Cheap int copies of the once-per-frame conversions — NO per-LED
+        // soft-float (FUG-122; this was the fx_bench overhead regression).
+        time_fix: FX_F_TIME_FIX,
+        dt_fix: FX_F_DT_FIX,
         ..Default::default()
     };
     // Per-LED topology (led.seg / led.s / led.branch) from the cache the last
     // lm_fx_update refreshed. `idx` is the map index — exactly this cache's key.
     // No association (or no topology stored) → seg = -1, s = 0, branch = false.
     let t = (*addr_of!(FX_LED_TOPO)).get(idx as usize).copied().unwrap_or(FxLedTopo::NONE);
-    let uv = [
-        ((x - FX_UV_MIN[0]) * FX_UV_INV[0]).clamp(0.0, 1.0),
-        ((y - FX_UV_MIN[1]) * FX_UV_INV[1]).clamp(0.0, 1.0),
-    ];
-    let led = FxLed {
+    // The uv projection is per-LED soft-float; skip it entirely unless the effect
+    // reads led.uv (FUG-122) — a chunk of the framing floor for the many effects
+    // that don't use it.
+    let uv = if FX_USES_UV {
+        [
+            ((x - FX_UV_MIN[0]) * FX_UV_INV[0]).clamp(0.0, 1.0),
+            ((y - FX_UV_MIN[1]) * FX_UV_INV[1]).clamp(0.0, 1.0),
+        ]
+    } else {
+        [0.0, 0.0]
+    };
+    let mut led = FxLed {
         pos: [x, y, z],
         idx,
         seg: t.seg as i32,
@@ -2272,7 +2317,18 @@ pub unsafe extern "C" fn lm_fx_shade(
         branch: t.branch,
         dist: t.dist,
         uv,
+        ..Default::default()
     };
+    // Fixed (Q16.16) mirrors read by LoadCtxFix — built ONLY when the loaded
+    // effect actually reads them (FUG-122), so an all-float shader pays zero
+    // per-LED overhead and the resident cache never grows. Positions come from
+    // this frame's map fetch; uv/s/dist from the already-derived values.
+    if FX_USES_CTXFIX {
+        led.pos_fix = [q16_16(x), q16_16(y), q16_16(z)];
+        led.uv_fix = [q16_16(uv[0]), q16_16(uv[1])];
+        led.s_fix = q16_16(t.s);
+        led.dist_fix = q16_16(t.dist);
+    }
     let outcome = if PERF_MODE == PERF_FULL {
         // FULL: count this LED's opcodes into the per-frame shade accumulator
         // and lift the stack high-water. This is the hottest path, so the
