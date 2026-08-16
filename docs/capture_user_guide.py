@@ -125,16 +125,19 @@ def capture(dist: Path, shots: list[dict], out_dir: Path) -> None:
                 # Some screens open by interaction (a library row -> workspace/
                 # editor, the Device tab -> device sheet). Tap the selector, then
                 # let the target mount + render (3D / WebGL / sheet transitions).
-                click = shot.get("click")
-                if click:
+                # A single `click` or an ordered `clicks` sequence (open the
+                # editor row, then switch to a specific dock tab, …). Each accepts
+                # a Playwright locator string (CSS, or `text=…`, or `a >> b`).
+                clicks = shot.get("clicks") or ([shot["click"]] if shot.get("click") else [])
+                for sel in clicks:
                     try:
-                        page.locator(click).first.click(timeout=8000)
-                        page.wait_for_timeout(2200)
-                    except Exception as e:  # best-effort; fall back to the route
-                        print(f"    (click {click!r} failed: {e})", file=sys.stderr)
+                        page.locator(sel).first.click(timeout=8000)
+                        page.wait_for_timeout(shot.get("waitMs", 1500))
+                    except Exception as e:  # best-effort; fall back to what's shown
+                        print(f"    (click {sel!r} failed: {e})", file=sys.stderr)
                 dst = out_dir / f"{sid}.png"
                 page.screenshot(path=str(dst))
-                suffix = f" + {click}" if click else ""
+                suffix = f" + {clicks}" if clicks else ""
                 print(f"  captured {sid} <- {route}{suffix}", file=sys.stderr)
                 ctx.close()
             browser.close()
