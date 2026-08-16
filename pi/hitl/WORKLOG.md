@@ -3,6 +3,47 @@
 Handoff notes alongside git history. Newest first. Read this before touching the
 rig's networking — there's live runtime state that isn't fully declarative yet.
 
+## 2026-08-16 — dedicated USB AP radio: RTL8851BU (rtw89), hardware-verified
+
+The analyzer rig now hosts its AP on a **dedicated USB WiFi dongle** (frees the Pi 3's
+onboard brcmfmac, which can't reliably run an AP) — `ap0` in `hitl-app.nix`, wlan0 left
+for STA. Hardware-verified on `hitl-rig-2`: driver binds, WiFi firmware loads, iface
+renames to `ap0`, and NetworkManager `hitl-ap` activates on it.
+
+- **The dongle is an RTL8851BU, not an RTL8188GU.** After usb_modeswitch it enumerates
+  `0bda:b851` "802.11ax" (WiFi 6 + BT combo, `rtl8851bu_fw.bin`), not `0bda:b711`. The
+  earlier RTL8188GU packaging (`rtl8188gu.nix` + 6.12 port patch, commit `d410e9b`) was
+  the wrong chip and never bound — **deleted**.
+- **Driver: `nix/rtl8851bu.nix` from `morrownr/rtw89`** (pinned `e2be1a0`) — the mainline
+  mac80211 rtw89 family backported to kernels 6.6+, so it supports hostapd AP cleanly.
+  The rig's in-tree rtw89 predates 8851BU-USB (that landed ~6.14; rig is 6.12.87), hence
+  out-of-tree. **Builds clean on 6.12 with zero source patches** (unlike the 8188gu
+  vendor driver). Module for the USB adapter is `rtw89_8851bu_git` (KBUILD_MODNAME); the
+  derivation also ships the WiFi firmware `rtw8851b_fw-1.bin` (nixpkgs' linux-firmware
+  predates it) → wired into `hardware.firmware`.
+- **rtw89 is built with `-DCONFIG_RTW89_LEDS_MC`,** so `rtw89_core_git` needs
+  `led-class-multicolor`'s symbols. Added it to `boot.kernelModules` **before** the
+  driver. (modprobe/udev auto-resolve it via modules.dep anyway, but the explicit line
+  documents the dep and avoids a boot race.)
+- **`.link` rename uses `matchConfig.Driver = "rtw89_8851bu_git"`** — verified: udev's
+  `ID_NET_DRIVER` reports the usb_driver's KBUILD_MODNAME, and `wlan1 → ap0` renamed.
+- **New kernel modules need a reboot (or manual insmod) to load** — `deploy_live` does a
+  `switch`, which does NOT put new `extraModulePackages` into `/run/booted-system`, so
+  `modprobe`/`systemd-modules-load` can't find them until the next boot. First deploy
+  looked like a failure for exactly this reason; the module + AP came up fine after
+  loading it by hand, and the reboot path is the production one.
+- **BT half is a bonus, not done**: `hci1` wants `rtl_bt/rtl8851bu_fw.bin`, which isn't
+  in nixpkgs linux-firmware yet — would give a dedicated BLE radio. Deferred.
+
+Deploy, then reboot (new kernel modules only load on the next boot):
+
+```sh
+SBC_HOSTNAME_OVERRIDE=hitl-rig-la-1 bazel run //pi/hitl:hitl_la.deploy_live -- hitl-rig-2 --keep-builder
+```
+
+`nmcli device` should then show `ap0:wifi:connected:hitl-ap`, and `dmesg | grep
+rtw89` the firmware load + `ap0: renamed from wlan1`.
+
 ## 2026-08-14 — LA rig confirmed on real hardware (`hitl-rig-2` / `hitl-rig-la-1`)
 
 The logic-analyzer rig is **hardware-verified end-to-end**: drove a known
