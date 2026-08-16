@@ -469,6 +469,43 @@ ops × 30 fps ≈ 230k ops/s ≈ low-single-digit % CPU even in soft-float. <cod
 <code class="docutils literal notranslate"><span class="pre">fixed</span></code> (Q16.16) is the recommended type for smooth per-LED quantities. The ISA
 carries both, so a script chooses its precision/speed tradeoff without any VM
 change.</p>
+<section id="complete-native-datatype-isa-fug-122">
+<h3>Complete native datatype ISA (FUG-122)<a class="headerlink" href="#complete-native-datatype-isa-fug-122" title="Link to this heading">¶</a></h3>
+<p>The goal: it is possible to run an entire <code class="docutils literal notranslate"><span class="pre">update()</span></code>/<code class="docutils literal notranslate"><span class="pre">shade()</span></code> — <strong>inputs, math,
+colour and output</strong> — without a single soft-float op. Three additions make that
+reachable:</p>
+<ul class="simple">
+<li><p><strong>Every opcode has a strictly-integer/fixed twin.</strong> The vector, transcendental
+and colour ops that were float-only now have counterparts operating on the raw
+scaled-integer slot word: <code class="docutils literal notranslate"><span class="pre">SqrtFix</span></code>, <code class="docutils literal notranslate"><span class="pre">Dot/Length/Distance/Normalize/Cross/</span> <span class="pre">Scale/Smoothstep/ClampV/MixV</span></code> (fixed), <code class="docutils literal notranslate"><span class="pre">Atan2Fix/LogFix/TanFix/PowFix</span></code>,
+<code class="docutils literal notranslate"><span class="pre">Hsv2RgbFix/PaletteFix</span></code>, <code class="docutils literal notranslate"><span class="pre">HashFix/Hash3Fix</span></code>. A carried <code class="docutils literal notranslate"><span class="pre">frac</span></code> operand (0 = int,
+6/14/16 = the fixed formats) lets one opcode serve every width. An exhaustive
+opcode-coverage test (<code class="docutils literal notranslate"><span class="pre">fx_vm/tests/vm.rs</span></code>) fails to compile if a new opcode is
+added without classifying its fixed path.</p></li>
+<li><p><strong>Float-free inputs — fixed context, VM-side.</strong> <code class="docutils literal notranslate"><span class="pre">LoadCtxFix</span> <span class="pre">id</span> <span class="pre">comp</span> <span class="pre">frac</span></code>
+pushes one scalar context component already in Q16.16 fixed/int, so no float
+op runs inside the VM for <code class="docutils literal notranslate"><span class="pre">led.pos</span></code>/<code class="docutils literal notranslate"><span class="pre">uv</span></code>/<code class="docutils literal notranslate"><span class="pre">s</span></code>/<code class="docutils literal notranslate"><span class="pre">dist</span></code>/<code class="docutils literal notranslate"><span class="pre">time</span></code>. <code class="docutils literal notranslate"><span class="pre">Frame</span></code>/<code class="docutils literal notranslate"><span class="pre">Led</span></code> carry
+both the <code class="docutils literal notranslate"><span class="pre">f32</span></code> and <code class="docutils literal notranslate"><span class="pre">*_fix</span></code> mirrors. The compiler sets a <code class="docutils literal notranslate"><span class="pre">.fxb</span></code> flag
+(<code class="docutils literal notranslate"><span class="pre">FLAG_USES_CTXFIX</span></code>) when it emits <code class="docutils literal notranslate"><span class="pre">LoadCtxFix</span></code>; the host builds the fixed
+mirrors <strong>only for those programs</strong> (all-float effects pay zero hot-path
+overhead and the resident cache is unchanged). The mirrors are derived from the
+per-frame map fetch — a small footprint on the FPU-less core, and a natural
+place to fold in a precomputed per-map fixed-position table later if profiling
+wants it.</p></li>
+<li><p><strong>Float-free output.</strong> <code class="docutils literal notranslate"><span class="pre">RetRgb8</span></code> (int 0..255 channels) and <code class="docutils literal notranslate"><span class="pre">RetRgbFix</span> <span class="pre">frac</span></code>
+(Q1.frac channels in [0,1]) emit the 8-bit colour directly, skipping the
+<code class="docutils literal notranslate"><span class="pre">clamp01()*255</span></code> soft-float epilogue.</p></li>
+</ul>
+<p><strong>Compiler.</strong> Vectors stay float in v1; the fixed path is expressed by <strong>scalar
+decomposition</strong> plus fixed <strong>colour assembly</strong>, which is exactly where the
+soft-float cost sits on an FPU-less core. The compiler: lowers a cast of a scalar
+context component (<code class="docutils literal notranslate"><span class="pre">fixed16(led.pos.x)</span></code>) to a single <code class="docutils literal notranslate"><span class="pre">LoadCtxFix</span></code>; folds literal
+casts (<code class="docutils literal notranslate"><span class="pre">fixed16(1.0)</span></code>) to a fixed const at compile time; routes <code class="docutils literal notranslate"><span class="pre">hsv2rgb</span></code>/
+<code class="docutils literal notranslate"><span class="pre">palette</span></code>/<code class="docutils literal notranslate"><span class="pre">rgb</span></code>/<code class="docutils literal notranslate"><span class="pre">rgb8</span></code> on fixed/int args to the fixed colour ops; and returns them
+via <code class="docutils literal notranslate"><span class="pre">RetRgbFix</span></code>/<code class="docutils literal notranslate"><span class="pre">RetRgb8</span></code>. Float effects compile byte-identically. Fixed-vector
+<em>algebra</em> opcodes exist in the ISA (with tests) but the front-end does not emit
+them yet — a follow-up if element-typed vectors are added.</p>
+</section>
 </section>
 <section id="file-format-fxb">
 <h2>File format (<code class="docutils literal notranslate"><span class="pre">.fxb</span></code>)<a class="headerlink" href="#file-format-fxb" title="Link to this heading">¶</a></h2>
@@ -623,7 +660,10 @@ As a few examples:</p>
 <li><a class="reference internal" href="#goal">Goal</a></li>
 <li><a class="reference internal" href="#execution-model-hybrid">Execution model (hybrid)</a></li>
 <li><a class="reference internal" href="#language-glsl-ish">Language (GLSL-ish)</a></li>
-<li><a class="reference internal" href="#bytecode-vm">Bytecode / VM</a></li>
+<li><a class="reference internal" href="#bytecode-vm">Bytecode / VM</a><ul>
+<li><a class="reference internal" href="#complete-native-datatype-isa-fug-122">Complete native datatype ISA (FUG-122)</a></li>
+</ul>
+</li>
 <li><a class="reference internal" href="#file-format-fxb">File format (<code class="docutils literal notranslate"><span class="pre">.fxb</span></code>)</a></li>
 <li><a class="reference internal" href="#uniforms-ui">Uniforms → UI</a></li>
 <li><a class="reference internal" href="#firmware-integration">Firmware integration</a></li>
