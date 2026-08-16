@@ -68,14 +68,6 @@
       }
       .topic-figure { position: sticky; top: 16px; align-self: start; }
       .figure-svg { width: 100%; height: auto; }
-      .shot {
-        width: 100%;
-        height: auto;
-        border-radius: 20px;
-        border: 1px solid #2a2a33;
-        box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
-        display: block;
-      }
       .topic-body h3 { margin: 0 0 4px; font-size: 1.2rem; }
       .topic-body h4 { margin: 20px 0 6px; font-size: 0.95rem; color: #c8c8d0; }
       .summary { color: #9a9aa2; font-style: italic; margin: 0 0 12px; }
@@ -109,8 +101,14 @@
       @media (max-width: 760px) {
         .layout { grid-template-columns: 1fr; }
         .toc { position: static; max-height: none; }
-        .topic { grid-template-columns: 1fr; }
-        .topic-figure { max-width: 220px; }
+        /* Single column: figure becomes a normal block ABOVE the text (not
+           sticky), so it can't float over the prose. */
+        .topic { grid-template-columns: 1fr; gap: 12px; }
+        .topic-figure {
+          position: static;
+          max-width: 230px;
+          margin: 0 0 4px;
+        }
       }
     </style>
   </head>
@@ -185,7 +183,7 @@
 </div>
 </article>
 <article class="topic" id="map-workspace">
-<div class="topic-figure"><svg viewBox="0 0 340 600" role="img" aria-label="The mapping workspace screen" class="figure-svg" xmlns="http://www.w3.org/2000/svg"><rect x="8" y="8" width="324" height="584" rx="28" fill="var(--fig-bg)" stroke="var(--fig-border)" stroke-width="2" /><text x="28" y="52" font-size="17" font-weight="700" fill="var(--fig-text)">Splanc</text><rect x="232" y="36" width="80" height="22" rx="11" fill="var(--fig-panel)" /><text x="272" y="51" text-anchor="middle" font-size="11" fill="var(--fig-dim)">Device</text><line x1="20" y1="72" x2="320" y2="72" stroke="var(--fig-border)" /><text x="28" y="112" font-size="16" font-weight="700" fill="var(--fig-accent)">The mapping workspace</text><text x="28" y="140" font-size="12" fill="var(--fig-dim)">Inspect the 3D solve, clean up topology,</text><text x="28" y="160" font-size="12" fill="var(--fig-dim)">and push maps to a device.</text><line x1="20" y1="520" x2="320" y2="520" stroke="var(--fig-border)" /><circle cx="70.0" cy="545" r="5" fill="var(--fig-accent)" /><text x="70.0" y="565" text-anchor="middle" font-size="11" fill="var(--fig-accent)">Maps</text><circle cx="170.0" cy="545" r="5" fill="var(--fig-dim)" /><text x="170.0" y="565" text-anchor="middle" font-size="11" fill="var(--fig-dim)">Effects</text><circle cx="270.0" cy="545" r="5" fill="var(--fig-dim)" /><text x="270.0" y="565" text-anchor="middle" font-size="11" fill="var(--fig-dim)">Device</text></svg></div>
+<div class="topic-figure"><img class="shot" src="img/map-workspace.png" alt="The mapping workspace screen" loading="lazy" /></div>
 <div class="topic-body">
 <h3>The mapping workspace</h3>
 <p class="summary">Inspect the 3D solve, clean up topology, and push maps to a device.</p>
@@ -239,7 +237,7 @@
 <section class="tab-section">
 <h2 id="tab-device">Devices</h2>
 <article class="topic" id="connect-device">
-<div class="topic-figure"><svg viewBox="0 0 340 600" role="img" aria-label="Connecting a device screen" class="figure-svg" xmlns="http://www.w3.org/2000/svg"><rect x="8" y="8" width="324" height="584" rx="28" fill="var(--fig-bg)" stroke="var(--fig-border)" stroke-width="2" /><text x="28" y="52" font-size="17" font-weight="700" fill="var(--fig-text)">Splanc</text><rect x="232" y="36" width="80" height="22" rx="11" fill="var(--fig-panel)" /><text x="272" y="51" text-anchor="middle" font-size="11" fill="var(--fig-dim)">Device</text><line x1="20" y1="72" x2="320" y2="72" stroke="var(--fig-border)" /><text x="28" y="112" font-size="16" font-weight="700" fill="var(--fig-accent)">Connecting a device</text><text x="28" y="140" font-size="12" fill="var(--fig-dim)">Link a controller over Bluetooth or by</text><text x="28" y="160" font-size="12" fill="var(--fig-dim)">address — or start offline.</text><line x1="20" y1="520" x2="320" y2="520" stroke="var(--fig-border)" /><circle cx="70.0" cy="545" r="5" fill="var(--fig-dim)" /><text x="70.0" y="565" text-anchor="middle" font-size="11" fill="var(--fig-dim)">Maps</text><circle cx="170.0" cy="545" r="5" fill="var(--fig-dim)" /><text x="170.0" y="565" text-anchor="middle" font-size="11" fill="var(--fig-dim)">Effects</text><circle cx="270.0" cy="545" r="5" fill="var(--fig-accent)" /><text x="270.0" y="565" text-anchor="middle" font-size="11" fill="var(--fig-accent)">Device</text></svg></div>
+<div class="topic-figure"><img class="shot" src="img/connect-device.png" alt="Connecting a device screen" loading="lazy" /></div>
 <div class="topic-body">
 <h3>Connecting a device</h3>
 <p class="summary">Link a controller over Bluetooth or by address — or start offline.</p>
@@ -255,7 +253,7 @@
 </div>
 </article>
 <article class="topic" id="device-management">
-<div class="topic-figure"><svg viewBox="0 0 340 600" role="img" aria-label="Managing devices screen" class="figure-svg" xmlns="http://www.w3.org/2000/svg"><rect x="8" y="8" width="324" height="584" rx="28" fill="var(--fig-bg)" stroke="var(--fig-border)" stroke-width="2" /><text x="28" y="52" font-size="17" font-weight="700" fill="var(--fig-text)">Splanc</text><rect x="232" y="36" width="80" height="22" rx="11" fill="var(--fig-panel)" /><text x="272" y="51" text-anchor="middle" font-size="11" fill="var(--fig-dim)">Device</text><line x1="20" y1="72" x2="320" y2="72" stroke="var(--fig-border)" /><text x="28" y="112" font-size="16" font-weight="700" fill="var(--fig-accent)">Managing devices</text><text x="28" y="140" font-size="12" fill="var(--fig-dim)">Connect, rename, re-discover, and forget</text><text x="28" y="160" font-size="12" fill="var(--fig-dim)">the controllers you know.</text><line x1="20" y1="520" x2="320" y2="520" stroke="var(--fig-border)" /><circle cx="70.0" cy="545" r="5" fill="var(--fig-dim)" /><text x="70.0" y="565" text-anchor="middle" font-size="11" fill="var(--fig-dim)">Maps</text><circle cx="170.0" cy="545" r="5" fill="var(--fig-dim)" /><text x="170.0" y="565" text-anchor="middle" font-size="11" fill="var(--fig-dim)">Effects</text><circle cx="270.0" cy="545" r="5" fill="var(--fig-accent)" /><text x="270.0" y="565" text-anchor="middle" font-size="11" fill="var(--fig-accent)">Device</text></svg></div>
+<div class="topic-figure"><img class="shot" src="img/device-management.png" alt="Managing devices screen" loading="lazy" /></div>
 <div class="topic-body">
 <h3>Managing devices</h3>
 <p class="summary">Connect, rename, re-discover, and forget the controllers you know.</p>
