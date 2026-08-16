@@ -52,6 +52,7 @@ the WebSocket framing + TLS the real ws/wss path also pays per message. Add TCP
 head-of-line blocking/latency and the known `set_uniforms` drop issue (there's a
 HITL drop-rate bench for exactly that), and proto-for-transport is strictly worse
 for realtime control. So the OSC path fully replaces the bridge — not kept.
+
 ## FX VM native datatypes — every opcode has a fixed/int twin + float-free I/O (branch `agent/fug-122-fx-vm-expand-native-datatypes`)
 
 FUG-122 (design: `docs/design/effects-runtime.md` "Complete native datatype
