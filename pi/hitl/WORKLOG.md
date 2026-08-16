@@ -3,6 +3,36 @@
 Handoff notes alongside git history. Newest first. Read this before touching the
 rig's networking — there's live runtime state that isn't fully declarative yet.
 
+## 2026-08-16 — container LA capture path green end-to-end (3 bugs fixed)
+
+`//pi/hitl/harness:led_capture` now **PASSES on real hardware** through the full
+container path (reserve → flash → BLE-provision onto the RTL8851BU AP → drive →
+`hitl-capture` in the container → decode): `[PASS] 8 pixels match the driven pattern`.
+This path had never actually run before — the 2026-08-14 "verified" run used
+`--device-ws` (daemon-side capture), which skips the container. Three bugs surfaced:
+
+- **Container SSH sessions didn't inherit the per-reservation env.** The daemon injects
+  `HITL_CAPTURE_SERVER` (and `HITL_DUT`/`HITL_ADAPTER_SERIAL`) via `podman -e`, but that
+  reaches only sshd's process, not the `ssh host cmd` sessions the harness uses (static
+  `SetEnv`, `UsePAM no`). `hitl-capture` saw `$HITL_CAPTURE_SERVER unset`. Fix: the
+  entrypoint writes `~/.ssh/environment` + `PermitUserEnvironment yes` (container.nix).
+  Also had to add **gnugrep** to the entrypoint's runtimeInputs — it uses `printenv |
+grep` and only openssh+coreutils were on PATH, so the env file came out empty.
+- **Capture window too short for the DUT's duty cycle.** fx2lafw has no hardware trigger,
+  so sigrok software-triggers within the sample window. The C6 counting probe repaints
+  the WS2812 frame at only 10 Hz (`kStaticPollMs = 100ms` in player_app), so the old
+  ~8.3ms window missed the burst ~92% of the time → "trigger never fired". Bumped the
+  default to ~208ms (2× the cadence); analyzer.go / main.go `--analyzer-samples`.
+- **`podman load` didn't move the `hitl-test:latest` tag** to the freshly-built image
+  while a stale reservation container still referenced the old one — so container.nix
+  changes silently never reached the rig (had to `podman load` by hand). hitl-image-load
+  now clears stale hitl containers + untags before load, ordered Before=hitl-manager.
+
+Gotcha for the next agent: **nix `path:` flake caching** bit twice — editing a file in
+place bumps the file mtime but not the dir mtime, so `deploy_live` served a stale tree
+and rebuilt the SAME derivation hash. If a deploy doesn't pick up a `pi/hitl/**` edit,
+`touch pi/hitl/flake.nix` (or commit) to force a fresh copy.
+
 ## 2026-08-16 — dedicated USB AP radio: RTL8851BU (rtw89), hardware-verified
 
 The analyzer rig now hosts its AP on a **dedicated USB WiFi dongle** (frees the Pi 3's
