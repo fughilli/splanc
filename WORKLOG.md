@@ -5,6 +5,31 @@ scan back for context. The dated sections toward the bottom were migrated out of
 `README.md` (now a user-facing intro; see `DEVELOPERS.md` for contributing) and
 are kept as historical record.
 
+## User docs — interactive tutorial + generated guide with real screenshots (FUG-103)
+
+Interactive in-app tutorial + a programmatically-generated user guide (Markdown + static
+site), both driven from one catalog (`web/src/ui/guide/catalog.ts`). Real app screenshots
+are captured by Playwright + headless Chromium (`//docs:capture_user_guide`;
+`//docs:build_user_guide` is the one-target rebuild — `bazel run` tools, never in
+`bazel test //...`, so CI needs no browser). Hardware-dependent screens are driven by an
+in-app `?demo=<scenario>` seam (`web/src/demo/init.ts`, guarded + lazy, no-op in production):
+a connected device + RTT, a simulated camera frame, a Web Bluetooth add button, and a
+mocked compiler worker so the effect editor renders its docked Code/Uniforms/Disassembly
+workspace.
+
+### FOLLOW-UP (needs more container memory)
+
+The effect editor's **live LED preview** (`FxPreview.create()`) loads the fx-vm wasm bundle,
+served separately at `/fx-vm`. The screenshot capturer serves only `//web:dist`, so the
+preview pane can't render headless; building the wasm bundles (`fx_compiler_web`,
+`fx_vm_web`) to serve them OOMs the build container. The editor shot therefore shows a
+compiled sample (Code + Uniforms + status) but not the live preview. Once the container
+memory limit is bumped, add the four wasm bundles (`//fx_compiler:fx_compiler_web`,
+`//firmware/fx_vm:fx_vm_web`, `//firmware/pulse:pulse_web`, `//solver:solver_web`) as
+`//docs:capture_user_guide` data deps and mount them (`/fx-compiler`, `/fx-vm`, `/pulse`,
+`/solver`) on the capturer's static server, then drop the `?demo=effect` compiler mock so
+the editor compiles + previews for real.
+
 ## OSC input → uniforms — NATIVE firmware (FUG-121, branch `agent/fug-121-feature-osc-input`)
 
 The device receives OSC directly over UDP (:9000) and drives live uniforms — no
