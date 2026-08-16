@@ -37,14 +37,20 @@
   {
     "id": "effect-editor-disassembly",
     "route": "#/effects",
-    "clicks": [".map-row", ".fxlayout-tablist >> text=Disassembly"],
+    "clicks": [
+      ".map-row",
+      ".fxlayout-tablist >> text=Disassembly"
+    ],
     "waitMs": 1200,
     "demo": "effect"
   },
   {
     "id": "effect-editor-device",
     "route": "#/effects",
-    "clicks": [".map-row", ".fxlayout-tablist >> text=Device"],
+    "clicks": [
+      ".map-row",
+      ".fxlayout-tablist >> text=Device"
+    ],
     "waitMs": 1000,
     "demo": "effect"
   },
