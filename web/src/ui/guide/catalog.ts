@@ -377,6 +377,9 @@ export const GUIDE_TOPICS: GuideTopic[] = [
     tab: "effects",
     route: "/effects",
     summary: "Write, preview, and push shader effects with the exact on-device VM.",
+    screenshot: "#/effects",
+    screenshotClick: ".map-row",
+    screenshotDemo: "effect",
     screenshotWaitMs: 2800,
     sections: [
       {

@@ -29,6 +29,7 @@ export function initDemoMode(scenarios: Set<string>): void {
   if (scenarios.has("device")) setupConnectedDevice();
   if (scenarios.has("bluetooth")) setupWebBluetooth();
   if (scenarios.has("camera")) setupFakeCamera();
+  if (scenarios.has("effect")) setupEffectEditor();
 }
 
 /** Inject a connected controller with a fixed RTT. The device sheet renders the
@@ -105,4 +106,71 @@ function setupFakeCamera(): void {
     getUserMedia: (c?: MediaStreamConstraints) => Promise<MediaStream>;
   };
   md.getUserMedia = async () => stream;
+}
+
+/**
+ * Make the effect editor render its docked workspace with a compiled sample —
+ * status, Uniforms panel and Disassembly all populated — WITHOUT the off-thread
+ * wasm compiler (which 404s on the headless static server). We intercept the
+ * `new Worker(new URL("./compile-worker.ts", …))` construction and hand back a
+ * fake worker that answers `compile`/`disassemble` with a canned result. (The
+ * live LED preview still needs the fx-vm wasm bundle served — a follow-up once
+ * container memory allows building it; see WORKLOG.) */
+function setupEffectEditor(): void {
+  const Orig = globalThis.Worker;
+  if (!Orig) return;
+  const compiled = {
+    ok: true,
+    // A short, valid-looking .fxb-ish blob; only its length is shown in the UI.
+    bytecode: new Uint8Array([0x46, 0x58, 0x42, 0x31, 0x10, 0x00, 0x2a, 0x07, 0x00, 0x00]),
+    uniforms: [
+      { name: "speed", slot: 0, width: 1, ui: { kind: "slider", min: 0, max: 5, step: 0.01 }, default: [1.5] },
+      { name: "glow", slot: 1, width: 1, ui: { kind: "slider", min: 0, max: 1, step: 0.01 }, default: [0.35] },
+      { name: "tint", slot: 2, width: 3, ui: { kind: "color" }, default: [0.95, 0.45, 0.12] },
+    ],
+    diagnostics: [] as { line: number; col: number; msg: string }[],
+  };
+  const disasm = [
+    "; demo disassembly (mocked compiler)",
+    "update:",
+    "  load_ctx   time            ; t",
+    "  push_f     1.500000        ; speed",
+    "  mul                        ; phase = t * speed",
+    "  store      g0",
+    "shade:",
+    "  load_ctx   led.pos.x",
+    "  load       g0",
+    "  add",
+    "  hsv2rgb                    ; -> colour",
+    "  ret_rgb",
+  ].join("\n");
+
+  const fake = (): Worker => {
+    const w: {
+      onmessage: ((ev: { data: unknown }) => void) | null;
+      postMessage: (req: { id: number; kind?: string }) => void;
+      terminate: () => void;
+      addEventListener: () => void;
+      removeEventListener: () => void;
+    } = {
+      onmessage: null,
+      postMessage(req) {
+        const resp =
+          req.kind === "disassemble"
+            ? { id: req.id, kind: "disassemble", text: disasm }
+            : { id: req.id, kind: "compile", result: compiled };
+        setTimeout(() => w.onmessage?.({ data: resp }), 40);
+      },
+      terminate() {},
+      addEventListener() {},
+      removeEventListener() {},
+    };
+    return w as unknown as Worker;
+  };
+
+  const Patched = function (this: unknown, url: string | URL, opts?: WorkerOptions): Worker {
+    if (String(url).includes("compile-worker")) return fake();
+    return new Orig(url, opts);
+  } as unknown as typeof Worker;
+  globalThis.Worker = Patched;
 }
