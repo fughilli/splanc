@@ -231,15 +231,30 @@ in
     # sigrok-cli + fx2lafw firmware, and usb-modeswitch for the USB AP dongle.
     ++ lib.optionals isAnalyzerRig (sigrok.packages ++ [ pkgs.usb-modeswitch ]);
 
-  # Load the test image into Podman at boot.
+  # Load the test image into Podman at boot (and on every deploy — the ExecStart
+  # store path changes with the image, so switch-to-configuration re-runs this).
   systemd.services.hitl-image-load = {
     description = "Load the HITL test container image into podman";
     wantedBy = [ "multi-user.target" ];
+    before = [ "hitl-manager.service" ];
     after = [ "network.target" ];
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;
-      ExecStart = "${pkgs.podman}/bin/podman load -i ${image}";
+      # `podman load` will NOT move ${imageRef} to the freshly-built image while the
+      # tag is still held by an old image that a (stale) reservation container
+      # references — the container keeps running the old image and container.nix
+      # changes silently never reach the rig. Clear stale hitl containers and untag
+      # the old image first, then load. Reservation containers are ephemeral and
+      # recreated per reservation, so removing them on a redeploy is safe.
+      ExecStart = pkgs.writeShellScript "hitl-image-load" ''
+        set -u
+        pm=${pkgs.podman}/bin/podman
+        ids=$($pm ps -aq --filter label=hitl=1 2>/dev/null || true)
+        [ -n "$ids" ] && $pm rm -f $ids 2>/dev/null || true
+        $pm untag ${imageRef} 2>/dev/null || true
+        $pm load -i ${image}
+      '';
     };
   };
 

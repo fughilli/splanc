@@ -90,7 +90,7 @@ func main() {
 	analyzerDriver := flag.String("analyzer-driver", "", "sigrok capture driver for the shared logic analyzer (e.g. fx2lafw); empty disables capture")
 	analyzerSigrok := flag.String("analyzer-sigrok", "sigrok-cli", "sigrok-cli binary")
 	analyzerRate := flag.String("analyzer-samplerate", "24m", "sigrok samplerate for captures")
-	analyzerSamples := flag.Int("analyzer-samples", 200000, "default capture length in samples (≈8.3ms @24MHz)")
+	analyzerSamples := flag.Int("analyzer-samples", 5000000, "default capture length in samples (≈208ms @24MHz — must span the DUT's frame cadence, see analyzer.go)")
 	analyzerMap := flag.String("analyzer-channel-map", "", `per-DUT analyzer channels as JSON: {"default":{"channels":["D0"],"protocol":"ws2812"},"c6-1a2b3c":{"channels":["D1"],"protocol":"ws2812"}}`)
 	// URL a reservation container uses to reach this daemon's /capture. podman
 	// injects host.containers.internal for the host gateway; keep the port in sync

@@ -66,7 +66,15 @@ func New(cfg Config) *Broker {
 		cfg.SampleRate = "24m"
 	}
 	if cfg.Samples == 0 {
-		cfg.Samples = 200000 // ≈8.3 ms @24 MHz: one WS2812 frame + the >50µs reset
+		// ≈208 ms @24 MHz. fx2lafw has no hardware trigger, so sigrok software-
+		// triggers within THIS acquisition window: if the tapped line's rising
+		// edge doesn't occur within the window, nothing is captured. A DUT driving
+		// a static/idle pattern only re-pushes the WS2812 frame at its render
+		// cadence (the C6 counting probe repaints at 10 Hz / every 100 ms), so an
+		// 8 ms window misses the burst ~92% of the time. Span >1 full cadence
+		// period (here 2×100 ms) so a burst — and its rising edge — is reliably in
+		// the window; the ~ms frame then lands in the post-trigger samples.
+		cfg.Samples = 5000000
 	}
 	if cfg.Map == nil {
 		cfg.Map = map[string]DUTMap{}
