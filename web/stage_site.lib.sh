@@ -29,7 +29,8 @@ stage_site() {
   mkdir -p "$out/fx-vm" && cp -RL firmware/fx_vm/fx_vm_web/. "$out/fx-vm/"
   # The generated static user guide (FUG-103), served at /user-guide/. Generated
   # from the in-app guide catalog and pinned fresh by //web:user_guide_freshness.
-  mkdir -p "$out/user-guide" && cp -L docs/user-guide/index.html "$out/user-guide/index.html"
+  # index.html + any dedicated flow sub-pages (effect-editor.html, …).
+  mkdir -p "$out/user-guide" && cp -L docs/user-guide/*.html "$out/user-guide/"
   # Captured app screenshots the guide embeds (may be absent on a bare build).
   if [ -d docs/user-guide/img ]; then cp -RL docs/user-guide/img "$out/user-guide/img"; fi
   # Firmware image(s) for in-browser USB flashing (FUG-60), staged at /firmware/

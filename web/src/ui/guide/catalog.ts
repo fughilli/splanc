@@ -83,6 +83,25 @@ export interface GuideTopic {
    * `?demo=` before the shot — mocks hardware so panes that need a device /
    * camera / Bluetooth render: "device", "camera", "bluetooth". */
   screenshotDemo?: string;
+  /** Optional extra shots for a multi-state flow (e.g. the effect editor's
+   * tabs). Each captures `<id>-<gallery.id>.png` by driving the same
+   * route/`screenshotDemo` through its `clicks` sequence. A topic with a gallery
+   * becomes a "flow" — it gets its own dedicated sub-page in the docs (with the
+   * hero + every gallery shot, each captioned), linked from the top-level. */
+  gallery?: GalleryShot[];
+}
+
+/** One captioned shot in a flow topic's dedicated sub-page. */
+export interface GalleryShot {
+  /** Suffix for the file/anchor: `docs/user-guide/img/<topic>-<id>.png`. */
+  id: string;
+  /** One-line caption shown under the shot on the sub-page. */
+  caption: string;
+  /** Playwright locator sequence to drive the app to this state (clicked in
+   * order after loading the topic's `screenshot` route + `screenshotDemo`). */
+  clicks?: string[];
+  /** Extra settle time (ms) after the clicks. */
+  waitMs?: number;
 }
 
 /** Human labels for each tab/area, used as section headers in both outputs. */
@@ -381,6 +400,24 @@ export const GUIDE_TOPICS: GuideTopic[] = [
     screenshotClick: ".map-row",
     screenshotDemo: "effect",
     screenshotWaitMs: 2800,
+    gallery: [
+      {
+        id: "disassembly",
+        caption:
+          "Disassembly — the compiled `.fxb` bytecode as a readable op listing, straight from " +
+          "the Rust disassembler the device uses.",
+        clicks: [".map-row", ".fxlayout-tablist >> text=Disassembly"],
+        waitMs: 1200,
+      },
+      {
+        id: "device",
+        caption:
+          "Device — with a controller connected, push the compiled effect and drive its live " +
+          "uniforms straight onto the fixture.",
+        clicks: [".map-row", ".fxlayout-tablist >> text=Device"],
+        waitMs: 1000,
+      },
+    ],
     sections: [
       {
         body: [
