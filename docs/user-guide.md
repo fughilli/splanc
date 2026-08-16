@@ -230,6 +230,8 @@ app uses.
 
 _Commission a blank board over USB, right from the browser._
 
+![Flashing firmware — Splanc app screen](user-guide/img/flashing.png)
+
 Splanc can flash the player firmware onto a USB-connected board directly from the browser — no
 toolchain, no command line. The flash sheet (from the Device tab) writes the firmware image this
 build bundles over Web Serial, with live progress, a log, and a diagnostics panel.

@@ -30,6 +30,16 @@ export function initDemoMode(scenarios: Set<string>): void {
   if (scenarios.has("bluetooth")) setupWebBluetooth();
   if (scenarios.has("camera")) setupFakeCamera();
   if (scenarios.has("effect")) setupEffectEditor();
+  if (scenarios.has("flash")) setupFlashDemo();
+}
+
+/** Open the flash sheet showing a simulated ESP32-C6 esptool log (see
+ * flashSheet.enableDemoFlash). Deferred so it lands over the mounted shell. */
+function setupFlashDemo(): void {
+  void import("../ui/screens/flashSheet").then((m) => {
+    m.enableDemoFlash();
+    setTimeout(() => void m.openFlashSheet(), 500);
+  });
 }
 
 /** Inject a connected controller with a fixed RTT. The device sheet renders the

@@ -42,6 +42,12 @@
     "demo": "device"
   },
   {
+    "id": "flashing",
+    "route": "#/maps",
+    "waitMs": 1400,
+    "demo": "flash"
+  },
+  {
     "id": "color-correction",
     "route": "#/settings/color-correction"
   },

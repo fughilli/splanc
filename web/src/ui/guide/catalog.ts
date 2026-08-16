@@ -445,6 +445,9 @@ export const GUIDE_TOPICS: GuideTopic[] = [
     tab: "device",
     route: "/maps",
     summary: "Commission a blank board over USB, right from the browser.",
+    screenshot: "#/maps",
+    screenshotDemo: "flash",
+    screenshotWaitMs: 1400,
     sections: [
       {
         body: [
