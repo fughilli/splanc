@@ -53,6 +53,63 @@ head-of-line blocking/latency and the known `set_uniforms` drop issue (there's a
 HITL drop-rate bench for exactly that), and proto-for-transport is strictly worse
 for realtime control. So the OSC path fully replaces the bridge — not kept.
 
+## FX VM native datatypes — every opcode has a fixed/int twin + float-free I/O (branch `agent/fug-122-fx-vm-expand-native-datatypes`)
+
+FUG-122 (design: `docs/design/effects-runtime.md` "Complete native datatype
+ISA"). Goal: run an entire `update()`/`shade()` — inputs, math, colour, output —
+with zero soft-float on the FPU-less C6.
+
+**Done (host tests green: `//firmware/fx_vm:fx_vm_test`,
+`//fx_compiler:fx_compiler_test`, `//firmware/player_app:ffi_test`; `esp32c6`
+links; wasm/bench/profile build):**
+
+- **VM ISA completeness** (`firmware/fx_vm/src/lib.rs`): a strictly-integer/fixed
+  twin for every remaining float opcode — `SqrtFix`, fixed vector reductions
+  (`Dot/Length/Distance/Normalize/Cross/Scale/Smoothstep/ClampV/MixV`),
+  `Atan2Fix/LogFix/TanFix/PowFix`, `Hsv2RgbFix/PaletteFix`, `HashFix/Hash3Fix`,
+  and float-free I/O `RetRgb8`/`RetRgbFix`/`LoadCtxFix`. Coefficients are
+  const-folded so no runtime `f64` reaches the device. `run()` returns an
+  `Option<Rgb>` so the shade caller uses a `RetRgb*`-produced colour directly.
+  16 hand-assembled opcode tests + an exhaustive `every_opcode_has_a_fixed_or_
+integer_path` audit (adding an opcode without a fixed path fails to compile).
+- **Fixed context, VM-side** (`firmware/player_app/ffi.rs`): `LoadCtxFix` reads
+  `FxLed`/`FxFrame` `*_fix` mirrors. Built ONLY when the `.fxb` sets
+  `FLAG_USES_CTXFIX` (all-float effects pay nothing) and the frame's fixed
+  time/dt are converted ONCE per frame, not per LED. wasm preview mirrors this.
+- **Compiler** (`fx_compiler/src/lib.rs`): `LoadCtxFix` provenance peephole for
+  `fixed16(led.pos.x)`; compile-time fold of literal casts; `Ty::Color` routing
+  of `hsv2rgb`/`palette`/`rgb`/`rgb8` on fixed args to the fixed colour ops with
+  `RetRgbFix`/`RetRgb8`; fixed sqrt/tan/log/atan2/pow. Float effects unchanged.
+  Disassembler completed for FUG-10 + FUG-122 opcodes. compile.rs tests assert an
+  all-fixed effect disassembles float-free and renders correctly.
+
+**HITL-validated on hitl-rig (esp32c6):** `//pi/hitl/harness:fx_bench` PASSES the
+golden. Fixed-vs-float A/B @ 256 LEDs (`pi/hitl/harness/ab_demo/`):
+
+- **swirl** (6 sin/cos + hsv, compute-heavy): float **4,077,126** vs fixed
+  **848,034** — **4.8×** faster (the soft-float trig+hsv → integer LUTs).
+- plasma (fract + hsv): float **1,571,722** vs fixed **848,942** — **1.85×**.
+
+**Framing hill-climb (Kevin's review — "why only ~18%?"):** the frame was
+dominated by per-LED FRAMING, not shader compute — `run_shade` copied/zeroed
+~2.5 KB of fixed arrays PER LED (uniforms by value, state/dist copied,
+stack/locals/call_stack zeroed) + a soft-float uv projection every LED. Cut it:
+resident VM scratch reused across calls (run_shade/update take `&mut self`, pass
+state/dist/uniforms by ref; stack/call_stack need no clearing); uv projection
+gated on `FLAG_USES_UV`; and the locals blanket-clear removed too — a new
+`FillLocal` opcode zeroes only the array/struct locals that need it, so the
+common scalar-only effect pays no locals-init on the hot path. Measured (before
+FillLocal): `empty` 490 k → 366 k (−25 %), benefiting EVERY effect, and
+undiluting the datatype win — the compute-heavy **swirl (6 sin/cos + hsv) is
+4.8× faster** in fixed (4.08 M → 0.85 M cyc), plasma −46 %. Golden +
+`docs/fx-vm-performance.md` regenerated for the faster firmware.
+
+**Gotcha fixed on-hardware:** the per-LED `FxFrame` build must NOT recompute
+`q16_16(time)`/`q16_16(dt)` — two soft-float muls per LED inflated the framing
+~12% and tripped the empty/sweep256 goldens. Convert once per frame in
+`lm_fx_update` (statics), copy the ints per LED. This is exactly the trap this
+ticket is about: a stray soft-float op on the FPU-less hot path is expensive.
+
 ## iOS support — Capacitor scaffold + host build server (branch `agent/fug-92-ios-support`)
 
 First implementation pass on FUG-92 (design: `docs/design/ios-support.md`; how-to:

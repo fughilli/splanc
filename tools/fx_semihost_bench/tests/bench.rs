@@ -16,7 +16,7 @@ fn micro_programs_parse_and_run() {
             let bp = build_op_program(op, reps, 4);
             let prog = Program::parse(&bp.bytecode)
                 .unwrap_or_else(|_| panic!("{op} x{reps} must parse"));
-            let vm = Vm::new();
+            let mut vm = Vm::new();
             // must produce a color without panicking (bounded budget covers it).
             let _rgb = vm.run_shade(&prog, &frame, &led);
         }
@@ -24,7 +24,7 @@ fn micro_programs_parse_and_run() {
     // overhead programs parse + run too.
     let es = build_empty_shade(4);
     let prog = Program::parse(&es.bytecode).expect("empty shade parses");
-    let vm = Vm::new();
+    let mut vm = Vm::new();
     assert_eq!(vm.run_shade(&prog, &frame, &led), (0, 0, 0), "empty shade is black");
 
     let eu = build_empty_update();
