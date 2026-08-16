@@ -102,10 +102,14 @@ def capture(dist: Path, shots: list[dict], out_dir: Path) -> None:
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
-            ctx = browser.new_context(viewport=VIEWPORT, device_scale_factor=SCALE)
-            ctx.add_init_script(SEED_JS)
-            page = ctx.new_page()
             for shot in shots:
+                # A FRESH context per shot so nothing carries over — an opened
+                # sheet/drawer, navigation, or seeded state from one screen can't
+                # contaminate the next (Kevin's review). New context == clean
+                # localStorage + a blank DOM.
+                ctx = browser.new_context(viewport=VIEWPORT, device_scale_factor=SCALE)
+                ctx.add_init_script(SEED_JS)
+                page = ctx.new_page()
                 sid, route = shot["id"], shot["route"]
                 url = base + (route if route.startswith("#") else "#" + route.lstrip("/"))
                 try:
@@ -128,6 +132,7 @@ def capture(dist: Path, shots: list[dict], out_dir: Path) -> None:
                 page.screenshot(path=str(dst))
                 suffix = f" + {click}" if click else ""
                 print(f"  captured {sid} <- {route}{suffix}", file=sys.stderr)
+                ctx.close()
             browser.close()
     finally:
         httpd.shutdown()
