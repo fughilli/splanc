@@ -31,7 +31,7 @@ export interface FixtureOptions {
   jitterFrac: number;
 }
 
-export type FixtureKind = "strip" | "ring" | "helix" | "grid" | "star" | "tree" | "squiggle";
+export type FixtureKind = "strip" | "ring" | "helix" | "grid" | "star" | "tree" | "squiggle" | "tube";
 
 export const FIXTURE_KINDS: { value: FixtureKind; label: string }[] = [
   { value: "strip", label: "Strip" },
@@ -41,6 +41,7 @@ export const FIXTURE_KINDS: { value: FixtureKind; label: string }[] = [
   { value: "star", label: "Star (junction)" },
   { value: "tree", label: "Tree (branches)" },
   { value: "squiggle", label: "Squiggle (random walk)" },
+  { value: "tube", label: "Tube (needs relax)" },
 ];
 
 function generate(kind: FixtureKind, opts: FixtureOptions): Vec3[] {
@@ -116,6 +117,23 @@ function generate(kind: FixtureKind, opts: FixtureOptions): Vec3[] {
         emit(px, py, ang - 0.5, len * 0.72, depth - 1);
       };
       emit(0, 0, Math.PI / 2, SPACING * 8, 3);
+      break;
+    }
+    case "tube": {
+      // LEDs wrapped over a CYLINDER surface (axis along x) — a tubiform cloud
+      // whose diameter (~3 × pitch) exceeds the LED spacing, so the raw k-NN
+      // graph is a surface mesh. extractTopology needs `relaxIterations > 0` to
+      // contract it onto the centreline and recover a single clean segment.
+      const R = 1.5 * SPACING;
+      const per = Math.max(6, Math.round((2 * Math.PI * R) / SPACING)); // points/ring
+      const rings = Math.max(2, Math.round(n / per));
+      for (let r = 0; r < rings && pts.length < n; r++) {
+        const x = r * SPACING; // one pitch of axial advance per ring
+        for (let a = 0; a < per && pts.length < n; a++) {
+          const th = (2 * Math.PI * a) / per + r * 0.3; // stagger so columns don't align
+          push(x, R * Math.cos(th), R * Math.sin(th));
+        }
+      }
       break;
     }
     case "squiggle": {

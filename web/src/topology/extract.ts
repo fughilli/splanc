@@ -31,6 +31,8 @@ import type {
   Vec3,
 } from "@ledmapper/protocol";
 
+import { relaxTubiform } from "./relax";
+
 export interface ExtractOptions {
   /** Neighbours considered when building the proximity graph. */
   k?: number;
@@ -62,6 +64,19 @@ export interface ExtractOptions {
   /** Flag LED pairs closer than this × the median spacing as (near-)coincident
    * — likely solve degeneracies that create a zero-length graph shortcut. */
   coincidentFactor?: number;
+  /** TUBIFORM support: contract the cloud onto its centreline for this many
+   * passes before building the graph (see topology/relax.ts). 0 (default)
+   * disables it — a thin fixture (strip/ring/tree) needs none. Turn it up when
+   * the LEDs wrap a tube whose diameter is ≳ their spacing, so the raw k-NN
+   * graph is a surface mesh rather than a 1-D chain. A tubiform JUNCTION also
+   * wants a wider `mergeFactor` (~tube diameter / spacing): the junction blob is
+   * tube-radius-sized, larger than the thin-strip default collapses. */
+  relaxIterations?: number;
+  /** Neighbourhood radius for the tubiform contraction, as a multiple of the
+   * median spacing — should span the tube cross-section (a few × spacing). */
+  relaxRadiusFactor?: number;
+  /** Fraction of the perpendicular pull applied per contraction pass (0..1). */
+  relaxRate?: number;
 }
 
 /** Diagnostic view of the raw graph the topology was extracted from, to reveal
@@ -265,6 +280,9 @@ export async function extractTopology(
   const mergeFactor = opts.mergeFactor ?? 1.5;
   const maxPolyline = Math.max(2, opts.maxPolyline ?? 64);
   const simplifyFrac = opts.simplifyFrac ?? 0.5;
+  const relaxIterations = Math.max(0, Math.floor(opts.relaxIterations ?? 0));
+  const relaxRadiusFactor = opts.relaxRadiusFactor ?? 3;
+  const relaxRate = opts.relaxRate ?? 0.5;
   const { signal, onProgress } = hooks;
   // Yield every N rows of the O(n²) phases so input/paint get a turn and abort
   // is responsive; below that many LEDs the whole solve stays within one task.
@@ -293,6 +311,29 @@ export async function extractTopology(
   }
   const s = median(nnd) || 1e-6;
   const maxEdge = s * radiusFactor;
+
+  // 1a. TUBIFORM contraction (topology/relax.ts): `G` is the WORKING cloud the
+  //     graph is built from. When the LEDs wrap a tube (a surface/volume, not a
+  //     1-D curve) the raw k-NN graph is a mesh around the tube and the MST
+  //     wanders over the surface. Contracting the cloud onto its centreline
+  //     first — endpoint-preserving, and a no-op on thin fixtures — makes the
+  //     graph trace the axis. `s` (the length scale) is measured on the ORIGINAL
+  //     cloud above, and every LED associates back to its ORIGINAL position in
+  //     §8, so `dPerp` still reports the true tube radius. Off unless the caller
+  //     sets relaxIterations.
+  const G =
+    relaxIterations > 0
+      ? relaxTubiform(P, {
+          iterations: relaxIterations,
+          radius: s * relaxRadiusFactor,
+          rate: relaxRate,
+          spacing: s,
+        })
+      : P;
+  if (relaxIterations > 0) {
+    if (signal?.aborted) throw new DOMException("topology extraction aborted", "AbortError");
+    await yieldToEventLoop();
+  }
 
   // Diagnostic collection (only when opts.debug): (near-)coincident pairs and,
   // below, the kept graph edges with a loop-chord flag.
@@ -337,14 +378,14 @@ export async function extractTopology(
   for (let i = 0; i < n; i++) {
     await breathe(i, 0.5);
     for (let j = i + 1; j < n; j++) {
-      const d = dist(P[i]!, P[j]!);
+      const d = dist(G[i]!, G[j]!);
       if (d <= coincEps) {
         cuf.union(i, j);
         if (wantDebug) {
           const key = `${i}-${j}`;
           if (!coincSeen.has(key)) {
             coincSeen.add(key);
-            coincident.push({ a: P[i]!, b: P[j]!, dist: d });
+            coincident.push({ a: G[i]!, b: G[j]!, dist: d });
           }
         }
       }
@@ -364,9 +405,9 @@ export async function extractTopology(
       nodeSum.push([0, 0, 0]);
       nodeCnt.push(0);
     }
-    nodeSum[node]![0] += P[i]![0];
-    nodeSum[node]![1] += P[i]![1];
-    nodeSum[node]![2] += P[i]![2];
+    nodeSum[node]![0] += G[i]![0];
+    nodeSum[node]![1] += G[i]![1];
+    nodeSum[node]![2] += G[i]![2];
     nodeCnt[node]!++;
   }
   const nNodes = NP.length;
