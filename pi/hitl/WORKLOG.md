@@ -65,6 +65,22 @@ renames to `ap0`, and NetworkManager `hitl-ap` activates on it.
 - **BT half is a bonus, not done**: `hci1` wants `rtl_bt/rtl8851bu_fw.bin`, which isn't
   in nixpkgs linux-firmware yet — would give a dedicated BLE radio. Deferred.
 
+### TODO (later): enable the RTL8851BU BT half as a second BLE radio
+
+The dongle is a WiFi 6 + BT combo. Only the WiFi half (`ap0`) is wired up; the BT
+controller (`hci1`) enumerates but stays DOWN because its firmware is missing —
+`dmesg`: `Bluetooth: hci1: RTL: firmware file rtl_bt/rtl8851bu_fw not found`
+(also wants `rtl_bt/rtl8851bu_config.bin`). BlueZ has the driver; it's purely a
+firmware-provisioning gap. Today the rig does BLE on the Pi's integrated adapter
+(`hci0`), which works, so this is upside, not a blocker.
+
+To do it: fetch `rtl8851bu_fw.bin` + `rtl8851bu_config.bin` from upstream
+linux-firmware (`rtl_bt/`) — recent enough to include 8851BU — and add them under
+`lib/firmware/rtl_bt/` via `hardware.firmware` (extend `rtl8851bu.nix` to also
+install the BT blobs, or a small separate firmware derivation). Then `hci1` should
+init and give a second, dedicated BLE controller (e.g. run DUT BLE on one and keep
+the other free, or parallelize). Nice-to-have; no rush.
+
 Deploy, then reboot (new kernel modules only load on the next boot):
 
 ```sh
