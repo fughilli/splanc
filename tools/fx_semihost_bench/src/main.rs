@@ -79,7 +79,7 @@ fn softfloat_weights() -> std::collections::BTreeMap<String, f64> {
 /// `leds`×`iters` invocations with a warmup pass to settle caches/branch state.
 fn time_shade(bytecode: &[u8], leds: u32, iters: u32) -> f64 {
     let prog = Program::parse(bytecode).expect("bench program parses");
-    let vm = Vm::new();
+    let mut vm = Vm::new();
     let frame = Frame { led_count: leds, ..Default::default() };
     // spread LED positions so pos.x varies (exercises real branch/value paths).
     let led_at = |i: u32| -> Led {

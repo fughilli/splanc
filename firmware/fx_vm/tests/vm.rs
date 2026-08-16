@@ -99,7 +99,7 @@ fn texture_rgba_written_into_arena_is_sampled() {
     let mut vm = Vm::new();
     vm.set_arena(&mut arena);
     let frame = Frame { led_count: led_count as u32, ..Default::default() };
-    let sample = |u: f32, v: f32| vm.run_shade(&prog, &frame, &Led { uv: [u, v], ..Default::default() });
+    let mut sample = |u: f32, v: f32| vm.run_shade(&prog, &frame, &Led { uv: [u, v], ..Default::default() });
     assert_eq!(sample(0.0, 0.0), (255, 0, 0), "u=0 samples texel 0 (red)");
     assert_eq!(sample(1.0, 0.0), (0, 255, 0), "u=1 samples texel 1 (green)");
     // Midpoint bilinearly blends the two texels (red+green -> ~half each).
@@ -220,7 +220,7 @@ fn math_and_palette() {
     ];
     let buf = fxb(0, 0, NO_ENTRY, 0, &[], &code);
     let prog = Program::parse(&buf).expect("parse");
-    let vm = Vm::new();
+    let mut vm = Vm::new();
     let frame = Frame::default();
     // t=0 rainbow (hsv h=0) => pure red
     let led = Led { pos: [0.0, 0.0, 0.0], ..Default::default() };
@@ -285,7 +285,7 @@ fn budget_trips_on_pathological_loop() {
     code.extend_from_slice(&(-3i16).to_le_bytes());
     let buf = fxb(0, 0, NO_ENTRY, 0, &[], &code);
     let prog = Program::parse(&buf).expect("parse");
-    let vm = Vm::new();
+    let mut vm = Vm::new();
     let frame = Frame::default();
     let led = Led::default();
 
@@ -315,7 +315,7 @@ fn budget_leaves_normal_programs_untouched() {
     ];
     let buf = fxb(0, 0, NO_ENTRY, 0, &[1.0, 0.0], &code);
     let prog = Program::parse(&buf).expect("parse");
-    let vm = Vm::new();
+    let mut vm = Vm::new();
     let frame = Frame::default();
     let led = Led::default();
     let (rgb, outcome) = vm.run_shade_bounded(&prog, &frame, &led, &Budget::instructions(1000));
@@ -333,7 +333,7 @@ fn deadline_flag_cancels_execution() {
     code.extend_from_slice(&(-3i16).to_le_bytes());
     let buf = fxb(0, 0, NO_ENTRY, 0, &[], &code);
     let prog = Program::parse(&buf).expect("parse");
-    let vm = Vm::new();
+    let mut vm = Vm::new();
     let frame = Frame::default();
     let led = Led::default();
 
@@ -365,7 +365,7 @@ fn counters_report_instr_and_stack_high_water() {
     ];
     let buf = fxb(0, 0, NO_ENTRY, 0, &[0.25], &code);
     let prog = Program::parse(&buf).expect("parse");
-    let vm = Vm::new();
+    let mut vm = Vm::new();
     let frame = Frame::default();
     let led = Led { pos: [0.5, 0.1, 0.2], ..Default::default() };
     let (_rgb, outcome, c) =
@@ -386,7 +386,7 @@ fn counters_count_budget_exhaustion() {
     code.extend_from_slice(&(-3i16).to_le_bytes());
     let buf = fxb(0, 0, NO_ENTRY, 0, &[], &code);
     let prog = Program::parse(&buf).expect("parse");
-    let vm = Vm::new();
+    let mut vm = Vm::new();
     let (_rgb, outcome, c) =
         vm.run_shade_counted(&prog, &Frame::default(), &Led::default(), &Budget::instructions(50));
     assert_eq!(outcome, Outcome::Budget);
@@ -590,4 +590,370 @@ fn integer_hash_uniform_and_no_fixed_point() {
     assert!((0.0..1.0).contains(&hash3(0.5, 0.25, 0.75)));
     assert!(hash3(1.0, 2.0, 3.0) != hash3(1.0, 2.0, 4.0));
     assert!(hash3(1.0, 2.0, 3.0) != hash3(2.0, 1.0, 3.0));
+}
+
+// --- FUG-122: fixed/int variants of the vector/transcendental/colour/I/O ops --
+//
+// These hand-assembled programs exercise each new opcode. Where a program's
+// result is a fixed value we convert it back to float (Fix2F, Q16.16) before the
+// float Ret so the shade RGB reflects the number; the RetRgb8/RetRgbFix and
+// LoadCtxFix tests exercise the strictly-integer I/O path directly.
+
+const F16: u8 = 16; // Q16.16 frac operand
+
+/// Run a shade program returning its (r,g,b).
+fn shade(code: &[u8], consts: &[f32], led: Led, frame: Frame) -> Rgb {
+    let buf = fxb(0, 0, NO_ENTRY, 0, consts, code);
+    let prog = Program::parse(&buf).expect("parse");
+    let mut vm = Vm::new();
+    vm.run_shade(&prog, &frame, &led)
+}
+
+#[test]
+fn sqrt_fix_matches_float() {
+    // sqrt(0.25) = 0.5 -> R = 127. Build 0.25 as Q16.16, SqrtFix, back to float.
+    #[rustfmt::skip]
+    let code = [
+        Op::PushConst as u8, 0, 0,   // 0.25 (float)
+        Op::F2Fix as u8,             // -> Q16.16 0.25
+        Op::SqrtFix as u8, F16,      // -> Q16.16 0.5
+        Op::Fix2F as u8,             // -> 0.5 float
+        Op::Swizzle as u8, 1, 3, 0, 0, 0, // broadcast to vec3
+        Op::Ret as u8, 3,
+    ];
+    let (r, g, b) = shade(&code, &[0.25], Led::default(), Frame::default());
+    assert_eq!((r, g, b), (127, 127, 127));
+}
+
+#[test]
+fn length_fix_matches_float() {
+    // |(0.6, 0.8, 0)| = 1.0 -> R = 255.
+    #[rustfmt::skip]
+    let code = [
+        Op::PushConst as u8, 0, 0, Op::F2Fix as u8, // 0.6
+        Op::PushConst as u8, 1, 0, Op::F2Fix as u8, // 0.8
+        Op::PushConst as u8, 2, 0, Op::F2Fix as u8, // 0.0
+        Op::LengthFix as u8, F16, 3,                // -> Q16.16 1.0
+        Op::Fix2F as u8,
+        Op::Swizzle as u8, 1, 3, 0, 0, 0,
+        Op::Ret as u8, 3,
+    ];
+    let (r, _, _) = shade(&code, &[0.6, 0.8, 0.0], Led::default(), Frame::default());
+    assert!((r as i32 - 255).abs() <= 1, "|(0.6,0.8,0)|=1 -> ~255, got {r}");
+}
+
+#[test]
+fn dot_and_distance_fix() {
+    // dot((0.5,0,0),(0.5,0,0)) = 0.25 -> 63 ; distance((0.6,0,0),(0,0.8,0)) = 1.0.
+    #[rustfmt::skip]
+    let dot = [
+        Op::PushConst as u8, 0, 0, Op::F2Fix as u8, // 0.5
+        Op::PushConst as u8, 1, 0, Op::F2Fix as u8, // 0
+        Op::PushConst as u8, 1, 0, Op::F2Fix as u8, // 0
+        Op::PushConst as u8, 0, 0, Op::F2Fix as u8, // 0.5
+        Op::PushConst as u8, 1, 0, Op::F2Fix as u8, // 0
+        Op::PushConst as u8, 1, 0, Op::F2Fix as u8, // 0
+        Op::DotFix as u8, F16, 3,
+        Op::Fix2F as u8,
+        Op::Swizzle as u8, 1, 3, 0, 0, 0,
+        Op::Ret as u8, 3,
+    ];
+    assert_eq!(shade(&dot, &[0.5, 0.0], Led::default(), Frame::default()).0, 63);
+
+    #[rustfmt::skip]
+    let dist = [
+        Op::PushConst as u8, 0, 0, Op::F2Fix as u8, // a=(0.6,0,0)
+        Op::PushConst as u8, 2, 0, Op::F2Fix as u8,
+        Op::PushConst as u8, 2, 0, Op::F2Fix as u8,
+        Op::PushConst as u8, 2, 0, Op::F2Fix as u8, // b=(0,0.8,0)
+        Op::PushConst as u8, 1, 0, Op::F2Fix as u8,
+        Op::PushConst as u8, 2, 0, Op::F2Fix as u8,
+        Op::DistanceFix as u8, F16, 3,
+        Op::Fix2F as u8,
+        Op::Swizzle as u8, 1, 3, 0, 0, 0,
+        Op::Ret as u8, 3,
+    ];
+    let dr = shade(&dist, &[0.6, 0.8, 0.0], Led::default(), Frame::default()).0;
+    assert!((dr as i32 - 255).abs() <= 1, "distance=1 -> ~255, got {dr}");
+}
+
+#[test]
+fn normalize_fix_unit_length() {
+    // normalize((3,4,0)).x = 0.6 -> 153. Uses Q16.16 range (values > 1).
+    #[rustfmt::skip]
+    let code = [
+        Op::PushConst as u8, 0, 0, Op::F2Fix as u8, // 3
+        Op::PushConst as u8, 1, 0, Op::F2Fix as u8, // 4
+        Op::PushConst as u8, 2, 0, Op::F2Fix as u8, // 0
+        Op::NormalizeFix as u8, F16, 3,
+        Op::Swizzle as u8, 3, 1, 0,   // take .x
+        Op::Fix2F as u8,
+        Op::Swizzle as u8, 1, 3, 0, 0, 0,
+        Op::Ret as u8, 3,
+    ];
+    let (r, _, _) = shade(&code, &[3.0, 4.0, 0.0], Led::default(), Frame::default());
+    assert!((r as i32 - 153).abs() <= 1, "normalize .x = 0.6 -> ~153, got {r}");
+}
+
+#[test]
+fn hsv2rgb_fix_red() {
+    // hsv(h=0, s=1, v=1) = pure red, via the strictly-integer path + RetRgbFix.
+    #[rustfmt::skip]
+    let code = [
+        Op::PushConst as u8, 0, 0, Op::F2Fix as u8, // h=0
+        Op::PushConst as u8, 1, 0, Op::F2Fix as u8, // s=1
+        Op::PushConst as u8, 1, 0, Op::F2Fix as u8, // v=1
+        Op::Hsv2RgbFix as u8, F16,
+        Op::RetRgbFix as u8, F16,
+    ];
+    assert_eq!(shade(&code, &[0.0, 1.0], Led::default(), Frame::default()), (255, 0, 0));
+}
+
+#[test]
+fn palette_fix_rainbow_t0_is_red() {
+    #[rustfmt::skip]
+    let code = [
+        Op::PushConst as u8, 0, 0, Op::F2Fix as u8, // t=0
+        Op::PaletteFix as u8, 2, F16,               // rainbow
+        Op::RetRgbFix as u8, F16,
+    ];
+    assert_eq!(shade(&code, &[0.0], Led::default(), Frame::default()), (255, 0, 0));
+}
+
+#[test]
+fn atan2_fix_quarter_turn() {
+    // atan2(1, 0) = 0.25 turn -> 0.25 * 255 = 63.
+    #[rustfmt::skip]
+    let code = [
+        Op::PushConst as u8, 0, 0, Op::F2Fix as u8, // y = 1
+        Op::PushConst as u8, 1, 0, Op::F2Fix as u8, // x = 0
+        Op::Atan2Fix as u8, F16,
+        Op::Fix2F as u8,
+        Op::Swizzle as u8, 1, 3, 0, 0, 0,
+        Op::Ret as u8, 3,
+    ];
+    let (r, _, _) = shade(&code, &[1.0, 0.0], Led::default(), Frame::default());
+    assert!((r as i32 - 63).abs() <= 2, "atan2(1,0)=0.25turn -> ~63, got {r}");
+}
+
+#[test]
+fn tan_log_pow_fix_smoke() {
+    // tan(0.125 turn) = tan(45deg) = 1.0.
+    #[rustfmt::skip]
+    let tan = [
+        Op::PushConst as u8, 0, 0, Op::F2Fix as u8, // 0.125 turn
+        Op::TanFix as u8, F16,
+        Op::Fix2F as u8, Op::Swizzle as u8, 1, 3, 0, 0, 0, Op::Ret as u8, 3,
+    ];
+    let (r, _, _) = shade(&tan, &[0.125], Led::default(), Frame::default());
+    assert!((r as i32 - 255).abs() <= 3, "tan(45deg)=1 -> ~255, got {r}");
+
+    // pow(0.5, 2) = 0.25 -> 63.
+    #[rustfmt::skip]
+    let pow = [
+        Op::PushConst as u8, 0, 0, Op::F2Fix as u8, // base 0.5
+        Op::PushConst as u8, 1, 0, Op::F2Fix as u8, // exp 2
+        Op::PowFix as u8, F16,
+        Op::Fix2F as u8, Op::Swizzle as u8, 1, 3, 0, 0, 0, Op::Ret as u8, 3,
+    ];
+    let (r, _, _) = shade(&pow, &[0.5, 2.0], Led::default(), Frame::default());
+    assert!((r as i32 - 63).abs() <= 4, "pow(0.5,2)=0.25 -> ~63, got {r}");
+}
+
+#[test]
+fn ret_rgb8_direct() {
+    // int channels 255, 0, 128 -> RGB directly (float-free output).
+    #[rustfmt::skip]
+    let code = [
+        Op::PushConst as u8, 0, 0, Op::F2I as u8, // 255
+        Op::PushConst as u8, 1, 0, Op::F2I as u8, // 0
+        Op::PushConst as u8, 2, 0, Op::F2I as u8, // 128
+        Op::RetRgb8 as u8,
+    ];
+    assert_eq!(shade(&code, &[255.0, 0.0, 128.0], Led::default(), Frame::default()), (255, 0, 128));
+}
+
+#[test]
+fn ret_rgb_fix_scales() {
+    // Q16.16 channels 1.0, 0.5, 0.25 -> 255, 127, 63.
+    #[rustfmt::skip]
+    let code = [
+        Op::PushConst as u8, 0, 0, Op::F2Fix as u8,
+        Op::PushConst as u8, 1, 0, Op::F2Fix as u8,
+        Op::PushConst as u8, 2, 0, Op::F2Fix as u8,
+        Op::RetRgbFix as u8, F16,
+    ];
+    assert_eq!(shade(&code, &[1.0, 0.5, 0.25], Led::default(), Frame::default()), (255, 127, 63));
+}
+
+#[test]
+fn load_ctx_fix_reads_cache_and_rescales() {
+    // led.pos.x cached as Q16.16 0.5 -> loaded as Q16.16 (frac 16) then Q1.14
+    // (frac 14) both yield 0.5 after FixToF; proves the cache read + rescale.
+    let led = Led { pos_fix: [(0.5 * 65536.0) as i32, 0, 0], ..Default::default() };
+
+    #[rustfmt::skip]
+    let q16 = [
+        Op::LoadCtxFix as u8, C_LED_POS, 0, F16, // pos.x as Q16.16
+        Op::FixToF as u8, F16,
+        Op::Swizzle as u8, 1, 3, 0, 0, 0,
+        Op::Ret as u8, 3,
+    ];
+    assert_eq!(shade(&q16, &[], led, Frame::default()).0, 127);
+
+    #[rustfmt::skip]
+    let q14 = [
+        Op::LoadCtxFix as u8, C_LED_POS, 0, 14, // pos.x rescaled to Q1.14
+        Op::FixToF as u8, 14,
+        Op::Swizzle as u8, 1, 3, 0, 0, 0,
+        Op::Ret as u8, 3,
+    ];
+    assert_eq!(shade(&q14, &[], led, Frame::default()).0, 127);
+}
+
+#[test]
+fn all_fixed_shade_has_no_float_boundary() {
+    // A shade() written end-to-end in fixed: read led.pos.x from the fixed cache,
+    // hue = pos.x, hsv->rgb, output — no LoadCtx/Ret float epilogue anywhere.
+    let led = Led { pos_fix: [(0.0 * 65536.0) as i32, 0, 0], ..Default::default() };
+    #[rustfmt::skip]
+    let code = [
+        Op::LoadCtxFix as u8, C_LED_POS, 0, F16, // h = pos.x (0)
+        Op::PushConst as u8, 0, 0, Op::F2Fix as u8, // s = 1
+        Op::PushConst as u8, 0, 0, Op::F2Fix as u8, // v = 1
+        Op::Hsv2RgbFix as u8, F16,
+        Op::RetRgbFix as u8, F16,
+    ];
+    assert_eq!(shade(&code, &[1.0], led, Frame::default()), (255, 0, 0));
+}
+
+// --- FUG-122: opcode-coverage audit ------------------------------------------
+//
+// The issue asks us to be "extremely diligent in ensuring that all supported fx
+// VM opcodes have a variant that operates strictly on fixed/integer." This test
+// classifies EVERY `Op` into one of four buckets via an exhaustive match, so a
+// newly-added opcode fails to compile until it is deliberately classified:
+//
+//   IntFixedNative  — the op reads/writes the raw scaled-integer slot word; no
+//                     soft-float ever runs (the integer/fixed ISA itself).
+//   TypeAgnostic    — moves/branches on raw slots regardless of type (stack &
+//                     control flow, packed buffer/graph access).
+//   FloatWithTwin   — a soft-float op whose strictly-integer/fixed counterpart
+//                     is the named Op (this is the completeness guarantee).
+//   FloatBoundary   — the float<->fixed conversion ops; float by definition, and
+//                     each has an all-integer sibling for staying off the FPU.
+
+#[derive(Debug)]
+enum Cov {
+    IntFixedNative,
+    TypeAgnostic,
+    FloatWithTwin(Op),
+    FloatBoundary,
+}
+
+fn classify(op: Op) -> Cov {
+    use Cov::*;
+    use Op::*;
+    match op {
+        // stack / control / typed-storage — operate on raw slots, any type.
+        PushConst | LoadUniform | LoadState | StoreState | LoadLocal | StoreLocal | Swizzle
+        | Swap | Pop | BrFalse | Jmp | Logic | Call | RetFn | LoadStateIdx | StoreStateIdx
+        | LoadLocalIdx | StoreLocalIdx | GraphQuery | LoadBuf | StoreBuf | FloodFrom
+        | FillLocal => TypeAgnostic,
+        // sampling always yields a float colour by design (packed storage detail).
+        SampleTex | PaintTex => TypeAgnostic,
+
+        // Float compute ops, each paired with its strictly-fixed/integer twin.
+        Add => FloatWithTwin(AddI),
+        Sub => FloatWithTwin(SubI),
+        Mul => FloatWithTwin(MulFix), // also MulI / MulFixN by frac
+        Div => FloatWithTwin(DivFix), // also DivI / DivFixN
+        Neg => FloatWithTwin(NegI),
+        Scale => FloatWithTwin(ScaleFix),
+        Clamp => FloatWithTwin(ClampVFix), // scalar: ClampI
+        Mix => FloatWithTwin(MixVFix),     // scalar: MixFix
+        Smoothstep => FloatWithTwin(SmoothstepFix),
+        Dot => FloatWithTwin(DotFix),
+        Cross => FloatWithTwin(CrossFix),
+        Length => FloatWithTwin(LengthFix),
+        Normalize => FloatWithTwin(NormalizeFix),
+        Distance => FloatWithTwin(DistanceFix),
+        Cmp => FloatWithTwin(CmpI),
+        Hash1 => FloatWithTwin(HashFix),
+        Hash3 => FloatWithTwin(Hash3Fix),
+        Hsv2Rgb => FloatWithTwin(Hsv2RgbFix),
+        Palette => FloatWithTwin(PaletteFix),
+        // UnMath/BinMath are dispatch-by-fn: every fn id has a fixed opcode
+        // (sin/cos/exp/sqrt/log/tan/abs/floor/ceil/fract/sign and
+        // min/max/pow/mod/step/atan2). Representative twins:
+        UnMath => FloatWithTwin(SinFix),
+        BinMath => FloatWithTwin(Atan2Fix),
+        // float I/O boundary of shade()/context — float-free replacements:
+        Ret => FloatWithTwin(RetRgbFix),   // also RetRgb8
+        LoadCtx => FloatWithTwin(LoadCtxFix),
+
+        // The float<->fixed boundary conversions (float by definition).
+        I2F | F2I | Fix2F | F2Fix | FixToF | FixFromF => FloatBoundary,
+
+        // The strictly-integer/fixed ISA itself (no soft-float in any of these).
+        AddI | SubI | MulI | DivI | ModI | NegI | CmpI | MulFix | DivFix | I2Fix | Fix2I
+        | MulFixN | DivFixN | FixRescale | SinFix | CosFix | ExpFix | AbsI | MinI | MaxI
+        | ClampI | SignI | StepI | FloorFix | CeilFix | FractFix | MixFix | SqrtFix | ScaleFix
+        | DotFix | LengthFix | DistanceFix | NormalizeFix | CrossFix | SmoothstepFix | ClampVFix
+        | MixVFix | Hsv2RgbFix | PaletteFix | Atan2Fix | LogFix | TanFix | PowFix | HashFix
+        | Hash3Fix | RetRgb8 | RetRgbFix | LoadCtxFix => IntFixedNative,
+    }
+}
+
+#[test]
+fn every_opcode_has_a_fixed_or_integer_path() {
+    // Walk the whole contiguous opcode space; classify() is exhaustive so this
+    // also proves no Op is unaccounted for.
+    let mut float_with_twin = 0;
+    for b in 0..=(Op::FillLocal as u8) {
+        let op = Op::from_u8(b).unwrap_or_else(|| panic!("opcode {b} missing from Op"));
+        match classify(op) {
+            // The completeness guarantee: the twin is itself a fixed/int-native op.
+            Cov::FloatWithTwin(twin) => {
+                assert!(
+                    matches!(classify(twin), Cov::IntFixedNative),
+                    "twin {twin:?} of float op {op:?} must be integer/fixed-native"
+                );
+                float_with_twin += 1;
+            }
+            Cov::IntFixedNative | Cov::TypeAgnostic | Cov::FloatBoundary => {}
+        }
+    }
+    // Every soft-float compute/I-O op is paired; sanity-check we covered them all.
+    assert_eq!(
+        float_with_twin, 23,
+        "expected 23 float ops each mapped to a fixed/integer twin"
+    );
+}
+
+#[test]
+fn fill_local_zeros_locals_each_invocation() {
+    // FUG-122 framing hill-climb reuses the Vm's stack/locals scratch across
+    // shade() calls WITHOUT the old per-invocation blanket clear. Array/struct
+    // locals (which used to rely on that clear) are now zeroed by an explicit
+    // FillLocal the compiler emits at their declaration. Verify FillLocal reads
+    // back as 0 even after a prior invocation wrote the slot to 1.0.
+    #[rustfmt::skip]
+    let code = [
+        Op::FillLocal as u8, 0, 1,   // local[0] = 0 (the compiler's array/struct init)
+        Op::LoadLocal as u8, 0, 1,   // push local[0] (must be 0)
+        Op::PushConst as u8, 1, 0,   // 1.0
+        Op::StoreLocal as u8, 0, 1,  // local[0] = 1.0 (persists in the resident scratch)
+        Op::PushConst as u8, 0, 0,   // 0.0
+        Op::PushConst as u8, 0, 0,   // 0.0
+        Op::Ret as u8, 3,            // vec3(loaded, 0, 0)
+    ];
+    let buf = fxb(0, 0, NO_ENTRY, 0, &[0.0, 1.0], &code);
+    let prog = Program::parse(&buf).expect("parse");
+    let mut vm = Vm::new();
+    let frame = Frame::default();
+    let led = Led::default();
+    assert_eq!(vm.run_shade(&prog, &frame, &led), (0, 0, 0), "1st: FillLocal zeroed");
+    // Without FillLocal re-zeroing, this would read the stale 1.0 -> (255,0,0).
+    assert_eq!(vm.run_shade(&prog, &frame, &led), (0, 0, 0), "2nd: FillLocal re-zeroed");
 }
