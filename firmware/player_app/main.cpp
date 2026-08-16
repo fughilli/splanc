@@ -94,6 +94,20 @@ static CRGB leds[kMaxLeds];
 // clocks out. Net frame period drops to max(render, transmit). We keep FastLED's
 // exact, field-proven WS2812 timing/colour path (rig has no camera to validate a
 // hand-rolled driver) — FastLED is bound to `show_buf`, never to the live `leds`.
+//
+// HANDOFF (FUG-122 review, Kevin): a follow-up wants a fresh interrupt/DMA WS2812
+// driver to replace FastLED here, validated by a logic-analyzer HITL. This
+// transmit path is structured so that swap is a drop-in: replace the body of
+// `led_show_async` / `xmit_task` with a custom `driver/rmt_tx.h` transmit
+// (rmt_new_tx_channel + rmt_new_bytes_encoder over `show_buf`'s GRB bytes;
+// `rmt_transmit` is already non-blocking, so the render task need not even wait
+// unless it out-runs the DMA). The async contract (snapshot → kick → render next;
+// `xmit_done` gates the buffer) stays the same. The logic analyzer should verify:
+// WS2812 bit timing (T0H≈0.4µs/T0L≈0.85µs, T1H≈0.8µs/T1L≈0.45µs, ≥50µs reset gap),
+// GRB byte order, the FastLED brightness scale (setBrightness 160) if it is
+// dropped, and — key for the async double-buffer — that no torn/half-updated
+// frame ever goes out (the `xmit_done` semaphore is what prevents a snapshot from
+// racing an in-flight push).
 static CRGB show_buf[kMaxLeds];
 static TaskHandle_t xmit_task_handle = nullptr;
 // Given when a transmit completes (and once at boot); the render task takes it
