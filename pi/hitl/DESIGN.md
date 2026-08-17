@@ -166,6 +166,24 @@ Latency is scaffolded (`CaptureResult.TriggerSample`/`SampleRate`); a full E2E
 number needs the stimulus and the capture co-timed in one clock (route the "show
 pattern" command through the daemon) — a hardware-gated follow-up.
 
+**Acquiring the DUT→channel map.** Which `c6-<serial>` is wired to which analyzer
+channel isn't knowable from software — it's a fact about the bench wiring. Two
+pieces close that gap:
+
+- `firmware/dut_id` — a minimal ESP32-C6 image that breathes the board's ONBOARD
+  WS2812 (GPIO8, via `//libs/pins`) so a _reserved_ DUT is physically identifiable,
+  with a serial toggle (`'0'`/`'1'`/`'t'` over its USB-CDC) to stop the blink.
+  `//pi/hitl/harness:dut_id` walks a rig's DUTs one at a time (blink → eyeball →
+  stop → next).
+- `//pi/hitl/harness:map_la` — drives that blink DUT-by-DUT and prompts "which
+  analyzer channel is THIS board on?", then `POST /analyzer/channel-map`s the
+  assembled map. The broker holds the map behind a `sync.RWMutex` (so a live
+  capture can't block a status/map read), applies it live, and persists it to
+  `<state-dir>/analyzer-channel-map.json`, which `New` reloads at boot **overlaid
+  on** the deploy-provided `--analyzer-channel-map` default — so a mapping "sticks
+  to the board" across reboots with no redeploy. `GET /analyzer/channel-map` reads
+  it back. POST rejects any key that isn't a real DUT on the rig.
+
 ## Packaging
 
 - **Go** → `nix/packages.nix` (`buildGoModule`, `vendorHash = null` since

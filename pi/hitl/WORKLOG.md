@@ -3,6 +3,39 @@
 Handoff notes alongside git history. Newest first. Read this before touching the
 rig's networking — there's live runtime state that isn't fully declarative yet.
 
+## 2026-08-17 — DUT identification + `map_la` (acquire the analyzer channel map)
+
+Which physical board (hence which analyzer channel) is which `c6-<serial>` can't
+be known from software, so two tools acquire it on the bench:
+
+- `firmware/dut_id` breathes a DUT's onboard WS2812 (GPIO8) with a serial toggle;
+  `//pi/hitl/harness:dut_id` walks a rig's DUTs to eyeball each one.
+- `//pi/hitl/harness:map_la` drives that blink DUT-by-DUT, asks which channel each
+  is on, and `POST`s the map to the daemon. New broker endpoints
+  `GET/POST /analyzer/channel-map` apply it live and persist it to
+  `<state-dir>/analyzer-channel-map.json` (reloaded at boot, overlaid on the deploy
+  default) — the map sticks across reboots, no redeploy. Validated locally
+  end-to-end + a round-trip/persist Go unit test.
+
+Serial toggle caveat: sending `'0'`/`'1'` to the C6's `/dev/ttyACM0` from a raw
+container shell couldn't be _confirmed_ to echo back (the C6 USB-CDC RX read-back
+via bare `cat` doesn't capture like `hitl-monitor` does); the write itself goes
+over USB CDC so the stop should land — the operator sees the LED stop. If it turns
+out unreliable, a distinct-color-per-MAC scheme would let all DUTs be ID'd in one
+pass with no stop needed.
+
+### Rig gotcha: `hitl-image-load` fails after a fresh Pi 3 reflash
+
+hitl-rig-3 (freshly reflashed) couldn't reserve — `POST /reserve` returned `null`
+because the container wouldn't start: `hitl-test:latest` wasn't loaded. The
+`hitl-image-load` oneshot had failed with `readlink
+/var/lib/containers/storage/overlay/l: invalid argument` — a corrupt/half-baked
+podman overlay store shipped in the SD image. Fix (per session, on the rig):
+`systemctl stop hitl-manager && podman system reset -f && systemctl start
+hitl-image-load` (slow on the Pi 3 — ~5 min for the 446 MB image) `&& systemctl
+start hitl-manager`. FOLLOW-UP: the image build shouldn't ship a populated
+graphroot, or the load unit should `podman system reset` on a prior failure.
+
 ## 2026-08-17 — `--hostname` now sets the identity (sbc-deploy fix, pin bumped)
 
 `--hostname` was overloaded: image mode used it as the identity override, but
