@@ -87,8 +87,10 @@ let
   apIface = if isAnalyzerRig then "ap0" else "wlan0";
   apConn = "hitl-ap";
   apChannel = 6; # fixed 2.4 GHz channel; the C6 is 2.4-only
-  apSsid = "hitl-${config.networking.hostName}";
-  apPsk = "hitl-${config.networking.hostName}-provision"; # ≥8 chars; override for a fixed one
+  # Canonical naming (README "Rig naming"): the AP SSID IS the system hostname, so
+  # a box is addressed identically everywhere (hostname = tailscale name = SSID).
+  apSsid = config.networking.hostName;
+  apPsk = "${config.networking.hostName}-provision"; # ≥8 chars; override for a fixed one
 
   # Shared logic analyzer (an FX2/fx2lafw "Saleae clone") — present only on the Pi
   # 3 logic-analyzer rig variant. sbc-deploy injects the board via $SBC_BOARD at
@@ -141,10 +143,36 @@ in
   # tailscaled-autoconnect runs `tailscale up` from it on a fresh state dir (e.g.
   # after a reflash) and is a no-op once already logged in. --ssh lets agents SSH
   # to the rig over the tailnet with tailnet identity instead of managed keys.
+  # The tailnet hostname IS the system hostname (canonical naming — see README),
+  # so every box is distinct on the tailnet (no hitl-rig/hitl-rig-2 collision) and
+  # `hitl reserve --require analyzer` can discover it without --server.
   services.tailscale = {
     enable = true;
     authKeyFile = "/var/lib/tailscale/authkey";
-    extraUpFlags = [ "--ssh" "--hostname=hitl-rig" ];
+    extraUpFlags = [ "--ssh" "--hostname=${config.networking.hostName}" ];
+  };
+
+  # `tailscale up` (above) only sets --hostname on a fresh login, so an already-
+  # registered rig keeps its old tailnet name across a redeploy. Enforce the
+  # canonical hostname on every boot with `tailscale set` (a no-op once correct),
+  # so the naming scheme sticks without a reflash.
+  systemd.services.tailscale-hostname = {
+    description = "Pin the tailscale device hostname to the system hostname";
+    after = [ "tailscaled.service" "tailscaled-autoconnect.service" ];
+    wants = [ "tailscaled.service" ];
+    wantedBy = [ "multi-user.target" ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+    script = ''
+      ts=${config.services.tailscale.package}/bin/tailscale
+      # Wait for the backend to be Running (autoconnect logs in first); `tailscale
+      # status` exits non-zero until then. Then pin the name; tolerate a not-yet-
+      # ready daemon so boot never blocks on it.
+      for _ in $(seq 1 30); do "$ts" status >/dev/null 2>&1 && break; sleep 2; done
+      "$ts" set --hostname=${config.networking.hostName} || true
+    '';
   };
 
   # USBIP host modules (attach the dev board into the container / to a remote).

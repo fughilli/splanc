@@ -26,42 +26,43 @@ lease, and releases on exit (`--keep` to hold it).
 ```sh
 bazel run //pi/hitl:hitl.keys        -- init
 bazel run //pi/hitl:hitl.image_sd    -- --device /dev/diskN   # flash a card
-bazel run //pi/hitl:hitl.deploy_live -- hitl-rig              # or push to a running rig
+bazel run //pi/hitl:hitl.deploy_live -- hitl-rig-1           # or push to a running rig
 ```
 
 (On macOS, start the builder first: `bazel run @sbc_deploy//:linux_builder`.)
 
 ### Rig naming (canonical)
 
-Every box has **one** name, `hitl-<box>`, chosen at deploy time via
-`SBC_HOSTNAME_OVERRIDE`. That same string is used verbatim in all three places
-below, so a box is addressed identically everywhere — no `hitl-rig` /
-`hitl-rig-2` ambiguity, and `hitl reserve` discovery (including
-`--require analyzer`) finds the right box with no `--server`.
+Every box has **one** name, `hitl-rig-<n>`, with a **mandatory** numeric suffix
+`<n>` unique to the box (`hitl-rig-1`, `hitl-rig-2`, … — never a bare `hitl-rig`).
+Capability (e.g. a logic analyzer) is discovered from `/status`, not encoded in
+the name. The name is chosen at deploy via `SBC_HOSTNAME_OVERRIDE` and used
+verbatim in all three places below, so a box is addressed identically everywhere —
+no `hitl-rig`/`hitl-rig-2` ambiguity, and `hitl reserve` (including
+`--require analyzer`) finds it with no `--server`.
 
-| what               | value                     | example (this LA rig) |
-| ------------------ | ------------------------- | --------------------- |
-| System hostname    | `hitl-<box>`              | `hitl-rig-la-1`       |
-| Tailscale hostname | `hitl-<box>` (= hostname) | `hitl-rig-la-1`       |
-| AP SSID            | `hitl-<box>` (= hostname) | `hitl-rig-la-1`       |
+| what               | value          | example      |
+| ------------------ | -------------- | ------------ |
+| System hostname    | `hitl-rig-<n>` | `hitl-rig-3` |
+| Tailscale hostname | `hitl-rig-<n>` | `hitl-rig-3` |
+| AP SSID            | `hitl-rig-<n>` | `hitl-rig-3` |
 
-`<box>` names the physical box: use an `-la-<n>` suffix for a logic-analyzer rig
-(`rig-la-1`), plain `-<n>` otherwise. Set it once at deploy:
+Set it once at deploy (this logic-analyzer rig is `hitl-rig-3`):
 
 ```sh
-SBC_HOSTNAME_OVERRIDE=hitl-rig-la-1 bazel run //pi/hitl:hitl_la.deploy_live -- hitl-rig-la-1
+SBC_HOSTNAME_OVERRIDE=hitl-rig-3 bazel run //pi/hitl:hitl_la.deploy_live -- hitl-rig-3
 ```
 
 ### Logic-analyzer rig variant (Pi 3 + shared FX2)
 
 `//pi/hitl:hitl_la.*` is the same rig built for a **Raspberry Pi 3B**
-(`hitl-rig-la-1`) with an FX2/fx2lafw logic analyzer tapping the DUT's WS2812 DIN,
+(`hitl-rig-3`) with an FX2/fx2lafw logic analyzer tapping the DUT's WS2812 DIN,
 for LED-driver correctness / latency tests. Same targets, `hitl_la` instead of
 `hitl`:
 
 ```sh
 bazel run //pi/hitl:hitl_la.image_sd    -- --device /dev/diskN
-bazel run //pi/hitl:hitl_la.deploy_live -- hitl-rig-la-1
+bazel run //pi/hitl:hitl_la.deploy_live -- hitl-rig-3
 ```
 
 The FX2 is a **shared, daemon-owned instrument** (its channels tap a couple per
