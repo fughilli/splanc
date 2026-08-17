@@ -211,13 +211,20 @@ export async function provisionViaBle(
   onStatus("Connecting…");
 
   // Android's BLE stack flakes "GATT operation failed for unknown reason" on
-  // the first attempt(s) — and NOT only at connect: service discovery,
-  // startNotifications and writeValue fail the same way. The old code retried
-  // just connect+discover, so a flake at subscribe/write threw the whole thing
-  // and the user had to re-click. Wrap the ENTIRE GATT handshake (connect →
-  // settle → discover → subscribe → send credentials) in the retry, with a
-  // full disconnect between tries, so one button press succeeds.
-  const { rpcResult, errorState } = await retryGatt(
+  // the first attempt(s) — and NOT only at connect: service discovery and
+  // startNotifications fail the same way. So retry connect → settle → discover →
+  // subscribe, with a full disconnect between tries, so one button press
+  // succeeds.
+  //
+  // The credential WRITE is deliberately NOT in this retried block. Retrying it
+  // re-sends WIFI_SETTINGS and (via onRetry) disconnects/reconnects — and on the
+  // player that is a DESTRUCTIVE re-provision: it re-runs WiFi.begin, drops the
+  // LAN session, and triggers a wss reconnect storm that has crashed the device
+  // mid-mapping (heap-corruption reboot). A write is write-with-response, so a
+  // heap-tight device that already latched the credentials but whose ACK was
+  // lost would look like a "failed" write and get hammered again. We send it
+  // exactly ONCE below and let the result/error notification confirm.
+  const { rpcCommand, rpcResult, errorState } = await retryGatt(
     async () => {
       const server = await gatt.connect();
       // Some Android stacks resolve connect() before the link is really ready;
@@ -227,13 +234,11 @@ export async function provisionViaBle(
       const rpcCommand = await service.getCharacteristic(CHAR_RPC_COMMAND);
       const rpcResult = await service.getCharacteristic(CHAR_RPC_RESULT);
       const errorState = await service.getCharacteristic(CHAR_ERROR_STATE);
-      // Subscribe BEFORE writing so the device's reply is never missed; both
-      // of these are inside the retry because they flake too.
+      // Subscribe BEFORE the write (below) so the device's reply is never
+      // missed; both flake too, so they stay inside the retry.
       await rpcResult.startNotifications();
       await errorState.startNotifications();
-      onStatus("Sending WiFi credentials…");
-      await rpcCommand.writeValue(buildWifiSettings(ssid, password));
-      return { rpcResult, errorState };
+      return { rpcCommand, rpcResult, errorState };
     },
     {
       attempts: 5,
@@ -247,6 +252,20 @@ export async function provisionViaBle(
       },
     },
   );
+
+  // Send credentials EXACTLY ONCE, on the now-subscribed connection. If the
+  // write rejects, do NOT re-send: on a heap-tight player the device has very
+  // likely already received the bytes and started joining (only the ACK was
+  // lost), and a re-send is the destructive re-provision described above. Fall
+  // through to await the result/error notification instead, bounded by the
+  // timeout below — a genuinely-dropped write simply times out and the user
+  // retries the whole flow.
+  onStatus("Sending WiFi credentials…");
+  try {
+    await rpcCommand.writeValue(buildWifiSettings(ssid, password));
+  } catch {
+    onStatus("Credentials sent — waiting for the device…");
+  }
 
   // Network-join phase: the player now tries to join WiFi and reports back on
   // the (already-subscribed) result/error notifications. The device joins
