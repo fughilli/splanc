@@ -113,6 +113,11 @@ static CRGB leds[kMaxLeds];
 // racing an in-flight push).
 static CRGB show_buf[kMaxLeds];
 static TaskHandle_t xmit_task_handle = nullptr;
+// Stored so the periodic report can log each task's stack high-water mark
+// (uxTaskGetStackHighWaterMark) — the basis for right-sizing the stacks, which
+// the malloc trace showed are the single biggest heap_caps bucket (~80 KB).
+static TaskHandle_t render_task_handle = nullptr;
+static TaskHandle_t osc_task_handle = nullptr;
 // Given when a transmit completes (and once at boot); the render task takes it
 // before overwriting `show_buf`, so a snapshot never races an in-flight push.
 static SemaphoreHandle_t xmit_done = nullptr;
@@ -1293,6 +1298,18 @@ static char g_gen_cert[2048];
 static esp_err_t wss_ws_handler(httpd_req_t *req) {
   if (req->method == HTTP_GET) return ESP_OK;  // upgrade handshake; nothing to send
 
+  // This runs ON the httpd task (28 KB stack); report its stack high-water when
+  // it hits a new low, to right-size cfg.httpd.stack_size. The hwm is cumulative
+  // (deepest ever), so sampling here catches the lm_player_handle peak.
+  {
+    static UBaseType_t s_httpd_hwm = ~UBaseType_t{0};
+    UBaseType_t hwm = uxTaskGetStackHighWaterMark(nullptr);
+    if (hwm < s_httpd_hwm) {
+      s_httpd_hwm = hwm;
+      Log().printf("[stack] httpd free-hwm bytes = %u (new low)\n", (unsigned)hwm);
+    }
+  }
+
   httpd_ws_frame_t frame = {};
   frame.type = HTTPD_WS_TYPE_BINARY;
   // First call with max_len 0 fills frame.len without copying the payload.
@@ -1780,11 +1797,12 @@ void setup() {
   // Drive the LEDs from a dedicated high-priority task so the pattern cadence
   // no longer rides on loop()'s cooperative WiFi/HTTP/BLE servicing.
   xTaskCreate(render_task, "render", kRenderTaskStack, nullptr, kRenderTaskPrio,
-              nullptr);
+              &render_task_handle);
   // Native OSC input: a low-priority UDP listener that drives live uniforms
   // (FUG-121). Independent of the WS/TLS player path; binds now and receives
   // once the LAN is up.
-  xTaskCreate(osc_task, "osc", kOscTaskStack, nullptr, tskIDLE_PRIORITY + 1, nullptr);
+  xTaskCreate(osc_task, "osc", kOscTaskStack, nullptr, tskIDLE_PRIORITY + 1,
+              &osc_task_handle);
 }
 
 // Improv provisioning state machine (Arduino task; BLE callbacks only latch).
@@ -1914,6 +1932,15 @@ void loop() {
                                           : "idle",
         map_leds, (unsigned)esp_get_free_heap_size(),
         (unsigned)esp_get_minimum_free_heap_size());
+    // Stack high-water (min free BYTES ever — ESP-IDF stacks are byte-sized) for
+    // right-sizing. loop is SET_LOOP_TASK_STACK_SIZE (24 KB); render/xmit are
+    // kRenderTaskStack (8 KB); osc is kOscTaskStack (4 KB); the httpd task (28 KB,
+    // cfg.httpd.stack_size) reports its own from inside the wss handler.
+    Log().printf("[stack] free-hwm bytes: loop=%u render=%u xmit=%u osc=%u\n",
+                 (unsigned)uxTaskGetStackHighWaterMark(nullptr),
+                 (unsigned)(render_task_handle ? uxTaskGetStackHighWaterMark(render_task_handle) : 0),
+                 (unsigned)(xmit_task_handle ? uxTaskGetStackHighWaterMark(xmit_task_handle) : 0),
+                 (unsigned)(osc_task_handle ? uxTaskGetStackHighWaterMark(osc_task_handle) : 0));
 #ifdef LM_MALLOC_TRACE
     // Throttled (rides this 5 s report) heap-trace report to SERIAL: the split
     // libc-vs-heap_caps totals, then the top allocation call sites by cumulative
