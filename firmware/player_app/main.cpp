@@ -46,7 +46,9 @@
 #include "firmware/player_app/color_correction.h"
 #include "firmware/player_app/improv_codec.h"
 #include "firmware/player_app/led_config.h"
-#include "firmware/player_app/malloc_trace.h"  // heap-trace facility (no-op unless -DLM_MALLOC_TRACE)
+#ifdef LM_MALLOC_TRACE
+#include "firmware/player_app/malloc_trace.h"  // heap-trace facility (trace image only)
+#endif
 #include "firmware/player_app/player_ffi.h"
 #include "firmware/player_app/serial_log.h"
 #include "firmware/player_app/ws_codec.h"
