@@ -31,6 +31,7 @@ import { PerfPanelScreen } from "../screens/perfPanel";
 import { CalibrateScreen } from "../screens/calibrate";
 import { PerfProfilesScreen } from "../screens/perfProfiles";
 import { SettingsScreen } from "../screens/settings";
+import { NativeCameraCheckScreen } from "../screens/nativeCameraCheck";
 import { MidiScreen } from "../screens/midi";
 import { ColorCorrectionScreen } from "../screens/colorCorrection";
 import { AboutScreen } from "../screens/about";
@@ -115,6 +116,12 @@ async function main(): Promise<void> {
     .add("/settings", () => {
       shell.setChrome({ title: "Settings", back: true, tabs: true });
       return SettingsScreen(router);
+    })
+    .add("/settings/native-camera", () => {
+      // Overlay chrome: the native preview layer sits behind the WebView, so the
+      // less opaque page furniture over it the better.
+      shell.setChrome({ title: "Native camera", back: true, tabs: false, overlay: true });
+      return NativeCameraCheckScreen(router);
     })
     .add("/settings/midi", () => {
       shell.setChrome({ title: "MIDI", back: true, tabs: true });
