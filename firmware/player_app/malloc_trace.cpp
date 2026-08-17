@@ -25,6 +25,18 @@ void *__real_malloc(size_t size);
 void __real_free(void *ptr);
 void *__real_calloc(size_t nmemb, size_t size);
 void *__real_realloc(void *ptr, size_t size);
+// ESP-IDF's capabilities allocator. WiFi/BLE/lwIP/DMA allocate through THESE
+// (not libc malloc), so on a real image most of the dynamic heap is invisible
+// to the malloc-only wrappers — hence hooking them too. On IDF, libc malloc
+// funnels through heap_caps_malloc_DEFAULT (a distinct symbol), not the public
+// heap_caps_malloc, so wrapping both paths does NOT double-count allocations.
+// We deliberately do NOT wrap heap_caps_free: libc free() already routes through
+// it, so wrapping both would double-count frees — accepting that a direct
+// heap_caps_free() (rare) is missed, which only nudges the live-bytes hint.
+void *__real_heap_caps_malloc(size_t size, uint32_t caps);
+void *__real_heap_caps_calloc(size_t n, size_t size, uint32_t caps);
+void *__real_heap_caps_realloc(void *ptr, size_t size, uint32_t caps);
+void *__real_heap_caps_aligned_alloc(size_t alignment, size_t size, uint32_t caps);
 }
 
 namespace {
@@ -32,7 +44,18 @@ namespace {
 // -- Record: one compact heap event ------------------------------------------
 // Packed so the on-disk / on-wire stream is a dense array with no target-ABI
 // padding surprises for the off-device decoder. 16 bytes/record.
-enum Op : uint8_t { kMalloc = 0, kFree = 1, kCalloc = 2, kRealloc = 3 };
+enum Op : uint8_t {
+  kMalloc = 0,
+  kFree = 1,
+  kCalloc = 2,
+  kRealloc = 3,
+  // ESP-IDF heap_caps_* path (WiFi/BLE/lwIP/DMA). Op >= kHeapCapsMalloc marks a
+  // caps-allocator event so the decoder / summary can split it from libc.
+  kHeapCapsMalloc = 4,
+  kHeapCapsCalloc = 5,
+  kHeapCapsRealloc = 6,
+  kHeapCapsAlignedAlloc = 7,
+};
 
 struct __attribute__((packed)) Record {
   uint8_t op;       // Op
@@ -45,15 +68,16 @@ struct __attribute__((packed)) Record {
 static_assert(sizeof(Record) == 16, "Record must stay 16 bytes for the decoder");
 
 // -- Fixed-size STATIC ring --------------------------------------------------
-// NOT malloc'd (that would recurse through us). Sizing: 4096 records * 16 B =
-// 64 KiB of .bss. That is a deliberate, generous window — the goal is to
-// capture the WiFi/BLE/TLS/lwIP bring-up burst (a few thousand allocations)
-// in one shot for attribution. If .bss headroom is tight on the C6, drop
-// kRingCap to 1024 (16 KiB) and drain more aggressively from loop(); the drain
-// path already tolerates a wrapping ring. Overflow is COUNTED, not fatal:
-// oldest records are overwritten and g_dropped increments so a drain can flag
-// that the window was too small.
-constexpr size_t kRingCap = 4096;  // records; MUST be a power of two for the mask
+// NOT malloc'd (that would recurse through us). Sizing: 1024 records * 16 B =
+// 16 KiB of .bss. Kept DELIBERATELY SMALL — on hardware this device runs with
+// only ~30 KB free heap, so a big ring (the first cut used 64 KiB) starves it
+// and it OOMs during bring-up, perturbing exactly what we measure. The aggregate
+// byte counters below are EXACT regardless of ring size (they count every
+// event), so the headline "newlib vs heap_caps bytes" is unaffected by a small
+// ring; only the per-record call-site detail in the binary drain is windowed.
+// Overflow is COUNTED, not fatal: oldest records are overwritten and g_dropped
+// increments so a drain can flag that the window lapped.
+constexpr size_t kRingCap = 1024;  // records; MUST be a power of two for the mask
 constexpr size_t kRingMask = kRingCap - 1;
 static_assert((kRingCap & kRingMask) == 0, "kRingCap must be a power of two");
 
@@ -65,9 +89,12 @@ uint32_t g_dropped = 0;              // records overwritten before being drained
 // Running accounting for the cheap LogSummary(). Approximate: free() of a
 // pointer we never saw (allocated before Init, or via heap_caps_*) still
 // decrements, so live_bytes can drift — it is a diagnostic hint, not a ledger.
-uint64_t g_alloc_bytes = 0;  // sum of successful allocation sizes
-uint64_t g_free_calls = 0;   // count of free()s seen
-uint32_t g_peak_head = 0;    // high-water record count (for overflow eyeballing)
+uint64_t g_alloc_bytes = 0;   // libc-path successful allocation bytes
+uint64_t g_alloc_calls = 0;   // libc-path allocation count
+uint64_t g_hc_alloc_bytes = 0;  // heap_caps-path successful allocation bytes
+uint64_t g_hc_alloc_calls = 0;  // heap_caps-path allocation count
+uint64_t g_free_calls = 0;    // count of free()s seen
+uint32_t g_peak_head = 0;     // high-water record count (for overflow eyeballing)
 
 // -- Guards ------------------------------------------------------------------
 // `g_armed`: the ring is live only after Init(). Before that (early C runtime /
@@ -135,7 +162,10 @@ extern "C" void *__wrap_malloc(size_t size) {
     ScopedGuard g;
     if (g.entered) {
       Push(kMalloc, size, p, p ? 0 : 1);
-      if (p) g_alloc_bytes += size;
+      if (p) {
+        g_alloc_bytes += size;
+        g_alloc_calls++;
+      }
     }
   }
   return p;
@@ -159,7 +189,10 @@ extern "C" void *__wrap_calloc(size_t nmemb, size_t size) {
     if (g.entered) {
       const size_t total = nmemb * size;
       Push(kCalloc, total, p, p ? 0 : 1);
-      if (p) g_alloc_bytes += total;
+      if (p) {
+        g_alloc_bytes += total;
+        g_alloc_calls++;
+      }
     }
   }
   return p;
@@ -173,7 +206,77 @@ extern "C" void *__wrap_realloc(void *ptr, size_t size) {
       // Records the NEW size + NEW pointer; the old pointer (ptr) is implicit.
       // A host decoder pairs realloc(old,new) by size/ptr deltas if needed.
       Push(kRealloc, size, p, p ? 0 : 1);
-      if (p) g_alloc_bytes += size;
+      if (p) {
+        g_alloc_bytes += size;
+        g_alloc_calls++;
+      }
+    }
+  }
+  return p;
+}
+
+// -- heap_caps_* wrappers (the ESP-IDF path: WiFi/BLE/lwIP/DMA) ---------------
+// Same shape as the libc wrappers, into the same ring, tagged with the
+// kHeapCaps* ops and accounted separately so LogSummary can split libc vs
+// heap_caps. `caps` is dropped from the record for now (size/ptr/caller are the
+// attribution signal); widen Record if per-cap breakdown is ever needed.
+extern "C" void *__wrap_heap_caps_malloc(size_t size, uint32_t caps) {
+  void *p = __real_heap_caps_malloc(size, caps);
+  if (g_armed.load(std::memory_order_relaxed)) {
+    ScopedGuard g;
+    if (g.entered) {
+      Push(kHeapCapsMalloc, size, p, p ? 0 : 1);
+      if (p) {
+        g_hc_alloc_bytes += size;
+        g_hc_alloc_calls++;
+      }
+    }
+  }
+  return p;
+}
+
+extern "C" void *__wrap_heap_caps_calloc(size_t n, size_t size, uint32_t caps) {
+  void *p = __real_heap_caps_calloc(n, size, caps);
+  if (g_armed.load(std::memory_order_relaxed)) {
+    ScopedGuard g;
+    if (g.entered) {
+      const size_t total = n * size;
+      Push(kHeapCapsCalloc, total, p, p ? 0 : 1);
+      if (p) {
+        g_hc_alloc_bytes += total;
+        g_hc_alloc_calls++;
+      }
+    }
+  }
+  return p;
+}
+
+extern "C" void *__wrap_heap_caps_realloc(void *ptr, size_t size, uint32_t caps) {
+  void *p = __real_heap_caps_realloc(ptr, size, caps);
+  if (g_armed.load(std::memory_order_relaxed)) {
+    ScopedGuard g;
+    if (g.entered) {
+      Push(kHeapCapsRealloc, size, p, p ? 0 : 1);
+      if (p) {
+        g_hc_alloc_bytes += size;
+        g_hc_alloc_calls++;
+      }
+    }
+  }
+  return p;
+}
+
+extern "C" void *__wrap_heap_caps_aligned_alloc(size_t alignment, size_t size,
+                                                uint32_t caps) {
+  void *p = __real_heap_caps_aligned_alloc(alignment, size, caps);
+  if (g_armed.load(std::memory_order_relaxed)) {
+    ScopedGuard g;
+    if (g.entered) {
+      Push(kHeapCapsAlignedAlloc, size, p, p ? 0 : 1);
+      if (p) {
+        g_hc_alloc_bytes += size;
+        g_hc_alloc_calls++;
+      }
     }
   }
   return p;
@@ -250,12 +353,15 @@ void LogSummary() {
   ScopedGuard g;
   if (!g.entered) return;
   const uint32_t head = g_head.load(std::memory_order_relaxed);
+  // The byte/call totals are EXACT (counted on every event, ring-size
+  // independent). The libc-vs-heap_caps split is the headline: on this firmware
+  // the bulk of the dynamic heap is the heap_caps path (WiFi/BLE/lwIP/DMA).
   Log().printf(
-      "[mtrace] records=%u peak=%u dropped=%u alloc=%llu B frees=%llu "
-      "live~=%lld B\n",
-      (unsigned)head, (unsigned)g_peak_head, (unsigned)g_dropped,
-      (unsigned long long)g_alloc_bytes, (unsigned long long)g_free_calls,
-      (long long)g_alloc_bytes /* free sizes unknown; see header */);
+      "[mtrace] libc: %llu allocs / %llu B | heap_caps: %llu allocs / %llu B | "
+      "frees=%llu | records=%u dropped=%u\n",
+      (unsigned long long)g_alloc_calls, (unsigned long long)g_alloc_bytes,
+      (unsigned long long)g_hc_alloc_calls, (unsigned long long)g_hc_alloc_bytes,
+      (unsigned long long)g_free_calls, (unsigned)head, (unsigned)g_dropped);
 }
 
 }  // namespace mtrace

@@ -295,6 +295,11 @@ cc_binary(
         "-Wl,--wrap=free",
         "-Wl,--wrap=calloc",
         "-Wl,--wrap=realloc",
+        # ESP-IDF caps allocator — where WiFi/BLE/lwIP/DMA actually allocate.
+        "-Wl,--wrap=heap_caps_malloc",
+        "-Wl,--wrap=heap_caps_calloc",
+        "-Wl,--wrap=heap_caps_realloc",
+        "-Wl,--wrap=heap_caps_aligned_alloc",
     ],
     local_defines = ["LM_MALLOC_TRACE"],
     target_compatible_with = select({
