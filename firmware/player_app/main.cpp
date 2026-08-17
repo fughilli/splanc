@@ -1661,6 +1661,15 @@ void setup() {
   // completing. A 0 ms tx timeout drops bytes instead of blocking, so logs are
   // best-effort and the network stacks always run.
   Serial.setTxTimeoutMs(0);
+  // Baseline free heap right after boot, BEFORE WiFi/BLE/TLS bring-up — the
+  // empirical counterpart to fw_memaudit's link-time heap ceiling
+  // (//firmware/player_app:esp32c6_ram). The gap from that ceiling to this line
+  // is the ROM/DMA-reserved regions + early driver init; the much larger drop
+  // later is the WiFi/BLE/TLS/lwip runtime allocations (see the periodic
+  // heap=/min= status line and PerfReport).
+  Log().printf("[boot] free heap = %u B (min %u) before WiFi/BLE bring-up\n",
+               (unsigned)esp_get_free_heap_size(),
+               (unsigned)esp_get_minimum_free_heap_size());
   // FastLED drives `show_buf` (the transmit snapshot), never the live `leds` —
   // the async transmit task pushes show_buf while the render task fills leds.
   FastLED.addLeds<WS2812B, LED_DATA_PIN, GRB>(show_buf, kMaxLeds);
