@@ -108,6 +108,7 @@ let
   sigrok = import ./sigrok.nix { inherit pkgs; };
   isAnalyzerRig = builtins.getEnv "SBC_ANALYZER" == "1";
   useApDongle = builtins.getEnv "SBC_AP_DONGLE" == "1";
+  isPi3 = builtins.getEnv "SBC_BOARD" == "raspberry-pi-3";
   # RTL8851BU driver + WiFi firmware for the optional dongle AP (see rtl8851bu.nix).
   # usb_modeswitch flips the CD-ROM dongle to WiFi mode + a .link renames it to ap0;
   # rtw89 is mac80211-based, so it supports hostapd AP cleanly.
@@ -184,6 +185,16 @@ in
     # rtw89 is built with -DCONFIG_RTW89_LEDS_MC, so rtw89_core_git needs
     # led-class-multicolor's symbols; load it first so the driver resolves them.
     ++ lib.optionals useApDongle [ "led-class-multicolor" "rtw89_8851bu_git" ];
+
+  # Pi 3B+ onboard USB hub (LAN7515 = hub + Ethernet) reliability. This device tree
+  # doesn't describe the hub's power rail, so the onboard_usb_dev driver logs
+  # "supply vdd not found, using dummy regulator" and its reset/power sequencing
+  # races and times out — "onboard-usb-dev 1-1: can't set config #1, error -110" —
+  # which takes the LAN7515 (and thus end0 Ethernet) down, stranding a wired rig.
+  # Blacklist the driver so the hub keeps its default (hardware) always-on power
+  # instead of the driver's broken sequencing. Pi-3-only: the Pi 5's RP1 USB relies
+  # on this driver, so never blacklist it there.
+  boot.blacklistedKernelModules = lib.optionals isPi3 [ "onboard_usb_dev" ];
 
   # Dedicated USB AP radio (RTL8851BU / rtw89), only when SBC_AP_DONGLE=1. A
   # post-boot module (not initrd/kernel), so it rides the deploy_live layer — no SD
