@@ -211,6 +211,55 @@ no exposure key of any kind.
 capture session **this app owns**, which means taking the camera away from `getUserMedia` on iOS
 and getting its frames to the detector another way — designed in §4.7.
 
+### 4.7 Native capture on iOS (FUG-120 follow-up)
+
+Since exposure is only controllable on a capture session we own, iOS must stop using `getUserMedia`
+for mapping and run its own `AVCaptureSession`. The obvious objection is that the detector is a
+WebGL2 pass over a `<video>` texture, and shipping 1280×720 frames across the Capacitor bridge at
+30 fps (110 MB/s as RGBA) is not viable. **But the pipeline doesn't need whole frames to cross the
+boundary.** Today it already goes:
+
+```text
+  camera texture ─[GPU: threshold + downsample]→ readPixels ~640×360 RGBA
+                 ─[CPU: connectedComponents]→ Blob[] ─→ decoder ─→ solver
+```
+
+The GPU stage (`cv/detect.ts`) is a ~15-line shader — max-channel luminance, soft threshold, 2×
+box downsample. Everything with real algorithmic content (CCL, sub-pixel centroids, per-blob chroma,
+the decoder) is **already CPU/JS**, and the readback buffer between them is a natural IPC boundary
+that is **mostly zeros by construction** — it's a thresholded image of a dark scene containing only
+LEDs.
+
+**Design.** Native does capture + the threshold/downsample stage and ships the sparse non-zero
+pixels; JS rebuilds the buffer and runs `connectedComponents` and everything downstream
+**completely unchanged**. No CV algorithm gets a second implementation, which is the trap a full
+Metal port would walk into for a pipeline still under active development.
+
+- **Capture:** an `AVCaptureSession` in the app process. Exposure then works via
+  `setExposureModeCustom` — on a device we actually own, so the completion handler fires and the
+  readback moves (§4.6 is the proof of what happens when you don't own it).
+- **Threshold/downsample:** start with vImage/Accelerate on CPU (a scale plus a per-pixel
+  max-channel threshold, ~2.7 M pixel-ops/frame); go to Metal only if profiling says so. Porting a
+  15-line shader is cheap either way.
+- **Transport:** sparse-encode the thresholded readback (index + RGBA per non-zero pixel). In the
+  mapping scenario — dark room, only LEDs lit — this is a few KB/frame against 921 KB dense. Needs
+  a density cap with a documented fallback for the bright-room case, where sparse encoding loses.
+- **Preview:** `AVCaptureVideoPreviewLayer` behind a transparent WKWebView, replacing the
+  `ms.video` element the capture screen prepends today (`capture.ts`).
+- **Exposure servo:** also needs the small measure readback (`detect.ts` `measure()`, ~64×36 RGBA)
+  and, for the trace path, `grabFrame`. Both are tiny; the measure buffer can ship dense.
+- **Seam:** a `NativeCaptureSource` implementing the existing `CaptureSource` interface
+  (`xr/capture.ts`), selected on `isIosNative()`. `CaptureFrame.texture` is the one field that can't
+  survive as-is, so the detector gains a path that accepts a supplied readback buffer instead of
+  running its own GPU pass.
+- **Bonus:** `AVCaptureDevice` reports real intrinsics, so iOS gets a true `K` instead of the
+  `heuristicK` FOV guess — which sets the map's metric scale roughly 1:1.
+
+**Risks.** The frame-timestamp mapping from `CMTime` to `performance.now()` must be right or the
+temporal decode drifts. The sparse encoding's worst case needs a real fallback rather than a
+silent collapse. And a transparent WebView over a native preview layer is a well-trodden but fiddly
+arrangement (scroll/z-order/safe-area interactions).
+
 ---
 
 ## 5. Tier 0 — ship the PWA now (recommended immediate step)
