@@ -561,6 +561,9 @@ func routes(ctx context.Context, mgr *queue.Manager, brk *analyzer.Broker) http.
 			writeErr(w, http.StatusInternalServerError, "persist channel map: "+err.Error())
 			return
 		}
+		// Refresh the /status capability snapshot so its channel list tracks the
+		// live map (Describe() recomputes distinct channels from the new map).
+		mgr.SetAnalyzer(brk.Describe())
 		js, _ := analyzer.MarshalChannelMap(brk.Snapshot())
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)

@@ -58,6 +58,15 @@ func WithWiFi(w *api.WiFiInfo) Option { return func(m *Manager) { m.wifi = w } }
 // clients can select an analyzer-capable rig by capability (not by name/tag).
 func WithAnalyzer(a *api.AnalyzerInfo) Option { return func(m *Manager) { m.analyzer = a } }
 
+// SetAnalyzer refreshes the advertised analyzer capability — called after a
+// runtime channel-map change (POST /analyzer/channel-map) so /status reflects the
+// live channel set instead of the boot-time snapshot.
+func (m *Manager) SetAnalyzer(a *api.AnalyzerInfo) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.analyzer = a
+}
+
 // WithAP wires an access point that the manager toggles around active
 // reservations (up on activation, down on release/reap).
 func WithAP(ap AP) Option { return func(m *Manager) { m.ap = ap } }

@@ -24,6 +24,35 @@ over USB CDC so the stop should land — the operator sees the LED stop. If it t
 out unreliable, a distinct-color-per-MAC scheme would let all DUTs be ID'd in one
 pass with no stop needed.
 
+`POST /analyzer/channel-map` also refreshes the `/status` capability snapshot
+(`Manager.SetAnalyzer(brk.Describe())`) so its channel list tracks the live map,
+not the boot-time default.
+
+### Test sweep 2026-08-17 (both DUTs, all three rigs)
+
+Rig IPs churn on re-registration (tailnet MagicDNS is stale in-container); current
+truth by `/status`: **hitl-rig-1** `100.99.64.43`, **hitl-rig-2** (analyzer, Pi 5)
+`100.107.245.18` DUTs `c6-003f08`/`c6-fa0324`, **hitl-rig-3** (Pi 3) `100.85.115.53`
+DUTs `c6-117d10`/`c6-fa3304`. You _can_ SSH the rigs from the container via tailscale
+SSH: `ssh -o StrictHostKeyChecking=accept-new root@<ip>` (clear the stale host key with
+`ssh-keygen -R <ip>` after churn). Run harness tests with `bazel run`/the built binary
+`PYTHONUNBUFFERED=1` **to a file, never `| tail`** — the long-lived reservation-holder
+subprocess keeps a pipe open so nothing flushes until the end.
+
+- **Non-LA e2e — all 4 DUTs PASS** (`--device` pins each): rig-3 `c6-117d10`,
+  `c6-fa3304`; rig-2 `c6-003f08`, `c6-fa0324`. rig-2's BLE connect is flaky
+  (host BT), but the provisioner's 3× retry recovers every time.
+- **LA capture on hitl-rig-2:** wrote the map via the new endpoint — `c6-003f08`→D6,
+  `c6-fa0324`→D7 (determined empirically: `c6-003f08` captured clean on the default
+  D6). `led_capture --device c6-003f08` **PASS** (exact 8-pixel match). `--device
+c6-fa0324` on D7 **captures the right pattern shape** (2R,2G,4B — so the D7 mapping
+  is correct) **but decodes degraded**: brightness `160` not `255`, and the 8 pixels
+  sit behind ~60 leading black pixels, repeating each frame. Classic FX2-tap signal
+  integrity (early trigger on noise + bit-time misreads) — see the DESIGN 5 V/level-
+  shift/shared-ground caveat. FOLLOW-UP (bench): improve the **D7** tap (level-shift
+  / shorter lead / shared ground), or rule out a persisted per-DUT brightness on
+  `c6-fa0324`, then re-run `led_capture --device c6-fa0324`.
+
 ### Rig gotcha: `hitl-image-load` fails after a fresh Pi 3 reflash
 
 hitl-rig-3 (freshly reflashed) couldn't reserve — `POST /reserve` returned `null`
