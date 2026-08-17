@@ -275,6 +275,26 @@ filegroup(
 )
 use_repo(nix_pkg, "minify")
 
+# GNU binutils with ALL BFD targets — readelf/nm/addr2line that can read the
+# RISC-V esp32c6 firmware ELF regardless of host arch. Vendored for the RAM
+# auditor //tools:fw_memaudit; the host may ship none of these (macOS has no
+# `readelf`), which is exactly what broke it. The whole bin/ is exposed as one
+# filegroup — fw_memaudit globs its runfiles for the tools it needs, so it does
+# not depend on the exact binary names (prefixed or not).
+nix_pkg.attr(
+    attr = "binutils-unwrapped-all-targets",
+    build_file_content = """\
+package(default_visibility = ["//visibility:public"])
+
+filegroup(
+    name = "tools",
+    srcs = glob(["bin/*"]),
+)
+""",
+    repo = "@nixpkgs",
+)
+use_repo(nix_pkg, "binutils-unwrapped-all-targets")
+
 # ---------------------------------------------------------------------------
 # Python toolchain — Pi-compatible 3.11.
 # rules_python provides a hermetic interpreter, so a system Python is not

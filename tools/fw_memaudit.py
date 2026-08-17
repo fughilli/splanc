@@ -37,21 +37,66 @@ import sys
 RAM_TYPES = set("bBdDgGsS")
 
 
+# Apparent repo name of the Nix-vendored binutils (MODULE.bazel `use_repo`); its
+# bin/ holds unprefixed readelf/nm/addr2line (binutils-unwrapped-all-targets).
+_BINUTILS_REPO = "binutils-unwrapped-all-targets"
+
+
+def _runfiles():
+    """The rules_python runfiles handle when launched under Bazel, else None.
+    Use the library (not a hand-rolled path walk): it reads the runfiles
+    MANIFEST + repo-mapping and resolves the SYMLINKED external-repo entries (the
+    Nix store paths), which a plain glob(**) skips because it won't descend
+    symlinked dirs. The API name shifted across rules_python versions (a
+    `Runfiles` class vs a `runfiles` module), so try both."""
+    try:
+        from python.runfiles import Runfiles  # newer rules_python
+
+        return Runfiles.Create()
+    except Exception:
+        pass
+    try:
+        from python.runfiles import runfiles  # older rules_python
+
+        return runfiles.Create()
+    except Exception:
+        return None
+
+
+_RF = _runfiles()
+
+
 def find_tool(name: str) -> str:
-    """Prefer the RISC-V cross tool from the Bazel/Nix cache, else generic."""
+    """Resolve readelf/nm/addr2line, in order of preference:
+    1. the Nix-vendored binutils from bazel runfiles (hermetic — works on a
+       host with no binutils, e.g. macOS; //tools:fw_memaudit `data`),
+    2. a RISC-V cross tool from the Bazel/Nix cache (~/.cache),
+    3. a generic host binutils on PATH."""
+    if _RF is not None:
+        p = _RF.Rlocation(f"{_BINUTILS_REPO}/bin/{name}")
+        if p and os.path.exists(p):
+            return p
     cache = os.path.expanduser("~/.cache")
     hits = glob.glob(f"{cache}/**/riscv32-esp-elf-{name}", recursive=True)
     if hits:
         return hits[0]
     generic = shutil.which(name)
     if not generic:
-        sys.exit(f"error: no `{name}` (install binutils or point --toolchain)")
+        sys.exit(
+            f"error: no `{name}` — under Bazel it comes from runfiles "
+            "(//tools:fw_memaudit `data`); standalone, install binutils or pass --toolchain"
+        )
     return generic
 
 
 def locate_elf() -> str:
     """Find the most recently built esp32c6 ELF under any bazel-out config."""
+    # BUILD_WORKSPACE_DIRECTORY is set by `bazel run`, so the workspace-root
+    # bazel-out symlink is reachable even though cwd is the runfiles tree.
+    ws = os.environ.get("BUILD_WORKSPACE_DIRECTORY", "")
     roots = ["bazel-out", os.path.expanduser("~/.cache/bazel-volumetric")]
+    if ws:
+        roots = [os.path.join(ws, "bazel-out")] + roots
     found: list[str] = []
     for r in roots:
         found += glob.glob(f"{r}/**/firmware/player_app/esp32c6.elf", recursive=True)
@@ -60,12 +105,26 @@ def locate_elf() -> str:
     return max(found, key=os.path.getmtime)
 
 
-def ram_sections(readelf: str, elf: str) -> tuple[list[tuple[str, int]], set[int]]:
-    """(name,size) of RAM sections + the set of section indices that are RAM.
-    RAM = ALLOC and (NOBITS bss OR writable) — excludes flash .text/.rodata."""
+# ESP32-C6 on-chip RAM (TRM ch.3): a single 512 KB HP SRAM (unified I/D bus,
+# based at 0x40800000) + 16 KB LP SRAM (0x50000000). Flash is XIP-mapped at
+# 0x42000000+ — NOT RAM. IRAM and DRAM are the SAME physical HP SRAM here, so
+# the heap is simply 512 KB minus everything statically placed in it.
+HP_SRAM_BYTES = 512 * 1024
+LP_SRAM_BYTES = 16 * 1024
+HP_SRAM_LO, HP_SRAM_HI = 0x40800000, 0x40800000 + HP_SRAM_BYTES
+LP_SRAM_LO, LP_SRAM_HI = 0x50000000, 0x50000000 + LP_SRAM_BYTES
+
+
+def ram_sections(readelf: str, elf: str) -> list[tuple[str, int, int, str]]:
+    """Allocated SRAM sections as (name, size, addr, kind); kind is
+    iram | dram | lp. 'SRAM' = any ALLOC section whose VMA lands in a C6 SRAM
+    window; an executable HP section is IRAM (code that runs from RAM), a
+    non-exec HP section is DRAM (.data/.bss). Flash XIP (rodata at 0x42000000+,
+    including the huge .flash_rodata_dummy address-space placeholder) is
+    excluded — gating on the ADDRESS is what keeps the total honest, since the
+    ELF flags alone (ALLOC) let those flash sections through."""
     out = subprocess.run([readelf, "-SW", elf], capture_output=True, text=True).stdout
-    sizes: list[tuple[str, int]] = []
-    ram_idx: set[int] = set()
+    secs: list[tuple[str, int, int, str]] = []
     for line in out.splitlines():
         m = re.match(
             r"\s*\[\s*(\d+)\]\s+(\S+)\s+(\S+)\s+([0-9a-f]+)\s+[0-9a-f]+\s+([0-9a-f]+)\s+\S+\s+([A-Zpx]*)",
@@ -73,13 +132,19 @@ def ram_sections(readelf: str, elf: str) -> tuple[list[tuple[str, int]], set[int
         )
         if not m:
             continue
-        idx, name, styp, _addr, size, flags = m.groups()
+        _idx, name, _styp, addr, size, flags = m.groups()
         size_i = int(size, 16)
-        is_ram = ("A" in flags) and (styp == "NOBITS" or "W" in flags)
-        if is_ram and size_i > 0:
-            sizes.append((name, size_i))
-            ram_idx.add(int(idx))
-    return sizes, ram_idx
+        a = int(addr, 16)
+        if size_i == 0 or "A" not in flags:
+            continue
+        if LP_SRAM_LO <= a < LP_SRAM_HI:
+            kind = "lp"
+        elif HP_SRAM_LO <= a < HP_SRAM_HI:
+            kind = "iram" if "X" in flags else "dram"
+        else:
+            continue  # flash XIP / MMIO — not SRAM
+        secs.append((name, size_i, a, kind))
+    return secs
 
 
 def read_symbols(nm: str, elf: str) -> list[tuple[int, int, str, str, str | None]]:
@@ -170,7 +235,7 @@ def main() -> int:
         readelf, nm, a2l = find_tool("readelf"), find_tool("nm"), find_tool("addr2line")
     elf = args.elf or locate_elf()
 
-    sections, _ = ram_sections(readelf, elf)
+    sections = ram_sections(readelf, elf)
     syms = read_symbols(nm, elf)
 
     # Fill missing source files via addr2line, then bucket everything.
@@ -184,14 +249,35 @@ def main() -> int:
         comp, short = component_of(src, name)
         tree.setdefault(comp, {}).setdefault(short, []).append((size, name))
 
-    total_ram = sum(s for _n, s in sections)
     comp_tot = {c: sum(sz for f in files.values() for sz, _ in f) for c, files in tree.items()}
+    attributable = sum(comp_tot.values()) or 1  # data/bss the tree accounts for
+
+    # SRAM budget. On the C6, IRAM and DRAM share the ONE 512 KB HP SRAM, so the
+    # link-time internal-RAM heap ceiling is simply what is left of it after all
+    # static code+data. This is the MOST the allocator can ever have; the live
+    # free heap is lower (ROM/DMA-reserved regions + runtime WiFi/BLE/TLS/lwip
+    # allocations) — compare against the `[boot]` heap print and PerfReport.
+    dram = sum(sz for _n, sz, _a, k in sections if k == "dram")
+    iram = sum(sz for _n, sz, _a, k in sections if k == "iram")
+    lp = sum(sz for _n, sz, _a, k in sections if k == "lp")
+    static_hp = dram + iram
+    heap_ceiling = HP_SRAM_BYTES - static_hp
+    sram = {
+        "hp_capacity_bytes": HP_SRAM_BYTES,
+        "lp_capacity_bytes": LP_SRAM_BYTES,
+        "dram_bytes": dram,
+        "iram_bytes": iram,
+        "lp_rtc_bytes": lp,
+        "static_hp_bytes": static_hp,
+        "heap_ceiling_bytes": heap_ceiling,
+    }
 
     if args.json:
         obj = {
             "elf": elf,
-            "sections": [{"name": n, "bytes": s} for n, s in sections],
-            "total_ram_bytes": total_ram,
+            "sram": sram,
+            "sections": [{"name": n, "bytes": s, "kind": k} for n, s, _a, k in sections],
+            "total_ram_bytes": attributable,
             "components": {
                 c: {
                     "bytes": comp_tot[c],
@@ -212,12 +298,29 @@ def main() -> int:
         print(json.dumps(obj, indent=2))
         return 0
 
-    print(f"ELF: {elf}")
-    print(f"\n== RAM sections ({human(total_ram)} static) ==")
-    for n, s in sorted(sections, key=lambda x: -x[1]):
-        print(f"  {human(s):>8}  {n}")
+    def pct(x: int) -> str:
+        return f"{100 * x / HP_SRAM_BYTES:5.1f}%"
 
-    print(f"\n== RAM by component → file{' → symbol' if args.depth >= 3 else ''} ==")
+    print(f"ELF: {elf}")
+    print("\n== SRAM budget (ESP32-C6: 512 KB HP SRAM, unified I/D) ==")
+    print(f"  IRAM  (code run from RAM)  {human(iram):>9}  {pct(iram)}")
+    print(f"  DRAM  (.data + .bss)       {human(dram):>9}  {pct(dram)}")
+    print(f"  static HP SRAM used        {human(static_hp):>9}  {pct(static_hp)}")
+    print(
+        f"  -> link-time heap ceiling  {human(heap_ceiling):>9}  {pct(heap_ceiling)}"
+        "   (before ROM/DMA-reserved + runtime WiFi/BLE/TLS alloc)"
+    )
+    if lp:
+        print(f"  LP/RTC SRAM used           {human(lp):>9}   (of {human(LP_SRAM_BYTES)})")
+
+    print("\n== SRAM sections ==")
+    for n, s, _a, k in sorted(sections, key=lambda x: -x[1]):
+        print(f"  {human(s):>8}  [{k:<4}]  {n}")
+
+    print(
+        f"\n== DRAM .data/.bss by component -> file"
+        f"{' -> symbol' if args.depth >= 3 else ''}  ({human(attributable)} attributed) =="
+    )
     for comp in sorted(comp_tot, key=lambda c: -comp_tot[c]):
         if comp_tot[comp] < args.min:
             continue

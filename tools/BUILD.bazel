@@ -3,6 +3,31 @@
 load("@pypi//:requirements.bzl", "requirement")
 load("@rules_python//python:defs.bzl", "py_binary")
 
+# Firmware static-RAM auditor: attributes every .data/.bss symbol in the esp32c6
+# ELF back to its source TU, for hunting fat static buffers that starve the heap.
+# Shells out to readelf/nm/addr2line — vendored from Nix (MODULE.bazel:
+# binutils-unwrapped-all-targets) as `data` so it works on hosts with no binutils
+# (e.g. macOS). The script globs its runfiles for the tools.
+#   bazel build -c opt //firmware/player_app:esp32c6
+#   bazel run //tools:fw_memaudit -- --json > mem.json
+py_binary(
+    name = "fw_memaudit",
+    srcs = ["fw_memaudit.py"],
+    data = ["@binutils-unwrapped-all-targets//:tools"],
+    visibility = ["//visibility:public"],
+    # Resolve the vendored binutils out of runfiles (manifest + repo-mapping aware).
+    deps = ["@rules_python//python/runfiles"],
+)
+
+# Treeview + bar-chart renderer over `fw_memaudit --json`. Pure stdlib — no ELF
+# or toolchain needed.
+#   bazel run //tools:fw_memaudit -- --json | bazel run //tools:fw_memviz
+py_binary(
+    name = "fw_memviz",
+    srcs = ["fw_memviz.py"],
+    visibility = ["//visibility:public"],
+)
+
 py_binary(
     name = "player_probe",
     srcs = ["player_probe.py"],
