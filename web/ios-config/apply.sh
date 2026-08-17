@@ -47,6 +47,21 @@ if [ -d "$(dirname "$appicon_dst")" ]; then
   echo "app icon → $appicon_dst"
 fi
 
+# --- Code signing team. The generated project sets CODE_SIGN_STYLE = Automatic but
+# no DEVELOPMENT_TEAM, so any device build dies with "Signing for App requires a
+# development team" (simulator builds don't sign, which is why `rebuild` is fine).
+# A team ID is not a secret — it's in every provisioning profile and shipped IPA —
+# but it IS per-developer, so SPLANC_IOS_TEAM overrides the default. Find yours with:
+#   security find-certificate -c "Apple Development: <you>" -p | openssl x509 -noout -subject
+# (the OU= field). Drop any stale line first, so re-running can't stack duplicates.
+team="${SPLANC_IOS_TEAM:-D9JWD94AGX}"
+pbxproj="${here}/../ios/App/App.xcodeproj/project.pbxproj"
+if [ -n "$team" ] && [ -f "$pbxproj" ]; then
+  perl -ni -e 'print unless /^\s*DEVELOPMENT_TEAM = /' "$pbxproj"
+  perl -pi -e "s/^(\s*)CODE_SIGN_STYLE = Automatic;\$/\$1CODE_SIGN_STYLE = Automatic;\n\$1DEVELOPMENT_TEAM = ${team};/" "$pbxproj"
+  echo "signing: DEVELOPMENT_TEAM = $team ($(grep -c 'DEVELOPMENT_TEAM = ' "$pbxproj") configs)"
+fi
+
 # Set (or overwrite) a string key. PlistBuddy has no upsert, so try Set then Add.
 set_str() {
   local key="$1" val="$2"
