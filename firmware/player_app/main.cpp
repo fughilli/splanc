@@ -1915,12 +1915,14 @@ void loop() {
         map_leds, (unsigned)esp_get_free_heap_size(),
         (unsigned)esp_get_minimum_free_heap_size());
 #ifdef LM_MALLOC_TRACE
-    // Throttled (rides this 5 s report) drain of the heap-trace ring to a
-    // LittleFS file for off-device attribution, plus a one-line summary. Pull
-    // /lfs/malloc_trace.bin afterwards and decode against the .elf. Only once
-    // the filesystem mounted; otherwise just the summary.
+    // Throttled (rides this 5 s report) heap-trace report to SERIAL: the split
+    // libc-vs-heap_caps totals, then the top allocation call sites by cumulative
+    // bytes (the per-PC histogram survives ring lapping, so the big early
+    // WiFi/BLE buffers are captured). The HITL rig reads /dev/ttyACM0
+    // continuously so nothing is dropped. Decode the `[mtrace] site pc=…` PCs
+    // off-device with tools/mtrace_decode.py against the .elf.
     mtrace::LogSummary();
-    if (fs_ok) mtrace::DrainToFile("/lfs/malloc_trace.bin");
+    mtrace::LogTopSites(20);
 #endif
   }
   delay(1);

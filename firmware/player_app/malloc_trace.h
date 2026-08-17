@@ -53,6 +53,12 @@ size_t DrainToFile(const char *fs_path);
 // eyeball without pulling the binary file. Defined in malloc_trace.cpp.
 void LogSummary();
 
+// Print the top `n` allocation call sites by cumulative bytes (from a fixed
+// per-PC histogram that survives ring lapping, so the big EARLY bring-up
+// buffers are captured). `op>=4` marks the heap_caps path. Symbolize the PCs
+// off-device with tools/mtrace_decode.py against the .elf.
+void LogTopSites(unsigned n);
+
 }  // namespace mtrace
 
 #else  // !LM_MALLOC_TRACE
@@ -63,6 +69,7 @@ namespace mtrace {
 inline void Init() {}
 inline size_t DrainToFile(const char *) { return 0; }
 inline void LogSummary() {}
+inline void LogTopSites(unsigned) {}
 }  // namespace mtrace
 
 #endif  // LM_MALLOC_TRACE

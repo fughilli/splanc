@@ -96,6 +96,46 @@ uint64_t g_hc_alloc_calls = 0;  // heap_caps-path allocation count
 uint64_t g_free_calls = 0;    // count of free()s seen
 uint32_t g_peak_head = 0;     // high-water record count (for overflow eyeballing)
 
+// -- Per-call-site histogram -------------------------------------------------
+// The ring only holds the last kRingCap records, so the BIG early bring-up
+// allocations (WiFi/BLE/lwIP buffer pools) lap out before any drain. This fixed
+// table accumulates (caller PC -> cumulative bytes + count) for EVERY successful
+// allocation, so the top consumers are captured exactly regardless of order or
+// lapping. Open-addressed on the PC; a full table drops (counted). 256 slots is
+// ample — there are only a few dozen distinct alloc sites. LogTopSites() prints
+// the biggest; symbolize the PCs off-device (tools/mtrace_decode.py).
+struct Site {
+  uint32_t pc;
+  uint32_t count;
+  uint64_t bytes;
+  uint8_t op;  // representative op (marks libc vs heap_caps class)
+};
+constexpr size_t kSiteCap = 256;  // MUST be a power of two
+Site g_sites[kSiteCap];
+uint32_t g_sites_used = 0;
+uint32_t g_sites_dropped = 0;
+
+inline void Accumulate(uint32_t pc, size_t size, uint8_t op) {
+  uint32_t h = (pc * 2654435761u) & (kSiteCap - 1);  // Knuth multiplicative hash
+  for (size_t probe = 0; probe < kSiteCap; probe++) {
+    Site &s = g_sites[(h + probe) & (kSiteCap - 1)];
+    if (s.count != 0 && s.pc == pc) {  // existing site
+      s.bytes += size;
+      s.count++;
+      return;
+    }
+    if (s.count == 0) {  // empty slot -> claim (pc is never 0: flash XIP addr)
+      s.pc = pc;
+      s.bytes = size;
+      s.count = 1;
+      s.op = op;
+      g_sites_used++;
+      return;
+    }
+  }
+  g_sites_dropped++;  // table full (shouldn't happen at 256)
+}
+
 // -- Guards ------------------------------------------------------------------
 // `g_armed`: the ring is live only after Init(). Before that (early C runtime /
 // driver init) we forward to __real_* but record nothing — the ring buffer and
@@ -124,7 +164,13 @@ struct ScopedGuard {
 // is throttled well behind the head, so in practice slots are long-settled. (If
 // exactness under concurrency ever matters, gate this with a portMUX spinlock —
 // left as a TODO to keep the hot path allocation-free and lock-free for v1.)
-inline void Push(Op op, size_t size, void *ptr, uint8_t flags) {
+// `caller` is the REAL call site (the code that called malloc/heap_caps_*),
+// captured by each wrapper as __builtin_return_address(0) IN the wrapper frame
+// and passed down — computing it here in Push would instead yield the wrapper
+// itself. TODO(deeper unwind): for sites buried behind operator new / std /
+// mbedTLS shims, one frame isn't enough; widen Record with a small caller[]
+// (esp_backtrace_get_next_frame) and symbolize off-device.
+inline void Push(Op op, size_t size, void *ptr, uint8_t flags, uint32_t caller) {
   const uint32_t idx = g_head.fetch_add(1, std::memory_order_relaxed);
   Record &r = g_ring[idx & kRingMask];
   r.op = static_cast<uint8_t>(op);
@@ -132,17 +178,10 @@ inline void Push(Op op, size_t size, void *ptr, uint8_t flags) {
   r._pad = 0;
   r.size = static_cast<uint32_t>(size);
   r.ptr = reinterpret_cast<uintptr_t>(ptr) & 0xFFFFFFFFu;
-  // Caller PC of the __wrap_* frame's caller — i.e. the code that called
-  // malloc(). Cheap single-frame attribution.
-  // TODO(deeper unwind): for call sites buried behind wrappers (operator new,
-  // std::allocator, mbedTLS shims) one frame is not enough. Capture a few frames
-  // with esp_backtrace_get_start() + esp_backtrace_get_next_frame(), or read
-  // __builtin_return_address(1..N) (guarded — they can fault past the top frame),
-  // and widen Record with a small caller[] array. Symbolize off-device against
-  // the .elf. Out of scope for v1.
-  r.caller = reinterpret_cast<uintptr_t>(__builtin_extract_return_addr(
-                 __builtin_return_address(0))) &
-             0xFFFFFFFFu;
+  r.caller = caller;
+
+  // Per-site histogram for successful allocations (survives ring lapping).
+  if (op != kFree && !(flags & 1)) Accumulate(caller, size, static_cast<uint8_t>(op));
 
   // Accounting + overflow bookkeeping (relaxed; diagnostic only).
   if (idx + 1 > g_peak_head) g_peak_head = idx + 1;
@@ -152,16 +191,27 @@ inline void Push(Op op, size_t size, void *ptr, uint8_t flags) {
 
 }  // namespace
 
-// -- The four wrappers -------------------------------------------------------
-// Each forwards to __real_* and records the event. The ScopedGuard makes the
-// record path non-recursive; if we are already inside a trace (or not yet
-// armed) we still allocate for real, we just skip the bookkeeping.
+// Capture the REAL caller in the WRAPPER frame (frame 0 here = the code that
+// called the allocator). It MUST be a macro evaluated inside each wrapper —
+// computing it in Push/a helper would capture that frame instead.
+// __builtin_return_address(1)+ isn't portable on riscv without frame pointers,
+// so we always read frame 0 in the wrapper.
+#define MTRACE_CALLER                                                \
+  (reinterpret_cast<uintptr_t>(                                      \
+       __builtin_extract_return_addr(__builtin_return_address(0))) & \
+   0xFFFFFFFFu)
+
+// -- The wrappers ------------------------------------------------------------
+// Each captures its caller, forwards to __real_*, and records the event. The
+// ScopedGuard makes the record path non-recursive; if we are already inside a
+// trace (or not yet armed) we still allocate for real, we just skip the record.
 extern "C" void *__wrap_malloc(size_t size) {
+  const uint32_t caller = MTRACE_CALLER;
   void *p = __real_malloc(size);
   if (g_armed.load(std::memory_order_relaxed)) {
     ScopedGuard g;
     if (g.entered) {
-      Push(kMalloc, size, p, p ? 0 : 1);
+      Push(kMalloc, size, p, p ? 0 : 1, caller);
       if (p) {
         g_alloc_bytes += size;
         g_alloc_calls++;
@@ -172,23 +222,25 @@ extern "C" void *__wrap_malloc(size_t size) {
 }
 
 extern "C" void __wrap_free(void *ptr) {
+  const uint32_t caller = MTRACE_CALLER;
   __real_free(ptr);
   if (ptr && g_armed.load(std::memory_order_relaxed)) {
     ScopedGuard g;
     if (g.entered) {
-      Push(kFree, 0, ptr, 0);
+      Push(kFree, 0, ptr, 0, caller);
       g_free_calls++;
     }
   }
 }
 
 extern "C" void *__wrap_calloc(size_t nmemb, size_t size) {
+  const uint32_t caller = MTRACE_CALLER;
   void *p = __real_calloc(nmemb, size);
   if (g_armed.load(std::memory_order_relaxed)) {
     ScopedGuard g;
     if (g.entered) {
       const size_t total = nmemb * size;
-      Push(kCalloc, total, p, p ? 0 : 1);
+      Push(kCalloc, total, p, p ? 0 : 1, caller);
       if (p) {
         g_alloc_bytes += total;
         g_alloc_calls++;
@@ -199,13 +251,12 @@ extern "C" void *__wrap_calloc(size_t nmemb, size_t size) {
 }
 
 extern "C" void *__wrap_realloc(void *ptr, size_t size) {
+  const uint32_t caller = MTRACE_CALLER;
   void *p = __real_realloc(ptr, size);
   if (g_armed.load(std::memory_order_relaxed)) {
     ScopedGuard g;
     if (g.entered) {
-      // Records the NEW size + NEW pointer; the old pointer (ptr) is implicit.
-      // A host decoder pairs realloc(old,new) by size/ptr deltas if needed.
-      Push(kRealloc, size, p, p ? 0 : 1);
+      Push(kRealloc, size, p, p ? 0 : 1, caller);
       if (p) {
         g_alloc_bytes += size;
         g_alloc_calls++;
@@ -216,16 +267,15 @@ extern "C" void *__wrap_realloc(void *ptr, size_t size) {
 }
 
 // -- heap_caps_* wrappers (the ESP-IDF path: WiFi/BLE/lwIP/DMA) ---------------
-// Same shape as the libc wrappers, into the same ring, tagged with the
-// kHeapCaps* ops and accounted separately so LogSummary can split libc vs
-// heap_caps. `caps` is dropped from the record for now (size/ptr/caller are the
-// attribution signal); widen Record if per-cap breakdown is ever needed.
+// Same shape, tagged kHeapCaps* and accounted separately. `caps` is dropped from
+// the record (size/ptr/caller are the attribution signal).
 extern "C" void *__wrap_heap_caps_malloc(size_t size, uint32_t caps) {
+  const uint32_t caller = MTRACE_CALLER;
   void *p = __real_heap_caps_malloc(size, caps);
   if (g_armed.load(std::memory_order_relaxed)) {
     ScopedGuard g;
     if (g.entered) {
-      Push(kHeapCapsMalloc, size, p, p ? 0 : 1);
+      Push(kHeapCapsMalloc, size, p, p ? 0 : 1, caller);
       if (p) {
         g_hc_alloc_bytes += size;
         g_hc_alloc_calls++;
@@ -236,12 +286,13 @@ extern "C" void *__wrap_heap_caps_malloc(size_t size, uint32_t caps) {
 }
 
 extern "C" void *__wrap_heap_caps_calloc(size_t n, size_t size, uint32_t caps) {
+  const uint32_t caller = MTRACE_CALLER;
   void *p = __real_heap_caps_calloc(n, size, caps);
   if (g_armed.load(std::memory_order_relaxed)) {
     ScopedGuard g;
     if (g.entered) {
       const size_t total = n * size;
-      Push(kHeapCapsCalloc, total, p, p ? 0 : 1);
+      Push(kHeapCapsCalloc, total, p, p ? 0 : 1, caller);
       if (p) {
         g_hc_alloc_bytes += total;
         g_hc_alloc_calls++;
@@ -252,11 +303,12 @@ extern "C" void *__wrap_heap_caps_calloc(size_t n, size_t size, uint32_t caps) {
 }
 
 extern "C" void *__wrap_heap_caps_realloc(void *ptr, size_t size, uint32_t caps) {
+  const uint32_t caller = MTRACE_CALLER;
   void *p = __real_heap_caps_realloc(ptr, size, caps);
   if (g_armed.load(std::memory_order_relaxed)) {
     ScopedGuard g;
     if (g.entered) {
-      Push(kHeapCapsRealloc, size, p, p ? 0 : 1);
+      Push(kHeapCapsRealloc, size, p, p ? 0 : 1, caller);
       if (p) {
         g_hc_alloc_bytes += size;
         g_hc_alloc_calls++;
@@ -268,11 +320,12 @@ extern "C" void *__wrap_heap_caps_realloc(void *ptr, size_t size, uint32_t caps)
 
 extern "C" void *__wrap_heap_caps_aligned_alloc(size_t alignment, size_t size,
                                                 uint32_t caps) {
+  const uint32_t caller = MTRACE_CALLER;
   void *p = __real_heap_caps_aligned_alloc(alignment, size, caps);
   if (g_armed.load(std::memory_order_relaxed)) {
     ScopedGuard g;
     if (g.entered) {
-      Push(kHeapCapsAlignedAlloc, size, p, p ? 0 : 1);
+      Push(kHeapCapsAlignedAlloc, size, p, p ? 0 : 1, caller);
       if (p) {
         g_hc_alloc_bytes += size;
         g_hc_alloc_calls++;
@@ -362,6 +415,34 @@ void LogSummary() {
       (unsigned long long)g_alloc_calls, (unsigned long long)g_alloc_bytes,
       (unsigned long long)g_hc_alloc_calls, (unsigned long long)g_hc_alloc_bytes,
       (unsigned long long)g_free_calls, (unsigned)head, (unsigned)g_dropped);
+}
+
+void LogTopSites(unsigned n) {
+  ScopedGuard g;
+  if (!g.entered) return;
+  Log().printf("[mtrace] top %u alloc sites (of %u used, %u dropped) — cumulative "
+               "bytes by caller PC; op>=4 is heap_caps:\n",
+               n, (unsigned)g_sites_used, (unsigned)g_sites_dropped);
+  // Selection sort over the small table; no allocation. `shown` is a 256-bit
+  // bitmap on the stack (32 B) so we don't mutate the table.
+  uint8_t shown[kSiteCap / 8] = {0};
+  for (unsigned k = 0; k < n; k++) {
+    int best = -1;
+    uint64_t bestb = 0;
+    for (size_t i = 0; i < kSiteCap; i++) {
+      if (g_sites[i].count == 0 || (shown[i >> 3] & (1u << (i & 7)))) continue;
+      if (g_sites[i].bytes > bestb) {
+        bestb = g_sites[i].bytes;
+        best = static_cast<int>(i);
+      }
+    }
+    if (best < 0) break;
+    shown[best >> 3] |= (1u << (best & 7));
+    const Site &s = g_sites[best];
+    Log().printf("[mtrace] site pc=%08x bytes=%llu count=%u op=%u\n",
+                 (unsigned)s.pc, (unsigned long long)s.bytes, (unsigned)s.count,
+                 (unsigned)s.op);
+  }
 }
 
 }  // namespace mtrace
