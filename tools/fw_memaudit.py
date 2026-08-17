@@ -147,6 +147,20 @@ def ram_sections(readelf: str, elf: str) -> list[tuple[str, int, int, str]]:
     return secs
 
 
+def section_kind_at(sections: list[tuple[str, int, int, str]], addr: int) -> str | None:
+    """The kind (dram|iram|lp) of the SRAM section physically containing `addr`,
+    or None if `addr` is outside every SRAM section (flash XIP / MMIO / gap).
+
+    Attribution is by ADDRESS, not by nm type: a data-type symbol placed inside
+    .iram0.text (e.g. WiFi/BLE IRAM-resident tables) lives in an `iram` section
+    even though nm calls it 'd'/'b'. Without this, such symbols get double-counted
+    — once in the IRAM section total and again in the DRAM symbol tree."""
+    for _name, size, a, kind in sections:
+        if a <= addr < a + size:
+            return kind
+    return None
+
+
 def read_symbols(nm: str, elf: str) -> list[tuple[int, int, str, str, str | None]]:
     """(addr,size,type,name,file|None) for every defined RAM symbol."""
     out = subprocess.run(
@@ -242,15 +256,36 @@ def main() -> int:
     missing = [a for (a, _s, _t, _n, src) in syms if not src]
     resolved = addr2line_files(a2l, elf, missing)
 
-    # tree: component -> file -> list[(size,name)]
+    # Attribute every RAM symbol to the SRAM section that physically CONTAINS it
+    # (by address), not to its nm type. Only symbols living in `dram` sections
+    # go into the .data/.bss tree; data-type symbols that reside inside
+    # .iram0.text (WiFi/BLE IRAM-resident tables) are surfaced separately so the
+    # ~38 KB they occupy is explained, not double-counted against DRAM.
+    #
+    # tree: component -> file -> list[(size,name)]  (DRAM symbols only)
     tree: dict[str, dict[str, list[tuple[int, str]]]] = {}
+    # iram-resident data, bucketed component -> bytes (a small breakdown).
+    iram_data: dict[str, int] = {}
+    iram_data_syms: list[tuple[int, str, str]] = []  # (size, name, component)
+    lp_data_bytes = 0
+    unplaced_bytes = 0  # symbols nm flags as RAM but that land in no SRAM section
     for addr, size, _typ, name, src in syms:
         src = src or resolved.get(addr)
         comp, short = component_of(src, name)
-        tree.setdefault(comp, {}).setdefault(short, []).append((size, name))
+        region = section_kind_at(sections, addr)
+        if region == "dram":
+            tree.setdefault(comp, {}).setdefault(short, []).append((size, name))
+        elif region == "iram":
+            iram_data[comp] = iram_data.get(comp, 0) + size
+            iram_data_syms.append((size, name, comp))
+        elif region == "lp":
+            lp_data_bytes += size
+        else:
+            unplaced_bytes += size
 
     comp_tot = {c: sum(sz for f in files.values() for sz, _ in f) for c, files in tree.items()}
-    attributable = sum(comp_tot.values()) or 1  # data/bss the tree accounts for
+    attributable = sum(comp_tot.values()) or 1  # DRAM data/bss the tree accounts for
+    iram_data_total = sum(iram_data.values())
 
     # SRAM budget. On the C6, IRAM and DRAM share the ONE 512 KB HP SRAM, so the
     # link-time internal-RAM heap ceiling is simply what is left of it after all
@@ -278,6 +313,19 @@ def main() -> int:
             "sram": sram,
             "sections": [{"name": n, "bytes": s, "kind": k} for n, s, _a, k in sections],
             "total_ram_bytes": attributable,
+            # Data-type symbols that physically reside in IRAM sections (already
+            # counted in sram.iram_bytes; listed here to explain the delta between
+            # the DRAM section total and a naive by-nm-type symbol sum).
+            "iram_data": {
+                "bytes": iram_data_total,
+                "components": {
+                    c: iram_data[c] for c in sorted(iram_data, key=lambda c: -iram_data[c])
+                },
+                "symbols": [
+                    {"name": n, "bytes": sz, "component": c}
+                    for sz, n, c in sorted(iram_data_syms, reverse=True)
+                ],
+            },
             "components": {
                 c: {
                     "bytes": comp_tot[c],
@@ -317,6 +365,17 @@ def main() -> int:
     for n, s, _a, k in sorted(sections, key=lambda x: -x[1]):
         print(f"  {human(s):>8}  [{k:<4}]  {n}")
 
+    if iram_data_total:
+        print(
+            f"\n== IRAM-resident data ({human(iram_data_total)}) =="
+            "  (data-type symbols physically inside .iram0.text — already in the"
+            " IRAM total above, NOT in the DRAM tree below)"
+        )
+        for comp in sorted(iram_data, key=lambda c: -iram_data[c]):
+            if iram_data[comp] < args.min:
+                continue
+            print(f"  {human(iram_data[comp]):>8}  {comp}")
+
     print(
         f"\n== DRAM .data/.bss by component -> file"
         f"{' -> symbol' if args.depth >= 3 else ''}  ({human(attributable)} attributed) =="
@@ -340,13 +399,17 @@ def main() -> int:
                     continue
                 print(f"  {human(sz):>8}      {name}")
 
-    print(f"\n== {args.top} biggest RAM symbols ==")
+    print(f"\n== {args.top} biggest RAM symbols ==  (region: dram/iram/lp by address)")
     flat = sorted(
-        ((sz, name, src or resolved.get(a) or "?") for (a, sz, _t, name, src) in syms), reverse=True
+        (
+            (sz, name, src or resolved.get(a) or "?", section_kind_at(sections, a) or "?")
+            for (a, sz, _t, name, src) in syms
+        ),
+        reverse=True,
     )
-    for sz, name, src in flat[: args.top]:
+    for sz, name, src, region in flat[: args.top]:
         loc = component_of(src if src != "?" else None, name)[0]
-        print(f"  {human(sz):>8}  {name}   [{loc}]")
+        print(f"  {human(sz):>8}  [{region:<4}]  {name}   [{loc}]")
     return 0
 
 

@@ -81,6 +81,23 @@ def render(obj: dict, depth: int, top: int, min_bytes: int, width: int) -> str:
                 f"{bar(s['bytes'] / hp, width)}  {kt:<7}{s['name']}"
             )
 
+    # --- IRAM-resident data (explains the delta vs a naive by-nm-type sum) ---
+    idata = obj.get("iram_data", {})
+    if idata and idata.get("bytes"):
+        out.append(f"\n== IRAM-resident data ({human(idata['bytes'])} attributed) ==")
+        out.append(
+            "  (data-type symbols physically inside .iram0.text — already in the IRAM"
+            " section total, NOT double-counted in the DRAM tree below)"
+        )
+        icomps = sorted(idata.get("components", {}).items(), key=lambda kv: -kv[1])
+        icomps = [(c, b) for c, b in icomps if b >= min_bytes]
+        for ci, (comp, b) in enumerate(icomps):
+            branch = "└── " if ci == len(icomps) - 1 else "├── "
+            ipct = 100 * b / idata["bytes"] if idata["bytes"] else 0
+            out.append(
+                f"{branch}{human(b):>9}  {ipct:5.1f}%  {bar(b / idata['bytes'], width)}  {comp}"
+            )
+
     # --- treeview: component -> file -> symbol (vs attributed .data/.bss) ---
     out.append(
         f"\n== DRAM .data/.bss treeview (component → file"
