@@ -30,6 +30,7 @@ import { DetectorGL } from "../../cv/detect";
 import { CaptureUnsupportedError } from "../../xr/capture";
 import { DEFAULT_IMU_MAPPING, ImuRecorder, parseImuMapping } from "../../xr/imu";
 import { MediaStreamCaptureSource } from "../../xr/mediaStreamCapture";
+import { NativeCaptureSource, nativeCaptureAvailable } from "../../xr/nativeCaptureSource";
 import { SolverAgent, type SolveSnapshot } from "../../solver/agent";
 import { chooseSolvePlacement } from "../../solver/placement";
 import { LabelOverlay } from "../labels";
@@ -77,6 +78,26 @@ const forcedExposure = ((): number | null => {
   const v = parseFloat(qs.get("exposure") ?? "");
   return Number.isFinite(v) && v >= 0 && v <= 1 ? v : null;
 })();
+
+
+/** A throwaway WebGL2 context for DetectorGL on the native iOS path, where frames
+ * arrive already reduced and its GPU pass never runs. Cheaper than reshaping the
+ * detector around a context-free mode that only one platform needs. */
+function offscreenGl(): WebGL2RenderingContext {
+  const c = document.createElement("canvas");
+  c.width = 1;
+  c.height = 1;
+  const gl = c.getContext("webgl2");
+  if (!gl) throw new CaptureUnsupportedError("WebGL2 is unavailable.", []);
+  return gl;
+}
+
+/** Undo the transparency the native preview layer needs (see the capture start
+ * path). A no-op on the getUserMedia path, which never set it. */
+function restorePageBackground(): void {
+  document.documentElement.style.background = "";
+  document.body.style.background = "";
+}
 
 export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Screen {
   const el = document.createElement("div");
@@ -224,7 +245,10 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     if (ok) console.info(`wasm solver ready: benchmark ${solverAgent.benchMs?.toFixed(0)} ms`);
     return ok;
   });
-  let capture: MediaStreamCaptureSource | null = null;
+  let capture: MediaStreamCaptureSource | NativeCaptureSource | null = null;
+  // Set only on the iOS native path; used to push detect params down and to undo
+  // the page transparency the native preview layer needs.
+  let nativeSource: NativeCaptureSource | null = null;
   let capturing = false;
   let imuRecorder: ImuRecorder | null = null;
   let previewVideo: HTMLVideoElement | null = null;
@@ -269,20 +293,50 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       const cached = prefs.getCalibratedK();
       const initialExposure = servoExposure ? EXPOSURE_SERVO_START : forcedExposure;
       let servoedExposure = initialExposure ?? EXPOSURE_SERVO_START;
-      const ms = new MediaStreamCaptureSource({
-        kSeed: cached,
-        fxOverride: forcedFx ?? undefined,
-      });
-      capture = ms;
-      await capture.start();
-      ms.video.style.cssText =
-        "position:fixed;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;background:#000";
-      document.body.prepend(ms.video);
-      previewVideo = ms.video;
+      // iOS takes the camera natively: WebKit's getUserMedia offers no exposure
+      // control at all and its camera is unreachable from this process, so the
+      // app owns an AVCaptureSession instead (design doc §4.6/§4.7). Everything
+      // downstream of `onFrame` is identical — the native source pre-runs the
+      // detector's threshold pass and ships the sparse result.
+      let exposureTarget: { setExposure(t: number, capMs?: number): unknown };
+      let detectGl: WebGL2RenderingContext;
+      if (nativeCaptureAvailable()) {
+        const nc = new NativeCaptureSource({ kSeed: cached, fxOverride: forcedFx ?? undefined });
+        capture = nc;
+        nativeSource = nc;
+        await nc.start();
+        // The preview is a native layer BEHIND the WebView, not a <video>, so the
+        // page has to be see-through for the duration (html as well as body — the
+        // root element paints the page canvas).
+        document.documentElement.style.background = "transparent";
+        document.body.style.background = "transparent";
+        exposureTarget = nc;
+        // The detector never runs its GPU pass on this path (frames arrive
+        // pre-reduced), but DetectorGL builds its program up front — so give it a
+        // throwaway context rather than reshaping the class around a path that
+        // only iOS takes.
+        detectGl = offscreenGl();
+      } else {
+        const ms = new MediaStreamCaptureSource({
+          kSeed: cached,
+          fxOverride: forcedFx ?? undefined,
+        });
+        capture = ms;
+        await ms.start();
+        ms.video.style.cssText =
+          "position:fixed;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;background:#000";
+        document.body.prepend(ms.video);
+        previewVideo = ms.video;
+        exposureTarget = ms;
+        detectGl = ms.gl;
+      }
       imuRecorder = new ImuRecorder(imuMapping);
       imuRecorder.start();
 
-      const detector = new DetectorGL(capture.gl, detectorOpts);
+      const detector = new DetectorGL(detectGl, detectorOpts);
+      // The native reduction must threshold with the SAME value the servo below
+      // steers, or the servo is reacting to counts it isn't controlling.
+      nativeSource?.setDetectParams({ threshold: detector.threshold, downscale: detector.downscale });
 
       // Pre-capture probe: measure the scene before the pattern runs, then
       // negotiate the capture configuration.
@@ -294,11 +348,11 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         let t0 = -1;
         capture!.onFrame((f) => {
           if (t0 < 0) t0 = f.tCaptureMs;
-          const blobs = detector.detect(f.texture, f.imgW, f.imgH);
+          const blobs = detector.detectFrame(f);
           monitor.push({
             tMs: f.tCaptureMs,
             blobCount: blobs.length,
-            scene: detector.measure(f.texture, f.imgW, f.imgH),
+            scene: detector.measureFrame(f),
           });
           lastAmbient = f.ambientIntensity ?? lastAmbient;
           if (f.tCaptureMs - t0 >= 1200) {
@@ -334,7 +388,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       let params: CodeParams = started.codeParams;
       let epoch: number = started.patternClockEpoch;
       if (initialExposure !== null) {
-        void ms.setExposure(initialExposure, params.bitPeriodMs / 2);
+        void exposureTarget.setExposure(initialExposure, params.bitPeriodMs / 2);
       }
       const makePipeline = (p: CodeParams, e: number): CvPipeline => {
         const pl = new CvPipeline(p, e, (t) => c.clock.toServerTime(t), { denseRecords: true });
@@ -354,8 +408,8 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
 
       capture.onFrame((f) => {
         if (!capturing || !capture) return;
-        const blobs = detector.detect(f.texture, f.imgW, f.imgH, {});
-        const measured = frameCount % 6 === 0 ? detector.measure(f.texture, f.imgW, f.imgH) : undefined;
+        const blobs = detector.detectFrame(f, {});
+        const measured = frameCount % 6 === 0 ? detector.measureFrame(f) : undefined;
         monitor.push({
           tMs: f.tCaptureMs,
           blobCount: blobs.length,
@@ -493,7 +547,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           // up under artificial light. It can exceed bitPeriodMs/2 and blur the
           // code across a hue transition — that's the deliberate manual trade
           // (FUG-62). The auto servo below keeps the Nyquist cap.
-          void ms.setExposure(e01, prefs.getManualExposureCeilingMs());
+          void exposureTarget.setExposure(e01, prefs.getManualExposureCeilingMs());
         },
       };
 
@@ -507,6 +561,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         c.sendExposureReport(report);
         if (!forcedThreshold) {
           detector.threshold = adjustThreshold(detector.threshold, report.blobCount, ledCount);
+          nativeSource?.setDetectParams({ threshold: detector.threshold });
         }
         if (renegotiating) return;
         const wantBit = forcedBitMs === null ? planReconfigure(params.bitPeriodMs, report.frameIntervalMs) : null;
@@ -529,7 +584,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           });
           if (nextExp !== null) {
             servoedExposure = nextExp;
-            void ms.setExposure(nextExp, params.bitPeriodMs / 2);
+            void exposureTarget.setExposure(nextExp, params.bitPeriodMs / 2);
           }
         }
         const wantBright =
@@ -571,6 +626,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       imuRecorder = null;
       previewVideo?.remove();
       previewVideo = null;
+      restorePageBackground();
       await capture?.stop().catch(() => undefined);
       capture = null;
       if (e instanceof CaptureUnsupportedError) toast(e.message, { error: true });
@@ -600,6 +656,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       imuRecorder?.stop();
       previewVideo?.remove();
       previewVideo = null;
+      restorePageBackground();
       await capture?.stop().catch(() => undefined);
       capture = null;
       await client()?.stopMappingNoSolve().catch(() => undefined);
@@ -620,6 +677,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     imuRecorder = null;
     previewVideo?.remove();
     previewVideo = null;
+    restorePageBackground();
     if (!sessionAlreadyEnded) await capture?.stop().catch(() => undefined);
     capture = null;
     resetLiveFeedback();
@@ -764,6 +822,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       imuRecorder?.stop();
       previewVideo?.remove();
       previewVideo = null;
+      restorePageBackground();
       void capture?.stop().catch(() => undefined);
       capture = null;
       resetLiveFeedback();

@@ -36,16 +36,37 @@ public class CameraBridge: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "start", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "stop", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setExposure", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "clearExposure", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "clearExposure", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setDetectParams", returnType: CAPPluginReturnPromise)
     ]
 
     // Session setup/teardown blocks; keep them off the main thread (startRunning
     // in particular takes long enough to jank the UI).
     private let sessionQueue = DispatchQueue(label: "dev.splanc.camera-bridge")
 
+    /// Must match MEASURE_W in web/src/cv/detect.ts — the measure buffer is handed
+    /// straight to sceneStatsFromLuma, which assumes that geometry.
+    fileprivate static let measureWidth = 64
+
     private var session: AVCaptureSession?
     private var device: AVCaptureDevice?
     private var previewView: PreviewView?
+    private var videoOutput: AVCaptureVideoDataOutput?
+    // Frame delivery runs off the session queue so a slow reduction can't stall
+    // session control (start/stop/exposure).
+    private let frameQueue = DispatchQueue(label: "dev.splanc.camera-bridge.frames")
+    // Detect-pass parameters, mirrored from the JS DetectorGL. `threshold` is
+    // servo-driven at runtime (capture.ts adjusts it as blob counts move), so it
+    // has to be pushed down here rather than fixed at start.
+    private let paramLock = NSLock()
+    private var threshold: Double = 0.6
+    private var downscale: Int = 2
+    private var framesEmitted = 0
+    private var framesDropped = 0
+    private var reduceMsEma = 0.0
+    private var lastFrameLogTime = CFAbsoluteTimeGetCurrent()
+    /// Holds its scratch buffers across frames — see FrameReducer's perf note.
+    private let reducer = FrameReducer()
     // WKWebView paints an opaque background by default, which would hide the
     // preview layer sitting behind it. Remember what to put back on stop().
     private var webViewWasOpaque = true
@@ -96,7 +117,28 @@ public class CameraBridge: CAPPlugin, CAPBridgedPlugin {
             call.reject("camera input failed: \(error.localizedDescription)")
             return
         }
+        // Frame tap for the detector. BGRA because FrameReducer reads packed 8-bit
+        // channels directly; discarding late frames keeps latency bounded when a
+        // reduction overruns its frame budget (reported, not hidden — see
+        // framesDropped in the emitted stats).
+        let out = AVCaptureVideoDataOutput()
+        out.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
+        out.alwaysDiscardsLateVideoFrames = true
+        out.setSampleBufferDelegate(self, queue: frameQueue)
+        if sess.canAddOutput(out) {
+            sess.addOutput(out)
+            videoOutput = out
+        } else {
+            clog("WARNING: cannot add video output — frames will not reach the detector")
+        }
         sess.commitConfiguration()
+
+        // Portrait for BOTH connections, so the pixel buffers the detector sees are
+        // oriented the same way as the preview the user is aiming (otherwise blob
+        // coordinates are transposed relative to what's on screen).
+        if let conn = out.connection(with: .video), conn.isVideoOrientationSupported {
+            conn.videoOrientation = .portrait
+        }
         sess.startRunning()
 
         session = sess
@@ -109,6 +151,8 @@ public class CameraBridge: CAPPlugin, CAPBridgedPlugin {
     @objc func stop(_ call: CAPPluginCall) {
         sessionQueue.async { [weak self] in
             guard let self = self else { call.resolve(); return }
+            self.videoOutput?.setSampleBufferDelegate(nil, queue: nil)
+            self.videoOutput = nil
             self.session?.stopRunning()
             self.session = nil
             self.device = nil
@@ -246,6 +290,22 @@ public class CameraBridge: CAPPlugin, CAPBridgedPlugin {
         }
     }
 
+    // MARK: - Detect params
+
+    /// Push the JS detector's live parameters down. `threshold` is servo-driven,
+    /// so this is called whenever capture.ts retunes it — the native reduction has
+    /// to use the same value or the blob counts the servo reacts to are not the
+    /// ones the servo is controlling.
+    @objc func setDetectParams(_ call: CAPPluginCall) {
+        paramLock.lock()
+        if let t = call.getDouble("threshold") { threshold = min(1.0, max(0.0, t)) }
+        if let d = call.getInt("downscale") { downscale = max(1, d) }
+        let (t, d) = (threshold, downscale)
+        paramLock.unlock()
+        clog("setDetectParams threshold=\(t) downscale=\(d)")
+        call.resolve()
+    }
+
     // MARK: - Introspection
 
     private func info(_ d: AVCaptureDevice, _ s: AVCaptureSession) -> [String: Any] {
@@ -274,6 +334,67 @@ public class CameraBridge: CAPPlugin, CAPBridgedPlugin {
                       CMTimeGetSeconds(d.exposureDuration) * 1000.0,
                       Double(d.iso),
                       Int(dims.width), Int(dims.height))
+    }
+}
+
+// MARK: - Frame delivery
+
+extension CameraBridge: AVCaptureVideoDataOutputSampleBufferDelegate {
+    public func captureOutput(_ output: AVCaptureOutput,
+                              didOutput sampleBuffer: CMSampleBuffer,
+                              from connection: AVCaptureConnection) {
+        guard let pixels = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        paramLock.lock()
+        let (thr, ds) = (threshold, downscale)
+        paramLock.unlock()
+
+        // Scene stats move at AE speed and capture.ts consumes them every 6th
+        // frame, so computing them every frame doubled the per-frame scan for
+        // nothing. NativeCaptureSource carries the last one forward.
+        let wantMeasure = framesEmitted % 6 == 0
+        let t0 = CFAbsoluteTimeGetCurrent()
+        guard let r = reducer.reduce(pixels, downscale: ds, threshold: thr,
+                                     measureWidth: CameraBridge.measureWidth,
+                                     wantMeasure: wantMeasure)
+        else {
+            framesDropped += 1
+            return
+        }
+        let reduceMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000.0
+        reduceMsEma = reduceMsEma == 0 ? reduceMs : reduceMsEma * 0.9 + reduceMs * 0.1
+
+        // Capture time in the SAME clock JS reads with performance.now(): both are
+        // rooted in mach_absolute_time, which is what CMTime timestamps use here.
+        // Getting this wrong drifts the temporal decode, so it's derived rather
+        // than stamped on arrival.
+        let tCapture = CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sampleBuffer)) * 1000.0
+
+        framesEmitted += 1
+        if framesEmitted % 60 == 1 {
+            let now = CFAbsoluteTimeGetCurrent()
+            let fps = 60.0 / max(0.001, now - lastFrameLogTime)
+            lastFrameLogTime = now
+            clog(String(format: "frame #%d: %dx%d lit=%d%@ fps=%.1f reduce=%.1fms dropped=%d",
+                        framesEmitted, r.width, r.height, r.nonZeroCount,
+                        r.truncated ? " TRUNCATED" : "", fps, reduceMsEma, framesDropped))
+        }
+
+        notifyListeners("cameraFrame", data: [
+            "w": r.width,
+            "h": r.height,
+            "imgW": r.width * ds,
+            "imgH": r.height * ds,
+            "idx": r.indices.base64EncodedString(),
+            "px": r.pixels.base64EncodedString(),
+            "lit": r.nonZeroCount,
+            "truncated": r.truncated,
+            // measureW/H are 0 on frames that skipped the measure pass; the JS side
+            // then keeps the previous buffer rather than the detector seeing a gap.
+            "measureW": r.measureWidth,
+            "measureH": r.measureHeight,
+            "measure": wantMeasure ? r.measure.base64EncodedString() : "",
+            "tCaptureMs": tCapture
+        ])
     }
 }
 
