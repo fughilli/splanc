@@ -72,6 +72,15 @@ RpcHandler g_rpc_handler;
 // result and left. Written on the BT task, read on the Arduino task.
 static volatile bool g_central_connected = false;
 
+// SYSTEM REQUIREMENT: BLE/Improv MUST stay resident for the life of the device
+// and MUST always be re-provisionable. Improv-over-BLE is the ONLY recovery path
+// to move the device to a different Wi-Fi network — if it is joined to a network
+// the user can no longer reach (moved, SSID changed, wrong AP, unknown IP) and
+// BLE is gone, the device is unrecoverable short of a serial re-flash. So do NOT
+// deinit the BLE stack after provisioning to save RAM (a RAM audit noted it
+// would free ~40-55 KB — rejected by design; see docs subsystems/firmware). The
+// only lifecycle action allowed is stopping/resuming ADVERTISING.
+//
 // A BLE peripheral stops advertising once a central connects, and does NOT
 // resume on its own — so after the app provisions and reloads (dropping the
 // link), the device would go silent and never be discoverable again. Resume

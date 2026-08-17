@@ -5,6 +5,27 @@ linked into one C++/Arduino app via a C ABI. **The target MCU is the
 ESP32-C6.** It drives the LEDs, serves the control channel, and runs effects on
 the device.
 
+```{important}
+**BLE / Improv provisioning must stay resident for the entire life of the
+device. Never deinitialize the BLE stack to reclaim RAM.**
+
+Improv-over-BLE is the *only* recovery path for moving the device onto a
+different Wi-Fi network. If the device is joined to a network the user can no
+longer reach — they moved, the SSID/password changed, it is on the wrong AP, or
+its IP is simply unknown — and BLE is gone, there is **no way to re-provision
+it**: the device is unrecoverable short of physical access and a serial
+re-flash. BLE advertising is deliberately resumed on every disconnect
+(`firmware/player_app/improv_ble.cpp`) so re-provisioning works at *any* time,
+regardless of Wi-Fi state.
+
+A RAM audit found that tearing the NimBLE stack down after a successful join
+(`esp_bt_controller_disable`/`deinit` + `esp_bt_mem_release(ESP_BT_MODE_BLE)`)
+would free ~40–55 KB of heap. **Do not do this — it is rejected by design.** The
+reclaim is real, but free heap is never worth a device that can strand itself
+unrecoverably. Pursue the other RAM levers (Wi-Fi buffer counts, task-stack
+high-water trimming, lazy/heap-caps tuning) instead.
+```
+
 ## Crates
 
 - **`player_app/`** — the on-device app (`main.cpp` + `ffi.rs`). Drives WS2812B
