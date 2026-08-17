@@ -46,6 +46,7 @@
 #include "firmware/player_app/color_correction.h"
 #include "firmware/player_app/improv_codec.h"
 #include "firmware/player_app/led_config.h"
+#include "firmware/player_app/malloc_trace.h"  // heap-trace facility (no-op unless -DLM_MALLOC_TRACE)
 #include "firmware/player_app/player_ffi.h"
 #include "firmware/player_app/serial_log.h"
 #include "firmware/player_app/ws_codec.h"
@@ -1661,6 +1662,11 @@ void setup() {
   // completing. A 0 ms tx timeout drops bytes instead of blocking, so logs are
   // best-effort and the network stacks always run.
   Serial.setTxTimeoutMs(0);
+#ifdef LM_MALLOC_TRACE
+  // Arm the heap-allocation trace ring BEFORE the WiFi/BLE/TLS bring-up burst we
+  // want to attribute (the big heap drop below). No-op image without the define.
+  mtrace::Init();
+#endif
   // Baseline free heap right after boot, BEFORE WiFi/BLE/TLS bring-up — the
   // empirical counterpart to fw_memaudit's link-time heap ceiling
   // (//firmware/player_app:esp32c6_ram). The gap from that ceiling to this line
@@ -1906,6 +1912,14 @@ void loop() {
                                           : "idle",
         map_leds, (unsigned)esp_get_free_heap_size(),
         (unsigned)esp_get_minimum_free_heap_size());
+#ifdef LM_MALLOC_TRACE
+    // Throttled (rides this 5 s report) drain of the heap-trace ring to a
+    // LittleFS file for off-device attribution, plus a one-line summary. Pull
+    // /lfs/malloc_trace.bin afterwards and decode against the .elf. Only once
+    // the filesystem mounted; otherwise just the summary.
+    mtrace::LogSummary();
+    if (fs_ok) mtrace::DrainToFile("/lfs/malloc_trace.bin");
+#endif
   }
   delay(1);
 }

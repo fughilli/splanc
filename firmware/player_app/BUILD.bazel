@@ -260,6 +260,84 @@ flash_bundle(
     tags = ["manual"],
 )
 
+# -- Heap-allocation TRACE image (RAM tooling) -------------------------------
+# A dedicated -DLM_MALLOC_TRACE build that intercepts the newlib allocator via
+# the linker's --wrap mechanism to attribute the ~180 KB dynamic-heap usage and
+# diagnose fragmentation. Mirrors the LM_OSC_BENCH bench-image pattern above: a
+# parallel cc_binary with the extra define + the trace TU + the --wrap linkopts,
+# then a firmware_binary/flash/flashbundle chain. The normal :esp32c6 image is
+# left untouched (no wrap, no trace TU). tags=manual keeps this heavy image out
+# of the `//...` wildcard, like the other opt firmware images.
+#
+# --wrap=<sym> makes the linker resolve `<sym>` to `__wrap_<sym>` (defined in
+# malloc_trace.cpp) and expose the original as `__real_<sym>`; the four wrappers
+# forward to __real_* and record each event to a static ring. Read the ring off
+# LittleFS: `hitl flash --monitor …:esp32c6_malloc_trace_flashbundle`, then pull
+# /lfs/malloc_trace.bin (drain rides the periodic loop() report).
+cc_binary(
+    name = "player_app_malloc_trace",
+    srcs = [
+        "improv_ble.cpp",
+        "improv_ble.h",
+        "led_config.h",
+        "main.cpp",
+        "malloc_trace.cpp",
+        "malloc_trace.h",
+        "player_ffi.h",
+        "serial_log.h",
+    ],
+    copts = ["-fno-rtti"],
+    # Redirect malloc/free/calloc/realloc to __wrap_* (with __real_* exposed).
+    # These MUST be linkopts (not on the trace TU alone) so the whole image's
+    # allocator references are rewritten. Only present in this variant.
+    linkopts = [
+        "-Wl,--wrap=malloc",
+        "-Wl,--wrap=free",
+        "-Wl,--wrap=calloc",
+        "-Wl,--wrap=realloc",
+    ],
+    local_defines = ["LM_MALLOC_TRACE"],
+    target_compatible_with = select({
+        "@embedded//platforms:is_esp32c6": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        ":color_correction",
+        ":improv_codec",
+        ":player_ffi",
+        ":ws_codec",
+        "//firmware/landing:landing_page",
+        "@embedded//libs/board:arduino_core",
+        "@embedded//libs/tls:selfsigned",
+        "@embedded//libs/vendor:ble",
+        "@embedded//libs/vendor:fastled",
+        "@embedded//libs/vendor:preferences",
+        "@embedded//libs/vendor:webserver",
+        "@embedded//libs/vendor:wifi",
+    ],
+)
+
+firmware_binary(
+    name = "esp32c6_malloc_trace",
+    binary = ":player_app_malloc_trace",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "flash_esp32c6_malloc_trace",
+    app = ":esp32c6_malloc_trace",
+    partitions = "@embedded//libs/vendor:partitions_huge_app",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "esp32c6_malloc_trace_flashbundle",
+    flash = ":flash_esp32c6_malloc_trace",
+    tags = ["manual"],
+)
+
 # The image (~2.05 MB at -c opt: WiFi + BLE + webserver + FastLED + the
 # protocol stack) exceeds default.csv's 1.25 MB app slot and just misses
 # no_ota's 2 MB — flash the 4 MB "huge app" layout (single 3 MB factory
