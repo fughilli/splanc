@@ -80,11 +80,11 @@ static const uint32_t kStaJoinTimeoutMs = 20000;
 
 // Render buffer cap; the actual rendered count follows the active pattern /
 // counting configuration at runtime (min'd against this).
-static const uint32_t kMaxLeds = 256;
+static const uint32_t kMaxLeds = 512;
 static CRGB leds[kMaxLeds];
 
 // --- async LED transmit (FUG-122 hill-climb) --------------------------------
-// The WS2812 strip write is ~30 µs/LED (256 LEDs ≈ 7.7 ms), and FastLED.show()
+// The WS2812 strip write is ~30 µs/LED (512 LEDs ≈ 15.4 ms), and FastLED.show()
 // BLOCKS until the RMT/DMA push completes — that used to stall the render task
 // for the whole transmit, serializing compute and I/O (frame period = render +
 // transmit). The RMT peripheral clocks the bits by DMA/interrupt with the CPU
@@ -131,7 +131,8 @@ static const UBaseType_t kRenderTaskPrio = 10;   // tune on-device if needed
 static const uint32_t kRenderTaskStack = 8192;   // FastLED.show() needs headroom
 
 // Largest inbound protocol message: a full submit_map for kMaxLeds (~96 B/LED,
-// so 256 LEDs ≈ 25 KB; 32 KB leaves headroom). Sized to the LED cap rather than
+// so 512 LEDs ≈ 49 KB) — but such uploads are sharded to flash (see below), so
+// this buffer is NOT sized to them. Sized to the LED cap rather than
 // the old 1024-LED assumption — the reclaimed static RAM is headroom the
 // heap-hungry TLS (wss) handshake needs. Shared by the ws:81 and wss:443 paths.
 // Single-frame message buffer: control traffic, one set_texture video frame
