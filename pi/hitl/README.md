@@ -31,16 +31,37 @@ bazel run //pi/hitl:hitl.deploy_live -- hitl-rig              # or push to a run
 
 (On macOS, start the builder first: `bazel run @sbc_deploy//:linux_builder`.)
 
+### Rig naming (canonical)
+
+Every box has **one** name, `hitl-<box>`, chosen at deploy time via
+`SBC_HOSTNAME_OVERRIDE`. That same string is used verbatim in all three places
+below, so a box is addressed identically everywhere — no `hitl-rig` /
+`hitl-rig-2` ambiguity, and `hitl reserve` discovery (including
+`--require analyzer`) finds the right box with no `--server`.
+
+| what               | value                     | example (this LA rig) |
+| ------------------ | ------------------------- | --------------------- |
+| System hostname    | `hitl-<box>`              | `hitl-rig-la-1`       |
+| Tailscale hostname | `hitl-<box>` (= hostname) | `hitl-rig-la-1`       |
+| AP SSID            | `hitl-<box>` (= hostname) | `hitl-rig-la-1`       |
+
+`<box>` names the physical box: use an `-la-<n>` suffix for a logic-analyzer rig
+(`rig-la-1`), plain `-<n>` otherwise. Set it once at deploy:
+
+```sh
+SBC_HOSTNAME_OVERRIDE=hitl-rig-la-1 bazel run //pi/hitl:hitl_la.deploy_live -- hitl-rig-la-1
+```
+
 ### Logic-analyzer rig variant (Pi 3 + shared FX2)
 
 `//pi/hitl:hitl_la.*` is the same rig built for a **Raspberry Pi 3B**
-(`hitl-la-rig`) with an FX2/fx2lafw logic analyzer tapping the DUT's WS2812 DIN,
+(`hitl-rig-la-1`) with an FX2/fx2lafw logic analyzer tapping the DUT's WS2812 DIN,
 for LED-driver correctness / latency tests. Same targets, `hitl_la` instead of
 `hitl`:
 
 ```sh
 bazel run //pi/hitl:hitl_la.image_sd    -- --device /dev/diskN
-bazel run //pi/hitl:hitl_la.deploy_live -- hitl-la-rig
+bazel run //pi/hitl:hitl_la.deploy_live -- hitl-rig-la-1
 ```
 
 The FX2 is a **shared, daemon-owned instrument** (its channels tap a couple per
