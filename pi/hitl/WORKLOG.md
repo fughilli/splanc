@@ -44,14 +44,19 @@ subprocess keeps a pipe open so nothing flushes until the end.
   (host BT), but the provisioner's 3× retry recovers every time.
 - **LA capture on hitl-rig-2:** wrote the map via the new endpoint — `c6-003f08`→D6,
   `c6-fa0324`→D7 (determined empirically: `c6-003f08` captured clean on the default
-  D6). `led_capture --device c6-003f08` **PASS** (exact 8-pixel match). `--device
-c6-fa0324` on D7 **captures the right pattern shape** (2R,2G,4B — so the D7 mapping
-  is correct) **but decodes degraded**: brightness `160` not `255`, and the 8 pixels
-  sit behind ~60 leading black pixels, repeating each frame. Classic FX2-tap signal
-  integrity (early trigger on noise + bit-time misreads) — see the DESIGN 5 V/level-
-  shift/shared-ground caveat. FOLLOW-UP (bench): improve the **D7** tap (level-shift
-  / shorter lead / shared ground), or rule out a persisted per-DUT brightness on
-  `c6-fa0324`, then re-run `led_capture --device c6-fa0324`.
+  D6). `led_capture --device c6-003f08` **PASS**. `--device c6-fa0324` on D7 **the
+  tap is fine** — decode is pristine (exact colors, no noise) and a re-run **PASSED**
+  on the same wiring. The one FAIL was a **capture frame-alignment flake**, not the
+  D7 tap:
+  - The wire carries **256-pixel frames** (`led_config.h NUM_LEDS 256`) with only the
+    first 8 lit, and every pixel is scaled to **160/255** (`main.cpp:1593
+FastLED.setBrightness(160)`) — both are player_app defaults, decoded exactly.
+  - With a 256-LED strip captured across ~2 repaints, the FX2 software-trigger's
+    frame-start doesn't reliably land on physical pixel 0: run 1 put the 8-lit block
+    at decoded offset 61 (so `got[:8]` was black → FAIL); run 2 at offset 0 → PASS.
+  - FOLLOW-UP (test, not bench): `led_capture` assumes the lit pattern starts at index
+    0 — harden it to locate the lit region within the decoded frame (the pattern is
+    the sole non-black run), so it's alignment-independent. NOT a wiring issue.
 
 ### Rig gotcha: `hitl-image-load` fails after a fresh Pi 3 reflash
 

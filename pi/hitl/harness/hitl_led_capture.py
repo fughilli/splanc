@@ -39,7 +39,7 @@ import time
 from typing import List, Tuple
 
 from hitl_client import Reservation, ReserveError
-from led_pattern import counting_message, diff_structure, expected_pixels
+from led_pattern import counting_message, diff_structure_aligned, expected_pixels
 from provision import dut_target, provision_dut
 
 BOOT_MARKER = "SPI_FAST_FLASH_BOOT"
@@ -171,8 +171,10 @@ def capture(res: Reservation, device: str, samples: int) -> List[Tuple[int, int,
     return [(p["r"], p["g"], p["b"]) for p in (res_json.get("pixels") or [])]
 
 
-# The pattern under test: full-scale primaries in short runs (LUT-identity), so the
-# wire carries exactly these bytes. Sized to --leds at runtime (see run()).
+# The pattern under test: full-scale primaries in short runs. The wire carries the
+# STRUCTURE (which channels are lit per LED) exactly; absolute values are scaled by
+# FastLED's global brightness (255 -> ~160), so we assert structure, not bytes (see
+# led_pattern). Sized to --leds at runtime (see run()).
 BLOCKS: List[Tuple[int, int, Tuple[int, int, int]]] = []
 
 
@@ -198,13 +200,15 @@ def run(args: argparse.Namespace) -> int:
         asyncio.run(_drive_pattern(args.device_ws, insecure=not args.ws_verify))
         time.sleep(0.5)
         got = capture_via_daemon(args.server, "", args.samples)
-        diffs = diff_structure(want, got)
+        diffs, off = diff_structure_aligned(want, got)
         if diffs:
-            _log(f"[FAIL] {len(diffs)} pixel(s) differ (first 8): {diffs[:8]}")
+            _log(f"[FAIL] {len(diffs)} pixel(s) differ (best offset {off}): {diffs[:8]}")
             _log(f"       expected {want}")
             _log(f"       got      {got}")
             return 1
-        _log(f"[PASS] {n} pixels match the driven pattern on the wire: {got}")
+        _log(
+            f"[PASS] {n} pixels match the driven pattern on the wire (at offset {off}): {got[off:off+n]}"
+        )
         return 0
 
     # require="analyzer" makes pool selection pick an analyzer-capable rig (not
@@ -238,13 +242,13 @@ def run(args: argparse.Namespace) -> int:
         # Empty device -> the daemon's default analyzer mapping (single-DUT LA rig);
         # pin it when a rig taps several DUTs on distinct channels.
         got = capture(res, getattr(res, "device", "") or "", args.samples)
-        diffs = diff_structure(want, got)
+        diffs, off = diff_structure_aligned(want, got)
         if diffs:
-            _log(f"[FAIL] {len(diffs)} pixel(s) differ (first 8): {diffs[:8]}")
+            _log(f"[FAIL] {len(diffs)} pixel(s) differ (best offset {off}): {diffs[:8]}")
             _log(f"       expected {want}")
             _log(f"       got      {got}")
             return 1
-        _log(f"[PASS] {n} pixels match the driven pattern on the wire")
+        _log(f"[PASS] {n} pixels match the driven pattern on the wire (at offset {off})")
         return 0
     finally:
         res.release()

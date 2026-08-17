@@ -9,10 +9,18 @@ compute the pixels the analyzer SHOULD decode, so a test reads:
     got = capture(dut)                          # via `hitl-capture` / the daemon
     assert not diff_pixels(expected_pixels(blocks, n), got)
 
-Choose full-scale channels (0 or 255) for the block colors: the firmware's WS2812
-gamma/color-correction LUT is the identity at 0 and 255, so the wire carries
-exactly what we asked for. Intermediate values are gamma-shaped on the wire —
-assert those against a post-LUT reference, not the raw request.
+Assert STRUCTURE, not exact bytes. The counting/calibration pattern is written to
+the FastLED buffer RAW — the firmware bypasses its color-correction LUT + software
+brightness for it on purpose (main.cpp cc_apply vs the counting-probe branch). BUT
+`FastLED.setBrightness(160)` is a FastLED-global scale applied to the whole buffer
+at show() time, so even the "unscaled" calibration pattern reaches the wire scaled
+(a full-scale 255 primary shows up as ~160 on every channel — uniform, since it's a
+global brightness, not the per-channel correction). That's why we compare lit-channel
+signatures (which channels are on), not raw values: the check is immune to both the
+global brightness and any per-channel correction. Use pure primaries/off for the
+blocks so each LED's signature is unambiguous. (For exact-value capture you'd need a
+firmware change to show calibration patterns at full brightness; diff_pixels is for
+synthesized traces where you control the exact bytes.)
 """
 
 from __future__ import annotations
@@ -80,6 +88,34 @@ def diff_structure(
         if g is None or channel_sig(g) != channel_sig(e):
             diffs.append((i, e, g if g is None else tuple(g)))
     return diffs
+
+
+def diff_structure_aligned(
+    expected: Sequence[Pixel], got: Sequence[Pixel]
+) -> Tuple[List[Tuple[int, Pixel, object]], int]:
+    """diff_structure, but tolerant of where the pattern sits in the capture.
+
+    The DUT drives a long strip (NUM_LEDS, e.g. 256) with only the pattern's LEDs
+    lit; the analyzer decodes one or more whole frames, and which decoded index the
+    lit block lands on depends on where the software trigger aligned to the frame —
+    it is NOT reliably 0. A fixed got[:n] comparison is therefore a coin flip (see
+    WORKLOG 2026-08-17). We instead slide `expected` across `got` and report the
+    best-matching offset, so the assert tracks the pattern's STRUCTURE regardless of
+    frame alignment. Returns (diffs_at_best_offset, best_offset); empty diffs = a
+    clean structural match somewhere in the capture.
+    """
+    n = len(expected)
+    if n == 0 or len(got) < n:
+        return diff_structure(expected, got), 0
+    best_diffs = None
+    best_off = 0
+    for off in range(0, len(got) - n + 1):
+        diffs = diff_structure(expected, got[off : off + n])
+        if not diffs:
+            return [], off  # perfect structural match — done
+        if best_diffs is None or len(diffs) < len(best_diffs):
+            best_diffs, best_off = diffs, off
+    return (best_diffs or []), best_off
 
 
 def diff_pixels(expected: Sequence[Pixel], got: Sequence[Pixel]) -> List[Tuple[int, Pixel, object]]:
