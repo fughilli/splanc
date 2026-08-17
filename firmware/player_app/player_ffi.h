@@ -110,6 +110,11 @@ bool lm_pattern_color(uint32_t led, uint32_t frame_index, uint8_t rgb[3]);
 // to the LEDs, buffered for the phone to drain via get_frame_timing.
 void lm_pattern_frame_shown(uint32_t seq, uint32_t t_mono_us);
 bool lm_counting_color(uint32_t led, uint8_t rgb[3]);
+// True while a mapping capture session is live (start_mapping .. stop_mapping).
+// provisioning_poll refuses a credential re-provision while this holds — the
+// WiFi.begin churn would drop the LAN mid-capture and trigger a wss reconnect
+// storm that OOMs/corrupts the heap-tight TLS stack (observed crash).
+bool lm_capture_active(void);
 // Topology-aware effect playback ("pulse"/"flood"). lm_playback_active() gates
 // it (an effect is configured). Once per frame call lm_playback_step(dt_ms) to
 // (re)build + advance the stateful sim; it returns whether a renderable sim

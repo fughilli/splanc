@@ -1683,6 +1683,16 @@ pub unsafe extern "C" fn lm_playback_active() -> bool {
     player().effect_config().is_some()
 }
 
+/// True while a mapping capture session is in progress (between start_mapping
+/// and stop_mapping). The firmware refuses a credential re-provision — whose
+/// WiFi.begin churn drops the LAN and unleashes a wss reconnect storm — while
+/// this holds, so a mid-capture re-init can't OOM/corrupt the TLS stack. See
+/// provisioning_poll in main.cpp.
+#[no_mangle]
+pub unsafe extern "C" fn lm_capture_active() -> bool {
+    player().capture_active()
+}
+
 /// (Re)build the effect simulator from the stored topology + active config if
 /// stale, then advance it by `dt_ms`. Returns whether a renderable sim exists
 /// (config active AND a topology is stored). Call once per render frame before

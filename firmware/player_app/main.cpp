@@ -65,6 +65,15 @@ SET_LOOP_TASK_STACK_SIZE(24 * 1024);
 static const char *kApPassword = "ledmapper";
 static const uint16_t kWsPort = 81;
 
+// Soft-AP master switch. The AP was only ever intended for a direct, non-TLS
+// bench/onboarding path that never shipped — provisioning is done over BLE
+// (Improv), and the hosted app reaches the player by its LAN IP over wss. With
+// the AP off we run STA-only, which also removes the boot-cert→demote→restart
+// TLS churn (the AP netif teardown + the httpd_ssl_stop/wss_start cycle) that
+// fragmented the heap and OOMed the :443 handshake. Flip back to true to
+// restore the AP if a direct non-TLS path is ever added.
+static constexpr bool kSoftApEnabled = false;
+
 // The player's display / Bluetooth-advertised name. Set in setup() from the
 // persisted custom name, or a "Led Widget <6-hex>" default derived from the MAC.
 // Reflected to BLE + persisted whenever the app sends set_device_name.
@@ -1448,22 +1457,29 @@ static void wss_start() {
   cfg.prvtkey_len = g_dev_key_len;
   cfg.prvtkey_pem = (const uint8_t *)g_dev_key;
   cfg.prvtkey_len = g_dev_key_len;
-  // TLS is heap-heavy on the C6: each mbedtls session is ~28 KB (the 16 KB
-  // record buffer + context), so cap concurrency hard — 2 sessions ≈ 56 KB
-  // leaves headroom, while 3+ (a browser's parallel connections plus the app's
-  // wss retries against a not-yet-trusted cert) exhaust the heap and every
-  // session fails with -0x7F00. LRU-purge the oldest rather than reject a
-  // reconnecting phone. The handler task runs lm_player_handle, whose micropb
-  // by-value structs need a big stack (the loop task is 24 KB for exactly this),
-  // so give the httpd task the same budget plus TLS-record margin or it
-  // overflows on the first message. Two sessions is deliberate: the phone loads
-  // the status/landing page over one while the app's wss holds the other.
-  cfg.httpd.max_open_sockets = 2;
+  // TLS concurrency — kept deliberately LOW. mbedtls (built from source with
+  // CONFIG_MBEDTLS_DYNAMIC_BUFFER, record buffer 16 KB -> 8 KB — see
+  // docs/design/mbedtls-dynamic-buffers.md) allocates the ~8 KB record buffer on
+  // demand per record so an IDLE session holds only ~2 KB, but the TRANSIENT
+  // handshake still needs its record buffer plus mbedtls/esp-aes working set. On
+  // this heap (STA+BLE+effect+map resident) a burst of concurrent handshakes
+  // still craters free heap — and under exhaustion the IDF TLS/AES path has been
+  // observed to corrupt the heap (multi_heap_free assert -> reboot), not just
+  // fail cleanly. So we cap concurrency hard: each extra slot is another possible
+  // simultaneous ~8 KB handshake. (The design doc floated 7 post-dynamic-buffer;
+  // on-hardware that proved unsafe — a mid-capture reconnect storm crashed the
+  // device — so we hold at 3: the app's wss + the status page + one spare.)
+  // LRU-purge the oldest rather than reject a reconnecting phone. The handler
+  // task runs lm_player_handle, whose micropb by-value structs need a big stack
+  // (the loop task is 24 KB for exactly this), so give the single httpd task the
+  // same budget plus TLS-record margin or it overflows on the first message.
+  // (stack_size is the ONE httpd task's stack, not per-session.)
+  cfg.httpd.max_open_sockets = 3;
   cfg.httpd.stack_size = 28 * 1024;
   cfg.httpd.lru_purge_enable = true;
   // Reclaim dead/half-open sessions so this single-task server can't wedge under
-  // connection churn. With only 2 slots, a client that vanishes mid-handshake or
-  // drops a live wss without a FIN otherwise holds a slot forever (it sits idle
+  // connection churn. With a small slot count, a client that vanishes mid-handshake
+  // or drops a live wss without a FIN otherwise holds a slot forever (it sits idle
   // in the httpd select loop with no way to notice the peer is gone), and new
   // handshakes stall behind it — observed on hardware: no recovery until reboot.
   //   - TCP keepalive detects a silently-gone peer and frees the slot (~14 s).
@@ -1714,19 +1730,22 @@ void setup() {
   // from the configured name (FUG-83).
   names_from_identity();
 
-  // WiFi: AP+STA. The soft-AP is always up (bench access + the fallback
-  // when no LAN is joined); stored credentials (BLE-provisioned via
-  // Improv) additionally join the user's network so the HOSTED app can
-  // reach the player (the AP-only onboarding was a dead end: a phone on
-  // the AP routes everything there and the hosted app can never load).
+  // WiFi: STA (optionally +AP, see kSoftApEnabled). Credentials are
+  // BLE-provisioned via Improv; a stored SSID joins the user's network so the
+  // HOSTED app can reach the player by LAN IP over wss. The soft-AP, when
+  // enabled, adds bench access + a no-LAN fallback (the AP-only onboarding was
+  // a dead end: a phone on the AP routes everything there and the hosted app
+  // can never load), but it's off by default now — see kSoftApEnabled.
   String ssid = prefs.getString("ssid", "");
-  WiFi.mode(WIFI_AP_STA);
+  WiFi.mode(kSoftApEnabled ? WIFI_AP_STA : WIFI_STA);
   // Set both hostnames before the netifs come up: STA before begin() (the DHCP
   // client name the router shows), AP before softAP().
   WiFi.setHostname(g_hostname);
-  WiFi.softAPsetHostname(g_hostname);
-  WiFi.softAP(g_ap_ssid, kApPassword);
-  softap_up = true;
+  if (kSoftApEnabled) {
+    WiFi.softAPsetHostname(g_hostname);
+    WiFi.softAP(g_ap_ssid, kApPassword);
+    softap_up = true;
+  }
   // Rebind the :81/:80 listeners on every STA (re)join — see on_sta_got_ip.
   WiFi.onEvent(on_sta_got_ip, ARDUINO_EVENT_WIFI_STA_GOT_IP);
   if (ssid.length() > 0) {
@@ -1757,8 +1776,15 @@ void setup() {
   // self-sign a boot cert for it, then start the server. If either step fails
   // under early-boot heap pressure, :443 stays down and reissue_cert_for_lan
   // brings it up after the LAN join (loop()'s reconcile retries).
-  if (load_or_gen_dev_key() && issue_boot_cert()) {
-    wss_start();  // TLS player on :443 for the hosted https app (direct, no relay)
+  //
+  // STA-only (kSoftApEnabled == false): there is no reachable IP before the LAN
+  // join — the boot cert only ever carried the soft-AP IP — so we DON'T start
+  // wss here. We just load/gen the key and let reissue_cert_for_lan issue the
+  // LAN cert and start :443 ONCE on the first join. That skips the
+  // boot-cert→httpd_ssl_stop→wss_start restart cycle whose teardown fragmented
+  // the heap and OOMed the handshake.
+  if (load_or_gen_dev_key() && kSoftApEnabled && issue_boot_cert()) {
+    wss_start();  // AP-mode: TLS player on :443 for the hosted https app
   }
 
   // Drive the LEDs from a dedicated high-priority task so the pattern cadence
@@ -1775,23 +1801,43 @@ void setup() {
 static void provisioning_poll() {
   char ssid[33], pass[65];
   if (improv_ble_take_credentials(ssid, sizeof ssid, pass, sizeof pass)) {
-    Log().printf("[player] provisioning: joining \"%s\"\n", ssid);
-    prefs.putString("ssid", ssid);
-    prefs.putString("pass", pass);
-    // Notify PROVISIONING BEFORE kicking off the join: WiFi.begin() churns the
-    // radio (scan + association) and a BLE notify fired into that churn is prone
-    // to being dropped on the single-core C6's WiFi/BLE coexistence. Report the
-    // state change while the radio is still calm, then start associating.
-    improv_ble_set_state(IMPROV_STATE_PROVISIONING);
-    WiFi.disconnect();
-    WiFi.begin(ssid, pass);
-    sta_joining = true;
-    sta_join_started = millis();
+    // Reject a re-provision that lands mid-capture. WiFi.begin() below churns
+    // the radio (disconnect + re-associate), which drops the app's LAN session;
+    // the app then reconnects and fires a burst of wss handshakes at the
+    // heap-tight TLS stack — observed to exhaust the heap and CORRUPT it
+    // (multi_heap_free assert -> reboot), destroying the in-progress mapping. A
+    // capture is a short, deliberate takeover, so refuse the reprovision rather
+    // than let it crash the run; the credential is consumed (take_credentials
+    // already latched it), so signal the client and stay AUTHORIZED. Reprovision
+    // once mapping finishes.
+    if (lm_capture_active()) {
+      Log().printf("[player] provisioning: REJECTED \"%s\" — mapping capture in "
+                   "progress (would churn WiFi mid-run)\n",
+                   ssid);
+      improv_ble_set_error(IMPROV_ERROR_UNABLE_TO_CONNECT);
+      improv_ble_set_state(IMPROV_STATE_AUTHORIZED);
+    } else {
+      Log().printf("[player] provisioning: joining \"%s\"\n", ssid);
+      prefs.putString("ssid", ssid);
+      prefs.putString("pass", pass);
+      // Notify PROVISIONING BEFORE kicking off the join: WiFi.begin() churns the
+      // radio (scan + association) and a BLE notify fired into that churn is prone
+      // to being dropped on the single-core C6's WiFi/BLE coexistence. Report the
+      // state change while the radio is still calm, then start associating.
+      improv_ble_set_state(IMPROV_STATE_PROVISIONING);
+      WiFi.disconnect();
+      WiFi.begin(ssid, pass);
+      sta_joining = true;
+      sta_join_started = millis();
+    }
   }
-  // Deferred post-join demote: reclaim the soft-AP heap and re-sign the wss cert
-  // for the LAN IP. Held off (see the join branch) until the central has taken
-  // the PROVISIONED result and disconnected — or the grace window lapses — so the
-  // BLE-disrupting teardown never races the provisioning notifications.
+  // Deferred post-join step: bring the wss cert/server onto the LAN IP (and, if
+  // the AP is enabled, reclaim its heap by demoting to STA-only). Held off (see
+  // the join branch) until the central has taken the PROVISIONED result and
+  // disconnected — or the grace window lapses — so the heap-disrupting TLS
+  // bring-up never races the provisioning notifications. With kSoftApEnabled
+  // false the softap_up block below is skipped and this is purely the first
+  // reissue_cert_for_lan (which starts :443 once, since wss is still null).
   if (sta_demote_pending &&
       (!improv_ble_central_connected() || millis() - sta_provisioned_at > kProvisionGraceMs)) {
     sta_demote_pending = false;

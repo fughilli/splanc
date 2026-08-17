@@ -754,6 +754,15 @@ impl Player {
             .map(|a| (a.epoch_ms, a.bit_period_us, a.spec.cycle_frames, a.spec.led_count))
     }
 
+    /// Whether a mapping capture session is in progress (start_mapping issued,
+    /// not yet stop_mapping'd). The firmware refuses a disruptive WiFi
+    /// re-provision (WiFi.begin churn) while this holds, since dropping the LAN
+    /// mid-capture triggers a wss reconnect storm that can OOM the heap-tight
+    /// TLS stack and corrupt the heap — see provisioning_poll in main.cpp.
+    pub fn capture_active(&self) -> bool {
+        self.active.is_some()
+    }
+
     /// The persisted strip length for `channel` (set_led_count).
     pub fn led_count(&self, channel: usize) -> Option<u32> {
         self.led_counts.get(channel).copied().flatten()
