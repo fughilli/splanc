@@ -15,6 +15,7 @@ load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_static_library", "rust_test")
 load("//tools:flash_bundle.bzl", "flash_bundle")
+load("//tools:ram_analysis.bzl", "ram_analysis")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -176,6 +177,14 @@ firmware_binary(
     board = "esp32c6",
     opt_mode = "opt",
     tags = ["manual"],
+)
+
+# Static-RAM audit of the opt image: `bazel build //firmware/player_app:esp32c6_ram`
+# then `cat bazel-bin/firmware/player_app/esp32c6_ram.ram_report`. Produces the
+# .ram.json + .ram_report targets (see //tools:ram_analysis.bzl).
+ram_analysis(
+    name = "esp32c6_ram",
+    image = ":esp32c6",
 )
 
 # -- On-device OSC bench image (FUG-121) -------------------------------------
