@@ -11,16 +11,14 @@ compute the pixels the analyzer SHOULD decode, so a test reads:
 
 Assert STRUCTURE, not exact bytes. The counting/calibration pattern is written to
 the FastLED buffer RAW — the firmware bypasses its color-correction LUT + software
-brightness for it on purpose (main.cpp cc_apply vs the counting-probe branch). BUT
-`FastLED.setBrightness(160)` is a FastLED-global scale applied to the whole buffer
-at show() time, so even the "unscaled" calibration pattern reaches the wire scaled
-(a full-scale 255 primary shows up as ~160 on every channel — uniform, since it's a
-global brightness, not the per-channel correction). That's why we compare lit-channel
-signatures (which channels are on), not raw values: the check is immune to both the
-global brightness and any per-channel correction. Use pure primaries/off for the
-blocks so each LED's signature is unambiguous. (For exact-value capture you'd need a
-firmware change to show calibration patterns at full brightness; diff_pixels is for
-synthesized traces where you control the exact bytes.)
+brightness for it on purpose (main.cpp cc_apply vs the counting-probe branch), and
+the redundant FastLED-global brightness scale was removed, so on current firmware a
+full-scale calibration pattern reaches the wire at its exact values. We still compare
+lit-channel signatures (which channels are on), not raw values, so the check stays
+robust to the software brightness control (which dims CONTENT paths via g_brightness)
+and any per-channel correction — and to older firmware that still dimmed the wire
+(255 showed up as ~160). Use pure primaries/off for the blocks so each LED's signature
+is unambiguous. (diff_pixels is for synthesized traces where you control the bytes.)
 """
 
 from __future__ import annotations

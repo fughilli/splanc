@@ -12,10 +12,11 @@ DUT's WS2812 DIN) it now can:
   3. drive a static color-block pattern (set_counting_pattern, §7.9) — full-scale
      primaries in R/G/B blocks;
   4. `hitl-capture` (or the daemon directly) asks the shared analyzer to capture +
-     decode this DUT's channel; assert the decoded pattern STRUCTURE matches. The
-     firmware applies WS2812 color-correction/gamma + brightness before the RMT
-     push (measured: full-scale 255 reaches the wire as ~160), so we compare
-     lit-channel structure per LED, not exact bytes (see led_pattern.diff_structure).
+     decode this DUT's channel; assert the decoded pattern STRUCTURE matches. We
+     compare lit-channel structure per LED, not exact bytes, so the check tolerates
+     the software brightness control (dims content) and older firmware that also
+     dimmed the wire via a FastLED-global scale (now removed) — see
+     led_pattern.diff_structure.
 
 Usage:
     bazel run //pi/hitl/harness:led_capture -- \
@@ -171,10 +172,10 @@ def capture(res: Reservation, device: str, samples: int) -> List[Tuple[int, int,
     return [(p["r"], p["g"], p["b"]) for p in (res_json.get("pixels") or [])]
 
 
-# The pattern under test: full-scale primaries in short runs. The wire carries the
-# STRUCTURE (which channels are lit per LED) exactly; absolute values are scaled by
-# FastLED's global brightness (255 -> ~160), so we assert structure, not bytes (see
-# led_pattern). Sized to --leds at runtime (see run()).
+# The pattern under test: full-scale primaries in short runs. We assert the STRUCTURE
+# (which channels are lit per LED), not exact bytes, so the check is robust to the
+# software brightness control and to older firmware that dimmed the wire via a
+# FastLED-global scale (removed). Sized to --leds at runtime (see run()).
 BLOCKS: List[Tuple[int, int, Tuple[int, int, int]]] = []
 
 
@@ -248,7 +249,10 @@ def run(args: argparse.Namespace) -> int:
             _log(f"       expected {want}")
             _log(f"       got      {got}")
             return 1
-        _log(f"[PASS] {n} pixels match the driven pattern on the wire (at offset {off})")
+        _log(
+            f"[PASS] {n} pixels match the driven pattern on the wire "
+            f"(at offset {off}): {got[off : off + n]}"
+        )
         return 0
     finally:
         res.release()
