@@ -209,7 +209,9 @@ def run(args: argparse.Namespace) -> int:
 
     # require="analyzer" makes pool selection pick an analyzer-capable rig (not
     # whichever frees first); with an explicit --server we assert it below.
-    res = Reservation(server=args.server or None, owner=args.owner, require="analyzer")
+    res = Reservation(
+        server=args.server or None, owner=args.owner, require="analyzer", device=args.device or None
+    )
     try:
         res.acquire()
     except ReserveError as e:
@@ -259,6 +261,11 @@ def main() -> int:
         "--server", default=os.environ.get("HITL_SERVER", ""), help="pin a rig (default: pool)"
     )
     ap.add_argument("--owner", default=os.environ.get("HITL_OWNER", "led_capture"))
+    ap.add_argument(
+        "--device",
+        default=os.environ.get("HITL_DEVICE"),
+        help="pin a specific DUT by name (e.g. c6-fa0324); default: any free DUT on the analyzer rig",
+    )
     ap.add_argument(
         "--wifi-ssid", default=os.environ.get("HITL_WIFI_SSID", ""), help="override the rig AP"
     )
