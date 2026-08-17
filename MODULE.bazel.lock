@@ -574,7 +574,7 @@
     "@@rules_nixpkgs_core~//extensions:package.bzl%nix_pkg": {
       "general": {
         "bzlTransitiveDigest": "2alEQC7q9PgrArc8ZeI662VmDHLGfuswqnzBJvVDnmg=",
-        "usagesDigest": "aicTSK3KgcH1kFoQ01/lWW93vVX6KYSsN7Ml1rxX2zg=",
+        "usagesDigest": "E4ucUN5Jn/YmDTyx5yC65QcL+uDL3u7smcb/18pFmjE=",
         "recordedFileInputs": {},
         "recordedDirentsInputs": {},
         "envVariables": {},
@@ -594,28 +594,11 @@
               "quiet": false,
               "fail_not_supported": true
             }
-          },
-          "binutils-unwrapped-all-targets": {
-            "bzlFile": "@@rules_nixpkgs_core~//:nixpkgs.bzl",
-            "ruleClassName": "_nixpkgs_package",
-            "attributes": {
-              "unmangled_name": "binutils-unwrapped-all-targets",
-              "attribute_path": "binutils-unwrapped-all-targets",
-              "nix_file_deps": {},
-              "nix_file_content": "",
-              "repository": "@@rules_nixpkgs_core~~nix_repo~nixpkgs//:nixpkgs",
-              "repositories": {},
-              "build_file_content": "package(default_visibility = [\"//visibility:public\"])\n\nfilegroup(\n    name = \"tools\",\n    srcs = glob([\"bin/*\"]),\n)\n",
-              "nixopts": [],
-              "quiet": false,
-              "fail_not_supported": true
-            }
           }
         },
         "moduleExtensionMetadata": {
           "explicitRootModuleDirectDeps": [
-            "minify",
-            "binutils-unwrapped-all-targets"
+            "minify"
           ],
           "explicitRootModuleDirectDevDeps": [],
           "useAllRepos": "NO",
@@ -1282,7 +1265,7 @@
         "bzlTransitiveDigest": "vt4SxWkQ68m/aCDZsNn52k7/n0uWiqqPHns004YWnPk=",
         "usagesDigest": "OlW6WWXv/18Gr0b4Af7hJ1klqvmCzNU25VIs31y4Wqs=",
         "recordedFileInputs": {
-          "@@//MODULE.bazel": "a298bc7942b3f304cbda737992ce20681a0e8fe619a97c5c7a301aaedb953f90",
+          "@@//MODULE.bazel": "d3c32deb01d87a6df46efc0174841d7ca81ffc9f6fb0e4f16657825fbce0510d",
           "@@rules_rust~~rust_host_tools~rust_host_tools//rust_host_tools": "ENOENT"
         },
         "recordedDirentsInputs": {},
@@ -2033,7 +2016,7 @@
         "bzlTransitiveDigest": "vt4SxWkQ68m/aCDZsNn52k7/n0uWiqqPHns004YWnPk=",
         "usagesDigest": "28S0c0v9E9ZvyYWD0ltX6dRQnIcS6QTp9mhHSIJVP2Q=",
         "recordedFileInputs": {
-          "@@//MODULE.bazel": "a298bc7942b3f304cbda737992ce20681a0e8fe619a97c5c7a301aaedb953f90",
+          "@@//MODULE.bazel": "d3c32deb01d87a6df46efc0174841d7ca81ffc9f6fb0e4f16657825fbce0510d",
           "@@rules_rust~~rust_host_tools~rust_host_tools//rust_host_tools": "ENOENT"
         },
         "recordedDirentsInputs": {},
