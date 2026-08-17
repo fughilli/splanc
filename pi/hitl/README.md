@@ -36,9 +36,9 @@ bazel run //pi/hitl:hitl.deploy_live -- hitl-rig-1           # or push to a runn
 Every box has **one** name, `hitl-rig-<n>`, with a **mandatory** numeric suffix
 `<n>` unique to the box (`hitl-rig-1`, `hitl-rig-2`, … — never a bare `hitl-rig`).
 Capability (e.g. a logic analyzer) is discovered from `/status`, not encoded in
-the name. The name is chosen at deploy via `SBC_HOSTNAME_OVERRIDE` and used
-verbatim in all three places below, so a box is addressed identically everywhere —
-no `hitl-rig`/`hitl-rig-2` ambiguity, and `hitl reserve` (including
+the name. The name is set at deploy with the `--hostname` flag and used verbatim
+in all three places below, so a box is addressed identically everywhere — no
+`hitl-rig`/`hitl-rig-2` ambiguity, and `hitl reserve` (including
 `--require analyzer`) finds it with no `--server`.
 
 | what               | value          | example      |
@@ -47,10 +47,10 @@ no `hitl-rig`/`hitl-rig-2` ambiguity, and `hitl reserve` (including
 | Tailscale hostname | `hitl-rig-<n>` | `hitl-rig-3` |
 | AP SSID            | `hitl-rig-<n>` | `hitl-rig-3` |
 
-Set it once at deploy (a plain Pi 3 rig `hitl-rig-3`):
+Set it with `--hostname` (a plain Pi 3 rig `hitl-rig-3`):
 
 ```sh
-SBC_HOSTNAME_OVERRIDE=hitl-rig-3 bazel run //pi/hitl:hitl_pi3.deploy_live -- hitl-rig-3
+bazel run //pi/hitl:hitl_pi3.deploy_live -- --hostname hitl-rig-3 <host-or-ip>
 ```
 
 ### Board + capabilities (mix and match)
@@ -64,11 +64,11 @@ optional capabilities are **env flags** at deploy, independent of the board:
 | `SBC_AP_DONGLE=1` | host the AP on a dedicated RTL8851BU USB radio (`ap0`) instead |
 |                   | of onboard `wlan0` — for a board that can't AP                 |
 
-So any combination works, e.g. an **analyzer on a Pi 5** (onboard-wlan0 AP):
+So any combination works, e.g. an **analyzer on a Pi 5** (onboard-wlan0 AP) —
+capabilities are env flags, the name is `--hostname`:
 
 ```sh
-SBC_HOSTNAME_OVERRIDE=hitl-rig-2 SBC_ANALYZER=1 \
-  bazel run //pi/hitl:hitl.deploy_live -- hitl-rig-2
+SBC_ANALYZER=1 bazel run //pi/hitl:hitl.deploy_live -- --hostname hitl-rig-2 <host-or-ip>
 ```
 
 ### Logic analyzer (shared FX2)

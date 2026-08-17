@@ -3,6 +3,27 @@
 Handoff notes alongside git history. Newest first. Read this before touching the
 rig's networking — there's live runtime state that isn't fully declarative yet.
 
+## 2026-08-17 — `--hostname` now sets the identity (sbc-deploy fix, pin bumped)
+
+`--hostname` was overloaded: image mode used it as the identity override, but
+deploy_live/ssh used it to pick the `nixosConfigurations` attr — so you had to set
+identity via `SBC_HOSTNAME_OVERRIDE` and never touch `--hostname` on deploy. Fixed
+upstream (sbc-deploy `caa484d`, branch `hostname-identity-decouple`): `--hostname`
+sets the machine identity (networking.hostName → tailscale name → AP SSID) in ALL
+modes; a new target-baked `--nixos-attr` picks the config variant. Pin bumped in
+MODULE.bazel + flake.nix/lock (nix/ was unchanged, so the flake narHash is kept).
+
+So the two knobs are now: **target** = what to build, **`--hostname`** = the box:
+
+```sh
+bazel run //pi/hitl:hitl_pi3.deploy_live -- --hostname hitl-rig-3 <host>       # plain Pi 3
+SBC_ANALYZER=1 bazel run //pi/hitl:hitl.deploy_live -- --hostname hitl-rig-2 <host>  # analyzer Pi 5
+```
+
+`SBC_HOSTNAME_OVERRIDE` still works (the flag just sets it), but prefer `--hostname`.
+Verified live: deployed hitl-rig-2 with `--hostname hitl-rig-2` (no env), all three
+names stuck.
+
 ## 2026-08-17 — decouple analyzer + AP-dongle from the board (3 orthogonal axes)
 
 The logic analyzer moved from a Pi 3 to a Pi 5 (hitl-rig-2), and hitl-rig-3 became a

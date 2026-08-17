@@ -43,13 +43,13 @@ sbc_application(
 # a plain Pi 3, an analyzer Pi 5, etc. Gives //pi/hitl:hitl_pi3.{image_sd,
 # deploy_live,ssh,keys}. See DESIGN.md "Shared logic analyzer" and internal/analyzer.
 #
-# hostname = "hitl-rig" is the nixosConfigurations attr the flake exposes
-# (mkSbcProject { hostName = "hitl-rig"; }), which deploy_live/ssh select — NOT the
-# deployed machine name. A rig's identity + capabilities are set per-deploy via env
-# (the same knobs used at flash time), e.g. a plain Pi 3:
-#   SBC_HOSTNAME_OVERRIDE=hitl-rig-3 bazel run //pi/hitl:hitl_pi3.deploy_live -- <host>
+# hostname = "hitl-rig" is the config's baked hostName / nixosConfigurations attr
+# (mkSbcProject { hostName = "hitl-rig"; }) that deploy_live/ssh build — NOT the
+# per-board machine name. The machine identity is the operator's --hostname flag,
+# and capabilities are env flags, both per-deploy, e.g. a plain Pi 3:
+#   bazel run //pi/hitl:hitl_pi3.deploy_live -- --hostname hitl-rig-3 <host>
 # or an analyzer Pi 5:
-#   SBC_HOSTNAME_OVERRIDE=hitl-rig-2 SBC_ANALYZER=1 bazel run //pi/hitl:hitl.deploy_live -- <host>
+#   SBC_ANALYZER=1 bazel run //pi/hitl:hitl.deploy_live -- --hostname hitl-rig-2 <host>
 sbc_application(
     name = "hitl_pi3",
     board = "@sbc_deploy//deploy/boards:raspberry-pi-3",

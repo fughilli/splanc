@@ -7,7 +7,7 @@
   description = "HITL rig — Pi test bench + agent CLI (sbc-deploy consumer)";
 
   inputs = {
-    sbc-deploy.url = "github:fughilli/sbc-deploy/18a5346812d8d7d56903b199c43feea800ba50dd?dir=nix";
+    sbc-deploy.url = "github:fughilli/sbc-deploy/caa484ddcbfeedd81868f2347eadeec818ed6642?dir=nix";
     nixpkgs.follows = "sbc-deploy/nixpkgs";
   };
 
