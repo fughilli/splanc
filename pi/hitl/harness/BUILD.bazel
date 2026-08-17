@@ -147,6 +147,33 @@ py_binary(
     ],
 )
 
+# Acquire the DUT→analyzer-channel map interactively: walk each DUT (blinking its
+# onboard LED via dut_id), ask which analyzer channel it's wired to, then POST the
+# map to the daemon (POST /analyzer/channel-map), which applies + persists it. Runs
+# the dut_id blink helpers, so it shares that firmware bundle. Interactive — run via
+# `bazel run … -- --server http://<rig-ip>:8087`.
+py_binary(
+    name = "map_la",
+    srcs = [
+        "hitl_dut_id.py",
+        "hitl_map_la.py",
+    ],
+    data = [
+        "//firmware/dut_id:esp32c6_flashbundle",
+        "//pi/hitl/cmd/hitl",
+    ],
+    imports = ["."],
+    main = "hitl_map_la.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "@rules_python//python/runfiles",
+    ],
+)
+
 # On-hardware mapping-sequence-trigger test (FUG-62): reserve a rig, flash,
 # activate an effect, send start_mapping, and assert the device shows
 # mapping-pattern frames (get_frame_timing ticks) — the regression guard for the

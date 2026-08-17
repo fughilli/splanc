@@ -48,12 +48,19 @@ type Config struct {
 	SampleRate string            // sigrok samplerate config, e.g. "24m"
 	Samples    int               // default capture length in samples
 	Map        map[string]DUTMap // keyed by DUT name; key "" is the default/fallback mapping
+	// MapPath, if set, is a JSON file the DUT→channel map is persisted to (the
+	// same schema as ParseChannelMap). It's loaded at New (overlaid on Map, so a
+	// map_la-written mapping survives daemon restarts and outranks the deploy
+	// default) and rewritten by SetMap. "" disables persistence.
+	MapPath string
 }
 
 // Broker owns the single shared analyzer and serializes captures on it.
 type Broker struct {
-	cfg Config
-	mu  sync.Mutex // exactly one capture at a time on the one instrument
+	cfg     Config
+	mu      sync.Mutex   // exactly one capture at a time on the one instrument
+	mapMu   sync.RWMutex // guards cfg.Map (read by captures/status, rewritten by SetMap)
+	mapPath string
 }
 
 // New builds a broker, filling defaults. A nil/disabled broker (empty Driver) is
@@ -79,7 +86,22 @@ func New(cfg Config) *Broker {
 	if cfg.Map == nil {
 		cfg.Map = map[string]DUTMap{}
 	}
-	return &Broker{cfg: cfg}
+	// Overlay any persisted map (runtime edits via map_la / SetMap) onto the
+	// deploy-provided default: persisted entries win, un-persisted DUTs keep the
+	// default. A missing/empty file is not an error (first boot).
+	if cfg.MapPath != "" {
+		if persisted, err := loadMapFile(cfg.MapPath); err != nil {
+			// Don't fail the daemon over a corrupt cache; log-and-ignore is the
+			// caller's job (New has no logger) — surface via a sentinel the caller
+			// can check. Here we just skip it.
+			_ = err
+		} else {
+			for k, v := range persisted {
+				cfg.Map[k] = v
+			}
+		}
+	}
+	return &Broker{cfg: cfg, mapPath: cfg.MapPath}
 }
 
 // Enabled reports whether an analyzer is configured on this rig.
@@ -92,6 +114,8 @@ func (b *Broker) Describe() *api.AnalyzerInfo {
 	if !b.Enabled() {
 		return nil
 	}
+	b.mapMu.RLock()
+	defer b.mapMu.RUnlock()
 	protoSeen, chSeen := map[string]bool{}, map[string]bool{}
 	var protocols, channels []string
 	add := func(m DUTMap) {
@@ -129,6 +153,8 @@ func (b *Broker) SampleRateHz() int { return parseSampleRate(b.cfg.SampleRate) }
 // the default ("") entry, then to a single-channel D0/ws2812 tap so a
 // minimally-configured rig still captures its sole DUT.
 func (b *Broker) mapping(dut string) DUTMap {
+	b.mapMu.RLock()
+	defer b.mapMu.RUnlock()
 	if m, ok := b.cfg.Map[dut]; ok {
 		return m
 	}
@@ -136,6 +162,40 @@ func (b *Broker) mapping(dut string) DUTMap {
 		return m
 	}
 	return DUTMap{Channels: []string{"D0"}, Protocol: ProtocolWS2812}
+}
+
+// Snapshot returns a copy of the current DUT→channel map for display/read-back
+// (the GET side of the runtime channel-map endpoint).
+func (b *Broker) Snapshot() map[string]DUTMap {
+	b.mapMu.RLock()
+	defer b.mapMu.RUnlock()
+	out := make(map[string]DUTMap, len(b.cfg.Map))
+	for k, v := range b.cfg.Map {
+		ch := append([]string(nil), v.Channels...)
+		out[k] = DUTMap{Channels: ch, Protocol: v.Protocol}
+	}
+	return out
+}
+
+// SetMap replaces the DUT→channel map wholesale and persists it (if a MapPath was
+// configured) so it survives daemon restarts. This is how `map_la` writes the
+// mapping it acquires interactively back "to the board" without a redeploy.
+// Persisting is best-effort surfaced as an error; the in-memory map is updated
+// regardless so the running daemon reflects the new mapping immediately.
+func (b *Broker) SetMap(m map[string]DUTMap) error {
+	b.mapMu.Lock()
+	next := make(map[string]DUTMap, len(m))
+	for k, v := range m {
+		ch := append([]string(nil), v.Channels...)
+		next[k] = DUTMap{Channels: ch, Protocol: v.Protocol}
+	}
+	b.cfg.Map = next
+	path := b.mapPath
+	b.mapMu.Unlock()
+	if path == "" {
+		return nil
+	}
+	return saveMapFile(path, next)
 }
 
 // Capture runs one triggered capture for the named DUT and returns the decoded
@@ -295,4 +355,61 @@ func ParseChannelMap(js string) (map[string]DUTMap, error) {
 		out[key] = DUTMap{Channels: v.Channels, Protocol: Protocol(v.Protocol)}
 	}
 	return out, nil
+}
+
+// wireMap is the on-disk / on-the-wire JSON shape of the channel map, matching
+// what ParseChannelMap reads: keyed by DUT name ("default" for the "" fallback).
+type wireEntry struct {
+	Channels []string `json:"channels"`
+	Protocol string   `json:"protocol"`
+}
+
+// MarshalChannelMap renders a broker map as the ParseChannelMap JSON schema, so a
+// map read out of the broker round-trips back in (and to the persisted file).
+func MarshalChannelMap(m map[string]DUTMap) ([]byte, error) {
+	raw := make(map[string]wireEntry, len(m))
+	for k, v := range m {
+		name := k
+		if name == "" {
+			name = "default"
+		}
+		ch := v.Channels
+		if ch == nil {
+			ch = []string{}
+		}
+		raw[name] = wireEntry{Channels: ch, Protocol: string(v.Protocol)}
+	}
+	return json.MarshalIndent(raw, "", "  ")
+}
+
+// loadMapFile reads a persisted channel map; a missing file yields an empty map
+// with no error (first boot, nothing persisted yet).
+func loadMapFile(path string) (map[string]DUTMap, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return map[string]DUTMap{}, nil
+		}
+		return nil, err
+	}
+	return ParseChannelMap(string(data))
+}
+
+// saveMapFile persists the map atomically (write-temp-then-rename) so a crash
+// mid-write can't corrupt the file the daemon reloads at boot.
+func saveMapFile(path string, m map[string]DUTMap) error {
+	data, err := MarshalChannelMap(m)
+	if err != nil {
+		return err
+	}
+	if dir := filepath.Dir(path); dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }

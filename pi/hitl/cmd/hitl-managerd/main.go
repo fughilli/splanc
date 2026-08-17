@@ -21,6 +21,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -118,6 +119,9 @@ func main() {
 		SampleRate: *analyzerRate,
 		Samples:    *analyzerSamples,
 		Map:        channelMap,
+		// Persist runtime map edits (map_la) next to the other daemon state so the
+		// acquired DUT→channel mapping survives restarts/reboots without a redeploy.
+		MapPath: filepath.Join(*stateDir, "analyzer-channel-map.json"),
 	})
 	if brk.Enabled() {
 		log.Printf("logic analyzer: driver=%s samplerate=%s (shared, brokered over /capture)", *analyzerDriver, *analyzerRate)
@@ -505,6 +509,62 @@ func routes(ctx context.Context, mgr *queue.Manager, brk *analyzer.Broker) http.
 			return
 		}
 		writeJSON(w, http.StatusOK, res)
+	})
+
+	// Read/write the shared analyzer's DUT→channel map at runtime. `map_la` walks
+	// the rig's DUTs (blinking each one's LED), asks the operator which analyzer
+	// channel each is wired to, and POSTs the assembled map here — which the broker
+	// applies live and persists, so the mapping "sticks to the board" across
+	// reboots with no redeploy. GET returns the current map for display/verify.
+	mux.HandleFunc("GET /analyzer/channel-map", func(w http.ResponseWriter, r *http.Request) {
+		if !brk.Enabled() {
+			writeErr(w, http.StatusServiceUnavailable, "this rig has no logic analyzer configured")
+			return
+		}
+		js, err := analyzer.MarshalChannelMap(brk.Snapshot())
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(js)
+	})
+
+	mux.HandleFunc("POST /analyzer/channel-map", func(w http.ResponseWriter, r *http.Request) {
+		if !brk.Enabled() {
+			writeErr(w, http.StatusServiceUnavailable, "this rig has no logic analyzer configured")
+			return
+		}
+		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "read body: "+err.Error())
+			return
+		}
+		m, err := analyzer.ParseChannelMap(string(body))
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		// Every non-default key must name a real DUT on this rig, so a typo can't
+		// silently write a mapping that never matches a capture.
+		for name := range m {
+			if name == "" {
+				continue
+			}
+			if !mgr.HasDevice(name) {
+				writeErr(w, http.StatusBadRequest, fmt.Sprintf("unknown device %q; rig has %v", name, mgr.Devices()))
+				return
+			}
+		}
+		if err := brk.SetMap(m); err != nil {
+			writeErr(w, http.StatusInternalServerError, "persist channel map: "+err.Error())
+			return
+		}
+		js, _ := analyzer.MarshalChannelMap(brk.Snapshot())
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(js)
 	})
 
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, r *http.Request) {
