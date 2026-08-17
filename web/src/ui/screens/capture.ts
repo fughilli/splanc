@@ -30,7 +30,12 @@ import { DetectorGL } from "../../cv/detect";
 import { CaptureUnsupportedError } from "../../xr/capture";
 import { DEFAULT_IMU_MAPPING, ImuRecorder, parseImuMapping } from "../../xr/imu";
 import { MediaStreamCaptureSource } from "../../xr/mediaStreamCapture";
-import { NativeCaptureSource, nativeCaptureAvailable } from "../../xr/nativeCaptureSource";
+import {
+  NativeCaptureSource,
+  nativeCaptureAvailable,
+  nativeLog,
+  saveSessionLog,
+} from "../../xr/nativeCaptureSource";
 import { SolverAgent, type SolveSnapshot } from "../../solver/agent";
 import { chooseSolvePlacement } from "../../solver/placement";
 import { LabelOverlay } from "../labels";
@@ -330,8 +335,16 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         exposureTarget = ms;
         detectGl = ms.gl;
       }
-      imuRecorder = new ImuRecorder(imuMapping);
-      imuRecorder.start();
+      // IMU: on iOS it comes from CoreMotion via the capture plugin, whose axes
+      // are documented and already in the camera frame — ImuRecorder's
+      // DeviceMotion mapping was fitted on an Android handset and has never been
+      // right here (mis-oriented maps; docs/design/ios-support.md §4.7). Both
+      // expose flush(), so the batch tick below is identical either way.
+      if (nativeSource === null) {
+        imuRecorder = new ImuRecorder(imuMapping);
+        imuRecorder.start();
+      }
+      const imuFlusher: { flush(): ImuSample[] } | null = nativeSource ?? imuRecorder;
 
       const detector = new DetectorGL(detectGl, detectorOpts);
       // The native reduction must threshold with the SAME value the servo below
@@ -449,6 +462,18 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           // Live count chip reads observations · solved, so the user sees more
           // recording only helps (design doc §4.2).
           countEl.textContent = `${localDetections.length} obs${liveSolvedText}`;
+          // Mirror the HUD to the console every ~2s: on iOS this is the only way
+          // to see decode health from a device run (tools/iosctl log), and the
+          // numbers that matter — ids, tracks, blobs, align — are already here.
+          if (frameCount % 60 === 0) {
+            const diag =
+              `[capture] ids=${s.uniqueIds.size}/${params.ledCount} tracks=${s.tracks} ` +
+                `blobs=${blobs.length} align=${s.alignShiftMs.toFixed(0)}ms ` +
+                `obs=${localDetections.length} bit=${params.bitPeriodMs}ms sym=${params.symbols}` +
+                (pop ? ` sat=${pop.satFrac.toFixed(2)} medI=${pop.medianIntensity.toFixed(2)}` : "");
+            console.info(diag);
+            nativeLog(diag);
+          }
         }
       });
 
@@ -500,8 +525,8 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       }, 400);
 
       // Inertial batches for the joint solver.
-      if (imuRecorder !== null) {
-        const rec = imuRecorder;
+      if (imuFlusher !== null) {
+        const rec = imuFlusher;
         const imuTick = setInterval(() => {
           if (!capturing) {
             clearInterval(imuTick);
@@ -689,6 +714,13 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     }
     const placement = chooseSolvePlacement(solverAgent.benchMs, c.hostSolverBenchMs);
     const solveOnPhone = placement === "phone" && solverAgent.available && localDetections.length > 0;
+    // The solve is where an iOS run can still fail after a perfect capture, and
+    // Release builds swallow console output — so record the whole decision.
+    nativeLog(
+      `[solve] placement=${placement} onPhone=${solveOnPhone} ` +
+        `wasmAvailable=${solverAgent.available} wasmBench=${solverAgent.benchMs} ` +
+        `hostBench=${c.hostSolverBenchMs} detections=${localDetections.length} imu=${localImu.length}`,
+    );
     if (!solveOnPhone && c.hostSolverBenchMs === null) {
       toast(
         solverAgent.available
@@ -739,14 +771,20 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     // plays no part once capture ends (FUG-69). Factored out so the host-solve
     // path can fall back to it when the device has dropped mid-capture.
     const solveOnPhoneNow = async (): Promise<OutputMap> => {
+      const problem = {
+        detections: localDetections,
+        imu: localImu,
+        ledCount: lastLedCount,
+        mapId: crypto.randomUUID(),
+        createdAt: new Date().toISOString(),
+      };
+      // Persist the exact solver input on iOS so a failed solve can be replayed
+      // natively (//solver:solver_cli) instead of re-captured per hypothesis.
+      void saveSessionLog(`session-${Date.now()}.json`, JSON.stringify(problem)).then((path) => {
+        if (path !== null) nativeLog(`[solve] session log saved: ${path}`);
+      });
       const solved = await solverAgent.solve(
-        {
-          detections: localDetections,
-          imu: localImu,
-          ledCount: lastLedCount,
-          mapId: crypto.randomUUID(),
-          createdAt: new Date().toISOString(),
-        },
+        problem,
         (snap: SolveSnapshot) => renderSolveSnapshot(snap),
       );
       // The solve frame is camera-anchored (origin ≈ camera-path end). Recenter
@@ -764,7 +802,9 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         // Best-effort device bookkeeping only — tell it to stop and hand it the
         // result if the socket is still up, but never fail the solve on it.
         await c.stopMappingNoSolve().catch(() => undefined);
+        nativeLog("[solve] phone solve starting");
         map = await solveOnPhoneNow();
+        nativeLog(`[solve] phone solve done: ${map.leds.length} leds`);
         pushedToDevice = await c.submitMap(map).then(() => true).catch(() => false);
       } else {
         try {
@@ -772,6 +812,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           const resp = await fetch(`/maps/${result.mapId}`);
           if (!resp.ok) throw new Error(`fetching map failed: HTTP ${resp.status}`);
           map = recenterToCentroid((await resp.json()) as OutputMap).map;
+          nativeLog(`[solve] host solve done: ${map.leds.length} leds`);
           pushedToDevice = true;
         } catch (hostErr) {
           // Host solve unreachable — typically the device dropped mid-capture
@@ -788,7 +829,12 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
             `host solve failed (${hostErr instanceof Error ? hostErr.message : hostErr}); ` +
               "falling back to the phone solver",
           );
+          nativeLog(
+            `[solve] host solve FAILED (${hostErr instanceof Error ? hostErr.message : String(hostErr)})` +
+              " — falling back to the phone solver",
+          );
           map = await solveOnPhoneNow();
+          nativeLog(`[solve] fallback phone solve done: ${map.leds.length} leds`);
           pushedToDevice = await c.submitMap(map).then(() => true).catch(() => false);
         }
       }
@@ -804,6 +850,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       );
       router.navigate(`/map/${id}`);
     } catch (e) {
+      nativeLog(`[solve] FAILED: ${e instanceof Error ? e.message : String(e)}`);
       toast(`Reconstruction failed: ${e instanceof Error ? e.message : e}`, { error: true });
       router.navigate("/maps");
     } finally {

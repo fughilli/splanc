@@ -36,6 +36,27 @@ if [ -f "$appdelegate" ]; then
   fi
 fi
 
+# --- Orientation lock during capture. iOS decides supported orientations by
+# asking the app delegate, so the camera plugin can't pin portrait on its own —
+# it sets CameraOrientationLock.portraitOnly and this delegate method reports it.
+# Mapping needs it: a viewport that flips to landscape mid-capture is distracting
+# while framing, and the camera-to-IMU relation the VIO solve depends on only
+# holds still while the interface orientation does. Patched here because the
+# ios/ tree is regenerated (idempotent — keyed on the method name).
+if [ -f "$appdelegate" ]; then
+  if grep -q supportedInterfaceOrientationsFor "$appdelegate"; then
+    echo "AppDelegate: orientation lock already wired"
+  else
+    perl -0pi -e 's/^(import UIKit\n)/$1import SplancCameraBridge\n/m' "$appdelegate"
+    perl -0pi -e 's/(func application\(_ application: UIApplication, didFinishLaunchingWithOptions[^\n]*\{\n)/    func application(_ application: UIApplication,\n                     supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {\n        \/\/ Splanc: pinned to portrait while the native capture session runs.\n        return CameraOrientationLock.portraitOnly ? .portrait : .all\n    }\n\n$1/' "$appdelegate"
+    if grep -q supportedInterfaceOrientationsFor "$appdelegate"; then
+      echo "AppDelegate: wired the capture orientation lock"
+    else
+      echo "WARNING: could not patch $appdelegate for the orientation lock" >&2
+    fi
+  fi
+fi
+
 # --- App icon: overwrite Capacitor's default with the Splanc logo (same as the
 # PWA). The asset catalog uses one universal 1024×1024 image (AppIcon-512@2x.png,
 # per Contents.json); iOS applies its own rounded-corner mask, so AppIcon-1024.png

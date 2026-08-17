@@ -19,7 +19,7 @@
  * capture screen must keep the page transparent while this source is running.
  */
 
-import type { Intrinsics } from "@ledmapper/protocol";
+import type { ImuSample, Intrinsics } from "@ledmapper/protocol";
 import type { CaptureFrame, CaptureSource } from "./capture";
 import type { ReducedFrame } from "../cv/detect";
 import { isIosNative, registerNativePlugin } from "../net/native";
@@ -40,12 +40,16 @@ interface FrameEvent {
   measureH: number;
   measure: string;
   tCaptureMs: number;
+  /** CoreMotion samples since the previous frame, already in the camera frame. */
+  imu: { t: number; gyro: [number, number, number]; accel: [number, number, number] }[];
 }
 
 interface CameraBridgePlugin {
   start(): Promise<{ width: number; height: number }>;
   stop(): Promise<void>;
   setDetectParams(opts: { threshold?: number; downscale?: number }): Promise<void>;
+  log(opts: { message: string }): Promise<void>;
+  saveSessionLog(opts: { name: string; json: string }): Promise<{ path: string; bytes: number }>;
   setExposure(opts: { target: number; maxExposureMs?: number }): Promise<{
     applied: boolean;
     description: string;
@@ -69,6 +73,53 @@ function b64ToBytes(b64: string): Uint8Array<ArrayBuffer> {
   return out;
 }
 
+
+/**
+ * Maps a native capture timestamp into the performance.now() clock the rest of
+ * the app works in.
+ *
+ * These are different epochs: CMTime presentation timestamps are seconds since
+ * BOOT, while performance.now() is milliseconds since the PAGE's time origin —
+ * and IMU samples (xr/imu.ts) are stamped with the latter. Left unmapped, the
+ * solver's IMU trim (solver/src/pipeline.rs retains only samples inside the frame
+ * span) discards every IMU sample and the solve dies with "too few IMU samples
+ * for a VIO solve".
+ *
+ * The offset is the MINIMUM of (arrival − capture) over the first frames: every
+ * observation is inflated by however long that frame took to reach JS, so the
+ * smallest one is the closest estimate of the true epoch difference. Taking the
+ * minimum rather than the first sample keeps one slow frame from biasing the
+ * whole run.
+ *
+ * Monotonic-safe: the offset only ever shrinks, by at most the delivery jitter (a
+ * few ms), while capture times advance ~33 ms per frame — so mapped timestamps
+ * still increase. Deliberately epoch-agnostic: it corrects ANY constant offset
+ * between the clocks, so it holds even if the native epoch is not boot-relative.
+ */
+export class ClockOffset {
+  private offsetMs = Number.POSITIVE_INFINITY;
+  private samples = 0;
+
+  constructor(private readonly settleFrames = 30) {}
+
+  /** Refine the estimate from a frame observation, and map that frame's time. */
+  map(captureMs: number, arrivalMs: number): number {
+    if (this.samples < this.settleFrames) {
+      this.offsetMs = Math.min(this.offsetMs, arrivalMs - captureMs);
+      this.samples++;
+    }
+    return this.apply(captureMs);
+  }
+
+  /** Map a timestamp WITHOUT letting it refine the estimate. For IMU samples:
+   * they share the frames' clock, but they're captured before the frame that
+   * carries them, so their apparent latency is not a latency — and letting them
+   * vote would also burn the settle window ~3x faster than intended. */
+  apply(captureMs: number): number {
+    return captureMs + this.offsetMs;
+  }
+}
+
 export class NativeCaptureSource implements CaptureSource {
   private frameCb: ((f: CaptureFrame) => void) | null = null;
   private listener: { remove(): Promise<void> } | null = null;
@@ -82,6 +133,9 @@ export class NativeCaptureSource implements CaptureSource {
   private measure: Uint8Array<ArrayBuffer> = new Uint8Array(0);
   private measureW = 0;
   private measureH = 0;
+  private clock = new ClockOffset();
+  // CoreMotion samples awaiting the capture screen's batch tick.
+  private imuPending: ImuSample[] = [];
   /** What the last setExposure did, for the HUD (mirrors MediaStreamCaptureSource). */
   exposureApplied: string | null = null;
 
@@ -94,6 +148,8 @@ export class NativeCaptureSource implements CaptureSource {
 
   async start(): Promise<void> {
     if (this.running) return;
+    // Re-estimate per session: the offset is only valid for one run of the clock.
+    this.clock = new ClockOffset();
     const b = cameraBridge();
     this.listener = await b.addListener("cameraFrame", (e) => this.onNativeFrame(e));
     await b.start();
@@ -140,6 +196,21 @@ export class NativeCaptureSource implements CaptureSource {
     void cameraBridge().setDetectParams(p);
   }
 
+  /**
+   * Drain the IMU samples collected since the last call — same shape as
+   * ImuRecorder.flush(), so the capture screen's batch tick works unchanged.
+   *
+   * These come from CoreMotion rather than WebKit's DeviceMotion, so no axis
+   * guessing is involved: for the rear camera in portrait the CoreMotion device
+   * frame and the wire's camera frame coincide (see the plugin's startImu), and
+   * the samples are already in m/s^2 and rad/s.
+   */
+  flush(): ImuSample[] {
+    const out = this.imuPending;
+    this.imuPending = [];
+    return out;
+  }
+
   /** Lit-pixel count of the last frame (diagnostics / HUD). */
   get lastLitPixels(): number {
     return this.lastLit;
@@ -147,6 +218,7 @@ export class NativeCaptureSource implements CaptureSource {
 
   private onNativeFrame(e: FrameEvent): void {
     if (!this.running || !this.frameCb) return;
+    const arrivalMs = performance.now();
 
     // Rebuild the dense RGBA buffer the detector's CCL expects by scattering the
     // lit pixels back into a zeroed frame.
@@ -185,6 +257,15 @@ export class NativeCaptureSource implements CaptureSource {
       measureH: this.measureH,
     };
 
+    // Map the frame FIRST so the IMU below applies an up-to-date offset. Both
+    // clocks are boot-relative, so they take the SAME offset — mapping them
+    // differently would shear camera and IMU apart, which is precisely what the
+    // solver's IMU trim punishes.
+    const tCaptureMs = this.clock.map(e.tCaptureMs, arrivalMs);
+    for (const s of e.imu ?? []) {
+      this.imuPending.push({ t: this.clock.apply(s.t), gyro: s.gyro, accel: s.accel });
+    }
+
     this.frameCb({
       texture: null,
       reduced,
@@ -192,7 +273,7 @@ export class NativeCaptureSource implements CaptureSource {
       K: this.intrinsics(e.imgW, e.imgH),
       imgW: e.imgW,
       imgH: e.imgH,
-      tCaptureMs: e.tCaptureMs,
+      tCaptureMs,
     });
   }
 
@@ -207,6 +288,41 @@ export class NativeCaptureSource implements CaptureSource {
       return [seed.k[0] * sx, seed.k[1] * sy, seed.k[2] * sx, seed.k[3] * sy];
     }
     return heuristicK(w, h);
+  }
+}
+
+/**
+ * Write a diagnostic line to the iOS device console.
+ *
+ * Release builds compile Capacitor's logging out, so `console.*` from here never
+ * reaches `tools/iosctl log` — and enabling its production logging instead would
+ * dump every bridge call, including a frame event 30x/s carrying kilobytes of
+ * base64, which would distort the timings it exists to reveal. A no-op off-iOS,
+ * so callers can log unconditionally alongside their normal console call.
+ */
+export function nativeLog(message: string): void {
+  if (!isIosNative()) return;
+  void cameraBridge().log({ message });
+}
+
+/**
+ * Persist a capture's solver input into the app container for offline replay.
+ *
+ * Pull it with:
+ *   xcrun devicectl device copy from --device <udid> \
+ *     --domain-type appDataContainer --domain-identifier dev.splanc.app \
+ *     --source Documents/<name> --destination .
+ * then replay natively with `bazel run //solver:solver_cli < <name>`.
+ *
+ * A no-op off-iOS. Resolves to the on-device path, or null if it couldn't write.
+ */
+export async function saveSessionLog(name: string, json: string): Promise<string | null> {
+  if (!isIosNative()) return null;
+  try {
+    const r = await cameraBridge().saveSessionLog({ name, json });
+    return r.path;
+  } catch {
+    return null;
   }
 }
 

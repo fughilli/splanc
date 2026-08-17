@@ -1,5 +1,6 @@
 import AVFoundation
 import Capacitor
+import CoreMotion
 import Foundation
 import UIKit
 import WebKit
@@ -37,7 +38,9 @@ public class CameraBridge: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "stop", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setExposure", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "clearExposure", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "setDetectParams", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "setDetectParams", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "log", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "saveSessionLog", returnType: CAPPluginReturnPromise)
     ]
 
     // Session setup/teardown blocks; keep them off the main thread (startRunning
@@ -67,6 +70,18 @@ public class CameraBridge: CAPPlugin, CAPBridgedPlugin {
     private var lastFrameLogTime = CFAbsoluteTimeGetCurrent()
     /// Holds its scratch buffers across frames — see FrameReducer's perf note.
     private let reducer = FrameReducer()
+
+    // CoreMotion IMU. Taken natively for the same reason as the camera: the axis
+    // conventions WebKit's DeviceMotion reports vary by handset, and imu.ts can
+    // only guess at them (its DEFAULT_IMU_MAPPING was fitted on an Android
+    // device). On iOS that guess has never been right — maps came out
+    // mis-oriented — and the VIO solve fuses camera with IMU, so a wrong mapping
+    // kills the solve while decode carries on looking perfect. CoreMotion's axes
+    // are documented, and its timestamps share the frames' clock.
+    private let motion = CMMotionManager()
+    private let imuQueue = OperationQueue()
+    private let imuLock = NSLock()
+    private var imuPending: [[String: Any]] = []
     // WKWebView paints an opaque background by default, which would hide the
     // preview layer sitting behind it. Remember what to put back on stop().
     private var webViewWasOpaque = true
@@ -143,6 +158,7 @@ public class CameraBridge: CAPPlugin, CAPBridgedPlugin {
 
         session = sess
         device = dev
+        startImu()
         clog("started: \(describe(dev))")
         DispatchQueue.main.async { self.installPreview(sess) }
         call.resolve(info(dev, sess))
@@ -151,6 +167,8 @@ public class CameraBridge: CAPPlugin, CAPBridgedPlugin {
     @objc func stop(_ call: CAPPluginCall) {
         sessionQueue.async { [weak self] in
             guard let self = self else { call.resolve(); return }
+            self.motion.stopDeviceMotionUpdates()
+            self.imuLock.lock(); self.imuPending.removeAll(); self.imuLock.unlock()
             self.videoOutput?.setSampleBufferDelegate(nil, queue: nil)
             self.videoOutput = nil
             self.session?.stopRunning()
@@ -162,6 +180,74 @@ public class CameraBridge: CAPPlugin, CAPBridgedPlugin {
                 call.resolve()
             }
         }
+    }
+
+    // MARK: - IMU
+
+    /// Standard gravity, for converting CoreMotion's g-units to m/s².
+    private static let g0 = 9.80665
+
+    /// Stream device motion at the frame-pairing rate the solver wants.
+    ///
+    /// Frame conventions, which is the whole point of doing this natively:
+    /// CoreMotion's device frame is +X right, +Y toward the top edge, +Z out of
+    /// the screen. The wire format wants the CAMERA frame, +X right, +Y up, -Z
+    /// look (see web/src/xr/imu.ts). The REAR camera looks out the back, along
+    /// -Z of the device — so its look direction is already -Z and the two frames
+    /// coincide: the mapping is the IDENTITY. That derivation only holds while
+    /// the interface is pinned to portrait, which is why capture locks it.
+    private func startImu() {
+        guard motion.isDeviceMotionAvailable else {
+            clog("WARNING: device motion unavailable — the VIO solve needs IMU")
+            return
+        }
+        imuQueue.maxConcurrentOperationCount = 1
+        motion.deviceMotionUpdateInterval = 1.0 / 100.0
+        motion.startDeviceMotionUpdates(using: .xArbitraryZVertical, to: imuQueue) {
+            [weak self] dm, _ in
+            guard let self = self, let dm = dm else { return }
+            let r = dm.rotationRate
+            // Accelerometer sign: `gravity − userAcceleration`, i.e. at rest this
+            // reports the GRAVITY vector in body coordinates, which is the NEGATION
+            // of textbook specific force (a − g). Determined empirically against a
+            // real 60-LED capture replayed through //solver:solver_cli, because
+            // getting it backwards does not fail loudly — it fails by collapsing
+            // the metric scale:
+            //
+            //     gravity − userAcceleration  → 59/60 leds, rms   1.1 px  <-- this
+            //     userAcceleration − gravity  →  0/60 leds, rms 150k  px
+            //
+            // With the sign inverted the solve still recovers the right SHAPE (the
+            // interim preview shows a recognisable strip) but at ~1.5 cm total
+            // extent, so every LED lands behind the cameras, fails pipeline.rs's
+            // depth check, and the map comes out empty. Historically this also
+            // produced the mis-oriented, single-vantage-point maps on iOS.
+            let ax = (dm.gravity.x - dm.userAcceleration.x) * CameraBridge.g0
+            let ay = (dm.gravity.y - dm.userAcceleration.y) * CameraBridge.g0
+            let az = (dm.gravity.z - dm.userAcceleration.z) * CameraBridge.g0
+            // dm.timestamp is seconds since boot — the same clock as the frames'
+            // presentation timestamps, so one ClockOffset maps both.
+            let sample: [String: Any] = [
+                "t": dm.timestamp * 1000.0,
+                "gyro": [r.x, r.y, r.z],
+                "accel": [ax, ay, az]
+            ]
+            self.imuLock.lock()
+            // Bound the queue: if frames stop draining it, drop the oldest rather
+            // than grow without limit (2 s at 100 Hz is far more than a frame gap).
+            if self.imuPending.count >= 200 { self.imuPending.removeFirst() }
+            self.imuPending.append(sample)
+            self.imuLock.unlock()
+        }
+    }
+
+    /// Samples accumulated since the last frame, handed over and cleared.
+    private func drainImu() -> [[String: Any]] {
+        imuLock.lock()
+        let out = imuPending
+        imuPending.removeAll(keepingCapacity: true)
+        imuLock.unlock()
+        return out
     }
 
     // MARK: - Preview
@@ -189,12 +275,30 @@ public class CameraBridge: CAPPlugin, CAPBridgedPlugin {
         web.backgroundColor = .clear
         web.scrollView.backgroundColor = .clear
         previewView = pv
+        applyOrientationLock(true)
         clog("preview installed: host=\(host.bounds.size) webViewWasOpaque=\(webViewWasOpaque) "
              + "— the PAGE must also be transparent (html AND body; the root element "
              + "paints the canvas) or this layer stays hidden behind it")
     }
 
+    /// Pin (or release) the interface orientation. The flag drives the
+    /// AppDelegate's supportedInterfaceOrientationsFor; the rest forces iOS to
+    /// re-evaluate it now rather than at the next device rotation, so a phone
+    /// already held sideways snaps back instead of staying landscape.
+    private func applyOrientationLock(_ portraitOnly: Bool) {
+        CameraOrientationLock.portraitOnly = portraitOnly
+        guard let vc = bridge?.viewController else { return }
+        if #available(iOS 16.0, *) {
+            vc.setNeedsUpdateOfSupportedInterfaceOrientations()
+            vc.view.window?.windowScene?.requestGeometryUpdate(
+                .iOS(interfaceOrientations: portraitOnly ? .portrait : .all))
+        } else {
+            UIViewController.attemptRotationToDeviceOrientation()
+        }
+    }
+
     private func removePreview() {
+        applyOrientationLock(false)
         previewView?.removeFromSuperview()
         previewView = nil
         guard let web = bridge?.webView else { return }
@@ -306,6 +410,50 @@ public class CameraBridge: CAPPlugin, CAPBridgedPlugin {
         call.resolve()
     }
 
+    /// A console sink for JS diagnostics on a Release build.
+    ///
+    /// Capacitor compiles its logging out of release builds, so `console.*` from
+    /// the web layer never reaches `devicectl --console`. Turning its production
+    /// logging back on is not an option here: it logs every bridge call, and this
+    /// plugin emits a frame event 30x/s carrying kilobytes of base64 — the log
+    /// traffic alone would distort the timings we use it to measure. So the
+    /// capture path routes its own diagnostic line through here instead.
+    @objc func log(_ call: CAPPluginCall) {
+        clog("[js] \(call.getString("message") ?? "")")
+        call.resolve()
+    }
+
+    /// Persist a capture's solver input to the app container, so it can be pulled
+    /// off with `xcrun devicectl device copy from` and replayed on a Mac.
+    ///
+    /// A failing solve can't be debugged from the phone: the interesting state is
+    /// thousands of detections and IMU samples, far too much for the console, and
+    /// each hypothesis otherwise costs a rebuild plus a physical re-capture. The
+    /// same JSON feeds `bazel run //solver:solver_cli` natively, so a real capture
+    /// becomes a fixture you can iterate against in seconds.
+    @objc func saveSessionLog(_ call: CAPPluginCall) {
+        guard let name = call.getString("name"), let json = call.getString("json") else {
+            call.reject("saveSessionLog: needs 'name' and 'json'")
+            return
+        }
+        // Reject path separators — this name reaches the filesystem.
+        let safe = name.replacingOccurrences(of: "/", with: "_")
+        guard let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+        else {
+            call.reject("saveSessionLog: no documents directory")
+            return
+        }
+        let url = dir.appendingPathComponent(safe)
+        do {
+            try json.write(to: url, atomically: true, encoding: .utf8)
+            clog("saved session log: \(url.path) (\(json.utf8.count) bytes)")
+            call.resolve(["path": url.path, "bytes": json.utf8.count])
+        } catch {
+            clog("saveSessionLog failed: \(error.localizedDescription)")
+            call.reject("saveSessionLog: \(error.localizedDescription)")
+        }
+    }
+
     // MARK: - Introspection
 
     private func info(_ d: AVCaptureDevice, _ s: AVCaptureSession) -> [String: Any] {
@@ -363,10 +511,13 @@ extension CameraBridge: AVCaptureVideoDataOutputSampleBufferDelegate {
         let reduceMs = (CFAbsoluteTimeGetCurrent() - t0) * 1000.0
         reduceMsEma = reduceMsEma == 0 ? reduceMs : reduceMsEma * 0.9 + reduceMs * 0.1
 
-        // Capture time in the SAME clock JS reads with performance.now(): both are
-        // rooted in mach_absolute_time, which is what CMTime timestamps use here.
-        // Getting this wrong drifts the temporal decode, so it's derived rather
-        // than stamped on arrival.
+        // Presentation time, in the host time base — seconds since BOOT. This is
+        // NOT the performance.now() epoch (milliseconds since the page's time
+        // origin), so NativeCaptureSource maps it before anything downstream sees
+        // it; unmapped, the solver's IMU trim throws away every IMU sample. It is
+        // still the right thing to send: it's the true capture instant, free of
+        // delivery latency, so frame-to-frame spacing (what the temporal decode
+        // depends on) is exact.
         let tCapture = CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sampleBuffer)) * 1000.0
 
         framesEmitted += 1
@@ -393,9 +544,29 @@ extension CameraBridge: AVCaptureVideoDataOutputSampleBufferDelegate {
             "measureW": r.measureWidth,
             "measureH": r.measureHeight,
             "measure": wantMeasure ? r.measure.base64EncodedString() : "",
-            "tCaptureMs": tCapture
+            "tCaptureMs": tCapture,
+            // IMU rides along with the frames rather than on its own event: at
+            // 100 Hz that would be 100 bridge calls a second, and the samples are
+            // consumed against these frames anyway.
+            "imu": drainImu()
         ])
     }
+}
+
+/// Whether the app is currently pinned to portrait.
+///
+/// Read by `application(_:supportedInterfaceOrientationsFor:)` in the generated
+/// AppDelegate, which web/ios-config/apply.sh patches in (the ios/ tree is
+/// regenerated, so that patch is the source of truth). Public because the app
+/// target has to see it across the module boundary.
+///
+/// Mapping holds portrait for two reasons: a viewport that flips to landscape
+/// mid-capture is distracting while you're framing a shot, and — the substantive
+/// one — the camera-to-IMU relationship is fixed only while the interface
+/// orientation is. The VIO solve fuses the two, so letting the device rotate
+/// under a fixed IMU axis mapping makes that mapping wrong for half the run.
+public enum CameraOrientationLock {
+    public static var portraitOnly = false
 }
 
 /// A view whose backing layer IS the preview layer, so it tracks bounds through
