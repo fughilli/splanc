@@ -6,7 +6,7 @@
 //	hitl release <id>       # release a reservation
 //	hitl ssh <id>           # SSH into an already-active reservation
 //
-// The rig URL comes from --server or $HITL_SERVER (e.g. http://hitl-rig:8087).
+// The rig URL comes from --server or $HITL_SERVER (e.g. http://hitl-rig-1:8087).
 package main
 
 import (
@@ -103,8 +103,9 @@ func usage() {
 
 Server URL: --server, else $HITL_SERVER, else the shortest-queue runner in the
 pool. The pool is an explicit $HITL_SERVERS list (comma/space hosts) if set,
-otherwise the tailnet nodes tagged $HITL_TAG (default tag:splanc-hitl). Falls
-back to http://hitl-rig:8087 when nothing is discoverable.
+otherwise the tailnet nodes tagged $HITL_TAG (default tag:splanc-hitl). Errors
+with a hint if nothing is discoverable (discovery needs the tailscale CLI on
+PATH, so use 'bazel run', not the sandboxed 'bazel test').
 Flash bundle: build one with e.g.
   bazel build //firmware/player_app:esp32c6_flashbundle
 `)
@@ -992,14 +993,24 @@ func poolServers() ([]string, string, error) {
 // resolveServer turns the (possibly empty) --server/$HITL_SERVER value into a
 // concrete runner URL. With neither set, it discovers the runner pool (see
 // poolServers), probes every runner's /status, and picks the shortest-queue one
-// (see internal/pool). With no pool discoverable, it falls back to hitl-rig.
+// (see internal/pool). With nothing discoverable it errors with a hint rather
+// than guessing a hostname (there is no canonical single rig under the naming
+// scheme — see pi/hitl/README.md).
 func resolveServer(s string, req ...pool.Require) (string, error) {
 	if strings.TrimSpace(s) != "" {
 		return s, nil // explicit --server/$HITL_SERVER: trust the operator's pick
 	}
-	servers, source, _ := poolServers()
+	servers, source, derr := poolServers()
 	if len(servers) == 0 {
-		return "http://hitl-rig:8087", nil
+		hint := "pass --server (e.g. http://hitl-rig-1:8087) or set $HITL_SERVERS"
+		if derr != nil {
+			// Discovery failed — commonly no `tailscale` on PATH, which is what
+			// `bazel test` sees (it sandboxes the action). `bazel run` inherits
+			// your shell env, so discovery works there.
+			return "", fmt.Errorf("no HITL rigs discovered via %s: %v — %s "+
+				"(run these hardware tests with `bazel run`, not `bazel test`)", source, derr, hint)
+		}
+		return "", fmt.Errorf("no HITL rigs discovered via %s — %s", source, hint)
 	}
 	picked, err := pool.Pick(pool.Probes(servers, fetchStatus), req...)
 	if err != nil {
