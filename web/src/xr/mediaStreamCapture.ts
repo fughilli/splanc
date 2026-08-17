@@ -24,7 +24,6 @@ import type { Intrinsics } from "@ledmapper/protocol";
 import type { CaptureFrame, CaptureSource } from "./capture";
 import { CaptureUnsupportedError } from "./capture";
 import { type ExposureCapabilities, planExposure } from "./exposureControl";
-import { clearNativeExposure, nativeExposureAvailable, setNativeExposure } from "./nativeExposure";
 
 /** Typical phone rear camera: ~70° horizontal FOV on the long side. */
 export function heuristicK(w: number, h: number): Intrinsics {
@@ -121,17 +120,15 @@ export class MediaStreamCaptureSource implements CaptureSource {
    * Public so the exposure servo can retune it live. Best effort: records the
    * outcome in exposureApplied and never throws. */
   async setExposure(target01: number, maxExposureMs?: number): Promise<void> {
-    // iOS: WebKit exposes no MediaStreamTrack exposure capabilities, so drive the
-    // shared back-camera AVCaptureDevice through the native bridge instead. Falls
-    // through to the web applyConstraints path when the bridge can't set it (e.g.
-    // a device without custom-exposure support), which then records "unsupported".
-    if (nativeExposureAvailable()) {
-      const desc = await setNativeExposure(target01, maxExposureMs);
-      if (desc !== null) {
-        this.exposureApplied = `native: ${desc}`;
-        return;
-      }
-    }
+    // NOTE iOS: this is a no-op there, and cannot be otherwise on this capture
+    // path. WebKit implements none of the Image-Capture exposure extensions
+    // (measured on iOS 26.6 — the track offers torch/zoom/focusDistance/
+    // frameRate/whiteBalanceMode and no exposure key at all), so planExposure
+    // returns null and we record "unsupported by this camera". Configuring the
+    // AVCaptureDevice natively does NOT work around it: WebKit captures in its
+    // own GPU process, so an AVCaptureDevice in ours drives none of its frames
+    // (an exposure-bridge plugin that tried was removed — see FUG-120). Real
+    // exposure control on iOS needs a capture session this app owns.
     const track = this.stream?.getVideoTracks()[0];
     const getCaps = track?.getCapabilities?.bind(track);
     if (!track || !getCaps) {
@@ -159,11 +156,6 @@ export class MediaStreamCaptureSource implements CaptureSource {
         .cancelVideoFrameCallback(this.rvfcHandle);
     }
     if (this.rafHandle) cancelAnimationFrame(this.rafHandle);
-    // Hand the camera back to auto-exposure so a custom lock doesn't persist on
-    // the shared AVCaptureDevice past this session (iOS native only; no-op else).
-    if (nativeExposureAvailable() && this.exposureApplied?.startsWith("native:")) {
-      await clearNativeExposure();
-    }
     this.video.pause();
     this.stream?.getTracks().forEach((t) => t.stop());
     this.stream = null;

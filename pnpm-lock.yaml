@@ -40,9 +40,6 @@ importers:
       '@ledmapper/protocol':
         specifier: workspace:*
         version: link:../shared/protocol/ts
-      '@splanc/exposure-bridge':
-        specifier: link:./native-plugins/exposure-bridge
-        version: link:native-plugins/exposure-bridge
       '@splanc/speech-bridge':
         specifier: link:./native-plugins/speech-bridge
         version: link:native-plugins/speech-bridge
@@ -364,6 +361,7 @@ packages:
   '@xmldom/xmldom@0.9.10':
     resolution: {integrity: sha512-A9gOqLdi6cV4ibazAjcQufGj0B1y/vDqYrcuP6d/6x8P27gRS8643Dj9o1dEKtB6O7fwxb2FgBmJS2mX7gpvdw==}
     engines: {node: '>=14.6'}
+    deprecated: this version has critical issues, please update to the latest version
 
   ansi-regex@5.0.1:
     resolution: {integrity: sha512-quJQXlTSUGL2LH9SUXo8VwsY4soanhgo6LNSm84E1LBcE8s3O0wpdiRzyR9z/ZZJMlMWv37qOOb9pdJlMUEKFQ==}

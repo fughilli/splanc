@@ -183,21 +183,33 @@ out in the dark. But WebKit implements none of the MediaStream Image-Capture exp
 returns nothing for exposure, so `planExposure()` finds no control and the manual slider + the
 auto servo are silently no-ops — the reported bug.
 
-- Exposure is a property of the physical `AVCaptureDevice`, not of a capture session, and WebKit's
-  `getUserMedia` opens the back **wide-angle** camera (the only device type its `AVVideoCaptureSource`
-  uses). So a first-party Capacitor plugin **`@splanc/exposure-bridge`**
-  (`web/native-plugins/exposure-bridge/`, same SPM shape as the cert/voice bridges) configures that
-  same shared device with `setExposureModeCustom(duration:iso:)` — no second capture session, no
-  ownership of WebKit's — and the lock applies to the frames the WebView is already rendering.
-- Semantics mirror `planExposure`: `target` in [0,1] maps 0 = shortest (darkest, least bloom) → 1 =
-  longest, ISO pins to the sensor minimum to hold gain down, and `maxExposureMs` (Nyquist for the
-  servo, the user ceiling for manual override) caps the longest exposure. `xr/nativeExposure.ts`
-  binds it via `registerPlugin("ExposureBridge")` and `MediaStreamCaptureSource.setExposure` routes
-  there on iOS (gated on `isIosNative()`), falling back to the web `applyConstraints` path elsewhere;
-  `stop()` restores continuous auto-exposure. No UI change — the existing slider/servo just start
-  working on iOS.
-- No new Info.plist string: camera access is already granted via `getUserMedia`
-  (`NSCameraUsageDescription`), and reading/writing device exposure needs no extra entitlement.
+**Attempt 1 — an `AVCaptureDevice` bridge — DOES NOT WORK. Removed.** The idea was that exposure is
+a property of the physical device rather than of a capture session, so a Capacitor plugin
+(`@splanc/exposure-bridge`) could call `setExposureModeCustom(duration:iso:)` on the same shared
+back wide-angle camera WebKit's `getUserMedia` opens, and the lock would apply to the frames the
+WebView was already rendering. **The premise is false**, measured on-device (iPhone SE 3rd gen,
+iOS 26.6):
+
+- `AVCaptureDevice` configuration is **per-process**, and WebKit captures in its own GPU process.
+  Our writes landed on an object with no session behind it.
+- The readback never moved: across targets spanning 0.02 ms → 140 ms, `exposureDuration` stayed
+  pinned at 33.33 ms and `iso` at 50. Only `exposureMode` flipped to `.custom` — a local property
+  write.
+- `setExposureModeCustom`'s completion handler — which fires when the setting takes effect on a
+  session **in this process** — never fired at all (14 calls, 0 completions). Since `call.resolve`
+  lived only in that handler, every JS promise leaked pending, which also made the web
+  `applyConstraints` fallback unreachable.
+- The active format disagreed: our device object reported 1920×1080 while `getUserMedia` had asked
+  for 1280×720 — different format, therefore different session.
+
+There is also no web-side fallback to reach for. On iOS 26.6 the track's capabilities are
+`aspectRatio, backgroundBlur, deviceId, facingMode, focusDistance, frameRate {1..60}, groupId,
+height, powerEfficient, torch, whiteBalanceMode ["manual","continuous"], width, zoom {1..10}` —
+no exposure key of any kind.
+
+**Conclusion:** exposure cannot be controlled while WebKit owns the camera. The only path is a
+capture session **this app owns**, which means taking the camera away from `getUserMedia` on iOS
+and getting its frames to the detector another way — designed in §4.7.
 
 ---
 
