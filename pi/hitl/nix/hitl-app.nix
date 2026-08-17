@@ -79,12 +79,12 @@ let
   # co-channel fragility. SSID is unique per rig; the PSK is world-readable in the
   # store (same posture as wifi.yaml) and the harness fetches both from the daemon
   # (`hitl wifi`), so it's never typed by hand.
-  # AP interface. On the analyzer rig it's a DEDICATED USB WiFi radio (RTL8851BU),
-  # renamed to ap0 by the systemd .link below — the Pi 3's onboard brcmfmac can't
-  # reliably host an AP, so the USB radio owns the AP and wlan0 is free for STA.
-  # The Pi 5 rig keeps its single-radio wlan0 AP. (isAnalyzerRig is defined below;
-  # nix `let` bindings are order-independent.)
-  apIface = if isAnalyzerRig then "ap0" else "wlan0";
+  # AP interface. By default the rig hosts its provisioning AP on onboard wlan0
+  # (verified working on Pi 5, and on the Pi 3B+). Set SBC_AP_DONGLE=1 to instead
+  # own the AP on a dedicated RTL8851BU USB radio renamed to ap0 (leaving wlan0 for
+  # STA) — for a board whose onboard WiFi can't host an AP. (useApDongle is defined
+  # below; nix `let` bindings are order-independent.)
+  apIface = if useApDongle then "ap0" else "wlan0";
   apConn = "hitl-ap";
   apChannel = 6; # fixed 2.4 GHz channel; the C6 is 2.4-only
   # Canonical naming (README "Rig naming"): the AP SSID IS the system hostname, so
@@ -92,27 +92,30 @@ let
   apSsid = config.networking.hostName;
   apPsk = "${config.networking.hostName}-provision"; # ≥8 chars; override for a fixed one
 
-  # Shared logic analyzer (an FX2/fx2lafw "Saleae clone") — present only on the Pi
-  # 3 logic-analyzer rig variant. sbc-deploy injects the board via $SBC_BOARD at
-  # (impure) eval, so this single appModule yields BOTH a lean Pi 5 rig image (no
-  # sigrok closure, capture broker dormant) and a Pi 3 image with capture wired —
-  # no second flake. Fail-safe: an unset/other board leaves the analyzer off.
+  # Two independent, board-agnostic capabilities, each toggled by an env var at
+  # (impure) deploy eval — so ONE appModule builds any of {Pi 3, Pi 5} × {analyzer,
+  # plain} × {onboard AP, dongle AP}. Unset = off, so a bare rig stays lean (no
+  # sigrok closure, no out-of-tree WiFi driver). These were previously conflated
+  # with the board (analyzer == Pi 3, dongle == analyzer); decoupled so the analyzer
+  # can live on a Pi 5 with an onboard-wlan0 AP, etc.
   #
-  # The FX2 is a RIG-LEVEL instrument the daemon owns (never passed into a
-  # container): the daemon serves captures over POST /capture, mapping each DUT to
-  # its channel subset so one 8-channel analyzer taps several DUTs (a couple of
-  # channels each). See internal/analyzer and DESIGN.md.
+  #   SBC_ANALYZER=1   → wire the shared FX2/fx2lafw logic analyzer: sigrok capture
+  #                      broker, POST /capture, per-DUT channel map. The FX2 is a
+  #                      rig-level instrument the daemon owns (never passed into a
+  #                      container). See internal/analyzer and DESIGN.md.
+  #   SBC_AP_DONGLE=1  → host the provisioning AP on a dedicated RTL8851BU USB radio
+  #                      (ap0) instead of onboard wlan0 — for a board that can't AP.
   sigrok = import ./sigrok.nix { inherit pkgs; };
-  isAnalyzerRig = builtins.getEnv "SBC_BOARD" == "raspberry-pi-3";
-  # Dedicated USB AP radio for the analyzer rig: the out-of-tree rtw89 (RTL8851BU)
-  # driver + WiFi firmware built against this kernel (see rtl8851bu.nix). Paired
-  # with usb_modeswitch (the dongle boots as a CD-ROM) and a .link that renames it
-  # to ap0. rtw89 is mac80211-based, so it supports hostapd AP cleanly.
+  isAnalyzerRig = builtins.getEnv "SBC_ANALYZER" == "1";
+  useApDongle = builtins.getEnv "SBC_AP_DONGLE" == "1";
+  # RTL8851BU driver + WiFi firmware for the optional dongle AP (see rtl8851bu.nix).
+  # usb_modeswitch flips the CD-ROM dongle to WiFi mode + a .link renames it to ap0;
+  # rtw89 is mac80211-based, so it supports hostapd AP cleanly.
   rtl8851bu = config.boot.kernelPackages.callPackage ./rtl8851bu.nix { };
-  # DUT → analyzer channels. The sole DUT's WS2812 DIN (the C6's GPIO20 / PIN20)
-  # is wired to the analyzer's CH6 = D6 on hitl-rig-la-1. Add per-DUT entries
-  # (keyed by the discovered c6-<serial> name, e.g. "c6-1a2b3c" = { channels =
-  # [ "D1" ]; ... }) as boards are wired to more channels.
+  # DUT → analyzer channels. A DUT's WS2812 DIN (the C6's GPIO20 / PIN20) is wired
+  # to one FX2 channel; "default" catches the single-DUT case. Add per-DUT entries
+  # keyed by the discovered c6-<serial> name (e.g. "c6-fa0324" = { channels =
+  # [ "D7" ]; ... }) as boards are wired to distinct channels.
   analyzerChannelMap = builtins.toJSON {
     "default" = { channels = [ "D6" ]; protocol = "ws2812"; };
   };
@@ -180,21 +183,21 @@ in
   boot.kernelModules = [ "usbip-host" "vhci-hcd" ]
     # rtw89 is built with -DCONFIG_RTW89_LEDS_MC, so rtw89_core_git needs
     # led-class-multicolor's symbols; load it first so the driver resolves them.
-    ++ lib.optionals isAnalyzerRig [ "led-class-multicolor" "rtw89_8851bu_git" ];
+    ++ lib.optionals useApDongle [ "led-class-multicolor" "rtw89_8851bu_git" ];
 
-  # Dedicated USB AP radio (RTL8851BU / rtw89) on the analyzer rig. A post-boot
-  # module (not initrd/kernel), so it rides the deploy_live layer — no SD reimage.
-  # udev autoloads it once usb_modeswitch flips the dongle into WiFi mode.
-  boot.extraModulePackages = lib.optionals isAnalyzerRig [ rtl8851bu ];
+  # Dedicated USB AP radio (RTL8851BU / rtw89), only when SBC_AP_DONGLE=1. A
+  # post-boot module (not initrd/kernel), so it rides the deploy_live layer — no SD
+  # reimage. udev autoloads it once usb_modeswitch flips the dongle into WiFi mode.
+  boot.extraModulePackages = lib.optionals useApDongle [ rtl8851bu ];
 
   # rtw89 loads rtw8851b_fw-1.bin from /lib/firmware/rtw89; our driver derivation
   # ships it (nixpkgs' linux-firmware predates 8851BU). No WiFi without it.
-  hardware.firmware = lib.optionals isAnalyzerRig [ rtl8851bu ];
+  hardware.firmware = lib.optionals useApDongle [ rtl8851bu ];
 
   # Stable name for the USB AP radio: rename the rtw89 AP interface (driver
   # rtw89_8851bu_git, the usb_driver's KBUILD_MODNAME) to ap0 so the AP profile
   # targets it regardless of wlanN enumeration order. Applied by systemd-udevd.
-  systemd.network.links = lib.optionalAttrs isAnalyzerRig {
+  systemd.network.links = lib.optionalAttrs useApDongle {
     "10-hitl-ap" = {
       matchConfig.Driver = "rtw89_8851bu_git";
       linkConfig.Name = "ap0";
@@ -217,6 +220,7 @@ in
     # single-purpose bench; the daemon (root) owns it, this is belt-and-suspenders.
     SUBSYSTEM=="usb", ATTR{idVendor}=="0925", ATTR{idProduct}=="3881", MODE="0666"
     SUBSYSTEM=="usb", ATTR{idVendor}=="1d50", ATTR{idProduct}=="608c", MODE="0666"
+  '' + lib.optionalString useApDongle ''
     # Dedicated USB AP dongle (RTL8851BU): it enumerates as a CD-ROM (0bda:1a2b);
     # StandardEject flips it into WiFi mode (re-enumerates as 0bda:b851) so the
     # rtw89_8851bu_git driver binds and the .link renames it to ap0.
@@ -256,8 +260,9 @@ in
   # The `hitl` CLI is handy on the rig too; usbutils for lsusb/bus ids, usbip for
   # bind/attach.
   environment.systemPackages = [ hitl pkgs.usbutils pkgs.linuxPackages.usbip ]
-    # sigrok-cli + fx2lafw firmware, and usb-modeswitch for the USB AP dongle.
-    ++ lib.optionals isAnalyzerRig (sigrok.packages ++ [ pkgs.usb-modeswitch ]);
+    # sigrok-cli + fx2lafw firmware for the analyzer; usb-modeswitch for the dongle.
+    ++ lib.optionals isAnalyzerRig sigrok.packages
+    ++ lib.optionals useApDongle [ pkgs.usb-modeswitch ];
 
   # Load the test image into Podman at boot (and on every deploy — the ExecStart
   # store path changes with the image, so switch-to-configuration re-runs this).

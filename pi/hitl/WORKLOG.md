@@ -3,6 +3,30 @@
 Handoff notes alongside git history. Newest first. Read this before touching the
 rig's networking — there's live runtime state that isn't fully declarative yet.
 
+## 2026-08-17 — decouple analyzer + AP-dongle from the board (3 orthogonal axes)
+
+The logic analyzer moved from a Pi 3 to a Pi 5 (hitl-rig-2), and hitl-rig-3 became a
+plain Pi 3. The old config conflated everything with the board (`isAnalyzerRig =
+SBC_BOARD == raspberry-pi-3`, and the RTL8851BU AP dongle was gated on the analyzer).
+Split into **three independent axes**, each set per-deploy:
+
+- **Board** — bazel target: `//pi/hitl:hitl` (Pi 5) or `//pi/hitl:hitl_pi3` (Pi 3B/3B+).
+  (Renamed from `hitl_la`, since it's no longer analyzer-specific.)
+- **`SBC_ANALYZER=1`** — wire the FX2/sigrok capture (was `SBC_BOARD == pi-3`).
+- **`SBC_AP_DONGLE=1`** — host the AP on the RTL8851BU `ap0` instead of onboard
+  `wlan0`. Now OFF by default: a Pi 5 hosts its AP fine on onboard wlan0 (verified on
+  hitl-rig-1), so the analyzer Pi 5 needs no dongle. The dongle is on neither rig now.
+
+Deploys: `SBC_HOSTNAME_OVERRIDE=hitl-rig-2 SBC_ANALYZER=1 bazel run //pi/hitl:hitl.deploy_live -- <host>`
+(analyzer Pi 5); `SBC_HOSTNAME_OVERRIDE=hitl-rig-3 bazel run //pi/hitl:hitl_pi3.deploy_live -- <host>`
+(plain Pi 3). hitl-rig-2 has 2 DUTs (serials …FA:03:24, …3F:08) on the FX2 — set the
+per-DUT D6/D7 channel map (`analyzerChannelMap`) once the wiring is confirmed.
+
+Note (Pi 3B+ brcmfmac): boot logs a `memcpy: detected field-spanning write … fweh.c:466`
+WARNING in `brcmf_fweh_activate_events` — a known upstream fortify-source warning for
+BCM4345 on 6.x; noisy, non-fatal (WiFi still comes up). The `onboard-usb-dev 1-1:
+can't set config #1, error -110` is a separate Pi 3B+ onboard-USB-hub quirk.
+
 ## 2026-08-16 — container LA capture path green end-to-end (3 bugs fixed)
 
 `//pi/hitl/harness:led_capture` now **PASSES on real hardware** through the full

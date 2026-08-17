@@ -47,23 +47,34 @@ no `hitl-rig`/`hitl-rig-2` ambiguity, and `hitl reserve` (including
 | Tailscale hostname | `hitl-rig-<n>` | `hitl-rig-3` |
 | AP SSID            | `hitl-rig-<n>` | `hitl-rig-3` |
 
-Set it once at deploy (this logic-analyzer rig is `hitl-rig-3`):
+Set it once at deploy (a plain Pi 3 rig `hitl-rig-3`):
 
 ```sh
-SBC_HOSTNAME_OVERRIDE=hitl-rig-3 bazel run //pi/hitl:hitl_la.deploy_live -- hitl-rig-3
+SBC_HOSTNAME_OVERRIDE=hitl-rig-3 bazel run //pi/hitl:hitl_pi3.deploy_live -- hitl-rig-3
 ```
 
-### Logic-analyzer rig variant (Pi 3 + shared FX2)
+### Board + capabilities (mix and match)
 
-`//pi/hitl:hitl_la.*` is the same rig built for a **Raspberry Pi 3B**
-(`hitl-rig-3`) with an FX2/fx2lafw logic analyzer tapping the DUT's WS2812 DIN,
-for LED-driver correctness / latency tests. Same targets, `hitl_la` instead of
-`hitl`:
+The board is a **bazel target** (`:hitl` = Pi 5, `:hitl_pi3` = Pi 3B/3B+); the two
+optional capabilities are **env flags** at deploy, independent of the board:
+
+| flag              | effect                                                         |
+| ----------------- | -------------------------------------------------------------- |
+| `SBC_ANALYZER=1`  | wire the shared FX2/fx2lafw logic analyzer (sigrok `/capture`) |
+| `SBC_AP_DONGLE=1` | host the AP on a dedicated RTL8851BU USB radio (`ap0`) instead |
+|                   | of onboard `wlan0` — for a board that can't AP                 |
+
+So any combination works, e.g. an **analyzer on a Pi 5** (onboard-wlan0 AP):
 
 ```sh
-bazel run //pi/hitl:hitl_la.image_sd    -- --device /dev/diskN
-bazel run //pi/hitl:hitl_la.deploy_live -- hitl-rig-3
+SBC_HOSTNAME_OVERRIDE=hitl-rig-2 SBC_ANALYZER=1 \
+  bazel run //pi/hitl:hitl.deploy_live -- hitl-rig-2
 ```
+
+### Logic analyzer (shared FX2)
+
+With `SBC_ANALYZER=1` the rig hosts an FX2/fx2lafw logic analyzer tapping the DUT's
+WS2812 DIN, for LED-driver correctness / latency tests.
 
 The FX2 is a **shared, daemon-owned instrument** (its channels tap a couple per
 DUT), so inside a reservation you capture + decode the wire with:
@@ -157,5 +168,5 @@ pi/hitl/
     hitl-app.nix       # NixOS: podman, tailscale, usbip, the daemon, (Pi3) sigrok
     sigrok.nix         # host sigrok-cli + fx2lafw firmware (logic-analyzer rig)
   flake.nix            # mkSbcProject + packages.<system>.hitl
-  BUILD.bazel          # sbc_application "hitl" (Pi 5) + "hitl_la" (Pi 3 + FX2)
+  BUILD.bazel          # sbc_application "hitl" (Pi 5) + "hitl_pi3" (Pi 3); caps via env
 ```

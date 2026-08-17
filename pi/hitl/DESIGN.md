@@ -119,10 +119,11 @@ one host Bluetooth radio, and the provisioning AP is still rig-level.
 
 ## Logic-analyzer rig (shared FX2 capture)
 
-A second rig **variant** adds LED-wire correctness/latency testing: a Raspberry
-Pi 3B (`//pi/hitl:hitl_la`, `board = raspberry-pi-3`, hostname `hitl-la-rig`) with
-an **FX2/fx2lafw "Saleae clone"** 24 MHz logic analyzer tapping the DUT's WS2812
-DIN. It closes the gap flagged in `pi/led_driver/README.md`, `docs/decisions.md`,
+An optional, board-independent capability adds LED-wire correctness/latency
+testing: deploy any board target (`//pi/hitl:hitl` = Pi 5, `:hitl_pi3` = Pi 3) with
+`SBC_ANALYZER=1`, which wires an **FX2/fx2lafw "Saleae clone"** 24 MHz logic
+analyzer tapping the DUT's WS2812 DIN. It closes the gap flagged in
+`pi/led_driver/README.md`, `docs/decisions.md`,
 and `docs/runbook.md`: real cadence/wire correctness "needs a logic analyzer on a
 bench — cannot be done in CI."
 
