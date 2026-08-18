@@ -19,6 +19,7 @@
 // Second WS2812 channel (RMT ch1). A long strip splits across the two GPIOs and
 // clocks out in PARALLEL — channel 0 drives the first set_led_count(0) LEDs,
 // channel 1 the next set_led_count(1). Off unless channel 1 is configured
-// (set_led_count(1, n)), so single-channel wiring is unaffected. GPIO21 is clean
-// (not a strapping pin, not USB-JTAG, not SPI-flash).
-#define LED_DATA_PIN_2 21
+// (set_led_count(1, n)), so single-channel wiring is unaffected. GPIO14: clean on
+// the C6 SuperMini (NOT strapping 4/5/8/9/15, NOT USB-JTAG 12/13, and NOT the
+// SuperMini's internal SPI flash — GPIO18/19 carry that, so they're off-limits).
+#define LED_DATA_PIN_2 14
