@@ -197,8 +197,8 @@ export function SettingsScreen(router: Router): Screen {
 
   // -- Help & tutorial (FUG-103) -------------------------------------------
   // The interactive tutorial is dismissible and never nags after that, so this
-  // is where it's re-launchable — plus a link to the full generated user guide
-  // and a reset that lets the first-run hint appear again.
+  // is where it's re-launchable, with a reset that lets the first-run hint
+  // appear again. (The full user-guide site is linked from About ▸ Documentation.)
   function helpGroup(): HTMLElement {
     const g = group("Help & tutorial");
     g.append(
@@ -213,17 +213,8 @@ export function SettingsScreen(router: Router): Screen {
         }),
       ),
     );
-    // Full documentation site (generated from the same catalog as the tour). It
-    // ships at /user-guide/ on the deployed site; open in a new tab.
-    const guideLink = document.createElement("a");
-    guideLink.href = "user-guide/";
-    guideLink.target = "_blank";
-    guideLink.rel = "noopener";
-    guideLink.className = "k-btn k-btn--quiet";
-    const guideSpan = document.createElement("span");
-    guideSpan.textContent = "Open user guide";
-    guideLink.appendChild(guideSpan);
-    g.append(row("User guide", "Browse the full documentation with screenshots.", guideLink));
+    // (The full user-guide site lives under About ▸ Documentation ▸ User guide;
+    // this group keeps just the interactive-tutorial controls.)
     g.append(
       row(
         "Reset tutorial",
