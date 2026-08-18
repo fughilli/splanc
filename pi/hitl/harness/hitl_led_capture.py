@@ -207,12 +207,57 @@ def _set_channel_map(server: str, m: dict) -> None:
         r.read()
 
 
+def _reserved_device(server: str, res_id: str | None) -> str:
+    """The DUT name this reservation holds, from /status — the reserve output
+    doesn't carry it, and this rig has per-DUT channel maps with no default entry,
+    so /capture needs the real name to resolve the tap."""
+    import urllib.request
+
+    with urllib.request.urlopen(server.rstrip("/") + "/status", timeout=10) as r:
+        st = json.loads(r.read())
+    for d in st.get("devices") or []:
+        act = d.get("active") or {}
+        if res_id and act.get("id") == res_id:
+            return d.get("name") or act.get("device") or ""
+    return ""
+
+
+def _dut_ch0_pin(server: str, device: str) -> str | None:
+    """The analyzer channel the DUT's channel-0 GPIO (GPIO20) is tapped on, from
+    the current map — its per-DUT entry, else the default."""
+    m = _channel_map(server)
+    entry = m.get(device) or m.get("default") or {}
+    chans = entry.get("channels") or []
+    return chans[0] if chans else None
+
+
+def _resolve_ch1_pin(server: str, device: str, requested: str, pairs_arg: str) -> str:
+    """Channel 1's analyzer tap. Each DUT taps both GPIOs as a fixed pair (e.g.
+    ch0=D6 -> ch1=D0, ch0=D7 -> ch1=D1); with --ch1-pin auto we read the DUT's ch0
+    tap and look up its partner, so the test works whichever DUT the reservation
+    picks. An explicit --ch1-pin wins (and requires pinning the DUT)."""
+    if requested != "auto":
+        return requested
+    pairs = dict(p.split(":") for p in pairs_arg.split(",") if ":" in p)
+    ch0 = _dut_ch0_pin(server, device)
+    ch1 = pairs.get(ch0 or "")
+    if not ch1:
+        raise SystemExit(
+            f"[capture] can't derive channel-1 tap from ch0={ch0!r} via pairs {pairs}; "
+            f"pass --ch1-pin explicitly (and --device to pin the DUT)"
+        )
+    _log(f"[capture] DUT ch0 tap {ch0} -> ch1 tap {ch1}")
+    return ch1
+
+
 def _capture_on_pin(server: str, device: str, samples: int, pin: str | None):
     """Capture `device`; when `pin` is set, temporarily map the DUT to that
     analyzer channel (e.g. 'D5' for channel 1), capture, and ALWAYS restore the
     original map (it persists on the rig — a leaked remap breaks later captures)."""
     if pin is None:
+        _log(f"[capture] channel 0: {device} on its default tap")
         return capture_via_daemon(server, device, samples)
+    _log(f"[capture] channel 1: remapping {device} -> {pin}")
     original = _channel_map(server)
     key = device if (device and device in original) else "default"
     proto = (original.get(key) or {}).get("protocol", "ws2812")
@@ -329,9 +374,21 @@ def run(args: argparse.Namespace) -> int:
                 ws_url = f"{args.ws_scheme}://localhost:{local_port}/ws"
                 asyncio.run(_drive_two_channel(ws_url, not args.ws_verify, half0, half1))
             time.sleep(0.5)
-            dev = getattr(res, "device", "") or ""
+            dev = getattr(res, "device", "") or _reserved_device(
+                res.server, getattr(res, "id", None)
+            )
+            if not dev:
+                raise SystemExit("[capture] couldn't resolve the reserved DUT name for the map")
+            _log(f"[capture] reserved DUT {dev}")
+            ch1_pin = _resolve_ch1_pin(res.server, dev, args.ch1_pin, args.ch1_pairs)
             got0 = _capture_on_pin(res.server, dev, args.samples, None)
-            got1 = _capture_on_pin(res.server, dev, args.samples, args.ch1_pin)
+            _log(f"[capture] ch0 ({half0} LEDs) decoded {len(got0)} px: {got0}")
+            try:
+                got1 = _capture_on_pin(res.server, dev, args.samples, ch1_pin)
+            except Exception as e:  # noqa: BLE001 — a dead ch1 line surfaces as timeout/500
+                _log(f"[capture] ch1 capture failed on {ch1_pin}: {type(e).__name__}: {e}")
+                got1 = []
+            _log(f"[capture] ch1 ({half1} LEDs) decoded {len(got1)} px: {got1}")
             e0, o0 = diff_structure_aligned(want[:half0], got0)
             e1, o1 = diff_structure_aligned(want[half0:n], got1)
             if e0 or e1:
@@ -384,8 +441,15 @@ def main() -> int:
     )
     ap.add_argument(
         "--ch1-pin",
-        default="D5",
-        help="analyzer channel wired to the DUT's channel-1 GPIO (GPIO14), for --two-channel",
+        default="auto",
+        help="analyzer channel wired to the DUT's channel-1 GPIO (GPIO14), for --two-channel. "
+        "'auto' derives it from the DUT's ch0 tap via --ch1-pairs.",
+    )
+    ap.add_argument(
+        "--ch1-pairs",
+        default="D6:D0,D7:D1",
+        help="ch0->ch1 analyzer-tap pairs per DUT (the rig wires both GPIOs of each DUT as a "
+        "fixed pair), for --ch1-pin auto",
     )
     ap.add_argument("--samples", type=int, default=0, help="capture length (0 = rig default)")
     ap.add_argument(
