@@ -29,6 +29,10 @@ type PodmanConfig struct {
 	StateDir string
 	// Podman is the podman binary (defaults to "podman" on PATH).
 	Podman string
+	// CaptureURL, if set, is injected into each container as $HITL_CAPTURE_SERVER
+	// so the `hitl-capture` toolbox client can reach the daemon's shared logic
+	// analyzer (/capture) — typically http://host.containers.internal:<apiPort>.
+	CaptureURL string
 	// Privileged runs the container privileged. AVOID on a multi-DUT rig: a
 	// privileged container bind-mounts the whole host /dev, so every DUT's
 	// /dev/ttyACM* leaks into every container — an agent sees its neighbor's board.
@@ -101,6 +105,11 @@ func (p *PodmanRunner) Start(ctx context.Context, id, owner, sshKey string, dev 
 		// $HITL_DUT). Their board's tty is also pinned to /dev/ttyACM0, so the
 		// toolbox targets it by default without needing the name.
 		"-e", "HITL_DUT=" + dev.Name,
+	}
+	// The shared logic analyzer is brokered by the daemon (not passed into the
+	// container); tell hitl-capture where to reach it, and which DUT to capture.
+	if p.cfg.CaptureURL != "" {
+		args = append(args, "-e", "HITL_CAPTURE_SERVER="+p.cfg.CaptureURL)
 	}
 	// Per-DUT env (e.g. HITL_ADAPTER_SERIAL so openocd targets this DUT's board).
 	for _, k := range sortedKeys(dev.Env) {

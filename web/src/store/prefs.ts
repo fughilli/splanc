@@ -25,7 +25,10 @@ const EXPOSURE_CEILING_KEY = "ledmapper.manualExposureCeilingMs";
 const AI_HINT_KEY = "ledmapper.aiHintDismissed";
 /** Default manual-exposure ceiling (ms) — generous headroom over a typical
  * Nyquist cap so a well-lit frame is reachable without changing the setting. */
-export const DEFAULT_MANUAL_EXPOSURE_CEILING_MS = 250;
+// LEDs are bright: even in a naturally lit room the useful manual range tops out
+// well under this, and a high ceiling only wastes slider travel on exposures
+// nobody wants (measured on-device 2026-08-17).
+export const DEFAULT_MANUAL_EXPOSURE_CEILING_MS = 50;
 
 export interface WifiCreds {
   ssid: string;

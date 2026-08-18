@@ -173,16 +173,17 @@ export function SettingsScreen(router: Router): Screen {
     hint.className = "settings-row-hint settings-full";
     hint.textContent =
       "The manual exposure slider (Advanced ▸ Manual override, while mapping) " +
-      "ranges from the camera minimum up to this ceiling. Raise it to light the " +
-      "frame under artificial light; the automatic exposure stays capped for " +
-      "decode sharpness.";
+      "ranges from the camera minimum up to this ceiling, in equal stops. Raise " +
+      "it to light the frame under artificial light; the automatic exposure stays " +
+      "capped for decode sharpness. Lower is finer: the whole slider spans this " +
+      "range, so a tighter ceiling buys more precision where the LEDs sit.";
     g.append(
       fullRow(
         Slider({
           label: "Manual exposure ceiling",
-          min: 20,
-          max: 1000,
-          step: 10,
+          min: 5,
+          max: 250,
+          step: 5,
           value: prefs.getManualExposureCeilingMs(),
           format: (v) => `${Math.round(v)} ms`,
           // Not applied to anything on this screen, so commit on release.

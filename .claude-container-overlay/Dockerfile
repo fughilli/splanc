@@ -116,3 +116,10 @@ RUN curl -fsSL https://pkgs.tailscale.com/stable/ubuntu/noble.noarmor.gpg \
     && apt-get install -y --no-install-recommends tailscale \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /var/lib/tailscale /var/run/tailscale
+
+# 2026-08-12: sigrok-cli libsigrokdecode4 sigrok-firmware-fx2lafw (recorded by apt-install)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        sigrok-cli \
+        libsigrokdecode4 \
+        sigrok-firmware-fx2lafw \
+    && rm -rf /var/lib/apt/lists/*

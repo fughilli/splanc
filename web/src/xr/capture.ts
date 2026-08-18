@@ -25,8 +25,14 @@ export class CaptureUnsupportedError extends Error {
 }
 
 export interface CaptureFrame {
-  /** Raw camera image for this frame (texture in the source's GL context). */
-  texture: WebGLTexture;
+  /** Raw camera image for this frame (texture in the source's GL context).
+   * Null when the source pre-reduced the frame itself (see `reduced`). */
+  texture: WebGLTexture | null;
+  /** Set by a source that ran the detector's threshold/downsample pass itself —
+   * the native iOS path, where frames never enter a WebGL context at all
+   * (design doc §4.7). The detector reads this instead of running its GPU pass;
+   * use `DetectorGL.detectFrame`/`measureFrame` so either form works. */
+  reduced?: import("../cv/detect").ReducedFrame | undefined;
   /** Camera pose in the session reference space — null when the source has
    * no tracker (MediaStreamCaptureSource), in which case the visual-inertial
    * solver estimates the trajectory jointly. */

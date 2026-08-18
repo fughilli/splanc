@@ -79,11 +79,57 @@ let
   # co-channel fragility. SSID is unique per rig; the PSK is world-readable in the
   # store (same posture as wifi.yaml) and the harness fetches both from the daemon
   # (`hitl wifi`), so it's never typed by hand.
-  apIface = "wlan0";
+  # AP interface. By default the rig hosts its provisioning AP on onboard wlan0
+  # (verified working on Pi 5, and on the Pi 3B+). Set SBC_AP_DONGLE=1 to instead
+  # own the AP on a dedicated RTL8851BU USB radio renamed to ap0 (leaving wlan0 for
+  # STA) — for a board whose onboard WiFi can't host an AP. (useApDongle is defined
+  # below; nix `let` bindings are order-independent.)
+  apIface = if useApDongle then "ap0" else "wlan0";
   apConn = "hitl-ap";
   apChannel = 6; # fixed 2.4 GHz channel; the C6 is 2.4-only
-  apSsid = "hitl-${config.networking.hostName}";
-  apPsk = "hitl-${config.networking.hostName}-provision"; # ≥8 chars; override for a fixed one
+  # Canonical naming (README "Rig naming"): the AP SSID IS the system hostname, so
+  # a box is addressed identically everywhere (hostname = tailscale name = SSID).
+  apSsid = config.networking.hostName;
+  apPsk = "${config.networking.hostName}-provision"; # ≥8 chars; override for a fixed one
+
+  # Two independent, board-agnostic capabilities, each toggled by an env var at
+  # (impure) deploy eval — so ONE appModule builds any of {Pi 3, Pi 5} × {analyzer,
+  # plain} × {onboard AP, dongle AP}. Unset = off, so a bare rig stays lean (no
+  # sigrok closure, no out-of-tree WiFi driver). These were previously conflated
+  # with the board (analyzer == Pi 3, dongle == analyzer); decoupled so the analyzer
+  # can live on a Pi 5 with an onboard-wlan0 AP, etc.
+  #
+  #   SBC_ANALYZER=1   → wire the shared FX2/fx2lafw logic analyzer: sigrok capture
+  #                      broker, POST /capture, per-DUT channel map. The FX2 is a
+  #                      rig-level instrument the daemon owns (never passed into a
+  #                      container). See internal/analyzer and DESIGN.md.
+  #   SBC_AP_DONGLE=1  → host the provisioning AP on a dedicated RTL8851BU USB radio
+  #                      (ap0) instead of onboard wlan0 — for a board that can't AP.
+  sigrok = import ./sigrok.nix { inherit pkgs; };
+  isAnalyzerRig = builtins.getEnv "SBC_ANALYZER" == "1";
+  useApDongle = builtins.getEnv "SBC_AP_DONGLE" == "1";
+  isPi3 = builtins.getEnv "SBC_BOARD" == "raspberry-pi-3";
+  # RTL8851BU driver + WiFi firmware for the optional dongle AP (see rtl8851bu.nix).
+  # usb_modeswitch flips the CD-ROM dongle to WiFi mode + a .link renames it to ap0;
+  # rtw89 is mac80211-based, so it supports hostapd AP cleanly.
+  rtl8851bu = config.boot.kernelPackages.callPackage ./rtl8851bu.nix { };
+  # DUT → analyzer channels. A DUT's WS2812 DIN (the C6's GPIO20 / PIN20) is wired
+  # to one FX2 channel; "default" catches the single-DUT case. Add per-DUT entries
+  # keyed by the discovered c6-<serial> name (e.g. "c6-fa0324" = { channels =
+  # [ "D7" ]; ... }) as boards are wired to distinct channels.
+  analyzerChannelMap = builtins.toJSON {
+    "default" = { channels = [ "D6" ]; protocol = "ws2812"; };
+  };
+  analyzerArgs = lib.optionals isAnalyzerRig [
+    "--analyzer-driver"
+    "fx2lafw"
+    "--analyzer-sigrok"
+    sigrok.cli
+    "--analyzer-samplerate"
+    "24m"
+    "--analyzer-channel-map"
+    (lib.escapeShellArg analyzerChannelMap)
+  ];
 in
 {
   # Headless rig: drop the NixOS manual + man-page closure (groff/texinfo/aspell/…),
@@ -101,15 +147,73 @@ in
   # tailscaled-autoconnect runs `tailscale up` from it on a fresh state dir (e.g.
   # after a reflash) and is a no-op once already logged in. --ssh lets agents SSH
   # to the rig over the tailnet with tailnet identity instead of managed keys.
+  # The tailnet hostname IS the system hostname (canonical naming — see README),
+  # so every box is distinct on the tailnet (no hitl-rig/hitl-rig-2 collision) and
+  # `hitl reserve --require analyzer` can discover it without --server.
   services.tailscale = {
     enable = true;
     authKeyFile = "/var/lib/tailscale/authkey";
-    extraUpFlags = [ "--ssh" "--hostname=hitl-rig" ];
+    extraUpFlags = [ "--ssh" "--hostname=${config.networking.hostName}" ];
+  };
+
+  # `tailscale up` (above) only sets --hostname on a fresh login, so an already-
+  # registered rig keeps its old tailnet name across a redeploy. Enforce the
+  # canonical hostname on every boot with `tailscale set` (a no-op once correct),
+  # so the naming scheme sticks without a reflash.
+  systemd.services.tailscale-hostname = {
+    description = "Pin the tailscale device hostname to the system hostname";
+    after = [ "tailscaled.service" "tailscaled-autoconnect.service" ];
+    wants = [ "tailscaled.service" ];
+    wantedBy = [ "multi-user.target" ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+    script = ''
+      ts=${config.services.tailscale.package}/bin/tailscale
+      # Wait for the backend to be Running (autoconnect logs in first); `tailscale
+      # status` exits non-zero until then. Then pin the name; tolerate a not-yet-
+      # ready daemon so boot never blocks on it.
+      for _ in $(seq 1 30); do "$ts" status >/dev/null 2>&1 && break; sleep 2; done
+      "$ts" set --hostname=${config.networking.hostName} || true
+    '';
   };
 
   # USBIP host modules (attach the dev board into the container / to a remote).
   # Confirmed present in the nixos-raspberrypi kernel (usbip-host/vhci-hcd .ko).
-  boot.kernelModules = [ "usbip-host" "vhci-hcd" ];
+  boot.kernelModules = [ "usbip-host" "vhci-hcd" ]
+    # rtw89 is built with -DCONFIG_RTW89_LEDS_MC, so rtw89_core_git needs
+    # led-class-multicolor's symbols; load it first so the driver resolves them.
+    ++ lib.optionals useApDongle [ "led-class-multicolor" "rtw89_8851bu_git" ];
+
+  # Pi 3B+ onboard USB hub (LAN7515 = hub + Ethernet) reliability. This device tree
+  # doesn't describe the hub's power rail, so the onboard_usb_dev driver logs
+  # "supply vdd not found, using dummy regulator" and its reset/power sequencing
+  # races and times out — "onboard-usb-dev 1-1: can't set config #1, error -110" —
+  # which takes the LAN7515 (and thus end0 Ethernet) down, stranding a wired rig.
+  # Blacklist the driver so the hub keeps its default (hardware) always-on power
+  # instead of the driver's broken sequencing. Pi-3-only: the Pi 5's RP1 USB relies
+  # on this driver, so never blacklist it there.
+  boot.blacklistedKernelModules = lib.optionals isPi3 [ "onboard_usb_dev" ];
+
+  # Dedicated USB AP radio (RTL8851BU / rtw89), only when SBC_AP_DONGLE=1. A
+  # post-boot module (not initrd/kernel), so it rides the deploy_live layer — no SD
+  # reimage. udev autoloads it once usb_modeswitch flips the dongle into WiFi mode.
+  boot.extraModulePackages = lib.optionals useApDongle [ rtl8851bu ];
+
+  # rtw89 loads rtw8851b_fw-1.bin from /lib/firmware/rtw89; our driver derivation
+  # ships it (nixpkgs' linux-firmware predates 8851BU). No WiFi without it.
+  hardware.firmware = lib.optionals useApDongle [ rtl8851bu ];
+
+  # Stable name for the USB AP radio: rename the rtw89 AP interface (driver
+  # rtw89_8851bu_git, the usb_driver's KBUILD_MODNAME) to ap0 so the AP profile
+  # targets it regardless of wlanN enumeration order. Applied by systemd-udevd.
+  systemd.network.links = lib.optionalAttrs useApDongle {
+    "10-hitl-ap" = {
+      matchConfig.Driver = "rtw89_8851bu_git";
+      linkConfig.Name = "ap0";
+    };
+  };
 
   # Bluetooth controller (hci0) for BLE central: agents scan/connect to the DUT's
   # GATT from inside the container via bleak, which drives the host bluetoothd
@@ -121,6 +225,17 @@ in
   # over the built-in USB-JTAG); the device nodes are otherwise root-only.
   services.udev.extraRules = ''
     SUBSYSTEM=="usb", ATTR{idVendor}=="303a", MODE="0666"
+  '' + lib.optionalString isAnalyzerRig ''
+    # FX2/fx2lafw logic analyzer, both the bare-clone VID:PID and the fx2lafw one
+    # it re-enumerates to after firmware upload. World-writable on this
+    # single-purpose bench; the daemon (root) owns it, this is belt-and-suspenders.
+    SUBSYSTEM=="usb", ATTR{idVendor}=="0925", ATTR{idProduct}=="3881", MODE="0666"
+    SUBSYSTEM=="usb", ATTR{idVendor}=="1d50", ATTR{idProduct}=="608c", MODE="0666"
+  '' + lib.optionalString useApDongle ''
+    # Dedicated USB AP dongle (RTL8851BU): it enumerates as a CD-ROM (0bda:1a2b);
+    # StandardEject flips it into WiFi mode (re-enumerates as 0bda:b851) so the
+    # rtw89_8851bu_git driver binds and the .link renames it to ap0.
+    ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="0bda", ATTR{idProduct}=="1a2b", RUN+="${pkgs.usb-modeswitch}/bin/usb_modeswitch -v 0bda -p 1a2b -K"
   '';
 
   # The container's agent runs as uid 1000; the host needs a matching passwd entry
@@ -155,17 +270,35 @@ in
 
   # The `hitl` CLI is handy on the rig too; usbutils for lsusb/bus ids, usbip for
   # bind/attach.
-  environment.systemPackages = [ hitl pkgs.usbutils pkgs.linuxPackages.usbip ];
+  environment.systemPackages = [ hitl pkgs.usbutils pkgs.linuxPackages.usbip ]
+    # sigrok-cli + fx2lafw firmware for the analyzer; usb-modeswitch for the dongle.
+    ++ lib.optionals isAnalyzerRig sigrok.packages
+    ++ lib.optionals useApDongle [ pkgs.usb-modeswitch ];
 
-  # Load the test image into Podman at boot.
+  # Load the test image into Podman at boot (and on every deploy — the ExecStart
+  # store path changes with the image, so switch-to-configuration re-runs this).
   systemd.services.hitl-image-load = {
     description = "Load the HITL test container image into podman";
     wantedBy = [ "multi-user.target" ];
+    before = [ "hitl-manager.service" ];
     after = [ "network.target" ];
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;
-      ExecStart = "${pkgs.podman}/bin/podman load -i ${image}";
+      # `podman load` will NOT move ${imageRef} to the freshly-built image while the
+      # tag is still held by an old image that a (stale) reservation container
+      # references — the container keeps running the old image and container.nix
+      # changes silently never reach the rig. Clear stale hitl containers and untag
+      # the old image first, then load. Reservation containers are ephemeral and
+      # recreated per reservation, so removing them on a redeploy is safe.
+      ExecStart = pkgs.writeShellScript "hitl-image-load" ''
+        set -u
+        pm=${pkgs.podman}/bin/podman
+        ids=$($pm ps -aq --filter label=hitl=1 2>/dev/null || true)
+        [ -n "$ids" ] && $pm rm -f $ids 2>/dev/null || true
+        $pm untag ${imageRef} 2>/dev/null || true
+        $pm load -i ${image}
+      '';
     };
   };
 
@@ -233,11 +366,13 @@ in
     wantedBy = [ "multi-user.target" ];
     after = [ "network-online.target" "tailscaled.service" "hitl-image-load.service" ];
     wants = [ "network-online.target" "hitl-image-load.service" ];
-    # networkmanager (nmcli) toggles the AP; iw/iproute2 create the AP vif on demand.
-    path = [ pkgs.podman pkgs.iproute2 pkgs.openssh ];
+    # networkmanager (nmcli) toggles the AP; iw/iproute2 create the AP vif on
+    # demand; sigrok-cli (analyzer rig only) captures the DUT's tapped LED line.
+    path = [ pkgs.podman pkgs.iproute2 pkgs.openssh ]
+      ++ lib.optionals isAnalyzerRig sigrok.packages;
     serviceConfig = {
       ExecStart =
-        lib.concatStringsSep " " [
+        lib.concatStringsSep " " ([
           "${hitl}/bin/hitl-managerd"
           "--addr :${toString apiPort}"
           "--rig ${config.networking.hostName}"
@@ -248,6 +383,9 @@ in
           "--podman ${pkgs.podman}/bin/podman"
           "--privileged=${lib.boolToString privilegedContainers}"
           "--state-dir /var/lib/hitl"
+          # Reservation containers reach the daemon's shared analyzer over the
+          # podman host gateway; keep the port in sync with --addr above.
+          "--container-capture-url http://host.containers.internal:${toString apiPort}"
           # The AP is always-on (NM autoconnect); the daemon only advertises its
           # creds in /status for the harness (`hitl wifi`). It does NOT toggle the
           # AP — no --ap-conn — so per-reservation AP control (internal/ap) stays
@@ -255,7 +393,9 @@ in
           "--ap-ssid ${apSsid}"
           "--ap-psk ${apPsk}"
           dutArgs
-        ];
+        ] ++ analyzerArgs); # --analyzer-* only on the logic-analyzer rig
+      # libsigrok uploads fx2lafw firmware to the bare FX2 from here (analyzer rig).
+      Environment = lib.optionals isAnalyzerRig [ "SIGROK_FIRMWARE_DIR=${sigrok.firmwareDir}" ];
       StateDirectory = "hitl";
       Restart = "on-failure";
       RestartSec = 3;

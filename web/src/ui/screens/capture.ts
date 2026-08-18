@@ -30,6 +30,12 @@ import { DetectorGL } from "../../cv/detect";
 import { CaptureUnsupportedError } from "../../xr/capture";
 import { DEFAULT_IMU_MAPPING, ImuRecorder, parseImuMapping } from "../../xr/imu";
 import { MediaStreamCaptureSource } from "../../xr/mediaStreamCapture";
+import {
+  NativeCaptureSource,
+  nativeCaptureAvailable,
+  nativeLog,
+  saveSessionLog,
+} from "../../xr/nativeCaptureSource";
 import { SolverAgent, type SolveSnapshot } from "../../solver/agent";
 import { chooseSolvePlacement } from "../../solver/placement";
 import { LabelOverlay } from "../labels";
@@ -77,6 +83,26 @@ const forcedExposure = ((): number | null => {
   const v = parseFloat(qs.get("exposure") ?? "");
   return Number.isFinite(v) && v >= 0 && v <= 1 ? v : null;
 })();
+
+
+/** A throwaway WebGL2 context for DetectorGL on the native iOS path, where frames
+ * arrive already reduced and its GPU pass never runs. Cheaper than reshaping the
+ * detector around a context-free mode that only one platform needs. */
+function offscreenGl(): WebGL2RenderingContext {
+  const c = document.createElement("canvas");
+  c.width = 1;
+  c.height = 1;
+  const gl = c.getContext("webgl2");
+  if (!gl) throw new CaptureUnsupportedError("WebGL2 is unavailable.", []);
+  return gl;
+}
+
+/** Undo the transparency the native preview layer needs (see the capture start
+ * path). A no-op on the getUserMedia path, which never set it. */
+function restorePageBackground(): void {
+  document.documentElement.style.background = "";
+  document.body.style.background = "";
+}
 
 export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Screen {
   const el = document.createElement("div");
@@ -224,7 +250,10 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     if (ok) console.info(`wasm solver ready: benchmark ${solverAgent.benchMs?.toFixed(0)} ms`);
     return ok;
   });
-  let capture: MediaStreamCaptureSource | null = null;
+  let capture: MediaStreamCaptureSource | NativeCaptureSource | null = null;
+  // Set only on the iOS native path; used to push detect params down and to undo
+  // the page transparency the native preview layer needs.
+  let nativeSource: NativeCaptureSource | null = null;
   let capturing = false;
   let imuRecorder: ImuRecorder | null = null;
   let previewVideo: HTMLVideoElement | null = null;
@@ -269,20 +298,58 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       const cached = prefs.getCalibratedK();
       const initialExposure = servoExposure ? EXPOSURE_SERVO_START : forcedExposure;
       let servoedExposure = initialExposure ?? EXPOSURE_SERVO_START;
-      const ms = new MediaStreamCaptureSource({
-        kSeed: cached,
-        fxOverride: forcedFx ?? undefined,
-      });
-      capture = ms;
-      await capture.start();
-      ms.video.style.cssText =
-        "position:fixed;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;background:#000";
-      document.body.prepend(ms.video);
-      previewVideo = ms.video;
-      imuRecorder = new ImuRecorder(imuMapping);
-      imuRecorder.start();
+      // iOS takes the camera natively: WebKit's getUserMedia offers no exposure
+      // control at all and its camera is unreachable from this process, so the
+      // app owns an AVCaptureSession instead (design doc §4.6/§4.7). Everything
+      // downstream of `onFrame` is identical — the native source pre-runs the
+      // detector's threshold pass and ships the sparse result.
+      let exposureTarget: { setExposure(t: number, capMs?: number): unknown };
+      let detectGl: WebGL2RenderingContext;
+      if (nativeCaptureAvailable()) {
+        const nc = new NativeCaptureSource({ kSeed: cached, fxOverride: forcedFx ?? undefined });
+        capture = nc;
+        nativeSource = nc;
+        await nc.start();
+        // The preview is a native layer BEHIND the WebView, not a <video>, so the
+        // page has to be see-through for the duration (html as well as body — the
+        // root element paints the page canvas).
+        document.documentElement.style.background = "transparent";
+        document.body.style.background = "transparent";
+        exposureTarget = nc;
+        // The detector never runs its GPU pass on this path (frames arrive
+        // pre-reduced), but DetectorGL builds its program up front — so give it a
+        // throwaway context rather than reshaping the class around a path that
+        // only iOS takes.
+        detectGl = offscreenGl();
+      } else {
+        const ms = new MediaStreamCaptureSource({
+          kSeed: cached,
+          fxOverride: forcedFx ?? undefined,
+        });
+        capture = ms;
+        await ms.start();
+        ms.video.style.cssText =
+          "position:fixed;inset:0;width:100%;height:100%;object-fit:cover;z-index:0;background:#000";
+        document.body.prepend(ms.video);
+        previewVideo = ms.video;
+        exposureTarget = ms;
+        detectGl = ms.gl;
+      }
+      // IMU: on iOS it comes from CoreMotion via the capture plugin, whose axes
+      // are documented and already in the camera frame — ImuRecorder's
+      // DeviceMotion mapping was fitted on an Android handset and has never been
+      // right here (mis-oriented maps; docs/design/ios-support.md §4.7). Both
+      // expose flush(), so the batch tick below is identical either way.
+      if (nativeSource === null) {
+        imuRecorder = new ImuRecorder(imuMapping);
+        imuRecorder.start();
+      }
+      const imuFlusher: { flush(): ImuSample[] } | null = nativeSource ?? imuRecorder;
 
-      const detector = new DetectorGL(capture.gl, detectorOpts);
+      const detector = new DetectorGL(detectGl, detectorOpts);
+      // The native reduction must threshold with the SAME value the servo below
+      // steers, or the servo is reacting to counts it isn't controlling.
+      nativeSource?.setDetectParams({ threshold: detector.threshold, downscale: detector.downscale });
 
       // Pre-capture probe: measure the scene before the pattern runs, then
       // negotiate the capture configuration.
@@ -294,11 +361,11 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         let t0 = -1;
         capture!.onFrame((f) => {
           if (t0 < 0) t0 = f.tCaptureMs;
-          const blobs = detector.detect(f.texture, f.imgW, f.imgH);
+          const blobs = detector.detectFrame(f);
           monitor.push({
             tMs: f.tCaptureMs,
             blobCount: blobs.length,
-            scene: detector.measure(f.texture, f.imgW, f.imgH),
+            scene: detector.measureFrame(f),
           });
           lastAmbient = f.ambientIntensity ?? lastAmbient;
           if (f.tCaptureMs - t0 >= 1200) {
@@ -334,7 +401,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       let params: CodeParams = started.codeParams;
       let epoch: number = started.patternClockEpoch;
       if (initialExposure !== null) {
-        void ms.setExposure(initialExposure, params.bitPeriodMs / 2);
+        void exposureTarget.setExposure(initialExposure, params.bitPeriodMs / 2);
       }
       const makePipeline = (p: CodeParams, e: number): CvPipeline => {
         const pl = new CvPipeline(p, e, (t) => c.clock.toServerTime(t), { denseRecords: true });
@@ -351,11 +418,22 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       startedAt = performance.now();
       startTimer();
       let frameCount = 0;
+      // Frames the capture source had to clip (see the onFrame handler). Counted
+      // so a run that quietly threw away half its frames says so.
+      let truncatedFrames = 0;
 
       capture.onFrame((f) => {
         if (!capturing || !capture) return;
-        const blobs = detector.detect(f.texture, f.imgW, f.imgH, {});
-        const measured = frameCount % 6 === 0 ? detector.measure(f.texture, f.imgW, f.imgH) : undefined;
+        const blobs = detector.detectFrame(f, {});
+        // A truncated frame is one the capture source had to clip: too much of it
+        // was above threshold to encode (a bright scene before exposure settles).
+        // Its detections are incomplete AND spatially biased — the encoder fills
+        // in scan order, so what survives is the top of the frame — so they must
+        // not reach the decoder or the tracker, which would associate garbage.
+        // The blob count still goes to the monitor: that's the signal the
+        // threshold servo needs to climb out of the bright state.
+        const clipped = f.reduced?.truncated === true;
+        const measured = frameCount % 6 === 0 ? detector.measureFrame(f) : undefined;
         monitor.push({
           tMs: f.tCaptureMs,
           blobCount: blobs.length,
@@ -364,6 +442,10 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         });
         lastAmbient = f.ambientIntensity ?? lastAmbient;
 
+        if (clipped) {
+          truncatedFrames++;
+          return;
+        }
         pipeline.step(blobs, {
           tCaptureMs: f.tCaptureMs,
           pose: f.pose,
@@ -395,6 +477,19 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           // Live count chip reads observations · solved, so the user sees more
           // recording only helps (design doc §4.2).
           countEl.textContent = `${localDetections.length} obs${liveSolvedText}`;
+          // Mirror the HUD to the console every ~2s: on iOS this is the only way
+          // to see decode health from a device run (tools/iosctl log), and the
+          // numbers that matter — ids, tracks, blobs, align — are already here.
+          if (frameCount % 60 === 0) {
+            const diag =
+              `[capture] ids=${s.uniqueIds.size}/${params.ledCount} tracks=${s.tracks} ` +
+                `blobs=${blobs.length} align=${s.alignShiftMs.toFixed(0)}ms ` +
+                `obs=${localDetections.length} clipped=${truncatedFrames} ` +
+                `bit=${params.bitPeriodMs}ms sym=${params.symbols}` +
+                (pop ? ` sat=${pop.satFrac.toFixed(2)} medI=${pop.medianIntensity.toFixed(2)}` : "");
+            console.info(diag);
+            nativeLog(diag);
+          }
         }
       });
 
@@ -446,8 +541,8 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       }, 400);
 
       // Inertial batches for the joint solver.
-      if (imuRecorder !== null) {
-        const rec = imuRecorder;
+      if (imuFlusher !== null) {
+        const rec = imuFlusher;
         const imuTick = setInterval(() => {
           if (!capturing) {
             clearInterval(imuTick);
@@ -493,7 +588,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           // up under artificial light. It can exceed bitPeriodMs/2 and blur the
           // code across a hue transition — that's the deliberate manual trade
           // (FUG-62). The auto servo below keeps the Nyquist cap.
-          void ms.setExposure(e01, prefs.getManualExposureCeilingMs());
+          void exposureTarget.setExposure(e01, prefs.getManualExposureCeilingMs());
         },
       };
 
@@ -507,6 +602,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         c.sendExposureReport(report);
         if (!forcedThreshold) {
           detector.threshold = adjustThreshold(detector.threshold, report.blobCount, ledCount);
+          nativeSource?.setDetectParams({ threshold: detector.threshold });
         }
         if (renegotiating) return;
         const wantBit = forcedBitMs === null ? planReconfigure(params.bitPeriodMs, report.frameIntervalMs) : null;
@@ -529,7 +625,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           });
           if (nextExp !== null) {
             servoedExposure = nextExp;
-            void ms.setExposure(nextExp, params.bitPeriodMs / 2);
+            void exposureTarget.setExposure(nextExp, params.bitPeriodMs / 2);
           }
         }
         const wantBright =
@@ -571,6 +667,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       imuRecorder = null;
       previewVideo?.remove();
       previewVideo = null;
+      restorePageBackground();
       await capture?.stop().catch(() => undefined);
       capture = null;
       if (e instanceof CaptureUnsupportedError) toast(e.message, { error: true });
@@ -600,6 +697,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       imuRecorder?.stop();
       previewVideo?.remove();
       previewVideo = null;
+      restorePageBackground();
       await capture?.stop().catch(() => undefined);
       capture = null;
       await client()?.stopMappingNoSolve().catch(() => undefined);
@@ -620,6 +718,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     imuRecorder = null;
     previewVideo?.remove();
     previewVideo = null;
+    restorePageBackground();
     if (!sessionAlreadyEnded) await capture?.stop().catch(() => undefined);
     capture = null;
     resetLiveFeedback();
@@ -631,6 +730,13 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     }
     const placement = chooseSolvePlacement(solverAgent.benchMs, c.hostSolverBenchMs);
     const solveOnPhone = placement === "phone" && solverAgent.available && localDetections.length > 0;
+    // The solve is where an iOS run can still fail after a perfect capture, and
+    // Release builds swallow console output — so record the whole decision.
+    nativeLog(
+      `[solve] placement=${placement} onPhone=${solveOnPhone} ` +
+        `wasmAvailable=${solverAgent.available} wasmBench=${solverAgent.benchMs} ` +
+        `hostBench=${c.hostSolverBenchMs} detections=${localDetections.length} imu=${localImu.length}`,
+    );
     if (!solveOnPhone && c.hostSolverBenchMs === null) {
       toast(
         solverAgent.available
@@ -681,14 +787,21 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
     // plays no part once capture ends (FUG-69). Factored out so the host-solve
     // path can fall back to it when the device has dropped mid-capture.
     const solveOnPhoneNow = async (): Promise<OutputMap> => {
+      const problem = {
+        detections: localDetections,
+        imu: localImu,
+        ledCount: lastLedCount,
+        mapId: crypto.randomUUID(),
+        createdAt: new Date().toISOString(),
+      };
+      // Persist the exact solver input on iOS so a failed solve can be replayed
+      // natively (//solver:solver_cli) instead of re-captured per hypothesis.
+      const logged = nativeSource === null ? problem : { ...problem, imuRaw: nativeSource.rawImuLog() };
+      void saveSessionLog(`session-${Date.now()}.json`, JSON.stringify(logged)).then((path) => {
+        if (path !== null) nativeLog(`[solve] session log saved: ${path}`);
+      });
       const solved = await solverAgent.solve(
-        {
-          detections: localDetections,
-          imu: localImu,
-          ledCount: lastLedCount,
-          mapId: crypto.randomUUID(),
-          createdAt: new Date().toISOString(),
-        },
+        problem,
         (snap: SolveSnapshot) => renderSolveSnapshot(snap),
       );
       // The solve frame is camera-anchored (origin ≈ camera-path end). Recenter
@@ -706,7 +819,9 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         // Best-effort device bookkeeping only — tell it to stop and hand it the
         // result if the socket is still up, but never fail the solve on it.
         await c.stopMappingNoSolve().catch(() => undefined);
+        nativeLog("[solve] phone solve starting");
         map = await solveOnPhoneNow();
+        nativeLog(`[solve] phone solve done: ${map.leds.length} leds`);
         pushedToDevice = await c.submitMap(map).then(() => true).catch(() => false);
       } else {
         try {
@@ -714,6 +829,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
           const resp = await fetch(`/maps/${result.mapId}`);
           if (!resp.ok) throw new Error(`fetching map failed: HTTP ${resp.status}`);
           map = recenterToCentroid((await resp.json()) as OutputMap).map;
+          nativeLog(`[solve] host solve done: ${map.leds.length} leds`);
           pushedToDevice = true;
         } catch (hostErr) {
           // Host solve unreachable — typically the device dropped mid-capture
@@ -730,7 +846,12 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
             `host solve failed (${hostErr instanceof Error ? hostErr.message : hostErr}); ` +
               "falling back to the phone solver",
           );
+          nativeLog(
+            `[solve] host solve FAILED (${hostErr instanceof Error ? hostErr.message : String(hostErr)})` +
+              " — falling back to the phone solver",
+          );
           map = await solveOnPhoneNow();
+          nativeLog(`[solve] fallback phone solve done: ${map.leds.length} leds`);
           pushedToDevice = await c.submitMap(map).then(() => true).catch(() => false);
         }
       }
@@ -746,6 +867,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       );
       router.navigate(`/map/${id}`);
     } catch (e) {
+      nativeLog(`[solve] FAILED: ${e instanceof Error ? e.message : String(e)}`);
       toast(`Reconstruction failed: ${e instanceof Error ? e.message : e}`, { error: true });
       router.navigate("/maps");
     } finally {
@@ -764,6 +886,7 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       imuRecorder?.stop();
       previewVideo?.remove();
       previewVideo = null;
+      restorePageBackground();
       void capture?.stop().catch(() => undefined);
       capture = null;
       resetLiveFeedback();
