@@ -1004,7 +1004,14 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     // the panel re-renders; then refresh its manifest for the drivable list.
     midiStore.autoBind(effectId, r.uniforms.filter(isDrivable).map((u) => u.name));
     midiPanel.setManifest(r.uniforms);
-    await swapPreview(r.bytecode);
+    // A preview failure (e.g. the fx-vm module can't load) must not block the
+    // rest of the compile pipeline — the status, uniforms and disassembly below
+    // are independent of the live preview.
+    try {
+      await swapPreview(r.bytecode);
+    } catch (err) {
+      console.warn("live preview unavailable:", err);
+    }
 
     // Refresh disassembly (authoritative Rust disassembler via the worker).
     const disasm = await worker.disassemble(r.bytecode);

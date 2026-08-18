@@ -40,6 +40,7 @@ import { shakeConfirmLine, SHAKE_CONFIRM_LINES } from "../acid/narrate";
 import { confirmDialog } from "../kit";
 import { initAppearance } from "../../store/appearance";
 import { maybeShowSplash } from "./splash";
+import { maybeShowFirstRunHint } from "../guide/tour";
 
 async function main(): Promise<void> {
   // Apply the saved appearance (theme / fonts / scale) before the shell mounts
@@ -59,8 +60,14 @@ async function main(): Promise<void> {
   // PWA: register the service worker + offer the install banner / ⋯-menu entry.
   initPwa();
 
+  // Demo/capture mode (FUG-103 docs screenshots): a `?demo=<scenario>` flag lazy-
+  // loads a seam that mocks hardware (connected device + RTT, camera, Bluetooth)
+  // so the user guide can screenshot those states. No-op in every normal load.
+  const demoParam = new URLSearchParams(location.search).get("demo");
+
   // Lazily probe known devices' liveness in the background (1/min → 1/10min).
-  deviceProber.start();
+  // Skipped in demo mode so a real probe can't override the injected device state.
+  if (!demoParam) deviceProber.start();
 
   const router = new Router(shell.outlet);
   shell.attach(router);
@@ -71,7 +78,12 @@ async function main(): Promise<void> {
   // Back-compat: ?url=<wss> auto-adds/selects a device on load.
   const qs = new URLSearchParams(location.search);
   const urlOverride = qs.get("url");
-  appState.restoreActive(urlOverride);
+  if (demoParam) {
+    const { initDemoMode } = await import("../../demo/init");
+    initDemoMode(new Set(demoParam.split(",")));
+  } else {
+    appState.restoreActive(urlOverride);
+  }
 
   router
     .add("/onboard", () => {
@@ -154,6 +166,11 @@ async function main(): Promise<void> {
   await seedBuiltinEffects();
 
   router.start();
+
+  // First-run tutorial hint (FUG-103): a dismissible "?" affordance offering the
+  // guided tour. No-op once the tutorial has been taken or dismissed; always
+  // recallable from Settings ▸ Help & tutorial.
+  maybeShowFirstRunHint(router);
 
   // Shake-to-enter Acid Mode (FUG-106): a vigorous side-to-side shake pops a
   // (humorous) confirmation; on OK we drop into the hands-free mode. Guarded so

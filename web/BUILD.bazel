@@ -203,6 +203,40 @@ js_binary(
     entry_point = ":dist-test/tests/tools/genFxVmPerfDoc.js",
 )
 
+# Auto-generate the user guide (FUG-103) — docs/user-guide.md + the static
+# docs/user-guide/ site — from the shared in-app guide catalog
+# (web/src/ui/guide/catalog.ts), the same data the interactive tutorial uses.
+# Regenerate the checked-in docs:
+#   bazel run //web:gen_user_guide
+# (writes into the source tree via $BUILD_WORKSPACE_DIRECTORY). The freshness
+# genrule below runs it with --check under `bazel test //...`.
+js_binary(
+    name = "gen_user_guide",
+    data = [
+        ":dist_test_pkg_json",
+        ":web_tests_js",
+    ],
+    entry_point = ":dist-test/tests/tools/genUserGuide.js",
+)
+
+# Freshness gate mirroring :fx_vm_perf_doc_freshness: regenerate the user guide
+# in memory and diff it against the checked-in copies, failing the build if a
+# catalog change moved the docs without a re-pin. `bazel test //...` builds this.
+genrule(
+    name = "user_guide_freshness",
+    srcs = [
+        "//docs:user-guide.md",
+        "//docs:user-guide/index.html",
+        "//docs:user-guide/shots.json",
+    ],
+    outs = ["user_guide_freshness.stamp"],
+    cmd = "BAZEL_BINDIR=. $(execpath :gen_user_guide) --check " +
+          "--md-out $(location //docs:user-guide.md) " +
+          "--html-out $(location //docs:user-guide/index.html) " +
+          "--shots-out $(location //docs:user-guide/shots.json) && touch $@",
+    tools = [":gen_user_guide"],
+)
+
 # The golden HITL benchmark bundles the perf doc is generated from (one per
 # platform; only esp32c6 today). A filegroup so the freshness genrule can pass
 # every bundle to the generator regardless of how many platforms exist.
@@ -294,6 +328,10 @@ sh_binary(
 SITE_DATA = [
     ":dist",
     "stage_site.lib.sh",
+    # The generated static user guide (FUG-103), published at /user-guide/,
+    # plus its captured screenshots.
+    "//docs:user-guide/index.html",
+    "//docs:user_guide_img",
     "//firmware/fx_vm:fx_vm_web",
     "//firmware/pulse:pulse_web",
     "//fx_compiler:fx_compiler_web",

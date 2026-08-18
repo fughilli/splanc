@@ -1,0 +1,90 @@
+[
+  {
+    "id": "welcome",
+    "route": "#/onboard"
+  },
+  {
+    "id": "connect-device",
+    "route": "#/onboard",
+    "demo": "bluetooth"
+  },
+  {
+    "id": "maps-library",
+    "route": "#/maps"
+  },
+  {
+    "id": "capture",
+    "route": "#/capture",
+    "demo": "device,camera"
+  },
+  {
+    "id": "map-workspace",
+    "route": "#/maps",
+    "click": ".map-row",
+    "waitMs": 2000
+  },
+  {
+    "id": "effects-library",
+    "route": "#/effects"
+  },
+  {
+    "id": "effect-editor",
+    "route": "#/effects",
+    "click": ".map-row",
+    "waitMs": 2800,
+    "demo": "effect"
+  },
+  {
+    "id": "effect-editor-disassembly",
+    "route": "#/effects",
+    "clicks": [
+      ".map-row",
+      ".fxlayout-tablist >> text=Disassembly"
+    ],
+    "waitMs": 1200,
+    "demo": "effect"
+  },
+  {
+    "id": "effect-editor-device",
+    "route": "#/effects",
+    "clicks": [
+      ".map-row",
+      ".fxlayout-tablist >> text=Device"
+    ],
+    "waitMs": 1000,
+    "demo": "effect"
+  },
+  {
+    "id": "device-management",
+    "route": "#/maps",
+    "click": ".tab[data-tab='device']",
+    "waitMs": 700,
+    "demo": "device"
+  },
+  {
+    "id": "flashing",
+    "route": "#/maps",
+    "waitMs": 1400,
+    "demo": "flash"
+  },
+  {
+    "id": "color-correction",
+    "route": "#/settings/color-correction"
+  },
+  {
+    "id": "performance",
+    "route": "#/perf"
+  },
+  {
+    "id": "midi",
+    "route": "#/settings/midi"
+  },
+  {
+    "id": "appearance",
+    "route": "#/settings"
+  },
+  {
+    "id": "help",
+    "route": "#/about"
+  }
+]

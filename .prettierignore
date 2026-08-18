@@ -2,3 +2,6 @@
 # pretty-printing solver/testdata/ios_capture.json inflates it 531KB -> 777KB,
 # past the repo's large-file gate, for no readability gain on 2389 records.
 solver/testdata/
+
+# Generated manifest (byte-pinned by //web:user_guide_freshness; not prettier-shaped).
+docs/user-guide/shots.json

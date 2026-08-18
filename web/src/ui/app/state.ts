@@ -179,6 +179,15 @@ class AppState {
     if (wasActive) void deviceProber.probeNow(wasActive);
   }
 
+  /** Capture/demo-mode seam (FUG-103 docs screenshots): force a connected client
+   * + status without opening a real socket, so the user guide can show a
+   * connected device with a plausible RTT. Only the `?demo` bootstrap
+   * (src/demo/init.ts) ever calls this; no production path does. */
+  setDemoConnection(client: LedMapperClient, status: ConnStatus): void {
+    this.client = client;
+    this.setStatus(status);
+  }
+
   /** Restore the previously-active device on boot (back-compat with ?url=). */
   restoreActive(urlOverride?: string | null): void {
     if (urlOverride) {

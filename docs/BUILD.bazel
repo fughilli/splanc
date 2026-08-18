@@ -21,6 +21,58 @@ package(default_visibility = ["//visibility:public"])
 # (//web:fx_vm_perf_doc_freshness) can still $(location) it.
 exports_files(["fx-vm-performance.md"])
 
+# The generated user guide (FUG-103): the Markdown doc and the static site's
+# index. Exported so the web freshness genrule (//web:user_guide_freshness) can
+# $(location) them and //web:stage_site can publish the site under /user-guide/.
+exports_files([
+    "user-guide.md",
+    "user-guide/index.html",
+    "user-guide/shots.json",
+])
+
+# Capture real app screenshots for the user guide (FUG-103 review follow-up). A
+# `bazel run` tool — NEVER part of `bazel test //...` (a py_binary is only built,
+# never run, by the wildcard), so CI needs no browser. It builds the app, drives
+# headless Chromium via Playwright over each route in docs/user-guide/shots.json,
+# and writes docs/user-guide/img/<id>.png. Refresh the screenshots with:
+#   bazel run //docs:capture_user_guide
+py_binary(
+    name = "capture_user_guide",
+    srcs = ["capture_user_guide.py"],
+    data = ["//web:dist"],
+    main = "capture_user_guide.py",
+    deps = [requirement("playwright")],
+)
+
+# One-target user-guide rebuild: regenerate the Markdown + static site + manifest
+# (the TS //web:gen_user_guide), then capture fresh screenshots. `bazel run` only:
+#   bazel run //docs:build_user_guide
+py_binary(
+    name = "build_user_guide",
+    srcs = [
+        "build_user_guide.py",
+        "capture_user_guide.py",
+    ],
+    data = [
+        "//web:dist",
+        "//web:gen_user_guide",
+    ],
+    main = "build_user_guide.py",
+    deps = [requirement("playwright")],
+)
+
+# The captured screenshots (checked-in binary assets, refreshed by
+# :capture_user_guide). A filegroup so //web:stage_site can publish them and it
+# tolerates the set being empty before the first capture.
+filegroup(
+    name = "user_guide_img",
+    srcs = glob([
+        "user-guide/img/*.png",
+        # Dedicated flow sub-pages (effect-editor.html, …) linked from index.html.
+        "user-guide/*.html",
+    ]),
+)
+
 # The figures + animations, rendered from the real simulator -> reconstruction
 # path. Runnable on its own (writes to the given dir); also imported by :build.
 py_binary(
