@@ -997,7 +997,10 @@ static uint32_t render_once() {
           leds[i] = Rgb(rgb[0], rgb[1], rgb[2]);
         }
       }
-      for (uint32_t i = n; i < kMaxLeds; i++) leds[i] = Rgb::Black;
+      // Blank only the TRANSMITTED tail [n, xmit_len); LEDs past xmit_len are
+      // never pushed (exact-count transmit), so blanking to kMaxLeds is dead
+      // work — and at kMaxLeds=1024 it dominated the cheapest effect's frame.
+      for (uint32_t i = n; i < xmit_len; i++) leds[i] = Rgb::Black;
       // Record the render instant (raw micros(), integer µs — no f64) BEFORE
       // the strip write; consecutive records reveal the true frame cadence,
       // drained by the phone via get_frame_timing. micros() wraps ~71 min; the
@@ -1074,7 +1077,10 @@ static uint32_t render_once() {
           leds[i] = Rgb::Black;  // no map entry
         }
       }
-      for (uint32_t i = n; i < kMaxLeds; i++) leds[i] = Rgb::Black;
+      // Blank only the TRANSMITTED tail [n, xmit_len); LEDs past xmit_len are
+      // never pushed (exact-count transmit), so blanking to kMaxLeds is dead
+      // work — and at kMaxLeds=1024 it dominated the cheapest effect's frame.
+      for (uint32_t i = n; i < xmit_len; i++) leds[i] = Rgb::Black;
       // Rate-limited interpreter diagnostic (~1 Hz): update outcome + how many
       // LEDs the bounded-exec guard cancelled this frame. Cheap; helps see if an
       // effect is tripping the instruction budget / wall-time deadline.
@@ -1114,8 +1120,13 @@ static uint32_t render_once() {
     uint32_t dt = now - last_playback_ms;   // wraps cleanly (unsigned)
     if (last_playback_ms == 0 || dt > 100) dt = 33;  // fresh entry / long gap
     last_playback_ms = now;
+    // Colour + transmit exactly the mapped/topology LEDs, not the whole 1024-cap
+    // buffer (lm_playback_color returns false past the topology extent anyway).
+    uint32_t pn = lm_map_len();
+    if (pn > kMaxLeds) pn = kMaxLeds;
+    if (pn > 0) xmit_len = pn;
     if (lm_playback_step(dt)) {
-      for (uint32_t i = 0; i < kMaxLeds; i++) {
+      for (uint32_t i = 0; i < xmit_len; i++) {
         if (lm_playback_color(i, rgb)) {
           leds[i] = cc_apply(rgb);
         } else {
@@ -1124,7 +1135,7 @@ static uint32_t render_once() {
       }
     } else {
       // Effect configured but no topology stored yet — hold black.
-      fill_rgb(leds, kMaxLeds, Rgb::Black);
+      fill_rgb(leds, xmit_len, Rgb::Black);
     }
     show = true;
     was_active = true;
