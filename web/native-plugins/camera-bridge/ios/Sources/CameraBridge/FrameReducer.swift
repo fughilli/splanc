@@ -57,10 +57,13 @@ final class FrameReducer {
     }
 
     /// Beyond this many lit pixels the scene isn't a dark room with LEDs in it and
-    /// sparse encoding has stopped paying for itself (at 640x360 this is ~15%, or
-    /// ~276 KB of payload). The threshold servo exists to keep the frame well under
-    /// this; exceeding it is reported, never silently trimmed away.
-    static let maxSparsePixels = 34_560
+    /// sparse encoding has stopped paying for itself (~3.5% of a 640x360 frame,
+    /// ~64 KB of payload). Sized from measurement, not guesswork: a real 60-LED
+    /// capture runs 100-1000 lit pixels, peaking near 8.5k while the exposure
+    /// servo is still settling — so this leaves ~1000x headroom over typical and
+    /// ~1x over the worst observed transient, while bounding both the payload and
+    /// the scan's worst case. Exceeding it is reported, never silently trimmed.
+    static let maxSparsePixels = 8_192
 
     // Reused across frames; sized once on first use.
     private var idxBuf = [UInt32](repeating: 0, count: FrameReducer.maxSparsePixels)

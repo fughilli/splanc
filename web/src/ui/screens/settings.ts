@@ -29,7 +29,6 @@ import { installSettingsStyles } from "./settings.css";
 import { MapView } from "../mapview";
 import { generateFixture } from "../../effects/fixtures";
 import { prefs, DEFAULT_MANUAL_EXPOSURE_CEILING_MS } from "../../store/prefs";
-import { isIosNative } from "../../net/native";
 
 type SettingsTab = "appearance" | "behavior";
 
@@ -47,7 +46,7 @@ const MONO_LABELS: Record<MonoChoice, string> = {
   courier: "Courier",
 };
 
-export function SettingsScreen(router: Router): Screen {
+export function SettingsScreen(_router: Router): Screen {
   installSettingsStyles();
   const el = document.createElement("div");
   el.className = "screen screen--settings";
@@ -191,26 +190,6 @@ export function SettingsScreen(router: Router): Screen {
       ),
       hint,
     );
-    // iOS only: exposure can't be driven through getUserMedia at all (WebKit
-    // implements none of the Image-Capture exposure extensions), so it runs on a
-    // native capture session instead — docs/design/ios-support.md §4.7. This is
-    // the checkpoint screen that proves that session can do it.
-    if (isIosNative()) {
-      const nativeHint = document.createElement("div");
-      nativeHint.className = "settings-row-hint settings-full";
-      nativeHint.textContent =
-        "Camera exposure on iOS runs on a native capture session. Open this to check it live.";
-      g.append(
-        fullRow(
-          Button({
-            label: "Native camera check",
-            variant: "quiet",
-            onClick: () => router.navigate("/settings/native-camera"),
-          }),
-        ),
-        nativeHint,
-      );
-    }
     return g;
   }
 

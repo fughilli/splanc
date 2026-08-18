@@ -418,10 +418,21 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       startedAt = performance.now();
       startTimer();
       let frameCount = 0;
+      // Frames the capture source had to clip (see the onFrame handler). Counted
+      // so a run that quietly threw away half its frames says so.
+      let truncatedFrames = 0;
 
       capture.onFrame((f) => {
         if (!capturing || !capture) return;
         const blobs = detector.detectFrame(f, {});
+        // A truncated frame is one the capture source had to clip: too much of it
+        // was above threshold to encode (a bright scene before exposure settles).
+        // Its detections are incomplete AND spatially biased — the encoder fills
+        // in scan order, so what survives is the top of the frame — so they must
+        // not reach the decoder or the tracker, which would associate garbage.
+        // The blob count still goes to the monitor: that's the signal the
+        // threshold servo needs to climb out of the bright state.
+        const clipped = f.reduced?.truncated === true;
         const measured = frameCount % 6 === 0 ? detector.measureFrame(f) : undefined;
         monitor.push({
           tMs: f.tCaptureMs,
@@ -431,6 +442,10 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
         });
         lastAmbient = f.ambientIntensity ?? lastAmbient;
 
+        if (clipped) {
+          truncatedFrames++;
+          return;
+        }
         pipeline.step(blobs, {
           tCaptureMs: f.tCaptureMs,
           pose: f.pose,
@@ -469,7 +484,8 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
             const diag =
               `[capture] ids=${s.uniqueIds.size}/${params.ledCount} tracks=${s.tracks} ` +
                 `blobs=${blobs.length} align=${s.alignShiftMs.toFixed(0)}ms ` +
-                `obs=${localDetections.length} bit=${params.bitPeriodMs}ms sym=${params.symbols}` +
+                `obs=${localDetections.length} clipped=${truncatedFrames} ` +
+                `bit=${params.bitPeriodMs}ms sym=${params.symbols}` +
                 (pop ? ` sat=${pop.satFrac.toFixed(2)} medI=${pop.medianIntensity.toFixed(2)}` : "");
             console.info(diag);
             nativeLog(diag);

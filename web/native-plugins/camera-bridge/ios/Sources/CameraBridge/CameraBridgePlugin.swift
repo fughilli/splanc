@@ -24,11 +24,11 @@ private func clog(_ s: String) {
 /// Exposure is then an ordinary `setExposureModeCustom` on a device this process
 /// is actually streaming, so it takes effect and the readback proves it.
 ///
-/// This is phase 1+2 of §4.7: session, preview, and exposure — enough to confirm
-/// exposure control works on-device. Frames do not yet reach the detector; that's
-/// the threshold/downsample + sparse-transport stage, which lands next. While this
-/// plugin holds the camera nothing may call `getUserMedia` — two capture clients
-/// can't share it — so today only the checkpoint screen starts it.
+/// The plugin owns the whole iOS capture path: the session, the preview layer,
+/// exposure, the detector's threshold/downsample stage (FrameReducer, shipped as
+/// sparse lit pixels), and the CoreMotion IMU. While it holds the camera nothing
+/// may call `getUserMedia` — two capture clients can't share it — so the capture
+/// screen picks exactly one source (see nativeCaptureAvailable).
 @objc(CameraBridge)
 public class CameraBridge: CAPPlugin, CAPBridgedPlugin {
     public let identifier = "CameraBridge"
