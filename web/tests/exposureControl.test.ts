@@ -35,7 +35,23 @@ test("prefers a manual exposure lock and pins ISO to its minimum", () => {
   assert.equal(a["iso"], 100); // gain held at the floor
 });
 
-test("target interpolates linearly across the exposureTime range", () => {
+test("target walks the exposureTime range in equal stops (geometric)", () => {
+  // 10 → 1280 units is exactly 7 doublings, so each 1/7 of travel is one stop.
+  const caps: ExposureCapabilities = {
+    exposureMode: ["manual"],
+    exposureTime: { min: 10, max: 1280 },
+  };
+  const at = (t: number): number => adv(planExposure(caps, t))["exposureTime"] as number;
+  assert.equal(at(0), 10); // endpoints are exact
+  assert.equal(at(1), 1280);
+  assert.ok(Math.abs(at(1 / 7) - 20) < 1e-9); // one stop in
+  assert.ok(Math.abs(at(4 / 7) - 160) < 1e-9); // four stops in
+  // The midpoint is the geometric mean, NOT the arithmetic one — that's the
+  // whole point: it leaves half the travel below 113 units instead of 645.
+  assert.ok(Math.abs(at(0.5) - Math.sqrt(10 * 1280)) < 1e-9);
+});
+
+test("a zero exposureTime floor has no log to walk, so it stays linear", () => {
   const caps: ExposureCapabilities = {
     exposureMode: ["manual"],
     exposureTime: { min: 0, max: 1000 },

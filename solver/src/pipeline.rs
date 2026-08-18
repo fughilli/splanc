@@ -712,6 +712,51 @@ mod tests {
         }
     }
 
+    /// Regression on a REAL iOS capture (60-LED strip, iPhone SE 3 / iOS 26.6).
+    ///
+    /// Guards the accelerometer sign convention, which has bitten this project
+    /// twice and never fails loudly. The solver's model wants specific force
+    /// f = R^T(a - g) (see synth.rs); CoreMotion's userAcceleration is the
+    /// NEGATIVE of body-frame acceleration, so the client must send
+    /// -(userAcceleration + gravity). Get it wrong and you do not get an error —
+    /// you get either a collapsed metric scale (0 leds) or, worse, a clean
+    /// sub-pixel fit whose map is silently upside down, because a global rotation
+    /// that negates gravity satisfies every reprojection exactly.
+    ///
+    /// So this asserts ORIENTATION as well as fit: the capture was shot from
+    /// ABOVE the fixture looking down, so the solved camera path must sit above
+    /// the LEDs. rms alone cannot see that.
+    #[test]
+    fn ios_capture_solves_upright() {
+        let raw = std::fs::read_to_string("solver/testdata/ios_capture.json")
+            .expect("fixture: solver/testdata/ios_capture.json");
+        let problem: Problem = serde_json::from_str(&raw).expect("fixture parses");
+        let map = reconstruct_vio(&problem, None).unwrap();
+
+        assert!(map.leds.len() >= 50, "solved {} of 60", map.leds.len());
+        assert!(
+            map.stats.rms_reproj_px_global < 3.0,
+            "rms {}",
+            map.stats.rms_reproj_px_global
+        );
+
+        let led_y: f64 = map.leds.iter().map(|l| l.xyz[1]).sum::<f64>() / map.leds.len() as f64;
+        let cam_y: f64 =
+            map.trajectory.iter().map(|p| p[1]).sum::<f64>() / map.trajectory.len() as f64;
+        assert!(
+            cam_y > led_y,
+            "map is upside down: camera {cam_y:.2} should be above LEDs {led_y:.2} \
+             (check the accelerometer sign convention)"
+        );
+
+        // Metric scale: a 30mm-pitch strip. A sign error collapses this to ~1.5cm
+        // across the whole fixture rather than per-LED.
+        let mut xs: Vec<f64> = map.leds.iter().map(|l| l.xyz[0]).collect();
+        xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let span = xs.last().unwrap() - xs.first().unwrap();
+        assert!(span > 0.3, "x span {span:.3} m — metric scale collapsed?");
+    }
+
     /// End-to-end wire test on the synthetic scene (mirrors
     /// test_reconstruct_vio_wire_end_to_end's shape checks).
     #[test]

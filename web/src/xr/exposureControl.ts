@@ -46,7 +46,10 @@ export const EXPOSURE_UNIT_MS = 0.1;
 
 /**
  * Choose exposure constraints for `target01` (0 = minimum exposure = darkest,
- * the least-bloom end; 1 = maximum). Prefers a hard MANUAL exposure lock
+ * the least-bloom end; 1 = maximum). The manual lock walks the range
+ * GEOMETRICALLY — equal target travel is equal stops — so the short end stays
+ * controllable instead of collapsing into the last percent of the slider.
+ * Prefers a hard MANUAL exposure lock
  * (also pinning ISO to its minimum to hold the gain down) when the camera
  * supports it; falls back to an exposure-COMPENSATION bias (a hint the auto
  * loop honors, weaker but widely supported); null when neither exists.
@@ -73,7 +76,16 @@ export function planExposure(
       // the shortest exposure is the best we can do (and we say so).
       hi = Math.max(caps.exposureTime.min, Math.min(hi, maxExposureMs / EXPOSURE_UNIT_MS));
     }
-    const exposureTime = caps.exposureTime.min + t * (hi - caps.exposureTime.min);
+    // GEOMETRIC, not linear. Exposure is perceived in stops (doublings), so a
+    // linear ramp spends nearly all its travel in the blown-out top end: on a
+    // 0.02–250 ms range, everything from "well exposed" to "black" is squeezed
+    // into the bottom ~1% of the slider, which is the complaint from the field.
+    // Interpolating the log makes equal travel = equal stops, so the dim end —
+    // where LED mapping actually lives — gets its fair share of the control.
+    // A zero floor or an inverted range has no log to walk, so those degenerate
+    // cases keep the linear ramp.
+    const lo = caps.exposureTime.min;
+    const exposureTime = lo > 0 && hi > lo ? lo * Math.pow(hi / lo, t) : lo + t * (hi - lo);
     const advanced: Record<string, unknown> = { exposureMode: "manual", exposureTime };
     if (caps.iso) advanced["iso"] = caps.iso.min; // hold gain at its lowest
     return {

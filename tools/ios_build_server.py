@@ -550,8 +550,24 @@ class Handler(BaseHTTPRequestHandler):
                 return
 
         params = _params(q)  # validates; raises ValueError → 400
+        # Device builds default to Release, simulator builds stay Debug.
+        # Swift compiled -Onone is 10-100x slower, and the native capture path's
+        # per-pixel reduction runs 30x/s on real hardware — a Debug device build
+        # once looked like a 1.7fps architectural failure when it was purely the
+        # optimizer being off. Nothing on-device is timed meaningfully in Debug,
+        # so pay the compile cost by default and let --configuration override.
+        if "configuration" not in q and any(n.startswith("device-") for n in seq):
+            params["configuration"] = "Release"
+            self_note = True
+        else:
+            self_note = False
 
         self._begin_stream()
+        if self_note:
+            self._write(
+                "[ios-build] configuration=Release (device build default; "
+                "pass --configuration Debug to override)\n"
+            )
         self._write(
             f"[ios-build] workspace={CFG['workspace']}\n[ios-build] plan: {' → '.join(seq)}\n\n"
         )
