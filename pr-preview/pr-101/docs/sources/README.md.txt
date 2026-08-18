@@ -87,6 +87,8 @@ The app is a PWA — nothing to install:
 
 ## Learn more
 
+- **Using the app:** [`docs/user-guide.md`](./docs/user-guide.md) — a walkthrough of
+  every feature (also an interactive tutorial in the app, from Settings ▸ Help)
 - **Contributing & building from source:** [`DEVELOPERS.md`](./DEVELOPERS.md)
 - **Design & architecture:** [`led-mapper-design.md`](./led-mapper-design.md) —
   the durable spec — plus [`docs/`](./docs)
