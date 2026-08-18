@@ -16,3 +16,9 @@
 // kMaxLeds) so the firmware advertises its full "up to 1024 LEDs" capacity.
 #define NUM_LEDS 1024
 #define LED_DATA_PIN 20
+// Second WS2812 channel (RMT ch1). A long strip splits across the two GPIOs and
+// clocks out in PARALLEL — channel 0 drives the first set_led_count(0) LEDs,
+// channel 1 the next set_led_count(1). Off unless channel 1 is configured
+// (set_led_count(1, n)), so single-channel wiring is unaffected. GPIO21 is clean
+// (not a strapping pin, not USB-JTAG, not SPI-flash).
+#define LED_DATA_PIN_2 21
