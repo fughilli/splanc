@@ -26,12 +26,13 @@ var ErrNotFound = errors.New("reservation not found")
 // podman). Reservations are infrequent, so this simple serialization is fine;
 // revisit with a control goroutine if it ever becomes a bottleneck.
 type Manager struct {
-	rig     string
-	lease   time.Duration
-	run     runner.Runner
-	devices []runner.Device // the DUTs this rig can hand out (>=1)
-	wifi    *api.WiFiInfo   // rig's provisioning AP creds, advertised in Status (or nil)
-	ap      AP              // brings that AP up/down around active reservations (or nil)
+	rig      string
+	lease    time.Duration
+	run      runner.Runner
+	devices  []runner.Device   // the DUTs this rig can hand out (>=1)
+	wifi     *api.WiFiInfo     // rig's provisioning AP creds, advertised in Status (or nil)
+	analyzer *api.AnalyzerInfo // rig's shared logic-analyzer capability, advertised in Status (or nil)
+	ap       AP                // brings that AP up/down around active reservations (or nil)
 
 	mu    sync.Mutex
 	items []*api.Reservation // admission order; several may be Active (one per DUT)
@@ -52,6 +53,19 @@ type Option func(*Manager)
 // WithWiFi advertises the rig's provisioning-AP creds in Status so the harness can
 // provision the DUT onto it with no out-of-band config.
 func WithWiFi(w *api.WiFiInfo) Option { return func(m *Manager) { m.wifi = w } }
+
+// WithAnalyzer advertises the rig's shared logic-analyzer capability in Status so
+// clients can select an analyzer-capable rig by capability (not by name/tag).
+func WithAnalyzer(a *api.AnalyzerInfo) Option { return func(m *Manager) { m.analyzer = a } }
+
+// SetAnalyzer refreshes the advertised analyzer capability — called after a
+// runtime channel-map change (POST /analyzer/channel-map) so /status reflects the
+// live channel set instead of the boot-time snapshot.
+func (m *Manager) SetAnalyzer(a *api.AnalyzerInfo) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.analyzer = a
+}
 
 // WithAP wires an access point that the manager toggles around active
 // reservations (up on activation, down on release/reap).
@@ -309,7 +323,7 @@ func (m *Manager) Release(ctx context.Context, id, reason string) error {
 func (m *Manager) Status() api.Status {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	s := api.Status{Rig: m.rig, LeaseSeconds: int(m.lease.Seconds()), WiFi: m.wifi}
+	s := api.Status{Rig: m.rig, LeaseSeconds: int(m.lease.Seconds()), WiFi: m.wifi, Analyzer: m.analyzer}
 
 	// active DUT name -> holder view.
 	holders := map[string]*api.Reservation{}

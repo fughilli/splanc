@@ -204,7 +204,7 @@ use_repo(host_crate, "host_crates")
 bazel_dep(name = "sbc_deploy", version = "0.0.0")
 git_override(
     module_name = "sbc_deploy",
-    commit = "cb70fcc832700c776a960d8f4303876acab0ac36",
+    commit = "6dd1e56142c8cfe416b13df77128310214d79059",
     remote = "https://github.com/fughilli/sbc-deploy.git",
 )
 

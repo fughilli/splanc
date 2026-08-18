@@ -26,10 +26,68 @@ lease, and releases on exit (`--keep` to hold it).
 ```sh
 bazel run //pi/hitl:hitl.keys        -- init
 bazel run //pi/hitl:hitl.image_sd    -- --device /dev/diskN   # flash a card
-bazel run //pi/hitl:hitl.deploy_live -- hitl-rig              # or push to a running rig
+bazel run //pi/hitl:hitl.deploy_live -- hitl-rig-1           # or push to a running rig
 ```
 
 (On macOS, start the builder first: `bazel run @sbc_deploy//:linux_builder`.)
+
+### Rig naming (canonical)
+
+Every box has **one** name, `hitl-rig-<n>`, with a **mandatory** numeric suffix
+`<n>` unique to the box (`hitl-rig-1`, `hitl-rig-2`, … — never a bare `hitl-rig`).
+Capability (e.g. a logic analyzer) is discovered from `/status`, not encoded in
+the name. The name is set at deploy with the `--hostname` flag and used verbatim
+in all three places below, so a box is addressed identically everywhere — no
+`hitl-rig`/`hitl-rig-2` ambiguity, and `hitl reserve` (including
+`--require analyzer`) finds it with no `--server`.
+
+| what               | value          | example      |
+| ------------------ | -------------- | ------------ |
+| System hostname    | `hitl-rig-<n>` | `hitl-rig-3` |
+| Tailscale hostname | `hitl-rig-<n>` | `hitl-rig-3` |
+| AP SSID            | `hitl-rig-<n>` | `hitl-rig-3` |
+
+Set it with `--hostname` (a plain Pi 3 rig `hitl-rig-3`):
+
+```sh
+bazel run //pi/hitl:hitl_pi3.deploy_live -- --hostname hitl-rig-3 <host-or-ip>
+```
+
+### Board + capabilities (mix and match)
+
+The board is a **bazel target** (`:hitl` = Pi 5, `:hitl_pi3` = Pi 3B/3B+); the two
+optional capabilities are **env flags** at deploy, independent of the board:
+
+| flag              | effect                                                         |
+| ----------------- | -------------------------------------------------------------- |
+| `SBC_ANALYZER=1`  | wire the shared FX2/fx2lafw logic analyzer (sigrok `/capture`) |
+| `SBC_AP_DONGLE=1` | host the AP on a dedicated RTL8851BU USB radio (`ap0`) instead |
+|                   | of onboard `wlan0` — for a board that can't AP                 |
+
+So any combination works, e.g. an **analyzer on a Pi 5** (onboard-wlan0 AP) —
+capabilities are env flags, the name is `--hostname`:
+
+```sh
+SBC_ANALYZER=1 bazel run //pi/hitl:hitl.deploy_live -- --hostname hitl-rig-2 <host-or-ip>
+```
+
+### Logic analyzer (shared FX2)
+
+With `SBC_ANALYZER=1` the rig hosts an FX2/fx2lafw logic analyzer tapping the DUT's
+WS2812 DIN, for LED-driver correctness / latency tests.
+
+The FX2 is a **shared, daemon-owned instrument** (its channels tap a couple per
+DUT), so inside a reservation you capture + decode the wire with:
+
+```sh
+hitl-capture               # decode this DUT's LED line -> "idx: #rrggbb"
+hitl-capture --json --sr /tmp/cap.sr   # raw pixels + a .sr for PulseView
+```
+
+Wiring: share ground, and tap the **3.3 V** side of the DIN (or level-shift) — the
+FX2 clone's inputs aren't reliably 5 V tolerant. See DESIGN.md "Logic-analyzer
+rig". The correctness suite is `//pi/hitl/harness:led_capture` (manual+hitl); the
+pattern/pixel + WS2812 decode contracts are unit-tested off hardware.
 
 ## Status — MVP scaffold
 
@@ -99,12 +157,16 @@ pi/hitl/
   cmd/hitl-managerd/   # Pi-side reservation daemon (Go)
   cmd/hitl/            # agent CLI (Go)
   internal/{api,queue,runner,pool,tailnet}/
+  internal/analyzer/   # shared logic-analyzer broker (sigrok capture + decode)
   harness/             # Python e2e driver + thin hitl-CLI client (FUG-33)
-  tests/               # pure-logic unit tests (codec/sync)
+    led_pattern.py     # known-pattern + expected-pixel helpers (pure)
+    hitl_led_capture.py# on-hardware LED correctness test (manual+hitl)
+  tests/               # pure-logic unit tests (codec/sync/led-pattern)
   nix/
     packages.nix       # buildGoModule -> bin/hitl{,-managerd}
-    container.nix      # dockerTools test container (sshd + ESP toolbox)
-    hitl-app.nix       # NixOS: podman, tailscale, usbip, the daemon
+    container.nix      # dockerTools test container (sshd + ESP toolbox + hitl-capture)
+    hitl-app.nix       # NixOS: podman, tailscale, usbip, the daemon, (Pi3) sigrok
+    sigrok.nix         # host sigrok-cli + fx2lafw firmware (logic-analyzer rig)
   flake.nix            # mkSbcProject + packages.<system>.hitl
-  BUILD.bazel          # sbc_application(name = "hitl", …)
+  BUILD.bazel          # sbc_application "hitl" (Pi 5) + "hitl_pi3" (Pi 3); caps via env
 ```

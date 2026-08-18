@@ -104,8 +104,9 @@ static CRGB leds[kMaxLeds];
 // unless it out-runs the DMA). The async contract (snapshot → kick → render next;
 // `xmit_done` gates the buffer) stays the same. The logic analyzer should verify:
 // WS2812 bit timing (T0H≈0.4µs/T0L≈0.85µs, T1H≈0.8µs/T1L≈0.45µs, ≥50µs reset gap),
-// GRB byte order, the FastLED brightness scale (setBrightness 160) if it is
-// dropped, and — key for the async double-buffer — that no torn/half-updated
+// GRB byte order, full-scale output (the FastLED global brightness scale is
+// intentionally unset now, so calibration patterns reach the wire at their exact
+// values), and — key for the async double-buffer — that no torn/half-updated
 // frame ever goes out (the `xmit_done` semaphore is what prevents a snapshot from
 // racing an in-flight push).
 static CRGB show_buf[kMaxLeds];
@@ -1664,7 +1665,13 @@ void setup() {
   // FastLED drives `show_buf` (the transmit snapshot), never the live `leds` —
   // the async transmit task pushes show_buf while the render task fills leds.
   FastLED.addLeds<WS2812B, LED_DATA_PIN, GRB>(show_buf, kMaxLeds);
-  FastLED.setBrightness(160);
+  // Leave the FastLED global brightness at full scale (255). Output brightness is
+  // owned by the software control: cc_apply() nscale8's content by g_brightness
+  // (set over the protocol via set_brightness). A FastLED-level scale here would be
+  // a second, redundant dimmer applied at show() to the WHOLE buffer — and unlike
+  // cc_apply it also dims the RAW calibration patterns (counting probe / mapping
+  // gray-code), which are meant to reach the wire at their exact known values for
+  // the camera + logic-analyzer to decode. So no setBrightness() call here.
   fill_solid(leds, kMaxLeds, CRGB::Black);
   fill_solid(show_buf, kMaxLeds, CRGB::Black);
   FastLED.show();  // synchronous here (xmit task not yet up)

@@ -21,6 +21,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -31,6 +32,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/fughilli/splanc/pi/hitl/internal/analyzer"
 	"github.com/fughilli/splanc/pi/hitl/internal/ap"
 	"github.com/fughilli/splanc/pi/hitl/internal/api"
 	"github.com/fughilli/splanc/pi/hitl/internal/queue"
@@ -82,6 +84,19 @@ func main() {
 	nmcli := flag.String("nmcli", "nmcli", "nmcli binary used to toggle the AP connection")
 	iw := flag.String("iw", "iw", "iw binary used to create the AP vif")
 	ipBin := flag.String("ip", "ip", "ip binary used to set the AP vif MAC")
+	// Shared logic analyzer (a single FX2/fx2lafw whose channels tap each DUT's
+	// LED data line). With --analyzer-driver set, the daemon owns the instrument
+	// and serves captures over POST /capture, scoped per DUT via --analyzer-channel-map.
+	// Empty driver = no analyzer on this rig (the /capture route reports 503).
+	analyzerDriver := flag.String("analyzer-driver", "", "sigrok capture driver for the shared logic analyzer (e.g. fx2lafw); empty disables capture")
+	analyzerSigrok := flag.String("analyzer-sigrok", "sigrok-cli", "sigrok-cli binary")
+	analyzerRate := flag.String("analyzer-samplerate", "24m", "sigrok samplerate for captures")
+	analyzerSamples := flag.Int("analyzer-samples", 5000000, "default capture length in samples (≈208ms @24MHz — must span the DUT's frame cadence, see analyzer.go)")
+	analyzerMap := flag.String("analyzer-channel-map", "", `per-DUT analyzer channels as JSON: {"default":{"channels":["D0"],"protocol":"ws2812"},"c6-1a2b3c":{"channels":["D1"],"protocol":"ws2812"}}`)
+	// URL a reservation container uses to reach this daemon's /capture. podman
+	// injects host.containers.internal for the host gateway; keep the port in sync
+	// with --addr. Passed to the container as $HITL_CAPTURE_SERVER for `hitl-capture`.
+	containerCaptureURL := flag.String("container-capture-url", "http://host.containers.internal:8087", "daemon base URL reservation containers use for /capture ($HITL_CAPTURE_SERVER)")
 	flag.Parse()
 
 	run := runner.NewPodman(runner.PodmanConfig{
@@ -91,10 +106,28 @@ func main() {
 		StateDir:   *stateDir,
 		Podman:     *podman,
 		Privileged: *privileged,
+		CaptureURL: *containerCaptureURL,
 	})
 
+	channelMap, err := analyzer.ParseChannelMap(*analyzerMap)
+	if err != nil {
+		log.Fatalf("analyzer config: %v", err)
+	}
+	brk := analyzer.New(analyzer.Config{
+		SigrokCLI:  *analyzerSigrok,
+		Driver:     *analyzerDriver,
+		SampleRate: *analyzerRate,
+		Samples:    *analyzerSamples,
+		Map:        channelMap,
+		// Persist runtime map edits (map_la) next to the other daemon state so the
+		// acquired DUT→channel mapping survives restarts/reboots without a redeploy.
+		MapPath: filepath.Join(*stateDir, "analyzer-channel-map.json"),
+	})
+	if brk.Enabled() {
+		log.Printf("logic analyzer: driver=%s samplerate=%s (shared, brokered over /capture)", *analyzerDriver, *analyzerRate)
+	}
+
 	var devs []runner.Device
-	var err error
 	var mon *dutMonitor
 	switch {
 	case len(duts) > 0:
@@ -117,6 +150,11 @@ func main() {
 
 	var opts []queue.Option
 	opts = append(opts, queue.WithDevices(devs))
+	// Advertise the shared logic-analyzer capability in /status so clients can
+	// select this rig by capability (e.g. `hitl reserve --require analyzer`).
+	if brk.Enabled() {
+		opts = append(opts, queue.WithAnalyzer(brk.Describe()))
+	}
 	var apCtl *ap.NMController
 	// Advertise the provisioning-AP creds in /status (for `hitl wifi`) whenever an
 	// SSID is configured — independent of whether the daemon toggles the AP.
@@ -166,7 +204,7 @@ func main() {
 		}
 	}()
 
-	srv := &http.Server{Addr: *addr, Handler: routes(ctx, mgr)}
+	srv := &http.Server{Addr: *addr, Handler: routes(ctx, mgr, brk)}
 	go func() {
 		<-ctx.Done()
 		sc, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -437,11 +475,99 @@ func (dm *dutMonitor) run(ctx context.Context, mgr *queue.Manager, interval time
 	}
 }
 
-func routes(ctx context.Context, mgr *queue.Manager) http.Handler {
+func routes(ctx context.Context, mgr *queue.Manager, brk *analyzer.Broker) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
+	})
+
+	// Shared-analyzer capture: decode the tapped LED line for a DUT. The FX2 is a
+	// rig-level instrument the daemon owns; the broker serializes access and maps
+	// the DUT to its channel subset. Reachable by reservation containers
+	// (host.containers.internal) and over the tailnet (the e2e harness).
+	mux.HandleFunc("POST /capture", func(w http.ResponseWriter, r *http.Request) {
+		if !brk.Enabled() {
+			writeErr(w, http.StatusServiceUnavailable, "this rig has no logic analyzer configured")
+			return
+		}
+		var req api.CaptureRequest
+		// Body is optional (an empty POST captures the default DUT mapping).
+		if r.Body != nil && r.ContentLength != 0 {
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
+				return
+			}
+		}
+		if req.Device != "" && !mgr.HasDevice(req.Device) {
+			writeErr(w, http.StatusBadRequest, fmt.Sprintf("unknown device %q; rig has %v", req.Device, mgr.Devices()))
+			return
+		}
+		res, err := brk.Capture(r.Context(), req)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, res)
+	})
+
+	// Read/write the shared analyzer's DUT→channel map at runtime. `map_la` walks
+	// the rig's DUTs (blinking each one's LED), asks the operator which analyzer
+	// channel each is wired to, and POSTs the assembled map here — which the broker
+	// applies live and persists, so the mapping "sticks to the board" across
+	// reboots with no redeploy. GET returns the current map for display/verify.
+	mux.HandleFunc("GET /analyzer/channel-map", func(w http.ResponseWriter, r *http.Request) {
+		if !brk.Enabled() {
+			writeErr(w, http.StatusServiceUnavailable, "this rig has no logic analyzer configured")
+			return
+		}
+		js, err := analyzer.MarshalChannelMap(brk.Snapshot())
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(js)
+	})
+
+	mux.HandleFunc("POST /analyzer/channel-map", func(w http.ResponseWriter, r *http.Request) {
+		if !brk.Enabled() {
+			writeErr(w, http.StatusServiceUnavailable, "this rig has no logic analyzer configured")
+			return
+		}
+		body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "read body: "+err.Error())
+			return
+		}
+		m, err := analyzer.ParseChannelMap(string(body))
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		// Every non-default key must name a real DUT on this rig, so a typo can't
+		// silently write a mapping that never matches a capture.
+		for name := range m {
+			if name == "" {
+				continue
+			}
+			if !mgr.HasDevice(name) {
+				writeErr(w, http.StatusBadRequest, fmt.Sprintf("unknown device %q; rig has %v", name, mgr.Devices()))
+				return
+			}
+		}
+		if err := brk.SetMap(m); err != nil {
+			writeErr(w, http.StatusInternalServerError, "persist channel map: "+err.Error())
+			return
+		}
+		// Refresh the /status capability snapshot so its channel list tracks the
+		// live map (Describe() recomputes distinct channels from the new map).
+		mgr.SetAnalyzer(brk.Describe())
+		js, _ := analyzer.MarshalChannelMap(brk.Snapshot())
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(js)
 	})
 
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, r *http.Request) {
