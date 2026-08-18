@@ -2,6 +2,7 @@ import AVFoundation
 import Capacitor
 import CoreMotion
 import Foundation
+import simd
 import UIKit
 import WebKit
 
@@ -151,8 +152,22 @@ public class CameraBridge: CAPPlugin, CAPBridgedPlugin {
         // Portrait for BOTH connections, so the pixel buffers the detector sees are
         // oriented the same way as the preview the user is aiming (otherwise blob
         // coordinates are transposed relative to what's on screen).
-        if let conn = out.connection(with: .video), conn.isVideoOrientationSupported {
-            conn.videoOrientation = .portrait
+        if let conn = out.connection(with: .video) {
+            if conn.isVideoOrientationSupported {
+                conn.videoOrientation = .portrait
+            }
+            // Real intrinsics per frame, rather than the FOV heuristic in
+            // xr/mediaStreamCapture.ts (f = 0.72 * long side, i.e. ~70 degrees).
+            // Focal error moves the map's METRIC SCALE about 1:1, and the guess is
+            // measurably wrong here: a 30-LED/m strip (33.3mm pitch, calipers)
+            // solved to 29.9mm, +11% small, consistent with the true long-axis FOV
+            // being nearer 64 degrees than 70.
+            if conn.isCameraIntrinsicMatrixDeliverySupported {
+                conn.isCameraIntrinsicMatrixDeliveryEnabled = true
+            } else {
+                clog("WARNING: intrinsic matrix delivery unsupported — "
+                     + "the FOV heuristic (and its scale error) stays in play")
+            }
         }
         sess.startRunning()
 
@@ -533,14 +548,32 @@ extension CameraBridge: AVCaptureVideoDataOutputSampleBufferDelegate {
         // depends on) is exact.
         let tCapture = CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sampleBuffer)) * 1000.0
 
+        // Per-frame intrinsics, when the connection delivers them. Apple documents
+        // the matrix as relative to the delivered buffer, so it should already
+        // account for the portrait rotation — the log below prints it against the
+        // buffer size on the first frame so a mismatch is visible rather than
+        // silently scaling the map.
+        var k: [Double]? = nil
+        if let att = CMGetAttachment(
+            sampleBuffer,
+            key: kCMSampleBufferAttachmentKey_CameraIntrinsicMatrix,
+            attachmentModeOut: nil) as? Data {
+            let m = att.withUnsafeBytes { $0.load(as: matrix_float3x3.self) }
+            k = [Double(m.columns.0[0]), Double(m.columns.1[1]),
+                 Double(m.columns.2[0]), Double(m.columns.2[1])]
+        }
+
         framesEmitted += 1
         if framesEmitted % 60 == 1 {
             let now = CFAbsoluteTimeGetCurrent()
             let fps = 60.0 / max(0.001, now - lastFrameLogTime)
             lastFrameLogTime = now
-            clog(String(format: "frame #%d: %dx%d lit=%d%@ fps=%.1f reduce=%.1fms dropped=%d",
+            let kStr = k.map { String(format: " K=[%.1f %.1f %.1f %.1f] (img %dx%d)",
+                                      $0[0], $0[1], $0[2], $0[3], r.width * ds, r.height * ds) }
+                ?? " K=heuristic"
+            clog(String(format: "frame #%d: %dx%d lit=%d%@ fps=%.1f reduce=%.1fms dropped=%d%@",
                         framesEmitted, r.width, r.height, r.nonZeroCount,
-                        r.truncated ? " TRUNCATED" : "", fps, reduceMsEma, framesDropped))
+                        r.truncated ? " TRUNCATED" : "", fps, reduceMsEma, framesDropped, kStr))
         }
 
         notifyListeners("cameraFrame", data: [
@@ -558,6 +591,8 @@ extension CameraBridge: AVCaptureVideoDataOutputSampleBufferDelegate {
             "measureH": r.measureHeight,
             "measure": wantMeasure ? r.measure.base64EncodedString() : "",
             "tCaptureMs": tCapture,
+            // Omitted when the connection can't deliver it; JS then keeps heuristicK.
+            "k": k as Any,
             // IMU rides along with the frames rather than on its own event: at
             // 100 Hz that would be 100 bridge calls a second, and the samples are
             // consumed against these frames anyway.
