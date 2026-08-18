@@ -563,7 +563,10 @@ def main() -> None:
         with open(args.emit_golden, "w") as f:
             json.dump(golden, f, indent=2)
             f.write("\n")
-        _log(f"wrote golden {args.emit_golden}: {len(golden['samples'])} samples")
+        _log(
+            f"wrote golden {args.emit_golden}: "
+            f"{len(golden.get('fit') or [])} fit + {len(golden.get('heldout') or [])} held-out samples"
+        )
         return
 
     # Pass/fail check: a profiling run on known hardware must match the golden
