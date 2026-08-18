@@ -40,8 +40,16 @@ interface FrameEvent {
   measureH: number;
   measure: string;
   tCaptureMs: number;
-  /** CoreMotion samples since the previous frame, already in the camera frame. */
-  imu: { t: number; gyro: [number, number, number]; accel: [number, number, number] }[];
+  /** CoreMotion samples since the previous frame, already in the camera frame.
+   * `ua`/`g` are the raw CoreMotion components the `accel` above was derived
+   * from, carried so a sign convention can be re-tested from a session log. */
+  imu: {
+    t: number;
+    gyro: [number, number, number];
+    accel: [number, number, number];
+    ua?: [number, number, number];
+    g?: [number, number, number];
+  }[];
 }
 
 interface CameraBridgePlugin {
@@ -136,6 +144,8 @@ export class NativeCaptureSource implements CaptureSource {
   private clock = new ClockOffset();
   // CoreMotion samples awaiting the capture screen's batch tick.
   private imuPending: ImuSample[] = [];
+  /** Raw CoreMotion components, kept only for the session log (see FrameEvent). */
+  private imuRawLog: { t: number; ua: number[]; g: number[] }[] = [];
   /** What the last setExposure did, for the HUD (mirrors MediaStreamCaptureSource). */
   exposureApplied: string | null = null;
 
@@ -211,6 +221,12 @@ export class NativeCaptureSource implements CaptureSource {
     return out;
   }
 
+  /** Raw CoreMotion components for the whole session, for offline convention
+   * checks. Empty off-iOS. */
+  rawImuLog(): { t: number; ua: number[]; g: number[] }[] {
+    return this.imuRawLog;
+  }
+
   /** Lit-pixel count of the last frame (diagnostics / HUD). */
   get lastLitPixels(): number {
     return this.lastLit;
@@ -263,7 +279,11 @@ export class NativeCaptureSource implements CaptureSource {
     // solver's IMU trim punishes.
     const tCaptureMs = this.clock.map(e.tCaptureMs, arrivalMs);
     for (const s of e.imu ?? []) {
-      this.imuPending.push({ t: this.clock.apply(s.t), gyro: s.gyro, accel: s.accel });
+      const t = this.clock.apply(s.t);
+      this.imuPending.push({ t, gyro: s.gyro, accel: s.accel });
+      if (s.ua && s.g && this.imuRawLog.length < 200000) {
+        this.imuRawLog.push({ t, ua: s.ua, g: s.g });
+      }
     }
 
     this.frameCb({

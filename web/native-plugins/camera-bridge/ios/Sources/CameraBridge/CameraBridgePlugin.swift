@@ -207,30 +207,43 @@ public class CameraBridge: CAPPlugin, CAPBridgedPlugin {
             [weak self] dm, _ in
             guard let self = self, let dm = dm else { return }
             let r = dm.rotationRate
-            // Accelerometer sign: `gravity − userAcceleration`, i.e. at rest this
-            // reports the GRAVITY vector in body coordinates, which is the NEGATION
-            // of textbook specific force (a − g). Determined empirically against a
-            // real 60-LED capture replayed through //solver:solver_cli, because
-            // getting it backwards does not fail loudly — it fails by collapsing
-            // the metric scale:
+            // Specific force f = R^T(a − g), which is what the solver's model wants
+            // (see synth.rs: `f_body = R^T (a_world − G_WORLD)`).
             //
-            //     gravity − userAcceleration  → 59/60 leds, rms   1.1 px  <-- this
-            //     userAcceleration − gravity  →  0/60 leds, rms 150k  px
+            // The subtlety is CoreMotion's signs. Apple reports raw acceleration as
+            // (0,0,−1) at rest face-up, but an accelerometer at rest physically
+            // measures specific force of +1g UPWARD — so Apple's raw is −f. Given
+            // raw = gravity + userAcceleration and gravity = R^T·g, it follows that
+            // userAcceleration = −R^T·a: Apple's user acceleration is the NEGATIVE
+            // of body-frame inertial acceleration. Hence f = −(userAcceleration +
+            // gravity), and NOT either of the plausible-looking differences.
             //
-            // With the sign inverted the solve still recovers the right SHAPE (the
-            // interim preview shows a recognisable strip) but at ~1.5 cm total
-            // extent, so every LED lands behind the cameras, fails pipeline.rs's
-            // depth check, and the map comes out empty. Historically this also
-            // produced the mis-oriented, single-vantage-point maps on iOS.
-            let ax = (dm.gravity.x - dm.userAcceleration.x) * CameraBridge.g0
-            let ay = (dm.gravity.y - dm.userAcceleration.y) * CameraBridge.g0
-            let az = (dm.gravity.z - dm.userAcceleration.z) * CameraBridge.g0
+            // Both wrong forms were tried on a real 60-LED capture, and neither
+            // fails loudly — which is the reason for this comment:
+            //
+            //   −(userAcceleration + gravity)  correct
+            //    (userAcceleration − gravity)  gravity right, inertial term
+            //                                  inverted → diverges: 0 leds, 150k px
+            //    (gravity − userAcceleration)  inertial right, gravity inverted →
+            //                                  fits at 0.97 px but the whole map is
+            //                                  rotated 180° about a horizontal axis
+            //                                  (upside down), because a global
+            //                                  rotation that negates gravity costs
+            //                                  nothing in reprojection error
+            let ax = -(dm.userAcceleration.x + dm.gravity.x) * CameraBridge.g0
+            let ay = -(dm.userAcceleration.y + dm.gravity.y) * CameraBridge.g0
+            let az = -(dm.userAcceleration.z + dm.gravity.z) * CameraBridge.g0
             // dm.timestamp is seconds since boot — the same clock as the frames'
             // presentation timestamps, so one ClockOffset maps both.
             let sample: [String: Any] = [
                 "t": dm.timestamp * 1000.0,
                 "gyro": [r.x, r.y, r.z],
-                "accel": [ax, ay, az]
+                "accel": [ax, ay, az],
+                // Raw components too: the derived `accel` above discards which part
+                // was gravity, and settling a sign convention offline needs both.
+                // Working that out cost a re-capture per hypothesis once already.
+                "ua": [dm.userAcceleration.x, dm.userAcceleration.y, dm.userAcceleration.z],
+                "g": [dm.gravity.x, dm.gravity.y, dm.gravity.z]
             ]
             self.imuLock.lock()
             // Bound the queue: if frames stop draining it, drop the oldest rather

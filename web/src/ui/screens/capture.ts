@@ -780,7 +780,8 @@ export function CaptureScreen(router: Router, routeQuery?: URLSearchParams): Scr
       };
       // Persist the exact solver input on iOS so a failed solve can be replayed
       // natively (//solver:solver_cli) instead of re-captured per hypothesis.
-      void saveSessionLog(`session-${Date.now()}.json`, JSON.stringify(problem)).then((path) => {
+      const logged = nativeSource === null ? problem : { ...problem, imuRaw: nativeSource.rawImuLog() };
+      void saveSessionLog(`session-${Date.now()}.json`, JSON.stringify(logged)).then((path) => {
         if (path !== null) nativeLog(`[solve] session log saved: ${path}`);
       });
       const solved = await solverAgent.solve(

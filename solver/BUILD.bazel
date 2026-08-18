@@ -28,6 +28,7 @@ rust_library(
 rust_test(
     name = "solver_test",
     crate = ":solver",
+    data = ["testdata/ios_capture.json"],
     edition = "2021",
 )
 
