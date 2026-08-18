@@ -252,8 +252,27 @@ Metal port would walk into for a pipeline still under active development.
   (`xr/capture.ts`), selected on `isIosNative()`. `CaptureFrame.texture` is the one field that can't
   survive as-is, so the detector gains a path that accepts a supplied readback buffer instead of
   running its own GPU pass.
-- **Bonus:** `AVCaptureDevice` reports real intrinsics, so iOS gets a true `K` instead of the
-  `heuristicK` FOV guess — which sets the map's metric scale roughly 1:1.
+- **Real intrinsics: TRIED, MEASURED WORSE, REVERTED.** `AVCaptureConnection` will deliver a
+  per-frame intrinsic matrix (`f = 1011.3` on an iPhone SE 3 at 720x1280, vs the heuristic's
+  921.6), and using it looked obviously right. Measured against a 30-LED/m strip whose pitch was
+  checked with calipers at 33.3 mm:
+
+  | intrinsics | rms | solved pitch | error |
+  | --- | --- | --- | --- |
+  | `heuristicK` (921.6) | 1.38 px | 32.9 mm | **-1.3%** |
+  | native (1011.3) | 1.05 px | 31.5 mm | **-5.5%** |
+
+  Better reprojection fit, four times worse metric scale — and metric scale is the point. The
+  matrix does describe our buffer (its `cy` is exactly half the portrait height), so this isn't an
+  orientation mix-up; extrapolating the two points puts the pitch-matching focal near 896, BELOW
+  both, which suggests the residual few percent is accelerometer scale rather than optics. Worth
+  revisiting only with several caliper-verified captures, and judged on pitch, never on rms.
+
+**Metric scale needs dynamic capture.** VIO recovers scale from ACCELERATION, not from motion —
+a slow, smooth pass leaves it unobservable and the map collapses (measured: a 115s capture at
+0.23 rad/s mean gyro solved to a 0.4 mm pitch, ~1/80 scale, at a clean 0.68 px rms; a 65s capture
+at 0.40 rad/s solved correctly). Deliberate direction changes are what make the scale observable.
+Note the failure is silent in rms, like every other scale error in this section.
 
 **Risks.** The frame-timestamp mapping from `CMTime` to `performance.now()` must be right or the
 temporal decode drifts. The sparse encoding's worst case needs a real fallback rather than a

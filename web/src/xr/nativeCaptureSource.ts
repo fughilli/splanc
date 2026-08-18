@@ -40,9 +40,6 @@ interface FrameEvent {
   measureH: number;
   measure: string;
   tCaptureMs: number;
-  /** Real per-frame intrinsics [fx, fy, cx, cy] from AVCaptureConnection, when
-   * the device delivers them. Absent → the caller falls back to heuristicK. */
-  k?: [number, number, number, number] | null;
   /** CoreMotion samples since the previous frame, already in the camera frame.
    * `ua`/`g` are the raw CoreMotion components the `accel` above was derived
    * from, carried so a sign convention can be re-tested from a session log. */
@@ -145,7 +142,6 @@ export class NativeCaptureSource implements CaptureSource {
   private measureW = 0;
   private measureH = 0;
   private clock = new ClockOffset();
-  private warnedK = false;
   // CoreMotion samples awaiting the capture screen's batch tick.
   private imuPending: ImuSample[] = [];
   /** Raw CoreMotion components, kept only for the session log (see FrameEvent). */
@@ -294,33 +290,16 @@ export class NativeCaptureSource implements CaptureSource {
       texture: null,
       reduced,
       pose: null,
-      K: this.intrinsics(e.imgW, e.imgH, e.k),
+      K: this.intrinsics(e.imgW, e.imgH),
       imgW: e.imgW,
       imgH: e.imgH,
       tCaptureMs,
     });
   }
 
-  private intrinsics(w: number, h: number, k?: [number, number, number, number] | null): Intrinsics {
+  private intrinsics(w: number, h: number): Intrinsics {
     if (this.opts.fxOverride) {
       return [this.opts.fxOverride, this.opts.fxOverride, w / 2, h / 2];
-    }
-    // Real intrinsics beat both the cached calibration and the FOV heuristic:
-    // they're this camera, this format, this frame. Guarded because a matrix
-    // whose principal point isn't near the frame centre would mean it describes
-    // a different geometry than the buffer we measured blobs in (e.g. delivered
-    // unrotated), and silently trusting that would skew the map's metric scale —
-    // the very error this replaces.
-    if (k && k[0] > 0 && k[1] > 0) {
-      const centred = Math.abs(k[2] - w / 2) < w * 0.2 && Math.abs(k[3] - h / 2) < h * 0.2;
-      if (centred) return [k[0], k[1], k[2], k[3]];
-      if (!this.warnedK) {
-        this.warnedK = true;
-        console.warn(
-          `[capture] ignoring native intrinsics: principal point ${k[2].toFixed(0)},${k[3].toFixed(0)} ` +
-            `is not near the ${w}x${h} frame centre`,
-        );
-      }
     }
     const seed = this.opts.kSeed;
     if (seed && seed.imgW > 0 && seed.imgH > 0) {
