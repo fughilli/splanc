@@ -527,23 +527,113 @@ out in the dark. But WebKit implements none of the MediaStream Image-Capture exp
 (<code class="docutils literal notranslate"><span class="pre">exposureMode</span></code> / <code class="docutils literal notranslate"><span class="pre">exposureTime</span></code> / <code class="docutils literal notranslate"><span class="pre">exposureCompensation</span></code> / <code class="docutils literal notranslate"><span class="pre">iso</span></code>): on iOS <code class="docutils literal notranslate"><span class="pre">getCapabilities()</span></code>
 returns nothing for exposure, so <code class="docutils literal notranslate"><span class="pre">planExposure()</span></code> finds no control and the manual slider + the
 auto servo are silently no-ops — the reported bug.</p>
+<p><strong>Attempt 1 — an <code class="docutils literal notranslate"><span class="pre">AVCaptureDevice</span></code> bridge — DOES NOT WORK. Removed.</strong> The idea was that exposure is
+a property of the physical device rather than of a capture session, so a Capacitor plugin
+(<code class="docutils literal notranslate"><span class="pre">&#64;splanc/exposure-bridge</span></code>) could call <code class="docutils literal notranslate"><span class="pre">setExposureModeCustom(duration:iso:)</span></code> on the same shared
+back wide-angle camera WebKit’s <code class="docutils literal notranslate"><span class="pre">getUserMedia</span></code> opens, and the lock would apply to the frames the
+WebView was already rendering. <strong>The premise is false</strong>, measured on-device (iPhone SE 3rd gen,
+iOS 26.6):</p>
 <ul class="simple">
-<li><p>Exposure is a property of the physical <code class="docutils literal notranslate"><span class="pre">AVCaptureDevice</span></code>, not of a capture session, and WebKit’s
-<code class="docutils literal notranslate"><span class="pre">getUserMedia</span></code> opens the back <strong>wide-angle</strong> camera (the only device type its <code class="docutils literal notranslate"><span class="pre">AVVideoCaptureSource</span></code>
-uses). So a first-party Capacitor plugin <strong><code class="docutils literal notranslate"><span class="pre">&#64;splanc/exposure-bridge</span></code></strong>
-(<code class="docutils literal notranslate"><span class="pre">web/native-plugins/exposure-bridge/</span></code>, same SPM shape as the cert/voice bridges) configures that
-same shared device with <code class="docutils literal notranslate"><span class="pre">setExposureModeCustom(duration:iso:)</span></code> — no second capture session, no
-ownership of WebKit’s — and the lock applies to the frames the WebView is already rendering.</p></li>
-<li><p>Semantics mirror <code class="docutils literal notranslate"><span class="pre">planExposure</span></code>: <code class="docutils literal notranslate"><span class="pre">target</span></code> in [0,1] maps 0 = shortest (darkest, least bloom) → 1 =
-longest, ISO pins to the sensor minimum to hold gain down, and <code class="docutils literal notranslate"><span class="pre">maxExposureMs</span></code> (Nyquist for the
-servo, the user ceiling for manual override) caps the longest exposure. <code class="docutils literal notranslate"><span class="pre">xr/nativeExposure.ts</span></code>
-binds it via <code class="docutils literal notranslate"><span class="pre">registerPlugin(&quot;ExposureBridge&quot;)</span></code> and <code class="docutils literal notranslate"><span class="pre">MediaStreamCaptureSource.setExposure</span></code> routes
-there on iOS (gated on <code class="docutils literal notranslate"><span class="pre">isIosNative()</span></code>), falling back to the web <code class="docutils literal notranslate"><span class="pre">applyConstraints</span></code> path elsewhere;
-<code class="docutils literal notranslate"><span class="pre">stop()</span></code> restores continuous auto-exposure. No UI change — the existing slider/servo just start
-working on iOS.</p></li>
-<li><p>No new Info.plist string: camera access is already granted via <code class="docutils literal notranslate"><span class="pre">getUserMedia</span></code>
-(<code class="docutils literal notranslate"><span class="pre">NSCameraUsageDescription</span></code>), and reading/writing device exposure needs no extra entitlement.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">AVCaptureDevice</span></code> configuration is <strong>per-process</strong>, and WebKit captures in its own GPU process.
+Our writes landed on an object with no session behind it.</p></li>
+<li><p>The readback never moved: across targets spanning 0.02 ms → 140 ms, <code class="docutils literal notranslate"><span class="pre">exposureDuration</span></code> stayed
+pinned at 33.33 ms and <code class="docutils literal notranslate"><span class="pre">iso</span></code> at 50. Only <code class="docutils literal notranslate"><span class="pre">exposureMode</span></code> flipped to <code class="docutils literal notranslate"><span class="pre">.custom</span></code> — a local property
+write.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">setExposureModeCustom</span></code>’s completion handler — which fires when the setting takes effect on a
+session <strong>in this process</strong> — never fired at all (14 calls, 0 completions). Since <code class="docutils literal notranslate"><span class="pre">call.resolve</span></code>
+lived only in that handler, every JS promise leaked pending, which also made the web
+<code class="docutils literal notranslate"><span class="pre">applyConstraints</span></code> fallback unreachable.</p></li>
+<li><p>The active format disagreed: our device object reported 1920×1080 while <code class="docutils literal notranslate"><span class="pre">getUserMedia</span></code> had asked
+for 1280×720 — different format, therefore different session.</p></li>
 </ul>
+<p>There is also no web-side fallback to reach for. On iOS 26.6 the track’s capabilities are
+<code class="docutils literal notranslate"><span class="pre">aspectRatio,</span> <span class="pre">backgroundBlur,</span> <span class="pre">deviceId,</span> <span class="pre">facingMode,</span> <span class="pre">focusDistance,</span> <span class="pre">frameRate</span> <span class="pre">{1..60},</span> <span class="pre">groupId,</span> <span class="pre">height,</span> <span class="pre">powerEfficient,</span> <span class="pre">torch,</span> <span class="pre">whiteBalanceMode</span> <span class="pre">[&quot;manual&quot;,&quot;continuous&quot;],</span> <span class="pre">width,</span> <span class="pre">zoom</span> <span class="pre">{1..10}</span></code> —
+no exposure key of any kind.</p>
+<p><strong>Conclusion:</strong> exposure cannot be controlled while WebKit owns the camera. The only path is a
+capture session <strong>this app owns</strong>, which means taking the camera away from <code class="docutils literal notranslate"><span class="pre">getUserMedia</span></code> on iOS
+and getting its frames to the detector another way — designed in §4.7.</p>
+</section>
+<section id="native-capture-on-ios-fug-120-follow-up">
+<h3>4.7 Native capture on iOS (FUG-120 follow-up)<a class="headerlink" href="#native-capture-on-ios-fug-120-follow-up" title="Link to this heading">¶</a></h3>
+<p>Since exposure is only controllable on a capture session we own, iOS must stop using <code class="docutils literal notranslate"><span class="pre">getUserMedia</span></code>
+for mapping and run its own <code class="docutils literal notranslate"><span class="pre">AVCaptureSession</span></code>. The obvious objection is that the detector is a
+WebGL2 pass over a <code class="docutils literal notranslate"><span class="pre">&lt;video&gt;</span></code> texture, and shipping 1280×720 frames across the Capacitor bridge at
+30 fps (110 MB/s as RGBA) is not viable. <strong>But the pipeline doesn’t need whole frames to cross the
+boundary.</strong> Today it already goes:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>  camera texture ─[GPU: threshold + downsample]→ readPixels ~640×360 RGBA
+                 ─[CPU: connectedComponents]→ Blob[] ─→ decoder ─→ solver
+</pre></div>
+</div>
+<p>The GPU stage (<code class="docutils literal notranslate"><span class="pre">cv/detect.ts</span></code>) is a ~15-line shader — max-channel luminance, soft threshold, 2×
+box downsample. Everything with real algorithmic content (CCL, sub-pixel centroids, per-blob chroma,
+the decoder) is <strong>already CPU/JS</strong>, and the readback buffer between them is a natural IPC boundary
+that is <strong>mostly zeros by construction</strong> — it’s a thresholded image of a dark scene containing only
+LEDs.</p>
+<p><strong>Design.</strong> Native does capture + the threshold/downsample stage and ships the sparse non-zero
+pixels; JS rebuilds the buffer and runs <code class="docutils literal notranslate"><span class="pre">connectedComponents</span></code> and everything downstream
+<strong>completely unchanged</strong>. No CV algorithm gets a second implementation, which is the trap a full
+Metal port would walk into for a pipeline still under active development.</p>
+<ul>
+<li><p><strong>Capture:</strong> an <code class="docutils literal notranslate"><span class="pre">AVCaptureSession</span></code> in the app process. Exposure then works via
+<code class="docutils literal notranslate"><span class="pre">setExposureModeCustom</span></code> — on a device we actually own, so the completion handler fires and the
+readback moves (§4.6 is the proof of what happens when you don’t own it).</p></li>
+<li><p><strong>Threshold/downsample:</strong> start with vImage/Accelerate on CPU (a scale plus a per-pixel
+max-channel threshold, ~2.7 M pixel-ops/frame); go to Metal only if profiling says so. Porting a
+15-line shader is cheap either way.</p></li>
+<li><p><strong>Transport:</strong> sparse-encode the thresholded readback (index + RGBA per non-zero pixel). In the
+mapping scenario — dark room, only LEDs lit — this is a few KB/frame against 921 KB dense. Needs
+a density cap with a documented fallback for the bright-room case, where sparse encoding loses.</p></li>
+<li><p><strong>Preview:</strong> <code class="docutils literal notranslate"><span class="pre">AVCaptureVideoPreviewLayer</span></code> behind a transparent WKWebView, replacing the
+<code class="docutils literal notranslate"><span class="pre">ms.video</span></code> element the capture screen prepends today (<code class="docutils literal notranslate"><span class="pre">capture.ts</span></code>).</p></li>
+<li><p><strong>Exposure servo:</strong> also needs the small measure readback (<code class="docutils literal notranslate"><span class="pre">detect.ts</span></code> <code class="docutils literal notranslate"><span class="pre">measure()</span></code>, ~64×36 RGBA)
+and, for the trace path, <code class="docutils literal notranslate"><span class="pre">grabFrame</span></code>. Both are tiny; the measure buffer can ship dense.</p></li>
+<li><p><strong>Seam:</strong> a <code class="docutils literal notranslate"><span class="pre">NativeCaptureSource</span></code> implementing the existing <code class="docutils literal notranslate"><span class="pre">CaptureSource</span></code> interface
+(<code class="docutils literal notranslate"><span class="pre">xr/capture.ts</span></code>), selected on <code class="docutils literal notranslate"><span class="pre">isIosNative()</span></code>. <code class="docutils literal notranslate"><span class="pre">CaptureFrame.texture</span></code> is the one field that can’t
+survive as-is, so the detector gains a path that accepts a supplied readback buffer instead of
+running its own GPU pass.</p></li>
+<li><p><strong>Real intrinsics: TRIED, MEASURED WORSE, REVERTED.</strong> <code class="docutils literal notranslate"><span class="pre">AVCaptureConnection</span></code> will deliver a
+per-frame intrinsic matrix (<code class="docutils literal notranslate"><span class="pre">f</span> <span class="pre">=</span> <span class="pre">1011.3</span></code> on an iPhone SE 3 at 720x1280, vs the heuristic’s
+921.6), and using it looked obviously right. Measured against a 30-LED/m strip whose pitch was
+checked with calipers at 33.3 mm:</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>intrinsics</p></th>
+<th class="head"><p>rms</p></th>
+<th class="head"><p>solved pitch</p></th>
+<th class="head"><p>error</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">heuristicK</span></code> (921.6)</p></td>
+<td><p>1.38 px</p></td>
+<td><p>32.9 mm</p></td>
+<td><p><strong>-1.3%</strong></p></td>
+</tr>
+<tr class="row-odd"><td><p>native (1011.3)</p></td>
+<td><p>1.05 px</p></td>
+<td><p>31.5 mm</p></td>
+<td><p><strong>-5.5%</strong></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Better reprojection fit, four times worse metric scale — and metric scale is the point. The
+matrix does describe our buffer (its <code class="docutils literal notranslate"><span class="pre">cy</span></code> is exactly half the portrait height), so this isn’t an
+orientation mix-up; extrapolating the two points puts the pitch-matching focal near 896, BELOW
+both, which suggests the residual few percent is accelerometer scale rather than optics. Worth
+revisiting only with several caliper-verified captures, and judged on pitch, never on rms.</p>
+</li>
+</ul>
+<p><strong>Metric scale needs dynamic capture.</strong> VIO recovers scale from ACCELERATION, not from motion —
+a slow, smooth pass leaves it unobservable and the map collapses (measured: a 115s capture at
+0.23 rad/s mean gyro solved to a 0.4 mm pitch, ~1/80 scale, at a clean 0.68 px rms; a 65s capture
+at 0.40 rad/s solved correctly). Deliberate direction changes are what make the scale observable.
+Note the failure is silent in rms, like every other scale error in this section.</p>
+<p><strong>Risks.</strong> The frame-timestamp mapping from <code class="docutils literal notranslate"><span class="pre">CMTime</span></code> to <code class="docutils literal notranslate"><span class="pre">performance.now()</span></code> must be right or the
+temporal decode drifts. The sparse encoding’s worst case needs a real fallback rather than a
+silent collapse. And a transparent WebView over a native preview layer is a well-trodden but fiddly
+arrangement (scroll/z-order/safe-area interactions).</p>
 </section>
 </section>
 <hr class="docutils" />
@@ -659,6 +749,7 @@ path, with a thin app-side uploader.</p></li>
 <li><a class="reference internal" href="#native-voice-input-acid-mode">4.4 Native voice input (Acid Mode)</a></li>
 <li><a class="reference internal" href="#distribution-ci">4.5 Distribution &amp; CI</a></li>
 <li><a class="reference internal" href="#native-exposure-control-fug-120">4.6 Native exposure control (FUG-120)</a></li>
+<li><a class="reference internal" href="#native-capture-on-ios-fug-120-follow-up">4.7 Native capture on iOS (FUG-120 follow-up)</a></li>
 </ul>
 </li>
 <li><a class="reference internal" href="#tier-0-ship-the-pwa-now-recommended-immediate-step">5. Tier 0 — ship the PWA now (recommended immediate step)</a></li>
