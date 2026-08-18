@@ -1882,6 +1882,13 @@ pub unsafe extern "C" fn lm_counting_color(led: u32, rgb: *mut u8) -> bool {
     }
 }
 
+/// Highest LED the latched counting pattern lights + 1 (0 when none). The frame
+/// loop transmits exactly this many LEDs for the calibration pattern.
+#[no_mangle]
+pub unsafe extern "C" fn lm_counting_len() -> u32 {
+    player().counting_len()
+}
+
 /// The persisted strip length for `channel` (set_led_count); -1 when unset.
 #[no_mangle]
 pub unsafe extern "C" fn lm_led_count(channel: u32) -> i32 {

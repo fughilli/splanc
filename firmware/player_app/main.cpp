@@ -130,7 +130,13 @@ static SemaphoreHandle_t xmit_done = nullptr;
 // Latest transmit span (cycles), written by the transmit task, read for perf.
 static volatile uint32_t g_show_c = 0;
 static volatile bool g_show_timed = false;
-static void led_show_async(bool timed);  // defined below render_once
+// How many LEDs the transmit task clocks out this frame — the ACTIVE strip
+// length, not the whole render buffer. Latched by led_show_async alongside the
+// show_buf snapshot (so a length change never races an in-flight push), read by
+// xmit_task. Raising kMaxLeds therefore doesn't slow a short strip, and the
+// calibration probe drives exactly its extent (no overrun to the buffer cap).
+static volatile uint32_t g_xmit_len = 0;
+static void led_show_async(bool timed, uint32_t count);  // defined below render_once
 
 // LED rendering is decoupled from loop() (which cooperatively services WiFi,
 // HTTP and BLE and can stall for milliseconds during a burst): it runs in its
@@ -942,6 +948,15 @@ static uint32_t render_once() {
   bool show = false;
   uint32_t next_delay_ms = kStaticPollMs;
 
+  // Active strip length to clock out this frame. Default: the configured strip
+  // length (set_led_count); fall back to the render cap when unset (early boot /
+  // idle). Each render branch narrows it to exactly what it drives (the mapping /
+  // effect LED count, the calibration probe's extent), so a large kMaxLeds never
+  // slows a short strip and the probe never overruns past its pattern.
+  int32_t cfg_leds = lm_led_count(0);
+  uint32_t xmit_len = cfg_leds > 0 ? (uint32_t)cfg_leds : kMaxLeds;
+  if (xmit_len > kMaxLeds) xmit_len = kMaxLeds;
+
   // Perf (Tier 0): time the effect update()/shade span with the free-running
   // cycle counter; the show() span is timed separately AFTER the strip write
   // (it runs outside the lock). Only sampled while a perf mode is active and an
@@ -968,6 +983,7 @@ static uint32_t render_once() {
     uint32_t frame_index = seq % cycle_frames;
     if (frame_index != last_shown_frame) {
       uint32_t n = led_count < kMaxLeds ? led_count : kMaxLeds;
+      xmit_len = n;  // drive exactly the mapping strip
       for (uint32_t i = 0; i < n; i++) {
         if (lm_pattern_color(i, frame_index, rgb)) {
           leds[i] = Rgb(rgb[0], rgb[1], rgb[2]);
@@ -989,8 +1005,13 @@ static uint32_t render_once() {
     next_delay_ms = d <= 1 ? 1 : (d > (int64_t)kStaticPollMs ? kStaticPollMs : (uint32_t)d);
     was_active = true;
   } else if (lm_counting_color(0, rgb)) {
-    // Counting probe: static pattern, repaint at the slow static cadence.
-    for (uint32_t i = 0; i < kMaxLeds; i++) {
+    // Counting probe: static pattern, repaint at the slow static cadence. Drive
+    // EXACTLY the pattern's extent — no overrun past it to the buffer cap.
+    uint32_t cn = lm_counting_len();
+    if (cn == 0) cn = 1;
+    if (cn > kMaxLeds) cn = kMaxLeds;
+    xmit_len = cn;
+    for (uint32_t i = 0; i < cn; i++) {
       lm_counting_color(i, rgb);
       leds[i] = Rgb(rgb[0], rgb[1], rgb[2]);
     }
@@ -1018,6 +1039,7 @@ static uint32_t render_once() {
     // guard and is fully effective without the timer.
     uint32_t n = lm_map_len();
     if (n > kMaxLeds) n = kMaxLeds;
+    if (n > 0) xmit_len = n;  // drive exactly the mapped LEDs
     uint32_t this_seq = fx_frame++;
     // Cycle-counter span around update() (perf-monitoring.md: two CSR reads,
     // negligible against the per-frame float ops).
@@ -1129,7 +1151,7 @@ static uint32_t render_once() {
   // is max(frame_c, show_c), not their sum.
   uint32_t show_c = 0;
   if (show) {
-    led_show_async(fx_frame_rendered);
+    led_show_async(fx_frame_rendered, xmit_len);
     if (fx_frame_rendered) show_c = g_show_c;
   }
 
@@ -1208,7 +1230,7 @@ static void xmit_task(void *) {
   for (;;) {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     uint32_t c0 = g_show_timed ? esp_cpu_get_cycle_count() : 0;
-    ws2812_rmt_show(reinterpret_cast<const uint8_t *>(show_buf), kMaxLeds);
+    ws2812_rmt_show(reinterpret_cast<const uint8_t *>(show_buf), g_xmit_len);
     if (g_show_timed) g_show_c = esp_cpu_get_cycle_count() - c0;
     xSemaphoreGive(xmit_done);
   }
@@ -1219,14 +1241,18 @@ static void xmit_task(void *) {
 // (instant once rendering out-runs the transmit), snapshots into `show_buf`, and
 // kicks the higher-priority transmit task — which preempts, starts the DMA, and
 // yields straight back so the render task can compute the next frame in parallel.
-static void led_show_async(bool timed) {
+static void led_show_async(bool timed, uint32_t count) {
+  if (count > kMaxLeds) count = kMaxLeds;
   if (xmit_task_handle == nullptr) {
     // Pre-task fallback (setup, before the transmit task exists): synchronous.
-    ws2812_rmt_show(reinterpret_cast<const uint8_t *>(show_buf), kMaxLeds);
+    ws2812_rmt_show(reinterpret_cast<const uint8_t *>(show_buf), count);
     return;
   }
   xSemaphoreTake(xmit_done, portMAX_DELAY);  // previous transmit fully drained
-  memcpy(show_buf, leds, kMaxLeds * sizeof(Rgb));
+  // Snapshot only the active LEDs; g_xmit_len rides with the buffer under the
+  // same xmit_done gate so the transmit task sees a consistent (buf, len) pair.
+  memcpy(show_buf, leds, static_cast<size_t>(count) * sizeof(Rgb));
+  g_xmit_len = count;
   g_show_timed = timed;
   xTaskNotifyGive(xmit_task_handle);
 }
