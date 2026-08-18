@@ -13,6 +13,6 @@
 // Default code-book LED count — the fallback until start_mapping / set_led_count
 // override it, and the value advertised in `welcome` that the phone uses to
 // prefill its LED-count field. Matched to the render ceiling (main.cpp
-// kMaxLeds) so the firmware advertises its full "up to 256 LEDs" capacity.
-#define NUM_LEDS 256
+// kMaxLeds) so the firmware advertises its full "up to 1024 LEDs" capacity.
+#define NUM_LEDS 1024
 #define LED_DATA_PIN 20

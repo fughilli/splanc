@@ -158,7 +158,7 @@ static mut FX_LAST_UPDATE_OUTCOME: u32 = 0;
 // exactly this cache's index.
 
 /// Cache capacity: the firmware's LED cap (main.cpp kMaxLeds). One entry/LED.
-const FX_TOPO_CAP: usize = 256;
+const FX_TOPO_CAP: usize = 1024;
 /// An LED is "at a junction" (`led.branch`) within this arclength (meters) of a
 /// segment endpoint that is a real branch point (degree >= 3).
 const FX_BRANCH_DIST_M: f32 = 0.05;
