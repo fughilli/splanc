@@ -153,20 +153,27 @@ const FX_TOPO_CAP: usize = 256;
 /// segment endpoint that is a real branch point (degree >= 3).
 const FX_BRANCH_DIST_M: f32 = 0.05;
 
-/// One LED's derived topology terms. `seg` is the segment INDEX (position in
-/// topo.segments), -1 = no association; `s` is normalized 0..1; `branch` = near
-/// a junction; `dist` is the geodesic distance from the topology root, 0..1
-/// (accumulates across segments — flood/pulse ride it). 12 bytes/entry → 3 KiB
-/// for the whole cache.
+/// One LED's derived topology terms, in map-index order (== led_id; the render
+/// is index-based). `seg` is the segment INDEX (position in topo.segments, which
+/// equals the sim segment index — see ensure_sim), -1 = no association; `s` is
+/// normalized 0..1; `branch` = near a junction; `dist` is the geodesic distance
+/// from the topology root, 0..1. `foot`/`dperp` are the raw association terms
+/// (meters) the pulse/flood sim needs — caching them here makes lm_playback_color
+/// an O(1) array read instead of an O(associations) scan per LED per frame. This
+/// cache is the SOLE render-time source of topology (the raw associations are no
+/// longer resident). 20 bytes/entry.
 #[derive(Clone, Copy)]
 struct FxLedTopo {
     seg: i16,
     s: f32,
     branch: bool,
     dist: f32,
+    foot: f32,
+    dperp: f32,
 }
 impl FxLedTopo {
-    const NONE: FxLedTopo = FxLedTopo { seg: -1, s: 0.0, branch: false, dist: 0.0 };
+    const NONE: FxLedTopo =
+        FxLedTopo { seg: -1, s: 0.0, branch: false, dist: 0.0, foot: 0.0, dperp: 0.0 };
 }
 
 /// Convert a float to Q16.16 (the canonical fixed context width, CTX_FIX_FRAC).
@@ -1690,6 +1697,10 @@ pub unsafe extern "C" fn lm_playback_active() -> bool {
 #[no_mangle]
 pub unsafe extern "C" fn lm_playback_step(dt_ms: u32) -> bool {
     ensure_sim();
+    // The per-LED topology cache backs lm_playback_color (O(1) reads); build it
+    // here too (not just on the fx path) so pulse/flood playback has it fresh.
+    // Cheap: early-returns unless a map/topology upload invalidated it.
+    fx_rebuild_topo();
     match (*addr_of_mut!(SIM)).as_mut() {
         Some(sim) => {
             sim.step(dt_ms);
@@ -1750,21 +1761,20 @@ pub unsafe extern "C" fn lm_playback_color(led: u32, rgb: *mut u8) -> bool {
     let Some(sim) = (*addr_of!(SIM)).as_ref() else {
         return false;
     };
-    let Some(topo) = (*addr_of!(TOPO)).as_ref() else {
-        return false;
-    };
-    let Some(assoc) = topo.associations.iter().find(|a| a.led_id == led) else {
-        return false;
-    };
-    let Some(idx) = topo.segments.iter().position(|s| s.id == assoc.segment_id) else {
-        return false;
-    };
-    if idx >= MAX_SEGMENTS {
+    // O(1): the per-LED cache (built in lm_playback_step) already holds this LED's
+    // segment index + foot arclength + perpendicular offset — no per-frame scan of
+    // the associations/segments. seg is the sim segment index (see ensure_sim).
+    let i = led as usize;
+    if i >= FX_TOPO_CAP {
         return false;
     }
-    let s_mm = (assoc.foot_arclength * 1000.0) as u32;
-    let d_perp_mm = (assoc.d_perp * 1000.0) as u32;
-    let (r, g, b) = sim.led_color(idx as u16, s_mm, d_perp_mm);
+    let e = &(*addr_of!(FX_LED_TOPO))[i];
+    if e.seg < 0 || e.seg as usize >= MAX_SEGMENTS {
+        return false;
+    }
+    let s_mm = (e.foot * 1000.0) as u32;
+    let d_perp_mm = (e.dperp * 1000.0) as u32;
+    let (r, g, b) = sim.led_color(e.seg as u16, s_mm, d_perp_mm);
     *rgb = r;
     *rgb.add(1) = g;
     *rgb.add(2) = b;
@@ -1849,7 +1859,10 @@ unsafe fn fx_rebuild_topo() {
             FX_UV_INV[k] = if range > 1e-6 { 1.0 / range } else { 0.0 };
         }
     }
-    let (Some(map), Some(topo)) = ((*addr_of!(MAP)).as_ref(), (*addr_of!(TOPO)).as_ref()) else {
+    // The per-LED topology fill needs only the topology (associations reference
+    // led_id, which IS the map index — the render is index-based), so it runs
+    // independent of the map: pulse/flood playback works with a topology alone.
+    let Some(topo) = (*addr_of!(TOPO)).as_ref() else {
         return;
     };
     // Precompute which branch points are true junctions (degree >= 3). A branch
@@ -1945,14 +1958,16 @@ unsafe fn fx_rebuild_topo() {
         }
     }
 
+    // Association-driven fill (led_id IS the map/cache index): O(associations),
+    // not the old O(LEDs × associations) per-LED scan — and independent of the
+    // map. Each entry caches enough for BOTH shade (seg/s/branch/dist) and the
+    // pulse/flood sim (seg/foot/dperp), so lm_playback_color is an O(1) read.
     let mut max_geo = 0.0f32;
-    for (i, led) in map.leds.iter().enumerate() {
+    for assoc in topo.associations.iter() {
+        let i = assoc.led_id as usize;
         if i >= FX_TOPO_CAP {
-            break;
-        }
-        let Some(assoc) = topo.associations.iter().find(|a| a.led_id == led.id) else {
             continue;
-        };
+        }
         let Some(seg_idx) = topo.segments.iter().position(|s| s.id == assoc.segment_id) else {
             continue;
         };
@@ -1981,7 +1996,14 @@ unsafe fn fx_rebuild_topo() {
         if geo > max_geo {
             max_geo = geo;
         }
-        cache[i] = FxLedTopo { seg: seg_idx as i16, s: s_norm, branch, dist: geo };
+        cache[i] = FxLedTopo {
+            seg: seg_idx as i16,
+            s: s_norm,
+            branch,
+            dist: geo,
+            foot: assoc.foot_arclength,
+            dperp: assoc.d_perp,
+        };
     }
     // Normalize the raw geodesic distances to 0..1 (unassociated LEDs stay 0).
     if max_geo > 1e-6 {
