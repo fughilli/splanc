@@ -23,6 +23,7 @@ int g_n_chan = 0;
 uint8_t *g_grb = nullptr;  // R,G,B -> G,R,B reorder scratch (max_leds*3)
 uint32_t g_max_leds = 0;
 rmt_transmit_config_t g_txcfg = {};
+esp_err_t g_last_tx[kMaxChannels] = {ESP_OK, ESP_OK};  // last rmt_transmit result / channel
 
 bool make_channel(int gpio, int idx) {
   rmt_tx_channel_config_t chan_cfg = {};
@@ -31,7 +32,12 @@ bool make_channel(int gpio, int idx) {
   chan_cfg.resolution_hz = kResolutionHz;
   // On-chip symbol ring; the encoder refills it on interrupt (no DMA — the C6
   // has a single DMA-capable RMT channel, and interrupt streaming is ample).
-  chan_cfg.mem_block_symbols = 64;
+  // Cap at 48 = the C6's per-channel RMT memory block (SOC_RMT_MEM_WORDS_PER_
+  // CHANNEL). Asking for more makes channel 0 borrow into channel 1's block, so
+  // allocating the 2nd TX channel then fails (rmt_new_tx_channel -> ESP_ERR_NOT_
+  // FOUND) and only 1 channel comes up. 48 symbols is ample: the bytes encoder
+  // refills the ring on interrupt, it just refills a little more often.
+  chan_cfg.mem_block_symbols = 48;
   chan_cfg.trans_queue_depth = 4;
   if (rmt_new_tx_channel(&chan_cfg, &g_chan[idx]) != ESP_OK) return false;
 
@@ -85,12 +91,18 @@ void ws2812_rmt_show(const uint8_t *rgb, uint32_t count0, uint32_t count1) {
   // Kick both channels, THEN wait — so they clock out in parallel.
   bool tx1 = count1 > 0 && g_chan[1];
   if (count0 > 0) {
-    rmt_transmit(g_chan[0], g_encoder[0], g_grb, static_cast<size_t>(count0) * 3, &g_txcfg);
+    g_last_tx[0] = rmt_transmit(g_chan[0], g_encoder[0], g_grb, static_cast<size_t>(count0) * 3,
+                               &g_txcfg);
   }
   if (tx1) {
-    rmt_transmit(g_chan[1], g_encoder[1], g_grb + static_cast<size_t>(count0) * 3,
-                 static_cast<size_t>(count1) * 3, &g_txcfg);
+    g_last_tx[1] = rmt_transmit(g_chan[1], g_encoder[1], g_grb + static_cast<size_t>(count0) * 3,
+                                static_cast<size_t>(count1) * 3, &g_txcfg);
   }
   if (count0 > 0) rmt_tx_wait_all_done(g_chan[0], -1);
   if (tx1) rmt_tx_wait_all_done(g_chan[1], -1);
+}
+
+int ws2812_rmt_channels(void) { return g_n_chan; }
+int ws2812_rmt_last_error(int ch) {
+  return (ch >= 0 && ch < kMaxChannels) ? static_cast<int>(g_last_tx[ch]) : -1;
 }

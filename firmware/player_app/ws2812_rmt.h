@@ -29,4 +29,9 @@ bool ws2812_rmt_init(int gpio0, int gpio1, uint32_t max_leds);
 // inter-frame gap latches. count1 == 0 (or no channel 1) drives channel 0 only.
 void ws2812_rmt_show(const uint8_t *rgb, uint32_t count0, uint32_t count1);
 
+// Diagnostics: the number of channels that initialized (1 or 2), and the last
+// rmt_transmit() result (esp_err_t as int; 0 == ESP_OK) for channel `ch`.
+int ws2812_rmt_channels(void);
+int ws2812_rmt_last_error(int ch);
+
 #endif  // FIRMWARE_PLAYER_APP_WS2812_RMT_H_

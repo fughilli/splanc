@@ -78,6 +78,9 @@ def flash(res: Reservation, bundle: str, monitor_seconds: float) -> str:
     if BLE_MARKER not in log:
         raise SystemExit(f"[flash] BLE never advertised ({BLE_MARKER!r} absent)\n{log[-2000:]}")
     _log("[flash] booted + BLE up")
+    for line in log.splitlines():
+        if "ws2812 channels" in line or "ws2812 RMT init" in line:
+            _log("[flash] " + line.strip())
     return log
 
 

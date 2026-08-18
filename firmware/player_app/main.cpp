@@ -1739,6 +1739,16 @@ void setup() {
   fill_rgb(leds, kMaxLeds, Rgb::Black);
   fill_rgb(show_buf, kMaxLeds, Rgb::Black);
   ws2812_rmt_show(reinterpret_cast<const uint8_t *>(show_buf), kMaxLeds, 0);  // blank the strip
+  // Boot self-test: drive ONE pixel on each channel so a silent rmt_transmit()
+  // failure on channel 1 (GPIO14) shows up in the boot log, independent of the
+  // logic-analyzer tap. show_buf[0] -> ch0, show_buf[1] -> ch1 (count0==1 splits).
+  show_buf[0] = Rgb(1, 0, 0);
+  show_buf[1] = Rgb(0, 0, 1);
+  ws2812_rmt_show(reinterpret_cast<const uint8_t *>(show_buf), 1, 1);
+  Log().printf("[led] ws2812 channels=%d ch0_err=0x%x ch1_err=0x%x\n",
+               ws2812_rmt_channels(), ws2812_rmt_last_error(0), ws2812_rmt_last_error(1));
+  fill_rgb(show_buf, kMaxLeds, Rgb::Black);
+  ws2812_rmt_show(reinterpret_cast<const uint8_t *>(show_buf), kMaxLeds, 0);  // re-blank
   // Bring up the async transmit task + its completion gate (starts "available"
   // so the first led_show_async proceeds without waiting). Priority one above
   // the render task so a kick preempts, starts the DMA, and yields right back.
