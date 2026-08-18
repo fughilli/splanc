@@ -1,7 +1,7 @@
 """ESP32-C6 player firmware app (bring-up build — see README.md).
 
 WiFi soft-AP + HTTP (landing page) + plain-WS player protocol bridged into
-the Rust session core via a C ABI staticlib, FastLED strip rendering. The
+the Rust session core via a C ABI staticlib, RMT WS2812 strip rendering. The
 Rust side links the FIRMWARE capacity profile of the generated protobuf
 (//shared/protocol/rust:ledmapper_pb_fw); host tests drive the same ffi.rs
 against the host profile, and the RFC6455 codec is host-tested byte-exactly.
@@ -157,7 +157,6 @@ cc_binary(
         # DevKitC-1 onboard LED); our strip wiring lives in led_config.h.
         "@embedded//libs/board:arduino_core",
         "@embedded//libs/vendor:ble",
-        "@embedded//libs/vendor:fastled",
         "@embedded//libs/vendor:preferences",
         "@embedded//libs/vendor:webserver",
         "@embedded//libs/vendor:wifi",
@@ -208,6 +207,8 @@ cc_binary(
         "main.cpp",
         "player_ffi.h",
         "serial_log.h",
+        "ws2812_rmt.cpp",
+        "ws2812_rmt.h",
     ],
     copts = ["-fno-rtti"],
     local_defines = ["LM_OSC_BENCH"],
@@ -225,7 +226,6 @@ cc_binary(
         "@embedded//libs/board:arduino_core",
         "@embedded//libs/tls:selfsigned",
         "@embedded//libs/vendor:ble",
-        "@embedded//libs/vendor:fastled",
         "@embedded//libs/vendor:preferences",
         "@embedded//libs/vendor:webserver",
         "@embedded//libs/vendor:wifi",
@@ -253,7 +253,7 @@ flash_bundle(
     tags = ["manual"],
 )
 
-# The image (~2.05 MB at -c opt: WiFi + BLE + webserver + FastLED + the
+# The image (~2.05 MB at -c opt: WiFi + BLE + webserver + the RMT driver + the
 # protocol stack) exceeds default.csv's 1.25 MB app slot and just misses
 # no_ota's 2 MB — flash the 4 MB "huge app" layout (single 3 MB factory
 # app + nvs, fits the common 4 MB-flash C6 devkits; a dual-OTA 8 MB table
