@@ -563,6 +563,254 @@ where
 }
 
 // ---------------------------------------------------------------------------
+// Streaming decoders (flash-backed storage): parse the per-LED data and hand
+// each entry to a sink instead of accumulating the whole map/topology in the
+// arena. The caller populates fixed per-LED caches, so the arena stops scaling
+// with LED count (it holds only the small per-segment topology geometry). Share
+// the same wire-walk logic as the arena decoders above.
+// ---------------------------------------------------------------------------
+
+/// Topology geometry that IS kept resident (small — one entry per segment /
+/// branch point, independent of LED count), returned by the streaming topology
+/// decoder. The per-LED associations are streamed to a sink, not stored here.
+pub struct StoredTopoGeom<'a> {
+    pub map_id: Str64,
+    pub branch_points: &'a [StoredBranchPoint],
+    pub segments: &'a [StoredSegment<'a>],
+}
+
+/// Streaming decode of `submit_map`: invoke `sink(index, led_count, &led)` for
+/// each LED without accumulating them in the arena. Returns (map_id, led_count).
+pub fn decode_submit_map_streamed<R, F>(
+    reader: R,
+    frame_len: usize,
+    mut sink: F,
+) -> Result<(Str64, u32), StoreError>
+where
+    R: PbRead<Error = Infallible>,
+    F: FnMut(u32, u32, &StoredLed) -> Result<(), StoreError>,
+{
+    let mut dec = PbDecoder::new(reader);
+    let mut map_id = Str64::new();
+    let mut led_count = 0u32;
+    walk(&mut dec, frame_len, |field, _wt, dec| match field {
+        ARM_SUBMIT_MAP => len_record(dec, |len, dec| {
+            walk(dec, len, |f, wt, dec| match f {
+                1 => len_record(dec, |len, dec| {
+                    let (mid, lc) = decode_output_map_streamed(dec, len, &mut sink)?;
+                    map_id = mid;
+                    led_count = lc;
+                    Ok(())
+                }),
+                _ => skip(dec, wt),
+            })
+        }),
+        _ => Err(StoreError::Malformed("frame is not submit_map")),
+    })?;
+    Ok((map_id, led_count))
+}
+
+fn decode_output_map_streamed<R, F>(
+    dec: &mut Dec<R>,
+    len: usize,
+    sink: &mut F,
+) -> Result<(Str64, u32), StoreError>
+where
+    R: PbRead<Error = Infallible>,
+    F: FnMut(u32, u32, &StoredLed) -> Result<(), StoreError>,
+{
+    let mut map_id = Str64::new();
+    let mut led_count = 0u32;
+    let mut idx = 0u32;
+    walk(dec, len, |field, wt, dec| match field {
+        1 => {
+            dec.decode_string(&mut map_id, micropb::Presence::Implicit)?;
+            Ok(())
+        }
+        5 => {
+            let n = dec.decode_int32()?;
+            if n < 0 {
+                return Err(StoreError::Malformed("negative led_count"));
+            }
+            led_count = n as u32;
+            Ok(())
+        }
+        6 => {
+            if led_count == 0 {
+                return Err(StoreError::Malformed("led_count must precede leds"));
+            }
+            if idx >= led_count {
+                return Err(StoreError::Malformed("more leds than led_count"));
+            }
+            let led = len_record_value(dec, |len, dec| {
+                let mut led = StoredLed { id: 0, xyz: [0.0; 3] };
+                walk(dec, len, |f, wt, dec| match f {
+                    1 => {
+                        led.id = dec.decode_int32()?.max(0) as u32;
+                        Ok(())
+                    }
+                    2 => decode_vec3(dec, wt, &mut led.xyz),
+                    _ => skip(dec, wt),
+                })?;
+                Ok(led)
+            })?;
+            sink(idx, led_count, &led)?;
+            idx += 1;
+            Ok(())
+        }
+        _ => skip(dec, wt),
+    })?;
+    Ok((map_id, led_count))
+}
+
+/// Streaming decode of `submit_topology`: branch points + segments (few — one
+/// per segment) accumulate in `arena`, while each per-LED association is handed
+/// to `sink`. Returns the resident geometry (map_id, branch_points, segments).
+pub fn decode_submit_topology_streamed<'a, R, F>(
+    reader: R,
+    frame_len: usize,
+    arena: &'a Arena<'_>,
+    mut sink: F,
+) -> Result<StoredTopoGeom<'a>, StoreError>
+where
+    R: PbRead<Error = Infallible>,
+    F: FnMut(&StoredAssociation) -> Result<(), StoreError>,
+{
+    let mut dec = PbDecoder::new(reader);
+    let mut geom = None;
+    walk(&mut dec, frame_len, |field, _wt, dec| match field {
+        ARM_SUBMIT_TOPOLOGY => len_record(dec, |len, dec| {
+            walk(dec, len, |f, wt, dec| match f {
+                1 => len_record(dec, |len, dec| {
+                    geom = Some(decode_topology_streamed(dec, len, arena, &mut sink)?);
+                    Ok(())
+                }),
+                _ => skip(dec, wt),
+            })
+        }),
+        _ => Err(StoreError::Malformed("frame is not submit_topology")),
+    })?;
+    geom.ok_or(StoreError::Malformed("submit_topology without topology"))
+}
+
+fn decode_topology_streamed<'a, R, F>(
+    dec: &mut Dec<R>,
+    len: usize,
+    arena: &'a Arena<'_>,
+    sink: &mut F,
+) -> Result<StoredTopoGeom<'a>, StoreError>
+where
+    R: PbRead<Error = Infallible>,
+    F: FnMut(&StoredAssociation) -> Result<(), StoreError>,
+{
+    let mut map_id = Str64::new();
+    let mut branch_points = ArenaVec::<StoredBranchPoint>::new(arena);
+    let mut segments = ArenaVec::<StoredSegment<'a>>::new(arena);
+    walk(dec, len, |field, wt, dec| match field {
+        1 => {
+            dec.decode_string(&mut map_id, micropb::Presence::Implicit)?;
+            Ok(())
+        }
+        2 => {
+            let bp = len_record_value(dec, |len, dec| {
+                let mut bp = StoredBranchPoint { id: 0, xyz: [0.0; 3] };
+                walk(dec, len, |f, wt, dec| match f {
+                    1 => {
+                        bp.id = dec.decode_int32()?.max(0) as u32;
+                        Ok(())
+                    }
+                    2 => decode_vec3(dec, wt, &mut bp.xyz),
+                    _ => skip(dec, wt),
+                })?;
+                Ok(bp)
+            })?;
+            branch_points.push(bp)?;
+            Ok(())
+        }
+        3 => {
+            let seg = len_record_value(dec, |len, dec| {
+                let mut id = 0u32;
+                let (mut a, mut b) = (0i32, 0i32);
+                let mut length = 0f32;
+                let mut polyline = ArenaVec::<[f32; 3]>::new(arena);
+                walk(dec, len, |f, wt, dec| match f {
+                    1 => {
+                        id = dec.decode_int32()?.max(0) as u32;
+                        Ok(())
+                    }
+                    2 => {
+                        a = dec.decode_int32()?;
+                        Ok(())
+                    }
+                    3 => {
+                        b = dec.decode_int32()?;
+                        Ok(())
+                    }
+                    4 => {
+                        let p = len_record_value(dec, |len, dec| {
+                            let mut p = [0f32; 3];
+                            walk(dec, len, |f, wt, dec| match f {
+                                1 => decode_vec3(dec, wt, &mut p),
+                                _ => skip(dec, wt),
+                            })?;
+                            Ok(p)
+                        })?;
+                        polyline.push(p)?;
+                        Ok(())
+                    }
+                    5 => {
+                        length = dec.decode_double()? as f32;
+                        Ok(())
+                    }
+                    _ => skip(dec, wt),
+                })?;
+                Ok(StoredSegment { id, a, b, length, polyline: polyline.into_slice() })
+            })?;
+            segments.push(seg)?;
+            Ok(())
+        }
+        4 => {
+            let assoc = len_record_value(dec, |len, dec| {
+                let mut v = StoredAssociation {
+                    led_id: 0,
+                    segment_id: 0,
+                    foot_arclength: 0.0,
+                    d_perp: 0.0,
+                };
+                walk(dec, len, |f, wt, dec| match f {
+                    1 => {
+                        v.led_id = dec.decode_int32()?.max(0) as u32;
+                        Ok(())
+                    }
+                    2 => {
+                        v.segment_id = dec.decode_int32()?.max(0) as u32;
+                        Ok(())
+                    }
+                    3 => {
+                        v.foot_arclength = dec.decode_double()? as f32;
+                        Ok(())
+                    }
+                    4 => {
+                        v.d_perp = dec.decode_double()? as f32;
+                        Ok(())
+                    }
+                    _ => skip(dec, wt),
+                })?;
+                Ok(v)
+            })?;
+            sink(&assoc)?;
+            Ok(())
+        }
+        _ => skip(dec, wt),
+    })?;
+    Ok(StoredTopoGeom {
+        map_id,
+        branch_points: branch_points.into_slice(),
+        segments: segments.into_slice(),
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Wire-walk helpers
 // ---------------------------------------------------------------------------
 

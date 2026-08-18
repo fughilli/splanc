@@ -224,7 +224,14 @@ archive_override(
     # generates a per-device EC key on-device instead of baking one shared key
     # into every firmware image. Additive-only patch (a new function in the
     # existing TU); fold it upstream and drop this on the next embedded bump.
-    patches = ["//patches:embedded-fug90-gen-key.patch"],
+    # esp32-libs-c6-only: restrict the esp32-arduino-libs FOD to the esp32c6
+    # variant (upstream unpacks all ~8 chip variants, ~10 GB — overflowed the
+    # container overlay, the sole reason the C6 firmware couldn't build in
+    # container). We build C6 only. See the patch header.
+    patches = [
+        "//patches:embedded-fug90-gen-key.patch",
+        "//patches:embedded-esp32-libs-c6-only.patch",
+    ],
     strip_prefix = "embedded-569102d541664d790fc708206f450dce477ca220",
     urls = ["https://github.com/fughilli/embedded/archive/569102d541664d790fc708206f450dce477ca220.tar.gz"],
 )

@@ -6,7 +6,7 @@
 //                 ──  WS   :81  /ws        the ledmapper.v1 player protocol
 //                                          (binary frames -> lm_player_handle,
 //                                          the Rust session core)
-//   FastLED strip on LED_DATA_PIN: renders the counting pattern, the hue
+//   RMT WS2812 strip on LED_DATA_PIN: renders the counting pattern, the hue
 //   mapping pattern (frame index from the pattern clock), or an idle
 //   heartbeat.
 //
@@ -19,7 +19,6 @@
 //  - one reassembly buffer bounds the largest inbound message (a ~1024-LED
 //    submit_map is ~45 KB); larger -> close 1009 (message too big).
 #include <Arduino.h>
-#include <FastLED.h>
 #include <Preferences.h>
 #include <WebServer.h>
 #include <WiFi.h>
@@ -48,6 +47,7 @@
 #include "firmware/player_app/led_config.h"
 #include "firmware/player_app/player_ffi.h"
 #include "firmware/player_app/serial_log.h"
+#include "firmware/player_app/ws2812_rmt.h"
 #include "firmware/player_app/ws_codec.h"
 
 // The player protocol handler (lm_player_handle -> Player::handle) decodes a
@@ -59,7 +59,7 @@
 // Player::handle). Size loopTask well above the measured peak. Must be at
 // global scope (overrides a weak core getter). If the protobuf frames ever
 // grow, re-measure with objdump on the .elf prologues. (The render task has
-// its own stack; it only calls the small pure-read accessors + FastLED.show.)
+// its own stack; it only calls the small pure-read accessors + the RMT show.)
 SET_LOOP_TASK_STACK_SIZE(24 * 1024);
 
 static const char *kApPassword = "ledmapper";
@@ -78,38 +78,51 @@ static char g_hostname[33] = "ledmapper";
 // STA join budget before a provisioning attempt is reported failed.
 static const uint32_t kStaJoinTimeoutMs = 20000;
 
+// Minimal RGB pixel — replaces FastLED's CRGB now that the WS2812 transmit is our
+// own RMT driver (ws2812_rmt). Memory layout is r,g,b, tightly packed (3 bytes,
+// no padding), so `(const uint8_t *)show_buf` feeds the driver directly (which
+// reorders to the WS2812 GRB wire order). nscale8 matches Rgb::nscale8 (scale by
+// scale/256) so the software brightness path is unchanged.
+struct Rgb {
+  uint8_t r = 0, g = 0, b = 0;
+  Rgb() = default;
+  Rgb(uint8_t r_, uint8_t g_, uint8_t b_) : r(r_), g(g_), b(b_) {}
+  void nscale8(uint8_t scale) {
+    r = static_cast<uint8_t>((static_cast<uint16_t>(r) * scale) >> 8);
+    g = static_cast<uint8_t>((static_cast<uint16_t>(g) * scale) >> 8);
+    b = static_cast<uint8_t>((static_cast<uint16_t>(b) * scale) >> 8);
+  }
+  static const Rgb Black;
+};
+inline const Rgb Rgb::Black{};
+static inline void fill_rgb(Rgb *a, uint32_t n, Rgb v) {
+  for (uint32_t i = 0; i < n; i++) a[i] = v;
+}
+
 // Render buffer cap; the actual rendered count follows the active pattern /
 // counting configuration at runtime (min'd against this).
 static const uint32_t kMaxLeds = 256;
-static CRGB leds[kMaxLeds];
+static Rgb leds[kMaxLeds];
 
 // --- async LED transmit (FUG-122 hill-climb) --------------------------------
-// The WS2812 strip write is ~30 µs/LED (256 LEDs ≈ 7.7 ms), and FastLED.show()
-// BLOCKS until the RMT/DMA push completes — that used to stall the render task
-// for the whole transmit, serializing compute and I/O (frame period = render +
-// transmit). The RMT peripheral clocks the bits by DMA/interrupt with the CPU
-// idle, and FastLED's wait YIELDS, so we move show() to a dedicated higher-
-// priority task: the render task snapshots its frame into `show_buf`, kicks the
-// transmit task, and immediately renders the NEXT frame WHILE the current one
-// clocks out. Net frame period drops to max(render, transmit). We keep FastLED's
-// exact, field-proven WS2812 timing/colour path (rig has no camera to validate a
-// hand-rolled driver) — FastLED is bound to `show_buf`, never to the live `leds`.
+// The WS2812 strip write is ~30 µs/LED (256 LEDs ≈ 7.7 ms), and the transmit
+// BLOCKS the caller until the RMT push completes — that used to stall the render
+// task for the whole transmit, serializing compute and I/O (frame period = render
+// + transmit). The RMT peripheral clocks the bits by interrupt with the CPU idle,
+// and rmt_tx_wait_all_done YIELDS, so the push runs on a dedicated higher-priority
+// task: the render task snapshots its frame into `show_buf`, kicks the transmit
+// task, and immediately renders the NEXT frame WHILE the current one clocks out.
+// Net frame period drops to max(render, transmit). The transmit reads `show_buf`
+// (the snapshot), never the live `leds`.
 //
-// HANDOFF (FUG-122 review, Kevin): a follow-up wants a fresh interrupt/DMA WS2812
-// driver to replace FastLED here, validated by a logic-analyzer HITL. This
-// transmit path is structured so that swap is a drop-in: replace the body of
-// `led_show_async` / `xmit_task` with a custom `driver/rmt_tx.h` transmit
-// (rmt_new_tx_channel + rmt_new_bytes_encoder over `show_buf`'s GRB bytes;
-// `rmt_transmit` is already non-blocking, so the render task need not even wait
-// unless it out-runs the DMA). The async contract (snapshot → kick → render next;
-// `xmit_done` gates the buffer) stays the same. The logic analyzer should verify:
-// WS2812 bit timing (T0H≈0.4µs/T0L≈0.85µs, T1H≈0.8µs/T1L≈0.45µs, ≥50µs reset gap),
-// GRB byte order, full-scale output (the FastLED global brightness scale is
-// intentionally unset now, so calibration patterns reach the wire at their exact
-// values), and — key for the async double-buffer — that no torn/half-updated
-// frame ever goes out (the `xmit_done` semaphore is what prevents a snapshot from
-// racing an in-flight push).
-static CRGB show_buf[kMaxLeds];
+// The WS2812 output is our own RMT driver (ws2812_rmt.{h,cpp}) — FastLED was
+// dropped once the logic-analyzer HITL (//pi/hitl/harness:led_capture) confirmed
+// the driver's WS2812 bit timing (T0H≈0.4µs/T0L≈0.8µs, T1H≈0.8µs/T1L≈0.4µs,
+// ≥50µs inter-frame reset), GRB byte order, full-scale output (no hardware
+// dimming; calibration patterns reach the wire at their exact values), and — key
+// for the async double-buffer — that no torn/half-updated frame goes out (the
+// `xmit_done` semaphore prevents a snapshot from racing an in-flight push).
+static Rgb show_buf[kMaxLeds];
 static TaskHandle_t xmit_task_handle = nullptr;
 // Given when a transmit completes (and once at boot); the render task takes it
 // before overwriting `show_buf`, so a snapshot never races an in-flight push.
@@ -129,7 +142,7 @@ static void led_show_async(bool timed);  // defined below render_once
 // well below the WiFi/BLE stacks (~23) so networking still preempts rendering.
 static SemaphoreHandle_t player_mutex = nullptr;
 static const UBaseType_t kRenderTaskPrio = 10;   // tune on-device if needed
-static const uint32_t kRenderTaskStack = 8192;   // FastLED.show() needs headroom
+static const uint32_t kRenderTaskStack = 8192;   // render + the GRB reorder/RMT show
 
 // Largest inbound protocol message: a full submit_map for kMaxLeds (~96 B/LED,
 // so 256 LEDs ≈ 25 KB; 32 KB leaves headroom). Sized to the LED cap rather than
@@ -443,10 +456,10 @@ static void poll_brightness() {
 // render paths (effects / playback); the camera calibration patterns (mapping
 // gray-code, counting probe) stay uncorrected AND unscaled so their known signal
 // values reach the camera unchanged.
-static inline CRGB cc_apply(const uint8_t rgb[3]) {
+static inline Rgb cc_apply(const uint8_t rgb[3]) {
   const uint8_t (*lut)[256] = g_lut;
-  CRGB c = (lut == nullptr) ? CRGB(rgb[0], rgb[1], rgb[2])
-                            : CRGB(lut[0][rgb[0]], lut[1][rgb[1]], lut[2][rgb[2]]);
+  Rgb c = (lut == nullptr) ? Rgb(rgb[0], rgb[1], rgb[2])
+                            : Rgb(lut[0][rgb[0]], lut[1][rgb[1]], lut[2][rgb[2]]);
   if (g_brightness < 255) c.nscale8(g_brightness);
   return c;
 }
@@ -913,8 +926,8 @@ static void ws_poll() {
 static const uint32_t kStaticPollMs = 100;
 
 // Compute + push (at most) one frame. Player reads happen under player_mutex
-// (the core is single-threaded); the long FastLED.show() runs OUTSIDE the lock
-// so the loop-task message handler isn't blocked by the strip write. Returns
+// (the core is single-threaded); the long RMT strip transmit runs OUTSIDE the
+// lock so the loop-task message handler isn't blocked by the strip write. Returns
 // how long the render task should sleep before the next wake — for the mapping
 // pattern that's the time to the NEXT frame boundary, so frames land on the
 // pattern clock regardless of loop() load.
@@ -957,10 +970,10 @@ static uint32_t render_once() {
       uint32_t n = led_count < kMaxLeds ? led_count : kMaxLeds;
       for (uint32_t i = 0; i < n; i++) {
         if (lm_pattern_color(i, frame_index, rgb)) {
-          leds[i] = CRGB(rgb[0], rgb[1], rgb[2]);
+          leds[i] = Rgb(rgb[0], rgb[1], rgb[2]);
         }
       }
-      for (uint32_t i = n; i < kMaxLeds; i++) leds[i] = CRGB::Black;
+      for (uint32_t i = n; i < kMaxLeds; i++) leds[i] = Rgb::Black;
       // Record the render instant (raw micros(), integer µs — no f64) BEFORE
       // the strip write; consecutive records reveal the true frame cadence,
       // drained by the phone via get_frame_timing. micros() wraps ~71 min; the
@@ -979,7 +992,7 @@ static uint32_t render_once() {
     // Counting probe: static pattern, repaint at the slow static cadence.
     for (uint32_t i = 0; i < kMaxLeds; i++) {
       lm_counting_color(i, rgb);
-      leds[i] = CRGB(rgb[0], rgb[1], rgb[2]);
+      leds[i] = Rgb(rgb[0], rgb[1], rgb[2]);
     }
     show = true;
     was_active = true;
@@ -1024,14 +1037,14 @@ static uint32_t render_once() {
           if (lm_fx_shade(i, xyz[0], xyz[1], xyz[2], rgb)) {
             leds[i] = cc_apply(rgb);
           } else {
-            leds[i] = CRGB::Black;  // a cancelled/timed-out shade
+            leds[i] = Rgb::Black;  // a cancelled/timed-out shade
             shade_bad++;
           }
         } else {
-          leds[i] = CRGB::Black;  // no map entry
+          leds[i] = Rgb::Black;  // no map entry
         }
       }
-      for (uint32_t i = n; i < kMaxLeds; i++) leds[i] = CRGB::Black;
+      for (uint32_t i = n; i < kMaxLeds; i++) leds[i] = Rgb::Black;
       // Rate-limited interpreter diagnostic (~1 Hz): update outcome + how many
       // LEDs the bounded-exec guard cancelled this frame. Cheap; helps see if an
       // effect is tripping the instruction budget / wall-time deadline.
@@ -1045,7 +1058,7 @@ static uint32_t render_once() {
       }
     } else {
       // Effect active but not runnable (shouldn't happen) — hold black.
-      fill_solid(leds, kMaxLeds, CRGB::Black);
+      fill_rgb(leds, kMaxLeds, Rgb::Black);
     }
     if (perf_on) {
       uint32_t c_frame_end = esp_cpu_get_cycle_count();
@@ -1076,12 +1089,12 @@ static uint32_t render_once() {
         if (lm_playback_color(i, rgb)) {
           leds[i] = cc_apply(rgb);
         } else {
-          leds[i] = CRGB::Black;
+          leds[i] = Rgb::Black;
         }
       }
     } else {
       // Effect configured but no topology stored yet — hold black.
-      fill_solid(leds, kMaxLeds, CRGB::Black);
+      fill_rgb(leds, kMaxLeds, Rgb::Black);
     }
     show = true;
     was_active = true;
@@ -1090,15 +1103,19 @@ static uint32_t render_once() {
   } else {
     // Idle: blank once after activity, then a dim heartbeat on LED 0.
     if (was_active) {
-      fill_solid(leds, kMaxLeds, CRGB::Black);
+      fill_rgb(leds, kMaxLeds, Rgb::Black);
       show = true;
       was_active = false;
     } else {
       uint32_t t = millis();
       if (t - last_beat > kStaticPollMs) {
         last_beat = t;
-        uint8_t breath = (uint8_t)(8 + 7 * sin8(t / 8) / 255);
-        leds[0] = CRGB(0, 0, breath);
+        // Triangle-wave "breath" (was FastLED sin8; a smooth idle indicator on
+        // LED 0). phase 0..255 -> 0..254 triangle -> dim 8..15.
+        uint8_t phase = (uint8_t)(t / 8);
+        uint8_t tri = phase < 128 ? (uint8_t)(phase * 2) : (uint8_t)((255 - phase) * 2);
+        uint8_t breath = (uint8_t)(8 + 7 * tri / 255);
+        leds[0] = Rgb(0, 0, breath);
         show = true;
       }
     }
@@ -1183,14 +1200,15 @@ static void osc_task(void *) {
 
 // The render task: forever, render one frame then sleep until the next is due.
 // Dedicated LED transmit task (higher priority than render). Sleeps until the
-// render task kicks it, pushes `show_buf` via FastLED's RMT/DMA driver (blocking,
-// but this wait YIELDS the single core back to the render task for the whole
-// ~7.7 ms transmit), then signals completion. Owns the RMT from one task.
+// render task kicks it, pushes `show_buf` via the RMT WS2812 driver (blocks THIS
+// task while the encoder streams the bits by interrupt, YIELDING the single core
+// back to the render task for the whole ~7.7 ms transmit), then signals
+// completion. Owns the RMT channel from one task.
 static void xmit_task(void *) {
   for (;;) {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     uint32_t c0 = g_show_timed ? esp_cpu_get_cycle_count() : 0;
-    FastLED.show();
+    ws2812_rmt_show(reinterpret_cast<const uint8_t *>(show_buf), kMaxLeds);
     if (g_show_timed) g_show_c = esp_cpu_get_cycle_count() - c0;
     xSemaphoreGive(xmit_done);
   }
@@ -1203,13 +1221,12 @@ static void xmit_task(void *) {
 // yields straight back so the render task can compute the next frame in parallel.
 static void led_show_async(bool timed) {
   if (xmit_task_handle == nullptr) {
-    FastLED.show();  // pre-task fallback (setup): synchronous
+    // Pre-task fallback (setup, before the transmit task exists): synchronous.
+    ws2812_rmt_show(reinterpret_cast<const uint8_t *>(show_buf), kMaxLeds);
     return;
   }
   xSemaphoreTake(xmit_done, portMAX_DELAY);  // previous transmit fully drained
-  // `::memcpy` — FastLED also declares a memcpy overload, which makes the bare
-  // call ambiguous.
-  ::memcpy(show_buf, leds, kMaxLeds * sizeof(CRGB));
+  memcpy(show_buf, leds, kMaxLeds * sizeof(Rgb));
   g_show_timed = timed;
   xTaskNotifyGive(xmit_task_handle);
 }
@@ -1662,19 +1679,20 @@ void setup() {
   // completing. A 0 ms tx timeout drops bytes instead of blocking, so logs are
   // best-effort and the network stacks always run.
   Serial.setTxTimeoutMs(0);
-  // FastLED drives `show_buf` (the transmit snapshot), never the live `leds` —
+  // RMT WS2812 driver on LED_DATA_PIN (replaces FastLED's blocking clockless
+  // driver). It reads `show_buf` (the transmit snapshot), never the live `leds` —
   // the async transmit task pushes show_buf while the render task fills leds.
-  FastLED.addLeds<WS2812B, LED_DATA_PIN, GRB>(show_buf, kMaxLeds);
-  // Leave the FastLED global brightness at full scale (255). Output brightness is
-  // owned by the software control: cc_apply() nscale8's content by g_brightness
-  // (set over the protocol via set_brightness). A FastLED-level scale here would be
-  // a second, redundant dimmer applied at show() to the WHOLE buffer — and unlike
-  // cc_apply it also dims the RAW calibration patterns (counting probe / mapping
-  // gray-code), which are meant to reach the wire at their exact known values for
-  // the camera + logic-analyzer to decode. So no setBrightness() call here.
-  fill_solid(leds, kMaxLeds, CRGB::Black);
-  fill_solid(show_buf, kMaxLeds, CRGB::Black);
-  FastLED.show();  // synchronous here (xmit task not yet up)
+  if (!ws2812_rmt_init(LED_DATA_PIN, kMaxLeds)) {
+    Log().printf("[led] ws2812 RMT init FAILED\n");
+  }
+  // No global hardware dimming. Output brightness is owned by the software
+  // control: cc_apply() nscale8's content by g_brightness (set over the protocol
+  // via set_brightness). A hardware scale would also dim the RAW calibration
+  // patterns (counting probe / mapping gray-code), which must reach the wire at
+  // their exact known values for the camera + logic-analyzer to decode.
+  fill_rgb(leds, kMaxLeds, Rgb::Black);
+  fill_rgb(show_buf, kMaxLeds, Rgb::Black);
+  ws2812_rmt_show(reinterpret_cast<const uint8_t *>(show_buf), kMaxLeds);  // blank the strip
   // Bring up the async transmit task + its completion gate (starts "available"
   // so the first led_show_async proceeds without waiting). Priority one above
   // the render task so a kick preempts, starts the DMA, and yields right back.
