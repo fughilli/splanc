@@ -48,6 +48,7 @@
 #include "firmware/player_app/led_config.h"
 #include "firmware/player_app/player_ffi.h"
 #include "firmware/player_app/serial_log.h"
+#include "firmware/player_app/ws2812_rmt.h"
 #include "firmware/player_app/ws_codec.h"
 
 // The player protocol handler (lm_player_handle -> Player::handle) decodes a
@@ -1183,14 +1184,15 @@ static void osc_task(void *) {
 
 // The render task: forever, render one frame then sleep until the next is due.
 // Dedicated LED transmit task (higher priority than render). Sleeps until the
-// render task kicks it, pushes `show_buf` via FastLED's RMT/DMA driver (blocking,
-// but this wait YIELDS the single core back to the render task for the whole
-// ~7.7 ms transmit), then signals completion. Owns the RMT from one task.
+// render task kicks it, pushes `show_buf` via the RMT WS2812 driver (blocks THIS
+// task while the encoder streams the bits by interrupt, YIELDING the single core
+// back to the render task for the whole ~7.7 ms transmit), then signals
+// completion. Owns the RMT channel from one task.
 static void xmit_task(void *) {
   for (;;) {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     uint32_t c0 = g_show_timed ? esp_cpu_get_cycle_count() : 0;
-    FastLED.show();
+    ws2812_rmt_show(reinterpret_cast<const uint8_t *>(show_buf), kMaxLeds);
     if (g_show_timed) g_show_c = esp_cpu_get_cycle_count() - c0;
     xSemaphoreGive(xmit_done);
   }
@@ -1203,7 +1205,8 @@ static void xmit_task(void *) {
 // yields straight back so the render task can compute the next frame in parallel.
 static void led_show_async(bool timed) {
   if (xmit_task_handle == nullptr) {
-    FastLED.show();  // pre-task fallback (setup): synchronous
+    // Pre-task fallback (setup, before the transmit task exists): synchronous.
+    ws2812_rmt_show(reinterpret_cast<const uint8_t *>(show_buf), kMaxLeds);
     return;
   }
   xSemaphoreTake(xmit_done, portMAX_DELAY);  // previous transmit fully drained
@@ -1662,19 +1665,20 @@ void setup() {
   // completing. A 0 ms tx timeout drops bytes instead of blocking, so logs are
   // best-effort and the network stacks always run.
   Serial.setTxTimeoutMs(0);
-  // FastLED drives `show_buf` (the transmit snapshot), never the live `leds` —
+  // RMT WS2812 driver on LED_DATA_PIN (replaces FastLED's blocking clockless
+  // driver). It reads `show_buf` (the transmit snapshot), never the live `leds` —
   // the async transmit task pushes show_buf while the render task fills leds.
-  FastLED.addLeds<WS2812B, LED_DATA_PIN, GRB>(show_buf, kMaxLeds);
-  // Leave the FastLED global brightness at full scale (255). Output brightness is
-  // owned by the software control: cc_apply() nscale8's content by g_brightness
-  // (set over the protocol via set_brightness). A FastLED-level scale here would be
-  // a second, redundant dimmer applied at show() to the WHOLE buffer — and unlike
-  // cc_apply it also dims the RAW calibration patterns (counting probe / mapping
-  // gray-code), which are meant to reach the wire at their exact known values for
-  // the camera + logic-analyzer to decode. So no setBrightness() call here.
+  if (!ws2812_rmt_init(LED_DATA_PIN, kMaxLeds)) {
+    Log().printf("[led] ws2812 RMT init FAILED\n");
+  }
+  // No global hardware dimming. Output brightness is owned by the software
+  // control: cc_apply() nscale8's content by g_brightness (set over the protocol
+  // via set_brightness). A hardware scale would also dim the RAW calibration
+  // patterns (counting probe / mapping gray-code), which must reach the wire at
+  // their exact known values for the camera + logic-analyzer to decode.
   fill_solid(leds, kMaxLeds, CRGB::Black);
   fill_solid(show_buf, kMaxLeds, CRGB::Black);
-  FastLED.show();  // synchronous here (xmit task not yet up)
+  ws2812_rmt_show(reinterpret_cast<const uint8_t *>(show_buf), kMaxLeds);  // blank the strip
   // Bring up the async transmit task + its completion gate (starts "available"
   // so the first led_show_async proceeds without waiting). Priority one above
   // the render task so a kick preempts, starts the DMA, and yields right back.

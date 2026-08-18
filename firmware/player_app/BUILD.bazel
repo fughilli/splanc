@@ -136,6 +136,8 @@ cc_binary(
         "main.cpp",
         "player_ffi.h",
         "serial_log.h",
+        "ws2812_rmt.cpp",
+        "ws2812_rmt.h",
     ],
     # Match the SDK/library ABI: the Arduino tree builds -fno-rtti, and a
     # subclass of its polymorphic types must not demand base typeinfo.
