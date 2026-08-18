@@ -330,12 +330,12 @@ held-out programs (<code class="docutils literal notranslate"><span class="pre">
 </thead>
 <tbody>
 <tr class="row-even"><td><p>esp32c6</p></td>
-<td><p>HITL rig ESP32-C6 (golden)</p></td>
+<td><p>esp32c6</p></td>
 <td><p>160</p></td>
 <td><p>65</p></td>
 <td><p>7</p></td>
-<td><p>6.5%</p></td>
-<td><p>12.3%</p></td>
+<td><p>7.5%</p></td>
+<td><p>15.0%</p></td>
 <td><p>13%</p></td>
 <td><p>PASS</p></td>
 </tr>
@@ -343,8 +343,8 @@ held-out programs (<code class="docutils literal notranslate"><span class="pre">
 </table>
 </div>
 </section>
-<section id="esp32c6-hitl-rig-esp32-c6-golden">
-<h2>esp32c6 — HITL rig ESP32-C6 (golden)<a class="headerlink" href="#esp32c6-hitl-rig-esp32-c6-golden" title="Link to this heading">¶</a></h2>
+<section id="esp32c6-esp32c6">
+<h2>esp32c6 — esp32c6<a class="headerlink" href="#esp32c6-esp32c6" title="Link to this heading">¶</a></h2>
 <div class="table-wrapper colwidths-auto docutils container">
 <table class="docutils align-default">
 <thead>
@@ -357,10 +357,10 @@ held-out programs (<code class="docutils literal notranslate"><span class="pre">
 <td><p>esp32c6</p></td>
 </tr>
 <tr class="row-odd"><td><p>Device</p></td>
-<td><p>HITL rig ESP32-C6 (golden)</p></td>
+<td><p>esp32c6</p></td>
 </tr>
 <tr class="row-even"><td><p>deviceKey</p></td>
-<td><p>esp32c6-hitl-golden</p></td>
+<td><p>esp32c6</p></td>
 </tr>
 <tr class="row-odd"><td><p>CPU clock</p></td>
 <td><p>160 MHz (160,000,000 Hz)</p></td>
@@ -372,13 +372,13 @@ held-out programs (<code class="docutils literal notranslate"><span class="pre">
 <td><p>default 10%, sweep16 15%</p></td>
 </tr>
 <tr class="row-even"><td><p>Fit residual</p></td>
-<td><p>±41.5%</p></td>
+<td><p>±64.4%</p></td>
 </tr>
 <tr class="row-odd"><td><p>Held-out accuracy</p></td>
-<td><p>RMS 6.5% · mean 5.7% · max 12.3% · R² 0.982</p></td>
+<td><p>RMS 7.5% · mean 6.2% · max 15.0% · R² 0.985</p></td>
 </tr>
 <tr class="row-even"><td><p>Verdict</p></td>
-<td><p>PASS (RMS 6.5% vs 13% tolerance)</p></td>
+<td><p>PASS (RMS 7.5% vs 13% tolerance)</p></td>
 </tr>
 </tbody>
 </table>
@@ -396,20 +396,20 @@ held-out programs (<code class="docutils literal notranslate"><span class="pre">
 </thead>
 <tbody>
 <tr class="row-even"><td><p>update_fixed</p></td>
-<td><p>441883.6</p></td>
-<td><p>2761772.8</p></td>
+<td><p>415440.8</p></td>
+<td><p>2596505.1</p></td>
 </tr>
 <tr class="row-odd"><td><p>shade_fixed</p></td>
-<td><p>2434.9</p></td>
-<td><p>15218.0</p></td>
+<td><p>2167.8</p></td>
+<td><p>13548.5</p></td>
 </tr>
 <tr class="row-even"><td><p>show_fixed</p></td>
-<td><p>1034002.2</p></td>
-<td><p>6462513.9</p></td>
+<td><p>455164.7</p></td>
+<td><p>2844779.6</p></td>
 </tr>
 <tr class="row-odd"><td><p>show_per_led</p></td>
-<td><p>106.9</p></td>
-<td><p>668.2</p></td>
+<td><p>9.5</p></td>
+<td><p>59.5</p></td>
 </tr>
 </tbody>
 </table>
@@ -431,173 +431,173 @@ benchmark actually exercised). Sorted by cost.</p>
 </thead>
 <tbody>
 <tr class="row-even"><td><p>BinMath:pow</p></td>
-<td><p>1926.28</p></td>
-<td><p>12039.27</p></td>
+<td><p>1920.92</p></td>
+<td><p>12005.75</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>Hsv2Rgb</p></td>
-<td><p>1379.74</p></td>
-<td><p>8623.38</p></td>
+<td><p>1380.35</p></td>
+<td><p>8627.19</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>UnMath:tan</p></td>
-<td><p>1354.63</p></td>
-<td><p>8466.42</p></td>
+<td><p>1349.68</p></td>
+<td><p>8435.48</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>BinMath:atan2</p></td>
-<td><p>1157.96</p></td>
-<td><p>7237.26</p></td>
+<td><p>1148.21</p></td>
+<td><p>7176.32</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>Cross</p></td>
-<td><p>1036.67</p></td>
-<td><p>6479.19</p></td>
+<td><p>1010.18</p></td>
+<td><p>6313.62</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>UnMath:exp</p></td>
-<td><p>904.68</p></td>
-<td><p>5654.27</p></td>
+<td><p>901.09</p></td>
+<td><p>5631.84</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>UnMath:log</p></td>
-<td><p>849.61</p></td>
-<td><p>5310.05</p></td>
+<td><p>845.45</p></td>
+<td><p>5284.07</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>Smoothstep</p></td>
-<td><p>832.41</p></td>
-<td><p>5202.54</p></td>
+<td><p>823.20</p></td>
+<td><p>5145.01</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>UnMath:sqrt</p></td>
-<td><p>727.02</p></td>
-<td><p>4543.89</p></td>
+<td><p>726.73</p></td>
+<td><p>4542.06</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>BinMath:mod</p></td>
-<td><p>714.07</p></td>
-<td><p>4462.95</p></td>
+<td><p>703.83</p></td>
+<td><p>4398.91</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>UnMath:cos</p></td>
-<td><p>688.88</p></td>
-<td><p>4305.48</p></td>
+<td><p>692.08</p></td>
+<td><p>4325.52</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>Palette</p></td>
-<td><p>647.62</p></td>
-<td><p>4047.63</p></td>
+<td><p>649.39</p></td>
+<td><p>4058.68</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>UnMath:sin</p></td>
-<td><p>618.48</p></td>
-<td><p>3865.51</p></td>
+<td><p>617.73</p></td>
+<td><p>3860.82</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>Normalize</p></td>
-<td><p>560.51</p></td>
-<td><p>3503.17</p></td>
+<td><p>556.70</p></td>
+<td><p>3479.35</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>Distance</p></td>
-<td><p>533.65</p></td>
-<td><p>3335.34</p></td>
+<td><p>529.66</p></td>
+<td><p>3310.35</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-odd"><td><p>UnMath:ceil</p></td>
-<td><p>460.27</p></td>
-<td><p>2876.71</p></td>
+<tr class="row-odd"><td><p>Div</p></td>
+<td><p>457.71</p></td>
+<td><p>2860.71</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-even"><td><p>Div</p></td>
-<td><p>460.03</p></td>
-<td><p>2875.20</p></td>
+<tr class="row-even"><td><p>UnMath:ceil</p></td>
+<td><p>456.85</p></td>
+<td><p>2855.32</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>Mix</p></td>
-<td><p>422.01</p></td>
-<td><p>2637.56</p></td>
+<td><p>420.80</p></td>
+<td><p>2630.01</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>Length</p></td>
-<td><p>386.92</p></td>
-<td><p>2418.25</p></td>
+<td><p>388.93</p></td>
+<td><p>2430.82</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>UnMath:fract</p></td>
-<td><p>382.93</p></td>
-<td><p>2393.30</p></td>
+<td><p>381.73</p></td>
+<td><p>2385.82</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>Clamp</p></td>
-<td><p>382.25</p></td>
-<td><p>2389.08</p></td>
+<td><p>375.54</p></td>
+<td><p>2347.15</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>Hash3</p></td>
-<td><p>374.13</p></td>
-<td><p>2338.30</p></td>
+<td><p>364.98</p></td>
+<td><p>2281.12</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>Mul</p></td>
-<td><p>314.93</p></td>
-<td><p>1968.29</p></td>
+<td><p>314.09</p></td>
+<td><p>1963.04</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>Add</p></td>
-<td><p>313.99</p></td>
-<td><p>1962.43</p></td>
+<td><p>313.34</p></td>
+<td><p>1958.37</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>Sub</p></td>
-<td><p>313.05</p></td>
-<td><p>1956.56</p></td>
+<td><p>311.92</p></td>
+<td><p>1949.48</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-odd"><td><p>BinMath:step</p></td>
-<td><p>303.32</p></td>
-<td><p>1895.72</p></td>
+<tr class="row-odd"><td><p>UnMath:floor</p></td>
+<td><p>300.69</p></td>
+<td><p>1879.32</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-even"><td><p>BinMath:max</p></td>
-<td><p>302.25</p></td>
-<td><p>1889.06</p></td>
+<tr class="row-even"><td><p>BinMath:step</p></td>
+<td><p>297.47</p></td>
+<td><p>1859.22</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>BinMath:min</p></td>
-<td><p>301.28</p></td>
-<td><p>1882.98</p></td>
+<td><p>290.98</p></td>
+<td><p>1818.62</p></td>
 <td><p>yes</p></td>
 </tr>
-<tr class="row-even"><td><p>UnMath:floor</p></td>
-<td><p>298.64</p></td>
-<td><p>1866.53</p></td>
+<tr class="row-even"><td><p>BinMath:max</p></td>
+<td><p>290.31</p></td>
+<td><p>1814.41</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>Dot</p></td>
-<td><p>244.99</p></td>
-<td><p>1531.19</p></td>
+<td><p>241.61</p></td>
+<td><p>1510.05</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>Hash1</p></td>
-<td><p>222.45</p></td>
-<td><p>1390.32</p></td>
+<td><p>226.59</p></td>
+<td><p>1416.18</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>UnMath:sign</p></td>
-<td><p>179.50</p></td>
-<td><p>1121.86</p></td>
+<td><p>177.16</p></td>
+<td><p>1107.23</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>UnMath:abs</p></td>
-<td><p>155.06</p></td>
-<td><p>969.14</p></td>
+<td><p>154.00</p></td>
+<td><p>962.47</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-odd"><td><p>Neg</p></td>
-<td><p>148.54</p></td>
-<td><p>928.36</p></td>
+<td><p>142.80</p></td>
+<td><p>892.48</p></td>
 <td><p>yes</p></td>
 </tr>
 <tr class="row-even"><td><p>BinMath</p></td>
@@ -785,7 +785,7 @@ benchmark actually exercised). Sorted by cost.</p>
 in-editor AI is fed, relative to a float multiply (each runs once per LED in
 <code class="docutils literal notranslate"><span class="pre">shade()</span></code>):</p>
 <div class="highlight-text notranslate"><div class="highlight"><pre><span></span>BUILTIN COSTS on this device (esp32c6 @ 160 MHz, measured on your board) — per call, relative to a float multiply. shade() runs each ONCE PER LED, so favor the cheap ones:
-  abs 0.5x, sign 0.6x, hash 0.7x, dot 0.8x, floor 0.9x, min 1.0x, max 1.0x, step 1.0x, sub 1.0x, add 1.0x, mul 1.0x, clamp 1.2x, fract 1.2x, length 1.2x, mix 1.3x, div 1.5x, ceil 1.5x, distance 1.7x, normalize 1.8x, sin 2.0x, palette0 2.1x, cos 2.2x, mod 2.3x, sqrt 2.3x, smoothstep 2.6x, log 2.7x, exp 2.9x, cross 3.3x, atan2 3.7x, tan 4.3x, hsv2rgb 4.4x, pow 6.1x
+  abs 0.5x, sign 0.6x, hash 0.7x, dot 0.8x, max 0.9x, min 0.9x, step 0.9x, floor 1.0x, sub 1.0x, add 1.0x, mul 1.0x, clamp 1.2x, fract 1.2x, length 1.2x, mix 1.3x, ceil 1.5x, div 1.5x, distance 1.7x, normalize 1.8x, sin 2.0x, palette0 2.1x, cos 2.2x, mod 2.2x, sqrt 2.3x, smoothstep 2.6x, log 2.7x, exp 2.9x, cross 3.2x, atan2 3.7x, tan 4.3x, hsv2rgb 4.4x, pow 6.1x
 Hoist the pricey builtins (pow/atan2/log/exp/length/normalize/distance/smoothstep) out of shade() into update() or precompute into state; swap sin/cos/pow for fixed16/fixed8 (LUT trig, no soft-float) or step/mix/polynomials; avoid length/normalize where a squared distance works (hidden sqrt).
 </pre></div>
 </div>
@@ -809,65 +809,65 @@ programs the fit never saw. Cycles are the wall-time re-expressed at the device 
 <tbody>
 <tr class="row-even"><td><p>hsv2rgbM</p></td>
 <td><p>128</p></td>
-<td><p>50.57</p></td>
-<td><p>49.10</p></td>
+<td><p>46.36</p></td>
+<td><p>45.03</p></td>
 <td><p>-2.9%</p></td>
-<td><p>8.09M</p></td>
-<td><p>7.86M</p></td>
+<td><p>7.42M</p></td>
+<td><p>7.21M</p></td>
 </tr>
 <tr class="row-odd"><td><p>neg2M</p></td>
 <td><p>128</p></td>
-<td><p>18.77</p></td>
-<td><p>21.07</p></td>
-<td><p>+12.3%</p></td>
-<td><p>3.00M</p></td>
-<td><p>3.37M</p></td>
+<td><p>14.52</p></td>
+<td><p>16.70</p></td>
+<td><p>+15.0%</p></td>
+<td><p>2.32M</p></td>
+<td><p>2.67M</p></td>
 </tr>
 <tr class="row-even"><td><p>dot3M</p></td>
 <td><p>128</p></td>
-<td><p>30.68</p></td>
-<td><p>32.67</p></td>
-<td><p>+6.5%</p></td>
-<td><p>4.91M</p></td>
-<td><p>5.23M</p></td>
+<td><p>26.27</p></td>
+<td><p>28.33</p></td>
+<td><p>+7.8%</p></td>
+<td><p>4.20M</p></td>
+<td><p>4.53M</p></td>
 </tr>
 <tr class="row-odd"><td><p>mix3M</p></td>
 <td><p>128</p></td>
-<td><p>48.11</p></td>
-<td><p>46.39</p></td>
-<td><p>-3.6%</p></td>
-<td><p>7.70M</p></td>
-<td><p>7.42M</p></td>
+<td><p>43.53</p></td>
+<td><p>42.22</p></td>
+<td><p>-3.0%</p></td>
+<td><p>6.97M</p></td>
+<td><p>6.75M</p></td>
 </tr>
 <tr class="row-even"><td><p>expf2M</p></td>
 <td><p>128</p></td>
-<td><p>73.78</p></td>
-<td><p>76.01</p></td>
-<td><p>+3.0%</p></td>
-<td><p>11.81M</p></td>
-<td><p>12.16M</p></td>
+<td><p>70.09</p></td>
+<td><p>71.71</p></td>
+<td><p>+2.3%</p></td>
+<td><p>11.21M</p></td>
+<td><p>11.47M</p></td>
 </tr>
 <tr class="row-odd"><td><p>clamp32M</p></td>
 <td><p>128</p></td>
+<td><p>63.26</p></td>
 <td><p>67.99</p></td>
-<td><p>73.10</p></td>
 <td><p>+7.5%</p></td>
+<td><p>10.12M</p></td>
 <td><p>10.88M</p></td>
-<td><p>11.70M</p></td>
 </tr>
 <tr class="row-even"><td><p>lavalamp</p></td>
 <td><p>200</p></td>
-<td><p>27.78</p></td>
-<td><p>26.54</p></td>
-<td><p>-4.4%</p></td>
-<td><p>4.44M</p></td>
-<td><p>4.25M</p></td>
+<td><p>23.38</p></td>
+<td><p>22.27</p></td>
+<td><p>-4.7%</p></td>
+<td><p>3.74M</p></td>
+<td><p>3.56M</p></td>
 </tr>
 </tbody>
 </table>
 </div>
-<p>Held-out <strong>RMS 6.5%</strong>, mean 5.7%, max 12.3% against the <strong>13%</strong> tolerance — <strong>PASS</strong>.</p>
-<p>Outliers (|error| &gt; 10%): <code class="docutils literal notranslate"><span class="pre">neg2M</span></code> +12.3%. The linear sum-of-op-costs model over-predicts the
+<p>Held-out <strong>RMS 7.5%</strong>, mean 6.2%, max 15.0% against the <strong>13%</strong> tolerance — <strong>PASS</strong>.</p>
+<p>Outliers (|error| &gt; 10%): <code class="docutils literal notranslate"><span class="pre">neg2M</span></code> +15.0%. The linear sum-of-op-costs model over-predicts the
 cheapest real effects.</p>
 </section>
 <section id="raw-measured-costs">
@@ -889,434 +889,434 @@ LED transmit path, excluded from the gate as transmit-bound noise).</p>
 <tr class="row-even"><td><p>empty</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>365,610</p></td>
-<td><p>1,025,204</p></td>
+<td><p>305,767</p></td>
+<td><p>429,201</p></td>
 </tr>
 <tr class="row-odd"><td><p>sweep16</p></td>
 <td><p>fit</p></td>
 <td><p>16</p></td>
-<td><p>86,286</p></td>
-<td><p>1,021,233</p></td>
+<td><p>54,940</p></td>
+<td><p>441,417</p></td>
 </tr>
 <tr class="row-even"><td><p>sweep256</p></td>
 <td><p>fit</p></td>
 <td><p>256</p></td>
-<td><p>719,534</p></td>
-<td><p>1,047,669</p></td>
+<td><p>624,185</p></td>
+<td><p>444,984</p></td>
 </tr>
 <tr class="row-odd"><td><p>hash1M</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>2,114,488</p></td>
-<td><p>1,039,982</p></td>
+<td><p>2,063,497</p></td>
+<td><p>435,216</p></td>
 </tr>
 <tr class="row-even"><td><p>hash3M</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>2,416,760</p></td>
-<td><p>1,035,198</p></td>
+<td><p>2,342,332</p></td>
+<td><p>441,908</p></td>
 </tr>
 <tr class="row-odd"><td><p>hash12M</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>2,833,988</p></td>
-<td><p>1,035,619</p></td>
+<td><p>2,809,762</p></td>
+<td><p>438,180</p></td>
 </tr>
 <tr class="row-even"><td><p>hsv2rgb2M</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>12,378,394</p></td>
-<td><p>1,066,214</p></td>
+<td><p>12,321,993</p></td>
+<td><p>500,046</p></td>
 </tr>
 <tr class="row-odd"><td><p>length3M</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>5,629,810</p></td>
-<td><p>1,048,460</p></td>
+<td><p>5,618,239</p></td>
+<td><p>473,478</p></td>
 </tr>
 <tr class="row-even"><td><p>negM</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>1,683,964</p></td>
-<td><p>1,029,950</p></td>
+<td><p>1,599,051</p></td>
+<td><p>437,066</p></td>
 </tr>
 <tr class="row-odd"><td><p>normalize3M</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>8,202,396</p></td>
-<td><p>1,054,876</p></td>
+<td><p>8,114,963</p></td>
+<td><p>496,074</p></td>
 </tr>
 <tr class="row-even"><td><p>paletteM</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>3,542,542</p></td>
-<td><p>1,028,579</p></td>
+<td><p>3,499,806</p></td>
+<td><p>444,135</p></td>
 </tr>
 <tr class="row-odd"><td><p>absfM</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>1,838,764</p></td>
-<td><p>1,030,290</p></td>
+<td><p>1,769,914</p></td>
+<td><p>437,280</p></td>
 </tr>
 <tr class="row-even"><td><p>ceilfM</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>3,082,946</p></td>
-<td><p>1,035,373</p></td>
+<td><p>2,995,378</p></td>
+<td><p>434,911</p></td>
 </tr>
 <tr class="row-odd"><td><p>cosM</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>4,018,912</p></td>
-<td><p>1,038,123</p></td>
+<td><p>3,968,350</p></td>
+<td><p>447,114</p></td>
 </tr>
 <tr class="row-even"><td><p>floorfM</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>2,419,212</p></td>
-<td><p>1,042,897</p></td>
+<td><p>2,358,072</p></td>
+<td><p>444,197</p></td>
 </tr>
 <tr class="row-odd"><td><p>fractfM</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>2,771,906</p></td>
-<td><p>1,036,014</p></td>
+<td><p>2,699,987</p></td>
+<td><p>451,346</p></td>
 </tr>
 <tr class="row-even"><td><p>signfM</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>1,938,572</p></td>
-<td><p>1,036,622</p></td>
+<td><p>1,860,722</p></td>
+<td><p>452,296</p></td>
 </tr>
 <tr class="row-odd"><td><p>sinM</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>3,734,474</p></td>
-<td><p>1,030,931</p></td>
+<td><p>3,663,497</p></td>
+<td><p>444,454</p></td>
 </tr>
 <tr class="row-even"><td><p>sqrtfM</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>4,188,334</p></td>
-<td><p>1,051,846</p></td>
+<td><p>4,117,554</p></td>
+<td><p>443,911</p></td>
 </tr>
 <tr class="row-odd"><td><p>tanM</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>6,744,280</p></td>
-<td><p>1,053,491</p></td>
+<td><p>6,678,261</p></td>
+<td><p>457,494</p></td>
 </tr>
 <tr class="row-even"><td><p>normalize32M</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>14,730,894</p></td>
-<td><p>1,064,344</p></td>
+<td><p>14,565,465</p></td>
+<td><p>485,627</p></td>
 </tr>
 <tr class="row-odd"><td><p>addM</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>2,459,624</p></td>
-<td><p>1,043,431</p></td>
+<td><p>2,391,383</p></td>
+<td><p>439,505</p></td>
 </tr>
 <tr class="row-even"><td><p>divM</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>3,078,514</p></td>
-<td><p>1,039,900</p></td>
+<td><p>3,006,035</p></td>
+<td><p>434,650</p></td>
 </tr>
 <tr class="row-odd"><td><p>mulM</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>2,463,468</p></td>
-<td><p>1,054,881</p></td>
+<td><p>2,390,649</p></td>
+<td><p>442,042</p></td>
 </tr>
 <tr class="row-even"><td><p>subM</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>2,484,204</p></td>
-<td><p>1,031,043</p></td>
+<td><p>2,416,113</p></td>
+<td><p>440,912</p></td>
 </tr>
 <tr class="row-odd"><td><p>absf2M</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>2,281,788</p></td>
-<td><p>1,051,715</p></td>
+<td><p>2,213,190</p></td>
+<td><p>482,728</p></td>
 </tr>
 <tr class="row-even"><td><p>atan2fM</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>5,906,684</p></td>
-<td><p>1,064,984</p></td>
+<td><p>5,808,640</p></td>
+<td><p>445,169</p></td>
 </tr>
 <tr class="row-odd"><td><p>ceilf2M</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>4,785,054</p></td>
-<td><p>1,043,619</p></td>
+<td><p>4,701,705</p></td>
+<td><p>445,557</p></td>
 </tr>
 <tr class="row-even"><td><p>cos2M</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>6,657,978</p></td>
-<td><p>1,040,680</p></td>
+<td><p>6,623,994</p></td>
+<td><p>451,018</p></td>
 </tr>
 <tr class="row-odd"><td><p>floorf2M</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>3,461,840</p></td>
-<td><p>1,034,180</p></td>
+<td><p>3,421,270</p></td>
+<td><p>447,274</p></td>
 </tr>
 <tr class="row-even"><td><p>fractf2M</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>4,148,566</p></td>
-<td><p>1,054,835</p></td>
+<td><p>4,080,167</p></td>
+<td><p>445,916</p></td>
 </tr>
 <tr class="row-odd"><td><p>modfM</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>4,120,416</p></td>
-<td><p>1,066,783</p></td>
+<td><p>4,013,218</p></td>
+<td><p>439,536</p></td>
 </tr>
 <tr class="row-even"><td><p>powfM</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>9,067,392</p></td>
-<td><p>1,060,019</p></td>
+<td><p>8,973,593</p></td>
+<td><p>530,966</p></td>
 </tr>
 <tr class="row-odd"><td><p>signf2M</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>2,482,102</p></td>
-<td><p>1,060,544</p></td>
+<td><p>2,404,965</p></td>
+<td><p>441,028</p></td>
 </tr>
 <tr class="row-even"><td><p>sin2M</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>6,079,350</p></td>
-<td><p>1,037,823</p></td>
+<td><p>6,015,048</p></td>
+<td><p>501,399</p></td>
 </tr>
 <tr class="row-odd"><td><p>sqrtf2M</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>6,963,872</p></td>
-<td><p>1,038,390</p></td>
+<td><p>6,904,164</p></td>
+<td><p>442,060</p></td>
 </tr>
 <tr class="row-even"><td><p>stepfM</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>2,445,310</p></td>
-<td><p>1,044,406</p></td>
+<td><p>2,353,926</p></td>
+<td><p>433,295</p></td>
 </tr>
 <tr class="row-odd"><td><p>tan2M</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>12,112,574</p></td>
-<td><p>1,070,313</p></td>
+<td><p>12,002,791</p></td>
+<td><p>457,716</p></td>
 </tr>
 <tr class="row-even"><td><p>maxfM</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>2,433,264</p></td>
-<td><p>1,052,460</p></td>
+<td><p>2,323,486</p></td>
+<td><p>443,965</p></td>
 </tr>
 <tr class="row-odd"><td><p>minfM</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>2,436,924</p></td>
-<td><p>1,044,294</p></td>
+<td><p>2,327,102</p></td>
+<td><p>443,066</p></td>
 </tr>
 <tr class="row-even"><td><p>hash32M</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>4,236,026</p></td>
-<td><p>1,033,718</p></td>
+<td><p>4,087,459</p></td>
+<td><p>451,250</p></td>
 </tr>
 <tr class="row-odd"><td><p>expfM</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>6,071,076</p></td>
-<td><p>1,041,478</p></td>
+<td><p>5,991,537</p></td>
+<td><p>481,542</p></td>
 </tr>
 <tr class="row-even"><td><p>logfM</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>5,924,230</p></td>
-<td><p>1,046,098</p></td>
+<td><p>5,848,357</p></td>
+<td><p>450,580</p></td>
 </tr>
 <tr class="row-odd"><td><p>length32M</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>10,684,586</p></td>
-<td><p>1,071,380</p></td>
+<td><p>10,660,097</p></td>
+<td><p>492,456</p></td>
 </tr>
 <tr class="row-even"><td><p>palette2M</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>6,473,688</p></td>
-<td><p>1,035,520</p></td>
+<td><p>6,421,065</p></td>
+<td><p>447,074</p></td>
 </tr>
 <tr class="row-odd"><td><p>add2M</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>3,528,224</p></td>
-<td><p>1,031,448</p></td>
+<td><p>3,463,582</p></td>
+<td><p>447,221</p></td>
 </tr>
 <tr class="row-even"><td><p>div2M</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>4,784,802</p></td>
-<td><p>1,058,541</p></td>
+<td><p>4,705,212</p></td>
+<td><p>437,708</p></td>
 </tr>
 <tr class="row-odd"><td><p>mul2M</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>3,535,904</p></td>
-<td><p>1,045,406</p></td>
+<td><p>3,471,601</p></td>
+<td><p>478,171</p></td>
 </tr>
 <tr class="row-even"><td><p>sub2M</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>3,576,856</p></td>
-<td><p>1,036,441</p></td>
+<td><p>3,507,201</p></td>
+<td><p>442,527</p></td>
 </tr>
 <tr class="row-odd"><td><p>distance3M</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>7,474,484</p></td>
-<td><p>1,040,089</p></td>
+<td><p>7,366,923</p></td>
+<td><p>493,204</p></td>
 </tr>
 <tr class="row-even"><td><p>cross3M</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>5,575,824</p></td>
-<td><p>1,050,801</p></td>
+<td><p>5,408,228</p></td>
+<td><p>454,045</p></td>
 </tr>
 <tr class="row-odd"><td><p>atan2f2M</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>10,517,510</p></td>
-<td><p>1,060,107</p></td>
+<td><p>10,374,599</p></td>
+<td><p>449,293</p></td>
 </tr>
 <tr class="row-even"><td><p>modf2M</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>6,865,210</p></td>
-<td><p>1,060,721</p></td>
+<td><p>6,721,803</p></td>
+<td><p>453,765</p></td>
 </tr>
 <tr class="row-odd"><td><p>powf2M</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>16,804,776</p></td>
-<td><p>1,054,680</p></td>
+<td><p>16,704,655</p></td>
+<td><p>504,548</p></td>
 </tr>
 <tr class="row-even"><td><p>stepf2M</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>3,496,628</p></td>
-<td><p>1,043,046</p></td>
+<td><p>3,390,413</p></td>
+<td><p>445,704</p></td>
 </tr>
 <tr class="row-odd"><td><p>maxf2M</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>3,491,738</p></td>
-<td><p>1,081,613</p></td>
+<td><p>3,332,221</p></td>
+<td><p>441,546</p></td>
 </tr>
 <tr class="row-even"><td><p>minf2M</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>3,479,938</p></td>
-<td><p>1,037,038</p></td>
+<td><p>3,337,307</p></td>
+<td><p>436,956</p></td>
 </tr>
 <tr class="row-odd"><td><p>dot32M</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>7,096,446</p></td>
-<td><p>1,061,677</p></td>
+<td><p>6,951,910</p></td>
+<td><p>483,803</p></td>
 </tr>
 <tr class="row-even"><td><p>logf2M</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>10,566,452</p></td>
-<td><p>1,060,841</p></td>
+<td><p>10,463,073</p></td>
+<td><p>454,409</p></td>
 </tr>
 <tr class="row-odd"><td><p>clamp3M</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>5,772,670</p></td>
-<td><p>1,038,381</p></td>
+<td><p>5,628,832</p></td>
+<td><p>453,738</p></td>
 </tr>
 <tr class="row-even"><td><p>smoothstep3M</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>11,621,422</p></td>
-<td><p>1,058,367</p></td>
+<td><p>11,437,735</p></td>
+<td><p>455,354</p></td>
 </tr>
 <tr class="row-odd"><td><p>cross32M</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>9,440,914</p></td>
-<td><p>1,052,127</p></td>
+<td><p>9,161,355</p></td>
+<td><p>443,127</p></td>
 </tr>
 <tr class="row-even"><td><p>distance32M</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>14,269,938</p></td>
-<td><p>1,104,979</p></td>
+<td><p>14,108,807</p></td>
+<td><p>517,909</p></td>
 </tr>
 <tr class="row-odd"><td><p>mix32M</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>11,446,842</p></td>
-<td><p>1,050,966</p></td>
+<td><p>11,355,760</p></td>
+<td><p>458,882</p></td>
 </tr>
 <tr class="row-even"><td><p>smoothstep32M</p></td>
 <td><p>fit</p></td>
 <td><p>128</p></td>
-<td><p>21,374,118</p></td>
-<td><p>1,059,758</p></td>
+<td><p>21,091,107</p></td>
+<td><p>502,568</p></td>
 </tr>
 <tr class="row-odd"><td><p>hsv2rgbM</p></td>
 <td><p>held-out</p></td>
 <td><p>128</p></td>
-<td><p>7,039,428</p></td>
-<td><p>1,051,308</p></td>
+<td><p>6,974,730</p></td>
+<td><p>443,078</p></td>
 </tr>
 <tr class="row-even"><td><p>neg2M</p></td>
 <td><p>held-out</p></td>
 <td><p>128</p></td>
-<td><p>1,973,488</p></td>
-<td><p>1,029,206</p></td>
+<td><p>1,883,022</p></td>
+<td><p>439,399</p></td>
 </tr>
 <tr class="row-odd"><td><p>dot3M</p></td>
 <td><p>held-out</p></td>
 <td><p>128</p></td>
-<td><p>3,863,760</p></td>
-<td><p>1,045,075</p></td>
+<td><p>3,752,355</p></td>
+<td><p>450,556</p></td>
 </tr>
 <tr class="row-even"><td><p>mix3M</p></td>
 <td><p>held-out</p></td>
 <td><p>128</p></td>
-<td><p>6,645,396</p></td>
-<td><p>1,052,028</p></td>
+<td><p>6,520,762</p></td>
+<td><p>444,763</p></td>
 </tr>
 <tr class="row-odd"><td><p>expf2M</p></td>
 <td><p>held-out</p></td>
 <td><p>128</p></td>
-<td><p>10,761,484</p></td>
-<td><p>1,044,052</p></td>
+<td><p>10,751,673</p></td>
+<td><p>462,464</p></td>
 </tr>
 <tr class="row-even"><td><p>clamp32M</p></td>
 <td><p>held-out</p></td>
 <td><p>128</p></td>
-<td><p>9,832,210</p></td>
-<td><p>1,045,874</p></td>
+<td><p>9,625,235</p></td>
+<td><p>495,669</p></td>
 </tr>
 <tr class="row-odd"><td><p>lavalamp</p></td>
 <td><p>held-out</p></td>
 <td><p>200</p></td>
-<td><p>3,396,842</p></td>
-<td><p>1,047,441</p></td>
+<td><p>3,288,746</p></td>
+<td><p>451,653</p></td>
 </tr>
 </tbody>
 </table>
@@ -1382,7 +1382,7 @@ LED transmit path, excluded from the gate as transmit-bound noise).</p>
             <ul>
 <li><a class="reference internal" href="#">FX-VM performance</a><ul>
 <li><a class="reference internal" href="#platforms">Platforms</a></li>
-<li><a class="reference internal" href="#esp32c6-hitl-rig-esp32-c6-golden">esp32c6 — HITL rig ESP32-C6 (golden)</a><ul>
+<li><a class="reference internal" href="#esp32c6-esp32c6">esp32c6 — esp32c6</a><ul>
 <li><a class="reference internal" href="#fixed-overheads">Fixed overheads</a></li>
 <li><a class="reference internal" href="#fitted-per-opcode-cost">Fitted per-opcode cost</a></li>
 <li><a class="reference internal" href="#builtin-costs-effects-ai-ranking">Builtin costs (effects-AI ranking)</a></li>
