@@ -14,6 +14,7 @@ Targets:
                            (bazelisk run //web:serve)
 """
 
+load("@aspect_bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
 load("@aspect_rules_js//js:defs.bzl", "js_binary", "js_test")
 load("@aspect_rules_ts//ts:defs.bzl", "ts_config", "ts_project")
 load("@npm//:defs.bzl", "npm_link_all_packages")
@@ -306,6 +307,33 @@ vite_bin.vite(
     args = ["build"],
     chdir = package_name(),
     out_dirs = ["dist"],
+)
+
+# The complete iOS/Capacitor web payload as ONE Bazel artifact: the vite bundle
+# (:dist) plus the four runtime WASM bundles staged at the paths the app loads
+# them from (mirrors tools/stage_ios_wasm.sh, but hermetic). Downstream targets
+# (e.g. //tools:ios_deploy) depend on this by label — no re-invoking Bazel to
+# build the app, no separate wasm-staging shell step. The WKWebView has no
+# backend, so these bundles must ride inside the packaged app.
+copy_to_directory(
+    name = "ios_payload",
+    srcs = [
+        ":dist",
+        "//firmware/fx_vm:fx_vm_web",
+        "//firmware/pulse:pulse_web",
+        "//fx_compiler:fx_compiler_web",
+        "//solver:solver_web",
+    ],
+    # The wasm bundles ship .d.ts alongside the runtime glue; the app never loads
+    # them, so drop them from the payload (as tools/stage_ios_wasm.sh did).
+    exclude_srcs_patterns = ["**/*.d.ts"],
+    replace_prefixes = {
+        "dist": "",
+        "solver/solver_web": "solver",
+        "firmware/pulse/pulse_web": "pulse",
+        "fx_compiler/fx_compiler_web": "fx-compiler",
+        "firmware/fx_vm/fx_vm_web": "fx-vm",
+    },
 )
 
 # One-command phone-testing entry point: M2 server serving the built app.

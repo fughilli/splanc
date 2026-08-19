@@ -20,17 +20,18 @@ Which path it takes is auto-detected (override with `--sidecar`):
   3. else, on macOS                 → start a sidecar build server on localhost
   4. else (container, none running) → the usual "start the server on the Mac" error
 
-Xcode/CocoaPods live only on the macOS host, so the actual build always runs in
-`tools/ios_build_server.py`. This script is the client — the same HTTP contract
-`iosctl` uses — that:
+The web app + WASM payload (`//web:ios_payload`) is a normal label dep of this
+binary, so `bazel run` builds it in THIS invocation — no re-invoking Bazel from
+the build server. Xcode/CocoaPods still live only on the macOS host, so those
+steps run in `tools/ios_build_server.py`. This script:
 
   1. finds the paired iPhone (auto-detects the single connected device, or takes
      `--target <UDID|name>` / $IOS_DEPLOY_TARGET),
-  2. runs the `deploy-device` chain on the host — web-build → stage-wasm →
-     cap-sync → device-build → device-install → device-launch — streaming the
-     build log live, and
+  2. stages the Bazel-built payload into web/dist, then runs the `deploy-prebuilt`
+     chain on the host — cap-sync → device-build → device-install → device-launch
+     — streaming the log live (the app build already happened, as a label dep), and
   3. with `--log`, swaps the final launch for a console-attached relaunch
-     (`deploy-device-log`) so the app's stdout/stderr + forwarded JS console
+     (`deploy-prebuilt-log`) so the app's stdout/stderr + forwarded JS console
      stream back until you Ctrl-C.
 
 The device deploy goes through devicectl (CoreDevice), so a Wi-Fi-paired iPhone
@@ -294,6 +295,35 @@ def _detect_target() -> str:
     return udid
 
 
+def _stage_payload() -> None:
+    """Copy the Bazel-built web payload into web/dist for the build server's
+    `cap sync`. //web:ios_payload is a data dep of this binary, so `bazel run
+    //tools:ios_deploy` has ALREADY built it (no Bazel re-invocation on the
+    server) — it's handed over as a normal label dep via bazel-bin. The workspace
+    is shared with the server (the container's /workspace is the Mac checkout)."""
+    ws = os.environ.get("BUILD_WORKSPACE_DIRECTORY") or str(Path(__file__).resolve().parents[1])
+    src = Path(ws) / "bazel-bin" / "web" / "ios_payload"
+    dst = Path(ws) / "web" / "dist"
+    if not src.is_dir():
+        raise SystemExit(
+            f"ios_deploy: {src} is missing — run via `bazel run //tools:ios_deploy` "
+            "(it builds //web:ios_payload), or `bazel build //web:ios_payload` first."
+        )
+    sys.stdout.write(f"ios_deploy: staging web payload → {dst}\n")
+    # bazel outputs are read-only; copy then make writable so `cap sync` can work.
+    subprocess.run(
+        [
+            "bash",
+            "-c",
+            'rm -rf "$1"; mkdir -p "$1"; cp -RL "$2"/. "$1"/; chmod -R u+w "$1"',
+            "_",
+            str(dst),
+            str(src),
+        ],
+        check=True,
+    )
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         prog="ios_deploy",
@@ -336,7 +366,10 @@ def main() -> int:
     if args.bundle:
         params["bundle"] = args.bundle
 
-    chain = "deploy-device-log" if args.log else "deploy-device"
+    # Stage the Bazel-built payload, then run the PREBUILT chain (cap-sync onward)
+    # — the server never re-invokes Bazel for the app build.
+    _stage_payload()
+    chain = "deploy-prebuilt-log" if args.log else "deploy-prebuilt"
     return _stream(_url(chain, params))
 
 

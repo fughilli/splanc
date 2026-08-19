@@ -67,7 +67,13 @@ py_binary(
 py_binary(
     name = "ios_deploy",
     srcs = ["ios_deploy.py"],
-    data = ["ios_build_server.py"],
+    # The web app + WASM payload is built by THIS `bazel run` (a normal label dep,
+    # no re-invoking Bazel from the build server) and staged into web/dist for
+    # `cap sync`. ios_build_server.py rides along for the Mac sidecar.
+    data = [
+        "ios_build_server.py",
+        "//web:ios_payload",
+    ],
 )
 
 # Host-side Improv-BLE onboarding driver — provisions the player onto WiFi via a
