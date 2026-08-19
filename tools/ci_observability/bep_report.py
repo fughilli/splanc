@@ -460,11 +460,34 @@ class BepParser:
         content = self.read(xml_path) if xml_path else ""
         cases = parse_junit_xml(content) if content.strip() else []
 
+        # The BEP TestResult status is authoritative for pass/fail. Trust the
+        # per-case XML breakdown only when it's consistent with it: a real JUnit
+        # XML (e.g. pytest --junitxml) marks the failing case, so a failed
+        # attempt has a failing case. But Bazel's *synthesized* XML for a failed
+        # test keeps status="run" with no <failure> element (the failure is only
+        # in test.log) — that XML is non-informative, so we fall through to a
+        # synthetic failing case with the log trace.
         if cases:
-            return cases
+            xml_has_failure = any(c["status"] in _FAILING for c in cases)
+            if status not in _FAILING or xml_has_failure:
+                # A single failing case (typical for sh_test / a py_test's
+                # synthesized XML) often carries only a generic message like
+                # "exited with error code 1" — a useless aggregation key. Enrich
+                # it with the test.log tail so the real reason (the exception /
+                # stderr) drives the signature. Multi-case XML (real per-case
+                # granularity, e.g. pytest --junitxml) is left untouched — its
+                # traces are already per-case and the shared log would be noise.
+                failing = [c for c in cases if c["status"] in _FAILING]
+                if len(cases) == 1 and len(failing) == 1 and len(failing[0]["trace"]) < 120:
+                    log_path = _uri_to_path(attempt.get("log_uri", ""))
+                    tail = _tail(self.read(log_path)) if log_path else ""
+                    if tail:
+                        base = failing[0]["trace"]
+                        failing[0]["trace"] = (base + "\n" + tail).strip() if base else tail
+                return cases
 
-        # No usable per-case XML: synthesize a single case for the whole target,
-        # pulling the trace from the test log on failure.
+        # No usable per-case failure detail: synthesize a single case for the
+        # whole target, pulling the trace from the test log on failure.
         trace = ""
         if status in _FAILING:
             log_path = _uri_to_path(attempt.get("log_uri", ""))

@@ -272,6 +272,65 @@ class TestFlaky(unittest.TestCase):
         self.assertFalse(any(r.is_failure() for r in recs))
 
 
+class TestBepStatusReconciliation(unittest.TestCase):
+    """Bazel's synthesized test.xml for a FAILED test keeps status="run" with no
+    <failure> element (the failure is only in test.log). The BEP TestResult
+    status is authoritative — a failed attempt whose XML shows no failing case
+    must still yield a failing record, enriched with the log trace.
+    """
+
+    # Mimics bazel's minimal XML for a failed sh_test / py_test: one testcase,
+    # a generic <error>, no useful per-case detail.
+    GENERIC_FAIL_XML = (
+        '<testsuites><testsuite name="x/t" tests="1" failures="0" errors="1">'
+        '<testcase name="x/t" status="run" time="0">'
+        '<error message="exited with error code 1"></error>'
+        "</testcase></testsuite></testsuites>"
+    )
+    LOG = "Executing tests from //x:t\nstarting\nValueError: divide by zero\n"
+
+    def _run(self, xml):
+        events = [
+            {"id": {"started": {}}, "started": {"uuid": "i", "startTimeMillis": "1723075200000"}},
+            {
+                "id": {"targetCompleted": {"label": "//x:t"}},
+                "completed": {"success": True, "targetKind": "sh_test rule"},
+            },
+            {
+                "id": {"testResult": {"label": "//x:t", "run": 1, "attempt": 1}},
+                "testResult": {
+                    "status": "FAILED",
+                    "testAttemptDurationMillis": "10",
+                    "testActionOutput": [
+                        {"name": "test.xml", "uri": "file:///t.xml"},
+                        {"name": "test.log", "uri": "file:///t.log"},
+                    ],
+                },
+            },
+        ]
+        parser = B.BepParser(context={}, file_reader=_reader({"/t.xml": xml, "/t.log": self.LOG}))
+        for e in events:
+            parser.consume(e)
+        return parser.records()
+
+    def test_generic_xml_failure_is_recorded(self):
+        recs = self._run(self.GENERIC_FAIL_XML)
+        self.assertEqual(len(recs), 1)
+        self.assertTrue(recs[0].is_failure())
+        # The generic <error> message drives the (stable) reason...
+        self.assertIn("error code", recs[0].failure_reason)
+        # ...but the trace is enriched with the real log cause for debugging.
+        self.assertIn("divide by zero", recs[0].failure_trace)
+
+    def test_failed_attempt_with_no_failure_xml_synthesizes(self):
+        # XML that parses but shows the case as passing (bazel's status="run").
+        passing_xml = '<testsuite name="x/t" tests="1"><testcase name="x/t" time="0"/></testsuite>'
+        recs = self._run(passing_xml)
+        self.assertEqual(len(recs), 1)
+        self.assertTrue(recs[0].is_failure())  # BEP status wins over the XML
+        self.assertIn("divide by zero", recs[0].failure_trace)
+
+
 class TestSinksNoop(unittest.TestCase):
     def test_loki_noop_without_creds(self):
         import os
