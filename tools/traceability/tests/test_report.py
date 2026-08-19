@@ -118,6 +118,39 @@ def test_untagged_evidence_defaults_to_simulation():
 
 
 @pytest.mark.requirements("PR-25")
+def test_cost_pyramid_policy_flags_expensive_only_evidence():
+    model, _ = parse_model(
+        {
+            "user_needs": [{"id": "UN-1", "title": "n"}],
+            "product_requirements": [
+                # demands hitl, only hitl evidence -> pyramid violation
+                {"id": "PR-1", "title": "lonely", "satisfies": ["UN-1"], "method": "hitl"},
+                # demands hitl, has both hitl and a cheap sim rung -> OK
+                {"id": "PR-2", "title": "backed", "satisfies": ["UN-1"], "method": "hitl"},
+                # demands simulation -> never a pyramid concern
+                {"id": "PR-3", "title": "cheap", "satisfies": ["UN-1"], "method": "simulation"},
+            ],
+            "risks": [],
+        }
+    )
+    r = JUnitResults()
+    r.cases = [
+        CaseResult(name="a", classname="c", status="passed", requirements=("PR-1",), level="hitl"),
+        CaseResult(name="b", classname="c", status="passed", requirements=("PR-2",), level="hitl"),
+        CaseResult(
+            name="b2", classname="c", status="passed", requirements=("PR-2",), level="simulation"
+        ),
+        CaseResult(name="c", classname="c", status="passed", requirements=("PR-3",), level="hitl"),
+    ]
+    m = report.build_matrix(model, r)
+    assert m.pyramid_violations() == ["PR-1"]
+    assert m.pr_status["PR-1"].pyramid_violation is True
+    assert m.pr_status["PR-2"].pyramid_violation is False
+    assert m.pr_status["PR-3"].pyramid_violation is False
+    assert "Cost-pyramid policy" in report.render_html(m)
+
+
+@pytest.mark.requirements("PR-25")
 def test_render_html_is_self_contained_and_lists_entities():
     m = report.build_matrix(MODEL, _results())
     html = report.render_html(m)

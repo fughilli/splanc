@@ -160,6 +160,22 @@ demand — which is why several of those now read AMBER: real verification debt 
 visible, not a regression. The HITL `JUnitWriter` stamps its phases `level: hitl`
 by default.
 
+## Cost-pyramid policy
+
+Physical test cycles are the scarce, expensive oracle. Cheap verification
+(analysis, host simulation) should be **exhausted before** an expensive rung is
+accepted as the _sole_ evidence — both to avoid waste and to catch cases where a
+physical result was never sanity-checked cheaply. The aggregator enforces this:
+
+> Every PR that demands `hil` or `hitl` and has passing evidence must also carry
+> at least one passing artifact at `analysis`/`simulation` level.
+
+A PR whose only passing evidence is the expensive rung is a **policy violation**,
+listed in a banner at the top of the report and on stderr. Severity is
+configurable via `--pyramid-policy {off,warn,error}` (default `warn`; `error`
+fails the aggregate step). An `UNVERIFIED` PR is not a violation — it simply has
+no evidence yet.
+
 ## Two traceability mechanisms
 
 Verification evidence for a PR is the union of:

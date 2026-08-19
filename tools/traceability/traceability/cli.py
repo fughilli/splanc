@@ -55,11 +55,23 @@ def _cmd_aggregate(args: argparse.Namespace) -> int:
     if failed_prs:
         print("FAILED PRs: " + ", ".join(sorted(failed_prs)), file=sys.stderr)
 
+    # Cost-pyramid policy: expensive-rigor PRs resting only on the expensive rung.
+    violations = matrix.pyramid_violations()
+    if violations and args.pyramid_policy != "off":
+        print(
+            f"COST-PYRAMID {args.pyramid_policy}: "
+            + ", ".join(sorted(violations))
+            + " rest only on >= HIL evidence (no analysis/simulation backing)",
+            file=sys.stderr,
+        )
+
     if args.fail_on == "failed" and failed_prs:
         return 1
     if args.fail_on == "unverified" and (failed_prs or unverified_prs):
         if unverified_prs:
             print("UNVERIFIED PRs: " + ", ".join(sorted(unverified_prs)), file=sys.stderr)
+        return 1
+    if args.pyramid_policy == "error" and violations:
         return 1
     return 0
 
@@ -94,6 +106,12 @@ def main(argv: list[str] | None = None) -> int:
         choices=["none", "failed", "unverified"],
         default="none",
         help="exit non-zero on failing (or additionally unverified) PRs",
+    )
+    agg.add_argument(
+        "--pyramid-policy",
+        choices=["off", "warn", "error"],
+        default="warn",
+        help="cost-pyramid check: warn (default) or fail on PRs resting only on >= HIL evidence",
     )
     agg.set_defaults(func=_cmd_aggregate)
 

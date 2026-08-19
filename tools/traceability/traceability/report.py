@@ -28,9 +28,17 @@ from traceability.model import (
     DEFAULT_METHOD,
     DEFAULT_PROVIDED,
     INSPECTION,
+    Method,
     RequirementsModel,
     method_rank,
 )
+
+# The cost pyramid: expensive physical verification (>= HIL) must rest on at
+# least one cheap rung (analysis/simulation), not stand alone. A PR that demands
+# this rigor but whose only passing evidence is the expensive rung is a policy
+# violation (severity configurable at the CLI).
+PYRAMID_MIN_RANK = int(Method.HIL)
+CHEAP_LEVELS = ("analysis", "simulation")
 
 # Verification/validation verdicts.
 VERIFIED = "VERIFIED"  # GREEN — passing evidence meets the demanded rigor
@@ -96,12 +104,31 @@ def _classify(passed_levels: list[str], failed: list[str], demanded: str) -> tup
     return UNDERVERIFIED, best_name
 
 
+def _pyramid_violation(demanded: str, passed_levels: list[str]) -> bool:
+    """True when an expensive-rigor PR rests only on the expensive rung.
+
+    A PR that demands >= HIL and has passing evidence, but none of it at an
+    ``analysis``/``simulation`` level, violates the cost pyramid: cheap
+    verification should back the physical result, not be skipped.
+    """
+    demanded_rank = method_rank(demanded)
+    if demanded_rank is None or demanded_rank < PYRAMID_MIN_RANK:
+        return False
+    if not passed_levels:
+        return False  # nothing to verify yet — that's UNVERIFIED, not a violation
+    return not any(
+        (lvl or DEFAULT_PROVIDED).strip().lower() in CHEAP_LEVELS for lvl in passed_levels
+    )
+
+
 @dataclass
 class PrEvidence:
     pr_id: str
     status: str
     demanded: str = DEFAULT_METHOD  # rigor this PR demands
     provided: str = ""  # best passing rigor level, "" if none
+    provided_levels: list[str] = field(default_factory=list)  # every passing artifact's level
+    pyramid_violation: bool = False  # demands >= HIL but has no cheap rung
     passed: list[str] = field(default_factory=list)  # test full-names / targets
     failed: list[str] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
@@ -113,6 +140,10 @@ class Matrix:
     pr_status: dict[str, PrEvidence]
     un_status: dict[str, str]
     risk_status: dict[str, str]
+
+    def pyramid_violations(self) -> list[str]:
+        """PR ids that rest only on expensive (>= HIL) evidence (cost-pyramid policy)."""
+        return [e.pr_id for e in self.pr_status.values() if e.pyramid_violation]
 
     def counts(self) -> dict[str, int]:
         prs = list(self.pr_status.values())
@@ -165,6 +196,8 @@ def build_matrix(model: RequirementsModel, results: JUnitResults) -> Matrix:
             status=status,
             demanded=pr.method,
             provided=provided,
+            provided_levels=passed_levels,
+            pyramid_violation=_pyramid_violation(pr.method, passed_levels),
             passed=passed,
             failed=failed,
             skipped=skipped,
@@ -295,9 +328,29 @@ def render_html(matrix: Matrix, title: str = "splanc requirements traceability")
         f"<b>{c['risk_mitigated']}/{c['risks']}</b> risks mitigated"
     )
 
+    violations = matrix.pyramid_violations()
+    if violations:
+        items = "".join(
+            f'<li><a href="#{v}">{_esc(v)}</a> demands '
+            f"<b>{_esc(matrix.pr_status[v].demanded)}</b> but has no analysis/simulation "
+            f"evidence backing the physical result</li>"
+            for v in sorted(violations)
+        )
+        policy = (
+            "<div class='policy'><b>Cost-pyramid policy:</b> "
+            f"{len(violations)} requirement(s) rest only on expensive (&ge; HIL) evidence."
+            f"<ul>{items}</ul></div>"
+        )
+    else:
+        policy = (
+            "<div class='policy ok'><b>Cost-pyramid policy:</b> every physical-rigor "
+            "requirement with evidence is also backed by cheaper analysis/simulation.</div>"
+        )
+
     return _TEMPLATE.format(
         title=_esc(title),
         summary=summary,
+        policy=policy,
         source=_esc(model.meta.get("source", "")),
         rows_un="\n".join(rows_un),
         rows_pr="\n".join(rows_pr),
@@ -345,10 +398,15 @@ _TEMPLATE = """<!doctype html>
   .muted, .fail-text {{ color: #999; font-size: .85rem; }}
   .fail-text {{ color: #e05252; }}
   .amber-text {{ color: #e8890c; }}
+  .policy {{ margin: .75rem 0; padding: .6rem .9rem; border-radius: 8px;
+            background: #c9910018; border-left: 3px solid #d9a023; font-size: .9rem; }}
+  .policy.ok {{ background: #2e7d3212; border-left-color: #3ba55d; }}
+  .policy ul {{ margin: .4rem 0 0; padding-left: 1.1rem; }}
 </style></head>
 <body>
 <h1>{title}</h1>
 <div class="summary">{summary}</div>
+{policy}
 <p class="source">{source}</p>
 
 <h2>User needs &mdash; validation</h2>
