@@ -99,7 +99,7 @@ export async function generate(
     signal: opts.signal ?? null,
     body: JSON.stringify({
       model: MODEL,
-      max_tokens: 4000,
+      max_tokens: 16000, // headroom for a full effect (ceiling, not a cost)
       thinking: { type: "adaptive" },
       stream: true,
       system: [
@@ -462,8 +462,12 @@ async function messagesRequest(
     },
     signal: signal ?? null,
     body: JSON.stringify({
+      // 4000 truncated routinely: a set_script carrying a whole shader PLUS
+      // adaptive-thinking tokens easily exceeds it, and a mid-tool-call cutoff
+      // used to wedge the chat (see chatTurn's truncation guard). max_tokens is a
+      // ceiling, not a cost, so give it real headroom.
       model: MODEL,
-      max_tokens: 4000,
+      max_tokens: 16000,
       thinking: { type: "adaptive" },
       system,
       tools,
@@ -538,6 +542,20 @@ export async function chatTurn(
     const toolUses = content.filter(
       (b): b is Extract<ContentBlock, { type: "tool_use" }> => b.type === "tool_use",
     );
+    // A reply can carry tool_use blocks yet stop for a reason OTHER than
+    // "tool_use" — almost always max_tokens truncating it mid-tool-call, so the
+    // tool_use's input is empty/partial. If we left that assistant message in
+    // `history`, its unanswered tool_use would poison EVERY later turn: the
+    // Anthropic API rejects the whole conversation with "tool_use ids ... without
+    // tool_result". Roll the partial turn back and fail cleanly so the session
+    // stays usable (this is the FUG bug reproduced via the debug-server drive).
+    if (stop_reason !== "tool_use" && toolUses.length > 0) {
+      history.pop();
+      throw new Error(
+        `the reply was cut off (stop_reason: ${stop_reason}) before it finished a tool ` +
+          "call — try a smaller change, or ask again",
+      );
+    }
     if (stop_reason !== "tool_use" || toolUses.length === 0) break;
 
     // Fulfill every tool call locally, then feed the results back in one user turn.
