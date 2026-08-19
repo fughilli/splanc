@@ -599,6 +599,112 @@ As a few examples:</p>
 </ul>
 <p>The effects runtime should have a dedicated arena allocator for any data structures needed so as to prevent the firmware from locking up because of heap exhaustion.</p>
 </section>
+<section id="bytecode-optimizer-superinstructions-fug-125">
+<h2>Bytecode optimizer + superinstructions (FUG-125)<a class="headerlink" href="#bytecode-optimizer-superinstructions-fug-125" title="Link to this heading">¶</a></h2>
+<p>The compiler front-end (<code class="docutils literal notranslate"><span class="pre">fx_compiler/src/lib.rs</span></code>) is a single-pass emitter. Rather
+than rewrite it around an SSA IR, the optimizer (<code class="docutils literal notranslate"><span class="pre">fx_compiler/src/opt.rs</span></code>) runs
+over the <strong>emitted <code class="docutils literal notranslate"><span class="pre">.fxb</span></code> code section</strong> just before serialization: it decodes the
+flat byte stream into a linear instruction list where every branch/call/entry
+target is a <strong>stable instruction id</strong> (not a byte offset), applies a fixed point
+of passes, then re-encodes and recomputes the relative branches. Because targets
+are ids, a pass can delete/splice/reorder instructions with no offset math; if a
+pass ever leaves a dangling target or an out-of-<code class="docutils literal notranslate"><span class="pre">i16</span></code> branch, <code class="docutils literal notranslate"><span class="pre">encode</span></code> bails and
+the <em>original</em> bytes ship — correctness is absolute, optimization best-effort.</p>
+<p>Passes (the issue’s “local and scalar” list):</p>
+<ul class="simple">
+<li><p><strong>Constant folding</strong> — <code class="docutils literal notranslate"><span class="pre">PushConst</span> <span class="pre">a;</span> <span class="pre">PushConst</span> <span class="pre">b;</span> <span class="pre">&lt;scalar</span> <span class="pre">binop&gt;</span></code> and
+<code class="docutils literal notranslate"><span class="pre">PushConst</span> <span class="pre">a;</span> <span class="pre">&lt;unop&gt;</span></code> collapse to one <code class="docutils literal notranslate"><span class="pre">PushConst</span></code>. Every fold reproduces the
+VM’s exact arithmetic (wrapping ints, <code class="docutils literal notranslate"><span class="pre">&gt;&gt;frac</span></code> fixed, IEEE <code class="docutils literal notranslate"><span class="pre">f32</span></code>, guarded
+divide-by-zero), so a folded constant equals what the interpreter would compute.</p></li>
+<li><p><strong>Algebraic simplification / strength reduction</strong> — <code class="docutils literal notranslate"><span class="pre">x*1</span></code>, <code class="docutils literal notranslate"><span class="pre">x/1</span></code>, <code class="docutils literal notranslate"><span class="pre">x-0</span></code>,
+<code class="docutils literal notranslate"><span class="pre">vec*1</span></code>, and <code class="docutils literal notranslate"><span class="pre">-(-x)</span></code> involutions, on both float and int/Q16.16 twins. Float
+<code class="docutils literal notranslate"><span class="pre">x+0.0</span></code> is deliberately <em>excluded</em> (it flushes <code class="docutils literal notranslate"><span class="pre">-0.0</span></code>→<code class="docutils literal notranslate"><span class="pre">+0.0</span></code>, not a true identity).</p></li>
+<li><p><strong>Dead local elimination</strong> — a single-assignment/single-use temp
+(<code class="docutils literal notranslate"><span class="pre">StoreLocal</span> <span class="pre">s;</span> <span class="pre">LoadLocal</span> <span class="pre">s</span></code> whose slot is touched nowhere else) drops both ops,
+leaving the value on the stack. Disabled in the presence of dynamic-index local
+ops (<code class="docutils literal notranslate"><span class="pre">*LocalIdx</span></code>), which could alias any slot.</p></li>
+<li><p><strong>Constant-condition branch folding + dead-code elimination</strong> — a known
+<code class="docutils literal notranslate"><span class="pre">PushConst</span> <span class="pre">c;</span> <span class="pre">BrFalse</span></code> becomes an unconditional <code class="docutils literal notranslate"><span class="pre">Jmp</span></code> or vanishes, and a CFG
+reachability walk from both entries removes the orphaned code.</p></li>
+</ul>
+<p><strong>Superinstructions.</strong> Guided by the dynamic profiler (<code class="docutils literal notranslate"><span class="pre">tools/fx_profile</span></code>, which
+ranks the hottest adjacent opcode pairs across the corpus), three fused opcodes
+were added to the VM ISA (appended after <code class="docutils literal notranslate"><span class="pre">FillLocal</span></code>, so every existing
+discriminant is stable) and emitted by an optimizer fusion pass:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">TeeLocal</span> <span class="pre">s,n</span></code> — <code class="docutils literal notranslate"><span class="pre">StoreLocal;</span> <span class="pre">LoadLocal</span></code> (the temp-reload idiom).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">IncLocalI</span> <span class="pre">s,c</span></code> — <code class="docutils literal notranslate"><span class="pre">LoadLocal;</span> <span class="pre">PushConst;</span> <span class="pre">AddI;</span> <span class="pre">StoreLocal</span></code> (the <code class="docutils literal notranslate"><span class="pre">i</span> <span class="pre">=</span> <span class="pre">i</span> <span class="pre">+</span> <span class="pre">k</span></code>
+counter/index idiom).</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">BrCmpI</span> <span class="pre">k,rel</span></code> — <code class="docutils literal notranslate"><span class="pre">CmpI;</span> <span class="pre">BrFalse</span></code> (the integer loop-condition tail).</p></li>
+</ul>
+<p>Each is a byte-for-byte fusion of the sequence it replaces, trading two-to-four
+dispatches for one on the FPU-less core.</p>
+<p><strong>Correctness + hill-climb loop.</strong> <code class="docutils literal notranslate"><span class="pre">fx_compiler/tests/optimizer.rs</span></code> is both the
+safety net and the simulator the issue asks for: it compiles every corpus program
+with and without <code class="docutils literal notranslate"><span class="pre">-O</span></code>, runs BOTH through the real fx_vm (<code class="docutils literal notranslate"><span class="pre">update()</span></code> once +
+<code class="docutils literal notranslate"><span class="pre">shade()</span></code> across an LED raster over several frames), and asserts <strong>bit-identical</strong>
+RGB. It then hill-climbs the fx_vm retired-op counter (a direct proxy for device
+dispatch cost, priced by the golden per-opcode profile) and fails on any
+regression. Corpus-wide retired-op reduction is ~15%, up to ~36% on
+constant-heavy programs and ~15% on the loop-dominated agentic effect.</p>
+</section>
+<section id="on-device-jit-fug-125">
+<h2>On-device JIT (FUG-125)<a class="headerlink" href="#on-device-jit-fug-125" title="Link to this heading">¶</a></h2>
+<p>The ESP32-C6 core is RISC-V RV32IMC, so a hot straight-line block of the cheap
+integer/fixed opcodes (loop counters, index math, Q16.16 multiplies) can be
+lowered to a <strong>short position-independent code (PIC) segment</strong> that runs natively,
+skipping the interpreter’s per-opcode fetch/decode/dispatch/budget overhead.
+<code class="docutils literal notranslate"><span class="pre">firmware/fx_jit</span></code> is that JIT:</p>
+<ul class="simple">
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">rv32</span></code></strong> encodes the small RV32IM instruction set the translator emits (pinned
+by unit tests to known ISA words).</p></li>
+<li><p><strong><code class="docutils literal notranslate"><span class="pre">compile(&amp;[Ir])</span> <span class="pre">-&gt;</span> <span class="pre">Segment</span></code></strong> lowers a supported straight-line block. The
+segment is PIC — it touches memory only through three base registers (operand
+stack <code class="docutils literal notranslate"><span class="pre">a0</span></code>, locals <code class="docutils literal notranslate"><span class="pre">a1</span></code>, const pool <code class="docutils literal notranslate"><span class="pre">a2</span></code>) and returns via <code class="docutils literal notranslate"><span class="pre">ret</span></code>, so it can be
+copied into an executable IRAM window and called as a C function. The operand
+stack is modelled exactly like the interpreter; compile-time depth may go
+negative (consuming operands already on the stack), reported via
+<code class="docutils literal notranslate"><span class="pre">Segment::min_depth</span></code> so the VM gates on the live <code class="docutils literal notranslate"><span class="pre">sp</span></code>, with <code class="docutils literal notranslate"><span class="pre">net_delta</span></code> advancing
+<code class="docutils literal notranslate"><span class="pre">sp</span></code> after the call.</p></li>
+<li><p>Correctness is established entirely on the host: <code class="docutils literal notranslate"><span class="pre">emu</span></code> is a minimal RV32IM
+interpreter that executes the emitted segment, <code class="docutils literal notranslate"><span class="pre">reference</span></code> re-runs the block with
+<code class="docutils literal notranslate"><span class="pre">fx_vm</span></code>’s exact integer semantics, and a differential test runs thousands of
+random blocks over random state through both and asserts identical results.
+Unjitable blocks (bad <code class="docutils literal notranslate"><span class="pre">frac</span></code>, out-of-range offsets) are rejected, never
+miscompiled.</p></li>
+</ul>
+<p><code class="docutils literal notranslate"><span class="pre">fx_jit</span></code> is <code class="docutils literal notranslate"><span class="pre">no_std</span></code> (the firmware links only the no-alloc <code class="docutils literal notranslate"><span class="pre">compile_into</span></code> /
+<code class="docutils literal notranslate"><span class="pre">plan_blocks_into</span></code> path; the <code class="docutils literal notranslate"><span class="pre">Vec</span></code>-based API is behind an <code class="docutils literal notranslate"><span class="pre">alloc</span></code> feature).</p>
+<p><strong>On-device integration (wired + validated).</strong> At effect load the firmware
+(<code class="docutils literal notranslate"><span class="pre">ffi.rs::fx_build_jit</span></code>) scans the resident bytecode with <code class="docutils literal notranslate"><span class="pre">plan_blocks_into</span></code>,
+compiles each hot block into one executable region, patches <code class="docutils literal notranslate"><span class="pre">Op::JitCall</span></code> over the
+block’s first bytes, and installs a <code class="docutils literal notranslate"><span class="pre">JitBlock</span></code> table on the VM; <code class="docutils literal notranslate"><span class="pre">JitCall</span></code> dispatch
+calls the native segment against the live stack/locals/consts and resumes
+interpreting at the block end. The interpreter runs everything else and is the
+always-on fallback (JIT disabled, or the region full).</p>
+<p>The executable memory is a <strong>bounded W^X carve-out</strong>. The arduino-esp32 C6 build
+ships esp-idf as precompiled libs (no RWX heap: IRAM is RX, DRAM is NX), so rather
+than weaken memory protection globally, the firmware makes one small static buffer
+read+write+execute via a spare RISC-V <strong>PMP</strong> entry: entries 3/4 are free and
+unlocked and, being lower-index than the SRAM data-region entries (PMP is
+lowest-index-wins), an RWX NAPOT entry there overrides the default NX for just that
+range — W^X stays enforced everywhere else.</p>
+<p>Validated on a real ESP32-C6 over HITL with a fixed-point-heavy <code class="docutils literal notranslate"><span class="pre">shade()</span></code>: the
+native JIT renders <strong>bit-identically</strong> to the interpreter and cuts per-LED
+<code class="docutils literal notranslate"><span class="pre">shade()</span></code> cost by ~<strong>2.1×</strong> (≈10077 → 4723 cycles). The boot self-bench
+<code class="docutils literal notranslate"><span class="pre">:esp32c6_fxjitbench</span></code> reproduces the A/B (<code class="docutils literal notranslate"><span class="pre">lm_fx_set_jit_enabled</span></code> toggles it on one
+firmware).</p>
+<p><strong>Shipped off by default.</strong> This device is heap-critically-tight (mbedtls needs
+~28 KB for a TLS session), so the JIT’s static footprint is kept to ~3.4 KB (the
+segments compile straight into the 2 KB exec region — no scratch copy — plus a
+small bounded planning scratch), and <code class="docutils literal notranslate"><span class="pre">FX_JIT_ENABLED</span></code> defaults <strong>false</strong>: the
+interpreter is the shipped path (it is also what the golden cost model the app +
+<code class="docutils literal notranslate"><span class="pre">fx_bench</span></code> validate against measures), and the PMP carve-out is armed only when the
+JIT is explicitly enabled via <code class="docutils literal notranslate"><span class="pre">lm_fx_set_jit_enabled</span></code>. An earlier revision that
+enabled it by default with ~15 KB of scratch starved the WiFi/TLS heap and broke
+provisioning — the small-footprint, opt-in design keeps the default firmware’s RAM
+profile ~unchanged from baseline.</p>
+</section>
 </section>
 
         </article>
@@ -670,6 +776,8 @@ As a few examples:</p>
 <li><a class="reference internal" href="#webapp-integration">Webapp integration</a></li>
 <li><a class="reference internal" href="#milestones">Milestones</a></li>
 <li><a class="reference internal" href="#open-questions">Open questions</a></li>
+<li><a class="reference internal" href="#bytecode-optimizer-superinstructions-fug-125">Bytecode optimizer + superinstructions (FUG-125)</a></li>
+<li><a class="reference internal" href="#on-device-jit-fug-125">On-device JIT (FUG-125)</a></li>
 </ul>
 </li>
 </ul>
