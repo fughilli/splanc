@@ -2666,11 +2666,9 @@ impl Compiler {
         // the `.fxb`. The pass repoints the entry offsets and may grow the const
         // pool; it is a semantics-preserving rewrite (guarded by the differential
         // `optimizer_preserves_output` test) so host + wasm stay bit-identical.
-        // Drivers (FUG-107) are excluded from the optimizer: it repoints the
-        // update/shade entries but NOT poll_entry, so optimizing a driver would
-        // leave poll() pointing into the rewritten code. A low-rate sensor poll
-        // gains nothing from the per-LED superinstruction fusion anyway.
-        if self.optimize && self.poll_entry == NO_ENTRY {
+        // The pass repoints all three entries (update/shade/poll), so a FUG-107
+        // driver's poll() is optimized + relocated correctly alongside effects.
+        if self.optimize {
             self.code = opt::optimize(
                 &self.code,
                 &mut self.consts,
