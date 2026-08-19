@@ -1521,16 +1521,28 @@ body.is-locked {
   height: 16px;
 }
 
-/* Live "model is working" indicator: reuses the existing .fxedit-spinner, with
-   a phase label ("Thinking…", "Generating code…", "Inspecting rendered image…"). */
+/* Live "model is working" indicator: reuses the existing .fxedit-spinner, with a
+   main label — the model's own terse summary for a code edit, or a fixed verb for
+   other tools ("Taking a screenshot…") — over a ticking-elapsed subtext, so a
+   long turn visibly progresses instead of looking stuck. */
 .fxedit-chatstatus {
   align-self: flex-start;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 0.5rem;
   color: var(--text-dim);
   font-size: var(--f-caption);
   padding: 0.15rem 0.2rem;
+}
+.fxedit-chatstatus-col {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.3;
+}
+.fxedit-chatstatus-sub {
+  color: var(--text-dim);
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
 }
 
 /* AI pane: keep the input legible. The chat content has a minimum width and the

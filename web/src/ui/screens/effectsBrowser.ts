@@ -14,8 +14,6 @@ import type { HelpTipHandle } from "../kit";
 import { effectStore, isBuiltinEffect, type StoredEffect } from "../../store/effectStore";
 import { EffectPreviewTiles } from "./effectPreviewTiles";
 import { appendGrouped, openFolderPicker } from "./folders";
-import { openDebugServerSheet } from "./debugServerSheet";
-import { scanQr, qrScanSupported } from "./qrScan";
 import { openAiKeySheet } from "./aiKeySheet";
 import { getApiKey } from "../../effects/ai/generate";
 import { setTabMenuItems } from "../app/tabMenu";
@@ -108,21 +106,8 @@ export function EffectsBrowserScreen(router: Router): Screen {
   // Toolbar row: the search field takes the space; the "?" tip floats at its end.
   const toolbar = document.createElement("div");
   toolbar.className = "fxlib-toolbar";
-  // Debug: ship the whole library to a host-side debug server for analysis. Tap
-  // opens the camera to scan the server's QR (fills the URL); no camera / no scan
-  // falls back to manual entry in the sheet. Lives in the app-bar ⋯ menu (below
-  // the divider, as a tab-context action).
-  async function sendLibraryFlow(): Promise<void> {
-    const scanned = qrScanSupported() ? await scanQr() : null;
-    openDebugServerSheet(scanned ?? undefined);
-  }
-  const tabMenuItems = [
-    {
-      icon: "effect-to-device" as const,
-      label: "Send library to debug server",
-      onClick: () => void sendLibraryFlow(),
-    },
-  ];
+  // (The "Connect debug server" affordance moved to Settings ▸ Debugging, so it's
+  // no longer in the effects ⋯ menu.)
   toolbar.append(searchWrap, aiHelp);
 
   const tagRow = document.createElement("div");
@@ -315,7 +300,7 @@ export function EffectsBrowserScreen(router: Router): Screen {
     el,
     onMount: () => {
       document.body.appendChild(fab);
-      setTabMenuItems(tabMenuItems);
+      setTabMenuItems([]);
       void refresh();
     },
     onUnmount: () => {

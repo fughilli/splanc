@@ -31,7 +31,8 @@ public class WssBridge: CAPPlugin, CAPBridgedPlugin {
     public let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "connect", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "send", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "close", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "close", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "httpRequest", returnType: CAPPluginReturnPromise)
     ]
 
     private var conns: [String: WssConnection] = [:]
@@ -80,6 +81,64 @@ public class WssBridge: CAPPlugin, CAPBridgedPlugin {
         lock.lock(); let conn = conns[id]; conns[id] = nil; lock.unlock()
         conn?.close()
         call.resolve()
+    }
+
+    /// One-shot HTTP(S) request that trusts a self-signed server cert, using the
+    /// SAME cert bridge as the WebSocket path (CertTrustingDelegate). Lets the app
+    /// POST to a LAN debug server whose self-signed cert the WKWebView's fetch()
+    /// would otherwise reject — no manual "open in a tab and accept" step on iOS.
+    /// Resolves { status, body }; rejects only on a transport error.
+    @objc func httpRequest(_ call: CAPPluginCall) {
+        guard let urlStr = call.getString("url"), let url = URL(string: urlStr) else {
+            call.reject("httpRequest: missing/invalid 'url'")
+            return
+        }
+        var req = URLRequest(url: url)
+        req.httpMethod = call.getString("method") ?? "POST"
+        if let headers = call.getObject("headers") {
+            for (k, v) in headers { if let s = v as? String { req.setValue(s, forHTTPHeaderField: k) } }
+        }
+        if let body = call.getString("body") { req.httpBody = body.data(using: .utf8) }
+
+        // Same local-interface pinning as the socket path (LAN peer, maybe on a
+        // Wi-Fi with no internet), and the shared trust-accepting delegate.
+        let config = URLSessionConfiguration.ephemeral
+        config.allowsCellularAccess = false
+        config.allowsConstrainedNetworkAccess = true
+        config.allowsExpensiveNetworkAccess = true
+        config.waitsForConnectivity = false
+        let session = URLSession(configuration: config, delegate: CertTrustingDelegate(),
+                                 delegateQueue: nil)
+        let task = session.dataTask(with: req) { data, resp, err in
+            // Referencing `session` here retains it until the request completes.
+            defer { session.finishTasksAndInvalidate() }
+            if let err = err {
+                call.reject("httpRequest failed: \(err.localizedDescription)")
+                return
+            }
+            let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+            let text = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+            call.resolve(["status": status, "body": text])
+        }
+        task.resume()
+    }
+}
+
+/// Trusts a server-presented self-signed cert for the URLSessions this plugin
+/// opens — the native counterpart of the browser's one-time "accept self-signed
+/// cert" step, scoped to this plugin's own sessions (the WebView's normal traffic
+/// is unaffected). Shared by the HTTP path and (inline) the WebSocket path.
+private final class CertTrustingDelegate: NSObject, URLSessionDelegate {
+    func urlSession(_ session: URLSession,
+                    didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping (URLSession.AuthChallengeDisposition,
+                                                  URLCredential?) -> Void) {
+        guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+              let trust = challenge.protectionSpace.serverTrust else {
+            completionHandler(.performDefaultHandling, nil)
+            return
+        }
+        completionHandler(.useCredential, URLCredential(trust: trust))
     }
 }
 

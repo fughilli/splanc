@@ -62,6 +62,20 @@ _LOCK = threading.Lock()  # serialize Chromium launches (one at a time)
 _EFFECTS_LIB: dict = {"library": None, "at": None}
 _EFFECTS_FILE = os.path.join(tempfile.gettempdir(), "ledmapper-effects-library.json")
 
+# FX-agent chat logs the app POSTed to /chatlogs (transcripts of the AI effect
+# sessions, for debugging why the agent failed a request). MERGED by session id
+# across POSTs — so the error auto-pushes (one session each) accumulate alongside
+# a later manual "Send AI chat logs" (the whole set). Pull with
+# `curl http://host:8092/chatlogs`.
+_CHATLOGS: dict = {"sessions": {}, "at": None}  # id -> session
+_CHATLOGS_FILE = os.path.join(tempfile.gettempdir(), "ledmapper-chatlogs.json")
+
+# Remote chat-drive queue (repro-on-device without the user retyping): the agent
+# enqueues prompts here (`POST /chatcmd {"text": ...}`), and the app — when
+# "Drive chat from debug server" is on and a chat screen is open — polls
+# `GET /chatcmd` and runs each in its FX-agent chat. FIFO, in memory only.
+_CHATCMDS: list = []
+
 # In-page probe: resolve when the socket OPENs (or errors/closes/times out).
 _WS_PROBE = """
 (url, ms) => new Promise((resolve) => {
@@ -655,6 +669,50 @@ def load_app(app_url: str, wss: str, timeout_ms: int) -> dict:
             browser.close()
 
 
+def _persist_chatlogs() -> None:
+    """Mirror the merged chat-log sessions to a file so they survive a restart."""
+    try:
+        with open(_CHATLOGS_FILE, "w") as f:
+            json.dump(
+                {"sessions": list(_CHATLOGS["sessions"].values()), "at": _CHATLOGS["at"]},
+                f,
+                indent=2,
+            )
+    except OSError:
+        pass
+
+
+def _load_chatlogs_if_empty() -> None:
+    """Populate the in-memory session map from the file after a restart."""
+    if _CHATLOGS["sessions"] or not os.path.exists(_CHATLOGS_FILE):
+        return
+    try:
+        with open(_CHATLOGS_FILE) as f:
+            saved = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return
+    for sess in saved.get("sessions", []) if isinstance(saved, dict) else []:
+        if isinstance(sess, dict) and "id" in sess:
+            _CHATLOGS["sessions"][str(sess["id"])] = sess
+    _CHATLOGS["at"] = saved.get("at") or _CHATLOGS["at"]
+
+
+def _print_qr_console(intake_url: str) -> None:
+    """Print the intake-URL QR to the console as ASCII/ANSI art (segno) so the app
+    can be pointed at this server without opening the separate QR web page."""
+    if segno is None or not intake_url:
+        return
+    try:
+        qr = segno.make(intake_url, error="m")
+        print("\n  Scan to connect the app (Settings ▸ Debugging ▸ Connect debug server):")
+        # border=2 keeps a quiet zone so phone cameras lock on; ANSI blocks scan
+        # well in a real terminal.
+        qr.terminal(border=2)
+        print(f"  {intake_url}\n", flush=True)
+    except Exception as e:  # noqa: BLE001
+        _log(f"  (QR console render failed: {e})")
+
+
 def _qr_page(intake_url: str) -> str:
     """A standalone page (shown on the LAPTOP) with a QR encoding the HTTPS
     effects-intake URL, so the phone app can scan it instead of typing the IP."""
@@ -745,6 +803,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if route == "/":
                 self._json({"usage": __doc__, "playwright": _pw_ok()})
+            elif route == "/ping":
+                # Lightweight health check the app uses to show "connected".
+                self._json({"ok": True, "server": "ledmapper-debug"})
             elif route == "/qr":
                 self._html(_qr_page(CFG.get("intake_url", "")))
             elif route == "/probe":
@@ -867,6 +928,75 @@ class Handler(BaseHTTPRequestHandler):
                         except (OSError, json.JSONDecodeError):
                             lib = None
                     self._json({"library": lib, "at": _EFFECTS_LIB["at"]})
+            elif route == "/chatlogs":
+                # POST (from the app over HTTPS): merge the FX-agent chat sessions
+                # in by id. GET (from a debugging container over HTTP): retrieve.
+                if self.command == "POST":
+                    raw = self._read_body()
+                    try:
+                        payload = json.loads(raw.decode("utf-8")) if raw else None
+                    except (UnicodeDecodeError, json.JSONDecodeError) as e:
+                        self._json({"error": f"bad JSON body: {e}"}, 400)
+                        return
+                    incoming = payload.get("sessions") if isinstance(payload, dict) else None
+                    if not isinstance(incoming, list):
+                        self._json({"error": "expected {sessions: [...]}"}, 400)
+                        return
+                    merged = 0
+                    for sess in incoming:
+                        if isinstance(sess, dict) and "id" in sess:
+                            _CHATLOGS["sessions"][str(sess["id"])] = sess
+                            merged += 1
+                    _CHATLOGS["at"] = g("at") or ""
+                    _persist_chatlogs()
+                    n = len(_CHATLOGS["sessions"])
+                    _log(
+                        f"/chatlogs merged {merged} session(s); {n} total, "
+                        f"{len(raw)} bytes -> {_CHATLOGS_FILE}"
+                    )
+                    self._json(
+                        {
+                            "stored": True,
+                            "sessions": n,
+                            "merged": merged,
+                            "bytes": len(raw),
+                            "file": _CHATLOGS_FILE,
+                        }
+                    )
+                else:
+                    _load_chatlogs_if_empty()
+                    sessions = list(_CHATLOGS["sessions"].values())
+                    self._json(
+                        {"sessions": sessions, "count": len(sessions), "at": _CHATLOGS["at"]}
+                    )
+            elif route == "/chatcmd":
+                # POST (from the agent/container): enqueue a prompt to drive the
+                # app's FX-agent chat. GET (from the app, polling): pop the next
+                # queued prompt (or ?peek=1 to inspect the queue without popping).
+                if self.command == "POST":
+                    raw = self._read_body()
+                    try:
+                        payload = json.loads(raw.decode("utf-8")) if raw else {}
+                    except (UnicodeDecodeError, json.JSONDecodeError) as e:
+                        self._json({"error": f"bad JSON body: {e}"}, 400)
+                        return
+                    text = payload.get("text") if isinstance(payload, dict) else None
+                    if not isinstance(text, str) or not text.strip():
+                        self._json({"error": "expected {text: '...'}"}, 400)
+                        return
+                    target = payload.get("target") if isinstance(payload, dict) else None
+                    with _LOCK:
+                        cmd = {"text": text, "target": target or "", "at": g("at") or ""}
+                        _CHATCMDS.append(cmd)
+                        depth = len(_CHATCMDS)
+                    _log(f"/chatcmd queued {text[:60]!r} (queue={depth})")
+                    self._json({"queued": depth})
+                elif g("peek"):
+                    self._json({"queue": _CHATCMDS, "count": len(_CHATCMDS)})
+                else:
+                    with _LOCK:
+                        cmd = _CHATCMDS.pop(0) if _CHATCMDS else None
+                    self._json(cmd if cmd is not None else {})
             else:
                 self._json({"error": f"no such endpoint: {route}"}, 404)
         except Exception as e:  # noqa: BLE001
@@ -973,8 +1103,21 @@ def main() -> int:
                 f"  effects intake (HTTPS): https://{lan}:{args.tls_port}/effects "
                 f"(accept the cert once, then POST the library here)"
             )
+            _log(
+                f"  chat-log intake (HTTPS): https://{lan}:{args.tls_port}/chatlogs "
+                f"— pull with: curl http://{lan}:{args.port}/chatlogs"
+            )
+            _log(
+                f"  drive chat (repro on-device): "
+                f"curl -X POST http://{lan}:{args.port}/chatcmd "
+                f"-H 'content-type: application/json' -d '{{\"text\": \"...\"}}'"
+            )
         except OSError as e:
             _log(f"  HTTPS listener failed on :{args.tls_port} ({e})")
+
+    # Print the intake QR to the console as ASCII art — the fastest way to point
+    # the app at this server (no need to open the QR web page on a laptop).
+    _print_qr_console(CFG["intake_url"])
 
     # QR page (plain HTTP, another port): open on the laptop; the app scans it to
     # fill in the intake URL. Encodes CFG["intake_url"] (the HTTPS :tls-port).

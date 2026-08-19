@@ -140,4 +140,86 @@ const CSS = `
   font-size: var(--f-caption);
   text-align: center;
 }
+
+/* Debug-server connect block: a big camera button over a status label; the
+   button glows green once connected. */
+.dbg-connect {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-3) 0 var(--sp-2);
+}
+.k-iconbtn.dbg-connect-btn {
+  width: 3.4rem;
+  height: 3.4rem;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--surface-2);
+}
+.k-iconbtn.dbg-connect-btn svg {
+  width: 1.6rem;
+  height: 1.6rem;
+}
+.k-iconbtn.dbg-connect-btn.on {
+  color: #16a34a;
+  border-color: #16a34a;
+  background: rgba(22, 163, 74, 0.16);
+}
+.dbg-connect-status {
+  font-size: var(--f-caption);
+  color: var(--text-dim);
+}
+.dbg-connect-status.on {
+  color: #16a34a;
+  font-weight: 600;
+}
+
+/* An icon-only variant of the viewfinder pill (the chainlink "connect by URL"). */
+.qrscan-btn--icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.5rem 0.7rem;
+}
+.qrscan-btn--icon svg {
+  width: 1.25rem;
+  height: 1.25rem;
+  display: block;
+}
+
+/* Manual-URL drawer: a bottom sheet inside the connect overlay, hidden until the
+   chainlink is tapped (class toggle, so it beats the [hidden] vs display race). */
+.dbgconn-drawer {
+  display: none;
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + var(--sp-4));
+  background: rgba(16, 16, 20, 0.96);
+  border-top-left-radius: var(--r-card);
+  border-top-right-radius: var(--r-card);
+  backdrop-filter: blur(8px);
+}
+.dbgconn-drawer.open {
+  display: flex;
+}
+.dbgconn-input {
+  width: 100%;
+  padding: 0.7rem 0.95rem;
+  border-radius: var(--r-ctrl);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: rgba(20, 20, 26, 0.85);
+  color: #fff;
+  font: inherit;
+}
+.dbgconn-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+}
 `;

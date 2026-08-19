@@ -18,7 +18,13 @@ ROOT="${1:-$(cd "$(dirname "$0")/.." && pwd)}"
 cd "$ROOT"
 
 echo "[stage-wasm] building WASM bundles…"
-bazelisk build \
+# When invoked by the iOS build server, share its dedicated Bazel output base
+# ($IOS_BAZEL_OUTPUT_BASE) so this nested build doesn't deadlock on the server
+# lock an outer `bazel run //tools:ios_deploy` holds. Unset (standalone) → the
+# normal default base.
+BZ=(bazelisk)
+[ -n "${IOS_BAZEL_OUTPUT_BASE:-}" ] && BZ+=(--output_base="$IOS_BAZEL_OUTPUT_BASE")
+"${BZ[@]}" build \
   //solver:solver_web \
   //firmware/pulse:pulse_web \
   //fx_compiler:fx_compiler_web \
