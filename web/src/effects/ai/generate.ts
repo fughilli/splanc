@@ -302,8 +302,10 @@ export interface ChatHooks {
   onEstimatePerformance?: () => Promise<string>;
   /** Streamed assistant text (deltas) for the "thinking…"/live panel. */
   onText?: (delta: string) => void;
-  /** A model request is starting (the model is reasoning) — drive a spinner. */
-  onThinking?: () => void;
+  /** A model request is starting (the model is reasoning) — drive a spinner.
+   * `round` is the 1-based tool-use round, so the UI can show progress across a
+   * multi-step turn ("step 3"). */
+  onThinking?: (round: number) => void;
   /** A tool is about to run (for a status line in the panel). */
   onToolUse?: (name: string) => void;
   signal?: AbortSignal;
@@ -521,7 +523,7 @@ export async function chatTurn(
     ...(hooks.onListMidi && hooks.onSetMidiMapping ? MIDI_TOOLS : []),
   ];
   for (let round = 0; round < MAX_ROUNDS; round++) {
-    hooks.onThinking?.();
+    hooks.onThinking?.(round + 1);
     const { content, stop_reason } = await messagesRequest(
       history,
       tools,

@@ -597,24 +597,60 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   // A live "what the model is doing" indicator (spinner + phase label), shown at
   // the foot of the log while a turn runs and updated as phases change.
   let chatStatusEl: HTMLElement | null = null;
-  function setChatStatus(label: string): void {
+  let chatStatusLabelEl: HTMLElement | null = null;
+  let chatStatusSubEl: HTMLElement | null = null;
+  let chatStatusTimer: number | null = null;
+  let chatStatusStartMs = 0;
+  let chatStatusStep = 0;
+
+  function fmtElapsed(ms: number): string {
+    const s = Math.max(0, Math.floor(ms / 1000));
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  }
+  function paintChatSub(): void {
+    if (chatStatusSubEl === null) return;
+    const el = fmtElapsed(performance.now() - chatStatusStartMs);
+    // A ticking "step N · M:SS" so a long turn visibly progresses (proves the
+    // agent is working, not stuck, even during a slow single request).
+    chatStatusSubEl.textContent = chatStatusStep > 0 ? `step ${chatStatusStep} · ${el}` : el;
+  }
+  /** Update the "model is working" indicator: a main phase label ("Thinking…",
+   * "Writing the effect code…") over a live subtext. `step` (1-based round) is
+   * carried in the subtext; pass 0 to leave it unchanged. */
+  function setChatStatus(label: string, step = 0): void {
     if (chatHint.isConnected) chatHint.remove();
     if (chatStatusEl === null) {
       chatStatusEl = document.createElement("div");
       chatStatusEl.className = "fxedit-chatstatus";
       const sp = document.createElement("span");
       sp.className = "fxedit-spinner";
-      const tx = document.createElement("span");
-      tx.className = "fxedit-chatstatus-label";
-      chatStatusEl.append(sp, tx);
+      const col = document.createElement("span");
+      col.className = "fxedit-chatstatus-col";
+      chatStatusLabelEl = document.createElement("span");
+      chatStatusLabelEl.className = "fxedit-chatstatus-label";
+      chatStatusSubEl = document.createElement("span");
+      chatStatusSubEl.className = "fxedit-chatstatus-sub";
+      col.append(chatStatusLabelEl, chatStatusSubEl);
+      chatStatusEl.append(sp, col);
+      chatStatusStartMs = performance.now();
+      chatStatusStep = 0;
+      chatStatusTimer = window.setInterval(paintChatSub, 1000);
     }
-    (chatStatusEl.querySelector(".fxedit-chatstatus-label") as HTMLElement).textContent = label;
+    if (step > 0) chatStatusStep = step;
+    chatStatusLabelEl!.textContent = label;
+    paintChatSub();
     chatLog.appendChild(chatStatusEl); // keep it pinned to the bottom
     chatLog.scrollTop = chatLog.scrollHeight;
   }
   function clearChatStatus(): void {
+    if (chatStatusTimer !== null) {
+      clearInterval(chatStatusTimer);
+      chatStatusTimer = null;
+    }
     chatStatusEl?.remove();
     chatStatusEl = null;
+    chatStatusLabelEl = null;
+    chatStatusSubEl = null;
   }
 
   // -- device section -------------------------------------------------------
@@ -1178,7 +1214,7 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     chatSend.disabled = true;
     chatTurns += 1;
     let turnError: string | undefined;
-    setChatStatus("Thinking…");
+    setChatStatus("Thinking…", 1);
 
     // Per-device builtin cost listing (from the user's calibrated board if any,
     // else the default model) so the model knows the relative cost of each fn.
@@ -1194,9 +1230,9 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
       const finalText = await chatTurn(
         chatHistory,
         {
-        onThinking: () => setChatStatus("Thinking…"),
+        onThinking: (round) => setChatStatus("Thinking…", round),
         onSetScript: async (source) => {
-          setChatStatus("Generating code…");
+          setChatStatus("Writing the effect code…");
           codeEl.value = source;
           paintHighlight();
           syncScroll();
@@ -1208,7 +1244,7 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
           }`;
         },
         onCapturePreview: async () => {
-          setChatStatus("Inspecting rendered image…");
+          setChatStatus("Taking a screenshot of the preview…");
           return capturePreviewPng();
         },
         onListMidi: async () => {
@@ -1220,7 +1256,7 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
           return applyMidiMappings(mappings);
         },
         onEstimatePerformance: async () => {
-          setChatStatus("Estimating performance…");
+          setChatStatus("Running a performance pass…");
           return estimateFleetReport();
         },
         onToolUse: () => undefined,
