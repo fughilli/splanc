@@ -31,8 +31,18 @@ optimize)` exposes the off path for the harness.
 - Builds verified: `esp32c6` firmware, `fx_vm_web` + `fx_compiler_wasm` bundles,
   and `//tools/fx_profile` still runs. The optimizer is in the shared `compile()`,
   so host + wasm preview + device stay bit-identical.
-- **Remaining (this branch):** on-device RV32 JIT for hot straight-line segments
-  (the issue's "small JIT"); HITL cycle validation of the above on a real C6.
+- **On-device RV32 JIT (done + HITL-validated).** `firmware/fx_jit` lowers hot
+  straight-line integer/fixed blocks to RV32 PIC segments; `ffi.rs::fx_build_jit`
+  compiles + installs them at effect load and patches `Op::JitCall` into the
+  resident bytecode. Executable memory is a **bounded W^X PMP carve-out** (a 4 KB
+  static buffer made RWX via a spare, unlocked RISC-V PMP entry that outranks the
+  SRAM data-region NX entry — W^X stays on elsewhere), because the arduino-esp32
+  C6 build is precompiled with no RWX heap (IRAM RX, DRAM NX). On a real C6
+  (rig-2), a fixed-point `shade()` renders **bit-identically** to the interpreter
+  and drops **9797 → 4710 cyc/LED (−51%, 2.08×)**. Boot A/B: `:esp32c6_fxjitbench`.
+  Note: the arduino-esp32 esp-idf is precompiled (only mbedtls is from source), so
+  a memprot sdkconfig change would need a full IDF-from-source build — the in-app
+  PMP carve-out avoids that entirely. Interpreter stays the fallback.
 
 ## User docs — interactive tutorial + generated guide with real screenshots (FUG-103)
 
