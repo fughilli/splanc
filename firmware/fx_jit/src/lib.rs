@@ -30,6 +30,7 @@
 
 extern crate alloc;
 use alloc::vec::Vec;
+use ledmapper_fx_vm::Op;
 
 /// The straight-line opcode subset the JIT accepts. These mirror `fx_vm::Op`
 /// (scalar integer/fixed), the cheap dispatch-bound ops that dominate hot loops.
@@ -252,6 +253,140 @@ pub fn compile(block: &[Ir]) -> Option<Segment> {
     }
     code.push(ret());
     Some(Segment { code, net_delta: depth, min_depth })
+}
+
+// -- bytecode planner: find + compile hot blocks ------------------------------
+
+/// A JIT plan for one hot block found in a program's bytecode: the byte range to
+/// patch (`start..end`), the compiled PIC segment, and the operand-stack delta.
+/// The firmware allocates executable memory for `code`, patches `Op::JitCall`
+/// (index) over `[start, start+3)`, and builds the VM's `JitBlock` table.
+pub struct Plan {
+    pub start: usize,
+    pub end: usize,
+    pub net_delta: i32,
+    pub code: Vec<u32>,
+}
+
+/// A block must retire at least this many interpreter ops to be worth a JIT call
+/// (each fused op saves a dispatch; the native call has fixed overhead).
+const MIN_BLOCK_OPS: usize = 4;
+
+/// Total on-wire length of the opcode at `code[pc]` (opcode + operands), via the
+/// `fx_vm::Op` enum so it can never drift from the ISA (exhaustive match — a new
+/// opcode fails to compile until sized here). `None` = unknown opcode byte.
+pub fn op_len(code: &[u8], pc: usize) -> Option<usize> {
+    use Op::*;
+    let op = Op::from_u8(code[pc])?;
+    Some(match op {
+        // Variable: 3 header bytes + one component byte per dst lane.
+        Swizzle => 3 + *code.get(pc + 2).unwrap_or(&0) as usize,
+        Hash1 | Hash3 | Hsv2Rgb | AddI | SubI | MulI | DivI | ModI | NegI | MulFix | DivFix
+        | I2F | F2I | Fix2F | F2Fix | I2Fix | Fix2I | RetFn | FloodFrom | AbsI | MinI | MaxI
+        | ClampI | RetRgb8 => 1,
+        LoadCtx | Add | Sub | Mul | Div | Neg | Scale | Clamp | Mix | Smoothstep | Dot | Cross
+        | Length | Normalize | Distance | Cmp | Logic | Palette | Pop | Ret | CmpI | GraphQuery
+        | LoadBuf | StoreBuf | SampleTex | PaintTex | MulFixN | DivFixN | FixRescale | FixToF
+        | FixFromF | SinFix | CosFix | ExpFix | SignI | StepI | FloorFix | CeilFix | FractFix
+        | MixFix | SqrtFix | CrossFix | ClampVFix | Hsv2RgbFix | Atan2Fix | LogFix | TanFix
+        | PowFix | HashFix | Hash3Fix | RetRgbFix => 2,
+        PushConst | LoadUniform | LoadState | StoreState | LoadLocal | StoreLocal | UnMath
+        | BinMath | BrFalse | Jmp | Swap | Call | ScaleFix | DotFix | LengthFix | DistanceFix
+        | NormalizeFix | SmoothstepFix | MixVFix | PaletteFix | FillLocal | TeeLocal | JitCall => 3,
+        LoadCtxFix | IncLocalI | BrCmpI => 4,
+        LoadStateIdx | StoreStateIdx | LoadLocalIdx | StoreLocalIdx => 6,
+    })
+}
+
+/// Map one fx_vm opcode to its JIT [`Ir`], or `None` if it isn't in the supported
+/// straight-line integer/fixed subset. Returns `(ir, byte_len)`.
+fn op_to_ir(code: &[u8], pc: usize) -> Option<(Ir, usize)> {
+    let op = Op::from_u8(code[pc])?;
+    let b = |k: usize| *code.get(pc + 1 + k).unwrap_or(&0);
+    Some(match op {
+        Op::PushConst => (Ir::PushConst(u16::from_le_bytes([b(0), b(1)])), 3),
+        Op::LoadLocal if b(1) == 1 => (Ir::LoadLocal(b(0)), 3),
+        Op::StoreLocal if b(1) == 1 => (Ir::StoreLocal(b(0)), 3),
+        Op::AddI => (Ir::AddI, 1),
+        Op::SubI => (Ir::SubI, 1),
+        Op::MulI => (Ir::MulI, 1),
+        Op::NegI => (Ir::NegI, 1),
+        Op::MulFix => (Ir::MulFix(16), 1),
+        Op::MulFixN => (Ir::MulFix(b(0)), 2),
+        Op::Pop => (Ir::Pop(b(0)), 2),
+        _ => return None,
+    })
+}
+
+/// The absolute byte target of a branch/call at `code[pc]`, if any (so a block is
+/// never started/extended across a jump into its interior).
+fn branch_target(code: &[u8], pc: usize) -> Option<usize> {
+    let op = Op::from_u8(code[pc])?;
+    let rel16 = |at: usize| i16::from_le_bytes([code[at], code[at + 1]]);
+    match op {
+        Op::BrFalse | Op::Jmp => Some((pc as isize + 3 + rel16(pc + 1) as isize) as usize),
+        Op::BrCmpI => Some((pc as isize + 4 + rel16(pc + 2) as isize) as usize),
+        Op::Call => Some(u16::from_le_bytes([code[pc + 1], code[pc + 2]]) as usize),
+        _ => None,
+    }
+}
+
+/// Scan a program's `code` section and return a JIT plan for every hot
+/// straight-line integer/fixed block: a maximal run of supported opcodes that (a)
+/// no branch jumps into the interior of, (b) retires at least [`MIN_BLOCK_OPS`]
+/// ops, (c) spans at least 3 bytes (room for the `JitCall` patch), and (d)
+/// actually compiles. Returns `Vec::new()` if the stream is malformed (an unknown
+/// opcode), so the firmware simply keeps interpreting.
+pub fn plan_blocks(code: &[u8]) -> Vec<Plan> {
+    // Instruction offsets + the set of branch/call targets.
+    let mut offs: Vec<usize> = Vec::new();
+    let mut pc = 0usize;
+    while pc < code.len() {
+        let len = match op_len(code, pc) {
+            Some(l) if l > 0 && pc + l <= code.len() => l,
+            _ => return Vec::new(),
+        };
+        offs.push(pc);
+        pc += len;
+    }
+    let mut is_target = alloc::vec![false; code.len() + 1];
+    for &o in &offs {
+        if let Some(t) = branch_target(code, o) {
+            if t <= code.len() {
+                is_target[t] = true;
+            }
+        }
+    }
+
+    let mut plans = Vec::new();
+    let mut i = 0usize;
+    while i < offs.len() {
+        let start = offs[i];
+        let mut irs: Vec<Ir> = Vec::new();
+        let mut end = start;
+        let mut j = i;
+        while j < offs.len() {
+            let o = offs[j];
+            if j > i && is_target[o] {
+                break; // a jump lands here — the block must not swallow it
+            }
+            match op_to_ir(code, o) {
+                Some((ir, len)) => {
+                    irs.push(ir);
+                    end = o + len;
+                    j += 1;
+                }
+                None => break,
+            }
+        }
+        if irs.len() >= MIN_BLOCK_OPS && end - start >= 3 {
+            if let Some(seg) = compile(&irs) {
+                plans.push(Plan { start, end, net_delta: seg.net_delta, code: seg.code });
+            }
+        }
+        i = if j > i { j } else { i + 1 };
+    }
+    plans
 }
 
 // -- reference semantics (mirror fx_vm::run's integer ops) --------------------
@@ -514,6 +649,58 @@ mod tests {
         let s = compile(&[Ir::StoreLocal(0)]).expect("StoreLocal is JIT-able");
         assert_eq!(s.min_depth, -1);
         assert_eq!(s.net_delta, -1);
+    }
+
+    #[test]
+    fn plan_blocks_finds_the_integer_run_between_non_jit_ops() {
+        use ledmapper_fx_vm::Op;
+        // LoadCtx (non-JIT) | LoadLocal;PushConst;MulI;PushConst;AddI (5-op block) | Ret
+        #[rustfmt::skip]
+        let code = [
+            Op::LoadCtx as u8, 0,          // 0: non-JIT (2 bytes)
+            Op::LoadLocal as u8, 0, 1,     // 2: block start
+            Op::PushConst as u8, 0, 0,     // 5
+            Op::MulI as u8,                // 8
+            Op::PushConst as u8, 1, 0,     // 9
+            Op::AddI as u8,                // 12: block end -> 13
+            Op::Ret as u8, 0,              // 13: non-JIT
+        ];
+        let plans = plan_blocks(&code);
+        assert_eq!(plans.len(), 1, "one JIT-able block");
+        assert_eq!((plans[0].start, plans[0].end), (2, 13));
+        assert_eq!(plans[0].net_delta, 1, "5 ops net +1 on the stack");
+        assert!(!plans[0].code.is_empty());
+    }
+
+    #[test]
+    fn plan_blocks_stops_at_a_branch_target_interior() {
+        use ledmapper_fx_vm::Op;
+        // A Jmp lands in the MIDDLE of an otherwise-JIT-able run; the block must
+        // not swallow the target, so no single block spans it. Layout:
+        //   0: PushConst        (block A candidate)
+        //   3: PushConst
+        //   6: AddI
+        //   7: PushConst        <- Jmp target (interior) -> A ends at 7
+        //   10: AddI
+        //   11: Jmp -> 7
+        #[rustfmt::skip]
+        let code = [
+            Op::PushConst as u8, 0, 0, // 0
+            Op::PushConst as u8, 0, 0, // 3
+            Op::AddI as u8,            // 6
+            Op::PushConst as u8, 0, 0, // 7  <- target
+            Op::AddI as u8,            // 10
+            Op::Jmp as u8, 0xF8, 0xFF, // 11: rel -8 -> 14-8 = ... target 7
+        ];
+        // rel: target = pc(11)+3 + rel; want 7 => rel = 7 - 14 = -7 => 0xFFF9.
+        let mut code = code;
+        code[12] = 0xF9;
+        code[13] = 0xFF;
+        let plans = plan_blocks(&code);
+        // Block A = [0,7) (PushConst;PushConst;AddI = 3 ops < MIN 4) -> dropped.
+        // The run from 7 (PushConst;AddI = 2 ops) is also < MIN. So no plans, and
+        // crucially none spans the target at 7.
+        assert!(plans.iter().all(|p| !(p.start < 7 && p.end > 7)), "no block crosses the target");
     }
 
     #[test]

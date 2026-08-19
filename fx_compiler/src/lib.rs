@@ -2891,6 +2891,7 @@ fn decode_op(code: &[u8], pc: usize) -> (String, usize) {
             let tgt = (next as isize + i16::from_le_bytes([b(1), b(2)]) as isize) as isize;
             (format!("BR_CMP_I {} -> {tgt}", cmp_kind(b(0))), 4)
         }
+        JIT_CALL => (format!("JIT_CALL block={}", u16at(0)), 3),
         other => (format!("?? 0x{other:02x}"), 0),
     }
 }
@@ -3053,6 +3054,9 @@ mod fx_vm_op {
     pub const TEE_LOCAL: u8 = 102;
     pub const INC_LOCAL_I: u8 = 103;
     pub const BR_CMP_I: u8 = 104;
+    // FUG-125 on-device JIT dispatch (patched in by the firmware, never emitted by
+    // the compiler; here so the disassembler + optimizer op-length agree).
+    pub const JIT_CALL: u8 = 105;
 }
 
 /// `.fxb` flags bit: a buffer descriptor table follows `code` (mirrors

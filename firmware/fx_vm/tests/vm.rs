@@ -863,6 +863,9 @@ fn classify(op: Op) -> Cov {
         // FUG-125 superinstructions: fusions of existing sequences. TeeLocal is a
         // typed-storage move; IncLocalI/BrCmpI are strictly-integer (no soft-float).
         TeeLocal | IncLocalI | BrCmpI => TypeAgnostic,
+        // FUG-125 JitCall: dispatches to a firmware-compiled native segment for a
+        // hot integer/fixed block — control-flow/dispatch, no soft-float.
+        JitCall => TypeAgnostic,
         // sampling always yields a float colour by design (packed storage detail).
         SampleTex | PaintTex => TypeAgnostic,
 
@@ -913,7 +916,7 @@ fn every_opcode_has_a_fixed_or_integer_path() {
     // Walk the whole contiguous opcode space; classify() is exhaustive so this
     // also proves no Op is unaccounted for.
     let mut float_with_twin = 0;
-    for b in 0..=(Op::BrCmpI as u8) {
+    for b in 0..=(Op::JitCall as u8) {
         let op = Op::from_u8(b).unwrap_or_else(|| panic!("opcode {b} missing from Op"));
         match classify(op) {
             // The completeness guarantee: the twin is itself a fixed/int-native op.
@@ -959,4 +962,59 @@ fn fill_local_zeros_locals_each_invocation() {
     assert_eq!(vm.run_shade(&prog, &frame, &led), (0, 0, 0), "1st: FillLocal zeroed");
     // Without FillLocal re-zeroing, this would read the stale 1.0 -> (255,0,0).
     assert_eq!(vm.run_shade(&prog, &frame, &led), (0, 0, 0), "2nd: FillLocal re-zeroed");
+}
+
+// --- FUG-125: on-device JIT dispatch (JitCall) -------------------------------
+
+/// A stand-in native segment for the block `PushConst 0 ; PushConst 1 ; AddI`
+/// (writes `consts[0] + consts[1]` to the entry top-of-stack). On the device the
+/// firmware compiles the real RV32 for this; on the host we can't execute RV32,
+/// so this Rust `extern "C"` fn exercises the interpreter's JitCall dispatch +
+/// sp/pc bookkeeping with the SAME ABI the generated segment uses. (`fx_jit`'s
+/// own tests separately prove the emitted machine code matches these semantics.)
+unsafe extern "C" fn seg_add_consts(stack: *mut i32, _locals: *mut i32, consts: *const i32) {
+    *stack = (*consts).wrapping_add(*consts.add(1));
+}
+
+#[test]
+fn jitcall_renders_identically_to_the_interpreter() {
+    // shade(): (consts[0] + consts[1]) as the red channel via RetRgb8.
+    let consts = [f32::from_bits(150), f32::from_bits(37), f32::from_bits(0)];
+    #[rustfmt::skip]
+    let code = [
+        Op::PushConst as u8, 0, 0, // consts[0] = 150 (int)
+        Op::PushConst as u8, 1, 0, // consts[1] = 37  (int)
+        Op::AddI as u8,            // -> 187            [block ends here @ byte 7]
+        Op::PushConst as u8, 2, 0, // g = 0
+        Op::PushConst as u8, 2, 0, // b = 0
+        Op::RetRgb8 as u8,         // (r,g,b) = (187,0,0)
+    ];
+
+    // Interpreter baseline.
+    let buf = fxb(0, 0, NO_ENTRY, 0, &consts, &code);
+    let prog = Program::parse(&buf).expect("parse");
+    let base = Vm::new().run_shade(&prog, &Frame::default(), &Led::default());
+    assert_eq!(base, (187, 0, 0));
+
+    // Patch the first block (PushConst;PushConst;AddI, bytes 0..7) to JitCall #0;
+    // the trailing operand bytes are dead — dispatch resumes at block.end (7).
+    let mut jcode = code;
+    jcode[0] = Op::JitCall as u8;
+    jcode[1] = 0;
+    jcode[2] = 0;
+    let bufj = fxb(0, 0, NO_ENTRY, 0, &consts, &jcode);
+    let progj = Program::parse(&bufj).expect("parse jit");
+    let jit_consts: [i32; 3] = [150, 37, 0];
+    let blocks = [JitBlock { func: seg_add_consts, end: 7, net_delta: 1 }];
+    let mut vm = Vm::new();
+    unsafe { vm.set_jit(&blocks, jit_consts.as_ptr()) };
+    let got = vm.run_shade(&progj, &Frame::default(), &Led::default());
+    assert_eq!(got, base, "JIT segment must render identically to the interpreter");
+
+    // With the JIT cleared, the patched program still has JitCall but an empty
+    // table -> the dispatch is a no-op that just skips to block.end; the red
+    // channel is then whatever the (dead) path leaves — prove clear_jit is safe
+    // (no crash) rather than asserting a specific colour.
+    vm.clear_jit();
+    let _ = vm.run_shade(&progj, &Frame::default(), &Led::default());
 }

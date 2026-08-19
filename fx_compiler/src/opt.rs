@@ -134,6 +134,7 @@ pub(crate) fn op_len(code: &[u8], pc: usize) -> Option<usize> {
         TEE_LOCAL => 3,
         INC_LOCAL_I => 4,
         BR_CMP_I => 4,
+        JIT_CALL => 3,
         _ => return None,
     };
     Some(n)

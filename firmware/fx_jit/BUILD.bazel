@@ -17,6 +17,7 @@ rust_library(
     srcs = ["src/lib.rs"],
     crate_name = "ledmapper_fx_jit",
     edition = "2021",
+    deps = ["//firmware/fx_vm"],
 )
 
 # Host unit + differential tests (encoder pins, JIT-vs-reference over random
