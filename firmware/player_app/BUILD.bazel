@@ -28,6 +28,11 @@ build_info_file(
     template = "build_info.h.tmpl",
 )
 
+# The board-caps descriptor as a labelable source: the HITL board-caps check
+# (//pi/hitl) loads this SAME textproto as its expected value, so the on-hardware
+# report is pinned to exactly what the image embeds.
+exports_files(["board_caps.textproto"])
+
 # The C ABI over the player stack, as the firmware links it. Bare-metal
 # only (it carries the panic handler); the host test drives the same source
 # via :player_ffi_host.

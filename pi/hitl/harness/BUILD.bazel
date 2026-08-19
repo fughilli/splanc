@@ -21,6 +21,7 @@ package(default_visibility = ["//visibility:public"])
 py_library(
     name = "harness",
     srcs = [
+        "board_caps.py",
         "fx_bench_core.py",
         "hardware_config_pattern.py",
         "hitl_client.py",
@@ -37,6 +38,8 @@ py_library(
         "video_bench_core.py",
     ],
     imports = ["."],
+    # board_caps parses the BoardCapabilities textproto via the generated py proto.
+    deps = ["//shared/protocol/proto:ledmapper_py_proto"],
 )
 
 # On-hardware orchestrator: reserve a free rig from the pool (the checkout
@@ -57,6 +60,9 @@ py_test(
     # CLI also rides in runfiles: hitl_client shells out to it for the whole
     # reserve/flash/tunnel flow (default_hitl() resolves it there).
     data = [
+        # The board-caps descriptor pins the BOARD CAPS phase to exactly what the
+        # image embeds (loaded from runfiles as the expected value).
+        "//firmware/player_app:board_caps.textproto",
         "//firmware/player_app:esp32c6_flashbundle",
         "//pi/hitl/cmd/hitl",
     ],

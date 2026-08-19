@@ -24,6 +24,7 @@ py_test(
     name = "hitl_test",
     srcs = [
         "pytest_main.py",
+        "test_board_caps.py",
         "test_fx_bench.py",
         "test_hardware_config_pattern.py",
         "test_improv.py",
@@ -38,11 +39,14 @@ py_test(
         "test_uniform_bench.py",
         "test_video_bench.py",
     ],
+    # test_board_caps pins the REAL descriptor, loaded from runfiles.
+    data = ["//firmware/player_app:board_caps.textproto"],
     imports = ["."],
     legacy_create_init = False,
     main = "pytest_main.py",
     deps = [
         "//pi/hitl/harness",
+        "@rules_python//python/runfiles",
         requirement("pytest"),
     ],
 )
