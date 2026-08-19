@@ -197,6 +197,7 @@ async function main(): Promise<void> {
       message: line,
       confirmLabel: "Let's go 🌀",
       cancelLabel: "Nope",
+      trippy: true,
     }).then((ok) => {
       shakePrompting = false;
       if (ok) router.navigate("/acid");
