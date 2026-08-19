@@ -13,8 +13,9 @@ use base64::Engine;
 use ledmapper_arena::Arena;
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_store::{
-    decode_submit_map, decode_submit_topology, envelope_arm, parse_upload_chunk, BlobStore,
-    BlockReader, ChunkedReader, StoreError, StoredLed, ARM_SUBMIT_MAP, ARM_SUBMIT_TOPOLOGY,
+    decode_submit_map, decode_submit_map_streamed, decode_submit_topology,
+    decode_submit_topology_streamed, envelope_arm, parse_upload_chunk, BlobStore, BlockReader,
+    ChunkedReader, StoreError, StoredAssociation, StoredLed, ARM_SUBMIT_MAP, ARM_SUBMIT_TOPOLOGY,
 };
 use micropb::{MessageEncode, PbEncoder};
 use std::collections::HashMap;
@@ -235,6 +236,112 @@ fn sharded_topology_upload_reassembles_and_decodes_identically() {
     assert_eq!(topo.map_id.as_str(), "m-test");
     assert_eq!(topo.associations.len(), 150);
     assert_eq!(topo.segments.len(), 12);
+}
+
+#[test]
+fn streamed_map_matches_the_arena_decode() {
+    // The flash-backed path: stream each LED to a sink (no whole-map arena), and
+    // assert it produces exactly what the arena decoder does.
+    let frame = submit_map_frame(1024);
+    let mut buf = vec![0u8; 32 * 1024];
+    let arena = Arena::new(&mut buf);
+    let want = decode_submit_map(frame.as_slice(), frame.len(), &arena).expect("arena decodes");
+
+    let mut got: Vec<StoredLed> = Vec::new();
+    let mut seen_count = 0u32;
+    let (map_id, led_count) =
+        decode_submit_map_streamed(frame.as_slice(), frame.len(), |idx, lc, led| {
+            assert_eq!(idx as usize, got.len(), "sink indices are dense + in order");
+            seen_count = lc;
+            got.push(*led);
+            Ok(())
+        })
+        .expect("streams");
+    assert_eq!(map_id.as_str(), want.map_id.as_str());
+    assert_eq!(led_count, want.led_count);
+    assert_eq!(seen_count, want.led_count);
+    assert_eq!(got.as_slice(), want.leds, "streamed LEDs == arena LEDs, byte-for-byte");
+}
+
+#[test]
+fn streamed_topology_matches_the_arena_decode() {
+    let frame = submit_topology_frame(150, 12, 20, 12);
+    let mut buf = vec![0u8; 32 * 1024];
+    let arena = Arena::new(&mut buf);
+    let want = decode_submit_topology(frame.as_slice(), frame.len(), &arena).expect("arena");
+
+    // Segments/branch points still land in a (small) arena; associations stream.
+    let mut sbuf = vec![0u8; 16 * 1024];
+    let sarena = Arena::new(&mut sbuf);
+    let mut assocs: Vec<StoredAssociation> = Vec::new();
+    let geom = decode_submit_topology_streamed(
+        frame.as_slice(),
+        frame.len(),
+        &sarena,
+        |a: &StoredAssociation| {
+            assocs.push(*a);
+            Ok(())
+        },
+    )
+    .expect("streams");
+    assert_eq!(geom.map_id.as_str(), want.map_id.as_str());
+    assert_eq!(geom.segments.len(), want.segments.len());
+    assert_eq!(geom.branch_points.len(), want.branch_points.len());
+    assert_eq!(assocs.len(), want.associations.len());
+    assert_eq!(assocs.as_slice(), want.associations, "streamed associations == arena");
+    // The resident geometry arena holds only per-segment data, NOT per-LED — so
+    // it does not scale with LED count (the whole point of flash-backing).
+    assert!(
+        sarena.used() < 8 * 1024,
+        "segment geometry stays small ({} bytes)",
+        sarena.used()
+    );
+}
+
+#[test]
+fn dump_src_matches_the_slice_dump() {
+    // get_stored_map reconstructs the bundle from the render caches via the
+    // accessor dump; assert it's byte-identical to the slice dump for the same
+    // data (id/xyz via a dense led() closure, associations via a for_each).
+    let mut buf = vec![0u8; 64 * 1024];
+    let arena = Arena::new(&mut buf);
+    let mframe = submit_map_frame(150);
+    let map = decode_submit_map(mframe.as_slice(), mframe.len(), &arena).expect("map");
+    let tframe = submit_topology_frame(150, 12, 20, 12);
+    let topo = decode_submit_topology(tframe.as_slice(), tframe.len(), &arena).expect("topo");
+
+    let led = |i: u32| {
+        let l = &map.leds[i as usize];
+        (l.id, l.xyz)
+    };
+    let assoc_each = |f: &mut dyn FnMut(u32, u32, f32, f32)| {
+        for a in topo.associations {
+            f(a.led_id, a.segment_id, a.foot_arclength, a.d_perp);
+        }
+    };
+    let tsrc = ledmapper_store::dump::TopoSrc {
+        map_id: topo.map_id.as_str(),
+        branch_points: topo.branch_points,
+        segments: topo.segments,
+        assoc_each: &assoc_each,
+    };
+    let want_len = ledmapper_store::dump::bundle_len(&map, Some(&topo));
+    let got_len =
+        ledmapper_store::dump::bundle_len_src(map.map_id.as_str(), map.led_count, &led, Some(&tsrc));
+    assert_eq!(got_len, want_len, "src bundle_len == slice bundle_len");
+
+    let mut a = vec![0u8; want_len];
+    let mut b = vec![0u8; want_len];
+    ledmapper_store::dump::encode_bundle_window(&map, Some(&topo), 0, &mut a);
+    ledmapper_store::dump::encode_bundle_window_src(
+        map.map_id.as_str(),
+        map.led_count,
+        &led,
+        Some(&tsrc),
+        0,
+        &mut b,
+    );
+    assert_eq!(a, b, "src dump == slice dump, byte-for-byte");
 }
 
 #[test]

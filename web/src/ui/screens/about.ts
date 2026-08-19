@@ -26,6 +26,9 @@ export type AboutTab = "about" | "docs";
 // origin (Cloudflare + GitHub Pages + PR previews); assetUrl resolves that
 // sibling path against the current document, exactly like the wasm bundles.
 const DEV_DOCS_PATH = "docs/index.html";
+// The user guide (FUG-103) is published at /user-guide/ on every origin, the
+// same way — resolved against the current document via assetUrl.
+const USER_GUIDE_PATH = "user-guide/index.html";
 
 interface Contributor {
   name: string;
@@ -171,8 +174,7 @@ function docsBody(): HTMLElement {
       docLink(
         "User guide",
         "An interactive, step-by-step guide to mapping and lighting a fixture.",
-        null,
-        "Coming soon",
+        assetUrl(USER_GUIDE_PATH),
       ),
     ),
   );

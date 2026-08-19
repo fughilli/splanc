@@ -404,6 +404,10 @@ export function HelpTip(opts: {
   action?: { label: string; icon?: IconName; onClick: () => void };
   label?: string; // aria-label for the trigger
   align?: "left" | "right"; // which edge the popover aligns to (default right)
+  // Which vertical direction the popover opens (default "down"). Use "up" when
+  // the trigger sits near the bottom of the viewport so the bubble stays in
+  // bounds (e.g. the first-run tour hint anchored above the tab bar).
+  direction?: "up" | "down";
   defaultOpen?: boolean; // start expanded (e.g. a first-run hint) instead of collapsed
   // Fired when the USER dismisses an open tip (outside press / Escape / tapping
   // the trigger) — NOT on a programmatic `close()` (teardown, the action button).
@@ -429,6 +433,7 @@ export function HelpTip(opts: {
   const pop = document.createElement("div");
   pop.className = "k-helptip-pop";
   if (opts.align === "left") pop.classList.add("k-helptip-pop--left");
+  if (opts.direction === "up") pop.classList.add("k-helptip-pop--up");
   if (opts.title) {
     const t = document.createElement("div");
     t.className = "k-helptip-title";

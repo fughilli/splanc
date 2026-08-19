@@ -64,12 +64,19 @@ class Reservation:
         server: str | None = None,
         owner: str | None = None,
         hitl: list[str] | None = None,
+        require: str | None = None,
+        device: str | None = None,
     ):
         # server=None lets `hitl` select a free rig from the pool (tag discovery
         # or $HITL_SERVERS); once acquired, self.server pins the chosen rig so
-        # every follow-up command targets the same daemon.
+        # every follow-up command targets the same daemon. require (e.g.
+        # "analyzer") narrows pool selection to capability-matching rigs. device
+        # (a discovered c6-<serial> name) pins a specific DUT on the rig instead
+        # of whichever frees first — for walking every DUT (see hitl_dut_id.py).
         self.server = server
         self.owner = owner or os.environ.get("HITL_OWNER")
+        self.require = require
+        self.device = device
         self._hitl = hitl or default_hitl()
         self.id: str | None = None
         self.host: str | None = None
@@ -84,6 +91,10 @@ class Reservation:
             argv += ["--server", self.server]
         if self.owner:
             argv += ["--owner", self.owner]
+        if self.require:
+            argv += ["--require", self.require]
+        if self.device:
+            argv += ["--device", self.device]
         # stderr inherits (human progress -> our logs); stdout is the machine
         # channel we parse. The process stays alive to heartbeat until release().
         self._holder = subprocess.Popen(argv, stdout=subprocess.PIPE, text=True, bufsize=1)

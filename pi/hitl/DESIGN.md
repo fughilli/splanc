@@ -117,6 +117,73 @@ non-hardware reservations still come up. See `internal/runner/usbport.go`.
 Remaining hardware caveats (shared single resources, follow-ups): BLE shares the
 one host Bluetooth radio, and the provisioning AP is still rig-level.
 
+## Logic-analyzer rig (shared FX2 capture)
+
+An optional, board-independent capability adds LED-wire correctness/latency
+testing: deploy any board target (`//pi/hitl:hitl` = Pi 5, `:hitl_pi3` = Pi 3) with
+`SBC_ANALYZER=1`, which wires an **FX2/fx2lafw "Saleae clone"** 24 MHz logic
+analyzer tapping the DUT's WS2812 DIN. It closes the gap flagged in
+`pi/led_driver/README.md`, `docs/decisions.md`,
+and `docs/runbook.md`: real cadence/wire correctness "needs a logic analyzer on a
+bench — cannot be done in CI."
+
+The analyzer is a **rig-level SHARED instrument**, not a per-container device — so
+one cheap FX2 (8 channels) taps a couple of channels on each of several DUTs
+instead of one-analyzer-per-DUT:
+
+- **The daemon owns the FX2** (`internal/analyzer`). It never enters a container.
+  A `Broker` serializes captures on the single instrument (one `sync.Mutex`) and
+  maps each DUT name → its channel subset + wire protocol (a `--analyzer-channel-map`
+  JSON). So `internal/runner`'s per-DUT raw-USB isolation is **unchanged**.
+- **Container agents request captures over the API.** `POST /capture {device}`
+  runs a triggered `sigrok-cli` capture scoped to that DUT's channels, decodes it
+  (`rgb_led_ws281x` for WS2812, `rgb_led_spi` stacked on `spi` for APA102/SK9822 —
+  both mainline decoders in libsigrokdecode ≥0.5.3), and returns the pixels. The
+  `hitl-capture` toolbox tool is a thin client to it (`$HITL_CAPTURE_SERVER` =
+  `host.containers.internal:<apiPort>`, injected by the runner).
+- **One flake, two boards.** sbc-deploy injects the board via `$SBC_BOARD` at eval,
+  so `nix/hitl-app.nix` keys its sigrok closure + capture flags + FX2 udev rules on
+  `$SBC_BOARD == "raspberry-pi-3"` (`lib.optionals isAnalyzerRig …`). The Pi 5 rig
+  image stays lean (no sigrok); the same appModule yields the capture-enabled Pi 3.
+
+Decode is verified with **no hardware**: `internal/analyzer` synthesizes a WS2812
+`.sr` and runs the real `sigrok-cli` decode path over it in a Go test (skips if
+`sigrok-cli` is absent). The drive/expected-pixel contract is a pure unit test
+(`//pi/hitl/tests:hitl_test` `test_led_pattern.py`); the on-hardware
+reserve→flash→drive→capture→assert loop is `//pi/hitl/harness:led_capture`
+(`manual`+`hitl`). Wiring caveat: the FX2 clone's inputs aren't reliably 5 V
+tolerant — tap the 3.3 V side of the DIN or level-shift, and share ground.
+
+**Capability-based rig selection.** A rig with an analyzer advertises it in
+`/status` (`Analyzer{present, driver, protocols, channels}`), so a test picks a
+rig by CAPABILITY, not by name or tag (tags are too coarse). `hitl reserve/run
+--require analyzer` filters pool selection to analyzer-capable rigs
+(`pool.Require`), and `led_capture` sets `require="analyzer"` + asserts the chosen
+rig's `/status` before driving — so an analyzer test can never silently land on an
+ESP-toolbox rig and fail at capture.
+
+Latency is scaffolded (`CaptureResult.TriggerSample`/`SampleRate`); a full E2E
+number needs the stimulus and the capture co-timed in one clock (route the "show
+pattern" command through the daemon) — a hardware-gated follow-up.
+
+**Acquiring the DUT→channel map.** Which `c6-<serial>` is wired to which analyzer
+channel isn't knowable from software — it's a fact about the bench wiring. Two
+pieces close that gap:
+
+- `firmware/dut_id` — a minimal ESP32-C6 image that breathes the board's ONBOARD
+  WS2812 (GPIO8, via `//libs/pins`) so a _reserved_ DUT is physically identifiable,
+  with a serial toggle (`'0'`/`'1'`/`'t'` over its USB-CDC) to stop the blink.
+  `//pi/hitl/harness:dut_id` walks a rig's DUTs one at a time (blink → eyeball →
+  stop → next).
+- `//pi/hitl/harness:map_la` — drives that blink DUT-by-DUT and prompts "which
+  analyzer channel is THIS board on?", then `POST /analyzer/channel-map`s the
+  assembled map. The broker holds the map behind a `sync.RWMutex` (so a live
+  capture can't block a status/map read), applies it live, and persists it to
+  `<state-dir>/analyzer-channel-map.json`, which `New` reloads at boot **overlaid
+  on** the deploy-provided `--analyzer-channel-map` default — so a mapping "sticks
+  to the board" across reboots with no redeploy. `GET /analyzer/channel-map` reads
+  it back. POST rejects any key that isn't a real DUT on the rig.
+
 ## Packaging
 
 - **Go** → `nix/packages.nix` (`buildGoModule`, `vendorHash = null` since
@@ -127,6 +194,17 @@ one host Bluetooth radio, and the provisioning AP is still rig-level.
 [ ./nix/hitl-app.nix ]; … }`; Bazel `sbc_application` gives the
   image/deploy/ssh targets. The `hitl` CLI is `packages.<system>.hitl` for
   agents to `nix run`/install.
+
+## Observability (FUG-117)
+
+`hitl-managerd` serves Prometheus metrics at `GET /metrics` (same port as the
+API): reservation-queue depth, per-DUT occupancy, reservation-lifecycle
+counters, and host CPU/memory/temperature. Because the rigs are tailnet-only
+(no inbound), a **Grafana Alloy** agent runs on each Pi and `remote_write`s the
+metrics _out_ to Grafana Cloud (free tier), where dashboards — kept as code in
+the repo and CI-synced — plot the fleet. CI job pass/fail is reported alongside
+(Grafana Cloud GitHub integration and/or an optional Loki push). Full design,
+metric catalog, and setup: [`observability/README.md`](./observability/README.md).
 
 ## USBIP (dev board → container)
 

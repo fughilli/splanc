@@ -329,6 +329,18 @@ a {
   left: 0;
   transform-origin: top left;
 }
+/* Open upward — for triggers near the bottom edge, so the bubble stays on
+   screen. Anchors the popover above the trigger and flips the entrance so it
+   grows up from the bottom. */
+.k-helptip-pop--up {
+  top: auto;
+  bottom: calc(100% + 6px);
+  transform-origin: bottom right;
+  transform: translateY(6px) scale(0.98);
+}
+.k-helptip-pop--up.k-helptip-pop--left {
+  transform-origin: bottom left;
+}
 .k-helptip--open .k-helptip-pop {
   opacity: 1;
   transform: translateY(0) scale(1);

@@ -67,7 +67,14 @@ class AppState {
     // the device's self-signed wss:// is trusted (no manual cert accept). Off
     // native this is undefined and the client uses the browser WebSocket.
     const factory = nativeSocketFactory();
-    if (factory) clientOpts.socketFactory = factory;
+    if (factory) {
+      clientOpts.socketFactory = factory;
+      // …and tell the client the trust affordance is meaningless on this
+      // transport, so a transient cold failure (device waking, or one of the
+      // ESP's two TLS slots still held by the socket we just closed) retries
+      // over the backoff instead of dead-ending at "trust needed".
+      clientOpts.certTrustPossible = false;
+    }
     const client = new LedMapperClient(wssUrl, clientOpts);
     this.client = client;
     client.events = {
@@ -119,7 +126,11 @@ class AppState {
         // it doesn't starve the cert page's TLS slot); reconnection is driven by
         // the user's "Trust & connect". For other failures it reconnects with
         // backoff, so poll for that completing.
-        const certUrl = certApprovalUrl(wssUrl);
+        // …but only where the user could actually DO something about a cert: in
+        // the native wrapper the socket comes from the cert-pinning bridge, which
+        // already trusts it, so this is an ordinary failure to retry (and note
+        // certApprovalUrl alone can't tell — it's always non-null in the wrapper).
+        const certUrl = factory ? null : certApprovalUrl(wssUrl);
         this.setStatus({
           state: certUrl ? "connecting" : "error",
           text: certUrl ? "trust needed" : "connection failed",
@@ -166,6 +177,15 @@ class AppState {
     // probe it immediately so its row flips to reachable/offline right away
     // instead of after up to a full poll interval.
     if (wasActive) void deviceProber.probeNow(wasActive);
+  }
+
+  /** Capture/demo-mode seam (FUG-103 docs screenshots): force a connected client
+   * + status without opening a real socket, so the user guide can show a
+   * connected device with a plausible RTT. Only the `?demo` bootstrap
+   * (src/demo/init.ts) ever calls this; no production path does. */
+  setDemoConnection(client: LedMapperClient, status: ConnStatus): void {
+    this.client = client;
+    this.setStatus(status);
   }
 
   /** Restore the previously-active device on boot (back-compat with ?url=). */

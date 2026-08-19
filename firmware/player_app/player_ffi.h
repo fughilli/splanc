@@ -120,6 +120,9 @@ bool lm_pattern_color(uint32_t led, uint32_t frame_index, uint8_t rgb[3]);
 // to the LEDs, buffered for the phone to drain via get_frame_timing.
 void lm_pattern_frame_shown(uint32_t seq, uint32_t t_mono_us);
 bool lm_counting_color(uint32_t led, uint8_t rgb[3]);
+// Highest LED the latched counting pattern lights + 1 (0 when none). The frame
+// loop transmits exactly this many LEDs for the calibration pattern (no overrun).
+uint32_t lm_counting_len(void);
 // Topology-aware effect playback ("pulse"/"flood"). lm_playback_active() gates
 // it (an effect is configured). Once per frame call lm_playback_step(dt_ms) to
 // (re)build + advance the stateful sim; it returns whether a renderable sim
@@ -178,6 +181,15 @@ uint32_t lm_fx_last_update_outcome(void);
 // Apply a uniform value (n = its width, 1..4) to a deck's VM.
 void lm_fx_set_uniform(uint32_t slot, const float *vals, size_t n);  // deck A
 void lm_fx_set_uniform_deck(uint32_t deck, uint32_t slot, const float *vals, size_t n);
+// Ingest one OSC datagram (from the UDP task) and drive the active effect's
+// uniforms from it. Returns the number of uniform writes applied (0 when no
+// effect is active, the datagram isn't OSC, or nothing matched). Non-blocking,
+// no allocation. Call under the same lock as lm_fx_set_uniform.
+uint32_t lm_osc_ingest(const uint8_t *data, size_t len);
+// Select OSC addressing: true (default) resolves uniform names via the active
+// effect's manifest (unknown names fall back to slot index); false treats every
+// address as a raw slot number.
+void lm_osc_set_by_name(bool by_name);
 // Run update() once this frame for EVERY active deck (clears the deadline flag
 // first, latches the shared frame context). True if any deck advanced.
 bool lm_fx_update(float time_s, float dt_s, uint32_t frame, uint32_t led_count);
@@ -196,6 +208,12 @@ int32_t lm_fx_manifest(uint8_t *out, size_t cap);
 // The deck a raw submit_effect frame targets (0 = A, 1 = B; default 0). Lets the
 // persistence layer resume only the deck-A effect on boot (FUG-110).
 uint32_t lm_fx_frame_deck(const uint8_t *data, size_t len);
+// FUG-125 on-device JIT: enable/disable (takes effect on the next lm_fx_load;
+// reload to rebuild or tear down the segments) and read how many segments the
+// current effect installed (0 = pure interpretation). For the HITL A/B.
+void lm_fx_set_jit_enabled(bool enabled);
+uint32_t lm_fx_jit_count(void);
+void lm_fx_jit_diag(uint32_t *plans, uint32_t *words, uint32_t *alloc_ok);
 
 // -- Perf monitoring (docs/design/perf-monitoring.md) -------------------------
 // The set_perf / get_perf_report protocol arms are handled inside

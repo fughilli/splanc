@@ -136,6 +136,24 @@ vec3 shade(Led led) {
   return vec3(v, v, v);
 }"#,
     ),
+    // FUG-122 A/B: the SAME hue plasma written two ways, to show the soft-float
+    // that the fully-fixed native-datatype path removes end to end.
+    (
+        "plasma_hue_f32",
+        r#"void update() {}
+vec3 shade(Led led) {
+  float h = fract(led.pos.x + time);
+  return hsv2rgb(h, 1.0, 1.0);
+}"#,
+    ),
+    (
+        "plasma_hue_fixed",
+        r#"void update() {}
+vec3 shade(Led led) {
+  fixed16 h = fract(fixed16(led.pos.x) + fixed16(time));
+  return hsv2rgb(h, fixed16(1.0), fixed16(1.0));
+}"#,
+    ),
 ];
 
 const LED_COUNT: usize = 256;

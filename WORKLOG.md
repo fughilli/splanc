@@ -65,6 +65,175 @@ surface is app-side per-device tracking. Per-deck arena is now 12 KB (was a
 single 24 KB); a very heavy single-deck effect could want more. Perf/Tier-1
 attribution tracks deck A only.
 
+## FX engine optimizations + superinstructions (FUG-125, branch `agent/fug-125-fx-engine-optimizations-jit`)
+
+A bytecode optimizer for the fx compiler + a first set of VM superinstructions,
+hill-climbed against the golden device profile and guarded by a differential test.
+
+- **`fx_compiler/src/opt.rs`** — runs over the emitted `.fxb` code in `finish()`:
+  decode → stable-id instruction list → fixed point of passes → re-encode. Passes:
+  constant folding (exact int/Q16.16/fixed/`f32`), algebraic simplification &
+  strength reduction (`x*1`, `x/1`, `x-0`, involutions; NOT float `x+0.0` — signed
+  zero), dead-local elimination (single-use temp `StoreLocal;LoadLocal`),
+  constant-branch folding, and unreachable-code DCE. Bails to the original bytes on
+  any dangling target / `i16`-overflow, so it can never miscompile. `compile_opts(src,
+optimize)` exposes the off path for the harness.
+- **VM superinstructions** (`firmware/fx_vm`, appended after `FillLocal`):
+  `TeeLocal` (`StoreLocal;LoadLocal`), `IncLocalI` (`i = i + k`), `BrCmpI`
+  (`CmpI;BrFalse` loop tail) — the profiler's hottest pairs. The optimizer's
+  `fuse_superinstructions` pass emits them. `from_u8` bound, `classify()` coverage
+  audit, `fx_vm_op` mirror, and `decode_op` all updated.
+- **`fx_compiler/tests/optimizer.rs`** — the differential + hill-climb harness:
+  compiles the corpus with & without `-O`, runs BOTH through the real fx_vm over an
+  LED raster and asserts bit-identical RGB, then measures the retired-op reduction
+  and fails on any regression. Result: **14.6% corpus-wide** retired-op reduction,
+  up to **35.7%** (const-heavy) and **15.0%** on the loop-dominated agents effect.
+- Builds verified: `esp32c6` firmware, `fx_vm_web` + `fx_compiler_wasm` bundles,
+  and `//tools/fx_profile` still runs. The optimizer is in the shared `compile()`,
+  so host + wasm preview + device stay bit-identical.
+- **On-device RV32 JIT (done + HITL-validated).** `firmware/fx_jit` lowers hot
+  straight-line integer/fixed blocks to RV32 PIC segments; `ffi.rs::fx_build_jit`
+  compiles + installs them at effect load and patches `Op::JitCall` into the
+  resident bytecode. Executable memory is a **bounded W^X PMP carve-out** (a 4 KB
+  static buffer made RWX via a spare, unlocked RISC-V PMP entry that outranks the
+  SRAM data-region NX entry — W^X stays on elsewhere), because the arduino-esp32
+  C6 build is precompiled with no RWX heap (IRAM RX, DRAM NX). On a real C6
+  (rig-2), a fixed-point `shade()` renders **bit-identically** to the interpreter
+  and drops **9797 → 4710 cyc/LED (−51%, 2.08×)**. Boot A/B: `:esp32c6_fxjitbench`.
+  Note: the arduino-esp32 esp-idf is precompiled (only mbedtls is from source), so
+  a memprot sdkconfig change would need a full IDF-from-source build — the in-app
+  PMP carve-out avoids that entirely. Interpreter stays the fallback.
+
+## User docs — interactive tutorial + generated guide with real screenshots (FUG-103)
+
+Interactive in-app tutorial + a programmatically-generated user guide (Markdown + static
+site), both driven from one catalog (`web/src/ui/guide/catalog.ts`). Real app screenshots
+are captured by Playwright + headless Chromium (`//docs:capture_user_guide`;
+`//docs:build_user_guide` is the one-target rebuild — `bazel run` tools, never in
+`bazel test //...`, so CI needs no browser). Hardware-dependent screens are driven by an
+in-app `?demo=<scenario>` seam (`web/src/demo/init.ts`, guarded + lazy, no-op in production):
+a connected device + RTT, a simulated camera frame, a Web Bluetooth add button, and a
+mocked compiler worker so the effect editor renders its docked Code/Uniforms/Disassembly
+workspace.
+
+### FOLLOW-UP (needs more container memory)
+
+The effect editor's **live LED preview** (`FxPreview.create()`) loads the fx-vm wasm bundle,
+served separately at `/fx-vm`. The screenshot capturer serves only `//web:dist`, so the
+preview pane can't render headless; building the wasm bundles (`fx_compiler_web`,
+`fx_vm_web`) to serve them OOMs the build container. The editor shot therefore shows a
+compiled sample (Code + Uniforms + status) but not the live preview. Once the container
+memory limit is bumped, add the four wasm bundles (`//fx_compiler:fx_compiler_web`,
+`//firmware/fx_vm:fx_vm_web`, `//firmware/pulse:pulse_web`, `//solver:solver_web`) as
+`//docs:capture_user_guide` data deps and mount them (`/fx-compiler`, `/fx-vm`, `/pulse`,
+`/solver`) on the capturer's static server, then drop the `?demo=effect` compiler mock so
+the editor compiles + previews for real.
+
+## OSC input → uniforms — NATIVE firmware (FUG-121, branch `agent/fug-121-feature-osc-input`)
+
+The device receives OSC directly over UDP (:9000) and drives live uniforms — no
+host bridge (an earlier `//tools/osc_bridge` host-side approach was replaced at
+Kevin's steer: "can't the firmware receive OSC natively?").
+
+- **`//firmware/osc`** — `no_std`, zero-dep: OSC 1.0 parser (messages + nested
+  bundles), a `name→(slot,width)` `PortTable` built from the effect manifest, and
+  `ingest()` (datagram → `set(slot, values)` callbacks) with a per-slot value
+  `Shadow` so per-axis vec messages (`/tint/x`) patch one component. Config
+  toggles name resolution vs slot-index-only. 12 host tests; builds for C6.
+- **`fx_compiler`** — now embeds the uniform-manifest JSON in the `.fxb` (was
+  empty), so the device knows uniform names; `get_effect_uniforms` returns a real
+  manifest too. The web uses its own local-compile copy, so this only grows the
+  on-wire `.fxb`.
+- **`ffi.rs`** — builds the `PortTable`/`Shadow` once per `lm_fx_load` (off the
+  render path); `lm_osc_ingest(data,len)` applies a datagram via the existing
+  `set_uniform` seam; `lm_osc_set_by_name` toggles addressing. Cleared on
+  `lm_fx_clear`. End-to-end in the ffi host test.
+- **`main.cpp`** — a low-prio UDP task on :9000 feeds `lm_osc_ingest` under
+  `player_mutex` (the only state shared with the render task). Full `esp32c6`
+  firmware builds.
+- **Perf — REAL C6 numbers** (HITL, `:esp32c6_oscbench` boot self-bench, 160 MHz):
+  - osc by-name: **1282 cyc / 8.0 µs** per update
+  - osc by-slot: **1186 cyc / 7.4 µs** — so **by-name costs only +96 cyc / +0.6 µs
+    (~8%)**, NOT the 3.35× the host bench predicted (host int-parse was so cheap it
+    skewed the ratio). Names are effectively free on-device → keep by-name.
+  - proto set_uniforms: **3568 cyc / 22.3 µs**, and that EXCLUDES the WS/TLS the
+    real path pays — ~2.8× OSC on-device (plus TCP latency), so OSC/UDP stays the
+    right transport.
+  - one-time effect load incl. table build: 18900 cyc / 118 µs.
+  - Both transports functionally verified on the DUT (`/k=0.5 → red=127`). At
+    8 µs, a 200 Hz knob = 0.16% of a core; ingest is off the render task anyway.
+    (Host `//firmware/osc:osc_bench` + `:transport_bench` remain for quick host
+    iteration; the C6 figures above are the design authority.)
+
+Address convention: `/speed` (scalar), `/tint/x|y|z|w` (vec component) or `/tint`
+`,fff` (whole vector); `/slotN` when no manifest. Configurable prefix.
+
+**Bridge dropped (profiled).** `//firmware/player_app:transport_bench` compares
+the device-side cost of one uniform update via the proto `set_uniforms` path
+(`lm_player_handle`: envelope scan + micropb decode + dispatch + reply encode)
+vs native OSC ingest: **858 ns vs 22 ns — ~38×**, and the proto figure EXCLUDES
+the WebSocket framing + TLS the real ws/wss path also pays per message. Add TCP
+head-of-line blocking/latency and the known `set_uniforms` drop issue (there's a
+HITL drop-rate bench for exactly that), and proto-for-transport is strictly worse
+for realtime control. So the OSC path fully replaces the bridge — not kept.
+
+## FX VM native datatypes — every opcode has a fixed/int twin + float-free I/O (branch `agent/fug-122-fx-vm-expand-native-datatypes`)
+
+FUG-122 (design: `docs/design/effects-runtime.md` "Complete native datatype
+ISA"). Goal: run an entire `update()`/`shade()` — inputs, math, colour, output —
+with zero soft-float on the FPU-less C6.
+
+**Done (host tests green: `//firmware/fx_vm:fx_vm_test`,
+`//fx_compiler:fx_compiler_test`, `//firmware/player_app:ffi_test`; `esp32c6`
+links; wasm/bench/profile build):**
+
+- **VM ISA completeness** (`firmware/fx_vm/src/lib.rs`): a strictly-integer/fixed
+  twin for every remaining float opcode — `SqrtFix`, fixed vector reductions
+  (`Dot/Length/Distance/Normalize/Cross/Scale/Smoothstep/ClampV/MixV`),
+  `Atan2Fix/LogFix/TanFix/PowFix`, `Hsv2RgbFix/PaletteFix`, `HashFix/Hash3Fix`,
+  and float-free I/O `RetRgb8`/`RetRgbFix`/`LoadCtxFix`. Coefficients are
+  const-folded so no runtime `f64` reaches the device. `run()` returns an
+  `Option<Rgb>` so the shade caller uses a `RetRgb*`-produced colour directly.
+  16 hand-assembled opcode tests + an exhaustive `every_opcode_has_a_fixed_or_
+integer_path` audit (adding an opcode without a fixed path fails to compile).
+- **Fixed context, VM-side** (`firmware/player_app/ffi.rs`): `LoadCtxFix` reads
+  `FxLed`/`FxFrame` `*_fix` mirrors. Built ONLY when the `.fxb` sets
+  `FLAG_USES_CTXFIX` (all-float effects pay nothing) and the frame's fixed
+  time/dt are converted ONCE per frame, not per LED. wasm preview mirrors this.
+- **Compiler** (`fx_compiler/src/lib.rs`): `LoadCtxFix` provenance peephole for
+  `fixed16(led.pos.x)`; compile-time fold of literal casts; `Ty::Color` routing
+  of `hsv2rgb`/`palette`/`rgb`/`rgb8` on fixed args to the fixed colour ops with
+  `RetRgbFix`/`RetRgb8`; fixed sqrt/tan/log/atan2/pow. Float effects unchanged.
+  Disassembler completed for FUG-10 + FUG-122 opcodes. compile.rs tests assert an
+  all-fixed effect disassembles float-free and renders correctly.
+
+**HITL-validated on hitl-rig (esp32c6):** `//pi/hitl/harness:fx_bench` PASSES the
+golden. Fixed-vs-float A/B @ 256 LEDs (`pi/hitl/harness/ab_demo/`):
+
+- **swirl** (6 sin/cos + hsv, compute-heavy): float **4,077,126** vs fixed
+  **848,034** — **4.8×** faster (the soft-float trig+hsv → integer LUTs).
+- plasma (fract + hsv): float **1,571,722** vs fixed **848,942** — **1.85×**.
+
+**Framing hill-climb (Kevin's review — "why only ~18%?"):** the frame was
+dominated by per-LED FRAMING, not shader compute — `run_shade` copied/zeroed
+~2.5 KB of fixed arrays PER LED (uniforms by value, state/dist copied,
+stack/locals/call_stack zeroed) + a soft-float uv projection every LED. Cut it:
+resident VM scratch reused across calls (run_shade/update take `&mut self`, pass
+state/dist/uniforms by ref; stack/call_stack need no clearing); uv projection
+gated on `FLAG_USES_UV`; and the locals blanket-clear removed too — a new
+`FillLocal` opcode zeroes only the array/struct locals that need it, so the
+common scalar-only effect pays no locals-init on the hot path. Measured (before
+FillLocal): `empty` 490 k → 366 k (−25 %), benefiting EVERY effect, and
+undiluting the datatype win — the compute-heavy **swirl (6 sin/cos + hsv) is
+4.8× faster** in fixed (4.08 M → 0.85 M cyc), plasma −46 %. Golden +
+`docs/fx-vm-performance.md` regenerated for the faster firmware.
+
+**Gotcha fixed on-hardware:** the per-LED `FxFrame` build must NOT recompute
+`q16_16(time)`/`q16_16(dt)` — two soft-float muls per LED inflated the framing
+~12% and tripped the empty/sweep256 goldens. Convert once per frame in
+`lm_fx_update` (statics), copy the ints per LED. This is exactly the trap this
+ticket is about: a stray soft-float op on the FPU-less hot path is expensive.
+
 ## iOS support — Capacitor scaffold + host build server (branch `agent/fug-92-ios-support`)
 
 First implementation pass on FUG-92 (design: `docs/design/ios-support.md`; how-to:

@@ -36,6 +36,27 @@ if [ -f "$appdelegate" ]; then
   fi
 fi
 
+# --- Orientation lock during capture. iOS decides supported orientations by
+# asking the app delegate, so the camera plugin can't pin portrait on its own —
+# it sets CameraOrientationLock.portraitOnly and this delegate method reports it.
+# Mapping needs it: a viewport that flips to landscape mid-capture is distracting
+# while framing, and the camera-to-IMU relation the VIO solve depends on only
+# holds still while the interface orientation does. Patched here because the
+# ios/ tree is regenerated (idempotent — keyed on the method name).
+if [ -f "$appdelegate" ]; then
+  if grep -q supportedInterfaceOrientationsFor "$appdelegate"; then
+    echo "AppDelegate: orientation lock already wired"
+  else
+    perl -0pi -e 's/^(import UIKit\n)/$1import SplancCameraBridge\n/m' "$appdelegate"
+    perl -0pi -e 's/(func application\(_ application: UIApplication, didFinishLaunchingWithOptions[^\n]*\{\n)/    func application(_ application: UIApplication,\n                     supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {\n        \/\/ Splanc: pinned to portrait while the native capture session runs.\n        return CameraOrientationLock.portraitOnly ? .portrait : .all\n    }\n\n$1/' "$appdelegate"
+    if grep -q supportedInterfaceOrientationsFor "$appdelegate"; then
+      echo "AppDelegate: wired the capture orientation lock"
+    else
+      echo "WARNING: could not patch $appdelegate for the orientation lock" >&2
+    fi
+  fi
+fi
+
 # --- App icon: overwrite Capacitor's default with the Splanc logo (same as the
 # PWA). The asset catalog uses one universal 1024×1024 image (AppIcon-512@2x.png,
 # per Contents.json); iOS applies its own rounded-corner mask, so AppIcon-1024.png
@@ -45,6 +66,21 @@ appicon_dst="${here}/../ios/App/App/Assets.xcassets/AppIcon.appiconset/AppIcon-5
 if [ -d "$(dirname "$appicon_dst")" ]; then
   cp "${here}/AppIcon-1024.png" "$appicon_dst"
   echo "app icon → $appicon_dst"
+fi
+
+# --- Code signing team. The generated project sets CODE_SIGN_STYLE = Automatic but
+# no DEVELOPMENT_TEAM, so any device build dies with "Signing for App requires a
+# development team" (simulator builds don't sign, which is why `rebuild` is fine).
+# A team ID is not a secret — it's in every provisioning profile and shipped IPA —
+# but it IS per-developer, so SPLANC_IOS_TEAM overrides the default. Find yours with:
+#   security find-certificate -c "Apple Development: <you>" -p | openssl x509 -noout -subject
+# (the OU= field). Drop any stale line first, so re-running can't stack duplicates.
+team="${SPLANC_IOS_TEAM:-D9JWD94AGX}"
+pbxproj="${here}/../ios/App/App.xcodeproj/project.pbxproj"
+if [ -n "$team" ] && [ -f "$pbxproj" ]; then
+  perl -ni -e 'print unless /^\s*DEVELOPMENT_TEAM = /' "$pbxproj"
+  perl -pi -e "s/^(\s*)CODE_SIGN_STYLE = Automatic;\$/\$1CODE_SIGN_STYLE = Automatic;\n\$1DEVELOPMENT_TEAM = ${team};/" "$pbxproj"
+  echo "signing: DEVELOPMENT_TEAM = $team ($(grep -c 'DEVELOPMENT_TEAM = ' "$pbxproj") configs)"
 fi
 
 # Set (or overwrite) a string key. PlistBuddy has no upsert, so try Set then Add.

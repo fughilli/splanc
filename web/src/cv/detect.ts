@@ -44,6 +44,39 @@ void main() {
   outColor = vec4(rgb * m, m * lum);
 }`;
 
+/**
+ * A frame whose threshold/downsample pass was already run by the capture source
+ * instead of by this detector's GPU pass — the native iOS path, where the app owns
+ * the AVCaptureSession and WebKit never sees the camera (design doc §4.7).
+ *
+ * `detect` is byte-identical in layout to what {@link DetectorGL.detect}'s
+ * readPixels produces (RGBA, sub-threshold pixels all-zero, alpha = masked
+ * luminance) so it feeds the same {@link connectedComponents} unchanged. The one
+ * difference is row order: this buffer's row 0 is the image TOP, so blob v needs
+ * no flip — unlike the GL readback, whose row 0 is the render target's bottom.
+ */
+export interface ReducedFrame {
+  detect: Uint8Array;
+  w: number;
+  h: number;
+  /** The source clipped its encoding — too much of the frame was above threshold,
+   * so this frame's detections are incomplete. Surfaced, never silently dropped. */
+  truncated: boolean;
+  /** Unthresholded measure buffer: rgb = color, alpha = raw luminance. */
+  measure: Uint8Array;
+  measureW: number;
+  measureH: number;
+}
+
+/** The subset of a CaptureFrame the detector needs; kept structural so cv/ doesn't
+ * depend on xr/. */
+export interface DetectInput {
+  texture: WebGLTexture | null;
+  imgW: number;
+  imgH: number;
+  reduced?: ReducedFrame | undefined;
+}
+
 export interface DetectorOptions {
   /** Integer downsample factor for the threshold pass. */
   downscale?: number;
@@ -173,13 +206,56 @@ export class DetectorGL {
     gl.bindFramebuffer(gl.FRAMEBUFFER, prevFbo);
     gl.viewport(prevViewport[0]!, prevViewport[1]!, prevViewport[2]!, prevViewport[3]!);
 
+    // readPixels row 0 is the render target's bottom row, and the fragment
+    // shader samples the camera texture identity-mapped — so buffer row 0
+    // holds the camera texture's v=0 row. Whether that row is the image top
+    // or bottom is what `flipV` encodes (see DetectorOptions.flipV).
+    return this.blobsFrom(this.readback, w, h, this.downscale, imgH, this.flipV, opts);
+  }
+
+  /**
+   * Run detection on whichever form this frame arrived in: a camera texture (the
+   * GPU path runs the threshold pass here) or an already-reduced buffer (the
+   * native iOS path ran it in the capture source). Both end in the same CCL.
+   */
+  detectFrame(f: DetectInput, opts: { stats?: boolean } = {}): Blob[] {
+    const r = f.reduced;
+    if (!r) return this.detect(f.texture!, f.imgW, f.imgH, opts);
+    // The reduced buffer's row 0 is the image top, so no v-flip — and its own
+    // width fixes the downsample factor, rather than this.downscale, so the two
+    // can't silently disagree.
+    const ds = r.w > 0 ? f.imgW / r.w : this.downscale;
+    return this.blobsFrom(r.detect, r.w, r.h, ds, f.imgH, false, opts);
+  }
+
+  /** Scene stats from whichever form this frame arrived in (see detectFrame). */
+  measureFrame(f: DetectInput): SceneStats {
+    const r = f.reduced;
+    if (!r) return this.measure(f.texture!, f.imgW, f.imgH);
+    // Keep lastMeasureFrame() working for the trace sink on this path too.
+    this.measureBuf = r.measure;
+    this.measureW = r.measureW;
+    this.measureH = r.measureH;
+    return sceneStatsFromLuma(r.measure, r.measureW * r.measureH);
+  }
+
+  /** CCL + blob mapping, shared by the GPU and pre-reduced paths. */
+  private blobsFrom(
+    buf: Uint8Array,
+    w: number,
+    h: number,
+    ds: number,
+    imgH: number,
+    flipV: boolean,
+    opts: { stats?: boolean },
+  ): Blob[] {
     // Fill/weight channel is alpha (masked luminance); RGB carries color.
     // splitOversized: a washed-out strip merges every halo into one giant
     // component that maxArea used to silently drop — taking every LED with
     // it (2026-07-12 capture screenshot: one 98k-px component spanned the
     // frame at threshold 0.6, beyond even the threshold servo's 0.9 cap).
     // The cut ladders re-threshold such components into per-core blobs.
-    const comps = connectedComponents(this.readback, w, h, 4, 3, {
+    const comps = connectedComponents(buf, w, h, 4, 3, {
       minArea: this.minArea,
       maxArea: this.maxArea,
       maxBlobs: this.maxBlobs,
@@ -188,17 +264,12 @@ export class DetectorGL {
       splitOversized: true,
     });
 
-    // readPixels row 0 is the render target's bottom row, and the fragment
-    // shader samples the camera texture identity-mapped — so buffer row 0
-    // holds the camera texture's v=0 row. Whether that row is the image top
-    // or bottom is what `flipV` encodes (see DetectorOptions.flipV).
-    const ds = this.downscale;
     return comps
       .filter((c) => Math.max(c.w, c.h) <= this.maxAspect * Math.min(c.w, c.h))
       .map((c) => {
         const blob: Blob = {
           u: c.x * ds,
-          v: this.flipV ? imgH - c.y * ds : c.y * ds,
+          v: flipV ? imgH - c.y * ds : c.y * ds,
           intensity: c.intensity,
           area: c.area * ds * ds,
           w: c.w * ds,

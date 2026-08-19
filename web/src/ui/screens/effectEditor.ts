@@ -57,6 +57,8 @@ import { midiManager, controlLabel } from "../../midi/manager";
 import { effectStore, isBuiltinEffect } from "../../store/effectStore";
 import { deviceEffects } from "../../store/deviceEffects";
 import { deviceStore } from "../../store/deviceStore";
+import { chatLogStore, newChatLogSessionId } from "../../store/chatLogStore";
+import { registerChatDriver } from "../../net/remoteChat";
 import { mapStore } from "../../store/mapStore";
 import { renderSettings } from "../../store/appearance";
 import { appState } from "../app/state";
@@ -116,6 +118,11 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   let lastPushedFxb: Uint8Array | null = null;
   let chatBusy = false;
   const chatHistory: ChatMessage[] = [];
+  // Persisted-log bookkeeping: one session id per editor screen; snapshot the
+  // transcript after every turn so a failed agent run can be pulled off-device.
+  const chatLogSessionId = newChatLogSessionId();
+  let chatTurns = 0;
+  let unregisterChatDriver: (() => void) | null = null;
   let raf = 0;
   let disposed = false;
 
@@ -592,24 +599,62 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   // A live "what the model is doing" indicator (spinner + phase label), shown at
   // the foot of the log while a turn runs and updated as phases change.
   let chatStatusEl: HTMLElement | null = null;
+  let chatStatusLabelEl: HTMLElement | null = null;
+  let chatStatusSubEl: HTMLElement | null = null;
+  let chatStatusTimer: number | null = null;
+  let chatStatusStartMs = 0;
+  let chatHasRealStatus = false;
+  const THINKING = "Thinking…";
+
+  function fmtElapsed(ms: number): string {
+    const s = Math.max(0, Math.floor(ms / 1000));
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+  }
+  function paintChatSub(): void {
+    if (chatStatusSubEl === null) return;
+    // Just a ticking clock for liveness — the WHAT lives in the main label (the
+    // model's own summary for a set_script, or a fixed verb for other tools).
+    chatStatusSubEl.textContent = fmtElapsed(performance.now() - chatStatusStartMs);
+  }
+  /** Update the "model is working" indicator: a main label (the model's terse
+   * summary, or a fixed tool verb) over a ticking-elapsed subtext. "Thinking…" is
+   * a SOFT placeholder — once a real status (a model summary or tool verb) shows,
+   * later "Thinking…" pings are ignored so it doesn't flick back between rounds. */
   function setChatStatus(label: string): void {
+    if (label === THINKING && chatHasRealStatus) return;
+    if (label !== THINKING) chatHasRealStatus = true;
     if (chatHint.isConnected) chatHint.remove();
     if (chatStatusEl === null) {
       chatStatusEl = document.createElement("div");
       chatStatusEl.className = "fxedit-chatstatus";
       const sp = document.createElement("span");
       sp.className = "fxedit-spinner";
-      const tx = document.createElement("span");
-      tx.className = "fxedit-chatstatus-label";
-      chatStatusEl.append(sp, tx);
+      const col = document.createElement("span");
+      col.className = "fxedit-chatstatus-col";
+      chatStatusLabelEl = document.createElement("span");
+      chatStatusLabelEl.className = "fxedit-chatstatus-label";
+      chatStatusSubEl = document.createElement("span");
+      chatStatusSubEl.className = "fxedit-chatstatus-sub";
+      col.append(chatStatusLabelEl, chatStatusSubEl);
+      chatStatusEl.append(sp, col);
+      chatStatusStartMs = performance.now();
+      chatStatusTimer = window.setInterval(paintChatSub, 1000);
     }
-    (chatStatusEl.querySelector(".fxedit-chatstatus-label") as HTMLElement).textContent = label;
+    chatStatusLabelEl!.textContent = label;
+    paintChatSub();
     chatLog.appendChild(chatStatusEl); // keep it pinned to the bottom
     chatLog.scrollTop = chatLog.scrollHeight;
   }
   function clearChatStatus(): void {
+    if (chatStatusTimer !== null) {
+      clearInterval(chatStatusTimer);
+      chatStatusTimer = null;
+    }
     chatStatusEl?.remove();
     chatStatusEl = null;
+    chatStatusLabelEl = null;
+    chatStatusSubEl = null;
+    chatHasRealStatus = false; // next turn starts soft ("Thinking…") again
   }
 
   // -- device section -------------------------------------------------------
@@ -1006,7 +1051,14 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     // the panel re-renders; then refresh its manifest for the drivable list.
     midiStore.autoBind(effectId, r.uniforms.filter(isDrivable).map((u) => u.name));
     midiPanel.setManifest(r.uniforms);
-    await swapPreview(r.bytecode);
+    // A preview failure (e.g. the fx-vm module can't load) must not block the
+    // rest of the compile pipeline — the status, uniforms and disassembly below
+    // are independent of the live preview.
+    try {
+      await swapPreview(r.bytecode);
+    } catch (err) {
+      console.warn("live preview unavailable:", err);
+    }
 
     // Refresh disassembly (authoritative Rust disassembler via the worker).
     const disasm = await worker.disassemble(r.bytecode);
@@ -1164,6 +1216,8 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
 
     chatBusy = true;
     chatSend.disabled = true;
+    chatTurns += 1;
+    let turnError: string | undefined;
     setChatStatus("Thinking…");
 
     // Per-device builtin cost listing (from the user's calibrated board if any,
@@ -1181,20 +1235,24 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
         chatHistory,
         {
         onThinking: () => setChatStatus("Thinking…"),
-        onSetScript: async (source) => {
-          setChatStatus("Generating code…");
+        // Live status as the response streams (thinking → tool verb → the model's
+        // own set_script summary), so a long turn narrates itself in real time.
+        onStatus: (label) => setChatStatus(label),
+        onSetScript: async (source, summary) => {
+          // Streaming already surfaced the summary live; keep it sticky through
+          // the fast client-side compile instead of flicking to "Compiling…".
+          if (summary) setChatStatus(summary);
           codeEl.value = source;
           paintHighlight();
           syncScroll();
           scheduleSave();
-          setChatStatus("Compiling…");
           await compileNow();
           return `Compile result: ${lastCompileSummary}${
             lastDisassembly ? `\n\nDisassembly:\n${lastDisassembly}` : ""
           }`;
         },
         onCapturePreview: async () => {
-          setChatStatus("Inspecting rendered image…");
+          setChatStatus("Taking a screenshot of the preview…");
           return capturePreviewPng();
         },
         onListMidi: async () => {
@@ -1206,7 +1264,7 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
           return applyMidiMappings(mappings);
         },
         onEstimatePerformance: async () => {
-          setChatStatus("Estimating performance…");
+          setChatStatus("Running a performance pass…");
           return estimateFleetReport();
         },
         onToolUse: () => undefined,
@@ -1217,11 +1275,23 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
       appendChat("assistant", finalText || "(done)");
     } catch (e) {
       clearChatStatus();
-      appendChat("assistant", `AI error: ${msg(e)}`);
+      turnError = msg(e);
+      appendChat("assistant", `AI error: ${turnError}`);
     } finally {
       chatBusy = false;
       chatSend.disabled = false;
       chatLog.scrollTop = chatLog.scrollHeight;
+      // Snapshot the (whole) transcript for off-device debugging. Best-effort.
+      void chatLogStore.record({
+        id: chatLogSessionId,
+        screen: "effectEditor",
+        effectId,
+        effectName,
+        turns: chatTurns,
+        errored: turnError !== undefined,
+        lastError: turnError,
+        messages: chatHistory,
+      });
     }
   }
 
@@ -1547,9 +1617,12 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
       document.documentElement.classList.add("is-locked");
       document.body.classList.add("is-locked");
       void load();
+      // Remote chat drive (repro-on-device): feed queued prompts into this turn.
+      unregisterChatDriver = registerChatDriver((text) => submitChat(text));
     },
     onUnmount: () => {
       disposed = true;
+      unregisterChatDriver?.();
       document.documentElement.classList.remove("is-locked");
       document.body.classList.remove("is-locked");
       closeMenu();

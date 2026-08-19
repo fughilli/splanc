@@ -128,11 +128,16 @@ impl FxPreview {
 
     /// Advance one frame: sets time/dt/frame and runs update().
     pub fn update(&mut self, time: f32, dt: f32, frame: u32, led_count: u32) {
+        // Q16.16 mirrors so a fixed-only shader (LoadCtxFix) previews identically
+        // to the device, which caches these fixed forms (FUG-122).
+        let q16 = |x: f32| (x * 65536.0) as i32;
         self.frame = Frame {
             time,
             dt,
             frame,
             led_count,
+            time_fix: q16(time),
+            dt_fix: q16(dt),
             ..Default::default()
         };
         if let Ok(prog) = Program::parse(&self.bytes) {
@@ -150,7 +155,7 @@ impl FxPreview {
 
     /// Shade all LEDs. `positions` is flat xyz (len = 3*N); returns flat RGB
     /// u8 (len = 3*N) aligned to the map's LED order.
-    pub fn shade_all(&self, positions: &[f32]) -> Vec<u8> {
+    pub fn shade_all(&mut self, positions: &[f32]) -> Vec<u8> {
         let n = positions.len() / 3;
         let mut out = Vec::with_capacity(n * 3);
         // Map XY bounds for led.uv (mirrors the device's fx_rebuild_topo): a
@@ -174,14 +179,22 @@ impl FxPreview {
                     ((positions[3 * i] - mn[0]) * inv[0]).clamp(0.0, 1.0),
                     ((positions[3 * i + 1] - mn[1]) * inv[1]).clamp(0.0, 1.0),
                 ];
+                let q16 = |x: f32| (x * 65536.0) as i32;
+                let s = self.topo_s.get(i).copied().unwrap_or(0.0);
+                let dist = self.topo_dist.get(i).copied().unwrap_or(0.0);
                 let led = Led {
                     pos: [positions[3 * i], positions[3 * i + 1], positions[3 * i + 2]],
                     idx: i as u32,
                     seg: self.topo_seg.get(i).copied().unwrap_or(-1),
-                    s: self.topo_s.get(i).copied().unwrap_or(0.0),
+                    s,
                     branch: self.topo_branch.get(i).copied().unwrap_or(0) != 0,
-                    dist: self.topo_dist.get(i).copied().unwrap_or(0.0),
+                    dist,
                     uv,
+                    // Q16.16 mirrors for LoadCtxFix (device↔preview parity).
+                    pos_fix: [q16(positions[3 * i]), q16(positions[3 * i + 1]), q16(positions[3 * i + 2])],
+                    uv_fix: [q16(uv[0]), q16(uv[1])],
+                    s_fix: q16(s),
+                    dist_fix: q16(dist),
                 };
                 let (r, g, b) = self.vm.run_shade(&prog, &self.frame, &led);
                 out.push(r);

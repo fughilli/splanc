@@ -1,0 +1,35 @@
+"""Native on-device OSC input for shader uniforms (FUG-121).
+
+no_std, zero-dependency — buildable for the ESP32-C6 triple and linked into the
+player app (//firmware/player_app) to drive uniforms from OSC over UDP. The pure
+wire parser, manifest scanner and ingest orchestration are host-tested byte-for-
+byte in :osc_test; the socket task and the FX VM binding live in the app.
+"""
+
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "osc",
+    srcs = ["src/lib.rs"],
+    crate_name = "ledmapper_osc",
+    edition = "2021",
+)
+
+# Host micro-benchmark: by-name vs by-slot ingest cost + one-time table build
+# (FUG-121). `bazel run //firmware/osc:osc_bench`. Host CPU, not the C6 — the
+# portable signal is the name/slot ratio; on-device cycles come from HITL.
+rust_binary(
+    name = "osc_bench",
+    srcs = ["bench/main.rs"],
+    edition = "2021",
+    deps = [":osc"],
+)
+
+rust_test(
+    name = "osc_test",
+    srcs = ["tests/osc.rs"],
+    edition = "2021",
+    deps = [":osc"],
+)

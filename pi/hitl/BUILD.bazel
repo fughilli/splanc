@@ -31,6 +31,44 @@ _wifi_config = (glob(
 
 sbc_application(
     name = "hitl",
+    # Hybrid detect-warn for `:update`: probe the board for the Saleae Logic
+    # analyzer (USB 0925:3881) and report the capability it implies; `.update`
+    # warns if this disagrees with the board's committed /var/lib/sbc/profile.
+    detect_caps_cmd = "lsusb | grep -q 0925:3881 && echo SBC_ANALYZER=1 || echo SBC_ANALYZER=0",
+    flake = "pi/hitl",
+    hostname = "hitl-rig",
+    wifi_config_file = _wifi_config,
+)
+
+# The one-shot "make this rig current" deploy. `:update` reads the board's own
+# hardware (Pi 5 vs Pi 3 -> SBC_BOARD) and committed capability profile
+# (/var/lib/sbc/profile -> SBC_ANALYZER etc.) and deploys the matching closure —
+# no per-board target or SBC_* flags to remember, and the identity is reused from
+# the board (never reset). Aliased to :hitl.update since update autodetects the
+# board, so it serves every rig (incl. the Pi 3):
+#   bazel run //pi/hitl:update -- hitl-rig-2   # detects LA Pi5, analyzer profile
+alias(
+    name = "update",
+    actual = ":hitl.update",
+)
+
+# Raspberry Pi 3B/3B+ board variant of the SAME flake + config (:hitl above is the
+# Pi 5 board). Capability is NO LONGER tied to the board: nix/hitl-app.nix keys the
+# logic analyzer on $SBC_ANALYZER and the dedicated-AP-radio dongle on
+# $SBC_AP_DONGLE (both default off), independent of $SBC_BOARD — so you can deploy
+# a plain Pi 3, an analyzer Pi 5, etc. Gives //pi/hitl:hitl_pi3.{image_sd,
+# deploy_live,ssh,keys}. See DESIGN.md "Shared logic analyzer" and internal/analyzer.
+#
+# hostname = "hitl-rig" is the config's baked hostName / nixosConfigurations attr
+# (mkSbcProject { hostName = "hitl-rig"; }) that deploy_live/ssh build — NOT the
+# per-board machine name. The machine identity is the operator's --hostname flag,
+# and capabilities are env flags, both per-deploy, e.g. a plain Pi 3:
+#   bazel run //pi/hitl:hitl_pi3.deploy_live -- --hostname hitl-rig-3 <host>
+# or an analyzer Pi 5:
+#   SBC_ANALYZER=1 bazel run //pi/hitl:hitl.deploy_live -- --hostname hitl-rig-2 <host>
+sbc_application(
+    name = "hitl_pi3",
+    board = "@sbc_deploy//deploy/boards:raspberry-pi-3",
     flake = "pi/hitl",
     hostname = "hitl-rig",
     wifi_config_file = _wifi_config,
@@ -54,6 +92,15 @@ sh_binary(
 sh_binary(
     name = "seed_tailscale_authkey",
     srcs = ["scripts/seed-tailscale-authkey.sh"],
+)
+
+# Seed the Grafana Cloud creds onto the rig and (re)start Alloy, wiring the rig
+# to Grafana Cloud. Reads pi/secrets/grafana.env + deploy_key. See
+# observability/README.md and observability/alloy.nix.
+#   bazel run //pi/hitl:seed_grafana [-- host]
+sh_binary(
+    name = "seed_grafana",
+    srcs = ["scripts/seed-grafana.sh"],
 )
 
 # HTTP-driven runner for the on-hardware HITL suite (see the file's docstring).

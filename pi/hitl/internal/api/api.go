@@ -76,12 +76,25 @@ type Reservation struct {
 // count the unassigned waiters. Devices carries the full per-DUT breakdown for
 // newer clients.
 type Status struct {
-	Rig          string         `json:"rig"`               // rig name/hostname
-	Active       *Reservation   `json:"active"`            // a busy DUT's holder, or null if any DUT is free
-	QueueLength  int            `json:"queue_length"`      // waiters not yet assigned a DUT (0 while any DUT is free)
-	Devices      []DeviceStatus `json:"devices,omitempty"` // per-DUT state (newer clients)
-	LeaseSeconds int            `json:"lease_seconds"`     // heartbeat lease window
-	WiFi         *WiFiInfo      `json:"wifi,omitempty"`    // the rig's own provisioning AP, if it runs one
+	Rig          string         `json:"rig"`                // rig name/hostname
+	Active       *Reservation   `json:"active"`             // a busy DUT's holder, or null if any DUT is free
+	QueueLength  int            `json:"queue_length"`       // waiters not yet assigned a DUT (0 while any DUT is free)
+	Devices      []DeviceStatus `json:"devices,omitempty"`  // per-DUT state (newer clients)
+	LeaseSeconds int            `json:"lease_seconds"`      // heartbeat lease window
+	WiFi         *WiFiInfo      `json:"wifi,omitempty"`     // the rig's own provisioning AP, if it runs one
+	Analyzer     *AnalyzerInfo  `json:"analyzer,omitempty"` // the rig's shared logic analyzer, if any
+}
+
+// AnalyzerInfo advertises a rig's shared logic analyzer so clients can select a
+// rig by CAPABILITY rather than by name — a test that needs to capture the DUT's
+// wire (LED-driver correctness, latency) can require an analyzer-capable rig
+// instead of hoping the pool hands it one. Nil/omitted on rigs without one (the
+// ESP-toolbox rigs). Tags are too coarse to model this; capabilities self-describe.
+type AnalyzerInfo struct {
+	Present   bool     `json:"present"`             // true when the rig has a working analyzer
+	Driver    string   `json:"driver,omitempty"`    // sigrok capture driver, e.g. "fx2lafw"
+	Protocols []string `json:"protocols,omitempty"` // wire protocols it can decode (e.g. "ws2812")
+	Channels  []string `json:"channels,omitempty"`  // mapped analyzer channels (e.g. "D6"), for display
 }
 
 // DeviceStatus is one DUT's slice of the rig's Status.
@@ -103,4 +116,55 @@ type WiFiInfo struct {
 // Error is the JSON error envelope for non-2xx responses.
 type Error struct {
 	Error string `json:"error"`
+}
+
+// CaptureRequest asks the daemon to capture and decode a trace from the rig's
+// shared logic analyzer (a single FX2/fx2lafw instrument owned by the daemon).
+//
+// The analyzer is a RIG-LEVEL resource, not per-container: its channels are
+// partitioned across DUTs (one or two channels tap each DUT's LED data line), so
+// a caller names the DUT it wants and the daemon maps that to the DUT's channel
+// subset + wire protocol. Captures are serialized on the single instrument, so a
+// request may briefly block while another DUT's capture finishes.
+type CaptureRequest struct {
+	// Device is the DUT whose tapped line to capture (matches ReserveRequest.Device
+	// / DeviceStatus.Name). Empty uses the analyzer's default/only DUT mapping.
+	Device string `json:"device,omitempty"`
+	// Protocol overrides the DUT's configured decoder ("ws2812" or "spi"). Empty
+	// uses the mapping's protocol (default ws2812 — the ESP32-C6 player_app DUT).
+	Protocol string `json:"protocol,omitempty"`
+	// Samples overrides the capture length in samples (0 = the daemon default).
+	// One WS2812 frame of N LEDs is N*24*1.25µs; size to cover the frame + the
+	// >50µs reset latch. At 24 MHz, 200000 samples ≈ 8.3 ms.
+	Samples int `json:"samples,omitempty"`
+	// SaveSR requests the raw sigrok .sr session (base64 in CaptureResult.SR) for
+	// offline inspection in PulseView, in addition to the decoded pixels.
+	SaveSR bool `json:"save_sr,omitempty"`
+}
+
+// Pixel is one decoded LED, 8-bit per channel in logical RGB order (the decoder
+// output is normalized to RGB regardless of the wire order, e.g. WS2812's GRB).
+type Pixel struct {
+	R uint8 `json:"r"`
+	G uint8 `json:"g"`
+	B uint8 `json:"b"`
+}
+
+// CaptureResult is the decoded trace: the per-LED pixels the analyzer saw on the
+// wire, plus optional timing and the raw session.
+type CaptureResult struct {
+	// Device is the DUT the capture came from.
+	Device string `json:"device"`
+	// Protocol is the decoder used ("ws2812" / "spi").
+	Protocol string `json:"protocol"`
+	// Pixels are the decoded LEDs in wire order (index 0 = first LED / DIN).
+	Pixels []Pixel `json:"pixels"`
+	// SampleRate is the capture sample rate in Hz (for latency math on Samples).
+	SampleRate int `json:"sample_rate,omitempty"`
+	// TriggerSample is the sample index of the trigger edge that armed the capture
+	// (the first data edge), when a trigger was used — the anchor for end-to-end
+	// latency (t_edge = TriggerSample / SampleRate after the capture start).
+	TriggerSample int `json:"trigger_sample,omitempty"`
+	// SR is the base64-encoded raw .sr session, present only when SaveSR was set.
+	SR string `json:"sr,omitempty"`
 }

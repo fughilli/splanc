@@ -8,6 +8,35 @@ import (
 	"github.com/fughilli/splanc/pi/hitl/internal/api"
 )
 
+func TestPickRequireAnalyzer(t *testing.T) {
+	// Only b advertises an analyzer, but a is idle (would win without the filter).
+	withAnalyzer := mkStatus(true, 3) // busy + queued, but has an analyzer
+	withAnalyzer.Analyzer = &api.AnalyzerInfo{Present: true, Driver: "fx2lafw"}
+	states := map[string]*api.Status{
+		"http://a:8087": mkStatus(false, 0), // idle, NO analyzer
+		"http://b:8087": withAnalyzer,       // busy, HAS analyzer
+	}
+	servers := []string{"http://a:8087", "http://b:8087"}
+	got, err := Pick(Probes(servers, fakeGet(states, nil)), Require{Analyzer: true})
+	if err != nil {
+		t.Fatalf("Pick(require analyzer): %v", err)
+	}
+	if got != "http://b:8087" {
+		t.Errorf("Pick(require analyzer) = %q, want the analyzer rig b (not the idle non-analyzer a)", got)
+	}
+
+	// No analyzer rig in the pool -> a clear error, not a wrong pick.
+	only := map[string]*api.Status{"http://a:8087": mkStatus(false, 0)}
+	if _, err := Pick(Probes([]string{"http://a:8087"}, fakeGet(only, nil)), Require{Analyzer: true}); err == nil {
+		t.Error("Pick(require analyzer) with no analyzer rig: want error, got nil")
+	}
+
+	// Without the requirement, the idle non-analyzer rig still wins (back-compat).
+	if got, _ := Pick(Probes(servers, fakeGet(states, nil))); got != "http://a:8087" {
+		t.Errorf("Pick(no require) = %q, want idle a", got)
+	}
+}
+
 func TestNormalize(t *testing.T) {
 	cases := []struct {
 		in   string

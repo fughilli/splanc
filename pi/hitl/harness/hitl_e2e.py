@@ -167,7 +167,7 @@ def default_bundle() -> str | None:
 def run(args: argparse.Namespace) -> int:
     # server=None lets `hitl` pick a free rig from the pool (tailnet tag discovery
     # or $HITL_SERVERS); --server pins a specific one.
-    res = Reservation(server=args.server or None, owner=args.owner)
+    res = Reservation(server=args.server or None, owner=args.owner, device=args.device or None)
     try:
         res.acquire()
         # Default WiFi to the rig's own provisioning AP (creds served by the
@@ -224,6 +224,11 @@ def main() -> int:
         "--server", help="target a specific rig base URL (else `hitl` picks a free one)"
     )
     ap.add_argument("--owner", default=os.environ.get("HITL_OWNER"), help="reservation owner id")
+    ap.add_argument(
+        "--device",
+        default=os.environ.get("HITL_DEVICE"),
+        help="pin a specific DUT by name (e.g. c6-003f08); default: any free DUT on the rig",
+    )
     ap.add_argument(
         "--bundle", default=os.environ.get("HITL_BUNDLE"), help="firmware flash-bundle .tar"
     )

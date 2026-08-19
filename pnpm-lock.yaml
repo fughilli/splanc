@@ -40,6 +40,9 @@ importers:
       '@ledmapper/protocol':
         specifier: workspace:*
         version: link:../shared/protocol/ts
+      '@splanc/camera-bridge':
+        specifier: link:./native-plugins/camera-bridge
+        version: link:native-plugins/camera-bridge
       '@splanc/speech-bridge':
         specifier: link:./native-plugins/speech-bridge
         version: link:native-plugins/speech-bridge
@@ -49,6 +52,9 @@ importers:
       esptool-js:
         specifier: ^0.6.0
         version: 0.6.0
+      jsqr:
+        specifier: ^1.4.0
+        version: 1.4.0
       web-serial-polyfill:
         specifier: ^1.0.15
         version: 1.0.15(patch_hash=de2e1d095816f71b772ecafcf08cdc2dbb5d84382713d66508c9785917fb88df)
@@ -361,6 +367,7 @@ packages:
   '@xmldom/xmldom@0.9.10':
     resolution: {integrity: sha512-A9gOqLdi6cV4ibazAjcQufGj0B1y/vDqYrcuP6d/6x8P27gRS8643Dj9o1dEKtB6O7fwxb2FgBmJS2mX7gpvdw==}
     engines: {node: '>=14.6'}
+    deprecated: this version has critical issues, please update to the latest version
 
   ansi-regex@5.0.1:
     resolution: {integrity: sha512-quJQXlTSUGL2LH9SUXo8VwsY4soanhgo6LNSm84E1LBcE8s3O0wpdiRzyR9z/ZZJMlMWv37qOOb9pdJlMUEKFQ==}
@@ -537,6 +544,9 @@ packages:
 
   jsonfile@6.2.1:
     resolution: {integrity: sha512-zwOTdL3rFQ/lRdBnntKVOX6k5cKJwEc1HdilT71BWEu7J41gXIB2MRp+vxduPSwZJPWBxEzv4yH1wYLJGUHX4Q==}
+
+  jsqr@1.4.0:
+    resolution: {integrity: sha512-dxLob7q65Xg2DvstYkRpkYtmKm2sPJ9oFhrhmudT1dZvNFFTlroai3AWSpLey/w5vMcLBXRgOJsbXpdN9HzU/A==}
 
   kleur@3.0.3:
     resolution: {integrity: sha512-eTIzlVOSUR+JxdDFepEYcBMtZ9Qqdef+rnzWdRZuMbOywu5tO2w2N7rqjoANZ5k9vywhL6Br1VRjUIgTQx4E8w==}
@@ -1334,6 +1344,8 @@ snapshots:
       universalify: 2.0.1
     optionalDependencies:
       graceful-fs: 4.2.11
+
+  jsqr@1.4.0: {}
 
   kleur@3.0.3: {}
 

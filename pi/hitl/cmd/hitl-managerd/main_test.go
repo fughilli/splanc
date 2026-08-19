@@ -4,11 +4,52 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/fughilli/splanc/pi/hitl/internal/metrics"
+	"github.com/fughilli/splanc/pi/hitl/internal/queue"
 	"github.com/fughilli/splanc/pi/hitl/internal/runner"
 )
+
+// writeMetrics emits every configured metric family with the rig label, a
+// per-DUT busy series, and omits any host metric whose source was unreadable.
+func TestWriteMetrics(t *testing.T) {
+	snap := queue.MetricsSnapshot{
+		Rig: "rig-1", LeaseSeconds: 1800,
+		DUTsTotal: 2, DUTsBusy: 1, QueueDepth: 3, ActiveTotal: 1,
+		Devices: []queue.DeviceMetric{{Name: "c6-a", Busy: true}, {Name: "c6-b", Busy: false}},
+		Reservations: 10, Activations: 8, Releases: 7, LeaseExpiries: 2, StartFailures: 1,
+	}
+	host := metrics.HostStats{Load1: 0.5, Load1OK: true, TempCelsius: 46.7, TempOK: true} // MemOK false
+
+	var b strings.Builder
+	writeMetrics(&b, snap, host)
+	out := b.String()
+
+	for _, want := range []string{
+		`hitl_up{rig="rig-1"} 1`,
+		`hitl_duts_total{rig="rig-1"} 2`,
+		`hitl_queue_depth{rig="rig-1"} 3`,
+		`hitl_dut_busy{device="c6-a",rig="rig-1"} 1`,
+		`hitl_dut_busy{device="c6-b",rig="rig-1"} 0`,
+		`hitl_reservations_total{rig="rig-1"} 10`,
+		`hitl_lease_expirations_total{rig="rig-1"} 2`,
+		`hitl_host_load1{rig="rig-1"} 0.5`,
+		`hitl_host_temperature_celsius{rig="rig-1"} 46.7`,
+		"# TYPE hitl_reservations_total counter",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("metrics output missing %q\n---\n%s", want, out)
+		}
+	}
+	// Memory source was unreadable (MemOK false), so those series are omitted, not
+	// reported as a misleading zero.
+	if strings.Contains(out, "hitl_host_memory_total_bytes") {
+		t.Errorf("memory metric should be omitted when MemOK is false:\n%s", out)
+	}
+}
 
 // With no --dut flags, buildDevices synthesizes one DUT from the legacy
 // --ssh-port/--device flags — preserving the original single-DUT behavior.

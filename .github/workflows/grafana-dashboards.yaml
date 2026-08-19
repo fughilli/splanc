@@ -1,0 +1,61 @@
+# Dashboards-as-code (FUG-117 bonus).
+#
+# The HITL Grafana dashboards live in the repo as JSON models under
+# pi/hitl/observability/dashboards/. This workflow pushes them to Grafana on any
+# change to that directory on main (and on demand), so the dashboards are
+# reviewed and versioned like code instead of hand-edited in the UI. Editing a
+# panel? Change the JSON, open a PR; on merge this syncs it.
+#
+# It targets any Grafana with an HTTP API — Grafana Cloud or self-hosted. Config
+# lives in a "Grafana" GitHub Actions environment (Settings → Environments):
+#   secrets.GRAFANA_URL          base URL, e.g. https://myorg.grafana.net
+#   secrets.GRAFANA_TOKEN        a service-account token with the Editor role
+#   vars.GRAFANA_FOLDER_UID      (optional) folder UID to place the dashboards in
+name: Grafana dashboards
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'pi/hitl/observability/dashboards/**'
+      - '.github/workflows/grafana-dashboards.yaml'
+  workflow_dispatch:
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    environment: Grafana
+    steps:
+      - uses: actions/checkout@v4
+      - name: Push dashboards to Grafana
+        env:
+          GRAFANA_URL: ${{ secrets.GRAFANA_URL }}
+          GRAFANA_TOKEN: ${{ secrets.GRAFANA_TOKEN }}
+          GRAFANA_FOLDER_UID: ${{ vars.GRAFANA_FOLDER_UID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GRAFANA_URL:-}" ] || [ -z "${GRAFANA_TOKEN:-}" ]; then
+            echo "GRAFANA_URL/GRAFANA_TOKEN unset (Grafana environment not configured); skipping." >&2
+            exit 0
+          fi
+          shopt -s nullglob
+          for f in pi/hitl/observability/dashboards/*.json; do
+            echo "==> syncing $f"
+            # Wrap the dashboard model into the /api/dashboards/db payload:
+            #   - id:null so Grafana keys on the model's uid (create-or-update),
+            #   - overwrite:true so a repeat push updates in place,
+            #   - folderUid places it in the configured folder (empty = General).
+            payload=$(jq \
+              --arg folder "${GRAFANA_FOLDER_UID:-}" \
+              '{dashboard: (.id = null), overwrite: true, folderUid: $folder, message: "synced from repo by CI"}' \
+              "$f")
+            code=$(curl -s -o /tmp/resp.json -w '%{http_code}' \
+              -H "Authorization: Bearer ${GRAFANA_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -X POST "${GRAFANA_URL%/}/api/dashboards/db" \
+              --data-binary "$payload")
+            echo "HTTP $code"; cat /tmp/resp.json; echo
+            if [ "$code" != "200" ]; then
+              echo "dashboard sync for $f failed (HTTP $code)" >&2
+              exit 1
+            fi
+          done
+          echo "All dashboards synced."

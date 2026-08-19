@@ -3,6 +3,295 @@
 Handoff notes alongside git history. Newest first. Read this before touching the
 rig's networking — there's live runtime state that isn't fully declarative yet.
 
+## 2026-08-17 — DUT identification + `map_la` (acquire the analyzer channel map)
+
+Which physical board (hence which analyzer channel) is which `c6-<serial>` can't
+be known from software, so two tools acquire it on the bench:
+
+- `firmware/dut_id` breathes a DUT's onboard WS2812 (GPIO8) with a serial toggle;
+  `//pi/hitl/harness:dut_id` walks a rig's DUTs to eyeball each one.
+- `//pi/hitl/harness:map_la` drives that blink DUT-by-DUT, asks which channel each
+  is on, and `POST`s the map to the daemon. New broker endpoints
+  `GET/POST /analyzer/channel-map` apply it live and persist it to
+  `<state-dir>/analyzer-channel-map.json` (reloaded at boot, overlaid on the deploy
+  default) — the map sticks across reboots, no redeploy. Validated locally
+  end-to-end + a round-trip/persist Go unit test.
+
+Serial toggle caveat: sending `'0'`/`'1'` to the C6's `/dev/ttyACM0` from a raw
+container shell couldn't be _confirmed_ to echo back (the C6 USB-CDC RX read-back
+via bare `cat` doesn't capture like `hitl-monitor` does); the write itself goes
+over USB CDC so the stop should land — the operator sees the LED stop. If it turns
+out unreliable, a distinct-color-per-MAC scheme would let all DUTs be ID'd in one
+pass with no stop needed.
+
+`POST /analyzer/channel-map` also refreshes the `/status` capability snapshot
+(`Manager.SetAnalyzer(brk.Describe())`) so its channel list tracks the live map,
+not the boot-time default.
+
+### Test sweep 2026-08-17 (both DUTs, all three rigs)
+
+Rig IPs churn on re-registration (tailnet MagicDNS is stale in-container); current
+truth by `/status`: **hitl-rig-1** `100.99.64.43`, **hitl-rig-2** (analyzer, Pi 5)
+`100.107.245.18` DUTs `c6-003f08`/`c6-fa0324`, **hitl-rig-3** (Pi 3) `100.85.115.53`
+DUTs `c6-117d10`/`c6-fa3304`. You _can_ SSH the rigs from the container via tailscale
+SSH: `ssh -o StrictHostKeyChecking=accept-new root@<ip>` (clear the stale host key with
+`ssh-keygen -R <ip>` after churn). Run harness tests with `bazel run`/the built binary
+`PYTHONUNBUFFERED=1` **to a file, never `| tail`** — the long-lived reservation-holder
+subprocess keeps a pipe open so nothing flushes until the end.
+
+- **Non-LA e2e — all 4 DUTs PASS** (`--device` pins each): rig-3 `c6-117d10`,
+  `c6-fa3304`; rig-2 `c6-003f08`, `c6-fa0324`. rig-2's BLE connect is flaky
+  (host BT), but the provisioner's 3× retry recovers every time.
+- **LA capture on hitl-rig-2:** wrote the map via the new endpoint — `c6-003f08`→D6,
+  `c6-fa0324`→D7 (determined empirically: `c6-003f08` captured clean on the default
+  D6). `led_capture --device c6-003f08` **PASS**. `--device c6-fa0324` on D7 **the
+  tap is fine** — decode is pristine (exact colors, no noise) and a re-run **PASSED**
+  on the same wiring. The one FAIL was a **capture frame-alignment flake**, not the
+  D7 tap:
+  - The wire carries **256-pixel frames** (`led_config.h NUM_LEDS 256`) with only the
+    first 8 lit, and every pixel is scaled to **160/255** (`main.cpp:1593
+FastLED.setBrightness(160)`) — both are player_app defaults, decoded exactly.
+  - With a 256-LED strip captured across ~2 repaints, the FX2 software-trigger's
+    frame-start doesn't reliably land on physical pixel 0: run 1 put the 8-lit block
+    at decoded offset 61 (so `got[:8]` was black → FAIL); run 2 at offset 0 → PASS.
+  - FOLLOW-UP (test, not bench): `led_capture` assumes the lit pattern starts at index
+    0 — harden it to locate the lit region within the decoded frame (the pattern is
+    the sole non-black run), so it's alignment-independent. NOT a wiring issue.
+
+### Rig gotcha: `hitl-image-load` fails after a fresh Pi 3 reflash
+
+hitl-rig-3 (freshly reflashed) couldn't reserve — `POST /reserve` returned `null`
+because the container wouldn't start: `hitl-test:latest` wasn't loaded. The
+`hitl-image-load` oneshot had failed with `readlink
+/var/lib/containers/storage/overlay/l: invalid argument` — a corrupt/half-baked
+podman overlay store shipped in the SD image. Fix (per session, on the rig):
+`systemctl stop hitl-manager && podman system reset -f && systemctl start
+hitl-image-load` (slow on the Pi 3 — ~5 min for the 446 MB image) `&& systemctl
+start hitl-manager`. FOLLOW-UP: the image build shouldn't ship a populated
+graphroot, or the load unit should `podman system reset` on a prior failure.
+
+## 2026-08-17 — `--hostname` now sets the identity (sbc-deploy fix, pin bumped)
+
+`--hostname` was overloaded: image mode used it as the identity override, but
+deploy_live/ssh used it to pick the `nixosConfigurations` attr — so you had to set
+identity via `SBC_HOSTNAME_OVERRIDE` and never touch `--hostname` on deploy. Fixed
+upstream (sbc-deploy `caa484d`, branch `hostname-identity-decouple`): `--hostname`
+sets the machine identity (networking.hostName → tailscale name → AP SSID) in ALL
+modes; a new target-baked `--nixos-attr` picks the config variant. Pin bumped in
+MODULE.bazel + flake.nix/lock (nix/ was unchanged, so the flake narHash is kept).
+
+So the two knobs are now: **target** = what to build, **`--hostname`** = the box:
+
+```sh
+bazel run //pi/hitl:hitl_pi3.deploy_live -- --hostname hitl-rig-3 <host>       # plain Pi 3
+SBC_ANALYZER=1 bazel run //pi/hitl:hitl.deploy_live -- --hostname hitl-rig-2 <host>  # analyzer Pi 5
+```
+
+`SBC_HOSTNAME_OVERRIDE` still works (the flag just sets it), but prefer `--hostname`.
+Verified live: deployed hitl-rig-2 with `--hostname hitl-rig-2` (no env), all three
+names stuck.
+
+## 2026-08-17 — decouple analyzer + AP-dongle from the board (3 orthogonal axes)
+
+The logic analyzer moved from a Pi 3 to a Pi 5 (hitl-rig-2), and hitl-rig-3 became a
+plain Pi 3. The old config conflated everything with the board (`isAnalyzerRig =
+SBC_BOARD == raspberry-pi-3`, and the RTL8851BU AP dongle was gated on the analyzer).
+Split into **three independent axes**, each set per-deploy:
+
+- **Board** — bazel target: `//pi/hitl:hitl` (Pi 5) or `//pi/hitl:hitl_pi3` (Pi 3B/3B+).
+  (Renamed from `hitl_la`, since it's no longer analyzer-specific.)
+- **`SBC_ANALYZER=1`** — wire the FX2/sigrok capture (was `SBC_BOARD == pi-3`).
+- **`SBC_AP_DONGLE=1`** — host the AP on the RTL8851BU `ap0` instead of onboard
+  `wlan0`. Now OFF by default: a Pi 5 hosts its AP fine on onboard wlan0 (verified on
+  hitl-rig-1), so the analyzer Pi 5 needs no dongle. The dongle is on neither rig now.
+
+Deploys: `SBC_HOSTNAME_OVERRIDE=hitl-rig-2 SBC_ANALYZER=1 bazel run //pi/hitl:hitl.deploy_live -- <host>`
+(analyzer Pi 5); `SBC_HOSTNAME_OVERRIDE=hitl-rig-3 bazel run //pi/hitl:hitl_pi3.deploy_live -- <host>`
+(plain Pi 3). hitl-rig-2 has 2 DUTs (serials …FA:03:24, …3F:08) on the FX2 — set the
+per-DUT D6/D7 channel map (`analyzerChannelMap`) once the wiring is confirmed.
+
+Note (Pi 3B+ brcmfmac): boot logs a `memcpy: detected field-spanning write … fweh.c:466`
+WARNING in `brcmf_fweh_activate_events` — a known upstream fortify-source warning for
+BCM4345 on 6.x; noisy, non-fatal (WiFi still comes up). The `onboard-usb-dev 1-1:
+can't set config #1, error -110` is a separate Pi 3B+ onboard-USB-hub quirk.
+
+## 2026-08-16 — container LA capture path green end-to-end (3 bugs fixed)
+
+`//pi/hitl/harness:led_capture` now **PASSES on real hardware** through the full
+container path (reserve → flash → BLE-provision onto the RTL8851BU AP → drive →
+`hitl-capture` in the container → decode): `[PASS] 8 pixels match the driven pattern`.
+This path had never actually run before — the 2026-08-14 "verified" run used
+`--device-ws` (daemon-side capture), which skips the container. Three bugs surfaced:
+
+- **Container SSH sessions didn't inherit the per-reservation env.** The daemon injects
+  `HITL_CAPTURE_SERVER` (and `HITL_DUT`/`HITL_ADAPTER_SERIAL`) via `podman -e`, but that
+  reaches only sshd's process, not the `ssh host cmd` sessions the harness uses (static
+  `SetEnv`, `UsePAM no`). `hitl-capture` saw `$HITL_CAPTURE_SERVER unset`. Fix: the
+  entrypoint writes `~/.ssh/environment` + `PermitUserEnvironment yes` (container.nix).
+  Also had to add **gnugrep** to the entrypoint's runtimeInputs — it uses `printenv |
+grep` and only openssh+coreutils were on PATH, so the env file came out empty.
+- **Capture window too short for the DUT's duty cycle.** fx2lafw has no hardware trigger,
+  so sigrok software-triggers within the sample window. The C6 counting probe repaints
+  the WS2812 frame at only 10 Hz (`kStaticPollMs = 100ms` in player_app), so the old
+  ~8.3ms window missed the burst ~92% of the time → "trigger never fired". Bumped the
+  default to ~208ms (2× the cadence); analyzer.go / main.go `--analyzer-samples`.
+- **`podman load` didn't move the `hitl-test:latest` tag** to the freshly-built image
+  while a stale reservation container still referenced the old one — so container.nix
+  changes silently never reached the rig (had to `podman load` by hand). hitl-image-load
+  now clears stale hitl containers + untags before load, ordered Before=hitl-manager.
+
+Gotcha for the next agent: **nix `path:` flake caching** bit twice — editing a file in
+place bumps the file mtime but not the dir mtime, so `deploy_live` served a stale tree
+and rebuilt the SAME derivation hash. If a deploy doesn't pick up a `pi/hitl/**` edit,
+`touch pi/hitl/flake.nix` (or commit) to force a fresh copy.
+
+## 2026-08-16 — dedicated USB AP radio: RTL8851BU (rtw89), hardware-verified
+
+The analyzer rig now hosts its AP on a **dedicated USB WiFi dongle** (frees the Pi 3's
+onboard brcmfmac, which can't reliably run an AP) — `ap0` in `hitl-app.nix`, wlan0 left
+for STA. Hardware-verified on `hitl-rig-2`: driver binds, WiFi firmware loads, iface
+renames to `ap0`, and NetworkManager `hitl-ap` activates on it.
+
+- **The dongle is an RTL8851BU, not an RTL8188GU.** After usb_modeswitch it enumerates
+  `0bda:b851` "802.11ax" (WiFi 6 + BT combo, `rtl8851bu_fw.bin`), not `0bda:b711`. The
+  earlier RTL8188GU packaging (`rtl8188gu.nix` + 6.12 port patch, commit `d410e9b`) was
+  the wrong chip and never bound — **deleted**.
+- **Driver: `nix/rtl8851bu.nix` from `morrownr/rtw89`** (pinned `e2be1a0`) — the mainline
+  mac80211 rtw89 family backported to kernels 6.6+, so it supports hostapd AP cleanly.
+  The rig's in-tree rtw89 predates 8851BU-USB (that landed ~6.14; rig is 6.12.87), hence
+  out-of-tree. **Builds clean on 6.12 with zero source patches** (unlike the 8188gu
+  vendor driver). Module for the USB adapter is `rtw89_8851bu_git` (KBUILD_MODNAME); the
+  derivation also ships the WiFi firmware `rtw8851b_fw-1.bin` (nixpkgs' linux-firmware
+  predates it) → wired into `hardware.firmware`.
+- **rtw89 is built with `-DCONFIG_RTW89_LEDS_MC`,** so `rtw89_core_git` needs
+  `led-class-multicolor`'s symbols. Added it to `boot.kernelModules` **before** the
+  driver. (modprobe/udev auto-resolve it via modules.dep anyway, but the explicit line
+  documents the dep and avoids a boot race.)
+- **`.link` rename uses `matchConfig.Driver = "rtw89_8851bu_git"`** — verified: udev's
+  `ID_NET_DRIVER` reports the usb_driver's KBUILD_MODNAME, and `wlan1 → ap0` renamed.
+- **New kernel modules need a reboot (or manual insmod) to load** — `deploy_live` does a
+  `switch`, which does NOT put new `extraModulePackages` into `/run/booted-system`, so
+  `modprobe`/`systemd-modules-load` can't find them until the next boot. First deploy
+  looked like a failure for exactly this reason; the module + AP came up fine after
+  loading it by hand, and the reboot path is the production one.
+- **BT half is a bonus, not done**: `hci1` wants `rtl_bt/rtl8851bu_fw.bin`, which isn't
+  in nixpkgs linux-firmware yet — would give a dedicated BLE radio. Deferred.
+
+### TODO (later): enable the RTL8851BU BT half as a second BLE radio
+
+The dongle is a WiFi 6 + BT combo. Only the WiFi half (`ap0`) is wired up; the BT
+controller (`hci1`) enumerates but stays DOWN because its firmware is missing —
+`dmesg`: `Bluetooth: hci1: RTL: firmware file rtl_bt/rtl8851bu_fw not found`
+(also wants `rtl_bt/rtl8851bu_config.bin`). BlueZ has the driver; it's purely a
+firmware-provisioning gap. Today the rig does BLE on the Pi's integrated adapter
+(`hci0`), which works, so this is upside, not a blocker.
+
+To do it: fetch `rtl8851bu_fw.bin` + `rtl8851bu_config.bin` from upstream
+linux-firmware (`rtl_bt/`) — recent enough to include 8851BU — and add them under
+`lib/firmware/rtl_bt/` via `hardware.firmware` (extend `rtl8851bu.nix` to also
+install the BT blobs, or a small separate firmware derivation). Then `hci1` should
+init and give a second, dedicated BLE controller (e.g. run DUT BLE on one and keep
+the other free, or parallelize). Nice-to-have; no rush.
+
+Deploy, then reboot (new kernel modules only load on the next boot):
+
+```sh
+SBC_HOSTNAME_OVERRIDE=hitl-rig-la-1 bazel run //pi/hitl:hitl_la.deploy_live -- hitl-rig-2 --keep-builder
+```
+
+`nmcli device` should then show `ap0:wifi:connected:hitl-ap`, and `dmesg | grep
+rtw89` the firmware load + `ap0: renamed from wlan1`.
+
+## 2026-08-14 — LA rig confirmed on real hardware (`hitl-rig-2` / `hitl-rig-la-1`)
+
+The logic-analyzer rig is **hardware-verified end-to-end**: drove a known
+`set_counting_pattern` (2×red/2×green/4×blue) on the ESP32-C6 DUT and the FX2 on
+**D6** captured + decoded it via the daemon `/capture` — decoded pattern matches
+(GRB→RGB, correct positions/order). Pin bumped to sbc-deploy `18a5346` (auto-managed
+macOS builder for external consumers, PRs #4/#5).
+
+Key facts learned + fixes:
+
+- **Analyzer channel is D6, not D0.** PIN20/GPIO20 (the C6's WS2812 DIN) is wired to
+  the FX2's CH6. `hitl-app.nix` `analyzerChannelMap` now defaults to `D6`. (Was D0.)
+- **`hitl_la` `hostname` must be the flake's nixosConfigurations attr (`hitl-rig`),**
+  not a novel name — `deploy_live`'s `--hostname` is the attr selector, not the
+  machine name. Per-rig identity is `SBC_HOSTNAME_OVERRIDE` at deploy/flash time
+  (this rig runs as `hitl-rig-la-1`; deploy with
+  `SBC_HOSTNAME_OVERRIDE=hitl-rig-la-1 bazel run //pi/hitl:hitl_la.deploy_live -- hitl-rig-2`).
+- **Firmware scales the wire**: full-scale 255 reaches the WS2812 as ~160 (color-
+  correction/gamma+brightness). The correctness test asserts lit-channel STRUCTURE
+  (`led_pattern.diff_structure`), not exact bytes.
+- **Bugs fixed this pass**: broker returned a cryptic "No such file" when the tapped
+  line is idle (trigger never fires → sigrok writes no `.sr`) — now a clear "no data
+  captured" (`internal/analyzer`); and 4 in the harness (`CompletedProcess` vs str
+  ×2, stale `_drive_pattern` signature, missing rig-AP cred resolution). Added a
+  `--device-ws` harness mode (drive a reachable ws URL + capture via the daemon, no
+  reservation).
+
+**⚠️ Open rig-networking issues (BLOCK the normal container-based `led_capture` flow):**
+
+1. **The Pi 3 can't host the provisioning AP.** `wlan0: AP-DISABLED` /
+   `hostapd… interface wasn't started` — brcmfmac AP mode won't start, so NM falls
+   back to the STA (`BigVibes`). The single-radio AP design that works on the Pi 5
+   doesn't here. **Fix: a dedicated USB Wi-Fi dongle for the AP** (DESIGN already
+   anticipates this), or debug brcmfmac/hostapd AP mode.
+2. **Container can't reach a DUT on an external LAN.** With the AP down, provisioning
+   onto `BigVibes` gives the DUT a link-local `169.254.x` addr and the reservation
+   container routes via Ethernet, so it can't reach the DUT's WSS. The **rig host**
+   can (same `wlan0` subnet). The hardware-confirming run therefore drove the DUT via
+   an **ssh tunnel through the rig host** (`ssh -L …:169.254.x:81 root@hitl-rig-2`) +
+   `--device-ws`, capturing via the daemon. Until (1) is fixed, `led_capture`'s
+   reservation flow won't pass on this rig; use `--device-ws`.
+
+Also: the DUT needed a **physical power-cycle** twice — a latched USB-download strap
+(`boot:0x10 (USB_BOOT)`) and then flash flakiness (`esptool: chip stopped responding`).
+Watch for probes/ground loading GPIO8/9/15 or the reset/EN line.
+
+## 2026-08-12 — Logic-analyzer rig variant (Pi 3 + shared FX2/sigrok)
+
+New rig **variant** for LED-driver correctness/latency: a Raspberry Pi 3B
+(`//pi/hitl:hitl_la`, `board = raspberry-pi-3`, hostname `hitl-la-rig`) with an
+FX2/fx2lafw "Saleae clone" 24 MHz logic analyzer tapping the ESP32-C6 DUT's WS2812
+DIN. Closes the "needs a logic analyzer on a bench" gap flagged in
+`pi/led_driver/README.md` + `docs/{decisions,runbook}.md`. Built on the FUG-105 pin
+that added first-class Pi 3B (`@sbc_deploy//deploy/boards:raspberry-pi-3`).
+
+**The FX2 is a rig-level SHARED instrument** (per the ask: wire 1–2 channels to each
+DUT to save analyzer hardware), so the design differs from passing a DUT into a
+container:
+
+- `internal/analyzer` — the daemon owns the one FX2; a `Broker` serializes captures
+  (mutex) and maps DUT→channels/protocol (`--analyzer-channel-map` JSON). New
+  `POST /capture {device}` runs a triggered `sigrok-cli` capture scoped to that DUT
+  and decodes it. Because the FX2 never enters a container, **`internal/runner`
+  raw-USB isolation is untouched**.
+- `nix/container.nix` — `hitl-capture` thin client (POSTs `/capture` via
+  `$HITL_CAPTURE_SERVER = host.containers.internal:<apiPort>`, injected by the
+  runner's new `PodmanConfig.CaptureURL`). No sigrok/raw-USB in the container.
+- `nix/{sigrok,hitl-app}.nix` — sigrok closure + capture flags + FX2 udev rules are
+  board-gated (`builtins.getEnv "SBC_BOARD" == "raspberry-pi-3"`), so the **same
+  appModule** yields a lean Pi 5 image and a capture-enabled Pi 3 image — no flake
+  fork. `sbc_application(board=…)` swaps the board via `$SBC_BOARD` at eval.
+
+**Decoders:** `rgb_led_ws281x` (WS2812) and `rgb_led_spi`+`spi` (future APA102) are
+BUILT IN to libsigrokdecode ≥0.5.3 — no vendored decoder. The ws281x decoder emits
+`#rrggbb` in logical RGB (it un-GRBs the wire).
+
+**Verified (no hardware):** `internal/analyzer` synthesizes a WS2812 `.sr` and runs
+the real `sigrok-cli` decode over it — `go test` PASS (ran, not skipped, with
+sigrok-cli installed in-container via the overlay). Pure pattern/pixel contract in
+`//pi/hitl/tests:hitl_test` (`test_led_pattern.py`). `bazel build` of daemon/CLI/
+`led_capture` + all 6 Go test targets PASS; `hitl_la.image_sd` resolves with the
+Pi 3 board wired in (build eval, not a full aarch64 image — that OOMs here).
+
+**Not yet on hardware (follow-ups):** the reserve→flash→drive→`hitl-capture`→assert
+loop (`//pi/hitl/harness:led_capture`, manual+hitl) against a real Pi3+FX2+board;
+full E2E latency (needs stimulus+capture co-timed — `CaptureResult.TriggerSample`/
+`SampleRate` are the hooks); confirm the 3.3 V DIN tap / level-shift + common ground.
+sbc-deploy's `$SBC_BOARD` eval-gating of appModule config should be re-confirmed on
+the real image build (fail-safe: unset board ⇒ analyzer off).
+
 ## 2026-08-10 — FUG-94: the FUG-61 provisioning flake is a per-connect BLE failure, not coexistence
 
 The FUG-61 fix works; its recorded root cause (WiFi/BLE **coexistence** starves the

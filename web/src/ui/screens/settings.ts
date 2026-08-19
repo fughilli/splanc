@@ -11,7 +11,7 @@
  * reproduce today's look, so this screen is purely opt-in.
  */
 
-import { Card, Slider, Button, confirmDialog, icon, toast } from "../kit";
+import { Card, Slider, Button, IconButton, confirmDialog, icon, toast } from "../kit";
 import type { Router, Screen } from "../app/router";
 import {
   getAppearance,
@@ -29,8 +29,36 @@ import { installSettingsStyles } from "./settings.css";
 import { MapView } from "../mapview";
 import { generateFixture } from "../../effects/fixtures";
 import { prefs, DEFAULT_MANUAL_EXPOSURE_CEILING_MS } from "../../store/prefs";
+import { startTour } from "../guide/tour";
+import { resetTour } from "../guide/tourStore";
+import { openDebugServerConnect } from "./debugServerConnect";
+import { effectStore } from "../../store/effectStore";
+import {
+  debugServerUrl,
+  postJson,
+  debugServerConnected,
+  subscribeDebugServer,
+  pingDebugServer,
+} from "../../net/debugServer";
+import {
+  chatLogStore,
+  chatLogDumpOnBootEnabled,
+  setChatLogDumpOnBoot,
+} from "../../store/chatLogStore";
+import { remoteChatEnabled, setRemoteChatEnabled } from "../../net/remoteChat";
 
-type SettingsTab = "appearance" | "behavior";
+type SettingsTab = "appearance" | "behavior" | "debugging";
+
+// The Debugging tab is hidden until the user opts in (Behavior ▸ "Enable Debug
+// Settings"), so the developer affordances don't clutter the default surface.
+const DEBUG_SETTINGS_KEY = "ledmapper.debugSettings";
+function debugSettingsEnabled(): boolean {
+  return localStorage.getItem(DEBUG_SETTINGS_KEY) === "1";
+}
+function setDebugSettingsEnabled(on: boolean): void {
+  if (on) localStorage.setItem(DEBUG_SETTINGS_KEY, "1");
+  else localStorage.removeItem(DEBUG_SETTINGS_KEY);
+}
 
 const FONT_LABELS: Record<FontChoice, string> = {
   system: "System",
@@ -46,7 +74,7 @@ const MONO_LABELS: Record<MonoChoice, string> = {
   courier: "Courier",
 };
 
-export function SettingsScreen(_router: Router): Screen {
+export function SettingsScreen(router: Router): Screen {
   installSettingsStyles();
   const el = document.createElement("div");
   el.className = "screen screen--settings";
@@ -91,15 +119,22 @@ export function SettingsScreen(_router: Router): Screen {
   const preview = buildPreview();
 
   function rerender(): void {
-    const panels =
-      tab === "appearance"
-        ? [themeGroup(), typeGroup(), viewGroup(), startupGroup(), experimentalGroup(), appearanceResetRow()]
-        : [captureGroup(), captureResetRow()];
+    // The Debugging tab can vanish (toggle turned off) while it's selected — fall
+    // back to Behavior so we never render an empty/orphaned tab.
+    if (tab === "debugging" && !debugSettingsEnabled()) tab = "behavior";
+    let panels: HTMLElement[];
+    if (tab === "appearance") {
+      panels = [themeGroup(), typeGroup(), viewGroup(), startupGroup(), experimentalGroup(), appearanceResetRow()];
+    } else if (tab === "debugging") {
+      panels = [debugServerGroup(), chatLogsDebugGroup()];
+    } else {
+      panels = [captureGroup(), helpGroup(), developerGroup(), captureResetRow()];
+    }
     body.replaceChildren(tabBar(), ...panels);
   }
 
   // Switch tabs. The 3D preview only lives in the Appearance panel, so pause its
-  // render loop while it's off-screen (Capture) and resume when it's back.
+  // render loop while it's off-screen and resume when it's back.
   function setTab(next: SettingsTab): void {
     if (next === tab) return;
     tab = next;
@@ -121,6 +156,8 @@ export function SettingsScreen(_router: Router): Screen {
       return b;
     };
     bar.append(mk("appearance", "Appearance"), mk("behavior", "Behavior"));
+    // Debugging is a first-class tab, shown only once opted in.
+    if (debugSettingsEnabled()) bar.append(mk("debugging", "Debugging"));
     return bar;
   }
 
@@ -171,16 +208,17 @@ export function SettingsScreen(_router: Router): Screen {
     hint.className = "settings-row-hint settings-full";
     hint.textContent =
       "The manual exposure slider (Advanced ▸ Manual override, while mapping) " +
-      "ranges from the camera minimum up to this ceiling. Raise it to light the " +
-      "frame under artificial light; the automatic exposure stays capped for " +
-      "decode sharpness.";
+      "ranges from the camera minimum up to this ceiling, in equal stops. Raise " +
+      "it to light the frame under artificial light; the automatic exposure stays " +
+      "capped for decode sharpness. Lower is finer: the whole slider spans this " +
+      "range, so a tighter ceiling buys more precision where the LEDs sit.";
     g.append(
       fullRow(
         Slider({
           label: "Manual exposure ceiling",
-          min: 20,
-          max: 1000,
-          step: 10,
+          min: 5,
+          max: 250,
+          step: 5,
           value: prefs.getManualExposureCeilingMs(),
           format: (v) => `${Math.round(v)} ms`,
           // Not applied to anything on this screen, so commit on release.
@@ -188,6 +226,183 @@ export function SettingsScreen(_router: Router): Screen {
         }).el,
       ),
       hint,
+    );
+    return g;
+  }
+
+  // -- Help & tutorial (FUG-103) -------------------------------------------
+  // The interactive tutorial is dismissible and never nags after that, so this
+  // is where it's re-launchable, with a reset that lets the first-run hint
+  // appear again. (The full user-guide site is linked from About ▸ Documentation.)
+  function helpGroup(): HTMLElement {
+    const g = group("Help & tutorial");
+    g.append(
+      row(
+        "Interactive tutorial",
+        "Take a guided tour of the app's main features.",
+        Button({
+          label: "Start tutorial",
+          variant: "primary",
+          icon: "sparkles",
+          onClick: () => startTour(router),
+        }),
+      ),
+    );
+    // (The full user-guide site lives under About ▸ Documentation ▸ User guide;
+    // this group keeps just the interactive-tutorial controls.)
+    g.append(
+      row(
+        "Reset tutorial",
+        "Show the first-run tutorial hint again on next launch.",
+        Button({
+          label: "Reset",
+          variant: "quiet",
+          onClick: () => {
+            resetTour();
+            toast("Tutorial reset — the hint will show again");
+          },
+        }),
+      ),
+    );
+    return g;
+  }
+
+  // -- Developer (Behavior tab) — gates the Debugging tab ------------------
+  function developerGroup(): HTMLElement {
+    const g = group("Developer");
+    g.append(
+      row(
+        "Enable Debug Settings",
+        "Show the Debugging tab: connect a debug server, pull AI chat logs, and " +
+          "drive the FX-agent chat remotely.",
+        segmented<"on" | "off">(
+          [
+            ["off", "Off"],
+            ["on", "On"],
+          ],
+          debugSettingsEnabled() ? "on" : "off",
+          (v) => {
+            setDebugSettingsEnabled(v === "on");
+            // Rebuild so the Debugging tab appears/disappears immediately.
+            rerender();
+            toast(v === "on" ? "Debug settings enabled" : "Debug settings hidden");
+          },
+        ),
+      ),
+    );
+    return g;
+  }
+
+  // -- Debug server (its own tab, shown once Debug Settings are enabled) ----
+  // A camera-icon connect button (green when connected) over a status label,
+  // then the actions on the connection — greyed out until connected. The connect
+  // flow itself (viewfinder + Connect-by-URL) is openDebugServerConnect().
+  function debugServerGroup(): HTMLElement {
+    const g = group("Debug server");
+    const connected = debugServerConnected();
+
+    // Connect block: big camera button + status underneath.
+    const connectWrap = document.createElement("div");
+    connectWrap.className = "dbg-connect";
+    connectWrap.append(
+      IconButton("camera", {
+        title: connected ? "Debug server connected" : "Connect debug server",
+        className: "dbg-connect-btn" + (connected ? " on" : ""),
+        onClick: () => openDebugServerConnect(),
+      }),
+    );
+    const status = document.createElement("div");
+    status.className = "dbg-connect-status" + (connected ? " on" : "");
+    status.textContent = connected ? "Connected" : "Push to connect";
+    connectWrap.append(status);
+    g.append(connectWrap);
+
+    g.append(
+      row(
+        "Effects library",
+        "Send the whole effects library (source only) to pull off-device.",
+        Button({
+          label: "Send",
+          icon: "effect-to-device",
+          disabled: !connected,
+          onClick: () => void sendEffectsLibrary(),
+        }),
+      ),
+      row(
+        "AI chat logs",
+        "Send the FX-agent transcripts to the server to debug failed requests.",
+        Button({
+          label: "Send",
+          icon: "sparkles",
+          disabled: !connected,
+          onClick: () => void sendChatLogsToServer(),
+        }),
+      ),
+      row(
+        "Download AI chat logs",
+        "Save the transcripts as JSON (works offline, no server needed).",
+        Button({
+          label: "Download",
+          variant: "quiet",
+          icon: "download",
+          onClick: () => void downloadChatLogs(),
+        }),
+      ),
+    );
+    return g;
+  }
+
+  // -- Chat-log tools (Debugging tab) — the auto-feature toggles stay usable
+  // regardless of connection state.
+  function chatLogsDebugGroup(): HTMLElement {
+    const g = group("Chat logs");
+    g.append(
+      row(
+        "Dump chat logs on launch",
+        "Print the FX-agent chat logs to the device console at startup so " +
+          "`ios_deploy --log` can capture them. Leave off unless debugging.",
+        segmented<"on" | "off">(
+          [
+            ["off", "Off"],
+            ["on", "On"],
+          ],
+          chatLogDumpOnBootEnabled() ? "on" : "off",
+          (v) => {
+            setChatLogDumpOnBoot(v === "on");
+            toast(v === "on" ? "Will dump chat logs on next launch" : "Boot dump off");
+          },
+        ),
+      ),
+      row(
+        "Dump chat logs now",
+        "Print the current chat logs to the console immediately.",
+        Button({
+          label: "Dump to console",
+          variant: "quiet",
+          icon: "download",
+          onClick: () => {
+            void chatLogStore.dumpToConsole();
+            toast("Chat logs dumped to console");
+          },
+        }),
+      ),
+      row(
+        "Drive chat from debug server",
+        "Let the debug server feed prompts into the FX-agent chat (while a chat " +
+          "screen is open) to reproduce a session on-device without retyping. " +
+          "Enqueue with: curl -X POST <server>/chatcmd -d '{\"text\":\"…\"}'.",
+        segmented<"on" | "off">(
+          [
+            ["off", "Off"],
+            ["on", "On"],
+          ],
+          remoteChatEnabled() ? "on" : "off",
+          (v) => {
+            setRemoteChatEnabled(v === "on");
+            toast(v === "on" ? "Remote chat drive on" : "Remote chat drive off");
+          },
+        ),
+      ),
     );
     return g;
   }
@@ -410,12 +625,103 @@ export function SettingsScreen(_router: Router): Screen {
     return wrap;
   }
 
+  let unsubDebug: (() => void) | null = null;
+
   rerender();
   return {
     el,
-    onMount: () => preview.start(),
-    onUnmount: () => preview.stop(),
+    onMount: () => {
+      preview.start();
+      // Reflect live connection state on the Debugging tab, and refresh it.
+      unsubDebug = subscribeDebugServer(() => {
+        if (tab === "debugging") rerender();
+      });
+      void pingDebugServer();
+    },
+    onUnmount: () => {
+      preview.stop();
+      unsubDebug?.();
+    },
   };
+}
+
+// -- Debug-server actions (Debugging tab) ------------------------------------
+
+/** POST JSON to the connected debug server, toasting on failure. Returns the
+ * parsed response, or null. */
+async function postToServer(path: string, payload: unknown): Promise<Record<string, unknown> | null> {
+  const base = debugServerUrl();
+  if (!base) {
+    toast("Not connected to a debug server", { error: true });
+    return null;
+  }
+  try {
+    const res = await postJson(base, path, payload);
+    if (!res.ok) {
+      toast(`Server ${res.status}: ${await res.text()}`, { error: true });
+      return null;
+    }
+    return JSON.parse(await res.text()) as Record<string, unknown>;
+  } catch (e) {
+    toast(`Upload failed: ${e instanceof Error ? e.message : e}`, { error: true });
+    return null;
+  }
+}
+
+async function sendEffectsLibrary(): Promise<void> {
+  const effects = await effectStore.list();
+  const j = await postToServer("/effects", {
+    exportedAt: new Date().toISOString(),
+    count: effects.length,
+    userAgent: navigator.userAgent,
+    effects,
+  });
+  if (j) toast(`Sent ${(j.effects as number) ?? effects.length} effects`);
+}
+
+async function sendChatLogsToServer(): Promise<void> {
+  const sessions = await chatLogStore.list();
+  if (sessions.length === 0) {
+    toast("No AI chat logs yet — run the FX agent first", { error: true });
+    return;
+  }
+  const j = await postToServer("/chatlogs", {
+    exportedAt: new Date().toISOString(),
+    count: sessions.length,
+    userAgent: navigator.userAgent,
+    sessions,
+  });
+  if (j) toast(`Sent ${(j.sessions as number) ?? sessions.length} chat sessions`);
+}
+
+async function downloadChatLogs(): Promise<void> {
+  const sessions = await chatLogStore.list();
+  if (sessions.length === 0) {
+    toast("No AI chat logs yet — run the FX agent first", { error: true });
+    return;
+  }
+  const blob = new Blob(
+    [
+      JSON.stringify(
+        {
+          exportedAt: new Date().toISOString(),
+          count: sessions.length,
+          userAgent: navigator.userAgent,
+          sessions,
+        },
+        null,
+        2,
+      ),
+    ],
+    { type: "application/json" },
+  );
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `ledmapper-chatlogs-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  toast(`Downloaded ${sessions.length} chat session(s)`);
 }
 
 // -- 3D preview --------------------------------------------------------------
