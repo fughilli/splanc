@@ -1,0 +1,103 @@
+# Reusable CI-observability step (FUG-128).
+#
+# Turns a Bazel Build Event Protocol file (written by `bazel … --build_event_json_file=…`)
+# into a static HTML report + normalized NDJSON records, uploads the HTML as a
+# build artifact, links it from the job summary, and pushes the records to the
+# telemetry sinks (Grafana Cloud Loki and/or a ClickHouse-compatible columnar
+# DB). Safe to call from any Bazel-running job with `if: always()` — the parser
+# and both sinks no-op cleanly when there's no BEP file / no credentials.
+#
+# The sink credentials are read from the *job* environment (composite-action run
+# steps inherit it), so the calling job must expose them via `env:` from the
+# "CI Observability" GitHub Actions environment (see observability/ci/README.md):
+#   GRAFANA_CLOUD_LOKI_URL / _USER / _KEY     Loki push (reused from FUG-117)
+#   CLICKHOUSE_URL / _USER / _PASSWORD / …    columnar push (optional)
+name: BEP report
+description: Parse a Bazel BEP file into a CI-failure HTML report + telemetry.
+inputs:
+  bep-file:
+    description: Path to the bazel --build_event_json_file output.
+    required: true
+  job:
+    description: Logical job name (e.g. test, firmware, hitl-suite).
+    required: true
+  runner:
+    description: 'Runner/DUT label, e.g. github:linux, github:macos, hitl. Default: github:<os>.'
+    required: false
+    default: ''
+  artifact-name:
+    description: Name for the uploaded HTML artifact (must be unique per job).
+    required: false
+    default: ci-report
+outputs:
+  report-url:
+    description: URL of the uploaded HTML report artifact.
+    value: ${{ steps.upload.outputs.artifact-url }}
+runs:
+  using: composite
+  steps:
+    # Parse the BEP -> HTML + NDJSON, write the counts to the step summary, and
+    # push records to the configured sinks. Stdlib-only, so plain python3 (no
+    # pip). Guarded on the BEP file existing so a job that crashed before bazel
+    # wrote anything still succeeds here.
+    - name: Generate CI report
+      id: gen
+      shell: bash
+      env:
+        BEP_FILE: ${{ inputs.bep-file }}
+        BEP_JOB: ${{ inputs.job }}
+        BEP_RUNNER: ${{ inputs.runner }}
+      run: |
+        set -euo pipefail
+        outdir="${RUNNER_TEMP}/ci-report-${BEP_JOB}"
+        mkdir -p "$outdir"
+        echo "outdir=$outdir" >> "$GITHUB_OUTPUT"
+        if [ ! -s "$BEP_FILE" ]; then
+          echo "no BEP file at $BEP_FILE (bazel wrote nothing); skipping report." >&2
+          echo "have_report=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        runner_arg=()
+        [ -n "$BEP_RUNNER" ] && runner_arg=(--runner "$BEP_RUNNER")
+        run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+        python3 "${GITHUB_WORKSPACE}/tools/ci_observability/bep_report.py" \
+          --bep "$BEP_FILE" \
+          --out-html "$outdir/report.html" \
+          --out-ndjson "$outdir/records.ndjson" \
+          --out-summary "$GITHUB_STEP_SUMMARY" \
+          --job "$BEP_JOB" \
+          --pr "${PR_NUMBER:-}" \
+          --run-url "$run_url" \
+          --push \
+          "${runner_arg[@]}"
+        echo "have_report=true" >> "$GITHUB_OUTPUT"
+
+    - name: Upload CI report artifact
+      id: upload
+      if: steps.gen.outputs.have_report == 'true'
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ steps.gen.outputs.outdir }}/report.html
+        retention-days: 14
+        if-no-files-found: warn
+
+    # Link the uploaded HTML from the job summary AND as a clickable ::notice::
+    # at the end of the log — so the user can open the report straight from the
+    # run page (per the issue: "link the uploaded artifact at the end of the log").
+    - name: Link the report
+      if: steps.gen.outputs.have_report == 'true'
+      shell: bash
+      env:
+        REPORT_URL: ${{ steps.upload.outputs.artifact-url }}
+      run: |
+        set -euo pipefail
+        if [ -n "${REPORT_URL:-}" ]; then
+          {
+            echo ""
+            echo "📊 **[Download the full CI report](${REPORT_URL})** "\
+                 "(open \`report.html\` from the artifact zip)."
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=CI report::${REPORT_URL} (download the '${{ inputs.artifact-name }}' artifact and open report.html)"
+        fi

@@ -8,6 +8,23 @@ on:
   push:
     branches:
       - main
+# CI-observability sink credentials (FUG-128), inherited by every job in this
+# workflow. Set them as *repository* secrets (Settings → Secrets and variables →
+# Actions) so all jobs — with or without an environment — can read them; fork
+# PRs get empty values and the sinks/report no-op. The Loki keys are the same
+# ones FUG-117 uses; the CLICKHOUSE_* keys are the optional columnar backend.
+# See tools/ci_observability/README.md.
+env:
+  GRAFANA_CLOUD_LOKI_URL: ${{ secrets.GRAFANA_CLOUD_LOKI_URL }}
+  GRAFANA_CLOUD_LOKI_USER: ${{ secrets.GRAFANA_CLOUD_LOKI_USER }}
+  GRAFANA_CLOUD_LOKI_KEY: ${{ secrets.GRAFANA_CLOUD_LOKI_KEY }}
+  CLICKHOUSE_URL: ${{ secrets.CLICKHOUSE_URL }}
+  CLICKHOUSE_USER: ${{ secrets.CLICKHOUSE_USER }}
+  CLICKHOUSE_PASSWORD: ${{ secrets.CLICKHOUSE_PASSWORD }}
+  CLICKHOUSE_DATABASE: ${{ secrets.CLICKHOUSE_DATABASE }}
+  CLICKHOUSE_TABLE: ${{ secrets.CLICKHOUSE_TABLE }}
+  CLICKHOUSE_TOKEN: ${{ secrets.CLICKHOUSE_TOKEN }}
+  PR_NUMBER: ${{ github.event.pull_request.number }}
 jobs:
   test:
     # Don't run the (heavy) build on a PR-close event — that only tears down the
@@ -69,10 +86,28 @@ jobs:
           restore-keys: bazel-disk-test-${{ runner.os }}-
 
       - name: Test
+        id: test
         # `--test_output=errors` (not `streamed`): streamed serializes test
         # execution and suppresses caching of test actions; errors still surfaces
-        # failing-test logs.
-        run: bazel test //... --disk_cache="$HOME/.cache/bazel-disk" --test_output=errors
+        # failing-test logs. --build_event_json_file records the BEP the
+        # CI-observability step parses below (FUG-128).
+        run: |
+          bazel test //... \
+            --disk_cache="$HOME/.cache/bazel-disk" \
+            --test_output=errors \
+            --build_event_json_file="$RUNNER_TEMP/bep-test.json"
+
+      # Parse the BEP into a CI-failure HTML report, upload it, link it from the
+      # job summary, and push per-test-case records to the telemetry sinks.
+      # always() so a failing test run is still reported.
+      - name: CI report
+        if: always()
+        uses: ./.github/actions/bep-report
+        with:
+          bep-file: ${{ runner.temp }}/bep-test.json
+          job: test
+          runner: github:linux
+          artifact-name: ci-report-test
 
   # The ESP32-C6 firmware image is tags=manual (kept out of the `//...` wildcard
   # so the `test` job above — and dev on small containers — stays light: it
@@ -133,10 +168,22 @@ jobs:
       # (FUG-60); build-site downloads this artifact and stages it under
       # /firmware/, so the heavy ESP toolchain lives only in this job.
       - name: Build firmware image + flash bundle (esp32c6)
+        id: fw
         run: |
           bazel build -c opt --disk_cache="$HOME/.cache/bazel-disk" \
+            --build_event_json_file="$RUNNER_TEMP/bep-firmware.json" \
             //firmware/player_app:esp32c6 \
             //firmware/player_app:esp32c6_flashbundle
+
+      # Report build-event outcomes (captures firmware compile/link failures).
+      - name: CI report
+        if: always()
+        uses: ./.github/actions/bep-report
+        with:
+          bep-file: ${{ runner.temp }}/bep-firmware.json
+          job: firmware
+          runner: github:linux
+          artifact-name: ci-report-firmware
 
       - name: Upload flash bundle artifact
         uses: actions/upload-artifact@v4
@@ -269,10 +316,25 @@ jobs:
         # LEDMAPPER_FLASHBUNDLE points stage_site.lib.sh at the downloaded flash
         # bundle so it's staged under /firmware/ (FUG-60); LEDMAPPER_DOCS_SITE
         # points it at the docs built above so they're staged under /docs/.
+        id: stage
         env:
           LEDMAPPER_FLASHBUNDLE: ${{ github.workspace }}/_flashbundle/esp32c6_flashbundle.tar
           LEDMAPPER_DOCS_SITE: ${{ github.workspace }}/docs/site/html
-        run: bazel run //web:stage_site --disk_cache="$HOME/.cache/bazel-disk" -- "$GITHUB_WORKSPACE/_site"
+        run: |
+          bazel run //web:stage_site \
+            --disk_cache="$HOME/.cache/bazel-disk" \
+            --build_event_json_file="$RUNNER_TEMP/bep-site.json" \
+            -- "$GITHUB_WORKSPACE/_site"
+
+      # Report build-event outcomes (captures wasm/site build failures).
+      - name: CI report
+        if: always()
+        uses: ./.github/actions/bep-report
+        with:
+          bep-file: ${{ runner.temp }}/bep-site.json
+          job: build-site
+          runner: github:linux
+          artifact-name: ci-report-build-site
 
       - name: Upload site artifact
         uses: actions/upload-artifact@v4

@@ -74,6 +74,15 @@ jobs:
       GRAFANA_CLOUD_LOKI_URL: ${{ secrets.GRAFANA_CLOUD_LOKI_URL }}
       GRAFANA_CLOUD_LOKI_USER: ${{ secrets.GRAFANA_CLOUD_LOKI_USER }}
       GRAFANA_CLOUD_LOKI_KEY: ${{ secrets.GRAFANA_CLOUD_LOKI_KEY }}
+      # Optional columnar (ClickHouse-compatible) sink for the per-test-case CI
+      # observability records (FUG-128); no-ops when unset. Repository secrets.
+      CLICKHOUSE_URL: ${{ secrets.CLICKHOUSE_URL }}
+      CLICKHOUSE_USER: ${{ secrets.CLICKHOUSE_USER }}
+      CLICKHOUSE_PASSWORD: ${{ secrets.CLICKHOUSE_PASSWORD }}
+      CLICKHOUSE_DATABASE: ${{ secrets.CLICKHOUSE_DATABASE }}
+      CLICKHOUSE_TABLE: ${{ secrets.CLICKHOUSE_TABLE }}
+      CLICKHOUSE_TOKEN: ${{ secrets.CLICKHOUSE_TOKEN }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
     steps:
       - name: Setup repository
         uses: actions/checkout@v4
@@ -172,6 +181,7 @@ jobs:
             --loading_phase_threads=1 \
             --disk_cache="$HOME/.cache/bazel-disk" \
             --test_output=all \
+            --build_event_json_file="$RUNNER_TEMP/bep-hitl.json" \
             --local_test_jobs="$ntargets" \
             --test_env=HITL_SERVERS \
             --test_env=HITL_WIFI_SSID \
@@ -191,3 +201,16 @@ jobs:
             --job hitl-suite \
             --pr "${{ github.event.pull_request.number }}" \
             --commit "${{ github.sha }}"
+
+      # Per-test-case CI-failure report for the on-hardware suite: parse the BEP,
+      # upload the HTML report, link it, and push records to the sinks (FUG-128).
+      # runner=hitl labels the source; the "by runner/DUT" view separates this
+      # from github:linux/github:macos.
+      - name: CI report
+        if: always()
+        uses: ./.github/actions/bep-report
+        with:
+          bep-file: ${{ runner.temp }}/bep-hitl.json
+          job: hitl-suite
+          runner: hitl
+          artifact-name: ci-report-hitl

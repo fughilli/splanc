@@ -28,6 +28,21 @@ concurrency:
   group: macos-${{ github.ref }}
   cancel-in-progress: true
 
+# CI-observability sink credentials (FUG-128), inherited by every job. Set as
+# repository secrets; fork PRs get empty values and the sinks/report no-op. See
+# tools/ci_observability/README.md.
+env:
+  GRAFANA_CLOUD_LOKI_URL: ${{ secrets.GRAFANA_CLOUD_LOKI_URL }}
+  GRAFANA_CLOUD_LOKI_USER: ${{ secrets.GRAFANA_CLOUD_LOKI_USER }}
+  GRAFANA_CLOUD_LOKI_KEY: ${{ secrets.GRAFANA_CLOUD_LOKI_KEY }}
+  CLICKHOUSE_URL: ${{ secrets.CLICKHOUSE_URL }}
+  CLICKHOUSE_USER: ${{ secrets.CLICKHOUSE_USER }}
+  CLICKHOUSE_PASSWORD: ${{ secrets.CLICKHOUSE_PASSWORD }}
+  CLICKHOUSE_DATABASE: ${{ secrets.CLICKHOUSE_DATABASE }}
+  CLICKHOUSE_TABLE: ${{ secrets.CLICKHOUSE_TABLE }}
+  CLICKHOUSE_TOKEN: ${{ secrets.CLICKHOUSE_TOKEN }}
+  PR_NUMBER: ${{ github.event.pull_request.number }}
+
 jobs:
   test-macos:
     runs-on: macos-latest
@@ -84,7 +99,19 @@ jobs:
             --experimental_worker_for_repo_fetching=off \
             --loading_phase_threads=1 \
             --disk_cache="$HOME/.cache/bazel-disk" \
-            --test_output=errors
+            --test_output=errors \
+            --build_event_json_file="$RUNNER_TEMP/bep-macos.json"
+
+      # Parse the BEP -> HTML report + telemetry. runner=github:macos so the "by
+      # runner/DUT" view separates macOS failures from Linux (FUG-128).
+      - name: CI report
+        if: always()
+        uses: ./.github/actions/bep-report
+        with:
+          bep-file: ${{ runner.temp }}/bep-macos.json
+          job: test-macos
+          runner: github:macos
+          artifact-name: ci-report-macos
 
   ios-build:
     runs-on: macos-latest
