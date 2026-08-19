@@ -55,7 +55,12 @@ function resolveBuildInfo(): BuildInfo {
   try {
     const commit = execSync("git rev-parse HEAD", { encoding: "utf8" }).trim();
     const short = execSync("git rev-parse --short=8 HEAD", { encoding: "utf8" }).trim();
-    const dirty = execSync("git status --porcelain", { encoding: "utf8" }).trim().length > 0;
+    // --untracked-files=no: only tracked-source edits count as dirty, so a
+    // build that drops artifacts in the tree doesn't read as dirty (matches
+    // tools/build_info/status.sh).
+    const dirty =
+      execSync("git status --porcelain --untracked-files=no", { encoding: "utf8" }).trim().length >
+      0;
     return { gitCommit: commit, gitCommitShort: short, gitDirty: dirty };
   } catch {
     return { gitCommit: "", gitCommitShort: "", gitDirty: false };

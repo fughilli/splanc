@@ -14,8 +14,12 @@ set -euo pipefail
 
 commit=$(git rev-parse HEAD 2>/dev/null || echo unknown)
 short=$(git rev-parse --short=8 HEAD 2>/dev/null || echo unknown)
-# --porcelain is empty exactly when the working tree + index match HEAD.
-if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+# "Dirty" means the committed *sources* were modified — a change to a TRACKED
+# file. --untracked-files=no ignores untracked files on purpose: a build /
+# CI step routinely drops artifacts in the workspace (e.g. the site build
+# stages _site/ and downloads _flashbundle/ before this runs), and those must
+# NOT make an otherwise-pristine checkout report dirty (FUG-126 review).
+if [ -n "$(git status --porcelain --untracked-files=no 2>/dev/null)" ]; then
   dirty=1
   dirty_json=true
 else
