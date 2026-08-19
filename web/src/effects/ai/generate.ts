@@ -472,6 +472,20 @@ function dataUrlToImageBlock(dataUrl: string): {
   return { type: "image", source: { type: "base64", media_type, data } };
 }
 
+/** A message's content with a prompt-cache breakpoint on its LAST block (a bare
+ * string becomes one text block). NON-MUTATING — the stored history that chatTurn
+ * re-sends each round must never carry a moved/stale breakpoint. */
+export function withCacheControl(content: string | ContentBlock[]): unknown {
+  const cc = { type: "ephemeral" as const };
+  if (typeof content === "string") {
+    return [{ type: "text", text: content, cache_control: cc }];
+  }
+  if (content.length === 0) return content;
+  const copy = content.map((b) => ({ ...b })) as Record<string, unknown>[];
+  copy[copy.length - 1] = { ...copy[copy.length - 1], cache_control: cc };
+  return copy;
+}
+
 /** Live-progress callbacks fired while the response streams in. */
 export interface StreamHooks {
   /** Assistant text deltas (the visible reply, as it's written). */
@@ -494,15 +508,33 @@ async function messagesRequest(
 }> {
   const key = getApiKey();
   if (!key) throw new Error("no Anthropic API key set (add one in AI settings)");
-  // Frozen cacheable prefix first (caching engages across turns), then an
-  // UNcached per-device builtin-cost block so it can vary by board without
-  // busting the cache, and finally an optional caller persona block (e.g. the
-  // hands-free "acid mode" framing) — also uncached since it varies by surface.
-  const system: unknown[] = [
+  // Prompt caching (order is tools → system → messages; a cache_control marker
+  // caches the whole prefix up to it). Breakpoints:
+  //   1. CHAT_SYSTEM — the frozen spec, shared across boards/surfaces/turns.
+  //   2. the LAST system block — so tools + the WHOLE system (incl per-device
+  //      costs + persona) are a cache hit within a conversation (each is stable
+  //      for the duration; a different board just gets its own entry).
+  type SysBlock = { type: "text"; text: string; cache_control?: { type: "ephemeral" } };
+  const system: SysBlock[] = [
     { type: "text", text: CHAT_SYSTEM, cache_control: { type: "ephemeral" } },
   ];
   if (deviceCosts) system.push({ type: "text", text: deviceCosts });
   if (systemExtra) system.push({ type: "text", text: systemExtra });
+  system[system.length - 1]!.cache_control = { type: "ephemeral" };
+
+  //   3. the LAST message's last block — caches the growing conversation prefix,
+  //      so every tool-loop round (and the next turn's shared prefix) RE-READS
+  //      the history — the ~9KB editor context, prior tool_results, any captured
+  //      preview images — at the cache rate instead of re-billing it each round.
+  const reqMessages: { role: string; content: unknown }[] = messages.map((m) => ({
+    role: m.role,
+    content: m.content,
+  }));
+  if (reqMessages.length > 0) {
+    reqMessages[reqMessages.length - 1]!.content = withCacheControl(
+      messages[messages.length - 1]!.content,
+    );
+  }
   const resp = await fetch(API_URL, {
     method: "POST",
     headers: {
@@ -526,7 +558,7 @@ async function messagesRequest(
       stream: true,
       system,
       tools,
-      messages: messages.map((m) => ({ role: m.role, content: m.content })),
+      messages: reqMessages,
     }),
   });
   if (!resp.ok || resp.body === null) {

@@ -11,7 +11,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { consumeChatStream } from "../src/effects/ai/generate";
+import { consumeChatStream, withCacheControl } from "../src/effects/ai/generate";
 
 // A realistic Anthropic streaming sequence: thinking → text → set_script tool_use
 // (summary before source) → stop_reason tool_use. `event:` lines are ignored by
@@ -98,4 +98,37 @@ test("chunk size is irrelevant (whole-stream in one read)", async () => {
   const { content, stop_reason } = await consumeChatStream(streamOf(SSE, SSE.length));
   assert.equal(stop_reason, "tool_use");
   assert.equal(content.length, 3);
+});
+
+// ---------------------------------------------------------------------------
+// withCacheControl: adds a prompt-cache breakpoint on the LAST content block
+// without mutating the stored history (which is re-sent every tool-loop round).
+// ---------------------------------------------------------------------------
+
+test("withCacheControl: bare string becomes one cached text block", () => {
+  const out = withCacheControl("hello ctx") as Array<Record<string, unknown>>;
+  assert.deepEqual(out, [
+    { type: "text", text: "hello ctx", cache_control: { type: "ephemeral" } },
+  ]);
+});
+
+test("withCacheControl: marks only the last block, does not mutate input", () => {
+  const original = [
+    { type: "text", text: "first" },
+    { type: "tool_result", tool_use_id: "t1", content: [{ type: "text", text: "r" }] },
+  ] as never;
+  const out = withCacheControl(original) as Array<Record<string, unknown>>;
+
+  // last block gets the breakpoint; earlier blocks are untouched
+  assert.equal(out[0]!.cache_control, undefined);
+  assert.deepEqual(out[1]!.cache_control, { type: "ephemeral" });
+  assert.equal(out[1]!.tool_use_id, "t1");
+
+  // the ORIGINAL array/blocks are unchanged (no breakpoint leaked into history)
+  assert.equal((original as Array<Record<string, unknown>>)[1]!.cache_control, undefined);
+});
+
+test("withCacheControl: empty array is returned unchanged", () => {
+  const empty: never[] = [];
+  assert.equal(withCacheControl(empty as never), empty);
 });
