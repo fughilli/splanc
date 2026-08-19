@@ -1,10 +1,12 @@
-# Dashboards-as-code (FUG-117 bonus).
+# Dashboards-as-code (FUG-117 + FUG-128).
 #
-# The HITL Grafana dashboards live in the repo as JSON models under
-# pi/hitl/observability/dashboards/. This workflow pushes them to Grafana on any
-# change to that directory on main (and on demand), so the dashboards are
-# reviewed and versioned like code instead of hand-edited in the UI. Editing a
-# panel? Change the JSON, open a PR; on merge this syncs it.
+# The Grafana dashboards live in the repo as JSON models under
+# pi/hitl/observability/dashboards/ (HITL rig health) and
+# observability/ci/dashboards/ (CI failure dashboarding, FUG-128). This workflow
+# pushes them to Grafana on any change to those directories on main (and on
+# demand), so the dashboards are reviewed and versioned like code instead of
+# hand-edited in the UI. Editing a panel? Change the JSON, open a PR; on merge
+# this syncs it.
 #
 # It targets any Grafana with an HTTP API — Grafana Cloud or self-hosted. Config
 # lives in a "Grafana" GitHub Actions environment (Settings → Environments):
@@ -17,6 +19,7 @@ on:
     branches: [main]
     paths:
       - 'pi/hitl/observability/dashboards/**'
+      - 'observability/ci/dashboards/**'
       - '.github/workflows/grafana-dashboards.yaml'
   workflow_dispatch:
 jobs:
@@ -37,7 +40,7 @@ jobs:
             exit 0
           fi
           shopt -s nullglob
-          for f in pi/hitl/observability/dashboards/*.json; do
+          for f in pi/hitl/observability/dashboards/*.json observability/ci/dashboards/*.json; do
             echo "==> syncing $f"
             # Wrap the dashboard model into the /api/dashboards/db payload:
             #   - id:null so Grafana keys on the model's uid (create-or-update),
