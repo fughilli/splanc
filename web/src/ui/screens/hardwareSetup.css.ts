@@ -30,7 +30,13 @@ const CSS = `
   justify-content: space-between;
   gap: var(--sp-3);
   padding: var(--sp-2) 0;
+  /* Let a wide control drop below the label instead of crushing the hint into
+   * one-word-per-line. */
+  flex-wrap: wrap;
 }
+/* The label column grows to fill the row; min-width:0 lets the hint wrap as
+ * normal body text rather than forcing the control off-screen. */
+.hw-row-label { flex: 1 1 12rem; min-width: 0; }
 .hw-row-name { font-weight: 600; }
 .hw-row-hint { color: var(--text-dim); font-size: var(--f-caption); }
 .hw-row-ctl { flex: 0 0 auto; display: flex; align-items: center; gap: var(--sp-2); }
@@ -43,7 +49,16 @@ const CSS = `
   padding: var(--sp-2) var(--sp-3);
   font: inherit;
   min-width: 8.5rem;
+  /* Cap the CLOSED control so a long option label can't stretch the row; the
+   * native popup still renders full-width option text. */
+  max-width: 13rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
+.hw-select--narrow { min-width: 3.5rem; }
+.hw-count { display: inline-flex; align-items: center; gap: var(--sp-2); }
+.hw-count-label { color: var(--text-dim); font-size: var(--f-caption); white-space: nowrap; }
 .hw-order-current {
   display: inline-flex;
   align-items: center;

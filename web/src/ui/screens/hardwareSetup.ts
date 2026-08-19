@@ -5,18 +5,22 @@
  *
  * Color order is the tricky one — you can't read a strip's wiring, you have to
  * SEE it. The "check color order" flow forces the channel to identity RGB (so
- * the raw wire bytes reach the strip) and paints three bands: intent red, green,
- * blue. Whatever the strip physically shows is a permutation of those; the user
- * taps the swatch (of the six) whose dots match what they see, and that
- * permutation IS the wire order. Committing it makes the same on-device pattern
- * snap to a correct R/G/B — instant confirmation.
+ * the raw wire bytes reach the strip) and lights three short runs at the START
+ * of the strip: N pixels intent-red, then N green, then N blue (N is picked next
+ * to the button). Anchoring at index 0 keeps them visible no matter how many
+ * LEDs are physically wired — the old "even thirds of the configured length"
+ * lit the whole strip red when the strip was shorter than a third of that count.
+ * Whatever the strip physically shows is a permutation of R/G/B; the user taps
+ * the swatch (of the six) whose dots match what they see, and that permutation
+ * IS the wire order. Committing it makes the same on-device pattern snap to a
+ * correct R/G/B — instant confirmation.
  *
  * The config round-trips through set_hardware_config; the device persists it to
  * NVS and replies hardware_config_state, and get_hardware_config hydrates this
  * page on open.
  */
 
-import { Button, Card, toast } from "../kit";
+import { Button, Card, confirmDialog, toast } from "../kit";
 import type { Router, Screen } from "../app/router";
 import { appState } from "../app/state";
 import { deviceStore } from "../../store/deviceStore";
@@ -24,19 +28,74 @@ import { COLOR_ORDERS, type ColorOrder, type HardwareChannel } from "../../net/p
 import type { ColorBlock } from "@ledmapper/protocol";
 import { installHardwareSetupStyles } from "./hardwareSetup.css";
 
-// Curated output-capable C6 GPIOs for LED data (see firmware led_config.h): not
-// strapping (4/5/8/9/15), not USB-JTAG (12/13), not SPI-flash. The device also
-// range-checks; the currently-configured pin is always added so hydration has a
-// matching option even if it's off this list.
-const SAFE_GPIOS = [0, 1, 2, 3, 6, 7, 10, 11, 14, 20, 21, 22, 23];
+// Output-capable C6 GPIOs for LED data, grouped by how safe they are to use (see
+// firmware led_config.h + the ESP32-C6 SuperMini pinout). "Recommended" are clean
+// general-purpose pins; the rest are OVERLOADED — usable for WS281x data (the GPIO
+// matrix routes RMT anywhere) but with a caveat, so picking one pops a confirm.
+// The device also range-checks; a currently-configured pin that's off this list is
+// still shown (see gpioGroups) so hydration always has a matching option.
+interface GpioGroup {
+  label: string;
+  gpios: number[];
+  /** Non-null → picking any pin in this group needs a confirm; text explains why. */
+  caution?: (gpio: number) => string;
+}
+
+const GPIO_GROUPS: GpioGroup[] = [
+  { label: "Recommended", gpios: [0, 1, 2, 3, 6, 7, 10, 11, 14, 20, 21, 22, 23] },
+  {
+    label: "Strapping pins — use with care",
+    gpios: [4, 5, 8, 9, 15],
+    caution: (g) =>
+      `GPIO ${g} is an ESP32-C6 boot strapping pin. Whatever is wired to it is sampled ` +
+      `at reset and can change how the board boots (download mode, flash voltage). It ` +
+      `works for LED data once booted, but wire it with care so it isn't held at the ` +
+      `wrong level during power-up.`,
+  },
+  {
+    label: "USB-Serial-JTAG — use with care",
+    gpios: [12, 13],
+    caution: (g) =>
+      `GPIO ${g} is the C6's built-in USB-Serial-JTAG line. Driving it for LED data ` +
+      `gives up USB flashing and serial monitoring over that port until the pin is freed.`,
+  },
+  {
+    label: "Internal SPI flash — avoid",
+    gpios: [18, 19],
+    caution: (g) =>
+      `GPIO ${g} is wired to the C6 SuperMini's on-board SPI flash. Driving it will very ` +
+      `likely hang or corrupt the board. Only pick it if your particular board does NOT ` +
+      `route flash to this pin.`,
+  },
+];
+
+/** The caution text for `gpio`, or undefined if it's a recommended/off-catalog pin. */
+function gpioCaution(gpio: number): string | undefined {
+  for (const grp of GPIO_GROUPS) {
+    if (grp.gpios.includes(gpio)) return grp.caution?.(gpio);
+  }
+  return undefined;
+}
+
+/** Groups for the dropdown; a device pin that's off the catalog gets its own
+ * "Current" group up top so hydration always has a matching (selectable) option. */
+function gpioGroups(current: number): Array<{ label: string; gpios: number[] }> {
+  const known = GPIO_GROUPS.some((g) => g.gpios.includes(current));
+  const groups = GPIO_GROUPS.map((g) => ({ label: g.label, gpios: g.gpios }));
+  if (!known) groups.unshift({ label: "Current", gpios: [current] });
+  return groups;
+}
 
 // Per-logical-channel dot colors for the color-order swatches (matches the
 // color-correction screen's channel palette).
 const COLOR_HEX: Record<string, string> = { R: "#ff5d5d", G: "#57d16a", B: "#5d8bff" };
 
-const LED_TYPES: Array<{ value: string; label: string }> = [
-  { value: "ws281x", label: "WS281x (WS2811/2812/2812B/SK6812)" },
-];
+const LED_TYPES: Array<{ value: string; label: string }> = [{ value: "ws281x", label: "WS281x" }];
+
+// Pixel-run lengths offered next to "Check color order": N pixels of each
+// primary. Anchored at the strip start, so N up to this max stays visible on a
+// short strip (needs 3·N LEDs to show all three runs).
+const TEST_COUNTS = [1, 2, 3, 5, 10];
 
 export function HardwareSetupScreen(_router: Router): Screen {
   installHardwareSetupStyles();
@@ -50,6 +109,8 @@ export function HardwareSetupScreen(_router: Router): Screen {
   let channels: HardwareChannel[] = [];
   // Which channel's color-order test is currently painting the strip (null = none).
   let activeTest: number | null = null;
+  // How many pixels of each primary the color-order test lights (see TEST_COUNTS).
+  let testCount = 3;
 
   const el = document.createElement("div");
   el.className = "screen screen--hw";
@@ -78,14 +139,16 @@ export function HardwareSetupScreen(_router: Router): Screen {
     return c;
   }
 
-  /** Three equal R/G/B bands across the strip, for the color-order check. */
+  /** Three short R/G/B runs at the START of the strip (N = testCount pixels
+   * each), for the color-order check. Anchored at index 0 — NOT scaled to the
+   * configured length — so they stay visible on a strip shorter than the
+   * configured max (the old thirds-of-ledCount lit the whole strip red then). */
   function testBlocks(): ColorBlock[] {
-    const ledCount = appState.client?.welcome?.codeParams.ledCount ?? 30;
-    const seg = Math.max(1, Math.floor(ledCount / 3));
+    const n = Math.max(1, testCount);
     return [
-      { start: 0, count: seg, rgb: [1, 0, 0] },
-      { start: seg, count: seg, rgb: [0, 1, 0] },
-      { start: 2 * seg, count: seg, rgb: [0, 0, 1] },
+      { start: 0, count: n, rgb: [1, 0, 0] },
+      { start: n, count: n, rgb: [0, 1, 0] },
+      { start: 2 * n, count: n, rgb: [0, 0, 1] },
     ];
   }
 
@@ -136,7 +199,7 @@ export function HardwareSetupScreen(_router: Router): Screen {
     try {
       const st = await c.setHardwareConfig({ channel: ch, colorOrder: order, commit: true });
       channels = st.channels.map((x) => ({ ...x }));
-      // Repaint: the same on-device bands now reorder through the chosen wire
+      // Repaint: the same on-device runs now reorder through the chosen wire
       // order, so the strip should snap to a correct red / green / blue.
       await c.setCountingPattern(testBlocks(), ch);
       render();
@@ -182,14 +245,10 @@ export function HardwareSetupScreen(_router: Router): Screen {
     const g = group(`Channel ${cfg.channel}`);
 
     g.append(
-      row(
-        "Data GPIO",
-        "Which pin drives this channel's WS281x data line.",
-        select(gpioOptions(cfg.gpio), String(cfg.gpio), (v) => void setGpio(cfg.channel, Number(v))),
-      ),
+      row("Data GPIO", "Which pin drives this channel's WS281x data line.", gpioSelect(cfg)),
       row(
         "LED type",
-        "The LED chip family. Only WS281x is supported today.",
+        "The LED chip family. Only WS281x (WS2811/2812/2812B/SK6812) is supported today.",
         select(
           LED_TYPES.map((t) => ({ value: t.value, label: t.label })),
           "ws281x",
@@ -203,6 +262,7 @@ export function HardwareSetupScreen(_router: Router): Screen {
     const orderRow = document.createElement("div");
     orderRow.className = "hw-row";
     const label = document.createElement("div");
+    label.className = "hw-row-label";
     const name = document.createElement("div");
     name.className = "hw-row-name";
     name.textContent = "Color order";
@@ -223,12 +283,15 @@ export function HardwareSetupScreen(_router: Router): Screen {
       const testHint = document.createElement("div");
       testHint.className = "hw-hint";
       testHint.textContent =
-        "The strip now shows three color bands. Tap the swatch whose dots match " +
-        "what you physically see, left to right — that's your wire order.";
+        `The strip now lights ${testCount} red, then ${testCount} green, then ` +
+        `${testCount} blue pixel${testCount === 1 ? "" : "s"} at its start. Tap the ` +
+        "swatch whose dots match what you physically see, left to right — that's " +
+        "your wire order.";
       g.append(testHint, permGrid(cfg.channel, cfg.colorOrder));
       const actions = document.createElement("div");
       actions.className = "hw-test-actions";
       actions.append(
+        countControl(cfg.channel),
         Button({ label: "Done", variant: "primary", onClick: () => void stopTest(cfg.channel) }),
       );
       g.append(actions);
@@ -236,6 +299,7 @@ export function HardwareSetupScreen(_router: Router): Screen {
       const actions = document.createElement("div");
       actions.className = "hw-test-actions";
       actions.append(
+        countControl(cfg.channel),
         Button({
           label: "Check color order",
           onClick: () => void startTest(cfg.channel),
@@ -244,6 +308,29 @@ export function HardwareSetupScreen(_router: Router): Screen {
       g.append(actions);
     }
     return g;
+  }
+
+  /** "N per color" picker sitting next to the check button. Retunes the live
+   * strip immediately if this channel's test is already running. */
+  function countControl(ch: number): HTMLElement {
+    const wrap = document.createElement("label");
+    wrap.className = "hw-count";
+    const cap = document.createElement("span");
+    cap.className = "hw-count-label";
+    cap.textContent = "Pixels each";
+    const sel = select(
+      TEST_COUNTS.map((n) => ({ value: String(n), label: String(n) })),
+      String(testCount),
+      (v) => {
+        testCount = Math.max(1, Number(v) || 1);
+        const c = appState.client;
+        if (activeTest === ch && c?.isConnected) void c.setCountingPattern(testBlocks(), ch);
+        if (activeTest === ch) render(); // refresh the hint's pixel counts
+      },
+    );
+    sel.classList.add("hw-select--narrow");
+    wrap.append(cap, sel);
+    return wrap;
   }
 
   /** The six permutations as tappable swatches; the current order is highlighted. */
@@ -264,9 +351,47 @@ export function HardwareSetupScreen(_router: Router): Screen {
     return grid;
   }
 
-  function gpioOptions(current: number): Array<{ value: string; label: string }> {
-    const pins = SAFE_GPIOS.includes(current) ? SAFE_GPIOS : [current, ...SAFE_GPIOS];
-    return pins.map((p) => ({ value: String(p), label: `GPIO ${p}` }));
+  /** GPIO dropdown with the pins grouped (optgroups) by safety category. Picking
+   * an overloaded pin (strapping / USB-JTAG / flash) confirms first; on cancel the
+   * select snaps back to the previously-set pin so nothing is committed. */
+  function gpioSelect(cfg: HardwareChannel): HTMLElement {
+    const sel = document.createElement("select");
+    sel.className = "hw-select";
+    for (const grp of gpioGroups(cfg.gpio)) {
+      const og = document.createElement("optgroup");
+      og.label = grp.label;
+      for (const gpio of grp.gpios) {
+        const o = document.createElement("option");
+        o.value = String(gpio);
+        o.textContent = `GPIO ${gpio}`;
+        if (gpio === cfg.gpio) o.selected = true;
+        og.appendChild(o);
+      }
+      sel.appendChild(og);
+    }
+    let prev = String(cfg.gpio);
+    sel.addEventListener("change", () => {
+      void (async () => {
+        const gpio = Number(sel.value);
+        const caution = gpioCaution(gpio);
+        if (caution) {
+          const ok = await confirmDialog({
+            title: `Use GPIO ${gpio}?`,
+            message: caution,
+            confirmLabel: `Use GPIO ${gpio}`,
+            cancelLabel: "Keep current",
+            danger: true,
+          });
+          if (!ok) {
+            sel.value = prev; // user backed out — revert the visible selection
+            return;
+          }
+        }
+        prev = sel.value;
+        await setGpio(cfg.channel, gpio);
+      })();
+    });
+    return sel;
   }
 
   render();
@@ -332,6 +457,7 @@ function row(name: string, hint: string, control: HTMLElement): HTMLElement {
   const r = document.createElement("div");
   r.className = "hw-row";
   const label = document.createElement("div");
+  label.className = "hw-row-label";
   const n = document.createElement("div");
   n.className = "hw-row-name";
   n.textContent = name;
