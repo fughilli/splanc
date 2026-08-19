@@ -204,23 +204,43 @@ async def _drive_order(ws_url: str, insecure: bool, order: str) -> None:
     _log(f"[order] {order} + pattern latched")
 
 
+# A reconfigure-then-capture can catch a transitional/short frame (the order
+# applies a frame or two after set_hardware_config; the analyzer's trigger may arm
+# on a stale one), so retry the drive+capture a couple of times before failing —
+# a real mis-wiring fails every attempt, a transient bad frame clears on a re-drive.
+_ORDER_ATTEMPTS = 3
+
+
 def _verify_color_orders(res, host, port, dev, n, args) -> int:
     """For each non-default wire order: reconfigure, re-drive, re-capture, and
     assert the DIN permutes as predicted. Returns 0 on success, 1 on a mismatch."""
     for order in COLOR_ORDERS_UNDER_TEST:
         want = expected_decoded_pixels(order, BLOCKS, n)
-        with res.forward(host, port) as local_port:
-            ws_url = f"{args.ws_scheme}://localhost:{local_port}/ws"
-            asyncio.run(_drive_order(ws_url, not args.ws_verify, order))
-        time.sleep(0.5)
-        got = capture(res, dev, args.samples)
-        diffs, off = diff_structure_aligned(want, got)
-        if diffs:
-            _log(f"[FAIL] color order {order}: {len(diffs)} pixel(s) differ (best offset {off})")
+        last_diffs: list = []
+        last_got: list = []
+        last_off = 0
+        for attempt in range(1, _ORDER_ATTEMPTS + 1):
+            with res.forward(host, port) as local_port:
+                ws_url = f"{args.ws_scheme}://localhost:{local_port}/ws"
+                asyncio.run(_drive_order(ws_url, not args.ws_verify, order))
+            time.sleep(0.5)
+            got = capture(res, dev, args.samples)
+            diffs, off = diff_structure_aligned(want, got)
+            if not diffs:
+                _log(f"[PASS] color order {order}: wire decodes to {want} (at offset {off})")
+                break
+            last_diffs, last_got, last_off = diffs, got, off
+            _log(
+                f"[order] {order} attempt {attempt}/{_ORDER_ATTEMPTS}: "
+                f"{len(diffs)} pixel(s) differ (best offset {off}) — retrying"
+            )
+        else:
+            _log(
+                f"[FAIL] color order {order}: {len(last_diffs)} pixel(s) differ (offset {last_off})"
+            )
             _log(f"       want {want}")
-            _log(f"       got  {got}")
+            _log(f"       got  {last_got}")
             return 1
-        _log(f"[PASS] color order {order}: wire decodes to {want} (at offset {off})")
     _log(f"[PASS] wire color order configurable ({', '.join(COLOR_ORDERS_UNDER_TEST)} on the DIN)")
     return 0
 
