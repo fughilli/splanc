@@ -7,7 +7,9 @@
   description = "HITL rig — Pi test bench + agent CLI (sbc-deploy consumer)";
 
   inputs = {
-    sbc-deploy.url = "github:fughilli/sbc-deploy/6dd1e56142c8cfe416b13df77128310214d79059?dir=nix";
+    # Pinned to sbc-deploy PR #7 (persistent, immutable board-hostname identity).
+    # TODO: repin to the squashed main commit once #7 lands.
+    sbc-deploy.url = "github:fughilli/sbc-deploy/33f421bc81616317bd57c51e97d4dc9e149aefcd?dir=nix";
     nixpkgs.follows = "sbc-deploy/nixpkgs";
   };
 
