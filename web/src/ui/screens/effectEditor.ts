@@ -601,7 +601,6 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   let chatStatusSubEl: HTMLElement | null = null;
   let chatStatusTimer: number | null = null;
   let chatStatusStartMs = 0;
-  let chatStatusStep = 0;
 
   function fmtElapsed(ms: number): string {
     const s = Math.max(0, Math.floor(ms / 1000));
@@ -609,15 +608,13 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   }
   function paintChatSub(): void {
     if (chatStatusSubEl === null) return;
-    const el = fmtElapsed(performance.now() - chatStatusStartMs);
-    // A ticking "step N · M:SS" so a long turn visibly progresses (proves the
-    // agent is working, not stuck, even during a slow single request).
-    chatStatusSubEl.textContent = chatStatusStep > 0 ? `step ${chatStatusStep} · ${el}` : el;
+    // Just a ticking clock for liveness — the WHAT lives in the main label (the
+    // model's own summary for a set_script, or a fixed verb for other tools).
+    chatStatusSubEl.textContent = fmtElapsed(performance.now() - chatStatusStartMs);
   }
-  /** Update the "model is working" indicator: a main phase label ("Thinking…",
-   * "Writing the effect code…") over a live subtext. `step` (1-based round) is
-   * carried in the subtext; pass 0 to leave it unchanged. */
-  function setChatStatus(label: string, step = 0): void {
+  /** Update the "model is working" indicator: a main label (the model's terse
+   * summary, or a fixed tool verb) over a ticking-elapsed subtext. */
+  function setChatStatus(label: string): void {
     if (chatHint.isConnected) chatHint.remove();
     if (chatStatusEl === null) {
       chatStatusEl = document.createElement("div");
@@ -633,10 +630,8 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
       col.append(chatStatusLabelEl, chatStatusSubEl);
       chatStatusEl.append(sp, col);
       chatStatusStartMs = performance.now();
-      chatStatusStep = 0;
       chatStatusTimer = window.setInterval(paintChatSub, 1000);
     }
-    if (step > 0) chatStatusStep = step;
     chatStatusLabelEl!.textContent = label;
     paintChatSub();
     chatLog.appendChild(chatStatusEl); // keep it pinned to the bottom
@@ -1214,7 +1209,7 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     chatSend.disabled = true;
     chatTurns += 1;
     let turnError: string | undefined;
-    setChatStatus("Thinking…", 1);
+    setChatStatus("Thinking…");
 
     // Per-device builtin cost listing (from the user's calibrated board if any,
     // else the default model) so the model knows the relative cost of each fn.
@@ -1230,9 +1225,10 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
       const finalText = await chatTurn(
         chatHistory,
         {
-        onThinking: (round) => setChatStatus("Thinking…", round),
-        onSetScript: async (source) => {
-          setChatStatus("Writing the effect code…");
+        onThinking: () => setChatStatus("Thinking…"),
+        onSetScript: async (source, summary) => {
+          // The model supplies a terse ≤5-word summary of the change; show it.
+          setChatStatus(summary || "Writing the effect code…");
           codeEl.value = source;
           paintHighlight();
           syncScroll();

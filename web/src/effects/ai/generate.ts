@@ -265,6 +265,8 @@ export interface ChatMessage {
 /** The tool the model calls to replace the editor script. */
 export interface SetScriptCall {
   source: string;
+  /** Terse (≤5-word) status the model supplies for the UI while this applies. */
+  summary?: string;
 }
 
 /** One uniform→MIDI-control mapping the model proposes (set_midi_mapping). */
@@ -283,8 +285,9 @@ export interface MidiMappingCall {
  * supplies these so the AI can act on the live editor + preview. */
 export interface ChatHooks {
   /** The model proposed a new script. Apply it, compile, and return the compile
-   * outcome text (ok/diagnostics/uniforms + disassembly) to feed back. */
-  onSetScript: (source: string) => Promise<string>;
+   * outcome text (ok/diagnostics/uniforms + disassembly) to feed back. `summary`
+   * is the model's terse (≤5-word) status for the UI. */
+  onSetScript: (source: string, summary?: string) => Promise<string>;
   /** The model asked to see the preview. Return a PNG data URL
    * ("data:image/png;base64,...") of the current live preview canvas. */
   onCapturePreview: () => Promise<string>;
@@ -323,8 +326,14 @@ const TOOLS = [
       additionalProperties: false,
       properties: {
         source: { type: "string", description: "The complete new effect source." },
+        summary: {
+          type: "string",
+          description:
+            "A terse status shown in the UI while this applies — AT MOST 5 words, " +
+            "present-tense, e.g. 'adding hue-space blending' or 'fixing compile error'.",
+        },
       },
-      required: ["source"],
+      required: ["source", "summary"],
     },
   },
   {
@@ -566,12 +575,14 @@ export async function chatTurn(
       hooks.onToolUse?.(tu.name);
       try {
         if (tu.name === "set_script") {
-          const source = String((tu.input as { source?: unknown }).source ?? "");
-          const summary = await hooks.onSetScript(source);
+          const input = tu.input as { source?: unknown; summary?: unknown };
+          const source = String(input.source ?? "");
+          const note = typeof input.summary === "string" ? input.summary : undefined;
+          const compileResult = await hooks.onSetScript(source, note);
           results.push({
             type: "tool_result",
             tool_use_id: tu.id,
-            content: [{ type: "text", text: summary }],
+            content: [{ type: "text", text: compileResult }],
           });
         } else if (tu.name === "capture_preview") {
           const dataUrl = await hooks.onCapturePreview();

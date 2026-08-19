@@ -1522,8 +1522,9 @@ body.is-locked {
 }
 
 /* Live "model is working" indicator: reuses the existing .fxedit-spinner, with a
-   phase label ("Thinking…", "Writing the effect code…") over a ticking subtext
-   ("step 2 · 0:37") so a long turn visibly progresses instead of looking stuck. */
+   main label — the model's own terse summary for a code edit, or a fixed verb for
+   other tools ("Taking a screenshot…") — over a ticking-elapsed subtext, so a
+   long turn visibly progresses instead of looking stuck. */
 .fxedit-chatstatus {
   align-self: flex-start;
   display: flex;

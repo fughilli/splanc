@@ -277,7 +277,7 @@ export function AcidModeScreen(router: Router): Screen {
       const finalText = await chatTurn(
         chatHistory,
         {
-          onThinking: (round) => showThinking(round > 1 ? `Thinking… (step ${round})` : "Thinking…"),
+          onThinking: () => showThinking("Thinking…"),
           onToolUse: (name) => {
             clearThinking();
             appendMsg("think", narrateTool(name));
