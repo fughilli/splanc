@@ -50,25 +50,58 @@
 #include "firmware/player_app/ws2812_rmt.h"
 #include "firmware/player_app/ws_codec.h"
 
-#include "esp_heap_caps.h"
-
 // FUG-125: executable-memory primitives for the on-device JIT. The Rust FFI
 // (ffi.rs::fx_build_jit) compiles hot fx_vm blocks to RV32 PIC segments and asks
-// the firmware for instruction-bus-reachable memory to copy them into. On the
-// ESP32-C6 that is IRAM (32-bit-addressable executable SRAM) via MALLOC_CAP_EXEC.
-// Internal SRAM is not behind the CPU's instruction cache (that cache fronts
-// external flash only), so after writing a segment we only need a RISC-V `fence.i`
-// to make the core refetch — no cache flush/invalidate.
+// the firmware for instruction-bus-reachable memory to copy them into. Internal
+// SRAM is not behind the CPU's instruction cache (that cache fronts external
+// flash only), so after writing a segment we only need a RISC-V `fence.i` to make
+// the core refetch — no cache flush/invalidate.
+//
+// A BOUNDED W^X exception region for the JIT. The arduino-esp32 C6 build
+// ships esp-idf as precompiled libs whose memory protection leaves the data heap
+// non-executable and code IRAM non-writable — no RWX anywhere — and a custom
+// sdkconfig would need a full IDF-from-source build. Instead we carve out one
+// small static region and make just IT read+write+execute using a spare RISC-V
+// PMP entry. The runtime PMP dump showed entries 3/4 free + UNLOCKED and, being
+// lower-index than the SRAM data-region entries (PMP is lowest-index-wins), an
+// RWX entry there overrides the default NX for this range only. W^X stays
+// enforced everywhere else. Power-of-2 size + alignment for NAPOT encoding.
+namespace {
+constexpr uint32_t kJitRegionSize = 4096;  // must be a power of two (NAPOT)
+alignas(kJitRegionSize) uint8_t g_jit_region[kJitRegionSize];
+size_t g_jit_used = 0;
+bool g_jit_armed = false;
+
+void jit_arm_exec_region() {
+  uintptr_t base = (uintptr_t)g_jit_region;  // C6 SRAM data addr == physical
+  // NAPOT: pmpaddr = (base>>2) | ((size>>3) - 1); base is size-aligned.
+  uintptr_t pmpaddr = (base >> 2) | ((kJitRegionSize >> 3) - 1);
+  asm volatile("csrw 0x3b3, %0" ::"r"(pmpaddr));  // pmpaddr3
+  // pmpcfg0 byte 3 = entry 3 = A=NAPOT(3)<<3 | X | W | R = 0x1f (unlocked). The
+  // locked low entries (0-2) ignore the write per the PMP spec, so preserve them.
+  uint32_t cfg0;
+  asm volatile("csrr %0, 0x3a0" : "=r"(cfg0));
+  cfg0 = (cfg0 & 0x00ffffffu) | (0x1fu << 24);
+  asm volatile("csrw 0x3a0, %0" ::"r"(cfg0));
+  asm volatile("fence.i" ::: "memory");
+  g_jit_armed = true;
+}
+}  // namespace
+
 extern "C" {
 void *lm_jit_alloc_exec(size_t bytes) {
-  // Executable memory ONLY (no DRAM fallback — DRAM is NX under the C6's memory
-  // protection, so executing it faults). Returns null when no EXEC heap exists.
-  return heap_caps_malloc(bytes, MALLOC_CAP_EXEC);
+  if (!g_jit_armed) jit_arm_exec_region();
+  bytes = (bytes + 3u) & ~3u;  // keep the bump pointer word-aligned
+  if (g_jit_used + bytes > kJitRegionSize) return nullptr;
+  void *p = g_jit_region + g_jit_used;
+  g_jit_used += bytes;
+  return p;
 }
-size_t lm_jit_exec_free(void) { return heap_caps_get_free_size(MALLOC_CAP_EXEC); }
-size_t lm_jit_iram_free(void) { return heap_caps_get_free_size(MALLOC_CAP_IRAM_8BIT); }
-void lm_jit_free_exec(void *p) { heap_caps_free(p); }
+// The JIT builds one exec block per effect and frees the previous first; with the
+// single carve-out region, freeing just resets the bump allocator.
+void lm_jit_free_exec(void * /*p*/) { g_jit_used = 0; }
 void lm_jit_sync_icache(void) { asm volatile("fence.i" ::: "memory"); }
+size_t lm_jit_region_size(void) { return kJitRegionSize; }
 }
 
 // The player protocol handler (lm_player_handle -> Player::handle) decodes a
@@ -1772,15 +1805,14 @@ static uint32_t time_shade_strip(uint32_t nled, uint32_t reps, volatile uint32_t
   return (esp_cpu_get_cycle_count() - t0) / (reps * nled);
 }
 
-extern "C" size_t lm_jit_exec_free(void);
-extern "C" size_t lm_jit_iram_free(void);
+extern "C" size_t lm_jit_region_size(void);
 
 static void run_fx_jit_bench() {
   const uint32_t NLED = 128;
   const uint32_t REPS = 200;
   volatile uint32_t sink = 0;
-  Log().printf("[fxjitbench] heap free: EXEC=%u  IRAM_8BIT=%u bytes\n",
-               (unsigned)lm_jit_exec_free(), (unsigned)lm_jit_iram_free());
+  Log().printf("[fxjitbench] JIT exec region = %u bytes (bounded W^X carve-out)\n",
+               (unsigned)lm_jit_region_size());
 
   // Functional check: JIT vs interpreter must render the SAME LED.
   lm_fx_set_jit_enabled(false);
