@@ -130,9 +130,12 @@ Grafana yet — it stays dormant until `seed_grafana` drops the creds in.
 ## 5. Dashboards as code (bonus)
 
 `dashboards/*.json` are Grafana dashboard models, versioned and reviewed like
-code. `dashboards/hitl-rigs.json` covers the rig metrics above, with `rig` and
-datasource template variables so it works for the whole fleet against any
-Prometheus datasource.
+code. `dashboards/hitl-rigs.json` covers the rig metrics above. It carries **no
+template variables** (so the dashboard can be shared via Grafana's public/shared
+link — those reject `datasource`/`query` variables): every panel pins the
+Prometheus datasource `grafanacloud-prom`, and each panel breaks the
+fleet out per-rig via the `{{rig}}` legend rather than a `$rig` filter. If your
+Prometheus datasource UID differs, update the pinned `uid` in the JSON.
 
 `.github/workflows/grafana-dashboards.yaml` pushes them to Grafana on any change
 to `dashboards/` on `main` (`POST /api/dashboards/db`, `overwrite:true`, keyed on
