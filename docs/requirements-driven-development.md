@@ -211,6 +211,15 @@ risk whose mitigating derived PR(s) are not GREEN** into a red banner at the top
 distinct from ordinary `UNVERIFIED` rows. A high risk mitigated only by an
 under-verified PR is a headline, not a checkmark.
 
+## Module rollups
+
+The model is a tree, not a flat list: a subassembly's verification state derives
+from its parts. The report includes a **per-module** section where each module's
+status is the AND of the PRs that list it in `modules` — `web`, `firmware`,
+`pi/hitl`, etc. each show a single rolled-up state (VERIFIED only if every one of
+its PRs is; FAILED if any failed; PARTIAL otherwise). No model restructuring —
+it's derived from the existing `modules` fields.
+
 ## The work queue (closing the authoring loop)
 
 The report is also a machine-readable queue so its gaps feed back as typed work.
