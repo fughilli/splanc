@@ -175,6 +175,19 @@ class Matrix:
             if risk.is_high and self.risk_status.get(rid) != MITIGATED
         ]
 
+    def module_status(self) -> dict[str, str]:
+        """Rolled-up verification state per module (the AND of the PRs it implements).
+
+        A module is VERIFIED only when every PR listing it is VERIFIED; FAILED if
+        any failed; PARTIAL when some are verified/under-verified; else UNVERIFIED.
+        Derived from the PRs' ``modules`` fields — no model restructuring.
+        """
+        by_module: dict[str, list[str]] = {}
+        for pr in self.model.requirements.values():
+            for mod in pr.modules:
+                by_module.setdefault(mod, []).append(self.pr_status[pr.id].status)
+        return {mod: _rollup(sts, all_ok=VERIFIED) for mod, sts in sorted(by_module.items())}
+
     def counts(self) -> dict[str, int]:
         prs = list(self.pr_status.values())
         return {
@@ -469,6 +482,19 @@ def render_html(matrix: Matrix, title: str = "splanc requirements traceability")
             "requirement with evidence is also backed by cheaper analysis/simulation.</div>"
         )
 
+    rows_module = []
+    module_status = matrix.module_status()
+    for mod, status in module_status.items():
+        prs = sorted(
+            (p for p in model.requirements.values() if mod in p.modules), key=lambda r: r.id
+        )
+        pr_cells = ", ".join(f'<a href="#{p.id}">{p.id}</a>' for p in prs)
+        rows_module.append(
+            f"<tr><td class='id'>{_esc(mod)}</td>"
+            f"<td>{pr_cells}</td>"
+            f"<td>{_badge(status)}</td></tr>"
+        )
+
     return _TEMPLATE.format(
         title=_esc(title),
         summary=summary,
@@ -478,6 +504,7 @@ def render_html(matrix: Matrix, title: str = "splanc requirements traceability")
         rows_un="\n".join(rows_un),
         rows_pr="\n".join(rows_pr),
         rows_risk="\n".join(rows_risk),
+        rows_module="\n".join(rows_module),
     )
 
 
@@ -552,6 +579,12 @@ _TEMPLATE = """<!doctype html>
 <table><thead><tr><th>RISK</th><th>Hazard</th><th>Mitigating PRs</th><th>Status</th></tr></thead>
 <tbody>
 {rows_risk}
+</tbody></table>
+
+<h2>Modules &mdash; rolled-up verification</h2>
+<table><thead><tr><th>Module</th><th>Requirements</th><th>Status</th></tr></thead>
+<tbody>
+{rows_module}
 </tbody></table>
 </body></html>
 """

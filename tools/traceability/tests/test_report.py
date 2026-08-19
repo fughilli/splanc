@@ -300,6 +300,33 @@ def test_high_severity_unmitigated_risk_is_flagged():
 
 
 @pytest.mark.requirements("PR-25")
+def test_module_rollup_is_the_and_of_its_prs():
+    model, _ = parse_model(
+        {
+            "user_needs": [{"id": "UN-1", "title": "n"}],
+            "product_requirements": [
+                {"id": "PR-1", "title": "a", "satisfies": ["UN-1"], "modules": ["web"]},
+                {"id": "PR-2", "title": "b", "satisfies": ["UN-1"], "modules": ["web", "firmware"]},
+                {"id": "PR-3", "title": "c", "satisfies": ["UN-1"], "modules": ["firmware"]},
+            ],
+            "risks": [],
+        }
+    )
+    r = JUnitResults()
+    r.cases = [
+        # web's PRs (PR-1, PR-2) both pass -> web VERIFIED.
+        CaseResult(name="a", classname="c", status="passed", requirements=("PR-1",)),
+        CaseResult(name="b", classname="c", status="passed", requirements=("PR-2",)),
+        # firmware has PR-2 (pass) + PR-3 (no evidence) -> PARTIAL.
+    ]
+    m = report.build_matrix(model, r)
+    ms = m.module_status()
+    assert ms["web"] == report.VERIFIED
+    assert ms["firmware"] == report.PARTIAL
+    assert "Modules" in report.render_html(m)
+
+
+@pytest.mark.requirements("PR-25")
 def test_render_html_is_self_contained_and_lists_entities():
     m = report.build_matrix(MODEL, _results())
     html = report.render_html(m)
