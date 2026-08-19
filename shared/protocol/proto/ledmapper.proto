@@ -522,6 +522,8 @@ message ClientMessage {
     SetColorCorrection set_color_correction = 30;
     SetBrightness set_brightness = 31;
     SetJit set_jit = 32;
+    SetHardwareConfig set_hardware_config = 33;
+    GetHardwareConfig get_hardware_config = 34;
   }
 }
 
@@ -553,6 +555,19 @@ message Welcome {
   // changes). Always false on older firmware.
   bool fw_git_dirty = 8;
 }
+
+// One LED output channel's hardware config, carried in hardware_config_state.
+message HardwareChannel {
+  int32 channel = 1;
+  int32 gpio = 2;
+  string led_type = 3;
+  // Wire color order, a permutation of "RGB" (see SetHardwareConfig.color_order).
+  string color_order = 4;
+}
+
+// Request the per-channel hardware config (GPIO / LED type / wire color order),
+// so the Hardware Setup page can hydrate on open. Reply: hardware_config_state.
+message GetHardwareConfig {}
 
 // Stream a frame into a loaded effect's 2D `texture` (video textures). `data` is
 // the frame quantized to `format` (row-major, `width`*`height` texels),
@@ -617,6 +632,38 @@ message SetColorCorrection {
 message SetBrightness {
   // Output scale in 0.0 .. 1.0 (clamped by the player). 1.0 is unattenuated.
   double brightness = 1;
+}
+
+// Configure an LED output channel's HARDWARE wiring: which GPIO drives its data
+// line, the LED chip family, and the wire color order. Persisted to flash (NVS)
+// and applied to the RMT driver. Every field is optional so the UI can nudge one
+// setting at a time; an unset field leaves that setting unchanged. Reply:
+// hardware_config_state (the resulting per-channel config).
+message SetHardwareConfig {
+  // Output channel index; unset -> 0. The ESP32-C6 drives up to two parallel RMT
+  // channels; the Pi has one.
+  optional int32 channel = 1;
+  // GPIO number driving this channel's data line (any output-capable pin — the
+  // RMT peripheral routes through the GPIO matrix). Unset -> leave unchanged.
+  optional int32 gpio = 2;
+  // LED chip family. "ws281x" (WS2811/WS2812/WS2812B/SK6812 clockless) is the
+  // only type supported today. Unset -> leave unchanged.
+  optional string led_type = 3;
+  // Wire color order: a permutation of "RGB" naming which logical channel each
+  // of the three wire bytes carries (e.g. "GRB" for WS2812B — byte0=green). The
+  // driver maps logical R,G,B to this order on every strip write. Unset -> leave
+  // unchanged.
+  optional string color_order = 4;
+  // Persist to flash (unset/true) or apply from RAM only (false). The color-order
+  // confirmation test streams commit=false previews (forcing identity "RGB" so
+  // the raw wire bytes reach the strip) and commits once the user picks the match.
+  optional bool commit = 5;
+}
+
+// Reply to set_hardware_config / get_hardware_config: the per-channel hardware
+// config the device is running (defaults filled in), for the UI to hydrate.
+message HardwareConfigState {
+  repeated HardwareChannel channels = 1;
 }
 
 // Reply to stop_mapping(solve_on_host=false): stopped + persisted, no host
@@ -795,5 +842,6 @@ message ServerMessage {
     EffectUniforms effect_uniforms = 16;
     PerfReport perf_report = 17;
     ChunkAck chunk_ack = 18;
+    HardwareConfigState hardware_config_state = 19;
   }
 }

@@ -423,6 +423,21 @@ static uint32_t g_cc_gen = 0;  // last color_correction_gen the poll acted on
 static uint32_t g_brightness_gen = 0;  // last brightness_gen the poll acted on
 static uint8_t g_brightness = 255;     // global output scale (255 = unattenuated)
 
+// Hardware output config (set_hardware_config: GPIO + wire color order per RMT
+// channel). g_hw_gen tracks the last-applied lm_hw_config_gen. The GPIOs
+// currently driving the two channels (seeded from NVS / led_config.h at boot).
+static uint32_t g_hw_gen = 0;
+static int g_hw_gpio0 = LED_DATA_PIN;
+static int g_hw_gpio1 = LED_DATA_PIN_2;
+// A GPIO change can't touch the RMT channels from the message task without
+// racing the transmit task (the sole RMT owner). The poll stages the request
+// here; the transmit task performs the reconfigure just before its next push.
+// `g_hw_reconfig_req` is written LAST (after the pins) and read first, so the
+// transmit task never sees a half-written request.
+static volatile int g_hw_req_gpio0 = LED_DATA_PIN;
+static volatile int g_hw_req_gpio1 = LED_DATA_PIN_2;
+static volatile bool g_hw_reconfig_req = false;
+
 static uint32_t lut_crc(const LutRecord *r) {
   return esp_rom_crc32_le(0, reinterpret_cast<const uint8_t *>(r),
                           offsetof(LutRecord, crc));
@@ -552,6 +567,82 @@ static void poll_brightness() {
   g_brightness_gen = gen;
   g_brightness = lm_brightness_u8();
   Log().printf("[bright] output scale = %u/255 (gen=%u)\n", g_brightness, gen);
+}
+
+// Poll after each handled message (like poll_color_correction): a
+// set_hardware_config bumps the gen. Re-apply each channel's wire color order to
+// the RMT driver (live — a torn read self-corrects next frame), stage any GPIO
+// change for the transmit task, and persist to NVS when the update commits.
+static void poll_hardware_config() {
+  uint32_t gen = lm_hw_config_gen();
+  if (gen == g_hw_gen) return;
+  g_hw_gen = gen;
+  bool commit = lm_hw_config_commit() != 0;
+  // Color order: apply to both channels immediately.
+  for (int ch = 0; ch < 2; ch++) {
+    uint8_t perm[3];
+    if (lm_hw_color_order_perm((uint32_t)ch, perm) == 0) {
+      ws2812_rmt_set_color_order(ch, perm[0], perm[1], perm[2]);
+    }
+  }
+  // GPIO: stage a reconfigure for the transmit task if either pin changed.
+  int g0 = lm_hw_gpio(0), g1 = lm_hw_gpio(1);
+  if (g0 < 0) g0 = g_hw_gpio0;
+  if (g1 < 0) g1 = g_hw_gpio1;
+  if (g0 != g_hw_gpio0 || g1 != g_hw_gpio1) {
+    g_hw_req_gpio0 = g0;
+    g_hw_req_gpio1 = g1;
+    g_hw_reconfig_req = true;  // written last — see the globals' note
+  }
+  if (commit) {
+    prefs.putInt("hw_gpio0", g0);
+    prefs.putInt("hw_gpio1", g1);
+    char ord0[8] = {0}, ord1[8] = {0};
+    if (lm_hw_color_order_name(0, reinterpret_cast<uint8_t *>(ord0), sizeof ord0 - 1) >= 0) {
+      prefs.putString("hw_ord0", ord0);
+    }
+    if (lm_hw_color_order_name(1, reinterpret_cast<uint8_t *>(ord1), sizeof ord1 - 1) >= 0) {
+      prefs.putString("hw_ord1", ord1);
+    }
+    Log().printf("[hw] committed gpio=%d/%d order=%s/%s (gen=%u)\n", g0, g1, ord0, ord1, gen);
+  } else {
+    Log().printf("[hw] preview gpio=%d/%d (gen=%u)\n", g0, g1, gen);
+  }
+}
+
+// Boot-time hardware config: seed the player + RMT driver from NVS (falling back
+// to the led_config.h defaults). Must run after lm_player_init + prefs.begin and
+// BEFORE render_task starts (so a GPIO reconfigure is a synchronous no-race).
+static void hardware_config_begin() {
+  int g0 = prefs.getInt("hw_gpio0", LED_DATA_PIN);
+  int g1 = prefs.getInt("hw_gpio1", LED_DATA_PIN_2);
+  String o0 = prefs.getString("hw_ord0", "GRB");
+  String o1 = prefs.getString("hw_ord1", "GRB");
+  // Seed the core so the first welcome echoes the real per-channel config.
+  lm_hw_seed(0, g0, reinterpret_cast<const uint8_t *>(o0.c_str()), o0.length());
+  lm_hw_seed(1, g1, reinterpret_cast<const uint8_t *>(o1.c_str()), o1.length());
+  // Apply the wire color orders to the driver.
+  for (int ch = 0; ch < 2; ch++) {
+    uint8_t perm[3];
+    if (lm_hw_color_order_perm((uint32_t)ch, perm) == 0) {
+      ws2812_rmt_set_color_order(ch, perm[0], perm[1], perm[2]);
+    }
+  }
+  // The strip was init'd on the led_config.h defaults; if NVS pins differ,
+  // reconfigure the RMT channels now (synchronous — transmit task still idle).
+  if (g0 != g_hw_gpio0 || g1 != g_hw_gpio1) {
+    if (ws2812_rmt_reconfigure(g0, g1)) {
+      g_hw_gpio0 = g0;
+      g_hw_gpio1 = g1;
+    } else {
+      Log().printf("[hw] boot RMT reconfigure to gpio=%d/%d FAILED\n", g0, g1);
+    }
+  }
+  g_hw_req_gpio0 = g_hw_gpio0;
+  g_hw_req_gpio1 = g_hw_gpio1;
+  g_hw_gen = lm_hw_config_gen();
+  Log().printf("[hw] boot gpio=%d/%d order=%s/%s\n", g_hw_gpio0, g_hw_gpio1, o0.c_str(),
+               o1.c_str());
 }
 
 // Map an 8-bit RGB triple through the active per-channel LUT (indexed directly
@@ -894,6 +985,7 @@ static void ws_dispatch_message() {
   poll_device_rename();
   poll_color_correction();
   poll_brightness();
+  poll_hardware_config();
   rx_len = 0;
 }
 
@@ -1349,6 +1441,20 @@ static void osc_task(void *) {
 static void xmit_task(void *) {
   for (;;) {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    // A staged GPIO reconfigure (set_hardware_config) runs HERE — this task owns
+    // the RMT channels, so recreating them can't race an in-flight push. Consume
+    // the request before the frame it precedes.
+    if (g_hw_reconfig_req) {
+      int ng0 = g_hw_req_gpio0, ng1 = g_hw_req_gpio1;
+      g_hw_reconfig_req = false;
+      if (ws2812_rmt_reconfigure(ng0, ng1)) {
+        g_hw_gpio0 = ng0;
+        g_hw_gpio1 = ng1;
+        Log().printf("[hw] RMT reconfigured to gpio=%d/%d\n", ng0, ng1);
+      } else {
+        Log().printf("[hw] RMT reconfigure to gpio=%d/%d FAILED\n", ng0, ng1);
+      }
+    }
     uint32_t c0 = g_show_timed ? esp_cpu_get_cycle_count() : 0;
     ws2812_rmt_show(reinterpret_cast<const uint8_t *>(show_buf), g_xmit_len0, g_xmit_len1);
     if (g_show_timed) g_show_c = esp_cpu_get_cycle_count() - c0;
@@ -2021,6 +2127,12 @@ void setup() {
   Log().printf("[player] identity %s / \"%s\" ap \"%s\" host %s.local build %s%s\n", macstr,
                g_device_name, g_ap_ssid, g_hostname, LM_GIT_COMMIT_SHORT,
                LM_GIT_DIRTY ? "-dirty" : "");
+  // Hardware output config (GPIO + wire color order): seed the player + RMT
+  // driver from NVS (or led_config.h defaults) before the render task starts, so
+  // the first welcome echoes the real hardware and the first frame uses the
+  // configured color order. Runs synchronously — the transmit task is idle until
+  // render_task starts, so a GPIO reconfigure here can't race a push.
+  hardware_config_begin();
 
   improv_ble_begin(g_device_name,
                    ssid.length() > 0 ? IMPROV_STATE_PROVISIONING : IMPROV_STATE_AUTHORIZED);

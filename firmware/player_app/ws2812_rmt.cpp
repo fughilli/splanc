@@ -20,10 +20,15 @@ constexpr int kMaxChannels = 2;
 rmt_channel_handle_t g_chan[kMaxChannels] = {nullptr, nullptr};
 rmt_encoder_handle_t g_encoder[kMaxChannels] = {nullptr, nullptr};
 int g_n_chan = 0;
-uint8_t *g_grb = nullptr;  // R,G,B -> G,R,B reorder scratch (max_leds*3)
+uint8_t *g_grb = nullptr;  // reordered wire scratch (max_leds*3)
 uint32_t g_max_leds = 0;
 rmt_transmit_config_t g_txcfg = {};
 esp_err_t g_last_tx[kMaxChannels] = {ESP_OK, ESP_OK};  // last rmt_transmit result / channel
+
+// Per-channel wire color order as a SOURCE permutation of the R,G,B input:
+// wire byte i is written from rgb[g_order[ch][i]]. Default GRB {1, 0, 2} — the
+// WS2812B order (wire = G, R, B). set_hardware_config overrides it per channel.
+uint8_t g_order[kMaxChannels][3] = {{1, 0, 2}, {1, 0, 2}};
 
 bool make_channel(int gpio, int idx) {
   rmt_tx_channel_config_t chan_cfg = {};
@@ -56,6 +61,36 @@ bool make_channel(int gpio, int idx) {
   return rmt_enable(g_chan[idx]) == ESP_OK;
 }
 
+// Build channel 0 (and channel 1 if gpio1 >= 0), setting g_n_chan. Assumes the
+// channel slots are empty (fresh init, or after teardown_channels). Returns
+// false on the first peripheral/allocation failure.
+bool build_channels(int gpio0, int gpio1) {
+  if (!make_channel(gpio0, 0)) return false;
+  g_n_chan = 1;
+  if (gpio1 >= 0) {
+    if (!make_channel(gpio1, 1)) return false;
+    g_n_chan = 2;
+  }
+  return true;
+}
+
+// Disable + delete every live channel and its encoder (for reconfigure). Leaves
+// g_n_chan == 0. The scratch buffer / color orders / txcfg are preserved.
+void teardown_channels() {
+  for (int i = 0; i < kMaxChannels; i++) {
+    if (g_chan[i]) {
+      rmt_disable(g_chan[i]);
+      rmt_del_channel(g_chan[i]);
+      g_chan[i] = nullptr;
+    }
+    if (g_encoder[i]) {
+      rmt_del_encoder(g_encoder[i]);
+      g_encoder[i] = nullptr;
+    }
+  }
+  g_n_chan = 0;
+}
+
 }  // namespace
 
 bool ws2812_rmt_init(int gpio0, int gpio1, uint32_t max_leds) {
@@ -64,12 +99,7 @@ bool ws2812_rmt_init(int gpio0, int gpio1, uint32_t max_leds) {
   if (!g_grb) return false;
   g_max_leds = max_leds;
 
-  if (!make_channel(gpio0, 0)) return false;
-  g_n_chan = 1;
-  if (gpio1 >= 0) {
-    if (!make_channel(gpio1, 1)) return false;
-    g_n_chan = 2;
-  }
+  if (!build_channels(gpio0, gpio1)) return false;
 
   // Hold the lines LOW after the last bit: the inter-frame idle (the render
   // period, ms >> 50 us) is the WS2812 reset that latches this frame.
@@ -78,15 +108,33 @@ bool ws2812_rmt_init(int gpio0, int gpio1, uint32_t max_leds) {
   return true;
 }
 
+void ws2812_rmt_set_color_order(int ch, uint8_t s0, uint8_t s1, uint8_t s2) {
+  if (ch < 0 || ch >= kMaxChannels) return;
+  g_order[ch][0] = s0;
+  g_order[ch][1] = s1;
+  g_order[ch][2] = s2;
+}
+
+bool ws2812_rmt_reconfigure(int gpio0, int gpio1) {
+  if (!g_grb) return false;  // never init'd — nothing to reconfigure
+  teardown_channels();
+  return build_channels(gpio0, gpio1);
+}
+
 void ws2812_rmt_show(const uint8_t *rgb, uint32_t count0, uint32_t count1) {
   if (!g_n_chan) return;
   if (g_n_chan < 2) count1 = 0;  // no channel 1 configured
   uint32_t total = count0 + count1;
   if (total > g_max_leds) return;
+  // Reorder each pixel to its channel's wire color order. Channel 0 owns pixels
+  // [0, count0); channel 1 owns [count0, total) — so a per-channel order applies
+  // to the right span even though both share one contiguous buffer.
   for (uint32_t i = 0; i < total; i++) {
-    g_grb[3 * i + 0] = rgb[3 * i + 1];  // G
-    g_grb[3 * i + 1] = rgb[3 * i + 0];  // R
-    g_grb[3 * i + 2] = rgb[3 * i + 2];  // B
+    const uint8_t *ord = g_order[i < count0 ? 0 : 1];
+    const uint8_t *in = &rgb[3 * i];
+    g_grb[3 * i + 0] = in[ord[0]];
+    g_grb[3 * i + 1] = in[ord[1]];
+    g_grb[3 * i + 2] = in[ord[2]];
   }
   // Kick both channels, THEN wait — so they clock out in parallel.
   bool tx1 = count1 > 0 && g_chan[1];

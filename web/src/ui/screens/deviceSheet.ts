@@ -456,6 +456,14 @@ function openDeviceDetail(dev: KnownDevice): void {
         },
       },
       {
+        label: "Hardware",
+        icon: "chip",
+        onClick: () => {
+          sheet.close();
+          location.hash = "#/settings/hardware";
+        },
+      },
+      {
         label: "Move",
         icon: "folder",
         onClick: () => {

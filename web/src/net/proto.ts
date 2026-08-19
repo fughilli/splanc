@@ -55,6 +55,8 @@ const CLIENT_ARMS: Record<string, string> = {
   upload_chunk: "uploadChunk",
   set_color_correction: "setColorCorrection",
   set_brightness: "setBrightness",
+  set_hardware_config: "setHardwareConfig",
+  get_hardware_config: "getHardwareConfig",
 };
 const SERVER_ARMS: Record<string, string> = {
   welcome: "welcome",
@@ -75,6 +77,7 @@ const SERVER_ARMS: Record<string, string> = {
   effect_uniforms: "effectUniforms",
   perf_report: "perfReport",
   chunk_ack: "chunkAck",
+  hardware_config_state: "hardwareConfigState",
 };
 const CLIENT_TYPES: Record<string, string> = Object.fromEntries(
   Object.entries(CLIENT_ARMS).map(([snake, camel]) => [camel, snake]),
@@ -317,6 +320,55 @@ export interface EffectUniformsMessage {
   effectId: string;
   manifest: Uint8Array;
   current: UniformValueFlat[];
+}
+
+// -- Hardware-config arms (flat shapes) -------------------------------------
+// GPIO / LED-type / wire-color-order config for an LED output channel (proto
+// SetHardwareConfig / GetHardwareConfig / HardwareConfigState). New proto
+// additions consumed only by the Hardware Setup page, so — like the effect arms
+// above — the flat shapes live here rather than in the checked-in
+// @ledmapper/protocol types. Field names are the proto3 JSON (camel) names.
+
+/** The six wire color orders (permutations of "RGB"). "GRB" is the WS2812B
+ * default. Each names which logical channel each of the three wire bytes
+ * carries. */
+export type ColorOrder = "RGB" | "RBG" | "GRB" | "GBR" | "BRG" | "BGR";
+export const COLOR_ORDERS: ColorOrder[] = ["RGB", "RBG", "GRB", "GBR", "BRG", "BGR"];
+
+/** Configure an LED output channel's hardware wiring (proto SetHardwareConfig).
+ * Every field but the message tag is optional so the UI can nudge one setting at
+ * a time; an unset field leaves that setting unchanged. Reply:
+ * hardware_config_state. */
+export interface SetHardwareConfigMessage {
+  type: "set_hardware_config";
+  channel?: number;
+  gpio?: number;
+  ledType?: string;
+  colorOrder?: ColorOrder;
+  /** Persist to flash (default) or apply from RAM only (false) — the color-order
+   * test streams commit:false previews and commits once the user confirms. */
+  commit?: boolean;
+}
+
+/** Request the per-channel hardware config (proto GetHardwareConfig). Reply:
+ * hardware_config_state. */
+export interface GetHardwareConfigMessage {
+  type: "get_hardware_config";
+}
+
+/** One LED output channel's hardware config (proto HardwareChannel). */
+export interface HardwareChannel {
+  channel: number;
+  gpio: number;
+  ledType: string;
+  colorOrder: ColorOrder;
+}
+
+/** Reply to set/get_hardware_config (proto HardwareConfigState): the per-channel
+ * config the device is running. */
+export interface HardwareConfigStateMessage {
+  type: "hardware_config_state";
+  channels: HardwareChannel[];
 }
 
 // -- Chunked-upload arms (flat shapes) --------------------------------------

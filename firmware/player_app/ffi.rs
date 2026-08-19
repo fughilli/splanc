@@ -762,6 +762,83 @@ pub unsafe extern "C" fn lm_brightness_u8() -> u8 {
     (b * 255.0 + 0.5) as u8
 }
 
+/// Seed a hardware channel's config at boot with the GPIO the firmware actually
+/// initialized and its wire color order (a NUL-free name like "GRB"; an unknown
+/// or null name falls back to the WS2812B default). Call once per wired channel
+/// after [`lm_player_init`], BEFORE any client can `set_hardware_config`, so the
+/// first `welcome` echoes the real hardware.
+///
+/// # Safety
+/// `order` points to `order_len` readable UTF-8 bytes (or is null).
+#[no_mangle]
+pub unsafe extern "C" fn lm_hw_seed(channel: u32, gpio: i32, order: *const u8, order_len: usize) {
+    let name = if order.is_null() {
+        ""
+    } else {
+        core::str::from_utf8(core::slice::from_raw_parts(order, order_len)).unwrap_or("")
+    };
+    let idx = ledmapper_player::color_order_index(name).unwrap_or(ledmapper_player::DEFAULT_COLOR_ORDER);
+    player().set_hw_defaults(channel as usize, gpio, idx);
+}
+
+/// Generation counter for the hardware config, bumped on every
+/// `set_hardware_config`. The firmware polls this after each `lm_player_handle`
+/// (like `lm_color_correction_gen`) to persist the config to NVS and re-apply it
+/// to the RMT driver.
+#[no_mangle]
+pub unsafe extern "C" fn lm_hw_config_gen() -> u32 {
+    player().hw_config_gen()
+}
+
+/// Whether the latest `set_hardware_config` should be committed to flash
+/// (returns 1) or applied from RAM only (0) — the color-order test previews.
+#[no_mangle]
+pub unsafe extern "C" fn lm_hw_config_commit() -> i32 {
+    player().hw_config_commit() as i32
+}
+
+/// The GPIO configured for hardware channel `channel`, or -1 if the channel is
+/// out of range or unseeded. The firmware persists this to NVS on a config change.
+#[no_mangle]
+pub unsafe extern "C" fn lm_hw_gpio(channel: u32) -> i32 {
+    player().hw_gpio(channel as usize).unwrap_or(-1)
+}
+
+/// Write hardware channel `channel`'s wire color-order SOURCE permutation into
+/// `out` as three bytes: `out[i]` is the logical channel (R=0, G=1, B=2) that
+/// wire byte `i` carries. The RMT driver applies this on every strip write.
+/// Returns 0 on success, -1 if `out` is null.
+///
+/// # Safety
+/// `out` must point to at least three writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn lm_hw_color_order_perm(channel: u32, out: *mut u8) -> i32 {
+    if out.is_null() {
+        return -1;
+    }
+    let perm = player().hw_color_order_perm(channel as usize);
+    core::ptr::copy_nonoverlapping(perm.as_ptr(), out, perm.len());
+    0
+}
+
+/// Copy hardware channel `channel`'s wire color-order NAME (e.g. "GRB") into
+/// `out` (cap bytes); returns the length written, or -2 when it doesn't fit. The
+/// firmware persists this to NVS on a config change.
+///
+/// # Safety
+/// `out` must point to `cap` writable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn lm_hw_color_order_name(channel: u32, out: *mut u8, cap: usize) -> i32 {
+    let name = player().hw_color_order_name(channel as usize).as_bytes();
+    if name.len() > cap {
+        return -2;
+    }
+    if !out.is_null() && !name.is_empty() {
+        core::ptr::copy_nonoverlapping(name.as_ptr(), out, name.len());
+    }
+    name.len() as i32
+}
+
 fn encode_reply(reply: &pb::ServerMessage, out: *mut u8, out_cap: usize) -> i32 {
     let mut enc = PbEncoder::new(micropb::heapless::Vec::<u8, REPLY_CAP>::new());
     if reply.encode(&mut enc).is_err() {
