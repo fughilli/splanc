@@ -27,6 +27,16 @@
 # tags yet). Requirements that describe product areas not implemented in this
 # repository yet (e.g. AI workflow surfaces) are intentionally left without
 # verifying tests and surface as UNVERIFIED in the report.
+#
+# `method` (FUG-89) declares the verification RIGOR a requirement demands, from
+# an ordered scale analysis < simulation < sil < hil < hitl (plus a non-ordered
+# `inspection` for manual/visual sign-off). A PR is only GREEN when a passing
+# test provides rigor >= the method it demands; passing evidence below that shows
+# as AMBER ("under-verified"). Missing `method` defaults to `simulation`, so only
+# the hardware-implicated PRs (modules touching firmware/pi/hitl, and derived PRs
+# mitigating hardware/stability risks) are annotated with their true hil/hitl
+# demand below. TODO(FUG-89): audit the PRs still defaulting to `simulation` and
+# give each its true demanded method.
 
 meta:
   project: splanc
@@ -200,6 +210,7 @@ product_requirements:
       scale-aware upload behavior, and recovery-oriented handling of
       reconstruction interruptions.
     satisfies: [UN-4, UN-7]
+    method: hitl
     modules: [pi/server, web, pi/hitl]
 
   - id: PR-13
@@ -209,6 +220,7 @@ product_requirements:
       discovery, LAN connection, and direct connection by available connection
       modes.
     satisfies: [UN-5]
+    method: hitl
     modules: [firmware, pi/server, pi/hitl, web]
     verified_by:
       - '//firmware/player_app:improv_codec_test'
@@ -223,6 +235,7 @@ product_requirements:
       The system shall derive or maintain device-visible identity consistently
       across configured name, AP name, hostname, and related discovery surfaces.
     satisfies: [UN-5]
+    method: hil
     modules: [firmware]
 
   - id: PR-15
@@ -250,6 +263,7 @@ product_requirements:
       documented effect system, including embedded/runtime type support and
       calibrated performance estimation inputs.
     satisfies: [UN-6]
+    method: hil
     modules: [firmware, fx_compiler]
     verified_by:
       - '//firmware/player_app:ffi_test'
@@ -262,6 +276,7 @@ product_requirements:
       The system shall provide users with performance visibility sufficient to
       understand whether an effect is likely to run within device budget.
     satisfies: [UN-6]
+    method: hil
     modules: [web, firmware]
     verified_by:
       - '//web:costModel_test'
@@ -275,6 +290,7 @@ product_requirements:
       The system shall adapt effect playback rate or execution rate to preserve
       system stability when performance headroom becomes insufficient.
     satisfies: [UN-6, UN-7]
+    method: hil
     modules: [firmware]
 
   - id: PR-20
@@ -283,6 +299,7 @@ product_requirements:
       The product shall support visual output calibration features such as color
       correction where documented.
     satisfies: [UN-6]
+    method: hil
     modules: [firmware, web]
     verified_by:
       - '//firmware/player_app:color_correction_test'
@@ -295,6 +312,7 @@ product_requirements:
       enough to support intended networking, control, and effect workloads on
       target hardware.
     satisfies: [UN-7]
+    method: hil
     modules: [firmware]
 
   - id: PR-22
@@ -311,6 +329,7 @@ product_requirements:
       HITL and CI infrastructure shall validate provisioning, flashing,
       connectivity, mapping, and representative operational flows.
     satisfies: [UN-8]
+    method: hitl
     modules: [pi/hitl, tools/traceability, requirements]
 
   - id: PR-24
@@ -319,6 +338,7 @@ product_requirements:
       The validation system shall support multiple DUTs safely and isolate test
       resources well enough to prevent cross-device interference.
     satisfies: [UN-8]
+    method: hitl
     modules: [pi/hitl]
 
   - id: PR-25
@@ -342,6 +362,7 @@ product_requirements:
     kind: derived
     satisfies: [UN-7]
     mitigates: [RISK-1]
+    method: hitl
     modules: [firmware]
 
   - id: PR-27
@@ -353,6 +374,7 @@ product_requirements:
     kind: derived
     satisfies: [UN-6]
     mitigates: [RISK-2]
+    method: hil
     modules: [firmware, fx_compiler, web]
     verified_by: ['//web:costModel_test']
 
@@ -365,6 +387,7 @@ product_requirements:
     kind: derived
     satisfies: [UN-6, UN-7]
     mitigates: [RISK-3]
+    method: hil
     modules: [firmware]
 
   - id: PR-29
@@ -376,6 +399,7 @@ product_requirements:
     kind: derived
     satisfies: [UN-5]
     mitigates: [RISK-4]
+    method: hitl
     modules: [firmware, pi/hitl, web]
     verified_by: ['//web:improv_provision_test', '//web:clocksync_test']
 
@@ -388,6 +412,7 @@ product_requirements:
     kind: derived
     satisfies: [UN-8]
     mitigates: [RISK-5]
+    method: hitl
     modules: [pi/hitl]
 
   - id: PR-31
@@ -399,6 +424,7 @@ product_requirements:
     kind: derived
     satisfies: [UN-4, UN-7]
     mitigates: [RISK-6]
+    method: hitl
     modules: [pi/reconstruction, pi/server, web, pi/hitl]
 
   - id: PR-32
@@ -449,6 +475,7 @@ product_requirements:
     kind: derived
     satisfies: [UN-5]
     mitigates: [RISK-10]
+    method: hitl
     modules: [firmware, web]
 
   - id: PR-36
@@ -460,6 +487,7 @@ product_requirements:
     kind: derived
     satisfies: [UN-8]
     mitigates: [RISK-11]
+    method: hitl
     modules: [pi/hitl, tools/traceability, requirements]
 
   - id: PR-37

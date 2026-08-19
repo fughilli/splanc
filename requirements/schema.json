@@ -44,6 +44,12 @@
         "title": { "type": "string" },
         "description": { "type": "string" },
         "kind": { "type": "string", "enum": ["direct", "derived"], "default": "direct" },
+        "method": {
+          "type": "string",
+          "description": "Demanded verification rigor. Ordered analysis<simulation<sil<hil<hitl, plus non-ordered inspection. Missing defaults to simulation.",
+          "enum": ["analysis", "simulation", "sil", "hil", "hitl", "inspection"],
+          "default": "simulation"
+        },
         "satisfies": {
           "type": "array",
           "items": { "type": "string", "pattern": "^UN-\\d+$" }
@@ -55,8 +61,24 @@
         "modules": { "type": "array", "items": { "type": "string" } },
         "verified_by": {
           "type": "array",
-          "description": "Bazel test target labels that verify this PR at target granularity.",
-          "items": { "type": "string" }
+          "description": "Bazel test targets that verify this PR at target granularity. Each item is either a bare label string (provides the default rigor) or a {target, level} mapping declaring the rigor that target provides.",
+          "items": {
+            "oneOf": [
+              { "type": "string" },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["target"],
+                "properties": {
+                  "target": { "type": "string" },
+                  "level": {
+                    "type": "string",
+                    "enum": ["analysis", "simulation", "sil", "hil", "hitl", "inspection"]
+                  }
+                }
+              }
+            ]
+          }
         }
       }
     },
@@ -72,6 +94,15 @@
           "type": "string",
           "enum": ["low", "medium", "high", "critical"],
           "default": "medium"
+        },
+        "likelihood": {
+          "type": "string",
+          "description": "Ordinal likelihood of the failure mode.",
+          "enum": ["rare", "unlikely", "possible", "likely", "certain"]
+        },
+        "residual": {
+          "type": "string",
+          "description": "Risk remaining after mitigation (free-form note or level)."
         },
         "mitigated_by": {
           "type": "array",

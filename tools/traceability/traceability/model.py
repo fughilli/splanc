@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from enum import IntEnum
 from typing import Any, Iterable
 
 import yaml
@@ -35,6 +36,46 @@ PR_RE = re.compile(r"^PR-\d+$")
 RISK_RE = re.compile(r"^RISK-\d+$")
 
 SEVERITIES = ("low", "medium", "high", "critical")
+LIKELIHOODS = ("rare", "unlikely", "possible", "likely", "certain")
+
+
+class Method(IntEnum):
+    """Verification rigor, lowest to highest.
+
+    The ordering is what turns the report from a coverage dashboard into a V&V
+    matrix (FUG-89): a requirement is only truly GREEN when the rigor of the
+    evidence *provided* meets or exceeds the rigor it *demands*. ``inspection``
+    (manual/visual sign-off) is a valid method but deliberately *not* part of the
+    order — it is incomparable, so it neither satisfies nor is satisfied by an
+    ordered demand.
+    """
+
+    ANALYSIS = 1
+    SIMULATION = 2
+    SIL = 3
+    HIL = 4
+    HITL = 5
+
+
+INSPECTION = "inspection"
+# A PR that does not declare a method demands SIMULATION; untagged evidence is
+# assumed to provide SIMULATION. Both defaults keep the existing model + suites
+# working without mass edits (FUG-89 migration).
+DEFAULT_METHOD = "simulation"
+DEFAULT_PROVIDED = "simulation"
+
+_METHOD_BY_NAME = {m.name.lower(): m for m in Method}
+VALID_METHODS = tuple(_METHOD_BY_NAME) + (INSPECTION,)
+
+
+def method_rank(name: str) -> int | None:
+    """Ordered rank for a method name, or ``None`` for ``inspection``/unknown.
+
+    ``None`` means "incomparable" — callers must not order it against ranked
+    methods; an inspection demand is met only by inspection evidence.
+    """
+    m = _METHOD_BY_NAME.get((name or "").strip().lower())
+    return int(m) if m is not None else None
 
 
 class ValidationError(Exception):
@@ -57,22 +98,40 @@ class UserNeed:
 
 
 @dataclass(frozen=True)
+class VerifiedBy:
+    """A whole-target verification artifact and the rigor level it provides.
+
+    Authored in YAML as either a bare string (``'//pkg:target'`` — provides the
+    default level) or a mapping (``{target: '//pkg:target', level: hil}``).
+    """
+
+    target: str
+    level: str = DEFAULT_PROVIDED
+
+
+@dataclass(frozen=True)
 class Requirement:
     id: str
     title: str
     description: str = ""
     kind: str = "direct"  # "direct" | "derived"
+    # Demanded verification rigor (see Method). Missing -> DEFAULT_METHOD.
+    method: str = DEFAULT_METHOD
     satisfies: tuple[str, ...] = ()  # UN ids
     mitigates: tuple[str, ...] = ()  # RISK ids (derived PRs only)
     modules: tuple[str, ...] = ()  # implementing module dirs (documentation aid)
     # Bazel test targets that verify this PR at *target* granularity, for
     # languages whose runners do not yet emit per-case traceability tags. The
     # whole target's pass/fail contributes to the PR. See traceability.report.
-    verified_by: tuple[str, ...] = ()
+    verified_by: tuple[VerifiedBy, ...] = ()
 
     @property
     def is_derived(self) -> bool:
         return self.kind == "derived"
+
+    @property
+    def demanded_rank(self) -> int | None:
+        return method_rank(self.method)
 
 
 @dataclass(frozen=True)
@@ -81,7 +140,13 @@ class Risk:
     title: str
     description: str = ""
     severity: str = "medium"
+    likelihood: str = ""  # ordinal (LIKELIHOODS); "" when unrated
+    residual: str = ""  # note/level for risk remaining after mitigation
     mitigated_by: tuple[str, ...] = ()  # derived PR ids
+
+    @property
+    def is_high(self) -> bool:
+        return self.severity in ("high", "critical")
 
 
 @dataclass(frozen=True)
@@ -116,6 +181,30 @@ def _as_tuple(value: Any) -> tuple[str, ...]:
     if isinstance(value, Iterable):
         return tuple(str(v) for v in value)
     return (str(value),)
+
+
+def _parse_verified_by(value: Any, pid: str, errors: list[str]) -> tuple[VerifiedBy, ...]:
+    """Parse ``verified_by`` items: each is a bare target string or a
+    ``{target, level}`` mapping. Bare strings default to DEFAULT_PROVIDED."""
+    if value is None:
+        return ()
+    items = value if isinstance(value, (list, tuple)) else [value]
+    out: list[VerifiedBy] = []
+    for item in items:
+        if isinstance(item, str):
+            out.append(VerifiedBy(target=item))
+        elif isinstance(item, dict):
+            target = item.get("target", "")
+            if not target:
+                errors.append(f"PR {pid}: verified_by mapping is missing 'target'")
+                continue
+            level = str(item.get("level", DEFAULT_PROVIDED)).strip().lower()
+            if level not in VALID_METHODS:
+                errors.append(f"PR {pid}: verified_by target {target} has unknown level {level!r}")
+            out.append(VerifiedBy(target=str(target), level=level))
+        else:
+            errors.append(f"PR {pid}: verified_by item must be a string or mapping, got {item!r}")
+    return tuple(out)
 
 
 def _require_keys(kind: str, idx: int, obj: dict, keys: Iterable[str], errors: list[str]) -> None:
@@ -163,16 +252,20 @@ def parse_model(data: dict[str, Any]) -> tuple[RequirementsModel, list[str]]:
         kind = raw.get("kind", "direct")
         if kind not in ("direct", "derived"):
             errors.append(f"PR {pid}: kind must be 'direct' or 'derived', got {kind!r}")
+        method = str(raw.get("method", DEFAULT_METHOD)).strip().lower()
+        if method not in VALID_METHODS:
+            errors.append(f"PR {pid}: method must be one of {VALID_METHODS}, got {method!r}")
         if pid:
             requirements[pid] = Requirement(
                 id=pid,
                 title=raw.get("title", ""),
                 description=raw.get("description", ""),
                 kind=kind,
+                method=method,
                 satisfies=_as_tuple(raw.get("satisfies")),
                 mitigates=_as_tuple(raw.get("mitigates")),
                 modules=_as_tuple(raw.get("modules")),
-                verified_by=_as_tuple(raw.get("verified_by")),
+                verified_by=_parse_verified_by(raw.get("verified_by"), pid, errors),
             )
 
     # --- risks ---
@@ -187,12 +280,19 @@ def parse_model(data: dict[str, Any]) -> tuple[RequirementsModel, list[str]]:
         sev = raw.get("severity", "medium")
         if sev not in SEVERITIES:
             errors.append(f"RISK {rid}: severity must be one of {SEVERITIES}, got {sev!r}")
+        likelihood = str(raw.get("likelihood", "")).strip().lower()
+        if likelihood and likelihood not in LIKELIHOODS:
+            errors.append(
+                f"RISK {rid}: likelihood must be one of {LIKELIHOODS}, got {likelihood!r}"
+            )
         if rid:
             risks[rid] = Risk(
                 id=rid,
                 title=raw.get("title", ""),
                 description=raw.get("description", ""),
                 severity=sev,
+                likelihood=likelihood,
+                residual=str(raw.get("residual", "")).strip(),
                 mitigated_by=_as_tuple(raw.get("mitigated_by")),
             )
 

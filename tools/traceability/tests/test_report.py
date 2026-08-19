@@ -49,7 +49,7 @@ def test_matrix_verification_status():
     assert m.pr_status["PR-3"].status == report.UNVERIFIED
     # Coarse per-target verification.
     assert m.pr_status["PR-9"].status == report.VERIFIED
-    assert "//pkg:target (target)" in m.pr_status["PR-9"].passed
+    assert "//pkg:target (target, simulation)" in m.pr_status["PR-9"].passed
 
 
 @pytest.mark.requirements("PR-25")
@@ -64,6 +64,57 @@ def test_user_need_validation_rolls_up():
 def test_risk_mitigation_rolls_up():
     m = report.build_matrix(MODEL, _results())
     assert m.risk_status["RISK-1"] == report.MITIGATED
+
+
+@pytest.mark.requirements("PR-25")
+def test_underverified_when_evidence_below_demanded_method():
+    model, errs = parse_model(
+        {
+            "user_needs": [{"id": "UN-1", "title": "n"}],
+            "product_requirements": [
+                {"id": "PR-1", "title": "hw", "satisfies": ["UN-1"], "method": "hitl"},
+                {"id": "PR-2", "title": "hw-ok", "satisfies": ["UN-1"], "method": "hitl"},
+            ],
+            "risks": [],
+        }
+    )
+    assert errs == []
+    r = JUnitResults()
+    r.cases = [
+        # PR-1 covered only by a simulation-level test -> AMBER (under-verified).
+        CaseResult(
+            name="t1", classname="c", status="passed", requirements=("PR-1",), level="simulation"
+        ),
+        # PR-2 covered by an on-hardware test -> GREEN.
+        CaseResult(name="t2", classname="c", status="passed", requirements=("PR-2",), level="hitl"),
+    ]
+    m = report.build_matrix(model, r)
+    assert m.pr_status["PR-1"].status == report.UNDERVERIFIED
+    assert m.pr_status["PR-1"].demanded == "hitl"
+    assert m.pr_status["PR-1"].provided == "simulation"
+    assert m.pr_status["PR-2"].status == report.VERIFIED
+    # A user need with an under-verified PR is only PARTIAL, not VALIDATED.
+    assert m.un_status["UN-1"] == report.PARTIAL
+    html = report.render_html(m)
+    assert "UNDER-VERIFIED" in html
+
+
+@pytest.mark.requirements("PR-25")
+def test_untagged_evidence_defaults_to_simulation():
+    model, _ = parse_model(
+        {
+            "user_needs": [{"id": "UN-1", "title": "n"}],
+            "product_requirements": [
+                {"id": "PR-1", "title": "sim", "satisfies": ["UN-1"]},  # demands simulation
+            ],
+            "risks": [],
+        }
+    )
+    r = JUnitResults()
+    # No level tag -> provides simulation, which meets the simulation demand.
+    r.cases = [CaseResult(name="t", classname="c", status="passed", requirements=("PR-1",))]
+    m = report.build_matrix(model, r)
+    assert m.pr_status["PR-1"].status == report.VERIFIED
 
 
 @pytest.mark.requirements("PR-25")
