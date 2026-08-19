@@ -330,6 +330,18 @@ CHAINS = {
         "device-install",
         "device-launch",
     ],
+    # Same as deploy-device, but the final step relaunches with the console
+    # attached (device-log) so the app's stdout/stderr + forwarded JS console
+    # stream back until the client disconnects. This is what
+    # `bazel run //tools:ios_deploy -- --log` uses.
+    "deploy-device-log": [
+        "web-build",
+        "stage-wasm",
+        "cap-sync",
+        "device-build",
+        "device-install",
+        "device-log",
+    ],
 }
 
 # Query params we allow into argv templates, with the pattern each must match.

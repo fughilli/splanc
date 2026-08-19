@@ -57,6 +57,19 @@ py_binary(
     srcs = ["ios_build_server.py"],
 )
 
+# Single-command iOS deploy:
+#   bazel run //tools:ios_deploy            # compile + load onto the paired iPhone
+#   bazel run //tools:ios_deploy -- --log   # …and stream the device console
+# On the Mac it starts ios_build_server as a sidecar when none is running (true
+# one-command), so ios_build_server.py rides along in data. From the container it
+# stays a thin HTTP client for a build server running on the Mac. Auto-detects
+# the paired device; stdlib-only.
+py_binary(
+    name = "ios_deploy",
+    srcs = ["ios_deploy.py"],
+    data = ["ios_build_server.py"],
+)
+
 # Host-side Improv-BLE onboarding driver — provisions the player onto WiFi via a
 # real Bluetooth radio (SimpleBLE), replacing the phone's Web Bluetooth step
 # (which can't be automated). Run on the host: `bazel run //tools:ble_onboard_server`.
