@@ -28,9 +28,10 @@ import { COLOR_ORDERS, type ColorOrder, type HardwareChannel } from "../../net/p
 import type { ColorBlock } from "@ledmapper/protocol";
 import { installHardwareSetupStyles } from "./hardwareSetup.css";
 
-// Output-capable C6 GPIOs for LED data, grouped by how safe they are to use (see
-// firmware led_config.h + the ESP32-C6 SuperMini pinout). "Recommended" are clean
-// general-purpose pins; the rest are OVERLOADED — usable for WS281x data (the GPIO
+// Output-capable C6 GPIOs for LED data, grouped by how safe they are to use.
+// Categories + caveats follow the ESP32-C6 SuperMini pinout published at
+// espboards.dev/esp32/esp32-c6-super-mini: "Recommended" is that page's exact
+// no-caveat set; every other pin is OVERLOADED — usable for WS281x data (the GPIO
 // matrix routes RMT anywhere) but with a caveat, so picking one pops a confirm.
 // The device also range-checks; a currently-configured pin that's off this list is
 // still shown (see gpioGroups) so hydration always has a matching option.
@@ -41,16 +42,40 @@ interface GpioGroup {
   caution?: (gpio: number) => string;
 }
 
+// The four JTAG debug pins (MTMS/MTDI/MTCK/MTDO) that also carry internal-flash
+// clock/data on internal-flash C6 SuperMini models (espboards.dev, above).
+const JTAG_FLASH: Record<number, { sig: string; flash: string }> = {
+  4: { sig: "MTMS", flash: "flash data" },
+  5: { sig: "MTDI", flash: "flash data" },
+  6: { sig: "MTCK", flash: "flash clock" },
+  7: { sig: "MTDO", flash: "flash data" },
+};
+
 const GPIO_GROUPS: GpioGroup[] = [
-  { label: "Recommended", gpios: [0, 1, 2, 3, 6, 7, 10, 11, 14, 20, 21, 22, 23] },
+  // espboards.dev's exact "safe/general-purpose (no caveats)" list. NOTE: 6/7 were
+  // wrongly here before — they're JTAG/flash pins (below); 10/11 were inherited
+  // from the old firmware list but the pinout page doesn't vouch for them.
+  { label: "Recommended", gpios: [0, 1, 2, 3, 14, 20, 21, 22, 23] },
   {
-    label: "Strapping pins — use with care",
-    gpios: [4, 5, 8, 9, 15],
+    label: "JTAG / internal-flash — use with care",
+    gpios: [4, 5, 6, 7],
+    caution: (g) => {
+      const { sig, flash } = JTAG_FLASH[g] ?? { sig: `IO${g}`, flash: "flash data" };
+      return (
+        `GPIO ${g} (${sig}) is a JTAG debug pin and carries ${flash} on internal-flash ` +
+        `C6 SuperMini models. Using it for LED data disables JTAG debugging and, on those ` +
+        `boards, will disrupt the internal flash — only pick it if your board doesn't ` +
+        `route flash to this pin.`
+      );
+    },
+  },
+  {
+    label: "Boot strapping — use with care",
+    gpios: [8, 9, 15],
     caution: (g) =>
-      `GPIO ${g} is an ESP32-C6 boot strapping pin. Whatever is wired to it is sampled ` +
-      `at reset and can change how the board boots (download mode, flash voltage). It ` +
-      `works for LED data once booted, but wire it with care so it isn't held at the ` +
-      `wrong level during power-up.`,
+      `GPIO ${g} is an ESP32-C6 boot strapping pin (boot mode / download mode / JTAG ` +
+      `source). It's sampled at reset, so whatever is wired to it can stop the board ` +
+      `booting normally. Usable for LED data once booted, but wire it with care.`,
   },
   {
     label: "USB-Serial-JTAG — use with care",
@@ -63,9 +88,9 @@ const GPIO_GROUPS: GpioGroup[] = [
     label: "Internal SPI flash — avoid",
     gpios: [18, 19],
     caution: (g) =>
-      `GPIO ${g} is wired to the C6 SuperMini's on-board SPI flash. Driving it will very ` +
-      `likely hang or corrupt the board. Only pick it if your particular board does NOT ` +
-      `route flash to this pin.`,
+      `GPIO ${g} (${g === 18 ? "FSPIQ" : "FSPID"}) is connected to the C6 SuperMini's ` +
+      `internal SPI flash. Driving it will disrupt flash operations and very likely hang ` +
+      `or corrupt the board — avoid it.`,
   },
 ];
 
