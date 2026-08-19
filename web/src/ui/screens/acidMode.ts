@@ -34,6 +34,7 @@ import { isDrivable, MidiRouter } from "../../midi/router";
 import { midiStore, type UniformBinding } from "../../store/midiStore";
 import { midiManager, controlLabel } from "../../midi/manager";
 import { effectStore } from "../../store/effectStore";
+import { chatLogStore, newChatLogSessionId } from "../../store/chatLogStore";
 import { mapStore } from "../../store/mapStore";
 import { appState } from "../app/state";
 import { StatusPill, icon, toast, type PillState } from "../kit";
@@ -234,6 +235,9 @@ export function AcidModeScreen(router: Router): Screen {
 
   // -- the agent turn ---------------------------------------------------------
   const chatHistory: ChatMessage[] = [];
+  // Persisted-log bookkeeping (see chatLogStore) — one session per acid screen.
+  const chatLogSessionId = newChatLogSessionId();
+  let chatTurns = 0;
 
   async function ask(text: string): Promise<void> {
     if (busy) return;
@@ -255,6 +259,8 @@ export function AcidModeScreen(router: Router): Screen {
 
     busy = true;
     micBtn.disabled = true;
+    chatTurns += 1;
+    let turnError: string | undefined;
     showThinking("Thinking");
 
     let deviceCosts: string | undefined;
@@ -287,12 +293,24 @@ export function AcidModeScreen(router: Router): Screen {
       appendMsg("agent", finalText || "Done.");
     } catch (e) {
       clearThinking();
-      appendMsg("agent", `Hmm, that didn't work: ${msg(e)}`);
+      turnError = msg(e);
+      appendMsg("agent", `Hmm, that didn't work: ${turnError}`);
     } finally {
       busy = false;
       micBtn.disabled = false;
       setMicListening(false);
       scrollFeed();
+      // Snapshot the transcript for off-device debugging. Best-effort.
+      void chatLogStore.record({
+        id: chatLogSessionId,
+        screen: "acidMode",
+        effectId: ACID_EFFECT_ID,
+        effectName: "Acid Mode",
+        turns: chatTurns,
+        errored: turnError !== undefined,
+        lastError: turnError,
+        messages: chatHistory,
+      });
     }
   }
 

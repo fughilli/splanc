@@ -55,6 +55,7 @@ import { MidiMapPanel } from "../../effects/editor/midi-panel";
 import { midiStore, type UniformBinding } from "../../store/midiStore";
 import { midiManager, controlLabel } from "../../midi/manager";
 import { effectStore, isBuiltinEffect } from "../../store/effectStore";
+import { chatLogStore, newChatLogSessionId } from "../../store/chatLogStore";
 import { mapStore } from "../../store/mapStore";
 import { renderSettings } from "../../store/appearance";
 import { appState } from "../app/state";
@@ -114,6 +115,10 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   let lastPushedFxb: Uint8Array | null = null;
   let chatBusy = false;
   const chatHistory: ChatMessage[] = [];
+  // Persisted-log bookkeeping: one session id per editor screen; snapshot the
+  // transcript after every turn so a failed agent run can be pulled off-device.
+  const chatLogSessionId = newChatLogSessionId();
+  let chatTurns = 0;
   let raf = 0;
   let disposed = false;
 
@@ -1169,6 +1174,8 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
 
     chatBusy = true;
     chatSend.disabled = true;
+    chatTurns += 1;
+    let turnError: string | undefined;
     setChatStatus("Thinking…");
 
     // Per-device builtin cost listing (from the user's calibrated board if any,
@@ -1222,11 +1229,23 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
       appendChat("assistant", finalText || "(done)");
     } catch (e) {
       clearChatStatus();
-      appendChat("assistant", `AI error: ${msg(e)}`);
+      turnError = msg(e);
+      appendChat("assistant", `AI error: ${turnError}`);
     } finally {
       chatBusy = false;
       chatSend.disabled = false;
       chatLog.scrollTop = chatLog.scrollHeight;
+      // Snapshot the (whole) transcript for off-device debugging. Best-effort.
+      void chatLogStore.record({
+        id: chatLogSessionId,
+        screen: "effectEditor",
+        effectId,
+        effectName,
+        turns: chatTurns,
+        errored: turnError !== undefined,
+        lastError: turnError,
+        messages: chatHistory,
+      });
     }
   }
 

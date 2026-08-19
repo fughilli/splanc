@@ -62,6 +62,13 @@ _LOCK = threading.Lock()  # serialize Chromium launches (one at a time)
 _EFFECTS_LIB: dict = {"library": None, "at": None}
 _EFFECTS_FILE = os.path.join(tempfile.gettempdir(), "ledmapper-effects-library.json")
 
+# Last FX-agent chat logs the app POSTed to /chatlogs (transcripts of the AI
+# effect-editor sessions, for debugging why the agent failed a request). Same
+# in-memory + file mirror pattern as the effects library; pull with
+# `curl http://host:8092/chatlogs`.
+_CHATLOGS: dict = {"logs": None, "at": None}
+_CHATLOGS_FILE = os.path.join(tempfile.gettempdir(), "ledmapper-chatlogs.json")
+
 # In-page probe: resolve when the socket OPENs (or errors/closes/times out).
 _WS_PROBE = """
 (url, ms) => new Promise((resolve) => {
@@ -867,6 +874,37 @@ class Handler(BaseHTTPRequestHandler):
                         except (OSError, json.JSONDecodeError):
                             lib = None
                     self._json({"library": lib, "at": _EFFECTS_LIB["at"]})
+            elif route == "/chatlogs":
+                # POST (from the app over HTTPS): store the FX-agent chat logs.
+                # GET (from a debugging container over HTTP): retrieve them.
+                if self.command == "POST":
+                    raw = self._read_body()
+                    try:
+                        logs = json.loads(raw.decode("utf-8")) if raw else None
+                    except (UnicodeDecodeError, json.JSONDecodeError) as e:
+                        self._json({"error": f"bad JSON body: {e}"}, 400)
+                        return
+                    _CHATLOGS["logs"] = logs
+                    _CHATLOGS["at"] = g("at") or ""
+                    try:
+                        with open(_CHATLOGS_FILE, "w") as f:
+                            json.dump(logs, f, indent=2)
+                    except OSError:
+                        pass
+                    n = len(logs.get("sessions", [])) if isinstance(logs, dict) else 0
+                    _log(f"/chatlogs stored: {n} sessions, {len(raw)} bytes -> {_CHATLOGS_FILE}")
+                    self._json(
+                        {"stored": True, "sessions": n, "bytes": len(raw), "file": _CHATLOGS_FILE}
+                    )
+                else:
+                    logs = _CHATLOGS["logs"]
+                    if logs is None and os.path.exists(_CHATLOGS_FILE):
+                        try:
+                            with open(_CHATLOGS_FILE) as f:
+                                logs = json.load(f)
+                        except (OSError, json.JSONDecodeError):
+                            logs = None
+                    self._json({"logs": logs, "at": _CHATLOGS["at"]})
             else:
                 self._json({"error": f"no such endpoint: {route}"}, 404)
         except Exception as e:  # noqa: BLE001
@@ -972,6 +1010,10 @@ def main() -> int:
             _log(
                 f"  effects intake (HTTPS): https://{lan}:{args.tls_port}/effects "
                 f"(accept the cert once, then POST the library here)"
+            )
+            _log(
+                f"  chat-log intake (HTTPS): https://{lan}:{args.tls_port}/chatlogs "
+                f"— pull with: curl http://{lan}:{args.port}/chatlogs"
             )
         except OSError as e:
             _log(f"  HTTPS listener failed on :{args.tls_port} ({e})")

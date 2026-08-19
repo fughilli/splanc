@@ -119,7 +119,7 @@ export function EffectsBrowserScreen(router: Router): Screen {
   const tabMenuItems = [
     {
       icon: "effect-to-device" as const,
-      label: "Send library to debug server",
+      label: "Send to debug server (effects · AI logs)",
       onClick: () => void sendLibraryFlow(),
     },
   ];
