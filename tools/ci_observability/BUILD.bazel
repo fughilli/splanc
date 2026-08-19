@@ -1,0 +1,39 @@
+"""CI observability — parse the Bazel Build Event Protocol into failure telemetry.
+
+`bep_report` turns a `--build_event_json_file` stream into (a) normalized NDJSON
+records at per-test-case granularity, (b) a self-contained static HTML report,
+and (c) optional pushes to a telemetry sink (Grafana Cloud Loki and/or a
+ClickHouse-compatible columnar DB). Standard-library only, so CI needs nothing
+but `python3` — the GitHub composite action calls the checked-in script
+directly; this Bazel target exists for local runs and the unit test. FUG-128.
+"""
+
+load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# imports=["."] puts this package dir on sys.path so the modules import each
+# other by bare name (`import sinks`, `from report_html import ...`) both under
+# Bazel and when the .py files are run directly in the CI action.
+py_library(
+    name = "lib",
+    srcs = [
+        "bep_report.py",
+        "report_html.py",
+        "sinks.py",
+    ],
+    imports = ["."],
+)
+
+py_binary(
+    name = "bep_report",
+    srcs = ["bep_report.py"],
+    main = "bep_report.py",
+    deps = [":lib"],
+)
+
+py_test(
+    name = "bep_report_test",
+    srcs = ["bep_report_test.py"],
+    deps = [":lib"],
+)
