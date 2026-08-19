@@ -5,6 +5,35 @@ scan back for context. The dated sections toward the bottom were migrated out of
 `README.md` (now a user-facing intro; see `DEVELOPERS.md` for contributing) and
 are kept as historical record.
 
+## FX engine optimizations + superinstructions (FUG-125, branch `agent/fug-125-fx-engine-optimizations-jit`)
+
+A bytecode optimizer for the fx compiler + a first set of VM superinstructions,
+hill-climbed against the golden device profile and guarded by a differential test.
+
+- **`fx_compiler/src/opt.rs`** — runs over the emitted `.fxb` code in `finish()`:
+  decode → stable-id instruction list → fixed point of passes → re-encode. Passes:
+  constant folding (exact int/Q16.16/fixed/`f32`), algebraic simplification &
+  strength reduction (`x*1`, `x/1`, `x-0`, involutions; NOT float `x+0.0` — signed
+  zero), dead-local elimination (single-use temp `StoreLocal;LoadLocal`),
+  constant-branch folding, and unreachable-code DCE. Bails to the original bytes on
+  any dangling target / `i16`-overflow, so it can never miscompile. `compile_opts(src,
+optimize)` exposes the off path for the harness.
+- **VM superinstructions** (`firmware/fx_vm`, appended after `FillLocal`):
+  `TeeLocal` (`StoreLocal;LoadLocal`), `IncLocalI` (`i = i + k`), `BrCmpI`
+  (`CmpI;BrFalse` loop tail) — the profiler's hottest pairs. The optimizer's
+  `fuse_superinstructions` pass emits them. `from_u8` bound, `classify()` coverage
+  audit, `fx_vm_op` mirror, and `decode_op` all updated.
+- **`fx_compiler/tests/optimizer.rs`** — the differential + hill-climb harness:
+  compiles the corpus with & without `-O`, runs BOTH through the real fx_vm over an
+  LED raster and asserts bit-identical RGB, then measures the retired-op reduction
+  and fails on any regression. Result: **14.6% corpus-wide** retired-op reduction,
+  up to **35.7%** (const-heavy) and **15.0%** on the loop-dominated agents effect.
+- Builds verified: `esp32c6` firmware, `fx_vm_web` + `fx_compiler_wasm` bundles,
+  and `//tools/fx_profile` still runs. The optimizer is in the shared `compile()`,
+  so host + wasm preview + device stay bit-identical.
+- **Remaining (this branch):** on-device RV32 JIT for hot straight-line segments
+  (the issue's "small JIT"); HITL cycle validation of the above on a real C6.
+
 ## User docs — interactive tutorial + generated guide with real screenshots (FUG-103)
 
 Interactive in-app tutorial + a programmatically-generated user guide (Markdown + static

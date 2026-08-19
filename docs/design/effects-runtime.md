@@ -286,3 +286,54 @@ As a few examples:
 - 2D video mapping: stream bitmap frames from client, sample bitmap in uv space like `texture()`
 
 The effects runtime should have a dedicated arena allocator for any data structures needed so as to prevent the firmware from locking up because of heap exhaustion.
+
+## Bytecode optimizer + superinstructions (FUG-125)
+
+The compiler front-end (`fx_compiler/src/lib.rs`) is a single-pass emitter. Rather
+than rewrite it around an SSA IR, the optimizer (`fx_compiler/src/opt.rs`) runs
+over the **emitted `.fxb` code section** just before serialization: it decodes the
+flat byte stream into a linear instruction list where every branch/call/entry
+target is a **stable instruction id** (not a byte offset), applies a fixed point
+of passes, then re-encodes and recomputes the relative branches. Because targets
+are ids, a pass can delete/splice/reorder instructions with no offset math; if a
+pass ever leaves a dangling target or an out-of-`i16` branch, `encode` bails and
+the *original* bytes ship — correctness is absolute, optimization best-effort.
+
+Passes (the issue's "local and scalar" list):
+
+- **Constant folding** — `PushConst a; PushConst b; <scalar binop>` and
+  `PushConst a; <unop>` collapse to one `PushConst`. Every fold reproduces the
+  VM's exact arithmetic (wrapping ints, `>>frac` fixed, IEEE `f32`, guarded
+  divide-by-zero), so a folded constant equals what the interpreter would compute.
+- **Algebraic simplification / strength reduction** — `x*1`, `x/1`, `x-0`,
+  `vec*1`, and `-(-x)` involutions, on both float and int/Q16.16 twins. Float
+  `x+0.0` is deliberately *excluded* (it flushes `-0.0`→`+0.0`, not a true identity).
+- **Dead local elimination** — a single-assignment/single-use temp
+  (`StoreLocal s; LoadLocal s` whose slot is touched nowhere else) drops both ops,
+  leaving the value on the stack. Disabled in the presence of dynamic-index local
+  ops (`*LocalIdx`), which could alias any slot.
+- **Constant-condition branch folding + dead-code elimination** — a known
+  `PushConst c; BrFalse` becomes an unconditional `Jmp` or vanishes, and a CFG
+  reachability walk from both entries removes the orphaned code.
+
+**Superinstructions.** Guided by the dynamic profiler (`tools/fx_profile`, which
+ranks the hottest adjacent opcode pairs across the corpus), three fused opcodes
+were added to the VM ISA (appended after `FillLocal`, so every existing
+discriminant is stable) and emitted by an optimizer fusion pass:
+
+- `TeeLocal s,n` — `StoreLocal; LoadLocal` (the temp-reload idiom).
+- `IncLocalI s,c` — `LoadLocal; PushConst; AddI; StoreLocal` (the `i = i + k`
+  counter/index idiom).
+- `BrCmpI k,rel` — `CmpI; BrFalse` (the integer loop-condition tail).
+
+Each is a byte-for-byte fusion of the sequence it replaces, trading two-to-four
+dispatches for one on the FPU-less core.
+
+**Correctness + hill-climb loop.** `fx_compiler/tests/optimizer.rs` is both the
+safety net and the simulator the issue asks for: it compiles every corpus program
+with and without `-O`, runs BOTH through the real fx_vm (`update()` once +
+`shade()` across an LED raster over several frames), and asserts **bit-identical**
+RGB. It then hill-climbs the fx_vm retired-op counter (a direct proxy for device
+dispatch cost, priced by the golden per-opcode profile) and fails on any
+regression. Corpus-wide retired-op reduction is ~15%, up to ~36% on
+constant-heavy programs and ~15% on the loop-dominated agentic effect.
