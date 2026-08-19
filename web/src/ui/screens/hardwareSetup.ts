@@ -52,10 +52,12 @@ const JTAG_FLASH: Record<number, { sig: string; flash: string }> = {
 };
 
 const GPIO_GROUPS: GpioGroup[] = [
-  // espboards.dev's exact "safe/general-purpose (no caveats)" list. NOTE: 6/7 were
-  // wrongly here before — they're JTAG/flash pins (below); 10/11 were inherited
-  // from the old firmware list but the pinout page doesn't vouch for them.
-  { label: "Recommended", gpios: [0, 1, 2, 3, 14, 20, 21, 22, 23] },
+  // espboards.dev's "safe/general-purpose (no caveats)" list, plus 10/11 — plain
+  // C6 GPIOs with no strapping/flash/USB/JTAG role (just not enumerated on that
+  // page). NOTE: 6/7 were wrongly here before — they're JTAG/flash pins (below).
+  // This whole catalog is a FALLBACK; a board that reports its pin config over RPC
+  // should override it (see hardware_config_state / TODO board-capabilities).
+  { label: "Recommended", gpios: [0, 1, 2, 3, 10, 11, 14, 20, 21, 22, 23] },
   {
     label: "JTAG / internal-flash — use with care",
     gpios: [4, 5, 6, 7],
