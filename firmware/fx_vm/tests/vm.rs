@@ -866,6 +866,8 @@ fn classify(op: Op) -> Cov {
         // FUG-125 JitCall: dispatches to a firmware-compiled native segment for a
         // hot integer/fixed block — control-flow/dispatch, no soft-float.
         JitCall => TypeAgnostic,
+        // FUG-107 I2C intrinsics: strictly-integer I/O, no float twin needed.
+        I2cWrite | I2cRead => TypeAgnostic,
         // sampling always yields a float colour by design (packed storage detail).
         SampleTex | PaintTex => TypeAgnostic,
 
@@ -916,7 +918,7 @@ fn every_opcode_has_a_fixed_or_integer_path() {
     // Walk the whole contiguous opcode space; classify() is exhaustive so this
     // also proves no Op is unaccounted for.
     let mut float_with_twin = 0;
-    for b in 0..=(Op::JitCall as u8) {
+    for b in 0..=(Op::I2cRead as u8) {
         let op = Op::from_u8(b).unwrap_or_else(|| panic!("opcode {b} missing from Op"));
         match classify(op) {
             // The completeness guarantee: the twin is itself a fixed/int-native op.

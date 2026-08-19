@@ -380,7 +380,13 @@ impl Player {
             CMsg::SubmitEffect(_)
             | CMsg::SetEffect(_)
             | CMsg::SetUniforms(_)
-            | CMsg::GetEffectUniforms(_) => {
+            | CMsg::GetEffectUniforms(_)
+            // Auto hardware discovery (FUG-107): scan / driver arms are
+            // intercepted by the fx layer (ffi.rs) before they reach here, so
+            // this branch only fires on a profile without that layer.
+            | CMsg::ScanI2C(_)
+            | CMsg::SubmitDriver(_)
+            | CMsg::RemoveDriver(_) => {
                 Some(error("unsupported", "effects handled by the fx layer"))
             }
             // Fire-and-forget: Pi-profile telemetry, and set_texture (a video

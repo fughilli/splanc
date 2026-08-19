@@ -293,18 +293,21 @@ function rdI16(b: Uint8Array, o: number): number {
 
 /** Parse the `.fxb` header and slice out the code segment. Throws on a bad or
  * truncated buffer. Layout: magic(4) ver(1) flags(1) n_state(1) n_uniform(1)
- * manifest_len(2) n_consts(2) code_len(2) update_entry(2) shade_entry(2). */
+ * manifest_len(2) n_consts(2) code_len(2) update_entry(2) shade_entry(2), then
+ * v2 (FUG-107) appends poll_entry(2) — an 18-byte header for v1, 20 for v2. */
 export function parseFxb(buf: Uint8Array): FxbHeader {
   if (buf.length < 18) throw new Error("fxb too short");
   if (buf[0] !== 0x46 || buf[1] !== 0x58 || buf[2] !== 0x42 || buf[3] !== 0x31)
     throw new Error("bad fxb magic");
-  if (buf[4] !== 1) throw new Error("bad fxb version");
+  const version = buf[4];
+  if (version !== 1 && version !== 2) throw new Error("bad fxb version");
   const manifestLen = rdU16(buf, 8);
   const nConsts = rdU16(buf, 10);
   const codeLen = rdU16(buf, 12);
   const updateEntry = rdU16(buf, 14);
   const shadeEntry = rdU16(buf, 16);
-  let o = 18 + manifestLen + nConsts * 4;
+  const headerLen = version >= 2 ? 20 : 18;
+  let o = headerLen + manifestLen + nConsts * 4;
   const code = buf.subarray(o, o + codeLen);
   return { code, updateEntry, shadeEntry };
 }

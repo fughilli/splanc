@@ -13,7 +13,7 @@
  * with the sibling .wasm, cache the module promise.
  */
 
-import type { FxCompiled, FxDiagnostic, FxUniform } from "../../fx/preview";
+import type { FxCompiled, FxDiagnostic, FxExport, FxUniform } from "../../fx/preview";
 
 /** A compile request (`src`) or a disassemble request (`fxb`). Discriminated by
  * `kind`; the untagged legacy `{id, src}` shape is treated as a compile. */
@@ -29,6 +29,7 @@ interface CompilerResult {
   readonly ok: boolean;
   readonly bytecode: Uint8Array;
   readonly manifest: string;
+  readonly exports: string;
   readonly diagnostics: string;
 }
 interface CompilerModule {
@@ -67,6 +68,7 @@ function toCompiled(r: CompilerResult): FxCompiled {
     ok: r.ok,
     bytecode: r.bytecode,
     uniforms: r.ok ? (JSON.parse(r.manifest) as FxUniform[]) : [],
+    exports: r.ok ? (JSON.parse(r.exports) as FxExport[]) : [],
     diagnostics: JSON.parse(r.diagnostics) as FxDiagnostic[],
   };
 }
@@ -97,6 +99,7 @@ self.onmessage = (ev: MessageEvent<CompileRequest>): void => {
         ok: false,
         bytecode: new Uint8Array(0),
         uniforms: [],
+        exports: [],
         diagnostics: [
           { line: 0, col: 0, msg: `compiler error: ${e instanceof Error ? e.message : String(e)}` },
         ] satisfies FxDiagnostic[],

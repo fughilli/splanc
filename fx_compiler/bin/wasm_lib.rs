@@ -3,7 +3,7 @@
 //! (JSON) + diagnostics (JSON) so the editor can show inline errors, build the
 //! uniform panel, and feed the `.fxb` to the preview VM (fx_vm_web).
 
-use ledmapper_fx_compiler::{compile, disassemble, manifest_json};
+use ledmapper_fx_compiler::{compile, disassemble, exports_manifest_json, manifest_json};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -11,6 +11,7 @@ pub struct CompileResult {
     ok: bool,
     bytecode: Vec<u8>,
     manifest: String,
+    exports: String,
     diagnostics: String,
 }
 
@@ -28,6 +29,12 @@ impl CompileResult {
     pub fn manifest(&self) -> String {
         self.manifest.clone()
     }
+    /// Driver export manifest JSON (FUG-107): `[{name,slot,width,unit}]`, empty
+    /// `[]` for a plain effect (no `export`s).
+    #[wasm_bindgen(getter)]
+    pub fn exports(&self) -> String {
+        self.exports.clone()
+    }
     #[wasm_bindgen(getter)]
     pub fn diagnostics(&self) -> String {
         self.diagnostics.clone()
@@ -41,6 +48,7 @@ pub fn fx_compile(src: &str) -> CompileResult {
             ok: true,
             bytecode: c.fxb,
             manifest: manifest_json(&c.uniforms),
+            exports: exports_manifest_json(&c.exports),
             diagnostics: "[]".into(),
         },
         Err(ds) => {
@@ -59,6 +67,7 @@ pub fn fx_compile(src: &str) -> CompileResult {
                 ok: false,
                 bytecode: vec![],
                 manifest: "[]".into(),
+                exports: "[]".into(),
                 diagnostics: format!("[{}]", items.join(",")),
             }
         }

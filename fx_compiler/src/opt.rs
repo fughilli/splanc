@@ -135,6 +135,8 @@ pub(crate) fn op_len(code: &[u8], pc: usize) -> Option<usize> {
         INC_LOCAL_I => 4,
         BR_CMP_I => 4,
         JIT_CALL => 3,
+        I2C_WRITE => 1,
+        I2C_READ => 2,
         _ => return None,
     };
     Some(n)
@@ -149,8 +151,9 @@ pub(crate) fn optimize(
     consts: &mut Vec<u32>,
     update: &mut u16,
     shade: &mut u16,
+    poll: &mut u16,
 ) -> Vec<u8> {
-    let mut prog = match decode(code, *update, *shade) {
+    let mut prog = match decode(code, *update, *shade, *poll) {
         Some(p) => p,
         None => return code.to_vec(),
     };
@@ -171,14 +174,15 @@ pub(crate) fn optimize(
         }
     }
 
-    let (u0, s0) = (*update, *shade);
-    match encode(&prog, update, shade) {
+    let (u0, s0, p0) = (*update, *shade, *poll);
+    match encode(&prog, update, shade, poll) {
         Some(bytes) => bytes,
         None => {
             // Dangling target or an out-of-range branch slipped through: discard
             // the optimized program and ship the original bytes/entries.
             *update = u0;
             *shade = s0;
+            *poll = p0;
             code.to_vec()
         }
     }
@@ -191,6 +195,7 @@ struct Prog {
     ins: Vec<Ins>,
     update: Option<u32>,
     shade: Option<u32>,
+    poll: Option<u32>, // FUG-107 sensor-driver entry
     next_id: u32,
 }
 
@@ -211,11 +216,12 @@ impl Prog {
             .collect();
         r.extend(self.update);
         r.extend(self.shade);
+        r.extend(self.poll);
         r
     }
 }
 
-fn decode(code: &[u8], update: u16, shade: u16) -> Option<Prog> {
+fn decode(code: &[u8], update: u16, shade: u16, poll: u16) -> Option<Prog> {
     // First walk: byte offset -> instruction index (== id at decode time).
     let mut offs: Vec<usize> = Vec::new();
     let mut pc = 0usize;
@@ -260,6 +266,7 @@ fn decode(code: &[u8], update: u16, shade: u16) -> Option<Prog> {
         ins,
         update: entry(update)?,
         shade: entry(shade)?,
+        poll: entry(poll)?,
         next_id: offs.len() as u32,
     })
 }
@@ -267,7 +274,7 @@ fn decode(code: &[u8], update: u16, shade: u16) -> Option<Prog> {
 /// Re-encode to bytes, repointing entries. `None` if a target id is missing
 /// (dangling) or a relative branch no longer fits `i16` — callers fall back to
 /// the original bytes.
-fn encode(prog: &Prog, update: &mut u16, shade: &mut u16) -> Option<Vec<u8>> {
+fn encode(prog: &Prog, update: &mut u16, shade: &mut u16, poll: &mut u16) -> Option<Vec<u8>> {
     // Byte offset of each instruction id.
     let mut id_off: HashMap<u32, usize> = HashMap::with_capacity(prog.ins.len());
     let mut p = 0usize;
@@ -298,6 +305,10 @@ fn encode(prog: &Prog, update: &mut u16, shade: &mut u16) -> Option<Vec<u8>> {
         None => NO_ENTRY,
     };
     *shade = match prog.shade {
+        Some(id) => u16::try_from(*id_off.get(&id)?).ok()?,
+        None => NO_ENTRY,
+    };
+    *poll = match prog.poll {
         Some(id) => u16::try_from(*id_off.get(&id)?).ok()?,
         None => NO_ENTRY,
     };
@@ -540,7 +551,7 @@ fn remove_unreachable(prog: &mut Prog) -> bool {
         prog.ins.iter().enumerate().map(|(p, ii)| (ii.id, p)).collect();
     let mut reachable = vec![false; n];
     let mut stack: Vec<usize> = Vec::new();
-    for e in [prog.update, prog.shade].into_iter().flatten() {
+    for e in [prog.update, prog.shade, prog.poll].into_iter().flatten() {
         if let Some(&p) = pos_of.get(&e) {
             stack.push(p);
         }

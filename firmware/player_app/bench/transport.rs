@@ -26,6 +26,22 @@ use ledmapper_player_ffi::{
 use micropb::{MessageEncode, PbEncoder};
 use pb::ClientMessage_::Msg as CMsg;
 
+// The qwiic I2C hooks (FUG-107) are provided by the C++ app on-device; this host
+// bench links the same ffi, so it stubs them to satisfy the linker (the bench
+// never exercises a sensor driver).
+#[no_mangle]
+extern "C" fn lm_i2c_write(_addr: u8, _bytes: *const u8, _n: usize) -> bool {
+    false
+}
+#[no_mangle]
+extern "C" fn lm_i2c_read(_addr: u8, _reg: u8, _out: *mut u8, _n: usize) -> bool {
+    false
+}
+#[no_mangle]
+extern "C" fn lm_i2c_scan(_out: *mut u8, _cap: usize) -> usize {
+    0
+}
+
 fn encode(msg: CMsg) -> Vec<u8> {
     let env = pb::ClientMessage { r#msg: Some(msg) };
     let mut enc = PbEncoder::new(micropb::heapless::Vec::<u8, 4096>::new());

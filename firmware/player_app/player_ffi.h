@@ -176,6 +176,28 @@ bool lm_fx_update(float time_s, float dt_s, uint32_t frame, uint32_t led_count);
 // Shade one LED at position (x,y,z) into rgb[3]. False when no effect is loaded
 // or the invocation was cancelled by a bounded-execution guard.
 bool lm_fx_shade(uint32_t idx, float x, float y, float z, uint8_t rgb[3]);
+
+// -- sensor drivers / auto hardware discovery (FUG-107) ----------------------
+// A sensor driver (.fxb with a poll() entry) runs in its own VM off the render
+// loop; scan_i2c / submit_driver / remove_driver are handled inside
+// lm_player_handle. The app must (a) provide the qwiic-bus I2C hooks below that
+// the driver VM calls, and (b) periodically call lm_drv_poll so poll() runs.
+//
+// Run the loaded driver's poll() if it is due (self-paced against now_ms), then
+// copy its exports into the active effect's uniforms. Call under player_mutex.
+// True iff poll() actually ran this call.
+bool lm_drv_poll(int64_t now_ms);
+// Whether a driver is loaded and polling.
+bool lm_drv_running(void);
+
+// I2C hooks the driver VM calls — DEFINED BY THE APP (main.cpp), backed by the
+// board's qwiic bus. write: send n bytes to 7-bit addr (true on ACK). read:
+// write register pointer `reg` then read n bytes (true on success). scan: probe
+// 0x08..0x77, writing the ACKing 7-bit addresses into out (up to cap), return
+// the count. Weak/stub definitions are fine on a board with no qwiic bus.
+bool lm_i2c_write(uint8_t addr, const uint8_t *bytes, size_t n);
+bool lm_i2c_read(uint8_t addr, uint8_t reg, uint8_t *out, size_t n);
+size_t lm_i2c_scan(uint8_t *out, size_t cap);
 // Copy the active effect's uniform manifest into out (cap bytes). Returns the
 // length written, -1 when no effect is loaded, -2 when it doesn't fit cap.
 int32_t lm_fx_manifest(uint8_t *out, size_t cap);

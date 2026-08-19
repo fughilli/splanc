@@ -43,6 +43,9 @@ import {
   type ChatMessage,
   type MidiMappingCall,
 } from "../../effects/ai/generate";
+import { DRIVER_SYSTEM_EXTRA } from "../../effects/ai/driver-system-prompt";
+import { formatAddress, identifyScan } from "../../hardware/sensorDb";
+import { computeBindings } from "../../hardware/driverBindings";
 import { resolveFleetTargets } from "../../effects/fleet";
 import { estimateAcrossDevices, describeFleet } from "../../effects/multiDevice";
 import { estimateFrameTime, DEFAULT_BUDGET_MODEL, type BudgetModel } from "../../effects/costModel";
@@ -1228,6 +1231,10 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
       deviceCosts = undefined;
     }
 
+    // Sensor-driver tools need a live device (to scan the bus + install the
+    // driver), so only offer them when connected (FUG-107).
+    const driverToolsEnabled = appState.client?.isConnected ?? false;
+
     try {
       const finalText = await chatTurn(
         chatHistory,
@@ -1265,9 +1272,16 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
           setChatStatus("Running a performance pass…");
           return estimateFleetReport();
         },
+        // Auto hardware discovery (FUG-107): only offered when a device is
+        // connected, so the model can enumerate the qwiic bus and install a
+        // sensor driver whose readings drive the effect's uniforms.
+        ...(driverToolsEnabled
+          ? { onScanBus: scanBusSummary, onSetDriver: installDriverFromSource }
+          : {}),
         onToolUse: () => undefined,
         },
         deviceCosts,
+        driverToolsEnabled ? DRIVER_SYSTEM_EXTRA : undefined,
       );
       clearChatStatus();
       appendChat("assistant", finalText || "(done)");
@@ -1305,6 +1319,69 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
       mapView.setLedColors(preview.shadeAll(positions));
     }
     return canvas.toDataURL("image/png");
+  }
+
+  // -- sensor drivers (FUG-107) ---------------------------------------------
+
+  /** scan_bus tool: enumerate the connected device's qwiic bus and match each
+   * responding address against the sensor database for the model to identify. */
+  async function scanBusSummary(): Promise<string> {
+    const c = appState.client;
+    if (!c?.isConnected) return "No device connected — connect one to scan its qwiic bus.";
+    setChatStatus("Scanning I2C bus…");
+    const res = await c.scanI2c();
+    const matches = identifyScan(res.addresses);
+    if (matches.length === 0) {
+      return "Bus scan found no I2C devices. Check the qwiic cable and that the sensor is powered.";
+    }
+    const lines = matches.map((m) => {
+      const cands = m.candidates.length
+        ? m.candidates.map((s) => `${s.part} — ${s.label} [${s.measures.join(", ")}]`).join(" | ")
+        : "unknown (ask the user which sensor this is)";
+      return `  ${formatAddress(m.address)}: ${cands}`;
+    });
+    return `I2C devices on the bus:\n${lines.join("\n")}`;
+  }
+
+  /** set_driver tool: compile the source as a driver, bind its exports to the
+   * current effect's uniforms by name, and install it on the connected device.
+   * Returns a summary the model iterates on. */
+  async function installDriverFromSource(source: string): Promise<string> {
+    setChatStatus("Compiling driver…");
+    const drv = await worker.compile(source);
+    if (!drv.ok) {
+      const diags = drv.diagnostics.map((d) => `  line ${d.line}:${d.col} — ${d.msg}`).join("\n");
+      return `Driver compile FAILED:\n${diags}`;
+    }
+    if (drv.exports.length === 0) {
+      return "Compiled, but this program declares no `export`s. A driver needs `void poll()` and at least one `export`.";
+    }
+    // Match exports to the CURRENT effect's uniforms by name.
+    const eff = await worker.compile(codeEl.value);
+    const { bindings, unmatched } = computeBindings(drv.exports, eff.ok ? eff.uniforms : []);
+    const exportList = drv.exports
+      .map((e) => `${e.name}${e.unit ? ` (${e.unit})` : ""}`)
+      .join(", ");
+    let summary = `Driver compiled. Exports: ${exportList}. `;
+    summary += bindings.length
+      ? `Bound ${bindings.length} export(s) to matching effect uniforms.`
+      : "No exports matched an effect uniform by name.";
+    if (unmatched.length > 0) {
+      summary += ` Unmatched (no same-named uniform in the effect): ${unmatched.join(", ")}.`;
+    }
+    const c = appState.client;
+    if (!c?.isConnected) {
+      return `${summary} No device connected, so it was not installed.`;
+    }
+    setChatStatus("Installing driver…");
+    try {
+      const st = await c.submitDriver(drv.bytecode, bindings, 100, true);
+      return `${summary} Installed (running=${st.running}, poll=${st.pollIntervalMs}ms, lastPoll=${
+        st.lastPoll || "pending"
+      }).`;
+    } catch (e) {
+      return `${summary} Install failed: ${msg(e)}.`;
+    }
   }
 
   // -- device ---------------------------------------------------------------

@@ -43,7 +43,10 @@ import type {
 import {
   type ChunkAckMessage,
   decodeMappingBundle,
+  type DriverBindingFlat,
+  type DriverStateMessage,
   type EffectUniformsMessage,
+  type I2cScanResultMessage,
   type MappingBundle,
   type PerfMode,
   type PerfReportMessage,
@@ -561,6 +564,41 @@ export class LedMapperClient {
       } as unknown as ClientMessage,
       "effect_uniforms",
     )) as unknown as EffectUniformsMessage;
+  }
+
+  // -- auto hardware discovery (FUG-107) ------------------------------------
+
+  /** Enumerate the qwiic I2C bus. Reply: i2c_scan_result (responding 7-bit
+   * addresses). The app cross-references these against its sensor database. */
+  async scanI2c(): Promise<I2cScanResultMessage> {
+    return (await this.request(
+      { type: "scan_i2c" } as unknown as ClientMessage,
+      "i2c_scan_result",
+    )) as unknown as I2cScanResultMessage;
+  }
+
+  /** Upload a compiled sensor driver (a `.fxb` with a poll() entry). `bindings`
+   * map the driver's export slots to the active effect's uniform slots; the
+   * device runs poll() every `pollIntervalMs` and feeds those uniforms. Reply:
+   * driver_state. */
+  async submitDriver(
+    fxb: Uint8Array,
+    bindings: DriverBindingFlat[],
+    pollIntervalMs = 100,
+    activate = true,
+  ): Promise<DriverStateMessage> {
+    return (await this.request(
+      { type: "submit_driver", fxb, pollIntervalMs, bindings, activate } as unknown as ClientMessage,
+      "driver_state",
+    )) as unknown as DriverStateMessage;
+  }
+
+  /** Stop polling and clear the active sensor driver. Reply: driver_state. */
+  async removeDriver(): Promise<DriverStateMessage> {
+    return (await this.request(
+      { type: "remove_driver" } as unknown as ClientMessage,
+      "driver_state",
+    )) as unknown as DriverStateMessage;
   }
 
   /** Configure effect perf instrumentation (perf-monitoring.md). `mode` picks

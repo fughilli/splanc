@@ -22,6 +22,7 @@
 #include <Preferences.h>
 #include <WebServer.h>
 #include <WiFi.h>
+#include <driver/i2c.h>
 #include <esp_cpu.h>
 #include <esp_https_server.h>
 #include <esp_mac.h>
@@ -1376,6 +1377,97 @@ static void emit_perf_report_if_due() {
   if (n > 0) ws_send_frame(WS_OP_BINARY, tx, (size_t)n);
 }
 
+// -- qwiic I2C bus (FUG-107 auto hardware discovery) --------------------------
+// The bus a plugged-in qwiic sensor lives on. scan_i2c enumerates it; a loaded
+// sensor driver's poll() reads it via lm_i2c_{write,read} (called from the Rust
+// driver VM). Pins are a board wiring choice like LED_DATA_PIN — the DevKitC-1
+// has no qwiic connector, so these default to a common breakout wiring and are
+// overridable at build time. 100 kHz is the safe qwiic default.
+#ifndef QWIIC_SDA_PIN
+#define QWIIC_SDA_PIN 6
+#endif
+#ifndef QWIIC_SCL_PIN
+#define QWIIC_SCL_PIN 7
+#endif
+#ifndef QWIIC_I2C_HZ
+#define QWIIC_I2C_HZ 100000
+#endif
+
+static constexpr i2c_port_t kQwiicPort = I2C_NUM_0;
+// 0 = not yet attempted, 1 = up, -1 = install failed (don't retry every call).
+static int g_i2c_state = 0;
+static constexpr TickType_t kI2cTimeout = pdMS_TO_TICKS(50);
+
+// Bring the qwiic bus up LAZILY, on first use — installing the I2C master driver
+// allocates heap, and boot/TLS-handshake heap headroom on the C6 is tight (see
+// the arena/.bss notes in ffi.rs), so a device with no sensor in use must pay
+// nothing. Idempotent; all callers hold player_mutex, so no init race.
+static bool i2c_ensure() {
+  if (g_i2c_state != 0) return g_i2c_state > 0;
+  i2c_config_t cfg = {};
+  cfg.mode = I2C_MODE_MASTER;
+  cfg.sda_io_num = QWIIC_SDA_PIN;
+  cfg.scl_io_num = QWIIC_SCL_PIN;
+  cfg.sda_pullup_en = GPIO_PULLUP_ENABLE;
+  cfg.scl_pullup_en = GPIO_PULLUP_ENABLE;
+  cfg.master.clk_speed = QWIIC_I2C_HZ;
+  if (i2c_param_config(kQwiicPort, &cfg) != ESP_OK ||
+      i2c_driver_install(kQwiicPort, I2C_MODE_MASTER, 0, 0, 0) != ESP_OK) {
+    g_i2c_state = -1;
+    return false;
+  }
+  g_i2c_state = 1;
+  Log().printf("[i2c] qwiic bus up: SDA=%d SCL=%d @%d Hz\n", QWIIC_SDA_PIN,
+               QWIIC_SCL_PIN, QWIIC_I2C_HZ);
+  return true;
+}
+
+// Write `n` bytes to 7-bit `addr`. Backs the driver VM's i2c_write.
+extern "C" bool lm_i2c_write(uint8_t addr, const uint8_t *bytes, size_t n) {
+  if (bytes == nullptr || n == 0 || !i2c_ensure()) return false;
+  i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+  i2c_master_start(cmd);
+  i2c_master_write_byte(cmd, (uint8_t)((addr << 1) | I2C_MASTER_WRITE), true);
+  i2c_master_write(cmd, bytes, n, true);
+  i2c_master_stop(cmd);
+  esp_err_t err = i2c_master_cmd_begin(kQwiicPort, cmd, kI2cTimeout);
+  i2c_cmd_link_delete(cmd);
+  return err == ESP_OK;
+}
+
+// Write register pointer `reg`, then repeated-start read `n` bytes into `out`.
+extern "C" bool lm_i2c_read(uint8_t addr, uint8_t reg, uint8_t *out, size_t n) {
+  if (out == nullptr || n == 0 || !i2c_ensure()) return false;
+  i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+  i2c_master_start(cmd);
+  i2c_master_write_byte(cmd, (uint8_t)((addr << 1) | I2C_MASTER_WRITE), true);
+  i2c_master_write_byte(cmd, reg, true);
+  i2c_master_start(cmd);
+  i2c_master_write_byte(cmd, (uint8_t)((addr << 1) | I2C_MASTER_READ), true);
+  if (n > 1) i2c_master_read(cmd, out, n - 1, I2C_MASTER_ACK);
+  i2c_master_read_byte(cmd, out + n - 1, I2C_MASTER_NACK);
+  i2c_master_stop(cmd);
+  esp_err_t err = i2c_master_cmd_begin(kQwiicPort, cmd, kI2cTimeout);
+  i2c_cmd_link_delete(cmd);
+  return err == ESP_OK;
+}
+
+// Probe 0x08..0x77; record the addresses that ACK a zero-length write.
+extern "C" size_t lm_i2c_scan(uint8_t *out, size_t cap) {
+  if (out == nullptr || cap == 0 || !i2c_ensure()) return 0;
+  size_t count = 0;
+  for (uint8_t addr = 0x08; addr <= 0x77 && count < cap; ++addr) {
+    i2c_cmd_handle_t cmd = i2c_cmd_link_create();
+    i2c_master_start(cmd);
+    i2c_master_write_byte(cmd, (uint8_t)((addr << 1) | I2C_MASTER_WRITE), true);
+    i2c_master_stop(cmd);
+    esp_err_t err = i2c_master_cmd_begin(kQwiicPort, cmd, kI2cTimeout);
+    i2c_cmd_link_delete(cmd);
+    if (err == ESP_OK) out[count++] = addr;
+  }
+  return count;
+}
+
 // -- app ----------------------------------------------------------------------
 
 // -- wss: TLS WebSocket player endpoint (:443) -------------------------------
@@ -1989,6 +2081,9 @@ void setup() {
     wss_start();  // TLS player on :443 for the hosted https app (direct, no relay)
   }
 
+  // The qwiic I2C bus is brought up lazily on first scan/driver use (i2c_ensure)
+  // so a device with no sensor pays no boot-time heap/.bss for it (FUG-107).
+
   // Drive the LEDs from a dedicated high-priority task so the pattern cadence
   // no longer rides on loop()'s cooperative WiFi/HTTP/BLE servicing.
   xTaskCreate(render_task, "render", kRenderTaskStack, nullptr, kRenderTaskPrio,
@@ -2102,6 +2197,15 @@ void loop() {
     flush_fx_sel_save();
   }
   emit_perf_report_if_due();
+
+  // Run a loaded sensor driver's poll() if it's due (FUG-107); self-paced, so a
+  // cheap no-op when no driver is loaded. Under player_mutex — it writes the
+  // active effect's uniforms, which the render task also touches.
+  if (lm_drv_running()) {
+    xSemaphoreTake(player_mutex, portMAX_DELAY);
+    lm_drv_poll((int64_t)millis());
+    xSemaphoreGive(player_mutex);
+  }
 
   static uint32_t last_report = 0;
   if (millis() - last_report > 5000) {
