@@ -28,7 +28,13 @@
 //! portable, host-verified heart that produces the code.
 #![cfg_attr(not(test), no_std)]
 
+// The `alloc` feature enables the Vec-based convenience API (compile / plan_blocks
+// / reference) used by host tools + tests. The firmware links WITHOUT it and uses
+// only the no-alloc path (compile_into / plan_blocks_into), so `fx_jit` needs no
+// global allocator on-device.
+#[cfg(feature = "alloc")]
 extern crate alloc;
+#[cfg(feature = "alloc")]
 use alloc::vec::Vec;
 use ledmapper_fx_vm::Op;
 
@@ -122,7 +128,9 @@ pub mod rv32 {
 }
 
 /// A compiled straight-line segment: PIC machine code plus the operand-stack
-/// bookkeeping the VM needs around the call.
+/// bookkeeping the VM needs around the call. (`alloc`-only; the firmware uses the
+/// no-alloc [`compile_into`].)
+#[cfg(feature = "alloc")]
 pub struct Segment {
     /// RV32IM words. Copy into executable memory and call as
     /// `extern "C" fn(stack: *mut i32, locals: *mut i32, consts: *const i32)`;
@@ -149,15 +157,83 @@ const IMM12_MAX: i32 = 2047;
 /// with the depth tracked at compile time (it may go negative, consuming entry
 /// operands), so no runtime stack pointer is needed. Runtime stack sufficiency is
 /// the caller's check via [`Segment::min_depth`].
+#[cfg(feature = "alloc")]
 pub fn compile(block: &[Ir]) -> Option<Segment> {
-    use rv32::*;
     let mut code = Vec::new();
+    let meta = emit_block(block, &mut code)?;
+    Some(Segment { code, net_delta: meta.net_delta, min_depth: meta.min_depth })
+}
+
+/// Metadata for a compiled block, returned by the no-alloc [`compile_into`].
+#[derive(Clone, Copy)]
+pub struct SegMeta {
+    /// Number of RV32 words written.
+    pub len: usize,
+    pub net_delta: i32,
+    pub min_depth: i32,
+}
+
+/// no-alloc twin of [`compile`]: emit the segment into `out` (the firmware's
+/// static code arena) instead of a `Vec`. `None` on the same rejections, or if
+/// `out` is too small. This is the path the firmware uses (it has no heap).
+pub fn compile_into(block: &[Ir], out: &mut [u32]) -> Option<SegMeta> {
+    let mut sink = SliceSink { buf: out, n: 0 };
+    let meta = emit_block(block, &mut sink)?;
+    Some(SegMeta { len: sink.n, net_delta: meta.net_delta, min_depth: meta.min_depth })
+}
+
+/// A destination for emitted RV32 words. `emit` returns false when full, so the
+/// codegen (shared by the `Vec` and slice paths) can bail identically.
+trait Sink {
+    fn emit(&mut self, w: u32) -> bool;
+}
+#[cfg(feature = "alloc")]
+impl Sink for Vec<u32> {
+    fn emit(&mut self, w: u32) -> bool {
+        self.push(w);
+        true
+    }
+}
+struct SliceSink<'a> {
+    buf: &'a mut [u32],
+    n: usize,
+}
+impl Sink for SliceSink<'_> {
+    fn emit(&mut self, w: u32) -> bool {
+        if self.n < self.buf.len() {
+            self.buf[self.n] = w;
+            self.n += 1;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+/// Net stack effect of a compiled block.
+struct BlockMeta {
+    net_delta: i32,
+    min_depth: i32,
+}
+
+/// The shared codegen: lower `block` into `sink`. Semantics are identical to the
+/// documented `compile`; only the output destination differs.
+fn emit_block(block: &[Ir], sink: &mut impl Sink) -> Option<BlockMeta> {
+    use rv32::*;
     let mut depth: i32 = 0; // slots relative to the entry top-of-stack
     let mut min_depth: i32 = 0;
 
     // Byte offset of stack slot at model-depth `k` from a0 (may be negative).
     let stack_off = |k: i32| k * 4;
     let fits = |off: i32| (IMM12_MIN..=IMM12_MAX).contains(&off);
+
+    macro_rules! emit {
+        ($w:expr) => {
+            if !sink.emit($w) {
+                return None;
+            }
+        };
+    }
 
     for op in block {
         // Deepest stack slot this op reads/writes (relative to the entry TOS):
@@ -178,8 +254,8 @@ pub fn compile(block: &[Ir]) -> Option<Segment> {
                 if !fits(coff) || !fits(soff) {
                     return None;
                 }
-                code.push(lw(T0, A2, coff));
-                code.push(sw(T0, A0, soff));
+                emit!(lw(T0, A2, coff));
+                emit!(sw(T0, A0, soff));
                 depth += 1;
             }
             Ir::LoadLocal(slot) => {
@@ -188,8 +264,8 @@ pub fn compile(block: &[Ir]) -> Option<Segment> {
                 if !fits(loff) || !fits(soff) {
                     return None;
                 }
-                code.push(lw(T0, A1, loff));
-                code.push(sw(T0, A0, soff));
+                emit!(lw(T0, A1, loff));
+                emit!(sw(T0, A0, soff));
                 depth += 1;
             }
             Ir::StoreLocal(slot) => {
@@ -199,8 +275,8 @@ pub fn compile(block: &[Ir]) -> Option<Segment> {
                 if !fits(loff) || !fits(soff) {
                     return None;
                 }
-                code.push(lw(T0, A0, soff));
-                code.push(sw(T0, A1, loff));
+                emit!(lw(T0, A0, soff));
+                emit!(sw(T0, A1, loff));
             }
             Ir::AddI | Ir::SubI | Ir::MulI => {
                 let a = stack_off(depth - 2);
@@ -208,14 +284,14 @@ pub fn compile(block: &[Ir]) -> Option<Segment> {
                 if !fits(a) || !fits(b) {
                     return None;
                 }
-                code.push(lw(T0, A0, a));
-                code.push(lw(T1, A0, b));
-                code.push(match *op {
+                emit!(lw(T0, A0, a));
+                emit!(lw(T1, A0, b));
+                emit!(match *op {
                     Ir::AddI => add(T0, T0, T1),
                     Ir::SubI => sub(T0, T0, T1),
                     _ => mul(T0, T0, T1),
                 });
-                code.push(sw(T0, A0, a));
+                emit!(sw(T0, A0, a));
                 depth -= 1;
             }
             Ir::NegI => {
@@ -223,9 +299,9 @@ pub fn compile(block: &[Ir]) -> Option<Segment> {
                 if !fits(a) {
                     return None;
                 }
-                code.push(lw(T0, A0, a));
-                code.push(sub(T0, ZERO, T0));
-                code.push(sw(T0, A0, a));
+                emit!(lw(T0, A0, a));
+                emit!(sub(T0, ZERO, T0));
+                emit!(sw(T0, A0, a));
             }
             Ir::MulFix(frac) => {
                 if !(1..=31).contains(&frac) {
@@ -238,29 +314,29 @@ pub fn compile(block: &[Ir]) -> Option<Segment> {
                 }
                 // (a*b) >> frac, low 32 bits of the 64-bit signed product:
                 //   (low >>u frac) | (high <<u (32-frac)).
-                code.push(lw(T0, A0, a));
-                code.push(lw(T1, A0, b));
-                code.push(mul(T2, T0, T1)); // low 32
-                code.push(mulh(T0, T0, T1)); // high 32 (signed)
-                code.push(srli(T2, T2, frac as u32));
-                code.push(slli(T0, T0, 32 - frac as u32));
-                code.push(or(T0, T2, T0));
-                code.push(sw(T0, A0, a));
+                emit!(lw(T0, A0, a));
+                emit!(lw(T1, A0, b));
+                emit!(mul(T2, T0, T1)); // low 32
+                emit!(mulh(T0, T0, T1)); // high 32 (signed)
+                emit!(srli(T2, T2, frac as u32));
+                emit!(slli(T0, T0, 32 - frac as u32));
+                emit!(or(T0, T2, T0));
+                emit!(sw(T0, A0, a));
                 depth -= 1;
             }
             Ir::Pop(n) => depth -= n as i32,
         }
     }
-    code.push(ret());
-    Some(Segment { code, net_delta: depth, min_depth })
+    emit!(ret());
+    Some(BlockMeta { net_delta: depth, min_depth })
 }
 
 // -- bytecode planner: find + compile hot blocks ------------------------------
 
 /// A JIT plan for one hot block found in a program's bytecode: the byte range to
 /// patch (`start..end`), the compiled PIC segment, and the operand-stack delta.
-/// The firmware allocates executable memory for `code`, patches `Op::JitCall`
-/// (index) over `[start, start+3)`, and builds the VM's `JitBlock` table.
+/// (`alloc`-only; the firmware uses [`plan_blocks_into`] + [`PlanOut`].)
+#[cfg(feature = "alloc")]
 pub struct Plan {
     pub start: usize,
     pub end: usize,
@@ -331,62 +407,122 @@ fn branch_target(code: &[u8], pc: usize) -> Option<usize> {
     }
 }
 
-/// Scan a program's `code` section and return a JIT plan for every hot
-/// straight-line integer/fixed block: a maximal run of supported opcodes that (a)
-/// no branch jumps into the interior of, (b) retires at least [`MIN_BLOCK_OPS`]
-/// ops, (c) spans at least 3 bytes (room for the `JitCall` patch), and (d)
-/// actually compiles. Returns `Vec::new()` if the stream is malformed (an unknown
-/// opcode), so the firmware simply keeps interpreting.
-pub fn plan_blocks(code: &[u8]) -> Vec<Plan> {
-    // Instruction offsets + the set of branch/call targets.
-    let mut offs: Vec<usize> = Vec::new();
+/// Longest straight-line JIT block a single plan will hold (in ops). A run longer
+/// than this is split; blocks this long are already well past the dispatch
+/// break-even, so the tail keeps interpreting.
+pub const MAX_BLOCK_IR: usize = 64;
+
+/// no-alloc block scan shared by [`plan_blocks`] and [`plan_blocks_into`]. Walks
+/// `code`, marks branch/call targets into `is_target` (caller scratch, len ≥
+/// `code.len()+1`), and invokes `on_block(start, end, &irs)` for every maximal
+/// supported straight-line run of ≥ [`MIN_BLOCK_OPS`] ops (≥ 3 bytes) that no
+/// branch enters mid-way. Returns `false` (scanning nothing) if the stream is
+/// malformed. `on_block` decides whether to keep the block.
+fn scan_blocks(code: &[u8], is_target: &mut [bool], mut on_block: impl FnMut(usize, usize, &[Ir])) -> bool {
+    // Pass 1: mark every branch/call target.
     let mut pc = 0usize;
     while pc < code.len() {
         let len = match op_len(code, pc) {
             Some(l) if l > 0 && pc + l <= code.len() => l,
-            _ => return Vec::new(),
+            _ => return false,
         };
-        offs.push(pc);
-        pc += len;
-    }
-    let mut is_target = alloc::vec![false; code.len() + 1];
-    for &o in &offs {
-        if let Some(t) = branch_target(code, o) {
-            if t <= code.len() {
+        if let Some(t) = branch_target(code, pc) {
+            if t < is_target.len() {
                 is_target[t] = true;
             }
         }
+        pc += len;
     }
-
-    let mut plans = Vec::new();
-    let mut i = 0usize;
-    while i < offs.len() {
-        let start = offs[i];
-        let mut irs: Vec<Ir> = Vec::new();
-        let mut end = start;
-        let mut j = i;
-        while j < offs.len() {
-            let o = offs[j];
-            if j > i && is_target[o] {
+    // Pass 2: form maximal JIT-able blocks.
+    let mut irs = [Ir::AddI; MAX_BLOCK_IR];
+    let mut pc = 0usize;
+    while pc < code.len() {
+        let start = pc;
+        let mut n = 0usize;
+        let mut end = pc;
+        let mut q = pc;
+        while q < code.len() && n < MAX_BLOCK_IR {
+            if q > start && is_target[q] {
                 break; // a jump lands here — the block must not swallow it
             }
-            match op_to_ir(code, o) {
+            match op_to_ir(code, q) {
                 Some((ir, len)) => {
-                    irs.push(ir);
-                    end = o + len;
-                    j += 1;
+                    irs[n] = ir;
+                    n += 1;
+                    end = q + len;
+                    q += len;
                 }
                 None => break,
             }
         }
-        if irs.len() >= MIN_BLOCK_OPS && end - start >= 3 {
-            if let Some(seg) = compile(&irs) {
-                plans.push(Plan { start, end, net_delta: seg.net_delta, code: seg.code });
-            }
+        if n >= MIN_BLOCK_OPS && end - start >= 3 {
+            on_block(start, end, &irs[..n]);
         }
-        i = if j > i { j } else { i + 1 };
+        // Advance past the run we just consumed (or one op if none was JIT-able),
+        // so blocks never overlap.
+        pc = if end > start && n > 0 {
+            end
+        } else {
+            start + op_len(code, start).unwrap_or(1).max(1)
+        };
     }
+    true
+}
+
+/// Scan a program's `code` and return a compiled JIT [`Plan`] for every hot
+/// block. `Vec`-based (host/tests); the firmware uses [`plan_blocks_into`].
+#[cfg(feature = "alloc")]
+pub fn plan_blocks(code: &[u8]) -> Vec<Plan> {
+    let mut is_target = alloc::vec![false; code.len() + 1];
+    let mut plans = Vec::new();
+    scan_blocks(code, &mut is_target, |start, end, irs| {
+        if let Some(seg) = compile(irs) {
+            plans.push(Plan { start, end, net_delta: seg.net_delta, code: seg.code });
+        }
+    });
     plans
+}
+
+/// A JIT plan in no-alloc form: the byte range to patch and the segment's
+/// location in the shared code arena the firmware passed to [`plan_blocks_into`].
+#[derive(Clone, Copy, Default)]
+pub struct PlanOut {
+    pub start: u16,
+    pub end: u16,
+    pub net_delta: i16,
+    pub code_off: u16,
+    pub code_len: u16,
+}
+
+/// no-alloc twin of [`plan_blocks`] for the firmware: find hot blocks, compile
+/// each into the shared `seg_code` arena, and record a [`PlanOut`] per block.
+/// `is_target` is caller scratch (len ≥ `code.len()+1`). Stops early if `plans`
+/// or `seg_code` fills. Returns the number of plans written.
+pub fn plan_blocks_into(
+    code: &[u8],
+    is_target: &mut [bool],
+    plans: &mut [PlanOut],
+    seg_code: &mut [u32],
+) -> usize {
+    let mut count = 0usize;
+    let mut cursor = 0usize;
+    scan_blocks(code, is_target, |start, end, irs| {
+        if count >= plans.len() {
+            return;
+        }
+        if let Some(meta) = compile_into(irs, &mut seg_code[cursor..]) {
+            plans[count] = PlanOut {
+                start: start as u16,
+                end: end as u16,
+                net_delta: meta.net_delta as i16,
+                code_off: cursor as u16,
+                code_len: meta.len as u16,
+            };
+            cursor += meta.len;
+            count += 1;
+        }
+    });
+    count
 }
 
 // -- reference semantics (mirror fx_vm::run's integer ops) --------------------
@@ -394,6 +530,7 @@ pub fn plan_blocks(code: &[u8]) -> Vec<Plan> {
 /// Execute a block with the EXACT `fx_vm` integer semantics, mutating the given
 /// operand stack + locals. The differential test proves the JIT matches this,
 /// and a cross-check proves this matches the real `fx_vm`.
+#[cfg(feature = "alloc")]
 pub fn reference(block: &[Ir], stack: &mut Vec<i32>, locals: &mut [i32], consts: &[i32]) {
     for op in block {
         match *op {
@@ -649,6 +786,56 @@ mod tests {
         let s = compile(&[Ir::StoreLocal(0)]).expect("StoreLocal is JIT-able");
         assert_eq!(s.min_depth, -1);
         assert_eq!(s.net_delta, -1);
+    }
+
+    #[test]
+    fn compile_into_matches_the_vec_compile() {
+        // The no-alloc firmware path must emit byte-identical code to the Vec path.
+        let block = [
+            Ir::LoadLocal(0),
+            Ir::PushConst(2),
+            Ir::MulI,
+            Ir::PushConst(1),
+            Ir::AddI,
+            Ir::MulFix(16),
+        ];
+        let seg = compile(&block).unwrap();
+        let mut out = [0u32; 64];
+        let meta = compile_into(&block, &mut out).unwrap();
+        assert_eq!(&out[..meta.len], &seg.code[..]);
+        assert_eq!(meta.net_delta, seg.net_delta);
+        assert_eq!(meta.min_depth, seg.min_depth);
+        // Too-small buffer is rejected, not overrun.
+        let mut tiny = [0u32; 2];
+        assert!(compile_into(&block, &mut tiny).is_none());
+    }
+
+    #[test]
+    fn plan_blocks_into_matches_plan_blocks() {
+        use ledmapper_fx_vm::Op;
+        #[rustfmt::skip]
+        let code = [
+            Op::LoadCtx as u8, 0,
+            Op::LoadLocal as u8, 0, 1,
+            Op::PushConst as u8, 0, 0,
+            Op::MulI as u8,
+            Op::PushConst as u8, 1, 0,
+            Op::AddI as u8,
+            Op::Ret as u8, 0,
+        ];
+        let vec_plans = plan_blocks(&code);
+        let mut is_target = [false; 64];
+        let mut plans = [PlanOut::default(); 8];
+        let mut seg = [0u32; 256];
+        let n = plan_blocks_into(&code, &mut is_target, &mut plans, &mut seg);
+        assert_eq!(n, vec_plans.len());
+        for (i, vp) in vec_plans.iter().enumerate() {
+            assert_eq!(plans[i].start as usize, vp.start);
+            assert_eq!(plans[i].end as usize, vp.end);
+            assert_eq!(plans[i].net_delta as i32, vp.net_delta);
+            let po = &plans[i];
+            assert_eq!(&seg[po.code_off as usize..(po.code_off + po.code_len) as usize], &vp.code[..]);
+        }
     }
 
     #[test]

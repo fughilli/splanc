@@ -21,10 +21,13 @@ rust_library(
 )
 
 # Host unit + differential tests (encoder pins, JIT-vs-reference over random
-# blocks, unjitable-block rejection). Compiles the crate WITH its `cfg(test)`
-# tests (so `std`/`alloc` test helpers are available).
+# blocks, unjitable-block rejection). Built WITH the `alloc` feature so the
+# Vec-based convenience API (compile / plan_blocks / reference) the tests use is
+# present; the firmware links the library above WITHOUT it (no-alloc path only).
 rust_test(
     name = "fx_jit_test",
-    crate = ":fx_jit",
+    srcs = ["src/lib.rs"],
+    crate_features = ["alloc"],
     edition = "2021",
+    deps = ["//firmware/fx_vm"],
 )

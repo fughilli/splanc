@@ -32,6 +32,7 @@ rust_static_library(
     }),
     deps = [
         "//firmware/arena",
+        "//firmware/fx_jit",
         "//firmware/fx_vm",
         "//firmware/osc",
         "//firmware/player:player_fw",
@@ -51,6 +52,7 @@ rust_library(
     edition = "2021",
     deps = [
         "//firmware/arena",
+        "//firmware/fx_jit",
         "//firmware/fx_vm",
         "//firmware/osc",
         "//firmware/player",

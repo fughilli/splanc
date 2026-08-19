@@ -673,6 +673,21 @@ impl<'a> Program<'a> {
         })
     }
 
+    /// The raw code section (borrowed from the `.fxb`). The device JIT scans this
+    /// for hot blocks and the firmware patches `JitCall` into the backing buffer
+    /// (FUG-125).
+    #[inline]
+    pub fn code(&self) -> &'a [u8] {
+        self.code
+    }
+
+    /// The raw const pool bytes (`n_consts * 4`, little-endian). The device JIT
+    /// builds an aligned i32 mirror of these for its segments' `a2` base.
+    #[inline]
+    pub fn consts_raw(&self) -> &'a [u8] {
+        self.consts
+    }
+
     /// Whether the program reads the per-LED fixed context cache (`LoadCtxFix`).
     /// The host uses this to skip building the fixed mirrors for all-float
     /// programs (FUG-122).

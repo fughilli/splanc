@@ -50,6 +50,23 @@
 #include "firmware/player_app/ws2812_rmt.h"
 #include "firmware/player_app/ws_codec.h"
 
+#include "esp_heap_caps.h"
+
+// FUG-125: executable-memory primitives for the on-device JIT. The Rust FFI
+// (ffi.rs::fx_build_jit) compiles hot fx_vm blocks to RV32 PIC segments and asks
+// the firmware for instruction-bus-reachable memory to copy them into. On the
+// ESP32-C6 that is IRAM (32-bit-addressable executable SRAM) via MALLOC_CAP_EXEC.
+// Internal SRAM is not behind the CPU's instruction cache (that cache fronts
+// external flash only), so after writing a segment we only need a RISC-V `fence.i`
+// to make the core refetch — no cache flush/invalidate.
+extern "C" {
+void *lm_jit_alloc_exec(size_t bytes) {
+  return heap_caps_malloc(bytes, MALLOC_CAP_EXEC | MALLOC_CAP_32BIT);
+}
+void lm_jit_free_exec(void *p) { heap_caps_free(p); }
+void lm_jit_sync_icache(void) { asm volatile("fence.i" ::: "memory"); }
+}
+
 // The player protocol handler (lm_player_handle -> Player::handle) decodes a
 // ClientMessage and builds a ServerMessage as by-value protobuf structs on the
 // caller's stack, and this path runs in loopTask (ws_poll). Measured frames on

@@ -23,8 +23,10 @@ use core::ptr::{addr_of, addr_of_mut};
 use core::sync::atomic::AtomicBool;
 
 use ledmapper_arena::Arena;
+use ledmapper_fx_jit::{plan_blocks_into, PlanOut};
 use ledmapper_fx_vm::{
-    Budget, Counters as FxCounters, Frame as FxFrame, Led as FxLed, Outcome, Program, Vm as FxVm,
+    Budget, Counters as FxCounters, Frame as FxFrame, JitBlock, JitFn, Led as FxLed, Outcome,
+    Program, Vm as FxVm,
 };
 use ledmapper_osc::{self as osc, Config as OscConfig, PortTable, Shadow};
 use ledmapper_pb::ledmapper_::v1_ as pb;
@@ -93,6 +95,166 @@ const FX_MAX_BYTES: usize = 4 * 1024;
 static mut FX_BYTES: [u8; FX_MAX_BYTES] = [0; FX_MAX_BYTES];
 static mut FX_LEN: usize = 0;
 static mut FX_VM: Option<FxVm> = None;
+
+// -- FUG-125: on-device JIT ---------------------------------------------------
+//
+// At effect load the firmware scans the (interpreter) bytecode for hot
+// straight-line integer/fixed blocks (fx_jit::plan_blocks_into), compiles each to
+// a short RV32 PIC segment, copies the segments into ONE executable IRAM block,
+// patches `Op::JitCall` over each block's first bytes in FX_BYTES, and installs a
+// JitBlock table on the VM. The interpreter runs everything else and is the
+// fallback. Toggle at runtime with `lm_fx_set_jit_enabled` (for the HITL A/B).
+
+/// Max JIT blocks per effect + the shared segment-code scratch (words). Bounded
+/// so all JIT state is static RAM, never heap. Excess blocks stay interpreted.
+const MAX_JIT_BLOCKS: usize = 12;
+const JIT_SEG_WORDS: usize = 1024;
+const MAX_JIT_CONSTS: usize = 256;
+
+static mut FX_JIT_ENABLED: bool = true;
+static mut FX_JIT_BLOCKS: [JitBlock; MAX_JIT_BLOCKS] =
+    [JitBlock { func: jit_noop, end: 0, net_delta: 0 }; MAX_JIT_BLOCKS];
+static mut FX_JIT_N: usize = 0;
+static mut FX_JIT_CONSTS: [i32; MAX_JIT_CONSTS] = [0; MAX_JIT_CONSTS];
+static mut FX_JIT_PLANS: [PlanOut; MAX_JIT_BLOCKS] = [PlanOut {
+    start: 0,
+    end: 0,
+    net_delta: 0,
+    code_off: 0,
+    code_len: 0,
+}; MAX_JIT_BLOCKS];
+static mut FX_JIT_SEG: [u32; JIT_SEG_WORDS] = [0; JIT_SEG_WORDS];
+static mut FX_JIT_TARGETS: [bool; FX_MAX_BYTES + 1] = [false; FX_MAX_BYTES + 1];
+/// The executable IRAM block backing the current effect's segments (freed +
+/// re-allocated each load). Null when no JIT is active.
+static mut FX_JIT_EXEC: *mut u32 = core::ptr::null_mut();
+
+/// Placeholder segment for the never-called table slots (a real segment always
+/// overwrites the slots we install). Must be a valid function, not null.
+unsafe extern "C" fn jit_noop(_stack: *mut i32, _locals: *mut i32, _consts: *const i32) {}
+
+// Executable-memory primitives, provided by the C++ firmware (esp-idf IRAM +
+// icache sync). Host builds can't execute RV32, so the JIT never installs a block
+// there; these host stubs just satisfy the linker.
+#[cfg(target_arch = "riscv32")]
+extern "C" {
+    /// Allocate `bytes` of 32-bit-addressable executable IRAM (or null).
+    fn lm_jit_alloc_exec(bytes: usize) -> *mut u32;
+    /// Free a block from `lm_jit_alloc_exec`.
+    fn lm_jit_free_exec(ptr: *mut u32);
+    /// Synchronize the instruction stream after writing code (RISC-V `fence.i`).
+    fn lm_jit_sync_icache();
+}
+#[cfg(not(target_arch = "riscv32"))]
+unsafe fn lm_jit_alloc_exec(_bytes: usize) -> *mut u32 {
+    core::ptr::null_mut()
+}
+#[cfg(not(target_arch = "riscv32"))]
+unsafe fn lm_jit_free_exec(_ptr: *mut u32) {}
+#[cfg(not(target_arch = "riscv32"))]
+unsafe fn lm_jit_sync_icache() {}
+
+/// Build (or tear down) the JIT for the freshly-loaded `prog` and install it on
+/// `vm`. Frees the previous effect's exec block first. A no-op that clears the
+/// table when the JIT is disabled, the program has too many consts, or no exec
+/// memory is available — the VM then purely interprets.
+///
+/// # Safety
+/// Call from `lm_fx_load` after `FX_BYTES`/`FX_LEN` are set and `prog` was parsed
+/// from them; mutates `FX_BYTES` (patches `JitCall`) and the JIT statics.
+unsafe fn fx_build_jit(prog: &Program, vm: &mut FxVm) {
+    // Tear down any previous effect's exec block + table.
+    if !FX_JIT_EXEC.is_null() {
+        lm_jit_free_exec(FX_JIT_EXEC);
+        FX_JIT_EXEC = core::ptr::null_mut();
+    }
+    FX_JIT_N = 0;
+    vm.clear_jit();
+    if !FX_JIT_ENABLED {
+        return;
+    }
+
+    // Aligned i32 mirror of the const pool (the segments' `a2` base).
+    let craw = prog.consts_raw();
+    let n_consts = craw.len() / 4;
+    if n_consts > MAX_JIT_CONSTS {
+        return;
+    }
+    let consts = &mut *addr_of_mut!(FX_JIT_CONSTS);
+    for i in 0..n_consts {
+        consts[i] = i32::from_le_bytes([craw[i * 4], craw[i * 4 + 1], craw[i * 4 + 2], craw[i * 4 + 3]]);
+    }
+
+    // Plan the hot blocks into the static scratch.
+    let code = prog.code();
+    let code_len = code.len();
+    // Byte offset of the code section within FX_BYTES, so we can patch JitCall.
+    let code_off = code.as_ptr() as usize - addr_of!(FX_BYTES) as usize;
+    let n = {
+        let targets = &mut (*addr_of_mut!(FX_JIT_TARGETS))[..code_len + 1];
+        for t in targets.iter_mut() {
+            *t = false;
+        }
+        plan_blocks_into(
+            code,
+            targets,
+            &mut *addr_of_mut!(FX_JIT_PLANS),
+            &mut *addr_of_mut!(FX_JIT_SEG),
+        )
+    };
+    if n == 0 {
+        return;
+    }
+
+    // Total segment words to place in one executable block.
+    let plans = &*addr_of!(FX_JIT_PLANS);
+    let total_words = plans[..n]
+        .iter()
+        .map(|p| p.code_off as usize + p.code_len as usize)
+        .max()
+        .unwrap_or(0);
+    if total_words == 0 {
+        return;
+    }
+    let exec = lm_jit_alloc_exec(total_words * 4);
+    if exec.is_null() {
+        return; // no exec memory -> stay interpreted
+    }
+    // Copy the packed segments into IRAM, then sync the instruction stream.
+    let seg = &*addr_of!(FX_JIT_SEG);
+    for i in 0..total_words {
+        core::ptr::write(exec.add(i), seg[i]);
+    }
+    lm_jit_sync_icache();
+
+    // Build the block table + patch JitCall over each block's first 3 bytes.
+    let blocks = &mut *addr_of_mut!(FX_JIT_BLOCKS);
+    let fxb = &mut *addr_of_mut!(FX_BYTES);
+    let mut installed = 0usize;
+    for k in 0..n {
+        if installed >= MAX_JIT_BLOCKS {
+            break;
+        }
+        let p = plans[k];
+        // SAFETY: exec+code_off points at the copied+synced segment for this block.
+        let func: JitFn = core::mem::transmute::<*mut u32, JitFn>(exec.add(p.code_off as usize));
+        blocks[installed] = JitBlock { func, end: p.end, net_delta: p.net_delta };
+        let at = code_off + p.start as usize;
+        fxb[at] = fx_vm_jit_call_op();
+        fxb[at + 1] = (installed & 0xff) as u8;
+        fxb[at + 2] = ((installed >> 8) & 0xff) as u8;
+        installed += 1;
+    }
+    FX_JIT_EXEC = exec;
+    FX_JIT_N = installed;
+    vm.set_jit(&blocks[..installed], consts.as_ptr());
+}
+
+/// The `Op::JitCall` opcode byte (kept as a tiny fn so the value has one source).
+#[inline]
+fn fx_vm_jit_call_op() -> u8 {
+    ledmapper_fx_vm::Op::JitCall as u8
+}
 
 /// Native OSC control (FUG-121). The active effect's uniform manifest reduced to
 /// a `name -> (slot, width)` table, rebuilt once per `lm_fx_load` so the UDP
@@ -2199,6 +2361,14 @@ pub unsafe extern "C" fn lm_fx_load(fxb: *const u8, len: usize) -> bool {
             vm.set_arena(arena);
         }
     }
+    // FUG-125: build the on-device JIT for this effect (patches JitCall into the
+    // resident FX_BYTES + installs the segment table on the VM). Re-parse from
+    // FX_BYTES so the patched offsets + JIT code slice point at the resident copy.
+    if let Some(vm) = (*addr_of_mut!(FX_VM)).as_mut() {
+        if let Ok(resident) = Program::parse(&(*addr_of!(FX_BYTES))[..len]) {
+            fx_build_jit(&resident, vm);
+        }
+    }
     // Force a topology-cache rebuild so the fresh VM gets the current graph
     // (set_graph) + per-LED cache on its first frame, regardless of load order.
     FX_TOPO_READY = false;
@@ -2221,7 +2391,27 @@ pub unsafe extern "C" fn lm_fx_clear() {
     FX_ID_LEN = 0;
     *addr_of_mut!(OSC_TABLE) = PortTable::empty();
     (*addr_of_mut!(OSC_SHADOW)).reset();
+    // Release the JIT's executable IRAM (FUG-125) so a clear doesn't leak it.
+    if !FX_JIT_EXEC.is_null() {
+        lm_jit_free_exec(FX_JIT_EXEC);
+        FX_JIT_EXEC = core::ptr::null_mut();
+    }
+    FX_JIT_N = 0;
     perf_reset_ring();
+}
+
+/// Enable/disable the on-device JIT (FUG-125). Takes effect on the NEXT
+/// `lm_fx_load`; the caller reloads the effect to rebuild (or tear down) the
+/// segments — the HITL A/B flips this and re-submits to measure JIT on vs off.
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_set_jit_enabled(enabled: bool) {
+    FX_JIT_ENABLED = enabled;
+}
+
+/// How many JIT segments the current effect installed (0 = pure interpretation).
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_jit_count() -> u32 {
+    FX_JIT_N as u32
 }
 
 /// Whether an effect is loaded, ACTIVE, and renderable — the render loop gates
