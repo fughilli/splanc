@@ -65,6 +65,17 @@ def _cmd_aggregate(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    if argv is None:
+        argv = sys.argv[1:]
+    # The binary is named ``aggregate`` and exposes a single subcommand of the
+    # same name, so callers may omit it: ``bazel run //tools/traceability:aggregate
+    # -- --requirements ...`` is treated as ``aggregate --requirements ...``. This
+    # is how CI and the docs invoke it.
+    if not argv:
+        argv = ["aggregate"]
+    elif argv[0] not in {"aggregate", "-h", "--help"}:
+        argv = ["aggregate", *argv]
+
     parser = argparse.ArgumentParser(prog="traceability", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
 
