@@ -269,6 +269,37 @@ def test_route_boundary_is_sil_vs_hil():
 
 
 @pytest.mark.requirements("PR-25")
+def test_high_severity_unmitigated_risk_is_flagged():
+    model, errs = parse_model(
+        {
+            "user_needs": [],
+            "product_requirements": [
+                {"id": "PR-9", "title": "m", "kind": "derived", "mitigates": ["RISK-1"]},
+            ],
+            "risks": [
+                {
+                    "id": "RISK-1",
+                    "title": "big hazard",
+                    "severity": "high",
+                    "likelihood": "likely",
+                    "residual": "still scary",
+                    "mitigated_by": ["PR-9"],
+                }
+            ],
+        }
+    )
+    assert errs == []
+    assert model.risks["RISK-1"].likelihood == "likely"
+    assert model.risks["RISK-1"].residual == "still scary"
+    # No passing evidence for PR-9 -> RISK-1 is not mitigated -> flagged.
+    m = report.build_matrix(model, JUnitResults())
+    assert m.high_open_risks() == ["RISK-1"]
+    html = report.render_html(m)
+    assert "High-severity risks not mitigated" in html
+    assert "residual: still scary" in html
+
+
+@pytest.mark.requirements("PR-25")
 def test_render_html_is_self_contained_and_lists_entities():
     m = report.build_matrix(MODEL, _results())
     html = report.render_html(m)

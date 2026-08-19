@@ -512,6 +512,10 @@ risks:
       Undermines UN-5, UN-6, UN-7 by causing disconnects, instability, or
       inability to complete operations during networking/control workloads.
     severity: high
+    likelihood: likely
+    residual: >-
+      Reduced but not eliminated — long-session heap headroom still needs
+      on-hardware soak coverage (PR-26 is HITL-demanded).
     mitigated_by: [PR-26]
 
   - id: RISK-2
@@ -520,6 +524,10 @@ risks:
       The model allows effects that exceed realistic runtime budget, undermining
       UN-6 and indirectly threatening UN-7.
     severity: high
+    likelihood: possible
+    residual: >-
+      Bounded by held-out validation, but the cost model only tracks reality as
+      well as its device calibration (PR-27 is HIL-demanded).
     mitigated_by: [PR-27]
 
   - id: RISK-3
@@ -535,6 +543,10 @@ risks:
     description: >-
       Directly harms UN-5 and weakens UN-8 when HITL depends on it.
     severity: high
+    likelihood: possible
+    residual: >-
+      Reconnect/coexistence hardening helps, but association reliability is only
+      as good as the last repeated on-bench provisioning run (PR-29 is HITL).
     mitigated_by: [PR-29]
 
   - id: RISK-5
@@ -574,6 +586,10 @@ risks:
       Causes catastrophic allocations or corrupted behavior, harming UN-3, UN-4,
       UN-6, UN-7.
     severity: high
+    likelihood: unlikely
+    residual: >-
+      Cross-language conformance tests catch drift at simulation level; the
+      residual is schema changes shipped without regenerating a consumer.
     mitigated_by: [PR-34]
 
   - id: RISK-10
