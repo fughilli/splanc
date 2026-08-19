@@ -78,6 +78,9 @@ def flash(res: Reservation, bundle: str, monitor_seconds: float) -> str:
     if BLE_MARKER not in log:
         raise SystemExit(f"[flash] BLE never advertised ({BLE_MARKER!r} absent)\n{log[-2000:]}")
     _log("[flash] booted + BLE up")
+    for line in log.splitlines():
+        if "ws2812 channels" in line or "ws2812 RMT init" in line:
+            _log("[flash] " + line.strip())
     return log
 
 
@@ -179,6 +182,135 @@ def capture(res: Reservation, device: str, samples: int) -> List[Tuple[int, int,
 BLOCKS: List[Tuple[int, int, Tuple[int, int, int]]] = []
 
 
+# -- two-channel split validation --------------------------------------------
+# The analyzer rig taps four GPIOs per DUT (GPIO20->D7 = channel 0, GPIO19->D5 =
+# channel 1). To verify the parallel 2-channel driver end-to-end, drive one
+# logical strip split across both channels and capture EACH pin, asserting each
+# channel carries exactly its half. Capturing channel 1 means pointing the shared
+# analyzer at D5 for one capture via POST /analyzer/channel-map — always restored.
+
+
+def _channel_map(server: str) -> dict:
+    import urllib.request
+
+    with urllib.request.urlopen(server.rstrip("/") + "/analyzer/channel-map", timeout=10) as r:
+        return json.loads(r.read())
+
+
+def _set_channel_map(server: str, m: dict) -> None:
+    import urllib.request
+
+    req = urllib.request.Request(
+        server.rstrip("/") + "/analyzer/channel-map",
+        data=json.dumps(m).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=10) as r:
+        r.read()
+
+
+def _reserved_device(server: str, res_id: str | None) -> str:
+    """The DUT name this reservation holds, from /status — the reserve output
+    doesn't carry it, and this rig has per-DUT channel maps with no default entry,
+    so /capture needs the real name to resolve the tap."""
+    import urllib.request
+
+    with urllib.request.urlopen(server.rstrip("/") + "/status", timeout=10) as r:
+        st = json.loads(r.read())
+    for d in st.get("devices") or []:
+        act = d.get("active") or {}
+        if res_id and act.get("id") == res_id:
+            return d.get("name") or act.get("device") or ""
+    return ""
+
+
+def _dut_ch0_pin(server: str, device: str) -> str | None:
+    """The analyzer channel the DUT's channel-0 GPIO (GPIO20) is tapped on, from
+    the current map — its per-DUT entry, else the default."""
+    m = _channel_map(server)
+    entry = m.get(device) or m.get("default") or {}
+    chans = entry.get("channels") or []
+    return chans[0] if chans else None
+
+
+def _resolve_ch1_pin(server: str, device: str, requested: str, pairs_arg: str) -> str:
+    """Channel 1's analyzer tap. Each DUT taps both GPIOs as a fixed pair (e.g.
+    ch0=D6 -> ch1=D0, ch0=D7 -> ch1=D1); with --ch1-pin auto we read the DUT's ch0
+    tap and look up its partner, so the test works whichever DUT the reservation
+    picks. An explicit --ch1-pin wins (and requires pinning the DUT)."""
+    if requested != "auto":
+        return requested
+    pairs = dict(p.split(":") for p in pairs_arg.split(",") if ":" in p)
+    ch0 = _dut_ch0_pin(server, device)
+    ch1 = pairs.get(ch0 or "")
+    if not ch1:
+        raise SystemExit(
+            f"[capture] can't derive channel-1 tap from ch0={ch0!r} via pairs {pairs}; "
+            f"pass --ch1-pin explicitly (and --device to pin the DUT)"
+        )
+    _log(f"[capture] DUT ch0 tap {ch0} -> ch1 tap {ch1}")
+    return ch1
+
+
+def _capture_on_pin(server: str, device: str, samples: int, pin: str | None):
+    """Capture `device`; when `pin` is set, temporarily map the DUT to that
+    analyzer channel (e.g. 'D5' for channel 1), capture, and ALWAYS restore the
+    original map (it persists on the rig — a leaked remap breaks later captures)."""
+    if pin is None:
+        _log(f"[capture] channel 0: {device} on its default tap")
+        return capture_via_daemon(server, device, samples)
+    _log(f"[capture] channel 1: remapping {device} -> {pin}")
+    original = _channel_map(server)
+    key = device if (device and device in original) else "default"
+    proto = (original.get(key) or {}).get("protocol", "ws2812")
+    remapped = json.loads(json.dumps(original))
+    remapped[key] = {"channels": [pin], "protocol": proto}
+    _set_channel_map(server, remapped)
+    try:
+        return capture_via_daemon(server, device, samples)
+    finally:
+        _set_channel_map(server, original)
+
+
+async def _drive_two_channel(ws_url: str, insecure: bool, half0: int, half1: int) -> None:
+    """Configure the DUT with a per-channel split (set_led_count 0/1) then latch
+    the counting pattern over the whole logical strip."""
+    import websockets
+    from server import proto_wire
+
+    ssl_ctx = None
+    if ws_url.startswith("wss:"):
+        ssl_ctx = ssl.create_default_context()
+        if insecure:
+            ssl_ctx.check_hostname = False
+            ssl_ctx.verify_mode = ssl.CERT_NONE
+
+    async def rpc(sock, flat, expect):
+        await sock.send(proto_wire.encode_client(flat))
+        while True:
+            msg = proto_wire.decode_server(await asyncio.wait_for(sock.recv(), timeout=15))
+            if msg.get("type") == expect:
+                return msg
+            if msg.get("type") == "error":
+                raise SystemExit(f"[drive] device error: {msg}")
+
+    _log(f"[drive] connecting {ws_url} (split {half0}+{half1})")
+    sock = await websockets.connect(ws_url, max_size=2**22, ssl=ssl_ctx, open_timeout=8)
+    async with sock:
+        await rpc(sock, {"type": "hello", "client": "led_capture", "app_version": "1"}, "welcome")
+        await rpc(
+            sock, {"type": "set_led_count", "led_count": half0, "channel": 0}, "led_count_state"
+        )
+        await rpc(
+            sock, {"type": "set_led_count", "led_count": half1, "channel": 1}, "led_count_state"
+        )
+        state = await rpc(sock, counting_message(BLOCKS), "counting_state")
+        if not state.get("active"):
+            raise SystemExit(f"[drive] counting pattern not active: {state}")
+    _log("[drive] split pattern latched")
+
+
 def run(args: argparse.Namespace) -> int:
     global BLOCKS
     n = args.leds
@@ -234,6 +366,46 @@ def run(args: argparse.Namespace) -> int:
         flash(res, args.bundle, args.monitor_seconds)
         redirect = provision_dut(res, args.wifi_ssid, args.wifi_pass, args.improv_timeout)
         host, port = dut_target(redirect, args.ws_scheme)
+
+        if args.two_channel:
+            # Split n across the two output channels; assert each pin carries its
+            # half. Channel 0 = the default analyzer mapping (GPIO20/D7); channel 1
+            # = --ch1-pin (GPIO14's tap).
+            half0 = n // 2
+            half1 = n - half0
+            with res.forward(host, port) as local_port:
+                ws_url = f"{args.ws_scheme}://localhost:{local_port}/ws"
+                asyncio.run(_drive_two_channel(ws_url, not args.ws_verify, half0, half1))
+            time.sleep(0.5)
+            dev = getattr(res, "device", "") or _reserved_device(
+                res.server, getattr(res, "id", None)
+            )
+            if not dev:
+                raise SystemExit("[capture] couldn't resolve the reserved DUT name for the map")
+            _log(f"[capture] reserved DUT {dev}")
+            ch1_pin = _resolve_ch1_pin(res.server, dev, args.ch1_pin, args.ch1_pairs)
+            got0 = _capture_on_pin(res.server, dev, args.samples, None)
+            _log(f"[capture] ch0 ({half0} LEDs) decoded {len(got0)} px: {got0}")
+            try:
+                got1 = _capture_on_pin(res.server, dev, args.samples, ch1_pin)
+            except Exception as e:  # noqa: BLE001 — a dead ch1 line surfaces as timeout/500
+                _log(f"[capture] ch1 capture failed on {ch1_pin}: {type(e).__name__}: {e}")
+                got1 = []
+            _log(f"[capture] ch1 ({half1} LEDs) decoded {len(got1)} px: {got1}")
+            e0, o0 = diff_structure_aligned(want[:half0], got0)
+            e1, o1 = diff_structure_aligned(want[half0:n], got1)
+            if e0 or e1:
+                _log(f"[FAIL] ch0 {len(e0)} diff(s) @off {o0}; ch1 {len(e1)} diff(s) @off {o1}")
+                _log(f"       ch0 want {want[:half0]} got {got0}")
+                _log(f"       ch1 want {want[half0:n]} got {got1}")
+                return 1
+            _log(
+                f"[PASS] 2-channel split verified on the wire: ch0 carries LEDs "
+                f"0..{half0} ({want[:half0]} @off {o0}), ch1 carries LEDs {half0}..{n} "
+                f"({want[half0:n]} @off {o1})"
+            )
+            return 0
+
         with res.forward(host, port) as local_port:
             ws_url = f"{args.ws_scheme}://localhost:{local_port}/ws"
             asyncio.run(_drive_pattern(ws_url, insecure=not args.ws_verify))
@@ -264,6 +436,24 @@ def main() -> int:
     )
     ap.add_argument("--bundle", default=_default_bundle(), help="firmware flash-bundle tar")
     ap.add_argument("--leds", type=int, default=8, help="LED count driven + expected on the wire")
+    ap.add_argument(
+        "--two-channel",
+        action="store_true",
+        help="split --leds across the two output channels (set_led_count 0/1) and assert each "
+        "pin carries its half — channel 0 on the default tap, channel 1 on --ch1-pin",
+    )
+    ap.add_argument(
+        "--ch1-pin",
+        default="auto",
+        help="analyzer channel wired to the DUT's channel-1 GPIO (GPIO14), for --two-channel. "
+        "'auto' derives it from the DUT's ch0 tap via --ch1-pairs.",
+    )
+    ap.add_argument(
+        "--ch1-pairs",
+        default="D6:D0,D7:D1",
+        help="ch0->ch1 analyzer-tap pairs per DUT (the rig wires both GPIOs of each DUT as a "
+        "fixed pair), for --ch1-pin auto",
+    )
     ap.add_argument("--samples", type=int, default=0, help="capture length (0 = rig default)")
     ap.add_argument(
         "--server", default=os.environ.get("HITL_SERVER", ""), help="pin a rig (default: pool)"

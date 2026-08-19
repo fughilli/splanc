@@ -21,7 +21,7 @@ held-out programs (`profileValidation.ts`), gated at the same tolerance as
 
 | SoC     | Device  | MHz | Fit | Held-out | RMS  | Max   | Tolerance | Verdict |
 | ------- | ------- | --- | --- | -------- | ---- | ----- | --------- | ------- |
-| esp32c6 | esp32c6 | 160 | 65  | 7        | 7.5% | 15.0% | 13%       | PASS    |
+| esp32c6 | esp32c6 | 160 | 65  | 7        | 7.8% | 15.8% | 13%       | PASS    |
 
 ## esp32c6 — esp32c6
 
@@ -33,9 +33,9 @@ held-out programs (`profileValidation.ts`), gated at the same tolerance as
 | CPU clock          | 160 MHz (160,000,000 Hz)                    |
 | Programs           | 65 fit + 7 held-out                         |
 | Regression margins | default 10%, sweep16 15%                    |
-| Fit residual       | ±64.4%                                      |
-| Held-out accuracy  | RMS 7.5% · mean 6.2% · max 15.0% · R² 0.985 |
-| Verdict            | PASS (RMS 7.5% vs 13% tolerance)            |
+| Fit residual       | ±81.4%                                      |
+| Held-out accuracy  | RMS 7.8% · mean 6.5% · max 15.8% · R² 0.985 |
+| Verdict            | PASS (RMS 7.8% vs 13% tolerance)            |
 
 ### Fixed overheads
 
@@ -43,10 +43,10 @@ Per-phase framing costs the fit isolates from the per-opcode slopes.
 
 | Overhead     | Cycles   | ns        |
 | ------------ | -------- | --------- |
-| update_fixed | 415440.8 | 2596505.1 |
-| shade_fixed  | 2167.8   | 13548.5   |
-| show_fixed   | 455164.7 | 2844779.6 |
-| show_per_led | 9.5      | 59.5      |
+| update_fixed | 396144.6 | 2475903.8 |
+| shade_fixed  | 2199.2   | 13744.8   |
+| show_fixed   | 52672.1  | 329200.4  |
+| show_per_led | 1945.8   | 12161.0   |
 
 ### Fitted per-opcode cost
 
@@ -56,40 +56,40 @@ benchmark actually exercised). Sorted by cost.
 
 | Opcode        | Cycles  | ns       | Fitted |
 | ------------- | ------- | -------- | ------ |
-| BinMath:pow   | 1920.92 | 12005.75 | yes    |
-| Hsv2Rgb       | 1380.35 | 8627.19  | yes    |
-| UnMath:tan    | 1349.68 | 8435.48  | yes    |
-| BinMath:atan2 | 1148.21 | 7176.32  | yes    |
-| Cross         | 1010.18 | 6313.62  | yes    |
-| UnMath:exp    | 901.09  | 5631.84  | yes    |
-| UnMath:log    | 845.45  | 5284.07  | yes    |
-| Smoothstep    | 823.20  | 5145.01  | yes    |
-| UnMath:sqrt   | 726.73  | 4542.06  | yes    |
-| BinMath:mod   | 703.83  | 4398.91  | yes    |
-| UnMath:cos    | 692.08  | 4325.52  | yes    |
-| Palette       | 649.39  | 4058.68  | yes    |
-| UnMath:sin    | 617.73  | 3860.82  | yes    |
-| Normalize     | 556.70  | 3479.35  | yes    |
-| Distance      | 529.66  | 3310.35  | yes    |
-| Div           | 457.71  | 2860.71  | yes    |
-| UnMath:ceil   | 456.85  | 2855.32  | yes    |
-| Mix           | 420.80  | 2630.01  | yes    |
-| Length        | 388.93  | 2430.82  | yes    |
-| UnMath:fract  | 381.73  | 2385.82  | yes    |
-| Clamp         | 375.54  | 2347.15  | yes    |
-| Hash3         | 364.98  | 2281.12  | yes    |
-| Mul           | 314.09  | 1963.04  | yes    |
-| Add           | 313.34  | 1958.37  | yes    |
-| Sub           | 311.92  | 1949.48  | yes    |
-| UnMath:floor  | 300.69  | 1879.32  | yes    |
-| BinMath:step  | 297.47  | 1859.22  | yes    |
-| BinMath:min   | 290.98  | 1818.62  | yes    |
-| BinMath:max   | 290.31  | 1814.41  | yes    |
-| Dot           | 241.61  | 1510.05  | yes    |
-| Hash1         | 226.59  | 1416.18  | yes    |
-| UnMath:sign   | 177.16  | 1107.23  | yes    |
-| UnMath:abs    | 154.00  | 962.47   | yes    |
-| Neg           | 142.80  | 892.48   | yes    |
+| BinMath:pow   | 1922.16 | 12013.48 | yes    |
+| Hsv2Rgb       | 1384.70 | 8654.37  | yes    |
+| UnMath:tan    | 1352.35 | 8452.16  | yes    |
+| BinMath:atan2 | 1154.06 | 7212.85  | yes    |
+| Cross         | 1013.15 | 6332.18  | yes    |
+| UnMath:exp    | 902.29  | 5639.32  | yes    |
+| UnMath:log    | 847.87  | 5299.19  | yes    |
+| Smoothstep    | 824.22  | 5151.39  | yes    |
+| UnMath:sqrt   | 727.35  | 4545.96  | yes    |
+| BinMath:mod   | 704.62  | 4403.89  | yes    |
+| UnMath:cos    | 691.74  | 4323.39  | yes    |
+| Palette       | 653.30  | 4083.11  | yes    |
+| UnMath:sin    | 617.96  | 3862.28  | yes    |
+| Normalize     | 557.24  | 3482.76  | yes    |
+| Distance      | 529.69  | 3310.57  | yes    |
+| Div           | 459.48  | 2871.73  | yes    |
+| UnMath:ceil   | 457.02  | 2856.39  | yes    |
+| Mix           | 419.63  | 2622.70  | yes    |
+| Length        | 390.48  | 2440.51  | yes    |
+| UnMath:fract  | 382.45  | 2390.32  | yes    |
+| Clamp         | 375.04  | 2344.01  | yes    |
+| Hash3         | 365.89  | 2286.80  | yes    |
+| Mul           | 315.18  | 1969.87  | yes    |
+| Add           | 313.81  | 1961.31  | yes    |
+| Sub           | 313.58  | 1959.87  | yes    |
+| UnMath:floor  | 301.88  | 1886.73  | yes    |
+| BinMath:step  | 298.32  | 1864.52  | yes    |
+| BinMath:min   | 292.50  | 1828.10  | yes    |
+| BinMath:max   | 291.41  | 1821.34  | yes    |
+| Dot           | 241.84  | 1511.47  | yes    |
+| Hash1         | 228.41  | 1427.59  | yes    |
+| UnMath:sign   | 178.22  | 1113.89  | yes    |
+| UnMath:abs    | 154.53  | 965.81   | yes    |
+| Neg           | 144.74  | 904.64   | yes    |
 | BinMath       | 130.00  | 812.50   |        |
 | UnMath        | 120.00  | 750.00   |        |
 | DivFix        | 24.00   | 150.00   |        |
@@ -145,17 +145,17 @@ programs the fit never saw. Cycles are the wall-time re-expressed at the device 
 
 | Program  | LEDs | Measured (ms) | Predicted (ms) | Error  | Measured cyc | Predicted cyc |
 | -------- | ---- | ------------- | -------------- | ------ | ------------ | ------------- |
-| hsv2rgbM | 128  | 46.36         | 45.03          | -2.9%  | 7.42M        | 7.21M         |
-| neg2M    | 128  | 14.52         | 16.70          | +15.0% | 2.32M        | 2.67M         |
-| dot3M    | 128  | 26.27         | 28.33          | +7.8%  | 4.20M        | 4.53M         |
-| mix3M    | 128  | 43.53         | 42.22          | -3.0%  | 6.97M        | 6.75M         |
-| expf2M   | 128  | 70.09         | 71.71          | +2.3%  | 11.21M       | 11.47M        |
-| clamp32M | 128  | 63.26         | 67.99          | +7.5%  | 10.12M       | 10.88M        |
-| lavalamp | 200  | 23.38         | 22.27          | -4.7%  | 3.74M        | 3.56M         |
+| clamp32M | 128  | 62.14         | 66.86          | +7.6%  | 9.94M        | 10.70M        |
+| dot3M    | 128  | 25.26         | 27.29          | +8.0%  | 4.04M        | 4.37M         |
+| expf2M   | 128  | 69.19         | 70.77          | +2.3%  | 11.07M       | 11.32M        |
+| hsv2rgbM | 128  | 45.51         | 44.09          | -3.1%  | 7.28M        | 7.05M         |
+| lavalamp | 200  | 23.29         | 22.12          | -5.0%  | 3.73M        | 3.54M         |
+| mix3M    | 128  | 42.67         | 41.07          | -3.7%  | 6.83M        | 6.57M         |
+| neg2M    | 128  | 13.59         | 15.74          | +15.8% | 2.17M        | 2.52M         |
 
-Held-out **RMS 7.5%**, mean 6.2%, max 15.0% against the **13%** tolerance — **PASS**.
+Held-out **RMS 7.8%**, mean 6.5%, max 15.8% against the **13%** tolerance — **PASS**.
 
-Outliers (|error| > 10%): `neg2M` +15.0%. The linear sum-of-op-costs model over-predicts the
+Outliers (|error| > 10%): `neg2M` +15.8%. The linear sum-of-op-costs model over-predicts the
 cheapest real effects.
 
 ### Raw measured costs
@@ -166,75 +166,75 @@ LED transmit path, excluded from the gate as transmit-bound noise).
 
 | Program       | Set      | LEDs | Frame cycles | Show cycles |
 | ------------- | -------- | ---- | ------------ | ----------- |
-| empty         | fit      | 128  | 305,767      | 429,201     |
-| sweep16       | fit      | 16   | 54,940       | 441,417     |
-| sweep256      | fit      | 256  | 624,185      | 444,984     |
-| hash1M        | fit      | 128  | 2,063,497    | 435,216     |
-| hash3M        | fit      | 128  | 2,342,332    | 441,908     |
-| hash12M       | fit      | 128  | 2,809,762    | 438,180     |
-| hsv2rgb2M     | fit      | 128  | 12,321,993   | 500,046     |
-| length3M      | fit      | 128  | 5,618,239    | 473,478     |
-| negM          | fit      | 128  | 1,599,051    | 437,066     |
-| normalize3M   | fit      | 128  | 8,114,963    | 496,074     |
-| paletteM      | fit      | 128  | 3,499,806    | 444,135     |
-| absfM         | fit      | 128  | 1,769,914    | 437,280     |
-| ceilfM        | fit      | 128  | 2,995,378    | 434,911     |
-| cosM          | fit      | 128  | 3,968,350    | 447,114     |
-| floorfM       | fit      | 128  | 2,358,072    | 444,197     |
-| fractfM       | fit      | 128  | 2,699,987    | 451,346     |
-| signfM        | fit      | 128  | 1,860,722    | 452,296     |
-| sinM          | fit      | 128  | 3,663,497    | 444,454     |
-| sqrtfM        | fit      | 128  | 4,117,554    | 443,911     |
-| tanM          | fit      | 128  | 6,678,261    | 457,494     |
-| normalize32M  | fit      | 128  | 14,565,465   | 485,627     |
-| addM          | fit      | 128  | 2,391,383    | 439,505     |
-| divM          | fit      | 128  | 3,006,035    | 434,650     |
-| mulM          | fit      | 128  | 2,390,649    | 442,042     |
-| subM          | fit      | 128  | 2,416,113    | 440,912     |
-| absf2M        | fit      | 128  | 2,213,190    | 482,728     |
-| atan2fM       | fit      | 128  | 5,808,640    | 445,169     |
-| ceilf2M       | fit      | 128  | 4,701,705    | 445,557     |
-| cos2M         | fit      | 128  | 6,623,994    | 451,018     |
-| floorf2M      | fit      | 128  | 3,421,270    | 447,274     |
-| fractf2M      | fit      | 128  | 4,080,167    | 445,916     |
-| modfM         | fit      | 128  | 4,013,218    | 439,536     |
-| powfM         | fit      | 128  | 8,973,593    | 530,966     |
-| signf2M       | fit      | 128  | 2,404,965    | 441,028     |
-| sin2M         | fit      | 128  | 6,015,048    | 501,399     |
-| sqrtf2M       | fit      | 128  | 6,904,164    | 442,060     |
-| stepfM        | fit      | 128  | 2,353,926    | 433,295     |
-| tan2M         | fit      | 128  | 12,002,791   | 457,716     |
-| maxfM         | fit      | 128  | 2,323,486    | 443,965     |
-| minfM         | fit      | 128  | 2,327,102    | 443,066     |
-| hash32M       | fit      | 128  | 4,087,459    | 451,250     |
-| expfM         | fit      | 128  | 5,991,537    | 481,542     |
-| logfM         | fit      | 128  | 5,848,357    | 450,580     |
-| length32M     | fit      | 128  | 10,660,097   | 492,456     |
-| palette2M     | fit      | 128  | 6,421,065    | 447,074     |
-| add2M         | fit      | 128  | 3,463,582    | 447,221     |
-| div2M         | fit      | 128  | 4,705,212    | 437,708     |
-| mul2M         | fit      | 128  | 3,471,601    | 478,171     |
-| sub2M         | fit      | 128  | 3,507,201    | 442,527     |
-| distance3M    | fit      | 128  | 7,366,923    | 493,204     |
-| cross3M       | fit      | 128  | 5,408,228    | 454,045     |
-| atan2f2M      | fit      | 128  | 10,374,599   | 449,293     |
-| modf2M        | fit      | 128  | 6,721,803    | 453,765     |
-| powf2M        | fit      | 128  | 16,704,655   | 504,548     |
-| stepf2M       | fit      | 128  | 3,390,413    | 445,704     |
-| maxf2M        | fit      | 128  | 3,332,221    | 441,546     |
-| minf2M        | fit      | 128  | 3,337,307    | 436,956     |
-| dot32M        | fit      | 128  | 6,951,910    | 483,803     |
-| logf2M        | fit      | 128  | 10,463,073   | 454,409     |
-| clamp3M       | fit      | 128  | 5,628,832    | 453,738     |
-| smoothstep3M  | fit      | 128  | 11,437,735   | 455,354     |
-| cross32M      | fit      | 128  | 9,161,355    | 443,127     |
-| distance32M   | fit      | 128  | 14,108,807   | 517,909     |
-| mix32M        | fit      | 128  | 11,355,760   | 458,882     |
-| smoothstep32M | fit      | 128  | 21,091,107   | 502,568     |
-| hsv2rgbM      | held-out | 128  | 6,974,730    | 443,078     |
-| neg2M         | held-out | 128  | 1,883,022    | 439,399     |
-| dot3M         | held-out | 128  | 3,752,355    | 450,556     |
-| mix3M         | held-out | 128  | 6,520,762    | 444,763     |
-| expf2M        | held-out | 128  | 10,751,673   | 462,464     |
-| clamp32M      | held-out | 128  | 9,625,235    | 495,669     |
-| lavalamp      | held-out | 200  | 3,288,746    | 451,653     |
+| empty         | fit      | 128  | 297,761      | 274,854     |
+| sweep16       | fit      | 16   | 42,589       | 53,587      |
+| sweep256      | fit      | 256  | 618,587      | 524,294     |
+| hash1M        | fit      | 128  | 2,053,970    | 281,328     |
+| hash3M        | fit      | 128  | 2,334,585    | 287,707     |
+| hash12M       | fit      | 128  | 2,811,501    | 290,677     |
+| hsv2rgb2M     | fit      | 128  | 12,343,136   | 334,740     |
+| length3M      | fit      | 128  | 5,592,212    | 303,212     |
+| negM          | fit      | 128  | 1,592,547    | 299,441     |
+| normalize3M   | fit      | 128  | 8,092,727    | 302,080     |
+| paletteM      | fit      | 128  | 3,497,327    | 293,009     |
+| absfM         | fit      | 128  | 1,753,869    | 282,656     |
+| ceilfM        | fit      | 128  | 2,991,053    | 278,173     |
+| cosM          | fit      | 128  | 3,947,280    | 283,031     |
+| floorfM       | fit      | 128  | 2,351,145    | 284,317     |
+| fractfM       | fit      | 128  | 2,692,659    | 283,482     |
+| signfM        | fit      | 128  | 1,850,827    | 290,253     |
+| sinM          | fit      | 128  | 3,656,685    | 295,630     |
+| sqrtfM        | fit      | 128  | 4,104,150    | 290,281     |
+| tanM          | fit      | 128  | 6,660,036    | 295,349     |
+| normalize32M  | fit      | 128  | 14,571,636   | 346,630     |
+| addM          | fit      | 128  | 2,378,852    | 283,689     |
+| divM          | fit      | 128  | 3,020,327    | 293,854     |
+| mulM          | fit      | 128  | 2,385,642    | 280,991     |
+| subM          | fit      | 128  | 2,410,056    | 286,280     |
+| absf2M        | fit      | 128  | 2,204,972    | 290,888     |
+| atan2fM       | fit      | 128  | 5,807,201    | 313,667     |
+| ceilf2M       | fit      | 128  | 4,683,906    | 291,295     |
+| cos2M         | fit      | 128  | 6,609,316    | 294,923     |
+| floorf2M      | fit      | 128  | 3,415,165    | 288,851     |
+| fractf2M      | fit      | 128  | 4,069,497    | 290,490     |
+| modfM         | fit      | 128  | 4,003,429    | 290,613     |
+| powfM         | fit      | 128  | 9,006,126    | 303,076     |
+| signf2M       | fit      | 128  | 2,399,100    | 283,519     |
+| sin2M         | fit      | 128  | 5,999,138    | 295,055     |
+| sqrtf2M       | fit      | 128  | 6,895,540    | 301,558     |
+| stepfM        | fit      | 128  | 2,343,036    | 285,696     |
+| tan2M         | fit      | 128  | 12,017,520   | 342,296     |
+| maxfM         | fit      | 128  | 2,317,956    | 288,878     |
+| minfM         | fit      | 128  | 2,320,462    | 280,341     |
+| hash32M       | fit      | 128  | 4,078,928    | 287,666     |
+| expfM         | fit      | 128  | 5,986,440    | 289,774     |
+| logfM         | fit      | 128  | 5,836,956    | 294,149     |
+| length32M     | fit      | 128  | 10,698,996   | 324,618     |
+| palette2M     | fit      | 128  | 6,440,624    | 295,978     |
+| add2M         | fit      | 128  | 3,454,164    | 285,639     |
+| div2M         | fit      | 128  | 4,694,407    | 296,108     |
+| mul2M         | fit      | 128  | 3,464,788    | 285,867     |
+| sub2M         | fit      | 128  | 3,505,540    | 291,492     |
+| distance3M    | fit      | 128  | 7,309,609    | 295,013     |
+| cross3M       | fit      | 128  | 5,388,679    | 310,778     |
+| atan2f2M      | fit      | 128  | 10,413,456   | 297,628     |
+| modf2M        | fit      | 128  | 6,713,144    | 318,996     |
+| powf2M        | fit      | 128  | 16,679,342   | 325,409     |
+| stepf2M       | fit      | 128  | 3,382,841    | 312,644     |
+| maxf2M        | fit      | 128  | 3,324,628    | 288,632     |
+| minf2M        | fit      | 128  | 3,334,457    | 294,324     |
+| dot32M        | fit      | 128  | 6,943,042    | 293,142     |
+| logf2M        | fit      | 128  | 10,476,656   | 309,452     |
+| clamp3M       | fit      | 128  | 5,608,188    | 299,981     |
+| smoothstep3M  | fit      | 128  | 11,445,166   | 340,494     |
+| cross32M      | fit      | 128  | 9,179,828    | 289,058     |
+| distance32M   | fit      | 128  | 14,116,846   | 335,280     |
+| mix32M        | fit      | 128  | 11,312,554   | 324,298     |
+| smoothstep32M | fit      | 128  | 21,097,054   | 596,485     |
+| clamp32M      | held-out | 128  | 9,638,042    | 305,113     |
+| dot3M         | held-out | 128  | 3,744,460    | 297,614     |
+| expf2M        | held-out | 128  | 10,748,038   | 322,011     |
+| hsv2rgbM      | held-out | 128  | 6,967,974    | 314,210     |
+| lavalamp      | held-out | 200  | 3,291,131    | 435,225     |
+| mix3M         | held-out | 128  | 6,529,490    | 297,549     |
+| neg2M         | held-out | 128  | 1,871,863    | 302,727     |

@@ -1134,4 +1134,116 @@ pub mod dump {
         }
         w.w
     }
+
+    // -- source-agnostic dump (flash-backed storage) ------------------------
+    // The same MappingBundle encoding, but the map LEDs come from a dense
+    // accessor `led(i) -> (id, xyz)` and the topology associations from a
+    // `for_each` callback, so get_stored_map can reconstruct the bundle straight
+    // from the resident per-LED caches (FX_LED_POS + FX_LED_TOPO + segment geom)
+    // without ever materializing a StoredMap/StoredTopology. `assoc_each(f)`
+    // invokes `f(led_id, segment_id, foot_arclength, d_perp)` per association, in
+    // led order. Both passes (size + window) call it, so it must be repeatable.
+    pub type LedFn<'a> = dyn Fn(u32) -> (u32, [f32; 3]) + 'a;
+    pub type AssocEach<'a> = dyn Fn(&mut dyn FnMut(u32, u32, f32, f32)) + 'a;
+    pub struct TopoSrc<'a> {
+        pub map_id: &'a str,
+        pub branch_points: &'a [StoredBranchPoint],
+        pub segments: &'a [StoredSegment<'a>],
+        pub assoc_each: &'a AssocEach<'a>,
+    }
+
+    fn map_len_src(map_id: &str, led_count: u32, led: &LedFn) -> usize {
+        let mut n =
+            str_len(1, map_id) + str_len(3, UNITS) + str_len(4, FRAME) + i32_len(5, led_count as i32);
+        for i in 0..led_count {
+            let (id, _) = led(i);
+            n += sub_len(6, i32_len(1, id as i32) + packed3_len(2));
+        }
+        n
+    }
+    fn topo_len_src(t: &TopoSrc) -> usize {
+        let mut n = str_len(1, t.map_id);
+        for b in t.branch_points {
+            n += sub_len(2, bp_len(b));
+        }
+        for s in t.segments {
+            n += sub_len(3, seg_len(s));
+        }
+        (t.assoc_each)(&mut |led_id, segment_id, _, _| {
+            n += sub_len(
+                4,
+                i32_len(1, led_id as i32) + i32_len(2, segment_id as i32) + f64_len(3) + f64_len(4),
+            );
+        });
+        n
+    }
+    fn enc_map_src(w: &mut Win, map_id: &str, led_count: u32, led: &LedFn) {
+        w.str_field(1, map_id);
+        w.str_field(3, UNITS);
+        w.str_field(4, FRAME);
+        w.i32_field(5, led_count as i32);
+        for i in 0..led_count {
+            let (id, xyz) = led(i);
+            w.sub(6, i32_len(1, id as i32) + packed3_len(2));
+            w.i32_field(1, id as i32);
+            w.packed3(2, xyz);
+        }
+    }
+    fn enc_topo_src(w: &mut Win, t: &TopoSrc) {
+        w.str_field(1, t.map_id);
+        for b in t.branch_points {
+            w.sub(2, bp_len(b));
+            w.i32_field(1, b.id as i32);
+            w.packed3(2, b.xyz);
+        }
+        for s in t.segments {
+            w.sub(3, seg_len(s));
+            w.i32_field(1, s.id as i32);
+            w.i32_field(2, s.a);
+            w.i32_field(3, s.b);
+            for p in s.polyline {
+                w.sub(4, vec3_len());
+                w.packed3(1, *p);
+            }
+            w.f64_field(5, s.length as f64);
+        }
+        (t.assoc_each)(&mut |led_id, segment_id, foot, dperp| {
+            w.sub(
+                4,
+                i32_len(1, led_id as i32) + i32_len(2, segment_id as i32) + f64_len(3) + f64_len(4),
+            );
+            w.i32_field(1, led_id as i32);
+            w.i32_field(2, segment_id as i32);
+            w.f64_field(3, foot as f64);
+            w.f64_field(4, dperp as f64);
+        });
+    }
+
+    /// Total encoded MappingBundle length, from accessors (see module note).
+    pub fn bundle_len_src(map_id: &str, led_count: u32, led: &LedFn, topo: Option<&TopoSrc>) -> usize {
+        let mut n = sub_len(1, map_len_src(map_id, led_count, led));
+        if let Some(t) = topo {
+            n += sub_len(2, topo_len_src(t));
+        }
+        n
+    }
+    /// Windowed encode, from accessors (see module note).
+    pub fn encode_bundle_window_src(
+        map_id: &str,
+        led_count: u32,
+        led: &LedFn,
+        topo: Option<&TopoSrc>,
+        start: usize,
+        buf: &mut [u8],
+    ) -> usize {
+        let end = start + buf.len();
+        let mut w = Win { pos: 0, start, end, buf, w: 0 };
+        w.sub(1, map_len_src(map_id, led_count, led));
+        enc_map_src(&mut w, map_id, led_count, led);
+        if let Some(t) = topo {
+            w.sub(2, topo_len_src(t));
+            enc_topo_src(&mut w, t);
+        }
+        w.w
+    }
 }

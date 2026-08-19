@@ -31,8 +31,9 @@ use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_player::{upload_malformed, upload_too_large, Player};
 use ledmapper_pulse::{Graph, Sim, MAX_SEGMENTS};
 use ledmapper_store::{
-    decode_submit_map, decode_submit_topology, dump, envelope_arm, parse_upload_chunk, BlockReader,
-    StoreError, StoredMap, StoredTopology, ARM_GET_STORED_MAP, ARM_SUBMIT_MAP, ARM_SUBMIT_TOPOLOGY,
+    decode_submit_map_streamed, decode_submit_topology_streamed, dump, envelope_arm,
+    parse_upload_chunk, BlockReader, StoreError, StoredAssociation, StoredSegment, StoredTopoGeom,
+    Str64, ARM_GET_STORED_MAP, ARM_SUBMIT_MAP, ARM_SUBMIT_TOPOLOGY,
 };
 use micropb::{MessageDecode, MessageEncode, PbDecoder, PbEncoder, PbRead};
 
@@ -46,7 +47,12 @@ use micropb::{MessageDecode, MessageEncode, PbDecoder, PbEncoder, PbRead};
 /// matches the worst-case decode with no spare margin — a full 256-LED upload
 /// that churns past it gets the bounded ArenaFull ("map_too_large"), not a
 /// crash; today's maps are ~150 LEDs and fit comfortably.
-const ARENA_BYTES: usize = 16 * 1024;
+// Flash-backed storage: the arena no longer holds the per-LED map + topology
+// (those stream straight into the resident per-LED caches below). It holds ONLY
+// the small per-segment topology GEOMETRY (branch points + segments + polylines,
+// one entry each — independent of LED count), so 8 KB is ample and the arena no
+// longer scales with the strip length.
+const ARENA_BYTES: usize = 8 * 1024;
 
 /// Reply frames are control traffic (firmware caps): welcome is the
 /// largest at a few hundred bytes.
@@ -54,11 +60,15 @@ const REPLY_CAP: usize = 2048;
 
 static mut ARENA_MEM: [u8; ARENA_BYTES] = [0; ARENA_BYTES];
 static mut ARENA: Option<Arena<'static>> = None;
-static mut MAP: Option<StoredMap<'static>> = None;
-static mut TOPO: Option<StoredTopology<'static>> = None;
+/// The stored map's id + LED count. The per-LED positions live in FX_LED_POS
+/// (below), streamed in — the raw StoredMap is never resident.
+static mut MAP_META: Option<(Str64, u32)> = None;
+/// The resident topology geometry (branch points + segments); the per-LED
+/// associations are folded into FX_LED_TOPO, not kept here. Borrows ARENA.
+static mut GEOM: Option<StoredTopoGeom<'static>> = None;
 static mut PLAYER: Option<Player> = None;
 
-/// The topology-aware effect simulator, rebuilt lazily from TOPO + the active
+/// The topology-aware effect simulator, rebuilt lazily from GEOM + the active
 /// effect config. `SIM_GEN` records the `playback_gen` it was built for so a
 /// config change forces a rebuild; a topology upload nulls SIM directly.
 static mut SIM: Option<Sim> = None;
@@ -148,7 +158,7 @@ static mut FX_LAST_UPDATE_OUTCOME: u32 = 0;
 // exactly this cache's index.
 
 /// Cache capacity: the firmware's LED cap (main.cpp kMaxLeds). One entry/LED.
-const FX_TOPO_CAP: usize = 256;
+const FX_TOPO_CAP: usize = 1024;
 /// An LED is "at a junction" (`led.branch`) within this arclength (meters) of a
 /// segment endpoint that is a real branch point (degree >= 3).
 const FX_BRANCH_DIST_M: f32 = 0.05;
@@ -186,14 +196,25 @@ fn q16_16(x: f32) -> i32 {
 
 static mut FX_LED_TOPO: [FxLedTopo; FX_TOPO_CAP] = [FxLedTopo::NONE; FX_TOPO_CAP];
 
+/// Flash-backed map: the per-LED positions (meters), the ONLY map data resident
+/// at render time. Fed by the streaming submit_map decode; lm_map_led /
+/// get_stored_map / led.uv all read this (the raw StoredMap is gone). Indexed by
+/// map index, which IS the LED id (the render is index-based).
+static mut FX_LED_POS: [[f32; 3]; FX_TOPO_CAP] = [[0.0; 3]; FX_TOPO_CAP];
+
 /// Map XY bounding box for `led.uv` (a top-down projection of the map to 0..1):
-/// `uv = (pos.xy - FX_UV_MIN) * FX_UV_INV`, clamped. Recomputed by
-/// fx_rebuild_topo when the map changes; inv = 0 for a degenerate axis (uv 0).
+/// `uv = (pos.xy - FX_UV_MIN) * FX_UV_INV`, clamped. Recomputed from FX_LED_POS
+/// when the map changes; inv = 0 for a degenerate axis (uv 0).
 static mut FX_UV_MIN: [f32; 2] = [0.0, 0.0];
 static mut FX_UV_INV: [f32; 2] = [0.0, 0.0];
-/// False when the cache is stale (a map/topology upload cleared it); rebuilt
-/// lazily at the top of the next lm_fx_update frame.
+/// Stale flags for the two independent caches: FX_UV_READY covers the map-derived
+/// uv bounds (a map upload clears it), FX_TOPO_READY covers the per-LED topology
+/// resolve (a topology upload clears it + refills FX_LED_TOPO.seg with the raw
+/// segment_id, which the rebuild resolves to a segment index exactly once). Kept
+/// separate so a map upload never re-triggers the topology resolve (which would
+/// treat an already-resolved index as an id). Rebuilt lazily before a frame.
 static mut FX_TOPO_READY: bool = false;
+static mut FX_UV_READY: bool = false;
 /// True when the loaded effect reads the per-LED fixed context cache
 /// (`LoadCtxFix`). All-float effects leave this false and skip the per-LED
 /// fixed-mirror build entirely — zero hot-path overhead (FUG-122).
@@ -425,9 +446,14 @@ unsafe fn arena_mut() -> &'static mut Arena<'static> {
 #[no_mangle]
 pub extern "C" fn lm_player_init(default_led_count: u32) {
     unsafe {
-        *addr_of_mut!(MAP) = None;
-        *addr_of_mut!(TOPO) = None;
+        *addr_of_mut!(MAP_META) = None;
+        *addr_of_mut!(GEOM) = None;
         *addr_of_mut!(SIM) = None;
+        FX_TOPO_READY = false;
+        FX_UV_READY = false;
+        for e in (*addr_of_mut!(FX_LED_TOPO)).iter_mut() {
+            *e = FxLedTopo::NONE;
+        }
         *addr_of_mut!(ARENA) = Some(Arena::new(&mut *addr_of_mut!(ARENA_MEM)));
         *addr_of_mut!(PLAYER) = Some(Player::new("esp32c6-player", default_led_count.max(1)));
     }
@@ -610,55 +636,83 @@ pub unsafe extern "C" fn lm_player_handle(
     encode_reply(&reply, out, out_cap)
 }
 
-/// A map upload replaces the stored map AND its topology (a topology is
-/// meaningless against a different solve), so the arena resets wholesale.
+/// Drop the resident topology (geometry + sim + per-LED cache). The geometry
+/// borrows the arena, so this must run before the arena is reset.
+unsafe fn reset_topo_cache() {
+    *addr_of_mut!(GEOM) = None;
+    *addr_of_mut!(SIM) = None;
+    for e in (*addr_of_mut!(FX_LED_TOPO)).iter_mut() {
+        *e = FxLedTopo::NONE;
+    }
+    FX_TOPO_READY = false;
+}
+
+/// A map upload STREAMS each LED's position into FX_LED_POS (never a resident
+/// StoredMap) and replaces the topology (meaningless against a different solve).
 unsafe fn handle_map_upload<R: PbRead<Error = Infallible>>(
     reader: R,
     total: usize,
 ) -> pb::ServerMessage {
-    *addr_of_mut!(MAP) = None;
-    *addr_of_mut!(TOPO) = None;
-    *addr_of_mut!(SIM) = None;
-    FX_TOPO_READY = false; // map replaced → per-LED topology cache is stale
-    arena_mut().reset();
-    match decode_submit_map(reader, total, arena_ref()) {
-        Ok(map) => {
-            let reply = player().map_stored(map.map_id.as_str());
-            *addr_of_mut!(MAP) = Some(map);
+    *addr_of_mut!(MAP_META) = None;
+    reset_topo_cache();
+    FX_UV_READY = false; // positions changed → uv bounds stale
+    let res = decode_submit_map_streamed(reader, total, |idx, _led_count, led| {
+        if (idx as usize) < FX_TOPO_CAP {
+            (*addr_of_mut!(FX_LED_POS))[idx as usize] = led.xyz;
+        }
+        // LEDs past the render cap simply aren't stored (the strip can't drive
+        // them); the decode still validates the whole frame.
+        Ok(())
+    });
+    match res {
+        Ok((map_id, led_count)) => {
+            let reply = player().map_stored(map_id.as_str());
+            *addr_of_mut!(MAP_META) = Some((map_id, led_count));
             reply
         }
-        Err(e) => {
-            arena_mut().reset();
-            upload_error(e)
-        }
+        Err(e) => upload_error(e),
     }
 }
 
-/// Topology appends after the map; a failed decode rolls back to the map.
+/// A topology upload STREAMS the per-LED associations into FX_LED_TOPO (seg holds
+/// the raw segment_id until the first render frame resolves it to a segment
+/// index) and keeps only the small per-segment geometry resident in the arena.
+/// A failed / rejected decode rolls the whole thing back.
 unsafe fn handle_topology_upload<R: PbRead<Error = Infallible>>(
     reader: R,
     total: usize,
 ) -> pb::ServerMessage {
-    *addr_of_mut!(TOPO) = None;
-    *addr_of_mut!(SIM) = None;
-    FX_TOPO_READY = false; // topology replaced → per-LED topology cache is stale
-    let cp = arena_ref().checkpoint();
-    match decode_submit_topology(reader, total, arena_ref()) {
-        Ok(topo) => {
-            let reply = player().topology_stored(topo.map_id.as_str());
-            if matches!(
-                reply.r#msg,
-                Some(pb::ServerMessage_::Msg::ResultReady(_))
-            ) {
-                *addr_of_mut!(TOPO) = Some(topo);
+    reset_topo_cache();
+    arena_mut().reset();
+    let res = decode_submit_topology_streamed(reader, total, arena_ref(), |a: &StoredAssociation| {
+        let i = a.led_id as usize;
+        if i < FX_TOPO_CAP && a.segment_id <= i16::MAX as u32 {
+            (*addr_of_mut!(FX_LED_TOPO))[i] = FxLedTopo {
+                seg: a.segment_id as i16, // TEMP raw id; resolved in fx_rebuild_topo
+                s: 0.0,
+                branch: false,
+                dist: 0.0,
+                foot: a.foot_arclength,
+                dperp: a.d_perp,
+            };
+        }
+        Ok(())
+    });
+    match res {
+        Ok(geom) => {
+            let reply = player().topology_stored(geom.map_id.as_str());
+            if matches!(reply.r#msg, Some(pb::ServerMessage_::Msg::ResultReady(_))) {
+                *addr_of_mut!(GEOM) = Some(geom); // FX_TOPO_READY stays false → resolved next frame
             } else {
-                drop(topo);
-                arena_mut().reset_to(cp);
+                drop(geom);
+                reset_topo_cache();
+                arena_mut().reset();
             }
             reply
         }
         Err(e) => {
-            arena_mut().reset_to(cp);
+            reset_topo_cache();
+            arena_mut().reset();
             upload_error(e)
         }
     }
@@ -687,16 +741,48 @@ unsafe fn handle_get_stored_map(frame: &[u8]) -> pb::ServerMessage {
         },
         Err(_) => return upload_malformed(),
     };
-    let Some(map) = (*addr_of!(MAP)).as_ref() else {
+    let Some((map_id, led_count)) = (*addr_of!(MAP_META)).as_ref().map(|(id, c)| (id.clone(), *c))
+    else {
         return dump_error("no_map", "no stored map to dump");
     };
-    let topo = (*addr_of!(TOPO)).as_ref();
-    let total = dump::bundle_len(map, topo);
+    // Resolve the per-LED cache so FX_LED_TOPO.seg is the segment INDEX (not the
+    // raw upload id); cheap after the first frame.
+    fx_rebuild_topo();
+    // Reconstruct the bundle from the resident caches (see dump::*_src): id == map
+    // index, xyz from FX_LED_POS, associations recovered from FX_LED_TOPO with the
+    // segment_id read back out of the geometry.
+    let led = |i: u32| -> (u32, [f32; 3]) { (i, (*addr_of!(FX_LED_POS))[i as usize]) };
+    let geom = (*addr_of!(GEOM)).as_ref();
+    let assoc_each = |f: &mut dyn FnMut(u32, u32, f32, f32)| {
+        if let Some(g) = geom {
+            let n = (led_count as usize).min(FX_TOPO_CAP);
+            for i in 0..n {
+                let e = &(*addr_of!(FX_LED_TOPO))[i];
+                if e.seg >= 0 && (e.seg as usize) < g.segments.len() {
+                    f(i as u32, g.segments[e.seg as usize].id, e.foot, e.dperp);
+                }
+            }
+        }
+    };
+    let tsrc = geom.map(|g| dump::TopoSrc {
+        map_id: g.map_id.as_str(),
+        branch_points: g.branch_points,
+        segments: g.segments,
+        assoc_each: &assoc_each,
+    });
+    let total = dump::bundle_len_src(map_id.as_str(), led_count, &led, tsrc.as_ref());
     // Bound the chunk by the reply field capacity (StoredMapChunk.data).
     let cap = max_len.min(1024);
     let mut chunk = [0u8; 1024];
     let n = if offset < total {
-        dump::encode_bundle_window(map, topo, offset, &mut chunk[..cap])
+        dump::encode_bundle_window_src(
+            map_id.as_str(),
+            led_count,
+            &led,
+            tsrc.as_ref(),
+            offset,
+            &mut chunk[..cap],
+        )
     } else {
         0
     };
@@ -704,7 +790,7 @@ unsafe fn handle_get_stored_map(frame: &[u8]) -> pb::ServerMessage {
     m.r#total_len = total as i32;
     m.r#offset = offset as i32;
     let _ = m.r#data.extend_from_slice(&chunk[..n]);
-    m.r#has_topology = topo.is_some();
+    m.r#has_topology = geom.is_some();
     pb::ServerMessage { r#msg: Some(pb::ServerMessage_::Msg::StoredMapChunk(m)) }
 }
 
@@ -1731,7 +1817,7 @@ unsafe fn ensure_sim() {
         }
         return;
     }
-    let Some(topo) = (*addr_of!(TOPO)).as_ref() else {
+    let Some(topo) = (*addr_of!(GEOM)).as_ref() else {
         return;
     };
     // Graph::build takes (branch-point a, b, length_mm) per segment in order;
@@ -1796,6 +1882,13 @@ pub unsafe extern "C" fn lm_counting_color(led: u32, rgb: *mut u8) -> bool {
     }
 }
 
+/// Highest LED the latched counting pattern lights + 1 (0 when none). The frame
+/// loop transmits exactly this many LEDs for the calibration pattern.
+#[no_mangle]
+pub unsafe extern "C" fn lm_counting_len() -> u32 {
+    player().counting_len()
+}
+
 /// The persisted strip length for `channel` (set_led_count); -1 when unset.
 #[no_mangle]
 pub unsafe extern "C" fn lm_led_count(channel: u32) -> i32 {
@@ -1805,25 +1898,28 @@ pub unsafe extern "C" fn lm_led_count(channel: u32) -> i32 {
     }
 }
 
-/// Number of LEDs in the stored (arena-decoded) map; 0 when none stored.
+/// Number of LEDs in the stored map; 0 when none stored.
 #[no_mangle]
 pub unsafe extern "C" fn lm_map_len() -> u32 {
-    (*addr_of!(MAP)).as_ref().map_or(0, |m| m.leds.len() as u32)
+    (*addr_of!(MAP_META)).as_ref().map_or(0, |(_, c)| *c)
 }
 
-/// The stored map entry at `index`: id + xyz (meters). False out of range.
+/// The stored map entry at `index`: id + xyz (meters). The map is flash-backed —
+/// only positions are resident (FX_LED_POS); id == index (the render is
+/// index-based). False out of range.
 #[no_mangle]
 pub unsafe extern "C" fn lm_map_led(index: u32, id: *mut u32, xyz: *mut f32) -> bool {
-    match (*addr_of!(MAP)).as_ref().and_then(|m| m.leds.get(index as usize)) {
-        Some(led) => {
-            *id = led.id;
-            *xyz = led.xyz[0];
-            *xyz.add(1) = led.xyz[1];
-            *xyz.add(2) = led.xyz[2];
-            true
-        }
-        None => false,
+    let len = (*addr_of!(MAP_META)).as_ref().map_or(0, |(_, c)| *c);
+    let i = index as usize;
+    if index >= len || i >= FX_TOPO_CAP {
+        return false;
     }
+    let pos = (*addr_of!(FX_LED_POS))[i];
+    *id = index;
+    *xyz = pos[0];
+    *xyz.add(1) = pos[1];
+    *xyz.add(2) = pos[2];
+    true
 }
 
 // -- effects VM FFI (fx_vm) ---------------------------------------------------
@@ -1837,20 +1933,21 @@ pub unsafe extern "C" fn lm_map_led(index: u32, id: *mut u32, xyz: *mut f32) -> 
 /// With no topology stored, every entry stays `NONE` (seg = -1), so unmapped
 /// LEDs read `led.seg == -1` and topology-aware effects fall back gracefully.
 unsafe fn fx_rebuild_topo() {
-    let cache = &mut *addr_of_mut!(FX_LED_TOPO);
-    for e in cache.iter_mut() {
-        *e = FxLedTopo::NONE;
-    }
-    FX_TOPO_READY = true;
-    // Map XY bounds for led.uv — needs only the map (independent of topology), so
-    // compute it before the map+topo gate below.
-    if let Some(map) = (*addr_of!(MAP)).as_ref() {
+    // UV bounds for led.uv — map-derived (independent of topology). Gated by its
+    // OWN flag so a topology upload doesn't recompute it and, crucially, a map
+    // upload doesn't re-trigger the topology resolve below.
+    if !FX_UV_READY {
+        FX_UV_READY = true;
+        let len = (*addr_of!(MAP_META))
+            .as_ref()
+            .map_or(0, |(_, c)| *c as usize)
+            .min(FX_TOPO_CAP);
         let mut mn = [f32::INFINITY; 2];
         let mut mx = [f32::NEG_INFINITY; 2];
-        for led in map.leds.iter() {
+        for p in (*addr_of!(FX_LED_POS)).iter().take(len) {
             for k in 0..2 {
-                mn[k] = mn[k].min(led.xyz[k]);
-                mx[k] = mx[k].max(led.xyz[k]);
+                mn[k] = mn[k].min(p[k]);
+                mx[k] = mx[k].max(p[k]);
             }
         }
         for k in 0..2 {
@@ -1859,10 +1956,20 @@ unsafe fn fx_rebuild_topo() {
             FX_UV_INV[k] = if range > 1e-6 { 1.0 / range } else { 0.0 };
         }
     }
-    // The per-LED topology fill needs only the topology (associations reference
-    // led_id, which IS the map index — the render is index-based), so it runs
-    // independent of the map: pulse/flood playback works with a topology alone.
-    let Some(topo) = (*addr_of!(TOPO)).as_ref() else {
+    // The per-LED topology resolve: the streaming upload sink filled FX_LED_TOPO
+    // with each LED's RAW segment_id (in `seg`) + foot/dperp; here we resolve seg
+    // to a segment INDEX and derive s/branch/dist from the resident geometry.
+    // Gated so it runs exactly once per topology upload — seg holds the id only
+    // until this resolves it in place.
+    if FX_TOPO_READY {
+        return;
+    }
+    FX_TOPO_READY = true;
+    let Some(topo) = (*addr_of!(GEOM)).as_ref() else {
+        // No topology stored — clear any stale association entries.
+        for e in (*addr_of_mut!(FX_LED_TOPO)).iter_mut() {
+            *e = FxLedTopo::NONE;
+        }
         return;
     };
     // Precompute which branch points are true junctions (degree >= 3). A branch
@@ -1958,33 +2065,32 @@ unsafe fn fx_rebuild_topo() {
         }
     }
 
-    // Association-driven fill (led_id IS the map/cache index): O(associations),
-    // not the old O(LEDs × associations) per-LED scan — and independent of the
-    // map. Each entry caches enough for BOTH shade (seg/s/branch/dist) and the
-    // pulse/flood sim (seg/foot/dperp), so lm_playback_color is an O(1) read.
+    // Resolve each sink-filled entry in place: `seg` currently holds the raw
+    // segment_id → map it to the segment INDEX (== sim segment index), and derive
+    // s/branch/dist. foot/dperp are kept. O(associations × segments), once per
+    // upload — and lm_playback_color/shade are then O(1) reads per frame.
+    let cache = &mut *addr_of_mut!(FX_LED_TOPO);
     let mut max_geo = 0.0f32;
-    for assoc in topo.associations.iter() {
-        let i = assoc.led_id as usize;
-        if i >= FX_TOPO_CAP {
-            continue;
+    for e in cache.iter_mut() {
+        if e.seg < 0 {
+            continue; // no association
         }
-        let Some(seg_idx) = topo.segments.iter().position(|s| s.id == assoc.segment_id) else {
+        let seg_id = e.seg as u32; // TEMP raw id from the streaming sink
+        let foot = e.foot;
+        let Some(seg_idx) = topo.segments.iter().position(|s| s.id == seg_id) else {
+            *e = FxLedTopo::NONE; // dangling association
             continue;
         };
         let seg = &topo.segments[seg_idx];
-        let s_norm = if seg.length > 1e-6 {
-            (assoc.foot_arclength / seg.length).clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
+        let s_norm = if seg.length > 1e-6 { (foot / seg.length).clamp(0.0, 1.0) } else { 0.0 };
         // Near endpoint a (s≈0) or b (s≈1) AND that endpoint is a real junction.
-        let near_a = assoc.foot_arclength <= FX_BRANCH_DIST_M;
-        let near_b = (seg.length - assoc.foot_arclength) <= FX_BRANCH_DIST_M;
+        let near_a = foot <= FX_BRANCH_DIST_M;
+        let near_b = (seg.length - foot) <= FX_BRANCH_DIST_M;
         let branch = (near_a && is_junction(seg.a)) || (near_b && is_junction(seg.b));
         let geo = if seg_idx < n_seg {
             let da = node_dist[node_of(seg_idx, 0)];
             let db = node_dist[node_of(seg_idx, 1)];
-            let g = (da + assoc.foot_arclength).min(db + (seg.length - assoc.foot_arclength));
+            let g = (da + foot).min(db + (seg.length - foot));
             if g.is_finite() {
                 g
             } else {
@@ -1996,14 +2102,10 @@ unsafe fn fx_rebuild_topo() {
         if geo > max_geo {
             max_geo = geo;
         }
-        cache[i] = FxLedTopo {
-            seg: seg_idx as i16,
-            s: s_norm,
-            branch,
-            dist: geo,
-            foot: assoc.foot_arclength,
-            dperp: assoc.d_perp,
-        };
+        e.seg = seg_idx as i16; // resolve id → index
+        e.s = s_norm;
+        e.branch = branch;
+        e.dist = geo;
     }
     // Normalize the raw geodesic distances to 0..1 (unassociated LEDs stay 0).
     if max_geo > 1e-6 {

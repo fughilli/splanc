@@ -101,7 +101,7 @@ static inline void fill_rgb(Rgb *a, uint32_t n, Rgb v) {
 
 // Render buffer cap; the actual rendered count follows the active pattern /
 // counting configuration at runtime (min'd against this).
-static const uint32_t kMaxLeds = 256;
+static const uint32_t kMaxLeds = 1024;
 static Rgb leds[kMaxLeds];
 
 // --- async LED transmit (FUG-122 hill-climb) --------------------------------
@@ -130,7 +130,17 @@ static SemaphoreHandle_t xmit_done = nullptr;
 // Latest transmit span (cycles), written by the transmit task, read for perf.
 static volatile uint32_t g_show_c = 0;
 static volatile bool g_show_timed = false;
-static void led_show_async(bool timed);  // defined below render_once
+// How many LEDs the transmit task clocks out this frame per channel — the ACTIVE
+// strip length, not the whole render buffer. Channel 0 drives show_buf[0..len0),
+// channel 1 show_buf[len0..len0+len1) (len1 == 0 = single channel). Latched by
+// led_show_async alongside the show_buf snapshot (so a length change never races
+// an in-flight push), read by xmit_task. Raising kMaxLeds therefore doesn't slow
+// a short strip; the calibration probe drives exactly its extent; and a long
+// strip clocks out on both channels in parallel.
+static volatile uint32_t g_xmit_len0 = 0;
+static volatile uint32_t g_xmit_len1 = 0;
+// defined below render_once
+static void led_show_async(bool timed, uint32_t count0, uint32_t count1);
 
 // LED rendering is decoupled from loop() (which cooperatively services WiFi,
 // HTTP and BLE and can stall for milliseconds during a burst): it runs in its
@@ -942,6 +952,19 @@ static uint32_t render_once() {
   bool show = false;
   uint32_t next_delay_ms = kStaticPollMs;
 
+  // Active strip length to clock out this frame, split across the two output
+  // channels at the channel-0 boundary. Default total: set_led_count(0) +
+  // set_led_count(1); fall back to the render cap when unconfigured (early boot /
+  // idle). Each render branch narrows `xmit_len` (the LOGICAL total) to exactly
+  // what it drives; the split is applied just before the transmit below.
+  int32_t c0 = lm_led_count(0);
+  int32_t c1 = lm_led_count(1);
+  uint32_t ch0_len = c0 > 0 ? (uint32_t)c0 : 0;
+  uint32_t ch1_len = c1 > 0 ? (uint32_t)c1 : 0;
+  uint32_t total_cfg = ch0_len + ch1_len;
+  uint32_t xmit_len = total_cfg > 0 ? total_cfg : kMaxLeds;
+  if (xmit_len > kMaxLeds) xmit_len = kMaxLeds;
+
   // Perf (Tier 0): time the effect update()/shade span with the free-running
   // cycle counter; the show() span is timed separately AFTER the strip write
   // (it runs outside the lock). Only sampled while a perf mode is active and an
@@ -968,12 +991,16 @@ static uint32_t render_once() {
     uint32_t frame_index = seq % cycle_frames;
     if (frame_index != last_shown_frame) {
       uint32_t n = led_count < kMaxLeds ? led_count : kMaxLeds;
+      xmit_len = n;  // drive exactly the mapping strip
       for (uint32_t i = 0; i < n; i++) {
         if (lm_pattern_color(i, frame_index, rgb)) {
           leds[i] = Rgb(rgb[0], rgb[1], rgb[2]);
         }
       }
-      for (uint32_t i = n; i < kMaxLeds; i++) leds[i] = Rgb::Black;
+      // Blank only the TRANSMITTED tail [n, xmit_len); LEDs past xmit_len are
+      // never pushed (exact-count transmit), so blanking to kMaxLeds is dead
+      // work — and at kMaxLeds=1024 it dominated the cheapest effect's frame.
+      for (uint32_t i = n; i < xmit_len; i++) leds[i] = Rgb::Black;
       // Record the render instant (raw micros(), integer µs — no f64) BEFORE
       // the strip write; consecutive records reveal the true frame cadence,
       // drained by the phone via get_frame_timing. micros() wraps ~71 min; the
@@ -989,8 +1016,13 @@ static uint32_t render_once() {
     next_delay_ms = d <= 1 ? 1 : (d > (int64_t)kStaticPollMs ? kStaticPollMs : (uint32_t)d);
     was_active = true;
   } else if (lm_counting_color(0, rgb)) {
-    // Counting probe: static pattern, repaint at the slow static cadence.
-    for (uint32_t i = 0; i < kMaxLeds; i++) {
+    // Counting probe: static pattern, repaint at the slow static cadence. Drive
+    // EXACTLY the pattern's extent — no overrun past it to the buffer cap.
+    uint32_t cn = lm_counting_len();
+    if (cn == 0) cn = 1;
+    if (cn > kMaxLeds) cn = kMaxLeds;
+    xmit_len = cn;
+    for (uint32_t i = 0; i < cn; i++) {
       lm_counting_color(i, rgb);
       leds[i] = Rgb(rgb[0], rgb[1], rgb[2]);
     }
@@ -1018,6 +1050,7 @@ static uint32_t render_once() {
     // guard and is fully effective without the timer.
     uint32_t n = lm_map_len();
     if (n > kMaxLeds) n = kMaxLeds;
+    if (n > 0) xmit_len = n;  // drive exactly the mapped LEDs
     uint32_t this_seq = fx_frame++;
     // Cycle-counter span around update() (perf-monitoring.md: two CSR reads,
     // negligible against the per-frame float ops).
@@ -1044,7 +1077,10 @@ static uint32_t render_once() {
           leds[i] = Rgb::Black;  // no map entry
         }
       }
-      for (uint32_t i = n; i < kMaxLeds; i++) leds[i] = Rgb::Black;
+      // Blank only the TRANSMITTED tail [n, xmit_len); LEDs past xmit_len are
+      // never pushed (exact-count transmit), so blanking to kMaxLeds is dead
+      // work — and at kMaxLeds=1024 it dominated the cheapest effect's frame.
+      for (uint32_t i = n; i < xmit_len; i++) leds[i] = Rgb::Black;
       // Rate-limited interpreter diagnostic (~1 Hz): update outcome + how many
       // LEDs the bounded-exec guard cancelled this frame. Cheap; helps see if an
       // effect is tripping the instruction budget / wall-time deadline.
@@ -1084,8 +1120,13 @@ static uint32_t render_once() {
     uint32_t dt = now - last_playback_ms;   // wraps cleanly (unsigned)
     if (last_playback_ms == 0 || dt > 100) dt = 33;  // fresh entry / long gap
     last_playback_ms = now;
+    // Colour + transmit exactly the mapped/topology LEDs, not the whole 1024-cap
+    // buffer (lm_playback_color returns false past the topology extent anyway).
+    uint32_t pn = lm_map_len();
+    if (pn > kMaxLeds) pn = kMaxLeds;
+    if (pn > 0) xmit_len = pn;
     if (lm_playback_step(dt)) {
-      for (uint32_t i = 0; i < kMaxLeds; i++) {
+      for (uint32_t i = 0; i < xmit_len; i++) {
         if (lm_playback_color(i, rgb)) {
           leds[i] = cc_apply(rgb);
         } else {
@@ -1094,7 +1135,7 @@ static uint32_t render_once() {
       }
     } else {
       // Effect configured but no topology stored yet — hold black.
-      fill_rgb(leds, kMaxLeds, Rgb::Black);
+      fill_rgb(leds, xmit_len, Rgb::Black);
     }
     show = true;
     was_active = true;
@@ -1129,7 +1170,14 @@ static uint32_t render_once() {
   // is max(frame_c, show_c), not their sum.
   uint32_t show_c = 0;
   if (show) {
-    led_show_async(fx_frame_rendered);
+    // Split the active range across the channels at the channel-0 boundary. With
+    // channel 1 unconfigured (ch1_len == 0) this is count0 = xmit_len, count1 = 0
+    // — i.e. single-channel, byte-identical to before.
+    uint32_t split = ch1_len > 0 ? ch0_len : xmit_len;
+    uint32_t count0 = xmit_len < split ? xmit_len : split;
+    uint32_t count1 = xmit_len > split ? (xmit_len - split) : 0;
+    if (count1 > ch1_len) count1 = ch1_len;
+    led_show_async(fx_frame_rendered, count0, count1);
     if (fx_frame_rendered) show_c = g_show_c;
   }
 
@@ -1208,7 +1256,7 @@ static void xmit_task(void *) {
   for (;;) {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
     uint32_t c0 = g_show_timed ? esp_cpu_get_cycle_count() : 0;
-    ws2812_rmt_show(reinterpret_cast<const uint8_t *>(show_buf), kMaxLeds);
+    ws2812_rmt_show(reinterpret_cast<const uint8_t *>(show_buf), g_xmit_len0, g_xmit_len1);
     if (g_show_timed) g_show_c = esp_cpu_get_cycle_count() - c0;
     xSemaphoreGive(xmit_done);
   }
@@ -1219,14 +1267,23 @@ static void xmit_task(void *) {
 // (instant once rendering out-runs the transmit), snapshots into `show_buf`, and
 // kicks the higher-priority transmit task — which preempts, starts the DMA, and
 // yields straight back so the render task can compute the next frame in parallel.
-static void led_show_async(bool timed) {
+static void led_show_async(bool timed, uint32_t count0, uint32_t count1) {
+  uint32_t total = count0 + count1;
+  if (total > kMaxLeds) {  // clamp defensively; render never exceeds the cap
+    count1 = count1 > kMaxLeds - count0 ? kMaxLeds - count0 : count1;
+    total = count0 + count1;
+  }
   if (xmit_task_handle == nullptr) {
     // Pre-task fallback (setup, before the transmit task exists): synchronous.
-    ws2812_rmt_show(reinterpret_cast<const uint8_t *>(show_buf), kMaxLeds);
+    ws2812_rmt_show(reinterpret_cast<const uint8_t *>(show_buf), count0, count1);
     return;
   }
   xSemaphoreTake(xmit_done, portMAX_DELAY);  // previous transmit fully drained
-  memcpy(show_buf, leds, kMaxLeds * sizeof(Rgb));
+  // Snapshot only the active LEDs; the per-channel lengths ride with the buffer
+  // under the same xmit_done gate so the transmit task sees a consistent snapshot.
+  memcpy(show_buf, leds, static_cast<size_t>(total) * sizeof(Rgb));
+  g_xmit_len0 = count0;
+  g_xmit_len1 = count1;
   g_show_timed = timed;
   xTaskNotifyGive(xmit_task_handle);
 }
@@ -1682,7 +1739,7 @@ void setup() {
   // RMT WS2812 driver on LED_DATA_PIN (replaces FastLED's blocking clockless
   // driver). It reads `show_buf` (the transmit snapshot), never the live `leds` —
   // the async transmit task pushes show_buf while the render task fills leds.
-  if (!ws2812_rmt_init(LED_DATA_PIN, kMaxLeds)) {
+  if (!ws2812_rmt_init(LED_DATA_PIN, LED_DATA_PIN_2, kMaxLeds)) {
     Log().printf("[led] ws2812 RMT init FAILED\n");
   }
   // No global hardware dimming. Output brightness is owned by the software
@@ -1692,7 +1749,17 @@ void setup() {
   // their exact known values for the camera + logic-analyzer to decode.
   fill_rgb(leds, kMaxLeds, Rgb::Black);
   fill_rgb(show_buf, kMaxLeds, Rgb::Black);
-  ws2812_rmt_show(reinterpret_cast<const uint8_t *>(show_buf), kMaxLeds);  // blank the strip
+  ws2812_rmt_show(reinterpret_cast<const uint8_t *>(show_buf), kMaxLeds, 0);  // blank the strip
+  // Boot self-test: drive ONE pixel on each channel so a silent rmt_transmit()
+  // failure on channel 1 (GPIO14) shows up in the boot log, independent of the
+  // logic-analyzer tap. show_buf[0] -> ch0, show_buf[1] -> ch1 (count0==1 splits).
+  show_buf[0] = Rgb(1, 0, 0);
+  show_buf[1] = Rgb(0, 0, 1);
+  ws2812_rmt_show(reinterpret_cast<const uint8_t *>(show_buf), 1, 1);
+  Log().printf("[led] ws2812 channels=%d ch0_err=0x%x ch1_err=0x%x\n",
+               ws2812_rmt_channels(), ws2812_rmt_last_error(0), ws2812_rmt_last_error(1));
+  fill_rgb(show_buf, kMaxLeds, Rgb::Black);
+  ws2812_rmt_show(reinterpret_cast<const uint8_t *>(show_buf), kMaxLeds, 0);  // re-blank
   // Bring up the async transmit task + its completion gate (starts "available"
   // so the first led_show_async proceeds without waiting). Priority one above
   // the render task so a kick preempts, starts the DMA, and yields right back.

@@ -299,6 +299,52 @@ fn streamed_topology_matches_the_arena_decode() {
 }
 
 #[test]
+fn dump_src_matches_the_slice_dump() {
+    // get_stored_map reconstructs the bundle from the render caches via the
+    // accessor dump; assert it's byte-identical to the slice dump for the same
+    // data (id/xyz via a dense led() closure, associations via a for_each).
+    let mut buf = vec![0u8; 64 * 1024];
+    let arena = Arena::new(&mut buf);
+    let mframe = submit_map_frame(150);
+    let map = decode_submit_map(mframe.as_slice(), mframe.len(), &arena).expect("map");
+    let tframe = submit_topology_frame(150, 12, 20, 12);
+    let topo = decode_submit_topology(tframe.as_slice(), tframe.len(), &arena).expect("topo");
+
+    let led = |i: u32| {
+        let l = &map.leds[i as usize];
+        (l.id, l.xyz)
+    };
+    let assoc_each = |f: &mut dyn FnMut(u32, u32, f32, f32)| {
+        for a in topo.associations {
+            f(a.led_id, a.segment_id, a.foot_arclength, a.d_perp);
+        }
+    };
+    let tsrc = ledmapper_store::dump::TopoSrc {
+        map_id: topo.map_id.as_str(),
+        branch_points: topo.branch_points,
+        segments: topo.segments,
+        assoc_each: &assoc_each,
+    };
+    let want_len = ledmapper_store::dump::bundle_len(&map, Some(&topo));
+    let got_len =
+        ledmapper_store::dump::bundle_len_src(map.map_id.as_str(), map.led_count, &led, Some(&tsrc));
+    assert_eq!(got_len, want_len, "src bundle_len == slice bundle_len");
+
+    let mut a = vec![0u8; want_len];
+    let mut b = vec![0u8; want_len];
+    ledmapper_store::dump::encode_bundle_window(&map, Some(&topo), 0, &mut a);
+    ledmapper_store::dump::encode_bundle_window_src(
+        map.map_id.as_str(),
+        map.led_count,
+        &led,
+        Some(&tsrc),
+        0,
+        &mut b,
+    );
+    assert_eq!(a, b, "src dump == slice dump, byte-for-byte");
+}
+
+#[test]
 fn block_reader_decodes_a_frame_fed_in_small_blocks() {
     // The flash-streaming decode path: pull the frame one small block at a time
     // (a whole submit_map never resident) — 100-byte blocks straddle varints,
