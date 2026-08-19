@@ -519,7 +519,10 @@ async function messagesRequest(
       // ceiling, not a cost, so give it real headroom.
       model: MODEL,
       max_tokens: 16000,
-      thinking: { type: "adaptive" },
+      // Bounded thinking instead of `adaptive`: adaptive could burn ~50s of
+      // reasoning before the reply even starts. 4000 tokens keeps solid planning
+      // while cutting the up-front "Thinking…" wait. Tune here for speed↔quality.
+      thinking: { type: "enabled", budget_tokens: 4000 },
       stream: true,
       system,
       tools,

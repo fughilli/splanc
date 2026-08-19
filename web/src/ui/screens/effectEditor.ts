@@ -601,6 +601,8 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   let chatStatusSubEl: HTMLElement | null = null;
   let chatStatusTimer: number | null = null;
   let chatStatusStartMs = 0;
+  let chatHasRealStatus = false;
+  const THINKING = "Thinking…";
 
   function fmtElapsed(ms: number): string {
     const s = Math.max(0, Math.floor(ms / 1000));
@@ -613,8 +615,12 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     chatStatusSubEl.textContent = fmtElapsed(performance.now() - chatStatusStartMs);
   }
   /** Update the "model is working" indicator: a main label (the model's terse
-   * summary, or a fixed tool verb) over a ticking-elapsed subtext. */
+   * summary, or a fixed tool verb) over a ticking-elapsed subtext. "Thinking…" is
+   * a SOFT placeholder — once a real status (a model summary or tool verb) shows,
+   * later "Thinking…" pings are ignored so it doesn't flick back between rounds. */
   function setChatStatus(label: string): void {
+    if (label === THINKING && chatHasRealStatus) return;
+    if (label !== THINKING) chatHasRealStatus = true;
     if (chatHint.isConnected) chatHint.remove();
     if (chatStatusEl === null) {
       chatStatusEl = document.createElement("div");
@@ -646,6 +652,7 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
     chatStatusEl = null;
     chatStatusLabelEl = null;
     chatStatusSubEl = null;
+    chatHasRealStatus = false; // next turn starts soft ("Thinking…") again
   }
 
   // -- device section -------------------------------------------------------
@@ -1230,13 +1237,13 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
         // own set_script summary), so a long turn narrates itself in real time.
         onStatus: (label) => setChatStatus(label),
         onSetScript: async (source, summary) => {
-          // Streaming already surfaced the summary; re-affirm then show compile.
-          setChatStatus(summary || "Writing the effect code…");
+          // Streaming already surfaced the summary live; keep it sticky through
+          // the fast client-side compile instead of flicking to "Compiling…".
+          if (summary) setChatStatus(summary);
           codeEl.value = source;
           paintHighlight();
           syncScroll();
           scheduleSave();
-          setChatStatus("Compiling…");
           await compileNow();
           return `Compile result: ${lastCompileSummary}${
             lastDisassembly ? `\n\nDisassembly:\n${lastDisassembly}` : ""

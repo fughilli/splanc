@@ -148,7 +148,12 @@ export function AcidModeScreen(router: Router): Screen {
   // A single live "thinking…" indicator that hops to the bottom while the agent
   // reasons, then gives way to the concrete tool-narration lines.
   let liveThink: HTMLElement | null = null;
+  let acidHasRealStatus = false;
   function showThinking(label: string): void {
+    // "Thinking…" is soft: once a streamed status (tool verb / model summary)
+    // shows, don't let a later "Thinking…" flick over it (reset each tool round).
+    if (label === "Thinking…" && acidHasRealStatus) return;
+    if (label !== "Thinking…") acidHasRealStatus = true;
     if (liveThink === null) {
       liveThink = document.createElement("div");
       liveThink.className = "acid-msg acid-msg--think acid-live";
@@ -158,6 +163,7 @@ export function AcidModeScreen(router: Router): Screen {
     scrollFeed();
   }
   function clearThinking(): void {
+    acidHasRealStatus = false;
     if (liveThink !== null) {
       liveThink.remove();
       liveThink = null;
