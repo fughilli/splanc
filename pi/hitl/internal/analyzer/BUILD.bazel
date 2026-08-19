@@ -1,0 +1,23 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "analyzer",
+    srcs = [
+        "analyzer.go",
+        "decode.go",
+    ],
+    importpath = "github.com/fughilli/splanc/pi/hitl/internal/analyzer",
+    visibility = ["//pi/hitl:__subpackages__"],
+    deps = ["//pi/hitl/internal/api"],
+)
+
+go_test(
+    name = "analyzer_test",
+    srcs = [
+        "channelmap_test.go",
+        "decode_test.go",
+        "golden_test.go",
+    ],
+    embed = [":analyzer"],
+    deps = ["//pi/hitl/internal/api"],
+)

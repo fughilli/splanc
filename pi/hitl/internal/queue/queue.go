@@ -26,17 +26,27 @@ var ErrNotFound = errors.New("reservation not found")
 // podman). Reservations are infrequent, so this simple serialization is fine;
 // revisit with a control goroutine if it ever becomes a bottleneck.
 type Manager struct {
-	rig     string
-	lease   time.Duration
-	run     runner.Runner
-	devices []runner.Device // the DUTs this rig can hand out (>=1)
-	wifi    *api.WiFiInfo   // rig's provisioning AP creds, advertised in Status (or nil)
-	ap      AP              // brings that AP up/down around active reservations (or nil)
+	rig      string
+	lease    time.Duration
+	run      runner.Runner
+	devices  []runner.Device   // the DUTs this rig can hand out (>=1)
+	wifi     *api.WiFiInfo     // rig's provisioning AP creds, advertised in Status (or nil)
+	analyzer *api.AnalyzerInfo // rig's shared logic-analyzer capability, advertised in Status (or nil)
+	ap       AP                // brings that AP up/down around active reservations (or nil)
 
 	mu    sync.Mutex
 	items []*api.Reservation // admission order; several may be Active (one per DUT)
 	keys  map[string]string  // reservation id -> SSH pubkey (not serialized out)
 	want  map[string]string  // reservation id -> pinned DUT name ("" = any free DUT)
+
+	// Monotonic lifecycle counters, exported via Metrics() for /metrics. Guarded
+	// by mu; only ever incremented, so a scraper sees rates (reservations/min,
+	// lease-expiry rate, container-start failure rate).
+	cReservations  uint64 // enqueued (every Reserve)
+	cActivations   uint64 // queued -> active transitions
+	cReleases      uint64 // reservations ended, any reason
+	cLeaseExpiries uint64 // subset of releases triggered by a lapsed lease
+	cStartFailures uint64 // container Start() errors during reconcile
 }
 
 // AP is the rig's provisioning access point: brought up while a reservation holds
@@ -52,6 +62,19 @@ type Option func(*Manager)
 // WithWiFi advertises the rig's provisioning-AP creds in Status so the harness can
 // provision the DUT onto it with no out-of-band config.
 func WithWiFi(w *api.WiFiInfo) Option { return func(m *Manager) { m.wifi = w } }
+
+// WithAnalyzer advertises the rig's shared logic-analyzer capability in Status so
+// clients can select an analyzer-capable rig by capability (not by name/tag).
+func WithAnalyzer(a *api.AnalyzerInfo) Option { return func(m *Manager) { m.analyzer = a } }
+
+// SetAnalyzer refreshes the advertised analyzer capability — called after a
+// runtime channel-map change (POST /analyzer/channel-map) so /status reflects the
+// live channel set instead of the boot-time snapshot.
+func (m *Manager) SetAnalyzer(a *api.AnalyzerInfo) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.analyzer = a
+}
 
 // WithAP wires an access point that the manager toggles around active
 // reservations (up on activation, down on release/reap).
@@ -244,6 +267,7 @@ func (m *Manager) Reserve(ctx context.Context, req api.ReserveRequest) *api.Rese
 		m.want[r.ID] = req.Device
 	}
 	m.items = append(m.items, r)
+	m.cReservations++
 	log.Printf("reserve: id=%s owner=%q device=%q queued (position %d)", r.ID, r.Owner, req.Device, len(m.items)-1)
 	m.reconcileLocked(ctx)
 	return m.viewLocked(r.ID)
@@ -285,6 +309,7 @@ func (m *Manager) Release(ctx context.Context, id, reason string) error {
 		return ErrNotFound
 	}
 	wasActive := m.items[idx].State == api.StateActive
+	m.cReleases++
 	log.Printf("release: id=%s reason=%q wasActive=%v", id, reason, wasActive)
 	if wasActive {
 		if err := m.run.Stop(ctx, id); err != nil {
@@ -309,7 +334,7 @@ func (m *Manager) Release(ctx context.Context, id, reason string) error {
 func (m *Manager) Status() api.Status {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	s := api.Status{Rig: m.rig, LeaseSeconds: int(m.lease.Seconds()), WiFi: m.wifi}
+	s := api.Status{Rig: m.rig, LeaseSeconds: int(m.lease.Seconds()), WiFi: m.wifi, Analyzer: m.analyzer}
 
 	// active DUT name -> holder view.
 	holders := map[string]*api.Reservation{}
@@ -347,6 +372,76 @@ func (m *Manager) Status() api.Status {
 	return s
 }
 
+// DeviceMetric is one DUT's slice of a MetricsSnapshot: its name and whether it
+// currently has an active holder.
+type DeviceMetric struct {
+	Name string
+	Busy bool
+}
+
+// MetricsSnapshot is a point-in-time, lock-free-to-consume view of the manager
+// for the /metrics endpoint. Gauges describe the current state; the *Total
+// counters are monotonic since process start (a scraper differentiates them into
+// rates).
+type MetricsSnapshot struct {
+	Rig          string
+	LeaseSeconds float64
+
+	DUTsTotal   int // configured DUTs
+	DUTsBusy    int // DUTs with an active holder
+	QueueDepth  int // reservations still queued (waiting for a DUT)
+	ActiveTotal int // active reservations (one per busy DUT)
+
+	Devices []DeviceMetric // per-DUT busy state (for a device-labelled gauge)
+
+	Reservations  uint64 // enqueued
+	Activations   uint64 // queued -> active
+	Releases      uint64 // ended (any reason)
+	LeaseExpiries uint64 // ended by a lapsed lease
+	StartFailures uint64 // container start errors
+}
+
+// Metrics returns a MetricsSnapshot for /metrics. Unlike Status (which keeps the
+// legacy "idle whenever any DUT is free" summary for old clients), this reports
+// the true per-DUT occupancy and queue depth, so a busy-DUT-count and a
+// queue-depth panel read correctly even on a multi-DUT rig with a free slot.
+func (m *Manager) Metrics() MetricsSnapshot {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	busy := map[string]bool{}
+	active, queued := 0, 0
+	for _, r := range m.items {
+		switch r.State {
+		case api.StateActive:
+			busy[r.Device] = true
+			active++
+		case api.StateQueued:
+			queued++
+		}
+	}
+	snap := MetricsSnapshot{
+		Rig:           m.rig,
+		LeaseSeconds:  m.lease.Seconds(),
+		DUTsTotal:     len(m.devices),
+		QueueDepth:    queued,
+		ActiveTotal:   active,
+		Reservations:  m.cReservations,
+		Activations:   m.cActivations,
+		Releases:      m.cReleases,
+		LeaseExpiries: m.cLeaseExpiries,
+		StartFailures: m.cStartFailures,
+	}
+	for _, d := range m.devices {
+		b := busy[d.Name]
+		if b {
+			snap.DUTsBusy++
+		}
+		snap.Devices = append(snap.Devices, DeviceMetric{Name: d.Name, Busy: b})
+	}
+	return snap
+}
+
 // ReapExpired releases every reservation whose lease has passed — the active
 // holder (tearing its container down) and any queued waiter (dequeuing it) alike.
 // Call periodically. Sweeping the whole queue, not just the head, is what keeps a
@@ -360,6 +455,7 @@ func (m *Manager) ReapExpired(ctx context.Context) {
 			expired = append(expired, r.ID)
 		}
 	}
+	m.cLeaseExpiries += uint64(len(expired))
 	m.mu.Unlock()
 	for _, id := range expired {
 		_ = m.Release(ctx, id, "lease expired (no heartbeat)")
@@ -409,6 +505,7 @@ func (m *Manager) reconcileLocked(ctx context.Context) {
 		ep, err := m.run.Start(ctx, head.ID, head.Owner, m.keys[head.ID], *dev)
 		if err != nil {
 			log.Printf("reconcile: start container for %s on %s failed: %v", head.ID, dev.Name, err)
+			m.cStartFailures++
 			head.Message = "failed to start container: " + err.Error()
 			// Drop the failed reservation so the queue can make progress, then retry
 			// the same DUT with the next waiter.
@@ -422,6 +519,7 @@ func (m *Manager) reconcileLocked(ctx context.Context) {
 		head.ExpiresAt = &exp
 		head.SSH = ep
 		head.Device = dev.Name
+		m.cActivations++
 		log.Printf("reconcile: id=%s active dut=%s ssh=%s:%d", head.ID, dev.Name, ep.Host, ep.Port)
 		// Stand up the provisioning AP for the new holder (best-effort, idempotent).
 		m.apUp(ctx)

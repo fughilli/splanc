@@ -222,6 +222,55 @@ let
     '';
   };
 
+  # hitl-capture: thin client for the rig's SHARED logic analyzer. The FX2 stays
+  # on the host (owned by the daemon); this just POSTs to the daemon's /capture
+  # over the podman host gateway ($HITL_CAPTURE_SERVER), naming this reservation's
+  # DUT ($HITL_DUT), and prints the decoded pixels. No sigrok or raw USB in the
+  # container. Stdlib only.
+  hitlCapture = p.writeTextFile {
+    name = "hitl-capture";
+    executable = true;
+    destination = "/bin/hitl-capture";
+    text = ''
+      #!${pyEnv}/bin/python3
+      import argparse, base64, json, os, sys, urllib.request, urllib.error
+      ap = argparse.ArgumentParser(prog="hitl-capture",
+          description="capture + decode this DUT's LED line via the rig's shared logic analyzer")
+      ap.add_argument("--dut", default=os.environ.get("HITL_DUT", ""),
+                      help="DUT name to capture (default $HITL_DUT)")
+      ap.add_argument("--server", default=os.environ.get("HITL_CAPTURE_SERVER", ""),
+                      help="daemon base URL (default $HITL_CAPTURE_SERVER)")
+      ap.add_argument("--protocol", default="", help="override decoder: ws2812|spi")
+      ap.add_argument("--samples", type=int, default=0, help="capture length (0 = rig default)")
+      ap.add_argument("--sr", default="", help="also write the raw .sr session to this file")
+      ap.add_argument("--json", action="store_true", help="print the raw JSON result")
+      a = ap.parse_args()
+      if not a.server:
+          sys.exit("hitl-capture: no daemon URL ($HITL_CAPTURE_SERVER unset; pass --server)")
+      req = {"device": a.dut, "protocol": a.protocol, "samples": a.samples, "save_sr": bool(a.sr)}
+      body = json.dumps(req).encode()
+      try:
+          with urllib.request.urlopen(
+                  urllib.request.Request(a.server.rstrip("/") + "/capture", data=body,
+                                         headers={"Content-Type": "application/json"}),
+                  timeout=60) as r:
+              res = json.loads(r.read())
+      except urllib.error.HTTPError as e:
+          sys.exit("hitl-capture: %s: %s" % (e.code, e.read().decode(errors="replace")))
+      except Exception as e:
+          sys.exit("hitl-capture: %s" % e)
+      if a.sr and res.get("sr"):
+          with open(a.sr, "wb") as f:
+              f.write(base64.b64decode(res["sr"]))
+          sys.stderr.write("hitl-capture: wrote raw session to %s\n" % a.sr)
+      if a.json:
+          json.dump(res, sys.stdout); print()
+      else:
+          for i, px in enumerate(res.get("pixels") or []):
+              print("%3d: #%02x%02x%02x" % (i, px["r"], px["g"], px["b"]))
+    '';
+  };
+
   toolbox = with p; [
     bashInteractive
     coreutils
@@ -233,6 +282,8 @@ let
     pyEnv
     hitlFlash
     hitlMonitor
+    # Shared logic analyzer capture (thin client to the daemon's /capture):
+    hitlCapture
     # BLE central (drives the host bluetoothd over the mounted system D-Bus).
     # ImprovBLE provisioning isn't a baked tool: the e2e harness ships its own
     # provisioner (pi/hitl/harness/hitl_improv.py) and runs it with this python3.
@@ -260,11 +311,16 @@ let
     Subsystem sftp ${p.openssh}/libexec/sftp-server
     PidFile /run/sshd.pid
     SetEnv PATH=${toolPath}:/bin:/usr/bin DBUS_SYSTEM_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket
+    # The daemon injects per-reservation HITL_* env (HITL_DUT, HITL_CAPTURE_SERVER,
+    # HITL_ADAPTER_SERIAL) via `podman -e`; that reaches sshd's process but not the
+    # session it spawns. Read them from ~/.ssh/environment (written by the entrypoint)
+    # so both interactive shells and `ssh host cmd` (the harness capture path) see them.
+    PermitUserEnvironment yes
   '';
 
   entrypoint = p.writeShellApplication {
     name = "hitl-entrypoint";
-    runtimeInputs = [ p.openssh p.coreutils ];
+    runtimeInputs = [ p.openssh p.coreutils p.gnugrep ];
     text = ''
       user="''${HITL_SSH_USER:-${sshUser}}"
       mkdir -p /run /etc/ssh
@@ -280,6 +336,13 @@ let
       fi
       # Diagnostics for pubkey-auth issues (StrictModes checks these):
       ls -lad "/home/$user" "/home/$user/.ssh" "/home/$user/.ssh/authorized_keys" >&2 2>/dev/null || true
+      # Expose the per-reservation HITL_* env (set on this process by `podman -e`) to
+      # SSH sessions. sshd doesn't pass its own env to sessions; PermitUserEnvironment
+      # + ~/.ssh/environment does, for both interactive shells and `ssh host cmd`
+      # (e.g. the harness running hitl-capture, which defaults to $HITL_CAPTURE_SERVER).
+      printenv | grep -E '^HITL_[A-Za-z0-9_]+=' > "/home/$user/.ssh/environment" || true
+      chown "$user":"$user" "/home/$user/.ssh/environment" 2>/dev/null || true
+      chmod 600 "/home/$user/.ssh/environment" 2>/dev/null || true
       # Make passed-through serial/JTAG nodes usable by the (non-root) agent —
       # they arrive with the host's root:dialout 660 perms. The container is
       # ephemeral + single-user, so opening them up is fine.

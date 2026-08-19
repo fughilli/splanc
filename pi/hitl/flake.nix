@@ -7,7 +7,10 @@
   description = "HITL rig — Pi test bench + agent CLI (sbc-deploy consumer)";
 
   inputs = {
-    sbc-deploy.url = "github:fughilli/sbc-deploy/cb70fcc832700c776a960d8f4303876acab0ac36?dir=nix";
+    # sbc-deploy main @ f51b3f2 (#7 persistent hostname identity + #8 `update`
+    # mode: board + capability-profile autodetect). Kept in lockstep with the
+    # @sbc_deploy git_override in //MODULE.bazel.
+    sbc-deploy.url = "github:fughilli/sbc-deploy/f51b3f2?dir=nix";
     nixpkgs.follows = "sbc-deploy/nixpkgs";
   };
 
@@ -16,7 +19,11 @@
       project = sbc-deploy.lib.mkSbcProject {
         hostName = "hitl-rig";
         board = "raspberry-pi-5";
-        appModules = [ ./nix/hitl-app.nix ];
+        # observability/alloy.nix is opt-in but safe to always import: its
+        # hitl-alloy service is gated on /var/lib/hitl/grafana.env existing
+        # (ConditionPathExists), so a rig without Grafana creds just doesn't
+        # start it. Seed the creds with `bazel run //pi/hitl:seed_grafana`.
+        appModules = [ ./nix/hitl-app.nix ./observability/alloy.nix ];
         # systemModules = [ sbc-deploy.nixosModules.spi ];  # if the DUT needs SPI
       };
 

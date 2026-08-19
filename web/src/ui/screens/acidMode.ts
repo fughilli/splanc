@@ -34,6 +34,8 @@ import { isDrivable, MidiRouter } from "../../midi/router";
 import { midiStore, type UniformBinding } from "../../store/midiStore";
 import { midiManager, controlLabel } from "../../midi/manager";
 import { effectStore } from "../../store/effectStore";
+import { chatLogStore, newChatLogSessionId } from "../../store/chatLogStore";
+import { registerChatDriver } from "../../net/remoteChat";
 import { mapStore } from "../../store/mapStore";
 import { appState } from "../app/state";
 import { StatusPill, icon, toast, type PillState } from "../kit";
@@ -146,7 +148,12 @@ export function AcidModeScreen(router: Router): Screen {
   // A single live "thinking…" indicator that hops to the bottom while the agent
   // reasons, then gives way to the concrete tool-narration lines.
   let liveThink: HTMLElement | null = null;
+  let acidHasRealStatus = false;
   function showThinking(label: string): void {
+    // "Thinking…" is soft: once a streamed status (tool verb / model summary)
+    // shows, don't let a later "Thinking…" flick over it (reset each tool round).
+    if (label === "Thinking…" && acidHasRealStatus) return;
+    if (label !== "Thinking…") acidHasRealStatus = true;
     if (liveThink === null) {
       liveThink = document.createElement("div");
       liveThink.className = "acid-msg acid-msg--think acid-live";
@@ -156,6 +163,7 @@ export function AcidModeScreen(router: Router): Screen {
     scrollFeed();
   }
   function clearThinking(): void {
+    acidHasRealStatus = false;
     if (liveThink !== null) {
       liveThink.remove();
       liveThink = null;
@@ -234,6 +242,10 @@ export function AcidModeScreen(router: Router): Screen {
 
   // -- the agent turn ---------------------------------------------------------
   const chatHistory: ChatMessage[] = [];
+  // Persisted-log bookkeeping (see chatLogStore) — one session per acid screen.
+  const chatLogSessionId = newChatLogSessionId();
+  let chatTurns = 0;
+  let unregisterChatDriver: (() => void) | null = null;
 
   async function ask(text: string): Promise<void> {
     if (busy) return;
@@ -255,6 +267,8 @@ export function AcidModeScreen(router: Router): Screen {
 
     busy = true;
     micBtn.disabled = true;
+    chatTurns += 1;
+    let turnError: string | undefined;
     showThinking("Thinking");
 
     let deviceCosts: string | undefined;
@@ -269,7 +283,9 @@ export function AcidModeScreen(router: Router): Screen {
       const finalText = await chatTurn(
         chatHistory,
         {
-          onThinking: () => showThinking("Thinking"),
+          onThinking: () => showThinking("Thinking…"),
+          // Live streamed status (thinking → tool verb → the model's summary).
+          onStatus: (label) => showThinking(label),
           onToolUse: (name) => {
             clearThinking();
             appendMsg("think", narrateTool(name));
@@ -287,12 +303,24 @@ export function AcidModeScreen(router: Router): Screen {
       appendMsg("agent", finalText || "Done.");
     } catch (e) {
       clearThinking();
-      appendMsg("agent", `Hmm, that didn't work: ${msg(e)}`);
+      turnError = msg(e);
+      appendMsg("agent", `Hmm, that didn't work: ${turnError}`);
     } finally {
       busy = false;
       micBtn.disabled = false;
       setMicListening(false);
       scrollFeed();
+      // Snapshot the transcript for off-device debugging. Best-effort.
+      void chatLogStore.record({
+        id: chatLogSessionId,
+        screen: "acidMode",
+        effectId: ACID_EFFECT_ID,
+        effectName: "Acid Mode",
+        turns: chatTurns,
+        errored: turnError !== undefined,
+        lastError: turnError,
+        messages: chatHistory,
+      });
     }
   }
 
@@ -494,6 +522,8 @@ export function AcidModeScreen(router: Router): Screen {
       void initMap();
       raf = requestAnimationFrame(tick);
       midiRouter.attach();
+      // Remote chat drive (repro-on-device): feed queued prompts into ask().
+      unregisterChatDriver = registerChatDriver((text) => ask(text));
       if (!getApiKey()) {
         appendMsg(
           "agent",
@@ -503,6 +533,7 @@ export function AcidModeScreen(router: Router): Screen {
     },
     onUnmount: () => {
       disposed = true;
+      unregisterChatDriver?.();
       cancelAnimationFrame(raf);
       unsubPill();
       midiRouter.detach();

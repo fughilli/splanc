@@ -13,6 +13,13 @@
 // Default code-book LED count — the fallback until start_mapping / set_led_count
 // override it, and the value advertised in `welcome` that the phone uses to
 // prefill its LED-count field. Matched to the render ceiling (main.cpp
-// kMaxLeds) so the firmware advertises its full "up to 256 LEDs" capacity.
-#define NUM_LEDS 256
+// kMaxLeds) so the firmware advertises its full "up to 1024 LEDs" capacity.
+#define NUM_LEDS 1024
 #define LED_DATA_PIN 20
+// Second WS2812 channel (RMT ch1). A long strip splits across the two GPIOs and
+// clocks out in PARALLEL — channel 0 drives the first set_led_count(0) LEDs,
+// channel 1 the next set_led_count(1). Off unless channel 1 is configured
+// (set_led_count(1, n)), so single-channel wiring is unaffected. GPIO14: clean on
+// the C6 SuperMini (NOT strapping 4/5/8/9/15, NOT USB-JTAG 12/13, and NOT the
+// SuperMini's internal SPI flash — GPIO18/19 carry that, so they're off-limits).
+#define LED_DATA_PIN_2 14

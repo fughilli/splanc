@@ -11,6 +11,24 @@
 
 pub type Rgb = (u8, u8, u8);
 
+/// A native code segment produced by the on-device JIT (`firmware/fx_jit`), for
+/// one hot straight-line integer/fixed block. The firmware compiles the block,
+/// copies the machine code into an executable region, and hands the VM a table of
+/// these; the interpreter's `JitCall` opcode (which the firmware patches over the
+/// block's first bytes at load) dispatches to `func`. The VM never allocates or
+/// executes anything itself — it just calls a function pointer the firmware set
+/// up, so it stays `no_std`/no-alloc.
+pub type JitFn = unsafe extern "C" fn(stack: *mut i32, locals: *mut i32, consts: *const i32);
+
+/// One JIT block: its native entry, the pc to resume interpreting at, and the net
+/// operand-stack depth change to apply after the call (see `firmware/fx_jit`).
+#[derive(Clone, Copy)]
+pub struct JitBlock {
+    pub func: JitFn,
+    pub end: u16,
+    pub net_delta: i16,
+}
+
 pub const MAX_STACK: usize = 128; // f32 slots
 pub const MAX_STATE: usize = 128; // raised for arrays/structs (agent sims live here)
 pub const MAX_LOCALS: usize = 128;
@@ -260,6 +278,25 @@ pub enum Op {
     // ones the compiler used to lean on the blanket zeroing for — emit this. A
     // big slice of the per-LED framing cost for the common effect that has none.
     FillLocal,    // u8 slot, u8 n
+    // --- FUG-125 superinstructions -------------------------------------------
+    // Pure fusions of hot opcode sequences the compiler's bytecode optimizer
+    // recognizes (see fx_compiler::opt). Each is byte-for-byte equivalent to the
+    // sequence it replaces — the differential optimizer test proves identical VM
+    // output — trading two-to-four dispatches for one on the FPU-less core.
+    // Appended at the end of the enum so every existing discriminant is stable.
+    TeeLocal,  // u8 slot, u8 n : copy top n slots to local[slot..] WITHOUT popping
+               // (fuses StoreLocal slot,n ; LoadLocal slot,n — the temp reload)
+    IncLocalI, // u8 slot, u16 cidx : local[slot] = int(local[slot]) +i const[cidx]
+               // (fuses LoadLocal s,1 ; PushConst ; AddI ; StoreLocal s,1 — `i = i + k`)
+    BrCmpI,    // u8 kind, i16 rel : pop b,a; branch by rel if NOT cmp_kind(a,b)
+               // (fuses CmpI kind ; BrFalse rel — the integer loop-condition tail)
+    // --- FUG-125 on-device JIT ------------------------------------------------
+    // The firmware patches this over the first bytes of a hot straight-line
+    // integer/fixed block at effect load, after compiling that block to a native
+    // RV32 segment (firmware/fx_jit). Dispatch calls the segment against the live
+    // operand stack + locals + const pool, then resumes interpreting at the
+    // block's end. Not emitted by the compiler; the interpreter is the fallback.
+    JitCall,   // u16 block-index into the VM's JIT table
     // --- I2C sensor-driver intrinsics (FUG-107 auto hardware discovery) -------
     // A sensor driver is ordinary .fxb bytecode with a `poll()` entry that talks
     // to a qwiic module over the VM's [`I2cBus`] and writes the readings into
@@ -267,7 +304,7 @@ pub enum Op {
     // uniforms). Only reachable when the run is given a bus (poll()); in
     // shade()/update() there is no bus, so both ops become inert (write→0 ack,
     // read→ -1). Args ride the operand stack as ints; results push an int.
-    // Appended LAST so FUG-122's discriminants above are unchanged.
+    // Appended LAST so FUG-122's + FUG-125's discriminants above are unchanged.
     I2cWrite, // pop val,reg,addr -> write [reg,val] to addr ; push ack (1 ok / 0 fail)
     I2cRead,  // u8 n(1..2): pop reg,addr -> read n bytes big-endian ; push int (-1 fail)
 }
@@ -673,6 +710,21 @@ impl<'a> Program<'a> {
         })
     }
 
+    /// The raw code section (borrowed from the `.fxb`). The device JIT scans this
+    /// for hot blocks and the firmware patches `JitCall` into the backing buffer
+    /// (FUG-125).
+    #[inline]
+    pub fn code(&self) -> &'a [u8] {
+        self.code
+    }
+
+    /// The raw const pool bytes (`n_consts * 4`, little-endian). The device JIT
+    /// builds an aligned i32 mirror of these for its segments' `a2` base.
+    #[inline]
+    pub fn consts_raw(&self) -> &'a [u8] {
+        self.consts
+    }
+
     /// Whether the program reads the per-LED fixed context cache (`LoadCtxFix`).
     /// The host uses this to skip building the fixed mirrors for all-float
     /// programs (FUG-122).
@@ -832,6 +884,16 @@ pub struct Vm {
     stack: [f32; MAX_STACK],
     locals: [f32; MAX_LOCALS],
     call_stack: [usize; 16],
+    // On-device JIT table (FUG-125). Borrowed from the firmware, which owns the
+    // block descriptors + the executable segments they point at and keeps them
+    // alive for the effect's lifetime; the VM only reads/calls through them.
+    // Null/0 = no JIT (the interpreter runs everything). Raw ptr so the Vm needs
+    // no lifetime and stays no-alloc.
+    jit_blocks: *const JitBlock,
+    jit_len: usize,
+    // Aligned i32 mirror of the const pool for the JIT segments' `a2` base
+    // (the .fxb const bytes may be unaligned; the firmware provides this).
+    jit_consts: *const i32,
 }
 
 /// Single-source geodesic node-distance field, filled by the `flood_from`
@@ -869,6 +931,9 @@ impl Default for Vm {
             stack: [0.0; MAX_STACK],
             locals: [0.0; MAX_LOCALS],
             call_stack: [0; 16],
+            jit_blocks: core::ptr::null(),
+            jit_len: 0,
+            jit_consts: core::ptr::null(),
         }
     }
 }
@@ -923,6 +988,40 @@ impl Vm {
     pub fn set_arena(&mut self, arena: &mut [u8]) {
         self.arena_ptr = arena.as_mut_ptr();
         self.arena_len = arena.len();
+    }
+
+    /// Install the on-device JIT table (FUG-125): `blocks` describe the native
+    /// segments the firmware compiled for this effect's hot straight-line blocks,
+    /// and `consts` is an aligned i32 mirror of the program's const pool (the
+    /// segments' `a2` base). Both must outlive the following run calls; the
+    /// firmware owns the executable code the block funcs point at. Pass an empty
+    /// slice to disable the JIT (pure interpretation).
+    ///
+    /// # Safety
+    /// `blocks` and `consts` must remain valid + immovable for as long as this Vm
+    /// runs the matching (JitCall-patched) program, and each `JitBlock::func` must
+    /// point at executable code with the documented ABI.
+    pub unsafe fn set_jit(&mut self, blocks: &[JitBlock], consts: *const i32) {
+        self.jit_blocks = blocks.as_ptr();
+        self.jit_len = blocks.len();
+        self.jit_consts = consts;
+    }
+
+    /// Clear the JIT table (back to pure interpretation).
+    pub fn clear_jit(&mut self) {
+        self.jit_blocks = core::ptr::null();
+        self.jit_len = 0;
+        self.jit_consts = core::ptr::null();
+    }
+
+    /// The JIT table as a slice (empty when unset).
+    fn jit_table(&self) -> &[JitBlock] {
+        if self.jit_blocks.is_null() {
+            &[]
+        } else {
+            // SAFETY: set via `set_jit` with a slice the firmware keeps alive.
+            unsafe { core::slice::from_raw_parts(self.jit_blocks, self.jit_len) }
+        }
     }
 
     /// Run `update()` (if present), evolving `state`. Uses the default budget.
@@ -986,6 +1085,9 @@ impl Vm {
             None, // no I2C bus for update()
             prog.update_entry as usize,
             budget,
+            self.jit_blocks,
+            self.jit_len,
+            self.jit_consts,
         );
         (outcome, counters)
     }
@@ -1052,6 +1154,9 @@ impl Vm {
             None, // no I2C bus for shade()
             prog.shade_entry as usize,
             budget,
+            self.jit_blocks,
+            self.jit_len,
+            self.jit_consts,
         );
         if outcome.timed_out() {
             return ((0, 0, 0), outcome, counters);
@@ -1120,6 +1225,9 @@ impl Vm {
             Some(bus),
             prog.poll_entry as usize,
             budget,
+            self.jit_blocks,
+            self.jit_len,
+            self.jit_consts,
         );
         outcome
     }
@@ -1252,6 +1360,11 @@ fn run(
     mut i2c: Option<&mut dyn I2cBus>,
     entry: usize,
     guard: &Budget,
+    // On-device JIT table (FUG-125), passed as raw parts so `run` needs no extra
+    // borrow of the Vm; empty/null when the JIT is off.
+    jit_blocks: *const JitBlock,
+    jit_len: usize,
+    jit_consts: *const i32,
 ) -> ([f32; 3], Option<Rgb>, Outcome, Counters) {
     use core::sync::atomic::Ordering;
     let code = prog.code;
@@ -2472,6 +2585,77 @@ fn run(
                     if slot + i < MAX_LOCALS {
                         locals[slot + i] = 0.0;
                     }
+                }
+            }
+            // --- FUG-125 superinstructions ---------------------------------
+            Op::TeeLocal => {
+                // StoreLocal slot,n ; LoadLocal slot,n : write the top n stack
+                // slots to local[slot..] but leave them on the stack.
+                let slot = code[pc] as usize;
+                let n = code[pc + 1] as usize;
+                pc += 2;
+                for i in 0..n {
+                    if slot + i < MAX_LOCALS && sp >= n {
+                        locals[slot + i] = stack[sp - n + i];
+                    }
+                }
+            }
+            Op::IncLocalI => {
+                // LoadLocal s,1 ; PushConst k ; AddI ; StoreLocal s,1 : the
+                // integer compound-add idiom `i = i + k` (loop counters, indices).
+                let slot = code[pc] as usize;
+                let idx = rd_u16(code, pc + 1) as usize;
+                pc += 3;
+                let k = prog.const_f32(idx).to_bits() as i32;
+                if slot < MAX_LOCALS {
+                    let cur = locals[slot].to_bits() as i32;
+                    locals[slot] = f32::from_bits(cur.wrapping_add(k) as u32);
+                }
+            }
+            Op::BrCmpI => {
+                // CmpI kind ; BrFalse rel : compare two ints and branch when the
+                // comparison is FALSE (BrFalse branched on the 0 that CmpI pushed).
+                let kind = code[pc];
+                let rel = i16::from_le_bytes([code[pc + 1], code[pc + 2]]);
+                pc += 3;
+                let b = popi!();
+                let a = popi!();
+                let t = match kind {
+                    0 => a < b,
+                    1 => a <= b,
+                    2 => a > b,
+                    3 => a >= b,
+                    4 => a == b,
+                    _ => a != b,
+                };
+                if !t {
+                    pc = (pc as isize + rel as isize) as usize;
+                }
+            }
+            Op::JitCall => {
+                // Dispatch to the firmware-compiled native segment for this hot
+                // block: a0 = &stack[sp] (the segment's entry top-of-stack, so it
+                // reaches live operands at negative offsets), a1 = locals base,
+                // a2 = the aligned const pool. Then apply the block's net stack
+                // delta and resume interpreting at its end. Ints ride bit-for-bit
+                // in the f32 slots, so the i32 view is exact.
+                let idx = rd_u16(code, pc) as usize;
+                pc += 2;
+                // SAFETY: the firmware installed this table via `set_jit` and keeps
+                // both the descriptors and the executable code alive for the
+                // effect; `func` has the documented ABI. The slot arrays are 4-byte
+                // aligned (`[f32; N]`), so the i32 reinterpret is aligned.
+                if idx < jit_len {
+                    let blk = unsafe { &*jit_blocks.add(idx) };
+                    unsafe {
+                        (blk.func)(
+                            stack.as_mut_ptr().add(sp) as *mut i32,
+                            locals.as_mut_ptr() as *mut i32,
+                            jit_consts,
+                        );
+                    }
+                    sp = (sp as isize + blk.net_delta as isize) as usize;
+                    pc = blk.end as usize;
                 }
             }
             // --- FUG-107: I2C sensor-driver intrinsics. Inert without a bus

@@ -13,7 +13,10 @@ package(default_visibility = ["//visibility:public"])
 
 rust_library(
     name = "fx_compiler",
-    srcs = ["src/lib.rs"],
+    srcs = [
+        "src/lib.rs",
+        "src/opt.rs",
+    ],
     crate_name = "ledmapper_fx_compiler",
     edition = "2021",
     visibility = ["//visibility:public"],
@@ -29,6 +32,17 @@ rust_binary(
 rust_test(
     name = "fx_compiler_test",
     srcs = ["tests/compile.rs"],
+    edition = "2021",
+    deps = [
+        ":fx_compiler",
+        "//firmware/fx_vm",
+    ],
+)
+
+# FUG-125: differential + hill-climb harness for the bytecode optimizer.
+rust_test(
+    name = "optimizer_test",
+    srcs = ["tests/optimizer.rs"],
     edition = "2021",
     deps = [
         ":fx_compiler",

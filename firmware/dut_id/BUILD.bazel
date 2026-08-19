@@ -1,0 +1,52 @@
+"""DUT-identification firmware: breathe the ESP32-C6's onboard WS2812 (GPIO8) so a
+reserved DUT can be picked out on the bench — see harness/hitl_dut_id.py and
+DESIGN.md "Shared logic analyzer". A minimal, board-agnostic-shaped app (like the
+embedded apps/rainbow / apps/blink): one cc_binary, packaged per board by
+firmware_binary + flash_bundle. Only esp32c6 is wired up (that's the DUT here)."""
+
+load("@embedded//rules:firmware.bzl", "firmware_binary")
+load("@embedded//rules:flash.bzl", "esptool_flash")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("//tools:flash_bundle.bzl", "flash_bundle")
+
+package(default_visibility = ["//visibility:public"])
+
+cc_binary(
+    name = "dut_id",
+    srcs = ["dut_id.cpp"],
+    target_compatible_with = select({
+        "@embedded//platforms:is_esp32c6": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        # LED_DATA_PIN (= GPIO8, the onboard WS2812) + NUM_LEDS, per board.
+        "@embedded//libs/board:arduino_core",  # the board's Arduino core (main())
+        "@embedded//libs/pins",
+        "@embedded//libs/vendor:fastled",
+    ],
+)
+
+# Tiny image (FastLED + Arduino core, no WiFi/BLE), so the default partition
+# table fits — no huge-app layout needed. tags=manual keeps this out of the
+# `//...` wildcard (it compiles the Arduino core from source).
+firmware_binary(
+    name = "esp32c6",
+    binary = ":dut_id",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "flash_esp32c6",
+    app = ":esp32c6",
+    tags = ["manual"],
+)
+
+# Self-describing flash bundle (flash.json + bins) the HITL rig flashes in one
+# step. Consumed by `hitl flash …` / harness:dut_id.
+flash_bundle(
+    name = "esp32c6_flashbundle",
+    flash = ":flash_esp32c6",
+    tags = ["manual"],
+)

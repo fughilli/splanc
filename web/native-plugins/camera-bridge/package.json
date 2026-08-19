@@ -1,0 +1,16 @@
+{
+  "name": "@splanc/camera-bridge",
+  "version": "0.0.1",
+  "description": "Native AVCaptureSession the app owns, so camera exposure is controllable on iOS (docs/design/ios-support.md §4.7).",
+  "license": "UNLICENSED",
+  "private": true,
+  "capacitor": {
+    "ios": {
+      "src": "ios"
+    }
+  },
+  "files": [
+    "ios/Sources",
+    "Package.swift"
+  ]
+}

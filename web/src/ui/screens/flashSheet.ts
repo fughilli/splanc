@@ -37,6 +37,58 @@ import type { FirmwareEntry, FirmwareIndex } from "../../flash/manifest";
 
 let openHandle: SheetHandle | null = null;
 
+// Demo/capture mode (FUG-103 docs screenshots): when set, openFlashSheet() shows
+// a canned "flashed" view with a simulated esptool log instead of driving real
+// hardware (no Web Serial / firmware / chip in a headless browser).
+let demoFlash = false;
+export function enableDemoFlash(): void {
+  demoFlash = true;
+}
+
+/** Render a finished demo flash: a simulated ESP32-C6 esptool/bootloader log +
+ * a full progress bar, as if a real board had just been flashed. */
+function renderDemoFlash(sheet: SheetHandle): void {
+  sheet.body.innerHTML = "";
+  const status = document.createElement("div");
+  status.className = "flash-status flash-status--ok";
+  status.textContent = "Flashed ESP32-C6 · reset into the app";
+  const bar = document.createElement("div");
+  bar.className = "flash-bar";
+  const fill = document.createElement("div");
+  fill.className = "flash-bar-fill flash-bar-fill--done";
+  fill.style.width = "100%";
+  bar.append(fill);
+  const log = document.createElement("pre");
+  log.className = "flash-log";
+  log.textContent = [
+    "Port USB id: 303a:1001 — Espressif ESP32-C6",
+    "Firmware: 1.21 MB across 4 image(s).",
+    "esptool.py v4.7.0",
+    "Connecting.....",
+    "Chip is ESP32-C6 (QFN40) (revision v0.1)",
+    "Features: WiFi 6, BT 5, IEEE802.15.4",
+    "Crystal is 40MHz",
+    "MAC: 40:4c:ca:4b:9e:20",
+    "Uploading stub...",
+    "Running stub...",
+    "Stub running...",
+    "Configuring flash size...",
+    "Flash will be erased from 0x00000000 to 0x00005fff...",
+    "Flash will be erased from 0x00010000 to 0x0013afff...",
+    "Compressed 1269248 bytes to 812004...",
+    "Writing at 0x00010000... (25 %)",
+    "Writing at 0x00050000... (58 %)",
+    "Writing at 0x000a4000... (91 %)",
+    "Writing at 0x00130000... (100 %)",
+    "Wrote 1269248 bytes (812004 compressed) at 0x00010000 in 11.3 seconds.",
+    "Hash of data verified.",
+    "Leaving...",
+    "Hard resetting via RTS pin...",
+    "Done — the board is running the Splanc firmware.",
+  ].join("\n");
+  sheet.body.append(status, bar, log);
+}
+
 export async function openFlashSheet(): Promise<void> {
   if (openHandle) return;
 
@@ -67,6 +119,11 @@ export async function openFlashSheet(): Promise<void> {
 
   const sheet = Sheet("Flash firmware", { onClose: () => (openHandle = null) });
   openHandle = sheet;
+
+  if (demoFlash) {
+    renderDemoFlash(sheet);
+    return;
+  }
 
   const reason = webSerialUnavailableReason();
   if (reason) {

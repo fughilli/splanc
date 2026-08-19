@@ -29,7 +29,10 @@ export async function probeDevice(wssUrl: string): Promise<ProbeInfo | null> {
   // Native wrapper: probe through the cert-pinning bridge too (same self-signed
   // wss:// trust as the main client), else the browser WebSocket.
   const factory = nativeSocketFactory();
-  const client = new LedMapperClient(wssUrl, factory ? { socketFactory: factory } : {});
+  const client = new LedMapperClient(
+    wssUrl,
+    factory ? { socketFactory: factory, certTrustPossible: false } : {},
+  );
   try {
     const timeout = new Promise<never>((_, rej) =>
       setTimeout(() => rej(new Error("probe timeout")), PROBE_TIMEOUT),

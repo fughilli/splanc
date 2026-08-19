@@ -39,10 +39,11 @@ Named tasks:
 
     doctor         toolchain + project-state report (same as /doctor)
     install        `pnpm install` — pull the Capacitor deps into the workspace
-    web-build      `pnpm --dir web build` — produce web/dist (the WKWebView payload)
+    web-build      `bazel build //web:ios_payload` (hermetic node deps + WASM) → web/dist
     cap-add-ios    `cap add ios` — ONE-TIME: generate web/ios/App (native project)
     ios-config     apply web/ios-config/apply.sh (Info.plist usage strings)
-    stage-wasm     build + stage solver/pulse/fx-compiler/fx-vm WASM into web/dist
+    stage-wasm     (standalone) build + stage the WASM into web/dist — folded into
+                   web-build's //web:ios_payload now; kept for manual use
     cap-sync       `cap sync ios` — copy web/dist + resolve plugins (SPM in Cap 8)
     pod-install    `pod install` (only for a CocoaPods setup; Cap 8 uses SPM)
     ios-build      `xcodebuild build` for the simulator (SPM or Pods; no launch)
@@ -61,11 +62,14 @@ USB-attached devices. Enable Wi-Fi once in Xcode → Devices and Simulators →
 
 Convenience chains (each is just the tasks above, in order, stop-on-failure):
 
-    bootstrap      install → web-build → stage-wasm → cap-add-ios → ios-config → cap-sync
-    rebuild        web-build → stage-wasm → cap-sync → ios-build
-    launch         web-build → stage-wasm → cap-sync → ios-run          (USB device/sim)
-    deploy-device  web-build → stage-wasm → cap-sync → device-build →
+    bootstrap      install → web-build → cap-add-ios → ios-config → cap-sync
+    rebuild        web-build → cap-sync → ios-build
+    launch         web-build → cap-sync → ios-run                       (USB device/sim)
+    deploy-device  web-build → cap-sync → device-build →
                    device-install → device-launch  (wireless-capable; needs &target=UDID)
+    deploy-prebuilt  cap-sync → device-build → device-install → device-launch — for
+                   `bazel run //tools:ios_deploy`, which already staged web/dist
+                   (the payload is its label dep), so the server skips web-build
 
 Nothing here is macOS-specific in the server itself; it simply shells out to the
 host's tools. On a non-mac host the Xcode tasks fail cleanly (command not found),
@@ -144,6 +148,32 @@ _INSTALL_SH = (
     'rm -f "$log"; exit $rc'
 )
 
+# Web app build via Bazel (rules_js), NOT raw `pnpm build`: node deps resolve
+# hermetically from pnpm-lock.yaml, so a new app dependency (e.g. jsqr) is fetched
+# by Bazel with no host `pnpm install`. `//web:ios_payload` is the complete payload
+# (vite bundle + the four WASM bundles staged in), so this ALSO folds in what
+# stage-wasm used to do. It lands read-only in bazel-bin/web/ios_payload; copy into
+# web/dist where `cap sync` reads it (webDir: "dist").
+#
+# This task exists for the container/iosctl path (the server builds the app). The
+# `bazel run //tools:ios_deploy` path never calls it — there the payload is a label
+# dep of //tools:ios_deploy, built by that outer run and staged by ios_deploy, so
+# Bazel is not re-invoked. --output_base is a DEDICATED base (child_env's
+# IOS_BAZEL_OUTPUT_BASE) so an iosctl run against a `bazel run`-started server can't
+# deadlock on the outer server lock.
+_WEB_BUILD_SH = (
+    "set -e; "
+    ': "${IOS_BAZEL_OUTPUT_BASE:=$HOME/.cache/ledmapper-ios-bazel}"; '
+    'echo "[web-build] bazelisk --output_base=$IOS_BAZEL_OUTPUT_BASE build //web:ios_payload"; '
+    'bazelisk --output_base="$IOS_BAZEL_OUTPUT_BASE" build //web:ios_payload; '
+    'src="bazel-bin/web/ios_payload"; '
+    '[ -d "$src" ] || { echo "[web-build] $src missing after build" >&2; exit 1; }; '
+    "rm -rf web/dist; mkdir -p web/dist; "
+    'cp -RL "$src"/. web/dist/; '
+    "chmod -R u+w web/dist; "
+    'echo "[web-build] staged $src -> web/dist"'
+)
+
 # xcodebuild container select — App.xcworkspace (CocoaPods) if present, else the
 # App.xcodeproj that Capacitor 8's SPM integration produces. Placeholders are
 # filled by _fill (literal token replace), so the `{scheme}`/`{configuration}`/
@@ -186,9 +216,9 @@ def _tasks() -> dict:
             "desc": "pnpm install — pull Capacitor deps (tolerates the buf ignored-build gate)",
         },
         "web-build": {
-            "argv": [*PNPM, "--dir", "web", "build"],
+            "argv": ["bash", "-c", _WEB_BUILD_SH],
             "cwd": ".",
-            "desc": "vite build — produce web/dist (the WKWebView payload)",
+            "desc": "bazel build //web:dist (hermetic node deps) -> web/dist",
         },
         "cap-add-ios": {
             "argv": [*CAP, "add", "ios"],
@@ -315,21 +345,26 @@ def _tasks() -> dict:
 # Convenience chains — each expands to a stop-on-failure sequence of tasks above.
 # No pod-install: Capacitor 8 resolves iOS deps via Swift Package Manager, so
 # `cap sync` is the whole story (pod-install stays available for Pods setups).
+# web-build now produces the COMPLETE payload (//web:ios_payload folds in the WASM
+# that stage-wasm used to stage), so stage-wasm is no longer in the chains — it
+# stays available as a standalone task for manual use.
 CHAINS = {
-    "bootstrap": ["install", "web-build", "stage-wasm", "cap-add-ios", "ios-config", "cap-sync"],
-    "rebuild": ["web-build", "stage-wasm", "cap-sync", "ios-build"],
-    "launch": ["web-build", "stage-wasm", "cap-sync", "ios-run"],
+    "bootstrap": ["install", "web-build", "cap-add-ios", "ios-config", "cap-sync"],
+    "rebuild": ["web-build", "cap-sync", "ios-build"],
+    "launch": ["web-build", "cap-sync", "ios-run"],
     # Wireless-capable device deploy: like `launch` but the last three steps go
     # through devicectl (USB or Wi-Fi) instead of `cap run` (USB only). Needs
     # &target=<device UDID>.
-    "deploy-device": [
-        "web-build",
-        "stage-wasm",
-        "cap-sync",
-        "device-build",
-        "device-install",
-        "device-launch",
-    ],
+    "deploy-device": ["web-build", "cap-sync", "device-build", "device-install", "device-launch"],
+    # Same as deploy-device, but the final step relaunches with the console
+    # attached (device-log) so the app's stdout/stderr + forwarded JS console
+    # stream back until the client disconnects.
+    "deploy-device-log": ["web-build", "cap-sync", "device-build", "device-install", "device-log"],
+    # PREBUILT variants: the caller already staged web/dist (the payload is a label
+    # dep it built), so skip web-build. This is what `bazel run //tools:ios_deploy`
+    # uses — no Bazel re-invocation on the server.
+    "deploy-prebuilt": ["cap-sync", "device-build", "device-install", "device-launch"],
+    "deploy-prebuilt-log": ["cap-sync", "device-build", "device-install", "device-log"],
 }
 
 # Query params we allow into argv templates, with the pattern each must match.
@@ -550,8 +585,24 @@ class Handler(BaseHTTPRequestHandler):
                 return
 
         params = _params(q)  # validates; raises ValueError → 400
+        # Device builds default to Release, simulator builds stay Debug.
+        # Swift compiled -Onone is 10-100x slower, and the native capture path's
+        # per-pixel reduction runs 30x/s on real hardware — a Debug device build
+        # once looked like a 1.7fps architectural failure when it was purely the
+        # optimizer being off. Nothing on-device is timed meaningfully in Debug,
+        # so pay the compile cost by default and let --configuration override.
+        if "configuration" not in q and any(n.startswith("device-") for n in seq):
+            params["configuration"] = "Release"
+            self_note = True
+        else:
+            self_note = False
 
         self._begin_stream()
+        if self_note:
+            self._write(
+                "[ios-build] configuration=Release (device build default; "
+                "pass --configuration Debug to override)\n"
+            )
         self._write(
             f"[ios-build] workspace={CFG['workspace']}\n[ios-build] plan: {' → '.join(seq)}\n\n"
         )
@@ -614,6 +665,12 @@ def child_env() -> dict:
     # Silence the Capacitor CLI's first-run telemetry question so `cap add ios`
     # never waits on a prompt (belt-and-suspenders with stdin=DEVNULL).
     env.setdefault("CAP_DISABLE_TELEMETRY", "true")
+    # Dedicated Bazel output base for the nested web-build / stage-wasm builds, so
+    # they don't contend for the server lock an outer `bazel run //tools:ios_deploy`
+    # (the sidecar's parent) holds — that would deadlock. web-build reads this;
+    # stage_ios_wasm.sh passes it through as --output_base when set. (Name doesn't
+    # start with BAZEL_, so the strip loop above leaves it alone.)
+    env.setdefault("IOS_BAZEL_OUTPUT_BASE", os.path.expanduser("~/.cache/ledmapper-ios-bazel"))
     return env
 
 

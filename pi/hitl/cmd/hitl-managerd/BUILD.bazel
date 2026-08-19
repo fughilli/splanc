@@ -6,8 +6,10 @@ go_library(
     importpath = "github.com/fughilli/splanc/pi/hitl/cmd/hitl-managerd",
     visibility = ["//visibility:private"],
     deps = [
+        "//pi/hitl/internal/analyzer",
         "//pi/hitl/internal/ap",
         "//pi/hitl/internal/api",
+        "//pi/hitl/internal/metrics",
         "//pi/hitl/internal/queue",
         "//pi/hitl/internal/runner",
     ],
@@ -23,5 +25,9 @@ go_test(
     name = "hitl-managerd_test",
     srcs = ["main_test.go"],
     embed = [":hitl-managerd_lib"],
-    deps = ["//pi/hitl/internal/runner"],
+    deps = [
+        "//pi/hitl/internal/metrics",
+        "//pi/hitl/internal/queue",
+        "//pi/hitl/internal/runner",
+    ],
 )

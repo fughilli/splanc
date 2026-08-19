@@ -105,6 +105,15 @@ export interface ClientOptions {
    * cold limit so an ordinary reboot (same cert) reconnects within the backoff
    * instead of prematurely dropping the user to "trust needed". Default 4. */
   warmRetryLimit?: number;
+  /** Whether a manual self-signed-cert approval is even POSSIBLE on this
+   * transport. True for a browser WebSocket. False when the socket is opened by
+   * the native bridge (net/nativeSocket.ts), whose URLSession delegate already
+   * trusts the device cert and shares nothing with WebKit's cert store — there,
+   * a failure is never "the user hasn't trusted the cert", so retry with backoff
+   * instead of dead-ending on an affordance that cannot fix anything. Default
+   * true. (Independent of certApprovalUrl(), which only compares origins and is
+   * ALWAYS non-null in the wrapper, whose page origin is capacitor://localhost.) */
+  certTrustPossible?: boolean;
 }
 
 export interface ClientEvents {
@@ -209,7 +218,7 @@ export class LedMapperClient {
     this.connectTimeoutMs = opts.connectTimeoutMs ?? 5000;
     this.coldRetryLimit = opts.coldRetryLimit ?? 1;
     this.warmRetryLimit = opts.warmRetryLimit ?? 4;
-    this.needsTrust = certApprovalUrl(url) !== null;
+    this.needsTrust = (opts.certTrustPossible ?? true) && certApprovalUrl(url) !== null;
     this.appVersion = opts.appVersion ?? "0.1.0";
     this.clientName = opts.clientName ?? "android-web";
     this.clock = new ServerClock({ offsetMs: 0, rttMs: Infinity }, this.now);

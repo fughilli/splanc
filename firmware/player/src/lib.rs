@@ -704,6 +704,17 @@ impl Player {
         Some((scale(r), scale(g), scale(b)))
     }
 
+    /// The highest LED index the latched counting pattern lights + 1 (the max of
+    /// `start + count` over the blocks), or 0 when no pattern is latched. The
+    /// output driver transmits exactly this many LEDs for the calibration pattern
+    /// rather than the whole render buffer.
+    pub fn counting_len(&self) -> u32 {
+        let Some((_, blocks)) = self.counting.as_ref() else {
+            return 0;
+        };
+        blocks.iter().map(|b| b.start + b.count).max().unwrap_or(0)
+    }
+
     /// The color LED `led` shows under the latched counting pattern: blocks
     /// paint [start, start+count), everything else is off. Painting past the
     /// physical strip end is expected — that IS the length probe.

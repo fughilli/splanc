@@ -110,6 +110,9 @@ bool lm_pattern_color(uint32_t led, uint32_t frame_index, uint8_t rgb[3]);
 // to the LEDs, buffered for the phone to drain via get_frame_timing.
 void lm_pattern_frame_shown(uint32_t seq, uint32_t t_mono_us);
 bool lm_counting_color(uint32_t led, uint8_t rgb[3]);
+// Highest LED the latched counting pattern lights + 1 (0 when none). The frame
+// loop transmits exactly this many LEDs for the calibration pattern (no overrun).
+uint32_t lm_counting_len(void);
 // Topology-aware effect playback ("pulse"/"flood"). lm_playback_active() gates
 // it (an effect is configured). Once per frame call lm_playback_step(dt_ms) to
 // (re)build + advance the stateful sim; it returns whether a renderable sim
@@ -198,6 +201,12 @@ size_t lm_i2c_scan(uint8_t *out, size_t cap);
 // Copy the active effect's uniform manifest into out (cap bytes). Returns the
 // length written, -1 when no effect is loaded, -2 when it doesn't fit cap.
 int32_t lm_fx_manifest(uint8_t *out, size_t cap);
+// FUG-125 on-device JIT: enable/disable (takes effect on the next lm_fx_load;
+// reload to rebuild or tear down the segments) and read how many segments the
+// current effect installed (0 = pure interpretation). For the HITL A/B.
+void lm_fx_set_jit_enabled(bool enabled);
+uint32_t lm_fx_jit_count(void);
+void lm_fx_jit_diag(uint32_t *plans, uint32_t *words, uint32_t *alloc_ok);
 
 // -- Perf monitoring (docs/design/perf-monitoring.md) -------------------------
 // The set_perf / get_perf_report protocol arms are handled inside

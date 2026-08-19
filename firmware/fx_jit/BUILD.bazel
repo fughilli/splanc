@@ -1,0 +1,33 @@
+"""RV32IM JIT for the effects VM's hot straight-line integer/fixed paths (FUG-125).
+
+Lowers a supported straight-line opcode block into a short position-independent
+RV32IM code segment for the ESP32-C6 (RISC-V) render loop, skipping the
+interpreter's per-opcode dispatch. no_std (+ alloc) so it can build for the
+firmware triple; the correctness of the emitted machine code is proven entirely
+on the host by a differential test that runs each segment through a small RV32IM
+emulator and compares against the reference integer semantics.
+"""
+
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "fx_jit",
+    srcs = ["src/lib.rs"],
+    crate_name = "ledmapper_fx_jit",
+    edition = "2021",
+    deps = ["//firmware/fx_vm"],
+)
+
+# Host unit + differential tests (encoder pins, JIT-vs-reference over random
+# blocks, unjitable-block rejection). Built WITH the `alloc` feature so the
+# Vec-based convenience API (compile / plan_blocks / reference) the tests use is
+# present; the firmware links the library above WITHOUT it (no-alloc path only).
+rust_test(
+    name = "fx_jit_test",
+    srcs = ["src/lib.rs"],
+    crate_features = ["alloc"],
+    edition = "2021",
+    deps = ["//firmware/fx_vm"],
+)
