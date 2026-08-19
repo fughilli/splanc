@@ -23,6 +23,11 @@ fn main() {
             }
         }
     }
+    // `--no-opt` disables the bytecode optimizer (FUG-125) — used to produce an
+    // optimized/unoptimized A/B of the SAME source for on-device (HITL) cycle
+    // comparison against one firmware build. Filtered out of the positional args.
+    let optimize = !args.iter().any(|a| a == "--no-opt");
+    let args: Vec<String> = args.into_iter().filter(|a| a != "--no-opt").collect();
     let src = if args.len() > 1 {
         std::fs::read_to_string(&args[1]).expect("read source file")
     } else {
@@ -30,7 +35,7 @@ fn main() {
         std::io::stdin().read_to_string(&mut s).expect("read stdin");
         s
     };
-    match ledmapper_fx_compiler::compile(&src) {
+    match ledmapper_fx_compiler::compile_opts(&src, optimize) {
         Ok(c) => {
             if args.len() > 2 {
                 std::fs::write(&args[2], &c.fxb).expect("write .fxb");

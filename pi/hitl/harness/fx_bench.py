@@ -136,11 +136,19 @@ def resolve_out(explicit: str | None) -> str:
 def compile_fx(fx_compile: str, src_path: str) -> bytes:
     """Compile a `.fx` source file to `.fxb` bytes via the fx_compile CLI. Writes
     the artifact to a temp file (not next to the source — the benchmarks ride in
-    read-only-ish runfiles and we don't want to litter the tree)."""
+    read-only-ish runfiles and we don't want to litter the tree).
+
+    Calibration compiles with `--no-opt` (FUG-125): the golden device profile is
+    the INTERPRETER's per-opcode cost model on canonical (unoptimized) bytecode,
+    so the micro-benchmarks must isolate raw opcodes without the bytecode
+    optimizer fusing/eliding them. The optimizer's win is measured separately
+    (fx_compiler's hill-climb test + the on-device fxjitbench), and its output is
+    what the app ships — but this regression gate tracks the VM/interpreter, not
+    the compiler pass."""
     fd, out = tempfile.mkstemp(suffix=".fxb")
     os.close(fd)
     try:
-        subprocess.run([fx_compile, src_path, out], check=True)
+        subprocess.run([fx_compile, "--no-opt", src_path, out], check=True)
         with open(out, "rb") as f:
             return f.read()
     finally:

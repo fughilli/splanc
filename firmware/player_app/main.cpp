@@ -50,6 +50,59 @@
 #include "firmware/player_app/ws2812_rmt.h"
 #include "firmware/player_app/ws_codec.h"
 
+// FUG-125: executable-memory primitives for the on-device JIT. The Rust FFI
+// (ffi.rs::fx_build_jit) compiles hot fx_vm blocks to RV32 PIC segments and asks
+// the firmware for instruction-bus-reachable memory to copy them into. Internal
+// SRAM is not behind the CPU's instruction cache (that cache fronts external
+// flash only), so after writing a segment we only need a RISC-V `fence.i` to make
+// the core refetch — no cache flush/invalidate.
+//
+// A BOUNDED W^X exception region for the JIT. The arduino-esp32 C6 build
+// ships esp-idf as precompiled libs whose memory protection leaves the data heap
+// non-executable and code IRAM non-writable — no RWX anywhere — and a custom
+// sdkconfig would need a full IDF-from-source build. Instead we carve out one
+// small static region and make just IT read+write+execute using a spare RISC-V
+// PMP entry. The runtime PMP dump showed entries 3/4 free + UNLOCKED and, being
+// lower-index than the SRAM data-region entries (PMP is lowest-index-wins), an
+// RWX entry there overrides the default NX for this range only. W^X stays
+// enforced everywhere else. Power-of-2 size + alignment for NAPOT encoding.
+// This device is heap-critically-tight (mbedtls needs ~28 KB for a TLS session),
+// so the region is SMALL and the Rust side compiles its RV32 segments DIRECTLY
+// into it (no separate scratch buffer, no copy) — the whole JIT static footprint
+// on the firmware is just this 2 KB.
+namespace {
+constexpr uint32_t kJitRegionSize = 2048;  // power of two (NAPOT); 512 RV32 words
+alignas(kJitRegionSize) uint8_t g_jit_region[kJitRegionSize];
+bool g_jit_armed = false;
+
+void jit_arm_exec_region() {
+  uintptr_t base = (uintptr_t)g_jit_region;  // C6 SRAM data addr == physical
+  // NAPOT: pmpaddr = (base>>2) | ((size>>3) - 1); base is size-aligned.
+  uintptr_t pmpaddr = (base >> 2) | ((kJitRegionSize >> 3) - 1);
+  asm volatile("csrw 0x3b3, %0" ::"r"(pmpaddr));  // pmpaddr3
+  // pmpcfg0 byte 3 = entry 3 = A=NAPOT(3)<<3 | X | W | R = 0x1f (unlocked). The
+  // locked low entries (0-2) ignore the write per the PMP spec, so preserve them.
+  uint32_t cfg0;
+  asm volatile("csrr %0, 0x3a0" : "=r"(cfg0));
+  cfg0 = (cfg0 & 0x00ffffffu) | (0x1fu << 24);
+  asm volatile("csrw 0x3a0, %0" ::"r"(cfg0));
+  asm volatile("fence.i" ::: "memory");
+  g_jit_armed = true;
+}
+}  // namespace
+
+extern "C" {
+// The Rust side plans + compiles the effect's hot blocks straight into this
+// region (as a `&mut [u32]`), then calls lm_jit_arm once + lm_jit_sync_icache.
+uint32_t *lm_jit_region_ptr(void) { return reinterpret_cast<uint32_t *>(g_jit_region); }
+size_t lm_jit_region_words(void) { return kJitRegionSize / 4; }
+void lm_jit_arm(void) {
+  if (!g_jit_armed) jit_arm_exec_region();
+}
+void lm_jit_sync_icache(void) { asm volatile("fence.i" ::: "memory"); }
+size_t lm_jit_region_size(void) { return kJitRegionSize; }
+}
+
 // The player protocol handler (lm_player_handle -> Player::handle) decodes a
 // ClientMessage and builds a ServerMessage as by-value protobuf structs on the
 // caller's stack, and this path runs in loopTask (ws_poll). Measured frames on
@@ -1726,6 +1779,86 @@ static void run_osc_bench() {
 }
 #endif  // LM_OSC_BENCH
 
+#ifdef LM_FX_JIT_BENCH
+// On-device JIT A/B (FUG-125). Loads a fixed-point-heavy effect and, on the SAME
+// firmware, times shade() across the strip with the JIT disabled vs enabled, plus
+// a functional check that the JIT renders bit-identically to the interpreter.
+// Built into a dedicated -DLM_FX_JIT_BENCH image (`:esp32c6_fxjitbench`); runs
+// once at boot, logs `[fxjitbench]` lines, then halts (no radios). Read over HITL.
+extern "C" {
+extern const unsigned char jit_bench_fxb[];
+extern const unsigned int jit_bench_fxb_len;
+}
+static constexpr uint32_t kJitBenchCpuHz = 160000000;
+
+static uint32_t time_shade_strip(uint32_t nled, uint32_t reps, volatile uint32_t *sink) {
+  uint8_t rgb[3];
+  lm_fx_update(0.3f, 0.016f, 0, nled);
+  uint32_t t0 = esp_cpu_get_cycle_count();
+  for (uint32_t r = 0; r < reps; r++)
+    for (uint32_t i = 0; i < nled; i++) {
+      float f = (float)i / (float)(nled - 1);
+      lm_fx_shade(i, f, 1.0f - f, f * 0.5f, rgb);
+      *sink += rgb[0];
+    }
+  return (esp_cpu_get_cycle_count() - t0) / (reps * nled);
+}
+
+extern "C" size_t lm_jit_region_size(void);
+
+static void run_fx_jit_bench() {
+  const uint32_t NLED = 128;
+  const uint32_t REPS = 200;
+  volatile uint32_t sink = 0;
+  Log().printf("[fxjitbench] JIT exec region = %u bytes (bounded W^X carve-out)\n",
+               (unsigned)lm_jit_region_size());
+
+  // Functional check: JIT vs interpreter must render the SAME LED.
+  lm_fx_set_jit_enabled(false);
+  lm_fx_load(jit_bench_fxb, jit_bench_fxb_len);
+  lm_fx_set_active(true);
+  lm_fx_update(0.3f, 0.016f, 0, NLED);
+  uint8_t interp[3] = {0, 0, 0};
+  lm_fx_shade(7, 0.31f, -0.22f, 0.15f, interp);
+
+  lm_fx_set_jit_enabled(true);
+  lm_fx_load(jit_bench_fxb, jit_bench_fxb_len);
+  lm_fx_set_active(true);
+  lm_fx_update(0.3f, 0.016f, 0, NLED);
+  uint32_t nblk = lm_fx_jit_count();
+  uint32_t d_plans = 0, d_words = 0, d_alloc = 0;
+  lm_fx_jit_diag(&d_plans, &d_words, &d_alloc);
+  Log().printf("[fxjitbench] diag: planned=%u words=%u alloc_ok=%u installed=%u\n", d_plans,
+               d_words, d_alloc, nblk);
+  uint8_t jit[3] = {0, 0, 0};
+  lm_fx_shade(7, 0.31f, -0.22f, 0.15f, jit);
+  bool match = interp[0] == jit[0] && interp[1] == jit[1] && interp[2] == jit[2];
+  Log().printf("[fxjitbench] segments=%u functional: interp=(%u,%u,%u) jit=(%u,%u,%u) %s\n",
+               nblk, interp[0], interp[1], interp[2], jit[0], jit[1], jit[2],
+               match ? "MATCH" : "MISMATCH!");
+
+  // Timing A/B on one firmware.
+  lm_fx_set_jit_enabled(false);
+  lm_fx_load(jit_bench_fxb, jit_bench_fxb_len);
+  lm_fx_set_active(true);
+  uint32_t interp_cyc = time_shade_strip(NLED, REPS, &sink);
+
+  lm_fx_set_jit_enabled(true);
+  lm_fx_load(jit_bench_fxb, jit_bench_fxb_len);
+  lm_fx_set_active(true);
+  uint32_t jit_cyc = time_shade_strip(NLED, REPS, &sink);
+
+  int saved = (int)interp_cyc - (int)jit_cyc;
+  int pct = interp_cyc ? (100 * saved) / (int)interp_cyc : 0;
+  Log().printf("[fxjitbench] cpu_hz=%u leds=%u reps=%u fxb=%u bytes\n", kJitBenchCpuHz, NLED,
+               REPS, (unsigned)jit_bench_fxb_len);
+  Log().printf("[fxjitbench] shade/LED interp=%u cyc  jit=%u cyc  saved=%d cyc (%d%%)\n",
+               interp_cyc, jit_cyc, saved, pct);
+  Log().printf("[fxjitbench] DONE (sink=%u) — halting\n", (unsigned)sink);
+  for (;;) vTaskDelay(pdMS_TO_TICKS(2000));
+}
+#endif  // LM_FX_JIT_BENCH
+
 void setup() {
   Serial.begin(115200);
   // Non-blocking logging. Serial is the C6's USB-Serial-JTAG (HWCDC); its
@@ -1775,6 +1908,10 @@ void setup() {
 #ifdef LM_OSC_BENCH
   // Bench image: measure on-device, log, and halt — never brings up the radios.
   run_osc_bench();
+#endif
+#ifdef LM_FX_JIT_BENCH
+  // JIT A/B image (FUG-125): measure shade() with the JIT off vs on, log, halt.
+  run_fx_jit_bench();
 #endif
   // Restore a previously-mapped fixture from flash (LittleFS) before serving.
   fs_begin_and_restore();

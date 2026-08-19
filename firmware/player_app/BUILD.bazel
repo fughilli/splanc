@@ -32,6 +32,7 @@ rust_static_library(
     }),
     deps = [
         "//firmware/arena",
+        "//firmware/fx_jit",
         "//firmware/fx_vm",
         "//firmware/osc",
         "//firmware/player:player_fw",
@@ -51,6 +52,7 @@ rust_library(
     edition = "2021",
     deps = [
         "//firmware/arena",
+        "//firmware/fx_jit",
         "//firmware/fx_vm",
         "//firmware/osc",
         "//firmware/player",
@@ -250,6 +252,80 @@ esptool_flash(
 flash_bundle(
     name = "esp32c6_oscbench_flashbundle",
     flash = ":flash_esp32c6_oscbench",
+    tags = ["manual"],
+)
+
+# -- On-device JIT A/B image (FUG-125) ---------------------------------------
+# A -DLM_FX_JIT_BENCH build that, at boot, times shade() across the strip with
+# the on-device JIT disabled vs enabled (on ONE firmware) and checks the JIT
+# renders bit-identically to the interpreter; logs `[fxjitbench]` and halts.
+# Read over HITL: `hitl flash --monitor …:esp32c6_fxjitbench_flashbundle`.
+genrule(
+    name = "jit_bench_fxb_file",
+    srcs = ["bench/jit_bench.fx"],
+    outs = ["jit_bench.fxb"],
+    cmd = "$(execpath //fx_compiler:fx_compile) $(execpath bench/jit_bench.fx) $(execpath jit_bench.fxb)",
+    tools = ["//fx_compiler:fx_compile"],
+)
+
+# -> jit_bench_fxb[] / jit_bench_fxb_len (symbols from the file basename).
+c_resource_library(
+    name = "jit_bench_fxb_res",
+    srcs = [":jit_bench_fxb_file"],
+)
+
+cc_binary(
+    name = "player_app_fxjitbench",
+    srcs = [
+        "improv_ble.cpp",
+        "improv_ble.h",
+        "led_config.h",
+        "main.cpp",
+        "player_ffi.h",
+        "serial_log.h",
+        "ws2812_rmt.cpp",
+        "ws2812_rmt.h",
+    ],
+    copts = ["-fno-rtti"],
+    local_defines = ["LM_FX_JIT_BENCH"],
+    target_compatible_with = select({
+        "@embedded//platforms:is_esp32c6": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        ":color_correction",
+        ":improv_codec",
+        ":jit_bench_fxb_res",
+        ":player_ffi",
+        ":ws_codec",
+        "//firmware/landing:landing_page",
+        "@embedded//libs/board:arduino_core",
+        "@embedded//libs/tls:selfsigned",
+        "@embedded//libs/vendor:ble",
+        "@embedded//libs/vendor:preferences",
+        "@embedded//libs/vendor:webserver",
+        "@embedded//libs/vendor:wifi",
+    ],
+)
+
+firmware_binary(
+    name = "esp32c6_fxjitbench",
+    binary = ":player_app_fxjitbench",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "flash_esp32c6_fxjitbench",
+    app = ":esp32c6_fxjitbench",
+    partitions = "@embedded//libs/vendor:partitions_huge_app",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "esp32c6_fxjitbench_flashbundle",
+    flash = ":flash_esp32c6_fxjitbench",
     tags = ["manual"],
 )
 
