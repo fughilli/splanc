@@ -22,6 +22,7 @@ py_library(
     name = "harness",
     srcs = [
         "fx_bench_core.py",
+        "hardware_config_pattern.py",
         "hitl_client.py",
         "hitl_improv.py",
         "improv.py",
@@ -126,6 +127,38 @@ py_test(
     ],
     imports = ["."],
     main = "hitl_led_capture.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# On-hardware WS2812 color-order test (logic-analyzer rig, FUG-123): reserve,
+# flash, provision, then for each configured wire order drive the R/G/B counting
+# pattern and `hitl-capture` the DIN, asserting the decoded pixels permute exactly
+# as the order predicts — the one check only a logic analyzer can make. Shares the
+# reserve/flash/provision/capture plumbing with :led_capture (hence it in srcs);
+# manual+hitl like it, and the decode contract is unit-tested off hardware in
+# //pi/hitl/tests:hitl_test (test_hardware_config_pattern.py).
+py_test(
+    name = "hardware_config",
+    timeout = "eternal",
+    srcs = [
+        "hitl_hardware_config.py",
+        "hitl_led_capture.py",
+    ],
+    data = [
+        "//firmware/player_app:esp32c6_flashbundle",
+        "//pi/hitl/cmd/hitl",
+    ],
+    imports = ["."],
+    main = "hitl_hardware_config.py",
     tags = [
         "hitl",
         "manual",
