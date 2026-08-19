@@ -41,6 +41,7 @@ import { confirmDialog } from "../kit";
 import { initAppearance } from "../../store/appearance";
 import { maybeShowSplash } from "./splash";
 import { maybeShowFirstRunHint } from "../guide/tour";
+import { chatLogStore, chatLogDumpOnBootEnabled } from "../../store/chatLogStore";
 
 async function main(): Promise<void> {
   // Apply the saved appearance (theme / fonts / scale) before the shell mounts
@@ -166,6 +167,14 @@ async function main(): Promise<void> {
   await seedBuiltinEffects();
 
   router.start();
+
+  // FX-agent chat-log console dump (debugging, Option 1): a manual trigger from
+  // DevTools, plus an on-boot dump when the "dump on launch" toggle is set — the
+  // latter lets `bazel run //tools:ios_deploy -- --log` capture the transcripts
+  // off a physical iPhone via the device console.
+  (globalThis as { __dumpChatLogs?: () => void }).__dumpChatLogs = () =>
+    void chatLogStore.dumpToConsole();
+  if (chatLogDumpOnBootEnabled()) void chatLogStore.dumpToConsole();
 
   // First-run tutorial hint (FUG-103): a dismissible "?" affordance offering the
   // guided tour. No-op once the tutorial has been taken or dismissed; always

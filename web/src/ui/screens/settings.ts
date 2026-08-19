@@ -31,6 +31,13 @@ import { generateFixture } from "../../effects/fixtures";
 import { prefs, DEFAULT_MANUAL_EXPOSURE_CEILING_MS } from "../../store/prefs";
 import { startTour } from "../guide/tour";
 import { resetTour } from "../guide/tourStore";
+import { openDebugServerSheet } from "./debugServerSheet";
+import { scanQr, qrScanSupported } from "./qrScan";
+import {
+  chatLogStore,
+  chatLogDumpOnBootEnabled,
+  setChatLogDumpOnBoot,
+} from "../../store/chatLogStore";
 
 type SettingsTab = "appearance" | "behavior";
 
@@ -96,7 +103,7 @@ export function SettingsScreen(router: Router): Screen {
     const panels =
       tab === "appearance"
         ? [themeGroup(), typeGroup(), viewGroup(), startupGroup(), experimentalGroup(), appearanceResetRow()]
-        : [captureGroup(), helpGroup(), captureResetRow()];
+        : [captureGroup(), helpGroup(), debugGroup(), captureResetRow()];
     body.replaceChildren(tabBar(), ...panels);
   }
 
@@ -225,6 +232,65 @@ export function SettingsScreen(router: Router): Screen {
           onClick: () => {
             resetTour();
             toast("Tutorial reset — the hint will show again");
+          },
+        }),
+      ),
+    );
+    return g;
+  }
+
+  // -- Debugging (developer affordances) -----------------------------------
+  // "Connect debug server" (was in the effects ⋯ menu) plus the FX-agent
+  // chat-log pull controls: it's used for both the effects library and the AI
+  // logs, so it lives here rather than cluttering a top-level menu.
+  function debugGroup(): HTMLElement {
+    const g = group("Debugging");
+
+    async function connectDebugServer(): Promise<void> {
+      // Scan the server's QR to fill the URL (same flow for effects + AI logs);
+      // no camera / no scan falls back to manual entry in the sheet.
+      const scanned = qrScanSupported() ? await scanQr() : null;
+      openDebugServerSheet(scanned ?? undefined);
+    }
+
+    g.append(
+      row(
+        "Debug server",
+        "Ship the effects library or the AI chat logs to a host-side debug " +
+          "server (tools/browser_server.py) to pull them off-device. Scan its QR " +
+          "or type the URL.",
+        Button({
+          label: "Connect debug server",
+          icon: "effect-to-device",
+          onClick: () => void connectDebugServer(),
+        }),
+      ),
+      row(
+        "Dump chat logs on launch",
+        "Print the FX-agent chat logs to the device console at startup so " +
+          "`ios_deploy --log` can capture them. Leave off unless debugging.",
+        segmented<"on" | "off">(
+          [
+            ["off", "Off"],
+            ["on", "On"],
+          ],
+          chatLogDumpOnBootEnabled() ? "on" : "off",
+          (v) => {
+            setChatLogDumpOnBoot(v === "on");
+            toast(v === "on" ? "Will dump chat logs on next launch" : "Boot dump off");
+          },
+        ),
+      ),
+      row(
+        "Dump chat logs now",
+        "Print the current chat logs to the console immediately.",
+        Button({
+          label: "Dump to console",
+          variant: "quiet",
+          icon: "download",
+          onClick: () => {
+            void chatLogStore.dumpToConsole();
+            toast("Chat logs dumped to console");
           },
         }),
       ),
