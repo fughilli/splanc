@@ -9,6 +9,9 @@
   <a href="https://github.com/fughilli/splanc/actions/workflows/hitl.yaml"><img
     src="https://github.com/fughilli/splanc/actions/workflows/hitl.yaml/badge.svg"
     alt="HITL tests" /></a>
+  <a href="https://splanc.grafana.net/public-dashboards/0ce888d9584940a6845438d376555b51"><img
+    src="https://img.shields.io/badge/HITL%20status-Grafana-f46800?logo=grafana&logoColor=white"
+    alt="HITL status" /></a>
   <a href="https://ledmapper.pages.dev"><img
     src="https://img.shields.io/badge/live%20app-ledmapper.pages.dev-084de7"
     alt="Live app" /></a>
