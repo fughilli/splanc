@@ -35,6 +35,7 @@ import (
 	"github.com/fughilli/splanc/pi/hitl/internal/analyzer"
 	"github.com/fughilli/splanc/pi/hitl/internal/ap"
 	"github.com/fughilli/splanc/pi/hitl/internal/api"
+	"github.com/fughilli/splanc/pi/hitl/internal/metrics"
 	"github.com/fughilli/splanc/pi/hitl/internal/queue"
 	"github.com/fughilli/splanc/pi/hitl/internal/runner"
 )
@@ -574,6 +575,15 @@ func routes(ctx context.Context, mgr *queue.Manager, brk *analyzer.Broker) http.
 		writeJSON(w, http.StatusOK, mgr.Status())
 	})
 
+	// Prometheus scrape endpoint. Grafana Alloy (or any Prometheus agent) running
+	// on the rig scrapes this and remote_writes to Grafana Cloud — see
+	// observability/README.md. Emits reservation-queue + per-DUT occupancy metrics
+	// alongside host CPU/memory/temperature.
+	mux.HandleFunc("GET /metrics", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+		writeMetrics(w, mgr.Metrics(), metrics.ReadHost())
+	})
+
 	mux.HandleFunc("POST /reserve", func(w http.ResponseWriter, r *http.Request) {
 		var req api.ReserveRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -618,6 +628,51 @@ func routes(ctx context.Context, mgr *queue.Manager, brk *analyzer.Broker) http.
 	})
 
 	return logging(mux)
+}
+
+// writeMetrics renders the daemon's Prometheus exposition: reservation-queue and
+// per-DUT occupancy gauges + lifecycle counters from the manager, plus host
+// CPU/memory/temperature. Every series carries a `rig` label so several rigs can
+// remote_write into one Grafana Cloud tenant and stay distinguishable even if the
+// collector adds no target labels. Kept separate from the HTTP handler so it can
+// be unit-tested against a fixed snapshot.
+func writeMetrics(w io.Writer, snap queue.MetricsSnapshot, host metrics.HostStats) {
+	mw := metrics.NewWriter(w)
+	rig := metrics.Label{Name: "rig", Value: snap.Rig}
+
+	mw.Gauge("hitl_up", "1 if the reservation daemon is serving.", 1, rig)
+	mw.Gauge("hitl_duts_total", "Configured DUTs on this rig.", float64(snap.DUTsTotal), rig)
+	mw.Gauge("hitl_duts_busy", "DUTs with an active reservation.", float64(snap.DUTsBusy), rig)
+	mw.Gauge("hitl_queue_depth", "Reservations queued waiting for a DUT.", float64(snap.QueueDepth), rig)
+	mw.Gauge("hitl_active_reservations", "Reservations currently active (one per busy DUT).", float64(snap.ActiveTotal), rig)
+	mw.Gauge("hitl_lease_seconds", "Heartbeat lease window.", snap.LeaseSeconds, rig)
+
+	// Per-DUT occupancy, so a dashboard can show which specific board is busy.
+	for _, d := range snap.Devices {
+		v := 0.0
+		if d.Busy {
+			v = 1
+		}
+		mw.Gauge("hitl_dut_busy", "1 if this DUT has an active reservation.", v,
+			rig, metrics.Label{Name: "device", Value: d.Name})
+	}
+
+	mw.Counter("hitl_reservations_total", "Reservations enqueued since start.", float64(snap.Reservations), rig)
+	mw.Counter("hitl_activations_total", "Reservations that became active since start.", float64(snap.Activations), rig)
+	mw.Counter("hitl_releases_total", "Reservations ended (any reason) since start.", float64(snap.Releases), rig)
+	mw.Counter("hitl_lease_expirations_total", "Reservations reaped for a lapsed lease since start.", float64(snap.LeaseExpiries), rig)
+	mw.Counter("hitl_start_failures_total", "Container start failures during reconcile since start.", float64(snap.StartFailures), rig)
+
+	if host.Load1OK {
+		mw.Gauge("hitl_host_load1", "Host 1-minute load average.", host.Load1, rig)
+	}
+	if host.MemOK {
+		mw.Gauge("hitl_host_memory_total_bytes", "Host total memory.", host.MemTotalBytes, rig)
+		mw.Gauge("hitl_host_memory_available_bytes", "Host available memory.", host.MemAvailableBytes, rig)
+	}
+	if host.TempOK {
+		mw.Gauge("hitl_host_temperature_celsius", "Host SoC temperature.", host.TempCelsius, rig)
+	}
 }
 
 func logging(h http.Handler) http.Handler {

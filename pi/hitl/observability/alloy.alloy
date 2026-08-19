@@ -1,0 +1,68 @@
+// Grafana Alloy configuration for a HITL rig.
+//
+// Alloy is Grafana's telemetry collector (the successor to grafana-agent). It
+// runs *on the Pi*, scrapes the local hitl-managerd /metrics endpoint and full
+// host metrics, and remote_writes them out to Grafana Cloud. This push model is
+// what makes the whole thing work behind Tailscale with no inbound ports: the
+// rig only accepts tailnet peers (DESIGN.md "Security"), so nothing can scrape
+// it from the internet — instead Alloy dials *out* to Grafana Cloud.
+//
+// Credentials are read from the environment (a systemd EnvironmentFile), so no
+// secret is committed. Set, e.g. in /var/lib/hitl/grafana.env:
+//   GRAFANA_CLOUD_PROM_URL   https://prometheus-prod-NN-REGION.grafana.net/api/prom/push
+//   GRAFANA_CLOUD_PROM_USER  numeric metrics instance id (Grafana Cloud → Prometheus → Details)
+//   GRAFANA_CLOUD_PROM_KEY   a Grafana Cloud access-policy token scoped to metrics:write
+// HITL_RIG (the `rig` label below) is injected by alloy.nix from the rig's
+// hostname — not an env-file key — so it always matches hitl-managerd --rig.
+//
+// See observability/README.md for the end-to-end setup.
+
+logging {
+  level  = "info"
+  format = "logfmt"
+}
+
+prometheus.remote_write "grafana_cloud" {
+  endpoint {
+    url = sys.env("GRAFANA_CLOUD_PROM_URL")
+    basic_auth {
+      username = sys.env("GRAFANA_CLOUD_PROM_USER")
+      password = sys.env("GRAFANA_CLOUD_PROM_KEY")
+    }
+  }
+  // Tag every series with the rig identity so one Grafana Cloud tenant holds the
+  // whole fleet and dashboards can filter by rig. external_labels only fill in a
+  // label that's ABSENT, so the daemon's own metrics (which already carry rig=)
+  // keep their value while host metrics inherit it here — keep HITL_RIG equal to
+  // hitl-managerd's --rig (both default to the hostname) so they agree.
+  external_labels = {
+    rig = sys.env("HITL_RIG"),
+  }
+}
+
+// The HITL reservation daemon's own metrics (queue depth, per-DUT occupancy,
+// reservation lifecycle counters, host CPU/mem/temp it reads itself).
+prometheus.scrape "hitl_managerd" {
+  targets = [
+    { "__address__" = "127.0.0.1:8087", "job" = "hitl-managerd" },
+  ]
+  metrics_path    = "/metrics"
+  scrape_interval = "15s"
+  forward_to      = [prometheus.remote_write.grafana_cloud.receiver]
+}
+
+// Full host metrics (CPU, memory, disk, network, thermal) with no separate
+// node_exporter process — Alloy has the Unix collector built in.
+prometheus.exporter.unix "host" {
+  set_collectors = [
+    "cpu", "meminfo", "loadavg", "filesystem",
+    "diskstats", "netdev", "thermal_zone", "hwmon",
+  ]
+}
+
+prometheus.scrape "host" {
+  targets         = prometheus.exporter.unix.host.targets
+  job_name        = "node"
+  scrape_interval = "15s"
+  forward_to      = [prometheus.remote_write.grafana_cloud.receiver]
+}

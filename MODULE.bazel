@@ -204,7 +204,9 @@ use_repo(host_crate, "host_crates")
 bazel_dep(name = "sbc_deploy", version = "0.0.0")
 git_override(
     module_name = "sbc_deploy",
-    commit = "6dd1e56142c8cfe416b13df77128310214d79059",
+    # sbc-deploy main @ f51b3f2 (#7 persistent hostname identity + #8 `update`
+    # mode). Kept in lockstep with pi/hitl/nix flake.lock.
+    commit = "f51b3f2cd0036caf4f594c70ad79e86ce51fec31",
     remote = "https://github.com/fughilli/sbc-deploy.git",
 )
 
