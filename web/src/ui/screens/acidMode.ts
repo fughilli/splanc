@@ -278,6 +278,8 @@ export function AcidModeScreen(router: Router): Screen {
         chatHistory,
         {
           onThinking: () => showThinking("Thinking…"),
+          // Live streamed status (thinking → tool verb → the model's summary).
+          onStatus: (label) => showThinking(label),
           onToolUse: (name) => {
             clearThinking();
             appendMsg("think", narrateTool(name));

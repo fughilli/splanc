@@ -1226,8 +1226,11 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
         chatHistory,
         {
         onThinking: () => setChatStatus("Thinking…"),
+        // Live status as the response streams (thinking → tool verb → the model's
+        // own set_script summary), so a long turn narrates itself in real time.
+        onStatus: (label) => setChatStatus(label),
         onSetScript: async (source, summary) => {
-          // The model supplies a terse ≤5-word summary of the change; show it.
+          // Streaming already surfaced the summary; re-affirm then show compile.
           setChatStatus(summary || "Writing the effect code…");
           codeEl.value = source;
           paintHighlight();

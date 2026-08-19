@@ -199,6 +199,30 @@ function partialScript(json: string): string | null {
   return out;
 }
 
+/** Best-effort extraction of a string field's in-progress value from partial JSON
+ * (a streamed tool-input object), e.g. the set_script `summary`. Null until the
+ * field's opening quote has arrived. */
+function partialField(json: string, field: string): string | null {
+  const m = new RegExp(`"${field}"\\s*:\\s*"`).exec(json);
+  if (m === null) return null;
+  const start = m.index + m[0].length;
+  let out = "";
+  for (let i = start; i < json.length; i++) {
+    const ch = json[i]!;
+    if (ch === "\\") {
+      const next = json[i + 1];
+      if (next === undefined) break; // escape spans the stream boundary
+      out += unescapeChar(next);
+      i++;
+    } else if (ch === '"') {
+      break; // closing quote — field complete
+    } else {
+      out += ch;
+    }
+  }
+  return out;
+}
+
 function unescapeChar(c: string): string {
   switch (c) {
     case "n":
@@ -305,6 +329,9 @@ export interface ChatHooks {
   onEstimatePerformance?: () => Promise<string>;
   /** Streamed assistant text (deltas) for the "thinking…"/live panel. */
   onText?: (delta: string) => void;
+  /** Live status label as the response streams — "Thinking…", a fixed tool verb,
+   * or the model's streamed set_script `summary`. */
+  onStatus?: (label: string) => void;
   /** A model request is starting (the model is reasoning) — drive a spinner.
    * `round` is the 1-based tool-use round, so the UI can show progress across a
    * multi-step turn ("step 3"). */
@@ -325,15 +352,18 @@ const TOOLS = [
       type: "object",
       additionalProperties: false,
       properties: {
-        source: { type: "string", description: "The complete new effect source." },
+        // `summary` FIRST so it streams before the (large) source, letting the UI
+        // show the model's own status while the code is still being written.
         summary: {
           type: "string",
           description:
             "A terse status shown in the UI while this applies — AT MOST 5 words, " +
-            "present-tense, e.g. 'adding hue-space blending' or 'fixing compile error'.",
+            "present-tense, e.g. 'adding hue-space blending' or 'fixing compile error'. " +
+            "Emit this field FIRST.",
         },
+        source: { type: "string", description: "The complete new effect source." },
       },
-      required: ["source", "summary"],
+      required: ["summary", "source"],
     },
   },
   {
@@ -442,12 +472,22 @@ function dataUrlToImageBlock(dataUrl: string): {
   return { type: "image", source: { type: "base64", media_type, data } };
 }
 
+/** Live-progress callbacks fired while the response streams in. */
+export interface StreamHooks {
+  /** Assistant text deltas (the visible reply, as it's written). */
+  onText?: ((delta: string) => void) | undefined;
+  /** The current status label, updated live: "Thinking…", a fixed tool verb, or
+   * the model's own streamed set_script `summary`. */
+  onStatus?: ((label: string) => void) | undefined;
+}
+
 async function messagesRequest(
   messages: ChatMessage[],
   tools: readonly unknown[],
   signal?: AbortSignal,
   deviceCosts?: string,
   systemExtra?: string,
+  stream?: StreamHooks,
 ): Promise<{
   content: ContentBlock[];
   stop_reason: string | null;
@@ -480,20 +520,141 @@ async function messagesRequest(
       model: MODEL,
       max_tokens: 16000,
       thinking: { type: "adaptive" },
+      stream: true,
       system,
       tools,
       messages: messages.map((m) => ({ role: m.role, content: m.content })),
     }),
   });
-  if (!resp.ok) {
+  if (!resp.ok || resp.body === null) {
     const body = await resp.text().catch(() => "");
     throw new Error(`Anthropic API ${resp.status}: ${body.slice(0, 300)}`);
   }
-  const json = (await resp.json()) as {
-    content?: ContentBlock[];
-    stop_reason?: string | null;
-  };
-  return { content: json.content ?? [], stop_reason: json.stop_reason ?? null };
+  return consumeChatStream(resp.body, stream);
+}
+
+/** Fixed status verb for a tool call, shown the moment the model starts it. */
+function toolLabel(name: string): string {
+  switch (name) {
+    case "set_script":
+      return "Writing the effect code…";
+    case "capture_preview":
+      return "Taking a screenshot of the preview…";
+    case "estimate_performance":
+      return "Running a performance pass…";
+    case "list_midi_controls":
+      return "Reading MIDI controls…";
+    case "set_midi_mapping":
+      return "Mapping MIDI controls…";
+    default:
+      return "Working…";
+  }
+}
+
+/**
+ * Read the Anthropic SSE stream, reconstructing the assistant `content` blocks
+ * (text, thinking + signature, tool_use with parsed input) exactly as the
+ * non-streaming response would return them — so chatTurn's downstream logic and
+ * the history it re-sends are unchanged — while firing live progress:
+ *   - text_delta      → onText (the reply, as written)
+ *   - thinking_delta  → onStatus("Thinking…")
+ *   - tool_use start  → onStatus(fixed verb)
+ *   - set_script's `summary` field (streamed first) → onStatus(<model summary>)
+ */
+export async function consumeChatStream(
+  body: ReadableStream<Uint8Array>,
+  hooks?: StreamHooks,
+): Promise<{ content: ContentBlock[]; stop_reason: string | null }> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let stopReason: string | null = null;
+  // Blocks reconstructed by their `index`; `toolJson` accumulates each tool_use's
+  // streamed input JSON until its content_block_stop, when we parse it.
+  const blocks: Record<number, Record<string, unknown>> = {};
+  let maxIndex = -1;
+  const toolJson: Record<number, string> = {};
+  let lastSummary = "";
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const frames = buffer.split("\n\n");
+    buffer = frames.pop() ?? "";
+    for (const frame of frames) {
+      for (const line of frame.split("\n")) {
+        if (!line.startsWith("data:")) continue;
+        const payload = line.slice(5).trim();
+        if (payload === "" || payload === "[DONE]") continue;
+        let ev: {
+          type?: string;
+          index?: number;
+          content_block?: Record<string, unknown>;
+          delta?: Record<string, unknown>;
+          error?: unknown;
+        };
+        try {
+          ev = JSON.parse(payload);
+        } catch {
+          continue;
+        }
+        if (ev.type === "error") {
+          throw new Error(`Anthropic stream error: ${JSON.stringify(ev.error)}`);
+        }
+        if (ev.type === "content_block_start" && typeof ev.index === "number") {
+          const cb = { ...(ev.content_block ?? {}) };
+          blocks[ev.index] = cb;
+          maxIndex = Math.max(maxIndex, ev.index);
+          if (cb.type === "tool_use") {
+            toolJson[ev.index] = "";
+            cb.input = {};
+            lastSummary = "";
+            hooks?.onStatus?.(toolLabel(String(cb.name)));
+          }
+        } else if (ev.type === "content_block_delta" && typeof ev.index === "number") {
+          const b = blocks[ev.index];
+          const d = ev.delta ?? {};
+          if (b === undefined) continue;
+          if (d.type === "text_delta") {
+            b.text = String(b.text ?? "") + String(d.text ?? "");
+            hooks?.onText?.(String(d.text ?? ""));
+          } else if (d.type === "thinking_delta") {
+            b.thinking = String(b.thinking ?? "") + String(d.thinking ?? "");
+            hooks?.onStatus?.("Thinking…");
+          } else if (d.type === "signature_delta") {
+            b.signature = String(b.signature ?? "") + String(d.signature ?? "");
+          } else if (d.type === "input_json_delta") {
+            const acc = (toolJson[ev.index] ?? "") + String(d.partial_json ?? "");
+            toolJson[ev.index] = acc;
+            if (b.name === "set_script") {
+              const s = partialField(acc, "summary");
+              if (s !== null && s !== lastSummary) {
+                lastSummary = s;
+                hooks?.onStatus?.(s);
+              }
+            }
+          }
+        } else if (ev.type === "content_block_stop" && typeof ev.index === "number") {
+          const b = blocks[ev.index];
+          if (b?.type === "tool_use") {
+            try {
+              b.input = JSON.parse(toolJson[ev.index] || "{}");
+            } catch {
+              b.input = {};
+            }
+          }
+        } else if (ev.type === "message_delta") {
+          const sr = (ev.delta ?? {}).stop_reason;
+          if (typeof sr === "string") stopReason = sr;
+        }
+      }
+    }
+  }
+
+  const content: ContentBlock[] = [];
+  for (let i = 0; i <= maxIndex; i++) if (blocks[i]) content.push(blocks[i] as unknown as ContentBlock);
+  return { content, stop_reason: stopReason };
 }
 
 /** Assemble the always-included editor context block for a user turn: the
@@ -539,6 +700,7 @@ export async function chatTurn(
       hooks.signal,
       deviceCosts,
       systemExtra,
+      { onText: hooks.onText, onStatus: hooks.onStatus },
     );
     history.push({ role: "assistant", content });
 
