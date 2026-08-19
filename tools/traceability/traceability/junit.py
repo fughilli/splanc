@@ -36,6 +36,10 @@ class CaseResult:
     classname: str
     status: str  # passed | skipped | failed | error
     requirements: tuple[str, ...] = ()  # PR ids from per-case property tags
+    # Verification rigor this testcase provides (a `level` property tag); the
+    # aggregator compares it against each referenced PR's demanded method.
+    # Missing -> DEFAULT_PROVIDED (see traceability.model).
+    level: str = ""
     source_file: str = ""  # jUnit file this came from
     target: str = ""  # bazel label derived from the file path, if any
 
@@ -80,16 +84,31 @@ def _case_requirements(case: ET.Element) -> tuple[str, ...]:
     return tuple(reqs)
 
 
+def _case_property(case: ET.Element, name: str) -> str:
+    """First ``<property name=...>`` value inside a testcase, or ""."""
+    for prop in case.findall("./properties/property"):
+        if prop.get("name") == name:
+            return prop.get("value", "").strip()
+    return ""
+
+
 def target_from_path(path: str, workspace_root: str = "") -> str:
-    """Derive a Bazel test label from a ``bazel-testlogs`` jUnit file path.
+    """Derive a Bazel test label from a testlogs jUnit file path.
 
     ``.../bazel-testlogs/pi/hitl/tests/hitl_test/test.xml`` -> ``//pi/hitl/tests:hitl_test``.
-    Returns "" when the path is not recognisably under bazel-testlogs.
+    Also handles the *resolved* path (what ``readlink -f bazel-testlogs`` yields in
+    CI): ``.../bazel-out/<cfg>/testlogs/pi/hitl/tests/hitl_test/test.xml`` — the
+    ``bazel-testlogs`` symlink points there, so the marker is only ``testlogs/``.
+    Returns "" when the path is not recognisably under a testlogs tree.
     """
     norm = path.replace("\\", "/")
-    marker = "bazel-testlogs/"
-    idx = norm.rfind(marker)
-    if idx == -1:
+    # Prefer the convenience-symlink marker; fall back to the resolved
+    # bazel-out/.../testlogs path so target mapping survives `readlink -f`.
+    for marker in ("bazel-testlogs/", "/testlogs/"):
+        idx = norm.rfind(marker)
+        if idx != -1:
+            break
+    else:
         return ""
     rel = norm[idx + len(marker) :]
     parts = rel.split("/")
@@ -122,6 +141,7 @@ def parse_file(path: str) -> list[CaseResult]:
                     classname=case.get("classname", ""),
                     status=_case_status(case),
                     requirements=_case_requirements(case),
+                    level=_case_property(case, "level"),
                     source_file=path,
                     target=target,
                 )

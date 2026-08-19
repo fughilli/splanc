@@ -31,6 +31,7 @@ class _Case:
     status: str = "passed"  # passed | failed | error | skipped
     message: str = ""
     duration: float = 0.0
+    level: str = ""
 
 
 @dataclass
@@ -38,6 +39,9 @@ class JUnitWriter:
     suite: str
     classname: str = ""
     cases: list[_Case] = field(default_factory=list)
+    # On-hardware runs provide HITL-level evidence by default; a caller may pass a
+    # different default (e.g. "hil") or override per case.
+    default_level: str = "hitl"
 
     def add(
         self,
@@ -46,11 +50,14 @@ class JUnitWriter:
         status: str = "passed",
         message: str = "",
         duration: float = 0.0,
+        level: str = "",
     ) -> None:
-        self.cases.append(_Case(name, list(requirements), status, message, duration))
+        self.cases.append(
+            _Case(name, list(requirements), status, message, duration, level or self.default_level)
+        )
 
     @contextmanager
-    def case(self, name: str, requirements: list[str]):
+    def case(self, name: str, requirements: list[str], level: str = ""):
         """Record ``name`` as passed, or as failed if the block raises (re-raised)."""
         start = time.monotonic()
         try:
@@ -62,10 +69,11 @@ class JUnitWriter:
                 "failed",
                 f"{type(exc).__name__}: {exc}",
                 time.monotonic() - start,
+                level,
             )
             raise
         else:
-            self.add(name, requirements, "passed", "", time.monotonic() - start)
+            self.add(name, requirements, "passed", "", time.monotonic() - start, level)
 
     def to_element(self) -> ET.Element:
         failures = sum(1 for c in self.cases if c.status == "failed")
@@ -91,10 +99,12 @@ class JUnitWriter:
                 name=c.name,
                 time=f"{c.duration:.3f}",
             )
-            if c.requirements:
+            if c.requirements or c.level:
                 props = ET.SubElement(tc, "properties")
                 for rid in c.requirements:
                     ET.SubElement(props, "property", name="requirement", value=rid)
+                if c.level:
+                    ET.SubElement(props, "property", name="level", value=c.level)
             if c.status in ("failed", "error"):
                 tag = "failure" if c.status == "failed" else "error"
                 ET.SubElement(tc, tag, message=c.message).text = c.message

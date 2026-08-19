@@ -4,7 +4,7 @@ Requirements: PR-23, PR-25
 """
 
 import pytest
-from traceability.model import ValidationError, parse_model
+from traceability.model import Method, ValidationError, method_rank, parse_model
 
 GOOD = {
     "user_needs": [{"id": "UN-1", "title": "Need"}],
@@ -90,6 +90,59 @@ def test_bad_ids_are_rejected():
     }
     _, errors = parse_model(data)
     assert any("id must match UN-<n>" in e for e in errors)
+
+
+@pytest.mark.requirements("PR-23")
+def test_method_ordering_is_analysis_to_hitl():
+    assert (
+        method_rank("analysis")
+        < method_rank("simulation")
+        < method_rank("sil")
+        < method_rank("hil")
+        < method_rank("hitl")
+    )
+    assert int(Method.HITL) == max(int(m) for m in Method)
+    # inspection is deliberately unordered (incomparable), and so is nonsense.
+    assert method_rank("inspection") is None
+    assert method_rank("bogus") is None
+
+
+@pytest.mark.requirements("PR-23")
+def test_method_defaults_to_simulation_and_validates():
+    model, errors = parse_model(GOOD)
+    assert errors == []
+    assert model.requirements["PR-1"].method == "simulation"  # defaulted
+    bad = {
+        "user_needs": [{"id": "UN-1", "title": "n"}],
+        "product_requirements": [
+            {"id": "PR-1", "title": "x", "satisfies": ["UN-1"], "method": "vibes"}
+        ],
+        "risks": [],
+    }
+    _, errors = parse_model(bad)
+    assert any("method must be one of" in e for e in errors)
+
+
+@pytest.mark.requirements("PR-23")
+def test_verified_by_accepts_string_or_mapping():
+    data = {
+        "user_needs": [{"id": "UN-1", "title": "n"}],
+        "product_requirements": [
+            {
+                "id": "PR-1",
+                "title": "x",
+                "satisfies": ["UN-1"],
+                "method": "hitl",
+                "verified_by": ["//a:bare", {"target": "//b:rich", "level": "hitl"}],
+            }
+        ],
+        "risks": [],
+    }
+    model, errors = parse_model(data)
+    assert errors == []
+    vbs = model.requirements["PR-1"].verified_by
+    assert vbs[0].target == "//a:bare" and vbs[0].level == "simulation"  # default
+    assert vbs[1].target == "//b:rich" and vbs[1].level == "hitl"
 
 
 @pytest.mark.requirements("PR-23")

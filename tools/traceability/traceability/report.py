@@ -24,12 +24,19 @@ import html
 from dataclasses import dataclass, field
 
 from traceability.junit import CaseResult, JUnitResults
-from traceability.model import RequirementsModel
+from traceability.model import (
+    DEFAULT_METHOD,
+    DEFAULT_PROVIDED,
+    INSPECTION,
+    RequirementsModel,
+    method_rank,
+)
 
 # Verification/validation verdicts.
-VERIFIED = "VERIFIED"
-FAILED = "FAILED"
-UNVERIFIED = "UNVERIFIED"
+VERIFIED = "VERIFIED"  # GREEN — passing evidence meets the demanded rigor
+UNDERVERIFIED = "UNDER-VERIFIED"  # AMBER — passing, but below the demanded rigor
+FAILED = "FAILED"  # RED — a referencing test failed/errored
+UNVERIFIED = "UNVERIFIED"  # no passing evidence
 VALIDATED = "VALIDATED"
 PARTIAL = "PARTIAL"
 MITIGATED = "MITIGATED"
@@ -43,13 +50,58 @@ _BADGE_CLASS = {
     UNVERIFIED: "none",
     OPEN: "none",
     PARTIAL: "warn",
+    UNDERVERIFIED: "amber",
 }
+
+
+def _best_provided(levels: list[str]) -> tuple[int | None, str]:
+    """From a list of provided level names, return (best ordered rank, display).
+
+    The highest ranked ordered level wins; ``inspection`` (unordered) is only
+    surfaced when no ordered level is present. Returns (None, "") for no levels.
+    """
+    best_rank: int | None = None
+    best_name = ""
+    has_inspection = False
+    for lvl in levels:
+        name = (lvl or DEFAULT_PROVIDED).strip().lower()
+        rank = method_rank(name)
+        if rank is None:  # inspection / unknown
+            has_inspection = has_inspection or name == INSPECTION
+            continue
+        if best_rank is None or rank > best_rank:
+            best_rank, best_name = rank, name
+    if best_rank is None and has_inspection:
+        return None, INSPECTION
+    return best_rank, best_name
+
+
+def _classify(passed_levels: list[str], failed: list[str], demanded: str) -> tuple[str, str]:
+    """Verdict + best-provided-level display for one PR's evidence.
+
+    GREEN when a passing artifact's rigor meets/exceeds the demanded method;
+    AMBER (UNDER-VERIFIED) when there is passing evidence but all of it is below
+    the demand; RED (FAILED) on any failure; UNVERIFIED with no passing evidence.
+    """
+    if failed:
+        return FAILED, ""
+    if not passed_levels:
+        return UNVERIFIED, ""
+    demanded_rank = method_rank(demanded)
+    best_rank, best_name = _best_provided(passed_levels)
+    if demanded_rank is None:  # inspection demand — met only by inspection evidence
+        return (VERIFIED if best_name == INSPECTION else UNDERVERIFIED), best_name
+    if best_rank is not None and best_rank >= demanded_rank:
+        return VERIFIED, best_name
+    return UNDERVERIFIED, best_name
 
 
 @dataclass
 class PrEvidence:
     pr_id: str
     status: str
+    demanded: str = DEFAULT_METHOD  # rigor this PR demands
+    provided: str = ""  # best passing rigor level, "" if none
     passed: list[str] = field(default_factory=list)  # test full-names / targets
     failed: list[str] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
@@ -67,6 +119,7 @@ class Matrix:
         return {
             "prs": len(prs),
             "pr_verified": sum(1 for e in prs if e.status == VERIFIED),
+            "pr_underverified": sum(1 for e in prs if e.status == UNDERVERIFIED),
             "pr_failed": sum(1 for e in prs if e.status == FAILED),
             "pr_unverified": sum(1 for e in prs if e.status == UNVERIFIED),
             "uns": len(self.un_status),
@@ -74,14 +127,6 @@ class Matrix:
             "risks": len(self.risk_status),
             "risk_mitigated": sum(1 for s in self.risk_status.values() if s == MITIGATED),
         }
-
-
-def _pr_verdict(passed: list[str], failed: list[str], skipped: list[str]) -> str:
-    if failed:
-        return FAILED
-    if passed:
-        return VERIFIED
-    return UNVERIFIED  # only skipped, or nothing
 
 
 def build_matrix(model: RequirementsModel, results: JUnitResults) -> Matrix:
@@ -96,22 +141,30 @@ def build_matrix(model: RequirementsModel, results: JUnitResults) -> Matrix:
         passed: list[str] = []
         failed: list[str] = []
         skipped: list[str] = []
+        passed_levels: list[str] = []  # provided level of each passing artifact
         for case in fine.get(pr_id, []):
             bucket = {"passed": passed, "failed": failed, "error": failed, "skipped": skipped}[
                 case.status
             ]
             bucket.append(case.full_name)
-        for target in pr.verified_by:
-            status = results.target_status.get(target)
+            if case.status == "passed":
+                passed_levels.append(case.level or DEFAULT_PROVIDED)
+        for vb in pr.verified_by:
+            status = results.target_status.get(vb.target)
             if status is None:
                 continue
-            label = f"{target} (target)"
+            label = f"{vb.target} (target, {vb.level})"
             {"passed": passed, "failed": failed, "error": failed, "skipped": skipped}[
                 status
             ].append(label)
+            if status == "passed":
+                passed_levels.append(vb.level or DEFAULT_PROVIDED)
+        status, provided = _classify(passed_levels, failed, pr.method)
         pr_status[pr_id] = PrEvidence(
             pr_id=pr_id,
-            status=_pr_verdict(passed, failed, skipped),
+            status=status,
+            demanded=pr.method,
+            provided=provided,
             passed=passed,
             failed=failed,
             skipped=skipped,
@@ -141,7 +194,8 @@ def _rollup(
         return FAILED
     if all(s == VERIFIED for s in statuses):
         return all_ok
-    if any(s == VERIFIED for s in statuses):
+    # Any GREEN or AMBER child is progress but not full validation/mitigation.
+    if any(s in (VERIFIED, UNDERVERIFIED) for s in statuses):
         return PARTIAL
     return none_ok
 
@@ -200,12 +254,20 @@ def render_html(matrix: Matrix, title: str = "splanc requirements traceability")
             + _evidence_list(ev.failed, "fail")
             + _evidence_list(ev.skipped, "skip")
         ) or "<span class='muted'>no tests reference this PR</span>"
+        # Method line: demanded rigor, and (when AMBER) the best rigor provided.
+        if ev.status == UNDERVERIFIED:
+            method_cell = (
+                f"demands <b>{_esc(ev.demanded)}</b>"
+                f" &middot; best provided <b>{_esc(ev.provided or '—')}</b>"
+            )
+        else:
+            method_cell = f"demands <b>{_esc(ev.demanded)}</b>"
         rows_pr.append(
             f"<tr id='{pr.id}'><td class='id'>{_esc(pr.id)}"
             f"<div class='kind {kind}'>{kind}</div></td>"
             f"<td>{_esc(pr.title)}<div class='desc'>{_esc(pr.description)}</div>"
             f"<div class='trace'>{_esc('; '.join(trace))}</div></td>"
-            f"<td>{evidence}</td>"
+            f"<td>{evidence}<div class='method'>{method_cell}</div></td>"
             f"<td>{_badge(ev.status)}</td></tr>"
         )
 
@@ -227,7 +289,8 @@ def render_html(matrix: Matrix, title: str = "splanc requirements traceability")
     summary = (
         f"<b>{c['un_validated']}/{c['uns']}</b> user needs validated &middot; "
         f"<b>{c['pr_verified']}/{c['prs']}</b> requirements verified "
-        f"(<span class='fail-text'>{c['pr_failed']} failed</span>, "
+        f"(<span class='amber-text'>{c['pr_underverified']} under-verified</span>, "
+        f"<span class='fail-text'>{c['pr_failed']} failed</span>, "
         f"{c['pr_unverified']} unverified) &middot; "
         f"<b>{c['risk_mitigated']}/{c['risks']}</b> risks mitigated"
     )
@@ -272,12 +335,16 @@ _TEMPLATE = """<!doctype html>
   .badge.fail {{ background: #c6282822; color: #e05252; }}
   .badge.none {{ background: #8882; color: #999; }}
   .badge.warn {{ background: #c9910022; color: #d9a023; }}
+  .badge.amber {{ background: #d9770622; color: #e8890c; }}
   ul.ev {{ margin: 0; padding-left: 1.1rem; font-size: .82rem; }}
   ul.ev.pass li {{ color: #3ba55d; }}
   ul.ev.fail li {{ color: #e05252; }}
   ul.ev.skip li {{ color: #999; }}
+  .method {{ color: #888; font-size: .78rem; margin-top: .3rem;
+            font-family: ui-monospace, monospace; }}
   .muted, .fail-text {{ color: #999; font-size: .85rem; }}
   .fail-text {{ color: #e05252; }}
+  .amber-text {{ color: #e8890c; }}
 </style></head>
 <body>
 <h1>{title}</h1>

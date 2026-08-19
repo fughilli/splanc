@@ -113,6 +113,53 @@ if __name__ == "__main__":
 
 Add `//tools/traceability` to the `py_test`'s `deps` for the import to resolve.
 
+## Verification method (demanded rigor)
+
+A passing test is not automatically enough. Each PR declares the **rigor its
+verification demands** via a `method`, drawn from an ordered scale (lowest →
+highest) plus one non-ordered value:
+
+```text
+analysis  <  simulation  <  sil  <  hil  <  hitl        inspection (unordered)
+```
+
+- `analysis` — hand/derivation/static argument. `simulation` — host unit/sim
+  test. `sil` — software-in-the-loop (e.g. cross-language conformance).
+  `hil` — hardware-in-the-loop component test. `hitl` — full hardware-in-the-loop
+  system run. `inspection` — manual/visual sign-off (incomparable: met only by
+  inspection evidence).
+
+Evidence carries the rigor it **provides**. Per-testcase, that's a `level=` on
+the marker; for whole targets, a `{target, level}` mapping in `verified_by`:
+
+```python
+pytestmark = pytest.mark.requirements("PR-29", level="hitl")  # this suite runs on hardware
+```
+
+```yaml
+- id: PR-13
+  method: hitl # demanded rigor
+  verified_by:
+    - '//web:improv_provision_test' # bare string -> provides simulation
+    - { target: '//pi/hitl/tests:e2e_test', level: hitl } # provides hitl
+```
+
+The aggregator compares the two, per PR:
+
+- **GREEN (`VERIFIED`)** — a passing artifact provides rigor **≥** the demand.
+- **AMBER (`UNDER-VERIFIED`)** — there is passing evidence, but the best rigor
+  provided is **below** the demand (e.g. a `hitl` PR covered only by a `simulation`
+  test). The row shows _demanded vs best-provided_.
+- **RED (`FAILED`) / `UNVERIFIED`** — a test failed / no passing evidence at all.
+
+Migration defaults keep this additive: a PR with no `method` demands `simulation`
+and untagged evidence provides `simulation`, so nothing mass-fails. Only the
+hardware-implicated PRs (modules touching `firmware`/`pi/hitl`, and derived PRs
+mitigating hardware/stability risks) are annotated with their true `hil`/`hitl`
+demand — which is why several of those now read AMBER: real verification debt made
+visible, not a regression. The HITL `JUnitWriter` stamps its phases `level: hitl`
+by default.
+
 ## Two traceability mechanisms
 
 Verification evidence for a PR is the union of:
@@ -154,15 +201,16 @@ suites, aggregates their jUnit, and uploads `traceability-report.html` as an
 artifact. The report lists all user needs, product requirements and risks with a
 status badge each:
 
-| Status       | Applies to     | Meaning                                        |
-| ------------ | -------------- | ---------------------------------------------- |
-| `VERIFIED`   | PR             | ≥1 referencing test passed, none failed        |
-| `FAILED`     | PR / UN / RISK | a referencing/rolled-up test failed or errored |
-| `UNVERIFIED` | PR             | no test references it                          |
-| `VALIDATED`  | UN             | all satisfying PRs verified                    |
-| `PARTIAL`    | UN / RISK      | some (not all) rolled-up PRs verified          |
-| `MITIGATED`  | RISK           | all mitigating derived PRs verified            |
-| `OPEN`       | RISK           | no mitigating PR verified                      |
+| Status           | Applies to     | Meaning                                            |
+| ---------------- | -------------- | -------------------------------------------------- |
+| `VERIFIED`       | PR             | passing evidence provides rigor ≥ demanded         |
+| `UNDER-VERIFIED` | PR             | passing, but best provided rigor < demanded        |
+| `FAILED`         | PR / UN / RISK | a referencing/rolled-up test failed or errored     |
+| `UNVERIFIED`     | PR             | no passing test references it                      |
+| `VALIDATED`      | UN             | all satisfying PRs verified                        |
+| `PARTIAL`        | UN / RISK      | some rolled-up PRs verified or only under-verified |
+| `MITIGATED`      | RISK           | all mitigating derived PRs verified                |
+| `OPEN`           | RISK           | no mitigating PR verified                          |
 
 ## Recipes
 
