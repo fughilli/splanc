@@ -691,9 +691,19 @@ lowest-index-wins), an RWX NAPOT entry there overrides the default NX for just t
 range — W^X stays enforced everywhere else.</p>
 <p>Validated on a real ESP32-C6 over HITL with a fixed-point-heavy <code class="docutils literal notranslate"><span class="pre">shade()</span></code>: the
 native JIT renders <strong>bit-identically</strong> to the interpreter and cuts per-LED
-<code class="docutils literal notranslate"><span class="pre">shade()</span></code> cost from <strong>9797 → 4710 cycles (−51%, 2.08×)</strong>. The boot self-bench
+<code class="docutils literal notranslate"><span class="pre">shade()</span></code> cost by ~<strong>2.1×</strong> (≈10077 → 4723 cycles). The boot self-bench
 <code class="docutils literal notranslate"><span class="pre">:esp32c6_fxjitbench</span></code> reproduces the A/B (<code class="docutils literal notranslate"><span class="pre">lm_fx_set_jit_enabled</span></code> toggles it on one
 firmware).</p>
+<p><strong>Shipped off by default.</strong> This device is heap-critically-tight (mbedtls needs
+~28 KB for a TLS session), so the JIT’s static footprint is kept to ~3.4 KB (the
+segments compile straight into the 2 KB exec region — no scratch copy — plus a
+small bounded planning scratch), and <code class="docutils literal notranslate"><span class="pre">FX_JIT_ENABLED</span></code> defaults <strong>false</strong>: the
+interpreter is the shipped path (it is also what the golden cost model the app +
+<code class="docutils literal notranslate"><span class="pre">fx_bench</span></code> validate against measures), and the PMP carve-out is armed only when the
+JIT is explicitly enabled via <code class="docutils literal notranslate"><span class="pre">lm_fx_set_jit_enabled</span></code>. An earlier revision that
+enabled it by default with ~15 KB of scratch starved the WiFi/TLS heap and broke
+provisioning — the small-footprint, opt-in design keeps the default firmware’s RAM
+profile ~unchanged from baseline.</p>
 </section>
 </section>
 

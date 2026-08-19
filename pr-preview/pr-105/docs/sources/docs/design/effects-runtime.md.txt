@@ -384,6 +384,17 @@ range — W^X stays enforced everywhere else.
 
 Validated on a real ESP32-C6 over HITL with a fixed-point-heavy `shade()`: the
 native JIT renders **bit-identically** to the interpreter and cuts per-LED
-`shade()` cost from **9797 → 4710 cycles (−51%, 2.08×)**. The boot self-bench
+`shade()` cost by ~**2.1×** (≈10077 → 4723 cycles). The boot self-bench
 `:esp32c6_fxjitbench` reproduces the A/B (`lm_fx_set_jit_enabled` toggles it on one
 firmware).
+
+**Shipped off by default.** This device is heap-critically-tight (mbedtls needs
+~28 KB for a TLS session), so the JIT's static footprint is kept to ~3.4 KB (the
+segments compile straight into the 2 KB exec region — no scratch copy — plus a
+small bounded planning scratch), and `FX_JIT_ENABLED` defaults **false**: the
+interpreter is the shipped path (it is also what the golden cost model the app +
+`fx_bench` validate against measures), and the PMP carve-out is armed only when the
+JIT is explicitly enabled via `lm_fx_set_jit_enabled`. An earlier revision that
+enabled it by default with ~15 KB of scratch starved the WiFi/TLS heap and broke
+provisioning — the small-footprint, opt-in design keeps the default firmware's RAM
+profile ~unchanged from baseline.
