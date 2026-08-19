@@ -175,25 +175,51 @@ const CSS = `
   font-weight: 600;
 }
 
-/* Manual-URL panel inside the connect viewfinder overlay (reuses .qrscan*). */
-.dbgconn-url {
-  position: absolute;
-  bottom: calc(env(safe-area-inset-bottom, 0px) + var(--sp-4));
-  left: var(--sp-4);
-  right: var(--sp-4);
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--sp-2);
+/* An icon-only variant of the viewfinder pill (the chainlink "connect by URL"). */
+.qrscan-btn--icon {
+  display: inline-flex;
+  align-items: center;
   justify-content: center;
+  padding: 0.5rem 0.7rem;
+}
+.qrscan-btn--icon svg {
+  width: 1.25rem;
+  height: 1.25rem;
+  display: block;
+}
+
+/* Manual-URL drawer: a bottom sheet inside the connect overlay, hidden until the
+   chainlink is tapped (class toggle, so it beats the [hidden] vs display race). */
+.dbgconn-drawer {
+  display: none;
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  flex-direction: column;
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px) + var(--sp-4));
+  background: rgba(16, 16, 20, 0.96);
+  border-top-left-radius: var(--r-card);
+  border-top-right-radius: var(--r-card);
+  backdrop-filter: blur(8px);
+}
+.dbgconn-drawer.open {
+  display: flex;
 }
 .dbgconn-input {
-  flex: 1 1 100%;
-  min-width: 0;
-  padding: 0.6rem 0.9rem;
-  border-radius: 999px;
+  width: 100%;
+  padding: 0.7rem 0.95rem;
+  border-radius: var(--r-ctrl);
   border: 1px solid rgba(255, 255, 255, 0.3);
-  background: rgba(20, 20, 26, 0.8);
+  background: rgba(20, 20, 26, 0.85);
   color: #fff;
   font: inherit;
+}
+.dbgconn-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-2);
 }
 `;

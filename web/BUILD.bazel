@@ -280,6 +280,12 @@ vite_bin.vite(
         ":node_modules/@bufbuild/protobuf",
         ":node_modules/@ledmapper/protocol",
         ":node_modules/esptool-js",
+        # jsqr decodes the debug-server QR in the connect viewfinder — reached
+        # only via `await import("jsqr")` (ui/screens/debugServerConnect.ts), so
+        # like the capacitor chunks below it must be present for Rolldown to
+        # resolve + emit that lazy chunk. iOS WKWebView has no BarcodeDetector, so
+        # this is the on-device decoder.
+        ":node_modules/jsqr",
         ":node_modules/vite",
         ":node_modules/web-serial-polyfill",
         # Capacitor native-wrapper packages (docs/design/ios-support.md §4.2–4.3).
