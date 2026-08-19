@@ -233,14 +233,36 @@ def default_board_caps() -> dict | None:
         return None
 
 
+def _dut_identity(args: argparse.Namespace) -> dict:
+    """Identity of the artifact this run exercises, for evidence-freshness.
+
+    Stamped on every jUnit case so the aggregator can tell a result about the
+    current firmware from a stale one (see docs/requirements-driven-development.md).
+    Uses the flash-bundle name plus the CI commit / board revision from the
+    environment when present; missing keys are simply omitted.
+    """
+    identity: dict = {}
+    bundle = args.bundle or default_bundle()
+    if bundle:
+        identity["firmware_build_id"] = os.path.basename(bundle)
+    sha = os.environ.get("GIT_COMMIT") or os.environ.get("GITHUB_SHA")
+    if sha:
+        identity["dut_git_sha"] = sha
+    board = os.environ.get("HITL_BOARD_REV") or args.device
+    if board:
+        identity["board_rev"] = board
+    return identity
+
+
 def run(args: argparse.Namespace) -> int:
     # server=None lets `hitl` pick a free rig from the pool (tailnet tag discovery
     # or $HITL_SERVERS); --server pins a specific one.
     res = Reservation(server=args.server or None, owner=args.owner, device=args.device or None)
-    # Traceability: each phase is a jUnit testcase tagged with the PRs it verifies,
-    # so the on-hardware HITL run feeds the same requirements report as the
-    # software suites (see docs/requirements-driven-development.md).
-    report = JUnitWriter("hitl_e2e")
+    # Traceability: each phase is a jUnit testcase tagged with the PRs it verifies
+    # and the identity of the firmware it exercised, so the on-hardware HITL run
+    # feeds the same requirements report as the software suites — and stale results
+    # are detectable (see docs/requirements-driven-development.md).
+    report = JUnitWriter("hitl_e2e", artifact=_dut_identity(args))
     try:
         res.acquire()
         # Default WiFi to the rig's own provisioning AP (creds served by the

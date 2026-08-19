@@ -40,9 +40,16 @@ from traceability.model import (
 PYRAMID_MIN_RANK = int(Method.HIL)
 CHEAP_LEVELS = ("analysis", "simulation")
 
+# Routing boundary for the work queue: demands an agent can satisfy on its own
+# (<= SIL) vs. demands needing a bench/DUT (>= HIL, and manual inspection).
+AUTONOMOUS_MAX_RANK = int(Method.SIL)
+ROUTE_AUTONOMOUS = "autonomous"
+ROUTE_HUMAN_GATE = "human-gate"
+
 # Verification/validation verdicts.
 VERIFIED = "VERIFIED"  # GREEN — passing evidence meets the demanded rigor
 UNDERVERIFIED = "UNDER-VERIFIED"  # AMBER — passing, but below the demanded rigor
+STALE = "STALE"  # evidence exists but only against an out-of-date build
 FAILED = "FAILED"  # RED — a referencing test failed/errored
 UNVERIFIED = "UNVERIFIED"  # no passing evidence
 VALIDATED = "VALIDATED"
@@ -104,6 +111,15 @@ def _classify(passed_levels: list[str], failed: list[str], demanded: str) -> tup
     return UNDERVERIFIED, best_name
 
 
+def _is_stale(artifact: dict, current: dict | None) -> bool:
+    """True when the artifact identity a result recorded differs from the current
+    build's identity. Only keys present in *both* are compared; a result with no
+    identity, or no current reference to compare against, is never stale."""
+    if not artifact or not current:
+        return False
+    return any(k in current and str(current[k]) != str(v) for k, v in artifact.items())
+
+
 def _pyramid_violation(demanded: str, passed_levels: list[str]) -> bool:
     """True when an expensive-rigor PR rests only on the expensive rung.
 
@@ -129,6 +145,7 @@ class PrEvidence:
     provided: str = ""  # best passing rigor level, "" if none
     provided_levels: list[str] = field(default_factory=list)  # every passing artifact's level
     pyramid_violation: bool = False  # demands >= HIL but has no cheap rung
+    stale: bool = False  # only passing evidence is against an out-of-date build
     passed: list[str] = field(default_factory=list)  # test full-names / targets
     failed: list[str] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
@@ -160,7 +177,9 @@ class Matrix:
         }
 
 
-def build_matrix(model: RequirementsModel, results: JUnitResults) -> Matrix:
+def build_matrix(
+    model: RequirementsModel, results: JUnitResults, current_build: dict | None = None
+) -> Matrix:
     # --- per-PR evidence, unioning fine-grained tags and coarse targets ---
     fine: dict[str, list[CaseResult]] = {}
     for case in results.cases:
@@ -172,14 +191,20 @@ def build_matrix(model: RequirementsModel, results: JUnitResults) -> Matrix:
         passed: list[str] = []
         failed: list[str] = []
         skipped: list[str] = []
-        passed_levels: list[str] = []  # provided level of each passing artifact
+        # Each passing artifact's provided level, split by whether its recorded
+        # build identity is still current.
+        fresh_levels: list[str] = []
+        stale_levels: list[str] = []
         for case in fine.get(pr_id, []):
             bucket = {"passed": passed, "failed": failed, "error": failed, "skipped": skipped}[
                 case.status
             ]
             bucket.append(case.full_name)
             if case.status == "passed":
-                passed_levels.append(case.level or DEFAULT_PROVIDED)
+                lvl = case.level or DEFAULT_PROVIDED
+                (stale_levels if _is_stale(case.artifact, current_build) else fresh_levels).append(
+                    lvl
+                )
         for vb in pr.verified_by:
             status = results.target_status.get(vb.target)
             if status is None:
@@ -189,15 +214,25 @@ def build_matrix(model: RequirementsModel, results: JUnitResults) -> Matrix:
                 status
             ].append(label)
             if status == "passed":
-                passed_levels.append(vb.level or DEFAULT_PROVIDED)
-        status, provided = _classify(passed_levels, failed, pr.method)
+                fresh_levels.append(vb.level or DEFAULT_PROVIDED)  # targets carry no DUT identity
+
+        # Fresh evidence decides the verdict; if the only passing evidence is
+        # stale, the PR is AMBER-stale rather than GREEN.
+        if fresh_levels or failed or not stale_levels:
+            status, provided = _classify(fresh_levels, failed, pr.method)
+            stale_flag = False
+        else:
+            status, provided = UNDERVERIFIED, _best_provided(stale_levels)[1]
+            stale_flag = True
+        all_levels = fresh_levels + stale_levels
         pr_status[pr_id] = PrEvidence(
             pr_id=pr_id,
             status=status,
             demanded=pr.method,
             provided=provided,
-            provided_levels=passed_levels,
-            pyramid_violation=_pyramid_violation(pr.method, passed_levels),
+            provided_levels=all_levels,
+            pyramid_violation=_pyramid_violation(pr.method, all_levels),
+            stale=stale_flag,
             passed=passed,
             failed=failed,
             skipped=skipped,
@@ -231,6 +266,50 @@ def _rollup(
     if any(s in (VERIFIED, UNDERVERIFIED) for s in statuses):
         return PARTIAL
     return none_ok
+
+
+def route_for(method: str) -> str:
+    """Where a gap for a PR of this demanded method should go.
+
+    <= SIL: an agent may write the missing analysis/sim/SIL test (autonomous).
+    >= HIL, or manual inspection: needs a bench/DUT or a human — the agent may
+    only prepare the harness and open the gate, never synthesise the evidence.
+    """
+    rank = method_rank(method)
+    if rank is not None and rank <= AUTONOMOUS_MAX_RANK:
+        return ROUTE_AUTONOMOUS
+    return ROUTE_HUMAN_GATE
+
+
+def build_queue(matrix: Matrix) -> list[dict]:
+    """The report's gaps as a machine-readable work queue.
+
+    One entry per PR that is UNVERIFIED, UNDER-VERIFIED or STALE, carrying the
+    gap type, demanded method, best provided level, and the route derived from
+    the demanded method. This is the agentic feedback loop: autonomous items an
+    agent can close, human-gate items it must hand off (see docs).
+    """
+    queue: list[dict] = []
+    for pr_id in sorted(matrix.pr_status, key=lambda p: (len(p), p)):
+        ev = matrix.pr_status[pr_id]
+        if ev.stale:
+            gap = "stale"
+        elif ev.status == UNVERIFIED:
+            gap = "unverified"
+        elif ev.status == UNDERVERIFIED:
+            gap = "under-verified"
+        else:
+            continue
+        queue.append(
+            {
+                "pr": pr_id,
+                "gap": gap,
+                "demanded_method": ev.demanded,
+                "provided_level": ev.provided or None,
+                "route": route_for(ev.demanded),
+            }
+        )
+    return queue
 
 
 # --------------------------------------------------------------------------- #
@@ -295,13 +374,19 @@ def render_html(matrix: Matrix, title: str = "splanc requirements traceability")
             )
         else:
             method_cell = f"demands <b>{_esc(ev.demanded)}</b>"
+        badge = _badge(ev.status)
+        if ev.stale:
+            badge += " <span class='badge stale'>STALE</span>"
+            method_cell += (
+                " &middot; <span class='stale-text'>evidence is against an old build</span>"
+            )
         rows_pr.append(
             f"<tr id='{pr.id}'><td class='id'>{_esc(pr.id)}"
             f"<div class='kind {kind}'>{kind}</div></td>"
             f"<td>{_esc(pr.title)}<div class='desc'>{_esc(pr.description)}</div>"
             f"<div class='trace'>{_esc('; '.join(trace))}</div></td>"
             f"<td>{evidence}<div class='method'>{method_cell}</div></td>"
-            f"<td>{_badge(ev.status)}</td></tr>"
+            f"<td>{badge}</td></tr>"
         )
 
     rows_risk = []
@@ -389,6 +474,8 @@ _TEMPLATE = """<!doctype html>
   .badge.none {{ background: #8882; color: #999; }}
   .badge.warn {{ background: #c9910022; color: #d9a023; }}
   .badge.amber {{ background: #d9770622; color: #e8890c; }}
+  .badge.stale {{ background: #7c3aed22; color: #a06bff; }}
+  .stale-text {{ color: #a06bff; }}
   ul.ev {{ margin: 0; padding-left: 1.1rem; font-size: .82rem; }}
   ul.ev.pass li {{ color: #3ba55d; }}
   ul.ev.fail li {{ color: #e05252; }}

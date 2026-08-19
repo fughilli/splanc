@@ -257,16 +257,20 @@ jobs:
       - name: Aggregate jUnit XML into the HTML traceability report
         run: |
           bazel run //tools/traceability:aggregate \
-            --disk_cache="$HOME/.cache/bazel-disk" -- \
+            --disk_cache="$HOME/.cache/bazel-disk" -- aggregate \
             --requirements "$GITHUB_WORKSPACE/requirements/requirements.yaml" \
             --junit "$(readlink -f bazel-testlogs)" \
+            --current-build dut_git_sha="$GITHUB_SHA" \
+            --queue-out "$GITHUB_WORKSPACE/traceability-queue.json" \
             --out "$GITHUB_WORKSPACE/traceability-report.html"
 
       - name: Upload traceability report
         uses: actions/upload-artifact@v4
         with:
           name: traceability-report
-          path: traceability-report.html
+          path: |
+            traceability-report.html
+            traceability-queue.json
           retention-days: 14
           if-no-files-found: error
 

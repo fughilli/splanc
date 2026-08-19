@@ -176,6 +176,66 @@ configurable via `--pyramid-policy {off,warn,error}` (default `warn`; `error`
 fails the aggregate step). An `UNVERIFIED` PR is not a violation — it simply has
 no evidence yet.
 
+## Evidence freshness (staleness)
+
+"Was ever green" and "is green for what's on the bench now" are different claims.
+A `verified_by` HITL result from three firmware builds ago still reads green as
+long as the target name is unchanged — so on-hardware evidence records the
+**identity of the artifact it exercised** and the aggregator checks it against
+the current build.
+
+The HITL `JUnitWriter` stamps each case with `artifact.<key>` property tags
+(firmware build id, board revision, DUT image git SHA). The aggregate step is
+told the current identity with repeatable `--current-build KEY=VALUE`:
+
+```sh
+bazel run //tools/traceability:aggregate -- aggregate \
+  --current-build dut_git_sha="$GIT_COMMIT" \
+  --current-build firmware_build_id="$FW_ID" ...
+```
+
+Evidence whose recorded identity differs from the current build (on any shared
+key) is **STALE**. A PR whose _only_ passing evidence is stale renders AMBER with
+a `STALE` badge, not GREEN; fresh evidence, if any, wins. Evidence with no
+identity, or when no `--current-build` is given, is never stale — so software
+suites are unaffected.
+
+## The work queue (closing the authoring loop)
+
+The report is also a machine-readable queue so its gaps feed back as typed work.
+With `--queue-out`, the aggregator writes `traceability-queue.json`: one entry per
+`UNVERIFIED` / `UNDER-VERIFIED` / `STALE` PR, with the demanded method, best
+provided level, and a **route** derived from the demanded method:
+
+```json
+{
+  "queue": [
+    {
+      "pr": "PR-2",
+      "gap": "unverified",
+      "demanded_method": "simulation",
+      "provided_level": null,
+      "route": "autonomous"
+    },
+    {
+      "pr": "PR-13",
+      "gap": "under-verified",
+      "demanded_method": "hitl",
+      "provided_level": "simulation",
+      "route": "human-gate"
+    }
+  ]
+}
+```
+
+- `route: autonomous` — demanded ≤ `sil`; an agent may write the missing
+  sim/unit/SIL test itself.
+- `route: human-gate` — demanded ≥ `hil` (or `inspection`); the work needs a
+  bench/DUT or a human. The agent must **not** synthesise or claim this evidence —
+  it may only prepare the harness and open the gate. This encodes the ODD
+  boundary: autonomous where cheap verification is trustworthy, a hard checkpoint
+  where it isn't.
+
 ## Two traceability mechanisms
 
 Verification evidence for a PR is the union of:
@@ -217,16 +277,17 @@ suites, aggregates their jUnit, and uploads `traceability-report.html` as an
 artifact. The report lists all user needs, product requirements and risks with a
 status badge each:
 
-| Status           | Applies to     | Meaning                                            |
-| ---------------- | -------------- | -------------------------------------------------- |
-| `VERIFIED`       | PR             | passing evidence provides rigor ≥ demanded         |
-| `UNDER-VERIFIED` | PR             | passing, but best provided rigor < demanded        |
-| `FAILED`         | PR / UN / RISK | a referencing/rolled-up test failed or errored     |
-| `UNVERIFIED`     | PR             | no passing test references it                      |
-| `VALIDATED`      | UN             | all satisfying PRs verified                        |
-| `PARTIAL`        | UN / RISK      | some rolled-up PRs verified or only under-verified |
-| `MITIGATED`      | RISK           | all mitigating derived PRs verified                |
-| `OPEN`           | RISK           | no mitigating PR verified                          |
+| Status           | Applies to     | Meaning                                               |
+| ---------------- | -------------- | ----------------------------------------------------- |
+| `VERIFIED`       | PR             | passing evidence provides rigor ≥ demanded            |
+| `UNDER-VERIFIED` | PR             | passing, but best provided rigor < demanded           |
+| `STALE`          | PR             | only passing evidence is against an out-of-date build |
+| `FAILED`         | PR / UN / RISK | a referencing/rolled-up test failed or errored        |
+| `UNVERIFIED`     | PR             | no passing test references it                         |
+| `VALIDATED`      | UN             | all satisfying PRs verified                           |
+| `PARTIAL`        | UN / RISK      | some rolled-up PRs verified or only under-verified    |
+| `MITIGATED`      | RISK           | all mitigating derived PRs verified                   |
+| `OPEN`           | RISK           | no mitigating PR verified                             |
 
 ## Recipes
 
