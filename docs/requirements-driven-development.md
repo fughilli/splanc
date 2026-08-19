@@ -200,6 +200,17 @@ a `STALE` badge, not GREEN; fresh evidence, if any, wins. Evidence with no
 identity, or when no `--current-build` is given, is never stale — so software
 suites are unaffected.
 
+## Risks: severity, likelihood, residual
+
+Mitigation is not elimination. A risk carries `severity` (`low`/`medium`/`high`/
+`critical`), an optional ordinal `likelihood`
+(`rare`/`unlikely`/`possible`/`likely`/`certain`), and an optional `residual`
+note describing what remains after mitigation. The report shows likelihood and
+residual on each risk row, and — crucially — hoists any **high/critical-severity
+risk whose mitigating derived PR(s) are not GREEN** into a red banner at the top,
+distinct from ordinary `UNVERIFIED` rows. A high risk mitigated only by an
+under-verified PR is a headline, not a checkmark.
+
 ## The work queue (closing the authoring loop)
 
 The report is also a machine-readable queue so its gaps feed back as typed work.

@@ -162,6 +162,19 @@ class Matrix:
         """PR ids that rest only on expensive (>= HIL) evidence (cost-pyramid policy)."""
         return [e.pr_id for e in self.pr_status.values() if e.pyramid_violation]
 
+    def high_open_risks(self) -> list[str]:
+        """High/critical-severity risks whose mitigation is not fully verified.
+
+        Mitigation is not elimination: a high risk mitigated only by an
+        unverified/under-verified derived PR must surface loudly, not vanish
+        into a checkmark.
+        """
+        return [
+            rid
+            for rid, risk in self.model.risks.items()
+            if risk.is_high and self.risk_status.get(rid) != MITIGATED
+        ]
+
     def counts(self) -> dict[str, int]:
         prs = list(self.pr_status.values())
         return {
@@ -396,10 +409,17 @@ def render_html(matrix: Matrix, title: str = "splanc requirements traceability")
             ", ".join(f'<a href="#{p.id}">{p.id}</a>' for p in sorted(prs, key=lambda r: r.id))
             or "<span class='muted'>none</span>"
         )
+        meta_bits = []
+        if risk.likelihood:
+            meta_bits.append(f"likelihood: {risk.likelihood}")
+        if risk.residual:
+            meta_bits.append(f"residual: {risk.residual}")
+        meta_line = f"<div class='trace'>{_esc(' · '.join(meta_bits))}</div>" if meta_bits else ""
         rows_risk.append(
             f"<tr id='{risk.id}'><td class='id'>{_esc(risk.id)}"
             f"<div class='kind sev-{_esc(risk.severity)}'>{_esc(risk.severity)}</div></td>"
-            f"<td>{_esc(risk.title)}<div class='desc'>{_esc(risk.description)}</div></td>"
+            f"<td>{_esc(risk.title)}<div class='desc'>{_esc(risk.description)}</div>"
+            f"{meta_line}</td>"
             f"<td>{pr_cells}</td>"
             f"<td>{_badge(matrix.risk_status[risk.id])}</td></tr>"
         )
@@ -412,6 +432,23 @@ def render_html(matrix: Matrix, title: str = "splanc requirements traceability")
         f"{c['pr_unverified']} unverified) &middot; "
         f"<b>{c['risk_mitigated']}/{c['risks']}</b> risks mitigated"
     )
+
+    high_open = matrix.high_open_risks()
+    if high_open:
+        risk_items = "".join(
+            f'<li><a href="#{rid}">{_esc(rid)}</a> '
+            f"<b>({_esc(model.risks[rid].severity)})</b> "
+            f"{_esc(model.risks[rid].title)} &mdash; "
+            f"mitigation {_esc(matrix.risk_status[rid])}</li>"
+            for rid in sorted(high_open, key=lambda r: (len(r), r))
+        )
+        risk_alert = (
+            "<div class='policy alert'><b>High-severity risks not mitigated:</b> "
+            f"{len(high_open)} require attention."
+            f"<ul>{risk_items}</ul></div>"
+        )
+    else:
+        risk_alert = ""
 
     violations = matrix.pyramid_violations()
     if violations:
@@ -435,6 +472,7 @@ def render_html(matrix: Matrix, title: str = "splanc requirements traceability")
     return _TEMPLATE.format(
         title=_esc(title),
         summary=summary,
+        risk_alert=risk_alert,
         policy=policy,
         source=_esc(model.meta.get("source", "")),
         rows_un="\n".join(rows_un),
@@ -488,11 +526,13 @@ _TEMPLATE = """<!doctype html>
   .policy {{ margin: .75rem 0; padding: .6rem .9rem; border-radius: 8px;
             background: #c9910018; border-left: 3px solid #d9a023; font-size: .9rem; }}
   .policy.ok {{ background: #2e7d3212; border-left-color: #3ba55d; }}
+  .policy.alert {{ background: #c6282818; border-left-color: #e05252; }}
   .policy ul {{ margin: .4rem 0 0; padding-left: 1.1rem; }}
 </style></head>
 <body>
 <h1>{title}</h1>
 <div class="summary">{summary}</div>
+{risk_alert}
 {policy}
 <p class="source">{source}</p>
 
