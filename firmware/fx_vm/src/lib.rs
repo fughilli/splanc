@@ -260,6 +260,18 @@ pub enum Op {
     // ones the compiler used to lean on the blanket zeroing for — emit this. A
     // big slice of the per-LED framing cost for the common effect that has none.
     FillLocal,    // u8 slot, u8 n
+    // --- FUG-125 superinstructions -------------------------------------------
+    // Pure fusions of hot opcode sequences the compiler's bytecode optimizer
+    // recognizes (see fx_compiler::opt). Each is byte-for-byte equivalent to the
+    // sequence it replaces — the differential optimizer test proves identical VM
+    // output — trading two-to-four dispatches for one on the FPU-less core.
+    // Appended at the end of the enum so every existing discriminant is stable.
+    TeeLocal,  // u8 slot, u8 n : copy top n slots to local[slot..] WITHOUT popping
+               // (fuses StoreLocal slot,n ; LoadLocal slot,n — the temp reload)
+    IncLocalI, // u8 slot, u16 cidx : local[slot] = int(local[slot]) +i const[cidx]
+               // (fuses LoadLocal s,1 ; PushConst ; AddI ; StoreLocal s,1 — `i = i + k`)
+    BrCmpI,    // u8 kind, i16 rel : pop b,a; branch by rel if NOT cmp_kind(a,b)
+               // (fuses CmpI kind ; BrFalse rel — the integer loop-condition tail)
 }
 
 /// Graph-query kinds (the `GraphQuery` opcode operand).
@@ -357,8 +369,8 @@ pub struct Counters {
 impl Op {
     #[inline]
     pub fn from_u8(b: u8) -> Option<Op> {
-        // Op is a contiguous enum 0..=LoadCtxFix; guard the range then transmute.
-        if b <= Op::FillLocal as u8 {
+        // Op is a contiguous enum 0..=BrCmpI; guard the range then transmute.
+        if b <= Op::BrCmpI as u8 {
             Some(unsafe { core::mem::transmute::<u8, Op>(b) })
         } else {
             None
@@ -2371,6 +2383,51 @@ fn run(
                     if slot + i < MAX_LOCALS {
                         locals[slot + i] = 0.0;
                     }
+                }
+            }
+            // --- FUG-125 superinstructions ---------------------------------
+            Op::TeeLocal => {
+                // StoreLocal slot,n ; LoadLocal slot,n : write the top n stack
+                // slots to local[slot..] but leave them on the stack.
+                let slot = code[pc] as usize;
+                let n = code[pc + 1] as usize;
+                pc += 2;
+                for i in 0..n {
+                    if slot + i < MAX_LOCALS && sp >= n {
+                        locals[slot + i] = stack[sp - n + i];
+                    }
+                }
+            }
+            Op::IncLocalI => {
+                // LoadLocal s,1 ; PushConst k ; AddI ; StoreLocal s,1 : the
+                // integer compound-add idiom `i = i + k` (loop counters, indices).
+                let slot = code[pc] as usize;
+                let idx = rd_u16(code, pc + 1) as usize;
+                pc += 3;
+                let k = prog.const_f32(idx).to_bits() as i32;
+                if slot < MAX_LOCALS {
+                    let cur = locals[slot].to_bits() as i32;
+                    locals[slot] = f32::from_bits(cur.wrapping_add(k) as u32);
+                }
+            }
+            Op::BrCmpI => {
+                // CmpI kind ; BrFalse rel : compare two ints and branch when the
+                // comparison is FALSE (BrFalse branched on the 0 that CmpI pushed).
+                let kind = code[pc];
+                let rel = i16::from_le_bytes([code[pc + 1], code[pc + 2]]);
+                pc += 3;
+                let b = popi!();
+                let a = popi!();
+                let t = match kind {
+                    0 => a < b,
+                    1 => a <= b,
+                    2 => a > b,
+                    3 => a >= b,
+                    4 => a == b,
+                    _ => a != b,
+                };
+                if !t {
+                    pc = (pc as isize + rel as isize) as usize;
                 }
             }
         }

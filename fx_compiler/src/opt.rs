@@ -46,9 +46,13 @@ struct Ins {
 }
 
 impl Ins {
-    /// Encoded byte length (opcode + operands). Branches/call are always 3.
+    /// Encoded byte length (opcode + operands). A branch is `1 + prefix-ops + 2`
+    /// (its `ops` hold the prefix bytes; the `i16` rel is implied by `target`);
+    /// a `Call` is 3.
     fn enc_len(&self) -> usize {
-        if is_branch(self.op) || self.op == op::CALL {
+        if is_branch(self.op) {
+            1 + self.ops.len() + 2
+        } else if self.op == op::CALL {
             3
         } else {
             1 + self.ops.len()
@@ -56,8 +60,19 @@ impl Ins {
     }
 }
 
+/// Number of operand bytes a branch opcode carries *before* its `i16` relative
+/// target (so the target stays symbolic in `Ins::target` while the prefix rides
+/// in `ops`). `None` for non-branches.
+fn branch_prefix(o: u8) -> Option<usize> {
+    match o {
+        op::BR_FALSE | op::JMP => Some(0),
+        op::BR_CMP_I => Some(1), // the compare `kind` byte
+        _ => None,
+    }
+}
+
 fn is_branch(o: u8) -> bool {
-    o == op::BR_FALSE || o == op::JMP
+    branch_prefix(o).is_some()
 }
 
 fn is_ctrl_target_op(o: u8) -> bool {
@@ -116,6 +131,9 @@ pub(crate) fn op_len(code: &[u8], pc: usize) -> Option<usize> {
         RET_RGB_FIX => 2,
         LOAD_CTX_FIX => 4,
         FILL_LOCAL => 3,
+        TEE_LOCAL => 3,
+        INC_LOCAL_I => 4,
+        BR_CMP_I => 4,
         _ => return None,
     };
     Some(n)
@@ -146,6 +164,7 @@ pub(crate) fn optimize(
         changed |= fold_branches(&mut prog, consts);
         changed |= eliminate_dead_locals(&mut prog);
         changed |= remove_unreachable(&mut prog);
+        changed |= fuse_superinstructions(&mut prog, consts);
         if !changed {
             break;
         }
@@ -215,10 +234,11 @@ fn decode(code: &[u8], update: u16, shade: u16) -> Option<Prog> {
     for (i, &o) in offs.iter().enumerate() {
         let opc = code[o];
         let len = op_len(code, o)?;
-        let (ops, target) = if is_branch(opc) {
-            let rel = i16::from_le_bytes([code[o + 1], code[o + 2]]);
-            let target_byte = (o as isize + 3 + rel as isize) as usize;
-            (Vec::new(), resolve(target_byte)?)
+        let (ops, target) = if let Some(prefix) = branch_prefix(opc) {
+            let rel_at = o + 1 + prefix;
+            let rel = i16::from_le_bytes([code[rel_at], code[rel_at + 1]]);
+            let target_byte = (rel_at as isize + 2 + rel as isize) as usize;
+            (code[o + 1..rel_at].to_vec(), resolve(target_byte)?)
         } else if opc == op::CALL {
             let target_byte = u16::from_le_bytes([code[o + 1], code[o + 2]]) as usize;
             (Vec::new(), resolve(target_byte)?)
@@ -260,8 +280,10 @@ fn encode(prog: &Prog, update: &mut u16, shade: &mut u16) -> Option<Vec<u8>> {
         let here = id_off[&ii.id];
         out.push(ii.op);
         if is_branch(ii.op) {
+            out.extend_from_slice(&ii.ops); // branch prefix bytes (e.g. BrCmpI kind)
             let dst = *id_off.get(&ii.target)?;
-            let rel = dst as isize - (here + 3) as isize;
+            // rel is measured from the byte after the 2-byte i16.
+            let rel = dst as isize - (here + 1 + ii.ops.len() + 2) as isize;
             out.extend_from_slice(&i16::try_from(rel).ok()?.to_le_bytes());
         } else if ii.op == op::CALL {
             let dst = *id_off.get(&ii.target)?;
@@ -536,7 +558,7 @@ fn remove_unreachable(prog: &mut Prog) -> bool {
         match ii.op {
             op::JMP => goto(ii.target, &mut stack),
             op::RET | op::RET_FN | op::RET_RGB8 | op::RET_RGB_FIX => {}
-            op::BR_FALSE | op::CALL => {
+            op::BR_FALSE | op::BR_CMP_I | op::CALL => {
                 goto(ii.target, &mut stack);
                 stack.push(i + 1);
             }
@@ -571,14 +593,20 @@ fn eliminate_dead_locals(prog: &mut Prog) -> bool {
     if has_dyn {
         return false;
     }
-    // Count references to each local slot from every static local op.
+    // Count references to each local slot from every static local op — including
+    // the superinstructions the fusion pass may have already produced (they too
+    // read/write a local), so a fused counter/temp is never miscounted as unused.
     let mut touch: HashMap<u8, u32> = HashMap::new();
     for ii in &prog.ins {
-        if matches!(ii.op, op::LOAD_LOCAL | op::STORE_LOCAL | op::FILL_LOCAL) {
-            let (slot, n) = (ii.ops[0], ii.ops[1]);
-            for s in slot..slot.saturating_add(n) {
-                *touch.entry(s).or_insert(0) += 1;
+        let (slot, n) = match ii.op {
+            op::LOAD_LOCAL | op::STORE_LOCAL | op::FILL_LOCAL | op::TEE_LOCAL => {
+                (ii.ops[0], ii.ops[1])
             }
+            op::INC_LOCAL_I => (ii.ops[0], 1),
+            _ => continue,
+        };
+        for s in slot..slot.saturating_add(n) {
+            *touch.entry(s).or_insert(0) += 1;
         }
     }
 
@@ -602,6 +630,77 @@ fn eliminate_dead_locals(prog: &mut Prog) -> bool {
                 for s in slot..slot.saturating_add(n) {
                     touch.remove(&s);
                 }
+                changed = true;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    changed
+}
+
+// -- pass: superinstruction fusion --------------------------------------------
+
+/// Fuse the profiler's hottest opcode sequences into the VM's superinstructions
+/// (see `fx_vm::Op`): the integer loop-condition tail (`CmpI; BrFalse` →
+/// `BrCmpI`), the compound-add counter idiom (`LoadLocal; PushConst; AddI;
+/// StoreLocal` → `IncLocalI`), and the temp reload (`StoreLocal; LoadLocal` →
+/// `TeeLocal`). Each is an exact fusion, so the differential test still holds.
+/// A window is only fused when none of the instructions it consumes is a
+/// branch/call/entry target (a jump landing mid-window would change meaning).
+fn fuse_superinstructions(prog: &mut Prog, consts: &[u32]) -> bool {
+    let mut changed = false;
+    let mut i = 0usize;
+    while i < prog.ins.len() {
+        let refd = prog.referenced();
+
+        // `i = i + k`: LoadLocal s,1 ; PushConst k(int) ; AddI ; StoreLocal s,1.
+        if i + 3 < prog.ins.len() && window_deletable(&prog.ins, i, 4, &refd) {
+            let w = &prog.ins[i..i + 4];
+            if w[0].op == op::LOAD_LOCAL
+                && w[0].ops.len() == 2
+                && w[0].ops[1] == 1 // width 1 (scalar counter)
+                && w[1].op == op::PUSH_CONST
+                && w[2].op == op::ADD_I
+                && w[3].op == op::STORE_LOCAL
+                && w[3].ops == w[0].ops
+            {
+                let slot = w[0].ops[0];
+                let cidx = [w[1].ops[0], w[1].ops[1]];
+                let _ = consts; // (const stays in the pool, referenced by idx)
+                let id = prog.fresh_id();
+                let ops = vec![slot, cidx[0], cidx[1]];
+                prog.ins
+                    .splice(i..i + 4, [Ins { id, op: op::INC_LOCAL_I, ops, target: 0 }]);
+                changed = true;
+                continue;
+            }
+        }
+
+        // Integer loop condition: CmpI kind ; BrFalse rel  ->  BrCmpI kind, rel.
+        if i + 1 < prog.ins.len() && window_deletable(&prog.ins, i, 2, &refd) {
+            let (a, b) = (&prog.ins[i], &prog.ins[i + 1]);
+            if a.op == op::CMP_I && b.op == op::BR_FALSE {
+                let kind = a.ops[0];
+                let target = b.target;
+                let id = prog.fresh_id();
+                prog.ins.splice(
+                    i..i + 2,
+                    [Ins { id, op: op::BR_CMP_I, ops: vec![kind], target }],
+                );
+                changed = true;
+                continue;
+            }
+        }
+
+        // Temp reload: StoreLocal s,n ; LoadLocal s,n  ->  TeeLocal s,n.
+        if i + 1 < prog.ins.len() && window_deletable(&prog.ins, i, 2, &refd) {
+            let (a, b) = (&prog.ins[i], &prog.ins[i + 1]);
+            if a.op == op::STORE_LOCAL && b.op == op::LOAD_LOCAL && a.ops == b.ops {
+                let ops = a.ops.clone();
+                let id = prog.fresh_id();
+                prog.ins
+                    .splice(i..i + 2, [Ins { id, op: op::TEE_LOCAL, ops, target: 0 }]);
                 changed = true;
                 continue;
             }

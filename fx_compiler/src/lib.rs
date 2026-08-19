@@ -2882,6 +2882,15 @@ fn decode_op(code: &[u8], pc: usize) -> (String, usize) {
         RET_RGB_FIX => (format!("RET_RGB_FIX frac={}", b(0)), 2),
         LOAD_CTX_FIX => (format!("LOAD_CTX_FIX {} comp={} frac={}", ctx_name(b(0)), b(1), b(2)), 4),
         FILL_LOCAL => (format!("FILL_LOCAL slot={} n={}", b(0), b(1)), 3),
+        // FUG-125 superinstructions.
+        TEE_LOCAL => (format!("TEE_LOCAL slot={} n={}", b(0), b(1)), 3),
+        INC_LOCAL_I => (format!("INC_LOCAL_I slot={} c{}", b(0), u16at(1)), 4),
+        BR_CMP_I => {
+            // op, kind(u8), i16 rel — target is relative to the byte after the rel.
+            let next = pc + 4;
+            let tgt = (next as isize + i16::from_le_bytes([b(1), b(2)]) as isize) as isize;
+            (format!("BR_CMP_I {} -> {tgt}", cmp_kind(b(0))), 4)
+        }
         other => (format!("?? 0x{other:02x}"), 0),
     }
 }
@@ -3040,6 +3049,10 @@ mod fx_vm_op {
     pub const RET_RGB_FIX: u8 = 99;
     pub const LOAD_CTX_FIX: u8 = 100;
     pub const FILL_LOCAL: u8 = 101;
+    // FUG-125 superinstructions (emitted by the optimizer, mirror fx_vm::Op).
+    pub const TEE_LOCAL: u8 = 102;
+    pub const INC_LOCAL_I: u8 = 103;
+    pub const BR_CMP_I: u8 = 104;
 }
 
 /// `.fxb` flags bit: a buffer descriptor table follows `code` (mirrors
