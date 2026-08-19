@@ -218,6 +218,11 @@ pub struct Player {
     /// updates `device_name` in place (the firmware persists it + renames BLE).
     mac: Str64,
     device_name: Str64,
+    /// Git commit the firmware was built from (full hash) + whether the tree was
+    /// dirty, set once by the firmware via [`Player::set_build_info`] (it owns the
+    /// stamped `build_info.h`) and echoed in every `welcome`. Empty/false until set.
+    fw_git_commit: Str64,
+    fw_git_dirty: bool,
     default_led_count: u32,
     active: Option<ActiveCapture>,
     counting: Option<(i64, CountingBlocks)>,
@@ -253,6 +258,8 @@ impl Player {
             session_id: s64(session_id),
             mac: Str64::new(),
             device_name: Str64::new(),
+            fw_git_commit: Str64::new(),
+            fw_git_dirty: false,
             default_led_count,
             active: None,
             counting: None,
@@ -635,6 +642,14 @@ impl Player {
         self.device_name = s64(device_name);
     }
 
+    /// Set the firmware build info echoed in `welcome` (called once at init by the
+    /// firmware, which owns the stamped `build_info.h`). `commit` is the full git
+    /// hash; `dirty` marks an uncommitted working tree at build time.
+    pub fn set_build_info(&mut self, commit: &str, dirty: bool) {
+        self.fw_git_commit = s64(commit);
+        self.fw_git_dirty = dirty;
+    }
+
     /// The player's current display name (after any `set_device_name`), so the
     /// firmware can persist it + rename the BLE advertisement.
     pub fn device_name(&self) -> &str {
@@ -675,6 +690,8 @@ impl Player {
         w.r#session_id = self.session_id.clone();
         w.r#mac = self.mac.clone();
         w.r#device_name = self.device_name.clone();
+        w.r#fw_git_commit = self.fw_git_commit.clone();
+        w.r#fw_git_dirty = self.fw_git_dirty;
         w.set_brightness(self.output_brightness as f64);
         let spec = CodeSpec::derive(self.default_led_count, DEFAULT_SYMBOLS, true);
         w.set_code_params(code_params_msg(&spec, DEFAULT_BIT_PERIOD_MS, 1.0));

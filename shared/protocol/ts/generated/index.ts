@@ -421,6 +421,11 @@ export interface WelcomeMessage {
   /** Current display / Bluetooth name (default "Led Widget <6-hex>" or a
    * user-customized name). Empty on older firmware. */
   deviceName: string;
+  /** Git commit the firmware was built from (full 40-char hash), stamped
+   * in via Bazel --stamp. Empty on older firmware / an unstamped build. */
+  fwGitCommit: string;
+  /** Whether the firmware was built from a dirty working tree. */
+  fwGitDirty: boolean;
 }
 
 /** Reply to stop_mapping with solveOnHost=false: capture stopped + log

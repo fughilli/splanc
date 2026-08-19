@@ -42,6 +42,7 @@
 #include "firmware/landing/landing_page.h"
 #include "firmware/player_app/improv_ble.h"
 #include "selfsigned.h"  // @embedded//libs/tls: on-device keygen + cert re-issuance
+#include "firmware/player_app/build_info.h"  // generated: LM_GIT_COMMIT / LM_GIT_DIRTY
 #include "firmware/player_app/color_correction.h"
 #include "firmware/player_app/improv_codec.h"
 #include "firmware/player_app/led_config.h"
@@ -1967,8 +1968,13 @@ void setup() {
 
   lm_player_set_identity(reinterpret_cast<const uint8_t *>(macstr), strlen(macstr),
                          reinterpret_cast<const uint8_t *>(g_device_name), strlen(g_device_name));
-  Log().printf("[player] identity %s / \"%s\" ap \"%s\" host %s.local\n", macstr,
-               g_device_name, g_ap_ssid, g_hostname);
+  // Build info stamped in at build time (FUG-126): the full git commit + dirty
+  // flag, echoed in every welcome so the app can show + link the device's build.
+  lm_player_set_build_info(reinterpret_cast<const uint8_t *>(LM_GIT_COMMIT), strlen(LM_GIT_COMMIT),
+                           LM_GIT_DIRTY);
+  Log().printf("[player] identity %s / \"%s\" ap \"%s\" host %s.local build %s%s\n", macstr,
+               g_device_name, g_ap_ssid, g_hostname, LM_GIT_COMMIT_SHORT,
+               LM_GIT_DIRTY ? "-dirty" : "");
 
   improv_ble_begin(g_device_name,
                    ssid.length() > 0 ? IMPROV_STATE_PROVISIONING : IMPROV_STATE_AUTHORIZED);

@@ -28,6 +28,8 @@ const PROBE_TIMEOUT = 10_000;
 export interface ProbeInfo {
   mac: string;
   deviceName: string;
+  fwGitCommit: string;
+  fwGitDirty: boolean;
 }
 
 /** Open a transient wss to read a device's welcome (MAC + name), then close.
@@ -46,7 +48,14 @@ export async function probeDevice(wssUrl: string): Promise<ProbeInfo | null> {
     );
     await Promise.race([client.connect(), timeout]);
     const w = client.welcome;
-    return w ? { mac: w.mac, deviceName: w.deviceName } : null;
+    return w
+      ? {
+          mac: w.mac,
+          deviceName: w.deviceName,
+          fwGitCommit: w.fwGitCommit,
+          fwGitDirty: w.fwGitDirty,
+        }
+      : null;
   } catch {
     return null;
   } finally {

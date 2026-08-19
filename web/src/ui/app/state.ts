@@ -103,12 +103,24 @@ class AppState {
         // tracks the display name the user set.
         const w = client.welcome;
         if (w) {
-          deviceStore.applyWelcome(dev.id, { mac: w.mac, deviceName: w.deviceName });
+          deviceStore.applyWelcome(dev.id, {
+            mac: w.mac,
+            deviceName: w.deviceName,
+            fwGitCommit: w.fwGitCommit,
+            fwGitDirty: w.fwGitDirty,
+          });
           const pending = deviceStore.takePending(dev.id);
           if (pending && pending !== w.deviceName) {
             await client
               .setDeviceName(pending)
-              .then((nw) => deviceStore.applyWelcome(dev.id, { mac: nw.mac, deviceName: nw.deviceName }))
+              .then((nw) =>
+                deviceStore.applyWelcome(dev.id, {
+                  mac: nw.mac,
+                  deviceName: nw.deviceName,
+                  fwGitCommit: nw.fwGitCommit,
+                  fwGitDirty: nw.fwGitDirty,
+                }),
+              )
               .catch(() => undefined);
           }
         }

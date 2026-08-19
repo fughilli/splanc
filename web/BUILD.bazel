@@ -20,8 +20,17 @@ load("@aspect_rules_ts//ts:defs.bzl", "ts_config", "ts_project")
 load("@npm//:defs.bzl", "npm_link_all_packages")
 load("@npm//web:vite/package_json.bzl", vite_bin = "bin")
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+load("//tools/build_info:build_info.bzl", "build_info_file")
 
 package(default_visibility = ["//visibility:public"])
+
+# Git build info (FUG-126) stamped into the bundle: vite.config.ts reads this
+# JSON and injects it via `define` (src/buildInfo.ts → About page commit link).
+build_info_file(
+    name = "build_info_json",
+    out = "build_info.json",
+    template = "build_info.json.tmpl",
+)
 
 # The cross-language goldens (Python-generated, TS-verified here) also feed
 # the firmware legs: the wire frames drive the Rust/micropb conformance test
@@ -286,6 +295,7 @@ vite_bin.vite(
         "package.json",
         "vite.config.ts",
         "wall.html",
+        ":build_info_json",  # stamped git build info (read by vite.config.ts)
         ":node_modules/@bufbuild/protobuf",
         ":node_modules/@ledmapper/protocol",
         ":node_modules/esptool-js",

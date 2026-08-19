@@ -547,6 +547,8 @@ def test_decode_raw_dict_welcome_message() -> None:
         "solverBenchMs": None,
         "mac": "AA:BB:CC:DD:EE:FF",
         "deviceName": "Led Widget AABBCC",
+        "fwGitCommit": "0123456789abcdef0123456789abcdef01234567",
+        "fwGitDirty": False,
         "codeParams": {
             "ledCount": 1024,
             "bits": 10,

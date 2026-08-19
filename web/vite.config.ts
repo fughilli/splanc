@@ -10,6 +10,7 @@
  * (`bazelisk run //web:serve`).
  */
 
+import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
 import { defineConfig } from "vite";
@@ -32,7 +33,43 @@ const devPort = process.env["LEDMAPPER_DEV_PORT"]
   ? Number(process.env["LEDMAPPER_DEV_PORT"])
   : undefined;
 
+interface BuildInfo {
+  gitCommit: string;
+  gitCommitShort: string;
+  gitDirty: boolean;
+}
+
+/**
+ * Git build info baked into the bundle (FUG-126), surfaced on the About page.
+ * In a Bazel build, //web:build_info_json stamps it from the workspace status
+ * (`--stamp` / //tools/build_info) and is present as build_info.json in the
+ * action's cwd. Outside Bazel (`pnpm --dir web dev`) that file is absent, so we
+ * fall back to a direct git query, then to an "unknown" dev placeholder.
+ */
+function resolveBuildInfo(): BuildInfo {
+  try {
+    return JSON.parse(readFileSync("build_info.json", "utf8")) as BuildInfo;
+  } catch {
+    // no stamped file — dev server.
+  }
+  try {
+    const commit = execSync("git rev-parse HEAD", { encoding: "utf8" }).trim();
+    const short = execSync("git rev-parse --short=8 HEAD", { encoding: "utf8" }).trim();
+    const dirty = execSync("git status --porcelain", { encoding: "utf8" }).trim().length > 0;
+    return { gitCommit: commit, gitCommitShort: short, gitDirty: dirty };
+  } catch {
+    return { gitCommit: "", gitCommitShort: "", gitDirty: false };
+  }
+}
+
+const buildInfo = resolveBuildInfo();
+
 export default defineConfig({
+  // Compile-time git build info, read by src/buildInfo.ts (About page + device
+  // card commit links). Replaced literally in the bundle by esbuild/rolldown.
+  define: {
+    __BUILD_INFO__: JSON.stringify(buildInfo),
+  },
   // Relative base so ONE built bundle works whether it's served from an origin
   // root (the Pi M2 server, Cloudflare ledmapper.pages.dev) OR from a subpath
   // (GitHub Pages project site https://fughilli.github.io/splanc/ and its

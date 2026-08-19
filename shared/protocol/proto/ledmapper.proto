@@ -541,6 +541,13 @@ message Welcome {
   // master-dimmer control on connect. Runtime-only on the device (defaults to
   // 1.0 after a reboot); unset on older firmware.
   optional double brightness = 6;
+  // Git commit the firmware was built from (full 40-char hash), stamped in at
+  // build time (FUG-126). Lets the app show + link the device's exact build.
+  // Empty on older firmware or an unstamped build.
+  string fw_git_commit = 7;
+  // True when the firmware was built from a dirty working tree (uncommitted
+  // changes). Always false on older firmware.
+  bool fw_git_dirty = 8;
 }
 
 // Stream a frame into a loaded effect's 2D `texture` (video textures). `data` is
