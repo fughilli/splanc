@@ -803,6 +803,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if route == "/":
                 self._json({"usage": __doc__, "playwright": _pw_ok()})
+            elif route == "/ping":
+                # Lightweight health check the app uses to show "connected".
+                self._json({"ok": True, "server": "ledmapper-debug"})
             elif route == "/qr":
                 self._html(_qr_page(CFG.get("intake_url", "")))
             elif route == "/probe":

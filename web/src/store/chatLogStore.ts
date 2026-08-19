@@ -9,9 +9,9 @@
  * (`ledmapper-chatlog`) so it never has to touch the shared `ledmapper` DB's
  * version/upgrade coordination (mapStore + effectStore both own that one).
  *
- * The debug-server sheet (debugServerSheet.ts) ships these to the host-side
- * `tools/browser_server.py` `/chatlogs` endpoint (or downloads them as JSON),
- * the same pull path already used for the effects library.
+ * Settings ▸ Debugging ships these to the host-side `tools/browser_server.py`
+ * `/chatlogs` endpoint (or downloads them as JSON), the same pull path already
+ * used for the effects library.
  *
  * Base64 image bytes from `capture_preview` tool results are REDACTED to a size
  * placeholder — they're huge, and the tool-call sequence + text is what matters

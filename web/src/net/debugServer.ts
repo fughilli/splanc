@@ -52,3 +52,50 @@ export function getJson(base: string, path: string): Promise<HttpResult> {
     text: () => res.text(),
   }));
 }
+
+// -- Connection status -------------------------------------------------------
+// "Connected" means the last /ping succeeded. It's runtime state (reachability
+// changes), so it lives in memory with a subscribe seam the UI observes; the URL
+// itself is what persists.
+type Listener = () => void;
+let connected = false;
+const listeners = new Set<Listener>();
+
+export function debugServerConnected(): boolean {
+  return connected;
+}
+
+export function subscribeDebugServer(fn: Listener): () => void {
+  listeners.add(fn);
+  return () => listeners.delete(fn);
+}
+
+function setConnected(v: boolean): void {
+  if (v === connected) return;
+  connected = v;
+  for (const fn of listeners) fn();
+}
+
+/** Health-check the configured server (`GET /ping`) and update connected state.
+ * Never throws. */
+export async function pingDebugServer(): Promise<boolean> {
+  const base = debugServerUrl();
+  if (!base) {
+    setConnected(false);
+    return false;
+  }
+  try {
+    const res = await getJson(base, "/ping");
+    setConnected(res.ok);
+    return res.ok;
+  } catch {
+    setConnected(false);
+    return false;
+  }
+}
+
+/** Point at a server URL and verify it (ping). Returns whether it connected. */
+export async function connectDebugServer(url: string): Promise<boolean> {
+  setDebugServerUrl(url);
+  return pingDebugServer();
+}

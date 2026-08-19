@@ -140,4 +140,60 @@ const CSS = `
   font-size: var(--f-caption);
   text-align: center;
 }
+
+/* Debug-server connect block: a big camera button over a status label; the
+   button glows green once connected. */
+.dbg-connect {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-3) 0 var(--sp-2);
+}
+.k-iconbtn.dbg-connect-btn {
+  width: 3.4rem;
+  height: 3.4rem;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--surface-2);
+}
+.k-iconbtn.dbg-connect-btn svg {
+  width: 1.6rem;
+  height: 1.6rem;
+}
+.k-iconbtn.dbg-connect-btn.on {
+  color: #16a34a;
+  border-color: #16a34a;
+  background: rgba(22, 163, 74, 0.16);
+}
+.dbg-connect-status {
+  font-size: var(--f-caption);
+  color: var(--text-dim);
+}
+.dbg-connect-status.on {
+  color: #16a34a;
+  font-weight: 600;
+}
+
+/* Manual-URL panel inside the connect viewfinder overlay (reuses .qrscan*). */
+.dbgconn-url {
+  position: absolute;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + var(--sp-4));
+  left: var(--sp-4);
+  right: var(--sp-4);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  justify-content: center;
+}
+.dbgconn-input {
+  flex: 1 1 100%;
+  min-width: 0;
+  padding: 0.6rem 0.9rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: rgba(20, 20, 26, 0.8);
+  color: #fff;
+  font: inherit;
+}
 `;
