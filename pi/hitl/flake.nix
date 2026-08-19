@@ -7,10 +7,10 @@
   description = "HITL rig — Pi test bench + agent CLI (sbc-deploy consumer)";
 
   inputs = {
-    # sbc-deploy main @ a21f1e9 (#7: persistent, immutable board-hostname identity).
-    # The `update` mode (board+profile autodetect) is sbc-deploy PR #8, not yet
-    # pinned — repin here once it lands to enable //pi/hitl:update.
-    sbc-deploy.url = "github:fughilli/sbc-deploy/a21f1e9?dir=nix";
+    # sbc-deploy main @ f51b3f2 (#7 persistent hostname identity + #8 `update`
+    # mode: board + capability-profile autodetect). Kept in lockstep with the
+    # @sbc_deploy git_override in //MODULE.bazel.
+    sbc-deploy.url = "github:fughilli/sbc-deploy/f51b3f2?dir=nix";
     nixpkgs.follows = "sbc-deploy/nixpkgs";
   };
 

@@ -116,17 +116,17 @@
       },
       "locked": {
         "dir": "nix",
-        "lastModified": 1787168378,
-        "narHash": "sha256-a1WLTfqB1ANMIlHnnHc1fc6nEkEh1y+lYa65pitjZPg=",
+        "lastModified": 1787169079,
+        "narHash": "sha256-QTjRoKmjD58lQSKVFtMevDeKks3I//w66z5bhNA8RCU=",
         "owner": "fughilli",
         "repo": "sbc-deploy",
-        "rev": "a21f1e91ca0e4ab0dd60053d00022a7531938194",
+        "rev": "f51b3f2cd0036caf4f594c70ad79e86ce51fec31",
         "type": "github"
       },
       "original": {
         "dir": "nix",
         "owner": "fughilli",
-        "ref": "a21f1e9",
+        "ref": "f51b3f2",
         "repo": "sbc-deploy",
         "type": "github"
       }

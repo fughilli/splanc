@@ -31,9 +31,25 @@ _wifi_config = (glob(
 
 sbc_application(
     name = "hitl",
+    # Hybrid detect-warn for `:update`: probe the board for the Saleae Logic
+    # analyzer (USB 0925:3881) and report the capability it implies; `.update`
+    # warns if this disagrees with the board's committed /var/lib/sbc/profile.
+    detect_caps_cmd = "lsusb | grep -q 0925:3881 && echo SBC_ANALYZER=1 || echo SBC_ANALYZER=0",
     flake = "pi/hitl",
     hostname = "hitl-rig",
     wifi_config_file = _wifi_config,
+)
+
+# The one-shot "make this rig current" deploy. `:update` reads the board's own
+# hardware (Pi 5 vs Pi 3 -> SBC_BOARD) and committed capability profile
+# (/var/lib/sbc/profile -> SBC_ANALYZER etc.) and deploys the matching closure —
+# no per-board target or SBC_* flags to remember, and the identity is reused from
+# the board (never reset). Aliased to :hitl.update since update autodetects the
+# board, so it serves every rig (incl. the Pi 3):
+#   bazel run //pi/hitl:update -- hitl-rig-2   # detects LA Pi5, analyzer profile
+alias(
+    name = "update",
+    actual = ":hitl.update",
 )
 
 # Raspberry Pi 3B/3B+ board variant of the SAME flake + config (:hitl above is the
