@@ -10,6 +10,10 @@
 use std::collections::HashMap;
 use std::fmt::Write as _;
 
+// Bytecode optimizer (FUG-125): decode → peephole/local/CFG passes → re-encode,
+// run over the emitted code just before it is serialized in `finish`.
+mod opt;
+
 // -- types --------------------------------------------------------------------
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -373,6 +377,9 @@ pub struct Compiler {
     // FUG-122: set once the program references `led.uv` (float or fixed), so the
     // host can skip the per-LED soft-float uv projection when it's unset.
     uses_uv: bool,
+    // FUG-125: run the bytecode optimizer in `finish`. Off only for the
+    // differential test harness / instruction-count measurements.
+    optimize: bool,
 }
 
 /// A just-emitted numeric literal, for the constant-cast fold (FUG-122).
@@ -396,7 +403,16 @@ struct CtxProv {
 const CTX_WHOLE: u8 = 0xFF;
 
 /// Compile GLSL-ish source to `.fxb` + manifest, or a list of diagnostics.
+/// Runs the bytecode optimizer (FUG-125); see [`compile_opts`] to disable it.
 pub fn compile(src: &str) -> Result<Compiled, Vec<Diagnostic>> {
+    compile_opts(src, true)
+}
+
+/// Like [`compile`], but with the bytecode optimizer explicitly toggled. The
+/// unoptimized path exists for the differential test harness (compile both ways,
+/// prove the fx_vm renders identical RGB) and for measuring the optimizer's
+/// instruction-count win against the golden device profile.
+pub fn compile_opts(src: &str, optimize: bool) -> Result<Compiled, Vec<Diagnostic>> {
     let mut lx = Lexer::new(src);
     let mut toks = Vec::new();
     loop {
@@ -433,6 +449,7 @@ pub fn compile(src: &str) -> Result<Compiled, Vec<Diagnostic>> {
         last_const: None,
         emitted_ctxfix: false,
         uses_uv: false,
+        optimize,
     };
     match c.program() {
         Ok(()) => Ok(c.finish()),
@@ -2553,7 +2570,20 @@ impl Compiler {
         Diagnostic { line: *line, col: *col, msg: msg.to_string() }
     }
 
-    fn finish(self) -> Compiled {
+    fn finish(mut self) -> Compiled {
+        // FUG-125: optimize the emitted bytecode (constant folding, algebraic
+        // simplification, dead-local + dead-code elimination) before we lay out
+        // the `.fxb`. The pass repoints the entry offsets and may grow the const
+        // pool; it is a semantics-preserving rewrite (guarded by the differential
+        // `optimizer_preserves_output` test) so host + wasm stay bit-identical.
+        if self.optimize {
+            self.code = opt::optimize(
+                &self.code,
+                &mut self.consts,
+                &mut self.update_entry,
+                &mut self.shade_entry,
+            );
+        }
         let mut b = Vec::new();
         let mut flags = if self.buffers.is_empty() { 0 } else { FLAG_BUFFERS };
         if self.emitted_ctxfix {
