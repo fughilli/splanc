@@ -40,7 +40,18 @@ import {
 } from "../../store/chatLogStore";
 import { remoteChatEnabled, setRemoteChatEnabled } from "../../net/remoteChat";
 
-type SettingsTab = "appearance" | "behavior";
+type SettingsTab = "appearance" | "behavior" | "debugging";
+
+// The Debugging tab is hidden until the user opts in (Behavior ▸ "Enable Debug
+// Settings"), so the developer affordances don't clutter the default surface.
+const DEBUG_SETTINGS_KEY = "ledmapper.debugSettings";
+function debugSettingsEnabled(): boolean {
+  return localStorage.getItem(DEBUG_SETTINGS_KEY) === "1";
+}
+function setDebugSettingsEnabled(on: boolean): void {
+  if (on) localStorage.setItem(DEBUG_SETTINGS_KEY, "1");
+  else localStorage.removeItem(DEBUG_SETTINGS_KEY);
+}
 
 const FONT_LABELS: Record<FontChoice, string> = {
   system: "System",
@@ -101,15 +112,22 @@ export function SettingsScreen(router: Router): Screen {
   const preview = buildPreview();
 
   function rerender(): void {
-    const panels =
-      tab === "appearance"
-        ? [themeGroup(), typeGroup(), viewGroup(), startupGroup(), experimentalGroup(), appearanceResetRow()]
-        : [captureGroup(), helpGroup(), debugGroup(), captureResetRow()];
+    // The Debugging tab can vanish (toggle turned off) while it's selected — fall
+    // back to Behavior so we never render an empty/orphaned tab.
+    if (tab === "debugging" && !debugSettingsEnabled()) tab = "behavior";
+    let panels: HTMLElement[];
+    if (tab === "appearance") {
+      panels = [themeGroup(), typeGroup(), viewGroup(), startupGroup(), experimentalGroup(), appearanceResetRow()];
+    } else if (tab === "debugging") {
+      panels = [debugGroup()];
+    } else {
+      panels = [captureGroup(), helpGroup(), developerGroup(), captureResetRow()];
+    }
     body.replaceChildren(tabBar(), ...panels);
   }
 
   // Switch tabs. The 3D preview only lives in the Appearance panel, so pause its
-  // render loop while it's off-screen (Capture) and resume when it's back.
+  // render loop while it's off-screen and resume when it's back.
   function setTab(next: SettingsTab): void {
     if (next === tab) return;
     tab = next;
@@ -131,6 +149,8 @@ export function SettingsScreen(router: Router): Screen {
       return b;
     };
     bar.append(mk("appearance", "Appearance"), mk("behavior", "Behavior"));
+    // Debugging is a first-class tab, shown only once opted in.
+    if (debugSettingsEnabled()) bar.append(mk("debugging", "Debugging"));
     return bar;
   }
 
@@ -240,10 +260,36 @@ export function SettingsScreen(router: Router): Screen {
     return g;
   }
 
-  // -- Debugging (developer affordances) -----------------------------------
+  // -- Developer (Behavior tab) — gates the Debugging tab ------------------
+  function developerGroup(): HTMLElement {
+    const g = group("Developer");
+    g.append(
+      row(
+        "Enable Debug Settings",
+        "Show the Debugging tab: connect a debug server, pull AI chat logs, and " +
+          "drive the FX-agent chat remotely.",
+        segmented<"on" | "off">(
+          [
+            ["off", "Off"],
+            ["on", "On"],
+          ],
+          debugSettingsEnabled() ? "on" : "off",
+          (v) => {
+            setDebugSettingsEnabled(v === "on");
+            // Rebuild so the Debugging tab appears/disappears immediately.
+            rerender();
+            toast(v === "on" ? "Debug settings enabled" : "Debug settings hidden");
+          },
+        ),
+      ),
+    );
+    return g;
+  }
+
+  // -- Debugging (its own tab, shown once Debug Settings are enabled) -------
   // "Connect debug server" (was in the effects ⋯ menu) plus the FX-agent
-  // chat-log pull controls: it's used for both the effects library and the AI
-  // logs, so it lives here rather than cluttering a top-level menu.
+  // chat-log pull + remote-drive controls: used for both the effects library and
+  // the AI logs, so it lives here rather than cluttering a top-level menu.
   function debugGroup(): HTMLElement {
     const g = group("Debugging");
 
