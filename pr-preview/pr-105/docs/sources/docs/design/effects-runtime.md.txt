@@ -363,9 +363,27 @@ skipping the interpreter's per-opcode fetch/decode/dispatch/budget overhead.
   Unjitable blocks (bad `frac`, out-of-range offsets) are rejected, never
   miscompiled.
 
-`fx_jit` is `no_std` (+ `alloc`) so it builds for the firmware triple. **On-device
-integration** — allocating an executable IRAM window, flushing the I-cache after
-writing the segment, detecting the JIT-able block at effect load, and calling it
-from the render loop while the interpreter handles the rest — is the remaining
-device-side step; the crate is the portable, host-verified heart that produces the
-code, and the interpreter remains the correctness reference and fallback.
+`fx_jit` is `no_std` (the firmware links only the no-alloc `compile_into` /
+`plan_blocks_into` path; the `Vec`-based API is behind an `alloc` feature).
+
+**On-device integration (wired + validated).** At effect load the firmware
+(`ffi.rs::fx_build_jit`) scans the resident bytecode with `plan_blocks_into`,
+compiles each hot block into one executable region, patches `Op::JitCall` over the
+block's first bytes, and installs a `JitBlock` table on the VM; `JitCall` dispatch
+calls the native segment against the live stack/locals/consts and resumes
+interpreting at the block end. The interpreter runs everything else and is the
+always-on fallback (JIT disabled, or the region full).
+
+The executable memory is a **bounded W^X carve-out**. The arduino-esp32 C6 build
+ships esp-idf as precompiled libs (no RWX heap: IRAM is RX, DRAM is NX), so rather
+than weaken memory protection globally, the firmware makes one small static buffer
+read+write+execute via a spare RISC-V **PMP** entry: entries 3/4 are free and
+unlocked and, being lower-index than the SRAM data-region entries (PMP is
+lowest-index-wins), an RWX NAPOT entry there overrides the default NX for just that
+range — W^X stays enforced everywhere else.
+
+Validated on a real ESP32-C6 over HITL with a fixed-point-heavy `shade()`: the
+native JIT renders **bit-identically** to the interpreter and cuts per-LED
+`shade()` cost from **9797 → 4710 cycles (−51%, 2.08×)**. The boot self-bench
+`:esp32c6_fxjitbench` reproduces the A/B (`lm_fx_set_jit_enabled` toggles it on one
+firmware).

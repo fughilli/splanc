@@ -673,12 +673,27 @@ random blocks over random state through both and asserts identical results.
 Unjitable blocks (bad <code class="docutils literal notranslate"><span class="pre">frac</span></code>, out-of-range offsets) are rejected, never
 miscompiled.</p></li>
 </ul>
-<p><code class="docutils literal notranslate"><span class="pre">fx_jit</span></code> is <code class="docutils literal notranslate"><span class="pre">no_std</span></code> (+ <code class="docutils literal notranslate"><span class="pre">alloc</span></code>) so it builds for the firmware triple. <strong>On-device
-integration</strong> — allocating an executable IRAM window, flushing the I-cache after
-writing the segment, detecting the JIT-able block at effect load, and calling it
-from the render loop while the interpreter handles the rest — is the remaining
-device-side step; the crate is the portable, host-verified heart that produces the
-code, and the interpreter remains the correctness reference and fallback.</p>
+<p><code class="docutils literal notranslate"><span class="pre">fx_jit</span></code> is <code class="docutils literal notranslate"><span class="pre">no_std</span></code> (the firmware links only the no-alloc <code class="docutils literal notranslate"><span class="pre">compile_into</span></code> /
+<code class="docutils literal notranslate"><span class="pre">plan_blocks_into</span></code> path; the <code class="docutils literal notranslate"><span class="pre">Vec</span></code>-based API is behind an <code class="docutils literal notranslate"><span class="pre">alloc</span></code> feature).</p>
+<p><strong>On-device integration (wired + validated).</strong> At effect load the firmware
+(<code class="docutils literal notranslate"><span class="pre">ffi.rs::fx_build_jit</span></code>) scans the resident bytecode with <code class="docutils literal notranslate"><span class="pre">plan_blocks_into</span></code>,
+compiles each hot block into one executable region, patches <code class="docutils literal notranslate"><span class="pre">Op::JitCall</span></code> over the
+block’s first bytes, and installs a <code class="docutils literal notranslate"><span class="pre">JitBlock</span></code> table on the VM; <code class="docutils literal notranslate"><span class="pre">JitCall</span></code> dispatch
+calls the native segment against the live stack/locals/consts and resumes
+interpreting at the block end. The interpreter runs everything else and is the
+always-on fallback (JIT disabled, or the region full).</p>
+<p>The executable memory is a <strong>bounded W^X carve-out</strong>. The arduino-esp32 C6 build
+ships esp-idf as precompiled libs (no RWX heap: IRAM is RX, DRAM is NX), so rather
+than weaken memory protection globally, the firmware makes one small static buffer
+read+write+execute via a spare RISC-V <strong>PMP</strong> entry: entries 3/4 are free and
+unlocked and, being lower-index than the SRAM data-region entries (PMP is
+lowest-index-wins), an RWX NAPOT entry there overrides the default NX for just that
+range — W^X stays enforced everywhere else.</p>
+<p>Validated on a real ESP32-C6 over HITL with a fixed-point-heavy <code class="docutils literal notranslate"><span class="pre">shade()</span></code>: the
+native JIT renders <strong>bit-identically</strong> to the interpreter and cuts per-LED
+<code class="docutils literal notranslate"><span class="pre">shade()</span></code> cost from <strong>9797 → 4710 cycles (−51%, 2.08×)</strong>. The boot self-bench
+<code class="docutils literal notranslate"><span class="pre">:esp32c6_fxjitbench</span></code> reproduces the A/B (<code class="docutils literal notranslate"><span class="pre">lm_fx_set_jit_enabled</span></code> toggles it on one
+firmware).</p>
 </section>
 </section>
 
