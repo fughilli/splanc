@@ -337,3 +337,35 @@ RGB. It then hill-climbs the fx_vm retired-op counter (a direct proxy for device
 dispatch cost, priced by the golden per-opcode profile) and fails on any
 regression. Corpus-wide retired-op reduction is ~15%, up to ~36% on
 constant-heavy programs and ~15% on the loop-dominated agentic effect.
+
+## On-device JIT (FUG-125)
+
+The ESP32-C6 core is RISC-V RV32IMC, so a hot straight-line block of the cheap
+integer/fixed opcodes (loop counters, index math, Q16.16 multiplies) can be
+lowered to a **short position-independent code (PIC) segment** that runs natively,
+skipping the interpreter's per-opcode fetch/decode/dispatch/budget overhead.
+`firmware/fx_jit` is that JIT:
+
+- **`rv32`** encodes the small RV32IM instruction set the translator emits (pinned
+  by unit tests to known ISA words).
+- **`compile(&[Ir]) -> Segment`** lowers a supported straight-line block. The
+  segment is PIC — it touches memory only through three base registers (operand
+  stack `a0`, locals `a1`, const pool `a2`) and returns via `ret`, so it can be
+  copied into an executable IRAM window and called as a C function. The operand
+  stack is modelled exactly like the interpreter; compile-time depth may go
+  negative (consuming operands already on the stack), reported via
+  `Segment::min_depth` so the VM gates on the live `sp`, with `net_delta` advancing
+  `sp` after the call.
+- Correctness is established entirely on the host: `emu` is a minimal RV32IM
+  interpreter that executes the emitted segment, `reference` re-runs the block with
+  `fx_vm`'s exact integer semantics, and a differential test runs thousands of
+  random blocks over random state through both and asserts identical results.
+  Unjitable blocks (bad `frac`, out-of-range offsets) are rejected, never
+  miscompiled.
+
+`fx_jit` is `no_std` (+ `alloc`) so it builds for the firmware triple. **On-device
+integration** — allocating an executable IRAM window, flushing the I-cache after
+writing the segment, detecting the JIT-able block at effect load, and calling it
+from the render loop while the interpreter handles the rest — is the remaining
+device-side step; the crate is the portable, host-verified heart that produces the
+code, and the interpreter remains the correctness reference and fallback.
