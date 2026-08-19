@@ -70,6 +70,12 @@ _EFFECTS_FILE = os.path.join(tempfile.gettempdir(), "ledmapper-effects-library.j
 _CHATLOGS: dict = {"sessions": {}, "at": None}  # id -> session
 _CHATLOGS_FILE = os.path.join(tempfile.gettempdir(), "ledmapper-chatlogs.json")
 
+# Remote chat-drive queue (repro-on-device without the user retyping): the agent
+# enqueues prompts here (`POST /chatcmd {"text": ...}`), and the app — when
+# "Drive chat from debug server" is on and a chat screen is open — polls
+# `GET /chatcmd` and runs each in its FX-agent chat. FIFO, in memory only.
+_CHATCMDS: list = []
+
 # In-page probe: resolve when the socket OPENs (or errors/closes/times out).
 _WS_PROBE = """
 (url, ms) => new Promise((resolve) => {
@@ -960,6 +966,34 @@ class Handler(BaseHTTPRequestHandler):
                     self._json(
                         {"sessions": sessions, "count": len(sessions), "at": _CHATLOGS["at"]}
                     )
+            elif route == "/chatcmd":
+                # POST (from the agent/container): enqueue a prompt to drive the
+                # app's FX-agent chat. GET (from the app, polling): pop the next
+                # queued prompt (or ?peek=1 to inspect the queue without popping).
+                if self.command == "POST":
+                    raw = self._read_body()
+                    try:
+                        payload = json.loads(raw.decode("utf-8")) if raw else {}
+                    except (UnicodeDecodeError, json.JSONDecodeError) as e:
+                        self._json({"error": f"bad JSON body: {e}"}, 400)
+                        return
+                    text = payload.get("text") if isinstance(payload, dict) else None
+                    if not isinstance(text, str) or not text.strip():
+                        self._json({"error": "expected {text: '...'}"}, 400)
+                        return
+                    target = payload.get("target") if isinstance(payload, dict) else None
+                    with _LOCK:
+                        cmd = {"text": text, "target": target or "", "at": g("at") or ""}
+                        _CHATCMDS.append(cmd)
+                        depth = len(_CHATCMDS)
+                    _log(f"/chatcmd queued {text[:60]!r} (queue={depth})")
+                    self._json({"queued": depth})
+                elif g("peek"):
+                    self._json({"queue": _CHATCMDS, "count": len(_CHATCMDS)})
+                else:
+                    with _LOCK:
+                        cmd = _CHATCMDS.pop(0) if _CHATCMDS else None
+                    self._json(cmd if cmd is not None else {})
             else:
                 self._json({"error": f"no such endpoint: {route}"}, 404)
         except Exception as e:  # noqa: BLE001
@@ -1069,6 +1103,11 @@ def main() -> int:
             _log(
                 f"  chat-log intake (HTTPS): https://{lan}:{args.tls_port}/chatlogs "
                 f"— pull with: curl http://{lan}:{args.port}/chatlogs"
+            )
+            _log(
+                f"  drive chat (repro on-device): "
+                f"curl -X POST http://{lan}:{args.port}/chatcmd "
+                f"-H 'content-type: application/json' -d '{{\"text\": \"...\"}}'"
             )
         except OSError as e:
             _log(f"  HTTPS listener failed on :{args.tls_port} ({e})")

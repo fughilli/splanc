@@ -56,6 +56,7 @@ import { midiStore, type UniformBinding } from "../../store/midiStore";
 import { midiManager, controlLabel } from "../../midi/manager";
 import { effectStore, isBuiltinEffect } from "../../store/effectStore";
 import { chatLogStore, newChatLogSessionId } from "../../store/chatLogStore";
+import { registerChatDriver } from "../../net/remoteChat";
 import { mapStore } from "../../store/mapStore";
 import { renderSettings } from "../../store/appearance";
 import { appState } from "../app/state";
@@ -119,6 +120,7 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
   // transcript after every turn so a failed agent run can be pulled off-device.
   const chatLogSessionId = newChatLogSessionId();
   let chatTurns = 0;
+  let unregisterChatDriver: (() => void) | null = null;
   let raf = 0;
   let disposed = false;
 
@@ -1568,9 +1570,12 @@ export function EffectEditorScreen(router: Router, effectId: string): Screen {
       document.documentElement.classList.add("is-locked");
       document.body.classList.add("is-locked");
       void load();
+      // Remote chat drive (repro-on-device): feed queued prompts into this turn.
+      unregisterChatDriver = registerChatDriver((text) => submitChat(text));
     },
     onUnmount: () => {
       disposed = true;
+      unregisterChatDriver?.();
       document.documentElement.classList.remove("is-locked");
       document.body.classList.remove("is-locked");
       closeMenu();

@@ -40,14 +40,15 @@ export function nativeHttpAvailable(): boolean {
   return isNativePlatform();
 }
 
-/** POST via the native WssBridge — trusts the server's self-signed cert, so no
- * manual browser cert-accept is needed. Rejects only on a transport error. */
-export async function nativePostJson(
+/** Request via the native WssBridge — trusts the server's self-signed cert, so
+ * no manual browser cert-accept is needed. Rejects only on a transport error. */
+export async function nativeRequest(
   url: string,
-  body: string,
+  method: string,
   headers: Record<string, string>,
+  body?: string,
 ): Promise<HttpResult> {
-  const res = await bridge().httpRequest({ url, method: "POST", headers, body });
+  const res = await bridge().httpRequest({ url, method, headers, ...(body !== undefined ? { body } : {}) });
   return {
     ok: res.status >= 200 && res.status < 300,
     status: res.status,

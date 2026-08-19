@@ -38,6 +38,7 @@ import {
   chatLogDumpOnBootEnabled,
   setChatLogDumpOnBoot,
 } from "../../store/chatLogStore";
+import { remoteChatEnabled, setRemoteChatEnabled } from "../../net/remoteChat";
 
 type SettingsTab = "appearance" | "behavior";
 
@@ -293,6 +294,23 @@ export function SettingsScreen(router: Router): Screen {
             toast("Chat logs dumped to console");
           },
         }),
+      ),
+      row(
+        "Drive chat from debug server",
+        "Let the debug server feed prompts into the FX-agent chat (while a chat " +
+          "screen is open) to reproduce a session on-device without retyping. " +
+          "Enqueue with: curl -X POST <server>/chatcmd -d '{\"text\":\"…\"}'.",
+        segmented<"on" | "off">(
+          [
+            ["off", "Off"],
+            ["on", "On"],
+          ],
+          remoteChatEnabled() ? "on" : "off",
+          (v) => {
+            setRemoteChatEnabled(v === "on");
+            toast(v === "on" ? "Remote chat drive on" : "Remote chat drive off");
+          },
+        ),
       ),
     );
     return g;

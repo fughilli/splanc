@@ -35,6 +35,7 @@ import { midiStore, type UniformBinding } from "../../store/midiStore";
 import { midiManager, controlLabel } from "../../midi/manager";
 import { effectStore } from "../../store/effectStore";
 import { chatLogStore, newChatLogSessionId } from "../../store/chatLogStore";
+import { registerChatDriver } from "../../net/remoteChat";
 import { mapStore } from "../../store/mapStore";
 import { appState } from "../app/state";
 import { StatusPill, icon, toast, type PillState } from "../kit";
@@ -238,6 +239,7 @@ export function AcidModeScreen(router: Router): Screen {
   // Persisted-log bookkeeping (see chatLogStore) — one session per acid screen.
   const chatLogSessionId = newChatLogSessionId();
   let chatTurns = 0;
+  let unregisterChatDriver: (() => void) | null = null;
 
   async function ask(text: string): Promise<void> {
     if (busy) return;
@@ -512,6 +514,8 @@ export function AcidModeScreen(router: Router): Screen {
       void initMap();
       raf = requestAnimationFrame(tick);
       midiRouter.attach();
+      // Remote chat drive (repro-on-device): feed queued prompts into ask().
+      unregisterChatDriver = registerChatDriver((text) => ask(text));
       if (!getApiKey()) {
         appendMsg(
           "agent",
@@ -521,6 +525,7 @@ export function AcidModeScreen(router: Router): Screen {
     },
     onUnmount: () => {
       disposed = true;
+      unregisterChatDriver?.();
       cancelAnimationFrame(raf);
       unsubPill();
       midiRouter.detach();

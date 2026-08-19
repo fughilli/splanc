@@ -13,7 +13,7 @@
  * or typed in the "Connect debug server" sheet, and remembered in localStorage.
  */
 
-import { nativeHttpAvailable, nativePostJson, type HttpResult } from "./nativeHttp";
+import { nativeHttpAvailable, nativeRequest, type HttpResult } from "./nativeHttp";
 
 const URL_KEY = "ledmapper.debugServer";
 
@@ -34,8 +34,19 @@ export function setDebugServerUrl(url: string): void {
 export function postJson(base: string, path: string, payload: unknown): Promise<HttpResult> {
   const body = JSON.stringify(payload);
   const headers = { "Content-Type": "application/json" };
-  if (nativeHttpAvailable()) return nativePostJson(base + path, body, headers);
+  if (nativeHttpAvailable()) return nativeRequest(base + path, "POST", headers, body);
   return fetch(base + path, { method: "POST", headers, body }).then((res) => ({
+    ok: res.ok,
+    status: res.status,
+    text: () => res.text(),
+  }));
+}
+
+/** GET `<base><path>` (native cert bridge or fetch). Used to poll the remote
+ * chat-drive queue. Throws on a transport failure. */
+export function getJson(base: string, path: string): Promise<HttpResult> {
+  if (nativeHttpAvailable()) return nativeRequest(base + path, "GET", {});
+  return fetch(base + path).then((res) => ({
     ok: res.ok,
     status: res.status,
     text: () => res.text(),
