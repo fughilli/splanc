@@ -40,6 +40,9 @@ class CaseResult:
     # aggregator compares it against each referenced PR's demanded method.
     # Missing -> DEFAULT_PROVIDED (see traceability.model).
     level: str = ""
+    # Identity of the artifact exercised (from `artifact.<key>` property tags:
+    # firmware build id, board rev, DUT git SHA). Used to detect stale evidence.
+    artifact: dict = field(default_factory=dict)
     source_file: str = ""  # jUnit file this came from
     target: str = ""  # bazel label derived from the file path, if any
 
@@ -92,6 +95,16 @@ def _case_property(case: ET.Element, name: str) -> str:
     return ""
 
 
+def _case_artifact(case: ET.Element) -> dict:
+    """Collect ``artifact.<key>`` property tags into a {key: value} dict."""
+    out: dict = {}
+    for prop in case.findall("./properties/property"):
+        name = prop.get("name", "")
+        if name.startswith("artifact."):
+            out[name[len("artifact.") :]] = prop.get("value", "").strip()
+    return out
+
+
 def target_from_path(path: str, workspace_root: str = "") -> str:
     """Derive a Bazel test label from a testlogs jUnit file path.
 
@@ -142,6 +155,7 @@ def parse_file(path: str) -> list[CaseResult]:
                     status=_case_status(case),
                     requirements=_case_requirements(case),
                     level=_case_property(case, "level"),
+                    artifact=_case_artifact(case),
                     source_file=path,
                     target=target,
                 )

@@ -32,6 +32,7 @@ class _Case:
     message: str = ""
     duration: float = 0.0
     level: str = ""
+    artifact: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -42,6 +43,10 @@ class JUnitWriter:
     # On-hardware runs provide HITL-level evidence by default; a caller may pass a
     # different default (e.g. "hil") or override per case.
     default_level: str = "hitl"
+    # Identity of the thing under test (firmware build id, board revision, DUT
+    # image git SHA, ...), stamped on every case so the aggregator can tell a
+    # result about the current build from a stale one. See traceability.report.
+    artifact: dict = field(default_factory=dict)
 
     def add(
         self,
@@ -51,13 +56,25 @@ class JUnitWriter:
         message: str = "",
         duration: float = 0.0,
         level: str = "",
+        artifact: dict | None = None,
     ) -> None:
+        merged = {**self.artifact, **(artifact or {})}
         self.cases.append(
-            _Case(name, list(requirements), status, message, duration, level or self.default_level)
+            _Case(
+                name,
+                list(requirements),
+                status,
+                message,
+                duration,
+                level or self.default_level,
+                merged,
+            )
         )
 
     @contextmanager
-    def case(self, name: str, requirements: list[str], level: str = ""):
+    def case(
+        self, name: str, requirements: list[str], level: str = "", artifact: dict | None = None
+    ):
         """Record ``name`` as passed, or as failed if the block raises (re-raised)."""
         start = time.monotonic()
         try:
@@ -70,10 +87,11 @@ class JUnitWriter:
                 f"{type(exc).__name__}: {exc}",
                 time.monotonic() - start,
                 level,
+                artifact,
             )
             raise
         else:
-            self.add(name, requirements, "passed", "", time.monotonic() - start, level)
+            self.add(name, requirements, "passed", "", time.monotonic() - start, level, artifact)
 
     def to_element(self) -> ET.Element:
         failures = sum(1 for c in self.cases if c.status == "failed")
@@ -99,12 +117,14 @@ class JUnitWriter:
                 name=c.name,
                 time=f"{c.duration:.3f}",
             )
-            if c.requirements or c.level:
+            if c.requirements or c.level or c.artifact:
                 props = ET.SubElement(tc, "properties")
                 for rid in c.requirements:
                     ET.SubElement(props, "property", name="requirement", value=rid)
                 if c.level:
                     ET.SubElement(props, "property", name="level", value=c.level)
+                for key, value in c.artifact.items():
+                    ET.SubElement(props, "property", name=f"artifact.{key}", value=str(value))
             if c.status in ("failed", "error"):
                 tag = "failure" if c.status == "failed" else "error"
                 ET.SubElement(tc, tag, message=c.message).text = c.message

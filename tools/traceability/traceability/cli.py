@@ -18,10 +18,22 @@ when any PR has no verifying test (useful once coverage is meant to be complete)
 from __future__ import annotations
 
 import argparse
+import json
 import sys
+from collections import Counter
 
 from traceability import junit, report
 from traceability.model import ValidationError, load_model
+
+
+def _parse_kv(pairs: list[str] | None) -> dict:
+    """Parse ``key=value`` CLI args into a dict (ignores malformed entries)."""
+    out: dict = {}
+    for item in pairs or []:
+        key, sep, value = item.partition("=")
+        if sep and key.strip():
+            out[key.strip()] = value.strip()
+    return out
 
 
 def _cmd_aggregate(args: argparse.Namespace) -> int:
@@ -34,11 +46,22 @@ def _cmd_aggregate(args: argparse.Namespace) -> int:
         return 2
 
     results = junit.collect(args.junit)
-    matrix = report.build_matrix(model, results)
+    current_build = _parse_kv(args.current_build)
+    matrix = report.build_matrix(model, results, current_build=current_build)
 
     html = report.render_html(matrix, title=args.title)
     with open(args.out, "w", encoding="utf-8") as fh:
         fh.write(html)
+
+    if args.queue_out:
+        queue = report.build_queue(matrix)
+        with open(args.queue_out, "w", encoding="utf-8") as fh:
+            json.dump({"queue": queue}, fh, indent=2)
+        routes = Counter(item["route"] for item in queue)
+        print(
+            f"wrote {args.queue_out}: {len(queue)} gap(s) "
+            f"({routes.get('autonomous', 0)} autonomous, {routes.get('human-gate', 0)} human-gate)"
+        )
 
     c = matrix.counts()
     print(f"parsed {len(results.files)} jUnit file(s), {len(results.cases)} test case(s)")
@@ -100,6 +123,11 @@ def main(argv: list[str] | None = None) -> int:
         help="jUnit XML files, directories, or globs",
     )
     agg.add_argument("--out", default="traceability-report.html")
+    agg.add_argument(
+        "--queue-out",
+        default="",
+        help="also write the gaps (UNVERIFIED/UNDER-VERIFIED/STALE PRs) as a JSON work queue",
+    )
     agg.add_argument("--title", default="splanc requirements traceability")
     agg.add_argument(
         "--fail-on",
@@ -112,6 +140,13 @@ def main(argv: list[str] | None = None) -> int:
         choices=["off", "warn", "error"],
         default="warn",
         help="cost-pyramid check: warn (default) or fail on PRs resting only on >= HIL evidence",
+    )
+    agg.add_argument(
+        "--current-build",
+        action="append",
+        metavar="KEY=VALUE",
+        help="current artifact identity (e.g. firmware_build_id=..., dut_git_sha=...); "
+        "evidence recorded against a different identity renders STALE. Repeatable.",
     )
     agg.set_defaults(func=_cmd_aggregate)
 

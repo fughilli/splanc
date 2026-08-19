@@ -119,6 +119,17 @@ def test_junit_writer_stamps_hitl_level_by_default():
 
 
 @pytest.mark.requirements("PR-25")
+def test_junit_writer_stamps_and_parses_artifact_identity():
+    w = JUnitWriter("hitl_e2e", artifact={"firmware_build_id": "abc", "dut_git_sha": "deadbeef"})
+    w.add("flash_boot", ["PR-13"])
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "test.xml")
+        w.write(p)
+        cases = junit.parse_file(p)
+    assert cases[0].artifact == {"firmware_build_id": "abc", "dut_git_sha": "deadbeef"}
+
+
+@pytest.mark.requirements("PR-25")
 def test_collect_merges_target_status_worst_wins():
     with tempfile.TemporaryDirectory() as d:
         logs = os.path.join(d, "bazel-testlogs", "pi", "hitl", "tests", "hitl_test")

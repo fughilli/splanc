@@ -151,6 +151,124 @@ def test_cost_pyramid_policy_flags_expensive_only_evidence():
 
 
 @pytest.mark.requirements("PR-25")
+def test_stale_evidence_renders_amber_not_green():
+    model, _ = parse_model(
+        {
+            "user_needs": [{"id": "UN-1", "title": "n"}],
+            "product_requirements": [
+                {"id": "PR-1", "title": "only-stale", "satisfies": ["UN-1"], "method": "hitl"},
+                {"id": "PR-2", "title": "has-fresh", "satisfies": ["UN-1"], "method": "hitl"},
+            ],
+            "risks": [],
+        }
+    )
+    current = {"dut_git_sha": "new"}
+    r = JUnitResults()
+    r.cases = [
+        # PR-1: only a passing result against an old firmware -> STALE (amber).
+        CaseResult(
+            name="a",
+            classname="c",
+            status="passed",
+            requirements=("PR-1",),
+            level="hitl",
+            artifact={"dut_git_sha": "old"},
+        ),
+        # PR-2: one stale + one against the current build -> fresh wins, GREEN.
+        CaseResult(
+            name="b1",
+            classname="c",
+            status="passed",
+            requirements=("PR-2",),
+            level="hitl",
+            artifact={"dut_git_sha": "old"},
+        ),
+        CaseResult(
+            name="b2",
+            classname="c",
+            status="passed",
+            requirements=("PR-2",),
+            level="hitl",
+            artifact={"dut_git_sha": "new"},
+        ),
+    ]
+    m = report.build_matrix(model, r, current_build=current)
+    assert m.pr_status["PR-1"].stale is True
+    assert m.pr_status["PR-1"].status == report.UNDERVERIFIED
+    assert m.pr_status["PR-2"].stale is False
+    assert m.pr_status["PR-2"].status == report.VERIFIED
+    assert "STALE" in report.render_html(m)
+
+
+@pytest.mark.requirements("PR-25")
+def test_no_current_build_means_nothing_stale():
+    model, _ = parse_model(
+        {
+            "user_needs": [{"id": "UN-1", "title": "n"}],
+            "product_requirements": [
+                {"id": "PR-1", "title": "hw", "satisfies": ["UN-1"], "method": "hitl"},
+            ],
+            "risks": [],
+        }
+    )
+    r = JUnitResults()
+    r.cases = [
+        CaseResult(
+            name="a",
+            classname="c",
+            status="passed",
+            requirements=("PR-1",),
+            level="hitl",
+            artifact={"dut_git_sha": "whatever"},
+        ),
+    ]
+    m = report.build_matrix(model, r)  # no current_build reference
+    assert m.pr_status["PR-1"].stale is False
+    assert m.pr_status["PR-1"].status == report.VERIFIED
+
+
+@pytest.mark.requirements("PR-25")
+def test_work_queue_lists_gaps_with_routes():
+    model, _ = parse_model(
+        {
+            "user_needs": [{"id": "UN-1", "title": "n"}],
+            "product_requirements": [
+                {"id": "PR-1", "title": "green", "satisfies": ["UN-1"], "method": "simulation"},
+                {"id": "PR-2", "title": "unver-sim", "satisfies": ["UN-1"], "method": "simulation"},
+                {"id": "PR-3", "title": "amber-hw", "satisfies": ["UN-1"], "method": "hitl"},
+            ],
+            "risks": [],
+        }
+    )
+    r = JUnitResults()
+    r.cases = [
+        CaseResult(name="a", classname="c", status="passed", requirements=("PR-1",)),
+        # PR-3 has only sim evidence but demands hitl -> AMBER, human-gate.
+        CaseResult(
+            name="c", classname="c", status="passed", requirements=("PR-3",), level="simulation"
+        ),
+    ]
+    m = report.build_matrix(model, r)
+    queue = report.build_queue(m)
+    by_pr = {item["pr"]: item for item in queue}
+    assert "PR-1" not in by_pr  # green PRs are not gaps
+    assert by_pr["PR-2"]["gap"] == "unverified"
+    assert by_pr["PR-2"]["route"] == report.ROUTE_AUTONOMOUS  # demands simulation
+    assert by_pr["PR-3"]["gap"] == "under-verified"
+    assert by_pr["PR-3"]["demanded_method"] == "hitl"
+    assert by_pr["PR-3"]["route"] == report.ROUTE_HUMAN_GATE  # demands hitl
+
+
+@pytest.mark.requirements("PR-25")
+def test_route_boundary_is_sil_vs_hil():
+    assert report.route_for("analysis") == report.ROUTE_AUTONOMOUS
+    assert report.route_for("sil") == report.ROUTE_AUTONOMOUS
+    assert report.route_for("hil") == report.ROUTE_HUMAN_GATE
+    assert report.route_for("hitl") == report.ROUTE_HUMAN_GATE
+    assert report.route_for("inspection") == report.ROUTE_HUMAN_GATE  # manual
+
+
+@pytest.mark.requirements("PR-25")
 def test_render_html_is_self_contained_and_lists_entities():
     m = report.build_matrix(MODEL, _results())
     html = report.render_html(m)
