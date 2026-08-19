@@ -7,9 +7,10 @@
   description = "HITL rig — Pi test bench + agent CLI (sbc-deploy consumer)";
 
   inputs = {
-    # Pinned to sbc-deploy PR #7 (persistent, immutable board-hostname identity).
-    # TODO: repin to the squashed main commit once #7 lands.
-    sbc-deploy.url = "github:fughilli/sbc-deploy/33f421bc81616317bd57c51e97d4dc9e149aefcd?dir=nix";
+    # sbc-deploy main @ a21f1e9 (#7: persistent, immutable board-hostname identity).
+    # The `update` mode (board+profile autodetect) is sbc-deploy PR #8, not yet
+    # pinned — repin here once it lands to enable //pi/hitl:update.
+    sbc-deploy.url = "github:fughilli/sbc-deploy/a21f1e9?dir=nix";
     nixpkgs.follows = "sbc-deploy/nixpkgs";
   };
 

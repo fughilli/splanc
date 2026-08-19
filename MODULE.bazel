@@ -204,10 +204,10 @@ use_repo(host_crate, "host_crates")
 bazel_dep(name = "sbc_deploy", version = "0.0.0")
 git_override(
     module_name = "sbc_deploy",
-    # sbc-deploy PR #7 (persistent, immutable board-hostname identity). Kept in
-    # lockstep with pi/hitl/nix flake.lock. Repin to the squashed main commit
-    # once #7 lands.
-    commit = "33f421bc81616317bd57c51e97d4dc9e149aefcd",
+    # sbc-deploy main @ a21f1e9 (#7: persistent, immutable board-hostname
+    # identity). Kept in lockstep with pi/hitl/nix flake.lock. The `update` mode
+    # is PR #8 — repin both here + flake.lock once it lands.
+    commit = "a21f1e91ca0e4ab0dd60053d00022a7531938194",
     remote = "https://github.com/fughilli/sbc-deploy.git",
 )
 
