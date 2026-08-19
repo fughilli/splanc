@@ -179,6 +179,12 @@ bool lm_fx_shade(uint32_t idx, float x, float y, float z, uint8_t rgb[3]);
 // Copy the active effect's uniform manifest into out (cap bytes). Returns the
 // length written, -1 when no effect is loaded, -2 when it doesn't fit cap.
 int32_t lm_fx_manifest(uint8_t *out, size_t cap);
+// FUG-125 on-device JIT: enable/disable (takes effect on the next lm_fx_load;
+// reload to rebuild or tear down the segments) and read how many segments the
+// current effect installed (0 = pure interpretation). For the HITL A/B.
+void lm_fx_set_jit_enabled(bool enabled);
+uint32_t lm_fx_jit_count(void);
+void lm_fx_jit_diag(uint32_t *plans, uint32_t *words, uint32_t *alloc_ok);
 
 // -- Perf monitoring (docs/design/perf-monitoring.md) -------------------------
 // The set_perf / get_perf_report protocol arms are handled inside

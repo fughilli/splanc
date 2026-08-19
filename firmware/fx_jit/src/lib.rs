@@ -49,6 +49,9 @@ pub enum Ir {
     LoadLocal(u8),
     /// Pop into `locals[slot]` (scalar).
     StoreLocal(u8),
+    /// Copy the top of stack into `locals[slot]` WITHOUT popping (the VM's
+    /// `TeeLocal` superinstruction — `StoreLocal; LoadLocal` fused).
+    TeeLocal(u8),
     AddI,
     SubI,
     MulI,
@@ -241,7 +244,7 @@ fn emit_block(block: &[Ir], sink: &mut impl Sink) -> Option<BlockMeta> {
         // reaches `depth-2`. Recorded so the VM can gate on the live `sp`.
         let access = match *op {
             Ir::PushConst(_) | Ir::LoadLocal(_) => depth,
-            Ir::StoreLocal(_) | Ir::NegI => depth - 1,
+            Ir::StoreLocal(_) | Ir::NegI | Ir::TeeLocal(_) => depth - 1,
             Ir::AddI | Ir::SubI | Ir::MulI | Ir::MulFix(_) => depth - 2,
             Ir::Pop(_) => depth, // touches nothing
         };
@@ -272,6 +275,16 @@ fn emit_block(block: &[Ir], sink: &mut impl Sink) -> Option<BlockMeta> {
                 depth -= 1;
                 let loff = slot as i32 * 4;
                 let soff = stack_off(depth);
+                if !fits(loff) || !fits(soff) {
+                    return None;
+                }
+                emit!(lw(T0, A0, soff));
+                emit!(sw(T0, A1, loff));
+            }
+            Ir::TeeLocal(slot) => {
+                // Copy the top of stack to local[slot], leaving it on the stack.
+                let loff = slot as i32 * 4;
+                let soff = stack_off(depth - 1);
                 if !fits(loff) || !fits(soff) {
                     return None;
                 }
@@ -383,6 +396,7 @@ fn op_to_ir(code: &[u8], pc: usize) -> Option<(Ir, usize)> {
         Op::PushConst => (Ir::PushConst(u16::from_le_bytes([b(0), b(1)])), 3),
         Op::LoadLocal if b(1) == 1 => (Ir::LoadLocal(b(0)), 3),
         Op::StoreLocal if b(1) == 1 => (Ir::StoreLocal(b(0)), 3),
+        Op::TeeLocal if b(1) == 1 => (Ir::TeeLocal(b(0)), 3),
         Op::AddI => (Ir::AddI, 1),
         Op::SubI => (Ir::SubI, 1),
         Op::MulI => (Ir::MulI, 1),
@@ -539,6 +553,9 @@ pub fn reference(block: &[Ir], stack: &mut Vec<i32>, locals: &mut [i32], consts:
             Ir::StoreLocal(s) => {
                 let v = stack.pop().unwrap();
                 locals[s as usize] = v;
+            }
+            Ir::TeeLocal(s) => {
+                locals[s as usize] = *stack.last().unwrap();
             }
             Ir::AddI => {
                 let b = stack.pop().unwrap();
@@ -737,7 +754,7 @@ mod tests {
             let mut block: Vec<Ir> = Vec::new();
             let steps = 1 + lcg(&mut rng) % 12;
             for _ in 0..steps {
-                let choice = lcg(&mut rng) % 9;
+                let choice = lcg(&mut rng) % 10;
                 let ir = match choice {
                     0 => Ir::PushConst((lcg(&mut rng) % consts.len() as u32) as u16),
                     1 => Ir::LoadLocal((lcg(&mut rng) % 4) as u8),
@@ -748,13 +765,14 @@ mod tests {
                     6 if depth >= 1 => Ir::NegI,
                     7 if depth >= 2 => Ir::MulFix(1 + (lcg(&mut rng) % 31) as u8),
                     8 if depth >= 1 => Ir::Pop(1),
+                    9 if depth >= 1 => Ir::TeeLocal((lcg(&mut rng) % 4) as u8),
                     _ => Ir::PushConst((lcg(&mut rng) % consts.len() as u32) as u16),
                 };
                 // Update the model depth exactly as compile()/reference() will.
                 depth += match ir {
                     Ir::PushConst(_) | Ir::LoadLocal(_) => 1,
                     Ir::StoreLocal(_) | Ir::AddI | Ir::SubI | Ir::MulI | Ir::MulFix(_) => -1,
-                    Ir::NegI => 0,
+                    Ir::NegI | Ir::TeeLocal(_) => 0,
                     Ir::Pop(n) => -(n as i32),
                 };
                 block.push(ir);

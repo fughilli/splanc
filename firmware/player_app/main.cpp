@@ -61,8 +61,12 @@
 // to make the core refetch — no cache flush/invalidate.
 extern "C" {
 void *lm_jit_alloc_exec(size_t bytes) {
-  return heap_caps_malloc(bytes, MALLOC_CAP_EXEC | MALLOC_CAP_32BIT);
+  // Executable memory ONLY (no DRAM fallback — DRAM is NX under the C6's memory
+  // protection, so executing it faults). Returns null when no EXEC heap exists.
+  return heap_caps_malloc(bytes, MALLOC_CAP_EXEC);
 }
+size_t lm_jit_exec_free(void) { return heap_caps_get_free_size(MALLOC_CAP_EXEC); }
+size_t lm_jit_iram_free(void) { return heap_caps_get_free_size(MALLOC_CAP_IRAM_8BIT); }
 void lm_jit_free_exec(void *p) { heap_caps_free(p); }
 void lm_jit_sync_icache(void) { asm volatile("fence.i" ::: "memory"); }
 }
@@ -1743,6 +1747,87 @@ static void run_osc_bench() {
 }
 #endif  // LM_OSC_BENCH
 
+#ifdef LM_FX_JIT_BENCH
+// On-device JIT A/B (FUG-125). Loads a fixed-point-heavy effect and, on the SAME
+// firmware, times shade() across the strip with the JIT disabled vs enabled, plus
+// a functional check that the JIT renders bit-identically to the interpreter.
+// Built into a dedicated -DLM_FX_JIT_BENCH image (`:esp32c6_fxjitbench`); runs
+// once at boot, logs `[fxjitbench]` lines, then halts (no radios). Read over HITL.
+extern "C" {
+extern const unsigned char jit_bench_fxb[];
+extern const unsigned int jit_bench_fxb_len;
+}
+static constexpr uint32_t kJitBenchCpuHz = 160000000;
+
+static uint32_t time_shade_strip(uint32_t nled, uint32_t reps, volatile uint32_t *sink) {
+  uint8_t rgb[3];
+  lm_fx_update(0.3f, 0.016f, 0, nled);
+  uint32_t t0 = esp_cpu_get_cycle_count();
+  for (uint32_t r = 0; r < reps; r++)
+    for (uint32_t i = 0; i < nled; i++) {
+      float f = (float)i / (float)(nled - 1);
+      lm_fx_shade(i, f, 1.0f - f, f * 0.5f, rgb);
+      *sink += rgb[0];
+    }
+  return (esp_cpu_get_cycle_count() - t0) / (reps * nled);
+}
+
+extern "C" size_t lm_jit_exec_free(void);
+extern "C" size_t lm_jit_iram_free(void);
+
+static void run_fx_jit_bench() {
+  const uint32_t NLED = 128;
+  const uint32_t REPS = 200;
+  volatile uint32_t sink = 0;
+  Log().printf("[fxjitbench] heap free: EXEC=%u  IRAM_8BIT=%u bytes\n",
+               (unsigned)lm_jit_exec_free(), (unsigned)lm_jit_iram_free());
+
+  // Functional check: JIT vs interpreter must render the SAME LED.
+  lm_fx_set_jit_enabled(false);
+  lm_fx_load(jit_bench_fxb, jit_bench_fxb_len);
+  lm_fx_set_active(true);
+  lm_fx_update(0.3f, 0.016f, 0, NLED);
+  uint8_t interp[3] = {0, 0, 0};
+  lm_fx_shade(7, 0.31f, -0.22f, 0.15f, interp);
+
+  lm_fx_set_jit_enabled(true);
+  lm_fx_load(jit_bench_fxb, jit_bench_fxb_len);
+  lm_fx_set_active(true);
+  lm_fx_update(0.3f, 0.016f, 0, NLED);
+  uint32_t nblk = lm_fx_jit_count();
+  uint32_t d_plans = 0, d_words = 0, d_alloc = 0;
+  lm_fx_jit_diag(&d_plans, &d_words, &d_alloc);
+  Log().printf("[fxjitbench] diag: planned=%u words=%u alloc_ok=%u installed=%u\n", d_plans,
+               d_words, d_alloc, nblk);
+  uint8_t jit[3] = {0, 0, 0};
+  lm_fx_shade(7, 0.31f, -0.22f, 0.15f, jit);
+  bool match = interp[0] == jit[0] && interp[1] == jit[1] && interp[2] == jit[2];
+  Log().printf("[fxjitbench] segments=%u functional: interp=(%u,%u,%u) jit=(%u,%u,%u) %s\n",
+               nblk, interp[0], interp[1], interp[2], jit[0], jit[1], jit[2],
+               match ? "MATCH" : "MISMATCH!");
+
+  // Timing A/B on one firmware.
+  lm_fx_set_jit_enabled(false);
+  lm_fx_load(jit_bench_fxb, jit_bench_fxb_len);
+  lm_fx_set_active(true);
+  uint32_t interp_cyc = time_shade_strip(NLED, REPS, &sink);
+
+  lm_fx_set_jit_enabled(true);
+  lm_fx_load(jit_bench_fxb, jit_bench_fxb_len);
+  lm_fx_set_active(true);
+  uint32_t jit_cyc = time_shade_strip(NLED, REPS, &sink);
+
+  int saved = (int)interp_cyc - (int)jit_cyc;
+  int pct = interp_cyc ? (100 * saved) / (int)interp_cyc : 0;
+  Log().printf("[fxjitbench] cpu_hz=%u leds=%u reps=%u fxb=%u bytes\n", kJitBenchCpuHz, NLED,
+               REPS, (unsigned)jit_bench_fxb_len);
+  Log().printf("[fxjitbench] shade/LED interp=%u cyc  jit=%u cyc  saved=%d cyc (%d%%)\n",
+               interp_cyc, jit_cyc, saved, pct);
+  Log().printf("[fxjitbench] DONE (sink=%u) — halting\n", (unsigned)sink);
+  for (;;) vTaskDelay(pdMS_TO_TICKS(2000));
+}
+#endif  // LM_FX_JIT_BENCH
+
 void setup() {
   Serial.begin(115200);
   // Non-blocking logging. Serial is the C6's USB-Serial-JTAG (HWCDC); its
@@ -1792,6 +1877,10 @@ void setup() {
 #ifdef LM_OSC_BENCH
   // Bench image: measure on-device, log, and halt — never brings up the radios.
   run_osc_bench();
+#endif
+#ifdef LM_FX_JIT_BENCH
+  // JIT A/B image (FUG-125): measure shade() with the JIT off vs on, log, halt.
+  run_fx_jit_bench();
 #endif
   // Restore a previously-mapped fixture from flash (LittleFS) before serving.
   fs_begin_and_restore();

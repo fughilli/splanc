@@ -115,6 +115,12 @@ static mut FX_JIT_ENABLED: bool = true;
 static mut FX_JIT_BLOCKS: [JitBlock; MAX_JIT_BLOCKS] =
     [JitBlock { func: jit_noop, end: 0, net_delta: 0 }; MAX_JIT_BLOCKS];
 static mut FX_JIT_N: usize = 0;
+// Diagnostics for the HITL bring-up: how many blocks the planner found, the total
+// segment words, and whether the exec-memory alloc succeeded. Surfaced via
+// lm_fx_jit_diag so a segments=0 outcome can be attributed (no blocks vs no IRAM).
+static mut FX_JIT_DIAG_PLANS: u32 = 0;
+static mut FX_JIT_DIAG_WORDS: u32 = 0;
+static mut FX_JIT_DIAG_ALLOC_OK: u32 = 0;
 static mut FX_JIT_CONSTS: [i32; MAX_JIT_CONSTS] = [0; MAX_JIT_CONSTS];
 static mut FX_JIT_PLANS: [PlanOut; MAX_JIT_BLOCKS] = [PlanOut {
     start: 0,
@@ -202,6 +208,7 @@ unsafe fn fx_build_jit(prog: &Program, vm: &mut FxVm) {
             &mut *addr_of_mut!(FX_JIT_SEG),
         )
     };
+    FX_JIT_DIAG_PLANS = n as u32;
     if n == 0 {
         return;
     }
@@ -213,10 +220,12 @@ unsafe fn fx_build_jit(prog: &Program, vm: &mut FxVm) {
         .map(|p| p.code_off as usize + p.code_len as usize)
         .max()
         .unwrap_or(0);
+    FX_JIT_DIAG_WORDS = total_words as u32;
     if total_words == 0 {
         return;
     }
     let exec = lm_jit_alloc_exec(total_words * 4);
+    FX_JIT_DIAG_ALLOC_OK = !exec.is_null() as u32;
     if exec.is_null() {
         return; // no exec memory -> stay interpreted
     }
@@ -2412,6 +2421,22 @@ pub unsafe extern "C" fn lm_fx_set_jit_enabled(enabled: bool) {
 #[no_mangle]
 pub unsafe extern "C" fn lm_fx_jit_count() -> u32 {
     FX_JIT_N as u32
+}
+
+/// JIT bring-up diagnostics (FUG-125): `*plans` = blocks the planner found,
+/// `*words` = total RV32 words, `*alloc_ok` = 1 if the exec alloc succeeded.
+/// Lets a bench attribute a segments=0 outcome (no hot blocks vs no exec IRAM).
+#[no_mangle]
+pub unsafe extern "C" fn lm_fx_jit_diag(plans: *mut u32, words: *mut u32, alloc_ok: *mut u32) {
+    if !plans.is_null() {
+        *plans = FX_JIT_DIAG_PLANS;
+    }
+    if !words.is_null() {
+        *words = FX_JIT_DIAG_WORDS;
+    }
+    if !alloc_ok.is_null() {
+        *alloc_ok = FX_JIT_DIAG_ALLOC_OK;
+    }
 }
 
 /// Whether an effect is loaded, ACTIVE, and renderable — the render loop gates
