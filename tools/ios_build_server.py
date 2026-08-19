@@ -39,7 +39,7 @@ Named tasks:
 
     doctor         toolchain + project-state report (same as /doctor)
     install        `pnpm install` — pull the Capacitor deps into the workspace
-    web-build      `pnpm --dir web build` — produce web/dist (the WKWebView payload)
+    web-build      `bazel build //web:dist` (hermetic node deps) → web/dist
     cap-add-ios    `cap add ios` — ONE-TIME: generate web/ios/App (native project)
     ios-config     apply web/ios-config/apply.sh (Info.plist usage strings)
     stage-wasm     build + stage solver/pulse/fx-compiler/fx-vm WASM into web/dist
@@ -144,6 +144,28 @@ _INSTALL_SH = (
     'rm -f "$log"; exit $rc'
 )
 
+# Web app build via Bazel (rules_js), NOT raw `pnpm build`: node deps resolve
+# hermetically from pnpm-lock.yaml, so a new app dependency (e.g. jsqr) is fetched
+# by Bazel with no host `pnpm install`. `//web:dist` lands in bazel-bin/web/dist
+# (read-only), so copy it into web/dist where stage-wasm adds the WASM bundles and
+# `cap sync` reads it (webDir: "dist"). Uses bazelisk to match stage_ios_wasm.sh.
+# --output_base is a DEDICATED base (see child_env's IOS_BAZEL_OUTPUT_BASE) so this
+# nested build doesn't deadlock on the server lock an outer `bazel run
+# //tools:ios_deploy` holds. `bazel-bin` is repointed to that base by the build,
+# so bazel-bin/web/dist resolves.
+_WEB_BUILD_SH = (
+    "set -e; "
+    ': "${IOS_BAZEL_OUTPUT_BASE:=$HOME/.cache/ledmapper-ios-bazel}"; '
+    'echo "[web-build] bazelisk --output_base=$IOS_BAZEL_OUTPUT_BASE build //web:dist"; '
+    'bazelisk --output_base="$IOS_BAZEL_OUTPUT_BASE" build //web:dist; '
+    'src="bazel-bin/web/dist"; '
+    '[ -d "$src" ] || { echo "[web-build] $src missing after build" >&2; exit 1; }; '
+    "rm -rf web/dist; mkdir -p web/dist; "
+    'cp -RL "$src"/. web/dist/; '
+    "chmod -R u+w web/dist; "
+    'echo "[web-build] staged $src -> web/dist"'
+)
+
 # xcodebuild container select — App.xcworkspace (CocoaPods) if present, else the
 # App.xcodeproj that Capacitor 8's SPM integration produces. Placeholders are
 # filled by _fill (literal token replace), so the `{scheme}`/`{configuration}`/
@@ -186,9 +208,9 @@ def _tasks() -> dict:
             "desc": "pnpm install — pull Capacitor deps (tolerates the buf ignored-build gate)",
         },
         "web-build": {
-            "argv": [*PNPM, "--dir", "web", "build"],
+            "argv": ["bash", "-c", _WEB_BUILD_SH],
             "cwd": ".",
-            "desc": "vite build — produce web/dist (the WKWebView payload)",
+            "desc": "bazel build //web:dist (hermetic node deps) -> web/dist",
         },
         "cap-add-ios": {
             "argv": [*CAP, "add", "ios"],
@@ -642,6 +664,12 @@ def child_env() -> dict:
     # Silence the Capacitor CLI's first-run telemetry question so `cap add ios`
     # never waits on a prompt (belt-and-suspenders with stdin=DEVNULL).
     env.setdefault("CAP_DISABLE_TELEMETRY", "true")
+    # Dedicated Bazel output base for the nested web-build / stage-wasm builds, so
+    # they don't contend for the server lock an outer `bazel run //tools:ios_deploy`
+    # (the sidecar's parent) holds — that would deadlock. web-build reads this;
+    # stage_ios_wasm.sh passes it through as --output_base when set. (Name doesn't
+    # start with BAZEL_, so the strip loop above leaves it alone.)
+    env.setdefault("IOS_BAZEL_OUTPUT_BASE", os.path.expanduser("~/.cache/ledmapper-ios-bazel"))
     return env
 
 
