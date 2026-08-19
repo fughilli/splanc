@@ -78,6 +78,15 @@ sh_binary(
     srcs = ["scripts/seed-tailscale-authkey.sh"],
 )
 
+# Seed the Grafana Cloud creds onto the rig and (re)start Alloy, wiring the rig
+# to Grafana Cloud. Reads pi/secrets/grafana.env + deploy_key. See
+# observability/README.md and observability/alloy.nix.
+#   bazel run //pi/hitl:seed_grafana [-- host]
+sh_binary(
+    name = "seed_grafana",
+    srcs = ["scripts/seed-grafana.sh"],
+)
+
 # HTTP-driven runner for the on-hardware HITL suite (see the file's docstring).
 # Run it on a tailnet host where the rigs work, then curl it to run the harness
 # py_tests one at a time. Lives in //pi/hitl (not a scripts/ subpackage) so the

@@ -5,12 +5,16 @@
 #
 # It's intentionally a separate, opt-in module rather than baked into
 # hitl-app.nix: a rig only reports once its Grafana Cloud credentials exist. The
-# service is gated on an EnvironmentFile (ConditionPathExists) holding:
+# service is gated on an EnvironmentFile (ConditionPathExists) holding only the
+# shared Grafana Cloud creds (identical across the fleet):
 #
 #   GRAFANA_CLOUD_PROM_URL=https://prometheus-prod-NN-REGION.grafana.net/api/prom/push
 #   GRAFANA_CLOUD_PROM_USER=<numeric metrics instance id>
 #   GRAFANA_CLOUD_PROM_KEY=<access-policy token, metrics:write>
-#   HITL_RIG=<this rig's name; match hitl-managerd --rig>
+#
+# HITL_RIG (the per-series `rig` label) is NOT in that file — it's injected below
+# from config.networking.hostName so it always matches hitl-managerd --rig, the
+# AP SSID, and the tailnet name, with no per-rig env file to keep in sync.
 #
 # Provision that file out-of-band (like the Tailscale authkey / WiFi creds — see
 # scripts/seed-*.sh) at the path below; until it exists Alloy simply doesn't
@@ -42,6 +46,10 @@ in
         # No inbound scrape UI needed; bind the built-in server to loopback only.
         "--server.http.listen-addr=127.0.0.1:12345"
       ];
+      # Per-rig identity for the `rig` label, from the single source of truth
+      # (the hostname) — matches hitl-managerd --rig / apSsid / the tailnet name.
+      # Set here rather than in grafana.env so the env file stays fleet-identical.
+      Environment = [ "HITL_RIG=${config.networking.hostName}" ];
       EnvironmentFile = envFile;
       StateDirectory = "hitl-alloy";
       DynamicUser = true;

@@ -107,24 +107,25 @@ comfortably enough for a handful of rigs.
    username; create an **access-policy token** with `metrics:write`.
 3. (For option 2b) **Loki** → _Details_: note the push URL and username; a token
    with `logs:write`.
-4. Put the metrics creds on each rig at `/var/lib/hitl/grafana.env` (see
-   `alloy.nix` for the keys), seeded out-of-band like the Tailscale/WiFi creds.
+4. Put the metrics creds in `pi/secrets/grafana.env` (the three
+   `GRAFANA_CLOUD_PROM_*` keys — see `alloy.nix`) and seed each rig with
+   `bazel run //pi/hitl:seed_grafana [-- host]`. That one file is
+   **fleet-identical**: the per-rig `rig` label is injected by `alloy.nix` from
+   the hostname (matching `hitl-managerd --rig`), so there's nothing per-rig to
+   edit. Seeded out-of-band like the Tailscale/WiFi creds.
 5. Put the Loki creds + the dashboard-sync creds in GitHub Actions
    _environments_ ("HITL" and "Grafana" respectively) — see the workflow files.
 
 ## 4. Running the collector on the rigs
 
 `alloy.alloy` is the Alloy pipeline (scrape `127.0.0.1:8087/metrics` + host
-metrics → remote_write to Grafana Cloud). Deploy it with the opt-in NixOS module:
-
-```nix
-# in the rig's system configuration
-imports = [ ./hitl-app.nix ./observability/alloy.nix ];
-```
+metrics → remote_write to Grafana Cloud), run by the `alloy.nix` NixOS module.
+That module is already imported by `flake.nix` (in `appModules`), so a normal
+`bazel run //pi/hitl:hitl.deploy_live` ships it to every rig.
 
 The `hitl-alloy` service starts only once `/var/lib/hitl/grafana.env` exists
-(`ConditionPathExists`), so importing it never breaks a rig that isn't wired to
-Grafana yet. Bring it in via the usual `bazel run //pi/hitl:hitl.deploy_live`.
+(`ConditionPathExists`), so shipping it never breaks a rig that isn't wired to
+Grafana yet — it stays dormant until `seed_grafana` drops the creds in.
 
 ## 5. Dashboards as code (bonus)
 

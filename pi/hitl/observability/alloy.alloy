@@ -12,7 +12,8 @@
 //   GRAFANA_CLOUD_PROM_URL   https://prometheus-prod-NN-REGION.grafana.net/api/prom/push
 //   GRAFANA_CLOUD_PROM_USER  numeric metrics instance id (Grafana Cloud → Prometheus → Details)
 //   GRAFANA_CLOUD_PROM_KEY   a Grafana Cloud access-policy token scoped to metrics:write
-//   HITL_RIG                 this rig's name (default: hostname; match hitl-managerd --rig)
+// HITL_RIG (the `rig` label below) is injected by alloy.nix from the rig's
+// hostname — not an env-file key — so it always matches hitl-managerd --rig.
 //
 // See observability/README.md for the end-to-end setup.
 

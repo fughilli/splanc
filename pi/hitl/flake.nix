@@ -16,7 +16,11 @@
       project = sbc-deploy.lib.mkSbcProject {
         hostName = "hitl-rig";
         board = "raspberry-pi-5";
-        appModules = [ ./nix/hitl-app.nix ];
+        # observability/alloy.nix is opt-in but safe to always import: its
+        # hitl-alloy service is gated on /var/lib/hitl/grafana.env existing
+        # (ConditionPathExists), so a rig without Grafana creds just doesn't
+        # start it. Seed the creds with `bazel run //pi/hitl:seed_grafana`.
+        appModules = [ ./nix/hitl-app.nix ./observability/alloy.nix ];
         # systemModules = [ sbc-deploy.nixosModules.spi ];  # if the DUT needs SPI
       };
 
