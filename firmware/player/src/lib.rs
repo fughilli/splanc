@@ -298,6 +298,11 @@ pub struct Player {
     /// (true) or applied from RAM only (false) — the color-order test streams
     /// commit=false previews. See the `commit` field on `set_hardware_config`.
     hw_config_commit: bool,
+    /// Static board capabilities (GPIO safety catalog + LED modes) the firmware
+    /// embeds and installs at boot via [`Player::set_board_caps`]; echoed in
+    /// `hardware_config_state` so the app builds its pin picker from THIS board.
+    /// `None` until installed (and on boards/tests that never call it).
+    board_caps: Option<pb::BoardCapabilities>,
 }
 
 impl Player {
@@ -325,6 +330,7 @@ impl Player {
             hw_order: [DEFAULT_COLOR_ORDER; HW_CHANNELS],
             hw_config_gen: 0,
             hw_config_commit: true,
+            board_caps: None,
         }
     }
 
@@ -814,6 +820,9 @@ impl Player {
             hc.r#color_order = s64(COLOR_ORDERS[self.hw_order[ch] as usize].0);
             let _ = state.r#channels.push(hc);
         }
+        if let Some(caps) = &self.board_caps {
+            state.set_board(caps.clone());
+        }
         reply(SMsg::HardwareConfigState(state))
     }
 
@@ -832,6 +841,14 @@ impl Player {
         } else {
             DEFAULT_COLOR_ORDER
         };
+    }
+
+    /// Install the board's static capability descriptor (already decoded from the
+    /// embedded binaryproto). Echoed verbatim in `hardware_config_state`; the app
+    /// builds its GPIO picker + LED-type list from it (falling back to a built-in
+    /// catalog when a board doesn't report one). Call once at boot.
+    pub fn set_board_caps(&mut self, caps: pb::BoardCapabilities) {
+        self.board_caps = Some(caps);
     }
 
     /// Generation counter bumped on every `set_hardware_config`; the firmware

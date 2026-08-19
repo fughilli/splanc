@@ -781,6 +781,29 @@ pub unsafe extern "C" fn lm_hw_seed(channel: u32, gpio: i32, order: *const u8, o
     player().set_hw_defaults(channel as usize, gpio, idx);
 }
 
+/// Install this board's static capability descriptor: `data` is a serialized
+/// `BoardCapabilities` (the board textproto compiled to a binaryproto at build
+/// time and embedded in the image). Decoded once and echoed in
+/// `hardware_config_state` so the app builds its pin picker / LED-type list from
+/// what this board supports. Call once after [`lm_player_init`]. A null, empty,
+/// or undecodable blob is ignored (the app just falls back to its built-in
+/// catalog), so a board that ships no descriptor still works.
+///
+/// # Safety
+/// `data` points to `len` readable bytes (or is null).
+#[no_mangle]
+pub unsafe extern "C" fn lm_set_board_caps(data: *const u8, len: usize) {
+    if data.is_null() || len == 0 {
+        return;
+    }
+    let bytes = core::slice::from_raw_parts(data, len);
+    let mut caps = pb::BoardCapabilities::default();
+    let mut dec = PbDecoder::new(bytes);
+    if caps.decode(&mut dec, bytes.len()).is_ok() {
+        player().set_board_caps(caps);
+    }
+}
+
 /// Generation counter for the hardware config, bumped on every
 /// `set_hardware_config`. The firmware polls this after each `lm_player_handle`
 /// (like `lm_color_correction_gen`) to persist the config to NVS and re-apply it

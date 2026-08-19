@@ -364,11 +364,44 @@ export interface HardwareChannel {
   colorOrder: ColorOrder;
 }
 
+/** Pin safety category (proto PinSafety). Rides the JSON boundary as its enum
+ * NAME string (proto3 JSON), matching how toJson serializes enums. */
+export type PinSafety =
+  | "PIN_SAFETY_UNSPECIFIED"
+  | "PIN_SAFETY_RECOMMENDED"
+  | "PIN_SAFETY_CAUTION"
+  | "PIN_SAFETY_AVOID";
+
+/** One selectable GPIO for LED data output (proto GpioPin). */
+export interface GpioPinFlat {
+  gpio: number;
+  safety: PinSafety;
+  /** Board-specific reason for the confirm dialog; "" -> app uses default wording. */
+  note: string;
+}
+
+/** One LED driver mode / chip family the firmware supports (proto LedMode). */
+export interface LedModeFlat {
+  id: string;
+  label: string;
+}
+
+/** Static per-board hardware capabilities (proto BoardCapabilities): the pin
+ * catalog + LED modes THIS board supports, for the Hardware Setup pickers. */
+export interface BoardCapabilitiesFlat {
+  board: string;
+  gpioPins: GpioPinFlat[];
+  ledModes: LedModeFlat[];
+}
+
 /** Reply to set/get_hardware_config (proto HardwareConfigState): the per-channel
  * config the device is running. */
 export interface HardwareConfigStateMessage {
   type: "hardware_config_state";
   channels: HardwareChannel[];
+  /** Static board capabilities (pin catalog + LED modes). Undefined on older
+   * firmware that doesn't report them — the app falls back to a built-in catalog. */
+  board?: BoardCapabilitiesFlat;
 }
 
 // -- Chunked-upload arms (flat shapes) --------------------------------------

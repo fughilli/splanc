@@ -47,6 +47,7 @@
 #include "firmware/player_app/build_info.h"  // generated: LM_GIT_COMMIT / LM_GIT_DIRTY
 #include "firmware/player_app/color_correction.h"
 #include "firmware/player_app/improv_codec.h"
+#include "firmware/player_app/board_caps_res.h"  // board_caps_binaryproto[] / _len
 #include "firmware/player_app/led_config.h"
 #include "firmware/player_app/player_ffi.h"
 #include "firmware/player_app/serial_log.h"
@@ -2058,6 +2059,11 @@ void setup() {
   // either the message handler or the render task can touch it.
   player_mutex = xSemaphoreCreateMutex();
   lm_player_init(NUM_LEDS);
+  // Install this board's static capability descriptor (GPIO safety catalog + LED
+  // modes), compiled from board_caps.textproto and embedded in the image, so the
+  // app's Hardware Setup pin picker reflects THIS board. Ignored if it can't
+  // decode — the app falls back to a built-in catalog.
+  lm_set_board_caps((const uint8_t *)board_caps_binaryproto, board_caps_binaryproto_len);
 #ifdef LM_OSC_BENCH
   // Bench image: measure on-device, log, and halt — never brings up the radios.
   run_osc_bench();

@@ -664,6 +664,55 @@ message SetHardwareConfig {
 // config the device is running (defaults filled in), for the UI to hydrate.
 message HardwareConfigState {
   repeated HardwareChannel channels = 1;
+  // Static, board-specific capabilities (pin catalog + LED modes). Unset on
+  // older firmware — the app falls back to a built-in default catalog.
+  BoardCapabilities board = 2;
+}
+
+// How safe a GPIO is to repurpose for LED data on a given board. Drives how the
+// app groups the pin picker and whether picking it needs a confirmation.
+enum PinSafety {
+  PIN_SAFETY_UNSPECIFIED = 0;
+  // Clean general-purpose pin: no boot / flash / USB / JTAG duty. Default choice.
+  PIN_SAFETY_RECOMMENDED = 1;
+  // Overloaded but usable (strapping / USB-JTAG / JTAG-debug): pick with care.
+  PIN_SAFETY_CAUTION = 2;
+  // Actively dangerous (e.g. wired to internal flash): driving it can hang the board.
+  PIN_SAFETY_AVOID = 3;
+}
+
+// One selectable GPIO for LED data output.
+message GpioPin {
+  // GPIO number.
+  uint32 gpio = 1;
+  // Safety category — grouping in the picker + whether a confirm is shown.
+  PinSafety safety = 2;
+  // Optional board-specific reason shown in the confirm dialog (e.g. "JTAG debug
+  // pin; flash clock on internal-flash models"). Empty -> the app uses default
+  // wording for the safety level.
+  string note = 3;
+}
+
+// One LED driver mode (chip family) this firmware build supports.
+message LedMode {
+  // Stable id echoed back in set_hardware_config.led_type (e.g. "ws281x").
+  string id = 1;
+  // Human-readable label for the dropdown (e.g. "WS281x (WS2811/2812/SK6812)").
+  string label = 2;
+}
+
+// Static per-board hardware capabilities the firmware reports so the app can
+// build its pin picker and LED-type list from what THIS board actually supports
+// (different ESP32-C6 boards expose different pins / driver modes). Authored per
+// board as a checked-in textproto, compiled to a binaryproto at build time and
+// embedded in the firmware image (see firmware/player_app board_caps).
+message BoardCapabilities {
+  // Human-readable board identifier (e.g. "ESP32-C6 SuperMini"), for display/debug.
+  string board = 1;
+  // Selectable GPIOs for LED data output, each tagged with how safe it is.
+  repeated GpioPin gpio_pins = 2;
+  // LED driver modes (chip families) this firmware build supports.
+  repeated LedMode led_modes = 3;
 }
 
 // Reply to stop_mapping(solve_on_host=false): stopped + persisted, no host

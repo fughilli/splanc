@@ -1,0 +1,44 @@
+# ESP32-C6 SuperMini board capabilities (FUG-123), a ledmapper.v1.BoardCapabilities
+# message. Compiled to a binaryproto at build time (:board_caps_binaryproto) and
+# embedded in the image; the player echoes it in hardware_config_state so the app
+# builds its GPIO picker + LED-type list from THIS board. Pin safety follows the
+# SuperMini pinout (espboards.dev/esp32/esp32-c6-super-mini) + firmware led_config.h.
+#
+# NOTE: every string must fit the firmware decode capacity (max_bytes 64 — see
+# shared/protocol/rust/gen_main.rs); keep notes short and ASCII, or the whole
+# descriptor fails to decode and the app silently falls back to its catalog.
+board: "ESP32-C6 SuperMini"
+
+# Recommended: clean general-purpose pins (no boot / flash / USB / JTAG duty).
+gpio_pins { gpio: 0 safety: PIN_SAFETY_RECOMMENDED }
+gpio_pins { gpio: 1 safety: PIN_SAFETY_RECOMMENDED }
+gpio_pins { gpio: 2 safety: PIN_SAFETY_RECOMMENDED }
+gpio_pins { gpio: 3 safety: PIN_SAFETY_RECOMMENDED }
+gpio_pins { gpio: 10 safety: PIN_SAFETY_RECOMMENDED }
+gpio_pins { gpio: 11 safety: PIN_SAFETY_RECOMMENDED }
+gpio_pins { gpio: 14 safety: PIN_SAFETY_RECOMMENDED }
+gpio_pins { gpio: 20 safety: PIN_SAFETY_RECOMMENDED }
+gpio_pins { gpio: 21 safety: PIN_SAFETY_RECOMMENDED }
+gpio_pins { gpio: 22 safety: PIN_SAFETY_RECOMMENDED }
+gpio_pins { gpio: 23 safety: PIN_SAFETY_RECOMMENDED }
+
+# JTAG debug pins (MTMS/MTDI/MTCK/MTDO); also flash clock/data on internal-flash models.
+gpio_pins { gpio: 4 safety: PIN_SAFETY_CAUTION note: "MTMS JTAG pin; flash data on internal-flash models." }
+gpio_pins { gpio: 5 safety: PIN_SAFETY_CAUTION note: "MTDI JTAG pin; flash data on internal-flash models." }
+gpio_pins { gpio: 6 safety: PIN_SAFETY_CAUTION note: "MTCK JTAG pin; flash clock on internal-flash models." }
+gpio_pins { gpio: 7 safety: PIN_SAFETY_CAUTION note: "MTDO JTAG pin; flash data on internal-flash models." }
+
+# Boot strapping pins (sampled at reset).
+gpio_pins { gpio: 8 safety: PIN_SAFETY_CAUTION note: "Boot-mode strapping pin; sampled at reset." }
+gpio_pins { gpio: 9 safety: PIN_SAFETY_CAUTION note: "Pulling low at reset forces download mode." }
+gpio_pins { gpio: 15 safety: PIN_SAFETY_CAUTION note: "JTAG_SEL strapping pin; sampled at reset." }
+
+# USB-Serial-JTAG.
+gpio_pins { gpio: 12 safety: PIN_SAFETY_CAUTION note: "USB-Serial-JTAG D-; disables USB flashing/monitor." }
+gpio_pins { gpio: 13 safety: PIN_SAFETY_CAUTION note: "USB-Serial-JTAG D+; disables USB flashing/monitor." }
+
+# Internal SPI flash — driving these can hang / corrupt the board.
+gpio_pins { gpio: 18 safety: PIN_SAFETY_AVOID note: "FSPIQ: wired to internal SPI flash; can hang the board." }
+gpio_pins { gpio: 19 safety: PIN_SAFETY_AVOID note: "FSPID: wired to internal SPI flash; can hang the board." }
+
+led_modes { id: "ws281x" label: "WS281x (WS2811/2812/2812B/SK6812)" }

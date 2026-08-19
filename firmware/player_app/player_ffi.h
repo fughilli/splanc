@@ -64,6 +64,13 @@ uint8_t lm_brightness_u8(void);
 // (lm_hw_color_order_name) to NVS.
 void lm_hw_seed(uint32_t channel, int32_t gpio, const uint8_t *order,
                 size_t order_len);
+// Install this board's static capability descriptor (a serialized
+// BoardCapabilities: the board textproto compiled to a binaryproto at build time
+// and embedded in the image). Call once at boot; it's echoed in
+// hardware_config_state so the app builds its GPIO picker / LED-type list from
+// this board. A null/empty/undecodable blob is ignored (app falls back to a
+// built-in catalog).
+void lm_set_board_caps(const uint8_t *data, size_t len);
 uint32_t lm_hw_config_gen(void);
 int32_t lm_hw_config_commit(void);
 int32_t lm_hw_gpio(uint32_t channel);

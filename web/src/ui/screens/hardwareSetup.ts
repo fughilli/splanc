@@ -24,7 +24,14 @@ import { Button, Card, confirmDialog, toast } from "../kit";
 import type { Router, Screen } from "../app/router";
 import { appState } from "../app/state";
 import { deviceStore } from "../../store/deviceStore";
-import { COLOR_ORDERS, type ColorOrder, type HardwareChannel } from "../../net/proto";
+import {
+  COLOR_ORDERS,
+  type BoardCapabilitiesFlat,
+  type ColorOrder,
+  type GpioPinFlat,
+  type HardwareChannel,
+  type PinSafety,
+} from "../../net/proto";
 import type { ColorBlock } from "@ledmapper/protocol";
 import { installHardwareSetupStyles } from "./hardwareSetup.css";
 
@@ -96,19 +103,93 @@ const GPIO_GROUPS: GpioGroup[] = [
   },
 ];
 
-/** The caution text for `gpio`, or undefined if it's a recommended/off-catalog pin. */
-function gpioCaution(gpio: number): string | undefined {
-  for (const grp of GPIO_GROUPS) {
-    if (grp.gpios.includes(gpio)) return grp.caution?.(gpio);
+// Fallback LED driver modes when the board reports none (only WS281x today).
+const LED_TYPES: Array<{ value: string; label: string }> = [{ value: "ws281x", label: "WS281x" }];
+
+// The GPIO picker + LED-type list are driven by a PinCatalog. It comes from the
+// board itself when the firmware reports BoardCapabilities (hardware_config_state
+// .board); older firmware that reports none falls back to FALLBACK_CATALOG below.
+interface PinCatalog {
+  /** Ordered optgroups for the dropdown. */
+  groups: Array<{ label: string; gpios: number[] }>;
+  /** Confirm text for a pin, or undefined when it needs no confirmation. */
+  caution: (gpio: number) => string | undefined;
+  /** LED driver-mode options for the LED-type dropdown. */
+  ledTypes: Array<{ value: string; label: string }>;
+}
+
+// The built-in fallback, from the hardcoded ESP32-C6 SuperMini catalog above.
+const FALLBACK_CATALOG: PinCatalog = {
+  groups: GPIO_GROUPS.map((g) => ({ label: g.label, gpios: g.gpios })),
+  caution: (gpio) => {
+    for (const grp of GPIO_GROUPS) {
+      if (grp.gpios.includes(gpio)) return grp.caution?.(gpio);
+    }
+    return undefined;
+  },
+  ledTypes: LED_TYPES,
+};
+
+// PinSafety (proto enum name) -> dropdown group. UNSPECIFIED is treated as
+// recommended (a board that lists a pin without tagging it isn't flagging risk);
+// any unknown value is treated as caution, the safe default.
+const CAUTION_GROUP = { order: 1, label: "Use with care" };
+const SAFETY_GROUP: Record<string, { order: number; label: string }> = {
+  PIN_SAFETY_RECOMMENDED: { order: 0, label: "Recommended" },
+  PIN_SAFETY_UNSPECIFIED: { order: 0, label: "Recommended" },
+  PIN_SAFETY_CAUTION: CAUTION_GROUP,
+  PIN_SAFETY_AVOID: { order: 2, label: "Avoid" },
+};
+
+function pinNeedsConfirm(safety: PinSafety): boolean {
+  return safety === "PIN_SAFETY_CAUTION" || safety === "PIN_SAFETY_AVOID";
+}
+
+/** App-supplied default wording when a reported pin carries no board-specific note. */
+function defaultCaution(safety: PinSafety, gpio: number): string {
+  if (safety === "PIN_SAFETY_AVOID") {
+    return (
+      `GPIO ${gpio} is unsafe to drive on this board — it can hang or corrupt it. ` +
+      `Only use it if you know your board wiring differs.`
+    );
   }
-  return undefined;
+  return `GPIO ${gpio} is an overloaded pin on this board — use it with care.`;
+}
+
+/** Build a catalog from the board's reported capabilities (grouped by safety;
+ * the per-pin note drives the confirm text, falling back to default wording). */
+function boardCatalog(caps: BoardCapabilitiesFlat): PinCatalog {
+  const buckets = new Map<string, { order: number; gpios: number[] }>();
+  const byGpio = new Map<number, GpioPinFlat>();
+  for (const p of caps.gpioPins) {
+    byGpio.set(p.gpio, p);
+    const grp = SAFETY_GROUP[p.safety] ?? CAUTION_GROUP;
+    const bucket = buckets.get(grp.label) ?? { order: grp.order, gpios: [] };
+    bucket.gpios.push(p.gpio);
+    buckets.set(grp.label, bucket);
+  }
+  const groups = [...buckets.entries()]
+    .sort((a, b) => a[1].order - b[1].order)
+    .map(([label, b]) => ({ label, gpios: [...b.gpios].sort((x, y) => x - y) }));
+  const ledTypes = caps.ledModes.length
+    ? caps.ledModes.map((m) => ({ value: m.id, label: m.label }))
+    : LED_TYPES;
+  return {
+    groups,
+    caution: (gpio) => {
+      const p = byGpio.get(gpio);
+      if (!p || !pinNeedsConfirm(p.safety)) return undefined;
+      return p.note.length > 0 ? p.note : defaultCaution(p.safety, gpio);
+    },
+    ledTypes,
+  };
 }
 
 /** Groups for the dropdown; a device pin that's off the catalog gets its own
  * "Current" group up top so hydration always has a matching (selectable) option. */
-function gpioGroups(current: number): Array<{ label: string; gpios: number[] }> {
-  const known = GPIO_GROUPS.some((g) => g.gpios.includes(current));
-  const groups = GPIO_GROUPS.map((g) => ({ label: g.label, gpios: g.gpios }));
+function gpioGroupsFor(cat: PinCatalog, current: number): Array<{ label: string; gpios: number[] }> {
+  const known = cat.groups.some((g) => g.gpios.includes(current));
+  const groups = cat.groups.map((g) => ({ label: g.label, gpios: g.gpios }));
   if (!known) groups.unshift({ label: "Current", gpios: [current] });
   return groups;
 }
@@ -116,8 +197,6 @@ function gpioGroups(current: number): Array<{ label: string; gpios: number[] }> 
 // Per-logical-channel dot colors for the color-order swatches (matches the
 // color-correction screen's channel palette).
 const COLOR_HEX: Record<string, string> = { R: "#ff5d5d", G: "#57d16a", B: "#5d8bff" };
-
-const LED_TYPES: Array<{ value: string; label: string }> = [{ value: "ws281x", label: "WS281x" }];
 
 // Pixel-run lengths offered next to "Check color order": N pixels of each
 // primary. Anchored at the strip start, so N up to this max stays visible on a
@@ -134,10 +213,18 @@ export function HardwareSetupScreen(_router: Router): Screen {
   // get_hardware_config on mount and updated as the user edits (each edit
   // round-trips a fresh hardware_config_state).
   let channels: HardwareChannel[] = [];
+  // The board's reported capabilities (pin catalog + LED modes), captured from
+  // hardware_config_state; null until hydrated or on firmware that reports none.
+  let boardCaps: BoardCapabilitiesFlat | null = null;
   // Which channel's color-order test is currently painting the strip (null = none).
   let activeTest: number | null = null;
   // How many pixels of each primary the color-order test lights (see TEST_COUNTS).
   let testCount = 3;
+
+  // Active pin/LED-type catalog: the board's own when it reports one, else the
+  // built-in SuperMini fallback.
+  const catalog = (): PinCatalog =>
+    boardCaps && boardCaps.gpioPins.length > 0 ? boardCatalog(boardCaps) : FALLBACK_CATALOG;
 
   const el = document.createElement("div");
   el.className = "screen screen--hw";
@@ -186,6 +273,7 @@ export function HardwareSetupScreen(_router: Router): Screen {
     try {
       const st = await c.getHardwareConfig();
       channels = st.channels.map((x) => ({ ...x }));
+      boardCaps = st.board ?? null;
       render();
     } catch {
       /* leave the empty-state note up */
@@ -198,10 +286,25 @@ export function HardwareSetupScreen(_router: Router): Screen {
     try {
       const st = await c.setHardwareConfig({ channel: ch, gpio, commit: true });
       channels = st.channels.map((x) => ({ ...x }));
+      if (st.board) boardCaps = st.board;
       render();
       toast(`Channel ${ch} → GPIO ${gpio}`);
     } catch {
       toast("Failed to set GPIO", { error: true });
+    }
+  }
+
+  async function setLedType(ch: number, ledType: string): Promise<void> {
+    const c = connectedClient();
+    if (!c) return;
+    try {
+      const st = await c.setHardwareConfig({ channel: ch, ledType, commit: true });
+      channels = st.channels.map((x) => ({ ...x }));
+      if (st.board) boardCaps = st.board;
+      render();
+      toast(`LED type set to ${ledType}`);
+    } catch {
+      toast("Failed to set LED type", { error: true });
     }
   }
 
@@ -271,16 +374,21 @@ export function HardwareSetupScreen(_router: Router): Screen {
   function channelCard(cfg: HardwareChannel): HTMLElement {
     const g = group(`Channel ${cfg.channel}`);
 
+    const ledTypes = catalog().ledTypes;
+    const ledHint =
+      ledTypes.length > 1
+        ? "The LED chip family this channel drives."
+        : "The LED chip family. Only WS281x (WS2811/2812/2812B/SK6812) is supported today.";
     g.append(
       row("Data GPIO", "Which pin drives this channel's WS281x data line.", gpioSelect(cfg)),
       row(
         "LED type",
-        "The LED chip family. Only WS281x (WS2811/2812/2812B/SK6812) is supported today.",
+        ledHint,
         select(
-          LED_TYPES.map((t) => ({ value: t.value, label: t.label })),
-          "ws281x",
-          () => undefined,
-          true,
+          ledTypes,
+          cfg.ledType || ledTypes[0]?.value || "ws281x",
+          (v) => void setLedType(cfg.channel, v),
+          ledTypes.length <= 1, // only one supported mode -> read-only
         ),
       ),
     );
@@ -382,9 +490,10 @@ export function HardwareSetupScreen(_router: Router): Screen {
    * an overloaded pin (strapping / USB-JTAG / flash) confirms first; on cancel the
    * select snaps back to the previously-set pin so nothing is committed. */
   function gpioSelect(cfg: HardwareChannel): HTMLElement {
+    const cat = catalog();
     const sel = document.createElement("select");
     sel.className = "hw-select";
-    for (const grp of gpioGroups(cfg.gpio)) {
+    for (const grp of gpioGroupsFor(cat, cfg.gpio)) {
       const og = document.createElement("optgroup");
       og.label = grp.label;
       for (const gpio of grp.gpios) {
@@ -400,7 +509,7 @@ export function HardwareSetupScreen(_router: Router): Screen {
     sel.addEventListener("change", () => {
       void (async () => {
         const gpio = Number(sel.value);
-        const caution = gpioCaution(gpio);
+        const caution = cat.caution(gpio);
         if (caution) {
           const ok = await confirmDialog({
             title: `Use GPIO ${gpio}?`,
