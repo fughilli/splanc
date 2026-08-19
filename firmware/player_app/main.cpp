@@ -66,10 +66,13 @@
 // lower-index than the SRAM data-region entries (PMP is lowest-index-wins), an
 // RWX entry there overrides the default NX for this range only. W^X stays
 // enforced everywhere else. Power-of-2 size + alignment for NAPOT encoding.
+// This device is heap-critically-tight (mbedtls needs ~28 KB for a TLS session),
+// so the region is SMALL and the Rust side compiles its RV32 segments DIRECTLY
+// into it (no separate scratch buffer, no copy) — the whole JIT static footprint
+// on the firmware is just this 2 KB.
 namespace {
-constexpr uint32_t kJitRegionSize = 4096;  // must be a power of two (NAPOT)
+constexpr uint32_t kJitRegionSize = 2048;  // power of two (NAPOT); 512 RV32 words
 alignas(kJitRegionSize) uint8_t g_jit_region[kJitRegionSize];
-size_t g_jit_used = 0;
 bool g_jit_armed = false;
 
 void jit_arm_exec_region() {
@@ -89,17 +92,13 @@ void jit_arm_exec_region() {
 }  // namespace
 
 extern "C" {
-void *lm_jit_alloc_exec(size_t bytes) {
+// The Rust side plans + compiles the effect's hot blocks straight into this
+// region (as a `&mut [u32]`), then calls lm_jit_arm once + lm_jit_sync_icache.
+uint32_t *lm_jit_region_ptr(void) { return reinterpret_cast<uint32_t *>(g_jit_region); }
+size_t lm_jit_region_words(void) { return kJitRegionSize / 4; }
+void lm_jit_arm(void) {
   if (!g_jit_armed) jit_arm_exec_region();
-  bytes = (bytes + 3u) & ~3u;  // keep the bump pointer word-aligned
-  if (g_jit_used + bytes > kJitRegionSize) return nullptr;
-  void *p = g_jit_region + g_jit_used;
-  g_jit_used += bytes;
-  return p;
 }
-// The JIT builds one exec block per effect and frees the previous first; with the
-// single carve-out region, freeing just resets the bump allocator.
-void lm_jit_free_exec(void * /*p*/) { g_jit_used = 0; }
 void lm_jit_sync_icache(void) { asm volatile("fence.i" ::: "memory"); }
 size_t lm_jit_region_size(void) { return kJitRegionSize; }
 }

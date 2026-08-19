@@ -105,19 +105,25 @@ static mut FX_VM: Option<FxVm> = None;
 // JitBlock table on the VM. The interpreter runs everything else and is the
 // fallback. Toggle at runtime with `lm_fx_set_jit_enabled` (for the HITL A/B).
 
-/// Max JIT blocks per effect + the shared segment-code scratch (words). Bounded
-/// so all JIT state is static RAM, never heap. Excess blocks stay interpreted.
-const MAX_JIT_BLOCKS: usize = 12;
-const JIT_SEG_WORDS: usize = 1024;
-const MAX_JIT_CONSTS: usize = 256;
+// Small, bounded JIT state. This device is heap-critically-tight (TLS needs
+// ~28 KB), so the footprint is kept minimal: the segments are compiled DIRECTLY
+// into the firmware's 2 KB exec region (no separate scratch/copy), and the
+// planning scratch below totals ~1.4 KB. Programs whose code exceeds
+// JIT_MAX_CODE stay fully interpreted.
+const MAX_JIT_BLOCKS: usize = 8;
+const MAX_JIT_CONSTS: usize = 64;
+const JIT_MAX_CODE: usize = 1024;
 
-static mut FX_JIT_ENABLED: bool = true;
+// Default OFF: the interpreter is the shipped default (the golden device cost
+// model the app + fx_bench validate against is the interpreter's), and the
+// bounded-W^X PMP carve-out is armed only when the JIT is explicitly enabled.
+// Flip via lm_fx_set_jit_enabled + reload (the bench does this for the A/B).
+static mut FX_JIT_ENABLED: bool = false;
 static mut FX_JIT_BLOCKS: [JitBlock; MAX_JIT_BLOCKS] =
     [JitBlock { func: jit_noop, end: 0, net_delta: 0 }; MAX_JIT_BLOCKS];
 static mut FX_JIT_N: usize = 0;
-// Diagnostics for the HITL bring-up: how many blocks the planner found, the total
-// segment words, and whether the exec-memory alloc succeeded. Surfaced via
-// lm_fx_jit_diag so a segments=0 outcome can be attributed (no blocks vs no IRAM).
+// Diagnostics for the HITL bring-up: how many blocks the planner found + the
+// segment words used. Surfaced via lm_fx_jit_diag.
 static mut FX_JIT_DIAG_PLANS: u32 = 0;
 static mut FX_JIT_DIAG_WORDS: u32 = 0;
 static mut FX_JIT_DIAG_ALLOC_OK: u32 = 0;
@@ -129,55 +135,59 @@ static mut FX_JIT_PLANS: [PlanOut; MAX_JIT_BLOCKS] = [PlanOut {
     code_off: 0,
     code_len: 0,
 }; MAX_JIT_BLOCKS];
-static mut FX_JIT_SEG: [u32; JIT_SEG_WORDS] = [0; JIT_SEG_WORDS];
-static mut FX_JIT_TARGETS: [bool; FX_MAX_BYTES + 1] = [false; FX_MAX_BYTES + 1];
-/// The executable IRAM block backing the current effect's segments (freed +
-/// re-allocated each load). Null when no JIT is active.
-static mut FX_JIT_EXEC: *mut u32 = core::ptr::null_mut();
+static mut FX_JIT_TARGETS: [bool; JIT_MAX_CODE + 1] = [false; JIT_MAX_CODE + 1];
 
 /// Placeholder segment for the never-called table slots (a real segment always
 /// overwrites the slots we install). Must be a valid function, not null.
 unsafe extern "C" fn jit_noop(_stack: *mut i32, _locals: *mut i32, _consts: *const i32) {}
 
-// Executable-memory primitives, provided by the C++ firmware (esp-idf IRAM +
-// icache sync). Host builds can't execute RV32, so the JIT never installs a block
-// there; these host stubs just satisfy the linker.
+// Executable-memory primitives, provided by the C++ firmware: a fixed 2 KB
+// static region the Rust side compiles segments straight into, made RWX by a
+// spare RISC-V PMP entry (`lm_jit_arm`), plus the instruction-stream sync. Host
+// builds can't execute RV32, so `lm_jit_region_words` returns 0 there and the JIT
+// installs nothing; these host stubs just satisfy the linker.
 #[cfg(target_arch = "riscv32")]
 extern "C" {
-    /// Allocate `bytes` of 32-bit-addressable executable IRAM (or null).
-    fn lm_jit_alloc_exec(bytes: usize) -> *mut u32;
-    /// Free a block from `lm_jit_alloc_exec`.
-    fn lm_jit_free_exec(ptr: *mut u32);
-    /// Synchronize the instruction stream after writing code (RISC-V `fence.i`).
+    fn lm_jit_region_ptr() -> *mut u32;
+    fn lm_jit_region_words() -> usize;
+    fn lm_jit_arm();
     fn lm_jit_sync_icache();
 }
 #[cfg(not(target_arch = "riscv32"))]
-unsafe fn lm_jit_alloc_exec(_bytes: usize) -> *mut u32 {
+unsafe fn lm_jit_region_ptr() -> *mut u32 {
     core::ptr::null_mut()
 }
 #[cfg(not(target_arch = "riscv32"))]
-unsafe fn lm_jit_free_exec(_ptr: *mut u32) {}
+unsafe fn lm_jit_region_words() -> usize {
+    0
+}
+#[cfg(not(target_arch = "riscv32"))]
+unsafe fn lm_jit_arm() {}
 #[cfg(not(target_arch = "riscv32"))]
 unsafe fn lm_jit_sync_icache() {}
 
 /// Build (or tear down) the JIT for the freshly-loaded `prog` and install it on
-/// `vm`. Frees the previous effect's exec block first. A no-op that clears the
-/// table when the JIT is disabled, the program has too many consts, or no exec
-/// memory is available — the VM then purely interprets.
+/// `vm`. A no-op that clears the table when the JIT is disabled, the program is
+/// too big / has too many consts, or no hot block is found — the VM then purely
+/// interprets. Compiles the segments straight into the exec region (no heap, no
+/// scratch copy).
 ///
 /// # Safety
 /// Call from `lm_fx_load` after `FX_BYTES`/`FX_LEN` are set and `prog` was parsed
 /// from them; mutates `FX_BYTES` (patches `JitCall`) and the JIT statics.
 unsafe fn fx_build_jit(prog: &Program, vm: &mut FxVm) {
-    // Tear down any previous effect's exec block + table.
-    if !FX_JIT_EXEC.is_null() {
-        lm_jit_free_exec(FX_JIT_EXEC);
-        FX_JIT_EXEC = core::ptr::null_mut();
-    }
     FX_JIT_N = 0;
     vm.clear_jit();
+    FX_JIT_DIAG_PLANS = 0;
+    FX_JIT_DIAG_WORDS = 0;
+    FX_JIT_DIAG_ALLOC_OK = 0;
     if !FX_JIT_ENABLED {
         return;
+    }
+    let region_words = lm_jit_region_words();
+    let region_ptr = lm_jit_region_ptr();
+    if region_words == 0 || region_ptr.is_null() {
+        return; // host / no exec region
     }
 
     // Aligned i32 mirror of the const pool (the segments' `a2` base).
@@ -191,78 +201,56 @@ unsafe fn fx_build_jit(prog: &Program, vm: &mut FxVm) {
         consts[i] = i32::from_le_bytes([craw[i * 4], craw[i * 4 + 1], craw[i * 4 + 2], craw[i * 4 + 3]]);
     }
 
-    // Plan the hot blocks into the static scratch.
     let code = prog.code();
     let code_len = code.len();
+    if code_len + 1 > JIT_MAX_CODE {
+        return; // too big to plan with the bounded scratch — interpret it
+    }
     // Byte offset of the code section within FX_BYTES, so we can patch JitCall.
     let code_off = code.as_ptr() as usize - addr_of!(FX_BYTES) as usize;
+
+    // Compile the hot blocks STRAIGHT into the exec region (no scratch/copy).
+    let region = core::slice::from_raw_parts_mut(region_ptr, region_words);
     let n = {
         let targets = &mut (*addr_of_mut!(FX_JIT_TARGETS))[..code_len + 1];
         for t in targets.iter_mut() {
             *t = false;
         }
-        plan_blocks_into(
-            code,
-            targets,
-            &mut *addr_of_mut!(FX_JIT_PLANS),
-            &mut *addr_of_mut!(FX_JIT_SEG),
-        )
+        plan_blocks_into(code, targets, &mut *addr_of_mut!(FX_JIT_PLANS), region)
     };
     FX_JIT_DIAG_PLANS = n as u32;
     if n == 0 {
         return;
     }
-
-    // Total segment words to place in one executable block.
-    let plans = &*addr_of!(FX_JIT_PLANS);
-    let total_words = plans[..n]
-        .iter()
-        .map(|p| p.code_off as usize + p.code_len as usize)
-        .max()
-        .unwrap_or(0);
-    FX_JIT_DIAG_WORDS = total_words as u32;
-    if total_words == 0 {
-        return;
-    }
-    let exec = lm_jit_alloc_exec(total_words * 4);
-    FX_JIT_DIAG_ALLOC_OK = !exec.is_null() as u32;
-    if exec.is_null() {
-        return; // no exec memory -> stay interpreted
-    }
-    // Copy the packed segments into IRAM, then sync the instruction stream.
-    let seg = &*addr_of!(FX_JIT_SEG);
-    for i in 0..total_words {
-        core::ptr::write(exec.add(i), seg[i]);
-    }
+    // Segments now live in the region: arm the PMP W^X carve-out + sync i-stream.
+    lm_jit_arm();
     lm_jit_sync_icache();
 
     // Build the block table + patch JitCall over each block's first 3 bytes.
     let blocks = &mut *addr_of_mut!(FX_JIT_BLOCKS);
+    let plans = &*addr_of!(FX_JIT_PLANS);
     let fxb = &mut *addr_of_mut!(FX_BYTES);
     let mut installed = 0usize;
+    let mut used_words = 0usize;
     for k in 0..n {
         if installed >= MAX_JIT_BLOCKS {
             break;
         }
         let p = plans[k];
-        // SAFETY: exec+code_off points at the copied+synced segment for this block.
-        let func: JitFn = core::mem::transmute::<*mut u32, JitFn>(exec.add(p.code_off as usize));
+        // SAFETY: region_ptr+code_off is the compiled+synced segment for this block.
+        let func: JitFn = core::mem::transmute::<*mut u32, JitFn>(region_ptr.add(p.code_off as usize));
         blocks[installed] = JitBlock { func, end: p.end, net_delta: p.net_delta };
         let at = code_off + p.start as usize;
-        fxb[at] = fx_vm_jit_call_op();
+        fxb[at] = ledmapper_fx_vm::Op::JitCall as u8;
         fxb[at + 1] = (installed & 0xff) as u8;
         fxb[at + 2] = ((installed >> 8) & 0xff) as u8;
         installed += 1;
+        used_words = used_words.max(p.code_off as usize + p.code_len as usize);
     }
-    FX_JIT_EXEC = exec;
+    FX_JIT_DIAG_WORDS = used_words as u32;
+    FX_JIT_DIAG_ALLOC_OK = 1;
     FX_JIT_N = installed;
     vm.set_jit(&blocks[..installed], consts.as_ptr());
-}
-
-/// The `Op::JitCall` opcode byte (kept as a tiny fn so the value has one source).
-#[inline]
-fn fx_vm_jit_call_op() -> u8 {
-    ledmapper_fx_vm::Op::JitCall as u8
 }
 
 /// Native OSC control (FUG-121). The active effect's uniform manifest reduced to
@@ -2400,11 +2388,8 @@ pub unsafe extern "C" fn lm_fx_clear() {
     FX_ID_LEN = 0;
     *addr_of_mut!(OSC_TABLE) = PortTable::empty();
     (*addr_of_mut!(OSC_SHADOW)).reset();
-    // Release the JIT's executable IRAM (FUG-125) so a clear doesn't leak it.
-    if !FX_JIT_EXEC.is_null() {
-        lm_jit_free_exec(FX_JIT_EXEC);
-        FX_JIT_EXEC = core::ptr::null_mut();
-    }
+    // Drop the JIT table (the exec region is a fixed static, reused on next load;
+    // FX_VM was just cleared above, so the installed table goes with it).
     FX_JIT_N = 0;
     perf_reset_ring();
 }
