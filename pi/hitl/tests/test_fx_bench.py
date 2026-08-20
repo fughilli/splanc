@@ -13,6 +13,7 @@ from fx_bench_core import (
     compare_to_golden,
     cpu_hz_of,
     intended_led_count,
+    run_health_failure,
     sample_from,
     stable_cycles,
 )
@@ -222,3 +223,45 @@ def test_assemble_bundle_omits_absent_optionals():
     bundle = assemble_bundle(soc="esp32c6", cpu_hz=160_000_000, fit=[], heldout=[])
     assert "deviceKey" not in bundle
     assert "firmwareBuild" not in bundle
+    assert "runHealth" not in bundle  # a clean run (no health passed) carries no block
+
+
+# -- run health (FUG-137) --------------------------------------------------- #
+
+
+def _health(drops=0, aborted=False, reprovisions=0, ip_changes=0, reboot_programs=()):
+    return {
+        "drops": drops,
+        "reconnectFailures": 0,
+        "reprovisions": reprovisions,
+        "ipChanges": ip_changes,
+        "rebootPrograms": list(reboot_programs),
+        "aborted": aborted,
+    }
+
+
+def test_assemble_bundle_stamps_run_health():
+    health = _health(drops=2, reprovisions=1, ip_changes=1, reboot_programs=["big"])
+    bundle = assemble_bundle(
+        soc="esp32c6", cpu_hz=160_000_000, fit=[], heldout=[], run_health=health
+    )
+    assert bundle["runHealth"] == health
+
+
+def test_run_health_failure_clean_run_passes():
+    assert run_health_failure(None, fail_on_reboot=False) is None
+    assert run_health_failure(_health(), fail_on_reboot=True) is None
+
+
+def test_run_health_failure_aborted_always_fails():
+    # An incomplete (aborted) run fails loudly regardless of --fail-on-reboot.
+    reason = run_health_failure(_health(drops=1, aborted=True), fail_on_reboot=False)
+    assert reason and "incomplete" in reason
+
+
+def test_run_health_failure_recovered_reboot_only_fails_when_strict():
+    # A recovered reboot passes by default (bundle is complete) but fails --strict.
+    recovered = _health(drops=1, reboot_programs=["big"])
+    assert run_health_failure(recovered, fail_on_reboot=False) is None
+    reason = run_health_failure(recovered, fail_on_reboot=True)
+    assert reason and "big" in reason
