@@ -41,9 +41,9 @@ from typing import List, Tuple
 
 from hitl_client import Reservation, ReserveError
 from led_pattern import counting_message, diff_structure_aligned, expected_pixels
-from provision import dut_target, provision_dut
+from provision import HarnessError, dut_target, ensure_booted, provision_dut
 
-BOOT_MARKER = "SPI_FAST_FLASH_BOOT"
+# The SPI_FAST_FLASH_BOOT check + its strap-race retry live in provision.ensure_booted.
 BLE_MARKER = "[ble] advertising"
 
 
@@ -71,10 +71,13 @@ def flash(res: Reservation, bundle: str, monitor_seconds: float) -> str:
     log = (proc.stdout or "") + (proc.stderr or "")
     if proc.returncode != 0:
         raise SystemExit(f"[flash] hitl-flash failed (rc={proc.returncode})\n{log[-2000:]}")
-    if BOOT_MARKER not in log:
-        raise SystemExit(
-            f"[flash] DUT did not boot the app ({BOOT_MARKER!r} absent)\n{log[-2000:]}"
-        )
+    # A C6 occasionally latches USB download mode instead of booting the app (a
+    # post-flash reset / GPIO9-strap race); re-reset and re-read a few times
+    # before calling it a boot failure.
+    try:
+        log = ensure_booted(res, log, monitor_seconds)
+    except HarnessError as e:
+        raise SystemExit(f"[flash] {e}\n{log[-2000:]}")
     if BLE_MARKER not in log:
         raise SystemExit(f"[flash] BLE never advertised ({BLE_MARKER!r} absent)\n{log[-2000:]}")
     _log("[flash] booted + BLE up")

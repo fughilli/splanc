@@ -43,11 +43,11 @@ import time
 
 from hitl_client import Reservation, ReserveError
 from provision import HarnessError as E2EFailure
-from provision import dut_target, provision_dut
+from provision import dut_target, ensure_booted, provision_dut
 from sync import best_sample, is_sane, sync_sample
 
 # Boot markers the firmware prints (see pi/hitl/AGENTS.md "A typical E2E test").
-BOOT_MARKER = "SPI_FAST_FLASH_BOOT"  # ran the app (not USB download mode)
+# The SPI_FAST_FLASH_BOOT check + its strap-race retry live in provision.ensure_booted.
 BLE_MARKER = "[ble] advertising"  # Improv service is up
 
 
@@ -69,8 +69,10 @@ def flash(res: Reservation, bundle: str, monitor_seconds: float) -> str:
     sys.stdout.write(log)
     if proc.returncode != 0:
         raise E2EFailure(f"hitl-flash exited {proc.returncode}")
-    if BOOT_MARKER not in log:
-        raise E2EFailure(f"board did not boot from flash (no {BOOT_MARKER!r} in serial)")
+    # A C6 occasionally latches USB download mode instead of booting the app (a
+    # post-flash reset / GPIO9-strap race); re-reset and re-read a few times
+    # before calling it a boot failure. Returns the log of the successful boot.
+    log = ensure_booted(res, log, monitor_seconds)
     if BLE_MARKER not in log:
         raise E2EFailure(f"BLE never came up (no {BLE_MARKER!r} in serial)")
     print("[flash] OK — booted the app and BLE is advertising", flush=True)
