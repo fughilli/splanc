@@ -351,8 +351,31 @@ tools/iosctl<span class="w"> </span>open<span class="w">                   </spa
 tools/iosctl<span class="w"> </span>run<span class="w"> </span>cap-sync,ios-build<span class="w">      </span><span class="c1"># run specific task(s), in order</span>
 </pre></div>
 </div>
+<section id="deploy-to-a-paired-iphone-in-one-command">
+<h3>Deploy to a paired iPhone in one command<a class="headerlink" href="#deploy-to-a-paired-iphone-in-one-command" title="Link to this heading">¶</a></h3>
+<p>When you just want the app compiled and running on your phone, skip <code class="docutils literal notranslate"><span class="pre">iosctl</span></code> and
+use the single Bazel target (it auto-detects the paired device):</p>
+<div class="highlight-sh notranslate"><div class="highlight"><pre><span></span>bazel<span class="w"> </span>run<span class="w"> </span>//tools:ios_deploy<span class="w">              </span><span class="c1"># compile → install → launch</span>
+bazel<span class="w"> </span>run<span class="w"> </span>//tools:ios_deploy<span class="w"> </span>--<span class="w"> </span>--log<span class="w">     </span><span class="c1"># …and stream the device console (Ctrl-C to detach)</span>
+</pre></div>
+</div>
+<p><strong>On the Mac this is fully self-contained</strong> — if no build server is running, it
+starts <code class="docutils literal notranslate"><span class="pre">tools/ios_build_server.py</span></code> as a <strong>sidecar</strong>, drives it, and shuts it down
+when it’s done. You don’t need the separate “leave the server running” step above.</p>
+<p><strong>From the container</strong> it stays a thin client and talks to the build server on
+<code class="docutils literal notranslate"><span class="pre">host.docker.internal:8099</span></code> (start <code class="docutils literal notranslate"><span class="pre">bazel</span> <span class="pre">run</span> <span class="pre">//tools:ios_build_server</span></code> on the
+Mac first, as usual) — the container never starts a sidecar, since it has no
+Xcode toolchain.</p>
+<p>Which path it takes is auto-detected; override with <code class="docutils literal notranslate"><span class="pre">--sidecar</span> <span class="pre">auto|always|never</span></code>.
+Setting <code class="docutils literal notranslate"><span class="pre">$IOS_BUILD_SERVER</span></code> points it at a specific running server and skips the
+sidecar. With no <code class="docutils literal notranslate"><span class="pre">--target</span></code>, it picks the single connected/Wi-Fi-paired iPhone
+(<code class="docutils literal notranslate"><span class="pre">xcrun</span> <span class="pre">xctrace</span> <span class="pre">list</span> <span class="pre">devices</span></code>); pass <code class="docutils literal notranslate"><span class="pre">--target</span> <span class="pre">&lt;UDID&gt;</span></code> or set <code class="docutils literal notranslate"><span class="pre">$IOS_DEPLOY_TARGET</span></code>
+when more than one device is attached. <code class="docutils literal notranslate"><span class="pre">--log</span></code> swaps the final launch for a
+console-attached relaunch so the app’s stdout/stderr + forwarded JS console
+stream back live. The iPhone must be awake + unlocked during install.</p>
 <p>Everything streams the underlying tool’s output live (<code class="docutils literal notranslate"><span class="pre">curl</span> <span class="pre">-N</span></code>), and a non-zero
 exit stops a chain.</p>
+</section>
 <section id="the-tasks-tasks">
 <h3>The tasks (<code class="docutils literal notranslate"><span class="pre">/tasks</span></code>)<a class="headerlink" href="#the-tasks-tasks" title="Link to this heading">¶</a></h3>
 <div class="table-wrapper colwidths-auto docutils container">
@@ -475,6 +498,7 @@ from an iPhone” path, since USB flashing is impossible on iOS (§3.1).</p></li
 <li><a class="reference internal" href="#the-shape-of-it">The shape of it</a></li>
 <li><a class="reference internal" href="#one-time-host-setup">One-time host setup</a></li>
 <li><a class="reference internal" href="#driving-it-from-the-container">Driving it from the container</a><ul>
+<li><a class="reference internal" href="#deploy-to-a-paired-iphone-in-one-command">Deploy to a paired iPhone in one command</a></li>
 <li><a class="reference internal" href="#the-tasks-tasks">The tasks (<code class="docutils literal notranslate"><span class="pre">/tasks</span></code>)</a></li>
 </ul>
 </li>
