@@ -24,11 +24,20 @@
 #                            the daemon), so no external WiFi is needed.
 name: HITL tests
 on:
-  # Runs on PRs (full flash + improv + ws against a real rig) and on demand. The
-  # job below is guarded to same-repo events only — fork PRs can't read the HITL
-  # environment's secrets, and the tailnet join would fail.
+  # Runs on PRs (full flash + improv + ws against a real rig), post-merge on main,
+  # and on demand. The job below is guarded to same-repo events only — fork PRs
+  # can't read the HITL environment's secrets, and the tailnet join would fail.
   pull_request:
     types: [opened, synchronize, reopened]
+  # Post-merge run against main so there's an authoritative "latest HITL run
+  # against main" (FUG-129): the README's HITL badge pins to
+  # ?branch=main&event=push, so it reflects THIS run — not whatever PR branch
+  # happened to run last. Also feeds the post-merge result into the Grafana CI
+  # metrics. Contention with in-flight PR runs is resolved a layer down by the
+  # managerd FIFO rig queue (see the concurrency note below).
+  push:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       server:
@@ -55,7 +64,10 @@ concurrency:
 jobs:
   hitl_tests:
     # Skip on fork PRs (no access to the HITL environment secrets / tailnet).
+    # push (post-merge on main) and workflow_dispatch only fire on this repo, so
+    # they're always allowed; PRs are gated to same-repo head.
     if: >-
+      github.event_name == 'push' ||
       github.event_name == 'workflow_dispatch' ||
       github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
