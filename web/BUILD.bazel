@@ -247,8 +247,8 @@ genrule(
 )
 
 # The golden HITL benchmark bundles the perf doc is generated from (one per
-# platform; only esp32c6 today). A filegroup so the freshness genrule can pass
-# every bundle to the generator regardless of how many platforms exist.
+# platform, plus the JIT variant per platform). A filegroup so the freshness
+# genrule can pass every bundle to the generator regardless of how many exist.
 filegroup(
     name = "device_bench_goldens",
     srcs = glob(["tests/testdata/device-bench-*.json"]),

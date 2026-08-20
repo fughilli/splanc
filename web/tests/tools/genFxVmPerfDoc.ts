@@ -130,13 +130,18 @@ interface FxBenchMargins {
   perLabel: Record<string, number>;
 }
 
-function renderPlatform(rawJson: string): PlatformDoc {
+function renderPlatform(rawJson: string, jit: boolean): PlatformDoc {
   const bundle = parseDeviceBundle(rawJson);
   const { profile, validation, table } = buildDeviceProfile(bundle, TOLERANCE);
   const cpuHz = profile.cpuHz;
   const mhz = (cpuHz / 1e6).toFixed(0);
-  const label = profile.deviceLabel || profile.soc;
-  const deviceKey = profile.deviceKey ?? profile.soc;
+  // The interpreter and JIT goldens share a SoC (same silicon, one flashed
+  // firmware); the JIT is a runtime mode, not a platform. Suffix the label +
+  // deviceKey so the two sections get distinct headings/anchors and sort
+  // adjacently (interpreter first).
+  const base = profile.deviceLabel || profile.soc;
+  const label = jit ? `${base} (JIT)` : base;
+  const deviceKey = jit ? `${profile.deviceKey ?? profile.soc}-jit` : (profile.deviceKey ?? profile.soc);
 
   const raw = JSON.parse(rawJson) as { fxBenchMargins?: FxBenchMargins };
   const margins = raw.fxBenchMargins;
@@ -146,6 +151,18 @@ function renderPlatform(rawJson: string): PlatformDoc {
   const out: string[] = [];
   out.push(`## ${profile.soc} — ${label}`);
   out.push("");
+  if (jit) {
+    out.push(
+      ...wrapProse(
+        "The **on-device RV32IM JIT** is enabled (the shipped default). It compiles hot " +
+          "straight-line **integer / fixed-point** blocks to native RV32; float-heavy and " +
+          "control-flow-heavy code stays interpreted. Same calibration corpus and firmware " +
+          "as the interpreter section above — only `set_jit` differs — so compare per-opcode " +
+          "and per-program costs directly against it to see where the JIT pays off.",
+      ),
+    );
+    out.push("");
+  }
 
   // --- summary ---
   const marginText = margins
@@ -344,7 +361,7 @@ function renderPlatform(rawJson: string): PlatformDoc {
 
 function renderDoc(bundlePaths: string[]): string {
   const platforms = bundlePaths
-    .map((p) => renderPlatform(fs.readFileSync(p, "utf8")))
+    .map((p) => renderPlatform(fs.readFileSync(p, "utf8"), path.basename(p).includes("-jit")))
     .sort((a, b) =>
       a.soc < b.soc ? -1 : a.soc > b.soc ? 1 : a.deviceKey < b.deviceKey ? -1 : a.deviceKey > b.deviceKey ? 1 : 0,
     );
