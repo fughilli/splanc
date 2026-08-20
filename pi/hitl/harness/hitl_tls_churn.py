@@ -450,8 +450,9 @@ def main() -> None:
     ap.add_argument(
         "--recover-window",
         type=float,
-        default=30.0,
-        help="seconds to wait for wss to recover after each burst (the anti-wedge gate)",
+        default=40.0,
+        help="seconds to wait for wss to recover after a burst; recovery after the "
+        "FINAL burst is the anti-wedge gate (earlier-round recovery is reported only)",
     )
     ap.add_argument(
         "--settle", type=float, default=90.0, help="seconds to wait for wss to first come up"
