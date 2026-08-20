@@ -339,6 +339,16 @@ held-out programs (<code class="docutils literal notranslate"><span class="pre">
 <td><p>13%</p></td>
 <td><p>PASS</p></td>
 </tr>
+<tr class="row-odd"><td><p>esp32c6</p></td>
+<td><p>esp32c6 (JIT)</p></td>
+<td><p>160</p></td>
+<td><p>65</p></td>
+<td><p>7</p></td>
+<td><p>7.3%</p></td>
+<td><p>16.7%</p></td>
+<td><p>13%</p></td>
+<td><p>PASS</p></td>
+</tr>
 </tbody>
 </table>
 </div>
@@ -1323,6 +1333,991 @@ LED transmit path, excluded from the gate as transmit-bound noise).</p>
 </div>
 </section>
 </section>
+<section id="esp32c6-esp32c6-jit">
+<h2>esp32c6 — esp32c6 (JIT)<a class="headerlink" href="#esp32c6-esp32c6-jit" title="Link to this heading">¶</a></h2>
+<p>The <strong>on-device RV32IM JIT</strong> is enabled (the shipped default). It compiles hot straight-line
+<strong>integer / fixed-point</strong> blocks to native RV32; float-heavy and control-flow-heavy code stays
+interpreted. Same calibration corpus and firmware as the interpreter section above — only <code class="docutils literal notranslate"><span class="pre">set_jit</span></code>
+differs — so compare per-opcode and per-program costs directly against it to see where the JIT pays
+off.</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Field</p></th>
+<th class="head"><p>Value</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>SoC</p></td>
+<td><p>esp32c6</p></td>
+</tr>
+<tr class="row-odd"><td><p>Device</p></td>
+<td><p>esp32c6 (JIT)</p></td>
+</tr>
+<tr class="row-even"><td><p>deviceKey</p></td>
+<td><p>esp32c6-jit</p></td>
+</tr>
+<tr class="row-odd"><td><p>CPU clock</p></td>
+<td><p>160 MHz (160,000,000 Hz)</p></td>
+</tr>
+<tr class="row-even"><td><p>Programs</p></td>
+<td><p>65 fit + 7 held-out</p></td>
+</tr>
+<tr class="row-odd"><td><p>Regression margins</p></td>
+<td><p>default 10%, sweep16 15%</p></td>
+</tr>
+<tr class="row-even"><td><p>Fit residual</p></td>
+<td><p>±70.2%</p></td>
+</tr>
+<tr class="row-odd"><td><p>Held-out accuracy</p></td>
+<td><p>RMS 7.3% · mean 5.1% · max 16.7% · R² 0.994</p></td>
+</tr>
+<tr class="row-even"><td><p>Verdict</p></td>
+<td><p>PASS (RMS 7.3% vs 13% tolerance)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<section id="id1">
+<h3>Fixed overheads<a class="headerlink" href="#id1" title="Link to this heading">¶</a></h3>
+<p>Per-phase framing costs the fit isolates from the per-opcode slopes.</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Overhead</p></th>
+<th class="head"><p>Cycles</p></th>
+<th class="head"><p>ns</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>update_fixed</p></td>
+<td><p>385176.2</p></td>
+<td><p>2407351.4</p></td>
+</tr>
+<tr class="row-odd"><td><p>shade_fixed</p></td>
+<td><p>2199.7</p></td>
+<td><p>13748.4</p></td>
+</tr>
+<tr class="row-even"><td><p>show_fixed</p></td>
+<td><p>51316.6</p></td>
+<td><p>320728.8</p></td>
+</tr>
+<tr class="row-odd"><td><p>show_per_led</p></td>
+<td><p>1958.9</p></td>
+<td><p>12243.0</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="id2">
+<h3>Fitted per-opcode cost<a class="headerlink" href="#id2" title="Link to this heading">¶</a></h3>
+<p>Per-lane opcode cost from the least-squares fit. <strong>Fitted</strong> rows were measured on this
+device; the rest keep the shipped default seed (the fit only overrides opcodes a
+benchmark actually exercised). Sorted by cost.</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Opcode</p></th>
+<th class="head"><p>Cycles</p></th>
+<th class="head"><p>ns</p></th>
+<th class="head"><p>Fitted</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>BinMath:pow</p></td>
+<td><p>1917.46</p></td>
+<td><p>11984.15</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-odd"><td><p>Hsv2Rgb</p></td>
+<td><p>1387.67</p></td>
+<td><p>8672.97</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-even"><td><p>UnMath:tan</p></td>
+<td><p>1347.88</p></td>
+<td><p>8424.27</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-odd"><td><p>BinMath:atan2</p></td>
+<td><p>1145.23</p></td>
+<td><p>7157.69</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-even"><td><p>Cross</p></td>
+<td><p>988.19</p></td>
+<td><p>6176.17</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-odd"><td><p>UnMath:exp</p></td>
+<td><p>899.16</p></td>
+<td><p>5619.77</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-even"><td><p>UnMath:log</p></td>
+<td><p>841.75</p></td>
+<td><p>5260.97</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-odd"><td><p>Smoothstep</p></td>
+<td><p>800.04</p></td>
+<td><p>5000.27</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-even"><td><p>UnMath:sqrt</p></td>
+<td><p>723.66</p></td>
+<td><p>4522.89</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-odd"><td><p>BinMath:mod</p></td>
+<td><p>697.67</p></td>
+<td><p>4360.47</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-even"><td><p>UnMath:cos</p></td>
+<td><p>686.85</p></td>
+<td><p>4292.83</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-odd"><td><p>Palette</p></td>
+<td><p>644.00</p></td>
+<td><p>4024.98</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-even"><td><p>UnMath:sin</p></td>
+<td><p>615.30</p></td>
+<td><p>3845.62</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-odd"><td><p>Normalize</p></td>
+<td><p>559.49</p></td>
+<td><p>3496.80</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-even"><td><p>Distance</p></td>
+<td><p>524.14</p></td>
+<td><p>3275.88</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-odd"><td><p>UnMath:ceil</p></td>
+<td><p>452.55</p></td>
+<td><p>2828.45</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-even"><td><p>Div</p></td>
+<td><p>449.81</p></td>
+<td><p>2811.29</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-odd"><td><p>Mix</p></td>
+<td><p>408.40</p></td>
+<td><p>2552.49</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-even"><td><p>Length</p></td>
+<td><p>387.18</p></td>
+<td><p>2419.87</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-odd"><td><p>UnMath:fract</p></td>
+<td><p>378.52</p></td>
+<td><p>2365.74</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-even"><td><p>Hash3</p></td>
+<td><p>366.69</p></td>
+<td><p>2291.81</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-odd"><td><p>Clamp</p></td>
+<td><p>327.61</p></td>
+<td><p>2047.57</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-even"><td><p>Mul</p></td>
+<td><p>307.68</p></td>
+<td><p>1922.97</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-odd"><td><p>Sub</p></td>
+<td><p>306.03</p></td>
+<td><p>1912.66</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-even"><td><p>Add</p></td>
+<td><p>303.63</p></td>
+<td><p>1897.70</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-odd"><td><p>UnMath:floor</p></td>
+<td><p>296.96</p></td>
+<td><p>1856.03</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-even"><td><p>BinMath:min</p></td>
+<td><p>286.65</p></td>
+<td><p>1791.56</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-odd"><td><p>BinMath:max</p></td>
+<td><p>286.26</p></td>
+<td><p>1789.14</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-even"><td><p>BinMath:step</p></td>
+<td><p>264.49</p></td>
+<td><p>1653.04</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-odd"><td><p>Dot</p></td>
+<td><p>242.28</p></td>
+<td><p>1514.27</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-even"><td><p>Hash1</p></td>
+<td><p>220.20</p></td>
+<td><p>1376.28</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-odd"><td><p>UnMath:sign</p></td>
+<td><p>173.46</p></td>
+<td><p>1084.10</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-even"><td><p>UnMath:abs</p></td>
+<td><p>150.81</p></td>
+<td><p>942.58</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-odd"><td><p>Neg</p></td>
+<td><p>143.68</p></td>
+<td><p>898.00</p></td>
+<td><p>yes</p></td>
+</tr>
+<tr class="row-even"><td><p>BinMath</p></td>
+<td><p>130.00</p></td>
+<td><p>812.50</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p>UnMath</p></td>
+<td><p>120.00</p></td>
+<td><p>750.00</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p>DivFix</p></td>
+<td><p>24.00</p></td>
+<td><p>150.00</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p>DivI</p></td>
+<td><p>20.00</p></td>
+<td><p>125.00</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p>ModI</p></td>
+<td><p>20.00</p></td>
+<td><p>125.00</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p>Scale</p></td>
+<td><p>14.00</p></td>
+<td><p>87.50</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p>F2Fix</p></td>
+<td><p>10.00</p></td>
+<td><p>62.50</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p>Fix2F</p></td>
+<td><p>10.00</p></td>
+<td><p>62.50</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p>F2I</p></td>
+<td><p>8.00</p></td>
+<td><p>50.00</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p>I2F</p></td>
+<td><p>8.00</p></td>
+<td><p>50.00</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p>Call</p></td>
+<td><p>6.00</p></td>
+<td><p>37.50</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p>MulFix</p></td>
+<td><p>6.00</p></td>
+<td><p>37.50</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p>MulI</p></td>
+<td><p>4.00</p></td>
+<td><p>25.00</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p>Ret</p></td>
+<td><p>4.00</p></td>
+<td><p>25.00</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p>RetFn</p></td>
+<td><p>4.00</p></td>
+<td><p>25.00</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p>Swizzle</p></td>
+<td><p>4.00</p></td>
+<td><p>25.00</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p>BrFalse</p></td>
+<td><p>3.00</p></td>
+<td><p>18.75</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p>Cmp</p></td>
+<td><p>3.00</p></td>
+<td><p>18.75</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p>LoadCtx</p></td>
+<td><p>3.00</p></td>
+<td><p>18.75</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p>LoadLocal</p></td>
+<td><p>3.00</p></td>
+<td><p>18.75</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p>LoadState</p></td>
+<td><p>3.00</p></td>
+<td><p>18.75</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p>LoadUniform</p></td>
+<td><p>3.00</p></td>
+<td><p>18.75</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p>StoreLocal</p></td>
+<td><p>3.00</p></td>
+<td><p>18.75</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p>StoreState</p></td>
+<td><p>3.00</p></td>
+<td><p>18.75</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p>Swap</p></td>
+<td><p>3.00</p></td>
+<td><p>18.75</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p>AddI</p></td>
+<td><p>2.00</p></td>
+<td><p>12.50</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p>CmpI</p></td>
+<td><p>2.00</p></td>
+<td><p>12.50</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p>Fix2I</p></td>
+<td><p>2.00</p></td>
+<td><p>12.50</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p>I2Fix</p></td>
+<td><p>2.00</p></td>
+<td><p>12.50</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p>Jmp</p></td>
+<td><p>2.00</p></td>
+<td><p>12.50</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p>Logic</p></td>
+<td><p>2.00</p></td>
+<td><p>12.50</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p>NegI</p></td>
+<td><p>2.00</p></td>
+<td><p>12.50</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p>PushConst</p></td>
+<td><p>2.00</p></td>
+<td><p>12.50</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-odd"><td><p>SubI</p></td>
+<td><p>2.00</p></td>
+<td><p>12.50</p></td>
+<td><p></p></td>
+</tr>
+<tr class="row-even"><td><p>Pop</p></td>
+<td><p>1.00</p></td>
+<td><p>6.25</p></td>
+<td><p></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+<section id="id3">
+<h3>Builtin costs (effects-AI ranking)<a class="headerlink" href="#id3" title="Link to this heading">¶</a></h3>
+<p>Rendered verbatim from <code class="docutils literal notranslate"><span class="pre">builtinCostsToPrompt</span></code> — the per-builtin ranking the
+in-editor AI is fed, relative to a float multiply (each runs once per LED in
+<code class="docutils literal notranslate"><span class="pre">shade()</span></code>):</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>BUILTIN COSTS on this device (esp32c6 @ 160 MHz, measured on your board) — per call, relative to a float multiply. shade() runs each ONCE PER LED, so favor the cheap ones:
+  abs 0.5x, sign 0.6x, hash 0.7x, dot 0.8x, step 0.9x, max 0.9x, min 0.9x, floor 1.0x, add 1.0x, sub 1.0x, mul 1.0x, clamp 1.1x, fract 1.2x, length 1.3x, mix 1.3x, div 1.5x, ceil 1.5x, distance 1.7x, normalize 1.8x, sin 2.0x, palette0 2.1x, cos 2.2x, mod 2.3x, sqrt 2.4x, smoothstep 2.6x, log 2.7x, exp 2.9x, cross 3.2x, atan2 3.7x, tan 4.4x, hsv2rgb 4.5x, pow 6.2x
+Hoist the pricey builtins (pow/atan2/log/exp/length/normalize/distance/smoothstep) out of shade() into update() or precompute into state; swap sin/cos/pow for fixed16/fixed8 (LUT trig, no soft-float) or step/mix/polynomials; avoid length/normalize where a squared distance works (hidden sqrt).
+</pre></div>
+</div>
+</section>
+<section id="id4">
+<h3>Estimator accuracy (held-out)<a class="headerlink" href="#id4" title="Link to this heading">¶</a></h3>
+<p>Predicted-vs-measured total frame time (FX-VM frame + LED transmit) for the held-out
+programs the fit never saw. Cycles are the wall-time re-expressed at the device clock.</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Program</p></th>
+<th class="head"><p>LEDs</p></th>
+<th class="head"><p>Measured (ms)</p></th>
+<th class="head"><p>Predicted (ms)</p></th>
+<th class="head"><p>Error</p></th>
+<th class="head"><p>Measured cyc</p></th>
+<th class="head"><p>Predicted cyc</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>clamp32M</p></td>
+<td><p>128</p></td>
+<td><p>59.78</p></td>
+<td><p>59.45</p></td>
+<td><p>-0.5%</p></td>
+<td><p>9.56M</p></td>
+<td><p>9.51M</p></td>
+</tr>
+<tr class="row-odd"><td><p>dot3M</p></td>
+<td><p>128</p></td>
+<td><p>25.39</p></td>
+<td><p>27.20</p></td>
+<td><p>+7.1%</p></td>
+<td><p>4.06M</p></td>
+<td><p>4.35M</p></td>
+</tr>
+<tr class="row-even"><td><p>expf2M</p></td>
+<td><p>128</p></td>
+<td><p>67.91</p></td>
+<td><p>70.10</p></td>
+<td><p>+3.2%</p></td>
+<td><p>10.87M</p></td>
+<td><p>11.22M</p></td>
+</tr>
+<tr class="row-odd"><td><p>hsv2rgbM</p></td>
+<td><p>128</p></td>
+<td><p>45.29</p></td>
+<td><p>44.04</p></td>
+<td><p>-2.8%</p></td>
+<td><p>7.25M</p></td>
+<td><p>7.05M</p></td>
+</tr>
+<tr class="row-even"><td><p>lavalamp</p></td>
+<td><p>200</p></td>
+<td><p>20.71</p></td>
+<td><p>21.75</p></td>
+<td><p>+5.0%</p></td>
+<td><p>3.31M</p></td>
+<td><p>3.48M</p></td>
+</tr>
+<tr class="row-odd"><td><p>mix3M</p></td>
+<td><p>128</p></td>
+<td><p>40.05</p></td>
+<td><p>40.08</p></td>
+<td><p>+0.1%</p></td>
+<td><p>6.41M</p></td>
+<td><p>6.41M</p></td>
+</tr>
+<tr class="row-even"><td><p>neg2M</p></td>
+<td><p>128</p></td>
+<td><p>13.33</p></td>
+<td><p>15.56</p></td>
+<td><p>+16.7%</p></td>
+<td><p>2.13M</p></td>
+<td><p>2.49M</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Held-out <strong>RMS 7.3%</strong>, mean 5.1%, max 16.7% against the <strong>13%</strong> tolerance — <strong>PASS</strong>.</p>
+<p>Outliers (|error| &gt; 10%): <code class="docutils literal notranslate"><span class="pre">neg2M</span></code> +16.7%. The linear sum-of-op-costs model over-predicts the
+cheapest real effects.</p>
+</section>
+<section id="id5">
+<h3>Raw measured costs<a class="headerlink" href="#id5" title="Link to this heading">¶</a></h3>
+<p>Every measured micro-program from the golden bundle: cycle-accurate frame cycles
+(the FX-VM execution cost, which the regression gate compares) and show cycles (the
+LED transmit path, excluded from the gate as transmit-bound noise).</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Program</p></th>
+<th class="head"><p>Set</p></th>
+<th class="head"><p>LEDs</p></th>
+<th class="head"><p>Frame cycles</p></th>
+<th class="head"><p>Show cycles</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>empty</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>300,321</p></td>
+<td><p>283,160</p></td>
+</tr>
+<tr class="row-odd"><td><p>sweep16</p></td>
+<td><p>fit</p></td>
+<td><p>16</p></td>
+<td><p>47,459</p></td>
+<td><p>56,322</p></td>
+</tr>
+<tr class="row-even"><td><p>sweep256</p></td>
+<td><p>fit</p></td>
+<td><p>256</p></td>
+<td><p>621,625</p></td>
+<td><p>529,694</p></td>
+</tr>
+<tr class="row-odd"><td><p>hash1M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>2,001,217</p></td>
+<td><p>291,854</p></td>
+</tr>
+<tr class="row-even"><td><p>hash3M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>2,324,747</p></td>
+<td><p>289,290</p></td>
+</tr>
+<tr class="row-odd"><td><p>hash12M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>2,723,887</p></td>
+<td><p>305,855</p></td>
+</tr>
+<tr class="row-even"><td><p>hsv2rgb2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>12,347,565</p></td>
+<td><p>315,600</p></td>
+</tr>
+<tr class="row-odd"><td><p>length3M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>5,586,013</p></td>
+<td><p>313,516</p></td>
+</tr>
+<tr class="row-even"><td><p>negM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>1,568,245</p></td>
+<td><p>281,732</p></td>
+</tr>
+<tr class="row-odd"><td><p>normalize3M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>8,110,105</p></td>
+<td><p>299,119</p></td>
+</tr>
+<tr class="row-even"><td><p>paletteM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>3,452,051</p></td>
+<td><p>285,195</p></td>
+</tr>
+<tr class="row-odd"><td><p>absfM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>1,720,653</p></td>
+<td><p>282,525</p></td>
+</tr>
+<tr class="row-even"><td><p>ceilfM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>2,950,816</p></td>
+<td><p>286,742</p></td>
+</tr>
+<tr class="row-odd"><td><p>cosM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>3,906,905</p></td>
+<td><p>301,830</p></td>
+</tr>
+<tr class="row-even"><td><p>floorfM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>2,313,793</p></td>
+<td><p>291,403</p></td>
+</tr>
+<tr class="row-odd"><td><p>fractfM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>2,654,009</p></td>
+<td><p>283,776</p></td>
+</tr>
+<tr class="row-even"><td><p>signfM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>1,811,865</p></td>
+<td><p>294,359</p></td>
+</tr>
+<tr class="row-odd"><td><p>sinM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>3,622,071</p></td>
+<td><p>289,070</p></td>
+</tr>
+<tr class="row-even"><td><p>sqrtfM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>4,070,561</p></td>
+<td><p>312,177</p></td>
+</tr>
+<tr class="row-odd"><td><p>tanM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>6,626,355</p></td>
+<td><p>298,810</p></td>
+</tr>
+<tr class="row-even"><td><p>normalize32M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>14,602,029</p></td>
+<td><p>349,093</p></td>
+</tr>
+<tr class="row-odd"><td><p>addM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>2,318,779</p></td>
+<td><p>290,620</p></td>
+</tr>
+<tr class="row-even"><td><p>divM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>2,943,615</p></td>
+<td><p>305,152</p></td>
+</tr>
+<tr class="row-odd"><td><p>mulM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>2,335,469</p></td>
+<td><p>284,180</p></td>
+</tr>
+<tr class="row-even"><td><p>subM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>2,355,717</p></td>
+<td><p>296,146</p></td>
+</tr>
+<tr class="row-odd"><td><p>absf2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>2,153,587</p></td>
+<td><p>296,169</p></td>
+</tr>
+<tr class="row-even"><td><p>atan2fM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>5,766,087</p></td>
+<td><p>294,476</p></td>
+</tr>
+<tr class="row-odd"><td><p>ceilf2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>4,628,326</p></td>
+<td><p>296,663</p></td>
+</tr>
+<tr class="row-even"><td><p>cos2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>6,549,521</p></td>
+<td><p>299,095</p></td>
+</tr>
+<tr class="row-odd"><td><p>floorf2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>3,353,623</p></td>
+<td><p>295,721</p></td>
+</tr>
+<tr class="row-even"><td><p>fractf2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>4,018,629</p></td>
+<td><p>292,975</p></td>
+</tr>
+<tr class="row-odd"><td><p>modfM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>3,952,485</p></td>
+<td><p>296,560</p></td>
+</tr>
+<tr class="row-even"><td><p>powfM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>8,965,455</p></td>
+<td><p>301,294</p></td>
+</tr>
+<tr class="row-odd"><td><p>signf2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>2,339,861</p></td>
+<td><p>289,188</p></td>
+</tr>
+<tr class="row-even"><td><p>sin2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>5,959,227</p></td>
+<td><p>297,141</p></td>
+</tr>
+<tr class="row-odd"><td><p>sqrtf2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>6,844,626</p></td>
+<td><p>311,641</p></td>
+</tr>
+<tr class="row-even"><td><p>stepfM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>2,293,737</p></td>
+<td><p>293,656</p></td>
+</tr>
+<tr class="row-odd"><td><p>tan2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>11,958,743</p></td>
+<td><p>330,084</p></td>
+</tr>
+<tr class="row-even"><td><p>maxfM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>2,277,225</p></td>
+<td><p>289,543</p></td>
+</tr>
+<tr class="row-odd"><td><p>minfM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>2,273,265</p></td>
+<td><p>302,207</p></td>
+</tr>
+<tr class="row-even"><td><p>hash32M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>4,062,121</p></td>
+<td><p>287,984</p></td>
+</tr>
+<tr class="row-odd"><td><p>expfM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>5,922,945</p></td>
+<td><p>295,824</p></td>
+</tr>
+<tr class="row-even"><td><p>logfM</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>5,753,319</p></td>
+<td><p>322,934</p></td>
+</tr>
+<tr class="row-odd"><td><p>length32M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>10,570,733</p></td>
+<td><p>324,563</p></td>
+</tr>
+<tr class="row-even"><td><p>palette2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>6,338,097</p></td>
+<td><p>301,334</p></td>
+</tr>
+<tr class="row-odd"><td><p>add2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>3,352,757</p></td>
+<td><p>306,207</p></td>
+</tr>
+<tr class="row-even"><td><p>div2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>4,603,813</p></td>
+<td><p>291,051</p></td>
+</tr>
+<tr class="row-odd"><td><p>mul2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>3,385,807</p></td>
+<td><p>291,648</p></td>
+</tr>
+<tr class="row-even"><td><p>sub2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>3,425,449</p></td>
+<td><p>288,749</p></td>
+</tr>
+<tr class="row-odd"><td><p>distance3M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>7,253,363</p></td>
+<td><p>295,144</p></td>
+</tr>
+<tr class="row-even"><td><p>cross3M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>5,288,111</p></td>
+<td><p>295,136</p></td>
+</tr>
+<tr class="row-odd"><td><p>atan2f2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>10,313,707</p></td>
+<td><p>296,556</p></td>
+</tr>
+<tr class="row-even"><td><p>modf2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>6,637,546</p></td>
+<td><p>291,240</p></td>
+</tr>
+<tr class="row-odd"><td><p>powf2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>16,621,707</p></td>
+<td><p>311,331</p></td>
+</tr>
+<tr class="row-even"><td><p>stepf2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>3,031,071</p></td>
+<td><p>286,007</p></td>
+</tr>
+<tr class="row-odd"><td><p>maxf2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>3,262,307</p></td>
+<td><p>295,234</p></td>
+</tr>
+<tr class="row-even"><td><p>minf2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>3,268,265</p></td>
+<td><p>292,640</p></td>
+</tr>
+<tr class="row-odd"><td><p>dot32M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>6,934,095</p></td>
+<td><p>299,571</p></td>
+</tr>
+<tr class="row-even"><td><p>logf2M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>10,321,707</p></td>
+<td><p>303,559</p></td>
+</tr>
+<tr class="row-odd"><td><p>clamp3M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>5,005,421</p></td>
+<td><p>296,073</p></td>
+</tr>
+<tr class="row-even"><td><p>smoothstep3M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>10,788,779</p></td>
+<td><p>299,233</p></td>
+</tr>
+<tr class="row-odd"><td><p>cross32M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>8,944,577</p></td>
+<td><p>296,336</p></td>
+</tr>
+<tr class="row-even"><td><p>distance32M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>13,944,543</p></td>
+<td><p>333,568</p></td>
+</tr>
+<tr class="row-odd"><td><p>mix32M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>11,016,523</p></td>
+<td><p>300,842</p></td>
+</tr>
+<tr class="row-even"><td><p>smoothstep32M</p></td>
+<td><p>fit</p></td>
+<td><p>128</p></td>
+<td><p>20,652,543</p></td>
+<td><p>558,458</p></td>
+</tr>
+<tr class="row-odd"><td><p>clamp32M</p></td>
+<td><p>held-out</p></td>
+<td><p>128</p></td>
+<td><p>9,262,239</p></td>
+<td><p>301,900</p></td>
+</tr>
+<tr class="row-even"><td><p>dot3M</p></td>
+<td><p>held-out</p></td>
+<td><p>128</p></td>
+<td><p>3,747,741</p></td>
+<td><p>313,890</p></td>
+</tr>
+<tr class="row-odd"><td><p>expf2M</p></td>
+<td><p>held-out</p></td>
+<td><p>128</p></td>
+<td><p>10,557,717</p></td>
+<td><p>308,014</p></td>
+</tr>
+<tr class="row-even"><td><p>hsv2rgbM</p></td>
+<td><p>held-out</p></td>
+<td><p>128</p></td>
+<td><p>6,949,793</p></td>
+<td><p>296,724</p></td>
+</tr>
+<tr class="row-odd"><td><p>lavalamp</p></td>
+<td><p>held-out</p></td>
+<td><p>200</p></td>
+<td><p>2,868,795</p></td>
+<td><p>445,284</p></td>
+</tr>
+<tr class="row-even"><td><p>mix3M</p></td>
+<td><p>held-out</p></td>
+<td><p>128</p></td>
+<td><p>6,108,051</p></td>
+<td><p>299,981</p></td>
+</tr>
+<tr class="row-odd"><td><p>neg2M</p></td>
+<td><p>held-out</p></td>
+<td><p>128</p></td>
+<td><p>1,839,733</p></td>
+<td><p>293,852</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+</section>
+</section>
 </section>
 
         </article>
@@ -1388,6 +2383,14 @@ LED transmit path, excluded from the gate as transmit-bound noise).</p>
 <li><a class="reference internal" href="#builtin-costs-effects-ai-ranking">Builtin costs (effects-AI ranking)</a></li>
 <li><a class="reference internal" href="#estimator-accuracy-held-out">Estimator accuracy (held-out)</a></li>
 <li><a class="reference internal" href="#raw-measured-costs">Raw measured costs</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#esp32c6-esp32c6-jit">esp32c6 — esp32c6 (JIT)</a><ul>
+<li><a class="reference internal" href="#id1">Fixed overheads</a></li>
+<li><a class="reference internal" href="#id2">Fitted per-opcode cost</a></li>
+<li><a class="reference internal" href="#id3">Builtin costs (effects-AI ranking)</a></li>
+<li><a class="reference internal" href="#id4">Estimator accuracy (held-out)</a></li>
+<li><a class="reference internal" href="#id5">Raw measured costs</a></li>
 </ul>
 </li>
 </ul>
