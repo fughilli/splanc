@@ -60,7 +60,9 @@ runs:
         runner_arg=()
         [ -n "$BEP_RUNNER" ] && runner_arg=(--runner "$BEP_RUNNER")
         run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-        python3 "${GITHUB_WORKSPACE}/tools/ci_observability/bep_report.py" \
+        # Best-effort: this is observability, so a report/push failure must NEVER
+        # fail the CI job. Run it out from under `set -e` and swallow errors.
+        if python3 "${GITHUB_WORKSPACE}/tools/ci_observability/bep_report.py" \
           --bep "$BEP_FILE" \
           --out-html "$outdir/report.html" \
           --out-ndjson "$outdir/records.ndjson" \
@@ -69,12 +71,17 @@ runs:
           --pr "${PR_NUMBER:-}" \
           --run-url "$run_url" \
           --push \
-          "${runner_arg[@]}"
-        echo "have_report=true" >> "$GITHUB_OUTPUT"
+          "${runner_arg[@]}"; then
+          echo "have_report=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "::warning title=CI report::report generation failed (non-fatal); continuing." >&2
+          echo "have_report=false" >> "$GITHUB_OUTPUT"
+        fi
 
     - name: Upload CI report artifact
       id: upload
       if: steps.gen.outputs.have_report == 'true'
+      continue-on-error: true
       uses: actions/upload-artifact@v4
       with:
         name: ${{ inputs.artifact-name }}
@@ -88,6 +95,7 @@ runs:
     # we link it as an OPTIONAL styled download rather than the way to read it.
     - name: Note the downloadable report
       if: steps.gen.outputs.have_report == 'true'
+      continue-on-error: true
       shell: bash
       env:
         REPORT_URL: ${{ steps.upload.outputs.artifact-url }}

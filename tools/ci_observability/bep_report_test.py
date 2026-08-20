@@ -430,6 +430,23 @@ class TestSinksNoop(unittest.TestCase):
             os.environ.pop(k, None)
         self.assertFalse(sinks.push_tinybird([B.Record(target="//x")]))
 
+    def test_push_all_swallows_a_raising_sink(self):
+        # A sink raising (e.g. an unforeseen network error) must not propagate —
+        # it would fail the CI step. push_all must swallow it.
+        import os
+
+        os.environ["GRAFANA_CLOUD_LOKI_URL"] = "http://127.0.0.1:0/bad"
+        os.environ["GRAFANA_CLOUD_LOKI_KEY"] = "k"
+        orig = sinks._post
+        try:
+            sinks._post = lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom"))
+            # Must not raise despite the sink blowing up.
+            sinks.push_all([B.Record(target="//x", runner="hitl")])
+        finally:
+            sinks._post = orig
+            os.environ.pop("GRAFANA_CLOUD_LOKI_URL", None)
+            os.environ.pop("GRAFANA_CLOUD_LOKI_KEY", None)
+
     def test_tinybird_row_keeps_iso_timestamp(self):
         rec = B.Record(target="//x", status="FAILED", cached=True, timestamp="2024-08-07T12:00:00Z")
         row = sinks._tinybird_row(rec)

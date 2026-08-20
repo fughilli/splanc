@@ -270,7 +270,15 @@ def push_tinybird(records: list) -> bool:
 
 
 def push_all(records: list) -> None:
-    """Push to every configured sink; each no-ops without its credentials."""
-    push_loki(records)
-    push_clickhouse(records)
-    push_tinybird(records)
+    """Push to every configured sink; each no-ops without its credentials.
+
+    Telemetry is best-effort: a sink raising (an unforeseen network error type,
+    a transient outage, malformed creds) must NEVER propagate — it would fail the
+    CI step that called us. Each sink already catches HTTPError/URLError, but this
+    is the belt-and-suspenders backstop for anything they miss.
+    """
+    for fn in (push_loki, push_clickhouse, push_tinybird):
+        try:
+            fn(records)
+        except Exception as e:  # noqa: BLE001 - observability must not break CI
+            _log(f"{fn.__name__} raised (ignored, non-fatal): {e!r}")
