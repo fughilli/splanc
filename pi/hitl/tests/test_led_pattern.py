@@ -8,6 +8,7 @@ drive/decode contract can't silently drift. The on-hardware capture+assert loop 
 from led_pattern import (
     counting_message,
     diff_pixels,
+    diff_pixels_aligned,
     diff_structure_aligned,
     expected_pixels,
 )
@@ -69,3 +70,50 @@ def test_aligned_reports_best_offset_on_true_mismatch():
     got = [(0, 0, 0)] * 10 + [(0, 0, 160)] * 4 + [(0, 0, 0)] * 10
     diffs, _ = diff_structure_aligned(want, got)
     assert diffs  # blue-lit != red-lit structure
+
+
+# -- JIT-verify differential (FUG-134): diff_pixels_aligned ------------------
+
+
+def _frame(n):
+    # A distinct per-LED frame — like jit_bench's per-LED output, every LED lit.
+    return [(i * 7 % 256, 0x20, 0x50) for i in range(n)]
+
+
+def test_jit_aligned_identical_captures_pass_at_any_phase():
+    # Two captures of the SAME static frame, each starting at a different phase and
+    # spanning several frames — the JIT-on vs JIT-off happy path. An exact match
+    # must be found regardless of where each capture's software trigger armed.
+    n = 8
+    frame = _frame(n)
+    tiled = frame * 4
+    a = tiled[3 : 3 + 2 * n + 2]  # phase 3, >=2 frames
+    b = tiled[5 : 5 + 2 * n + 2]  # phase 5
+    diffs, off = diff_pixels_aligned(a, b, n)
+    assert diffs == []
+    assert b[off : off + n] == a[n : 2 * n]  # matched a whole mid-frame of `a`
+
+
+def test_jit_aligned_flags_a_single_divergent_pixel():
+    # One wrong pixel in the JIT-on capture (a codegen divergence) must fail — the
+    # compare is EXACT bytes, not structure, so even a 1-LSB difference is caught.
+    n = 8
+    frame = _frame(n)
+    a = frame * 3
+    bad = list(frame)
+    bad[2] = (bad[2][0] ^ 0x01, bad[2][1], bad[2][2])  # flip one bit
+    b = bad * 3
+    diffs, _ = diff_pixels_aligned(a, b, n)
+    assert diffs  # not bit-identical -> real JIT/interpreter divergence
+
+
+def test_jit_aligned_short_capture_falls_back_to_head_compare():
+    # Fewer than a full frame captured: fall back to a head-to-head diff so the
+    # caller still gets a signal rather than a bogus empty (matched-nothing) pass.
+    n = 8
+    frame = _frame(n)
+    # Equal short heads -> the compared prefix matches (empty diff).
+    assert diff_pixels_aligned(frame[:3], frame[:3], n) == ([], 0)
+    # Differing short heads still surface a diff via the fallback path.
+    diffs, off = diff_pixels_aligned(frame[:3], [(0, 0, 0)] * 3, n)
+    assert off == 0 and diffs
