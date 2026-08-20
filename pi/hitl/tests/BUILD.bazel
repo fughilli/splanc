@@ -28,6 +28,7 @@ py_test(
         "test_improv.py",
         "test_improv_find.py",
         "test_led_pattern.py",
+        "test_loaded_tls.py",
         "test_map_upload.py",
         "test_mapping_trigger.py",
         "test_provision.py",
