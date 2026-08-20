@@ -6,6 +6,7 @@
  */
 
 import { icon, type IconName } from "./icons";
+import { attachDiffractionBackdrop, type DiffractionHandle } from "./diffractionBackdrop";
 
 export { icon, installIconSprite, type IconName } from "./icons";
 
@@ -285,7 +286,9 @@ export function Sheet(title: string, opts: { onClose?: () => void } = {}): Sheet
  * A centered modal confirmation in the app design language — a replacement for
  * the browser's `confirm()`. Dims + blurs the app behind it, animates in like a
  * Sheet, and resolves `true` (confirmed) / `false` (cancelled, scrim tap, ✕-less
- * Escape). Set `danger` for destructive actions (red confirm button).
+ * Escape). Set `danger` for destructive actions (red confirm button). Set
+ * `trippy` (FUG-127) to melt the flat blur into an animated diffraction warp —
+ * used by the Acid Mode entry prompt.
  */
 export function confirmDialog(opts: {
   message: string;
@@ -293,12 +296,16 @@ export function confirmDialog(opts: {
   confirmLabel?: string;
   cancelLabel?: string;
   danger?: boolean;
+  trippy?: boolean;
 }): Promise<boolean> {
   return new Promise((resolve) => {
     const scrim = document.createElement("div");
-    scrim.className = "k-confirm-scrim";
+    scrim.className = opts.trippy ? "k-confirm-scrim k-confirm-scrim--trippy" : "k-confirm-scrim";
+    let diffraction: DiffractionHandle | null = null;
     const dialog = document.createElement("div");
-    dialog.className = "k-confirm";
+    // `trippy` gives the dialog a blur→crisp materialize (see .k-confirm--trippy),
+    // to match the Acid Mode diffraction backdrop it opens over.
+    dialog.className = opts.trippy ? "k-confirm k-confirm--trippy" : "k-confirm";
     dialog.setAttribute("role", "alertdialog");
     dialog.setAttribute("aria-modal", "true");
 
@@ -329,16 +336,24 @@ export function confirmDialog(opts: {
     dialog.appendChild(actions);
 
     document.body.append(scrim, dialog);
+    // Force the pre-`--in` styles (opacity 0, blurred/scaled ghost) to resolve as
+    // the transition baseline BEFORE flipping to `--in`. Without this, the append
+    // and the class-add coalesce into a single style pass and the browser paints
+    // the dialog straight in its final state — the entrance transition never fires
+    // and it "pops". Reading layout flushes the baseline.
+    void dialog.offsetHeight;
     requestAnimationFrame(() => {
       scrim.classList.add("k-confirm--in");
       dialog.classList.add("k-confirm--in");
       confirmBtn.focus();
+      if (opts.trippy) diffraction = attachDiffractionBackdrop(scrim);
     });
 
     let closed = false;
     function done(result: boolean): void {
       if (closed) return;
       closed = true;
+      diffraction?.detach();
       document.removeEventListener("keydown", onKey);
       scrim.classList.remove("k-confirm--in");
       dialog.classList.remove("k-confirm--in");
