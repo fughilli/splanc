@@ -177,10 +177,15 @@ def assemble_bundle(
     device_label: str | None = None,
     firmware_build: str | None = None,
     timestamp: str | None = None,
+    run_health: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Assemble the device-measurement bundle (schema: deviceProfile.ts
     parseDeviceBundle). `fit` are the isolation benchmarks; `heldout` are the
-    validation programs the fit never sees."""
+    validation programs the fit never sees. `run_health` (FUG-137) is an optional
+    reliability record of the sweep — mid-run watchdog reboots, re-provisions, IP
+    changes, whether the run aborted incomplete — stamped so a flaky run is a
+    first-class, inspectable signal rather than a silently short bundle;
+    parseDeviceBundle ignores the extra key."""
     bundle: dict[str, Any] = {
         "kind": "ledmapper-device-benchmark",
         "version": 1,
@@ -197,4 +202,28 @@ def assemble_bundle(
         bundle["firmwareBuild"] = firmware_build
     if timestamp:
         bundle["timestamp"] = timestamp
+    if run_health:
+        bundle["runHealth"] = run_health
     return bundle
+
+
+def run_health_failure(run_health: dict[str, Any] | None, fail_on_reboot: bool) -> str | None:
+    """Decide whether a run's reliability record should FAIL the run, returning a
+    human-readable reason or None (FUG-137). Two levels:
+
+    * An `aborted` run ALWAYS fails: the DUT went unreachable mid-sweep, so the
+      bundle is incomplete — writing a short bundle and passing is exactly how a
+      real regression used to hide in the flake. Fail loudly regardless of flags.
+    * A run that dropped the socket but *recovered* (a watchdog reboot we
+      reconnected/re-provisioned through) fails only under `fail_on_reboot`, the
+      strict regression-gate mode: the bundle is complete, but the reboot itself
+      is worth surfacing as a signal.
+    """
+    if not run_health:
+        return None
+    if run_health.get("aborted"):
+        return "the DUT went unreachable mid-sweep — the bundle is incomplete"
+    if fail_on_reboot and run_health.get("drops"):
+        hit = ", ".join(run_health.get("rebootPrograms") or []) or "unknown program(s)"
+        return f"{run_health['drops']} mid-sweep DUT socket drop(s) during {hit}"
+    return None
