@@ -349,3 +349,67 @@ flash_bundle(
     flash = ":flash_esp32c6",
     tags = ["manual"],
 )
+
+# -- Splanc Dev Module target (FUG-131) --------------------------------------
+# The player app built for the //hardware/splanc_dev board: -DLM_BOARD_SPLANC_DEV
+# swaps in that board's pin map (boards/splanc_dev.h — LED channels on IO0/IO1,
+# the load-switch/boost/I2C/button pins, per docs/hardware/splanc-dev-module.md
+# §4). Same stock ESP32-C6 chip as :esp32c6 (board = esp32c6), so it rolls the
+# same driver set (RMT WS2812 ×2, WiFi + BLE + webserver, TLS); the sensor
+# drivers (I2C/I2S IMU/baro/compass/mic) are a tracked follow-up — @embedded has
+# no I2C/I2S stack yet — and this target reserves their pins. Build with:
+#   bazelisk build -c opt //firmware/player_app:splanc_dev
+cc_binary(
+    name = "player_app_splanc_dev",
+    srcs = [
+        "boards/splanc_dev.h",
+        "improv_ble.cpp",
+        "improv_ble.h",
+        "led_config.h",
+        "main.cpp",
+        "player_ffi.h",
+        "serial_log.h",
+        "ws2812_rmt.cpp",
+        "ws2812_rmt.h",
+    ],
+    copts = ["-fno-rtti"],
+    local_defines = ["LM_BOARD_SPLANC_DEV"],
+    target_compatible_with = select({
+        "@embedded//platforms:is_esp32c6": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        ":color_correction",
+        ":improv_codec",
+        ":player_ffi",
+        ":ws_codec",
+        "//firmware/landing:landing_page",
+        "@embedded//libs/board:arduino_core",
+        "@embedded//libs/tls:selfsigned",
+        "@embedded//libs/vendor:ble",
+        "@embedded//libs/vendor:preferences",
+        "@embedded//libs/vendor:webserver",
+        "@embedded//libs/vendor:wifi",
+    ],
+)
+
+firmware_binary(
+    name = "splanc_dev",
+    binary = ":player_app_splanc_dev",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "flash_splanc_dev",
+    app = ":splanc_dev",
+    partitions = "@embedded//libs/vendor:partitions_huge_app",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "splanc_dev_flashbundle",
+    flash = ":flash_splanc_dev",
+    tags = ["manual"],
+)

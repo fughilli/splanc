@@ -1,0 +1,13 @@
+requires-atopile: '>=0.15.0,<0.16.0'
+
+# Authoring only: the local picker resolves lcsc ids while `ato create part`
+# generates the atomic parts under elec/src/parts. The build itself needs no
+# picker — every part is pre-picked (atomic) — so the Bazel target sets
+# picker=False. See hardware/README.md.
+services:
+  components:
+    url: http://127.0.0.1:8099
+
+builds:
+  default:
+    entry: elec/src/splanc_dev.ato:SplancDev

@@ -1,0 +1,19 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component Sunlord_SWPA6045S1R0NT_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C96955", date="2026-08-20T03:34:42.275424+00:00", checksum="f8fab656344f2d2353aa865be7636444caf7b1613982fb88fb6ca3d7f8cb7b78">
+
+    trait is_atomic_part<manufacturer="Sunlord", partnumber="SWPA6045S1R0NT", footprint="IND-SMD_L6.0-W6.0_SWPA6045S.kicad_mod", symbol="SWPA6045S1R0NT.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C96955", manufacturer="Sunlord", partno="SWPA6045S1R0NT">
+    trait has_designator_prefix<prefix="L">
+
+    # pins
+    pin 2
+    signal p2 ~ pin 2
+    pin 1
+    signal p1 ~ pin 1
