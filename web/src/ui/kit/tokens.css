@@ -465,6 +465,17 @@ a {
 .k-confirm-scrim.k-confirm--in {
   opacity: 1;
 }
+/* Trippy scrim (FUG-127): the JS diffraction controller owns BOTH the dark
+   shade and the blur/warp, ramping each from zero on one smoothstep timeline —
+   so nothing pops. Start with no shade and no blur here; attachDiffractionBackdrop
+   drives them via inline styles. (The element opacity fade is kept only so the
+   scrim still fades out cleanly on close.) SHADE_ALPHA in diffractionBackdrop.ts
+   must match the plain scrim's 0.45. */
+.k-confirm-scrim--trippy {
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
 .k-confirm {
   position: fixed;
   left: 50%;
@@ -483,6 +494,31 @@ a {
 .k-confirm.k-confirm--in {
   opacity: 1;
   transform: translate(-50%, -50%) scale(1);
+}
+/* Trippy entrance (FUG-127): the dialog materializes out of a blurred,
+   transparent ghost into crisp + opaque — reverse alpha/blur — over a short
+   window, on a slight delay so it resolves *behind* the diffraction backdrop
+   instead of popping in with it. Opt-in via `trippy` (the Acid Mode confirm);
+   plain confirms keep the quick scale/fade above. Reduced motion collapses the
+   whole thing via the global rule below (transition-duration: 1ms). */
+.k-confirm--trippy {
+  filter: blur(12px);
+  transform: translate(-50%, -50%) scale(0.94);
+  /* EXIT transition (used when `--in` is removed — CSS applies the after-change
+     state's transition). Matches the scrim's opacity fade rate (--motion-sheet
+     var(--ease)) so the dialog dismisses in lockstep with the background, no
+     entrance delay dragging it. */
+  transition: opacity var(--motion-sheet) var(--ease),
+    transform var(--motion-sheet) var(--ease),
+    filter var(--motion-sheet) var(--ease);
+}
+.k-confirm--trippy.k-confirm--in {
+  filter: blur(0);
+  /* ENTRANCE transition (used when `--in` is added): the slow, delayed
+     materialize from the blurred ghost. */
+  transition: opacity 460ms cubic-bezier(0.4, 0, 0.2, 1) 140ms,
+    transform 460ms cubic-bezier(0.4, 0, 0.2, 1) 140ms,
+    filter 460ms cubic-bezier(0.4, 0, 0.2, 1) 140ms;
 }
 .k-confirm-title {
   margin: 0 0 var(--sp-2);

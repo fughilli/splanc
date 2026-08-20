@@ -49,7 +49,7 @@ function prefersReducedMotion(): boolean {
 }
 
 interface FilterNodes {
-  turbulence: SVGFETurbulenceElement;
+  noiseShift: SVGFEOffsetElement;
   displace: SVGFEDisplacementMapElement;
   offsetR: SVGFEOffsetElement;
   offsetB: SVGFEOffsetElement;
@@ -89,9 +89,19 @@ function ensureFilter(): FilterNodes {
   turbulence.setAttribute("stitchTiles", "stitch");
   turbulence.setAttribute("result", "noise");
 
+  // The noise is computed ONCE (static baseFrequency). To keep the warp morphing
+  // without re-running feTurbulence every frame (a full fractal-noise recompute —
+  // the source of the stutter), we slide this cached noise with a cheap feOffset
+  // raster translate and feed the displacement map the shifted copy.
+  const noiseShift = document.createElementNS(SVG_NS, "feOffset");
+  noiseShift.setAttribute("in", "noise");
+  noiseShift.setAttribute("dx", "0");
+  noiseShift.setAttribute("dy", "0");
+  noiseShift.setAttribute("result", "noiseShift");
+
   const displace = document.createElementNS(SVG_NS, "feDisplacementMap");
   displace.setAttribute("in", "SourceGraphic");
-  displace.setAttribute("in2", "noise");
+  displace.setAttribute("in2", "noiseShift");
   displace.setAttribute("scale", "0");
   displace.setAttribute("xChannelSelector", "R");
   displace.setAttribute("yChannelSelector", "G");
@@ -134,6 +144,7 @@ function ensureFilter(): FilterNodes {
 
   filter.append(
     turbulence,
+    noiseShift,
     displace,
     matR,
     matG,
@@ -146,7 +157,7 @@ function ensureFilter(): FilterNodes {
   svg.append(filter);
   document.body.append(svg);
 
-  filterNodes = { turbulence, displace, offsetR, offsetB };
+  filterNodes = { noiseShift, displace, offsetR, offsetB };
   return filterNodes;
 }
 
@@ -166,7 +177,12 @@ function channelMatrix(channel: "R" | "G" | "B"): SVGFEColorMatrixElement {
 }
 
 // Effect shape — tuned to read as "warpy and trippy" without being dramatic.
-const BASE_BLUR = 3; // px, the resting blur the plain scrim already had feel of
+const BASE_BLUR = 1.5; // px, the constant floor of the peak blur (kept low so the
+// warp displacement stays perceptible — too much blur smears it out)
+// Peak alpha of the dark scrim shade. Ramped with `amp` (not left to CSS) so the
+// shade eases in from zero alongside the blur — nothing pops. MUST match the
+// plain `.k-confirm-scrim` background alpha in tokens.css.
+const SHADE_ALPHA = 0.45;
 const WARP_SCALE = 16; // px, peak displacement amplitude
 const CHROMA = 2.6; // px, peak R/B channel separation
 const HUE_SWING = 14; // deg, subtle chromatic shimmer (fallback + accent)
@@ -186,6 +202,7 @@ export function attachDiffractionBackdrop(scrim: HTMLElement): DiffractionHandle
     const filter = `blur(${BASE_BLUR + 3}px) saturate(1.15)`;
     scrim.style.backdropFilter = filter;
     scrim.style.setProperty("-webkit-backdrop-filter", filter);
+    scrim.style.backgroundColor = `rgba(0, 0, 0, ${SHADE_ALPHA})`;
     return { detach: () => {} };
   }
 
@@ -197,25 +214,32 @@ export function attachDiffractionBackdrop(scrim: HTMLElement): DiffractionHandle
     if (stopped) return;
     if (start < 0) start = t;
     const elapsed = t - start;
-    // Ease the amplitude in (cubic ease-out) so the warp melts up from the blur.
+    // Ease the amplitude in with smoothstep (ease-in-out) so the warp starts
+    // gently and melts up from the blur. A cubic ease-out front-loads the ramp
+    // (fastest slope at p=0), which reads as "instant" even over a long RAMP_MS;
+    // smoothstep has zero slope at both ends, so the onset is actually gradual.
     const p = Math.min(1, elapsed / RAMP_MS);
-    const amp = 1 - Math.pow(1 - p, 3);
-    // Slow, out-of-phase oscillators keep the field "breathing" organically.
+    const amp = p * p * (3 - 2 * p);
+    // Slow, out-of-phase oscillators drive the warp's motion (noise slide +
+    // displacement pulse). Frequencies bumped ~20% for a slightly faster morph.
     const sec = elapsed / 1000;
-    const slow = Math.sin(sec * 0.55);
-    const slower = Math.sin(sec * 0.31 + 1.3);
+    const slow = Math.sin(sec * 0.66);
+    const slower = Math.sin(sec * 0.372 + 1.3);
 
-    const blur = BASE_BLUR + amp * (2.4 + 1.1 * slow);
+    // Ramp the WHOLE blur with amp so it eases up from zero (no frame-1 flick),
+    // then holds CONSTANT once settled — deliberately NOT tied to the oscillators,
+    // so only the warp moves; the blur level doesn't breathe up and down.
+    const blur = amp * (BASE_BLUR + 1.0);
     const hue = amp * HUE_SWING * slower;
     const sat = 1 + amp * (0.18 + 0.06 * slow);
 
     if (nodes) {
       const scale = amp * WARP_SCALE * (0.85 + 0.15 * slow);
       const chroma = amp * CHROMA * (0.8 + 0.2 * slower);
-      // Drift the noise field so the warp morphs instead of sitting still.
-      const fx = 0.010 + 0.0022 * slow;
-      const fy = 0.014 + 0.0022 * slower;
-      nodes.turbulence.setAttribute("baseFrequency", `${fx.toFixed(5)} ${fy.toFixed(5)}`);
+      // Morph the warp by sliding the cached noise (bounded within the padded
+      // filter region) — cheap raster translate, no feTurbulence recompute.
+      nodes.noiseShift.setAttribute("dx", (14 * slow).toFixed(2));
+      nodes.noiseShift.setAttribute("dy", (14 * slower).toFixed(2));
       nodes.displace.setAttribute("scale", scale.toFixed(2));
       nodes.offsetR.setAttribute("dx", chroma.toFixed(2));
       nodes.offsetR.setAttribute("dy", (chroma * 0.35).toFixed(2));
@@ -227,6 +251,8 @@ export function attachDiffractionBackdrop(scrim: HTMLElement): DiffractionHandle
     const filter = nodes ? `${base} url("#${FILTER_ID}")` : base;
     scrim.style.backdropFilter = filter;
     scrim.style.setProperty("-webkit-backdrop-filter", filter);
+    // Ease the dark shade in on the same amp curve as the blur — no CSS-driven pop.
+    scrim.style.backgroundColor = `rgba(0, 0, 0, ${(amp * SHADE_ALPHA).toFixed(3)})`;
 
     raf = requestAnimationFrame(frame);
   };

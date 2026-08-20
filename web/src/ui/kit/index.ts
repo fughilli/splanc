@@ -300,10 +300,12 @@ export function confirmDialog(opts: {
 }): Promise<boolean> {
   return new Promise((resolve) => {
     const scrim = document.createElement("div");
-    scrim.className = "k-confirm-scrim";
+    scrim.className = opts.trippy ? "k-confirm-scrim k-confirm-scrim--trippy" : "k-confirm-scrim";
     let diffraction: DiffractionHandle | null = null;
     const dialog = document.createElement("div");
-    dialog.className = "k-confirm";
+    // `trippy` gives the dialog a blur→crisp materialize (see .k-confirm--trippy),
+    // to match the Acid Mode diffraction backdrop it opens over.
+    dialog.className = opts.trippy ? "k-confirm k-confirm--trippy" : "k-confirm";
     dialog.setAttribute("role", "alertdialog");
     dialog.setAttribute("aria-modal", "true");
 
@@ -334,6 +336,12 @@ export function confirmDialog(opts: {
     dialog.appendChild(actions);
 
     document.body.append(scrim, dialog);
+    // Force the pre-`--in` styles (opacity 0, blurred/scaled ghost) to resolve as
+    // the transition baseline BEFORE flipping to `--in`. Without this, the append
+    // and the class-add coalesce into a single style pass and the browser paints
+    // the dialog straight in its final state — the entrance transition never fires
+    // and it "pops". Reading layout flushes the baseline.
+    void dialog.offsetHeight;
     requestAnimationFrame(() => {
       scrim.classList.add("k-confirm--in");
       dialog.classList.add("k-confirm--in");
