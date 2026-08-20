@@ -11,6 +11,10 @@ convention); the codecs are imported both here and by the container's
 `imports = ["."]` puts this directory on the import path so the modules are
 importable as top-level (hitl_client, sync, improv) the way they import each
 other.
+
+
+
+Requirements (PRs implemented here; see requirements/requirements.yaml): PR-12, PR-13, PR-23, PR-24, PR-29, PR-30, PR-31, PR-36
 """
 
 load("@pypi//:requirements.bzl", "requirement")
@@ -66,6 +70,7 @@ py_test(
     deps = [
         ":harness",
         "//pi/server",
+        "//tools/traceability",
         "@rules_python//python/runfiles",
         requirement("websockets"),
     ],

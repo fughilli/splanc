@@ -9,7 +9,11 @@ The full M9→M3 pipeline acceptance lives in the simulator package.
 from __future__ import annotations
 
 import numpy as np
+import pytest
 from reconstruction import back_project_ray, look_at_quat, project, reconstruct
+
+# Traceability: PR(s) this suite verifies (see requirements/requirements.yaml).
+pytestmark = pytest.mark.requirements("PR-11", "PR-31")
 
 
 def _camera_at(eye, target=(0.0, 0.0, 0.0)):
