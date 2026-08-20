@@ -41,20 +41,43 @@ set -uo pipefail
 # Runs FIRST, ahead of the tailnet block below, because that block `exit`s early
 # in the common no-authkey path and would otherwise skip this entirely.
 #
-# `prek install` writes the git shim; `--prepare-hooks` pre-builds every hook's
-# environment so the agent's first commit isn't a slow cold start (and so a
-# missing toolchain surfaces now, not mid-commit). All non-fatal: prek may be
-# absent on an un-rebuilt image, or offline with cold hook caches — neither
-# should abort container startup.
+# `prek install` writes the git shim and is instant. Building the hook
+# ENVIRONMENTS is the slow part (~40s cold: black/isort/flake8 venvs, node envs
+# for prettier/markdownlint, a rustup toolchain for nixpkgs-fmt), and this hook
+# blocks the session opening — so it must never be paid here.
+#
+# It normally isn't: the overlay Dockerfile bakes that cache into the image at
+# $PREK_HOME=/opt/prek-cache, seeded from the copy of .pre-commit-config.yaml in
+# this directory. When the workspace config still matches that copy, every
+# environment is already prepared and there is nothing to do.
+#
+# When they differ (someone edited .pre-commit-config.yaml and hasn't relaunched
+# into a rebuilt image), prek would rebuild the drifted hooks — so do it
+# DETACHED, in the background, and let the session open immediately. A commit
+# landing mid-build isn't a problem: prek locks per environment, so the hook run
+# waits for the build in flight rather than racing it.
+#
+# All non-fatal: prek may be absent on an un-rebuilt image, or the network may be
+# down with cold caches — neither should abort container startup.
 prek_log() { printf 'prek: %s\n' "$*"; }
+PREK_BAKED_CONFIG=/opt/prek-seed/.pre-commit-config.yaml
 if command -v prek >/dev/null 2>&1; then
     if git -C /workspace rev-parse --git-dir >/dev/null 2>&1; then
         prek_log "installing lint hooks into /workspace (every git commit will run the lints)"
-        if prek install --prepare-hooks --allow-missing-config -C /workspace >/tmp/prek-install.log 2>&1; then
-            prek_log "hooks installed and environments prepared"
+        if prek install --allow-missing-config -C /workspace >/tmp/prek-install.log 2>&1; then
+            prek_log "git shim installed"
         else
-            prek_log "install did not fully succeed (offline? cold caches?) — see /tmp/prek-install.log"
-            prek_log "  the git shim may still be in place; hooks build on first use"
+            prek_log "install did not succeed — see /tmp/prek-install.log"
+        fi
+
+        if [ -f "$PREK_BAKED_CONFIG" ] \
+           && cmp -s "$PREK_BAKED_CONFIG" /workspace/.pre-commit-config.yaml; then
+            prek_log "hook environments served from the image's baked cache (${PREK_HOME:-~/.cache/prek})"
+        else
+            prek_log ".pre-commit-config.yaml differs from the copy baked into this image —"
+            prek_log "  preparing the drifted hook environments in the BACKGROUND (log: /tmp/prek-prepare.log)"
+            prek_log "  to re-bake: run tools/sync_prek_overlay_config.sh, commit, and relaunch claude-container"
+            setsid nohup prek install-hooks -C /workspace >/tmp/prek-prepare.log 2>&1 &
         fi
     else
         prek_log "/workspace is not a git repo — skipping hook install"
