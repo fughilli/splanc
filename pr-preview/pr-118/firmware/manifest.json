@@ -1,0 +1,13 @@
+{
+  "revision": "c31bede",
+  "builtAt": null,
+  "entries": [
+    {
+      "id": "esp32c6",
+      "label": "LED Mapper player \u2014 ESP32-C6",
+      "chip": "esp32c6",
+      "family": "esp",
+      "manifest": "flash.json"
+    }
+  ]
+}
