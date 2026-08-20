@@ -123,3 +123,45 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libsigrokdecode4 \
         sigrok-firmware-fx2lafw \
     && rm -rf /var/lib/apt/lists/*
+
+# 2026-08-19: bake prek's hook environments into the image.
+#
+# ../startup.sh used to run `prek install --prepare-hooks` on every container
+# start, which cold-builds every hook toolchain: venvs for black/isort/flake8,
+# node envs for prettier/markdownlint, a rustup toolchain to compile
+# nixpkgs-fmt, the buildifier binary. Measured at ~40s of *blocking* startup,
+# paid EVERY launch — the launcher runs `docker run --rm`, so each session gets
+# a fresh /home/claude and prek's cache (default $HOME/.cache/prek) is gone with
+# it. Only /workspace and /claude are bind-mounted; nothing else survives.
+#
+# So build that cache once here, at a path outside $HOME that lives in the image
+# layer, and point PREK_HOME at it. `prek install --prepare-hooks` in startup.sh
+# then finds every environment already prepared (measured 0.07s).
+#
+# pre-commit-config.yaml next to this Dockerfile is a byte-identical copy of the
+# repo's .pre-commit-config.yaml, kept in sync by the prek-overlay-config-copy
+# hook. The copy is what makes the bake correct AND self-invalidating: the
+# overlay directory is the docker build context and the launcher hashes its
+# files into the image tag, so editing the root config changes the tag and
+# rebuilds this layer. (The root file can't be COPYed directly — /workspace is
+# mounted at run time, not build time.)
+#
+# Seeded as root, consumed by the runtime `claude` user, so the same treatment
+# as /nix above: go+rwX, plus the cache's git clones marked safe.directory
+# --system (they are root-owned, which otherwise trips dubious-ownership).
+# Drift is not fatal: prek rebuilds only the hooks whose repo/rev moved (~2s for
+# one hook) and writes them into this same cache as the runtime user.
+#
+# The rustup toolchain (520MB) is dropped after the build — nixpkgs-fmt is
+# already compiled into its hook env by then, and rustup is only needed again if
+# that hook's rev moves, in which case prek re-fetches it. Same RUN as the
+# install, or the union filesystem would keep the bytes anyway. Net image
+# growth: ~200MB.
+ENV PREK_HOME=/opt/prek-cache
+COPY pre-commit-config.yaml /opt/prek-seed/.pre-commit-config.yaml
+RUN git init -q /opt/prek-seed \
+    && git config --system --add safe.directory /opt/prek-seed \
+    && prek install-hooks -C /opt/prek-seed \
+    && rm -rf "$PREK_HOME/tools/rustup" "$PREK_HOME/cache" "$PREK_HOME/prek.log" \
+    && chmod -R go+rwX "$PREK_HOME" \
+    && git config --system --add safe.directory '/opt/prek-cache/*'
