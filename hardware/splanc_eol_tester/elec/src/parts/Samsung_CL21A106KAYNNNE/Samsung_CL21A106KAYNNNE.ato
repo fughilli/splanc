@@ -1,0 +1,21 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component Samsung_CL21A106KAYNNNE_package:
+    """10uF (106) ±10% 25V"""
+
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C15850", date="2026-08-20T03:34:41.821463+00:00", checksum="a5194edf44709252c710cfc21716ee4276601a36885530c7610d147ab16c73db">
+
+    trait is_atomic_part<manufacturer="Samsung", partnumber="CL21A106KAYNNNE", footprint="C0805.kicad_mod", symbol="CL21A106KAYNNNE.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C15850", manufacturer="Samsung", partno="CL21A106KAYNNNE">
+    trait has_designator_prefix<prefix="C">
+
+    # pins
+    pin 2
+    signal p2 ~ pin 2
+    pin 1
+    signal p1 ~ pin 1

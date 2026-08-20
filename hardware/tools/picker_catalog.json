@@ -119,6 +119,34 @@
       "manufacturer": "XKB",
       "package": "2.54-2x10",
       "description": "2x10 2.54mm pin header (EoL connector)"
+    },
+    {
+      "lcsc": 26717,
+      "mpn": "CY7C68013A-56PVXC",
+      "manufacturer": "Cypress",
+      "package": "SSOP-56",
+      "description": "FX2LP USB 24MHz logic analyzer core (fx2lafw)"
+    },
+    {
+      "lcsc": 9386,
+      "mpn": "74HC4051D",
+      "manufacturer": "Nexperia",
+      "package": "SOIC-16",
+      "description": "8-channel analog mux"
+    },
+    {
+      "lcsc": 3025164,
+      "mpn": "PC817C",
+      "manufacturer": "Ketec",
+      "package": "SMD-4",
+      "description": "Optocoupler (isolated button driver)"
+    },
+    {
+      "lcsc": 14912,
+      "mpn": "CY7C68013A-56LTXC",
+      "manufacturer": "Cypress",
+      "package": "QFN-56",
+      "description": "FX2LP USB 24MHz logic analyzer core (fx2lafw)"
     }
   ],
   "passives": [
