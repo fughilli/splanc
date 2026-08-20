@@ -26,6 +26,7 @@ py_library(
         "hitl_improv.py",
         "improv.py",
         "led_pattern.py",
+        "loaded_tls_core.py",
         "map_upload_core.py",
         "mapping_trigger_core.py",
         "provision.py",
@@ -328,6 +329,39 @@ py_test(
     ],
     imports = ["."],
     main = "hitl_rename_wss.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# On-hardware wss:443 / cert-page TLS-under-load gate (FUG-133): reserve, flash,
+# provision, then LOAD the device to its worst case (a full map + a texture
+# effect + a resident texture) and assert a FRESH wss:443 handshake completes AND
+# a concurrent HTTPS GET / on the cert page returns 200 — with the serial showing
+# no esp_tls_create_server_session / mbedTLS-alloc OOM (the PR #114 symptom that
+# :rename_wss can't reach, since it only tests a clean device). A manual+hitl
+# py_test; --device-ws hits a reachable board directly (skips the serial leg). The
+# pure logic (fixtures + serial scan) is unit-tested in //pi/hitl/tests. Compiles
+# the texture effect with fx_compile, so it rides that + the flash-bundle + hitl
+# CLI in runfiles.
+py_test(
+    name = "loaded_tls",
+    timeout = "eternal",
+    srcs = ["hitl_loaded_tls.py"],
+    data = [
+        "//firmware/player_app:esp32c6_flashbundle",
+        "//fx_compiler:fx_compile",
+        "//pi/hitl/cmd/hitl",
+    ],
+    imports = ["."],
+    main = "hitl_loaded_tls.py",
     tags = [
         "hitl",
         "manual",
