@@ -1,0 +1,7 @@
+# Auto-placed, code-only board (atopile_project frozen = False): the layout is
+# regenerated with fresh UUIDs on every build, so it is not a committed fixed
+# point. The committed source of truth is elec/src/**. A hand-placed/frozen
+# project would instead commit elec/layout/**/*.kicad_pcb.
+elec/layout/
+build/
+.ato/

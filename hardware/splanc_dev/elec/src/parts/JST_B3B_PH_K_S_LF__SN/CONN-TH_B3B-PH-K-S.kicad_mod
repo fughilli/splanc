@@ -1,0 +1,161 @@
+(footprint "JST_B3B_PH_K_S_LF__SN:CONN-TH_B3B-PH-K-S"
+	(version 20241229)
+	(generator "faebryk_convert")
+	(generator_version "v5")
+	(layer "F.Cu")
+	(tedit "5DC5F6A4")
+	(uuid "48c28a8d-6cd1-4db6-9959-2593245bc464")
+	(property "Reference" "REF**"
+		(at 0 -4)
+		(layer "F.SilkS")
+		(uuid "bfe023ff-c53d-4e59-b831-45fc1e80e7d8")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(property "Value" "CONN-TH_B3B-PH-K-S"
+		(at 0 4)
+		(layer "F.Fab")
+		(uuid "79b35c95-51a4-4a25-a162-f33ea5a6e567")
+		(effects
+			(font
+				(size 1 1)
+				(thickness 0.15)
+			)
+		)
+	)
+	(attr through_hole)
+	(fp_circle
+		(center 4.13 -2.93)
+		(end 4.16 -2.93)
+		(stroke
+			(width 0.06)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(locked no)
+		(uuid "6c87da9c-6bbe-4110-8902-084f0fe2f3d1")
+	)
+	(fp_circle
+		(center 0 0)
+		(end 0.2 0)
+		(stroke
+			(width 0.4)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(locked no)
+		(uuid "160bec2a-16a9-4170-b5e9-9b65bfc3ed78")
+	)
+	(fp_circle
+		(center 2 0)
+		(end 2.2 0)
+		(stroke
+			(width 0.4)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(locked no)
+		(uuid "5abc5eb7-9bb7-48ec-bc7b-aa95be39f1eb")
+	)
+	(fp_circle
+		(center -2 0)
+		(end -1.8 0)
+		(stroke
+			(width 0.4)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(locked no)
+		(uuid "cccb5e06-9b33-46be-98c9-df57bcae3e98")
+	)
+	(fp_circle
+		(center 3.29 1.02)
+		(end 3.65 1.02)
+		(stroke
+			(width 0.25)
+			(type solid)
+		)
+		(layer "F.SilkS")
+		(locked no)
+		(uuid "41c24a82-3c42-43d2-918e-a1549b4ac6ca")
+	)
+	(fp_line
+		(start -4 -2.8)
+		(end 4 -2.8)
+		(stroke
+			(width 3)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(layers "F.Fab")
+		(locked no)
+		(uuid "17cdc115-60e9-4960-a6b4-766b58a738d1")
+	)
+	(fp_line
+		(start 4 -2.8)
+		(end 4 1.7)
+		(stroke
+			(width 3)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(layers "F.Fab")
+		(locked no)
+		(uuid "abdcb993-3e06-4488-ae6c-a0ef8636c952")
+	)
+	(fp_line
+		(start 4 1.7)
+		(end -4 1.7)
+		(stroke
+			(width 3)
+			(type solid)
+		)
+		(layer "F.Fab")
+		(layers "F.Fab")
+		(locked no)
+		(uuid "1eb10479-fae3-49f0-b899-236ac60cf4e6")
+	)
+	(pad "2" thru_hole circle
+		(at 0 0 180)
+		(size 1.6 1.6)
+		(drill 0.999998)
+		(layers "*.Cu" "*.Mask")
+		(uuid "03ba6bad-2195-4bd5-9eff-2af74eb448df")
+	)
+	(pad "1" thru_hole circle
+		(at 2 0 180)
+		(size 1.6 1.6)
+		(drill 0.999998)
+		(layers "*.Cu" "*.Mask")
+		(uuid "5ae4c51e-4569-440c-abfd-714e4c65f894")
+	)
+	(pad "3" thru_hole circle
+		(at -2 0 180)
+		(size 1.6 1.6)
+		(drill 0.999998)
+		(layers "*.Cu" "*.Mask")
+		(uuid "f78a0eb3-300f-4071-bd14-72894f3bb80b")
+	)
+	(model "${KIPRJMOD}/../../src/parts/JST_B3B_PH_K_S_LF__SN/CONN-TH_B3B-PH-K-S.step"
+		(offset
+			(xyz 0 0.56 0)
+		)
+		(scale
+			(xyz 1 1 1)
+		)
+		(rotate
+			(xyz 0 0 0)
+		)
+	)
+	(embedded_fonts no)
+	(fp_line
+		(start -2.0 0.0)
+		(end 2.0 0.0)
+		(stroke (width 0.12) (type solid))
+		(layer "F.SilkS")
+	)
+)

@@ -1,0 +1,259 @@
+{
+  "_comment": "Authoring-time parts catalog for the splanc hardware (FUG-131). Used ONLY by the local atopile picker while generating atomic parts via `ato create part` (see hardware/README.md). The built boards import the generated, pre-picked parts and build with picker=False, so this file is NOT consumed at build time. LCSC ids resolved against jlcsearch/JLCPCB + EasyEDA (2026-08-20); verify stock/footprint before fabrication.",
+  "ics": [
+    {
+      "lcsc": 5366877,
+      "mpn": "ESP32-C6-WROOM-1-N8",
+      "manufacturer": "Espressif Systems",
+      "package": "SMD-25.5x18",
+      "description": "ESP32-C6 WiFi6+BLE+802.15.4 module, 8MB flash"
+    },
+    {
+      "lcsc": 424093,
+      "mpn": "MCP73831T-2ACI/OT",
+      "manufacturer": "Microchip",
+      "package": "SOT-23-5",
+      "description": "Single-cell Li-Po linear charger"
+    },
+    {
+      "lcsc": 2682616,
+      "mpn": "MAX17048G+T10",
+      "manufacturer": "Analog Devices",
+      "package": "DFN-8",
+      "description": "ModelGauge Li-Po fuel gauge, I2C"
+    },
+    {
+      "lcsc": 87357,
+      "mpn": "TPS61088RHLR",
+      "manufacturer": "Texas Instruments",
+      "package": "VQFN-20",
+      "description": "10A boost converter"
+    },
+    {
+      "lcsc": 141836,
+      "mpn": "TLV62569DBVR",
+      "manufacturer": "Texas Instruments",
+      "package": "SOT-23-5",
+      "description": "2A step-down (buck) converter"
+    },
+    {
+      "lcsc": 49851,
+      "mpn": "INA226AIDGSR",
+      "manufacturer": "Texas Instruments",
+      "package": "VSOP-10",
+      "description": "Bidirectional current/power monitor, I2C"
+    },
+    {
+      "lcsc": 24112,
+      "mpn": "MPU-6050",
+      "manufacturer": "TDK InvenSense",
+      "package": "QFN-24",
+      "description": "6-axis accel+gyro IMU, I2C"
+    },
+    {
+      "lcsc": 83291,
+      "mpn": "BMP280",
+      "manufacturer": "Bosch",
+      "package": "LGA-8",
+      "description": "Barometric pressure/altimeter, I2C"
+    },
+    {
+      "lcsc": 7843,
+      "mpn": "SN74LVC1T45DBVR",
+      "manufacturer": "Texas Instruments",
+      "package": "SOT-23-6",
+      "description": "1-bit dual-supply level translator"
+    },
+    {
+      "lcsc": 2765186,
+      "mpn": "TYPE-C-31-M-12",
+      "manufacturer": "Korean Hroparts",
+      "package": "SMD",
+      "description": "USB Type-C 16-pin receptacle"
+    },
+    {
+      "lcsc": 720477,
+      "mpn": "TS-1088-AR02016",
+      "manufacturer": "XKB",
+      "package": "SMD-4x3",
+      "description": "Tactile switch"
+    },
+    {
+      "lcsc": 15127,
+      "mpn": "AO3401A",
+      "manufacturer": "Alpha & Omega",
+      "package": "SOT-23",
+      "description": "P-channel MOSFET -30V -4A"
+    },
+    {
+      "lcsc": 20526,
+      "mpn": "MMBT3904",
+      "manufacturer": "Changjiang",
+      "package": "SOT-23",
+      "description": "NPN transistor"
+    },
+    {
+      "lcsc": 96955,
+      "mpn": "SWPA6045S1R0NT",
+      "manufacturer": "Sunlord",
+      "package": "SMD-6x6",
+      "description": "1uH power inductor"
+    },
+    {
+      "lcsc": 131337,
+      "mpn": "B2B-PH-K-S",
+      "manufacturer": "JST",
+      "package": "PH-2.0-2P",
+      "description": "2-pin JST-PH battery connector"
+    },
+    {
+      "lcsc": 131339,
+      "mpn": "B3B-PH-K-S",
+      "manufacturer": "JST",
+      "package": "PH-2.0-3P",
+      "description": "3-pin JST-PH LED connector"
+    },
+    {
+      "lcsc": 492427,
+      "mpn": "PZ254V-12-20P",
+      "manufacturer": "XKB",
+      "package": "2.54-2x10",
+      "description": "2x10 2.54mm pin header (EoL connector)"
+    },
+    {
+      "lcsc": 26717,
+      "mpn": "CY7C68013A-56PVXC",
+      "manufacturer": "Cypress",
+      "package": "SSOP-56",
+      "description": "FX2LP USB 24MHz logic analyzer core (fx2lafw)"
+    },
+    {
+      "lcsc": 9386,
+      "mpn": "74HC4051D",
+      "manufacturer": "Nexperia",
+      "package": "SOIC-16",
+      "description": "8-channel analog mux"
+    },
+    {
+      "lcsc": 3025164,
+      "mpn": "PC817C",
+      "manufacturer": "Ketec",
+      "package": "SMD-4",
+      "description": "Optocoupler (isolated button driver)"
+    },
+    {
+      "lcsc": 14912,
+      "mpn": "CY7C68013A-56LTXC",
+      "manufacturer": "Cypress",
+      "package": "QFN-56",
+      "description": "FX2LP USB 24MHz logic analyzer core (fx2lafw)"
+    }
+  ],
+  "passives": [
+    {
+      "lcsc": 1525,
+      "mpn": "CL05B104KO5NNNC",
+      "manufacturer": "Samsung",
+      "package": "0402",
+      "description": "100nF 50V X7R"
+    },
+    {
+      "lcsc": 52923,
+      "mpn": "CL05A105KA5NQNC",
+      "manufacturer": "Samsung",
+      "package": "0402",
+      "description": "1uF 25V X5R"
+    },
+    {
+      "lcsc": 19702,
+      "mpn": "CL10A106KP8NNNC",
+      "manufacturer": "Samsung",
+      "package": "0603",
+      "description": "10uF 10V X5R"
+    },
+    {
+      "lcsc": 15850,
+      "mpn": "CL21A106KAYNNNE",
+      "manufacturer": "Samsung",
+      "package": "0805",
+      "description": "10uF 25V X5R"
+    },
+    {
+      "lcsc": 98190,
+      "mpn": "CL21A226MOQNNNE",
+      "manufacturer": "Samsung",
+      "package": "0805",
+      "description": "22uF 16V X5R"
+    },
+    {
+      "lcsc": 1017,
+      "mpn": "GZ2012D601TF",
+      "manufacturer": "Sunlord",
+      "package": "0805",
+      "description": "600R@100MHz ferrite bead"
+    },
+    {
+      "lcsc": 17168,
+      "mpn": "0402WGF0000TCE",
+      "manufacturer": "UNI-ROYAL",
+      "package": "0402",
+      "description": "0 ohm jumper"
+    },
+    {
+      "lcsc": 25105,
+      "mpn": "0402WGF330JTCE",
+      "manufacturer": "UNI-ROYAL",
+      "package": "0402",
+      "description": "33 ohm"
+    },
+    {
+      "lcsc": 25082,
+      "mpn": "0402WGF1500TCE",
+      "manufacturer": "UNI-ROYAL",
+      "package": "0402",
+      "description": "150 ohm"
+    },
+    {
+      "lcsc": 11702,
+      "mpn": "0402WGF1001TCE",
+      "manufacturer": "UNI-ROYAL",
+      "package": "0402",
+      "description": "1k"
+    },
+    {
+      "lcsc": 4109,
+      "mpn": "0402WGF2001TCE",
+      "manufacturer": "UNI-ROYAL",
+      "package": "0402",
+      "description": "2k"
+    },
+    {
+      "lcsc": 25905,
+      "mpn": "0402WGF5101TCE",
+      "manufacturer": "UNI-ROYAL",
+      "package": "0402",
+      "description": "5.1k"
+    },
+    {
+      "lcsc": 25804,
+      "mpn": "0402WGF1002TCE",
+      "manufacturer": "UNI-ROYAL",
+      "package": "0402",
+      "description": "10k"
+    },
+    {
+      "lcsc": 25741,
+      "mpn": "0402WGF1003TCE",
+      "manufacturer": "UNI-ROYAL",
+      "package": "0402",
+      "description": "100k"
+    },
+    {
+      "lcsc": 393072,
+      "mpn": "RLP25FEGMR010",
+      "manufacturer": "Uniroyal",
+      "package": "2512",
+      "description": "10mohm 2W 1% current shunt"
+    }
+  ]
+}

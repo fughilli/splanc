@@ -1,0 +1,22 @@
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+
+# Build the Splanc Dev Module PCB (FUG-131) — the board designed in elec/src,
+# specified in docs/hardware/splanc-dev-module.md.
+#
+#   bazel run //hardware/splanc_dev:build            # resolve + lay out -> .kicad_pcb
+#   bazel run //hardware/splanc_dev:build -- pdf     # + kicad-cli PDF
+#   bazel run //hardware/splanc_dev:build -- gerber  # + Gerbers + drill
+#
+# This drives rules_atopile's Nix-pinned `ato` + `kicad-cli` via ato_build.sh
+# (see that script for why rules_atopile isn't wired into //MODULE.bazel). `ato`
+# builds hermetically here — every part is a pre-picked atomic LCSC component
+# (elec/src/parts + passives.ato), so there's no picker / EasyEDA at build time.
+sh_binary(
+    name = "build",
+    srcs = ["//hardware/tools:ato_build.sh"],
+    args = ["hardware/splanc_dev"],
+    data = [
+        "//hardware/tools:sanitize_footprints.py",
+        "//patches:rules_atopile-venvhash.patch",
+    ],
+)

@@ -1,0 +1,18 @@
+load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
+
+# Build the Splanc EoL Tester PCB (FUG-131) — the fixture designed in elec/src,
+# specified in docs/hardware/splanc-eol-tester.md. See //hardware/splanc_dev for
+# the target family and hardware/README.md for how the build works.
+#
+#   bazel run //hardware/splanc_eol_tester:build            # -> .kicad_pcb
+#   bazel run //hardware/splanc_eol_tester:build -- pdf     # + PDF
+#   bazel run //hardware/splanc_eol_tester:build -- gerber  # + Gerbers + drill
+sh_binary(
+    name = "build",
+    srcs = ["//hardware/tools:ato_build.sh"],
+    args = ["hardware/splanc_eol_tester"],
+    data = [
+        "//hardware/tools:sanitize_footprints.py",
+        "//patches:rules_atopile-venvhash.patch",
+    ],
+)

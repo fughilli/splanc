@@ -1,0 +1,5 @@
+# Auto-placed, code-only board (frozen = False): layout is regenerated with
+# fresh UUIDs each build. Source of truth is elec/src/**.
+elec/layout/
+build/
+.ato/
