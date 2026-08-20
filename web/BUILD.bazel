@@ -35,6 +35,9 @@ exports_files([
     # The unified FX-bench golden: the web estimator test imports it, and the HITL
     # //pi/hitl/harness:fx_bench margin check cross-deps it (one source of truth).
     "tests/testdata/device-bench-esp32c6.json",
+    # The JIT golden (FUG-125): the shipped firmware runs the JIT by default, so
+    # //pi/hitl/harness:fx_bench_jit pins it ON and enforces this separate set.
+    "tests/testdata/device-bench-esp32c6-jit.json",
 ])
 
 npm_link_all_packages(name = "node_modules")

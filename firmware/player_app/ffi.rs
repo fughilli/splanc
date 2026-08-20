@@ -775,6 +775,12 @@ pub unsafe extern "C" fn lm_player_handle(
         // cadence, or drain the ring into a rolled-up PerfReport.
         Some(ARM_SET_PERF) => handle_set_perf(frame),
         Some(ARM_GET_PERF_REPORT) => handle_get_perf_report(),
+        // Debug/bench: toggle the on-device JIT (FUG-125). Fire-and-forget; takes
+        // effect on the next lm_fx_load, so the HITL fx_bench re-submits after.
+        Some(ARM_SET_JIT) => {
+            handle_set_jit(frame);
+            return 0;
+        }
         // Video-texture frame: decode into the active effect's texture arena.
         // Fire-and-forget (no reply) so high frame rates aren't gated on a round
         // trip — a malformed/oversized frame is silently dropped.
@@ -1111,6 +1117,7 @@ const ARM_GET_EFFECT_UNIFORMS: u32 = 24;
 const ARM_SET_PERF: u32 = 25;
 const ARM_GET_PERF_REPORT: u32 = 26;
 const ARM_SET_TEXTURE: u32 = 28;
+const ARM_SET_JIT: u32 = 32;
 
 /// Read a base-128 varint at `buf[*o..]`, advancing `*o`. None on truncation.
 fn rd_varint(buf: &[u8], o: &mut usize) -> Option<u64> {
@@ -1792,6 +1799,41 @@ unsafe fn handle_set_perf(frame: &[u8]) -> pb::ServerMessage {
         perf_reset_ring();
     }
     build_perf_report()
+}
+
+/// set_jit: toggle the on-device JIT (FUG-125 debug/bench control). Takes effect
+/// on the NEXT `lm_fx_load` (matching `lm_fx_set_jit_enabled`), so the caller
+/// re-submits the effect — the HITL fx_bench sends this before submit_effect to
+/// pin the interpreter (off) vs the JIT (on) for its two golden sets against the
+/// SAME flashed firmware. Fire-and-forget: no reply, and message ordering on the
+/// single-threaded player guarantees it lands before the following submit_effect.
+unsafe fn handle_set_jit(frame: &[u8]) {
+    // proto3 omits a `false` bool from the wire, so `set_jit(enabled=false)` is an
+    // EMPTY body. Default to false and assign AFTER the walk (like handle_set_perf)
+    // so an absent field correctly DISABLES the JIT — assigning only inside the
+    // match arm would leave a set_jit(false) as a no-op at the default (on).
+    let mut enabled = false;
+    if let Some(body) = unwrap_arm(frame, ARM_SET_JIT) {
+        // SetJit { bool enabled = 1; }  (field 1, varint wire type)
+        let mut o = 0;
+        while o < body.len() {
+            let Some(key) = rd_varint(body, &mut o) else { break };
+            let field = (key >> 3) as u32;
+            let wire = (key & 7) as u8;
+            match (field, wire) {
+                (1, 0) => {
+                    let Some(v) = rd_varint(body, &mut o) else { break };
+                    enabled = v != 0;
+                }
+                _ => {
+                    if !skip_field(body, &mut o, wire) {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    FX_JIT_ENABLED = enabled;
 }
 
 /// get_perf_report: roll up the ring window + drain the tail into a PerfReport.

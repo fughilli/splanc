@@ -440,6 +440,15 @@ message SetPerf {
 // Request the rolled-up perf report for the active effect. Reply: perf_report.
 message GetPerfReport {}
 
+// Toggle the on-device RV32IM JIT (FUG-125). Debug/bench control, not a normal
+// app path: the HITL fx_bench flips this to measure the interpreter golden (off)
+// vs the JIT golden (on) against the SAME flashed firmware. Takes effect on the
+// NEXT effect load, so callers re-submit the effect after toggling.
+// Fire-and-forget (no reply).
+message SetJit {
+  bool enabled = 1;
+}
+
 // One rendered frame's timing/memory sample (all integers; cycles at cpu_hz).
 message PerfFrame {
   uint32 seq = 1;
@@ -508,6 +517,7 @@ message ClientMessage {
     UploadChunk upload_chunk = 29;
     SetColorCorrection set_color_correction = 30;
     SetBrightness set_brightness = 31;
+    SetJit set_jit = 32;
   }
 }
 
