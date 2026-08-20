@@ -8,29 +8,7 @@
   "refresh": "30s",
   "time": { "from": "now-6h", "to": "now" },
   "templating": {
-    "list": [
-      {
-        "name": "DS_PROM",
-        "label": "Prometheus",
-        "type": "datasource",
-        "query": "prometheus",
-        "current": {},
-        "hide": 0
-      },
-      {
-        "name": "rig",
-        "label": "Rig",
-        "type": "query",
-        "datasource": { "type": "prometheus", "uid": "${DS_PROM}" },
-        "definition": "label_values(hitl_up, rig)",
-        "query": { "query": "label_values(hitl_up, rig)", "refId": "rig" },
-        "includeAll": true,
-        "multi": true,
-        "current": { "text": "All", "value": "$__all" },
-        "refresh": 2,
-        "sort": 1
-      }
-    ]
+    "list": []
   },
   "panels": [
     {
@@ -43,7 +21,7 @@
       "id": 2,
       "type": "stat",
       "title": "DUTs busy",
-      "datasource": { "type": "prometheus", "uid": "${DS_PROM}" },
+      "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
       "gridPos": { "h": 5, "w": 6, "x": 0, "y": 1 },
       "fieldConfig": {
         "defaults": {
@@ -55,8 +33,8 @@
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "${DS_PROM}" },
-          "expr": "sum(hitl_duts_busy{rig=~\"$rig\"})"
+          "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
+          "expr": "sum(hitl_duts_busy)"
         }
       ]
     },
@@ -64,13 +42,13 @@
       "id": 3,
       "type": "stat",
       "title": "DUTs total",
-      "datasource": { "type": "prometheus", "uid": "${DS_PROM}" },
+      "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
       "gridPos": { "h": 5, "w": 6, "x": 6, "y": 1 },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "${DS_PROM}" },
-          "expr": "sum(hitl_duts_total{rig=~\"$rig\"})"
+          "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
+          "expr": "sum(hitl_duts_total)"
         }
       ]
     },
@@ -78,7 +56,7 @@
       "id": 4,
       "type": "stat",
       "title": "Queue depth (fleet)",
-      "datasource": { "type": "prometheus", "uid": "${DS_PROM}" },
+      "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
       "gridPos": { "h": 5, "w": 6, "x": 12, "y": 1 },
       "fieldConfig": {
         "defaults": {
@@ -95,8 +73,8 @@
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "${DS_PROM}" },
-          "expr": "sum(hitl_queue_depth{rig=~\"$rig\"})"
+          "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
+          "expr": "sum(hitl_queue_depth)"
         }
       ]
     },
@@ -104,13 +82,13 @@
       "id": 5,
       "type": "stat",
       "title": "Rigs up",
-      "datasource": { "type": "prometheus", "uid": "${DS_PROM}" },
+      "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
       "gridPos": { "h": 5, "w": 6, "x": 18, "y": 1 },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "${DS_PROM}" },
-          "expr": "count(hitl_up{rig=~\"$rig\"} == 1)"
+          "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
+          "expr": "count(hitl_up == 1)"
         }
       ]
     },
@@ -124,7 +102,7 @@
       "id": 11,
       "type": "timeseries",
       "title": "Queue depth by rig",
-      "datasource": { "type": "prometheus", "uid": "${DS_PROM}" },
+      "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 7 },
       "fieldConfig": {
         "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10, "stepAfter": true } },
@@ -133,8 +111,8 @@
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "${DS_PROM}" },
-          "expr": "hitl_queue_depth{rig=~\"$rig\"}",
+          "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
+          "expr": "hitl_queue_depth",
           "legendFormat": "{{rig}}"
         }
       ]
@@ -143,7 +121,7 @@
       "id": 12,
       "type": "timeseries",
       "title": "DUTs busy by rig",
-      "datasource": { "type": "prometheus", "uid": "${DS_PROM}" },
+      "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 7 },
       "fieldConfig": {
         "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 20, "stepAfter": true } },
@@ -152,14 +130,14 @@
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "${DS_PROM}" },
-          "expr": "hitl_duts_busy{rig=~\"$rig\"}",
+          "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
+          "expr": "hitl_duts_busy",
           "legendFormat": "{{rig}} busy"
         },
         {
           "refId": "B",
-          "datasource": { "type": "prometheus", "uid": "${DS_PROM}" },
-          "expr": "hitl_duts_total{rig=~\"$rig\"}",
+          "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
+          "expr": "hitl_duts_total",
           "legendFormat": "{{rig}} total"
         }
       ]
@@ -168,19 +146,19 @@
       "id": 13,
       "type": "timeseries",
       "title": "Reservation rate (per min)",
-      "datasource": { "type": "prometheus", "uid": "${DS_PROM}" },
+      "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 15 },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "${DS_PROM}" },
-          "expr": "sum by (rig) (rate(hitl_reservations_total{rig=~\"$rig\"}[$__rate_interval])) * 60",
+          "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
+          "expr": "sum by (rig) (rate(hitl_reservations_total[$__rate_interval])) * 60",
           "legendFormat": "{{rig}} reserved"
         },
         {
           "refId": "B",
-          "datasource": { "type": "prometheus", "uid": "${DS_PROM}" },
-          "expr": "sum by (rig) (rate(hitl_activations_total{rig=~\"$rig\"}[$__rate_interval])) * 60",
+          "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
+          "expr": "sum by (rig) (rate(hitl_activations_total[$__rate_interval])) * 60",
           "legendFormat": "{{rig}} activated"
         }
       ]
@@ -190,19 +168,19 @@
       "type": "timeseries",
       "title": "Lease expiries & start failures (per min)",
       "description": "Nonzero lease-expiry or start-failure rates flag stuck clients or broken DUTs.",
-      "datasource": { "type": "prometheus", "uid": "${DS_PROM}" },
+      "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 15 },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "${DS_PROM}" },
-          "expr": "sum by (rig) (rate(hitl_lease_expirations_total{rig=~\"$rig\"}[$__rate_interval])) * 60",
+          "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
+          "expr": "sum by (rig) (rate(hitl_lease_expirations_total[$__rate_interval])) * 60",
           "legendFormat": "{{rig}} lease-expiry"
         },
         {
           "refId": "B",
-          "datasource": { "type": "prometheus", "uid": "${DS_PROM}" },
-          "expr": "sum by (rig) (rate(hitl_start_failures_total{rig=~\"$rig\"}[$__rate_interval])) * 60",
+          "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
+          "expr": "sum by (rig) (rate(hitl_start_failures_total[$__rate_interval])) * 60",
           "legendFormat": "{{rig}} start-fail"
         }
       ]
@@ -217,13 +195,13 @@
       "id": 21,
       "type": "timeseries",
       "title": "Load average (1m)",
-      "datasource": { "type": "prometheus", "uid": "${DS_PROM}" },
+      "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
       "gridPos": { "h": 8, "w": 8, "x": 0, "y": 24 },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "${DS_PROM}" },
-          "expr": "hitl_host_load1{rig=~\"$rig\"}",
+          "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
+          "expr": "hitl_host_load1",
           "legendFormat": "{{rig}}"
         }
       ]
@@ -232,14 +210,14 @@
       "id": 22,
       "type": "timeseries",
       "title": "Memory used %",
-      "datasource": { "type": "prometheus", "uid": "${DS_PROM}" },
+      "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
       "gridPos": { "h": 8, "w": 8, "x": 8, "y": 24 },
       "fieldConfig": { "defaults": { "unit": "percent", "max": 100, "min": 0 }, "overrides": [] },
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "${DS_PROM}" },
-          "expr": "100 * (1 - hitl_host_memory_available_bytes{rig=~\"$rig\"} / hitl_host_memory_total_bytes{rig=~\"$rig\"})",
+          "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
+          "expr": "100 * (1 - hitl_host_memory_available_bytes / hitl_host_memory_total_bytes)",
           "legendFormat": "{{rig}}"
         }
       ]
@@ -248,7 +226,7 @@
       "id": 23,
       "type": "timeseries",
       "title": "SoC temperature",
-      "datasource": { "type": "prometheus", "uid": "${DS_PROM}" },
+      "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
       "gridPos": { "h": 8, "w": 8, "x": 16, "y": 24 },
       "fieldConfig": {
         "defaults": {
@@ -266,8 +244,8 @@
       "targets": [
         {
           "refId": "A",
-          "datasource": { "type": "prometheus", "uid": "${DS_PROM}" },
-          "expr": "hitl_host_temperature_celsius{rig=~\"$rig\"}",
+          "datasource": { "type": "prometheus", "uid": "grafanacloud-prom" },
+          "expr": "hitl_host_temperature_celsius",
           "legendFormat": "{{rig}}"
         }
       ]
