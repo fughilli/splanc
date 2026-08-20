@@ -25,6 +25,66 @@ class HarnessError(RuntimeError):
     """A HITL step failed in a way worth reporting with a diagnostic."""
 
 
+# The firmware prints this once it's running the app (not sitting in the ROM
+# USB downloader); the ROM prints one of the download-mode markers instead when
+# a reset lands in `wait usb download`. See pi/hitl/AGENTS.md "A typical E2E test".
+BOOT_MARKER = "SPI_FAST_FLASH_BOOT"
+_DOWNLOAD_MODE_MARKERS = ("wait usb download", "USB_BOOT", "DOWNLOAD(USB")
+BOOT_ATTEMPTS = 3
+
+
+def in_download_mode(log: str) -> bool:
+    """True if the DUT reset into the ROM USB downloader instead of the app."""
+    return any(marker in log for marker in _DOWNLOAD_MODE_MARKERS)
+
+
+def ensure_booted(res, log: str, monitor_seconds: float, attempts: int = BOOT_ATTEMPTS) -> str:
+    """Ensure the freshly-flashed DUT booted the app; retry the *boot* if not.
+
+    `log` is the serial captured by the initial flash+monitor. A C6 intermittently
+    latches USB download mode after a flash: esptool's post-flash reset races the
+    GPIO9/BOOT strap release over the native USB-Serial-JTAG, so the ROM samples
+    the strap low and sits in `wait usb download` (rst:…, boot:0x0 USB_BOOT)
+    instead of running the app — and SPI_FAST_FLASH_BOOT never prints. The flash
+    write itself is fine; only the reset latched the wrong boot mode, and a clean
+    re-reset (which re-samples the now-released strap) recovers it. So retry the
+    boot — a bare reset, NOT a re-flash: the firmware is already written, and a
+    re-flash would needlessly re-erase NVS/littlefs and cost ~30s. `hitl-monitor
+    --reset` is the same already-deployed native-USB reset used between provision
+    attempts. Returns the serial log that shows the successful boot; raises
+    HarnessError once `attempts` boot observations are spent. A *persistent*
+    download-mode (every reset lands there) is instead a real stuck-strap hardware
+    fault (a held BOOT button), surfaced with a distinct human-actionable message.
+    """
+    for attempt in range(1, attempts + 1):
+        if BOOT_MARKER in log:
+            return log
+        if attempt == attempts:
+            if in_download_mode(log):
+                raise HarnessError(
+                    f"board stuck in USB download mode after {attempts} resets "
+                    f"(no {BOOT_MARKER!r} in serial) — the GPIO9/BOOT strap is "
+                    "likely held/stuck; a human must release BOOT and tap RESET"
+                )
+            raise HarnessError(f"board did not boot from flash (no {BOOT_MARKER!r} in serial)")
+        why = "USB download mode" if in_download_mode(log) else "no boot banner"
+        print(
+            f"[flash] did not boot ({why}); re-resetting the DUT "
+            f"(attempt {attempt + 1}/{attempts})…",
+            flush=True,
+        )
+        proc = res.ssh(
+            f"hitl-monitor --reset --seconds {monitor_seconds:g}",
+            capture=True,
+            timeout=monitor_seconds + 60,
+        )
+        log = (proc.stdout or "") + (proc.stderr or "")
+        sys.stdout.write(log)
+        if proc.returncode != 0:
+            raise HarnessError(f"hitl-monitor exited {proc.returncode}")
+    return log  # unreachable: the loop returns on boot or raises when spent
+
+
 def dut_target(redirect: str, scheme: str) -> tuple[str, int]:
     """Device redirect (http://<ip>/) -> (host, ws_port) for the player socket.
 
