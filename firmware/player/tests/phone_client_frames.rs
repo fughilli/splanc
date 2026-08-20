@@ -67,12 +67,13 @@ fn reply_allowed(req: &CMsg, reply: &Option<SMsg>) -> bool {
         }
         CMsg::GetPlayback(_) => matches!(reply, Some(SMsg::PlaybackState(_))),
         CMsg::GetFrameTiming(_) => matches!(reply, Some(SMsg::FrameTiming(_))),
-        // Fire-and-forget Pi telemetry + set_texture (a video frame handled by
-        // the ffi fx layer): silence.
+        // Fire-and-forget Pi telemetry + set_texture (a video frame) + set_jit
+        // (the JIT debug/bench toggle), all handled by the ffi fx layer: silence.
         CMsg::Detections(_)
         | CMsg::ImuBatch(_)
         | CMsg::ExposureReport(_)
-        | CMsg::SetTexture(_) => reply.is_none(),
+        | CMsg::SetTexture(_)
+        | CMsg::SetJit(_) => reply.is_none(),
         // Pi-only request arms: bounded refusal.
         CMsg::GetStatus(_) | CMsg::GetLiveMap(_) | CMsg::GetSolveStatus(_) => is_err("unsupported"),
         // The map dump and sharded uploads are handled by the ffi arena /
@@ -126,6 +127,7 @@ fn arm_name(req: &CMsg) -> &'static str {
         CMsg::UploadChunk(_) => "upload_chunk",
         CMsg::SetColorCorrection(_) => "set_color_correction",
         CMsg::SetBrightness(_) => "set_brightness",
+        CMsg::SetJit(_) => "set_jit",
     }
 }
 

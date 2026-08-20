@@ -16,7 +16,14 @@ import { deviceStore, type KnownDevice } from "../store/deviceStore";
 
 const MIN_INTERVAL = 60_000; // one request / minute
 const MAX_INTERVAL = 600_000; // backs off to one / ten minutes
-const PROBE_TIMEOUT = 4_000;
+// Generous on purpose: this device's cold wss handshake (a ~28 KB mbedTLS
+// session alloc on a heap-tight, freshly-booted C6 that may still be joining
+// WiFi + standing up its TLS server) routinely takes several seconds. At 4 s the
+// background prober cut the still-connecting socket ("WebSocket is closed before
+// the connection is established") and falsely marked a live device offline until
+// it warmed up. The prober is lazy (≥1 min between ticks), so a longer ceiling
+// costs nothing and only delays declaring a genuinely-dead device offline.
+const PROBE_TIMEOUT = 10_000;
 
 export interface ProbeInfo {
   mac: string;

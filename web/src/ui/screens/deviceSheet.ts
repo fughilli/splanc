@@ -470,31 +470,41 @@ function trustCert(certUrl: string): void {
   appState.disconnect(); // stop competing for the device's scarce TLS slots
   let popup: Window | null = null;
   let done = false;
+  // Named handlers so finish() can REMOVE them: without this, every "Trust &
+  // connect" click (and the flow re-pops on a mid-linger bounce) leaked a fresh
+  // message + visibilitychange pair. The stale listeners kept firing finish() on
+  // later returns, racing disconnect()/connect() and thrashing the player's ~2
+  // TLS slots until only a full page reload cleared them — the reload-to-recover
+  // bug. One trust attempt now registers exactly one pair and tears it down.
+  const onMessage = (ev: MessageEvent): void => {
+    if (ev.origin === deviceOrigin && ev.data === "ledmapper-cert-ok") finish();
+  };
+  const onVisible = (): void => {
+    if (document.visibilityState === "visible") finish();
+  };
   const finish = (): void => {
     if (done) return;
     done = true;
+    window.removeEventListener("message", onMessage);
+    document.removeEventListener("visibilitychange", onVisible);
     try {
       popup?.close();
     } catch {
       /* cross-origin close may be refused — the reconnect covers it */
     }
-    // Retry over the backoff (not the default single cold attempt): the cert is
-    // trusted now, so a failure here is a transient — the player freeing the TLS
-    // slot the socket we just closed still holds — that clears within seconds.
-    // Without this the one attempt often lands mid-linger and the user is bounced
-    // back to "trust needed", having to reconnect by hand.
-    if (wssUrl) appState.connect(wssUrl, undefined, { coldRetryLimit: 6 });
+    // Give the player a beat to release the TLS slot the socket we just closed
+    // (and the popup's cert-page load) still hold, THEN reconnect over the backoff
+    // (not the default single cold attempt): the cert is trusted now, so what's
+    // left is transient slot-linger that clears within a second or two. Without
+    // the delay the first attempt lands mid-linger and bounces the user back to
+    // "trust needed"; without the backoff it wouldn't retry after that.
+    if (wssUrl) {
+      window.setTimeout(() => appState.connect(wssUrl, undefined, { coldRetryLimit: 6 }), 800);
+    }
     toast("Certificate trusted — connecting…");
   };
-  window.addEventListener("message", (ev: MessageEvent): void => {
-    if (ev.origin === deviceOrigin && ev.data === "ledmapper-cert-ok") finish();
-  });
-  const armReturn = (): void => {
-    document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible") finish();
-    });
-  };
-  armReturn();
+  window.addEventListener("message", onMessage);
+  document.addEventListener("visibilitychange", onVisible);
   popup = window.open(certUrl, "ledmapper-cert", "width=420,height=560");
   if (popup === null) {
     toast("Popup blocked — open the device page, accept the warning, then return", { error: true });

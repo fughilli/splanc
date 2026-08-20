@@ -86,7 +86,12 @@ export interface ClientOptions {
   /** Give up on a socket that hasn't reached `welcome` this long and retry.
    * The browser's own WS/TCP connect timeout is tens of seconds on mobile, so
    * without this a not-yet-reachable player (e.g. just after it joins WiFi)
-   * hangs the UI at "connecting…". Default 5000. */
+   * hangs the UI at "connecting…". This is the REAL per-attempt ceiling (it
+   * fires before any outer race, e.g. the prober's), so it must exceed the
+   * device's actual cold-handshake latency: a heap-tight, freshly-booted C6
+   * needs several seconds for the ~28 KB mbedTLS session on its fragmented heap.
+   * At 5000 a slow-but-trusted reconnect timed out and was misread as "cert not
+   * trusted". Default 10000. */
   connectTimeoutMs?: number;
   appVersion?: string;
   clientName?: string;
@@ -212,7 +217,7 @@ export class LedMapperClient {
     // cert-approval page load. Spacing retries out (1–8 s) keeps a slot free for
     // it and still reconnects within ~8 s once the cert is trusted.
     this.backoffMs = opts.backoffMs ?? [1000, 2000, 4000, 8000];
-    this.connectTimeoutMs = opts.connectTimeoutMs ?? 5000;
+    this.connectTimeoutMs = opts.connectTimeoutMs ?? 10_000;
     this.coldRetryLimit = opts.coldRetryLimit ?? 1;
     this.warmRetryLimit = opts.warmRetryLimit ?? 4;
     this.needsTrust = (opts.certTrustPossible ?? true) && certApprovalUrl(url) !== null;

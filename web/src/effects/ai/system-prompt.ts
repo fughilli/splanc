@@ -92,6 +92,14 @@ integer path — those cost essentially nothing. So:
 - Prefer \`int\` for indices/counters/modes and \`fixed\`/\`fixed16\`/\`fixed8\` for smooth
   per-LED quantities (phase, brightness, positions, colour ramps). \`int\`/\`fixed\`
   arithmetic (\`+ - * / %\`) runs natively — NO soft-float.
+- The device also runs an on-device JIT (on by default): hot STRAIGHT-LINE runs of
+  \`int\`/\`fixed\` ops compile to native RV32 for a further ~2× on top of the native
+  interpreter path. Float and branch-heavy code stays interpreted (no JIT benefit),
+  so a tight loop of \`int\`/\`fixed\` arithmetic is the genuine fast path — a further
+  reason to keep hot per-LED math in \`int\`/\`fixed\` and avoid \`if\`-ladders and
+  soft-float in it. Note estimate_performance models the INTERPRETER, so it
+  over-estimates frame time for straight-line \`int\`/\`fixed\` — the JIT runs that
+  faster on hardware than the tool predicts.
 - These builtins run NATIVELY on \`int\`/\`fixed\` args (no soft-float, so keep hot
   math in these + fixed types): \`min max abs clamp mod sign step floor ceil fract mix\`.
   And \`sin\`/\`cos\`/\`exp\` are native on a \`fixed\`/\`fixed16\`/\`fixed8\` arg (integer LUT;

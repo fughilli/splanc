@@ -252,6 +252,39 @@ py_test(
     ],
 )
 
+# FUG-125: the JIT-enabled sibling of :fx_bench. The shipped firmware runs the
+# on-device JIT by DEFAULT, so :fx_bench pins it OFF (set_jit false) to keep
+# checking the interpreter golden, and THIS target pins it ON (--jit) and checks
+# the separate device-bench-esp32c6-jit.json golden. Same flashed firmware, same
+# calibration corpus — only the runtime JIT differs, so the two lanes enforce the
+# interpreter cost model and the JIT-accelerated cost model independently.
+py_test(
+    name = "fx_bench_jit",
+    timeout = "eternal",
+    srcs = ["fx_bench.py"],
+    args = ["--jit"],
+    data = [
+        ":fx_benchmarks",
+        "//firmware/player_app:esp32c6_flashbundle",
+        "//fx_compiler:fx_compile",
+        "//pi/hitl/cmd/hitl",
+        # The JIT golden (JIT pinned ON); its interpreter twin is on :fx_bench.
+        "//web:tests/testdata/device-bench-esp32c6-jit.json",
+    ],
+    imports = ["."],
+    main = "fx_bench.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
 # On-hardware large-map upload test (FUG-74): reserve a rig, flash, then shard a
 # ~14 KB submit_map + a multi-KB submit_topology into UploadChunk windows over
 # the player WebSocket and assert they upload, decode, and round-trip via

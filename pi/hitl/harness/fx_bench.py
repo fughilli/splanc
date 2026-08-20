@@ -118,9 +118,15 @@ def default_flashbundle() -> str | None:
     return _rlocation(_BUNDLE_RUNFILE)
 
 
-def default_golden(soc: str) -> str | None:
-    """The committed golden reference for this SoC from runfiles, if present."""
-    return _rlocation(_GOLDEN_RUNFILE.format(soc=soc))
+def default_golden(soc: str, jit: bool = False) -> str | None:
+    """The committed golden reference for this SoC from runfiles, if present.
+
+    The JIT and interpreter goldens are SEPARATE files (device-bench-<soc>.json vs
+    device-bench-<soc>-jit.json): the shipped firmware runs the JIT by default, so
+    the interpreter lane pins it OFF (set_jit false) and checks the original
+    golden, while the JIT lane pins it ON and checks the -jit golden."""
+    soc_key = f"{soc}-jit" if jit else soc
+    return _rlocation(_GOLDEN_RUNFILE.format(soc=soc_key))
 
 
 def resolve_out(explicit: str | None) -> str:
@@ -255,6 +261,17 @@ async def _open_ws(ws_url: str, args, settle_deadline: float):
         try:
             sock = await websockets.connect(ws_url, max_size=2**22, ssl=ssl_ctx, open_timeout=8)
             await _rpc(sock, {"type": "hello", "client": "fx_bench", "app_version": "1"}, "welcome")
+            # Pin the JIT state for this run BEFORE any submit_effect (it takes
+            # effect on the next load). Fire-and-forget; re-sent on every reconnect
+            # (a heavy program under FULL perf can reboot the DUT mid-sweep) so the
+            # pin never silently reverts to the firmware default. The shipped
+            # firmware defaults the JIT ON, so the interpreter lane MUST send this.
+            from server import proto_wire
+
+            await sock.send(
+                proto_wire.encode_client({"type": "set_jit", "enabled": bool(args.jit)})
+            )
+            _log(f"[jit] pinned {'ON' if args.jit else 'OFF'} for this run")
             return sock
         except (OSError, TimeoutError, websockets.exceptions.WebSocketException) as e:
             if time.monotonic() >= settle_deadline:
@@ -547,6 +564,14 @@ def main() -> None:
         help="write a golden reference (from this run) to PATH instead of checking",
     )
     ap.add_argument("--debug", action="store_true", help="log each raw PerfReport summary")
+    ap.add_argument(
+        "--jit",
+        action="store_true",
+        help="pin the on-device JIT ON for this run (set_jit) and check the "
+        "device-bench-<soc>-jit.json golden; default pins it OFF and checks the "
+        "interpreter golden. The shipped firmware runs the JIT by default, so this "
+        "flag is what separates the two enforced golden sets.",
+    )
     args = ap.parse_args()
 
     if args.replay:
@@ -582,9 +607,12 @@ def main() -> None:
     # the run itself, regressed).
     if args.no_golden_check:
         return
-    golden_path = args.golden or default_golden(args.soc)
+    golden_path = args.golden or default_golden(args.soc, args.jit)
     if not golden_path:
-        _log(f"[golden] no golden for soc={args.soc!r}; skipping the margin check")
+        _log(
+            f"[golden] no {'JIT ' if args.jit else ''}golden for soc={args.soc!r}; "
+            "skipping the margin check"
+        )
         return
     with open(golden_path) as f:
         golden = json.load(f)
