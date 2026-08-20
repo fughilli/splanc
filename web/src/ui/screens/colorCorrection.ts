@@ -13,7 +13,7 @@
  * hammering the device's flash.
  */
 
-import { Card, Slider, Button, Chip, toast } from "../kit";
+import { Card, Slider, Button, Switch, choiceDialog, toast } from "../kit";
 import type { Router, Screen } from "../app/router";
 import { appState } from "../app/state";
 import { deviceStore } from "../../store/deviceStore";
@@ -74,8 +74,17 @@ export function ColorCorrectionScreen(_router: Router): Screen {
 
   const deviceId = deviceStore.activeId();
   let profile = loadProfile(deviceId);
+  // Baseline the curves were last committed to the device at (assumed == the
+  // persisted profile on open, since there's no device read-back). "Discard"
+  // reverts to this; a successful save advances it.
+  let snapshot = cloneProfile(profile);
   let brightness = loadBrightness(deviceId);
   let live = true;
+  // Unsaved profile edits not yet committed to device flash, and whether the last
+  // save succeeded with nothing changed since (drives the green save button).
+  let dirty = false;
+  let savedOk = false;
+  let saveBtnEl: HTMLButtonElement | null = null;
 
   const el = document.createElement("div");
   el.className = "screen screen--cc";
@@ -136,19 +145,90 @@ export function ColorCorrectionScreen(_router: Router): Screen {
   // device applies the LUT from RAM (a drag doesn't thrash flash); the profile is
   // committed to flash once — on an explicit push or when the screen closes.
   let pushTimer = 0;
-  let pendingCommit = false; // a RAM-only preview is on the device, not persisted
+  // Live RAM-only preview (commit=false); persisting to flash is the explicit
+  // Save. A drag doesn't thrash flash, and the profile isn't committed until the
+  // user saves (or picks Save on the leave prompt).
   function pushNow(commit: boolean): void {
     const c = appState.client;
     if (!c?.isConnected) return;
     void c
       .setColorCorrection({ gamma: profile.gamma, luminance: profile.luminance, commit })
       .catch(() => undefined);
-    pendingCommit = !commit;
   }
   function schedulePush(): void {
     if (!live) return;
     window.clearTimeout(pushTimer);
     pushTimer = window.setTimeout(() => pushNow(false), PUSH_DEBOUNCE_MS);
+  }
+
+  // -- save / discard state -------------------------------------------------
+
+  function markDirty(): void {
+    dirty = true;
+    savedOk = false;
+    saveBtnEl?.classList.remove("cc-save--ok");
+  }
+  function markSaved(): void {
+    dirty = false;
+    savedOk = true;
+    snapshot = cloneProfile(profile);
+    saveBtnEl?.classList.add("cc-save--ok");
+  }
+
+  /** Commit the current curves to device flash. Awaited so the button can flip
+   * green on completion. Returns whether it persisted. */
+  async function saveToDevice(): Promise<boolean> {
+    const c = appState.client;
+    if (!c?.isConnected) {
+      toast("No device connected", { error: true });
+      return false;
+    }
+    try {
+      await c.setColorCorrection({ gamma: profile.gamma, luminance: profile.luminance, commit: true });
+    } catch {
+      toast("Save failed", { error: true });
+      return false;
+    }
+    markSaved();
+    toast("Saved to device");
+    return true;
+  }
+
+  /** Roll back to the last-saved baseline: revert the working copy, undo the
+   * persisted edits, and restore the device's live view to that baseline. */
+  function discardChanges(): void {
+    profile = cloneProfile(snapshot);
+    saveProfile(deviceId, profile);
+    const c = appState.client;
+    if (c?.isConnected) {
+      void c
+        .setColorCorrection({ gamma: profile.gamma, luminance: profile.luminance, commit: false })
+        .catch(() => undefined);
+    }
+    dirty = false;
+    savedOk = false;
+    drawPlot(plot, profile);
+    sim.draw(profile);
+    rebuildControls();
+  }
+
+  /** Leave-guard (router): prompt to save/discard uncommitted curve edits. */
+  async function beforeLeave(): Promise<boolean> {
+    // Nothing to reconcile with a device: offline edits are already persisted
+    // locally, and a clean screen just leaves.
+    if (!dirty || !(appState.client?.isConnected ?? false)) return true;
+    const choice = await choiceDialog({
+      title: "Unsaved changes",
+      message: "Save your color-correction changes to the device before leaving?",
+      choices: [
+        { id: "save", label: "Save", variant: "primary" },
+        { id: "discard", label: "Discard", variant: "danger" },
+      ],
+    });
+    if (choice === null) return false; // dismissed → stay
+    if (choice === "save") return await saveToDevice(); // stay if the save fails
+    discardChanges();
+    return true;
   }
 
   // Global output brightness — a separate master dimmer (not part of the gamma
@@ -170,6 +250,7 @@ export function ColorCorrectionScreen(_router: Router): Screen {
     drawPlot(plot, profile);
     sim.draw(profile);
     saveProfile(deviceId, profile);
+    markDirty();
     if (structural) rebuildControls();
     schedulePush();
   }
@@ -184,7 +265,7 @@ export function ColorCorrectionScreen(_router: Router): Screen {
       curveGroup(),
       whiteBalanceGroup(),
       colorTestGroup(),
-      pushGroup(),
+      deviceGroup(),
     );
   }
 
@@ -334,36 +415,37 @@ export function ColorCorrectionScreen(_router: Router): Screen {
     return g;
   }
 
-  function pushGroup(): HTMLElement {
+  function deviceGroup(): HTMLElement {
     const g = group("Device");
-    const c = appState.client;
-    const connected = c?.isConnected ?? false;
-    const liveChip = Chip({
-      label: live ? "Live update: on" : "Live update: off",
+    const connected = appState.client?.isConnected ?? false;
+
+    // Live-update toggle (a switch, like the settings on/off controls): stream
+    // curve edits to the strip as they're made. Turning it back on resyncs the
+    // device to the current curves.
+    const liveSwitch = Switch({
       on: live,
-      icon: "sparkles",
-      onClick: () => {
-        live = !live;
-        rebuildControls();
+      label: "Live update",
+      onChange: (on) => {
+        live = on;
         if (live) pushNow(false);
       },
     });
-    const pushBtn = Button({
-      label: connected ? "Push & save to device" : "Connect a device to push",
+    g.append(row("Live update", "Push curve edits to the strip as you make them.", liveSwitch.el));
+
+    // Save (floppy): commit the curves to device flash. Goes green on success,
+    // and clears back to neutral on the next edit.
+    const saveBtn = Button({
+      label: connected ? "Save to device" : "Connect a device to save",
+      icon: "save",
       block: true,
-      onClick: () => {
-        if (!appState.client?.isConnected) {
-          toast("No device connected", { error: true });
-          return;
-        }
-        pushNow(true);
-        toast("Curves pushed & saved");
-      },
+      disabled: !connected,
+      onClick: () => void saveToDevice(),
     });
-    const ctl = document.createElement("div");
-    ctl.className = "cc-push";
-    ctl.append(liveChip, pushBtn);
-    g.append(ctl);
+    saveBtn.classList.add("cc-save");
+    if (savedOk && !dirty) saveBtn.classList.add("cc-save--ok");
+    saveBtnEl = saveBtn;
+    g.append(saveBtn);
+
     if (!connected) {
       const note = document.createElement("div");
       note.className = "cc-hint";
@@ -393,11 +475,13 @@ export function ColorCorrectionScreen(_router: Router): Screen {
 
   return {
     el,
+    // Ask to save/discard uncommitted curve edits before leaving (all exits —
+    // back, tabs, ⋯ menu — route through here). Save/discard are handled in the
+    // guard, so onUnmount no longer silently commits.
+    beforeLeave,
     onUnmount: () => {
       window.clearTimeout(pushTimer);
       window.clearTimeout(brightnessTimer);
-      // Commit whatever was being previewed live (device RAM) to flash on close.
-      if (pendingCommit) pushNow(true);
     },
   };
 }

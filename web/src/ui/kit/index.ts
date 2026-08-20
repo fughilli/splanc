@@ -191,6 +191,42 @@ export function Chip(opts: {
   return c;
 }
 
+// -- Switch ------------------------------------------------------------------
+
+export interface SwitchHandle {
+  el: HTMLButtonElement;
+  set: (on: boolean) => void;
+}
+
+/** A sliding on/off toggle (track + knob) — the app's on/off control. `label`
+ * becomes the accessible name. `onChange` fires with the new state on tap. */
+export function Switch(opts: {
+  on: boolean;
+  label?: string;
+  onChange: (on: boolean) => void;
+}): SwitchHandle {
+  const b = document.createElement("button");
+  b.type = "button";
+  b.className = "k-switch";
+  b.setAttribute("role", "switch");
+  if (opts.label) b.setAttribute("aria-label", opts.label);
+  const knob = document.createElement("span");
+  knob.className = "k-switch-knob";
+  b.appendChild(knob);
+  let on = opts.on;
+  const sync = (): void => {
+    b.classList.toggle("k-switch--on", on);
+    b.setAttribute("aria-checked", String(on));
+  };
+  sync();
+  b.addEventListener("click", () => {
+    on = !on;
+    sync();
+    opts.onChange(on);
+  });
+  return { el: b, set: (v: boolean) => { on = v; sync(); } };
+}
+
 // -- StatusPill --------------------------------------------------------------
 
 export type PillState = "connected" | "connecting" | "offline" | "error";
@@ -368,6 +404,71 @@ export function confirmDialog(opts: {
     }
     document.addEventListener("keydown", onKey);
     scrim.addEventListener("click", () => done(false));
+  });
+}
+
+/**
+ * Like `confirmDialog`, but with N labelled choices — resolves the chosen id, or
+ * `null` when dismissed (scrim tap / Escape). Use for "Save / Discard / (stay)"
+ * style prompts where dismissing must be distinct from either action.
+ */
+export function choiceDialog(opts: {
+  message: string;
+  title?: string;
+  choices: Array<{ id: string; label: string; variant?: "primary" | "quiet" | "danger" }>;
+}): Promise<string | null> {
+  return new Promise((resolve) => {
+    const scrim = document.createElement("div");
+    scrim.className = "k-confirm-scrim";
+    const dialog = document.createElement("div");
+    dialog.className = "k-confirm";
+    dialog.setAttribute("role", "alertdialog");
+    dialog.setAttribute("aria-modal", "true");
+
+    if (opts.title) {
+      const h = document.createElement("h2");
+      h.className = "k-confirm-title";
+      h.textContent = opts.title;
+      dialog.appendChild(h);
+    }
+    const msg = document.createElement("p");
+    msg.className = "k-confirm-msg";
+    msg.textContent = opts.message;
+    dialog.appendChild(msg);
+
+    const actions = document.createElement("div");
+    actions.className = "k-confirm-actions";
+    for (const choice of opts.choices) {
+      actions.append(
+        Button({ label: choice.label, variant: choice.variant ?? "quiet", onClick: () => done(choice.id) }),
+      );
+    }
+    dialog.appendChild(actions);
+
+    document.body.append(scrim, dialog);
+    requestAnimationFrame(() => {
+      scrim.classList.add("k-confirm--in");
+      dialog.classList.add("k-confirm--in");
+    });
+
+    let closed = false;
+    function done(result: string | null): void {
+      if (closed) return;
+      closed = true;
+      document.removeEventListener("keydown", onKey);
+      scrim.classList.remove("k-confirm--in");
+      dialog.classList.remove("k-confirm--in");
+      setTimeout(() => {
+        scrim.remove();
+        dialog.remove();
+      }, 200);
+      resolve(result);
+    }
+    function onKey(ev: KeyboardEvent): void {
+      if (ev.key === "Escape") done(null);
+    }
+    document.addEventListener("keydown", onKey);
+    scrim.addEventListener("click", () => done(null));
   });
 }
 

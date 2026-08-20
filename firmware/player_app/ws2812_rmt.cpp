@@ -121,16 +121,19 @@ bool ws2812_rmt_reconfigure(int gpio0, int gpio1) {
   return build_channels(gpio0, gpio1);
 }
 
-void ws2812_rmt_show(const uint8_t *rgb, uint32_t count0, uint32_t count1) {
+void ws2812_rmt_show(const uint8_t *rgb, uint32_t count0, uint32_t count1,
+                     const uint8_t *order_override) {
   if (!g_n_chan) return;
   if (g_n_chan < 2) count1 = 0;  // no channel 1 configured
   uint32_t total = count0 + count1;
   if (total > g_max_leds) return;
   // Reorder each pixel to its channel's wire color order. Channel 0 owns pixels
   // [0, count0); channel 1 owns [count0, total) — so a per-channel order applies
-  // to the right span even though both share one contiguous buffer.
+  // to the right span even though both share one contiguous buffer. An
+  // order_override (the counting probe's own order) applies to ALL pixels
+  // instead, leaving the committed per-channel order untouched.
   for (uint32_t i = 0; i < total; i++) {
-    const uint8_t *ord = g_order[i < count0 ? 0 : 1];
+    const uint8_t *ord = order_override ? order_override : g_order[i < count0 ? 0 : 1];
     const uint8_t *in = &rgb[3 * i];
     g_grb[3 * i + 0] = in[ord[0]];
     g_grb[3 * i + 1] = in[ord[1]];

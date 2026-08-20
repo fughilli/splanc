@@ -314,6 +314,12 @@ message SetCountingPattern {
   // Player output channel; unset -> 0 (the Pi has one channel; the ESP32
   // may drive several RMT outputs).
   optional int32 channel = 2;
+  // Wire color order for THIS probe's pixels (a permutation of "RGB", e.g.
+  // "GRB"), applied ONLY to the counting pattern and independent of the
+  // channel's committed color order. Lets the color-order test preview a
+  // candidate order (or drive raw during identify) WITHOUT mutating the
+  // persisted hardware config. Unset -> identity "RGB" (raw wire bytes).
+  optional string color_order = 3;
 }
 
 // Persist the detected strip length for a channel (defaults future

@@ -145,6 +145,10 @@ bool lm_counting_color(uint32_t led, uint8_t rgb[3]);
 // Highest LED the latched counting pattern lights + 1 (0 when none). The frame
 // loop transmits exactly this many LEDs for the calibration pattern (no overrun).
 uint32_t lm_counting_len(void);
+// Wire color order for the counting probe's pixels: writes the 3-byte source-
+// index permutation (R=0,G=1,B=2) into `perm`. The probe's OWN order, applied at
+// transmit independent of the committed per-channel color order (identity = raw).
+void lm_counting_color_order(uint8_t perm[3]);
 // Topology-aware effect playback ("pulse"/"flood"). lm_playback_active() gates
 // it (an effect is configured). Once per frame call lm_playback_step(dt_ms) to
 // (re)build + advance the stateful sim; it returns whether a renderable sim

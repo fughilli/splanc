@@ -225,6 +225,43 @@ a {
   color: #fff;
 }
 
+/* Sliding on/off switch (track + knob). */
+.k-switch {
+  --sw-w: 44px;
+  --sw-h: 26px;
+  position: relative;
+  flex: 0 0 auto;
+  width: var(--sw-w);
+  height: var(--sw-h);
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  cursor: pointer;
+  transition: background var(--motion-micro) var(--ease),
+    border-color var(--motion-micro) var(--ease);
+}
+.k-switch-knob {
+  position: absolute;
+  top: 50%;
+  left: 3px;
+  width: calc(var(--sw-h) - 8px);
+  height: calc(var(--sw-h) - 8px);
+  border-radius: 50%;
+  background: var(--text-dim);
+  transform: translate(0, -50%);
+  transition: transform var(--motion-micro) var(--ease),
+    background var(--motion-micro) var(--ease);
+}
+.k-switch.k-switch--on {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.k-switch.k-switch--on .k-switch-knob {
+  background: #fff;
+  transform: translate(calc(var(--sw-w) - var(--sw-h)), -50%);
+}
+
 .k-toast-host {
   position: fixed;
   left: 0;

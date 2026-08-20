@@ -257,6 +257,11 @@ pub struct Player {
     default_led_count: u32,
     active: Option<ActiveCapture>,
     counting: Option<(i64, CountingBlocks)>,
+    /// Wire color order applied to the counting probe ONLY — a source-index
+    /// permutation like [`COLOR_ORDERS`] (identity [0,1,2] = raw). Set per
+    /// SetCountingPattern; kept out of the committed per-channel `hw_order` so
+    /// the color-order test never mutates the persisted config.
+    counting_order: [u8; 3],
     led_counts: [Option<u32>; MAX_CHANNELS],
     stored_map_id: Option<Str64>,
     frame_log: FrameLog,
@@ -316,6 +321,7 @@ impl Player {
             default_led_count,
             active: None,
             counting: None,
+            counting_order: [0, 1, 2],
             led_counts: [None; MAX_CHANNELS],
             stored_map_id: None,
             frame_log: FrameLog::new(),
@@ -602,10 +608,21 @@ impl Player {
         now_ms: i64,
     ) -> pb::ServerMessage {
         let mut state = pb::CountingState::default();
+        // Probe wire order (identity = raw). Validated before any mutation so a
+        // bad string leaves the current pattern untouched.
+        let order = match m.r#color_order() {
+            Some(s) => match color_order_index(s.as_str()) {
+                Some(i) => COLOR_ORDERS[i as usize].1,
+                None => return error("bad_message", "unknown color_order"),
+            },
+            None => [0, 1, 2],
+        };
         if m.r#blocks.is_empty() {
             self.counting = None;
+            self.counting_order = [0, 1, 2];
             state.r#active = false;
         } else {
+            self.counting_order = order;
             state.r#active = true;
             state.set_epoch_ms(now_ms as f64); // integer clock → wire ms double
             // Pre-reduce each block's [0,1] wire color to 8-bit RGB now (cold),
@@ -926,6 +943,15 @@ impl Player {
             }
         }
         Some(color)
+    }
+
+    /// The wire color order to apply to the counting probe's pixels — a
+    /// source-index permutation ([`COLOR_ORDERS`] convention). Independent of the
+    /// committed per-channel order so the color-order test can preview a candidate
+    /// (or drive raw) without touching the persisted config. Identity when no
+    /// pattern is latched.
+    pub fn counting_color_order(&self) -> [u8; 3] {
+        self.counting_order
     }
 
     /// Record that the output driver just pushed mapping-pattern frame `seq`

@@ -218,6 +218,9 @@ export function HardwareSetupScreen(_router: Router): Screen {
   let boardCaps: BoardCapabilitiesFlat | null = null;
   // Which channel's color-order test is currently painting the strip (null = none).
   let activeTest: number | null = null;
+  // While a test is active: the order the user tapped and is now confirming (the
+  // strip previews it applied), or null during the raw identify phase.
+  let pendingOrder: ColorOrder | null = null;
   // How many pixels of each primary the color-order test lights (see TEST_COUNTS).
   let testCount = 3;
 
@@ -312,11 +315,13 @@ export function HardwareSetupScreen(_router: Router): Screen {
     const c = connectedClient();
     if (!c) return;
     try {
-      // Force identity so the raw wire bytes (255,0,0)/(0,255,0)/(0,0,255) reach
-      // the strip unpermuted — commit:false keeps it out of flash.
-      await c.setHardwareConfig({ channel: ch, colorOrder: "RGB", commit: false });
-      await c.setCountingPattern(testBlocks(), ch);
+      // Identify phase: drive the probe with identity "RGB" so the raw wire bytes
+      // (255,0,0)/(0,255,0)/(0,0,255) reach the strip unpermuted and the user sees
+      // its true wire order. The probe carries its own order — the committed
+      // hardware config is never touched.
+      await c.setCountingPattern(testBlocks(), ch, "RGB");
       activeTest = ch;
+      pendingOrder = null;
       render();
     } catch {
       toast("Couldn't start the color test", { error: true });
@@ -327,28 +332,56 @@ export function HardwareSetupScreen(_router: Router): Screen {
     const c = connectedClient();
     if (!c) return;
     try {
-      const st = await c.setHardwareConfig({ channel: ch, colorOrder: order, commit: true });
-      channels = st.channels.map((x) => ({ ...x }));
-      // Repaint: the same on-device runs now reorder through the chosen wire
-      // order, so the strip should snap to a correct red / green / blue.
-      await c.setCountingPattern(testBlocks(), ch);
+      // PREVIEW the picked order on the probe only — the committed hardware config
+      // is untouched until the user confirms. The probe now reorders through the
+      // candidate, so a correct pick snaps the strip to red / green / blue.
+      await c.setCountingPattern(testBlocks(), ch, order);
+      pendingOrder = order;
       render();
-      toast(`Color order set to ${order}`);
     } catch {
       toast("Failed to set color order", { error: true });
     }
   }
 
+  /** Confirm phase → "Yes": persist the previewed order to flash and end the test. */
+  async function confirmOrder(ch: number): Promise<void> {
+    const c = connectedClient();
+    if (!c || pendingOrder === null) return;
+    const order = pendingOrder;
+    try {
+      const st = await c.setHardwareConfig({ channel: ch, colorOrder: order, commit: true });
+      channels = st.channels.map((x) => ({ ...x }));
+    } catch {
+      toast("Failed to set color order", { error: true });
+      return;
+    }
+    toast(`Color order set to ${order}`);
+    await stopTest(ch);
+  }
+
+  /** Confirm phase → "No": drop the preview, drive the probe raw again (identity)
+   * so the strip shows the true wire colors, and reopen the swatch picker. */
+  async function rePick(ch: number): Promise<void> {
+    const c = connectedClient();
+    if (!c) return;
+    try {
+      await c.setCountingPattern(testBlocks(), ch, "RGB");
+      pendingOrder = null;
+      render();
+    } catch {
+      toast("Couldn't restart the color test", { error: true });
+    }
+  }
+
   async function stopTest(ch: number): Promise<void> {
     activeTest = null;
+    pendingOrder = null;
     const c = appState.client;
     if (c?.isConnected) {
       try {
-        await c.setCountingPattern([], ch); // clear the strip
-        // Re-assert the committed order from RAM (undoes the identity override if
-        // the user backed out without picking).
-        const cur = channels.find((x) => x.channel === ch);
-        if (cur) await c.setHardwareConfig({ channel: ch, colorOrder: cur.colorOrder, commit: false });
+        // Just clear the probe. Nothing to restore: the test drives the probe's
+        // own wire order and never touches the committed hardware config.
+        await c.setCountingPattern([], ch);
       } catch {
         /* best-effort cleanup */
       }
@@ -414,14 +447,17 @@ export function HardwareSetupScreen(_router: Router): Screen {
     orderRow.append(label, ctl);
     g.append(orderRow);
 
-    if (activeTest === cfg.channel) {
+    if (activeTest === cfg.channel && pendingOrder === null) {
+      // Identify phase: the strip shows the RAW primaries (the test forces an
+      // identity wire order, so the stored color order is NOT applied) and the
+      // user taps the swatch matching what they physically see.
       const testHint = document.createElement("div");
       testHint.className = "hw-hint";
       testHint.textContent =
         `The strip now lights ${testCount} red, then ${testCount} green, then ` +
         `${testCount} blue pixel${testCount === 1 ? "" : "s"} at its start. Tap the ` +
-        "swatch whose dots match what you physically see, left to right — that's " +
-        "your wire order.";
+        "swatch whose dots match what you physically see, from the beginning of " +
+        "the strip toward the end — that's your wire order.";
       g.append(testHint, permGrid(cfg.channel, cfg.colorOrder));
       const actions = document.createElement("div");
       actions.className = "hw-test-actions";
@@ -430,6 +466,30 @@ export function HardwareSetupScreen(_router: Router): Screen {
         Button({ label: "Done", variant: "primary", onClick: () => void stopTest(cfg.channel) }),
       );
       g.append(actions);
+    } else if (activeTest === cfg.channel) {
+      // Confirm phase: the picked order is now applied (previewed, not yet
+      // committed), so a correct pick makes the strip read red → green → blue in
+      // order. Ask whether it now matches that RGB target; let the user re-pick.
+      const confirmHint = document.createElement("div");
+      confirmHint.className = "hw-hint";
+      confirmHint.textContent =
+        `Set to ${pendingOrder}. The strip should now read ${testCount} red, then ` +
+        `${testCount} green, then ${testCount} blue — from the beginning of the ` +
+        "strip toward the end. Does the color order now look like this?";
+      const target = document.createElement("div");
+      target.className = "hw-order-current";
+      target.append(orderDots("RGB"), document.createTextNode("RGB"));
+      const actions = document.createElement("div");
+      actions.className = "hw-test-actions";
+      actions.append(
+        Button({
+          label: "Yes, looks right",
+          variant: "primary",
+          onClick: () => void confirmOrder(cfg.channel),
+        }),
+        Button({ label: "No, pick again", onClick: () => void rePick(cfg.channel) }),
+      );
+      g.append(confirmHint, target, actions);
     } else {
       const actions = document.createElement("div");
       actions.className = "hw-test-actions";
@@ -459,7 +519,10 @@ export function HardwareSetupScreen(_router: Router): Screen {
       (v) => {
         testCount = Math.max(1, Number(v) || 1);
         const c = appState.client;
-        if (activeTest === ch && c?.isConnected) void c.setCountingPattern(testBlocks(), ch);
+        // Retune the live probe, keeping its current wire order (raw during
+        // identify, the previewed candidate during confirm).
+        if (activeTest === ch && c?.isConnected)
+          void c.setCountingPattern(testBlocks(), ch, pendingOrder ?? "RGB");
         if (activeTest === ch) render(); // refresh the hint's pixel counts
       },
     );

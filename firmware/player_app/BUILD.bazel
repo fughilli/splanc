@@ -98,6 +98,25 @@ rust_test(
     ],
 )
 
+# The color-order counting probe must preempt the FX engine with no map stored.
+# Own binary (fresh process-global FFI state) so it can arm an effect + skip the
+# map without the full-flow test's ordering — see tests/counting_preempt.rs.
+rust_test(
+    name = "counting_preempt_test",
+    srcs = ["tests/counting_preempt.rs"],
+    edition = "2021",
+    env = {
+        # Host-profile envelopes carry big inline heapless storage.
+        "RUST_MIN_STACK": "16777216",
+    },
+    deps = [
+        ":player_ffi_host",
+        "//fx_compiler",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+    ],
+)
+
 # Transport profile (FUG-121): per-uniform-update device-CPU cost of the proto
 # `set_uniforms` path vs native OSC ingest, to decide whether a proto-transport
 # bridge is worth keeping. `bazel run //firmware/player_app:transport_bench`.

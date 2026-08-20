@@ -28,7 +28,13 @@ bool ws2812_rmt_init(int gpio0, int gpio1, uint32_t max_leds);
 // (default GRB — see ws2812_rmt_set_color_order) internally. Blocks the calling
 // task until BOTH channels finish, then holds the lines low so the >=50 us
 // inter-frame gap latches. count1 == 0 (or no channel 1) drives channel 0 only.
-void ws2812_rmt_show(const uint8_t *rgb, uint32_t count0, uint32_t count1);
+//
+// `order_override` (default nullptr) applies a single source-index permutation
+// (wire byte i = rgb[order_override[i]]) to ALL pixels on both channels instead
+// of the per-channel configured order — the color-order counting probe uses this
+// to drive its own wire order without disturbing the committed content order.
+void ws2812_rmt_show(const uint8_t *rgb, uint32_t count0, uint32_t count1,
+                     const uint8_t *order_override = nullptr);
 
 // Set channel `ch`'s wire color order as a SOURCE permutation of the R,G,B input:
 // wire byte i is written from rgb[src[i]] (R=0, G=1, B=2). GRB (the WS2812B

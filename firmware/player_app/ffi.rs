@@ -2232,6 +2232,19 @@ pub unsafe extern "C" fn lm_counting_len() -> u32 {
     player().counting_len()
 }
 
+/// The wire color order for the counting probe's pixels: writes the 3-byte
+/// source-index permutation (R=0, G=1, B=2) into `perm`. This is the probe's
+/// OWN order — independent of the committed per-channel color order — so the
+/// color-order test drives the strip raw (identity) or through a previewed
+/// candidate without touching the persisted config. Identity when none latched.
+#[no_mangle]
+pub unsafe extern "C" fn lm_counting_color_order(perm: *mut u8) {
+    let p = player().counting_color_order();
+    *perm = p[0];
+    *perm.add(1) = p[1];
+    *perm.add(2) = p[2];
+}
+
 /// The persisted strip length for `channel` (set_led_count); -1 when unset.
 #[no_mangle]
 pub unsafe extern "C" fn lm_led_count(channel: u32) -> i32 {

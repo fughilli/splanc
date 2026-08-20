@@ -60,6 +60,14 @@ const CSS = `
 
 .cc-push { display: flex; flex-direction: column; gap: var(--sp-2); }
 
+/* Save (floppy) button: flips green on a successful commit, until the next edit. */
+.cc-save.cc-save--ok {
+  background: #1f7a3d;
+  border-color: #2e9d52;
+  color: #fff;
+  --icon-cut: #1f7a3d;
+}
+
 .cc-sim-row { margin: var(--sp-1) 0; }
 .cc-sim-cap { color: var(--text-dim); font-size: var(--f-caption); margin-bottom: 2px; }
 .cc-sim-bar {

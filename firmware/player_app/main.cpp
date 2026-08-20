@@ -224,6 +224,13 @@ static SemaphoreHandle_t xmit_done = nullptr;
 // Latest transmit span (cycles), written by the transmit task, read for perf.
 static volatile uint32_t g_show_c = 0;
 static volatile bool g_show_timed = false;
+// Per-frame color-order override for the counting probe: when g_xmit_probe_order
+// is set, the transmit applies g_probe_perm (a source-index permutation) to every
+// pixel instead of the committed per-channel order — so the color-order test
+// drives its own wire order without touching the persisted config. Latched by
+// led_show_async under the xmit_done gate (like g_xmit_len*), read by xmit_task.
+static volatile bool g_xmit_probe_order = false;
+static volatile uint8_t g_probe_perm[3] = {0, 1, 2};
 // How many LEDs the transmit task clocks out this frame per channel — the ACTIVE
 // strip length, not the whole render buffer. Channel 0 drives show_buf[0..len0),
 // channel 1 show_buf[len0..len0+len1) (len1 == 0 = single channel). Latched by
@@ -234,7 +241,8 @@ static volatile bool g_show_timed = false;
 static volatile uint32_t g_xmit_len0 = 0;
 static volatile uint32_t g_xmit_len1 = 0;
 // defined below render_once
-static void led_show_async(bool timed, uint32_t count0, uint32_t count1);
+static void led_show_async(bool timed, uint32_t count0, uint32_t count1,
+                           const uint8_t *order_override);
 
 // LED rendering is decoupled from loop() (which cooperatively services WiFi,
 // HTTP and BLE and can stall for milliseconds during a burst): it runs in its
@@ -885,6 +893,21 @@ static void poll_device_rename() {
   // or reboot (reissue_cert_for_lan), which is all the DNS SAN is used for.
 }
 
+// Apply every device-side effect of the message just handled by lm_player_handle:
+// a rename, the color-correction LUT, the output brightness, and the hardware
+// (GPIO / wire color order). Each poller is an idempotent gen-check, so it's
+// cheap when nothing changed. BOTH transports (plain ws:81 and wss:443) must call
+// this after handling a frame — previously only the ws path ran the cc/brightness/
+// hw pollers, so set_color_correction / set_brightness / set_hardware_config were
+// silently dropped over wss (the app's normal transport): the core state + gen
+// updated, but g_lut / g_brightness / the RMT color order never followed.
+static void poll_after_message() {
+  poll_device_rename();
+  poll_color_correction();
+  poll_brightness();
+  poll_hardware_config();
+}
+
 // Handle one sharded-upload window (proto UploadChunk), shared by the wss and
 // ws:81 paths. `payload` points at the window's bytes (inside the caller's rx).
 // Each window is appended to the temp file; the last one is decoded straight
@@ -983,10 +1006,7 @@ static void ws_dispatch_message() {
     ws_send_frame(WS_OP_BINARY, tx, (size_t)n);
     persist_if_upload(rx, rx_len, tx, (size_t)n);
   }
-  poll_device_rename();
-  poll_color_correction();
-  poll_brightness();
-  poll_hardware_config();
+  poll_after_message();
   rx_len = 0;
 }
 
@@ -1137,6 +1157,11 @@ static uint32_t render_once() {
   uint32_t bit_period_us, cycle_frames, led_count;
   bool show = false;
   uint32_t next_delay_ms = kStaticPollMs;
+  // Per-frame color-order override: only the counting probe sets it, to drive its
+  // own wire order (see the counting branch). Content frames leave it off and use
+  // the committed per-channel order.
+  uint8_t frame_order[3];
+  bool use_frame_order = false;
 
   // Active strip length to clock out this frame, split across the two output
   // channels at the channel-0 boundary. Default total: set_led_count(0) +
@@ -1202,16 +1227,29 @@ static uint32_t render_once() {
     next_delay_ms = d <= 1 ? 1 : (d > (int64_t)kStaticPollMs ? kStaticPollMs : (uint32_t)d);
     was_active = true;
   } else if (lm_counting_color(0, rgb)) {
-    // Counting probe: static pattern, repaint at the slow static cadence. Drive
-    // EXACTLY the pattern's extent — no overrun past it to the buffer cap.
+    // Counting probe: static pattern, repaint at the slow static cadence.
+    // Shrinking the per-color run ("pixels each" 10 -> 1) lights fewer LEDs, but
+    // an exact-count transmit of just the new run would leave the WS2812s the
+    // old, wider run drove latched at their stale color. Track the widest run
+    // we've driven and, on a shrink, transmit out to it once with the freed tail
+    // blanked — so the strip actually clears from N back down to M.
+    static uint32_t counting_hwm = 0;  // widest run lit since counting began
     uint32_t cn = lm_counting_len();
     if (cn == 0) cn = 1;
     if (cn > kMaxLeds) cn = kMaxLeds;
-    xmit_len = cn;
+    uint32_t extent = cn > counting_hwm ? cn : counting_hwm;
+    xmit_len = extent;
     for (uint32_t i = 0; i < cn; i++) {
       lm_counting_color(i, rgb);
       leds[i] = Rgb(rgb[0], rgb[1], rgb[2]);
     }
+    for (uint32_t i = cn; i < extent; i++) leds[i] = Rgb::Black;  // clear the stale tail
+    counting_hwm = cn;  // next frame only needs to cover the current run
+    // Drive the probe through ITS OWN wire order (identity = raw, or a previewed
+    // candidate), bypassing the committed per-channel color order so the test
+    // never mutates the persisted config.
+    lm_counting_color_order(frame_order);
+    use_frame_order = true;
     show = true;
     was_active = true;
     last_shown_frame = 0xffffffff;
@@ -1363,7 +1401,7 @@ static uint32_t render_once() {
     uint32_t count0 = xmit_len < split ? xmit_len : split;
     uint32_t count1 = xmit_len > split ? (xmit_len - split) : 0;
     if (count1 > ch1_len) count1 = ch1_len;
-    led_show_async(fx_frame_rendered, count0, count1);
+    led_show_async(fx_frame_rendered, count0, count1, use_frame_order ? frame_order : nullptr);
     if (fx_frame_rendered) show_c = g_show_c;
   }
 
@@ -1457,7 +1495,8 @@ static void xmit_task(void *) {
       }
     }
     uint32_t c0 = g_show_timed ? esp_cpu_get_cycle_count() : 0;
-    ws2812_rmt_show(reinterpret_cast<const uint8_t *>(show_buf), g_xmit_len0, g_xmit_len1);
+    const uint8_t *ovr = g_xmit_probe_order ? const_cast<const uint8_t *>(g_probe_perm) : nullptr;
+    ws2812_rmt_show(reinterpret_cast<const uint8_t *>(show_buf), g_xmit_len0, g_xmit_len1, ovr);
     if (g_show_timed) g_show_c = esp_cpu_get_cycle_count() - c0;
     xSemaphoreGive(xmit_done);
   }
@@ -1468,7 +1507,8 @@ static void xmit_task(void *) {
 // (instant once rendering out-runs the transmit), snapshots into `show_buf`, and
 // kicks the higher-priority transmit task — which preempts, starts the DMA, and
 // yields straight back so the render task can compute the next frame in parallel.
-static void led_show_async(bool timed, uint32_t count0, uint32_t count1) {
+static void led_show_async(bool timed, uint32_t count0, uint32_t count1,
+                           const uint8_t *order_override) {
   uint32_t total = count0 + count1;
   if (total > kMaxLeds) {  // clamp defensively; render never exceeds the cap
     count1 = count1 > kMaxLeds - count0 ? kMaxLeds - count0 : count1;
@@ -1476,16 +1516,23 @@ static void led_show_async(bool timed, uint32_t count0, uint32_t count1) {
   }
   if (xmit_task_handle == nullptr) {
     // Pre-task fallback (setup, before the transmit task exists): synchronous.
-    ws2812_rmt_show(reinterpret_cast<const uint8_t *>(show_buf), count0, count1);
+    ws2812_rmt_show(reinterpret_cast<const uint8_t *>(show_buf), count0, count1, order_override);
     return;
   }
   xSemaphoreTake(xmit_done, portMAX_DELAY);  // previous transmit fully drained
-  // Snapshot only the active LEDs; the per-channel lengths ride with the buffer
-  // under the same xmit_done gate so the transmit task sees a consistent snapshot.
+  // Snapshot only the active LEDs; the per-channel lengths + probe order ride with
+  // the buffer under the same xmit_done gate so the transmit task sees a
+  // consistent snapshot.
   memcpy(show_buf, leds, static_cast<size_t>(total) * sizeof(Rgb));
   g_xmit_len0 = count0;
   g_xmit_len1 = count1;
   g_show_timed = timed;
+  g_xmit_probe_order = order_override != nullptr;
+  if (order_override != nullptr) {
+    g_probe_perm[0] = order_override[0];
+    g_probe_perm[1] = order_override[1];
+    g_probe_perm[2] = order_override[2];
+  }
   xTaskNotifyGive(xmit_task_handle);
 }
 
@@ -1612,7 +1659,7 @@ static esp_err_t wss_ws_handler(httpd_req_t *req) {
   xSemaphoreTake(player_mutex, portMAX_DELAY);
   int32_t n = lm_player_handle(rx, frame.len, now, now, tx, sizeof tx);
   xSemaphoreGive(player_mutex);
-  poll_device_rename();
+  poll_after_message();
   if (n > 0) {
     httpd_ws_frame_t out = {};
     out.type = HTTPD_WS_TYPE_BINARY;

@@ -592,10 +592,20 @@ export class LedMapperClient {
   /** Paint a static color-block pattern on a channel (proto SetCountingPattern):
    * each block lights [start, start+count) a solid [r,g,b] in [0,1], everything
    * else off. Used by the Hardware Setup color-order test to drive three R/G/B
-   * segments. Reply: counting_state. Pass empty `blocks` to clear. */
-  async setCountingPattern(blocks: ColorBlock[], channel?: number): Promise<ServerMessage> {
+   * segments. Reply: counting_state. Pass empty `blocks` to clear.
+   *
+   * `colorOrder` (a permutation of "RGB") drives the probe through its OWN wire
+   * order, independent of the channel's committed color order — so the color-
+   * order test previews a candidate (or drives raw with "RGB") without mutating
+   * the persisted config. Omit -> identity "RGB" (raw wire bytes). */
+  async setCountingPattern(
+    blocks: ColorBlock[],
+    channel?: number,
+    colorOrder?: ColorOrder,
+  ): Promise<ServerMessage> {
     const msg: Record<string, unknown> = { type: "set_counting_pattern", blocks };
     if (channel !== undefined) msg.channel = channel;
+    if (colorOrder !== undefined) msg.colorOrder = colorOrder;
     return await this.request(msg as unknown as ClientMessage, "counting_state");
   }
 
