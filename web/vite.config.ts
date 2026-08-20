@@ -10,9 +10,27 @@
  * (`bazelisk run //web:serve`).
  */
 
+import { readFileSync } from "node:fs";
+
 import { defineConfig } from "vite";
 
 const backend = process.env["LEDMAPPER_BACKEND"] ?? "http://localhost:8080";
+
+// TLS for `ibazel run //web:dev` (see dev.sh): when the launcher hands us a
+// cert/key pair, terminate HTTPS here so the dev server is a secure context
+// (WebXR/getUserMedia/DeviceMotion need one) and WSS works end-to-end. Absent
+// the env (plain `pnpm --dir web dev`), we stay on http:5173 as before. The
+// cert is the SAME self-signed pair `//web:serve` uses (.ledmapper/ssl), so a
+// browser trust exception taken through one dev path is honored by the other.
+const tlsCert = process.env["LEDMAPPER_TLS_CERT"];
+const tlsKey = process.env["LEDMAPPER_TLS_KEY"];
+const https =
+  tlsCert && tlsKey
+    ? { cert: readFileSync(tlsCert), key: readFileSync(tlsKey) }
+    : undefined;
+const devPort = process.env["LEDMAPPER_DEV_PORT"]
+  ? Number(process.env["LEDMAPPER_DEV_PORT"])
+  : undefined;
 
 export default defineConfig({
   // Relative base so ONE built bundle works whether it's served from an origin
@@ -37,6 +55,8 @@ export default defineConfig({
   },
   server: {
     host: true,
+    ...(https ? { https } : {}),
+    ...(devPort ? { port: devPort, strictPort: true } : {}),
     proxy: {
       "/ws": { target: backend.replace(/^http/, "ws"), ws: true },
       "/maps": backend,

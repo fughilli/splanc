@@ -15,7 +15,7 @@ Targets:
 """
 
 load("@aspect_bazel_lib//lib:copy_to_directory.bzl", "copy_to_directory")
-load("@aspect_rules_js//js:defs.bzl", "js_binary", "js_test")
+load("@aspect_rules_js//js:defs.bzl", "js_binary", "js_run_devserver", "js_test")
 load("@aspect_rules_ts//ts:defs.bzl", "ts_config", "ts_project")
 load("@npm//:defs.bzl", "npm_link_all_packages")
 load("@npm//web:vite/package_json.bzl", vite_bin = "bin")
@@ -352,6 +352,66 @@ sh_binary(
         "//fx_compiler:fx_compiler_web",
         "//pi/server:serve",
         "//solver:solver_web",
+    ],
+)
+
+# The live-reloading TLS dev server — hermetic Vite, run and watched by ibazel
+# (see :dev below for the one-command driver). Everything comes from Bazel's
+# node toolchain + the Bazel-linked node_modules (@npm, materialized from the
+# repo cache) — NO host Node/pnpm, and no dependence on a developer's global
+# pnpm store. `js_run_devserver` syncs the app sources into its run tree and,
+# under `ibazel run`, re-syncs on every edit so Vite HMR picks them up; TLS,
+# port, and the M2 backend URL come in via env (LEDMAPPER_* — see vite.config.ts
+# and dev_watch.sh). Vite proxies /ws + /maps + the wasm routes to the M2 server
+# the driver runs alongside it.
+#
+# vite as a hermetic js_binary (entry_point from the linked vite package) — used
+# as the devserver tool since npm_link_all_packages doesn't materialize a .bin/.
+vite_bin.vite_binary(name = "vite_dev_bin")
+
+js_run_devserver(
+    name = "dev_server",
+    args = ["dev"],
+    chdir = package_name(),
+    data = SRCS + CSS + [
+        "index.html",
+        "wall.html",
+        "effects.html",
+        "vite.config.ts",
+        "package.json",
+        "tsconfig.json",
+        # tsconfig.json extends the repo-root base; Vite/rolldown's dep scanner
+        # needs it synced too (`../tsconfig.base.json` from web/) or it fails the
+        # scan with TSCONFIG_ERROR. (js_library wrapper — js_run_devserver won't
+        # take a raw cross-package file label.)
+        "//:tsconfig_base_json",
+        # The complete Bazel-linked node_modules (incl. jsqr) — hermetic, from
+        # the repo cache, so Vite resolves every import with no `pnpm install`.
+        ":node_modules",
+    ],
+    tool = ":vite_dev_bin",
+)
+
+# One-command driver — THE entry point:
+#   bazelisk run //web:dev                    # https://localhost:8443, hot reload
+#   bazelisk run //web:dev -- --no-tls        # http://localhost:8080 (wall/dev)
+#   bazelisk run //web:dev -- --port 9443 --backend-port 9080
+# Fully hermetic: it generates the shared self-signed cert, starts the M2 server
+# (a rules_python py_binary — hermetic interpreter), and execs the Bazel-fetched
+# `ibazel` (//third_party/ibazel, a standalone binary — no Node) on
+# //web:dev_server. ibazel watches the devserver's inputs and re-serves on
+# change; it nests a bazelisk invocation, which is the point — `bazel run
+# //web:dev` is the single top-level driver for the whole live-reload loop.
+sh_binary(
+    name = "dev",
+    srcs = ["dev_watch.sh"],
+    data = [
+        "//firmware/fx_vm:fx_vm_web",
+        "//firmware/pulse:pulse_web",
+        "//fx_compiler:fx_compiler_web",
+        "//pi/server:serve",
+        "//solver:solver_web",
+        "//third_party/ibazel",
     ],
 )
 

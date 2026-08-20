@@ -22,6 +22,7 @@ bazel_dep(name = "rules_python", version = "2.0.3")
 bazel_dep(name = "aspect_rules_js", version = "3.2.2")
 bazel_dep(name = "aspect_rules_ts", version = "3.8.11")
 bazel_dep(name = "aspect_bazel_lib", version = "2.22.5")
+bazel_dep(name = "bazel_skylib", version = "1.9.0")
 bazel_dep(name = "rules_pkg", version = "1.2.0")
 
 # buildifier-lint's modern-loads fix rewrites native sh_binary to the
@@ -351,3 +352,29 @@ http_archive(
     strip_prefix = "CustomOperatorSamples-main",
     urls = ["https://github.com/TouchDesigner/CustomOperatorSamples/archive/refs/heads/main.tar.gz"],
 )
+
+# ---------------------------------------------------------------------------
+# ibazel (bazel-watcher) — the file watcher that drives `//web:dev`'s live
+# reload. Fetched as a standalone Go binary per host platform so the dev loop
+# needs NO host Node/pnpm (unlike @bazel/ibazel, which is an npm package): it's
+# hermetic, pinned by sha256, and materialized from the Bazel repository cache.
+# //third_party/ibazel:ibazel select()s the right one. Bump: update the version
+# + all four sha256 (curl -sL <url> | sha256sum).
+# ---------------------------------------------------------------------------
+http_file = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_file")
+
+[
+    http_file(
+        name = "ibazel_" + plat,
+        downloaded_file_path = "ibazel",
+        executable = True,
+        sha256 = sha,
+        urls = ["https://github.com/bazelbuild/bazel-watcher/releases/download/v0.32.0/ibazel_" + plat],
+    )
+    for plat, sha in {
+        "darwin_amd64": "781e6113fc8f3d41299a001fe2e4780c1f6cc3d236ace8af69a87558ade07df4",
+        "darwin_arm64": "1cfec3c53213520ddba3d8ff6dbc85ac0ec0c07e9703dc44695e1af166b009ab",
+        "linux_amd64": "761cb60545f3de5bc0615d2b0f58accd4186161ac6cdd2a168ad6ee59731b92e",
+        "linux_arm64": "3f2c3c0b629a426cb5452fdf54b88c92b554344689e67c592046dbbc017fa562",
+    }.items()
+]

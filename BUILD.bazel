@@ -17,6 +17,7 @@ To regenerate the lockfile after editing requirements.in:
 # rules onto the hand-written proto BUILD (shared/protocol/proto). No target uses
 # Go protobuf bindings.
 
+load("@aspect_rules_js//js:defs.bzl", "js_library")
 load("@aspect_rules_ts//ts:defs.bzl", "ts_config")
 load("@npm//:defs.bzl", "npm_link_all_packages")
 load("@rules_python//python:pip.bzl", "compile_pip_requirements")
@@ -35,6 +36,16 @@ npm_link_all_packages(name = "node_modules")
 ts_config(
     name = "tsconfig_base",
     src = "tsconfig.base.json",
+)
+
+# The same file wrapped as a js_library so js_* rules in other packages can take
+# it as data (js_run_devserver rejects a raw cross-package file label). The web
+# dev server (//web:dev_server) needs it synced: web/tsconfig.json extends
+# ../tsconfig.base.json, and Vite's dep scanner loads that chain.
+js_library(
+    name = "tsconfig_base_json",
+    srcs = ["tsconfig.base.json"],
+    visibility = ["//visibility:public"],
 )
 
 # Exported so other packages (and the codegen genrule) can depend on the source
