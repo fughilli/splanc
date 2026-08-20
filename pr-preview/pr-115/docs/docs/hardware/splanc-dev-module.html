@@ -1,0 +1,1082 @@
+<!doctype html>
+<html class="no-js" lang="en" data-content_root="../../">
+  <head><meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
+<link rel="index" title="Index" href="../../genindex.html"><link rel="search" title="Search" href="../../search.html">
+        <link rel="prefetch" href="../../static/splanc-icon.svg" as="image">
+
+    <link rel="shortcut icon" href="../../static/splanc-icon.svg"><!-- Generated with Sphinx 9.0.4 and Furo 2025.12.19 -->
+        <title>Splanc Dev Module — hardware design - splanc developer docs</title>
+      <link rel="stylesheet" type="text/css" href="../../static/pygments.css?v=d111a655" />
+    <link rel="stylesheet" type="text/css" href="../../static/styles/furo.css?v=7bdb33bb" />
+    <link rel="stylesheet" type="text/css" href="../../static/copybutton.css?v=76b2166b" />
+    <link rel="stylesheet" type="text/css" href="../../static/sphinx-design.min.css?v=95c83b7e" />
+    <link rel="stylesheet" type="text/css" href="../../static/styles/furo-extensions.css?v=8dab3a3b" />
+    <link rel="stylesheet" type="text/css" href="../../static/custom.css?v=36188834" />
+    
+    
+
+
+<style>
+  body {
+    --color-code-background: #f2f2f2;
+  --color-code-foreground: #1e1e1e;
+  --color-brand-primary: #084de7;
+  --color-brand-content: #084de7;
+  
+  }
+  @media not print {
+    body[data-theme="dark"] {
+      --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+    }
+    @media (prefers-color-scheme: dark) {
+      body:not([data-theme="light"]) {
+        --color-code-background: #202020;
+  --color-code-foreground: #d0d0d0;
+  --color-brand-primary: #5b9bff;
+  --color-brand-content: #5b9bff;
+  
+      }
+    }
+  }
+</style></head>
+  <body>
+    
+    <script>
+      document.body.dataset.theme = localStorage.getItem("theme") || "auto";
+    </script>
+    
+
+<svg xmlns="http://www.w3.org/2000/svg" style="display: none;">
+  <symbol id="svg-toc" viewBox="0 0 24 24">
+    <title>Contents</title>
+    <svg stroke="currentColor" fill="currentColor" stroke-width="0" viewBox="0 0 1024 1024">
+      <path d="M408 442h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8zm-8 204c0 4.4 3.6 8 8 8h480c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8H408c-4.4 0-8 3.6-8 8v56zm504-486H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zm0 632H120c-4.4 0-8 3.6-8 8v56c0 4.4 3.6 8 8 8h784c4.4 0 8-3.6 8-8v-56c0-4.4-3.6-8-8-8zM115.4 518.9L271.7 642c5.8 4.6 14.4.5 14.4-6.9V388.9c0-7.4-8.5-11.5-14.4-6.9L115.4 505.1a8.74 8.74 0 0 0 0 13.8z"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-menu" viewBox="0 0 24 24">
+    <title>Menu</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-menu">
+      <line x1="3" y1="12" x2="21" y2="12"></line>
+      <line x1="3" y1="6" x2="21" y2="6"></line>
+      <line x1="3" y1="18" x2="21" y2="18"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-arrow-right" viewBox="0 0 24 24">
+    <title>Expand</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather-chevron-right">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  </symbol>
+  <symbol id="svg-sun" viewBox="0 0 24 24">
+    <title>Light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="feather-sun">
+      <circle cx="12" cy="12" r="5"></circle>
+      <line x1="12" y1="1" x2="12" y2="3"></line>
+      <line x1="12" y1="21" x2="12" y2="23"></line>
+      <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+      <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+      <line x1="1" y1="12" x2="3" y2="12"></line>
+      <line x1="21" y1="12" x2="23" y2="12"></line>
+      <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+      <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon" viewBox="0 0 24 24">
+    <title>Dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-moon">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446a9 9 0 1 1 -8.313 -12.454z" />
+    </svg>
+  </symbol>
+  <symbol id="svg-sun-with-moon" viewBox="0 0 24 24">
+    <title>Auto light/dark, in light mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path style="opacity: 50%" d="M 5.411 14.504 C 5.471 14.504 5.532 14.504 5.591 14.504 C 3.639 16.319 4.383 19.569 6.931 20.352 C 7.693 20.586 8.512 20.551 9.25 20.252 C 8.023 23.207 4.056 23.725 2.11 21.184 C 0.166 18.642 1.702 14.949 4.874 14.536 C 5.051 14.512 5.231 14.5 5.411 14.5 L 5.411 14.504 Z"/>
+      <line x1="14.5" y1="3.25" x2="14.5" y2="1.25"/>
+      <line x1="14.5" y1="15.85" x2="14.5" y2="17.85"/>
+      <line x1="10.044" y1="5.094" x2="8.63" y2="3.68"/>
+      <line x1="19" y1="14.05" x2="20.414" y2="15.464"/>
+      <line x1="8.2" y1="9.55" x2="6.2" y2="9.55"/>
+      <line x1="20.8" y1="9.55" x2="22.8" y2="9.55"/>
+      <line x1="10.044" y1="14.006" x2="8.63" y2="15.42"/>
+      <line x1="19" y1="5.05" x2="20.414" y2="3.636"/>
+      <circle cx="14.5" cy="9.55" r="3.6"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-moon-with-sun" viewBox="0 0 24 24">
+    <title>Auto light/dark, in dark mode</title>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round"
+      class="icon-custom-derived-from-feather-sun-and-tabler-moon">
+      <path d="M 8.282 7.007 C 8.385 7.007 8.494 7.007 8.595 7.007 C 5.18 10.184 6.481 15.869 10.942 17.24 C 12.275 17.648 13.706 17.589 15 17.066 C 12.851 22.236 5.91 23.143 2.505 18.696 C -0.897 14.249 1.791 7.786 7.342 7.063 C 7.652 7.021 7.965 7 8.282 7 L 8.282 7.007 Z"/>
+      <line style="opacity: 50%" x1="18" y1="3.705" x2="18" y2="2.5"/>
+      <line style="opacity: 50%" x1="18" y1="11.295" x2="18" y2="12.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="4.816" x2="14.464" y2="3.964"/>
+      <line style="opacity: 50%" x1="20.711" y1="10.212" x2="21.563" y2="11.063"/>
+      <line style="opacity: 50%" x1="14.205" y1="7.5" x2="13.001" y2="7.5"/>
+      <line style="opacity: 50%" x1="21.795" y1="7.5" x2="23" y2="7.5"/>
+      <line style="opacity: 50%" x1="15.316" y1="10.184" x2="14.464" y2="11.036"/>
+      <line style="opacity: 50%" x1="20.711" y1="4.789" x2="21.563" y2="3.937"/>
+      <circle style="opacity: 50%" cx="18" cy="7.5" r="2.169"/>
+    </svg>
+  </symbol>
+  <symbol id="svg-pencil" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-pencil-code">
+      <path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" />
+      <path d="M13.5 6.5l4 4" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+  <symbol id="svg-eye" viewBox="0 0 24 24">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="icon-tabler-eye-code">
+      <path stroke="none" d="M0 0h24v24H0z" fill="none" />
+      <path d="M10 12a2 2 0 1 0 4 0a2 2 0 0 0 -4 0" />
+      <path
+        d="M11.11 17.958c-3.209 -.307 -5.91 -2.293 -8.11 -5.958c2.4 -4 5.4 -6 9 -6c3.6 0 6.6 2 9 6c-.21 .352 -.427 .688 -.647 1.008" />
+      <path d="M20 21l2 -2l-2 -2" />
+      <path d="M17 17l-2 2l2 2" />
+    </svg>
+  </symbol>
+</svg>
+
+<input type="checkbox" class="sidebar-toggle" name="__navigation" id="__navigation" aria-label="Toggle site navigation sidebar">
+<input type="checkbox" class="sidebar-toggle" name="__toc" id="__toc" aria-label="Toggle table of contents sidebar">
+<label class="overlay sidebar-overlay" for="__navigation"></label>
+<label class="overlay toc-overlay" for="__toc"></label>
+
+<a class="skip-to-content muted-link" href="#furo-main-content">Skip to content</a>
+
+
+
+<div class="page">
+  <header class="mobile-header">
+    <div class="header-left">
+      <label class="nav-overlay-icon" for="__navigation">
+        <span class="icon"><svg><use href="#svg-menu"></use></svg></span>
+      </label>
+    </div>
+    <div class="header-center">
+      <a href="../../index.html"><div class="brand">splanc developer docs</div></a>
+    </div>
+    <div class="header-right">
+      <div class="theme-toggle-container theme-toggle-header">
+        <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+          <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+          <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+          <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+          <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+        </button>
+      </div>
+      <label class="toc-overlay-icon toc-header-icon" for="__toc">
+        <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+      </label>
+    </div>
+  </header>
+  <aside class="sidebar-drawer">
+    <div class="sidebar-container">
+      
+      <div class="sidebar-sticky"><a class="sidebar-brand" href="../../index.html">
+  <div class="sidebar-logo-container">
+    <img class="sidebar-logo" src="../../static/splanc-icon.svg" alt="Logo"/>
+  </div>
+  
+  <span class="sidebar-brand-text">splanc developer docs</span>
+  
+</a><form class="sidebar-search-container" method="get" action="../../search.html" role="search">
+  <input class="sidebar-search" placeholder="Search" name="q" aria-label="Search">
+  <input type="hidden" name="check_keywords" value="yes">
+  <input type="hidden" name="area" value="default">
+</form>
+<div id="searchbox"></div><div class="sidebar-scroll"><div class="sidebar-tree">
+  <p class="caption" role="heading"><span class="caption-text">Overview</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../architecture.html">Architecture</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../subsystems/index.html">Subsystems</a><input aria-label="Toggle navigation of Subsystems" class="toctree-checkbox" id="toctree-checkbox-1" name="toctree-checkbox-1" role="switch" type="checkbox"/><label for="toctree-checkbox-1"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/web.html">The PWA (<code class="docutils literal notranslate"><span class="pre">web/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/firmware.html">The firmware (<code class="docutils literal notranslate"><span class="pre">firmware/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/fx-compiler.html">The effects compiler (<code class="docutils literal notranslate"><span class="pre">fx_compiler/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/solver.html">The solver (<code class="docutils literal notranslate"><span class="pre">solver/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/reconstruction.html">Reconstruction (<code class="docutils literal notranslate"><span class="pre">pi/reconstruction/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/protocol.html">The wire protocol (<code class="docutils literal notranslate"><span class="pre">shared/protocol/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/simulator.html">The simulator (<code class="docutils literal notranslate"><span class="pre">shared/simulator/</span></code>)</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../../subsystems/hitl.html">HITL &amp; tooling (<code class="docutils literal notranslate"><span class="pre">pi/hitl/</span></code>, <code class="docutils literal notranslate"><span class="pre">tools/</span></code>)</a></li>
+</ul>
+</li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Guides</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../DEVELOPERS.html">Developing splanc</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html">Getting started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#hardware">Hardware</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#how-it-works">How it works</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../README.html#learn-more">Learn more</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../runbook.html">Runbook</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html">APP</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#firmware">FIRMWARE</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#effects-compiler">EFFECTS COMPILER</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../next_steps.html#performance-monitoring">PERFORMANCE MONITORING</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Effects</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../EFFECTS.html">The splanc effects engine</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../fx-vm-performance.html">FX-VM performance</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../led-mapper-design.html">LED Mapper — Design Doc (Android-first)</a></li>
+<li class="toctree-l1 has-children"><a class="reference internal" href="../../design/index.html">Design notes</a><input aria-label="Toggle navigation of Design notes" class="toctree-checkbox" id="toctree-checkbox-2" name="toctree-checkbox-2" role="switch" type="checkbox"/><label for="toctree-checkbox-2"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul>
+<li class="toctree-l2"><a class="reference internal" href="../design/effects-runtime.html">The effects runtime</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/effects-compiler.html">The effects compiler</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/perf-monitoring.html">Performance monitoring</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../vio-exploration.html">VIO solver exploration</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../blob-detection-playbook.html">Blob-detection playbook</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../esp32-led-mapping-plan.html">ESP32 LED-mapping plan</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/mbedtls-dynamic-buffers.html">mbedtls dynamic buffers</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../design/app-ux-overhaul.html">App UX overhaul</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="../decisions.html">Decision log</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Meta</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../about-these-docs.html">How these docs are built</a></li>
+</ul>
+
+</div>
+</div>
+
+      </div>
+      
+    </div>
+  </aside>
+  <div class="main">
+    <div class="content">
+      <div class="article-container">
+        <a href="#" class="back-to-top muted-link">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+            <path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8v12z"></path>
+          </svg>
+          <span>Back to top</span>
+        </a>
+        <div class="content-icon-container">
+          <div class="view-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/blob/main/docs/_sphinx/docs/hardware/splanc-dev-module.md?plain=true" title="View this page">
+    <svg><use href="#svg-eye"></use></svg>
+    <span class="visually-hidden">View this page</span>
+  </a>
+</div><div class="edit-this-page">
+  <a class="muted-link" href="https://github.com/fughilli/splanc/edit/main/docs/_sphinx/docs/hardware/splanc-dev-module.md" rel="edit" title="Edit this page">
+    <svg><use href="#svg-pencil"></use></svg>
+    <span class="visually-hidden">Edit this page</span>
+  </a>
+</div><div class="theme-toggle-container theme-toggle-content">
+            <button class="theme-toggle" aria-label="Toggle Light / Dark / Auto color theme">
+              <svg class="theme-icon-when-auto-light"><use href="#svg-sun-with-moon"></use></svg>
+              <svg class="theme-icon-when-auto-dark"><use href="#svg-moon-with-sun"></use></svg>
+              <svg class="theme-icon-when-dark"><use href="#svg-moon"></use></svg>
+              <svg class="theme-icon-when-light"><use href="#svg-sun"></use></svg>
+            </button>
+          </div>
+          <label class="toc-overlay-icon toc-content-icon" for="__toc">
+            <span class="icon"><svg><use href="#svg-toc"></use></svg></span>
+          </label>
+        </div>
+        <article role="main" id="furo-main-content">
+          <section id="splanc-dev-module-hardware-design">
+<h1>Splanc Dev Module — hardware design<a class="headerlink" href="#splanc-dev-module-hardware-design" title="Link to this heading">¶</a></h1>
+<p><strong>FUG-131.</strong> A single-board ESP32-C6 development platform for the splanc LED
+player: an 8 MB-flash C6 with its own 2.4 GHz radio front-end, a 1S LiPo power
+system, a 5 V/4 A boost feeding two independently-switched and monitored LED
+channels, a 9-DoF + baro + microphone sensor cluster, USB-C for code upload and
+JTAG, a full set of user/power/boot buttons, exhaustive test points, and a
+keyed End-of-Line (EoL) test connector. The companion
+<a class="reference internal" href="splanc-eol-tester.html"><span class="std std-doc">EoL tester board</span></a> drives that connector for automated
+factory test.</p>
+<p>The board is authored as code with <a class="reference external" href="https://atopile.io">atopile</a> and built by
+Bazel (<code class="docutils literal notranslate"><span class="pre">//hardware/splanc_dev</span></code>) via
+<a class="reference external" href="https://github.com/fughilli/rules_atopile">rules_atopile</a>. This document is the
+specification the <code class="docutils literal notranslate"><span class="pre">.ato</span></code> source implements; the two are meant to be read
+together and kept in sync.</p>
+<hr class="docutils" />
+<section id="goals-and-scope">
+<h2>1. Goals and scope<a class="headerlink" href="#goals-and-scope" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p><strong>Bring-up / dev target, not a shipping product.</strong> Every sensible net is
+broken out to a test point; the board is generously decoupled and laid out to
+be probed, reworked, and abused on the bench.</p></li>
+<li><p><strong>Exercise the whole splanc player stack on real silicon</strong>: two WS2812-class
+LED channels at real power, WiFi/BLE provisioning over the discrete radio, and
+the sensor suite the effects runtime will eventually consume.</p></li>
+<li><p><strong>Design-for-test from day one.</strong> The board terminates in a single keyed EoL
+connector so the <a class="reference internal" href="splanc-eol-tester.html"><span class="std std-doc">tester</span></a> can power it, actuate every
+button, sniff its buses with the same FX2 24 MHz analyzer the HITL rigs use,
+sample every rail and current-sense output, and apply calibrated resistive
+loads to verify the per-channel over-current shutoff.</p></li>
+</ul>
+<section id="deliberate-non-goals">
+<h3>1.1 Deliberate non-goals<a class="headerlink" href="#deliberate-non-goals" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>Multi-cell battery support, USB-PD negotiation (fixed 5 V sink only), and
+wireless charging are out of scope.</p></li>
+<li><p>The 5 V/4 A boost is specified as an <strong>aggregate</strong> budget across both LED
+channels (≈2 A/channel nominal, 4 A total), not 4 A per channel — see §5.3 for
+why a 1S source makes per-channel 4 A impractical.</p></li>
+</ul>
+</section>
+</section>
+<hr class="docutils" />
+<section id="system-block-diagram">
+<h2>2. System block diagram<a class="headerlink" href="#system-block-diagram" title="Link to this heading">¶</a></h2>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>             ┌────────── USB-C (sink, 5 V) ──────────┐
+             │  CC 5.1k pulldowns · ESD · VBUS        │
+             │            D+ / D-  ─────────────► ESP32-C6 native USB (JTAG+CDC)
+             ▼
+   VBUS ─► [ideal-diode load-share] ─► VSYS ─┬─► [3V3 buck TLV62569] ─► 3V3 (MCU, radio)
+             ▲                                │                        └─► [ferrite] ─► 3V3A (sensors/ADC)
+             │                                │
+   [MCP73831 linear charger] ◄── VBUS         └─► [5V/4A boost TPS61088] ─► 5V0 ─┬─► CH0: shunt→[load sw]→conn
+             │  STAT, PROG                                                        │        INA226 (V/I)
+             ▼                                                                    └─► CH1: shunt→[load sw]→conn
+   1S LiPo ──┴─► [MAX17048 fuel gauge, I2C]                                                INA226 (V/I)
+             │
+   [power-path pushbutton controller] ── PWR button (on / long-press off), MCU KILL
+
+   ESP32-C6FH8 (8 MB) ── 40 MHz XTAL ── π-match ── PCB IFA antenna (2.4 GHz)
+        │  I2C0 (SDA/SCL) ─► MPU6050 · QMC5883L · BMP280 · MAX17048 · 2× INA226
+        │  I2S0 ─────────► INMP441 MEMS mic
+        │  GPIO ─────────► 2× LED data, 2× load-sw EN + FAULT, boost EN, buttons…
+        └──────────────────────────────────► EoL test connector (all of the above)
+</pre></div>
+</div>
+<p>See §4 for the exact pin map and §11 for the EoL connector pinout.</p>
+</section>
+<hr class="docutils" />
+<section id="mcu-radio-front-end">
+<h2>3. MCU + radio front-end<a class="headerlink" href="#mcu-radio-front-end" title="Link to this heading">¶</a></h2>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Item</p></th>
+<th class="head"><p>Choice</p></th>
+<th class="head"><p>Notes</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>MCU</p></td>
+<td><p><strong>ESP32-C6FH8</strong> (bare QFN, 8 MB in-package flash)</p></td>
+<td><p>RISC-V, WiFi 6 + BLE 5 + 802.15.4; native USB Serial/JTAG. <code class="docutils literal notranslate"><span class="pre">board</span> <span class="pre">=</span> <span class="pre">esp32c6</span></code> in firmware.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Clock</p></td>
+<td><p>40 MHz crystal, 2× ~12 pF load caps</p></td>
+<td><p>RTC uses the internal RC (no 32 kHz XTAL — not needed for this app).</p></td>
+</tr>
+<tr class="row-even"><td><p>Antenna</p></td>
+<td><p>PCB <strong>inverted-F antenna (IFA)</strong> in a keep-out on the board edge</p></td>
+<td><p>Zero-BOM radiator; the reference IFA geometry from the ESP32-C6 hardware design guidelines.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Match</p></td>
+<td><p>3-element <strong>π network</strong> (series L + two shunt C) between the C6 RF pad and the antenna feed</p></td>
+<td><p>Populated as a π so the board can be tuned on a VNA; nominal is series 0 Ω / DNP shunts, adjusted per antenna.</p></td>
+</tr>
+<tr class="row-even"><td><p>Decoupling</p></td>
+<td><p>100 nF + 10 µF per 3V3 pin group, bulk 22 µF at the module</p></td>
+<td><p>Star ground under the QFN pad.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Reset</p></td>
+<td><p><strong>EN</strong> RC (10 kΩ pull-up + 1 µF + button to GND)</p></td>
+<td><p>Debounced by the RC; also on a test point and the EoL connector.</p></td>
+</tr>
+<tr class="row-even"><td><p>Strapping</p></td>
+<td><p>GPIO8 (pull-up), GPIO9 (BOOT button, pull-up), GPIO15 (JTAG-sel, pull-up)</p></td>
+<td><p>Left in the documented safe states; BOOT/RESET double as the download combo.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<blockquote>
+<div><p><strong>Module alternative.</strong> For a lower-risk first spin, the same design drops in
+an <strong>ESP32-C6-WROOM-1-N8</strong> (module with integrated antenna, matching, XTAL and
+8 MB flash) and the discrete radio section (crystal, π-match, IFA) is DNP. The
+<code class="docutils literal notranslate"><span class="pre">.ato</span></code> keeps the radio front-end in its own module so this swap is a one-line
+change. The bare-chip design is the default because the issue explicitly calls
+for a discrete “2.4 GHz antenna with matching network.”</p>
+</div></blockquote>
+</section>
+<hr class="docutils" />
+<section id="pin-map-esp32-c6">
+<h2>4. Pin map (ESP32-C6)<a class="headerlink" href="#pin-map-esp32-c6" title="Link to this heading">¶</a></h2>
+<p>The firmware board target (<code class="docutils literal notranslate"><span class="pre">//firmware/player_app:splanc_dev</span></code>) and the <code class="docutils literal notranslate"><span class="pre">.ato</span></code>
+netlist share this map. Strapping pins (8, 9, 15), the USB pins (12, 13) and the
+default UART0 pins (16, 17) are reserved.</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head text-right"><p>GPIO</p></th>
+<th class="head"><p>Net</p></th>
+<th class="head"><p>Direction</p></th>
+<th class="head"><p>Function</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td class="text-right"><p>0</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">LED_CH0_DATA</span></code></p></td>
+<td><p>out</p></td>
+<td><p>Channel 0 WS2812 data (level-shifted to 5 V)</p></td>
+</tr>
+<tr class="row-odd"><td class="text-right"><p>1</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">LED_CH1_DATA</span></code></p></td>
+<td><p>out</p></td>
+<td><p>Channel 1 WS2812 data (level-shifted to 5 V)</p></td>
+</tr>
+<tr class="row-even"><td class="text-right"><p>2</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">LOAD_SW0_EN</span></code></p></td>
+<td><p>out</p></td>
+<td><p>Channel 0 load-switch enable</p></td>
+</tr>
+<tr class="row-odd"><td class="text-right"><p>3</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">LOAD_SW0_FLT</span></code></p></td>
+<td><p>in</p></td>
+<td><p>Channel 0 load-switch fault (open-drain, pulled up)</p></td>
+</tr>
+<tr class="row-even"><td class="text-right"><p>4</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">LOAD_SW1_EN</span></code></p></td>
+<td><p>out</p></td>
+<td><p>Channel 1 load-switch enable</p></td>
+</tr>
+<tr class="row-odd"><td class="text-right"><p>5</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">LOAD_SW1_FLT</span></code></p></td>
+<td><p>in</p></td>
+<td><p>Channel 1 load-switch fault (open-drain, pulled up)</p></td>
+</tr>
+<tr class="row-even"><td class="text-right"><p>6</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">I2C_SDA</span></code></p></td>
+<td><p>i/o</p></td>
+<td><p>Shared I²C0 data (sensors, fuel gauge, INA226×2)</p></td>
+</tr>
+<tr class="row-odd"><td class="text-right"><p>7</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">I2C_SCL</span></code></p></td>
+<td><p>out</p></td>
+<td><p>Shared I²C0 clock</p></td>
+</tr>
+<tr class="row-even"><td class="text-right"><p>8</p></td>
+<td><p><em>(strap)</em></p></td>
+<td><p>—</p></td>
+<td><p>Boot strap, pulled up (status LED optional, weak drive)</p></td>
+</tr>
+<tr class="row-odd"><td class="text-right"><p>9</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">BOOT</span></code></p></td>
+<td><p>in</p></td>
+<td><p>BOOT button / download strap (pull-up + button to GND)</p></td>
+</tr>
+<tr class="row-even"><td class="text-right"><p>10</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">BOOST_EN</span></code></p></td>
+<td><p>out</p></td>
+<td><p>5 V boost converter enable</p></td>
+</tr>
+<tr class="row-odd"><td class="text-right"><p>11</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">PWR_KILL</span></code></p></td>
+<td><p>out</p></td>
+<td><p>Assert to latch system power off (to pushbutton controller)</p></td>
+</tr>
+<tr class="row-even"><td class="text-right"><p>12</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">USB_D-</span></code></p></td>
+<td><p>i/o</p></td>
+<td><p>Native USB (JTAG + CDC)</p></td>
+</tr>
+<tr class="row-odd"><td class="text-right"><p>13</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">USB_D+</span></code></p></td>
+<td><p>i/o</p></td>
+<td><p>Native USB (JTAG + CDC)</p></td>
+</tr>
+<tr class="row-even"><td class="text-right"><p>14</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">PWR_BTN_SNS</span></code></p></td>
+<td><p>in</p></td>
+<td><p>Power button state (post-debounce, for graceful shutdown)</p></td>
+</tr>
+<tr class="row-odd"><td class="text-right"><p>15</p></td>
+<td><p><em>(strap)</em></p></td>
+<td><p>—</p></td>
+<td><p>JTAG source select, pulled up</p></td>
+</tr>
+<tr class="row-even"><td class="text-right"><p>16</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">UART0_TXD</span></code></p></td>
+<td><p>out</p></td>
+<td><p>Serial log fallback</p></td>
+</tr>
+<tr class="row-odd"><td class="text-right"><p>17</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">UART0_RXD</span></code></p></td>
+<td><p>in</p></td>
+<td><p>Serial console fallback</p></td>
+</tr>
+<tr class="row-even"><td class="text-right"><p>18</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">I2S_BCLK</span></code></p></td>
+<td><p>out</p></td>
+<td><p>INMP441 bit clock</p></td>
+</tr>
+<tr class="row-odd"><td class="text-right"><p>19</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">I2S_WS</span></code></p></td>
+<td><p>out</p></td>
+<td><p>INMP441 word select (L/R)</p></td>
+</tr>
+<tr class="row-even"><td class="text-right"><p>20</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">I2S_DIN</span></code></p></td>
+<td><p>in</p></td>
+<td><p>INMP441 serial data</p></td>
+</tr>
+<tr class="row-odd"><td class="text-right"><p>21</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">IMU_INT</span></code></p></td>
+<td><p>in</p></td>
+<td><p>MPU6050 / shared sensor interrupt</p></td>
+</tr>
+<tr class="row-even"><td class="text-right"><p>22</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">USER_BTN1</span></code></p></td>
+<td><p>in</p></td>
+<td><p>User button 1 (pull-up + button to GND)</p></td>
+</tr>
+<tr class="row-odd"><td class="text-right"><p>23</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">USER_BTN2</span></code></p></td>
+<td><p>in</p></td>
+<td><p>User button 2 (pull-up + button to GND)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>INA226, MAX17048 and BMP280 ALERT/INT lines are <strong>polled over I²C</strong> rather than
+wired to GPIOs (the C6’s usable GPIO budget is tight); their pads are still
+broken out as test points for scope work.</p>
+<section id="i2c0-address-map">
+<h3>4.1 I²C0 address map<a class="headerlink" href="#i2c0-address-map" title="Link to this heading">¶</a></h3>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Addr</p></th>
+<th class="head"><p>Device</p></th>
+<th class="head"><p>Role</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>0x0D</p></td>
+<td><p>QMC5883L</p></td>
+<td><p>Magnetometer / compass</p></td>
+</tr>
+<tr class="row-odd"><td><p>0x36</p></td>
+<td><p>MAX17048</p></td>
+<td><p>LiPo fuel gauge</p></td>
+</tr>
+<tr class="row-even"><td><p>0x40</p></td>
+<td><p>INA226 #0</p></td>
+<td><p>LED channel 0 V/I monitor (A0=A1=GND)</p></td>
+</tr>
+<tr class="row-odd"><td><p>0x41</p></td>
+<td><p>INA226 #1</p></td>
+<td><p>LED channel 1 V/I monitor (A0=VS, A1=GND)</p></td>
+</tr>
+<tr class="row-even"><td><p>0x68</p></td>
+<td><p>MPU6050</p></td>
+<td><p>Accel + gyro (AD0=0)</p></td>
+</tr>
+<tr class="row-odd"><td><p>0x76</p></td>
+<td><p>BMP280</p></td>
+<td><p>Barometric altimeter (SDO=0)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>All addresses distinct → one bus, no mux needed. Bus pulled up to <strong>3V3A</strong> with
+2.2 kΩ (fast-mode, six devices + connector stub).</p>
+</section>
+</section>
+<hr class="docutils" />
+<section id="power-system">
+<h2>5. Power system<a class="headerlink" href="#power-system" title="Link to this heading">¶</a></h2>
+<section id="usb-c-input">
+<h3>5.1 USB-C input<a class="headerlink" href="#usb-c-input" title="Link to this heading">¶</a></h3>
+<ul class="simple">
+<li><p>USB-C 2.0 receptacle (16-pin), <strong>sink-only</strong>: CC1/CC2 each via 5.1 kΩ to GND
+(Rd, advertises a 5 V/default-USB sink). No PD.</p></li>
+<li><p>VBUS ESD/TVS array on D+/D-/VBUS; series ferrite + 10 µF bulk on VBUS.</p></li>
+<li><p>D+/D- run as a 90 Ω differential pair to the C6 native-USB pins (GPIO12/13).</p></li>
+<li><p>VBUS feeds both the charger input and the system load-share.</p></li>
+</ul>
+</section>
+<section id="battery-charging-fuel-gauge-power-path">
+<h3>5.2 Battery, charging, fuel-gauge, power path<a class="headerlink" href="#battery-charging-fuel-gauge-power-path" title="Link to this heading">¶</a></h3>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Block</p></th>
+<th class="head"><p>Part</p></th>
+<th class="head"><p>Detail</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Charger</p></td>
+<td><p><strong>MCP73831</strong> (linear, single-cell Li-Po)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">PROG</span></code> resistor sets I_chg (default 500 mA; 2 kΩ). <code class="docutils literal notranslate"><span class="pre">STAT</span></code> LED + test point. Charges from VBUS.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Fuel gauge</p></td>
+<td><p><strong>MAX17048G</strong> (I²C, ModelGauge, no sense resistor)</p></td>
+<td><p>Reports SoC + cell voltage on I²C 0x36; <code class="docutils literal notranslate"><span class="pre">QSTRT</span></code>/<code class="docutils literal notranslate"><span class="pre">ALRT</span></code> broken out.</p></td>
+</tr>
+<tr class="row-even"><td><p>Load-share</p></td>
+<td><p>Ideal-diode P-FET path (VBUS priority)</p></td>
+<td><p>System runs from VBUS when present (so charging isn’t back-fed by load); falls back to battery when unplugged.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Power button</p></td>
+<td><p><strong>Pushbutton on/off controller</strong> (LTC2954-class)</p></td>
+<td><p>Press → latch VSYS on; <strong>long-press → hardware off</strong>; MCU can read state (<code class="docutils literal notranslate"><span class="pre">PWR_BTN_SNS</span></code>) and assert <code class="docutils literal notranslate"><span class="pre">PWR_KILL</span></code> for a clean shutdown.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>VSYS (≈3.0–5.0 V, battery or VBUS) is the common input to both the 3V3 buck and
+the 5 V boost.</p>
+</section>
+<section id="rails">
+<h3>5.3 Rails<a class="headerlink" href="#rails" title="Link to this heading">¶</a></h3>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Rail</p></th>
+<th class="head"><p>Source</p></th>
+<th class="head"><p>Budget</p></th>
+<th class="head"><p>Part</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><strong>3V3</strong></p></td>
+<td><p>Buck from VSYS</p></td>
+<td><p>~500 mA (MCU + radio peaks)</p></td>
+<td><p><strong>TLV62569</strong> (2 A, 1.5 MHz)</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>3V3A</strong></p></td>
+<td><p>3V3 via ferrite bead + bulk cap</p></td>
+<td><p>sensors + ADC reference</p></td>
+<td><p>quiet analog domain for the sensor cluster</p></td>
+</tr>
+<tr class="row-even"><td><p><strong>5V0</strong></p></td>
+<td><p>Boost from VSYS</p></td>
+<td><p><strong>5 V &#64; 4 A aggregate</strong></p></td>
+<td><p><strong>TPS61088</strong> (10 A switch, 2.7–12.6 V in)</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p><strong>On the 4 A boost from 1S.</strong> 5 V × 4 A = 20 W. At a 3.0 V (near-empty) cell and
+~88 % efficiency that draws ≈7.6 A from the battery — beyond a typical dev-board
+LiPo and its protection FET. The board therefore:</p>
+<ul class="simple">
+<li><p>Specifies the boost for <strong>4 A total across both channels</strong> (≈2 A/channel), and</p></li>
+<li><p>Recommends running the LED channels at full power from <strong>USB VBUS</strong> (5 V input,
+boost in near-pass-through) or a bench supply on the VSYS test point; the LiPo
+is for logic + light LED use and for testing the power path itself.</p></li>
+</ul>
+<p>Input/output bulk: ≥2× 22 µF ceramic + 1× 100 µF on 5V0; 2× 22 µF on the boost
+input; the datasheet’s compensation and soft-start network. A 5V0 sense divider
+feeds a test point and the EoL connector.</p>
+</section>
+</section>
+<hr class="docutils" />
+<section id="led-output-channels-2">
+<h2>6. LED output channels (×2)<a class="headerlink" href="#led-output-channels-2" title="Link to this heading">¶</a></h2>
+<p>Each of the two identical channels, from the 5V0 rail to the LED connector:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>5V0 ─► [Rshunt 10 mΩ] ─► [current-limited load switch] ─► CHx_5V ─► 3-pin conn (5V, DATA, GND)
+          │  │                  │  EN   FAULT
+          │  └── INA226 (Vbus + Vshunt, I²C) ── V/I telemetry
+          │                     └─ over-current / short → FAULT (to MCU)
+          └── data: GPIO ─► [level shifter 3V3→5V] ─► DATA
+</pre></div>
+</div>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Element</p></th>
+<th class="head"><p>Part</p></th>
+<th class="head"><p>Role</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Shunt</p></td>
+<td><p>10 mΩ, 1 W, 1 % (2512)</p></td>
+<td><p>INA226 current sense; ±3.2 A range at 40 mV.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Monitor</p></td>
+<td><p><strong>INA226</strong> (I²C)</p></td>
+<td><p>Bus <strong>voltage</strong> + <strong>current</strong> + power, programmable over/under-current alert. Satisfies “per-channel current/voltage monitoring.”</p></td>
+</tr>
+<tr class="row-even"><td><p>Load switch</p></td>
+<td><p><strong>TPS25200</strong> (adjustable current-limit, <code class="docutils literal notranslate"><span class="pre">ILIM</span></code> set ≈2.5 A)</p></td>
+<td><p>On/off via <code class="docutils literal notranslate"><span class="pre">LOAD_SWx_EN</span></code>; hard <strong>current limit + thermal shutdown</strong> = the over-current / short shutoff; open-drain <code class="docutils literal notranslate"><span class="pre">FAULT</span></code> back to the MCU.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Level shift</p></td>
+<td><p>74LVC1T45 / single-FET translator</p></td>
+<td><p>3V3 data → clean 5 V WS2812 logic; series 33 Ω near the connector.</p></td>
+</tr>
+<tr class="row-even"><td><p>Connector</p></td>
+<td><p>3-pin 3.96 mm (5V / DATA / GND), reverse-key</p></td>
+<td><p>Also mirrored onto the EoL connector for the simulated-load test.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The load switch’s current limit is the <strong>short-circuit protection</strong> device the
+EoL tester exercises: a low-R resistor across a channel forces the limit to trip
+(FAULT asserts, output folds back); a nominal-R resistor verifies the operating
+point and the INA226 reading. See <a class="reference internal" href="splanc-eol-tester.html"><span class="std std-doc">EoL tester</span></a> §4.</p>
+</section>
+<hr class="docutils" />
+<section id="sensor-cluster">
+<h2>7. Sensor cluster<a class="headerlink" href="#sensor-cluster" title="Link to this heading">¶</a></h2>
+<p>All on the shared I²C0 bus (except the mic, which is I²S), powered from 3V3A.</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Sensor</p></th>
+<th class="head"><p>Part</p></th>
+<th class="head"><p>Bus</p></th>
+<th class="head"><p>Address</p></th>
+<th class="head"><p>Notes</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Accel + gyro (IMU)</p></td>
+<td><p><strong>MPU6050</strong></p></td>
+<td><p>I²C</p></td>
+<td><p>0x68</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">INT</span></code> → GPIO21; AD0 tied low.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Compass / magnetometer</p></td>
+<td><p><strong>QMC5883L</strong></p></td>
+<td><p>I²C</p></td>
+<td><p>0x0D</p></td>
+<td><p>3-axis mag; DRDY on a test point.</p></td>
+</tr>
+<tr class="row-even"><td><p>Altimeter (baro)</p></td>
+<td><p><strong>BMP280</strong></p></td>
+<td><p>I²C</p></td>
+<td><p>0x76</p></td>
+<td><p>Pressure→altitude; SDO low.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Microphone</p></td>
+<td><p><strong>INMP441</strong></p></td>
+<td><p>I²S</p></td>
+<td><p>—</p></td>
+<td><p>MEMS mic on I²S0 (<code class="docutils literal notranslate"><span class="pre">BCLK</span></code>/<code class="docutils literal notranslate"><span class="pre">WS</span></code>/<code class="docutils literal notranslate"><span class="pre">DIN</span></code>); <code class="docutils literal notranslate"><span class="pre">L/R</span></code> tied low (left).</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<blockquote>
+<div><p><strong>On “I²C microphone.”</strong> The issue names the INMP441, which is an <strong>I²S</strong>
+(not I²C) MEMS microphone; the board wires it on I²S0 accordingly. If a true
+I²C/PDM part is preferred later, the mic lives in its own <code class="docutils literal notranslate"><span class="pre">.ato</span></code> module and can
+be swapped without touching the rest of the board.</p>
+</div></blockquote>
+<p>Each sensor gets local 100 nF decoupling; the mic gets the datasheet’s supply
+filter. INT/DRDY/ALERT pins are all broken out to test points.</p>
+</section>
+<hr class="docutils" />
+<section id="buttons">
+<h2>8. Buttons<a class="headerlink" href="#buttons" title="Link to this heading">¶</a></h2>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Button</p></th>
+<th class="head"><p>Net</p></th>
+<th class="head"><p>Circuit</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><strong>RESET</strong></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">EN</span></code></p></td>
+<td><p>10 kΩ pull-up + 1 µF + button to GND (RC debounce).</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>BOOT</strong></p></td>
+<td><p>GPIO9</p></td>
+<td><p>10 kΩ pull-up + button to GND; hold during reset → download mode.</p></td>
+</tr>
+<tr class="row-even"><td><p><strong>POWER (combo)</strong></p></td>
+<td><p>pushbutton controller</p></td>
+<td><p>Press = power on; <strong>long-press = power off</strong> (hardware latch); MCU reads <code class="docutils literal notranslate"><span class="pre">PWR_BTN_SNS</span></code>, asserts <code class="docutils literal notranslate"><span class="pre">PWR_KILL</span></code> to shut down cleanly.</p></td>
+</tr>
+<tr class="row-odd"><td><p><strong>USER1</strong></p></td>
+<td><p>GPIO22</p></td>
+<td><p>10 kΩ pull-up + button to GND; RC + optional external debounce.</p></td>
+</tr>
+<tr class="row-even"><td><p><strong>USER2</strong></p></td>
+<td><p>GPIO23</p></td>
+<td><p>10 kΩ pull-up + button to GND.</p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>Every button node is (a) broken out to a test point and (b) routed to the EoL
+connector so the tester can drive it through an <strong>opto/analog-switch isolator</strong>
+(§11 and the tester doc) — actuating buttons without a robot finger.</p>
+</section>
+<hr class="docutils" />
+<section id="decoupling-power-integrity">
+<h2>9. Decoupling &amp; power integrity<a class="headerlink" href="#decoupling-power-integrity" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p>Per-IC local ceramics (100 nF) on every supply pin; bulk 10–22 µF at each
+regulator and at the C6 module.</p></li>
+<li><p>5V0: 2× 22 µF + 100 µF low-ESR near the boost, 22 µF at each load switch, 10 µF
+at each LED connector.</p></li>
+<li><p>Separate <strong>3V3A</strong> analog island fed through a ferrite bead; sensor references
+and the INA226 supplies hang off it.</p></li>
+<li><p>Solid ground pour, stitched; RF section has its own tight ground keep-out under
+the antenna and π-match.</p></li>
+</ul>
+</section>
+<hr class="docutils" />
+<section id="test-points">
+<h2>10. Test points<a class="headerlink" href="#test-points" title="Link to this heading">¶</a></h2>
+<p>Every “sensible net” gets a labelled 1 mm test pad (or a loop for scoping):</p>
+<ul class="simple">
+<li><p><strong>Power:</strong> VBUS, VSYS, VBAT, 3V3, 3V3A, 5V0, and the 5V0 sense-divider node.</p></li>
+<li><p><strong>Charger/gauge:</strong> <code class="docutils literal notranslate"><span class="pre">STAT</span></code>, <code class="docutils literal notranslate"><span class="pre">PROG</span></code>, fuel-gauge <code class="docutils literal notranslate"><span class="pre">ALRT</span></code>.</p></li>
+<li><p><strong>Per LED channel:</strong> <code class="docutils literal notranslate"><span class="pre">LED_CHx_DATA</span></code> (both 3V3 and shifted 5 V sides),
+<code class="docutils literal notranslate"><span class="pre">LOAD_SWx_EN</span></code>, <code class="docutils literal notranslate"><span class="pre">LOAD_SWx_FLT</span></code>, <code class="docutils literal notranslate"><span class="pre">CHx_5V</span></code> (post-switch), the shunt Kelvin taps.</p></li>
+<li><p><strong>Boost:</strong> <code class="docutils literal notranslate"><span class="pre">BOOST_EN</span></code>, <code class="docutils literal notranslate"><span class="pre">SW</span></code> (scope-only loop), feedback node.</p></li>
+<li><p><strong>Buses:</strong> <code class="docutils literal notranslate"><span class="pre">I2C_SDA</span></code>, <code class="docutils literal notranslate"><span class="pre">I2C_SCL</span></code>, <code class="docutils literal notranslate"><span class="pre">I2S_BCLK</span></code>, <code class="docutils literal notranslate"><span class="pre">I2S_WS</span></code>, <code class="docutils literal notranslate"><span class="pre">I2S_DIN</span></code>, <code class="docutils literal notranslate"><span class="pre">UART0_TXD</span></code>,
+<code class="docutils literal notranslate"><span class="pre">UART0_RXD</span></code>.</p></li>
+<li><p><strong>Sensors:</strong> each <code class="docutils literal notranslate"><span class="pre">INT</span></code>/<code class="docutils literal notranslate"><span class="pre">DRDY</span></code>/<code class="docutils literal notranslate"><span class="pre">ALERT</span></code>.</p></li>
+<li><p><strong>Control:</strong> <code class="docutils literal notranslate"><span class="pre">EN</span></code>(reset), <code class="docutils literal notranslate"><span class="pre">BOOT</span></code>, <code class="docutils literal notranslate"><span class="pre">PWR_BTN_SNS</span></code>, <code class="docutils literal notranslate"><span class="pre">PWR_KILL</span></code>, <code class="docutils literal notranslate"><span class="pre">USER_BTN1/2</span></code>.</p></li>
+<li><p><strong>JTAG fallback:</strong> MTMS/MTDI/MTCK/MTDO pads (normally the C6 debugs over USB,
+but the pads allow an external probe).</p></li>
+<li><p><strong>GND:</strong> multiple ground pads distributed for short return loops.</p></li>
+</ul>
+</section>
+<hr class="docutils" />
+<section id="eol-test-connector">
+<h2>11. EoL test connector<a class="headerlink" href="#eol-test-connector" title="Link to this heading">¶</a></h2>
+<p>A single keyed <strong>2×10 1.27 mm</strong> shrouded header (<code class="docutils literal notranslate"><span class="pre">J_EOL</span></code>) carries everything the
+<a class="reference internal" href="splanc-eol-tester.html"><span class="std std-doc">tester</span></a> needs. All DUT-driven inputs (buttons, resets)
+arrive through the connector so the tester’s <strong>isolated drivers</strong> actuate them;
+all analog rails/CSA outputs leave through it for the tester’s ADC; the two LED
+channels leave through it so the tester can hang its <strong>simulated loads</strong> and the
+FX2 analyzer can tap the data/clock lines.</p>
+<div class="table-wrapper colwidths-auto docutils container">
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head text-right"><p>Pin</p></th>
+<th class="head"><p>Net</p></th>
+<th class="head text-right"><p>Pin</p></th>
+<th class="head"><p>Net</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td class="text-right"><p>1</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">VBUS_INJ</span></code> (tester can power the DUT)</p></td>
+<td class="text-right"><p>2</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">GND</span></code></p></td>
+</tr>
+<tr class="row-odd"><td class="text-right"><p>3</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">VSYS_SENSE</span></code></p></td>
+<td class="text-right"><p>4</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">VBAT_SENSE</span></code></p></td>
+</tr>
+<tr class="row-even"><td class="text-right"><p>5</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">5V0_SENSE</span></code></p></td>
+<td class="text-right"><p>6</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">3V3_SENSE</span></code></p></td>
+</tr>
+<tr class="row-odd"><td class="text-right"><p>7</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">CH0_CSA</span></code> (INA226 alert / analog tap)</p></td>
+<td class="text-right"><p>8</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">CH1_CSA</span></code></p></td>
+</tr>
+<tr class="row-even"><td class="text-right"><p>9</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">CH0_5V</span></code> (to simulated load)</p></td>
+<td class="text-right"><p>10</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">CH1_5V</span></code> (to simulated load)</p></td>
+</tr>
+<tr class="row-odd"><td class="text-right"><p>11</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">LED_CH0_DATA</span></code> (FX2 tap)</p></td>
+<td class="text-right"><p>12</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">LED_CH1_DATA</span></code> (FX2 tap)</p></td>
+</tr>
+<tr class="row-even"><td class="text-right"><p>13</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">I2C_SDA</span></code> (FX2 / sniff)</p></td>
+<td class="text-right"><p>14</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">I2C_SCL</span></code> (FX2 / sniff)</p></td>
+</tr>
+<tr class="row-odd"><td class="text-right"><p>15</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">BTN_RESET_DRV</span></code> (isolated)</p></td>
+<td class="text-right"><p>16</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">BTN_BOOT_DRV</span></code> (isolated)</p></td>
+</tr>
+<tr class="row-even"><td class="text-right"><p>17</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">BTN_PWR_DRV</span></code> (isolated)</p></td>
+<td class="text-right"><p>18</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">BTN_USER_DRV</span></code> (USER1/2, isolated)</p></td>
+</tr>
+<tr class="row-odd"><td class="text-right"><p>19</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">UART0_TXD</span></code></p></td>
+<td class="text-right"><p>20</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">UART0_RXD</span></code></p></td>
+</tr>
+</tbody>
+</table>
+</div>
+<p>The button-drive pins land on the DUT side of each button (parallel to the human
+switch) so the tester pulls them low through an opto/analog-switch without
+fighting the pull-ups. <code class="docutils literal notranslate"><span class="pre">VBUS_INJ</span></code> lets the tester fully power-cycle the DUT.</p>
+</section>
+<hr class="docutils" />
+<section id="manufacturing-fabrication">
+<h2>12. Manufacturing / fabrication<a class="headerlink" href="#manufacturing-fabrication" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p>4-layer, 1.6 mm, ENIG (RF + fine-pitch QFN), controlled-impedance 90 Ω diff
+for USB and 50 Ω for the RF feed.</p></li>
+<li><p>JLCPCB-oriented: parts chosen by LCSC id so the same picker/catalog that
+builds the board also maps to an assembleable BOM (see the <code class="docutils literal notranslate"><span class="pre">.ato</span></code> and
+<code class="docutils literal notranslate"><span class="pre">//hardware/splanc_dev</span></code>).</p></li>
+<li><p>Outputs from Bazel: resolved <code class="docutils literal notranslate"><span class="pre">.kicad_pcb</span></code>, layout <code class="docutils literal notranslate"><span class="pre">.pdf</span></code>, Gerber+drill,
+BOM. See §14 for commands.</p></li>
+</ul>
+</section>
+<hr class="docutils" />
+<section id="interfaces-to-firmware">
+<h2>13. Interfaces to firmware<a class="headerlink" href="#interfaces-to-firmware" title="Link to this heading">¶</a></h2>
+<p>The firmware board target <code class="docutils literal notranslate"><span class="pre">//firmware/player_app:splanc_dev</span></code> consumes the §4 pin
+map via a board pin-config header (<code class="docutils literal notranslate"><span class="pre">splanc_dev_pins.h</span></code>). It rolls up:</p>
+<ul class="simple">
+<li><p><strong>LED</strong>: two RMT WS2812 channels on <code class="docutils literal notranslate"><span class="pre">LED_CH0/1_DATA</span></code>.</p></li>
+<li><p><strong>Power control</strong>: drive <code class="docutils literal notranslate"><span class="pre">BOOST_EN</span></code>, <code class="docutils literal notranslate"><span class="pre">LOAD_SW0/1_EN</span></code>; read <code class="docutils literal notranslate"><span class="pre">LOAD_SW0/1_FLT</span></code>,
+<code class="docutils literal notranslate"><span class="pre">PWR_BTN_SNS</span></code>; assert <code class="docutils literal notranslate"><span class="pre">PWR_KILL</span></code> on shutdown.</p></li>
+<li><p><strong>Telemetry</strong>: I²C0 driver reading the two INA226 (per-channel V/I) and the
+MAX17048 (battery SoC).</p></li>
+<li><p><strong>Sensors</strong>: I²C0 for MPU6050 / QMC5883L / BMP280, I²S0 for the INMP441.</p></li>
+</ul>
+<p>Sensor driver implementations that <code class="docutils literal notranslate"><span class="pre">&#64;embedded</span></code> does not yet provide (there is no
+I²C/IMU/I²S library there today) are tracked as follow-up; this board target
+lands the <strong>pin configuration + power/LED/monitoring bring-up</strong> and reserves the
+sensor pins so the drivers drop straight in. See §15.</p>
+</section>
+<hr class="docutils" />
+<section id="build-commands">
+<h2>14. Build commands<a class="headerlink" href="#build-commands" title="Link to this heading">¶</a></h2>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># Resolved board (part-pick + layout; the one networked step):</span>
+bazel<span class="w"> </span>build<span class="w"> </span>//hardware/splanc_dev:splanc_dev
+<span class="c1"># Fabrication outputs (hermetic kicad-cli on the resolved board):</span>
+bazel<span class="w"> </span>build<span class="w"> </span>//hardware/splanc_dev:splanc_dev.pdf
+bazel<span class="w"> </span>build<span class="w"> </span>//hardware/splanc_dev:splanc_dev.gerber
+<span class="c1"># Inspect interactively:</span>
+bazel<span class="w"> </span>run<span class="w">   </span>//hardware/splanc_dev:splanc_dev.view
+</pre></div>
+</div>
+</section>
+<section id="open-items-follow-up">
+<h2>15. Open items / follow-up<a class="headerlink" href="#open-items-follow-up" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p>Sensor drivers (MPU6050, QMC5883L, BMP280, INMP441) in firmware — <code class="docutils literal notranslate"><span class="pre">&#64;embedded</span></code>
+has no I²C/I²S stack yet; file a follow-up to add one + the four drivers.</p></li>
+<li><p>Antenna π-match values are placeholders pending a VNA sweep of the fabricated
+IFA.</p></li>
+<li><p>The 20 W boost from a 1S cell is bench/USB-fed by design (§5.3); if untethered
+full-power LED operation is required, move to a 2S pack or an external 5 V
+input and re-spec the boost.</p></li>
+</ul>
+</section>
+</section>
+
+        </article>
+      </div>
+      <footer>
+        
+        <div class="related-pages">
+          
+          
+        </div>
+        <div class="bottom-of-page">
+          <div class="left-details">
+            <div class="copyright">
+                Copyright &#169; Kevin Balke and the splanc contributors — AGPL-3.0-or-later
+            </div>
+            Made with <a href="https://www.sphinx-doc.org/">Sphinx</a> and <a class="muted-link" href="https://pradyunsg.me">@pradyunsg</a>'s
+            
+            <a href="https://github.com/pradyunsg/furo">Furo</a>
+            
+          </div>
+          <div class="right-details">
+            
+          </div>
+        </div>
+        
+      </footer>
+    </div>
+    <aside class="toc-drawer">
+      
+      
+      <div class="toc-sticky toc-scroll">
+        <div class="toc-title-container">
+          <span class="toc-title">
+            On this page
+          </span>
+        </div>
+        <div class="toc-tree-container">
+          <div class="toc-tree">
+            <ul>
+<li><a class="reference internal" href="#">Splanc Dev Module — hardware design</a><ul>
+<li><a class="reference internal" href="#goals-and-scope">1. Goals and scope</a><ul>
+<li><a class="reference internal" href="#deliberate-non-goals">1.1 Deliberate non-goals</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#system-block-diagram">2. System block diagram</a></li>
+<li><a class="reference internal" href="#mcu-radio-front-end">3. MCU + radio front-end</a></li>
+<li><a class="reference internal" href="#pin-map-esp32-c6">4. Pin map (ESP32-C6)</a><ul>
+<li><a class="reference internal" href="#i2c0-address-map">4.1 I²C0 address map</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#power-system">5. Power system</a><ul>
+<li><a class="reference internal" href="#usb-c-input">5.1 USB-C input</a></li>
+<li><a class="reference internal" href="#battery-charging-fuel-gauge-power-path">5.2 Battery, charging, fuel-gauge, power path</a></li>
+<li><a class="reference internal" href="#rails">5.3 Rails</a></li>
+</ul>
+</li>
+<li><a class="reference internal" href="#led-output-channels-2">6. LED output channels (×2)</a></li>
+<li><a class="reference internal" href="#sensor-cluster">7. Sensor cluster</a></li>
+<li><a class="reference internal" href="#buttons">8. Buttons</a></li>
+<li><a class="reference internal" href="#decoupling-power-integrity">9. Decoupling &amp; power integrity</a></li>
+<li><a class="reference internal" href="#test-points">10. Test points</a></li>
+<li><a class="reference internal" href="#eol-test-connector">11. EoL test connector</a></li>
+<li><a class="reference internal" href="#manufacturing-fabrication">12. Manufacturing / fabrication</a></li>
+<li><a class="reference internal" href="#interfaces-to-firmware">13. Interfaces to firmware</a></li>
+<li><a class="reference internal" href="#build-commands">14. Build commands</a></li>
+<li><a class="reference internal" href="#open-items-follow-up">15. Open items / follow-up</a></li>
+</ul>
+</li>
+</ul>
+
+          </div>
+        </div>
+      </div>
+      
+      
+    </aside>
+  </div>
+</div><script src="../../static/documentation_options.js?v=8a448e45"></script>
+    <script src="../../static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../../static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../static/scripts/furo.js?v=46bd48cc"></script>
+    <script src="../../static/clipboard.min.js?v=a7894cd8"></script>
+    <script src="../../static/copybutton.js?v=fd10adb8"></script>
+    <script src="../../static/design-tabs.js?v=f930bc37"></script>
+    </body>
+</html>
