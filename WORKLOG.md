@@ -5,6 +5,66 @@ scan back for context. The dated sections toward the bottom were migrated out of
 `README.md` (now a user-facing intro; see `DEVELOPERS.md` for contributing) and
 are kept as historical record.
 
+## FX blending — dual decks + crossfade (FUG-110, branch `agent/fug-110-feature-fx-blending`)
+
+Run two effect programs at once and crossfade between them, plus a Show-Mode
+workspace to drive it.
+
+**Protocol** (`shared/protocol/proto/ledmapper.proto`, TS bindings regenerated
+via `shared/protocol/proto/gen_ts.sh`; firmware micropb types regen at build):
+
+- `SubmitEffect`/`SetEffect`/`SetUniforms`/`GetEffectUniforms` gain a `uint32
+deck` (0 = A default/legacy, 1 = B). `EffectUniforms` echoes the deck.
+- New `SetCrossfade{double position, uint32 mode}` global (arm 32), echoed in
+  `Welcome` (`crossfade` + `crossfade_mode`), handled in the session core like
+  `set_brightness`. `deck`/`mode` are `uint32` (not proto enums) to dodge the
+  enum-JSON-name pitfall the proto header warns about.
+
+**Firmware:**
+
+- `firmware/player_app/ffi.rs`: per-deck state (`FX_BYTES`/`FX_LEN`/`FX_VM`/
+  `FX_ACTIVE`) is now a `[_; 2]` array; the 24 KB fx arena split into two 12 KB
+  halves so total static RAM stays flat (no new TLS heap pressure, FUG-71).
+  Deck-aware FFI (`lm_fx_*_deck`) with the bare `lm_fx_*` kept as deck-A
+  wrappers. `lm_fx_update` runs every active deck; `lm_fx_shade_blended` shades
+  the active decks and blends per-LED, short-circuiting a faded-out deck at the
+  endpoints. The topology graph binds to both decks.
+- `firmware/fx_vm/src/lib.rs`: pure, unit-tested `blend_rgb8(a,b,t,mode)` —
+  mode 0 = linear-RGB per-channel lerp, mode 1 = linear-HSV shortest-hue path;
+  exact at t=0/1.
+- `main.cpp` polls the crossfade (like brightness) and feeds
+  `lm_fx_shade_blended` in the render loop. Boot-resume persists deck A only
+  (crossfade resets to 0 → deck A visible), gated by `lm_fx_frame_deck`.
+- Verified: `bazel build -c opt //firmware/player_app:esp32c6` + all firmware
+  tests green.
+
+**Web:**
+
+- `store/deviceEffects.ts`: per-device (by device id) record of which library
+  effects the app has pushed. Editor "Send to device" + Show-Mode cue call
+  `markSent`. The effects browser shows a green "on device" badge + an
+  ephemeral "On <device>" section (label uses the device NAME; keyed by the
+  stable id for robustness).
+- `ui/screens/showMode.ts` (route `/show`, reached from the Effects ⋯ menu):
+  left/right deck cards (cue → compile → `submit_effect` on a deck), a crossfade
+  fader, RGB/HSV blend-mode toggle, per-deck play/pause, and a focusable effect
+  list. Excluded from the CJS test build (statically imports the worker
+  compiler, like effectEditor/acidMode).
+- MIDI: `midiStore` gains a show-action binding layer; `midi/showRouter.ts` is
+  the pure resolver; the screen routes hardware MIDI (fader → value, buttons →
+  rising-edge triggers) and has a learn sheet. Actions: crossfade, blend-mode,
+  per-deck play/pause, list prev/next, cue A/B.
+- Verified: `//web:unit_tests` 62/62 (incl. new showRouter / deviceEffects /
+  midiStore-show / proto-crossfade+deck tests); full app typechecks; `//web:dist`
+  bundles clean.
+
+**Design note / possible follow-ups:** the app is the effect-library source of
+truth and cues by sending `.fxb` bytes to a deck — the device holds only the two
+live decks in RAM, not a browsable flash store, which is why the "on device"
+surface is app-side per-device tracking. Per-deck arena is now 12 KB (was a
+single 24 KB); a very heavy single-deck effect could want more. Perf/Tier-1
+attribution tracks deck A only.
+
 ## FX engine optimizations + superinstructions (FUG-125, branch `agent/fug-125-fx-engine-optimizations-jit`)
 
 A bytecode optimizer for the fx compiler + a first set of VM superinstructions,

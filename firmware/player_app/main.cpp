@@ -382,6 +382,9 @@ static uint32_t g_lut_seq = 0;
 static uint32_t g_cc_gen = 0;  // last color_correction_gen the poll acted on
 static uint32_t g_brightness_gen = 0;  // last brightness_gen the poll acted on
 static uint8_t g_brightness = 255;     // global output scale (255 = unattenuated)
+static uint32_t g_crossfade_gen = 0;   // last crossfade_gen the poll acted on
+static float g_crossfade = 0.0f;       // FX crossfade position (0=deck A, 1=deck B)
+static uint32_t g_crossfade_mode = 0;  // FX crossfade mode (0=linear RGB, 1=linear HSV)
 
 static uint32_t lut_crc(const LutRecord *r) {
   return esp_rom_crc32_le(0, reinterpret_cast<const uint8_t *>(r),
@@ -514,6 +517,19 @@ static void poll_brightness() {
   Log().printf("[bright] output scale = %u/255 (gen=%u)\n", g_brightness, gen);
 }
 
+// Poll the FX crossfade (FUG-110) the same way: a set_crossfade bumps the gen;
+// re-read the blend position + mode when it changes. Runtime only (a reboot
+// returns to 0.0 / linear RGB). The render loop feeds these to lm_fx_shade_blended.
+static void poll_crossfade() {
+  uint32_t gen = lm_crossfade_gen();
+  if (gen == g_crossfade_gen) return;
+  g_crossfade_gen = gen;
+  g_crossfade = lm_crossfade_pos();
+  g_crossfade_mode = lm_crossfade_mode();
+  Log().printf("[fx] crossfade = %.2f mode=%u (gen=%u)\n", g_crossfade, g_crossfade_mode,
+               gen);
+}
+
 // Map an 8-bit RGB triple through the active per-channel LUT (indexed directly
 // from flash), then scale by the global output brightness. Used on the CONTENT
 // render paths (effects / playback); the camera calibration patterns (mapping
@@ -575,10 +591,13 @@ static void persist_if_upload(const uint8_t *req, size_t req_len,
     fs_write_file(kTopoPath, req, req_len);
   } else if (reply_arm == kArmPlaybackState && req_arm == kArmSetPlayback) {
     queue_playback_save(req, req_len);  // coalesced: live tuning fires rapidly
-  } else if (reply_arm == kArmResultReady && req_arm == kArmSubmitEffect) {
-    // A validated effect upload: persist the raw .fxb frame (the effect
+  } else if (reply_arm == kArmResultReady && req_arm == kArmSubmitEffect &&
+             lm_fx_frame_deck(req, req_len) == 0) {
+    // A validated deck-A effect upload: persist the raw .fxb frame (the effect
     // bytecode) so it auto-resumes on boot. A new effect supersedes any prior
-    // selection/uniforms (they belong to the old effect).
+    // selection/uniforms (they belong to the old effect). Deck B is NOT
+    // persisted: the crossfade resets to 0 on reboot (deck A only visible), and
+    // the app re-cues deck B on connect for a show (FUG-110).
     fs_write_file(kEffectPath, req, req_len);
     remove(kEffectSelPath);
   } else if (reply_arm == kArmPlaybackState &&
@@ -854,6 +873,7 @@ static void ws_dispatch_message() {
   poll_device_rename();
   poll_color_correction();
   poll_brightness();
+  poll_crossfade();
   rx_len = 0;
 }
 
@@ -1082,7 +1102,7 @@ static uint32_t render_once() {
     show = true;
     was_active = true;
     last_shown_frame = 0xffffffff;
-  } else if (lm_fx_active()) {
+  } else if (lm_fx_any_active()) {
     // User effect (.fxb shader) takes priority over the built-in playback:
     // run update() once, then shade() per LED over the stored map position.
     // Bounded execution guards each invocation (instruction budget + wall-time
@@ -1118,9 +1138,11 @@ static uint32_t render_once() {
       // The whole per-LED shade loop is timed as one span (never per LED — that
       // would add a counter read to the hottest inner loop 256x/frame).
       for (uint32_t i = 0; i < n; i++) {
-        // Shade over the stored fixture position (map order == LED order here).
+        // Shade over the stored fixture position (map order == LED order here),
+        // blending the two decks by the global crossfade (FUG-110).
         if (lm_map_led(i, &id, xyz)) {
-          if (lm_fx_shade(i, xyz[0], xyz[1], xyz[2], rgb)) {
+          if (lm_fx_shade_blended(i, xyz[0], xyz[1], xyz[2], g_crossfade,
+                                  g_crossfade_mode, rgb)) {
             leds[i] = cc_apply(rgb);
           } else {
             leds[i] = Rgb::Black;  // a cancelled/timed-out shade

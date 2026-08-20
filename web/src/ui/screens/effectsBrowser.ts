@@ -12,6 +12,9 @@
 import { ActionGrid, Button, Chip, EmptyState, HelpTip, IconButton, Sheet, confirmDialog, toast, icon } from "../kit";
 import type { HelpTipHandle } from "../kit";
 import { effectStore, isBuiltinEffect, type StoredEffect } from "../../store/effectStore";
+import { deviceEffects } from "../../store/deviceEffects";
+import { deviceStore } from "../../store/deviceStore";
+import { appState } from "../app/state";
 import { EffectPreviewTiles } from "./effectPreviewTiles";
 import { appendGrouped, openFolderPicker } from "./folders";
 import { openAiKeySheet } from "./aiKeySheet";
@@ -30,6 +33,11 @@ export function EffectsBrowserScreen(router: Router): Screen {
   let search = "";
   let activeTags: string[] = [];
   let sort: Sort = "updated";
+
+  // FUG-110: effects the app has pushed to the connected device (green badge +
+  // the "On <device>" section). Recomputed each refresh; `row()` reads it.
+  let onDeviceIds = new Set<string>();
+  let deviceName = "";
 
   // Lazily renders each effect's 64×64 preview clip into its thumbnail when the
   // row scrolls into view, one render at a time (FUG-80).
@@ -106,8 +114,15 @@ export function EffectsBrowserScreen(router: Router): Screen {
   // Toolbar row: the search field takes the space; the "?" tip floats at its end.
   const toolbar = document.createElement("div");
   toolbar.className = "fxlib-toolbar";
-  // (The "Connect debug server" affordance moved to Settings ▸ Debugging, so it's
-  // no longer in the effects ⋯ menu.)
+  // Show Mode (cue + crossfade) lives in the app-bar ⋯ menu as a tab-context
+  // action. (The "Connect debug server" affordance moved to Settings ▸ Debugging.)
+  const tabMenuItems = [
+    {
+      icon: "effect-to-device" as const,
+      label: "Show mode (cue + crossfade)",
+      onClick: () => router.navigate("/show"),
+    },
+  ];
   toolbar.append(searchWrap, aiHelp);
 
   const tagRow = document.createElement("div");
@@ -132,7 +147,42 @@ export function EffectsBrowserScreen(router: Router): Screen {
 
   el.append(toolbar, tagRow, listEl);
 
+  // Build the ephemeral "On <device>" section (FUG-110): the effects the app
+  // has pushed to the currently-connected device, in most-recently-cued order.
+  // Null when offline or nothing has been sent to this device yet.
+  function deviceSection(all: StoredEffect[]): HTMLElement | null {
+    if (onDeviceIds.size === 0) return null;
+    const byId = new Map(all.map((e) => [e.id, e]));
+    const devId = deviceStore.activeId();
+    const ordered = deviceEffects
+      .list(devId)
+      .map((id) => byId.get(id))
+      .filter((e): e is StoredEffect => e !== undefined);
+    if (ordered.length === 0) return null;
+
+    const section = document.createElement("div");
+    section.className = "fxlib-devsection";
+    const header = document.createElement("div");
+    header.className = "fxlib-devsection-head";
+    header.append(icon("device"));
+    const label = document.createElement("span");
+    label.textContent = `On ${deviceName || "device"}`;
+    header.append(label);
+    const count = document.createElement("span");
+    count.className = "fxlib-devsection-count metric";
+    count.textContent = String(ordered.length);
+    header.append(count);
+    section.append(header);
+    for (const e of ordered) section.append(row(e));
+    return section;
+  }
+
   async function refresh(): Promise<void> {
+    // Which effects live on the connected device (drives the badge + section).
+    const devId = appState.client?.isConnected ? deviceStore.activeId() : null;
+    onDeviceIds = new Set(devId ? deviceEffects.list(devId) : []);
+    deviceName = appState.client?.welcome?.deviceName || deviceStore.active()?.label || "";
+
     const all = await effectStore.list();
     const tagCounts = new Map<string, number>();
     for (const e of all) for (const t of e.tags) tagCounts.set(t, (tagCounts.get(t) ?? 0) + 1);
@@ -171,6 +221,12 @@ export function EffectsBrowserScreen(router: Router): Screen {
       listEl.append(EmptyState({ icon: "sparkles", title: "No effects match your search" }));
       return;
     }
+    // Ephemeral device section first (only when unfiltered, so the search view
+    // stays a flat match list), then the normal folder-grouped library.
+    if (!search && activeTags.length === 0) {
+      const section = deviceSection(all);
+      if (section) listEl.append(section);
+    }
     appendGrouped(listEl, rows, (e) => e.folder, row, { scope: "effects" });
   }
 
@@ -192,6 +248,15 @@ export function EffectsBrowserScreen(router: Router): Screen {
     const name = document.createElement("div");
     name.className = "map-name";
     name.textContent = e.name;
+    // Green "on device" badge (FUG-110) when this effect has been pushed to the
+    // connected device.
+    if (onDeviceIds.has(e.id)) {
+      const badge = document.createElement("span");
+      badge.className = "fx-device-badge";
+      badge.title = `On ${deviceName || "device"}`;
+      badge.setAttribute("aria-label", `On ${deviceName || "device"}`);
+      name.append(badge);
+    }
     const meta = document.createElement("div");
     meta.className = "map-meta metric";
     meta.textContent = shortDate(e.updatedAt);
@@ -286,6 +351,7 @@ export function EffectsBrowserScreen(router: Router): Screen {
               if (!ok) return;
               sheet.close();
               void effectStore.delete(e.id).then(() => {
+                deviceEffects.forgetEverywhere(e.id); // no stale badge/section entry
                 toast("Deleted");
                 void refresh();
               });
@@ -296,11 +362,17 @@ export function EffectsBrowserScreen(router: Router): Screen {
     );
   }
 
+  // Repaint the badge + device section when the device connection or the
+  // on-device set changes (e.g. a cue from Show Mode, or a reconnect).
+  const unsubs: Array<() => void> = [];
+
   return {
     el,
     onMount: () => {
       document.body.appendChild(fab);
-      setTabMenuItems([]);
+      setTabMenuItems(tabMenuItems);
+      unsubs.push(appState.subscribe(() => void refresh()));
+      unsubs.push(deviceEffects.subscribe(() => void refresh()));
       void refresh();
     },
     onUnmount: () => {
@@ -308,6 +380,8 @@ export function EffectsBrowserScreen(router: Router): Screen {
       fab.remove();
       tiles.dispose();
       setTabMenuItems([]);
+      for (const u of unsubs) u();
+      unsubs.length = 0;
     },
   };
 }
