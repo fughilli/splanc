@@ -202,6 +202,16 @@ Run `pre-commit run --all-files` locally before pushing — the hooks (black/iso
 flake8, buildifier, prettier, markdownlint, shellcheck, …) are pinned in
 `.pre-commit-config.yaml`. The on-hardware **HITL** suite runs separately (below).
 
+Editing `.pre-commit-config.yaml` has one extra step: the agent container bakes
+prek's hook environments into its image (a cold build of those toolchains is
+~40s, and `claude-container` runs `docker run --rm`, so without the bake every
+session pays it again — see `.claude-container-overlay/Dockerfile`). The bake is
+seeded from `.claude-container-overlay/pre-commit-config.yaml`, a byte-identical
+copy that the `prek-overlay-config-copy` hook refreshes for you (or run
+`tools/sync_prek_overlay_config.sh`). Commit the copy with the config change and
+relaunch `claude-container` to pick up the rebuilt image; until then the
+container just rebuilds the drifted hooks in the background at startup.
+
 ## Try the pipeline with no hardware
 
 ```sh
