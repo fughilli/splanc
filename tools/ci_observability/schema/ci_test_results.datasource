@@ -1,0 +1,43 @@
+# Tinybird Data Source for the CI observability records (FUG-128).
+#
+# Tinybird is the recommended free, fully-hosted, well-supported columnar store
+# (managed ClickHouse; the free tier needs no credit card). Drop this file in
+# your Tinybird project's datasources/ dir and `tb deploy` (Forward), or paste
+# the schema in the UI.
+#
+# The BEP parser's Tinybird sink (sinks.push_tinybird) appends rows via the
+# Events API: POST <api-host>/v0/events?name=ci_test_results with newline-
+# delimited JSON. The `json:$.field` paths below map each JSON key to a column;
+# names match the Record fields in tools/ci_observability/bep_report.py.
+
+SCHEMA >
+    `timestamp` DateTime64(3) `json:$.timestamp`,
+    `invocation_id` LowCardinality(String) `json:$.invocation_id`,
+    `commit` String `json:$.commit`,
+    `branch` LowCardinality(String) `json:$.branch`,
+    `pr` String `json:$.pr`,
+    `workflow` LowCardinality(String) `json:$.workflow`,
+    `job` LowCardinality(String) `json:$.job`,
+    `run_url` String `json:$.run_url`,
+    `runner` LowCardinality(String) `json:$.runner`,
+    `runner_os` LowCardinality(String) `json:$.runner_os`,
+    `target` String `json:$.target`,
+    `target_kind` LowCardinality(String) `json:$.target_kind`,
+    `record_type` LowCardinality(String) `json:$.record_type`,
+    `test_suite` String `json:$.test_suite`,
+    `test_case` String `json:$.test_case`,
+    `status` LowCardinality(String) `json:$.status`,
+    `cached` UInt8 `json:$.cached`,
+    `duration_ms` UInt32 `json:$.duration_ms`,
+    `attempt` UInt16 `json:$.attempt`,
+    `run` UInt16 `json:$.run`,
+    `shard` UInt16 `json:$.shard`,
+    `failure_category` LowCardinality(String) `json:$.failure_category`,
+    `failure_signature` String `json:$.failure_signature`,
+    `failure_reason` String `json:$.failure_reason`,
+    `failure_trace` String `json:$.failure_trace`
+
+ENGINE "MergeTree"
+ENGINE_PARTITION_KEY "toYYYYMM(timestamp)"
+ENGINE_SORTING_KEY "toDate(timestamp), runner, target, test_case"
+ENGINE_TTL "toDateTime(timestamp) + toIntervalDay(180)"
