@@ -10,8 +10,12 @@ results, categorize failures, and drive a Grafana dashboard that answers:
   vs `hitl` — to spot flaky hardware/runner configurations.
 - **Heatmap of failures by test case** — which tests fail most.
 
-Each Bazel job also uploads a **self-contained static HTML report** (charts +
-collapsible per-target details) and links it from the job summary and the log.
+Each Bazel job also renders the full report **inline in the run's Summary tab**
+(GitHub-flavored markdown — opens directly, no download), with a collapsible
+block per target showing its per-case results **and its full `test.log` / build
+stderr** (for passing targets too) plus the bazel console output. The same
+report is also uploaded as a **self-contained styled HTML artifact** for offline
+viewing.
 
 ## Architecture
 
@@ -21,7 +25,8 @@ collapsible per-target details) and links it from the job summary and the log.
      ▼
   .github/actions/bep-report  (composite action, always())
      │  python3 tools/ci_observability/bep_report.py
-     ├─► report.html ──► upload-artifact ──► link in job summary + ::notice:: log line
+     ├─► markdown report ──► $GITHUB_STEP_SUMMARY  (renders INLINE on the run page)
+     ├─► report.html ──────► upload-artifact       (optional styled download)
      └─► NDJSON records ──► sinks.push_all()
                               ├─► Grafana Cloud Loki   (default; reuses FUG-117 creds)
                               └─► ClickHouse-compatible (optional columnar; Tinybird/…)

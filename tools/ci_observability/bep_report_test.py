@@ -100,7 +100,10 @@ def _events():
                 "status": "PASSED",
                 "testAttemptDurationMillis": "50",
                 "cachedLocally": False,
-                "testActionOutput": [{"name": "test.xml", "uri": "file:///out/a/pass.xml"}],
+                "testActionOutput": [
+                    {"name": "test.xml", "uri": "file:///out/a/pass.xml"},
+                    {"name": "test.log", "uri": "file:///out/a/pass.log"},
+                ],
             },
         },
         # failing test target (with per-case xml)
@@ -148,6 +151,7 @@ class TestPipeline(unittest.TestCase):
     def setUp(self):
         files = {
             "/out/a/pass.xml": PASS_XML,
+            "/out/a/pass.log": "Executing tests from //a:pass_test\nRan 1 test\nOK\n",
             "/out/b/test.xml": JUNIT_MIXED,
             "/out/b/test.log": "irrelevant",
             "/out/c/stderr.txt": "x.cc:10:5: error: 'foo' was not declared in this scope\n",
@@ -208,6 +212,8 @@ class TestPipeline(unittest.TestCase):
         self.assertEqual(len(a), 1)
         self.assertEqual(a[0].status, B.STATUS_PASSED)
         self.assertFalse(a[0].is_failure())
+        # Even a PASSING target carries its test.log so the report can show it.
+        self.assertIn("Ran 1 test", a[0].log_excerpt)
 
     def test_summary_counts(self):
         s = B.summarize(self.records)
@@ -221,20 +227,34 @@ class TestPipeline(unittest.TestCase):
     def test_html_renders(self):
         s = B.summarize(self.records)
         htmlout = report_html.render_html(
-            self.records, s, {"workflow": "Test", "runner": "github:linux"}
+            self.records,
+            s,
+            {"workflow": "Test", "runner": "github:linux"},
+            console="INFO: bazel build\nERROR: something\n",
         )
         self.assertIn("<!doctype html>", htmlout)
         self.assertIn("//b:math_test", htmlout)
         self.assertIn("division by zero", htmlout)
         self.assertIn("Per-target details", htmlout)
+        # The passing target's log shows in the report.
+        self.assertIn("Ran 1 test", htmlout)
+        # The bazel console output section is included.
+        self.assertIn("Console output", htmlout)
         # No unescaped traceback breaking the doc.
         self.assertNotIn("<script", htmlout.lower())
 
-    def test_markdown_summary(self):
+    def test_markdown_report(self):
         s = B.summarize(self.records)
-        md = B.render_markdown_summary(s, "https://example.com/report.html")
-        self.assertIn("passed", md)
-        self.assertIn("Open the full CI report", md)
+        md = B.render_markdown_report(
+            self.records, s, {"workflow": "Test", "runner": "github:linux"}
+        )
+        self.assertIn("CI report", md)
+        self.assertIn("Per-target details", md)
+        self.assertIn("//b:math_test", md)
+        # Collapsible per-target sections render on the run page (no download).
+        self.assertIn("<details", md)
+        # A failing case surfaces its reason inline.
+        self.assertIn("division by zero", md)
 
 
 class TestFlaky(unittest.TestCase):
@@ -329,6 +349,64 @@ class TestBepStatusReconciliation(unittest.TestCase):
         self.assertEqual(len(recs), 1)
         self.assertTrue(recs[0].is_failure())  # BEP status wins over the XML
         self.assertIn("divide by zero", recs[0].failure_trace)
+
+
+class TestConsoleAndLogs(unittest.TestCase):
+    def test_console_captured_and_build_failure_falls_back_to_it(self):
+        # A target that aborted because a *dependency* failed: no action stderr
+        # attributed to it, but the compiler error is in the console (progress).
+        events = [
+            {"id": {"started": {}}, "started": {"uuid": "i", "startTimeMillis": "1723075200000"}},
+            {
+                "id": {"progress": {"opaqueCount": 1}},
+                "progress": {"stderr": "gen.cc:5:2: error: expected ';' before '}' token\n"},
+            },
+            {
+                "id": {"targetCompleted": {"label": "//d:dep"}},
+                "completed": {"success": False, "targetKind": "cc_library rule"},
+            },
+            {
+                "id": {"aborted": {"label": "//d:dep"}},
+                "aborted": {"reason": "USER_INTERRUPTED", "description": "build failed"},
+            },
+        ]
+        parser = B.BepParser(context={}, file_reader=_reader({}))
+        for e in events:
+            parser.consume(e)
+        self.assertIn("expected ';'", parser.console())
+        recs = parser.records()
+        self.assertEqual(len(recs), 1)
+        rec = recs[0]
+        self.assertEqual(rec.status, B.STATUS_BUILD_FAILED)
+        # Reason picked from the console error line (not the generic "build failed").
+        self.assertIn("error", rec.failure_reason.lower())
+        # The compiler output is available for the report.
+        self.assertIn("expected ';'", rec.log_excerpt)
+
+    def test_build_failure_uses_own_action_stderr(self):
+        files = {"/e/stderr.txt": "e.cc:1:1: error: boom in this file\n"}
+        events = [
+            {"id": {"started": {}}, "started": {"uuid": "i", "startTimeMillis": "1723075200000"}},
+            {
+                "id": {"targetCompleted": {"label": "//e:t"}},
+                "completed": {"success": False, "targetKind": "cc_binary rule"},
+            },
+            {
+                "id": {"actionCompleted": {"label": "//e:t"}},
+                "action": {
+                    "success": False,
+                    "type": "CppCompile",
+                    "label": "//e:t",
+                    "stderr": {"uri": "file:///e/stderr.txt"},
+                },
+            },
+        ]
+        parser = B.BepParser(context={}, file_reader=_reader(files))
+        for e in events:
+            parser.consume(e)
+        rec = parser.records()[0]
+        self.assertIn("boom in this file", rec.failure_reason)
+        self.assertIn("boom in this file", rec.log_excerpt)
 
 
 class TestSinksNoop(unittest.TestCase):

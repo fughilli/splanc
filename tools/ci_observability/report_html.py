@@ -73,6 +73,8 @@ overflow:auto;font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace;color:#
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 .cat{display:inline-block;padding:0 6px;border-radius:4px;background:var(--panel2);color:var(--muted);font-size:11px}
 .empty{color:var(--muted);padding:20px;text-align:center}
+.logwrap{margin-top:8px}
+.logcap{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.04em;margin:8px 0 4px}
 .heat{display:flex;flex-wrap:wrap;gap:4px}
 .heat .cell{width:16px;height:16px;border-radius:3px;background:var(--panel2)}
 footer{color:var(--muted);font-size:12px;margin-top:32px;border-top:1px solid var(--border);padding-top:14px}
@@ -139,17 +141,39 @@ def _target_details(records) -> str:
                 f'<td class="mono">{case}{reason}</td>'
                 f'<td class="bar-val">{dur}</td></tr>'
             )
+        # The target's log (test.log / build stderr), shown for every target —
+        # pass or fail — so expanding a target always reveals its output.
+        log = ""
+        logs = [r.log_excerpt for r in recs if r.log_excerpt]
+        if logs:
+            log = max(logs, key=len)  # identical per run; pick the fullest
+        log_block = (
+            f'<div class="logwrap"><div class="logcap">log</div><pre>{_esc(log)}</pre></div>'
+            if log
+            else '<div class="logcap">no log captured</div>'
+        )
         blocks.append(
             f'<details{" open" if fails else ""}>'
             f'<summary><span class="t">{_esc(label)}</span>'
             f'<span class="meta"><span class="badge {badge}">{badge_txt}</span> · {total} case(s)</span></summary>'
             f'<div class="det-body"><table><thead><tr><th>Status</th><th>Test case</th><th>Time</th></tr></thead>'
-            f"<tbody>{''.join(rows)}</tbody></table></div></details>"
+            f"<tbody>{''.join(rows)}</tbody></table>{log_block}</div></details>"
         )
     return "".join(blocks) if blocks else '<div class="empty">no targets in this run</div>'
 
 
-def render_html(records, summary, context) -> str:
+def _console_section(console) -> str:
+    """A collapsible block with the full bazel console output (compiler errors)."""
+    if not console:
+        return ""
+    return (
+        "<h2>Console output</h2>"
+        "<details><summary><span class='t'>bazel console (stderr/stdout)</span></summary>"
+        f"<div class='det-body'><pre>{_esc(console)}</pre></div></details>"
+    )
+
+
+def render_html(records, summary, context, console="") -> str:
     now = (
         _dt.datetime.now(tz=_dt.timezone.utc)
         .replace(microsecond=0)
@@ -208,6 +232,7 @@ def render_html(records, summary, context) -> str:
 <h2>Per-target details</h2>
 {_target_details(records)}
 
+{_console_section(console)}
 <footer>Generated {now} by <span class="mono">tools/ci_observability/bep_report.py</span>
 from the Bazel Build Event Protocol.</footer>
 </div></body></html>

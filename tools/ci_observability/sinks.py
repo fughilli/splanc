@@ -33,6 +33,8 @@ import urllib.parse
 import urllib.request
 from dataclasses import asdict
 
+import bep_report  # for REPORT_ONLY_FIELDS (safe: its sinks import is deferred)
+
 
 def _log(msg: str) -> None:
     print(f"ci-observability/sinks: {msg}", file=sys.stderr)
@@ -78,6 +80,9 @@ def push_loki(records: list) -> bool:
     streams: dict = {}
     for rec in records:
         d = asdict(rec)
+        # log_excerpt is report-only — keep it out of Loki to avoid fat lines.
+        for f in bep_report.REPORT_ONLY_FIELDS:
+            d.pop(f, None)
         result = "fail" if rec.is_failure() else ("flaky" if rec.status == "FLAKY" else "pass")
         labels = {
             "job": "ci-results",

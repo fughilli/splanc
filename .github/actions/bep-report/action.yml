@@ -82,10 +82,11 @@ runs:
         retention-days: 14
         if-no-files-found: warn
 
-    # Link the uploaded HTML from the job summary AND as a clickable ::notice::
-    # at the end of the log — so the user can open the report straight from the
-    # run page (per the issue: "link the uploaded artifact at the end of the log").
-    - name: Link the report
+    # The full report (per-target logs + charts) is already rendered INLINE in
+    # this job's Summary above — it opens on the run page, no download. GitHub
+    # only serves artifacts as .zip, so there's no direct-open URL for the HTML;
+    # we link it as an OPTIONAL styled download rather than the way to read it.
+    - name: Note the downloadable report
       if: steps.gen.outputs.have_report == 'true'
       shell: bash
       env:
@@ -95,9 +96,8 @@ runs:
         if [ -n "${REPORT_URL:-}" ]; then
           {
             echo ""
-            echo "📊 **[Download the full CI report](${REPORT_URL})** "\
-                 "(open \`report.html\` from the artifact zip)."
+            echo "🎨 Styled HTML version (optional): **[download the \`${{ inputs.artifact-name }}\` artifact](${REPORT_URL})** and open \`report.html\`. The full report — including per-target logs — is rendered inline above."
             echo ""
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "::notice title=CI report::${REPORT_URL} (download the '${{ inputs.artifact-name }}' artifact and open report.html)"
+          echo "::notice title=CI report::Full report is in this job's Summary tab. Styled HTML: download the '${{ inputs.artifact-name }}' artifact → report.html (${REPORT_URL})"
         fi

@@ -12,13 +12,17 @@ to recover *per-test-case* results, and emits three things:
   1. Normalized records (NDJSON) — one per test case (or per failed build
      target) — carrying enough context (runner/DUT, target, test case, failure
      category + signature + full trace, timing) to drive the dashboards.
-  2. A self-contained static HTML report — summary, CSS/SVG charts, and a
-     collapsible ``<details>`` block per target with its per-case rows and
-     traces — meant to be uploaded as a CI artifact and linked from the log.
-  3. Optional pushes of the records to a telemetry sink (Grafana Cloud Loki
-     and/or a ClickHouse-compatible columnar DB); see ``sinks.py``. Each sink
+  2. A report of the run — as a self-contained static HTML artifact AND as a
+     GitHub-flavored-markdown version written to ``$GITHUB_STEP_SUMMARY`` so it
+     renders INLINE on the run page (no zip download). Both show a collapsible
+     block per target with its per-case rows, failure traces, and the target's
+     full ``test.log`` / build stderr — for passing targets too — plus the
+     bazel console output.
+  3. Optional pushes of the records to a telemetry sink (Grafana Cloud Loki,
+     Tinybird, and/or a ClickHouse columnar DB); see ``sinks.py``. Each sink
      no-ops when its credentials are absent, so this is safe to wire into CI
-     unconditionally, including on fork PRs.
+     unconditionally, including on fork PRs. (The large per-target logs are
+     report-only — ``REPORT_ONLY_FIELDS`` keeps them out of the sink payloads.)
 
 Everything here is standard-library only (matching the other stdlib tools in
 ``tools/``) so the CI step needs nothing but ``python3``.
@@ -94,8 +98,18 @@ class Record:
     failure_reason: str = ""  # raw first meaningful line
     failure_trace: str = ""  # full trace/log excerpt (truncated)
 
+    # The target's full test.log / build stderr tail, kept for EVERY record
+    # (pass or fail) so the report can show the log for every target. This is
+    # report-only — it is deliberately excluded from the telemetry sinks (Loki /
+    # columnar) to keep those payloads small; see sinks.py.
+    log_excerpt: str = ""
+
     def is_failure(self) -> bool:
         return self.status in _FAILING
+
+
+# Fields carried only for the HTML/markdown report, never pushed to a sink.
+REPORT_ONLY_FIELDS = ("log_excerpt",)
 
 
 # ---------------------------------------------------------------------------
@@ -252,6 +266,11 @@ class BepParser:
         # label -> list of test attempts (dicts)
         self.test_results: dict = defaultdict(list)
         self.test_summaries: dict = {}  # label -> summary dict
+        # Bazel streams the console (incl. compiler errors on build failure) as
+        # `progress` events; we accumulate them into one capped build log so the
+        # report can show the actual output even when no per-target action was
+        # attributed (e.g. a target aborted because a dependency failed).
+        self._console_parts: list = []
 
     def _target(self, label: str) -> _TargetInfo:
         info = self.targets.get(label)
@@ -269,6 +288,12 @@ class BepParser:
                 self.start_millis = int(st.get("startTimeMillis", 0))
             except (TypeError, ValueError):
                 self.start_millis = 0
+        elif "progress" in eid and "progress" in event:
+            prog = event["progress"]
+            for stream in ("stderr", "stdout"):
+                text = prog.get(stream, "")
+                if text:
+                    self._console_parts.append(text)
         elif "targetCompleted" in eid:
             self._on_target_completed(eid["targetCompleted"], event.get("completed", {}))
         elif "aborted" in eid:
@@ -394,17 +419,36 @@ class BepParser:
         rec.target_kind = info.kind
         rec.record_type = "target"
         rec.status = STATUS_BUILD_FAILED
-        # Prefer compiler stderr; fall back to the abort description.
-        text = ""
-        if info.action_failures:
-            text = "\n".join(t for _, t in info.action_failures if t) or ""
-        if not text:
-            text = info.abort_description or info.abort_reason or "build failed"
-        rec.failure_reason = first_meaningful_line(text) or (info.abort_reason or "build failed")
+        # Compiler stderr attributed to this target, if bazel emitted a failed
+        # action for it.
+        stderr = "\n".join(t for _, t in info.action_failures if t) if info.action_failures else ""
+        console = self.console()
+        # Reason/signature (pushed to the sinks) stay focused: the action stderr
+        # if we have it, else the first error-looking line of the console, else
+        # the abort description. The full compiler output goes in log_excerpt
+        # (report-only) so the report shows it even when the target merely
+        # aborted because a *dependency* failed to build.
+        if stderr:
+            rec.failure_reason = first_meaningful_line(stderr) or "build failed"
+            categorize_text = stderr
+        else:
+            rec.failure_reason = (
+                _extract_error_line(console)
+                or info.abort_description
+                or info.abort_reason
+                or "build failed"
+            )
+            categorize_text = console or info.abort_description or info.abort_reason or ""
         rec.failure_signature = signature(rec.failure_reason)
-        rec.failure_category = categorize(text, STATUS_BUILD_FAILED)
-        rec.failure_trace = _truncate(text)
+        rec.failure_category = categorize(categorize_text, STATUS_BUILD_FAILED)
+        rec.failure_trace = _truncate(stderr) if stderr else _truncate(rec.failure_reason)
+        # Report-only: prefer this target's own stderr, else the console output.
+        rec.log_excerpt = _report_tail(stderr) if stderr else _report_tail(console)
         return rec
+
+    def console(self) -> str:
+        """The accumulated bazel console output (stderr+stdout), capped."""
+        return _report_tail("".join(self._console_parts))
 
     def _records_for_test(self, label: str, info: Optional[_TargetInfo], attempts: list) -> list:
         # Group attempts by run; the final attempt is authoritative, but a pass
@@ -429,6 +473,10 @@ class BepParser:
             # Per-test-case rows from the JUnit XML (falls back to one synthetic
             # case for the whole target when there's no usable XML).
             cases = self._parse_cases(final)
+            # The target's test.log tail — shown in the report for EVERY case
+            # (pass or fail), so expanding a target always reveals its output.
+            log_path = _uri_to_path(final.get("log_uri", ""))
+            run_log = _report_tail(self.read(log_path)) if log_path else ""
             for case in cases:
                 rec = self._base_record()
                 rec.target = label
@@ -444,6 +492,7 @@ class BepParser:
                 rec.attempt = final["attempt"]
                 rec.run = run
                 rec.shard = final["shard"]
+                rec.log_excerpt = run_log
                 if case["status"] in _FAILING:
                     text = case["trace"] or final.get("status_details", "")
                     rec.failure_reason = first_meaningful_line(text) or case["status"]
@@ -592,6 +641,30 @@ def _tail(text: str, lines: int = 60) -> str:
     return "\n".join(parts[-lines:])
 
 
+# A larger cap for the log excerpts shown verbatim in the report (the last N
+# lines, then hard-capped in bytes).
+def _report_tail(text: str, lines: int = 400, cap: int = 40000) -> str:
+    text = text or ""
+    tail = "\n".join(text.splitlines()[-lines:])
+    if len(tail) > cap:
+        tail = "…[truncated]\n" + tail[-cap:]
+    return tail
+
+
+# Bazel/compiler error lines look like "foo.cc:12:3: error: …", "ERROR: …",
+# "FAILED: …", "undefined reference", etc. Pull the first such line out of the
+# console so a build failure with no attributed action still gets a real reason.
+_ERROR_LINE = re.compile(r"\berror:|\bERROR\b|\bFAILED\b|undefined reference|fatal error", re.I)
+
+
+def _extract_error_line(console: str) -> str:
+    for raw in (console or "").splitlines():
+        line = raw.strip()
+        if line and _ERROR_LINE.search(line):
+            return line[:400]
+    return ""
+
+
 # ---------------------------------------------------------------------------
 # Aggregation for the report / summary
 # ---------------------------------------------------------------------------
@@ -690,15 +763,17 @@ def main(argv: Optional[list] = None) -> int:
             for rec in records:
                 fh.write(json.dumps(asdict(rec), separators=(",", ":")) + "\n")
 
+    console = parser.console()
+
     if args.out_html:
         from report_html import render_html  # local import keeps sinks/html optional
 
         with open(args.out_html, "w", encoding="utf-8") as fh:
-            fh.write(render_html(records, summary, _context_from_args(args)))
+            fh.write(render_html(records, summary, _context_from_args(args), console=console))
 
     if args.out_summary:
         with open(args.out_summary, "a", encoding="utf-8") as fh:
-            fh.write(render_markdown_summary(summary, args.report_url))
+            fh.write(render_markdown_report(records, summary, _context_from_args(args), console))
 
     if args.push:
         import sinks
@@ -713,33 +788,117 @@ def main(argv: Optional[list] = None) -> int:
     return 0
 
 
-def render_markdown_summary(summary: dict, report_url: str) -> str:
-    """Small GitHub-flavored markdown block for $GITHUB_STEP_SUMMARY."""
-    lines = ["", "### CI results", ""]
-    lines.append(
-        f"**{summary['passed']} passed**, **{summary['failed']} failed**, "
-        f"{summary['flaky']} flaky, {summary['skipped']} skipped "
-        f"({summary['total']} total)."
+_ICON = {
+    STATUS_PASSED: "✅",
+    STATUS_FAILED: "❌",
+    STATUS_TIMEOUT: "⏱️",
+    STATUS_ERROR: "❌",
+    STATUS_BUILD_FAILED: "🔨",
+    STATUS_FLAKY: "⚠️",
+    STATUS_SKIPPED: "⏭️",
+}
+
+# GitHub renders the step summary as GFM: headings, tables, <details>/<summary>,
+# and fenced code all work (inline CSS/SVG do NOT). So the summary IS the report
+# — it opens right on the run page, no artifact download. Keep it under GitHub's
+# ~1 MiB/step limit.
+_SUMMARY_BUDGET = 900_000
+
+
+def _md_inline(text: str) -> str:
+    # Neutralize backticks/pipes so a reason can't break inline code / a table.
+    return (text or "").replace("`", "ʼ").replace("|", "\\|").replace("\n", " ")[:200]
+
+
+def _fence(text: str, lines: int = 80) -> str:
+    """A fenced code block, with any ``` in the body defused so it can't break out."""
+    body = "\n".join((text or "").splitlines()[-lines:]).replace("```", "'''")
+    return "```text\n" + body + "\n```"
+
+
+def render_markdown_report(records: list, summary: dict, context: dict, console: str = "") -> str:
+    """Full GFM report for $GITHUB_STEP_SUMMARY — renders inline on the run page."""
+    ctx = context or {}
+    out: list = []
+    add = out.append
+    title = " · ".join(b for b in [ctx.get("workflow"), ctx.get("job")] if b) or "CI run"
+    add(f"## CI report — {html.escape(title)}")
+    add("")
+    add(
+        f"**{summary['passed']} passed** · **{summary['failed']} failed** · "
+        f"{summary['flaky']} flaky · {summary['skipped']} skipped "
+        f"({summary['total']} total) on `{ctx.get('runner', '')}`"
     )
-    lines.append("")
-    if report_url:
-        lines.append(f"📊 [Open the full CI report]({report_url})")
-        lines.append("")
+    add("")
+
     if summary["by_category"]:
-        lines.append("| Failure category | Count |")
-        lines.append("| --- | ---: |")
-        for cat, n in summary["by_category"]:
-            lines.append(f"| {cat} | {n} |")
-        lines.append("")
+        add("**Failures by category** · **by runner/DUT**")
+        add("")
+        add("| category | count | | runner/DUT | count |")
+        add("| --- | ---: | --- | --- | ---: |")
+        cats = summary["by_category"]
+        runners = summary["by_runner"]
+        for i in range(max(len(cats), len(runners))):
+            c = f"{cats[i][0]} | {cats[i][1]}" if i < len(cats) else " | "
+            r = f"{runners[i][0]} | {runners[i][1]}" if i < len(runners) else " | "
+            add(f"| {c} | | {r} |")
+        add("")
+
     if summary["by_signature"]:
-        lines.append("<details><summary>Top failure signatures</summary>")
-        lines.append("")
+        add("**Top failure signatures (aggregated by trace)**")
+        add("")
         for sig, n in summary["by_signature"][:10]:
-            lines.append(f"- `{n}×` {html.escape(sig)[:160]}")
-        lines.append("")
-        lines.append("</details>")
-        lines.append("")
-    return "\n".join(lines) + "\n"
+            add(f"- `{n}×` {_md_inline(sig)}")
+        add("")
+
+    add("### Per-target details")
+    add("")
+    by_target: dict = defaultdict(list)
+    for r in records:
+        by_target[r.target].append(r)
+
+    def tkey(item):
+        return (0 if any(r.is_failure() for r in item[1]) else 1, item[0])
+
+    for label, recs in sorted(by_target.items(), key=tkey):
+        fails = [r for r in recs if r.is_failure()]
+        flaky = any(r.status == STATUS_FLAKY for r in recs)
+        icon = "❌" if fails else ("⚠️" if flaky else "✅")
+        state = f"{len(fails)} failed" if fails else ("flaky" if flaky else "passed")
+        add(f"<details{' open' if fails else ''}>")
+        add(
+            f"<summary>{icon} <code>{html.escape(label)}</code> — {state} · {len(recs)} case(s)</summary>"
+        )
+        add("")
+        for r in sorted(recs, key=lambda x: (not x.is_failure(), x.test_case)):
+            ic = _ICON.get(r.status, "•")
+            name = _md_inline(r.test_case or "(target)")
+            extra = (
+                f" — {_md_inline(r.failure_category + ': ' + r.failure_reason)}"
+                if r.is_failure()
+                else ""
+            )
+            add(f"- {ic} `{name}`{extra}")
+        add("")
+        log = max((r.log_excerpt for r in recs if r.log_excerpt), key=len, default="")
+        if log:
+            add(_fence(log))
+        add("")
+        add("</details>")
+        add("")
+
+    if console:
+        add("<details><summary>🖥️ bazel console output</summary>")
+        add("")
+        add(_fence(console, lines=200))
+        add("")
+        add("</details>")
+        add("")
+
+    text = "\n".join(out)
+    if len(text) > _SUMMARY_BUDGET:
+        text = text[:_SUMMARY_BUDGET] + "\n\n…[report truncated to fit the step-summary limit]\n"
+    return text + "\n"
 
 
 if __name__ == "__main__":
