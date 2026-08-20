@@ -190,12 +190,18 @@ class AppState {
 
   /** Restore the previously-active device on boot (back-compat with ?url=). */
   restoreActive(urlOverride?: string | null): void {
+    // A restored device is one we've already connected to, so its cert is almost
+    // certainly still trusted — a fresh-page reconnect that fails is far more
+    // likely a slow cold handshake (heap-tight C6, maybe still booting) than a
+    // genuinely untrusted cert. Retry over the backoff before concluding "trust
+    // needed" (default coldRetryLimit 1 dead-ended at the trust prompt after a
+    // single slow miss, stranding a reload that used to just reconnect).
     if (urlOverride) {
-      this.connect(urlOverride);
+      this.connect(urlOverride, undefined, { coldRetryLimit: 6 });
       return;
     }
     const active = deviceStore.active();
-    if (active) this.connect(active.wssUrl);
+    if (active) this.connect(active.wssUrl, undefined, { coldRetryLimit: 6 });
   }
 
   setSelectedMap(id: string | null): void {
