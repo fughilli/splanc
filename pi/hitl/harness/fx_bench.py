@@ -64,6 +64,7 @@ from fx_bench_core import (
     compare_to_golden,
     cpu_hz_of,
     intended_led_count,
+    run_health_failure,
     sample_from,
 )
 
@@ -245,6 +246,176 @@ class WsUnavailable(RuntimeError):
     """The player socket did not come up within the settle window."""
 
 
+# A run only ever escalates to a full cold re-bring-up (re-flash + re-provision +
+# re-forward) this many times before it gives up and records an aborted run —
+# bounded so a board that reboots on EVERY heavy program can't loop forever
+# re-flashing. Each escalation is ~1–2 min, so a couple is plenty of slack.
+_MAX_REPROVISIONS = 2
+
+
+class RunHealth:
+    """First-class record of a sweep's reliability (FUG-137). A heavy calibration
+    program under FULL perf can watchdog-reboot the DUT mid-sweep; recovering from
+    that used to be a quiet "recovered from N drops" log, which let a flaky red — or
+    a real regression hiding behind one — pass unnoticed. This tallies the drops,
+    the reconnect/re-provision recoveries, whether the DUT's IP moved (DHCP re-lease
+    after a reboot), and whether the run ultimately aborted incomplete, so the
+    bundle carries an inspectable health block and the run can fail loudly."""
+
+    def __init__(self) -> None:
+        self.drops = 0
+        self.reconnect_failures = 0
+        self.reprovisions = 0
+        self.ip_changes = 0
+        self.reboot_programs: list[str] = []
+        self.aborted = False
+
+    def record_drop(self, label: str) -> None:
+        self.drops += 1
+        if label not in self.reboot_programs:
+            self.reboot_programs.append(label)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "drops": self.drops,
+            "reconnectFailures": self.reconnect_failures,
+            "reprovisions": self.reprovisions,
+            "ipChanges": self.ip_changes,
+            "rebootPrograms": list(self.reboot_programs),
+            "aborted": self.aborted,
+        }
+
+
+class DutLink:
+    """How `_measure` (re)opens the player WebSocket — and, crucially, how it
+    RECOVERS the connection after a mid-sweep reboot. The base link is the trivial
+    fixed-URL case (`--device-ws`, or any externally-managed socket): it can retry
+    the same URL but can't re-resolve the DUT, since the address is not ours to
+    move."""
+
+    def __init__(self, ws_url: str, args: Any) -> None:
+        self._ws_url = ws_url
+        self.args = args
+
+    @property
+    def ws_url(self) -> str:
+        return self._ws_url
+
+    async def open(self, settle_s: float):
+        """Open the socket, retrying within `settle_s` (a rebooted board settles)."""
+        return await _open_ws(self._ws_url, self.args, time.monotonic() + settle_s)
+
+    async def recover(self) -> bool:
+        """Re-resolve the DUT and rebuild any tunnel after a reboot stranded the
+        socket; return True if the DUT's address changed. The fixed-URL link can't:
+        the URL is user-managed, so recovery is limited to plain reconnects."""
+        return False
+
+    def close(self) -> None:  # nothing to tear down for a fixed URL
+        pass
+
+
+class RigLink(DutLink):
+    """The rig-tunnelled link: the DUT lives on the rig's WiFi LAN, reached through
+    a `hitl forward` tunnel to a specific DUT IP. A watchdog reboot can hand the DUT
+    a fresh DHCP lease, stranding that tunnel on a dead IP (the InvalidMessage /
+    unable_to_connect reconnect loop this hardens). `recover()` does a full cold
+    re-bring-up — erase-fs re-flash → ImprovBLE re-provision → fresh redirect →
+    rebuilt forward — which both re-resolves the (possibly new) IP AND clears a
+    persisted, crash-looping effect that auto-resume would keep rebooting on."""
+
+    def __init__(self, res: Any, ssid: str, password: str, args: Any) -> None:
+        super().__init__("", args)
+        self.res = res
+        self.ssid = ssid
+        self.password = password
+        self._fwd = None  # the active `res.forward(...)` context manager, driven by hand
+        self._host: str | None = None
+
+    def _teardown_forward(self) -> None:
+        if self._fwd is not None:
+            try:
+                self._fwd.__exit__(None, None, None)
+            except Exception:  # noqa: BLE001 — best-effort tunnel teardown
+                pass
+            self._fwd = None
+
+    def _flash(self) -> None:
+        args, res = self.args, self.res
+        _log(f"[flash] {os.path.basename(args.bundle)} → {res.host}")
+        res.scp_to([args.bundle], "/tmp/")
+        # --erase-fs boots the DUT into a clean first-provision state (empty NVS, no
+        # auto-join short-circuit, no persisted effect) — the reliably-provisionable
+        # path, and the one that breaks a crash-looping persisted effect on recover.
+        res.ssh(
+            f"hitl-flash /tmp/{os.path.basename(args.bundle)} --erase-fs "
+            f"--monitor --monitor-seconds {args.monitor_seconds:g}",
+            capture=True,
+            timeout=args.monitor_seconds + 120,
+        )
+
+    def bring_up(self, flash: bool) -> bool:
+        """(Re)provision the DUT over ImprovBLE and (re)build the forward tunnel to
+        its player socket. `flash` erase-fs-reflashes first (the cold path). Returns
+        True if the DUT's IP changed from the previous bring-up."""
+        from provision import dut_target, provision_dut
+
+        if flash:
+            self._flash()
+        redirect = provision_dut(
+            self.res, self.ssid, self.password, self.args.improv_timeout, self.args.improv_attempts
+        )
+        host, port = dut_target(redirect, self.args.ws_scheme)
+        moved = self._host is not None and host != self._host
+        self._teardown_forward()
+        self._fwd = self.res.forward(host, port)
+        local_port = self._fwd.__enter__()
+        self._host = host
+        self._ws_url = f"{self.args.ws_scheme}://localhost:{local_port}/ws"
+        if moved:
+            _log(f"[recover] DUT IP moved to {host}; rebuilt tunnel → {self._ws_url}")
+        return moved
+
+    async def recover(self) -> bool:
+        # bring_up is blocking (ssh/scp subprocesses); keep the event loop free. A
+        # cold re-bring-up erase-fs-reflashes only when we have a bundle to flash;
+        # under --no-bundle the best we can do is reset+re-provision what's there.
+        return await asyncio.to_thread(self.bring_up, bool(self.args.bundle))
+
+    def close(self) -> None:
+        self._teardown_forward()
+
+
+async def _reconnect(link: DutLink, health: RunHealth, label: str):
+    """Bring the socket back after a mid-sweep drop. First a plain reconnect to the
+    same URL — a quick watchdog reboot usually keeps the DUT's IP, so this is the
+    common, cheap path. If it keeps failing, the tunnel is likely stranded on a
+    moved IP (or a persisted effect is crash-looping the board): escalate, bounded,
+    to a full re-resolve (`link.recover()`) and reconnect. Returns a live socket, or
+    None if the board never came back."""
+    try:
+        return await link.open(45.0)
+    except WsUnavailable:
+        health.reconnect_failures += 1
+        _log(f"  [ws] plain reconnect failed after {label}; re-resolving the DUT…")
+    if health.reprovisions >= _MAX_REPROVISIONS:
+        _log(f"  [recover] re-resolve budget ({_MAX_REPROVISIONS}) spent; giving up")
+        return None
+    try:
+        moved = await link.recover()
+    except Exception as e:  # noqa: BLE001 — recovery is best-effort; a failure aborts
+        _log(f"  [recover] re-bring-up failed ({type(e).__name__}: {e}); giving up")
+        return None
+    health.reprovisions += 1
+    if moved:
+        health.ip_changes += 1
+    try:
+        return await link.open(45.0)
+    except WsUnavailable:
+        _log(f"  [recover] socket still down after re-bring-up ({label}); giving up")
+        return None
+
+
 async def _open_ws(ws_url: str, args, settle_deadline: float):
     """Open the player socket + say hello, retrying until settle_deadline. A
     freshly-provisioned (or just-rebooted) board is still settling its servers
@@ -280,19 +451,25 @@ async def _open_ws(ws_url: str, args, settle_deadline: float):
             await asyncio.sleep(1.5)
 
 
-async def _measure(ws_url: str, fit_src, held_src, args) -> tuple[list, list, int]:
+async def _measure(
+    link: DutLink, fit_src, held_src, args
+) -> tuple[list, list, int, dict[str, Any]]:
     """Drive the calibration programs over the player WebSocket; return
-    (fit_samples, held_samples, cpu_hz). Resilient to the DUT dropping the socket
-    mid-sweep (a heavy program under FULL perf can trip the watchdog and reboot):
-    each program is retried on a fresh connection a bounded number of times, and a
-    persistently-failing program is skipped rather than sinking the whole run."""
+    (fit_samples, held_samples, cpu_hz, run_health). Resilient to the DUT dropping
+    the socket mid-sweep (a heavy program under FULL perf can trip the watchdog and
+    reboot): each program is retried on a recovered connection a bounded number of
+    times — a plain reconnect first, escalating to a full re-resolve/re-provision if
+    the DUT's IP moved — and a persistently-failing program is skipped rather than
+    sinking the whole run. Every drop/recovery is tallied into `run_health` so a
+    flaky run is a visible signal, not a silently short bundle (FUG-137)."""
     import websockets
 
-    _log(f"[ws] connecting {ws_url}")
+    health = RunHealth()
+    _log(f"[ws] connecting {link.ws_url}")
     try:
         # 60s: a cold --erase-fs flash + LAN-cert reissue can be slow to bring
         # up the socket. Slack only — a warm DUT answers on the first attempt.
-        sock = await _open_ws(ws_url, args, time.monotonic() + 60.0)
+        sock = await link.open(60.0)
     except WsUnavailable as e:
         raise SystemExit(str(e))  # nothing measured yet — a hard failure
 
@@ -305,13 +482,11 @@ async def _measure(ws_url: str, fit_src, held_src, args) -> tuple[list, list, in
     cpu_hz = 0
     fit_samples: list[dict[str, Any]] = []
     held_samples: list[dict[str, Any]] = []
-    drops = 0
-    aborted = False
     for kind, srcs, dest in (
         ("fit", sorted(fit_src, key=order), fit_samples),
         ("heldout", held_src, held_samples),
     ):
-        if aborted:
+        if health.aborted:
             break
         for src in srcs:
             label = os.path.basename(src).removesuffix(".heldout.fx").removesuffix(".fx")
@@ -334,46 +509,48 @@ async def _measure(ws_url: str, fit_src, held_src, args) -> tuple[list, list, in
                         dest.append(sample)
                     break
                 except (
-                    websockets.exceptions.ConnectionClosed,
+                    websockets.exceptions.WebSocketException,  # incl. InvalidMessage on a stale IP
                     OSError,
                     TimeoutError,
                     asyncio.IncompleteReadError,
                 ) as e:
-                    drops += 1
+                    health.record_drop(label)
                     _log(f"  [ws] dropped during {label} ({type(e).__name__}); reconnecting…")
                     try:
                         await sock.close()
                     except OSError:
                         pass
-                    # The board may be rebooting (auto-resuming the persisted
-                    # effect); give it room and re-establish before retrying.
-                    try:
-                        sock = await _open_ws(ws_url, args, time.monotonic() + 45.0)
-                    except WsUnavailable:
-                        # Board isn't coming back (a program may be crash-looping
-                        # via auto-resume). Keep what we measured rather than lose
-                        # the whole sweep.
+                    recovered = await _reconnect(link, health, label)
+                    if recovered is None:
+                        # Board isn't coming back (IP moved past recovery, or a
+                        # program is crash-looping via auto-resume). Keep what we
+                        # measured, but mark the run aborted — an incomplete bundle
+                        # is a loud failure, not a silent pass.
                         _log(f"  [ws] board unreachable after {label}; stopping with what we have")
-                        aborted = True
+                        health.aborted = True
                         break
+                    sock = recovered
                     if attempt == 3:
                         _log(f"  giving up on {label} after {attempt} drops")
-            if aborted:
+            if health.aborted:
                 break
-    if aborted:
-        return fit_samples, held_samples, cpu_hz
-    try:
-        from server import proto_wire
+    if not health.aborted:
+        try:
+            from server import proto_wire
 
-        await sock.send(
-            proto_wire.encode_client({"type": "set_perf", "mode": "OFF", "interval_ms": 0})
+            await sock.send(
+                proto_wire.encode_client({"type": "set_perf", "mode": "OFF", "interval_ms": 0})
+            )
+            await sock.close()
+        except (OSError, websockets.exceptions.WebSocketException):
+            pass
+    if health.drops:
+        _log(
+            f"[health] {health.drops} mid-sweep drop(s), {health.reprovisions} re-provision(s), "
+            f"{health.ip_changes} IP change(s) during {', '.join(health.reboot_programs)}"
+            + ("; run ABORTED incomplete" if health.aborted else "; recovered")
         )
-        await sock.close()
-    except (OSError, websockets.exceptions.WebSocketException):
-        pass
-    if drops:
-        _log(f"[ws] recovered from {drops} mid-sweep socket drop(s)")
-    return fit_samples, held_samples, cpu_hz
+    return fit_samples, held_samples, cpu_hz, health.to_dict()
 
 
 def run_on_hardware(args) -> dict[str, Any]:
@@ -382,14 +559,13 @@ def run_on_hardware(args) -> dict[str, Any]:
     board. Mirrors the proven hitl_e2e path so the FX benchmark reaches the board
     the same way — the DUT lives on the rig's WiFi LAN, not this host's network."""
     from hitl_client import Reservation
-    from provision import dut_target, provision_dut
 
     fit_src, held_src = discover_benchmarks(args.benchmarks_dir)
     if not fit_src:
         raise SystemExit(f"no .fx benchmarks in {args.benchmarks_dir}")
     _log(f"benchmarks: {len(fit_src)} fit, {len(held_src)} held-out")
 
-    def bundle_from(fit_samples, held_samples, cpu_hz) -> dict[str, Any]:
+    def bundle_from(fit_samples, held_samples, cpu_hz, run_health) -> dict[str, Any]:
         return assemble_bundle(
             soc=args.soc,
             cpu_hz=cpu_hz or 160_000_000,
@@ -399,11 +575,13 @@ def run_on_hardware(args) -> dict[str, Any]:
             device_label=args.device_label,
             firmware_build=args.firmware_build,
             timestamp=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            run_health=run_health,
         )
 
     # An explicit --device-ws that's reachable from here skips the rig entirely.
     if args.device_ws:
-        return bundle_from(*asyncio.run(_measure(args.device_ws, fit_src, held_src, args)))
+        link = DutLink(args.device_ws, args)
+        return bundle_from(*asyncio.run(_measure(link, fit_src, held_src, args)))
 
     res = Reservation(server=args.server, owner=args.owner)
     res.acquire()
@@ -416,28 +594,18 @@ def run_on_hardware(args) -> dict[str, Any]:
             if creds:
                 ssid, password = creds
                 _log(f"[improv] provisioning onto the rig AP {ssid!r}")
-
-        if args.bundle:
-            _log(f"[flash] {os.path.basename(args.bundle)} → {res.host}")
-            res.scp_to([args.bundle], "/tmp/")
-            # --erase-fs boots the DUT into a clean first-provision state (empty
-            # NVS, no auto-join short-circuit) — the reliably-provisionable path.
-            res.ssh(
-                f"hitl-flash /tmp/{os.path.basename(args.bundle)} --erase-fs "
-                f"--monitor --monitor-seconds {args.monitor_seconds:g}",
-                capture=True,
-                timeout=args.monitor_seconds + 120,
-            )
-
-        # ImprovBLE-provision the DUT onto WiFi, then tunnel to its player socket
-        # via the rig (the rig shares the DUT's LAN; this host only reaches the rig).
         if not ssid:
             raise SystemExit("no WiFi: rig serves no AP; pass --wifi-ssid or --device-ws")
-        redirect = provision_dut(res, ssid, password, args.improv_timeout, args.improv_attempts)
-        host, port = dut_target(redirect, args.ws_scheme)
-        with res.forward(host, port) as local_port:
-            ws_url = f"{args.ws_scheme}://localhost:{local_port}/ws"
-            return bundle_from(*asyncio.run(_measure(ws_url, fit_src, held_src, args)))
+
+        # The RigLink owns the flash → ImprovBLE-provision → tunnel bring-up (the
+        # rig shares the DUT's LAN; this host only reaches the rig), and knows how
+        # to re-run it to recover the socket if a mid-sweep reboot moves the DUT.
+        link = RigLink(res, ssid, password, args)
+        link.bring_up(flash=bool(args.bundle))
+        try:
+            return bundle_from(*asyncio.run(_measure(link, fit_src, held_src, args)))
+        finally:
+            link.close()
     finally:
         res.release()
 
@@ -565,6 +733,12 @@ def main() -> None:
     )
     ap.add_argument("--debug", action="store_true", help="log each raw PerfReport summary")
     ap.add_argument(
+        "--fail-on-reboot",
+        action="store_true",
+        help="strict gate: fail the run if the DUT dropped the socket mid-sweep at "
+        "all, even if recovered (an aborted/incomplete run always fails regardless)",
+    )
+    ap.add_argument(
         "--jit",
         action="store_true",
         help="pin the on-device JIT ON for this run (set_jit) and check the "
@@ -585,6 +759,14 @@ def main() -> None:
     with open(out, "w") as f:
         json.dump(bundle, f, indent=2)
     _log(f"wrote {out}: {len(bundle['fit'])} fit, {len(bundle['heldout'])} held-out samples")
+
+    # First-class run-health gate (FUG-137): a run that went unreachable mid-sweep
+    # (incomplete bundle) always fails loudly here — BEFORE emitting a golden or
+    # skipping the margin check — so a flaky sweep can't quietly pass as a clean
+    # run. --fail-on-reboot additionally fails a recovered-but-rebooted run.
+    reason = run_health_failure(bundle.get("runHealth"), args.fail_on_reboot)
+    if reason:
+        raise SystemExit(f"FAIL: unstable HITL run — {reason}")
 
     # Regenerate the golden from this run instead of checking against it.
     if args.emit_golden:
