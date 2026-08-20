@@ -22,6 +22,7 @@ py_library(
     name = "harness",
     srcs = [
         "fx_bench_core.py",
+        "heap_floor_core.py",
         "hitl_client.py",
         "hitl_improv.py",
         "improv.py",
@@ -360,6 +361,39 @@ py_test(
     ],
     imports = ["."],
     main = "hitl_video_stream.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# On-hardware min-free-heap gate under worst-case resident load (FUG-132): reserve
+# a rig, flash, provision, then over wss:443 shard-upload a max map + topology, pin
+# the strip to the render cap, activate a texture effect + push a keyframe, enable
+# FULL perf and assert PerfReport.heap_min_free clears a fresh-mbedTLS-session
+# floor (~30 KB). The regression guard the whole PR #114 heap saga lacked —
+# :rename_wss ran against a CLEAN device and sailed through it. Like :map_upload /
+# :video_stream it's a manual+hitl py_test (needs a rig + board); the pure verdict
+# logic (heap_floor_core) is unit-tested in //pi/hitl/tests. It compiles the
+# texture effect with fx_compile and rides the flash-bundle + hitl CLI in runfiles;
+# --device-ws wss://<ip>/ws hits an already-reachable board directly.
+py_test(
+    name = "heap_floor",
+    timeout = "eternal",
+    srcs = ["hitl_heap_floor.py"],
+    data = [
+        "//firmware/player_app:esp32c6_flashbundle",
+        "//fx_compiler:fx_compile",
+        "//pi/hitl/cmd/hitl",
+    ],
+    imports = ["."],
+    main = "hitl_heap_floor.py",
     tags = [
         "hitl",
         "manual",
