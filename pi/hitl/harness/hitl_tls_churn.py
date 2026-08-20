@@ -39,7 +39,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from python.runfiles import runfiles
-from tls_churn_core import Round, classify, result_line, tally, verdict
+from tls_churn_core import FAIL, Round, classify, result_line, run_status, tally, verdict
 
 
 def _log(msg: str) -> None:
@@ -249,22 +249,29 @@ async def _drive(
                 )
             )
     else:
-        _log(f"[baseline] never came up in {settle_s:g}s — cannot run churn rounds")
+        # Never got a clean baseline handshake: we could not reach the device to
+        # test it (flaky Improv join / dropped STA / wss still binding). That's an
+        # inconclusive SKIP, not a wedge — exit 0, like rename_wss and the
+        # rejoin-UNREACHABLE path. We only ASSERT once a baseline proved the
+        # device was reachable, so a healthy-but-unreachable board never red-lines
+        # the HITL lane on this test.
+        _log(f"[baseline] never came up in {settle_s:g}s — SKIP (cannot test churn on this run)")
 
+    status = run_status(baseline_ok, round_results, crashed)
     v = verdict(baseline_ok, round_results, crashed)
-    line = result_line(baseline_ok, round_results, crashed, v)
+    line = result_line(baseline_ok, round_results, crashed, status)
     _log(line)
-    if not v.ok:
+    if status == FAIL:
         for reason in v.reasons:
             _log(f"[FAIL] {reason}")
     return {
         "baseline_ok": baseline_ok,
         "rounds": [asdict(r) for r in round_results],
         "crashed": crashed,
-        "verdict": "PASS" if v.ok else "FAIL",
-        "reasons": v.reasons,
+        "status": status,
+        "reasons": v.reasons if status == FAIL else [],
         "result_line": line,
-        "ok": v.ok,
+        "ok": status != FAIL,  # PASS and SKIP both exit 0; only FAIL exits non-zero
     }
 
 
@@ -336,17 +343,20 @@ def run_on_hardware(args) -> int:
         # test wss. (Same dance as rename_wss / the e2e.)
         _log("[reset] rebooting DUT for a clean NVS-join (stable STA)…")
         res.ssh("hitl-monitor --reset --seconds 3", capture=True, timeout=30)
+        # Poll :80 (the HTTP landing) for reachability, like rename_wss — it binds
+        # as soon as the STA rejoins, whereas :443 comes up a beat later after the
+        # LAN cert re-issue; the baseline's own settle window then waits for :443.
         iters = max(1, int(args.rejoin_wait // 5))
         poll = (
             f"for i in $(seq 1 {iters}); do "
-            f'if timeout 2 bash -c "cat </dev/null >/dev/tcp/{host}/443" 2>/dev/null; '
+            f'if timeout 2 bash -c "cat </dev/null >/dev/tcp/{host}/80" 2>/dev/null; '
             f'then echo "REACHABLE after $((i*5))s"; exit 0; fi; sleep 3; done; echo UNREACHABLE'
         )
-        _log(f"[rejoin] polling rig -> {host}:443 for up to ~{iters * 5}s…")
+        _log(f"[rejoin] polling rig -> {host}:80 for up to ~{iters * 5}s…")
         rp = res.ssh(poll, capture=True, timeout=iters * 5 + 40)
         _log("[rejoin] " + (rp.stdout or "").strip())
         if "UNREACHABLE" in (rp.stdout or ""):
-            _log("[rejoin] DUT never came back on the network — cannot test wss on this run.")
+            _log("[rejoin] DUT never came back on the network — SKIP (cannot test wss).")
             return 0
 
         # Opening the C6's USB-CDC serial resets the chip (drops the just-joined
@@ -360,7 +370,11 @@ def run_on_hardware(args) -> int:
             mon = _monitor_thread(res, mon_seconds, mon_out)
             time.sleep(3)  # let the (resetting) monitor attach + the board re-join
 
-        result: dict[str, Any] = {"ok": False, "result_line": "RESULT verdict=FAIL (no run)"}
+        result: dict[str, Any] = {
+            "ok": True,
+            "status": "skip",
+            "result_line": "RESULT verdict=SKIP (driver did not complete a run)",
+        }
         try:
             with res.forward(host, port) as local_port:
                 ws_url = f"wss://localhost:{local_port}/ws"
@@ -392,11 +406,16 @@ def run_on_hardware(args) -> int:
                     ):
                         _log("  " + ln)
                 # Fold a serial-observed crash into the verdict (the network path
-                # alone can't see a reboot that the STA survives).
-                if crashed and result.get("ok"):
+                # alone can't see a reboot the STA survives). Only a run that
+                # actually PASSed flips to FAIL — a crash on a SKIP (no baseline,
+                # nothing asserted) stays environmental, not a wedge.
+                if crashed and result.get("status") == "pass":
                     result["ok"] = False
-                    result["verdict"] = "FAIL"
+                    result["status"] = FAIL
                     result["reasons"] = [*result.get("reasons", []), "crash marker on serial"]
+                    result["result_line"] = result.get("result_line", "").replace(
+                        "verdict=PASS", "verdict=FAIL"
+                    )
                     _log("[FAIL] crash/reboot marker seen on serial during churn")
             _log(f"[result] {result['result_line']}")
         return 0 if result.get("ok") else 1

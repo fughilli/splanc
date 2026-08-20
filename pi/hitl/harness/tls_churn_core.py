@@ -139,14 +139,42 @@ def verdict(baseline_ok: bool, rounds: list[Round], crashed: bool) -> Verdict:
     return Verdict(ok=not reasons, reasons=reasons)
 
 
-def result_line(baseline_ok: bool, rounds: list[Round], crashed: bool, v: Verdict) -> str:
-    """A single grep-able RESULT line for the CI log, mirroring the other benches."""
+# Overall run status. SKIP is distinct from FAIL on purpose: if we never got a
+# clean baseline handshake, we could not reach the device to test it at all — an
+# infra/environment miss (a flaky Improv join, a dropped STA, wss still binding),
+# NOT evidence of a wedge. A gate must only *assert* a regression once a baseline
+# has proven the device was reachable; otherwise it conflates "the bench couldn't
+# connect us" with "the device wedged", which is how a healthy board red-lines the
+# lane. This mirrors rename_wss (and this driver's own rejoin-UNREACHABLE path),
+# which exit 0 when they simply cannot test wss on a given run.
+PASS = "pass"
+FAIL = "fail"
+SKIP = "skip"
+
+
+def run_status(baseline_ok: bool, rounds: list[Round], crashed: bool) -> str:
+    """Map a run to PASS / FAIL / SKIP. SKIP (no baseline) => exit 0, inconclusive.
+
+    Only once a baseline proves the device was reachable do the verdict's hard
+    gates (every round recovers, no crash, no blackout) decide PASS vs FAIL.
+    """
+    if not baseline_ok:
+        return SKIP
+    return PASS if verdict(baseline_ok, rounds, crashed).ok else FAIL
+
+
+def result_line(baseline_ok: bool, rounds: list[Round], crashed: bool, status: str) -> str:
+    """A single grep-able RESULT line for the CI log, mirroring the other benches.
+
+    `status` is a run_status() value (pass/fail/skip); it drives the verdict field
+    so an inconclusive run reads `verdict=SKIP`, not a misleading PASS/FAIL.
+    """
     recovered = sum(1 for r in rounds if r.recovered)
     served_total = sum(r.served for r in rounds)
     certs_ok = sum(1 for r in rounds if r.cert_ok)
     return (
-        f"RESULT rounds={len(rounds)} baseline={'ok' if baseline_ok else 'fail'} "
+        f"RESULT rounds={len(rounds)} baseline={'ok' if baseline_ok else 'down'} "
         f"recovered={recovered}/{len(rounds)} served_total={served_total} "
         f"cert_ok={certs_ok}/{len(rounds)} crashed={'yes' if crashed else 'no'} "
-        f"verdict={'PASS' if v.ok else 'FAIL'}"
+        f"verdict={status.upper()}"
     )

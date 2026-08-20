@@ -11,12 +11,16 @@ import ssl
 
 from tls_churn_core import (
     ERROR,
+    FAIL,
     OK,
+    PASS,
     REJECTED,
+    SKIP,
     TIMEOUT,
     Round,
     classify,
     result_line,
+    run_status,
     tally,
     verdict,
 )
@@ -123,11 +127,27 @@ def test_verdict_fails_on_total_blackout_every_round():
     assert any("blackout" in r for r in v.reasons)
 
 
-def test_result_line_is_greppable():
+def test_run_status_skip_when_no_baseline():
+    # No baseline handshake => inconclusive (the bench couldn't reach the device),
+    # NOT a wedge — must be SKIP (exit 0), never FAIL, even with no rounds/crash.
+    assert run_status(baseline_ok=False, rounds=[], crashed=False) == SKIP
+    assert run_status(baseline_ok=False, rounds=[], crashed=True) == SKIP
+
+
+def test_run_status_pass_and_fail_once_baseline_established():
+    assert run_status(baseline_ok=True, rounds=[_round(1)], crashed=False) == PASS
+    assert run_status(baseline_ok=True, rounds=[_round(1, recovered=False)], crashed=False) == FAIL
+    assert run_status(baseline_ok=True, rounds=[_round(1)], crashed=True) == FAIL
+
+
+def test_result_line_reflects_status():
     rounds = [_round(1), _round(2, recovered=False)]
-    v = verdict(baseline_ok=True, rounds=rounds, crashed=False)
-    line = result_line(baseline_ok=True, rounds=rounds, crashed=False, v=v)
+    line = result_line(baseline_ok=True, rounds=rounds, crashed=False, status=FAIL)
     assert line.startswith("RESULT ")
     assert "rounds=2" in line
     assert "recovered=1/2" in line
     assert "verdict=FAIL" in line
+    # A no-baseline run reads verdict=SKIP with baseline=down, not a false PASS/FAIL.
+    skip_line = result_line(baseline_ok=False, rounds=[], crashed=False, status=SKIP)
+    assert "verdict=SKIP" in skip_line
+    assert "baseline=down" in skip_line
