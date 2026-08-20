@@ -35,6 +35,9 @@ exports_files([
     # The unified FX-bench golden: the web estimator test imports it, and the HITL
     # //pi/hitl/harness:fx_bench margin check cross-deps it (one source of truth).
     "tests/testdata/device-bench-esp32c6.json",
+    # The JIT golden (FUG-125): the shipped firmware runs the JIT by default, so
+    # //pi/hitl/harness:fx_bench_jit pins it ON and enforces this separate set.
+    "tests/testdata/device-bench-esp32c6-jit.json",
 ])
 
 npm_link_all_packages(name = "node_modules")
@@ -124,6 +127,11 @@ ts_project(
             "src/ui/screens/acidMode.ts",
             "src/ui/app/main.ts",
             "src/ui/main.ts",
+            # The JIT fx-bench golden lives here only for the shared
+            # device-bench-<soc>[-jit].json path convention; it's consumed by the
+            # HITL harness (//pi/hitl/harness:fx_bench_jit), NOT imported by any web
+            # test — so tsc never emits it and its declared out would be missing.
+            "tests/testdata/*-jit.json",
         ],
     ),
     declaration = False,
@@ -239,8 +247,8 @@ genrule(
 )
 
 # The golden HITL benchmark bundles the perf doc is generated from (one per
-# platform; only esp32c6 today). A filegroup so the freshness genrule can pass
-# every bundle to the generator regardless of how many platforms exist.
+# platform, plus the JIT variant per platform). A filegroup so the freshness
+# genrule can pass every bundle to the generator regardless of how many exist.
 filegroup(
     name = "device_bench_goldens",
     srcs = glob(["tests/testdata/device-bench-*.json"]),

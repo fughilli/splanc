@@ -19,9 +19,10 @@ held-out programs (`profileValidation.ts`), gated at the same tolerance as
 
 ## Platforms
 
-| SoC     | Device  | MHz | Fit | Held-out | RMS  | Max   | Tolerance | Verdict |
-| ------- | ------- | --- | --- | -------- | ---- | ----- | --------- | ------- |
-| esp32c6 | esp32c6 | 160 | 65  | 7        | 7.8% | 15.8% | 13%       | PASS    |
+| SoC     | Device        | MHz | Fit | Held-out | RMS  | Max   | Tolerance | Verdict |
+| ------- | ------------- | --- | --- | -------- | ---- | ----- | --------- | ------- |
+| esp32c6 | esp32c6       | 160 | 65  | 7        | 7.8% | 15.8% | 13%       | PASS    |
+| esp32c6 | esp32c6 (JIT) | 160 | 65  | 7        | 7.3% | 16.7% | 13%       | PASS    |
 
 ## esp32c6 — esp32c6
 
@@ -238,3 +239,225 @@ LED transmit path, excluded from the gate as transmit-bound noise).
 | lavalamp      | held-out | 200  | 3,291,131    | 435,225     |
 | mix3M         | held-out | 128  | 6,529,490    | 297,549     |
 | neg2M         | held-out | 128  | 1,871,863    | 302,727     |
+
+## esp32c6 — esp32c6 (JIT)
+
+The **on-device RV32IM JIT** is enabled (the shipped default). It compiles hot straight-line
+**integer / fixed-point** blocks to native RV32; float-heavy and control-flow-heavy code stays
+interpreted. Same calibration corpus and firmware as the interpreter section above — only `set_jit`
+differs — so compare per-opcode and per-program costs directly against it to see where the JIT pays
+off.
+
+| Field              | Value                                       |
+| ------------------ | ------------------------------------------- |
+| SoC                | esp32c6                                     |
+| Device             | esp32c6 (JIT)                               |
+| deviceKey          | esp32c6-jit                                 |
+| CPU clock          | 160 MHz (160,000,000 Hz)                    |
+| Programs           | 65 fit + 7 held-out                         |
+| Regression margins | default 10%, sweep16 15%                    |
+| Fit residual       | ±70.2%                                      |
+| Held-out accuracy  | RMS 7.3% · mean 5.1% · max 16.7% · R² 0.994 |
+| Verdict            | PASS (RMS 7.3% vs 13% tolerance)            |
+
+### Fixed overheads
+
+Per-phase framing costs the fit isolates from the per-opcode slopes.
+
+| Overhead     | Cycles   | ns        |
+| ------------ | -------- | --------- |
+| update_fixed | 385176.2 | 2407351.4 |
+| shade_fixed  | 2199.7   | 13748.4   |
+| show_fixed   | 51316.6  | 320728.8  |
+| show_per_led | 1958.9   | 12243.0   |
+
+### Fitted per-opcode cost
+
+Per-lane opcode cost from the least-squares fit. **Fitted** rows were measured on this
+device; the rest keep the shipped default seed (the fit only overrides opcodes a
+benchmark actually exercised). Sorted by cost.
+
+| Opcode        | Cycles  | ns       | Fitted |
+| ------------- | ------- | -------- | ------ |
+| BinMath:pow   | 1917.46 | 11984.15 | yes    |
+| Hsv2Rgb       | 1387.67 | 8672.97  | yes    |
+| UnMath:tan    | 1347.88 | 8424.27  | yes    |
+| BinMath:atan2 | 1145.23 | 7157.69  | yes    |
+| Cross         | 988.19  | 6176.17  | yes    |
+| UnMath:exp    | 899.16  | 5619.77  | yes    |
+| UnMath:log    | 841.75  | 5260.97  | yes    |
+| Smoothstep    | 800.04  | 5000.27  | yes    |
+| UnMath:sqrt   | 723.66  | 4522.89  | yes    |
+| BinMath:mod   | 697.67  | 4360.47  | yes    |
+| UnMath:cos    | 686.85  | 4292.83  | yes    |
+| Palette       | 644.00  | 4024.98  | yes    |
+| UnMath:sin    | 615.30  | 3845.62  | yes    |
+| Normalize     | 559.49  | 3496.80  | yes    |
+| Distance      | 524.14  | 3275.88  | yes    |
+| UnMath:ceil   | 452.55  | 2828.45  | yes    |
+| Div           | 449.81  | 2811.29  | yes    |
+| Mix           | 408.40  | 2552.49  | yes    |
+| Length        | 387.18  | 2419.87  | yes    |
+| UnMath:fract  | 378.52  | 2365.74  | yes    |
+| Hash3         | 366.69  | 2291.81  | yes    |
+| Clamp         | 327.61  | 2047.57  | yes    |
+| Mul           | 307.68  | 1922.97  | yes    |
+| Sub           | 306.03  | 1912.66  | yes    |
+| Add           | 303.63  | 1897.70  | yes    |
+| UnMath:floor  | 296.96  | 1856.03  | yes    |
+| BinMath:min   | 286.65  | 1791.56  | yes    |
+| BinMath:max   | 286.26  | 1789.14  | yes    |
+| BinMath:step  | 264.49  | 1653.04  | yes    |
+| Dot           | 242.28  | 1514.27  | yes    |
+| Hash1         | 220.20  | 1376.28  | yes    |
+| UnMath:sign   | 173.46  | 1084.10  | yes    |
+| UnMath:abs    | 150.81  | 942.58   | yes    |
+| Neg           | 143.68  | 898.00   | yes    |
+| BinMath       | 130.00  | 812.50   |        |
+| UnMath        | 120.00  | 750.00   |        |
+| DivFix        | 24.00   | 150.00   |        |
+| DivI          | 20.00   | 125.00   |        |
+| ModI          | 20.00   | 125.00   |        |
+| Scale         | 14.00   | 87.50    |        |
+| F2Fix         | 10.00   | 62.50    |        |
+| Fix2F         | 10.00   | 62.50    |        |
+| F2I           | 8.00    | 50.00    |        |
+| I2F           | 8.00    | 50.00    |        |
+| Call          | 6.00    | 37.50    |        |
+| MulFix        | 6.00    | 37.50    |        |
+| MulI          | 4.00    | 25.00    |        |
+| Ret           | 4.00    | 25.00    |        |
+| RetFn         | 4.00    | 25.00    |        |
+| Swizzle       | 4.00    | 25.00    |        |
+| BrFalse       | 3.00    | 18.75    |        |
+| Cmp           | 3.00    | 18.75    |        |
+| LoadCtx       | 3.00    | 18.75    |        |
+| LoadLocal     | 3.00    | 18.75    |        |
+| LoadState     | 3.00    | 18.75    |        |
+| LoadUniform   | 3.00    | 18.75    |        |
+| StoreLocal    | 3.00    | 18.75    |        |
+| StoreState    | 3.00    | 18.75    |        |
+| Swap          | 3.00    | 18.75    |        |
+| AddI          | 2.00    | 12.50    |        |
+| CmpI          | 2.00    | 12.50    |        |
+| Fix2I         | 2.00    | 12.50    |        |
+| I2Fix         | 2.00    | 12.50    |        |
+| Jmp           | 2.00    | 12.50    |        |
+| Logic         | 2.00    | 12.50    |        |
+| NegI          | 2.00    | 12.50    |        |
+| PushConst     | 2.00    | 12.50    |        |
+| SubI          | 2.00    | 12.50    |        |
+| Pop           | 1.00    | 6.25     |        |
+
+### Builtin costs (effects-AI ranking)
+
+Rendered verbatim from `builtinCostsToPrompt` — the per-builtin ranking the
+in-editor AI is fed, relative to a float multiply (each runs once per LED in
+`shade()`):
+
+```text
+BUILTIN COSTS on this device (esp32c6 @ 160 MHz, measured on your board) — per call, relative to a float multiply. shade() runs each ONCE PER LED, so favor the cheap ones:
+  abs 0.5x, sign 0.6x, hash 0.7x, dot 0.8x, step 0.9x, max 0.9x, min 0.9x, floor 1.0x, add 1.0x, sub 1.0x, mul 1.0x, clamp 1.1x, fract 1.2x, length 1.3x, mix 1.3x, div 1.5x, ceil 1.5x, distance 1.7x, normalize 1.8x, sin 2.0x, palette0 2.1x, cos 2.2x, mod 2.3x, sqrt 2.4x, smoothstep 2.6x, log 2.7x, exp 2.9x, cross 3.2x, atan2 3.7x, tan 4.4x, hsv2rgb 4.5x, pow 6.2x
+Hoist the pricey builtins (pow/atan2/log/exp/length/normalize/distance/smoothstep) out of shade() into update() or precompute into state; swap sin/cos/pow for fixed16/fixed8 (LUT trig, no soft-float) or step/mix/polynomials; avoid length/normalize where a squared distance works (hidden sqrt).
+```
+
+### Estimator accuracy (held-out)
+
+Predicted-vs-measured total frame time (FX-VM frame + LED transmit) for the held-out
+programs the fit never saw. Cycles are the wall-time re-expressed at the device clock.
+
+| Program  | LEDs | Measured (ms) | Predicted (ms) | Error  | Measured cyc | Predicted cyc |
+| -------- | ---- | ------------- | -------------- | ------ | ------------ | ------------- |
+| clamp32M | 128  | 59.78         | 59.45          | -0.5%  | 9.56M        | 9.51M         |
+| dot3M    | 128  | 25.39         | 27.20          | +7.1%  | 4.06M        | 4.35M         |
+| expf2M   | 128  | 67.91         | 70.10          | +3.2%  | 10.87M       | 11.22M        |
+| hsv2rgbM | 128  | 45.29         | 44.04          | -2.8%  | 7.25M        | 7.05M         |
+| lavalamp | 200  | 20.71         | 21.75          | +5.0%  | 3.31M        | 3.48M         |
+| mix3M    | 128  | 40.05         | 40.08          | +0.1%  | 6.41M        | 6.41M         |
+| neg2M    | 128  | 13.33         | 15.56          | +16.7% | 2.13M        | 2.49M         |
+
+Held-out **RMS 7.3%**, mean 5.1%, max 16.7% against the **13%** tolerance — **PASS**.
+
+Outliers (|error| > 10%): `neg2M` +16.7%. The linear sum-of-op-costs model over-predicts the
+cheapest real effects.
+
+### Raw measured costs
+
+Every measured micro-program from the golden bundle: cycle-accurate frame cycles
+(the FX-VM execution cost, which the regression gate compares) and show cycles (the
+LED transmit path, excluded from the gate as transmit-bound noise).
+
+| Program       | Set      | LEDs | Frame cycles | Show cycles |
+| ------------- | -------- | ---- | ------------ | ----------- |
+| empty         | fit      | 128  | 300,321      | 283,160     |
+| sweep16       | fit      | 16   | 47,459       | 56,322      |
+| sweep256      | fit      | 256  | 621,625      | 529,694     |
+| hash1M        | fit      | 128  | 2,001,217    | 291,854     |
+| hash3M        | fit      | 128  | 2,324,747    | 289,290     |
+| hash12M       | fit      | 128  | 2,723,887    | 305,855     |
+| hsv2rgb2M     | fit      | 128  | 12,347,565   | 315,600     |
+| length3M      | fit      | 128  | 5,586,013    | 313,516     |
+| negM          | fit      | 128  | 1,568,245    | 281,732     |
+| normalize3M   | fit      | 128  | 8,110,105    | 299,119     |
+| paletteM      | fit      | 128  | 3,452,051    | 285,195     |
+| absfM         | fit      | 128  | 1,720,653    | 282,525     |
+| ceilfM        | fit      | 128  | 2,950,816    | 286,742     |
+| cosM          | fit      | 128  | 3,906,905    | 301,830     |
+| floorfM       | fit      | 128  | 2,313,793    | 291,403     |
+| fractfM       | fit      | 128  | 2,654,009    | 283,776     |
+| signfM        | fit      | 128  | 1,811,865    | 294,359     |
+| sinM          | fit      | 128  | 3,622,071    | 289,070     |
+| sqrtfM        | fit      | 128  | 4,070,561    | 312,177     |
+| tanM          | fit      | 128  | 6,626,355    | 298,810     |
+| normalize32M  | fit      | 128  | 14,602,029   | 349,093     |
+| addM          | fit      | 128  | 2,318,779    | 290,620     |
+| divM          | fit      | 128  | 2,943,615    | 305,152     |
+| mulM          | fit      | 128  | 2,335,469    | 284,180     |
+| subM          | fit      | 128  | 2,355,717    | 296,146     |
+| absf2M        | fit      | 128  | 2,153,587    | 296,169     |
+| atan2fM       | fit      | 128  | 5,766,087    | 294,476     |
+| ceilf2M       | fit      | 128  | 4,628,326    | 296,663     |
+| cos2M         | fit      | 128  | 6,549,521    | 299,095     |
+| floorf2M      | fit      | 128  | 3,353,623    | 295,721     |
+| fractf2M      | fit      | 128  | 4,018,629    | 292,975     |
+| modfM         | fit      | 128  | 3,952,485    | 296,560     |
+| powfM         | fit      | 128  | 8,965,455    | 301,294     |
+| signf2M       | fit      | 128  | 2,339,861    | 289,188     |
+| sin2M         | fit      | 128  | 5,959,227    | 297,141     |
+| sqrtf2M       | fit      | 128  | 6,844,626    | 311,641     |
+| stepfM        | fit      | 128  | 2,293,737    | 293,656     |
+| tan2M         | fit      | 128  | 11,958,743   | 330,084     |
+| maxfM         | fit      | 128  | 2,277,225    | 289,543     |
+| minfM         | fit      | 128  | 2,273,265    | 302,207     |
+| hash32M       | fit      | 128  | 4,062,121    | 287,984     |
+| expfM         | fit      | 128  | 5,922,945    | 295,824     |
+| logfM         | fit      | 128  | 5,753,319    | 322,934     |
+| length32M     | fit      | 128  | 10,570,733   | 324,563     |
+| palette2M     | fit      | 128  | 6,338,097    | 301,334     |
+| add2M         | fit      | 128  | 3,352,757    | 306,207     |
+| div2M         | fit      | 128  | 4,603,813    | 291,051     |
+| mul2M         | fit      | 128  | 3,385,807    | 291,648     |
+| sub2M         | fit      | 128  | 3,425,449    | 288,749     |
+| distance3M    | fit      | 128  | 7,253,363    | 295,144     |
+| cross3M       | fit      | 128  | 5,288,111    | 295,136     |
+| atan2f2M      | fit      | 128  | 10,313,707   | 296,556     |
+| modf2M        | fit      | 128  | 6,637,546    | 291,240     |
+| powf2M        | fit      | 128  | 16,621,707   | 311,331     |
+| stepf2M       | fit      | 128  | 3,031,071    | 286,007     |
+| maxf2M        | fit      | 128  | 3,262,307    | 295,234     |
+| minf2M        | fit      | 128  | 3,268,265    | 292,640     |
+| dot32M        | fit      | 128  | 6,934,095    | 299,571     |
+| logf2M        | fit      | 128  | 10,321,707   | 303,559     |
+| clamp3M       | fit      | 128  | 5,005,421    | 296,073     |
+| smoothstep3M  | fit      | 128  | 10,788,779   | 299,233     |
+| cross32M      | fit      | 128  | 8,944,577    | 296,336     |
+| distance32M   | fit      | 128  | 13,944,543   | 333,568     |
+| mix32M        | fit      | 128  | 11,016,523   | 300,842     |
+| smoothstep32M | fit      | 128  | 20,652,543   | 558,458     |
+| clamp32M      | held-out | 128  | 9,262,239    | 301,900     |
+| dot3M         | held-out | 128  | 3,747,741    | 313,890     |
+| expf2M        | held-out | 128  | 10,557,717   | 308,014     |
+| hsv2rgbM      | held-out | 128  | 6,949,793    | 296,724     |
+| lavalamp      | held-out | 200  | 2,868,795    | 445,284     |
+| mix3M         | held-out | 128  | 6,108,051    | 299,981     |
+| neg2M         | held-out | 128  | 1,839,733    | 293,852     |
