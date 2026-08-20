@@ -345,6 +345,20 @@ class TestSinksNoop(unittest.TestCase):
         os.environ.pop("CLICKHOUSE_URL", None)
         self.assertFalse(sinks.push_clickhouse([B.Record(target="//x")]))
 
+    def test_tinybird_noop_without_creds(self):
+        import os
+
+        for k in ("TINYBIRD_API_URL", "TINYBIRD_TOKEN"):
+            os.environ.pop(k, None)
+        self.assertFalse(sinks.push_tinybird([B.Record(target="//x")]))
+
+    def test_tinybird_row_keeps_iso_timestamp(self):
+        rec = B.Record(target="//x", status="FAILED", cached=True, timestamp="2024-08-07T12:00:00Z")
+        row = sinks._tinybird_row(rec)
+        self.assertEqual(set(row), set(sinks._CLICKHOUSE_COLUMNS))
+        self.assertEqual(row["cached"], 1)
+        self.assertEqual(row["timestamp"], "2024-08-07T12:00:00Z")  # ISO, not space-format
+
     def test_clickhouse_row_shape(self):
         rec = B.Record(target="//x", status="FAILED", cached=True, timestamp="2024-08-07T12:00:00Z")
         row = sinks._clickhouse_row(rec)

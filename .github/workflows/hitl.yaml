@@ -82,6 +82,9 @@ jobs:
       CLICKHOUSE_DATABASE: ${{ secrets.CLICKHOUSE_DATABASE }}
       CLICKHOUSE_TABLE: ${{ secrets.CLICKHOUSE_TABLE }}
       CLICKHOUSE_TOKEN: ${{ secrets.CLICKHOUSE_TOKEN }}
+      TINYBIRD_API_URL: ${{ secrets.TINYBIRD_API_URL }}
+      TINYBIRD_TOKEN: ${{ secrets.TINYBIRD_TOKEN }}
+      TINYBIRD_DATASOURCE: ${{ secrets.TINYBIRD_DATASOURCE }}
       PR_NUMBER: ${{ github.event.pull_request.number }}
     steps:
       - name: Setup repository

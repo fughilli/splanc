@@ -212,7 +212,60 @@ def push_clickhouse(records: list) -> bool:
     return True
 
 
+# ---------------------------------------------------------------------------
+# Tinybird (Forward) — the recommended free, fully-hosted columnar backend
+# ---------------------------------------------------------------------------
+
+# Tinybird does NOT expose a raw ClickHouse `INSERT` HTTP endpoint; it ingests
+# through its high-throughput Events API (POST /v0/events?name=<datasource>,
+# newline-delimited JSON, Bearer token with append scope). This is the correct
+# path for Tinybird Forward / the free "Build" plan. (push_clickhouse above is
+# for real ClickHouse / ClickHouse Cloud / self-hosted.)
+
+
+def _tinybird_row(rec) -> dict:
+    # Same columns as the columnar schema, but keep the ISO-8601 timestamp — the
+    # Events API parses ISO into DateTime64 — and coerce the bool to 0/1 for the
+    # UInt8 column.
+    d = asdict(rec)
+    row = {c: d.get(c) for c in _CLICKHOUSE_COLUMNS}
+    row["cached"] = 1 if row.get("cached") else 0
+    return row
+
+
+def push_tinybird(records: list) -> bool:
+    api = os.environ.get("TINYBIRD_API_URL", "")  # e.g. https://api.us-east.aws.tinybird.co
+    token = os.environ.get("TINYBIRD_TOKEN", "")  # token with DATASOURCES:APPEND scope
+    if not api or not token:
+        _log("Tinybird creds unset; skipping Tinybird push.")
+        return False
+    if not records:
+        _log("no records; skipping Tinybird push.")
+        return False
+
+    datasource = os.environ.get("TINYBIRD_DATASOURCE", "ci_test_results")
+    endpoint = f"{api.rstrip('/')}/v0/events?name={urllib.parse.quote(datasource)}"
+    body = "\n".join(json.dumps(_tinybird_row(r), separators=(",", ":")) for r in records).encode()
+    headers = {"Content-Type": "application/x-ndjson", "Authorization": f"Bearer {token}"}
+
+    try:
+        resp = _post(endpoint, body, headers)
+        code = resp.getcode()
+    except urllib.error.HTTPError as e:
+        _log(f"Tinybird push failed: HTTP {e.code} {e.read()[:200]!r}")
+        return False
+    except urllib.error.URLError as e:
+        _log(f"Tinybird push failed: {e}")
+        return False
+    if code not in (200, 202):
+        _log(f"Tinybird push returned HTTP {code}")
+        return False
+    _log(f"pushed {len(records)} records to Tinybird datasource {datasource}.")
+    return True
+
+
 def push_all(records: list) -> None:
     """Push to every configured sink; each no-ops without its credentials."""
     push_loki(records)
     push_clickhouse(records)
+    push_tinybird(records)

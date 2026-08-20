@@ -1,12 +1,14 @@
 # Tinybird Data Source for the CI observability records (FUG-128).
 #
 # Tinybird is the recommended free, fully-hosted, well-supported columnar store
-# (managed ClickHouse; the free "Build" plan needs no credit card). Create this
-# Data Source with the Tinybird CLI (`tb push`) or paste the schema in the UI.
+# (managed ClickHouse; the free tier needs no credit card). Drop this file in
+# your Tinybird project's datasources/ dir and `tb deploy` (Forward), or paste
+# the schema in the UI.
 #
-# The BEP parser's ClickHouse sink posts NDJSON to Tinybird's ClickHouse-
-# compatible endpoint (or use Tinybird's Events API). Column names match the
-# Record fields in tools/ci_observability/bep_report.py.
+# The BEP parser's Tinybird sink (sinks.push_tinybird) appends rows via the
+# Events API: POST <api-host>/v0/events?name=ci_test_results with newline-
+# delimited JSON. The `json:$.field` paths below map each JSON key to a column;
+# names match the Record fields in tools/ci_observability/bep_report.py.
 
 SCHEMA >
     `timestamp` DateTime64(3) `json:$.timestamp`,

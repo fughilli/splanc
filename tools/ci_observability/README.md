@@ -36,7 +36,7 @@ collapsible per-target details) and links it from the job summary and the log.
 | ---------------------------------------------------- | ------------------------------------------------------------------------------------------ |
 | `bep_report.py`                                      | Parse BEP → normalized records → NDJSON + HTML + step-summary; push to sinks. Stdlib only. |
 | `report_html.py`                                     | The self-contained static HTML report renderer.                                            |
-| `sinks.py`                                           | `loki` + `clickhouse` sinks; each no-ops without credentials.                              |
+| `sinks.py`                                           | `loki` + `tinybird` + `clickhouse` sinks; each no-ops without credentials.                 |
 | `schema/ci_test_results.sql`                         | ClickHouse DDL for the columnar table.                                                     |
 | `schema/ci_test_results.datasource`                  | Tinybird-native Data Source form of the same.                                              |
 | `../../.github/actions/bep-report/action.yml`        | Reusable CI step wiring it all together.                                                   |
@@ -66,71 +66,108 @@ identical failures across runs group into one row.
 The issue asks for a **columnar** store that is low-cost, fully-hosted, and
 well-supported. Evaluated options:
 
-| Option                    | Free & hosted?                      | Notes                                                                                                                                                                     |
-| ------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Tinybird** (Build plan) | ✅ free, hosted, managed ClickHouse | **Recommended columnar backend.** No credit card; ClickHouse under the hood, so `schema/ci_test_results.sql` applies and Grafana's ClickHouse datasource works.           |
-| ClickHouse Cloud          | ⚠️ 30-day trial then paid           | The archetype, but not fully-free-hosted.                                                                                                                                 |
-| Self-hosted ClickHouse    | free, **not** hosted                | You run it.                                                                                                                                                               |
-| **Grafana Cloud Loki**    | ✅ free, hosted                     | Not columnar, but LogQL aggregates these structured events into all three views — and FUG-117 already wired the credentials, so this is the **zero-new-account default**. |
+| Option                            | Free & hosted?                      | Notes                                                                                                                                                                     |
+| --------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Tinybird** (Build/Forward free) | ✅ free, hosted, managed ClickHouse | **Recommended columnar backend.** No credit card. Ingest via its Events API (`sinks.push_tinybird`); columns match `schema/ci_test_results.datasource`.                   |
+| ClickHouse Cloud                  | ⚠️ 30-day trial then paid           | The archetype, but not fully-free-hosted.                                                                                                                                 |
+| Self-hosted ClickHouse            | free, **not** hosted                | You run it.                                                                                                                                                               |
+| **Grafana Cloud Loki**            | ✅ free, hosted                     | Not columnar, but LogQL aggregates these structured events into all three views — and FUG-117 already wired the credentials, so this is the **zero-new-account default**. |
 
 **What we ship:** the dashboard (`ci-failures.json`) is built against **Loki**,
 because those credentials already exist in this repo (FUG-117) — so the pipeline
 produces the three required views the moment the Loki secrets are present, with
-no new account. The **ClickHouse sink + DDL** are the columnar upgrade: point
-`CLICKHOUSE_URL` at a Tinybird/ClickHouse endpoint and the same records also land
-in a real columnar table for ad-hoc SQL (the three reference queries are in the
-DDL). Both sinks run; either can be left unconfigured.
+no new account. The **Tinybird sink** (Events API) and the **ClickHouse sink**
+(native `INSERT`) are the columnar upgrade: the same records also land in a real
+columnar table for ad-hoc SQL (reference queries in `schema/ci_test_results.sql`).
+All sinks run independently; leave any unconfigured. See the recipes below.
 
-## Configuration — the only manual step
+## Configuration — pick a recipe (both fully free)
 
-Everything above is wired and tested. To light it up, set credentials (nothing
-else):
+All the code is wired and tested. Turning it on is **just credentials** — set as
+**repository** secrets (Settings → Secrets and variables → Actions → _Repository
+secrets_) so every job inherits them; fork PRs get empty values and every push
+step no-ops. The sinks are independent — configure one, the other, or both.
 
-### 1. Telemetry sink credentials (GitHub → repository secrets)
+The HTML report + artifact link need **no** credentials at all — they work on
+the very next CI run regardless.
 
-Set these as **repository** secrets (Settings → Secrets and variables → Actions
-→ _Repository secrets_) so every workflow job inherits them; fork PRs see empty
-values and the push/report steps no-op.
+### Recipe A — Grafana Cloud Loki only (least effort; the shipped dashboard)
 
-**Loki (default; same values FUG-117 uses for the HITL push):**
+This is the simplest fully-free path, and the `ci-failures.json` dashboard is
+built for it. You likely already have the Grafana Cloud stack + Loki from
+FUG-117.
 
-| Secret                    | Value                                                     |
-| ------------------------- | --------------------------------------------------------- |
-| `GRAFANA_CLOUD_LOKI_URL`  | `https://logs-prod-<region>.grafana.net/loki/api/v1/push` |
-| `GRAFANA_CLOUD_LOKI_USER` | numeric Loki instance id                                  |
-| `GRAFANA_CLOUD_LOKI_KEY`  | access-policy token with `logs:write`                     |
+1. Grafana Cloud free tier (10k series / 50 GB logs) → **Loki → Details**: note
+   the push URL + numeric user; create an access-policy token with `logs:write`.
+2. Set repository secrets:
 
-> These already live in the "HITL" _environment_ from FUG-117. Copy the same
-> values to repository secrets so the non-HITL jobs (test, macos, …) can read
-> them too. (Environment secrets are only visible to jobs that opt into that
-> environment; the CI-observability jobs don't.)
+   | Secret                    | Value                                                     |
+   | ------------------------- | --------------------------------------------------------- |
+   | `GRAFANA_CLOUD_LOKI_URL`  | `https://logs-prod-<region>.grafana.net/loki/api/v1/push` |
+   | `GRAFANA_CLOUD_LOKI_USER` | numeric Loki instance id                                  |
+   | `GRAFANA_CLOUD_LOKI_KEY`  | access-policy token with `logs:write`                     |
 
-**ClickHouse / Tinybird (optional columnar backend):**
+   > These already exist in the "HITL" _environment_ from FUG-117 — copy the
+   > same values to **repository** secrets so the non-HITL jobs (test, macos, …)
+   > can read them too. (Environment secrets are invisible to jobs that don't
+   > opt into that environment; these jobs don't.)
 
-| Secret                                    | Value                                                                                               |
-| ----------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `CLICKHOUSE_URL`                          | HTTP(S) endpoint, e.g. `https://<host>:8443` (ClickHouse) or the Tinybird ClickHouse-compatible URL |
-| `CLICKHOUSE_DATABASE`                     | database name (optional)                                                                            |
-| `CLICKHOUSE_TABLE`                        | table name (default `ci_test_results`)                                                              |
-| `CLICKHOUSE_USER` / `CLICKHOUSE_PASSWORD` | ClickHouse auth, **or**                                                                             |
-| `CLICKHOUSE_TOKEN`                        | a bearer token (Tinybird)                                                                           |
+3. In Grafana → Connections → Data sources, add a **Loki** data source pointing
+   at that stack. The dashboard's `DS_LOKI` variable selects it.
 
-Then create the table once from `schema/ci_test_results.sql` (or push
-`schema/ci_test_results.datasource` with the Tinybird CLI).
+That's the whole recipe — nothing else to stand up. **You do not need Tinybird
+or ClickHouse for the dashboard.**
 
-### 2. Grafana dashboard sync (already set up by FUG-117)
+### Recipe B — Tinybird (Forward) columnar backend (also free)
 
-The dashboard is synced by the existing `grafana-dashboards.yaml` workflow,
-which reads the "Grafana" Actions environment (`GRAFANA_URL`, `GRAFANA_TOKEN`,
-optional `GRAFANA_FOLDER_UID`). It now also globs
-`observability/ci/dashboards/*.json`, so a merge to `main` pushes the CI
-dashboard automatically. Add a **Loki datasource** to your Grafana (Connections
-→ Data sources) pointing at the same Grafana Cloud stack; the dashboard's
-`DS_LOKI` variable selects it. For the columnar path, add the **ClickHouse**
-datasource plugin and repoint the panels (or import the SQL from the DDL).
+Use this if you want a real columnar table for ad-hoc SQL / the three
+aggregations in ClickHouse SQL. Tinybird's free tier needs no credit card. From
+your Tinybird quick-start, you only need steps that create **our** data source
+and a token — **skip the taxi sample data, the `best_tip_zones` pipe, and
+Tinybird Local/Docker.**
 
-That's it — once the secrets are in place, the next CI run parses its BEP,
-uploads the HTML report, and populates the dashboard.
+```bash
+# In a fresh Tinybird project dir (`tb init`), drop our schema in:
+cp <splanc>/tools/ci_observability/schema/ci_test_results.datasource datasources/
+tb deploy                      # creates the ci_test_results data source in Cloud
+tb --cloud token ls            # or create one scoped to append ci_test_results
+```
+
+Get the workspace **API host** (e.g. `https://api.us-east.aws.tinybird.co`) from
+`.tinyb` (`jq -r .host .tinyb`) or the workspace URL, and a **token with append
+scope** for `ci_test_results` (the admin token works; a scoped one is cleaner).
+Then set repository secrets:
+
+| Secret                | Value                                                               |
+| --------------------- | ------------------------------------------------------------------- |
+| `TINYBIRD_API_URL`    | your workspace API host, e.g. `https://api.us-east.aws.tinybird.co` |
+| `TINYBIRD_TOKEN`      | a token with `DATASOURCES:APPEND` scope for `ci_test_results`       |
+| `TINYBIRD_DATASOURCE` | data source name (optional; default `ci_test_results`)              |
+
+The sink posts rows to Tinybird's **Events API**
+(`POST /v0/events?name=ci_test_results`, newline-delimited JSON) — the correct
+ingestion path for Tinybird Forward. Explore the data in Tinybird's own UI
+(`tb --cloud open`) with SQL, or graph it in Grafana by adding the community
+**ClickHouse/Tinybird** data source and using the reference queries in
+`schema/ci_test_results.sql`.
+
+> **Self-hosted / ClickHouse Cloud instead of Tinybird?** Use the `CLICKHOUSE_*`
+> secrets (`CLICKHOUSE_URL`, `CLICKHOUSE_USER`/`CLICKHOUSE_PASSWORD` or
+> `CLICKHOUSE_TOKEN`, optional `CLICKHOUSE_DATABASE`/`CLICKHOUSE_TABLE`) and
+> create the table from `schema/ci_test_results.sql`. That sink uses ClickHouse's
+> native `INSERT … FORMAT JSONEachRow` HTTP endpoint — which Tinybird does not
+> expose, hence the separate Tinybird sink above.
+
+### Grafana dashboard sync (already set up by FUG-117)
+
+The dashboard is synced by the existing `grafana-dashboards.yaml` workflow, which
+reads the "Grafana" Actions environment (`GRAFANA_URL`, `GRAFANA_TOKEN`, optional
+`GRAFANA_FOLDER_UID`). It now also globs `observability/ci/dashboards/*.json`, so
+a merge to `main` pushes the CI dashboard automatically. (You can also import the
+JSON by hand: Grafana → Dashboards → New → Import.)
+
+Once the secrets are in place, the next CI run parses its BEP, uploads the HTML
+report, and populates whichever sink(s) you configured.
 
 ## Local use
 
