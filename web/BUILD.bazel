@@ -127,6 +127,11 @@ ts_project(
             "src/ui/screens/acidMode.ts",
             "src/ui/app/main.ts",
             "src/ui/main.ts",
+            # The JIT fx-bench golden lives here only for the shared
+            # device-bench-<soc>[-jit].json path convention; it's consumed by the
+            # HITL harness (//pi/hitl/harness:fx_bench_jit), NOT imported by any web
+            # test — so tsc never emits it and its declared out would be missing.
+            "tests/testdata/*-jit.json",
         ],
     ),
     declaration = False,
