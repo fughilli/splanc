@@ -25,6 +25,7 @@ py_library(
         "hitl_client.py",
         "hitl_improv.py",
         "improv.py",
+        "jit_soak_core.py",
         "led_pattern.py",
         "map_upload_core.py",
         "mapping_trigger_core.py",
@@ -273,6 +274,41 @@ py_test(
     ],
     imports = ["."],
     main = "fx_bench.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# On-hardware JIT-on soak (FUG-135): reserve a rig, flash, provision, load a
+# JIT-able effect (benchmarks/lavalamp.heldout.fx, compiled via fx_compile), drive
+# set_perf FULL for ~30 s, and assert the DUT never faults / reboots and stays
+# healthy — no Guru Meditation / watchdog / extra boot banner in serial, update=ok
+# throughout, and a stable heap_min_free. The shipped firmware runs the on-device
+# JIT by default, but :e2e never loads a JIT-able effect under sustained load, so a
+# JIT stability regression slips through this lane otherwise. Like :fx_bench it's a
+# manual+hitl py_test (needs a rig + board); the verdict logic (jit_soak_core) is
+# unit-tested off hardware in //pi/hitl/tests. --device-ws hits a reachable board
+# directly (a WS-only soak, no rig serial). Rides the flash-bundle + fx_compile +
+# the benchmark .fx + the hitl CLI in runfiles.
+py_test(
+    name = "jit_soak",
+    timeout = "eternal",
+    srcs = ["hitl_jit_soak.py"],
+    data = [
+        ":fx_benchmarks",
+        "//firmware/player_app:esp32c6_flashbundle",
+        "//fx_compiler:fx_compile",
+        "//pi/hitl/cmd/hitl",
+    ],
+    imports = ["."],
+    main = "hitl_jit_soak.py",
     tags = [
         "hitl",
         "manual",
