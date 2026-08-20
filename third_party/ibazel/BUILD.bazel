@@ -1,0 +1,55 @@
+"""ibazel (bazel-watcher) — the file watcher that drives `//web:dev`'s live reload.
+
+The per-platform standalone binaries are fetched hermetically in MODULE.bazel
+(`http_file`, pinned by sha256). This package select()s the one matching the
+host and re-exposes it as a single main-repo executable, so a consumer's
+runfiles always carry it at the stable path `third_party/ibazel/ibazel` — no
+Node/pnpm anywhere in the chain (unlike the @bazel/ibazel npm package).
+"""
+
+load("@bazel_skylib//rules:native_binary.bzl", "native_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+config_setting(
+    name = "darwin_arm64",
+    constraint_values = [
+        "@platforms//os:macos",
+        "@platforms//cpu:arm64",
+    ],
+)
+
+config_setting(
+    name = "darwin_amd64",
+    constraint_values = [
+        "@platforms//os:macos",
+        "@platforms//cpu:x86_64",
+    ],
+)
+
+config_setting(
+    name = "linux_arm64",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:arm64",
+    ],
+)
+
+config_setting(
+    name = "linux_amd64",
+    constraint_values = [
+        "@platforms//os:linux",
+        "@platforms//cpu:x86_64",
+    ],
+)
+
+native_binary(
+    name = "ibazel",
+    src = select({
+        ":darwin_arm64": "@ibazel_darwin_arm64//file",
+        ":darwin_amd64": "@ibazel_darwin_amd64//file",
+        ":linux_arm64": "@ibazel_linux_arm64//file",
+        ":linux_amd64": "@ibazel_linux_amd64//file",
+    }),
+    out = "ibazel",
+)

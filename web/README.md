@@ -57,7 +57,49 @@ mis-ids, tolerance to 60 ms camera latency (via the decoder's sync-delimiter
 alignment) and to dropped frames + pixel noise. Cross-language goldens pin the
 Gray-code plan to the M1 driver and the projection math to the M3 solver.
 
-Dev loop (hot reload, proxies `/ws` + `/maps` to a local M2):
+Dev loop — one bazel command for a live-reloading server **with TLS** (WebXR /
+getUserMedia / DeviceMotion / WSS all need a secure context):
+
+```sh
+bazelisk run //web:dev                    # https://localhost:8443, hot reload
+bazelisk run //web:dev -- --no-tls        # http://localhost:8080 (wall/dev)
+bazelisk run //web:dev -- --port 9443 --backend-port 9080
+```
+
+This is **fully hermetic** — it needs no host Node or pnpm, and doesn't touch a
+developer's global pnpm store. Everything comes from Bazel:
+
+- **Vite** runs via `//web:dev_server`, a `js_run_devserver` on Bazel's node
+  toolchain + the Bazel-linked `//web:node_modules` (materialized from the
+  repository cache — `jsqr` and every other import included). No `pnpm install`.
+- **The M2 backend** is `//pi/server:serve`, a `rules_python` py_binary with a
+  hermetic interpreter — serving the §7 WebSocket, `/maps`, and the wasm dirs
+  Vite proxies to.
+- **ibazel** is `//third_party/ibazel` — the standalone `bazel-watcher` binary
+  fetched by Bazel (pinned by sha256, per platform), _not_ the `@bazel/ibazel`
+  npm package, so the watch layer is Node-free too.
+
+The only host tools involved are `bazelisk` (the build tool) and `openssl` (the
+self-signed cert, shared with `//web:serve` via `.ledmapper/ssl`).
+
+`//web:dev` (`dev_watch.sh`) is the top-level driver: it makes the cert, starts
+the hermetic M2 backend, and execs the hermetic `ibazel` on `//web:dev_server`.
+ibazel watches the devserver's inputs and, via `js_run_devserver`'s notify
+integration, re-syncs changed sources into the run tree so Vite HMR applies them
+— live reload, sandbox-correct. TLS, port, and the backend URL are passed to
+Vite through `LEDMAPPER_*` env (see `vite.config.ts`). It nests a `bazelisk`
+invocation on purpose: `bazel run //web:dev` is the single entry point.
+
+Run the server directly (one-shot, no watch — still hermetic) with
+`bazelisk run //web:dev_server`; you just don't get the ibazel-driven reload.
+
+> Note: `src/**` edits hot-reload through ibazel's file-sync into the run tree.
+> The wasm bundles are served by the backend from a snapshot taken at launch, so
+> a change to a Rust/C++ effect or the Python server needs a restart (Ctrl-C +
+> re-run) — the app/UI loop itself is fully live.
+
+The older two-terminal loop still works if you prefer driving Vite yourself off
+a local `pnpm install` (plain http, no TLS, needs host Node/pnpm):
 
 ```sh
 bazelisk run //pi/server:serve -- --port 8080 --session-dir /tmp/lm/s --maps-dir /tmp/lm/m
