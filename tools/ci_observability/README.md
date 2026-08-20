@@ -101,11 +101,15 @@ FUG-117.
    the push URL + numeric user; create an access-policy token with `logs:write`.
 2. Set repository secrets:
 
-   | Secret                    | Value                                                     |
-   | ------------------------- | --------------------------------------------------------- |
-   | `GRAFANA_CLOUD_LOKI_URL`  | `https://logs-prod-<region>.grafana.net/loki/api/v1/push` |
-   | `GRAFANA_CLOUD_LOKI_USER` | numeric Loki instance id                                  |
-   | `GRAFANA_CLOUD_LOKI_KEY`  | access-policy token with `logs:write`                     |
+   | Secret                    | Value                                                        |
+   | ------------------------- | ------------------------------------------------------------ |
+   | `GRAFANA_CLOUD_LOKI_URL`  | `https://logs-prod-<region>.grafana.net/loki/api/v1/push`    |
+   | `GRAFANA_CLOUD_LOKI_USER` | numeric Loki instance id (e.g. `1740555`)                    |
+   | `GRAFANA_CLOUD_LOKI_KEY`  | a Grafana.com API token / access-policy token (`logs:write`) |
+
+   The sink authenticates with HTTP **basic auth** (`USER:KEY`) — exactly the
+   `basic_auth { username = "<id>"; password = "<token>" }` block Grafana Alloy
+   uses — so the same token/URL work here unchanged.
 
    > These already exist in the "HITL" _environment_ from FUG-117 — copy the
    > same values to **repository** secrets so the non-HITL jobs (test, macos, …)
