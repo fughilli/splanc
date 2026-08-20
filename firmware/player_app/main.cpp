@@ -154,7 +154,7 @@ static inline void fill_rgb(Rgb *a, uint32_t n, Rgb v) {
 
 // Render buffer cap; the actual rendered count follows the active pattern /
 // counting configuration at runtime (min'd against this).
-static const uint32_t kMaxLeds = 1024;
+static const uint32_t kMaxLeds = 768;
 static Rgb leds[kMaxLeds];
 
 // --- async LED transmit (FUG-122 hill-climb) --------------------------------

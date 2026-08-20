@@ -114,11 +114,15 @@ const MAX_JIT_BLOCKS: usize = 8;
 const MAX_JIT_CONSTS: usize = 64;
 const JIT_MAX_CODE: usize = 1024;
 
-// Default OFF: the interpreter is the shipped default (the golden device cost
-// model the app + fx_bench validate against is the interpreter's), and the
-// bounded-W^X PMP carve-out is armed only when the JIT is explicitly enabled.
-// Flip via lm_fx_set_jit_enabled + reload (the bench does this for the A/B).
-static mut FX_JIT_ENABLED: bool = false;
+// Default ON (FUG-125 follow-up): the on-device RV32IM JIT ships enabled — the
+// 3.4 KB of JIT statics are always linked regardless, so enabling is heap-neutral
+// and buys ~2.1x on hot straight-line integer/fixed blocks. The bounded-W^X PMP
+// carve-out arms lazily on the first JIT-able effect load (lm_jit_arm's g_jit_armed
+// guard). Toggle at runtime via lm_fx_set_jit_enabled + reload (fxjitbench A/B).
+// NOTE: fx_bench's golden is the INTERPRETER's per-opcode cost on canonical
+// bytecode, and the app's offline cost model is interpreter-calibrated — both now
+// diverge from what the shipped firmware runs. See WORKLOG / FUG-125 follow-up.
+static mut FX_JIT_ENABLED: bool = true;
 static mut FX_JIT_BLOCKS: [JitBlock; MAX_JIT_BLOCKS] =
     [JitBlock { func: jit_noop, end: 0, net_delta: 0 }; MAX_JIT_BLOCKS];
 static mut FX_JIT_N: usize = 0;
@@ -317,7 +321,8 @@ static mut FX_LAST_UPDATE_OUTCOME: u32 = 0;
 // exactly this cache's index.
 
 /// Cache capacity: the firmware's LED cap (main.cpp kMaxLeds). One entry/LED.
-const FX_TOPO_CAP: usize = 1024;
+/// Keep in sync with main.cpp `kMaxLeds` and led_config.h `NUM_LEDS`.
+const FX_TOPO_CAP: usize = 768;
 /// An LED is "at a junction" (`led.branch`) within this arclength (meters) of a
 /// segment endpoint that is a real branch point (degree >= 3).
 const FX_BRANCH_DIST_M: f32 = 0.05;
