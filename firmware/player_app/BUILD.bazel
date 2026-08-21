@@ -296,6 +296,7 @@ cc_binary(
         "serial_log.h",
         "ws2812_rmt.cpp",
         "ws2812_rmt.h",
+        ":build_info_h",  # generated build_info.h (git commit + dirty flag)
     ],
     copts = ["-fno-rtti"],
     local_defines = ["LM_FX_JIT_BENCH"],

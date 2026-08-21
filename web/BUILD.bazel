@@ -398,6 +398,11 @@ js_run_devserver(
         "vite.config.ts",
         "package.json",
         "tsconfig.json",
+        # Stamped git build info, same as :dist. Synced into the run tree next to
+        # vite.config.ts (chdir=web) so resolveBuildInfo() reads it directly —
+        # the dev server runs from a non-git sync tree, so its git fallback
+        # can't resolve HEAD and the About page would otherwise show "unknown".
+        ":build_info_json",
         # tsconfig.json extends the repo-root base; Vite/rolldown's dep scanner
         # needs it synced too (`../tsconfig.base.json` from web/) or it fails the
         # scan with TSCONFIG_ERROR. (js_library wrapper — js_run_devserver won't
