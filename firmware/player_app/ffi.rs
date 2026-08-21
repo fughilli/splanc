@@ -320,9 +320,23 @@ static mut FX_LAST_UPDATE_OUTCOME: u32 = 0;
 // scan every call. lm_map_led hands the render loop the map index, which is
 // exactly this cache's index.
 
-/// Cache capacity: the firmware's LED cap (main.cpp kMaxLeds). One entry/LED.
-/// Keep in sync with main.cpp `kMaxLeds` and led_config.h `NUM_LEDS`.
-const FX_TOPO_CAP: usize = 768;
+/// Cache capacity: the firmware's LED cap. One entry/LED. SINGLE SOURCE OF TRUTH
+/// is //firmware/player_app:led_caps.bzl (`MAX_LEDS`), injected here as the
+/// `LM_MAX_LEDS` rustc_env and as `-DLM_MAX_LEDS` into main.cpp / led_config.h.
+pub const FX_TOPO_CAP: usize = parse_cap(env!("LM_MAX_LEDS"));
+
+/// Parse the LM_MAX_LEDS build env (a decimal literal) at compile time.
+const fn parse_cap(s: &str) -> usize {
+    let b = s.as_bytes();
+    let mut n = 0usize;
+    let mut i = 0;
+    while i < b.len() {
+        assert!(b[i] >= b'0' && b[i] <= b'9', "LM_MAX_LEDS must be decimal");
+        n = n * 10 + (b[i] - b'0') as usize;
+        i += 1;
+    }
+    n
+}
 /// An LED is "at a junction" (`led.branch`) within this arclength (meters) of a
 /// segment endpoint that is a real branch point (degree >= 3).
 const FX_BRANCH_DIST_M: f32 = 0.05;

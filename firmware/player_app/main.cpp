@@ -192,8 +192,9 @@ static void on_heap_alloc_failed(size_t size, uint32_t caps, const char *fn) {
 }
 
 // Render buffer cap; the actual rendered count follows the active pattern /
-// counting configuration at runtime (min'd against this).
-static const uint32_t kMaxLeds = 768;
+// counting configuration at runtime (min'd against this). LM_MAX_LEDS is the
+// LED-cap SSOT, injected by the build from //firmware/player_app:led_caps.bzl.
+static const uint32_t kMaxLeds = LM_MAX_LEDS;
 static Rgb leds[kMaxLeds];
 
 // --- async LED transmit (FUG-122 hill-climb) --------------------------------
