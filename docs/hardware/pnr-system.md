@@ -78,6 +78,36 @@ placement and **periodically ground-truth** it with a fast router, feeding the
 result back — a damped fixed-point iteration, not a one-shot hand-off. §6 makes
 this precise.
 
+### Ingestion contract (v0)
+
+The bridge into the engine is the resolved `.kicad_pcb` that
+`atopile_layout` already emits (footprints placed in a row, ratsnest, no
+tracks), read via KiCad's **`pcbnew` Python API** — the same interpreter the
+autoroute step already uses (`@kicad_python`, see `//hardware/atopile`). This
+avoids parsing the s-expr by hand and gives us a write-back path. Extract into an
+internal graph with exactly these fields (all present in a built board — verified
+against `splanc_dev.kicad_pcb`):
+
+| Internal field | pcbnew source                                                             | Notes                                 |
+| -------------- | ------------------------------------------------------------------------- | ------------------------------------- |
+| component id   | `fp.GetReference()`                                                       | e.g. `U1`, `J3`, `SW2`                |
+| footprint id   | `fp.GetFPIDAsString()`                                                    | `Lib:Name` (pad geometry key)         |
+| position       | `fp.GetPosition()` (nm → mm)                                              | initial (row) placement; we overwrite |
+| orientation    | `fp.GetOrientationDegrees()`                                              | 0/90/180/270 (or finer)               |
+| side           | `fp.GetLayer()` → `F.Cu`/`B.Cu`                                           | top/bottom                            |
+| courtyard/bbox | `fp.GetCourtyard(layer)` / `fp.GetBoundingBox()`                          | overlap/density geometry              |
+| pads           | `fp.Pads()` → `pad.GetPadName()`, `pad.GetPosition()`, `pad.GetNetname()` | pin→net binding + pin offset          |
+| nets           | `board.GetNetsByName()` / `pad.GetNetCode()`                              | net graph (drop net 0 / unconnected)  |
+| board outline  | `Edge.Cuts` drawings, or the constraint file `board.outline`              | placement region                      |
+
+**Write-back:** after PnR, set `fp.SetPosition/SetOrientationDegrees/SetLayer`
+(flip via `fp.Flip()` for side changes), add the routed tracks/vias
+(`PCB_TRACK`/`PCB_VIA`), then `pcbnew.SaveBoard()` — yielding the same
+`.kicad_pcb` the existing `.gerber`/BOM/`.pdf` exporters consume. **The engine
+never emits Gerbers directly**; it only produces the placed+routed board and lets
+the existing hermetic `kicad-cli` exporters do the fab files. A tiny
+`pcbnew`-based `ingest.py`/`writeback.py` is the first code to write (Phase 1).
+
 ## 3. Constraint model
 
 The user-facing constraint language is the differentiator. A first cut:
@@ -97,6 +127,42 @@ Design principle: **hard constraints as feasibility barriers, soft intent as
 penalty gradients**, so the same relaxation engine handles both. Constraints
 should be expressible in the `.ato` (or a sidecar YAML) and compiled into this
 model.
+
+### Concrete constraint file (v0)
+
+Start with a **sidecar YAML** next to the board (`elec/constraints.yaml`), keyed
+by component reference — no `.ato` language changes needed for the MVP. Coordinate
+frame: mm, origin at board-outline bottom-left, `rot` CCW degrees. A worked
+example for `splanc_dev` (real refs: `usbc` Type-C, the two user buttons, the
+ESP32-C6-WROOM module with its integrated antenna):
+
+```yaml
+board:
+  outline: { w: 40, h: 30 } # approx; the placer frames the real Edge.Cuts
+  layers: 2
+  default_clearance_mm: 0.2
+
+fixed: # hard: locked pose (held out of the position gradient)
+  usbc: { edge: south, align: center, rot: 0, side: top } # Type-C overhangs the south edge
+
+edge_align: # soft: pull to a board edge, snap orientation
+  SW1: { edge: north, side: top } # user button, enclosure-accessible
+  SW2: { edge: north, side: top }
+
+keepout: # hard: no parts/copper in region (poly or rel-to-component)
+  - { name: esp32_antenna, ref: U1, extent: { edge: west, depth_mm: 8 } }
+
+side_pref: # soft: bias to a side (top = user-facing)
+  bottom: [C*, R*] # decouplers/passives to the back
+
+group: # soft: attract members together, near an anchor
+  - { members: [U3, L1, C_boost*], anchor: U3, radius_mm: 6 } # boost stage
+```
+
+Parser contract: unknown refs → warning (not error); globs (`C*`) expand against
+the netlist; every constraint compiles to either a **barrier** (hard) or a
+**weighted penalty term** (soft) in the placement loss (§4). Keep the schema
+versioned (`v0`) — it will grow (diff-pair classes, thermal, mounting holes).
 
 ## 4. State of the art — placement
 
@@ -272,11 +338,11 @@ treat RL and learned routers as inspiration, not dependencies.
 **Build integration.** A new rule (e.g. `atopile_pnr` / a `<board>.fab` target)
 consumes the resolved netlist from the existing `atopile_layout` step, runs the
 PnR engine, and emits a placed+routed `.kicad_pcb` that the existing
-`.gerber`/BOM exporters consume. The nix toolchain already provides `kicad-cli`
-
-- a `pcbnew`-capable Python (see `//hardware/atopile`); the PnR engine (PyTorch
-- the router) would be another Nix-provided tool. This replaces the autoroute
-  "preview" with a real layout while keeping the single-build-target UX.
+`.gerber`/BOM exporters consume. The Nix toolchain already provides `kicad-cli`
+plus a `pcbnew`-capable Python (see `//hardware/atopile`); the PnR engine
+(PyTorch + the router) is packaged as another Bazel `py_binary` (see §11). This
+replaces the autoroute "preview" with a real layout while keeping the
+single-build-target UX.
 
 **Reuse vs. build:**
 
@@ -291,22 +357,56 @@ PnR engine, and emits a placed+routed `.kicad_pcb` that the existing
 
 ## 9. Phased implementation plan
 
-1. **Ingestion + constraint schema.** Get netlist/footprints out of `ato` into an
-   internal graph; define the constraint DSL (§3) and a couple of real fixtures
-   (splanc_dev, eol_tester). Deliverable: parse + visualize constraints.
+Each phase names a concrete **acceptance test** (a `py_test` gated on the two
+fixtures below) so "done" is unambiguous and regressions are caught.
+
+0. **Task 0 — decisions (resolve before coding, see §11).** (a) Verify the
+   **Cypress license** permits vendoring/forking; if not, plan a clean-room
+   reimpl of its math. (b) Land **PyTorch under Bazel** (CPU wheel via the root
+   `requirements.in`) and prove `import torch` in a `py_test`. Acceptance: a
+   green `//hardware/pnr:torch_smoke_test` + a one-paragraph license note in the
+   WORKLOG.
+1. **Ingestion + constraint schema.** `ingest.py` (pcbnew → internal graph, §2)
+   and a `constraints.yaml` parser (§3) for both fixtures. Acceptance:
+   `ingest_test` asserts the parsed graph for `splanc_dev` has the expected
+   component/net/pad counts and that `constraints.yaml` round-trips to compiled
+   penalty/barrier terms; a `--dump-svg` renders the ratsnest + constraints.
 2. **Placement MVP.** Differentiable LSE-WL + per-side density + hard-constraint
-   penalties (fixed/edge/keep-out), gradient descent, Tetris legalization.
-   No orientation search yet. Deliverable: a legal, constraint-honoring placement
-   (metric: HPWL, constraint violations = 0).
-3. **Orientation + grouping.** Gumbel-Softmax bilevel orientation; partition seed.
-4. **Routing + feedback loop.** FLUTE+FastRoute lookahead; overflow→inflation with
-   PathFinder history; converge. Deliverable: routable placements, measured by a
-   real global route.
-5. **Detailed route + DRC + fab.** FreeRouting DSN/SES on the converged placement;
-   DRC gate; Gerber/drill/BOM/pick-place. Deliverable: **the end-to-end
-   `<board>.fab` target.**
+   penalties (fixed/edge/keep-out), gradient descent, Tetris legalization; no
+   orientation search yet. Acceptance: `placement_test` on `splanc_dev` reports
+   **0 courtyard overlaps, 0 hard-constraint violations, all parts inside the
+   outline**, and **HPWL ≤ the ato-row baseline** (regression-tracked number).
+3. **Orientation + grouping.** Gumbel-Softmax bilevel orientation; hMETIS
+   partition seed. Acceptance: orientations settle to legal discrete angles;
+   HPWL improves vs. Phase 2 on both fixtures (tracked).
+4. **Routing + feedback loop.** FLUTE+FastRoute lookahead; overflow→inflation
+   with PathFinder history; converge. Acceptance: `route_feedback_test` shows the
+   lookahead **global-route overflow reaches 0** within a pass cap, and the loop
+   **terminates** (no oscillation) on both fixtures.
+5. **Detailed route + DRC + fab.** FreeRouting DSN/SES on the converged
+   placement; DRC gate; Gerber/drill/BOM/pick-place. Acceptance: **`bazel build
+//hardware/splanc_dev:splanc_dev.fab`** yields a **DRC-clean** board and a
+   complete Gerber/drill/BOM/pick-place set — the end-to-end target.
 6. **Quality passes.** Diff-pair/length-match; via/length optimization;
    (optional) a learned routability predictor if the analytical signal limits us.
+
+### Test fixtures & extraction
+
+Use the two existing boards as regression fixtures — both already build a
+resolved `.kicad_pcb`:
+
+```bash
+# Resolved board (row placement + ratsnest) — the ingestion input:
+bazelisk --output_base=$HOME/.cache/bazel-atopile \
+  build //hardware/splanc_dev:splanc_dev
+# -> bazel-bin/hardware/splanc_dev/splanc_dev.kicad_pcb  (79 footprints, real nets)
+# Same for //hardware/splanc_eol_tester:splanc_eol_tester
+```
+
+Commit a **frozen copy** of each fixture's `.kicad_pcb` + a hand-written
+`constraints.yaml` under `hardware/pnr/testdata/<board>/` so tests don't depend
+on rebuilding atopile. `splanc_dev` (dense, mixed power/sensor/USB) and
+`splanc_eol_tester` (logic analyzer + load bank) give two distinct topologies.
 
 ## 10. Open questions & risks
 
@@ -328,6 +428,80 @@ PnR engine, and emits a placed+routed `.kicad_pcb` that the existing
 - **Convergence guarantees.** The place↔route loop can oscillate; the PathFinder
   history term and damped inflation are the mitigation, but need tuning + a
   pass/round cap.
+
+## 11. Handoff / bootstrapping (read this first if you're picking this up)
+
+You are starting from a **design doc, not a codebase** — no PnR code exists yet.
+This section is the concrete on-ramp. Also read `hardware/pnr/WORKLOG.md`
+(running log, newest-first) and the existing atopile wiring you'll build on:
+`hardware/README.md` §"How the Nix toolchain is wired" and `//hardware/atopile`.
+
+### Repo mechanics you need
+
+- **Build in this container with a local output base** — `/workspace` is a
+  macOS-synced (case-insensitive) mount, so use:
+  `bazelisk --output_base=$HOME/.cache/bazel-atopile build //hardware/...`.
+  (Plain `bazel build` from `/workspace` can corrupt on the synced cache.)
+- **Bazel is bzlmod** (`MODULE.bazel`, Bazel 7.7.1). **Python** = `rules_python`
+  3.11; pip deps are one **root lockfile**: add to `//requirements.in`, run
+  `bazel run //:requirements.update`, consume via
+  `load("@pypi//:requirements.bzl", "requirement")` +
+  `requirement("torch")` (see `tools/sim_studio/BUILD.bazel` for the pattern).
+- **Nix provides the PCB tools** already: `kicad-cli` + a `pcbnew`-capable
+  python3.12 (`@kicad_python`) + `@freerouting`, bound by `//hardware/atopile`.
+  Reuse that toolchain for ingest/write-back/detailed-route — don't re-fetch KiCad.
+- **Hooks**: `prek` runs `buildifier`, `prettier`, `markdownlint`, `black`,
+  `flake8`, etc. on commit — a hook that reformats a file **aborts** the commit;
+  re-add and re-commit. Python is `black`+`flake8`+`isort` formatted.
+- **Commits/branches**: work on `pnr-system`; end commit messages with the
+  `Co-Authored-By` trailer; **do not push from the container** (hand the user
+  the push/PR commands). No Claude-Session trailer.
+
+### Proposed code layout
+
+```text
+hardware/pnr/
+  BUILD.bazel            # py_binary(pnr), py_library, py_test targets
+  WORKLOG.md             # running handoff log (seeded)
+  pnr/
+    ingest.py            # pcbnew .kicad_pcb -> internal graph (§2 contract)
+    constraints.py       # constraints.yaml -> compiled penalty/barrier terms (§3)
+    place/               # differentiable placement (torch): wirelength, density, legalize
+    route/               # FLUTE/FastRoute lookahead + PathFinder feedback
+    writeback.py         # graph -> .kicad_pcb (pcbnew), then hand to kicad-cli exporters
+  testdata/<board>/      # frozen .kicad_pcb + constraints.yaml fixtures
+```
+
+The `<board>.fab` target is an `atopile_pnr` rule (parallel to `atopile_project`)
+that runs `pnr` on the resolved board and feeds the result to the **existing**
+`.gerber`/BOM/`.pdf` exporters. Land it last (Phase 5); until then drive `pnr` as
+a plain `py_binary` on the committed fixtures.
+
+### Language & dependency decisions (made — don't re-litigate)
+
+- **Python + PyTorch** for the placement engine (matches DREAMPlace/Cypress, and
+  the repo's Python tooling). **CPU wheel** first (determinism + no GPU in CI);
+  keep tensor ops device-agnostic so a GPU is a later speedup, not a dependency.
+- **pcbnew** (from `@kicad_python`) for all `.kicad_pcb` I/O — never hand-roll
+  s-expr parsing.
+- **FreeRouting** stays an **external process** via DSN/SES (GPL/JVM; already
+  wired) — do not link it in.
+- **FLUTE/FastRoute**: prefer OpenROAD's implementations (BSD-3). Decide in
+  Phase 4 whether to vendor the C++ or reimplement the (small) FLUTE LUT in
+  Python; log the choice.
+
+### Task 0 → first vertical slice
+
+1. **Resolve blockers (Task 0, §9):** confirm the **Cypress license** allows
+   reuse (repo: NVlabs/Cypress) and land **torch** in the lockfile with a green
+   `torch_smoke_test`. Record both in the WORKLOG.
+2. **First slice (Phase 1):** `ingest.py` that loads
+   `testdata/splanc_dev/splanc_dev.kicad_pcb` via pcbnew and prints
+   component/net/pad counts + a `--dump-svg` of the ratsnest; a `constraints.py`
+   that parses the example `constraints.yaml`. Green `ingest_test`. This is the
+   smallest end-to-end proof the bridge works before any optimization.
+
+Then follow §9 phase by phase; update the WORKLOG at each handoff.
 
 ## References (primary sources)
 
