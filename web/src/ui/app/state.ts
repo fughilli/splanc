@@ -7,6 +7,7 @@
 
 import type { WelcomeMessage } from "@ledmapper/protocol";
 import { certApprovalUrl, LedMapperClient, type ClientOptions } from "../../net/client";
+import { connectionRegistry } from "../../net/connectionRegistry";
 import { nativeSocketFactory } from "../../net/nativeSocket";
 import { deviceStore } from "../../store/deviceStore";
 import { deviceProber } from "../../net/deviceProber";
@@ -77,6 +78,9 @@ class AppState {
     }
     const client = new LedMapperClient(wssUrl, clientOpts);
     this.client = client;
+    // Register as the sole owner of this device's socket so the liveness prober
+    // multiplexes onto it instead of opening a parallel (slot-starving) handshake.
+    connectionRegistry.register(client);
     client.events = {
       onConnecting: (attempt, url) =>
         this.setStatus({
@@ -180,6 +184,7 @@ class AppState {
 
   disconnect(): void {
     this.clearReconnectWatch();
+    if (this.client) connectionRegistry.unregister(this.client);
     this.client?.close();
     this.client = null;
     const wasActive = deviceStore.activeId();

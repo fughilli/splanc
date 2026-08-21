@@ -433,3 +433,55 @@ py_test(
         requirement("websockets"),
     ],
 )
+
+# TLS-slot-starvation repro (max_open_sockets=2 -> -0x7780 field storm). Flash +
+# provision the DUT, tunnel :443, sweep concurrent TLS handshakes. See the module
+# docstring. Manual (needs a rig); not in the hitl-tagged CI lane.
+py_binary(
+    name = "slot_repro",
+    srcs = ["hitl_slot_repro.py"],
+    data = [
+        "//firmware/player_app:esp32c6_flashbundle",
+        "//pi/hitl/cmd/hitl",
+    ],
+    imports = ["."],
+    main = "hitl_slot_repro.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# Regression guard for the connection fix: the SAME script as :slot_repro, but as
+# a hitl-tagged py_test — it asserts <=2 concurrent ws sessions serve cleanly, a
+# reconnecting client (even with one held) never storms, and a served welcome
+# beats the 10s connectTimeoutMs. Runs in the CI HITL lane (bazel query on
+# tag:hitl). Reproduces the field -0x7780 storm as a failing assertion if the
+# slot budget or reconnect behaviour regresses.
+py_test(
+    name = "slot_guard",
+    timeout = "eternal",
+    srcs = ["hitl_slot_repro.py"],
+    data = [
+        "//firmware/player_app:esp32c6_flashbundle",
+        "//pi/hitl/cmd/hitl",
+    ],
+    imports = ["."],
+    main = "hitl_slot_repro.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)

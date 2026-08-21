@@ -87,11 +87,15 @@ export interface ClientOptions {
    * The browser's own WS/TCP connect timeout is tens of seconds on mobile, so
    * without this a not-yet-reachable player (e.g. just after it joins WiFi)
    * hangs the UI at "connecting…". This is the REAL per-attempt ceiling (it
-   * fires before any outer race, e.g. the prober's), so it must exceed the
-   * device's actual cold-handshake latency: a heap-tight, freshly-booted C6
-   * needs several seconds for the ~28 KB mbedTLS session on its fragmented heap.
-   * At 5000 a slow-but-trusted reconnect timed out and was misread as "cert not
-   * trusted". Default 10000. */
+   * fires before any outer race, e.g. the prober's), so it must EXCEED the
+   * device's real worst-case time-to-welcome — otherwise it aborts a legitimate
+   * (just slow) handshake mid-flight, which emits the -0x7780 fatal alert and is
+   * itself the storm. HITL measurement (//pi/hitl/harness:slot_guard): a served
+   * welcome is ~2.5–4s normally but stretches to ~8.3s when both TLS slots are
+   * contended (a reconnect racing a held session). 10000 covers that with margin;
+   * 7000/5000 do NOT (a slot-contended welcome misses them) — the reason not to
+   * shrink this. The real fix for the storm is keeping the app <=2 concurrent
+   * (net/connectionRegistry single-flight), not a shorter timeout. Default 10000. */
   connectTimeoutMs?: number;
   appVersion?: string;
   clientName?: string;

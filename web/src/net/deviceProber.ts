@@ -11,6 +11,7 @@
  */
 
 import { LedMapperClient } from "./client";
+import { connectionRegistry } from "./connectionRegistry";
 import { nativeSocketFactory } from "./nativeSocket";
 import { deviceStore, type KnownDevice } from "../store/deviceStore";
 
@@ -32,9 +33,28 @@ export interface ProbeInfo {
   fwGitDirty: boolean;
 }
 
-/** Open a transient wss to read a device's welcome (MAC + name), then close.
- * Null if it can't be reached (untrusted cert, offline, timeout). */
+/** Read a device's welcome (MAC + name). If a comms client already owns this
+ * device's socket, MULTIPLEX onto it (read its welcome — never open a parallel
+ * TLS session to a device we're already talking to, which would starve the
+ * player's two slots). Otherwise open a transient wss, read the welcome, close.
+ * Null if it can't be reached (untrusted cert, offline, timeout) or the owning
+ * client is still mid-handshake (unknown yet — don't race it with a probe). */
 export async function probeDevice(wssUrl: string): Promise<ProbeInfo | null> {
+  const live = connectionRegistry.clientFor(wssUrl);
+  if (live) {
+    // A comms client owns this device's single socket. Read its welcome for
+    // liveness; if it hasn't welcomed yet, report unknown rather than opening a
+    // competing handshake.
+    const w = live.welcome;
+    return w
+      ? {
+          mac: w.mac,
+          deviceName: w.deviceName,
+          fwGitCommit: w.fwGitCommit,
+          fwGitDirty: w.fwGitDirty,
+        }
+      : null;
+  }
   // Native wrapper: probe through the cert-pinning bridge too (same self-signed
   // wss:// trust as the main client), else the browser WebSocket.
   const factory = nativeSocketFactory();
