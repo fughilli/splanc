@@ -8,10 +8,12 @@ Given a firmware flash-bundle it:
   3. ImprovBLE SETUP — provisions the board onto WiFi over the Improv GATT
      (the rig's Bluetooth adapter; the harness ships hitl_improv.py into the
      reservation and runs it there), capturing the device's redirect URL;
-  4. checks TIME SYNC (sane offset/rtt) and RENAME (set_device_name -> welcome
-     echoes the new name) over the player's WebSocket — tunneled through the
-     reservation's ssh so the DUT is reached FROM the rig (which shares its WiFi
-     LAN), not from the harness host;
+  4. checks TIME SYNC (sane offset/rtt), RENAME (set_device_name -> welcome
+     echoes the new name), and BOARD CAPS (get_hardware_config reports the static
+     GPIO/LED descriptor embedded in the image, matching board_caps.textproto)
+     over the player's WebSocket — tunneled through the reservation's ssh so the
+     DUT is reached FROM the rig (which shares its WiFi LAN), not from the harness
+     host;
   5. releases the reservation.
 
 Usage:
@@ -42,6 +44,7 @@ import ssl
 import sys
 import time
 
+import board_caps
 from hitl_client import Reservation, ReserveError
 from provision import HarnessError as E2EFailure
 from provision import dut_target, ensure_booted, provision_dut
@@ -80,7 +83,9 @@ def flash(res: Reservation, bundle: str, monitor_seconds: float) -> str:
     return log
 
 
-async def _ws_checks(ws_url: str, new_name: str, insecure: bool) -> None:
+async def _ws_checks(
+    ws_url: str, new_name: str, insecure: bool, expected_caps: dict | None
+) -> None:
     import websockets
     from server import proto_wire
 
@@ -161,12 +166,33 @@ async def _ws_checks(ws_url: str, new_name: str, insecure: bool) -> None:
         if got != new_name:
             raise E2EFailure(f"rename not echoed: asked {new_name!r}, welcome says {got!r}")
         print(f"[ws] RENAME OK — device reports name={got!r}", flush=True)
+
+        # BOARD CAPS (FUG-123) — the device reports the static GPIO/LED descriptor
+        # embedded in its image. Assert it matches the checked-in
+        # board_caps.textproto EXACTLY: proves the binaryproto embed -> FFI decode
+        # -> hardware_config_state round-trip on real hardware (the host build only
+        # proves it compiles + links). Skipped only if the descriptor isn't in
+        # runfiles (a bare local run); CI always has it.
+        if expected_caps is None:
+            print("[ws] BOARD CAPS skipped — no descriptor in runfiles", flush=True)
+        else:
+            hw = await rpc(sock, {"type": "get_hardware_config"}, "hardware_config_state")
+            diffs = board_caps.diff_board_caps(expected_caps, hw.get("board"))
+            if diffs:
+                raise E2EFailure("board capabilities mismatch:\n  " + "\n  ".join(diffs))
+            board = hw.get("board") or {}
+            print(
+                f"[ws] BOARD CAPS OK — device reports {board.get('board')!r} "
+                f"({len(board.get('gpioPins', []))} pins, "
+                f"{len(board.get('ledModes', []))} LED modes)",
+                flush=True,
+            )
     finally:
         await sock.close()
 
 
-def ws_checks(ws_url: str, new_name: str, insecure: bool) -> None:
-    asyncio.run(_ws_checks(ws_url, new_name, insecure))
+def ws_checks(ws_url: str, new_name: str, insecure: bool, expected_caps: dict | None) -> None:
+    asyncio.run(_ws_checks(ws_url, new_name, insecure, expected_caps))
 
 
 # --- driver ----------------------------------------------------------------
@@ -185,6 +211,25 @@ def default_bundle() -> str | None:
     except Exception:
         return None
     return path if path and os.path.exists(path) else None
+
+
+# The board-caps descriptor (single source of truth for the BOARD CAPS phase),
+# shipped in runfiles as a data dep so the check pins what the image embeds.
+_CAPS_RUNFILE = "_main/firmware/player_app/board_caps.textproto"
+
+
+def default_board_caps() -> dict | None:
+    """Parse the checked-in board_caps.textproto from runfiles, if present."""
+    try:
+        from python.runfiles import runfiles
+
+        path = runfiles.Create().Rlocation(_CAPS_RUNFILE)
+        if not path or not os.path.exists(path):
+            return None
+        with open(path, encoding="utf-8") as f:
+            return board_caps.parse_expected(f.read())
+    except Exception:
+        return None
 
 
 def run(args: argparse.Namespace) -> int:
@@ -215,9 +260,10 @@ def run(args: argparse.Namespace) -> int:
             redirect = provision_dut(res, args.wifi_ssid, args.wifi_pass, args.improv_timeout)
 
         if not args.skip_ws:
+            expected_caps = default_board_caps()
             if args.device_ws:
                 # Explicit override: connect straight to a reachable ws(s) URL.
-                ws_checks(args.device_ws, args.rename_to, insecure=not args.ws_verify)
+                ws_checks(args.device_ws, args.rename_to, not args.ws_verify, expected_caps)
             else:
                 if not redirect:
                     raise E2EFailure(
@@ -229,13 +275,16 @@ def run(args: argparse.Namespace) -> int:
                 # ssh (the far end dials the DUT from the Pi's container).
                 with res.forward(host, port) as local_port:
                     ws_url = f"{args.ws_scheme}://localhost:{local_port}/ws"
-                    ws_checks(ws_url, args.rename_to, insecure=not args.ws_verify)
+                    ws_checks(ws_url, args.rename_to, not args.ws_verify, expected_caps)
     except (E2EFailure, ReserveError) as e:
         print(f"\nFAIL: {e}", file=sys.stderr)
         return 1
     finally:
         res.release()
-    print("\nPASS — ImprovBLE setup, rename, and time sync all checked out", flush=True)
+    print(
+        "\nPASS — ImprovBLE setup, rename, time sync, and board caps all checked out",
+        flush=True,
+    )
     return 0
 
 

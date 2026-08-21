@@ -52,6 +52,31 @@ int32_t lm_color_correction_commit(void);
 uint32_t lm_brightness_gen(void);
 uint8_t lm_brightness_u8(void);
 
+// Hardware output config (set_hardware_config: GPIO + wire color order per RMT
+// channel). Seed each wired channel once at boot with lm_hw_seed (the GPIO the
+// firmware initialized + a color-order name like "GRB"; an unknown name falls
+// back to GRB) so the first welcome echoes the real hardware. Then the app polls
+// lm_hw_config_gen after each lm_player_handle (like lm_color_correction_gen); on
+// a change it re-reads each channel's color-order permutation (into a 3-byte
+// buffer via lm_hw_color_order_perm — out[i] is the logical channel R=0/G=1/B=2
+// that wire byte i carries) and GPIO (lm_hw_gpio, -1 if unseeded), applies them,
+// and — when lm_hw_config_commit is 1 — persists the GPIO + color-order name
+// (lm_hw_color_order_name) to NVS.
+void lm_hw_seed(uint32_t channel, int32_t gpio, const uint8_t *order,
+                size_t order_len);
+// Install this board's static capability descriptor (a serialized
+// BoardCapabilities: the board textproto compiled to a binaryproto at build time
+// and embedded in the image). Call once at boot; it's echoed in
+// hardware_config_state so the app builds its GPIO picker / LED-type list from
+// this board. A null/empty/undecodable blob is ignored (app falls back to a
+// built-in catalog).
+void lm_set_board_caps(const uint8_t *data, size_t len);
+uint32_t lm_hw_config_gen(void);
+int32_t lm_hw_config_commit(void);
+int32_t lm_hw_gpio(uint32_t channel);
+int32_t lm_hw_color_order_perm(uint32_t channel, uint8_t *out);
+int32_t lm_hw_color_order_name(uint32_t channel, uint8_t *out, size_t cap);
+
 // Handle one received protocol frame (a binary WebSocket message).
 // recv_ms/send_ms are the player clock (millis()) at receive / reply time,
 // integer milliseconds. Returns: >0 = reply length written to out; 0 = no
@@ -120,6 +145,10 @@ bool lm_counting_color(uint32_t led, uint8_t rgb[3]);
 // Highest LED the latched counting pattern lights + 1 (0 when none). The frame
 // loop transmits exactly this many LEDs for the calibration pattern (no overrun).
 uint32_t lm_counting_len(void);
+// Wire color order for the counting probe's pixels: writes the 3-byte source-
+// index permutation (R=0,G=1,B=2) into `perm`. The probe's OWN order, applied at
+// transmit independent of the committed per-channel color order (identity = raw).
+void lm_counting_color_order(uint8_t perm[3]);
 // Topology-aware effect playback ("pulse"/"flood"). lm_playback_active() gates
 // it (an effect is configured). Once per frame call lm_playback_step(dt_ms) to
 // (re)build + advance the stateful sim; it returns whether a renderable sim

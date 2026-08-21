@@ -330,3 +330,79 @@ fn frame_timing_drain() {
     // dropped + delivered accounts for every sample pushed since the last poll.
     assert_eq!(ft.r#dropped + ft.r#ticks.len() as u32, 500);
 }
+
+/// set_hardware_config / get_hardware_config: GPIO + wire color order round-trip,
+/// validation, and the hardware_config_state the Hardware Setup page hydrates from.
+#[test]
+fn hardware_config_roundtrip() {
+    let mut player = Player::new("esp32-0001", 256);
+    // The firmware seeds the two RMT channels at boot; without a seed a channel
+    // isn't wired and is omitted from the state.
+    player.set_hw_defaults(0, 20, ledmapper_player::DEFAULT_COLOR_ORDER);
+    player.set_hw_defaults(1, 14, ledmapper_player::DEFAULT_COLOR_ORDER);
+
+    // get_hardware_config reports both seeded channels at the GRB default.
+    let Some(SMsg::HardwareConfigState(st)) =
+        send(&mut player, CMsg::GetHardwareConfig(pb::GetHardwareConfig::default()), 0.0)
+    else {
+        panic!("get_hardware_config must produce hardware_config_state");
+    };
+    assert_eq!(st.r#channels.len(), 2);
+    let ch0 = &st.r#channels[0];
+    assert_eq!((ch0.r#channel, ch0.r#gpio), (0, 20));
+    assert_eq!(ch0.r#led_type.as_str(), "ws281x");
+    assert_eq!(ch0.r#color_order.as_str(), "GRB");
+
+    // Set channel 0's color order to RBG (the identity-ish preview the color test
+    // uses). The reply echoes the new order; the FFI permutation follows.
+    let mut cfg = pb::SetHardwareConfig::default();
+    cfg.set_channel(0);
+    cfg.set_color_order(micropb::heapless::String::try_from("RBG").unwrap());
+    cfg.set_commit(false);
+    let g0 = player.hw_config_gen();
+    let Some(SMsg::HardwareConfigState(st)) = send(&mut player, CMsg::SetHardwareConfig(cfg), 100.0)
+    else {
+        panic!("set_hardware_config must produce hardware_config_state");
+    };
+    assert_eq!(st.r#channels[0].r#color_order.as_str(), "RBG");
+    assert!(player.hw_config_gen() != g0, "a config change bumps the gen");
+    assert!(!player.hw_config_commit(), "commit=false is a RAM preview");
+    // RBG = wire R,B,G -> source permutation [0, 2, 1].
+    assert_eq!(player.hw_color_order_perm(0), [0, 2, 1]);
+    assert_eq!(player.hw_color_order_name(0), "RBG");
+    // Channel 1 is untouched.
+    assert_eq!(player.hw_color_order_name(1), "GRB");
+
+    // A GPIO change on channel 1 (commit) sticks and echoes back.
+    let mut cfg = pb::SetHardwareConfig::default();
+    cfg.set_channel(1);
+    cfg.set_gpio(21);
+    cfg.set_commit(true);
+    let Some(SMsg::HardwareConfigState(st)) = send(&mut player, CMsg::SetHardwareConfig(cfg), 200.0)
+    else {
+        panic!("hardware_config_state");
+    };
+    assert_eq!(st.r#channels[1].r#gpio, 21);
+    assert_eq!(player.hw_gpio(1), Some(21));
+    assert!(player.hw_config_commit(), "commit=true persists");
+
+    // Validation: unknown order, bad GPIO, unsupported LED type, out-of-range
+    // channel are all refused without mutating state.
+    let mut bad = pb::SetHardwareConfig::default();
+    bad.set_channel(0);
+    bad.set_color_order(micropb::heapless::String::try_from("XYZ").unwrap());
+    expect_error(send(&mut player, CMsg::SetHardwareConfig(bad), 300.0), "bad_message");
+    let mut bad = pb::SetHardwareConfig::default();
+    bad.set_channel(0);
+    bad.set_gpio(99);
+    expect_error(send(&mut player, CMsg::SetHardwareConfig(bad), 310.0), "bad_message");
+    let mut bad = pb::SetHardwareConfig::default();
+    bad.set_channel(0);
+    bad.set_led_type(micropb::heapless::String::try_from("apa102").unwrap());
+    expect_error(send(&mut player, CMsg::SetHardwareConfig(bad), 320.0), "bad_message");
+    let mut bad = pb::SetHardwareConfig::default();
+    bad.set_channel(9);
+    expect_error(send(&mut player, CMsg::SetHardwareConfig(bad), 330.0), "bad_message");
+    // Nothing above changed channel 0's order.
+    assert_eq!(player.hw_color_order_name(0), "RBG");
+}

@@ -91,6 +91,10 @@ fn reply_allowed(req: &CMsg, reply: &Option<SMsg>) -> bool {
         CMsg::SetDeviceName(_) | CMsg::SetColorCorrection(_) | CMsg::SetBrightness(_) => {
             matches!(reply, Some(SMsg::Welcome(_)))
         }
+        // Hardware config get/set reply hardware_config_state.
+        CMsg::SetHardwareConfig(_) | CMsg::GetHardwareConfig(_) => {
+            matches!(reply, Some(SMsg::HardwareConfigState(_)))
+        }
     }
 }
 
@@ -128,6 +132,8 @@ fn arm_name(req: &CMsg) -> &'static str {
         CMsg::SetColorCorrection(_) => "set_color_correction",
         CMsg::SetBrightness(_) => "set_brightness",
         CMsg::SetJit(_) => "set_jit",
+        CMsg::SetHardwareConfig(_) => "set_hardware_config",
+        CMsg::GetHardwareConfig(_) => "get_hardware_config",
     }
 }
 

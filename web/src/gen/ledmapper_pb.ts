@@ -59,7 +59,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file ledmapper.proto.
  */
 export const file_ledmapper: GenFile = /*@__PURE__*/
-  fileDesc("Cg9sZWRtYXBwZXIucHJvdG8SDGxlZG1hcHBlci52MSIVCgRWZWMzEg0KAXYYASADKAFCAhABIiQKBFBvc2USDQoBcBgBIAMoAUICEAESDQoBcRgCIAMoAUICEAEiyAEKCkNvZGVQYXJhbXMSEQoJbGVkX2NvdW50GAEgASgFEgwKBGJpdHMYAiABKAUSEAoIZW5jb2RpbmcYAyABKAkSFQoNYml0X3BlcmlvZF9tcxgEIAEoARIUCgxzeW5jX3BhdHRlcm4YBSABKAkSFAoMY3ljbGVfZnJhbWVzGAYgASgFEgsKA2ZlYxgHIAEoCRIPCgdzeW1ib2xzGAggASgFEhcKCmJyaWdodG5lc3MYCSABKAFIAIgBAUINCgtfYnJpZ2h0bmVzcyLBAQoPRGV0ZWN0aW9uUmVjb3JkEg4KBmxlZF9pZBgBIAEoBRIUCgx0X2NhcHR1cmVfbXMYAiABKAESCQoBdRgDIAEoARIJCgF2GAQgASgBEg0KBWltZ193GAUgASgFEg0KBWltZ19oGAYgASgFEhAKAWsYByADKAFCAhABUgFLEiUKBHBvc2UYCCABKAsyEi5sZWRtYXBwZXIudjEuUG9zZUgAiAEBEhIKCmNvbmZpZGVuY2UYCSABKAFCBwoFX3Bvc2UiOwoJSW11U2FtcGxlEgkKAXQYASABKAESEAoEZ3lybxgCIAMoAUICEAESEQoFYWNjZWwYAyADKAFCAhABIqwCCg1FeHBvc3VyZVN0YXRzEhQKDHRfY2FwdHVyZV9tcxgBIAEoARIZChFmcmFtZV9pbnRlcnZhbF9tcxgCIAEoARIRCgltZWFuX2x1bWEYAyABKAESEAoIcDk1X2x1bWEYBCABKAESEQoJY2xpcF9mcmFjGAUgASgBEhIKCmJsb2JfY291bnQYBiABKAUSGgoSZGV0ZWN0b3JfdGhyZXNob2xkGAcgASgBEhAKA2lzbxgIIAEoAUgAiAEBEh0KEGV4cG9zdXJlX3RpbWVfbXMYCSABKAFIAYgBARIeChFhbWJpZW50X2ludGVuc2l0eRgKIAEoAUgCiAEBQgYKBF9pc29CEwoRX2V4cG9zdXJlX3RpbWVfbXNCFAoSX2FtYmllbnRfaW50ZW5zaXR5InkKCExlZEVudHJ5EgoKAmlkGAEgASgFEg8KA3h5ehgCIAMoAUICEAESEgoKY29uZmlkZW5jZRgDIAEoARIPCgduX3ZpZXdzGAQgASgFEhUKDXJtc19yZXByb2pfcHgYBSABKAESFAoMcGFyYWxsYXhfZGVnGAYgASgBIksKDk91dHB1dE1hcFN0YXRzEhwKFHJtc19yZXByb2pfcHhfZ2xvYmFsGAEgASgBEhsKE21lZGlhbl9wYXJhbGxheF9kZWcYAiABKAEi8QEKCU91dHB1dE1hcBIOCgZtYXBfaWQYASABKAkSEgoKY3JlYXRlZF9hdBgCIAEoCRINCgV1bml0cxgDIAEoCRINCgVmcmFtZRgEIAEoCRIRCglsZWRfY291bnQYBSABKAUSJAoEbGVkcxgGIAMoCzIWLmxlZG1hcHBlci52MS5MZWRFbnRyeRIUCgh1bm1hcHBlZBgHIAMoBUICEAESJgoKdHJhamVjdG9yeRgIIAMoCzISLmxlZG1hcHBlci52MS5WZWMzEisKBXN0YXRzGAkgASgLMhwubGVkbWFwcGVyLnYxLk91dHB1dE1hcFN0YXRzIicKCFNvbHZlTGVkEgoKAmlkGAEgASgFEg8KA3h5ehgCIAMoAUICEAEiOwoKQ29sb3JCbG9jaxINCgVzdGFydBgBIAEoBRINCgVjb3VudBgCIAEoBRIPCgNyZ2IYAyADKAFCAhABIioKC0JyYW5jaFBvaW50EgoKAmlkGAEgASgFEg8KA3h5ehgCIAMoAUICEAEiaQoPVG9wb2xvZ3lTZWdtZW50EgoKAmlkGAEgASgFEgkKAWEYAiABKAUSCQoBYhgDIAEoBRIkCghwb2x5bGluZRgEIAMoCzISLmxlZG1hcHBlci52MS5WZWMzEg4KBmxlbmd0aBgFIAEoASJcCg5MZWRBc3NvY2lhdGlvbhIOCgZsZWRfaWQYASABKAUSEgoKc2VnbWVudF9pZBgCIAEoBRIWCg5mb290X2FyY2xlbmd0aBgDIAEoARIOCgZkX3BlcnAYBCABKAEisQEKCFRvcG9sb2d5Eg4KBm1hcF9pZBgBIAEoCRIwCg1icmFuY2hfcG9pbnRzGAIgAygLMhkubGVkbWFwcGVyLnYxLkJyYW5jaFBvaW50Ei8KCHNlZ21lbnRzGAMgAygLMh0ubGVkbWFwcGVyLnYxLlRvcG9sb2d5U2VnbWVudBIyCgxhc3NvY2lhdGlvbnMYBCADKAsyHC5sZWRtYXBwZXIudjEuTGVkQXNzb2NpYXRpb24iXwoNTWFwcGluZ0J1bmRsZRIkCgNtYXAYASABKAsyFy5sZWRtYXBwZXIudjEuT3V0cHV0TWFwEigKCHRvcG9sb2d5GAIgASgLMhYubGVkbWFwcGVyLnYxLlRvcG9sb2d5IqUCCg5QbGF5YmFja1BhcmFtcxIWCglpbnRlbnNpdHkYASABKAFIAIgBARIYCgtnbG93X3JhZGl1cxgCIAEoAUgBiAEBEhgKC2FnZW50X2NvdW50GAMgASgFSAKIAQESEgoFc3BlZWQYBCABKAFIA4gBARITCgdwYWxldHRlGAUgAygNQgIQARIUCgdsZWFkX2luGAYgASgBSASIAQESFwoKc3BsaXRfcHJvYhgHIAEoAUgFiAEBEhIKBWRlY2F5GAggASgBSAaIAQFCDAoKX2ludGVuc2l0eUIOCgxfZ2xvd19yYWRpdXNCDgoMX2FnZW50X2NvdW50QggKBl9zcGVlZEIKCghfbGVhZF9pbkINCgtfc3BsaXRfcHJvYkIICgZfZGVjYXkiLAoFSGVsbG8SDgoGY2xpZW50GAEgASgJEhMKC2FwcF92ZXJzaW9uGAIgASgJIhoKDFRpbWVTeW5jUGluZxIKCgJ0MBgBIAEoASKgAQoTU3RhcnRNYXBwaW5nT3B0aW9ucxIRCglsZWRfY291bnQYASABKAUSFAoHc3ltYm9scxgCIAEoBUgAiAEBEhoKDWJpdF9wZXJpb2RfbXMYAyABKAFIAYgBARIXCgpicmlnaHRuZXNzGAQgASgBSAKIAQFCCgoIX3N5bWJvbHNCEAoOX2JpdF9wZXJpb2RfbXNCDQoLX2JyaWdodG5lc3MiQgoMU3RhcnRNYXBwaW5nEjIKB29wdGlvbnMYASABKAsyIS5sZWRtYXBwZXIudjEuU3RhcnRNYXBwaW5nT3B0aW9ucyKwAQoQQ29uZmlndXJlT3B0aW9ucxIWCglsZWRfY291bnQYASABKAVIAIgBARIUCgdzeW1ib2xzGAIgASgFSAGIAQESGgoNYml0X3BlcmlvZF9tcxgDIAEoAUgCiAEBEhcKCmJyaWdodG5lc3MYBCABKAFIA4gBAUIMCgpfbGVkX2NvdW50QgoKCF9zeW1ib2xzQhAKDl9iaXRfcGVyaW9kX21zQg0KC19icmlnaHRuZXNzIjwKCUNvbmZpZ3VyZRIvCgdvcHRpb25zGAEgASgLMh4ubGVkbWFwcGVyLnYxLkNvbmZpZ3VyZU9wdGlvbnMiOwoLU3RvcE1hcHBpbmcSGgoNc29sdmVfb25faG9zdBgBIAEoCEgAiAEBQhAKDl9zb2x2ZV9vbl9ob3N0IjEKCVN1Ym1pdE1hcBIkCgNtYXAYASABKAsyFy5sZWRtYXBwZXIudjEuT3V0cHV0TWFwIjoKCkRldGVjdGlvbnMSLAoFYmF0Y2gYASADKAsyHS5sZWRtYXBwZXIudjEuRGV0ZWN0aW9uUmVjb3JkIjQKCEltdUJhdGNoEigKB3NhbXBsZXMYASADKAsyFy5sZWRtYXBwZXIudjEuSW11U2FtcGxlIj0KDkV4cG9zdXJlUmVwb3J0EisKBnJlcG9ydBgBIAEoCzIbLmxlZG1hcHBlci52MS5FeHBvc3VyZVN0YXRzIgsKCUdldFN0YXR1cyIMCgpHZXRQYXR0ZXJuIgwKCkdldExpdmVNYXAiEAoOR2V0U29sdmVTdGF0dXMiYAoSU2V0Q291bnRpbmdQYXR0ZXJuEigKBmJsb2NrcxgBIAMoCzIYLmxlZG1hcHBlci52MS5Db2xvckJsb2NrEhQKB2NoYW5uZWwYAiABKAVIAIgBAUIKCghfY2hhbm5lbCJCCgtTZXRMZWRDb3VudBIRCglsZWRfY291bnQYASABKAUSFAoHY2hhbm5lbBgCIAEoBUgAiAEBQgoKCF9jaGFubmVsIjoKDlN1Ym1pdFRvcG9sb2d5EigKCHRvcG9sb2d5GAEgASgLMhYubGVkbWFwcGVyLnYxLlRvcG9sb2d5ImsKC1NldFBsYXliYWNrEg4KBmVmZmVjdBgBIAEoCRIsCgZwYXJhbXMYAiABKAsyHC5sZWRtYXBwZXIudjEuUGxheWJhY2tQYXJhbXMSEwoGbWFwX2lkGAMgASgJSACIAQFCCQoHX21hcF9pZCINCgtHZXRQbGF5YmFjayIQCg5HZXRGcmFtZVRpbWluZyIvCgxHZXRTdG9yZWRNYXASDgoGb2Zmc2V0GAEgASgFEg8KB21heF9sZW4YAiABKAUimQEKC1VwbG9hZENodW5rEhEKCXVwbG9hZF9pZBgBIAEoDRILCgNzZXEYAiABKA0SDAoEbGFzdBgDIAEoCBIsCgRraW5kGAQgASgOMh4ubGVkbWFwcGVyLnYxLlVwbG9hZENodW5rLktpbmQSDwoHcGF5bG9hZBgFIAEoDCIdCgRLaW5kEgcKA01BUBAAEgwKCFRPUE9MT0dZEAEiLwoMVW5pZm9ybVZhbHVlEgwKBHNsb3QYASABKA0SEQoFdmFsdWUYAiADKAJCAhABIkAKDFN1Ym1pdEVmZmVjdBIRCgllZmZlY3RfaWQYASABKAkSCwoDZnhiGAIgASgMEhAKCGFjdGl2YXRlGAMgASgIIh4KCVNldEVmZmVjdBIRCgllZmZlY3RfaWQYASABKAkiOQoLU2V0VW5pZm9ybXMSKgoGdmFsdWVzGAEgAygLMhoubGVkbWFwcGVyLnYxLlVuaWZvcm1WYWx1ZSI5ChFHZXRFZmZlY3RVbmlmb3JtcxIWCgllZmZlY3RfaWQYASABKAlIAIgBAUIMCgpfZWZmZWN0X2lkIm4KB1NldFBlcmYSKAoEbW9kZRgBIAEoDjIaLmxlZG1hcHBlci52MS5TZXRQZXJmLk1vZGUSEwoLaW50ZXJ2YWxfbXMYAiABKA0iJAoETW9kZRIHCgNPRkYQABIJCgVCQVNJQxABEggKBEZVTEwQAiIPCg1HZXRQZXJmUmVwb3J0IhkKBlNldEppdBIPCgdlbmFibGVkGAEgASgIIsEBCglQZXJmRnJhbWUSCwoDc2VxGAEgASgNEhUKDXVwZGF0ZV9jeWNsZXMYAiABKA0SFAoMc2hhZGVfY3ljbGVzGAMgASgNEhQKDGZyYW1lX2N5Y2xlcxgEIAEoDRITCgtzaG93X2N5Y2xlcxgFIAEoDRIRCglsZWRfY291bnQYBiABKA0SFAoMaW5zdHJfdXBkYXRlGAcgASgNEhMKC2luc3RyX3NoYWRlGAggASgNEhEKCXN0YWNrX21heBgJIAEoDSKoAwoKUGVyZlJlcG9ydBIRCgllZmZlY3RfaWQYASABKAkSEAoIZnhiX2hhc2gYAiABKA0SDgoGY3B1X2h6GAMgASgNEhUKDWJ1ZGdldF9jeWNsZXMYBCABKA0SGAoQZnJhbWVfY3ljbGVzX21pbhgKIAEoDRIZChFmcmFtZV9jeWNsZXNfbWVhbhgLIAEoDRIYChBmcmFtZV9jeWNsZXNfbWF4GAwgASgNEhoKEnVwZGF0ZV9jeWNsZXNfbWVhbhgNIAEoDRIZChFzaGFkZV9jeWNsZXNfbWVhbhgOIAEoDRIYChBzaG93X2N5Y2xlc19tZWFuGA8gASgNEhAKCG92ZXJydW5zGBQgASgNEhYKDmRyb3BwZWRfZnJhbWVzGBUgASgNEhcKD3NhbXBsZXNfZHJvcHBlZBgWIAEoDRIRCgloZWFwX2ZyZWUYHiABKA0SFQoNaGVhcF9taW5fZnJlZRgfIAEoDRIZChFoZWFwX2xhcmdlc3RfZnJlZRggIAEoDRImCgV0aWNrcxgoIAMoCzIXLmxlZG1hcHBlci52MS5QZXJmRnJhbWUilg0KDUNsaWVudE1lc3NhZ2USJAoFaGVsbG8YASABKAsyEy5sZWRtYXBwZXIudjEuSGVsbG9IABI0Cg50aW1lX3N5bmNfcGluZxgCIAEoCzIaLmxlZG1hcHBlci52MS5UaW1lU3luY1BpbmdIABIzCg1zdGFydF9tYXBwaW5nGAMgASgLMhoubGVkbWFwcGVyLnYxLlN0YXJ0TWFwcGluZ0gAEiwKCWNvbmZpZ3VyZRgEIAEoCzIXLmxlZG1hcHBlci52MS5Db25maWd1cmVIABIxCgxzdG9wX21hcHBpbmcYBSABKAsyGS5sZWRtYXBwZXIudjEuU3RvcE1hcHBpbmdIABIuCgpkZXRlY3Rpb25zGAYgASgLMhgubGVkbWFwcGVyLnYxLkRldGVjdGlvbnNIABIrCglpbXVfYmF0Y2gYByABKAsyFi5sZWRtYXBwZXIudjEuSW11QmF0Y2hIABI3Cg9leHBvc3VyZV9yZXBvcnQYCCABKAsyHC5sZWRtYXBwZXIudjEuRXhwb3N1cmVSZXBvcnRIABItCgpnZXRfc3RhdHVzGAkgASgLMhcubGVkbWFwcGVyLnYxLkdldFN0YXR1c0gAEi8KC2dldF9wYXR0ZXJuGAogASgLMhgubGVkbWFwcGVyLnYxLkdldFBhdHRlcm5IABIwCgxnZXRfbGl2ZV9tYXAYCyABKAsyGC5sZWRtYXBwZXIudjEuR2V0TGl2ZU1hcEgAEjgKEGdldF9zb2x2ZV9zdGF0dXMYDCABKAsyHC5sZWRtYXBwZXIudjEuR2V0U29sdmVTdGF0dXNIABItCgpzdWJtaXRfbWFwGA0gASgLMhcubGVkbWFwcGVyLnYxLlN1Ym1pdE1hcEgAEkAKFHNldF9jb3VudGluZ19wYXR0ZXJuGA4gASgLMiAubGVkbWFwcGVyLnYxLlNldENvdW50aW5nUGF0dGVybkgAEjIKDXNldF9sZWRfY291bnQYDyABKAsyGS5sZWRtYXBwZXIudjEuU2V0TGVkQ291bnRIABI3Cg9zdWJtaXRfdG9wb2xvZ3kYECABKAsyHC5sZWRtYXBwZXIudjEuU3VibWl0VG9wb2xvZ3lIABIxCgxzZXRfcGxheWJhY2sYESABKAsyGS5sZWRtYXBwZXIudjEuU2V0UGxheWJhY2tIABIxCgxnZXRfcGxheWJhY2sYEiABKAsyGS5sZWRtYXBwZXIudjEuR2V0UGxheWJhY2tIABI4ChBnZXRfZnJhbWVfdGltaW5nGBMgASgLMhwubGVkbWFwcGVyLnYxLkdldEZyYW1lVGltaW5nSAASNAoOZ2V0X3N0b3JlZF9tYXAYFCABKAsyGi5sZWRtYXBwZXIudjEuR2V0U3RvcmVkTWFwSAASMwoNc3VibWl0X2VmZmVjdBgVIAEoCzIaLmxlZG1hcHBlci52MS5TdWJtaXRFZmZlY3RIABItCgpzZXRfZWZmZWN0GBYgASgLMhcubGVkbWFwcGVyLnYxLlNldEVmZmVjdEgAEjEKDHNldF91bmlmb3JtcxgXIAEoCzIZLmxlZG1hcHBlci52MS5TZXRVbmlmb3Jtc0gAEj4KE2dldF9lZmZlY3RfdW5pZm9ybXMYGCABKAsyHy5sZWRtYXBwZXIudjEuR2V0RWZmZWN0VW5pZm9ybXNIABIpCghzZXRfcGVyZhgZIAEoCzIVLmxlZG1hcHBlci52MS5TZXRQZXJmSAASNgoPZ2V0X3BlcmZfcmVwb3J0GBogASgLMhsubGVkbWFwcGVyLnYxLkdldFBlcmZSZXBvcnRIABI2Cg9zZXRfZGV2aWNlX25hbWUYGyABKAsyGy5sZWRtYXBwZXIudjEuU2V0RGV2aWNlTmFtZUgAEi8KC3NldF90ZXh0dXJlGBwgASgLMhgubGVkbWFwcGVyLnYxLlNldFRleHR1cmVIABIxCgx1cGxvYWRfY2h1bmsYHSABKAsyGS5sZWRtYXBwZXIudjEuVXBsb2FkQ2h1bmtIABJAChRzZXRfY29sb3JfY29ycmVjdGlvbhgeIAEoCzIgLmxlZG1hcHBlci52MS5TZXRDb2xvckNvcnJlY3Rpb25IABI1Cg5zZXRfYnJpZ2h0bmVzcxgfIAEoCzIbLmxlZG1hcHBlci52MS5TZXRCcmlnaHRuZXNzSAASJwoHc2V0X2ppdBggIAEoCzIULmxlZG1hcHBlci52MS5TZXRKaXRIAEIFCgNtc2ci9QEKB1dlbGNvbWUSEgoKc2Vzc2lvbl9pZBgBIAEoCRItCgtjb2RlX3BhcmFtcxgCIAEoCzIYLmxlZG1hcHBlci52MS5Db2RlUGFyYW1zEhwKD3NvbHZlcl9iZW5jaF9tcxgDIAEoAUgAiAEBEgsKA21hYxgEIAEoCRITCgtkZXZpY2VfbmFtZRgFIAEoCRIXCgpicmlnaHRuZXNzGAYgASgBSAGIAQESFQoNZndfZ2l0X2NvbW1pdBgHIAEoCRIUCgxmd19naXRfZGlydHkYCCABKAhCEgoQX3NvbHZlcl9iZW5jaF9tc0INCgtfYnJpZ2h0bmVzcyKAAQoKU2V0VGV4dHVyZRIRCgl0ZXhfaW5kZXgYASABKA0SDgoGZm9ybWF0GAIgASgNEg0KBXdpZHRoGAMgASgNEg4KBmhlaWdodBgEIAEoDRINCgVmbGFncxgFIAEoDRIMCgRkYXRhGAYgASgMEhMKB3BhbGV0dGUYByADKA1CAhABIh0KDVNldERldmljZU5hbWUSDAoEbmFtZRgBIAEoCSKWAgoSU2V0Q29sb3JDb3JyZWN0aW9uEhQKB3Byb2ZpbGUYASABKAlIAIgBARIUCgdnYW1tYV9yGAIgASgCSAGIAQESFAoHZ2FtbWFfZxgDIAEoAkgCiAEBEhQKB2dhbW1hX2IYBCABKAJIA4gBARISCgVsdW1fchgFIAEoAkgEiAEBEhIKBWx1bV9nGAYgASgCSAWIAQESEgoFbHVtX2IYByABKAJIBogBARITCgZjb21taXQYCCABKAhIB4gBAUIKCghfcHJvZmlsZUIKCghfZ2FtbWFfckIKCghfZ2FtbWFfZ0IKCghfZ2FtbWFfYkIICgZfbHVtX3JCCAoGX2x1bV9nQggKBl9sdW1fYkIJCgdfY29tbWl0IiMKDVNldEJyaWdodG5lc3MSEgoKYnJpZ2h0bmVzcxgBIAEoASI5Cg5NYXBwaW5nU3RvcHBlZBISCgpkZXRlY3Rpb25zGAEgASgFEhMKC2ltdV9zYW1wbGVzGAIgASgFIjIKDFRpbWVTeW5jUG9uZxIKCgJ0MBgBIAEoARIKCgJ0MRgCIAEoARIKCgJ0MhgDIAEoASJcCg5NYXBwaW5nU3RhcnRlZBIbChNwYXR0ZXJuX2Nsb2NrX2Vwb2NoGAEgASgBEi0KC2NvZGVfcGFyYW1zGAIgASgLMhgubGVkbWFwcGVyLnYxLkNvZGVQYXJhbXMiQQoGU3RhdHVzEhIKCmlkZW50aWZpZWQYASABKAUSDQoFdG90YWwYAiABKAUSFAoMbG93X3BhcmFsbGF4GAMgASgFIocBCgxQYXR0ZXJuU3RhdGUSDgoGYWN0aXZlGAEgASgIEiAKE3BhdHRlcm5fY2xvY2tfZXBvY2gYAiABKAFIAIgBARItCgtjb2RlX3BhcmFtcxgDIAEoCzIYLmxlZG1hcHBlci52MS5Db2RlUGFyYW1zQhYKFF9wYXR0ZXJuX2Nsb2NrX2Vwb2NoIkwKB0xpdmVNYXASDgoGYWN0aXZlGAEgASgIEikKA21hcBgCIAEoCzIXLmxlZG1hcHBlci52MS5PdXRwdXRNYXBIAIgBAUIGCgRfbWFwIrABCgtTb2x2ZVN0YXR1cxIPCgdydW5uaW5nGAEgASgIEhUKCHByb2dyZXNzGAIgASgBSACIAQESEwoGcm1zX3B4GAMgASgBSAGIAQESJAoEbGVkcxgEIAMoCzIWLmxlZG1hcHBlci52MS5Tb2x2ZUxlZBImCgp0cmFqZWN0b3J5GAUgAygLMhIubGVkbWFwcGVyLnYxLlZlYzNCCwoJX3Byb2dyZXNzQgkKB19ybXNfcHgiHQoLUmVzdWx0UmVhZHkSDgoGbWFwX2lkGAEgASgJIioKCENodW5rQWNrEhEKCXVwbG9hZF9pZBgBIAEoDRILCgNzZXEYAiABKA0iJgoFRXJyb3ISDAoEY29kZRgBIAEoCRIPCgdtZXNzYWdlGAIgASgJIkMKDUNvdW50aW5nU3RhdGUSDgoGYWN0aXZlGAEgASgIEhUKCGVwb2NoX21zGAIgASgBSACIAQFCCwoJX2Vwb2NoX21zIjMKDUxlZENvdW50U3RhdGUSEQoJbGVkX2NvdW50GAEgASgFEg8KB2NoYW5uZWwYAiABKAUifQoNUGxheWJhY2tTdGF0ZRIOCgZhY3RpdmUYASABKAgSDgoGZWZmZWN0GAIgASgJEiwKBnBhcmFtcxgDIAEoCzIcLmxlZG1hcHBlci52MS5QbGF5YmFja1BhcmFtcxITCgZtYXBfaWQYBCABKAlIAIgBAUIJCgdfbWFwX2lkIisKCUZyYW1lVGljaxILCgNzZXEYASABKA0SEQoJdF9tb25vX3VzGAIgASgNIrMBCgtGcmFtZVRpbWluZxIjChZwYXR0ZXJuX2Nsb2NrX2Vwb2NoX21zGAEgASgNSACIAQESFQoNYml0X3BlcmlvZF91cxgCIAEoDRIUCgxjeWNsZV9mcmFtZXMYAyABKA0SDwoHZHJvcHBlZBgEIAEoDRImCgV0aWNrcxgFIAMoCzIXLmxlZG1hcHBlci52MS5GcmFtZVRpY2tCGQoXX3BhdHRlcm5fY2xvY2tfZXBvY2hfbXMiVwoOU3RvcmVkTWFwQ2h1bmsSEQoJdG90YWxfbGVuGAEgASgFEg4KBm9mZnNldBgCIAEoBRIMCgRkYXRhGAMgASgMEhQKDGhhc190b3BvbG9neRgEIAEoCCJJCgtUZXh0dXJlUG9ydBINCgVpbmRleBgBIAEoDRINCgV3aWR0aBgCIAEoDRIOCgZoZWlnaHQYAyABKA0SDAoEZWxlbRgEIAEoDSKPAQoORWZmZWN0VW5pZm9ybXMSEQoJZWZmZWN0X2lkGAEgASgJEhAKCG1hbmlmZXN0GAIgASgMEisKB2N1cnJlbnQYAyADKAsyGi5sZWRtYXBwZXIudjEuVW5pZm9ybVZhbHVlEisKCHRleHR1cmVzGAQgAygLMhkubGVkbWFwcGVyLnYxLlRleHR1cmVQb3J0IqYHCg1TZXJ2ZXJNZXNzYWdlEigKB3dlbGNvbWUYASABKAsyFS5sZWRtYXBwZXIudjEuV2VsY29tZUgAEjQKDnRpbWVfc3luY19wb25nGAIgASgLMhoubGVkbWFwcGVyLnYxLlRpbWVTeW5jUG9uZ0gAEjcKD21hcHBpbmdfc3RhcnRlZBgDIAEoCzIcLmxlZG1hcHBlci52MS5NYXBwaW5nU3RhcnRlZEgAEiYKBnN0YXR1cxgEIAEoCzIULmxlZG1hcHBlci52MS5TdGF0dXNIABIzCg1wYXR0ZXJuX3N0YXRlGAUgASgLMhoubGVkbWFwcGVyLnYxLlBhdHRlcm5TdGF0ZUgAEikKCGxpdmVfbWFwGAYgASgLMhUubGVkbWFwcGVyLnYxLkxpdmVNYXBIABIxCgxzb2x2ZV9zdGF0dXMYByABKAsyGS5sZWRtYXBwZXIudjEuU29sdmVTdGF0dXNIABIxCgxyZXN1bHRfcmVhZHkYCCABKAsyGS5sZWRtYXBwZXIudjEuUmVzdWx0UmVhZHlIABIkCgVlcnJvchgJIAEoCzITLmxlZG1hcHBlci52MS5FcnJvckgAEjcKD21hcHBpbmdfc3RvcHBlZBgKIAEoCzIcLmxlZG1hcHBlci52MS5NYXBwaW5nU3RvcHBlZEgAEjUKDmNvdW50aW5nX3N0YXRlGAsgASgLMhsubGVkbWFwcGVyLnYxLkNvdW50aW5nU3RhdGVIABI2Cg9sZWRfY291bnRfc3RhdGUYDCABKAsyGy5sZWRtYXBwZXIudjEuTGVkQ291bnRTdGF0ZUgAEjUKDnBsYXliYWNrX3N0YXRlGA0gASgLMhsubGVkbWFwcGVyLnYxLlBsYXliYWNrU3RhdGVIABIxCgxmcmFtZV90aW1pbmcYDiABKAsyGS5sZWRtYXBwZXIudjEuRnJhbWVUaW1pbmdIABI4ChBzdG9yZWRfbWFwX2NodW5rGA8gASgLMhwubGVkbWFwcGVyLnYxLlN0b3JlZE1hcENodW5rSAASNwoPZWZmZWN0X3VuaWZvcm1zGBAgASgLMhwubGVkbWFwcGVyLnYxLkVmZmVjdFVuaWZvcm1zSAASLwoLcGVyZl9yZXBvcnQYESABKAsyGC5sZWRtYXBwZXIudjEuUGVyZlJlcG9ydEgAEisKCWNodW5rX2FjaxgSIAEoCzIWLmxlZG1hcHBlci52MS5DaHVua0Fja0gAQgUKA21zZ2IGcHJvdG8z");
+  fileDesc("Cg9sZWRtYXBwZXIucHJvdG8SDGxlZG1hcHBlci52MSIVCgRWZWMzEg0KAXYYASADKAFCAhABIiQKBFBvc2USDQoBcBgBIAMoAUICEAESDQoBcRgCIAMoAUICEAEiyAEKCkNvZGVQYXJhbXMSEQoJbGVkX2NvdW50GAEgASgFEgwKBGJpdHMYAiABKAUSEAoIZW5jb2RpbmcYAyABKAkSFQoNYml0X3BlcmlvZF9tcxgEIAEoARIUCgxzeW5jX3BhdHRlcm4YBSABKAkSFAoMY3ljbGVfZnJhbWVzGAYgASgFEgsKA2ZlYxgHIAEoCRIPCgdzeW1ib2xzGAggASgFEhcKCmJyaWdodG5lc3MYCSABKAFIAIgBAUINCgtfYnJpZ2h0bmVzcyLBAQoPRGV0ZWN0aW9uUmVjb3JkEg4KBmxlZF9pZBgBIAEoBRIUCgx0X2NhcHR1cmVfbXMYAiABKAESCQoBdRgDIAEoARIJCgF2GAQgASgBEg0KBWltZ193GAUgASgFEg0KBWltZ19oGAYgASgFEhAKAWsYByADKAFCAhABUgFLEiUKBHBvc2UYCCABKAsyEi5sZWRtYXBwZXIudjEuUG9zZUgAiAEBEhIKCmNvbmZpZGVuY2UYCSABKAFCBwoFX3Bvc2UiOwoJSW11U2FtcGxlEgkKAXQYASABKAESEAoEZ3lybxgCIAMoAUICEAESEQoFYWNjZWwYAyADKAFCAhABIqwCCg1FeHBvc3VyZVN0YXRzEhQKDHRfY2FwdHVyZV9tcxgBIAEoARIZChFmcmFtZV9pbnRlcnZhbF9tcxgCIAEoARIRCgltZWFuX2x1bWEYAyABKAESEAoIcDk1X2x1bWEYBCABKAESEQoJY2xpcF9mcmFjGAUgASgBEhIKCmJsb2JfY291bnQYBiABKAUSGgoSZGV0ZWN0b3JfdGhyZXNob2xkGAcgASgBEhAKA2lzbxgIIAEoAUgAiAEBEh0KEGV4cG9zdXJlX3RpbWVfbXMYCSABKAFIAYgBARIeChFhbWJpZW50X2ludGVuc2l0eRgKIAEoAUgCiAEBQgYKBF9pc29CEwoRX2V4cG9zdXJlX3RpbWVfbXNCFAoSX2FtYmllbnRfaW50ZW5zaXR5InkKCExlZEVudHJ5EgoKAmlkGAEgASgFEg8KA3h5ehgCIAMoAUICEAESEgoKY29uZmlkZW5jZRgDIAEoARIPCgduX3ZpZXdzGAQgASgFEhUKDXJtc19yZXByb2pfcHgYBSABKAESFAoMcGFyYWxsYXhfZGVnGAYgASgBIksKDk91dHB1dE1hcFN0YXRzEhwKFHJtc19yZXByb2pfcHhfZ2xvYmFsGAEgASgBEhsKE21lZGlhbl9wYXJhbGxheF9kZWcYAiABKAEi8QEKCU91dHB1dE1hcBIOCgZtYXBfaWQYASABKAkSEgoKY3JlYXRlZF9hdBgCIAEoCRINCgV1bml0cxgDIAEoCRINCgVmcmFtZRgEIAEoCRIRCglsZWRfY291bnQYBSABKAUSJAoEbGVkcxgGIAMoCzIWLmxlZG1hcHBlci52MS5MZWRFbnRyeRIUCgh1bm1hcHBlZBgHIAMoBUICEAESJgoKdHJhamVjdG9yeRgIIAMoCzISLmxlZG1hcHBlci52MS5WZWMzEisKBXN0YXRzGAkgASgLMhwubGVkbWFwcGVyLnYxLk91dHB1dE1hcFN0YXRzIicKCFNvbHZlTGVkEgoKAmlkGAEgASgFEg8KA3h5ehgCIAMoAUICEAEiOwoKQ29sb3JCbG9jaxINCgVzdGFydBgBIAEoBRINCgVjb3VudBgCIAEoBRIPCgNyZ2IYAyADKAFCAhABIioKC0JyYW5jaFBvaW50EgoKAmlkGAEgASgFEg8KA3h5ehgCIAMoAUICEAEiaQoPVG9wb2xvZ3lTZWdtZW50EgoKAmlkGAEgASgFEgkKAWEYAiABKAUSCQoBYhgDIAEoBRIkCghwb2x5bGluZRgEIAMoCzISLmxlZG1hcHBlci52MS5WZWMzEg4KBmxlbmd0aBgFIAEoASJcCg5MZWRBc3NvY2lhdGlvbhIOCgZsZWRfaWQYASABKAUSEgoKc2VnbWVudF9pZBgCIAEoBRIWCg5mb290X2FyY2xlbmd0aBgDIAEoARIOCgZkX3BlcnAYBCABKAEisQEKCFRvcG9sb2d5Eg4KBm1hcF9pZBgBIAEoCRIwCg1icmFuY2hfcG9pbnRzGAIgAygLMhkubGVkbWFwcGVyLnYxLkJyYW5jaFBvaW50Ei8KCHNlZ21lbnRzGAMgAygLMh0ubGVkbWFwcGVyLnYxLlRvcG9sb2d5U2VnbWVudBIyCgxhc3NvY2lhdGlvbnMYBCADKAsyHC5sZWRtYXBwZXIudjEuTGVkQXNzb2NpYXRpb24iXwoNTWFwcGluZ0J1bmRsZRIkCgNtYXAYASABKAsyFy5sZWRtYXBwZXIudjEuT3V0cHV0TWFwEigKCHRvcG9sb2d5GAIgASgLMhYubGVkbWFwcGVyLnYxLlRvcG9sb2d5IqUCCg5QbGF5YmFja1BhcmFtcxIWCglpbnRlbnNpdHkYASABKAFIAIgBARIYCgtnbG93X3JhZGl1cxgCIAEoAUgBiAEBEhgKC2FnZW50X2NvdW50GAMgASgFSAKIAQESEgoFc3BlZWQYBCABKAFIA4gBARITCgdwYWxldHRlGAUgAygNQgIQARIUCgdsZWFkX2luGAYgASgBSASIAQESFwoKc3BsaXRfcHJvYhgHIAEoAUgFiAEBEhIKBWRlY2F5GAggASgBSAaIAQFCDAoKX2ludGVuc2l0eUIOCgxfZ2xvd19yYWRpdXNCDgoMX2FnZW50X2NvdW50QggKBl9zcGVlZEIKCghfbGVhZF9pbkINCgtfc3BsaXRfcHJvYkIICgZfZGVjYXkiLAoFSGVsbG8SDgoGY2xpZW50GAEgASgJEhMKC2FwcF92ZXJzaW9uGAIgASgJIhoKDFRpbWVTeW5jUGluZxIKCgJ0MBgBIAEoASKgAQoTU3RhcnRNYXBwaW5nT3B0aW9ucxIRCglsZWRfY291bnQYASABKAUSFAoHc3ltYm9scxgCIAEoBUgAiAEBEhoKDWJpdF9wZXJpb2RfbXMYAyABKAFIAYgBARIXCgpicmlnaHRuZXNzGAQgASgBSAKIAQFCCgoIX3N5bWJvbHNCEAoOX2JpdF9wZXJpb2RfbXNCDQoLX2JyaWdodG5lc3MiQgoMU3RhcnRNYXBwaW5nEjIKB29wdGlvbnMYASABKAsyIS5sZWRtYXBwZXIudjEuU3RhcnRNYXBwaW5nT3B0aW9ucyKwAQoQQ29uZmlndXJlT3B0aW9ucxIWCglsZWRfY291bnQYASABKAVIAIgBARIUCgdzeW1ib2xzGAIgASgFSAGIAQESGgoNYml0X3BlcmlvZF9tcxgDIAEoAUgCiAEBEhcKCmJyaWdodG5lc3MYBCABKAFIA4gBAUIMCgpfbGVkX2NvdW50QgoKCF9zeW1ib2xzQhAKDl9iaXRfcGVyaW9kX21zQg0KC19icmlnaHRuZXNzIjwKCUNvbmZpZ3VyZRIvCgdvcHRpb25zGAEgASgLMh4ubGVkbWFwcGVyLnYxLkNvbmZpZ3VyZU9wdGlvbnMiOwoLU3RvcE1hcHBpbmcSGgoNc29sdmVfb25faG9zdBgBIAEoCEgAiAEBQhAKDl9zb2x2ZV9vbl9ob3N0IjEKCVN1Ym1pdE1hcBIkCgNtYXAYASABKAsyFy5sZWRtYXBwZXIudjEuT3V0cHV0TWFwIjoKCkRldGVjdGlvbnMSLAoFYmF0Y2gYASADKAsyHS5sZWRtYXBwZXIudjEuRGV0ZWN0aW9uUmVjb3JkIjQKCEltdUJhdGNoEigKB3NhbXBsZXMYASADKAsyFy5sZWRtYXBwZXIudjEuSW11U2FtcGxlIj0KDkV4cG9zdXJlUmVwb3J0EisKBnJlcG9ydBgBIAEoCzIbLmxlZG1hcHBlci52MS5FeHBvc3VyZVN0YXRzIgsKCUdldFN0YXR1cyIMCgpHZXRQYXR0ZXJuIgwKCkdldExpdmVNYXAiEAoOR2V0U29sdmVTdGF0dXMiigEKElNldENvdW50aW5nUGF0dGVybhIoCgZibG9ja3MYASADKAsyGC5sZWRtYXBwZXIudjEuQ29sb3JCbG9jaxIUCgdjaGFubmVsGAIgASgFSACIAQESGAoLY29sb3Jfb3JkZXIYAyABKAlIAYgBAUIKCghfY2hhbm5lbEIOCgxfY29sb3Jfb3JkZXIiQgoLU2V0TGVkQ291bnQSEQoJbGVkX2NvdW50GAEgASgFEhQKB2NoYW5uZWwYAiABKAVIAIgBAUIKCghfY2hhbm5lbCI6Cg5TdWJtaXRUb3BvbG9neRIoCgh0b3BvbG9neRgBIAEoCzIWLmxlZG1hcHBlci52MS5Ub3BvbG9neSJrCgtTZXRQbGF5YmFjaxIOCgZlZmZlY3QYASABKAkSLAoGcGFyYW1zGAIgASgLMhwubGVkbWFwcGVyLnYxLlBsYXliYWNrUGFyYW1zEhMKBm1hcF9pZBgDIAEoCUgAiAEBQgkKB19tYXBfaWQiDQoLR2V0UGxheWJhY2siEAoOR2V0RnJhbWVUaW1pbmciLwoMR2V0U3RvcmVkTWFwEg4KBm9mZnNldBgBIAEoBRIPCgdtYXhfbGVuGAIgASgFIpkBCgtVcGxvYWRDaHVuaxIRCgl1cGxvYWRfaWQYASABKA0SCwoDc2VxGAIgASgNEgwKBGxhc3QYAyABKAgSLAoEa2luZBgEIAEoDjIeLmxlZG1hcHBlci52MS5VcGxvYWRDaHVuay5LaW5kEg8KB3BheWxvYWQYBSABKAwiHQoES2luZBIHCgNNQVAQABIMCghUT1BPTE9HWRABIi8KDFVuaWZvcm1WYWx1ZRIMCgRzbG90GAEgASgNEhEKBXZhbHVlGAIgAygCQgIQASJACgxTdWJtaXRFZmZlY3QSEQoJZWZmZWN0X2lkGAEgASgJEgsKA2Z4YhgCIAEoDBIQCghhY3RpdmF0ZRgDIAEoCCIeCglTZXRFZmZlY3QSEQoJZWZmZWN0X2lkGAEgASgJIjkKC1NldFVuaWZvcm1zEioKBnZhbHVlcxgBIAMoCzIaLmxlZG1hcHBlci52MS5Vbmlmb3JtVmFsdWUiOQoRR2V0RWZmZWN0VW5pZm9ybXMSFgoJZWZmZWN0X2lkGAEgASgJSACIAQFCDAoKX2VmZmVjdF9pZCJuCgdTZXRQZXJmEigKBG1vZGUYASABKA4yGi5sZWRtYXBwZXIudjEuU2V0UGVyZi5Nb2RlEhMKC2ludGVydmFsX21zGAIgASgNIiQKBE1vZGUSBwoDT0ZGEAASCQoFQkFTSUMQARIICgRGVUxMEAIiDwoNR2V0UGVyZlJlcG9ydCIZCgZTZXRKaXQSDwoHZW5hYmxlZBgBIAEoCCLBAQoJUGVyZkZyYW1lEgsKA3NlcRgBIAEoDRIVCg11cGRhdGVfY3ljbGVzGAIgASgNEhQKDHNoYWRlX2N5Y2xlcxgDIAEoDRIUCgxmcmFtZV9jeWNsZXMYBCABKA0SEwoLc2hvd19jeWNsZXMYBSABKA0SEQoJbGVkX2NvdW50GAYgASgNEhQKDGluc3RyX3VwZGF0ZRgHIAEoDRITCgtpbnN0cl9zaGFkZRgIIAEoDRIRCglzdGFja19tYXgYCSABKA0iqAMKClBlcmZSZXBvcnQSEQoJZWZmZWN0X2lkGAEgASgJEhAKCGZ4Yl9oYXNoGAIgASgNEg4KBmNwdV9oehgDIAEoDRIVCg1idWRnZXRfY3ljbGVzGAQgASgNEhgKEGZyYW1lX2N5Y2xlc19taW4YCiABKA0SGQoRZnJhbWVfY3ljbGVzX21lYW4YCyABKA0SGAoQZnJhbWVfY3ljbGVzX21heBgMIAEoDRIaChJ1cGRhdGVfY3ljbGVzX21lYW4YDSABKA0SGQoRc2hhZGVfY3ljbGVzX21lYW4YDiABKA0SGAoQc2hvd19jeWNsZXNfbWVhbhgPIAEoDRIQCghvdmVycnVucxgUIAEoDRIWCg5kcm9wcGVkX2ZyYW1lcxgVIAEoDRIXCg9zYW1wbGVzX2Ryb3BwZWQYFiABKA0SEQoJaGVhcF9mcmVlGB4gASgNEhUKDWhlYXBfbWluX2ZyZWUYHyABKA0SGQoRaGVhcF9sYXJnZXN0X2ZyZWUYICABKA0SJgoFdGlja3MYKCADKAsyFy5sZWRtYXBwZXIudjEuUGVyZkZyYW1lIpYOCg1DbGllbnRNZXNzYWdlEiQKBWhlbGxvGAEgASgLMhMubGVkbWFwcGVyLnYxLkhlbGxvSAASNAoOdGltZV9zeW5jX3BpbmcYAiABKAsyGi5sZWRtYXBwZXIudjEuVGltZVN5bmNQaW5nSAASMwoNc3RhcnRfbWFwcGluZxgDIAEoCzIaLmxlZG1hcHBlci52MS5TdGFydE1hcHBpbmdIABIsCgljb25maWd1cmUYBCABKAsyFy5sZWRtYXBwZXIudjEuQ29uZmlndXJlSAASMQoMc3RvcF9tYXBwaW5nGAUgASgLMhkubGVkbWFwcGVyLnYxLlN0b3BNYXBwaW5nSAASLgoKZGV0ZWN0aW9ucxgGIAEoCzIYLmxlZG1hcHBlci52MS5EZXRlY3Rpb25zSAASKwoJaW11X2JhdGNoGAcgASgLMhYubGVkbWFwcGVyLnYxLkltdUJhdGNoSAASNwoPZXhwb3N1cmVfcmVwb3J0GAggASgLMhwubGVkbWFwcGVyLnYxLkV4cG9zdXJlUmVwb3J0SAASLQoKZ2V0X3N0YXR1cxgJIAEoCzIXLmxlZG1hcHBlci52MS5HZXRTdGF0dXNIABIvCgtnZXRfcGF0dGVybhgKIAEoCzIYLmxlZG1hcHBlci52MS5HZXRQYXR0ZXJuSAASMAoMZ2V0X2xpdmVfbWFwGAsgASgLMhgubGVkbWFwcGVyLnYxLkdldExpdmVNYXBIABI4ChBnZXRfc29sdmVfc3RhdHVzGAwgASgLMhwubGVkbWFwcGVyLnYxLkdldFNvbHZlU3RhdHVzSAASLQoKc3VibWl0X21hcBgNIAEoCzIXLmxlZG1hcHBlci52MS5TdWJtaXRNYXBIABJAChRzZXRfY291bnRpbmdfcGF0dGVybhgOIAEoCzIgLmxlZG1hcHBlci52MS5TZXRDb3VudGluZ1BhdHRlcm5IABIyCg1zZXRfbGVkX2NvdW50GA8gASgLMhkubGVkbWFwcGVyLnYxLlNldExlZENvdW50SAASNwoPc3VibWl0X3RvcG9sb2d5GBAgASgLMhwubGVkbWFwcGVyLnYxLlN1Ym1pdFRvcG9sb2d5SAASMQoMc2V0X3BsYXliYWNrGBEgASgLMhkubGVkbWFwcGVyLnYxLlNldFBsYXliYWNrSAASMQoMZ2V0X3BsYXliYWNrGBIgASgLMhkubGVkbWFwcGVyLnYxLkdldFBsYXliYWNrSAASOAoQZ2V0X2ZyYW1lX3RpbWluZxgTIAEoCzIcLmxlZG1hcHBlci52MS5HZXRGcmFtZVRpbWluZ0gAEjQKDmdldF9zdG9yZWRfbWFwGBQgASgLMhoubGVkbWFwcGVyLnYxLkdldFN0b3JlZE1hcEgAEjMKDXN1Ym1pdF9lZmZlY3QYFSABKAsyGi5sZWRtYXBwZXIudjEuU3VibWl0RWZmZWN0SAASLQoKc2V0X2VmZmVjdBgWIAEoCzIXLmxlZG1hcHBlci52MS5TZXRFZmZlY3RIABIxCgxzZXRfdW5pZm9ybXMYFyABKAsyGS5sZWRtYXBwZXIudjEuU2V0VW5pZm9ybXNIABI+ChNnZXRfZWZmZWN0X3VuaWZvcm1zGBggASgLMh8ubGVkbWFwcGVyLnYxLkdldEVmZmVjdFVuaWZvcm1zSAASKQoIc2V0X3BlcmYYGSABKAsyFS5sZWRtYXBwZXIudjEuU2V0UGVyZkgAEjYKD2dldF9wZXJmX3JlcG9ydBgaIAEoCzIbLmxlZG1hcHBlci52MS5HZXRQZXJmUmVwb3J0SAASNgoPc2V0X2RldmljZV9uYW1lGBsgASgLMhsubGVkbWFwcGVyLnYxLlNldERldmljZU5hbWVIABIvCgtzZXRfdGV4dHVyZRgcIAEoCzIYLmxlZG1hcHBlci52MS5TZXRUZXh0dXJlSAASMQoMdXBsb2FkX2NodW5rGB0gASgLMhkubGVkbWFwcGVyLnYxLlVwbG9hZENodW5rSAASQAoUc2V0X2NvbG9yX2NvcnJlY3Rpb24YHiABKAsyIC5sZWRtYXBwZXIudjEuU2V0Q29sb3JDb3JyZWN0aW9uSAASNQoOc2V0X2JyaWdodG5lc3MYHyABKAsyGy5sZWRtYXBwZXIudjEuU2V0QnJpZ2h0bmVzc0gAEicKB3NldF9qaXQYICABKAsyFC5sZWRtYXBwZXIudjEuU2V0Sml0SAASPgoTc2V0X2hhcmR3YXJlX2NvbmZpZxghIAEoCzIfLmxlZG1hcHBlci52MS5TZXRIYXJkd2FyZUNvbmZpZ0gAEj4KE2dldF9oYXJkd2FyZV9jb25maWcYIiABKAsyHy5sZWRtYXBwZXIudjEuR2V0SGFyZHdhcmVDb25maWdIAEIFCgNtc2ci9QEKB1dlbGNvbWUSEgoKc2Vzc2lvbl9pZBgBIAEoCRItCgtjb2RlX3BhcmFtcxgCIAEoCzIYLmxlZG1hcHBlci52MS5Db2RlUGFyYW1zEhwKD3NvbHZlcl9iZW5jaF9tcxgDIAEoAUgAiAEBEgsKA21hYxgEIAEoCRITCgtkZXZpY2VfbmFtZRgFIAEoCRIXCgpicmlnaHRuZXNzGAYgASgBSAGIAQESFQoNZndfZ2l0X2NvbW1pdBgHIAEoCRIUCgxmd19naXRfZGlydHkYCCABKAhCEgoQX3NvbHZlcl9iZW5jaF9tc0INCgtfYnJpZ2h0bmVzcyJXCg9IYXJkd2FyZUNoYW5uZWwSDwoHY2hhbm5lbBgBIAEoBRIMCgRncGlvGAIgASgFEhAKCGxlZF90eXBlGAMgASgJEhMKC2NvbG9yX29yZGVyGAQgASgJIhMKEUdldEhhcmR3YXJlQ29uZmlnIoABCgpTZXRUZXh0dXJlEhEKCXRleF9pbmRleBgBIAEoDRIOCgZmb3JtYXQYAiABKA0SDQoFd2lkdGgYAyABKA0SDgoGaGVpZ2h0GAQgASgNEg0KBWZsYWdzGAUgASgNEgwKBGRhdGEYBiABKAwSEwoHcGFsZXR0ZRgHIAMoDUICEAEiHQoNU2V0RGV2aWNlTmFtZRIMCgRuYW1lGAEgASgJIpYCChJTZXRDb2xvckNvcnJlY3Rpb24SFAoHcHJvZmlsZRgBIAEoCUgAiAEBEhQKB2dhbW1hX3IYAiABKAJIAYgBARIUCgdnYW1tYV9nGAMgASgCSAKIAQESFAoHZ2FtbWFfYhgEIAEoAkgDiAEBEhIKBWx1bV9yGAUgASgCSASIAQESEgoFbHVtX2cYBiABKAJIBYgBARISCgVsdW1fYhgHIAEoAkgGiAEBEhMKBmNvbW1pdBgIIAEoCEgHiAEBQgoKCF9wcm9maWxlQgoKCF9nYW1tYV9yQgoKCF9nYW1tYV9nQgoKCF9nYW1tYV9iQggKBl9sdW1fckIICgZfbHVtX2dCCAoGX2x1bV9iQgkKB19jb21taXQiIwoNU2V0QnJpZ2h0bmVzcxISCgpicmlnaHRuZXNzGAEgASgBIr8BChFTZXRIYXJkd2FyZUNvbmZpZxIUCgdjaGFubmVsGAEgASgFSACIAQESEQoEZ3BpbxgCIAEoBUgBiAEBEhUKCGxlZF90eXBlGAMgASgJSAKIAQESGAoLY29sb3Jfb3JkZXIYBCABKAlIA4gBARITCgZjb21taXQYBSABKAhIBIgBAUIKCghfY2hhbm5lbEIHCgVfZ3Bpb0ILCglfbGVkX3R5cGVCDgoMX2NvbG9yX29yZGVyQgkKB19jb21taXQidgoTSGFyZHdhcmVDb25maWdTdGF0ZRIvCghjaGFubmVscxgBIAMoCzIdLmxlZG1hcHBlci52MS5IYXJkd2FyZUNoYW5uZWwSLgoFYm9hcmQYAiABKAsyHy5sZWRtYXBwZXIudjEuQm9hcmRDYXBhYmlsaXRpZXMiTgoHR3Bpb1BpbhIMCgRncGlvGAEgASgNEicKBnNhZmV0eRgCIAEoDjIXLmxlZG1hcHBlci52MS5QaW5TYWZldHkSDAoEbm90ZRgDIAEoCSIkCgdMZWRNb2RlEgoKAmlkGAEgASgJEg0KBWxhYmVsGAIgASgJInYKEUJvYXJkQ2FwYWJpbGl0aWVzEg0KBWJvYXJkGAEgASgJEigKCWdwaW9fcGlucxgCIAMoCzIVLmxlZG1hcHBlci52MS5HcGlvUGluEigKCWxlZF9tb2RlcxgDIAMoCzIVLmxlZG1hcHBlci52MS5MZWRNb2RlIjkKDk1hcHBpbmdTdG9wcGVkEhIKCmRldGVjdGlvbnMYASABKAUSEwoLaW11X3NhbXBsZXMYAiABKAUiMgoMVGltZVN5bmNQb25nEgoKAnQwGAEgASgBEgoKAnQxGAIgASgBEgoKAnQyGAMgASgBIlwKDk1hcHBpbmdTdGFydGVkEhsKE3BhdHRlcm5fY2xvY2tfZXBvY2gYASABKAESLQoLY29kZV9wYXJhbXMYAiABKAsyGC5sZWRtYXBwZXIudjEuQ29kZVBhcmFtcyJBCgZTdGF0dXMSEgoKaWRlbnRpZmllZBgBIAEoBRINCgV0b3RhbBgCIAEoBRIUCgxsb3dfcGFyYWxsYXgYAyABKAUihwEKDFBhdHRlcm5TdGF0ZRIOCgZhY3RpdmUYASABKAgSIAoTcGF0dGVybl9jbG9ja19lcG9jaBgCIAEoAUgAiAEBEi0KC2NvZGVfcGFyYW1zGAMgASgLMhgubGVkbWFwcGVyLnYxLkNvZGVQYXJhbXNCFgoUX3BhdHRlcm5fY2xvY2tfZXBvY2giTAoHTGl2ZU1hcBIOCgZhY3RpdmUYASABKAgSKQoDbWFwGAIgASgLMhcubGVkbWFwcGVyLnYxLk91dHB1dE1hcEgAiAEBQgYKBF9tYXAisAEKC1NvbHZlU3RhdHVzEg8KB3J1bm5pbmcYASABKAgSFQoIcHJvZ3Jlc3MYAiABKAFIAIgBARITCgZybXNfcHgYAyABKAFIAYgBARIkCgRsZWRzGAQgAygLMhYubGVkbWFwcGVyLnYxLlNvbHZlTGVkEiYKCnRyYWplY3RvcnkYBSADKAsyEi5sZWRtYXBwZXIudjEuVmVjM0ILCglfcHJvZ3Jlc3NCCQoHX3Jtc19weCIdCgtSZXN1bHRSZWFkeRIOCgZtYXBfaWQYASABKAkiKgoIQ2h1bmtBY2sSEQoJdXBsb2FkX2lkGAEgASgNEgsKA3NlcRgCIAEoDSImCgVFcnJvchIMCgRjb2RlGAEgASgJEg8KB21lc3NhZ2UYAiABKAkiQwoNQ291bnRpbmdTdGF0ZRIOCgZhY3RpdmUYASABKAgSFQoIZXBvY2hfbXMYAiABKAFIAIgBAUILCglfZXBvY2hfbXMiMwoNTGVkQ291bnRTdGF0ZRIRCglsZWRfY291bnQYASABKAUSDwoHY2hhbm5lbBgCIAEoBSJ9Cg1QbGF5YmFja1N0YXRlEg4KBmFjdGl2ZRgBIAEoCBIOCgZlZmZlY3QYAiABKAkSLAoGcGFyYW1zGAMgASgLMhwubGVkbWFwcGVyLnYxLlBsYXliYWNrUGFyYW1zEhMKBm1hcF9pZBgEIAEoCUgAiAEBQgkKB19tYXBfaWQiKwoJRnJhbWVUaWNrEgsKA3NlcRgBIAEoDRIRCgl0X21vbm9fdXMYAiABKA0iswEKC0ZyYW1lVGltaW5nEiMKFnBhdHRlcm5fY2xvY2tfZXBvY2hfbXMYASABKA1IAIgBARIVCg1iaXRfcGVyaW9kX3VzGAIgASgNEhQKDGN5Y2xlX2ZyYW1lcxgDIAEoDRIPCgdkcm9wcGVkGAQgASgNEiYKBXRpY2tzGAUgAygLMhcubGVkbWFwcGVyLnYxLkZyYW1lVGlja0IZChdfcGF0dGVybl9jbG9ja19lcG9jaF9tcyJXCg5TdG9yZWRNYXBDaHVuaxIRCgl0b3RhbF9sZW4YASABKAUSDgoGb2Zmc2V0GAIgASgFEgwKBGRhdGEYAyABKAwSFAoMaGFzX3RvcG9sb2d5GAQgASgIIkkKC1RleHR1cmVQb3J0Eg0KBWluZGV4GAEgASgNEg0KBXdpZHRoGAIgASgNEg4KBmhlaWdodBgDIAEoDRIMCgRlbGVtGAQgASgNIo8BCg5FZmZlY3RVbmlmb3JtcxIRCgllZmZlY3RfaWQYASABKAkSEAoIbWFuaWZlc3QYAiABKAwSKwoHY3VycmVudBgDIAMoCzIaLmxlZG1hcHBlci52MS5Vbmlmb3JtVmFsdWUSKwoIdGV4dHVyZXMYBCADKAsyGS5sZWRtYXBwZXIudjEuVGV4dHVyZVBvcnQi6gcKDVNlcnZlck1lc3NhZ2USKAoHd2VsY29tZRgBIAEoCzIVLmxlZG1hcHBlci52MS5XZWxjb21lSAASNAoOdGltZV9zeW5jX3BvbmcYAiABKAsyGi5sZWRtYXBwZXIudjEuVGltZVN5bmNQb25nSAASNwoPbWFwcGluZ19zdGFydGVkGAMgASgLMhwubGVkbWFwcGVyLnYxLk1hcHBpbmdTdGFydGVkSAASJgoGc3RhdHVzGAQgASgLMhQubGVkbWFwcGVyLnYxLlN0YXR1c0gAEjMKDXBhdHRlcm5fc3RhdGUYBSABKAsyGi5sZWRtYXBwZXIudjEuUGF0dGVyblN0YXRlSAASKQoIbGl2ZV9tYXAYBiABKAsyFS5sZWRtYXBwZXIudjEuTGl2ZU1hcEgAEjEKDHNvbHZlX3N0YXR1cxgHIAEoCzIZLmxlZG1hcHBlci52MS5Tb2x2ZVN0YXR1c0gAEjEKDHJlc3VsdF9yZWFkeRgIIAEoCzIZLmxlZG1hcHBlci52MS5SZXN1bHRSZWFkeUgAEiQKBWVycm9yGAkgASgLMhMubGVkbWFwcGVyLnYxLkVycm9ySAASNwoPbWFwcGluZ19zdG9wcGVkGAogASgLMhwubGVkbWFwcGVyLnYxLk1hcHBpbmdTdG9wcGVkSAASNQoOY291bnRpbmdfc3RhdGUYCyABKAsyGy5sZWRtYXBwZXIudjEuQ291bnRpbmdTdGF0ZUgAEjYKD2xlZF9jb3VudF9zdGF0ZRgMIAEoCzIbLmxlZG1hcHBlci52MS5MZWRDb3VudFN0YXRlSAASNQoOcGxheWJhY2tfc3RhdGUYDSABKAsyGy5sZWRtYXBwZXIudjEuUGxheWJhY2tTdGF0ZUgAEjEKDGZyYW1lX3RpbWluZxgOIAEoCzIZLmxlZG1hcHBlci52MS5GcmFtZVRpbWluZ0gAEjgKEHN0b3JlZF9tYXBfY2h1bmsYDyABKAsyHC5sZWRtYXBwZXIudjEuU3RvcmVkTWFwQ2h1bmtIABI3Cg9lZmZlY3RfdW5pZm9ybXMYECABKAsyHC5sZWRtYXBwZXIudjEuRWZmZWN0VW5pZm9ybXNIABIvCgtwZXJmX3JlcG9ydBgRIAEoCzIYLmxlZG1hcHBlci52MS5QZXJmUmVwb3J0SAASKwoJY2h1bmtfYWNrGBIgASgLMhYubGVkbWFwcGVyLnYxLkNodW5rQWNrSAASQgoVaGFyZHdhcmVfY29uZmlnX3N0YXRlGBMgASgLMiEubGVkbWFwcGVyLnYxLkhhcmR3YXJlQ29uZmlnU3RhdGVIAEIFCgNtc2cqcQoJUGluU2FmZXR5EhoKFlBJTl9TQUZFVFlfVU5TUEVDSUZJRUQQABIaChZQSU5fU0FGRVRZX1JFQ09NTUVOREVEEAESFgoSUElOX1NBRkVUWV9DQVVUSU9OEAISFAoQUElOX1NBRkVUWV9BVk9JRBADYgZwcm90bzM");
 
 /**
  * 3-vector; used only where nesting forces a message type (trajectories).
@@ -1064,6 +1064,17 @@ export type SetCountingPattern = Message<"ledmapper.v1.SetCountingPattern"> & {
    * @generated from field: optional int32 channel = 2;
    */
   channel?: number | undefined;
+
+  /**
+   * Wire color order for THIS probe's pixels (a permutation of "RGB", e.g.
+   * "GRB"), applied ONLY to the counting pattern and independent of the
+   * channel's committed color order. Lets the color-order test preview a
+   * candidate order (or drive raw during identify) WITHOUT mutating the
+   * persisted hardware config. Unset -> identity "RGB" (raw wire bytes).
+   *
+   * @generated from field: optional string color_order = 3;
+   */
+  colorOrder?: string | undefined;
 };
 
 /**
@@ -1868,6 +1879,18 @@ export type ClientMessage = Message<"ledmapper.v1.ClientMessage"> & {
      */
     value: SetJit;
     case: "setJit";
+  } | {
+    /**
+     * @generated from field: ledmapper.v1.SetHardwareConfig set_hardware_config = 33;
+     */
+    value: SetHardwareConfig;
+    case: "setHardwareConfig";
+  } | {
+    /**
+     * @generated from field: ledmapper.v1.GetHardwareConfig get_hardware_config = 34;
+     */
+    value: GetHardwareConfig;
+    case: "getHardwareConfig";
   } | { case: undefined; value?: undefined };
 };
 
@@ -1951,6 +1974,58 @@ export const WelcomeSchema: GenMessage<Welcome> = /*@__PURE__*/
   messageDesc(file_ledmapper, 51);
 
 /**
+ * One LED output channel's hardware config, carried in hardware_config_state.
+ *
+ * @generated from message ledmapper.v1.HardwareChannel
+ */
+export type HardwareChannel = Message<"ledmapper.v1.HardwareChannel"> & {
+  /**
+   * @generated from field: int32 channel = 1;
+   */
+  channel: number;
+
+  /**
+   * @generated from field: int32 gpio = 2;
+   */
+  gpio: number;
+
+  /**
+   * @generated from field: string led_type = 3;
+   */
+  ledType: string;
+
+  /**
+   * Wire color order, a permutation of "RGB" (see SetHardwareConfig.color_order).
+   *
+   * @generated from field: string color_order = 4;
+   */
+  colorOrder: string;
+};
+
+/**
+ * Describes the message ledmapper.v1.HardwareChannel.
+ * Use `create(HardwareChannelSchema)` to create a new message.
+ */
+export const HardwareChannelSchema: GenMessage<HardwareChannel> = /*@__PURE__*/
+  messageDesc(file_ledmapper, 52);
+
+/**
+ * Request the per-channel hardware config (GPIO / LED type / wire color order),
+ * so the Hardware Setup page can hydrate on open. Reply: hardware_config_state.
+ *
+ * @generated from message ledmapper.v1.GetHardwareConfig
+ */
+export type GetHardwareConfig = Message<"ledmapper.v1.GetHardwareConfig"> & {
+};
+
+/**
+ * Describes the message ledmapper.v1.GetHardwareConfig.
+ * Use `create(GetHardwareConfigSchema)` to create a new message.
+ */
+export const GetHardwareConfigSchema: GenMessage<GetHardwareConfig> = /*@__PURE__*/
+  messageDesc(file_ledmapper, 53);
+
+/**
  * Stream a frame into a loaded effect's 2D `texture` (video textures). `data` is
  * the frame quantized to `format` (row-major, `width`*`height` texels),
  * optionally XOR-delta'd against the previous frame (flags bit0 = DELTA — the
@@ -2010,7 +2085,7 @@ export type SetTexture = Message<"ledmapper.v1.SetTexture"> & {
  * Use `create(SetTextureSchema)` to create a new message.
  */
 export const SetTextureSchema: GenMessage<SetTexture> = /*@__PURE__*/
-  messageDesc(file_ledmapper, 52);
+  messageDesc(file_ledmapper, 54);
 
 /**
  * Set the player's display name; it becomes the Bluetooth-advertised name too
@@ -2030,7 +2105,7 @@ export type SetDeviceName = Message<"ledmapper.v1.SetDeviceName"> & {
  * Use `create(SetDeviceNameSchema)` to create a new message.
  */
 export const SetDeviceNameSchema: GenMessage<SetDeviceName> = /*@__PURE__*/
-  messageDesc(file_ledmapper, 53);
+  messageDesc(file_ledmapper, 55);
 
 /**
  * Configure per-channel color correction. LEDs render washed out without gamma
@@ -2102,7 +2177,7 @@ export type SetColorCorrection = Message<"ledmapper.v1.SetColorCorrection"> & {
  * Use `create(SetColorCorrectionSchema)` to create a new message.
  */
 export const SetColorCorrectionSchema: GenMessage<SetColorCorrection> = /*@__PURE__*/
-  messageDesc(file_ledmapper, 54);
+  messageDesc(file_ledmapper, 56);
 
 /**
  * Global output brightness — a single scalar applied to every LED's rendered
@@ -2132,7 +2207,200 @@ export type SetBrightness = Message<"ledmapper.v1.SetBrightness"> & {
  * Use `create(SetBrightnessSchema)` to create a new message.
  */
 export const SetBrightnessSchema: GenMessage<SetBrightness> = /*@__PURE__*/
-  messageDesc(file_ledmapper, 55);
+  messageDesc(file_ledmapper, 57);
+
+/**
+ * Configure an LED output channel's HARDWARE wiring: which GPIO drives its data
+ * line, the LED chip family, and the wire color order. Persisted to flash (NVS)
+ * and applied to the RMT driver. Every field is optional so the UI can nudge one
+ * setting at a time; an unset field leaves that setting unchanged. Reply:
+ * hardware_config_state (the resulting per-channel config).
+ *
+ * @generated from message ledmapper.v1.SetHardwareConfig
+ */
+export type SetHardwareConfig = Message<"ledmapper.v1.SetHardwareConfig"> & {
+  /**
+   * Output channel index; unset -> 0. The ESP32-C6 drives up to two parallel RMT
+   * channels; the Pi has one.
+   *
+   * @generated from field: optional int32 channel = 1;
+   */
+  channel?: number | undefined;
+
+  /**
+   * GPIO number driving this channel's data line (any output-capable pin — the
+   * RMT peripheral routes through the GPIO matrix). Unset -> leave unchanged.
+   *
+   * @generated from field: optional int32 gpio = 2;
+   */
+  gpio?: number | undefined;
+
+  /**
+   * LED chip family. "ws281x" (WS2811/WS2812/WS2812B/SK6812 clockless) is the
+   * only type supported today. Unset -> leave unchanged.
+   *
+   * @generated from field: optional string led_type = 3;
+   */
+  ledType?: string | undefined;
+
+  /**
+   * Wire color order: a permutation of "RGB" naming which logical channel each
+   * of the three wire bytes carries (e.g. "GRB" for WS2812B — byte0=green). The
+   * driver maps logical R,G,B to this order on every strip write. Unset -> leave
+   * unchanged.
+   *
+   * @generated from field: optional string color_order = 4;
+   */
+  colorOrder?: string | undefined;
+
+  /**
+   * Persist to flash (unset/true) or apply from RAM only (false). The color-order
+   * confirmation test streams commit=false previews (forcing identity "RGB" so
+   * the raw wire bytes reach the strip) and commits once the user picks the match.
+   *
+   * @generated from field: optional bool commit = 5;
+   */
+  commit?: boolean | undefined;
+};
+
+/**
+ * Describes the message ledmapper.v1.SetHardwareConfig.
+ * Use `create(SetHardwareConfigSchema)` to create a new message.
+ */
+export const SetHardwareConfigSchema: GenMessage<SetHardwareConfig> = /*@__PURE__*/
+  messageDesc(file_ledmapper, 58);
+
+/**
+ * Reply to set_hardware_config / get_hardware_config: the per-channel hardware
+ * config the device is running (defaults filled in), for the UI to hydrate.
+ *
+ * @generated from message ledmapper.v1.HardwareConfigState
+ */
+export type HardwareConfigState = Message<"ledmapper.v1.HardwareConfigState"> & {
+  /**
+   * @generated from field: repeated ledmapper.v1.HardwareChannel channels = 1;
+   */
+  channels: HardwareChannel[];
+
+  /**
+   * Static, board-specific capabilities (pin catalog + LED modes). Unset on
+   * older firmware — the app falls back to a built-in default catalog.
+   *
+   * @generated from field: ledmapper.v1.BoardCapabilities board = 2;
+   */
+  board?: BoardCapabilities | undefined;
+};
+
+/**
+ * Describes the message ledmapper.v1.HardwareConfigState.
+ * Use `create(HardwareConfigStateSchema)` to create a new message.
+ */
+export const HardwareConfigStateSchema: GenMessage<HardwareConfigState> = /*@__PURE__*/
+  messageDesc(file_ledmapper, 59);
+
+/**
+ * One selectable GPIO for LED data output.
+ *
+ * @generated from message ledmapper.v1.GpioPin
+ */
+export type GpioPin = Message<"ledmapper.v1.GpioPin"> & {
+  /**
+   * GPIO number.
+   *
+   * @generated from field: uint32 gpio = 1;
+   */
+  gpio: number;
+
+  /**
+   * Safety category — grouping in the picker + whether a confirm is shown.
+   *
+   * @generated from field: ledmapper.v1.PinSafety safety = 2;
+   */
+  safety: PinSafety;
+
+  /**
+   * Optional board-specific reason shown in the confirm dialog (e.g. "JTAG debug
+   * pin; flash clock on internal-flash models"). Empty -> the app uses default
+   * wording for the safety level.
+   *
+   * @generated from field: string note = 3;
+   */
+  note: string;
+};
+
+/**
+ * Describes the message ledmapper.v1.GpioPin.
+ * Use `create(GpioPinSchema)` to create a new message.
+ */
+export const GpioPinSchema: GenMessage<GpioPin> = /*@__PURE__*/
+  messageDesc(file_ledmapper, 60);
+
+/**
+ * One LED driver mode (chip family) this firmware build supports.
+ *
+ * @generated from message ledmapper.v1.LedMode
+ */
+export type LedMode = Message<"ledmapper.v1.LedMode"> & {
+  /**
+   * Stable id echoed back in set_hardware_config.led_type (e.g. "ws281x").
+   *
+   * @generated from field: string id = 1;
+   */
+  id: string;
+
+  /**
+   * Human-readable label for the dropdown (e.g. "WS281x (WS2811/2812/SK6812)").
+   *
+   * @generated from field: string label = 2;
+   */
+  label: string;
+};
+
+/**
+ * Describes the message ledmapper.v1.LedMode.
+ * Use `create(LedModeSchema)` to create a new message.
+ */
+export const LedModeSchema: GenMessage<LedMode> = /*@__PURE__*/
+  messageDesc(file_ledmapper, 61);
+
+/**
+ * Static per-board hardware capabilities the firmware reports so the app can
+ * build its pin picker and LED-type list from what THIS board actually supports
+ * (different ESP32-C6 boards expose different pins / driver modes). Authored per
+ * board as a checked-in textproto, compiled to a binaryproto at build time and
+ * embedded in the firmware image (see firmware/player_app board_caps).
+ *
+ * @generated from message ledmapper.v1.BoardCapabilities
+ */
+export type BoardCapabilities = Message<"ledmapper.v1.BoardCapabilities"> & {
+  /**
+   * Human-readable board identifier (e.g. "ESP32-C6 SuperMini"), for display/debug.
+   *
+   * @generated from field: string board = 1;
+   */
+  board: string;
+
+  /**
+   * Selectable GPIOs for LED data output, each tagged with how safe it is.
+   *
+   * @generated from field: repeated ledmapper.v1.GpioPin gpio_pins = 2;
+   */
+  gpioPins: GpioPin[];
+
+  /**
+   * LED driver modes (chip families) this firmware build supports.
+   *
+   * @generated from field: repeated ledmapper.v1.LedMode led_modes = 3;
+   */
+  ledModes: LedMode[];
+};
+
+/**
+ * Describes the message ledmapper.v1.BoardCapabilities.
+ * Use `create(BoardCapabilitiesSchema)` to create a new message.
+ */
+export const BoardCapabilitiesSchema: GenMessage<BoardCapabilities> = /*@__PURE__*/
+  messageDesc(file_ledmapper, 62);
 
 /**
  * Reply to stop_mapping(solve_on_host=false): stopped + persisted, no host
@@ -2157,7 +2425,7 @@ export type MappingStopped = Message<"ledmapper.v1.MappingStopped"> & {
  * Use `create(MappingStoppedSchema)` to create a new message.
  */
 export const MappingStoppedSchema: GenMessage<MappingStopped> = /*@__PURE__*/
-  messageDesc(file_ledmapper, 56);
+  messageDesc(file_ledmapper, 63);
 
 /**
  * @generated from message ledmapper.v1.TimeSyncPong
@@ -2184,7 +2452,7 @@ export type TimeSyncPong = Message<"ledmapper.v1.TimeSyncPong"> & {
  * Use `create(TimeSyncPongSchema)` to create a new message.
  */
 export const TimeSyncPongSchema: GenMessage<TimeSyncPong> = /*@__PURE__*/
-  messageDesc(file_ledmapper, 57);
+  messageDesc(file_ledmapper, 64);
 
 /**
  * @generated from message ledmapper.v1.MappingStarted
@@ -2206,7 +2474,7 @@ export type MappingStarted = Message<"ledmapper.v1.MappingStarted"> & {
  * Use `create(MappingStartedSchema)` to create a new message.
  */
 export const MappingStartedSchema: GenMessage<MappingStarted> = /*@__PURE__*/
-  messageDesc(file_ledmapper, 58);
+  messageDesc(file_ledmapper, 65);
 
 /**
  * @generated from message ledmapper.v1.Status
@@ -2233,7 +2501,7 @@ export type Status = Message<"ledmapper.v1.Status"> & {
  * Use `create(StatusSchema)` to create a new message.
  */
 export const StatusSchema: GenMessage<Status> = /*@__PURE__*/
-  messageDesc(file_ledmapper, 59);
+  messageDesc(file_ledmapper, 66);
 
 /**
  * @generated from message ledmapper.v1.PatternState
@@ -2262,7 +2530,7 @@ export type PatternState = Message<"ledmapper.v1.PatternState"> & {
  * Use `create(PatternStateSchema)` to create a new message.
  */
 export const PatternStateSchema: GenMessage<PatternState> = /*@__PURE__*/
-  messageDesc(file_ledmapper, 60);
+  messageDesc(file_ledmapper, 67);
 
 /**
  * @generated from message ledmapper.v1.LiveMap
@@ -2286,7 +2554,7 @@ export type LiveMap = Message<"ledmapper.v1.LiveMap"> & {
  * Use `create(LiveMapSchema)` to create a new message.
  */
 export const LiveMapSchema: GenMessage<LiveMap> = /*@__PURE__*/
-  messageDesc(file_ledmapper, 61);
+  messageDesc(file_ledmapper, 68);
 
 /**
  * @generated from message ledmapper.v1.SolveStatus
@@ -2323,7 +2591,7 @@ export type SolveStatus = Message<"ledmapper.v1.SolveStatus"> & {
  * Use `create(SolveStatusSchema)` to create a new message.
  */
 export const SolveStatusSchema: GenMessage<SolveStatus> = /*@__PURE__*/
-  messageDesc(file_ledmapper, 62);
+  messageDesc(file_ledmapper, 69);
 
 /**
  * @generated from message ledmapper.v1.ResultReady
@@ -2340,7 +2608,7 @@ export type ResultReady = Message<"ledmapper.v1.ResultReady"> & {
  * Use `create(ResultReadySchema)` to create a new message.
  */
 export const ResultReadySchema: GenMessage<ResultReady> = /*@__PURE__*/
-  messageDesc(file_ledmapper, 63);
+  messageDesc(file_ledmapper, 70);
 
 /**
  * Reply to a non-final UploadChunk: the player has accumulated `seq` and is
@@ -2366,7 +2634,7 @@ export type ChunkAck = Message<"ledmapper.v1.ChunkAck"> & {
  * Use `create(ChunkAckSchema)` to create a new message.
  */
 export const ChunkAckSchema: GenMessage<ChunkAck> = /*@__PURE__*/
-  messageDesc(file_ledmapper, 64);
+  messageDesc(file_ledmapper, 71);
 
 /**
  * @generated from message ledmapper.v1.Error
@@ -2388,7 +2656,7 @@ export type Error = Message<"ledmapper.v1.Error"> & {
  * Use `create(ErrorSchema)` to create a new message.
  */
 export const ErrorSchema: GenMessage<Error> = /*@__PURE__*/
-  messageDesc(file_ledmapper, 65);
+  messageDesc(file_ledmapper, 72);
 
 /**
  * Reply to set_counting_pattern: whether a counting pattern is displayed and
@@ -2415,7 +2683,7 @@ export type CountingState = Message<"ledmapper.v1.CountingState"> & {
  * Use `create(CountingStateSchema)` to create a new message.
  */
 export const CountingStateSchema: GenMessage<CountingState> = /*@__PURE__*/
-  messageDesc(file_ledmapper, 66);
+  messageDesc(file_ledmapper, 73);
 
 /**
  * Reply to set_led_count: echo of the persisted per-channel strip length.
@@ -2439,7 +2707,7 @@ export type LedCountState = Message<"ledmapper.v1.LedCountState"> & {
  * Use `create(LedCountStateSchema)` to create a new message.
  */
 export const LedCountStateSchema: GenMessage<LedCountState> = /*@__PURE__*/
-  messageDesc(file_ledmapper, 67);
+  messageDesc(file_ledmapper, 74);
 
 /**
  * Reply to set_playback / get_playback: the effective configuration (the
@@ -2478,7 +2746,7 @@ export type PlaybackState = Message<"ledmapper.v1.PlaybackState"> & {
  * Use `create(PlaybackStateSchema)` to create a new message.
  */
 export const PlaybackStateSchema: GenMessage<PlaybackState> = /*@__PURE__*/
-  messageDesc(file_ledmapper, 68);
+  messageDesc(file_ledmapper, 75);
 
 /**
  * One rendered mapping-pattern frame: the player's monotonic-clock time
@@ -2511,7 +2779,7 @@ export type FrameTick = Message<"ledmapper.v1.FrameTick"> & {
  * Use `create(FrameTickSchema)` to create a new message.
  */
 export const FrameTickSchema: GenMessage<FrameTick> = /*@__PURE__*/
-  messageDesc(file_ledmapper, 69);
+  messageDesc(file_ledmapper, 76);
 
 /**
  * Reply to get_frame_timing: a drained batch of rendered-frame timestamps
@@ -2560,7 +2828,7 @@ export type FrameTiming = Message<"ledmapper.v1.FrameTiming"> & {
  * Use `create(FrameTimingSchema)` to create a new message.
  */
 export const FrameTimingSchema: GenMessage<FrameTiming> = /*@__PURE__*/
-  messageDesc(file_ledmapper, 70);
+  messageDesc(file_ledmapper, 77);
 
 /**
  * Reply to get_stored_map: a slice of the encoded MappingBundle. total_len is
@@ -2597,7 +2865,7 @@ export type StoredMapChunk = Message<"ledmapper.v1.StoredMapChunk"> & {
  * Use `create(StoredMapChunkSchema)` to create a new message.
  */
 export const StoredMapChunkSchema: GenMessage<StoredMapChunk> = /*@__PURE__*/
-  messageDesc(file_ledmapper, 71);
+  messageDesc(file_ledmapper, 78);
 
 /**
  * A declared 2D texture input (buffer kind=1) of the active effect. Lets a
@@ -2644,7 +2912,7 @@ export type TexturePort = Message<"ledmapper.v1.TexturePort"> & {
  * Use `create(TexturePortSchema)` to create a new message.
  */
 export const TexturePortSchema: GenMessage<TexturePort> = /*@__PURE__*/
-  messageDesc(file_ledmapper, 72);
+  messageDesc(file_ledmapper, 79);
 
 /**
  * The active/named effect's uniform manifest (compiler JSON) plus current live
@@ -2684,7 +2952,7 @@ export type EffectUniforms = Message<"ledmapper.v1.EffectUniforms"> & {
  * Use `create(EffectUniformsSchema)` to create a new message.
  */
 export const EffectUniformsSchema: GenMessage<EffectUniforms> = /*@__PURE__*/
-  messageDesc(file_ledmapper, 73);
+  messageDesc(file_ledmapper, 80);
 
 /**
  * @generated from message ledmapper.v1.ServerMessage
@@ -2801,6 +3069,12 @@ export type ServerMessage = Message<"ledmapper.v1.ServerMessage"> & {
      */
     value: ChunkAck;
     case: "chunkAck";
+  } | {
+    /**
+     * @generated from field: ledmapper.v1.HardwareConfigState hardware_config_state = 19;
+     */
+    value: HardwareConfigState;
+    case: "hardwareConfigState";
   } | { case: undefined; value?: undefined };
 };
 
@@ -2809,5 +3083,45 @@ export type ServerMessage = Message<"ledmapper.v1.ServerMessage"> & {
  * Use `create(ServerMessageSchema)` to create a new message.
  */
 export const ServerMessageSchema: GenMessage<ServerMessage> = /*@__PURE__*/
-  messageDesc(file_ledmapper, 74);
+  messageDesc(file_ledmapper, 81);
+
+/**
+ * How safe a GPIO is to repurpose for LED data on a given board. Drives how the
+ * app groups the pin picker and whether picking it needs a confirmation.
+ *
+ * @generated from enum ledmapper.v1.PinSafety
+ */
+export enum PinSafety {
+  /**
+   * @generated from enum value: PIN_SAFETY_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * Clean general-purpose pin: no boot / flash / USB / JTAG duty. Default choice.
+   *
+   * @generated from enum value: PIN_SAFETY_RECOMMENDED = 1;
+   */
+  RECOMMENDED = 1,
+
+  /**
+   * Overloaded but usable (strapping / USB-JTAG / JTAG-debug): pick with care.
+   *
+   * @generated from enum value: PIN_SAFETY_CAUTION = 2;
+   */
+  CAUTION = 2,
+
+  /**
+   * Actively dangerous (e.g. wired to internal flash): driving it can hang the board.
+   *
+   * @generated from enum value: PIN_SAFETY_AVOID = 3;
+   */
+  AVOID = 3,
+}
+
+/**
+ * Describes the enum ledmapper.v1.PinSafety.
+ */
+export const PinSafetySchema: GenEnum<PinSafety> = /*@__PURE__*/
+  enumDesc(file_ledmapper, 0);
 

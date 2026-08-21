@@ -42,14 +42,17 @@ import type {
 } from "@ledmapper/protocol";
 import {
   type ChunkAckMessage,
+  type ColorOrder,
   decodeMappingBundle,
   type EffectUniformsMessage,
+  type HardwareConfigStateMessage,
   type MappingBundle,
   type PerfMode,
   type PerfReportMessage,
   type SetTextureMessage,
   type UniformValueFlat,
 } from "./proto";
+import type { ColorBlock } from "@ledmapper/protocol";
 import { bestSample, ServerClock, syncSample, type SyncSample } from "./clocksync";
 import { decodeServer, encodeClient } from "./proto";
 
@@ -550,6 +553,60 @@ export class LedMapperClient {
       msg as unknown as ClientMessage,
       "welcome",
     )) as unknown as WelcomeMessage;
+  }
+
+  /** Configure an LED output channel's hardware wiring: which GPIO drives it, the
+   * LED type ("ws281x"), and the wire color order ("GRB" etc). Every field is
+   * optional — nudge one at a time; an unset field is left unchanged. `commit`
+   * false applies from RAM only (the color-order test previews without wearing
+   * flash). Reply: hardware_config_state (the resulting per-channel config). */
+  async setHardwareConfig(cfg: {
+    channel?: number;
+    gpio?: number;
+    ledType?: string;
+    colorOrder?: ColorOrder;
+    commit?: boolean;
+  }): Promise<HardwareConfigStateMessage> {
+    const msg: Record<string, unknown> = { type: "set_hardware_config" };
+    if (cfg.channel !== undefined) msg.channel = cfg.channel;
+    if (cfg.gpio !== undefined) msg.gpio = cfg.gpio;
+    if (cfg.ledType !== undefined) msg.ledType = cfg.ledType;
+    if (cfg.colorOrder !== undefined) msg.colorOrder = cfg.colorOrder;
+    if (cfg.commit !== undefined) msg.commit = cfg.commit;
+    return (await this.request(
+      msg as unknown as ClientMessage,
+      "hardware_config_state",
+    )) as unknown as HardwareConfigStateMessage;
+  }
+
+  /** Fetch the device's per-channel hardware config (GPIO, LED type, wire color
+   * order) for the Hardware Setup page to hydrate. Reply: hardware_config_state
+   * (channels empty on older firmware / the Pi profile). */
+  async getHardwareConfig(): Promise<HardwareConfigStateMessage> {
+    return (await this.request(
+      { type: "get_hardware_config" } as unknown as ClientMessage,
+      "hardware_config_state",
+    )) as unknown as HardwareConfigStateMessage;
+  }
+
+  /** Paint a static color-block pattern on a channel (proto SetCountingPattern):
+   * each block lights [start, start+count) a solid [r,g,b] in [0,1], everything
+   * else off. Used by the Hardware Setup color-order test to drive three R/G/B
+   * segments. Reply: counting_state. Pass empty `blocks` to clear.
+   *
+   * `colorOrder` (a permutation of "RGB") drives the probe through its OWN wire
+   * order, independent of the channel's committed color order — so the color-
+   * order test previews a candidate (or drives raw with "RGB") without mutating
+   * the persisted config. Omit -> identity "RGB" (raw wire bytes). */
+  async setCountingPattern(
+    blocks: ColorBlock[],
+    channel?: number,
+    colorOrder?: ColorOrder,
+  ): Promise<ServerMessage> {
+    const msg: Record<string, unknown> = { type: "set_counting_pattern", blocks };
+    if (channel !== undefined) msg.channel = channel;
+    if (colorOrder !== undefined) msg.colorOrder = colorOrder;
+    return await this.request(msg as unknown as ClientMessage, "counting_state");
   }
 
   /** Stream a video frame into a loaded effect's 2D texture. Build the message

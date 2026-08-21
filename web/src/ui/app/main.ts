@@ -33,6 +33,7 @@ import { PerfProfilesScreen } from "../screens/perfProfiles";
 import { SettingsScreen } from "../screens/settings";
 import { MidiScreen } from "../screens/midi";
 import { ColorCorrectionScreen } from "../screens/colorCorrection";
+import { HardwareSetupScreen } from "../screens/hardwareSetup";
 import { AboutScreen } from "../screens/about";
 import { AcidModeScreen } from "../screens/acidMode";
 import { installShakeToEnter } from "../acid/shake";
@@ -136,6 +137,10 @@ async function main(): Promise<void> {
     .add("/settings/color-correction", () => {
       shell.setChrome({ title: "Color correction", back: true, tabs: true });
       return ColorCorrectionScreen(router);
+    })
+    .add("/settings/hardware", () => {
+      shell.setChrome({ title: "Hardware Setup", back: true, tabs: true });
+      return HardwareSetupScreen(router);
     })
     .add("/capture", (m) => {
       shell.setChrome({ title: "Capture", back: true, tabs: false, overlay: true });

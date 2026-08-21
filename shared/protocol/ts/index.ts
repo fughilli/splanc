@@ -15,6 +15,7 @@
 export type {
   ClientMessage,
   CodeParams,
+  ColorBlock,
   ConfigureMessage,
   ConfigureOptions,
   DetectionRecord,

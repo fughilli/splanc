@@ -208,6 +208,37 @@ fn color_correction_from(m: &pb::SetColorCorrection) -> ColorCorrection {
     cc
 }
 
+/// Hardware output channels the player exposes to the Hardware Setup UI (the
+/// two parallel RMT channels on the C6). Distinct from `MAX_CHANNELS` (the
+/// logical set_led_count fan-out): only these carry a GPIO + color order.
+pub const HW_CHANNELS: usize = 2;
+
+/// The six wire color orders, each a permutation of "RGB". The `[u8; 3]` is the
+/// SOURCE-INDEX permutation the driver applies: wire byte `i` carries logical
+/// channel `perm[i]` of the R,G,B input (R=0, G=1, B=2). So "GRB" -> [1, 0, 2]
+/// means wire = G,R,B — the WS2812B default. The strings double as the wire
+/// values echoed to / accepted from the app.
+pub const COLOR_ORDERS: [(&str, [u8; 3]); 6] = [
+    ("RGB", [0, 1, 2]),
+    ("RBG", [0, 2, 1]),
+    ("GRB", [1, 0, 2]),
+    ("GBR", [1, 2, 0]),
+    ("BRG", [2, 0, 1]),
+    ("BGR", [2, 1, 0]),
+];
+/// Default wire order index into [`COLOR_ORDERS`] — GRB, the WS2812B order.
+pub const DEFAULT_COLOR_ORDER: u8 = 2;
+/// The only LED chip family supported today (WS2811/2812/2812B/SK6812 clockless).
+const LED_TYPE_WS281X: &str = "ws281x";
+
+/// Match a wire color-order string to its [`COLOR_ORDERS`] index, case-insensitively.
+pub fn color_order_index(s: &str) -> Option<u8> {
+    COLOR_ORDERS
+        .iter()
+        .position(|(name, _)| name.eq_ignore_ascii_case(s))
+        .map(|i| i as u8)
+}
+
 /// The protocol session core. One per WSS connection (like the Pi's
 /// ConnectionHandler), with the persisted bits (led_counts, stored map)
 /// living for the player's lifetime in the real firmware.
@@ -226,6 +257,11 @@ pub struct Player {
     default_led_count: u32,
     active: Option<ActiveCapture>,
     counting: Option<(i64, CountingBlocks)>,
+    /// Wire color order applied to the counting probe ONLY — a source-index
+    /// permutation like [`COLOR_ORDERS`] (identity [0,1,2] = raw). Set per
+    /// SetCountingPattern; kept out of the committed per-channel `hw_order` so
+    /// the color-order test never mutates the persisted config.
+    counting_order: [u8; 3],
     led_counts: [Option<u32>; MAX_CHANNELS],
     stored_map_id: Option<Str64>,
     frame_log: FrameLog,
@@ -250,6 +286,28 @@ pub struct Player {
     /// hook. The firmware polls `output_brightness_gen` to notice a change.
     output_brightness: f32,
     output_brightness_gen: u32,
+    /// Per-channel hardware output config (GPIO + wire color order), configurable
+    /// from the Hardware Setup page via `set_hardware_config` and reported by
+    /// `hardware_config_state`. `hw_gpio[ch] < 0` means "not yet seeded" — the
+    /// firmware calls [`Player::set_hw_defaults`] at boot with the pins it
+    /// actually initialized so the echo is accurate. `hw_order` indexes
+    /// [`COLOR_ORDERS`]. A `led_type` other than `ws281x` is rejected (only type
+    /// supported today), so it is echoed as a constant rather than stored.
+    hw_gpio: [i32; HW_CHANNELS],
+    hw_order: [u8; HW_CHANNELS],
+    /// Bumped on every `set_hardware_config`; the firmware polls it (like the
+    /// color-correction gen) to persist the config + re-apply it to the RMT
+    /// driver (color order live, a GPIO change on the transmit task).
+    hw_config_gen: u32,
+    /// Whether the latest `set_hardware_config` should be persisted to flash
+    /// (true) or applied from RAM only (false) — the color-order test streams
+    /// commit=false previews. See the `commit` field on `set_hardware_config`.
+    hw_config_commit: bool,
+    /// Static board capabilities (GPIO safety catalog + LED modes) the firmware
+    /// embeds and installs at boot via [`Player::set_board_caps`]; echoed in
+    /// `hardware_config_state` so the app builds its pin picker from THIS board.
+    /// `None` until installed (and on boards/tests that never call it).
+    board_caps: Option<pb::BoardCapabilities>,
 }
 
 impl Player {
@@ -263,6 +321,7 @@ impl Player {
             default_led_count,
             active: None,
             counting: None,
+            counting_order: [0, 1, 2],
             led_counts: [None; MAX_CHANNELS],
             stored_map_id: None,
             frame_log: FrameLog::new(),
@@ -273,6 +332,11 @@ impl Player {
             color_correction_commit: true,
             output_brightness: 1.0,
             output_brightness_gen: 0,
+            hw_gpio: [-1; HW_CHANNELS],
+            hw_order: [DEFAULT_COLOR_ORDER; HW_CHANNELS],
+            hw_config_gen: 0,
+            hw_config_commit: true,
+            board_caps: None,
         }
     }
 
@@ -384,6 +448,12 @@ impl Player {
                 self.output_brightness_gen = self.output_brightness_gen.wrapping_add(1);
                 Some(self.welcome())
             }
+            // Hardware wiring config: GPIO / LED type / wire color order per
+            // channel. The firmware notices the gen bump, persists to NVS, and
+            // re-applies to the RMT driver. Every field is optional (nudge one
+            // setting at a time); an unset field is left unchanged.
+            CMsg::SetHardwareConfig(m) => Some(self.set_hardware_config(&m)),
+            CMsg::GetHardwareConfig(_) => Some(self.hardware_config_state()),
             CMsg::SubmitEffect(_)
             | CMsg::SetEffect(_)
             | CMsg::SetUniforms(_)
@@ -538,10 +608,21 @@ impl Player {
         now_ms: i64,
     ) -> pb::ServerMessage {
         let mut state = pb::CountingState::default();
+        // Probe wire order (identity = raw). Validated before any mutation so a
+        // bad string leaves the current pattern untouched.
+        let order = match m.r#color_order() {
+            Some(s) => match color_order_index(s.as_str()) {
+                Some(i) => COLOR_ORDERS[i as usize].1,
+                None => return error("bad_message", "unknown color_order"),
+            },
+            None => [0, 1, 2],
+        };
         if m.r#blocks.is_empty() {
             self.counting = None;
+            self.counting_order = [0, 1, 2];
             state.r#active = false;
         } else {
+            self.counting_order = order;
             state.r#active = true;
             state.set_epoch_ms(now_ms as f64); // integer clock → wire ms double
             // Pre-reduce each block's [0,1] wire color to 8-bit RGB now (cold),
@@ -577,6 +658,46 @@ impl Player {
         state.r#led_count = m.r#led_count;
         state.r#channel = channel;
         reply(SMsg::LedCountState(state))
+    }
+
+    fn set_hardware_config(&mut self, m: &pb::SetHardwareConfig) -> pb::ServerMessage {
+        let channel = m.r#channel().copied().unwrap_or(0);
+        if channel < 0 || channel as usize >= HW_CHANNELS {
+            return error("bad_message", "channel out of range");
+        }
+        let ch = channel as usize;
+        // Validate everything BEFORE mutating so a bad field leaves the config
+        // untouched (and the app sees the real state echoed back).
+        if let Some(&gpio) = m.r#gpio() {
+            // Any output-capable C6 GPIO (0..=30 covers the exposed pins; the
+            // RMT peripheral routes through the GPIO matrix). A tighter denylist
+            // lives in the app's curated pin list.
+            if !(0..=30).contains(&gpio) {
+                return error("bad_message", "gpio out of range");
+            }
+        }
+        if let Some(t) = m.r#led_type() {
+            if !t.eq_ignore_ascii_case(LED_TYPE_WS281X) {
+                return error("bad_message", "unsupported led_type (only ws281x)");
+            }
+        }
+        let order_idx = match m.r#color_order() {
+            Some(s) => match color_order_index(s.as_str()) {
+                Some(i) => Some(i),
+                None => return error("bad_message", "unknown color_order"),
+            },
+            None => None,
+        };
+        // All valid: apply the present fields.
+        if let Some(&gpio) = m.r#gpio() {
+            self.hw_gpio[ch] = gpio;
+        }
+        if let Some(i) = order_idx {
+            self.hw_order[ch] = i;
+        }
+        self.hw_config_commit = m.r#commit().copied().unwrap_or(true);
+        self.hw_config_gen = self.hw_config_gen.wrapping_add(1);
+        self.hardware_config_state()
     }
 
     /// Drain the rendered-frame timing log into a FrameTiming reply. Reports
@@ -699,6 +820,87 @@ impl Player {
         reply(SMsg::Welcome(w))
     }
 
+    /// The per-channel hardware config as a `hardware_config_state` reply (the
+    /// Hardware Setup page hydrates from this and set_hardware_config echoes it).
+    /// Only channels the firmware has seeded a real GPIO for are reported — an
+    /// unseeded channel isn't wired up.
+    fn hardware_config_state(&self) -> pb::ServerMessage {
+        let mut state = pb::HardwareConfigState::default();
+        for ch in 0..HW_CHANNELS {
+            if self.hw_gpio[ch] < 0 {
+                continue;
+            }
+            let mut hc = pb::HardwareChannel::default();
+            hc.r#channel = ch as i32;
+            hc.r#gpio = self.hw_gpio[ch];
+            hc.r#led_type = s64(LED_TYPE_WS281X);
+            hc.r#color_order = s64(COLOR_ORDERS[self.hw_order[ch] as usize].0);
+            let _ = state.r#channels.push(hc);
+        }
+        if let Some(caps) = &self.board_caps {
+            state.set_board(caps.clone());
+        }
+        reply(SMsg::HardwareConfigState(state))
+    }
+
+    /// Seed a hardware channel's config at boot from what the firmware actually
+    /// initialized (the default or NVS-persisted GPIO + color order). Does NOT
+    /// bump `hw_config_gen` — this is the starting state, not a change to
+    /// persist. `order` indexes [`COLOR_ORDERS`]; out-of-range falls back to the
+    /// WS2812B default.
+    pub fn set_hw_defaults(&mut self, channel: usize, gpio: i32, order: u8) {
+        if channel >= HW_CHANNELS {
+            return;
+        }
+        self.hw_gpio[channel] = gpio;
+        self.hw_order[channel] = if (order as usize) < COLOR_ORDERS.len() {
+            order
+        } else {
+            DEFAULT_COLOR_ORDER
+        };
+    }
+
+    /// Install the board's static capability descriptor (already decoded from the
+    /// embedded binaryproto). Echoed verbatim in `hardware_config_state`; the app
+    /// builds its GPIO picker + LED-type list from it (falling back to a built-in
+    /// catalog when a board doesn't report one). Call once at boot.
+    pub fn set_board_caps(&mut self, caps: pb::BoardCapabilities) {
+        self.board_caps = Some(caps);
+    }
+
+    /// Generation counter bumped on every `set_hardware_config`; the firmware
+    /// polls it (like the color-correction gen) to persist + re-apply the config.
+    pub fn hw_config_gen(&self) -> u32 {
+        self.hw_config_gen
+    }
+
+    /// Whether the latest `set_hardware_config` should be committed to flash.
+    pub fn hw_config_commit(&self) -> bool {
+        self.hw_config_commit
+    }
+
+    /// The GPIO configured for hardware channel `channel`, or None if the
+    /// channel is out of range or unseeded.
+    pub fn hw_gpio(&self, channel: usize) -> Option<i32> {
+        self.hw_gpio.get(channel).copied().filter(|&g| g >= 0)
+    }
+
+    /// The wire color-order source permutation for hardware channel `channel`
+    /// (wire byte `i` carries logical channel `perm[i]`; see [`COLOR_ORDERS`]),
+    /// or the WS2812B default for an out-of-range channel.
+    pub fn hw_color_order_perm(&self, channel: usize) -> [u8; 3] {
+        let idx = self.hw_order.get(channel).copied().unwrap_or(DEFAULT_COLOR_ORDER);
+        COLOR_ORDERS[idx as usize].1
+    }
+
+    /// The wire color-order NAME (e.g. "GRB") for hardware channel `channel`, or
+    /// the WS2812B default for an out-of-range channel. The firmware persists
+    /// this to NVS.
+    pub fn hw_color_order_name(&self, channel: usize) -> &'static str {
+        let idx = self.hw_order.get(channel).copied().unwrap_or(DEFAULT_COLOR_ORDER);
+        COLOR_ORDERS[idx as usize].0
+    }
+
     // -- output-driver hooks ------------------------------------------------
 
     /// The color LED `led` shows in mapping-pattern cycle frame
@@ -741,6 +943,15 @@ impl Player {
             }
         }
         Some(color)
+    }
+
+    /// The wire color order to apply to the counting probe's pixels — a
+    /// source-index permutation ([`COLOR_ORDERS`] convention). Independent of the
+    /// committed per-channel order so the color-order test can preview a candidate
+    /// (or drive raw) without touching the persisted config. Identity when no
+    /// pattern is latched.
+    pub fn counting_color_order(&self) -> [u8; 3] {
+        self.counting_order
     }
 
     /// Record that the output driver just pushed mapping-pattern frame `seq`

@@ -133,5 +133,17 @@ fn main() -> std::io::Result<()> {
     // profiles.
     g.configure(".ledmapper.v1.EffectUniforms.textures", Config::new().max_len(8));
 
+    // Static board capabilities the firmware ENCODES into hardware_config_state
+    // (full size in both profiles). The C6 has GPIO0..30, so 31 pins covers the
+    // worst case; a handful of LED driver modes is plenty.
+    g.configure(
+        ".ledmapper.v1.BoardCapabilities.gpio_pins",
+        Config::new().max_len(31),
+    );
+    g.configure(
+        ".ledmapper.v1.BoardCapabilities.led_modes",
+        Config::new().max_len(6),
+    );
+
     g.compile_fdset_file(&args[1], &args[2])
 }

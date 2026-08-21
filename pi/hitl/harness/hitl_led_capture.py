@@ -17,6 +17,12 @@ DUT's WS2812 DIN) it now can:
      the software brightness control (dims content) and older firmware that also
      dimmed the wire via a FastLED-global scale (now removed) — see
      led_pattern.diff_structure.
+  5. Color order (FUG-123): the baseline above proves the DEFAULT wire order; then
+     reconfigure channel 0 to a couple of non-default orders (set_hardware_config,
+     RAM preview) and assert the DIN bytes permute exactly as each order predicts —
+     the one thing only a logic analyzer can verify. Folded in HERE, rather than a
+     second analyzer-requiring target, so the single analyzer rig isn't contended
+     twice per suite. See hardware_config_pattern; --no-color-order skips it.
 
 JIT correctness (`--jit-verify`, FUG-134): PR #114 shipped the on-device RV32IM JIT
 ENABLED by default. Its differential correctness is proven off-hardware
@@ -40,8 +46,8 @@ Usage:
 
 Selection/WiFi/tunnel are the CLI's, identical to hitl_e2e. Needs a live
 logic-analyzer rig with a board wired to the FX2, so it's a manual+hitl py_test;
-the pattern/pixel contract is unit-tested off-hardware in
-//pi/hitl/tests:test_led_pattern.
+the pattern/pixel + color-order contracts are unit-tested off-hardware in
+//pi/hitl/tests (test_led_pattern.py, test_hardware_config_pattern.py).
 """
 
 from __future__ import annotations
@@ -56,6 +62,7 @@ import sys
 import time
 from typing import Dict, List, Tuple
 
+from hardware_config_pattern import expected_decoded_pixels
 from hitl_client import Reservation, ReserveError
 from led_pattern import (
     counting_message,
@@ -138,6 +145,104 @@ async def _drive_pattern(ws_url: str, insecure: bool) -> None:
         if not state.get("active"):
             raise SystemExit(f"[drive] counting pattern not active: {state}")
     _log("[drive] pattern latched")
+
+
+# -- color-order verification (FUG-123) --------------------------------------
+# set_hardware_config makes the WS2812 wire color order configurable; the only way
+# to confirm the BYTES on the DIN actually change is a logic analyzer. This runs as
+# an extra phase of THIS test (rather than a second analyzer-requiring target that
+# would double contention on the single analyzer rig): after the baseline capture
+# proves the default order, reconfigure to a couple of non-default orders (RAM
+# preview, commit=false — the persisted default is untouched) and assert the wire
+# permutes exactly as each order predicts. The analyzer decodes with a FIXED order
+# (GRB — pinned by the baseline reading logical primaries back), so a configured
+# order shows up as a predictable permutation; see hardware_config_pattern.
+
+# Non-default orders to verify (GRB is the baseline already asserted above). RGB
+# swaps R<->G on the wire, BGR is a full permutation.
+COLOR_ORDERS_UNDER_TEST = ["RGB", "BGR"]
+
+
+async def _drive_order(ws_url: str, insecure: bool, order: str) -> None:
+    """Set channel 0's wire color order (RAM preview) then latch the R/G/B pattern."""
+    import websockets
+    from server import proto_wire
+
+    ssl_ctx = None
+    if ws_url.startswith("wss:"):
+        ssl_ctx = ssl.create_default_context()
+        if insecure:
+            ssl_ctx.check_hostname = False
+            ssl_ctx.verify_mode = ssl.CERT_NONE
+
+    async def rpc(sock, flat, expect):
+        await sock.send(proto_wire.encode_client(flat))
+        while True:
+            msg = proto_wire.decode_server(await asyncio.wait_for(sock.recv(), timeout=15))
+            if msg.get("type") == expect:
+                return msg
+            if msg.get("type") == "error":
+                raise SystemExit(f"[order] device error: {msg}")
+
+    sock = await websockets.connect(ws_url, max_size=2**22, ssl=ssl_ctx, open_timeout=8)
+    async with sock:
+        await rpc(sock, {"type": "hello", "client": "led_capture", "app_version": "1"}, "welcome")
+        st = await rpc(
+            sock,
+            {"type": "set_hardware_config", "channel": 0, "color_order": order, "commit": False},
+            "hardware_config_state",
+        )
+        got = next(
+            (c.get("colorOrder") for c in (st.get("channels") or []) if c.get("channel") == 0),
+            None,
+        )
+        if got != order:
+            raise SystemExit(f"[order] device did not accept order {order!r}: {st}")
+        state = await rpc(sock, counting_message(BLOCKS), "counting_state")
+        if not state.get("active"):
+            raise SystemExit(f"[order] counting pattern not active: {state}")
+    _log(f"[order] {order} + pattern latched")
+
+
+# A reconfigure-then-capture can catch a transitional/short frame (the order
+# applies a frame or two after set_hardware_config; the analyzer's trigger may arm
+# on a stale one), so retry the drive+capture a couple of times before failing —
+# a real mis-wiring fails every attempt, a transient bad frame clears on a re-drive.
+_ORDER_ATTEMPTS = 3
+
+
+def _verify_color_orders(res, host, port, dev, n, args) -> int:
+    """For each non-default wire order: reconfigure, re-drive, re-capture, and
+    assert the DIN permutes as predicted. Returns 0 on success, 1 on a mismatch."""
+    for order in COLOR_ORDERS_UNDER_TEST:
+        want = expected_decoded_pixels(order, BLOCKS, n)
+        last_diffs: list = []
+        last_got: list = []
+        last_off = 0
+        for attempt in range(1, _ORDER_ATTEMPTS + 1):
+            with res.forward(host, port) as local_port:
+                ws_url = f"{args.ws_scheme}://localhost:{local_port}/ws"
+                asyncio.run(_drive_order(ws_url, not args.ws_verify, order))
+            time.sleep(0.5)
+            got = capture(res, dev, args.samples)
+            diffs, off = diff_structure_aligned(want, got)
+            if not diffs:
+                _log(f"[PASS] color order {order}: wire decodes to {want} (at offset {off})")
+                break
+            last_diffs, last_got, last_off = diffs, got, off
+            _log(
+                f"[order] {order} attempt {attempt}/{_ORDER_ATTEMPTS}: "
+                f"{len(diffs)} pixel(s) differ (best offset {off}) — retrying"
+            )
+        else:
+            _log(
+                f"[FAIL] color order {order}: {len(last_diffs)} pixel(s) differ (offset {last_off})"
+            )
+            _log(f"       want {want}")
+            _log(f"       got  {last_got}")
+            return 1
+    _log(f"[PASS] wire color order configurable ({', '.join(COLOR_ORDERS_UNDER_TEST)} on the DIN)")
+    return 0
 
 
 def require_analyzer(server: str) -> None:
@@ -599,7 +704,8 @@ def run(args: argparse.Namespace) -> int:
         time.sleep(0.5)
         # Empty device -> the daemon's default analyzer mapping (single-DUT LA rig);
         # pin it when a rig taps several DUTs on distinct channels.
-        got = capture(res, getattr(res, "device", "") or "", args.samples)
+        dev = getattr(res, "device", "") or ""
+        got = capture(res, dev, args.samples)
         diffs, off = diff_structure_aligned(want, got)
         if diffs:
             _log(f"[FAIL] {len(diffs)} pixel(s) differ (best offset {off}): {diffs[:8]}")
@@ -610,6 +716,12 @@ def run(args: argparse.Namespace) -> int:
             f"[PASS] {n} pixels match the driven pattern on the wire "
             f"(at offset {off}): {got[off : off + n]}"
         )
+        # Color-order phase (FUG-123): the baseline above proves the DEFAULT order;
+        # now verify the configured order actually moves the bytes on the wire.
+        if args.check_color_order:
+            rc = _verify_color_orders(res, host, port, dev, n, args)
+            if rc != 0:
+                return rc
         return 0
     finally:
         res.release()
@@ -632,6 +744,20 @@ def main() -> int:
         "--fxb",
         default="",
         help="override the JIT-verify effect with a .fxb on disk (default: jit_bench.fxb from runfiles)",
+    )
+    ap.add_argument(
+        "--check-color-order",
+        dest="check_color_order",
+        action="store_true",
+        default=True,
+        help="also verify configurable WS2812 wire color order on the DIN (FUG-123; default on, "
+        "single-channel path only)",
+    )
+    ap.add_argument(
+        "--no-color-order",
+        dest="check_color_order",
+        action="store_false",
+        help="skip the " "color-order phase",
     )
     ap.add_argument(
         "--two-channel",

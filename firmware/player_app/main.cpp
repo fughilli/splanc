@@ -47,6 +47,7 @@
 #include "firmware/player_app/build_info.h"  // generated: LM_GIT_COMMIT / LM_GIT_DIRTY
 #include "firmware/player_app/color_correction.h"
 #include "firmware/player_app/improv_codec.h"
+#include "firmware/player_app/board_caps_res.h"  // board_caps_binaryproto[] / _len
 #include "firmware/player_app/led_config.h"
 #include "firmware/player_app/player_ffi.h"
 #include "firmware/player_app/serial_log.h"
@@ -223,6 +224,13 @@ static SemaphoreHandle_t xmit_done = nullptr;
 // Latest transmit span (cycles), written by the transmit task, read for perf.
 static volatile uint32_t g_show_c = 0;
 static volatile bool g_show_timed = false;
+// Per-frame color-order override for the counting probe: when g_xmit_probe_order
+// is set, the transmit applies g_probe_perm (a source-index permutation) to every
+// pixel instead of the committed per-channel order — so the color-order test
+// drives its own wire order without touching the persisted config. Latched by
+// led_show_async under the xmit_done gate (like g_xmit_len*), read by xmit_task.
+static volatile bool g_xmit_probe_order = false;
+static volatile uint8_t g_probe_perm[3] = {0, 1, 2};
 // How many LEDs the transmit task clocks out this frame per channel — the ACTIVE
 // strip length, not the whole render buffer. Channel 0 drives show_buf[0..len0),
 // channel 1 show_buf[len0..len0+len1) (len1 == 0 = single channel). Latched by
@@ -233,7 +241,8 @@ static volatile bool g_show_timed = false;
 static volatile uint32_t g_xmit_len0 = 0;
 static volatile uint32_t g_xmit_len1 = 0;
 // defined below render_once
-static void led_show_async(bool timed, uint32_t count0, uint32_t count1);
+static void led_show_async(bool timed, uint32_t count0, uint32_t count1,
+                           const uint8_t *order_override);
 
 // LED rendering is decoupled from loop() (which cooperatively services WiFi,
 // HTTP and BLE and can stall for milliseconds during a burst): it runs in its
@@ -423,6 +432,21 @@ static uint32_t g_cc_gen = 0;  // last color_correction_gen the poll acted on
 static uint32_t g_brightness_gen = 0;  // last brightness_gen the poll acted on
 static uint8_t g_brightness = 255;     // global output scale (255 = unattenuated)
 
+// Hardware output config (set_hardware_config: GPIO + wire color order per RMT
+// channel). g_hw_gen tracks the last-applied lm_hw_config_gen. The GPIOs
+// currently driving the two channels (seeded from NVS / led_config.h at boot).
+static uint32_t g_hw_gen = 0;
+static int g_hw_gpio0 = LED_DATA_PIN;
+static int g_hw_gpio1 = LED_DATA_PIN_2;
+// A GPIO change can't touch the RMT channels from the message task without
+// racing the transmit task (the sole RMT owner). The poll stages the request
+// here; the transmit task performs the reconfigure just before its next push.
+// `g_hw_reconfig_req` is written LAST (after the pins) and read first, so the
+// transmit task never sees a half-written request.
+static volatile int g_hw_req_gpio0 = LED_DATA_PIN;
+static volatile int g_hw_req_gpio1 = LED_DATA_PIN_2;
+static volatile bool g_hw_reconfig_req = false;
+
 static uint32_t lut_crc(const LutRecord *r) {
   return esp_rom_crc32_le(0, reinterpret_cast<const uint8_t *>(r),
                           offsetof(LutRecord, crc));
@@ -552,6 +576,82 @@ static void poll_brightness() {
   g_brightness_gen = gen;
   g_brightness = lm_brightness_u8();
   Log().printf("[bright] output scale = %u/255 (gen=%u)\n", g_brightness, gen);
+}
+
+// Poll after each handled message (like poll_color_correction): a
+// set_hardware_config bumps the gen. Re-apply each channel's wire color order to
+// the RMT driver (live — a torn read self-corrects next frame), stage any GPIO
+// change for the transmit task, and persist to NVS when the update commits.
+static void poll_hardware_config() {
+  uint32_t gen = lm_hw_config_gen();
+  if (gen == g_hw_gen) return;
+  g_hw_gen = gen;
+  bool commit = lm_hw_config_commit() != 0;
+  // Color order: apply to both channels immediately.
+  for (int ch = 0; ch < 2; ch++) {
+    uint8_t perm[3];
+    if (lm_hw_color_order_perm((uint32_t)ch, perm) == 0) {
+      ws2812_rmt_set_color_order(ch, perm[0], perm[1], perm[2]);
+    }
+  }
+  // GPIO: stage a reconfigure for the transmit task if either pin changed.
+  int g0 = lm_hw_gpio(0), g1 = lm_hw_gpio(1);
+  if (g0 < 0) g0 = g_hw_gpio0;
+  if (g1 < 0) g1 = g_hw_gpio1;
+  if (g0 != g_hw_gpio0 || g1 != g_hw_gpio1) {
+    g_hw_req_gpio0 = g0;
+    g_hw_req_gpio1 = g1;
+    g_hw_reconfig_req = true;  // written last — see the globals' note
+  }
+  if (commit) {
+    prefs.putInt("hw_gpio0", g0);
+    prefs.putInt("hw_gpio1", g1);
+    char ord0[8] = {0}, ord1[8] = {0};
+    if (lm_hw_color_order_name(0, reinterpret_cast<uint8_t *>(ord0), sizeof ord0 - 1) >= 0) {
+      prefs.putString("hw_ord0", ord0);
+    }
+    if (lm_hw_color_order_name(1, reinterpret_cast<uint8_t *>(ord1), sizeof ord1 - 1) >= 0) {
+      prefs.putString("hw_ord1", ord1);
+    }
+    Log().printf("[hw] committed gpio=%d/%d order=%s/%s (gen=%u)\n", g0, g1, ord0, ord1, gen);
+  } else {
+    Log().printf("[hw] preview gpio=%d/%d (gen=%u)\n", g0, g1, gen);
+  }
+}
+
+// Boot-time hardware config: seed the player + RMT driver from NVS (falling back
+// to the led_config.h defaults). Must run after lm_player_init + prefs.begin and
+// BEFORE render_task starts (so a GPIO reconfigure is a synchronous no-race).
+static void hardware_config_begin() {
+  int g0 = prefs.getInt("hw_gpio0", LED_DATA_PIN);
+  int g1 = prefs.getInt("hw_gpio1", LED_DATA_PIN_2);
+  String o0 = prefs.getString("hw_ord0", "GRB");
+  String o1 = prefs.getString("hw_ord1", "GRB");
+  // Seed the core so the first welcome echoes the real per-channel config.
+  lm_hw_seed(0, g0, reinterpret_cast<const uint8_t *>(o0.c_str()), o0.length());
+  lm_hw_seed(1, g1, reinterpret_cast<const uint8_t *>(o1.c_str()), o1.length());
+  // Apply the wire color orders to the driver.
+  for (int ch = 0; ch < 2; ch++) {
+    uint8_t perm[3];
+    if (lm_hw_color_order_perm((uint32_t)ch, perm) == 0) {
+      ws2812_rmt_set_color_order(ch, perm[0], perm[1], perm[2]);
+    }
+  }
+  // The strip was init'd on the led_config.h defaults; if NVS pins differ,
+  // reconfigure the RMT channels now (synchronous — transmit task still idle).
+  if (g0 != g_hw_gpio0 || g1 != g_hw_gpio1) {
+    if (ws2812_rmt_reconfigure(g0, g1)) {
+      g_hw_gpio0 = g0;
+      g_hw_gpio1 = g1;
+    } else {
+      Log().printf("[hw] boot RMT reconfigure to gpio=%d/%d FAILED\n", g0, g1);
+    }
+  }
+  g_hw_req_gpio0 = g_hw_gpio0;
+  g_hw_req_gpio1 = g_hw_gpio1;
+  g_hw_gen = lm_hw_config_gen();
+  Log().printf("[hw] boot gpio=%d/%d order=%s/%s\n", g_hw_gpio0, g_hw_gpio1, o0.c_str(),
+               o1.c_str());
 }
 
 // Map an 8-bit RGB triple through the active per-channel LUT (indexed directly
@@ -793,6 +893,21 @@ static void poll_device_rename() {
   // or reboot (reissue_cert_for_lan), which is all the DNS SAN is used for.
 }
 
+// Apply every device-side effect of the message just handled by lm_player_handle:
+// a rename, the color-correction LUT, the output brightness, and the hardware
+// (GPIO / wire color order). Each poller is an idempotent gen-check, so it's
+// cheap when nothing changed. BOTH transports (plain ws:81 and wss:443) must call
+// this after handling a frame — previously only the ws path ran the cc/brightness/
+// hw pollers, so set_color_correction / set_brightness / set_hardware_config were
+// silently dropped over wss (the app's normal transport): the core state + gen
+// updated, but g_lut / g_brightness / the RMT color order never followed.
+static void poll_after_message() {
+  poll_device_rename();
+  poll_color_correction();
+  poll_brightness();
+  poll_hardware_config();
+}
+
 // Handle one sharded-upload window (proto UploadChunk), shared by the wss and
 // ws:81 paths. `payload` points at the window's bytes (inside the caller's rx).
 // Each window is appended to the temp file; the last one is decoded straight
@@ -891,9 +1006,7 @@ static void ws_dispatch_message() {
     ws_send_frame(WS_OP_BINARY, tx, (size_t)n);
     persist_if_upload(rx, rx_len, tx, (size_t)n);
   }
-  poll_device_rename();
-  poll_color_correction();
-  poll_brightness();
+  poll_after_message();
   rx_len = 0;
 }
 
@@ -1044,6 +1157,11 @@ static uint32_t render_once() {
   uint32_t bit_period_us, cycle_frames, led_count;
   bool show = false;
   uint32_t next_delay_ms = kStaticPollMs;
+  // Per-frame color-order override: only the counting probe sets it, to drive its
+  // own wire order (see the counting branch). Content frames leave it off and use
+  // the committed per-channel order.
+  uint8_t frame_order[3];
+  bool use_frame_order = false;
 
   // Active strip length to clock out this frame, split across the two output
   // channels at the channel-0 boundary. Default total: set_led_count(0) +
@@ -1109,16 +1227,29 @@ static uint32_t render_once() {
     next_delay_ms = d <= 1 ? 1 : (d > (int64_t)kStaticPollMs ? kStaticPollMs : (uint32_t)d);
     was_active = true;
   } else if (lm_counting_color(0, rgb)) {
-    // Counting probe: static pattern, repaint at the slow static cadence. Drive
-    // EXACTLY the pattern's extent — no overrun past it to the buffer cap.
+    // Counting probe: static pattern, repaint at the slow static cadence.
+    // Shrinking the per-color run ("pixels each" 10 -> 1) lights fewer LEDs, but
+    // an exact-count transmit of just the new run would leave the WS2812s the
+    // old, wider run drove latched at their stale color. Track the widest run
+    // we've driven and, on a shrink, transmit out to it once with the freed tail
+    // blanked — so the strip actually clears from N back down to M.
+    static uint32_t counting_hwm = 0;  // widest run lit since counting began
     uint32_t cn = lm_counting_len();
     if (cn == 0) cn = 1;
     if (cn > kMaxLeds) cn = kMaxLeds;
-    xmit_len = cn;
+    uint32_t extent = cn > counting_hwm ? cn : counting_hwm;
+    xmit_len = extent;
     for (uint32_t i = 0; i < cn; i++) {
       lm_counting_color(i, rgb);
       leds[i] = Rgb(rgb[0], rgb[1], rgb[2]);
     }
+    for (uint32_t i = cn; i < extent; i++) leds[i] = Rgb::Black;  // clear the stale tail
+    counting_hwm = cn;  // next frame only needs to cover the current run
+    // Drive the probe through ITS OWN wire order (identity = raw, or a previewed
+    // candidate), bypassing the committed per-channel color order so the test
+    // never mutates the persisted config.
+    lm_counting_color_order(frame_order);
+    use_frame_order = true;
     show = true;
     was_active = true;
     last_shown_frame = 0xffffffff;
@@ -1270,7 +1401,7 @@ static uint32_t render_once() {
     uint32_t count0 = xmit_len < split ? xmit_len : split;
     uint32_t count1 = xmit_len > split ? (xmit_len - split) : 0;
     if (count1 > ch1_len) count1 = ch1_len;
-    led_show_async(fx_frame_rendered, count0, count1);
+    led_show_async(fx_frame_rendered, count0, count1, use_frame_order ? frame_order : nullptr);
     if (fx_frame_rendered) show_c = g_show_c;
   }
 
@@ -1349,8 +1480,23 @@ static void osc_task(void *) {
 static void xmit_task(void *) {
   for (;;) {
     ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
+    // A staged GPIO reconfigure (set_hardware_config) runs HERE — this task owns
+    // the RMT channels, so recreating them can't race an in-flight push. Consume
+    // the request before the frame it precedes.
+    if (g_hw_reconfig_req) {
+      int ng0 = g_hw_req_gpio0, ng1 = g_hw_req_gpio1;
+      g_hw_reconfig_req = false;
+      if (ws2812_rmt_reconfigure(ng0, ng1)) {
+        g_hw_gpio0 = ng0;
+        g_hw_gpio1 = ng1;
+        Log().printf("[hw] RMT reconfigured to gpio=%d/%d\n", ng0, ng1);
+      } else {
+        Log().printf("[hw] RMT reconfigure to gpio=%d/%d FAILED\n", ng0, ng1);
+      }
+    }
     uint32_t c0 = g_show_timed ? esp_cpu_get_cycle_count() : 0;
-    ws2812_rmt_show(reinterpret_cast<const uint8_t *>(show_buf), g_xmit_len0, g_xmit_len1);
+    const uint8_t *ovr = g_xmit_probe_order ? const_cast<const uint8_t *>(g_probe_perm) : nullptr;
+    ws2812_rmt_show(reinterpret_cast<const uint8_t *>(show_buf), g_xmit_len0, g_xmit_len1, ovr);
     if (g_show_timed) g_show_c = esp_cpu_get_cycle_count() - c0;
     xSemaphoreGive(xmit_done);
   }
@@ -1361,7 +1507,8 @@ static void xmit_task(void *) {
 // (instant once rendering out-runs the transmit), snapshots into `show_buf`, and
 // kicks the higher-priority transmit task — which preempts, starts the DMA, and
 // yields straight back so the render task can compute the next frame in parallel.
-static void led_show_async(bool timed, uint32_t count0, uint32_t count1) {
+static void led_show_async(bool timed, uint32_t count0, uint32_t count1,
+                           const uint8_t *order_override) {
   uint32_t total = count0 + count1;
   if (total > kMaxLeds) {  // clamp defensively; render never exceeds the cap
     count1 = count1 > kMaxLeds - count0 ? kMaxLeds - count0 : count1;
@@ -1369,16 +1516,23 @@ static void led_show_async(bool timed, uint32_t count0, uint32_t count1) {
   }
   if (xmit_task_handle == nullptr) {
     // Pre-task fallback (setup, before the transmit task exists): synchronous.
-    ws2812_rmt_show(reinterpret_cast<const uint8_t *>(show_buf), count0, count1);
+    ws2812_rmt_show(reinterpret_cast<const uint8_t *>(show_buf), count0, count1, order_override);
     return;
   }
   xSemaphoreTake(xmit_done, portMAX_DELAY);  // previous transmit fully drained
-  // Snapshot only the active LEDs; the per-channel lengths ride with the buffer
-  // under the same xmit_done gate so the transmit task sees a consistent snapshot.
+  // Snapshot only the active LEDs; the per-channel lengths + probe order ride with
+  // the buffer under the same xmit_done gate so the transmit task sees a
+  // consistent snapshot.
   memcpy(show_buf, leds, static_cast<size_t>(total) * sizeof(Rgb));
   g_xmit_len0 = count0;
   g_xmit_len1 = count1;
   g_show_timed = timed;
+  g_xmit_probe_order = order_override != nullptr;
+  if (order_override != nullptr) {
+    g_probe_perm[0] = order_override[0];
+    g_probe_perm[1] = order_override[1];
+    g_probe_perm[2] = order_override[2];
+  }
   xTaskNotifyGive(xmit_task_handle);
 }
 
@@ -1505,7 +1659,7 @@ static esp_err_t wss_ws_handler(httpd_req_t *req) {
   xSemaphoreTake(player_mutex, portMAX_DELAY);
   int32_t n = lm_player_handle(rx, frame.len, now, now, tx, sizeof tx);
   xSemaphoreGive(player_mutex);
-  poll_device_rename();
+  poll_after_message();
   if (n > 0) {
     httpd_ws_frame_t out = {};
     out.type = HTTPD_WS_TYPE_BINARY;
@@ -1952,6 +2106,11 @@ void setup() {
   // either the message handler or the render task can touch it.
   player_mutex = xSemaphoreCreateMutex();
   lm_player_init(NUM_LEDS);
+  // Install this board's static capability descriptor (GPIO safety catalog + LED
+  // modes), compiled from board_caps.textproto and embedded in the image, so the
+  // app's Hardware Setup pin picker reflects THIS board. Ignored if it can't
+  // decode — the app falls back to a built-in catalog.
+  lm_set_board_caps((const uint8_t *)board_caps_binaryproto, board_caps_binaryproto_len);
 #ifdef LM_OSC_BENCH
   // Bench image: measure on-device, log, and halt — never brings up the radios.
   run_osc_bench();
@@ -2021,6 +2180,12 @@ void setup() {
   Log().printf("[player] identity %s / \"%s\" ap \"%s\" host %s.local build %s%s\n", macstr,
                g_device_name, g_ap_ssid, g_hostname, LM_GIT_COMMIT_SHORT,
                LM_GIT_DIRTY ? "-dirty" : "");
+  // Hardware output config (GPIO + wire color order): seed the player + RMT
+  // driver from NVS (or led_config.h defaults) before the render task starts, so
+  // the first welcome echoes the real hardware and the first frame uses the
+  // configured color order. Runs synchronously — the transmit task is idle until
+  // render_task starts, so a GPIO reconfigure here can't race a push.
+  hardware_config_begin();
 
   improv_ble_begin(g_device_name,
                    ssid.length() > 0 ? IMPROV_STATE_PROVISIONING : IMPROV_STATE_AUTHORIZED);

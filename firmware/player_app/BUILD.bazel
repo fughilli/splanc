@@ -28,6 +28,11 @@ build_info_file(
     template = "build_info.h.tmpl",
 )
 
+# The board-caps descriptor as a labelable source: the HITL board-caps check
+# (//pi/hitl) loads this SAME textproto as its expected value, so the on-hardware
+# report is pinned to exactly what the image embeds.
+exports_files(["board_caps.textproto"])
+
 # The C ABI over the player stack, as the firmware links it. Bare-metal
 # only (it carries the panic handler); the host test drives the same source
 # via :player_ffi_host.
@@ -93,6 +98,25 @@ rust_test(
     ],
 )
 
+# The color-order counting probe must preempt the FX engine with no map stored.
+# Own binary (fresh process-global FFI state) so it can arm an effect + skip the
+# map without the full-flow test's ordering — see tests/counting_preempt.rs.
+rust_test(
+    name = "counting_preempt_test",
+    srcs = ["tests/counting_preempt.rs"],
+    edition = "2021",
+    env = {
+        # Host-profile envelopes carry big inline heapless storage.
+        "RUST_MIN_STACK": "16777216",
+    },
+    deps = [
+        ":player_ffi_host",
+        "//fx_compiler",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+    ],
+)
+
 # Transport profile (FUG-121): per-uniform-update device-CPU cost of the proto
 # `set_uniforms` path vs native OSC ingest, to decide whether a proto-transport
 # bridge is worth keeping. `bazel run //firmware/player_app:transport_bench`.
@@ -143,6 +167,33 @@ cc_test(
     deps = [":improv_codec"],
 )
 
+# Board capability descriptor (FUG-123): the checked-in textproto is compiled to
+# a serialized BoardCapabilities at build time by the hermetic protoc, then
+# embedded as board_caps_binaryproto[] / board_caps_binaryproto_len via
+# c_resource_library (symbols from the file basename). main.cpp hands it to
+# lm_set_board_caps at boot; the player echoes it in hardware_config_state.
+# Board-specific firmware_binary targets swap in their own textproto here.
+genrule(
+    name = "board_caps_binaryproto",
+    srcs = [
+        "board_caps.textproto",
+        "//shared/protocol/proto:ledmapper.proto",
+    ],
+    outs = ["board_caps.binaryproto"],
+    cmd = "$(execpath //tools/toolchains:protoc) " +
+          "-I $$(dirname $(location //shared/protocol/proto:ledmapper.proto)) " +
+          "--encode=ledmapper.v1.BoardCapabilities " +
+          "$(location //shared/protocol/proto:ledmapper.proto) " +
+          "< $(location board_caps.textproto) > $@",
+    tools = ["//tools/toolchains:protoc"],
+)
+
+# -> board_caps_binaryproto[] / board_caps_binaryproto_len (symbols from basename).
+c_resource_library(
+    name = "board_caps_res",
+    srcs = [":board_caps_binaryproto"],
+)
+
 cc_binary(
     name = "player_app",
     srcs = [
@@ -166,6 +217,7 @@ cc_binary(
         "//conditions:default": ["@platforms//:incompatible"],
     }),
     deps = [
+        ":board_caps_res",
         ":color_correction",
         ":improv_codec",
         ":player_ffi",

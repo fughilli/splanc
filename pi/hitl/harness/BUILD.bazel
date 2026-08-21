@@ -21,7 +21,9 @@ package(default_visibility = ["//visibility:public"])
 py_library(
     name = "harness",
     srcs = [
+        "board_caps.py",
         "fx_bench_core.py",
+        "hardware_config_pattern.py",
         "hitl_client.py",
         "hitl_improv.py",
         "improv.py",
@@ -36,6 +38,8 @@ py_library(
         "video_bench_core.py",
     ],
     imports = ["."],
+    # board_caps parses the BoardCapabilities textproto via the generated py proto.
+    deps = ["//shared/protocol/proto:ledmapper_py_proto"],
 )
 
 # On-hardware orchestrator: reserve a free rig from the pool (the checkout
@@ -56,6 +60,9 @@ py_test(
     # CLI also rides in runfiles: hitl_client shells out to it for the whole
     # reserve/flash/tunnel flow (default_hitl() resolves it there).
     data = [
+        # The board-caps descriptor pins the BOARD CAPS phase to exactly what the
+        # image embeds (loaded from runfiles as the expected value).
+        "//firmware/player_app:board_caps.textproto",
         "//firmware/player_app:esp32c6_flashbundle",
         "//pi/hitl/cmd/hitl",
     ],
@@ -76,10 +83,14 @@ py_test(
 # On-hardware LED-driver correctness test (logic-analyzer rig): reserve, flash,
 # provision, drive a static counting pattern over the player WebSocket, then
 # `hitl-capture` the WS2812 wire via the rig's shared FX2 and assert the decoded
-# pixels match. Needs a logic-analyzer rig (Pi 3 + FX2 tapping the DUT's DIN), so
-# it's manual+hitl like :e2e; the pattern/pixel contract is unit-tested off
-# hardware in //pi/hitl/tests:hitl_test (test_led_pattern.py). The `hitl-capture`
-# tool itself is baked into the reservation container (nix/container.nix).
+# pixels match. Also verifies the configurable wire color order (FUG-123) as a
+# folded-in phase — reconfigures channel 0 to non-default orders and asserts the
+# DIN permutes as predicted (kept in this one target so the single analyzer rig
+# isn't contended by a second one). Needs a logic-analyzer rig (Pi 3 + FX2 tapping
+# the DUT's DIN), so it's manual+hitl like :e2e; the pattern/pixel + color-order
+# contracts are unit-tested off hardware in //pi/hitl/tests:hitl_test
+# (test_led_pattern.py, test_hardware_config_pattern.py). The `hitl-capture` tool
+# itself is baked into the reservation container (nix/container.nix).
 py_test(
     name = "led_capture",
     timeout = "eternal",
