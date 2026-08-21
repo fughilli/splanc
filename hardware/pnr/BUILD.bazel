@@ -26,6 +26,7 @@ filegroup(
         "pnr/__init__.py",
         "pnr/graph.py",
         "pnr/ingest.py",
+        "pnr/planes.py",
         "pnr/quality.py",
         "pnr/writeback.py",
     ],

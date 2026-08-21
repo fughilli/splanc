@@ -413,6 +413,48 @@ learned routability predictor) is future work.
    net-crossing + PathFinder signal already converges the loop, so it isn't
    limiting — revisit only if a future board proves it necessary.
 
+### Detailed router (own build) — phases R1–R5
+
+Phases 1–6 place the board and drive an _external_ detailed router (FreeRouting).
+An EE review + a routability diagnosis (below) showed that on a dense, fine-pitch
+board (ESP32 module + QFN sensors) FreeRouting + naive planes cannot reach a
+DRC-clean, fully-routed result, and its failed run — while a usable _signal_ — is
+not enough to close the loop cleanly. So we build our **own** detailed router,
+SOTA-grounded (see §5 and the escape-routing refs), phased with tests like the
+placer.
+
+**Diagnosis that motivates it (`splanc_dev`, verified via union-find matching
+pcbnew's ratsnest exactly):** of 81 unrouted connections, **55 (68%) are
+high-fanout ground/power** (`lv` ground = 75 pads / 32 unrouted) that must be
+**planes**, not traces; the rest are signal congestion at the dense parts. Planes
+connect those nets, but connecting SMD pads to inner planes with **via-in-pad**
+shorts on 0.5 mm-pitch parts (612 DRC violations) — the fix is **dog-bone fanout**
+(offset via + short trace), the standard for ≥0.5 mm pitch.
+
+- **R1 — Plane fanout, DRC-clean.** Replace via-in-pad with **dog-bone fanout**:
+  for each plane-net pad, place the via offset into free space with a short trace,
+  and ensure plane **antipads/thermal** clearance. Split-plane the inner layers by
+  net (already scaffolded in `writeback.apply_planes`). Acceptance
+  `plane_fanout_test`: all plane-net pads connected, **0 DRC clearance/short
+  violations** on the plane layers.
+- **R2 — Geometry + pin-access model.** A gridless (or fine-grid) obstacle model
+  of the copper layers; per-pad **access points** (TritonRoute-style). Acceptance:
+  access points are DRC-legal and reachable; obstacle queries are correct.
+- **R3 — Escape / fanout routing.** Route each fine-pitch part's pins out to the
+  channel (dog-bone + short escape), network-flow/greedy per the escape-routing
+  SOTA. Acceptance: every pin of the ESP32/QFN escapes its footprint DRC-clean.
+- **R4 — Negotiated signal router.** **PathFinder** rip-up-&-reroute (we already
+  have the cost model in `pnr/route`) as a real geometric maze/A\* on R2's grid,
+  honoring clearance/width/via rules. Acceptance `detail_route_test`: 0 unrouted
+  signals + 0 DRC on a fixture, deterministic.
+- **R5 — Close the loop + optimize.** Feed R4's _real_ per-region congestion back
+  into placement (replacing the optimistic lookahead) so the placement iterates to
+  routable; then length/via optimization. Acceptance: `splanc_dev.fab` is fully
+  routed **and** DRC-clean end-to-end.
+
+Until R1–R5 land, `splanc_dev.fab` correctly **fails** the routing-completeness
+gate (`require_routed`) rather than shipping a partial board.
+
 ### Test fixtures & extraction
 
 Use the two existing boards as regression fixtures — both already build a

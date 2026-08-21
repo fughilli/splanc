@@ -6,7 +6,43 @@ scan back. Full design + rationale lives in
 the running state so a fresh-context agent can pick up cleanly. Update it at the
 end of every session.
 
-## 2026-08-21 (late) — correctness fixes from EE review; routability still open (START HERE)
+## 2026-08-21 (night) — routability diagnosed; own detailed router kicked off (START HERE)
+
+**Decision (Kevin):** build our **own detailed router**, SOTA-grounded and phased
+like the placer — FreeRouting + naive planes can't get a dense fine-pitch board
+DRC-clean. Phased plan **R1–R5** now in `docs/hardware/pnr-system.md` (§ Detailed
+router). `splanc_dev.fab` correctly **fails** the `require_routed` gate until it
+lands.
+
+**Diagnosis (rigorous — union-find matched pcbnew's ratsnest exactly at 81):** of
+81 unrouted, **55 (68%) are high-fanout ground/power** — `lv` ground = 75 pads /
+32 unrouted — that must be **planes**. The rest is signal congestion at the dense
+parts (ESP32 module, QFN, 20-pin header).
+
+**What's built toward it (this session, validated but NOT yet DRC-clean):**
+
+- **Planes**: `net_class.plane_layer` schema; `writeback.apply_planes` pours
+  **split-plane** zones (multiple rails share an inner layer, each = bbox of its
+  own pads, priority-carved) + via-stitches pads to the plane; plane layers typed
+  `LT_POWER` so the router keeps signals on F/B. **Proven**: planes connect the
+  high-fanout nets (`lv`/`p3v3` → 0 unrouted).
+- **THE OPEN BUG (→ R1):** via-**in-pad** stitching shorts on 0.5 mm-pitch parts —
+  **612 DRC violations**. Fix is **dog-bone fanout** (offset via + short trace,
+  standard ≥0.5 mm) + proper plane antipads. That's phase **R1**.
+- Constraints: `splanc_dev` planes = In1 solid `lv` ground, In2 split
+  {p3v3,p5v,vsys,vbat,hv}. Connector grounds stay traces.
+
+**Config note:** typing In1/In2 as power (clean planes) forces signals onto F/B
+(2 layers) → 81→71 (planes fixed ~34, but 2-layer signal squeeze added back ~24).
+The real answer is R1–R5 (fanout + own signal router), not more FreeRouting knobs.
+`route_max_passes=0` + `require_routed` stays.
+
+**Fast iteration:** engine tests `bazelisk … test //hardware/pnr/...` (no
+atopile/FreeRouting). The `.fab` build is the slow (~10 min) integration path;
+each plane experiment above cost one. Diagnosis scripts: union-find over
+tracks+pads per net = pcbnew ratsnest (use it to see which nets/regions fail).
+
+## 2026-08-21 (late) — correctness fixes from EE review; routability still open
 
 An EE review of the first routed board (`splanc_dev.fab`) surfaced real defects.
 Fixed three; a fourth (full routability) is now **honestly gated** but not yet met.

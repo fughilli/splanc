@@ -87,12 +87,16 @@ class NetClass:
     """A named routing rule set (trace width / clearance) over a set of nets.
 
     ``nets`` are net-name globs, resolved against the real netlist at route time
-    (nets are not component refs, so they can't be expanded at compile time)."""
+    (nets are not component refs, so they can't be expanded at compile time).
+    ``plane_layer`` (e.g. ``In1.Cu``) pours the class's nets as a copper plane on
+    that layer instead of trace-routing them — the right home for high-fanout
+    ground / power nets on a multilayer board."""
 
     name: str
     width_mm: Optional[float] = None
     clearance_mm: Optional[float] = None
     nets: Tuple[str, ...] = ()
+    plane_layer: Optional[str] = None
 
 
 @dataclass
@@ -230,6 +234,7 @@ def compile_routing_rules(compiled: "CompiledConstraints", net_names: Sequence[s
                 "name": nc.name,
                 "width_mm": nc.width_mm,
                 "clearance_mm": nc.clearance_mm,
+                "plane_layer": nc.plane_layer,
                 "nets": list(_expand_nets(nc.nets, net_names)),
             }
             for nc in compiled.net_classes
@@ -408,6 +413,7 @@ def compile_constraints(doc: Dict, known_refs: Sequence[str]) -> CompiledConstra
                 width_mm=_opt_float(spec.get("width_mm")),
                 clearance_mm=_opt_float(spec.get("clearance_mm")),
                 nets=tuple(str(n) for n in nets),
+                plane_layer=spec.get("plane_layer"),
             )
         )
 

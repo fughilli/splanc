@@ -46,12 +46,18 @@ group: # soft: attract members together, near an anchor
 # Net names come from the netlist (atopile lowercases most). These drive the
 # detailed router (widths) and the post-route quality report (skew / length).
 
-net_class: # per-class trace width + clearance, applied to matching nets
-  power: # rails carry more current -> wider copper (FreeRouting honors this)
-    width_mm: 0.4
-    clearance_mm: 0.3
-    nets: [lv, '*hv', GND, '*-GND'] # lv, p3v3/p5v/vbat/vsys-hv, GND, gauge/usbc-GND
-
+net_class: # per-class trace width + clearance / plane assignment
+  # High-fanout ground + power rails are hopeless to trace-route, so they go on
+  # copper planes on the 2 inner layers (split-plane: several rails share a layer,
+  # each getting the region around its own pads). In1 = ground; In2 = the power
+  # rails, split by pad cluster. Each pad reaches its plane with a short via.
+  gnd:
+    nets: [lv] # solid ground plane (75 pads, board-wide) — keep In1 unfragmented
+    plane_layer: In1.Cu
+  power:
+    nets: [p3v3-hv, p5v-hv, vsys-hv, vbat-hv, hv] # 3V3 / 5V / vsys / vbat / boost
+    plane_layer: In2.Cu
+  # The connector grounds (GND, gauge/usbc-GND) are low fanout — trace-routed.
 # This module has no nets that require length-matching or a differential pair
 # (its USB is inside the WROOM module). For boards that do, the quality pass
 # checks them — see docs/hardware/pnr-inputs.md, e.g.:

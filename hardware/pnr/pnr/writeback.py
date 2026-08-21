@@ -22,7 +22,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from pnr.graph import SIDE_BOTTOM, BoardGraph
 
@@ -168,6 +168,128 @@ def apply_net_classes(board, rules: dict) -> int:
     return applied
 
 
+_LAYER_NAMES = {
+    "F.Cu": "F_Cu",
+    "B.Cu": "B_Cu",
+    "In1.Cu": "In1_Cu",
+    "In2.Cu": "In2_Cu",
+    "In3.Cu": "In3_Cu",
+    "In4.Cu": "In4_Cu",
+}
+
+
+def apply_planes(board, rules: dict, pad_margin_mm: float = 2.0) -> int:
+    """Pour the ``plane_layer`` net classes as filled copper zones + via-drop each
+    of their pads to the plane. **Run after the detailed route** — a FreeRouting
+    DSN/SES round-trip drops pre-poured zones.
+
+    High-fanout ground / power nets (e.g. `lv` with 75 pads) are hopeless to
+    trace-route; on a multilayer board they belong on a plane, where each pad
+    reaches them with a short via. **Split planes:** several nets can share one
+    inner layer — each net's zone is the bounding box of *its own* pads (+ margin),
+    so ground, 3V3, 5V, … coexist on the inner layers without shorting (the filler
+    keeps clearance where regions overlap, and smaller zones carve out of larger
+    ones by priority). Each net's pads are via-stitched down to its zone. Returns
+    the number of zones poured.
+    """
+    import pcbnew
+
+    layer_id = {name: getattr(pcbnew, attr) for name, attr in _LAYER_NAMES.items()}
+    edges = board.GetBoardEdgesBoundingBox()
+    bx0, by0, bx1, by1 = edges.GetLeft(), edges.GetTop(), edges.GetRight(), edges.GetBottom()
+    margin = _nm(pad_margin_mm)
+
+    # Pad positions per net (for per-net zone extents).
+    pad_pos: Dict[str, list] = {}
+    for fp in board.GetFootprints():
+        for pad in fp.Pads():
+            pad_pos.setdefault(pad.GetNetname(), []).append(pad.GetPosition())
+
+    zones = []  # (area, zone) for priority assignment
+    for nc in rules.get("net_classes", []):
+        layer = nc.get("plane_layer")
+        if not layer or layer not in layer_id:
+            continue
+        for net_name in nc.get("nets", []):
+            net = board.FindNet(net_name)
+            pts = pad_pos.get(net_name, [])
+            if net is None or not pts:
+                continue
+            xs = [p.x for p in pts]
+            ys = [p.y for p in pts]
+            x0 = max(bx0, min(xs) - margin)
+            x1 = min(bx1, max(xs) + margin)
+            y0 = max(by0, min(ys) - margin)
+            y1 = min(by1, max(ys) + margin)
+            z = pcbnew.ZONE(board)
+            z.SetLayer(layer_id[layer])
+            z.SetNetCode(net.GetNetCode())
+            outline = z.Outline()
+            outline.NewOutline()
+            for x, y in [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]:
+                outline.Append(pcbnew.VECTOR2I(int(x), int(y)))
+            board.Add(z)
+            _via_stitch_net(board, net.GetNetCode())
+            zones.append(((x1 - x0) * (y1 - y0), z))
+
+    # Priority: smaller zones fill on top of (carve out of) larger overlapping ones.
+    for rank, (_area, z) in enumerate(sorted(zones, key=lambda az: -az[0])):
+        z.SetAssignedPriority(rank)
+
+    if zones:
+        try:
+            pcbnew.ZONE_FILLER(board).Fill(board.Zones())
+        except Exception:  # pragma: no cover - version shim
+            pass
+    return len(zones)
+
+
+def _type_plane_layers(board, rules: dict) -> None:
+    """Mark each ``plane_layer`` as a POWER layer so the router keeps signals off
+    it (the ground/power plane is poured there after routing)."""
+    import pcbnew
+
+    layer_id = {name: getattr(pcbnew, attr) for name, attr in _LAYER_NAMES.items()}
+    for nc in rules.get("net_classes", []):
+        layer = nc.get("plane_layer")
+        if layer and layer in layer_id and hasattr(board, "SetLayerType"):
+            try:
+                board.SetLayerType(layer_id[layer], pcbnew.LT_POWER)
+            except Exception:  # pragma: no cover - version shim
+                pass
+
+
+def _via_stitch_net(board, netcode: int) -> int:
+    """Drop a through-via at every pad of ``netcode`` so pads on other layers reach
+    the plane. A through-via touches every copper layer including the plane, and
+    the zone fill bonds to it (same net). Returns vias added."""
+    import pcbnew
+
+    via_d = _nm(0.6)
+    drill_d = _nm(0.3)
+    seen = set()
+    added = 0
+    for fp in board.GetFootprints():
+        for pad in fp.Pads():
+            if pad.GetNetCode() != netcode:
+                continue
+            pos = pad.GetPosition()
+            k = (pos.x, pos.y)
+            if k in seen:
+                continue
+            seen.add(k)
+            v = pcbnew.PCB_VIA(board)
+            v.SetPosition(pos)
+            v.SetViaType(pcbnew.VIATYPE_THROUGH)
+            v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu)
+            v.SetFrontWidth(via_d)  # KiCad 9: per-via diameter (SetWidth wants a layer)
+            v.SetDrill(drill_d)
+            v.SetNetCode(netcode)
+            board.Add(v)
+            added += 1
+    return added
+
+
 def _clear_tracks(board) -> int:
     """Remove all existing tracks + vias (mm-scale preview routing from the base
     autoroute pass). Moving footprints invalidates them; the detailed router
@@ -285,6 +407,11 @@ def writeback(
     if rules:
         apply_net_classes(board, rules)
     n = apply_placement(board, graph, width=width, height=height, layers=layers)
+    # Type the plane layers as POWER so the detailed router keeps signals on the
+    # outer layers (F.Cu/B.Cu) and leaves the inner layers for the ground/power
+    # planes poured after routing (pnr.planes).
+    if rules:
+        _type_plane_layers(board, rules)
     pcbnew.SaveBoard(out_pcb, board)
     # Text pass: strip all (stale) Edge.Cuts — pcbnew reformats gr_lines into
     # nested strokes a single-level regex can't remove — then stamp one clean
@@ -294,6 +421,8 @@ def writeback(
     text = frame_region(strip_edge_cuts(text), width, height)
     with open(out_pcb, "w", encoding="utf-8") as fh:
         fh.write(text)
+    # NB: planes are poured *after* the detailed route (see pnr.planes) — a
+    # FreeRouting DSN/SES round-trip drops pre-poured zones.
     return n
 
 

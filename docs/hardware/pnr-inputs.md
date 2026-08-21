@@ -194,7 +194,19 @@ length_match:
 - **`net_class`** — a named width/clearance rule over a set of nets. Applied to
   the board's net settings in write-back, so **FreeRouting routes those nets at
   the given width** (e.g. power rails wider). The quality report rolls up total
-  routed length per class.
+  routed length per class. A class may also set **`plane_layer`** (e.g.
+  `In1.Cu`): its net is **poured as a copper plane** on that layer instead of
+  being trace-routed — the right home for a high-fanout ground or power net on a
+  multilayer board (each pad reaches it with a short via, and the router only has
+  to route signals). Use **one net per plane layer** (a full-board pour is a
+  single net, or they short). Example:
+
+  ```yaml
+  net_class:
+    gnd: { nets: [GND], plane_layer: In1.Cu } # ground plane on inner layer 1
+    v3v3: { nets: [3V3], plane_layer: In2.Cu } # 3V3 plane on inner layer 2
+  ```
+
 - **`diff_pair`** — two nets (`p`/`n`) routed together with `width_mm`/`gap_mm`;
   the quality pass reports their routed-length **skew** and flags it if it
   exceeds `skew_mm` (default 0.5).

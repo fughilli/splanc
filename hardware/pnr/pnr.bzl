@@ -126,6 +126,9 @@ def _pnr_board_impl(ctx):
         _ki_run('-m pnr.writeback "%s" "$_WORK/placed.json" --out "%s" --rules "$_WORK/rules.json"' % (in_pcb.path, out_pcb.path)),
         # 4. detailed route (FreeRouting DSN/SES) — routes tracks into the board.
         _ki_run('"%s" "%s" "$_FR" %d' % (autoroute.path, out_pcb.path, mp)),
+        # 4b. pour ground/power planes + via-stitch their pads (after routing:
+        # FreeRouting's SES round-trip drops pre-poured zones).
+        _ki_run('-m pnr.planes "%s" --rules "$_WORK/rules.json"' % out_pcb.path),
         # 5. DRC report (gated iff drc_gate).
         '"%s" pcb drc "%s" -o "%s" --format report %s || _DRC=$?' % (
             _kicad_cli(info),
