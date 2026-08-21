@@ -174,6 +174,10 @@ export function PerfPanelScreen(router: Router): Screen {
       readout("stack high-water", last && last.stackMax > 0 ? `${last.stackMax} / 128` : "—"),
       readout("heap free", r.heapFree > 0 ? `${(r.heapFree / 1024).toFixed(0)} KB` : "—"),
       readout("heap min-free", r.heapMinFree > 0 ? `${(r.heapMinFree / 1024).toFixed(0)} KB` : "—"),
+      readout(
+        "heap max-block",
+        r.heapLargestFree > 0 ? `${(r.heapLargestFree / 1024).toFixed(0)} KB` : "—",
+      ),
       readout("LEDs", last ? String(last.ledCount) : "—"),
     );
   }

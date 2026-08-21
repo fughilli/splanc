@@ -217,7 +217,7 @@ uint32_t lm_perf_instr_update(void);
 uint32_t lm_perf_instr_shade(void);
 uint32_t lm_perf_stack_max(void);
 // Refresh the heap figures carried in the next PerfReport (call before push).
-void lm_perf_set_heap(uint32_t free, uint32_t min_free);
+void lm_perf_set_heap(uint32_t free, uint32_t min_free, uint32_t largest_free);
 // Push one rendered effect frame's Tier-0 cycle spans (+ latched Tier-1 counts)
 // into the perf ring. `overran` marks a frame whose frame+show cycles exceeded
 // the ~33 ms budget (counted since the last report drain).

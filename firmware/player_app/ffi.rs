@@ -1903,6 +1903,7 @@ unsafe fn build_perf_report() -> pb::ServerMessage {
     // latest values ride here).
     r.r#heap_free = PERF_HEAP_FREE;
     r.r#heap_min_free = PERF_HEAP_MIN_FREE;
+    r.r#heap_largest_free = PERF_HEAP_LARGEST_FREE;
     // Raw tail: drain oldest-first until the ticks field is at capacity; any
     // remaining samples stay in the ring for the next poll (no loss).
     while r.r#ticks.len() < r.r#ticks.capacity() {
@@ -1926,6 +1927,7 @@ unsafe fn build_perf_report() -> pb::ServerMessage {
 /// core has no ESP-IDF; the C++ side reads esp_get_free_heap_size et al.).
 static mut PERF_HEAP_FREE: u32 = 0;
 static mut PERF_HEAP_MIN_FREE: u32 = 0;
+static mut PERF_HEAP_LARGEST_FREE: u32 = 0;
 
 /// Reset the ring + its counters (fresh effect / mode change). Latched Tier-1
 /// counters are cleared too so a stale count can't leak into the next frame.
@@ -2812,11 +2814,15 @@ pub unsafe extern "C" fn lm_perf_stack_max() -> u32 {
 }
 
 /// Refresh the heap figures carried in the next PerfReport. Called by the render
-/// loop right before lm_perf_push (esp_get_free_heap_size / _minimum on C++).
+/// loop right before lm_perf_push. `free` / `min_free` are esp_get_free_heap_size
+/// / _minimum; `largest_free` is heap_caps_get_largest_free_block (the biggest
+/// contiguous block, i.e. the real ceiling on a single allocation) — all read on
+/// the C++ side.
 #[no_mangle]
-pub unsafe extern "C" fn lm_perf_set_heap(free: u32, min_free: u32) {
+pub unsafe extern "C" fn lm_perf_set_heap(free: u32, min_free: u32, largest_free: u32) {
     PERF_HEAP_FREE = free;
     PERF_HEAP_MIN_FREE = min_free;
+    PERF_HEAP_LARGEST_FREE = largest_free;
 }
 
 /// Push one rendered effect frame's Tier-0 cycle spans (+ the latched Tier-1

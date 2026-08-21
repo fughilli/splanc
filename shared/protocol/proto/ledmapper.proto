@@ -480,6 +480,10 @@ message PerfReport {
   uint32 samples_dropped = 22;
   uint32 heap_free = 30;
   uint32 heap_min_free = 31;
+  // Largest allocatable contiguous block (heap_caps_get_largest_free_block):
+  // free heap can be ample yet fragmented, so this is what actually bounds a
+  // single big allocation (TLS buffers, the map record, a render buffer).
+  uint32 heap_largest_free = 32;
   repeated PerfFrame ticks = 40;
 }
 
