@@ -1,0 +1,73 @@
+"""Algorithmic place-and-route for the atopile PCBs (FUG-138).
+
+Design + rationale: docs/hardware/pnr-system.md. Running handoff: WORKLOG.md.
+This package is the CPU-first Python engine; the differentiable placement core
+(a later phase) is PyTorch. The two interpreters in the flow are kept apart:
+
+- `pnr` (this py_library) is imported by the hermetic rules_python interpreter
+  that carries torch. `pnr.ingest` imports KiCad's `pcbnew` **lazily**, so the
+  library imports fine here even though `pcbnew` is absent — the `pcbnew` path is
+  run out-of-band under `@kicad_python` (see the ingest module docstring; a
+  first-class `atopile_pnr` rule that wires that interpreter is Phase 5).
+- `torch_smoke_test` is the Task 0 gate: torch imports + runs on CPU.
+"""
+
+load("@pypi//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+py_library(
+    name = "pnr",
+    srcs = glob(["pnr/*.py"]),
+    imports = ["."],
+    deps = [
+        requirement("pyyaml"),  # constraints.py parses the sidecar YAML
+    ],
+)
+
+# Task 0 acceptance: PyTorch is available and differentiable under Bazel.
+py_test(
+    name = "torch_smoke_test",
+    size = "small",  # imports torch; a few seconds even cold
+    srcs = ["tests/test_torch_smoke.py"],
+    legacy_create_init = False,
+    main = "tests/test_torch_smoke.py",
+    deps = [requirement("torch")],
+)
+
+# Phase 1 acceptance: internal graph, constraint schema, and ingestion.
+py_test(
+    name = "graph_test",
+    size = "small",
+    srcs = ["tests/test_graph.py"],
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_graph.py",
+    deps = [":pnr"],
+)
+
+py_test(
+    name = "constraints_test",
+    size = "small",
+    srcs = ["tests/test_constraints.py"],
+    data = glob(["testdata/splanc_dev/*"]),
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_constraints.py",
+    deps = [
+        ":pnr",
+        requirement("pyyaml"),
+    ],
+)
+
+py_test(
+    name = "ingest_test",
+    size = "small",
+    srcs = ["tests/test_ingest.py"],
+    data = glob(["testdata/splanc_dev/*"]),
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_ingest.py",
+    deps = [":pnr"],
+)

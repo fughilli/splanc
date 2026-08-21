@@ -1,0 +1,3353 @@
+{
+  "components": [
+    {
+      "bbox": [5.069762, 5.1115],
+      "courtyard": [5.069762, 5.1115],
+      "footprint": "Samsung_CL05B104KO5NNNC:C0402",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "p5v-hv",
+          "offset": [-0.42, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [0.42, 0.0]
+        }
+      ],
+      "pos": [603.575, 3.575],
+      "ref": "C23",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [5.209762, 5.1115],
+      "courtyard": [5.209762, 5.1115],
+      "footprint": "UNI_ROYAL_0402WGF330JTCE:R0402",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "led0-B",
+          "offset": [-0.43, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "data_out",
+          "offset": [0.43, 0.0]
+        }
+      ],
+      "pos": [473.575, 3.575],
+      "ref": "R17",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [6.297381, 5.23825],
+      "courtyard": [6.297381, 5.23825],
+      "footprint": "Samsung_CL21A226MOQNNNE:C0805",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "vsys-hv",
+          "offset": [-1.0, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [1.0, 0.0]
+        }
+      ],
+      "pos": [363.575, 3.575],
+      "ref": "C5",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [4.257381, 5.1115],
+      "courtyard": [4.257381, 5.1115],
+      "footprint": "UNI_ROYAL_0402WGF1001TCE:R0402",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "p3v3-hv",
+          "offset": [-0.43, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "STAT",
+          "offset": [0.43, 0.0]
+        }
+      ],
+      "pos": [713.575, 3.575],
+      "ref": "R9",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [4.74, 6.81825],
+      "courtyard": [4.74, 6.81825],
+      "footprint": "Changjiang_MMBT3904_RANGE_100_300:SOT-23-3_L2.9-W1.3-P1.90-LS2.4-BR",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "B",
+          "offset": [1.0, 0.95]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [1.0, -0.95]
+        },
+        {
+          "name": "3",
+          "net": "C",
+          "offset": [-1.0, 0.0]
+        }
+      ],
+      "pos": [443.575, 3.575],
+      "ref": "Q1",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [5.209762, 5.1115],
+      "courtyard": [5.209762, 5.1115],
+      "footprint": "UNI_ROYAL_0402WGF2001TCE:R0402",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "hv",
+          "offset": [-0.43, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "SCL",
+          "offset": [0.43, 0.0]
+        }
+      ],
+      "pos": [33.575, 3.575],
+      "ref": "R22",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [5.209762, 5.1115],
+      "courtyard": [5.209762, 5.1115],
+      "footprint": "UNI_ROYAL_0402WGF1003TCE:R0402",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "p3v3-hv",
+          "offset": [-0.43, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "FB-1",
+          "offset": [0.43, 0.0]
+        }
+      ],
+      "pos": [223.575, 3.575],
+      "ref": "R12",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [5.069762, 5.1115],
+      "courtyard": [5.069762, 5.1115],
+      "footprint": "Samsung_CL05A105KA5NQNC:C0402",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "vsys-hv",
+          "offset": [-0.42, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [0.42, 0.0]
+        }
+      ],
+      "pos": [723.575, 3.575],
+      "ref": "C12",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [6.109762, 5.1115],
+      "courtyard": [6.109762, 5.1115],
+      "footprint": "UNI_ROYAL_0603WAF1002T5E:R0603",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "p3v3-hv",
+          "offset": [-0.75, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "1-2",
+          "offset": [0.75, 0.0]
+        }
+      ],
+      "pos": [143.575, 3.575],
+      "ref": "R25",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [6.109762, 5.1115],
+      "courtyard": [6.109762, 5.1115],
+      "footprint": "UNI_ROYAL_0603WAF1002T5E:R0603",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "led1-S",
+          "offset": [-0.75, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "led1-C",
+          "offset": [0.75, 0.0]
+        }
+      ],
+      "pos": [553.575, 3.575],
+      "ref": "R19",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [4.257381, 5.1115],
+      "courtyard": [4.257381, 5.1115],
+      "footprint": "UNI_ROYAL_0402WGF5101TCE:R0402",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "A5",
+          "offset": [-0.43, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [0.43, 0.0]
+        }
+      ],
+      "pos": [173.575, 3.575],
+      "ref": "R6",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [6.109762, 5.1115],
+      "courtyard": [6.109762, 5.1115],
+      "footprint": "UNI_ROYAL_0603WAF1002T5E:R0603",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "p3v3-hv",
+          "offset": [-0.75, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "EN-1",
+          "offset": [0.75, 0.0]
+        }
+      ],
+      "pos": [73.575, 3.575],
+      "ref": "R10",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [5.209762, 5.1115],
+      "courtyard": [5.209762, 5.1115],
+      "footprint": "UNI_ROYAL_0402WGF330JTCE:R0402",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "led1-B-1",
+          "offset": [-0.43, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "led1-data_out",
+          "offset": [0.43, 0.0]
+        }
+      ],
+      "pos": [593.575, 3.575],
+      "ref": "R21",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [4.257381, 5.1115],
+      "courtyard": [4.257381, 5.1115],
+      "footprint": "UNI_ROYAL_0402WGF1003TCE:R0402",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "p5v-hv",
+          "offset": [-0.43, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "FB",
+          "offset": [0.43, 0.0]
+        }
+      ],
+      "pos": [293.575, 3.575],
+      "ref": "R2",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [4.95, 6.76825],
+      "courtyard": [4.95, 6.76825],
+      "footprint": "Bosch_BMP280:LGA-8_L2.5-W2.0-P0.65_AMP6127",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "lv",
+          "offset": [0.72, -0.98]
+        },
+        {
+          "name": "2",
+          "net": "hv",
+          "offset": [0.72, -0.32]
+        },
+        {
+          "name": "3",
+          "net": "SDA",
+          "offset": [0.72, 0.32]
+        },
+        {
+          "name": "4",
+          "net": "SCL",
+          "offset": [0.72, 0.98]
+        },
+        {
+          "name": "5",
+          "net": "lv",
+          "offset": [-0.72, 0.98]
+        },
+        {
+          "name": "6",
+          "net": "hv",
+          "offset": [-0.72, 0.32]
+        },
+        {
+          "name": "7",
+          "net": "lv",
+          "offset": [-0.72, -0.32]
+        },
+        {
+          "name": "8",
+          "net": "hv",
+          "offset": [-0.72, -0.98]
+        }
+      ],
+      "pos": [673.575, 3.575],
+      "ref": "U1",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [11.0, 8.56325],
+      "courtyard": [11.0, 8.56325],
+      "footprint": "JST_B3B_PH_K_S_LF__SN:CONN-TH_B3B-PH-K-S",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "chan_out-1",
+          "offset": [2.0, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "data_out",
+          "offset": [0.0, 0.0]
+        },
+        {
+          "name": "3",
+          "net": "lv",
+          "offset": [-2.0, 0.0]
+        }
+      ],
+      "pos": [493.575, 3.575],
+      "ref": "CN2",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [5.157381, 5.1115],
+      "courtyard": [5.157381, 5.1115],
+      "footprint": "UNI_ROYAL_0603WAF1002T5E:R0603",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "p3v3-hv",
+          "offset": [-0.75, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "1",
+          "offset": [0.75, 0.0]
+        }
+      ],
+      "pos": [103.575, 3.575],
+      "ref": "R5",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [7.249762, 5.23825],
+      "courtyard": [7.249762, 5.23825],
+      "footprint": "Samsung_CL21A106KAYNNNE:C0805",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "p5v-hv",
+          "offset": [-1.0, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [1.0, 0.0]
+        }
+      ],
+      "pos": [503.575, 3.575],
+      "ref": "C18",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [6.109762, 5.1115],
+      "courtyard": [6.109762, 5.1115],
+      "footprint": "UNI_ROYAL_0603WAF1002T5E:R0603",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "p3v3-hv",
+          "offset": [-0.75, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "nALRT",
+          "offset": [0.75, 0.0]
+        }
+      ],
+      "pos": [753.575, 3.575],
+      "ref": "R13",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [4.117381, 5.1115],
+      "courtyard": [4.117381, 5.1115],
+      "footprint": "Samsung_CL05A105KA5NQNC:C0402",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "hv",
+          "offset": [-0.42, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [0.42, 0.0]
+        }
+      ],
+      "pos": [13.575, 3.575],
+      "ref": "C1",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [7.249762, 5.23825],
+      "courtyard": [7.249762, 5.23825],
+      "footprint": "Samsung_CL21A106KAYNNNE:C0805",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "vsys-hv",
+          "offset": [-1.0, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [1.0, 0.0]
+        }
+      ],
+      "pos": [243.575, 3.575],
+      "ref": "C10",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [6.159762, 5.1115],
+      "courtyard": [6.159762, 5.1115],
+      "footprint": "Samsung_CL10A106KP8NNNC:C0603",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "p3v3-hv",
+          "offset": [-0.7, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [0.7, 0.0]
+        }
+      ],
+      "pos": [63.575, 3.575],
+      "ref": "C15",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [13.722381, 9.57325],
+      "courtyard": [13.722381, 9.57325],
+      "footprint": "Korean_Hroparts_TYPE_C_16PIN_2MD_073:USB-C-SMD_TYPE-C-16PIN-2MD-073",
+      "locked": false,
+      "pads": [
+        {
+          "name": "",
+          "net": "",
+          "offset": [-2.89, -1.3]
+        },
+        {
+          "name": "",
+          "net": "",
+          "offset": [2.89, -1.3]
+        },
+        {
+          "name": "13",
+          "net": "lv",
+          "offset": [-4.32, -1.83]
+        },
+        {
+          "name": "13",
+          "net": "lv",
+          "offset": [-4.32, 2.38]
+        },
+        {
+          "name": "14",
+          "net": "lv",
+          "offset": [4.32, -1.83]
+        },
+        {
+          "name": "14",
+          "net": "lv",
+          "offset": [4.32, 2.38]
+        },
+        {
+          "name": "A1B12",
+          "net": "usbc-GND",
+          "offset": [-3.2, -2.38]
+        },
+        {
+          "name": "A4B9",
+          "net": "vsys-hv",
+          "offset": [-2.4, -2.38]
+        },
+        {
+          "name": "A5",
+          "net": "A5",
+          "offset": [-1.25, -2.38]
+        },
+        {
+          "name": "A6",
+          "net": "14",
+          "offset": [-0.25, -2.38]
+        },
+        {
+          "name": "A7",
+          "net": "13",
+          "offset": [0.25, -2.38]
+        },
+        {
+          "name": "A8",
+          "net": "A8",
+          "offset": [1.25, -2.38]
+        },
+        {
+          "name": "B1A12",
+          "net": "usbc-GND",
+          "offset": [3.2, -2.38]
+        },
+        {
+          "name": "B4A9",
+          "net": "vsys-hv",
+          "offset": [2.4, -2.38]
+        },
+        {
+          "name": "B5",
+          "net": "B5",
+          "offset": [1.75, -2.38]
+        },
+        {
+          "name": "B6",
+          "net": "14",
+          "offset": [0.75, -2.38]
+        },
+        {
+          "name": "B7",
+          "net": "13",
+          "offset": [-0.75, -2.38]
+        },
+        {
+          "name": "B8",
+          "net": "B8",
+          "offset": [-1.75, -2.38]
+        }
+      ],
+      "pos": [163.575, 3.575],
+      "ref": "USB1",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [8.222619, 5.87825],
+      "courtyard": [8.222619, 5.87825],
+      "footprint": "XKB_TS_1088_AR02016:SW-SMD_L3.9-W3.0-P4.45",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "EN-1",
+          "offset": [-2.18, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [2.18, 0.0]
+        }
+      ],
+      "pos": [93.575, 3.575],
+      "ref": "SW2",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [7.842381, 8.66325],
+      "courtyard": [7.842381, 8.66325],
+      "footprint": "TDK_InvenSense_MPU_6050:QFN-24_L4.0-W4.0-P0.50-BL-EP2.7",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "CLKIN",
+          "offset": [-1.25, 2.0]
+        },
+        {
+          "name": "2",
+          "net": "",
+          "offset": [-0.75, 2.0]
+        },
+        {
+          "name": "3",
+          "net": "",
+          "offset": [-0.25, 2.0]
+        },
+        {
+          "name": "4",
+          "net": "",
+          "offset": [0.25, 2.0]
+        },
+        {
+          "name": "5",
+          "net": "",
+          "offset": [0.75, 2.0]
+        },
+        {
+          "name": "6",
+          "net": "AUX_DA",
+          "offset": [1.25, 2.0]
+        },
+        {
+          "name": "7",
+          "net": "AUX_CL",
+          "offset": [2.0, 1.25]
+        },
+        {
+          "name": "8",
+          "net": "hv",
+          "offset": [2.0, 0.75]
+        },
+        {
+          "name": "9",
+          "net": "lv",
+          "offset": [2.0, 0.25]
+        },
+        {
+          "name": "10",
+          "net": "REGOUT",
+          "offset": [2.0, -0.25]
+        },
+        {
+          "name": "11",
+          "net": "FSYNC",
+          "offset": [2.0, -0.75]
+        },
+        {
+          "name": "12",
+          "net": "INT",
+          "offset": [2.0, -1.25]
+        },
+        {
+          "name": "13",
+          "net": "hv",
+          "offset": [1.25, -2.0]
+        },
+        {
+          "name": "14",
+          "net": "",
+          "offset": [0.75, -2.0]
+        },
+        {
+          "name": "15",
+          "net": "",
+          "offset": [0.25, -2.0]
+        },
+        {
+          "name": "16",
+          "net": "",
+          "offset": [-0.25, -2.0]
+        },
+        {
+          "name": "17",
+          "net": "",
+          "offset": [-0.75, -2.0]
+        },
+        {
+          "name": "18",
+          "net": "lv",
+          "offset": [-1.24, -2.0]
+        },
+        {
+          "name": "19",
+          "net": "RESV",
+          "offset": [-2.0, -1.25]
+        },
+        {
+          "name": "20",
+          "net": "CPOUT",
+          "offset": [-2.0, -0.75]
+        },
+        {
+          "name": "21",
+          "net": "RESV",
+          "offset": [-2.0, -0.25]
+        },
+        {
+          "name": "22",
+          "net": "RESV",
+          "offset": [-2.0, 0.25]
+        },
+        {
+          "name": "23",
+          "net": "SCL",
+          "offset": [-2.0, 0.75]
+        },
+        {
+          "name": "24",
+          "net": "SDA",
+          "offset": [-2.0, 1.25]
+        },
+        {
+          "name": "25",
+          "net": "EP",
+          "offset": [0.01, 0.0]
+        }
+      ],
+      "pos": [633.575, 3.575],
+      "ref": "U11",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [5.069762, 5.1115],
+      "courtyard": [5.069762, 5.1115],
+      "footprint": "Samsung_CL05B104KO5NNNC:C0402",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "p3v3-hv",
+          "offset": [-0.42, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [0.42, 0.0]
+        }
+      ],
+      "pos": [533.575, 3.575],
+      "ref": "C22",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [5.209762, 5.1115],
+      "courtyard": [5.209762, 5.1115],
+      "footprint": "UNI_ROYAL_0402WGF1001TCE:R0402",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "en-1",
+          "offset": [-0.43, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "led1-B",
+          "offset": [0.43, 0.0]
+        }
+      ],
+      "pos": [573.575, 3.575],
+      "ref": "R18",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [4.585, 6.35825],
+      "courtyard": [4.585, 6.35825],
+      "footprint": "Analog_Devices_MAX17048G_T10:TDFN-8_L2.0-W2.0-P0.50-BL-EP1.2",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "CTG",
+          "offset": [-0.75, 0.94]
+        },
+        {
+          "name": "2",
+          "net": "vbat-hv",
+          "offset": [-0.25, 0.94]
+        },
+        {
+          "name": "3",
+          "net": "vbat-hv",
+          "offset": [0.25, 0.94]
+        },
+        {
+          "name": "4",
+          "net": "gauge-GND",
+          "offset": [0.75, 0.94]
+        },
+        {
+          "name": "5",
+          "net": "nALRT",
+          "offset": [0.75, -0.94]
+        },
+        {
+          "name": "6",
+          "net": "QSTRT",
+          "offset": [0.25, -0.94]
+        },
+        {
+          "name": "7",
+          "net": "SCL",
+          "offset": [-0.25, -0.94]
+        },
+        {
+          "name": "8",
+          "net": "SDA",
+          "offset": [-0.75, -0.94]
+        },
+        {
+          "name": "9",
+          "net": "lv",
+          "offset": [0.0, 0.0]
+        }
+      ],
+      "pos": [743.575, 3.575],
+      "ref": "U6",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [4.117381, 5.1115],
+      "courtyard": [4.117381, 5.1115],
+      "footprint": "Samsung_CL05B104KO5NNNC:C0402",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "hv",
+          "offset": [-0.42, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [0.42, 0.0]
+        }
+      ],
+      "pos": [683.575, 3.575],
+      "ref": "C2",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [4.257381, 5.1115],
+      "courtyard": [4.257381, 5.1115],
+      "footprint": "UNI_ROYAL_0402WGF1001TCE:R0402",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "FB",
+          "offset": [-0.43, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [0.43, 0.0]
+        }
+      ],
+      "pos": [303.575, 3.575],
+      "ref": "R1",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [27.875, 8.19825],
+      "courtyard": [27.875, 8.19825],
+      "footprint": "XKB_PZ254V_12_20P:HDR-TH_20P-P2.54-V-M-R2-C10-S2.54",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "vsys-hv",
+          "offset": [-11.43, 1.27]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [-11.43, -1.27]
+        },
+        {
+          "name": "3",
+          "net": "vsys-hv",
+          "offset": [-8.89, 1.27]
+        },
+        {
+          "name": "4",
+          "net": "vbat-hv",
+          "offset": [-8.89, -1.27]
+        },
+        {
+          "name": "5",
+          "net": "p5v-hv",
+          "offset": [-6.35, 1.27]
+        },
+        {
+          "name": "6",
+          "net": "p3v3-hv",
+          "offset": [-6.35, -1.27]
+        },
+        {
+          "name": "7",
+          "net": "fault",
+          "offset": [-3.81, 1.27]
+        },
+        {
+          "name": "8",
+          "net": "fault-1",
+          "offset": [-3.81, -1.27]
+        },
+        {
+          "name": "9",
+          "net": "chan_out-1",
+          "offset": [-1.27, 1.27]
+        },
+        {
+          "name": "10",
+          "net": "chan_out",
+          "offset": [-1.27, -1.27]
+        },
+        {
+          "name": "11",
+          "net": "data_in",
+          "offset": [1.27, 1.27]
+        },
+        {
+          "name": "12",
+          "net": "data_in-1",
+          "offset": [1.27, -1.27]
+        },
+        {
+          "name": "13",
+          "net": "SDA",
+          "offset": [3.81, 1.27]
+        },
+        {
+          "name": "14",
+          "net": "SCL",
+          "offset": [3.81, -1.27]
+        },
+        {
+          "name": "15",
+          "net": "EN-1",
+          "offset": [6.35, 1.27]
+        },
+        {
+          "name": "16",
+          "net": "1",
+          "offset": [6.35, -1.27]
+        },
+        {
+          "name": "17",
+          "net": "1-1",
+          "offset": [8.89, 1.27]
+        },
+        {
+          "name": "18",
+          "net": "1-2",
+          "offset": [8.89, -1.27]
+        },
+        {
+          "name": "19",
+          "net": "19",
+          "offset": [11.43, 1.27]
+        },
+        {
+          "name": "20",
+          "net": "20",
+          "offset": [11.43, -1.27]
+        }
+      ],
+      "pos": [783.575, 3.575],
+      "ref": "H1",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [6.297381, 5.23825],
+      "courtyard": [6.297381, 5.23825],
+      "footprint": "Samsung_CL21A226MOQNNNE:C0805",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "p5v-hv",
+          "offset": [-1.0, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [1.0, 0.0]
+        }
+      ],
+      "pos": [373.575, 3.575],
+      "ref": "C6",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [4.117381, 5.1115],
+      "courtyard": [4.117381, 5.1115],
+      "footprint": "Samsung_CL05A105KA5NQNC:C0402",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "vsys-hv",
+          "offset": [-0.42, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [0.42, 0.0]
+        }
+      ],
+      "pos": [353.575, 3.575],
+      "ref": "C9",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [4.117381, 5.1115],
+      "courtyard": [4.117381, 5.1115],
+      "footprint": "Samsung_CL05B104KO5NNNC:C0402",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "COMP",
+          "offset": [-0.42, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [0.42, 0.0]
+        }
+      ],
+      "pos": [343.575, 3.575],
+      "ref": "C4",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [4.257381, 5.1115],
+      "courtyard": [4.257381, 5.1115],
+      "footprint": "UNI_ROYAL_0402WGF2001TCE:R0402",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "PROG",
+          "offset": [-0.43, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [0.43, 0.0]
+        }
+      ],
+      "pos": [703.575, 3.575],
+      "ref": "R8",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [5.209762, 5.1115],
+      "courtyard": [5.209762, 5.1115],
+      "footprint": "UNI_ROYAL_0402WGF0000TCE:R0402",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "p5v-hv",
+          "offset": [-0.43, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "led1-S",
+          "offset": [0.43, 0.0]
+        }
+      ],
+      "pos": [513.575, 3.575],
+      "ref": "R20",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [5.069762, 5.1115],
+      "courtyard": [5.069762, 5.1115],
+      "footprint": "Samsung_CL05B104KO5NNNC:C0402",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "p3v3-hv",
+          "offset": [-0.42, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [0.42, 0.0]
+        }
+      ],
+      "pos": [53.575, 3.575],
+      "ref": "C16",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [5.069762, 5.1115],
+      "courtyard": [5.069762, 5.1115],
+      "footprint": "Samsung_CL05B104KO5NNNC:C0402",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "p3v3-hv",
+          "offset": [-0.42, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [0.42, 0.0]
+        }
+      ],
+      "pos": [413.575, 3.575],
+      "ref": "C19",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [6.109762, 5.1115],
+      "courtyard": [6.109762, 5.1115],
+      "footprint": "UNI_ROYAL_0603WAF1002T5E:R0603",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "S",
+          "offset": [-0.75, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "C",
+          "offset": [0.75, 0.0]
+        }
+      ],
+      "pos": [433.575, 3.575],
+      "ref": "R15",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [9.026905, 7.41825],
+      "courtyard": [9.026905, 7.41825],
+      "footprint": "Sunlord_SWPA6045S1R0NT:IND-SMD_L6.0-W6.0_SWPA6045S",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "SW-1",
+          "offset": [-2.6, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "p3v3-hv",
+          "offset": [2.6, 0.0]
+        }
+      ],
+      "pos": [213.575, 3.575],
+      "ref": "L3",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [5.069762, 5.1115],
+      "courtyard": [5.069762, 5.1115],
+      "footprint": "Samsung_CL05B104KO5NNNC:C0402",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "EN-1",
+          "offset": [-0.42, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [0.42, 0.0]
+        }
+      ],
+      "pos": [83.575, 3.575],
+      "ref": "C14",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [6.159762, 5.1115],
+      "courtyard": [6.159762, 5.1115],
+      "footprint": "Samsung_CL10A106KP8NNNC:C0603",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "vsys-hv",
+          "offset": [-0.7, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [0.7, 0.0]
+        }
+      ],
+      "pos": [193.575, 3.575],
+      "ref": "C27",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [5.1, 6.83825],
+      "courtyard": [5.1, 6.83825],
+      "footprint": "Alpha___Omega_AO3401A:SOT-23_L2.9-W1.3-P1.90-LS2.4-BR",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "led1-C",
+          "offset": [1.15, 0.95]
+        },
+        {
+          "name": "2",
+          "net": "led1-S",
+          "offset": [1.15, -0.95]
+        },
+        {
+          "name": "3",
+          "net": "chan_out",
+          "offset": [-1.15, 0.0]
+        }
+      ],
+      "pos": [543.575, 3.575],
+      "ref": "Q4",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [4.257381, 5.1115],
+      "courtyard": [4.257381, 5.1115],
+      "footprint": "UNI_ROYAL_0402WGF5101TCE:R0402",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "B5",
+          "offset": [-0.43, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [0.43, 0.0]
+        }
+      ],
+      "pos": [183.575, 3.575],
+      "ref": "R7",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [6.109762, 5.1115],
+      "courtyard": [6.109762, 5.1115],
+      "footprint": "UNI_ROYAL_0603WAF1002T5E:R0603",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "p3v3-hv",
+          "offset": [-0.75, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "1-1",
+          "offset": [0.75, 0.0]
+        }
+      ],
+      "pos": [123.575, 3.575],
+      "ref": "R24",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [5.585, 9.29325],
+      "courtyard": [5.585, 9.29325],
+      "footprint": "Texas_Instruments_INA226AIDGSR:MSOP-10_L3.0-W3.0-P0.50-LS5.0-BL",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "lv",
+          "offset": [-1.0, 2.11]
+        },
+        {
+          "name": "2",
+          "net": "hv",
+          "offset": [-0.5, 2.11]
+        },
+        {
+          "name": "3",
+          "net": "fault-1",
+          "offset": [0.0, 2.11]
+        },
+        {
+          "name": "4",
+          "net": "SDA",
+          "offset": [0.5, 2.11]
+        },
+        {
+          "name": "5",
+          "net": "SCL",
+          "offset": [1.0, 2.11]
+        },
+        {
+          "name": "6",
+          "net": "p3v3-hv",
+          "offset": [1.0, -2.11]
+        },
+        {
+          "name": "7",
+          "net": "lv",
+          "offset": [0.5, -2.11]
+        },
+        {
+          "name": "8",
+          "net": "led1-S",
+          "offset": [0.0, -2.11]
+        },
+        {
+          "name": "9",
+          "net": "led1-S",
+          "offset": [-0.5, -2.11]
+        },
+        {
+          "name": "10",
+          "net": "p5v-hv",
+          "offset": [-1.0, -2.11]
+        }
+      ],
+      "pos": [523.575, 3.575],
+      "ref": "U9",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [7.18, 8.07325],
+      "courtyard": [7.18, 8.07325],
+      "footprint": "Texas_Instruments_TPS61088RHLR:VQFN-20_L4.6-W3.6-P0.50-BL",
+      "locked": false,
+      "pads": [
+        {
+          "name": "",
+          "net": "",
+          "offset": [-1.27, 0.0]
+        },
+        {
+          "name": "",
+          "net": "",
+          "offset": [-0.52, -0.77]
+        },
+        {
+          "name": "",
+          "net": "",
+          "offset": [-0.52, 0.0]
+        },
+        {
+          "name": "",
+          "net": "",
+          "offset": [-0.52, 0.77]
+        },
+        {
+          "name": "",
+          "net": "",
+          "offset": [0.53, -0.77]
+        },
+        {
+          "name": "",
+          "net": "",
+          "offset": [0.53, 0.0]
+        },
+        {
+          "name": "",
+          "net": "",
+          "offset": [0.53, 0.77]
+        },
+        {
+          "name": "",
+          "net": "",
+          "offset": [1.28, 0.0]
+        },
+        {
+          "name": "1",
+          "net": "vsys-hv",
+          "offset": [-2.18, 0.75]
+        },
+        {
+          "name": "2",
+          "net": "EN",
+          "offset": [-1.75, 1.73]
+        },
+        {
+          "name": "3",
+          "net": "FSW",
+          "offset": [-1.25, 1.73]
+        },
+        {
+          "name": "4",
+          "net": "SW",
+          "offset": [-0.75, 1.73]
+        },
+        {
+          "name": "5",
+          "net": "SW",
+          "offset": [-0.25, 1.73]
+        },
+        {
+          "name": "6",
+          "net": "SW",
+          "offset": [0.25, 1.73]
+        },
+        {
+          "name": "7",
+          "net": "SW",
+          "offset": [0.75, 1.73]
+        },
+        {
+          "name": "8",
+          "net": "BOOT",
+          "offset": [1.25, 1.73]
+        },
+        {
+          "name": "9",
+          "net": "vsys-hv",
+          "offset": [1.75, 1.73]
+        },
+        {
+          "name": "10",
+          "net": "SS",
+          "offset": [2.18, 0.75]
+        },
+        {
+          "name": "11",
+          "net": "",
+          "offset": [2.18, -0.75]
+        },
+        {
+          "name": "12",
+          "net": "",
+          "offset": [1.75, -1.73]
+        },
+        {
+          "name": "13",
+          "net": "lv",
+          "offset": [1.25, -1.73]
+        },
+        {
+          "name": "14",
+          "net": "p5v-hv",
+          "offset": [0.75, -1.73]
+        },
+        {
+          "name": "15",
+          "net": "p5v-hv",
+          "offset": [0.25, -1.73]
+        },
+        {
+          "name": "16",
+          "net": "p5v-hv",
+          "offset": [-0.25, -1.73]
+        },
+        {
+          "name": "17",
+          "net": "FB",
+          "offset": [-0.75, -1.73]
+        },
+        {
+          "name": "18",
+          "net": "COMP",
+          "offset": [-1.25, -1.73]
+        },
+        {
+          "name": "19",
+          "net": "ILIM",
+          "offset": [-1.75, -1.73]
+        },
+        {
+          "name": "20",
+          "net": "lv",
+          "offset": [-2.18, -0.75]
+        },
+        {
+          "name": "21",
+          "net": "lv",
+          "offset": [0.0, 0.0]
+        }
+      ],
+      "pos": [263.575, 3.575],
+      "ref": "U2",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [5.15, 6.88825],
+      "courtyard": [5.15, 6.88825],
+      "footprint": "Texas_Instruments_SN74LVC1T45DBVR:SOT-23-6_L2.9-W1.6-P0.95-LS2.8-BR",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "p3v3-hv",
+          "offset": [1.35, 0.95]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [1.35, 0.0]
+        },
+        {
+          "name": "3",
+          "net": "data_in",
+          "offset": [1.35, -0.95]
+        },
+        {
+          "name": "4",
+          "net": "led0-B",
+          "offset": [-1.35, -0.95]
+        },
+        {
+          "name": "5",
+          "net": "p5v-hv",
+          "offset": [-1.35, 0.0]
+        },
+        {
+          "name": "6",
+          "net": "p5v-hv",
+          "offset": [-1.35, 0.95]
+        }
+      ],
+      "pos": [463.575, 3.575],
+      "ref": "U8",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [4.117381, 5.1115],
+      "courtyard": [4.117381, 5.1115],
+      "footprint": "Samsung_CL05B104KO5NNNC:C0402",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "SW",
+          "offset": [-0.42, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "BOOT",
+          "offset": [0.42, 0.0]
+        }
+      ],
+      "pos": [283.575, 3.575],
+      "ref": "C3",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [4.74, 6.81825],
+      "courtyard": [4.74, 6.81825],
+      "footprint": "Changjiang_MMBT3904_RANGE_100_300:SOT-23-3_L2.9-W1.3-P1.90-LS2.4-BR",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "led1-B",
+          "offset": [1.0, 0.95]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [1.0, -0.95]
+        },
+        {
+          "name": "3",
+          "net": "led1-C",
+          "offset": [-1.0, 0.0]
+        }
+      ],
+      "pos": [563.575, 3.575],
+      "ref": "Q3",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [6.297381, 5.23825],
+      "courtyard": [6.297381, 5.23825],
+      "footprint": "Samsung_CL21A226MOQNNNE:C0805",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "p5v-hv",
+          "offset": [-1.0, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [1.0, 0.0]
+        }
+      ],
+      "pos": [383.575, 3.575],
+      "ref": "C7",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [5.069762, 5.1115],
+      "courtyard": [5.069762, 5.1115],
+      "footprint": "Samsung_CL05B104KO5NNNC:C0402",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "hv",
+          "offset": [-0.42, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [0.42, 0.0]
+        }
+      ],
+      "pos": [643.575, 3.575],
+      "ref": "C25",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [20.85, 28.38825],
+      "courtyard": [20.85, 28.38825],
+      "footprint": "Espressif_Systems_ESP32_C6_WROOM_1_N8:WIRELM-SMD_ESP32-C6-WROOM-1",
+      "locked": false,
+      "pads": [
+        {
+          "name": "",
+          "net": "",
+          "offset": [-2.75, -3.16]
+        },
+        {
+          "name": "",
+          "net": "",
+          "offset": [-2.75, -1.91]
+        },
+        {
+          "name": "",
+          "net": "",
+          "offset": [-2.13, -3.78]
+        },
+        {
+          "name": "",
+          "net": "",
+          "offset": [-2.13, -2.53]
+        },
+        {
+          "name": "",
+          "net": "",
+          "offset": [-2.13, -1.28]
+        },
+        {
+          "name": "",
+          "net": "",
+          "offset": [-1.5, -3.16]
+        },
+        {
+          "name": "",
+          "net": "",
+          "offset": [-1.5, -1.91]
+        },
+        {
+          "name": "",
+          "net": "",
+          "offset": [-0.88, -3.78]
+        },
+        {
+          "name": "",
+          "net": "",
+          "offset": [-0.88, -2.53]
+        },
+        {
+          "name": "",
+          "net": "",
+          "offset": [-0.88, -1.28]
+        },
+        {
+          "name": "",
+          "net": "",
+          "offset": [-0.26, -3.16]
+        },
+        {
+          "name": "",
+          "net": "",
+          "offset": [-0.26, -1.91]
+        },
+        {
+          "name": "1",
+          "net": "lv",
+          "offset": [-8.75, -8.25]
+        },
+        {
+          "name": "2",
+          "net": "p3v3-hv",
+          "offset": [-8.75, -6.99]
+        },
+        {
+          "name": "3",
+          "net": "EN-1",
+          "offset": [-8.75, -5.72]
+        },
+        {
+          "name": "4",
+          "net": "en-1",
+          "offset": [-8.75, -4.45]
+        },
+        {
+          "name": "5",
+          "net": "fault-1",
+          "offset": [-8.75, -3.18]
+        },
+        {
+          "name": "6",
+          "net": "SDA",
+          "offset": [-8.75, -1.9]
+        },
+        {
+          "name": "7",
+          "net": "SCL",
+          "offset": [-8.75, -0.63]
+        },
+        {
+          "name": "8",
+          "net": "data_in",
+          "offset": [-8.75, 0.63]
+        },
+        {
+          "name": "9",
+          "net": "data_in-1",
+          "offset": [-8.75, 1.9]
+        },
+        {
+          "name": "10",
+          "net": "10",
+          "offset": [-8.75, 3.17]
+        },
+        {
+          "name": "11",
+          "net": "EN",
+          "offset": [-8.75, 4.44]
+        },
+        {
+          "name": "12",
+          "net": "12",
+          "offset": [-8.75, 5.71]
+        },
+        {
+          "name": "13",
+          "net": "13",
+          "offset": [-8.75, 6.99]
+        },
+        {
+          "name": "14",
+          "net": "14",
+          "offset": [-8.75, 8.25]
+        },
+        {
+          "name": "15",
+          "net": "1",
+          "offset": [8.75, 8.25]
+        },
+        {
+          "name": "16",
+          "net": "16",
+          "offset": [8.75, 6.99]
+        },
+        {
+          "name": "17",
+          "net": "17",
+          "offset": [8.75, 5.71]
+        },
+        {
+          "name": "18",
+          "net": "18",
+          "offset": [8.75, 4.44]
+        },
+        {
+          "name": "19",
+          "net": "INT",
+          "offset": [8.75, 3.17]
+        },
+        {
+          "name": "20",
+          "net": "1-1",
+          "offset": [8.75, 1.9]
+        },
+        {
+          "name": "21",
+          "net": "1-2",
+          "offset": [8.75, 0.63]
+        },
+        {
+          "name": "22",
+          "net": "",
+          "offset": [8.75, -0.63]
+        },
+        {
+          "name": "23",
+          "net": "23",
+          "offset": [8.75, -1.9]
+        },
+        {
+          "name": "24",
+          "net": "20",
+          "offset": [8.75, -3.18]
+        },
+        {
+          "name": "25",
+          "net": "19",
+          "offset": [8.75, -4.45]
+        },
+        {
+          "name": "26",
+          "net": "fault",
+          "offset": [8.75, -5.72]
+        },
+        {
+          "name": "27",
+          "net": "en",
+          "offset": [8.75, -6.99]
+        },
+        {
+          "name": "28",
+          "net": "lv",
+          "offset": [8.75, -8.25]
+        },
+        {
+          "name": "29",
+          "net": "lv",
+          "offset": [-2.75, -3.78]
+        },
+        {
+          "name": "30",
+          "net": "lv",
+          "offset": [-1.5, -3.78]
+        },
+        {
+          "name": "31",
+          "net": "lv",
+          "offset": [-0.26, -3.78]
+        },
+        {
+          "name": "32",
+          "net": "lv",
+          "offset": [-0.26, -2.53]
+        },
+        {
+          "name": "33",
+          "net": "lv",
+          "offset": [-1.5, -2.53]
+        },
+        {
+          "name": "34",
+          "net": "lv",
+          "offset": [-2.75, -2.53]
+        },
+        {
+          "name": "35",
+          "net": "lv",
+          "offset": [-2.75, -1.28]
+        },
+        {
+          "name": "36",
+          "net": "lv",
+          "offset": [-1.5, -1.28]
+        },
+        {
+          "name": "37",
+          "net": "lv",
+          "offset": [-0.26, -1.28]
+        }
+      ],
+      "pos": [43.575, 3.575],
+      "ref": "U5",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [4.117381, 5.1115],
+      "courtyard": [4.117381, 5.1115],
+      "footprint": "Samsung_CL05B104KO5NNNC:C0402",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "SS",
+          "offset": [-0.42, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [0.42, 0.0]
+        }
+      ],
+      "pos": [313.575, 3.575],
+      "ref": "C8",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [8.222619, 5.87825],
+      "courtyard": [8.222619, 5.87825],
+      "footprint": "XKB_TS_1088_AR02016:SW-SMD_L3.9-W3.0-P4.45",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "1",
+          "offset": [-2.18, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [2.18, 0.0]
+        }
+      ],
+      "pos": [113.575, 3.575],
+      "ref": "SW1",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [5.585, 9.29325],
+      "courtyard": [5.585, 9.29325],
+      "footprint": "Texas_Instruments_INA226AIDGSR:MSOP-10_L3.0-W3.0-P0.50-LS5.0-BL",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "lv",
+          "offset": [-1.0, 2.11]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [-0.5, 2.11]
+        },
+        {
+          "name": "3",
+          "net": "fault",
+          "offset": [0.0, 2.11]
+        },
+        {
+          "name": "4",
+          "net": "SDA",
+          "offset": [0.5, 2.11]
+        },
+        {
+          "name": "5",
+          "net": "SCL",
+          "offset": [1.0, 2.11]
+        },
+        {
+          "name": "6",
+          "net": "p3v3-hv",
+          "offset": [1.0, -2.11]
+        },
+        {
+          "name": "7",
+          "net": "lv",
+          "offset": [0.5, -2.11]
+        },
+        {
+          "name": "8",
+          "net": "S",
+          "offset": [0.0, -2.11]
+        },
+        {
+          "name": "9",
+          "net": "S",
+          "offset": [-0.5, -2.11]
+        },
+        {
+          "name": "10",
+          "net": "p5v-hv",
+          "offset": [-1.0, -2.11]
+        }
+      ],
+      "pos": [403.575, 3.575],
+      "ref": "U7",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [11.0, 8.56325],
+      "courtyard": [11.0, 8.56325],
+      "footprint": "JST_B3B_PH_K_S_LF__SN:CONN-TH_B3B-PH-K-S",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "chan_out",
+          "offset": [2.0, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "led1-data_out",
+          "offset": [0.0, 0.0]
+        },
+        {
+          "name": "3",
+          "net": "lv",
+          "offset": [-2.0, 0.0]
+        }
+      ],
+      "pos": [613.575, 3.575],
+      "ref": "CN3",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [7.249762, 5.23825],
+      "courtyard": [7.249762, 5.23825],
+      "footprint": "Samsung_CL21A106KAYNNNE:C0805",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "p3v3-hv",
+          "offset": [-1.0, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [1.0, 0.0]
+        }
+      ],
+      "pos": [253.575, 3.575],
+      "ref": "C11",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [5.069762, 5.1115],
+      "courtyard": [5.069762, 5.1115],
+      "footprint": "Samsung_CL05B104KO5NNNC:C0402",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "p5v-hv",
+          "offset": [-0.42, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [0.42, 0.0]
+        }
+      ],
+      "pos": [483.575, 3.575],
+      "ref": "C20",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [9.026905, 7.41825],
+      "courtyard": [9.026905, 7.41825],
+      "footprint": "Sunlord_SWPA6045S1R0NT:IND-SMD_L6.0-W6.0_SWPA6045S",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "vsys-hv",
+          "offset": [-2.6, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "SW",
+          "offset": [2.6, 0.0]
+        }
+      ],
+      "pos": [273.575, 3.575],
+      "ref": "L2",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [5.209762, 5.1115],
+      "courtyard": [5.209762, 5.1115],
+      "footprint": "UNI_ROYAL_0402WGF2001TCE:R0402",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "hv",
+          "offset": [-0.43, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "SDA",
+          "offset": [0.43, 0.0]
+        }
+      ],
+      "pos": [23.575, 3.575],
+      "ref": "R23",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [5.209762, 5.1115],
+      "courtyard": [5.209762, 5.1115],
+      "footprint": "UNI_ROYAL_0402WGF1001TCE:R0402",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "en",
+          "offset": [-0.43, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "B",
+          "offset": [0.43, 0.0]
+        }
+      ],
+      "pos": [453.575, 3.575],
+      "ref": "R14",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [5.209762, 5.1115],
+      "courtyard": [5.209762, 5.1115],
+      "footprint": "UNI_ROYAL_0402WGF2001TCE:R0402",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "FB-1",
+          "offset": [-0.43, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [0.43, 0.0]
+        }
+      ],
+      "pos": [233.575, 3.575],
+      "ref": "R11",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [5.209762, 5.1115],
+      "courtyard": [5.209762, 5.1115],
+      "footprint": "UNI_ROYAL_0402WGF0000TCE:R0402",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "p5v-hv",
+          "offset": [-0.43, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "S",
+          "offset": [0.43, 0.0]
+        }
+      ],
+      "pos": [393.575, 3.575],
+      "ref": "R16",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [6.102381, 6.88825],
+      "courtyard": [6.102381, 6.88825],
+      "footprint": "Texas_Instruments_SN74LVC1T45DBVR:SOT-23-6_L2.9-W1.6-P0.95-LS2.8-BR",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "p3v3-hv",
+          "offset": [1.35, 0.95]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [1.35, 0.0]
+        },
+        {
+          "name": "3",
+          "net": "data_in-1",
+          "offset": [1.35, -0.95]
+        },
+        {
+          "name": "4",
+          "net": "led1-B-1",
+          "offset": [-1.35, -0.95]
+        },
+        {
+          "name": "5",
+          "net": "p5v-hv",
+          "offset": [-1.35, 0.0]
+        },
+        {
+          "name": "6",
+          "net": "p5v-hv",
+          "offset": [-1.35, 0.95]
+        }
+      ],
+      "pos": [583.575, 3.575],
+      "ref": "U10",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [5.069762, 5.1115],
+      "courtyard": [5.069762, 5.1115],
+      "footprint": "Samsung_CL05A105KA5NQNC:C0402",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "vbat-hv",
+          "offset": [-0.42, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [0.42, 0.0]
+        }
+      ],
+      "pos": [733.575, 3.575],
+      "ref": "C13",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [10.77, 8.56325],
+      "courtyard": [10.77, 8.56325],
+      "footprint": "JST_B2B_PH_K_S_LF__SN:CONN-TH_B2B-PH-K-S",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "vbat-hv",
+          "offset": [1.0, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [-1.0, 0.0]
+        }
+      ],
+      "pos": [773.575, 3.575],
+      "ref": "CN1",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [5.069762, 5.1115],
+      "courtyard": [5.069762, 5.1115],
+      "footprint": "Samsung_CL05B104KO5NNNC:C0402",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "REGOUT",
+          "offset": [-0.42, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [0.42, 0.0]
+        }
+      ],
+      "pos": [653.575, 3.575],
+      "ref": "C26",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [5.1, 6.81325],
+      "courtyard": [5.1, 6.81325],
+      "footprint": "Texas_Instruments_TLV62569DBVR:SOT-23-5_L3.0-W1.7-P0.95-LS2.8-BR",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "vsys-hv",
+          "offset": [1.3, 0.95]
+        },
+        {
+          "name": "2",
+          "net": "GND",
+          "offset": [1.3, 0.0]
+        },
+        {
+          "name": "3",
+          "net": "SW-1",
+          "offset": [1.3, -0.95]
+        },
+        {
+          "name": "4",
+          "net": "vsys-hv",
+          "offset": [-1.3, -0.95]
+        },
+        {
+          "name": "5",
+          "net": "FB-1",
+          "offset": [-1.3, 0.95]
+        }
+      ],
+      "pos": [203.575, 3.575],
+      "ref": "U3",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [5.1, 6.83825],
+      "courtyard": [5.1, 6.83825],
+      "footprint": "Alpha___Omega_AO3401A:SOT-23_L2.9-W1.3-P1.90-LS2.4-BR",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "C",
+          "offset": [1.15, 0.95]
+        },
+        {
+          "name": "2",
+          "net": "S",
+          "offset": [1.15, -0.95]
+        },
+        {
+          "name": "3",
+          "net": "chan_out-1",
+          "offset": [-1.15, 0.0]
+        }
+      ],
+      "pos": [423.575, 3.575],
+      "ref": "Q2",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [7.249762, 5.23825],
+      "courtyard": [7.249762, 5.23825],
+      "footprint": "Samsung_CL21A106KAYNNNE:C0805",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "p5v-hv",
+          "offset": [-1.0, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [1.0, 0.0]
+        }
+      ],
+      "pos": [623.575, 3.575],
+      "ref": "C21",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [4.257381, 5.1115],
+      "courtyard": [4.257381, 5.1115],
+      "footprint": "UNI_ROYAL_0402WGF1003TCE:R0402",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "FSW",
+          "offset": [-0.43, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [0.43, 0.0]
+        }
+      ],
+      "pos": [333.575, 3.575],
+      "ref": "R3",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [5.485, 7.15325],
+      "courtyard": [5.485, 7.15325],
+      "footprint": "Microchip_MCP73831T_2ACI_OT:SOT-23-5_L3.0-W1.7-P0.95-LS2.8-BL",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "STAT",
+          "offset": [-0.95, 1.15]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [0.0, 1.15]
+        },
+        {
+          "name": "3",
+          "net": "vbat-hv",
+          "offset": [0.95, 1.15]
+        },
+        {
+          "name": "4",
+          "net": "vsys-hv",
+          "offset": [0.95, -1.15]
+        },
+        {
+          "name": "5",
+          "net": "PROG",
+          "offset": [-0.95, -1.15]
+        }
+      ],
+      "pos": [693.575, 3.575],
+      "ref": "U4",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [8.222619, 5.87825],
+      "courtyard": [8.222619, 5.87825],
+      "footprint": "XKB_TS_1088_AR02016:SW-SMD_L3.9-W3.0-P4.45",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "1-2",
+          "offset": [-2.18, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [2.18, 0.0]
+        }
+      ],
+      "pos": [153.575, 3.575],
+      "ref": "SW4",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [5.157381, 5.1115],
+      "courtyard": [5.157381, 5.1115],
+      "footprint": "UNI_ROYAL_0603WAF1002T5E:R0603",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "ILIM",
+          "offset": [-0.75, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [0.75, 0.0]
+        }
+      ],
+      "pos": [323.575, 3.575],
+      "ref": "R4",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [8.222619, 5.87825],
+      "courtyard": [8.222619, 5.87825],
+      "footprint": "XKB_TS_1088_AR02016:SW-SMD_L3.9-W3.0-P4.45",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "1-1",
+          "offset": [-2.18, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [2.18, 0.0]
+        }
+      ],
+      "pos": [133.575, 3.575],
+      "ref": "SW3",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [5.069762, 5.1115],
+      "courtyard": [5.069762, 5.1115],
+      "footprint": "Samsung_CL05B104KO5NNNC:C0402",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "vbat-hv",
+          "offset": [-0.42, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [0.42, 0.0]
+        }
+      ],
+      "pos": [763.575, 3.575],
+      "ref": "C17",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [5.069762, 5.1115],
+      "courtyard": [5.069762, 5.1115],
+      "footprint": "Samsung_CL05B104KO5NNNC:C0402",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "CPOUT",
+          "offset": [-0.42, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "lv",
+          "offset": [0.42, 0.0]
+        }
+      ],
+      "pos": [663.575, 3.575],
+      "ref": "C24",
+      "rot": 0.0,
+      "side": "top"
+    },
+    {
+      "bbox": [6.046905, 5.40825],
+      "courtyard": [6.046905, 5.40825],
+      "footprint": "Sunlord_GZ2012D601TF:L0805",
+      "locked": false,
+      "pads": [
+        {
+          "name": "1",
+          "net": "p3v3-hv",
+          "offset": [-0.97, 0.0]
+        },
+        {
+          "name": "2",
+          "net": "hv",
+          "offset": [0.97, 0.0]
+        }
+      ],
+      "pos": [3.575, 3.575],
+      "ref": "L1",
+      "rot": 0.0,
+      "side": "top"
+    }
+  ],
+  "name": "splanc_dev",
+  "nets": [
+    {
+      "code": 1,
+      "name": "hv",
+      "pins": [
+        ["R22", "1"],
+        ["U1", "2"],
+        ["U1", "6"],
+        ["U1", "8"],
+        ["C1", "1"],
+        ["U11", "8"],
+        ["U11", "13"],
+        ["C2", "1"],
+        ["U9", "2"],
+        ["C25", "1"],
+        ["R23", "1"],
+        ["L1", "2"]
+      ]
+    },
+    {
+      "code": 2,
+      "name": "FB",
+      "pins": [
+        ["R2", "2"],
+        ["R1", "1"],
+        ["U2", "17"]
+      ]
+    },
+    {
+      "code": 3,
+      "name": "COMP",
+      "pins": [
+        ["C4", "1"],
+        ["U2", "18"]
+      ]
+    },
+    {
+      "code": 4,
+      "name": "ILIM",
+      "pins": [
+        ["U2", "19"],
+        ["R4", "1"]
+      ]
+    },
+    {
+      "code": 5,
+      "name": "EN",
+      "pins": [
+        ["U2", "2"],
+        ["U5", "11"]
+      ]
+    },
+    {
+      "code": 6,
+      "name": "FSW",
+      "pins": [
+        ["U2", "3"],
+        ["R3", "1"]
+      ]
+    },
+    {
+      "code": 7,
+      "name": "SW",
+      "pins": [
+        ["U2", "4"],
+        ["U2", "5"],
+        ["U2", "6"],
+        ["U2", "7"],
+        ["C3", "1"],
+        ["L2", "2"]
+      ]
+    },
+    {
+      "code": 8,
+      "name": "BOOT",
+      "pins": [
+        ["U2", "8"],
+        ["C3", "2"]
+      ]
+    },
+    {
+      "code": 9,
+      "name": "vsys-hv",
+      "pins": [
+        ["C5", "1"],
+        ["C12", "1"],
+        ["C10", "1"],
+        ["USB1", "A4B9"],
+        ["USB1", "B4A9"],
+        ["H1", "1"],
+        ["H1", "3"],
+        ["C9", "1"],
+        ["C27", "1"],
+        ["U2", "1"],
+        ["U2", "9"],
+        ["L2", "1"],
+        ["U3", "1"],
+        ["U3", "4"],
+        ["U4", "4"]
+      ]
+    },
+    {
+      "code": 10,
+      "name": "SS",
+      "pins": [
+        ["U2", "10"],
+        ["C8", "1"]
+      ]
+    },
+    {
+      "code": 11,
+      "name": "1",
+      "pins": [
+        ["R5", "2"],
+        ["H1", "16"],
+        ["U5", "15"],
+        ["SW1", "1"]
+      ]
+    },
+    {
+      "code": 12,
+      "name": "1-2",
+      "pins": [
+        ["R25", "2"],
+        ["H1", "18"],
+        ["U5", "21"],
+        ["SW4", "1"]
+      ]
+    },
+    {
+      "code": 13,
+      "name": "GND",
+      "pins": [["U3", "2"]]
+    },
+    {
+      "code": 14,
+      "name": "SW-1",
+      "pins": [
+        ["L3", "1"],
+        ["U3", "3"]
+      ]
+    },
+    {
+      "code": 15,
+      "name": "A5",
+      "pins": [
+        ["R6", "1"],
+        ["USB1", "A5"]
+      ]
+    },
+    {
+      "code": 16,
+      "name": "PROG",
+      "pins": [
+        ["R8", "1"],
+        ["U4", "5"]
+      ]
+    },
+    {
+      "code": 17,
+      "name": "STAT",
+      "pins": [
+        ["R9", "2"],
+        ["U4", "1"]
+      ]
+    },
+    {
+      "code": 18,
+      "name": "EN-1",
+      "pins": [
+        ["R10", "2"],
+        ["SW2", "1"],
+        ["H1", "15"],
+        ["C14", "1"],
+        ["U5", "3"]
+      ]
+    },
+    {
+      "code": 19,
+      "name": "19",
+      "pins": [
+        ["H1", "19"],
+        ["U5", "25"]
+      ]
+    },
+    {
+      "code": 20,
+      "name": "vbat-hv",
+      "pins": [
+        ["U6", "2"],
+        ["U6", "3"],
+        ["H1", "4"],
+        ["C13", "1"],
+        ["CN1", "1"],
+        ["U4", "3"],
+        ["C17", "1"]
+      ]
+    },
+    {
+      "code": 21,
+      "name": "p5v-hv",
+      "pins": [
+        ["C23", "1"],
+        ["R2", "1"],
+        ["C18", "1"],
+        ["H1", "5"],
+        ["C6", "1"],
+        ["R20", "1"],
+        ["U9", "10"],
+        ["U2", "14"],
+        ["U2", "15"],
+        ["U2", "16"],
+        ["U8", "5"],
+        ["U8", "6"],
+        ["C7", "1"],
+        ["U7", "10"],
+        ["C20", "1"],
+        ["R16", "1"],
+        ["U10", "5"],
+        ["U10", "6"],
+        ["C21", "1"]
+      ]
+    },
+    {
+      "code": 22,
+      "name": "chan_out-1",
+      "pins": [
+        ["CN2", "1"],
+        ["H1", "9"],
+        ["Q2", "3"]
+      ]
+    },
+    {
+      "code": 23,
+      "name": "lv",
+      "pins": [
+        ["C23", "2"],
+        ["C5", "2"],
+        ["Q1", "2"],
+        ["C12", "2"],
+        ["R6", "2"],
+        ["U1", "1"],
+        ["U1", "5"],
+        ["U1", "7"],
+        ["CN2", "3"],
+        ["C18", "2"],
+        ["C1", "2"],
+        ["C10", "2"],
+        ["C15", "2"],
+        ["USB1", "13"],
+        ["USB1", "13"],
+        ["USB1", "14"],
+        ["USB1", "14"],
+        ["SW2", "2"],
+        ["U11", "9"],
+        ["U11", "18"],
+        ["C22", "2"],
+        ["U6", "9"],
+        ["C2", "2"],
+        ["R1", "2"],
+        ["H1", "2"],
+        ["C6", "2"],
+        ["C9", "2"],
+        ["C4", "2"],
+        ["R8", "2"],
+        ["C16", "2"],
+        ["C19", "2"],
+        ["C14", "2"],
+        ["C27", "2"],
+        ["R7", "2"],
+        ["U9", "1"],
+        ["U9", "7"],
+        ["U2", "13"],
+        ["U2", "20"],
+        ["U2", "21"],
+        ["U8", "2"],
+        ["Q3", "2"],
+        ["C7", "2"],
+        ["C25", "2"],
+        ["U5", "1"],
+        ["U5", "28"],
+        ["U5", "29"],
+        ["U5", "30"],
+        ["U5", "31"],
+        ["U5", "32"],
+        ["U5", "33"],
+        ["U5", "34"],
+        ["U5", "35"],
+        ["U5", "36"],
+        ["U5", "37"],
+        ["C8", "2"],
+        ["SW1", "2"],
+        ["U7", "1"],
+        ["U7", "2"],
+        ["U7", "7"],
+        ["CN3", "3"],
+        ["C11", "2"],
+        ["C20", "2"],
+        ["R11", "2"],
+        ["U10", "2"],
+        ["C13", "2"],
+        ["CN1", "2"],
+        ["C26", "2"],
+        ["C21", "2"],
+        ["R3", "2"],
+        ["U4", "2"],
+        ["SW4", "2"],
+        ["R4", "2"],
+        ["SW3", "2"],
+        ["C17", "2"],
+        ["C24", "2"]
+      ]
+    },
+    {
+      "code": 24,
+      "name": "10",
+      "pins": [["U5", "10"]]
+    },
+    {
+      "code": 25,
+      "name": "12",
+      "pins": [["U5", "12"]]
+    },
+    {
+      "code": 26,
+      "name": "16",
+      "pins": [["U5", "16"]]
+    },
+    {
+      "code": 27,
+      "name": "17",
+      "pins": [["U5", "17"]]
+    },
+    {
+      "code": 28,
+      "name": "18",
+      "pins": [["U5", "18"]]
+    },
+    {
+      "code": 29,
+      "name": "1-1",
+      "pins": [
+        ["H1", "17"],
+        ["R24", "2"],
+        ["U5", "20"],
+        ["SW3", "1"]
+      ]
+    },
+    {
+      "code": 30,
+      "name": "23",
+      "pins": [["U5", "23"]]
+    },
+    {
+      "code": 31,
+      "name": "20",
+      "pins": [
+        ["H1", "20"],
+        ["U5", "24"]
+      ]
+    },
+    {
+      "code": 32,
+      "name": "fault",
+      "pins": [
+        ["H1", "7"],
+        ["U5", "26"],
+        ["U7", "3"]
+      ]
+    },
+    {
+      "code": 33,
+      "name": "en",
+      "pins": [
+        ["U5", "27"],
+        ["R14", "1"]
+      ]
+    },
+    {
+      "code": 34,
+      "name": "en-1",
+      "pins": [
+        ["R18", "1"],
+        ["U5", "4"]
+      ]
+    },
+    {
+      "code": 35,
+      "name": "fault-1",
+      "pins": [
+        ["H1", "8"],
+        ["U9", "3"],
+        ["U5", "5"]
+      ]
+    },
+    {
+      "code": 36,
+      "name": "FB-1",
+      "pins": [
+        ["R12", "2"],
+        ["R11", "1"],
+        ["U3", "5"]
+      ]
+    },
+    {
+      "code": 37,
+      "name": "CTG",
+      "pins": [["U6", "1"]]
+    },
+    {
+      "code": 38,
+      "name": "gauge-GND",
+      "pins": [["U6", "4"]]
+    },
+    {
+      "code": 39,
+      "name": "nALRT",
+      "pins": [
+        ["R13", "2"],
+        ["U6", "5"]
+      ]
+    },
+    {
+      "code": 40,
+      "name": "QSTRT",
+      "pins": [["U6", "6"]]
+    },
+    {
+      "code": 41,
+      "name": "p3v3-hv",
+      "pins": [
+        ["R9", "1"],
+        ["R12", "1"],
+        ["R25", "1"],
+        ["R10", "1"],
+        ["R5", "1"],
+        ["R13", "1"],
+        ["C15", "1"],
+        ["C22", "1"],
+        ["H1", "6"],
+        ["C16", "1"],
+        ["C19", "1"],
+        ["L3", "2"],
+        ["R24", "1"],
+        ["U9", "6"],
+        ["U8", "1"],
+        ["U5", "2"],
+        ["U7", "6"],
+        ["C11", "1"],
+        ["U10", "1"],
+        ["L1", "1"]
+      ]
+    },
+    {
+      "code": 42,
+      "name": "B",
+      "pins": [
+        ["Q1", "1"],
+        ["R14", "2"]
+      ]
+    },
+    {
+      "code": 43,
+      "name": "C",
+      "pins": [
+        ["Q1", "3"],
+        ["R15", "2"],
+        ["Q2", "1"]
+      ]
+    },
+    {
+      "code": 44,
+      "name": "data_in",
+      "pins": [
+        ["H1", "11"],
+        ["U8", "3"],
+        ["U5", "8"]
+      ]
+    },
+    {
+      "code": 45,
+      "name": "S",
+      "pins": [
+        ["R15", "1"],
+        ["U7", "8"],
+        ["U7", "9"],
+        ["R16", "2"],
+        ["Q2", "2"]
+      ]
+    },
+    {
+      "code": 46,
+      "name": "led0-B",
+      "pins": [
+        ["R17", "1"],
+        ["U8", "4"]
+      ]
+    },
+    {
+      "code": 47,
+      "name": "data_out",
+      "pins": [
+        ["R17", "2"],
+        ["CN2", "2"]
+      ]
+    },
+    {
+      "code": 48,
+      "name": "chan_out",
+      "pins": [
+        ["H1", "10"],
+        ["Q4", "3"],
+        ["CN3", "1"]
+      ]
+    },
+    {
+      "code": 49,
+      "name": "led1-data_out",
+      "pins": [
+        ["R21", "2"],
+        ["CN3", "2"]
+      ]
+    },
+    {
+      "code": 50,
+      "name": "led1-C",
+      "pins": [
+        ["R19", "2"],
+        ["Q4", "1"],
+        ["Q3", "3"]
+      ]
+    },
+    {
+      "code": 51,
+      "name": "SDA",
+      "pins": [
+        ["U1", "3"],
+        ["U11", "24"],
+        ["U6", "8"],
+        ["H1", "13"],
+        ["U9", "4"],
+        ["U5", "6"],
+        ["U7", "4"],
+        ["R23", "2"]
+      ]
+    },
+    {
+      "code": 52,
+      "name": "SCL",
+      "pins": [
+        ["R22", "2"],
+        ["U1", "4"],
+        ["U11", "23"],
+        ["U6", "7"],
+        ["H1", "14"],
+        ["U9", "5"],
+        ["U5", "7"],
+        ["U7", "5"]
+      ]
+    },
+    {
+      "code": 53,
+      "name": "led1-B",
+      "pins": [
+        ["R18", "2"],
+        ["Q3", "1"]
+      ]
+    },
+    {
+      "code": 54,
+      "name": "data_in-1",
+      "pins": [
+        ["H1", "12"],
+        ["U5", "9"],
+        ["U10", "3"]
+      ]
+    },
+    {
+      "code": 55,
+      "name": "led1-S",
+      "pins": [
+        ["R19", "1"],
+        ["R20", "2"],
+        ["Q4", "2"],
+        ["U9", "8"],
+        ["U9", "9"]
+      ]
+    },
+    {
+      "code": 56,
+      "name": "led1-B-1",
+      "pins": [
+        ["R21", "1"],
+        ["U10", "4"]
+      ]
+    },
+    {
+      "code": 57,
+      "name": "CLKIN",
+      "pins": [["U11", "1"]]
+    },
+    {
+      "code": 58,
+      "name": "REGOUT",
+      "pins": [
+        ["U11", "10"],
+        ["C26", "1"]
+      ]
+    },
+    {
+      "code": 59,
+      "name": "FSYNC",
+      "pins": [["U11", "11"]]
+    },
+    {
+      "code": 60,
+      "name": "INT",
+      "pins": [
+        ["U11", "12"],
+        ["U5", "19"]
+      ]
+    },
+    {
+      "code": 61,
+      "name": "RESV",
+      "pins": [
+        ["U11", "19"],
+        ["U11", "21"],
+        ["U11", "22"]
+      ]
+    },
+    {
+      "code": 62,
+      "name": "EP",
+      "pins": [["U11", "25"]]
+    },
+    {
+      "code": 63,
+      "name": "AUX_DA",
+      "pins": [["U11", "6"]]
+    },
+    {
+      "code": 64,
+      "name": "AUX_CL",
+      "pins": [["U11", "7"]]
+    },
+    {
+      "code": 65,
+      "name": "CPOUT",
+      "pins": [
+        ["U11", "20"],
+        ["C24", "1"]
+      ]
+    },
+    {
+      "code": 66,
+      "name": "usbc-GND",
+      "pins": [
+        ["USB1", "A1B12"],
+        ["USB1", "B1A12"]
+      ]
+    },
+    {
+      "code": 67,
+      "name": "14",
+      "pins": [
+        ["USB1", "A6"],
+        ["USB1", "B6"],
+        ["U5", "14"]
+      ]
+    },
+    {
+      "code": 68,
+      "name": "A8",
+      "pins": [["USB1", "A8"]]
+    },
+    {
+      "code": 69,
+      "name": "B5",
+      "pins": [
+        ["USB1", "B5"],
+        ["R7", "1"]
+      ]
+    },
+    {
+      "code": 70,
+      "name": "13",
+      "pins": [
+        ["USB1", "A7"],
+        ["USB1", "B7"],
+        ["U5", "13"]
+      ]
+    },
+    {
+      "code": 71,
+      "name": "B8",
+      "pins": [["USB1", "B8"]]
+    }
+  ],
+  "outline": {
+    "height": 7.15,
+    "polygon": [
+      [0.0, 0.0],
+      [787.15, 0.0],
+      [787.15, 7.15],
+      [0.0, 7.15]
+    ],
+    "width": 787.15
+  },
+  "schema": "v0"
+}
