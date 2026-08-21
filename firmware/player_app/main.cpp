@@ -29,6 +29,8 @@
 #include <esp_littlefs.h>
 #include <esp_partition.h>
 #include <esp_rom_crc.h>
+#include <esp_heap_caps.h>
+#include <esp_memory_utils.h>  // esp_ptr_executable — validate scanned stack words are code
 #include <esp_system.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
@@ -151,6 +153,42 @@ struct Rgb {
 inline const Rgb Rgb::Black{};
 static inline void fill_rgb(Rgb *a, uint32_t n, Rgb v) {
   for (uint32_t i = 0; i < n; i++) a[i] = v;
+}
+
+// Largest allocatable contiguous heap block — the real ceiling on a single
+// allocation (a TLS handshake needs a big contiguous buffer), logged next to
+// free heap so a free-but-fragmented heap is visible in the serial monitor.
+static inline unsigned heap_largest() {
+  return (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT);
+}
+
+// Rough backtrace for the alloc-failed hook. The C6 is RISC-V and the image is
+// built -O2 with no frame pointer, so a precise unwind isn't available without
+// EH-frame in the sdkconfig. Instead scan a small window of the current stack
+// and print words that point into executable memory — candidate return addresses
+// to run through addr2line. Not exact (there can be false positives), but enough
+// to see which call site attempted the failing allocation.
+static void heap_fail_backtrace() {
+  const uintptr_t *sp = (const uintptr_t *)__builtin_frame_address(0);
+  unsigned shown = 0;
+  for (unsigned i = 0; i < 96 && shown < 8; i++) {
+    uintptr_t w = sp[i];
+    if (esp_ptr_executable((void *)w)) {
+      Log().printf("  [heap] pc#%u 0x%08x\n", shown++, (unsigned)w);
+    }
+  }
+}
+
+// Fires on ANY heap allocation failure (heap_caps_register_failed_alloc_callback):
+// the exact requested size + caps + the allocator's immediate caller, plus the
+// live free heap and largest contiguous block and a rough backtrace. This is how
+// we pin the REAL size of the mbedtls TLS-session allocation that -0x7F00s on a
+// fragmented heap — vs the stale ~28 KiB / ~17 KB estimates in the comments.
+static void on_heap_alloc_failed(size_t size, uint32_t caps, const char *fn) {
+  Log().printf("[heap] alloc FAILED: %u B caps=0x%x in %s  (free=%u max=%u)\n",
+               (unsigned)size, (unsigned)caps, fn ? fn : "?",
+               (unsigned)esp_get_free_heap_size(), heap_largest());
+  heap_fail_backtrace();
 }
 
 // Render buffer cap; the actual rendered count follows the active pattern /
@@ -1245,7 +1283,8 @@ static uint32_t render_once() {
     uint32_t period_c = perf_frame_c > show_c ? perf_frame_c : show_c;
     bool overran = period_c > kBudgetCycles;
     xSemaphoreTake(player_mutex, portMAX_DELAY);
-    lm_perf_set_heap(esp_get_free_heap_size(), esp_get_minimum_free_heap_size());
+    lm_perf_set_heap(esp_get_free_heap_size(), esp_get_minimum_free_heap_size(),
+                     heap_caps_get_largest_free_block(MALLOC_CAP_DEFAULT));
     lm_perf_push(perf_seq, perf_update_c, perf_shade_c, perf_frame_c, show_c,
                  perf_led_count, overran);
     xSemaphoreGive(player_mutex);
@@ -1452,8 +1491,8 @@ static esp_err_t wss_ws_handler(httpd_req_t *req) {
       out.len = (size_t)n;
       esp_err_t serr = httpd_ws_send_frame(req, &out);
       if (serr != ESP_OK) {
-        Log().printf("[wss] send_frame failed: %d (reply=%d B, heap=%u)\n",
-                     (int)serr, (int)n, (unsigned)esp_get_free_heap_size());
+        Log().printf("[wss] send_frame failed: %d (reply=%d B, heap=%u max=%u)\n",
+                     (int)serr, (int)n, (unsigned)esp_get_free_heap_size(), heap_largest());
       }
     }
     return ESP_OK;
@@ -1473,8 +1512,8 @@ static esp_err_t wss_ws_handler(httpd_req_t *req) {
     out.len = (size_t)n;
     esp_err_t serr = httpd_ws_send_frame(req, &out);
     if (serr != ESP_OK) {
-      Log().printf("[wss] send_frame failed: %d (reply=%d B, heap=%u)\n",
-                   (int)serr, (int)n, (unsigned)esp_get_free_heap_size());
+      Log().printf("[wss] send_frame failed: %d (reply=%d B, heap=%u max=%u)\n",
+                   (int)serr, (int)n, (unsigned)esp_get_free_heap_size(), heap_largest());
     }
     persist_if_upload(rx, frame.len, tx, (size_t)n);
   }
@@ -1528,9 +1567,9 @@ static bool load_or_gen_dev_key() {
   }
   int ret = ledmapper_gen_key(g_dev_key, sizeof g_dev_key);
   if (ret != 0) {
-    Log().printf("[wss] device key generation failed: -0x%04X (heap=%u); will "
+    Log().printf("[wss] device key generation failed: -0x%04X (heap=%u max=%u); will "
                  "retry next boot\n",
-                 -ret, (unsigned)esp_get_free_heap_size());
+                 -ret, (unsigned)esp_get_free_heap_size(), heap_largest());
     g_dev_key_len = 0;
     return false;
   }
@@ -1553,9 +1592,9 @@ static bool issue_boot_cert() {
   int ret = ledmapper_selfsign(g_dev_key, g_device_name, &ap_ip, 1, fqdn,
                                g_gen_cert, sizeof g_gen_cert);
   if (ret != 0) {
-    Log().printf("[wss] boot cert issue failed: -0x%04X (heap=%u); will issue on "
+    Log().printf("[wss] boot cert issue failed: -0x%04X (heap=%u max=%u); will issue on "
                  "LAN join\n",
-                 -ret, (unsigned)esp_get_free_heap_size());
+                 -ret, (unsigned)esp_get_free_heap_size(), heap_largest());
     return false;
   }
   g_wss_cert = g_gen_cert;
@@ -1565,8 +1604,8 @@ static bool issue_boot_cert() {
 
 static void wss_start() {
   if (!g_wss_cert || g_dev_key_len == 0) {
-    Log().printf("[wss] no cert/key yet; TLS server not started (heap=%u)\n",
-                 (unsigned)esp_get_free_heap_size());
+    Log().printf("[wss] no cert/key yet; TLS server not started (heap=%u max=%u)\n",
+                 (unsigned)esp_get_free_heap_size(), heap_largest());
     return;
   }
   httpd_ssl_config_t cfg = HTTPD_SSL_CONFIG_DEFAULT();
@@ -1610,8 +1649,8 @@ static void wss_start() {
   cfg.tls_handshake_timeout_ms = 5000;
   esp_err_t err = httpd_ssl_start(&wss, &cfg);
   if (err != ESP_OK) {
-    Log().printf("[wss] httpd_ssl_start failed: %d (heap=%u)\n", (int)err,
-                 (unsigned)esp_get_free_heap_size());
+    Log().printf("[wss] httpd_ssl_start failed: %d (heap=%u max=%u)\n", (int)err,
+                 (unsigned)esp_get_free_heap_size(), heap_largest());
     return;
   }
   httpd_uri_t u = {};
@@ -1627,8 +1666,8 @@ static void wss_start() {
   u.uri = "/healthz";
   u.handler = wss_health_handler;
   httpd_register_uri_handler(wss, &u);
-  Log().printf("[wss] TLS player on :443 (heap=%u)\n",
-               (unsigned)esp_get_free_heap_size());
+  Log().printf("[wss] TLS player on :443 (heap=%u max=%u)\n",
+               (unsigned)esp_get_free_heap_size(), heap_largest());
 }
 
 // Re-issue the wss cert with the live STA IP (+ the soft-AP IP + a stable mDNS
@@ -1659,9 +1698,9 @@ static void reissue_cert_for_lan() {
   int ret = ledmapper_selfsign(g_dev_key, g_device_name, ips, n, fqdn,
                                g_gen_cert, sizeof g_gen_cert);
   if (ret != 0) {
-    Log().printf("[wss] cert re-issue failed: -0x%04X (heap=%u); keeping current "
+    Log().printf("[wss] cert re-issue failed: -0x%04X (heap=%u max=%u); keeping current "
                  "cert, will retry\n",
-                 -ret, (unsigned)esp_get_free_heap_size());
+                 -ret, (unsigned)esp_get_free_heap_size(), heap_largest());
     return;
   }
   g_wss_cert = g_gen_cert;
@@ -1678,8 +1717,8 @@ static void reissue_cert_for_lan() {
     // reopening the hole the new task reuses.
     delay(200);
   }
-  Log().printf("[wss] re-issuing cert with SAN IP:%s (heap=%u); restarting TLS\n",
-               WiFi.localIP().toString().c_str(), (unsigned)esp_get_free_heap_size());
+  Log().printf("[wss] re-issuing cert with SAN IP:%s (heap=%u max=%u); restarting TLS\n",
+               WiFi.localIP().toString().c_str(), (unsigned)esp_get_free_heap_size(), heap_largest());
   wss_start();
   if (wss) {
     // Commit the served IP only on a CONFIRMED restart. If wss_start() still
@@ -1688,8 +1727,8 @@ static void reissue_cert_for_lan() {
     // task) instead of stranding :443 down until the next reboot.
     g_cert_ip = sta_ip;
   } else {
-    Log().printf("[wss] TLS restart failed (heap=%u); will retry from loop()\n",
-                 (unsigned)esp_get_free_heap_size());
+    Log().printf("[wss] TLS restart failed (heap=%u max=%u); will retry from loop()\n",
+                 (unsigned)esp_get_free_heap_size(), heap_largest());
   }
 }
 
@@ -1872,6 +1911,10 @@ void setup() {
   // serial is disconnected.
   Serial.setTxTimeoutMs(100);
   log_drain_start();
+  // Capture the exact size of any failing allocation — above all the mbedtls TLS
+  // session on a fragmented heap (-0x7F00) — with a rough backtrace to its call
+  // site. Registered before anything allocates so no early failure is missed.
+  heap_caps_register_failed_alloc_callback(on_heap_alloc_failed);
   // RMT WS2812 driver on LED_DATA_PIN (replaces FastLED's blocking clockless
   // driver). It reads `show_buf` (the transmit snapshot), never the live `leds` —
   // the async transmit task pushes show_buf while the render task fills leds.
@@ -2039,8 +2082,8 @@ static void provisioning_poll() {
       WiFi.softAPdisconnect(true);
       WiFi.mode(WIFI_STA);
       softap_up = false;
-      Log().printf("[player] soft-AP down; STA-only, heap=%u\n",
-                   (unsigned)esp_get_free_heap_size());
+      Log().printf("[player] soft-AP down; STA-only, heap=%u max=%u\n",
+                   (unsigned)esp_get_free_heap_size(), heap_largest());
     }
     // Re-sign the wss cert with this IP in the SAN so browsers will take the
     // trust exception (the build-time cert has none → fatal alert / ERR_TIMED_OUT).
@@ -2126,13 +2169,13 @@ void loop() {
                           : String("AP off");
     Log().printf(
         "[player] %s  %s  ws :%u  "
-        "ws=%s map=%lu leds heap=%u min=%u\n",
+        "ws=%s map=%lu leds heap=%u max=%u min=%u\n",
         ap.c_str(),
         sta.c_str(), kWsPort,
         ws_state == WsState::kOpen        ? "open"
         : ws_state == WsState::kHandshake ? "handshake"
                                           : "idle",
-        map_leds, (unsigned)esp_get_free_heap_size(),
+        map_leds, (unsigned)esp_get_free_heap_size(), heap_largest(),
         (unsigned)esp_get_minimum_free_heap_size());
   }
   delay(1);
