@@ -21,6 +21,52 @@ and `internal/tailnet`).
 ESP32 attached and your key authorized, SSHes you in, heartbeats to hold the
 lease, and releases on exit (`--keep` to hold it).
 
+## BLE HCI capture (btmon)
+
+When you're debugging BLE — e.g. a provisioning `connect()` that times out and
+you need link-level truth (did `CONNECT_IND` go unanswered? did the peripheral
+answer and the link drop?) — capture an HCI trace covering your DUT's session:
+
+```sh
+hitl reserve --no-shell &                 # hold a reservation; note its id=…
+hitl btmon start   --id RES               # begin capturing
+#   … flash + provision / run your BLE flow …
+hitl btmon fetch   --id RES --mac AA:BB:CC:DD:EE:FF out.btsnoop
+hitl btmon stop    --id RES               # (fetch leaves it running; stop when done)
+```
+
+or, in one shot, the windowed form (start → run the command in the reservation →
+stop → fetch):
+
+```sh
+hitl btmon capture --mac AA:BB:CC:DD:EE:FF --out out.btsnoop -- \
+    python3 /tmp/hitl_improv.py provision --ssid … --pass …
+```
+
+`out.btsnoop` opens in `btmon -r out.btsnoop` and in Wireshark. The DUT's BLE
+MAC is the one it advertises on boot (the harness derives it via
+`reserved_board_ble_mac()` in `harness/provision.py`; `hitl monitor --reset` also
+prints it).
+
+**Shared adapter — the trace is annotated, not isolated.** The rig has **one
+Bluetooth controller shared by every DUT** (see DESIGN.md "Open items": per-DUT
+BLE radio). A capture therefore contains _every_ DUT's BLE traffic for the window
+it runs, not just yours. `--mac` prints the Wireshark filter
+(`bluetooth.addr == <mac>`) to isolate your DUT; do not read conclusions off
+unfiltered traffic. Real isolation needs a per-DUT USB BT dongle (FUG-73-style
+passthrough), tracked as a follow-up.
+
+How it works: `btmon` needs an `AF_BLUETOOTH` HCI monitor socket +
+`CAP_NET_RAW`/`CAP_NET_ADMIN`, which the unprivileged reservation container
+deliberately lacks. So it runs **host-side** (the daemon is already root) and
+bind-mounts its btsnoop **read-only** into the container at
+`/run/hitl/capture/hci.btsnoop` — readable there (`btmon -r`) but tamper-proof.
+Captures are **bounded** (a size cap and a max-duration auto-stop, so a forgotten
+one can't fill the rig disk), **off by default** (nothing runs until `start`),
+and **torn down** with the rest of per-reservation state on release / lease
+expiry. Multiple DUTs can capture at once (the kernel HCI monitor channel is
+shared).
+
 ## Deploying the rig
 
 ```sh

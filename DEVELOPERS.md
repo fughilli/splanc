@@ -258,7 +258,11 @@ Rigs advertise themselves into the pool by carrying a tailnet tag
 and picks the shortest queue. Precedence: `--server`/`$HITL_SERVER` >
 `$HITL_SERVERS` (explicit list) > tag discovery. Multi-DUT rigs auto-discover
 boards from `/dev/serial/by-id/*`, giving each its own container, sticky sshd port,
-and isolated USB tree. The design lives in `pi/hitl/DESIGN.md` and `pi/hitl/README.md`.
+and isolated USB tree. To debug BLE at the link layer, `hitl btmon start|stop|fetch`
+(or the windowed `hitl btmon capture -- <cmd>`) grabs a bounded, host-side HCI
+btsnoop of your reservation that opens in `btmon -r`/Wireshark — note the rig's one
+BT controller is shared across DUTs, so the trace is annotated by the DUT BLE MAC,
+not isolated (FUG-93). The design lives in `pi/hitl/DESIGN.md` and `pi/hitl/README.md`.
 
 ### The suite
 

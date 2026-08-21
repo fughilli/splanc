@@ -10,6 +10,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"log"
 	"sync"
 	"time"
@@ -460,6 +461,54 @@ func (m *Manager) ReapExpired(ctx context.Context) {
 	for _, id := range expired {
 		_ = m.Release(ctx, id, "lease expired (no heartbeat)")
 	}
+}
+
+// --- BLE HCI capture ------------------------------------------------------
+
+// StartCapture begins a bounded BLE HCI (btmon) capture for the active
+// reservation id and returns its status. The capture records the one shared
+// host controller (all DUTs' BLE), bounded and torn down on release — see the
+// runner's capture.go.
+func (m *Manager) StartCapture(ctx context.Context, id string) (*api.CaptureStatus, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.requireActiveLocked(id); err != nil {
+		return nil, err
+	}
+	return m.run.StartCapture(ctx, id)
+}
+
+// StopCapture ends the active reservation's capture.
+func (m *Manager) StopCapture(ctx context.Context, id string) (*api.CaptureStatus, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.requireActiveLocked(id); err != nil {
+		return nil, err
+	}
+	return m.run.StopCapture(ctx, id)
+}
+
+// CaptureStatus reports the active reservation's capture state.
+func (m *Manager) CaptureStatus(id string) (*api.CaptureStatus, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.requireActiveLocked(id); err != nil {
+		return nil, err
+	}
+	return m.run.CaptureStatus(id)
+}
+
+// requireActiveLocked returns ErrNotFound for an unknown id, an error for a
+// non-active one, and nil when id is an active reservation. Caller holds m.mu.
+func (m *Manager) requireActiveLocked(id string) error {
+	r := m.findLocked(id)
+	if r == nil {
+		return ErrNotFound
+	}
+	if r.State != api.StateActive {
+		return fmt.Errorf("reservation %s is %s (not active)", id, r.State)
+	}
+	return nil
 }
 
 // --- locked helpers -------------------------------------------------------

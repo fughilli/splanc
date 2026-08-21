@@ -41,6 +41,19 @@ type PodmanConfig struct {
 	// (see isolateUSB), which are enough for the C6's serial and USB-JTAG while
 	// keeping raw USB isolated per DUT. Kept as an escape hatch.
 	Privileged bool
+	// Btmon is the host btmon binary used for per-reservation BLE HCI capture.
+	// Empty disables capture (StartCapture then returns an error). btmon runs on
+	// the HOST (as root, where the daemon runs) because it needs an AF_BLUETOOTH
+	// HCI monitor socket + CAP_NET_RAW/ADMIN the unprivileged container lacks; its
+	// btsnoop file is bind-mounted read-only into the reservation container.
+	Btmon string
+	// CaptureMaxBytes is the hard size cap for a capture's btsnoop file (0 = a
+	// built-in default). A watchdog stops a capture at this size so it can't fill
+	// the rig disk.
+	CaptureMaxBytes int64
+	// CaptureMaxDur is the max wall-clock for a single capture (0 = a built-in
+	// default). A watchdog stops a capture after this so a forgotten one is bounded.
+	CaptureMaxDur time.Duration
 }
 
 // PodmanRunner implements Runner by shelling out to podman.
@@ -51,6 +64,9 @@ type PodmanRunner struct {
 	// re-enumerations. Cancelled on Stop/Cleanup.
 	mu      sync.Mutex
 	usbSync map[string]func()
+	// captures holds each reservation's live BLE HCI capture (btmon), keyed on
+	// reservation id. Cancelled/reaped on StopCapture/Stop/Cleanup. See capture.go.
+	captures map[string]*capture
 }
 
 func NewPodman(cfg PodmanConfig) *PodmanRunner {
@@ -60,7 +76,7 @@ func NewPodman(cfg PodmanConfig) *PodmanRunner {
 	if cfg.SSHUser == "" {
 		cfg.SSHUser = "agent"
 	}
-	return &PodmanRunner{cfg: cfg, usbSync: map[string]func(){}}
+	return &PodmanRunner{cfg: cfg, usbSync: map[string]func(){}, captures: map[string]*capture{}}
 }
 
 // containerName is deterministic per reservation so Stop/Cleanup can find it.
@@ -120,6 +136,15 @@ func (p *PodmanRunner) Start(ctx context.Context, id, owner, sshKey string, dev 
 	if _, err := os.Stat("/run/dbus/system_bus_socket"); err == nil {
 		args = append(args, "-v", "/run/dbus/system_bus_socket:/run/dbus/system_bus_socket")
 	}
+	// BLE HCI capture: a per-reservation dir the host btmon writes its btsnoop into
+	// (see capture.go), bind-mounted READ-ONLY so the agent can read the trace (and
+	// `btmon -r` it) but can't tamper with it. Created empty now; StartCapture fills
+	// it on demand. The container sees the host's writes live through the mount.
+	captureDir := filepath.Join(keyDir, "capture")
+	if err := os.MkdirAll(captureDir, 0o755); err != nil {
+		return nil, fmt.Errorf("mkdir capture: %w", err)
+	}
+	args = append(args, "-v", captureDir+":"+captureContainerDir+":ro")
 	// JTAG: give the container raw USB (libusb, for openocd on the C6's built-in
 	// USB-JTAG, and esptool's native-USB reset). Isolated to this DUT's board where
 	// we can resolve it (see isolateUSB), else the whole bus as a fallback.
@@ -352,6 +377,7 @@ func waitTCP(ctx context.Context, addr string, timeout time.Duration) error {
 
 func (p *PodmanRunner) Stop(ctx context.Context, id string) error {
 	p.stopUSBSync(id)
+	p.killCapture(id, "reservation released")
 	name := containerName(id)
 	_, err := p.podman(ctx, "rm", "-f", "-t", "5", name)
 	// Best-effort scratch cleanup.
@@ -370,7 +396,13 @@ func (p *PodmanRunner) Cleanup(ctx context.Context) error {
 		cancel()
 		delete(p.usbSync, id)
 	}
+	caps := p.captures
+	p.captures = map[string]*capture{}
 	p.mu.Unlock()
+	// Reap any BLE captures still running (e.g. from a Start with no Stop).
+	for _, c := range caps {
+		c.finish("daemon cleanup")
+	}
 
 	out, err := p.podman(ctx, "ps", "-aq", "--filter", "label=hitl=1")
 	if err != nil {
