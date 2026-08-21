@@ -136,6 +136,9 @@ SERVER_FLATS = [
         "solverBenchMs": None,
         "mac": "AA:BB:CC:DD:EE:FF",
         "deviceName": "Led Widget A1B2C3",
+        # Older firmware / unstamped build: build info empty.
+        "fwGitCommit": "",
+        "fwGitDirty": False,
     },
     {
         "type": "welcome",
@@ -144,6 +147,9 @@ SERVER_FLATS = [
         "solverBenchMs": 210.5,
         "mac": "AA:BB:CC:DD:EE:FF",
         "deviceName": "Led Widget A1B2C3",
+        # Stamped firmware build (FUG-126): full commit hash + dirty flag.
+        "fwGitCommit": "0123456789abcdef0123456789abcdef01234567",
+        "fwGitDirty": True,
     },
     {"type": "time_sync_pong", "t0": 1.0, "t1": 2.0, "t2": 3.0},
     {"type": "mapping_started", "patternClockEpoch": 987.5, "codeParams": CODE_PARAMS},

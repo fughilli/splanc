@@ -423,6 +423,8 @@ class WelcomeMessage(_StrictModel):
     solverBenchMs: Union[float, None] = None
     mac: str = ""
     deviceName: str = ""
+    fwGitCommit: str = ""
+    fwGitDirty: bool = False
 
 
 class MappingStoppedMessage(_StrictModel):

@@ -93,7 +93,7 @@ export interface PerfMetrics {
   opsPerLed: number;
   /** VM operand-stack high-water (f32 slots); null if unknown (predicted). */
   stackMax: number | null;
-  heap: { freeBytes: number | null; minFreeBytes: number | null };
+  heap: { freeBytes: number | null; minFreeBytes: number | null; largestFreeBytes: number | null };
   overruns: number | null;
   droppedFrames: number | null;
   samplesDropped: number | null;
@@ -147,7 +147,11 @@ export function contextFromReport(
       phase: { updateMs, shadeMs, showMs },
       opsPerLed,
       stackMax,
-      heap: { freeBytes: report.heapFree, minFreeBytes: report.heapMinFree },
+      heap: {
+        freeBytes: report.heapFree,
+        minFreeBytes: report.heapMinFree,
+        largestFreeBytes: report.heapLargestFree,
+      },
       overruns: report.overruns,
       droppedFrames: report.droppedFrames,
       samplesDropped: report.samplesDropped,
@@ -181,7 +185,7 @@ export function contextFromEstimate(
       },
       opsPerLed: est.opsPerLed,
       stackMax: null,
-      heap: { freeBytes: null, minFreeBytes: null },
+      heap: { freeBytes: null, minFreeBytes: null, largestFreeBytes: null },
       overruns: null,
       droppedFrames: null,
       samplesDropped: null,

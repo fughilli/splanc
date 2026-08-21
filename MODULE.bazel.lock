@@ -1367,7 +1367,7 @@
         "bzlTransitiveDigest": "vt4SxWkQ68m/aCDZsNn52k7/n0uWiqqPHns004YWnPk=",
         "usagesDigest": "OlW6WWXv/18Gr0b4Af7hJ1klqvmCzNU25VIs31y4Wqs=",
         "recordedFileInputs": {
-          "@@//MODULE.bazel": "d28eb44975fea94c16b81c628d4aa6b322871fe4e492b2555bac7e6b774b0567",
+          "@@//MODULE.bazel": "2b766b747fd0534de280a68a965117bad9706f3d1060c562a161f00373d1a19d",
           "@@rules_rust~~rust_host_tools~rust_host_tools//rust_host_tools": "ENOENT"
         },
         "recordedDirentsInputs": {},
@@ -2118,7 +2118,7 @@
         "bzlTransitiveDigest": "vt4SxWkQ68m/aCDZsNn52k7/n0uWiqqPHns004YWnPk=",
         "usagesDigest": "28S0c0v9E9ZvyYWD0ltX6dRQnIcS6QTp9mhHSIJVP2Q=",
         "recordedFileInputs": {
-          "@@//MODULE.bazel": "d28eb44975fea94c16b81c628d4aa6b322871fe4e492b2555bac7e6b774b0567",
+          "@@//MODULE.bazel": "2b766b747fd0534de280a68a965117bad9706f3d1060c562a161f00373d1a19d",
           "@@rules_rust~~rust_host_tools~rust_host_tools//rust_host_tools": "ENOENT"
         },
         "recordedDirentsInputs": {},

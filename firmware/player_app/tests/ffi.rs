@@ -8,12 +8,12 @@
 
 use ledmapper_pb::ledmapper_::v1_ as pb;
 use ledmapper_player_ffi::{
-    lm_color_correction_commit, lm_color_correction_gen, lm_color_correction_params,
+    FX_TOPO_CAP, lm_color_correction_commit, lm_color_correction_gen, lm_color_correction_params,
     lm_counting_color, lm_envelope_arm,
     lm_fx_load, lm_fx_set_active, lm_fx_shade, lm_fx_update, lm_led_count, lm_map_led, lm_map_len,
     lm_osc_ingest, lm_osc_set_by_name, lm_pattern_color, lm_pattern_timing, lm_perf_build_report,
     lm_perf_interval_ms, lm_perf_mode,
-    lm_perf_push, lm_player_handle, lm_player_init,
+    lm_perf_push, lm_player_handle, lm_player_init, lm_player_set_build_info,
 };
 use micropb::{MessageDecode, MessageEncode, PbEncoder};
 use pb::ClientMessage_::Msg as CMsg;
@@ -52,12 +52,20 @@ fn handle(frame: &[u8], now: f64) -> Option<SMsg> {
 fn full_device_flow_through_the_c_abi() {
     lm_player_init(64);
 
+    // Build info (FUG-126): the firmware stamps LM_GIT_COMMIT / LM_GIT_DIRTY in
+    // once at init; it must be echoed in every welcome so the app's device card
+    // can show + link the device's build.
+    let commit = "0123456789abcdef0123456789abcdef01234567";
+    unsafe { lm_player_set_build_info(commit.as_ptr(), commit.len(), true) };
+
     // hello -> welcome without a solver bench score.
     let Some(SMsg::Welcome(w)) = handle(&encode(CMsg::Hello(pb::Hello::default())), 1.0) else {
         panic!("welcome expected");
     };
     assert!(!w._has.r#solver_bench_ms());
     assert_eq!(w.r#code_params.r#led_count, 64);
+    assert_eq!(w.r#fw_git_commit.as_str(), commit, "welcome echoes the git commit");
+    assert!(w.r#fw_git_dirty, "welcome echoes the dirty flag");
 
     // start_mapping 16 LEDs -> pattern timing + frame colors line up.
     let mut opts = pb::StartMappingOptions::default();
@@ -114,12 +122,15 @@ fn full_device_flow_through_the_c_abi() {
 
     // Map upload takes the ARENA path (never the generated envelope):
     // result_ready + the stored entries readable through the map accessors.
+    // Fill the FX topology cache exactly to capacity (FX_TOPO_CAP, the LED-cap
+    // SSOT) so the last LED is readable through lm_map_led and index==cap is not.
+    let cap = FX_TOPO_CAP as u32;
     let mut map = Box::new(pb::OutputMap::default());
     map.r#map_id = "m-ffi".parse().unwrap();
-    map.r#led_count = 64;
-    for i in 0..64 {
+    map.r#led_count = cap as i32;
+    for i in 0..cap {
         let mut led = pb::LedEntry::default();
-        led.r#id = i;
+        led.r#id = i as i32;
         led.r#xyz
             .extend_from_slice(&[i as f64 * 0.01, 0.0, -0.5])
             .unwrap();
@@ -144,12 +155,12 @@ fn full_device_flow_through_the_c_abi() {
     };
     assert_eq!(unsafe { lm_envelope_arm(rr.as_ptr(), rr.len()) }, 8);
     assert_eq!(r.r#map_id.as_str(), "m-ffi");
-    assert_eq!(unsafe { lm_map_len() }, 64);
+    assert_eq!(unsafe { lm_map_len() }, cap);
     let (mut id, mut xyz) = (0u32, [0f32; 3]);
-    assert!(unsafe { lm_map_led(63, &mut id, xyz.as_mut_ptr()) });
-    assert_eq!(id, 63);
-    assert!((xyz[0] - 0.63).abs() < 1e-6);
-    assert!(!unsafe { lm_map_led(64, &mut id, xyz.as_mut_ptr()) });
+    assert!(unsafe { lm_map_led(cap - 1, &mut id, xyz.as_mut_ptr()) });
+    assert_eq!(id, cap - 1);
+    assert!((xyz[0] - (cap - 1) as f32 * 0.01).abs() < 1e-6);
+    assert!(!unsafe { lm_map_led(cap, &mut id, xyz.as_mut_ptr()) });
 
     // Topology for the stored map: result_ready through the arena path.
     let mut topo = pb::SubmitTopology::default();
@@ -188,8 +199,8 @@ fn full_device_flow_through_the_c_abi() {
     let mut bundle = pb::MappingBundle::default();
     bundle.decode_from_bytes(&assembled).expect("dumped bundle decodes");
     assert_eq!(bundle.r#map.r#map_id.as_str(), "m-ffi");
-    assert_eq!(bundle.r#map.r#leds.len(), 64);
-    assert_eq!(bundle.r#map.r#leds[63].r#id, 63);
+    assert_eq!(bundle.r#map.r#leds.len(), cap as usize);
+    assert_eq!(bundle.r#map.r#leds[cap as usize - 1].r#id, (cap - 1) as i32);
 
     // -- effects: per-LED topology (led.seg / led.s / led.branch) end-to-end ---
     // Replace the (empty) topology with a real Y-junction: three segments meeting

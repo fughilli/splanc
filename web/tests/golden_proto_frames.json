@@ -390,12 +390,14 @@
           "symbols": 4
         },
         "mac": "AA:BB:CC:DD:EE:FF",
-        "deviceName": "Led Widget A1B2C3"
+        "deviceName": "Led Widget A1B2C3",
+        "fwGitCommit": "",
+        "fwGitDirty": false
       }
     },
     {
       "direction": "server",
-      "frameB64": "ClwKA3MtMRImCEAQDBoDaHVlIQAAAAAAgFtAKgZvbl9vZmYwCDoGc2VjZGVkQAQZAAAAAABQakAiEUFBOkJCOkNDOkREOkVFOkZGKhFMZWQgV2lkZ2V0IEExQjJDMw==",
+      "frameB64": "CogBCgNzLTESJghAEAwaA2h1ZSEAAAAAAIBbQCoGb25fb2ZmMAg6BnNlY2RlZEAEGQAAAAAAUGpAIhFBQTpCQjpDQzpERDpFRTpGRioRTGVkIFdpZGdldCBBMUIyQzM6KDAxMjM0NTY3ODlhYmNkZWYwMTIzNDU2Nzg5YWJjZGVmMDEyMzQ1NjdAAQ==",
       "decoded": {
         "type": "welcome",
         "sessionId": "s-1",
@@ -411,7 +413,9 @@
         },
         "solverBenchMs": 210.5,
         "mac": "AA:BB:CC:DD:EE:FF",
-        "deviceName": "Led Widget A1B2C3"
+        "deviceName": "Led Widget A1B2C3",
+        "fwGitCommit": "0123456789abcdef0123456789abcdef01234567",
+        "fwGitDirty": true
       }
     },
     {

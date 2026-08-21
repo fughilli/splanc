@@ -7,6 +7,7 @@
 
 import type { WelcomeMessage } from "@ledmapper/protocol";
 import { certApprovalUrl, LedMapperClient, type ClientOptions } from "../../net/client";
+import { connectionRegistry } from "../../net/connectionRegistry";
 import { nativeSocketFactory } from "../../net/nativeSocket";
 import { deviceStore } from "../../store/deviceStore";
 import { deviceProber } from "../../net/deviceProber";
@@ -77,6 +78,9 @@ class AppState {
     }
     const client = new LedMapperClient(wssUrl, clientOpts);
     this.client = client;
+    // Register as the sole owner of this device's socket so the liveness prober
+    // multiplexes onto it instead of opening a parallel (slot-starving) handshake.
+    connectionRegistry.register(client);
     client.events = {
       onConnecting: (attempt, url) =>
         this.setStatus({
@@ -103,12 +107,24 @@ class AppState {
         // tracks the display name the user set.
         const w = client.welcome;
         if (w) {
-          deviceStore.applyWelcome(dev.id, { mac: w.mac, deviceName: w.deviceName });
+          deviceStore.applyWelcome(dev.id, {
+            mac: w.mac,
+            deviceName: w.deviceName,
+            fwGitCommit: w.fwGitCommit,
+            fwGitDirty: w.fwGitDirty,
+          });
           const pending = deviceStore.takePending(dev.id);
           if (pending && pending !== w.deviceName) {
             await client
               .setDeviceName(pending)
-              .then((nw) => deviceStore.applyWelcome(dev.id, { mac: nw.mac, deviceName: nw.deviceName }))
+              .then((nw) =>
+                deviceStore.applyWelcome(dev.id, {
+                  mac: nw.mac,
+                  deviceName: nw.deviceName,
+                  fwGitCommit: nw.fwGitCommit,
+                  fwGitDirty: nw.fwGitDirty,
+                }),
+              )
               .catch(() => undefined);
           }
         }
@@ -168,6 +184,7 @@ class AppState {
 
   disconnect(): void {
     this.clearReconnectWatch();
+    if (this.client) connectionRegistry.unregister(this.client);
     this.client?.close();
     this.client = null;
     const wasActive = deviceStore.activeId();

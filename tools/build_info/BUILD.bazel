@@ -1,0 +1,22 @@
+"""//tools/build_info — git build-info stamping (FUG-126).
+
+`status.sh` is Bazel's workspace_status_command (registered in //.bazelrc); it
+emits the git commit + dirty flag into stable-status.txt. `expand.py` (wrapped
+as the `expand` py_binary) substitutes those STABLE_* values into a template,
+driven by the `build_info_file` rule in build_info.bzl. Consumers: the firmware
+build-info header (//firmware/player_app) and the web build-info JSON (//web).
+"""
+
+load("@rules_python//python:defs.bzl", "py_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+# The workspace status command. Exported so its path is a real build artifact
+# the .bazelrc `%workspace%/tools/build_info/status.sh` reference tracks.
+exports_files(["status.sh"])
+
+py_binary(
+    name = "expand",
+    srcs = ["expand.py"],
+    main = "expand.py",
+)

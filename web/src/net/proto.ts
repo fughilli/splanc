@@ -400,6 +400,7 @@ export interface PerfReportMessage {
   samplesDropped: number;
   heapFree: number;
   heapMinFree: number;
+  heapLargestFree: number;
   ticks: PerfFrameFlat[];
 }
 

@@ -320,9 +320,23 @@ static mut FX_LAST_UPDATE_OUTCOME: u32 = 0;
 // scan every call. lm_map_led hands the render loop the map index, which is
 // exactly this cache's index.
 
-/// Cache capacity: the firmware's LED cap (main.cpp kMaxLeds). One entry/LED.
-/// Keep in sync with main.cpp `kMaxLeds` and led_config.h `NUM_LEDS`.
-const FX_TOPO_CAP: usize = 768;
+/// Cache capacity: the firmware's LED cap. One entry/LED. SINGLE SOURCE OF TRUTH
+/// is //firmware/player_app:led_caps.bzl (`MAX_LEDS`), injected here as the
+/// `LM_MAX_LEDS` rustc_env and as `-DLM_MAX_LEDS` into main.cpp / led_config.h.
+pub const FX_TOPO_CAP: usize = parse_cap(env!("LM_MAX_LEDS"));
+
+/// Parse the LM_MAX_LEDS build env (a decimal literal) at compile time.
+const fn parse_cap(s: &str) -> usize {
+    let b = s.as_bytes();
+    let mut n = 0usize;
+    let mut i = 0;
+    while i < b.len() {
+        assert!(b[i] >= b'0' && b[i] <= b'9', "LM_MAX_LEDS must be decimal");
+        n = n * 10 + (b[i] - b'0') as usize;
+        i += 1;
+    }
+    n
+}
 /// An LED is "at a junction" (`led.branch`) within this arclength (meters) of a
 /// segment endpoint that is a real branch point (degree >= 3).
 const FX_BRANCH_DIST_M: f32 = 0.05;
@@ -647,6 +661,27 @@ pub unsafe extern "C" fn lm_player_set_identity(
         core::str::from_utf8(core::slice::from_raw_parts(name, name_len)).unwrap_or("")
     };
     player().set_identity(mac_s, name_s);
+}
+
+/// Set the firmware build info (git commit + dirty flag) echoed in every
+/// `welcome`. `commit` is the full git hash as UTF-8 bytes; `dirty` is true when
+/// the working tree had uncommitted changes at build time. Call once after
+/// `lm_player_init` (the firmware owns the stamped `build_info.h`).
+///
+/// # Safety
+/// `commit` must point to `commit_len` readable bytes (or be null).
+#[no_mangle]
+pub unsafe extern "C" fn lm_player_set_build_info(
+    commit: *const u8,
+    commit_len: usize,
+    dirty: bool,
+) {
+    let commit_s = if commit.is_null() {
+        ""
+    } else {
+        core::str::from_utf8(core::slice::from_raw_parts(commit, commit_len)).unwrap_or("")
+    };
+    player().set_build_info(commit_s, dirty);
 }
 
 /// Copy the player's CURRENT display name into `out` (cap bytes); returns the
@@ -1882,6 +1917,7 @@ unsafe fn build_perf_report() -> pb::ServerMessage {
     // latest values ride here).
     r.r#heap_free = PERF_HEAP_FREE;
     r.r#heap_min_free = PERF_HEAP_MIN_FREE;
+    r.r#heap_largest_free = PERF_HEAP_LARGEST_FREE;
     // Raw tail: drain oldest-first until the ticks field is at capacity; any
     // remaining samples stay in the ring for the next poll (no loss).
     while r.r#ticks.len() < r.r#ticks.capacity() {
@@ -1905,6 +1941,7 @@ unsafe fn build_perf_report() -> pb::ServerMessage {
 /// core has no ESP-IDF; the C++ side reads esp_get_free_heap_size et al.).
 static mut PERF_HEAP_FREE: u32 = 0;
 static mut PERF_HEAP_MIN_FREE: u32 = 0;
+static mut PERF_HEAP_LARGEST_FREE: u32 = 0;
 
 /// Reset the ring + its counters (fresh effect / mode change). Latched Tier-1
 /// counters are cleared too so a stale count can't leak into the next frame.
@@ -2791,11 +2828,15 @@ pub unsafe extern "C" fn lm_perf_stack_max() -> u32 {
 }
 
 /// Refresh the heap figures carried in the next PerfReport. Called by the render
-/// loop right before lm_perf_push (esp_get_free_heap_size / _minimum on C++).
+/// loop right before lm_perf_push. `free` / `min_free` are esp_get_free_heap_size
+/// / _minimum; `largest_free` is heap_caps_get_largest_free_block (the biggest
+/// contiguous block, i.e. the real ceiling on a single allocation) — all read on
+/// the C++ side.
 #[no_mangle]
-pub unsafe extern "C" fn lm_perf_set_heap(free: u32, min_free: u32) {
+pub unsafe extern "C" fn lm_perf_set_heap(free: u32, min_free: u32, largest_free: u32) {
     PERF_HEAP_FREE = free;
     PERF_HEAP_MIN_FREE = min_free;
+    PERF_HEAP_LARGEST_FREE = largest_free;
 }
 
 /// Push one rendered effect frame's Tier-0 cycle spans (+ the latched Tier-1
