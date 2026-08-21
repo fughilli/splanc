@@ -85,9 +85,14 @@ _GOLDEN_RUNFILE = "_main/web/tests/testdata/device-bench-{soc}.json"
 # Blanket 10% default margin for now — a deliberately safe band until we do a
 # comprehensive run-to-run variance measurement per effect and tighten it back
 # down (sweep256, e.g., swung +6.1% in CI under the old 5%). sweep16 keeps its
-# even-looser 15%: the tiniest programs have higher RELATIVE measurement noise
-# (a fixed absolute jitter is a big % of a ~100 K-cycle program).
-_GOLDEN_PER_LABEL_MARGIN = {"sweep16": 0.15}
+# even-looser 30%: the tiniest programs have higher RELATIVE measurement noise
+# (a fixed absolute jitter is a big % of a ~40 K-cycle program), and since FUG-82
+# the framerate autoscaler runs a cheap effect at up to 80 fps (vs the old fixed
+# 30) — the extra async-strip-transmit overlap adds a near-constant per-frame
+# cost (~+9 K cycles seen across ALL programs) that is negligible on the big
+# programs but ~+20% on the 16-LED anchor. The substantive programs still enforce
+# ±10%, so a real FX-VM regression is still caught.
+_GOLDEN_PER_LABEL_MARGIN = {"sweep16": 0.30}
 _GOLDEN_DEFAULT_MARGIN = 0.10
 
 
