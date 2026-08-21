@@ -25,6 +25,7 @@ py_test(
     srcs = [
         "pytest_main.py",
         "test_fx_bench.py",
+        "test_heap_floor.py",
         "test_improv.py",
         "test_improv_find.py",
         "test_jit_soak.py",
