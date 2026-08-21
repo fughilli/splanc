@@ -16,6 +16,7 @@ load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_static_library", "rust_test")
 load("//tools:flash_bundle.bzl", "flash_bundle")
 load("//tools/build_info:build_info.bzl", "build_info_file")
+load(":led_caps.bzl", "MAX_LEDS")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -35,6 +36,8 @@ rust_static_library(
     srcs = ["ffi.rs"],
     crate_name = "ledmapper_player_ffi",
     edition = "2021",
+    # LED cap SSOT (led_caps.bzl): ffi.rs FX_TOPO_CAP reads env!("LM_MAX_LEDS").
+    rustc_env = {"LM_MAX_LEDS": "%d" % MAX_LEDS},
     target_compatible_with = select({
         "@embedded//platforms:is_esp32c6": [],
         "//conditions:default": ["@platforms//:incompatible"],
@@ -59,6 +62,8 @@ rust_library(
     srcs = ["ffi.rs"],
     crate_name = "ledmapper_player_ffi",
     edition = "2021",
+    # LED cap SSOT (led_caps.bzl): ffi.rs FX_TOPO_CAP reads env!("LM_MAX_LEDS").
+    rustc_env = {"LM_MAX_LEDS": "%d" % MAX_LEDS},
     deps = [
         "//firmware/arena",
         "//firmware/fx_jit",
@@ -154,6 +159,8 @@ cc_binary(
     # Match the SDK/library ABI: the Arduino tree builds -fno-rtti, and a
     # subclass of its polymorphic types must not demand base typeinfo.
     copts = ["-fno-rtti"],
+    # LED cap SSOT (led_caps.bzl): kMaxLeds / NUM_LEDS derive from LM_MAX_LEDS.
+    local_defines = ["LM_MAX_LEDS=%d" % MAX_LEDS],
     target_compatible_with = select({
         "@embedded//platforms:is_esp32c6": [],
         "//conditions:default": ["@platforms//:incompatible"],
@@ -224,7 +231,10 @@ cc_binary(
         ":build_info_h",  # generated build_info.h (git commit + dirty flag)
     ],
     copts = ["-fno-rtti"],
-    local_defines = ["LM_OSC_BENCH"],
+    local_defines = [
+        "LM_OSC_BENCH",
+        "LM_MAX_LEDS=%d" % MAX_LEDS,
+    ],
     target_compatible_with = select({
         "@embedded//platforms:is_esp32c6": [],
         "//conditions:default": ["@platforms//:incompatible"],
@@ -299,7 +309,10 @@ cc_binary(
         ":build_info_h",  # generated build_info.h (git commit + dirty flag)
     ],
     copts = ["-fno-rtti"],
-    local_defines = ["LM_FX_JIT_BENCH"],
+    local_defines = [
+        "LM_FX_JIT_BENCH",
+        "LM_MAX_LEDS=%d" % MAX_LEDS,
+    ],
     target_compatible_with = select({
         "@embedded//platforms:is_esp32c6": [],
         "//conditions:default": ["@platforms//:incompatible"],

@@ -12,9 +12,13 @@
 
 // Default code-book LED count — the fallback until start_mapping / set_led_count
 // override it, and the value advertised in `welcome` that the phone uses to
-// prefill its LED-count field. Matched to the render ceiling (main.cpp
-// kMaxLeds) so the firmware advertises its full "up to 768 LEDs" capacity.
-#define NUM_LEDS 768
+// prefill its LED-count field. Derived from the LED-cap SSOT (main.cpp kMaxLeds
+// is the same LM_MAX_LEDS) so the firmware advertises its full capacity.
+// LM_MAX_LEDS is injected by the build (//firmware/player_app:led_caps.bzl).
+#ifndef LM_MAX_LEDS
+#error "LM_MAX_LEDS must be defined by the build — see //firmware/player_app:led_caps.bzl"
+#endif
+#define NUM_LEDS LM_MAX_LEDS
 #define LED_DATA_PIN 20
 // Second WS2812 channel (RMT ch1). A long strip splits across the two GPIOs and
 // clocks out in PARALLEL — channel 0 drives the first set_led_count(0) LEDs,
