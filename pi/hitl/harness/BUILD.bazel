@@ -30,6 +30,7 @@ py_library(
         "mapping_trigger_core.py",
         "provision.py",
         "sync.py",
+        "tls_churn_core.py",
         "uniform_bench_core.py",
         "video_bench_core.py",
     ],
@@ -328,6 +329,36 @@ py_test(
     ],
     imports = ["."],
     main = "hitl_rename_wss.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# On-hardware concurrent-TLS-slot churn resilience (FUG-136): reserve, flash,
+# provision, then fire N simultaneous wss:443 handshakes + a cert-page HTTPS GET
+# competing for the device's 2 TLS slots and assert it degrades gracefully
+# (serves/sheds, then recovers) rather than wedging until reboot. Unlike
+# rename_wss (a repro that exits 0), this ASSERTS — a wedge/crash exits non-zero,
+# so the HITL lane gates the regression. The verdict + taxonomy are pure-logic
+# unit-tested in //pi/hitl/tests (tls_churn_core). --device-ws hits a board
+# directly. A manual+hitl py_test like the other on-hardware drivers.
+py_test(
+    name = "tls_churn",
+    timeout = "eternal",
+    srcs = ["hitl_tls_churn.py"],
+    data = [
+        "//firmware/player_app:esp32c6_flashbundle",
+        "//pi/hitl/cmd/hitl",
+    ],
+    imports = ["."],
+    main = "hitl_tls_churn.py",
     tags = [
         "hitl",
         "manual",
