@@ -6,7 +6,49 @@ scan back. Full design + rationale lives in
 the running state so a fresh-context agent can pick up cleanly. Update it at the
 end of every session.
 
-## 2026-08-21 (late) — Phases 4 + 5 + 6 landed: end-to-end `.fab` target (START HERE)
+## 2026-08-21 (late) — correctness fixes from EE review; routability still open (START HERE)
+
+An EE review of the first routed board (`splanc_dev.fab`) surfaced real defects.
+Fixed three; a fourth (full routability) is now **honestly gated** but not yet met.
+
+**Fixed:**
+
+1. **Outline clipped parts (U5/ESP32 pads outside Edge.Cuts).** Root cause: the
+   outline was framed from footprint _origins_ (atopile `board_outline.py`),
+   discarding the placement's containment guarantee. Now `writeback.frame_region`
+   stamps Edge.Cuts at the **placement region** `[0,W]×[0,H]` (which the placer
+   keeps every courtyard inside) as text — so all pads are inside by construction.
+   Dropped board_outline.py from the flow.
+2. **2-vs-4 layer mismatch.** `constraints.layers` (4) now actually sets the board
+   copper-layer count (`SetCopperLayerCount`) via `rules.json`; gerbers export
+   In1/In2 and FreeRouting routes on all four layers (verified: F/In1/In2/B all
+   used).
+3. **Connector edge overhang.** New `overhang_mm` on `fixed`/`edge_align`
+   (`geometry._edge_pose`) so an edge connector protrudes a set distance past the
+   board edge for cable mating; `USB1` = 1.5 mm overhang. Fixed parts are excluded
+   from the outside-outline check (`metrics.outside_outline(exclude=…)`) since the
+   overhang is intentional. Gated by `geometry_test`.
+
+**Routing-completeness gate (the important behavior change):** `pnr.quality`
+counts unrouted ratsnest (`GetUnconnectedCount`) and the rule **fails the build**
+if any net is unrouted (`require_routed`, default True); `route_max_passes=0` lets
+FreeRouting run to completion. No more green build on a partial route.
+
+**STILL OPEN — the board does not fully route.** On 4 layers, uncapped,
+FreeRouting leaves **~81 connections unrouted** (44/71 nets with copper), so
+`splanc_dev.fab` **correctly fails**. The place↔route loop's global-route
+lookahead reports `overflow 0` (says "routable") while the detailed router can't —
+i.e. the coarse 2.5 mm-gcell lookahead is too optimistic to catch the real
+(pin-access / local) congestion around the dense parts (ESP32 module, QFN sensor,
+20-pin header). Levers to pursue (open PnR-quality work): a bigger / less-dense
+board; a **realistic** lookahead capacity so the feedback loop actually spreads
+congested regions (its designed purpose — today it converges in 1 round because
+overflow reads 0); channel-aware legalization; running the _detailed_ router
+inside the loop; or accepting FreeRouting's limits and hand-routing the fine-pitch
+parts. `route_feedback_test`'s "overflow→0" acceptance will need to soften to
+"overflow decreases + terminates" if the lookahead is made pessimistic.
+
+## 2026-08-21 (late) — Phases 4 + 5 + 6 landed: end-to-end `.fab` target
 
 **Phase 6 — routing rules + post-route quality pass (added same session):**
 

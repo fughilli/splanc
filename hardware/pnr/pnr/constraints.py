@@ -223,6 +223,8 @@ def compile_routing_rules(compiled: "CompiledConstraints", net_names: Sequence[s
     """
     names = set(net_names)
     return {
+        "layers": int(compiled.board.layers),
+        "default_clearance_mm": float(compiled.board.default_clearance_mm),
         "net_classes": [
             {
                 "name": nc.name,
@@ -316,6 +318,8 @@ def compile_constraints(doc: Dict, known_refs: Sequence[str]) -> CompiledConstra
                     "rot": spec.get("rot"),
                     "side": spec.get("side"),
                     "at": spec.get("at"),  # explicit (x, y) pose, optional
+                    # protrude past the edge (mm) for a mating connector; -inset
+                    "overhang_mm": spec.get("overhang_mm"),
                 },
             )
         )

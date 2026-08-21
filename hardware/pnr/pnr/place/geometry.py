@@ -105,18 +105,24 @@ def _edge_pose(
     h: float,
     width: float,
     height: float,
+    overhang: float = 0.0,
 ) -> Tuple[float, float]:
-    """Resolve an edge+align hint to a concrete centre so the courtyard sits
-    flush against that edge (align controls the free axis; default = centre)."""
+    """Resolve an edge+align hint to a concrete centre.
+
+    By default the courtyard sits flush against ``edge`` (align controls the free
+    axis; default = centre). ``overhang`` (mm) shifts the part *past* the edge by
+    that much — for an edge connector (USB-C) whose mating face must protrude
+    through an enclosure wall so a cable seats fully. Negative insets it inward.
+    """
     cx, cy = width / 2, height / 2
     if edge == "south":
-        cy = h / 2
+        cy = h / 2 - overhang
     elif edge == "north":
-        cy = height - h / 2
+        cy = height - h / 2 + overhang
     elif edge == "west":
-        cx = w / 2
+        cx = w / 2 - overhang
     elif edge == "east":
-        cx = width - w / 2
+        cx = width - w / 2 + overhang
     if align == "left":
         cx = w / 2
     elif align == "right":
@@ -144,7 +150,13 @@ def resolve_fixed_poses(
                 poses[ref] = (float(at[0]), float(at[1]))
             else:
                 poses[ref] = _edge_pose(
-                    c.params.get("edge"), c.params.get("align"), w, h, width, height
+                    c.params.get("edge"),
+                    c.params.get("align"),
+                    w,
+                    h,
+                    width,
+                    height,
+                    overhang=float(c.params.get("overhang_mm") or 0.0),
                 )
     return poses
 

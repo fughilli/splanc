@@ -66,19 +66,29 @@ class QualityReport:
     total_length_mm: float
     total_vias: int
     routed_nets: int
+    unrouted: int = 0  # remaining ratsnest connections (0 == fully routed)
     diff_pairs: List[DiffPairResult] = field(default_factory=list)
     length_matches: List[LengthMatchResult] = field(default_factory=list)
     net_class_length_mm: Dict[str, float] = field(default_factory=dict)
 
     @property
+    def fully_routed(self) -> bool:
+        return self.unrouted == 0
+
+    @property
     def ok(self) -> bool:
-        """All declared diff-pair + length-match checks pass (empty ⇒ trivially ok)."""
-        return all(d.ok for d in self.diff_pairs) and all(m.ok for m in self.length_matches)
+        """Fully routed AND all diff-pair + length-match checks pass."""
+        return (
+            self.fully_routed
+            and all(d.ok for d in self.diff_pairs)
+            and all(m.ok for m in self.length_matches)
+        )
 
     def summary(self) -> str:
+        route = "fully routed" if self.fully_routed else f"{self.unrouted} UNROUTED connections"
         lines = [
             f"routed length {self.total_length_mm:.0f} mm, {self.total_vias} vias, "
-            f"{self.routed_nets} nets with copper"
+            f"{self.routed_nets} nets with copper — {route}"
         ]
         for c, ln in sorted(self.net_class_length_mm.items()):
             lines.append(f"  net-class {c}: {ln:.0f} mm")
@@ -101,9 +111,11 @@ def analyze(
     lengths: Dict[str, float],
     vias: Dict[str, int],
     rules: Dict,
+    unrouted: int = 0,
 ) -> QualityReport:
     """Score routed per-net ``lengths`` (mm) + ``vias`` against ``rules`` (the
-    ``rules.json`` dict). Pure — no KiCad."""
+    ``rules.json`` dict). ``unrouted`` is the remaining ratsnest count (0 == fully
+    routed). Pure — no KiCad."""
     total_len = float(sum(lengths.values()))
     total_vias = int(sum(vias.values()))
     routed = sum(1 for v in lengths.values() if v > 0)
@@ -151,6 +163,7 @@ def analyze(
         total_length_mm=total_len,
         total_vias=total_vias,
         routed_nets=routed,
+        unrouted=int(unrouted),
         diff_pairs=diff_pairs,
         length_matches=length_matches,
         net_class_length_mm=nc_len,
@@ -172,10 +185,22 @@ def net_lengths(board) -> Tuple[Dict[str, float], Dict[str, int]]:
     return lengths, vias
 
 
-def load(pcb_path: str) -> Tuple[Dict[str, float], Dict[str, int]]:
+def unrouted_count(board) -> int:
+    """Remaining ratsnest connections (unrouted pin pairs). 0 == fully routed."""
+    try:
+        conn = board.GetConnectivity()
+        return int(conn.GetUnconnectedCount(True))
+    except Exception:  # pragma: no cover - version shim
+        return 0
+
+
+def load(pcb_path: str) -> Tuple[Dict[str, float], Dict[str, int], int]:
     import pcbnew
 
-    return net_lengths(pcbnew.LoadBoard(pcb_path))
+    board = pcbnew.LoadBoard(pcb_path)
+    board.BuildConnectivity()
+    lengths, vias = net_lengths(board)
+    return lengths, vias, unrouted_count(board)
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -184,21 +209,35 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--rules", help="rules.json (pnr.route --dump-rules); optional")
     ap.add_argument("--out", metavar="PATH", help="write the report text")
     ap.add_argument("--gate", action="store_true", help="exit nonzero if any check fails")
+    ap.add_argument(
+        "--require-routed",
+        action="store_true",
+        help="exit nonzero if any net is unrouted (the routing-completeness gate)",
+    )
     args = ap.parse_args(argv)
 
-    lengths, vias = load(args.pcb)
+    lengths, vias, unrouted = load(args.pcb)
     rules = {}
     if args.rules:
         with open(args.rules, encoding="utf-8") as fh:
             rules = json.load(fh)
 
-    report = analyze(lengths, vias, rules)
+    report = analyze(lengths, vias, rules, unrouted=unrouted)
     text = report.summary()
     print(text)
     if args.out:
         with open(args.out, "w", encoding="utf-8") as fh:
             fh.write(text + "\n")
-    return 0 if (report.ok or not args.gate) else 3
+
+    if args.require_routed and not report.fully_routed:
+        sys.stderr.write(
+            "pnr: routing incomplete — %d unrouted connection(s); board is not "
+            "fab-ready\n" % report.unrouted
+        )
+        return 4
+    if args.gate and not report.ok:
+        return 3
+    return 0
 
 
 if __name__ == "__main__":

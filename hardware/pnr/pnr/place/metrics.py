@@ -56,9 +56,18 @@ def overlap_pairs(graph: BoardGraph, clearance: float = 0.0) -> List[Tuple[str, 
     return out
 
 
-def outside_outline(graph: BoardGraph, width: float, height: float) -> List[str]:
-    """Refs whose courtyard is not fully inside ``[0,width] x [0,height]``."""
-    return [c.ref for c in graph.components if not courtyard_rect(c).inside(width, height)]
+def outside_outline(graph: BoardGraph, width: float, height: float, exclude=()) -> List[str]:
+    """Refs whose courtyard is not fully inside ``[0,width] x [0,height]``.
+
+    ``exclude`` (e.g. fixed connectors placed with an intentional edge overhang)
+    are skipped — their protrusion past the outline is by design, not a
+    violation."""
+    ex = set(exclude)
+    return [
+        c.ref
+        for c in graph.components
+        if c.ref not in ex and not courtyard_rect(c).inside(width, height)
+    ]
 
 
 def in_keepout(graph: BoardGraph, keepouts: List[Rect], clearance: float = 0.0) -> List[str]:
@@ -97,7 +106,7 @@ def hard_violations(
     keepouts = keepout_rects(graph, constraints, poses)
     return {
         "overlaps": overlap_pairs(graph, clearance),
-        "outside_outline": outside_outline(graph, width, height),
+        "outside_outline": outside_outline(graph, width, height, exclude=constraints.locked_refs),
         "fixed_misplaced": misplaced_fixed(graph, poses),
         "keepout": in_keepout(graph, keepouts, clearance),
     }

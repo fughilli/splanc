@@ -226,6 +226,17 @@ py_test(
     ],
 )
 
+# Connector edge-overhang + outline-exclusion geometry (pure).
+py_test(
+    name = "geometry_test",
+    size = "small",
+    srcs = ["tests/test_geometry.py"],
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_geometry.py",
+    deps = [":pnr_place"],
+)
+
 # Phase 4 acceptance: the place<->route loop converges (overflow -> 0), terminates.
 py_test(
     name = "route_feedback_test",

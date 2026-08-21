@@ -19,7 +19,9 @@ board:
   default_clearance_mm: 0.3
 
 fixed: # hard: locked pose, held out of the position gradient
-  USB1: { edge: south, align: center, rot: 0, side: top } # Type-C overhangs the south edge
+  # Type-C: overhang the south edge by 1.5 mm so the connector mouth clears an
+  # enclosure wall and a cable seats fully (overhang_mm; negative would inset).
+  USB1: { edge: south, align: center, rot: 0, side: top, overhang_mm: 1.5 }
   U5: { edge: north, align: center, rot: 0, side: top } # ESP32-C6 module, antenna off the north edge
 
 edge_align: # soft: pull to a board edge, snap orientation

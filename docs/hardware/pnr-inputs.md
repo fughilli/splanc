@@ -106,13 +106,17 @@ mechanical interface (a USB connector that must protrude, a module whose antenna
 must point off-board). Fixed parts are held out of the position gradient but still
 pull their nets (so nearby parts cluster around them).
 
-| Key     | Meaning                                                                               |
-| ------- | ------------------------------------------------------------------------------------- |
-| `edge`  | Sit flush against `north`/`south`/`east`/`west`.                                      |
-| `align` | Position along the free axis: `left`/`right`/`center` (default center).               |
-| `at`    | Explicit `[x, y]` centre (mm). Overrides `edge`/`align` when you know the exact spot. |
-| `rot`   | Orientation (degrees CCW); snapped to 0/90/180/270.                                   |
-| `side`  | `top` or `bottom`.                                                                    |
+| Key           | Meaning                                                                                                                                                                                                                                                               |
+| ------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `edge`        | Sit flush against `north`/`south`/`east`/`west`.                                                                                                                                                                                                                      |
+| `align`       | Position along the free axis: `left`/`right`/`center` (default center).                                                                                                                                                                                               |
+| `at`          | Explicit `[x, y]` centre (mm). Overrides `edge`/`align` when you know the exact spot.                                                                                                                                                                                 |
+| `rot`         | Orientation (degrees CCW); snapped to 0/90/180/270.                                                                                                                                                                                                                   |
+| `side`        | `top` or `bottom`.                                                                                                                                                                                                                                                    |
+| `overhang_mm` | Protrude this far _past_ the edge (with `edge`) — for a connector whose mating face must clear an enclosure wall so a cable seats fully. Negative insets it inward. The board outline is cut at the edge, so the connector body pokes out while its pads stay inside. |
+
+For example, an edge USB-C is `USB1: { edge: south, overhang_mm: 1.5 }` — the
+connector body extends 1.5 mm past the board edge, its pads on-board.
 
 ### `edge_align` — pull to an edge (soft)
 
@@ -198,10 +202,15 @@ length_match:
   `tolerance_mm`; the quality pass reports the group **spread** and flags it if
   it exceeds the tolerance.
 
-The quality report ships in the fab bundle as `quality.txt`. By default the
-checks are **advisory** (reported, not enforced); set `quality_gate = True` on the
-`atopile_pnr` target to fail the build when a diff-pair/length-match check fails
-(as `drc_gate` does for DRC).
+The quality report ships in the fab bundle as `quality.txt`. Its diff-pair /
+length-match checks are **advisory** by default (reported, not enforced); set
+`quality_gate = True` on the `atopile_pnr` target to fail the build on a miss.
+
+**Routing completeness is always enforced.** If FreeRouting leaves any net
+unrouted, the build **fails** with the count — a partially-routed board is not a
+board. (`route_max_passes = 0` lets the router run to completion; set
+`require_routed = False` only to inspect a deliberately-partial result.) `drc_gate`
+similarly turns DRC violations into a build failure.
 
 ## How intent becomes a layout
 

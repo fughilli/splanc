@@ -101,6 +101,18 @@ class QualityAnalyzeTest(unittest.TestCase):
         self.assertIn("diff-pair usb", text)
         self.assertIn("quality: PASS", text)
 
+    def test_fully_routed_default(self):
+        r = analyze({"a": 10.0}, {}, {})
+        self.assertTrue(r.fully_routed)
+        self.assertTrue(r.ok)
+
+    def test_unrouted_fails_and_is_not_ok(self):
+        r = analyze({"a": 10.0}, {}, {}, unrouted=7)
+        self.assertFalse(r.fully_routed)
+        self.assertFalse(r.ok)  # incomplete routing is never ok
+        self.assertIn("7 UNROUTED", r.summary())
+        self.assertIn("quality: FAIL", r.summary())
+
 
 if __name__ == "__main__":
     unittest.main()

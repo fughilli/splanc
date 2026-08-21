@@ -179,17 +179,23 @@ def _clear_tracks(board) -> int:
     return n
 
 
-def apply_placement(board, graph: BoardGraph, *, width: float, height: float) -> int:
-    """Move each footprint in ``board`` to its pose in ``graph``; clear old tracks.
+def apply_placement(
+    board, graph: BoardGraph, *, width: float, height: float, layers: int = 2
+) -> int:
+    """Move each footprint in ``board`` to its pose in ``graph``; clear old tracks;
+    set the copper layer count.
 
     Returns the number of footprints placed. Footprints in the board with no
     matching ref in the graph are left untouched (and warned about by the CLI).
-    The ``Edge.Cuts`` outline is *not* stamped here — the detailed-route flow reuses
-    the proven text-based ``board_outline.py`` to (re)frame the board to the new
-    placement, which avoids a broken ``BOARD.GetDrawings()`` SWIG iterator in this
-    KiCad 9 python binding. ``width`` is accepted for API symmetry (the framer
-    derives the real extent from the placed footprints)."""
+    The ``Edge.Cuts`` outline is stamped separately, as text, at the *placement
+    region* (see :func:`frame_region`) — which the placer keeps all courtyards
+    inside — rather than via ``BOARD.GetDrawings()`` (a broken SWIG iterator in
+    this KiCad 9 python under Bazel).
+    """
     import pcbnew
+
+    if layers and layers >= 2:
+        board.SetCopperLayerCount(int(layers))
 
     frame = _WriteFrame(height)
     by_ref = {c.ref: c for c in graph.components}
@@ -213,6 +219,50 @@ def apply_placement(board, graph: BoardGraph, *, width: float, height: float) ->
     return placed
 
 
+# Sentinel uuid prefix for our Edge.Cuts lines (so they are recognizable).
+_OUTLINE_UUID = "b0ad0011-0000-4000-8000"
+
+
+def frame_region(text: str, width: float, height: float, offset: float = _PAGE_OFFSET_MM) -> str:
+    """Stamp a rectangular ``Edge.Cuts`` outline at the *placement region* and size
+    the page to fit — as text.
+
+    The region is ``[0,width] x [0,height]`` in the engine frame, which the placer
+    keeps every courtyard inside; drawn in pcbnew coordinates (page ``offset``,
+    y-down) it is the axis-aligned rectangle ``[offset, offset+width] x [offset,
+    offset+height]``. Framing to the region (not the footprint-origin bbox) is what
+    guarantees **all pads land inside the outline** — an intentionally-overhanging
+    edge connector is the only thing that pokes past it, by design.
+
+    ``strip_edge_cuts`` must have removed the old outline first.
+    """
+    x0, y0 = offset, offset
+    x1, y1 = offset + width, offset + height
+    corners = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+    lines = []
+    for i in range(4):
+        ax, ay = corners[i]
+        bx, by = corners[(i + 1) % 4]
+        lines.append(
+            f"  (gr_line (start {ax:.3f} {ay:.3f}) (end {bx:.3f} {by:.3f})\n"
+            f'    (stroke (width 0.15) (type solid)) (layer "Edge.Cuts")\n'
+            f'    (uuid "{_OUTLINE_UUID}-00000000000{i}"))'
+        )
+    block = "\n".join(lines) + "\n"
+
+    # Insert before the final closing paren of the (kicad_pcb …) s-expression.
+    idx = text.rstrip().rfind(")")
+    if idx < 0:
+        return text
+    framed = text[:idx] + block + text[idx:]
+
+    # Size the sheet to contain the board (a border past the outline).
+    border = 10.0
+    paper = '(paper "User" %.3f %.3f)' % (x1 + border, y1 + border)
+    framed, n = re.subn(r"\(paper[^)]*\)", paper, framed, count=1)
+    return framed
+
+
 def writeback(
     in_pcb: str,
     graph: BoardGraph,
@@ -221,9 +271,11 @@ def writeback(
     width: float,
     height: float,
     rules: Optional[dict] = None,
+    layers: int = 2,
 ) -> int:
-    """Load ``in_pcb``, apply ``graph``'s placement (+ optional net-class ``rules``),
-    save to ``out_pcb``."""
+    """Load ``in_pcb``, apply ``graph``'s placement (+ optional net-class ``rules``,
+    + copper ``layers``), frame the board to the placement region, save to
+    ``out_pcb``."""
     import pcbnew
 
     board = pcbnew.LoadBoard(in_pcb)
@@ -232,15 +284,16 @@ def writeback(
     # applying them afterwards does not persist through the save).
     if rules:
         apply_net_classes(board, rules)
-    n = apply_placement(board, graph, width=width, height=height)
+    n = apply_placement(board, graph, width=width, height=height, layers=layers)
     pcbnew.SaveBoard(out_pcb, board)
-    # Strip all Edge.Cuts as text so the framing step (board_outline.py) adds one
-    # clean outline instead of doubling the stale one (pcbnew reformats gr_lines
-    # into nested strokes that board_outline's regex cannot remove).
+    # Text pass: strip all (stale) Edge.Cuts — pcbnew reformats gr_lines into
+    # nested strokes a single-level regex can't remove — then stamp one clean
+    # outline at the placement region so every pad is inside it.
     with open(out_pcb, encoding="utf-8") as fh:
         text = fh.read()
+    text = frame_region(strip_edge_cuts(text), width, height)
     with open(out_pcb, "w", encoding="utf-8") as fh:
-        fh.write(strip_edge_cuts(text))
+        fh.write(text)
     return n
 
 
@@ -260,13 +313,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     h = graph.outline.height
 
     rules = None
+    layers = 2
     if args.rules:
         import json
 
         with open(args.rules, encoding="utf-8") as fh:
             rules = json.load(fh)
+        layers = int(rules.get("layers", 2))
 
-    n = writeback(args.pcb, graph, args.out, width=w, height=h, rules=rules)
+    n = writeback(args.pcb, graph, args.out, width=w, height=h, rules=rules, layers=layers)
     print(f"writeback: placed {n}/{len(graph.components)} footprints -> {args.out}")
     if n < len(graph.components):
         missing = n - len(graph.components)

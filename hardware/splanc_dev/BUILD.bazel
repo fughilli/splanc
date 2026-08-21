@@ -54,6 +54,8 @@ atopile_pnr(
     name = "splanc_dev.fab",
     constraints = "constraints.yaml",
     layout = ":splanc_dev",
-    route_max_passes = 6,
+    # 0 = let FreeRouting route to completion; the build then fails unless every
+    # net is routed (require_routed defaults True) — a partial route is not a board.
+    route_max_passes = 0,
     visibility = ["//visibility:public"],
 )

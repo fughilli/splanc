@@ -99,7 +99,6 @@ def _pnr_board_impl(ctx):
     fr = ctx.file.freerouting
     placer = ctx.executable.placer
     autoroute = ctx.file._autoroute
-    board_outline = ctx.file._board_outline
     graph_py = _graph_py(ctx)
     name = ctx.attr.board_name or ctx.label.name
     mp = ctx.attr.route_max_passes
@@ -122,11 +121,9 @@ def _pnr_board_impl(ctx):
             ctx.file.constraints.path,
             "--allow-unconverged" if ctx.attr.allow_unconverged else "",
         ),
-        # 3. writeback the optimized placement + net classes onto the board.
+        # 3. writeback the optimized placement + net classes onto the board, and
+        # frame Edge.Cuts to the placement region (all pads inside; set layer count).
         _ki_run('-m pnr.writeback "%s" "$_WORK/placed.json" --out "%s" --rules "$_WORK/rules.json"' % (in_pcb.path, out_pcb.path)),
-        # 3b. frame the board: tight Edge.Cuts + page around the new placement, via
-        # the proven text-based board_outline.py (pure regex, no pcbnew container).
-        _ki_run('"%s" "%s" %d' % (board_outline.path, out_pcb.path, ctx.attr.outline_margin_mm)),
         # 4. detailed route (FreeRouting DSN/SES) — routes tracks into the board.
         _ki_run('"%s" "%s" "$_FR" %d' % (autoroute.path, out_pcb.path, mp)),
         # 5. DRC report (gated iff drc_gate).
@@ -142,17 +139,19 @@ def _pnr_board_impl(ctx):
         "fi",
         # Ensure the report file exists even when kicad-cli wrote nothing.
         '[ -f "%s" ] || : > "%s"' % (drc_rpt.path, drc_rpt.path),
-        # 6. quality pass (Phase 6): routed length / vias / diff-pair skew /
-        # length-match compliance against the resolved rules.
-        _ki_run('-m pnr.quality "%s" --rules "$_WORK/rules.json" --out "%s" %s' % (
+        # 6. quality pass: routed length / vias / diff-pair skew / length-match,
+        # AND the routing-completeness gate — fail the build if any net is unrouted
+        # (unless require_routed is off). A partial route is not a board.
+        _ki_run('-m pnr.quality "%s" --rules "$_WORK/rules.json" --out "%s" %s %s' % (
             out_pcb.path,
             quality_rpt.path,
             "--gate" if ctx.attr.quality_gate else "",
+            "--require-routed" if ctx.attr.require_routed else "",
         )),
     ])
 
     inputs = depset(
-        direct = [in_pcb, ctx.file.constraints, fr, autoroute, board_outline, graph_py] +
+        direct = [in_pcb, ctx.file.constraints, fr, autoroute, graph_py] +
                  ctx.files._pnr_srcs,
         transitive = [_tool_inputs(info)],
     )
@@ -183,15 +182,14 @@ _pnr_board = rule(
         "constraints": attr.label(allow_single_file = [".yaml", ".yml"], mandatory = True, doc = "Sidecar constraints.yaml (design §3)."),
         "placer": attr.label(executable = True, cfg = "exec", mandatory = True, doc = "The torch place+route py_binary (//hardware/pnr:pnr_fab)."),
         "freerouting": attr.label(allow_single_file = True, mandatory = True, doc = "FreeRouting binary for the detailed route."),
-        "route_max_passes": attr.int(default = 0, doc = "Cap FreeRouting optimization passes (`-mp`); 0 = unbounded."),
-        "outline_margin_mm": attr.int(default = 4, doc = "Edge.Cuts margin (mm) around the placed board (board_outline.py)."),
+        "route_max_passes": attr.int(default = 0, doc = "Cap FreeRouting optimization passes (`-mp`); 0 = route to completion."),
         "board_name": attr.string(doc = "Board name recorded in the graph (default: target name)."),
         "allow_unconverged": attr.bool(default = True, doc = "Proceed even if the place↔route loop did not drive overflow to 0."),
         "drc_gate": attr.bool(default = False, doc = "Fail the build on DRC violations (else report only)."),
         "quality_gate": attr.bool(default = False, doc = "Fail the build if a diff-pair/length-match check fails (else report only)."),
+        "require_routed": attr.bool(default = True, doc = "Fail the build if any net is left unrouted (the routing-completeness gate)."),
         "_pnr_srcs": attr.label(default = "//hardware/pnr:pnr_kicad_srcs", doc = "Stdlib pnr sources for the pcbnew steps."),
         "_autoroute": attr.label(default = "@atopile_rules//tools:autoroute.py", allow_single_file = True),
-        "_board_outline": attr.label(default = "@atopile_rules//tools:board_outline.py", allow_single_file = True),
     },
     toolchains = [TOOLCHAIN_TYPE],
 )
@@ -248,9 +246,9 @@ def atopile_pnr(
         layout,
         constraints,
         route_max_passes = 0,
-        outline_margin_mm = 4,
         drc_gate = False,
         quality_gate = False,
+        require_routed = True,
         allow_unconverged = True,
         board_name = None,
         visibility = None,
@@ -265,10 +263,10 @@ def atopile_pnr(
       name: base target name (e.g. `splanc_dev.fab`).
       layout: the `atopile_project` base target (provides the resolved board).
       constraints: the sidecar `constraints.yaml` (design §3).
-      route_max_passes: cap FreeRouting passes (`-mp`); 0 = route to convergence.
-      outline_margin_mm: Edge.Cuts margin (mm) around the placed board.
+      route_max_passes: cap FreeRouting passes (`-mp`); 0 = route to completion.
       drc_gate: fail the build on DRC violations (default: report only).
       quality_gate: fail the build if a diff-pair/length-match check fails.
+      require_routed: fail the build if any net is left unrouted (default True).
       allow_unconverged: proceed even if the place↔route loop leaves overflow.
       board_name: board name stamped into the graph (default: `<name>.board`).
       visibility: standard Bazel visibility, applied to both sub-targets.
@@ -281,9 +279,9 @@ def atopile_pnr(
         placer = "//hardware/pnr:pnr_fab",
         freerouting = "@freerouting//:bin/freerouting",
         route_max_passes = route_max_passes,
-        outline_margin_mm = outline_margin_mm,
         drc_gate = drc_gate,
         quality_gate = quality_gate,
+        require_routed = require_routed,
         allow_unconverged = allow_unconverged,
         board_name = board_name,
         visibility = visibility,
