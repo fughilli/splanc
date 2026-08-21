@@ -19,7 +19,7 @@
 import { Button, Card, EmptyState, toast } from "../kit";
 import { appState } from "../app/state";
 import type { Router, Screen } from "../app/router";
-import type { PerfMode, PerfReportMessage } from "../../net/proto";
+import type { FpsStateMessage, PerfMode, PerfReportMessage } from "../../net/proto";
 import { mapStore } from "../../store/mapStore";
 import { costTableStore } from "../../store/costTableStore";
 import {
@@ -83,16 +83,78 @@ export function PerfPanelScreen(router: Router): Screen {
   let lastReport: PerfReportMessage | null = null;
 
   let unsub: (() => void) | null = null;
+  let fpsUnsub: (() => void) | null = null;
   let pollTimer: number | null = null;
   let overrunToasted = false;
+  let curFps = 30;
 
   const client = appState.client;
   const connected = client !== null && client.isConnected;
+
+  // FUG-82 framerate control: pin the effect's target FPS (or Auto) and show the
+  // rate the autoscaler is running it at. Only meaningful with a device.
+  const fpsRow = document.createElement("div");
+  fpsRow.className = "perf-fps";
+  const fpsCap = document.createElement("span");
+  fpsCap.className = "perf-fps-label";
+  fpsCap.textContent = "Framerate";
+  const fpsSelect = document.createElement("select");
+  fpsSelect.className = "perf-fps-select";
+  fpsSelect.disabled = !connected;
+  {
+    const auto = document.createElement("option");
+    auto.value = "0";
+    auto.textContent = "Auto";
+    fpsSelect.append(auto);
+    for (let f = 25; f <= 80; f += 5) {
+      const o = document.createElement("option");
+      o.value = String(f);
+      o.textContent = `${f} fps`;
+      fpsSelect.append(o);
+    }
+  }
+  const fpsNow = document.createElement("span");
+  fpsNow.className = "perf-fps-now";
+  fpsNow.textContent = "—";
+  fpsRow.append(fpsCap, fpsSelect, fpsNow);
+
+  function showFps(currentFps: number, auto: boolean): void {
+    if (currentFps > 0) curFps = currentFps;
+    fpsNow.textContent = curFps > 0 ? (auto ? `auto · ${curFps} fps` : `${curFps} fps`) : "—";
+  }
+
+  function applyFpsState(s: FpsStateMessage): void {
+    fpsSelect.value = String(s.auto ? 0 : s.targetFps);
+    showFps(s.currentFps, s.auto);
+    if (s.aborted) {
+      // The device parked the effect — it couldn't render fast enough even at
+      // the floor / pinned rate. Notify the user and drop the control to Auto.
+      fpsSelect.value = "0";
+      toast(
+        `Effect stopped: this device can't render it at ${
+          s.targetFps > 0 ? `${s.targetFps} fps` : `${s.minFps} fps`
+        }`,
+        { error: true },
+      );
+    }
+  }
+
+  fpsSelect.addEventListener("change", () => {
+    if (client === null) return;
+    const target = Number(fpsSelect.value) | 0;
+    void client
+      .setFps(target)
+      .then(applyFpsState)
+      .catch(() => toast("Couldn't set the framerate target", { error: true }));
+  });
 
   function pushReport(r: PerfReportMessage): void {
     lastReport = r;
     if (r.cpuHz > 0) cpuHz = r.cpuHz;
     if (r.budgetCycles > 0) budgetMs = (r.budgetCycles / cpuHz) * 1000;
+    // The autoscaler's live target (FUG-82); reflect it in the framerate readout
+    // (leave the select on the user's pin / Auto choice).
+    if (r.currentFps > 0) showFps(r.currentFps, fpsSelect.value === "0");
     for (const t of r.ticks) {
       points.push({
         frameMs: cyc(t.frameCycles + t.showCycles),
@@ -161,7 +223,7 @@ export function PerfPanelScreen(router: Router): Screen {
     }
     if (headroomMs < 0 && !overrunToasted) {
       overrunToasted = true;
-      toast("Effect overruns the 30 fps budget", { error: true });
+      toast(`Effect overruns the ${curFps} fps budget`, { error: true });
     }
 
     // FULL-mode detail readout
@@ -332,6 +394,8 @@ export function PerfPanelScreen(router: Router): Screen {
     const { table } = await costTableStore.resolveTable().catch(() => ({ table: null }));
     if (table?.budget) budgetModel = table.budget;
     unsub = client.onPerfReport((r) => pushReport(r));
+    // Reflect autoscaler state (live target + abort notification, FUG-82).
+    fpsUnsub = client.onFpsState(applyFpsState);
     try {
       const mode: PerfMode = "FULL";
       const first = await client.setPerf(mode, 250);
@@ -381,6 +445,7 @@ export function PerfPanelScreen(router: Router): Screen {
     Card(canvas),
     Card(gauge),
     Card(budgetBar.el),
+    Card(fpsRow),
     Card(badges),
     Card(detail),
     actions,
@@ -436,6 +501,8 @@ export function PerfPanelScreen(router: Router): Screen {
     onUnmount: () => {
       unsub?.();
       unsub = null;
+      fpsUnsub?.();
+      fpsUnsub = null;
       if (pollTimer !== null) {
         clearInterval(pollTimer);
         pollTimer = null;

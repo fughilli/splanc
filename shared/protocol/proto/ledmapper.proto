@@ -420,6 +420,16 @@ message GetEffectUniforms {
   optional string effect_id = 1;
 }
 
+// Override the effect framerate target (FUG-82). By default the player
+// autoscales the FPS on a 5-fps ladder (25..80) to keep at least 5% headroom;
+// `target_fps` pins an exact rate (snapped to the ladder) and stops autoscaling.
+// `target_fps` = 0 returns to autoscale. If the pinned rate can't be held the
+// player aborts the effect and pushes an fps_state{aborted=true}. Reply:
+// fps_state.
+message SetFps {
+  uint32 target_fps = 1;
+}
+
 // ---------------------------------------------------------------------------
 // Perf monitoring (§ perf-monitoring): device execution-time/memory telemetry
 // ---------------------------------------------------------------------------
@@ -469,6 +479,10 @@ message PerfReport {
   uint32 fxb_hash = 2;
   uint32 cpu_hz = 3;
   uint32 budget_cycles = 4;
+  // The framerate autoscaler's live target FPS (FUG-82). budget_cycles tracks
+  // this (it's cpu_hz / current_fps), so the panel can show the headroom against
+  // the rate the effect is actually running at.
+  uint32 current_fps = 5;
   uint32 frame_cycles_min = 10;
   uint32 frame_cycles_mean = 11;
   uint32 frame_cycles_max = 12;
@@ -522,6 +536,7 @@ message ClientMessage {
     SetColorCorrection set_color_correction = 30;
     SetBrightness set_brightness = 31;
     SetJit set_jit = 32;
+    SetFps set_fps = 33;
   }
 }
 
@@ -775,6 +790,21 @@ message EffectUniforms {
   repeated TexturePort textures = 4;
 }
 
+// Framerate autoscaler state (FUG-82). Reply to set_fps, and pushed unsolicited
+// when the autoscaler aborts an effect it can't run within budget. `target_fps`
+// is the user-pinned rate (0 = autoscaling); `current_fps` is the rate the
+// effect is running at right now; `min_fps`/`max_fps` are the ladder bounds
+// (25/80). `aborted` = the effect was just parked because even the floor/pinned
+// rate couldn't hold 5% headroom — the app should surface this to the user.
+message FpsState {
+  uint32 target_fps = 1;
+  uint32 current_fps = 2;
+  uint32 min_fps = 3;
+  uint32 max_fps = 4;
+  bool auto = 5;
+  bool aborted = 6;
+}
+
 message ServerMessage {
   oneof msg {
     Welcome welcome = 1;
@@ -795,5 +825,6 @@ message ServerMessage {
     EffectUniforms effect_uniforms = 16;
     PerfReport perf_report = 17;
     ChunkAck chunk_ack = 18;
+    FpsState fps_state = 19;
   }
 }

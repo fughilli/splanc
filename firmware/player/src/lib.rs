@@ -406,6 +406,9 @@ impl Player {
             CMsg::SetPerf(_) | CMsg::GetPerfReport(_) => {
                 Some(error("unsupported", "perf monitoring not available on this player"))
             }
+            // set_fps is intercepted by the fx/autoscaler layer (ffi) before the
+            // session core sees it; unreachable here.
+            CMsg::SetFps(_) => Some(error("unsupported", "fps handled by the autoscaler layer")),
         }
     }
 

@@ -55,6 +55,7 @@ const CLIENT_ARMS: Record<string, string> = {
   upload_chunk: "uploadChunk",
   set_color_correction: "setColorCorrection",
   set_brightness: "setBrightness",
+  set_fps: "setFps",
 };
 const SERVER_ARMS: Record<string, string> = {
   welcome: "welcome",
@@ -75,6 +76,7 @@ const SERVER_ARMS: Record<string, string> = {
   effect_uniforms: "effectUniforms",
   perf_report: "perfReport",
   chunk_ack: "chunkAck",
+  fps_state: "fpsState",
 };
 const CLIENT_TYPES: Record<string, string> = Object.fromEntries(
   Object.entries(CLIENT_ARMS).map(([snake, camel]) => [camel, snake]),
@@ -389,6 +391,9 @@ export interface PerfReportMessage {
   fxbHash: number;
   cpuHz: number;
   budgetCycles: number;
+  /** The framerate autoscaler's live target FPS (FUG-82); budgetCycles =
+   * cpuHz / currentFps. */
+  currentFps: number;
   frameCyclesMin: number;
   frameCyclesMean: number;
   frameCyclesMax: number;
@@ -402,6 +407,33 @@ export interface PerfReportMessage {
   heapMinFree: number;
   heapLargestFree: number;
   ticks: PerfFrameFlat[];
+}
+
+// -- FPS autoscaler arms (flat shapes, FUG-82) ------------------------------
+// The effect framerate autoscaler keeps effects at a consistent rate on a
+// 5-fps ladder (25..80) and aborts an effect it can't run within budget. The
+// app can override the target; an unachievable override aborts + notifies.
+
+/** Override the effect framerate target (proto SetFps). `targetFps` = 0 returns
+ * to autoscale; any other value pins that rate (snapped to the 5-fps ladder). */
+export interface SetFpsMessage {
+  type: "set_fps";
+  targetFps: number;
+}
+
+/** Framerate autoscaler state (proto FpsState). Reply to set_fps and pushed
+ * unsolicited when an effect is aborted (`aborted` = the effect was parked
+ * because even the floor/pinned rate couldn't hold — surface this to the user).
+ * `targetFps` is the user-pinned rate (0 = autoscaling); `currentFps` is the
+ * rate the effect runs at now; `minFps`/`maxFps` are the ladder bounds. */
+export interface FpsStateMessage {
+  type: "fps_state";
+  targetFps: number;
+  currentFps: number;
+  minFps: number;
+  maxFps: number;
+  auto: boolean;
+  aborted: boolean;
 }
 
 // -- MappingBundle (.binpb file format) -------------------------------------
