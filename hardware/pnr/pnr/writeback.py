@@ -103,6 +103,71 @@ class _WriteFrame:
         return pcbnew.VECTOR2I(px, py)
 
 
+def apply_net_classes(board, rules: dict) -> int:
+    """Apply net-class / diff-pair widths from ``rules`` (rules.json) to the board
+    so the detailed router honors them (FreeRouting reads per-class rules from the
+    exported DSN). Verified to persist across save/reload in KiCad 9.
+
+    Best-effort and fully guarded: any API hiccup degrades that class to default
+    routing rather than failing the write-back. Returns the number of classes
+    applied. ``default`` sets the board default class; named classes are created
+    and their nets assigned by pattern.
+    """
+    import pcbnew
+
+    try:
+        ns = board.GetDesignSettings().m_NetSettings
+    except Exception:  # pragma: no cover - version shim
+        return 0
+
+    applied = 0
+    for nc in rules.get("net_classes", []):
+        try:
+            if nc["name"] == "default":
+                d = ns.GetDefaultNetclass()
+                if nc.get("width_mm"):
+                    d.SetTrackWidth(_nm(nc["width_mm"]))
+                if nc.get("clearance_mm"):
+                    d.SetClearance(_nm(nc["clearance_mm"]))
+                applied += 1
+                continue
+            cls = pcbnew.NETCLASS(nc["name"])
+            if nc.get("width_mm"):
+                cls.SetTrackWidth(_nm(nc["width_mm"]))
+            if nc.get("clearance_mm"):
+                cls.SetClearance(_nm(nc["clearance_mm"]))
+            ns.SetNetclass(nc["name"], cls)
+            for net in nc.get("nets", []):
+                ns.SetNetclassPatternAssignment(net, nc["name"])
+            applied += 1
+        except Exception:  # pragma: no cover - version shim
+            continue
+
+    for dp in rules.get("diff_pairs", []):
+        try:
+            name = "dp_" + dp["name"]
+            cls = pcbnew.NETCLASS(name)
+            if dp.get("width_mm"):
+                cls.SetTrackWidth(_nm(dp["width_mm"]))
+                if hasattr(cls, "SetDiffPairWidth"):
+                    cls.SetDiffPairWidth(_nm(dp["width_mm"]))
+            if dp.get("gap_mm") and hasattr(cls, "SetDiffPairGap"):
+                cls.SetDiffPairGap(_nm(dp["gap_mm"]))
+            ns.SetNetclass(name, cls)
+            ns.SetNetclassPatternAssignment(dp["p"], name)
+            ns.SetNetclassPatternAssignment(dp["n"], name)
+            applied += 1
+        except Exception:  # pragma: no cover - version shim
+            continue
+
+    try:
+        if hasattr(ns, "RecomputeEffectiveNetclasses"):
+            ns.RecomputeEffectiveNetclasses()
+    except Exception:  # pragma: no cover - version shim
+        pass
+    return applied
+
+
 def _clear_tracks(board) -> int:
     """Remove all existing tracks + vias (mm-scale preview routing from the base
     autoroute pass). Moving footprints invalidates them; the detailed router
@@ -155,11 +220,18 @@ def writeback(
     *,
     width: float,
     height: float,
+    rules: Optional[dict] = None,
 ) -> int:
-    """Load ``in_pcb``, apply ``graph``'s placement, save to ``out_pcb``."""
+    """Load ``in_pcb``, apply ``graph``'s placement (+ optional net-class ``rules``),
+    save to ``out_pcb``."""
     import pcbnew
 
     board = pcbnew.LoadBoard(in_pcb)
+    # Net classes first: apply_placement's BuildConnectivity() must run *after*
+    # the classes exist for them to stick to the board's net settings (verified —
+    # applying them afterwards does not persist through the save).
+    if rules:
+        apply_net_classes(board, rules)
     n = apply_placement(board, graph, width=width, height=height)
     pcbnew.SaveBoard(out_pcb, board)
     # Strip all Edge.Cuts as text so the framing step (board_outline.py) adds one
@@ -177,6 +249,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("pcb", help="the atopile-resolved .kicad_pcb (footprint source)")
     ap.add_argument("graph", help="placed BoardGraph JSON (pnr.route --dump-json)")
     ap.add_argument("--out", required=True, help="output .kicad_pcb path")
+    ap.add_argument("--rules", help="rules.json (pnr.route --dump-rules); optional net classes")
     args = ap.parse_args(argv)
 
     with open(args.graph, encoding="utf-8") as fh:
@@ -186,7 +259,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     w = graph.outline.width
     h = graph.outline.height
 
-    n = writeback(args.pcb, graph, args.out, width=w, height=h)
+    rules = None
+    if args.rules:
+        import json
+
+        with open(args.rules, encoding="utf-8") as fh:
+            rules = json.load(fh)
+
+    n = writeback(args.pcb, graph, args.out, width=w, height=h, rules=rules)
     print(f"writeback: placed {n}/{len(graph.components)} footprints -> {args.out}")
     if n < len(graph.components):
         missing = n - len(graph.components)

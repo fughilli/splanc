@@ -39,3 +39,22 @@ side_pref: # soft: bias parts to a side (top = user-facing)
 
 group: # soft: attract members together, near an anchor
   - { members: [U2, L2, L3], anchor: U2, radius_mm: 8 } # boost converter stage
+
+# --- Routing rules (Phase 6, docs/hardware/pnr-inputs.md) --------------------
+# Net names come from the netlist (atopile lowercases most). These drive the
+# detailed router (widths) and the post-route quality report (skew / length).
+
+net_class: # per-class trace width + clearance, applied to matching nets
+  power: # rails carry more current -> wider copper (FreeRouting honors this)
+    width_mm: 0.4
+    clearance_mm: 0.3
+    nets: [lv, '*hv', GND, '*-GND'] # lv, p3v3/p5v/vbat/vsys-hv, GND, gauge/usbc-GND
+
+# This module has no nets that require length-matching or a differential pair
+# (its USB is inside the WROOM module). For boards that do, the quality pass
+# checks them — see docs/hardware/pnr-inputs.md, e.g.:
+#
+#   length_match:
+#     - { name: rgmii, nets: [TXD0, TXD1, TXD2, TXD3], tolerance_mm: 1.0 }
+#   diff_pair:
+#     - { name: usb, p: USB_DP, n: USB_DM, width_mm: 0.2, gap_mm: 0.15, skew_mm: 0.3 }

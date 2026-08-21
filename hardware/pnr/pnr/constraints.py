@@ -83,6 +83,40 @@ class Constraint:
 
 
 @dataclass
+class NetClass:
+    """A named routing rule set (trace width / clearance) over a set of nets.
+
+    ``nets`` are net-name globs, resolved against the real netlist at route time
+    (nets are not component refs, so they can't be expanded at compile time)."""
+
+    name: str
+    width_mm: Optional[float] = None
+    clearance_mm: Optional[float] = None
+    nets: Tuple[str, ...] = ()
+
+
+@dataclass
+class DiffPair:
+    """A differential pair: two nets routed together, length-skew-checked."""
+
+    name: str
+    p: str
+    n: str
+    width_mm: Optional[float] = None
+    gap_mm: Optional[float] = None
+    skew_mm: float = 0.5  # max acceptable + / - routed-length difference
+
+
+@dataclass
+class LengthMatch:
+    """A group of nets whose routed lengths must agree within a tolerance."""
+
+    name: str
+    nets: Tuple[str, ...] = ()
+    tolerance_mm: float = 1.0
+
+
+@dataclass
 class CompiledConstraints:
     """The whole file, compiled and validated."""
 
@@ -90,6 +124,11 @@ class CompiledConstraints:
     constraints: List[Constraint] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
     schema: str = SCHEMA_VERSION
+    # Routing rules (design §9.6). Kept separate from placement constraints — the
+    # placer ignores them; writeback + the quality pass consume them.
+    net_classes: List[NetClass] = field(default_factory=list)
+    diff_pairs: List[DiffPair] = field(default_factory=list)
+    length_matches: List[LengthMatch] = field(default_factory=list)
 
     @property
     def hard(self) -> List[Constraint]:
@@ -154,6 +193,68 @@ def _require_enum(value, allowed, where: str):
     return value
 
 
+def _opt_float(value):
+    return None if value is None else float(value)
+
+
+def _expand_nets(patterns: Iterable[str], net_names: Sequence[str]) -> Tuple[str, ...]:
+    """Expand net-name literals/globs against the real netlist (order-stable)."""
+    resolved: List[str] = []
+    seen = set()
+    for pat in patterns:
+        is_glob = any(ch in pat for ch in "*?[")
+        hits = (
+            [n for n in net_names if fnmatch.fnmatchcase(n, pat)]
+            if is_glob
+            else ([pat] if pat in net_names else [])
+        )
+        for n in hits:
+            if n not in seen:
+                seen.add(n)
+                resolved.append(n)
+    return tuple(resolved)
+
+
+def compile_routing_rules(compiled: "CompiledConstraints", net_names: Sequence[str]) -> Dict:
+    """Resolve net-class / diff-pair / length-match rules against the real net
+    names into a plain (JSON-serializable) dict — the ``rules.json`` seam the
+    pcbnew steps (writeback, quality) consume without pyyaml/torch. Net globs are
+    expanded here (where the netlist is known); unknown literal nets are dropped.
+    """
+    names = set(net_names)
+    return {
+        "net_classes": [
+            {
+                "name": nc.name,
+                "width_mm": nc.width_mm,
+                "clearance_mm": nc.clearance_mm,
+                "nets": list(_expand_nets(nc.nets, net_names)),
+            }
+            for nc in compiled.net_classes
+        ],
+        "diff_pairs": [
+            {
+                "name": dp.name,
+                "p": dp.p,
+                "n": dp.n,
+                "width_mm": dp.width_mm,
+                "gap_mm": dp.gap_mm,
+                "skew_mm": dp.skew_mm,
+            }
+            for dp in compiled.diff_pairs
+            if dp.p in names and dp.n in names
+        ],
+        "length_match": [
+            {
+                "name": lm.name,
+                "nets": list(_expand_nets(lm.nets, net_names)),
+                "tolerance_mm": lm.tolerance_mm,
+            }
+            for lm in compiled.length_matches
+        ],
+    }
+
+
 def _parse_board(raw: Dict) -> BoardSpec:
     outline = raw.get("outline") or {}
     return BoardSpec(
@@ -190,6 +291,9 @@ def compile_constraints(doc: Dict, known_refs: Sequence[str]) -> CompiledConstra
         "keepout",
         "side_pref",
         "group",
+        "net_class",
+        "diff_pair",
+        "length_match",
     }
     for key in doc:
         if key not in known_keys:
@@ -289,11 +393,60 @@ def compile_constraints(doc: Dict, known_refs: Sequence[str]) -> CompiledConstra
             )
         )
 
+    # net_class: routing rule sets over net-name globs (resolved at route time).
+    net_classes: List[NetClass] = []
+    for name, spec in (doc.get("net_class") or {}).items():
+        spec = spec or {}
+        nets = spec.get("nets") or []
+        net_classes.append(
+            NetClass(
+                name=str(name),
+                width_mm=_opt_float(spec.get("width_mm")),
+                clearance_mm=_opt_float(spec.get("clearance_mm")),
+                nets=tuple(str(n) for n in nets),
+            )
+        )
+
+    # diff_pair: two nets routed together + skew-checked.
+    diff_pairs: List[DiffPair] = []
+    for entry in doc.get("diff_pair") or []:
+        entry = entry or {}
+        if not entry.get("p") or not entry.get("n"):
+            raise ConstraintError(f"diff_pair {entry.get('name')!r}: needs 'p' and 'n' nets")
+        diff_pairs.append(
+            DiffPair(
+                name=str(entry.get("name") or f"{entry['p']}/{entry['n']}"),
+                p=str(entry["p"]),
+                n=str(entry["n"]),
+                width_mm=_opt_float(entry.get("width_mm")),
+                gap_mm=_opt_float(entry.get("gap_mm")),
+                skew_mm=float(entry.get("skew_mm", 0.5)),
+            )
+        )
+
+    # length_match: groups whose routed lengths must agree within a tolerance.
+    length_matches: List[LengthMatch] = []
+    for entry in doc.get("length_match") or []:
+        entry = entry or {}
+        nets = entry.get("nets") or []
+        if len(nets) < 2:
+            raise ConstraintError(f"length_match {entry.get('name')!r}: needs >= 2 nets")
+        length_matches.append(
+            LengthMatch(
+                name=str(entry.get("name") or "group"),
+                nets=tuple(str(n) for n in nets),
+                tolerance_mm=float(entry.get("tolerance_mm", 1.0)),
+            )
+        )
+
     return CompiledConstraints(
         board=board,
         constraints=constraints,
         warnings=warnings,
         schema=str(doc.get("schema", SCHEMA_VERSION)),
+        net_classes=net_classes,
+        diff_pairs=diff_pairs,
+        length_matches=length_matches,
     )
 
 

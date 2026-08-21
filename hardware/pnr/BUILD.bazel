@@ -26,6 +26,7 @@ filegroup(
         "pnr/__init__.py",
         "pnr/graph.py",
         "pnr/ingest.py",
+        "pnr/quality.py",
         "pnr/writeback.py",
     ],
 )
@@ -161,6 +162,21 @@ py_test(
     legacy_create_init = False,
     main = "tests/test_writeback.py",
     deps = [":pnr"],
+)
+
+# Phase 6: routing-rule compilation (net-class/diff-pair/length-match) + the pure
+# post-route quality analysis. No torch/pcbnew.
+py_test(
+    name = "quality_test",
+    size = "small",
+    srcs = ["tests/test_quality.py"],
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_quality.py",
+    deps = [
+        ":pnr",
+        requirement("pyyaml"),
+    ],
 )
 
 # Phase 2 acceptance: placement MVP is legal + beats the ato-row HPWL baseline.

@@ -26,6 +26,16 @@ load("@atopile_rules//bazel/atopile:providers.bzl", "AtopileLayoutInfo")
 
 TOOLCHAIN_TYPE = "@atopile_rules//bazel/atopile:toolchain_type"
 
+# Reports the PnR board rule produces alongside the routed board, so the fab
+# bundle can collect them (DRC report + the Phase 6 quality report).
+PnrReportsInfo = provider(
+    doc = "Side-car reports from the PnR board flow.",
+    fields = {
+        "drc": "File: the kicad-cli DRC report.",
+        "quality": "File: routed length / via / diff-pair / length-match report.",
+    },
+)
+
 def _toolinfo(ctx):
     return ctx.toolchains[TOOLCHAIN_TYPE].atopileinfo
 
@@ -84,6 +94,7 @@ def _pnr_board_impl(ctx):
     bom = ctx.attr.layout[AtopileLayoutInfo].bom
     out_pcb = ctx.actions.declare_file(ctx.label.name + ".kicad_pcb")
     drc_rpt = ctx.actions.declare_file(ctx.label.name + ".drc.rpt")
+    quality_rpt = ctx.actions.declare_file(ctx.label.name + ".quality.txt")
 
     fr = ctx.file.freerouting
     placer = ctx.executable.placer
@@ -103,15 +114,16 @@ def _pnr_board_impl(ctx):
         '_FR="$(cd "$(dirname \'%s\')" && pwd)/$(basename \'%s\')"' % (fr.path, fr.path),
         # 1. ingest: resolved board -> neutral graph.
         _ki_run('-m pnr.ingest "%s" --name "%s" --dump-json "$_WORK/graph.json"' % (in_pcb.path, name)),
-        # 2. place + route feedback loop (torch) -> placed graph. Runs with its
-        # OWN runfiles env (no injected PYTHONPATH).
-        '"%s" "$_WORK/graph.json" "%s" --dump-json "$_WORK/placed.json" %s' % (
+        # 2. place + route feedback loop (torch) -> placed graph + routing rules
+        # (net classes / diff pairs / length match). Runs with its OWN runfiles
+        # env (no injected PYTHONPATH).
+        '"%s" "$_WORK/graph.json" "%s" --dump-json "$_WORK/placed.json" --dump-rules "$_WORK/rules.json" %s' % (
             placer.path,
             ctx.file.constraints.path,
             "--allow-unconverged" if ctx.attr.allow_unconverged else "",
         ),
-        # 3. writeback the optimized placement onto the board (poses + cleared tracks).
-        _ki_run('-m pnr.writeback "%s" "$_WORK/placed.json" --out "%s"' % (in_pcb.path, out_pcb.path)),
+        # 3. writeback the optimized placement + net classes onto the board.
+        _ki_run('-m pnr.writeback "%s" "$_WORK/placed.json" --out "%s" --rules "$_WORK/rules.json"' % (in_pcb.path, out_pcb.path)),
         # 3b. frame the board: tight Edge.Cuts + page around the new placement, via
         # the proven text-based board_outline.py (pure regex, no pcbnew container).
         _ki_run('"%s" "%s" %d' % (board_outline.path, out_pcb.path, ctx.attr.outline_margin_mm)),
@@ -130,6 +142,13 @@ def _pnr_board_impl(ctx):
         "fi",
         # Ensure the report file exists even when kicad-cli wrote nothing.
         '[ -f "%s" ] || : > "%s"' % (drc_rpt.path, drc_rpt.path),
+        # 6. quality pass (Phase 6): routed length / vias / diff-pair skew /
+        # length-match compliance against the resolved rules.
+        _ki_run('-m pnr.quality "%s" --rules "$_WORK/rules.json" --out "%s" %s' % (
+            out_pcb.path,
+            quality_rpt.path,
+            "--gate" if ctx.attr.quality_gate else "",
+        )),
     ])
 
     inputs = depset(
@@ -139,7 +158,7 @@ def _pnr_board_impl(ctx):
     )
 
     ctx.actions.run_shell(
-        outputs = [out_pcb, drc_rpt],
+        outputs = [out_pcb, drc_rpt, quality_rpt],
         inputs = inputs,
         # files_to_run stages the placer py_binary AND its runfiles tree.
         tools = [ctx.attr.placer[DefaultInfo].files_to_run],
@@ -152,8 +171,9 @@ def _pnr_board_impl(ctx):
         execution_requirements = {"local": "1", "no-sandbox": "1"},
     )
     return [
-        DefaultInfo(files = depset([out_pcb, drc_rpt])),
+        DefaultInfo(files = depset([out_pcb, drc_rpt, quality_rpt])),
         AtopileLayoutInfo(pcb = out_pcb, bom = bom),
+        PnrReportsInfo(drc = drc_rpt, quality = quality_rpt),
     ]
 
 _pnr_board = rule(
@@ -168,6 +188,7 @@ _pnr_board = rule(
         "board_name": attr.string(doc = "Board name recorded in the graph (default: target name)."),
         "allow_unconverged": attr.bool(default = True, doc = "Proceed even if the place↔route loop did not drive overflow to 0."),
         "drc_gate": attr.bool(default = False, doc = "Fail the build on DRC violations (else report only)."),
+        "quality_gate": attr.bool(default = False, doc = "Fail the build if a diff-pair/length-match check fails (else report only)."),
         "_pnr_srcs": attr.label(default = "//hardware/pnr:pnr_kicad_srcs", doc = "Stdlib pnr sources for the pcbnew steps."),
         "_autoroute": attr.label(default = "@atopile_rules//tools:autoroute.py", allow_single_file = True),
         "_board_outline": attr.label(default = "@atopile_rules//tools:board_outline.py", allow_single_file = True),
@@ -180,8 +201,11 @@ _pnr_board = rule(
 def _pnr_fab_impl(ctx):
     info = _toolinfo(ctx)
     layout = ctx.attr.board[AtopileLayoutInfo]
+    reports = ctx.attr.board[PnrReportsInfo]
     pcb = layout.pcb
     bom = layout.bom
+    drc = reports.drc
+    quality = reports.quality
     outdir = ctx.actions.declare_directory(ctx.label.name)
     kc = _kicad_cli(info)
 
@@ -195,11 +219,14 @@ def _pnr_fab_impl(ctx):
         '"%s" pcb export drill "%s" -o "%s/"' % (kc, pcb.path, outdir.path),
         '"%s" pcb export pos "%s" -o "%s/pick-place.csv" --format csv --units mm || true' % (kc, pcb.path, outdir.path),
         'if [ -s "%s" ]; then cp -f "%s" "%s/bom.csv"; fi' % (bom.path, bom.path, outdir.path),
+        # The DRC + Phase 6 quality reports travel with the bundle.
+        'cp -f "%s" "%s/drc.rpt"' % (drc.path, outdir.path),
+        'cp -f "%s" "%s/quality.txt"' % (quality.path, outdir.path),
     ])
 
     ctx.actions.run_shell(
         outputs = [outdir],
-        inputs = depset([pcb, bom], transitive = [_tool_inputs(info)]),
+        inputs = depset([pcb, bom, drc, quality], transitive = [_tool_inputs(info)]),
         command = cmd,
         mnemonic = "PnrFab",
         progress_message = "PnR fab bundle -> %s" % outdir.short_path,
@@ -211,7 +238,7 @@ def _pnr_fab_impl(ctx):
 _pnr_fab = rule(
     implementation = _pnr_fab_impl,
     attrs = {
-        "board": attr.label(providers = [AtopileLayoutInfo], mandatory = True),
+        "board": attr.label(providers = [AtopileLayoutInfo, PnrReportsInfo], mandatory = True),
     },
     toolchains = [TOOLCHAIN_TYPE],
 )
@@ -223,6 +250,7 @@ def atopile_pnr(
         route_max_passes = 0,
         outline_margin_mm = 4,
         drc_gate = False,
+        quality_gate = False,
         allow_unconverged = True,
         board_name = None,
         visibility = None,
@@ -240,6 +268,7 @@ def atopile_pnr(
       route_max_passes: cap FreeRouting passes (`-mp`); 0 = route to convergence.
       outline_margin_mm: Edge.Cuts margin (mm) around the placed board.
       drc_gate: fail the build on DRC violations (default: report only).
+      quality_gate: fail the build if a diff-pair/length-match check fails.
       allow_unconverged: proceed even if the place↔route loop leaves overflow.
       board_name: board name stamped into the graph (default: `<name>.board`).
       visibility: standard Bazel visibility, applied to both sub-targets.
@@ -254,6 +283,7 @@ def atopile_pnr(
         route_max_passes = route_max_passes,
         outline_margin_mm = outline_margin_mm,
         drc_gate = drc_gate,
+        quality_gate = quality_gate,
         allow_unconverged = allow_unconverged,
         board_name = board_name,
         visibility = visibility,

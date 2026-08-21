@@ -401,8 +401,17 @@ learned routability predictor) is future work.
    **`bazel build //hardware/splanc_dev:splanc_dev.fab`** yields the routed board
    - a Gerber/drill/BOM/pick-place bundle. DRC runs each build (report by default;
      `drc_gate = True` to fail on violations — the "DRC-clean" gate).
-6. **Quality passes.** Diff-pair/length-match; via/length optimization;
-   (optional) a learned routability predictor if the analytical signal limits us.
+6. **Quality passes.** ✅ **Done** (except the optional learned predictor).
+   `net_class` / `diff_pair` / `length_match` routing rules (§3) compile to a
+   `rules.json`; write-back applies per-class **trace widths** to the board net
+   settings so FreeRouting routes power rails wider (verified to persist through
+   the KiCad-9 save); and `pnr/quality.py` runs a **post-route quality pass** —
+   per-net routed length, via count, diff-pair length **skew**, and length-match
+   **spread** vs tolerance — shipped as `quality.txt` in the fab bundle (advisory
+   by default; `quality_gate = True` enforces). Gated by `quality_test`. The
+   optional **learned routability predictor** is deferred: the analytical
+   net-crossing + PathFinder signal already converges the loop, so it isn't
+   limiting — revisit only if a future board proves it necessary.
 
 ### Test fixtures & extraction
 

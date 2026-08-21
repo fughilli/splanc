@@ -38,3 +38,13 @@ side_pref: # soft: bias parts to a side (top = user-facing)
 
 group: # soft: attract members together, near an anchor
   - { members: [U2, L2, L3], anchor: U2, radius_mm: 8 } # boost converter stage
+
+# --- Routing rules (Phase 6) ---
+net_class:
+  power:
+    width_mm: 0.4
+    clearance_mm: 0.3
+    nets: [lv, '*hv', GND, '*-GND']
+
+length_match:
+  - { name: i2c, nets: [SCL, SDA], tolerance_mm: 3.0 }

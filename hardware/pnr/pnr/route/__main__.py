@@ -13,10 +13,11 @@ the end-to-end ``<board>.fab`` flow: ingest (pcbnew) → **this** → writeback
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from typing import List, Optional
 
-from pnr.constraints import compile_constraints
+from pnr.constraints import compile_constraints, compile_routing_rules
 from pnr.graph import BoardGraph
 from pnr.ingest import dump_svg
 from pnr.route.feedback import route_and_place
@@ -32,6 +33,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--gcell-mm", type=float, default=2.5)
     ap.add_argument("--dump-json", metavar="PATH")
     ap.add_argument("--dump-svg", metavar="PATH")
+    ap.add_argument(
+        "--dump-rules",
+        metavar="PATH",
+        help="write resolved net-class/diff-pair/length-match rules (rules.json) "
+        "for the pcbnew writeback + quality steps",
+    )
     ap.add_argument(
         "--allow-unconverged",
         action="store_true",
@@ -62,6 +69,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.dump_svg:
         with open(args.dump_svg, "w", encoding="utf-8") as fh:
             fh.write(dump_svg(placed))
+    if args.dump_rules:
+        net_names = [n.name for n in graph.nets]
+        with open(args.dump_rules, "w", encoding="utf-8") as fh:
+            json.dump(compile_routing_rules(constraints, net_names), fh, indent=2, sort_keys=True)
 
     ok = report.converged or args.allow_unconverged
     return 0 if ok else 2

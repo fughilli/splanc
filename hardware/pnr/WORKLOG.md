@@ -6,7 +6,37 @@ scan back. Full design + rationale lives in
 the running state so a fresh-context agent can pick up cleanly. Update it at the
 end of every session.
 
-## 2026-08-21 (late) — Phases 4 + 5 landed: end-to-end `.fab` target (START HERE)
+## 2026-08-21 (late) — Phases 4 + 5 + 6 landed: end-to-end `.fab` target (START HERE)
+
+**Phase 6 — routing rules + post-route quality pass (added same session):**
+
+- **Schema** (`constraints.py`): `net_class` (per-class trace width/clearance over
+  net-name globs), `diff_pair` (p/n + skew tol), `length_match` (net group +
+  tolerance). `compile_routing_rules(compiled, net_names)` expands net globs →
+  a stdlib `rules.json` (the seam the pcbnew steps consume without pyyaml/torch).
+- **Widths reach the router** (`writeback.apply_net_classes`): applies net classes
+  to the board's `m_NetSettings` (default class + named classes via
+  `SetNetclassPatternAssignment`) so FreeRouting's DSN carries per-class widths —
+  power rails route wider. **Order matters:** classes must be applied _before_
+  `apply_placement` (its `BuildConnectivity()` must run with the classes present,
+  else they don't persist through the KiCad-9 save — verified).
+- **Quality pass** (`pnr/quality.py`): reads the routed board via pcbnew
+  (`GetTracks().GetLength()` + `PCB_VIA` count), and a pure `analyze()` scores
+  per-net routed length, via count, **diff-pair skew**, **length-match spread** vs
+  tolerance, and per-net-class length roll-up → `quality.txt` in the fab bundle.
+  Advisory by default; `quality_gate = True` fails the build on a diff-pair/
+  length-match miss. Gated by `quality_test` (pure).
+- `pnr.bzl`: pnr_fab `--dump-rules`, writeback `--rules`, a quality step, and a
+  `PnrReportsInfo` provider so the bundle collects `drc.rpt` + `quality.txt`.
+- splanc_dev `constraints.yaml`: a `power` net class (rails → 0.4 mm). This board
+  has no genuine diff-pair / length-match need (USB is inside the WROOM), so those
+  are documented/tested/fixture-only, not forced onto the shipped board.
+
+**Watch-out:** the optional **learned routability predictor** (design §9.6) is
+deliberately _not_ built — the analytical net-crossing + PathFinder signal already
+converges the loop, so it isn't limiting. Revisit only if a future board needs it.
+
+## 2026-08-21 (late) — Phases 4 + 5 landed: end-to-end `.fab` target
 
 **State:** the design's remaining phases are integrated and the end-to-end target
 is **verified building a real board**. One target runs the whole multi-turn

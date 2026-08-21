@@ -168,6 +168,41 @@ together — shorter loops, less noise.
 | `radius_mm` | Target radius (default ~5 mm).                     |
 | `weight`    | Penalty weight (default 2.0).                      |
 
+### `net_class` / `diff_pair` / `length_match` — routing rules
+
+These describe how nets are _routed_ rather than how parts are _placed_ — they
+drive the detailed router (trace widths) and the post-route **quality pass**
+(`pnr/quality.py`), which measures routed length, via count, differential-pair
+skew, and length-match compliance. They are keyed by **net name** (not component
+ref); net-name globs (`*hv`) expand against the real netlist.
+
+```yaml
+net_class:
+  power: { width_mm: 0.4, clearance_mm: 0.3, nets: [lv, '*hv', GND, '*-GND'] }
+
+diff_pair:
+  - { name: usb, p: USB_DP, n: USB_DM, width_mm: 0.2, gap_mm: 0.15, skew_mm: 0.3 }
+
+length_match:
+  - { name: rgmii, nets: [TXD0, TXD1, TXD2, TXD3], tolerance_mm: 1.0 }
+```
+
+- **`net_class`** — a named width/clearance rule over a set of nets. Applied to
+  the board's net settings in write-back, so **FreeRouting routes those nets at
+  the given width** (e.g. power rails wider). The quality report rolls up total
+  routed length per class.
+- **`diff_pair`** — two nets (`p`/`n`) routed together with `width_mm`/`gap_mm`;
+  the quality pass reports their routed-length **skew** and flags it if it
+  exceeds `skew_mm` (default 0.5).
+- **`length_match`** — a group of nets whose routed lengths must agree within
+  `tolerance_mm`; the quality pass reports the group **spread** and flags it if
+  it exceeds the tolerance.
+
+The quality report ships in the fab bundle as `quality.txt`. By default the
+checks are **advisory** (reported, not enforced); set `quality_gate = True` on the
+`atopile_pnr` target to fail the build when a diff-pair/length-match check fails
+(as `drc_gate` does for DRC).
+
 ## How intent becomes a layout
 
 1. **Ingest** reads the resolved board into a neutral graph (components, pads,
