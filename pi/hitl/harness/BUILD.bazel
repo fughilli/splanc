@@ -403,3 +403,33 @@ py_test(
         requirement("websockets"),
     ],
 )
+
+# Regression guard for the LED-freeze fix (async ring logger): reserve, flash,
+# ship led_freeze_probe.py into the reservation and run it on the rig's serial —
+# it asserts the [fx] render loop keeps advancing frames while the console is
+# backpressured (the old blocking logger froze the strip there). hitl-tagged so
+# the CI HITL lane runs it; no provisioning needed (effects run from boot).
+py_test(
+    name = "led_freeze",
+    timeout = "eternal",
+    srcs = ["hitl_led_freeze.py"],
+    data = [
+        "benchmarks/empty.fx",
+        "led_freeze_probe.py",
+        "//firmware/player_app:esp32c6_flashbundle",
+        "//fx_compiler:fx_compile",
+        "//pi/hitl/cmd/hitl",
+    ],
+    imports = ["."],
+    main = "hitl_led_freeze.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
