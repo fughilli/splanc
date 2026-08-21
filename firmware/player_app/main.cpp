@@ -1862,14 +1862,16 @@ static void run_fx_jit_bench() {
 
 void setup() {
   Serial.begin(115200);
-  // Non-blocking logging. Serial is the C6's USB-Serial-JTAG (HWCDC); its
-  // default write BLOCKS until the TX FIFO drains, so when the USB is enumerated
-  // but nothing is reading it (a field device, or the HITL rig between monitor
-  // windows) a full buffer stalls whatever task is logging — including loop(),
-  // which then stops servicing provisioning_poll()/WiFi and never notices a join
-  // completing. A 0 ms tx timeout drops bytes instead of blocking, so logs are
-  // best-effort and the network stacks always run.
-  Serial.setTxTimeoutMs(0);
+  // Logging is async (serial_log.h): Log() only appends to an in-RAM ring, and
+  // the low-priority drain task started below does the actual Serial writes — so
+  // a blocking write on a disconnected/backpressured console can NEVER stall the
+  // LED render loop (the old freeze) or any other task. That in turn lets us keep
+  // a generous TX timeout for RELIABLE delivery, since only the idle-time drain
+  // task ever pays it: writes complete in microseconds when a host is draining,
+  // and block at most this long (then the ring overwrites its oldest bytes) when
+  // serial is disconnected.
+  Serial.setTxTimeoutMs(100);
+  log_drain_start();
   // RMT WS2812 driver on LED_DATA_PIN (replaces FastLED's blocking clockless
   // driver). It reads `show_buf` (the transmit snapshot), never the live `leds` —
   // the async transmit task pushes show_buf while the render task fills leds.
