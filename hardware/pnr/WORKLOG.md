@@ -6,7 +6,50 @@ scan back. Full design + rationale lives in
 the running state so a fresh-context agent can pick up cleanly. Update it at the
 end of every session.
 
-## 2026-08-21 (pm) — Task 0 + Phase 1 landed (START HERE)
+## 2026-08-21 (evening) — Phase 2 placement MVP landed (START HERE)
+
+**State:** Phase 2 is done and green. The placer reflows the atopile row into a
+legal, compact layout. Next actor starts **Phase 3 — orientation + grouping**
+(`docs/hardware/pnr-system.md` §9.3).
+
+**What exists now (`hardware/pnr/pnr/place/`):**
+
+- `model.py` — differentiable **global placement** (torch, CPU, seeded): loss =
+  log-sum-exp wirelength + pairwise spreading + outline containment + soft
+  edge-align + soft grouping + keep-out penalty. Adam. Fixed parts held as
+  anchors (still pull the wirelength).
+- `legalize.py` — **grid nearest-free-fit legalizer** (numpy): rasterize the
+  outline, block fixed courtyards + keep-outs, place movable parts biggest-first
+  into the free slot nearest their continuous target. Disjoint blocks sized
+  `ceil((courtyard+clearance)/g)` ⇒ **0 overlaps + in-outline by construction**.
+- `geometry.py` (pure: Rect, courtyard, pin positions, edge-pose + keep-out
+  resolution), `metrics.py` (pure: HPWL, overlap pairs, hard-violation checks),
+  `placer.py` (`place()` orchestrator + `PlacementReport`), `__main__.py` (CLI).
+- **Result on `splanc_dev`:** legal (0 overlaps / 0 outside / 0 fixed-off / 0
+  keep-out), **HPWL 15832 → 2023 mm (87% shorter)** than the ato row, and
+  deterministic. `placement_test` gates all of this (design §9.2 acceptance).
+  Run it: `bazelisk … run //hardware/pnr:place -- <graph.json> <constraints.yaml>
+--dump-svg placed.svg`.
+
+**Data fix along the way:** the atomic EasyEDA footprints carry **no courtyard
+layer**, so `ingest.py` had been falling back to the graphical bbox _including
+silkscreen + reference text_ — inflating every part ~5× (a 0402 read as 4.1×5.1
+mm; total 3580 mm²). Fixed to use the text-excluded `GetBoundingBox(False)` (0402
+→ 1.9×1.2 mm; total 1490 mm²); regenerated the frozen `graph.json` (counts
+unchanged). Bumped the fixture outline to 60×50 mm and fixed U5 (RF module) at the
+north edge so its antenna keep-out is well-defined.
+
+**MVP simplifications (Phase 3+ material, tracked):** no orientation search
+(angles kept as ingested); **single-sided** legalization — `side_pref` compiles
+to a soft term but parts stay top for now; keep-out supports rel-to-a-fixed-part
+and absolute polygon (rel-to-a-movable-part would need the two-tier loop).
+
+**Next up — Phase 3 (design §9.3):** Gumbel-Softmax bilevel **orientation**
+(rotate pin offsets by a relaxed rotation class) + hMETIS **partition seed** for
+initial clustering. Acceptance: orientations settle to legal discrete angles and
+HPWL improves vs. Phase 2 on both fixtures. Then Phase 4 (routing + feedback).
+
+## 2026-08-21 (pm) — Task 0 + Phase 1 landed
 
 **State:** Task 0 and Phase 1 are done and green under Bazel. The engine now
 ingests a resolved board into a neutral graph and compiles the constraint file;

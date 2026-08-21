@@ -13,16 +13,47 @@ This package is the CPU-first Python engine; the differentiable placement core
 """
 
 load("@pypi//:requirements.bzl", "requirement")
-load("@rules_python//python:defs.bzl", "py_library", "py_test")
+load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
 
 package(default_visibility = ["//visibility:public"])
 
+# Core: graph + constraints + ingest. No torch/numpy — the light path that the
+# KiCad pcbnew flow and the schema tests use.
 py_library(
     name = "pnr",
-    srcs = glob(["pnr/*.py"]),
+    srcs = glob(["pnr/*.py"]),  # top-level modules only, not pnr/place/
     imports = ["."],
     deps = [
         requirement("pyyaml"),  # constraints.py parses the sidecar YAML
+    ],
+)
+
+# Placement engine (Phase 2): differentiable global placement (torch) + grid
+# legalization (numpy). Separated so the core/schema tests stay torch-free.
+py_library(
+    name = "pnr_place",
+    srcs = glob(
+        ["pnr/place/*.py"],
+        exclude = ["pnr/place/__main__.py"],
+    ),
+    imports = ["."],
+    deps = [
+        ":pnr",
+        requirement("torch"),
+        requirement("numpy"),
+    ],
+)
+
+# Runnable placer: python -m pnr.place graph.json constraints.yaml [--dump-svg ...]
+py_binary(
+    name = "place",
+    srcs = ["pnr/place/__main__.py"],
+    imports = ["."],
+    main = "pnr/place/__main__.py",
+    deps = [
+        ":pnr",
+        ":pnr_place",
+        requirement("pyyaml"),
     ],
 )
 
@@ -70,4 +101,20 @@ py_test(
     legacy_create_init = False,
     main = "tests/test_ingest.py",
     deps = [":pnr"],
+)
+
+# Phase 2 acceptance: placement MVP is legal + beats the ato-row HPWL baseline.
+py_test(
+    name = "placement_test",
+    size = "small",  # torch global placement + legalization; ~9s
+    srcs = ["tests/test_placement.py"],
+    data = glob(["testdata/splanc_dev/*"]),
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_placement.py",
+    deps = [
+        ":pnr",
+        ":pnr_place",
+        requirement("pyyaml"),
+    ],
 )
