@@ -5,30 +5,33 @@
 # bottom-left, `rot` CCW degrees. Refs come from the board (U5 = ESP32-C6-WROOM
 # module, USB1 = Type-C, SW1..4 = tactile buttons, U2/L2/L3 = boost stage).
 #
-# This is a hand-written first cut used as a regression fixture for the parser;
-# the values are plausible mechanical intent, not a finalized layout.
+# This is a hand-written first cut used as a regression fixture; the values are
+# plausible mechanical intent, not a finalized layout. The RF module U5 is fixed
+# at the north edge so its integrated antenna faces off-board and its keep-out is
+# a well-defined region; the Type-C is fixed overhanging the south edge.
 
 schema: v0
 
 board:
-  outline: { w: 40, h: 30 } # approx target; the placer frames the real Edge.Cuts
+  outline: { w: 60, h: 50 } # approx target; the placer frames the real Edge.Cuts
   layers: 4 # 4-layer stackup (design doc §12)
-  default_clearance_mm: 0.2
+  default_clearance_mm: 0.3
 
 fixed: # hard: locked pose, held out of the position gradient
   USB1: { edge: south, align: center, rot: 0, side: top } # Type-C overhangs the south edge
+  U5: { edge: north, align: center, rot: 0, side: top } # ESP32-C6 module, antenna off the north edge
 
 edge_align: # soft: pull to a board edge, snap orientation
-  SW1: { edge: north, side: top } # user buttons, enclosure-accessible
-  SW2: { edge: north, side: top }
-  SW3: { edge: north, side: top }
-  SW4: { edge: north, side: top }
+  SW1: { edge: south, side: top } # user buttons, enclosure-accessible
+  SW2: { edge: south, side: top }
+  SW3: { edge: south, side: top }
+  SW4: { edge: south, side: top }
   CN1: { edge: east, side: top } # JST LED/battery connectors on the east edge
   CN2: { edge: east, side: top }
   CN3: { edge: east, side: top }
 
-keepout: # hard: no parts/copper in region (relative to a component)
-  - { name: esp32_antenna, ref: U5, extent: { edge: west, depth_mm: 8 } }
+keepout: # hard: no parts/copper in region (relative to a fixed component)
+  - { name: esp32_antenna, ref: U5, extent: { edge: north, depth_mm: 6 } }
 
 side_pref: # soft: bias parts to a side (top = user-facing)
   bottom: [C*, R*] # decouplers/passives to the back

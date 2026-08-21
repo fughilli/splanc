@@ -89,6 +89,21 @@ def _pad_name(pad) -> str:
     return ""
 
 
+def _phys_bbox_mm(fp) -> Tuple[float, float]:
+    """Physical footprint extent (mm), **excluding** the reference/value text.
+
+    The default ``GetBoundingBox()`` includes silkscreen text, which inflates a
+    tiny 0402 to ~4x5 mm. We want the copper/silk body for placement, so we ask
+    for the text-excluded box (the arg signature varies across KiCad versions)."""
+    for args in ((False, False), (False,), ()):
+        try:
+            bb = fp.GetBoundingBox(*args)
+            return (_mm(bb.GetWidth()), _mm(bb.GetHeight()))
+        except Exception:  # pragma: no cover - version shim
+            continue
+    raise RuntimeError("GetBoundingBox unavailable")
+
+
 def _component(fp, frame: _Frame) -> Component:
     import pcbnew
 
@@ -96,11 +111,11 @@ def _component(fp, frame: _Frame) -> Component:
     x, y = frame.point(pos.x, pos.y)
     side = SIDE_BOTTOM if fp.IsFlipped() else SIDE_TOP
 
-    bbox = fp.GetBoundingBox()
-    bbox_mm = (_mm(bbox.GetWidth()), _mm(bbox.GetHeight()))
+    bbox_mm = _phys_bbox_mm(fp)
 
-    # Courtyard is the placement/overlap footprint; fall back to the bbox when a
-    # part has no courtyard drawn.
+    # Courtyard is the placement/overlap footprint. These atomic (EasyEDA-sourced)
+    # parts carry no F/B.CrtYd layer, so GetCourtyard is empty — fall back to the
+    # text-excluded body box (any silk keep-out area is drawn on the body).
     try:
         layer = pcbnew.B_CrtYd if fp.IsFlipped() else pcbnew.F_CrtYd
         cyard = fp.GetCourtyard(layer).BBox()

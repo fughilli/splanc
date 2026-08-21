@@ -1,8 +1,8 @@
 {
   "components": [
     {
-      "bbox": [5.069762, 5.1115],
-      "courtyard": [5.069762, 5.1115],
+      "bbox": [1.89, 1.15],
+      "courtyard": [1.89, 1.15],
       "footprint": "Samsung_CL05B104KO5NNNC:C0402",
       "locked": false,
       "pads": [
@@ -23,8 +23,8 @@
       "side": "top"
     },
     {
-      "bbox": [5.209762, 5.1115],
-      "courtyard": [5.209762, 5.1115],
+      "bbox": [2.03, 1.15],
+      "courtyard": [2.03, 1.15],
       "footprint": "UNI_ROYAL_0402WGF330JTCE:R0402",
       "locked": false,
       "pads": [
@@ -45,8 +45,8 @@
       "side": "top"
     },
     {
-      "bbox": [6.297381, 5.23825],
-      "courtyard": [6.297381, 5.23825],
+      "bbox": [4.07, 1.95],
+      "courtyard": [4.07, 1.95],
       "footprint": "Samsung_CL21A226MOQNNNE:C0805",
       "locked": false,
       "pads": [
@@ -67,8 +67,8 @@
       "side": "top"
     },
     {
-      "bbox": [4.257381, 5.1115],
-      "courtyard": [4.257381, 5.1115],
+      "bbox": [2.03, 1.15],
+      "courtyard": [2.03, 1.15],
       "footprint": "UNI_ROYAL_0402WGF1001TCE:R0402",
       "locked": false,
       "pads": [
@@ -89,8 +89,8 @@
       "side": "top"
     },
     {
-      "bbox": [4.74, 6.81825],
-      "courtyard": [4.74, 6.81825],
+      "bbox": [3.0, 3.21],
+      "courtyard": [3.0, 3.21],
       "footprint": "Changjiang_MMBT3904_RANGE_100_300:SOT-23-3_L2.9-W1.3-P1.90-LS2.4-BR",
       "locked": false,
       "pads": [
@@ -116,8 +116,8 @@
       "side": "top"
     },
     {
-      "bbox": [5.209762, 5.1115],
-      "courtyard": [5.209762, 5.1115],
+      "bbox": [2.03, 1.15],
+      "courtyard": [2.03, 1.15],
       "footprint": "UNI_ROYAL_0402WGF2001TCE:R0402",
       "locked": false,
       "pads": [
@@ -138,8 +138,8 @@
       "side": "top"
     },
     {
-      "bbox": [5.209762, 5.1115],
-      "courtyard": [5.209762, 5.1115],
+      "bbox": [2.03, 1.15],
+      "courtyard": [2.03, 1.15],
       "footprint": "UNI_ROYAL_0402WGF1003TCE:R0402",
       "locked": false,
       "pads": [
@@ -160,8 +160,8 @@
       "side": "top"
     },
     {
-      "bbox": [5.069762, 5.1115],
-      "courtyard": [5.069762, 5.1115],
+      "bbox": [1.89, 1.15],
+      "courtyard": [1.89, 1.15],
       "footprint": "Samsung_CL05A105KA5NQNC:C0402",
       "locked": false,
       "pads": [
@@ -182,8 +182,8 @@
       "side": "top"
     },
     {
-      "bbox": [6.109762, 5.1115],
-      "courtyard": [6.109762, 5.1115],
+      "bbox": [2.93, 1.47],
+      "courtyard": [2.93, 1.47],
       "footprint": "UNI_ROYAL_0603WAF1002T5E:R0603",
       "locked": false,
       "pads": [
@@ -204,8 +204,8 @@
       "side": "top"
     },
     {
-      "bbox": [6.109762, 5.1115],
-      "courtyard": [6.109762, 5.1115],
+      "bbox": [2.93, 1.47],
+      "courtyard": [2.93, 1.47],
       "footprint": "UNI_ROYAL_0603WAF1002T5E:R0603",
       "locked": false,
       "pads": [
@@ -226,8 +226,8 @@
       "side": "top"
     },
     {
-      "bbox": [4.257381, 5.1115],
-      "courtyard": [4.257381, 5.1115],
+      "bbox": [2.03, 1.15],
+      "courtyard": [2.03, 1.15],
       "footprint": "UNI_ROYAL_0402WGF5101TCE:R0402",
       "locked": false,
       "pads": [
@@ -248,8 +248,8 @@
       "side": "top"
     },
     {
-      "bbox": [6.109762, 5.1115],
-      "courtyard": [6.109762, 5.1115],
+      "bbox": [2.93, 1.47],
+      "courtyard": [2.93, 1.47],
       "footprint": "UNI_ROYAL_0603WAF1002T5E:R0603",
       "locked": false,
       "pads": [
@@ -270,8 +270,8 @@
       "side": "top"
     },
     {
-      "bbox": [5.209762, 5.1115],
-      "courtyard": [5.209762, 5.1115],
+      "bbox": [2.03, 1.15],
+      "courtyard": [2.03, 1.15],
       "footprint": "UNI_ROYAL_0402WGF330JTCE:R0402",
       "locked": false,
       "pads": [
@@ -292,8 +292,8 @@
       "side": "top"
     },
     {
-      "bbox": [4.257381, 5.1115],
-      "courtyard": [4.257381, 5.1115],
+      "bbox": [2.03, 1.15],
+      "courtyard": [2.03, 1.15],
       "footprint": "UNI_ROYAL_0402WGF1003TCE:R0402",
       "locked": false,
       "pads": [
@@ -314,8 +314,8 @@
       "side": "top"
     },
     {
-      "bbox": [4.95, 6.76825],
-      "courtyard": [4.95, 6.76825],
+      "bbox": [2.725, 3.05],
+      "courtyard": [2.725, 3.05],
       "footprint": "Bosch_BMP280:LGA-8_L2.5-W2.0-P0.65_AMP6127",
       "locked": false,
       "pads": [
@@ -366,8 +366,8 @@
       "side": "top"
     },
     {
-      "bbox": [11.0, 8.56325],
-      "courtyard": [11.0, 8.56325],
+      "bbox": [11.0, 7.5],
+      "courtyard": [11.0, 7.5],
       "footprint": "JST_B3B_PH_K_S_LF__SN:CONN-TH_B3B-PH-K-S",
       "locked": false,
       "pads": [
@@ -393,8 +393,8 @@
       "side": "top"
     },
     {
-      "bbox": [5.157381, 5.1115],
-      "courtyard": [5.157381, 5.1115],
+      "bbox": [2.93, 1.47],
+      "courtyard": [2.93, 1.47],
       "footprint": "UNI_ROYAL_0603WAF1002T5E:R0603",
       "locked": false,
       "pads": [
@@ -415,8 +415,8 @@
       "side": "top"
     },
     {
-      "bbox": [7.249762, 5.23825],
-      "courtyard": [7.249762, 5.23825],
+      "bbox": [4.07, 1.95],
+      "courtyard": [4.07, 1.95],
       "footprint": "Samsung_CL21A106KAYNNNE:C0805",
       "locked": false,
       "pads": [
@@ -437,8 +437,8 @@
       "side": "top"
     },
     {
-      "bbox": [6.109762, 5.1115],
-      "courtyard": [6.109762, 5.1115],
+      "bbox": [2.93, 1.47],
+      "courtyard": [2.93, 1.47],
       "footprint": "UNI_ROYAL_0603WAF1002T5E:R0603",
       "locked": false,
       "pads": [
@@ -459,8 +459,8 @@
       "side": "top"
     },
     {
-      "bbox": [4.117381, 5.1115],
-      "courtyard": [4.117381, 5.1115],
+      "bbox": [1.89, 1.15],
+      "courtyard": [1.89, 1.15],
       "footprint": "Samsung_CL05A105KA5NQNC:C0402",
       "locked": false,
       "pads": [
@@ -481,8 +481,8 @@
       "side": "top"
     },
     {
-      "bbox": [7.249762, 5.23825],
-      "courtyard": [7.249762, 5.23825],
+      "bbox": [4.07, 1.95],
+      "courtyard": [4.07, 1.95],
       "footprint": "Samsung_CL21A106KAYNNNE:C0805",
       "locked": false,
       "pads": [
@@ -503,8 +503,8 @@
       "side": "top"
     },
     {
-      "bbox": [6.159762, 5.1115],
-      "courtyard": [6.159762, 5.1115],
+      "bbox": [3.03, 1.67],
+      "courtyard": [3.03, 1.67],
       "footprint": "Samsung_CL10A106KP8NNNC:C0603",
       "locked": false,
       "pads": [
@@ -525,8 +525,8 @@
       "side": "top"
     },
     {
-      "bbox": [13.722381, 9.57325],
-      "courtyard": [13.722381, 9.57325],
+      "bbox": [9.84, 8.025],
+      "courtyard": [9.84, 8.025],
       "footprint": "Korean_Hroparts_TYPE_C_16PIN_2MD_073:USB-C-SMD_TYPE-C-16PIN-2MD-073",
       "locked": false,
       "pads": [
@@ -627,8 +627,8 @@
       "side": "top"
     },
     {
-      "bbox": [8.222619, 5.87825],
-      "courtyard": [8.222619, 5.87825],
+      "bbox": [5.59, 3.23],
+      "courtyard": [5.59, 3.23],
       "footprint": "XKB_TS_1088_AR02016:SW-SMD_L3.9-W3.0-P4.45",
       "locked": false,
       "pads": [
@@ -649,8 +649,8 @@
       "side": "top"
     },
     {
-      "bbox": [7.842381, 8.66325],
-      "courtyard": [7.842381, 8.66325],
+      "bbox": [4.8, 4.8],
+      "courtyard": [4.8, 4.8],
       "footprint": "TDK_InvenSense_MPU_6050:QFN-24_L4.0-W4.0-P0.50-BL-EP2.7",
       "locked": false,
       "pads": [
@@ -786,8 +786,8 @@
       "side": "top"
     },
     {
-      "bbox": [5.069762, 5.1115],
-      "courtyard": [5.069762, 5.1115],
+      "bbox": [1.89, 1.15],
+      "courtyard": [1.89, 1.15],
       "footprint": "Samsung_CL05B104KO5NNNC:C0402",
       "locked": false,
       "pads": [
@@ -808,8 +808,8 @@
       "side": "top"
     },
     {
-      "bbox": [5.209762, 5.1115],
-      "courtyard": [5.209762, 5.1115],
+      "bbox": [2.03, 1.15],
+      "courtyard": [2.03, 1.15],
       "footprint": "UNI_ROYAL_0402WGF1001TCE:R0402",
       "locked": false,
       "pads": [
@@ -830,8 +830,8 @@
       "side": "top"
     },
     {
-      "bbox": [4.585, 6.35825],
-      "courtyard": [4.585, 6.35825],
+      "bbox": [2.31, 2.785],
+      "courtyard": [2.31, 2.785],
       "footprint": "Analog_Devices_MAX17048G_T10:TDFN-8_L2.0-W2.0-P0.50-BL-EP1.2",
       "locked": false,
       "pads": [
@@ -887,8 +887,8 @@
       "side": "top"
     },
     {
-      "bbox": [4.117381, 5.1115],
-      "courtyard": [4.117381, 5.1115],
+      "bbox": [1.89, 1.15],
+      "courtyard": [1.89, 1.15],
       "footprint": "Samsung_CL05B104KO5NNNC:C0402",
       "locked": false,
       "pads": [
@@ -909,8 +909,8 @@
       "side": "top"
     },
     {
-      "bbox": [4.257381, 5.1115],
-      "courtyard": [4.257381, 5.1115],
+      "bbox": [2.03, 1.15],
+      "courtyard": [2.03, 1.15],
       "footprint": "UNI_ROYAL_0402WGF1001TCE:R0402",
       "locked": false,
       "pads": [
@@ -931,8 +931,8 @@
       "side": "top"
     },
     {
-      "bbox": [27.875, 8.19825],
-      "courtyard": [27.875, 8.19825],
+      "bbox": [25.65, 5.33],
+      "courtyard": [25.65, 5.33],
       "footprint": "XKB_PZ254V_12_20P:HDR-TH_20P-P2.54-V-M-R2-C10-S2.54",
       "locked": false,
       "pads": [
@@ -1043,8 +1043,8 @@
       "side": "top"
     },
     {
-      "bbox": [6.297381, 5.23825],
-      "courtyard": [6.297381, 5.23825],
+      "bbox": [4.07, 1.95],
+      "courtyard": [4.07, 1.95],
       "footprint": "Samsung_CL21A226MOQNNNE:C0805",
       "locked": false,
       "pads": [
@@ -1065,8 +1065,8 @@
       "side": "top"
     },
     {
-      "bbox": [4.117381, 5.1115],
-      "courtyard": [4.117381, 5.1115],
+      "bbox": [1.89, 1.15],
+      "courtyard": [1.89, 1.15],
       "footprint": "Samsung_CL05A105KA5NQNC:C0402",
       "locked": false,
       "pads": [
@@ -1087,8 +1087,8 @@
       "side": "top"
     },
     {
-      "bbox": [4.117381, 5.1115],
-      "courtyard": [4.117381, 5.1115],
+      "bbox": [1.89, 1.15],
+      "courtyard": [1.89, 1.15],
       "footprint": "Samsung_CL05B104KO5NNNC:C0402",
       "locked": false,
       "pads": [
@@ -1109,8 +1109,8 @@
       "side": "top"
     },
     {
-      "bbox": [4.257381, 5.1115],
-      "courtyard": [4.257381, 5.1115],
+      "bbox": [2.03, 1.15],
+      "courtyard": [2.03, 1.15],
       "footprint": "UNI_ROYAL_0402WGF2001TCE:R0402",
       "locked": false,
       "pads": [
@@ -1131,8 +1131,8 @@
       "side": "top"
     },
     {
-      "bbox": [5.209762, 5.1115],
-      "courtyard": [5.209762, 5.1115],
+      "bbox": [2.03, 1.15],
+      "courtyard": [2.03, 1.15],
       "footprint": "UNI_ROYAL_0402WGF0000TCE:R0402",
       "locked": false,
       "pads": [
@@ -1153,8 +1153,8 @@
       "side": "top"
     },
     {
-      "bbox": [5.069762, 5.1115],
-      "courtyard": [5.069762, 5.1115],
+      "bbox": [1.89, 1.15],
+      "courtyard": [1.89, 1.15],
       "footprint": "Samsung_CL05B104KO5NNNC:C0402",
       "locked": false,
       "pads": [
@@ -1175,8 +1175,8 @@
       "side": "top"
     },
     {
-      "bbox": [5.069762, 5.1115],
-      "courtyard": [5.069762, 5.1115],
+      "bbox": [1.89, 1.15],
+      "courtyard": [1.89, 1.15],
       "footprint": "Samsung_CL05B104KO5NNNC:C0402",
       "locked": false,
       "pads": [
@@ -1197,8 +1197,8 @@
       "side": "top"
     },
     {
-      "bbox": [6.109762, 5.1115],
-      "courtyard": [6.109762, 5.1115],
+      "bbox": [2.93, 1.47],
+      "courtyard": [2.93, 1.47],
       "footprint": "UNI_ROYAL_0603WAF1002T5E:R0603",
       "locked": false,
       "pads": [
@@ -1219,8 +1219,8 @@
       "side": "top"
     },
     {
-      "bbox": [9.026905, 7.41825],
-      "courtyard": [9.026905, 7.41825],
+      "bbox": [7.67, 6.31],
+      "courtyard": [7.67, 6.31],
       "footprint": "Sunlord_SWPA6045S1R0NT:IND-SMD_L6.0-W6.0_SWPA6045S",
       "locked": false,
       "pads": [
@@ -1241,8 +1241,8 @@
       "side": "top"
     },
     {
-      "bbox": [5.069762, 5.1115],
-      "courtyard": [5.069762, 5.1115],
+      "bbox": [1.89, 1.15],
+      "courtyard": [1.89, 1.15],
       "footprint": "Samsung_CL05B104KO5NNNC:C0402",
       "locked": false,
       "pads": [
@@ -1263,8 +1263,8 @@
       "side": "top"
     },
     {
-      "bbox": [6.159762, 5.1115],
-      "courtyard": [6.159762, 5.1115],
+      "bbox": [3.03, 1.67],
+      "courtyard": [3.03, 1.67],
       "footprint": "Samsung_CL10A106KP8NNNC:C0603",
       "locked": false,
       "pads": [
@@ -1285,8 +1285,8 @@
       "side": "top"
     },
     {
-      "bbox": [5.1, 6.83825],
-      "courtyard": [5.1, 6.83825],
+      "bbox": [3.3, 3.25],
+      "courtyard": [3.3, 3.25],
       "footprint": "Alpha___Omega_AO3401A:SOT-23_L2.9-W1.3-P1.90-LS2.4-BR",
       "locked": false,
       "pads": [
@@ -1312,8 +1312,8 @@
       "side": "top"
     },
     {
-      "bbox": [4.257381, 5.1115],
-      "courtyard": [4.257381, 5.1115],
+      "bbox": [2.03, 1.15],
+      "courtyard": [2.03, 1.15],
       "footprint": "UNI_ROYAL_0402WGF5101TCE:R0402",
       "locked": false,
       "pads": [
@@ -1334,8 +1334,8 @@
       "side": "top"
     },
     {
-      "bbox": [6.109762, 5.1115],
-      "courtyard": [6.109762, 5.1115],
+      "bbox": [2.93, 1.47],
+      "courtyard": [2.93, 1.47],
       "footprint": "UNI_ROYAL_0603WAF1002T5E:R0603",
       "locked": false,
       "pads": [
@@ -1356,8 +1356,8 @@
       "side": "top"
     },
     {
-      "bbox": [5.585, 9.29325],
-      "courtyard": [5.585, 9.29325],
+      "bbox": [3.545, 5.84],
+      "courtyard": [3.545, 5.84],
       "footprint": "Texas_Instruments_INA226AIDGSR:MSOP-10_L3.0-W3.0-P0.50-LS5.0-BL",
       "locked": false,
       "pads": [
@@ -1418,8 +1418,8 @@
       "side": "top"
     },
     {
-      "bbox": [7.18, 8.07325],
-      "courtyard": [7.18, 8.07325],
+      "bbox": [5.395, 4.16],
+      "courtyard": [5.395, 4.16],
       "footprint": "Texas_Instruments_TPS61088RHLR:VQFN-20_L4.6-W3.6-P0.50-BL",
       "locked": false,
       "pads": [
@@ -1575,8 +1575,8 @@
       "side": "top"
     },
     {
-      "bbox": [5.15, 6.88825],
-      "courtyard": [5.15, 6.88825],
+      "bbox": [3.8, 3.58],
+      "courtyard": [3.8, 3.58],
       "footprint": "Texas_Instruments_SN74LVC1T45DBVR:SOT-23-6_L2.9-W1.6-P0.95-LS2.8-BR",
       "locked": false,
       "pads": [
@@ -1617,8 +1617,8 @@
       "side": "top"
     },
     {
-      "bbox": [4.117381, 5.1115],
-      "courtyard": [4.117381, 5.1115],
+      "bbox": [1.89, 1.15],
+      "courtyard": [1.89, 1.15],
       "footprint": "Samsung_CL05B104KO5NNNC:C0402",
       "locked": false,
       "pads": [
@@ -1639,8 +1639,8 @@
       "side": "top"
     },
     {
-      "bbox": [4.74, 6.81825],
-      "courtyard": [4.74, 6.81825],
+      "bbox": [3.0, 3.21],
+      "courtyard": [3.0, 3.21],
       "footprint": "Changjiang_MMBT3904_RANGE_100_300:SOT-23-3_L2.9-W1.3-P1.90-LS2.4-BR",
       "locked": false,
       "pads": [
@@ -1666,8 +1666,8 @@
       "side": "top"
     },
     {
-      "bbox": [6.297381, 5.23825],
-      "courtyard": [6.297381, 5.23825],
+      "bbox": [4.07, 1.95],
+      "courtyard": [4.07, 1.95],
       "footprint": "Samsung_CL21A226MOQNNNE:C0805",
       "locked": false,
       "pads": [
@@ -1688,8 +1688,8 @@
       "side": "top"
     },
     {
-      "bbox": [5.069762, 5.1115],
-      "courtyard": [5.069762, 5.1115],
+      "bbox": [1.89, 1.15],
+      "courtyard": [1.89, 1.15],
       "footprint": "Samsung_CL05B104KO5NNNC:C0402",
       "locked": false,
       "pads": [
@@ -1710,8 +1710,8 @@
       "side": "top"
     },
     {
-      "bbox": [20.85, 28.38825],
-      "courtyard": [20.85, 28.38825],
+      "bbox": [19.0, 25.85],
+      "courtyard": [19.0, 25.85],
       "footprint": "Espressif_Systems_ESP32_C6_WROOM_1_N8:WIRELM-SMD_ESP32-C6-WROOM-1",
       "locked": false,
       "pads": [
@@ -1967,8 +1967,8 @@
       "side": "top"
     },
     {
-      "bbox": [4.117381, 5.1115],
-      "courtyard": [4.117381, 5.1115],
+      "bbox": [1.89, 1.15],
+      "courtyard": [1.89, 1.15],
       "footprint": "Samsung_CL05B104KO5NNNC:C0402",
       "locked": false,
       "pads": [
@@ -1989,8 +1989,8 @@
       "side": "top"
     },
     {
-      "bbox": [8.222619, 5.87825],
-      "courtyard": [8.222619, 5.87825],
+      "bbox": [5.59, 3.23],
+      "courtyard": [5.59, 3.23],
       "footprint": "XKB_TS_1088_AR02016:SW-SMD_L3.9-W3.0-P4.45",
       "locked": false,
       "pads": [
@@ -2011,8 +2011,8 @@
       "side": "top"
     },
     {
-      "bbox": [5.585, 9.29325],
-      "courtyard": [5.585, 9.29325],
+      "bbox": [3.545, 5.84],
+      "courtyard": [3.545, 5.84],
       "footprint": "Texas_Instruments_INA226AIDGSR:MSOP-10_L3.0-W3.0-P0.50-LS5.0-BL",
       "locked": false,
       "pads": [
@@ -2073,8 +2073,8 @@
       "side": "top"
     },
     {
-      "bbox": [11.0, 8.56325],
-      "courtyard": [11.0, 8.56325],
+      "bbox": [11.0, 7.5],
+      "courtyard": [11.0, 7.5],
       "footprint": "JST_B3B_PH_K_S_LF__SN:CONN-TH_B3B-PH-K-S",
       "locked": false,
       "pads": [
@@ -2100,8 +2100,8 @@
       "side": "top"
     },
     {
-      "bbox": [7.249762, 5.23825],
-      "courtyard": [7.249762, 5.23825],
+      "bbox": [4.07, 1.95],
+      "courtyard": [4.07, 1.95],
       "footprint": "Samsung_CL21A106KAYNNNE:C0805",
       "locked": false,
       "pads": [
@@ -2122,8 +2122,8 @@
       "side": "top"
     },
     {
-      "bbox": [5.069762, 5.1115],
-      "courtyard": [5.069762, 5.1115],
+      "bbox": [1.89, 1.15],
+      "courtyard": [1.89, 1.15],
       "footprint": "Samsung_CL05B104KO5NNNC:C0402",
       "locked": false,
       "pads": [
@@ -2144,8 +2144,8 @@
       "side": "top"
     },
     {
-      "bbox": [9.026905, 7.41825],
-      "courtyard": [9.026905, 7.41825],
+      "bbox": [7.67, 6.31],
+      "courtyard": [7.67, 6.31],
       "footprint": "Sunlord_SWPA6045S1R0NT:IND-SMD_L6.0-W6.0_SWPA6045S",
       "locked": false,
       "pads": [
@@ -2166,8 +2166,8 @@
       "side": "top"
     },
     {
-      "bbox": [5.209762, 5.1115],
-      "courtyard": [5.209762, 5.1115],
+      "bbox": [2.03, 1.15],
+      "courtyard": [2.03, 1.15],
       "footprint": "UNI_ROYAL_0402WGF2001TCE:R0402",
       "locked": false,
       "pads": [
@@ -2188,8 +2188,8 @@
       "side": "top"
     },
     {
-      "bbox": [5.209762, 5.1115],
-      "courtyard": [5.209762, 5.1115],
+      "bbox": [2.03, 1.15],
+      "courtyard": [2.03, 1.15],
       "footprint": "UNI_ROYAL_0402WGF1001TCE:R0402",
       "locked": false,
       "pads": [
@@ -2210,8 +2210,8 @@
       "side": "top"
     },
     {
-      "bbox": [5.209762, 5.1115],
-      "courtyard": [5.209762, 5.1115],
+      "bbox": [2.03, 1.15],
+      "courtyard": [2.03, 1.15],
       "footprint": "UNI_ROYAL_0402WGF2001TCE:R0402",
       "locked": false,
       "pads": [
@@ -2232,8 +2232,8 @@
       "side": "top"
     },
     {
-      "bbox": [5.209762, 5.1115],
-      "courtyard": [5.209762, 5.1115],
+      "bbox": [2.03, 1.15],
+      "courtyard": [2.03, 1.15],
       "footprint": "UNI_ROYAL_0402WGF0000TCE:R0402",
       "locked": false,
       "pads": [
@@ -2254,8 +2254,8 @@
       "side": "top"
     },
     {
-      "bbox": [6.102381, 6.88825],
-      "courtyard": [6.102381, 6.88825],
+      "bbox": [3.8, 3.58],
+      "courtyard": [3.8, 3.58],
       "footprint": "Texas_Instruments_SN74LVC1T45DBVR:SOT-23-6_L2.9-W1.6-P0.95-LS2.8-BR",
       "locked": false,
       "pads": [
@@ -2296,8 +2296,8 @@
       "side": "top"
     },
     {
-      "bbox": [5.069762, 5.1115],
-      "courtyard": [5.069762, 5.1115],
+      "bbox": [1.89, 1.15],
+      "courtyard": [1.89, 1.15],
       "footprint": "Samsung_CL05A105KA5NQNC:C0402",
       "locked": false,
       "pads": [
@@ -2318,8 +2318,8 @@
       "side": "top"
     },
     {
-      "bbox": [10.77, 8.56325],
-      "courtyard": [10.77, 8.56325],
+      "bbox": [9.0, 7.5],
+      "courtyard": [9.0, 7.5],
       "footprint": "JST_B2B_PH_K_S_LF__SN:CONN-TH_B2B-PH-K-S",
       "locked": false,
       "pads": [
@@ -2340,8 +2340,8 @@
       "side": "top"
     },
     {
-      "bbox": [5.069762, 5.1115],
-      "courtyard": [5.069762, 5.1115],
+      "bbox": [1.89, 1.15],
+      "courtyard": [1.89, 1.15],
       "footprint": "Samsung_CL05B104KO5NNNC:C0402",
       "locked": false,
       "pads": [
@@ -2362,8 +2362,8 @@
       "side": "top"
     },
     {
-      "bbox": [5.1, 6.81325],
-      "courtyard": [5.1, 6.81325],
+      "bbox": [3.7, 3.2],
+      "courtyard": [3.7, 3.2],
       "footprint": "Texas_Instruments_TLV62569DBVR:SOT-23-5_L3.0-W1.7-P0.95-LS2.8-BR",
       "locked": false,
       "pads": [
@@ -2399,8 +2399,8 @@
       "side": "top"
     },
     {
-      "bbox": [5.1, 6.83825],
-      "courtyard": [5.1, 6.83825],
+      "bbox": [3.3, 3.25],
+      "courtyard": [3.3, 3.25],
       "footprint": "Alpha___Omega_AO3401A:SOT-23_L2.9-W1.3-P1.90-LS2.4-BR",
       "locked": false,
       "pads": [
@@ -2426,8 +2426,8 @@
       "side": "top"
     },
     {
-      "bbox": [7.249762, 5.23825],
-      "courtyard": [7.249762, 5.23825],
+      "bbox": [4.07, 1.95],
+      "courtyard": [4.07, 1.95],
       "footprint": "Samsung_CL21A106KAYNNNE:C0805",
       "locked": false,
       "pads": [
@@ -2448,8 +2448,8 @@
       "side": "top"
     },
     {
-      "bbox": [4.257381, 5.1115],
-      "courtyard": [4.257381, 5.1115],
+      "bbox": [2.03, 1.15],
+      "courtyard": [2.03, 1.15],
       "footprint": "UNI_ROYAL_0402WGF1003TCE:R0402",
       "locked": false,
       "pads": [
@@ -2470,8 +2470,8 @@
       "side": "top"
     },
     {
-      "bbox": [5.485, 7.15325],
-      "courtyard": [5.485, 7.15325],
+      "bbox": [3.555, 3.47],
+      "courtyard": [3.555, 3.47],
       "footprint": "Microchip_MCP73831T_2ACI_OT:SOT-23-5_L3.0-W1.7-P0.95-LS2.8-BL",
       "locked": false,
       "pads": [
@@ -2507,8 +2507,8 @@
       "side": "top"
     },
     {
-      "bbox": [8.222619, 5.87825],
-      "courtyard": [8.222619, 5.87825],
+      "bbox": [5.59, 3.23],
+      "courtyard": [5.59, 3.23],
       "footprint": "XKB_TS_1088_AR02016:SW-SMD_L3.9-W3.0-P4.45",
       "locked": false,
       "pads": [
@@ -2529,8 +2529,8 @@
       "side": "top"
     },
     {
-      "bbox": [5.157381, 5.1115],
-      "courtyard": [5.157381, 5.1115],
+      "bbox": [2.93, 1.47],
+      "courtyard": [2.93, 1.47],
       "footprint": "UNI_ROYAL_0603WAF1002T5E:R0603",
       "locked": false,
       "pads": [
@@ -2551,8 +2551,8 @@
       "side": "top"
     },
     {
-      "bbox": [8.222619, 5.87825],
-      "courtyard": [8.222619, 5.87825],
+      "bbox": [5.59, 3.23],
+      "courtyard": [5.59, 3.23],
       "footprint": "XKB_TS_1088_AR02016:SW-SMD_L3.9-W3.0-P4.45",
       "locked": false,
       "pads": [
@@ -2573,8 +2573,8 @@
       "side": "top"
     },
     {
-      "bbox": [5.069762, 5.1115],
-      "courtyard": [5.069762, 5.1115],
+      "bbox": [1.89, 1.15],
+      "courtyard": [1.89, 1.15],
       "footprint": "Samsung_CL05B104KO5NNNC:C0402",
       "locked": false,
       "pads": [
@@ -2595,8 +2595,8 @@
       "side": "top"
     },
     {
-      "bbox": [5.069762, 5.1115],
-      "courtyard": [5.069762, 5.1115],
+      "bbox": [1.89, 1.15],
+      "courtyard": [1.89, 1.15],
       "footprint": "Samsung_CL05B104KO5NNNC:C0402",
       "locked": false,
       "pads": [
@@ -2617,8 +2617,8 @@
       "side": "top"
     },
     {
-      "bbox": [6.046905, 5.40825],
-      "courtyard": [6.046905, 5.40825],
+      "bbox": [4.06, 2.29],
+      "courtyard": [4.06, 2.29],
       "footprint": "Sunlord_GZ2012D601TF:L0805",
       "locked": false,
       "pads": [
