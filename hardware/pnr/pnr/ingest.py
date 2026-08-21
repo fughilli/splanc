@@ -131,11 +131,13 @@ def _component(fp, frame: _Frame) -> Component:
         # the old GetPos0(); GetFPRelativePosition() is the current accessor.
         get_rel = getattr(pad, "GetFPRelativePosition", None) or pad.GetPos0
         p0 = get_rel()
+        sz = pad.GetSize()
         pads.append(
             Pad(
                 name=_pad_name(pad),
                 net=pad.GetNetname(),
                 offset=(_mm(p0.x), _mm(p0.y)),
+                size=(_mm(sz.x), _mm(sz.y)),
             )
         )
 

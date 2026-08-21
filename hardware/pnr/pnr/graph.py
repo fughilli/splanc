@@ -48,15 +48,20 @@ class Pad:
 
     ``offset`` is the pad centre relative to the component origin, in the
     component's *unrotated* frame (mm); the placer rotates it by the component
-    orientation. ``net`` is the net name (``""`` for an unconnected pad).
+    orientation. ``size`` is the pad's (w, h) extent (mm) in that same unrotated
+    frame — used by the detailed router for obstacle/keep-away geometry; ``(0, 0)``
+    for hand-built pads that don't need it. ``net`` is the net name (``""`` for an
+    unconnected pad).
     """
 
     name: str
     net: str
     offset: Tuple[float, float]
+    size: Tuple[float, float] = (0.0, 0.0)
 
     def __post_init__(self):
         self.offset = _fpair(self.offset)
+        self.size = _fpair(self.size)
 
 
 @dataclass
@@ -170,7 +175,13 @@ class BoardGraph:
                 bbox=c["bbox"],
                 locked=bool(c.get("locked", False)),
                 pads=[
-                    Pad(name=p["name"], net=p["net"], offset=p["offset"]) for p in c.get("pads", [])
+                    Pad(
+                        name=p["name"],
+                        net=p["net"],
+                        offset=p["offset"],
+                        size=p.get("size", (0.0, 0.0)),
+                    )
+                    for p in c.get("pads", [])
                 ],
             )
             for c in d.get("components", [])

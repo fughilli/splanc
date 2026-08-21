@@ -6,7 +6,37 @@ scan back. Full design + rationale lives in
 the running state so a fresh-context agent can pick up cleanly. Update it at the
 end of every session.
 
-## 2026-08-21 (night) — routability diagnosed; own detailed router kicked off (START HERE)
+## 2026-08-21 (night) — detailed router R2 + R4 core built + tested (START HERE)
+
+The own detailed router now has its **engine**: a grid model (R2) + a negotiated
+multi-layer maze router (R4), both pure Python and unit-tested (suite 13/13).
+This is the hard algorithmic core; what's left is integration (R5) + fanout (R3).
+
+- **R2 — `pnr/route/detail/grid.py`.** `RouteGrid` over the placed graph: per
+  signal layer (F.Cu=0, B.Cu=last), pitch ≥ track+clearance ⇒ **DRC-by-
+  construction**. Pads (now carry `size` — added to `graph.Pad` + `ingest`;
+  fixture `graph.json` regenerated) become **own-net access cells**; other-net
+  pads/keep-outs are obstacles; outline = grid bound. `passable(layer,i,j,net)`.
+  `detail_grid_test` green (incl. building on the real 338-pad fixture).
+- **R4 — `pnr/route/detail/maze.py`.** Multi-layer **A\\\*** + **PathFinder**
+  rip-up-&-reroute: in-plane + via moves (via surcharge), multi-pin nets grow a
+  tree (Prim on the grid), cost `(1+h)·p`; iterate until **no cell is shared by
+  two nets** ⇒ DRC-clean at the pitch. `RouteResult` (routes/vias/unrouted).
+  `detail_maze_test` green: 2-pin, via-when-needed, obstacle-avoid, **two crossing
+  nets negotiate DRC-clean (no shared cells)**, deterministic, other-net-pad blocks.
+  **This engine subsumes R1/R3** — a dog-bone fanout is just a short route + via.
+
+**Next (R5 integration + R3):** (1) a `route_board(placed_graph, constraints)`
+that builds the grid, routes the **signal** nets, and does **plane fanout** by
+routing each plane-net pad to its plane layer (R4 with the plane as target) — all
+DRC-clean by construction; (2) convert grid cells → mm tracks/vias and emit them
+in `writeback` (instead of FreeRouting); (3) feed the router's real per-region
+congestion back to placement (the design's loop, §R5). Then `splanc_dev.fab` can
+be fully routed AND DRC-clean by our own engine. Grid pitch for splanc_dev ≈ 0.25
+mm (240×200×2). Watch A\\\* performance on the full board (bound iters; the tests
+are instant on synthetic grids).
+
+## 2026-08-21 (night) — routability diagnosed; own detailed router kicked off
 
 **Decision (Kevin):** build our **own detailed router**, SOTA-grounded and phased
 like the placer — FreeRouting + naive planes can't get a dense fine-pitch board

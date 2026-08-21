@@ -84,6 +84,21 @@ def pin_positions(comp: Component) -> List[Tuple[str, Tuple[float, float]]]:
     return out
 
 
+def pad_rects(comp: Component) -> List[Tuple[str, str, Rect]]:
+    """``(pad_name, net, Rect)`` for each pad — absolute centre + rotation-aware
+    (w, h). For a 90/270° part the pad's w/h swap (like the courtyard). Used by the
+    detailed router for pad obstacle / access geometry."""
+    swap = int(round(comp.rot)) % 180 == 90
+    out: List[Tuple[str, str, Rect]] = []
+    positions = pin_positions(comp)
+    for (name, (x, y)), pad in zip(positions, comp.pads):
+        w, h = pad.size
+        if swap:
+            w, h = h, w
+        out.append((name, pad.net, Rect(x, y, w, h)))
+    return out
+
+
 # --- constraint resolution (edge poses, keep-out regions) ------------------
 
 

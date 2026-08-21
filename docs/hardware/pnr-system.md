@@ -437,16 +437,22 @@ shorts on 0.5 mm-pitch parts (612 DRC violations) — the fix is **dog-bone fano
   net (already scaffolded in `writeback.apply_planes`). Acceptance
   `plane_fanout_test`: all plane-net pads connected, **0 DRC clearance/short
   violations** on the plane layers.
-- **R2 — Geometry + pin-access model.** A gridless (or fine-grid) obstacle model
-  of the copper layers; per-pad **access points** (TritonRoute-style). Acceptance:
-  access points are DRC-legal and reachable; obstacle queries are correct.
-- **R3 — Escape / fanout routing.** Route each fine-pitch part's pins out to the
-  channel (dog-bone + short escape), network-flow/greedy per the escape-routing
-  SOTA. Acceptance: every pin of the ESP32/QFN escapes its footprint DRC-clean.
-- **R4 — Negotiated signal router.** **PathFinder** rip-up-&-reroute (we already
-  have the cost model in `pnr/route`) as a real geometric maze/A\* on R2's grid,
-  honoring clearance/width/via rules. Acceptance `detail_route_test`: 0 unrouted
-  signals + 0 DRC on a fixture, deterministic.
+- **R2 — Geometry + pin-access model.** ✅ **Done.** `pnr/route/detail/grid.py` —
+  a per-signal-layer `RouteGrid` (pitch ≥ track+clearance ⇒ DRC-by-construction),
+  built from the placed graph: pads (now carrying `size`) become own-net access
+  cells, other-net pads/keep-outs are obstacles, the outline is the grid bound.
+  `detail_grid_test` covers mapping/ownership/passability + builds on the real
+  fixture (338 pads).
+- **R4 — Negotiated signal router.** ✅ **Core done.** `pnr/route/detail/maze.py` —
+  multi-layer **A\\\*** + **PathFinder** rip-up-&-reroute: via moves cost a via,
+  multi-pin nets grow a tree (Prim on the grid), and nets negotiate until **no
+  cell is shared** (⇒ DRC-clean at the grid pitch). `detail_maze_test`: 2-pin,
+  via-when-needed, obstacle avoidance, **two crossing nets negotiate DRC-clean**,
+  other-net-pad blocks, deterministic. (This engine subsumes R1/R3 — a fanout is a
+  short route that drops a via.)
+- **R3 — Escape / fanout via the engine.** Apply R4 to plane-net pads with the
+  plane layer as target (dog-bone = a short route + via), so fanout is DRC-clean by
+  construction. Acceptance: every ESP32/QFN pin escapes DRC-clean.
 - **R5 — Close the loop + optimize.** Feed R4's _real_ per-region congestion back
   into placement (replacing the optimistic lookahead) so the placement iterates to
   routable; then length/via optimization. Acceptance: `splanc_dev.fab` is fully

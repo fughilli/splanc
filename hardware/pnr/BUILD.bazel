@@ -89,6 +89,20 @@ py_library(
     ],
 )
 
+# Own detailed router (design §Detailed router, R2–R5): grid/obstacle model + a
+# multi-layer PathFinder maze router. Pure python/numpy; imports place.geometry
+# (torch-containing package, but the router logic is torch-free).
+py_library(
+    name = "pnr_detail",
+    srcs = glob(["pnr/route/detail/*.py"]),
+    imports = ["."],
+    deps = [
+        ":pnr",
+        ":pnr_place",
+        requirement("numpy"),
+    ],
+)
+
 # Runnable end-to-end place+route loop: emits the final placed graph JSON that
 # the writeback step turns back into a .kicad_pcb. This is the torch-side step
 # of the <board>.fab flow.
@@ -236,6 +250,35 @@ py_test(
     legacy_create_init = False,
     main = "tests/test_geometry.py",
     deps = [":pnr_place"],
+)
+
+# R2 acceptance: the routing grid + obstacle + pin-access model.
+py_test(
+    name = "detail_grid_test",
+    size = "small",
+    srcs = ["tests/test_detail_grid.py"],
+    data = glob(["testdata/splanc_dev/*"]),
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_detail_grid.py",
+    deps = [
+        ":pnr",
+        ":pnr_detail",
+    ],
+)
+
+# R4 acceptance: the multi-layer PathFinder maze router (routes, vias, negotiation).
+py_test(
+    name = "detail_maze_test",
+    size = "small",
+    srcs = ["tests/test_detail_maze.py"],
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_detail_maze.py",
+    deps = [
+        ":pnr",
+        ":pnr_detail",
+    ],
 )
 
 # Phase 4 acceptance: the place<->route loop converges (overflow -> 0), terminates.
