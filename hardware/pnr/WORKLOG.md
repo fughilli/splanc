@@ -42,6 +42,26 @@ atopile/FreeRouting). The `.fab` build is the slow (~10 min) integration path;
 each plane experiment above cost one. Diagnosis scripts: union-find over
 tracks+pads per net = pcbnew ratsnest (use it to see which nets/regions fail).
 
+**R1 attempt + finding (next actor start here):** implemented dog-bone fanout in
+`writeback._dogbone_fanout_net` (offset via + short trace, outward from footprint
+centre, clearance-checked vs other-net pads/tracks via `_collect_obstacles` /
+`_clear_of_obstacles`; via-in-pad only for big pads). **Result: still not
+DRC-clean** — a naive outward offset leaves ~28 shorts / ~553 DRC on the dense
+row fixture, because (a) the fanout **trace** itself isn't collision-routed (only
+the via position is checked) and (b) via geometry (`PCB_VIA` width: `GetWidth
+called without a layer argument` under DRC) needs the proper setup. **Conclusion:
+R1 needs R2 first** — clean fanout requires the geometry/obstacle model + a real
+(even 1-segment) router for the dog-bone trace. So the build order is
+**R2 (geometry + pin access) → R1/R3 (fanout/escape on it) → R4 → R5**, not
+R1 standalone. The dog-bone scaffold + obstacle framework is committed and is the
+foundation; the missing piece is a collision-aware trace router (R2/R4).
+
+**Env hazard:** `BOARD.GetTracks()` / `GetDrawings()` / `Zones()` have a **flaky
+SWIG iterator** in this KiCad-9 python (`'SwigPyObject' object is not iterable`) —
+usually works, sometimes not. `_collect_obstacles` wraps `GetTracks()` in
+try/except (falls back to pads-only). Prefer `GetFootprints()` (reliable). Any new
+pcbnew iteration should be guarded.
+
 ## 2026-08-21 (late) — correctness fixes from EE review; routability still open
 
 An EE review of the first routed board (`splanc_dev.fab`) surfaced real defects.

@@ -229,7 +229,7 @@ def apply_planes(board, rules: dict, pad_margin_mm: float = 2.0) -> int:
             for x, y in [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]:
                 outline.Append(pcbnew.VECTOR2I(int(x), int(y)))
             board.Add(z)
-            _via_stitch_net(board, net.GetNetCode())
+            _dogbone_fanout_net(board, net.GetNetCode())
             zones.append(((x1 - x0) * (y1 - y0), z))
 
     # Priority: smaller zones fill on top of (carve out of) larger overlapping ones.
@@ -259,34 +259,108 @@ def _type_plane_layers(board, rules: dict) -> None:
                 pass
 
 
-def _via_stitch_net(board, netcode: int) -> int:
-    """Drop a through-via at every pad of ``netcode`` so pads on other layers reach
-    the plane. A through-via touches every copper layer including the plane, and
-    the zone fill bonds to it (same net). Returns vias added."""
+def _collect_obstacles(board):
+    """(x, y, radius, netcode) for every pad + track/via endpoint — the copper a
+    fanout via/trace must clear. Coarse bounding circles (safe for keep-away)."""
+    obs = []
+    for fp in board.GetFootprints():
+        for pad in fp.Pads():
+            p = pad.GetPosition()
+            sz = pad.GetSize()
+            obs.append((p.x, p.y, max(sz.x, sz.y) / 2.0, pad.GetNetCode()))
+    try:  # BOARD.GetTracks() has a flaky SWIG iterator in this KiCad 9 python
+        tracks = list(board.GetTracks())
+    except TypeError:  # pragma: no cover - version shim
+        tracks = []
+        sys.stderr.write("planes: GetTracks() not iterable; fanout avoids pads only\n")
+    for t in tracks:
+        code = t.GetNetCode()
+        w = t.GetWidth() / 2.0
+        for pt in (t.GetStart(), t.GetEnd()):
+            obs.append((pt.x, pt.y, w, code))
+    return obs
+
+
+def _clear_of_obstacles(vx, vy, keepr, netcode, obstacles) -> bool:
+    """True if a disc of radius ``keepr`` at (vx, vy) clears all other-net copper."""
+    for ox, oy, orad, onet in obstacles:
+        if onet == netcode:
+            continue
+        dx, dy = vx - ox, vy - oy
+        if dx * dx + dy * dy < (keepr + orad) ** 2:
+            return False
+    return True
+
+
+def _dogbone_fanout_net(board, netcode: int, clearance_mm: float = 0.2) -> int:
+    """Dog-bone fanout: for each pad of ``netcode`` place a through-via *offset*
+    into free space with a short trace (not via-in-pad, which shorts on 0.5 mm
+    pitch — the standard fanout for ≥0.5 mm pitch). The via is pushed outward from
+    the footprint centre and clearance-checked against all other-net copper; the
+    first clear offset wins, else via-in-pad only where the pad is big enough to
+    host one cleanly. The plane fill bonds to the via. Returns pads fanned out."""
+    import math
+
     import pcbnew
 
     via_d = _nm(0.6)
+    via_r = via_d / 2.0
     drill_d = _nm(0.3)
-    seen = set()
+    clr = _nm(clearance_mm)
+    trace_w = _nm(0.25)
+    obstacles = _collect_obstacles(board)
+
+    def add_via(x, y):
+        v = pcbnew.PCB_VIA(board)
+        v.SetPosition(pcbnew.VECTOR2I(int(x), int(y)))
+        v.SetViaType(pcbnew.VIATYPE_THROUGH)
+        v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu)
+        v.SetFrontWidth(via_d)  # KiCad 9: per-via diameter (SetWidth wants a layer)
+        v.SetDrill(drill_d)
+        v.SetNetCode(netcode)
+        board.Add(v)
+
     added = 0
     for fp in board.GetFootprints():
+        cen = fp.GetPosition()
         for pad in fp.Pads():
             if pad.GetNetCode() != netcode:
                 continue
             pos = pad.GetPosition()
-            k = (pos.x, pos.y)
-            if k in seen:
+            sz = pad.GetSize()
+            pr = max(sz.x, sz.y) / 2.0
+            layer = pad.GetLayer()
+            dx, dy = pos.x - cen.x, pos.y - cen.y
+            norm = math.hypot(dx, dy) or 1.0
+            ux, uy = dx / norm, dy / norm
+
+            # A big pad (thermal / through-hole) hosts a via in-pad cleanly.
+            if pr >= via_r + _nm(0.15):
+                add_via(pos.x, pos.y)
+                added += 1
                 continue
-            seen.add(k)
-            v = pcbnew.PCB_VIA(board)
-            v.SetPosition(pos)
-            v.SetViaType(pcbnew.VIATYPE_THROUGH)
-            v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu)
-            v.SetFrontWidth(via_d)  # KiCad 9: per-via diameter (SetWidth wants a layer)
-            v.SetDrill(drill_d)
-            v.SetNetCode(netcode)
-            board.Add(v)
-            added += 1
+
+            placed = False
+            base = pr + via_r + clr
+            for extra in (_nm(0.0), _nm(0.25), _nm(0.5), _nm(0.9)):
+                vx = pos.x + ux * (base + extra)
+                vy = pos.y + uy * (base + extra)
+                if _clear_of_obstacles(vx, vy, via_r + clr, netcode, obstacles):
+                    add_via(vx, vy)
+                    t = pcbnew.PCB_TRACK(board)
+                    t.SetStart(pos)
+                    t.SetEnd(pcbnew.VECTOR2I(int(vx), int(vy)))
+                    t.SetWidth(trace_w)
+                    t.SetLayer(layer)
+                    t.SetNetCode(netcode)
+                    board.Add(t)
+                    obstacles.append((vx, vy, via_r, netcode))  # don't stack
+                    added += 1
+                    placed = True
+                    break
+            if not placed:
+                add_via(pos.x, pos.y)  # congested: via-in-pad last resort
+                added += 1
     return added
 
 
