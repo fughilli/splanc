@@ -6,7 +6,87 @@ scan back. Full design + rationale lives in
 the running state so a fresh-context agent can pick up cleanly. Update it at the
 end of every session.
 
-## 2026-08-21 (night) — Phase 3 orientation landed (START HERE)
+## 2026-08-21 (late) — Phases 4 + 5 landed: end-to-end `.fab` target (START HERE)
+
+**State:** the design's remaining phases are integrated and the end-to-end target
+is **verified building a real board**. One target runs the whole multi-turn
+optimize→route→export flow:
+
+    bazel build //hardware/splanc_dev:splanc_dev.fab        # routed board + Gerber/drill/BOM/pick-place
+    bazel build //hardware/splanc_dev:splanc_dev.fab.board  # just the routed .kicad_pcb + DRC report
+
+**Verified end-to-end (2026-08-21):** `splanc_dev.fab` **built clean**. The loop
+reported `place<->route 1 round: overflow 0, converged; placement 60x50 mm, HPWL
+15832 -> 1849 mm (88% shorter), 61 parts rotated, legal`; FreeRouting then laid
+**1004 tracks + 80 vias** over the 79-footprint board, and the bundle came out
+with the full Gerber set (F_Cu/B_Cu/mask/paste/silk/Edge.Cuts), drill (.drl),
+`pick-place.csv`, and `bom.csv`. Engine suite (`//hardware/pnr/...`) is 9/9
+green.
+
+**Phase 4 — routing + place↔route feedback (`pnr/route/`):**
+
+- `steiner.py` — RMST net decomposition (a light FLUTE stand-in).
+- `global_route.py` — coarse **gcell** global router with **PathFinder** negotiated
+  congestion: per-edge capacity = signal-layers × tracks/gcell; each 2-pin segment
+  routed as the cheaper monotone **L**; cost `c=(1+h)·p` with present-sharing `p`
+  and accumulated history `h`. Objective = total **overflow**; returns per-gcell
+  overflow + history maps.
+- `feedback.py` — the loop (design §6): place → global route → if overflow>0,
+  accumulate congestion into a persistent history map, turn it into per-part
+  **RePlAce inflation** (grow congested parts' spreading footprint), re-place;
+  converge when overflow→0. Round cap + no-improvement guard.
+- Threaded an `inflation` dict through `place()` / `global_place()` / `legalize()`.
+- Tests: `route_test` (primitives — Steiner tree, capacity/overflow, PathFinder
+  history, inflation derivation) + `route_feedback_test` (acceptance §9.4: on
+  `splanc_dev` overflow reaches **0**, loop **terminates**, overflow
+  **non-increasing**, placement stays legal, deterministic). Both green.
+
+**Phase 5 — writeback + detailed route + DRC + fab (`pnr/writeback.py`, `pnr.bzl`):**
+
+- `writeback.py` — inverse of ingest: place each footprint (pose/orientation/side)
+  via pcbnew, **clear stale preview tracks**, save. Outline framing is delegated to
+  the proven text-based `board_outline.py` (tight Edge.Cuts + page around the new
+  placement) because `BOARD.GetDrawings()` has a broken SWIG iterator in this KiCad
+  9 python under Bazel (`GetTracks`/`GetFootprints` are fine). Since pcbnew's
+  `SaveBoard` reformats gr_lines into nested `(stroke …)` that `board_outline.py`'s
+  single-level regex can't strip, `writeback.strip_edge_cuts` (a paren-matched text
+  pass) removes all Edge.Cuts first so the framer adds exactly one outline. Pure
+  `to_pcb_nm` + `strip_edge_cuts` are unit-tested; a pcbnew-gated live test checks
+  the round-trip. `writeback_test` green.
+- `pnr.bzl` — `atopile_pnr` macro → a `_pnr_board` rule that orchestrates the two
+  interpreters in one action (ingest+writeback+FreeRouting under `@kicad_python`
+  with a _scoped_ PYTHONPATH; place+route under the hermetic torch `pnr_fab`
+  py_binary via `files_to_run`), runs DRC (report by default, `drc_gate=True` to
+  fail on violations), and re-provides `AtopileLayoutInfo`; a `_pnr_fab` rule then
+  runs the existing `kicad-cli` exporters into one vendor bundle dir.
+- Wired `//hardware/splanc_dev:splanc_dev.fab` with `constraints.yaml`.
+
+**Guidance-input docs (Kevin's ask):** new `docs/hardware/pnr-inputs.md` — the full
+`constraints.yaml` reference (board size/layers/clearance, fixed/edge_align/
+keepout/side_pref/group, hard-vs-soft, frame/units, how each steers placement, a
+worked splanc_dev example). `hardware/README.md` updated with the two layout paths;
+design doc §9 marks Phases 4–5 done.
+
+**Watch-outs for the next actor:**
+
+- The `.fab` build is **non-hermetic + slow**: it rebuilds atopile (nix, venvHash
+  can drift — see `hardware/README.md`) and runs FreeRouting (minutes; capped at
+  `route_max_passes=6`). The unit/acceptance tests (`bazel test //hardware/pnr/…`)
+  cover the engine without any of that and are the fast feedback loop.
+- **Frame/orientation fidelity:** ingest records pad offsets in the footprint's
+  y-down local frame while the engine works y-up, so the placer's _estimate_ of a
+  rotated pin's landing is mirror-approximate; courtyard legality (w/h swap) is
+  exact, so this affects HPWL fidelity only, not DRC. A true y-consistent pad
+  frame is a clean follow-up.
+- **DRC gate is off by default** (report-only) so the target reliably produces
+  outputs; flip `drc_gate=True` once FreeRouting reliably clears the real board.
+- **Cosmetic:** `board_outline.py` draws the Edge.Cuts as 4 separate `gr_line`
+  segments, so kicad-cli prints "non-closed outline" warnings during export
+  (harmless — the Edge.Cuts gerber is still produced). Drawing a single closed
+  `gr_rect`/`gr_poly` would silence them; a small follow-up.
+- Phase 6 (diff-pair/length-match, learned routability predictor) is untouched.
+
+## 2026-08-21 (night) — Phase 3 orientation landed
 
 **State:** Phase 3 (orientation) is done and green. The placer now co-optimizes a
 90° rotation per movable part. Next actor starts **Phase 4 — routing + place↔route
@@ -138,14 +218,12 @@ it consumes is in place; wire the loss over `BoardGraph` + `CompiledConstraints`
 
 ### To regenerate the fixture graph (needs the KiCad `pcbnew` python)
 
-```bash
-bazelisk --output_base=$HOME/.cache/bazel-atopile build //hardware/splanc_dev:splanc_dev
-KP=$HOME/.cache/bazel-atopile/external/rules_nixpkgs_core~~nix_pkg~kicad_python
-PCBNEW=$(dirname $(find /nix/store -name pcbnew.py -path '*kicad-base*' | head -1))
-PYTHONPATH="$PCBNEW:hardware/pnr" "$KP/bin/python3.12" -m pnr.ingest \
-  hardware/pnr/testdata/splanc_dev/splanc_dev.kicad_pcb --name splanc_dev \
-  --dump-json hardware/pnr/testdata/splanc_dev/graph.json
-```
+    bazelisk --output_base=$HOME/.cache/bazel-atopile build //hardware/splanc_dev:splanc_dev
+    KP=$HOME/.cache/bazel-atopile/external/rules_nixpkgs_core~~nix_pkg~kicad_python
+    PCBNEW=$(dirname $(find /nix/store -name pcbnew.py -path '*kicad-base*' | head -1))
+    PYTHONPATH="$PCBNEW:hardware/pnr" "$KP/bin/python3.12" -m pnr.ingest \
+      hardware/pnr/testdata/splanc_dev/splanc_dev.kicad_pcb --name splanc_dev \
+      --dump-json hardware/pnr/testdata/splanc_dev/graph.json
 
 ## 2026-08-21 (am) — design doc drafted; no code yet
 

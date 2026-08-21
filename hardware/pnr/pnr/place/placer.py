@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from pnr.constraints import CompiledConstraints
-from pnr.graph import BoardGraph
+from pnr.graph import BoardGraph, BoardOutline
 
 from . import metrics
 from .geometry import keepout_rects, outline_size, resolve_fixed_poses
@@ -60,12 +60,16 @@ def place(
     iters: int = 800,
     grid_mm: float = 0.5,
     orient: bool = True,
+    inflation: Optional[Dict[str, float]] = None,
 ) -> Tuple[BoardGraph, PlacementReport]:
     """Place ``graph`` under ``constraints``; return the placed graph + report.
 
     ``hpwl_baseline`` is the wirelength of the incoming (atopile row) placement,
     so the report shows the improvement. With ``orient`` the placer also picks a
-    90° rotation per movable part (Phase 3). Deterministic under a fixed ``seed``.
+    90° rotation per movable part (Phase 3). ``inflation`` (ref → spreading
+    multiplier) is the routing-feedback hook (§6): the place↔route loop grows the
+    footprint of congested parts so the next round spreads them. Deterministic
+    under a fixed ``seed``.
     """
     width, height = outline_size(graph, constraints)
     baseline = metrics.hpwl(graph)
@@ -76,7 +80,14 @@ def place(
 
     # 1. Global placement (continuous position + orientation).
     positions, rotations = global_place(
-        graph, constraints, width, height, seed=seed, iters=iters, orient=orient
+        graph,
+        constraints,
+        width,
+        height,
+        seed=seed,
+        iters=iters,
+        orient=orient,
+        inflation=inflation,
     )
     cont = BoardGraph.from_json(graph.to_json())
     for comp in cont.components:
@@ -92,7 +103,13 @@ def place(
         keepouts=keepouts,
         clearance=clearance,
         grid_mm=grid_mm,
+        inflation=inflation,
     )
+
+    # Stamp the *placement region* as the placed board's outline, so downstream
+    # steps (writeback framing, route SVG) use the constraint-resolved region
+    # rather than the incoming atopile-framed one.
+    placed.outline = BoardOutline(width=width, height=height)
 
     # 3. Score (hard checks at zero tolerance — strict no-overlap / in-outline).
     v = metrics.hard_violations(placed, constraints, clearance=0.0)

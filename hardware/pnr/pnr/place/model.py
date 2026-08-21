@@ -25,7 +25,7 @@ the end we snap to the arg-max angle. Fixed parts keep their constrained angle.
 
 from __future__ import annotations
 
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import torch
 from pnr.constraints import CompiledConstraints
@@ -59,12 +59,19 @@ def global_place(
     lr: float = 0.3,
     gamma: float = 1.0,
     orient: bool = True,
+    inflation: Optional[Dict[str, float]] = None,
     w_spread: float = 1.0,
     w_bound: float = 20.0,
     w_keep: float = 40.0,
     w_group: float = 0.5,
 ) -> Tuple[Dict[str, Tuple[float, float]], Dict[str, float]]:
     """Optimize continuous centres (+ orientation); return positions and angles.
+
+    ``inflation`` optionally maps a ref to a spreading multiplier > 1 (RePlAce
+    cell inflation, §6): the part's courtyard is scaled up *only in the density/
+    spreading term*, so a component the router found in a congested region is
+    pushed into lower-density space on the next placement round. Wirelength and
+    the reported courtyard are unaffected.
 
     Returns ``({ref: (x, y)}, {ref: angle_deg})`` for every component (angle is
     the arg-max of the relaxed rotation distribution, a legal 0/90/180/270)."""
@@ -74,6 +81,11 @@ def global_place(
     idx = {c.ref: i for i, c in enumerate(comps)}
 
     half = _base_half_sizes(graph)  # (n, 2), unrotated
+    if inflation:
+        scale = torch.tensor(
+            [[max(1.0, float(inflation.get(c.ref, 1.0)))] for c in comps], dtype=torch.float32
+        )
+        half = half * scale  # grows the spreading footprint of congested parts
     # Courtyard half-size per candidate angle: swap w/h at 90/270.
     swapped = half[:, [1, 0]]
     half4 = torch.stack([half, swapped, half, swapped], dim=1)  # (n, 4, 2)

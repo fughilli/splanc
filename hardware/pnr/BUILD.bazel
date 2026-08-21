@@ -5,10 +5,10 @@ This package is the CPU-first Python engine; the differentiable placement core
 (a later phase) is PyTorch. The two interpreters in the flow are kept apart:
 
 - `pnr` (this py_library) is imported by the hermetic rules_python interpreter
-  that carries torch. `pnr.ingest` imports KiCad's `pcbnew` **lazily**, so the
-  library imports fine here even though `pcbnew` is absent — the `pcbnew` path is
-  run out-of-band under `@kicad_python` (see the ingest module docstring; a
-  first-class `atopile_pnr` rule that wires that interpreter is Phase 5).
+  that carries torch. `pnr.ingest`/`pnr.writeback` import KiCad's `pcbnew`
+  **lazily**, so the library imports fine here even though `pcbnew` is absent —
+  the `pcbnew` path runs out-of-band under `@kicad_python`, wired by the
+  `atopile_pnr` rule in `//hardware/pnr:pnr.bzl` (the `<board>.fab` flow).
 - `torch_smoke_test` is the Task 0 gate: torch imports + runs on CPU.
 """
 
@@ -16,6 +16,19 @@ load("@pypi//:requirements.bzl", "requirement")
 load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
 
 package(default_visibility = ["//visibility:public"])
+
+# The stdlib-only pnr sources the pcbnew steps (ingest, writeback) run under
+# @kicad_python — staged as plain files on PYTHONPATH, NOT the torch py_library
+# (KiCad's python has no torch and doesn't need it). See //hardware/pnr:pnr.bzl.
+filegroup(
+    name = "pnr_kicad_srcs",
+    srcs = [
+        "pnr/__init__.py",
+        "pnr/graph.py",
+        "pnr/ingest.py",
+        "pnr/writeback.py",
+    ],
+)
 
 # Core: graph + constraints + ingest. No torch/numpy — the light path that the
 # KiCad pcbnew flow and the schema tests use.
@@ -53,6 +66,40 @@ py_binary(
     deps = [
         ":pnr",
         ":pnr_place",
+        requirement("pyyaml"),
+    ],
+)
+
+# Lookahead global router + place<->route feedback loop (Phase 4). Pure
+# python/numpy (no torch of its own) but the feedback loop calls the torch
+# placer, so it depends on :pnr_place.
+py_library(
+    name = "pnr_route",
+    srcs = glob(
+        ["pnr/route/*.py"],
+        exclude = ["pnr/route/__main__.py"],
+    ),
+    imports = ["."],
+    deps = [
+        ":pnr",
+        ":pnr_place",
+        requirement("numpy"),
+    ],
+)
+
+# Runnable end-to-end place+route loop: emits the final placed graph JSON that
+# the writeback step turns back into a .kicad_pcb. This is the torch-side step
+# of the <board>.fab flow.
+py_binary(
+    name = "pnr_fab",
+    srcs = ["pnr/route/__main__.py"],
+    imports = ["."],
+    main = "pnr/route/__main__.py",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":pnr",
+        ":pnr_place",
+        ":pnr_route",
         requirement("pyyaml"),
     ],
 )
@@ -103,6 +150,19 @@ py_test(
     deps = [":pnr"],
 )
 
+# Write-back frame math (Phase 5); a pcbnew-gated live round-trip when KiCad's
+# python is present. Depends only on :pnr_kicad (stdlib), not torch.
+py_test(
+    name = "writeback_test",
+    size = "small",
+    srcs = ["tests/test_writeback.py"],
+    data = glob(["testdata/splanc_dev/*"]),
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_writeback.py",
+    deps = [":pnr"],
+)
+
 # Phase 2 acceptance: placement MVP is legal + beats the ato-row HPWL baseline.
 py_test(
     name = "placement_test",
@@ -131,6 +191,38 @@ py_test(
     deps = [
         ":pnr",
         ":pnr_place",
+        requirement("pyyaml"),
+    ],
+)
+
+# Phase 4 unit tests: the routing primitives (Steiner, global router, inflation).
+py_test(
+    name = "route_test",
+    size = "small",
+    srcs = ["tests/test_route.py"],
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_route.py",
+    deps = [
+        ":pnr",
+        ":pnr_route",
+        requirement("numpy"),
+    ],
+)
+
+# Phase 4 acceptance: the place<->route loop converges (overflow -> 0), terminates.
+py_test(
+    name = "route_feedback_test",
+    size = "medium",  # runs the placement loop up to several rounds; ~30-60s
+    srcs = ["tests/test_route_feedback.py"],
+    data = glob(["testdata/splanc_dev/*"]),
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_route_feedback.py",
+    deps = [
+        ":pnr",
+        ":pnr_place",
+        ":pnr_route",
         requirement("pyyaml"),
     ],
 )

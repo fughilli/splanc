@@ -27,18 +27,39 @@ there is **no** picker / components API / EasyEDA call at build time
 (`Picking parts [0.03s]`). The `.pdf`/`.gerber` exports run `kicad-cli` on the
 resolved `.kicad_pcb` with no network.
 
-### Layout is an auto-placed _preview_, not a fab layout
+### Two layout paths: the autoroute _preview_ and the algorithmic PnR fab flow
 
 The `.ato` sources are electrical-only, so `ato` auto-places parts in a naive
-row. The targets set `outline_margin_mm = 4` (auto Edge.Cuts outline + tight
-page) and `autoroute = True` (headless FreeRouting), bounded by
-`route_max_passes = 3` so a `.pdf`/`.gerber` build finishes in ~3 min instead of
-~10 (FreeRouting keeps optimizing for a long time on a densely/naively-placed
-board). The result is framed and routed but the routing is long/dense — a
-**preview / DRC aid, not a fab-ready layout**. For production, an EE should do
-the layout by hand (`bazel run //hardware/<board>:<board>.view`, save, commit
-the `.kicad_pcb`, flip `frozen = True`). An algorithmic place-and-route system
-to close this gap is planned (see `docs/hardware/pnr-system.md`).
+row. There are two ways to get from there to a laid-out board:
+
+**1. Autoroute preview (`.pdf`/`.gerber`).** The base targets set
+`outline_margin_mm = 4` (auto Edge.Cuts outline + tight page) and
+`autoroute = True` (headless FreeRouting), bounded by `route_max_passes = 3` so a
+build finishes in ~3 min instead of ~10. The result is framed and routed but the
+placement is atopile's naive row, so the routing is long/dense — a **preview /
+DRC aid, not a fab-ready layout**.
+
+**2. Algorithmic place-and-route (`.fab`)** — FUG-138. `//hardware/splanc_dev:
+splanc_dev.fab` runs the full multi-turn optimize loop: differentiable placement
+
+- orientation, then the place↔route feedback loop, honoring the spatial guidance
+  in `constraints.yaml` (connector/edge placement, antenna keep-outs, board size,
+  side/grouping preferences). It writes the optimized placement back onto the
+  board, routes it, runs DRC, and emits the vendor fab bundle (Gerbers + drill +
+  BOM + pick-place). This replaces the naive-row preview with a real optimized
+  layout while keeping the one-target UX. See `docs/hardware/pnr-system.md` (design)
+  and `docs/hardware/pnr-inputs.md` (the constraint language), and
+  `hardware/pnr/` (the engine).
+
+```bash
+bazel build //hardware/splanc_dev:splanc_dev.fab        # optimized board + fab bundle
+bazel build //hardware/splanc_dev:splanc_dev.fab.board  # just the routed .kicad_pcb + DRC report
+```
+
+For production either flow's output is a first-spin an EE should review; fixed
+poses and keep-outs are trustworthy, soft placement preferences are advisory. To
+hand-finish, `bazel run //hardware/<board>:<board>.view`, save, commit the
+`.kicad_pcb`, flip `frozen = True`.
 
 Requires `nix` (already a repo prerequisite). The first build realises the
 Nix `ato`/`kicad-cli` toolchain (see below); no `nix develop` shell needed —

@@ -18,7 +18,7 @@ wirelength structure the global stage found.
 from __future__ import annotations
 
 import math
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 from pnr.graph import BoardGraph, Component
@@ -77,14 +77,19 @@ def legalize(
     keepouts: List[Rect],
     clearance: float = 0.2,
     grid_mm: float = 0.5,
+    inflation: Optional[Dict[str, float]] = None,
 ) -> BoardGraph:
     """Return a copy of ``graph`` with movable parts snapped to a legal layout.
 
     ``fixed`` maps refs to their held centres (placed as-is, marked as obstacles);
     ``keepouts`` are blocked regions. Movable parts are read at their current
-    (continuous) ``pos`` as the placement target. Raises
-    :class:`LegalizationError` if a part will not fit.
+    (continuous) ``pos`` as the placement target. ``inflation`` optionally scales
+    the *reserved* footprint of a part (RePlAce cell inflation, §6): a factor > 1
+    grows the slot a congested part claims so the packer spreads it into lower-
+    density space — the part's real courtyard (used for the legality check) is
+    unchanged. Raises :class:`LegalizationError` if a part will not fit.
     """
+    inflation = inflation or {}
     g = grid_mm
     nx = int(math.ceil(width / g))
     ny = int(math.ceil(height / g))
@@ -110,8 +115,9 @@ def legalize(
     movable.sort(key=lambda c: courtyard_rect(c).w * courtyard_rect(c).h, reverse=True)
     for comp in movable:
         cr = courtyard_rect(comp)
-        bw = int(math.ceil((cr.w + clearance) / g))
-        bh = int(math.ceil((cr.h + clearance) / g))
+        infl = max(1.0, float(inflation.get(comp.ref, 1.0)))
+        bw = int(math.ceil((cr.w * infl + clearance) / g))
+        bh = int(math.ceil((cr.h * infl + clearance) / g))
         r, c = _place_part(occ, g, bw, bh, comp.pos)
         occ[r : r + bh, c : c + bw] = True
         comp.pos = ((c + bw / 2.0) * g, (r + bh / 2.0) * g)

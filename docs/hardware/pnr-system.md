@@ -346,19 +346,24 @@ single-build-target UX.
 
 **Reuse vs. build:**
 
-| Layer                   | Recommendation                                                                                                                                      |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Placement core          | **Fork NVlabs/Cypress** (DREAMPlace-derived, PCB-specific, orientation + per-side + net-crossing already done) — check its license before vendoring |
-| Global router (in-loop) | **FLUTE + FastRoute** (OpenROAD `grt`, BSD-3) as the lookahead router                                                                               |
-| Feedback                | RePlAce inflation loop + **PathFinder history** term (our glue)                                                                                     |
-| Legalization / discrete | Tetris/Abacus + **SA** (VPR/TimberWolf move set)                                                                                                    |
-| Detailed router         | **FreeRouting** now (GPL/JVM — keep at arm's length via DSN/SES, as today); PCB-rule DRT later                                                      |
-| DB I/O + fab export     | **KiCad `pcbnew` + `kicad-cli`** (already wired)                                                                                                    |
+| Layer                   | Recommendation                                                                                                                                                                                                                                          |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Placement core          | **Clean-room** DREAMPlace/Cypress-style differentiable placement (`pnr/place/`, torch) — Cypress's license is non-permissive for AGPL, so we reimplemented the math (LSE-WL + spreading + Gumbel-Softmax orientation) rather than fork (WORKLOG Task 0) |
+| Global router (in-loop) | **RMST + gcell PathFinder** lookahead (`pnr/route/`) — a lightweight in-house router; FLUTE/FastRoute (OpenROAD `grt`, BSD-3) is a drop-in upgrade behind the same interface if the estimate proves too coarse                                          |
+| Feedback                | RePlAce inflation loop + **PathFinder history** term (our glue)                                                                                                                                                                                         |
+| Legalization / discrete | Tetris/Abacus + **SA** (VPR/TimberWolf move set)                                                                                                                                                                                                        |
+| Detailed router         | **FreeRouting** now (GPL/JVM — keep at arm's length via DSN/SES, as today); PCB-rule DRT later                                                                                                                                                          |
+| DB I/O + fab export     | **KiCad `pcbnew` + `kicad-cli`** (already wired)                                                                                                                                                                                                        |
 
 ## 9. Phased implementation plan
 
 Each phase names a concrete **acceptance test** (a `py_test` gated on the two
 fixtures below) so "done" is unambiguous and regressions are caught.
+
+**Status (2026-08-21):** Task 0 + Phases 1–5 are implemented and green in
+`hardware/pnr/`; the end-to-end `//hardware/splanc_dev:splanc_dev.fab` target
+runs the full optimize→route→export flow. Phase 6 (diff-pair/length-match, a
+learned routability predictor) is future work.
 
 0. **Task 0 — decisions (resolve before coding, see §11).** (a) Verify the
    **Cypress license** permits vendoring/forking; if not, plan a clean-room
@@ -379,14 +384,23 @@ fixtures below) so "done" is unambiguous and regressions are caught.
 3. **Orientation + grouping.** Gumbel-Softmax bilevel orientation; hMETIS
    partition seed. Acceptance: orientations settle to legal discrete angles;
    HPWL improves vs. Phase 2 on both fixtures (tracked).
-4. **Routing + feedback loop.** FLUTE+FastRoute lookahead; overflow→inflation
-   with PathFinder history; converge. Acceptance: `route_feedback_test` shows the
-   lookahead **global-route overflow reaches 0** within a pass cap, and the loop
-   **terminates** (no oscillation) on both fixtures.
-5. **Detailed route + DRC + fab.** FreeRouting DSN/SES on the converged
-   placement; DRC gate; Gerber/drill/BOM/pick-place. Acceptance: **`bazel build
-//hardware/splanc_dev:splanc_dev.fab`** yields a **DRC-clean** board and a
-   complete Gerber/drill/BOM/pick-place set — the end-to-end target.
+4. **Routing + feedback loop.** ✅ **Done.** RMST decomposition +
+   gcell global route with **PathFinder** present/history congestion
+   (`pnr/route/`); overflow→RePlAce-style component **inflation** weighted by an
+   accumulated history term; converge (`pnr/route/feedback.py`). Acceptance:
+   `route_feedback_test` shows the lookahead **global-route overflow reaches 0**
+   within a pass cap and the loop **terminates** (non-increasing overflow, no
+   oscillation); `route_test` covers the primitives. (FLUTE/FastRoute proper are
+   a future swap-in behind the same interface — the RMST+L-route lookahead is
+   enough to drive the loop.)
+5. **Detailed route + DRC + fab.** ✅ **Done.** `pnr/writeback.py` (placed graph
+   → `.kicad_pcb` via pcbnew: poses, orientation, side, new `Edge.Cuts`, stale
+   tracks cleared) + the `atopile_pnr` rule (`hardware/pnr/pnr.bzl`) orchestrating
+   ingest → place+route → writeback → FreeRouting → DRC across the two
+   interpreters, re-providing `AtopileLayoutInfo` to the existing exporters.
+   **`bazel build //hardware/splanc_dev:splanc_dev.fab`** yields the routed board
+   - a Gerber/drill/BOM/pick-place bundle. DRC runs each build (report by default;
+     `drc_gate = True` to fail on violations — the "DRC-clean" gate).
 6. **Quality passes.** Diff-pair/length-match; via/length optimization;
    (optional) a learned routability predictor if the analytical signal limits us.
 

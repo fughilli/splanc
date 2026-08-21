@@ -22,6 +22,7 @@
 # a preview/DRC aid, NOT a fab-ready layout (an EE should place + route in
 # :splanc_dev.view for production).
 load("@atopile_rules//bazel/atopile:defs.bzl", "atopile_project")
+load("//hardware/pnr:pnr.bzl", "atopile_pnr")
 
 atopile_project(
     name = "splanc_dev",
@@ -36,5 +37,23 @@ atopile_project(
     outline_margin_mm = 4,
     picker = False,
     route_max_passes = 3,
+    visibility = ["//visibility:public"],
+)
+
+# Algorithmic place-and-route (FUG-138). Unlike the naive-row autoroute preview
+# above, this runs the full multi-turn optimize loop — differentiable placement +
+# orientation, then the place↔route feedback loop (docs/hardware/pnr-system.md
+# §4/§6) — writes the optimized placement back onto the board, routes it, and
+# emits the vendor fab bundle. Guidance (fixed connectors, edge alignments,
+# antenna keep-out, board size, side preferences, grouping) is read from
+# constraints.yaml; see docs/hardware/pnr-inputs.md.
+#
+#   bazel build //hardware/splanc_dev:splanc_dev.fab        # routed board + Gerbers/drill/BOM/pick-place
+#   bazel build //hardware/splanc_dev:splanc_dev.fab.board  # just the routed .kicad_pcb + DRC report
+atopile_pnr(
+    name = "splanc_dev.fab",
+    constraints = "constraints.yaml",
+    layout = ":splanc_dev",
+    route_max_passes = 6,
     visibility = ["//visibility:public"],
 )
