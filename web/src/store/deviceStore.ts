@@ -26,6 +26,11 @@ export interface KnownDevice {
   pendingName?: string;
   /** Optional folder for organizing devices; "" / absent = ungrouped. */
   folder?: string;
+  /** Firmware git commit last reported in `welcome` (full hash); absent/"" until
+   * seen or on older firmware. Shown + linked on the device card (FUG-126). */
+  fwGitCommit?: string;
+  /** Whether that firmware build had a dirty working tree. */
+  fwGitDirty?: boolean;
   /** ISO timestamp of the last successful connection. */
   lastSeen: string;
 }
@@ -165,7 +170,10 @@ class DeviceStore {
    * record — the freshly-connected one, whose URL we know is reachable — folding
    * the absorbed record's user-set fields (folder, BLE id, a queued rename, a
    * user-given name) in so nothing is lost. */
-  applyWelcome(id: string, welcome: { mac?: string; deviceName?: string }): void {
+  applyWelcome(
+    id: string,
+    welcome: { mac?: string; deviceName?: string; fwGitCommit?: string; fwGitDirty?: boolean },
+  ): void {
     const list = read();
     const d = list.find((x) => x.id === id);
     if (!d) return;
@@ -174,6 +182,10 @@ class DeviceStore {
       d.label = welcome.deviceName;
       d.named = true;
     }
+    // Build info: adopt whatever the latest welcome reported (a firmware update
+    // can change it; "" means older firmware / unstamped — leave prior value).
+    if (welcome.fwGitCommit !== undefined) d.fwGitCommit = welcome.fwGitCommit;
+    if (welcome.fwGitDirty !== undefined) d.fwGitDirty = welcome.fwGitDirty;
     d.lastSeen = new Date().toISOString();
     const dups = welcome.mac ? list.filter((x) => x.id !== id && x.bleMac === welcome.mac) : [];
     for (const dup of dups) {

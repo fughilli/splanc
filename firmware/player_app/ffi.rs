@@ -649,6 +649,27 @@ pub unsafe extern "C" fn lm_player_set_identity(
     player().set_identity(mac_s, name_s);
 }
 
+/// Set the firmware build info (git commit + dirty flag) echoed in every
+/// `welcome`. `commit` is the full git hash as UTF-8 bytes; `dirty` is true when
+/// the working tree had uncommitted changes at build time. Call once after
+/// `lm_player_init` (the firmware owns the stamped `build_info.h`).
+///
+/// # Safety
+/// `commit` must point to `commit_len` readable bytes (or be null).
+#[no_mangle]
+pub unsafe extern "C" fn lm_player_set_build_info(
+    commit: *const u8,
+    commit_len: usize,
+    dirty: bool,
+) {
+    let commit_s = if commit.is_null() {
+        ""
+    } else {
+        core::str::from_utf8(core::slice::from_raw_parts(commit, commit_len)).unwrap_or("")
+    };
+    player().set_build_info(commit_s, dirty);
+}
+
 /// Copy the player's CURRENT display name into `out` (cap bytes); returns the
 /// length written, or -2 when it doesn't fit. The firmware polls this after each
 /// `lm_player_handle` so a `set_device_name` can be persisted + reflected to the

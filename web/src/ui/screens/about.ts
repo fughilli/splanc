@@ -11,6 +11,7 @@
  */
 
 import { assetUrl } from "../../assetBase";
+import { appBuildInfo, buildLabel, commitUrl } from "../../buildInfo";
 import { Card } from "../kit";
 import { installAboutStyles } from "./about.css";
 import type { Router, Screen } from "../app/router";
@@ -91,6 +92,21 @@ function extLink(text: string, href: string): HTMLAnchorElement {
   a.textContent = text;
   a.target = "_blank";
   a.rel = "noopener noreferrer";
+  return a;
+}
+
+/** The build-info value for a commit: a link to its GitHub commit page, or a
+ * plain "unknown" span when the build was made without stamping (dev/tests). */
+function buildValue(commit: string, dirty: boolean): HTMLElement {
+  if (!commit) {
+    const span = document.createElement("span");
+    span.className = "about-build-unknown metric";
+    span.textContent = "unknown";
+    return span;
+  }
+  const a = extLink(buildLabel(commit, dirty), commitUrl(commit));
+  a.classList.add("metric");
+  a.title = commit;
   return a;
 }
 
@@ -197,6 +213,7 @@ function aboutBody(): HTMLElement {
   links.append(
     linkRow("Source code", extLink("github.com/fughilli/splanc", GITHUB_URL)),
     linkRow("Studio", extLink("fug.studio", STUDIO_URL)),
+    linkRow("Build", buildValue(appBuildInfo.gitCommit, appBuildInfo.gitDirty)),
   );
 
   // Contributors.

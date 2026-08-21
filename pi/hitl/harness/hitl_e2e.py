@@ -37,6 +37,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import re
 import ssl
 import sys
 import time
@@ -119,6 +120,26 @@ async def _ws_checks(ws_url: str, new_name: str, insecure: bool) -> None:
             sock, {"type": "hello", "client": "hitl-e2e", "appVersion": "0"}, "welcome"
         )
         print(f"[ws] welcome: device_name={welcome.get('deviceName')!r}", flush=True)
+
+        # BUILD INFO (FUG-126) — the firmware must report the git commit it was
+        # built from (stamped via Bazel --stamp) so the app's device card can show
+        # + link it. The CI flash-bundle is built from a real checkout, so the
+        # commit is a 40-char hex hash; assert the device echoes it (this catches a
+        # firmware that silently drops the field, which is what a plain
+        # welcome.get() on the app side would render as "unknown").
+        fw_commit = welcome.get("fwGitCommit")
+        fw_dirty = welcome.get("fwGitDirty")
+        if not isinstance(fw_commit, str) or not re.fullmatch(r"[0-9a-f]{40}", fw_commit):
+            raise E2EFailure(
+                f"welcome build info missing/malformed: fwGitCommit={fw_commit!r} "
+                "(expected the 40-char git hash the firmware was built from)"
+            )
+        if not isinstance(fw_dirty, bool):
+            raise E2EFailure(f"welcome fwGitDirty not a bool: {fw_dirty!r}")
+        print(
+            f"[ws] BUILD INFO OK — fwGitCommit={fw_commit[:8]} dirty={fw_dirty}",
+            flush=True,
+        )
 
         # TIME SYNC — three pings, keep the min-RTT sample, assert it's sane.
         samples = []

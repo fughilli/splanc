@@ -24,7 +24,16 @@
     "Welcome": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["type", "sessionId", "codeParams", "solverBenchMs", "mac", "deviceName"],
+      "required": [
+        "type",
+        "sessionId",
+        "codeParams",
+        "solverBenchMs",
+        "mac",
+        "deviceName",
+        "fwGitCommit",
+        "fwGitDirty"
+      ],
       "properties": {
         "type": { "const": "welcome" },
         "sessionId": { "type": "string", "description": "UUID for this control session." },
@@ -40,6 +49,14 @@
         "deviceName": {
           "type": "string",
           "description": "The player's current display / Bluetooth-advertised name (default \"Led Widget <6-hex>\" derived from the MAC, or a user-customized name set via set_device_name). Empty from older firmware."
+        },
+        "fwGitCommit": {
+          "type": "string",
+          "description": "Git commit the firmware was built from (full 40-char hash), stamped in at build time via Bazel --stamp (FUG-126). Lets the app show + link the device's exact build. Empty from older firmware or an unstamped build."
+        },
+        "fwGitDirty": {
+          "type": "boolean",
+          "description": "True when the firmware was built from a dirty working tree (uncommitted changes). Always false from older firmware."
         }
       }
     },

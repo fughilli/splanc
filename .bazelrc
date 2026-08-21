@@ -17,6 +17,13 @@ common --registry=https://bcr.bazel.build
 # Make actions hermetic so caching is correct across machines.
 build --incompatible_strict_action_env
 
+# Git build info (FUG-126). The workspace status command runs git in the real
+# checkout and folds STABLE_GIT_* keys into stable-status.txt, which the
+# //tools/build_info:build_info_file rule stamps into the firmware header and
+# the web build-info JSON (About page + device card commit links). STABLE_ keys
+# only change on a new commit / dirty toggle, so stamped outputs don't churn.
+build --workspace_status_command="bash tools/build_info/status.sh"
+
 # Persist Bazel state in the project tree (gitignored, dot-prefixed) so it
 # survives container restarts, which wipe the container's root fs (~/.cache).
 # Both caches are content-addressable (hash filenames), so they are safe on the

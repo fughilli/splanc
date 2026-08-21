@@ -13,7 +13,7 @@ use ledmapper_player_ffi::{
     lm_fx_load, lm_fx_set_active, lm_fx_shade, lm_fx_update, lm_led_count, lm_map_led, lm_map_len,
     lm_osc_ingest, lm_osc_set_by_name, lm_pattern_color, lm_pattern_timing, lm_perf_build_report,
     lm_perf_interval_ms, lm_perf_mode,
-    lm_perf_push, lm_player_handle, lm_player_init,
+    lm_perf_push, lm_player_handle, lm_player_init, lm_player_set_build_info,
 };
 use micropb::{MessageDecode, MessageEncode, PbEncoder};
 use pb::ClientMessage_::Msg as CMsg;
@@ -52,12 +52,20 @@ fn handle(frame: &[u8], now: f64) -> Option<SMsg> {
 fn full_device_flow_through_the_c_abi() {
     lm_player_init(64);
 
+    // Build info (FUG-126): the firmware stamps LM_GIT_COMMIT / LM_GIT_DIRTY in
+    // once at init; it must be echoed in every welcome so the app's device card
+    // can show + link the device's build.
+    let commit = "0123456789abcdef0123456789abcdef01234567";
+    unsafe { lm_player_set_build_info(commit.as_ptr(), commit.len(), true) };
+
     // hello -> welcome without a solver bench score.
     let Some(SMsg::Welcome(w)) = handle(&encode(CMsg::Hello(pb::Hello::default())), 1.0) else {
         panic!("welcome expected");
     };
     assert!(!w._has.r#solver_bench_ms());
     assert_eq!(w.r#code_params.r#led_count, 64);
+    assert_eq!(w.r#fw_git_commit.as_str(), commit, "welcome echoes the git commit");
+    assert!(w.r#fw_git_dirty, "welcome echoes the dirty flag");
 
     // start_mapping 16 LEDs -> pattern timing + frame colors line up.
     let mut opts = pb::StartMappingOptions::default();

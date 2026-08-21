@@ -11,6 +11,7 @@
  * not as a one-tap top-level button, so it can't be hit by accident.
  */
 
+import { buildLabel, commitUrl } from "../../buildInfo";
 import { ActionGrid, Button, IconButton, Sheet, toast } from "../kit";
 import { appState } from "../app/state";
 import { deviceProber } from "../../net/deviceProber";
@@ -337,6 +338,25 @@ function openDeviceDetail(dev: KnownDevice): void {
     return r;
   };
 
+  // Like rowFor, but the value is a link to the GitHub commit page (FUG-126).
+  const commitRowFor = (cap: string, commit: string, dirty: boolean): HTMLElement => {
+    if (!commit) return rowFor(cap, "unknown (connect once)");
+    const r = document.createElement("div");
+    r.className = "device-detail-row";
+    const c = document.createElement("span");
+    c.className = "device-detail-cap";
+    c.textContent = cap;
+    const a = document.createElement("a");
+    a.className = "device-detail-val metric about-link";
+    a.href = commitUrl(commit);
+    a.textContent = buildLabel(commit, dirty);
+    a.title = commit;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    r.append(c, a);
+    return r;
+  };
+
   // -- display name: a label with a pencil; tapping swaps in an input + floppy.
   const nameField = document.createElement("div");
   nameField.className = "device-detail-field";
@@ -354,7 +374,12 @@ function openDeviceDetail(dev: KnownDevice): void {
       void appState.client
         .setDeviceName(name)
         .then((w) => {
-          deviceStore.applyWelcome(dev.id, { mac: w.mac, deviceName: w.deviceName });
+          deviceStore.applyWelcome(dev.id, {
+            mac: w.mac,
+            deviceName: w.deviceName,
+            fwGitCommit: w.fwGitCommit,
+            fwGitDirty: w.fwGitDirty,
+          });
           deviceStore.takePending(dev.id);
           toast("Device renamed");
         })
@@ -455,6 +480,7 @@ function openDeviceDetail(dev: KnownDevice): void {
     divider,
     rowFor("LAN address", deviceHost(cur)),
     rowFor("MAC address", cur.bleMac || "unknown (connect once)"),
+    commitRowFor("Firmware build", cur.fwGitCommit ?? "", cur.fwGitDirty ?? false),
     rowFor("Folder", cur.folder || "Ungrouped"),
   );
 }

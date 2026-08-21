@@ -15,8 +15,17 @@ load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_static_library", "rust_test")
 load("//tools:flash_bundle.bzl", "flash_bundle")
+load("//tools/build_info:build_info.bzl", "build_info_file")
 
 package(default_visibility = ["//visibility:public"])
+
+# Git build info (FUG-126): main.cpp includes this stamped header and reports the
+# commit + dirty flag to the app in every `welcome` (see lm_player_set_build_info).
+build_info_file(
+    name = "build_info_h",
+    out = "build_info.h",
+    template = "build_info.h.tmpl",
+)
 
 # The C ABI over the player stack, as the firmware links it. Bare-metal
 # only (it carries the panic handler); the host test drives the same source
@@ -140,6 +149,7 @@ cc_binary(
         "serial_log.h",
         "ws2812_rmt.cpp",
         "ws2812_rmt.h",
+        ":build_info_h",  # generated build_info.h (git commit + dirty flag)
     ],
     # Match the SDK/library ABI: the Arduino tree builds -fno-rtti, and a
     # subclass of its polymorphic types must not demand base typeinfo.
@@ -211,6 +221,7 @@ cc_binary(
         "serial_log.h",
         "ws2812_rmt.cpp",
         "ws2812_rmt.h",
+        ":build_info_h",  # generated build_info.h (git commit + dirty flag)
     ],
     copts = ["-fno-rtti"],
     local_defines = ["LM_OSC_BENCH"],
@@ -285,6 +296,7 @@ cc_binary(
         "serial_log.h",
         "ws2812_rmt.cpp",
         "ws2812_rmt.h",
+        ":build_info_h",  # generated build_info.h (git commit + dirty flag)
     ],
     copts = ["-fno-rtti"],
     local_defines = ["LM_FX_JIT_BENCH"],
