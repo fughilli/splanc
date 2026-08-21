@@ -128,3 +128,42 @@ def diff_pixels(expected: Sequence[Pixel], got: Sequence[Pixel]) -> List[Tuple[i
         if g is None or tuple(g) != tuple(e):
             diffs.append((i, e, g if g is None else tuple(g)))
     return diffs
+
+
+def diff_pixels_aligned(
+    a: Sequence[Pixel], b: Sequence[Pixel], n: int
+) -> Tuple[List[Tuple[int, Pixel, object]], int]:
+    """Exact-byte diff of two captures of the SAME static n-pixel frame at unknown
+    phase — the JIT-off vs JIT-on differential (FUG-134).
+
+    Both captures are the wire of one static effect (`jit_bench.fx`): the DUT keeps
+    re-pushing an identical n-LED frame, so each capture is that frame repeated at
+    an arbitrary starting phase (the software trigger arms mid-frame — see
+    diff_structure_aligned). We take one WHOLE frame from `a` (skipping a possibly
+    partial leading frame when the capture is long enough) and slide it across `b`,
+    reporting the best EXACT-byte offset. Empty diffs = the two are byte-identical
+    somewhere, i.e. the JIT rendered bit-identically to the interpreter.
+
+    This is an exact (not structural) compare on purpose: both passes run the
+    identical firmware content path (color-correction + brightness), so the ONLY
+    variable is the JIT — any surviving pixel difference is a real
+    codegen/W^X/i-cache divergence, not a brightness/correction artifact.
+
+    Returns (diffs_at_best_offset, best_offset). With too few pixels to hold a full
+    frame it falls back to a head-to-head compare so the caller still gets a diff.
+    """
+    if n <= 0 or len(a) < n or len(b) < n:
+        return diff_pixels(list(a[:n]), list(b[:n])), 0
+    # Anchor on a whole frame from the middle of `a` when we have >=2 frames, so a
+    # torn leading pixel (trigger caught mid-transmission) can't skew the compare.
+    start = n if len(a) >= 2 * n else 0
+    ref = a[start : start + n]
+    best_diffs: List[Tuple[int, Pixel, object]] | None = None
+    best_off = 0
+    for off in range(0, len(b) - n + 1):
+        diffs = diff_pixels(ref, b[off : off + n])
+        if not diffs:
+            return [], off  # exact match somewhere — done
+        if best_diffs is None or len(diffs) < len(best_diffs):
+            best_diffs, best_off = diffs, off
+    return (best_diffs or []), best_off

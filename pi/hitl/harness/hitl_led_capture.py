@@ -18,9 +18,25 @@ DUT's WS2812 DIN) it now can:
      dimmed the wire via a FastLED-global scale (now removed) — see
      led_pattern.diff_structure.
 
+JIT correctness (`--jit-verify`, FUG-134): PR #114 shipped the on-device RV32IM JIT
+ENABLED by default. Its differential correctness is proven off-hardware
+(fx_compiler optimizer_test, the fx_jit differential test) and by a non-HITL
+on-device fxjitbench, but nothing asserted the JIT's output on the real LED wire —
+a W^X / PMP / i-cache / codegen bug can only manifest on the actual silicon. With
+--jit-verify this test drives `jit_bench.fx` (a time-independent fixed-point chain
+the device JIT lowers to one native RV32 segment — see firmware/player_app/bench),
+captures + decodes the WS2812 wire once with `set_jit(false)` and once with
+`set_jit(true)` on the SAME flashed firmware, and asserts the decoded pixels are
+BIT-IDENTICAL (led_pattern.diff_pixels_aligned). Because both passes run the
+identical content path, the differential cancels color-correction/brightness and
+the only variable is the JIT. (The set_jit arm added in #114 makes the toggle a
+one-liner; jit_bench.fx is the same program the standalone fxjitbench A/B uses, so
+it is known to engage the JIT.)
+
 Usage:
     bazel run //pi/hitl/harness:led_capture -- \
         --bundle bazel-bin/firmware/player_app/esp32c6_flashbundle.tar --leds 8
+    bazel run //pi/hitl/harness:led_capture -- --jit-verify --leds 16
 
 Selection/WiFi/tunnel are the CLI's, identical to hitl_e2e. Needs a live
 logic-analyzer rig with a board wired to the FX2, so it's a manual+hitl py_test;
@@ -32,15 +48,21 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import json
 import os
 import ssl
 import sys
 import time
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 from hitl_client import Reservation, ReserveError
-from led_pattern import counting_message, diff_structure_aligned, expected_pixels
+from led_pattern import (
+    counting_message,
+    diff_pixels_aligned,
+    diff_structure_aligned,
+    expected_pixels,
+)
 from provision import HarnessError, dut_target, ensure_booted, provision_dut
 
 # The SPI_FAST_FLASH_BOOT check + its strap-race retry live in provision.ensure_booted.
@@ -314,7 +336,167 @@ async def _drive_two_channel(ws_url: str, insecure: bool, half0: int, half1: int
     _log("[drive] split pattern latched")
 
 
+# -- JIT output-correctness (FUG-134) ----------------------------------------
+# Drive a JIT-able fx effect twice on the SAME flashed firmware — set_jit(false)
+# then set_jit(true) — and assert the captured WS2812 pixels are bit-identical.
+
+
+def _jitbench_fxb(explicit: str | None) -> bytes:
+    """The compiled `jit_bench.fxb` — the fixed-point chain the device JIT lowers.
+
+    Defaults to the artifact in runfiles (the OPTIMIZED build the firmware ships,
+    so the TeeLocal/MulFix superinstructions that maximize JIT coverage are
+    present); --fxb overrides with any `.fxb` on disk.
+    """
+    if explicit:
+        with open(explicit, "rb") as f:
+            return f.read()
+    try:
+        from python.runfiles import runfiles
+
+        path = runfiles.Create().Rlocation("_main/firmware/player_app/jit_bench.fxb")
+    except Exception:
+        path = None
+    if not path or not os.path.exists(path):
+        raise SystemExit(
+            "[jit] no jit_bench.fxb in runfiles; pass --fxb <path> (build it with "
+            "`bazel build //firmware/player_app:jit_bench_fxb_file`)"
+        )
+    with open(path, "rb") as f:
+        return f.read()
+
+
+def _linear_map(n: int) -> dict:
+    """A synthetic linear fixture map of `n` LEDs (x spread 0..1, y=z=0). The
+    firmware's shade loop iterates the MAP (lm_map_len), reading each LED's stored
+    position — a fresh --erase-fs board has none, so nothing renders. jit_bench's
+    shade() reads led.pos, so the bench must supply a map (same shape fx_bench uses)."""
+    denom = max(1, n - 1)
+    leds = [{"id": i, "xyz": [i / denom, 0.0, 0.0]} for i in range(n)]
+    return {"type": "submit_map", "map": {"map_id": "__jitverify", "led_count": n, "leds": leds}}
+
+
+async def _drive_fx(ws_url: str, insecure: bool, fxb_b64: str, jit: bool, leds: int) -> None:
+    """Connect the player socket, pin the JIT state, load the map + strip length,
+    and submit + activate the bench effect. set_jit takes effect on the NEXT load,
+    so it is sent BEFORE submit_effect; it is fire-and-forget (no reply), and the
+    single-threaded player guarantees it lands first. The map + led_count are
+    (re)sent each pass so a pass is self-contained even if the DUT rebooted."""
+    import websockets
+    from server import proto_wire
+
+    ssl_ctx = None
+    if ws_url.startswith("wss:"):
+        ssl_ctx = ssl.create_default_context()
+        if insecure:
+            ssl_ctx.check_hostname = False
+            ssl_ctx.verify_mode = ssl.CERT_NONE
+
+    async def rpc(sock, flat, expect):
+        await sock.send(proto_wire.encode_client(flat))
+        while True:
+            msg = proto_wire.decode_server(await asyncio.wait_for(sock.recv(), timeout=15))
+            if msg.get("type") == expect:
+                return msg
+            if msg.get("type") == "error":
+                raise SystemExit(f"[drive] device error: {msg}")
+
+    _log(f"[drive] connecting {ws_url} (jit {'ON' if jit else 'OFF'})")
+    sock = await websockets.connect(ws_url, max_size=2**22, ssl=ssl_ctx, open_timeout=8)
+    async with sock:
+        await rpc(sock, {"type": "hello", "client": "led_capture", "app_version": "1"}, "welcome")
+        # Pin the JIT for the load that follows (fire-and-forget, ordered before it).
+        await sock.send(proto_wire.encode_client({"type": "set_jit", "enabled": bool(jit)}))
+        await rpc(sock, _linear_map(leds), "result_ready")
+        await rpc(sock, {"type": "set_led_count", "led_count": leds}, "led_count_state")
+        await rpc(
+            sock,
+            {
+                "type": "submit_effect",
+                "effect_id": "__jitverify",
+                "fxb": fxb_b64,
+                "activate": True,
+            },
+            "result_ready",
+        )
+    _log(f"[drive] bench effect latched (jit {'ON' if jit else 'OFF'})")
+
+
+def _report_jit(got: Dict[bool, List[Tuple[int, int, int]]], n: int) -> int:
+    """Compare the JIT-off and JIT-on captures and PASS iff they're bit-identical."""
+    off, on = got[False], got[True]
+    if len(off) < n or len(on) < n:
+        _log(f"[FAIL] too few pixels captured (jit-off {len(off)}, jit-on {len(on)}, need >={n})")
+        return 1
+    diffs, at = diff_pixels_aligned(off, on, n)
+    if diffs:
+        _log(
+            f"[FAIL] JIT diverges from the interpreter: {len(diffs)} pixel(s) differ (offset {at})"
+        )
+        _log(f"       first diffs {diffs[:8]}")
+        _log(f"       jit-off {off}")
+        _log(f"       jit-on  {on}")
+        return 1
+    _log(
+        f"[PASS] on-device JIT renders bit-identically to the interpreter: {n} pixels "
+        f"match on the wire (offset {at}): {on[at : at + n]}"
+    )
+    return 0
+
+
+def run_jit_verify(args: argparse.Namespace) -> int:
+    """FUG-134: capture the WS2812 wire for a JIT-able effect with the JIT OFF then
+    ON (same firmware) and assert the decoded pixels are bit-identical."""
+    n = args.leds
+    fxb_b64 = base64.b64encode(_jitbench_fxb(args.fxb)).decode("ascii")
+    got: Dict[bool, List[Tuple[int, int, int]]] = {}
+
+    # --device-ws: drive an already-reachable DUT + capture via the daemon.
+    if args.device_ws:
+        require_analyzer(args.server)
+        _log(f"[jit] {args.device_ws} (no reservation; capturing via daemon {args.server})")
+        for jit in (False, True):
+            asyncio.run(_drive_fx(args.device_ws, not args.ws_verify, fxb_b64, jit, n))
+            time.sleep(0.5)
+            got[jit] = capture_via_daemon(args.server, "", args.samples)
+            _log(f"[capture] jit {'ON' if jit else 'OFF'}: decoded {len(got[jit])} px")
+        return _report_jit(got, n)
+
+    res = Reservation(
+        server=args.server or None, owner=args.owner, require="analyzer", device=args.device or None
+    )
+    try:
+        res.acquire()
+    except ReserveError as e:
+        _log(f"[reserve] {e}")
+        return 2
+    require_analyzer(res.server)
+    try:
+        if not args.wifi_ssid:
+            creds = res.wifi()
+            if creds:
+                args.wifi_ssid, args.wifi_pass = creds
+                _log(f"[improv] provisioning onto the rig AP {args.wifi_ssid!r}")
+        flash(res, args.bundle, args.monitor_seconds)
+        redirect = provision_dut(res, args.wifi_ssid, args.wifi_pass, args.improv_timeout)
+        host, port = dut_target(redirect, args.ws_scheme)
+        dev = getattr(res, "device", "") or ""
+        with res.forward(host, port) as local_port:
+            ws_url = f"{args.ws_scheme}://localhost:{local_port}/ws"
+            for jit in (False, True):
+                asyncio.run(_drive_fx(ws_url, not args.ws_verify, fxb_b64, jit, n))
+                # Give the RMT push a beat to hit the wire before we capture.
+                time.sleep(0.5)
+                got[jit] = capture(res, dev, args.samples)
+                _log(f"[capture] jit {'ON' if jit else 'OFF'}: decoded {len(got[jit])} px")
+        return _report_jit(got, n)
+    finally:
+        res.release()
+
+
 def run(args: argparse.Namespace) -> int:
+    if args.jit_verify:
+        return run_jit_verify(args)
     global BLOCKS
     n = args.leds
     # red / green / blue thirds, remainder off — distinct, order-sensitive.
@@ -440,6 +622,18 @@ def main() -> int:
     ap.add_argument("--bundle", default=_default_bundle(), help="firmware flash-bundle tar")
     ap.add_argument("--leds", type=int, default=8, help="LED count driven + expected on the wire")
     ap.add_argument(
+        "--jit-verify",
+        action="store_true",
+        help="FUG-134: drive a JIT-able fx effect (jit_bench.fx) with the on-device JIT OFF then "
+        "ON (same firmware) and assert the captured WS2812 pixels are bit-identical — proves the "
+        "RV32 JIT renders identically to the interpreter on real silicon",
+    )
+    ap.add_argument(
+        "--fxb",
+        default="",
+        help="override the JIT-verify effect with a .fxb on disk (default: jit_bench.fxb from runfiles)",
+    )
+    ap.add_argument(
         "--two-channel",
         action="store_true",
         help="split --leds across the two output channels (set_led_count 0/1) and assert each "
@@ -488,6 +682,9 @@ def main() -> int:
         return 2
     if args.device_ws and not args.server:
         _log("--device-ws requires --server (the daemon to capture from)")
+        return 2
+    if args.jit_verify and args.two_channel:
+        _log("--jit-verify and --two-channel are mutually exclusive")
         return 2
     return run(args)
 

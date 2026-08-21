@@ -85,6 +85,42 @@ py_test(
     srcs = ["hitl_led_capture.py"],
     data = [
         "//firmware/player_app:esp32c6_flashbundle",
+        # The compiled JIT-bench effect for --jit-verify (FUG-134). The OPTIMIZED
+        # .fxb the firmware ships, so it lowers to a native RV32 segment on-device.
+        "//firmware/player_app:jit_bench_fxb_file",
+        "//pi/hitl/cmd/hitl",
+    ],
+    imports = ["."],
+    main = "hitl_led_capture.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# FUG-134: the JIT-correctness sibling of :led_capture, the LED-wire analogue of
+# the :fx_bench / :fx_bench_jit split. PR #114 shipped the on-device RV32IM JIT ON
+# by default; this pins --jit-verify, which drives a JIT-able fx effect
+# (jit_bench.fx) with the JIT OFF then ON on the SAME flashed firmware and asserts
+# the captured WS2812 pixels are BIT-IDENTICAL — so the CI HITL lane proves the JIT
+# renders identically to the interpreter on real silicon (a W^X/PMP/i-cache/codegen
+# bug only manifests on the chip). Same analyzer rig + capture path as :led_capture.
+py_test(
+    name = "led_capture_jit",
+    timeout = "eternal",
+    srcs = ["hitl_led_capture.py"],
+    args = ["--jit-verify"],
+    data = [
+        "//firmware/player_app:esp32c6_flashbundle",
+        # The OPTIMIZED .fxb the firmware ships, so it lowers to a native RV32
+        # segment on-device — the program under differential test.
+        "//firmware/player_app:jit_bench_fxb_file",
         "//pi/hitl/cmd/hitl",
     ],
     imports = ["."],
