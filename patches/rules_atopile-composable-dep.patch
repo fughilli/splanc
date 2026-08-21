@@ -1,0 +1,106 @@
+diff --git a/MODULE.bazel b/MODULE.bazel
+index ac28e9d..5a15e8f 100644
+--- a/MODULE.bazel
++++ b/MODULE.bazel
+@@ -1,7 +1,12 @@
+ """Bazel module for atopile PCB projects.
+ 
+-Provides the atopile rules (//bazel/atopile) and, optionally, a hermetic
+-Nix-backed toolchain via rules_nixpkgs.
++Provides the atopile rules (//bazel/atopile). The hermetic Nix-backed toolchain
++(ato/kicad-cli via rules_nixpkgs) is intentionally NOT wired here: rules_nixpkgs'
++`nix_repo`/`nix_pkg` tags are root-module-only, so a consumer that depends on
++this module supplies `@atopile`/`@kicad` from its OWN root Nix and registers an
++`atopile_toolchain` against `//bazel/atopile:toolchain_type` (see README). The
++`nix/*.nix` derivations here are the single source of truth a consumer points
++`nix_pkg.file` at; `examples/blinky` is built by that consumer's toolchain.
+ """
+ 
+ module(
+@@ -10,86 +15,3 @@ module(
+ )
+ 
+ bazel_dep(name = "platforms", version = "0.0.11")
+-
+-# --- Nix integration (hermetic toolchain) -----------------------------------
+-# Provides `ato`/`kicad-cli` to Bazel as concrete store paths via rules_nixpkgs,
+-# so artifact actions don't depend on a `nix develop` PATH. nixpkgs is pinned to
+-# the SAME commit as flake.lock: the atopile derivation (and its pinned venvHash
+-# in nix/packages.nix) is keyed to that nixpkgs' python313, so a floating tag
+-# would risk a venvHash mismatch. To re-pin, update `commit` here and flake.lock
+-# together. Prefer the host toolchain for interactive `bazel run …:*.view`.
+-bazel_dep(name = "rules_nixpkgs_core", version = "0.13.0")
+-
+-nix_repo = use_extension("@rules_nixpkgs_core//extensions:repository.bzl", "nix_repo")
+-nix_repo.github(
+-    name = "nixpkgs",
+-    org = "NixOS",
+-    repo = "nixpkgs",
+-    commit = "ac62194c3917d5f474c1a844b6fd6da2db95077d",  # == flake.lock nixpkgs
+-)
+-use_repo(nix_repo, "nixpkgs")
+-
+-nix_pkg = use_extension("@rules_nixpkgs_core//extensions:package.bzl", "nix_pkg")
+-
+-# Both packages come from //nix:bazel-atopile.nix, which returns the
+-# `{ atopile, kicad }` attrset; `attr` selects one. file_deps make Bazel refetch
+-# when the derivation or its pinned venvHash changes. Sourcing kicad from the
+-# same file (not `nix_pkg.attr` on nixpkgs) keeps it identical to the flake's.
+-nix_pkg.file(
+-    name = "atopile",
+-    attr = "atopile",
+-    file = "//nix:bazel-atopile.nix",
+-    file_deps = [
+-        "//nix:packages.nix",
+-        "//nix:atopile.nix",
+-    ],
+-    repo = "@nixpkgs",
+-)
+-nix_pkg.file(
+-    name = "kicad",
+-    attr = "kicad",
+-    file = "//nix:bazel-atopile.nix",
+-    file_deps = [
+-        "//nix:packages.nix",
+-        "//nix:atopile.nix",
+-    ],
+-    repo = "@nixpkgs",
+-)
+-
+-# FreeRouting: KiCad's autorouter is this external tool. Built from
+-# //nix:freerouting.nix (pinned 2.2.4 — the nixpkgs pin's 2.1.0 blocks on a GUI
+-# email dialog and routes nothing). Cross-platform Java; only referenced by the
+-# rules when a project sets `autoroute = True`, so it isn't fetched otherwise.
+-nix_pkg.file(
+-    name = "freerouting",
+-    attr = "freerouting",
+-    file = "//nix:bazel-atopile.nix",
+-    file_deps = [
+-        "//nix:packages.nix",
+-        "//nix:freerouting.nix",
+-    ],
+-    repo = "@nixpkgs",
+-)
+-
+-# A nix python3 to run the local picker sidecar (tools/atopile-picker) — so its
+-# interpreter is Bazel-provided/hermetic like the other tools, not the ambient
+-# `python3` (whose version varies: macOS ships 3.9). Only referenced when a
+-# project sets `picker = True`.
+-nix_pkg.attr(
+-    name = "python3",
+-    attr = "python3",
+-    repo = "@nixpkgs",
+-)
+-use_repo(nix_pkg, "atopile", "kicad", "freerouting", "python3")
+-
+-# --- Toolchain registration -------------------------------------------------
+-# Nix toolchains first so they win resolution; the host toolchain stays
+-# registered as a fallback (and for interactive `.view`/`.schematic`, which use
+-# PATH). The nix toolchain is split by exec platform: the darwin variant avoids
+-# the `@kicad` repo (nixpkgs KiCad is broken on aarch64-darwin) and uses the
+-# system KiCad.app — see //bazel/atopile/nix:BUILD.bazel.
+-register_toolchains("//bazel/atopile/nix:nix_toolchain_linux")
+-
+-register_toolchains("//bazel/atopile/nix:nix_toolchain_darwin")
+-
+-register_toolchains("//bazel/atopile:host_toolchain")

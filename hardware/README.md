@@ -11,32 +11,58 @@ with [rules_atopile](https://github.com/fughilli/rules_atopile) (`ato` +
 
 ## Build
 
+Each board is an `atopile_project` target (`//hardware/<board>:<board>`), which
+fans out a family of sub-targets:
+
 ```bash
-bazel run //hardware/splanc_dev:build             # resolve + lay out -> .kicad_pcb
-bazel run //hardware/splanc_dev:build -- pdf      # + layout PDF (kicad-cli)
-bazel run //hardware/splanc_dev:build -- gerber   # + Gerbers + drill
-# or directly:
-hardware/tools/ato_build.sh hardware/splanc_dev [pcb|pdf|gerber]
+bazel build //hardware/splanc_dev:splanc_dev          # resolve + lay out -> .kicad_pcb
+bazel build //hardware/splanc_dev:splanc_dev.pdf      # + layout PDF (kicad-cli)
+bazel build //hardware/splanc_dev:splanc_dev.gerber   # + Gerbers + drill dir
+bazel run   //hardware/splanc_dev:splanc_dev.view     # open the layout in KiCad
 ```
 
 `ato` builds **hermetically** — every part is a pre-picked atomic LCSC component
-(`elec/src/parts/**` + `passives.ato`), so there is **no** picker / components
-API / EasyEDA call at build time (`Picking parts [0.03s]`).
+(`elec/src/parts/**` + `passives.ato`), so the targets set `picker = False` and
+there is **no** picker / components API / EasyEDA call at build time
+(`Picking parts [0.03s]`). The `.pdf`/`.gerber` exports run `kicad-cli` on the
+resolved `.kicad_pcb` with no network.
 
-Requires `nix` (already a repo prerequisite) + `git`. The first build fetches
-rules_atopile and realises its Nix `ato`/`kicad-cli` toolchain.
+### Layout is an auto-placed _preview_, not a fab layout
 
-## Why it's not wired into `//MODULE.bazel`
+The `.ato` sources are electrical-only, so `ato` auto-places parts in a naive
+row. The targets set `outline_margin_mm = 4` (auto Edge.Cuts outline + tight
+page) and `autoroute = True` (headless FreeRouting), bounded by
+`route_max_passes = 3` so a `.pdf`/`.gerber` build finishes in ~3 min instead of
+~10 (FreeRouting keeps optimizing for a long time on a densely/naively-placed
+board). The result is framed and routed but the routing is long/dense — a
+**preview / DRC aid, not a fab-ready layout**. For production, an EE should do
+the layout by hand (`bazel run //hardware/<board>:<board>.view`, save, commit
+the `.kicad_pcb`, flip `frozen = True`). An algorithmic place-and-route system
+to close this gap is planned (see `docs/hardware/pnr-system.md`).
 
-rules_atopile was authored as a standalone **root** Bazel module. Its Nix
-toolchain uses rules_nixpkgs `nix_repo`/`nix_pkg` extension tags that are
-**root-module-only** — as a `bazel_dep` they fail (`Illegal use of the file/attr
-tag`), and marking the extensions `isolate = True` gets past that only to hit a
-rules_nixpkgs file-copy bug. So `ato_build.sh` drives rules_atopile at a pinned
-commit through its own `nix develop` instead — the same `ato`/`kicad-cli` steps
-the rules would run, without destabilising this repo's build graph. Wiring it as
-a first-class `atopile_project()` is a follow-up (needs an upstream rules_atopile
-change to compose as a dependency).
+Requires `nix` (already a repo prerequisite). The first build realises the
+Nix `ato`/`kicad-cli` toolchain (see below); no `nix develop` shell needed —
+Bazel provides the tools as action inputs.
+
+## How the Nix toolchain is wired
+
+rules_atopile provides the Starlark rules (`atopile_project`) and an
+`atopile_toolchain` rule, but **not** the tools: its own Nix toolchain uses
+rules_nixpkgs `nix_repo`/`nix_pkg` extension tags that are **root-module-only**,
+so they can't run when rules_atopile is consumed as a `bazel_dep`. So the wiring
+is split, the way rules_nixpkgs intends:
+
+- `//MODULE.bazel` pulls rules_atopile via `git_override` (patched to a minimal,
+  dependency-safe module — see `patches/rules_atopile-composable-dep.patch`) and
+  builds `ato` + `kicad-cli` from **this repo's** Nix (`nix_pkg.file` over
+  rules_atopile's `nix/packages.nix`, pinned to that project's nixpkgs so the
+  `venvHash` matches — `patches/rules_atopile-venvhash.patch`).
+- `//hardware/atopile` binds those `@atopile`/`@kicad` tools to an
+  `atopile_toolchain` and registers it (per exec platform).
+
+`ato_build.sh` (its own `nix develop` flow) predates this and is kept only for
+part authoring (`gen_parts_robust.sh`, `sanitize_footprints.py`); the boards now
+build through Bazel's toolchain.
 
 ## How the design is authored
 

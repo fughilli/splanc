@@ -7,7 +7,7 @@ index bd5e9d9..40b1865 100644
    # reproducible (determinism pass in atopile.nix), so the pin holds.
    venvHashBySystem = {
 -    "aarch64-linux" = "sha256-AAXyNGp2PaQSfcQmwOakRUpkm6UF/irnUm7iqXjMaxo=";
-+    "aarch64-linux" = "sha256-2miTphZ4Y6KMC1gIW2ARb/+aI29EHsekIdCoVJLa4xQ=";
++    "aarch64-linux" = "sha256-e5yy8ypw8cFphiCmF3DoZcY/ZupHJrGFL687c8ExRnQ=";
      "aarch64-darwin" = "sha256-xQkjTeRtl4SaigiZpNtGkRthm+l/pyKiGLrTZ05f2FU=";
    };
    venvHash = venvHashBySystem.${pkgs.stdenv.hostPlatform.system} or lib.fakeHash;

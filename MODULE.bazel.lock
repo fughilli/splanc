@@ -574,7 +574,7 @@
     "@@rules_nixpkgs_core~//extensions:package.bzl%nix_pkg": {
       "general": {
         "bzlTransitiveDigest": "2alEQC7q9PgrArc8ZeI662VmDHLGfuswqnzBJvVDnmg=",
-        "usagesDigest": "E4ucUN5Jn/YmDTyx5yC65QcL+uDL3u7smcb/18pFmjE=",
+        "usagesDigest": "uSWZbSPsZvDGSPnPb0uzlsdepKIY1165EhWM9ERnwDQ=",
         "recordedFileInputs": {},
         "recordedDirentsInputs": {},
         "envVariables": {},
@@ -594,17 +594,107 @@
               "quiet": false,
               "fail_not_supported": true
             }
+          },
+          "kicad_python": {
+            "bzlFile": "@@rules_nixpkgs_core~//:nixpkgs.bzl",
+            "ruleClassName": "_nixpkgs_package",
+            "attributes": {
+              "unmangled_name": "kicad_python",
+              "attribute_path": "python312",
+              "nix_file_deps": {},
+              "nix_file_content": "",
+              "repository": "@@rules_nixpkgs_core~~nix_repo~atopile_nixpkgs//:atopile_nixpkgs",
+              "repositories": {},
+              "build_file_content": "package(default_visibility = [\"//visibility:public\"])\n\nexports_files(glob([\"bin/*\"]))\n\nfilegroup(\n    name = \"bin\",\n    srcs = glob([\"bin/**\"]),\n)\n",
+              "nixopts": [],
+              "quiet": false,
+              "fail_not_supported": true
+            }
+          },
+          "atopile": {
+            "bzlFile": "@@rules_nixpkgs_core~//:nixpkgs.bzl",
+            "ruleClassName": "_nixpkgs_package",
+            "attributes": {
+              "unmangled_name": "atopile",
+              "attribute_path": "atopile",
+              "nix_file": "@@atopile_rules~//nix:packages.nix",
+              "nix_file_deps": {
+                "@@atopile_rules~//nix:atopile.nix": "'@@atopile_rules~//nix:atopile.nix'",
+                "@@atopile_rules~//nix:freerouting.nix": "'@@atopile_rules~//nix:freerouting.nix'"
+              },
+              "nix_file_content": "",
+              "repository": "@@rules_nixpkgs_core~~nix_repo~atopile_nixpkgs//:atopile_nixpkgs",
+              "repositories": {},
+              "build_file_content": "package(default_visibility = [\"//visibility:public\"])\n\nexports_files(glob([\"bin/*\"]))\n\nfilegroup(\n    name = \"bin\",\n    srcs = glob([\"bin/**\"]),\n)\n",
+              "nixopts": [],
+              "quiet": false,
+              "fail_not_supported": true
+            }
+          },
+          "kicad": {
+            "bzlFile": "@@rules_nixpkgs_core~//:nixpkgs.bzl",
+            "ruleClassName": "_nixpkgs_package",
+            "attributes": {
+              "unmangled_name": "kicad",
+              "attribute_path": "kicad",
+              "nix_file": "@@atopile_rules~//nix:packages.nix",
+              "nix_file_deps": {
+                "@@atopile_rules~//nix:atopile.nix": "'@@atopile_rules~//nix:atopile.nix'",
+                "@@atopile_rules~//nix:freerouting.nix": "'@@atopile_rules~//nix:freerouting.nix'"
+              },
+              "nix_file_content": "",
+              "repository": "@@rules_nixpkgs_core~~nix_repo~atopile_nixpkgs//:atopile_nixpkgs",
+              "repositories": {},
+              "build_file_content": "package(default_visibility = [\"//visibility:public\"])\n\nexports_files(glob([\"bin/*\"]))\n\nfilegroup(\n    name = \"bin\",\n    srcs = glob([\"bin/**\"]),\n)\n",
+              "nixopts": [],
+              "quiet": false,
+              "fail_not_supported": true
+            }
+          },
+          "freerouting": {
+            "bzlFile": "@@rules_nixpkgs_core~//:nixpkgs.bzl",
+            "ruleClassName": "_nixpkgs_package",
+            "attributes": {
+              "unmangled_name": "freerouting",
+              "attribute_path": "freerouting",
+              "nix_file": "@@atopile_rules~//nix:packages.nix",
+              "nix_file_deps": {
+                "@@atopile_rules~//nix:atopile.nix": "'@@atopile_rules~//nix:atopile.nix'",
+                "@@atopile_rules~//nix:freerouting.nix": "'@@atopile_rules~//nix:freerouting.nix'"
+              },
+              "nix_file_content": "",
+              "repository": "@@rules_nixpkgs_core~~nix_repo~atopile_nixpkgs//:atopile_nixpkgs",
+              "repositories": {},
+              "build_file_content": "package(default_visibility = [\"//visibility:public\"])\n\nexports_files(glob([\"bin/*\"]))\n\nfilegroup(\n    name = \"bin\",\n    srcs = glob([\"bin/**\"]),\n)\n",
+              "nixopts": [],
+              "quiet": false,
+              "fail_not_supported": true
+            }
           }
         },
         "moduleExtensionMetadata": {
           "explicitRootModuleDirectDeps": [
-            "minify"
+            "minify",
+            "kicad_python",
+            "atopile",
+            "kicad",
+            "freerouting"
           ],
           "explicitRootModuleDirectDevDeps": [],
           "useAllRepos": "NO",
           "reproducible": false
         },
         "recordedRepoMappingEntries": [
+          [
+            "",
+            "atopile_nixpkgs",
+            "rules_nixpkgs_core~~nix_repo~atopile_nixpkgs"
+          ],
+          [
+            "",
+            "atopile_rules",
+            "atopile_rules~"
+          ],
           [
             "",
             "nixpkgs",
@@ -969,7 +1059,7 @@
     "@@rules_nixpkgs_core~//extensions:repository.bzl%nix_repo": {
       "general": {
         "bzlTransitiveDigest": "dTTtWNdwe7E4j77oKh1mHI1qtdxfaVSGSZa1oPf2QjU=",
-        "usagesDigest": "HkcCctwbjjYImWLFTFUhEUON0mBbV1mMNOyjRky3kz0=",
+        "usagesDigest": "6Jy+Oplj7f9m7Cz4n2tHiIJCYUcI9E4OXIZMm5pGnzA=",
         "recordedFileInputs": {},
         "recordedDirentsInputs": {},
         "envVariables": {},
@@ -984,11 +1074,23 @@
               "integrity": "",
               "sha256": "130b4257b3d53bfbfea6d61fb76d4751a3989a4a09a28615ff77516a82b3924d"
             }
+          },
+          "atopile_nixpkgs": {
+            "bzlFile": "@@rules_nixpkgs_core~//:nixpkgs.bzl",
+            "ruleClassName": "_nixpkgs_http_repository",
+            "attributes": {
+              "unmangled_name": "atopile_nixpkgs",
+              "url": "https://github.com/NixOS/nixpkgs/archive/ac62194c3917d5f474c1a844b6fd6da2db95077d.tar.gz",
+              "strip_prefix": "nixpkgs-ac62194c3917d5f474c1a844b6fd6da2db95077d",
+              "integrity": "",
+              "sha256": ""
+            }
           }
         },
         "moduleExtensionMetadata": {
           "explicitRootModuleDirectDeps": [
-            "nixpkgs"
+            "nixpkgs",
+            "atopile_nixpkgs"
           ],
           "explicitRootModuleDirectDevDeps": [],
           "useAllRepos": "NO",
@@ -1265,7 +1367,7 @@
         "bzlTransitiveDigest": "vt4SxWkQ68m/aCDZsNn52k7/n0uWiqqPHns004YWnPk=",
         "usagesDigest": "OlW6WWXv/18Gr0b4Af7hJ1klqvmCzNU25VIs31y4Wqs=",
         "recordedFileInputs": {
-          "@@//MODULE.bazel": "18323ec461c26c7fdd8d11e4227f419a89315cd257be5b015213a83ecb9add59",
+          "@@//MODULE.bazel": "d28eb44975fea94c16b81c628d4aa6b322871fe4e492b2555bac7e6b774b0567",
           "@@rules_rust~~rust_host_tools~rust_host_tools//rust_host_tools": "ENOENT"
         },
         "recordedDirentsInputs": {},
@@ -2016,7 +2118,7 @@
         "bzlTransitiveDigest": "vt4SxWkQ68m/aCDZsNn52k7/n0uWiqqPHns004YWnPk=",
         "usagesDigest": "28S0c0v9E9ZvyYWD0ltX6dRQnIcS6QTp9mhHSIJVP2Q=",
         "recordedFileInputs": {
-          "@@//MODULE.bazel": "75f54e64dfcb68bd2776926d895a5ec9537499f6c962145f89949a397866d000",
+          "@@//MODULE.bazel": "d28eb44975fea94c16b81c628d4aa6b322871fe4e492b2555bac7e6b774b0567",
           "@@rules_rust~~rust_host_tools~rust_host_tools//rust_host_tools": "ENOENT"
         },
         "recordedDirentsInputs": {},
