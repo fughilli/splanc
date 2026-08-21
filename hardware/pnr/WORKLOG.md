@@ -6,11 +6,44 @@ scan back. Full design + rationale lives in
 the running state so a fresh-context agent can pick up cleanly. Update it at the
 end of every session.
 
-## 2026-08-21 (evening) — Phase 2 placement MVP landed (START HERE)
+## 2026-08-21 (night) — Phase 3 orientation landed (START HERE)
+
+**State:** Phase 3 (orientation) is done and green. The placer now co-optimizes a
+90° rotation per movable part. Next actor starts **Phase 4 — routing + place↔route
+feedback** (`docs/hardware/pnr-system.md` §9.4).
+
+**What's new (`pnr/place/model.py`):** each movable part carries a categorical
+over {0,90,180,270}, relaxed to a temperature-annealed softmax (deterministic
+Concrete/Gumbel-Softmax, Cypress §9.3). Pin offsets and courtyard extents become
+the _expected_ offset/extent under that distribution (so orientation is
+differentiable and co-optimized with position); at the end we snap to the arg-max
+angle. Fixed parts keep their constrained angle. `place(orient=True)` is the
+default; `orient=False` recovers the Phase 2 position-only placement.
+
+- **Result on `splanc_dev`:** legal, **HPWL 2023 → 1836 mm** (orientation on vs
+  off; **88% below** the ato row), **61 parts rotated**, deterministic.
+  `orientation_test` gates legal-discrete-angles + not-worse-than-Phase-2 HPWL +
+  determinism (design §9.3 acceptance). Full suite: **6/6 green**.
+- **Reproducibility:** `model.py` sets `torch.set_num_threads(1)` at import so
+  float reductions don't vary with thread scheduling — needed for the
+  deterministic-placement guarantee (and the `test_deterministic` gates).
+
+**Watch-out for the next actor:** `place()` defaults to `orient=True`; the Phase 2
+`placement_test` deliberately passes `orient=False` for position-only semantics —
+keep any determinism comparison on the _same_ `orient` value (a mismatch there is
+not a nondeterminism bug).
+
+**Next up — Phase 4 (design §9.4):** FLUTE+FastRoute lookahead global route over
+the placed board; overflow → RePlAce-style region inflation with a PathFinder
+history term; converge the place↔route loop. Acceptance `route_feedback_test`:
+global-route overflow reaches 0 within a pass cap and the loop terminates (no
+oscillation). Build it over the placed `BoardGraph` (pins are already available
+via `pnr.place.geometry.pin_positions`).
+
+## 2026-08-21 (evening) — Phase 2 placement MVP landed
 
 **State:** Phase 2 is done and green. The placer reflows the atopile row into a
-legal, compact layout. Next actor starts **Phase 3 — orientation + grouping**
-(`docs/hardware/pnr-system.md` §9.3).
+legal, compact layout.
 
 **What exists now (`hardware/pnr/pnr/place/`):**
 

@@ -118,3 +118,19 @@ py_test(
         requirement("pyyaml"),
     ],
 )
+
+# Phase 3 acceptance: orientation search yields legal discrete angles + better HPWL.
+py_test(
+    name = "orientation_test",
+    size = "small",  # runs the placer twice (orient on/off); ~14s
+    srcs = ["tests/test_orientation.py"],
+    data = glob(["testdata/splanc_dev/*"]),
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_orientation.py",
+    deps = [
+        ":pnr",
+        ":pnr_place",
+        requirement("pyyaml"),
+    ],
+)

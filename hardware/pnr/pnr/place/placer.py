@@ -26,6 +26,7 @@ class PlacementReport:
     outside_outline: List[str] = field(default_factory=list)
     fixed_misplaced: List[str] = field(default_factory=list)
     keepout: List[str] = field(default_factory=list)
+    rotated: int = 0
 
     @property
     def legal(self) -> bool:
@@ -42,6 +43,7 @@ class PlacementReport:
             f"placement {self.width:.0f}x{self.height:.0f} mm: "
             f"HPWL {self.hpwl_baseline:.0f} -> {self.hpwl_placed:.0f} mm "
             f"({self.hpwl_improvement * 100:.0f}% shorter); "
+            f"rotated={self.rotated}; "
             f"legal={self.legal} "
             f"(overlaps={len(self.overlaps)}, "
             f"outside={len(self.outside_outline)}, "
@@ -57,11 +59,13 @@ def place(
     seed: int = 0,
     iters: int = 800,
     grid_mm: float = 0.5,
+    orient: bool = True,
 ) -> Tuple[BoardGraph, PlacementReport]:
     """Place ``graph`` under ``constraints``; return the placed graph + report.
 
     ``hpwl_baseline`` is the wirelength of the incoming (atopile row) placement,
-    so the report shows the improvement. Deterministic under a fixed ``seed``.
+    so the report shows the improvement. With ``orient`` the placer also picks a
+    90° rotation per movable part (Phase 3). Deterministic under a fixed ``seed``.
     """
     width, height = outline_size(graph, constraints)
     baseline = metrics.hpwl(graph)
@@ -70,11 +74,14 @@ def place(
     keepouts = keepout_rects(graph, constraints, poses)
     clearance = float(constraints.board.default_clearance_mm)
 
-    # 1. Global placement (continuous).
-    positions = global_place(graph, constraints, width, height, seed=seed, iters=iters)
+    # 1. Global placement (continuous position + orientation).
+    positions, rotations = global_place(
+        graph, constraints, width, height, seed=seed, iters=iters, orient=orient
+    )
     cont = BoardGraph.from_json(graph.to_json())
     for comp in cont.components:
         comp.pos = positions[comp.ref]
+        comp.rot = rotations[comp.ref]
 
     # 2. Legalization (snap to a non-overlapping, in-outline layout).
     placed = legalize(
@@ -98,5 +105,6 @@ def place(
         outside_outline=v["outside_outline"],
         fixed_misplaced=v["fixed_misplaced"],
         keepout=v["keepout"],
+        rotated=sum(1 for c in placed.components if int(round(c.rot)) % 360 != 0),
     )
     return placed, report

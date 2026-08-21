@@ -31,7 +31,8 @@ class PlacementAcceptanceTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.graph, cls.constraints = _load()
-        cls.placed, cls.report = place(cls.graph, cls.constraints, seed=0, iters=600)
+        # Phase 2 semantics: position-only (orientation is the Phase 3 test).
+        cls.placed, cls.report = place(cls.graph, cls.constraints, seed=0, iters=600, orient=False)
 
     def test_no_courtyard_overlaps(self):
         self.assertEqual(self.report.overlaps, [], self.report.summary())
@@ -62,7 +63,7 @@ class PlacementAcceptanceTest(unittest.TestCase):
         self.assertAlmostEqual(u5.pos[1], h - courtyard_rect(u5).h / 2, places=2)
 
     def test_deterministic(self):
-        placed2, report2 = place(self.graph, self.constraints, seed=0, iters=600)
+        placed2, report2 = place(self.graph, self.constraints, seed=0, iters=600, orient=False)
         self.assertEqual(placed2.to_json(), self.placed.to_json())
         self.assertEqual(report2.hpwl_placed, self.report.hpwl_placed)
 
