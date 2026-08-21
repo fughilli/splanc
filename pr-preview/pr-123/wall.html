@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>Splanc — Virtual LED Wall</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #000;
+        color: #9a9a9a;
+        font: 13px/1.5 system-ui, sans-serif;
+        overflow: hidden;
+        cursor: default;
+      }
+      #wall {
+        position: fixed;
+        inset: 0;
+        display: block;
+      }
+      #bar {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        display: flex;
+        gap: 1rem;
+        align-items: center;
+        padding: 0.5rem 1rem;
+        background: rgba(20, 20, 20, 0.85);
+        z-index: 2;
+      }
+      body.fullscreen #bar {
+        display: none;
+      }
+      body.fullscreen {
+        cursor: none;
+      }
+      button {
+        background: #222;
+        color: #ddd;
+        border: 1px solid #444;
+        border-radius: 4px;
+        padding: 0.3rem 0.8rem;
+        font: inherit;
+        cursor: pointer;
+      }
+      button:hover {
+        background: #333;
+      }
+      #status {
+        flex: 1;
+      }
+      #hint {
+        color: #666;
+      }
+    </style>
+    <script type="module" crossorigin src="./assets/wall-DBNLAJrc.js"></script>
+    <link rel="modulepreload" crossorigin href="./assets/proto-BBKsm2dy.js">
+    <link rel="modulepreload" crossorigin href="./assets/gray-BM5VACWv.js">
+  </head>
+  <body>
+    <canvas id="wall"></canvas>
+    <div id="bar">
+      <button id="fullscreen">Fullscreen</button>
+      <span id="status">connecting…</span>
+      <span id="hint"></span>
+      <button id="truth">Ground truth ⤓</button>
+    </div>
+  </body>
+</html>
