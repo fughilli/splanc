@@ -26,6 +26,22 @@ from .maze import RouteResult, route
 # Full copper stack for a 4-layer board, outer→inner→outer.
 _FOUR_LAYER = ("F.Cu", "In1.Cu", "In2.Cu", "B.Cu")
 
+# Fallback fab geometry when the rules carry no ``fab:`` block (older rules.json).
+_FAB_DEFAULT = {
+    "track_width_mm": 0.15,
+    "clearance_mm": 0.13,
+    "via_diameter_mm": 0.45,
+    "via_drill_mm": 0.25,
+}
+
+
+def _fab(rules: Optional[dict]) -> dict:
+    """The fab geometry from the rules (``fab:`` block), defaults filled in."""
+    out = dict(_FAB_DEFAULT)
+    if rules and isinstance(rules.get("fab"), dict):
+        out.update({k: float(v) for k, v in rules["fab"].items() if k in out})
+    return out
+
 
 @dataclass
 class BoardRoute:
@@ -120,20 +136,49 @@ def route_board(
     constraints: CompiledConstraints,
     rules: Optional[dict] = None,
     *,
-    pitch: float = 0.3,
-    track_width_mm: float = 0.15,
+    pitch: Optional[float] = None,
+    track_width_mm: Optional[float] = None,
     max_iters: int = 12,
 ) -> BoardRoute:
     """Detailed-route the signal nets of a placed ``graph``.
 
     ``rules`` (the routing rules dict) names the plane nets, which are left to the
-    plane pour + fanout (they connect via a via drop, not signal routing). The rest
-    are negotiated-routed on the grid. Returns a :class:`BoardRoute` with grid +
-    mm geometry.
+    plane pour + fanout (they connect via a via drop, not signal routing), and
+    carries the **fab profile** (track/clearance/via geometry — local DRC
+    relaxation). The rest are negotiated-routed on the grid. ``pitch``/
+    ``track_width_mm`` default to the fab profile: the grid pitch is the DRC-clean
+    floor ``track + clearance`` (a tighter fab ⇒ finer pitch ⇒ better escape).
+    Returns a :class:`BoardRoute` with grid + mm geometry.
     """
+    fab = _fab(rules)
+    track_width_mm = fab["track_width_mm"] if track_width_mm is None else track_width_mm
+    clearance_mm = fab["clearance_mm"]
+    via_radius_mm = fab["via_diameter_mm"] / 2.0
+    if pitch is None:
+        # DRC-clean floor + a hair so equal-spacing tracks pass; round to 0.05 mm.
+        floor = track_width_mm + clearance_mm
+        pitch = round((floor + 0.02) / 0.05) * 0.05
+
+    # Via keep-out radius derived from the fab geometry, NOT hardcoded: two vias
+    # must clear by ``via_diameter + clearance`` centre-to-centre, so the nearest
+    # allowed other-net via sits ⌈(via_d+clr)/pitch⌉ cells away ⇒ keep-out radius one
+    # less. (Default 0.45/0.13/0.30 ⇒ 1; a tighter fab needs a wider halo.)
+    import math
+
+    via_keepout = max(1, math.ceil((2 * via_radius_mm + clearance_mm) / pitch) - 1)
+
     width, height = outline_size(graph, constraints)
     layers = _signal_layers(rules)
-    grid = RouteGrid.from_graph(graph, width, height, pitch=pitch, layers=layers)
+    grid = RouteGrid.from_graph(
+        graph,
+        width,
+        height,
+        pitch=pitch,
+        layers=layers,
+        clearance=clearance_mm,
+        track_width=track_width_mm,
+        via_radius=via_radius_mm,
+    )
     # Split planes on the inner layers become obstacles the signals route around
     # (matching the 2 mm writeback pour margin).
     _mark_plane_regions(grid, graph, rules, margin=2.0)
@@ -147,7 +192,7 @@ def route_board(
         if len(cells) >= 2:
             net_access[net.name] = cells
 
-    result = route(grid, net_access, max_iters=max_iters)
+    result = route(grid, net_access, max_iters=max_iters, via_keepout=via_keepout)
 
     board = BoardRoute(result=result, grid=grid, plane_nets=planes)
     layer_names = grid.layers

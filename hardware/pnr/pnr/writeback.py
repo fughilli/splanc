@@ -470,24 +470,34 @@ def frame_region(text: str, width: float, height: float, offset: float = _PAGE_O
 #   * min through-drill 0.20 mm / min via annular 0.0 — to *tolerate the source
 #     footprints* (U2 has 0.20 mm PTH drills, USB1 a near-zero annulus): vendor
 #     parts, fab-compatible, out of the router's scope.
-_RULE_SET_MM = {
-    "min_clearance": 0.13,
-    "min_track_width": 0.15,
-    "min_via_diameter": 0.45,
-    "min_via_annular_width": 0.0,
-    "min_through_hole_diameter": 0.20,
-    "min_hole_clearance": 0.20,
-    "min_hole_to_hole": 0.20,
-    "min_copper_edge_clearance": 0.20,
+# Fallback fab geometry when the rules carry no ``fab:`` block (older rules.json).
+_FAB_DEFAULT = {
+    "track_width_mm": 0.15,
+    "clearance_mm": 0.13,
+    "via_diameter_mm": 0.45,
+    "via_drill_mm": 0.25,
+    "hole_clearance_mm": 0.20,
+    "edge_clearance_mm": 0.20,
+    "min_through_drill_mm": 0.20,
+    "via_annular_mm": 0.0,
 }
-_NETCLASS_CLEARANCE_MM = 0.13
-_NETCLASS_TRACK_MM = 0.15
 
 
-def patch_project_rules(pro_path: str) -> bool:
-    """Write :data:`_RULE_SET_MM` (+ per-net-class clearance/width) into the KiCad
-    **project file** (``.kicad_pro``) as pure JSON — the authoritative source DRC
-    reads for board constraints and net-class clearances.
+def _fab(rules: Optional[dict]) -> dict:
+    """The fab geometry from the rules (``fab:`` block), defaults filled in — the
+    single source of truth for the DRC rule set + emitted via geometry (local DRC
+    relaxation flows from here)."""
+    out = dict(_FAB_DEFAULT)
+    if rules and isinstance(rules.get("fab"), dict):
+        out.update({k: float(v) for k, v in rules["fab"].items() if k in out})
+    return out
+
+
+def patch_project_rules(pro_path: str, rules: Optional[dict] = None) -> bool:
+    """Write the fab design-rule set (from the ``fab:`` profile in ``rules``, else
+    defaults) + per-net-class clearance/width into the KiCad **project file**
+    (``.kicad_pro``) as pure JSON — the authoritative source DRC reads for board
+    constraints and net-class clearances.
 
     Why JSON and not pcbnew: the board's design settings are held by the *project*,
     and ``apply_placement`` (``SetCopperLayerCount`` / ``BuildConnectivity``)
@@ -499,17 +509,28 @@ def patch_project_rules(pro_path: str) -> bool:
     """
     import json
 
+    fab = _fab(rules)
+    rule_set = {
+        "min_clearance": fab["clearance_mm"],
+        "min_track_width": fab["track_width_mm"],
+        "min_via_diameter": fab["via_diameter_mm"],
+        "min_via_annular_width": fab["via_annular_mm"],
+        "min_through_hole_diameter": fab["min_through_drill_mm"],
+        "min_hole_clearance": fab["hole_clearance_mm"],
+        "min_hole_to_hole": fab["hole_clearance_mm"],
+        "min_copper_edge_clearance": fab["edge_clearance_mm"],
+    }
     try:
         with open(pro_path, encoding="utf-8") as fh:
             pro = json.load(fh)
     except (OSError, ValueError):
         return False
-    rules = pro.setdefault("board", {}).setdefault("design_settings", {}).setdefault("rules", {})
-    rules.update(_RULE_SET_MM)
+    rules_j = pro.setdefault("board", {}).setdefault("design_settings", {}).setdefault("rules", {})
+    rules_j.update(rule_set)
     for cls in pro.setdefault("net_settings", {}).get("classes", []):
-        cls["clearance"] = _NETCLASS_CLEARANCE_MM
-        if cls.get("track_width", 0.0) < _NETCLASS_TRACK_MM:
-            cls["track_width"] = _NETCLASS_TRACK_MM
+        cls["clearance"] = fab["clearance_mm"]
+        if cls.get("track_width", 0.0) < fab["track_width_mm"]:
+            cls["track_width"] = fab["track_width_mm"]
     with open(pro_path, "w", encoding="utf-8") as fh:
         json.dump(pro, fh, indent=2)
     return True
@@ -548,14 +569,23 @@ def _net_code_map(board) -> Dict[str, int]:
 
 
 def emit_routes(
-    board, routes: dict, height: float, net_code: Dict[str, int], offset: float = _PAGE_OFFSET_MM
+    board,
+    routes: dict,
+    height: float,
+    net_code: Dict[str, int],
+    offset: float = _PAGE_OFFSET_MM,
+    fab: Optional[dict] = None,
 ) -> int:
     """Add the own detailed router's tracks + vias (``routes.json``, engine mm)
     onto the board via the write-back frame (engine y-up → pcbnew y-down). Each
     track/via is bound to its net (via the precomputed ``net_code`` map) so DRC +
-    connectivity see it. Returns tracks added."""
+    connectivity see it. Via geometry comes from the ``fab`` profile (local DRC
+    relaxation). Returns tracks added."""
     import pcbnew
 
+    fab = fab or _FAB_DEFAULT
+    via_d = _nm(fab["via_diameter_mm"])
+    via_drill = _nm(fab["via_drill_mm"])
     frame = _WriteFrame(height, offset)
     layer_id = {
         "F.Cu": pcbnew.F_Cu,
@@ -582,8 +612,8 @@ def emit_routes(
         v.SetPosition(frame.point(x, y))
         v.SetViaType(pcbnew.VIATYPE_THROUGH)
         v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu)
-        v.SetFrontWidth(_nm(0.45))  # Ø0.45 / 0.25 drill: 0.10 annular; radius-1
-        v.SetDrill(_nm(0.25))  # keep-out ⇒ DRC-clean via-via + via-track at 0.3 pitch
+        v.SetFrontWidth(via_d)  # from the fab profile; radius-1 keep-out ⇒ DRC-clean
+        v.SetDrill(via_drill)  # via-via + via-track at the grid pitch
         v.SetNetCode(code(net))
         board.Add(v)
     board.BuildConnectivity()
@@ -622,8 +652,9 @@ def writeback(
         _type_plane_layers(board, rules)
     # Emit the own detailed router's signal tracks/vias (replaces FreeRouting).
     if routes:
-        _set_design_rules(board)
-        emit_routes(board, routes, height, net_code)
+        fab = _fab(rules)
+        _set_design_rules(board, clearance_mm=fab["clearance_mm"], track_mm=fab["track_width_mm"])
+        emit_routes(board, routes, height, net_code, fab=fab)
     pcbnew.SaveBoard(out_pcb, board)
     # Text pass: strip all (stale) Edge.Cuts — pcbnew reformats gr_lines into
     # nested strokes a single-level regex can't remove — then stamp one clean

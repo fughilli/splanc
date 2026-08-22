@@ -53,6 +53,36 @@ DEFAULT_WEIGHTS = {
 
 
 @dataclass
+class FabProfile:
+    """The manufacturable design-rule set (a ``fab:`` block) the router targets and
+    the emitted board is checked against — a knob for **local DRC relaxation**.
+
+    The defaults are a conservative JLCPCB-class 4-layer set; a fab house that
+    supports finer geometry (advanced/2-layer) lets you tighten these, which lowers
+    the DRC-clean grid-pitch floor (``track_width + clearance``) and so lets tracks
+    escape between finer-pitch pads. Every value flows into the grid pitch, the
+    router's via/track geometry, and the ``.kicad_pro`` DRC rules — one source of
+    truth. ``min_through_drill`` / ``via_annular`` are loosened only to *tolerate
+    source footprints* (vendor parts with sub-spec drills / annuli), not routing.
+    """
+
+    track_width_mm: float = 0.15
+    clearance_mm: float = 0.13
+    via_diameter_mm: float = 0.45
+    via_drill_mm: float = 0.25
+    hole_clearance_mm: float = 0.20
+    edge_clearance_mm: float = 0.20
+    min_through_drill_mm: float = 0.20
+    via_annular_mm: float = 0.0
+
+    @property
+    def pitch_floor_mm(self) -> float:
+        """Smallest DRC-clean grid pitch: two adjacent tracks clear iff
+        ``pitch ≥ track + clearance``. The router grid may not go finer."""
+        return self.track_width_mm + self.clearance_mm
+
+
+@dataclass
 class BoardSpec:
     """The ``board:`` block — approximate outline + global rules."""
 
@@ -128,6 +158,8 @@ class CompiledConstraints:
     constraints: List[Constraint] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
     schema: str = SCHEMA_VERSION
+    # The manufacturable design-rule set (a ``fab:`` block) — see :class:`FabProfile`.
+    fab: FabProfile = field(default_factory=FabProfile)
     # Routing rules (design §9.6). Kept separate from placement constraints — the
     # placer ignores them; writeback + the quality pass consume them.
     net_classes: List[NetClass] = field(default_factory=list)
@@ -226,9 +258,20 @@ def compile_routing_rules(compiled: "CompiledConstraints", net_names: Sequence[s
     expanded here (where the netlist is known); unknown literal nets are dropped.
     """
     names = set(net_names)
+    fab = compiled.fab
     return {
         "layers": int(compiled.board.layers),
         "default_clearance_mm": float(compiled.board.default_clearance_mm),
+        "fab": {
+            "track_width_mm": fab.track_width_mm,
+            "clearance_mm": fab.clearance_mm,
+            "via_diameter_mm": fab.via_diameter_mm,
+            "via_drill_mm": fab.via_drill_mm,
+            "hole_clearance_mm": fab.hole_clearance_mm,
+            "edge_clearance_mm": fab.edge_clearance_mm,
+            "min_through_drill_mm": fab.min_through_drill_mm,
+            "via_annular_mm": fab.via_annular_mm,
+        },
         "net_classes": [
             {
                 "name": nc.name,
@@ -272,6 +315,25 @@ def _parse_board(raw: Dict) -> BoardSpec:
     )
 
 
+def _parse_fab(raw: Dict) -> FabProfile:
+    """Parse the optional ``fab:`` block; any omitted field keeps its default."""
+    d = FabProfile()
+    fields = (
+        "track_width_mm",
+        "clearance_mm",
+        "via_diameter_mm",
+        "via_drill_mm",
+        "hole_clearance_mm",
+        "edge_clearance_mm",
+        "min_through_drill_mm",
+        "via_annular_mm",
+    )
+    for k in fields:
+        if k in raw:
+            setattr(d, k, float(raw[k]))
+    return d
+
+
 def compile_constraints(doc: Dict, known_refs: Sequence[str]) -> CompiledConstraints:
     """Compile a parsed constraints document against a netlist's refs.
 
@@ -288,11 +350,13 @@ def compile_constraints(doc: Dict, known_refs: Sequence[str]) -> CompiledConstra
 
     warnings: List[str] = []
     board = _parse_board(doc.get("board") or {})
+    fab = _parse_fab(doc.get("fab") or {})
     constraints: List[Constraint] = []
 
     known_keys = {
         "schema",
         "board",
+        "fab",
         "fixed",
         "edge_align",
         "keepout",
@@ -454,6 +518,7 @@ def compile_constraints(doc: Dict, known_refs: Sequence[str]) -> CompiledConstra
         constraints=constraints,
         warnings=warnings,
         schema=str(doc.get("schema", SCHEMA_VERSION)),
+        fab=fab,
         net_classes=net_classes,
         diff_pairs=diff_pairs,
         length_matches=length_matches,

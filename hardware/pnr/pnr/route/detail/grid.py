@@ -175,11 +175,20 @@ class RouteGrid:
         pitch: float = 0.25,
         clearance: float = 0.15,
         track_width: float = 0.15,
+        via_radius: float = 0.225,
         layers: Tuple[str, ...] = DEFAULT_SIGNAL_LAYERS,
     ) -> "RouteGrid":
         """Build the grid from a placed graph: pads become access points +
         own-net cells; the outline is the grid bounds."""
-        g = cls(width, height, pitch, layers=layers, clearance=clearance, track_width=track_width)
+        g = cls(
+            width,
+            height,
+            pitch,
+            layers=layers,
+            clearance=clearance,
+            track_width=track_width,
+            via_radius=via_radius,
+        )
         for comp in graph.components:
             side = g.side_layer(comp.side)
             for (name, net, r), pad in zip(pad_rects(comp), comp.pads):

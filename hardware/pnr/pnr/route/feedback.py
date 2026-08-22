@@ -163,7 +163,7 @@ def _place_route_loop(
     track_pitch_mm: float,
     route_passes: int,
     detail_rules: Optional[dict],
-    detail_pitch_mm: float,
+    detail_pitch_mm: Optional[float],
     detail_iters: int,
 ) -> Tuple[BoardGraph, FeedbackReport]:
     """One place↔route loop at the *current* ``constraints`` outline (the inner loop
@@ -250,7 +250,7 @@ def route_and_place(
     track_pitch_mm: float = 0.4,
     route_passes: int = 8,
     detail_rules: Optional[dict] = None,
-    detail_pitch_mm: float = 0.4,
+    detail_pitch_mm: Optional[float] = None,
     detail_iters: int = 10,
     auto_outline: bool = False,
     outline_grow: float = 1.15,

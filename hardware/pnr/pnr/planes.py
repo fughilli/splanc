@@ -42,7 +42,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     # board save — DRC reads the .kicad_pro, and the board's live settings detach
     # from it across SetCopperLayerCount/BuildConnectivity (see patch_project_rules).
     pro = args.pcb[: -len(".kicad_pcb")] + ".kicad_pro" if args.pcb.endswith(".kicad_pcb") else None
-    if pro and patch_project_rules(pro):
+    if pro and patch_project_rules(pro, rules):
         print(f"planes: poured {n} plane(s); design rules stamped into {pro}")
     else:
         print(f"planes: poured {n} plane(s)")

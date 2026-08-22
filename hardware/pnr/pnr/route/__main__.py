@@ -46,7 +46,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         "mm-space tracks/vias (routes.json) for write-back to emit",
     )
     ap.add_argument(
-        "--route-pitch", type=float, default=0.3, help="detailed-router grid pitch (mm)"
+        "--route-pitch",
+        type=float,
+        default=0.0,
+        help="detailed-router grid pitch (mm); 0 = auto from the fab profile "
+        "(track+clearance floor, so a tighter fab routes finer)",
     )
     ap.add_argument(
         "--route-iters", type=int, default=12, help="detailed-router negotiation passes"
@@ -87,6 +91,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     net_names = [n.name for n in graph.nets]
     rules = compile_routing_rules(constraints, net_names)
+    route_pitch = args.route_pitch or None  # 0 => auto from the fab profile
 
     placed, report = route_and_place(
         graph,
@@ -98,7 +103,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         # Close the loop on the DRC-clean detailed router when asked — the emitted
         # route must actually succeed, so it steers placement, not the lookahead.
         detail_rules=rules if args.detail_loop else None,
-        detail_pitch_mm=args.route_pitch,
+        detail_pitch_mm=route_pitch,
         detail_iters=args.route_iters,
         auto_outline=args.auto_outline,
         outline_max_scale=args.outline_max_scale,
@@ -119,7 +124,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         from pnr.route.detail.router import route_board
 
         board = route_board(
-            placed, constraints, rules, pitch=args.route_pitch, max_iters=args.route_iters
+            placed, constraints, rules, pitch=route_pitch, max_iters=args.route_iters
         )
         print(board.summary())
         routes = {
