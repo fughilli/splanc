@@ -60,9 +60,16 @@ class RouteGrid:
         self.ny = max(1, int(np.ceil(height / pitch)))
         # Static obstacles (True = never routable) per layer.
         self.blocked = np.zeros((self.nlayers, self.ny, self.nx), dtype=bool)
-        # Pad cells: (layer, j, i) -> net name (routable only by that net; the
-        # net's connection point).
+        # Pad cells: (layer, i, j) -> net name (routable only by that net; the net's
+        # connection point). This is the pad body + its *track* clearance halo
+        # (clearance + ½track) — a track may run this close to the pad.
         self.pad_net: Dict[Tuple[int, int, int], str] = {}
+        # A wider *via* clearance halo (clearance + via radius) around each pad,
+        # (layer, i, j) -> net: a via (much fatter than a track) must stay this far
+        # from the pad, but a TRACK may enter it. Keeping the two separate is what
+        # frees the pad-dense top layer for tracks instead of over-reserving it at
+        # via width (which forced routing onto the back layer).
+        self.via_halo: Dict[Tuple[int, int, int], str] = {}
         # Access cell per (net, pad_key) recorded during build.
         self.access: Dict[Tuple[str, str], Cell] = {}
 
@@ -95,6 +102,15 @@ class RouteGrid:
         owner = self.pad_net.get((layer, i, j))
         return owner is None or owner == net
 
+    def via_passable(self, layer: int, i: int, j: int, net: Optional[str] = None) -> bool:
+        """True if net ``net`` may drop a **via** at cell (layer, i, j): passable for
+        a track *and* clear of every other net's wider via-halo (a via is fatter than
+        a track, so it needs more room from foreign pads)."""
+        if not self.passable(layer, i, j, net):
+            return False
+        vh = self.via_halo.get((layer, i, j))
+        return vh is None or vh == net
+
     # -- construction --------------------------------------------------------
 
     def _mark_rect(self, layer: int, r: Rect, grow: float, setter) -> None:
@@ -108,31 +124,35 @@ class RouteGrid:
                 setter(layer, i, j)
 
     def add_pad(self, layer: int, net: str, r: Rect) -> None:
-        """Record a pad: its body cells are owned by ``net`` (routable only by it),
-        and a **clearance halo** one grid step wider is reserved for ``net`` too so
-        *other* nets keep ≥ clearance from the pad copper (else a neighbouring
-        other-net track/via shorts to the pad or bridges its mask). The pad's centre
-        cell is its access point.
+        """Record a pad with a **two-tier clearance halo** so the pad-dense layer
+        stays routable by tracks:
 
-        Body cells hard-set the owner (pad copper always wins over another pad's
-        halo); halo cells only ``setdefault`` (a real pad body nearby is not
-        overwritten by a halo). The halo grow is ``clearance + via_radius`` — enough
-        that the nearest *unreserved* cell centre clears the pad edge by ``clearance``
-        even for the widest neighbouring feature (a via, not just a track).
+        * body cells → own-net (hard-set; pad copper wins over another pad's halo);
+        * a **track halo** (``clearance + ½track``) → own-net (``setdefault``): only
+          this net's tracks/vias may come this close — a foreign track here would
+          short the pad;
+        * a wider **via halo** (``clearance + via_radius``) → recorded separately in
+          ``via_halo``: a foreign *via* (fatter than a track) must stay outside this,
+          but a foreign *track* may enter it.
+
+        Reserving the whole via-width around every pad (the old behaviour) walled off
+        the top layer for tracks and pushed routing to the back; the track halo is the
+        tighter reservation a track actually needs. The pad's centre is its access.
         """
 
-        # Body: own-net cells (a same-net track may run into the pad). Hard-set.
         def own(la, i, j):
             self.pad_net[(la, i, j)] = net
 
-        # Halo: reserve for own net only if unclaimed (don't stomp another pad body).
         def reserve(la, i, j):
             self.pad_net.setdefault((la, i, j), net)
 
-        # Grow by clearance + the *largest* neighbouring feature radius (a via, not
-        # just a track) so an other-net via placed just outside the halo still
-        # clears the pad copper.
-        self._mark_rect(layer, r, self.clearance + self.via_radius, reserve)
+        def reserve_via(la, i, j):
+            self.via_halo.setdefault((la, i, j), net)
+
+        # Widest ring first (vias), then the track ring, then the body — inner marks
+        # win where they overlap.
+        self._mark_rect(layer, r, self.clearance + self.via_radius, reserve_via)
+        self._mark_rect(layer, r, self.clearance + 0.5 * self.track_width, reserve)
         self._mark_rect(layer, r, 0.0, own)
         # Access = centre cell.
         ci, cj = self.cell_of(r.cx, r.cy)

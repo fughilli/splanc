@@ -176,6 +176,7 @@ def _place_route_loop(
     inflation: Dict[str, float] = {}
     report = FeedbackReport(rounds=0, outline=(width, height))
     placed = graph
+    best_placed = graph
     best_overflow = float("inf")
     stale = 0
 
@@ -198,6 +199,7 @@ def _place_route_loop(
             report.route = None
             if n_unrouted <= 0:
                 report.converged = True
+                best_placed = placed
                 break
             cell = detail_congestion(broute, placed, width, height, gcell_mm)
             overflow = float(n_unrouted)
@@ -215,6 +217,7 @@ def _place_route_loop(
             report.route = gr
             if gr.overflow <= 0.0:
                 report.converged = True
+                best_placed = placed
                 break
             cell = gr.cell_overflow
             overflow = gr.overflow
@@ -226,16 +229,19 @@ def _place_route_loop(
         accum = accum + cell
         inflation = derive_inflation(placed, accum, gcell_mm, fixed=fixed)
 
-        # No-improvement guard: stop if the objective hasn't dropped for two rounds.
+        # Track the BEST placement seen — the inflation feedback can overshoot and
+        # oscillate (round N+1 worse than round N), so we must not return the last
+        # round blindly; return the fewest-unrouted one.
         if overflow < best_overflow - 1e-9:
             best_overflow = overflow
+            best_placed = placed
             stale = 0
         else:
             stale += 1
             if stale >= 2:
                 break
 
-    return placed, report
+    return best_placed, report
 
 
 def route_and_place(

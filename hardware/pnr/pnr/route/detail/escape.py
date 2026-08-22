@@ -180,7 +180,7 @@ def _plan_one(
         for la in order:
             tgt = Cell(la, ci, cj)
             if (
-                grid.passable(la, ci, cj, net)
+                grid.via_passable(la, ci, cj, net)
                 and _has_free_neighbor(grid, tgt, net)
                 and _via_clean(grid, ci, cj, net, via_keepout)
             ):
@@ -224,7 +224,7 @@ def _plan_one(
                         continue
                     tgt = Cell(la, ni, nj)
                     if (
-                        grid.passable(la, ni, nj, net)
+                        grid.via_passable(la, ni, nj, net)
                         and _has_free_neighbor(grid, tgt, net)
                         and _via_clean(grid, ni, nj, net, via_keepout)
                     ):

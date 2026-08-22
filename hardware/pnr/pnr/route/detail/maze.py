@@ -126,7 +126,13 @@ def _astar(
             if la == cur.layer:
                 continue
             nc = Cell(la, cur.i, cur.j)
-            if nc in block or not grid.passable(nc.layer, nc.i, nc.j, net):
+            # A via needs the wider via-clearance from foreign pads, and the column
+            # must be clear where it lands (checked here and at the source layer).
+            if (
+                nc in block
+                or not grid.via_passable(nc.layer, nc.i, nc.j, net)
+                or not grid.via_passable(cur.layer, cur.i, cur.j, net)
+            ):
                 continue
             ng = base + cell_cost(nc) + via_cost
             if ng < g.get(nc, float("inf")):
