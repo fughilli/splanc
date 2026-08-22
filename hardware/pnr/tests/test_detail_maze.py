@@ -8,17 +8,19 @@ from pnr.route.detail.maze import route
 
 def _connected(rn, a, b):
     """True if cells ``a`` and ``b`` are in one connected component of the routed
-    tree (edges = in-plane adjacency or a via at the same i,j)."""
+    tree (edges = in-plane adjacency — orthogonal or 45° diagonal — or a via at the
+    same i,j)."""
     cells = set(rn.cells)
     if a not in cells or b not in cells:
         return False
     seen = {a}
     stack = [a]
+    steps = ((1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1))
     while stack:
         c = stack.pop()
         if c == b:
             return True
-        for dl, di, dj in ((0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)):
+        for di, dj in steps:
             nb = Cell(c.layer, c.i + di, c.j + dj)
             if nb in cells and nb not in seen:
                 seen.add(nb)
