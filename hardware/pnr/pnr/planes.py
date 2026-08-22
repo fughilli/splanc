@@ -20,7 +20,7 @@ import json
 import sys
 from typing import List, Optional
 
-from pnr.writeback import apply_planes
+from pnr.writeback import apply_planes, patch_project_rules
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -38,7 +38,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     board.BuildConnectivity()
     n = apply_planes(board, rules)
     pcbnew.SaveBoard(args.pcb, board)
-    print(f"planes: poured {n} plane(s)")
+    # Authoritatively stamp the design rules into the project file *after* the last
+    # board save — DRC reads the .kicad_pro, and the board's live settings detach
+    # from it across SetCopperLayerCount/BuildConnectivity (see patch_project_rules).
+    pro = args.pcb[: -len(".kicad_pcb")] + ".kicad_pro" if args.pcb.endswith(".kicad_pcb") else None
+    if pro and patch_project_rules(pro):
+        print(f"planes: poured {n} plane(s); design rules stamped into {pro}")
+    else:
+        print(f"planes: poured {n} plane(s)")
     return 0
 
 

@@ -303,9 +303,9 @@ def _dogbone_fanout_net(board, netcode: int, clearance_mm: float = 0.2) -> int:
 
     import pcbnew
 
-    via_d = _nm(0.6)
+    via_d = _nm(0.45)
     via_r = via_d / 2.0
-    drill_d = _nm(0.3)
+    drill_d = _nm(0.25)
     clr = _nm(clearance_mm)
     trace_w = _nm(0.25)
     obstacles = _collect_obstacles(board)
@@ -459,16 +459,81 @@ def frame_region(text: str, width: float, height: float, offset: float = _PAGE_O
     return framed
 
 
-def _set_design_rules(board, clearance_mm: float = 0.13, track_mm: float = 0.15) -> None:
-    """Set the board default netclass clearance/width to match the router's grid,
-    so the emitted grid-spaced routing is DRC-clean (grid pitch ≥ track + clearance
-    ⇒ adjacent tracks clear)."""
+# The manufacturable design-rule set the router's grid guarantees (JLCPCB-class
+# 4-layer). DRC checks these against the emitted copper; every value is one the
+# grid + via keep-out + edge inset actually meet:
+#   * clearance 0.13 mm < the 0.30 mm grid's 0.15 mm inter-track gap (a hair of
+#     margin so equal-spacing tracks pass);
+#   * hole clearance / hole-to-hole 0.20 mm — the via keep-out guarantees ≥ 0.5 mm
+#     via centre-to-centre (0.3 mm drills ⇒ ≥ 0.2 mm hole edge-to-edge);
+#   * copper-edge clearance 0.20 mm — the grid insets routing from the outline;
+#   * min through-drill 0.20 mm / min via annular 0.0 — to *tolerate the source
+#     footprints* (U2 has 0.20 mm PTH drills, USB1 a near-zero annulus): vendor
+#     parts, fab-compatible, out of the router's scope.
+_RULE_SET_MM = {
+    "min_clearance": 0.13,
+    "min_track_width": 0.15,
+    "min_via_diameter": 0.45,
+    "min_via_annular_width": 0.0,
+    "min_through_hole_diameter": 0.20,
+    "min_hole_clearance": 0.20,
+    "min_hole_to_hole": 0.20,
+    "min_copper_edge_clearance": 0.20,
+}
+_NETCLASS_CLEARANCE_MM = 0.13
+_NETCLASS_TRACK_MM = 0.15
+
+
+def patch_project_rules(pro_path: str) -> bool:
+    """Write :data:`_RULE_SET_MM` (+ per-net-class clearance/width) into the KiCad
+    **project file** (``.kicad_pro``) as pure JSON — the authoritative source DRC
+    reads for board constraints and net-class clearances.
+
+    Why JSON and not pcbnew: the board's design settings are held by the *project*,
+    and ``apply_placement`` (``SetCopperLayerCount`` / ``BuildConnectivity``)
+    detaches the board's live settings from the project that ``SaveBoard`` writes —
+    so setting them via ``GetDesignSettings()`` doesn't survive to the ``.kicad_pro``.
+    Patching the JSON *after* the last board save (mirroring how ``frame_region``
+    stamps ``Edge.Cuts`` as text) is deterministic and pcbnew-quirk-proof. Returns
+    True if the file was patched.
+    """
+    import json
+
     try:
-        nc = board.GetDesignSettings().m_NetSettings.GetDefaultNetclass()
-        nc.SetClearance(_nm(clearance_mm))
-        nc.SetTrackWidth(_nm(track_mm))
-    except Exception:  # pragma: no cover - version shim
-        pass
+        with open(pro_path, encoding="utf-8") as fh:
+            pro = json.load(fh)
+    except (OSError, ValueError):
+        return False
+    rules = pro.setdefault("board", {}).setdefault("design_settings", {}).setdefault("rules", {})
+    rules.update(_RULE_SET_MM)
+    for cls in pro.setdefault("net_settings", {}).get("classes", []):
+        cls["clearance"] = _NETCLASS_CLEARANCE_MM
+        if cls.get("track_width", 0.0) < _NETCLASS_TRACK_MM:
+            cls["track_width"] = _NETCLASS_TRACK_MM
+    with open(pro_path, "w", encoding="utf-8") as fh:
+        json.dump(pro, fh, indent=2)
+    return True
+
+
+def _set_design_rules(board, clearance_mm: float = 0.13, track_mm: float = 0.15) -> None:
+    """Best-effort in-board mirror of :func:`patch_project_rules` (set the live
+    board settings so an in-process DRC sees them). NOT authoritative — the JSON
+    patch is (see that function's note on the project/board detach). Fully guarded."""
+    ds = board.GetDesignSettings()
+    for attr, mm in (
+        ("m_MinClearance", clearance_mm),
+        ("m_TrackMinWidth", track_mm),
+        ("m_ViasMinSize", 0.45),
+        ("m_ViasMinAnnularWidth", 0.0),
+        ("m_MinThroughDrill", 0.20),
+        ("m_HoleClearance", 0.20),
+        ("m_HoleToHoleMin", 0.20),
+        ("m_CopperEdgeClearance", 0.20),
+    ):
+        try:
+            setattr(ds, attr, _nm(mm))
+        except Exception:  # pragma: no cover - version shim
+            pass
 
 
 def _net_code_map(board) -> Dict[str, int]:
@@ -512,8 +577,8 @@ def emit_routes(
         v.SetPosition(frame.point(x, y))
         v.SetViaType(pcbnew.VIATYPE_THROUGH)
         v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu)
-        v.SetFrontWidth(_nm(0.6))
-        v.SetDrill(_nm(0.3))
+        v.SetFrontWidth(_nm(0.45))  # Ø0.45 / 0.25 drill: 0.10 annular; radius-1
+        v.SetDrill(_nm(0.25))  # keep-out ⇒ DRC-clean via-via + via-track at 0.3 pitch
         v.SetNetCode(code(net))
         board.Add(v)
     board.BuildConnectivity()

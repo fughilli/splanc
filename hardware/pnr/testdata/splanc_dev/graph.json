@@ -9,14 +9,16 @@
         {
           "name": "1",
           "net": "p5v-hv",
-          "offset": [-0.42, 0.0],
-          "size": [0.5, 0.54]
+          "offset": [-0.42, -0.0],
+          "size": [0.5, 0.54],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [0.42, 0.0],
-          "size": [0.5, 0.54]
+          "offset": [0.42, -0.0],
+          "size": [0.5, 0.54],
+          "through_hole": false
         }
       ],
       "pos": [603.575, 3.575],
@@ -33,14 +35,16 @@
         {
           "name": "1",
           "net": "led0-B",
-          "offset": [-0.43, 0.0],
-          "size": [0.57, 0.54]
+          "offset": [-0.43, -0.0],
+          "size": [0.57, 0.54],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "data_out",
-          "offset": [0.43, 0.0],
-          "size": [0.57, 0.54]
+          "offset": [0.43, -0.0],
+          "size": [0.57, 0.54],
+          "through_hole": false
         }
       ],
       "pos": [473.575, 3.575],
@@ -57,14 +61,16 @@
         {
           "name": "1",
           "net": "vsys-hv",
-          "offset": [-1.0, 0.0],
-          "size": [1.41, 1.35]
+          "offset": [-1.0, -0.0],
+          "size": [1.41, 1.35],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [1.0, 0.0],
-          "size": [1.41, 1.35]
+          "offset": [1.0, -0.0],
+          "size": [1.41, 1.35],
+          "through_hole": false
         }
       ],
       "pos": [363.575, 3.575],
@@ -81,14 +87,16 @@
         {
           "name": "1",
           "net": "p3v3-hv",
-          "offset": [-0.43, 0.0],
-          "size": [0.57, 0.54]
+          "offset": [-0.43, -0.0],
+          "size": [0.57, 0.54],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "STAT",
-          "offset": [0.43, 0.0],
-          "size": [0.57, 0.54]
+          "offset": [0.43, -0.0],
+          "size": [0.57, 0.54],
+          "through_hole": false
         }
       ],
       "pos": [713.575, 3.575],
@@ -105,20 +113,23 @@
         {
           "name": "1",
           "net": "B",
-          "offset": [1.0, 0.95],
-          "size": [1.0, 0.65]
+          "offset": [1.0, -0.95],
+          "size": [1.0, 0.65],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [1.0, -0.95],
-          "size": [1.0, 0.65]
+          "offset": [1.0, 0.95],
+          "size": [1.0, 0.65],
+          "through_hole": false
         },
         {
           "name": "3",
           "net": "C",
-          "offset": [-1.0, 0.0],
-          "size": [1.0, 0.65]
+          "offset": [-1.0, -0.0],
+          "size": [1.0, 0.65],
+          "through_hole": false
         }
       ],
       "pos": [443.575, 3.575],
@@ -135,14 +146,16 @@
         {
           "name": "1",
           "net": "hv",
-          "offset": [-0.43, 0.0],
-          "size": [0.57, 0.54]
+          "offset": [-0.43, -0.0],
+          "size": [0.57, 0.54],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "SCL",
-          "offset": [0.43, 0.0],
-          "size": [0.57, 0.54]
+          "offset": [0.43, -0.0],
+          "size": [0.57, 0.54],
+          "through_hole": false
         }
       ],
       "pos": [33.575, 3.575],
@@ -159,14 +172,16 @@
         {
           "name": "1",
           "net": "p3v3-hv",
-          "offset": [-0.43, 0.0],
-          "size": [0.57, 0.54]
+          "offset": [-0.43, -0.0],
+          "size": [0.57, 0.54],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "FB-1",
-          "offset": [0.43, 0.0],
-          "size": [0.57, 0.54]
+          "offset": [0.43, -0.0],
+          "size": [0.57, 0.54],
+          "through_hole": false
         }
       ],
       "pos": [223.575, 3.575],
@@ -183,14 +198,16 @@
         {
           "name": "1",
           "net": "vsys-hv",
-          "offset": [-0.42, 0.0],
-          "size": [0.5, 0.54]
+          "offset": [-0.42, -0.0],
+          "size": [0.5, 0.54],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [0.42, 0.0],
-          "size": [0.5, 0.54]
+          "offset": [0.42, -0.0],
+          "size": [0.5, 0.54],
+          "through_hole": false
         }
       ],
       "pos": [723.575, 3.575],
@@ -207,14 +224,16 @@
         {
           "name": "1",
           "net": "p3v3-hv",
-          "offset": [-0.75, 0.0],
-          "size": [0.81, 0.86]
+          "offset": [-0.75, -0.0],
+          "size": [0.81, 0.86],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "1-2",
-          "offset": [0.75, 0.0],
-          "size": [0.81, 0.86]
+          "offset": [0.75, -0.0],
+          "size": [0.81, 0.86],
+          "through_hole": false
         }
       ],
       "pos": [143.575, 3.575],
@@ -231,14 +250,16 @@
         {
           "name": "1",
           "net": "led1-S",
-          "offset": [-0.75, 0.0],
-          "size": [0.81, 0.86]
+          "offset": [-0.75, -0.0],
+          "size": [0.81, 0.86],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "led1-C",
-          "offset": [0.75, 0.0],
-          "size": [0.81, 0.86]
+          "offset": [0.75, -0.0],
+          "size": [0.81, 0.86],
+          "through_hole": false
         }
       ],
       "pos": [553.575, 3.575],
@@ -255,14 +276,16 @@
         {
           "name": "1",
           "net": "A5",
-          "offset": [-0.43, 0.0],
-          "size": [0.57, 0.54]
+          "offset": [-0.43, -0.0],
+          "size": [0.57, 0.54],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [0.43, 0.0],
-          "size": [0.57, 0.54]
+          "offset": [0.43, -0.0],
+          "size": [0.57, 0.54],
+          "through_hole": false
         }
       ],
       "pos": [173.575, 3.575],
@@ -279,14 +302,16 @@
         {
           "name": "1",
           "net": "p3v3-hv",
-          "offset": [-0.75, 0.0],
-          "size": [0.81, 0.86]
+          "offset": [-0.75, -0.0],
+          "size": [0.81, 0.86],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "EN-1",
-          "offset": [0.75, 0.0],
-          "size": [0.81, 0.86]
+          "offset": [0.75, -0.0],
+          "size": [0.81, 0.86],
+          "through_hole": false
         }
       ],
       "pos": [73.575, 3.575],
@@ -303,14 +328,16 @@
         {
           "name": "1",
           "net": "led1-B-1",
-          "offset": [-0.43, 0.0],
-          "size": [0.57, 0.54]
+          "offset": [-0.43, -0.0],
+          "size": [0.57, 0.54],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "led1-data_out",
-          "offset": [0.43, 0.0],
-          "size": [0.57, 0.54]
+          "offset": [0.43, -0.0],
+          "size": [0.57, 0.54],
+          "through_hole": false
         }
       ],
       "pos": [593.575, 3.575],
@@ -327,14 +354,16 @@
         {
           "name": "1",
           "net": "p5v-hv",
-          "offset": [-0.43, 0.0],
-          "size": [0.57, 0.54]
+          "offset": [-0.43, -0.0],
+          "size": [0.57, 0.54],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "FB",
-          "offset": [0.43, 0.0],
-          "size": [0.57, 0.54]
+          "offset": [0.43, -0.0],
+          "size": [0.57, 0.54],
+          "through_hole": false
         }
       ],
       "pos": [293.575, 3.575],
@@ -351,50 +380,58 @@
         {
           "name": "1",
           "net": "lv",
-          "offset": [0.72, -0.98],
-          "size": [0.6, 0.4]
+          "offset": [0.72, 0.98],
+          "size": [0.6, 0.4],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "hv",
-          "offset": [0.72, -0.32],
-          "size": [0.6, 0.4]
+          "offset": [0.72, 0.32],
+          "size": [0.6, 0.4],
+          "through_hole": false
         },
         {
           "name": "3",
           "net": "SDA",
-          "offset": [0.72, 0.32],
-          "size": [0.6, 0.4]
+          "offset": [0.72, -0.32],
+          "size": [0.6, 0.4],
+          "through_hole": false
         },
         {
           "name": "4",
           "net": "SCL",
-          "offset": [0.72, 0.98],
-          "size": [0.6, 0.4]
+          "offset": [0.72, -0.98],
+          "size": [0.6, 0.4],
+          "through_hole": false
         },
         {
           "name": "5",
           "net": "lv",
-          "offset": [-0.72, 0.98],
-          "size": [0.6, 0.4]
+          "offset": [-0.72, -0.98],
+          "size": [0.6, 0.4],
+          "through_hole": false
         },
         {
           "name": "6",
           "net": "hv",
-          "offset": [-0.72, 0.32],
-          "size": [0.6, 0.4]
+          "offset": [-0.72, -0.32],
+          "size": [0.6, 0.4],
+          "through_hole": false
         },
         {
           "name": "7",
           "net": "lv",
-          "offset": [-0.72, -0.32],
-          "size": [0.6, 0.4]
+          "offset": [-0.72, 0.32],
+          "size": [0.6, 0.4],
+          "through_hole": false
         },
         {
           "name": "8",
           "net": "hv",
-          "offset": [-0.72, -0.98],
-          "size": [0.6, 0.4]
+          "offset": [-0.72, 0.98],
+          "size": [0.6, 0.4],
+          "through_hole": false
         }
       ],
       "pos": [673.575, 3.575],
@@ -411,20 +448,23 @@
         {
           "name": "1",
           "net": "chan_out-1",
-          "offset": [2.0, 0.0],
-          "size": [1.6, 1.6]
+          "offset": [2.0, -0.0],
+          "size": [1.6, 1.6],
+          "through_hole": true
         },
         {
           "name": "2",
           "net": "data_out",
-          "offset": [0.0, 0.0],
-          "size": [1.6, 1.6]
+          "offset": [0.0, -0.0],
+          "size": [1.6, 1.6],
+          "through_hole": true
         },
         {
           "name": "3",
           "net": "lv",
-          "offset": [-2.0, 0.0],
-          "size": [1.6, 1.6]
+          "offset": [-2.0, -0.0],
+          "size": [1.6, 1.6],
+          "through_hole": true
         }
       ],
       "pos": [493.575, 3.575],
@@ -441,14 +481,16 @@
         {
           "name": "1",
           "net": "p3v3-hv",
-          "offset": [-0.75, 0.0],
-          "size": [0.81, 0.86]
+          "offset": [-0.75, -0.0],
+          "size": [0.81, 0.86],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "1",
-          "offset": [0.75, 0.0],
-          "size": [0.81, 0.86]
+          "offset": [0.75, -0.0],
+          "size": [0.81, 0.86],
+          "through_hole": false
         }
       ],
       "pos": [103.575, 3.575],
@@ -465,14 +507,16 @@
         {
           "name": "1",
           "net": "p5v-hv",
-          "offset": [-1.0, 0.0],
-          "size": [1.41, 1.35]
+          "offset": [-1.0, -0.0],
+          "size": [1.41, 1.35],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [1.0, 0.0],
-          "size": [1.41, 1.35]
+          "offset": [1.0, -0.0],
+          "size": [1.41, 1.35],
+          "through_hole": false
         }
       ],
       "pos": [503.575, 3.575],
@@ -489,14 +533,16 @@
         {
           "name": "1",
           "net": "p3v3-hv",
-          "offset": [-0.75, 0.0],
-          "size": [0.81, 0.86]
+          "offset": [-0.75, -0.0],
+          "size": [0.81, 0.86],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "nALRT",
-          "offset": [0.75, 0.0],
-          "size": [0.81, 0.86]
+          "offset": [0.75, -0.0],
+          "size": [0.81, 0.86],
+          "through_hole": false
         }
       ],
       "pos": [753.575, 3.575],
@@ -513,14 +559,16 @@
         {
           "name": "1",
           "net": "hv",
-          "offset": [-0.42, 0.0],
-          "size": [0.5, 0.54]
+          "offset": [-0.42, -0.0],
+          "size": [0.5, 0.54],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [0.42, 0.0],
-          "size": [0.5, 0.54]
+          "offset": [0.42, -0.0],
+          "size": [0.5, 0.54],
+          "through_hole": false
         }
       ],
       "pos": [13.575, 3.575],
@@ -537,14 +585,16 @@
         {
           "name": "1",
           "net": "vsys-hv",
-          "offset": [-1.0, 0.0],
-          "size": [1.41, 1.35]
+          "offset": [-1.0, -0.0],
+          "size": [1.41, 1.35],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [1.0, 0.0],
-          "size": [1.41, 1.35]
+          "offset": [1.0, -0.0],
+          "size": [1.41, 1.35],
+          "through_hole": false
         }
       ],
       "pos": [243.575, 3.575],
@@ -561,14 +611,16 @@
         {
           "name": "1",
           "net": "p3v3-hv",
-          "offset": [-0.7, 0.0],
-          "size": [0.8, 0.9]
+          "offset": [-0.7, -0.0],
+          "size": [0.8, 0.9],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [0.7, 0.0],
-          "size": [0.8, 0.9]
+          "offset": [0.7, -0.0],
+          "size": [0.8, 0.9],
+          "through_hole": false
         }
       ],
       "pos": [63.575, 3.575],
@@ -585,110 +637,128 @@
         {
           "name": "",
           "net": "",
-          "offset": [-2.89, -1.3],
-          "size": [0.7, 0.7]
+          "offset": [-2.89, 1.3],
+          "size": [0.7, 0.7],
+          "through_hole": true
         },
         {
           "name": "",
           "net": "",
-          "offset": [2.89, -1.3],
-          "size": [0.7, 0.7]
+          "offset": [2.89, 1.3],
+          "size": [0.7, 0.7],
+          "through_hole": true
         },
         {
           "name": "13",
           "net": "lv",
-          "offset": [-4.32, -1.83],
-          "size": [1.1, 2.0]
+          "offset": [-4.32, 1.83],
+          "size": [1.1, 2.0],
+          "through_hole": true
         },
         {
           "name": "13",
           "net": "lv",
-          "offset": [-4.32, 2.38],
-          "size": [1.2, 1.8]
+          "offset": [-4.32, -2.38],
+          "size": [1.2, 1.8],
+          "through_hole": true
         },
         {
           "name": "14",
           "net": "lv",
-          "offset": [4.32, -1.83],
-          "size": [1.1, 2.0]
+          "offset": [4.32, 1.83],
+          "size": [1.1, 2.0],
+          "through_hole": true
         },
         {
           "name": "14",
           "net": "lv",
-          "offset": [4.32, 2.38],
-          "size": [1.2, 1.8]
+          "offset": [4.32, -2.38],
+          "size": [1.2, 1.8],
+          "through_hole": true
         },
         {
           "name": "A1B12",
           "net": "usbc-GND",
-          "offset": [-3.2, -2.38],
-          "size": [0.55, 1.1]
+          "offset": [-3.2, 2.38],
+          "size": [0.55, 1.1],
+          "through_hole": false
         },
         {
           "name": "A4B9",
           "net": "vsys-hv",
-          "offset": [-2.4, -2.38],
-          "size": [0.55, 1.1]
+          "offset": [-2.4, 2.38],
+          "size": [0.55, 1.1],
+          "through_hole": false
         },
         {
           "name": "A5",
           "net": "A5",
-          "offset": [-1.25, -2.38],
-          "size": [0.3, 1.1]
+          "offset": [-1.25, 2.38],
+          "size": [0.3, 1.1],
+          "through_hole": false
         },
         {
           "name": "A6",
           "net": "14",
-          "offset": [-0.25, -2.38],
-          "size": [0.3, 1.1]
+          "offset": [-0.25, 2.38],
+          "size": [0.3, 1.1],
+          "through_hole": false
         },
         {
           "name": "A7",
           "net": "13",
-          "offset": [0.25, -2.38],
-          "size": [0.3, 1.1]
+          "offset": [0.25, 2.38],
+          "size": [0.3, 1.1],
+          "through_hole": false
         },
         {
           "name": "A8",
           "net": "A8",
-          "offset": [1.25, -2.38],
-          "size": [0.3, 1.1]
+          "offset": [1.25, 2.38],
+          "size": [0.3, 1.1],
+          "through_hole": false
         },
         {
           "name": "B1A12",
           "net": "usbc-GND",
-          "offset": [3.2, -2.38],
-          "size": [0.55, 1.1]
+          "offset": [3.2, 2.38],
+          "size": [0.55, 1.1],
+          "through_hole": false
         },
         {
           "name": "B4A9",
           "net": "vsys-hv",
-          "offset": [2.4, -2.38],
-          "size": [0.55, 1.1]
+          "offset": [2.4, 2.38],
+          "size": [0.55, 1.1],
+          "through_hole": false
         },
         {
           "name": "B5",
           "net": "B5",
-          "offset": [1.75, -2.38],
-          "size": [0.3, 1.1]
+          "offset": [1.75, 2.38],
+          "size": [0.3, 1.1],
+          "through_hole": false
         },
         {
           "name": "B6",
           "net": "14",
-          "offset": [0.75, -2.38],
-          "size": [0.3, 1.1]
+          "offset": [0.75, 2.38],
+          "size": [0.3, 1.1],
+          "through_hole": false
         },
         {
           "name": "B7",
           "net": "13",
-          "offset": [-0.75, -2.38],
-          "size": [0.3, 1.1]
+          "offset": [-0.75, 2.38],
+          "size": [0.3, 1.1],
+          "through_hole": false
         },
         {
           "name": "B8",
           "net": "B8",
-          "offset": [-1.75, -2.38],
-          "size": [0.3, 1.1]
+          "offset": [-1.75, 2.38],
+          "size": [0.3, 1.1],
+          "through_hole": false
         }
       ],
       "pos": [163.575, 3.575],
@@ -705,14 +775,16 @@
         {
           "name": "1",
           "net": "EN-1",
-          "offset": [-2.18, 0.0],
-          "size": [1.23, 1.86]
+          "offset": [-2.18, -0.0],
+          "size": [1.23, 1.86],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [2.18, 0.0],
-          "size": [1.23, 1.86]
+          "offset": [2.18, -0.0],
+          "size": [1.23, 1.86],
+          "through_hole": false
         }
       ],
       "pos": [93.575, 3.575],
@@ -729,152 +801,177 @@
         {
           "name": "1",
           "net": "CLKIN",
-          "offset": [-1.25, 2.0],
-          "size": [0.28, 0.8]
+          "offset": [-1.25, -2.0],
+          "size": [0.28, 0.8],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "",
-          "offset": [-0.75, 2.0],
-          "size": [0.28, 0.8]
+          "offset": [-0.75, -2.0],
+          "size": [0.28, 0.8],
+          "through_hole": false
         },
         {
           "name": "3",
           "net": "",
-          "offset": [-0.25, 2.0],
-          "size": [0.28, 0.8]
+          "offset": [-0.25, -2.0],
+          "size": [0.28, 0.8],
+          "through_hole": false
         },
         {
           "name": "4",
           "net": "",
-          "offset": [0.25, 2.0],
-          "size": [0.28, 0.8]
+          "offset": [0.25, -2.0],
+          "size": [0.28, 0.8],
+          "through_hole": false
         },
         {
           "name": "5",
           "net": "",
-          "offset": [0.75, 2.0],
-          "size": [0.28, 0.8]
+          "offset": [0.75, -2.0],
+          "size": [0.28, 0.8],
+          "through_hole": false
         },
         {
           "name": "6",
           "net": "AUX_DA",
-          "offset": [1.25, 2.0],
-          "size": [0.28, 0.8]
+          "offset": [1.25, -2.0],
+          "size": [0.28, 0.8],
+          "through_hole": false
         },
         {
           "name": "7",
           "net": "AUX_CL",
-          "offset": [2.0, 1.25],
-          "size": [0.8, 0.28]
+          "offset": [2.0, -1.25],
+          "size": [0.8, 0.28],
+          "through_hole": false
         },
         {
           "name": "8",
           "net": "hv",
-          "offset": [2.0, 0.75],
-          "size": [0.8, 0.28]
+          "offset": [2.0, -0.75],
+          "size": [0.8, 0.28],
+          "through_hole": false
         },
         {
           "name": "9",
           "net": "lv",
-          "offset": [2.0, 0.25],
-          "size": [0.8, 0.28]
+          "offset": [2.0, -0.25],
+          "size": [0.8, 0.28],
+          "through_hole": false
         },
         {
           "name": "10",
           "net": "REGOUT",
-          "offset": [2.0, -0.25],
-          "size": [0.8, 0.28]
+          "offset": [2.0, 0.25],
+          "size": [0.8, 0.28],
+          "through_hole": false
         },
         {
           "name": "11",
           "net": "FSYNC",
-          "offset": [2.0, -0.75],
-          "size": [0.8, 0.28]
+          "offset": [2.0, 0.75],
+          "size": [0.8, 0.28],
+          "through_hole": false
         },
         {
           "name": "12",
           "net": "INT",
-          "offset": [2.0, -1.25],
-          "size": [0.8, 0.28]
+          "offset": [2.0, 1.25],
+          "size": [0.8, 0.28],
+          "through_hole": false
         },
         {
           "name": "13",
           "net": "hv",
-          "offset": [1.25, -2.0],
-          "size": [0.28, 0.8]
+          "offset": [1.25, 2.0],
+          "size": [0.28, 0.8],
+          "through_hole": false
         },
         {
           "name": "14",
           "net": "",
-          "offset": [0.75, -2.0],
-          "size": [0.28, 0.8]
+          "offset": [0.75, 2.0],
+          "size": [0.28, 0.8],
+          "through_hole": false
         },
         {
           "name": "15",
           "net": "",
-          "offset": [0.25, -2.0],
-          "size": [0.28, 0.8]
+          "offset": [0.25, 2.0],
+          "size": [0.28, 0.8],
+          "through_hole": false
         },
         {
           "name": "16",
           "net": "",
-          "offset": [-0.25, -2.0],
-          "size": [0.28, 0.8]
+          "offset": [-0.25, 2.0],
+          "size": [0.28, 0.8],
+          "through_hole": false
         },
         {
           "name": "17",
           "net": "",
-          "offset": [-0.75, -2.0],
-          "size": [0.28, 0.8]
+          "offset": [-0.75, 2.0],
+          "size": [0.28, 0.8],
+          "through_hole": false
         },
         {
           "name": "18",
           "net": "lv",
-          "offset": [-1.24, -2.0],
-          "size": [0.28, 0.8]
+          "offset": [-1.24, 2.0],
+          "size": [0.28, 0.8],
+          "through_hole": false
         },
         {
           "name": "19",
           "net": "RESV",
-          "offset": [-2.0, -1.25],
-          "size": [0.8, 0.28]
+          "offset": [-2.0, 1.25],
+          "size": [0.8, 0.28],
+          "through_hole": false
         },
         {
           "name": "20",
           "net": "CPOUT",
-          "offset": [-2.0, -0.75],
-          "size": [0.8, 0.28]
+          "offset": [-2.0, 0.75],
+          "size": [0.8, 0.28],
+          "through_hole": false
         },
         {
           "name": "21",
           "net": "RESV",
-          "offset": [-2.0, -0.25],
-          "size": [0.8, 0.28]
+          "offset": [-2.0, 0.25],
+          "size": [0.8, 0.28],
+          "through_hole": false
         },
         {
           "name": "22",
           "net": "RESV",
-          "offset": [-2.0, 0.25],
-          "size": [0.8, 0.28]
+          "offset": [-2.0, -0.25],
+          "size": [0.8, 0.28],
+          "through_hole": false
         },
         {
           "name": "23",
           "net": "SCL",
-          "offset": [-2.0, 0.75],
-          "size": [0.8, 0.28]
+          "offset": [-2.0, -0.75],
+          "size": [0.8, 0.28],
+          "through_hole": false
         },
         {
           "name": "24",
           "net": "SDA",
-          "offset": [-2.0, 1.25],
-          "size": [0.8, 0.28]
+          "offset": [-2.0, -1.25],
+          "size": [0.8, 0.28],
+          "through_hole": false
         },
         {
           "name": "25",
           "net": "EP",
-          "offset": [0.01, 0.0],
-          "size": [2.7, 2.7]
+          "offset": [0.01, -0.0],
+          "size": [2.7, 2.7],
+          "through_hole": false
         }
       ],
       "pos": [633.575, 3.575],
@@ -891,14 +988,16 @@
         {
           "name": "1",
           "net": "p3v3-hv",
-          "offset": [-0.42, 0.0],
-          "size": [0.5, 0.54]
+          "offset": [-0.42, -0.0],
+          "size": [0.5, 0.54],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [0.42, 0.0],
-          "size": [0.5, 0.54]
+          "offset": [0.42, -0.0],
+          "size": [0.5, 0.54],
+          "through_hole": false
         }
       ],
       "pos": [533.575, 3.575],
@@ -915,14 +1014,16 @@
         {
           "name": "1",
           "net": "en-1",
-          "offset": [-0.43, 0.0],
-          "size": [0.57, 0.54]
+          "offset": [-0.43, -0.0],
+          "size": [0.57, 0.54],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "led1-B",
-          "offset": [0.43, 0.0],
-          "size": [0.57, 0.54]
+          "offset": [0.43, -0.0],
+          "size": [0.57, 0.54],
+          "through_hole": false
         }
       ],
       "pos": [573.575, 3.575],
@@ -939,56 +1040,65 @@
         {
           "name": "1",
           "net": "CTG",
-          "offset": [-0.75, 0.94],
-          "size": [0.28, 0.42]
+          "offset": [-0.75, -0.94],
+          "size": [0.28, 0.42],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "vbat-hv",
-          "offset": [-0.25, 0.94],
-          "size": [0.28, 0.42]
+          "offset": [-0.25, -0.94],
+          "size": [0.28, 0.42],
+          "through_hole": false
         },
         {
           "name": "3",
           "net": "vbat-hv",
-          "offset": [0.25, 0.94],
-          "size": [0.28, 0.42]
+          "offset": [0.25, -0.94],
+          "size": [0.28, 0.42],
+          "through_hole": false
         },
         {
           "name": "4",
           "net": "gauge-GND",
-          "offset": [0.75, 0.94],
-          "size": [0.28, 0.42]
+          "offset": [0.75, -0.94],
+          "size": [0.28, 0.42],
+          "through_hole": false
         },
         {
           "name": "5",
           "net": "nALRT",
-          "offset": [0.75, -0.94],
-          "size": [0.28, 0.42]
+          "offset": [0.75, 0.94],
+          "size": [0.28, 0.42],
+          "through_hole": false
         },
         {
           "name": "6",
           "net": "QSTRT",
-          "offset": [0.25, -0.94],
-          "size": [0.28, 0.42]
+          "offset": [0.25, 0.94],
+          "size": [0.28, 0.42],
+          "through_hole": false
         },
         {
           "name": "7",
           "net": "SCL",
-          "offset": [-0.25, -0.94],
-          "size": [0.28, 0.42]
+          "offset": [-0.25, 0.94],
+          "size": [0.28, 0.42],
+          "through_hole": false
         },
         {
           "name": "8",
           "net": "SDA",
-          "offset": [-0.75, -0.94],
-          "size": [0.28, 0.42]
+          "offset": [-0.75, 0.94],
+          "size": [0.28, 0.42],
+          "through_hole": false
         },
         {
           "name": "9",
           "net": "lv",
-          "offset": [0.0, 0.0],
-          "size": [1.2, 0.8]
+          "offset": [0.0, -0.0],
+          "size": [1.2, 0.8],
+          "through_hole": false
         }
       ],
       "pos": [743.575, 3.575],
@@ -1005,14 +1115,16 @@
         {
           "name": "1",
           "net": "hv",
-          "offset": [-0.42, 0.0],
-          "size": [0.5, 0.54]
+          "offset": [-0.42, -0.0],
+          "size": [0.5, 0.54],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [0.42, 0.0],
-          "size": [0.5, 0.54]
+          "offset": [0.42, -0.0],
+          "size": [0.5, 0.54],
+          "through_hole": false
         }
       ],
       "pos": [683.575, 3.575],
@@ -1029,14 +1141,16 @@
         {
           "name": "1",
           "net": "FB",
-          "offset": [-0.43, 0.0],
-          "size": [0.57, 0.54]
+          "offset": [-0.43, -0.0],
+          "size": [0.57, 0.54],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [0.43, 0.0],
-          "size": [0.57, 0.54]
+          "offset": [0.43, -0.0],
+          "size": [0.57, 0.54],
+          "through_hole": false
         }
       ],
       "pos": [303.575, 3.575],
@@ -1053,122 +1167,142 @@
         {
           "name": "1",
           "net": "vsys-hv",
-          "offset": [-11.43, 1.27],
-          "size": [1.7, 1.7]
+          "offset": [-11.43, -1.27],
+          "size": [1.7, 1.7],
+          "through_hole": true
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [-11.43, -1.27],
-          "size": [1.7, 1.7]
+          "offset": [-11.43, 1.27],
+          "size": [1.7, 1.7],
+          "through_hole": true
         },
         {
           "name": "3",
           "net": "vsys-hv",
-          "offset": [-8.89, 1.27],
-          "size": [1.7, 1.7]
+          "offset": [-8.89, -1.27],
+          "size": [1.7, 1.7],
+          "through_hole": true
         },
         {
           "name": "4",
           "net": "vbat-hv",
-          "offset": [-8.89, -1.27],
-          "size": [1.7, 1.7]
+          "offset": [-8.89, 1.27],
+          "size": [1.7, 1.7],
+          "through_hole": true
         },
         {
           "name": "5",
           "net": "p5v-hv",
-          "offset": [-6.35, 1.27],
-          "size": [1.7, 1.7]
+          "offset": [-6.35, -1.27],
+          "size": [1.7, 1.7],
+          "through_hole": true
         },
         {
           "name": "6",
           "net": "p3v3-hv",
-          "offset": [-6.35, -1.27],
-          "size": [1.7, 1.7]
+          "offset": [-6.35, 1.27],
+          "size": [1.7, 1.7],
+          "through_hole": true
         },
         {
           "name": "7",
           "net": "fault",
-          "offset": [-3.81, 1.27],
-          "size": [1.7, 1.7]
+          "offset": [-3.81, -1.27],
+          "size": [1.7, 1.7],
+          "through_hole": true
         },
         {
           "name": "8",
           "net": "fault-1",
-          "offset": [-3.81, -1.27],
-          "size": [1.7, 1.7]
+          "offset": [-3.81, 1.27],
+          "size": [1.7, 1.7],
+          "through_hole": true
         },
         {
           "name": "9",
           "net": "chan_out-1",
-          "offset": [-1.27, 1.27],
-          "size": [1.7, 1.7]
+          "offset": [-1.27, -1.27],
+          "size": [1.7, 1.7],
+          "through_hole": true
         },
         {
           "name": "10",
           "net": "chan_out",
-          "offset": [-1.27, -1.27],
-          "size": [1.7, 1.7]
+          "offset": [-1.27, 1.27],
+          "size": [1.7, 1.7],
+          "through_hole": true
         },
         {
           "name": "11",
           "net": "data_in",
-          "offset": [1.27, 1.27],
-          "size": [1.7, 1.7]
+          "offset": [1.27, -1.27],
+          "size": [1.7, 1.7],
+          "through_hole": true
         },
         {
           "name": "12",
           "net": "data_in-1",
-          "offset": [1.27, -1.27],
-          "size": [1.7, 1.7]
+          "offset": [1.27, 1.27],
+          "size": [1.7, 1.7],
+          "through_hole": true
         },
         {
           "name": "13",
           "net": "SDA",
-          "offset": [3.81, 1.27],
-          "size": [1.7, 1.7]
+          "offset": [3.81, -1.27],
+          "size": [1.7, 1.7],
+          "through_hole": true
         },
         {
           "name": "14",
           "net": "SCL",
-          "offset": [3.81, -1.27],
-          "size": [1.7, 1.7]
+          "offset": [3.81, 1.27],
+          "size": [1.7, 1.7],
+          "through_hole": true
         },
         {
           "name": "15",
           "net": "EN-1",
-          "offset": [6.35, 1.27],
-          "size": [1.7, 1.7]
+          "offset": [6.35, -1.27],
+          "size": [1.7, 1.7],
+          "through_hole": true
         },
         {
           "name": "16",
           "net": "1",
-          "offset": [6.35, -1.27],
-          "size": [1.7, 1.7]
+          "offset": [6.35, 1.27],
+          "size": [1.7, 1.7],
+          "through_hole": true
         },
         {
           "name": "17",
           "net": "1-1",
-          "offset": [8.89, 1.27],
-          "size": [1.7, 1.7]
+          "offset": [8.89, -1.27],
+          "size": [1.7, 1.7],
+          "through_hole": true
         },
         {
           "name": "18",
           "net": "1-2",
-          "offset": [8.89, -1.27],
-          "size": [1.7, 1.7]
+          "offset": [8.89, 1.27],
+          "size": [1.7, 1.7],
+          "through_hole": true
         },
         {
           "name": "19",
           "net": "19",
-          "offset": [11.43, 1.27],
-          "size": [1.7, 1.7]
+          "offset": [11.43, -1.27],
+          "size": [1.7, 1.7],
+          "through_hole": true
         },
         {
           "name": "20",
           "net": "20",
-          "offset": [11.43, -1.27],
-          "size": [1.7, 1.7]
+          "offset": [11.43, 1.27],
+          "size": [1.7, 1.7],
+          "through_hole": true
         }
       ],
       "pos": [783.575, 3.575],
@@ -1185,14 +1319,16 @@
         {
           "name": "1",
           "net": "p5v-hv",
-          "offset": [-1.0, 0.0],
-          "size": [1.41, 1.35]
+          "offset": [-1.0, -0.0],
+          "size": [1.41, 1.35],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [1.0, 0.0],
-          "size": [1.41, 1.35]
+          "offset": [1.0, -0.0],
+          "size": [1.41, 1.35],
+          "through_hole": false
         }
       ],
       "pos": [373.575, 3.575],
@@ -1209,14 +1345,16 @@
         {
           "name": "1",
           "net": "vsys-hv",
-          "offset": [-0.42, 0.0],
-          "size": [0.5, 0.54]
+          "offset": [-0.42, -0.0],
+          "size": [0.5, 0.54],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [0.42, 0.0],
-          "size": [0.5, 0.54]
+          "offset": [0.42, -0.0],
+          "size": [0.5, 0.54],
+          "through_hole": false
         }
       ],
       "pos": [353.575, 3.575],
@@ -1233,14 +1371,16 @@
         {
           "name": "1",
           "net": "COMP",
-          "offset": [-0.42, 0.0],
-          "size": [0.5, 0.54]
+          "offset": [-0.42, -0.0],
+          "size": [0.5, 0.54],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [0.42, 0.0],
-          "size": [0.5, 0.54]
+          "offset": [0.42, -0.0],
+          "size": [0.5, 0.54],
+          "through_hole": false
         }
       ],
       "pos": [343.575, 3.575],
@@ -1257,14 +1397,16 @@
         {
           "name": "1",
           "net": "PROG",
-          "offset": [-0.43, 0.0],
-          "size": [0.57, 0.54]
+          "offset": [-0.43, -0.0],
+          "size": [0.57, 0.54],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [0.43, 0.0],
-          "size": [0.57, 0.54]
+          "offset": [0.43, -0.0],
+          "size": [0.57, 0.54],
+          "through_hole": false
         }
       ],
       "pos": [703.575, 3.575],
@@ -1281,14 +1423,16 @@
         {
           "name": "1",
           "net": "p5v-hv",
-          "offset": [-0.43, 0.0],
-          "size": [0.57, 0.54]
+          "offset": [-0.43, -0.0],
+          "size": [0.57, 0.54],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "led1-S",
-          "offset": [0.43, 0.0],
-          "size": [0.57, 0.54]
+          "offset": [0.43, -0.0],
+          "size": [0.57, 0.54],
+          "through_hole": false
         }
       ],
       "pos": [513.575, 3.575],
@@ -1305,14 +1449,16 @@
         {
           "name": "1",
           "net": "p3v3-hv",
-          "offset": [-0.42, 0.0],
-          "size": [0.5, 0.54]
+          "offset": [-0.42, -0.0],
+          "size": [0.5, 0.54],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [0.42, 0.0],
-          "size": [0.5, 0.54]
+          "offset": [0.42, -0.0],
+          "size": [0.5, 0.54],
+          "through_hole": false
         }
       ],
       "pos": [53.575, 3.575],
@@ -1329,14 +1475,16 @@
         {
           "name": "1",
           "net": "p3v3-hv",
-          "offset": [-0.42, 0.0],
-          "size": [0.5, 0.54]
+          "offset": [-0.42, -0.0],
+          "size": [0.5, 0.54],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [0.42, 0.0],
-          "size": [0.5, 0.54]
+          "offset": [0.42, -0.0],
+          "size": [0.5, 0.54],
+          "through_hole": false
         }
       ],
       "pos": [413.575, 3.575],
@@ -1353,14 +1501,16 @@
         {
           "name": "1",
           "net": "S",
-          "offset": [-0.75, 0.0],
-          "size": [0.81, 0.86]
+          "offset": [-0.75, -0.0],
+          "size": [0.81, 0.86],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "C",
-          "offset": [0.75, 0.0],
-          "size": [0.81, 0.86]
+          "offset": [0.75, -0.0],
+          "size": [0.81, 0.86],
+          "through_hole": false
         }
       ],
       "pos": [433.575, 3.575],
@@ -1377,14 +1527,16 @@
         {
           "name": "1",
           "net": "SW-1",
-          "offset": [-2.6, 0.0],
-          "size": [2.47, 5.02]
+          "offset": [-2.6, -0.0],
+          "size": [2.47, 5.02],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "p3v3-hv",
-          "offset": [2.6, 0.0],
-          "size": [2.47, 5.02]
+          "offset": [2.6, -0.0],
+          "size": [2.47, 5.02],
+          "through_hole": false
         }
       ],
       "pos": [213.575, 3.575],
@@ -1401,14 +1553,16 @@
         {
           "name": "1",
           "net": "EN-1",
-          "offset": [-0.42, 0.0],
-          "size": [0.5, 0.54]
+          "offset": [-0.42, -0.0],
+          "size": [0.5, 0.54],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [0.42, 0.0],
-          "size": [0.5, 0.54]
+          "offset": [0.42, -0.0],
+          "size": [0.5, 0.54],
+          "through_hole": false
         }
       ],
       "pos": [83.575, 3.575],
@@ -1425,14 +1579,16 @@
         {
           "name": "1",
           "net": "vsys-hv",
-          "offset": [-0.7, 0.0],
-          "size": [0.8, 0.9]
+          "offset": [-0.7, -0.0],
+          "size": [0.8, 0.9],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [0.7, 0.0],
-          "size": [0.8, 0.9]
+          "offset": [0.7, -0.0],
+          "size": [0.8, 0.9],
+          "through_hole": false
         }
       ],
       "pos": [193.575, 3.575],
@@ -1449,20 +1605,23 @@
         {
           "name": "1",
           "net": "led1-C",
-          "offset": [1.15, 0.95],
-          "size": [1.0, 0.8]
+          "offset": [1.15, -0.95],
+          "size": [1.0, 0.8],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "led1-S",
-          "offset": [1.15, -0.95],
-          "size": [1.0, 0.8]
+          "offset": [1.15, 0.95],
+          "size": [1.0, 0.8],
+          "through_hole": false
         },
         {
           "name": "3",
           "net": "chan_out",
-          "offset": [-1.15, 0.0],
-          "size": [1.0, 0.8]
+          "offset": [-1.15, -0.0],
+          "size": [1.0, 0.8],
+          "through_hole": false
         }
       ],
       "pos": [543.575, 3.575],
@@ -1479,14 +1638,16 @@
         {
           "name": "1",
           "net": "B5",
-          "offset": [-0.43, 0.0],
-          "size": [0.57, 0.54]
+          "offset": [-0.43, -0.0],
+          "size": [0.57, 0.54],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [0.43, 0.0],
-          "size": [0.57, 0.54]
+          "offset": [0.43, -0.0],
+          "size": [0.57, 0.54],
+          "through_hole": false
         }
       ],
       "pos": [183.575, 3.575],
@@ -1503,14 +1664,16 @@
         {
           "name": "1",
           "net": "p3v3-hv",
-          "offset": [-0.75, 0.0],
-          "size": [0.81, 0.86]
+          "offset": [-0.75, -0.0],
+          "size": [0.81, 0.86],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "1-1",
-          "offset": [0.75, 0.0],
-          "size": [0.81, 0.86]
+          "offset": [0.75, -0.0],
+          "size": [0.81, 0.86],
+          "through_hole": false
         }
       ],
       "pos": [123.575, 3.575],
@@ -1527,62 +1690,72 @@
         {
           "name": "1",
           "net": "lv",
-          "offset": [-1.0, 2.11],
-          "size": [0.28, 1.62]
+          "offset": [-1.0, -2.11],
+          "size": [0.28, 1.62],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "hv",
-          "offset": [-0.5, 2.11],
-          "size": [0.28, 1.62]
+          "offset": [-0.5, -2.11],
+          "size": [0.28, 1.62],
+          "through_hole": false
         },
         {
           "name": "3",
           "net": "fault-1",
-          "offset": [0.0, 2.11],
-          "size": [0.28, 1.62]
+          "offset": [0.0, -2.11],
+          "size": [0.28, 1.62],
+          "through_hole": false
         },
         {
           "name": "4",
           "net": "SDA",
-          "offset": [0.5, 2.11],
-          "size": [0.28, 1.62]
+          "offset": [0.5, -2.11],
+          "size": [0.28, 1.62],
+          "through_hole": false
         },
         {
           "name": "5",
           "net": "SCL",
-          "offset": [1.0, 2.11],
-          "size": [0.28, 1.62]
+          "offset": [1.0, -2.11],
+          "size": [0.28, 1.62],
+          "through_hole": false
         },
         {
           "name": "6",
           "net": "p3v3-hv",
-          "offset": [1.0, -2.11],
-          "size": [0.28, 1.62]
+          "offset": [1.0, 2.11],
+          "size": [0.28, 1.62],
+          "through_hole": false
         },
         {
           "name": "7",
           "net": "lv",
-          "offset": [0.5, -2.11],
-          "size": [0.28, 1.62]
+          "offset": [0.5, 2.11],
+          "size": [0.28, 1.62],
+          "through_hole": false
         },
         {
           "name": "8",
           "net": "led1-S",
-          "offset": [0.0, -2.11],
-          "size": [0.28, 1.62]
+          "offset": [0.0, 2.11],
+          "size": [0.28, 1.62],
+          "through_hole": false
         },
         {
           "name": "9",
           "net": "led1-S",
-          "offset": [-0.5, -2.11],
-          "size": [0.28, 1.62]
+          "offset": [-0.5, 2.11],
+          "size": [0.28, 1.62],
+          "through_hole": false
         },
         {
           "name": "10",
           "net": "p5v-hv",
-          "offset": [-1.0, -2.11],
-          "size": [0.28, 1.62]
+          "offset": [-1.0, 2.11],
+          "size": [0.28, 1.62],
+          "through_hole": false
         }
       ],
       "pos": [523.575, 3.575],
@@ -1599,176 +1772,205 @@
         {
           "name": "",
           "net": "",
-          "offset": [-1.27, 0.0],
-          "size": [0.4, 0.4]
-        },
-        {
-          "name": "",
-          "net": "",
-          "offset": [-0.52, -0.77],
-          "size": [0.4, 0.4]
-        },
-        {
-          "name": "",
-          "net": "",
-          "offset": [-0.52, 0.0],
-          "size": [0.4, 0.4]
+          "offset": [-1.27, -0.0],
+          "size": [0.4, 0.4],
+          "through_hole": true
         },
         {
           "name": "",
           "net": "",
           "offset": [-0.52, 0.77],
-          "size": [0.4, 0.4]
+          "size": [0.4, 0.4],
+          "through_hole": true
         },
         {
           "name": "",
           "net": "",
-          "offset": [0.53, -0.77],
-          "size": [0.4, 0.4]
+          "offset": [-0.52, -0.0],
+          "size": [0.4, 0.4],
+          "through_hole": true
         },
         {
           "name": "",
           "net": "",
-          "offset": [0.53, 0.0],
-          "size": [0.4, 0.4]
+          "offset": [-0.52, -0.77],
+          "size": [0.4, 0.4],
+          "through_hole": true
         },
         {
           "name": "",
           "net": "",
           "offset": [0.53, 0.77],
-          "size": [0.4, 0.4]
+          "size": [0.4, 0.4],
+          "through_hole": true
         },
         {
           "name": "",
           "net": "",
-          "offset": [1.28, 0.0],
-          "size": [0.4, 0.4]
+          "offset": [0.53, -0.0],
+          "size": [0.4, 0.4],
+          "through_hole": true
+        },
+        {
+          "name": "",
+          "net": "",
+          "offset": [0.53, -0.77],
+          "size": [0.4, 0.4],
+          "through_hole": true
+        },
+        {
+          "name": "",
+          "net": "",
+          "offset": [1.28, -0.0],
+          "size": [0.4, 0.4],
+          "through_hole": true
         },
         {
           "name": "1",
           "net": "vsys-hv",
-          "offset": [-2.18, 0.75],
-          "size": [0.7, 0.24]
+          "offset": [-2.18, -0.75],
+          "size": [0.7, 0.24],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "EN",
-          "offset": [-1.75, 1.73],
-          "size": [0.24, 0.7]
+          "offset": [-1.75, -1.73],
+          "size": [0.24, 0.7],
+          "through_hole": false
         },
         {
           "name": "3",
           "net": "FSW",
-          "offset": [-1.25, 1.73],
-          "size": [0.24, 0.7]
+          "offset": [-1.25, -1.73],
+          "size": [0.24, 0.7],
+          "through_hole": false
         },
         {
           "name": "4",
           "net": "SW",
-          "offset": [-0.75, 1.73],
-          "size": [0.24, 0.7]
+          "offset": [-0.75, -1.73],
+          "size": [0.24, 0.7],
+          "through_hole": false
         },
         {
           "name": "5",
           "net": "SW",
-          "offset": [-0.25, 1.73],
-          "size": [0.24, 0.7]
+          "offset": [-0.25, -1.73],
+          "size": [0.24, 0.7],
+          "through_hole": false
         },
         {
           "name": "6",
           "net": "SW",
-          "offset": [0.25, 1.73],
-          "size": [0.24, 0.7]
+          "offset": [0.25, -1.73],
+          "size": [0.24, 0.7],
+          "through_hole": false
         },
         {
           "name": "7",
           "net": "SW",
-          "offset": [0.75, 1.73],
-          "size": [0.24, 0.7]
+          "offset": [0.75, -1.73],
+          "size": [0.24, 0.7],
+          "through_hole": false
         },
         {
           "name": "8",
           "net": "BOOT",
-          "offset": [1.25, 1.73],
-          "size": [0.24, 0.7]
+          "offset": [1.25, -1.73],
+          "size": [0.24, 0.7],
+          "through_hole": false
         },
         {
           "name": "9",
           "net": "vsys-hv",
-          "offset": [1.75, 1.73],
-          "size": [0.24, 0.7]
+          "offset": [1.75, -1.73],
+          "size": [0.24, 0.7],
+          "through_hole": false
         },
         {
           "name": "10",
           "net": "SS",
-          "offset": [2.18, 0.75],
-          "size": [0.7, 0.24]
+          "offset": [2.18, -0.75],
+          "size": [0.7, 0.24],
+          "through_hole": false
         },
         {
           "name": "11",
           "net": "",
-          "offset": [2.18, -0.75],
-          "size": [0.7, 0.24]
+          "offset": [2.18, 0.75],
+          "size": [0.7, 0.24],
+          "through_hole": false
         },
         {
           "name": "12",
           "net": "",
-          "offset": [1.75, -1.73],
-          "size": [0.24, 0.7]
+          "offset": [1.75, 1.73],
+          "size": [0.24, 0.7],
+          "through_hole": false
         },
         {
           "name": "13",
           "net": "lv",
-          "offset": [1.25, -1.73],
-          "size": [0.24, 0.7]
+          "offset": [1.25, 1.73],
+          "size": [0.24, 0.7],
+          "through_hole": false
         },
         {
           "name": "14",
           "net": "p5v-hv",
-          "offset": [0.75, -1.73],
-          "size": [0.24, 0.7]
+          "offset": [0.75, 1.73],
+          "size": [0.24, 0.7],
+          "through_hole": false
         },
         {
           "name": "15",
           "net": "p5v-hv",
-          "offset": [0.25, -1.73],
-          "size": [0.24, 0.7]
+          "offset": [0.25, 1.73],
+          "size": [0.24, 0.7],
+          "through_hole": false
         },
         {
           "name": "16",
           "net": "p5v-hv",
-          "offset": [-0.25, -1.73],
-          "size": [0.24, 0.7]
+          "offset": [-0.25, 1.73],
+          "size": [0.24, 0.7],
+          "through_hole": false
         },
         {
           "name": "17",
           "net": "FB",
-          "offset": [-0.75, -1.73],
-          "size": [0.24, 0.7]
+          "offset": [-0.75, 1.73],
+          "size": [0.24, 0.7],
+          "through_hole": false
         },
         {
           "name": "18",
           "net": "COMP",
-          "offset": [-1.25, -1.73],
-          "size": [0.24, 0.7]
+          "offset": [-1.25, 1.73],
+          "size": [0.24, 0.7],
+          "through_hole": false
         },
         {
           "name": "19",
           "net": "ILIM",
-          "offset": [-1.75, -1.73],
-          "size": [0.24, 0.7]
+          "offset": [-1.75, 1.73],
+          "size": [0.24, 0.7],
+          "through_hole": false
         },
         {
           "name": "20",
           "net": "lv",
-          "offset": [-2.18, -0.75],
-          "size": [0.7, 0.24]
+          "offset": [-2.18, 0.75],
+          "size": [0.7, 0.24],
+          "through_hole": false
         },
         {
           "name": "21",
           "net": "lv",
-          "offset": [0.0, 0.0],
-          "size": [0.01, 0.01]
+          "offset": [0.0, -0.0],
+          "size": [4.97, 2.04],
+          "through_hole": false
         }
       ],
       "pos": [263.575, 3.575],
@@ -1785,38 +1987,44 @@
         {
           "name": "1",
           "net": "p3v3-hv",
-          "offset": [1.35, 0.95],
-          "size": [1.1, 0.6]
+          "offset": [1.35, -0.95],
+          "size": [1.1, 0.6],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [1.35, 0.0],
-          "size": [1.1, 0.6]
+          "offset": [1.35, -0.0],
+          "size": [1.1, 0.6],
+          "through_hole": false
         },
         {
           "name": "3",
           "net": "data_in",
-          "offset": [1.35, -0.95],
-          "size": [1.1, 0.6]
+          "offset": [1.35, 0.95],
+          "size": [1.1, 0.6],
+          "through_hole": false
         },
         {
           "name": "4",
           "net": "led0-B",
-          "offset": [-1.35, -0.95],
-          "size": [1.1, 0.6]
+          "offset": [-1.35, 0.95],
+          "size": [1.1, 0.6],
+          "through_hole": false
         },
         {
           "name": "5",
           "net": "p5v-hv",
-          "offset": [-1.35, 0.0],
-          "size": [1.1, 0.6]
+          "offset": [-1.35, -0.0],
+          "size": [1.1, 0.6],
+          "through_hole": false
         },
         {
           "name": "6",
           "net": "p5v-hv",
-          "offset": [-1.35, 0.95],
-          "size": [1.1, 0.6]
+          "offset": [-1.35, -0.95],
+          "size": [1.1, 0.6],
+          "through_hole": false
         }
       ],
       "pos": [463.575, 3.575],
@@ -1833,14 +2041,16 @@
         {
           "name": "1",
           "net": "SW",
-          "offset": [-0.42, 0.0],
-          "size": [0.5, 0.54]
+          "offset": [-0.42, -0.0],
+          "size": [0.5, 0.54],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "BOOT",
-          "offset": [0.42, 0.0],
-          "size": [0.5, 0.54]
+          "offset": [0.42, -0.0],
+          "size": [0.5, 0.54],
+          "through_hole": false
         }
       ],
       "pos": [283.575, 3.575],
@@ -1857,20 +2067,23 @@
         {
           "name": "1",
           "net": "led1-B",
-          "offset": [1.0, 0.95],
-          "size": [1.0, 0.65]
+          "offset": [1.0, -0.95],
+          "size": [1.0, 0.65],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [1.0, -0.95],
-          "size": [1.0, 0.65]
+          "offset": [1.0, 0.95],
+          "size": [1.0, 0.65],
+          "through_hole": false
         },
         {
           "name": "3",
           "net": "led1-C",
-          "offset": [-1.0, 0.0],
-          "size": [1.0, 0.65]
+          "offset": [-1.0, -0.0],
+          "size": [1.0, 0.65],
+          "through_hole": false
         }
       ],
       "pos": [563.575, 3.575],
@@ -1887,14 +2100,16 @@
         {
           "name": "1",
           "net": "p5v-hv",
-          "offset": [-1.0, 0.0],
-          "size": [1.41, 1.35]
+          "offset": [-1.0, -0.0],
+          "size": [1.41, 1.35],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [1.0, 0.0],
-          "size": [1.41, 1.35]
+          "offset": [1.0, -0.0],
+          "size": [1.41, 1.35],
+          "through_hole": false
         }
       ],
       "pos": [383.575, 3.575],
@@ -1911,14 +2126,16 @@
         {
           "name": "1",
           "net": "hv",
-          "offset": [-0.42, 0.0],
-          "size": [0.5, 0.54]
+          "offset": [-0.42, -0.0],
+          "size": [0.5, 0.54],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [0.42, 0.0],
-          "size": [0.5, 0.54]
+          "offset": [0.42, -0.0],
+          "size": [0.5, 0.54],
+          "through_hole": false
         }
       ],
       "pos": [643.575, 3.575],
@@ -1935,296 +2152,345 @@
         {
           "name": "",
           "net": "",
-          "offset": [-2.75, -3.16],
-          "size": [0.5, 0.5]
+          "offset": [-2.75, 3.16],
+          "size": [0.5, 0.5],
+          "through_hole": true
         },
         {
           "name": "",
           "net": "",
-          "offset": [-2.75, -1.91],
-          "size": [0.5, 0.5]
+          "offset": [-2.75, 1.91],
+          "size": [0.5, 0.5],
+          "through_hole": true
         },
         {
           "name": "",
           "net": "",
-          "offset": [-2.13, -3.78],
-          "size": [0.5, 0.5]
+          "offset": [-2.13, 3.78],
+          "size": [0.5, 0.5],
+          "through_hole": true
         },
         {
           "name": "",
           "net": "",
-          "offset": [-2.13, -2.53],
-          "size": [0.5, 0.5]
+          "offset": [-2.13, 2.53],
+          "size": [0.5, 0.5],
+          "through_hole": true
         },
         {
           "name": "",
           "net": "",
-          "offset": [-2.13, -1.28],
-          "size": [0.5, 0.5]
+          "offset": [-2.13, 1.28],
+          "size": [0.5, 0.5],
+          "through_hole": true
         },
         {
           "name": "",
           "net": "",
-          "offset": [-1.5, -3.16],
-          "size": [0.5, 0.5]
+          "offset": [-1.5, 3.16],
+          "size": [0.5, 0.5],
+          "through_hole": true
         },
         {
           "name": "",
           "net": "",
-          "offset": [-1.5, -1.91],
-          "size": [0.5, 0.5]
+          "offset": [-1.5, 1.91],
+          "size": [0.5, 0.5],
+          "through_hole": true
         },
         {
           "name": "",
           "net": "",
-          "offset": [-0.88, -3.78],
-          "size": [0.5, 0.5]
+          "offset": [-0.88, 3.78],
+          "size": [0.5, 0.5],
+          "through_hole": true
         },
         {
           "name": "",
           "net": "",
-          "offset": [-0.88, -2.53],
-          "size": [0.5, 0.5]
+          "offset": [-0.88, 2.53],
+          "size": [0.5, 0.5],
+          "through_hole": true
         },
         {
           "name": "",
           "net": "",
-          "offset": [-0.88, -1.28],
-          "size": [0.5, 0.5]
+          "offset": [-0.88, 1.28],
+          "size": [0.5, 0.5],
+          "through_hole": true
         },
         {
           "name": "",
           "net": "",
-          "offset": [-0.26, -3.16],
-          "size": [0.5, 0.5]
+          "offset": [-0.26, 3.16],
+          "size": [0.5, 0.5],
+          "through_hole": true
         },
         {
           "name": "",
           "net": "",
-          "offset": [-0.26, -1.91],
-          "size": [0.5, 0.5]
+          "offset": [-0.26, 1.91],
+          "size": [0.5, 0.5],
+          "through_hole": true
         },
         {
           "name": "1",
           "net": "lv",
-          "offset": [-8.75, -8.25],
-          "size": [1.5, 0.9]
+          "offset": [-8.75, 8.25],
+          "size": [1.5, 0.9],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "p3v3-hv",
-          "offset": [-8.75, -6.99],
-          "size": [1.5, 0.9]
+          "offset": [-8.75, 6.99],
+          "size": [1.5, 0.9],
+          "through_hole": false
         },
         {
           "name": "3",
           "net": "EN-1",
-          "offset": [-8.75, -5.72],
-          "size": [1.5, 0.9]
+          "offset": [-8.75, 5.72],
+          "size": [1.5, 0.9],
+          "through_hole": false
         },
         {
           "name": "4",
           "net": "en-1",
-          "offset": [-8.75, -4.45],
-          "size": [1.5, 0.9]
+          "offset": [-8.75, 4.45],
+          "size": [1.5, 0.9],
+          "through_hole": false
         },
         {
           "name": "5",
           "net": "fault-1",
-          "offset": [-8.75, -3.18],
-          "size": [1.5, 0.9]
+          "offset": [-8.75, 3.18],
+          "size": [1.5, 0.9],
+          "through_hole": false
         },
         {
           "name": "6",
           "net": "SDA",
-          "offset": [-8.75, -1.9],
-          "size": [1.5, 0.9]
+          "offset": [-8.75, 1.9],
+          "size": [1.5, 0.9],
+          "through_hole": false
         },
         {
           "name": "7",
           "net": "SCL",
-          "offset": [-8.75, -0.63],
-          "size": [1.5, 0.9]
+          "offset": [-8.75, 0.63],
+          "size": [1.5, 0.9],
+          "through_hole": false
         },
         {
           "name": "8",
           "net": "data_in",
-          "offset": [-8.75, 0.63],
-          "size": [1.5, 0.9]
+          "offset": [-8.75, -0.63],
+          "size": [1.5, 0.9],
+          "through_hole": false
         },
         {
           "name": "9",
           "net": "data_in-1",
-          "offset": [-8.75, 1.9],
-          "size": [1.5, 0.9]
+          "offset": [-8.75, -1.9],
+          "size": [1.5, 0.9],
+          "through_hole": false
         },
         {
           "name": "10",
           "net": "10",
-          "offset": [-8.75, 3.17],
-          "size": [1.5, 0.9]
+          "offset": [-8.75, -3.17],
+          "size": [1.5, 0.9],
+          "through_hole": false
         },
         {
           "name": "11",
           "net": "EN",
-          "offset": [-8.75, 4.44],
-          "size": [1.5, 0.9]
+          "offset": [-8.75, -4.44],
+          "size": [1.5, 0.9],
+          "through_hole": false
         },
         {
           "name": "12",
           "net": "12",
-          "offset": [-8.75, 5.71],
-          "size": [1.5, 0.9]
+          "offset": [-8.75, -5.71],
+          "size": [1.5, 0.9],
+          "through_hole": false
         },
         {
           "name": "13",
           "net": "13",
-          "offset": [-8.75, 6.99],
-          "size": [1.5, 0.9]
+          "offset": [-8.75, -6.99],
+          "size": [1.5, 0.9],
+          "through_hole": false
         },
         {
           "name": "14",
           "net": "14",
-          "offset": [-8.75, 8.25],
-          "size": [1.5, 0.9]
+          "offset": [-8.75, -8.25],
+          "size": [1.5, 0.9],
+          "through_hole": false
         },
         {
           "name": "15",
           "net": "1",
-          "offset": [8.75, 8.25],
-          "size": [1.5, 0.9]
+          "offset": [8.75, -8.25],
+          "size": [1.5, 0.9],
+          "through_hole": false
         },
         {
           "name": "16",
           "net": "16",
-          "offset": [8.75, 6.99],
-          "size": [1.5, 0.9]
+          "offset": [8.75, -6.99],
+          "size": [1.5, 0.9],
+          "through_hole": false
         },
         {
           "name": "17",
           "net": "17",
-          "offset": [8.75, 5.71],
-          "size": [1.5, 0.9]
+          "offset": [8.75, -5.71],
+          "size": [1.5, 0.9],
+          "through_hole": false
         },
         {
           "name": "18",
           "net": "18",
-          "offset": [8.75, 4.44],
-          "size": [1.5, 0.9]
+          "offset": [8.75, -4.44],
+          "size": [1.5, 0.9],
+          "through_hole": false
         },
         {
           "name": "19",
           "net": "INT",
-          "offset": [8.75, 3.17],
-          "size": [1.5, 0.9]
+          "offset": [8.75, -3.17],
+          "size": [1.5, 0.9],
+          "through_hole": false
         },
         {
           "name": "20",
           "net": "1-1",
-          "offset": [8.75, 1.9],
-          "size": [1.5, 0.9]
+          "offset": [8.75, -1.9],
+          "size": [1.5, 0.9],
+          "through_hole": false
         },
         {
           "name": "21",
           "net": "1-2",
-          "offset": [8.75, 0.63],
-          "size": [1.5, 0.9]
+          "offset": [8.75, -0.63],
+          "size": [1.5, 0.9],
+          "through_hole": false
         },
         {
           "name": "22",
           "net": "",
-          "offset": [8.75, -0.63],
-          "size": [1.5, 0.9]
+          "offset": [8.75, 0.63],
+          "size": [1.5, 0.9],
+          "through_hole": false
         },
         {
           "name": "23",
           "net": "23",
-          "offset": [8.75, -1.9],
-          "size": [1.5, 0.9]
+          "offset": [8.75, 1.9],
+          "size": [1.5, 0.9],
+          "through_hole": false
         },
         {
           "name": "24",
           "net": "20",
-          "offset": [8.75, -3.18],
-          "size": [1.5, 0.9]
+          "offset": [8.75, 3.18],
+          "size": [1.5, 0.9],
+          "through_hole": false
         },
         {
           "name": "25",
           "net": "19",
-          "offset": [8.75, -4.45],
-          "size": [1.5, 0.9]
+          "offset": [8.75, 4.45],
+          "size": [1.5, 0.9],
+          "through_hole": false
         },
         {
           "name": "26",
           "net": "fault",
-          "offset": [8.75, -5.72],
-          "size": [1.5, 0.9]
+          "offset": [8.75, 5.72],
+          "size": [1.5, 0.9],
+          "through_hole": false
         },
         {
           "name": "27",
           "net": "en",
-          "offset": [8.75, -6.99],
-          "size": [1.5, 0.9]
+          "offset": [8.75, 6.99],
+          "size": [1.5, 0.9],
+          "through_hole": false
         },
         {
           "name": "28",
           "net": "lv",
-          "offset": [8.75, -8.25],
-          "size": [1.5, 0.9]
+          "offset": [8.75, 8.25],
+          "size": [1.5, 0.9],
+          "through_hole": false
         },
         {
           "name": "29",
           "net": "lv",
-          "offset": [-2.75, -3.78],
-          "size": [0.8, 0.8]
+          "offset": [-2.75, 3.78],
+          "size": [0.8, 0.8],
+          "through_hole": false
         },
         {
           "name": "30",
           "net": "lv",
-          "offset": [-1.5, -3.78],
-          "size": [0.8, 0.8]
+          "offset": [-1.5, 3.78],
+          "size": [0.8, 0.8],
+          "through_hole": false
         },
         {
           "name": "31",
           "net": "lv",
-          "offset": [-0.26, -3.78],
-          "size": [0.8, 0.8]
+          "offset": [-0.26, 3.78],
+          "size": [0.8, 0.8],
+          "through_hole": false
         },
         {
           "name": "32",
           "net": "lv",
-          "offset": [-0.26, -2.53],
-          "size": [0.8, 0.8]
+          "offset": [-0.26, 2.53],
+          "size": [0.8, 0.8],
+          "through_hole": false
         },
         {
           "name": "33",
           "net": "lv",
-          "offset": [-1.5, -2.53],
-          "size": [0.8, 0.8]
+          "offset": [-1.5, 2.53],
+          "size": [0.8, 0.8],
+          "through_hole": false
         },
         {
           "name": "34",
           "net": "lv",
-          "offset": [-2.75, -2.53],
-          "size": [0.8, 0.8]
+          "offset": [-2.75, 2.53],
+          "size": [0.8, 0.8],
+          "through_hole": false
         },
         {
           "name": "35",
           "net": "lv",
-          "offset": [-2.75, -1.28],
-          "size": [0.8, 0.8]
+          "offset": [-2.75, 1.28],
+          "size": [0.8, 0.8],
+          "through_hole": false
         },
         {
           "name": "36",
           "net": "lv",
-          "offset": [-1.5, -1.28],
-          "size": [0.8, 0.8]
+          "offset": [-1.5, 1.28],
+          "size": [0.8, 0.8],
+          "through_hole": false
         },
         {
           "name": "37",
           "net": "lv",
-          "offset": [-0.26, -1.28],
-          "size": [0.8, 0.8]
+          "offset": [-0.26, 1.28],
+          "size": [0.8, 0.8],
+          "through_hole": false
         }
       ],
       "pos": [43.575, 3.575],
@@ -2241,14 +2507,16 @@
         {
           "name": "1",
           "net": "SS",
-          "offset": [-0.42, 0.0],
-          "size": [0.5, 0.54]
+          "offset": [-0.42, -0.0],
+          "size": [0.5, 0.54],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [0.42, 0.0],
-          "size": [0.5, 0.54]
+          "offset": [0.42, -0.0],
+          "size": [0.5, 0.54],
+          "through_hole": false
         }
       ],
       "pos": [313.575, 3.575],
@@ -2265,14 +2533,16 @@
         {
           "name": "1",
           "net": "1",
-          "offset": [-2.18, 0.0],
-          "size": [1.23, 1.86]
+          "offset": [-2.18, -0.0],
+          "size": [1.23, 1.86],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [2.18, 0.0],
-          "size": [1.23, 1.86]
+          "offset": [2.18, -0.0],
+          "size": [1.23, 1.86],
+          "through_hole": false
         }
       ],
       "pos": [113.575, 3.575],
@@ -2289,62 +2559,72 @@
         {
           "name": "1",
           "net": "lv",
-          "offset": [-1.0, 2.11],
-          "size": [0.28, 1.62]
+          "offset": [-1.0, -2.11],
+          "size": [0.28, 1.62],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [-0.5, 2.11],
-          "size": [0.28, 1.62]
+          "offset": [-0.5, -2.11],
+          "size": [0.28, 1.62],
+          "through_hole": false
         },
         {
           "name": "3",
           "net": "fault",
-          "offset": [0.0, 2.11],
-          "size": [0.28, 1.62]
+          "offset": [0.0, -2.11],
+          "size": [0.28, 1.62],
+          "through_hole": false
         },
         {
           "name": "4",
           "net": "SDA",
-          "offset": [0.5, 2.11],
-          "size": [0.28, 1.62]
+          "offset": [0.5, -2.11],
+          "size": [0.28, 1.62],
+          "through_hole": false
         },
         {
           "name": "5",
           "net": "SCL",
-          "offset": [1.0, 2.11],
-          "size": [0.28, 1.62]
+          "offset": [1.0, -2.11],
+          "size": [0.28, 1.62],
+          "through_hole": false
         },
         {
           "name": "6",
           "net": "p3v3-hv",
-          "offset": [1.0, -2.11],
-          "size": [0.28, 1.62]
+          "offset": [1.0, 2.11],
+          "size": [0.28, 1.62],
+          "through_hole": false
         },
         {
           "name": "7",
           "net": "lv",
-          "offset": [0.5, -2.11],
-          "size": [0.28, 1.62]
+          "offset": [0.5, 2.11],
+          "size": [0.28, 1.62],
+          "through_hole": false
         },
         {
           "name": "8",
           "net": "S",
-          "offset": [0.0, -2.11],
-          "size": [0.28, 1.62]
+          "offset": [0.0, 2.11],
+          "size": [0.28, 1.62],
+          "through_hole": false
         },
         {
           "name": "9",
           "net": "S",
-          "offset": [-0.5, -2.11],
-          "size": [0.28, 1.62]
+          "offset": [-0.5, 2.11],
+          "size": [0.28, 1.62],
+          "through_hole": false
         },
         {
           "name": "10",
           "net": "p5v-hv",
-          "offset": [-1.0, -2.11],
-          "size": [0.28, 1.62]
+          "offset": [-1.0, 2.11],
+          "size": [0.28, 1.62],
+          "through_hole": false
         }
       ],
       "pos": [403.575, 3.575],
@@ -2361,20 +2641,23 @@
         {
           "name": "1",
           "net": "chan_out",
-          "offset": [2.0, 0.0],
-          "size": [1.6, 1.6]
+          "offset": [2.0, -0.0],
+          "size": [1.6, 1.6],
+          "through_hole": true
         },
         {
           "name": "2",
           "net": "led1-data_out",
-          "offset": [0.0, 0.0],
-          "size": [1.6, 1.6]
+          "offset": [0.0, -0.0],
+          "size": [1.6, 1.6],
+          "through_hole": true
         },
         {
           "name": "3",
           "net": "lv",
-          "offset": [-2.0, 0.0],
-          "size": [1.6, 1.6]
+          "offset": [-2.0, -0.0],
+          "size": [1.6, 1.6],
+          "through_hole": true
         }
       ],
       "pos": [613.575, 3.575],
@@ -2391,14 +2674,16 @@
         {
           "name": "1",
           "net": "p3v3-hv",
-          "offset": [-1.0, 0.0],
-          "size": [1.41, 1.35]
+          "offset": [-1.0, -0.0],
+          "size": [1.41, 1.35],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [1.0, 0.0],
-          "size": [1.41, 1.35]
+          "offset": [1.0, -0.0],
+          "size": [1.41, 1.35],
+          "through_hole": false
         }
       ],
       "pos": [253.575, 3.575],
@@ -2415,14 +2700,16 @@
         {
           "name": "1",
           "net": "p5v-hv",
-          "offset": [-0.42, 0.0],
-          "size": [0.5, 0.54]
+          "offset": [-0.42, -0.0],
+          "size": [0.5, 0.54],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [0.42, 0.0],
-          "size": [0.5, 0.54]
+          "offset": [0.42, -0.0],
+          "size": [0.5, 0.54],
+          "through_hole": false
         }
       ],
       "pos": [483.575, 3.575],
@@ -2439,14 +2726,16 @@
         {
           "name": "1",
           "net": "vsys-hv",
-          "offset": [-2.6, 0.0],
-          "size": [2.47, 5.02]
+          "offset": [-2.6, -0.0],
+          "size": [2.47, 5.02],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "SW",
-          "offset": [2.6, 0.0],
-          "size": [2.47, 5.02]
+          "offset": [2.6, -0.0],
+          "size": [2.47, 5.02],
+          "through_hole": false
         }
       ],
       "pos": [273.575, 3.575],
@@ -2463,14 +2752,16 @@
         {
           "name": "1",
           "net": "hv",
-          "offset": [-0.43, 0.0],
-          "size": [0.57, 0.54]
+          "offset": [-0.43, -0.0],
+          "size": [0.57, 0.54],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "SDA",
-          "offset": [0.43, 0.0],
-          "size": [0.57, 0.54]
+          "offset": [0.43, -0.0],
+          "size": [0.57, 0.54],
+          "through_hole": false
         }
       ],
       "pos": [23.575, 3.575],
@@ -2487,14 +2778,16 @@
         {
           "name": "1",
           "net": "en",
-          "offset": [-0.43, 0.0],
-          "size": [0.57, 0.54]
+          "offset": [-0.43, -0.0],
+          "size": [0.57, 0.54],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "B",
-          "offset": [0.43, 0.0],
-          "size": [0.57, 0.54]
+          "offset": [0.43, -0.0],
+          "size": [0.57, 0.54],
+          "through_hole": false
         }
       ],
       "pos": [453.575, 3.575],
@@ -2511,14 +2804,16 @@
         {
           "name": "1",
           "net": "FB-1",
-          "offset": [-0.43, 0.0],
-          "size": [0.57, 0.54]
+          "offset": [-0.43, -0.0],
+          "size": [0.57, 0.54],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [0.43, 0.0],
-          "size": [0.57, 0.54]
+          "offset": [0.43, -0.0],
+          "size": [0.57, 0.54],
+          "through_hole": false
         }
       ],
       "pos": [233.575, 3.575],
@@ -2535,14 +2830,16 @@
         {
           "name": "1",
           "net": "p5v-hv",
-          "offset": [-0.43, 0.0],
-          "size": [0.57, 0.54]
+          "offset": [-0.43, -0.0],
+          "size": [0.57, 0.54],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "S",
-          "offset": [0.43, 0.0],
-          "size": [0.57, 0.54]
+          "offset": [0.43, -0.0],
+          "size": [0.57, 0.54],
+          "through_hole": false
         }
       ],
       "pos": [393.575, 3.575],
@@ -2559,38 +2856,44 @@
         {
           "name": "1",
           "net": "p3v3-hv",
-          "offset": [1.35, 0.95],
-          "size": [1.1, 0.6]
+          "offset": [1.35, -0.95],
+          "size": [1.1, 0.6],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [1.35, 0.0],
-          "size": [1.1, 0.6]
+          "offset": [1.35, -0.0],
+          "size": [1.1, 0.6],
+          "through_hole": false
         },
         {
           "name": "3",
           "net": "data_in-1",
-          "offset": [1.35, -0.95],
-          "size": [1.1, 0.6]
+          "offset": [1.35, 0.95],
+          "size": [1.1, 0.6],
+          "through_hole": false
         },
         {
           "name": "4",
           "net": "led1-B-1",
-          "offset": [-1.35, -0.95],
-          "size": [1.1, 0.6]
+          "offset": [-1.35, 0.95],
+          "size": [1.1, 0.6],
+          "through_hole": false
         },
         {
           "name": "5",
           "net": "p5v-hv",
-          "offset": [-1.35, 0.0],
-          "size": [1.1, 0.6]
+          "offset": [-1.35, -0.0],
+          "size": [1.1, 0.6],
+          "through_hole": false
         },
         {
           "name": "6",
           "net": "p5v-hv",
-          "offset": [-1.35, 0.95],
-          "size": [1.1, 0.6]
+          "offset": [-1.35, -0.95],
+          "size": [1.1, 0.6],
+          "through_hole": false
         }
       ],
       "pos": [583.575, 3.575],
@@ -2607,14 +2910,16 @@
         {
           "name": "1",
           "net": "vbat-hv",
-          "offset": [-0.42, 0.0],
-          "size": [0.5, 0.54]
+          "offset": [-0.42, -0.0],
+          "size": [0.5, 0.54],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [0.42, 0.0],
-          "size": [0.5, 0.54]
+          "offset": [0.42, -0.0],
+          "size": [0.5, 0.54],
+          "through_hole": false
         }
       ],
       "pos": [733.575, 3.575],
@@ -2631,14 +2936,16 @@
         {
           "name": "1",
           "net": "vbat-hv",
-          "offset": [1.0, 0.0],
-          "size": [1.6, 1.6]
+          "offset": [1.0, -0.0],
+          "size": [1.6, 1.6],
+          "through_hole": true
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [-1.0, 0.0],
-          "size": [1.6, 1.6]
+          "offset": [-1.0, -0.0],
+          "size": [1.6, 1.6],
+          "through_hole": true
         }
       ],
       "pos": [773.575, 3.575],
@@ -2655,14 +2962,16 @@
         {
           "name": "1",
           "net": "REGOUT",
-          "offset": [-0.42, 0.0],
-          "size": [0.5, 0.54]
+          "offset": [-0.42, -0.0],
+          "size": [0.5, 0.54],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [0.42, 0.0],
-          "size": [0.5, 0.54]
+          "offset": [0.42, -0.0],
+          "size": [0.5, 0.54],
+          "through_hole": false
         }
       ],
       "pos": [653.575, 3.575],
@@ -2679,32 +2988,37 @@
         {
           "name": "1",
           "net": "vsys-hv",
-          "offset": [1.3, 0.95],
-          "size": [1.1, 0.6]
+          "offset": [1.3, -0.95],
+          "size": [1.1, 0.6],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "GND",
-          "offset": [1.3, 0.0],
-          "size": [1.1, 0.6]
+          "offset": [1.3, -0.0],
+          "size": [1.1, 0.6],
+          "through_hole": false
         },
         {
           "name": "3",
           "net": "SW-1",
-          "offset": [1.3, -0.95],
-          "size": [1.1, 0.6]
+          "offset": [1.3, 0.95],
+          "size": [1.1, 0.6],
+          "through_hole": false
         },
         {
           "name": "4",
           "net": "vsys-hv",
-          "offset": [-1.3, -0.95],
-          "size": [1.1, 0.6]
+          "offset": [-1.3, 0.95],
+          "size": [1.1, 0.6],
+          "through_hole": false
         },
         {
           "name": "5",
           "net": "FB-1",
-          "offset": [-1.3, 0.95],
-          "size": [1.1, 0.6]
+          "offset": [-1.3, -0.95],
+          "size": [1.1, 0.6],
+          "through_hole": false
         }
       ],
       "pos": [203.575, 3.575],
@@ -2721,20 +3035,23 @@
         {
           "name": "1",
           "net": "C",
-          "offset": [1.15, 0.95],
-          "size": [1.0, 0.8]
+          "offset": [1.15, -0.95],
+          "size": [1.0, 0.8],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "S",
-          "offset": [1.15, -0.95],
-          "size": [1.0, 0.8]
+          "offset": [1.15, 0.95],
+          "size": [1.0, 0.8],
+          "through_hole": false
         },
         {
           "name": "3",
           "net": "chan_out-1",
-          "offset": [-1.15, 0.0],
-          "size": [1.0, 0.8]
+          "offset": [-1.15, -0.0],
+          "size": [1.0, 0.8],
+          "through_hole": false
         }
       ],
       "pos": [423.575, 3.575],
@@ -2751,14 +3068,16 @@
         {
           "name": "1",
           "net": "p5v-hv",
-          "offset": [-1.0, 0.0],
-          "size": [1.41, 1.35]
+          "offset": [-1.0, -0.0],
+          "size": [1.41, 1.35],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [1.0, 0.0],
-          "size": [1.41, 1.35]
+          "offset": [1.0, -0.0],
+          "size": [1.41, 1.35],
+          "through_hole": false
         }
       ],
       "pos": [623.575, 3.575],
@@ -2775,14 +3094,16 @@
         {
           "name": "1",
           "net": "FSW",
-          "offset": [-0.43, 0.0],
-          "size": [0.57, 0.54]
+          "offset": [-0.43, -0.0],
+          "size": [0.57, 0.54],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [0.43, 0.0],
-          "size": [0.57, 0.54]
+          "offset": [0.43, -0.0],
+          "size": [0.57, 0.54],
+          "through_hole": false
         }
       ],
       "pos": [333.575, 3.575],
@@ -2799,32 +3120,37 @@
         {
           "name": "1",
           "net": "STAT",
-          "offset": [-0.95, 1.15],
-          "size": [0.49, 1.16]
+          "offset": [-0.95, -1.15],
+          "size": [0.49, 1.16],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [0.0, 1.15],
-          "size": [0.49, 1.16]
+          "offset": [0.0, -1.15],
+          "size": [0.49, 1.16],
+          "through_hole": false
         },
         {
           "name": "3",
           "net": "vbat-hv",
-          "offset": [0.95, 1.15],
-          "size": [0.49, 1.16]
+          "offset": [0.95, -1.15],
+          "size": [0.49, 1.16],
+          "through_hole": false
         },
         {
           "name": "4",
           "net": "vsys-hv",
-          "offset": [0.95, -1.15],
-          "size": [0.49, 1.18]
+          "offset": [0.95, 1.15],
+          "size": [0.49, 1.18],
+          "through_hole": false
         },
         {
           "name": "5",
           "net": "PROG",
-          "offset": [-0.95, -1.15],
-          "size": [0.49, 1.18]
+          "offset": [-0.95, 1.15],
+          "size": [0.49, 1.18],
+          "through_hole": false
         }
       ],
       "pos": [693.575, 3.575],
@@ -2841,14 +3167,16 @@
         {
           "name": "1",
           "net": "1-2",
-          "offset": [-2.18, 0.0],
-          "size": [1.23, 1.86]
+          "offset": [-2.18, -0.0],
+          "size": [1.23, 1.86],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [2.18, 0.0],
-          "size": [1.23, 1.86]
+          "offset": [2.18, -0.0],
+          "size": [1.23, 1.86],
+          "through_hole": false
         }
       ],
       "pos": [153.575, 3.575],
@@ -2865,14 +3193,16 @@
         {
           "name": "1",
           "net": "ILIM",
-          "offset": [-0.75, 0.0],
-          "size": [0.81, 0.86]
+          "offset": [-0.75, -0.0],
+          "size": [0.81, 0.86],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [0.75, 0.0],
-          "size": [0.81, 0.86]
+          "offset": [0.75, -0.0],
+          "size": [0.81, 0.86],
+          "through_hole": false
         }
       ],
       "pos": [323.575, 3.575],
@@ -2889,14 +3219,16 @@
         {
           "name": "1",
           "net": "1-1",
-          "offset": [-2.18, 0.0],
-          "size": [1.23, 1.86]
+          "offset": [-2.18, -0.0],
+          "size": [1.23, 1.86],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [2.18, 0.0],
-          "size": [1.23, 1.86]
+          "offset": [2.18, -0.0],
+          "size": [1.23, 1.86],
+          "through_hole": false
         }
       ],
       "pos": [133.575, 3.575],
@@ -2913,14 +3245,16 @@
         {
           "name": "1",
           "net": "vbat-hv",
-          "offset": [-0.42, 0.0],
-          "size": [0.5, 0.54]
+          "offset": [-0.42, -0.0],
+          "size": [0.5, 0.54],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [0.42, 0.0],
-          "size": [0.5, 0.54]
+          "offset": [0.42, -0.0],
+          "size": [0.5, 0.54],
+          "through_hole": false
         }
       ],
       "pos": [763.575, 3.575],
@@ -2937,14 +3271,16 @@
         {
           "name": "1",
           "net": "CPOUT",
-          "offset": [-0.42, 0.0],
-          "size": [0.5, 0.54]
+          "offset": [-0.42, -0.0],
+          "size": [0.5, 0.54],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "lv",
-          "offset": [0.42, 0.0],
-          "size": [0.5, 0.54]
+          "offset": [0.42, -0.0],
+          "size": [0.5, 0.54],
+          "through_hole": false
         }
       ],
       "pos": [663.575, 3.575],
@@ -2961,14 +3297,16 @@
         {
           "name": "1",
           "net": "p3v3-hv",
-          "offset": [-0.97, 0.0],
-          "size": [1.13, 1.38]
+          "offset": [-0.97, -0.0],
+          "size": [1.13, 1.38],
+          "through_hole": false
         },
         {
           "name": "2",
           "net": "hv",
-          "offset": [0.97, 0.0],
-          "size": [1.13, 1.38]
+          "offset": [0.97, -0.0],
+          "size": [1.13, 1.38],
+          "through_hole": false
         }
       ],
       "pos": [3.575, 3.575],

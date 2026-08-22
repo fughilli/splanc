@@ -131,13 +131,44 @@ def _component(fp, frame: _Frame) -> Component:
         # the old GetPos0(); GetFPRelativePosition() is the current accessor.
         get_rel = getattr(pad, "GetFPRelativePosition", None) or pad.GetPos0
         p0 = get_rel()
+        # Footprint-local coords are y-DOWN in pcbnew; the engine frame is y-UP.
+        # Flip the pad-offset y so the placer/router see the pad on the correct
+        # side of the component (else every pad's geometry is mirrored about the
+        # part centre — invisible in HPWL but it puts the router's pad halo /
+        # access cell on the wrong pad, shorting neighbouring nets).
         sz = pad.GetSize()
+        w_mm, h_mm = _mm(sz.x), _mm(sz.y)
+        # Custom-shape pads (exposed thermal die-pads etc.) report a tiny anchor for
+        # GetSize() but their real copper is the primitive set — use the copper
+        # bounding box instead, else the router models a big pad as a point and
+        # routes straight across it. GetBoundingBox() is board-frame (already
+        # rotated); un-rotate a 90/270° footprint so the stored extent stays in the
+        # part's unrotated frame, where pad_rects re-applies the rotation swap.
+        try:
+            is_custom = pad.GetShape() == pcbnew.PAD_SHAPE_CUSTOM
+        except Exception:  # pragma: no cover - version shim
+            is_custom = False
+        if is_custom:
+            bb = pad.GetBoundingBox()
+            bw, bh = _mm(bb.GetWidth()), _mm(bb.GetHeight())
+            if int(round(fp.GetOrientationDegrees())) % 180 == 90:
+                bw, bh = bh, bw
+            w_mm, h_mm = max(w_mm, bw), max(h_mm, bh)
+        # A pad with a drill (PTH/NPTH) has copper (or at least a hole) on every
+        # layer — the detailed router must keep *both* signal layers clear of it,
+        # not just the component's side. SMD pads live on one side only.
+        try:
+            attr = pad.GetAttribute()
+            through = attr in (pcbnew.PAD_ATTRIB_PTH, pcbnew.PAD_ATTRIB_NPTH)
+        except Exception:  # pragma: no cover - version shim
+            through = pad.GetDrillSize().x > 0
         pads.append(
             Pad(
                 name=_pad_name(pad),
                 net=pad.GetNetname(),
-                offset=(_mm(p0.x), _mm(p0.y)),
-                size=(_mm(sz.x), _mm(sz.y)),
+                offset=(_mm(p0.x), -_mm(p0.y)),
+                size=(w_mm, h_mm),
+                through_hole=bool(through),
             )
         )
 
@@ -178,7 +209,7 @@ def build_graph(board, name: Optional[str] = None) -> BoardGraph:
     nets = [by_code[c] for c in sorted(by_code)]
 
     return BoardGraph(
-        name=name or board.GetFileName().split("/")[-1] or "board",
+        name=name or board.GetFileName().split("/")[-1].removesuffix(".kicad_pcb") or "board",
         components=components,
         nets=nets,
         outline=outline,

@@ -45,12 +45,16 @@ class RouteGrid:
         pitch: float,
         layers: Tuple[str, ...] = DEFAULT_SIGNAL_LAYERS,
         clearance: float = 0.15,
+        track_width: float = 0.15,
+        via_radius: float = 0.225,
     ):
         self.width = float(width)
         self.height = float(height)
         self.pitch = float(pitch)
         self.layers = tuple(layers)
         self.clearance = float(clearance)
+        self.track_width = float(track_width)
+        self.via_radius = float(via_radius)
         self.nlayers = len(layers)
         self.nx = max(1, int(np.ceil(width / pitch)))
         self.ny = max(1, int(np.ceil(height / pitch)))
@@ -104,25 +108,62 @@ class RouteGrid:
                 setter(layer, i, j)
 
     def add_pad(self, layer: int, net: str, r: Rect) -> None:
-        """Record a pad: its body cells are owned by ``net`` (routable only by it);
-        a clearance halo blocks *other* nets. The pad's centre cell is its access
-        point."""
+        """Record a pad: its body cells are owned by ``net`` (routable only by it),
+        and a **clearance halo** one grid step wider is reserved for ``net`` too so
+        *other* nets keep ≥ clearance from the pad copper (else a neighbouring
+        other-net track/via shorts to the pad or bridges its mask). The pad's centre
+        cell is its access point.
 
-        # Body: own-net cells (a same-net track may run into the pad).
+        Body cells hard-set the owner (pad copper always wins over another pad's
+        halo); halo cells only ``setdefault`` (a real pad body nearby is not
+        overwritten by a halo). The halo grow is ``clearance + via_radius`` — enough
+        that the nearest *unreserved* cell centre clears the pad edge by ``clearance``
+        even for the widest neighbouring feature (a via, not just a track).
+        """
+
+        # Body: own-net cells (a same-net track may run into the pad). Hard-set.
         def own(la, i, j):
             self.pad_net[(la, i, j)] = net
 
+        # Halo: reserve for own net only if unclaimed (don't stomp another pad body).
+        def reserve(la, i, j):
+            self.pad_net.setdefault((la, i, j), net)
+
+        # Grow by clearance + the *largest* neighbouring feature radius (a via, not
+        # just a track) so an other-net via placed just outside the halo still
+        # clears the pad copper.
+        self._mark_rect(layer, r, self.clearance + self.via_radius, reserve)
         self._mark_rect(layer, r, 0.0, own)
         # Access = centre cell.
         ci, cj = self.cell_of(r.cx, r.cy)
         self.pad_net.setdefault((layer, ci, cj), net)
 
-    def block_region(self, r: Rect, layers: Optional[List[int]] = None) -> None:
-        """Block a rectangular region (e.g. a keep-out) on the given layers (all
-        by default) — never routable."""
+    def block_region(self, r: Rect, layers: Optional[List[int]] = None, grow: float = 0.0) -> None:
+        """Block a rectangular region (e.g. a keep-out, or no-net copper) on the
+        given layers (all by default), grown by ``grow`` — never routable."""
         lays = range(self.nlayers) if layers is None else layers
         for la in lays:
-            self._mark_rect(la, r, 0.0, lambda L, i, j: self.blocked.__setitem__((L, j, i), True))
+            self._mark_rect(la, r, grow, lambda L, i, j: self.blocked.__setitem__((L, j, i), True))
+
+    def block_edge_inset(self, inset: float) -> None:
+        """Block every routing cell whose centre is within ``inset`` of the board
+        outline (the grid bounds) on all layers, so routed copper keeps its edge
+        clearance from the board edge. Pad cells are left alone — a footprint placed
+        at the edge (an overhanging edge connector) still needs its access, and its
+        edge clearance is the footprint's concern, not the router's."""
+        n = max(0, int(np.ceil(inset / self.pitch - 0.5)))
+        if n == 0:
+            return
+        border = [
+            (i, j)
+            for j in range(self.ny)
+            for i in range(self.nx)
+            if i < n or j < n or i >= self.nx - n or j >= self.ny - n
+        ]
+        for la in range(self.nlayers):
+            for i, j in border:
+                if (la, i, j) not in self.pad_net:
+                    self.blocked[la, j, i] = True
 
     @classmethod
     def from_graph(
@@ -133,18 +174,31 @@ class RouteGrid:
         *,
         pitch: float = 0.25,
         clearance: float = 0.15,
+        track_width: float = 0.15,
         layers: Tuple[str, ...] = DEFAULT_SIGNAL_LAYERS,
     ) -> "RouteGrid":
         """Build the grid from a placed graph: pads become access points +
         own-net cells; the outline is the grid bounds."""
-        g = cls(width, height, pitch, layers=layers, clearance=clearance)
+        g = cls(width, height, pitch, layers=layers, clearance=clearance, track_width=track_width)
         for comp in graph.components:
-            la = g.side_layer(comp.side)
-            for name, net, r in pad_rects(comp):
+            side = g.side_layer(comp.side)
+            for (name, net, r), pad in zip(pad_rects(comp), comp.pads):
+                # A through-hole pad occupies (and must be cleared on) *every* signal
+                # layer; an SMD pad only the component's side.
+                pad_layers = tuple(range(g.nlayers)) if pad.through_hole else (side,)
                 if not net:
+                    # No-net copper (mounting/NC/shield pads) is still copper: block
+                    # it (+ a clearance halo) so routing keeps away — it can't be an
+                    # access point, so it is a hard obstacle, not an own-net cell.
+                    g.block_region(r, layers=list(pad_layers), grow=g.clearance + g.via_radius)
                     continue
-                g.add_pad(la, net, r)
-                g.access[(net, comp.ref + "." + name)] = Cell(la, *g.cell_of(r.cx, r.cy))
+                for la in pad_layers:
+                    g.add_pad(la, net, r)
+                # Access cell on the component's side (where a same-side track meets
+                # it); a through-hole pad is reachable from either side via its via.
+                g.access[(net, comp.ref + "." + name)] = Cell(side, *g.cell_of(r.cx, r.cy))
+        # Keep routed copper its edge clearance away from the board outline.
+        g.block_edge_inset(clearance + g.via_radius)
         return g
 
     # -- net access points ---------------------------------------------------

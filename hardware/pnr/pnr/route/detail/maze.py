@@ -160,6 +160,35 @@ def _route_one(
     return all_cells
 
 
+def _via_sites(cells: List[Cell]) -> List[Tuple[int, int]]:
+    """(i, j) grid columns where ``cells`` changes layer — i.e. a via drops there."""
+    by_ij: Dict[Tuple[int, int], Set[int]] = defaultdict(set)
+    for c in cells:
+        by_ij[(c.i, c.j)].add(c.layer)
+    return [ij for ij, lays in by_ij.items() if len(lays) > 1]
+
+
+def _footprint(grid: RouteGrid, cells: List[Cell], via_keepout: int) -> Set[Cell]:
+    """The cells a net's copper *reserves* for DRC: every routed cell, plus a
+    ``via_keepout``-radius halo (on **all** layers) around each via site.
+
+    A through-via's copper (Ø0.45 mm) + clearance spills past its own cell; at the
+    grid pitch a radius-1 halo keeps other-net tracks *and* vias ≥ 2 cells away
+    (≥ 0.6 mm centre-to-centre ⇒ DRC-clean copper and hole spacing). Reserving the
+    halo (not just the via cell) is what makes vias DRC-clean by construction, the
+    same way the pitch does for tracks. Same-net copper may share freely — the
+    caller accounts ownership per net."""
+    fp: Set[Cell] = set(cells)
+    for i, j in _via_sites(cells):
+        for la in range(grid.nlayers):
+            for di in range(-via_keepout, via_keepout + 1):
+                for dj in range(-via_keepout, via_keepout + 1):
+                    ni, nj = i + di, j + dj
+                    if grid.in_bounds(ni, nj):
+                        fp.add(Cell(la, ni, nj))
+    return fp
+
+
 def _to_geometry(cells: List[Cell]) -> RoutedNet:
     """Collapse a cell tree into track segments (per layer, between adjacent cells)
     + via sites (a cell reached by a layer change)."""
@@ -192,10 +221,11 @@ def route(
     pres_fac0: float = 0.5,
     pres_mult: float = 1.8,
     hist_fac: float = 1.0,
+    via_keepout: int = 1,
 ) -> RouteResult:
     """PathFinder negotiated detailed route of ``net_access`` (net → access cells)
-    on ``grid``. Iterates rip-up-&-reroute until no grid cell is shared by two nets
-    (DRC-clean) or ``max_iters``. Deterministic."""
+    on ``grid``. Iterates rip-up-&-reroute until no grid cell (nor via keep-out
+    halo) is shared by two nets (DRC-clean) or ``max_iters``. Deterministic."""
     nets = [n for n, cells in net_access.items() if len([c for c in cells]) >= 2]
     history: Dict[Cell, float] = defaultdict(float)
     pres_fac = pres_fac0
@@ -211,7 +241,9 @@ def route(
             cells = _route_one(grid, net_access[net], net, occ, history, via_cost, pres_fac)
             routed[net] = cells
             if cells:
-                for c in cells:
+                # Account the net's full copper footprint (cells + via keep-out
+                # halos) so contention on via clearance negotiates like cell sharing.
+                for c in _footprint(grid, cells, via_keepout):
                     occ[c] += 1
                     owner[c].add(net)
 
@@ -231,14 +263,15 @@ def route(
     unrouted: List[str] = []
     for net in sorted(nets):
         cells = routed.get(net)
-        if not cells or any(c in occupied for c in cells):
+        footprint = _footprint(grid, cells, via_keepout) if cells else set()
+        if not cells or any(occupied.get(c, net) != net for c in footprint):
             unrouted.append(net)
             rn = _to_geometry([])
             rn.name = net
             rn.routed = False
             result_nets[net] = rn
             continue
-        for c in cells:
+        for c in footprint:
             occupied[c] = net
         rn = _to_geometry(cells)
         rn.name = net

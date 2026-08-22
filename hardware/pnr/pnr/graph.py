@@ -58,6 +58,7 @@ class Pad:
     net: str
     offset: Tuple[float, float]
     size: Tuple[float, float] = (0.0, 0.0)
+    through_hole: bool = False  # PTH/NPTH: copper (or a hole) on *every* layer
 
     def __post_init__(self):
         self.offset = _fpair(self.offset)
@@ -180,6 +181,7 @@ class BoardGraph:
                         net=p["net"],
                         offset=p["offset"],
                         size=p.get("size", (0.0, 0.0)),
+                        through_hole=p.get("through_hole", False),
                     )
                     for p in c.get("pads", [])
                 ],
