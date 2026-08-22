@@ -37,6 +37,14 @@ impl<const N: usize> Buf<N> {
         &self.data[..self.len]
     }
     #[inline]
+    pub fn as_mut_slice(&mut self) -> &mut [u8] {
+        &mut self.data[..self.len]
+    }
+    #[inline]
+    pub fn clear(&mut self) {
+        self.len = 0;
+    }
+    #[inline]
     pub fn remaining(&self) -> usize {
         N - self.len
     }
