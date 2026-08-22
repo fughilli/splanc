@@ -21,7 +21,7 @@ Pure stdlib (heapq) on the grid — no numpy in the hot path, no pcbnew. Determi
 from __future__ import annotations
 
 import heapq
-from collections import defaultdict
+from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -243,9 +243,9 @@ def route(
     pres_inc: float = 0.6,
     hist_fac: float = 1.0,
     via_keepout: int = 1,
-    rrr_rounds: int = 10,
+    rrr_rounds: int = 12,
     rip_penalty: float = 4.0,
-    max_rip: int = 5,
+    max_rip: int = 8,
 ) -> RouteResult:
     """PathFinder negotiated detailed route of ``net_access`` (net → access cells)
     on ``grid``. Proper McMurchie–Ebeling: each iteration rips up one net at a time
@@ -355,80 +355,78 @@ def route(
             rn.routed = False
             result_nets[net] = rn
 
-    # Pass 3 — iterative RIP-UP & REROUTE. The negotiation leaves routable nets
-    # unrouted (measured: the large majority of unrouted nets route fine in
-    # isolation — they're blocked by *committed* nets, not by the board). Let each
-    # still-unrouted net cross committed copper at a penalty, then rip up the nets it
-    # crossed and requeue them. The crossing penalty rises each round so rip-ups die
-    # out and it converges. This is what turns "the router gave up" into "found a
-    # way", and it stays DRC-clean (committed footprints never overlap).
-    routed_cells: Dict[str, List[Cell]] = {
-        n: rn.cells for n, rn in result_nets.items() if rn.routed
-    }
+    # Pass 3 — NEGOTIATED rip-up & reroute with best-state tracking. The negotiation
+    # leaves routable nets unrouted (measured: most route fine in isolation — they're
+    # blocked by *committed* nets, not by the board). Place them by letting a net
+    # cross committed copper at a penalty that RISES with how often that net has
+    # itself been ripped; it rips the nets it crosses and re-queues them. The rising
+    # per-net penalty makes a net that keeps losing eventually route AROUND instead of
+    # ripping — so the churn converges — and we snapshot the best (most-routed)
+    # DRC-clean state seen and return that (rip-ups never corrupt the result).
+    def _cells_of(net: str) -> List[Cell]:
+        rn = result_nets.get(net)
+        return rn.cells if rn and rn.routed else []
 
-    for rnd in range(rrr_rounds):
-        if not unrouted:
-            break
-        penalty = rip_penalty * (rnd + 1)
-        progress = False
-        for net in sorted(unrouted, key=lambda n: (_span(n), n)):
-            soft = {c: penalty for c, o in occupied.items() if o != net}
-            cells = _route_one(
-                grid, net_access[net], net, zero_occ, zero_hist, via_cost, 0.0, soft=soft
+    def _routed_count() -> int:
+        return sum(1 for n in nets if result_nets[n].routed)
+
+    def _snapshot():
+        return {n: list(_cells_of(n)) for n in nets}
+
+    best_cells = _snapshot()
+    best_count = _routed_count()
+    rip_count: Dict[str, int] = defaultdict(int)
+    queue: deque = deque(sorted(unrouted, key=lambda n: (_span(n), n)))
+    queued: Set[str] = set(queue)
+    budget = len(nets) * rrr_rounds
+    while queue and budget > 0:
+        budget -= 1
+        net = queue.popleft()
+        queued.discard(net)
+        pen = rip_penalty * (1 + rip_count[net])
+        soft = {c: pen for c, o in occupied.items() if o != net}
+        cells = _route_one(
+            grid, net_access[net], net, zero_occ, zero_hist, via_cost, 0.0, soft=soft
+        )
+        if not cells:
+            continue
+        fp = _footprint(grid, cells, via_keepout)
+        crossed = sorted({occupied[c] for c in fp if c in occupied and occupied[c] != net})
+        if len(crossed) > max_rip:
+            # Too disruptive at this penalty — try to route strictly AROUND instead.
+            around = _route_one(
+                grid, net_access[net], net, zero_occ, zero_hist, via_cost, 0.0, blocked=committed
             )
-            if not cells:
-                continue
-            fp = _footprint(grid, cells, via_keepout)
-            crossed = {occupied[c] for c in fp if c in occupied and occupied[c] != net}
-            if not crossed:
-                _commit(net, cells)  # clean path opened up — take it
-                routed_cells[net] = cells
-                unrouted.remove(net)
-                progress = True
-                continue
-            if len(crossed) > max_rip:
-                continue
-            # Tentative rip: only accept if EVERY crossed net can reroute around the
-            # new commit — so a rip never loses a net (committed count only grows).
-            freed: Set[Cell] = set()
-            for c in crossed:
-                freed |= _footprint(grid, routed_cells[c], via_keepout)
-            new_committed = (committed - freed) | fp
-            reroutes: Dict[str, List[Cell]] = {}
-            ok = True
-            for c in sorted(crossed):
-                rc = _route_one(
-                    grid,
-                    net_access[c],
-                    c,
-                    zero_occ,
-                    zero_hist,
-                    via_cost,
-                    0.0,
-                    blocked=new_committed,
-                )
-                rfp = _footprint(grid, rc, via_keepout) if rc else set()
-                if rc and not (rfp & new_committed):
-                    reroutes[c] = rc
-                    new_committed |= rfp
-                else:
-                    ok = False
-                    break
-            if not ok:
-                continue
-            # Apply: rip the crossed nets, commit net + their reroutes.
-            for c in crossed:
-                for cell in _footprint(grid, routed_cells[c], via_keepout):
-                    if occupied.get(cell) == c:
-                        del occupied[cell]
-                        committed.discard(cell)
-            _commit(net, cells)
-            routed_cells[net] = cells
-            for c, rc in reroutes.items():
-                _commit(c, rc)
-                routed_cells[c] = rc
-            unrouted.remove(net)
-            progress = True
-        if not progress:
-            break
+            if around and not (_footprint(grid, around, via_keepout) & set(occupied)):
+                _commit(net, around)
+            continue
+        for c in crossed:  # rip the crossed nets, re-queue them
+            for cell in _footprint(grid, _cells_of(c), via_keepout):
+                if occupied.get(cell) == c:
+                    del occupied[cell]
+                    committed.discard(cell)
+            blank = _to_geometry([])
+            blank.name = c
+            blank.routed = False
+            result_nets[c] = blank
+            rip_count[c] += 1
+            if c not in queued:
+                queue.append(c)
+                queued.add(c)
+        _commit(net, cells)
+        cnt = _routed_count()
+        if cnt > best_count:
+            best_count = cnt
+            best_cells = _snapshot()
+
+    # Restore the best snapshot seen (the churn may end mid-rip; we keep the peak).
+    unrouted = []
+    for net in nets:
+        cells = best_cells.get(net)
+        rn = _to_geometry(cells) if cells else _to_geometry([])
+        rn.name = net
+        rn.routed = bool(cells)
+        result_nets[net] = rn
+        if not cells:
+            unrouted.append(net)
     return RouteResult(nets=result_nets, unrouted=sorted(unrouted), iterations=iters)

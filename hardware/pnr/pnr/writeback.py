@@ -224,6 +224,13 @@ def apply_planes(board, rules: dict, pad_margin_mm: float = 2.0) -> int:
             z = pcbnew.ZONE(board)
             z.SetLayer(layer_id[layer])
             z.SetNetCode(net.GetNetCode())
+            # Carve the pour back from foreign copper by the design clearance so a
+            # signal routed *on* this plane layer (4-layer routing) stays DRC-clean —
+            # the zone filler keeps this gap around every other-net track/via/pad.
+            try:
+                z.SetLocalClearance(_nm(0.2))
+            except Exception:  # pragma: no cover - version shim
+                pass
             outline = z.Outline()
             outline.NewOutline()
             for x, y in [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]:
