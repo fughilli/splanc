@@ -65,6 +65,8 @@ def global_place(
     w_bound: float = 20.0,
     w_keep: float = 40.0,
     w_group: float = 0.5,
+    w_plane: float = 0.05,
+    w_plane_sep: float = 0.35,
 ) -> Tuple[Dict[str, Tuple[float, float]], Dict[str, float]]:
     """Optimize continuous centres (+ orientation); return positions and angles.
 
@@ -158,6 +160,21 @@ def global_place(
     net_pin_idx = [[pin_key[p] for p in net.pins if p in pin_key] for net in graph.nets]
     net_pin_idx = [pins for pins in net_pin_idx if len(pins) >= 2]
 
+    # Plane nets (power/ground poured as copper planes): the pins on each, used to
+    # (a) minimise each plane's pad-bounding-box AREA and (b) keep different power
+    # domains from overlapping — so the split planes end up compact and disjoint,
+    # not sprawling stepped rectangles. A component with pads on two domains is a
+    # soft compromise between them.
+    import fnmatch as _fnmatch
+
+    plane_patterns = [pat for nc in constraints.net_classes if nc.plane_layer for pat in nc.nets]
+    plane_pin_idx: List[List[int]] = []
+    for net in graph.nets:
+        if any(_fnmatch.fnmatch(net.name, pat) for pat in plane_patterns):
+            pins = [pin_key[p] for p in net.pins if p in pin_key]
+            if len(pins) >= 2:
+                plane_pin_idx.append(pins)
+
     # Edge-align targets (soft): (comp_idx, axis, edge, weight).
     edge_terms: List[Tuple[int, int, str, float]] = []
     for con in constraints.constraints:
@@ -240,6 +257,31 @@ def global_place(
         bound = (bound * movable_f).sum()
 
         loss = wl + w_spread * overlap + w_bound * bound
+
+        # Power-plane compactness + inter-domain separation. Each plane net gets a
+        # smooth pad bbox; minimise its AREA (compact planes) and penalise overlap
+        # between different planes' bboxes (disjoint domains).
+        if plane_pin_idx and (w_plane > 0.0 or w_plane_sep > 0.0):
+            boxes = []  # (minx, maxx, miny, maxy) per plane net
+            for pins in plane_pin_idx:
+                px, py = pin_x[pins], pin_y[pins]
+                maxx = gamma * torch.logsumexp(px / gamma, 0)
+                minx = -gamma * torch.logsumexp(-px / gamma, 0)
+                maxy = gamma * torch.logsumexp(py / gamma, 0)
+                miny = -gamma * torch.logsumexp(-py / gamma, 0)
+                boxes.append((minx, maxx, miny, maxy))
+                loss = loss + w_plane * (maxx - minx) * (maxy - miny)  # bbox area
+            for a in range(len(boxes)):
+                axmin, axmax, aymin, aymax = boxes[a]
+                for b in range(a + 1, len(boxes)):
+                    bxmin, bxmax, bymin, bymax = boxes[b]
+                    ox = torch.clamp(
+                        torch.minimum(axmax, bxmax) - torch.maximum(axmin, bxmin), min=0.0
+                    )
+                    oy = torch.clamp(
+                        torch.minimum(aymax, bymax) - torch.maximum(aymin, bymin), min=0.0
+                    )
+                    loss = loss + w_plane_sep * ox * oy
 
         for i, axis, edge, weight in edge_terms:
             extent = hh[i] if axis == 1 else hw[i]

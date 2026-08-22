@@ -112,6 +112,21 @@ class Constraint:
     name: Optional[str] = None
 
 
+def width_for_current(
+    current_a: float, *, copper_oz: float = 1.0, delta_t_c: float = 10.0, external: bool = True
+) -> float:
+    """Minimum trace width (mm) to carry ``current_a`` within a ``delta_t_c`` rise,
+    per **IPC-2221**: ``A[mils²] = (I / (k·ΔT^0.44))^(1/0.725)``, then
+    ``width = A / (thickness[mils] · 1.378·copper_oz)``. ``k`` = 0.048 external /
+    0.024 internal. Lets a net class be specified by *amperage* instead of a raw
+    width, so power rails get sized for their expected current."""
+    k = 0.048 if external else 0.024
+    area_mils2 = (current_a / (k * (delta_t_c**0.44))) ** (1.0 / 0.725)
+    thickness_mils = 1.378 * copper_oz  # 1 oz ≈ 1.378 mil
+    width_mils = area_mils2 / thickness_mils
+    return width_mils * 0.0254  # mils -> mm
+
+
 @dataclass
 class NetClass:
     """A named routing rule set (trace width / clearance) over a set of nets.
@@ -120,13 +135,26 @@ class NetClass:
     (nets are not component refs, so they can't be expanded at compile time).
     ``plane_layer`` (e.g. ``In1.Cu``) pours the class's nets as a copper plane on
     that layer instead of trace-routing them — the right home for high-fanout
-    ground / power nets on a multilayer board."""
+    ground / power nets on a multilayer board. ``current_a`` sizes the trace width
+    from the expected current (IPC-2221) when ``width_mm`` is not given directly —
+    so a class is defined by *type/amperage* (signal vs power) rather than a raw
+    width."""
 
     name: str
     width_mm: Optional[float] = None
     clearance_mm: Optional[float] = None
     nets: Tuple[str, ...] = ()
     plane_layer: Optional[str] = None
+    current_a: Optional[float] = None
+
+    def resolved_width_mm(self, floor_mm: float) -> Optional[float]:
+        """The class width: explicit ``width_mm``, else derived from ``current_a``
+        (IPC-2221), else ``None``. Never below the fab ``floor_mm``."""
+        if self.width_mm:
+            return max(self.width_mm, floor_mm)
+        if self.current_a:
+            return max(width_for_current(self.current_a), floor_mm)
+        return None
 
 
 @dataclass
@@ -275,7 +303,9 @@ def compile_routing_rules(compiled: "CompiledConstraints", net_names: Sequence[s
         "net_classes": [
             {
                 "name": nc.name,
-                "width_mm": nc.width_mm,
+                # Resolved width: explicit, else IPC-2221 from current_a, else the
+                # fab default — the router emits each net's tracks at this width.
+                "width_mm": nc.resolved_width_mm(fab.track_width_mm),
                 "clearance_mm": nc.clearance_mm,
                 "plane_layer": nc.plane_layer,
                 "nets": list(_expand_nets(nc.nets, net_names)),
@@ -478,6 +508,7 @@ def compile_constraints(doc: Dict, known_refs: Sequence[str]) -> CompiledConstra
                 clearance_mm=_opt_float(spec.get("clearance_mm")),
                 nets=tuple(str(n) for n in nets),
                 plane_layer=spec.get("plane_layer"),
+                current_a=_opt_float(spec.get("current_a")),
             )
         )
 

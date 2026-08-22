@@ -189,9 +189,13 @@ def _via_sites(cells: List[Cell]) -> List[Tuple[int, int]]:
     return [ij for ij, lays in by_ij.items() if len(lays) > 1]
 
 
-def _footprint(grid: RouteGrid, cells: List[Cell], via_keepout: int) -> Set[Cell]:
+def _footprint(
+    grid: RouteGrid, cells: List[Cell], via_keepout: int, track_halo: int = 0
+) -> Set[Cell]:
     """The cells a net's copper *reserves* for DRC: every routed cell, plus a
-    ``via_keepout``-radius halo (on **all** layers) around each via site.
+    ``via_keepout``-radius halo (on **all** layers) around each via site, plus a
+    ``track_halo``-radius in-plane halo around each track cell (for a wider-than-
+    signal net — a fat power trace reserves more room so neighbours clear its copper).
 
     A through-via's copper (Ø0.45 mm) + clearance spills past its own cell; at the
     grid pitch a radius-1 halo keeps other-net tracks *and* vias ≥ 2 cells away
@@ -200,6 +204,13 @@ def _footprint(grid: RouteGrid, cells: List[Cell], via_keepout: int) -> Set[Cell
     same way the pitch does for tracks. Same-net copper may share freely — the
     caller accounts ownership per net."""
     fp: Set[Cell] = set(cells)
+    if track_halo:
+        for c in cells:
+            for di in range(-track_halo, track_halo + 1):
+                for dj in range(-track_halo, track_halo + 1):
+                    ni, nj = c.i + di, c.j + dj
+                    if grid.in_bounds(ni, nj):
+                        fp.add(Cell(c.layer, ni, nj))
     for i, j in _via_sites(cells):
         for la in range(grid.nlayers):
             for di in range(-via_keepout, via_keepout + 1):
@@ -246,6 +257,7 @@ def route(
     rrr_rounds: int = 12,
     rip_penalty: float = 4.0,
     max_rip: int = 8,
+    net_halo: Optional[Dict[str, int]] = None,
 ) -> RouteResult:
     """PathFinder negotiated detailed route of ``net_access`` (net → access cells)
     on ``grid``. Proper McMurchie–Ebeling: each iteration rips up one net at a time
@@ -262,6 +274,11 @@ def route(
     result_nets: Dict[str, RoutedNet] = {}
     iters = 0
 
+    halo = net_halo or {}
+
+    def _h(net: str) -> int:
+        return halo.get(net, 0)  # extra track-halo cells for a wide (power) net
+
     # Persistent congestion: owner[cell] = nets currently on it, occ[cell] = |owner|.
     owner: Dict[Cell, Set[str]] = defaultdict(set)
     occ: Dict[Cell, int] = defaultdict(int)
@@ -270,7 +287,7 @@ def route(
 
     def _place(net, cells):
         routed[net] = cells
-        fp = _footprint(grid, cells, via_keepout) if cells else set()
+        fp = _footprint(grid, cells, via_keepout, _h(net)) if cells else set()
         fps[net] = fp
         for c in fp:
             owner[c].add(net)
@@ -314,7 +331,7 @@ def route(
     committed: Set[Cell] = set()
 
     def _commit(net: str, cells: List[Cell]) -> None:
-        for c in _footprint(grid, cells, via_keepout):
+        for c in _footprint(grid, cells, via_keepout, _h(net)):
             occupied[c] = net
             committed.add(c)
         rn = _to_geometry(cells)
@@ -325,7 +342,7 @@ def route(
     leftover: List[str] = []
     for net in sorted(nets):
         cells = routed.get(net)
-        fp = _footprint(grid, cells, via_keepout) if cells else set()
+        fp = _footprint(grid, cells, via_keepout, _h(net)) if cells else set()
         if cells and not any(c in occupied for c in fp):
             _commit(net, cells)
         else:
@@ -346,7 +363,7 @@ def route(
         cells = _route_one(
             grid, net_access[net], net, zero_occ, zero_hist, via_cost, 0.0, blocked=committed
         )
-        fp = _footprint(grid, cells, via_keepout) if cells else set()
+        fp = _footprint(grid, cells, via_keepout, _h(net)) if cells else set()
         if cells and not any(c in occupied for c in fp):
             _commit(net, cells)
         else:
@@ -391,18 +408,18 @@ def route(
         )
         if not cells:
             continue
-        fp = _footprint(grid, cells, via_keepout)
+        fp = _footprint(grid, cells, via_keepout, _h(net))
         crossed = sorted({occupied[c] for c in fp if c in occupied and occupied[c] != net})
         if len(crossed) > max_rip:
             # Too disruptive at this penalty — try to route strictly AROUND instead.
             around = _route_one(
                 grid, net_access[net], net, zero_occ, zero_hist, via_cost, 0.0, blocked=committed
             )
-            if around and not (_footprint(grid, around, via_keepout) & set(occupied)):
+            if around and not (_footprint(grid, around, via_keepout, _h(net)) & set(occupied)):
                 _commit(net, around)
             continue
         for c in crossed:  # rip the crossed nets, re-queue them
-            for cell in _footprint(grid, _cells_of(c), via_keepout):
+            for cell in _footprint(grid, _cells_of(c), via_keepout, _h(c)):
                 if occupied.get(cell) == c:
                     del occupied[cell]
                     committed.discard(cell)

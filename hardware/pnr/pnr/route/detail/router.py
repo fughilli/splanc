@@ -13,6 +13,7 @@ Pure Python on the graph — no pcbnew. Deterministic under the grid's fixed ord
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass, field
 from typing import List, Optional, Set, Tuple
@@ -42,6 +43,22 @@ def _fab(rules: Optional[dict]) -> dict:
     out = dict(_FAB_DEFAULT)
     if rules and isinstance(rules.get("fab"), dict):
         out.update({k: float(v) for k, v in rules["fab"].items() if k in out})
+    return out
+
+
+def _net_widths(rules: Optional[dict], default_mm: float) -> dict:
+    """net name -> track width (mm) from the rules' net classes (which resolve
+    width from an explicit value or an IPC-2221 current). Nets not in a width class
+    route at ``default_mm``. Plane nets are skipped (they pour, not route)."""
+    out: dict = {}
+    if not rules:
+        return out
+    for nc in rules.get("net_classes", []):
+        w = nc.get("width_mm")
+        if not w or nc.get("plane_layer"):
+            continue
+        for n in nc.get("nets", []):
+            out[n] = float(w)
     return out
 
 
@@ -177,17 +194,25 @@ def route_board(
     track_width_mm = fab["track_width_mm"] if track_width_mm is None else track_width_mm
     clearance_mm = fab["clearance_mm"]
     via_radius_mm = fab["via_diameter_mm"] / 2.0
+    # Per-net track width from the net classes (type/amperage), default = fab width.
+    net_width = _net_widths(rules, track_width_mm)
     if pitch is None:
-        # DRC-clean floor + a hair so equal-spacing tracks pass; round to 0.05 mm.
+        # Fine grid sized for the SIGNAL width (not the widest power trace — that
+        # would coarsen the whole board); wide nets reserve extra room via a halo.
         floor = track_width_mm + clearance_mm
         pitch = round((floor + 0.02) / 0.05) * 0.05
+    # A wider-than-signal net reserves a track halo so neighbours clear its copper:
+    # other-net centre must be ≥ width/2 + clearance + ½signal from this net's cells.
+    net_halo = {
+        n: max(0, math.ceil((w / 2.0 + clearance_mm + track_width_mm / 2.0) / pitch) - 1)
+        for n, w in net_width.items()
+        if w > track_width_mm
+    }
 
     # Via keep-out radius derived from the fab geometry, NOT hardcoded: two vias
     # must clear by ``via_diameter + clearance`` centre-to-centre, so the nearest
     # allowed other-net via sits ⌈(via_d+clr)/pitch⌉ cells away ⇒ keep-out radius one
     # less. (Default 0.45/0.13/0.30 ⇒ 1; a tighter fab needs a wider halo.)
-    import math
-
     via_keepout = max(1, math.ceil((2 * via_radius_mm + clearance_mm) / pitch) - 1)
 
     width, height = outline_size(graph, constraints)
@@ -220,7 +245,9 @@ def route_board(
     )
     net_access = {n: cells for n, cells in plan.net_access.items() if len(cells) >= 2}
 
-    result = route(grid, net_access, max_iters=max_iters, via_keepout=via_keepout)
+    result = route(
+        grid, net_access, max_iters=max_iters, via_keepout=via_keepout, net_halo=net_halo
+    )
 
     if os.environ.get("PNR_DIAG_UNROUTED"):
         _diag_unrouted(grid, net_access, result.unrouted, via_keepout)
@@ -229,10 +256,11 @@ def route_board(
     layer_names = grid.layers
     routed_names = {n for n, rn in result.nets.items() if rn.routed}
     for name, rn in result.nets.items():
+        w = net_width.get(name, track_width_mm)  # per-net (type/amperage) width
         for layer, (i0, j0), (i1, j1) in rn.segments:
             x0, y0 = grid.center_of(i0, j0)
             x1, y1 = grid.center_of(i1, j1)
-            board.tracks.append((name, layer_names[layer], (x0, y0), (x1, y1), track_width_mm))
+            board.tracks.append((name, layer_names[layer], (x0, y0), (x1, y1), w))
         for i, j in rn.vias:
             x, y = grid.center_of(i, j)
             board.vias.append((name, x, y))
@@ -242,7 +270,7 @@ def route_board(
     for esc in plan.escapes:
         if esc.net not in routed_names:
             continue
-        _emit_escape(board, esc, grid, track_width_mm)
+        _emit_escape(board, esc, grid, net_width.get(esc.net, track_width_mm))
     return board
 
 
