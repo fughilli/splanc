@@ -1,0 +1,70 @@
+"""sysheap — confine all dynamic allocation to a fixed static arena (whole-product
+zero-system-heap). Link-wraps malloc/calloc/realloc/free and hooks mbedtls; pair
+with the WiFi OS-adapter arena. `arena_demo` proves it on hardware.
+"""
+
+load("@embedded//rules:firmware.bzl", "firmware_binary")
+load("@embedded//rules:flash.bzl", "esptool_flash")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_cc//cc:cc_library.bzl", "cc_library")
+load("//tools:flash_bundle.bzl", "flash_bundle")
+
+package(default_visibility = ["//visibility:public"])
+
+_C6 = select({
+    "@embedded//platforms:is_esp32c6": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+
+# The wrap linkopts every firmware that uses sysheap must apply.
+WRAP_LINKOPTS = [
+    "-Wl,--wrap=malloc",
+    "-Wl,--wrap=free",
+    "-Wl,--wrap=calloc",
+    "-Wl,--wrap=realloc",
+    "-Wl,--wrap=heap_caps_malloc",
+    "-Wl,--wrap=heap_caps_free",
+    "-Wl,--wrap=heap_caps_realloc",
+    "-Wl,--wrap=heap_caps_calloc",
+]
+
+cc_library(
+    name = "sysheap",
+    srcs = ["sysheap.cpp"],
+    hdrs = ["sysheap.h"],
+    target_compatible_with = _C6,
+    deps = ["@embedded//libs/board:arduino_core"],  # multi_heap + mbedtls headers
+    alwayslink = True,
+)
+
+cc_binary(
+    name = "arena_demo",
+    srcs = ["arena_demo.cpp"],
+    copts = ["-fno-rtti"],
+    linkopts = WRAP_LINKOPTS,
+    target_compatible_with = _C6,
+    deps = [
+        ":sysheap",
+        "@embedded//libs/board:arduino_core",
+    ],
+)
+
+firmware_binary(
+    name = "arena_demo_esp32c6",
+    binary = ":arena_demo",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "arena_demo_flash",
+    app = ":arena_demo_esp32c6",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "arena_demo_flashbundle",
+    flash = ":arena_demo_flash",
+    tags = ["manual"],
+)
