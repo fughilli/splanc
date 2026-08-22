@@ -55,6 +55,12 @@ Named tasks:
     list-sims      `xcrun simctl list devices available`
     list-devices   `xcrun xctrace list devices` — real devices + sims with UDIDs
 
+    tf-build-number  stamp CFBundleVersion ($IOS_BUILD_NUMBER, else epoch)
+    tf-signing-prep  place the App Store Connect API key (+ optional dist .p12)
+    tf-archive       `xcodebuild archive` — App-Store-signed (automatic signing)
+    tf-export        `xcodebuild -exportArchive` → build/export/*.ipa
+    tf-upload        `xcrun altool --upload-app` → App Store Connect / TestFlight
+
 The device-* tasks go through devicectl (CoreDevice), so they reach a device
 over USB *or* Wi-Fi — unlike ios-run (`cap run`/native-run), which only sees
 USB-attached devices. Enable Wi-Fi once in Xcode → Devices and Simulators →
@@ -70,6 +76,10 @@ Convenience chains (each is just the tasks above, in order, stop-on-failure):
     deploy-prebuilt  cap-sync → device-build → device-install → device-launch — for
                    `bazel run //tools:ios_deploy`, which already staged web/dist
                    (the payload is its label dep), so the server skips web-build
+    testflight     web-build → cap-sync → tf-build-number → tf-signing-prep →
+                   tf-archive → tf-export → tf-upload  (needs the ASC/signing env
+                   vars — see the tf-* block below)
+    testflight-prebuilt  same, minus web-build — for `bazel run //tools:ios_testflight`
 
 Nothing here is macOS-specific in the server itself; it simply shells out to the
 host's tools. On a non-mac host the Xcode tasks fail cleanly (command not found),
@@ -207,6 +217,143 @@ _DEVICE_BUILD_SH = (
     "-derivedDataPath build -allowProvisioningUpdates build"
 )
 
+# --------------------------------------------------------------------------- #
+# TestFlight distribution (tf-*) — archive → export .ipa → upload to App Store
+# Connect. Unlike the device-* deploy tasks (which install to a paired iPhone),
+# these produce an App-Store-signed build and hand it to TestFlight.
+#
+# Credentials are read from the SERVER PROCESS ENVIRONMENT (child_env), never
+# from the HTTP request — so no secret is ever in a URL or the streamed log. Set
+# them where the build server runs (dev Mac shell / launchd, or a GitHub Actions
+# `env:` from repo secrets). These are the SAME names the TestFlight job in
+# .github/workflows/macos.yaml uses, so one set of secrets serves both paths:
+#
+#   APP_STORE_CONNECT_KEY_ID          App Store Connect API key — Key ID
+#   APP_STORE_CONNECT_ISSUER_ID       …its Issuer ID
+#   APP_STORE_CONNECT_KEY_P8_BASE64   base64 of the AuthKey_<KeyID>.p8   (or…)
+#   APP_STORE_CONNECT_KEY_P8_PATH     …a path to the .p8 on this machine (or the
+#                                     key already sits in ~/.private_keys/)
+#   APPLE_TEAM_ID                     10-char Developer Team ID (else SPLANC_IOS_TEAM
+#                                     / the ios-config default)
+#   APPLE_DIST_CERT_P12_BASE64        base64 of an "Apple Distribution" .p12 —
+#   APPLE_DIST_CERT_PASSWORD          …and its export password. OPTIONAL: only
+#                                     needed on a machine whose keychain lacks a
+#                                     distribution cert (a fresh CI runner). A dev
+#                                     Mac that already ships device builds has one.
+#   IOS_BUILD_NUMBER                  CFBundleVersion for this upload (must be
+#                                     unique + increasing per TestFlight build);
+#                                     defaults to the current epoch seconds.
+#   IOS_EXPORT_METHOD                 export method (default app-store-connect).
+
+# Stamp CFBundleVersion so every upload is a distinct, increasing TestFlight
+# build. Epoch seconds is monotonic and well under CFBundleVersion's per-field
+# limit; override with IOS_BUILD_NUMBER (e.g. CI's run number). cwd web/ios/App,
+# so the app Info.plist is App/Info.plist.
+_TF_BUILD_NUMBER_SH = (
+    "set -e; "
+    'bn="${IOS_BUILD_NUMBER:-$(date +%s)}"; '
+    'pb=/usr/libexec/PlistBuddy; plist="App/Info.plist"; '
+    '"$pb" -c "Set :CFBundleVersion $bn" "$plist" 2>/dev/null '
+    '|| "$pb" -c "Add :CFBundleVersion string $bn" "$plist"; '
+    'echo "[testflight] CFBundleVersion = $bn"'
+)
+
+# Place the App Store Connect API key where xcodebuild + altool look for it, and
+# (only if a .p12 is supplied) import the distribution cert into a throwaway
+# keychain. Reads env; writes nothing that logs a secret.
+_TF_SIGNING_PREP_SH = (
+    "set -e; "
+    ': "${APP_STORE_CONNECT_KEY_ID:?set APP_STORE_CONNECT_KEY_ID (see /tasks)}"; '
+    ': "${APP_STORE_CONNECT_ISSUER_ID:?set APP_STORE_CONNECT_ISSUER_ID}"; '
+    'mkdir -p "$HOME/.private_keys"; '
+    'p8="$HOME/.private_keys/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8"; '
+    'if [ -n "${APP_STORE_CONNECT_KEY_P8_BASE64:-}" ]; then '
+    '  printf %s "$APP_STORE_CONNECT_KEY_P8_BASE64" | base64 --decode > "$p8"; '
+    '  echo "[testflight] wrote ASC API key -> $p8"; '
+    'elif [ -n "${APP_STORE_CONNECT_KEY_P8_PATH:-}" ]; then '
+    '  cp "$APP_STORE_CONNECT_KEY_P8_PATH" "$p8"; echo "[testflight] copied ASC API key -> $p8"; '
+    'elif [ -f "$p8" ]; then echo "[testflight] using existing ASC API key at $p8"; '
+    'else echo "[testflight] no ASC API key: set APP_STORE_CONNECT_KEY_P8_BASE64 or _PATH" >&2; exit 1; fi; '
+    'chmod 600 "$p8"; '
+    'if [ -n "${APPLE_DIST_CERT_P12_BASE64:-}" ]; then '
+    '  kc="${TMPDIR:-/tmp}/splanc-ios-signing.keychain-db"; kcpw="$(openssl rand -base64 24)"; '
+    '  security delete-keychain "$kc" 2>/dev/null || true; '
+    '  security create-keychain -p "$kcpw" "$kc"; '
+    '  security set-keychain-settings -lut 21600 "$kc"; '
+    '  security unlock-keychain -p "$kcpw" "$kc"; '
+    '  p12="${TMPDIR:-/tmp}/splanc-dist.p12"; '
+    '  printf %s "$APPLE_DIST_CERT_P12_BASE64" | base64 --decode > "$p12"; '
+    '  security import "$p12" -P "${APPLE_DIST_CERT_PASSWORD:-}" -A -t cert -f pkcs12 -k "$kc"; '
+    '  security set-key-partition-list -S apple-tool:,apple: -s -k "$kcpw" "$kc" >/dev/null; '
+    # Prepend our keychain to the search list (deduped, so re-runs don't stack it).
+    '  others="$(security list-keychains -d user | sed -e "s/\\"//g" -e "s/^ *//" | grep -v -F "$kc" || true)"; '
+    '  security list-keychains -d user -s "$kc" $others; '
+    '  rm -f "$p12"; echo "[testflight] imported distribution cert into a temp keychain"; '
+    'else echo "[testflight] APPLE_DIST_CERT_P12_BASE64 unset — using a distribution cert from the login keychain"; fi'
+)
+
+# Archive an App-Store-signed build. Automatic signing driven by the ASC API key
+# (-allowProvisioningUpdates creates/refreshes the App Store provisioning
+# profile); the distribution cert comes from the keychain (signing-prep).
+_TF_ARCHIVE_SH = (
+    "set -e; "
+    'team="${APPLE_TEAM_ID:-${SPLANC_IOS_TEAM:-D9JWD94AGX}}"; '
+    'p8="$HOME/.private_keys/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8"; '
+    'if [ -e App.xcworkspace ]; then C="-workspace App.xcworkspace"; else C="-project App.xcodeproj"; fi; '
+    'echo "[tf-archive] xcodebuild archive (team $team, {configuration})"; '
+    "xcodebuild $C -scheme {scheme} -configuration {configuration} "
+    '-destination "generic/platform=iOS" '
+    '-archivePath "$PWD/build/App.xcarchive" '
+    "-allowProvisioningUpdates "
+    '-authenticationKeyPath "$p8" '
+    '-authenticationKeyID "$APP_STORE_CONNECT_KEY_ID" '
+    '-authenticationKeyIssuerID "$APP_STORE_CONNECT_ISSUER_ID" '
+    'DEVELOPMENT_TEAM="$team" CODE_SIGN_STYLE=Automatic '
+    "archive"
+)
+
+# Export the archive to a distributable .ipa (App Store Connect method).
+_TF_EXPORT_SH = (
+    "set -e; "
+    'team="${APPLE_TEAM_ID:-${SPLANC_IOS_TEAM:-D9JWD94AGX}}"; '
+    'p8="$HOME/.private_keys/AuthKey_${APP_STORE_CONNECT_KEY_ID}.p8"; '
+    'method="${IOS_EXPORT_METHOD:-app-store-connect}"; '
+    'mkdir -p "$PWD/build"; plist="$PWD/build/exportOptions.plist"; '
+    # Unquoted heredoc so $method/$team expand; the plist itself has no braces
+    # that _fill could disturb.
+    'cat > "$plist" <<PLIST\n'
+    '<?xml version="1.0" encoding="UTF-8"?>\n'
+    '<plist version="1.0"><dict>\n'
+    "<key>method</key><string>$method</string>\n"
+    "<key>teamID</key><string>$team</string>\n"
+    "<key>signingStyle</key><string>automatic</string>\n"
+    "<key>destination</key><string>export</string>\n"
+    "</dict></plist>\n"
+    "PLIST\n"
+    'echo "[tf-export] xcodebuild -exportArchive (method $method)"; '
+    "xcodebuild -exportArchive "
+    '-archivePath "$PWD/build/App.xcarchive" '
+    '-exportOptionsPlist "$plist" '
+    '-exportPath "$PWD/build/export" '
+    "-allowProvisioningUpdates "
+    '-authenticationKeyPath "$p8" '
+    '-authenticationKeyID "$APP_STORE_CONNECT_KEY_ID" '
+    '-authenticationKeyIssuerID "$APP_STORE_CONNECT_ISSUER_ID"'
+)
+
+# Upload the exported .ipa to App Store Connect / TestFlight. altool finds the
+# AuthKey_<KeyID>.p8 in ~/.private_keys (written by signing-prep).
+_TF_UPLOAD_SH = (
+    "set -e; "
+    'ipa="$(ls "$PWD"/build/export/*.ipa 2>/dev/null | head -1)"; '
+    '[ -n "$ipa" ] || { echo "[tf-upload] no .ipa in build/export (run tf-export first)" >&2; exit 1; }; '
+    'echo "[tf-upload] uploading $ipa"; '
+    'xcrun altool --upload-app -f "$ipa" -t ios '
+    '--apiKey "$APP_STORE_CONNECT_KEY_ID" --apiIssuer "$APP_STORE_CONNECT_ISSUER_ID"; '
+    'echo "[tf-upload] uploaded — App Store Connect will process the build '
+    '(a few minutes) before it shows in TestFlight"'
+)
+
 
 def _tasks() -> dict:
     return {
@@ -304,6 +451,36 @@ def _tasks() -> dict:
             "cwd": ".",
             "desc": "launch {bundle} on {target} over USB/Wi-Fi (devicectl; no console)",
         },
+        # --- TestFlight distribution (tf-*): archive → export .ipa → upload. --- #
+        "tf-build-number": {
+            "argv": ["bash", "-c", _TF_BUILD_NUMBER_SH],
+            "cwd": "web/ios/App",
+            "needs_ios": True,
+            "desc": "stamp CFBundleVersion (IOS_BUILD_NUMBER, else epoch) so the upload is a new build",
+        },
+        "tf-signing-prep": {
+            "argv": ["bash", "-c", _TF_SIGNING_PREP_SH],
+            "cwd": ".",
+            "desc": "place the ASC API key (+ optional dist cert .p12) for signing/upload (reads env)",
+        },
+        "tf-archive": {
+            "argv": ["bash", "-c", _TF_ARCHIVE_SH],
+            "cwd": "web/ios/App",
+            "needs_ios": True,
+            "desc": "xcodebuild archive — App-Store-signed, automatic signing via the ASC API key",
+        },
+        "tf-export": {
+            "argv": ["bash", "-c", _TF_EXPORT_SH],
+            "cwd": "web/ios/App",
+            "needs_ios": True,
+            "desc": "xcodebuild -exportArchive → build/export/*.ipa (app-store-connect method)",
+        },
+        "tf-upload": {
+            "argv": ["bash", "-c", _TF_UPLOAD_SH],
+            "cwd": "web/ios/App",
+            "needs_ios": True,
+            "desc": "xcrun altool --upload-app — push the .ipa to App Store Connect / TestFlight",
+        },
         "list-devices": {
             "argv": ["xcrun", "xctrace", "list", "devices"],
             "cwd": ".",
@@ -365,6 +542,26 @@ CHAINS = {
     # uses — no Bazel re-invocation on the server.
     "deploy-prebuilt": ["cap-sync", "device-build", "device-install", "device-launch"],
     "deploy-prebuilt-log": ["cap-sync", "device-build", "device-install", "device-log"],
+    # TestFlight: build the App-Store-signed .ipa and upload it. `testflight`
+    # builds the web payload here (container/iosctl path); `testflight-prebuilt`
+    # skips web-build because `bazel run //tools:ios_testflight` already staged it.
+    "testflight": [
+        "web-build",
+        "cap-sync",
+        "tf-build-number",
+        "tf-signing-prep",
+        "tf-archive",
+        "tf-export",
+        "tf-upload",
+    ],
+    "testflight-prebuilt": [
+        "cap-sync",
+        "tf-build-number",
+        "tf-signing-prep",
+        "tf-archive",
+        "tf-export",
+        "tf-upload",
+    ],
 }
 
 # Query params we allow into argv templates, with the pattern each must match.
@@ -591,7 +788,7 @@ class Handler(BaseHTTPRequestHandler):
         # once looked like a 1.7fps architectural failure when it was purely the
         # optimizer being off. Nothing on-device is timed meaningfully in Debug,
         # so pay the compile cost by default and let --configuration override.
-        if "configuration" not in q and any(n.startswith("device-") for n in seq):
+        if "configuration" not in q and any(n.startswith(("device-", "tf-")) for n in seq):
             params["configuration"] = "Release"
             self_note = True
         else:
@@ -674,6 +871,34 @@ def child_env() -> dict:
     return env
 
 
+def _load_dotenv(workspace: str) -> list[str]:
+    """Populate os.environ from <workspace>/credentials/.env if it exists, so the
+    ASC/signing vars a dev drops there are picked up automatically (the sidecar
+    inherits this env → child_env → the tf-* tasks). Only fills vars that aren't
+    ALREADY set, so a real shell/CI env always wins; the file is gitignored
+    (credentials/), and never present in a CI checkout, so this no-ops there.
+
+    Deliberately tiny: KEY=VALUE per line, '#' comments and blanks skipped,
+    optional surrounding quotes stripped. Returns the names it set (for logging —
+    never the values)."""
+    path = Path(workspace) / "credentials" / ".env"
+    if not path.is_file():
+        return []
+    loaded: list[str] = []
+    for raw in path.read_text().splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        if not key or key in os.environ:
+            continue
+        val = val.strip().strip("'").strip('"')
+        os.environ[key] = val
+        loaded.append(key)
+    return loaded
+
+
 def _lan_ip() -> str:
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -707,6 +932,10 @@ def main() -> int:
     args = ap.parse_args()
 
     CFG.update(workspace=str(Path(args.workspace).resolve()), token=args.token)
+
+    dotenv = _load_dotenv(CFG["workspace"])
+    if dotenv:
+        _log(f"loaded credentials/.env: {', '.join(dotenv)}")
 
     httpd = ThreadingHTTPServer((args.host, args.port), Handler)
     lan = _lan_ip()

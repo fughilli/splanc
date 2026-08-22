@@ -1,19 +1,20 @@
 name: macOS
 
 # macOS CI: keep the repo building/testing on Apple silicon (the dev + on-device
-# iOS platform), split into two jobs so a failure points at the right layer:
+# iOS platform), split into jobs so a failure points at the right layer:
 #   - test-macos  : `bazel test //...` on macOS (mirrors the ubuntu `test` job in
 #                   test.yaml, but on macos-latest — the FUG-92 iOS work runs here)
 #   - ios-build   : the Capacitor/Xcode wrapper build, compiled for the iOS
-#                   Simulator (no code signing → NO credentials needed; see below)
+#                   Simulator (no code signing → NO credentials needed)
+#   - testflight  : the signed device build + TestFlight upload (needs the signing
+#                   secrets below). Gated behind testflight-check so it skips
+#                   cleanly until they're configured.
 #
 # Signing / credentials: the ios-build job compiles for the **Simulator**, which
-# needs no Apple Developer account, certificate, or provisioning profile. A real
-# **device** archive / TestFlight upload WOULD need signing secrets — a base64
-# .p12 + its password, a provisioning profile, and the Team ID — imported into a
-# temporary keychain. That's intentionally out of scope here; add it as a
-# separate device-archive job wired to repo/environment secrets when we want
-# distribution.
+# needs no Apple Developer account, certificate, or provisioning profile. The
+# **testflight** job archives a real signed device build and uploads it — it runs
+# the SAME `bazel run //tools:ios_testflight` a dev runs locally, so there is no
+# CI-only signing/upload logic to drift. See that job's header for the secrets.
 on:
   pull_request:
     types: [opened, synchronize, reopened]
@@ -260,12 +261,17 @@ jobs:
     if: needs.testflight-check.outputs.configured == 'true'
     runs-on: macos-latest
     environment: iOS distribution
+    # These are the exact env vars tools/ios_build_server.py's tf-* tasks read
+    # (via child_env) — the SAME names a dev sets locally / drops in
+    # credentials/.env. The job just plumbs the repo secrets into the environment;
+    # the single `bazel run //tools:ios_testflight` step below does the rest, so CI
+    # has no bespoke signing/upload logic that could drift from the local command.
     env:
-      ASC_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
-      ASC_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
-      ASC_KEY_P8_BASE64: ${{ secrets.APP_STORE_CONNECT_KEY_P8_BASE64 }}
-      DIST_CERT_P12_BASE64: ${{ secrets.APPLE_DIST_CERT_P12_BASE64 }}
-      DIST_CERT_PASSWORD: ${{ secrets.APPLE_DIST_CERT_PASSWORD }}
+      APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+      APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+      APP_STORE_CONNECT_KEY_P8_BASE64: ${{ secrets.APP_STORE_CONNECT_KEY_P8_BASE64 }}
+      APPLE_DIST_CERT_P12_BASE64: ${{ secrets.APPLE_DIST_CERT_P12_BASE64 }}
+      APPLE_DIST_CERT_PASSWORD: ${{ secrets.APPLE_DIST_CERT_PASSWORD }}
       APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
     steps:
       - name: Setup repository
@@ -299,12 +305,6 @@ jobs:
             bazel-disk-macos-ios-
             bazel-disk-macos-test-
 
-      - name: Provide a bazelisk shim
-        run: |
-          mkdir -p "$HOME/bin"
-          ln -sf "$(command -v bazel)" "$HOME/bin/bazelisk"
-          echo "$HOME/bin" >> "$GITHUB_PATH"
-
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -313,6 +313,11 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
 
+      # pnpm install is still needed here for the Capacitor CLI (`cap add ios`,
+      # and the `cap sync` the target runs). The web bundle + WASM, though, are
+      # NOT built with pnpm/stage_ios_wasm.sh anymore — the target builds
+      # //web:ios_payload and stages it, so those steps (and the bazelisk shim
+      # they needed) are gone.
       - name: Install JS deps
         run: |
           # GitHub runs `run:` with `bash -eo pipefail`; -e would abort at the
@@ -329,14 +334,6 @@ jobs:
           fi
           exit "$rc"
 
-      - name: Build web bundle (vite)
-        # verify-deps-before-run=false: pnpm 11's pre-`run` deps check otherwise
-        # shells out to install and dies on the @bufbuild/buf ignored build.
-        run: pnpm --config.verify-deps-before-run=false --dir web build
-
-      - name: Stage WASM bundles
-        run: bash tools/stage_ios_wasm.sh
-
       - name: Generate iOS project (cap add ios)
         env:
           CAP_DISABLE_TELEMETRY: 'true'
@@ -345,73 +342,22 @@ jobs:
       - name: Apply native config (ios-config)
         run: bash web/ios-config/apply.sh
 
-      # TestFlight requires a unique, monotonically increasing build number per
-      # upload; the run number is monotonic per workflow. (Marketing version /
-      # CFBundleShortVersionString is left as-is.)
-      - name: Set build number
-        run: /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${{ github.run_number }}" web/ios/App/App/Info.plist
-
-      - name: Sync iOS (cap sync)
-        run: pnpm --config.verify-deps-before-run=false --dir web exec cap sync ios
-
-      # Import the distribution cert into a throwaway keychain and drop the ASC
-      # API key where xcodebuild + altool look for it (~/.private_keys).
-      - name: Prepare signing
+      # The whole build → archive → export → upload is the single local target.
+      # `bazel run //tools:ios_testflight` builds //web:ios_payload (folding in the
+      # WASM), stages it, starts ios_build_server as a sidecar on this runner, and
+      # runs the `testflight-prebuilt` chain: cap-sync → tf-build-number →
+      # tf-signing-prep (imports the dist .p12 into a throwaway keychain + drops the
+      # ASC key in ~/.private_keys) → tf-archive → tf-export → tf-upload. Every
+      # credential comes from this job's env (above); nothing is passed in a
+      # request. --build-number stamps CFBundleVersion from the (monotonic) run
+      # number so each upload is a distinct TestFlight build.
+      #
+      # Bazel flags mirror the test job: a shared disk cache, plus the repo-fetch
+      # serialization that keeps rules_nixpkgs' repo rules off a shared SQLite lock.
+      - name: Build + upload to TestFlight
         run: |
-          KEYCHAIN="$RUNNER_TEMP/app-signing.keychain-db"
-          KEYCHAIN_PW="$(openssl rand -base64 24)"
-          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN"
-          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
-          echo "$DIST_CERT_P12_BASE64" | base64 --decode > "$RUNNER_TEMP/dist.p12"
-          security import "$RUNNER_TEMP/dist.p12" -P "$DIST_CERT_PASSWORD" \
-            -A -t cert -f pkcs12 -k "$KEYCHAIN"
-          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PW" "$KEYCHAIN" >/dev/null
-          # Put our keychain first in the search list so xcodebuild finds the cert.
-          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | sed s/\"//g)
-          mkdir -p "$HOME/.private_keys"
-          echo "$ASC_KEY_P8_BASE64" | base64 --decode > "$HOME/.private_keys/AuthKey_${ASC_KEY_ID}.p8"
-
-      - name: Archive (Release, device)
-        working-directory: web/ios/App
-        run: |
-          xcodebuild -project App.xcodeproj -scheme App -configuration Release \
-            -destination "generic/platform=iOS" \
-            -archivePath "$RUNNER_TEMP/App.xcarchive" \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath "$HOME/.private_keys/AuthKey_${ASC_KEY_ID}.p8" \
-            -authenticationKeyID "$ASC_KEY_ID" \
-            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
-            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" CODE_SIGN_STYLE=Automatic \
-            archive
-
-      - name: Export .ipa
-        working-directory: web/ios/App
-        run: |
-          cat > "$RUNNER_TEMP/exportOptions.plist" <<PLIST
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>method</key><string>app-store-connect</string>
-            <key>teamID</key><string>${APPLE_TEAM_ID}</string>
-            <key>signingStyle</key><string>automatic</string>
-            <key>destination</key><string>export</string>
-          </dict>
-          </plist>
-          PLIST
-          xcodebuild -exportArchive \
-            -archivePath "$RUNNER_TEMP/App.xcarchive" \
-            -exportOptionsPlist "$RUNNER_TEMP/exportOptions.plist" \
-            -exportPath "$RUNNER_TEMP/export" \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath "$HOME/.private_keys/AuthKey_${ASC_KEY_ID}.p8" \
-            -authenticationKeyID "$ASC_KEY_ID" \
-            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
-
-      - name: Upload to TestFlight
-        run: |
-          IPA="$(ls "$RUNNER_TEMP"/export/*.ipa | head -1)"
-          echo "Uploading $IPA"
-          xcrun altool --upload-app -f "$IPA" -t ios \
-            --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
+          bazel run \
+            --disk_cache="$HOME/.cache/bazel-disk" \
+            --experimental_worker_for_repo_fetching=off \
+            --loading_phase_threads=1 \
+            //tools:ios_testflight -- --build-number "${{ github.run_number }}"

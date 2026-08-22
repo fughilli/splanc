@@ -76,6 +76,24 @@ py_binary(
     ],
 )
 
+# Single-command TestFlight release:
+#   bazel run //tools:ios_testflight               # build + archive + export + upload
+#   bazel run //tools:ios_testflight -- --build-number 231
+# Same client/server split as ios_deploy: this `bazel run` builds the web payload
+# (a label dep), stages it, and drives ios_build_server's `testflight-prebuilt`
+# chain (archive → export → altool upload). On the Mac / a CI runner it starts the
+# server as a sidecar; from the container it's a thin HTTP client. Signing +
+# App Store Connect credentials are read from the SERVER's environment (see the
+# tf-* block in tools/ios_build_server.py), never passed in the request. Stdlib-only.
+py_binary(
+    name = "ios_testflight",
+    srcs = ["ios_testflight.py"],
+    data = [
+        "ios_build_server.py",
+        "//web:ios_payload",
+    ],
+)
+
 # Host-side Improv-BLE onboarding driver — provisions the player onto WiFi via a
 # real Bluetooth radio (SimpleBLE), replacing the phone's Web Bluetooth step
 # (which can't be automated). Run on the host: `bazel run //tools:ble_onboard_server`.
