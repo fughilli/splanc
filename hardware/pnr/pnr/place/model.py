@@ -60,6 +60,7 @@ def global_place(
     gamma: float = 1.0,
     orient: bool = True,
     inflation: Optional[Dict[str, float]] = None,
+    spread: float = 1.0,
     w_spread: float = 1.0,
     w_bound: float = 20.0,
     w_keep: float = 40.0,
@@ -81,11 +82,18 @@ def global_place(
     idx = {c.ref: i for i, c in enumerate(comps)}
 
     half = _base_half_sizes(graph)  # (n, 2), unrotated
-    if inflation:
+    # Inflate the *spreading* footprint (not WL, not the reported courtyard): a
+    # per-part ``inflation`` floor (congested parts, from the loop) OR a global
+    # ``spread`` floor applied to EVERY part. The latter is what makes parts fill
+    # the whole board — with each courtyard reserving `spread`× its area in the
+    # overlap term, they distribute to a lower target density with routing channels,
+    # instead of clumping toward the wirelength optimum and leaving the board empty.
+    if inflation or spread > 1.0:
         scale = torch.tensor(
-            [[max(1.0, float(inflation.get(c.ref, 1.0)))] for c in comps], dtype=torch.float32
+            [[max(1.0, spread, float((inflation or {}).get(c.ref, 1.0)))] for c in comps],
+            dtype=torch.float32,
         )
-        half = half * scale  # grows the spreading footprint of congested parts
+        half = half * scale
     # Courtyard half-size per candidate angle: swap w/h at 90/270.
     swapped = half[:, [1, 0]]
     half4 = torch.stack([half, swapped, half, swapped], dim=1)  # (n, 4, 2)

@@ -61,6 +61,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="disable pin-escape planning (via-in-pad / dog-bone) for A/B comparison",
     )
     ap.add_argument(
+        "--place-spread",
+        type=float,
+        default=1.0,
+        help="floor on the legalizer's per-part footprint inflation, so placement "
+        "leaves routing channels between all footprints (1.0 = pack tight; "
+        "1.3-1.6 = spread for routability)",
+    )
+    ap.add_argument(
         "--detail-loop",
         action="store_true",
         help="close the place<->route loop on the DRC-clean detailed router "
@@ -112,6 +120,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         detail_iters=args.route_iters,
         auto_outline=args.auto_outline,
         outline_max_scale=args.outline_max_scale,
+        spread=args.place_spread,
     )
     print(report.summary())
 

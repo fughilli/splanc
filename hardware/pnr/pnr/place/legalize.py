@@ -78,6 +78,7 @@ def legalize(
     clearance: float = 0.2,
     grid_mm: float = 0.5,
     inflation: Optional[Dict[str, float]] = None,
+    spread: float = 1.0,
 ) -> BoardGraph:
     """Return a copy of ``graph`` with movable parts snapped to a legal layout.
 
@@ -87,7 +88,10 @@ def legalize(
     the *reserved* footprint of a part (RePlAce cell inflation, §6): a factor > 1
     grows the slot a congested part claims so the packer spreads it into lower-
     density space — the part's real courtyard (used for the legality check) is
-    unchanged. Raises :class:`LegalizationError` if a part will not fit.
+    unchanged. ``spread`` is a *floor* on that factor applied to **every** movable
+    part, so legalization leaves routing channels between all footprints (HPWL
+    global placement otherwise packs parts shoulder-to-shoulder with no room for
+    tracks). Raises :class:`LegalizationError` if a part will not fit.
     """
     inflation = inflation or {}
     g = grid_mm
@@ -115,7 +119,7 @@ def legalize(
     movable.sort(key=lambda c: courtyard_rect(c).w * courtyard_rect(c).h, reverse=True)
     for comp in movable:
         cr = courtyard_rect(comp)
-        infl = max(1.0, float(inflation.get(comp.ref, 1.0)))
+        infl = max(1.0, spread, float(inflation.get(comp.ref, 1.0)))
         bw = int(math.ceil((cr.w * infl + clearance) / g))
         bh = int(math.ceil((cr.h * infl + clearance) / g))
         r, c = _place_part(occ, g, bw, bh, comp.pos)

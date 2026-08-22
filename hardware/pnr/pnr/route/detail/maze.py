@@ -68,15 +68,18 @@ def _astar(
     via_cost: float,
     pres_fac: float,
     blocked: Optional[Set[Cell]] = None,
+    soft: Optional[Dict[Cell, float]] = None,
 ) -> Optional[List[Cell]]:
     """A\\* from any ``sources`` cell to the nearest ``targets`` cell for ``net``.
     Cost of entering a cell is ``(1 + history)·present`` + a via surcharge on layer
-    moves. ``blocked`` cells are hard-impassable (accepted other-net copper during
-    the rip-up-&-reroute finalize). Returns the path (inclusive) or None."""
+    moves + a ``soft`` penalty for that cell. ``blocked`` cells are hard-impassable;
+    ``soft`` cells (committed other-net copper the rip-up pass may cross at a price)
+    are passable but expensive. Returns the path (inclusive) or None."""
     if not targets:
         return None
     tset = targets
     block = blocked or set()
+    softc = soft or {}
 
     def h(c: Cell) -> float:
         # Manhattan to the closest target (admissible; ignores vias).
@@ -84,7 +87,7 @@ def _astar(
 
     def cell_cost(c: Cell) -> float:
         present = 1.0 + pres_fac * max(0, occ.get(c, 0))
-        return (1.0 + history.get(c, 0.0)) * present
+        return (1.0 + history.get(c, 0.0)) * present + softc.get(c, 0.0)
 
     open_heap: List[Tuple[float, int, Cell]] = []
     g: Dict[Cell, float] = {}
@@ -152,9 +155,11 @@ def _route_one(
     via_cost: float,
     pres_fac: float,
     blocked: Optional[Set[Cell]] = None,
+    soft: Optional[Dict[Cell, float]] = None,
 ) -> Optional[List[Cell]]:
     """Connect all ``access`` cells of ``net`` into one tree (Prim on the grid).
-    ``blocked`` cells are hard-impassable (the finalize's already-committed copper)."""
+    ``blocked`` cells are hard-impassable; ``soft`` adds a crossing penalty (rip-up
+    pass)."""
     access = list(dict.fromkeys(access))  # de-dup, keep order
     if len(access) < 2:
         return list(access)
@@ -163,7 +168,7 @@ def _route_one(
     all_cells: List[Cell] = [access[0]]
     while remaining:
         path = _astar(
-            grid, set(tree), set(remaining), net, occ, history, via_cost, pres_fac, blocked
+            grid, set(tree), set(remaining), net, occ, history, via_cost, pres_fac, blocked, soft
         )
         if path is None:
             return None
@@ -235,40 +240,62 @@ def route(
     max_iters: int = 12,
     via_cost: float = 3.0,
     pres_fac0: float = 0.5,
-    pres_mult: float = 1.8,
+    pres_inc: float = 0.6,
     hist_fac: float = 1.0,
     via_keepout: int = 1,
+    rrr_rounds: int = 10,
+    rip_penalty: float = 4.0,
+    max_rip: int = 5,
 ) -> RouteResult:
     """PathFinder negotiated detailed route of ``net_access`` (net → access cells)
-    on ``grid``. Iterates rip-up-&-reroute until no grid cell (nor via keep-out
-    halo) is shared by two nets (DRC-clean) or ``max_iters``. Deterministic."""
-    nets = [n for n, cells in net_access.items() if len([c for c in cells]) >= 2]
+    on ``grid``. Proper McMurchie–Ebeling: each iteration rips up one net at a time
+    and reroutes it against the *others'* current congestion, so every net
+    negotiates symmetrically (not just the ones routed late in a fixed order). The
+    present-sharing penalty grows **additively** (``pres_inc``) — a multiplicative
+    schedule explodes it and makes later iterations *worse* — while history
+    accumulates on cells that stay contested. Iterate until no cell (nor via keep-out
+    halo) is shared (DRC-clean) or ``max_iters``. Deterministic."""
+    nets = sorted(n for n, cells in net_access.items() if len([c for c in cells]) >= 2)
     history: Dict[Cell, float] = defaultdict(float)
     pres_fac = pres_fac0
     result_nets: Dict[str, RoutedNet] = {}
     iters = 0
 
+    # Persistent congestion: owner[cell] = nets currently on it, occ[cell] = |owner|.
+    owner: Dict[Cell, Set[str]] = defaultdict(set)
+    occ: Dict[Cell, int] = defaultdict(int)
+    routed: Dict[str, Optional[List[Cell]]] = {n: None for n in nets}
+    fps: Dict[str, Set[Cell]] = {n: set() for n in nets}
+
+    def _place(net, cells):
+        routed[net] = cells
+        fp = _footprint(grid, cells, via_keepout) if cells else set()
+        fps[net] = fp
+        for c in fp:
+            owner[c].add(net)
+            occ[c] += 1
+
+    def _rip(net):
+        for c in fps[net]:
+            owner[c].discard(net)
+            occ[c] -= 1
+        fps[net] = set()
+
+    for net in nets:  # initial routes against growing congestion
+        _place(net, _route_one(grid, net_access[net], net, occ, history, via_cost, pres_fac))
+
     for it in range(max_iters):
         iters = it + 1
-        occ: Dict[Cell, int] = defaultdict(int)
-        owner: Dict[Cell, Set[str]] = defaultdict(set)
-        routed: Dict[str, Optional[List[Cell]]] = {}
-        for net in sorted(nets):
-            cells = _route_one(grid, net_access[net], net, occ, history, via_cost, pres_fac)
-            routed[net] = cells
-            if cells:
-                # Account the net's full copper footprint (cells + via keep-out
-                # halos) so contention on via clearance negotiates like cell sharing.
-                for c in _footprint(grid, cells, via_keepout):
-                    occ[c] += 1
-                    owner[c].add(net)
+        for net in nets:
+            _rip(net)  # reroute this net against the OTHERS' current congestion
+            _place(net, _route_one(grid, net_access[net], net, occ, history, via_cost, pres_fac))
 
         overused = [c for c, os in owner.items() if len(os) > 1]
         if not overused:
             break
         for c in overused:
-            history[c] += hist_fac
-        pres_fac *= pres_mult
+            history[c] += hist_fac * (len(owner[c]) - 1)
+        pres_fac += pres_inc
 
     # Finalize to a DRC-clean result *always*, in two passes:
     #
@@ -327,4 +354,81 @@ def route(
             rn.name = net
             rn.routed = False
             result_nets[net] = rn
+
+    # Pass 3 — iterative RIP-UP & REROUTE. The negotiation leaves routable nets
+    # unrouted (measured: the large majority of unrouted nets route fine in
+    # isolation — they're blocked by *committed* nets, not by the board). Let each
+    # still-unrouted net cross committed copper at a penalty, then rip up the nets it
+    # crossed and requeue them. The crossing penalty rises each round so rip-ups die
+    # out and it converges. This is what turns "the router gave up" into "found a
+    # way", and it stays DRC-clean (committed footprints never overlap).
+    routed_cells: Dict[str, List[Cell]] = {
+        n: rn.cells for n, rn in result_nets.items() if rn.routed
+    }
+
+    for rnd in range(rrr_rounds):
+        if not unrouted:
+            break
+        penalty = rip_penalty * (rnd + 1)
+        progress = False
+        for net in sorted(unrouted, key=lambda n: (_span(n), n)):
+            soft = {c: penalty for c, o in occupied.items() if o != net}
+            cells = _route_one(
+                grid, net_access[net], net, zero_occ, zero_hist, via_cost, 0.0, soft=soft
+            )
+            if not cells:
+                continue
+            fp = _footprint(grid, cells, via_keepout)
+            crossed = {occupied[c] for c in fp if c in occupied and occupied[c] != net}
+            if not crossed:
+                _commit(net, cells)  # clean path opened up — take it
+                routed_cells[net] = cells
+                unrouted.remove(net)
+                progress = True
+                continue
+            if len(crossed) > max_rip:
+                continue
+            # Tentative rip: only accept if EVERY crossed net can reroute around the
+            # new commit — so a rip never loses a net (committed count only grows).
+            freed: Set[Cell] = set()
+            for c in crossed:
+                freed |= _footprint(grid, routed_cells[c], via_keepout)
+            new_committed = (committed - freed) | fp
+            reroutes: Dict[str, List[Cell]] = {}
+            ok = True
+            for c in sorted(crossed):
+                rc = _route_one(
+                    grid,
+                    net_access[c],
+                    c,
+                    zero_occ,
+                    zero_hist,
+                    via_cost,
+                    0.0,
+                    blocked=new_committed,
+                )
+                rfp = _footprint(grid, rc, via_keepout) if rc else set()
+                if rc and not (rfp & new_committed):
+                    reroutes[c] = rc
+                    new_committed |= rfp
+                else:
+                    ok = False
+                    break
+            if not ok:
+                continue
+            # Apply: rip the crossed nets, commit net + their reroutes.
+            for c in crossed:
+                for cell in _footprint(grid, routed_cells[c], via_keepout):
+                    if occupied.get(cell) == c:
+                        del occupied[cell]
+                        committed.discard(cell)
+            _commit(net, cells)
+            routed_cells[net] = cells
+            for c, rc in reroutes.items():
+                _commit(c, rc)
+                routed_cells[c] = rc
+            unrouted.remove(net)
+            progress = True
+        if not progress:
+            break
     return RouteResult(nets=result_nets, unrouted=sorted(unrouted), iterations=iters)

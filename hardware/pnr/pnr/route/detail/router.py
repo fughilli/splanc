@@ -13,6 +13,7 @@ Pure Python on the graph — no pcbnew. Deterministic under the grid's fixed ord
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from typing import List, Optional, Set, Tuple
 
@@ -132,6 +133,25 @@ def _mark_plane_regions(
         grid.block_region(region, layers=[la], grow=margin + grid.clearance)
 
 
+def _diag_unrouted(grid, net_access, unrouted, via_keepout):
+    """Diagnostic: re-route each unrouted net ALONE (fresh occupancy, only the pad
+    obstacles) and report how many find a path. Routable-alone ⇒ the net's path
+    exists and the router's *negotiation* failed to deconflict it (a router-quality
+    gap); not-routable-alone ⇒ genuinely blocked by pads/planes (a resource gap)."""
+    import sys
+
+    alone_ok = 0
+    for net in unrouted:
+        r = route(grid, {net: net_access[net]}, max_iters=6, via_keepout=via_keepout)
+        if not r.unrouted:
+            alone_ok += 1
+    sys.stderr.write(
+        "DIAG unrouted=%d: routable-alone=%d (negotiation-limited), "
+        "blocked-alone=%d (resource-limited)\n"
+        % (len(unrouted), alone_ok, len(unrouted) - alone_ok)
+    )
+
+
 def route_board(
     graph: BoardGraph,
     constraints: CompiledConstraints,
@@ -201,6 +221,9 @@ def route_board(
     net_access = {n: cells for n, cells in plan.net_access.items() if len(cells) >= 2}
 
     result = route(grid, net_access, max_iters=max_iters, via_keepout=via_keepout)
+
+    if os.environ.get("PNR_DIAG_UNROUTED"):
+        _diag_unrouted(grid, net_access, result.unrouted, via_keepout)
 
     board = BoardRoute(result=result, grid=grid, plane_nets=planes)
     layer_names = grid.layers

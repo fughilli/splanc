@@ -52,6 +52,11 @@ class PlacementReport:
         )
 
 
+# Cap on the legalizer's per-part footprint inflation (the global spread does the
+# board-filling; legalization just needs channel slack that still fits the outline).
+_LEGALIZE_SPREAD_CAP = 1.3
+
+
 def place(
     graph: BoardGraph,
     constraints: CompiledConstraints,
@@ -61,6 +66,7 @@ def place(
     grid_mm: float = 0.5,
     orient: bool = True,
     inflation: Optional[Dict[str, float]] = None,
+    spread: float = 1.0,
 ) -> Tuple[BoardGraph, PlacementReport]:
     """Place ``graph`` under ``constraints``; return the placed graph + report.
 
@@ -88,6 +94,7 @@ def place(
         iters=iters,
         orient=orient,
         inflation=inflation,
+        spread=spread,
     )
     cont = BoardGraph.from_json(graph.to_json())
     for comp in cont.components:
@@ -104,6 +111,11 @@ def place(
         clearance=clearance,
         grid_mm=grid_mm,
         inflation=inflation,
+        # The global spread already distributes parts across the board; the
+        # legalizer only needs enough per-part slack to keep routing channels — a
+        # full spread here would over-reserve and fail to fit on a tight outline
+        # (grow the outline via the rubber-band instead).
+        spread=min(spread, _LEGALIZE_SPREAD_CAP),
     )
 
     # Stamp the *placement region* as the placed board's outline, so downstream

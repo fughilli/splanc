@@ -165,6 +165,7 @@ def _place_route_loop(
     detail_rules: Optional[dict],
     detail_pitch_mm: Optional[float],
     detail_iters: int,
+    spread: float,
 ) -> Tuple[BoardGraph, FeedbackReport]:
     """One place↔route loop at the *current* ``constraints`` outline (the inner loop
     the rubber-band wraps). See :func:`route_and_place`."""
@@ -183,7 +184,13 @@ def _place_route_loop(
     for r in range(max_rounds):
         report.rounds = r + 1
         placed, prep = place(
-            graph, constraints, seed=seed, iters=iters, orient=orient, inflation=inflation
+            graph,
+            constraints,
+            seed=seed,
+            iters=iters,
+            orient=orient,
+            inflation=inflation,
+            spread=spread,
         )
         report.placement = prep
 
@@ -261,6 +268,7 @@ def route_and_place(
     auto_outline: bool = False,
     outline_grow: float = 1.15,
     outline_max_scale: float = 2.0,
+    spread: float = 1.0,
 ) -> Tuple[BoardGraph, FeedbackReport]:
     """Run the place↔route loop to convergence (or the round cap).
 
@@ -305,6 +313,7 @@ def route_and_place(
             detail_rules=detail_rules,
             detail_pitch_mm=detail_pitch_mm,
             detail_iters=detail_iters,
+            spread=spread,
         )
         report.outline_scale = scale
         if report.converged or not auto_outline or scale >= outline_max_scale - 1e-9:
