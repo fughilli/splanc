@@ -599,3 +599,29 @@ py_test(
         requirement("websockets"),
     ],
 )
+
+# Exercise the netstack example roles (BLE peripheral, STA client, AP webserver)
+# on real C6 hardware — one reservation, flash each in turn, assert the role
+# reaches its end state. hitl-tagged so it runs in the HITL CI lane.
+py_test(
+    name = "netstack_examples",
+    size = "large",
+    timeout = "eternal",
+    srcs = ["hitl_netstack_examples.py"],
+    data = [
+        "//firmware/netstack:ap_webserver_flashbundle",
+        "//firmware/netstack:ble_peripheral_flashbundle",
+        "//firmware/netstack:sta_client_flashbundle",
+        "//pi/hitl/cmd/hitl",
+    ],
+    imports = ["."],
+    main = "hitl_netstack_examples.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "@rules_python//python/runfiles",
+    ],
+)
