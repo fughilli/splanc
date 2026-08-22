@@ -198,14 +198,18 @@ let
       # The container has no /var/run/dbus; point dbus-fast at the mounted socket.
       os.environ.setdefault("DBUS_SYSTEM_BUS_ADDRESS", "unix:path=/run/dbus/system_bus_socket")
       from bleak import BleakScanner, BleakClient
+      # Route BLE at the adapter the daemon selected (a USB dongle on rigs whose
+      # onboard controller is flaky); bleak's BlueZ backend defaults to hci0.
+      _adp = os.environ.get("HITL_BLE_ADAPTER", "").strip()
+      _akw = {"adapter": _adp} if _adp else {}
       async def scan(seconds, name):
-          found = await BleakScanner.discover(timeout=seconds, return_adv=True)
+          found = await BleakScanner.discover(timeout=seconds, return_adv=True, **_akw)
           for addr, (d, adv) in sorted(found.items()):
               if name and name.lower() not in (d.name or "").lower():
                   continue
               print("%s  rssi=%s  %s" % (addr, adv.rssi, d.name or ""))
       async def gatt(address):
-          async with BleakClient(address) as c:
+          async with BleakClient(address, **_akw) as c:
               for s in c.services:
                   print("service %s" % s.uuid)
                   for ch in s.characteristics:

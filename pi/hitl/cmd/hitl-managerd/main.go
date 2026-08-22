@@ -68,6 +68,12 @@ func main() {
 	btmonBin := flag.String("btmon", "btmon", "btmon binary for per-reservation BLE HCI capture (empty disables capture)")
 	btmonSize := flag.Int64("btmon-size-bytes", 64<<20, "hard size cap for a capture's btsnoop file, in bytes")
 	btmonMax := flag.Duration("btmon-max", 30*time.Minute, "max wall-clock for a single BLE HCI capture")
+	// BLE central adapter selection. Empty = the system default controller (onboard).
+	// A literal like "hci1" pins that controller; the special value "usb" resolves
+	// the USB Bluetooth controller (a dongle) by bus at runtime — used to route BLE
+	// around a marginal onboard controller. Threads into btmon (-i) and the
+	// container's bleak ($HITL_BLE_ADAPTER). See runner.PodmanConfig.BLEAdapter.
+	bleAdapter := flag.String("ble-adapter", "", `BLE central adapter: "" = system default, "hciN" pins one, "usb" auto-resolves the USB controller`)
 	var devices stringList
 	flag.Var(&devices, "device", "extra --device mapping for the single-DUT fallback (repeatable)")
 	var duts stringList
@@ -118,6 +124,7 @@ func main() {
 		Btmon:           *btmonBin,
 		CaptureMaxBytes: *btmonSize,
 		CaptureMaxDur:   *btmonMax,
+		BLEAdapter:      *bleAdapter,
 	})
 
 	channelMap, err := analyzer.ParseChannelMap(*analyzerMap)

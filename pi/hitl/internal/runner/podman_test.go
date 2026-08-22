@@ -60,3 +60,56 @@ func TestDeviceMappingBareAndMissing(t *testing.T) {
 		t.Error("a missing host device must be skipped (ok=false)")
 	}
 }
+
+// resolveBLEAdapter maps the configured value to a concrete adapter: "" and a
+// literal "hciN" pass through unchanged (no sysfs lookup).
+func TestResolveBLEAdapterLiteral(t *testing.T) {
+	if got := (&PodmanRunner{cfg: PodmanConfig{BLEAdapter: ""}}).resolveBLEAdapter(); got != "" {
+		t.Errorf("empty BLEAdapter = %q, want \"\"", got)
+	}
+	if got := (&PodmanRunner{cfg: PodmanConfig{BLEAdapter: "hci1"}}).resolveBLEAdapter(); got != "hci1" {
+		t.Errorf("literal BLEAdapter = %q, want \"hci1\"", got)
+	}
+}
+
+// resolveUSBHCIIn picks the Bluetooth controller whose device symlink resolves to
+// a USB path AND is UP, ignoring the onboard (UART/platform) one and a
+// present-but-DOWN dongle, and returns "" when none qualifies. hci entries are
+// sorted so the pick is deterministic.
+func TestResolveUSBHCI(t *testing.T) {
+	mkHCI := func(root, name, target string) {
+		if err := os.MkdirAll(target, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		hci := filepath.Join(root, name)
+		if err := os.MkdirAll(hci, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, filepath.Join(hci, "device")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	allUp := func(int) bool { return true }
+
+	// Onboard UART hci0 + a USB dongle hci1 that is UP → pick hci1.
+	root := resolvedTempDir(t)
+	mkHCI(root, "hci0", filepath.Join(root, "_serial", "serial0-0", "bluetooth", "hci0"))
+	mkHCI(root, "hci1", filepath.Join(root, "_usb", "usb3", "3-1", "3-1:1.0", "bluetooth", "hci1"))
+	if got := resolveUSBHCIIn(root, allUp); got != "hci1" {
+		t.Errorf("resolveUSBHCIIn = %q, want \"hci1\" (the UP USB controller)", got)
+	}
+
+	// Same topology but the USB dongle is DOWN (firmware not loaded) → fall back to
+	// "" so the caller uses the onboard default rather than a dead adapter.
+	downUSB := func(id int) bool { return id != 1 } // hci1 (the dongle) is down
+	if got := resolveUSBHCIIn(root, downUSB); got != "" {
+		t.Errorf("resolveUSBHCIIn with a DOWN dongle = %q, want \"\" (fall back)", got)
+	}
+
+	// No USB controller at all → "".
+	onlyUART := resolvedTempDir(t)
+	mkHCI(onlyUART, "hci0", filepath.Join(onlyUART, "_serial", "bluetooth", "hci0"))
+	if got := resolveUSBHCIIn(onlyUART, allUp); got != "" {
+		t.Errorf("resolveUSBHCIIn with no USB controller = %q, want \"\"", got)
+	}
+}
