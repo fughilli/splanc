@@ -1,0 +1,402 @@
+#pragma experiment("BRIDGE_CONNECT")
+
+import ElectricPower
+
+from "parts/Espressif_Systems_ESP32_C6_WROOM_1_N8/Espressif_Systems_ESP32_C6_WROOM_1_N8.ato" import Espressif_Systems_ESP32_C6_WROOM_1_N8_package
+from "parts/Korean_Hroparts_TYPE_C_16PIN_2MD_073/Korean_Hroparts_TYPE_C_16PIN_2MD_073.ato" import Korean_Hroparts_TYPE_C_16PIN_2MD_073_package
+from "parts/Texas_Instruments_TLV62569DBVR/Texas_Instruments_TLV62569DBVR.ato" import Texas_Instruments_TLV62569DBVR_package
+from "parts/Texas_Instruments_TPS61088RHLR/Texas_Instruments_TPS61088RHLR.ato" import Texas_Instruments_TPS61088RHLR_package
+from "parts/Texas_Instruments_INA226AIDGSR/Texas_Instruments_INA226AIDGSR.ato" import Texas_Instruments_INA226AIDGSR_package
+from "parts/Texas_Instruments_SN74LVC1T45DBVR/Texas_Instruments_SN74LVC1T45DBVR.ato" import Texas_Instruments_SN74LVC1T45DBVR_package
+from "parts/Alpha___Omega_AO3401A/Alpha___Omega_AO3401A.ato" import Alpha___Omega_AO3401A_package
+from "parts/Changjiang_MMBT3904_RANGE_100_300/Changjiang_MMBT3904_RANGE_100_300.ato" import Changjiang_MMBT3904_RANGE_100_300_package
+from "parts/Microchip_MCP73831T_2ACI_OT/Microchip_MCP73831T_2ACI_OT.ato" import Microchip_MCP73831T_2ACI_OT_package
+from "parts/Analog_Devices_MAX17048G_T10/Analog_Devices_MAX17048G_T10.ato" import Analog_Devices_MAX17048G_T10_package
+from "parts/TDK_InvenSense_MPU_6050/TDK_InvenSense_MPU_6050.ato" import TDK_InvenSense_MPU_6050_package
+from "parts/Bosch_BMP280/Bosch_BMP280.ato" import Bosch_BMP280_package
+from "parts/XKB_TS_1088_AR02016/XKB_TS_1088_AR02016.ato" import XKB_TS_1088_AR02016_package
+from "parts/JST_B2B_PH_K_S_LF__SN/JST_B2B_PH_K_S_LF__SN.ato" import JST_B2B_PH_K_S_LF__SN_package
+from "parts/JST_B3B_PH_K_S_LF__SN/JST_B3B_PH_K_S_LF__SN.ato" import JST_B3B_PH_K_S_LF__SN_package
+from "parts/XKB_PZ254V_12_20P/XKB_PZ254V_12_20P.ato" import XKB_PZ254V_12_20P_package
+from "passives.ato" import C100n
+from "passives.ato" import C1u
+from "passives.ato" import C10u
+from "passives.ato" import C10u_0603
+from "passives.ato" import C22u
+from "passives.ato" import FB600
+from "passives.ato" import L1u
+from "passives.ato" import R33
+from "passives.ato" import R1k
+from "passives.ato" import R2k
+from "passives.ato" import R5k1
+from "passives.ato" import R10k
+from "passives.ato" import R100k
+from "passives.ato" import Rshunt
+
+
+module LedChannel:
+    """One monitored + switched 5 V LED channel (docs/hardware §6):
+    shunt -> INA226 (I2C V/I) -> P-FET high-side load switch -> level-shifted
+    WS2812 data -> 3-pin connector. `en` turns the channel on; `fault` carries
+    the INA226 over-current alert. `sda`/`scl` join the shared I2C bus; the
+    caller straps `ina.A0`/`ina.A1` to pick the address."""
+    p5v = new ElectricPower       # 5 V boost rail in
+    p3v3 = new ElectricPower      # logic rail (INA226 supply + shifter A side)
+    signal data_in                # WS2812 data from the MCU (3V3)
+    signal data_out               # level-shifted data to the connector (5V)
+    signal en                     # channel enable from the MCU (active high)
+    signal fault                  # INA226 over-current alert to the MCU
+    signal chan_out               # switched 5 V to the LED connector
+    signal sda
+    signal scl
+
+    # Shunt + INA226 monitor. Bus voltage sensed on the load side of the shunt.
+    shunt = new Rshunt
+    ina = new Texas_Instruments_INA226AIDGSR_package
+    shunt.p1 ~ p5v.hv
+    ina.VINpos ~ p5v.hv
+    ina.VINneg ~ shunt.p2
+    ina.VBUS ~ shunt.p2
+    ina.VSpos ~ p3v3.hv
+    ina.GND ~ p5v.lv
+    ina.SDA ~ sda
+    ina.SCL ~ scl
+    ina.Alert ~ fault
+    ina_dec = new C100n
+    ina_dec.p1 ~ p3v3.hv
+    ina_dec.p2 ~ p5v.lv
+
+    # High-side load switch: P-FET, gate pulled to source, an NPN pulls the gate
+    # low (channel ON) when `en` is high. The P-FET is the over-current/short
+    # shutoff element (see docs/hardware §6, exercised by the EoL tester).
+    pfet = new Alpha___Omega_AO3401A_package
+    pfet.S ~ shunt.p2
+    pfet.D ~ chan_out
+    gate_pu = new R10k
+    gate_pu.p1 ~ shunt.p2
+    gate_pu.p2 ~ pfet.G
+    nmos = new Changjiang_MMBT3904_RANGE_100_300_package
+    nmos.C ~ pfet.G
+    nmos.E ~ p5v.lv
+    base_r = new R1k
+    base_r.p1 ~ en
+    base_r.p2 ~ nmos.B
+
+    # 3V3 -> 5V data level shift (DIR high = A->B) + series termination.
+    shifter = new Texas_Instruments_SN74LVC1T45DBVR_package
+    shifter.VCCA ~ p3v3.hv
+    shifter.VCCB ~ p5v.hv
+    shifter.GND ~ p5v.lv
+    shifter.DIR ~ p5v.hv
+    shifter.A ~ data_in
+    term = new R33
+    term.p1 ~ shifter.B
+    term.p2 ~ data_out
+    shifter_dec = new C100n
+    shifter_dec.p1 ~ p5v.hv
+    shifter_dec.p2 ~ p5v.lv
+
+    # 3-pin LED connector: 5V / DATA / GND.
+    conn = new JST_B3B_PH_K_S_LF__SN_package
+    conn.p1 ~ chan_out
+    conn.p2 ~ data_out
+    conn.p3 ~ p5v.lv
+    chan_bulk = new C10u
+    chan_bulk.p1 ~ p5v.hv
+    chan_bulk.p2 ~ p5v.lv
+
+
+module SplancDev:
+    """Splanc Dev Module (FUG-131). Full board per docs/hardware/splanc-dev-module.md.
+
+    Every part is a real, pre-picked atomic LCSC component (elec/src/parts; common
+    passives wrapped in passives.ato), so the board builds hermetically — no
+    picker/components-API/EasyEDA at build time. Simplifications vs the design
+    doc, all noted inline: VSYS is USB-fed (battery charges but doesn't load-share
+    — doc §5.3), the power-path pushbutton is omitted, and the compass/mic are
+    left off the first spin (their footprints didn't resolve here)."""
+
+    # -- Rails ---------------------------------------------------------------
+    vbus = new ElectricPower       # 5 V from USB-C
+    vbus.voltage = 5V +/- 5%
+    vsys = new ElectricPower       # system rail (USB-fed on this board)
+    vsys.voltage = 5V +/- 20%
+    p3v3 = new ElectricPower       # logic rail
+    p3v3.voltage = 3.3V +/- 3%
+    p3v3a = new ElectricPower      # quiet analog rail for the sensors
+    p3v3a.voltage = 3.3V +/- 3%
+    p5v = new ElectricPower        # 5 V boost output for the LED channels
+    p5v.voltage = 5V +/- 5%
+    vbat = new ElectricPower        # 1S LiPo
+    vbat.voltage = 3.7V +/- 20%
+
+    # Common ground; VBUS feeds VSYS directly (see docstring).
+    vbus.lv ~ vsys.lv
+    vsys.lv ~ p3v3.lv
+    p3v3.lv ~ p5v.lv
+    p5v.lv ~ vbat.lv
+    p3v3.lv ~ p3v3a.lv
+    vbus.hv ~ vsys.hv
+    # 3V3A derived from 3V3 through a ferrite bead (quiet analog island).
+    aferrite = new FB600
+    aferrite.p1 ~ p3v3.hv
+    aferrite.p2 ~ p3v3a.hv
+    a_dec = new C1u
+    a_dec.p1 ~ p3v3a.hv
+    a_dec.p2 ~ p3v3a.lv
+
+    # Shared I2C0 bus (2k2 pull-ups to 3V3A).
+    signal i2c_sda
+    signal i2c_scl
+    sda_pu = new R2k
+    sda_pu.p1 ~ p3v3a.hv
+    sda_pu.p2 ~ i2c_sda
+    scl_pu = new R2k
+    scl_pu.p1 ~ p3v3a.hv
+    scl_pu.p2 ~ i2c_scl
+
+    # -- MCU: ESP32-C6-WROOM-1-N8 -------------------------------------------
+    esp = new Espressif_Systems_ESP32_C6_WROOM_1_N8_package
+    esp.P3V3 ~ p3v3.hv
+    esp.GND ~ p3v3.lv
+    esp_dec = new C100n
+    esp_dec.p1 ~ p3v3.hv
+    esp_dec.p2 ~ p3v3.lv
+    esp_bulk = new C10u_0603
+    esp_bulk.p1 ~ p3v3.hv
+    esp_bulk.p2 ~ p3v3.lv
+    esp.IO6 ~ i2c_sda
+    esp.IO7 ~ i2c_scl
+
+    # Reset (EN): 10k pull-up + 100 nF + button. BOOT (IO9): 10k pull-up + button.
+    en_pullup = new R10k
+    en_pullup.p1 ~ p3v3.hv
+    en_pullup.p2 ~ esp.EN
+    en_cap = new C100n
+    en_cap.p1 ~ esp.EN
+    en_cap.p2 ~ p3v3.lv
+    btn_reset = new XKB_TS_1088_AR02016_package
+    btn_reset.p1 ~ esp.EN
+    btn_reset.p2 ~ p3v3.lv
+    boot_pullup = new R10k
+    boot_pullup.p1 ~ p3v3.hv
+    boot_pullup.p2 ~ esp.IO9
+    btn_boot = new XKB_TS_1088_AR02016_package
+    btn_boot.p1 ~ esp.IO9
+    btn_boot.p2 ~ p3v3.lv
+
+    # Two user buttons (IO22, IO23) with pull-ups.
+    u1_pullup = new R10k
+    u1_pullup.p1 ~ p3v3.hv
+    u1_pullup.p2 ~ esp.IO22
+    btn_user1 = new XKB_TS_1088_AR02016_package
+    btn_user1.p1 ~ esp.IO22
+    btn_user1.p2 ~ p3v3.lv
+    u2_pullup = new R10k
+    u2_pullup.p1 ~ p3v3.hv
+    u2_pullup.p2 ~ esp.IO23
+    btn_user2 = new XKB_TS_1088_AR02016_package
+    btn_user2.p1 ~ esp.IO23
+    btn_user2.p2 ~ p3v3.lv
+
+    # -- USB-C (native USB: JTAG + CDC) -------------------------------------
+    usbc = new Korean_Hroparts_TYPE_C_16PIN_2MD_073_package
+    usbc.VBUS ~ vbus.hv
+    usbc.EH ~ vbus.lv
+    cc1_r = new R5k1
+    cc1_r.p1 ~ usbc.CC1
+    cc1_r.p2 ~ vbus.lv
+    cc2_r = new R5k1
+    cc2_r.p1 ~ usbc.CC2
+    cc2_r.p2 ~ vbus.lv
+    usbc.Dp1 ~ esp.IO13
+    usbc.Dp2 ~ esp.IO13
+    usbc.Dn1 ~ esp.IO12
+    usbc.Dn2 ~ esp.IO12
+    vbus_bulk = new C10u_0603
+    vbus_bulk.p1 ~ vbus.hv
+    vbus_bulk.p2 ~ vbus.lv
+
+    # -- 3V3 buck: TLV62569 (VSYS -> 3V3) -----------------------------------
+    buck = new Texas_Instruments_TLV62569DBVR_package
+    buck.VIN ~ vsys.hv
+    buck.EN ~ vsys.hv
+    buck_l = new L1u
+    buck_l.p1 ~ buck.SW
+    buck_l.p2 ~ p3v3.hv
+    fb_top = new R100k
+    fb_top.p1 ~ p3v3.hv
+    fb_top.p2 ~ buck.FB
+    fb_bot = new R2k
+    fb_bot.p1 ~ buck.FB
+    fb_bot.p2 ~ p3v3.lv
+    buck_in = new C10u
+    buck_in.p1 ~ vsys.hv
+    buck_in.p2 ~ vsys.lv
+    buck_out = new C10u
+    buck_out.p1 ~ p3v3.hv
+    buck_out.p2 ~ p3v3.lv
+
+    # -- 5 V boost: TPS61088 (VSYS -> 5V0, EN from IO10) --------------------
+    # Feedback / current-limit / compensation values are first-pass and flagged
+    # for datasheet verification (docs/hardware §5.3).
+    boost = new Texas_Instruments_TPS61088RHLR_package
+    boost.VIN ~ vsys.hv
+    boost.VCC ~ vsys.hv
+    boost.AGND ~ vsys.lv
+    boost.PGND ~ vsys.lv
+    boost.EN ~ esp.IO10
+    boost.MODE ~ vsys.lv
+    boost.VOUT ~ p5v.hv
+    boost_l = new L1u
+    boost_l.p1 ~ vsys.hv
+    boost_l.p2 ~ boost.SW
+    boost_boot = new C100n
+    boost_boot.p1 ~ boost.SW
+    boost_boot.p2 ~ boost.BOOT
+    boost_fbtop = new R100k
+    boost_fbtop.p1 ~ p5v.hv
+    boost_fbtop.p2 ~ boost.FB
+    boost_fbbot = new R1k
+    boost_fbbot.p1 ~ boost.FB
+    boost_fbbot.p2 ~ vsys.lv
+    boost_ss = new C100n
+    boost_ss.p1 ~ boost.SS
+    boost_ss.p2 ~ vsys.lv
+    boost_ilim = new R10k
+    boost_ilim.p1 ~ boost.ILIM
+    boost_ilim.p2 ~ vsys.lv
+    boost_fsw = new R100k
+    boost_fsw.p1 ~ boost.FSW
+    boost_fsw.p2 ~ vsys.lv
+    boost_comp = new C100n
+    boost_comp.p1 ~ boost.COMP
+    boost_comp.p2 ~ vsys.lv
+    boost_vcc = new C1u
+    boost_vcc.p1 ~ boost.VCC
+    boost_vcc.p2 ~ vsys.lv
+    boost_in = new C22u
+    boost_in.p1 ~ vsys.hv
+    boost_in.p2 ~ vsys.lv
+    boost_out1 = new C22u
+    boost_out1.p1 ~ p5v.hv
+    boost_out1.p2 ~ p5v.lv
+    boost_out2 = new C22u
+    boost_out2.p1 ~ p5v.hv
+    boost_out2.p2 ~ p5v.lv
+
+    # -- LED channels x2 -----------------------------------------------------
+    led0 = new LedChannel
+    led0.p5v ~ p5v
+    led0.p3v3 ~ p3v3
+    led0.data_in ~ esp.IO0
+    led0.en ~ esp.IO2
+    led0.fault ~ esp.IO3
+    led0.sda ~ i2c_sda
+    led0.scl ~ i2c_scl
+    led0.ina.A0 ~ p3v3.lv        # A0=A1=GND -> 0x40
+    led0.ina.A1 ~ p3v3.lv
+    led1 = new LedChannel
+    led1.p5v ~ p5v
+    led1.p3v3 ~ p3v3
+    led1.data_in ~ esp.IO1
+    led1.en ~ esp.IO4
+    led1.fault ~ esp.IO5
+    led1.sda ~ i2c_sda
+    led1.scl ~ i2c_scl
+    led1.ina.A0 ~ p3v3a.hv       # A0=VS -> 0x41
+    led1.ina.A1 ~ p3v3.lv
+
+    # -- Sensors (I2C0, on 3V3A) --------------------------------------------
+    # MPU6050 (0x68): AD0 low. INT -> IO21. REGOUT + CPOUT caps per datasheet.
+    mpu = new TDK_InvenSense_MPU_6050_package
+    mpu.VDD ~ p3v3a.hv
+    mpu.VLOGIC ~ p3v3a.hv
+    mpu.GND ~ p3v3a.lv
+    mpu.SDA ~ i2c_sda
+    mpu.SCL ~ i2c_scl
+    mpu.AD0 ~ p3v3a.lv
+    mpu.INT ~ esp.IO21
+    mpu_dec = new C100n
+    mpu_dec.p1 ~ p3v3a.hv
+    mpu_dec.p2 ~ p3v3a.lv
+    mpu_reg = new C100n
+    mpu_reg.p1 ~ mpu.REGOUT
+    mpu_reg.p2 ~ p3v3a.lv
+    mpu_cp = new C100n
+    mpu_cp.p1 ~ mpu.CPOUT
+    mpu_cp.p2 ~ p3v3a.lv
+
+    # BMP280 (0x76): I2C mode (CSB=VDDIO, SDO=GND).
+    bmp = new Bosch_BMP280_package
+    bmp.VDD ~ p3v3a.hv
+    bmp.VDDIO ~ p3v3a.hv
+    bmp.GND ~ p3v3a.lv
+    bmp.SCK ~ i2c_scl
+    bmp.SDI ~ i2c_sda
+    bmp.SDO ~ p3v3a.lv
+    bmp.CSB ~ p3v3a.hv
+    bmp_dec = new C100n
+    bmp_dec.p1 ~ p3v3a.hv
+    bmp_dec.p2 ~ p3v3a.lv
+
+    # -- Battery: charger + fuel gauge + connector --------------------------
+    # MCP73831 charges VBAT from VBUS. PROG (2k) ~ 500 mA. STAT via 1k to 3V3.
+    charger = new Microchip_MCP73831T_2ACI_OT_package
+    charger.VDD ~ vbus.hv
+    charger.VBAT ~ vbat.hv
+    charger.VSS ~ vbus.lv
+    chg_prog = new R2k
+    chg_prog.p1 ~ charger.PROG
+    chg_prog.p2 ~ vbus.lv
+    chg_stat = new R1k
+    chg_stat.p1 ~ p3v3.hv
+    chg_stat.p2 ~ charger.STAT
+    chg_in = new C1u
+    chg_in.p1 ~ vbus.hv
+    chg_in.p2 ~ vbus.lv
+    chg_out = new C1u
+    chg_out.p1 ~ vbat.hv
+    chg_out.p2 ~ vbat.lv
+
+    # MAX17048 fuel gauge (0x36), powered from the cell, reports over I2C.
+    gauge = new Analog_Devices_MAX17048G_T10_package
+    gauge.VDD ~ vbat.hv
+    gauge.CELL ~ vbat.hv
+    gauge.EP ~ vbat.lv
+    gauge.SDA ~ i2c_sda
+    gauge.SCL ~ i2c_scl
+    gauge_alrt = new R10k
+    gauge_alrt.p1 ~ p3v3.hv
+    gauge_alrt.p2 ~ gauge.nALRT
+    gauge_dec = new C100n
+    gauge_dec.p1 ~ vbat.hv
+    gauge_dec.p2 ~ vbat.lv
+
+    # Battery connector (JST-PH 2-pin).
+    bat_conn = new JST_B2B_PH_K_S_LF__SN_package
+    bat_conn.p1 ~ vbat.hv
+    bat_conn.p2 ~ vbat.lv
+
+    # -- EoL test connector (2x10) — docs/hardware §11 ----------------------
+    eol = new XKB_PZ254V_12_20P_package
+    eol.p1 ~ vbus.hv          # VBUS_INJ
+    eol.p2 ~ p3v3.lv          # GND
+    eol.p3 ~ vsys.hv          # VSYS_SENSE
+    eol.p4 ~ vbat.hv          # VBAT_SENSE
+    eol.p5 ~ p5v.hv           # 5V0_SENSE
+    eol.p6 ~ p3v3.hv          # 3V3_SENSE
+    eol.p7 ~ led0.fault       # CH0_CSA (INA226 alert)
+    eol.p8 ~ led1.fault       # CH1_CSA
+    eol.p9 ~ led0.chan_out    # CH0_5V (to simulated load)
+    eol.p10 ~ led1.chan_out   # CH1_5V
+    eol.p11 ~ esp.IO0         # LED_CH0_DATA (FX2 tap)
+    eol.p12 ~ esp.IO1         # LED_CH1_DATA
+    eol.p13 ~ i2c_sda         # I2C_SDA
+    eol.p14 ~ i2c_scl         # I2C_SCL
+    eol.p15 ~ esp.EN          # BTN_RESET_DRV
+    eol.p16 ~ esp.IO9         # BTN_BOOT_DRV
+    eol.p17 ~ esp.IO22        # BTN_USER1_DRV
+    eol.p18 ~ esp.IO23        # BTN_USER2_DRV
+    eol.p19 ~ esp.TXD0        # UART0_TXD
+    eol.p20 ~ esp.RXD0        # UART0_RXD

@@ -1,0 +1,332 @@
+"""Algorithmic place-and-route for the atopile PCBs (FUG-138).
+
+Design + rationale: docs/hardware/pnr-system.md. Running handoff: WORKLOG.md.
+This package is the CPU-first Python engine; the differentiable placement core
+(a later phase) is PyTorch. The two interpreters in the flow are kept apart:
+
+- `pnr` (this py_library) is imported by the hermetic rules_python interpreter
+  that carries torch. `pnr.ingest`/`pnr.writeback` import KiCad's `pcbnew`
+  **lazily**, so the library imports fine here even though `pcbnew` is absent —
+  the `pcbnew` path runs out-of-band under `@kicad_python`, wired by the
+  `atopile_pnr` rule in `//hardware/pnr:pnr.bzl` (the `<board>.fab` flow).
+- `torch_smoke_test` is the Task 0 gate: torch imports + runs on CPU.
+"""
+
+load("@pypi//:requirements.bzl", "requirement")
+load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
+
+package(default_visibility = ["//visibility:public"])
+
+# The stdlib-only pnr sources the pcbnew steps (ingest, writeback) run under
+# @kicad_python — staged as plain files on PYTHONPATH, NOT the torch py_library
+# (KiCad's python has no torch and doesn't need it). See //hardware/pnr:pnr.bzl.
+filegroup(
+    name = "pnr_kicad_srcs",
+    srcs = [
+        "pnr/__init__.py",
+        "pnr/graph.py",
+        "pnr/ingest.py",
+        "pnr/planes.py",
+        "pnr/quality.py",
+        "pnr/writeback.py",
+    ],
+)
+
+# Core: graph + constraints + ingest. No torch/numpy — the light path that the
+# KiCad pcbnew flow and the schema tests use.
+py_library(
+    name = "pnr",
+    srcs = glob(["pnr/*.py"]),  # top-level modules only, not pnr/place/
+    imports = ["."],
+    deps = [
+        requirement("pyyaml"),  # constraints.py parses the sidecar YAML
+    ],
+)
+
+# Placement engine (Phase 2): differentiable global placement (torch) + grid
+# legalization (numpy). Separated so the core/schema tests stay torch-free.
+py_library(
+    name = "pnr_place",
+    srcs = glob(
+        ["pnr/place/*.py"],
+        exclude = ["pnr/place/__main__.py"],
+    ),
+    imports = ["."],
+    deps = [
+        ":pnr",
+        requirement("torch"),
+        requirement("numpy"),
+    ],
+)
+
+# Runnable placer: python -m pnr.place graph.json constraints.yaml [--dump-svg ...]
+py_binary(
+    name = "place",
+    srcs = ["pnr/place/__main__.py"],
+    imports = ["."],
+    main = "pnr/place/__main__.py",
+    deps = [
+        ":pnr",
+        ":pnr_place",
+        requirement("pyyaml"),
+    ],
+)
+
+# Lookahead global router + place<->route feedback loop (Phase 4). Pure
+# python/numpy (no torch of its own) but the feedback loop calls the torch
+# placer, so it depends on :pnr_place.
+py_library(
+    name = "pnr_route",
+    srcs = glob(
+        ["pnr/route/*.py"],
+        exclude = ["pnr/route/__main__.py"],
+    ),
+    imports = ["."],
+    deps = [
+        ":pnr",
+        ":pnr_place",
+        requirement("numpy"),
+    ],
+)
+
+# Own detailed router (design §Detailed router, R2–R5): grid/obstacle model + a
+# multi-layer PathFinder maze router. Pure python/numpy; imports place.geometry
+# (torch-containing package, but the router logic is torch-free).
+py_library(
+    name = "pnr_detail",
+    srcs = glob(["pnr/route/detail/*.py"]),
+    imports = ["."],
+    deps = [
+        ":pnr",
+        ":pnr_place",
+        requirement("numpy"),
+    ],
+)
+
+# Runnable end-to-end place+route loop: emits the final placed graph JSON that
+# the writeback step turns back into a .kicad_pcb. This is the torch-side step
+# of the <board>.fab flow.
+py_binary(
+    name = "pnr_fab",
+    srcs = ["pnr/route/__main__.py"],
+    imports = ["."],
+    main = "pnr/route/__main__.py",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":pnr",
+        ":pnr_detail",
+        ":pnr_place",
+        ":pnr_route",
+        requirement("pyyaml"),
+    ],
+)
+
+# Task 0 acceptance: PyTorch is available and differentiable under Bazel.
+py_test(
+    name = "torch_smoke_test",
+    size = "small",  # imports torch; a few seconds even cold
+    srcs = ["tests/test_torch_smoke.py"],
+    legacy_create_init = False,
+    main = "tests/test_torch_smoke.py",
+    deps = [requirement("torch")],
+)
+
+# Phase 1 acceptance: internal graph, constraint schema, and ingestion.
+py_test(
+    name = "graph_test",
+    size = "small",
+    srcs = ["tests/test_graph.py"],
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_graph.py",
+    deps = [":pnr"],
+)
+
+py_test(
+    name = "constraints_test",
+    size = "small",
+    srcs = ["tests/test_constraints.py"],
+    data = glob(["testdata/splanc_dev/*"]),
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_constraints.py",
+    deps = [
+        ":pnr",
+        requirement("pyyaml"),
+    ],
+)
+
+py_test(
+    name = "ingest_test",
+    size = "small",
+    srcs = ["tests/test_ingest.py"],
+    data = glob(["testdata/splanc_dev/*"]),
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_ingest.py",
+    deps = [":pnr"],
+)
+
+# Write-back frame math (Phase 5); a pcbnew-gated live round-trip when KiCad's
+# python is present. Depends only on :pnr_kicad (stdlib), not torch.
+py_test(
+    name = "writeback_test",
+    size = "small",
+    srcs = ["tests/test_writeback.py"],
+    data = glob(["testdata/splanc_dev/*"]),
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_writeback.py",
+    deps = [":pnr"],
+)
+
+# Phase 6: routing-rule compilation (net-class/diff-pair/length-match) + the pure
+# post-route quality analysis. No torch/pcbnew.
+py_test(
+    name = "quality_test",
+    size = "small",
+    srcs = ["tests/test_quality.py"],
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_quality.py",
+    deps = [
+        ":pnr",
+        requirement("pyyaml"),
+    ],
+)
+
+# Phase 2 acceptance: placement MVP is legal + beats the ato-row HPWL baseline.
+py_test(
+    name = "placement_test",
+    size = "small",  # torch global placement + legalization; ~9s
+    srcs = ["tests/test_placement.py"],
+    data = glob(["testdata/splanc_dev/*"]),
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_placement.py",
+    deps = [
+        ":pnr",
+        ":pnr_place",
+        requirement("pyyaml"),
+    ],
+)
+
+# Phase 3 acceptance: orientation search yields legal discrete angles + better HPWL.
+py_test(
+    name = "orientation_test",
+    size = "small",  # runs the placer twice (orient on/off); ~14s
+    srcs = ["tests/test_orientation.py"],
+    data = glob(["testdata/splanc_dev/*"]),
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_orientation.py",
+    deps = [
+        ":pnr",
+        ":pnr_place",
+        requirement("pyyaml"),
+    ],
+)
+
+# Phase 4 unit tests: the routing primitives (Steiner, global router, inflation).
+py_test(
+    name = "route_test",
+    size = "small",
+    srcs = ["tests/test_route.py"],
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_route.py",
+    deps = [
+        ":pnr",
+        ":pnr_route",
+        requirement("numpy"),
+    ],
+)
+
+# Connector edge-overhang + outline-exclusion geometry (pure).
+py_test(
+    name = "geometry_test",
+    size = "small",
+    srcs = ["tests/test_geometry.py"],
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_geometry.py",
+    deps = [":pnr_place"],
+)
+
+# R2 acceptance: the routing grid + obstacle + pin-access model.
+py_test(
+    name = "detail_grid_test",
+    size = "small",
+    srcs = ["tests/test_detail_grid.py"],
+    data = glob(["testdata/splanc_dev/*"]),
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_detail_grid.py",
+    deps = [
+        ":pnr",
+        ":pnr_detail",
+    ],
+)
+
+# R4 acceptance: the multi-layer PathFinder maze router (routes, vias, negotiation).
+py_test(
+    name = "detail_maze_test",
+    size = "small",
+    srcs = ["tests/test_detail_maze.py"],
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_detail_maze.py",
+    deps = [
+        ":pnr",
+        ":pnr_detail",
+    ],
+)
+
+# Escape planning (E2 via-in-pad / E3 dog-bone): per-pad escape selection.
+py_test(
+    name = "detail_escape_test",
+    size = "small",
+    srcs = ["tests/test_escape.py"],
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_escape.py",
+    deps = [
+        ":pnr",
+        ":pnr_detail",
+    ],
+)
+
+# R5 acceptance: the detailed router on a real placed board (place -> route,
+# DRC-clean by construction). Places the fixture, so it needs torch.
+py_test(
+    name = "detail_route_test",
+    size = "large",  # places the fixture + 3 full 4-layer RRR routes
+    srcs = ["tests/test_detail_route.py"],
+    data = glob(["testdata/splanc_dev/*"]),
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_detail_route.py",
+    deps = [
+        ":pnr",
+        ":pnr_detail",
+        ":pnr_place",
+        requirement("pyyaml"),
+    ],
+)
+
+# Phase 4 acceptance: the place<->route loop converges (overflow -> 0), terminates.
+py_test(
+    name = "route_feedback_test",
+    size = "medium",  # runs the placement loop up to several rounds; ~30-60s
+    srcs = ["tests/test_route_feedback.py"],
+    data = glob(["testdata/splanc_dev/*"]),
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_route_feedback.py",
+    deps = [
+        ":pnr",
+        ":pnr_place",
+        ":pnr_route",
+        requirement("pyyaml"),
+    ],
+)

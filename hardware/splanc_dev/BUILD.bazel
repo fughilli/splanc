@@ -1,0 +1,60 @@
+# Splanc Dev Module PCB (FUG-131) — the board designed in elec/src, specified
+# in docs/hardware/splanc-dev-module.md. Built with rules_atopile's
+# `atopile_project`, driving the Nix-pinned `ato` + `kicad-cli` toolchain wired
+# in //hardware/atopile (tools from //MODULE.bazel's @atopile / @kicad).
+#
+#   bazel build //hardware/splanc_dev:splanc_dev          # resolve + lay out -> .kicad_pcb
+#   bazel build //hardware/splanc_dev:splanc_dev.pdf      # + layout PDF (kicad-cli)
+#   bazel build //hardware/splanc_dev:splanc_dev.gerber   # + Gerbers + drill
+#   bazel run   //hardware/splanc_dev:splanc_dev.view     # open the layout in KiCad
+#
+# Every part is a pre-picked atomic LCSC component (elec/src/parts/** +
+# passives.ato), so the build needs NO picker / components API / EasyEDA call
+# (picker = False). The layout is regenerated from the .ato each build
+# (frozen = False): atopile stamps fresh UUIDs every run, so a committed layout
+# is never a byte-for-byte --frozen fixed point.
+#
+# The .ato defines only the electrical design, and atopile auto-places parts in
+# a row with no outline or tracks. So the export is framed + routed with no
+# human in the loop: outline_margin_mm adds an Edge.Cuts outline + tight page,
+# and autoroute runs a headless FreeRouting pass. NOTE: placement is atopile's
+# naive row, so machine-routing a board this dense yields long traces — this is
+# a preview/DRC aid, NOT a fab-ready layout (an EE should place + route in
+# :splanc_dev.view for production).
+load("@atopile_rules//bazel/atopile:defs.bzl", "atopile_project")
+load("//hardware/pnr:pnr.bzl", "atopile_pnr")
+
+atopile_project(
+    name = "splanc_dev",
+    # All design sources: the .ato plus the atomic parts' committed footprints
+    # (.kicad_mod) and symbols (.kicad_sym). With picker off nothing is fetched,
+    # so these must be staged as inputs.
+    srcs = glob(["elec/**"]),
+    ato_yaml = "ato.yaml",
+    autoroute = True,
+    build = "default",
+    frozen = False,
+    outline_margin_mm = 4,
+    picker = False,
+    route_max_passes = 3,
+    visibility = ["//visibility:public"],
+)
+
+# Algorithmic place-and-route (FUG-138). Unlike the naive-row autoroute preview
+# above, this runs the full multi-turn optimize loop — differentiable placement +
+# orientation, then the place↔route feedback loop (docs/hardware/pnr-system.md
+# §4/§6) — writes the optimized placement back onto the board, routes it, and
+# emits the vendor fab bundle. Guidance (fixed connectors, edge alignments,
+# antenna keep-out, board size, side preferences, grouping) is read from
+# constraints.yaml; see docs/hardware/pnr-inputs.md.
+#
+#   bazel build //hardware/splanc_dev:splanc_dev.fab        # routed board + Gerbers/drill/BOM/pick-place
+#   bazel build //hardware/splanc_dev:splanc_dev.fab.board  # just the routed .kicad_pcb + DRC report
+atopile_pnr(
+    name = "splanc_dev.fab",
+    constraints = "constraints.yaml",
+    layout = ":splanc_dev",
+    # The own detailed router routes the signals; the build fails unless every net
+    # is routed (require_routed defaults True) — a partial route is not a board.
+    visibility = ["//visibility:public"],
+)

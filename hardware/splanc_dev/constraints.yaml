@@ -1,0 +1,68 @@
+# PnR guidance for the Splanc dev module (FUG-138) — the spatial intent the
+# algorithmic place-and-route honors. Consumed by //hardware/splanc_dev:
+# splanc_dev.fab. Full schema + semantics: docs/hardware/pnr-inputs.md.
+#
+# Keyed by the real component references in the board. Coordinate frame: mm,
+# origin at the board-outline bottom-left, `rot` CCW degrees. (U5 = ESP32-C6-
+# WROOM module, USB1 = Type-C, SW1..4 = tactile buttons, U2/L2/L3 = boost stage.)
+#
+# First-cut mechanical intent, not a finalized layout — an EE should review.
+# The RF module U5 is fixed at the north edge so its integrated antenna faces
+# off-board and its keep-out is a well-defined region; the Type-C is fixed
+# overhanging the south edge for enclosure access.
+
+schema: v0
+
+board:
+  outline: { w: 60, h: 50 } # approx target; the placer frames the real Edge.Cuts
+  layers: 4 # 4-layer stackup (design doc §12)
+  default_clearance_mm: 0.3
+
+fixed: # hard: locked pose, held out of the position gradient
+  # Type-C: overhang the south edge by 1.5 mm so the connector mouth clears an
+  # enclosure wall and a cable seats fully (overhang_mm; negative would inset).
+  USB1: { edge: south, align: center, rot: 0, side: top, overhang_mm: 1.5 }
+  U5: { edge: north, align: center, rot: 0, side: top } # ESP32-C6 module, antenna off the north edge
+
+edge_align: # soft: pull to a board edge, snap orientation
+  SW1: { edge: south, side: top } # user buttons, enclosure-accessible
+  SW2: { edge: south, side: top }
+  SW3: { edge: south, side: top }
+  SW4: { edge: south, side: top }
+  CN1: { edge: east, side: top } # JST LED/battery connectors on the east edge
+  CN2: { edge: east, side: top }
+  CN3: { edge: east, side: top }
+
+keepout: # hard: no parts/copper in region (relative to a fixed component)
+  - { name: esp32_antenna, ref: U5, extent: { edge: north, depth_mm: 6 } }
+
+side_pref: # soft: bias parts to a side (top = user-facing)
+  bottom: [C*, R*] # decouplers/passives to the back
+
+group: # soft: attract members together, near an anchor
+  - { members: [U2, L2, L3], anchor: U2, radius_mm: 8 } # boost converter stage
+
+# --- Routing rules (Phase 6, docs/hardware/pnr-inputs.md) --------------------
+# Net names come from the netlist (atopile lowercases most). These drive the
+# detailed router (widths) and the post-route quality report (skew / length).
+
+net_class: # per-class trace width + clearance / plane assignment
+  # High-fanout ground + power rails are hopeless to trace-route, so they go on
+  # copper planes on the 2 inner layers (split-plane: several rails share a layer,
+  # each getting the region around its own pads). In1 = ground; In2 = the power
+  # rails, split by pad cluster. Each pad reaches its plane with a short via.
+  gnd:
+    nets: [lv] # solid ground plane (75 pads, board-wide) — keep In1 unfragmented
+    plane_layer: In1.Cu
+  power:
+    nets: [p3v3-hv, p5v-hv, vsys-hv, vbat-hv, hv] # 3V3 / 5V / vsys / vbat / boost
+    plane_layer: In2.Cu
+  # The connector grounds (GND, gauge/usbc-GND) are low fanout — trace-routed.
+# This module has no nets that require length-matching or a differential pair
+# (its USB is inside the WROOM module). For boards that do, the quality pass
+# checks them — see docs/hardware/pnr-inputs.md, e.g.:
+#
+#   length_match:
+#     - { name: rgmii, nets: [TXD0, TXD1, TXD2, TXD3], tolerance_mm: 1.0 }
+#   diff_pair:
+#     - { name: usb, p: USB_DP, n: USB_DM, width_mm: 0.2, gap_mm: 0.15, skew_mm: 0.3 }

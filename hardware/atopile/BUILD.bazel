@@ -1,0 +1,57 @@
+# atopile toolchain — binds rules_atopile's build/export actions to the `ato`
+# and `kicad-cli` this repo provides from Nix (@atopile / @kicad, declared in
+# //MODULE.bazel via rules_nixpkgs `nix_pkg.file`). rules_atopile's own
+# MODULE.bazel can't wire this: rules_nixpkgs' `nix_pkg` tags are root-only, so
+# the root module (us) supplies the tools and registers the toolchain. Split by
+# exec platform to mirror rules_atopile's Nix toolchain:
+#   - linux:  kicad-cli from nixpkgs kicad-small (@kicad).
+#   - darwin: nixpkgs marks the KiCad app broken on aarch64-darwin, so use the
+#             system KiCad.app by path and never reference @kicad (kept out of
+#             the macOS graph by exec_compatible_with).
+load("@atopile_rules//bazel/atopile:toolchain.bzl", "atopile_toolchain")
+
+package(default_visibility = ["//visibility:public"])
+
+# Standard macOS KiCad.app CLI location (same path atopile's find_kicad_cli globs).
+DARWIN_KICAD_CLI = "/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli"
+
+atopile_toolchain(
+    name = "nix_linux",
+    # rules_nixpkgs exposes each store-path file as a target under the repo.
+    ato = "@atopile//:bin/ato",
+    # Nominal closure inputs; actions run local/no-sandbox so the /nix/store
+    # paths are readable directly regardless.
+    data = [
+        "@atopile//:bin",
+        "@kicad//:bin",
+    ],
+    kicad_cli = "@kicad//:bin/kicad-cli",
+    # python3.12 for the autoroute DSN/SES round-trip: KiCad ships `pcbnew` as a
+    # module but no interpreter, so the rule points this one at KiCad's
+    # site-packages (py3.12 ABI — matches kicad-base) via PYTHONPATH. Only used
+    # by boards with autoroute = True.
+    kicad_python = "@kicad_python//:bin/python3.12",
+)
+
+toolchain(
+    name = "nix_toolchain_linux",
+    exec_compatible_with = ["@platforms//os:linux"],
+    toolchain = ":nix_linux",
+    toolchain_type = "@atopile_rules//bazel/atopile:toolchain_type",
+)
+
+atopile_toolchain(
+    name = "nix_darwin",
+    ato = "@atopile//:bin/ato",
+    data = ["@atopile//:bin"],
+    # No `kicad_cli` File (nixpkgs KiCad is broken on darwin) — invoke the system
+    # KiCad.app by absolute path. atopile's own kicad-cli lookup finds it too.
+    kicad_cli_path = DARWIN_KICAD_CLI,
+)
+
+toolchain(
+    name = "nix_toolchain_darwin",
+    exec_compatible_with = ["@platforms//os:macos"],
+    toolchain = ":nix_darwin",
+    toolchain_type = "@atopile_rules//bazel/atopile:toolchain_type",
+)

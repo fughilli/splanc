@@ -1,0 +1,55 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component XKB_PZ254V_12_20P_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C492427", date="2026-08-20T03:13:58.385395+00:00", checksum="a6ec03e11509aa85bbadb15ed0f85e8f6a5273e94924507347bf208b93f7b956">
+
+    trait is_atomic_part<manufacturer="XKB", partnumber="PZ254V-12-20P", footprint="HDR-TH_20P-P2.54-V-M-R2-C10-S2.54.kicad_mod", symbol="PZ254V-12-20P.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C492427", manufacturer="XKB", partno="PZ254V-12-20P">
+    trait has_designator_prefix<prefix="H">
+
+    # pins
+    pin 1
+    signal p1 ~ pin 1
+    pin 20
+    signal p20 ~ pin 20
+    pin 3
+    signal p3 ~ pin 3
+    pin 18
+    signal p18 ~ pin 18
+    pin 5
+    signal p5 ~ pin 5
+    pin 16
+    signal p16 ~ pin 16
+    pin 7
+    signal p7 ~ pin 7
+    pin 14
+    signal p14 ~ pin 14
+    pin 9
+    signal p9 ~ pin 9
+    pin 12
+    signal p12 ~ pin 12
+    pin 11
+    signal p11 ~ pin 11
+    pin 10
+    signal p10 ~ pin 10
+    pin 13
+    signal p13 ~ pin 13
+    pin 8
+    signal p8 ~ pin 8
+    pin 15
+    signal p15 ~ pin 15
+    pin 6
+    signal p6 ~ pin 6
+    pin 17
+    signal p17 ~ pin 17
+    pin 4
+    signal p4 ~ pin 4
+    pin 19
+    signal p19 ~ pin 19
+    pin 2
+    signal p2 ~ pin 2

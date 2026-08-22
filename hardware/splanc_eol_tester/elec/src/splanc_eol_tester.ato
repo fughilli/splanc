@@ -1,0 +1,235 @@
+#pragma experiment("BRIDGE_CONNECT")
+
+import ElectricPower
+
+from "parts/Espressif_Systems_ESP32_C6_WROOM_1_N8/Espressif_Systems_ESP32_C6_WROOM_1_N8.ato" import Espressif_Systems_ESP32_C6_WROOM_1_N8_package
+from "parts/XKB_PZ254V_12_20P/XKB_PZ254V_12_20P.ato" import XKB_PZ254V_12_20P_package
+from "parts/Texas_Instruments_SN74LVC1T45DBVR/Texas_Instruments_SN74LVC1T45DBVR.ato" import Texas_Instruments_SN74LVC1T45DBVR_package
+from "parts/Changjiang_MMBT3904_RANGE_100_300/Changjiang_MMBT3904_RANGE_100_300.ato" import Changjiang_MMBT3904_RANGE_100_300_package
+from "parts/Alpha___Omega_AO3401A/Alpha___Omega_AO3401A.ato" import Alpha___Omega_AO3401A_package
+from "passives.ato" import C100n
+from "passives.ato" import C10u
+from "passives.ato" import C10u_0603
+from "passives.ato" import R0
+from "passives.ato" import R33
+from "passives.ato" import R1k
+from "passives.ato" import R5k1
+from "passives.ato" import R10k
+
+
+module ButtonDriver:
+    """Actuate one DUT button line by pulling it low. An NPN (collector = the
+    DUT button node via the connector, emitter = GND, base via 1k from an MCU
+    GPIO) closes the "switch" when the GPIO is high.
+
+    NOTE: production uses a PC817 OPTOCOUPLER here for galvanic isolation (design
+    doc §3.2) — this NPN is a functional stand-in until the opto footprint
+    generates. Pin-compatible swap: drive the opto LED from the GPIO, tie the
+    phototransistor across drive/GND."""
+    signal drive        # to the DUT button node (connector)
+    signal gpio         # from the tester MCU
+    signal gnd
+    q = new Changjiang_MMBT3904_RANGE_100_300_package
+    rb = new R1k
+    q.C ~ drive
+    q.E ~ gnd
+    rb.p1 ~ gpio
+    rb.p2 ~ q.B
+
+
+module LoadLeg:
+    """One FET-switched resistive load leg from a DUT LED channel to GND — the
+    EoL over-current test (design doc §3.4). `sel` high closes an NPN that pulls
+    the P-FET gate low, connecting `res` (a power resistor) across chan->GND.
+
+    The resistor here is a 0402 STAND-IN; production is a 2512/axial power
+    resistor (SHORT 0.5 Ohm, NOMINAL 2.5 Ohm) — see the instantiation."""
+    p5v = new ElectricPower   # supplies the P-FET gate pull-up reference
+    signal chan          # DUT CHx_5V (from the connector)
+    signal sel           # from the tester MCU
+    signal gnd
+    fet = new Alpha___Omega_AO3401A_package
+    gpu = new R10k
+    q = new Changjiang_MMBT3904_RANGE_100_300_package
+    rb = new R1k
+    fet.S ~ chan
+    gpu.p1 ~ chan
+    gpu.p2 ~ fet.G
+    q.C ~ fet.G
+    q.E ~ gnd
+    rb.p1 ~ sel
+    rb.p2 ~ q.B
+    # load resistor: fet drain -> GND
+    # (res assigned by the parent so SHORT vs NOMINAL differ)
+
+
+module SplancEolTester:
+    """Splanc EoL Tester (FUG-131) — mates the dev module's J_EOL and drives an
+    automated End-of-Line test. Design doc: docs/hardware/splanc-eol-tester.md.
+
+    Built from the same atomic LCSC parts as the dev module. Two deviations, both
+    noted inline and in the doc: the 24 MHz analyzer is the HITL-style EXTERNAL
+    FX2/fx2lafw dongle (this board level-shifts the DUT taps out to a header for
+    it, rather than carrying the FX2 chip), and the isolated button drivers use
+    NPN stand-ins (production: PC817 optocouplers)."""
+
+    # -- Rails: tester logic (3V3) + a 5V test rail (host-fed) ---------------
+    vtest = new ElectricPower     # 5 V from the host (USB) — VBUS-inject source
+    vtest.voltage = 5V +/- 5%
+    p3v3 = new ElectricPower      # tester logic
+    p3v3.voltage = 3.3V +/- 3%
+    vtest.lv ~ p3v3.lv
+
+    # -- Tester MCU: ESP32-C6 (sequences the test, reports over USB-CDC) ------
+    mcu = new Espressif_Systems_ESP32_C6_WROOM_1_N8_package
+    mcu.P3V3 ~ p3v3.hv
+    mcu.GND ~ p3v3.lv
+    mcu_dec = new C100n
+    mcu_dec.p1 ~ p3v3.hv
+    mcu_dec.p2 ~ p3v3.lv
+    mcu_bulk = new C10u_0603
+    mcu_bulk.p1 ~ p3v3.hv
+    mcu_bulk.p2 ~ p3v3.lv
+    en_pu = new R10k
+    en_pu.p1 ~ p3v3.hv
+    en_pu.p2 ~ mcu.EN
+
+    # -- DUT connector (2x10) — mates the dev module J_EOL (doc §11) ----------
+    dut = new XKB_PZ254V_12_20P_package
+    dut.p2 ~ p3v3.lv          # GND
+
+    # -- VBUS inject: high-side P-FET gates the 5V test rail onto DUT VBUS -----
+    vinj = new Alpha___Omega_AO3401A_package
+    vinj_pu = new R10k
+    vinj_q = new Changjiang_MMBT3904_RANGE_100_300_package
+    vinj_rb = new R1k
+    vinj.S ~ vtest.hv
+    vinj.D ~ dut.p1           # DUT VBUS_INJ
+    vinj_pu.p1 ~ vtest.hv
+    vinj_pu.p2 ~ vinj.G
+    vinj_q.C ~ vinj.G
+    vinj_q.E ~ p3v3.lv
+    vinj_rb.p1 ~ mcu.IO10
+    vinj_rb.p2 ~ vinj_q.B
+    vinj_dec = new C10u
+    vinj_dec.p1 ~ vtest.hv
+    vinj_dec.p2 ~ vtest.lv
+
+    # -- Isolated button drivers (NPN stand-ins; production = PC817) ----------
+    drv_reset = new ButtonDriver
+    drv_reset.drive ~ dut.p15     # BTN_RESET_DRV
+    drv_reset.gpio ~ mcu.IO0
+    drv_reset.gnd ~ p3v3.lv
+    drv_boot = new ButtonDriver
+    drv_boot.drive ~ dut.p16      # BTN_BOOT_DRV
+    drv_boot.gpio ~ mcu.IO1
+    drv_boot.gnd ~ p3v3.lv
+    drv_user1 = new ButtonDriver
+    drv_user1.drive ~ dut.p17     # BTN_USER1_DRV
+    drv_user1.gpio ~ mcu.IO2
+    drv_user1.gnd ~ p3v3.lv
+    drv_user2 = new ButtonDriver
+    drv_user2.drive ~ dut.p18     # BTN_USER2_DRV
+    drv_user2.gpio ~ mcu.IO3
+    drv_user2.gnd ~ p3v3.lv
+
+    # -- Simulated LED loads (SHORT + NOMINAL per channel) --------------------
+    # SHORT: R0 stand-in (production 0.5 Ohm 2W) forces the DUT load switch to
+    # trip. NOMINAL: R33 stand-in (production 2.5 Ohm 10W) ~ the operating point.
+    ch0_short = new LoadLeg
+    ch0_short.p5v ~ vtest
+    ch0_short.chan ~ dut.p9       # DUT CH0_5V
+    ch0_short.sel ~ mcu.IO4
+    ch0_short.gnd ~ p3v3.lv
+    ch0_short_r = new R0
+    ch0_short_r.p1 ~ ch0_short.fet.D
+    ch0_short_r.p2 ~ p3v3.lv
+    ch0_nom = new LoadLeg
+    ch0_nom.p5v ~ vtest
+    ch0_nom.chan ~ dut.p9
+    ch0_nom.sel ~ mcu.IO5
+    ch0_nom.gnd ~ p3v3.lv
+    ch0_nom_r = new R33
+    ch0_nom_r.p1 ~ ch0_nom.fet.D
+    ch0_nom_r.p2 ~ p3v3.lv
+    ch1_short = new LoadLeg
+    ch1_short.p5v ~ vtest
+    ch1_short.chan ~ dut.p10      # DUT CH1_5V
+    ch1_short.sel ~ mcu.IO6
+    ch1_short.gnd ~ p3v3.lv
+    ch1_short_r = new R0
+    ch1_short_r.p1 ~ ch1_short.fet.D
+    ch1_short_r.p2 ~ p3v3.lv
+    ch1_nom = new LoadLeg
+    ch1_nom.p5v ~ vtest
+    ch1_nom.chan ~ dut.p10
+    ch1_nom.sel ~ mcu.IO7
+    ch1_nom.gnd ~ p3v3.lv
+    ch1_nom_r = new R33
+    ch1_nom_r.p1 ~ ch1_nom.fet.D
+    ch1_nom_r.p2 ~ p3v3.lv
+
+    # -- Rail / CSA sampling: dividers into the MCU ADC -----------------------
+    # 5V-range rails halved (10k/10k) into ADC; 3V3 rail direct-ish (10k/5k1).
+    s_vsys_t = new R10k
+    s_vsys_b = new R10k
+    s_vsys_t.p1 ~ dut.p3          # VSYS_SENSE
+    s_vsys_t.p2 ~ mcu.IO18
+    s_vsys_b.p1 ~ mcu.IO18
+    s_vsys_b.p2 ~ p3v3.lv
+    s_5v0_t = new R10k
+    s_5v0_b = new R10k
+    s_5v0_t.p1 ~ dut.p5          # 5V0_SENSE
+    s_5v0_t.p2 ~ mcu.IO19
+    s_5v0_b.p1 ~ mcu.IO19
+    s_5v0_b.p2 ~ p3v3.lv
+    s_ch0 = new R10k             # CH0_CSA (INA226 alert / analog tap)
+    s_ch0.p1 ~ dut.p7
+    s_ch0.p2 ~ mcu.IO20
+    s_ch1 = new R10k             # CH1_CSA
+    s_ch1.p1 ~ dut.p8
+    s_ch1.p2 ~ mcu.IO21
+
+    # -- Digital taps -> level shifters -> FX2 header (external dongle) --------
+    # DUT lines are 5V-tolerant taps; shift to 3V3 for the FX2 (whose clone
+    # inputs aren't 5V-safe, per the HITL notes) and break them out on `fx2`.
+    fx2 = new XKB_PZ254V_12_20P_package
+    fx2.p1 ~ p3v3.hv            # header VCC ref
+    fx2.p2 ~ p3v3.lv            # GND
+    ls_ch0 = new Texas_Instruments_SN74LVC1T45DBVR_package
+    ls_ch0.VCCA ~ p3v3.hv
+    ls_ch0.VCCB ~ p3v3.hv
+    ls_ch0.GND ~ p3v3.lv
+    ls_ch0.DIR ~ p3v3.lv        # B->A (DUT tap on B, FX2 on A)
+    ls_ch0.B ~ dut.p11          # LED_CH0_DATA
+    ls_ch0.A ~ fx2.p3
+    ls_ch1 = new Texas_Instruments_SN74LVC1T45DBVR_package
+    ls_ch1.VCCA ~ p3v3.hv
+    ls_ch1.VCCB ~ p3v3.hv
+    ls_ch1.GND ~ p3v3.lv
+    ls_ch1.DIR ~ p3v3.lv
+    ls_ch1.B ~ dut.p12          # LED_CH1_DATA
+    ls_ch1.A ~ fx2.p4
+    ls_sda = new Texas_Instruments_SN74LVC1T45DBVR_package
+    ls_sda.VCCA ~ p3v3.hv
+    ls_sda.VCCB ~ p3v3.hv
+    ls_sda.GND ~ p3v3.lv
+    ls_sda.DIR ~ p3v3.lv
+    ls_sda.B ~ dut.p13          # I2C_SDA
+    ls_sda.A ~ fx2.p5
+    ls_scl = new Texas_Instruments_SN74LVC1T45DBVR_package
+    ls_scl.VCCA ~ p3v3.hv
+    ls_scl.VCCB ~ p3v3.hv
+    ls_scl.GND ~ p3v3.lv
+    ls_scl.DIR ~ p3v3.lv
+    ls_scl.B ~ dut.p14          # I2C_SCL
+    ls_scl.A ~ fx2.p6
+    # UART pass-through to the header (DUT is 3V3 UART already).
+    fx2.p7 ~ dut.p19            # UART0_TXD
+    fx2.p8 ~ dut.p20            # UART0_RXD
+    ls_dec0 = new C100n
+    ls_dec0.p1 ~ p3v3.hv
+    ls_dec0.p2 ~ p3v3.lv
+    ls_dec1 = new C100n
+    ls_dec1.p1 ~ p3v3.hv
+    ls_dec1.p2 ~ p3v3.lv

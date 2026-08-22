@@ -1,0 +1,21 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component JST_B3B_PH_K_S_LF__SN_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C131339", date="2026-08-20T03:13:32.876006+00:00", checksum="027d4ec4a71e1b62fc6a11ed14c5c0a92a4a2e6f133a777c351cecc3bf525419">
+
+    trait is_atomic_part<manufacturer="JST", partnumber="B3B-PH-K-S(LF)(SN)", footprint="CONN-TH_B3B-PH-K-S.kicad_mod", symbol="B3B-PH-K-S(LF)(SN).kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C131339", manufacturer="JST", partno="B3B-PH-K-S(LF)(SN)">
+    trait has_designator_prefix<prefix="CN">
+
+    # pins
+    pin 1
+    signal p1 ~ pin 1
+    pin 2
+    signal p2 ~ pin 2
+    pin 3
+    signal p3 ~ pin 3

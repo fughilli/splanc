@@ -1,0 +1,14 @@
+# Helper scripts for the atopile PCB builds (//hardware/*). Exported so the
+# per-board `sh_binary(build)` targets can carry ato_build.sh as their source.
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "ato_build.sh",
+    "sanitize_footprints.py",
+    "picker_catalog.json",
+    "picker_server.py",
+    "gen_parts.sh",
+    "gen_parts_robust.sh",
+    "gen_parts_patient.sh",
+    "name_pins.py",
+])

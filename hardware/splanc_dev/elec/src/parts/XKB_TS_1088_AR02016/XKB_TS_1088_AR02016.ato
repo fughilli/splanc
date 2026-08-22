@@ -1,0 +1,19 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component XKB_TS_1088_AR02016_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C720477", date="2026-08-20T03:04:56.984456+00:00", checksum="5d8e85b1813fc9901172905f39fd1297f85f97d2dae5f2384d9b0f1f96e1297e">
+
+    trait is_atomic_part<manufacturer="XKB", partnumber="TS-1088-AR02016", footprint="SW-SMD_L3.9-W3.0-P4.45.kicad_mod", symbol="TS-1088-AR02016.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C720477", manufacturer="XKB", partno="TS-1088-AR02016">
+    trait has_designator_prefix<prefix="SW">
+
+    # pins
+    pin 2
+    signal p2 ~ pin 2
+    pin 1
+    signal p1 ~ pin 1
