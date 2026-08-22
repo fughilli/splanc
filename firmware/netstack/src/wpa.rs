@@ -200,10 +200,10 @@ pub fn derive_ptk(pmk: &[u8; 32], aa: &[u8; 6], sa: &[u8; 6], anonce: &Nonce, sn
 // --- EAPOL-Key framing + 4-way state machine ---------------------------------
 
 const EAPOL_HDR: usize = 4; // version, type, length[2]
-const KEY_INFO_MIC: u16 = 0x0100;
-const KEY_INFO_ACK: u16 = 0x0080;
-const KEY_INFO_INSTALL: u16 = 0x0040;
-const KEY_INFO_SECURE: u16 = 0x0200;
+pub const KEY_INFO_MIC: u16 = 0x0100;
+pub const KEY_INFO_ACK: u16 = 0x0080;
+pub const KEY_INFO_INSTALL: u16 = 0x0040;
+pub const KEY_INFO_SECURE: u16 = 0x0200;
 
 /// Parsed EAPOL-Key frame (fields borrow the input; no copy).
 struct EapolKey<'a> {
@@ -330,50 +330,71 @@ impl Supplicant {
         Step::Ignored
     }
 
-    /// Build an EAPOL-Key reply (M2/M4): header + descriptor with SNonce, then
-    /// compute the MIC (HMAC-SHA1-128 with KCK) over the whole frame with the MIC
-    /// field zeroed.
     fn build_reply(&self, key_info: u16, nonce: &Nonce, out: &mut Buf<128>) -> Result<usize, Overflow> {
-        out.clear();
-        out.extend(&[0x02, 0x03])?; // EAPOL version 2, type Key
-        let body_len: u16 = 95; // key descriptor length (no key data)
-        out.extend(&body_len.to_be_bytes())?;
-        out.extend(&[0x02])?; // descriptor type: RSN
-        out.extend(&key_info.to_be_bytes())?;
-        out.extend(&[0x00, 0x10])?; // key length 16
-        out.extend(&[0u8; 8])?; // replay counter (echo omitted for brevity)
-        out.extend(nonce)?;
-        out.extend(&[0u8; 8])?; // key IV
-        out.extend(&[0u8; 8])?; // key RSC
-        out.extend(&[0u8; 8])?; // key ID
-        let mic_pos = out.len();
-        out.extend(&[0u8; 16])?; // MIC (filled below)
-        out.extend(&[0x00, 0x00])?; // key data length 0
-        // MIC = HMAC-SHA1-128(KCK, whole EAPOL frame with MIC field zeroed).
-        let mut mic = [0u8; 20];
-        hmac_sha1(&self.ptk.kck, &[out.as_slice()], &mut mic);
-        out.as_mut_slice()[mic_pos..mic_pos + 16].copy_from_slice(&mic[..16]);
-        Ok(out.len())
+        build_eapol_key(key_info, nonce, &[], Some(&self.ptk.kck), out)
     }
 
     fn verify_mic(&self, frame: &[u8]) -> bool {
-        // Recompute HMAC-SHA1-128 over the frame with the MIC field zeroed.
-        if frame.len() < EAPOL_HDR + 93 {
-            return false;
-        }
-        let mic_pos = EAPOL_HDR + 77;
-        let mut tmp = [0u8; 128];
-        if frame.len() > tmp.len() {
-            return false;
-        }
-        tmp[..frame.len()].copy_from_slice(frame);
-        for b in &mut tmp[mic_pos..mic_pos + 16] {
-            *b = 0;
-        }
-        let mut mac = [0u8; 20];
-        hmac_sha1(&self.ptk.kck, &[&tmp[..frame.len()]], &mut mac);
-        &mac[..16] == &frame[mic_pos..mic_pos + 16]
+        verify_eapol_mic(&self.ptk.kck, frame)
     }
+}
+
+// --- shared EAPOL-Key framing (used by both supplicant and authenticator) -----
+
+/// Build an EAPOL-Key frame (any of M1..M4): the 802.1X descriptor with the given
+/// key info, nonce, and (optional) key data, then — if `kck` is given — the
+/// HMAC-SHA1-128 MIC over the whole frame with the MIC field zeroed.
+pub fn build_eapol_key<const N: usize>(
+    key_info: u16,
+    nonce: &Nonce,
+    key_data: &[u8],
+    kck: Option<&[u8; 16]>,
+    out: &mut Buf<N>,
+) -> Result<usize, Overflow> {
+    out.clear();
+    out.extend(&[0x02, 0x03])?; // EAPOL version 2, type Key
+    let body_len = (95 + key_data.len()) as u16;
+    out.extend(&body_len.to_be_bytes())?;
+    out.extend(&[0x02])?; // descriptor type: RSN
+    out.extend(&key_info.to_be_bytes())?;
+    out.extend(&[0x00, 0x10])?; // key length 16
+    out.extend(&[0u8; 8])?; // replay counter
+    out.extend(nonce)?; // 32
+    out.extend(&[0u8; 16])?; // EAPOL key IV
+    out.extend(&[0u8; 8])?; // key RSC
+    out.extend(&[0u8; 8])?; // reserved
+    let mic_pos = out.len(); // = EAPOL_HDR + 77
+    out.extend(&[0u8; 16])?; // MIC (filled below)
+    out.extend(&(key_data.len() as u16).to_be_bytes())?;
+    out.extend(key_data)?;
+    if let Some(k) = kck {
+        let mut mic = [0u8; 20];
+        hmac_sha1(k, &[out.as_slice()], &mut mic);
+        out.as_mut_slice()[mic_pos..mic_pos + 16].copy_from_slice(&mic[..16]);
+    }
+    Ok(out.len())
+}
+
+/// Verify the MIC of a received EAPOL-Key frame under `kck`.
+pub fn verify_eapol_mic(kck: &[u8; 16], frame: &[u8]) -> bool {
+    if frame.len() < EAPOL_HDR + 93 || frame.len() > 256 {
+        return false;
+    }
+    let mic_pos = EAPOL_HDR + 77;
+    let mut tmp = [0u8; 256];
+    tmp[..frame.len()].copy_from_slice(frame);
+    for b in &mut tmp[mic_pos..mic_pos + 16] {
+        *b = 0;
+    }
+    let mut mac = [0u8; 20];
+    hmac_sha1(kck, &[&tmp[..frame.len()]], &mut mac);
+    mac[..16] == frame[mic_pos..mic_pos + 16]
+}
+
+/// Parse the fields of an EAPOL-Key frame: (key_info, nonce, key_data).
+pub fn parse_eapol(frame: &[u8]) -> Option<(u16, &[u8], &[u8])> {
+    let k = EapolKey::parse(frame)?;
+    Some((k.key_info, k.nonce, k.key_data))
 }
 
 #[cfg(test)]

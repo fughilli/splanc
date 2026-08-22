@@ -166,6 +166,40 @@ fn inv_mix_columns(s: &mut [u8; 16]) {
 
 // --- AES key unwrap (RFC 3394) ----------------------------------------------
 
+/// AES key wrap (RFC 3394) — the authenticator side, to encrypt the GTK KDE in
+/// message 3. `plain` is a multiple of 8 bytes; `out` gets `plain.len()+8`.
+pub fn aes_wrap(kek: &[u8; 16], plain: &[u8], out: &mut [u8]) -> usize {
+    let n = plain.len() / 8;
+    if plain.len() % 8 != 0 || out.len() < plain.len() + 8 {
+        return 0;
+    }
+    let aes = Aes128::new(kek);
+    let mut a = [0xa6u8; 8];
+    let mut r = [[0u8; 8]; 8];
+    for i in 0..n {
+        r[i].copy_from_slice(&plain[8 * i..8 * i + 8]);
+    }
+    for j in 0..6 {
+        for i in 0..n {
+            let mut blk = [0u8; 16];
+            blk[..8].copy_from_slice(&a);
+            blk[8..].copy_from_slice(&r[i]);
+            aes.encrypt_block(&mut blk);
+            a.copy_from_slice(&blk[..8]);
+            let t = (n * j + i + 1) as u64;
+            for k in 0..8 {
+                a[k] ^= (t >> (8 * (7 - k))) as u8;
+            }
+            r[i].copy_from_slice(&blk[8..]);
+        }
+    }
+    out[..8].copy_from_slice(&a);
+    for i in 0..n {
+        out[8 * (i + 1)..8 * (i + 2)].copy_from_slice(&r[i]);
+    }
+    (n + 1) * 8
+}
+
 /// The AES for the WPA2 GTK KDE. Wraps [`Aes128`] to satisfy the supplicant hook.
 pub struct AesUnwrap;
 
