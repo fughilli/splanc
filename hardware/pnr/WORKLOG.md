@@ -6,7 +6,44 @@ scan back. Full design + rationale lives in
 the running state so a fresh-context agent can pick up cleanly. Update it at the
 end of every session.
 
-## 2026-08-22 (evening) — RRR router + rubber-band outline; pin-escape is the wall (START HERE)
+## 2026-08-22 (night) — escape routing E1/E2/E3 built; board is congestion-limited (START HERE)
+
+Kevin: "support escape routing by local DRC relaxation AND via-in-pad AND offset
+dog-bone — implement all." Built all three, DRC-clean by construction:
+
+- **E1 — configurable fab/DRC profile** (`fab:` block → `FabProfile` →
+  `rules.json["fab"]`). One source of truth for track/clearance/via geometry; the
+  grid pitch auto-derives from `track+clearance` (a tighter fab routes finer), the
+  **via keep-out radius derives from the geometry** (`⌈(via_d+clr)/pitch⌉-1`, not
+  hardcoded — a tighter fab needs a wider halo), and `patch_project_rules` +
+  `emit_routes` read it. `--route-pitch 0` = auto. Solid, committed (`f423410`).
+- **E2/E3 — pin-escape planner** (`route/detail/escape.py`, `--no-escape` A/B):
+  per-pad on-layer / via-in-pad / dog-bone, each reserving its keep-out so the
+  emitted geometry is DRC-clean (validated: escapes ON≡OFF in pcbnew DRC). Committed
+  (`e45fac6`, `f423410`).
+
+**THE definitive finding (measured, not guessed): splanc_dev is congestion-limited,
+not escape-limited.** Escape ON vs OFF is _identical_ — 23/48 default, 21/48 tight
+fab, same vias, same DRC — because (a) the pads that fail can already leave their
+pad on-layer (the maze vias where it needs to); (b) a full-size via-in-pad in a
+dense DRC-clean pad field is geometrically impossible — every pad's via keep-out
+overlaps its neighbours' clearance halos (`_via_clean` correctly rejects it), even
+at a 0.35 mm via / 0.20 mm pitch. The unrouted nets fail to **cross** the dense
+cluster, not to escape their pins. So the routability lever for this board is the
+**rubber-band outline + inflation** (bigger board relieves the channel), NOT escape.
+Escape is a correct capability for genuinely escape-limited boards (pads boxed by
+plane regions / keep-outs / edges → via down to a gap) and for micro-via fabs.
+
+**A real dog-bone as a routing CHOICE (vs a local fallback) needs group-terminal
+maze routing** — offer each pad {on-layer, via-in-pad, dog-bone-out} candidates and
+let the maze connect any one. That + the rubber-band is the remaining path to fully
+routing splanc_dev. Separately, two DRC items remain (both pre-existing, not escape):
+the **plane pour/dog-bone fanout** (~108, the top contributor — route plane pads
+through the engine) and a **maze via-vs-small-pad halo quantization** edge case (~20,
+diagonal vias landing ~0.055 mm from small pads — widen the pad halo / round the
+mark outward).
+
+## 2026-08-22 (evening) — RRR router + rubber-band outline; pin-escape is the wall
 
 Kevin chose **"invest in a stronger router"** (stay 4-layer) and OK'd **growing the
 outline** ("rubber-band, configurable"). Both built + committed:
