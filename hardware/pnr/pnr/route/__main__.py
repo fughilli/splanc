@@ -59,6 +59,19 @@ def main(argv: Optional[List[str]] = None) -> int:
         "lookahead — the honest 'route must succeed or fail the build' loop",
     )
     ap.add_argument(
+        "--auto-outline",
+        action="store_true",
+        help="rubber-band the board outline: if it won't fully route at the target "
+        "size, grow the outline (aspect preserved) and retry until it routes or "
+        "--outline-max-scale — the smallest outline that fully routes wins",
+    )
+    ap.add_argument(
+        "--outline-max-scale",
+        type=float,
+        default=2.0,
+        help="max rubber-band outline scale (linear; 2.0 => up to 4x area)",
+    )
+    ap.add_argument(
         "--allow-unconverged",
         action="store_true",
         help="exit 0 even if the loop did not drive overflow to 0 (for previews)",
@@ -86,6 +99,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         # route must actually succeed, so it steers placement, not the lookahead.
         detail_rules=rules if args.detail_loop else None,
         detail_pitch_mm=args.route_pitch,
+        detail_iters=args.route_iters,
+        auto_outline=args.auto_outline,
+        outline_max_scale=args.outline_max_scale,
     )
     print(report.summary())
 

@@ -43,6 +43,8 @@ class FeedbackReport:
     converged: bool = False
     placement: Optional[PlacementReport] = None
     route: Optional[GlobalRouteResult] = None
+    outline: Optional[Tuple[float, float]] = None  # (w, h) mm actually used
+    outline_scale: float = 1.0  # rubber-band factor applied to the target outline
 
     @property
     def final_overflow(self) -> float:
@@ -56,9 +58,17 @@ class FeedbackReport:
 
     def summary(self) -> str:
         hist = " -> ".join(f"{o:.0f}" for o in self.overflow_history)
+        outline = ""
+        if self.outline:
+            outline = "; outline %.1fx%.1f mm (x%.2f)" % (
+                self.outline[0],
+                self.outline[1],
+                self.outline_scale,
+            )
         return (
             f"place<->route {self.rounds} round(s): overflow [{hist}], "
             f"converged={self.converged}"
+            + outline
             + (f"; {self.placement.summary()}" if self.placement else "")
             + (f"; {self.route.summary()}" if self.route else "")
         )
@@ -141,42 +151,30 @@ def detail_congestion(
     return cong
 
 
-def route_and_place(
+def _place_route_loop(
     graph: BoardGraph,
     constraints: CompiledConstraints,
     *,
-    seed: int = 0,
-    iters: int = 600,
-    orient: bool = True,
-    max_rounds: int = 6,
-    gcell_mm: float = 2.5,
-    track_pitch_mm: float = 0.4,
-    route_passes: int = 8,
-    detail_rules: Optional[dict] = None,
-    detail_pitch_mm: float = 0.4,
-    detail_iters: int = 10,
+    seed: int,
+    iters: int,
+    orient: bool,
+    max_rounds: int,
+    gcell_mm: float,
+    track_pitch_mm: float,
+    route_passes: int,
+    detail_rules: Optional[dict],
+    detail_pitch_mm: float,
+    detail_iters: int,
 ) -> Tuple[BoardGraph, FeedbackReport]:
-    """Run the place↔route loop to convergence (or the round cap).
-
-    Two feedback signals are supported. The default is the fast **global lookahead**
-    (coarse-gcell overflow). When ``detail_rules`` is given, the loop instead uses
-    the **DRC-clean detailed router** as ground truth — it re-routes every round and
-    the number of *unrouted* signals is the objective the loop drives to zero
-    (:func:`detail_congestion` turns each failure into placement inflation). This is
-    the honest closure: the detailed router is the thing that must succeed, so it —
-    not an optimistic lookahead — steers the placement (design §6; the user's
-    directive that a failed route must guide the next placement cycle).
-
-    Returns the final placed :class:`BoardGraph` and a :class:`FeedbackReport` with
-    the per-round objective trajectory. Deterministic under a fixed ``seed``.
-    """
+    """One place↔route loop at the *current* ``constraints`` outline (the inner loop
+    the rubber-band wraps). See :func:`route_and_place`."""
     width, height = outline_size(graph, constraints)
     layers = int(constraints.board.layers)
     fixed = resolve_fixed_poses(graph, constraints)
 
     accum: Optional[np.ndarray] = None
     inflation: Dict[str, float] = {}
-    report = FeedbackReport(rounds=0)
+    report = FeedbackReport(rounds=0, outline=(width, height))
     placed = graph
     best_overflow = float("inf")
     stale = 0
@@ -237,4 +235,73 @@ def route_and_place(
             if stale >= 2:
                 break
 
+    return placed, report
+
+
+def route_and_place(
+    graph: BoardGraph,
+    constraints: CompiledConstraints,
+    *,
+    seed: int = 0,
+    iters: int = 600,
+    orient: bool = True,
+    max_rounds: int = 6,
+    gcell_mm: float = 2.5,
+    track_pitch_mm: float = 0.4,
+    route_passes: int = 8,
+    detail_rules: Optional[dict] = None,
+    detail_pitch_mm: float = 0.4,
+    detail_iters: int = 10,
+    auto_outline: bool = False,
+    outline_grow: float = 1.15,
+    outline_max_scale: float = 2.0,
+) -> Tuple[BoardGraph, FeedbackReport]:
+    """Run the place↔route loop to convergence (or the round cap).
+
+    Two feedback signals are supported. The default is the fast **global lookahead**
+    (coarse-gcell overflow). When ``detail_rules`` is given, the loop instead uses
+    the **DRC-clean detailed router** as ground truth — it re-routes every round and
+    the number of *unrouted* signals is the objective the loop drives to zero
+    (:func:`detail_congestion` turns each failure into placement inflation). This is
+    the honest closure: the detailed router is the thing that must succeed, so it —
+    not an optimistic lookahead — steers the placement (design §6; the user's
+    directive that a failed route must guide the next placement cycle).
+
+    **Rubber-band outline** (``auto_outline``): the ``board.outline`` in the
+    constraints is an approximate target, not a hard requirement — a too-small board
+    is simply unroutable. When enabled, if the loop does not fully route at the
+    target size, the outline is scaled up by ``outline_grow`` (both dims, aspect
+    preserved) and the whole loop retried, up to ``outline_max_scale``. The smallest
+    outline that fully routes wins — an automatic minimal-area board. Mutates
+    ``constraints.board.width/height`` to the chosen size (so write-back frames to
+    it).
+
+    Returns the final placed :class:`BoardGraph` and a :class:`FeedbackReport`.
+    Deterministic under a fixed ``seed``.
+    """
+    base_w, base_h = outline_size(graph, constraints)
+    scale = 1.0
+    placed: BoardGraph = graph
+    report = FeedbackReport(rounds=0)
+    while True:
+        constraints.board.width = base_w * scale
+        constraints.board.height = base_h * scale
+        placed, report = _place_route_loop(
+            graph,
+            constraints,
+            seed=seed,
+            iters=iters,
+            orient=orient,
+            max_rounds=max_rounds,
+            gcell_mm=gcell_mm,
+            track_pitch_mm=track_pitch_mm,
+            route_passes=route_passes,
+            detail_rules=detail_rules,
+            detail_pitch_mm=detail_pitch_mm,
+            detail_iters=detail_iters,
+        )
+        report.outline_scale = scale
+        if report.converged or not auto_outline or scale >= outline_max_scale - 1e-9:
+            break
+        scale = min(outline_max_scale, scale * outline_grow)
     return placed, report

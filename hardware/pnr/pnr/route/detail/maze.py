@@ -67,13 +67,16 @@ def _astar(
     history: Dict[Cell, float],
     via_cost: float,
     pres_fac: float,
+    blocked: Optional[Set[Cell]] = None,
 ) -> Optional[List[Cell]]:
     """A\\* from any ``sources`` cell to the nearest ``targets`` cell for ``net``.
     Cost of entering a cell is ``(1 + history)·present`` + a via surcharge on layer
-    moves. Returns the path (inclusive) or None."""
+    moves. ``blocked`` cells are hard-impassable (accepted other-net copper during
+    the rip-up-&-reroute finalize). Returns the path (inclusive) or None."""
     if not targets:
         return None
     tset = targets
+    block = blocked or set()
 
     def h(c: Cell) -> float:
         # Manhattan to the closest target (admissible; ignores vias).
@@ -107,7 +110,7 @@ def _astar(
         # in-plane moves
         for dl, di, dj in _INPLANE:
             nc = Cell(cur.layer, cur.i + di, cur.j + dj)
-            if not grid.passable(nc.layer, nc.i, nc.j, net):
+            if nc in block or not grid.passable(nc.layer, nc.i, nc.j, net):
                 continue
             ng = base + cell_cost(nc)
             if ng < g.get(nc, float("inf")):
@@ -123,7 +126,7 @@ def _astar(
             if la == cur.layer:
                 continue
             nc = Cell(la, cur.i, cur.j)
-            if not grid.passable(nc.layer, nc.i, nc.j, net):
+            if nc in block or not grid.passable(nc.layer, nc.i, nc.j, net):
                 continue
             ng = base + cell_cost(nc) + via_cost
             if ng < g.get(nc, float("inf")):
@@ -142,8 +145,10 @@ def _route_one(
     history: Dict[Cell, float],
     via_cost: float,
     pres_fac: float,
+    blocked: Optional[Set[Cell]] = None,
 ) -> Optional[List[Cell]]:
-    """Connect all ``access`` cells of ``net`` into one tree (Prim on the grid)."""
+    """Connect all ``access`` cells of ``net`` into one tree (Prim on the grid).
+    ``blocked`` cells are hard-impassable (the finalize's already-committed copper)."""
     access = list(dict.fromkeys(access))  # de-dup, keep order
     if len(access) < 2:
         return list(access)
@@ -151,7 +156,9 @@ def _route_one(
     remaining = set(access[1:])
     all_cells: List[Cell] = [access[0]]
     while remaining:
-        path = _astar(grid, set(tree), set(remaining), net, occ, history, via_cost, pres_fac)
+        path = _astar(
+            grid, set(tree), set(remaining), net, occ, history, via_cost, pres_fac, blocked
+        )
         if path is None:
             return None
         for c in path:
@@ -257,27 +264,61 @@ def route(
             history[c] += hist_fac
         pres_fac *= pres_mult
 
-    # Finalize to a DRC-clean result *always*: accept nets greedily (fixed order),
-    # skipping any whose cells would collide with an already-accepted net. On
-    # convergence nothing collides (all accepted); otherwise the leftovers are
-    # reported unrouted — honest ground truth for the place↔route loop, never a
-    # short in the emitted board.
+    # Finalize to a DRC-clean result *always*, in two passes:
+    #
+    #  Pass 1 — commit the negotiated routes greedily (fixed order), keeping any
+    #  whose footprint (cells + via keep-out) doesn't collide with one already
+    #  committed. On convergence this accepts everything; the negotiation's spread
+    #  paths are preserved.
+    #
+    #  Pass 2 — rip-up-&-reroute recovery: for each net Pass 1 had to drop, re-route
+    #  it from scratch *around* all committed copper (hard-blocked). A net that only
+    #  contended for one cell during negotiation now reroutes instead of being lost;
+    #  it stays unrouted only if it genuinely cannot path around the committed set.
+    #  This is the difference between a greedy grid router and a real one.
     occupied: Dict[Cell, str] = {}
-    unrouted: List[str] = []
+    committed: Set[Cell] = set()
+
+    def _commit(net: str, cells: List[Cell]) -> None:
+        for c in _footprint(grid, cells, via_keepout):
+            occupied[c] = net
+            committed.add(c)
+        rn = _to_geometry(cells)
+        rn.name = net
+        rn.routed = True
+        result_nets[net] = rn
+
+    leftover: List[str] = []
     for net in sorted(nets):
         cells = routed.get(net)
-        footprint = _footprint(grid, cells, via_keepout) if cells else set()
-        if not cells or any(occupied.get(c, net) != net for c in footprint):
+        fp = _footprint(grid, cells, via_keepout) if cells else set()
+        if cells and not any(c in occupied for c in fp):
+            _commit(net, cells)
+        else:
+            leftover.append(net)
+
+    # Pass 2: shortest (smallest-span) leftovers first — they fit most easily around
+    # the committed copper and free room for the rest. Deterministic.
+    def _span(net: str) -> int:
+        cs = net_access[net]
+        return (max(c.i for c in cs) - min(c.i for c in cs)) + (
+            max(c.j for c in cs) - min(c.j for c in cs)
+        )
+
+    zero_occ: Dict[Cell, int] = defaultdict(int)
+    zero_hist: Dict[Cell, float] = defaultdict(float)
+    unrouted: List[str] = []
+    for net in sorted(leftover, key=lambda n: (_span(n), n)):
+        cells = _route_one(
+            grid, net_access[net], net, zero_occ, zero_hist, via_cost, 0.0, blocked=committed
+        )
+        fp = _footprint(grid, cells, via_keepout) if cells else set()
+        if cells and not any(c in occupied for c in fp):
+            _commit(net, cells)
+        else:
             unrouted.append(net)
             rn = _to_geometry([])
             rn.name = net
             rn.routed = False
             result_nets[net] = rn
-            continue
-        for c in footprint:
-            occupied[c] = net
-        rn = _to_geometry(cells)
-        rn.name = net
-        rn.routed = True
-        result_nets[net] = rn
     return RouteResult(nets=result_nets, unrouted=sorted(unrouted), iterations=iters)
