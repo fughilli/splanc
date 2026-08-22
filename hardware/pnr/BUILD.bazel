@@ -282,6 +282,20 @@ py_test(
     ],
 )
 
+# Escape planning (E2 via-in-pad / E3 dog-bone): per-pad escape selection.
+py_test(
+    name = "detail_escape_test",
+    size = "small",
+    srcs = ["tests/test_escape.py"],
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_escape.py",
+    deps = [
+        ":pnr",
+        ":pnr_detail",
+    ],
+)
+
 # R5 acceptance: the detailed router on a real placed board (place -> route,
 # DRC-clean by construction). Places the fixture, so it needs torch.
 py_test(

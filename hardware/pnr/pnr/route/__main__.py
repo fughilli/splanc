@@ -56,6 +56,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--route-iters", type=int, default=12, help="detailed-router negotiation passes"
     )
     ap.add_argument(
+        "--no-escape",
+        action="store_true",
+        help="disable pin-escape planning (via-in-pad / dog-bone) for A/B comparison",
+    )
+    ap.add_argument(
         "--detail-loop",
         action="store_true",
         help="close the place<->route loop on the DRC-clean detailed router "
@@ -124,7 +129,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         from pnr.route.detail.router import route_board
 
         board = route_board(
-            placed, constraints, rules, pitch=route_pitch, max_iters=args.route_iters
+            placed,
+            constraints,
+            rules,
+            pitch=route_pitch,
+            max_iters=args.route_iters,
+            escape_via_in_pad=not args.no_escape,
+            escape_dogbone=not args.no_escape,
         )
         print(board.summary())
         routes = {

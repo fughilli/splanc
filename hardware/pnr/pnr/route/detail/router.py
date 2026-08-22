@@ -20,6 +20,7 @@ from pnr.constraints import CompiledConstraints
 from pnr.graph import BoardGraph
 
 from ...place.geometry import Rect, outline_size, pad_rects
+from .escape import plan_escapes
 from .grid import DEFAULT_SIGNAL_LAYERS, RouteGrid
 from .maze import RouteResult, route
 
@@ -139,6 +140,8 @@ def route_board(
     pitch: Optional[float] = None,
     track_width_mm: Optional[float] = None,
     max_iters: int = 12,
+    escape_via_in_pad: bool = True,
+    escape_dogbone: bool = True,
 ) -> BoardRoute:
     """Detailed-route the signal nets of a placed ``graph``.
 
@@ -184,13 +187,18 @@ def route_board(
     _mark_plane_regions(grid, graph, rules, margin=2.0)
     planes = _plane_nets(rules)
 
-    net_access = {}
-    for net in graph.nets:
-        if net.name in planes or net.degree < 2:
-            continue
-        cells = grid.net_access(graph, net.name)
-        if len(cells) >= 2:
-            net_access[net.name] = cells
+    # Plan a pin escape per pad (E2 via-in-pad / E3 dog-bone) — the access cell the
+    # maze routes each net from, plus the escape geometry that bonds pad→access.
+    signal_nets = {net.name for net in graph.nets if net.name not in planes and net.degree >= 2}
+    plan = plan_escapes(
+        grid,
+        graph,
+        signal_nets,
+        via_keepout=via_keepout,
+        allow_via_in_pad=escape_via_in_pad,
+        allow_dogbone=escape_dogbone,
+    )
+    net_access = {n: cells for n, cells in plan.net_access.items() if len(cells) >= 2}
 
     result = route(grid, net_access, max_iters=max_iters, via_keepout=via_keepout)
 
@@ -206,18 +214,31 @@ def route_board(
             x, y = grid.center_of(i, j)
             board.vias.append((name, x, y))
 
-    # Pin-access stubs: the routed tracks start at grid-cell *centres*, which are
-    # offset from the actual pad centres — connect each pad to its access cell so
-    # the net is electrically whole (no ratsnest at the pads).
-    for comp in graph.components:
-        la = grid.side_layer(comp.side)
-        for _pn, net_name, r in pad_rects(comp):
-            if net_name not in routed_names:
-                continue
-            ci, cj = grid.cell_of(r.cx, r.cy)
-            cx, cy = grid.center_of(ci, cj)
-            if (cx, cy) != (r.cx, r.cy):
-                board.tracks.append(
-                    (net_name, layer_names[la], (r.cx, r.cy), (cx, cy), track_width_mm)
-                )
+    # Emit each routed pad's escape geometry (on-layer stub, via-in-pad, or dog-bone
+    # stub + via) so the net is electrically whole from the real pad centre.
+    for esc in plan.escapes:
+        if esc.net not in routed_names:
+            continue
+        _emit_escape(board, esc, grid, track_width_mm)
     return board
+
+
+def _emit_escape(board: BoardRoute, esc, grid: RouteGrid, w: float) -> None:
+    """Append the mm-space geometry that bonds a pad to its maze access cell."""
+    access_ctr = grid.center_of(esc.access.i, esc.access.j)
+    access_layer = grid.layers[esc.access.layer]
+    if esc.kind == "via_in_pad":
+        # Via in the pad (side ↔ access layer); short stub on the access layer to the
+        # cell centre where the maze route begins.
+        board.vias.append((esc.net, esc.via_xy[0], esc.via_xy[1]))
+        if esc.pad_xy != access_ctr:
+            board.tracks.append((esc.net, access_layer, esc.pad_xy, access_ctr, w))
+    elif esc.kind == "dogbone":
+        # Stub outward on the pad's layer to the offset cell; via there if the maze
+        # route continues on another layer.
+        board.tracks.append((esc.net, esc.side_layer, esc.pad_xy, esc.stub_to, w))
+        if esc.via_xy is not None:
+            board.vias.append((esc.net, esc.via_xy[0], esc.via_xy[1]))
+    else:  # onlayer — the classic pin-access stub (pad centre → its cell centre)
+        if esc.pad_xy != access_ctr:
+            board.tracks.append((esc.net, esc.side_layer, esc.pad_xy, access_ctr, w))
