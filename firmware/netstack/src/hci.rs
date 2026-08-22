@@ -1,0 +1,219 @@
+//! BLE HCI host — the host side of the Host Controller Interface, allocation-free.
+//! Drives the (vendor) BLE controller over VHCI: builds HCI commands, parses HCI
+//! events + ACL, and sequences advertising bring-up and the connection. Together
+//! with `ble`/`gap` (L2CAP/ATT/GATT) this replaces the vendor BLE host (NimBLE):
+//! the controller only owns the radio link layer.
+//!
+//! Packet type indicators (first VHCI byte): 0x01 command, 0x02 ACL, 0x04 event.
+
+use crate::rx::{Buf, Overflow};
+
+pub const H4_CMD: u8 = 0x01;
+pub const H4_ACL: u8 = 0x02;
+pub const H4_EVT: u8 = 0x04;
+
+// LE / control opcodes (OGF<<10 | OCF).
+const OP_RESET: u16 = 0x0C03;
+const OP_LE_SET_ADV_PARAMS: u16 = 0x2006;
+const OP_LE_SET_ADV_DATA: u16 = 0x2008;
+const OP_LE_SET_SCAN_RSP: u16 = 0x2009;
+const OP_LE_SET_ADV_ENABLE: u16 = 0x200A;
+const OP_LE_SET_EVENT_MASK: u16 = 0x2001;
+
+// Event codes.
+const EV_CMD_COMPLETE: u8 = 0x0E;
+const EV_CMD_STATUS: u8 = 0x0F;
+const EV_DISCONN: u8 = 0x05;
+const EV_LE_META: u8 = 0x3E;
+const LE_CONN_COMPLETE: u8 = 0x01;
+
+fn cmd(op: u16, params: &[u8], out: &mut Buf<64>) -> usize {
+    out.clear();
+    let _ = out.extend(&[H4_CMD]);
+    let _ = out.extend(&op.to_le_bytes());
+    let _ = out.extend(&[params.len() as u8]);
+    let _ = out.extend(params);
+    out.len()
+}
+
+/// The bring-up sequence: each `poll` step emits the next HCI command until the
+/// device is advertising; `on_event` advances it as command-completes arrive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostState {
+    Init,
+    ResetSent,
+    EvtMaskSent,
+    AdvParamsSent,
+    AdvDataSent,
+    AdvEnableSent,
+    Advertising,
+    Connected(u16),
+}
+
+pub struct BleHost {
+    pub state: HostState,
+    adv: [u8; 32],
+    adv_len: usize,
+}
+
+impl BleHost {
+    pub const fn new() -> Self {
+        BleHost { state: HostState::Init, adv: [0; 32], adv_len: 0 }
+    }
+
+    /// Set the advertising payload (AD structures) — e.g. flags + complete local
+    /// name. Bounded to the 31-byte legacy limit.
+    pub fn set_adv(&mut self, ad: &[u8]) {
+        self.adv_len = ad.len().min(31);
+        self.adv[1..1 + self.adv_len].copy_from_slice(&ad[..self.adv_len]);
+        self.adv[0] = self.adv_len as u8; // HCI adv-data length field
+    }
+
+    /// Produce the next HCI command to send for bring-up, or 0 bytes when there's
+    /// nothing to do (advertising / connected).
+    pub fn poll_cmd(&mut self, out: &mut Buf<64>) -> usize {
+        match self.state {
+            HostState::Init => {
+                self.state = HostState::ResetSent;
+                cmd(OP_RESET, &[], out)
+            }
+            _ => 0,
+        }
+    }
+
+    /// Advance on a received HCI event; returns the next command to send (if any)
+    /// into `out`.
+    pub fn on_event(&mut self, pkt: &[u8], out: &mut Buf<64>) -> usize {
+        if pkt.len() < 3 || pkt[0] != H4_EVT {
+            return 0;
+        }
+        let code = pkt[1];
+        let params = &pkt[3..];
+        match code {
+            EV_CMD_COMPLETE if params.len() >= 3 => {
+                let op = u16::from_le_bytes([params[1], params[2]]);
+                self.after_complete(op, out)
+            }
+            EV_CMD_STATUS => 0,
+            EV_LE_META if !params.is_empty() && params[0] == LE_CONN_COMPLETE && params.len() >= 4 => {
+                let handle = u16::from_le_bytes([params[2], params[3]]) & 0x0fff;
+                self.state = HostState::Connected(handle);
+                0
+            }
+            EV_DISCONN => {
+                // back to advertising after a disconnect
+                self.state = HostState::AdvEnableSent;
+                cmd(OP_LE_SET_ADV_ENABLE, &[0x01], out)
+            }
+            _ => 0,
+        }
+    }
+
+    fn after_complete(&mut self, op: u16, out: &mut Buf<64>) -> usize {
+        match (self.state, op) {
+            (HostState::ResetSent, OP_RESET) => {
+                self.state = HostState::EvtMaskSent;
+                // enable LE meta events
+                cmd(OP_LE_SET_EVENT_MASK, &[0x1f, 0, 0, 0, 0, 0, 0, 0], out)
+            }
+            (HostState::EvtMaskSent, _) => {
+                self.state = HostState::AdvParamsSent;
+                // adv interval 0x00A0 (100ms), connectable undirected, public addr.
+                let p = [0xa0, 0x00, 0xa0, 0x00, 0x00, 0x00, 0x00, 0, 0, 0, 0, 0, 0, 0x07, 0x00];
+                cmd(OP_LE_SET_ADV_PARAMS, &p, out)
+            }
+            (HostState::AdvParamsSent, _) => {
+                self.state = HostState::AdvDataSent;
+                cmd(OP_LE_SET_ADV_DATA, &self.adv[..32], out)
+            }
+            (HostState::AdvDataSent, _) => {
+                self.state = HostState::AdvEnableSent;
+                cmd(OP_LE_SET_ADV_ENABLE, &[0x01], out)
+            }
+            (HostState::AdvEnableSent, _) => {
+                self.state = HostState::Advertising;
+                0
+            }
+            _ => 0,
+        }
+    }
+
+    pub fn conn_handle(&self) -> Option<u16> {
+        match self.state {
+            HostState::Connected(h) => Some(h),
+            _ => None,
+        }
+    }
+}
+
+impl Default for BleHost {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Build an HCI ACL packet carrying an L2CAP PDU on `handle` (first fragment).
+pub fn acl(handle: u16, l2cap: &[u8], out: &mut Buf<64>) -> Result<usize, Overflow> {
+    out.clear();
+    out.extend(&[H4_ACL])?;
+    out.extend(&(handle & 0x0fff | 0x2000).to_le_bytes())?; // PB=start,BC=00
+    out.extend(&(l2cap.len() as u16).to_le_bytes())?;
+    out.extend(l2cap)?;
+    Ok(out.len())
+}
+
+/// Parse an inbound HCI ACL packet -> (handle, l2cap payload).
+pub fn parse_acl(pkt: &[u8]) -> Option<(u16, &[u8])> {
+    if pkt.len() < 5 || pkt[0] != H4_ACL {
+        return None;
+    }
+    let handle = u16::from_le_bytes([pkt[1], pkt[2]]) & 0x0fff;
+    let dlen = u16::from_le_bytes([pkt[3], pkt[4]]) as usize;
+    let data = pkt.get(5..5 + dlen)?;
+    Some((handle, data))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Feed a command-complete for `op` and confirm the host advances + emits.
+    fn cmd_complete(op: u16) -> [u8; 6] {
+        [H4_EVT, EV_CMD_COMPLETE, 0x04, 0x01, op as u8, (op >> 8) as u8]
+    }
+
+    #[test]
+    fn bringup_sequence_reaches_advertising() {
+        let mut h = BleHost::new();
+        h.set_adv(&[0x02, 0x01, 0x06, 0x0c, 0x09, b'h', b'e', b'a', b'p', b'l', b'e', b's', b's', b'-', b'c', b'6']);
+        let mut out: Buf<64> = Buf::new();
+        assert!(h.poll_cmd(&mut out) > 0 && out.as_slice()[0] == H4_CMD); // Reset
+        assert_eq!(h.state, HostState::ResetSent);
+        // walk the completes
+        h.on_event(&cmd_complete(OP_RESET), &mut out);
+        h.on_event(&cmd_complete(OP_LE_SET_EVENT_MASK), &mut out);
+        assert_eq!(h.state, HostState::AdvParamsSent);
+        h.on_event(&cmd_complete(OP_LE_SET_ADV_PARAMS), &mut out);
+        // adv data command carries our payload length.
+        assert_eq!(out.as_slice()[0], H4_CMD);
+        h.on_event(&cmd_complete(OP_LE_SET_ADV_DATA), &mut out);
+        h.on_event(&cmd_complete(OP_LE_SET_ADV_ENABLE), &mut out);
+        assert_eq!(h.state, HostState::Advertising);
+    }
+
+    #[test]
+    fn connection_and_acl_roundtrip() {
+        let mut h = BleHost::new();
+        h.state = HostState::Advertising;
+        // LE Connection Complete -> Connected(handle=0x0040)
+        let ev = [H4_EVT, EV_LE_META, 0x13, LE_CONN_COMPLETE, 0x00, 0x40, 0x00, 0x00, 0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let mut out: Buf<64> = Buf::new();
+        h.on_event(&ev, &mut out);
+        assert_eq!(h.conn_handle(), Some(0x40));
+        // ACL build/parse round-trip.
+        let l2 = [0x04, 0x00, 0x04, 0x00, 0x0b, b'h', b'i']; // len,cid,att...
+        acl(0x40, &l2, &mut out).unwrap();
+        let (hh, data) = parse_acl(out.as_slice()).unwrap();
+        assert_eq!((hh, data), (0x40, &l2[..]));
+    }
+}

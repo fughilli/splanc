@@ -44,6 +44,7 @@ pub mod wpa;
 pub mod ccmp;
 pub mod sta;
 pub mod ap;
+pub mod hci;
 pub mod stack;
 pub mod mlme;
 pub mod phy;
