@@ -1,0 +1,139 @@
+"""Heapless WiFi + BLE + coexistence network stack for the ESP32-C6 (DESIGN.md).
+
+`no_std`, allocation-free: every buffer, ring, and table is sized at compile time
+and the protocol parsers are bounded by their input. The library is host-tested
+(pure logic) and exercised on real hardware through the three example roles under
+`examples/` (BLE peripheral, STA client, AP webserver).
+"""
+
+load("@embedded//rules:firmware.bzl", "firmware_binary")
+load("@embedded//rules:flash.bzl", "esptool_flash")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_static_library", "rust_test")
+load("//tools:flash_bundle.bzl", "flash_bundle")
+
+package(default_visibility = ["//visibility:public"])
+
+_C6 = select({
+    "@embedded//platforms:is_esp32c6": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+
+# The stack itself — host-testable logic and the firmware dependency.
+rust_library(
+    name = "netstack",
+    srcs = glob(["src/*.rs"]),
+    crate_name = "ledmapper_netstack",
+    crate_root = "src/lib.rs",
+    edition = "2021",
+)
+
+# Host unit tests (the crate's inline #[cfg(test)] modules: parsers, rings,
+# role state machines, coex arbiter, HTTP).
+rust_test(
+    name = "netstack_test",
+    crate = ":netstack",
+    edition = "2021",
+)
+
+# ---- example roles ----------------------------------------------------------
+# One FFI static library exposing an extern-"C" runner per role, linked into a
+# tiny Arduino shim per app. `tags=["manual"]` keeps the C6-only firmware out of
+# the //... wildcard.
+rust_static_library(
+    name = "netstack_examples_ffi",
+    srcs = ["examples/ffi.rs"],
+    crate_name = "netstack_examples_ffi",
+    edition = "2021",
+    target_compatible_with = _C6,
+    deps = [":netstack"],
+)
+
+_arduino = ["@embedded//libs/board:arduino_core"]
+
+# ble_peripheral — GAP advertising + a fixed GATT server.
+cc_binary(
+    name = "ble_peripheral",
+    srcs = ["examples/ble_peripheral.cpp"],
+    copts = ["-fno-rtti"],
+    target_compatible_with = _C6,
+    deps = _arduino + [":netstack_examples_ffi"],
+)
+
+firmware_binary(
+    name = "ble_peripheral_esp32c6",
+    binary = ":ble_peripheral",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "ble_peripheral_flash",
+    app = ":ble_peripheral_esp32c6",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "ble_peripheral_flashbundle",
+    flash = ":ble_peripheral_flash",
+    tags = ["manual"],
+)
+
+# sta_client — STA MLME (scan/auth/assoc -> Associated).
+cc_binary(
+    name = "sta_client",
+    srcs = ["examples/sta_client.cpp"],
+    copts = ["-fno-rtti"],
+    target_compatible_with = _C6,
+    deps = _arduino + [":netstack_examples_ffi"],
+)
+
+firmware_binary(
+    name = "sta_client_esp32c6",
+    binary = ":sta_client",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "sta_client_flash",
+    app = ":sta_client_esp32c6",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "sta_client_flashbundle",
+    flash = ":sta_client_flash",
+    tags = ["manual"],
+)
+
+# ap_webserver — AP MLME accepts a station + serves a bounded HTTP 200.
+cc_binary(
+    name = "ap_webserver",
+    srcs = ["examples/ap_webserver.cpp"],
+    copts = ["-fno-rtti"],
+    target_compatible_with = _C6,
+    deps = _arduino + [":netstack_examples_ffi"],
+)
+
+firmware_binary(
+    name = "ap_webserver_esp32c6",
+    binary = ":ap_webserver",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "ap_webserver_flash",
+    app = ":ap_webserver_esp32c6",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "ap_webserver_flashbundle",
+    flash = ":ap_webserver_flash",
+    tags = ["manual"],
+)
