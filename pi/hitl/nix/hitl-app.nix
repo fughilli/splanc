@@ -105,14 +105,30 @@ let
   #                      container). See internal/analyzer and DESIGN.md.
   #   SBC_AP_DONGLE=1  → host the provisioning AP on a dedicated RTL8851BU USB radio
   #                      (ap0) instead of onboard wlan0 — for a board that can't AP.
+  #   SBC_BT_DONGLE=1  → use the RTL8851BU USB dongle's BLUETOOTH half (btusb/hci) as
+  #                      the BLE central adapter instead of the onboard controller.
+  #                      The Pi 5 onboard Cypress BCM4345/6 marginally fails LE
+  #                      connection establishment (0x3E storm, 0 GATT) — proven
+  #                      0/20 vs the dongle's 20/20 on the same DUT — so the harness
+  #                      must talk to the dongle. Ships the BT firmware, flips the
+  #                      dongle out of CD-ROM mode, and points the daemon (btmon) +
+  #                      container (bleak) at the USB controller via --ble-adapter.
   sigrok = import ./sigrok.nix { inherit pkgs; };
   isAnalyzerRig = builtins.getEnv "SBC_ANALYZER" == "1";
   useApDongle = builtins.getEnv "SBC_AP_DONGLE" == "1";
+  useBtDongle = builtins.getEnv "SBC_BT_DONGLE" == "1";
   isPi3 = builtins.getEnv "SBC_BOARD" == "raspberry-pi-3";
+  # The RTL8851BU dongle must be flipped out of USB CD-ROM mode (0bda:1a2b →
+  # 0bda:b851) before either its WiFi (rtw89) or BT (btusb) half enumerates, so the
+  # modeswitch udev rule + usb-modeswitch package are shared by both dongle uses.
+  useDongle = useApDongle || useBtDongle;
   # RTL8851BU driver + WiFi firmware for the optional dongle AP (see rtl8851bu.nix).
   # usb_modeswitch flips the CD-ROM dongle to WiFi mode + a .link renames it to ap0;
   # rtw89 is mac80211-based, so it supports hostapd AP cleanly.
   rtl8851bu = config.boot.kernelPackages.callPackage ./rtl8851bu.nix { };
+  # BT firmware blob for the dongle's btusb half (see rtl8851bu-bt.nix). Independent
+  # of the WiFi driver — btusb is in-tree, it only lacks the firmware on this image.
+  rtl8851buBt = pkgs.callPackage ./rtl8851bu-bt.nix { };
   # DUT → analyzer channels. A DUT's WS2812 DIN (the C6's GPIO20 / PIN20) is wired
   # to one FX2 channel; "default" catches the single-DUT case. Add per-DUT entries
   # keyed by the discovered c6-<serial> name (e.g. "c6-fa0324" = { channels =
@@ -202,8 +218,11 @@ in
   boot.extraModulePackages = lib.optionals useApDongle [ rtl8851bu ];
 
   # rtw89 loads rtw8851b_fw-1.bin from /lib/firmware/rtw89; our driver derivation
-  # ships it (nixpkgs' linux-firmware predates 8851BU). No WiFi without it.
-  hardware.firmware = lib.optionals useApDongle [ rtl8851bu ];
+  # ships it (nixpkgs' linux-firmware predates 8851BU). No WiFi without it. The BT
+  # half needs rtl_bt/rtl8851bu_fw.bin, which the trimmed rig firmware set omits —
+  # ship it so btusb can bring the dongle's hci up (else it registers but stays DOWN).
+  hardware.firmware = lib.optionals useApDongle [ rtl8851bu ]
+    ++ lib.optionals useBtDongle [ rtl8851buBt ];
 
   # Stable name for the USB AP radio: rename the rtw89 AP interface (driver
   # rtw89_8851bu_git, the usb_driver's KBUILD_MODNAME) to ap0 so the AP profile
@@ -231,10 +250,11 @@ in
     # single-purpose bench; the daemon (root) owns it, this is belt-and-suspenders.
     SUBSYSTEM=="usb", ATTR{idVendor}=="0925", ATTR{idProduct}=="3881", MODE="0666"
     SUBSYSTEM=="usb", ATTR{idVendor}=="1d50", ATTR{idProduct}=="608c", MODE="0666"
-  '' + lib.optionalString useApDongle ''
-    # Dedicated USB AP dongle (RTL8851BU): it enumerates as a CD-ROM (0bda:1a2b);
-    # StandardEject flips it into WiFi mode (re-enumerates as 0bda:b851) so the
-    # rtw89_8851bu_git driver binds and the .link renames it to ap0.
+  '' + lib.optionalString useDongle ''
+    # RTL8851BU USB dongle: it enumerates as a CD-ROM (0bda:1a2b); StandardEject
+    # flips it into combo mode (re-enumerates as 0bda:b851), after which the
+    # rtw89_8851bu_git driver binds the WiFi half (AP dongle → .link renames to ap0)
+    # and the in-tree btusb binds the BT half (BT dongle → its hci, firmware above).
     ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="0bda", ATTR{idProduct}=="1a2b", RUN+="${pkgs.usb-modeswitch}/bin/usb_modeswitch -v 0bda -p 1a2b -K"
   '';
 
@@ -274,7 +294,7 @@ in
   environment.systemPackages = [ hitl pkgs.usbutils pkgs.linuxPackages.usbip pkgs.bluez ]
     # sigrok-cli + fx2lafw firmware for the analyzer; usb-modeswitch for the dongle.
     ++ lib.optionals isAnalyzerRig sigrok.packages
-    ++ lib.optionals useApDongle [ pkgs.usb-modeswitch ];
+    ++ lib.optionals useDongle [ pkgs.usb-modeswitch ];
 
   # Load the test image into Podman at boot (and on every deploy — the ExecStart
   # store path changes with the image, so switch-to-configuration re-runs this).
@@ -400,7 +420,11 @@ in
           "--ap-ssid ${apSsid}"
           "--ap-psk ${apPsk}"
           dutArgs
-        ] ++ analyzerArgs); # --analyzer-* only on the logic-analyzer rig
+        ] ++ analyzerArgs # --analyzer-* only on the logic-analyzer rig
+        # BT dongle rig: point BLE central (btmon capture host-side + bleak in the
+        # container) at the USB controller instead of the flaky onboard one. "usb"
+        # auto-resolves the hci by bus at runtime, so it's robust to hciN ordering.
+        ++ lib.optionals useBtDongle [ "--ble-adapter" "usb" ]);
       # libsigrok uploads fx2lafw firmware to the bare FX2 from here (analyzer rig).
       Environment = lib.optionals isAnalyzerRig [ "SIGROK_FIRMWARE_DIR=${sigrok.firmwareDir}" ];
       StateDirectory = "hitl";

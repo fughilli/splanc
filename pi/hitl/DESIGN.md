@@ -270,7 +270,12 @@ container is destroyed on release, so state never leaks between holders.
 ## Open items (need the hardware / decisions)
 
 - ESP32-C6 USB bus id + udev rules (for USBIP bind and stable device names).
-- BT controller: Pi built-in vs USB dongle; how it's exposed into the container.
+- BT controller: Pi built-in vs USB dongle — RESOLVED. The Pi 5 onboard Cypress
+  BCM4345/6 marginally fails LE connection establishment (0x3E storm, 0 GATT;
+  measured 0/20 vs a USB dongle's 20/20 on the same DUT). `SBC_BT_DONGLE=1` routes
+  BLE central onto an RTL8851BU USB dongle's BT half: ships its firmware, flips it
+  out of CD-ROM mode, and points btmon (`-i`) + the container's bleak
+  (`$HITL_BLE_ADAPTER`, resolved by USB bus so it's index-order-robust) at it.
 - Tailscale auth-key provisioning (secret): baked, `environmentFile`, or
   `tailscale up` once by hand. MVP: an `environmentFile` the daemon/tailscale
   reads (kept out of the image).

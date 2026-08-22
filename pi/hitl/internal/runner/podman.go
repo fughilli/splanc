@@ -54,6 +54,14 @@ type PodmanConfig struct {
 	// CaptureMaxDur is the max wall-clock for a single capture (0 = a built-in
 	// default). A watchdog stops a capture after this so a forgotten one is bounded.
 	CaptureMaxDur time.Duration
+	// BLEAdapter selects the BLE central controller for this rig. Empty = the system
+	// default (onboard). A literal "hciN" pins that controller. The special value
+	// "usb" resolves the USB Bluetooth controller by bus at runtime (see
+	// resolveBLEAdapter) — used to route BLE around a marginal onboard controller
+	// (Pi 5 Cypress) and onto a USB dongle. When it resolves non-empty it is
+	// injected into the container as $HITL_BLE_ADAPTER (bleak) and passed to btmon
+	// as `-i <hci>` (see capture.go).
+	BLEAdapter string
 }
 
 // PodmanRunner implements Runner by shelling out to podman.
@@ -81,6 +89,62 @@ func NewPodman(cfg PodmanConfig) *PodmanRunner {
 
 // containerName is deterministic per reservation so Stop/Cleanup can find it.
 func containerName(id string) string { return "hitl-" + id }
+
+// resolveBLEAdapter turns the configured BLEAdapter into a concrete "hciN" (or ""
+// for the system default). "usb" is resolved fresh each call by bus, so it tracks
+// the dongle's actual hci index regardless of enumeration order and tolerates the
+// controller not being up yet at daemon start (it just resolves once it appears).
+func (p *PodmanRunner) resolveBLEAdapter() string {
+	switch p.cfg.BLEAdapter {
+	case "":
+		return ""
+	case "usb":
+		hci := resolveUSBHCI()
+		if hci == "" {
+			// Configured to use the dongle but none is up — fall back to the default
+			// controller rather than breaking BLE, and say so (this is the flaky path).
+			log.Printf("ble-adapter=usb: no USB Bluetooth controller found; using system default")
+		}
+		return hci
+	default:
+		return p.cfg.BLEAdapter
+	}
+}
+
+// resolveUSBHCI returns the name (e.g. "hci1") of the first Bluetooth controller on
+// the USB bus, or "" if none. It reads /sys/class/bluetooth/hci*/device: a USB
+// controller's device path resolves under .../usbN/... while the onboard Pi
+// controller sits on a serial/platform path — a stable discriminator that doesn't
+// depend on the hciN numbering. Entries are sorted for a deterministic pick.
+func resolveUSBHCI() string { return resolveUSBHCIIn("/sys/class/bluetooth") }
+
+// resolveUSBHCIIn is resolveUSBHCI against an arbitrary bluetooth-class root (for
+// tests). A controller is "USB" if its device symlink resolves to a path with a
+// "/usb" segment.
+func resolveUSBHCIIn(root string) string {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return ""
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), "hci") {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		dev, err := filepath.EvalSymlinks(filepath.Join(root, n, "device"))
+		if err != nil {
+			continue
+		}
+		// USB device paths contain a "/usbN/" hub segment (e.g. .../usb3/3-1/3-1:1.0).
+		if strings.Contains(dev, "/usb") {
+			return n
+		}
+	}
+	return ""
+}
 
 func (p *PodmanRunner) podman(ctx context.Context, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, p.cfg.Podman, args...)
@@ -130,6 +194,12 @@ func (p *PodmanRunner) Start(ctx context.Context, id, owner, sshKey string, dev 
 	// Per-DUT env (e.g. HITL_ADAPTER_SERIAL so openocd targets this DUT's board).
 	for _, k := range sortedKeys(dev.Env) {
 		args = append(args, "-e", k+"="+dev.Env[k])
+	}
+	// BLE central adapter: tell the container's bleak (hitl-ble, ImprovBLE
+	// provisioning) which host controller to drive, so it uses the USB dongle rather
+	// than the flaky onboard one. Only set when configured AND resolvable.
+	if adp := p.resolveBLEAdapter(); adp != "" {
+		args = append(args, "-e", "HITL_BLE_ADAPTER="+adp)
 	}
 	// BLE: mount the host's system D-Bus socket so bleak in the container can
 	// drive the host bluetoothd (hci0). Present only if hardware.bluetooth is on.

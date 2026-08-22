@@ -60,3 +60,60 @@ func TestDeviceMappingBareAndMissing(t *testing.T) {
 		t.Error("a missing host device must be skipped (ok=false)")
 	}
 }
+
+// resolveBLEAdapter maps the configured value to a concrete adapter: "" and a
+// literal "hciN" pass through unchanged (no sysfs lookup).
+func TestResolveBLEAdapterLiteral(t *testing.T) {
+	if got := (&PodmanRunner{cfg: PodmanConfig{BLEAdapter: ""}}).resolveBLEAdapter(); got != "" {
+		t.Errorf("empty BLEAdapter = %q, want \"\"", got)
+	}
+	if got := (&PodmanRunner{cfg: PodmanConfig{BLEAdapter: "hci1"}}).resolveBLEAdapter(); got != "hci1" {
+		t.Errorf("literal BLEAdapter = %q, want \"hci1\"", got)
+	}
+}
+
+// resolveUSBHCIIn picks the Bluetooth controller whose device symlink resolves to
+// a USB path, ignoring the onboard (UART/platform) one, and returns "" when none
+// is on USB. hci entries are sorted so the pick is deterministic.
+func TestResolveUSBHCI(t *testing.T) {
+	root := resolvedTempDir(t)
+	// Fake sysfs: an onboard UART controller (hci0) and a USB dongle (hci1).
+	uartDev := filepath.Join(root, "_serial", "serial0-0", "bluetooth", "hci0")
+	usbDev := filepath.Join(root, "_usb", "usb3", "3-1", "3-1:1.0", "bluetooth", "hci1")
+	for _, d := range []string{uartDev, usbDev} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mkHCI := func(name, target string) {
+		hci := filepath.Join(root, name)
+		if err := os.MkdirAll(hci, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, filepath.Join(hci, "device")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mkHCI("hci0", uartDev)
+	mkHCI("hci1", usbDev)
+	if got := resolveUSBHCIIn(root); got != "hci1" {
+		t.Errorf("resolveUSBHCIIn = %q, want \"hci1\" (the USB controller)", got)
+	}
+
+	// With no USB controller, it returns "" (caller falls back to the default).
+	onlyUART := resolvedTempDir(t)
+	d := filepath.Join(onlyUART, "_serial", "bluetooth", "hci0")
+	if err := os.MkdirAll(d, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	hci := filepath.Join(onlyUART, "hci0")
+	if err := os.MkdirAll(hci, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(d, filepath.Join(hci, "device")); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveUSBHCIIn(onlyUART); got != "" {
+		t.Errorf("resolveUSBHCIIn with no USB controller = %q, want \"\"", got)
+	}
+}

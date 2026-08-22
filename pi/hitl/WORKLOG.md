@@ -3,6 +3,40 @@
 Handoff notes alongside git history. Newest first. Read this before touching the
 rig's networking — there's live runtime state that isn't fully declarative yet.
 
+## 2026-08-22 — BT dongle deflakes provisioning (Pi 5 onboard Cypress is the flake)
+
+The long-hunted ImprovBLE provisioning flake (FUG-61/FUG-94: ~50% per-attempt
+connect failure, ridden out by `_connect`'s retry loop) is the **Pi 5 onboard
+Cypress BCM4345/6 BT controller** — not coexistence, not the DUT. Proven with a
+same-rig/same-DUT A/B on rig-2 (`gatttool --primary`, whose pass/fail matches the
+btmon `Connection Failed to be Established (0x3E)` count exactly):
+
+- onboard `hci0` (Cypress, `98:FE:54:…`): **0/20 usable, 20× 0x3E**
+- USB dongle `hci1` (RTL8851BU, `90:DE:80:…`): **20/20 usable, 0× 0x3E**
+
+Control: rig-3 (Pi 3, onboard BCM43438 `B8:27:EB:…`) `hci0` passed 20/20 — so the
+flake is **Pi5-Cypress-specific**, not Pi-BT-in-general.
+
+Fix (`SBC_BT_DONGLE=1`): route BLE central onto the dongle's BT half.
+
+- `nix/rtl8851bu-bt.nix` ships `rtl_bt/rtl8851bu_fw.bin` (vendored under
+  `nix/firmware/`; the trimmed rig image has no `rtl_bt/` dir, so btusb registers
+  the hci but leaves it DOWN). No `rtl8851bu_config.bin` exists; btrtl's load-miss
+  is non-fatal.
+- `hitl-app.nix`: `useBtDongle` adds the firmware, shares the `usb_modeswitch` udev
+  rule (0bda:1a2b→b851) with the AP-dongle path, and passes `--ble-adapter usb`.
+- daemon resolves `"usb"` → the USB controller by sysfs bus (`resolveUSBHCI`, so
+  it's robust to hciN ordering), injects `HITL_BLE_ADAPTER` into the container and
+  `-i <hci>` into btmon. bleak (provisioning `hitl_improv.py` + `hitl-ble`) honors
+  `$HITL_BLE_ADAPTER` — bleak's BlueZ backend defaults to `hci0`, so this is
+  required, not cosmetic. Falls back to the default controller if no dongle is up.
+
+Validated by hand before the deploy (all reverts on reboot; the deploy makes it
+durable): a nix-built `usb_modeswitch`, the injected firmware, and a `btusb`
+rebind brought `hci1` up on rig-2 and rig-3. rig-3's dongle also scored 19/20 (one
+transient 0x3E = noise). Go/py units cover the resolver + adapter threading. See
+memory `hitl-bt-dongle-fixes-pi5-flake`.
+
 ## 2026-08-17 — DUT identification + `map_la` (acquire the analyzer channel map)
 
 Which physical board (hence which analyzer channel) is which `c6-<serial>` can't

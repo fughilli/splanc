@@ -95,8 +95,14 @@ func (p *PodmanRunner) StartCapture(ctx context.Context, id string) (*api.Captur
 	_ = os.Remove(path)
 	cctx, cancel := context.WithCancel(context.Background())
 	// `btmon -w` writes a btsnoop file of all HCI monitor traffic; it opens in
-	// `btmon -r` and Wireshark. One controller on the rig, so no -i filter.
-	cmd := exec.CommandContext(cctx, p.cfg.Btmon, "-w", path)
+	// `btmon -r` and Wireshark. When a specific BLE adapter is selected (a USB
+	// dongle rig), filter to it with `-i` so the trace matches the controller the
+	// harness actually drives; otherwise capture every controller (the rig default).
+	btmonArgs := []string{"-w", path}
+	if adp := p.resolveBLEAdapter(); adp != "" {
+		btmonArgs = append([]string{"-i", adp}, btmonArgs...)
+	}
+	cmd := exec.CommandContext(cctx, p.cfg.Btmon, btmonArgs...)
 	// On stop, SIGTERM btmon so it flushes and closes the btsnoop cleanly (a
 	// SIGKILL could truncate the final record); force-kill only if it lingers.
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }

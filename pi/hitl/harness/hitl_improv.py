@@ -49,6 +49,18 @@ from improv import (  # noqa: E402
 _TRANSPORT_ERRORS = (BleakError, asyncio.TimeoutError, OSError, EOFError)
 
 
+def _adapter_kwargs() -> dict:
+    """bleak `adapter=` kwargs from $HITL_BLE_ADAPTER, else empty (system default).
+
+    The daemon sets HITL_BLE_ADAPTER (e.g. "hci1") on a rig whose BLE central runs
+    on a USB dongle rather than the flaky onboard controller (see
+    runner.PodmanConfig.BLEAdapter). bleak's BlueZ backend defaults to "hci0", so
+    without this every scan/connect would hit the onboard controller regardless.
+    """
+    adp = os.environ.get("HITL_BLE_ADAPTER", "").strip()
+    return {"adapter": adp} if adp else {}
+
+
 def looks_like_player(name: str) -> bool:
     n = (name or "").lower()
     return "led widget" in n or "ledmapper" in n or "widget" in n
@@ -79,7 +91,9 @@ async def find(address: str | None, name_filter: str, scan_seconds: float, name_
     waited = 0.0
     nameless = None
     while True:
-        found = await BleakScanner.discover(timeout=scan_seconds, return_adv=True)
+        found = await BleakScanner.discover(
+            timeout=scan_seconds, return_adv=True, **_adapter_kwargs()
+        )
         for addr, (dev, adv) in found.items():
             nm = dev.name or ""
             if address:
@@ -131,14 +145,16 @@ async def _connect(dev, tries: int, connect_timeout: float, rescan_timeout: floa
     last: Exception | None = None
     for i in range(1, tries + 1):
         if dev is None:
-            dev = await BleakScanner.find_device_by_address(address, timeout=rescan_timeout)
+            dev = await BleakScanner.find_device_by_address(
+                address, timeout=rescan_timeout, **_adapter_kwargs()
+            )
             if dev is None:
                 last = BleakError(f"device {address} not advertising on rescan")
                 log(f"[improv] connect {i}/{tries}: {last}")
                 if i < tries:
                     await asyncio.sleep(1.0)
                 continue
-        client = BleakClient(dev, timeout=connect_timeout)
+        client = BleakClient(dev, timeout=connect_timeout, **_adapter_kwargs())
         try:
             await client.connect()
             if client.is_connected:
