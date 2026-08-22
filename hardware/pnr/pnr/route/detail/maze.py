@@ -256,6 +256,7 @@ def route(
     accumulates on cells that stay contested. Iterate until no cell (nor via keep-out
     halo) is shared (DRC-clean) or ``max_iters``. Deterministic."""
     nets = sorted(n for n, cells in net_access.items() if len([c for c in cells]) >= 2)
+    nego_order = nets  # name order (difficulty-first ordering measured worse here)
     history: Dict[Cell, float] = defaultdict(float)
     pres_fac = pres_fac0
     result_nets: Dict[str, RoutedNet] = {}
@@ -281,12 +282,12 @@ def route(
             occ[c] -= 1
         fps[net] = set()
 
-    for net in nets:  # initial routes against growing congestion
+    for net in nego_order:  # initial routes against growing congestion, hardest first
         _place(net, _route_one(grid, net_access[net], net, occ, history, via_cost, pres_fac))
 
     for it in range(max_iters):
         iters = it + 1
-        for net in nets:
+        for net in nego_order:
             _rip(net)  # reroute this net against the OTHERS' current congestion
             _place(net, _route_one(grid, net_access[net], net, occ, history, via_cost, pres_fac))
 
