@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"log"
 	"net"
@@ -9,9 +10,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
+	"unsafe"
 
 	"github.com/fughilli/splanc/pi/hitl/internal/api"
 )
@@ -112,16 +116,21 @@ func (p *PodmanRunner) resolveBLEAdapter() string {
 }
 
 // resolveUSBHCI returns the name (e.g. "hci1") of the first Bluetooth controller on
-// the USB bus, or "" if none. It reads /sys/class/bluetooth/hci*/device: a USB
-// controller's device path resolves under .../usbN/... while the onboard Pi
-// controller sits on a serial/platform path — a stable discriminator that doesn't
-// depend on the hciN numbering. Entries are sorted for a deterministic pick.
-func resolveUSBHCI() string { return resolveUSBHCIIn("/sys/class/bluetooth") }
+// the USB bus that is actually UP, or "" if none. It reads
+// /sys/class/bluetooth/hci*/device: a USB controller's device path resolves under
+// .../usbN/... while the onboard Pi controller sits on a serial/platform path — a
+// stable discriminator that doesn't depend on the hciN numbering. It then requires
+// the controller to be UP (see hciUp): a dongle can be enumerated (present in
+// sysfs) but DOWN — e.g. its RTL firmware never loaded — in which case BlueZ does
+// not expose it and bleak fails "adapter 'hciN' not found". Selecting such a dead
+// adapter would be worse than the onboard fallback, so skip it. Entries are sorted
+// for a deterministic pick.
+func resolveUSBHCI() string { return resolveUSBHCIIn("/sys/class/bluetooth", hciUp) }
 
-// resolveUSBHCIIn is resolveUSBHCI against an arbitrary bluetooth-class root (for
-// tests). A controller is "USB" if its device symlink resolves to a path with a
-// "/usb" segment.
-func resolveUSBHCIIn(root string) string {
+// resolveUSBHCIIn is resolveUSBHCI against an arbitrary bluetooth-class root, with
+// an injectable up-check (for tests). A controller is "USB" if its device symlink
+// resolves to a path with a "/usb" segment, and is only returned if isUp(devID).
+func resolveUSBHCIIn(root string, isUp func(devID int) bool) string {
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return ""
@@ -139,11 +148,49 @@ func resolveUSBHCIIn(root string) string {
 			continue
 		}
 		// USB device paths contain a "/usbN/" hub segment (e.g. .../usb3/3-1/3-1:1.0).
-		if strings.Contains(dev, "/usb") {
+		if !strings.Contains(dev, "/usb") {
+			continue
+		}
+		id, err := strconv.Atoi(strings.TrimPrefix(n, "hci"))
+		if err != nil {
+			continue
+		}
+		if isUp(id) {
 			return n
 		}
+		log.Printf("ble-adapter=usb: %s is a USB controller but DOWN; skipping", n)
 	}
 	return ""
+}
+
+// hciUp reports whether Bluetooth controller hci<devID> is UP, via the kernel's
+// HCIGETDEVINFO ioctl (the same HCI_UP flag `hciconfig` shows). sysfs exposes no
+// up/down attribute for hci devices, so this is the authoritative check. Returns
+// false on any error (no AF_BLUETOOTH support, no such device) — callers then fall
+// back to the default controller. Linux-only; the daemon runs as root on the rig.
+func hciUp(devID int) bool {
+	const (
+		afBluetooth  = 31         // AF_BLUETOOTH
+		btprotoHCI   = 1          // BTPROTO_HCI
+		hcigetDevInfo = 0x800448D3 // _IOR('H', 211, int)
+		flagsOffset  = 16         // offset of __u32 flags in struct hci_dev_info
+		hciUpBit     = 1 << 0     // HCI_UP
+	)
+	fd, err := syscall.Socket(afBluetooth, syscall.SOCK_RAW, btprotoHCI)
+	if err != nil {
+		return false
+	}
+	defer syscall.Close(fd)
+	// struct hci_dev_info: {u16 dev_id; char name[8]; bdaddr[6]; u32 flags; ...}.
+	// Set dev_id, ioctl fills the rest; read the flags word back.
+	var buf [144]byte
+	binary.LittleEndian.PutUint16(buf[0:2], uint16(devID))
+	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, uintptr(fd),
+		uintptr(hcigetDevInfo), uintptr(unsafe.Pointer(&buf[0]))); errno != 0 {
+		return false
+	}
+	flags := binary.LittleEndian.Uint32(buf[flagsOffset : flagsOffset+4])
+	return flags&hciUpBit != 0
 }
 
 func (p *PodmanRunner) podman(ctx context.Context, args ...string) (string, error) {
