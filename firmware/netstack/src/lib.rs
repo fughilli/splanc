@@ -40,6 +40,7 @@ pub mod tx;
 pub mod coex;
 pub mod http;
 pub mod pb;
+pub mod wpa;
 pub mod stack;
 pub mod mlme;
 pub mod phy;
