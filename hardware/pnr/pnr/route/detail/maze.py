@@ -115,7 +115,10 @@ def _astar(
                 came[nc] = cur
                 heapq.heappush(open_heap, (ng + h(nc), tie, nc))
                 tie += 1
-        # via moves (change layer at same i,j)
+        # via moves (change layer at same i,j). A through-via passes *through* the
+        # inner planes via the pour's antipad (the zone filler carves clearance
+        # around it — DRC-clean), so only the **target** layer must be clear: a
+        # signal track can't land under plane copper, but a via may pass through it.
         for la in range(grid.nlayers):
             if la == cur.layer:
                 continue

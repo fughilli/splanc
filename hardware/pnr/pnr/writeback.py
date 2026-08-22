@@ -557,7 +557,12 @@ def emit_routes(
     import pcbnew
 
     frame = _WriteFrame(height, offset)
-    layer_id = {"F.Cu": pcbnew.F_Cu, "B.Cu": pcbnew.B_Cu}
+    layer_id = {
+        "F.Cu": pcbnew.F_Cu,
+        "In1.Cu": pcbnew.In1_Cu,
+        "In2.Cu": pcbnew.In2_Cu,
+        "B.Cu": pcbnew.B_Cu,
+    }
 
     def code(net_name):
         return net_code.get(net_name, 0)

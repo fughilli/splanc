@@ -69,9 +69,11 @@ class DetailRouteAcceptanceTest(unittest.TestCase):
 
     def test_emits_geometry(self):
         self.assertGreater(len(self.board.tracks), 50, self.board.summary())
+        # 4-layer board: signals route the two outer layers plus the inner-layer
+        # gaps between the split planes.
         for net, layer, _a, _b, w in self.board.tracks:
             self.assertTrue(net)  # every track carries its net
-            self.assertIn(layer, ("F.Cu", "B.Cu"))
+            self.assertIn(layer, ("F.Cu", "In1.Cu", "In2.Cu", "B.Cu"))
             self.assertGreater(w, 0)
 
     def test_deterministic(self):

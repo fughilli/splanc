@@ -112,7 +112,7 @@ def _pnr_board_impl(ctx):
         # 2. place + route feedback loop (torch) -> placed graph + routing rules
         # (net classes / diff pairs / length match). Runs with its OWN runfiles
         # env (no injected PYTHONPATH).
-        '"%s" "$_WORK/graph.json" "%s" --dump-json "$_WORK/placed.json" --dump-rules "$_WORK/rules.json" --dump-routes "$_WORK/routes.json" %s' % (
+        '"%s" "$_WORK/graph.json" "%s" --dump-json "$_WORK/placed.json" --dump-rules "$_WORK/rules.json" --dump-routes "$_WORK/routes.json" --detail-loop %s' % (
             placer.path,
             ctx.file.constraints.path,
             "--allow-unconverged" if ctx.attr.allow_unconverged else "",

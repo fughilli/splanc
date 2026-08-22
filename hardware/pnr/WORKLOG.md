@@ -6,7 +6,47 @@ scan back. Full design + rationale lives in
 the running state so a fresh-context agent can pick up cleanly. Update it at the
 end of every session.
 
-## 2026-08-22 (late) — router is DRC-CLEAN BY CONSTRUCTION; close the loop next (START HERE)
+## 2026-08-22 (latest) — loop closed on the router; 4-layer routing; routability ceiling (START HERE)
+
+**Loop closed on the DRC-clean detailed router.** `route_and_place(detail_rules=…)`
+(+ `pnr.route --detail-loop`, wired into `pnr.bzl`) now uses the **detailed router
+as ground truth**: it re-routes every round and the #unrouted signals is the
+objective, with `detail_congestion()` stamping each failed net's pad-bbox into the
+inflation map so the next placement spreads those parts. This replaces the old
+global-lookahead signal, which was _useless here_ — it reports `overflow 0`
+(perfectly routable) on placements the DRC-clean router can't finish. This is the
+user's directive: a failed route must steer the next placement cycle.
+
+**4-layer signal routing built** (`router._signal_layers`/`_mark_plane_regions`,
+`grid` inner layers, `maze` via = antipad pass-through, `emit_routes` In1/In2).
+Signals now route the **inner-layer gaps** between the split planes, not just F/B;
+through-vias pass through a plane via its pour antipad (only the via's _target_
+layer must be clear — a track can't sit under plane copper, a via may pass through).
+**Validated: In2 signal tracks are 0/0 DRC against the plane** (region-block +
+antipad agree with the emitted copper). `detail_route_test` now exercises 4-layer.
+
+**Routability ceiling (honest, well-characterized): ~40 % of signals (≈16–22/48).**
+Firm across pitch (0.25→17, **0.3→20**, 0.4→14) and negotiation depth (12 vs 40
+passes → same ~18). The detail-loop trajectory oscillates (32→29→36→32 unrouted) —
+it does **not** converge. Root cause is _routing resource, not the router_: the
+**ground net has 75 pads spanning the whole board**, so its plane consumes ~all of
+In1; the power split-planes cover much of In2; the inner "gaps" are small. So a
+4-layer/2-plane stack gives ≈2 effective signal layers here, and 48 signals at
+manufacturable DRC-clean spacing don't fit. The router is correct and DRC-clean; the
+board needs more resource. Options for a fully-routed board: **6-layer** (2 planes +
+4 signal), a **bigger outline**, or a **ground-plane strategy** that frees an inner
+layer (e.g. ground on In1 only, In2 mostly signal with local power islands). Until
+then `splanc_dev.fab` correctly **fails** the routing-completeness gate — the "loop
+until success or fail the build" behaviour the user asked for.
+
+**Remaining DRC (separate from the signal router):** with planes poured, full-board
+DRC is ~187 = **66 source-footprint** (pad-vs-pad, out of scope) + ~13 signal-router
+edge cases + **~108 from the plane pour/dogbone fanout** (`writeback._dogbone…` — the
+old R1 via-in-pad/stitch shorts). The plane fanout is now the top DRC contributor
+and the next thing to route _through the engine_ (route each plane pad to its plane
+layer as a target) rather than the naive dogbone.
+
+## 2026-08-22 (late) — router is DRC-CLEAN BY CONSTRUCTION; close the loop next
 
 **Milestone: the emitted copper is DRC-clean by construction.** Validated against
 real `kicad-cli pcb drc`: **placement-only** (zero routing) already reports **66

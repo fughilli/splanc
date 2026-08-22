@@ -28,7 +28,7 @@ import numpy as np
 from pnr.constraints import CompiledConstraints
 from pnr.graph import BoardGraph
 from pnr.place import place
-from pnr.place.geometry import outline_size, resolve_fixed_poses
+from pnr.place.geometry import outline_size, pad_rects, resolve_fixed_poses
 from pnr.place.placer import PlacementReport
 
 from .global_route import GlobalRouteResult, global_route
@@ -103,6 +103,44 @@ def derive_inflation(
     return out
 
 
+def detail_congestion(
+    board_route,
+    graph: BoardGraph,
+    width: float,
+    height: float,
+    gcell_mm: float,
+) -> np.ndarray:
+    """Per-gcell congestion from a *detailed* route: each **unrouted** net stamps
+    its pad bounding box into the (nx, ny) grid, weighted by pin count.
+
+    This is the ground-truth feedback the global lookahead can't give — the global
+    router (coarse gcells, no via keep-out / pad halos) happily reports overflow 0
+    on a placement the DRC-clean detailed router *cannot* finish. A net the detailed
+    router had to drop marks the region its pins occupy as over-congested, so the
+    loop inflates the parts there and the next placement spreads them apart."""
+    nx = max(1, int(np.ceil(width / gcell_mm)))
+    ny = max(1, int(np.ceil(height / gcell_mm)))
+    cong = np.zeros((nx, ny))
+    unrouted = set(board_route.result.unrouted)
+    if not unrouted:
+        return cong
+    # Absolute pad centres per net (only pins we can place).
+    pad_xy: Dict[str, List[Tuple[float, float]]] = {}
+    for comp in graph.components:
+        for _name, net, r in pad_rects(comp):
+            if net in unrouted:
+                pad_xy.setdefault(net, []).append((r.cx, r.cy))
+    for net, pts in pad_xy.items():
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        i0 = min(nx - 1, max(0, int(min(xs) / gcell_mm)))
+        i1 = min(nx - 1, max(0, int(max(xs) / gcell_mm)))
+        j0 = min(ny - 1, max(0, int(min(ys) / gcell_mm)))
+        j1 = min(ny - 1, max(0, int(max(ys) / gcell_mm)))
+        cong[i0 : i1 + 1, j0 : j1 + 1] += float(len(pts))
+    return cong
+
+
 def route_and_place(
     graph: BoardGraph,
     constraints: CompiledConstraints,
@@ -114,11 +152,23 @@ def route_and_place(
     gcell_mm: float = 2.5,
     track_pitch_mm: float = 0.4,
     route_passes: int = 8,
+    detail_rules: Optional[dict] = None,
+    detail_pitch_mm: float = 0.4,
+    detail_iters: int = 10,
 ) -> Tuple[BoardGraph, FeedbackReport]:
     """Run the place↔route loop to convergence (or the round cap).
 
-    Returns the final placed :class:`BoardGraph` and a :class:`FeedbackReport`
-    with the per-round overflow trajectory. Deterministic under a fixed ``seed``.
+    Two feedback signals are supported. The default is the fast **global lookahead**
+    (coarse-gcell overflow). When ``detail_rules`` is given, the loop instead uses
+    the **DRC-clean detailed router** as ground truth — it re-routes every round and
+    the number of *unrouted* signals is the objective the loop drives to zero
+    (:func:`detail_congestion` turns each failure into placement inflation). This is
+    the honest closure: the detailed router is the thing that must succeed, so it —
+    not an optimistic lookahead — steers the placement (design §6; the user's
+    directive that a failed route must guide the next placement cycle).
+
+    Returns the final placed :class:`BoardGraph` and a :class:`FeedbackReport` with
+    the per-round objective trajectory. Deterministic under a fixed ``seed``.
     """
     width, height = outline_size(graph, constraints)
     layers = int(constraints.board.layers)
@@ -136,33 +186,51 @@ def route_and_place(
         placed, prep = place(
             graph, constraints, seed=seed, iters=iters, orient=orient, inflation=inflation
         )
-        gr = global_route(
-            placed,
-            width,
-            height,
-            gcell_mm=gcell_mm,
-            layers=layers,
-            track_pitch_mm=track_pitch_mm,
-            max_passes=route_passes,
-        )
-        report.overflow_history.append(gr.overflow)
         report.placement = prep
-        report.route = gr
 
-        if gr.overflow <= 0.0:
-            report.converged = True
-            break
+        if detail_rules is not None:
+            # Ground-truth: the DRC-clean detailed router. Objective = #unrouted.
+            from .detail.router import route_board
+
+            broute = route_board(
+                placed, constraints, detail_rules, pitch=detail_pitch_mm, max_iters=detail_iters
+            )
+            n_unrouted = len(broute.result.unrouted)
+            report.overflow_history.append(float(n_unrouted))
+            report.route = None
+            if n_unrouted <= 0:
+                report.converged = True
+                break
+            cell = detail_congestion(broute, placed, width, height, gcell_mm)
+            overflow = float(n_unrouted)
+        else:
+            gr = global_route(
+                placed,
+                width,
+                height,
+                gcell_mm=gcell_mm,
+                layers=layers,
+                track_pitch_mm=track_pitch_mm,
+                max_passes=route_passes,
+            )
+            report.overflow_history.append(gr.overflow)
+            report.route = gr
+            if gr.overflow <= 0.0:
+                report.converged = True
+                break
+            cell = gr.cell_overflow
+            overflow = gr.overflow
 
         # Accumulate this round's congestion (the persistent history term) and
         # re-derive inflation from the running total, so pressure only grows.
         if accum is None:
-            accum = np.zeros_like(gr.cell_overflow)
-        accum = accum + gr.cell_overflow
+            accum = np.zeros_like(cell)
+        accum = accum + cell
         inflation = derive_inflation(placed, accum, gcell_mm, fixed=fixed)
 
-        # No-improvement guard: stop if overflow hasn't dropped for two rounds.
-        if gr.overflow < best_overflow - 1e-9:
-            best_overflow = gr.overflow
+        # No-improvement guard: stop if the objective hasn't dropped for two rounds.
+        if overflow < best_overflow - 1e-9:
+            best_overflow = overflow
             stale = 0
         else:
             stale += 1

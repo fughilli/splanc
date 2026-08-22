@@ -49,6 +49,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--route-pitch", type=float, default=0.3, help="detailed-router grid pitch (mm)"
     )
     ap.add_argument(
+        "--route-iters", type=int, default=12, help="detailed-router negotiation passes"
+    )
+    ap.add_argument(
+        "--detail-loop",
+        action="store_true",
+        help="close the place<->route loop on the DRC-clean detailed router "
+        "(unrouted signals drive placement inflation) instead of the fast global "
+        "lookahead — the honest 'route must succeed or fail the build' loop",
+    )
+    ap.add_argument(
         "--allow-unconverged",
         action="store_true",
         help="exit 0 even if the loop did not drive overflow to 0 (for previews)",
@@ -62,6 +72,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     with open(args.constraints, encoding="utf-8") as fh:
         constraints = compile_constraints(yaml.safe_load(fh), graph.refs)
 
+    net_names = [n.name for n in graph.nets]
+    rules = compile_routing_rules(constraints, net_names)
+
     placed, report = route_and_place(
         graph,
         constraints,
@@ -69,6 +82,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         iters=args.iters,
         max_rounds=args.max_rounds,
         gcell_mm=args.gcell_mm,
+        # Close the loop on the DRC-clean detailed router when asked — the emitted
+        # route must actually succeed, so it steers placement, not the lookahead.
+        detail_rules=rules if args.detail_loop else None,
+        detail_pitch_mm=args.route_pitch,
     )
     print(report.summary())
 
@@ -78,8 +95,6 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.dump_svg:
         with open(args.dump_svg, "w", encoding="utf-8") as fh:
             fh.write(dump_svg(placed))
-    net_names = [n.name for n in graph.nets]
-    rules = compile_routing_rules(constraints, net_names)
     if args.dump_rules:
         with open(args.dump_rules, "w", encoding="utf-8") as fh:
             json.dump(rules, fh, indent=2, sort_keys=True)
@@ -87,7 +102,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.dump_routes:
         from pnr.route.detail.router import route_board
 
-        board = route_board(placed, constraints, rules, pitch=args.route_pitch)
+        board = route_board(
+            placed, constraints, rules, pitch=args.route_pitch, max_iters=args.route_iters
+        )
         print(board.summary())
         routes = {
             "tracks": [

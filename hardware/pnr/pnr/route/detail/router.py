@@ -19,9 +19,12 @@ from typing import List, Optional, Set, Tuple
 from pnr.constraints import CompiledConstraints
 from pnr.graph import BoardGraph
 
-from ...place.geometry import outline_size, pad_rects
-from .grid import RouteGrid
+from ...place.geometry import Rect, outline_size, pad_rects
+from .grid import DEFAULT_SIGNAL_LAYERS, RouteGrid
 from .maze import RouteResult, route
+
+# Full copper stack for a 4-layer board, outer→inner→outer.
+_FOUR_LAYER = ("F.Cu", "In1.Cu", "In2.Cu", "B.Cu")
 
 
 @dataclass
@@ -61,6 +64,57 @@ def _plane_nets(rules: Optional[dict]) -> Set[str]:
     return out
 
 
+def _net_plane_layer(rules: Optional[dict]) -> dict:
+    """plane-net name -> its plane layer name (from the routing rules)."""
+    out: dict = {}
+    if rules:
+        for nc in rules.get("net_classes", []):
+            pl = nc.get("plane_layer")
+            if pl:
+                for n in nc.get("nets", []):
+                    out[n] = pl
+    return out
+
+
+def _signal_layers(rules: Optional[dict]) -> Tuple[str, ...]:
+    """The copper layers the detailed router routes signals on. A 4-layer board
+    with split planes on the inners routes on **all four** — F/B plus the inner-
+    layer *gaps* between the split planes — which is the routing resource a dense
+    2-signal-layer board lacks. Otherwise the two outer layers."""
+    if rules and int(rules.get("layers", 2)) >= 4 and _plane_nets(rules):
+        return _FOUR_LAYER
+    return DEFAULT_SIGNAL_LAYERS
+
+
+def _mark_plane_regions(
+    grid: RouteGrid, graph: BoardGraph, rules: Optional[dict], margin: float
+) -> None:
+    """Block the poured split-plane regions on the inner layers so signals + their
+    through-vias avoid the plane copper (they route the gaps). Each plane net's
+    region is the bbox of its pads + ``margin`` (matching the writeback pour) +
+    clearance — the same split-plane geometry :func:`pnr.writeback.apply_planes`
+    lays down, so the grid model and the emitted copper agree."""
+    layer_idx = {name: i for i, name in enumerate(grid.layers)}
+    net_layer = _net_plane_layer(rules)
+    if not net_layer:
+        return
+    rects: dict = {}
+    for comp in graph.components:
+        for _name, net, r in pad_rects(comp):
+            if net in net_layer:
+                rects.setdefault(net, []).append(r)
+    for net, rs in rects.items():
+        la = layer_idx.get(net_layer[net])
+        if la is None:
+            continue
+        x0 = min(r.left for r in rs)
+        x1 = max(r.right for r in rs)
+        y0 = min(r.bottom for r in rs)
+        y1 = max(r.top for r in rs)
+        region = Rect((x0 + x1) / 2.0, (y0 + y1) / 2.0, x1 - x0, y1 - y0)
+        grid.block_region(region, layers=[la], grow=margin + grid.clearance)
+
+
 def route_board(
     graph: BoardGraph,
     constraints: CompiledConstraints,
@@ -78,7 +132,11 @@ def route_board(
     mm geometry.
     """
     width, height = outline_size(graph, constraints)
-    grid = RouteGrid.from_graph(graph, width, height, pitch=pitch)
+    layers = _signal_layers(rules)
+    grid = RouteGrid.from_graph(graph, width, height, pitch=pitch, layers=layers)
+    # Split planes on the inner layers become obstacles the signals route around
+    # (matching the 2 mm writeback pour margin).
+    _mark_plane_regions(grid, graph, rules, margin=2.0)
     planes = _plane_nets(rules)
 
     net_access = {}
