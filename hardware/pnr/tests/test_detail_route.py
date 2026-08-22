@@ -35,7 +35,7 @@ class DetailRouteAcceptanceTest(unittest.TestCase):
         cls.rules = compile_routing_rules(cls.constraints, [n.name for n in cls.placed.nets])
         # Coarse pitch keeps the test quick; the engine is pitch-agnostic. Power/
         # ground are planes (excluded); only true signals are routed here.
-        cls.board = route_board(cls.placed, cls.constraints, cls.rules, pitch=0.4, max_iters=15)
+        cls.board = route_board(cls.placed, cls.constraints, cls.rules, pitch=0.5, max_iters=10)
 
     def test_drc_clean_by_construction(self):
         # The emitted routing is *always* DRC-clean: no net's full copper footprint
@@ -78,8 +78,8 @@ class DetailRouteAcceptanceTest(unittest.TestCase):
 
     def test_deterministic(self):
         # Two fresh back-to-back routes of the same placed board must match.
-        b1 = route_board(self.placed, self.constraints, self.rules, pitch=0.4, max_iters=15)
-        b2 = route_board(self.placed, self.constraints, self.rules, pitch=0.4, max_iters=15)
+        b1 = route_board(self.placed, self.constraints, self.rules, pitch=0.5, max_iters=10)
+        b2 = route_board(self.placed, self.constraints, self.rules, pitch=0.5, max_iters=10)
         self.assertEqual(b1.result.unrouted, b2.result.unrouted)
         self.assertEqual(len(b1.tracks), len(b2.tracks))
 

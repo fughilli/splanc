@@ -286,7 +286,7 @@ py_test(
 # DRC-clean by construction). Places the fixture, so it needs torch.
 py_test(
     name = "detail_route_test",
-    size = "medium",
+    size = "large",  # places the fixture + 3 full 4-layer RRR routes
     srcs = ["tests/test_detail_route.py"],
     data = glob(["testdata/splanc_dev/*"]),
     imports = ["."],

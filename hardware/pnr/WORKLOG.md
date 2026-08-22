@@ -6,7 +6,45 @@ scan back. Full design + rationale lives in
 the running state so a fresh-context agent can pick up cleanly. Update it at the
 end of every session.
 
-## 2026-08-22 (latest) — loop closed on the router; 4-layer routing; routability ceiling (START HERE)
+## 2026-08-22 (evening) — stronger router (RRR) + rubber-band outline; pin-escape is the wall (START HERE)
+
+Kevin chose **"invest in a stronger router"** (stay 4-layer) and OK'd **growing the
+outline** ("rubber-band, configurable"). Both built + committed:
+
+- **Rip-up-&-reroute finalize** (`maze.route`): was greedy (a net contended for one
+  cell during negotiation → dropped whole). Now 2 passes — commit the non-colliding
+  negotiated routes, then **re-route every dropped net around the committed copper**
+  (hard-blocked A\*, `blocked` set threaded through `_astar`/`_route_one`),
+  shortest-span first. Still DRC-clean by construction.
+- **Rubber-band outline** (`route_and_place(auto_outline=…)`, `pnr.route
+--auto-outline`/`--outline-max-scale`, wired into nothing yet — opt-in): the
+  `board.outline` is an approximate target; if the loop won't fully route, grow the
+  outline (aspect preserved) and retry, smallest-that-routes wins. `place()` already
+  stamps `placed.outline` from the constraint size so write-back frames to it.
+
+**Measured levers (splanc_dev):** RRR alone ~19–20/48 (leftovers genuinely don't
+fit — congestion, not greedy-drop). Bigger board helps _global_ congestion (pitch
+0.4: 14/48 @1.0× → 21/48 @1.6×/2.56× area). Neither reaches 100 %.
+
+**THE WALL — fine-pitch pin escape (diagnosed).** The 29 unrouted nets concentrate
+on the **dense parts**: U5/ESP32 (11), H1/20-pin (7), U2/QFN (5), U11 (5). Two
+mechanisms: (a) **pin escape** — DRC-clean grid pitch has a hard floor at
+track+clearance ≈ **0.28 mm** (0.15 + 0.13), and a 0.15 mm track **cannot fit
+between 0.5 mm-pitch pads** (edge gap ~0.25 < 0.15+0.13+0.13), so inner-row pins
+can't escape _at any board size_; (b) **channel congestion** — long nets (e.g. from
+H1, a 2.54 mm header, so not escape) can't cross the dense cluster.
+
+**Next feature (the real lever): signal escape to the inner layers.** Drop a via
+in/adjacent to a stuck fine-pitch pad down to an inner-layer _gap_ (the plane-fanout
+dogbone, but for signals), where the 0.3 mm grid has room — the standard QFN/BGA
+escape. Needs: per-pad "can't escape on its own layer" detection + a short
+via-in-pad/dogbone stub + route on the inner layer. Optionally thinner (0.10 mm)
+escape tracks in the pad neighbourhood (differential width). This + the rubber-band
+
+- multi-round inflation is the path to a fully-routed splanc_dev. Until then the
+  gate correctly fails the build.
+
+## 2026-08-22 (latest) — loop closed on the router; 4-layer routing; routability ceiling
 
 **Loop closed on the DRC-clean detailed router.** `route_and_place(detail_rules=…)`
 (+ `pnr.route --detail-loop`, wired into `pnr.bzl`) now uses the **detailed router
