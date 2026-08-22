@@ -251,6 +251,14 @@ impl<const RX: usize, const TX: usize, const AP_N: usize, const GATT_N: usize>
         }
     }
 
+    /// Drain the next frame the stack has queued for transmission into `out`
+    /// (built by the MLME/GAP state machines), returning its length (0 if none).
+    /// The driver loops this after each `ingest`/`on_rx` and hands each frame to
+    /// the radio's raw-TX entry point.
+    pub fn pop_tx(&mut self, out: &mut [u8]) -> usize {
+        self.tx.pop_into(out)
+    }
+
     fn queue_tx(&mut self, bytes: &[u8], prio: Priority) -> Ingest {
         let ac = match prio {
             Priority::Critical | Priority::Management => 0,

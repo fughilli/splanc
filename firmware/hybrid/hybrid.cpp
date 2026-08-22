@@ -25,6 +25,21 @@ extern "C" {
 extern wifi_osi_funcs_t g_wifi_osi_funcs;
 int netstack_rx_ingest(const uint8_t *frame, uint32_t len);  // Rust FFI
 void netstack_rx_stats(uint32_t *data_frames, uint32_t *pb_fields);
+uint32_t netstack_sta_connect(const uint8_t *bssid);
+uint32_t netstack_tx_next(uint8_t *buf, uint32_t cap);
+}
+
+static uint32_t g_tx_frames = 0;
+
+// Drain every frame the netstack has queued and hand it to the radio's raw-TX
+// entry. The netstack builds the frames (auth/assoc/etc.); the blob only puts
+// bytes on the air.
+static void drain_netstack_tx() {
+  static uint8_t txbuf[1600];
+  uint32_t n;
+  while ((n = netstack_tx_next(txbuf, sizeof(txbuf))) > 0) {
+    if (esp_wifi_80211_tx(WIFI_IF_STA, txbuf, (int)n, true) == ESP_OK) g_tx_frames++;
+  }
 }
 
 // --- static arena: ALL WiFi-stack allocation is confined here -----------------
@@ -91,7 +106,7 @@ void setup() {
   esp_err_t e = esp_wifi_init(&cfg);
   Serial.printf("hybrid: esp_wifi_init=%d\n", e);
   esp_wifi_set_storage(WIFI_STORAGE_RAM);
-  esp_wifi_set_mode(WIFI_MODE_NULL);
+  esp_wifi_set_mode(WIFI_MODE_STA);  // STA interface so raw TX has an ifx
   esp_wifi_start();
 
   // 4) promiscuous radio -> heapless stack owns the protocol.
@@ -110,14 +125,25 @@ void setup() {
 void loop() {
   static uint32_t t = 0;
   static uint32_t sys0 = 0;
+  // Hop 1/6/11 so we catch beacon traffic (the rig AP + ambient) regardless of
+  // channel — this exercises the RX path under real load so heap-constancy is
+  // tested against per-frame allocation, not just idle.
+  static const uint8_t chans[] = {1, 6, 11};
+  esp_wifi_set_channel(chans[t % 3], WIFI_SECOND_CHAN_NONE);
   uint32_t sys = esp_get_free_heap_size();
   if (t == 0) sys0 = sys;
+  // Demonstrate the TX path: queue an auth to a test BSSID, then drain the
+  // netstack's TX ring to the radio.
+  static const uint8_t test_bssid[6] = {0x02, 0x00, 0x53, 0x45, 0x43, 0xa0};
+  netstack_sta_connect(test_bssid);
+  drain_netstack_tx();
+
   uint32_t data_frames = 0, pb_fields = 0;
   netstack_rx_stats(&data_frames, &pb_fields);
-  Serial.printf("hybrid: t=%lu sys_heap=%u (drift=%d) arena_free=%u rx=%lu bytes=%lu replied=%lu "
+  Serial.printf("hybrid: t=%lu sys_heap=%u (drift=%d) arena_free=%u rx=%lu tx=%lu replied=%lu "
                 "zc_data=%lu zc_pbfields=%lu\n",
                 t, sys, (int)((int)sys - (int)sys0), (unsigned)multi_heap_free_size(s_heap),
-                g_rx_frames, g_rx_bytes, g_rx_replied, data_frames, pb_fields);
+                g_rx_frames, g_tx_frames, g_rx_replied, data_frames, pb_fields);
   t++;
   delay(1000);
 }
