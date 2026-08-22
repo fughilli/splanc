@@ -453,10 +453,18 @@ shorts on 0.5 mm-pitch parts (612 DRC violations) — the fix is **dog-bone fano
 - **R3 — Escape / fanout via the engine.** Apply R4 to plane-net pads with the
   plane layer as target (dog-bone = a short route + via), so fanout is DRC-clean by
   construction. Acceptance: every ESP32/QFN pin escapes DRC-clean.
-- **R5 — Close the loop + optimize.** Feed R4's _real_ per-region congestion back
-  into placement (replacing the optimistic lookahead) so the placement iterates to
-  routable; then length/via optimization. Acceptance: `splanc_dev.fab` is fully
-  routed **and** DRC-clean end-to-end.
+- **R5 — Board driver + close the loop + optimize.** 🔨 **In progress.**
+  `pnr/route/detail/router.py` — `route_board(placed_graph, constraints, rules)`
+  builds the grid, excludes plane nets, and negotiated-routes the signals to a
+  **DRC-clean** result (`route()` greedy-finalizes: contested nets drop to
+  unrouted, so the emitted board is never shorted), emitting mm tracks/vias.
+  `detail_route_test` places the real fixture and routes it: DRC-clean by
+  construction + deterministic, routing a meaningful fraction on the dense
+  2-signal-layer board. **Remaining:** (a) emit the routes via `writeback`
+  (replacing FreeRouting) + plane fanout via the engine; (b) feed the router's real
+  per-region unrouted/congestion back into placement (the §6 loop) + cost/iteration
+  tuning so the fraction → 100%; (c) length/via optimization. Then `splanc_dev.fab`
+  is fully routed **and** DRC-clean by our own engine.
 
 Until R1–R5 land, `splanc_dev.fab` correctly **fails** the routing-completeness
 gate (`require_routed`) rather than shipping a partial board.

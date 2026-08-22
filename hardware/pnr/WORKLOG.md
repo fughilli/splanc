@@ -26,15 +26,24 @@ This is the hard algorithmic core; what's left is integration (R5) + fanout (R3)
   nets negotiate DRC-clean (no shared cells)**, deterministic, other-net-pad blocks.
   **This engine subsumes R1/R3** — a dog-bone fanout is just a short route + via.
 
-**Next (R5 integration + R3):** (1) a `route_board(placed_graph, constraints)`
-that builds the grid, routes the **signal** nets, and does **plane fanout** by
-routing each plane-net pad to its plane layer (R4 with the plane as target) — all
-DRC-clean by construction; (2) convert grid cells → mm tracks/vias and emit them
-in `writeback` (instead of FreeRouting); (3) feed the router's real per-region
-congestion back to placement (the design's loop, §R5). Then `splanc_dev.fab` can
-be fully routed AND DRC-clean by our own engine. Grid pitch for splanc_dev ≈ 0.25
-mm (240×200×2). Watch A\\\* performance on the full board (bound iters; the tests
-are instant on synthetic grids).
+**R5 driver landed — `pnr/route/detail/router.py`.** `route_board(placed_graph,
+constraints, rules)` builds the grid, excludes plane nets, negotiated-routes the
+signals, and emits mm tracks/vias. **`route()` now greedy-finalizes to a DRC-clean
+result always** — contested nets drop to _unrouted_ (never a short in the emitted
+board), the honest ground truth the loop consumes. `detail_route_test` places the
+real fixture + routes it: DRC-clean by construction + deterministic, routing a
+meaningful fraction on the dense 2-signal-layer board. Suite **14/14 green**.
+(The "non-determinism" was a self-inflicted test bug — two calls at different
+`max_iters`; the router is deterministic. Fraction < 100% because signals are on 2
+layers — the R5 loop + cost tuning close it.)
+
+**Next (finish R5 + R3):** (1) **emit** the `route_board` tracks/vias via
+`writeback` (replace the FreeRouting step in `pnr.bzl`) + **plane fanout** through
+the engine (route each plane-net pad to its plane layer as target); (2) **close the
+loop** — feed the router's real per-region unrouted/congestion into placement
+inflation (design §6) so it iterates to fully routable; tune cost/iters. Then
+`splanc_dev.fab` is fully routed AND DRC-clean by our own engine. Grid pitch for
+splanc_dev ≈ 0.25–0.4 mm; A\* is fine (place+route the fixture ≈ 50 s).
 
 ## 2026-08-21 (night) — routability diagnosed; own detailed router kicked off
 

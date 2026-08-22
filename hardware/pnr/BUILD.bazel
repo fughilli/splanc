@@ -281,6 +281,24 @@ py_test(
     ],
 )
 
+# R5 acceptance: the detailed router on a real placed board (place -> route,
+# DRC-clean by construction). Places the fixture, so it needs torch.
+py_test(
+    name = "detail_route_test",
+    size = "medium",
+    srcs = ["tests/test_detail_route.py"],
+    data = glob(["testdata/splanc_dev/*"]),
+    imports = ["."],
+    legacy_create_init = False,
+    main = "tests/test_detail_route.py",
+    deps = [
+        ":pnr",
+        ":pnr_detail",
+        ":pnr_place",
+        requirement("pyyaml"),
+    ],
+)
+
 # Phase 4 acceptance: the place<->route loop converges (overflow -> 0), terminates.
 py_test(
     name = "route_feedback_test",

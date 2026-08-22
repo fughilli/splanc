@@ -87,7 +87,9 @@ def _astar(
     g: Dict[Cell, float] = {}
     came: Dict[Cell, Cell] = {}
     tie = 0
-    for s in sources:
+    # Sorted source order so heap tie-breaks (hence the chosen equal-cost path)
+    # are independent of set-iteration order — the router must be deterministic.
+    for s in sorted(sources, key=lambda c: (c.layer, c.i, c.j)):
         g[s] = 0.0
         heapq.heappush(open_heap, (h(s), tie, s))
         tie += 1
@@ -215,26 +217,31 @@ def route(
 
         overused = [c for c, os in owner.items() if len(os) > 1]
         if not overused:
-            for net, cells in routed.items():
-                rn = _to_geometry(cells or [])
-                rn.name = net
-                rn.routed = cells is not None
-                result_nets[net] = rn
-            unrouted = [n for n, c in routed.items() if c is None]
-            return RouteResult(nets=result_nets, unrouted=unrouted, iterations=iters)
-
+            break
         for c in overused:
             history[c] += hist_fac
         pres_fac *= pres_mult
 
-    # Did not fully converge — report the last pass. "Unrouted" = nets with no
-    # path, plus nets still sharing an overused cell (a residual short).
-    for net in nets:
+    # Finalize to a DRC-clean result *always*: accept nets greedily (fixed order),
+    # skipping any whose cells would collide with an already-accepted net. On
+    # convergence nothing collides (all accepted); otherwise the leftovers are
+    # reported unrouted — honest ground truth for the place↔route loop, never a
+    # short in the emitted board.
+    occupied: Dict[Cell, str] = {}
+    unrouted: List[str] = []
+    for net in sorted(nets):
         cells = routed.get(net)
-        rn = _to_geometry(cells or [])
+        if not cells or any(c in occupied for c in cells):
+            unrouted.append(net)
+            rn = _to_geometry([])
+            rn.name = net
+            rn.routed = False
+            result_nets[net] = rn
+            continue
+        for c in cells:
+            occupied[c] = net
+        rn = _to_geometry(cells)
         rn.name = net
-        rn.routed = bool(cells)
+        rn.routed = True
         result_nets[net] = rn
-    contested = {n for c in overused for n in owner[c]}
-    unrouted = sorted({n for n, c in routed.items() if c is None} | contested)
-    return RouteResult(nets=result_nets, unrouted=unrouted, iterations=iters)
+    return RouteResult(nets=result_nets, unrouted=sorted(unrouted), iterations=iters)
