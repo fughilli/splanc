@@ -114,6 +114,7 @@ py_binary(
     visibility = ["//visibility:public"],
     deps = [
         ":pnr",
+        ":pnr_detail",
         ":pnr_place",
         ":pnr_route",
         requirement("pyyaml"),

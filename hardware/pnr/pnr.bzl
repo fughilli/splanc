@@ -96,12 +96,9 @@ def _pnr_board_impl(ctx):
     drc_rpt = ctx.actions.declare_file(ctx.label.name + ".drc.rpt")
     quality_rpt = ctx.actions.declare_file(ctx.label.name + ".quality.txt")
 
-    fr = ctx.file.freerouting
     placer = ctx.executable.placer
-    autoroute = ctx.file._autoroute
     graph_py = _graph_py(ctx)
     name = ctx.attr.board_name or ctx.label.name
-    mp = ctx.attr.route_max_passes
 
     drc_severity = "--exit-code-violations" if ctx.attr.drc_gate else ""
 
@@ -110,24 +107,21 @@ def _pnr_board_impl(ctx):
         'export HOME="${HOME:-$(mktemp -d)}"',
         "_WORK=\"$(mktemp -d)\"",
         _pcbnew_env(info, graph_py),
-        '_FR="$(cd "$(dirname \'%s\')" && pwd)/$(basename \'%s\')"' % (fr.path, fr.path),
         # 1. ingest: resolved board -> neutral graph.
         _ki_run('-m pnr.ingest "%s" --name "%s" --dump-json "$_WORK/graph.json"' % (in_pcb.path, name)),
         # 2. place + route feedback loop (torch) -> placed graph + routing rules
         # (net classes / diff pairs / length match). Runs with its OWN runfiles
         # env (no injected PYTHONPATH).
-        '"%s" "$_WORK/graph.json" "%s" --dump-json "$_WORK/placed.json" --dump-rules "$_WORK/rules.json" %s' % (
+        '"%s" "$_WORK/graph.json" "%s" --dump-json "$_WORK/placed.json" --dump-rules "$_WORK/rules.json" --dump-routes "$_WORK/routes.json" %s' % (
             placer.path,
             ctx.file.constraints.path,
             "--allow-unconverged" if ctx.attr.allow_unconverged else "",
         ),
-        # 3. writeback the optimized placement + net classes onto the board, and
-        # frame Edge.Cuts to the placement region (all pads inside; set layer count).
-        _ki_run('-m pnr.writeback "%s" "$_WORK/placed.json" --out "%s" --rules "$_WORK/rules.json"' % (in_pcb.path, out_pcb.path)),
-        # 4. detailed route (FreeRouting DSN/SES) — routes tracks into the board.
-        _ki_run('"%s" "%s" "$_FR" %d' % (autoroute.path, out_pcb.path, mp)),
-        # 4b. pour ground/power planes + via-stitch their pads (after routing:
-        # FreeRouting's SES round-trip drops pre-poured zones).
+        # 3. writeback: place the optimized layout + net classes + the OWN detailed
+        # router's tracks/vias onto the board (replaces FreeRouting), frame
+        # Edge.Cuts to the placement region (all pads inside; set the layer count).
+        _ki_run('-m pnr.writeback "%s" "$_WORK/placed.json" --out "%s" --rules "$_WORK/rules.json" --routes "$_WORK/routes.json"' % (in_pcb.path, out_pcb.path)),
+        # 4. pour ground/power planes + fanout their pads.
         _ki_run('-m pnr.planes "%s" --rules "$_WORK/rules.json"' % out_pcb.path),
         # 5. DRC report (gated iff drc_gate).
         '"%s" pcb drc "%s" -o "%s" --format report %s || _DRC=$?' % (
@@ -154,8 +148,7 @@ def _pnr_board_impl(ctx):
     ])
 
     inputs = depset(
-        direct = [in_pcb, ctx.file.constraints, fr, autoroute, graph_py] +
-                 ctx.files._pnr_srcs,
+        direct = [in_pcb, ctx.file.constraints, graph_py] + ctx.files._pnr_srcs,
         transitive = [_tool_inputs(info)],
     )
 
@@ -183,16 +176,13 @@ _pnr_board = rule(
     attrs = {
         "layout": attr.label(providers = [AtopileLayoutInfo], mandatory = True, doc = "Resolved atopile board to place+route."),
         "constraints": attr.label(allow_single_file = [".yaml", ".yml"], mandatory = True, doc = "Sidecar constraints.yaml (design §3)."),
-        "placer": attr.label(executable = True, cfg = "exec", mandatory = True, doc = "The torch place+route py_binary (//hardware/pnr:pnr_fab)."),
-        "freerouting": attr.label(allow_single_file = True, mandatory = True, doc = "FreeRouting binary for the detailed route."),
-        "route_max_passes": attr.int(default = 0, doc = "Cap FreeRouting optimization passes (`-mp`); 0 = route to completion."),
+        "placer": attr.label(executable = True, cfg = "exec", mandatory = True, doc = "The torch place+route+detail-route py_binary (//hardware/pnr:pnr_fab)."),
         "board_name": attr.string(doc = "Board name recorded in the graph (default: target name)."),
         "allow_unconverged": attr.bool(default = True, doc = "Proceed even if the place↔route loop did not drive overflow to 0."),
         "drc_gate": attr.bool(default = False, doc = "Fail the build on DRC violations (else report only)."),
         "quality_gate": attr.bool(default = False, doc = "Fail the build if a diff-pair/length-match check fails (else report only)."),
         "require_routed": attr.bool(default = True, doc = "Fail the build if any net is left unrouted (the routing-completeness gate)."),
         "_pnr_srcs": attr.label(default = "//hardware/pnr:pnr_kicad_srcs", doc = "Stdlib pnr sources for the pcbnew steps."),
-        "_autoroute": attr.label(default = "@atopile_rules//tools:autoroute.py", allow_single_file = True),
     },
     toolchains = [TOOLCHAIN_TYPE],
 )
@@ -248,7 +238,6 @@ def atopile_pnr(
         name,
         layout,
         constraints,
-        route_max_passes = 0,
         drc_gate = False,
         quality_gate = False,
         require_routed = True,
@@ -266,7 +255,6 @@ def atopile_pnr(
       name: base target name (e.g. `splanc_dev.fab`).
       layout: the `atopile_project` base target (provides the resolved board).
       constraints: the sidecar `constraints.yaml` (design §3).
-      route_max_passes: cap FreeRouting passes (`-mp`); 0 = route to completion.
       drc_gate: fail the build on DRC violations (default: report only).
       quality_gate: fail the build if a diff-pair/length-match check fails.
       require_routed: fail the build if any net is left unrouted (default True).
@@ -280,8 +268,6 @@ def atopile_pnr(
         layout = layout,
         constraints = constraints,
         placer = "//hardware/pnr:pnr_fab",
-        freerouting = "@freerouting//:bin/freerouting",
-        route_max_passes = route_max_passes,
         drc_gate = drc_gate,
         quality_gate = quality_gate,
         require_routed = require_routed,

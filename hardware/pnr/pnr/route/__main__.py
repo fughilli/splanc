@@ -40,6 +40,15 @@ def main(argv: Optional[List[str]] = None) -> int:
         "for the pcbnew writeback + quality steps",
     )
     ap.add_argument(
+        "--dump-routes",
+        metavar="PATH",
+        help="run the own detailed router on the placed board and write its "
+        "mm-space tracks/vias (routes.json) for write-back to emit",
+    )
+    ap.add_argument(
+        "--route-pitch", type=float, default=0.3, help="detailed-router grid pitch (mm)"
+    )
+    ap.add_argument(
         "--allow-unconverged",
         action="store_true",
         help="exit 0 even if the loop did not drive overflow to 0 (for previews)",
@@ -69,10 +78,26 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.dump_svg:
         with open(args.dump_svg, "w", encoding="utf-8") as fh:
             fh.write(dump_svg(placed))
+    net_names = [n.name for n in graph.nets]
+    rules = compile_routing_rules(constraints, net_names)
     if args.dump_rules:
-        net_names = [n.name for n in graph.nets]
         with open(args.dump_rules, "w", encoding="utf-8") as fh:
-            json.dump(compile_routing_rules(constraints, net_names), fh, indent=2, sort_keys=True)
+            json.dump(rules, fh, indent=2, sort_keys=True)
+
+    if args.dump_routes:
+        from pnr.route.detail.router import route_board
+
+        board = route_board(placed, constraints, rules, pitch=args.route_pitch)
+        print(board.summary())
+        routes = {
+            "tracks": [
+                [net, la, [a[0], a[1]], [b[0], b[1]], w] for net, la, a, b, w in board.tracks
+            ],
+            "vias": [[net, x, y] for (net, x, y) in board.vias],
+            "unrouted": board.result.unrouted,
+        }
+        with open(args.dump_routes, "w", encoding="utf-8") as fh:
+            json.dump(routes, fh, indent=2, sort_keys=True)
 
     ok = report.converged or args.allow_unconverged
     return 0 if ok else 2

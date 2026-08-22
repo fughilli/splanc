@@ -6,7 +6,36 @@ scan back. Full design + rationale lives in
 the running state so a fresh-context agent can pick up cleanly. Update it at the
 end of every session.
 
-## 2026-08-21 (night) — detailed router R2 + R4 core built + tested (START HERE)
+## 2026-08-22 — own router FULLY ROUTES the board; emit wired; DRC-clean is next (START HERE)
+
+**Milestone: the own detailed router fully routes splanc_dev** — `pnr_fab` on the
+fixture reports **`detail route: 48/48 nets, 0 unrouted, 8 passes`** at 0.3 mm
+pitch (the 6 power/ground nets are planes, excluded). This is the board FreeRouting
+couldn't finish. FreeRouting is **removed** from the pipeline — the own engine is
+the router now.
+
+**Emit path wired end-to-end:** `pnr.route --dump-routes routes.json` (runs
+`route_board` on the placed board, mm tracks/vias with nets + pin-access **stubs**
+pad→cell); `pnr.writeback --routes` emits them (`emit_routes`, net codes read up
+front via `_net_code_map` since FindNet/GetFootprints flake mid-session) + sets the
+board default clearance/width (`_set_design_rules`, 0.13/0.15 to match the grid);
+`pnr.bzl` drops the FreeRouting + `route_max_passes`/`freerouting` attrs.
+
+**OPEN — the _emitted_ board isn't DRC-clean yet (~1584 DRC, 144 ratsnest).** The
+routing is _in the grid model_ DRC-clean (no shared cells), but emitting to real
+pcbnew geometry exposes: (a) **via geometry** (each via → mask-bridge / hole-
+clearance — 199 each), (b) **plane fanout** DRC (the `lv` plane fanout still
+shorts — the R1 dogbone-in-pcbnew issue), (c) **pin-access** stub alignment /
+remaining ratsnest, (d) track **clearance** (499 — pitch/width vs the rule need a
+touch more margin, or the design-rule set didn't fully take). These are the R3
+(escape/fanout + DRC-detail) items — the router _decisions_ are right; turning them
+into DRC-clean copper is the remaining work. `splanc_dev.fab` still correctly fails
+the gate. Local test loop: `bazel run //hardware/pnr:pnr_fab -- <graph> <constraints>
+--dump-json p.json --dump-rules r.json --dump-routes ro.json --allow-unconverged`,
+then `pnr.writeback … --routes ro.json` + `pnr.planes` + `kicad-cli pcb drc` (all
+under @kicad_python) — fast, no full .fab rebuild.
+
+## 2026-08-21 (night) — detailed router R2 + R4 core built + tested
 
 The own detailed router now has its **engine**: a grid model (R2) + a negotiated
 multi-layer maze router (R4), both pure Python and unit-tested (suite 13/13).

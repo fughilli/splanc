@@ -19,7 +19,7 @@ from typing import List, Optional, Set, Tuple
 from pnr.constraints import CompiledConstraints
 from pnr.graph import BoardGraph
 
-from ...place.geometry import outline_size
+from ...place.geometry import outline_size, pad_rects
 from .grid import RouteGrid
 from .maze import RouteResult, route
 
@@ -30,11 +30,12 @@ class BoardRoute:
 
     result: RouteResult
     grid: RouteGrid
-    # mm-space geometry: tracks (layer_name, (x0,y0), (x1,y1), width_mm), vias (x,y).
-    tracks: List[Tuple[str, Tuple[float, float], Tuple[float, float], float]] = field(
+    # mm-space geometry with the owning net:
+    #   tracks (net, layer_name, (x0,y0), (x1,y1), width_mm), vias (net, x, y).
+    tracks: List[Tuple[str, str, Tuple[float, float], Tuple[float, float], float]] = field(
         default_factory=list
     )
-    vias: List[Tuple[float, float]] = field(default_factory=list)
+    vias: List[Tuple[str, float, float]] = field(default_factory=list)
     plane_nets: Set[str] = field(default_factory=set)
 
     @property
@@ -65,8 +66,8 @@ def route_board(
     constraints: CompiledConstraints,
     rules: Optional[dict] = None,
     *,
-    pitch: float = 0.25,
-    track_width_mm: float = 0.2,
+    pitch: float = 0.3,
+    track_width_mm: float = 0.15,
     max_iters: int = 12,
 ) -> BoardRoute:
     """Detailed-route the signal nets of a placed ``graph``.
@@ -92,11 +93,28 @@ def route_board(
 
     board = BoardRoute(result=result, grid=grid, plane_nets=planes)
     layer_names = grid.layers
-    for rn in result.nets.values():
+    routed_names = {n for n, rn in result.nets.items() if rn.routed}
+    for name, rn in result.nets.items():
         for layer, (i0, j0), (i1, j1) in rn.segments:
             x0, y0 = grid.center_of(i0, j0)
             x1, y1 = grid.center_of(i1, j1)
-            board.tracks.append((layer_names[layer], (x0, y0), (x1, y1), track_width_mm))
+            board.tracks.append((name, layer_names[layer], (x0, y0), (x1, y1), track_width_mm))
         for i, j in rn.vias:
-            board.vias.append(grid.center_of(i, j))
+            x, y = grid.center_of(i, j)
+            board.vias.append((name, x, y))
+
+    # Pin-access stubs: the routed tracks start at grid-cell *centres*, which are
+    # offset from the actual pad centres — connect each pad to its access cell so
+    # the net is electrically whole (no ratsnest at the pads).
+    for comp in graph.components:
+        la = grid.side_layer(comp.side)
+        for _pn, net_name, r in pad_rects(comp):
+            if net_name not in routed_names:
+                continue
+            ci, cj = grid.cell_of(r.cx, r.cy)
+            cx, cy = grid.center_of(ci, cj)
+            if (cx, cy) != (r.cx, r.cy):
+                board.tracks.append(
+                    (net_name, layer_names[la], (r.cx, r.cy), (cx, cy), track_width_mm)
+                )
     return board

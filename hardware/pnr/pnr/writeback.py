@@ -459,6 +459,67 @@ def frame_region(text: str, width: float, height: float, offset: float = _PAGE_O
     return framed
 
 
+def _set_design_rules(board, clearance_mm: float = 0.13, track_mm: float = 0.15) -> None:
+    """Set the board default netclass clearance/width to match the router's grid,
+    so the emitted grid-spaced routing is DRC-clean (grid pitch ≥ track + clearance
+    ⇒ adjacent tracks clear)."""
+    try:
+        nc = board.GetDesignSettings().m_NetSettings.GetDefaultNetclass()
+        nc.SetClearance(_nm(clearance_mm))
+        nc.SetTrackWidth(_nm(track_mm))
+    except Exception:  # pragma: no cover - version shim
+        pass
+
+
+def _net_code_map(board) -> Dict[str, int]:
+    """Net name -> code from the pads. Call right after LoadBoard — GetFootprints/
+    FindNet return flaky SWIG wrappers later in the pcbnew session in this KiCad 9
+    python; reading it once up front is reliable."""
+    out: Dict[str, int] = {}
+    for fp in board.GetFootprints():
+        for pad in fp.Pads():
+            out.setdefault(pad.GetNetname(), pad.GetNetCode())
+    return out
+
+
+def emit_routes(
+    board, routes: dict, height: float, net_code: Dict[str, int], offset: float = _PAGE_OFFSET_MM
+) -> int:
+    """Add the own detailed router's tracks + vias (``routes.json``, engine mm)
+    onto the board via the write-back frame (engine y-up → pcbnew y-down). Each
+    track/via is bound to its net (via the precomputed ``net_code`` map) so DRC +
+    connectivity see it. Returns tracks added."""
+    import pcbnew
+
+    frame = _WriteFrame(height, offset)
+    layer_id = {"F.Cu": pcbnew.F_Cu, "B.Cu": pcbnew.B_Cu}
+
+    def code(net_name):
+        return net_code.get(net_name, 0)
+
+    n_tracks = 0
+    for net, layer, (x0, y0), (x1, y1), w in routes.get("tracks", []):
+        t = pcbnew.PCB_TRACK(board)
+        t.SetStart(frame.point(x0, y0))
+        t.SetEnd(frame.point(x1, y1))
+        t.SetWidth(_nm(w))
+        t.SetLayer(layer_id.get(layer, pcbnew.F_Cu))
+        t.SetNetCode(code(net))
+        board.Add(t)
+        n_tracks += 1
+    for net, x, y in routes.get("vias", []):
+        v = pcbnew.PCB_VIA(board)
+        v.SetPosition(frame.point(x, y))
+        v.SetViaType(pcbnew.VIATYPE_THROUGH)
+        v.SetLayerPair(pcbnew.F_Cu, pcbnew.B_Cu)
+        v.SetFrontWidth(_nm(0.6))
+        v.SetDrill(_nm(0.3))
+        v.SetNetCode(code(net))
+        board.Add(v)
+    board.BuildConnectivity()
+    return n_tracks
+
+
 def writeback(
     in_pcb: str,
     graph: BoardGraph,
@@ -468,6 +529,7 @@ def writeback(
     height: float,
     rules: Optional[dict] = None,
     layers: int = 2,
+    routes: Optional[dict] = None,
 ) -> int:
     """Load ``in_pcb``, apply ``graph``'s placement (+ optional net-class ``rules``,
     + copper ``layers``), frame the board to the placement region, save to
@@ -475,17 +537,23 @@ def writeback(
     import pcbnew
 
     board = pcbnew.LoadBoard(in_pcb)
+    # Read the net-name -> code map up front, while the pcbnew session's iterators
+    # are reliable (they flake later).
+    net_code = _net_code_map(board) if routes else {}
     # Net classes first: apply_placement's BuildConnectivity() must run *after*
     # the classes exist for them to stick to the board's net settings (verified —
     # applying them afterwards does not persist through the save).
     if rules:
         apply_net_classes(board, rules)
     n = apply_placement(board, graph, width=width, height=height, layers=layers)
-    # Type the plane layers as POWER so the detailed router keeps signals on the
-    # outer layers (F.Cu/B.Cu) and leaves the inner layers for the ground/power
-    # planes poured after routing (pnr.planes).
+    # Type the plane layers as POWER so signals stay on the outer layers
+    # (F.Cu/B.Cu) and the inner layers carry the ground/power planes (pnr.planes).
     if rules:
         _type_plane_layers(board, rules)
+    # Emit the own detailed router's signal tracks/vias (replaces FreeRouting).
+    if routes:
+        _set_design_rules(board)
+        emit_routes(board, routes, height, net_code)
     pcbnew.SaveBoard(out_pcb, board)
     # Text pass: strip all (stale) Edge.Cuts — pcbnew reformats gr_lines into
     # nested strokes a single-level regex can't remove — then stamp one clean
@@ -506,7 +574,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("graph", help="placed BoardGraph JSON (pnr.route --dump-json)")
     ap.add_argument("--out", required=True, help="output .kicad_pcb path")
     ap.add_argument("--rules", help="rules.json (pnr.route --dump-rules); optional net classes")
+    ap.add_argument(
+        "--routes", help="routes.json (pnr.route --dump-routes); own-router tracks/vias"
+    )
     args = ap.parse_args(argv)
+
+    import json
 
     with open(args.graph, encoding="utf-8") as fh:
         graph = BoardGraph.from_json(fh.read())
@@ -518,13 +591,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     rules = None
     layers = 2
     if args.rules:
-        import json
-
         with open(args.rules, encoding="utf-8") as fh:
             rules = json.load(fh)
         layers = int(rules.get("layers", 2))
+    routes = None
+    if args.routes:
+        with open(args.routes, encoding="utf-8") as fh:
+            routes = json.load(fh)
 
-    n = writeback(args.pcb, graph, args.out, width=w, height=h, rules=rules, layers=layers)
+    n = writeback(
+        args.pcb, graph, args.out, width=w, height=h, rules=rules, layers=layers, routes=routes
+    )
     print(f"writeback: placed {n}/{len(graph.components)} footprints -> {args.out}")
     if n < len(graph.components):
         missing = n - len(graph.components)
