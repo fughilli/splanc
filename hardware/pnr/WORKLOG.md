@@ -6,7 +6,7 @@ scan back. Full design + rationale lives in
 the running state so a fresh-context agent can pick up cleanly. Update it at the
 end of every session.
 
-## 2026-08-22 (evening) — stronger router (RRR) + rubber-band outline; pin-escape is the wall (START HERE)
+## 2026-08-22 (evening) — RRR router + rubber-band outline; pin-escape is the wall (START HERE)
 
 Kevin chose **"invest in a stronger router"** (stay 4-layer) and OK'd **growing the
 outline** ("rubber-band, configurable"). Both built + committed:
@@ -39,10 +39,9 @@ in/adjacent to a stuck fine-pitch pad down to an inner-layer _gap_ (the plane-fa
 dogbone, but for signals), where the 0.3 mm grid has room — the standard QFN/BGA
 escape. Needs: per-pad "can't escape on its own layer" detection + a short
 via-in-pad/dogbone stub + route on the inner layer. Optionally thinner (0.10 mm)
-escape tracks in the pad neighbourhood (differential width). This + the rubber-band
-
-- multi-round inflation is the path to a fully-routed splanc_dev. Until then the
-  gate correctly fails the build.
+escape tracks in the pad neighbourhood (differential width). This, plus the
+rubber-band and multi-round inflation, is the path to a fully-routed splanc_dev.
+Until then the gate correctly fails the build.
 
 ## 2026-08-22 (latest) — loop closed on the router; 4-layer routing; routability ceiling
 
