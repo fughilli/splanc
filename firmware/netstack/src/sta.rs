@@ -107,12 +107,22 @@ impl Sta {
         match self.sup.on_eapol(frame, &AesUnwrap, &mut reply) {
             Step::Send(n) => Out::Send(self.stash(&reply.as_slice()[..n])),
             Step::Installed => {
+                self.stash(reply.as_slice()); // M4
                 self.have_keys = true;
                 self.phase = Phase::Connected;
                 Out::Connected
             }
             _ => Out::None,
         }
+    }
+
+    #[cfg(test)]
+    pub fn tk_for_test(&self) -> [u8; 16] {
+        self.sup.ptk().tk
+    }
+    #[cfg(test)]
+    pub fn gtk_for_test(&self) -> &[u8] {
+        self.sup.gtk()
     }
 
     // The EAPOL reply is built into a local Buf<128>; hand it back to the caller
