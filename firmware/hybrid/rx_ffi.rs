@@ -53,6 +53,41 @@ pub extern "C" fn netstack_rx_ingest(frame: *const u8, len: u32) -> u32 {
     }
 }
 
+/// Kick off a STA join to `bssid` (6 bytes): the MLME builds an auth request and
+/// queues it for transmission. Returns 1 if queued.
+#[no_mangle]
+pub extern "C" fn netstack_sta_connect(bssid: *const u8) -> u32 {
+    if bssid.is_null() {
+        return 0;
+    }
+    let mut b: Mac = [0; 6];
+    unsafe { core::ptr::copy_nonoverlapping(bssid, b.as_mut_ptr(), 6) };
+    let s = unsafe {
+        if STACK.is_none() {
+            STACK = Some(Stack::new(Role::Sta, SELF_MAC, BSSID));
+        }
+        STACK.as_mut().unwrap()
+    };
+    matches!(s.sta_connect(b), Ingest::Replied(_)) as u32
+}
+
+/// Drain the next frame the stack has queued for transmission into `buf`,
+/// returning its length (0 if none). The firmware hands each to esp_wifi_80211_tx.
+#[no_mangle]
+pub extern "C" fn netstack_tx_next(buf: *mut u8, cap: u32) -> u32 {
+    if buf.is_null() {
+        return 0;
+    }
+    let s = unsafe {
+        match STACK.as_mut() {
+            Some(st) => st,
+            None => return 0,
+        }
+    };
+    let out = unsafe { core::slice::from_raw_parts_mut(buf, cap as usize) };
+    s.pop_tx(out) as u32
+}
+
 /// Zero-copy telemetry for the firmware to print: (data_frames, pb_fields).
 #[no_mangle]
 pub extern "C" fn netstack_rx_stats(data_frames: *mut u32, pb_fields: *mut u32) {

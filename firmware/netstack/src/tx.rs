@@ -79,6 +79,25 @@ impl<const N: usize> TxRing<N> {
         self.slots.iter().filter(|s| s.owned_by_hw).count()
     }
 
+    /// Copy the next queued frame into `out`, free its slot, and return its
+    /// length (0 if the ring is empty or `out` is too small). The driver calls
+    /// this to hand a built frame to the transmit path.
+    pub fn pop_into(&mut self, out: &mut [u8]) -> usize {
+        for i in 0..N {
+            if self.slots[i].owned_by_hw {
+                let len = self.slots[i].len;
+                if len == 0 || len > out.len() {
+                    self.on_complete(i);
+                    return 0;
+                }
+                out[..len].copy_from_slice(&self.slots[i].buf[..len]);
+                self.on_complete(i);
+                return len;
+            }
+        }
+        0
+    }
+
     // --- MMIO glue (per-queue TXQ registers) --------------------------------
 
     /// Global TX bring-up: set the TX rate/duration config words and assert the
