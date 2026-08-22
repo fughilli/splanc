@@ -221,6 +221,36 @@ impl<const RX: usize, const TX: usize, const AP_N: usize, const GATT_N: usize>
         winner
     }
 
+    /// Zero-copy RX dispatch. Management frames advance the role state machines
+    /// internally (as [`ingest_wifi`](Self::ingest_wifi)); for a **data** frame,
+    /// the app `sink` closure is invoked with the payload borrowing `raw`
+    /// directly — the bytes are never copied into an app buffer. The closure can
+    /// parse them in place (e.g. with [`pb::PbReader`](crate::pb::PbReader)) and
+    /// borrow field values straight out of the radio's RX buffer.
+    pub fn on_rx<F: FnMut(&DataView<'_>)>(&mut self, raw: &[u8], mut sink: F) -> Ingest {
+        if raw.len() < 24 {
+            return Ingest::Refused;
+        }
+        // 802.11 frame type = FC bits [3:2]; 2 = data.
+        if (raw[0] >> 2) & 0x3 == 2 {
+            // QoS-data subtypes (8..=15) carry a 2-byte QoS control field.
+            let mut off = 24 + if raw[0] & 0x80 != 0 { 2 } else { 0 };
+            // Skip an LLC/SNAP header (AA-AA-03 ...) if present, so the closure
+            // sees the upper-layer payload.
+            if raw.len() >= off + 8 && raw[off] == 0xAA && raw[off + 1] == 0xAA && raw[off + 2] == 0x03 {
+                off += 8;
+            }
+            if off > raw.len() {
+                return Ingest::Refused;
+            }
+            let view = DataView { dst: mac_at(raw, 4), src: mac_at(raw, 10), payload: &raw[off..] };
+            sink(&view);
+            Ingest::Consumed
+        } else {
+            self.ingest_wifi(raw)
+        }
+    }
+
     fn queue_tx(&mut self, bytes: &[u8], prio: Priority) -> Ingest {
         let ac = match prio {
             Priority::Critical | Priority::Management => 0,
@@ -231,6 +261,14 @@ impl<const RX: usize, const TX: usize, const AP_N: usize, const GATT_N: usize>
             Err(_) => Ingest::Refused, // TX ring full -> back-pressure, no alloc
         }
     }
+}
+
+/// A borrowed view of a received data frame: the `payload` slice points **into
+/// the caller's RX buffer** (zero copy). Handed to the [`Stack::on_rx`] closure.
+pub struct DataView<'a> {
+    pub src: Mac,
+    pub dst: Mac,
+    pub payload: &'a [u8],
 }
 
 /// Read a 6-byte MAC at `off` (caller guarantees the frame is long enough for a
@@ -383,6 +421,36 @@ mod tests {
         acl[8..8 + att.len()].copy_from_slice(&att);
         let r = s.ingest_ble(&acl[..8 + att.len()]);
         assert!(matches!(r, Ingest::Replied(_) | Ingest::Consumed));
+    }
+
+    #[test]
+    fn on_rx_data_is_zero_copy_into_the_input() {
+        use crate::pb;
+        // Build a data frame: FC=0x08 (data), 24B hdr, LLC/SNAP, then a protobuf
+        // payload (field 1 = varint 42).
+        let mut f = [0u8; 64];
+        f[0] = 0x08; // type=data, subtype 0 (non-QoS)
+        f[10..16].copy_from_slice(&STA); // addr2 = src
+        let snap = [0xAA, 0xAA, 0x03, 0x00, 0x00, 0x00, 0x08, 0x00];
+        f[24..32].copy_from_slice(&snap);
+        let pb_msg = [0x08, 42]; // field 1, varint 42
+        f[32..34].copy_from_slice(&pb_msg);
+        let frame = &f[..34];
+
+        let mut s: Stack<1, 1, 1, 1> = Stack::new(Role::Sta, STA, AP);
+        let base = frame.as_ptr() as usize;
+        let mut seen = 0u64;
+        let r = s.on_rx(frame, |view| {
+            // payload must borrow the input frame (zero copy) ...
+            let p = view.payload.as_ptr() as usize;
+            assert!(p >= base && p < base + frame.len());
+            // ... and be decodable in place by the zero-copy protobuf reader.
+            if let Some(v) = pb::field(view.payload, 1) {
+                seen = v.as_u64().unwrap();
+            }
+        });
+        assert!(matches!(r, Ingest::Consumed));
+        assert_eq!(seen, 42);
     }
 
     #[test]
