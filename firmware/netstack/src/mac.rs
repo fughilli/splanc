@@ -9,10 +9,39 @@
 //! The ring *logic* (ownership, dispatch, back-pressure) is host-testable; the
 //! MMIO glue is a thin, clearly-separated layer.
 
+use core::ptr::addr_of;
+
 use crate::ble::{AclPacket, L2capReassembler};
 use crate::ieee80211::{reconstruct_mbssid, Beacon};
 use crate::regs::{mac, mmio};
 use crate::rx::{Buf, MAX_FRAME};
+
+/// C6 MAC RX descriptor — the ESP `lldesc` 3-word DMA format (reconstructed in
+/// esp32-reverse `docs/re/07-lower-mac-registers.md` from `wDev_AppendRxBlocks`):
+/// `word0` packs `size[13:0] | length[27:14] | flags[31:28]` (bit31 = OWN),
+/// `word1` is the DMA buffer pointer, `word2` is the next descriptor (a closed
+/// ring). This is the layout the hardware DMAs against — the driver hands buffers
+/// to it via the OWN bit and reads back the filled `length`.
+#[repr(C)]
+struct Lldesc {
+    word0: u32,
+    buf: u32,
+    next: u32,
+}
+
+const DESC_OWN: u32 = 1 << 31; // word0 bit31: 1 = hardware owns the descriptor
+const DESC_SIZE_MASK: u32 = 0x3fff; // size[13:0] — buffer capacity
+const DESC_LEN_SHIFT: u32 = 14; // length[27:14] — bytes the DMA delivered
+
+impl Lldesc {
+    const fn zero() -> Self {
+        Lldesc { word0: 0, buf: 0, next: 0 }
+    }
+    /// Length the DMA wrote into `word0[27:14]`.
+    fn dma_len(&self) -> usize {
+        ((self.word0 >> DESC_LEN_SHIFT) & DESC_SIZE_MASK) as usize
+    }
+}
 
 /// One RX slot: a fixed frame buffer + how many bytes the DMA delivered, plus an
 /// `owned_by_hw` flag mirroring the descriptor's OWN bit.
@@ -29,23 +58,48 @@ impl Slot {
 }
 
 /// Fixed-capacity RX descriptor ring. `N` = number of in-flight frames; total
-/// static RAM = `N * MAX_FRAME` (compile-time constant, no fragmentation).
+/// static RAM = `N * (MAX_FRAME + sizeof(Lldesc))` (compile-time constant, no
+/// fragmentation). `descs` is the hardware-visible lldesc ring; `slots` holds the
+/// frame buffers each descriptor points at.
 pub struct RxRing<const N: usize> {
+    descs: [Lldesc; N],
     slots: [Slot; N],
     head: usize, // next slot the driver will consume
 }
 
 impl<const N: usize> RxRing<N> {
     pub fn new() -> Self {
-        RxRing { slots: core::array::from_fn(|_| Slot::new()), head: 0 }
+        RxRing {
+            descs: core::array::from_fn(|_| Lldesc::zero()),
+            slots: core::array::from_fn(|_| Slot::new()),
+            head: 0,
+        }
     }
 
-    /// Program the ring base into the MAC and clear any pending RX interrupt.
+    /// Build the lldesc ring: point each descriptor at its slot's buffer, chain
+    /// `next` into a closed ring, and hand every descriptor to hardware (OWN set,
+    /// `size` = buffer capacity). Grounded in the C6 RX descriptor format.
+    ///
+    /// # Safety: `self` must be at a stable (`'static`) address — the descriptors
+    /// store raw pointers into `self`.
+    pub unsafe fn link(&mut self) {
+        for i in 0..N {
+            let buf_ptr = addr_of!(self.slots[i].buf) as u32;
+            let next_ptr = addr_of!(self.descs[(i + 1) % N]) as u32;
+            self.descs[i].buf = buf_ptr;
+            self.descs[i].next = next_ptr;
+            self.descs[i].word0 = DESC_OWN | (MAX_FRAME as u32 & DESC_SIZE_MASK);
+        }
+    }
+
+    /// Link the ring, program its base into the MAC, and clear any pending RX
+    /// interrupt.
     ///
     /// # Safety: caller must ensure the MAC is initialized and the ring outlives
     /// the hardware's use of it (here it's `'static`).
-    pub unsafe fn install(&self) {
-        mmio::write32(mac::RX_DSCR_BASE, self.slots.as_ptr() as u32);
+    pub unsafe fn install(&mut self) {
+        self.link();
+        mmio::write32(mac::RX_DSCR_BASE, self.descs.as_ptr() as u32);
         mmio::write32(mac::INT_CLEAR, 0xffff_ffff);
     }
 
@@ -70,6 +124,7 @@ impl<const N: usize> RxRing<N> {
         }
         self.slots[idx].len = len.min(MAX_FRAME);
         self.slots[idx].owned_by_hw = false;
+        self.descs[idx].word0 &= !DESC_OWN; // driver owns it until recycled
     }
 
     /// Take the next ready frame (driver-owned), or `None`. The caller must
@@ -91,6 +146,8 @@ impl<const N: usize> RxRing<N> {
         if idx < N {
             self.slots[idx].len = 0;
             self.slots[idx].owned_by_hw = true;
+            // Re-arm the descriptor: OWN set, length cleared, size restored.
+            self.descs[idx].word0 = DESC_OWN | (MAX_FRAME as u32 & DESC_SIZE_MASK);
         }
     }
 
@@ -149,6 +206,31 @@ pub fn dispatch_ble<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lldesc_ring_matches_hw_format() {
+        // The linked ring must match the C6 RX descriptor format: each descriptor
+        // owned by HW, size = MAX_FRAME, buf pointing at its slot, next forming a
+        // closed ring. (Ring is stack-local here => stable address for the test.)
+        let mut ring: RxRing<3> = RxRing::new();
+        unsafe { ring.link() };
+        for i in 0..3 {
+            assert_eq!(ring.descs[i].word0 & DESC_SIZE_MASK, MAX_FRAME as u32);
+            assert_eq!(ring.descs[i].word0 & DESC_OWN, DESC_OWN);
+            assert_eq!(ring.descs[i].buf, addr_of!(ring.slots[i].buf) as u32);
+            let expect_next = addr_of!(ring.descs[(i + 1) % 3]) as u32;
+            assert_eq!(ring.descs[i].next, expect_next);
+        }
+        // HW fills length[27:14]; the driver reads it back.
+        ring.descs[1].word0 =
+            (ring.descs[1].word0 & !((DESC_SIZE_MASK) << DESC_LEN_SHIFT)) | (200 << DESC_LEN_SHIFT);
+        assert_eq!(ring.descs[1].dma_len(), 200);
+        // Completion clears OWN; recycle re-arms it.
+        ring.on_dma_complete(0, 100);
+        assert_eq!(ring.descs[0].word0 & DESC_OWN, 0);
+        ring.recycle(0);
+        assert_eq!(ring.descs[0].word0 & DESC_OWN, DESC_OWN);
+    }
 
     #[test]
     fn ring_backpressure_never_overflows() {
