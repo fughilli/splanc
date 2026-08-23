@@ -130,8 +130,11 @@ impl<const N: usize> TxRing<N> {
         let ctrl = mac::txq_reg(mac::TXQ_PLCP_CTRL_BASE, queue, mac::TXQ_STRIDE);
         mmio::write32(ctrl, self.slots[idx].buf.as_ptr() as u32);
         let plcp = mac::txq_reg(mac::TXQ_PLCP0_BASE, queue, mac::TXQ_STRIDE);
-        // Set bits[31:30] to enable the queue.
-        mmio::write32(plcp, plcp0 | 0xc000_0000);
+        // Set the queue VALID bit (bit30). Per the vendor libpp RE (see esp32-reverse
+        // docs/re/07): mac_tx_set_plcp0 writes the length/rate word with no top bits,
+        // and hal_mac_set_txq_invalid clears bit30 to invalidate — so bit30 is the
+        // valid/arm bit. (Bit31 has no attested TX-enable role.)
+        mmio::write32(plcp, plcp0 | 0x4000_0000);
     }
 
     /// Poll each hardware queue for completion and, if done, clear the state and
