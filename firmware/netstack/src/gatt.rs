@@ -106,12 +106,16 @@ pub struct GattDb<const N: usize> {
     attrs: [Option<Attr>; N],
     count: usize,
     next_handle: u16,
+    /// The negotiated ATT MTU. A response PDU must be <= this; before any MTU
+    /// exchange the BLE default (23) applies, so discovery responses that ignore
+    /// it overflow the client and get discarded.
+    mtu: u16,
 }
 
 impl<const N: usize> GattDb<N> {
     pub const fn new() -> Self {
         const NONE: Option<Attr> = None;
-        GattDb { attrs: [NONE; N], count: 0, next_handle: 1 }
+        GattDb { attrs: [NONE; N], count: 0, next_handle: 1, mtu: 23 }
     }
 
     fn push(&mut self, a: Attr) -> Result<u16, Overflow> {
@@ -195,7 +199,7 @@ impl<const N: usize> GattDb<N> {
     pub fn handle_att(&mut self, opcode: u8, params: &[u8], out: &mut Buf<GATT_RSP_MAX>) -> usize {
         out.clear();
         let r = match opcode {
-            ATT_EXCHANGE_MTU_REQ => self.mtu(out),
+            ATT_EXCHANGE_MTU_REQ => self.mtu(params, out),
             ATT_READ_BY_GROUP_TYPE_REQ => self.read_by_group_type(params, out),
             ATT_READ_BY_TYPE_REQ => self.read_by_type(params, out),
             ATT_FIND_INFORMATION_REQ => self.find_information(params, out),
@@ -208,9 +212,19 @@ impl<const N: usize> GattDb<N> {
         out.len()
     }
 
-    fn mtu(&self, out: &mut Buf<GATT_RSP_MAX>) -> Result<(), Overflow> {
+    fn mtu(&mut self, params: &[u8], out: &mut Buf<GATT_RSP_MAX>) -> Result<(), Overflow> {
+        // Negotiated MTU = min(client, server); never below the 23-byte minimum.
+        if params.len() >= 2 {
+            let client = u16::from_le_bytes([params[0], params[1]]);
+            self.mtu = client.min(ATT_MTU).max(23);
+        }
         out.extend(&[ATT_EXCHANGE_MTU_RSP])?;
         out.extend(&ATT_MTU.to_le_bytes())
+    }
+
+    /// Response byte budget = the negotiated MTU (a response PDU must fit in it).
+    fn budget(&self) -> usize {
+        self.mtu as usize
     }
 
     /// ATT_READ_BY_GROUP_TYPE — primary-service discovery.
@@ -232,7 +246,7 @@ impl<const N: usize> GattDb<N> {
             if !wrote {
                 elem_len = this_len;
                 out.extend(&[ATT_READ_BY_GROUP_TYPE_RSP, elem_len as u8])?;
-            } else if this_len != elem_len || out.len() + elem_len > GATT_RSP_MAX {
+            } else if this_len != elem_len || out.len() + elem_len > self.budget() {
                 break; // format change or full: stop (client re-queries from next)
             }
             let end_group = self.service_end(a.handle);
@@ -283,7 +297,7 @@ impl<const N: usize> GattDb<N> {
             if !wrote {
                 elem_len = this_len;
                 out.extend(&[ATT_READ_BY_TYPE_RSP, elem_len as u8])?;
-            } else if this_len != elem_len || out.len() + elem_len > GATT_RSP_MAX {
+            } else if this_len != elem_len || out.len() + elem_len > self.budget() {
                 break;
             }
             out.extend(&a.handle.to_le_bytes())?;
@@ -314,7 +328,7 @@ impl<const N: usize> GattDb<N> {
             if !wrote {
                 fmt = this_fmt;
                 out.extend(&[ATT_FIND_INFORMATION_RSP, fmt])?;
-            } else if this_fmt != fmt || out.len() + elem_len > GATT_RSP_MAX {
+            } else if this_fmt != fmt || out.len() + elem_len > self.budget() {
                 break;
             }
             out.extend(&a.handle.to_le_bytes())?;
@@ -332,10 +346,11 @@ impl<const N: usize> GattDb<N> {
             return att_error(ATT_READ_REQ, 0, ERR_INVALID_LENGTH, out);
         }
         let handle = u16::from_le_bytes([params[0], params[1]]);
-        // borrow immutably via iter (read doesn't mutate)
+        let budget = self.budget();
         match self.iter().find(|a| a.handle == handle) {
             Some(a) if a.readable => {
-                let n = a.value.len().min(ATT_MTU as usize - 1);
+                let n = a.value.len().min(budget - 1); // Read Response: opcode + value
+
                 let val: Buf<GATT_VAL_MAX> = {
                     let mut b = Buf::new();
                     let _ = b.extend(&a.value.as_slice()[..n]);
@@ -487,6 +502,28 @@ mod tests {
         assert_eq!(out.as_slice()[0], ATT_WRITE_RSP);
         db.handle_att(ATT_READ_REQ, &val_h.to_le_bytes(), &mut out);
         assert_eq!(out.as_slice(), &[ATT_READ_RSP, 0xaa, 0xbb, 0xcc]);
+    }
+
+    #[test]
+    fn discovery_respects_negotiated_mtu() {
+        // 5 characteristics, each a 21-byte 128-bit decl. At the default MTU (23)
+        // only ONE fits per Read-By-Type response; after an MTU exchange, more do.
+        let mut db: GattDb<20> = GattDb::new();
+        db.add_primary_service(Uuid::U16(0x1234)).unwrap();
+        for c in 0..5u16 {
+            db.add_characteristic(Uuid::U128([c as u8; 16]), PROP_READ, &[0]).unwrap();
+        }
+        let mut out: Buf<GATT_RSP_MAX> = Buf::new();
+        let p = [0x01, 0x00, 0xff, 0xff, 0x03, 0x28]; // Read By Type, char decl
+        db.handle_att(ATT_READ_BY_TYPE_REQ, &p, &mut out);
+        let elem = out.as_slice()[1] as usize;
+        assert_eq!((out.len() - 2) / elem, 1, "default MTU 23 -> 1 char per response");
+
+        // Negotiate a large MTU, then the same query returns all 5.
+        let mut m: Buf<GATT_RSP_MAX> = Buf::new();
+        db.handle_att(ATT_EXCHANGE_MTU_REQ, &[0xff, 0x00], &mut m); // client MTU 255
+        db.handle_att(ATT_READ_BY_TYPE_REQ, &p, &mut out);
+        assert_eq!((out.len() - 2) / elem, 5, "large MTU -> all 5 chars");
     }
 
     #[test]
