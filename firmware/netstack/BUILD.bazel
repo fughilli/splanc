@@ -347,3 +347,35 @@ flash_bundle(
     flash = ":wifi_isr_driver_flash",
     tags = ["manual"],
 )
+
+# wifi_fullduplex_driver — combined heapless RX ring + our ISR + heapless TX.
+cc_binary(
+    name = "wifi_fullduplex_driver",
+    srcs = ["examples/wifi_fullduplex_driver.cpp"],
+    copts = ["-fno-rtti"],
+    target_compatible_with = _C6,
+    deps = _arduino + [
+        ":wifi_sta_ffi",
+        "@embedded//libs/vendor:wifi",
+    ],
+)
+
+firmware_binary(
+    name = "wifi_fullduplex_driver_esp32c6",
+    binary = ":wifi_fullduplex_driver",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "wifi_fullduplex_driver_flash",
+    app = ":wifi_fullduplex_driver_esp32c6",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "wifi_fullduplex_driver_flashbundle",
+    flash = ":wifi_fullduplex_driver_flash",
+    tags = ["manual"],
+)
