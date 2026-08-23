@@ -102,25 +102,21 @@ static int on_acl(void *om, void *arg) {
   return 0;
 }
 
-// NOTE on connections (RE'd from the vendor controller libs, ruled out on hw):
-//   * Advertising works headless; sync command-completes arrive via the
-//     r_ble_hci_trans callback above.
-//   * Event delivery to the host is SYNCHRONOUS: ble_transport_to_hs_evt_impl(ev)
-//     is a tail-call to ble_hs_hci_rx_evt(ev, 0) — no queue. So a connection event
-//     WOULD reach a -Wl,--wrap=ble_hs_hci_rx_evt handler. It never fired (hsevt=0)
-//     => the controller never GENERATES the event => the LL never creates the
-//     connection. (ACL, by contrast, IS queued via ble_mqueue_put -> needs the
-//     host task; moot until connections work.)
-//   * DEFINITIVE (on-hw --wrap of r_ble_ll_conn_slave_start): slave_start is NEVER
-//     called during a central's connect attempt (slavestart=0). So the CONNECT_IND
-//     never reaches connection-creation at all — it is dropped in the lower-LL adv
-//     RX ISR, or the upper-LL r_ble_ll_adv_conn_req_rxd rejects it before slave_start.
-//   * The conn module IS initialised by the controller (ble_ll_init ->
-//     r_ble_ll_conn_module_init allocates ble_ll_conn_env_p), so the pool exists.
-// Ruled out: both event masks, ble_transport_hs_init, --wrap ble_hs_hci_rx_evt,
-// conn-module-init, host event delivery. The gap is in the radio-ISR CONNECT_IND
-// acceptance path (ble_lll_adv RX) — a distinct deep-RE effort. GATT/ACL host code
-// is wired + ready for when the LL accepts connections.
+// CONNECTIONS — root cause is CENTRAL-SIDE, not our LL (on-hw RE, 2026-08-23):
+//   * On-hw --wrap of the LL RX path (r_ble_ll_adv_rx_pkt_in, whose 1st arg is the
+//     PDU type: 3=SCAN_REQ, 5=CONNECT_IND) showed the rig central sends only
+//     SCAN_REQ (type 3, 31x) and NEVER a CONNECT_IND (type 5, 0x). It actively
+//     scans us (and resolves our name via the scan response below) but never
+//     initiates a connection — so slave_start is never reached because there is no
+//     CONNECT_IND to accept, NOT because our LL rejects one.
+//   * The rig's shared host BLE adapter has a documented ~50% BleakClient.connect()
+//     flake (pi/hitl WORKLOG "FUG-61"); the generic `hitl ble gatt` tool never got a
+//     CONNECT_IND out to us. Our event delivery path is fine (synchronous:
+//     ble_transport_to_hs_evt_impl tail-calls ble_hs_hci_rx_evt).
+//   * Our advertising + scan response are validated (discoverable, name resolved).
+//     Definitive connection validation needs a reliable central: the real
+//     hitl_improv harness (which keys on the Improv service UUID in the ADV) or a
+//     phone. GATT/ACL host code is wired + ready.
 
 // Send a netstack HCI packet ([H4 type][payload]) to the controller. Commands go
 // through a controller-allocated buffer; ACL data goes through an msys mbuf. Both

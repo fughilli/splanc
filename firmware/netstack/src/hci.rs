@@ -47,6 +47,7 @@ pub enum HostState {
     LeMaskSent,
     AdvParamsSent,
     AdvDataSent,
+    ScanRspSent,
     AdvEnableSent,
     Advertising,
     Connected(u16),
@@ -56,11 +57,12 @@ pub struct BleHost {
     pub state: HostState,
     adv: [u8; 32],
     adv_len: usize,
+    scan_rsp: [u8; 32],
 }
 
 impl BleHost {
     pub const fn new() -> Self {
-        BleHost { state: HostState::Init, adv: [0; 32], adv_len: 0 }
+        BleHost { state: HostState::Init, adv: [0; 32], adv_len: 0, scan_rsp: [0; 32] }
     }
 
     /// Set the advertising payload (AD structures) — e.g. flags + complete local
@@ -69,6 +71,14 @@ impl BleHost {
         self.adv_len = ad.len().min(31);
         self.adv[1..1 + self.adv_len].copy_from_slice(&ad[..self.adv_len]);
         self.adv[0] = self.adv_len as u8; // HCI adv-data length field
+    }
+
+    /// Set the scan-response payload — AD structures returned to an active scanner
+    /// (SCAN_REQ). Must NOT contain the Flags AD type (invalid in a scan response).
+    pub fn set_scan_rsp(&mut self, ad: &[u8]) {
+        let n = ad.len().min(31);
+        self.scan_rsp[1..1 + n].copy_from_slice(&ad[..n]);
+        self.scan_rsp[0] = n as u8; // HCI scan-response-data length field
     }
 
     /// Produce the next HCI command to send for bring-up, or 0 bytes when there's
@@ -137,6 +147,13 @@ impl BleHost {
                 cmd(OP_LE_SET_ADV_DATA, &self.adv[..32], out)
             }
             (HostState::AdvDataSent, _) => {
+                // Provide a scan response so an active scanner (which sends SCAN_REQ
+                // before deciding to connect) completes discovery and proceeds to
+                // send CONNECT_IND. Without this the central only ever scans.
+                self.state = HostState::ScanRspSent;
+                cmd(OP_LE_SET_SCAN_RSP, &self.scan_rsp[..32], out)
+            }
+            (HostState::ScanRspSent, _) => {
                 self.state = HostState::AdvEnableSent;
                 cmd(OP_LE_SET_ADV_ENABLE, &[0x01], out)
             }
@@ -210,6 +227,8 @@ mod tests {
         // adv data command carries our payload length.
         assert_eq!(out.as_slice()[0], H4_CMD);
         h.on_event(&cmd_complete(OP_LE_SET_ADV_DATA), &mut out);
+        assert_eq!(h.state, HostState::ScanRspSent);
+        h.on_event(&cmd_complete(OP_LE_SET_SCAN_RSP), &mut out);
         h.on_event(&cmd_complete(OP_LE_SET_ADV_ENABLE), &mut out);
         assert_eq!(h.state, HostState::Advertising);
     }
