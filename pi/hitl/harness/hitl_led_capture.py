@@ -150,30 +150,43 @@ async def _drive_pattern(ws_url: str, insecure: bool) -> None:
     sock = await websockets.connect(ws_url, max_size=2**22, ssl=ssl_ctx, open_timeout=8)
     async with sock:
         await rpc(sock, {"type": "hello", "client": "led_capture", "app_version": "1"}, "welcome")
-        state = await rpc(sock, counting_message(BLOCKS), "counting_state")
+        # Drive the probe in GRB (the WS2812B wire order the analyzer decodes and
+        # real content uses); the counting-pattern default is raw/identity, which a
+        # GRB decode reads back R/G-swapped (FUG-140).
+        state = await rpc(sock, counting_message(BLOCKS, color_order="GRB"), "counting_state")
         if not state.get("active"):
             raise SystemExit(f"[drive] counting pattern not active: {state}")
     _log("[drive] pattern latched")
 
 
 # -- color-order verification (FUG-123) --------------------------------------
-# set_hardware_config makes the WS2812 wire color order configurable; the only way
-# to confirm the BYTES on the DIN actually change is a logic analyzer. This runs as
-# an extra phase of THIS test (rather than a second analyzer-requiring target that
-# would double contention on the single analyzer rig): after the baseline capture
-# proves the default order, reconfigure to a couple of non-default orders (RAM
-# preview, commit=false — the persisted default is untouched) and assert the wire
-# permutes exactly as each order predicts. The analyzer decodes with a FIXED order
-# (GRB — pinned by the baseline reading logical primaries back), so a configured
-# order shows up as a predictable permutation; see hardware_config_pattern.
+# The WS2812 wire color order is configurable; the only way to confirm the BYTES on
+# the DIN actually change is a logic analyzer. This runs as an extra phase of THIS
+# test (rather than a second analyzer-requiring target that would double contention
+# on the single analyzer rig): after the baseline (GRB) capture proves the default,
+# drive the counting probe with a couple of non-default orders and assert the wire
+# permutes exactly as each order predicts. We drive the order via the PROBE
+# (SetCountingPattern.color_order), not set_hardware_config: the probe carries its
+# own wire order, independent of the committed per-channel config, so it's the
+# mechanism that actually reorders the counting DIN (see _drive_order). The analyzer
+# decodes with a FIXED order (GRB — pinned by the baseline reading logical primaries
+# back), so a configured order shows up as a predictable permutation; see
+# hardware_config_pattern.
 
-# Non-default orders to verify (GRB is the baseline already asserted above). RGB
-# swaps R<->G on the wire, BGR is a full permutation.
+# Non-default probe orders to verify (GRB is the baseline already asserted above).
+# RGB swaps R<->G on the wire vs GRB, BGR is a full permutation.
 COLOR_ORDERS_UNDER_TEST = ["RGB", "BGR"]
 
 
 async def _drive_order(ws_url: str, insecure: bool, order: str) -> None:
-    """Set channel 0's wire color order (RAM preview) then latch the R/G/B pattern."""
+    """Latch the R/G/B pattern with the probe emitting `order` on the wire.
+
+    The counting probe carries its OWN wire order (SetCountingPattern.color_order →
+    counting_order), deliberately independent of the committed per-channel
+    set_hardware_config so the color-order test never mutates persisted config. So
+    to make the DIN carry a given order we drive the probe with that color_order —
+    NOT set_hardware_config, which only reorders the content path and leaves the
+    probe raw (that mismatch is FUG-140: every order came out identity/raw)."""
     import websockets
     from server import proto_wire
 
@@ -196,18 +209,7 @@ async def _drive_order(ws_url: str, insecure: bool, order: str) -> None:
     sock = await websockets.connect(ws_url, max_size=2**22, ssl=ssl_ctx, open_timeout=8)
     async with sock:
         await rpc(sock, {"type": "hello", "client": "led_capture", "app_version": "1"}, "welcome")
-        st = await rpc(
-            sock,
-            {"type": "set_hardware_config", "channel": 0, "color_order": order, "commit": False},
-            "hardware_config_state",
-        )
-        got = next(
-            (c.get("colorOrder") for c in (st.get("channels") or []) if c.get("channel") == 0),
-            None,
-        )
-        if got != order:
-            raise SystemExit(f"[order] device did not accept order {order!r}: {st}")
-        state = await rpc(sock, counting_message(BLOCKS), "counting_state")
+        state = await rpc(sock, counting_message(BLOCKS, color_order=order), "counting_state")
         if not state.get("active"):
             raise SystemExit(f"[order] counting pattern not active: {state}")
     _log(f"[order] {order} + pattern latched")
@@ -444,7 +446,7 @@ async def _drive_two_channel(ws_url: str, insecure: bool, half0: int, half1: int
         await rpc(
             sock, {"type": "set_led_count", "led_count": half1, "channel": 1}, "led_count_state"
         )
-        state = await rpc(sock, counting_message(BLOCKS), "counting_state")
+        state = await rpc(sock, counting_message(BLOCKS, color_order="GRB"), "counting_state")
         if not state.get("active"):
             raise SystemExit(f"[drive] counting pattern not active: {state}")
     _log("[drive] split pattern latched")

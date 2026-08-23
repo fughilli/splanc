@@ -30,13 +30,21 @@ Block = Tuple[int, int, Tuple[int, int, int]]
 Pixel = Tuple[int, int, int]
 
 
-def counting_message(blocks: Sequence[Block], channel: int = 0) -> dict:
+def counting_message(
+    blocks: Sequence[Block], channel: int = 0, color_order: str | None = None
+) -> dict:
     """A set_counting_pattern flat message ready for proto_wire.encode_client.
 
     The wire carries rgb in [0,1]; we scale the 0..255 block colors down so the
     caller thinks in bytes (matching what the analyzer decodes back).
+
+    color_order selects the WS2812 wire order the probe emits. The firmware default
+    (color_order unset) is IDENTITY/raw — logical RGB straight to the wire — which a
+    GRB-assuming analyzer reads back R/G-swapped. Pass "GRB" (the WS2812B order the
+    analyzer decodes and real content uses) so logical primaries decode back as
+    themselves; the color-order test drives the other orders explicitly.
     """
-    return {
+    m = {
         "type": "set_counting_pattern",
         "blocks": [
             {"start": s, "count": c, "rgb": [r / 255.0, g / 255.0, b / 255.0]}
@@ -44,6 +52,9 @@ def counting_message(blocks: Sequence[Block], channel: int = 0) -> dict:
         ],
         "channel": channel,
     }
+    if color_order is not None:
+        m["color_order"] = color_order
+    return m
 
 
 def expected_pixels(blocks: Sequence[Block], n: int) -> List[Pixel]:
