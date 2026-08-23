@@ -206,6 +206,8 @@ pub extern "C" fn ns_ble_state() -> u32 {
         HostState::ResetSent => 1,
         HostState::EvtMaskSent => 2,
         HostState::LeMaskSent => 8,
+        HostState::BufSizeSent => 10,
+        HostState::FeatSent => 11,
         HostState::AdvParamsSent => 3,
         HostState::AdvDataSent => 4,
         HostState::ScanRspSent => 9,

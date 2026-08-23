@@ -20,6 +20,8 @@ const OP_LE_SET_ADV_DATA: u16 = 0x2008;
 const OP_LE_SET_SCAN_RSP: u16 = 0x2009;
 const OP_LE_SET_ADV_ENABLE: u16 = 0x200A;
 const OP_LE_SET_EVENT_MASK: u16 = 0x2001;
+const OP_LE_READ_BUF_SIZE: u16 = 0x2002;
+const OP_LE_READ_LOCAL_FEAT: u16 = 0x2003;
 
 // Event codes.
 const EV_CMD_COMPLETE: u8 = 0x0E;
@@ -45,6 +47,8 @@ pub enum HostState {
     ResetSent,
     EvtMaskSent,
     LeMaskSent,
+    BufSizeSent,
+    FeatSent,
     AdvParamsSent,
     AdvDataSent,
     ScanRspSent,
@@ -137,6 +141,17 @@ impl BleHost {
                 cmd(OP_LE_SET_EVENT_MASK, &[0x1f, 0, 0, 0, 0, 0, 0, 0], out)
             }
             (HostState::LeMaskSent, _) => {
+                // Read the controller's ACL buffer sizes + LE features, as the
+                // NimBLE host does at startup (ble_hs_startup_go). Arms the ACL
+                // data path before we accept a connection.
+                self.state = HostState::BufSizeSent;
+                cmd(OP_LE_READ_BUF_SIZE, &[], out)
+            }
+            (HostState::BufSizeSent, _) => {
+                self.state = HostState::FeatSent;
+                cmd(OP_LE_READ_LOCAL_FEAT, &[], out)
+            }
+            (HostState::FeatSent, _) => {
                 self.state = HostState::AdvParamsSent;
                 // adv interval 0x00A0 (100ms), connectable undirected, public addr.
                 let p = [0xa0, 0x00, 0xa0, 0x00, 0x00, 0x00, 0x00, 0, 0, 0, 0, 0, 0, 0x07, 0x00];
@@ -225,6 +240,10 @@ mod tests {
         h.on_event(&cmd_complete(OP_SET_EVENT_MASK), &mut out);
         assert_eq!(h.state, HostState::LeMaskSent);
         h.on_event(&cmd_complete(OP_LE_SET_EVENT_MASK), &mut out);
+        assert_eq!(h.state, HostState::BufSizeSent);
+        h.on_event(&cmd_complete(OP_LE_READ_BUF_SIZE), &mut out);
+        assert_eq!(h.state, HostState::FeatSent);
+        h.on_event(&cmd_complete(OP_LE_READ_LOCAL_FEAT), &mut out);
         assert_eq!(h.state, HostState::AdvParamsSent);
         h.on_event(&cmd_complete(OP_LE_SET_ADV_PARAMS), &mut out);
         // adv data command carries our payload length.
