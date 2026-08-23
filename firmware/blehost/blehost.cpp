@@ -102,20 +102,24 @@ static int on_acl(void *om, void *arg) {
   return 0;
 }
 
-// NOTE on connections: synchronous command-completes arrive via the
-// r_ble_hci_trans callback above and advertising works. But ASYNC events (LE
-// Connection Complete, ACL) never reach this host — the vendor "NimBLE
-// controller" routes them through the ble_transport host layer
-// (ble_transport_to_hs_evt_impl), which is owned by the linked-but-unrun NimBLE
-// host (ble_hs_hci_rx_evt) and dropped at its dummy receiver. Wrapping
-// ble_hs_hci_rx_evt does not help (delivery is dropped earlier / intra-archive).
-// Completing the connection path needs the ble_transport host side initialised
-// (ble_transport_hs_init + a real host recv cb), not just the command transport.
-// Tried on hardware: ble_transport_hs_init() + -Wl,--wrap=ble_hs_hci_rx_evt did
-// NOT surface the connection event — the vendor controller does not complete the
-// LL connection in this headless config (advertising keeps running through a
-// central's connect attempt), so the gap is in controller connection-acceptance,
-// deeper than host event routing. Left for a dedicated investigation.
+// NOTE on connections (RE'd from the vendor controller libs, ruled out on hw):
+//   * Advertising works headless; sync command-completes arrive via the
+//     r_ble_hci_trans callback above.
+//   * Event delivery to the host is SYNCHRONOUS: ble_transport_to_hs_evt_impl(ev)
+//     is a tail-call to ble_hs_hci_rx_evt(ev, 0) — no queue. So a connection event
+//     WOULD reach a -Wl,--wrap=ble_hs_hci_rx_evt handler. It never fired (hsevt=0)
+//     => the controller never GENERATES the event => the LL never creates the
+//     connection. (ACL, by contrast, IS queued via ble_mqueue_put -> needs the
+//     host task; moot until connections work.)
+//   * The CONNECT_IND handler r_ble_ll_adv_conn_req_rxd validates the PDU then
+//     calls r_ble_ll_conn_slave_start (reachable); on failure it stops advertising.
+//     Advertising KEEPS running through connect attempts => either the lower-LL RX
+//     ISR isn't dispatching the CONNECT_IND, or slave_start returns early.
+//   * The conn module IS initialised by the controller (ble_ll_init ->
+//     r_ble_ll_conn_module_init allocates ble_ll_conn_env_p), so the pool exists.
+// Ruled out: both event masks, ble_transport_hs_init, --wrap ble_hs_hci_rx_evt.
+// Next: on-hw LL instrumentation (hook conn_req_rxd/slave_start) to see if/why the
+// CONNECT_IND is dropped in the lower-LL RX path.
 
 // Send a netstack HCI packet ([H4 type][payload]) to the controller. Commands go
 // through a controller-allocated buffer; ACL data goes through an msys mbuf. Both
