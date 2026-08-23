@@ -31,7 +31,7 @@ bool g_found = false;
 // RX via the vendor promiscuous callback (proven to receive), capturing auth /
 // assoc responses addressed to us from the AP for the association logic. Our
 // heapless TX (M1) sends the requests; combining heapless RX+TX is a later step.
-volatile uint32_t g_vendor_rx = 0, g_probe_resp = 0, g_auth_seen = 0, g_deauth_seen = 0, g_ap_beacons = 0, g_ap_probe_resp = 0;
+volatile uint32_t g_vendor_rx = 0, g_probe_resp = 0, g_auth_seen = 0, g_deauth_seen = 0, g_ap_beacons = 0, g_ap_probe_resp = 0, g_eapol = 0;
 volatile bool g_got_auth = false, g_got_assoc = false;
 uint8_t g_auth_resp[40], g_assoc_resp[64]; volatile int g_assoc_resp_len = 0;
 uint8_t g_beacon[200]; volatile int g_beacon_len = 0; volatile bool g_have_beacon = false;
@@ -64,6 +64,16 @@ void IRAM_ATTR on_rx(void *buf, wifi_promiscuous_pkt_type_t) {
     memcpy(g_assoc_resp, f, m);
     g_assoc_resp_len = m;
     g_got_assoc = true;
+  }
+  // EAPOL-Key from the AP after assoc (the 4-way M1): a data frame carrying the
+  // LLC/SNAP + EAPOL ethertype 0x888e. Scan for aa aa 03 00 00 00 88 8e.
+  if (from_ap && to_us && (f[0] & 0x0c) == 0x08) {
+    for (int i = 24; i + 8 <= len && i < 40; i++) {
+      if (f[i] == 0xaa && f[i + 1] == 0xaa && f[i + 6] == 0x88 && f[i + 7] == 0x8e) {
+        g_eapol++;
+        break;
+      }
+    }
   }
 }
 inline void wreg(uintptr_t a, uint32_t v) { *reinterpret_cast<volatile uint32_t *>(a) = v; }
@@ -219,6 +229,18 @@ void setup() {
     if (!assoc) delay(200);
   }
   Serial.println(assoc ? "*** ASSOCIATED to hitl-rig-3 ***" : "assoc: no success response");
+  // After association the AP should start the WPA2 4-way by sending EAPOL-Key M1.
+  // Watch for it (entry point for the supplicant / M2b).
+  if (assoc) {
+    for (int i = 0; i < 20; i++) {
+      delay(100);
+      if (g_eapol) {
+        Serial.printf("EAPOL-Key from AP: %u (4-way M1 arrived) — ready for wpa.rs\n", g_eapol);
+        break;
+      }
+    }
+    if (!g_eapol) Serial.println("no EAPOL M1 seen (AP may need us to hold the link)");
+  }
 }
 
 void loop() { delay(1000); }
