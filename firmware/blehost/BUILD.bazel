@@ -31,12 +31,12 @@ cc_binary(
     name = "blehost",
     srcs = ["blehost.cpp"],
     copts = ["-fno-rtti"],
-    # VALIDATED on hardware: brings the vendor controller up and drives it over
-    # its native ble_hci_trans host transport (the API NimBLE binds to). Full
-    # advertising bring-up completes (state=Advertising) and the device is
-    # discoverable on air ("heapless-c6", rssi -29) — no NimBLE host. The earlier
-    # hci_transport (VHCI) shim delivered zero-length events on this controller;
-    # the raw ble_hci_trans path is correct.
+    # Advertising VALIDATED on hardware: brings the vendor controller up and drives
+    # it over its native ble_hci_trans host transport (the API NimBLE binds to).
+    # Full advertising bring-up completes (state=Advertising) and the device is
+    # discoverable on air ("heapless-c6"). Connections are not yet handled: async
+    # events (LE Connection Complete / ACL) route through the ble_transport host
+    # layer, not the ble_hci_trans command path — see blehost.cpp.
     target_compatible_with = _C6,
     deps = [
         ":ble_ffi",
