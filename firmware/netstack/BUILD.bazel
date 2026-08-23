@@ -379,3 +379,90 @@ flash_bundle(
     flash = ":wifi_fullduplex_driver_flash",
     tags = ["manual"],
 )
+
+# wifi_vendor_join — clean vendor-association control (no heapless state).
+cc_binary(
+    name = "wifi_vendor_join",
+    srcs = ["examples/wifi_vendor_join.cpp"],
+    copts = ["-fno-rtti"],
+    target_compatible_with = _C6,
+    deps = _arduino + ["@embedded//libs/vendor:wifi"],
+)
+
+firmware_binary(
+    name = "wifi_vendor_join_esp32c6",
+    binary = ":wifi_vendor_join",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "wifi_vendor_join_flash",
+    app = ":wifi_vendor_join_esp32c6",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "wifi_vendor_join_flashbundle",
+    flash = ":wifi_vendor_join_flash",
+    tags = ["manual"],
+)
+
+# wifi_auth_capture — capture the vendor's own auth frame to diff vs ours.
+cc_binary(
+    name = "wifi_auth_capture",
+    srcs = ["examples/wifi_auth_capture.cpp"],
+    copts = ["-fno-rtti"],
+    target_compatible_with = _C6,
+    deps = _arduino + ["@embedded//libs/vendor:wifi"],
+)
+
+firmware_binary(
+    name = "wifi_auth_capture_esp32c6",
+    binary = ":wifi_auth_capture",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "wifi_auth_capture_flash",
+    app = ":wifi_auth_capture_esp32c6",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "wifi_auth_capture_flashbundle",
+    flash = ":wifi_auth_capture_flash",
+    tags = ["manual"],
+)
+
+# wifi_auth_replay — test PLCP1=len+4 (FCS) auth against the AP.
+cc_binary(
+    name = "wifi_auth_replay",
+    srcs = ["examples/wifi_auth_replay.cpp"],
+    copts = ["-fno-rtti"],
+    target_compatible_with = _C6,
+    deps = _arduino + ["@embedded//libs/vendor:wifi"],
+)
+
+firmware_binary(
+    name = "wifi_auth_replay_esp32c6",
+    binary = ":wifi_auth_replay",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "wifi_auth_replay_flash",
+    app = ":wifi_auth_replay_esp32c6",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "wifi_auth_replay_flashbundle",
+    flash = ":wifi_auth_replay_flash",
+    tags = ["manual"],
+)

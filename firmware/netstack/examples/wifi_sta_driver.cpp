@@ -22,7 +22,7 @@ uint32_t ns_mac_send(const uint8_t *frame, uint32_t len, uint32_t queue);
 namespace {
 constexpr uintptr_t WIFI_MAC_INTR_MAP = 0x60010000;
 const char *TARGET_SSID = "hitl-rig-3";
-const uint8_t OUR_MAC[6] = {0x02, 0x11, 0x22, 0x33, 0x44, 0x66};
+uint8_t OUR_MAC[6] = {0x02, 0x11, 0x22, 0x33, 0x44, 0x66}; // overwritten with the real STA MAC
 
 uint8_t g_bssid[6];
 uint8_t g_channel = 1;
@@ -132,24 +132,14 @@ void setup() {
   delay(300);
   Serial.println("wifi_sta_driver: boot (M2 — live association over heapless MAC)");
 
-  // CONTROL: can the vendor stack associate? Capture the disconnect REASON — a
-  // 4-way/handshake-timeout reason means auth+assoc SUCCEEDED (so the AP accepts
-  // auth and our frame would be the issue); a no-AP/auth reason means the AP isn't
-  // completing auth at all (rig-state, not our frame).
-  WiFi.onEvent([](arduino_event_id_t e, arduino_event_info_t info) {
-    if (e == ARDUINO_EVENT_WIFI_STA_DISCONNECTED)
-      Serial.printf("CONTROL disconnect reason=%d\n", info.wifi_sta_disconnected.reason);
-    if (e == ARDUINO_EVENT_WIFI_STA_CONNECTED) Serial.println("CONTROL: vendor CONNECTED (assoc ok)");
-  });
-  WiFi.begin("hitl-rig-3", "hitl-rig-3-provision");
-  for (int i = 0; i < 80 && WiFi.status() != WL_CONNECTED; i++) delay(250);
-  Serial.printf("CONTROL vendor assoc: status=%d %s\n", WiFi.status(),
-                WiFi.status() == WL_CONNECTED ? "CONNECTED" : "not connected");
-  WiFi.disconnect(true);
-  delay(500);
-
   WiFi.mode(WIFI_STA);
   esp_wifi_start();
+  // Use the DUT's REAL factory STA MAC (not a spoofed one): a rig AP may only
+  // authenticate its known DUT MAC, which would explain "answers our probes,
+  // ignores our auth". This tests that hypothesis directly.
+  esp_wifi_get_mac(WIFI_IF_STA, OUR_MAC);
+  Serial.printf("using real STA MAC %02x:%02x:%02x:%02x:%02x:%02x\n", OUR_MAC[0], OUR_MAC[1],
+                OUR_MAC[2], OUR_MAC[3], OUR_MAC[4], OUR_MAC[5]);
 
   // 1) target AP (from an earlier scan; hardcoded to isolate the RX path from the
   // scan, which was leaving the MAC idle). hitl-rig-3 hostapd on a Raspberry Pi.

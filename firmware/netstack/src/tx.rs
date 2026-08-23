@@ -259,7 +259,13 @@ impl<const N: usize> TxRing<N> {
             return;
         }
         let queue = self.slots[idx].queue;
-        let flen = (self.slots[idx].frame_len_802 as u32) & 0xfff;
+        // PLCP1 (the PHY SIGNAL length) is the 802.11 frame length PLUS the 4-byte
+        // FCS the hardware appends. Measured on silicon (wifi_auth_replay): setting
+        // just `frame_len` makes the SIGNAL 4 bytes short, so the receiver's FCS
+        // check fails and the frame is silently dropped — APs still answer probe
+        // requests (lenient discovery) but auth/assoc are dropped, which is exactly
+        // why our earlier auth got no response. `+ 4` makes the AP answer our auth.
+        let flen = (self.slots[idx].frame_len_802 as u32 + 4) & 0xfff;
         // Sequence/duration control word in the 0x4d block (stride 0x10, alongside
         // PLCP0). Captured with an incrementing counter + 0x077; a fixed value
         // suffices for the first frame of an exchange.
