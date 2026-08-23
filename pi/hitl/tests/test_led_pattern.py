@@ -20,6 +20,10 @@ def test_counting_message_shape():
     assert m["type"] == "set_counting_pattern"
     assert m["channel"] == 0
     assert m["blocks"] == [{"start": 0, "count": 2, "rgb": [1.0, 0.0, 0.0]}]
+    # color_order is omitted by default (firmware uses its raw/identity probe order)…
+    assert "color_order" not in m
+    # …and included when given, so led_capture can drive an explicit wire order.
+    assert counting_message([(0, 1, (1, 2, 3))], color_order="GRB")["color_order"] == "GRB"
 
 
 def test_expected_pixels_paints_and_clears():
