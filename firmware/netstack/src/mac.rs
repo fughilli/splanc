@@ -208,6 +208,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn install_programs_descriptor_base_and_clears_irq() {
+        use crate::regs::mmio;
+        mmio::test_reset();
+        let mut ring: RxRing<3> = RxRing::new();
+        unsafe { ring.install() };
+        // The descriptor ring base register holds our lldesc array pointer...
+        assert_eq!(mmio::test_get(mac::RX_DSCR_BASE).unwrap(), ring.descs.as_ptr() as u32);
+        // ...and pending RX interrupts were cleared.
+        assert_eq!(mmio::test_get(mac::INT_CLEAR).unwrap(), 0xffff_ffff);
+    }
+
+    #[test]
     fn lldesc_ring_matches_hw_format() {
         // The linked ring must match the C6 RX descriptor format: each descriptor
         // owned by HW, size = MAX_FRAME, buf pointing at its slot, next forming a

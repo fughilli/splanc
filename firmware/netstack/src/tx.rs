@@ -219,6 +219,18 @@ mod tests {
     }
 
     #[test]
+    fn init_tx_sets_conf_and_enable_registers() {
+        use crate::regs::mmio;
+        mmio::test_reset();
+        unsafe { TxRing::<2>::init_tx() };
+        // TX rate/duration config: low 16 bits kept, rate field set.
+        assert_eq!(mmio::test_get(mac::TX_CONF0).unwrap(), 0x0500_0000);
+        assert_eq!(mmio::test_get(mac::TX_CONF1).unwrap(), 0x0500_0000);
+        // Global TXQ enable bits asserted.
+        assert_eq!(mmio::test_get(mac::TXQ_ENABLE).unwrap() & 0x11, 0x11);
+    }
+
+    #[test]
     fn per_queue_register_addresses_stride_down() {
         // TX per-queue blocks stride *down* by the stride as the queue index
         // rises.
