@@ -199,7 +199,12 @@ void setup() {
   // Use a FRESH locally-administered MAC the AP has no prior state for, so its PMF
   // SA-Query / association-comeback (status 30) — triggered by a stale SA for a MAC
   // that's been hammering it — doesn't apply and we get a clean status-0 assoc.
-  esp_wifi_get_mac(WIFI_IF_STA, OUR_MAC); // the DUT's real globally-unique MAC
+  // RANDOM locally-administered MAC each boot: no stale 4-way state at the AP, and
+  // the own-MAC ACK register is set to it in mac_set_own_and_bssid.
+  uint8_t rnd[4];
+  esp_fill_random(rnd, 4);
+  OUR_MAC[0] = 0x02; OUR_MAC[1] = 0x0c; OUR_MAC[2] = 0x6a;
+  OUR_MAC[3] = rnd[0]; OUR_MAC[4] = rnd[1]; OUR_MAC[5] = rnd[2];
   Serial.printf("using fresh MAC %02x:%02x:%02x:%02x:%02x:%02x\n", OUR_MAC[0], OUR_MAC[1],
                 OUR_MAC[2], OUR_MAC[3], OUR_MAC[4], OUR_MAC[5]);
 
@@ -303,6 +308,12 @@ void setup() {
       int elen = g_eapol_len;
       uint8_t eb[256];
       memcpy(eb, g_eapol_buf, elen);
+      // Trim any trailing FCS/padding to the EXACT EAPOL length (802.1X body_len at
+      // bytes 2-3); otherwise the extra bytes break M3's MIC verification.
+      if (elen >= 4) {
+        int exact = 4 + ((eb[2] << 8) | eb[3]);
+        if (exact > 0 && exact <= elen) elen = exact;
+      }
       uint32_t r = ns_wpa_on_eapol(eb, elen, reply, sizeof(reply));
       uint32_t code = r >> 16, rlen = r & 0xffff;
       Serial.printf("4-way: got EAPOL (%d B) -> code=%u reply=%u\n", elen, code, rlen);
