@@ -44,6 +44,7 @@ pub mod wpa;
 pub mod ccmp;
 pub mod sta;
 pub mod ap;
+pub mod gatt;
 pub mod hci;
 pub mod improv;
 pub mod stack;
