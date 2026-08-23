@@ -47,7 +47,7 @@ pub extern "C" fn ns_ble_setup() {
         // ("heapless-ble") so a scanner doesn't confuse us with older DUTs still
         // advertising "heapless-c6"/"-imp" within the rigs' shared BLE range.
         HOST.set_scan_rsp(&[
-            0x0d, 0x09, b'h', b'e', b'a', b'p', b'l', b'e', b's', b's', b'-', b'b', b'l', b'e',
+            0x09, 0x09, b'h', b'l', b's', b'-', b'f', b'i', b'x', b'1',
         ]);
         IMPROV = Some(ImprovService::new());
     }

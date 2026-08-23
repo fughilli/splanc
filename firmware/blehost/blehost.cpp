@@ -131,7 +131,11 @@ static void hci_send(const uint8_t *pkt, uint32_t n) {
     g_tx++;
     r_ble_hci_trans_hs_cmd_tx(buf);
   } else if (pkt[0] == 0x02) {  // ACL (GATT response)
-    void *om = r_os_msys_get_pkthdr(n - 1, 0);
+    // 16-byte user header: NimBLE (ble_hs_mbuf_gen_pkt) allocates every ACL mbuf
+    // with os_msys_get_pkthdr(dlen, 16) — the controller's ACL-TX path reads/writes
+    // that ble_mbuf_hdr. Allocating with 0 corrupts the transmitted packet, so the
+    // response never reaches the central (30s ATT timeout observed on a phone).
+    void *om = r_os_msys_get_pkthdr(n - 1, 16);
     if (!om) return;
     if (r_os_mbuf_append(om, pkt + 1, n - 1) != 0) {
       r_os_mbuf_free_chain(om);
