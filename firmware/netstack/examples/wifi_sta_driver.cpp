@@ -79,6 +79,22 @@ void IRAM_ATTR on_rx(void *buf, wifi_promiscuous_pkt_type_t) {
 inline void wreg(uintptr_t a, uint32_t v) { *reinterpret_cast<volatile uint32_t *>(a) = v; }
 inline uint32_t rreg(uintptr_t a) { return *reinterpret_cast<volatile uint32_t *>(a); }
 
+// Program the WiFi-MAC own-address (slot 0) + BSSID (slot 0) so the hardware
+// auto-ACKs unicast frames to us and recognises our BSS — RE'd from libpp
+// hal_mac_set_addr (0x600a405c/60, valid bit 0x10000) and hal_mac_set_bssid
+// (0x600a4000/04, valid bit 0x80000000). Without our ACKs a FULLMAC AP won't keep
+// the association or run the 4-way.
+void mac_set_own_and_bssid(const uint8_t *mac, const uint8_t *bssid) {
+  uint32_t lo = mac[0] | (mac[1] << 8) | (mac[2] << 16) | ((uint32_t)mac[3] << 24);
+  uint16_t hi = mac[4] | (mac[5] << 8);
+  wreg(0x600A405C, lo);
+  wreg(0x600A4060, (uint32_t)hi | 0x10000);
+  uint32_t blo = bssid[0] | (bssid[1] << 8) | (bssid[2] << 16) | ((uint32_t)bssid[3] << 24);
+  uint16_t bhi = bssid[4] | (bssid[5] << 8);
+  wreg(0x600A4000, blo);
+  wreg(0x600A4004, (rreg(0x600A4004) & 0xffff0000) | bhi | 0x80000000);
+}
+
 // Build an 802.11 management header into f: fc, to BSSID, from OUR_MAC, bssid.
 int mgmt_hdr(uint8_t *f, uint8_t fc) {
   int n = 0;
@@ -176,6 +192,11 @@ void setup() {
   esp_wifi_set_channel(g_channel, WIFI_SECOND_CHAN_NONE);
   delay(300);
   Serial.printf("vendor rx active: %u frames on ch%u\n", g_vendor_rx, g_channel);
+  // Enable hardware auto-ACK for our MAC + register the BSS, so the AP holds the
+  // association and starts the 4-way (promiscuous alone doesn't ACK).
+  mac_set_own_and_bssid(OUR_MAC, g_bssid);
+  Serial.printf("mac filter set: own=%08x/%08x bssid=%08x/%08x\n", rreg(0x600A405C),
+                rreg(0x600A4060), rreg(0x600A4000), rreg(0x600A4004));
 
   // TX sanity: send a probe request (broadcast) via ns_mac_send and check for
   // probe responses to our SA — confirms tx.rs load_frame/set_rate/arm transmits.
