@@ -34,6 +34,7 @@ bool g_found = false;
 volatile uint32_t g_vendor_rx = 0, g_probe_resp = 0, g_auth_seen = 0, g_deauth_seen = 0, g_ap_beacons = 0, g_ap_probe_resp = 0;
 volatile bool g_got_auth = false, g_got_assoc = false;
 uint8_t g_auth_resp[40], g_assoc_resp[40];
+uint8_t g_beacon[200]; volatile int g_beacon_len = 0; volatile bool g_have_beacon = false;
 void IRAM_ATTR on_rx(void *buf, wifi_promiscuous_pkt_type_t) {
   g_vendor_rx++;
   auto *p = static_cast<wifi_promiscuous_pkt_t *>(buf);
@@ -42,7 +43,15 @@ void IRAM_ATTR on_rx(void *buf, wifi_promiscuous_pkt_type_t) {
   if (len < 24) return;
   bool from_ap = memcmp(f + 10, g_bssid, 6) == 0;
   bool to_us = memcmp(f + 4, OUR_MAC, 6) == 0;
-  if (from_ap && f[0] == 0x80) g_ap_beacons++;       // beacon from our target AP
+  if (from_ap && f[0] == 0x80) {
+    g_ap_beacons++; // beacon from our target AP
+    if (!g_have_beacon && len >= 40) {
+      int m = len < 200 ? len : 200;
+      memcpy(g_beacon, f, m);
+      g_beacon_len = m;
+      g_have_beacon = true;
+    }
+  }
   if (to_us && f[0] == 0x50) g_probe_resp++;          // probe resp (any AP)
   if (from_ap && to_us && f[0] == 0x50) g_ap_probe_resp++; // probe resp FROM target AP
   if (from_ap && f[0] == 0xb0) { // auth from AP (to any DA)
@@ -149,23 +158,40 @@ void setup() {
     uint8_t pf[64];
     int pn = 0;
     pf[pn++] = 0x40; pf[pn++] = 0x00; pf[pn++] = 0x00; pf[pn++] = 0x00;
-    for (int i = 0; i < 6; i++) pf[pn++] = 0xff;
+    memcpy(pf + pn, g_bssid, 6); pn += 6;   // DA = AP (UNICAST directed probe)
     for (int i = 0; i < 6; i++) pf[pn++] = OUR_MAC[i];
-    for (int i = 0; i < 6; i++) pf[pn++] = 0xff;
-    pf[pn++] = 0x00; pf[pn++] = 0x00; pf[pn++] = 0x00; pf[pn++] = 0x00;
+    memcpy(pf + pn, g_bssid, 6); pn += 6;   // BSSID = AP
+    pf[pn++] = 0x00; pf[pn++] = 0x00;       // seq
+    int slen = strlen(TARGET_SSID);         // directed SSID IE
+    pf[pn++] = 0x00; pf[pn++] = (uint8_t)slen;
+    memcpy(pf + pn, TARGET_SSID, slen); pn += slen;
     const uint8_t rr[] = {0x01, 0x08, 0x82, 0x84, 0x8b, 0x96, 0x12, 0x24, 0x48, 0x6c};
     memcpy(pf + pn, rr, sizeof(rr)); pn += sizeof(rr);
     for (int i = 0; i < 40; i++) { ns_mac_send(pf, pn, 0); delay(5); }
-    Serial.printf("tx sanity: probe_resp=%u ap_probe_resp=%u ap_beacons=%u\n", g_probe_resp, g_ap_probe_resp, g_ap_beacons);
+    Serial.printf("tx sanity (UNICAST probe->AP): ap_probe_resp=%u ap_beacons=%u\n",
+                  g_ap_probe_resp, g_ap_beacons);
+  }
+  if (g_have_beacon) {
+    // Capability info is at offset 34-35 (after 24 hdr + 8 timestamp + 2 beacon int).
+    uint16_t cap = g_beacon[34] | (g_beacon[35] << 8);
+    Serial.printf("beacon: len=%d cap=0x%04x (privacy=%d) IEs:", g_beacon_len, cap, (cap >> 4) & 1);
+    for (int i = 36; i < g_beacon_len; i++) Serial.printf(" %02x", g_beacon[i]);
+    Serial.println();
   }
 
   // 3) association exchange: OUR heapless TX sends auth/assoc, vendor RX catches
   // the responses.
   int auth_n = build_auth(f);
+  f[2] = 0x3a; f[3] = 0x01; // duration: cover SIFS+ACK
   bool authed = false, assoc = false;
   for (int attempt = 0; attempt < 30 && !authed; attempt++) {
+    // Incrementing 802.11 sequence number so hostapd doesn't treat repeats as
+    // retransmit duplicates.
+    uint16_t seq = attempt + 1;
+    f[22] = (uint8_t)((seq & 0x0f) << 4);
+    f[23] = (uint8_t)((seq >> 4) & 0xff);
     ns_mac_send(f, auth_n, 0);
-    delay(50);
+    delay(100);
     if (g_got_auth) {
       uint16_t status = g_auth_resp[28] | (g_auth_resp[29] << 8);
       Serial.printf("AUTH RESP: status=%u seq=%u\n", status, g_auth_resp[26] | (g_auth_resp[27] << 8));
