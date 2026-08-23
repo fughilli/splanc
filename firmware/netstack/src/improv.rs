@@ -240,7 +240,7 @@ pub struct ImprovOutcome {
 /// the characteristic values in sync with the [`Improv`] state machine, and routes
 /// ATT writes on the RPC-command characteristic through it.
 pub struct ImprovService {
-    pub db: GattDb<16>,
+    pub db: GattDb<24>,
     pub improv: Improv,
     h_current: u16,
     h_error: u16,
@@ -251,7 +251,14 @@ pub struct ImprovService {
 impl ImprovService {
     pub fn new() -> Self {
         let improv = Improv::new();
-        let mut db: GattDb<16> = GattDb::new();
+        let mut db: GattDb<24> = GattDb::new();
+        // Standard GATT Service (0x1801) with the feature characteristics a central
+        // probes during robust-caching setup: Server (0x2B3A) + Client (0x2B29)
+        // Supported Features. Without a GATT service, BlueZ's probe gets Attribute
+        // Not Found and stops before characteristic discovery.
+        let _ = db.add_primary_service(Uuid::U16(0x1801));
+        let _ = db.add_characteristic(Uuid::U16(0x2B3A), PROP_READ, &[0x00]);
+        let _ = db.add_characteristic(Uuid::U16(0x2B29), PROP_READ | PROP_WRITE, &[0x00]);
         let _ = db.add_primary_service(Uuid::U128(IMPROV_SVC_UUID));
         // Order per spec; each value handle is used by the central after discovery.
         let h_current = db
@@ -440,23 +447,61 @@ mod tests {
     fn improv_service_is_discoverable() {
         use crate::gatt::GATT_RSP_MAX;
         let mut svc = ImprovService::new();
+        // Negotiate a large MTU so one response can hold all elements.
         let mut out: Buf<GATT_RSP_MAX> = Buf::new();
-        // Read By Group Type (0x10): handles 1..0xffff, type 0x2800 (primary svc).
-        let params = [0x01, 0x00, 0xff, 0xff, 0x00, 0x28];
-        let n = svc.db.handle_att(0x10, &params, &mut out);
-        assert!(n > 0, "no response");
-        let s = out.as_slice();
-        assert_eq!(s[0], 0x11, "expected READ_BY_GROUP_TYPE_RSP, got {:#x}", s[0]);
-        assert_eq!(u16::from_le_bytes([s[2], s[3]]), 1, "service handle");
-        assert_eq!(&s[6..22], &IMPROV_SVC_UUID, "Improv service UUID");
-        // And the capabilities characteristic (last one) must fit in the DB.
+        svc.db.handle_att(0x02, &[0xff, 0x00], &mut out); // Exchange MTU
+
+        // Walk primary services (Read By Group Type) across re-queries: the standard
+        // GATT service (0x1801) is first (16-bit UUID, own response), then the Improv
+        // service (128-bit). Confirm the Improv 128-bit UUID is discoverable.
+        let mut found_improv = false;
+        let mut start = 1u16;
+        for _ in 0..4 {
+            let p = [start.to_le_bytes()[0], start.to_le_bytes()[1], 0xff, 0xff, 0x00, 0x28];
+            let n = svc.db.handle_att(0x10, &p, &mut out);
+            if n == 0 || out.as_slice()[0] != 0x11 {
+                break; // error / no more services
+            }
+            let s = out.as_slice();
+            let elem = s[1] as usize;
+            let mut off = 2;
+            while off + elem <= s.len() {
+                let end = u16::from_le_bytes([s[off + 2], s[off + 3]]);
+                if elem == 20 && &s[off + 4..off + 20] == &IMPROV_SVC_UUID {
+                    found_improv = true;
+                }
+                start = end + 1;
+                off += elem;
+            }
+        }
+        assert!(found_improv, "Improv 128-bit service not discoverable");
+
+        // All 5 Improv characteristics are discoverable (Read By Type, large MTU).
         let mut chars: Buf<GATT_RSP_MAX> = Buf::new();
-        let cparams = [0x01, 0x00, 0xff, 0xff, 0x03, 0x28]; // Read By Type, char decl
-        svc.db.handle_att(0x08, &cparams, &mut chars);
-        // Count characteristic declarations returned (element len = chars[1]).
-        let elem = chars.as_slice()[1] as usize;
-        let count = (chars.len() - 2) / elem;
-        assert!(count >= 1);
+        let mut cstart = 1u16;
+        let mut char_count = 0;
+        for _ in 0..8 {
+            let cp = [cstart.to_le_bytes()[0], cstart.to_le_bytes()[1], 0xff, 0xff, 0x03, 0x28];
+            let n = svc.db.handle_att(0x08, &cp, &mut chars);
+            if n == 0 || chars.as_slice()[0] != 0x09 {
+                break;
+            }
+            let s = chars.as_slice();
+            let elem = s[1] as usize;
+            let mut off = 2;
+            while off + elem <= s.len() {
+                if elem >= 5 && &s[off + 5..off + elem] == &IMPROV_CHAR_RPC_RESULT[..elem - 5] {
+                    // the RPC-result char (…8004) that Bleak couldn't find
+                }
+                let h = u16::from_le_bytes([s[off], s[off + 1]]);
+                cstart = h + 1;
+                if elem == 21 {
+                    char_count += 1; // a 128-bit (Improv) characteristic
+                }
+                off += elem;
+            }
+        }
+        assert_eq!(char_count, 5, "all 5 Improv characteristics discoverable");
     }
 
     #[test]
