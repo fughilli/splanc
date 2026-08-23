@@ -86,13 +86,19 @@ int build_auth(uint8_t *f) {
 
 int build_assoc(uint8_t *f) {
   int n = mgmt_hdr(f, 0x00);             // subtype 0 = association request
-  f[n++] = 0x21; f[n++] = 0x04;          // capability info (ESS + privacy)
+  f[n++] = 0x31; f[n++] = 0x04;          // capability info (ESS + Privacy + short-slot)
   f[n++] = 0x0a; f[n++] = 0x00;          // listen interval
   int slen = strlen(TARGET_SSID);        // SSID IE
   f[n++] = 0x00; f[n++] = (uint8_t)slen;
   memcpy(f + n, TARGET_SSID, slen); n += slen;
   const uint8_t rates[] = {0x01, 0x08, 0x82, 0x84, 0x8b, 0x96, 0x12, 0x24, 0x48, 0x6c};
   memcpy(f + n, rates, sizeof(rates)); n += sizeof(rates);
+  // RSN IE matching the beacon: group=TKIP, pairwise=CCMP, AKM=PSK, RSN caps=0
+  // (MFPC=0 -> request a NON-PMF association so the AP won't run the SA-Query
+  // comeback that returned status 30).
+  const uint8_t rsn[] = {0x30, 0x14, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x02, 0x01, 0x00, 0x00,
+                         0x0f, 0xac, 0x04, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x02, 0x00, 0x00};
+  memcpy(f + n, rsn, sizeof(rsn)); n += sizeof(rsn);
   return n;
 }
 
@@ -210,9 +216,10 @@ void setup() {
     return;
   }
   int assoc_n = build_assoc(f);
-  for (int attempt = 0; attempt < 30 && !assoc; attempt++) {
+  for (int attempt = 0; attempt < 8 && !assoc; attempt++) {
+    g_got_assoc = false;
     ns_mac_send(f, assoc_n, 0);
-    delay(50);
+    delay(1200); // give the AP's SA-Query/comeback time to lapse before retrying
     if (g_got_assoc) {
       uint16_t status = g_assoc_resp[26] | (g_assoc_resp[27] << 8);
       uint16_t aid = g_assoc_resp[28] | (g_assoc_resp[29] << 8);
