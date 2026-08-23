@@ -16,7 +16,7 @@ inline uint32_t reg(uintptr_t a) { return *reinterpret_cast<volatile uint32_t *>
 inline bool ram_ptr(uint32_t p) { return p >= 0x40800000u && p < 0x40880000u; }
 
 volatile bool g_got = false;
-uint8_t g_frame[48];
+uint8_t g_frame[128];
 uint32_t g_flen = 0, g_plcp1 = 0, g_sig = 0, g_lenr = 0, g_seq = 0, g_q = 0;
 
 // Tight capture: any armed TX queue whose buffer (past the 8-byte TX header) is an
@@ -31,7 +31,7 @@ void capture() {
     uint32_t buf = d[1], w0 = d[0];
     if (!ram_ptr(buf)) continue;
     volatile uint8_t *b = reinterpret_cast<volatile uint8_t *>(buf);
-    if (b[8] != 0xb0) continue; // 802.11 frame at offset 8; FC 0xb0 = auth
+    if (b[8] != 0x00 && b[8] != 0x20) continue; // FC 0x00 assoc-req / 0x20 reassoc-req
     uint32_t total = w0 & 0x3fff;
     uint32_t flen = total > 8 ? total - 8 : 0;
     if (flen == 0 || flen > sizeof(g_frame)) continue;
@@ -60,15 +60,18 @@ void setup() {
 
 void loop() {
   if (g_got) {
-    Serial.printf("VENDOR AUTH q=%u flen=%u plcp1=0x%08x sig=0x%08x lenr=0x%08x seq=0x%08x\n", g_q,
+    Serial.printf("VENDOR ASSOC q=%u flen=%u plcp1=0x%08x sig=0x%08x lenr=0x%08x seq=0x%08x\n", g_q,
                   g_flen, g_plcp1, g_sig, g_lenr, g_seq);
     Serial.print("  frame:");
     for (uint32_t i = 0; i < g_flen; i++) Serial.printf(" %02x", g_frame[i]);
     Serial.println();
     g_got = false;
   } else {
-    Serial.println("no vendor auth captured yet; retrying...");
-    for (int i = 0; i < 4000000 && !g_got; i++) capture();
+    Serial.println("no vendor assoc yet; forcing a fresh association attempt...");
+    WiFi.disconnect(true);
+    delay(200);
+    WiFi.begin("hitl-rig-3", "hitl-rig-3-provision");
+    for (int i = 0; i < 8000000 && !g_got; i++) capture();
   }
   delay(600);
 }

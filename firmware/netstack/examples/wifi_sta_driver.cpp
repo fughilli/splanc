@@ -33,7 +33,7 @@ bool g_found = false;
 // heapless TX (M1) sends the requests; combining heapless RX+TX is a later step.
 volatile uint32_t g_vendor_rx = 0, g_probe_resp = 0, g_auth_seen = 0, g_deauth_seen = 0, g_ap_beacons = 0, g_ap_probe_resp = 0;
 volatile bool g_got_auth = false, g_got_assoc = false;
-uint8_t g_auth_resp[40], g_assoc_resp[40];
+uint8_t g_auth_resp[40], g_assoc_resp[64]; volatile int g_assoc_resp_len = 0;
 uint8_t g_beacon[200]; volatile int g_beacon_len = 0; volatile bool g_have_beacon = false;
 void IRAM_ATTR on_rx(void *buf, wifi_promiscuous_pkt_type_t) {
   g_vendor_rx++;
@@ -59,7 +59,12 @@ void IRAM_ATTR on_rx(void *buf, wifi_promiscuous_pkt_type_t) {
     if (to_us && !g_got_auth) { memcpy(g_auth_resp, f, 40); g_got_auth = true; }
   }
   if (from_ap && f[0] == 0xc0) g_deauth_seen++; // deauth from AP
-  if (from_ap && to_us && f[0] == 0x10 && !g_got_assoc) { memcpy(g_assoc_resp, f, 40); g_got_assoc = true; }
+  if (from_ap && to_us && f[0] == 0x10 && !g_got_assoc) {
+    int m = len < 64 ? len : 64;
+    memcpy(g_assoc_resp, f, m);
+    g_assoc_resp_len = m;
+    g_got_assoc = true;
+  }
 }
 inline void wreg(uintptr_t a, uint32_t v) { *reinterpret_cast<volatile uint32_t *>(a) = v; }
 inline uint32_t rreg(uintptr_t a) { return *reinterpret_cast<volatile uint32_t *>(a); }
@@ -93,11 +98,10 @@ int build_assoc(uint8_t *f) {
   memcpy(f + n, TARGET_SSID, slen); n += slen;
   const uint8_t rates[] = {0x01, 0x08, 0x82, 0x84, 0x8b, 0x96, 0x12, 0x24, 0x48, 0x6c};
   memcpy(f + n, rates, sizeof(rates)); n += sizeof(rates);
-  // RSN IE matching the beacon: group=TKIP, pairwise=CCMP, AKM=PSK, RSN caps=0
-  // (MFPC=0 -> request a NON-PMF association so the AP won't run the SA-Query
-  // comeback that returned status 30).
+  // RSN IE: group=TKIP (match beacon), pairwise=CCMP, AKM=PSK-SHA256 (00-0f-ac-06,
+  // required with PMF), RSN caps=0x0080 (MFPC=1). The AP is MFPC=1, so match it.
   const uint8_t rsn[] = {0x30, 0x14, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x02, 0x01, 0x00, 0x00,
-                         0x0f, 0xac, 0x04, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x02, 0x00, 0x00};
+                         0x0f, 0xac, 0x04, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x06, 0x80, 0x00};
   memcpy(f + n, rsn, sizeof(rsn)); n += sizeof(rsn);
   return n;
 }
@@ -140,11 +144,12 @@ void setup() {
 
   WiFi.mode(WIFI_STA);
   esp_wifi_start();
-  // Use the DUT's REAL factory STA MAC (not a spoofed one): a rig AP may only
-  // authenticate its known DUT MAC, which would explain "answers our probes,
-  // ignores our auth". This tests that hypothesis directly.
-  esp_wifi_get_mac(WIFI_IF_STA, OUR_MAC);
-  Serial.printf("using real STA MAC %02x:%02x:%02x:%02x:%02x:%02x\n", OUR_MAC[0], OUR_MAC[1],
+  // Use a FRESH locally-administered MAC the AP has no prior state for, so its PMF
+  // SA-Query / association-comeback (status 30) — triggered by a stale SA for a MAC
+  // that's been hammering it — doesn't apply and we get a clean status-0 assoc.
+  const uint8_t fresh[6] = {0x02, 0x0c, 0x6a, 0x5a, 0x1e, 0x93};
+  memcpy(OUR_MAC, fresh, 6);
+  Serial.printf("using fresh MAC %02x:%02x:%02x:%02x:%02x:%02x\n", OUR_MAC[0], OUR_MAC[1],
                 OUR_MAC[2], OUR_MAC[3], OUR_MAC[4], OUR_MAC[5]);
 
   // 1) target AP (from an earlier scan; hardcoded to isolate the RX path from the
@@ -216,16 +221,28 @@ void setup() {
     return;
   }
   int assoc_n = build_assoc(f);
-  for (int attempt = 0; attempt < 8 && !assoc; attempt++) {
+  for (int attempt = 0; attempt < 6 && !assoc; attempt++) {
     g_got_assoc = false;
     ns_mac_send(f, assoc_n, 0);
-    delay(1200); // give the AP's SA-Query/comeback time to lapse before retrying
+    for (int w = 0; w < 200 && !g_got_assoc; w++) delay(5); // wait up to 1s for a resp
     if (g_got_assoc) {
       uint16_t status = g_assoc_resp[26] | (g_assoc_resp[27] << 8);
-      uint16_t aid = g_assoc_resp[28] | (g_assoc_resp[29] << 8);
-      Serial.printf("ASSOC RESP: status=%u aid=0x%04x %s\n", status, aid,
-                    status == 0 ? "== ASSOCIATED" : "");
+      Serial.printf("ASSOC RESP: status=%u len=%d bytes:", status, g_assoc_resp_len);
+      for (int i = 26; i < g_assoc_resp_len; i++) Serial.printf(" %02x", g_assoc_resp[i]);
+      Serial.println();
+      // On status 30, find the Timeout Interval element (0x38, type 3 = comeback)
+      // and wait that comeback time (in TUs, ~1.024ms) before the next attempt.
+      uint32_t comeback_ms = 1000;
+      for (int i = 32; i + 6 < g_assoc_resp_len; i++) {
+        if (g_assoc_resp[i] == 0x38 && g_assoc_resp[i + 1] == 5 && g_assoc_resp[i + 2] == 3) {
+          uint32_t tus = g_assoc_resp[i + 3] | (g_assoc_resp[i + 4] << 8) |
+                         (g_assoc_resp[i + 5] << 16) | (g_assoc_resp[i + 6] << 24);
+          comeback_ms = (tus * 1024) / 1000 + 20;
+          Serial.printf("  comeback=%u TU (~%u ms)\n", tus, comeback_ms);
+        }
+      }
       assoc = (status == 0);
+      if (!assoc) delay(comeback_ms);
     }
   }
   if (!assoc) Serial.println("assoc: no success response");
