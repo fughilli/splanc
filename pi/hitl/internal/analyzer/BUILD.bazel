@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "analyzer.go",
         "decode.go",
+        "srzip.go",
     ],
     importpath = "github.com/fughilli/splanc/pi/hitl/internal/analyzer",
     visibility = ["//pi/hitl:__subpackages__"],
@@ -17,6 +18,7 @@ go_test(
         "channelmap_test.go",
         "decode_test.go",
         "golden_test.go",
+        "srzip_test.go",
     ],
     embed = [":analyzer"],
     deps = ["//pi/hitl/internal/api"],

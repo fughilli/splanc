@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -289,6 +290,26 @@ func (b *Broker) decodeSR(ctx context.Context, srPath string, m DUTMap) ([]api.P
 	dargs, err := decoderArgs(m.Protocol, m.Channels)
 	if err != nil {
 		return nil, err
+	}
+	// Captures are armed on the data line's first rising edge, so the buffer has no
+	// leading WS2812 reset (>50µs low) for the decoder to anchor bit-0 on — the
+	// frame then decodes bit-slipped (FUG-140). Synthesize a leading reset in front
+	// of the samples so sigrok frames correctly. WS2812 only; SPI is clocked and
+	// doesn't have this failure mode.
+	if m.Protocol == ProtocolWS2812 {
+		rate := b.SampleRateHz()
+		if rate <= 0 {
+			rate = 24_000_000
+		}
+		resetSamples := int(80e-6 * float64(rate)) // 80µs, comfortably past the 50µs latch
+		if resetSamples < 1600 {
+			resetSamples = 1600
+		}
+		if fixed, ferr := prependResetSR(filepath.Dir(srPath), srPath, resetSamples); ferr != nil {
+			log.Printf("analyzer: prepend reset failed (%v); decoding raw capture", ferr)
+		} else {
+			srPath = fixed
+		}
 	}
 	args := append([]string{"-i", srPath}, dargs...)
 	out, err := run(ctx, b.cfg.SigrokCLI, args...)
