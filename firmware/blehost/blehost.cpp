@@ -48,9 +48,10 @@ struct Pkt {
 };
 static Pkt s_ring[8];
 static volatile uint8_t s_head = 0, s_tail = 0;
-static volatile uint32_t g_rx = 0, g_tx = 0, g_evtlen = 0;
+static volatile uint32_t g_rx = 0, g_tx = 0, g_evtlen = 0, g_acl = 0;
 static uint8_t g_first[12];
 static volatile uint8_t g_firstlen = 0;
+static volatile uint8_t g_lastcode = 0, g_lastsub = 0;  // most recent event code + LE subevent
 
 // Controller -> host EVENT. `evt` is a raw HCI event: [code][param_len][params...],
 // so its total length is param_len + 2. We prepend the H4 EVT type byte (0x04) the
@@ -58,6 +59,8 @@ static volatile uint8_t g_firstlen = 0;
 static int on_evt(uint8_t *evt, void *arg) {
   uint16_t n = (uint16_t)evt[1] + 2;
   g_evtlen = n;
+  g_lastcode = evt[0];                        // event code
+  g_lastsub = n > 2 ? evt[2] : 0;             // 1st param (LE subevent for 0x3E)
   uint8_t next = (s_head + 1) & 7;
   if (next != s_tail && (uint32_t)n + 1 <= sizeof(s_ring[0].data)) {
     s_ring[s_head].data[0] = 0x04;  // H4 EVT
@@ -80,6 +83,7 @@ static int on_evt(uint8_t *evt, void *arg) {
 // out of the mbuf chain (HCI ACL header = 4 bytes: handle + data length), prepend
 // the H4 ACL type, queue it for the loop, and free the controller's mbuf.
 static int on_acl(void *om, void *arg) {
+  g_acl++;
   uint8_t hdr[4];
   if (r_os_mbuf_copydata(om, 0, 4, hdr) != 0) {
     r_os_mbuf_free_chain(om);
@@ -97,6 +101,21 @@ static int on_acl(void *om, void *arg) {
   r_os_mbuf_free_chain(om);
   return 0;
 }
+
+// NOTE on connections: synchronous command-completes arrive via the
+// r_ble_hci_trans callback above and advertising works. But ASYNC events (LE
+// Connection Complete, ACL) never reach this host — the vendor "NimBLE
+// controller" routes them through the ble_transport host layer
+// (ble_transport_to_hs_evt_impl), which is owned by the linked-but-unrun NimBLE
+// host (ble_hs_hci_rx_evt) and dropped at its dummy receiver. Wrapping
+// ble_hs_hci_rx_evt does not help (delivery is dropped earlier / intra-archive).
+// Completing the connection path needs the ble_transport host side initialised
+// (ble_transport_hs_init + a real host recv cb), not just the command transport.
+// Tried on hardware: ble_transport_hs_init() + -Wl,--wrap=ble_hs_hci_rx_evt did
+// NOT surface the connection event — the vendor controller does not complete the
+// LL connection in this headless config (advertising keeps running through a
+// central's connect attempt), so the gap is in controller connection-acceptance,
+// deeper than host event routing. Left for a dedicated investigation.
 
 // Send a netstack HCI packet ([H4 type][payload]) to the controller. Commands go
 // through a controller-allocated buffer; ACL data goes through an msys mbuf. Both
@@ -156,9 +175,9 @@ void loop() {
     s_tail = (s_tail + 1) & 7;
   }
   if ((t++ % 100) == 0) {
-    Serial.printf("blehost: t=%lu state=%lu rx=%lu tx=%lu evtlen=%lu heap=%u\n",
-                  t / 100, ns_ble_state(), g_rx, g_tx, g_evtlen,
-                  esp_get_free_heap_size());
+    Serial.printf(
+        "blehost: t=%lu state=%lu rx=%lu tx=%lu acl=%lu lastcode=%02x lastsub=%02x\n",
+        t / 100, ns_ble_state(), g_rx, g_tx, g_acl, g_lastcode, g_lastsub);
     if (g_firstlen) {
       Serial.print("blehost: first_rx=");
       for (int i = 0; i < g_firstlen; i++) Serial.printf("%02x ", g_first[i]);

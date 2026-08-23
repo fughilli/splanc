@@ -14,6 +14,7 @@ pub const H4_EVT: u8 = 0x04;
 
 // LE / control opcodes (OGF<<10 | OCF).
 const OP_RESET: u16 = 0x0C03;
+const OP_SET_EVENT_MASK: u16 = 0x0C01;
 const OP_LE_SET_ADV_PARAMS: u16 = 0x2006;
 const OP_LE_SET_ADV_DATA: u16 = 0x2008;
 const OP_LE_SET_SCAN_RSP: u16 = 0x2009;
@@ -43,6 +44,7 @@ pub enum HostState {
     Init,
     ResetSent,
     EvtMaskSent,
+    LeMaskSent,
     AdvParamsSent,
     AdvDataSent,
     AdvEnableSent,
@@ -113,10 +115,18 @@ impl BleHost {
         match (self.state, op) {
             (HostState::ResetSent, OP_RESET) => {
                 self.state = HostState::EvtMaskSent;
-                // enable LE meta events
-                cmd(OP_LE_SET_EVENT_MASK, &[0x1f, 0, 0, 0, 0, 0, 0, 0], out)
+                // Main HCI event mask: enable the standard events AND the LE Meta
+                // Event (bit 61 = byte 7 bit 5). Without this the controller
+                // suppresses ALL LE meta events, so LE Connection Complete never
+                // reaches the host and connections silently fail.
+                cmd(OP_SET_EVENT_MASK, &[0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x3f], out)
             }
             (HostState::EvtMaskSent, _) => {
+                self.state = HostState::LeMaskSent;
+                // LE event mask: Connection Complete (bit0) .. LTK Request (bit4).
+                cmd(OP_LE_SET_EVENT_MASK, &[0x1f, 0, 0, 0, 0, 0, 0, 0], out)
+            }
+            (HostState::LeMaskSent, _) => {
                 self.state = HostState::AdvParamsSent;
                 // adv interval 0x00A0 (100ms), connectable undirected, public addr.
                 let p = [0xa0, 0x00, 0xa0, 0x00, 0x00, 0x00, 0x00, 0, 0, 0, 0, 0, 0, 0x07, 0x00];
@@ -189,8 +199,11 @@ mod tests {
         let mut out: Buf<64> = Buf::new();
         assert!(h.poll_cmd(&mut out) > 0 && out.as_slice()[0] == H4_CMD); // Reset
         assert_eq!(h.state, HostState::ResetSent);
-        // walk the completes
+        // walk the completes: Reset -> main event mask -> LE event mask -> adv params
         h.on_event(&cmd_complete(OP_RESET), &mut out);
+        assert_eq!(h.state, HostState::EvtMaskSent);
+        h.on_event(&cmd_complete(OP_SET_EVENT_MASK), &mut out);
+        assert_eq!(h.state, HostState::LeMaskSent);
         h.on_event(&cmd_complete(OP_LE_SET_EVENT_MASK), &mut out);
         assert_eq!(h.state, HostState::AdvParamsSent);
         h.on_event(&cmd_complete(OP_LE_SET_ADV_PARAMS), &mut out);
