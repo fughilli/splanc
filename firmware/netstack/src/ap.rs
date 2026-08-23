@@ -51,7 +51,7 @@ impl Authenticator {
 
     /// Begin: emit message 1 (ANonce, no MIC).
     pub fn start(&mut self, out: &mut Buf<256>) -> usize {
-        let n = build_eapol_key(KEY_INFO_ACK, &self.anonce, &[], None, out).unwrap_or(0);
+        let n = build_eapol_key(KEY_INFO_ACK, &self.anonce, &[0u8; 8], &[], None, out).unwrap_or(0);
         self.state = AuthState::SentM1;
         n
     }
@@ -91,7 +91,7 @@ impl Authenticator {
             let wl = aes_wrap(&self.ptk.kek, &kde, &mut wrapped);
             let ki3 = KEY_INFO_MIC | KEY_INFO_INSTALL | KEY_INFO_SECURE | KEY_INFO_ACK;
             let anonce = self.anonce;
-            return match build_eapol_key(ki3, &anonce, &wrapped[..wl], Some(&self.ptk.kck), out) {
+            return match build_eapol_key(ki3, &anonce, &[0u8; 8], &wrapped[..wl], Some(&self.ptk.kck), out) {
                 Ok(n) => {
                     self.state = AuthState::SentM3;
                     AuthStep::Send(n)

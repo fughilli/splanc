@@ -17,6 +17,9 @@ extern "C" {
 void ns_mac_rx_install();
 uint32_t ns_mac_recv(uint8_t *out, uint32_t cap);
 uint32_t ns_mac_send(const uint8_t *frame, uint32_t len, uint32_t queue);
+void ns_wpa_init(const uint8_t *ssid, uint32_t ssid_len, const uint8_t *pass, uint32_t pass_len,
+                 const uint8_t *ap, const uint8_t *self_mac, const uint8_t *snonce);
+uint32_t ns_wpa_on_eapol(const uint8_t *eapol, uint32_t len, uint8_t *out, uint32_t cap);
 }
 
 namespace {
@@ -35,6 +38,7 @@ volatile uint32_t g_vendor_rx = 0, g_probe_resp = 0, g_auth_seen = 0, g_deauth_s
 volatile bool g_got_auth = false, g_got_assoc = false;
 uint8_t g_auth_resp[40], g_assoc_resp[64]; volatile int g_assoc_resp_len = 0;
 uint8_t g_beacon[200]; volatile int g_beacon_len = 0; volatile bool g_have_beacon = false;
+uint8_t g_eapol_buf[256]; volatile int g_eapol_len = 0;
 void IRAM_ATTR on_rx(void *buf, wifi_promiscuous_pkt_type_t) {
   g_vendor_rx++;
   auto *p = static_cast<wifi_promiscuous_pkt_t *>(buf);
@@ -65,12 +69,18 @@ void IRAM_ATTR on_rx(void *buf, wifi_promiscuous_pkt_type_t) {
     g_assoc_resp_len = m;
     g_got_assoc = true;
   }
-  // EAPOL-Key from the AP after assoc (the 4-way M1): a data frame carrying the
-  // LLC/SNAP + EAPOL ethertype 0x888e. Scan for aa aa 03 00 00 00 88 8e.
+  // EAPOL-Key from the AP after assoc (the 4-way): a data frame carrying LLC/SNAP +
+  // EAPOL ethertype 0x888e. Capture the EAPOL-Key body (right after 88 8e).
   if (from_ap && to_us && (f[0] & 0x0c) == 0x08) {
     for (int i = 24; i + 8 <= len && i < 40; i++) {
       if (f[i] == 0xaa && f[i + 1] == 0xaa && f[i + 6] == 0x88 && f[i + 7] == 0x8e) {
-        g_eapol++;
+        int eb = i + 8;                    // EAPOL-Key frame starts here
+        int elen = len - eb;
+        if (elen > 0 && elen <= (int)sizeof(g_eapol_buf)) {
+          memcpy(g_eapol_buf, f + eb, elen);
+          g_eapol_len = elen;
+          g_eapol++; // sequence counter -> "new EAPOL frame available"
+        }
         break;
       }
     }
@@ -129,6 +139,22 @@ int build_assoc(uint8_t *f) {
   const uint8_t rsn[] = {0x30, 0x14, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x02, 0x01, 0x00, 0x00,
                          0x0f, 0xac, 0x04, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x02, 0x00, 0x00};
   memcpy(f + n, rsn, sizeof(rsn)); n += sizeof(rsn);
+  return n;
+}
+
+// Wrap an EAPOL-Key body in an 802.11 DATA frame (STA->AP, ToDS=1) + LLC/SNAP so
+// it can be transmitted during the 4-way (sent in the clear). Returns total length.
+int build_eapol_data(uint8_t *f, const uint8_t *eapol, int elen) {
+  int n = 0;
+  f[n++] = 0x08; f[n++] = 0x01;          // FC: data, ToDS=1
+  f[n++] = 0x00; f[n++] = 0x00;          // duration
+  memcpy(f + n, g_bssid, 6); n += 6;     // addr1 = BSSID (AP)
+  memcpy(f + n, OUR_MAC, 6); n += 6;     // addr2 = SA (us)
+  memcpy(f + n, g_bssid, 6); n += 6;     // addr3 = DA (AP)
+  f[n++] = 0x00; f[n++] = 0x00;          // seq
+  const uint8_t llc[] = {0xaa, 0xaa, 0x03, 0x00, 0x00, 0x00, 0x88, 0x8e};
+  memcpy(f + n, llc, sizeof(llc)); n += sizeof(llc);
+  memcpy(f + n, eapol, elen); n += elen;
   return n;
 }
 
@@ -229,6 +255,9 @@ void setup() {
   // 3) association: send auth and — the instant the auth response arrives —
   // immediately send the assoc, back-to-back, so it lands inside mac80211's brief
   // authenticated-state window. Retry the WHOLE auth+assoc pair on failure.
+  // Re-assert the own-MAC/BSSID ACK registers right before (the vendor's
+  // promiscuous management can clobber them).
+  mac_set_own_and_bssid(OUR_MAC, g_bssid);
   int auth_n = build_auth(f);
   uint8_t af[128];
   int assoc_n = build_assoc(af);
@@ -249,19 +278,44 @@ void setup() {
     }
     if (!assoc) delay(200);
   }
-  Serial.println(assoc ? "*** ASSOCIATED to hitl-rig-3 ***" : "assoc: no success response");
-  // After association the AP should start the WPA2 4-way by sending EAPOL-Key M1.
-  // Watch for it (entry point for the supplicant / M2b).
-  if (assoc) {
-    for (int i = 0; i < 20; i++) {
-      delay(100);
-      if (g_eapol) {
-        Serial.printf("EAPOL-Key from AP: %u (4-way M1 arrived) — ready for wpa.rs\n", g_eapol);
-        break;
-      }
-    }
-    if (!g_eapol) Serial.println("no EAPOL M1 seen (AP may need us to hold the link)");
+  if (!assoc) {
+    Serial.println("assoc: no success response");
+    return;
   }
+  Serial.println("*** ASSOCIATED to hitl-rig-3 ***");
+
+  // 4) WPA2 4-way handshake, driven by the netstack supplicant (wpa.rs). Feed each
+  // EAPOL-Key frame the AP sends; transmit each reply (M2, then M4) as a data frame.
+  uint8_t snonce[32];
+  esp_fill_random(snonce, sizeof(snonce));
+  ns_wpa_init((const uint8_t *)TARGET_SSID, strlen(TARGET_SSID),
+              (const uint8_t *)"hitl-rig-3-provision", 20, g_bssid, OUR_MAC, snonce);
+  Serial.println("4-way: supplicant initialised, waiting for M1...");
+
+  uint32_t last_eapol = 0;
+  bool connected = false;
+  uint8_t reply[160], df[256];
+  uint32_t t0 = millis();
+  while (millis() - t0 < 8000 && !connected) {
+    mac_set_own_and_bssid(OUR_MAC, g_bssid); // keep hardware ACK asserted
+    if (g_eapol != last_eapol) {
+      last_eapol = g_eapol;
+      int elen = g_eapol_len;
+      uint8_t eb[256];
+      memcpy(eb, g_eapol_buf, elen);
+      uint32_t r = ns_wpa_on_eapol(eb, elen, reply, sizeof(reply));
+      uint32_t code = r >> 16, rlen = r & 0xffff;
+      Serial.printf("4-way: got EAPOL (%d B) -> code=%u reply=%u\n", elen, code, rlen);
+      if (code >= 1 && rlen > 0) {
+        int dl = build_eapol_data(df, reply, rlen);
+        for (int k = 0; k < 3; k++) { ns_mac_send(df, dl, 0); delay(4); } // send M2/M4
+      }
+      if (code == 2) connected = true; // 4-way complete, keys installed
+    }
+    delay(5);
+  }
+  Serial.println(connected ? "*** 4-WAY COMPLETE — CCMP keys installed, LINK UP ***"
+                           : "4-way: did not complete");
 }
 
 void loop() { delay(1000); }

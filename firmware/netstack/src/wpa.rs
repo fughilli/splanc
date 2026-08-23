@@ -204,6 +204,15 @@ pub const KEY_INFO_MIC: u16 = 0x0100;
 pub const KEY_INFO_ACK: u16 = 0x0080;
 pub const KEY_INFO_INSTALL: u16 = 0x0040;
 pub const KEY_INFO_SECURE: u16 = 0x0200;
+pub const KEY_INFO_KEY_TYPE: u16 = 0x0008; // 1 = pairwise key
+
+/// The STA's RSN IE, echoed in EAPOL M2's key data (must match the association
+/// request exactly or the authenticator rejects M2): WPA2-PSK, group TKIP, pairwise
+/// CCMP, AKM PSK.
+pub const STA_RSN_IE: [u8; 22] = [
+    0x30, 0x14, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x02, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x04, 0x01, 0x00,
+    0x00, 0x0f, 0xac, 0x02, 0x00, 0x00,
+];
 
 /// Parsed EAPOL-Key frame (fields borrow the input; no copy).
 struct EapolKey<'a> {
@@ -256,6 +265,7 @@ pub struct Supplicant {
     ptk: Ptk,
     gtk: [u8; 32],
     gtk_len: usize,
+    replay: [u8; 8], // last received replay counter, echoed in our reply
 }
 
 impl Supplicant {
@@ -269,6 +279,7 @@ impl Supplicant {
             ptk: Ptk::default(),
             gtk: [0; 32],
             gtk_len: 0,
+            replay: [0; 8],
         }
     }
 
@@ -285,16 +296,25 @@ impl Supplicant {
         let Some(k) = EapolKey::parse(frame) else {
             return Step::Ignored;
         };
+        // Echo the peer's replay counter in our reply (real authenticators require
+        // M2/M4 to carry M1/M3's replay counter). It sits at descriptor offset 5..13.
+        self.replay.copy_from_slice(&frame[EAPOL_HDR + 5..EAPOL_HDR + 13]);
         let has_mic = k.key_info & KEY_INFO_MIC != 0;
         let ver = k.key_info & 0x0007; // key-descriptor version to echo
         if !has_mic && k.key_info & KEY_INFO_ACK != 0 {
-            // Message 1: ANonce, no MIC. Derive the PTK and emit M2.
+            // Message 1: ANonce, no MIC. Derive the PTK and emit M2 (carries the
+            // pairwise key type + the STA's RSN IE in the key data).
             let mut anonce = [0u8; 32];
             anonce.copy_from_slice(k.nonce);
             self.ptk = derive_ptk(&self.pmk, &self.aa, &self.sa, &anonce, &self.snonce);
             self.state = HsState::PtkStart;
             let snonce = self.snonce;
-            return match self.build_reply(KEY_INFO_MIC | ver, &snonce, out) {
+            return match self.build_reply(
+                KEY_INFO_KEY_TYPE | KEY_INFO_MIC | ver,
+                &snonce,
+                &STA_RSN_IE,
+                out,
+            ) {
                 Ok(n) => Step::Send(n),
                 Err(_) => {
                     self.state = HsState::Failed;
@@ -315,8 +335,13 @@ impl Supplicant {
                 self.gtk_len = core::cmp::min(gtk.len(), 32);
                 self.gtk[..self.gtk_len].copy_from_slice(&gtk[..self.gtk_len]);
             }
-            let empty = [0u8; 32]; // M4 carries no nonce
-            return match self.build_reply(KEY_INFO_MIC | KEY_INFO_SECURE | ver, &empty, out) {
+            let empty = [0u8; 32]; // M4 carries no nonce and no key data
+            return match self.build_reply(
+                KEY_INFO_KEY_TYPE | KEY_INFO_MIC | KEY_INFO_SECURE | ver,
+                &empty,
+                &[],
+                out,
+            ) {
                 Ok(_n) => {
                     self.state = HsState::Done;
                     Step::Installed
@@ -330,8 +355,14 @@ impl Supplicant {
         Step::Ignored
     }
 
-    fn build_reply(&self, key_info: u16, nonce: &Nonce, out: &mut Buf<128>) -> Result<usize, Overflow> {
-        build_eapol_key(key_info, nonce, &[], Some(&self.ptk.kck), out)
+    fn build_reply(
+        &self,
+        key_info: u16,
+        nonce: &Nonce,
+        key_data: &[u8],
+        out: &mut Buf<128>,
+    ) -> Result<usize, Overflow> {
+        build_eapol_key(key_info, nonce, &self.replay, key_data, Some(&self.ptk.kck), out)
     }
 
     fn verify_mic(&self, frame: &[u8]) -> bool {
@@ -347,6 +378,7 @@ impl Supplicant {
 pub fn build_eapol_key<const N: usize>(
     key_info: u16,
     nonce: &Nonce,
+    replay: &[u8; 8],
     key_data: &[u8],
     kck: Option<&[u8; 16]>,
     out: &mut Buf<N>,
@@ -358,7 +390,7 @@ pub fn build_eapol_key<const N: usize>(
     out.extend(&[0x02])?; // descriptor type: RSN
     out.extend(&key_info.to_be_bytes())?;
     out.extend(&[0x00, 0x10])?; // key length 16
-    out.extend(&[0u8; 8])?; // replay counter
+    out.extend(replay)?; // replay counter — echo the peer's (required by real APs)
     out.extend(nonce)?; // 32
     out.extend(&[0u8; 16])?; // EAPOL key IV
     out.extend(&[0u8; 8])?; // key RSC
