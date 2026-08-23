@@ -192,8 +192,7 @@ void loop() {
   }
   if ((t++ % 100) == 0) {
     Serial.printf(
-        "blehost: t=%lu state=%lu rx=%lu tx=%lu acl=%lu lastcode=%02x lastsub=%02x
-",
+        "blehost: t=%lu state=%lu rx=%lu tx=%lu acl=%lu lastcode=%02x lastsub=%02x\n",
         t / 100, ns_ble_state(), g_rx, g_tx, g_acl, g_lastcode, g_lastsub);
     if (g_firstlen) {
       Serial.print("blehost: first_rx=");
