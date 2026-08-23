@@ -502,6 +502,15 @@ hooks).</p></li>
 <p>Run <code class="docutils literal notranslate"><span class="pre">pre-commit</span> <span class="pre">run</span> <span class="pre">--all-files</span></code> locally before pushing — the hooks (black/isort/
 flake8, buildifier, prettier, markdownlint, shellcheck, …) are pinned in
 <code class="docutils literal notranslate"><span class="pre">.pre-commit-config.yaml</span></code>. The on-hardware <strong>HITL</strong> suite runs separately (below).</p>
+<p>Editing <code class="docutils literal notranslate"><span class="pre">.pre-commit-config.yaml</span></code> has one extra step: the agent container bakes
+prek’s hook environments into its image (a cold build of those toolchains is
+~40s, and <code class="docutils literal notranslate"><span class="pre">claude-container</span></code> runs <code class="docutils literal notranslate"><span class="pre">docker</span> <span class="pre">run</span> <span class="pre">--rm</span></code>, so without the bake every
+session pays it again — see <code class="docutils literal notranslate"><span class="pre">.claude-container-overlay/Dockerfile</span></code>). The bake is
+seeded from <code class="docutils literal notranslate"><span class="pre">.claude-container-overlay/pre-commit-config.yaml</span></code>, a byte-identical
+copy that the <code class="docutils literal notranslate"><span class="pre">prek-overlay-config-copy</span></code> hook refreshes for you (or run
+<code class="docutils literal notranslate"><span class="pre">tools/sync_prek_overlay_config.sh</span></code>). Commit the copy with the config change and
+relaunch <code class="docutils literal notranslate"><span class="pre">claude-container</span></code> to pick up the rebuilt image; until then the
+container just rebuilds the drifted hooks in the background at startup.</p>
 </section>
 <section id="try-the-pipeline-with-no-hardware">
 <h2>Try the pipeline with no hardware<a class="headerlink" href="#try-the-pipeline-with-no-hardware" title="Link to this heading">¶</a></h2>
@@ -567,7 +576,11 @@ provisions over Improv-BLE, and drives the device over its player WebSocket.</p>
 and picks the shortest queue. Precedence: <code class="docutils literal notranslate"><span class="pre">--server</span></code>/<code class="docutils literal notranslate"><span class="pre">$HITL_SERVER</span></code> &gt;
 <code class="docutils literal notranslate"><span class="pre">$HITL_SERVERS</span></code> (explicit list) &gt; tag discovery. Multi-DUT rigs auto-discover
 boards from <code class="docutils literal notranslate"><span class="pre">/dev/serial/by-id/*</span></code>, giving each its own container, sticky sshd port,
-and isolated USB tree. The design lives in <code class="docutils literal notranslate"><span class="pre">pi/hitl/DESIGN.md</span></code> and <code class="docutils literal notranslate"><span class="pre">pi/hitl/README.md</span></code>.</p>
+and isolated USB tree. To debug BLE at the link layer, <code class="docutils literal notranslate"><span class="pre">hitl</span> <span class="pre">btmon</span> <span class="pre">start|stop|fetch</span></code>
+(or the windowed <code class="docutils literal notranslate"><span class="pre">hitl</span> <span class="pre">btmon</span> <span class="pre">capture</span> <span class="pre">--</span> <span class="pre">&lt;cmd&gt;</span></code>) grabs a bounded, host-side HCI
+btsnoop of your reservation that opens in <code class="docutils literal notranslate"><span class="pre">btmon</span> <span class="pre">-r</span></code>/Wireshark — note the rig’s one
+BT controller is shared across DUTs, so the trace is annotated by the DUT BLE MAC,
+not isolated (FUG-93). The design lives in <code class="docutils literal notranslate"><span class="pre">pi/hitl/DESIGN.md</span></code> and <code class="docutils literal notranslate"><span class="pre">pi/hitl/README.md</span></code>.</p>
 </section>
 <section id="the-suite">
 <h3>The suite<a class="headerlink" href="#the-suite" title="Link to this heading">¶</a></h3>
