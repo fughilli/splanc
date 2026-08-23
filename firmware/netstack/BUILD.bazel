@@ -137,3 +137,139 @@ flash_bundle(
     flash = ":ap_webserver_flash",
     tags = ["manual"],
 )
+
+# wifi_rx_probe — MAC RX RE observation probe (Milestone 0a). Runs the VENDOR
+# esp_wifi in promiscuous mode as a reference oracle and dumps the live WiFi-MAC
+# register state (RX_DSCR_BASE/NEXT/LAST, lldesc words, RX_CTRL, INT_STATUS) so
+# the RE'd register map can be validated on silicon. Not the heapless stack;
+# a measurement tool. Needs the vendor wifi lib for esp_wifi.
+cc_binary(
+    name = "wifi_rx_probe",
+    srcs = ["examples/wifi_rx_probe.cpp"],
+    copts = ["-fno-rtti"],
+    target_compatible_with = _C6,
+    deps = _arduino + ["@embedded//libs/vendor:wifi"],
+)
+
+firmware_binary(
+    name = "wifi_rx_probe_esp32c6",
+    binary = ":wifi_rx_probe",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "wifi_rx_probe_flash",
+    app = ":wifi_rx_probe_esp32c6",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "wifi_rx_probe_flashbundle",
+    flash = ":wifi_rx_probe_flash",
+    tags = ["manual"],
+)
+
+# wifi_rx_ffi — heapless MAC RX driver FFI (Milestone 0b): installs OUR RxRing
+# into the MAC and polls it for real frames. Built on the netstack lower-MAC.
+rust_static_library(
+    name = "wifi_rx_ffi",
+    srcs = ["examples/wifi_rx_ffi.rs"],
+    crate_name = "wifi_rx_ffi",
+    edition = "2021",
+    target_compatible_with = _C6,
+    deps = [":netstack"],
+)
+
+# wifi_rx_driver — M0b: vendor brings up PHY/clock/channel, then we take over the
+# RX descriptor ring and prove real beacons land in the heapless ring.
+cc_binary(
+    name = "wifi_rx_driver",
+    srcs = ["examples/wifi_rx_driver.cpp"],
+    copts = ["-fno-rtti"],
+    target_compatible_with = _C6,
+    deps = _arduino + [
+        ":wifi_rx_ffi",
+        "@embedded//libs/vendor:wifi",
+    ],
+)
+
+firmware_binary(
+    name = "wifi_rx_driver_esp32c6",
+    binary = ":wifi_rx_driver",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "wifi_rx_driver_flash",
+    app = ":wifi_rx_driver_esp32c6",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "wifi_rx_driver_flashbundle",
+    flash = ":wifi_rx_driver_flash",
+    tags = ["manual"],
+)
+
+# wifi_tx_probe — TX-path RE observation probe (Milestone 1a). Vendor esp_wifi as
+# a TX oracle: snapshot the live TXQ PLCP registers + TX buffer the vendor builds.
+cc_binary(
+    name = "wifi_tx_probe",
+    srcs = ["examples/wifi_tx_probe.cpp"],
+    copts = ["-fno-rtti"],
+    target_compatible_with = _C6,
+    deps = _arduino + ["@embedded//libs/vendor:wifi"],
+)
+
+firmware_binary(
+    name = "wifi_tx_probe_esp32c6",
+    binary = ":wifi_tx_probe",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "wifi_tx_probe_flash",
+    app = ":wifi_tx_probe_esp32c6",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "wifi_tx_probe_flashbundle",
+    flash = ":wifi_tx_probe_flash",
+    tags = ["manual"],
+)
+
+# wifi_tx_driver — M1b: first transmit via our descriptor+PLCP0 (clone-and-replay).
+cc_binary(
+    name = "wifi_tx_driver",
+    srcs = ["examples/wifi_tx_driver.cpp"],
+    copts = ["-fno-rtti"],
+    target_compatible_with = _C6,
+    deps = _arduino + ["@embedded//libs/vendor:wifi"],
+)
+
+firmware_binary(
+    name = "wifi_tx_driver_esp32c6",
+    binary = ":wifi_tx_driver",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "wifi_tx_driver_flash",
+    app = ":wifi_tx_driver_esp32c6",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "wifi_tx_driver_flashbundle",
+    flash = ":wifi_tx_driver_flash",
+    tags = ["manual"],
+)

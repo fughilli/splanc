@@ -20,8 +20,11 @@ use crate::rx::{Buf, MAX_FRAME};
 /// esp32-reverse `docs/re/07-lower-mac-registers.md` from `wDev_AppendRxBlocks`):
 /// `word0` packs `size[13:0] | length[27:14] | flags[31:28]` (bit31 = OWN),
 /// `word1` is the DMA buffer pointer, `word2` is the next descriptor (a closed
-/// ring). This is the layout the hardware DMAs against — the driver hands buffers
-/// to it via the OWN bit and reads back the filled `length`.
+/// ring). This 14/14 split is CONFIRMED on silicon (M0a `wifi_rx_probe`): the live
+/// vendor ring reads `word0 = 0x822908a4`, which is exactly `size | (size<<14) |
+/// OWN` for `size = 0x8a4` — the `<<14` proves the length field starts at bit 14,
+/// not bit 12. The driver hands buffers to hardware via the OWN bit and reads back
+/// the filled `length`.
 #[repr(C)]
 struct Lldesc {
     word0: u32,
@@ -29,7 +32,8 @@ struct Lldesc {
     next: u32,
 }
 
-const DESC_OWN: u32 = 1 << 31; // word0 bit31: 1 = hardware owns the descriptor
+const DESC_OWN: u32 = 1 << 31; // word0 bit31: hand-off-to-HW flag (set on arm/recycle)
+const DESC_EOF: u32 = 1 << 30; // word0 bit30: HW sets it on a delivered (end-of-)frame
 const DESC_SIZE_MASK: u32 = 0x3fff; // size[13:0] — buffer capacity
 const DESC_LEN_SHIFT: u32 = 14; // length[27:14] — bytes the DMA delivered
 
@@ -68,10 +72,10 @@ pub struct RxRing<const N: usize> {
 }
 
 impl<const N: usize> RxRing<N> {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         RxRing {
-            descs: core::array::from_fn(|_| Lldesc::zero()),
-            slots: core::array::from_fn(|_| Slot::new()),
+            descs: [const { Lldesc::zero() }; N],
+            slots: [const { Slot::new() }; N],
             head: 0,
         }
     }
@@ -103,6 +107,17 @@ impl<const N: usize> RxRing<N> {
         mmio::write32(mac::INT_CLEAR, 0xffff_ffff);
     }
 
+    /// Diagnostic: volatile-read descriptor `i`'s word0 (OWN bit + filled length).
+    ///
+    /// # Safety: reads descriptor memory the MAC may DMA into concurrently.
+    pub unsafe fn peek_word0(&self, i: usize) -> u32 {
+        if i < N {
+            core::ptr::read_volatile(&self.descs[i].word0)
+        } else {
+            0
+        }
+    }
+
     /// Read and acknowledge the MAC RX interrupt status.
     ///
     /// # Safety: MMIO; MAC must be initialized.
@@ -114,9 +129,12 @@ impl<const N: usize> RxRing<N> {
         s
     }
 
-    /// Poll the descriptor ring for frames the hardware has completed: the MAC
-    /// clears the OWN bit and writes the delivered length into `word0[27:14]`. Each
-    /// slot still marked HW-owned whose descriptor OWN bit is now clear was just
+    /// Poll the descriptor ring for frames the hardware has completed. Confirmed on
+    /// silicon (M0b `wifi_rx_driver`): unlike a classic lldesc DMA, the C6 MAC does
+    /// NOT clear the OWN bit on completion — it leaves bit31 set, sets bit30 (EOF),
+    /// and writes the delivered length into `word0[27:14]` (the vendor ISR then
+    /// consumes via the NEXT/LAST pointers and re-arms with `|= 0x80000000`). So a
+    /// descriptor still marked HW-owned by us whose EOF bit is now set was just
     /// filled — mark it ready with its DMA length. Returns the number reaped.
     ///
     /// # Safety: reads descriptor memory the MAC DMAs into concurrently (volatile).
@@ -127,7 +145,7 @@ impl<const N: usize> RxRing<N> {
                 continue;
             }
             let word0 = core::ptr::read_volatile(&self.descs[i].word0);
-            if word0 & DESC_OWN == 0 {
+            if word0 & DESC_EOF != 0 {
                 let len = ((word0 >> DESC_LEN_SHIFT) & DESC_SIZE_MASK) as usize;
                 self.slots[i].len = len.min(MAX_FRAME);
                 self.slots[i].owned_by_hw = false;
@@ -196,6 +214,20 @@ impl<const N: usize> Default for RxRing<N> {
     }
 }
 
+/// Bytes of hardware RX-vector header the C6 MAC prepends to each received frame
+/// buffer before the 802.11 MAC frame. Measured on silicon (M0b `wifi_rx_driver`):
+/// beacons parse cleanly starting at offset 92 of the reaped buffer (`beacon_off`
+/// was a stable 92 across samples; the vendor `wDev_IndicateFrame` copies the frame
+/// from `buf + variable_offset`). Strip this before handing a reaped buffer to the
+/// 802.11 parsers.
+pub const RX_VECTOR_HDR: usize = 92;
+
+/// The 802.11 MAC frame inside a reaped RX buffer (skips [`RX_VECTOR_HDR`]).
+/// Returns an empty slice if the buffer is shorter than the header.
+pub fn rx_frame(buf: &[u8]) -> &[u8] {
+    buf.get(RX_VECTOR_HDR..).unwrap_or(&[])
+}
+
 /// Minimal 802.11 frame-control classification for dispatch.
 fn is_beacon(frame: &[u8]) -> bool {
     // FC byte 0: type(2 bits)=mgmt(0), subtype(4 bits)=beacon(8) -> 0x80.
@@ -233,11 +265,12 @@ mod tests {
     #[test]
     fn reap_detects_hw_completion_and_extracts_length() {
         let mut ring: RxRing<3> = RxRing::new();
-        unsafe { ring.link() }; // all descriptors OWN=1 (HW owns)
-        // Simulate the MAC filling slot 1: clear OWN, write length 250 into [27:14].
-        ring.descs[1].word0 =
-            (ring.descs[1].word0 & !DESC_OWN & !(DESC_SIZE_MASK << DESC_LEN_SHIFT))
-                | (250 << DESC_LEN_SHIFT);
+        unsafe { ring.link() }; // all descriptors armed (OWN=1, EOF=0)
+        // Simulate the MAC filling slot 1: set EOF (bit30) + write length 250 into
+        // [27:14], leaving OWN set — the C6 completion signal (M0b-measured).
+        ring.descs[1].word0 = (ring.descs[1].word0 & !(DESC_SIZE_MASK << DESC_LEN_SHIFT))
+            | DESC_EOF
+            | (250 << DESC_LEN_SHIFT);
         assert_eq!(unsafe { ring.reap() }, 1); // one frame reaped
         assert_eq!(unsafe { ring.reap() }, 0); // idempotent — not re-reaped
         let (idx, f) = ring.next_frame().unwrap();
@@ -273,7 +306,7 @@ mod tests {
         }
         // HW fills length[27:14]; the driver reads it back.
         ring.descs[1].word0 =
-            (ring.descs[1].word0 & !((DESC_SIZE_MASK) << DESC_LEN_SHIFT)) | (200 << DESC_LEN_SHIFT);
+            (ring.descs[1].word0 & !(DESC_SIZE_MASK << DESC_LEN_SHIFT)) | (200 << DESC_LEN_SHIFT);
         assert_eq!(ring.descs[1].dma_len(), 200);
         // Completion clears OWN; recycle re-arms it.
         ring.on_dma_complete(0, 100);

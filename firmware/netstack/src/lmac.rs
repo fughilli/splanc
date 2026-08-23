@@ -102,6 +102,43 @@ pub mod datapath {
         mmio::write32(RX_CTRL, v);
     }
 
+    /// Disable RX: clear `RX_CTRL` bits 31+27. Used to stop the DMA engine before
+    /// (re)pointing `RX_DSCR_BASE`, so the subsequent [`enable_rx`] is a real 0->1
+    /// edge that makes the engine reload the descriptor base.
+    ///
+    /// # Safety: MMIO.
+    pub unsafe fn disable_rx() {
+        let v = mmio::read32(RX_CTRL) & !0x8800_0000;
+        mmio::write32(RX_CTRL, v);
+    }
+
+    /// Arm RX after the descriptor ring base has been written to `RX_DSCR_BASE`.
+    ///
+    /// This replays the vendor `wDev_AppendRxBlocks` arm sequence, taken verbatim
+    /// from the `libpp` decompilation (esp32-reverse `out/pp/decomp`):
+    ///   * `hal_mac_rx_set_dscr_reload`: `RX_CTRL |= 1` — request a descriptor
+    ///     reload so the DMA engine picks up the base register (a plain base write
+    ///     mid-flight is ignored; the engine tracks its own NEXT pointer).
+    ///   * spin on `hal_mac_rx_is_dscr_reload` (`RX_CTRL` bit0) until hardware
+    ///     clears it (bounded), acknowledging the reload.
+    ///   * `hal_mac_set_rxbuf_reload_use_hw_beacon_enable`: `RX_CTRL |= 0x0800_0000`
+    ///     (bit27) — the reload policy the vendor runs with (matches the M0a
+    ///     steady-state `0x8800_0000`).
+    ///   * `hal_mac_rx_enable`: `RX_CTRL |= 0x8000_0000` (bit31) — arm RX DMA.
+    ///
+    /// # Safety: MMIO; call after [`txrx_init`] and ring install (base written).
+    pub unsafe fn enable_rx() {
+        // Request the reload and wait for the hardware ack (bit0 -> 0), bounded so
+        // a wedged engine can never hang the caller.
+        mmio::write32(RX_CTRL, mmio::read32(RX_CTRL) | 1);
+        let mut spins: u32 = 50_000;
+        while mmio::read32(RX_CTRL) & 1 != 0 && spins > 0 {
+            spins -= 1;
+        }
+        // Reload policy (bit27) + arm RX DMA (bit31).
+        mmio::write32(RX_CTRL, mmio::read32(RX_CTRL) | 0x8800_0000);
+    }
+
     #[cfg(test)]
     mod tests {
         use super::*;
@@ -127,6 +164,18 @@ pub mod datapath {
             assert_eq!(mmio::test_get(0x600A_4114).unwrap(), 0x81B0_0000);
             assert_eq!(mmio::test_get(0x600A_4C20).unwrap(), 0xF0);
             assert_eq!(mmio::test_get(RX_CTRL).unwrap() & 0x8000_0000, 0);
+        }
+
+        #[test]
+        fn enable_rx_requests_reload_then_arms() {
+            mmio::test_reset();
+            unsafe { enable_rx() };
+            // enable_rx requests a reload (bit0) then sets the arm bits. The test
+            // MMIO can't emulate hardware clearing bit0, so it spins to the bound;
+            // assert the vendor arm bits (bit31 RX-enable + bit27 reload-policy),
+            // matching the M0a steady-state 0x8800_0000.
+            let v = mmio::test_get(RX_CTRL).unwrap();
+            assert_eq!(v & 0x8800_0000, 0x8800_0000);
         }
     }
 }
