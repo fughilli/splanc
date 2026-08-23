@@ -23,6 +23,7 @@ import time
 
 from hitl_client import Reservation
 from provision import HarnessError, dut_target, ensure_booted, provision_dut
+from tls_churn_core import ERROR, OK, classify, sequential_churn_verdict, tally
 
 _BUNDLE_RUNFILE = "_main/firmware/player_app/esp32c6_flashbundle.tar"
 BLE_MARKER = "[ble] advertising"
@@ -61,7 +62,13 @@ def _ctx():
 
 
 async def ws_welcome(url, ctx, open_timeout=8, welcome_timeout=10):
-    """The app's real path: wss connect + hello -> welcome. (ok, ms, detail)."""
+    """The app's real path: wss connect + hello -> welcome. (ok, ms, category).
+
+    The category is a tls_churn_core.classify() bucket: OK on a welcome, ERROR if
+    the server answered with something other than a welcome (unexpected), else the
+    classification of the exception — REJECTED/TIMEOUT are graceful backpressure
+    from the heap-tight 2-slot server, ERROR is a genuine fault.
+    """
     import websockets
     from server import proto_wire
 
@@ -76,10 +83,12 @@ async def ws_welcome(url, ctx, open_timeout=8, welcome_timeout=10):
             reply = proto_wire.decode_server(
                 await asyncio.wait_for(sock.recv(), timeout=welcome_timeout)
             )
-            ok = reply.get("type") == "welcome"
-            return ok, (time.monotonic() - t0) * 1000.0, reply.get("type")
+            if reply.get("type") == "welcome":
+                return True, (time.monotonic() - t0) * 1000.0, OK
+            # Served, but not a welcome — unexpected protocol state, not graceful shedding.
+            return False, (time.monotonic() - t0) * 1000.0, ERROR
     except Exception as e:  # noqa: BLE001
-        return False, (time.monotonic() - t0) * 1000.0, type(e).__name__
+        return False, (time.monotonic() - t0) * 1000.0, classify(e)
 
 
 async def hold_open(url, ctx):
@@ -114,31 +123,71 @@ async def concurrency_sweep(url, ctx, upto=4):
 
 
 async def churn(url, ctx, rounds, held):
+    """Reconnect `rounds` times (with `held` other sessions open), then probe
+    recovery. Returns (outcomes, times, recovered): `outcomes` is a classify()
+    category per round, `recovered` is whether a fresh welcome succeeds after the
+    burst (holds released) — the anti-wedge signal. A few graceful REJECTED/TIMEOUT
+    mid-burst are fine; a persistent wedge shows up as recovered=False."""
     holds = []
     for _ in range(held):
         try:
             holds.append(await hold_open(url, ctx))
         except Exception:  # noqa: BLE001
             pass
-    fails, times = 0, []
+    outcomes, times = [], []
     for _ in range(rounds):
-        ok, ms, detail = await ws_welcome(url, ctx)
+        ok, ms, cat = await ws_welcome(url, ctx)
         times.append(ms)
-        if not ok:
-            fails += 1
+        outcomes.append(cat)
     for h in holds:
-        await h.close()
+        try:
+            await h.close()
+        except Exception:  # noqa: BLE001
+            pass
     await asyncio.sleep(2)
-    return fails, rounds, (sum(times) / len(times) if times else 0.0), max(times or [0])
+    # Recovery / anti-wedge probe: with the holds released the server has both
+    # slots back, so a fresh welcome must succeed within a bounded window. The
+    # field bug (-0x7780 storm) is a wedge that never recovers until reboot.
+    recovered = False
+    for _ in range(6):
+        ok, _ms, _cat = await ws_welcome(url, ctx)
+        if ok:
+            recovered = True
+            break
+        await asyncio.sleep(1.0)
+    return outcomes, times, recovered
+
+
+def _churn_line(label, outcomes, times, recovered):
+    counts = tally(outcomes)
+    avg = sum(times) / len(times) if times else 0.0
+    mx = max(times or [0])
+    # A wedge (never recovers) is the field bug; graceful REJECTED/TIMEOUT that
+    # recover are fine. ERROR is always odd.
+    if not recovered:
+        verdict = "WEDGE — the field bug"
+    elif counts[ERROR]:
+        verdict = "ERROR (non-graceful)"
+    elif counts[OK] == len(outcomes):
+        verdict = "clean"
+    else:
+        verdict = "shed some, recovered (graceful)"
+    return (
+        f"[ws churn {label}] x{len(outcomes)} {dict(counts)} "
+        f"avg={avg:.0f}ms max={mx:.0f}ms recovered={'yes' if recovered else 'NO'}  {verdict}"
+    )
 
 
 async def experiments(url):
     """Characterize + REGRESS-GUARD the slot behaviour. Prints the sweep (repro)
     and raises AssertionError on a regression (guard): the app-visible invariants
     are that <=2 concurrent sessions serve cleanly, a reconnecting client (even
-    with one other session held) never storms, and a served welcome always beats
-    the client's 7s connectTimeoutMs. The >=3 starvation is the KNOWN ceiling we
-    document, not a failure."""
+    with one other session held) never WEDGES, and a served welcome always beats
+    the client's connectTimeoutMs. The >=3 concurrency starvation is the KNOWN
+    ceiling we document, not a failure — and neither is a heap-tight 2-slot server
+    shedding the odd reconnect under a rapid hammer, PROVIDED it recovers (the
+    field bug is a wedge that never serves again until reboot — see
+    tls_churn_core.sequential_churn_verdict, shared with the FUG-136 tls_churn lane)."""
     ctx = _ctx()
     # wait for the ws server to settle after provisioning
     for _ in range(40):
@@ -149,50 +198,27 @@ async def experiments(url):
 
     ok1, ok2 = await concurrency_sweep(url, ctx, 4)
 
-    f0, n0, avg0, max0 = await churn(url, ctx, 20, held=0)
-    print(
-        f"[ws churn held=0] reconnect x{n0}: {f0} fail  avg={avg0:.0f}ms max={max0:.0f}ms  "
-        f"{'clean' if f0 == 0 else 'STORM'}",
-        flush=True,
-    )
+    out0, t0, rec0 = await churn(url, ctx, 20, held=0)
+    print(_churn_line("held=0", out0, t0, rec0), flush=True)
+    out1, t1, rec1 = await churn(url, ctx, 20, held=1)
+    print(_churn_line("held=1", out1, t1, rec1), flush=True)
 
-    f1, n1, avg1, max1 = await churn(url, ctx, 20, held=1)
-    print(
-        f"[ws churn held=1] reconnect x{n1} + 1 held: {f1} fail  avg={avg1:.0f}ms max={max1:.0f}ms  "
-        f"{'clean' if f1 == 0 else 'STORM — the field bug'}",
-        flush=True,
-    )
-
-    # -- regression guards (the app's connection fix must keep these true) ------
     # Keep in step with client.ts connectTimeoutMs. HITL showed a slot-contended
     # welcome can take ~8.3s, so this MUST stay above that — shrinking it aborts
     # legitimate slow welcomes and *causes* the -0x7780 storm.
     CONNECT_TIMEOUT_MS = 10000
-    problems = []
-    # A single connection (the app's single-flight target) must be rock solid.
-    if not ok1:
-        problems.append("a single ws connect+welcome failed")
-    # The reconnect-churn patterns are the app's REAL behaviour and were storm-free
-    # across characterization — a storm here is the field -0x7780 bug regressing.
-    # (held=1 exercises two sessions the way the app actually does — sequentially,
-    # not two handshakes at the same instant — so it also guards the 2-slot
-    # capacity without the marginal simultaneous-handshake flake that ok2 has.)
-    if f0 != 0:
-        problems.append(f"reconnect churn stormed ({f0}/{n0} failed)")
-    if f1 != 0:
-        problems.append(f"reconnect-with-1-held stormed ({f1}/{n1} failed) — the field bug")
-    # A served welcome must always beat the client's connectTimeoutMs, or the
-    # client aborts it mid-handshake (which IS the storm). HITL worst case ~8.3s.
-    if max(max0, max1) >= CONNECT_TIMEOUT_MS:
-        problems.append(
-            f"welcome latency {max(max0, max1):.0f}ms >= connectTimeoutMs "
-            f"{CONNECT_TIMEOUT_MS}ms — a served connection can now time out"
-        )
-    if problems:
-        raise AssertionError("slot-guard regressions: " + "; ".join(problems))
+    max_ms = max(max(t0 or [0]), max(t1 or [0]))
+    v = sequential_churn_verdict(
+        baseline_ok=ok1,
+        churns=[("reconnect churn (held=0)", out0, rec0), ("reconnect-with-1-held", out1, rec1)],
+        max_welcome_ms=max_ms,
+        connect_timeout_ms=CONNECT_TIMEOUT_MS,
+    )
+    if not v.ok:
+        raise AssertionError("slot-guard regressions: " + "; ".join(v.reasons))
     print(
-        "\nPASS — single connect solid, reconnect churn (incl. +1 held) storm-free, "
-        "welcome beats the 10s connect timeout  "
+        "\nPASS — single connect solid, reconnect churn (incl. +1 held) recovers "
+        "(no wedge), welcome beats the 10s connect timeout  "
         f"[concurrency ceiling: n=1 {'ok' if ok1 else 'FAIL'}, n=2 "
         f"{'ok' if ok2 else 'marginal'}, n>=3 starves as designed]",
         flush=True,
