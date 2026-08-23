@@ -195,56 +195,30 @@ void setup() {
     Serial.println();
   }
 
-  // 3) association exchange: OUR heapless TX sends auth/assoc, vendor RX catches
-  // the responses.
+  // 3) association: send auth and — the instant the auth response arrives —
+  // immediately send the assoc, back-to-back, so it lands inside mac80211's brief
+  // authenticated-state window. Retry the WHOLE auth+assoc pair on failure.
   int auth_n = build_auth(f);
-  f[2] = 0x3a; f[3] = 0x01; // duration: cover SIFS+ACK
-  bool authed = false, assoc = false;
-  for (int attempt = 0; attempt < 30 && !authed; attempt++) {
-    // Incrementing 802.11 sequence number so hostapd doesn't treat repeats as
-    // retransmit duplicates.
-    uint16_t seq = attempt + 1;
-    f[22] = (uint8_t)((seq & 0x0f) << 4);
-    f[23] = (uint8_t)((seq >> 4) & 0xff);
-    ns_mac_send(f, auth_n, 0);
-    delay(100);
-    if (g_got_auth) {
-      uint16_t status = g_auth_resp[28] | (g_auth_resp[29] << 8);
-      Serial.printf("AUTH RESP: status=%u seq=%u\n", status, g_auth_resp[26] | (g_auth_resp[27] << 8));
-      authed = (status == 0);
-    }
-  }
-  if (!authed) {
-    Serial.printf("auth: no response (auth_seen_from_ap=%u deauth_from_ap=%u)\n", g_auth_seen,
-                  g_deauth_seen);
-    return;
-  }
-  int assoc_n = build_assoc(f);
-  for (int attempt = 0; attempt < 6 && !assoc; attempt++) {
+  uint8_t af[128];
+  int assoc_n = build_assoc(af);
+  bool assoc = false;
+  for (int attempt = 0; attempt < 12 && !assoc; attempt++) {
+    g_got_auth = false;
     g_got_assoc = false;
-    ns_mac_send(f, assoc_n, 0);
-    for (int w = 0; w < 200 && !g_got_assoc; w++) delay(5); // wait up to 1s for a resp
+    ns_mac_send(f, auth_n, 0);
+    for (int w = 0; w < 60 && !g_got_auth; w++) delay(3); // wait <=180ms for auth resp
+    if (!g_got_auth) { delay(150); continue; }
+    // Auth OK -> fire the assoc immediately.
+    ns_mac_send(af, assoc_n, 0);
+    for (int w = 0; w < 120 && !g_got_assoc; w++) delay(3); // wait <=360ms for assoc resp
     if (g_got_assoc) {
       uint16_t status = g_assoc_resp[26] | (g_assoc_resp[27] << 8);
-      Serial.printf("ASSOC RESP: status=%u len=%d bytes:", status, g_assoc_resp_len);
-      for (int i = 26; i < g_assoc_resp_len; i++) Serial.printf(" %02x", g_assoc_resp[i]);
-      Serial.println();
-      // On status 30, find the Timeout Interval element (0x38, type 3 = comeback)
-      // and wait that comeback time (in TUs, ~1.024ms) before the next attempt.
-      uint32_t comeback_ms = 1000;
-      for (int i = 32; i + 6 < g_assoc_resp_len; i++) {
-        if (g_assoc_resp[i] == 0x38 && g_assoc_resp[i + 1] == 5 && g_assoc_resp[i + 2] == 3) {
-          uint32_t tus = g_assoc_resp[i + 3] | (g_assoc_resp[i + 4] << 8) |
-                         (g_assoc_resp[i + 5] << 16) | (g_assoc_resp[i + 6] << 24);
-          comeback_ms = (tus * 1024) / 1000 + 20;
-          Serial.printf("  comeback=%u TU (~%u ms)\n", tus, comeback_ms);
-        }
-      }
+      Serial.printf("ASSOC RESP: status=%u %s\n", status, status == 0 ? "== ASSOCIATED" : "");
       assoc = (status == 0);
-      if (!assoc) delay(comeback_ms);
     }
+    if (!assoc) delay(200);
   }
-  if (!assoc) Serial.println("assoc: no success response");
+  Serial.println(assoc ? "*** ASSOCIATED to hitl-rig-3 ***" : "assoc: no success response");
 }
 
 void loop() { delay(1000); }
