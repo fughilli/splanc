@@ -19,6 +19,9 @@ void ns_ble_setup();
 uint32_t ns_ble_poll_cmd(uint8_t *out, uint32_t cap);
 uint32_t ns_ble_on_hci(const uint8_t *pkt, uint32_t len, uint8_t *out, uint32_t cap);
 uint32_t ns_ble_state();
+uint32_t ns_ble_poll_notify(uint8_t *out, uint32_t cap);
+uint32_t ns_ble_take_wifi(uint8_t *ssid, uint32_t ssid_cap, uint8_t *pass, uint32_t pass_cap);
+void ns_ble_provision_result(uint32_t ok);
 
 // --- vendor controller low-level HCI transport (NimBLE ble_hci_trans API) -----
 // Not in the SDK's public headers (internal r_-prefixed controller symbols), but
@@ -168,12 +171,26 @@ void loop() {
   static uint32_t t = 0;
   while (s_tail != s_head) {
     Pkt &p = s_ring[s_tail];
-    uint8_t out[64];
-    // on_event advances the state machine and emits the next bring-up command
-    // (Reset -> event mask -> adv params -> data -> enable) directly.
+    uint8_t out[268];
+    // Drives the bring-up state machine (via events) AND the Improv GATT service
+    // (via ATT over ACL); emits the response ACL to send back.
     uint32_t n = ns_ble_on_hci(p.data, p.len, out, sizeof(out));
     if (n) hci_send(out, n);
+    // Flush any queued characteristic notifications (current-state / error /
+    // RPC-result) the Improv service produced.
+    uint32_t m;
+    while ((m = ns_ble_poll_notify(out, sizeof(out))) > 0) hci_send(out, m);
     s_tail = (s_tail + 1) & 7;
+  }
+  // Improv provisioning: if the central sent Wi-Fi credentials, act on them. This
+  // BLE-only demo has no Wi-Fi stack, so it acknowledges success to exercise the
+  // full Improv flow; the real STA connection lives in player_app.
+  {
+    uint8_t ssid[33], pass[65];
+    if (ns_ble_take_wifi(ssid, sizeof(ssid), pass, sizeof(pass))) {
+      Serial.printf("blehost: improv wifi ssid='%s' (demo: reporting provisioned)\n", ssid);
+      ns_ble_provision_result(1);
+    }
   }
   if ((t++ % 100) == 0) {
     Serial.printf(

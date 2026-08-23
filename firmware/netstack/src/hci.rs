@@ -180,7 +180,7 @@ impl Default for BleHost {
 }
 
 /// Build an HCI ACL packet carrying an L2CAP PDU on `handle` (first fragment).
-pub fn acl(handle: u16, l2cap: &[u8], out: &mut Buf<64>) -> Result<usize, Overflow> {
+pub fn acl<const N: usize>(handle: u16, l2cap: &[u8], out: &mut Buf<N>) -> Result<usize, Overflow> {
     out.clear();
     out.extend(&[H4_ACL])?;
     out.extend(&(handle & 0x0fff | 0x2000).to_le_bytes())?; // PB=start,BC=00
