@@ -314,3 +314,36 @@ flash_bundle(
     flash = ":wifi_sta_driver_flash",
     tags = ["manual"],
 )
+
+# wifi_isr_driver — M5: interrupt-driven RX via our own WiFi-MAC ISR (reuses the
+# M0b RX-ring FFI).
+cc_binary(
+    name = "wifi_isr_driver",
+    srcs = ["examples/wifi_isr_driver.cpp"],
+    copts = ["-fno-rtti"],
+    target_compatible_with = _C6,
+    deps = _arduino + [
+        ":wifi_rx_ffi",
+        "@embedded//libs/vendor:wifi",
+    ],
+)
+
+firmware_binary(
+    name = "wifi_isr_driver_esp32c6",
+    binary = ":wifi_isr_driver",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "wifi_isr_driver_flash",
+    app = ":wifi_isr_driver_esp32c6",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "wifi_isr_driver_flashbundle",
+    flash = ":wifi_isr_driver_flash",
+    tags = ["manual"],
+)
