@@ -21,6 +21,7 @@ from tls_churn_core import (
     classify,
     result_line,
     run_status,
+    sequential_churn_verdict,
     tally,
     verdict,
 )
@@ -162,3 +163,45 @@ def test_result_line_reflects_status():
     skip_line = result_line(baseline_ok=False, rounds=[], crashed=False, status=SKIP)
     assert "verdict=SKIP" in skip_line
     assert "baseline=down" in skip_line
+
+
+# -- sequential_churn_verdict (FUG-140-adjacent: slot_guard de-flake) ---------
+# slot_guard (hitl_slot_repro) used to fail on ANY reconnect failure; these pin
+# the corrected verdict: a wedge (no recovery) or a non-graceful ERROR fails, but
+# graceful shed-and-recover does not.
+
+
+def test_seq_verdict_passes_clean_and_graceful_recovered():
+    # All-clean, and shed-but-recovered, both pass — a heap-tight 2-slot server is
+    # allowed to reset/time-out the odd reconnect under a hammer as long as it heals.
+    clean = ("held=0", [OK] * 20, True)
+    shed = ("held=1", [OK] * 17 + [REJECTED, TIMEOUT, REJECTED], True)
+    v = sequential_churn_verdict(True, [clean, shed], max_welcome_ms=3000, connect_timeout_ms=10000)
+    assert v.ok and v.reasons == []
+
+
+def test_seq_verdict_fails_on_wedge_no_recovery():
+    # The field bug: the burst leaves the endpoint wedged (recovered=False).
+    wedged = ("held=1", [OK] * 5 + [REJECTED] * 15, False)
+    v = sequential_churn_verdict(True, [wedged], max_welcome_ms=3000, connect_timeout_ms=10000)
+    assert not v.ok
+    assert any("wedge" in r for r in v.reasons)
+
+
+def test_seq_verdict_fails_on_nongraceful_error():
+    # An ERROR outcome (e.g. served a non-welcome / unexpected) is never graceful,
+    # even if the server later recovers.
+    erred = ("held=0", [OK] * 19 + [ERROR], True)
+    v = sequential_churn_verdict(True, [erred], max_welcome_ms=3000, connect_timeout_ms=10000)
+    assert not v.ok
+    assert any("non-graceful" in r for r in v.reasons)
+
+
+def test_seq_verdict_fails_on_latency_breach_and_bad_baseline():
+    # A served welcome slower than the client deadline is a fail (it would abort
+    # mid-handshake — the storm trigger); so is a dead baseline.
+    ok_churn = ("held=0", [OK] * 20, True)
+    v = sequential_churn_verdict(True, [ok_churn], max_welcome_ms=10001, connect_timeout_ms=10000)
+    assert not v.ok and any("latency" in r for r in v.reasons)
+    v2 = sequential_churn_verdict(False, [ok_churn], max_welcome_ms=100, connect_timeout_ms=10000)
+    assert not v2.ok and any("single ws connect" in r for r in v2.reasons)

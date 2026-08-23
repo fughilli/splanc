@@ -159,6 +159,51 @@ FAIL = "fail"
 SKIP = "skip"
 
 
+def sequential_churn_verdict(
+    baseline_ok: bool,
+    churns: "list[tuple[str, list[str], bool]]",
+    max_welcome_ms: float,
+    connect_timeout_ms: float,
+) -> Verdict:
+    """PASS/FAIL for the SEQUENTIAL reconnect churn (slot_guard / hitl_slot_repro).
+
+    Same philosophy as verdict(): a heap-tight 2-slot server under a rapid
+    reconnect hammer (esp. with one slot already held) may shed some attempts by
+    resetting/timing them out — that's graceful backpressure (REJECTED/TIMEOUT),
+    not the field bug. The field bug (the -0x7780 storm) is a WEDGE: the endpoint
+    stops serving until reboot. So each churn is gated on RECOVERY (a fresh welcome
+    succeeds after the burst once the holds are released), NOT on zero mid-churn
+    failures — the old zero-tolerance gate red-lined healthy boards on an isolated
+    slow-slot-reclaim timeout.
+
+    `churns` is [(label, outcomes, recovered)] where `outcomes` is the list of
+    classify() categories over the reconnect rounds. Hard gates: the baseline
+    single connect works; every churn recovered (anti-wedge); no non-graceful
+    ERROR outcome; and a served welcome still beats the client's connect deadline.
+    Graceful REJECTED/TIMEOUT that recover are reported (in the caller's log), not
+    failed.
+    """
+    reasons: list[str] = []
+    if not baseline_ok:
+        reasons.append(
+            "a single ws connect+welcome failed (the single-flight target must be solid)"
+        )
+    for label, outcomes, recovered in churns:
+        counts = tally(outcomes)
+        if counts[ERROR]:
+            reasons.append(f"{label}: {counts[ERROR]} non-graceful ws error(s) ({counts})")
+        if not recovered:
+            reasons.append(
+                f"{label}: wss did not recover after the burst — persistent wedge, the field bug ({counts})"
+            )
+    if max_welcome_ms >= connect_timeout_ms:
+        reasons.append(
+            f"welcome latency {max_welcome_ms:.0f}ms >= connectTimeoutMs "
+            f"{connect_timeout_ms:.0f}ms — a served connection can now time out"
+        )
+    return Verdict(ok=not reasons, reasons=reasons)
+
+
 def run_status(baseline_ok: bool, rounds: list[Round], crashed: bool) -> str:
     """Map a run to PASS / FAIL / SKIP. SKIP (no baseline) => exit 0, inconclusive.
 
