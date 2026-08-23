@@ -1,0 +1,21 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component Texas_Instruments_SN74LVC1T45DBVR_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C7843", date="2026-08-20T03:04:48.368258+00:00", checksum="d025b6e6f500ca0e942435e592c217ef30fbb982aeba4b7accf8fe35368faf7f">
+
+    trait is_atomic_part<manufacturer="Texas Instruments", partnumber="SN74LVC1T45DBVR", footprint="SOT-23-6_L2.9-W1.6-P0.95-LS2.8-BR.kicad_mod", symbol="SN74LVC1T45DBVR.kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C7843", manufacturer="Texas Instruments", partno="SN74LVC1T45DBVR">
+    trait has_designator_prefix<prefix="U">
+
+    # pins
+    signal A ~ pin 3
+    signal B ~ pin 4
+    signal DIR ~ pin 5
+    signal GND ~ pin 2
+    signal VCCA ~ pin 1
+    signal VCCB ~ pin 6

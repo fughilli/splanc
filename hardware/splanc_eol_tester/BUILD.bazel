@@ -1,0 +1,27 @@
+# Splanc EoL Tester PCB (FUG-131) — the end-of-line test fixture designed in
+# elec/src, specified in docs/hardware/splanc-eol-tester.md. See
+# //hardware/splanc_dev for the target family and hardware/README.md for how
+# the build works.
+#
+#   bazel build //hardware/splanc_eol_tester:splanc_eol_tester          # -> .kicad_pcb
+#   bazel build //hardware/splanc_eol_tester:splanc_eol_tester.pdf      # + PDF
+#   bazel build //hardware/splanc_eol_tester:splanc_eol_tester.gerber   # + Gerbers + drill
+# Framed (Edge.Cuts outline + tight page) and headless-routed (FreeRouting) with
+# no human in the loop — see //hardware/splanc_dev for the caveat: auto-placed
+# parts make this a preview, not a fab-ready layout.
+load("@atopile_rules//bazel/atopile:defs.bzl", "atopile_project")
+
+atopile_project(
+    name = "splanc_eol_tester",
+    # The .ato design plus the atomic parts' committed footprints/symbols
+    # (picker off -> nothing fetched, so all inputs must be staged).
+    srcs = glob(["elec/**"]),
+    ato_yaml = "ato.yaml",
+    autoroute = True,
+    build = "default",
+    frozen = False,
+    outline_margin_mm = 4,
+    picker = False,
+    route_max_passes = 3,
+    visibility = ["//visibility:public"],
+)

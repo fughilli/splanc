@@ -239,6 +239,30 @@ archive_override(
     urls = ["https://github.com/fughilli/embedded/archive/569102d541664d790fc708206f450dce477ca220.tar.gz"],
 )
 
+# rules_atopile — the atopile PCB build rules (`atopile_project`; //hardware/*).
+# Provides the Starlark rules + `atopile_toolchain`/`toolchain_type`; the `ato`
+# + `kicad-cli` tools it runs are supplied from THIS repo's Nix (the @atopile /
+# @kicad nix_pkg repos below) and bound by //hardware/atopile:nix_toolchain_*.
+# Two patches (git_override applies them to the pinned checkout):
+#   - composable-dep: rules_atopile's own MODULE.bazel wires its Nix toolchain
+#     with rules_nixpkgs `nix_repo`/`nix_pkg` tags, which are ROOT-module-only
+#     and error when it's consumed as a dependency. The patch strips that wiring
+#     to a minimal module() — a consumer (us, the root) provides the toolchain.
+#   - venvhash: the atopile uv-venv FOD hash for aarch64-linux drifts as
+#     transitive deps release; re-pin it (see hardware/README.md).
+bazel_dep(name = "atopile_rules", version = "0.1.0")
+git_override(
+    module_name = "atopile_rules",
+    commit = "16a7e0749ac542ca48fcaa4eb7133d60cf94f827",  # main
+    patch_strip = 1,
+    patches = [
+        "//patches:rules_atopile-composable-dep.patch",
+        "//patches:rules_atopile-venvhash.patch",
+        "//patches:rules_atopile-autoroute-kicad-python.patch",
+    ],
+    remote = "https://github.com/fughilli/rules_atopile.git",
+)
+
 # ---------------------------------------------------------------------------
 # Nix integration.
 #
@@ -284,6 +308,95 @@ filegroup(
     repo = "@nixpkgs",
 )
 use_repo(nix_pkg, "minify")
+
+# atopile toolchain tools (`ato` + `kicad-cli`) for the PCB builds
+# (//hardware/*), realized from rules_atopile's Nix derivations
+# (@atopile_rules//nix:packages.nix returns `{ atopile, kicad, ... }`). These
+# are pinned to a SEPARATE nixpkgs than the 25.05 snapshot above: the atopile
+# venv needs python3.14 (absent in 25.05) and its `venvHash` is keyed to the
+# exact nixpkgs the hash was measured against — rules_atopile's flake.lock
+# nixpkgs (rev ac62194c). Bump this rev, the atopile flake.lock, and the
+# venvhash patch together. Fetched lazily: only realized when a
+# //hardware/*:<board> target (which resolves the nix_toolchain) is built.
+nix_repo.github(
+    name = "atopile_nixpkgs",
+    commit = "ac62194c3917d5f474c1a844b6fd6da2db95077d",  # == atopile flake.lock nixpkgs
+    org = "NixOS",
+    repo = "nixpkgs",
+)
+use_repo(nix_repo, "atopile_nixpkgs")
+
+# `nix_pkg.file` runs the .nix file with `<nixpkgs>` bound to @atopile_nixpkgs
+# and selects one attr. `ato` builds on Linux + macOS; `kicad` is nixpkgs
+# kicad-small on Linux (null on darwin — nixpkgs marks the KiCad app broken
+# there, so //hardware/atopile:nix_darwin uses the system KiCad.app and never
+# fetches @kicad). Expose bin/ + the closure so the atopile_toolchain can point
+# `ato`/`kicad_cli` at bin/ato and bin/kicad-cli.
+_ATO_NIX_DEPS = [
+    "@atopile_rules//nix:atopile.nix",
+    "@atopile_rules//nix:freerouting.nix",
+]
+
+_ATO_NIX_BUILD = """\
+package(default_visibility = ["//visibility:public"])
+
+exports_files(glob(["bin/*"]))
+
+filegroup(
+    name = "bin",
+    srcs = glob(["bin/**"]),
+)
+"""
+
+nix_pkg.file(
+    name = "atopile",
+    attr = "atopile",
+    build_file_content = _ATO_NIX_BUILD,
+    file = "@atopile_rules//nix:packages.nix",
+    file_deps = _ATO_NIX_DEPS,
+    repo = "@atopile_nixpkgs",
+)
+nix_pkg.file(
+    name = "kicad",
+    attr = "kicad",
+    build_file_content = _ATO_NIX_BUILD,
+    file = "@atopile_rules//nix:packages.nix",
+    file_deps = _ATO_NIX_DEPS,
+    repo = "@atopile_nixpkgs",
+)
+
+# FreeRouting (headless Java autorouter, pinned 2.2.4 in freerouting.nix) — the
+# `autoroute = True` PDF flow runs it over the placed board. Referenced only by
+# boards that opt into autoroute, so it's fetched lazily.
+nix_pkg.file(
+    name = "freerouting",
+    attr = "freerouting",
+    build_file_content = _ATO_NIX_BUILD,
+    file = "@atopile_rules//nix:packages.nix",
+    file_deps = _ATO_NIX_DEPS,
+    repo = "@atopile_nixpkgs",
+)
+
+# python3.12 with KiCad's `pcbnew` bindings on its path — the autoroute step
+# drives the Specctra DSN/SES round-trip through KiCad's pcbnew Python (only it
+# has those bindings), which KiCad ships as a module (_pcbnew.so, py3.12 ABI)
+# but with no standalone interpreter. @kicad_python is that interpreter, pointed
+# at KiCad's site-packages via KICAD_PYTHON below. Matches kicad-base's py3.12.
+nix_pkg.attr(
+    name = "kicad_python",
+    attr = "python312",
+    build_file_content = _ATO_NIX_BUILD,
+    repo = "@atopile_nixpkgs",
+)
+use_repo(nix_pkg, "atopile", "freerouting", "kicad", "kicad_python")
+
+# The atopile build/export actions resolve `ato`/`kicad-cli` through this
+# toolchain (nix on Linux; nix `ato` + system KiCad on macOS). Registered here
+# so //hardware/*:<board> (atopile_project) picks them up.
+register_toolchains(
+    "//hardware/atopile:nix_toolchain_linux",
+    "//hardware/atopile:nix_toolchain_darwin",
+)
 
 # ---------------------------------------------------------------------------
 # Python toolchain — Pi-compatible 3.11.

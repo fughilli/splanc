@@ -1,0 +1,196 @@
+diff --git a/bazel/atopile/defs.bzl b/bazel/atopile/defs.bzl
+index 098db49..746f2e3 100644
+--- a/bazel/atopile/defs.bzl
++++ b/bazel/atopile/defs.bzl
+@@ -60,6 +60,7 @@ def atopile_project(
+         frozen = True,
+         outline_margin_mm = 0,
+         autoroute = False,
++        route_max_passes = 0,
+         picker = False,
+         visibility = None,
+         tags = []):
+@@ -78,6 +79,10 @@ def atopile_project(
+       autoroute: if True, the `.pdf` target runs a headless FreeRouting pass over
+         the placed board (via KiCad's pcbnew Python) so it has traces — a fully
+         no-human end-to-end flow. Pulls `@freerouting`. See tools/autoroute.py.
++      route_max_passes: if > 0, cap FreeRouting's optimization passes (`-mp`).
++        On a dense/naively-placed board FreeRouting optimizes for many minutes;
++        a small cap keeps the build tractable (a preview route, not fab-quality).
++        0 = unbounded (route to convergence).
+       visibility: standard Bazel visibility.
+       tags: extra tags applied to every generated target.
+     """
+@@ -106,6 +111,7 @@ def atopile_project(
+         frozen = frozen,
+         outline_margin_mm = outline_margin_mm,
+         autoroute = autoroute,
++        route_max_passes = route_max_passes,
+         freerouting = "@freerouting//:bin/freerouting" if autoroute else None,
+         **common
+     )
+diff --git a/bazel/atopile/providers.bzl b/bazel/atopile/providers.bzl
+index 196dba1..ea3bb9b 100644
+--- a/bazel/atopile/providers.bzl
++++ b/bazel/atopile/providers.bzl
+@@ -7,6 +7,10 @@ AtopileToolchainInfo = provider(
+         "kicad_cli": "File or None: the `kicad-cli` executable; None => use kicad_cli_path.",
+         "ato_path": "string: command used when `ato` is None (host toolchain, from PATH).",
+         "kicad_cli_path": "string: command used when `kicad_cli` is None.",
++        "kicad_python": "File or None: a Python interpreter with KiCad's `pcbnew` bindings, used " +
++                        "for the autoroute DSN/SES round-trip. KiCad ships `pcbnew` as a module " +
++                        "(_pcbnew.so) but no standalone interpreter; this supplies one, with " +
++                        "PYTHONPATH derived from `kicad_cli` at action time. None => rely on PATH.",
+         "runfiles": "depset[File]: closure files that must be present as action inputs.",
+     },
+ )
+diff --git a/bazel/atopile/rules.bzl b/bazel/atopile/rules.bzl
+index abc96a2..915cbca 100644
+--- a/bazel/atopile/rules.bzl
++++ b/bazel/atopile/rules.bzl
+@@ -113,7 +113,7 @@ def _fp_table_setup(ctx):
+         'if [ -f "$_fp_tbl" ]; then cp -f "$_fp_tbl" "$ROOT/{ld}/fp-lib-table"; chmod u+w "$ROOT/{ld}/fp-lib-table"; fi'.format(ld = layout_dir),
+     ])
+ 
+-def _autoroute_step(ctx, pcb):
++def _autoroute_step(ctx, info, pcb):
+     # Optional headless autorouting (opt in via `autoroute`): run FreeRouting
+     # over the placed board via KiCad's pcbnew Python (DSN out -> route -> SES
+     # in), so the exported board actually has traces — see tools/autoroute.py.
+@@ -126,21 +126,36 @@ def _autoroute_step(ctx, pcb):
+         return "", []
+     fr = ctx.file.freerouting
+     ap = ctx.file._autoroute
++
++    # A KiCad-provided Python (toolchain `kicad_python`) is preferred: KiCad ships
++    # `pcbnew` as a module (_pcbnew.so) but no standalone interpreter, so we point
++    # an interpreter at KiCad's site-packages — derived from the resolved
++    # kicad-cli's store path — via PYTHONPATH. Falls back to $KICAD_PYTHON, the
++    # macOS KiCad.app Python, then a plain python3.
++    ki_py = info.kicad_python.path if info.kicad_python else ""
++    ki_cli = _kicad_cmd(info)
+     lines = [
+         "_FR=\"$(cd \"$(dirname '%s')\" && pwd)/$(basename '%s')\"" % (fr.path, fr.path),
++        # Put KiCad's pcbnew site-packages on PYTHONPATH so `import pcbnew`
++        # resolves for the interpreter chosen below (matched by py-version/ABI).
++        '_KI_CLI="%s"' % ki_cli,
++        'command -v "$_KI_CLI" >/dev/null 2>&1 && _KI_CLI="$(command -v "$_KI_CLI")"',
++        '_KI_ROOT="$(cd "$(dirname "$(readlink -f "$_KI_CLI")")/.." 2>/dev/null && pwd || true)"',
++        '_KI_SP="$(ls -d "$_KI_ROOT"/lib/python3*/site-packages 2>/dev/null | head -1)"',
++        '[ -n "$_KI_SP" ] && export PYTHONPATH="$_KI_SP${PYTHONPATH:+:$PYTHONPATH}"',
+         '_PCBNEW_PY=""',
+-        'for _c in "${KICAD_PYTHON:-}" ' +
++        'for _c in "%s" "${KICAD_PYTHON:-}" ' % ki_py +
+         '"/Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3" ' +
+         'python3; do',
+         '  [ -n "$_c" ] || continue',
+         '  if command -v "$_c" >/dev/null 2>&1 && "$_c" -c "import pcbnew" >/dev/null 2>&1; then _PCBNEW_PY="$_c"; break; fi',
+         'done',
+         'if [ -n "$_PCBNEW_PY" ]; then',
+-        '  "$_PCBNEW_PY" "%s" "$ROOT/%s" "$_FR"' % (ap.path, pcb),
++        '  "$_PCBNEW_PY" "%s" "$ROOT/%s" "$_FR" %d' % (ap.path, pcb, ctx.attr.route_max_passes),
+         'else',
+         # Degrade gracefully: skip routing (board just has no traces) rather than
+         # failing on a platform without KiCad's Python (e.g. kicad-small on Linux).
+-        '  echo "autoroute: skipped — no pcbnew-capable python (need KiCad python; set KICAD_PYTHON)" >&2',
++        '  echo "autoroute: skipped — no pcbnew-capable python (set toolchain kicad_python or KICAD_PYTHON)" >&2',
+         'fi',
+     ]
+     return "\n".join(lines), [fr, ap]
+@@ -247,7 +262,7 @@ def _atopile_layout_impl(ctx):
+ 
+     inputs = [_project_inputs(ctx, info)]
+ 
+-    autoroute, ar_inputs = _autoroute_step(ctx, pcb)
++    autoroute, ar_inputs = _autoroute_step(ctx, info, pcb)
+     if ar_inputs:
+         inputs.append(depset(ar_inputs))
+ 
+@@ -317,6 +332,7 @@ _atopile_layout = rule(
+         "outline_margin_mm": attr.int(default = 0, doc = "Frame the board (see tools/board_outline.py) if > 0."),
+         "_board_outline": attr.label(default = "//tools:board_outline.py", allow_single_file = True),
+         "autoroute": attr.bool(default = False, doc = "Headless FreeRouting pass (see tools/autoroute.py)."),
++        "route_max_passes": attr.int(default = 0, doc = "Cap FreeRouting optimization passes (`-mp`) for a bounded build; 0 = unbounded."),
+         "freerouting": attr.label(allow_single_file = True, doc = "FreeRouting binary; macro-set when autoroute on."),
+         "_autoroute": attr.label(default = "//tools:autoroute.py", allow_single_file = True),
+         "picker": attr.bool(default = False, doc = "Run the local picker sidecar (0.15.x picking)."),
+diff --git a/bazel/atopile/toolchain.bzl b/bazel/atopile/toolchain.bzl
+index 0dcbd2c..9583d71 100644
+--- a/bazel/atopile/toolchain.bzl
++++ b/bazel/atopile/toolchain.bzl
+@@ -13,8 +13,9 @@ load(":providers.bzl", "AtopileToolchainInfo")
+ def _atopile_toolchain_impl(ctx):
+     ato = ctx.executable.ato
+     kicad_cli = ctx.executable.kicad_cli
++    kicad_python = ctx.executable.kicad_python
+     runfiles = depset(
+-        direct = ctx.files.ato + ctx.files.kicad_cli + ctx.files.data,
++        direct = ctx.files.ato + ctx.files.kicad_cli + ctx.files.kicad_python + ctx.files.data,
+     )
+     return [platform_common.ToolchainInfo(
+         atopileinfo = AtopileToolchainInfo(
+@@ -22,6 +23,7 @@ def _atopile_toolchain_impl(ctx):
+             kicad_cli = kicad_cli,
+             ato_path = ctx.attr.ato_path,
+             kicad_cli_path = ctx.attr.kicad_cli_path,
++            kicad_python = kicad_python,
+             runfiles = runfiles,
+         ),
+     )]
+@@ -50,6 +52,15 @@ atopile_toolchain = rule(
+             doc = "Command used to invoke KiCad when `kicad_cli` is unset.",
+             default = "kicad-cli",
+         ),
++        "kicad_python": attr.label(
++            doc = "Optional Python interpreter with KiCad's `pcbnew` bindings, for the " +
++                  "autoroute DSN/SES round-trip (KiCad ships the module but no interpreter). " +
++                  "PYTHONPATH is derived from `kicad_cli` at action time. Leave unset to rely " +
++                  "on PATH (a system KiCad's Python, e.g. macOS KiCad.app).",
++            executable = True,
++            cfg = "exec",
++            allow_files = True,
++        ),
+         "data": attr.label_list(
+             doc = "Extra closure files (e.g. the whole nix store path) needed at action time.",
+             allow_files = True,
+diff --git a/tools/autoroute.py b/tools/autoroute.py
+index a8e441e..f620ca1 100644
+--- a/tools/autoroute.py
++++ b/tools/autoroute.py
+@@ -12,7 +12,12 @@ Pipeline:
+   2. FreeRouting (headless CLI)  -> board.ses
+   3. pcbnew `ImportSpecctraSES`  -> traces back into the board, then Save.
+ 
+-Usage: <kicad-python> autoroute.py <pcb_path> <freerouting_cmd>
++Usage: <kicad-python> autoroute.py <pcb_path> <freerouting_cmd> [max_passes]
++
++`max_passes` > 0 caps FreeRouting's optimization passes (`-mp`). On a densely /
++naively placed board FreeRouting keeps optimizing for many minutes; a small cap
++trades routing completeness for a bounded, tractable build (a preview, not a
++fab-quality route). 0 / omitted = unbounded (route to convergence).
+ """
+ 
+ from __future__ import annotations
+@@ -25,6 +30,7 @@ import tempfile
+ 
+ def main() -> int:
+     pcb, freerouting = sys.argv[1], sys.argv[2]
++    max_passes = int(sys.argv[3]) if len(sys.argv) > 3 else 0
+     import pcbnew  # provided by KiCad's Python
+ 
+     board = pcbnew.LoadBoard(pcb)
+@@ -40,10 +46,10 @@ def main() -> int:
+     # is broken and can hang. The board must already have an Edge.Cuts boundary
+     # (freerouting 2.1 scores NaN / routes nothing without one) — the outline
+     # step runs before this. Quiet unless it fails; the java log is verbose.
+-    proc = subprocess.run(
+-        [freerouting, "-de", dsn, "-do", ses, "-gui.enabled", "false", "-mt", "1"],
+-        capture_output=True, text=True,
+-    )
++    cmd = [freerouting, "-de", dsn, "-do", ses, "-gui.enabled", "false", "-mt", "1"]
++    if max_passes > 0:
++        cmd += ["-mp", str(max_passes)]
++    proc = subprocess.run(cmd, capture_output=True, text=True)
+     if not (os.path.exists(ses) and os.path.getsize(ses) > 0):
+         sys.stderr.write(proc.stdout + proc.stderr)
+         sys.exit("autoroute: FreeRouting produced no session (unroutable / failed)")

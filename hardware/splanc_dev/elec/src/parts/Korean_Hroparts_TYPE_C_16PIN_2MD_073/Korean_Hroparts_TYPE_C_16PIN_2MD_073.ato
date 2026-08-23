@@ -1,0 +1,29 @@
+import has_designator_prefix
+import has_part_picked
+import is_atomic_part
+import is_auto_generated
+
+component Korean_Hroparts_TYPE_C_16PIN_2MD_073_package:
+    # This trait marks this file as auto-generated
+    # If you want to manually change it, remove the trait
+    trait is_auto_generated<system="ato_part", source="easyeda:C2765186", date="2026-08-20T03:04:52.105136+00:00", checksum="95d60b7c0d0ea11de800187bed91f2a41ae7ab32fd573ae2ac235e39164f38db">
+
+    trait is_atomic_part<manufacturer="Korean Hroparts", partnumber="TYPE-C 16PIN 2MD(073)", footprint="USB-C-SMD_TYPE-C-16PIN-2MD-073.kicad_mod", symbol="TYPE-C16PIN2MD(073).kicad_sym">
+    trait has_part_picked::by_supplier<supplier_id="lcsc", supplier_partno="C2765186", manufacturer="Korean Hroparts", partno="TYPE-C 16PIN 2MD(073)">
+    trait has_designator_prefix<prefix="USB">
+
+    # pins
+    signal CC1 ~ pin A5
+    signal CC2 ~ pin B5
+    signal Dn1 ~ pin A7
+    signal Dn2 ~ pin B7
+    signal Dp1 ~ pin A6
+    signal Dp2 ~ pin B6
+    signal EH ~ pin 14
+    EH ~ pin 13
+    signal GND ~ pin A1B12
+    GND ~ pin B1A12
+    signal SBU1 ~ pin A8
+    signal SBU2 ~ pin B8
+    signal VBUS ~ pin A4B9
+    VBUS ~ pin B4A9

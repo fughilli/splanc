@@ -1,0 +1,67 @@
+# Two-terminal wrappers over the committed atomic LCSC passives used by the EoL
+# tester (a subset of the dev module's passives.ato). Pre-picked atomic parts ->
+# hermetic build (no picker / EasyEDA). See hardware/README.md.
+
+from "parts/Samsung_CL05B104KO5NNNC/Samsung_CL05B104KO5NNNC.ato" import Samsung_CL05B104KO5NNNC_package
+from "parts/Samsung_CL10A106KP8NNNC/Samsung_CL10A106KP8NNNC.ato" import Samsung_CL10A106KP8NNNC_package
+from "parts/Samsung_CL21A106KAYNNNE/Samsung_CL21A106KAYNNNE.ato" import Samsung_CL21A106KAYNNNE_package
+from "parts/UNI_ROYAL_0402WGF0000TCE/UNI_ROYAL_0402WGF0000TCE.ato" import UNI_ROYAL_0402WGF0000TCE_package
+from "parts/UNI_ROYAL_0402WGF330JTCE/UNI_ROYAL_0402WGF330JTCE.ato" import UNI_ROYAL_0402WGF330JTCE_package
+from "parts/UNI_ROYAL_0402WGF1001TCE/UNI_ROYAL_0402WGF1001TCE.ato" import UNI_ROYAL_0402WGF1001TCE_package
+from "parts/UNI_ROYAL_0402WGF2001TCE/UNI_ROYAL_0402WGF2001TCE.ato" import UNI_ROYAL_0402WGF2001TCE_package
+from "parts/UNI_ROYAL_0402WGF5101TCE/UNI_ROYAL_0402WGF5101TCE.ato" import UNI_ROYAL_0402WGF5101TCE_package
+from "parts/UNI_ROYAL_0603WAF1002T5E/UNI_ROYAL_0603WAF1002T5E.ato" import UNI_ROYAL_0603WAF1002T5E_package
+
+module C100n:
+    """100 nF 0402 (C1525)."""
+    _p = new Samsung_CL05B104KO5NNNC_package
+    signal p1 ~ _p.p1
+    signal p2 ~ _p.p2
+
+module C10u_0603:
+    """10 uF 0603 (C19702)."""
+    _p = new Samsung_CL10A106KP8NNNC_package
+    signal p1 ~ _p.p1
+    signal p2 ~ _p.p2
+
+module C10u:
+    """10 uF 0805 (C15850)."""
+    _p = new Samsung_CL21A106KAYNNNE_package
+    signal p1 ~ _p.p1
+    signal p2 ~ _p.p2
+
+module R0:
+    """0 ohm jumper 0402 (C17168) — also the load-bank SHORT stand-in."""
+    _p = new UNI_ROYAL_0402WGF0000TCE_package
+    signal p1 ~ _p.p1
+    signal p2 ~ _p.p2
+
+module R33:
+    """33 ohm 0402 (C25105) — also the load-bank NOMINAL stand-in."""
+    _p = new UNI_ROYAL_0402WGF330JTCE_package
+    signal p1 ~ _p.p1
+    signal p2 ~ _p.p2
+
+module R1k:
+    """1 k 0402 (C11702)."""
+    _p = new UNI_ROYAL_0402WGF1001TCE_package
+    signal p1 ~ _p.p1
+    signal p2 ~ _p.p2
+
+module R2k:
+    """2 k 0402 (C4109)."""
+    _p = new UNI_ROYAL_0402WGF2001TCE_package
+    signal p1 ~ _p.p1
+    signal p2 ~ _p.p2
+
+module R5k1:
+    """5.1 k 0402 (C25905)."""
+    _p = new UNI_ROYAL_0402WGF5101TCE_package
+    signal p1 ~ _p.p1
+    signal p2 ~ _p.p2
+
+module R10k:
+    """10 k 0603 (C25804)."""
+    _p = new UNI_ROYAL_0603WAF1002T5E_package
+    signal p1 ~ _p.p1
+    signal p2 ~ _p.p2

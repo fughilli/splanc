@@ -1,0 +1,12 @@
+requires-atopile: '>=0.15.0,<0.16.0'
+
+# Authoring only: the local picker resolves lcsc ids while `ato create part`
+# generates atomic parts. The build itself needs no picker — every part is
+# pre-picked (atomic). See hardware/README.md.
+services:
+  components:
+    url: http://127.0.0.1:8099
+
+builds:
+  default:
+    entry: elec/src/splanc_eol_tester.ato:SplancEolTester
