@@ -240,7 +240,7 @@ pub struct ImprovOutcome {
 /// the characteristic values in sync with the [`Improv`] state machine, and routes
 /// ATT writes on the RPC-command characteristic through it.
 pub struct ImprovService {
-    pub db: GattDb<12>,
+    pub db: GattDb<16>,
     pub improv: Improv,
     h_current: u16,
     h_error: u16,
@@ -251,7 +251,7 @@ pub struct ImprovService {
 impl ImprovService {
     pub fn new() -> Self {
         let improv = Improv::new();
-        let mut db: GattDb<12> = GattDb::new();
+        let mut db: GattDb<16> = GattDb::new();
         let _ = db.add_primary_service(Uuid::U128(IMPROV_SVC_UUID));
         // Order per spec; each value handle is used by the central after discovery.
         let h_current = db
@@ -434,6 +434,29 @@ mod tests {
         im.provisioning_result(false, &[]);
         assert_eq!(im.state, State::Authorized);
         assert_eq!(im.error, ErrorState::UnableToConnect);
+    }
+
+    #[test]
+    fn improv_service_is_discoverable() {
+        use crate::gatt::GATT_RSP_MAX;
+        let mut svc = ImprovService::new();
+        let mut out: Buf<GATT_RSP_MAX> = Buf::new();
+        // Read By Group Type (0x10): handles 1..0xffff, type 0x2800 (primary svc).
+        let params = [0x01, 0x00, 0xff, 0xff, 0x00, 0x28];
+        let n = svc.db.handle_att(0x10, &params, &mut out);
+        assert!(n > 0, "no response");
+        let s = out.as_slice();
+        assert_eq!(s[0], 0x11, "expected READ_BY_GROUP_TYPE_RSP, got {:#x}", s[0]);
+        assert_eq!(u16::from_le_bytes([s[2], s[3]]), 1, "service handle");
+        assert_eq!(&s[6..22], &IMPROV_SVC_UUID, "Improv service UUID");
+        // And the capabilities characteristic (last one) must fit in the DB.
+        let mut chars: Buf<GATT_RSP_MAX> = Buf::new();
+        let cparams = [0x01, 0x00, 0xff, 0xff, 0x03, 0x28]; // Read By Type, char decl
+        svc.db.handle_att(0x08, &cparams, &mut chars);
+        // Count characteristic declarations returned (element len = chars[1]).
+        let elem = chars.as_slice()[1] as usize;
+        let count = (chars.len() - 2) / elem;
+        assert!(count >= 1);
     }
 
     #[test]
