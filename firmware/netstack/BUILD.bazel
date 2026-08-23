@@ -273,3 +273,44 @@ flash_bundle(
     flash = ":wifi_tx_driver_flash",
     tags = ["manual"],
 )
+
+# wifi_sta_ffi / wifi_sta_driver — M2: live STA association over the heapless MAC.
+rust_static_library(
+    name = "wifi_sta_ffi",
+    srcs = ["examples/wifi_sta_ffi.rs"],
+    crate_name = "wifi_sta_ffi",
+    edition = "2021",
+    target_compatible_with = _C6,
+    deps = [":netstack"],
+)
+
+cc_binary(
+    name = "wifi_sta_driver",
+    srcs = ["examples/wifi_sta_driver.cpp"],
+    copts = ["-fno-rtti"],
+    target_compatible_with = _C6,
+    deps = _arduino + [
+        ":wifi_sta_ffi",
+        "@embedded//libs/vendor:wifi",
+    ],
+)
+
+firmware_binary(
+    name = "wifi_sta_driver_esp32c6",
+    binary = ":wifi_sta_driver",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "wifi_sta_driver_flash",
+    app = ":wifi_sta_driver_esp32c6",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "wifi_sta_driver_flashbundle",
+    flash = ":wifi_sta_driver_flash",
+    tags = ["manual"],
+)

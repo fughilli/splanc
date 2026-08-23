@@ -260,6 +260,10 @@ impl<const N: usize> TxRing<N> {
         }
         let queue = self.slots[idx].queue;
         let flen = (self.slots[idx].frame_len_802 as u32) & 0xfff;
+        // Sequence/duration control word in the 0x4d block (stride 0x10, alongside
+        // PLCP0). Captured with an incrementing counter + 0x077; a fixed value
+        // suffices for the first frame of an exchange.
+        mmio::write32(mac::txq_reg(0x600A_4D68, queue, mac::TXQ_STRIDE), 0x1200_0077);
         let s = mac::TXQ_STATUS_STRIDE;
         mmio::write32(mac::txq_reg(0x600A_5488, queue, s), flen); // PLCP1 = 802.11 length
         mmio::write32(mac::txq_reg(0x600A_548C, queue, s), 0x0002_0000);

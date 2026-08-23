@@ -1,0 +1,195 @@
+// wifi_sta_driver — Milestone 2: live STA association to a real AP over OUR
+// heapless MAC (RX ring M0b + TX recipe M1b).
+//
+// The vendor esp_wifi brings up the PHY/clock and finds the target AP (scan),
+// then we take over the descriptor rings and run the 802.11 association exchange
+// ourselves with real frames: TX open-auth -> RX auth-resp -> TX assoc-req ->
+// RX assoc-resp. Reaching an assoc response with status 0 == Associated.
+
+#include <Arduino.h>
+#include <WiFi.h>
+#include <esp_wifi.h>
+#include <string.h>
+
+SET_LOOP_TASK_STACK_SIZE(20480);
+
+extern "C" {
+void ns_mac_rx_install();
+uint32_t ns_mac_recv(uint8_t *out, uint32_t cap);
+uint32_t ns_mac_send(const uint8_t *frame, uint32_t len, uint32_t queue);
+}
+
+namespace {
+constexpr uintptr_t WIFI_MAC_INTR_MAP = 0x60010000;
+const char *TARGET_SSID = "hitl-rig-3";
+const uint8_t OUR_MAC[6] = {0x02, 0x11, 0x22, 0x33, 0x44, 0x66};
+
+uint8_t g_bssid[6];
+uint8_t g_channel = 1;
+bool g_found = false;
+
+// RX via the vendor promiscuous callback (proven to receive), capturing auth /
+// assoc responses addressed to us from the AP for the association logic. Our
+// heapless TX (M1) sends the requests; combining heapless RX+TX is a later step.
+volatile uint32_t g_vendor_rx = 0, g_probe_resp = 0, g_auth_seen = 0, g_deauth_seen = 0, g_ap_beacons = 0, g_ap_probe_resp = 0;
+volatile bool g_got_auth = false, g_got_assoc = false;
+uint8_t g_auth_resp[40], g_assoc_resp[40];
+void IRAM_ATTR on_rx(void *buf, wifi_promiscuous_pkt_type_t) {
+  g_vendor_rx++;
+  auto *p = static_cast<wifi_promiscuous_pkt_t *>(buf);
+  const uint8_t *f = p->payload;
+  int len = p->rx_ctrl.sig_len;
+  if (len < 24) return;
+  bool from_ap = memcmp(f + 10, g_bssid, 6) == 0;
+  bool to_us = memcmp(f + 4, OUR_MAC, 6) == 0;
+  if (from_ap && f[0] == 0x80) g_ap_beacons++;       // beacon from our target AP
+  if (to_us && f[0] == 0x50) g_probe_resp++;          // probe resp (any AP)
+  if (from_ap && to_us && f[0] == 0x50) g_ap_probe_resp++; // probe resp FROM target AP
+  if (from_ap && f[0] == 0xb0) { // auth from AP (to any DA)
+    g_auth_seen++;
+    if (to_us && !g_got_auth) { memcpy(g_auth_resp, f, 40); g_got_auth = true; }
+  }
+  if (from_ap && f[0] == 0xc0) g_deauth_seen++; // deauth from AP
+  if (from_ap && to_us && f[0] == 0x10 && !g_got_assoc) { memcpy(g_assoc_resp, f, 40); g_got_assoc = true; }
+}
+inline void wreg(uintptr_t a, uint32_t v) { *reinterpret_cast<volatile uint32_t *>(a) = v; }
+inline uint32_t rreg(uintptr_t a) { return *reinterpret_cast<volatile uint32_t *>(a); }
+
+// Build an 802.11 management header into f: fc, to BSSID, from OUR_MAC, bssid.
+int mgmt_hdr(uint8_t *f, uint8_t fc) {
+  int n = 0;
+  f[n++] = fc; f[n++] = 0x00;            // FC + flags
+  f[n++] = 0x00; f[n++] = 0x00;          // duration
+  memcpy(f + n, g_bssid, 6); n += 6;     // addr1 = DA = AP
+  memcpy(f + n, OUR_MAC, 6); n += 6;     // addr2 = SA = us
+  memcpy(f + n, g_bssid, 6); n += 6;     // addr3 = BSSID
+  f[n++] = 0x00; f[n++] = 0x00;          // seq
+  return n;
+}
+
+int build_auth(uint8_t *f) {
+  int n = mgmt_hdr(f, 0xb0);             // subtype 11 = authentication
+  f[n++] = 0x00; f[n++] = 0x00;          // algorithm = open system
+  f[n++] = 0x01; f[n++] = 0x00;          // transaction seq = 1
+  f[n++] = 0x00; f[n++] = 0x00;          // status = 0
+  return n;
+}
+
+int build_assoc(uint8_t *f) {
+  int n = mgmt_hdr(f, 0x00);             // subtype 0 = association request
+  f[n++] = 0x21; f[n++] = 0x04;          // capability info (ESS + privacy)
+  f[n++] = 0x0a; f[n++] = 0x00;          // listen interval
+  int slen = strlen(TARGET_SSID);        // SSID IE
+  f[n++] = 0x00; f[n++] = (uint8_t)slen;
+  memcpy(f + n, TARGET_SSID, slen); n += slen;
+  const uint8_t rates[] = {0x01, 0x08, 0x82, 0x84, 0x8b, 0x96, 0x12, 0x24, 0x48, 0x6c};
+  memcpy(f + n, rates, sizeof(rates)); n += sizeof(rates);
+  return n;
+}
+
+// A received frame f (len) is FROM our AP TO us?
+bool from_ap_to_us(const uint8_t *f, uint32_t len) {
+  return len >= 16 && memcmp(f + 4, OUR_MAC, 6) == 0 && memcmp(f + 10, g_bssid, 6) == 0;
+}
+
+uint32_t g_rx_total = 0, g_rx_from_ap = 0;
+uint8_t g_first_from_ap[24];
+bool g_have_first = false;
+
+// Poll our RX ring up to `ms` for a frame with FC == want addressed to us.
+int wait_for(uint8_t want, uint8_t *out, uint32_t cap, uint32_t ms) {
+  uint32_t t0 = millis();
+  while (millis() - t0 < ms) {
+    uint32_t n = ns_mac_recv(out, cap);
+    if (!n) continue;
+    g_rx_total++;
+    // Frame FROM the AP (addr2 == bssid) — beacons, responses, etc.
+    if (n >= 16 && memcmp(out + 10, g_bssid, 6) == 0) {
+      g_rx_from_ap++;
+      if (!g_have_first) {
+        memcpy(g_first_from_ap, out, 24);
+        g_have_first = true;
+      }
+    }
+    if (out[0] == want && from_ap_to_us(out, n)) return (int)n;
+  }
+  return 0;
+}
+
+} // namespace
+
+void setup() {
+  Serial.begin(115200);
+  delay(300);
+  Serial.println("wifi_sta_driver: boot (M2 — live association over heapless MAC)");
+
+  WiFi.mode(WIFI_STA);
+  esp_wifi_start();
+
+  // 1) target AP (from an earlier scan; hardcoded to isolate the RX path from the
+  // scan, which was leaving the MAC idle). hitl-rig-3 hostapd on a Raspberry Pi.
+  const uint8_t bssid[6] = {0xb8, 0x27, 0xeb, 0xbb, 0x8d, 0xf8};
+  memcpy(g_bssid, bssid, 6);
+  g_channel = 6;
+  g_found = true;
+  Serial.printf("target '%s' bssid=%02x:%02x:%02x:%02x:%02x:%02x ch=%u\n", TARGET_SSID,
+                g_bssid[0], g_bssid[1], g_bssid[2], g_bssid[3], g_bssid[4], g_bssid[5], g_channel);
+
+  // 2) continuous promiscuous RX (vendor callback captures responses to us).
+  esp_wifi_set_promiscuous(true);
+  esp_wifi_set_promiscuous_rx_cb(&on_rx);
+  esp_wifi_set_channel(g_channel, WIFI_SECOND_CHAN_NONE);
+  delay(300);
+  Serial.printf("vendor rx active: %u frames on ch%u\n", g_vendor_rx, g_channel);
+
+  // TX sanity: send a probe request (broadcast) via ns_mac_send and check for
+  // probe responses to our SA — confirms tx.rs load_frame/set_rate/arm transmits.
+  uint8_t f[128];
+  {
+    uint8_t pf[64];
+    int pn = 0;
+    pf[pn++] = 0x40; pf[pn++] = 0x00; pf[pn++] = 0x00; pf[pn++] = 0x00;
+    for (int i = 0; i < 6; i++) pf[pn++] = 0xff;
+    for (int i = 0; i < 6; i++) pf[pn++] = OUR_MAC[i];
+    for (int i = 0; i < 6; i++) pf[pn++] = 0xff;
+    pf[pn++] = 0x00; pf[pn++] = 0x00; pf[pn++] = 0x00; pf[pn++] = 0x00;
+    const uint8_t rr[] = {0x01, 0x08, 0x82, 0x84, 0x8b, 0x96, 0x12, 0x24, 0x48, 0x6c};
+    memcpy(pf + pn, rr, sizeof(rr)); pn += sizeof(rr);
+    for (int i = 0; i < 40; i++) { ns_mac_send(pf, pn, 0); delay(5); }
+    Serial.printf("tx sanity: probe_resp=%u ap_probe_resp=%u ap_beacons=%u\n", g_probe_resp, g_ap_probe_resp, g_ap_beacons);
+  }
+
+  // 3) association exchange: OUR heapless TX sends auth/assoc, vendor RX catches
+  // the responses.
+  int auth_n = build_auth(f);
+  bool authed = false, assoc = false;
+  for (int attempt = 0; attempt < 30 && !authed; attempt++) {
+    ns_mac_send(f, auth_n, 0);
+    delay(50);
+    if (g_got_auth) {
+      uint16_t status = g_auth_resp[28] | (g_auth_resp[29] << 8);
+      Serial.printf("AUTH RESP: status=%u seq=%u\n", status, g_auth_resp[26] | (g_auth_resp[27] << 8));
+      authed = (status == 0);
+    }
+  }
+  if (!authed) {
+    Serial.printf("auth: no response (auth_seen_from_ap=%u deauth_from_ap=%u)\n", g_auth_seen,
+                  g_deauth_seen);
+    return;
+  }
+  int assoc_n = build_assoc(f);
+  for (int attempt = 0; attempt < 30 && !assoc; attempt++) {
+    ns_mac_send(f, assoc_n, 0);
+    delay(50);
+    if (g_got_assoc) {
+      uint16_t status = g_assoc_resp[26] | (g_assoc_resp[27] << 8);
+      uint16_t aid = g_assoc_resp[28] | (g_assoc_resp[29] << 8);
+      Serial.printf("ASSOC RESP: status=%u aid=0x%04x %s\n", status, aid,
+                    status == 0 ? "== ASSOCIATED" : "");
+      assoc = (status == 0);
+    }
+  }
+  if (!assoc) Serial.println("assoc: no success response");
+}
+
+void loop() { delay(1000); }
