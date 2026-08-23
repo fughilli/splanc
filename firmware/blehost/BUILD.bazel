@@ -31,12 +31,12 @@ cc_binary(
     name = "blehost",
     srcs = ["blehost.cpp"],
     copts = ["-fno-rtti"],
-    # Links + runs: brings the vendor controller up and drives it via the C6
-    # hci_transport API (esp_hci_transport.h). Host<->controller HCI comms are
-    # confirmed on hardware (the transport callback fires). Remaining: the arduino
-    # controller routes HCI to NimBLE's ble_transport, so the Reset command-
-    # complete isn't returned over hci_transport (VHCI) mode — a controller-only /
-    # HCI-interface build config (via @embedded) makes VHCI the active HCI path.
+    # VALIDATED on hardware: brings the vendor controller up and drives it over
+    # its native ble_hci_trans host transport (the API NimBLE binds to). Full
+    # advertising bring-up completes (state=Advertising) and the device is
+    # discoverable on air ("heapless-c6", rssi -29) — no NimBLE host. The earlier
+    # hci_transport (VHCI) shim delivered zero-length events on this controller;
+    # the raw ble_hci_trans path is correct.
     target_compatible_with = _C6,
     deps = [
         ":ble_ffi",

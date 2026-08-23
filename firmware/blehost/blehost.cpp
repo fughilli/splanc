@@ -1,59 +1,87 @@
-// blehost — the heapless BLE host over the C6 HCI transport, replacing NimBLE.
+// blehost — the heapless BLE host over the C6 controller's native HCI transport.
 //
 // Brings up the vendor BLE *controller* (esp_bt_controller, the radio link layer)
-// and drives it from the netstack HCI host over the SDK's hci_transport API (the
-// C6's VHCI-mode transport). Our state machine sends HCI commands (Reset -> adv
-// params -> adv data -> adv enable) and processes events + ACL/ATT via our GATT
-// server. The controller owns only the radio; the host stack is ours. Validate
-// with `hitl ble scan --name heapless-c6` and `hitl ble gatt <addr>`.
+// and drives it from the netstack HCI host over the controller's low-level
+// `ble_hci_trans` API — the same transport NimBLE binds to. Our state machine
+// sends HCI commands (Reset -> adv params -> adv data -> adv enable) and processes
+// events + ACL via our GATT server. The controller owns only the radio; the host
+// stack is ours. Validate with `hitl ble scan --name heapless-c6` / `hitl ble gatt`.
+//
+// The `hci_transport` (VHCI) shim delivered zero-length events on this controller;
+// the raw `ble_hci_trans` path is what the NimBLE host uses, so we use it directly.
 
 #include <Arduino.h>
 
 #include "esp_bt.h"
-#include "esp_hci_transport.h"
 
 extern "C" {
 void ns_ble_setup();
 uint32_t ns_ble_poll_cmd(uint8_t *out, uint32_t cap);
 uint32_t ns_ble_on_hci(const uint8_t *pkt, uint32_t len, uint8_t *out, uint32_t cap);
 uint32_t ns_ble_state();
+
+// --- vendor controller low-level HCI transport (NimBLE ble_hci_trans API) -----
+// Not in the SDK's public headers (internal r_-prefixed controller symbols), but
+// the ABI is the stable NimBLE transport contract.
+typedef int ble_hci_trans_rx_cmd_fn(uint8_t *cmd, void *arg);
+typedef int ble_hci_trans_rx_acl_fn(void *om, void *arg);  // om = struct os_mbuf*
+void r_ble_hci_trans_cfg_hs(ble_hci_trans_rx_cmd_fn *cmd_cb, void *cmd_arg,
+                            ble_hci_trans_rx_acl_fn *acl_cb, void *acl_arg);
+int r_ble_hci_trans_hs_cmd_tx(uint8_t *cmd);
+uint8_t *r_ble_hci_trans_buf_alloc(int type);
+void r_ble_hci_trans_buf_free(uint8_t *buf);
 }
 
-// --- HCI receive queue (controller task -> loop) -----------------------------
+#define BLE_HCI_TRANS_BUF_CMD 3  // NimBLE ble_hci_trans buffer type: command
+
+// --- HCI receive queue (controller callback -> loop) -------------------------
 struct Pkt {
   uint16_t len;
   uint8_t data[268];
 };
 static Pkt s_ring[8];
 static volatile uint8_t s_head = 0, s_tail = 0;
-static volatile uint32_t g_rx = 0, g_tx = 0;
-static uint8_t g_first[12]; static volatile uint8_t g_firstlen = 0;
-static volatile int g_txrc = -99;
+static volatile uint32_t g_rx = 0, g_tx = 0, g_evtlen = 0;
+static uint8_t g_first[12];
+static volatile uint8_t g_firstlen = 0;
 
-// Controller -> host. The netstack expects an H4-prefixed packet ([type][body]);
-// the transport hands us (type, body) separately, so prepend the type byte.
-static int hci_recv(hci_trans_pkt_ind_t type, uint8_t *data, uint16_t len) {
+// Controller -> host EVENT. `evt` is a raw HCI event: [code][param_len][params...],
+// so its total length is param_len + 2. We prepend the H4 EVT type byte (0x04) the
+// netstack expects, queue a copy, and hand the controller's buffer straight back.
+static int on_evt(uint8_t *evt, void *arg) {
+  uint16_t n = (uint16_t)evt[1] + 2;
+  g_evtlen = n;
   uint8_t next = (s_head + 1) & 7;
-  if (next != s_tail && (uint32_t)len + 1 <= sizeof(s_ring[0].data)) {
-    s_ring[s_head].data[0] = (uint8_t)type;  // CMD=1/ACL=2/EVT=4 match our H4 bytes
-    memcpy(s_ring[s_head].data + 1, data, len);
-    s_ring[s_head].len = len + 1;
+  if (next != s_tail && (uint32_t)n + 1 <= sizeof(s_ring[0].data)) {
+    s_ring[s_head].data[0] = 0x04;  // H4 EVT
+    memcpy(s_ring[s_head].data + 1, evt, n);
+    s_ring[s_head].len = n + 1;
     s_head = next;
   }
-  if (g_rx == 0) { uint8_t k = len < 11 ? len : 11; g_first[0]=(uint8_t)type; memcpy(g_first+1, data, k); g_firstlen = k+1; }
+  if (g_rx == 0) {
+    uint8_t k = n < 11 ? n : 11;
+    g_first[0] = 0x04;
+    memcpy(g_first + 1, evt, k);
+    g_firstlen = k + 1;
+  }
   g_rx++;
+  r_ble_hci_trans_buf_free(evt);
   return 0;
 }
 
-// Send a netstack HCI packet ([H4 type][payload]) to the controller.
-static void hci_send(uint8_t *pkt, uint32_t n) {
-  if (n < 1) return;
+// Controller -> host ACL. Deferred: wiring the os_mbuf chain needs r_os_mbuf_*;
+// advertising bring-up is command/event only, so drop ACL for now (GATT later).
+static int on_acl(void *om, void *arg) { return 0; }
+
+// Send a netstack HCI packet ([H4 type][payload]) to the controller. Commands go
+// through a controller-allocated buffer (the transport takes ownership).
+static void hci_send(const uint8_t *pkt, uint32_t n) {
+  if (n < 2 || pkt[0] != 0x01) return;  // command only for now
+  uint8_t *buf = r_ble_hci_trans_buf_alloc(BLE_HCI_TRANS_BUF_CMD);
+  if (!buf) return;
+  memcpy(buf, pkt + 1, n - 1);  // drop the H4 type byte
   g_tx++;
-  if (pkt[0] == 0x01) {
-    g_txrc = hci_transport_host_cmd_tx(pkt + 1, n - 1);
-  } else if (pkt[0] == 0x02) {
-    hci_transport_host_acl_tx(pkt + 1, n - 1);
-  }
+  r_ble_hci_trans_hs_cmd_tx(buf);
 }
 
 void setup() {
@@ -65,34 +93,40 @@ void setup() {
   esp_bt_controller_config_t cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
   esp_err_t e = esp_bt_controller_init(&cfg);
   e |= esp_bt_controller_enable(ESP_BT_MODE_BLE);
-  int ti = hci_transport_init(HCI_TRANSPORT_VHCI);
-  hci_transport_host_callback_register(hci_recv);
-  Serial.printf("blehost: controller=%d transport=%d\n", e, ti);
+  // Bind our receive callbacks to the controller's host-side transport, exactly
+  // as the NimBLE host would, then drive it ourselves.
+  r_ble_hci_trans_cfg_hs(on_evt, nullptr, on_acl, nullptr);
+  Serial.printf("blehost: controller=%d\n", e);
 
   ns_ble_setup();
   uint8_t buf[64];
-  hci_send(buf, ns_ble_poll_cmd(buf, sizeof(buf)));  // kick off: Reset
+  uint32_t n = ns_ble_poll_cmd(buf, sizeof(buf));  // kick off: Reset
+  Serial.print("blehost: tx_reset=");
+  for (uint32_t i = 0; i < n; i++) Serial.printf("%02x ", buf[i]);
+  Serial.println();
+  hci_send(buf, n);
 }
 
 void loop() {
   static uint32_t t = 0;
-  static uint32_t retry = 0;
-  if (ns_ble_state() == 1 && (retry++ % 50) == 10) {
-    uint8_t rst[4] = {0x03, 0x0c, 0x00};  // HCI Reset opcode 0x0c03, no params
-    g_txrc = hci_transport_host_cmd_tx(rst, 3);
-    g_tx++;
-  }
   while (s_tail != s_head) {
     Pkt &p = s_ring[s_tail];
     uint8_t out[64];
+    // on_event advances the state machine and emits the next bring-up command
+    // (Reset -> event mask -> adv params -> data -> enable) directly.
     uint32_t n = ns_ble_on_hci(p.data, p.len, out, sizeof(out));
-    hci_send(out, n);
+    if (n) hci_send(out, n);
     s_tail = (s_tail + 1) & 7;
   }
   if ((t++ % 100) == 0) {
-    Serial.printf("blehost: t=%lu state=%lu rx=%lu tx=%lu txrc=%d heap=%u\n", t / 100,
-                  ns_ble_state(), g_rx, g_tx, g_txrc, esp_get_free_heap_size());
-    if (g_firstlen) { Serial.print("blehost: first_rx="); for (int i=0;i<g_firstlen;i++) Serial.printf("%02x ", g_first[i]); Serial.println(); }
+    Serial.printf("blehost: t=%lu state=%lu rx=%lu tx=%lu evtlen=%lu heap=%u\n",
+                  t / 100, ns_ble_state(), g_rx, g_tx, g_evtlen,
+                  esp_get_free_heap_size());
+    if (g_firstlen) {
+      Serial.print("blehost: first_rx=");
+      for (int i = 0; i < g_firstlen; i++) Serial.printf("%02x ", g_first[i]);
+      Serial.println();
+    }
   }
   delay(10);
 }
