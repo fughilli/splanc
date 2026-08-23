@@ -105,21 +105,19 @@ static int on_acl(void *om, void *arg) {
   return 0;
 }
 
-// CONNECTIONS — root cause is CENTRAL-SIDE, not our LL (on-hw RE, 2026-08-23):
-//   * On-hw --wrap of the LL RX path (r_ble_ll_adv_rx_pkt_in, whose 1st arg is the
-//     PDU type: 3=SCAN_REQ, 5=CONNECT_IND) showed the rig central sends only
-//     SCAN_REQ (type 3, 31x) and NEVER a CONNECT_IND (type 5, 0x). It actively
-//     scans us (and resolves our name via the scan response below) but never
-//     initiates a connection — so slave_start is never reached because there is no
-//     CONNECT_IND to accept, NOT because our LL rejects one.
-//   * The rig's shared host BLE adapter has a documented ~50% BleakClient.connect()
-//     flake (pi/hitl WORKLOG "FUG-61"); the generic `hitl ble gatt` tool never got a
-//     CONNECT_IND out to us. Our event delivery path is fine (synchronous:
-//     ble_transport_to_hs_evt_impl tail-calls ble_hs_hci_rx_evt).
-//   * Our advertising + scan response are validated (discoverable, name resolved).
-//     Definitive connection validation needs a reliable central: the real
-//     hitl_improv harness (which keys on the Improv service UUID in the ADV) or a
-//     phone. GATT/ACL host code is wired + ready.
+// CONNECTIONS WORK with a real central (validated 2026-08-23 via the Bleak-based
+// hitl_improv harness driving the rig's BLE against this firmware):
+//   * The generic `hitl ble gatt` Go tool never sent us a CONNECT_IND (it only
+//     scanned) — that tool, not our firmware, was the earlier "no connection".
+//   * Bleak DOES send CONNECT_IND: on-hw LL --wrap instrumentation showed
+//     slave_start firing (connections created), state reaching Connected(0x3E LE
+//     Conn Complete), AND ATT/ACL flowing in (acl>0) with our GATT responses going
+//     out (tx>0). So connection acceptance + the ATT datapath are proven on silicon.
+//   * Remaining: service discovery doesn't always complete (Bleak reports
+//     "failed to discover services, device disconnected" on some runs) — compounded
+//     by the documented ~50% BleakClient.connect() flake (pi/hitl WORKLOG "FUG-61")
+//     and two rig DUTs both advertising "heapless-c6". Next: a clean single-DUT run
+//     dumping the discovery ACL exchange to confirm the GATT discovery responses.
 
 // Send a netstack HCI packet ([H4 type][payload]) to the controller. Commands go
 // through a controller-allocated buffer; ACL data goes through an msys mbuf. Both
@@ -194,7 +192,8 @@ void loop() {
   }
   if ((t++ % 100) == 0) {
     Serial.printf(
-        "blehost: t=%lu state=%lu rx=%lu tx=%lu acl=%lu lastcode=%02x lastsub=%02x\n",
+        "blehost: t=%lu state=%lu rx=%lu tx=%lu acl=%lu lastcode=%02x lastsub=%02x
+",
         t / 100, ns_ble_state(), g_rx, g_tx, g_acl, g_lastcode, g_lastsub);
     if (g_firstlen) {
       Serial.print("blehost: first_rx=");
