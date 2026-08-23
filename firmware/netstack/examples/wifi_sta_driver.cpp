@@ -132,6 +132,22 @@ void setup() {
   delay(300);
   Serial.println("wifi_sta_driver: boot (M2 — live association over heapless MAC)");
 
+  // CONTROL: can the vendor stack associate? Capture the disconnect REASON — a
+  // 4-way/handshake-timeout reason means auth+assoc SUCCEEDED (so the AP accepts
+  // auth and our frame would be the issue); a no-AP/auth reason means the AP isn't
+  // completing auth at all (rig-state, not our frame).
+  WiFi.onEvent([](arduino_event_id_t e, arduino_event_info_t info) {
+    if (e == ARDUINO_EVENT_WIFI_STA_DISCONNECTED)
+      Serial.printf("CONTROL disconnect reason=%d\n", info.wifi_sta_disconnected.reason);
+    if (e == ARDUINO_EVENT_WIFI_STA_CONNECTED) Serial.println("CONTROL: vendor CONNECTED (assoc ok)");
+  });
+  WiFi.begin("hitl-rig-3", "hitl-rig-3-provision");
+  for (int i = 0; i < 80 && WiFi.status() != WL_CONNECTED; i++) delay(250);
+  Serial.printf("CONTROL vendor assoc: status=%d %s\n", WiFi.status(),
+                WiFi.status() == WL_CONNECTED ? "CONNECTED" : "not connected");
+  WiFi.disconnect(true);
+  delay(500);
+
   WiFi.mode(WIFI_STA);
   esp_wifi_start();
 
