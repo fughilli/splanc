@@ -6,6 +6,7 @@ drive/decode contract can't silently drift. The on-hardware capture+assert loop 
 //pi/hitl/harness:led_capture (manual+hitl)."""
 
 from led_pattern import (
+    best_structural_capture,
     counting_message,
     diff_pixels,
     diff_pixels_aligned,
@@ -70,6 +71,66 @@ def test_aligned_reports_best_offset_on_true_mismatch():
     got = [(0, 0, 0)] * 10 + [(0, 0, 160)] * 4 + [(0, 0, 0)] * 10
     diffs, _ = diff_structure_aligned(want, got)
     assert diffs  # blue-lit != red-lit structure
+
+
+# -- torn-frame re-capture (FUG-140): best_structural_capture ----------------
+
+
+def _capture_seq(*frames):
+    """A capture_fn that yields each given frame in turn (one per attempt)."""
+    it = iter(frames)
+    return lambda: next(it)
+
+
+def test_recapture_returns_first_clean_frame():
+    # A torn frame first (a garbage seam pixel where red is expected → no offset
+    # matches), then a clean one: the helper must re-capture and pass on the clean
+    # frame. Mirrors the FUG-140 flake: `diff_structure_aligned` alone would fail.
+    want = expected_pixels([(0, 2, (255, 0, 0)), (2, 2, (0, 255, 0)), (4, 4, (0, 0, 255))], 8)
+    clean = (
+        [(0, 0, 0)] * 20
+        + [
+            (160, 0, 0),
+            (160, 0, 0),
+            (0, 160, 0),
+            (0, 160, 0),
+            (0, 0, 160),
+            (0, 0, 160),
+            (0, 0, 160),
+            (0, 0, 160),
+        ]
+        + [(0, 0, 0)] * 20
+    )
+    torn = list(clean)
+    torn[21] = (1, 0, 254)  # a torn seam pixel — breaks every 8-window over the block
+    torn[24] = (200, 0, 0)  # blue expected here, decoded as red (frame straddle)
+    # Sanity: the torn frame alone has no clean structural offset.
+    assert diff_structure_aligned(want, torn)[0]
+    got, diffs, _ = best_structural_capture(_capture_seq(torn, clean), want, attempts=4)
+    assert diffs == []
+    assert got == clean  # re-captured past the torn frame
+
+
+def test_recapture_returns_best_effort_when_never_clean():
+    # A real fault (all captures torn/wrong) must still fail — retries don't mask it —
+    # and return the fewest-diff attempt for reporting.
+    want = expected_pixels([(0, 4, (255, 0, 0))], 4)
+    worse = [(0, 0, 160)] * 4  # all blue: 4 structural diffs vs red
+    better = [(160, 0, 0), (160, 0, 0), (0, 0, 160), (0, 0, 160)]  # 2 diffs
+    got, diffs, _ = best_structural_capture(_capture_seq(worse, better, worse), want, attempts=3)
+    assert diffs  # still a failure — a real fault is not retried away
+    assert len(diffs) == 2 and got == better  # kept the least-bad attempt
+
+
+def test_recapture_calls_on_retry_between_attempts():
+    want = expected_pixels([(0, 2, (255, 0, 0))], 2)
+    torn = [(1, 0, 254), (0, 0, 160)]
+    clean = [(160, 0, 0), (160, 0, 0)]
+    seen = []
+    best_structural_capture(
+        _capture_seq(torn, clean), want, attempts=4, on_retry=lambda a, d, o: seen.append(a)
+    )
+    assert seen == [1]  # one retry notice before the clean second capture; none after
 
 
 # -- JIT-verify differential (FUG-134): diff_pixels_aligned ------------------

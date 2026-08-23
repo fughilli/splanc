@@ -116,6 +116,39 @@ def diff_structure_aligned(
     return (best_diffs or []), best_off
 
 
+def best_structural_capture(
+    capture_fn,
+    expected: Sequence[Pixel],
+    attempts: int = 4,
+    on_retry=None,
+) -> Tuple[List[Pixel], List[Tuple[int, Pixel, object]], int]:
+    """Re-capture until the decode structurally matches `expected`.
+
+    `diff_structure_aligned` already slides `expected` across a capture to tolerate
+    where the lit block landed, but it needs ONE untorn window to exist: if the
+    analyzer's software trigger armed across a repaint seam the decoded frame is
+    torn (a garbage pixel at the seam, e.g. a red↔blue boundary decoding as
+    `(1,0,254)`), and NO offset matches — a coin-flip red (FUG-140). The pattern is
+    static on the wire, so a fresh capture re-arms at a new phase and clears the
+    tear; a *real* mismatch (miswire / wrong order) fails every attempt. Call
+    `capture_fn()` up to `attempts` times, returning the first clean
+    `(got, [], off)`, else the fewest-diff `(got, diffs, off)` seen. `on_retry(attempt,
+    diffs, off)` is invoked after each non-clean attempt (except the last) for logging.
+    """
+    attempts = max(1, attempts)
+    best: Tuple[List[Pixel], List[Tuple[int, Pixel, object]], int] | None = None
+    for attempt in range(1, attempts + 1):
+        got = list(capture_fn())
+        diffs, off = diff_structure_aligned(expected, got)
+        if not diffs:
+            return got, [], off
+        if best is None or len(diffs) < len(best[1]):
+            best = (got, diffs, off)
+        if on_retry is not None and attempt < attempts:
+            on_retry(attempt, diffs, off)
+    return best  # type: ignore[return-value]  # attempts>=1 => best is set
+
+
 def diff_pixels(expected: Sequence[Pixel], got: Sequence[Pixel]) -> List[Tuple[int, Pixel, object]]:
     """Positions where the captured pixels differ from expected.
 

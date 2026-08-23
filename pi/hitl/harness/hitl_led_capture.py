@@ -65,6 +65,7 @@ from typing import Dict, List, Tuple
 from hardware_config_pattern import expected_decoded_pixels
 from hitl_client import Reservation, ReserveError
 from led_pattern import (
+    best_structural_capture,
     counting_message,
     diff_pixels_aligned,
     diff_structure_aligned,
@@ -74,6 +75,14 @@ from provision import HarnessError, dut_target, ensure_booted, provision_dut
 
 # The SPI_FAST_FLASH_BOOT check + its strap-race retry live in provision.ensure_booted.
 BLE_MARKER = "[ble] advertising"
+
+
+def _recapture_log(attempt: int, diffs: list, off: int) -> None:
+    """on_retry callback for best_structural_capture: note a torn/transient frame."""
+    _log(
+        f"[capture] attempt {attempt}: {len(diffs)} pixel(s) differ (best offset {off}) "
+        f"— torn/transient frame, re-capturing"
+    )
 
 
 def _log(msg: str) -> None:
@@ -622,8 +631,9 @@ def run(args: argparse.Namespace) -> int:
         _log(f"[drive] {args.device_ws} (no reservation; capturing via daemon {args.server})")
         asyncio.run(_drive_pattern(args.device_ws, insecure=not args.ws_verify))
         time.sleep(0.5)
-        got = capture_via_daemon(args.server, "", args.samples)
-        diffs, off = diff_structure_aligned(want, got)
+        got, diffs, off = best_structural_capture(
+            lambda: capture_via_daemon(args.server, "", args.samples), want, on_retry=_recapture_log
+        )
         if diffs:
             _log(f"[FAIL] {len(diffs)} pixel(s) differ (best offset {off}): {diffs[:8]}")
             _log(f"       expected {want}")
@@ -674,16 +684,22 @@ def run(args: argparse.Namespace) -> int:
                 raise SystemExit("[capture] couldn't resolve the reserved DUT name for the map")
             _log(f"[capture] reserved DUT {dev}")
             ch1_pin = _resolve_ch1_pin(res.server, dev, args.ch1_pin, args.ch1_pairs)
-            got0 = _capture_on_pin(res.server, dev, args.samples, None)
+            got0, e0, o0 = best_structural_capture(
+                lambda: _capture_on_pin(res.server, dev, args.samples, None),
+                want[:half0],
+                on_retry=_recapture_log,
+            )
             _log(f"[capture] ch0 ({half0} LEDs) decoded {len(got0)} px: {got0}")
             try:
-                got1 = _capture_on_pin(res.server, dev, args.samples, ch1_pin)
+                got1, e1, o1 = best_structural_capture(
+                    lambda: _capture_on_pin(res.server, dev, args.samples, ch1_pin),
+                    want[half0:n],
+                    on_retry=_recapture_log,
+                )
             except Exception as e:  # noqa: BLE001 — a dead ch1 line surfaces as timeout/500
                 _log(f"[capture] ch1 capture failed on {ch1_pin}: {type(e).__name__}: {e}")
-                got1 = []
+                got1, e1, o1 = [], diff_structure_aligned(want[half0:n], [])[0], 0
             _log(f"[capture] ch1 ({half1} LEDs) decoded {len(got1)} px: {got1}")
-            e0, o0 = diff_structure_aligned(want[:half0], got0)
-            e1, o1 = diff_structure_aligned(want[half0:n], got1)
             if e0 or e1:
                 _log(f"[FAIL] ch0 {len(e0)} diff(s) @off {o0}; ch1 {len(e1)} diff(s) @off {o1}")
                 _log(f"       ch0 want {want[:half0]} got {got0}")
@@ -705,8 +721,9 @@ def run(args: argparse.Namespace) -> int:
         # Empty device -> the daemon's default analyzer mapping (single-DUT LA rig);
         # pin it when a rig taps several DUTs on distinct channels.
         dev = getattr(res, "device", "") or ""
-        got = capture(res, dev, args.samples)
-        diffs, off = diff_structure_aligned(want, got)
+        got, diffs, off = best_structural_capture(
+            lambda: capture(res, dev, args.samples), want, on_retry=_recapture_log
+        )
         if diffs:
             _log(f"[FAIL] {len(diffs)} pixel(s) differ (best offset {off}): {diffs[:8]}")
             _log(f"       expected {want}")
