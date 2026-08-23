@@ -22,6 +22,7 @@ const OP_LE_SET_ADV_ENABLE: u16 = 0x200A;
 const OP_LE_SET_EVENT_MASK: u16 = 0x2001;
 const OP_LE_READ_BUF_SIZE: u16 = 0x2002;
 const OP_LE_READ_LOCAL_FEAT: u16 = 0x2003;
+const OP_LE_SET_RANDOM_ADDR: u16 = 0x2005;
 
 // Event codes.
 const EV_CMD_COMPLETE: u8 = 0x0E;
@@ -49,6 +50,7 @@ pub enum HostState {
     LeMaskSent,
     BufSizeSent,
     FeatSent,
+    RandAddrSent,
     AdvParamsSent,
     AdvDataSent,
     ScanRspSent,
@@ -62,11 +64,27 @@ pub struct BleHost {
     adv: [u8; 32],
     adv_len: usize,
     scan_rsp: [u8; 32],
+    /// Static random advertising address (little-endian; MSB has the top two bits
+    /// set = static-random). Default is distinctive; the firmware overrides it.
+    rand_addr: [u8; 6],
 }
 
 impl BleHost {
     pub const fn new() -> Self {
-        BleHost { state: HostState::Init, adv: [0; 32], adv_len: 0, scan_rsp: [0; 32] }
+        BleHost {
+            state: HostState::Init,
+            adv: [0; 32],
+            adv_len: 0,
+            scan_rsp: [0; 32],
+            rand_addr: [0x01, 0x00, 0x00, 0x00, 0xDE, 0xC0], // C0:DE:00:00:00:01
+        }
+    }
+
+    /// Set the static random advertising address (LE byte order). The MSB
+    /// (`addr[5]`) must have its top two bits set (static random).
+    pub fn set_random_addr(&mut self, addr: [u8; 6]) {
+        self.rand_addr = addr;
+        self.rand_addr[5] |= 0xC0;
     }
 
     /// Set the advertising payload (AD structures) — e.g. flags + complete local
@@ -152,9 +170,18 @@ impl BleHost {
                 cmd(OP_LE_READ_LOCAL_FEAT, &[], out)
             }
             (HostState::FeatSent, _) => {
+                // Set a static random address (top 2 bits = 11). Advertising with a
+                // random address means a central caches our GATT DB under an address
+                // that changes per firmware build, avoiding a stale GATT cache after
+                // the DB layout changes.
+                self.state = HostState::RandAddrSent;
+                cmd(OP_LE_SET_RANDOM_ADDR, &self.rand_addr, out)
+            }
+            (HostState::RandAddrSent, _) => {
                 self.state = HostState::AdvParamsSent;
-                // adv interval 0x00A0 (100ms), connectable undirected, public addr.
-                let p = [0xa0, 0x00, 0xa0, 0x00, 0x00, 0x00, 0x00, 0, 0, 0, 0, 0, 0, 0x07, 0x00];
+                // adv interval 0x00A0 (100ms), connectable undirected, own addr type
+                // = 1 (random — matches the address set above).
+                let p = [0xa0, 0x00, 0xa0, 0x00, 0x00, 0x01, 0x00, 0, 0, 0, 0, 0, 0, 0x07, 0x00];
                 cmd(OP_LE_SET_ADV_PARAMS, &p, out)
             }
             (HostState::AdvParamsSent, _) => {
@@ -244,6 +271,8 @@ mod tests {
         h.on_event(&cmd_complete(OP_LE_READ_BUF_SIZE), &mut out);
         assert_eq!(h.state, HostState::FeatSent);
         h.on_event(&cmd_complete(OP_LE_READ_LOCAL_FEAT), &mut out);
+        assert_eq!(h.state, HostState::RandAddrSent);
+        h.on_event(&cmd_complete(OP_LE_SET_RANDOM_ADDR), &mut out);
         assert_eq!(h.state, HostState::AdvParamsSent);
         h.on_event(&cmd_complete(OP_LE_SET_ADV_PARAMS), &mut out);
         // adv data command carries our payload length.
