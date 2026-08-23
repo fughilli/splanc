@@ -114,6 +114,29 @@ impl<const N: usize> RxRing<N> {
         s
     }
 
+    /// Poll the descriptor ring for frames the hardware has completed: the MAC
+    /// clears the OWN bit and writes the delivered length into `word0[27:14]`. Each
+    /// slot still marked HW-owned whose descriptor OWN bit is now clear was just
+    /// filled — mark it ready with its DMA length. Returns the number reaped.
+    ///
+    /// # Safety: reads descriptor memory the MAC DMAs into concurrently (volatile).
+    pub unsafe fn reap(&mut self) -> usize {
+        let mut n = 0;
+        for i in 0..N {
+            if !self.slots[i].owned_by_hw {
+                continue;
+            }
+            let word0 = core::ptr::read_volatile(&self.descs[i].word0);
+            if word0 & DESC_OWN == 0 {
+                let len = ((word0 >> DESC_LEN_SHIFT) & DESC_SIZE_MASK) as usize;
+                self.slots[i].len = len.min(MAX_FRAME);
+                self.slots[i].owned_by_hw = false;
+                n += 1;
+            }
+        }
+        n
+    }
+
     // --- host-testable ring logic (no MMIO) ---------------------------------
 
     /// Called (from the ISR/poll) when the DMA has filled slot `idx` with `len`
@@ -206,6 +229,21 @@ pub fn dispatch_ble<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reap_detects_hw_completion_and_extracts_length() {
+        let mut ring: RxRing<3> = RxRing::new();
+        unsafe { ring.link() }; // all descriptors OWN=1 (HW owns)
+        // Simulate the MAC filling slot 1: clear OWN, write length 250 into [27:14].
+        ring.descs[1].word0 =
+            (ring.descs[1].word0 & !DESC_OWN & !(DESC_SIZE_MASK << DESC_LEN_SHIFT))
+                | (250 << DESC_LEN_SHIFT);
+        assert_eq!(unsafe { ring.reap() }, 1); // one frame reaped
+        assert_eq!(unsafe { ring.reap() }, 0); // idempotent — not re-reaped
+        let (idx, f) = ring.next_frame().unwrap();
+        assert_eq!(idx, 1);
+        assert_eq!(f.len(), 250);
+    }
 
     #[test]
     fn install_programs_descriptor_base_and_clears_irq() {
