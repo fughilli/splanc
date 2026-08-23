@@ -31,6 +31,14 @@
 #include <esp_rom_crc.h>
 #include <esp_heap_caps.h>
 #include <esp_memory_utils.h>  // esp_ptr_executable — validate scanned stack words are code
+#include <multi_heap.h>  // dedicated TLS heap pool (FUG-133)
+// mbedtls_platform_set_calloc_free — route TLS allocs at the pool. Declared here
+// rather than via <mbedtls/platform.h>: that header gates the prototype on
+// MBEDTLS_PLATFORM_MEMORY, which isn't visible without mbedtls's own config file
+// in this TU. The symbol exists in the linked mbedtls (built with PLATFORM_MEMORY
+// and no CALLOC_MACRO), so a direct extern "C" decl resolves at link.
+extern "C" int mbedtls_platform_set_calloc_free(void *(*calloc_func)(size_t, size_t),
+                                                void (*free_func)(void *));
 #include <esp_system.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
@@ -190,6 +198,63 @@ static void on_heap_alloc_failed(size_t size, uint32_t caps, const char *fn) {
                (unsigned)size, (unsigned)caps, fn ? fn : "?",
                (unsigned)esp_get_free_heap_size(), heap_largest());
   heap_fail_backtrace();
+}
+
+// -- dedicated TLS heap pool (FUG-133) ---------------------------------------
+// The mbedtls TLS record/handshake buffers (~8.5 KB each — IN/OUT_CONTENT_LEN is
+// 8 KB here) are big single allocations. Sharing the general heap, they FRAGMENT
+// it under wss reconnect churn: the largest free block drops just below ~8.5 KB
+// while ~17 KB stays free, so every new session's buffer alloc fails -0x7F00 and
+// the wss:443 server wedges until reboot (observed on hardware; slot_guard's
+// field bug). Route ALL mbedtls allocations to a dedicated pool instead, carved
+// once at boot when the heap is still whole: TLS churn then fragments only its own
+// pool — where every alloc/free is the same shape and lifecycle, so freed blocks
+// are reused rather than stranded — and can neither fragment nor be starved by the
+// general heap. mbedtls is built with MBEDTLS_PLATFORM_MEMORY and only
+// PLATFORM_STD_CALLOC (no CALLOC_MACRO), so the allocator is settable at runtime.
+//
+// Sized for the churn gate's realistic peak — one active session mid-record/
+// handshake (~in+out ≈ 17 KB) plus one idle held session (~2 KB with the dynamic
+// buffer) ≈ 19 KB, with margin. NOT sized for 2 concurrent full handshakes: that
+// (~34 KB) plus the 28 KB httpd task stack (allocated from the general heap)
+// exceeds the C6's contiguous heap and makes httpd_ssl_start fail to even reserve
+// its stack (observed at 40 KB). Concurrency ≥2 stays "marginal" by design; the
+// held=1 reconnect churn is the gate, and it's single-active. Carved from internal
+// 8-bit RAM. If the pool can't be reserved, we leave the default allocator.
+static const size_t kTlsPoolSize = 24 * 1024;
+static multi_heap_handle_t g_tls_heap = nullptr;
+
+static void *tls_pool_calloc(size_t n, size_t size) {
+  size_t total;
+  if (__builtin_mul_overflow(n, size, &total)) return nullptr;
+  void *p = multi_heap_malloc(g_tls_heap, total);
+  if (p) memset(p, 0, total);
+  return p;
+}
+
+static void tls_pool_free(void *p) {
+  if (p) multi_heap_free(g_tls_heap, p);
+}
+
+// Reserve the pool + point mbedtls at it. Call once, early in setup(), before any
+// TLS/cert use (ledmapper_gen_key, wss_start).
+static void tls_heap_init() {
+  void *pool = heap_caps_malloc(kTlsPoolSize, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  if (!pool) {
+    Log().printf("[tls] pool reserve FAILED (%u B); using shared heap (free=%u max=%u)\n",
+                 (unsigned)kTlsPoolSize, (unsigned)esp_get_free_heap_size(), heap_largest());
+    return;
+  }
+  g_tls_heap = multi_heap_register(pool, kTlsPoolSize);
+  if (!g_tls_heap) {
+    Log().printf("[tls] pool register FAILED; using shared heap\n");
+    heap_caps_free(pool);
+    return;
+  }
+  mbedtls_platform_set_calloc_free(tls_pool_calloc, tls_pool_free);
+  Log().printf("[tls] dedicated TLS heap: %u B (pool_free=%u); shared heap free=%u max=%u\n",
+               (unsigned)kTlsPoolSize, (unsigned)multi_heap_free_size(g_tls_heap),
+               (unsigned)esp_get_free_heap_size(), heap_largest());
 }
 
 // Render buffer cap; the actual rendered count follows the active pattern /
@@ -2070,6 +2135,10 @@ void setup() {
   // session on a fragmented heap (-0x7F00) — with a rough backtrace to its call
   // site. Registered before anything allocates so no early failure is missed.
   heap_caps_register_failed_alloc_callback(on_heap_alloc_failed);
+  // Carve the dedicated TLS heap now, while the heap is still whole, and route
+  // mbedtls at it — so wss reconnect churn can't fragment/starve the general heap
+  // out of a contiguous TLS record buffer and wedge the server (FUG-133).
+  tls_heap_init();
   // RMT WS2812 driver on LED_DATA_PIN (replaces FastLED's blocking clockless
   // driver). It reads `show_buf` (the transmit snapshot), never the live `leds` —
   // the async transmit task pushes show_buf while the render task fills leds.
