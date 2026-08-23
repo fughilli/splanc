@@ -49,16 +49,22 @@ pub const HW_TXQ_COUNT: usize = 5;
 /// bit the completion path clears).
 struct TxSlot {
     buf: [u8; MAX_FRAME],
-    len: usize,
+    len: usize,           // total buffer length (TX header + 802.11 frame)
+    frame_len_802: usize, // 802.11 frame length (the PHY SIGNAL length)
     queue: usize,
     owned_by_hw: bool,
 }
 
 impl TxSlot {
     const fn new() -> Self {
-        TxSlot { buf: [0u8; MAX_FRAME], len: 0, queue: 0, owned_by_hw: false }
+        TxSlot { buf: [0u8; MAX_FRAME], len: 0, frame_len_802: 0, queue: 0, owned_by_hw: false }
     }
 }
+
+/// Bytes of hardware TX header prepended before the 802.11 frame (M1b-measured on
+/// silicon): byte0 holds the 802.11 frame length (the PHY SIGNAL length); the
+/// frame proper starts at offset 8.
+pub const TX_HDR_LEN: usize = 8;
 
 /// A TX lldesc descriptor (same 3-word format as the RX ring): `word0` packs
 /// `size[13:0] | length[27:14] | flags[31:28]` (bit31 OWN, bit30 EOF), `word1` is
@@ -124,12 +130,42 @@ impl<const N: usize> TxRing<N> {
             if !self.slots[i].owned_by_hw {
                 self.slots[i].buf[..frame.len()].copy_from_slice(frame);
                 self.slots[i].len = frame.len();
+                self.slots[i].frame_len_802 = frame.len();
                 self.slots[i].queue = ac;
                 self.slots[i].owned_by_hw = true;
                 return Ok(i);
             }
         }
         Err(Overflow) // pool full -> back-pressure
+    }
+
+    /// Load an 802.11 `frame` for transmit on access category `ac`, building the
+    /// slot buffer as `[8-byte TX header | frame]` with the 802.11 length in the
+    /// header (byte 0, and its high nibble in byte 1) — the layout the hardware
+    /// expects (M1b). Records the 802.11 length for [`set_rate`]. Returns the slot
+    /// index, or `Err(Overflow)` if the pool is full or the frame is too long.
+    ///
+    /// This is the real transmit entry point (vs. [`enqueue`], which stores a raw
+    /// buffer for the ring-logic tests). Call [`set_rate`] then [`arm`] next.
+    pub fn load_frame(&mut self, frame: &[u8], ac: usize) -> Result<usize, Overflow> {
+        if frame.len() + TX_HDR_LEN > MAX_FRAME || ac >= HW_TXQ_COUNT {
+            return Err(Overflow);
+        }
+        for i in 0..N {
+            if !self.slots[i].owned_by_hw {
+                let s = &mut self.slots[i];
+                s.buf[..TX_HDR_LEN].fill(0);
+                s.buf[0] = (frame.len() & 0xff) as u8;
+                s.buf[1] = ((frame.len() >> 8) & 0x0f) as u8;
+                s.buf[TX_HDR_LEN..TX_HDR_LEN + frame.len()].copy_from_slice(frame);
+                s.len = TX_HDR_LEN + frame.len();
+                s.frame_len_802 = frame.len();
+                s.queue = ac;
+                s.owned_by_hw = true;
+                return Ok(i);
+            }
+        }
+        Err(Overflow)
     }
 
     /// Mark slot `idx` transmitted (hardware raised completion); the slot returns
@@ -185,10 +221,9 @@ impl<const N: usize> TxRing<N> {
     /// with the descriptor's address encoded in + the arm bits. The frame buffer
     /// holds the raw 802.11 frame from offset 0 (no TX vector header).
     ///
-    /// The caller MUST have programmed the per-queue rate/format registers (PLCP1
-    /// `0x5488`, signal `0x54ac`, len `0x54b8` — see [`set_rate_regs`]) for `queue`
-    /// BEFORE calling `arm`, since the PLCP0 write with `0xC000_0000` arms the DMA
-    /// immediately.
+    /// The caller MUST have programmed the per-queue rate/format registers via
+    /// [`set_rate`] for `queue` BEFORE calling `arm`, since the PLCP0 write with
+    /// `0xC000_0000` arms the DMA immediately.
     ///
     /// # Safety: MMIO; `self` must be `'static` (the descriptor stores a raw
     /// pointer into `self` and the hardware DMAs the frame buffer), and the MAC +
@@ -211,17 +246,29 @@ impl<const N: usize> TxRing<N> {
         mmio::write32(plcp, plcp0_for_desc(desc_addr));
     }
 
-    /// Program the per-queue rate/format registers captured from the vendor for a
-    /// legacy transmit (M1a). These carry the PHY rate + length the SIGNAL field
-    /// needs; the exact length-dependent encoding is still being reverse-engineered
-    /// (M1b), so for now the caller passes the measured words verbatim.
+    /// Program slot `idx`'s per-queue rate/format registers for a legacy transmit,
+    /// using the values measured + validated on silicon (M1b `wifi_tx_driver`
+    /// transmitted a from-scratch probe request that real APs answered). The 802.11
+    /// frame length goes into PLCP1's low 12 bits (`0x5488`, the PHY SIGNAL length);
+    /// the remaining words are the length-independent legacy-OFDM rate template.
+    /// Must be called before [`arm`] for the same queue.
     ///
-    /// # Safety: MMIO; call before [`arm`] for the same `queue`.
-    pub unsafe fn set_rate_regs(queue: usize, plcp1: u32, signal: u32, len_word: u32) {
-        let stride = mac::TXQ_STATUS_STRIDE;
-        mmio::write32(mac::txq_reg(0x600A_5488, queue, stride), plcp1);
-        mmio::write32(mac::txq_reg(0x600A_54AC, queue, stride), signal);
-        mmio::write32(mac::txq_reg(0x600A_54B8, queue, stride), len_word);
+    /// # Safety: MMIO; the MAC + PHY must be initialized.
+    pub unsafe fn set_rate(&self, idx: usize) {
+        if idx >= N {
+            return;
+        }
+        let queue = self.slots[idx].queue;
+        let flen = (self.slots[idx].frame_len_802 as u32) & 0xfff;
+        let s = mac::TXQ_STATUS_STRIDE;
+        mmio::write32(mac::txq_reg(0x600A_5488, queue, s), flen); // PLCP1 = 802.11 length
+        mmio::write32(mac::txq_reg(0x600A_548C, queue, s), 0x0002_0000);
+        mmio::write32(mac::txq_reg(0x600A_5490, queue, s), 0x0011_1110);
+        mmio::write32(mac::txq_reg(0x600A_54AC, queue, s), 0x1414_0014); // rate/format
+        mmio::write32(mac::txq_reg(0x600A_54B0, queue, s), 0x0000_4081);
+        mmio::write32(mac::txq_reg(0x600A_54B4, queue, s), 0x0040_0000);
+        mmio::write32(mac::txq_reg(0x600A_54B8, queue, s), 0x0040_0000);
+        mmio::write32(mac::txq_reg(0x600A_54BC, queue, s), 0x0040_0004);
     }
 
     /// Poll each hardware queue for completion and, if done, clear the state and
@@ -315,6 +362,20 @@ mod tests {
         assert_eq!(mmio::test_get(mac::TX_CONF1).unwrap(), 0x0500_0000);
         // Global TXQ enable bits asserted.
         assert_eq!(mmio::test_get(mac::TXQ_ENABLE).unwrap() & 0x11, 0x11);
+    }
+
+    #[test]
+    fn load_frame_prepends_tx_header_with_length() {
+        let mut ring: TxRing<2> = TxRing::new();
+        let frame = [0x40u8, 0x00, 0x00, 0x00]; // a 4-byte "802.11 frame"
+        let idx = ring.load_frame(&frame, 0).unwrap();
+        // Buffer = 8-byte header + frame; header byte0 = 802.11 length.
+        assert_eq!(ring.slots[idx].len, TX_HDR_LEN + 4);
+        assert_eq!(ring.slots[idx].frame_len_802, 4);
+        assert_eq!(ring.slots[idx].buf[0], 4); // length in header byte0
+        assert_eq!(&ring.slots[idx].buf[TX_HDR_LEN..TX_HDR_LEN + 4], &frame);
+        // A frame that would overflow the slot with the header is refused.
+        assert!(ring.load_frame(&[0u8; MAX_FRAME], 0).is_err());
     }
 
     #[test]

@@ -143,16 +143,31 @@ void setup() {
   esp_wifi_scan_stop();
   delay(50);
 
-  // 3) overwrite the 802.11 source address (addr2, frame offset 10 = buffer
-  // offset 8[TX hdr]+10) with our unique SA.
-  for (int i = 0; i < 6; i++) g_frame[18 + i] = g_sa[i];
-  // M1b test: APPEND a 10-byte vendor IE and grow the descriptor length, but keep
-  // the captured rate registers unchanged. If APs still respond, the PHY SIGNAL
-  // length is derived from the descriptor (rate regs are length-independent) and
-  // generalizing TX to arbitrary frames is trivial.
-  const uint8_t ie[10] = {0xdd, 0x08, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77};
-  for (int i = 0; i < 10; i++) g_frame[g_frame_len + i] = ie[i];
-  g_frame_len += 10;
+  // 3) build a probe request FROM SCRATCH (not cloned) into our buffer: an
+  // 8-byte TX header (byte0 = 802.11 length) followed by the 802.11 frame. This
+  // proves the full TX recipe — our own frame + the length encoding + the
+  // captured rate template — independent of the vendor's frame.
+  uint8_t f[64];
+  int n = 0;
+  f[n++] = 0x40; f[n++] = 0x00;             // FC: probe request
+  f[n++] = 0x00; f[n++] = 0x00;             // duration
+  for (int i = 0; i < 6; i++) f[n++] = 0xff; // DA broadcast
+  for (int i = 0; i < 6; i++) f[n++] = g_sa[i]; // SA = our unique MAC
+  for (int i = 0; i < 6; i++) f[n++] = 0xff; // BSSID broadcast
+  f[n++] = 0x00; f[n++] = 0x00;             // seq
+  f[n++] = 0x00; f[n++] = 0x00;             // SSID IE (wildcard, len 0)
+  const uint8_t rates[] = {0x01, 0x08, 0x82, 0x84, 0x8b, 0x96, 0x12, 0x24, 0x48, 0x6c};
+  for (uint8_t b : rates) f[n++] = b;       // supported rates
+  const uint8_t ext[] = {0x32, 0x04, 0x0c, 0x18, 0x30, 0x60};
+  for (uint8_t b : ext) f[n++] = b;         // extended rates
+  // Assemble buffer = 8-byte TX header + frame; byte0 of header = 802.11 length.
+  for (int i = 0; i < 8; i++) g_frame[i] = 0;
+  g_frame[0] = (uint8_t)n;
+  for (int i = 0; i < n; i++) g_frame[8 + i] = f[i];
+  g_frame_len = 8 + n;
+  g_rr.r5488 = (g_rr.r5488 & ~0xfffu) | ((uint32_t)n & 0xfff); // PLCP1 length
+  Serial.printf("scratch: 802.11 len=%d buflen=%u header[0]=0x%02x PLCP1=0x%08x\n", n,
+                g_frame_len, g_frame[0], g_rr.r5488);
   Serial.printf("armed: SA=%02x:%02x:%02x:%02x:%02x:%02x frame@0x%08x len=%u\n", g_sa[0],
                 g_sa[1], g_sa[2], g_sa[3], g_sa[4], g_sa[5],
                 reinterpret_cast<uint32_t>(&g_frame[0]), g_frame_len);
