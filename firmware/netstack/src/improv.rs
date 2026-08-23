@@ -1,0 +1,332 @@
+//! Improv Wi-Fi (BLE) provisioning protocol — the RPC codec + provisioning state
+//! machine, independent of the GATT transport. A central writes RPC commands to
+//! the RPC-command characteristic; we parse them here, drive the state, and emit
+//! current-state / RPC-result / error payloads for the notify characteristics.
+//!
+//! Everything is bounded and `no_std`: SSID/passphrase are copied into fixed
+//! buffers, a malformed/oversize/bad-checksum packet yields an error state rather
+//! than an out-of-bounds access. See <https://www.improv-wifi.com/ble/>.
+
+use crate::rx::Buf;
+
+/// Improv service + characteristic 128-bit UUIDs (little-endian byte order as they
+/// appear on-air). Base: `00467768-6228-2272-4663-2774782680XX`.
+pub const IMPROV_SVC_UUID: [u8; 16] = uuid128(0x00);
+pub const IMPROV_CHAR_CURRENT_STATE: [u8; 16] = uuid128(0x01);
+pub const IMPROV_CHAR_ERROR_STATE: [u8; 16] = uuid128(0x02);
+pub const IMPROV_CHAR_RPC_COMMAND: [u8; 16] = uuid128(0x03);
+pub const IMPROV_CHAR_RPC_RESULT: [u8; 16] = uuid128(0x04);
+pub const IMPROV_CHAR_CAPABILITIES: [u8; 16] = uuid128(0x05);
+
+/// Build an Improv 128-bit UUID (last byte `n`) in on-air little-endian order.
+const fn uuid128(n: u8) -> [u8; 16] {
+    // 00467768-6228-2272-4663-2774782680{n} reversed to LE.
+    [
+        n, 0x80, 0x26, 0x78, 0x74, 0x27, 0x63, 0x46, 0x72, 0x22, 0x28, 0x62, 0x68, 0x77, 0x46, 0x00,
+    ]
+}
+
+/// Current-state characteristic values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum State {
+    /// Awaiting activation/authorization (we auto-authorize: not used as a gate).
+    AuthorizationRequired = 0x01,
+    Authorized = 0x02,
+    Provisioning = 0x03,
+    Provisioned = 0x04,
+}
+
+/// Error-state characteristic values.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ErrorState {
+    None = 0x00,
+    InvalidRpcPacket = 0x01,
+    UnknownRpcCommand = 0x02,
+    UnableToConnect = 0x03,
+    NotAuthorized = 0x04,
+}
+
+/// RPC command identifiers (first byte of an RPC packet).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Command {
+    SendWifi = 0x01,
+    Identify = 0x02,
+    GetCurrentState = 0x03,
+    GetDeviceInfo = 0x04,
+    ScanWifi = 0x05,
+}
+
+impl Command {
+    fn from_u8(v: u8) -> Option<Command> {
+        match v {
+            0x01 => Some(Command::SendWifi),
+            0x02 => Some(Command::Identify),
+            0x03 => Some(Command::GetCurrentState),
+            0x04 => Some(Command::GetDeviceInfo),
+            0x05 => Some(Command::ScanWifi),
+            _ => None,
+        }
+    }
+}
+
+pub const MAX_SSID: usize = 32;
+pub const MAX_PASS: usize = 64;
+
+/// Wi-Fi credentials extracted from a SendWifi RPC.
+pub struct Credentials {
+    pub ssid: Buf<MAX_SSID>,
+    pub pass: Buf<MAX_PASS>,
+}
+
+/// What the caller (firmware) must act on after feeding an RPC packet.
+pub enum Action {
+    /// Nothing to do beyond the state/error updates already applied.
+    None,
+    /// Central requested identify (e.g. blink an LED).
+    Identify,
+    /// Central sent Wi-Fi credentials: connect, then call
+    /// [`Improv::provisioning_result`] with the outcome.
+    Provision(Credentials),
+}
+
+/// The Improv provisioning state machine + RPC codec.
+pub struct Improv {
+    pub state: State,
+    pub error: ErrorState,
+    /// The last RPC result payload to expose on the RPC-result characteristic.
+    result: Buf<64>,
+    /// 1 = supports identify (bit0 of the capabilities characteristic).
+    capabilities: u8,
+}
+
+impl Improv {
+    pub const fn new() -> Self {
+        Improv {
+            state: State::Authorized, // no user-authorization gate
+            error: ErrorState::None,
+            result: Buf::new(),
+            capabilities: 0x00,
+        }
+    }
+
+    /// Capabilities characteristic value (1 byte).
+    pub fn capabilities(&self) -> [u8; 1] {
+        [self.capabilities]
+    }
+    /// Current-state characteristic value (1 byte).
+    pub fn current_state(&self) -> [u8; 1] {
+        [self.state as u8]
+    }
+    /// Error-state characteristic value (1 byte).
+    pub fn error_state(&self) -> [u8; 1] {
+        [self.error as u8]
+    }
+    /// RPC-result characteristic value.
+    pub fn rpc_result(&self) -> &[u8] {
+        self.result.as_slice()
+    }
+
+    /// Feed a write to the RPC-command characteristic. Validates framing +
+    /// checksum, updates state/error, and returns the [`Action`] the firmware
+    /// must take. A bad packet sets `error = InvalidRpcPacket` and returns
+    /// `Action::None`.
+    pub fn on_rpc(&mut self, pkt: &[u8]) -> Action {
+        self.error = ErrorState::None;
+        // Framing: [command][data_len][data..data_len][checksum].
+        if pkt.len() < 3 {
+            self.error = ErrorState::InvalidRpcPacket;
+            return Action::None;
+        }
+        let data_len = pkt[1] as usize;
+        if pkt.len() != data_len + 3 {
+            self.error = ErrorState::InvalidRpcPacket;
+            return Action::None;
+        }
+        // Checksum = sum of all preceding bytes, low 8 bits.
+        let sum = pkt[..pkt.len() - 1].iter().fold(0u8, |a, &b| a.wrapping_add(b));
+        if sum != pkt[pkt.len() - 1] {
+            self.error = ErrorState::InvalidRpcPacket;
+            return Action::None;
+        }
+        let data = &pkt[2..2 + data_len];
+        match Command::from_u8(pkt[0]) {
+            Some(Command::SendWifi) => self.on_send_wifi(data),
+            Some(Command::Identify) => Action::Identify,
+            Some(Command::GetCurrentState) => Action::None,
+            Some(Command::GetDeviceInfo) => Action::None,
+            Some(Command::ScanWifi) => Action::None,
+            None => {
+                self.error = ErrorState::UnknownRpcCommand;
+                Action::None
+            }
+        }
+    }
+
+    /// Parse a SendWifi payload: `[ssid_len][ssid][pass_len][pass]`.
+    fn on_send_wifi(&mut self, data: &[u8]) -> Action {
+        let mut creds = Credentials { ssid: Buf::new(), pass: Buf::new() };
+        let Some((ssid, rest)) = take_lv(data) else {
+            self.error = ErrorState::InvalidRpcPacket;
+            return Action::None;
+        };
+        let Some((pass, _)) = take_lv(rest) else {
+            self.error = ErrorState::InvalidRpcPacket;
+            return Action::None;
+        };
+        if ssid.len() > MAX_SSID || pass.len() > MAX_PASS || creds.ssid.extend(ssid).is_err()
+            || creds.pass.extend(pass).is_err()
+        {
+            self.error = ErrorState::InvalidRpcPacket;
+            return Action::None;
+        }
+        self.state = State::Provisioning;
+        Action::Provision(creds)
+    }
+
+    /// Report the outcome of a provisioning attempt. On success, `redirect_urls`
+    /// (each `&str`) are packed into the SendWifi RPC result; on failure the state
+    /// reverts to Authorized with `error = UnableToConnect`.
+    pub fn provisioning_result(&mut self, ok: bool, redirect_urls: &[&str]) {
+        self.result.clear();
+        if !ok {
+            self.state = State::Authorized;
+            self.error = ErrorState::UnableToConnect;
+            return;
+        }
+        self.state = State::Provisioned;
+        self.error = ErrorState::None;
+        // RPC result: [command=SendWifi][data_len][ (len,str).. ][checksum].
+        let mut body: Buf<48> = Buf::new();
+        for url in redirect_urls {
+            let b = url.as_bytes();
+            if body.extend(&[b.len() as u8]).is_err() || body.extend(b).is_err() {
+                return;
+            }
+        }
+        let _ = self.result.extend(&[Command::SendWifi as u8, body.len() as u8]);
+        let _ = self.result.extend(body.as_slice());
+        let sum = self.result.as_slice().iter().fold(0u8, |a, &b| a.wrapping_add(b));
+        let _ = self.result.extend(&[sum]);
+    }
+}
+
+impl Default for Improv {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Split a length-prefixed value off the front: `[len][bytes..len]` -> (bytes, rest).
+fn take_lv(data: &[u8]) -> Option<(&[u8], &[u8])> {
+    let len = *data.first()? as usize;
+    if data.len() < 1 + len {
+        return None;
+    }
+    Some((&data[1..1 + len], &data[1 + len..]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Build a valid RPC packet [cmd][len][data][checksum].
+    fn rpc(cmd: u8, data: &[u8]) -> Buf<128> {
+        let mut b: Buf<128> = Buf::new();
+        b.extend(&[cmd, data.len() as u8]).unwrap();
+        b.extend(data).unwrap();
+        let sum = b.as_slice().iter().fold(0u8, |a, &x| a.wrapping_add(x));
+        b.extend(&[sum]).unwrap();
+        b
+    }
+
+    #[test]
+    fn uuids_are_improv_base() {
+        // Full on-air LE bytes of 00467768-6228-2272-4663-277478268000.
+        assert_eq!(
+            IMPROV_SVC_UUID,
+            [
+                0x00, 0x80, 0x26, 0x78, 0x74, 0x27, 0x63, 0x46, 0x72, 0x22, 0x28, 0x62, 0x68, 0x77,
+                0x46, 0x00
+            ]
+        );
+        // Only the last string byte (on-air index 0) varies per characteristic.
+        assert_eq!(IMPROV_CHAR_RPC_COMMAND[0], 0x03);
+        assert_eq!(IMPROV_CHAR_CAPABILITIES[0], 0x05);
+        assert_eq!(IMPROV_CHAR_RPC_COMMAND[1..], IMPROV_SVC_UUID[1..]);
+    }
+
+    #[test]
+    fn send_wifi_extracts_credentials_and_provisions() {
+        let mut im = Improv::new();
+        // data = [ssid_len]"net"[pass_len]"secret"
+        let mut data: Buf<64> = Buf::new();
+        data.extend(&[3]).unwrap();
+        data.extend(b"net").unwrap();
+        data.extend(&[6]).unwrap();
+        data.extend(b"secret").unwrap();
+        let pkt = rpc(Command::SendWifi as u8, data.as_slice());
+        match im.on_rpc(pkt.as_slice()) {
+            Action::Provision(c) => {
+                assert_eq!(c.ssid.as_slice(), b"net");
+                assert_eq!(c.pass.as_slice(), b"secret");
+            }
+            _ => panic!("expected Provision"),
+        }
+        assert_eq!(im.state, State::Provisioning);
+        assert_eq!(im.error, ErrorState::None);
+
+        im.provisioning_result(true, &["http://192.168.1.5"]);
+        assert_eq!(im.state, State::Provisioned);
+        // result parses back: cmd=SendWifi, one url.
+        let r = im.rpc_result();
+        assert_eq!(r[0], Command::SendWifi as u8);
+        let sum = r[..r.len() - 1].iter().fold(0u8, |a, &b| a.wrapping_add(b));
+        assert_eq!(sum, r[r.len() - 1]); // checksum valid
+    }
+
+    #[test]
+    fn bad_checksum_sets_invalid_error() {
+        let mut im = Improv::new();
+        let mut pkt = rpc(Command::Identify as u8, &[]);
+        let n = pkt.len();
+        pkt.as_mut_slice()[n - 1] ^= 0xff; // corrupt checksum
+        assert!(matches!(im.on_rpc(pkt.as_slice()), Action::None));
+        assert_eq!(im.error, ErrorState::InvalidRpcPacket);
+    }
+
+    #[test]
+    fn unknown_command_sets_error() {
+        let mut im = Improv::new();
+        let pkt = rpc(0x7f, &[]);
+        assert!(matches!(im.on_rpc(pkt.as_slice()), Action::None));
+        assert_eq!(im.error, ErrorState::UnknownRpcCommand);
+    }
+
+    #[test]
+    fn identify_returns_action() {
+        let mut im = Improv::new();
+        let pkt = rpc(Command::Identify as u8, &[]);
+        assert!(matches!(im.on_rpc(pkt.as_slice()), Action::Identify));
+    }
+
+    #[test]
+    fn oversize_length_field_is_rejected() {
+        let mut im = Improv::new();
+        // Claims data_len 200 but packet is short -> InvalidRpcPacket, no OOB.
+        let pkt = [Command::SendWifi as u8, 200, 0x00];
+        assert!(matches!(im.on_rpc(&pkt), Action::None));
+        assert_eq!(im.error, ErrorState::InvalidRpcPacket);
+    }
+
+    #[test]
+    fn failed_provision_reverts_with_error() {
+        let mut im = Improv::new();
+        im.state = State::Provisioning;
+        im.provisioning_result(false, &[]);
+        assert_eq!(im.state, State::Authorized);
+        assert_eq!(im.error, ErrorState::UnableToConnect);
+    }
+}

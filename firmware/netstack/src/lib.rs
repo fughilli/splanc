@@ -45,6 +45,7 @@ pub mod ccmp;
 pub mod sta;
 pub mod ap;
 pub mod hci;
+pub mod improv;
 pub mod stack;
 pub mod mlme;
 pub mod phy;
