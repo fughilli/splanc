@@ -219,6 +219,112 @@ impl Default for Improv {
     }
 }
 
+// --- GATT binding: the Improv service exposed over the GATT database ----------
+
+use crate::gatt::{
+    GattDb, Uuid, GATT_RSP_MAX, PROP_NOTIFY, PROP_READ, PROP_WRITE, PROP_WRITE_NO_RSP,
+};
+
+/// What the firmware should do after feeding an ATT op to [`ImprovService`].
+pub struct ImprovOutcome {
+    /// ATT response length written to `out` (0 = no response, e.g. write-command).
+    pub resp_len: usize,
+    /// A provisioning action to perform (connect Wi-Fi / identify), if any.
+    pub action: Action,
+    /// Characteristic value handles whose values changed and should be notified
+    /// (current-state, error-state, rpc-result), terminated by 0.
+    pub notify: [u16; 3],
+}
+
+/// The Improv service bound onto a GATT database: owns the attribute layout, keeps
+/// the characteristic values in sync with the [`Improv`] state machine, and routes
+/// ATT writes on the RPC-command characteristic through it.
+pub struct ImprovService {
+    pub db: GattDb<12>,
+    pub improv: Improv,
+    h_current: u16,
+    h_error: u16,
+    h_rpc_cmd: u16,
+    h_rpc_result: u16,
+}
+
+impl ImprovService {
+    pub fn new() -> Self {
+        let improv = Improv::new();
+        let mut db: GattDb<12> = GattDb::new();
+        let _ = db.add_primary_service(Uuid::U128(IMPROV_SVC_UUID));
+        // Order per spec; each value handle is used by the central after discovery.
+        let h_current = db
+            .add_characteristic(Uuid::U128(IMPROV_CHAR_CURRENT_STATE), PROP_READ | PROP_NOTIFY, &improv.current_state())
+            .unwrap_or(0);
+        let h_error = db
+            .add_characteristic(Uuid::U128(IMPROV_CHAR_ERROR_STATE), PROP_READ | PROP_NOTIFY, &improv.error_state())
+            .unwrap_or(0);
+        let h_rpc_cmd = db
+            .add_characteristic(Uuid::U128(IMPROV_CHAR_RPC_COMMAND), PROP_WRITE | PROP_WRITE_NO_RSP, &[])
+            .unwrap_or(0);
+        let h_rpc_result = db
+            .add_characteristic(Uuid::U128(IMPROV_CHAR_RPC_RESULT), PROP_READ | PROP_NOTIFY, &[])
+            .unwrap_or(0);
+        let _ = db.add_characteristic(Uuid::U128(IMPROV_CHAR_CAPABILITIES), PROP_READ, &improv.capabilities());
+        ImprovService { db, improv, h_current, h_error, h_rpc_cmd, h_rpc_result }
+    }
+
+    /// Copy the current Improv state into the characteristic values.
+    fn sync(&mut self) {
+        self.db.set_value(self.h_current, &self.improv.current_state());
+        self.db.set_value(self.h_error, &self.improv.error_state());
+        self.db.set_value(self.h_rpc_result, self.improv.rpc_result());
+    }
+
+    /// Handle an ATT op. Writes to the RPC-command characteristic drive the Improv
+    /// state machine; everything else is a plain GATT read/discovery. Returns the
+    /// response length, any provisioning [`Action`], and the changed value handles.
+    pub fn handle_att(&mut self, opcode: u8, params: &[u8], out: &mut Buf<GATT_RSP_MAX>) -> ImprovOutcome {
+        const ATT_WRITE_REQ: u8 = 0x12;
+        const ATT_WRITE_CMD: u8 = 0x52;
+        let is_rpc_write = (opcode == ATT_WRITE_REQ || opcode == ATT_WRITE_CMD)
+            && params.len() >= 2
+            && u16::from_le_bytes([params[0], params[1]]) == self.h_rpc_cmd;
+        if is_rpc_write {
+            let action = self.improv.on_rpc(&params[2..]);
+            self.sync();
+            let resp_len = self.db.handle_att(opcode, params, out); // records value + ACKs
+            return ImprovOutcome {
+                resp_len,
+                action,
+                notify: [self.h_current, self.h_error, self.h_rpc_result],
+            };
+        }
+        let resp_len = self.db.handle_att(opcode, params, out);
+        ImprovOutcome { resp_len, action: Action::None, notify: [0, 0, 0] }
+    }
+
+    /// After a provisioning attempt completes, update state + values (call before
+    /// notifying the changed handles).
+    pub fn finish_provisioning(&mut self, ok: bool, redirect_urls: &[&str]) {
+        self.improv.provisioning_result(ok, redirect_urls);
+        self.sync();
+    }
+
+    /// Value handles for the notify characteristics.
+    pub fn current_state_handle(&self) -> u16 {
+        self.h_current
+    }
+    pub fn error_state_handle(&self) -> u16 {
+        self.h_error
+    }
+    pub fn rpc_result_handle(&self) -> u16 {
+        self.h_rpc_result
+    }
+}
+
+impl Default for ImprovService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Split a length-prefixed value off the front: `[len][bytes..len]` -> (bytes, rest).
 fn take_lv(data: &[u8]) -> Option<(&[u8], &[u8])> {
     let len = *data.first()? as usize;
@@ -328,5 +434,45 @@ mod tests {
         im.provisioning_result(false, &[]);
         assert_eq!(im.state, State::Authorized);
         assert_eq!(im.error, ErrorState::UnableToConnect);
+    }
+
+    #[test]
+    fn service_routes_rpc_write_to_state_machine() {
+        use crate::gatt::GATT_RSP_MAX;
+        let mut svc = ImprovService::new();
+        let rpc_cmd_h = svc.h_rpc_cmd;
+        // Build an ATT Write to the RPC-command handle with a SendWifi RPC.
+        let mut data: Buf<64> = Buf::new();
+        data.extend(&[2]).unwrap();
+        data.extend(b"ap").unwrap();
+        data.extend(&[3]).unwrap();
+        data.extend(b"pwd").unwrap();
+        let pkt = rpc(Command::SendWifi as u8, data.as_slice());
+        let mut params: Buf<128> = Buf::new();
+        params.extend(&rpc_cmd_h.to_le_bytes()).unwrap();
+        params.extend(pkt.as_slice()).unwrap();
+
+        let mut out: Buf<GATT_RSP_MAX> = Buf::new();
+        let outcome = svc.handle_att(0x12 /*WRITE_REQ*/, params.as_slice(), &mut out);
+        // Provisioning action surfaced with the parsed credentials.
+        match outcome.action {
+            Action::Provision(c) => {
+                assert_eq!(c.ssid.as_slice(), b"ap");
+                assert_eq!(c.pass.as_slice(), b"pwd");
+            }
+            _ => panic!("expected Provision"),
+        }
+        assert_eq!(svc.improv.state, State::Provisioning);
+        // Current-state characteristic now reads "provisioning" via a GATT read.
+        let mut rd: Buf<GATT_RSP_MAX> = Buf::new();
+        svc.db.handle_att(0x0a /*READ_REQ*/, &svc.h_current.to_le_bytes(), &mut rd);
+        assert_eq!(rd.as_slice()[1], State::Provisioning as u8);
+
+        // Complete provisioning; result characteristic + state update.
+        svc.finish_provisioning(true, &["http://host"]);
+        let mut ntf: Buf<GATT_RSP_MAX> = Buf::new();
+        assert!(svc.db.notification(svc.rpc_result_handle(), &mut ntf) > 0);
+        svc.db.handle_att(0x0a, &svc.h_current.to_le_bytes(), &mut rd);
+        assert_eq!(rd.as_slice()[1], State::Provisioned as u8);
     }
 }
