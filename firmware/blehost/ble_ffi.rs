@@ -47,8 +47,11 @@ pub extern "C" fn ns_ble_setup() {
         // ("heapless-ble") so a scanner doesn't confuse us with older DUTs still
         // advertising "heapless-c6"/"-imp" within the rigs' shared BLE range.
         HOST.set_scan_rsp(&[
-            0x09, 0x09, b'h', b'l', b's', b'-', b'f', b'i', b'x', b'1',
+            0x09, 0x09, b'h', b'l', b's', b'-', b'f', b'i', b'x', b'2',
         ]);
+        // Distinctive static random address for this build so a central can't reuse
+        // a GATT cache from an earlier build (LE order; MSB C0 = static random).
+        HOST.set_random_addr([0x02, 0x00, 0x0f, 0x1f, 0xde, 0xc0]); // C0:DE:1F:0F:00:02
         IMPROV = Some(ImprovService::new());
     }
 }
@@ -208,6 +211,7 @@ pub extern "C" fn ns_ble_state() -> u32 {
         HostState::LeMaskSent => 8,
         HostState::BufSizeSent => 10,
         HostState::FeatSent => 11,
+        HostState::RandAddrSent => 12,
         HostState::AdvParamsSent => 3,
         HostState::AdvDataSent => 4,
         HostState::ScanRspSent => 9,
