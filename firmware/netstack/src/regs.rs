@@ -13,15 +13,58 @@
 /// Raw volatile MMIO. Safe wrappers live in the peripheral modules.
 pub mod mmio {
     /// # Safety: `addr` must be a valid peripheral register address.
+    #[cfg(not(test))]
     #[inline(always)]
     pub unsafe fn read32(addr: usize) -> u32 {
         core::ptr::read_volatile(addr as *const u32)
     }
 
     /// # Safety: `addr` must be a valid peripheral register address.
+    #[cfg(not(test))]
     #[inline(always)]
     pub unsafe fn write32(addr: usize, val: u32) {
         core::ptr::write_volatile(addr as *mut u32, val)
+    }
+
+    // On the host test build there is no memory-mapped peripheral, so record
+    // reads/writes into a per-thread register file. This lets the MAC MMIO paths
+    // (bring-up, RX/TX ring install) be unit-tested against the reconstructed
+    // register map instead of touching a real address (which would segfault).
+    #[cfg(test)]
+    thread_local! {
+        static REGS: std::cell::RefCell<std::collections::BTreeMap<usize, u32>> =
+            std::cell::RefCell::new(std::collections::BTreeMap::new());
+    }
+
+    /// # Safety: test stub — no real hardware access.
+    #[cfg(test)]
+    pub unsafe fn read32(addr: usize) -> u32 {
+        REGS.with(|r| *r.borrow().get(&addr).unwrap_or(&0))
+    }
+
+    /// # Safety: test stub — no real hardware access.
+    #[cfg(test)]
+    pub unsafe fn write32(addr: usize, val: u32) {
+        REGS.with(|r| {
+            r.borrow_mut().insert(addr, val);
+        });
+    }
+
+    /// Test helpers: reset the recorded register file, seed a register, or read
+    /// back what a driver wrote.
+    #[cfg(test)]
+    pub fn test_reset() {
+        REGS.with(|r| r.borrow_mut().clear());
+    }
+    #[cfg(test)]
+    pub fn test_seed(addr: usize, val: u32) {
+        REGS.with(|r| {
+            r.borrow_mut().insert(addr, val);
+        });
+    }
+    #[cfg(test)]
+    pub fn test_get(addr: usize) -> Option<u32> {
+        REGS.with(|r| r.borrow().get(&addr).copied())
     }
 }
 
