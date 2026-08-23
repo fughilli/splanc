@@ -183,7 +183,10 @@ impl Default for BleHost {
 pub fn acl<const N: usize>(handle: u16, l2cap: &[u8], out: &mut Buf<N>) -> Result<usize, Overflow> {
     out.clear();
     out.extend(&[H4_ACL])?;
-    out.extend(&(handle & 0x0fff | 0x2000).to_le_bytes())?; // PB=start,BC=00
+    // PB=0b00 (first non-automatically-flushable) is what a HOST uses for the
+    // start of an L2CAP PDU on LE; PB=0b10 (first-flush) is a controller->host /
+    // BR-EDR value and the C6 controller drops host ACL sent with it.
+    out.extend(&(handle & 0x0fff).to_le_bytes())?; // PB=00, BC=00
     out.extend(&(l2cap.len() as u16).to_le_bytes())?;
     out.extend(l2cap)?;
     Ok(out.len())

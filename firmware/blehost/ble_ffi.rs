@@ -43,9 +43,10 @@ pub extern "C" fn ns_ble_setup() {
         let _ = adv.extend(&[0x11, 0x07]);
         let _ = adv.extend(&IMPROV_SVC_UUID);
         HOST.set_adv(adv.as_slice());
-        // Scan response: the complete local name (NO Flags AD).
+        // Scan response: the complete local name (NO Flags AD). Distinct name so
+        // the harness targets only this DUT (a 2nd rig DUT also advertised "-c6").
         HOST.set_scan_rsp(&[
-            0x0c, 0x09, b'h', b'e', b'a', b'p', b'l', b'e', b's', b's', b'-', b'c', b'6',
+            0x0d, 0x09, b'h', b'e', b'a', b'p', b'l', b'e', b's', b's', b'-', b'i', b'm', b'p',
         ]);
         IMPROV = Some(ImprovService::new());
     }
