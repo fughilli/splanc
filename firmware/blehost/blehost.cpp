@@ -28,8 +28,15 @@ typedef int ble_hci_trans_rx_acl_fn(void *om, void *arg);  // om = struct os_mbu
 void r_ble_hci_trans_cfg_hs(ble_hci_trans_rx_cmd_fn *cmd_cb, void *cmd_arg,
                             ble_hci_trans_rx_acl_fn *acl_cb, void *acl_arg);
 int r_ble_hci_trans_hs_cmd_tx(uint8_t *cmd);
+int r_ble_hci_trans_hs_acl_tx(void *om);  // takes ownership of the mbuf
 uint8_t *r_ble_hci_trans_buf_alloc(int type);
 void r_ble_hci_trans_buf_free(uint8_t *buf);
+
+// os_mbuf helpers (NimBLE msys pool) for the ACL datapath. os_mbuf* is opaque here.
+void *r_os_msys_get_pkthdr(uint16_t dlen, uint16_t user_hdr_len);
+int r_os_mbuf_append(void *om, const void *data, uint16_t len);
+int r_os_mbuf_copydata(const void *om, int off, int len, void *dst);
+void r_os_mbuf_free_chain(void *om);
 }
 
 #define BLE_HCI_TRANS_BUF_CMD 3  // NimBLE ble_hci_trans buffer type: command
@@ -69,19 +76,49 @@ static int on_evt(uint8_t *evt, void *arg) {
   return 0;
 }
 
-// Controller -> host ACL. Deferred: wiring the os_mbuf chain needs r_os_mbuf_*;
-// advertising bring-up is command/event only, so drop ACL for now (GATT later).
-static int on_acl(void *om, void *arg) { return 0; }
+// Controller -> host ACL (connection data, e.g. an ATT request). Copy the packet
+// out of the mbuf chain (HCI ACL header = 4 bytes: handle + data length), prepend
+// the H4 ACL type, queue it for the loop, and free the controller's mbuf.
+static int on_acl(void *om, void *arg) {
+  uint8_t hdr[4];
+  if (r_os_mbuf_copydata(om, 0, 4, hdr) != 0) {
+    r_os_mbuf_free_chain(om);
+    return 0;
+  }
+  uint16_t total = 4 + (uint16_t)(hdr[2] | (hdr[3] << 8));
+  uint8_t next = (s_head + 1) & 7;
+  if (next != s_tail && (uint32_t)total + 1 <= sizeof(s_ring[0].data) &&
+      r_os_mbuf_copydata(om, 0, total, s_ring[s_head].data + 1) == 0) {
+    s_ring[s_head].data[0] = 0x02;  // H4 ACL
+    s_ring[s_head].len = total + 1;
+    s_head = next;
+  }
+  g_rx++;
+  r_os_mbuf_free_chain(om);
+  return 0;
+}
 
 // Send a netstack HCI packet ([H4 type][payload]) to the controller. Commands go
-// through a controller-allocated buffer (the transport takes ownership).
+// through a controller-allocated buffer; ACL data goes through an msys mbuf. Both
+// transfer ownership to the controller transport.
 static void hci_send(const uint8_t *pkt, uint32_t n) {
-  if (n < 2 || pkt[0] != 0x01) return;  // command only for now
-  uint8_t *buf = r_ble_hci_trans_buf_alloc(BLE_HCI_TRANS_BUF_CMD);
-  if (!buf) return;
-  memcpy(buf, pkt + 1, n - 1);  // drop the H4 type byte
-  g_tx++;
-  r_ble_hci_trans_hs_cmd_tx(buf);
+  if (n < 2) return;
+  if (pkt[0] == 0x01) {  // command
+    uint8_t *buf = r_ble_hci_trans_buf_alloc(BLE_HCI_TRANS_BUF_CMD);
+    if (!buf) return;
+    memcpy(buf, pkt + 1, n - 1);  // drop the H4 type byte
+    g_tx++;
+    r_ble_hci_trans_hs_cmd_tx(buf);
+  } else if (pkt[0] == 0x02) {  // ACL (GATT response)
+    void *om = r_os_msys_get_pkthdr(n - 1, 0);
+    if (!om) return;
+    if (r_os_mbuf_append(om, pkt + 1, n - 1) != 0) {
+      r_os_mbuf_free_chain(om);
+      return;
+    }
+    g_tx++;
+    r_ble_hci_trans_hs_acl_tx(om);
+  }
 }
 
 void setup() {
