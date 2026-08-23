@@ -98,10 +98,10 @@ int build_assoc(uint8_t *f) {
   memcpy(f + n, TARGET_SSID, slen); n += slen;
   const uint8_t rates[] = {0x01, 0x08, 0x82, 0x84, 0x8b, 0x96, 0x12, 0x24, 0x48, 0x6c};
   memcpy(f + n, rates, sizeof(rates)); n += sizeof(rates);
-  // RSN IE: group=TKIP (match beacon), pairwise=CCMP, AKM=PSK-SHA256 (00-0f-ac-06,
-  // required with PMF), RSN caps=0x0080 (MFPC=1). The AP is MFPC=1, so match it.
+  // Standard WPA2-PSK RSN IE (the AP is pmf=0, wpa-psk): group=TKIP (match beacon),
+  // pairwise=CCMP, AKM=PSK (00-0f-ac-02), RSN caps=0 (non-PMF).
   const uint8_t rsn[] = {0x30, 0x14, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x02, 0x01, 0x00, 0x00,
-                         0x0f, 0xac, 0x04, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x06, 0x80, 0x00};
+                         0x0f, 0xac, 0x04, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x02, 0x00, 0x00};
   memcpy(f + n, rsn, sizeof(rsn)); n += sizeof(rsn);
   return n;
 }
@@ -147,8 +147,7 @@ void setup() {
   // Use a FRESH locally-administered MAC the AP has no prior state for, so its PMF
   // SA-Query / association-comeback (status 30) — triggered by a stale SA for a MAC
   // that's been hammering it — doesn't apply and we get a clean status-0 assoc.
-  const uint8_t fresh[6] = {0x02, 0x0c, 0x6a, 0x5a, 0x1e, 0x93};
-  memcpy(OUR_MAC, fresh, 6);
+  esp_wifi_get_mac(WIFI_IF_STA, OUR_MAC); // the DUT's real globally-unique MAC
   Serial.printf("using fresh MAC %02x:%02x:%02x:%02x:%02x:%02x\n", OUR_MAC[0], OUR_MAC[1],
                 OUR_MAC[2], OUR_MAC[3], OUR_MAC[4], OUR_MAC[5]);
 
