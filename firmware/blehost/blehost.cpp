@@ -111,15 +111,16 @@ static int on_acl(void *om, void *arg) {
 //     => the controller never GENERATES the event => the LL never creates the
 //     connection. (ACL, by contrast, IS queued via ble_mqueue_put -> needs the
 //     host task; moot until connections work.)
-//   * The CONNECT_IND handler r_ble_ll_adv_conn_req_rxd validates the PDU then
-//     calls r_ble_ll_conn_slave_start (reachable); on failure it stops advertising.
-//     Advertising KEEPS running through connect attempts => either the lower-LL RX
-//     ISR isn't dispatching the CONNECT_IND, or slave_start returns early.
+//   * DEFINITIVE (on-hw --wrap of r_ble_ll_conn_slave_start): slave_start is NEVER
+//     called during a central's connect attempt (slavestart=0). So the CONNECT_IND
+//     never reaches connection-creation at all — it is dropped in the lower-LL adv
+//     RX ISR, or the upper-LL r_ble_ll_adv_conn_req_rxd rejects it before slave_start.
 //   * The conn module IS initialised by the controller (ble_ll_init ->
 //     r_ble_ll_conn_module_init allocates ble_ll_conn_env_p), so the pool exists.
-// Ruled out: both event masks, ble_transport_hs_init, --wrap ble_hs_hci_rx_evt.
-// Next: on-hw LL instrumentation (hook conn_req_rxd/slave_start) to see if/why the
-// CONNECT_IND is dropped in the lower-LL RX path.
+// Ruled out: both event masks, ble_transport_hs_init, --wrap ble_hs_hci_rx_evt,
+// conn-module-init, host event delivery. The gap is in the radio-ISR CONNECT_IND
+// acceptance path (ble_lll_adv RX) — a distinct deep-RE effort. GATT/ACL host code
+// is wired + ready for when the LL accepts connections.
 
 // Send a netstack HCI packet ([H4 type][payload]) to the controller. Commands go
 // through a controller-allocated buffer; ACL data goes through an msys mbuf. Both
