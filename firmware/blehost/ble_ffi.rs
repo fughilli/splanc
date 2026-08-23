@@ -30,6 +30,11 @@ pub extern "C" fn ns_ble_setup() {
             0x02, 0x01, 0x06, 0x0c, 0x09, b'h', b'e', b'a', b'p', b'l', b'e', b's', b's', b'-', b'c',
             b'6',
         ]);
+        // Scan response: the complete local name only (NO Flags AD — invalid in a
+        // scan response). Lets an active scanner finish discovery and then connect.
+        HOST.set_scan_rsp(&[
+            0x0c, 0x09, b'h', b'e', b'a', b'p', b'l', b'e', b's', b's', b'-', b'c', b'6',
+        ]);
         let _ = GATT.add(Attribute::new(0x0003, 0x2a00, b"heapless-c6", true));
     }
 }
@@ -107,6 +112,7 @@ pub extern "C" fn ns_ble_state() -> u32 {
         HostState::LeMaskSent => 8,
         HostState::AdvParamsSent => 3,
         HostState::AdvDataSent => 4,
+        HostState::ScanRspSent => 9,
         HostState::AdvEnableSent => 5,
         HostState::Advertising => 6,
         HostState::Connected(_) => 7,
