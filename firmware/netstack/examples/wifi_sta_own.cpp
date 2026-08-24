@@ -108,7 +108,7 @@ extern "C" void sta_rx_start_handler(void *req) {
   wifi_hw_start(0);
   ic_set_vif(0, 0, g_our_mac_ptr, 0, 0);
   pm_disconnected_stop();
-  pm_go_to_wake();
+  pm_go_to_wake();  // force the MAC awake so RX is continuous (not duty-cycled)
 }
 
 // No-op promiscuous sink: keeps the RX hardware + all-frames filter enabled but
@@ -122,6 +122,12 @@ const char *PASS = "hitl-rig-3-provision";
 const uint8_t BSSID[6] = {0xb8, 0x27, 0xeb, 0xbb, 0x8d, 0xf8};
 constexpr uint8_t CHAN = 6;
 uint8_t OUR_MAC[6];
+// Active WiFi credentials for the WPA2 PMK. Default to the baked rig AP so a no-BLE
+// (--skip-improv) run still associates; BLE Improv overwrites these from the provisioner
+// (same AP here). We only START associating once these are "committed" — see g_creds_ready.
+char g_ssid[33];
+char g_pass[65];
+bool g_creds_ready = false;  // creds committed (from BLE, or the baked fallback)
 
 // DHCP lease state (DORA).
 uint8_t g_offer_ip[4] = {0}, g_server_id[4] = {0};
@@ -787,6 +793,13 @@ void player_init() {
 
 void setup() {
   Serial.begin(115200);
+  // NON-BLOCKING serial (THE provisioning fix): on the C6's USB-Serial-JTAG, Serial.write
+  // BLOCKS when the TX FIFO fills and no host is draining the port. Our heavy debug logging
+  // then wedges loopTask mid-association whenever serial isn't monitored — which is exactly
+  // the HITL provisioning phase (the harness monitors only during flash). A 0ms TX timeout
+  // makes writes drop instead of block, so the stack keeps running headless. This is why
+  // every serial-monitored test passed while the real harness join timed out.
+  Serial.setTxTimeoutMs(0);
   delay(300);
   Serial.println("wifi_sta_own: heapless STA owning the MAC (no promiscuous)");
   uint8_t aesct[16];
@@ -891,7 +904,7 @@ void loop() {
       const uint8_t *eb; int el = eapol_body(rx, n, &eb);
       if (el > 4) {
         if (!inited) { uint8_t sn[32]; esp_fill_random(sn, 32);
-          ns_wpa_init((const uint8_t *)SSID, strlen(SSID), (const uint8_t *)PASS, strlen(PASS), BSSID, OUR_MAC, sn);
+          ns_wpa_init((const uint8_t *)g_ssid, strlen(g_ssid), (const uint8_t *)g_pass, strlen(g_pass), BSSID, OUR_MAC, sn);
           inited = true; }
         uint8_t e[256]; int elen = el; memcpy(e, eb, elen);
         int exact = 4 + ((e[2] << 8) | e[3]); if (exact > 0 && exact <= elen) elen = exact;
@@ -949,28 +962,42 @@ void loop() {
   }
   } // end RX drain loop
 
-  // Kick the state machine: (re)send auth periodically until associated.
-  if (st == AUTH && millis() - t > 200) { t = millis(); int a = build_auth(f); ns_mac_send(f, a, 0); }
+  // Commit WiFi credentials before associating — the proper Improv flow: on BLE provisioning
+  // associate with the creds the provisioner writes; with no BLE central (e.g. --skip-improv)
+  // fall back to the baked rig creds after a short grace so the transport still comes up.
+  // (Association coexists fine with an active BLE link — the earlier "join timeout" was NOT
+  //  coex but blocking Serial.printf wedging loopTask when the port wasn't drained; see
+  //  Serial.setTxTimeoutMs(0) in setup. Either association order works now.)
+  if (PLAYER_MODE && !g_creds_ready && !improv_ble_central_connected() && millis() > 8000) {
+    strncpy(g_ssid, SSID, sizeof g_ssid - 1);
+    strncpy(g_pass, PASS, sizeof g_pass - 1);
+    g_creds_ready = true;
+    Serial.printf("[assoc] no BLE central — associating with baked creds ssid=%s\n", g_ssid);
+  }
+  if (!PLAYER_MODE) g_creds_ready = true;  // non-player transport demo associates immediately
+  // Kick the state machine: (re)send auth periodically until associated (once creds committed).
+  if (st == AUTH && g_creds_ready && millis() - t > 200) { t = millis(); int a = build_auth(f); ns_mac_send(f, a, 0); }
   // TCP retransmission is the STACK's job: ns_tcp owns its RTO and ns_tcp_tick(now) emits a
-  // retransmit when it fires. The app just provides the clock + carries the bytes. The real
-  // fix for BLE-induced frame loss is radio coexistence (coex_*), so WiFi TX doesn't collide
-  // with BLE events — the RTO is only a correctness backstop for genuine loss.
+  // retransmit when it fires. The app just provides the clock + carries the bytes — a
+  // correctness backstop for genuine loss, not something the app should hand-roll.
   {
     static uint8_t rseg[1600];
     uint32_t rn = ns_tcp_tick((uint32_t)millis(), rseg, sizeof rseg);
     if (rn > 0) send_ip(rseg, rn);
   }
-  // BLE Improv: the harness writes wifi-settings over GATT; answer with the redirect URL
-  // (Improv result FIRST, then PROVISIONED — spec order) so a no-override e2e completes its
-  // provisioning phase. We already joined via the baked rig creds (same AP the harness
-  // sends), so the redirect just hands back our leased IP.
+  // BLE Improv: the harness writes wifi-settings over GATT. Commit those creds + START
+  // associating, then answer with the redirect URL once leased (Improv result FIRST, then
+  // PROVISIONED — spec order) so a no-override e2e completes its provisioning phase.
   if (PLAYER_MODE) {
     static bool ble_creds_pending = false, redirect_sent = false;
     char s[33], p[65];
     if (improv_ble_take_credentials(s, sizeof s, p, sizeof p)) {
+      strncpy(g_ssid, s, sizeof g_ssid - 1);
+      strncpy(g_pass, p, sizeof g_pass - 1);
+      g_creds_ready = true;  // trigger association with the provisioner's creds
       ble_creds_pending = true;
       improv_ble_set_state(IMPROV_STATE_PROVISIONING);
-      Serial.printf("[ble] wifi-settings received (ssid=%s) -> PROVISIONING\n", s);
+      Serial.printf("[ble] wifi-settings received (ssid=%s) -> associating + PROVISIONING\n", s);
     }
     if (ble_creds_pending && !redirect_sent && g_leased) {
       char url[40];
