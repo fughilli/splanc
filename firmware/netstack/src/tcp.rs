@@ -277,7 +277,9 @@ impl TcpConn {
         t[8..12].copy_from_slice(&self.rcv_nxt.to_be_bytes());
         t[12] = (((TCP_HDR + opt_len) / 4) as u8) << 4; // data offset (5 words, or 6 w/ MSS)
         t[13] = flags;
-        t[14..16].copy_from_slice(&2048u16.to_be_bytes()); // window
+        // Advertise the free receive-buffer space (never more than we can hold).
+        let win = (self.rx.len() - self.rx_len).min(0xffff) as u16;
+        t[14..16].copy_from_slice(&win.to_be_bytes());
         t[16] = 0;
         t[17] = 0;
         t[18..20].copy_from_slice(&0u16.to_be_bytes()); // urgent
