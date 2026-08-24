@@ -323,16 +323,15 @@ void loop() {
   static bool inited = false;
   uint8_t f[256], rx[400];
 
-  if (st != DONE) {
-    mac_own_bssid(); // hardware auto-ACK during auth/assoc/4-way
-  } else {
-    // Post-link: clear own-MAC "valid". The HW crypto key slot is programmed (see
-    // install_hw_key, verified valid on silicon), but PROMISCUOUS mode bypasses the
-    // hardware crypto datapath, so the MAC would still drop protected unicast to us
-    // rather than HW-decrypt it. Clearing valid lets promiscuous deliver it raw for
-    // software CCMP decap. (Activating HW decrypt needs a non-promiscuous STA RX path.)
-    volatile uint32_t *ov = reinterpret_cast<volatile uint32_t *>(0x600A4060);
-    *ov = *ov & ~0x10000u;
+  // Keep own-MAC valid the whole time so hardware auto-ACK stays on (no retransmit
+  // storm). Post-link we DISABLE the HW crypto engine (CTRL0=0) so the MAC passes
+  // protected unicast to us raw — no HW-decrypt attempt, no drop — for software CCMP
+  // decap, while still auto-ACKing. (Set once on entering DONE.)
+  mac_own_bssid();
+  static bool crypto_off = false;
+  if (st == DONE && !crypto_off) {
+    *reinterpret_cast<volatile uint32_t *>(0x600A4800) = 0; // disable HW crypto attempts
+    crypto_off = true;
   }
 
   // Drain RX and dispatch.
