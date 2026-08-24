@@ -251,7 +251,7 @@ impl TcpConn {
     /// segments (SYN, SYN-ACK) carry a 4-byte MSS option — a bare optionless SYN-ACK is
     /// rejected/undeliverable by some peers and middleboxes, stalling the data phase.
     fn build(&mut self, flags: u8, seq: u32, data: &[u8], out: &mut [u8]) -> usize {
-        let opt_len = if flags & SYN != 0 { 4 } else { 0 };
+        let opt_len = if flags & SYN != 0 { 12 } else { 0 };
         let total = IP_HDR + TCP_HDR + opt_len + data.len();
         // IPv4 header.
         out[0] = 0x45;
@@ -283,11 +283,14 @@ impl TcpConn {
         t[16] = 0;
         t[17] = 0;
         t[18..20].copy_from_slice(&0u16.to_be_bytes()); // urgent
-        if opt_len == 4 {
-            // MSS option: kind=2, len=4, value = 1400 (fits our CCMP MPDU without frag).
-            t[20] = 2;
-            t[21] = 4;
-            t[22..24].copy_from_slice(&1400u16.to_be_bytes());
+        if opt_len == 12 {
+            // A standard SYN/SYN-ACK option set so the rig's conntrack doesn't mark our
+            // data INVALID: MSS(1400) + SACK-permitted + window-scale(0) + NOP padding.
+            let o = &mut t[20..32];
+            o[0] = 2; o[1] = 4; o[2..4].copy_from_slice(&1400u16.to_be_bytes()); // MSS
+            o[4] = 4; o[5] = 2; // SACK-permitted
+            o[6] = 3; o[7] = 3; o[8] = 0; // window scale, shift 0
+            o[9] = 1; o[10] = 1; o[11] = 1; // NOP padding to 4-byte boundary
         }
         t[TCP_HDR + opt_len..TCP_HDR + opt_len + data.len()].copy_from_slice(data);
         // TCP checksum over the pseudo-header + segment.
