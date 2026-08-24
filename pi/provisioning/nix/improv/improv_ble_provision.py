@@ -165,6 +165,13 @@ class ImprovServer:
         try:
             log(f"provisioning: joining {ssid!r}")
             self.set_state(STATE_PROVISIONING)
+            # Clean slate, so provisioning is idempotent like the firmware's
+            # WiFi.begin(): a leftover profile for this SSID (e.g. from a prior
+            # provision) makes `device wifi connect` fail with
+            # "802-11-wireless-security.key-mgmt: property is missing". Drop it
+            # first; nmcli auto-names the profile after the SSID. Ignore failure
+            # (no such profile on a first-time join).
+            await self._nmcli("connection", "delete", "id", ssid)
             argv = [NMCLI, "--wait", str(JOIN_TIMEOUT_S), "device", "wifi", "connect", ssid]
             if password:
                 argv += ["password", password]
@@ -180,7 +187,11 @@ class ImprovServer:
                 self.set_error(ERR_UNABLE_TO_CONNECT)
                 self.set_state(STATE_AUTHORIZED)
                 return
-            url = f"http://{self._primary_ip()}/"
+            # Report the address ON the network we were just provisioned onto (the
+            # joined Wi-Fi device), like the firmware reports its STA IP. Fall back
+            # to the default-route source IP if the Wi-Fi address isn't readable.
+            ip = await self._wifi_ip() or self._primary_ip()
+            url = f"http://{ip}/"
             log(f"joined, {url} ({msg})")
             # Improv spec order: publish the redirect URL FIRST, then advance state
             # to Provisioned (a client keying on the state change must find the
@@ -194,9 +205,38 @@ class ImprovServer:
         finally:
             self._busy = False
 
+    async def _wifi_ip(self) -> str | None:
+        """IPv4 address of the connected Wi-Fi device — the network just joined.
+        None if there's no connected Wi-Fi device or nmcli can't be read."""
+        try:
+            dev = await self._nmcli("-t", "-f", "DEVICE,TYPE,STATE", "device")
+            wifi_dev = next(
+                (
+                    line.split(":")[0]
+                    for line in dev.splitlines()
+                    if line.split(":")[1:3] == ["wifi", "connected"]
+                ),
+                None,
+            )
+            if not wifi_dev:
+                return None
+            addr = await self._nmcli("-g", "IP4.ADDRESS", "device", "show", wifi_dev)
+            ip = addr.strip().splitlines()[0].split("/")[0].strip() if addr.strip() else ""
+            return ip or None
+        except (OSError, ValueError, IndexError):
+            return None
+
+    @staticmethod
+    async def _nmcli(*args: str) -> str:
+        proc = await asyncio.create_subprocess_exec(
+            NMCLI, *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL
+        )
+        out, _ = await proc.communicate()
+        return (out or b"").decode("utf-8", "replace")
+
     @staticmethod
     def _primary_ip() -> str:
-        """Source IP for the default route (the freshly-joined STA address)."""
+        """Source IP for the default route (fallback for the redirect address)."""
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
             s.connect(("8.8.8.8", 80))
