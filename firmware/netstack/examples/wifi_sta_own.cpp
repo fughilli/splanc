@@ -1,9 +1,15 @@
-// wifi_sta_own — full heapless STA that OWNS the RX path. The vendor brings up the
-// PHY/clock/RX-hardware via promiscuous mode (with a NO-OP sink callback so the
-// vendor's packet-delivery path never runs), then we install our own RX ring and
-// pull frames directly from it — deterministic, low-latency, and independent of the
-// vendor callback that was making the WPA2 4-way flaky. TX + auth/assoc + 4-way are
-// all ours; own-MAC/BSSID registers give hardware auto-ACK.
+// wifi_sta_own — full heapless STA that OWNS the RX path, NO promiscuous. We bring up
+// CONTINUOUS STA RX the vendor way (reversed): via the ieee80211_ioctl marshal in the
+// WiFi-task context we run wifi_hw_stop -> wifi_hw_start -> ic_set_vif(STA) ->
+// pm_disconnected_stop -> pm_go_to_wake (force the MAC awake so RX is continuous, not
+// duty-cycled), then install our own RX ring and pull frames directly. This uses the
+// real STA vif (crypto-capable, unlike monitor/promiscuous), is deterministic (fixed
+// the 4-way flakiness the promiscuous callback caused), and keeps hardware auto-ACK via
+// the own-MAC/BSSID registers. TX + auth/assoc + WPA2 4-way + CCMP are all ours.
+//
+// Software CCMP (HW crypto engine disabled post-link) currently drives the data plane;
+// the HW crypto slot programs (valid=1) but RX-decrypt needs ic_set_key's key-info
+// table, not the raw wDev_Insert_KeyEntry — that's the remaining acceleration step.
 
 #include <Arduino.h>
 #include <WiFi.h>
@@ -39,6 +45,27 @@ uint32_t ns_tcp_state();
 // hardware crypto engine does per-address CCMP decrypt instead of promiscuous accept-all.
 void ic_set_rx_policy(uint32_t vif, uint32_t a1, uint32_t a2, uint32_t a3);
 void ic_rx_enable_bssid_check(uint32_t vif);
+void ic_set_mac(uint32_t slot, const uint8_t *mac);
+void ic_set_bssid(uint32_t slot, const uint8_t *bssid);
+// Continuous STA RX bring-up (no promiscuous), so HW crypto stays inline. Run via the
+// ieee80211_ioctl marshal in the WiFi-task context.
+void wifi_hw_start(uint32_t vif);
+void wifi_hw_stop(uint32_t vif);
+uint32_t ic_set_vif(uint32_t vif, uint32_t mode, const uint8_t *mac, uint32_t a3, uint32_t a4);
+void pm_disconnected_stop();
+void pm_go_to_wake();
+int ieee80211_ioctl(void *req);
+}
+
+// ioctl handler: bring up continuous STA RX in the WiFi-task context.
+const uint8_t *g_our_mac_ptr = nullptr;
+extern "C" void sta_rx_start_handler(void *req) {
+  (void)req;
+  wifi_hw_stop(0);
+  wifi_hw_start(0);
+  ic_set_vif(0, 0, g_our_mac_ptr, 0, 0);
+  pm_disconnected_stop();
+  pm_go_to_wake();
 }
 
 // No-op promiscuous sink: keeps the RX hardware + all-frames filter enabled but
@@ -333,18 +360,27 @@ void setup() {
   OUR_MAC[3] = rnd[0]; OUR_MAC[4] = rnd[1]; OUR_MAC[5] = rnd[2];
   Serial.printf("MAC %02x:%02x:%02x:%02x:%02x:%02x\n", OUR_MAC[0], OUR_MAC[1], OUR_MAC[2],
                 OUR_MAC[3], OUR_MAC[4], OUR_MAC[5]);
-  // Promiscuous enables the RX hardware; the no-op sink keeps the vendor's
-  // packet-delivery path idle so our ring owns RX.
-  esp_wifi_set_promiscuous(true);
-  esp_wifi_set_promiscuous_rx_cb(&sink);
+  g_our_mac_ptr = OUR_MAC;
+  // Continuous STA RX with NO promiscuous, so the hardware crypto engine stays inline:
+  // stop->start the MAC, configure the STA vif, and force it awake (pm_go_to_wake) so
+  // RX is continuous instead of the disconnected duty-cycle. Runs in the WiFi task via
+  // the ioctl marshal (heap request, cmd@0/handler@4; the ioctl frees it).
+  esp_wifi_set_ps(WIFI_PS_NONE);
   esp_wifi_set_channel(CHAN, WIFI_SECOND_CHAN_NONE);
-  delay(300);
+  delay(150);
   wreg(WIFI_MAC_INTR_MAP, 0); // detach vendor ISR
-  mac_own_bssid();
   ns_mac_rx_install();
-  esp_wifi_set_channel(CHAN, WIFI_SECOND_CHAN_NONE); // re-kick RX DMA onto our ring
+  uint32_t *req = static_cast<uint32_t *>(malloc(24));
+  memset(req, 0, 24);
+  reinterpret_cast<uint8_t *>(req)[0] = 23;
+  req[1] = reinterpret_cast<uint32_t>(&sta_rx_start_handler);
+  ieee80211_ioctl(req);
+  wreg(WIFI_MAC_INTR_MAP, 0); // re-detach ISR
+  mac_own_bssid();            // own-MAC + BSSID: hardware auto-ACK
+  ns_mac_rx_install();        // re-own the RX ring
+  esp_wifi_set_channel(CHAN, WIFI_SECOND_CHAN_NONE);
 
-  // Sanity: does our ring receive with a STA filter (no promiscuous)?
+  // Sanity: continuous RX into our ring, no promiscuous.
   uint8_t rx[400];
   uint32_t beacons = 0;
   for (int i = 0; i < 400; i++) {
@@ -352,7 +388,7 @@ void setup() {
     if (n && rx[0] == 0x80) beacons++;
     delay(3);
   }
-  Serial.printf("RX sanity (own MAC, no promiscuous): beacons=%u\n", beacons);
+  Serial.printf("RX sanity (STA vif, no promiscuous, HW crypto inline): beacons=%u\n", beacons);
 }
 
 enum St { AUTH, ASSOC, FOURWAY, DONE };
@@ -367,10 +403,11 @@ void loop() {
   // protected unicast to us raw — no HW-decrypt attempt, no drop — for software CCMP
   // decap, while still auto-ACKing. (Set once on entering DONE.)
   mac_own_bssid();
-  // Post-link: disable the HW crypto engine (CTRL0=0) so the MAC passes protected
-  // unicast to us raw for software CCMP decap while keeping hardware auto-ACK. (The
-  // HW-crypto datapath needs a non-promiscuous baseband RX-start — wifi_hw_start —
-  // which is coupled to the vendor PM task and hangs standalone; see wifi_hw_rx_test.)
+  // Post-link on the continuous-STA-RX datapath: the HW crypto engine drops protected
+  // unicast when the key slot's RX-decrypt state isn't fully set up (raw
+  // wDev_Insert_KeyEntry programs the slot but not the ic_set_key key-info table). So
+  // disable the HW crypto engine (CTRL0=0) — protected unicast then passes raw for
+  // software CCMP decap, while hardware auto-ACK stays on. (HW decrypt: use ic_set_key.)
   static bool crypto_off = false;
   if (st == DONE && !crypto_off) {
     *reinterpret_cast<volatile uint32_t *>(0x600A4800) = 0;
