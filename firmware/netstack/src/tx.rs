@@ -185,6 +185,20 @@ impl<const N: usize> TxRing<N> {
     pub fn mark_secure(&mut self, idx: usize) {
         if idx < N {
             self.slots[idx].secure = true;
+            // The vendor's secure-TX builder (ppProcTxSecFrame) fills more of the 8-byte
+            // hardware TX header than the plain length: byte2 = the 802.11 sequence-control
+            // high nibble (dot11hdr[22] >> 4), and bytes4-5 = the fragmentation headroom
+            // (fragThreshold - framelen) >> 2. The plaintext datapath leaves these zero;
+            // the crypto pipeline appears to require them (it dequeues but drops our frame).
+            let flen = self.slots[idx].frame_len_802 as u32;
+            let buf = &mut self.slots[idx].buf;
+            // 802.11 header starts at TX_HDR_LEN; seq-control low byte is dot11 offset 22.
+            let seq_lo = buf[TX_HDR_LEN + 22];
+            buf[2] = seq_lo >> 4;
+            const FRAG_THRESH: u32 = 2346;
+            let headroom = FRAG_THRESH.saturating_sub(flen) >> 2;
+            buf[4] = (headroom & 0xff) as u8;
+            buf[5] = ((headroom >> 8) & 0xff) as u8;
         }
     }
 
@@ -200,6 +214,17 @@ impl<const N: usize> TxRing<N> {
     /// Number of slots currently owned by hardware (in flight).
     pub fn in_flight(&self) -> usize {
         self.slots.iter().filter(|s| s.owned_by_hw).count()
+    }
+
+    /// Read back descriptor `idx`'s word0 after the hardware has processed it — a
+    /// diagnostic for secure-TX debugging (OWN still set = never dequeued; OWN
+    /// cleared with a flag bit in [31:28] = hardware error/secure-drop).
+    pub fn desc_word0(&self, idx: usize) -> u32 {
+        if idx < N {
+            self.descs[idx].word0
+        } else {
+            0
+        }
     }
 
     /// Copy the next queued frame into `out`, free its slot, and return its

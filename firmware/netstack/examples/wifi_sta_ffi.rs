@@ -251,6 +251,13 @@ pub extern "C" fn ns_mac_send_sec(frame: *const u8, len: u32, queue: u32) -> u32
     }
 }
 
+/// Diagnostic: read back TX descriptor `idx`'s word0 after hardware processing
+/// (OWN bit still set => never dequeued; flag bits in [31:28] => error/secure-drop).
+#[no_mangle]
+pub extern "C" fn ns_tx_desc_word0(idx: u32) -> u32 {
+    unsafe { TX.desc_word0(idx as usize) }
+}
+
 #[cfg(not(test))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo) -> ! {

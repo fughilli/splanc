@@ -23,6 +23,7 @@ void ns_mac_rx_install();
 uint32_t ns_mac_recv(uint8_t *out, uint32_t cap);
 uint32_t ns_mac_send(const uint8_t *frame, uint32_t len, uint32_t queue);
 uint32_t ns_mac_send_sec(const uint8_t *frame, uint32_t len, uint32_t queue); // HW CCMP encrypt
+uint32_t ns_tx_desc_word0(uint32_t idx); // read back TX descriptor word0 (secure-TX diagnostic)
 void ns_wpa_init(const uint8_t *ssid, uint32_t ssid_len, const uint8_t *pass, uint32_t pass_len,
                  const uint8_t *ap, const uint8_t *self_mac, const uint8_t *snonce);
 uint32_t ns_wpa_on_eapol(const uint8_t *eapol, uint32_t len, uint8_t *out, uint32_t cap);
@@ -234,10 +235,14 @@ uint32_t tx_l2(const uint8_t *hdr, const uint8_t *payload, int plen, const char 
     // fills the PN, encrypts in place, and appends the 8-byte MIC (length = frame+8).
     static uint32_t tx_pn = 1;           // per-key CCMP packet number (must increment)
     uint8_t frame[1700];
+    // QoS data frame (FC 0x88 0x41: QoS-data subtype + ToDS + Protected). The vendor's
+    // hardware-encrypted TX was QoS with a 26-byte header (24 + 2-byte QoS control); the
+    // HW CCMP engine builds the AES-CCM nonce/AAD from the QoS bit, so a non-QoS frame
+    // with the secure descriptor bit is dropped in the crypto pipeline.
     memcpy(frame, hdr, 24);
-    frame[0] = 0x88;                     // QoS data (was 0x08) + ToDS + Protected
-    frame[24] = 0x00; frame[25] = 0x00;  // QoS control
-    // CCMP header: PN0 PN1 | Rsvd | KeyID | PN2 PN3 PN4 PN5
+    frame[0] = 0x88;                     // QoS data subtype (override the 0x08 the caller set)
+    frame[24] = 0x00; frame[25] = 0x00;  // QoS control: TID 0, normal ack
+    // CCMP header at offset 26: PN0 PN1 | Rsvd | KeyID | PN2 PN3 PN4 PN5
     frame[26] = tx_pn & 0xff;
     frame[27] = (tx_pn >> 8) & 0xff;
     frame[28] = 0x00;
@@ -248,12 +253,31 @@ uint32_t tx_l2(const uint8_t *hdr, const uint8_t *payload, int plen, const char 
     tx_pn++;
     memcpy(frame + 34, payload, plen);
     ns_mac_send_sec(frame, 26 + 8 + plen, 0);
-    if (label) Serial.printf("%s (HW-enc %d B)\n", label, 26 + 8 + plen);
+    // Diagnose the first few secure sends: read back the descriptor word0 (did the HW
+    // dequeue it? OWN=bit31; error flags in [31:28]) and the queue-0 TX status/error regs.
+    static int dbg = 0;
+    if (dbg++ < 4) {
+      auto rd = [](uintptr_t a) { return *reinterpret_cast<volatile uint32_t *>(a); };
+      delayMicroseconds(400); // let the HW pick up + process the descriptor
+      Serial.printf("SECDBG desc.w0=%08x status(54E0)=%08x plcp0(4D6C)=%08x cryptctl(4804)=%08x c10(4810)=%08x kv(4814)=%08x\n",
+                    ns_tx_desc_word0(0), rd(0x600A54E0), rd(0x600A4D6C), rd(0x600A4804), rd(0x600A4810), rd(0x600A4814));
+    }
+    if (label) Serial.printf("%s (HW-enc QoS %d B)\n", label, 26 + 8 + plen);
     return 26 + 8 + plen;
   }
   uint8_t enc[1700];
   uint32_t el = ns_sta_encrypt(hdr, 24, payload, plen, enc, sizeof(enc));
-  if (el > 0) { ns_mac_send(enc, el, 0); if (label) Serial.printf("%s (SW-enc %u B)\n", label, el); }
+  if (el > 0) {
+    ns_mac_send(enc, el, 0);
+    static int dbg = 0;
+    if (dbg++ < 4) {
+      auto rd = [](uintptr_t a) { return *reinterpret_cast<volatile uint32_t *>(a); };
+      delayMicroseconds(400);
+      Serial.printf("NSDBG(good-tx) desc.w0=%08x status(54E0)=%08x plcp0(4D6C)=%08x\n",
+                    ns_tx_desc_word0(0), rd(0x600A54E0), rd(0x600A4D6C));
+    }
+    if (label) Serial.printf("%s (SW-enc %u B)\n", label, el);
+  }
   return el;
 }
 
@@ -324,9 +348,13 @@ void install_hw_key() {
   slot[6] = 0; slot[7] = 0; slot[8] = 0; slot[9] = 0;   // zero RX PN replay words
   slot[1] = (slot[1] & 0x0000ffff) | 0x086c0000;        // vendor pairwise-key config
   wr(0x600A4004, rd(0x600A4004) | 0x00010000);          // BSSID entry "has key" bit
-  wr(0x600A4800, 0x00030103);                           // ctrl0: HW crypto enable
-  wr(0x600A4804, 0x00030000);                           // ctrl1 (clear hal_crypto_enable extras)
-  wr(0x600A4810, 0x00000000);                           // c10  (clear -> RX-decrypt works)
+  // hal_crypto_enable(cipher=CCMP) arming (reversed from hal_crypto.o): base 0x30103 with
+  // bit31 set on ctrl1, and 0x4810 gets the CCMP per-slot enable mask 0x3FFFC0. Leaving
+  // 0x4810=0 disabled the CCMP TX engine, so HW consumed the secure descriptor but dropped
+  // the frame (never reached the air). These two writes ARM the encrypt path.
+  wr(0x600A4800, 0x00030103);                           // ctrl0
+  wr(0x600A4804, 0x80030103);                           // ctrl1: base 0x30103 | bit31 (CCMP enable)
+  wr(0x600A4810, 0x003FFFC0);                           // CCMP per-slot enable mask
   wr(0x600A582C, SLOT);                                  // "using key idx" -> TX encrypt key
   ic_set_rx_policy(0, 0, 1, 1);
   ic_rx_enable_bssid_check(0);
