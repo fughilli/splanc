@@ -218,11 +218,10 @@ git_override(
 bazel_dep(name = "rules_fpga", version = "0.0.0")
 git_override(
     module_name = "rules_fpga",
-    # Branch cc-toolchain-consumption-safe: registers the Verilator cc toolchain
-    # under a dedicated type so it doesn't hijack splanc's host C++, and fixes the
-    # injected-BUILD config load for the dependency case. Move to the merged
-    # commit on main once the PR lands.
-    commit = "99d553acd81d0fc40e6e59ada6cfe4eac6a2031d",
+    # main @ c33f2b5 (#1, squash-merged): the Verilator cc toolchain is under a
+    # dedicated type so it doesn't hijack splanc's host C++, and the injected
+    # cc BUILD resolves correctly when rules_fpga is a dependency.
+    commit = "c33f2b54cac7893a0d043e6e8c3dbfe6c30866ca",
     remote = "https://github.com/fughilli/rules_fpga.git",
 )
 
