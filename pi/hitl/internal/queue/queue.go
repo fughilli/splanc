@@ -348,7 +348,7 @@ func (m *Manager) Status() api.Status {
 	var firstBusy *api.Reservation
 	for _, d := range m.devices {
 		h := holders[d.Name]
-		s.Devices = append(s.Devices, api.DeviceStatus{Name: d.Name, Active: h})
+		s.Devices = append(s.Devices, api.DeviceStatus{Name: d.Name, Kind: d.Kind, Active: h})
 		if h == nil {
 			anyFree = true
 		} else if firstBusy == nil {
@@ -601,7 +601,7 @@ func (m *Manager) nextAssignmentLocked() (*runner.Device, *api.Reservation) {
 		if busy[m.devices[i].Name] {
 			continue
 		}
-		if head := m.nextWaiterForLocked(m.devices[i].Name); head != nil {
+		if head := m.nextWaiterForLocked(&m.devices[i]); head != nil {
 			return &m.devices[i], head
 		}
 	}
@@ -609,13 +609,19 @@ func (m *Manager) nextAssignmentLocked() (*runner.Device, *api.Reservation) {
 }
 
 // nextWaiterForLocked returns the earliest queued reservation that can run on the
-// named DUT (unpinned, or pinned to it), or nil if none.
-func (m *Manager) nextWaiterForLocked(dev string) *api.Reservation {
+// given DUT, or nil if none. A normal (USB) DUT accepts an unpinned waiter or one
+// pinned to it. A network DUT is PIN-ONLY: it accepts only a waiter that named it,
+// so an ordinary "any DUT" reservation (e.g. a C6 test) never lands on the Pi.
+func (m *Manager) nextWaiterForLocked(dev *runner.Device) *api.Reservation {
+	pinOnly := dev.Kind == "network"
 	for _, r := range m.items {
 		if r.State != api.StateQueued {
 			continue
 		}
-		if want := m.want[r.ID]; want == "" || want == dev {
+		switch want := m.want[r.ID]; {
+		case want == dev.Name:
+			return r
+		case want == "" && !pinOnly:
 			return r
 		}
 	}

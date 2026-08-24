@@ -99,8 +99,9 @@ type AnalyzerInfo struct {
 
 // DeviceStatus is one DUT's slice of the rig's Status.
 type DeviceStatus struct {
-	Name   string       `json:"name"`   // DUT name (matches ReserveRequest.Device)
-	Active *Reservation `json:"active"` // this DUT's current holder, or null if free
+	Name   string       `json:"name"`           // DUT name (matches ReserveRequest.Device)
+	Kind   string       `json:"kind,omitempty"` // "" == usb board; "network" == LAN DUT (pin-only)
+	Active *Reservation `json:"active"`         // this DUT's current holder, or null if free
 }
 
 // WiFiInfo is the rig's self-hosted provisioning AP: the network a test flow

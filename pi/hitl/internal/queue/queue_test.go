@@ -584,3 +584,39 @@ func TestCaptureRequiresActiveReservation(t *testing.T) {
 		t.Errorf("runner capture must not be touched for a non-active id, got %v", fr.capStarted)
 	}
 }
+
+// A network DUT is PIN-ONLY: an unpinned "any DUT" reservation never lands on it
+// (so a C6 test can't accidentally run against a Pi), but a reservation that pins
+// it by name activates on it.
+func TestNetworkDUTPinOnly(t *testing.T) {
+	ctx := context.Background()
+	fr := &fakeRunner{}
+	m := New("rig", 30*time.Minute, fr, WithDevices([]runner.Device{
+		{Name: "c6-0", SSHPort: 2222},
+		{Name: "pi-1", SSHPort: 2230, Kind: "network"},
+	}))
+
+	// Unpinned reservation takes the C6, never the network DUT.
+	a := m.Reserve(ctx, api.ReserveRequest{Owner: "a"})
+	if a.State != api.StateActive || a.Device != "c6-0" {
+		t.Fatalf("unpinned should land on c6-0, got state=%q dev=%q", a.State, a.Device)
+	}
+
+	// A second unpinned reservation must QUEUE: the C6 is busy and the only free
+	// DUT (pi-1) is pin-only, so it must not silently take the Pi.
+	b := m.Reserve(ctx, api.ReserveRequest{Owner: "b"})
+	if b.State != api.StateQueued {
+		t.Fatalf("second unpinned should queue (network DUT is pin-only), got state=%q dev=%q", b.State, b.Device)
+	}
+
+	// A reservation pinned to the network DUT activates on it.
+	c := m.Reserve(ctx, api.ReserveRequest{Owner: "c", Device: "pi-1"})
+	if c.State != api.StateActive || c.Device != "pi-1" {
+		t.Fatalf("pin to pi-1 should activate on it, got state=%q dev=%q", c.State, c.Device)
+	}
+
+	// b is still queued (it wanted any DUT; only the pin-only Pi was free).
+	if got, _ := m.Get(b.ID); got.State != api.StateQueued {
+		t.Fatalf("b should remain queued, got %q", got.State)
+	}
+}
