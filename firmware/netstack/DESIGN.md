@@ -93,3 +93,13 @@ RISC-V code on an ESP32-C6:
   serve `GET /` with a bounded HTTP 200.
 
 Each example reports a simple pass/fail result over the serial console.
+
+## Open seams
+
+- **HW-crypto TX-encrypt** — the WiFi-MAC inline CCMP engine hardware-decrypts RX
+  for our driver, but hardware TX-encrypt is not reachable from our heapless
+  direct-submission path (it requires the vendor `ppTxPkt`/`esf_buf`+node coupling
+  the from-source MLME skips). Full reverse-engineering, everything tried, the
+  diagnostic tooling, and the chosen path forward (bridge TX via `ppTxPkt`) are
+  documented in [`hw-crypto-tx-seam.md`](hw-crypto-tx-seam.md). The current data
+  plane uses software CCMP (proven end-to-end: 4-way → DHCP → ping → TCP).
