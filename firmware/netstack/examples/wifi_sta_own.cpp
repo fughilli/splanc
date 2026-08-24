@@ -29,6 +29,12 @@ uint32_t ns_sta_get_tk(uint8_t *out);
 void wDev_Insert_KeyEntry(uint32_t cipher, uint32_t enable, uint32_t flag,
                           const uint8_t *mac, uint32_t slot, const uint8_t *key,
                           uint32_t key_len, uint32_t mgmt);
+uint32_t ns_tcp_connect(const uint8_t *src, const uint8_t *dst, uint16_t sport, uint16_t dport,
+                        uint32_t iss, uint8_t *out, uint32_t cap);
+uint32_t ns_tcp_on_ip(const uint8_t *ip, uint32_t len, uint8_t *out, uint32_t cap);
+uint32_t ns_tcp_send(const uint8_t *data, uint32_t len, uint8_t *out, uint32_t cap);
+uint32_t ns_tcp_recv(uint8_t *out, uint32_t cap);
+uint32_t ns_tcp_state();
 }
 
 // No-op promiscuous sink: keeps the RX hardware + all-frames filter enabled but
@@ -49,6 +55,7 @@ bool g_have_offer = false, g_leased = false;
 const uint8_t GATEWAY[4] = {10, 42, 0, 1};
 bool g_pinged = false;
 bool g_hwkey = false;
+bool g_tcp_started = false, g_tcp_requested = false;
 
 inline void wreg(uintptr_t a, uint32_t v) { *reinterpret_cast<volatile uint32_t *>(a) = v; }
 
@@ -219,6 +226,22 @@ void send_ping(const uint8_t *src, uint16_t seq) {
                                                         GATEWAY[0], GATEWAY[1], GATEWAY[2], GATEWAY[3], seq); }
 }
 
+// CCMP-encrypt + transmit an IPv4 packet to the gateway (the AP), wrapping it in
+// LLC/SNAP. Used for the TCP segments the tcp module produces.
+void send_ip(const uint8_t *ip, int iplen) {
+  uint8_t payload[1600];
+  const uint8_t llc[] = {0xaa, 0xaa, 0x03, 0x00, 0x00, 0x00, 0x08, 0x00};
+  memcpy(payload, llc, 8);
+  memcpy(payload + 8, ip, iplen);
+  uint8_t hdr[24]; // ToDS=1 + Protected=1; a1=BSSID a2=us a3=BSSID (gateway == AP)
+  hdr[0] = 0x08; hdr[1] = 0x41; hdr[2] = 0x00; hdr[3] = 0x00;
+  memcpy(hdr + 4, BSSID, 6); memcpy(hdr + 10, OUR_MAC, 6); memcpy(hdr + 16, BSSID, 6);
+  hdr[22] = 0x00; hdr[23] = 0x00;
+  uint8_t enc[1700];
+  uint32_t el = ns_sta_encrypt(hdr, 24, payload, 8 + iplen, enc, sizeof(enc));
+  if (el > 0) ns_mac_send(enc, el, 0);
+}
+
 // Program the HW CCMP key slot for our pairwise key so the MAC hardware-decrypts
 // protected unicast to us (delivering plaintext) AND keeps hardware auto-ACK.
 void install_hw_key() {
@@ -237,6 +260,15 @@ void install_hw_key() {
 void handle_l3(const uint8_t *pt, int pl) {
   if (pl <= 8 || pt[6] != 0x08 || pt[7] != 0x00) return; // IPv4 EtherType
   const uint8_t *ip = pt + 8;
+  if (pl > 8 + 20 && ip[9] == 6) { // TCP -> feed the connection
+    int iplen = (ip[2] << 8) | ip[3];
+    if (iplen >= 20 && 8 + iplen <= pl) {
+      uint8_t reply[1600];
+      uint32_t rl = ns_tcp_on_ip(ip, iplen, reply, sizeof(reply));
+      if (rl > 0) send_ip(reply, rl);
+    }
+    return;
+  }
   if (pl > 8 + 28 && ip[9] == 1) { // ICMP
     const uint8_t *ic = ip + ((ip[0] & 0x0f) * 4);
     if (ic[0] == 0) // echo reply
@@ -411,11 +443,29 @@ void loop() {
     if (g_have_offer) send_dhcp(3, g_offer_ip, g_server_id, "REQUEST");
     else send_dhcp(1, nullptr, nullptr, "DISCOVER");
   }
-  // With a lease, ping the gateway to prove general unicast IP connectivity.
-  if (st == DONE && g_leased && millis() - t > 800) {
+  // With a lease: prove ICMP a few times, then open a TCP connection to the rig echo
+  // server (10.42.0.1:7777) and exchange data over the heapless stack.
+  if (st == DONE && g_leased && !g_tcp_started && millis() - t > 700) {
     t = millis();
-    static uint16_t seq = 1;
-    send_ping(g_offer_ip, seq++);
-    g_pinged = true;
+    static int pc = 0;
+    if (pc < 3) { send_ping(g_offer_ip, pc + 1); pc++; }
+    else {
+      uint8_t syn[80];
+      uint32_t n = ns_tcp_connect(g_offer_ip, GATEWAY, 5001, 7777, 0x2000, syn, sizeof(syn));
+      Serial.printf("TCP connect: pc=%d n=%u\n", pc, n);
+      if (n > 0) { send_ip(syn, n); g_tcp_started = true; Serial.println("TCP SYN -> 10.42.0.1:7777"); }
+    }
+  }
+  // Drive the connection: on ESTABLISHED send a request; print any echoed bytes.
+  if (st == DONE && g_tcp_started) {
+    if (ns_tcp_state() == 2 && !g_tcp_requested) {
+      const char *req = "HELLO-FROM-HEAPLESS\n";
+      uint8_t seg[128];
+      uint32_t n = ns_tcp_send((const uint8_t *)req, strlen(req), seg, sizeof(seg));
+      if (n > 0) { send_ip(seg, n); g_tcp_requested = true; Serial.println("TCP ESTABLISHED — request sent"); }
+    }
+    uint8_t rb[256];
+    uint32_t rn = ns_tcp_recv(rb, sizeof(rb) - 1);
+    if (rn > 0) { rb[rn] = 0; Serial.printf("*** TCP RX (%u B): %s ***\n", rn, (char *)rb); }
   }
 }

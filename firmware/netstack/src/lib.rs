@@ -42,6 +42,7 @@ pub mod http;
 pub mod pb;
 pub mod wpa;
 pub mod ccmp;
+pub mod tcp;
 pub mod sta;
 pub mod ap;
 pub mod gatt;

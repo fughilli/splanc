@@ -90,6 +90,76 @@ pub extern "C" fn ns_sta_decrypt(frame: *const u8, frame_len: u32, out: *mut u8,
     }
 }
 
+// --- TCP client -------------------------------------------------------------
+use ledmapper_netstack::tcp::{State, TcpConn};
+
+static mut TCP: Option<TcpConn> = None;
+
+/// Open a TCP connection (src/dst are 4-byte IPv4). Builds the SYN into `out`.
+#[no_mangle]
+pub extern "C" fn ns_tcp_connect(src: *const u8, dst: *const u8, sport: u16, dport: u16,
+                                 iss: u32, out: *mut u8, cap: u32) -> u32 {
+    unsafe {
+        let s = core::slice::from_raw_parts(src, 4);
+        let d = core::slice::from_raw_parts(dst, 4);
+        let mut conn = TcpConn::new([s[0], s[1], s[2], s[3]], [d[0], d[1], d[2], d[3]], sport, dport, iss);
+        let o = core::slice::from_raw_parts_mut(out, cap as usize);
+        let n = conn.connect(o);
+        TCP = Some(conn);
+        n as u32
+    }
+}
+
+/// Feed an inbound IPv4 datagram to the connection. Writes any reply to `out`.
+#[no_mangle]
+pub extern "C" fn ns_tcp_on_ip(ip: *const u8, len: u32, out: *mut u8, cap: u32) -> u32 {
+    unsafe {
+        let Some(c) = TCP.as_mut() else { return 0 };
+        let i = core::slice::from_raw_parts(ip, len as usize);
+        let o = core::slice::from_raw_parts_mut(out, cap as usize);
+        c.on_ip(i, o) as u32
+    }
+}
+
+/// Queue application data to send; builds the segment into `out`.
+#[no_mangle]
+pub extern "C" fn ns_tcp_send(data: *const u8, len: u32, out: *mut u8, cap: u32) -> u32 {
+    unsafe {
+        let Some(c) = TCP.as_mut() else { return 0 };
+        let d = core::slice::from_raw_parts(data, len as usize);
+        let o = core::slice::from_raw_parts_mut(out, cap as usize);
+        c.send(d, o) as u32
+    }
+}
+
+/// Copy any received application bytes into `out` and clear the buffer.
+#[no_mangle]
+pub extern "C" fn ns_tcp_recv(out: *mut u8, cap: u32) -> u32 {
+    unsafe {
+        let Some(c) = TCP.as_mut() else { return 0 };
+        let d = c.rx_data();
+        let n = d.len().min(cap as usize);
+        core::ptr::copy_nonoverlapping(d.as_ptr(), out, n);
+        c.take_rx();
+        n as u32
+    }
+}
+
+/// Connection state: 0=Closed 1=SynSent 2=Established 3=FinWait 4=Done.
+#[no_mangle]
+pub extern "C" fn ns_tcp_state() -> u32 {
+    unsafe {
+        match TCP.as_ref().map(|c| c.state) {
+            Some(State::Closed) => 0,
+            Some(State::SynSent) => 1,
+            Some(State::Established) => 2,
+            Some(State::FinWait) => 3,
+            Some(State::Done) => 4,
+            None => 0,
+        }
+    }
+}
+
 /// Copy the installed pairwise TK (16 bytes) into `out` for programming the hardware
 /// crypto key slot. Returns 1 if keys are installed, 0 otherwise.
 #[no_mangle]
