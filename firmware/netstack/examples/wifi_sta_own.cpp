@@ -15,12 +15,24 @@
 #include <WiFi.h>
 #include <esp_wifi.h>
 #include <esp_random.h>
+#include <esp_mac.h>
 #include <string.h>
 #include <mbedtls/ssl.h>
 #include <mbedtls/x509_crt.h>
 #include <mbedtls/pk.h>
+#include "ws_codec.h"     // RFC6455 server codec (from //firmware/player_app:ws_codec)
+#include "player_ffi.h"   // lm_player_* session core (from //firmware/player_app:player_ffi)
 
-SET_LOOP_TASK_STACK_SIZE(20480);
+// Board capability descriptor, compiled from //firmware/player_app:board_caps_res
+// (symbols named after the binaryproto basename). Handed to the player at boot so
+// get_hardware_config echoes this board's real GPIO/LED-type catalog.
+extern "C" const unsigned char board_caps_binaryproto[];
+extern "C" const unsigned board_caps_binaryproto_len;
+
+// The player + TLS + WS + link-pump call chain is deep (mbedtls records, protobuf encode
+// of the ~800B hardware_config_state, and pump_link_once→handle_l3 nested inside a TLS
+// write). 24KB overflowed on get_hardware_config; give loopTask generous headroom.
+SET_LOOP_TASK_STACK_SIZE(49152);
 
 extern "C" {
 void ns_mac_rx_install();
@@ -74,6 +86,14 @@ uint32_t ic_set_vif(uint32_t vif, uint32_t mode, const uint8_t *mac, uint32_t a3
 void pm_disconnected_stop();
 void pm_go_to_wake();
 int ieee80211_ioctl(void *req);
+
+// On-device effects JIT trampoline — defined in the player_app's main.cpp, which we
+// don't link. The e2e path runs no effects, so stub it OFF: region_words()==0 makes the
+// player skip the JIT entirely (ffi.rs: a 0-word region disables it). fence.i is cheap.
+uint32_t *lm_jit_region_ptr(void) { return nullptr; }
+size_t lm_jit_region_words(void) { return 0; }
+void lm_jit_arm(void) {}
+void lm_jit_sync_icache(void) { asm volatile("fence.i" ::: "memory"); }
 }
 
 // ioctl handler: bring up continuous STA RX in the WiFi-task context.
@@ -111,7 +131,7 @@ bool g_tcp_started = false, g_tcp_requested = false;
 // outbound TCP-client test. Validates the inbound TCP path (SYN->SYN-ACK->data->ACK) on
 // silicon before layering mbedtls TLS on top.
 constexpr bool TCP_SERVER = true;
-constexpr uint16_t SERVER_PORT = 4433;
+constexpr uint16_t SERVER_PORT = 443;  // the LED Mapper wss:443 the HITL e2e connects to
 
 inline void wreg(uintptr_t a, uint32_t v) { *reinterpret_cast<volatile uint32_t *>(a) = v; }
 
@@ -497,7 +517,7 @@ void handle_l3(const uint8_t *pt, int pl) {
                       (tcp[2] << 8) | tcp[3], tcp[13],
                       (uint32_t)((tcp[4] << 24) | (tcp[5] << 16) | (tcp[6] << 8) | tcp[7]), dlen,
                       ns_tcp_state());
-      uint8_t reply[1600];
+      static uint8_t reply[1600];  // static: handle_l3 is never re-entered (single thread)
       uint32_t rl = ns_tcp_on_ip(ip, iplen, reply, sizeof(reply));
       if (rl > 0) send_ip(reply, rl);
     }
@@ -619,6 +639,141 @@ void tls_init() {
   Serial.printf("TLS init: cert=%d key=%d setup=%d\n", r, r2, r3);
 }
 
+// ---- WebSocket + player: the LED Mapper protocol over the proven TLS -----------------
+// When PLAYER_MODE, once TLS is up we speak RFC6455: consume the HTTP upgrade, then feed
+// each binary WS message to the player session core (lm_player_handle) and frame its
+// reply back. This is the transport the HITL e2e exercises (wss:443/ws): hello/welcome,
+// time_sync, set_device_name, get_hardware_config — all handled inside lm_player_handle.
+constexpr bool PLAYER_MODE = true;
+bool g_ws_up = false;
+uint8_t g_ws_rx[8192];
+size_t g_ws_rxlen = 0;
+
+// Receive + decrypt one link frame and drive it through the L3/TCP handler. Called from
+// the TLS write spin so the peer's ACK is processed and the stop-and-wait TCP frees its
+// in-flight segment — otherwise a write that spans >1 segment (or follows an unacked one)
+// deadlocks: bio_send returns WANT_WRITE forever because no RX drain runs to clear tx_data.
+static void pump_link_once() {
+  static uint8_t rxb[1600];
+  uint32_t n = ns_mac_recv(rxb, sizeof(rxb));
+  if (n == 0) return;
+  if ((rxb[0] & 0x0c) == 0x08 && (rxb[1] & 0x40)) {  // protected data frame from the AP
+    static uint8_t pt[1600];  // static: single-threaded, and keeps this off the deep TLS-write stack
+    uint32_t pl = 0;
+    for (uint32_t trim = 0; trim <= 4 && pl == 0; trim++)
+      if (n > trim + 32) pl = ns_sta_decrypt(rxb, n - trim, pt, sizeof(pt));
+    if (pl) handle_l3(pt, pl);
+  }
+}
+
+// Write all `len` bytes through TLS. On WANT_WRITE the stop-and-wait TCP has a segment in
+// flight — pump the link so its ACK clears tx_data and the next segment can go.
+static bool tls_write_all(const uint8_t *buf, size_t len) {
+  size_t off = 0;
+  uint32_t guard = 0;
+  while (off < len) {
+    int w = mbedtls_ssl_write(&g_ssl, buf + off, len - off);
+    if (w > 0) {
+      off += w;
+      guard = 0;
+    } else if (w == MBEDTLS_ERR_SSL_WANT_WRITE || w == MBEDTLS_ERR_SSL_WANT_READ) {
+      pump_link_once();  // drive on_ip so the in-flight ACK frees the TCP tx slot
+      if (++guard > 4000000) return false;  // don't wedge if the peer vanished
+    } else {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Frame + send one server WS message (unmasked). Header + payload go out as ONE buffer so
+// a small reply is a single TLS record / TCP segment (no mid-message stop-and-wait stall).
+static void ws_send(uint8_t opcode, const uint8_t *payload, size_t len) {
+  static uint8_t frame[8208];
+  uint8_t hdr[10];
+  size_t hn = ws_build_frame_header(opcode, len, hdr);
+  if (hn + len <= sizeof(frame)) {
+    memcpy(frame, hdr, hn);
+    if (len) memcpy(frame + hn, payload, len);
+    tls_write_all(frame, hn + len);
+  } else {  // oversized: header then payload (tls_write_all pumps the link between segments)
+    tls_write_all(hdr, hn);
+    if (len) tls_write_all(payload, len);
+  }
+}
+
+// Drive the WS layer once: pull TLS bytes, complete the upgrade, then dispatch any
+// complete frames. Returns false if the connection should be torn down.
+static bool ws_pump() {
+  int r = mbedtls_ssl_read(&g_ssl, g_ws_rx + g_ws_rxlen, sizeof(g_ws_rx) - g_ws_rxlen);
+  if (r == MBEDTLS_ERR_SSL_WANT_READ || r == MBEDTLS_ERR_SSL_WANT_WRITE) return true;
+  if (r <= 0) return false;  // close_notify or error
+  g_ws_rxlen += r;
+
+  if (!g_ws_up) {
+    // Wait for the full HTTP upgrade request (ends with a blank line), then 101.
+    g_ws_rx[g_ws_rxlen < sizeof(g_ws_rx) ? g_ws_rxlen : sizeof(g_ws_rx) - 1] = 0;
+    if (!strstr((char *)g_ws_rx, "\r\n\r\n")) return true;  // headers incomplete
+    char key[80];
+    if (!ws_find_key((char *)g_ws_rx, key, sizeof key)) return false;
+    char accept[29];
+    ws_accept_key(key, accept);
+    char resp[200];
+    int n = snprintf(resp, sizeof resp,
+                     "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
+                     "Connection: Upgrade\r\nSec-WebSocket-Accept: %s\r\n\r\n", accept);
+    if (!tls_write_all((const uint8_t *)resp, n)) return false;
+    g_ws_up = true;
+    g_ws_rxlen = 0;  // the request body ends at the blank line; nothing after it yet
+    Serial.println("*** WS UPGRADED — LED Mapper protocol over heapless TLS ***");
+    return true;
+  }
+
+  // Parse and dispatch every complete frame currently buffered.
+  for (;;) {
+    ws_frame_header h;
+    int pr = ws_parse_frame_header(g_ws_rx, g_ws_rxlen, &h);
+    if (pr > 0) break;       // need more bytes
+    if (pr < 0) return false;  // protocol violation
+    size_t total = h.header_len + (size_t)h.payload_len;
+    if (g_ws_rxlen < total) break;  // full payload not in yet
+    uint8_t *payload = g_ws_rx + h.header_len;
+    if (h.masked) ws_unmask(payload, h.payload_len, h.mask, 0);
+    if (h.opcode == WS_OP_BINARY || h.opcode == WS_OP_CONT) {
+      // NB: e2e messages are single-frame; sharded map/topology uploads (upload_chunk)
+      // aren't needed for the hello/time_sync/name/hw-config checks — handle directly.
+      static uint8_t tx[8192];
+      int64_t now = (int64_t)millis();
+      int32_t tn = lm_player_handle(payload, h.payload_len, now, now, tx, sizeof tx);
+      Serial.printf("*** WS msg %u B -> player reply %d B ***\n", (unsigned)h.payload_len, (int)tn);
+      if (tn > 0) ws_send(WS_OP_BINARY, tx, tn);
+    } else if (h.opcode == WS_OP_PING) {
+      ws_send(WS_OP_PONG, payload, h.payload_len);
+    } else if (h.opcode == WS_OP_CLOSE) {
+      return false;
+    }
+    size_t rest = g_ws_rxlen - total;
+    memmove(g_ws_rx, g_ws_rx + total, rest);
+    g_ws_rxlen = rest;
+  }
+  return true;
+}
+
+void player_init() {
+  lm_player_init(64);
+  // Identity: factory MAC + a default display name (the e2e renames it via
+  // set_device_name and expects the welcome to echo the change).
+  uint8_t mac[6];
+  esp_read_mac(mac, ESP_MAC_WIFI_STA);
+  const char *name = "LED Mapper (heapless)";
+  lm_player_set_identity(mac, sizeof mac, (const uint8_t *)name, strlen(name));
+  // 40-char git commit + dirty flag echoed in welcome (fwGitCommit/fwGitDirty).
+  const char *commit = "0000000000000000000000000000000000000000";
+  lm_player_set_build_info((const uint8_t *)commit, strlen(commit), true);
+  lm_set_board_caps(board_caps_binaryproto, board_caps_binaryproto_len);
+  Serial.printf("player init: board_caps=%u B\n", board_caps_binaryproto_len);
+}
+
 } // namespace
 
 void setup() {
@@ -666,6 +821,7 @@ void setup() {
   }
   Serial.printf("RX sanity (STA vif, no promiscuous, HW crypto inline): beacons=%u\n", beacons);
   if (TCP_SERVER && TLS_SERVER) tls_init();
+  if (TCP_SERVER && TLS_SERVER && PLAYER_MODE) player_init();
 }
 
 enum St { AUTH, ASSOC, FOURWAY, DONE };
@@ -749,7 +905,7 @@ void loop() {
       // Protected data frame from the AP: CCMP-decrypt and look for a DHCP reply.
       // The RX frame carries a trailing 4-byte FCS that would corrupt CCMP's MIC
       // (it lives in the last 8 bytes), so trim it before decap.
-      uint8_t pt[1600];
+      static uint8_t pt[1600];  // static: keep the drain's decrypt buffer off the deep stack
       // The RX MPDU has no trailing FCS here, so decap over the full length; fall
       // back to an FCS-trimmed length in case a driver variant appends one.
       // The RX hardware pads odd-length MPDUs to even (and some paths append a 4-byte
@@ -828,6 +984,8 @@ void loop() {
           mbedtls_ssl_session_reset(&g_ssl);
           g_bio_tx = g_bio_rx = 0;
         }
+      } else if (PLAYER_MODE) {
+        if (!ws_pump()) { mbedtls_ssl_close_notify(&g_ssl); }
       } else {
         uint8_t rb[600];
         int r = mbedtls_ssl_read(&g_ssl, rb, sizeof(rb));
@@ -854,7 +1012,7 @@ void loop() {
       static uint32_t niss = 0x4000;
       ns_tcp_listen(g_offer_ip, SERVER_PORT, niss);
       niss += 0x1000;
-      if (TLS_SERVER) { mbedtls_ssl_session_reset(&g_ssl); g_tls_hs = false; }
+      if (TLS_SERVER) { mbedtls_ssl_session_reset(&g_ssl); g_tls_hs = false; g_ws_up = false; g_ws_rxlen = 0; }
       Serial.println("*** SERVER re-listening ***");
     }
   } else if (st == DONE && g_tcp_started) {

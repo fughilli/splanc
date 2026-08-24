@@ -321,10 +321,19 @@ cc_binary(
     name = "wifi_sta_own",
     srcs = ["examples/wifi_sta_own.cpp"],
     copts = ["-fno-rtti"],
+    # Two no_std Rust staticlibs (our wifi_sta_ffi + the app's player_ffi) each define
+    # the panic handler (rust_begin_unwind) / eh_personality; take the first definition.
+    linkopts = ["-Wl,--allow-multiple-definition"],
     target_compatible_with = _C6,
     deps = _arduino + [
         ":wifi_sta_ffi",
         "@embedded//libs/vendor:wifi",
+        # Player session core + WS codec + board caps: serve the LED Mapper protocol
+        # (the HITL e2e transport) over the proven heapless TLS server.
+        "//firmware/player_app:player_ffi",
+        "//firmware/player_app:player_ffi_hdr",
+        "//firmware/player_app:ws_codec",
+        "//firmware/player_app:board_caps_res",
     ],
 )
 

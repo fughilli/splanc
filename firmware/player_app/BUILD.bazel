@@ -137,6 +137,17 @@ rust_binary(
 cc_library(
     name = "ws_codec",
     hdrs = ["ws_codec.h"],
+    # includes=["."] so out-of-package consumers (the netstack player variant) can
+    # `#include "ws_codec.h"` with a bare name, same as in-package main.cpp.
+    includes = ["."],
+)
+
+# The C ABI header for the Rust player core (:player_ffi provides the symbols).
+# Exposed as a header-only lib so the netstack player variant can declare lm_*.
+cc_library(
+    name = "player_ffi_hdr",
+    hdrs = ["player_ffi.h"],
+    includes = ["."],
 )
 
 cc_test(
