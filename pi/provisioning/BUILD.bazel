@@ -20,3 +20,16 @@ sbc_application(
     # pi/provisioning/nix/flake.lock (parallel to the git_override in
     # //MODULE.bazel), so no in-tree `framework=` injection.
 )
+
+# Raspberry Pi 3B/3B+ board variant of the SAME flake + config (:ledmapper above
+# is the Pi 5 board). The `board` attr overrides the flake's default
+# board = "raspberry-pi-5" at build time via $SBC_BOARD (impure eval), so no flake
+# fork is needed. Gives //pi/provisioning:ledmapper_pi3.{keys,image_sd,
+# image_sd_base,deploy_live,ssh}, e.g.:
+#   bazel run //pi/provisioning:ledmapper_pi3.image_sd -- --device /dev/sdX
+sbc_application(
+    name = "ledmapper_pi3",
+    board = "@sbc_deploy//deploy/boards:raspberry-pi-3",
+    flake = "pi/provisioning/nix",
+    hostname = "ledmapper",
+)
