@@ -1,9 +1,12 @@
 # The HW-crypto TX seam (WiFi-MAC inline CCMP encrypt)
 
 Status: **open**. HW inline _decrypt_ works; HW inline _encrypt_ is not reachable
-from our heapless direct-submission TX path. This documents the seam — where the
-from-source driver meets the vendor blob — what was reverse-engineered, everything
-that was tried, and the chosen way forward, so it can be revisited later.
+from our heapless direct-submission TX path. The vendor-`ppTxPkt` bridge is now
+IMPLEMENTED and de-risked (accepts the frame, sets the encrypt bit, arms the HW —
+no brick) but does NOT yet emit a valid frame: the vendor lmac/PHY TX pipeline
+isn't live under our RX-only bring-up (see "ppTxPkt bridge — on-silicon status").
+This documents the seam — where the from-source driver meets the vendor blob — what
+was reverse-engineered, everything tried, and the way forward, to revisit later.
 
 Last updated: 2026-08-24. Branch `claude/heapless-netstack`. Relevant commits:
 `22fdaafb`, `4281f42e`, `3fbfb906` (and the diagnostics/sniffer added around them).
@@ -235,6 +238,48 @@ rcUpdateTxDone@00010f72, esf_buf_alloc@0001024a, ic_ebuf_alloc@00010222,
 esf_buf_setup@00010700, esf_buf_setup_static@000105bc, ic_set_trc@000105d2,
 rc_enable_trc@0001277a, trc_init@000124ca}.c`; `net80211/decomp/{ieee80211_output_process@000142ae,
 ieee80211_encap_esfbuf@00013bf0, ieee80211_set_tx_desc@00013880}.c`.
+
+## ppTxPkt bridge — on-silicon status (WIP, implemented)
+
+The bridge is implemented in `wifi_sta_own.cpp` (`tx_hw_encrypt`, gated behind
+`HW_DECRYPT` in `install_hw_key`; default OFF so the SW datapath ships). Tested on
+rig-3. **It is plumbed correctly and does not brick the chip, but does not yet emit
+a valid frame.** What works and where it stops:
+
+- `ic_get_trc(0,0)` returns a valid default TRC (`0x40835344`) with no association —
+  as predicted. No hang.
+- `esf_buf_alloc(frame,1,len)` succeeds; `ppTxPkt(eb,1)` accepts the frame and
+  returns 0 (the "in-flight, owned by hardware" path — NOT a drop).
+- The cipher class (`word4[11:8]=3`) and qclass (`word4[7:4]=2`, TID 0) are correct —
+  no `ppProcTxSecFrame`/`ppTxPkt` hang.
+- Setting `txdesc.word0` bit18 (`0x40000`) + pre-reserving the 8-byte HW header
+  (`frame = [8 pad][26B QoS 802.11][LLC+L3]`, `esf+0x14=0x22`, `esf+0x24|=0x2000`)
+  makes `ppProcTxSecFrame` take the **secure branch**: it sets the `0x20000000`
+  encrypt flag on the hdr-desc (`esf+0x3c`), and the vendor **arms PLCP0 queue 0**
+  (readback `0xc163a564` → arm bits set, then cleared) and the TX status
+  (`0x600A_54E8`) reaches the ack-timeout class (`0x4016`).
+- BUT an unfiltered OTA sniffer (which DOES capture neighbouring networks' `prot=1`
+  QoS-data frames) sees **zero** frames with our OUI `02:0c:6a` — so no valid frame
+  reaches the air. Same signature as the direct path: the descriptor arms and the
+  status reaches ack-timeout, but nothing is demodulable.
+
+**Diagnosis:** the vendor lmac/PHY TX pipeline is not fully live under our custom
+RX-only bring-up (`wifi_hw_stop/start` + `ic_set_vif` + `pm_go_to_wake`). Our own
+EAPOL/data TX uses a _separate_ heapless TxRing (`tx.rs`, direct PLCP0), so the
+vendor lmac TX queues + PHY-TX config that `ppTxPkt` feeds were never exercised /
+brought up. The likely-missing pieces (per the ABI reversal's global-state list):
+the lmac per-queue instance state, the PHY-TX rate/PLCP programming that
+`rcGetSched`→`hal_mac_tx_set_ppdu` normally drives, and possibly a conflict between
+our TxRing's queue-0 PLCP0 usage and the vendor's. Cracking this = bringing up the
+vendor TX pipeline (much of what `esp_wifi_connect` does), which is a large further
+step that reintroduces substantial vendor coupling.
+
+**Next step to resume:** reverse + replicate the vendor lmac/PHY TX bring-up
+(`lmacInit`/`lmacInitAc`, the PHY-TX enable, TX-queue servicing) so a `ppTxPkt`-armed
+descriptor actually transmits; or reassess against the standalone-AES route (which,
+given this depth, is the pragmatic path to HW-accelerated crypto that stays
+heapless/in-source). The bridge code + diagnostics (`PPTX` readback, `QOSDATA`
+sniffer) are left in place to continue from.
 
 ## Everything tried on the direct path (all verified 0-on-air)
 

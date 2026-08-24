@@ -33,6 +33,17 @@ void IRAM_ATTR on_rx(void *buf, wifi_promiscuous_pkt_type_t type) {
     return;
   }
 
+  // Any QoS-data frame (fc byte0 == 0x88) — log full addr2/addr1 + protected bit + payload,
+  // to catch a vendor-path TX even if addr2 was rewritten off our OUI.
+  if (f[0] == 0x88 && len >= 34) {
+    static uint32_t qd = 0;
+    if (qd++ < 20) {
+      const uint8_t *pl = f + 26 + 8; // after 26B QoS hdr + 8B CCMP IV
+      Serial.printf("QOSDATA prot=%d a1=%02x:%02x:%02x:%02x:%02x:%02x a2=%02x:%02x:%02x:%02x:%02x:%02x len=%d pay=[%02x %02x %02x %02x]\n",
+                    (f[1] & 0x40) ? 1 : 0, f[4], f[5], f[6], f[7], f[8], f[9],
+                    f[10], f[11], f[12], f[13], f[14], f[15], len, pl[0], pl[1], pl[2], pl[3]);
+    }
+  }
   // Any frame with our OUI in addr1, addr2, or addr3.
   bool a1 = is_our_oui(f + 4), a2 = is_our_oui(f + 10), a3 = len >= 22 && is_our_oui(f + 16);
   if (!(a1 || a2 || a3)) return;

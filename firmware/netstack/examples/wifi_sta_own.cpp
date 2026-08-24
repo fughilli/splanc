@@ -41,6 +41,13 @@ void wDev_Insert_KeyEntry(uint32_t cipher, uint32_t enable, uint32_t flag,
 // cipher 4 = CCMP. Sets up the per-iface + global CCMP engine state (0x4800/0x4804/0x4810)
 // as an atomic sequence — may leave internal state our raw register pokes don't reproduce.
 void hal_crypto_enable(uint32_t iface, uint32_t cipher, uint32_t arg2, uint32_t flag);
+// Vendor TX submitter path (libpp) — bridge our heaplessly-built protected frame through
+// the vendor esf_buf/ppTxPkt so the MAC's inline CCMP engine encrypts it (the engine only
+// runs for frames on this path). ic_get_trc(0,0) returns the default TRC (no association
+// needed). See firmware/netstack/hw-crypto-tx-seam.md for the full reversed ABI.
+void *esf_buf_alloc(const void *src, int type, uint32_t len);
+int ppTxPkt(void *eb, int do_arm);
+void *ic_get_trc(uint32_t iface, uint32_t index);
 uint32_t ns_tcp_connect(const uint8_t *src, const uint8_t *dst, uint16_t sport, uint16_t dport,
                         uint32_t iss, uint8_t *out, uint32_t cap);
 uint32_t ns_tcp_on_ip(const uint8_t *ip, uint32_t len, uint8_t *out, uint32_t cap);
@@ -92,6 +99,7 @@ bool g_have_offer = false, g_leased = false;
 const uint8_t GATEWAY[4] = {10, 42, 0, 1};
 bool g_pinged = false;
 bool g_hwkey = false;
+void *g_trc = nullptr; // default TRC (ic_get_trc(0,0)) for the ppTxPkt HW-encrypt bridge
 bool g_tcp_started = false, g_tcp_requested = false;
 
 inline void wreg(uintptr_t a, uint32_t v) { *reinterpret_cast<volatile uint32_t *>(a) = v; }
@@ -236,50 +244,67 @@ int build_ping(uint8_t *p, const uint8_t *src, const uint8_t *dst, uint16_t seq)
   return n;
 }
 
+// HARDWARE CCMP encrypt via the vendor ppTxPkt bridge. `frame` is a bare protected QoS
+// data MPDU: [26-byte 802.11 QoS header, FC Protected bit set, addr1=BSSID][LLC/SNAP + L3
+// CLEARTEXT] — NO CCMP header (the HW inserts the 8-byte IV after the header, encrypts the
+// payload, and appends the 8-byte MIC). All magic numbers are decomp-verified; the two
+// hang risks (txdesc.word4[11:8]=cipher, word4[7:4]=qclass) are set to CCMP=3 / TID0=2.
+// See hw-crypto-tx-seam.md.
+bool tx_hw_encrypt(const uint8_t *frame, int frame_len) {
+  if (!g_trc) return false;
+  // `frame` is [8-byte HW-TX-header pad][26-byte QoS 802.11 hdr][LLC + L3 cleartext]; the
+  // 8-byte pad is where ppProcTxSecFrame's secure branch writes the HW header (it does NOT
+  // do its own reservation when the 0x2000 flag is pre-set). +16 room for CCMP IV(8)+MIC(8).
+  void *eb = esf_buf_alloc(frame, 1, frame_len + 16);
+  if (!eb) return false; // pool full -> bounded back-pressure
+  uint8_t *e = static_cast<uint8_t *>(eb);
+  *reinterpret_cast<uint16_t *>(e + 0x14) = 0x1a + 8; // hdrlen incl the pre-reserved 8-byte HW hdr
+  *reinterpret_cast<uint16_t *>(e + 0x24) |= 0x2000;  // "8-byte HW hdr already reserved" -> secure
+                                                       // branch uses frame_ptr+8 as the 802.11 hdr
+  *reinterpret_cast<void **>(e + 0x2c) = g_trc;     // default TRC (rate sched + gate byte +0x86=1)
+  uint8_t *td = *reinterpret_cast<uint8_t **>(e + 0x34); // txdesc (= eb+0x48)
+  td[4] = 0x20;                                      // word1 byte0: (qclass 2 << 4) | tid 0
+  // word0: bit18 (0x40000) -> ppProcTxSecFrame SECURE branch (sets the 0x20000000 HW-encrypt
+  // flag); bit0 HW-crypto request; bit3 QoS-data.
+  *reinterpret_cast<uint32_t *>(td + 0x00) |= 0x40000u | 0x1u | 0x8u;
+  *reinterpret_cast<uint32_t *>(td + 0x10) = 0x320; // word4: cipher(CCMP)=3, qclass=2, if0, queue=0
+  td[0x2a] = 1; td[0x2e] = 1;                        // descriptor valid/ready bytes
+  uint32_t w0_before = *reinterpret_cast<uint32_t *>(td + 0x00);
+  int ret = ppTxPkt(eb, 1);                          // 1 = arm/transmit now
+  static int dbg = 0;
+  if (dbg++ < 3) {
+    // After ppTxPkt: word0 bit29(0x20000000)=secure-branch-encrypt, bit30(0x40000000)=else
+    // branch; word4[23:20]=HW queue (set by ppMapTxQueue, nonzero = mapped).
+    auto rd = [](uintptr_t a) { return *reinterpret_cast<volatile uint32_t *>(a); };
+    Serial.printf("PPTX ret=%d w0 %08x->%08x w4=%08x hdrlen=%u qos24=%04x | hdrdesc0=%08x 54E8=%08x plcp[0..2]=%08x %08x %08x\n",
+                  ret, w0_before, *reinterpret_cast<uint32_t *>(td + 0x00),
+                  *reinterpret_cast<uint32_t *>(td + 0x10), *reinterpret_cast<uint16_t *>(e + 0x14),
+                  *reinterpret_cast<uint16_t *>(e + 0x24), *reinterpret_cast<uint32_t *>(e + 0x3c),
+                  rd(0x600A54E8), rd(0x600A4D6C), rd(0x600A4D5C), rd(0x600A4D4C));
+  }
+  return true;
+}
+
 // Build + CCMP-encrypt + transmit a DHCP message (DISCOVER/REQUEST) to the AP.
 // Transmit an L2 frame: `hdr` is the 24-byte 802.11 header (Protected bit set), `payload`
-// is LLC/SNAP + L3. With HW crypto active (g_hwkey) send PLAINTEXT and let the MAC insert
-// the CCMP header + encrypt; otherwise software-encrypt. Returns the enc'd length or the
-// plaintext length. `label` is logged.
+// is LLC/SNAP + L3. With HW crypto active (g_hwkey) hand a plaintext QoS MPDU to the vendor
+// ppTxPkt bridge and let the MAC insert the CCMP header + encrypt; otherwise software-
+// encrypt. Returns the enc'd length or the plaintext length. `label` is logged.
 uint32_t tx_l2(const uint8_t *hdr, const uint8_t *payload, int plen, const char *label) {
   if (g_hwkey) {
-    // HW TX-encrypt via ns_mac_send_sec (descriptor bit 29). Match the vendor's captured
-    // secure-TX buffer exactly: a QoS data frame (FC 0x88, 26-byte header w/ QoS control)
-    // + 8B CCMP header (keyid byte 0x20, PN=0) + CLEARTEXT payload. No MIC space; the MAC
-    // fills the PN, encrypts in place, and appends the 8-byte MIC (length = frame+8).
-    static uint32_t tx_pn = 1;           // per-key CCMP packet number (must increment)
+    // Bare protected QoS data MPDU: [26B QoS 802.11 hdr, FC 0x88 0x41 = QoS + ToDS +
+    // Protected][LLC/SNAP + L3 CLEARTEXT]. No CCMP header — the vendor ppTxPkt path + MAC
+    // engine insert the IV, encrypt, and append the MIC. addr1=BSSID (hdr already carries it).
     uint8_t frame[1700];
-    // QoS data frame (FC 0x88 0x41: QoS-data subtype + ToDS + Protected). The vendor's
-    // hardware-encrypted TX was QoS with a 26-byte header (24 + 2-byte QoS control); the
-    // HW CCMP engine builds the AES-CCM nonce/AAD from the QoS bit, so a non-QoS frame
-    // with the secure descriptor bit is dropped in the crypto pipeline.
-    memcpy(frame, hdr, 24);
-    frame[0] = 0x88;                     // QoS data subtype (override the 0x08 the caller set)
-    frame[24] = 0x00; frame[25] = 0x00;  // QoS control: TID 0, normal ack
-    // CCMP header at offset 26: PN0 PN1 | Rsvd | KeyID | PN2 PN3 PN4 PN5
-    frame[26] = tx_pn & 0xff;
-    frame[27] = (tx_pn >> 8) & 0xff;
-    frame[28] = 0x00;
-    frame[29] = 0x20;                    // ExtIV, key id 0
-    frame[30] = (tx_pn >> 16) & 0xff;
-    frame[31] = (tx_pn >> 24) & 0xff;
-    frame[32] = 0x00; frame[33] = 0x00;
-    tx_pn++;
-    memcpy(frame + 34, payload, plen);
-    // Reserve the 8-byte CCMP MIC in the buffer (zeroed) so the frame is a well-formed
-    // MPDU length whether or not the engine auto-encrypts. Send via the NORMAL path (no
-    // FTM/bit29, length=full) and let the enabled crypto engine encrypt on the Protected
-    // FC bit + address-matched key.
-    memset(frame + 34 + plen, 0, 8);
-    int flen = 26 + 8 + plen + 8;
-    ns_mac_send(frame, flen, 0);
-    static int dbg = 0;
-    if (dbg++ < 3) {
-      delayMicroseconds(500);
-      dump_txstat("hwtx");
-    }
-    if (label) Serial.printf("%s (HW-enc QoS %d B, no-bit29)\n", label, flen);
-    return flen;
+    memset(frame, 0, 8);                  // 8-byte HW-TX-header pad (secure branch fills it)
+    memcpy(frame + 8, hdr, 24);
+    frame[8] = 0x88;                     // QoS data subtype (override the 0x08 the caller set)
+    frame[9] = 0x41;                     // ToDS + Protected
+    frame[8 + 24] = 0x00; frame[8 + 25] = 0x00; // QoS control: TID 0, normal ack
+    memcpy(frame + 8 + 26, payload, plen);
+    bool ok = tx_hw_encrypt(frame, 8 + 26 + plen);
+    if (label) Serial.printf("%s (HW-enc ppTxPkt %d B, ok=%d)\n", label, 8 + 26 + plen, ok);
+    return 8 + 26 + plen;
   }
   uint8_t enc[1700];
   uint32_t el = ns_sta_encrypt(hdr, 24, payload, plen, enc, sizeof(enc));
@@ -359,6 +384,12 @@ void install_hw_key() {
   // inline path is decrypt-only for a heapless driver; TX-encrypt needs the standalone
   // AES peripheral driving our ccmp.rs, or the vendor ppTxPkt+node struct (vendor-coupled).
   // With HW crypto OFF, the proven all-software CCMP round-trip runs (4-way -> DHCP -> TCP).
+  // HW_DECRYPT=true enables HW decrypt + the WIP vendor ppTxPkt bridge for HW TX-encrypt
+  // (tx_hw_encrypt). The bridge is PLUMBED but not yet emitting: ppTxPkt accepts the frame,
+  // takes the secure branch (sets the 0x20000000 encrypt bit), arms PLCP0 queue 0, and the
+  // TX status reaches ack-timeout — but no valid frame reaches the air (0 on an OTA sniffer
+  // that DOES capture neighbours' encrypted QoS data). The vendor lmac/PHY TX pipeline isn't
+  // fully live under our RX-only bring-up. See hw-crypto-tx-seam.md "ppTxPkt bridge (WIP)".
   constexpr bool HW_DECRYPT = false;
   if (!HW_DECRYPT) {
     wr(0x600A4800, 0); // disable HW crypto engine -> protected unicast passes raw (SW CCMP)
@@ -378,9 +409,10 @@ void install_hw_key() {
   hal_crypto_enable(0 /*iface0*/, 4 /*CCMP*/, 0, 0);    // vendor engine enable sequence
   ic_set_rx_policy(0, 0, 1, 1);
   ic_rx_enable_bssid_check(0);
+  g_trc = ic_get_trc(0, 0); // default TRC for the ppTxPkt HW-encrypt bridge (no assoc needed)
   g_hwkey = true;
-  Serial.printf("HW crypto (vendor enable): kv=%08x 4800=%08x 4804=%08x 4810=%08x slot4w1=%08x\n",
-                rd(0x600A4814), rd(0x600A4800), rd(0x600A4804), rd(0x600A4810), rd(0x600A5804 + SLOT * 40));
+  Serial.printf("HW crypto (vendor enable): kv=%08x 4800=%08x 4810=%08x slot4w1=%08x trc=%p\n",
+                rd(0x600A4814), rd(0x600A4800), rd(0x600A4810), rd(0x600A5804 + SLOT * 40), g_trc);
 }
 
 // Parse an L2 payload (LLC/SNAP + IPv4) for our ICMP echo replies and DHCP responses.
