@@ -1,68 +1,55 @@
-// wifi_hw_rx_test — capture the vendor's ENCRYPTED TX descriptor + buffer during a real
-// connection, to reverse the HW-encrypt TX format (descriptor word0 flags + the 8-byte
-// TX header crypto fields). Let the vendor connect (WiFi.begin), trigger TX (the vendor
-// answers pings from the rig), and poll the per-queue PLCP0 registers: when an armed
-// descriptor has the secure bit (word0 bit 29), dump the descriptor + the buffer's TX
-// header + 802.11 header so we can replicate the exact secure-TX layout.
+// wifi_hw_rx_test — channel-6 promiscuous SNIFFER. Runs on a second DUT to capture the
+// FIRST DUT's transmitted data frames (from OUI 02:0c:6a) and show whether the payload
+// after the CCMP header is CIPHERTEXT (HW encrypted) or "aa aa 03" LLC (cleartext) —
+// the definitive test of whether our HW-encrypt TX actually encrypts.
 
 #include <Arduino.h>
 #include <WiFi.h>
 #include <esp_wifi.h>
-#include <string.h>
 
 SET_LOOP_TASK_STACK_SIZE(16384);
 
 namespace {
-const char *SSID = "hitl-rig-3";
-const char *PASS = "hitl-rig-3-provision";
-inline uint32_t rd(uintptr_t a) { return *reinterpret_cast<volatile uint32_t *>(a); }
-
-// PLCP0 base 0x600A_4D6C, stride -0x10 per queue. plcp0 = (desc-0x40800000)&0x7ffff |
-// 0x600000 | 0xC0000000, so desc = (plcp0 & 0x7ffff) | 0x40800000.
-uintptr_t desc_from_plcp0(uint32_t p) { return (uintptr_t)((p & 0x7ffff) | 0x40800000); }
-
-uint32_t g_dumped = 0;
-void poll_tx() {
-  for (int q = 0; q < 4; q++) {
-    uint32_t plcp = rd(0x600A4D6C - q * 0x10);
-    uintptr_t desc = desc_from_plcp0(plcp);
-    if (desc < 0x40800000 || desc > 0x4087ffff) continue;
-    uint32_t w0 = rd(desc);
-    // Dump descriptors that had the secure/crypto flag (word0 bit 29) — the last
-    // transmitted secure frame persists in the ring after the OWN bit clears.
-    if (!(w0 & 0x20000000)) continue;
-    uintptr_t buf = rd(desc + 4);
-    if (buf < 0x40800000 || buf > 0x4087ffff) continue;
-    if (g_dumped < 8) {
-      g_dumped++;
-      // Full descriptor words 0-5 (look for a crypto sub-descriptor / key-index word).
-      Serial.printf("Q%d desc=%08x  d0=%08x d1=%08x d2=%08x d3=%08x d4=%08x d5=%08x\n",
-                    q, (unsigned)desc, rd(desc), rd(desc + 4), rd(desc + 8),
-                    rd(desc + 12), rd(desc + 16), rd(desc + 20));
-      Serial.print("  txhdr:");
-      for (int i = 0; i < 8; i++) Serial.printf(" %02x", *(volatile uint8_t *)(buf + i));
-      Serial.println();
-    }
+volatile uint32_t g_seen = 0, g_total = 0, g_beacon = 0, g_from_ap = 0;
+void IRAM_ATTR on_rx(void *buf, wifi_promiscuous_pkt_type_t type) {
+  auto *p = static_cast<wifi_promiscuous_pkt_t *>(buf);
+  const uint8_t *f = p->payload;
+  int len = p->rx_ctrl.sig_len;
+  g_total++;
+  if (len >= 16) {
+    if (f[0] == 0x80) g_beacon++;
+    // any frame involving the rig-3 AP (b8:27:eb) in a1/a2/a3
+    if (f[10] == 0xb8 && f[11] == 0x27 && f[12] == 0xeb) g_from_ap++;
   }
+  if (len < 40) return;
+  // Data frame whose a2 (transmitter) is our OUI 02:0c:6a (the STA-under-test).
+  if ((f[0] & 0x0c) != 0x08) return;
+  if (!(f[10] == 0x02 && f[11] == 0x0c && f[12] == 0x6a)) return;
+  if (g_seen++ > 40) return;
+  int hl = (f[0] & 0x88) == 0x88 ? 26 : 24; // QoS?
+  const uint8_t *ccmp = f + hl;
+  const uint8_t *pl = ccmp + 8; // payload after CCMP header
+  Serial.printf("TX fc=%02x%02x prot=%d len=%d ccmp=[%02x %02x %02x %02x %02x] payload=[%02x %02x %02x %02x %02x %02x]\n",
+                f[0], f[1], (f[1] & 0x40) ? 1 : 0, len,
+                ccmp[0], ccmp[1], ccmp[2], ccmp[3], ccmp[4],
+                pl[0], pl[1], pl[2], pl[3], pl[4], pl[5]);
 }
 } // namespace
 
 void setup() {
   Serial.begin(115200);
   delay(300);
-  Serial.println("wifi_hw_rx_test: capture vendor encrypted-TX descriptor");
+  Serial.println("wifi_hw_rx_test: channel-6 sniffer for OUI 02:0c:6a TX frames");
   WiFi.mode(WIFI_STA);
-  WiFi.disconnect(true);
-  delay(200);
-  WiFi.begin(SSID, PASS);
-  int tries = 0;
-  while (WiFi.status() != WL_CONNECTED && tries++ < 120) delay(500);
-  if (WiFi.status() != WL_CONNECTED) { Serial.println("connect FAILED"); return; }
-  Serial.printf("CONNECTED IP=%s — polling TX descriptors (ping me!)\n", WiFi.localIP().toString().c_str());
+  esp_wifi_start();
+  esp_wifi_set_promiscuous(true);
+  esp_wifi_set_promiscuous_rx_cb(&on_rx);
+  esp_wifi_set_channel(6, WIFI_SECOND_CHAN_NONE);
+  Serial.println("sniffing ch6...");
 }
 
 void loop() {
-  // Poll with yields so the WiFi task can actually transmit; dump secure descriptors.
-  for (int k = 0; k < 50 && g_dumped < 8; k++) { poll_tx(); delay(1); }
-  delay(5);
+  delay(2000);
+  Serial.printf("total=%u beacons=%u from_ap(b8:27:eb)=%u our_tx=%u\n",
+                g_total, g_beacon, g_from_ap, g_seen);
 }
