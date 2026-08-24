@@ -53,11 +53,19 @@ struct TxSlot {
     frame_len_802: usize, // 802.11 frame length (the PHY SIGNAL length)
     queue: usize,
     owned_by_hw: bool,
+    secure: bool,         // request hardware CCMP encrypt (descriptor word0 bit 29)
 }
 
 impl TxSlot {
     const fn new() -> Self {
-        TxSlot { buf: [0u8; MAX_FRAME], len: 0, frame_len_802: 0, queue: 0, owned_by_hw: false }
+        TxSlot {
+            buf: [0u8; MAX_FRAME],
+            len: 0,
+            frame_len_802: 0,
+            queue: 0,
+            owned_by_hw: false,
+            secure: false,
+        }
     }
 }
 
@@ -84,6 +92,7 @@ impl TxDesc {
 
 const TX_OWN: u32 = 1 << 31; // hand-off to hardware
 const TX_EOF: u32 = 1 << 30; // end-of-frame (single-descriptor frame)
+const TX_SEC: u32 = 1 << 29; // hardware CCMP encrypt (ppProcTxSecFrame sets this)
 const TX_LEN_SHIFT: u32 = 14; // length[27:14]
 const TX_SIZE_MASK: u32 = 0x3fff; // size[13:0]
 
@@ -161,11 +170,22 @@ impl<const N: usize> TxRing<N> {
                 s.len = TX_HDR_LEN + frame.len();
                 s.frame_len_802 = frame.len();
                 s.queue = ac;
+                s.secure = false;
                 s.owned_by_hw = true;
                 return Ok(i);
             }
         }
         Err(Overflow)
+    }
+
+    /// Request hardware CCMP encryption for slot `idx` (sets the descriptor's secure
+    /// flag, word0 bit 29). The frame must already carry the 8-byte CCMP-header space
+    /// after the 802.11 header and 8-byte MIC space at the tail; the MAC fills the PN +
+    /// MIC and encrypts the payload, keying off the destination address.
+    pub fn mark_secure(&mut self, idx: usize) {
+        if idx < N {
+            self.slots[idx].secure = true;
+        }
     }
 
     /// Mark slot `idx` transmitted (hardware raised completion); the slot returns
@@ -239,7 +259,10 @@ impl<const N: usize> TxRing<N> {
         // point it at the frame buffer.
         self.descs[idx].buf = self.slots[idx].buf.as_ptr() as u32;
         self.descs[idx].next = 0;
-        self.descs[idx].word0 = TX_OWN | TX_EOF | (len << TX_LEN_SHIFT) | len;
+        // For a secure frame the MAC appends the 8-byte CCMP MIC on the air, so the
+        // descriptor's length (on-air) field = size (buffer) + 8; size is the buffer.
+        let (sec, length) = if self.slots[idx].secure { (TX_SEC, len + 8) } else { (0, len) };
+        self.descs[idx].word0 = TX_OWN | TX_EOF | sec | (length << TX_LEN_SHIFT) | len;
         // Encode the descriptor's address into PLCP0 and arm the queue.
         let desc_addr = core::ptr::addr_of!(self.descs[idx]) as u32;
         let plcp = mac::txq_reg(mac::TXQ_PLCP0_BASE, queue, mac::TXQ_STRIDE);
@@ -265,7 +288,10 @@ impl<const N: usize> TxRing<N> {
         // check fails and the frame is silently dropped — APs still answer probe
         // requests (lenient discovery) but auth/assoc are dropped, which is exactly
         // why our earlier auth got no response. `+ 4` makes the AP answer our auth.
-        let flen = (self.slots[idx].frame_len_802 as u32 + 4) & 0xfff;
+        // PLCP1 = 802.11 length + 4 (FCS); a secure frame also carries the 8-byte MIC
+        // the MAC appends, so include it in the PHY SIGNAL length.
+        let mic = if self.slots[idx].secure { 8 } else { 0 };
+        let flen = (self.slots[idx].frame_len_802 as u32 + mic + 4) & 0xfff;
         // Sequence/duration control word in the 0x4d block (stride 0x10, alongside
         // PLCP0). Captured with an incrementing counter + 0x077; a fixed value
         // suffices for the first frame of an exchange.

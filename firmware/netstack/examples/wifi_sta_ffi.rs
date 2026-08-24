@@ -231,6 +231,26 @@ pub extern "C" fn ns_mac_send(frame: *const u8, len: u32, queue: u32) -> u32 {
     }
 }
 
+/// Transmit `frame` requesting HARDWARE CCMP encryption (descriptor word0 bit 29). The
+/// frame must be [802.11 hdr | 8B CCMP-header space | plaintext | 8B MIC space] with the
+/// Protected bit set; the MAC fills the PN + MIC and encrypts, keying off the dest addr.
+#[no_mangle]
+pub extern "C" fn ns_mac_send_sec(frame: *const u8, len: u32, queue: u32) -> u32 {
+    unsafe {
+        let f = core::slice::from_raw_parts(frame, len as usize);
+        match TX.load_frame(f, queue as usize) {
+            Ok(idx) => {
+                TX.mark_secure(idx);
+                TX.set_rate(idx);
+                TX.arm(idx);
+                TX.on_complete(idx);
+                1
+            }
+            Err(_) => 0,
+        }
+    }
+}
+
 #[cfg(not(test))]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo) -> ! {

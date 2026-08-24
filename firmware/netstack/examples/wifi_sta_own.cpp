@@ -22,6 +22,7 @@ extern "C" {
 void ns_mac_rx_install();
 uint32_t ns_mac_recv(uint8_t *out, uint32_t cap);
 uint32_t ns_mac_send(const uint8_t *frame, uint32_t len, uint32_t queue);
+uint32_t ns_mac_send_sec(const uint8_t *frame, uint32_t len, uint32_t queue); // HW CCMP encrypt
 void ns_wpa_init(const uint8_t *ssid, uint32_t ssid_len, const uint8_t *pass, uint32_t pass_len,
                  const uint8_t *ap, const uint8_t *self_mac, const uint8_t *snonce);
 uint32_t ns_wpa_on_eapol(const uint8_t *eapol, uint32_t len, uint8_t *out, uint32_t cap);
@@ -227,16 +228,28 @@ int build_ping(uint8_t *p, const uint8_t *src, const uint8_t *dst, uint16_t seq)
 // plaintext length. `label` is logged.
 uint32_t tx_l2(const uint8_t *hdr, const uint8_t *payload, int plen, const char *label) {
   if (g_hwkey) {
-    // HW TX-encrypt: [802.11 hdr | 8B CCMP-header space | plaintext | 8B MIC space].
-    // The MAC keys off DA=BSSID (slot 4), fills the PN + MIC, and encrypts the payload.
+    // HW TX-encrypt via ns_mac_send_sec (descriptor bit 29). Match the vendor's captured
+    // secure-TX buffer exactly: a QoS data frame (FC 0x88, 26-byte header w/ QoS control)
+    // + 8B CCMP header (keyid byte 0x20, PN=0) + CLEARTEXT payload. No MIC space; the MAC
+    // fills the PN, encrypts in place, and appends the 8-byte MIC (length = frame+8).
+    static uint32_t tx_pn = 1;           // per-key CCMP packet number (must increment)
     uint8_t frame[1700];
     memcpy(frame, hdr, 24);
-    memset(frame + 24, 0, 8);            // CCMP header (HW fills PN)
-    memcpy(frame + 32, payload, plen);
-    memset(frame + 32 + plen, 0, 8);     // MIC space (HW fills)
-    ns_mac_send(frame, 24 + 8 + plen + 8, 0);
-    if (label) Serial.printf("%s (HW-enc %d B)\n", label, 24 + 8 + plen + 8);
-    return 24 + 8 + plen + 8;
+    frame[0] = 0x88;                     // QoS data (was 0x08) + ToDS + Protected
+    frame[24] = 0x00; frame[25] = 0x00;  // QoS control
+    // CCMP header: PN0 PN1 | Rsvd | KeyID | PN2 PN3 PN4 PN5
+    frame[26] = tx_pn & 0xff;
+    frame[27] = (tx_pn >> 8) & 0xff;
+    frame[28] = 0x00;
+    frame[29] = 0x20;                    // ExtIV, key id 0
+    frame[30] = (tx_pn >> 16) & 0xff;
+    frame[31] = (tx_pn >> 24) & 0xff;
+    frame[32] = 0x00; frame[33] = 0x00;
+    tx_pn++;
+    memcpy(frame + 34, payload, plen);
+    ns_mac_send_sec(frame, 26 + 8 + plen, 0);
+    if (label) Serial.printf("%s (HW-enc %d B)\n", label, 26 + 8 + plen);
+    return 26 + 8 + plen;
   }
   uint8_t enc[1700];
   uint32_t el = ns_sta_encrypt(hdr, 24, payload, plen, enc, sizeof(enc));
@@ -251,7 +264,9 @@ void send_dhcp(uint8_t msg_type, const uint8_t *req_ip, const uint8_t *server_id
   int pn = build_dhcp(payload, OUR_MAC, xid, msg_type, req_ip, server_id);
   uint8_t hdr[24]; // 802.11 data: ToDS=1 + Protected=1; a1=BSSID a2=us a3=broadcast
   hdr[0] = 0x08; hdr[1] = 0x41; hdr[2] = 0x00; hdr[3] = 0x00;
-  memcpy(hdr + 4, BSSID, 6); memcpy(hdr + 10, OUR_MAC, 6); memset(hdr + 16, 0xff, 6);
+  // a3 = BSSID (unicast to the AP at L2, L3 is still 255.255.255.255) so hardware TX
+  // encrypt uses the pairwise key (it keys off the destination address).
+  memcpy(hdr + 4, BSSID, 6); memcpy(hdr + 10, OUR_MAC, 6); memcpy(hdr + 16, BSSID, 6);
   hdr[22] = 0x00; hdr[23] = 0x00;
   char lbl[32]; snprintf(lbl, sizeof(lbl), "DHCP %s sent", what);
   tx_l2(hdr, payload, pn, lbl);
@@ -296,7 +311,7 @@ void install_hw_key() {
   // default because HW inline crypto also re-encrypts TX, and completing HW-encrypt TX
   // needs the TX-descriptor crypto/key-index flag (ppTxPkt->ppProcTxSecFrame) that our
   // ns_mac_send does not yet set; with it off the proven software-CCMP round-trip runs.
-  constexpr bool HW_DECRYPT = false;
+  constexpr bool HW_DECRYPT = true;
   if (!HW_DECRYPT) {
     wr(0x600A4800, 0); // disable HW crypto engine -> protected unicast passes raw (SW CCMP)
     g_hwkey = false;
@@ -312,6 +327,7 @@ void install_hw_key() {
   wr(0x600A4800, 0x00030103);                           // ctrl0: HW crypto enable
   wr(0x600A4804, 0x00030000);                           // ctrl1 (clear hal_crypto_enable extras)
   wr(0x600A4810, 0x00000000);                           // c10  (clear -> RX-decrypt works)
+  wr(0x600A582C, SLOT);                                  // "using key idx" -> TX encrypt key
   ic_set_rx_policy(0, 0, 1, 1);
   ic_rx_enable_bssid_check(0);
   g_hwkey = true;
