@@ -33,3 +33,15 @@ sbc_application(
     flake = "pi/provisioning/nix",
     hostname = "ledmapper",
 )
+
+# Board-autodetecting deploy for an already-commissioned board. `:update` reads
+# the board's own HARDWARE (Pi 5 vs Pi 3 -> SBC_BOARD) and committed identity and
+# deploys the MATCHING closure — so there's no per-board target to remember and no
+# way to push a mismatched closure (e.g. the Pi 5 `ledmapper` closure onto a Pi 3,
+# which installs an incompatible kernel and bricks the next boot). Prefer this over
+# `ledmapper[_pi3].deploy_live` once a board is imaged. Mirrors //pi/hitl:update.
+#   bazel run //pi/provisioning:update -- splanc-max-1.local
+alias(
+    name = "update",
+    actual = ":ledmapper.update",
+)
