@@ -20,6 +20,9 @@ void ns_wpa_init(const uint8_t *ssid, uint32_t ssid_len, const uint8_t *pass, ui
                  const uint8_t *ap, const uint8_t *self_mac, const uint8_t *snonce);
 uint32_t ns_wpa_on_eapol(const uint8_t *eapol, uint32_t len, uint8_t *out, uint32_t cap);
 uint32_t ns_wpa_diag(const uint8_t *eapol, uint32_t len);
+uint32_t ns_sta_encrypt(const uint8_t *hdr, uint32_t hdr_len, const uint8_t *payload,
+                        uint32_t payload_len, uint8_t *out, uint32_t cap);
+uint32_t ns_sta_decrypt(const uint8_t *frame, uint32_t frame_len, uint8_t *out, uint32_t cap);
 }
 
 // No-op promiscuous sink: keeps the RX hardware + all-frames filter enabled but
@@ -88,6 +91,55 @@ int build_eapol_data(uint8_t *f, const uint8_t *e, int el) {
   return n;
 }
 
+uint16_t ip_csum(const uint8_t *d, int len) {
+  uint32_t s = 0;
+  for (int i = 0; i + 1 < len; i += 2) s += (d[i] << 8) | d[i + 1];
+  if (len & 1) s += d[len - 1] << 8;
+  while (s >> 16) s = (s & 0xffff) + (s >> 16);
+  return ~s & 0xffff;
+}
+
+// Build a DHCP DISCOVER as an L2 payload: LLC/SNAP + IPv4 + UDP + BOOTP/DHCP.
+// Returns the payload length. `xid` is the transaction id.
+int build_dhcp_discover(uint8_t *p, const uint8_t *mac, uint32_t xid) {
+  int n = 0;
+  const uint8_t llc[] = {0xaa, 0xaa, 0x03, 0x00, 0x00, 0x00, 0x08, 0x00};
+  memcpy(p + n, llc, 8); n += 8;           // LLC/SNAP, EtherType IPv4
+  int ip_off = n;
+  // DHCP body: 236 fixed + magic(4) + options
+  uint8_t dhcp[300]; int d = 0;
+  dhcp[d++] = 1; dhcp[d++] = 1; dhcp[d++] = 6; dhcp[d++] = 0; // op/htype/hlen/hops
+  dhcp[d++] = xid >> 24; dhcp[d++] = xid >> 16; dhcp[d++] = xid >> 8; dhcp[d++] = xid;
+  dhcp[d++] = 0; dhcp[d++] = 0;             // secs
+  dhcp[d++] = 0x00; dhcp[d++] = 0x00;       // flags: unicast reply (we can RX unicast)
+  memset(dhcp + d, 0, 16); d += 16;         // ciaddr/yiaddr/siaddr/giaddr
+  memcpy(dhcp + d, mac, 6); memset(dhcp + d + 6, 0, 10); d += 16; // chaddr
+  memset(dhcp + d, 0, 64 + 128); d += 192;  // sname + file
+  dhcp[d++] = 0x63; dhcp[d++] = 0x82; dhcp[d++] = 0x53; dhcp[d++] = 0x63; // magic cookie
+  dhcp[d++] = 53; dhcp[d++] = 1; dhcp[d++] = 1; // DHCP message type = DISCOVER
+  dhcp[d++] = 55; dhcp[d++] = 4; dhcp[d++] = 1; dhcp[d++] = 3; dhcp[d++] = 6; dhcp[d++] = 51; // param req
+  dhcp[d++] = 255;                          // end
+  int udp_len = 8 + d;
+  int ip_len = 20 + udp_len;
+  // IPv4 header
+  uint8_t *ip = p + ip_off;
+  ip[0] = 0x45; ip[1] = 0x00; ip[2] = ip_len >> 8; ip[3] = ip_len & 0xff;
+  ip[4] = 0; ip[5] = 0; ip[6] = 0x00; ip[7] = 0x00; // id, flags/frag
+  ip[8] = 64; ip[9] = 17;                    // TTL, proto=UDP
+  ip[10] = 0; ip[11] = 0;                    // checksum (fill below)
+  memset(ip + 12, 0, 4);                     // src 0.0.0.0
+  memset(ip + 16, 0xff, 4);                  // dst 255.255.255.255
+  uint16_t c = ip_csum(ip, 20); ip[10] = c >> 8; ip[11] = c & 0xff;
+  n += 20;
+  // UDP header + DHCP body (UDP checksum 0 = disabled for IPv4)
+  uint8_t *udp = p + n;
+  udp[0] = 0; udp[1] = 68; udp[2] = 0; udp[3] = 67; // src 68 -> dst 67
+  udp[4] = udp_len >> 8; udp[5] = udp_len & 0xff; udp[6] = 0; udp[7] = 0;
+  n += 8;
+  memcpy(p + n, dhcp, d); n += d;
+  return n;
+}
+
 // Find an EAPOL-Key body inside a received data frame; returns len or 0.
 int eapol_body(const uint8_t *f, int len, const uint8_t **out) {
   for (int i = 24; i + 8 <= len && i < 40; i++) {
@@ -144,6 +196,12 @@ void loop() {
 
   // Drain RX and dispatch.
   uint32_t n = ns_mac_recv(rx, sizeof(rx));
+  // Broad DONE-state RX trace: what frames actually reach our ring post-link?
+  static uint32_t allf = 0;
+  if (st == DONE && n >= 10 && allf < 30) {
+    allf++;
+    Serial.printf("  rx fc=%02x%02x a1=%02x:%02x:%02x len=%u\n", rx[0], rx[1], rx[4], rx[5], rx[6], n);
+  }
   // Diagnostic: after we enter FOURWAY, log every frame from the AP addressed to us
   // (any FC), so we can see whether M3 (a data frame) actually reaches our ring.
   static uint32_t apf = 0;
@@ -180,10 +238,49 @@ void loop() {
         if (code >= 1 && rl > 0) { int dl = build_eapol_data(f, reply, rl); for (int k=0;k<3;k++){ns_mac_send(f, dl, 0);delay(3);} }
         if (code == 2) { st = DONE; Serial.println("*** 4-WAY COMPLETE — CCMP KEYS INSTALLED, LINK UP ***"); }
       }
+    } else if ((rx[0] & 0x0c) == 0x08 && (rx[1] & 0x40) && st == DONE) {
+      // Protected data frame from the AP: CCMP-decrypt and look for a DHCP reply.
+      // The RX frame carries a trailing 4-byte FCS that would corrupt CCMP's MIC
+      // (it lives in the last 8 bytes), so trim it before decap.
+      uint8_t pt[600];
+      uint32_t pl = ns_sta_decrypt(rx, n - 4, pt, sizeof(pt));
+      static uint32_t pf = 0;
+      if (pf++ < 8) Serial.printf("  prot AP->us len=%u decrypt=%u\n", n, pl);
+      if (pl > 8 && pt[6] == 0x08 && pt[7] == 0x00) { // IPv4 EtherType
+        const uint8_t *ip = pt + 8;
+        if (pl > 8 + 28 && ip[9] == 17) { // UDP
+          const uint8_t *udp = ip + ((ip[0] & 0x0f) * 4);
+          uint16_t sport = (udp[0] << 8) | udp[1], dport = (udp[2] << 8) | udp[3];
+          if (sport == 67 && dport == 68) { // DHCP server -> client
+            const uint8_t *dh = udp + 8;
+            uint8_t mt = 0; // parse options for msg type (53)
+            const uint8_t *o = dh + 240;
+            const uint8_t *end = pt + pl;
+            while (o < end && *o != 255) { if (*o == 53) mt = o[2]; o += 2 + o[1]; }
+            Serial.printf("DHCP reply: type=%u yiaddr=%u.%u.%u.%u\n", mt,
+                          dh[16], dh[17], dh[18], dh[19]);
+            if (mt == 2) Serial.println("*** DHCP OFFER received — L3 over heapless CCMP link ***");
+          }
+        }
+      }
     }
   }
 
   // Kick the state machine: (re)send auth periodically until associated.
   if (st == AUTH && millis() - t > 200) { t = millis(); int a = build_auth(f); ns_mac_send(f, a, 0); }
-  if (st == DONE) { delay(1000); }
+  // Once linked, send an encrypted DHCP DISCOVER every ~1.5s until we get a reply.
+  if (st == DONE && millis() - t > 1500) {
+    t = millis();
+    static uint32_t xid = 0x5e7a9c01;
+    uint8_t payload[400];
+    int pn = build_dhcp_discover(payload, OUR_MAC, xid++);
+    // 802.11 data header: ToDS=1 + Protected=1; a1=BSSID a2=us a3=broadcast.
+    uint8_t hdr[24];
+    hdr[0] = 0x08; hdr[1] = 0x41; hdr[2] = 0x00; hdr[3] = 0x00;
+    memcpy(hdr + 4, BSSID, 6); memcpy(hdr + 10, OUR_MAC, 6); memset(hdr + 16, 0xff, 6);
+    hdr[22] = 0x00; hdr[23] = 0x00;
+    uint8_t enc[500];
+    uint32_t el = ns_sta_encrypt(hdr, 24, payload, pn, enc, sizeof(enc));
+    if (el > 0) { ns_mac_send(enc, el, 0); Serial.printf("DHCP DISCOVER sent (%u B enc)\n", el); }
+  }
 }

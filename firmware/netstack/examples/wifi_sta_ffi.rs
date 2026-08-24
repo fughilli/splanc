@@ -63,6 +63,33 @@ pub extern "C" fn ns_wpa_on_eapol(eapol: *const u8, len: u32, out: *mut u8, cap:
     }
 }
 
+/// CCMP-encrypt an outbound data frame: `hdr` is the 24-byte 802.11 header (Protected
+/// bit set), `payload` is the LLC/SNAP + L3 bytes. Writes the full protected MPDU
+/// (header + CCMP header + ciphertext + MIC) to `out`; returns its length (0 if no keys).
+#[no_mangle]
+pub extern "C" fn ns_sta_encrypt(hdr: *const u8, hdr_len: u32, payload: *const u8, payload_len: u32,
+                                 out: *mut u8, cap: u32) -> u32 {
+    unsafe {
+        let Some(sup) = SUP.as_mut() else { return 0 };
+        let h = core::slice::from_raw_parts(hdr, hdr_len as usize);
+        let p = core::slice::from_raw_parts(payload, payload_len as usize);
+        let o = core::slice::from_raw_parts_mut(out, cap as usize);
+        sup.encrypt_data(h, p, o) as u32
+    }
+}
+
+/// CCMP-verify + decrypt an inbound protected data frame. Writes the plaintext
+/// payload (LLC/SNAP + L3) to `out`; returns its length, or 0 on auth/parse failure.
+#[no_mangle]
+pub extern "C" fn ns_sta_decrypt(frame: *const u8, frame_len: u32, out: *mut u8, cap: u32) -> u32 {
+    unsafe {
+        let Some(sup) = SUP.as_ref() else { return 0 };
+        let f = core::slice::from_raw_parts(frame, frame_len as usize);
+        let o = core::slice::from_raw_parts_mut(out, cap as usize);
+        sup.decrypt_data(f, o).unwrap_or(0) as u32
+    }
+}
+
 /// Diagnostic: report how the supplicant parses/verifies an EAPOL frame under the
 /// current PTK, without mutating state. See `Supplicant::diag` for the bit layout.
 #[no_mangle]
