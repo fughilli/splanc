@@ -205,11 +205,11 @@ use_repo(host_crate, "host_crates")
 bazel_dep(name = "sbc_deploy", version = "0.0.0")
 git_override(
     module_name = "sbc_deploy",
-    # sbc-deploy @ 871602e (#9 quote detect_caps_cmd so `:update` doesn't split it;
-    # atop #7 persistent hostname identity + #8 `update` mode). The .bzl-only fix
-    # doesn't touch the Nix side, so pi/hitl/nix + pi/provisioning/nix flake.lock
-    # stay at #8's tree; bump them next time the Nix side changes.
-    commit = "871602e498e204d3ceed6036d6e78f3753c893c6",
+    # sbc-deploy main @ 94d174a (#9 quote detect_caps_cmd so `:update` doesn't split
+    # it; atop #7 persistent hostname identity + #8 `update` mode). The .bzl-only
+    # fix doesn't touch the Nix side, so pi/hitl/nix + pi/provisioning/nix flake.lock
+    # (still at #8's nix/ tree) build the same closure; bump them on the next Nix change.
+    commit = "94d174ada8f611e8dea1b1e3246221621e4c4a6e",
     remote = "https://github.com/fughilli/sbc-deploy.git",
 )
 
