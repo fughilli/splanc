@@ -37,6 +37,10 @@ uint32_t ns_sta_get_tk(uint8_t *out);
 void wDev_Insert_KeyEntry(uint32_t cipher, uint32_t enable, uint32_t flag,
                           const uint8_t *mac, uint32_t slot, const uint8_t *key,
                           uint32_t key_len, uint32_t mgmt);
+// Vendor crypto-engine enable (hal_crypto.o). Reversed args: (iface, cipher, arg2, flag).
+// cipher 4 = CCMP. Sets up the per-iface + global CCMP engine state (0x4800/0x4804/0x4810)
+// as an atomic sequence — may leave internal state our raw register pokes don't reproduce.
+void hal_crypto_enable(uint32_t iface, uint32_t cipher, uint32_t arg2, uint32_t flag);
 uint32_t ns_tcp_connect(const uint8_t *src, const uint8_t *dst, uint16_t sport, uint16_t dport,
                         uint32_t iss, uint8_t *out, uint32_t cap);
 uint32_t ns_tcp_on_ip(const uint8_t *ip, uint32_t len, uint8_t *out, uint32_t cap);
@@ -262,16 +266,20 @@ uint32_t tx_l2(const uint8_t *hdr, const uint8_t *payload, int plen, const char 
     frame[32] = 0x00; frame[33] = 0x00;
     tx_pn++;
     memcpy(frame + 34, payload, plen);
-    ns_mac_send_sec(frame, 26 + 8 + plen, 0);
-    // Diagnose the first few secure sends: read back the descriptor word0 (did the HW
-    // dequeue it? OWN=bit31; error flags in [31:28]) and the queue-0 TX status/error regs.
+    // Reserve the 8-byte CCMP MIC in the buffer (zeroed) so the frame is a well-formed
+    // MPDU length whether or not the engine auto-encrypts. Send via the NORMAL path (no
+    // FTM/bit29, length=full) and let the enabled crypto engine encrypt on the Protected
+    // FC bit + address-matched key.
+    memset(frame + 34 + plen, 0, 8);
+    int flen = 26 + 8 + plen + 8;
+    ns_mac_send(frame, flen, 0);
     static int dbg = 0;
     if (dbg++ < 3) {
-      delayMicroseconds(500); // let the HW pick up + process the descriptor
-      dump_txstat("sec-drop");
+      delayMicroseconds(500);
+      dump_txstat("hwtx");
     }
-    if (label) Serial.printf("%s (HW-enc QoS %d B)\n", label, 26 + 8 + plen);
-    return 26 + 8 + plen;
+    if (label) Serial.printf("%s (HW-enc QoS %d B, no-bit29)\n", label, flen);
+    return flen;
   }
   uint8_t enc[1700];
   uint32_t el = ns_sta_encrypt(hdr, 24, payload, plen, enc, sizeof(enc));
@@ -337,13 +345,21 @@ void install_hw_key() {
   if (!ns_sta_get_tk(tk)) return;
   auto wr = [](uintptr_t a, uint32_t v) { *reinterpret_cast<volatile uint32_t *>(a) = v; };
   auto rd = [](uintptr_t a) { return *reinterpret_cast<volatile uint32_t *>(a); };
-  // Hardware inline CCMP. HW_DECRYPT replicates the vendor's connected-STA crypto state
-  // (reverse-engineered from a live WiFi.begin register dump) so the MAC hardware-
-  // decrypts protected unicast from the AP — PROVEN on silicon. It's gated OFF by
-  // default because HW inline crypto also re-encrypts TX, and completing HW-encrypt TX
-  // needs the TX-descriptor crypto/key-index flag (ppTxPkt->ppProcTxSecFrame) that our
-  // ns_mac_send does not yet set; with it off the proven software-CCMP round-trip runs.
-  constexpr bool HW_DECRYPT = true;
+  // Hardware inline CCMP. HW_DECRYPT (cleaner form: hal_crypto_enable + natural wDev key
+  // config) makes the MAC hardware-DECRYPT protected unicast from the AP — PROVEN on
+  // silicon. Gated OFF by default: MAC inline crypto also re-encrypts TX, but hardware
+  // TX-ENCRYPT is UNREACHABLE from our heapless direct-submission path. Exhaustively
+  // reversed + tested on silicon (4 RE agents, ~20 rig iterations): the WiFi MAC only
+  // encrypts frames that flow through the vendor TX path (ppTxPkt -> ppProcTxSecFrame,
+  // which requires a non-NULL station/node pointer at esf_buf+0x2c that the vendor
+  // association machinery builds). Our own lldesc/PLCP0 submission never engages the
+  // TX-crypto engine, so a Protected outbound frame is silently dropped pre-TX (confirmed
+  // 0-on-air with an unfiltered OTA sniffer). NB: descriptor word0 bit29 is the FTM
+  // timestamp bit, NOT a crypto flag — setting it made the drop worse. So the WiFi-MAC
+  // inline path is decrypt-only for a heapless driver; TX-encrypt needs the standalone
+  // AES peripheral driving our ccmp.rs, or the vendor ppTxPkt+node struct (vendor-coupled).
+  // With HW crypto OFF, the proven all-software CCMP round-trip runs (4-way -> DHCP -> TCP).
+  constexpr bool HW_DECRYPT = false;
   if (!HW_DECRYPT) {
     wr(0x600A4800, 0); // disable HW crypto engine -> protected unicast passes raw (SW CCMP)
     g_hwkey = false;
@@ -354,21 +370,17 @@ void install_hw_key() {
   wDev_Insert_KeyEntry(4 /*CCMP*/, 1 /*enable*/, 0, BSSID, SLOT, tk, 16, 0);
   volatile uint32_t *slot = reinterpret_cast<volatile uint32_t *>(0x600A5800 + SLOT * 40);
   slot[6] = 0; slot[7] = 0; slot[8] = 0; slot[9] = 0;   // zero RX PN replay words
-  slot[1] = (slot[1] & 0x0000ffff) | 0x086c0000;        // vendor slot-4 pairwise config
+  // EXPERIMENT: use the vendor's atomic engine setup instead of raw register pokes, and
+  // keep the NATURAL key config (no 0x086c overwrite). Prior raw-poke attempts matched the
+  // vendor's *visible* registers but the crypto engine still refused TX — internal state
+  // from the enable SEQUENCE may be the missing piece.
   wr(0x600A4004, rd(0x600A4004) | 0x00010000);          // BSSID entry "has key" bit
-  // hal_crypto_enable(cipher=CCMP) arming (reversed from hal_crypto.o): base 0x30103 with
-  // bit31 set on ctrl1, and 0x4810 gets the CCMP per-slot enable mask 0x3FFFC0. Leaving
-  // 0x4810=0 disabled the CCMP TX engine, so HW consumed the secure descriptor but dropped
-  // the frame (never reached the air). These two writes ARM the encrypt path.
-  wr(0x600A4800, 0x00030103);                           // ctrl0
-  wr(0x600A4804, 0x80030103);                           // ctrl1: base 0x30103 | bit31 (CCMP enable)
-  wr(0x600A4810, 0x003FFFC0);                           // CCMP per-slot enable mask
-  wr(0x600A582C, SLOT);                                  // "using key idx" -> TX encrypt key
+  hal_crypto_enable(0 /*iface0*/, 4 /*CCMP*/, 0, 0);    // vendor engine enable sequence
   ic_set_rx_policy(0, 0, 1, 1);
   ic_rx_enable_bssid_check(0);
   g_hwkey = true;
-  Serial.printf("HW decrypt ON: kv=%08x c0=%08x slot4 w1=%08x bssid4=%08x\n",
-                rd(0x600A4814), rd(0x600A4800), rd(0x600A5804 + SLOT * 40), rd(0x600A4004));
+  Serial.printf("HW crypto (vendor enable): kv=%08x 4800=%08x 4804=%08x 4810=%08x slot4w1=%08x\n",
+                rd(0x600A4814), rd(0x600A4800), rd(0x600A4804), rd(0x600A4810), rd(0x600A5804 + SLOT * 40));
 }
 
 // Parse an L2 payload (LLC/SNAP + IPv4) for our ICMP echo replies and DHCP responses.

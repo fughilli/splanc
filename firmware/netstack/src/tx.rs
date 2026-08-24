@@ -92,7 +92,13 @@ impl TxDesc {
 
 const TX_OWN: u32 = 1 << 31; // hand-off to hardware
 const TX_EOF: u32 = 1 << 30; // end-of-frame (single-descriptor frame)
-const TX_SEC: u32 = 1 << 29; // hardware CCMP encrypt (ppProcTxSecFrame sets this)
+// NOTE: descriptor word0 bit29 is the FTM (Fine Timing Measurement) timestamp bit
+// (lmacTxFrame gates wDev_ftm_set_t1t4 on it), NOT a crypto flag — setting it made the
+// hardware attempt FTM on a data frame and silently drop it pre-TX. Hardware CCMP encrypt
+// is driven by the 802.11 Protected FrameControl bit + an address-matched key slot, with
+// no manual descriptor crypto bit. So TX_SEC contributes no word0 flag; `secure` only
+// tells the length/PLCP math to reserve the 8-byte MIC the engine appends.
+const TX_SEC: u32 = 0;
 const TX_LEN_SHIFT: u32 = 14; // length[27:14]
 const TX_SIZE_MASK: u32 = 0x3fff; // size[13:0]
 
