@@ -221,6 +221,29 @@ int build_ping(uint8_t *p, const uint8_t *src, const uint8_t *dst, uint16_t seq)
 }
 
 // Build + CCMP-encrypt + transmit a DHCP message (DISCOVER/REQUEST) to the AP.
+// Transmit an L2 frame: `hdr` is the 24-byte 802.11 header (Protected bit set), `payload`
+// is LLC/SNAP + L3. With HW crypto active (g_hwkey) send PLAINTEXT and let the MAC insert
+// the CCMP header + encrypt; otherwise software-encrypt. Returns the enc'd length or the
+// plaintext length. `label` is logged.
+uint32_t tx_l2(const uint8_t *hdr, const uint8_t *payload, int plen, const char *label) {
+  if (g_hwkey) {
+    // HW TX-encrypt: [802.11 hdr | 8B CCMP-header space | plaintext | 8B MIC space].
+    // The MAC keys off DA=BSSID (slot 4), fills the PN + MIC, and encrypts the payload.
+    uint8_t frame[1700];
+    memcpy(frame, hdr, 24);
+    memset(frame + 24, 0, 8);            // CCMP header (HW fills PN)
+    memcpy(frame + 32, payload, plen);
+    memset(frame + 32 + plen, 0, 8);     // MIC space (HW fills)
+    ns_mac_send(frame, 24 + 8 + plen + 8, 0);
+    if (label) Serial.printf("%s (HW-enc %d B)\n", label, 24 + 8 + plen + 8);
+    return 24 + 8 + plen + 8;
+  }
+  uint8_t enc[1700];
+  uint32_t el = ns_sta_encrypt(hdr, 24, payload, plen, enc, sizeof(enc));
+  if (el > 0) { ns_mac_send(enc, el, 0); if (label) Serial.printf("%s (SW-enc %u B)\n", label, el); }
+  return el;
+}
+
 void send_dhcp(uint8_t msg_type, const uint8_t *req_ip, const uint8_t *server_id, const char *what) {
   // One transaction id for the whole DORA so the REQUEST correlates to the OFFER.
   const uint32_t xid = 0x5e7a9c01;
@@ -230,16 +253,8 @@ void send_dhcp(uint8_t msg_type, const uint8_t *req_ip, const uint8_t *server_id
   hdr[0] = 0x08; hdr[1] = 0x41; hdr[2] = 0x00; hdr[3] = 0x00;
   memcpy(hdr + 4, BSSID, 6); memcpy(hdr + 10, OUR_MAC, 6); memset(hdr + 16, 0xff, 6);
   hdr[22] = 0x00; hdr[23] = 0x00;
-  uint8_t enc[500];
-  uint32_t el = ns_sta_encrypt(hdr, 24, payload, pn, enc, sizeof(enc));
-  if (el > 0) {
-    ns_mac_send(enc, el, 0);
-    if (msg_type == 3)
-      Serial.printf("DHCP REQUEST sent (%u B) req=%u.%u.%u.%u sid=%u.%u.%u.%u\n", el,
-                    req_ip[0], req_ip[1], req_ip[2], req_ip[3],
-                    server_id[0], server_id[1], server_id[2], server_id[3]);
-    else Serial.printf("DHCP %s sent (%u B enc)\n", what, el);
-  }
+  char lbl[32]; snprintf(lbl, sizeof(lbl), "DHCP %s sent", what);
+  tx_l2(hdr, payload, pn, lbl);
 }
 
 // CCMP-encrypt + transmit an ICMP echo request from `src` to the gateway (which is
@@ -251,10 +266,7 @@ void send_ping(const uint8_t *src, uint16_t seq) {
   hdr[0] = 0x08; hdr[1] = 0x41; hdr[2] = 0x00; hdr[3] = 0x00;
   memcpy(hdr + 4, BSSID, 6); memcpy(hdr + 10, OUR_MAC, 6); memcpy(hdr + 16, BSSID, 6);
   hdr[22] = 0x00; hdr[23] = 0x00;
-  uint8_t enc[128];
-  uint32_t el = ns_sta_encrypt(hdr, 24, payload, pn, enc, sizeof(enc));
-  if (el > 0) { ns_mac_send(enc, el, 0); Serial.printf("PING %u.%u.%u.%u seq=%u sent\n",
-                                                        GATEWAY[0], GATEWAY[1], GATEWAY[2], GATEWAY[3], seq); }
+  tx_l2(hdr, payload, pn, "PING sent");
 }
 
 // CCMP-encrypt + transmit an IPv4 packet to the gateway (the AP), wrapping it in
@@ -268,9 +280,7 @@ void send_ip(const uint8_t *ip, int iplen) {
   hdr[0] = 0x08; hdr[1] = 0x41; hdr[2] = 0x00; hdr[3] = 0x00;
   memcpy(hdr + 4, BSSID, 6); memcpy(hdr + 10, OUR_MAC, 6); memcpy(hdr + 16, BSSID, 6);
   hdr[22] = 0x00; hdr[23] = 0x00;
-  uint8_t enc[1700];
-  uint32_t el = ns_sta_encrypt(hdr, 24, payload, 8 + iplen, enc, sizeof(enc));
-  if (el > 0) ns_mac_send(enc, el, 0);
+  tx_l2(hdr, payload, 8 + iplen, nullptr);
 }
 
 // Program the HW CCMP key slot for our pairwise key so the MAC hardware-decrypts
@@ -278,15 +288,35 @@ void send_ip(const uint8_t *ip, int iplen) {
 void install_hw_key() {
   uint8_t tk[16];
   if (!ns_sta_get_tk(tk)) return;
-  wDev_Insert_KeyEntry(4 /*CCMP*/, 1 /*enable*/, 0, BSSID, 0 /*slot*/, tk, 16, 0);
-  // Replace promiscuous accept-all with a real STA accept policy so the MAC does
-  // per-address hardware CCMP decrypt for frames from our BSSID to us.
+  auto wr = [](uintptr_t a, uint32_t v) { *reinterpret_cast<volatile uint32_t *>(a) = v; };
+  auto rd = [](uintptr_t a) { return *reinterpret_cast<volatile uint32_t *>(a); };
+  // Hardware inline CCMP. HW_DECRYPT replicates the vendor's connected-STA crypto state
+  // (reverse-engineered from a live WiFi.begin register dump) so the MAC hardware-
+  // decrypts protected unicast from the AP — PROVEN on silicon. It's gated OFF by
+  // default because HW inline crypto also re-encrypts TX, and completing HW-encrypt TX
+  // needs the TX-descriptor crypto/key-index flag (ppTxPkt->ppProcTxSecFrame) that our
+  // ns_mac_send does not yet set; with it off the proven software-CCMP round-trip runs.
+  constexpr bool HW_DECRYPT = false;
+  if (!HW_DECRYPT) {
+    wr(0x600A4800, 0); // disable HW crypto engine -> protected unicast passes raw (SW CCMP)
+    g_hwkey = false;
+    return;
+  }
+  // --- HW inline decrypt (the reversed vendor recipe) ---
+  constexpr uint32_t SLOT = 4; // slots 0-3 are group keys; pairwise goes in a slot >= 4
+  wDev_Insert_KeyEntry(4 /*CCMP*/, 1 /*enable*/, 0, BSSID, SLOT, tk, 16, 0);
+  volatile uint32_t *slot = reinterpret_cast<volatile uint32_t *>(0x600A5800 + SLOT * 40);
+  slot[6] = 0; slot[7] = 0; slot[8] = 0; slot[9] = 0;   // zero RX PN replay words
+  slot[1] = (slot[1] & 0x0000ffff) | 0x086c0000;        // vendor pairwise-key config
+  wr(0x600A4004, rd(0x600A4004) | 0x00010000);          // BSSID entry "has key" bit
+  wr(0x600A4800, 0x00030103);                           // ctrl0: HW crypto enable
+  wr(0x600A4804, 0x00030000);                           // ctrl1 (clear hal_crypto_enable extras)
+  wr(0x600A4810, 0x00000000);                           // c10  (clear -> RX-decrypt works)
   ic_set_rx_policy(0, 0, 1, 1);
   ic_rx_enable_bssid_check(0);
   g_hwkey = true;
-  auto rd = [](uintptr_t a) { return *reinterpret_cast<volatile uint32_t *>(a); };
-  Serial.printf("HW key slot: valid=%08x w0=%08x key0=%08x ctrl0=%08x policy=%08x\n",
-                rd(0x600A4814), rd(0x600A5800), rd(0x600A5808), rd(0x600A4800), rd(0x600A40D8));
+  Serial.printf("HW decrypt ON: kv=%08x c0=%08x slot4 w1=%08x bssid4=%08x\n",
+                rd(0x600A4814), rd(0x600A4800), rd(0x600A5804 + SLOT * 40), rd(0x600A4004));
 }
 
 // Parse an L2 payload (LLC/SNAP + IPv4) for our ICMP echo replies and DHCP responses.
@@ -403,16 +433,9 @@ void loop() {
   // protected unicast to us raw — no HW-decrypt attempt, no drop — for software CCMP
   // decap, while still auto-ACKing. (Set once on entering DONE.)
   mac_own_bssid();
-  // Post-link on the continuous-STA-RX datapath: the HW crypto engine drops protected
-  // unicast when the key slot's RX-decrypt state isn't fully set up (raw
-  // wDev_Insert_KeyEntry programs the slot but not the ic_set_key key-info table). So
-  // disable the HW crypto engine (CTRL0=0) — protected unicast then passes raw for
-  // software CCMP decap, while hardware auto-ACK stays on. (HW decrypt: use ic_set_key.)
-  static bool crypto_off = false;
-  if (st == DONE && !crypto_off) {
-    *reinterpret_cast<volatile uint32_t *>(0x600A4800) = 0;
-    crypto_off = true;
-  }
+  // Post-link: HW crypto stays ENABLED (install_hw_key replicated the vendor's
+  // connected-STA crypto state) so the MAC hardware-decrypts protected unicast to us
+  // and delivers plaintext (handled by the g_hwkey branch).
 
   // Drain RX and dispatch.
   uint32_t n = ns_mac_recv(rx, sizeof(rx));
