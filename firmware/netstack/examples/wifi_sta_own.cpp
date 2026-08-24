@@ -672,8 +672,14 @@ void loop() {
       uint8_t pt[600];
       // The RX MPDU has no trailing FCS here, so decap over the full length; fall
       // back to an FCS-trimmed length in case a driver variant appends one.
-      uint32_t pl = ns_sta_decrypt(rx, n, pt, sizeof(pt));
-      if (pl == 0 && n > 4) pl = ns_sta_decrypt(rx, n - 4, pt, sizeof(pt));
+      // The RX hardware pads odd-length MPDUs to even (and some paths append a 4-byte
+      // FCS), so frame_len can be 1-4 bytes longer than the real MPDU — which makes CCMP
+      // over-read the ciphertext and fail the MIC. Try trimming 0..4 trailing bytes until
+      // the MIC validates. (Was: only n and n-4, which missed the odd->even +1 pad.)
+      uint32_t pl = 0;
+      for (uint32_t trim = 0; trim <= 4 && pl == 0; trim++) {
+        if (n > trim + 32) pl = ns_sta_decrypt(rx, n - trim, pt, sizeof(pt));
+      }
       static uint32_t pf = 0;
       if (pf++ < 8)
         Serial.printf("  prot AP->us fc=%02x%02x len=%u ccmp@24=[%02x %02x %02x %02x] decrypt=%u\n",
