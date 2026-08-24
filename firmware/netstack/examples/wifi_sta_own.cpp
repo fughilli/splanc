@@ -35,6 +35,10 @@ uint32_t ns_tcp_on_ip(const uint8_t *ip, uint32_t len, uint8_t *out, uint32_t ca
 uint32_t ns_tcp_send(const uint8_t *data, uint32_t len, uint8_t *out, uint32_t cap);
 uint32_t ns_tcp_recv(uint8_t *out, uint32_t cap);
 uint32_t ns_tcp_state();
+// Vendor lower-MAC RX filter surface (libpp) — set a real STA accept policy so the
+// hardware crypto engine does per-address CCMP decrypt instead of promiscuous accept-all.
+void ic_set_rx_policy(uint32_t vif, uint32_t a1, uint32_t a2, uint32_t a3);
+void ic_rx_enable_bssid_check(uint32_t vif);
 }
 
 // No-op promiscuous sink: keeps the RX hardware + all-frames filter enabled but
@@ -248,11 +252,14 @@ void install_hw_key() {
   uint8_t tk[16];
   if (!ns_sta_get_tk(tk)) return;
   wDev_Insert_KeyEntry(4 /*CCMP*/, 1 /*enable*/, 0, BSSID, 0 /*slot*/, tk, 16, 0);
+  // Replace promiscuous accept-all with a real STA accept policy so the MAC does
+  // per-address hardware CCMP decrypt for frames from our BSSID to us.
+  ic_set_rx_policy(0, 0, 1, 1);
+  ic_rx_enable_bssid_check(0);
   g_hwkey = true;
   auto rd = [](uintptr_t a) { return *reinterpret_cast<volatile uint32_t *>(a); };
-  Serial.printf("HW key slot: valid=%08x w0=%08x w1=%08x key0=%08x ctrl0=%08x ctrl1=%08x\n",
-                rd(0x600A4814), rd(0x600A5800), rd(0x600A5804), rd(0x600A5808),
-                rd(0x600A4800), rd(0x600A4804));
+  Serial.printf("HW key slot: valid=%08x w0=%08x key0=%08x ctrl0=%08x policy=%08x\n",
+                rd(0x600A4814), rd(0x600A5800), rd(0x600A5808), rd(0x600A4800), rd(0x600A40D8));
 }
 
 // Parse an L2 payload (LLC/SNAP + IPv4) for our ICMP echo replies and DHCP responses.
@@ -360,9 +367,13 @@ void loop() {
   // protected unicast to us raw — no HW-decrypt attempt, no drop — for software CCMP
   // decap, while still auto-ACKing. (Set once on entering DONE.)
   mac_own_bssid();
+  // Post-link: disable the HW crypto engine (CTRL0=0) so the MAC passes protected
+  // unicast to us raw for software CCMP decap while keeping hardware auto-ACK. (The
+  // HW-crypto datapath needs a non-promiscuous baseband RX-start — wifi_hw_start —
+  // which is coupled to the vendor PM task and hangs standalone; see wifi_hw_rx_test.)
   static bool crypto_off = false;
   if (st == DONE && !crypto_off) {
-    *reinterpret_cast<volatile uint32_t *>(0x600A4800) = 0; // disable HW crypto attempts
+    *reinterpret_cast<volatile uint32_t *>(0x600A4800) = 0;
     crypto_off = true;
   }
 
@@ -431,6 +442,9 @@ void loop() {
     } else if ((rx[0] & 0x0c) == 0x08 && !(rx[1] & 0x40) && st == DONE && g_hwkey && n > 32) {
       // HW-decrypted data frame from the AP (Protected bit cleared, CCMP header
       // stripped by hardware): the LLC/SNAP + L3 payload follows the 24-byte header.
+      static uint32_t hwf = 0;
+      if (hwf++ < 6) Serial.printf("  HW-DECRYPTED fc=%02x%02x len=%u llc=[%02x %02x .. %02x %02x]\n",
+                                   rx[0], rx[1], n, rx[24], rx[25], rx[30], rx[31]);
       handle_l3(rx + 24, n - 24);
     }
   }
