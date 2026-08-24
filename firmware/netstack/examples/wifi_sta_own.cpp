@@ -92,6 +92,16 @@ bool g_tcp_started = false, g_tcp_requested = false;
 
 inline void wreg(uintptr_t a, uint32_t v) { *reinterpret_cast<volatile uint32_t *>(a) = v; }
 
+// Dump the queue-0 TX status block so we can compare a SUCCESSFUL non-secure send with a
+// dropped secure send and find the real error-code word/bit (the RE says completion status
+// is 0x600A_54E8+qid*0x74, dispatch on (s>>12)&0xf, low byte 0xC0 = TxSecKidErr).
+inline void dump_txstat(const char *tag) {
+  auto rd = [](uintptr_t a) { return *reinterpret_cast<volatile uint32_t *>(a); };
+  Serial.printf("TXSTAT[%s] E0=%08x E4=%08x E8=%08x EC=%08x F0=%08x F4=%08x B8=%08x BC=%08x\n",
+                tag, rd(0x600A54E0), rd(0x600A54E4), rd(0x600A54E8), rd(0x600A54EC),
+                rd(0x600A54F0), rd(0x600A54F4), rd(0x600A54B8), rd(0x600A54BC));
+}
+
 // Own-address slot 0 (0x600a405c/60, valid 0x10000) enables hardware auto-ACK for
 // our MAC; BSSID slot 0 (0x600a4000/04, valid 0x80000000) marks our BSS.
 void mac_own_bssid() {
@@ -256,11 +266,9 @@ uint32_t tx_l2(const uint8_t *hdr, const uint8_t *payload, int plen, const char 
     // Diagnose the first few secure sends: read back the descriptor word0 (did the HW
     // dequeue it? OWN=bit31; error flags in [31:28]) and the queue-0 TX status/error regs.
     static int dbg = 0;
-    if (dbg++ < 4) {
-      auto rd = [](uintptr_t a) { return *reinterpret_cast<volatile uint32_t *>(a); };
-      delayMicroseconds(400); // let the HW pick up + process the descriptor
-      Serial.printf("SECDBG desc.w0=%08x status(54E0)=%08x plcp0(4D6C)=%08x cryptctl(4804)=%08x c10(4810)=%08x kv(4814)=%08x\n",
-                    ns_tx_desc_word0(0), rd(0x600A54E0), rd(0x600A4D6C), rd(0x600A4804), rd(0x600A4810), rd(0x600A4814));
+    if (dbg++ < 3) {
+      delayMicroseconds(500); // let the HW pick up + process the descriptor
+      dump_txstat("sec-drop");
     }
     if (label) Serial.printf("%s (HW-enc QoS %d B)\n", label, 26 + 8 + plen);
     return 26 + 8 + plen;
@@ -346,7 +354,7 @@ void install_hw_key() {
   wDev_Insert_KeyEntry(4 /*CCMP*/, 1 /*enable*/, 0, BSSID, SLOT, tk, 16, 0);
   volatile uint32_t *slot = reinterpret_cast<volatile uint32_t *>(0x600A5800 + SLOT * 40);
   slot[6] = 0; slot[7] = 0; slot[8] = 0; slot[9] = 0;   // zero RX PN replay words
-  slot[1] = (slot[1] & 0x0000ffff) | 0x086c0000;        // vendor pairwise-key config
+  slot[1] = (slot[1] & 0x0000ffff) | 0x086c0000;        // vendor slot-4 pairwise config
   wr(0x600A4004, rd(0x600A4004) | 0x00010000);          // BSSID entry "has key" bit
   // hal_crypto_enable(cipher=CCMP) arming (reversed from hal_crypto.o): base 0x30103 with
   // bit31 set on ctrl1, and 0x4810 gets the CCMP per-slot enable mask 0x3FFFC0. Leaving
@@ -522,7 +530,14 @@ void loop() {
         uint32_t r = ns_wpa_on_eapol(e, elen, reply, sizeof(reply));
         uint32_t code = r >> 16, rl = r & 0xffff;
         Serial.printf("4-way: EAPOL %dB key_info=%04x -> code=%u reply=%u\n", elen, kinfo, code, rl);
-        if (code >= 1 && rl > 0) { int dl = build_eapol_data(f, reply, rl); for (int k=0;k<3;k++){ns_mac_send(f, dl, 0);delay(3);} }
+        if (code >= 1 && rl > 0) {
+          int dl = build_eapol_data(f, reply, rl);
+          ns_mac_send(f, dl, 0);
+          delayMicroseconds(500);
+          static bool once = false;
+          if (!once) { once = true; dump_txstat("eapol-good"); } // baseline: this TX succeeds
+          for (int k = 0; k < 2; k++) { delay(3); ns_mac_send(f, dl, 0); }
+        }
         if (code == 2) {
           st = DONE;
           Serial.println("*** 4-WAY COMPLETE — CCMP KEYS INSTALLED, LINK UP ***");
