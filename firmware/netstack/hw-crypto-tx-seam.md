@@ -23,10 +23,12 @@ Last updated: 2026-08-24. Branch `claude/heapless-netstack`. Relevant commits:
   station/node pointer at `esf_buf+0x2c` (built by the vendor association
   machinery). Our direct submission never engages the TX-crypto engine at all.
 - Decision (owner): keep the MAC inline engine and bridge TX through `ppTxPkt`
-  with a **minimal, statically-constructed `esf_buf` + node struct** — partial,
-  contained vendor coupling for the final TX hand-off only. Our MLME / 4-way /
-  key derivation stay in source. (Reversal of the `ppTxPkt` ABI + `esf_buf`/node
-  layout was in progress when this was written.)
+  with a **vendor-allocated `esf_buf` + a minimal, statically-built TRC context**
+  — partial, contained vendor coupling for the final TX hand-off only. Our MLME /
+  4-way / key derivation stay in source. The full `ppTxPkt` ABI, `esf_buf` layout,
+  and the minimal TRC struct are reversed and recorded below — this is
+  implementable; it was left as documented-not-built per the owner's "revisit
+  later" call.
 - Fallback that works today: all-software CCMP (crypto engine OFF). Verified
   end-to-end: 4-way → DHCP lease → ping → TCP.
 
@@ -75,11 +77,12 @@ All in `/workspace/esp32-reverse` (objects in `targets/esp32c6/`, Ghidra decomp 
 
 3. **The drop gate.** `ppProcTxSecFrame@00014136.c` (called by `ppTxPkt`) returns
    1 (→ `ppTxPkt` recycles/drops the frame) when the frame is protected AND
-   `*(esf_buf + 0x2c) == 0`. `esf_buf+0x2c` is the **station/node ("rc-sched")
-   pointer**, also consumed by `rcGetSched(*(esf+0x2c), *(esf+0x34))` and
-   `lmacSetTxFrame` (which reads `node+0x86`, checks `== 1`). It is _not_ an
-   "authorized/assoc" flag; it is the node object the vendor builds during
-   association. This is the exact coupling our heapless MLME skips.
+   `*(esf_buf + 0x2c) == 0`, also consumed by `rcGetSched(*(esf+0x2c), *(esf+0x34))`
+   and `lmacSetTxFrame` (which reads `+0x86`, checks `== 1`). It is _not_ an
+   "authorized/assoc" flag. **`esf_buf+0x2c` is the TRC (Tx Rate Control) context,
+   NOT the association node** (final RE below) — which is what makes a
+   statically-built minimal struct viable rather than needing vendor association
+   state. This is the coupling our direct-submission path skips.
 
 4. **`ic_set_sta_auth_flag` is a dead no-op** on this build (`wDev_SetAuthed` is a
    bare `ret`). Do not chase it.
@@ -113,18 +116,125 @@ we already call):
   allocate a real, correctly-initialized `esf_buf` and only fill in our frame +
   node pointer, rather than hand-building the struct.
 
-Planned integration (pending the ABI reversal):
+## The `ppTxPkt` bridge ABI (reversed)
 
-1. `esf_buf_alloc(...)` a TX buffer; copy in our protected QoS frame (24/26-byte
-   header w/ Protected bit + 8-byte CCMP header + cleartext payload).
-2. Point `esf_buf+0x2c` at a **static minimal node struct** with `node+0x86 = 1`
-   and whatever MAC/keyidx/AC fields the TX/rate path reads (being reversed).
-3. Set the AC/queue + length fields, then call `ppTxPkt`.
-4. Keep HW decrypt on the RX side (already working) → full inline-crypto datapath.
+Full reversal from `libpp.a` / `libnet80211.a` (decomp under
+`/workspace/esp32-reverse/out/{pp,net80211}/decomp/`). **Key correction to earlier
+notes: `esf_buf+0x2c` is the TRC (Tx Rate Control) context, a ~0x90-byte struct —
+NOT the `ieee80211_node`.** That is what makes a statically-built minimal struct
+viable: we do not need the vendor association node, only a mostly-zeroed TRC.
 
-The remaining unknowns (in flight): exact `ppTxPkt` signature, the full `esf_buf`
-field layout, the minimal node-struct fields, and any global lmac/queue state our
-bring-up must initialize first.
+### `ppTxPkt` signature and flow
+
+```c
+bool ppTxPkt(esf_buf_t *eb /*a0*/, int do_arm /*a1*/);
+```
+
+`eb` is the sole data input (queue, TRC, frame, flags all live inside it);
+`do_arm=1` also pushes the HW queue / signals the pp task (`ic_tx_pkt` uses `1`).
+Flow (`ppTxPkt@00014358.c`): `ic_interface_enabled(txdesc.w4>>19 & 1)` — drop if
+the interface bit is clear → `ppTxProtoProc(eb)` (sets txdesc word0 data/mgmt bits
+from the real FC byte) → `ppProcTxSecFrame(eb)` (**sets `txdesc.word0 |= 0x20000000`
+= inline-CCMP-encrypt when `eb+0x2c != 0` and the Protected FC path is taken**;
+returns 1 → frame dropped/recycled) → `rcGetSched(eb+0x2c, eb+0x34)` (no-op if
+`eb+0x2c==0`) → `ppMapTxQueue(eb)` (AC/TID → HW queue into txdesc w4[23:20]) → link
+into `_pTxRx` pending list, stamp `txdesc+0x18 = *0x600AD000` (MAC timer) → if
+`do_arm` and `lmacIsIdle(queue)`, submit / signal the pp task (actual HW arm is in
+`lmacTxFrame → lmacSetTxFrame` off the pp task).
+
+Note `txdesc.word0 |= 0x20000000` here (the esf txdesc's encrypt indicator) is a
+_different word_ from the raw lldesc bit29=FTM in §RE-1 — the confusion between the
+esf `txdesc` and the HW `lldesc` is exactly what made bit29 look like "secure".
+
+### `esf_buf` layout (header 0x90B, embedded 0x48B HW txdesc at +0x48, frame at +0x90)
+
+Fields the TX path reads/writes (from `esf_buf_alloc@0001024a.c` + the helpers):
+
+- **+0x04** `*hdr` ptr — `[0].word0` gets bit 0x20000000 on encrypt; `[1]` = frame data ptr.
+- **+0x10** payload base — `= eb+0x90` (dynamic); copy the frame here.
+- **+0x14** `hdrlen` u16 — 802.11 header len (0x18 non-QoS / 0x1a QoS).
+- **+0x16** `payloadlen` u16 — body length; `ProcTxSecFrame` uses `(payloadlen+hdrlen)-8`.
+- **+0x1a** `pool_type` u8 — 1 = data-TX pool.
+- **+0x24** `qos_flags` u16 — bit13 (0x2000) = "QoS/CCMP 8 bytes inserted".
+- **+0x2c** `trc` ptr — rate-control ctx (see below); must be non-NULL to encrypt.
+- **+0x30** `next` ptr — pending-list link (ppTxPkt owns).
+- **+0x34** `txdesc` ptr — embedded HW desc at `eb+0x48`.
+- **+0x48** `hw_txdesc` — word0 ctrl (bit3 data, bit0x20000000 encrypt, bit0x8000
+  hdr-present); word1 low-nibble=frametype, bits[7:4]=queue-class; word4 bit19=if-id,
+  bits[23:20]=HW queue; +0x18 timestamp; +0x30/31 rate.
+
+### The TRC context at `+0x2c` (~0x90B) — minimal fields to clear the gate
+
+Written normally by `ieee80211_set_tx_desc` via `ic_get_trc`; readers on the TX
+path: `rcGetSched` (`+0x0c` flags, `+0x08/09` fixed-rate, `+0x64/68/6c` sched-table
+ptrs, `+0x86` phymode), `ppProcTxSecFrame` (`+0x82` u16 length budget), `ppMapTxQueue`
+(`+0x0c` bit7, `+0x84` index), **`lmacSetTxFrame` (`+0x86 == 1` — the gate)**. A
+statically-allocated, mostly-zeroed 0x90 struct suffices:
+
+```c
+uint8_t trc[0x90] = {0};
+*(uint16_t*)(trc+0x0c) = 0x80;          // bit7 = no adaptive rate ctrl (fixed sched, queue 7)
+*(void**)   (trc+0x64) = &BasicOFDMSched;   // sched-table ptrs (resolve libpp symbols;
+*(void**)   (trc+0x68) = &BasicOFDMSched;   //   or &DAT_00012cb0 BasicSched / rc11BSchedTbl)
+*(void**)   (trc+0x6c) = &BasicOFDMSched;
+*(uint16_t*)(trc+0x82) = 0x600;         // generous length budget (>= frame)
+trc[0x84] = 0;                          // index
+trc[0x85] = 0;                          // interface (0 = STA)
+trc[0x86] = 1;                          // *** REQUIRED gate ***
+// +0x21..0x26 = peer MAC (BSSID) only needed if routing completion through vendor
+```
+
+Load-bearing minimum: `+0x86=1`, non-null `+0x2c`, and valid sched-table pointers
+at `+0x64/68/6c` so `rcGetSched` doesn't fault. `rcUpdateTxDone` (completion) reads
+more fields but can be skipped if we own TX completion ourselves.
+
+### Allocation + call sequence
+
+Use the vendor pool (`esp_wifi_start` initializes it) rather than hand-building:
+
+```c
+esf_buf_t *eb = ic_ebuf_alloc(&trc, 1 /*data-TX pool*/, hdrlen + bodylen);
+if (!eb) return; // pool full = bounded back-pressure
+memcpy(*(void**)((char*)eb + 0x10), frame, hdrlen + bodylen); // Protected QoS + CCMP hdr + cleartext
+*(uint16_t*)((char*)eb + 0x14) = hdrlen;
+*(uint16_t*)((char*)eb + 0x16) = bodylen;
+*(void**)   ((char*)eb + 0x2c) = &trc;
+*(uint16_t*)((char*)eb + 0x24) |= 0x2000; // if the QoS/CCMP 8 bytes were inserted
+ppTxPkt(eb, /*do_arm=*/1);
+```
+
+For a fully-heapless variant, mirror the static FG pool wiring (`esf_buf_setup_static`,
+`type=10`): one 0x90 header + one 0x48 txdesc, `eb+0x34=&desc`, `eb+0x10=payload`,
+`eb+0x0c=1` (refcnt), `eb+0x1a=type`, rest zero, and own the completion (skip
+`esf_buf_recycle`).
+
+### Global state ppTxPkt needs (verify our bring-up has it)
+
+`_pTxRx` (lmac TX/RX ctrl block), `_our_instances_ptr` (per-queue instances),
+`_g_osi_funcs_p` + `_g_intr_lock_mux`/`_g_wifi_global_lock` (OS-shim locks/queues,
+**required**), `_xphyQueue` + `pp_sig_cnt[]` (pp-task signalling), the esf_buf pools
+(`esf_buf_setup`), the TRC subsystem (`rcAttach`/`trc_init` from `lmacInit`), and the
+interface-enabled bit (`ic_interface_enabled(if)==1`). All of these are set up by the
+vendor `lmacInit`/`esp_wifi_start` we already run — the open risk is whether our
+custom continuous-RX bring-up leaves the **interface-enabled bit** and `_pTxRx`
+per-queue list heads in the state `ppTxPkt` expects. That is the first thing to
+check when implementing.
+
+### Why this should encrypt
+
+(a) the frame carries the real 802.11 Protected FC bit → `ppTxProtoProc` classifies
+it and `ppProcTxSecFrame` sets `txdesc.word0 |= 0x20000000`; (b) `eb+0x2c` (TRC) is
+non-null with `+0x86==1` so `lmacSetTxFrame` accepts + arms it. The HW then selects
+key slot 4 (MAC==BSSID) from the frame addresses — the same slot our decrypt path
+already validated.
+
+Decomp index (under `/workspace/esp32-reverse/out/`): `pp/decomp/{ppTxPkt@00014358,
+ppProcTxSecFrame@00014136, ppTxProtoProc@00010286, ppMapTxQueue@00013f50,
+lmacSetTxFrame@00010182, lmacTxFrame@00010cae, lmacInit@00010426, rcGetSched@00011e72,
+rcUpdateTxDone@00010f72, esf_buf_alloc@0001024a, ic_ebuf_alloc@00010222,
+esf_buf_setup@00010700, esf_buf_setup_static@000105bc, ic_set_trc@000105d2,
+rc_enable_trc@0001277a, trc_init@000124ca}.c`; `net80211/decomp/{ieee80211_output_process@000142ae,
+ieee80211_encap_esfbuf@00013bf0, ieee80211_set_tx_desc@00013880}.c`.
 
 ## Everything tried on the direct path (all verified 0-on-air)
 
