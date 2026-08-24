@@ -23,6 +23,12 @@ uint32_t ns_wpa_diag(const uint8_t *eapol, uint32_t len);
 uint32_t ns_sta_encrypt(const uint8_t *hdr, uint32_t hdr_len, const uint8_t *payload,
                         uint32_t payload_len, uint8_t *out, uint32_t cap);
 uint32_t ns_sta_decrypt(const uint8_t *frame, uint32_t frame_len, uint8_t *out, uint32_t cap);
+uint32_t ns_sta_get_tk(uint8_t *out);
+// Vendor HAL (libpp): program a hardware crypto key slot. Reversed signature:
+// (cipher, enable, flag, peer_mac[6], slot, key, key_len, mgmt). cipher 4 = CCMP.
+void wDev_Insert_KeyEntry(uint32_t cipher, uint32_t enable, uint32_t flag,
+                          const uint8_t *mac, uint32_t slot, const uint8_t *key,
+                          uint32_t key_len, uint32_t mgmt);
 }
 
 // No-op promiscuous sink: keeps the RX hardware + all-frames filter enabled but
@@ -42,6 +48,7 @@ uint8_t g_offer_ip[4] = {0}, g_server_id[4] = {0};
 bool g_have_offer = false, g_leased = false;
 const uint8_t GATEWAY[4] = {10, 42, 0, 1};
 bool g_pinged = false;
+bool g_hwkey = false;
 
 inline void wreg(uintptr_t a, uint32_t v) { *reinterpret_cast<volatile uint32_t *>(a) = v; }
 
@@ -212,6 +219,58 @@ void send_ping(const uint8_t *src, uint16_t seq) {
                                                         GATEWAY[0], GATEWAY[1], GATEWAY[2], GATEWAY[3], seq); }
 }
 
+// Program the HW CCMP key slot for our pairwise key so the MAC hardware-decrypts
+// protected unicast to us (delivering plaintext) AND keeps hardware auto-ACK.
+void install_hw_key() {
+  uint8_t tk[16];
+  if (!ns_sta_get_tk(tk)) return;
+  wDev_Insert_KeyEntry(4 /*CCMP*/, 1 /*enable*/, 0, BSSID, 0 /*slot*/, tk, 16, 0);
+  g_hwkey = true;
+  auto rd = [](uintptr_t a) { return *reinterpret_cast<volatile uint32_t *>(a); };
+  Serial.printf("HW key slot: valid=%08x w0=%08x w1=%08x key0=%08x ctrl0=%08x ctrl1=%08x\n",
+                rd(0x600A4814), rd(0x600A5800), rd(0x600A5804), rd(0x600A5808),
+                rd(0x600A4800), rd(0x600A4804));
+}
+
+// Parse an L2 payload (LLC/SNAP + IPv4) for our ICMP echo replies and DHCP responses.
+// Works for both software-decrypted and hardware-decrypted (plaintext) frames.
+void handle_l3(const uint8_t *pt, int pl) {
+  if (pl <= 8 || pt[6] != 0x08 || pt[7] != 0x00) return; // IPv4 EtherType
+  const uint8_t *ip = pt + 8;
+  if (pl > 8 + 28 && ip[9] == 1) { // ICMP
+    const uint8_t *ic = ip + ((ip[0] & 0x0f) * 4);
+    if (ic[0] == 0) // echo reply
+      Serial.printf("*** PING REPLY from %u.%u.%u.%u seq=%u — IP round-trip over heapless WiFi ***\n",
+                    ip[12], ip[13], ip[14], ip[15], (ic[6] << 8) | ic[7]);
+  } else if (pl > 8 + 28 && ip[9] == 17) { // UDP
+    const uint8_t *udp = ip + ((ip[0] & 0x0f) * 4);
+    uint16_t sport = (udp[0] << 8) | udp[1], dport = (udp[2] << 8) | udp[3];
+    if (sport == 67 && dport == 68) { // DHCP server -> client
+      const uint8_t *dh = udp + 8;
+      uint8_t mt = 0;
+      const uint8_t *o = dh + 240;
+      const uint8_t *end = pt + pl;
+      while (o + 1 < end && *o != 255) {
+        if (*o == 53) mt = o[2];
+        else if (*o == 54) memcpy(g_server_id, o + 2, 4);
+        o += 2 + o[1];
+      }
+      Serial.printf("DHCP reply: type=%u yiaddr=%u.%u.%u.%u\n", mt, dh[16], dh[17], dh[18], dh[19]);
+      if (mt == 2 && !g_have_offer && !g_leased) {
+        memcpy(g_offer_ip, dh + 16, 4);
+        g_have_offer = true;
+        Serial.println("*** DHCP OFFER received — L3 over heapless CCMP link ***");
+        send_dhcp(3, g_offer_ip, g_server_id, "REQUEST");
+      } else if (mt == 5) {
+        g_leased = true;
+        memcpy(g_offer_ip, dh + 16, 4);
+        Serial.printf("*** DHCP LEASE ACQUIRED — IP %u.%u.%u.%u over heapless WiFi ***\n",
+                      dh[16], dh[17], dh[18], dh[19]);
+      }
+    }
+  }
+}
+
 // Find an EAPOL-Key body inside a received data frame; returns len or 0.
 int eapol_body(const uint8_t *f, int len, const uint8_t **out) {
   for (int i = 24; i + 8 <= len && i < 40; i++) {
@@ -265,11 +324,13 @@ void loop() {
   uint8_t f[256], rx[400];
 
   if (st != DONE) {
-    mac_own_bssid(); // keep ACK asserted during auth/assoc/4-way
+    mac_own_bssid(); // hardware auto-ACK during auth/assoc/4-way
   } else {
-    // Post-link: clear the own-MAC "valid" bit so the MAC does not try to HW-decrypt
-    // protected unicast frames addressed to us (no HW key slot is programmed) and drop
-    // them. Promiscuous still delivers them raw to our ring for software CCMP decap.
+    // Post-link: clear own-MAC "valid". The HW crypto key slot is programmed (see
+    // install_hw_key, verified valid on silicon), but PROMISCUOUS mode bypasses the
+    // hardware crypto datapath, so the MAC would still drop protected unicast to us
+    // rather than HW-decrypt it. Clearing valid lets promiscuous deliver it raw for
+    // software CCMP decap. (Activating HW decrypt needs a non-promiscuous STA RX path.)
     volatile uint32_t *ov = reinterpret_cast<volatile uint32_t *>(0x600A4060);
     *ov = *ov & ~0x10000u;
   }
@@ -316,7 +377,11 @@ void loop() {
         uint32_t code = r >> 16, rl = r & 0xffff;
         Serial.printf("4-way: EAPOL %dB key_info=%04x -> code=%u reply=%u\n", elen, kinfo, code, rl);
         if (code >= 1 && rl > 0) { int dl = build_eapol_data(f, reply, rl); for (int k=0;k<3;k++){ns_mac_send(f, dl, 0);delay(3);} }
-        if (code == 2) { st = DONE; Serial.println("*** 4-WAY COMPLETE — CCMP KEYS INSTALLED, LINK UP ***"); }
+        if (code == 2) {
+          st = DONE;
+          Serial.println("*** 4-WAY COMPLETE — CCMP KEYS INSTALLED, LINK UP ***");
+          install_hw_key(); // program HW slot so auto-ACK + HW decrypt coexist
+        }
       }
     } else if ((rx[0] & 0x0c) == 0x08 && (rx[1] & 0x40) && st == DONE) {
       // Protected data frame from the AP: CCMP-decrypt and look for a DHCP reply.
@@ -331,42 +396,11 @@ void loop() {
       if (pf++ < 8)
         Serial.printf("  prot AP->us fc=%02x%02x len=%u ccmp@24=[%02x %02x %02x %02x] decrypt=%u\n",
                       rx[0], rx[1], n, rx[24], rx[25], rx[26], rx[27], pl);
-      if (pl > 8 && pt[6] == 0x08 && pt[7] == 0x00) { // IPv4 EtherType
-        const uint8_t *ip = pt + 8;
-        if (pl > 8 + 28 && ip[9] == 1) { // ICMP
-          const uint8_t *ic = ip + ((ip[0] & 0x0f) * 4);
-          if (ic[0] == 0) // echo reply
-            Serial.printf("*** PING REPLY from %u.%u.%u.%u seq=%u — IP round-trip over heapless WiFi ***\n",
-                          ip[12], ip[13], ip[14], ip[15], (ic[6] << 8) | ic[7]);
-        } else if (pl > 8 + 28 && ip[9] == 17) { // UDP
-          const uint8_t *udp = ip + ((ip[0] & 0x0f) * 4);
-          uint16_t sport = (udp[0] << 8) | udp[1], dport = (udp[2] << 8) | udp[3];
-          if (sport == 67 && dport == 68) { // DHCP server -> client
-            const uint8_t *dh = udp + 8;
-            uint8_t mt = 0; // parse options for msg type (53) + server id (54)
-            const uint8_t *o = dh + 240;
-            const uint8_t *end = pt + pl;
-            while (o + 1 < end && *o != 255) {
-              if (*o == 53) mt = o[2];
-              else if (*o == 54) memcpy(g_server_id, o + 2, 4);
-              o += 2 + o[1];
-            }
-            Serial.printf("DHCP reply: type=%u yiaddr=%u.%u.%u.%u\n", mt,
-                          dh[16], dh[17], dh[18], dh[19]);
-            if (mt == 2 && !g_have_offer && !g_leased) { // OFFER -> REQUEST immediately
-              memcpy(g_offer_ip, dh + 16, 4);
-              g_have_offer = true;
-              Serial.println("*** DHCP OFFER received — L3 over heapless CCMP link ***");
-              send_dhcp(3, g_offer_ip, g_server_id, "REQUEST");
-            } else if (mt == 5) { // ACK -> lease acquired
-              g_leased = true;
-              memcpy(g_offer_ip, dh + 16, 4); // our confirmed address
-              Serial.printf("*** DHCP LEASE ACQUIRED — IP %u.%u.%u.%u over heapless WiFi ***\n",
-                            dh[16], dh[17], dh[18], dh[19]);
-            }
-          }
-        }
-      }
+      handle_l3(pt, pl);
+    } else if ((rx[0] & 0x0c) == 0x08 && !(rx[1] & 0x40) && st == DONE && g_hwkey && n > 32) {
+      // HW-decrypted data frame from the AP (Protected bit cleared, CCMP header
+      // stripped by hardware): the LLC/SNAP + L3 payload follows the 24-byte header.
+      handle_l3(rx + 24, n - 24);
     }
   }
 

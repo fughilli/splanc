@@ -90,6 +90,18 @@ pub extern "C" fn ns_sta_decrypt(frame: *const u8, frame_len: u32, out: *mut u8,
     }
 }
 
+/// Copy the installed pairwise TK (16 bytes) into `out` for programming the hardware
+/// crypto key slot. Returns 1 if keys are installed, 0 otherwise.
+#[no_mangle]
+pub extern "C" fn ns_sta_get_tk(out: *mut u8) -> u32 {
+    unsafe {
+        let Some(sup) = SUP.as_ref() else { return 0 };
+        let tk = sup.tk();
+        core::ptr::copy_nonoverlapping(tk.as_ptr(), out, 16);
+        1
+    }
+}
+
 /// Diagnostic: report how the supplicant parses/verifies an EAPOL frame under the
 /// current PTK, without mutating state. See `Supplicant::diag` for the bit layout.
 #[no_mangle]

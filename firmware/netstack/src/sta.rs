@@ -121,6 +121,12 @@ impl Sta {
         self.sup.diag(frame)
     }
 
+    /// The installed pairwise temporal key (CCMP TK), valid once Connected. Used to
+    /// program the hardware crypto key slot for HW encrypt/decrypt + auto-ACK.
+    pub fn tk(&self) -> [u8; 16] {
+        self.sup.ptk().tk
+    }
+
     #[cfg(test)]
     pub fn tk_for_test(&self) -> [u8; 16] {
         self.sup.ptk().tk
