@@ -13,7 +13,7 @@ use ledmapper_netstack::mac::{rx_frame, RxRing};
 use ledmapper_netstack::sta::{Out, Sta};
 use ledmapper_netstack::tx::TxRing;
 
-static mut RX: RxRing<8> = RxRing::new();
+static mut RX: RxRing<16> = RxRing::new();
 static mut TX: TxRing<4> = TxRing::new();
 static mut SUP: Option<Sta> = None;
 

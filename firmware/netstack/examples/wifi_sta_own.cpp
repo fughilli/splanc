@@ -427,6 +427,23 @@ void install_hw_key() {
 void handle_l3(const uint8_t *pt, int pl) {
   if (pl <= 8 || pt[6] != 0x08 || pt[7] != 0x00) return; // IPv4 EtherType
   const uint8_t *ip = pt + 8;
+  // Identify EVERY inbound IPv4 packet (proto + ports) — chasing why the client's TCP
+  // data segment never arrives amid a flood of large frames.
+  {
+    static uint32_t ipf = 0;
+    if (ipf++ < 40 && pl >= 8 + 20) {
+      int ihl = (ip[0] & 0x0f) * 4;
+      uint16_t sp = 0, dp = 0;
+      if ((ip[9] == 6 || ip[9] == 17) && pl >= 8 + ihl + 4) {
+        const uint8_t *l4 = ip + ihl;
+        sp = (l4[0] << 8) | l4[1];
+        dp = (l4[2] << 8) | l4[3];
+      }
+      Serial.printf("  IP proto=%u %u.%u.%u.%u:%u -> %u.%u.%u.%u:%u len=%d(pl=%d)\n", ip[9],
+                    ip[12], ip[13], ip[14], ip[15], sp, ip[16], ip[17], ip[18], ip[19], dp,
+                    (ip[2] << 8) | ip[3], pl);
+    }
+  }
   if (pl > 8 + 20 && ip[9] == 6) { // TCP -> feed the connection
     int iplen = (ip[2] << 8) | ip[3];
     if (iplen >= 20 && 8 + iplen <= pl) {
@@ -554,8 +571,11 @@ void loop() {
   // connected-STA crypto state) so the MAC hardware-decrypts protected unicast to us
   // and delivers plaintext (handled by the g_hwkey branch).
 
-  // Drain RX and dispatch.
-  uint32_t n = ns_mac_recv(rx, sizeof(rx));
+  // Drain up to N frames per loop() so a burst (e.g. dnsmasq's DHCP retransmits) can't
+  // fill the fixed RX ring and drop an inbound SYN/data segment before we service it.
+  uint32_t n;
+  int drained = 0;
+  while (drained++ < 32 && (n = ns_mac_recv(rx, sizeof(rx))) > 0) {
   // Broad DONE-state RX trace: what frames actually reach our ring post-link?
   static uint32_t allf = 0;
   if (st == DONE && n >= 10 && allf < 30) {
@@ -632,6 +652,7 @@ void loop() {
       handle_l3(rx + 24, n - 24);
     }
   }
+  } // end RX drain loop
 
   // Kick the state machine: (re)send auth periodically until associated.
   if (st == AUTH && millis() - t > 200) { t = millis(); int a = build_auth(f); ns_mac_send(f, a, 0); }
@@ -662,6 +683,11 @@ void loop() {
     }
   }
   if (st == DONE && g_tcp_started && TCP_SERVER) {
+    // Keepalive: we have no ARP, so periodically send a frame to the gateway (our MAC as
+    // L2 source) to keep its ARP cache warm — otherwise inbound SYNs to us aren't delivered
+    // once the cache goes stale.
+    static uint32_t ka = 0;
+    if (millis() - ka > 4000) { ka = millis(); send_ping(g_offer_ip, 200); }
     // Server: handle_l3 already drove on_ip (SYN-ACK, ACKs); drain + echo any request.
     static uint32_t last_state = 99;
     uint32_t s = ns_tcp_state();
