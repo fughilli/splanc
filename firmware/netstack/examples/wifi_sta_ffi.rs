@@ -110,6 +110,16 @@ pub extern "C" fn ns_tcp_connect(src: *const u8, dst: *const u8, sport: u16, dpo
     }
 }
 
+/// Open a passive TCP listener bound to `src`:`sport` (the WSS/TLS server path). The peer
+/// is latched from the first inbound SYN; drive it with `ns_tcp_on_ip`.
+#[no_mangle]
+pub extern "C" fn ns_tcp_listen(src: *const u8, sport: u16, iss: u32) {
+    unsafe {
+        let s = core::slice::from_raw_parts(src, 4);
+        TCP = Some(TcpConn::listen([s[0], s[1], s[2], s[3]], sport, iss));
+    }
+}
+
 /// Feed an inbound IPv4 datagram to the connection. Writes any reply to `out`.
 #[no_mangle]
 pub extern "C" fn ns_tcp_on_ip(ip: *const u8, len: u32, out: *mut u8, cap: u32) -> u32 {

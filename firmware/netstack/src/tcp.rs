@@ -19,7 +19,9 @@ const ACK: u8 = 0x10;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum State {
     Closed,
-    SynSent,
+    Listen,   // passive open: waiting for an inbound SYN (server)
+    SynSent,  // active open: SYN sent, awaiting SYN-ACK (client)
+    SynRcvd,  // passive open: SYN-ACK sent, awaiting the final ACK (server)
     Established,
     FinWait,
     Done,
@@ -83,6 +85,16 @@ impl TcpConn {
         n
     }
 
+    /// A passive-open listener bound to our `src`/`sport`. The peer (`dst`/`dport`) is
+    /// latched from the first inbound SYN; `iss` is our initial send sequence. Drive it
+    /// with `on_ip`: an inbound SYN produces a SYN-ACK reply and moves to SynRcvd; the
+    /// final ACK moves to Established. Enables the app to be a WSS/TLS server.
+    pub fn listen(src: [u8; 4], sport: u16, iss: u32) -> Self {
+        let mut c = TcpConn::new(src, [0; 4], sport, 0, iss);
+        c.state = State::Listen;
+        c
+    }
+
     /// Application data pending delivery; the caller copies then calls `take_rx`.
     pub fn rx_data(&self) -> &[u8] {
         &self.rx[..self.rx_len]
@@ -136,14 +148,19 @@ impl TcpConn {
             return 0; // not TCP
         }
         let ihl = ((ip[0] & 0x0f) as usize) * 4;
-        // Match our 4-tuple.
-        if ip[12..16] != self.dst || ip[16..20] != self.src {
+        // Must be addressed to us on our port.
+        if ip[16..20] != self.src {
             return 0;
         }
         let tcp = &ip[ihl..];
         let sport = ((tcp[0] as u16) << 8) | tcp[1] as u16;
         let dport = ((tcp[2] as u16) << 8) | tcp[3] as u16;
-        if sport != self.dport || dport != self.sport {
+        if dport != self.sport {
+            return 0;
+        }
+        // A Listener latches its peer from the first SYN; every other state requires the
+        // already-bound peer to match.
+        if self.state != State::Listen && (ip[12..16] != self.dst || sport != self.dport) {
             return 0;
         }
         let seq = u32::from_be_bytes([tcp[4], tcp[5], tcp[6], tcp[7]]);
@@ -169,6 +186,38 @@ impl TcpConn {
         }
 
         match self.state {
+            State::Listen => {
+                // Passive open: an inbound SYN latches the peer and gets a SYN-ACK.
+                if flags & SYN != 0 && flags & ACK == 0 {
+                    self.dst.copy_from_slice(&ip[12..16]);
+                    self.dport = sport;
+                    self.rcv_nxt = seq.wrapping_add(1);
+                    let n = self.build(SYN | ACK, self.snd_nxt, &[], out);
+                    self.snd_nxt = self.snd_nxt.wrapping_add(1); // SYN-ACK's SYN consumes a seq
+                    self.state = State::SynRcvd;
+                    return n;
+                }
+                0
+            }
+            State::SynRcvd => {
+                // A retransmitted SYN (our SYN-ACK was lost) → resend the SYN-ACK.
+                if flags & SYN != 0 && flags & ACK == 0 {
+                    return self.build(SYN | ACK, self.snd_nxt.wrapping_sub(1), &[], out);
+                }
+                // The final ACK completes the 3-way handshake.
+                if flags & ACK != 0 && ack == self.snd_nxt {
+                    self.state = State::Established;
+                }
+                // The client often piggybacks its first data (e.g. TLS ClientHello) here.
+                if !payload.is_empty() && seq == self.rcv_nxt {
+                    let n = payload.len().min(self.rx.len() - self.rx_len);
+                    self.rx[self.rx_len..self.rx_len + n].copy_from_slice(&payload[..n]);
+                    self.rx_len += n;
+                    self.rcv_nxt = self.rcv_nxt.wrapping_add(n as u32);
+                    return self.build(ACK, self.snd_nxt, &[], out);
+                }
+                0
+            }
             State::SynSent => {
                 if flags & SYN != 0 && flags & ACK != 0 {
                     self.rcv_nxt = seq.wrapping_add(1); // SYN consumes a sequence
@@ -276,6 +325,44 @@ mod tests {
         let r = a.on_ip(&buf2[..synack], &mut buf);
         assert_eq!(a.state, State::Established);
         assert!(r >= IP_HDR + TCP_HDR); // A ACKs
+    }
+
+    // Full passive-open: a listener completes the 3-way handshake with an active client
+    // and exchanges data (the server path the WSS/TLS endpoint needs).
+    #[test]
+    fn passive_open_and_data() {
+        let cli_ip = [10, 0, 0, 1];
+        let srv_ip = [10, 0, 0, 2];
+        let mut cli = TcpConn::new(cli_ip, srv_ip, 5000, 443, 1000);
+        let mut srv = TcpConn::listen(srv_ip, 443, 9000);
+        let mut a = [0u8; 1600];
+        let mut b = [0u8; 1600];
+
+        let n = cli.connect(&mut a); // client SYN
+        let r = srv.on_ip(&a[..n], &mut b); // server latches peer + SYN-ACK
+        assert_eq!(srv.state, State::SynRcvd);
+        assert_eq!(srv.dst, cli_ip);
+        assert_eq!(srv.dport, 5000);
+        assert!(r > 0);
+        let n = cli.on_ip(&b[..r], &mut a); // client -> Established, sends ACK
+        assert_eq!(cli.state, State::Established);
+        assert!(n > 0);
+        let _ = srv.on_ip(&a[..n], &mut b); // server -> Established on the final ACK
+        assert_eq!(srv.state, State::Established);
+
+        // Client -> server data; server buffers + ACKs; client clears its in-flight seg.
+        let n = cli.send(b"GET / HTTP/1.1", &mut a);
+        let r = srv.on_ip(&a[..n], &mut b);
+        assert_eq!(srv.rx_data(), b"GET / HTTP/1.1");
+        assert!(r > 0);
+        let _ = cli.on_ip(&b[..r], &mut a);
+        assert_eq!(cli.tx_data, 0);
+
+        // Server -> client data (a TLS record flight would be several of these).
+        srv.take_rx();
+        let n = srv.send(b"HTTP/1.1 101\r\n\r\n", &mut b);
+        let _ = cli.on_ip(&b[..n], &mut a);
+        assert_eq!(cli.rx_data(), b"HTTP/1.1 101\r\n\r\n");
     }
 
     impl TcpConn {
