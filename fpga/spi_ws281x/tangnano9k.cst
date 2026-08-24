@@ -1,0 +1,30 @@
+// Tang Nano 9K (GW1NR-9C) pin constraints for spi_ws281x.
+// 27 MHz onboard crystal.
+IO_LOC "clk27" 52;
+IO_PORT "clk27" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
+// SPI slave (from the host / Pi). Header GPIO.
+IO_LOC "ss" 25;
+IO_PORT "ss" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+IO_LOC "sck" 26;
+IO_PORT "sck" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+IO_LOC "mosi" 27;
+IO_PORT "mosi" IO_TYPE=LVCMOS33 PULL_MODE=UP;
+
+// WS281x outputs (8 header GPIO).
+IO_LOC "ws[0]" 28;
+IO_PORT "ws[0]" IO_TYPE=LVCMOS33 DRIVE=8;
+IO_LOC "ws[1]" 29;
+IO_PORT "ws[1]" IO_TYPE=LVCMOS33 DRIVE=8;
+IO_LOC "ws[2]" 30;
+IO_PORT "ws[2]" IO_TYPE=LVCMOS33 DRIVE=8;
+IO_LOC "ws[3]" 31;
+IO_PORT "ws[3]" IO_TYPE=LVCMOS33 DRIVE=8;
+IO_LOC "ws[4]" 33;
+IO_PORT "ws[4]" IO_TYPE=LVCMOS33 DRIVE=8;
+IO_LOC "ws[5]" 34;
+IO_PORT "ws[5]" IO_TYPE=LVCMOS33 DRIVE=8;
+IO_LOC "ws[6]" 35;
+IO_PORT "ws[6]" IO_TYPE=LVCMOS33 DRIVE=8;
+IO_LOC "ws[7]" 36;
+IO_PORT "ws[7]" IO_TYPE=LVCMOS33 DRIVE=8;

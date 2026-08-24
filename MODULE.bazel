@@ -211,6 +211,21 @@ git_override(
     remote = "https://github.com/fughilli/sbc-deploy.git",
 )
 
+# rules_fpga: Bazel rules for Verilog + open FPGA toolchains (yosys/nextpnr/
+# apicula/verilator/surfer/wavepeek), all vendored via its own isolated Nix
+# usage. Used by //fpga/spi_ws281x (streaming SPI->WS281x). For co-developing
+# rules_fpga locally: bazel --override_module=rules_fpga=/path.
+bazel_dep(name = "rules_fpga", version = "0.0.0")
+git_override(
+    module_name = "rules_fpga",
+    # Branch cc-toolchain-consumption-safe: registers the Verilator cc toolchain
+    # under a dedicated type so it doesn't hijack splanc's host C++, and fixes the
+    # injected-BUILD config load for the dependency case. Move to the merged
+    # commit on main once the PR lands.
+    commit = "99d553acd81d0fc40e6e59ada6cfe4eac6a2031d",
+    remote = "https://github.com/fughilli/rules_fpga.git",
+)
+
 bazel_dep(name = "firmware", version = "0.0.0", repo_name = "embedded")
 archive_override(
     module_name = "firmware",

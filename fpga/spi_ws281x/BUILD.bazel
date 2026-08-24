@@ -1,0 +1,68 @@
+load(
+    "@rules_fpga//fpga/rules:defs.bzl",
+    "fpga_flash",
+    "synthesizable_bitstream",
+    "verilog_library",
+    "verilog_sim",
+    "verilog_top",
+)
+
+package(default_visibility = ["//visibility:public"])
+
+verilog_library(
+    name = "spi_ws281x_lib",
+    srcs = [
+        "csr.v",
+        "spi_ctrl.v",
+        "spi_slave.v",
+        "spi_ws281x.v",
+        "ws281x_stream.v",
+    ],
+)
+
+# SPI slave byte reception.
+verilog_sim(
+    name = "spi_slave_sim",
+    size = "small",
+    tb = "spi_slave_tb.v",
+    top = "spi_slave_tb",
+    deps = [":spi_ws281x_lib"],
+)
+
+# Streaming core: paced round-robin byte stream, decode WS outputs.
+verilog_sim(
+    name = "ws281x_stream_sim",
+    size = "small",
+    tb = "ws281x_stream_tb.v",
+    top = "ws281x_stream_tb",
+    deps = [":spi_ws281x_lib"],
+)
+
+# Full path: SPI CSR write + streamed frame, decode WS outputs.
+verilog_sim(
+    name = "spi_ws281x_sim",
+    size = "small",
+    tb = "spi_ws281x_tb.v",
+    top = "spi_ws281x_tb",
+    deps = [":spi_ws281x_lib"],
+)
+
+# ---- Tang Nano 9K bitstream (27 MHz -> rPLL 54 MHz -> streaming core) ----
+verilog_top(
+    name = "tangnano9k_top",
+    srcs = ["tangnano9k_top.v"],
+    top = "tangnano9k_top",
+    deps = [":spi_ws281x_lib"],
+)
+
+synthesizable_bitstream(
+    name = "spi_ws281x_tangnano9k",
+    constraints = "tangnano9k.cst",
+    platform = "@rules_fpga//fpga/platforms:tangnano9k",
+    top = ":tangnano9k_top",
+)
+
+fpga_flash(
+    name = "spi_ws281x_tangnano9k_flash",
+    bitstream = ":spi_ws281x_tangnano9k",
+)
