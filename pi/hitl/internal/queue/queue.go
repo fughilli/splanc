@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"reflect"
 	"sync"
 	"time"
 
@@ -123,21 +124,32 @@ func (m *Manager) SyncDevices(ctx context.Context, devs []runner.Device) (added,
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	next := map[string]bool{}
+	byName := make(map[string]runner.Device, len(devs))
 	for _, d := range devs {
-		next[d.Name] = true
+		byName[d.Name] = d
 	}
 	cur := map[string]bool{}
 	for _, d := range m.devices {
 		cur[d.Name] = true
 	}
 
-	// Keep existing DUTs exactly as they are (preserving any live container/port);
-	// evict the ones that have gone away.
+	// Reconcile the DUT set. Keep existing DUTs (preserving any live container and
+	// port); pick up a CHANGED spec on an idle DUT so a re-seed of a network DUT's
+	// env takes effect without a remove/re-add; evict the ones that have gone away.
+	changed := false
 	var kept []runner.Device
 	for _, d := range m.devices {
-		if next[d.Name] {
-			kept = append(kept, d)
+		if nd, ok := byName[d.Name]; ok {
+			// Present. Adopt a changed spec only while the DUT is IDLE — never mutate
+			// the env/port of a DUT with a live container out from under its holder.
+			// A busy DUT keeps its spec until the holder releases; the next scan then
+			// re-applies the change (it's still in `byName`).
+			if !sameSpec(d, nd) && !m.deviceBusyLocked(d.Name) {
+				kept = append(kept, nd)
+				changed = true
+			} else {
+				kept = append(kept, d)
+			}
 			continue
 		}
 		// The device is reported gone — but never tear down a live session over
@@ -160,10 +172,19 @@ func (m *Manager) SyncDevices(ctx context.Context, devs []runner.Device) (added,
 		}
 	}
 	m.devices = kept
-	if len(added) > 0 || len(removed) > 0 {
+	if len(added) > 0 || len(removed) > 0 || changed {
 		m.reconcileLocked(ctx)
 	}
 	return added, removed
+}
+
+// sameSpec reports whether two Devices for the same DUT carry the same runtime
+// spec — the fields a re-seed can change that flow into the container (kind, sshd
+// port, device mounts, env). Used to detect a re-seeded network DUT whose env
+// changed so an idle DUT adopts it in place.
+func sameSpec(a, b runner.Device) bool {
+	return a.Kind == b.Kind && a.SSHPort == b.SSHPort &&
+		reflect.DeepEqual(a.Devices, b.Devices) && reflect.DeepEqual(a.Env, b.Env)
 }
 
 // deviceBusyLocked reports whether the named DUT currently has an active holder.

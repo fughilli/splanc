@@ -18,15 +18,18 @@ type fakeRunner struct {
 	stopped    []string
 	capStarted []string
 	capStopped []string
-	onDev      map[string]string // reservation id -> DUT name it started on
+	onDev      map[string]string            // reservation id -> DUT name it started on
+	onEnv      map[string]map[string]string // reservation id -> DUT env it started with
 }
 
 func (f *fakeRunner) Start(_ context.Context, id, _, _ string, dev runner.Device) (*api.SSHEndpoint, error) {
 	f.started = append(f.started, id)
 	if f.onDev == nil {
 		f.onDev = map[string]string{}
+		f.onEnv = map[string]map[string]string{}
 	}
 	f.onDev[id] = dev.Name
+	f.onEnv[id] = dev.Env
 	port := dev.SSHPort
 	if port == 0 {
 		port = 2222
@@ -618,5 +621,46 @@ func TestNetworkDUTPinOnly(t *testing.T) {
 	// b is still queued (it wanted any DUT; only the pin-only Pi was free).
 	if got, _ := m.Get(b.ID); got.State != api.StateQueued {
 		t.Fatalf("b should remain queued, got %q", got.State)
+	}
+}
+
+// A re-seeded network DUT's changed env is adopted in place while the DUT is
+// IDLE (no remove/re-add needed), but a DUT with a live reservation keeps its
+// spec until the holder releases — the container is never restarted under it.
+func TestSyncDevicesUpdatesIdleDUTSpec(t *testing.T) {
+	ctx := context.Background()
+	fr := &fakeRunner{}
+	m := New("rig", 30*time.Minute, fr) // starts with no DUTs
+	mk := func(v string) runner.Device {
+		return runner.Device{Name: "pi-1", Kind: "network", SSHPort: 2230, Env: map[string]string{"K": v}}
+	}
+
+	m.SyncDevices(ctx, []runner.Device{mk("A")}) // attach
+	m.SyncDevices(ctx, []runner.Device{mk("B")}) // idle → adopt changed env in place
+
+	// Reserving it brings the container up with the UPDATED env.
+	r := m.Reserve(ctx, api.ReserveRequest{Owner: "o", Device: "pi-1"})
+	if r.State != api.StateActive {
+		t.Fatalf("pinned reserve should activate, got %q", r.State)
+	}
+	if got := fr.onEnv[r.ID]["K"]; got != "B" {
+		t.Fatalf("idle re-seed should update env in place: container got K=%q, want B", got)
+	}
+
+	// Now busy: a further re-seed must NOT restart or mutate the live container.
+	startsBefore := len(fr.started)
+	m.SyncDevices(ctx, []runner.Device{mk("C")})
+	if len(fr.started) != startsBefore {
+		t.Fatalf("busy DUT re-seed should not restart the container (starts %d -> %d)", startsBefore, len(fr.started))
+	}
+
+	// After release, the pending change is applied on the next scan.
+	if err := m.Release(ctx, r.ID, "done"); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	m.SyncDevices(ctx, []runner.Device{mk("C")})
+	r2 := m.Reserve(ctx, api.ReserveRequest{Owner: "o2", Device: "pi-1"})
+	if got := fr.onEnv[r2.ID]["K"]; got != "C" {
+		t.Fatalf("re-seed after release should apply: container got K=%q, want C", got)
 	}
 }
