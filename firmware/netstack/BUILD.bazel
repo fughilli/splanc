@@ -348,6 +348,38 @@ flash_bundle(
     tags = ["manual"],
 )
 
+# wifi_hw_rx_test — validate non-promiscuous STA RX bring-up (keeps HW crypto inline).
+cc_binary(
+    name = "wifi_hw_rx_test",
+    srcs = ["examples/wifi_hw_rx_test.cpp"],
+    copts = ["-fno-rtti"],
+    target_compatible_with = _C6,
+    deps = _arduino + [
+        ":wifi_sta_ffi",
+        "@embedded//libs/vendor:wifi",
+    ],
+)
+
+firmware_binary(
+    name = "wifi_hw_rx_test_esp32c6",
+    binary = ":wifi_hw_rx_test",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "wifi_hw_rx_test_flash",
+    app = ":wifi_hw_rx_test_esp32c6",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "wifi_hw_rx_test_flashbundle",
+    flash = ":wifi_hw_rx_test_flash",
+    tags = ["manual"],
+)
+
 # wifi_isr_driver — M5: interrupt-driven RX via our own WiFi-MAC ISR (reuses the
 # M0b RX-ring FFI).
 cc_binary(
