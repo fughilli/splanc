@@ -63,6 +63,17 @@ pub extern "C" fn ns_wpa_on_eapol(eapol: *const u8, len: u32, out: *mut u8, cap:
     }
 }
 
+/// Diagnostic: report how the supplicant parses/verifies an EAPOL frame under the
+/// current PTK, without mutating state. See `Supplicant::diag` for the bit layout.
+#[no_mangle]
+pub extern "C" fn ns_wpa_diag(eapol: *const u8, len: u32) -> u32 {
+    unsafe {
+        let Some(sup) = SUP.as_ref() else { return 0 };
+        let frame = core::slice::from_raw_parts(eapol, len as usize);
+        sup.diag_eapol(frame)
+    }
+}
+
 /// Install our RX descriptor ring and arm RX (the C shim has already brought the
 /// PHY/clock/channel up via the vendor blob and put the MAC in promiscuous filter).
 #[no_mangle]

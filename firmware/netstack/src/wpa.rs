@@ -328,12 +328,15 @@ impl Supplicant {
                 self.state = HsState::Failed;
                 return Step::Ignored;
             }
-            let mut gtk_buf = [0u8; 40];
-            if let Ok(n) = unwrap.aes_unwrap(&self.ptk.kek, k.key_data, &mut gtk_buf) {
-                // GTK KDE begins with an 8-byte KDE header before the key bytes.
-                let gtk = if n > 8 { &gtk_buf[8..n] } else { &gtk_buf[..n] };
-                self.gtk_len = core::cmp::min(gtk.len(), 32);
-                self.gtk[..self.gtk_len].copy_from_slice(&gtk[..self.gtk_len]);
+            // Real M3 key data holds several wrapped KDEs (GTK + IGTK + padding), not
+            // just one — so decrypt into a full-size buffer and walk the KDE list for
+            // the GTK KDE (OUI 00-0f-ac, data type 1) rather than assuming a lone KDE.
+            let mut kd_buf = [0u8; 128];
+            if let Ok(n) = unwrap.aes_unwrap(&self.ptk.kek, k.key_data, &mut kd_buf) {
+                if let Some(gtk) = find_gtk_kde(&kd_buf[..n]) {
+                    self.gtk_len = core::cmp::min(gtk.len(), 32);
+                    self.gtk[..self.gtk_len].copy_from_slice(&gtk[..self.gtk_len]);
+                }
             }
             let empty = [0u8; 32]; // M4 carries no nonce and no key data
             return match self.build_reply(
@@ -353,6 +356,32 @@ impl Supplicant {
             };
         }
         Step::Ignored
+    }
+
+    /// Diagnostic: report, without mutating state, how this frame parses under the
+    /// current PTK. bits: 0=parse_ok 1=has_mic 2=install 3=ack 4=secure 5=mic_ok,
+    /// 8..16 = parsed key_info.
+    pub fn diag(&self, frame: &[u8]) -> u32 {
+        let Some(k) = EapolKey::parse(frame) else {
+            return 0;
+        };
+        let mut r = 1u32 | ((k.key_info as u32) << 8);
+        if k.key_info & KEY_INFO_MIC != 0 {
+            r |= 2;
+        }
+        if k.key_info & KEY_INFO_INSTALL != 0 {
+            r |= 4;
+        }
+        if k.key_info & KEY_INFO_ACK != 0 {
+            r |= 8;
+        }
+        if k.key_info & KEY_INFO_SECURE != 0 {
+            r |= 16;
+        }
+        if verify_eapol_mic(&self.ptk.kck, frame) {
+            r |= 32;
+        }
+        r
     }
 
     fn build_reply(
@@ -405,6 +434,25 @@ pub fn build_eapol_key<const N: usize>(
         out.as_mut_slice()[mic_pos..mic_pos + 16].copy_from_slice(&mic[..16]);
     }
     Ok(out.len())
+}
+
+/// Walk the KDE list in M3's decrypted key data and return the GTK bytes from the
+/// GTK KDE (0xdd, OUI 00-0f-ac, data type 1). Skips the IGTK KDE and 0xdd/0x00
+/// padding. KDE layout: dd | len | OUI(3) | type(1) | [keyid(1) rsv(1) GTK..].
+fn find_gtk_kde(kd: &[u8]) -> Option<&[u8]> {
+    let mut i = 0;
+    while i + 2 <= kd.len() {
+        let l = kd[i + 1] as usize;
+        if kd[i] != 0xdd || l < 4 || i + 2 + l > kd.len() {
+            break; // padding or end of KDEs
+        }
+        let body = &kd[i + 2..i + 2 + l];
+        if body[0..3] == [0x00, 0x0f, 0xac] && body[3] == 0x01 && body.len() > 6 {
+            return Some(&body[6..]); // OUI(3) type(1) keyid(1) rsv(1) then GTK
+        }
+        i += 2 + l;
+    }
+    None
 }
 
 /// Verify the MIC of a received EAPOL-Key frame under `kck`.

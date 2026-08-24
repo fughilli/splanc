@@ -315,6 +315,39 @@ flash_bundle(
     tags = ["manual"],
 )
 
+# wifi_sta_own — full STA that OWNS the MAC (no vendor promiscuous), so the
+# hardware-ACK registers stay stable and the WPA2 4-way is deterministic.
+cc_binary(
+    name = "wifi_sta_own",
+    srcs = ["examples/wifi_sta_own.cpp"],
+    copts = ["-fno-rtti"],
+    target_compatible_with = _C6,
+    deps = _arduino + [
+        ":wifi_sta_ffi",
+        "@embedded//libs/vendor:wifi",
+    ],
+)
+
+firmware_binary(
+    name = "wifi_sta_own_esp32c6",
+    binary = ":wifi_sta_own",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "wifi_sta_own_flash",
+    app = ":wifi_sta_own_esp32c6",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "wifi_sta_own_flashbundle",
+    flash = ":wifi_sta_own_flash",
+    tags = ["manual"],
+)
+
 # wifi_isr_driver — M5: interrupt-driven RX via our own WiFi-MAC ISR (reuses the
 # M0b RX-ring FFI).
 cc_binary(

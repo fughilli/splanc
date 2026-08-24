@@ -209,10 +209,15 @@ impl KeyUnwrap for AesUnwrap {
             return Err(());
         }
         let n = wrapped.len() / 8 - 1;
+        // Real authenticators wrap several KDEs (GTK + IGTK + padding) into M3's key
+        // data — up to ~9 blocks — not just the single GTK KDE our interop test used.
+        if n > 32 {
+            return Err(());
+        }
         let aes = Aes128::new(kek);
         let mut a = [0u8; 8];
         a.copy_from_slice(&wrapped[..8]);
-        let mut r = [[0u8; 8]; 8];
+        let mut r = [[0u8; 8]; 32];
         for i in 0..n {
             r[i].copy_from_slice(&wrapped[8 * (i + 1)..8 * (i + 2)]);
         }

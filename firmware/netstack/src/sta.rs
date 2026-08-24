@@ -116,6 +116,11 @@ impl Sta {
         }
     }
 
+    /// Diagnostic passthrough: how would the supplicant parse/verify `frame`?
+    pub fn diag_eapol(&self, frame: &[u8]) -> u32 {
+        self.sup.diag(frame)
+    }
+
     #[cfg(test)]
     pub fn tk_for_test(&self) -> [u8; 16] {
         self.sup.ptk().tk
