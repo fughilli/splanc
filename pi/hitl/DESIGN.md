@@ -143,8 +143,12 @@ board can never steal one. The management address should be the DUT's **Ethernet
 IP so provisioning — which cycles the DUT's WiFi onto the rig AP — never drops
 monitoring/journalctl.
 
-Remaining hardware caveats (shared single resources, follow-ups): BLE shares the
-one host Bluetooth radio, and the provisioning AP is still rig-level.
+Remaining hardware caveats: all reservations share the one host Bluetooth radio
+and the one provisioning AP. The BLE radio is **shared, not exclusive** — BlueZ
+multiplexes multiple concurrent central connections on a single adapter, so
+several reservations can drive BLE (scan / connect / GATT) at the same time; it
+is not a mutex, and a reservation need not wait for the rig to be otherwise idle
+to use BLE. The AP is rig-level (one SSID for the whole rig).
 
 ## Logic-analyzer rig (shared FX2 capture)
 
@@ -293,8 +297,8 @@ container is destroyed on release, so state never leaks between holders.
    `/dev/bus/usb`, keyed on the stable physical port, refreshed across
    re-enumeration. Host-side BLE HCI (btmon) capture per reservation — done
    (FUG-93): bounded, torn down on release, read back as btsnoop, annotated by
-   the DUT BLE MAC (the adapter is still shared — see the caveat above).
-   Remaining: per-DUT BLE radio; per-DUT AP.
+   the DUT BLE MAC (one shared adapter, but concurrently usable — see the caveat
+   above; not a mutex). Remaining: per-DUT AP.
 
 ## Open items (need the hardware / decisions)
 

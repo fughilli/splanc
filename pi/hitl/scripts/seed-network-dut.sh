@@ -20,12 +20,18 @@
 set -euo pipefail
 
 HOST="hitl-rig.local"
-NAME=""; ADDR=""; BLE_MAC=""; SSH_USER="root"; SSH_PORT="22"; ACTION="add"
+NAME=""; ADDR=""; BLE_MAC=""; BLE_ADAPTER=""; SSH_USER="root"; SSH_PORT="22"; ACTION="add"
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --name) NAME="$2"; shift 2;;
     --addr) ADDR="$2"; shift 2;;
     --ble-mac) BLE_MAC="$2"; shift 2;;
+    # Override the container's BLE central (HITL_BLE_ADAPTER, e.g. "hci1"). Only
+    # needed when the rig doesn't set --ble-adapter itself AND its default adapter
+    # can't reach this DUT — e.g. a Pi5 rig whose flaky onboard controller scans
+    # but won't connect, so a USB dongle (hci1) must be used. The rig's own
+    # --ble-adapter, when set, wins over this.
+    --ble-adapter) BLE_ADAPTER="$2"; shift 2;;
     --ssh-user) SSH_USER="$2"; shift 2;;
     --ssh-port) SSH_PORT="$2"; shift 2;;
     --list) ACTION="list"; shift;;
@@ -55,7 +61,7 @@ if [ "$ACTION" = "add" ] && [ -z "$ADDR" ]; then
   echo "--addr is required for add" >&2; exit 2
 fi
 
-MERGED="$(CURRENT="$CURRENT" NAME="$NAME" ADDR="$ADDR" BLE_MAC="$BLE_MAC" \
+MERGED="$(CURRENT="$CURRENT" NAME="$NAME" ADDR="$ADDR" BLE_MAC="$BLE_MAC" BLE_ADAPTER="$BLE_ADAPTER" \
           SSH_USER="$SSH_USER" SSH_PORT="$SSH_PORT" ACTION="$ACTION" python3 - <<'PY'
 import json, os, sys
 try:
@@ -74,6 +80,8 @@ if os.environ["ACTION"] == "add":
     }
     if os.environ["BLE_MAC"]:
         env["HITL_DUT_BLE_MAC"] = os.environ["BLE_MAC"]
+    if os.environ["BLE_ADAPTER"]:
+        env["HITL_BLE_ADAPTER"] = os.environ["BLE_ADAPTER"]
     cur.append({"name": name, "kind": "network", "devices": [], "env": env})
 json.dump(cur, sys.stdout, indent=2)
 PY
