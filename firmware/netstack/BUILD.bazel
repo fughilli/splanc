@@ -334,6 +334,10 @@ cc_binary(
         "//firmware/player_app:player_ffi_hdr",
         "//firmware/player_app:ws_codec",
         "//firmware/player_app:board_caps_res",
+        # BLE Improv onboarding: advertise + receive WiFi creds like the app, so a
+        # full //pi/hitl/harness:e2e (with the provisioning phase) runs no-override.
+        "//firmware/player_app:improv_ble",
+        "//firmware/player_app:improv_codec",
     ],
 )
 

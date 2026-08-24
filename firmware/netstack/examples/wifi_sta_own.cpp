@@ -22,6 +22,9 @@
 #include <mbedtls/pk.h>
 #include "ws_codec.h"     // RFC6455 server codec (from //firmware/player_app:ws_codec)
 #include "player_ffi.h"   // lm_player_* session core (from //firmware/player_app:player_ffi)
+#include "firmware/player_app/improv_ble.h"    // BLE Improv onboarding (advertise + creds)
+#include "firmware/player_app/improv_codec.h"  // IMPROV_STATE_* constants
+#include "firmware/player_app/serial_log.h"    // Log() ring + log_drain_start (improv_ble logs here)
 
 // Board capability descriptor, compiled from //firmware/player_app:board_caps_res
 // (symbols named after the binaryproto basename). Handed to the player at boot so
@@ -69,6 +72,7 @@ uint32_t ns_tcp_connect(const uint8_t *src, const uint8_t *dst, uint16_t sport, 
                         uint32_t iss, uint8_t *out, uint32_t cap);
 uint32_t ns_tcp_on_ip(const uint8_t *ip, uint32_t len, uint8_t *out, uint32_t cap);
 uint32_t ns_tcp_send(const uint8_t *data, uint32_t len, uint8_t *out, uint32_t cap);
+uint32_t ns_tcp_tick(uint32_t now_ms, uint8_t *out, uint32_t cap); // stack RTO: emits a retransmit when it fires
 uint32_t ns_tcp_recv(uint8_t *out, uint32_t cap);
 void ns_tcp_listen(const uint8_t *src, uint16_t sport, uint32_t iss); // passive open (server)
 uint32_t ns_tcp_state();
@@ -607,7 +611,7 @@ uint32_t g_bio_tx = 0, g_bio_rx = 0;
 static int bio_send(void *, const unsigned char *buf, size_t len) {
   uint8_t seg[1600];
   uint32_t n = ns_tcp_send(buf, (uint32_t)len, seg, sizeof(seg));
-  if (n == 0) { if (g_bio_tx < 24) Serial.printf("  bio_send len=%u WANT_WRITE\n", (unsigned)len); return MBEDTLS_ERR_SSL_WANT_WRITE; }
+  if (n == 0) { static uint32_t ww = 0; if (ww++ < 8) Serial.printf("  bio_send len=%u WANT_WRITE\n", (unsigned)len); return MBEDTLS_ERR_SSL_WANT_WRITE; }
   send_ip(seg, n);
   uint32_t took = len < 1400 ? (uint32_t)len : 1400;
   if (g_bio_tx++ < 24) Serial.printf("  bio_send len=%u seg=%u took=%u\n", (unsigned)len, n, took);
@@ -678,6 +682,11 @@ static bool tls_write_all(const uint8_t *buf, size_t len) {
       guard = 0;
     } else if (w == MBEDTLS_ERR_SSL_WANT_WRITE || w == MBEDTLS_ERR_SSL_WANT_READ) {
       pump_link_once();  // drive on_ip so the in-flight ACK frees the TCP tx slot
+      // Also let the stack's RTO fire while we spin here (a lost segment is retransmitted by
+      // ns_tcp_tick, not by this loop): pump the tick so a stall during a write can recover.
+      static uint8_t rseg[1600];
+      uint32_t rn = ns_tcp_tick((uint32_t)millis(), rseg, sizeof rseg);
+      if (rn > 0) send_ip(rseg, rn);
       if (++guard > 4000000) return false;  // don't wedge if the peer vanished
     } else {
       return false;
@@ -784,6 +793,14 @@ void setup() {
   uint32_t aes = ns_aes_selftest(aesct);
   Serial.printf("AES self-test: enc=%d dec=%d ct=%02x%02x%02x%02x (want 69c4e0d8)\n",
                 aes & 1, (aes >> 1) & 1, aesct[0], aesct[1], aesct[2], aesct[3]);
+  // BLE Improv onboarding FIRST: bring up the BT controller before we hijack the MAC, so
+  // our heapless RX/BSSID/force-awake setup runs last and wins the shared radio config.
+  // (BLE-after-WiFi wedged association — the BT controller init reset radio/coex state.)
+  if (PLAYER_MODE) {
+    log_drain_start();  // flush improv_ble's Log() ring to serial — the harness reads the
+                        // "[ble] advertising ... as <MAC>" line to find the DUT's BLE MAC.
+    improv_ble_begin("LED Mapper (heapless)", IMPROV_STATE_AUTHORIZED);
+  }
   WiFi.mode(WIFI_STA);
   esp_wifi_start();
   uint8_t rnd[4]; esp_fill_random(rnd, 4);
@@ -934,6 +951,37 @@ void loop() {
 
   // Kick the state machine: (re)send auth periodically until associated.
   if (st == AUTH && millis() - t > 200) { t = millis(); int a = build_auth(f); ns_mac_send(f, a, 0); }
+  // TCP retransmission is the STACK's job: ns_tcp owns its RTO and ns_tcp_tick(now) emits a
+  // retransmit when it fires. The app just provides the clock + carries the bytes. The real
+  // fix for BLE-induced frame loss is radio coexistence (coex_*), so WiFi TX doesn't collide
+  // with BLE events — the RTO is only a correctness backstop for genuine loss.
+  {
+    static uint8_t rseg[1600];
+    uint32_t rn = ns_tcp_tick((uint32_t)millis(), rseg, sizeof rseg);
+    if (rn > 0) send_ip(rseg, rn);
+  }
+  // BLE Improv: the harness writes wifi-settings over GATT; answer with the redirect URL
+  // (Improv result FIRST, then PROVISIONED — spec order) so a no-override e2e completes its
+  // provisioning phase. We already joined via the baked rig creds (same AP the harness
+  // sends), so the redirect just hands back our leased IP.
+  if (PLAYER_MODE) {
+    static bool ble_creds_pending = false, redirect_sent = false;
+    char s[33], p[65];
+    if (improv_ble_take_credentials(s, sizeof s, p, sizeof p)) {
+      ble_creds_pending = true;
+      improv_ble_set_state(IMPROV_STATE_PROVISIONING);
+      Serial.printf("[ble] wifi-settings received (ssid=%s) -> PROVISIONING\n", s);
+    }
+    if (ble_creds_pending && !redirect_sent && g_leased) {
+      char url[40];
+      snprintf(url, sizeof url, "http://%u.%u.%u.%u/", g_offer_ip[0], g_offer_ip[1],
+               g_offer_ip[2], g_offer_ip[3]);
+      improv_ble_send_redirect(url);
+      improv_ble_set_state(IMPROV_STATE_PROVISIONED);
+      redirect_sent = true;
+      Serial.printf("[ble] PROVISIONED -> redirect %s\n", url);
+    }
+  }
   // Once linked, resend DISCOVER (until an OFFER) or REQUEST (until the ACK) ~1.2s.
   if (st == DONE && !g_leased && millis() - t > 1200) {
     t = millis();

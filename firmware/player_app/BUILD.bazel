@@ -161,6 +161,28 @@ cc_library(
     hdrs = ["improv_codec.h"],
 )
 
+# Improv BLE GATT service (advertising + credential exchange). Exposed as a lib so
+# the netstack player variant can onboard over BLE exactly like the app.
+cc_library(
+    name = "improv_ble",
+    srcs = ["improv_ble.cpp"],
+    hdrs = [
+        "improv_ble.h",
+        "serial_log.h",
+    ],
+    copts = ["-fno-rtti"],
+    includes = ["."],
+    target_compatible_with = select({
+        "@embedded//platforms:is_esp32c6": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        ":improv_codec",
+        "@embedded//libs/board:arduino_core",
+        "@embedded//libs/vendor:ble",
+    ],
+)
+
 cc_library(
     name = "color_correction",
     hdrs = ["color_correction.h"],

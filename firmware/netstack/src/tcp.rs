@@ -61,7 +61,14 @@ pub struct TcpConn {
     tx_len: usize,
     tx_seq: u32,   // sequence number of the in-flight segment's first byte
     tx_data: u16,  // payload length of the in-flight segment
+    // Retransmit timeout for the single in-flight segment (stop-and-wait). The stack owns
+    // its own RTO so the transport recovers from genuine loss without the app retransmitting.
+    tx_at_ms: u32, // clock when the RTO was armed / last retransmit fired (0 = unarmed)
+    rto_ms: u32,   // current retransmit timeout, doubled on each expiry (capped)
 }
+
+const RTO_INITIAL_MS: u32 = 300;
+const RTO_MAX_MS: u32 = 2000;
 
 /// A produced IP datagram to transmit (borrows the connection's tx scratch).
 pub struct Seg<'a>(pub &'a [u8]);
@@ -74,6 +81,7 @@ impl TcpConn {
             state: State::Closed,
             rx: [0; 1600], rx_len: 0,
             tx: [0; 1600], tx_len: 0, tx_seq: 0, tx_data: 0,
+            tx_at_ms: 0, rto_ms: RTO_INITIAL_MS,
         }
     }
 
@@ -137,6 +145,28 @@ impl TcpConn {
         0
     }
 
+    /// Advance the retransmit clock. The stack owns its own RTO: when the single in-flight
+    /// segment's timer expires (armed on the first tick after `send`), copy it into `out`
+    /// for retransmit and back off (exponential, capped). Returns the segment length, else 0.
+    /// The caller drives this once per poll with a millisecond clock — the app never decides
+    /// *whether* to retransmit, only supplies the time and carries the bytes.
+    pub fn tick(&mut self, now_ms: u32, out: &mut [u8]) -> usize {
+        if self.tx_data == 0 {
+            return 0;
+        }
+        if self.tx_at_ms == 0 {
+            self.tx_at_ms = now_ms.max(1); // arm on the first tick after the segment went out
+            return 0;
+        }
+        if now_ms.wrapping_sub(self.tx_at_ms) < self.rto_ms {
+            return 0;
+        }
+        self.tx_at_ms = now_ms.max(1);
+        self.rto_ms = (self.rto_ms.saturating_mul(2)).min(RTO_MAX_MS);
+        out[..self.tx_len].copy_from_slice(&self.tx[..self.tx_len]);
+        self.tx_len
+    }
+
     /// Begin an active close: send FIN|ACK. Returns its length.
     pub fn close(&mut self, out: &mut [u8]) -> usize {
         if self.state != State::Established {
@@ -181,12 +211,14 @@ impl TcpConn {
             return 0;
         }
 
-        // Clear the in-flight segment once its bytes are acknowledged.
+        // Clear the in-flight segment once its bytes are acknowledged; disarm the RTO.
         if flags & ACK != 0 && self.tx_data != 0
             && ack.wrapping_sub(self.tx_seq) >= self.tx_data as u32
         {
             self.tx_data = 0;
             self.tx_len = 0;
+            self.tx_at_ms = 0;
+            self.rto_ms = RTO_INITIAL_MS;
         }
         if flags & ACK != 0 {
             self.snd_una = ack;

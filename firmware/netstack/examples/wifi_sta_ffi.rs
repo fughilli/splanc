@@ -142,6 +142,19 @@ pub extern "C" fn ns_tcp_send(data: *const u8, len: u32, out: *mut u8, cap: u32)
     }
 }
 
+/// Drive the stack's retransmit timer. Emits the in-flight segment (into `out`, returning
+/// its length) when the RTO fires, else 0. The stack owns the RTO decision + backoff; the
+/// caller only supplies a millisecond clock and carries the bytes. Loss is a stack concern,
+/// not the application's — and the real remedy for BLE-induced loss is radio coexistence.
+#[no_mangle]
+pub extern "C" fn ns_tcp_tick(now_ms: u32, out: *mut u8, cap: u32) -> u32 {
+    unsafe {
+        let Some(c) = TCP.as_mut() else { return 0 };
+        let o = core::slice::from_raw_parts_mut(out, cap as usize);
+        c.tick(now_ms, o) as u32
+    }
+}
+
 /// Copy any received application bytes into `out` and clear the buffer.
 #[no_mangle]
 pub extern "C" fn ns_tcp_recv(out: *mut u8, cap: u32) -> u32 {
