@@ -54,6 +54,7 @@ uint32_t ns_tcp_connect(const uint8_t *src, const uint8_t *dst, uint16_t sport, 
 uint32_t ns_tcp_on_ip(const uint8_t *ip, uint32_t len, uint8_t *out, uint32_t cap);
 uint32_t ns_tcp_send(const uint8_t *data, uint32_t len, uint8_t *out, uint32_t cap);
 uint32_t ns_tcp_recv(uint8_t *out, uint32_t cap);
+void ns_tcp_listen(const uint8_t *src, uint16_t sport, uint32_t iss); // passive open (server)
 uint32_t ns_tcp_state();
 // Vendor lower-MAC RX filter surface (libpp) — set a real STA accept policy so the
 // hardware crypto engine does per-address CCMP decrypt instead of promiscuous accept-all.
@@ -102,6 +103,11 @@ bool g_pinged = false;
 bool g_hwkey = false;
 void *g_trc = nullptr; // default TRC (ic_get_trc(0,0)) for the ppTxPkt HW-encrypt bridge
 bool g_tcp_started = false, g_tcp_requested = false;
+// De-risk the WSS server path: after the lease, LISTEN on :4433 and echo, instead of the
+// outbound TCP-client test. Validates the inbound TCP path (SYN->SYN-ACK->data->ACK) on
+// silicon before layering mbedtls TLS on top.
+constexpr bool TCP_SERVER = true;
+constexpr uint16_t SERVER_PORT = 4433;
 
 inline void wreg(uintptr_t a, uint32_t v) { *reinterpret_cast<volatile uint32_t *>(a) = v; }
 
@@ -424,6 +430,16 @@ void handle_l3(const uint8_t *pt, int pl) {
   if (pl > 8 + 20 && ip[9] == 6) { // TCP -> feed the connection
     int iplen = (ip[2] << 8) | ip[3];
     if (iplen >= 20 && 8 + iplen <= pl) {
+      const uint8_t *tcp = ip + ((ip[0] & 0x0f) * 4);
+      int doff = (tcp[12] >> 4) * 4;
+      int dlen = iplen - ((ip[0] & 0x0f) * 4) - doff;
+      static uint32_t tf = 0;
+      if (tf++ < 24)
+        Serial.printf("  TCP %u.%u.%u.%u:%u->:%u flags=%02x seq=%08x dlen=%d st=%u\n",
+                      ip[12], ip[13], ip[14], ip[15], (tcp[0] << 8) | tcp[1],
+                      (tcp[2] << 8) | tcp[3], tcp[13],
+                      (uint32_t)((tcp[4] << 24) | (tcp[5] << 16) | (tcp[6] << 8) | tcp[7]), dlen,
+                      ns_tcp_state());
       uint8_t reply[1600];
       uint32_t rl = ns_tcp_on_ip(ip, iplen, reply, sizeof(reply));
       if (rl > 0) send_ip(reply, rl);
@@ -629,17 +645,44 @@ void loop() {
   // server (10.42.0.1:7777) and exchange data over the heapless stack.
   if (st == DONE && g_leased && !g_tcp_started && millis() - t > 700) {
     t = millis();
-    static int pc = 0;
-    if (pc < 3) { send_ping(g_offer_ip, pc + 1); pc++; }
-    else {
-      uint8_t syn[80];
-      uint32_t n = ns_tcp_connect(g_offer_ip, GATEWAY, 5001, 7777, 0x2000, syn, sizeof(syn));
-      Serial.printf("TCP connect: pc=%d n=%u\n", pc, n);
-      if (n > 0) { send_ip(syn, n); g_tcp_started = true; Serial.println("TCP SYN -> 10.42.0.1:7777"); }
+    if (TCP_SERVER) {
+      ns_tcp_listen(g_offer_ip, SERVER_PORT, 0x3000);
+      g_tcp_started = true;
+      Serial.printf("*** TCP LISTEN on %u.%u.%u.%u:%u — heapless server ***\n",
+                    g_offer_ip[0], g_offer_ip[1], g_offer_ip[2], g_offer_ip[3], SERVER_PORT);
+    } else {
+      static int pc = 0;
+      if (pc < 3) { send_ping(g_offer_ip, pc + 1); pc++; }
+      else {
+        uint8_t syn[80];
+        uint32_t n = ns_tcp_connect(g_offer_ip, GATEWAY, 5001, 7777, 0x2000, syn, sizeof(syn));
+        Serial.printf("TCP connect: pc=%d n=%u\n", pc, n);
+        if (n > 0) { send_ip(syn, n); g_tcp_started = true; Serial.println("TCP SYN -> 10.42.0.1:7777"); }
+      }
     }
   }
-  // Drive the connection: on ESTABLISHED send a request; print any echoed bytes.
-  if (st == DONE && g_tcp_started) {
+  if (st == DONE && g_tcp_started && TCP_SERVER) {
+    // Server: handle_l3 already drove on_ip (SYN-ACK, ACKs); drain + echo any request.
+    static uint32_t last_state = 99;
+    uint32_t s = ns_tcp_state();
+    if (s != last_state) { Serial.printf("*** SERVER state -> %u ***\n", s); last_state = s; }
+    if (s == 2) { // Established: echo any request bytes
+      uint8_t rb[600];
+      uint32_t rn = ns_tcp_recv(rb, sizeof(rb));
+      if (rn > 0) {
+        Serial.printf("*** SERVER RX %u B — echoing ***\n", rn);
+        uint8_t seg[700];
+        uint32_t sn = ns_tcp_send(rb, rn, seg, sizeof(seg));
+        if (sn > 0) send_ip(seg, sn);
+      }
+    } else if (s == 4 || s == 0) { // Done/Closed: re-arm the listener for the next client
+      static uint32_t niss = 0x4000;
+      ns_tcp_listen(g_offer_ip, SERVER_PORT, niss);
+      niss += 0x1000;
+      Serial.println("*** SERVER re-listening ***");
+    }
+  } else if (st == DONE && g_tcp_started) {
+    // Client mode (original outbound echo test).
     if (ns_tcp_state() == 2 && !g_tcp_requested) {
       const char *req = "HELLO-FROM-HEAPLESS\n";
       uint8_t seg[128];

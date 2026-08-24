@@ -155,7 +155,7 @@ pub extern "C" fn ns_tcp_recv(out: *mut u8, cap: u32) -> u32 {
     }
 }
 
-/// Connection state: 0=Closed 1=SynSent 2=Established 3=FinWait 4=Done.
+/// Connection state: 0=Closed 1=SynSent 2=Established 3=FinWait 4=Done 5=Listen 6=SynRcvd.
 #[no_mangle]
 pub extern "C" fn ns_tcp_state() -> u32 {
     unsafe {
@@ -165,6 +165,8 @@ pub extern "C" fn ns_tcp_state() -> u32 {
             Some(State::Established) => 2,
             Some(State::FinWait) => 3,
             Some(State::Done) => 4,
+            Some(State::Listen) => 5,
+            Some(State::SynRcvd) => 6,
             None => 0,
         }
     }
