@@ -339,6 +339,9 @@ firmware_binary(
 esptool_flash(
     name = "wifi_sta_own_flash",
     app = ":wifi_sta_own_esp32c6",
+    # mbedtls TLS server pushes the image past the 1.25MB default OTA slot; use
+    # the single-app huge partition (same as player_app) — this example never OTAs.
+    partitions = "@embedded//libs/vendor:partitions_huge_app",
     tags = ["manual"],
 )
 

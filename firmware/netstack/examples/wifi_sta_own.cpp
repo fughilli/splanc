@@ -14,7 +14,11 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <esp_wifi.h>
+#include <esp_random.h>
 #include <string.h>
+#include <mbedtls/ssl.h>
+#include <mbedtls/x509_crt.h>
+#include <mbedtls/pk.h>
 
 SET_LOOP_TASK_STACK_SIZE(20480);
 
@@ -543,6 +547,78 @@ int eapol_body(const uint8_t *f, int len, const uint8_t **out) {
   }
   return 0;
 }
+// ---- TLS server over the heapless TCP (mbedtls with a BIO on ns_tcp) ----------------
+// Layer a real TLS 1.2/1.3 server on the proven heapless TCP server: mbedtls drives the
+// handshake + records through send/recv callbacks that ride ns_tcp_send/recv (our CCMP
+// data path). Self-signed EC cert (the e2e client uses CERT_NONE, so identity doesn't
+// matter here). Stop-and-wait TCP carries the multi-KB cert flight one segment per ACK.
+constexpr bool TLS_SERVER = true;
+static const char TLS_CERT[] =
+    "-----BEGIN CERTIFICATE-----\n"
+    "MIIBfDCCASGgAwIBAgIUYfPx+3+VCjLBTz9xuRRdR2kBVS4wCgYIKoZIzj0EAwIw\n"
+    "EzERMA8GA1UEAwwIaGVhcGxlc3MwHhcNMjYwODI0MTg0NjIyWhcNMzYwODIxMTg0\n"
+    "NjIyWjATMREwDwYDVQQDDAhoZWFwbGVzczBZMBMGByqGSM49AgEGCCqGSM49AwEH\n"
+    "A0IABMYrmea00slBUqpcl1iPe9krK06bYMhL/B6ppK3zGESwPW+6W9HGYcC4aTnL\n"
+    "NSMEvqyHiu94agvA+pyDs/0FozWjUzBRMB0GA1UdDgQWBBTo/KTgeh0O7hupqPDh\n"
+    "hhWN5OIN2TAfBgNVHSMEGDAWgBTo/KTgeh0O7hupqPDhhhWN5OIN2TAPBgNVHRMB\n"
+    "Af8EBTADAQH/MAoGCCqGSM49BAMCA0kAMEYCIQD3kGEsK2MPWe1uYErGZgAaKyON\n"
+    "yGs7v+2EV+5lW0UyGwIhAL0WuN6eqZ9watBZpEo2H2AA7Y0a6j7lBCxEGx/nnXW5\n"
+    "-----END CERTIFICATE-----\n";
+static const char TLS_KEY[] =
+    "-----BEGIN EC PRIVATE KEY-----\n"
+    "MHcCAQEEIOEorPYc267y2s0hNmX9QDcFs2wWkH9Tv+UdemPcwYFxoAoGCCqGSM49\n"
+    "AwEHoUQDQgAExiuZ5rTSyUFSqlyXWI972SsrTptgyEv8HqmkrfMYRLA9b7pb0cZh\n"
+    "wLhpOcs1IwS+rIeK73hqC8D6nIOz/QWjNQ==\n"
+    "-----END EC PRIVATE KEY-----\n";
+mbedtls_ssl_context g_ssl;
+mbedtls_ssl_config g_conf;
+mbedtls_x509_crt g_srvcert;
+mbedtls_pk_context g_pk;
+bool g_tls_setup = false;
+bool g_tls_hs = false;
+
+static int tls_rng(void *, unsigned char *buf, size_t len) {
+  esp_fill_random(buf, len);
+  return 0;
+}
+uint32_t g_bio_tx = 0, g_bio_rx = 0;
+// BIO send: hand the TLS record bytes to the TCP conn (stop-and-wait). Returns the data
+// bytes consumed, or WANT_WRITE if a segment is already in flight (retry after the ACK).
+static int bio_send(void *, const unsigned char *buf, size_t len) {
+  uint8_t seg[1600];
+  uint32_t n = ns_tcp_send(buf, (uint32_t)len, seg, sizeof(seg));
+  if (n == 0) { if (g_bio_tx < 24) Serial.printf("  bio_send len=%u WANT_WRITE\n", (unsigned)len); return MBEDTLS_ERR_SSL_WANT_WRITE; }
+  send_ip(seg, n);
+  uint32_t took = len < 1400 ? (uint32_t)len : 1400;
+  if (g_bio_tx++ < 24) Serial.printf("  bio_send len=%u seg=%u took=%u\n", (unsigned)len, n, took);
+  return (int)took;
+}
+static int bio_recv(void *, unsigned char *buf, size_t len) {
+  uint32_t n = ns_tcp_recv(buf, (uint32_t)len);
+  if (n == 0) return MBEDTLS_ERR_SSL_WANT_READ;
+  if (g_bio_rx++ < 24) Serial.printf("  bio_recv want=%u got=%u\n", (unsigned)len, n);
+  return (int)n;
+}
+
+void tls_init() {
+  mbedtls_ssl_init(&g_ssl);
+  mbedtls_ssl_config_init(&g_conf);
+  mbedtls_x509_crt_init(&g_srvcert);
+  mbedtls_pk_init(&g_pk);
+  int r = mbedtls_x509_crt_parse(&g_srvcert, (const unsigned char *)TLS_CERT, sizeof(TLS_CERT));
+  int r2 = mbedtls_pk_parse_key(&g_pk, (const unsigned char *)TLS_KEY, sizeof(TLS_KEY), nullptr, 0,
+                                tls_rng, nullptr);
+  mbedtls_ssl_config_defaults(&g_conf, MBEDTLS_SSL_IS_SERVER, MBEDTLS_SSL_TRANSPORT_STREAM,
+                              MBEDTLS_SSL_PRESET_DEFAULT);
+  mbedtls_ssl_conf_rng(&g_conf, tls_rng, nullptr);
+  mbedtls_ssl_conf_authmode(&g_conf, MBEDTLS_SSL_VERIFY_NONE);
+  mbedtls_ssl_conf_own_cert(&g_conf, &g_srvcert, &g_pk);
+  int r3 = mbedtls_ssl_setup(&g_ssl, &g_conf);
+  mbedtls_ssl_set_bio(&g_ssl, nullptr, bio_send, bio_recv, nullptr);
+  g_tls_setup = true;
+  Serial.printf("TLS init: cert=%d key=%d setup=%d\n", r, r2, r3);
+}
+
 } // namespace
 
 void setup() {
@@ -589,6 +665,7 @@ void setup() {
     delay(3);
   }
   Serial.printf("RX sanity (STA vif, no promiscuous, HW crypto inline): beacons=%u\n", beacons);
+  if (TCP_SERVER && TLS_SERVER) tls_init();
 }
 
 enum St { AUTH, ASSOC, FOURWAY, DONE };
@@ -596,7 +673,10 @@ void loop() {
   static St st = AUTH;
   static uint32_t t = 0;
   static bool inited = false;
-  uint8_t f[256], rx[400];
+  // rx must hold a FULL MPDU: ns_mac_recv truncates to cap, and a truncated frame fails
+  // CCMP's MIC (silently dropped, no ACK) — which stalled inbound data segments >~360B
+  // (e.g. a 410-byte TLS ClientHello -> ~498-byte MPDU) while small control frames passed.
+  uint8_t f[256], rx[1600];
 
   // Keep own-MAC valid the whole time so hardware auto-ACK stays on (no retransmit
   // storm). Post-link we DISABLE the HW crypto engine (CTRL0=0) so the MAC passes
@@ -669,7 +749,7 @@ void loop() {
       // Protected data frame from the AP: CCMP-decrypt and look for a DHCP reply.
       // The RX frame carries a trailing 4-byte FCS that would corrupt CCMP's MIC
       // (it lives in the last 8 bytes), so trim it before decap.
-      uint8_t pt[600];
+      uint8_t pt[1600];
       // The RX MPDU has no trailing FCS here, so decap over the full length; fall
       // back to an FCS-trimmed length in case a driver variant appends one.
       // The RX hardware pads odd-length MPDUs to even (and some paths append a 4-byte
@@ -734,7 +814,34 @@ void loop() {
     static uint32_t last_state = 99;
     uint32_t s = ns_tcp_state();
     if (s != last_state) { Serial.printf("*** SERVER state -> %u ***\n", s); last_state = s; }
-    if (s == 2) { // Established: echo any request bytes
+    if (s == 2 && TLS_SERVER) { // Established: drive the TLS handshake, then read+echo
+      if (!g_tls_hs) {
+        static int last_hstate = -1;
+        int hs = g_ssl.MBEDTLS_PRIVATE(state);
+        if (hs != last_hstate) { Serial.printf("  TLS hs state -> %d\n", hs); last_hstate = hs; }
+        int r = mbedtls_ssl_handshake(&g_ssl);
+        if (r == 0) {
+          g_tls_hs = true;
+          Serial.printf("*** TLS HANDSHAKE COMPLETE (%s) ***\n", mbedtls_ssl_get_ciphersuite(&g_ssl));
+        } else if (r != MBEDTLS_ERR_SSL_WANT_READ && r != MBEDTLS_ERR_SSL_WANT_WRITE) {
+          Serial.printf("*** TLS handshake err -0x%04x ***\n", (unsigned)-r);
+          mbedtls_ssl_session_reset(&g_ssl);
+          g_bio_tx = g_bio_rx = 0;
+        }
+      } else {
+        uint8_t rb[600];
+        int r = mbedtls_ssl_read(&g_ssl, rb, sizeof(rb));
+        if (r > 0) {
+          Serial.printf("*** TLS RX %d B — echoing ***\n", r);
+          int off = 0;
+          while (off < r) {
+            int w = mbedtls_ssl_write(&g_ssl, rb + off, r - off);
+            if (w > 0) off += w;
+            else if (w != MBEDTLS_ERR_SSL_WANT_WRITE && w != MBEDTLS_ERR_SSL_WANT_READ) break;
+          }
+        }
+      }
+    } else if (s == 2) { // raw-TCP echo (TLS off)
       uint8_t rb[600];
       uint32_t rn = ns_tcp_recv(rb, sizeof(rb));
       if (rn > 0) {
@@ -747,6 +854,7 @@ void loop() {
       static uint32_t niss = 0x4000;
       ns_tcp_listen(g_offer_ip, SERVER_PORT, niss);
       niss += 0x1000;
+      if (TLS_SERVER) { mbedtls_ssl_session_reset(&g_ssl); g_tls_hs = false; }
       Serial.println("*** SERVER re-listening ***");
     }
   } else if (st == DONE && g_tcp_started) {

@@ -150,7 +150,7 @@ pub extern "C" fn ns_tcp_recv(out: *mut u8, cap: u32) -> u32 {
         let d = c.rx_data();
         let n = d.len().min(cap as usize);
         core::ptr::copy_nonoverlapping(d.as_ptr(), out, n);
-        c.take_rx();
+        c.take_rx_n(n);
         n as u32
     }
 }

@@ -102,6 +102,13 @@ impl TcpConn {
     pub fn take_rx(&mut self) {
         self.rx_len = 0;
     }
+    /// Consume only the first `n` received bytes, keeping the rest (TLS/mbedtls reads the
+    /// stream incrementally — record header, then body — so a full drain would lose data).
+    pub fn take_rx_n(&mut self, n: usize) {
+        let n = n.min(self.rx_len);
+        self.rx.copy_within(n..self.rx_len, 0);
+        self.rx_len -= n;
+    }
 
     /// Queue application data to send (stop-and-wait: only if nothing is in flight).
     /// Builds the segment into `out`; returns its length or 0 if busy/closed.

@@ -157,6 +157,7 @@ pub mod hw_aes {
     const AES_MODE: usize = AES_BASE + 0x40; // 0 = AES-128 enc, 4 = AES-128 dec
     const AES_TRIGGER: usize = AES_BASE + 0x48; // write 1 to start
     const AES_STATE: usize = AES_BASE + 0x4C; // typical mode: 0 = idle/done, 1 = busy
+    const AES_DMA_ENABLE: usize = AES_BASE + 0x90; // 0 = typical (CPU) mode, 1 = DMA mode
     const PCR_AES_CONF: usize = 0x6009_60C8; // bit0 = AES clock enable, bit1 = reset
     const PCR_DS_CONF: usize = 0x6009_60E0; // bit1 = DS reset (holds AES in reset if set)
 
@@ -175,9 +176,9 @@ pub mod hw_aes {
         core::ptr::read_volatile(a as *const u32)
     }
 
-    /// One-time: enable the AES clock, pulse its reset, and clear the DS reset that
-    /// otherwise holds AES down (our netstack examples don't run mbedtls init, so the
-    /// peripheral may be gated/reset at boot). Runs inside the caller's critical section.
+    /// One-time: pulse the AES reset. The clock-enable / DS-reset-clear / DMA-mode are
+    /// re-asserted on EVERY block (see `reclaim`) because mbedtls's esp_aes shares this
+    /// peripheral and, on release, disables the AES clock and can leave DMA mode enabled.
     unsafe fn ensure_init() {
         if INIT.load(Ordering::Relaxed) {
             return;
@@ -185,18 +186,31 @@ pub mod hw_aes {
         wr(PCR_AES_CONF, rd(PCR_AES_CONF) | 0b01); // clock enable (bit0)
         wr(PCR_AES_CONF, rd(PCR_AES_CONF) | 0b10); // assert reset (bit1)
         wr(PCR_AES_CONF, rd(PCR_AES_CONF) & !0b10); // release reset
-        wr(PCR_DS_CONF, rd(PCR_DS_CONF) & !0b10); // clear DS reset (else AES stays in reset)
         INIT.store(true, Ordering::Relaxed);
     }
 
+    /// Re-take ownership of the peripheral from mbedtls each block: clock on, DS reset
+    /// clear, and force typical (CPU) mode by disabling DMA. Without the DMA clear, a
+    /// prior mbedtls DMA-mode AES op leaves STATE semantics changed and our poll for
+    /// STATE==0 never returns — spinning forever with interrupts masked (interrupt WDT
+    /// reset, seen mid-TLS-handshake when mbedtls starts protecting records).
+    #[inline(always)]
+    unsafe fn reclaim() {
+        wr(PCR_AES_CONF, rd(PCR_AES_CONF) | 0b01); // clock enable (mbedtls disables it on release)
+        wr(PCR_DS_CONF, rd(PCR_DS_CONF) & !0b10); // clear DS reset (else AES held in reset)
+        wr(AES_DMA_ENABLE, 0); // typical/CPU mode (undo any mbedtls DMA-mode config)
+    }
+
     /// One AES-128 block on the accelerator, in place. Runs with machine interrupts
-    /// masked: the peripheral is stateful and shared with mbedtls/TLS, so key→text→
-    /// trigger→read must be atomic against a preempting AES user. One block is a few µs.
+    /// masked: the peripheral is stateful and shared with mbedtls/TLS, so reclaim→key→
+    /// text→trigger→read must be atomic against a preempting AES user. A few µs. The
+    /// STATE poll is bounded so a wedged peripheral can never hang interrupts (WDT).
     pub fn block(key: &[u8; 16], data: &mut [u8; 16], mode: u32) {
         let saved: usize;
         unsafe {
             core::arch::asm!("csrrci {0}, mstatus, 0x8", out(reg) saved); // clear MIE, save old
             ensure_init();
+            reclaim();
             wr(AES_MODE, mode);
             for i in 0..4 {
                 let o = i * 4;
@@ -204,7 +218,15 @@ pub mod hw_aes {
                 wr(AES_TEXT_IN_0 + o, u32::from_le_bytes([data[o], data[o + 1], data[o + 2], data[o + 3]]));
             }
             wr(AES_TRIGGER, 1);
-            while rd(AES_STATE) != 0 {}
+            // Bounded busy-wait: one block completes in a few dozen cycles; the cap only
+            // exists so a misconfigured/contended peripheral can't wedge with MIE cleared.
+            let mut spins = 0u32;
+            while rd(AES_STATE) != 0 {
+                spins += 1;
+                if spins > 100_000 {
+                    break;
+                }
+            }
             for i in 0..4 {
                 let o = i * 4;
                 data[o..o + 4].copy_from_slice(&rd(AES_TEXT_OUT_0 + o).to_le_bytes());
