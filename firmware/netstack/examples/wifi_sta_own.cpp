@@ -424,8 +424,44 @@ void install_hw_key() {
 
 // Parse an L2 payload (LLC/SNAP + IPv4) for our ICMP echo replies and DHCP responses.
 // Works for both software-decrypted and hardware-decrypted (plaintext) frames.
+// Reply to an ARP request for our IP. The gateway revalidates its ARP cache with a
+// UNICAST probe to our MAC (pairwise-encrypted, so we can decrypt it) — without a reply
+// the entry goes FAILED and our inbound data segments get dropped. LLC/SNAP EtherType for
+// ARP is 0x0806.
+void handle_arp(const uint8_t *pt, int pl) {
+  if (pl < 8 + 28) return;
+  const uint8_t *arp = pt + 8;
+  uint16_t oper = (arp[6] << 8) | arp[7];
+  static uint32_t af = 0;
+  if (af++ < 20)
+    Serial.printf("  ARP oper=%u who-has %u.%u.%u.%u (we=%u.%u.%u.%u) from %02x:%02x:%02x\n", oper,
+                  arp[24], arp[25], arp[26], arp[27], g_offer_ip[0], g_offer_ip[1], g_offer_ip[2],
+                  g_offer_ip[3], arp[8], arp[9], arp[10]);
+  if (oper != 1 || memcmp(arp + 24, g_offer_ip, 4) != 0) return; // not a request for our IP
+  Serial.println("  ARP -> replying");
+  uint8_t payload[8 + 28];
+  const uint8_t llc[] = {0xaa, 0xaa, 0x03, 0x00, 0x00, 0x00, 0x08, 0x06};
+  memcpy(payload, llc, 8);
+  uint8_t *r = payload + 8;
+  r[0] = 0x00; r[1] = 0x01;      // htype: Ethernet
+  r[2] = 0x08; r[3] = 0x00;      // ptype: IPv4
+  r[4] = 6; r[5] = 4;            // hlen, plen
+  r[6] = 0x00; r[7] = 0x02;      // oper: reply
+  memcpy(r + 8, OUR_MAC, 6);     // sha = our MAC
+  memcpy(r + 14, g_offer_ip, 4); // spa = our IP
+  memcpy(r + 18, arp + 8, 6);    // tha = requester's MAC
+  memcpy(r + 24, arp + 14, 4);   // tpa = requester's IP
+  uint8_t hdr[24];               // ToDS + Protected; a3 = DA = requester's MAC
+  hdr[0] = 0x08; hdr[1] = 0x41; hdr[2] = 0; hdr[3] = 0;
+  memcpy(hdr + 4, BSSID, 6); memcpy(hdr + 10, OUR_MAC, 6); memcpy(hdr + 16, arp + 8, 6);
+  hdr[22] = 0; hdr[23] = 0;
+  tx_l2(hdr, payload, 8 + 28, nullptr);
+}
+
 void handle_l3(const uint8_t *pt, int pl) {
-  if (pl <= 8 || pt[6] != 0x08 || pt[7] != 0x00) return; // IPv4 EtherType
+  if (pl <= 8 || pt[6] != 0x08) return; // not an EtherType we route
+  if (pt[7] == 0x06) { handle_arp(pt, pl); return; } // ARP
+  if (pt[7] != 0x00) return;            // only IPv4 past here
   const uint8_t *ip = pt + 8;
   // Identify EVERY inbound IPv4 packet (proto + ports) — chasing why the client's TCP
   // data segment never arrives amid a flood of large frames.

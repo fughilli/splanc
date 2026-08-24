@@ -247,9 +247,12 @@ impl TcpConn {
         }
     }
 
-    /// Build an IPv4 + TCP segment with `flags`, sequence `seq`, and `data`.
+    /// Build an IPv4 + TCP segment with `flags`, sequence `seq`, and `data`. SYN-bearing
+    /// segments (SYN, SYN-ACK) carry a 4-byte MSS option — a bare optionless SYN-ACK is
+    /// rejected/undeliverable by some peers and middleboxes, stalling the data phase.
     fn build(&mut self, flags: u8, seq: u32, data: &[u8], out: &mut [u8]) -> usize {
-        let total = IP_HDR + TCP_HDR + data.len();
+        let opt_len = if flags & SYN != 0 { 4 } else { 0 };
+        let total = IP_HDR + TCP_HDR + opt_len + data.len();
         // IPv4 header.
         out[0] = 0x45;
         out[1] = 0;
@@ -272,15 +275,21 @@ impl TcpConn {
         t[2..4].copy_from_slice(&self.dport.to_be_bytes());
         t[4..8].copy_from_slice(&seq.to_be_bytes());
         t[8..12].copy_from_slice(&self.rcv_nxt.to_be_bytes());
-        t[12] = 0x50; // data offset 5 words
+        t[12] = (((TCP_HDR + opt_len) / 4) as u8) << 4; // data offset (5 words, or 6 w/ MSS)
         t[13] = flags;
         t[14..16].copy_from_slice(&2048u16.to_be_bytes()); // window
         t[16] = 0;
         t[17] = 0;
         t[18..20].copy_from_slice(&0u16.to_be_bytes()); // urgent
-        t[20..20 + data.len()].copy_from_slice(data);
+        if opt_len == 4 {
+            // MSS option: kind=2, len=4, value = 1400 (fits our CCMP MPDU without frag).
+            t[20] = 2;
+            t[21] = 4;
+            t[22..24].copy_from_slice(&1400u16.to_be_bytes());
+        }
+        t[TCP_HDR + opt_len..TCP_HDR + opt_len + data.len()].copy_from_slice(data);
         // TCP checksum over the pseudo-header + segment.
-        let seg_len = TCP_HDR + data.len();
+        let seg_len = TCP_HDR + opt_len + data.len();
         let mut pseudo = [0u8; 12];
         pseudo[0..4].copy_from_slice(&self.src);
         pseudo[4..8].copy_from_slice(&self.dst);
