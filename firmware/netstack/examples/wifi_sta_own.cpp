@@ -40,6 +40,8 @@ uint8_t OUR_MAC[6];
 // DHCP lease state (DORA).
 uint8_t g_offer_ip[4] = {0}, g_server_id[4] = {0};
 bool g_have_offer = false, g_leased = false;
+const uint8_t GATEWAY[4] = {10, 42, 0, 1};
+bool g_pinged = false;
 
 inline void wreg(uintptr_t a, uint32_t v) { *reinterpret_cast<volatile uint32_t *>(a) = v; }
 
@@ -148,6 +150,31 @@ int build_dhcp(uint8_t *p, const uint8_t *mac, uint32_t xid, uint8_t msg_type,
   return n;
 }
 
+// Build an ICMP echo-request as an L2 payload: LLC/SNAP + IPv4 + ICMP.
+// src/dst are 4-byte IPv4 addresses. Returns the payload length.
+int build_ping(uint8_t *p, const uint8_t *src, const uint8_t *dst, uint16_t seq) {
+  int n = 0;
+  const uint8_t llc[] = {0xaa, 0xaa, 0x03, 0x00, 0x00, 0x00, 0x08, 0x00};
+  memcpy(p + n, llc, 8); n += 8;
+  uint8_t icmp[16];
+  icmp[0] = 8; icmp[1] = 0; icmp[2] = 0; icmp[3] = 0; // echo request, csum later
+  icmp[4] = 0x12; icmp[5] = 0x34;                     // id
+  icmp[6] = seq >> 8; icmp[7] = seq & 0xff;           // seq
+  const char *pl = "heapless"; memcpy(icmp + 8, pl, 8); // 8 bytes payload
+  uint16_t ic = ip_csum(icmp, 16); icmp[2] = ic >> 8; icmp[3] = ic & 0xff;
+  int ip_len = 20 + 16;
+  uint8_t *ip = p + n;
+  ip[0] = 0x45; ip[1] = 0; ip[2] = ip_len >> 8; ip[3] = ip_len & 0xff;
+  ip[4] = 0x56; ip[5] = 0x78; ip[6] = 0x40; ip[7] = 0x00; // id, DF
+  ip[8] = 64; ip[9] = 1;                                   // TTL, proto=ICMP
+  ip[10] = 0; ip[11] = 0;
+  memcpy(ip + 12, src, 4); memcpy(ip + 16, dst, 4);
+  uint16_t c = ip_csum(ip, 20); ip[10] = c >> 8; ip[11] = c & 0xff;
+  n += 20;
+  memcpy(p + n, icmp, 16); n += 16;
+  return n;
+}
+
 // Build + CCMP-encrypt + transmit a DHCP message (DISCOVER/REQUEST) to the AP.
 void send_dhcp(uint8_t msg_type, const uint8_t *req_ip, const uint8_t *server_id, const char *what) {
   // One transaction id for the whole DORA so the REQUEST correlates to the OFFER.
@@ -168,6 +195,21 @@ void send_dhcp(uint8_t msg_type, const uint8_t *req_ip, const uint8_t *server_id
                     server_id[0], server_id[1], server_id[2], server_id[3]);
     else Serial.printf("DHCP %s sent (%u B enc)\n", what, el);
   }
+}
+
+// CCMP-encrypt + transmit an ICMP echo request from `src` to the gateway (which is
+// the AP itself, so the L2 destination is the BSSID).
+void send_ping(const uint8_t *src, uint16_t seq) {
+  uint8_t payload[64];
+  int pn = build_ping(payload, src, GATEWAY, seq);
+  uint8_t hdr[24]; // ToDS=1 + Protected=1; a1=BSSID a2=us a3=BSSID (gateway == AP)
+  hdr[0] = 0x08; hdr[1] = 0x41; hdr[2] = 0x00; hdr[3] = 0x00;
+  memcpy(hdr + 4, BSSID, 6); memcpy(hdr + 10, OUR_MAC, 6); memcpy(hdr + 16, BSSID, 6);
+  hdr[22] = 0x00; hdr[23] = 0x00;
+  uint8_t enc[128];
+  uint32_t el = ns_sta_encrypt(hdr, 24, payload, pn, enc, sizeof(enc));
+  if (el > 0) { ns_mac_send(enc, el, 0); Serial.printf("PING %u.%u.%u.%u seq=%u sent\n",
+                                                        GATEWAY[0], GATEWAY[1], GATEWAY[2], GATEWAY[3], seq); }
 }
 
 // Find an EAPOL-Key body inside a received data frame; returns len or 0.
@@ -291,7 +333,12 @@ void loop() {
                       rx[0], rx[1], n, rx[24], rx[25], rx[26], rx[27], pl);
       if (pl > 8 && pt[6] == 0x08 && pt[7] == 0x00) { // IPv4 EtherType
         const uint8_t *ip = pt + 8;
-        if (pl > 8 + 28 && ip[9] == 17) { // UDP
+        if (pl > 8 + 28 && ip[9] == 1) { // ICMP
+          const uint8_t *ic = ip + ((ip[0] & 0x0f) * 4);
+          if (ic[0] == 0) // echo reply
+            Serial.printf("*** PING REPLY from %u.%u.%u.%u seq=%u — IP round-trip over heapless WiFi ***\n",
+                          ip[12], ip[13], ip[14], ip[15], (ic[6] << 8) | ic[7]);
+        } else if (pl > 8 + 28 && ip[9] == 17) { // UDP
           const uint8_t *udp = ip + ((ip[0] & 0x0f) * 4);
           uint16_t sport = (udp[0] << 8) | udp[1], dport = (udp[2] << 8) | udp[3];
           if (sport == 67 && dport == 68) { // DHCP server -> client
@@ -313,6 +360,7 @@ void loop() {
               send_dhcp(3, g_offer_ip, g_server_id, "REQUEST");
             } else if (mt == 5) { // ACK -> lease acquired
               g_leased = true;
+              memcpy(g_offer_ip, dh + 16, 4); // our confirmed address
               Serial.printf("*** DHCP LEASE ACQUIRED — IP %u.%u.%u.%u over heapless WiFi ***\n",
                             dh[16], dh[17], dh[18], dh[19]);
             }
@@ -329,5 +377,12 @@ void loop() {
     t = millis();
     if (g_have_offer) send_dhcp(3, g_offer_ip, g_server_id, "REQUEST");
     else send_dhcp(1, nullptr, nullptr, "DISCOVER");
+  }
+  // With a lease, ping the gateway to prove general unicast IP connectivity.
+  if (st == DONE && g_leased && millis() - t > 800) {
+    t = millis();
+    static uint16_t seq = 1;
+    send_ping(g_offer_ip, seq++);
+    g_pinged = true;
   }
 }
