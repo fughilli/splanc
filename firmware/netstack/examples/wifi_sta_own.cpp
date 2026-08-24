@@ -37,6 +37,10 @@ const uint8_t BSSID[6] = {0xb8, 0x27, 0xeb, 0xbb, 0x8d, 0xf8};
 constexpr uint8_t CHAN = 6;
 uint8_t OUR_MAC[6];
 
+// DHCP lease state (DORA).
+uint8_t g_offer_ip[4] = {0}, g_server_id[4] = {0};
+bool g_have_offer = false, g_leased = false;
+
 inline void wreg(uintptr_t a, uint32_t v) { *reinterpret_cast<volatile uint32_t *>(a) = v; }
 
 // Own-address slot 0 (0x600a405c/60, valid 0x10000) enables hardware auto-ACK for
@@ -99,9 +103,11 @@ uint16_t ip_csum(const uint8_t *d, int len) {
   return ~s & 0xffff;
 }
 
-// Build a DHCP DISCOVER as an L2 payload: LLC/SNAP + IPv4 + UDP + BOOTP/DHCP.
-// Returns the payload length. `xid` is the transaction id.
-int build_dhcp_discover(uint8_t *p, const uint8_t *mac, uint32_t xid) {
+// Build a DHCP message (DISCOVER=1 or REQUEST=3) as an L2 payload: LLC/SNAP + IPv4 +
+// UDP + BOOTP/DHCP. For REQUEST, `req_ip`/`server_id` (4 bytes each, else nullptr)
+// add the Requested-IP (50) and Server-Id (54) options. Returns the payload length.
+int build_dhcp(uint8_t *p, const uint8_t *mac, uint32_t xid, uint8_t msg_type,
+               const uint8_t *req_ip, const uint8_t *server_id) {
   int n = 0;
   const uint8_t llc[] = {0xaa, 0xaa, 0x03, 0x00, 0x00, 0x00, 0x08, 0x00};
   memcpy(p + n, llc, 8); n += 8;           // LLC/SNAP, EtherType IPv4
@@ -116,7 +122,9 @@ int build_dhcp_discover(uint8_t *p, const uint8_t *mac, uint32_t xid) {
   memcpy(dhcp + d, mac, 6); memset(dhcp + d + 6, 0, 10); d += 16; // chaddr
   memset(dhcp + d, 0, 64 + 128); d += 192;  // sname + file
   dhcp[d++] = 0x63; dhcp[d++] = 0x82; dhcp[d++] = 0x53; dhcp[d++] = 0x63; // magic cookie
-  dhcp[d++] = 53; dhcp[d++] = 1; dhcp[d++] = 1; // DHCP message type = DISCOVER
+  dhcp[d++] = 53; dhcp[d++] = 1; dhcp[d++] = msg_type; // DHCP message type
+  if (req_ip) { dhcp[d++] = 50; dhcp[d++] = 4; memcpy(dhcp + d, req_ip, 4); d += 4; } // requested IP
+  if (server_id) { dhcp[d++] = 54; dhcp[d++] = 4; memcpy(dhcp + d, server_id, 4); d += 4; } // server id
   dhcp[d++] = 55; dhcp[d++] = 4; dhcp[d++] = 1; dhcp[d++] = 3; dhcp[d++] = 6; dhcp[d++] = 51; // param req
   dhcp[d++] = 255;                          // end
   int udp_len = 8 + d;
@@ -138,6 +146,28 @@ int build_dhcp_discover(uint8_t *p, const uint8_t *mac, uint32_t xid) {
   n += 8;
   memcpy(p + n, dhcp, d); n += d;
   return n;
+}
+
+// Build + CCMP-encrypt + transmit a DHCP message (DISCOVER/REQUEST) to the AP.
+void send_dhcp(uint8_t msg_type, const uint8_t *req_ip, const uint8_t *server_id, const char *what) {
+  // One transaction id for the whole DORA so the REQUEST correlates to the OFFER.
+  const uint32_t xid = 0x5e7a9c01;
+  uint8_t payload[400];
+  int pn = build_dhcp(payload, OUR_MAC, xid, msg_type, req_ip, server_id);
+  uint8_t hdr[24]; // 802.11 data: ToDS=1 + Protected=1; a1=BSSID a2=us a3=broadcast
+  hdr[0] = 0x08; hdr[1] = 0x41; hdr[2] = 0x00; hdr[3] = 0x00;
+  memcpy(hdr + 4, BSSID, 6); memcpy(hdr + 10, OUR_MAC, 6); memset(hdr + 16, 0xff, 6);
+  hdr[22] = 0x00; hdr[23] = 0x00;
+  uint8_t enc[500];
+  uint32_t el = ns_sta_encrypt(hdr, 24, payload, pn, enc, sizeof(enc));
+  if (el > 0) {
+    ns_mac_send(enc, el, 0);
+    if (msg_type == 3)
+      Serial.printf("DHCP REQUEST sent (%u B) req=%u.%u.%u.%u sid=%u.%u.%u.%u\n", el,
+                    req_ip[0], req_ip[1], req_ip[2], req_ip[3],
+                    server_id[0], server_id[1], server_id[2], server_id[3]);
+    else Serial.printf("DHCP %s sent (%u B enc)\n", what, el);
+  }
 }
 
 // Find an EAPOL-Key body inside a received data frame; returns len or 0.
@@ -192,7 +222,15 @@ void loop() {
   static bool inited = false;
   uint8_t f[256], rx[400];
 
-  mac_own_bssid(); // keep ACK asserted (nothing should clobber it now)
+  if (st != DONE) {
+    mac_own_bssid(); // keep ACK asserted during auth/assoc/4-way
+  } else {
+    // Post-link: clear the own-MAC "valid" bit so the MAC does not try to HW-decrypt
+    // protected unicast frames addressed to us (no HW key slot is programmed) and drop
+    // them. Promiscuous still delivers them raw to our ring for software CCMP decap.
+    volatile uint32_t *ov = reinterpret_cast<volatile uint32_t *>(0x600A4060);
+    *ov = *ov & ~0x10000u;
+  }
 
   // Drain RX and dispatch.
   uint32_t n = ns_mac_recv(rx, sizeof(rx));
@@ -243,9 +281,14 @@ void loop() {
       // The RX frame carries a trailing 4-byte FCS that would corrupt CCMP's MIC
       // (it lives in the last 8 bytes), so trim it before decap.
       uint8_t pt[600];
-      uint32_t pl = ns_sta_decrypt(rx, n - 4, pt, sizeof(pt));
+      // The RX MPDU has no trailing FCS here, so decap over the full length; fall
+      // back to an FCS-trimmed length in case a driver variant appends one.
+      uint32_t pl = ns_sta_decrypt(rx, n, pt, sizeof(pt));
+      if (pl == 0 && n > 4) pl = ns_sta_decrypt(rx, n - 4, pt, sizeof(pt));
       static uint32_t pf = 0;
-      if (pf++ < 8) Serial.printf("  prot AP->us len=%u decrypt=%u\n", n, pl);
+      if (pf++ < 8)
+        Serial.printf("  prot AP->us fc=%02x%02x len=%u ccmp@24=[%02x %02x %02x %02x] decrypt=%u\n",
+                      rx[0], rx[1], n, rx[24], rx[25], rx[26], rx[27], pl);
       if (pl > 8 && pt[6] == 0x08 && pt[7] == 0x00) { // IPv4 EtherType
         const uint8_t *ip = pt + 8;
         if (pl > 8 + 28 && ip[9] == 17) { // UDP
@@ -253,13 +296,26 @@ void loop() {
           uint16_t sport = (udp[0] << 8) | udp[1], dport = (udp[2] << 8) | udp[3];
           if (sport == 67 && dport == 68) { // DHCP server -> client
             const uint8_t *dh = udp + 8;
-            uint8_t mt = 0; // parse options for msg type (53)
+            uint8_t mt = 0; // parse options for msg type (53) + server id (54)
             const uint8_t *o = dh + 240;
             const uint8_t *end = pt + pl;
-            while (o < end && *o != 255) { if (*o == 53) mt = o[2]; o += 2 + o[1]; }
+            while (o + 1 < end && *o != 255) {
+              if (*o == 53) mt = o[2];
+              else if (*o == 54) memcpy(g_server_id, o + 2, 4);
+              o += 2 + o[1];
+            }
             Serial.printf("DHCP reply: type=%u yiaddr=%u.%u.%u.%u\n", mt,
                           dh[16], dh[17], dh[18], dh[19]);
-            if (mt == 2) Serial.println("*** DHCP OFFER received — L3 over heapless CCMP link ***");
+            if (mt == 2 && !g_have_offer && !g_leased) { // OFFER -> REQUEST immediately
+              memcpy(g_offer_ip, dh + 16, 4);
+              g_have_offer = true;
+              Serial.println("*** DHCP OFFER received — L3 over heapless CCMP link ***");
+              send_dhcp(3, g_offer_ip, g_server_id, "REQUEST");
+            } else if (mt == 5) { // ACK -> lease acquired
+              g_leased = true;
+              Serial.printf("*** DHCP LEASE ACQUIRED — IP %u.%u.%u.%u over heapless WiFi ***\n",
+                            dh[16], dh[17], dh[18], dh[19]);
+            }
           }
         }
       }
@@ -268,19 +324,10 @@ void loop() {
 
   // Kick the state machine: (re)send auth periodically until associated.
   if (st == AUTH && millis() - t > 200) { t = millis(); int a = build_auth(f); ns_mac_send(f, a, 0); }
-  // Once linked, send an encrypted DHCP DISCOVER every ~1.5s until we get a reply.
-  if (st == DONE && millis() - t > 1500) {
+  // Once linked, resend DISCOVER (until an OFFER) or REQUEST (until the ACK) ~1.2s.
+  if (st == DONE && !g_leased && millis() - t > 1200) {
     t = millis();
-    static uint32_t xid = 0x5e7a9c01;
-    uint8_t payload[400];
-    int pn = build_dhcp_discover(payload, OUR_MAC, xid++);
-    // 802.11 data header: ToDS=1 + Protected=1; a1=BSSID a2=us a3=broadcast.
-    uint8_t hdr[24];
-    hdr[0] = 0x08; hdr[1] = 0x41; hdr[2] = 0x00; hdr[3] = 0x00;
-    memcpy(hdr + 4, BSSID, 6); memcpy(hdr + 10, OUR_MAC, 6); memset(hdr + 16, 0xff, 6);
-    hdr[22] = 0x00; hdr[23] = 0x00;
-    uint8_t enc[500];
-    uint32_t el = ns_sta_encrypt(hdr, 24, payload, pn, enc, sizeof(enc));
-    if (el > 0) { ns_mac_send(enc, el, 0); Serial.printf("DHCP DISCOVER sent (%u B enc)\n", el); }
+    if (g_have_offer) send_dhcp(3, g_offer_ip, g_server_id, "REQUEST");
+    else send_dhcp(1, nullptr, nullptr, "DISCOVER");
   }
 }
