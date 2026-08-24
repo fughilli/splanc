@@ -57,12 +57,23 @@ fn gmul(mut a: u8, mut b: u8) -> u8 {
     p
 }
 
-/// AES-128 with pre-expanded round keys.
+/// AES-128 block cipher. On the ESP32-C6 target the single-block primitive runs on
+/// the dedicated standalone AES accelerator ([`hw_aes`]); host builds (and the test
+/// suite) use the software cipher with pre-expanded round keys. The public API is
+/// identical either way, so CCMP / key-wrap code is backend-agnostic.
 pub struct Aes128 {
+    key: [u8; 16],
+    #[cfg(not(all(target_arch = "riscv32", not(test))))]
     rk: [[u8; 16]; 11],
 }
 
 impl Aes128 {
+    #[cfg(all(target_arch = "riscv32", not(test)))]
+    pub fn new(key: &[u8; 16]) -> Self {
+        Aes128 { key: *key } // HW engine takes the raw key; no round-key expansion needed
+    }
+
+    #[cfg(not(all(target_arch = "riscv32", not(test))))]
     pub fn new(key: &[u8; 16]) -> Self {
         let mut rk = [[0u8; 16]; 11];
         rk[0].copy_from_slice(key);
@@ -81,10 +92,31 @@ impl Aes128 {
                 rk[r][i] = prev[i] ^ rk[r][i - 4];
             }
         }
-        Aes128 { rk }
+        Aes128 { key: *key, rk }
     }
 
     pub fn encrypt_block(&self, s: &mut [u8; 16]) {
+        #[cfg(all(target_arch = "riscv32", not(test)))]
+        {
+            hw_aes::block(&self.key, s, hw_aes::MODE_ENC);
+            return;
+        }
+        #[cfg(not(all(target_arch = "riscv32", not(test))))]
+        self.encrypt_block_sw(s);
+    }
+
+    pub fn decrypt_block(&self, s: &mut [u8; 16]) {
+        #[cfg(all(target_arch = "riscv32", not(test)))]
+        {
+            hw_aes::block(&self.key, s, hw_aes::MODE_DEC);
+            return;
+        }
+        #[cfg(not(all(target_arch = "riscv32", not(test))))]
+        self.decrypt_block_sw(s);
+    }
+
+    #[cfg(not(all(target_arch = "riscv32", not(test))))]
+    fn encrypt_block_sw(&self, s: &mut [u8; 16]) {
         add_rk(s, &self.rk[0]);
         for r in 1..10 {
             sub_bytes(s);
@@ -97,7 +129,8 @@ impl Aes128 {
         add_rk(s, &self.rk[10]);
     }
 
-    pub fn decrypt_block(&self, s: &mut [u8; 16]) {
+    #[cfg(not(all(target_arch = "riscv32", not(test))))]
+    fn decrypt_block_sw(&self, s: &mut [u8; 16]) {
         add_rk(s, &self.rk[10]);
         for r in (1..10).rev() {
             inv_shift_rows(s);
@@ -108,6 +141,78 @@ impl Aes128 {
         inv_shift_rows(s);
         inv_sub_bytes(s);
         add_rk(s, &self.rk[0]);
+    }
+}
+
+/// ESP32-C6 standalone AES accelerator (`DR_REG_AES_BASE = 0x6008_8000`), single-block
+/// ECB. CCMP (AES-CTR keystream + CBC-MAC) and RFC-3394 key-wrap use the forward block
+/// (`MODE_ENC`); key-unwrap uses the inverse block (`MODE_DEC`). Register map + the
+/// mode/state encoding are from the IDF `soc/aes_reg.h` + `hal/aes_ll.h` for esp32c6.
+#[cfg(all(target_arch = "riscv32", not(test)))]
+pub mod hw_aes {
+    const AES_BASE: usize = 0x6008_8000;
+    const AES_KEY_0: usize = AES_BASE + 0x00; // KEY_0..3 (AES-128), stride 4
+    const AES_TEXT_IN_0: usize = AES_BASE + 0x20; // 4 words
+    const AES_TEXT_OUT_0: usize = AES_BASE + 0x30; // 4 words
+    const AES_MODE: usize = AES_BASE + 0x40; // 0 = AES-128 enc, 4 = AES-128 dec
+    const AES_TRIGGER: usize = AES_BASE + 0x48; // write 1 to start
+    const AES_STATE: usize = AES_BASE + 0x4C; // typical mode: 0 = idle/done, 1 = busy
+    const PCR_AES_CONF: usize = 0x6009_60C8; // bit0 = AES clock enable, bit1 = reset
+    const PCR_DS_CONF: usize = 0x6009_60E0; // bit1 = DS reset (holds AES in reset if set)
+
+    pub const MODE_ENC: u32 = 0;
+    pub const MODE_DEC: u32 = 4;
+
+    use core::sync::atomic::{AtomicBool, Ordering};
+    static INIT: AtomicBool = AtomicBool::new(false);
+
+    #[inline(always)]
+    unsafe fn wr(a: usize, v: u32) {
+        core::ptr::write_volatile(a as *mut u32, v);
+    }
+    #[inline(always)]
+    unsafe fn rd(a: usize) -> u32 {
+        core::ptr::read_volatile(a as *const u32)
+    }
+
+    /// One-time: enable the AES clock, pulse its reset, and clear the DS reset that
+    /// otherwise holds AES down (our netstack examples don't run mbedtls init, so the
+    /// peripheral may be gated/reset at boot). Runs inside the caller's critical section.
+    unsafe fn ensure_init() {
+        if INIT.load(Ordering::Relaxed) {
+            return;
+        }
+        wr(PCR_AES_CONF, rd(PCR_AES_CONF) | 0b01); // clock enable (bit0)
+        wr(PCR_AES_CONF, rd(PCR_AES_CONF) | 0b10); // assert reset (bit1)
+        wr(PCR_AES_CONF, rd(PCR_AES_CONF) & !0b10); // release reset
+        wr(PCR_DS_CONF, rd(PCR_DS_CONF) & !0b10); // clear DS reset (else AES stays in reset)
+        INIT.store(true, Ordering::Relaxed);
+    }
+
+    /// One AES-128 block on the accelerator, in place. Runs with machine interrupts
+    /// masked: the peripheral is stateful and shared with mbedtls/TLS, so key→text→
+    /// trigger→read must be atomic against a preempting AES user. One block is a few µs.
+    pub fn block(key: &[u8; 16], data: &mut [u8; 16], mode: u32) {
+        let saved: usize;
+        unsafe {
+            core::arch::asm!("csrrci {0}, mstatus, 0x8", out(reg) saved); // clear MIE, save old
+            ensure_init();
+            wr(AES_MODE, mode);
+            for i in 0..4 {
+                let o = i * 4;
+                wr(AES_KEY_0 + o, u32::from_le_bytes([key[o], key[o + 1], key[o + 2], key[o + 3]]));
+                wr(AES_TEXT_IN_0 + o, u32::from_le_bytes([data[o], data[o + 1], data[o + 2], data[o + 3]]));
+            }
+            wr(AES_TRIGGER, 1);
+            while rd(AES_STATE) != 0 {}
+            for i in 0..4 {
+                let o = i * 4;
+                data[o..o + 4].copy_from_slice(&rd(AES_TEXT_OUT_0 + o).to_le_bytes());
+            }
+            if saved & 0x8 != 0 {
+                core::arch::asm!("csrrsi x0, mstatus, 0x8"); // restore MIE if it was set
+            }
+        }
     }
 }
 

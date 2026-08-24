@@ -20,6 +20,7 @@ SET_LOOP_TASK_STACK_SIZE(20480);
 
 extern "C" {
 void ns_mac_rx_install();
+uint32_t ns_aes_selftest(uint8_t *out); // FIPS-197 AES-128: bit0=enc ok, bit1=dec ok; out=ciphertext
 uint32_t ns_mac_recv(uint8_t *out, uint32_t cap);
 uint32_t ns_mac_send(const uint8_t *frame, uint32_t len, uint32_t queue);
 uint32_t ns_mac_send_sec(const uint8_t *frame, uint32_t len, uint32_t queue); // HW CCMP encrypt
@@ -479,6 +480,10 @@ void setup() {
   Serial.begin(115200);
   delay(300);
   Serial.println("wifi_sta_own: heapless STA owning the MAC (no promiscuous)");
+  uint8_t aesct[16];
+  uint32_t aes = ns_aes_selftest(aesct);
+  Serial.printf("AES self-test: enc=%d dec=%d ct=%02x%02x%02x%02x (want 69c4e0d8)\n",
+                aes & 1, (aes >> 1) & 1, aesct[0], aesct[1], aesct[2], aesct[3]);
   WiFi.mode(WIFI_STA);
   esp_wifi_start();
   uint8_t rnd[4]; esp_fill_random(rnd, 4);

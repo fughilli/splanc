@@ -183,6 +183,35 @@ pub extern "C" fn ns_wpa_diag(eapol: *const u8, len: u32) -> u32 {
     }
 }
 
+/// AES self-test against the FIPS-197 AES-128 vector (validates the HW accelerator on
+/// target / the SW cipher on host). Returns bit0 = encrypt OK, bit1 = decrypt OK.
+#[no_mangle]
+pub extern "C" fn ns_aes_selftest(out: *mut u8) -> u32 {
+    use ledmapper_netstack::ccmp::Aes128;
+    let key: [u8; 16] = [
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+        0x0f,
+    ];
+    let pt: [u8; 16] = [
+        0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee,
+        0xff,
+    ];
+    let ct: [u8; 16] = [
+        0x69, 0xc4, 0xe0, 0xd8, 0x6a, 0x7b, 0x04, 0x30, 0xd8, 0xcd, 0xb7, 0x80, 0x70, 0xb4, 0xc5,
+        0x5a,
+    ];
+    let aes = Aes128::new(&key);
+    let mut b = pt;
+    aes.encrypt_block(&mut b);
+    let enc_ok = b == ct;
+    if !out.is_null() {
+        unsafe { core::ptr::copy_nonoverlapping(b.as_ptr(), out, 16) };
+    }
+    aes.decrypt_block(&mut b);
+    let dec_ok = b == pt;
+    (enc_ok as u32) | ((dec_ok as u32) << 1)
+}
+
 /// Install our RX descriptor ring and arm RX (the C shim has already brought the
 /// PHY/clock/channel up via the vendor blob and put the MAC in promiscuous filter).
 #[no_mangle]
