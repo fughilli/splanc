@@ -270,16 +270,23 @@ func (b *Broker) Capture(ctx context.Context, req api.CaptureRequest) (*api.Capt
 		return nil, fmt.Errorf("no data captured on %s (trigger %s=r never fired — is the DUT driving this line? wrong channel?)",
 			strings.Join(m.Channels, ","), m.Channels[0])
 	}
-	pixels, err := b.decodeSR(ctx, srPath, m)
-	if err != nil {
-		return nil, err
-	}
-
 	res := &api.CaptureResult{
 		Device:     req.Device,
 		Protocol:   string(m.Protocol),
-		Pixels:     pixels,
 		SampleRate: b.SampleRateHz(),
+	}
+	if m.Protocol == ProtocolSPIRaw {
+		data, err := b.decodeSRBytes(ctx, srPath, m)
+		if err != nil {
+			return nil, err
+		}
+		res.Bytes = data
+	} else {
+		pixels, err := b.decodeSR(ctx, srPath, m)
+		if err != nil {
+			return nil, err
+		}
+		res.Pixels = pixels
 	}
 	if req.SaveSR {
 		raw, err := os.ReadFile(srPath)
@@ -345,6 +352,22 @@ func (b *Broker) decodeSR(ctx context.Context, srPath string, m DUTMap) ([]api.P
 		return nil, fmt.Errorf("sigrok decode: %w: %s", err, out)
 	}
 	return parseRGBHex(out)
+}
+
+// decodeSRBytes runs the spi decoder over a captured .sr and returns the raw MOSI
+// byte stream (for spi-raw / FPGA wire validation). No WS2812 reset prepend: SPI
+// is clocked, so there's no bit-0 anchoring problem.
+func (b *Broker) decodeSRBytes(ctx context.Context, srPath string, m DUTMap) ([]byte, error) {
+	dargs, err := decoderArgs(m.Protocol, m.Channels)
+	if err != nil {
+		return nil, err
+	}
+	args := append([]string{"-i", srPath}, dargs...)
+	out, err := run(ctx, b.cfg.SigrokCLI, args...)
+	if err != nil {
+		return nil, fmt.Errorf("sigrok decode: %w: %s", err, out)
+	}
+	return parseSPIBytes(out)
 }
 
 // run executes sigrok-cli and returns combined output.

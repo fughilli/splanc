@@ -58,6 +58,41 @@ func TestDecoderArgs(t *testing.T) {
 	}
 }
 
+func TestParseSPIBytes(t *testing.T) {
+	// The shape sigrok-cli prints for `-A spi=mosi-data`: one byte per line,
+	// value as a 2-hex token after the "spi-1:" channel prefix.
+	in := "" +
+		"spi-1: 02\n" +
+		"spi-1: 0A\n" +
+		"noise without a byte token\n" +
+		"spi-1: ff\n"
+	got, err := parseSPIBytes(in)
+	if err != nil {
+		t.Fatalf("parseSPIBytes: %v", err)
+	}
+	if want := []byte{0x02, 0x0a, 0xff}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("parseSPIBytes = %v, want %v", got, want)
+	}
+}
+
+func TestDecoderArgsSPIRaw(t *testing.T) {
+	// clk, mosi, cs -> spi decoder with cs framing + the mosi-data annotation.
+	got, err := decoderArgs(ProtocolSPIRaw, []string{"D0", "D1", "D2"})
+	if err != nil {
+		t.Fatalf("spi-raw: %v", err)
+	}
+	if want := "-P spi:clk=D0:mosi=D1:cpol=0:cpha=0:cs=D2 -A spi=mosi-data"; join(got) != want {
+		t.Errorf("spi-raw args = %q, want %q", join(got), want)
+	}
+	// clk, mosi (no cs) is allowed.
+	if _, err := decoderArgs(ProtocolSPIRaw, []string{"D0", "D1"}); err != nil {
+		t.Errorf("spi-raw 2ch: %v", err)
+	}
+	if _, err := decoderArgs(ProtocolSPIRaw, []string{"D0"}); err == nil {
+		t.Error("spi-raw with one channel: want error")
+	}
+}
+
 func TestParseSampleRate(t *testing.T) {
 	cases := map[string]int{
 		"24m": 24_000_000, "24M": 24_000_000, "24MHz": 24_000_000,

@@ -26,6 +26,14 @@ HITL_SKUS = {
     "led-mapper-pi": [
         "improv",
     ],
+    # A LED Mapper Pi wired to the spi_ws281x FPGA (a network DUT): the Pi's
+    # led_driver streams over SPI (--output=fpga) and the FPGA fans out to WS2812
+    # strips. The FX2 taps both the SPI wire and the strip-drive outputs.
+    "led-mapper-pi-fpga": [
+        "improv",  # still a Pi
+        "led-strip",  # the FPGA drives WS2812 strips (FX2-capturable)
+        "spi-fpga",  # streams to the spi_ws281x FPGA over SPI (SPI wire is tapped)
+    ],
 }
 
 def hitl_skus_with(caps):
