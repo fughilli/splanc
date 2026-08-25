@@ -62,6 +62,11 @@ pub struct TcpConn {
     // the app drains rx and the window re-opens, so the transfer resumes. (Keeps rx small so
     // BLE GATT still has DMA-capable heap under the full-runtime drop-in.)
     last_adv_wnd: u32,
+    // True once we've advertised a zero window and the peer hasn't delivered data since.
+    // The peer then zero-window-probes with bare segments; we must re-advertise the open
+    // window on EVERY probe until data flows again, so a single lost window-update ACK
+    // can't wedge a large transfer on a lossy link. Cleared only on data receipt.
+    window_closed: bool,
     // The single in-flight outbound data segment (for retransmit), as an IP datagram.
     tx: [u8; 1600],
     tx_len: usize,
@@ -87,6 +92,7 @@ impl TcpConn {
             state: State::Closed,
             rx: [0; 1600], rx_len: 0,
             last_adv_wnd: 0,
+            window_closed: false,
             tx: [0; 1600], tx_len: 0, tx_seq: 0, tx_data: 0,
             tx_at_ms: 0, rto_ms: RTO_INITIAL_MS,
         }
@@ -292,12 +298,32 @@ impl TcpConn {
             }
             State::Established | State::FinWait => {
                 let mut reply = 0;
-                // In-order data: buffer it and advance rcv_nxt.
-                if !payload.is_empty() && seq == self.rcv_nxt {
-                    let n = payload.len().min(self.rx.len() - self.rx_len);
-                    self.rx[self.rx_len..self.rx_len + n].copy_from_slice(&payload[..n]);
-                    self.rx_len += n;
-                    self.rcv_nxt = self.rcv_nxt.wrapping_add(n as u32);
+                if !payload.is_empty() {
+                    // In-order data: buffer what fits (partial accept when the window is
+                    // tight) and advance rcv_nxt.
+                    if seq == self.rcv_nxt {
+                        let n = payload.len().min(self.rx.len() - self.rx_len);
+                        self.rx[self.rx_len..self.rx_len + n].copy_from_slice(&payload[..n]);
+                        self.rx_len += n;
+                        self.rcv_nxt = self.rcv_nxt.wrapping_add(n as u32);
+                        // The peer delivered data, so it has acted on our advertised window —
+                        // it's no longer blocked/probing on a zero window.
+                        self.window_closed = false;
+                    }
+                    // ALWAYS ACK a data segment — whether we accepted it, dropped it at a
+                    // zero window, or it's a pure duplicate/retransmit of bytes we already
+                    // took. A peer retransmits precisely because our earlier ACK was lost;
+                    // on a lossy link the old "ACK only in-order data once" wedges forever
+                    // (a single dropped ACK => the peer resends that segment for good, and
+                    // we never re-ACK it because rcv_nxt has moved past it). Re-ACKing our
+                    // true rcv_nxt on every retransmit lets the peer resync and advance.
+                    // (Observed stalling a multi-record upload mid-first-chunk on silicon.)
+                    reply = self.build(ACK, self.snd_nxt, &[], out);
+                } else if self.window_closed && self.rx.len() - self.rx_len > 0 {
+                    // A bare zero-window probe, and our window has since re-opened (the app
+                    // drained rx). Re-advertise it. We keep answering probes until the peer
+                    // sends data (which clears window_closed), so a lost window-update ACK
+                    // can't deadlock the transfer.
                     reply = self.build(ACK, self.snd_nxt, &[], out);
                 }
                 if flags & FIN != 0 && seq.wrapping_add(payload.len() as u32) == self.rcv_nxt {
@@ -344,6 +370,9 @@ impl TcpConn {
         // Advertise the free receive-buffer space (never more than we can hold).
         let win = (self.rx.len() - self.rx_len).min(0xffff) as u16;
         self.last_adv_wnd = win as u32;  // remember it so window_ack() can spot a re-open
+        if win == 0 {
+            self.window_closed = true; // peer will zero-window-probe until we re-advertise
+        }
         t[14..16].copy_from_slice(&win.to_be_bytes());
         t[16] = 0;
         t[17] = 0;

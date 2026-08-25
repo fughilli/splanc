@@ -12,11 +12,16 @@ time and streams to flash. CHUNK_BYTES must match the client + firmware."""
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 # Must match web/src/net/client.ts CHUNK_BYTES, and stay well under the device's
 # single-frame ceiling (firmware kRxCap) so each window is one small TLS record.
-CHUNK_BYTES = 4096
+# HITL_CHUNK_BYTES overrides it for boards with a tighter per-record budget than the
+# vendor firmware — e.g. the heapless esp32c6_netstack build, whose from-scratch TLS
+# must decrypt each record in one contiguous heap buffer while BLE+WiFi+LED+FX are all
+# resident, so a 4KB record overflows its DMA/internal heap (a genuine C6 RAM ceiling).
+CHUNK_BYTES = int(os.environ.get("HITL_CHUNK_BYTES", "4096"))
 
 
 def needs_chunking(frame_len: int, chunk_bytes: int = CHUNK_BYTES) -> bool:

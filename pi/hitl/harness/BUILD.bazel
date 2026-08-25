@@ -429,6 +429,39 @@ py_test(
     ],
 )
 
+# Same sharded-upload test against the heapless esp32c6_netstack drop-in. The
+# from-scratch TLS decrypts each record into one contiguous heap buffer while
+# BLE+WiFi+LED+FX are all resident, so a 4KB record overflows the C6's fragmented
+# DMA/internal heap (a genuine RAM ceiling — the full record arrives and is ACKed;
+# only the decrypt allocation fails). HITL_CHUNK_BYTES=1024 keeps each window one
+# small record, which the drop-in uploads + round-trips cleanly. (esp-aes: Failed to
+# allocate / mbedtls Dynamic Impl alloc failed at 4096; PASS at 1024.)
+py_test(
+    name = "map_upload_netstack",
+    timeout = "eternal",
+    srcs = ["hitl_map_upload.py"],
+    data = [
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "//pi/hitl/cmd/hitl",
+    ],
+    env = {
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        "HITL_CHUNK_BYTES": "1024",
+    },
+    imports = ["."],
+    main = "hitl_map_upload.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
 # On-hardware rename -> wss-wedge repro (FUG-85 follow-up): reserve, flash,
 # provision, then rename the device and probe whether its TLS server recovers,
 # capturing the serial `[wss]`/heap lines. A manual+hitl py_test; --device-ws
