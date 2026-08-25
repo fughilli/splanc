@@ -187,13 +187,26 @@ reserve→flash→drive→capture→assert loop is `//pi/hitl/harness:led_captur
 (`manual`+`hitl`). Wiring caveat: the FX2 clone's inputs aren't reliably 5 V
 tolerant — tap the 3.3 V side of the DIN or level-shift, and share ground.
 
-**Capability-based rig selection.** A rig with an analyzer advertises it in
-`/status` (`Analyzer{present, driver, protocols, channels}`), so a test picks a
-rig by CAPABILITY, not by name or tag (tags are too coarse). `hitl reserve/run
---require analyzer` filters pool selection to analyzer-capable rigs
-(`pool.Require`), and `led_capture` sets `require="analyzer"` + asserts the chosen
-rig's `/status` before driving — so an analyzer test can never silently land on an
-ESP-toolbox rig and fail at capture.
+**Capability-based selection.** DUTs are matched by CAPABILITY, not name or tag
+(tags are too coarse). Each DUT advertises `sku` + `capabilities` in `/status`
+(`DeviceStatus`); capabilities come from a single source-of-truth registry
+(`pi/hitl/skus.bzl` → committed `skus.json`, `go:embed`ded — a `diff_test` keeps
+them in sync) merged with rig-wiring caps the SKU can't express. The **logic
+analyzer is one such capability**: a DUT the FX2 taps advertises `logic-analyzer`
+(from the channel map, not the SKU — two identical DUTs can differ). `hitl reserve
+--require-caps logic-analyzer` (or the back-compat alias `--require analyzer`) lands
+on any DUT that has it; `led_capture` asserts the chosen rig's `/status` before
+driving, so an analyzer test can never silently land on a non-analyzer DUT.
+
+Two knobs, two jobs. **`--require-caps`** selects by capability (cross-hardware:
+"any DUT that can do Improv"). **`--sku`** targets exact hardware ("a
+led-mapper-pi"): it's how a SKU-fanned test (`hitl_test`) runs each variant on its
+own hardware, and — like `--device` — it's the only way to reach a **pin-only
+network DUT** (a bare `--require-caps` never drifts onto the scarce Pi). Selection
+is **best-fit**: among free DUTs that satisfy the request, both the queue (per-DUT)
+and `pool.Pick` (per-rig) prefer the one with the FEWEST capabilities beyond what's
+required — so an over-provisioned DUT (e.g. one wired to the analyzer) stays free
+for the tests that actually need it.
 
 Latency is scaffolded (`CaptureResult.TriggerSample`/`SampleRate`); a full E2E
 number needs the stimulus and the capture co-timed in one clock (route the "show

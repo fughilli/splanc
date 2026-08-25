@@ -5,3 +5,7 @@ solver/testdata/
 
 # Generated manifest (byte-pinned by //web:user_guide_freshness; not prettier-shaped).
 docs/user-guide/shots.json
+
+# Generated SKU→capability mirror of skus.bzl (byte-pinned by
+# //pi/hitl/internal/skus:skus_json_sync_test; go:embedded; not prettier-shaped).
+pi/hitl/internal/skus/skus.json

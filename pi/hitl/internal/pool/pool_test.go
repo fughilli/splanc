@@ -9,15 +9,19 @@ import (
 )
 
 func TestPickRequireAnalyzer(t *testing.T) {
-	// Only b advertises an analyzer, but a is idle (would win without the filter).
-	withAnalyzer := mkStatus(true, 3) // busy + queued, but has an analyzer
-	withAnalyzer.Analyzer = &api.AnalyzerInfo{Present: true, Driver: "fx2lafw"}
+	// The logic analyzer is a per-DUT capability now. Rig a is idle but its free
+	// DUT has no analyzer; rig b has a free analyzer DUT. Requiring logic-analyzer
+	// must pick b even though a is also idle.
 	states := map[string]*api.Status{
-		"http://a:8087": mkStatus(false, 0), // idle, NO analyzer
-		"http://b:8087": withAnalyzer,       // busy, HAS analyzer
+		"http://a:8087": {Devices: []api.DeviceStatus{
+			{Name: "c6-0", Capabilities: []string{"flash", "improv"}},
+		}},
+		"http://b:8087": {Devices: []api.DeviceStatus{
+			{Name: "c6-la", Capabilities: []string{"flash", "improv", "logic-analyzer"}},
+		}},
 	}
 	servers := []string{"http://a:8087", "http://b:8087"}
-	got, err := Pick(Probes(servers, fakeGet(states, nil)), Require{Analyzer: true})
+	got, err := Pick(Probes(servers, fakeGet(states, nil)), Require{Caps: []string{"logic-analyzer"}})
 	if err != nil {
 		t.Fatalf("Pick(require analyzer): %v", err)
 	}
@@ -25,15 +29,17 @@ func TestPickRequireAnalyzer(t *testing.T) {
 		t.Errorf("Pick(require analyzer) = %q, want the analyzer rig b (not the idle non-analyzer a)", got)
 	}
 
-	// No analyzer rig in the pool -> a clear error, not a wrong pick.
-	only := map[string]*api.Status{"http://a:8087": mkStatus(false, 0)}
-	if _, err := Pick(Probes([]string{"http://a:8087"}, fakeGet(only, nil)), Require{Analyzer: true}); err == nil {
+	// No rig with a free analyzer DUT -> a clear error, not a wrong pick.
+	only := map[string]*api.Status{"http://a:8087": states["http://a:8087"]}
+	if _, err := Pick(Probes([]string{"http://a:8087"}, fakeGet(only, nil)), Require{Caps: []string{"logic-analyzer"}}); err == nil {
 		t.Error("Pick(require analyzer) with no analyzer rig: want error, got nil")
 	}
 
-	// Without the requirement, the idle non-analyzer rig still wins (back-compat).
+	// Without the requirement, best-fit CONSERVES the analyzer rig: a plain reserve
+	// lands on rig a (its free DUT carries fewer caps), leaving b's analyzer DUT
+	// free for work that actually needs it.
 	if got, _ := Pick(Probes(servers, fakeGet(states, nil))); got != "http://a:8087" {
-		t.Errorf("Pick(no require) = %q, want idle a", got)
+		t.Errorf("Pick(no require) = %q, want the non-analyzer rig a (best-fit conserves the LA rig)", got)
 	}
 }
 
@@ -202,5 +208,72 @@ func TestPickLegacyIdleBeatsBusyMultiDUT(t *testing.T) {
 	}
 	if got != "http://legacy:8087" {
 		t.Errorf("Pick = %q, want the idle legacy runner", got)
+	}
+}
+
+// A reservation requiring per-DUT capabilities must land on a rig that has a FREE
+// DUT whose advertised capabilities are a superset — mirroring the analyzer filter
+// but at per-DUT granularity, and ignoring rigs whose only capable DUT is busy.
+func TestPickRequireCaps(t *testing.T) {
+	busy := &api.Reservation{ID: "held"}
+	states := map[string]*api.Status{
+		// a: idle but its DUTs lack the mic cap.
+		"http://a:8087": {Devices: []api.DeviceStatus{
+			{Name: "c6-0", Capabilities: []string{"improv", "flash"}},
+		}},
+		// b: has a mic DUT but it's busy, plus a free non-mic DUT — can't serve mic.
+		"http://b:8087": {Devices: []api.DeviceStatus{
+			{Name: "pi-mic", Capabilities: []string{"improv", "mic"}, Active: busy},
+			{Name: "c6-1", Capabilities: []string{"improv"}},
+		}},
+		// c: a FREE mic DUT — the only rig that can serve the reservation.
+		"http://c:8087": {Devices: []api.DeviceStatus{
+			{Name: "pi-mic", Capabilities: []string{"improv", "mic"}},
+		}},
+	}
+	servers := []string{"http://a:8087", "http://b:8087", "http://c:8087"}
+	got, err := Pick(Probes(servers, fakeGet(states, nil)), Require{Caps: []string{"mic"}})
+	if err != nil {
+		t.Fatalf("Pick(require mic): %v", err)
+	}
+	if got != "http://c:8087" {
+		t.Errorf("Pick(require mic) = %q, want rig c with the free mic DUT", got)
+	}
+
+	// No rig with a free mic DUT -> a clear error, not a wrong pick.
+	noMic := map[string]*api.Status{
+		"http://a:8087": states["http://a:8087"],
+		"http://b:8087": states["http://b:8087"],
+	}
+	if _, err := Pick(Probes([]string{"http://a:8087", "http://b:8087"}, fakeGet(noMic, nil)), Require{Caps: []string{"mic"}}); err == nil {
+		t.Error("Pick(require mic) with no free mic DUT: want error, got nil")
+	}
+}
+
+// --sku picks a rig with a free DUT of that hardware SKU — including one whose only
+// matching DUT is a pin-only network DUT. And a bare capability request is NOT
+// routed to a rig whose sole free DUT is pin-only network: that rig can't serve it.
+func TestPickBySKU(t *testing.T) {
+	states := map[string]*api.Status{
+		"http://a:8087": {Devices: []api.DeviceStatus{
+			{Name: "c6-0", SKU: "esp32c6", Capabilities: []string{"improv"}},
+		}},
+		"http://b:8087": {Devices: []api.DeviceStatus{
+			{Name: "pi-1", Kind: "network", SKU: "led-mapper-pi", Capabilities: []string{"improv"}},
+		}},
+	}
+	servers := []string{"http://a:8087", "http://b:8087"}
+	got, err := Pick(Probes(servers, fakeGet(states, nil)), Require{SKU: "led-mapper-pi"})
+	if err != nil {
+		t.Fatalf("Pick(sku led-mapper-pi): %v", err)
+	}
+	if got != "http://b:8087" {
+		t.Errorf("Pick(sku led-mapper-pi) = %q, want rig b (the Pi rig), even though a is idle", got)
+	}
+
+	// Bare caps must not select rig b — its only free DUT is a pin-only network DUT.
+	onlyPi := map[string]*api.Status{"http://b:8087": states["http://b:8087"]}
+	if _, err := Pick(Probes([]string{"http://b:8087"}, fakeGet(onlyPi, nil)), Require{Caps: []string{"improv"}}); err == nil {
+		t.Error("Pick(caps improv) with only a pin-only network DUT free: want error, got nil")
 	}
 }
