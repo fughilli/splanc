@@ -155,6 +155,17 @@ pub extern "C" fn ns_tcp_tick(now_ms: u32, out: *mut u8, cap: u32) -> u32 {
     }
 }
 
+/// Emit a bare window-update ACK if the receive window re-opened since our last advertisement
+/// (call after draining rx). Prevents a zero-window deadlock on large inbound transfers.
+#[no_mangle]
+pub extern "C" fn ns_tcp_window_ack(out: *mut u8, cap: u32) -> u32 {
+    unsafe {
+        let Some(c) = TCP.as_mut() else { return 0 };
+        let o = core::slice::from_raw_parts_mut(out, cap as usize);
+        c.window_ack(o) as u32
+    }
+}
+
 /// Copy any received application bytes into `out` and clear the buffer.
 #[no_mangle]
 pub extern "C" fn ns_tcp_recv(out: *mut u8, cap: u32) -> u32 {

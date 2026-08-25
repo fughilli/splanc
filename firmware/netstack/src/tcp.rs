@@ -56,6 +56,12 @@ pub struct TcpConn {
     // Received application bytes, delivered to the caller via `take_rx`.
     rx: [u8; 1600],
     rx_len: usize,
+    // Largest window we've advertised since the peer last filled us. On a big inbound
+    // transfer (a 4096B upload window) rx fills, we advertise window=0, and — because we only
+    // ACK on receive — the peer would stall forever. `window_ack()` emits a bare update once
+    // the app drains rx and the window re-opens, so the transfer resumes. (Keeps rx small so
+    // BLE GATT still has DMA-capable heap under the full-runtime drop-in.)
+    last_adv_wnd: u32,
     // The single in-flight outbound data segment (for retransmit), as an IP datagram.
     tx: [u8; 1600],
     tx_len: usize,
@@ -80,6 +86,7 @@ impl TcpConn {
             snd_nxt: iss, snd_una: iss, rcv_nxt: 0, ip_id: 1,
             state: State::Closed,
             rx: [0; 1600], rx_len: 0,
+            last_adv_wnd: 0,
             tx: [0; 1600], tx_len: 0, tx_seq: 0, tx_data: 0,
             tx_at_ms: 0, rto_ms: RTO_INITIAL_MS,
         }
@@ -141,6 +148,24 @@ impl TcpConn {
         if self.tx_data != 0 {
             out[..self.tx_len].copy_from_slice(&self.tx[..self.tx_len]);
             return self.tx_len;
+        }
+        0
+    }
+
+    /// Emit a bare window-update ACK when the receive window has re-opened since our last
+    /// advertisement (the app drained rx). We only ACK on receive, so on a big inbound
+    /// transfer that filled rx to window=0 the peer would stall forever waiting for space to
+    /// free up. Call this after draining rx (take_rx*). Returns the ACK length, or 0 if there's
+    /// nothing worth announcing. Cheap: one bare segment only when the window actually grew.
+    pub fn window_ack(&mut self, out: &mut [u8]) -> usize {
+        if self.state != State::Established {
+            return 0;
+        }
+        let wnd = (self.rx.len() - self.rx_len) as u32;
+        // Announce only a meaningful re-open (avoids an ACK per drained byte).
+        if wnd > self.last_adv_wnd && wnd - self.last_adv_wnd >= (self.rx.len() as u32) / 2 {
+            let seq = self.snd_nxt;
+            return self.build(ACK, seq, &[], out); // build() refreshes last_adv_wnd
         }
         0
     }
@@ -318,6 +343,7 @@ impl TcpConn {
         t[13] = flags;
         // Advertise the free receive-buffer space (never more than we can hold).
         let win = (self.rx.len() - self.rx_len).min(0xffff) as u16;
+        self.last_adv_wnd = win as u32;  // remember it so window_ack() can spot a re-open
         t[14..16].copy_from_slice(&win.to_be_bytes());
         t[16] = 0;
         t[17] = 0;

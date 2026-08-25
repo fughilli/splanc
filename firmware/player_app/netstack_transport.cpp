@@ -64,6 +64,7 @@ uint32_t ns_tcp_connect(const uint8_t *src, const uint8_t *dst, uint16_t sport, 
 uint32_t ns_tcp_on_ip(const uint8_t *ip, uint32_t len, uint8_t *out, uint32_t cap);
 uint32_t ns_tcp_send(const uint8_t *data, uint32_t len, uint8_t *out, uint32_t cap);
 uint32_t ns_tcp_tick(uint32_t now_ms, uint8_t *out, uint32_t cap); // stack RTO: emits a retransmit when it fires
+uint32_t ns_tcp_window_ack(uint8_t *out, uint32_t cap); // window-update ACK after draining rx
 uint32_t ns_tcp_recv(uint8_t *out, uint32_t cap);
 void ns_tcp_listen(const uint8_t *src, uint16_t sport, uint32_t iss); // passive open (server)
 uint32_t ns_tcp_state();
@@ -1063,6 +1064,12 @@ void netstack_loop() {
         }
       } else if (PLAYER_MODE) {
         if (!ws_pump()) { mbedtls_ssl_close_notify(&g_ssl); }
+        // The WS pump just drained the TCP rx (mbedtls read the record) — if that re-opened a
+        // window we'd shrunk to ~0 on a big inbound upload frame, announce it so the peer
+        // resumes (prevents a zero-window deadlock on large client->device transfers).
+        uint8_t wack[80];
+        uint32_t wn = ns_tcp_window_ack(wack, sizeof wack);
+        if (wn > 0) send_ip(wack, wn);
       } else {
         uint8_t rb[600];
         int r = mbedtls_ssl_read(&g_ssl, rb, sizeof(rb));
