@@ -219,10 +219,14 @@ func cmdStatus(args []string) error {
 	// so fall back to the legacy active/queue summary.
 	if len(s.Devices) > 0 {
 		for _, d := range s.Devices {
+			kind := ""
+			if d.Kind != "" {
+				kind = " [" + d.Kind + "]"
+			}
 			if d.Active != nil {
-				fmt.Printf("dut %-8s busy: id=%s owner=%q since=%s\n", d.Name, d.Active.ID, d.Active.Owner, fmtTime(d.Active.StartedAt))
+				fmt.Printf("dut %-8s%s busy: id=%s owner=%q since=%s\n", d.Name, kind, d.Active.ID, d.Active.Owner, fmtTime(d.Active.StartedAt))
 			} else {
-				fmt.Printf("dut %-8s (idle)\n", d.Name)
+				fmt.Printf("dut %-8s%s (idle)\n", d.Name, kind)
 			}
 		}
 	} else if s.Active != nil {

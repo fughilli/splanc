@@ -18,15 +18,18 @@ type fakeRunner struct {
 	stopped    []string
 	capStarted []string
 	capStopped []string
-	onDev      map[string]string // reservation id -> DUT name it started on
+	onDev      map[string]string            // reservation id -> DUT name it started on
+	onEnv      map[string]map[string]string // reservation id -> DUT env it started with
 }
 
 func (f *fakeRunner) Start(_ context.Context, id, _, _ string, dev runner.Device) (*api.SSHEndpoint, error) {
 	f.started = append(f.started, id)
 	if f.onDev == nil {
 		f.onDev = map[string]string{}
+		f.onEnv = map[string]map[string]string{}
 	}
 	f.onDev[id] = dev.Name
+	f.onEnv[id] = dev.Env
 	port := dev.SSHPort
 	if port == 0 {
 		port = 2222
@@ -582,5 +585,82 @@ func TestCaptureRequiresActiveReservation(t *testing.T) {
 	}
 	if len(fr.capStarted) != 1 {
 		t.Errorf("runner capture must not be touched for a non-active id, got %v", fr.capStarted)
+	}
+}
+
+// A network DUT is PIN-ONLY: an unpinned "any DUT" reservation never lands on it
+// (so a C6 test can't accidentally run against a Pi), but a reservation that pins
+// it by name activates on it.
+func TestNetworkDUTPinOnly(t *testing.T) {
+	ctx := context.Background()
+	fr := &fakeRunner{}
+	m := New("rig", 30*time.Minute, fr, WithDevices([]runner.Device{
+		{Name: "c6-0", SSHPort: 2222},
+		{Name: "pi-1", SSHPort: 2230, Kind: "network"},
+	}))
+
+	// Unpinned reservation takes the C6, never the network DUT.
+	a := m.Reserve(ctx, api.ReserveRequest{Owner: "a"})
+	if a.State != api.StateActive || a.Device != "c6-0" {
+		t.Fatalf("unpinned should land on c6-0, got state=%q dev=%q", a.State, a.Device)
+	}
+
+	// A second unpinned reservation must QUEUE: the C6 is busy and the only free
+	// DUT (pi-1) is pin-only, so it must not silently take the Pi.
+	b := m.Reserve(ctx, api.ReserveRequest{Owner: "b"})
+	if b.State != api.StateQueued {
+		t.Fatalf("second unpinned should queue (network DUT is pin-only), got state=%q dev=%q", b.State, b.Device)
+	}
+
+	// A reservation pinned to the network DUT activates on it.
+	c := m.Reserve(ctx, api.ReserveRequest{Owner: "c", Device: "pi-1"})
+	if c.State != api.StateActive || c.Device != "pi-1" {
+		t.Fatalf("pin to pi-1 should activate on it, got state=%q dev=%q", c.State, c.Device)
+	}
+
+	// b is still queued (it wanted any DUT; only the pin-only Pi was free).
+	if got, _ := m.Get(b.ID); got.State != api.StateQueued {
+		t.Fatalf("b should remain queued, got %q", got.State)
+	}
+}
+
+// A re-seeded network DUT's changed env is adopted in place while the DUT is
+// IDLE (no remove/re-add needed), but a DUT with a live reservation keeps its
+// spec until the holder releases — the container is never restarted under it.
+func TestSyncDevicesUpdatesIdleDUTSpec(t *testing.T) {
+	ctx := context.Background()
+	fr := &fakeRunner{}
+	m := New("rig", 30*time.Minute, fr) // starts with no DUTs
+	mk := func(v string) runner.Device {
+		return runner.Device{Name: "pi-1", Kind: "network", SSHPort: 2230, Env: map[string]string{"K": v}}
+	}
+
+	m.SyncDevices(ctx, []runner.Device{mk("A")}) // attach
+	m.SyncDevices(ctx, []runner.Device{mk("B")}) // idle → adopt changed env in place
+
+	// Reserving it brings the container up with the UPDATED env.
+	r := m.Reserve(ctx, api.ReserveRequest{Owner: "o", Device: "pi-1"})
+	if r.State != api.StateActive {
+		t.Fatalf("pinned reserve should activate, got %q", r.State)
+	}
+	if got := fr.onEnv[r.ID]["K"]; got != "B" {
+		t.Fatalf("idle re-seed should update env in place: container got K=%q, want B", got)
+	}
+
+	// Now busy: a further re-seed must NOT restart or mutate the live container.
+	startsBefore := len(fr.started)
+	m.SyncDevices(ctx, []runner.Device{mk("C")})
+	if len(fr.started) != startsBefore {
+		t.Fatalf("busy DUT re-seed should not restart the container (starts %d -> %d)", startsBefore, len(fr.started))
+	}
+
+	// After release, the pending change is applied on the next scan.
+	if err := m.Release(ctx, r.ID, "done"); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	m.SyncDevices(ctx, []runner.Device{mk("C")})
+	r2 := m.Reserve(ctx, api.ReserveRequest{Owner: "o2", Device: "pi-1"})
+	if got := fr.onEnv[r2.ID]["K"]; got != "C" {
+		t.Fatalf("re-seed after release should apply: container got K=%q, want C", got)
 	}
 }

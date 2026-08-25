@@ -114,8 +114,41 @@ so it can't fabricate a node for a neighbour. When the port can't be resolved (n
 board attached, or a non-USB tty) the runner falls back to the whole-bus mount so
 non-hardware reservations still come up. See `internal/runner/usbport.go`.
 
-Remaining hardware caveats (shared single resources, follow-ups): BLE shares the
-one host Bluetooth radio, and the provisioning AP is still rig-level.
+### Network DUTs (a non-USB device, e.g. a Pi)
+
+A DUT need not be a USB board. A **network DUT** (`Device.Kind == "network"`) is a
+whole networked device — e.g. the LED Mapper Raspberry Pi — reached over the LAN
+and provisioned onto the rig AP over Improv BLE, with no board attached to this
+rig. It reuses the entire queue/reservation/container/BLE machinery; only two
+things differ:
+
+- **No USB.** `PodmanRunner.Start` skips `isolateUSB` and the device mounts for a
+  network DUT — crucially, so the empty-`Devices` **whole-bus fallback above can't
+  expose every C6** to it. The Pi is reached over the network (its
+  `HITL_DUT_ADDR`, injected into the container's env) and driven over BLE from the
+  same container (the mounted host `dbus` + `HITL_BLE_ADAPTER`, exactly as the C6
+  Improv flow).
+- **Pin-only.** A network DUT never matches an _unpinned_ waiter, so an ordinary
+  "any DUT" reservation (a C6 test) can never land on the Pi; only
+  `hitl reserve --device <name>` selects it (`queue.nextWaiterForLocked`).
+
+**Attach = seed, not bake.** Rather than a fourth startup mode, network DUTs are
+**seeded onto a running rig** — `scripts/seed-network-dut.sh` (a
+`//pi/hitl:seed_network_dut` target, like `seed_grafana`) writes an entry to
+`/var/lib/hitl/network-duts.json`, and the same `--discover` monitor ingests it on
+its next poll (no restart). A malformed/partly-written file never disturbs the USB
+DUTs (the monitor keeps the last good network set). Their sshd ports come from a
+**dedicated range above the USB pool** (`--network-max-duts`) so a hot-plugged
+board can never steal one. The management address should be the DUT's **Ethernet**
+IP so provisioning — which cycles the DUT's WiFi onto the rig AP — never drops
+monitoring/journalctl.
+
+Remaining hardware caveats: all reservations share the one host Bluetooth radio
+and the one provisioning AP. The BLE radio is **shared, not exclusive** — BlueZ
+multiplexes multiple concurrent central connections on a single adapter, so
+several reservations can drive BLE (scan / connect / GATT) at the same time; it
+is not a mutex, and a reservation need not wait for the rig to be otherwise idle
+to use BLE. The AP is rig-level (one SSID for the whole rig).
 
 ## Logic-analyzer rig (shared FX2 capture)
 
@@ -264,8 +297,8 @@ container is destroyed on release, so state never leaks between holders.
    `/dev/bus/usb`, keyed on the stable physical port, refreshed across
    re-enumeration. Host-side BLE HCI (btmon) capture per reservation — done
    (FUG-93): bounded, torn down on release, read back as btsnoop, annotated by
-   the DUT BLE MAC (the adapter is still shared — see the caveat above).
-   Remaining: per-DUT BLE radio; per-DUT AP.
+   the DUT BLE MAC (one shared adapter, but concurrently usable — see the caveat
+   above; not a mutex). Remaining: per-DUT AP.
 
 ## Open items (need the hardware / decisions)
 

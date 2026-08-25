@@ -183,7 +183,7 @@ func TestDutMonitorStickyPortsAndRetention(t *testing.T) {
 	mk(nameA, "ttyA")
 	mk("usb-Espressif_USB_JTAG_serial_debug_unit_BBBBBB-if00", "ttyB")
 
-	dm := newDUTMonitor(filepath.Join(dir, "usb-*-if00"), 2222, 8, 30*time.Second)
+	dm := newDUTMonitor(filepath.Join(dir, "usb-*-if00"), 2222, 8, 30*time.Second, "", 0)
 	clock := time.Unix(0, 0)
 	dm.now = func() time.Time { return clock }
 
@@ -221,5 +221,67 @@ func TestDutMonitorStickyPortsAndRetention(t *testing.T) {
 	last, _ := dm.scan()
 	if len(last) != 1 || last[0].Name != "c6-bbbbbb" || last[0].SSHPort != 2223 {
 		t.Fatalf("after sustained absence, scan = %+v (B should remain on 2223)", last)
+	}
+}
+
+func TestReadNetworkDUTs(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "network-duts.json")
+	// USB pool [2222,2230); network range starts at 2222+8 = 2230.
+	dm := newDUTMonitor("/nonexistent/*", 2222, 8, 30*time.Second, path, 4)
+
+	// Absent file: no DUTs, no error (and it forgets any prior set).
+	if got, err := dm.readNetworkDUTs(); err != nil || got != nil {
+		t.Fatalf("absent file: got %+v err %v", got, err)
+	}
+
+	write := func(s string) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(s), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// One valid network DUT → port from the dedicated range, kind + env carried.
+	write(`[{"name":"pi-1","kind":"network","devices":[],"env":{"HITL_DUT_ADDR":"pi.local"}}]`)
+	got, err := dm.readNetworkDUTs()
+	if err != nil {
+		t.Fatalf("valid: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "pi-1" || got[0].Kind != "network" || got[0].SSHPort != 2230 {
+		t.Fatalf("valid single = %+v", got)
+	}
+	if got[0].Env["HITL_DUT_ADDR"] != "pi.local" {
+		t.Fatalf("env not carried: %+v", got[0].Env)
+	}
+
+	// Sticky port: add a second DUT; pi-1 keeps 2230, pi-2 gets a distinct port.
+	write(`[{"name":"pi-2","kind":"network","devices":[],"env":{"HITL_DUT_ADDR":"b"}},
+	        {"name":"pi-1","kind":"network","devices":[],"env":{"HITL_DUT_ADDR":"a"}}]`)
+	got, _ = dm.readNetworkDUTs()
+	ports := map[string]int{}
+	for _, d := range got {
+		ports[d.Name] = d.SSHPort
+	}
+	if ports["pi-1"] != 2230 {
+		t.Fatalf("pi-1 should keep its sticky port 2230, got %d", ports["pi-1"])
+	}
+	if ports["pi-2"] < 2230 || ports["pi-2"] == 2230 {
+		t.Fatalf("pi-2 should get a distinct network port, got %d", ports["pi-2"])
+	}
+
+	// Every invalid file returns an error (caller keeps the last good set).
+	for _, bad := range []string{
+		`[{"name":"c6-x","kind":"network","devices":[],"env":{"HITL_DUT_ADDR":"a"}}]`,        // bad name prefix
+		`[{"name":"pi-x","kind":"usb","devices":[],"env":{"HITL_DUT_ADDR":"a"}}]`,             // wrong kind
+		`[{"name":"pi-x","kind":"network","devices":["/dev/x"],"env":{"HITL_DUT_ADDR":"a"}}]`, // has devices
+		`[{"name":"pi-x","kind":"network","devices":[],"env":{}}]`,                            // missing addr
+		`[{"name":"pi-x","kind":"network","devices":[],"env":{"HITL_DUT_ADDR":"a"}},{"name":"pi-x","kind":"network","devices":[],"env":{"HITL_DUT_ADDR":"b"}}]`, // dup name
+		`{not json`, // malformed
+	} {
+		write(bad)
+		if _, err := dm.readNetworkDUTs(); err == nil {
+			t.Fatalf("expected error for %q", bad)
+		}
 	}
 }

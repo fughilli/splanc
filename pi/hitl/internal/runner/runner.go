@@ -15,6 +15,12 @@ import (
 type Device struct {
 	// Name is the stable DUT identifier (e.g. "c6-0"); matches ReserveRequest.Device.
 	Name string
+	// Kind selects how the DUT is wired into its container. "" (== "usb") is a
+	// board attached over USB: its serial/JTAG nodes are mapped in and isolated.
+	// "network" is a LAN DUT (e.g. a Raspberry Pi) with no board on this rig —
+	// reached over the network and provisioned over BLE; it gets NO USB mounts (see
+	// PodmanRunner.Start), so it can't see the USB DUTs' boards.
+	Kind string
 	// SSHPort is the host port published to this DUT's container sshd (:22). Each
 	// DUT gets a distinct port so their containers coexist.
 	SSHPort int
