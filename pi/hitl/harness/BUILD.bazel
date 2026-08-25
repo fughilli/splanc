@@ -332,6 +332,39 @@ py_test(
     ],
 )
 
+# Same effects benchmark against the heapless esp32c6_netstack drop-in. The fixture
+# map is chunked (HITL_CHUNK_BYTES=1024) so even the 256-LED map stays small TLS
+# records the from-scratch stack buffers comfortably, and HITL_BUNDLE_RUNFILE points
+# the harness at the netstack bundle.
+py_test(
+    name = "fx_bench_netstack",
+    timeout = "eternal",
+    srcs = ["fx_bench.py"],
+    data = [
+        ":fx_benchmarks",
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "//fx_compiler:fx_compile",
+        "//pi/hitl/cmd/hitl",
+        "//web:tests/testdata/device-bench-esp32c6.json",
+    ],
+    env = {
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        "HITL_CHUNK_BYTES": "1024",
+    },
+    imports = ["."],
+    main = "fx_bench.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
 # FUG-125: the JIT-enabled sibling of :fx_bench. The shipped firmware runs the
 # on-device JIT by DEFAULT, so :fx_bench pins it OFF (set_jit false) to keep
 # checking the interpreter golden, and THIS target pins it ON (--jit) and checks

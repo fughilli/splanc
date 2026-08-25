@@ -77,7 +77,11 @@ def _log(msg: str) -> None:
 # path needed. These resolve the defaults so a rig run is just `--device-ws`.
 _FXC_RUNFILE = "_main/fx_compiler/fx_compile"
 _BENCH_RUNFILE = "_main/pi/hitl/harness/benchmarks/empty.fx"
-_BUNDLE_RUNFILE = "_main/firmware/player_app/esp32c6_flashbundle.tar"
+# HITL_BUNDLE_RUNFILE lets a variant target (fx_bench_netstack) point at a different
+# firmware bundle in its runfiles without a code change.
+_BUNDLE_RUNFILE = os.environ.get(
+    "HITL_BUNDLE_RUNFILE", "_main/firmware/player_app/esp32c6_flashbundle.tar"
+)
 # The unified golden — a full device-measurement bundle + fxBenchMargins, shared
 # with the web estimator test (web/tests/testdata/device-bench-<soc>.json). One
 # per SoC; regenerate with `fx_bench --emit-golden <that path>`.
@@ -196,6 +200,38 @@ def _linear_map(n: int) -> dict[str, Any]:
     return {"type": "submit_map", "map": {"map_id": "__bench", "led_count": n, "leds": leds}}
 
 
+_map_upload_id = 0
+
+
+async def _submit_map(sock, led_count: int) -> None:
+    """Submit the fixture map, ALWAYS chunked like the web client (client.ts sendChunked)
+    and map_upload — a large 256-LED map (~4.6 KB encoded) is never sent as one oversized
+    TLS record, which the heapless-netstack player can't buffer. Small maps still go as a
+    single window. HITL_CHUNK_BYTES sizes the windows (1024 for the netstack variant)."""
+    global _map_upload_id
+    from map_upload_core import window_plan
+    from server import proto_wire
+
+    flat = _linear_map(led_count)
+    frame = proto_wire.encode_client(flat)
+    windows = window_plan(len(frame))
+    if len(windows) <= 1:
+        await _rpc(sock, flat, "result_ready", timeout=8.0)
+        return
+    _map_upload_id += 1
+    uid = _map_upload_id
+    for seq, off, end, last in windows:
+        chunk = {
+            "type": "upload_chunk",
+            "upload_id": uid,
+            "seq": seq,
+            "last": last,
+            "kind": "MAP",
+            "payload": base64.b64encode(frame[off:end]).decode("ascii"),
+        }
+        await _rpc(sock, chunk, "result_ready" if last else "chunk_ack", timeout=8.0)
+
+
 async def measure_program(
     sock, label: str, fxb: bytes, led_count: int, settle_ms: int, debug: bool = False
 ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
@@ -207,8 +243,9 @@ async def measure_program(
     fit can only separate fixed overhead from per-LED cost if the count varies."""
     if led_count > 0:
         # Submit a fixture map of led_count LEDs (the shade loop's iteration
-        # domain), then persist the matching strip length (the show path).
-        await _rpc(sock, _linear_map(led_count), "result_ready", timeout=8.0)
+        # domain), then persist the matching strip length (the show path). Chunked so
+        # a big map never becomes one oversized TLS record (see _submit_map).
+        await _submit_map(sock, led_count)
         await _rpc(sock, {"type": "set_led_count", "led_count": led_count}, "led_count_state")
     # submit_effect validates + persists the .fxb and replies result_ready; wait
     # for it so the effect is actually loaded before we start timing it.
