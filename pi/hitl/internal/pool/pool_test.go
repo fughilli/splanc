@@ -204,3 +204,42 @@ func TestPickLegacyIdleBeatsBusyMultiDUT(t *testing.T) {
 		t.Errorf("Pick = %q, want the idle legacy runner", got)
 	}
 }
+
+// A reservation requiring per-DUT capabilities must land on a rig that has a FREE
+// DUT whose advertised capabilities are a superset — mirroring the analyzer filter
+// but at per-DUT granularity, and ignoring rigs whose only capable DUT is busy.
+func TestPickRequireCaps(t *testing.T) {
+	busy := &api.Reservation{ID: "held"}
+	states := map[string]*api.Status{
+		// a: idle but its DUTs lack the mic cap.
+		"http://a:8087": {Devices: []api.DeviceStatus{
+			{Name: "c6-0", Capabilities: []string{"improv", "flash"}},
+		}},
+		// b: has a mic DUT but it's busy, plus a free non-mic DUT — can't serve mic.
+		"http://b:8087": {Devices: []api.DeviceStatus{
+			{Name: "pi-mic", Capabilities: []string{"improv", "mic"}, Active: busy},
+			{Name: "c6-1", Capabilities: []string{"improv"}},
+		}},
+		// c: a FREE mic DUT — the only rig that can serve the reservation.
+		"http://c:8087": {Devices: []api.DeviceStatus{
+			{Name: "pi-mic", Capabilities: []string{"improv", "mic"}},
+		}},
+	}
+	servers := []string{"http://a:8087", "http://b:8087", "http://c:8087"}
+	got, err := Pick(Probes(servers, fakeGet(states, nil)), Require{Caps: []string{"mic"}})
+	if err != nil {
+		t.Fatalf("Pick(require mic): %v", err)
+	}
+	if got != "http://c:8087" {
+		t.Errorf("Pick(require mic) = %q, want rig c with the free mic DUT", got)
+	}
+
+	// No rig with a free mic DUT -> a clear error, not a wrong pick.
+	noMic := map[string]*api.Status{
+		"http://a:8087": states["http://a:8087"],
+		"http://b:8087": states["http://b:8087"],
+	}
+	if _, err := Pick(Probes([]string{"http://a:8087", "http://b:8087"}, fakeGet(noMic, nil)), Require{Caps: []string{"mic"}}); err == nil {
+		t.Error("Pick(require mic) with no free mic DUT: want error, got nil")
+	}
+}

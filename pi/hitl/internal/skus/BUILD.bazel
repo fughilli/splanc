@@ -1,0 +1,41 @@
+load("@bazel_skylib//rules:diff_test.bzl", "diff_test")
+load("@bazel_skylib//rules:write_file.bzl", "write_file")
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+load("//pi/hitl:skus.bzl", "HITL_SKUS")
+
+go_library(
+    name = "skus",
+    srcs = ["skus.go"],
+    embedsrcs = ["skus.json"],
+    importpath = "github.com/fughilli/splanc/pi/hitl/internal/skus",
+    visibility = ["//pi/hitl:__subpackages__"],
+)
+
+go_test(
+    name = "skus_test",
+    srcs = ["skus_test.go"],
+    embed = [":skus"],
+)
+
+# skus.json is generated from //pi/hitl:skus.bzl (the source of truth). This writes
+# the current JSON; skus_json_sync_test fails if the committed copy has drifted. Refresh:
+#   bazel build //pi/hitl/internal/skus:skus_json_generated \
+#     && cp bazel-bin/pi/hitl/internal/skus/skus.generated.json pi/hitl/internal/skus/skus.json
+write_file(
+    name = "skus_json_generated",
+    out = "skus.generated.json",
+    # Trailing "" -> a final newline, so the committed mirror satisfies the
+    # end-of-file-fixer pre-commit hook and still matches this byte-for-byte.
+    content = [
+        json.encode(HITL_SKUS),
+        "",
+    ],
+    newline = "unix",
+)
+
+diff_test(
+    name = "skus_json_sync_test",
+    failure_message = "pi/hitl/internal/skus/skus.json is stale vs //pi/hitl:skus.bzl — regenerate (see BUILD comment).",
+    file1 = "skus.json",
+    file2 = ":skus_json_generated",
+)

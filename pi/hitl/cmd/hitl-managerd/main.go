@@ -38,6 +38,7 @@ import (
 	"github.com/fughilli/splanc/pi/hitl/internal/metrics"
 	"github.com/fughilli/splanc/pi/hitl/internal/queue"
 	"github.com/fughilli/splanc/pi/hitl/internal/runner"
+	"github.com/fughilli/splanc/pi/hitl/internal/skus"
 )
 
 type stringList []string
@@ -253,9 +254,24 @@ func main() {
 type dutSpec struct {
 	Name    string            `json:"name"`
 	Kind    string            `json:"kind,omitempty"`
+	SKU     string            `json:"sku,omitempty"`
 	SSHPort int               `json:"ssh_port"`
 	Devices []string          `json:"devices"`
 	Env     map[string]string `json:"env"`
+}
+
+// defaultUSBSKU is the SKU assumed for a USB DUT that doesn't name one — the rigs
+// only host ESP32-C6 player boards over USB, so an auto-discovered board is one.
+const defaultUSBSKU = "esp32c6"
+
+// withCaps fills a Device's Capabilities from its SKU (the registry), warning on an
+// unknown SKU (which yields no capabilities — the DUT then matches no requirement).
+func withCaps(d runner.Device) runner.Device {
+	if d.SKU != "" && !skus.Known(d.SKU) {
+		log.Printf("dut %s: unknown SKU %q; advertising no capabilities", d.Name, d.SKU)
+	}
+	d.Capabilities = skus.Capabilities(d.SKU)
+	return d
 }
 
 // buildDevices turns the --dut flags into runner.Devices. With no --dut flags it
@@ -264,7 +280,7 @@ type dutSpec struct {
 // misconfiguration can't collide two DUTs onto one container port.
 func buildDevices(duts []string, sshPort int, devices []string) ([]runner.Device, error) {
 	if len(duts) == 0 {
-		return []runner.Device{{Name: "dut0", SSHPort: sshPort, Devices: devices}}, nil
+		return []runner.Device{withCaps(runner.Device{Name: "dut0", SKU: defaultUSBSKU, SSHPort: sshPort, Devices: devices})}, nil
 	}
 	var out []runner.Device
 	names, ports := map[string]bool{}, map[int]bool{}
@@ -286,7 +302,11 @@ func buildDevices(duts []string, sshPort int, devices []string) ([]runner.Device
 			return nil, fmt.Errorf("--dut %q: ssh_port %d already used by another DUT", s.Name, s.SSHPort)
 		}
 		names[s.Name], ports[s.SSHPort] = true, true
-		out = append(out, runner.Device{Name: s.Name, Kind: s.Kind, SSHPort: s.SSHPort, Devices: s.Devices, Env: s.Env})
+		sku := s.SKU
+		if sku == "" && s.Kind != "network" {
+			sku = defaultUSBSKU // an explicit USB DUT that omits its SKU is a C6
+		}
+		out = append(out, withCaps(runner.Device{Name: s.Name, Kind: s.Kind, SKU: sku, SSHPort: s.SSHPort, Devices: s.Devices, Env: s.Env}))
 	}
 	return out, nil
 }
@@ -462,7 +482,7 @@ func (dm *dutMonitor) scan() ([]runner.Device, error) {
 			continue
 		}
 		used[port] = true
-		dm.last[b.name] = runner.Device{Name: b.name, SSHPort: port, Devices: b.devices, Env: b.env}
+		dm.last[b.name] = withCaps(runner.Device{Name: b.name, SKU: defaultUSBSKU, SSHPort: port, Devices: b.devices, Env: b.env})
 	}
 	// Absent boards: drop (and free the port of) only those gone for the whole
 	// retention window; a briefly-missing board (resetting DUT) is kept.
@@ -550,6 +570,8 @@ func (dm *dutMonitor) readNetworkDUTs() ([]runner.Device, error) {
 			return nil, fmt.Errorf("network-dut %q: devices must be empty (no board on this rig)", s.Name)
 		case s.Env["HITL_DUT_ADDR"] == "":
 			return nil, fmt.Errorf("network-dut %q: env.HITL_DUT_ADDR is required", s.Name)
+		case s.SKU == "":
+			return nil, fmt.Errorf("network-dut %q: sku is required (e.g. led-mapper-pi)", s.Name)
 		case names[s.Name]:
 			return nil, fmt.Errorf("network-dut %q: duplicate name", s.Name)
 		}
@@ -564,7 +586,7 @@ func (dm *dutMonitor) readNetworkDUTs() ([]runner.Device, error) {
 			continue
 		}
 		used[port] = true
-		dev := runner.Device{Name: s.Name, Kind: "network", SSHPort: port, Env: s.Env}
+		dev := withCaps(runner.Device{Name: s.Name, Kind: "network", SKU: s.SKU, SSHPort: port, Env: s.Env})
 		next[s.Name] = dev
 		out = append(out, dev)
 	}
