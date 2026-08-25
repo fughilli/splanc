@@ -9,7 +9,7 @@
 // context we run wifi_hw_stop -> wifi_hw_start -> ic_set_vif(STA) -> pm_disconnected_stop ->
 // pm_go_to_wake (force the MAC awake so RX is continuous), then install our own RX ring and
 // pull frames directly. Real STA vif (crypto-capable), deterministic 4-way, HW auto-ACK via
-// the own-MAC/BSSID registers. TX + auth/assoc + WPA2 4-way + CCMP are all ours. Software
+// the own-MAC/g_bssid registers. TX + auth/assoc + WPA2 4-way + CCMP are all ours. Software
 // CCMP drives the data plane; the standalone AES-128 accelerator does the block cipher.
 
 #include <Arduino.h>
@@ -108,8 +108,10 @@ namespace {
 constexpr uintptr_t WIFI_MAC_INTR_MAP = 0x60010000;
 const char *SSID = "hitl-rig-3";
 const char *PASS = "hitl-rig-3-provision";
-const uint8_t BSSID[6] = {0xb8, 0x27, 0xeb, 0xbb, 0x8d, 0xf8};
-constexpr uint8_t CHAN = 6;
+// Default to rig-3's AP; a WiFi scan (scan_and_latch_ap) overwrites these once the
+// provisioned SSID is known, so the netstack joins ANY rig's AP, not just this baked one.
+uint8_t g_bssid[6] = {0xb8, 0x27, 0xeb, 0xbb, 0x8d, 0xf8};
+uint8_t g_chan = 6;
 uint8_t OUR_MAC[6];
 // Active WiFi credentials for the WPA2 PMK. Default to the baked rig AP so a no-BLE
 // (--skip-improv) run still associates; BLE Improv overwrites these from the provisioner
@@ -145,24 +147,83 @@ inline void dump_txstat(const char *tag) {
 }
 
 // Own-address slot 0 (0x600a405c/60, valid 0x10000) enables hardware auto-ACK for
-// our MAC; BSSID slot 0 (0x600a4000/04, valid 0x80000000) marks our BSS.
+// our MAC; g_bssid slot 0 (0x600a4000/04, valid 0x80000000) marks our BSS.
 void mac_own_bssid() {
   uint32_t lo = OUR_MAC[0] | (OUR_MAC[1] << 8) | (OUR_MAC[2] << 16) | ((uint32_t)OUR_MAC[3] << 24);
   wreg(0x600A405C, lo);
   wreg(0x600A4060, (uint32_t)(OUR_MAC[4] | (OUR_MAC[5] << 8)) | 0x10000);
-  uint32_t blo = BSSID[0] | (BSSID[1] << 8) | (BSSID[2] << 16) | ((uint32_t)BSSID[3] << 24);
+  uint32_t blo = g_bssid[0] | (g_bssid[1] << 8) | (g_bssid[2] << 16) | ((uint32_t)g_bssid[3] << 24);
   wreg(0x600A4000, blo);
   volatile uint32_t *b = reinterpret_cast<volatile uint32_t *>(0x600A4004);
-  *b = (*b & 0xffff0000) | (BSSID[4] | (BSSID[5] << 8)) | 0x80000000;
+  *b = (*b & 0xffff0000) | (g_bssid[4] | (g_bssid[5] << 8)) | 0x80000000;
+}
+
+// --- WiFi scan: discover the provisioned AP's BSSID + channel (rig-agnostic) ---------
+// The baked g_bssid/g_chan only match rig-3. To run on ANY rig, cache every AP the vendor
+// scan sees at setup (while its RX path is still intact, before we hijack the MAC), then
+// once the provisioner tells us the SSID, latch that AP's real BSSID + channel.
+struct ApRec {
+  char ssid[33];
+  uint8_t bssid[6];
+  uint8_t chan;
+};
+ApRec g_scan[24];
+uint8_t g_scan_n = 0;
+bool g_ap_latched = false;
+
+// Run one blocking vendor scan and cache the results. Called once in setup() before the
+// MAC hijack — the vendor WiFi RX is still live there, so its scan machinery works; after
+// the hijack we own the ring and the vendor can't scan.
+void wifi_scan_cache() {
+  wifi_scan_config_t cfg = {};
+  cfg.scan_type = WIFI_SCAN_TYPE_ACTIVE;
+  esp_err_t e = esp_wifi_scan_start(&cfg, true);  // blocking
+  uint16_t n = 0;
+  esp_wifi_scan_get_ap_num(&n);
+  if (n > 24) n = 24;
+  static wifi_ap_record_t recs[24];
+  esp_wifi_scan_get_ap_records(&n, recs);
+  g_scan_n = 0;
+  for (uint16_t i = 0; i < n && g_scan_n < 24; i++) {
+    memcpy(g_scan[g_scan_n].ssid, recs[i].ssid, 32);
+    g_scan[g_scan_n].ssid[32] = 0;
+    memcpy(g_scan[g_scan_n].bssid, recs[i].bssid, 6);
+    g_scan[g_scan_n].chan = recs[i].primary;
+    g_scan_n++;
+  }
+  Serial.printf("[scan] err=%d found=%u AP(s)\n", (int)e, (unsigned)g_scan_n);
+  for (uint8_t i = 0; i < g_scan_n; i++)
+    Serial.printf("[scan]   ssid=\"%s\" bssid=%02x:%02x:%02x:%02x:%02x:%02x ch=%u\n", g_scan[i].ssid,
+                  g_scan[i].bssid[0], g_scan[i].bssid[1], g_scan[i].bssid[2], g_scan[i].bssid[3],
+                  g_scan[i].bssid[4], g_scan[i].bssid[5], g_scan[i].chan);
+}
+
+// Once g_ssid is known, find its cached AP and latch the real BSSID + channel + reprogram
+// the hardware. Keeps the baked default if the SSID wasn't seen in the scan (e.g. rig-3
+// fallback where they already match). Returns whether a scan match was applied.
+bool scan_latch_ap() {
+  for (uint8_t i = 0; i < g_scan_n; i++) {
+    if (strncmp(g_scan[i].ssid, g_ssid, 32) == 0) {
+      memcpy(g_bssid, g_scan[i].bssid, 6);
+      g_chan = g_scan[i].chan;
+      esp_wifi_set_channel(g_chan, WIFI_SECOND_CHAN_NONE);
+      mac_own_bssid();  // re-program the hardware BSSID register for the scanned AP
+      Serial.printf("[scan] latched \"%s\" -> bssid=%02x:%02x:%02x:%02x:%02x:%02x ch=%u\n", g_ssid,
+                    g_bssid[0], g_bssid[1], g_bssid[2], g_bssid[3], g_bssid[4], g_bssid[5], g_chan);
+      return true;
+    }
+  }
+  Serial.printf("[scan] no scan match for \"%s\" — keeping baked bssid ch=%u\n", g_ssid, g_chan);
+  return false;
 }
 
 int mgmt_hdr(uint8_t *f, uint8_t fc) {
   int n = 0;
   f[n++] = fc; f[n++] = 0x00;
   f[n++] = 0x00; f[n++] = 0x00;
-  memcpy(f + n, BSSID, 6); n += 6;
+  memcpy(f + n, g_bssid, 6); n += 6;
   memcpy(f + n, OUR_MAC, 6); n += 6;
-  memcpy(f + n, BSSID, 6); n += 6;
+  memcpy(f + n, g_bssid, 6); n += 6;
   f[n++] = 0x00; f[n++] = 0x00;
   return n;
 }
@@ -186,9 +247,9 @@ int build_assoc(uint8_t *f) {
 int build_eapol_data(uint8_t *f, const uint8_t *e, int el) {
   int n = 0;
   f[n++] = 0x08; f[n++] = 0x01; f[n++] = 0x00; f[n++] = 0x00;
-  memcpy(f + n, BSSID, 6); n += 6;
+  memcpy(f + n, g_bssid, 6); n += 6;
   memcpy(f + n, OUR_MAC, 6); n += 6;
-  memcpy(f + n, BSSID, 6); n += 6;
+  memcpy(f + n, g_bssid, 6); n += 6;
   f[n++] = 0x00; f[n++] = 0x00;
   const uint8_t llc[] = {0xaa, 0xaa, 0x03, 0x00, 0x00, 0x00, 0x88, 0x8e};
   memcpy(f + n, llc, sizeof(llc)); n += sizeof(llc);
@@ -275,7 +336,7 @@ int build_ping(uint8_t *p, const uint8_t *src, const uint8_t *dst, uint16_t seq)
 }
 
 // HARDWARE CCMP encrypt via the vendor ppTxPkt bridge. `frame` is a bare protected QoS
-// data MPDU: [26-byte 802.11 QoS header, FC Protected bit set, addr1=BSSID][LLC/SNAP + L3
+// data MPDU: [26-byte 802.11 QoS header, FC Protected bit set, addr1=g_bssid][LLC/SNAP + L3
 // CLEARTEXT] — NO CCMP header (the HW inserts the 8-byte IV after the header, encrypts the
 // payload, and appends the 8-byte MIC). All magic numbers are decomp-verified; the two
 // hang risks (txdesc.word4[11:8]=cipher, word4[7:4]=qclass) are set to CCMP=3 / TID0=2.
@@ -324,7 +385,7 @@ uint32_t tx_l2(const uint8_t *hdr, const uint8_t *payload, int plen, const char 
   if (g_hwkey) {
     // Bare protected QoS data MPDU: [26B QoS 802.11 hdr, FC 0x88 0x41 = QoS + ToDS +
     // Protected][LLC/SNAP + L3 CLEARTEXT]. No CCMP header — the vendor ppTxPkt path + MAC
-    // engine insert the IV, encrypt, and append the MIC. addr1=BSSID (hdr already carries it).
+    // engine insert the IV, encrypt, and append the MIC. addr1=g_bssid (hdr already carries it).
     uint8_t frame[1700];
     memset(frame, 0, 8);                  // 8-byte HW-TX-header pad (secure branch fills it)
     memcpy(frame + 8, hdr, 24);
@@ -357,24 +418,24 @@ void send_dhcp(uint8_t msg_type, const uint8_t *req_ip, const uint8_t *server_id
   const uint32_t xid = 0x5e7a9c01;
   uint8_t payload[400];
   int pn = build_dhcp(payload, OUR_MAC, xid, msg_type, req_ip, server_id);
-  uint8_t hdr[24]; // 802.11 data: ToDS=1 + Protected=1; a1=BSSID a2=us a3=broadcast
+  uint8_t hdr[24]; // 802.11 data: ToDS=1 + Protected=1; a1=g_bssid a2=us a3=broadcast
   hdr[0] = 0x08; hdr[1] = 0x41; hdr[2] = 0x00; hdr[3] = 0x00;
-  // a3 = BSSID (unicast to the AP at L2, L3 is still 255.255.255.255) so hardware TX
+  // a3 = g_bssid (unicast to the AP at L2, L3 is still 255.255.255.255) so hardware TX
   // encrypt uses the pairwise key (it keys off the destination address).
-  memcpy(hdr + 4, BSSID, 6); memcpy(hdr + 10, OUR_MAC, 6); memcpy(hdr + 16, BSSID, 6);
+  memcpy(hdr + 4, g_bssid, 6); memcpy(hdr + 10, OUR_MAC, 6); memcpy(hdr + 16, g_bssid, 6);
   hdr[22] = 0x00; hdr[23] = 0x00;
   char lbl[32]; snprintf(lbl, sizeof(lbl), "DHCP %s sent", what);
   tx_l2(hdr, payload, pn, lbl);
 }
 
 // CCMP-encrypt + transmit an ICMP echo request from `src` to the gateway (which is
-// the AP itself, so the L2 destination is the BSSID).
+// the AP itself, so the L2 destination is the g_bssid).
 void send_ping(const uint8_t *src, uint16_t seq) {
   uint8_t payload[64];
   int pn = build_ping(payload, src, GATEWAY, seq);
-  uint8_t hdr[24]; // ToDS=1 + Protected=1; a1=BSSID a2=us a3=BSSID (gateway == AP)
+  uint8_t hdr[24]; // ToDS=1 + Protected=1; a1=g_bssid a2=us a3=g_bssid (gateway == AP)
   hdr[0] = 0x08; hdr[1] = 0x41; hdr[2] = 0x00; hdr[3] = 0x00;
-  memcpy(hdr + 4, BSSID, 6); memcpy(hdr + 10, OUR_MAC, 6); memcpy(hdr + 16, BSSID, 6);
+  memcpy(hdr + 4, g_bssid, 6); memcpy(hdr + 10, OUR_MAC, 6); memcpy(hdr + 16, g_bssid, 6);
   hdr[22] = 0x00; hdr[23] = 0x00;
   tx_l2(hdr, payload, pn, "PING sent");
 }
@@ -386,9 +447,9 @@ void send_ip(const uint8_t *ip, int iplen) {
   const uint8_t llc[] = {0xaa, 0xaa, 0x03, 0x00, 0x00, 0x00, 0x08, 0x00};
   memcpy(payload, llc, 8);
   memcpy(payload + 8, ip, iplen);
-  uint8_t hdr[24]; // ToDS=1 + Protected=1; a1=BSSID a2=us a3=BSSID (gateway == AP)
+  uint8_t hdr[24]; // ToDS=1 + Protected=1; a1=g_bssid a2=us a3=g_bssid (gateway == AP)
   hdr[0] = 0x08; hdr[1] = 0x41; hdr[2] = 0x00; hdr[3] = 0x00;
-  memcpy(hdr + 4, BSSID, 6); memcpy(hdr + 10, OUR_MAC, 6); memcpy(hdr + 16, BSSID, 6);
+  memcpy(hdr + 4, g_bssid, 6); memcpy(hdr + 10, OUR_MAC, 6); memcpy(hdr + 16, g_bssid, 6);
   hdr[22] = 0x00; hdr[23] = 0x00;
   tx_l2(hdr, payload, 8 + iplen, nullptr);
 }
@@ -428,14 +489,14 @@ void install_hw_key() {
   }
   // --- HW inline decrypt (the reversed vendor recipe) ---
   constexpr uint32_t SLOT = 4; // slots 0-3 are group keys; pairwise goes in a slot >= 4
-  wDev_Insert_KeyEntry(4 /*CCMP*/, 1 /*enable*/, 0, BSSID, SLOT, tk, 16, 0);
+  wDev_Insert_KeyEntry(4 /*CCMP*/, 1 /*enable*/, 0, g_bssid, SLOT, tk, 16, 0);
   volatile uint32_t *slot = reinterpret_cast<volatile uint32_t *>(0x600A5800 + SLOT * 40);
   slot[6] = 0; slot[7] = 0; slot[8] = 0; slot[9] = 0;   // zero RX PN replay words
   // EXPERIMENT: use the vendor's atomic engine setup instead of raw register pokes, and
   // keep the NATURAL key config (no 0x086c overwrite). Prior raw-poke attempts matched the
   // vendor's *visible* registers but the crypto engine still refused TX — internal state
   // from the enable SEQUENCE may be the missing piece.
-  wr(0x600A4004, rd(0x600A4004) | 0x00010000);          // BSSID entry "has key" bit
+  wr(0x600A4004, rd(0x600A4004) | 0x00010000);          // g_bssid entry "has key" bit
   hal_crypto_enable(0 /*iface0*/, 4 /*CCMP*/, 0, 0);    // vendor engine enable sequence
   ic_set_rx_policy(0, 0, 1, 1);
   ic_rx_enable_bssid_check(0);
@@ -476,7 +537,7 @@ void handle_arp(const uint8_t *pt, int pl) {
   memcpy(r + 24, arp + 14, 4);   // tpa = requester's IP
   uint8_t hdr[24];               // ToDS + Protected; a3 = DA = requester's MAC
   hdr[0] = 0x08; hdr[1] = 0x41; hdr[2] = 0; hdr[3] = 0;
-  memcpy(hdr + 4, BSSID, 6); memcpy(hdr + 10, OUR_MAC, 6); memcpy(hdr + 16, arp + 8, 6);
+  memcpy(hdr + 4, g_bssid, 6); memcpy(hdr + 10, OUR_MAC, 6); memcpy(hdr + 16, arp + 8, 6);
   hdr[22] = 0; hdr[23] = 0;
   tx_l2(hdr, payload, 8 + 28, nullptr);
 }
@@ -822,7 +883,7 @@ void netstack_setup() {
   Serial.printf("[netstack] AES self-test: enc=%d dec=%d ct=%02x%02x%02x%02x (want 69c4e0d8)\n",
                 aes & 1, (aes >> 1) & 1, aesct[0], aesct[1], aesct[2], aesct[3]);
   // The BT controller is already up (the app's improv_ble_begin ran first); hijack the MAC
-  // last so our heapless RX/BSSID/force-awake setup wins the shared radio config.
+  // last so our heapless RX/g_bssid/force-awake setup wins the shared radio config.
   //
   // We OWN the RX ring (ns_mac_rx_install), so the vendor WiFi driver's default static/dynamic
   // RX buffers are pure waste — and they're DMA-capable, the scarce pool the RMT LED driver +
@@ -851,12 +912,17 @@ void netstack_setup() {
   Serial.printf("MAC %02x:%02x:%02x:%02x:%02x:%02x\n", OUR_MAC[0], OUR_MAC[1], OUR_MAC[2],
                 OUR_MAC[3], OUR_MAC[4], OUR_MAC[5]);
   g_our_mac_ptr = OUR_MAC;
+  // Cache every AP in range NOW, while the vendor WiFi RX still works — after the MAC
+  // hijack below we own the ring and the vendor scan can't run. scan_latch_ap() (in the
+  // loop, once the provisioner gives us the SSID) then picks our AP's real BSSID+channel,
+  // so the netstack joins ANY rig's AP, not just the baked rig-3 one.
+  wifi_scan_cache();
   // Continuous STA RX with NO promiscuous, so the hardware crypto engine stays inline:
   // stop->start the MAC, configure the STA vif, and force it awake (pm_go_to_wake) so
   // RX is continuous instead of the disconnected duty-cycle. Runs in the WiFi task via
   // the ioctl marshal (heap request, cmd@0/handler@4; the ioctl frees it).
   esp_wifi_set_ps(WIFI_PS_NONE);
-  esp_wifi_set_channel(CHAN, WIFI_SECOND_CHAN_NONE);
+  esp_wifi_set_channel(g_chan, WIFI_SECOND_CHAN_NONE);
   delay(150);
   wreg(WIFI_MAC_INTR_MAP, 0); // detach vendor ISR
   ns_mac_rx_install();
@@ -866,9 +932,9 @@ void netstack_setup() {
   req[1] = reinterpret_cast<uint32_t>(&sta_rx_start_handler);
   ieee80211_ioctl(req);
   wreg(WIFI_MAC_INTR_MAP, 0); // re-detach ISR
-  mac_own_bssid();            // own-MAC + BSSID: hardware auto-ACK
+  mac_own_bssid();            // own-MAC + g_bssid: hardware auto-ACK
   ns_mac_rx_install();        // re-own the RX ring
-  esp_wifi_set_channel(CHAN, WIFI_SECOND_CHAN_NONE);
+  esp_wifi_set_channel(g_chan, WIFI_SECOND_CHAN_NONE);
 
   // Sanity: continuous RX into our ring, no promiscuous.
   uint8_t rx[400];
@@ -922,11 +988,11 @@ void netstack_loop() {
   // (any FC), so we can see whether M3 (a data frame) actually reaches our ring.
   static uint32_t apf = 0;
   if (st == FOURWAY && n >= 16 && memcmp(rx + 4, OUR_MAC, 6) == 0 &&
-      (memcmp(rx + 10, BSSID, 6) == 0 || memcmp(rx + 16, BSSID, 6) == 0)) {
+      (memcmp(rx + 10, g_bssid, 6) == 0 || memcmp(rx + 16, g_bssid, 6) == 0)) {
     if (apf++ < 12) Serial.printf("  AP->us fc=%02x%02x len=%u\n", rx[0], rx[1], n);
   }
   if (n >= 24 && memcmp(rx + 4, OUR_MAC, 6) == 0 &&
-      (memcmp(rx + 10, BSSID, 6) == 0 || memcmp(rx + 16, BSSID, 6) == 0)) {
+      (memcmp(rx + 10, g_bssid, 6) == 0 || memcmp(rx + 16, g_bssid, 6) == 0)) {
     if (rx[0] == 0xb0 && st == AUTH) { // auth resp
       uint16_t status = rx[28] | (rx[29] << 8);
       if (status == 0) { int a = build_assoc(f); ns_mac_send(f, a, 0); st = ASSOC; Serial.println("auth ok -> assoc"); }
@@ -938,7 +1004,7 @@ void netstack_loop() {
       const uint8_t *eb; int el = eapol_body(rx, n, &eb);
       if (el > 4) {
         if (!inited) { uint8_t sn[32]; esp_fill_random(sn, 32);
-          ns_wpa_init((const uint8_t *)g_ssid, strlen(g_ssid), (const uint8_t *)g_pass, strlen(g_pass), BSSID, OUR_MAC, sn);
+          ns_wpa_init((const uint8_t *)g_ssid, strlen(g_ssid), (const uint8_t *)g_pass, strlen(g_pass), g_bssid, OUR_MAC, sn);
           inited = true; }
         uint8_t e[256]; int elen = el; memcpy(e, eb, elen);
         int exact = 4 + ((e[2] << 8) | e[3]); if (exact > 0 && exact <= elen) elen = exact;
@@ -1009,6 +1075,13 @@ void netstack_loop() {
     Serial.printf("[assoc] no BLE central — associating with baked creds ssid=%s\n", g_ssid);
   }
   if (!PLAYER_MODE) g_creds_ready = true;  // non-player transport demo associates immediately
+  // As soon as the SSID is committed, latch the AP's real BSSID + channel from the scan
+  // cache (once) BEFORE the first auth — so auth/assoc go out on the right channel to the
+  // right BSS on ANY rig, not just the baked rig-3 default.
+  if (g_creds_ready && !g_ap_latched) {
+    scan_latch_ap();
+    g_ap_latched = true;
+  }
   // Kick the state machine: (re)send auth periodically until associated (once creds committed).
   if (st == AUTH && g_creds_ready && millis() - t > 200) { t = millis(); int a = build_auth(f); ns_mac_send(f, a, 0); }
   // Stream out any send-window segments the just-processed ACKs now allow (the send
