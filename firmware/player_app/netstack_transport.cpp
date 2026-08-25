@@ -62,7 +62,8 @@ void *ic_get_trc(uint32_t iface, uint32_t index);
 uint32_t ns_tcp_connect(const uint8_t *src, const uint8_t *dst, uint16_t sport, uint16_t dport,
                         uint32_t iss, uint8_t *out, uint32_t cap);
 uint32_t ns_tcp_on_ip(const uint8_t *ip, uint32_t len, uint8_t *out, uint32_t cap);
-uint32_t ns_tcp_send(const uint8_t *data, uint32_t len, uint8_t *out, uint32_t cap);
+uint32_t ns_tcp_enqueue(const uint8_t *data, uint32_t len);          // buffer into the send window
+uint32_t ns_tcp_pump_tx(uint32_t now_ms, uint8_t *out, uint32_t cap); // emit next windowed segment
 uint32_t ns_tcp_tick(uint32_t now_ms, uint8_t *out, uint32_t cap); // stack RTO: emits a retransmit when it fires
 uint32_t ns_tcp_window_ack(uint8_t *out, uint32_t cap); // window-update ACK after draining rx
 uint32_t ns_tcp_recv(uint8_t *out, uint32_t cap);
@@ -599,16 +600,24 @@ static int tls_rng(void *, unsigned char *buf, size_t len) {
   return 0;
 }
 uint32_t g_bio_tx = 0, g_bio_rx = 0;
-// BIO send: hand the TLS record bytes to the TCP conn (stop-and-wait). Returns the data
-// bytes consumed, or WANT_WRITE if a segment is already in flight (retry after the ACK).
-static int bio_send(void *, const unsigned char *buf, size_t len) {
+// Enqueue `len` bytes into the TCP send window and stream out as many segments as the
+// peer's window currently allows. Returns the bytes accepted into the window.
+static uint32_t tcp_send_all(const uint8_t *data, uint32_t len) {
+  uint32_t acc = ns_tcp_enqueue(data, len);
   uint8_t seg[1600];
-  uint32_t n = ns_tcp_send(buf, (uint32_t)len, seg, sizeof(seg));
-  if (n == 0) { static uint32_t ww = 0; if (ww++ < 8) Serial.printf("  bio_send len=%u WANT_WRITE\n", (unsigned)len); return MBEDTLS_ERR_SSL_WANT_WRITE; }
-  send_ip(seg, n);
-  uint32_t took = len < 1400 ? (uint32_t)len : 1400;
-  if (g_bio_tx++ < 24) Serial.printf("  bio_send len=%u seg=%u took=%u\n", (unsigned)len, n, took);
-  return (int)took;
+  uint32_t n;
+  while ((n = ns_tcp_pump_tx((uint32_t)millis(), seg, sizeof seg)) > 0) send_ip(seg, n);
+  return acc;
+}
+// BIO send: hand the TLS record bytes to the TCP send window. Returns the bytes accepted
+// (mbedtls advances by that), or WANT_WRITE when the window buffer is full — ACKs drain it
+// and the record is retried. Unlike the old stop-and-wait path, many segments can be in
+// flight at once, so replies/streams pipeline instead of blocking one RTT per segment.
+static int bio_send(void *, const unsigned char *buf, size_t len) {
+  uint32_t acc = tcp_send_all(buf, (uint32_t)len);
+  if (acc == 0) { static uint32_t ww = 0; if (ww++ < 8) Serial.printf("  bio_send len=%u WANT_WRITE\n", (unsigned)len); return MBEDTLS_ERR_SSL_WANT_WRITE; }
+  if (g_bio_tx++ < 24) Serial.printf("  bio_send len=%u took=%u\n", (unsigned)len, (unsigned)acc);
+  return (int)acc;
 }
 static int bio_recv(void *, unsigned char *buf, size_t len) {
   uint32_t n = ns_tcp_recv(buf, (uint32_t)len);
@@ -664,6 +673,10 @@ static void pump_link_once() {
     for (uint32_t trim = 0; trim <= 4 && pl == 0; trim++)
       if (n > trim + 32) pl = ns_sta_decrypt(rxb, n - trim, pt, sizeof(pt));
     if (pl) handle_l3(pt, pl);
+    // The inbound ACK may have freed send-window space — stream out anything now allowed.
+    static uint8_t tseg[1600];
+    uint32_t tn;
+    while ((tn = ns_tcp_pump_tx((uint32_t)millis(), tseg, sizeof tseg)) > 0) send_ip(tseg, tn);
   }
 }
 
@@ -983,6 +996,13 @@ void netstack_loop() {
   if (!PLAYER_MODE) g_creds_ready = true;  // non-player transport demo associates immediately
   // Kick the state machine: (re)send auth periodically until associated (once creds committed).
   if (st == AUTH && g_creds_ready && millis() - t > 200) { t = millis(); int a = build_auth(f); ns_mac_send(f, a, 0); }
+  // Stream out any send-window segments the just-processed ACKs now allow (the send
+  // window pipelines many segments in flight rather than one-per-RTT).
+  {
+    static uint8_t tseg[1600];
+    uint32_t tn;
+    while ((tn = ns_tcp_pump_tx((uint32_t)millis(), tseg, sizeof tseg)) > 0) send_ip(tseg, tn);
+  }
   // TCP retransmission is the STACK's job: ns_tcp owns its RTO and ns_tcp_tick(now) emits a
   // retransmit when it fires. The app just provides the clock + carries the bytes — a
   // correctness backstop for genuine loss, not something the app should hand-roll.
@@ -1091,9 +1111,7 @@ void netstack_loop() {
       uint32_t rn = ns_tcp_recv(rb, sizeof(rb));
       if (rn > 0) {
         Serial.printf("*** SERVER RX %u B — echoing ***\n", rn);
-        uint8_t seg[700];
-        uint32_t sn = ns_tcp_send(rb, rn, seg, sizeof(seg));
-        if (sn > 0) send_ip(seg, sn);
+        tcp_send_all(rb, rn);
       }
     } else if (s == 4 || s == 0) { // Done/Closed: re-arm the listener for the next client
       static uint32_t niss = 0x4000;
@@ -1106,9 +1124,10 @@ void netstack_loop() {
     // Client mode (original outbound echo test).
     if (ns_tcp_state() == 2 && !g_tcp_requested) {
       const char *req = "HELLO-FROM-HEAPLESS\n";
-      uint8_t seg[128];
-      uint32_t n = ns_tcp_send((const uint8_t *)req, strlen(req), seg, sizeof(seg));
-      if (n > 0) { send_ip(seg, n); g_tcp_requested = true; Serial.println("TCP ESTABLISHED — request sent"); }
+      if (tcp_send_all((const uint8_t *)req, strlen(req)) > 0) {
+        g_tcp_requested = true;
+        Serial.println("TCP ESTABLISHED — request sent");
+      }
     }
     uint8_t rb[256];
     uint32_t rn = ns_tcp_recv(rb, sizeof(rb) - 1);

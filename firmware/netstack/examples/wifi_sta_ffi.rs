@@ -131,14 +131,26 @@ pub extern "C" fn ns_tcp_on_ip(ip: *const u8, len: u32, out: *mut u8, cap: u32) 
     }
 }
 
-/// Queue application data to send; builds the segment into `out`.
+/// Queue application data into the send window; returns bytes accepted (the caller
+/// advances by that + retries the rest when ACKs free space). Emits nothing — pump with
+/// `ns_tcp_pump_tx`.
 #[no_mangle]
-pub extern "C" fn ns_tcp_send(data: *const u8, len: u32, out: *mut u8, cap: u32) -> u32 {
+pub extern "C" fn ns_tcp_enqueue(data: *const u8, len: u32) -> u32 {
     unsafe {
         let Some(c) = TCP.as_mut() else { return 0 };
         let d = core::slice::from_raw_parts(data, len as usize);
+        c.enqueue(d) as u32
+    }
+}
+
+/// Emit the next in-flight segment into `out` if the peer's window allows; returns its
+/// length or 0. Call repeatedly to stream the window out (after enqueue + each loop).
+#[no_mangle]
+pub extern "C" fn ns_tcp_pump_tx(now_ms: u32, out: *mut u8, cap: u32) -> u32 {
+    unsafe {
+        let Some(c) = TCP.as_mut() else { return 0 };
         let o = core::slice::from_raw_parts_mut(out, cap as usize);
-        c.send(d, o) as u32
+        c.pump_tx(now_ms, o) as u32
     }
 }
 

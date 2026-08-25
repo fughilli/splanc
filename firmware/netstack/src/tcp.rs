@@ -67,19 +67,33 @@ pub struct TcpConn {
     // window on EVERY probe until data flows again, so a single lost window-update ACK
     // can't wedge a large transfer on a lossy link. Cleared only on data receipt.
     window_closed: bool,
-    // The single in-flight outbound data segment (for retransmit), as an IP datagram.
-    tx: [u8; 1600],
-    tx_len: usize,
-    tx_seq: u32,   // sequence number of the in-flight segment's first byte
-    tx_data: u16,  // payload length of the in-flight segment
-    // Retransmit timeout for the single in-flight segment (stop-and-wait). The stack owns
-    // its own RTO so the transport recovers from genuine loss without the app retransmitting.
-    tx_at_ms: u32, // clock when the RTO was armed / last retransmit fired (0 = unarmed)
-    rto_ms: u32,   // current retransmit timeout, doubled on each expiry (capped)
+    // Outbound SEND WINDOW (replaces the old stop-and-wait single segment). `snd_buf`
+    // holds unacknowledged application bytes; `snd_buf[0]` is sequence `snd_una`. Bytes
+    // [0..sent) are in flight (transmitted, unacked); [sent..len) are buffered but not yet
+    // on air. Segments stream out up to the peer's advertised window, so replies/streams
+    // pipeline (many segments in flight) instead of one-per-RTT — the difference between
+    // ~1 msg/RTT and line rate for a 1000-message uniform blast or an LED stream.
+    snd_buf: [u8; SND_BUF],
+    snd_len: usize,  // buffered unacked bytes
+    sent: usize,     // how many of them have been transmitted (in flight)
+    peer_wnd: u32,   // peer's advertised receive window, from inbound ACKs (wscale 0)
+    // Retransmit timeout for the oldest in-flight data. The stack owns its own RTO; on
+    // expiry it goes back-N (rewinds `sent` to 0) so the whole window is resent.
+    tx_at_ms: u32,   // clock when the RTO was armed (0 = nothing in flight / disarmed)
+    rto_ms: u32,     // current retransmit timeout, doubled on each expiry (capped)
 }
 
 const RTO_INITIAL_MS: u32 = 300;
 const RTO_MAX_MS: u32 = 2000;
+/// Outbound window buffer: bytes we may have in flight + queued at once. Bounds RAM and
+/// the reply/stream burst we can pipeline before an ACK must free space. Kept close to the
+/// old single-segment size on purpose — this struct is a static, and every extra byte here
+/// is a byte off the contiguous heap that mbedtls's ~8.5KB record buffer must fit into on
+/// each new connection (the C6's tight, un-growable Arduino-mbedtls budget). 2KB still lets
+/// many small replies coalesce + pipeline (the uniform-blast / LED-stream win) vs stop-and-wait.
+const SND_BUF: usize = 2048;
+/// Max TCP payload per segment (matches the MSS we advertise on SYN).
+const SND_MSS: usize = 1400;
 
 /// A produced IP datagram to transmit (borrows the connection's tx scratch).
 pub struct Seg<'a>(pub &'a [u8]);
@@ -93,7 +107,7 @@ impl TcpConn {
             rx: [0; 1600], rx_len: 0,
             last_adv_wnd: 0,
             window_closed: false,
-            tx: [0; 1600], tx_len: 0, tx_seq: 0, tx_data: 0,
+            snd_buf: [0; SND_BUF], snd_len: 0, sent: 0, peer_wnd: 0,
             tx_at_ms: 0, rto_ms: RTO_INITIAL_MS,
         }
     }
@@ -131,31 +145,52 @@ impl TcpConn {
         self.rx_len -= n;
     }
 
-    /// Queue application data to send (stop-and-wait: only if nothing is in flight).
-    /// Builds the segment into `out`; returns its length or 0 if busy/closed.
-    pub fn send(&mut self, data: &[u8], out: &mut [u8]) -> usize {
-        if self.state != State::Established || self.tx_data != 0 {
+    /// Queue application data into the send window. Copies what fits (bounded by the
+    /// free space in `snd_buf`) and returns how many bytes were accepted — the caller
+    /// (mbedtls BIO) advances by that, and retries the rest once ACKs free space. Emits
+    /// nothing itself; call `pump_tx` to put segments on air.
+    pub fn enqueue(&mut self, data: &[u8]) -> usize {
+        if self.state != State::Established {
             return 0;
         }
-        let n = data.len().min(1400);
-        let seq = self.snd_nxt;
-        let len = self.build(PSH | ACK, seq, &data[..n], out);
-        // Stash for retransmit.
-        self.tx[..len].copy_from_slice(&out[..len]);
-        self.tx_len = len;
-        self.tx_seq = seq;
-        self.tx_data = n as u16;
-        self.snd_nxt = self.snd_nxt.wrapping_add(n as u32);
-        len
+        let room = SND_BUF - self.snd_len;
+        let n = data.len().min(room);
+        self.snd_buf[self.snd_len..self.snd_len + n].copy_from_slice(&data[..n]);
+        self.snd_len += n;
+        n
     }
 
-    /// Anything in flight that may need a retransmit? Copies it into `out`.
-    pub fn retransmit(&self, out: &mut [u8]) -> usize {
-        if self.tx_data != 0 {
-            out[..self.tx_len].copy_from_slice(&self.tx[..self.tx_len]);
-            return self.tx_len;
+    /// Put the next in-flight segment on air if the peer's window allows, building it into
+    /// `out`. Returns its length, or 0 if nothing to send / the window is full. Call
+    /// repeatedly (each loop and after `enqueue`) to stream the window out; arms the RTO
+    /// on the first segment of a burst.
+    pub fn pump_tx(&mut self, now_ms: u32, out: &mut [u8]) -> usize {
+        if self.state != State::Established || self.sent >= self.snd_len {
+            return 0; // nothing buffered-but-unsent
         }
-        0
+        // Don't put more than the peer said it can hold in flight at once. Treat a
+        // never-seen window (0 before the first ACK) as one segment to get started.
+        let wnd = if self.peer_wnd == 0 { SND_MSS as u32 } else { self.peer_wnd };
+        if self.sent as u32 >= wnd {
+            return 0; // in-flight bytes already fill the peer's window
+        }
+        let avail = (wnd as usize - self.sent).min(self.snd_len - self.sent);
+        let n = avail.min(SND_MSS);
+        if n == 0 {
+            return 0;
+        }
+        let seq = self.snd_una.wrapping_add(self.sent as u32);
+        let start = self.sent;
+        // Copy the payload out of snd_buf first (build borrows `out`, not self.snd_buf).
+        let mut seg = [0u8; SND_MSS];
+        seg[..n].copy_from_slice(&self.snd_buf[start..start + n]);
+        let len = self.build(PSH | ACK, seq, &seg[..n], out);
+        self.sent += n;
+        self.snd_nxt = self.snd_una.wrapping_add(self.sent as u32);
+        if self.tx_at_ms == 0 {
+            self.tx_at_ms = now_ms.max(1); // arm the RTO on the first segment in flight
+        }
+        len
     }
 
     /// Emit a bare window-update ACK when the receive window has re-opened since our last
@@ -182,20 +217,23 @@ impl TcpConn {
     /// The caller drives this once per poll with a millisecond clock — the app never decides
     /// *whether* to retransmit, only supplies the time and carries the bytes.
     pub fn tick(&mut self, now_ms: u32, out: &mut [u8]) -> usize {
-        if self.tx_data == 0 {
-            return 0;
+        if self.sent == 0 {
+            return 0; // nothing in flight
         }
         if self.tx_at_ms == 0 {
-            self.tx_at_ms = now_ms.max(1); // arm on the first tick after the segment went out
+            self.tx_at_ms = now_ms.max(1); // arm on the first tick after a segment went out
             return 0;
         }
         if now_ms.wrapping_sub(self.tx_at_ms) < self.rto_ms {
             return 0;
         }
-        self.tx_at_ms = now_ms.max(1);
+        // RTO fired: go back N — rewind the window and resend from the oldest unacked
+        // byte. `pump_tx` re-arms the timer as the first resent segment goes out.
         self.rto_ms = (self.rto_ms.saturating_mul(2)).min(RTO_MAX_MS);
-        out[..self.tx_len].copy_from_slice(&self.tx[..self.tx_len]);
-        self.tx_len
+        self.sent = 0;
+        self.snd_nxt = self.snd_una;
+        self.tx_at_ms = 0;
+        self.pump_tx(now_ms, out)
     }
 
     /// Begin an active close: send FIN|ACK. Returns its length.
@@ -242,17 +280,26 @@ impl TcpConn {
             return 0;
         }
 
-        // Clear the in-flight segment once its bytes are acknowledged; disarm the RTO.
-        if flags & ACK != 0 && self.tx_data != 0
-            && ack.wrapping_sub(self.tx_seq) >= self.tx_data as u32
-        {
-            self.tx_data = 0;
-            self.tx_len = 0;
-            self.tx_at_ms = 0;
-            self.rto_ms = RTO_INITIAL_MS;
-        }
+        // Process an ACK against the send window: free acknowledged bytes from snd_buf,
+        // advance snd_una, refresh the peer's advertised receive window, and reset the RTO
+        // (a fresh timer for whatever remains in flight). SYN/FIN consume a sequence but
+        // aren't in snd_buf; snd_len is 0 then, so no data bytes are removed.
         if flags & ACK != 0 {
-            self.snd_una = ack;
+            let acked = ack.wrapping_sub(self.snd_una);
+            let unacked = self.snd_nxt.wrapping_sub(self.snd_una);
+            if acked > 0 && acked <= unacked {
+                let data_acked = (acked as usize).min(self.snd_len);
+                if data_acked > 0 {
+                    self.snd_buf.copy_within(data_acked..self.snd_len, 0);
+                    self.snd_len -= data_acked;
+                    self.sent = self.sent.saturating_sub(data_acked);
+                }
+                self.snd_una = ack;
+                self.rto_ms = RTO_INITIAL_MS;
+                self.tx_at_ms = 0; // re-armed by pump_tx/tick if data is still in flight
+            }
+            // Peer's advertised receive window (we send window-scale 0, so it's unscaled).
+            self.peer_wnd = ((tcp[14] as u32) << 8) | tcp[15] as u32;
         }
 
         match self.state {
@@ -458,19 +505,83 @@ mod tests {
         let _ = srv.on_ip(&a[..n], &mut b); // server -> Established on the final ACK
         assert_eq!(srv.state, State::Established);
 
-        // Client -> server data; server buffers + ACKs; client clears its in-flight seg.
-        let n = cli.send(b"GET / HTTP/1.1", &mut a);
+        // Client -> server data; server buffers + ACKs; client's send window drains on ACK.
+        cli.enqueue(b"GET / HTTP/1.1");
+        let n = cli.pump_tx(1000, &mut a);
         let r = srv.on_ip(&a[..n], &mut b);
         assert_eq!(srv.rx_data(), b"GET / HTTP/1.1");
         assert!(r > 0);
         let _ = cli.on_ip(&b[..r], &mut a);
-        assert_eq!(cli.tx_data, 0);
+        assert_eq!(cli.snd_len, 0);
 
         // Server -> client data (a TLS record flight would be several of these).
         srv.take_rx();
-        let n = srv.send(b"HTTP/1.1 101\r\n\r\n", &mut b);
+        srv.enqueue(b"HTTP/1.1 101\r\n\r\n");
+        let n = srv.pump_tx(1000, &mut b);
         let _ = cli.on_ip(&b[..n], &mut a);
         assert_eq!(cli.rx_data(), b"HTTP/1.1 101\r\n\r\n");
+    }
+
+    #[test]
+    fn send_window_pipelines_multiple_segments() {
+        // Establish a connection, then prove the send window puts SEVERAL segments in
+        // flight before any ACK (the whole point vs stop-and-wait), bounded by the peer's
+        // advertised window, and that a cumulative ACK frees the buffer.
+        let (cli_ip, srv_ip) = ([10, 0, 0, 1], [10, 0, 0, 2]);
+        let mut cli = TcpConn::new(cli_ip, srv_ip, 5000, 443, 1000);
+        let mut srv = TcpConn::listen(srv_ip, 443, 9000);
+        let (mut a, mut b) = ([0u8; 1600], [0u8; 1600]);
+        let n = cli.connect(&mut a);
+        let r = srv.on_ip(&a[..n], &mut b);
+        let n = cli.on_ip(&b[..r], &mut a);
+        let _ = srv.on_ip(&a[..n], &mut b); // both Established; peer_wnd learned from the handshake
+        assert!(srv.peer_wnd >= 1500);
+
+        // Pipelining: enqueue 3200 bytes, then pump TWICE with no ACK in between — a second
+        // segment must go out before the first is acknowledged (stop-and-wait emits one).
+        let payload = [0x5au8; 3200];
+        assert_eq!(srv.enqueue(&payload), 3200);
+        let s1 = srv.pump_tx(1000, &mut b);
+        let mut a2 = [0u8; 1600];
+        let s2 = srv.pump_tx(1000, &mut a2);
+        assert!(s1 > 0 && s2 > 0, "two segments in flight before any ACK: {s1},{s2}");
+        assert_eq!(srv.sent, 1600, "in-flight capped at the peer's 1600-byte window");
+
+        // Now deliver everything: client buffers + ACKs each segment and drains so its
+        // window reopens; the server streams the rest. All 3200 bytes arrive, in order.
+        let mut delivered = 0usize;
+        for &seg in &[&s1, &s2] {
+            let buf = if *seg == s1 { &b } else { &a2 };
+            let r = cli.on_ip(&buf[..*seg], &mut a);
+            delivered += cli.rx_len;
+            cli.take_rx();
+            if r > 0 {
+                let _ = srv.on_ip(&a[..r], &mut b);
+            }
+        }
+        for _ in 0..60 {
+            if srv.snd_len == 0 {
+                break;
+            }
+            let m = srv.pump_tx(1000, &mut b);
+            if m > 0 {
+                let r = cli.on_ip(&b[..m], &mut a);
+                delivered += cli.rx_len;
+                cli.take_rx();
+                if r > 0 {
+                    let _ = srv.on_ip(&a[..r], &mut b);
+                }
+            } else {
+                // window full with nothing acked yet: nudge it with a client window update
+                let mut w = [0u8; 80];
+                let wn = cli.window_ack(&mut w);
+                if wn > 0 {
+                    let _ = srv.on_ip(&w[..wn], &mut b);
+                }
+            }
+        }
+        assert_eq!(delivered, 3200, "all bytes delivered in order");
+        assert_eq!(srv.snd_len, 0, "send buffer fully acknowledged");
     }
 
     impl TcpConn {
