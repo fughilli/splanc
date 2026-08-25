@@ -90,6 +90,20 @@ sh_binary(
     deps = ["@bazel_tools//tools/bash/runfiles"],
 )
 
+# Offline sibling: add the SAME persistent WiFi profiles to an ALREADY-IMAGED SD
+# card (no boot, no rebuild) — writes the seed-<ssid>.nmconnection into the card's
+# ext4 root via e2tools. An alias to the sbc-deploy target, which bundles e2tools
+# (an sbc-deploy-internal repo, so it can't be re-wrapped here); pass the wifi-seed
+# file by absolute path since `bazel run` starts in the runfiles tree. See the
+# script header for --device/--partition/--root + auto ext4-root detection.
+#   bazel run //pi/hitl:sd_seed_wifi -- --device /dev/sdX --ssid X --psk Y
+#   bazel run //pi/hitl:sd_seed_wifi -- --device /dev/sdX --file "$PWD/pi/secrets/wifi-seed.yaml"
+#   bazel run //pi/hitl:sd_seed_wifi -- --device /dev/sdX --list / --remove SSID
+alias(
+    name = "sd_seed_wifi",
+    actual = "@sbc_deploy//deploy:sd_seed_wifi",
+)
+
 # Re-seed the Tailscale auth key onto the rig (needed after a reflash wipes
 # /var/lib). Reads pi/secrets/tailscale-authkey + deploy_key.
 #   bazel run //pi/hitl:seed_tailscale_authkey [-- host]

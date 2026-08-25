@@ -1061,7 +1061,7 @@
     "@@rules_nixpkgs_core~//extensions:package.bzl%nix_pkg%sbc_deploy@_~nix_pkg": {
       "general": {
         "bzlTransitiveDigest": "2alEQC7q9PgrArc8ZeI662VmDHLGfuswqnzBJvVDnmg=",
-        "usagesDigest": "9nkCZdbDWN4/uJTDdVnmxIdj3d1XoDqS0FyBKxKOlcg=",
+        "usagesDigest": "U5MiJ121jF2S4Kfo+d52soaY4RhyXVkPFnVdsRkxv0w=",
         "recordedFileInputs": {},
         "recordedDirentsInputs": {},
         "envVariables": {},
@@ -1125,6 +1125,22 @@
               "repository": "@@rules_nixpkgs_core~~_nix_repo~sbc_deploy~~nix_repo~nixpkgs//:nixpkgs",
               "repositories": {},
               "build_file_content": "package(default_visibility = [\"//visibility:public\"])\n\nfilegroup(\n    name = \"pv\",\n    srcs = [\"bin/pv\"],\n)\n",
+              "nixopts": [],
+              "quiet": false,
+              "fail_not_supported": true
+            }
+          },
+          "nixpkgs_e2tools": {
+            "bzlFile": "@@rules_nixpkgs_core~//:nixpkgs.bzl",
+            "ruleClassName": "_nixpkgs_package",
+            "attributes": {
+              "unmangled_name": "nixpkgs_e2tools",
+              "attribute_path": "e2tools",
+              "nix_file_deps": {},
+              "nix_file_content": "",
+              "repository": "@@rules_nixpkgs_core~~_nix_repo~sbc_deploy~~nix_repo~nixpkgs//:nixpkgs",
+              "repositories": {},
+              "build_file_content": "package(default_visibility = [\"//visibility:public\"])\n\nfilegroup(\n    name = \"e2tools\",\n    srcs = glob([\"bin/*\"]),\n)\n\nfilegroup(\n    name = \"e2cp\",\n    srcs = [\"bin/e2cp\"],\n)\n",
               "nixopts": [],
               "quiet": false,
               "fail_not_supported": true
