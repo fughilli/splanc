@@ -291,27 +291,46 @@ firmware_binary(
 # the full //pi/hitl/harness:e2e_netstack (BLE provisioning included) on silicon.
 cc_binary(
     name = "player_app_netstack",
+    # SAME main.cpp as the vendor build, gated by -DLM_NETSTACK: the WiFi/WSS/mDNS/OSC
+    # transport is swapped for netstack_transport.cpp (our heapless MAC/WPA2/CCMP/DHCP/
+    # TCP/TLS/WS), while the render task, effects+JIT, upload, persistence, perf, hardware
+    # config and WS dispatch are shared verbatim.
     srcs = [
-        "main_netstack.cpp",
-        ":build_info_h",  # generated build_info.h (git commit + dirty flag)
+        "improv_ble.cpp",
+        "improv_ble.h",
+        "led_config.h",
+        "main.cpp",
+        "netstack_transport.cpp",
+        "netstack_transport.h",
+        "player_ffi.h",
+        "serial_log.h",
+        "ws2812_rmt.cpp",
+        "ws2812_rmt.h",
+        ":build_info_h",
     ],
     copts = ["-fno-rtti"],
     # Two no_std Rust staticlibs (the netstack's wifi_sta_ffi + our player_ffi) each
     # define the panic handler (rust_begin_unwind)/eh_personality; take the first.
     linkopts = ["-Wl,--allow-multiple-definition"],
+    local_defines = [
+        "LM_MAX_LEDS=%d" % MAX_LEDS,
+        "LM_NETSTACK",
+    ],
     target_compatible_with = select({
         "@embedded//platforms:is_esp32c6": [],
         "//conditions:default": ["@platforms//:incompatible"],
     }),
     deps = [
         ":board_caps_res",
-        ":improv_ble",
+        ":color_correction",
         ":improv_codec",
         ":player_ffi",
-        ":player_ffi_hdr",
         ":ws_codec",
+        "//firmware/landing:landing_page",
         "//firmware/netstack:wifi_sta_ffi",  # ns_* heapless MAC/CCMP/TCP FFI
         "@embedded//libs/board:arduino_core",
+        "@embedded//libs/vendor:ble",
+        "@embedded//libs/vendor:preferences",
         "@embedded//libs/vendor:wifi",  # reversed vendor MAC/PM externs the netstack drives
     ],
 )

@@ -15,29 +15,18 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <esp_wifi.h>
+#include <esp_event.h>
+#include <esp_netif.h>
+#include <esp_heap_caps.h>
 #include <esp_random.h>
-#include <esp_mac.h>
 #include <string.h>
 #include <mbedtls/ssl.h>
 #include <mbedtls/x509_crt.h>
 #include <mbedtls/pk.h>
-#include "ws_codec.h"      // RFC6455 server codec
-#include "player_ffi.h"    // lm_player_* session core
-#include "improv_ble.h"    // BLE Improv onboarding (advertise + creds)
-#include "improv_codec.h"  // IMPROV_STATE_* constants
-#include "serial_log.h"    // Log() ring + log_drain_start (improv_ble logs here)
-#include "build_info.h"    // LM_GIT_COMMIT / LM_GIT_DIRTY (stamped at build time)
-
-// Board capability descriptor, compiled from //firmware/player_app:board_caps_res
-// (symbols named after the binaryproto basename). Handed to the player at boot so
-// get_hardware_config echoes this board's real GPIO/LED-type catalog.
-extern "C" const unsigned char board_caps_binaryproto[];
-extern "C" const unsigned board_caps_binaryproto_len;
-
-// The player + TLS + WS + link-pump call chain is deep (mbedtls records, protobuf encode
-// of the ~800B hardware_config_state, and pump_link_once→handle_l3 nested inside a TLS
-// write). 24KB overflowed on get_hardware_config; give loopTask generous headroom.
-SET_LOOP_TASK_STACK_SIZE(49152);
+#include "ws_codec.h"        // RFC6455 server codec
+#include "improv_ble.h"      // BLE Improv onboarding (advertise + creds)
+#include "improv_codec.h"    // IMPROV_STATE_* constants
+#include "netstack_transport.h"  // our public API + the shared lm_ws_dispatch seam
 
 extern "C" {
 void ns_mac_rx_install();
@@ -92,15 +81,10 @@ uint32_t ic_set_vif(uint32_t vif, uint32_t mode, const uint8_t *mac, uint32_t a3
 void pm_disconnected_stop();
 void pm_go_to_wake();
 int ieee80211_ioctl(void *req);
-
-// On-device effects JIT trampoline — defined in the player_app's main.cpp, which we
-// don't link. The e2e path runs no effects, so stub it OFF: region_words()==0 makes the
-// player skip the JIT entirely (ffi.rs: a 0-word region disables it). fence.i is cheap.
-uint32_t *lm_jit_region_ptr(void) { return nullptr; }
-size_t lm_jit_region_words(void) { return 0; }
-void lm_jit_arm(void) {}
-void lm_jit_sync_icache(void) { asm volatile("fence.i" ::: "memory"); }
 }
+// NB: the on-device effects JIT trampoline (lm_jit_region_ptr/words/arm/sync_icache) is
+// provided by main.cpp — building this transport INTO the player gives us the REAL JIT
+// (no stub), so fx_bench_jit / jit_soak / led_capture_jit exercise it for real.
 
 // ioctl handler: bring up continuous STA RX in the WiFi-task context.
 const uint8_t *g_our_mac_ptr = nullptr;
@@ -658,7 +642,11 @@ void tls_init() {
 // time_sync, set_device_name, get_hardware_config — all handled inside lm_player_handle.
 constexpr bool PLAYER_MODE = true;
 bool g_ws_up = false;
-uint8_t g_ws_rx[8192];
+// WS reassembly buffer. Clients shard anything over CHUNK_BYTES (4096) into UploadChunk
+// windows, so a single inbound frame never exceeds ~4KB + protobuf overhead — 6KB is ample.
+// Kept small on purpose: on the C6 all internal SRAM is DMA-capable, and oversized BSS here
+// starves the WiFi driver's DMA RX-buffer allocation (esp_wifi_init fails, beacons=0).
+uint8_t g_ws_rx[6144];
 size_t g_ws_rxlen = 0;
 
 // Receive + decrypt one link frame and drive it through the L3/TCP handler. Called from
@@ -706,7 +694,9 @@ static bool tls_write_all(const uint8_t *buf, size_t len) {
 // Frame + send one server WS message (unmasked). Header + payload go out as ONE buffer so
 // a small reply is a single TLS record / TCP segment (no mid-message stop-and-wait stall).
 static void ws_send(uint8_t opcode, const uint8_t *payload, size_t len) {
-  static uint8_t frame[8208];
+  // Server replies come from the app's tx buffer (<=2KB); size the coalesce buffer to match
+  // (the oversized path below handles anything larger). Small on purpose — see g_ws_rx note.
+  static uint8_t frame[2560];
   uint8_t hdr[10];
   size_t hn = ws_build_frame_header(opcode, len, hdr);
   if (hn + len <= sizeof(frame)) {
@@ -757,13 +747,12 @@ static bool ws_pump() {
     uint8_t *payload = g_ws_rx + h.header_len;
     if (h.masked) ws_unmask(payload, h.payload_len, h.mask, 0);
     if (h.opcode == WS_OP_BINARY || h.opcode == WS_OP_CONT) {
-      // NB: e2e messages are single-frame; sharded map/topology uploads (upload_chunk)
-      // aren't needed for the hello/time_sync/name/hw-config checks — handle directly.
-      static uint8_t tx[8192];
-      int64_t now = (int64_t)millis();
-      int32_t tn = lm_player_handle(payload, h.payload_len, now, now, tx, sizeof tx);
-      Serial.printf("*** WS msg %u B -> player reply %d B ***\n", (unsigned)h.payload_len, (int)tn);
-      if (tn > 0) ws_send(WS_OP_BINARY, tx, tn);
+      // Hand the message to the SHARED app dispatch (main.cpp): upload-chunk streaming +
+      // lm_player_handle + persistence + device-side polling, identical to the vendor ws/wss
+      // paths. Returns the reply length; reply bytes are in *reply (the app's tx buffer).
+      const uint8_t *reply = nullptr;
+      int tn = lm_ws_dispatch(payload, (size_t)h.payload_len, &reply);
+      if (tn > 0 && reply) ws_send(WS_OP_BINARY, reply, (size_t)tn);
     } else if (h.opcode == WS_OP_PING) {
       ws_send(WS_OP_PONG, payload, h.payload_len);
     } else if (h.opcode == WS_OP_CLOSE) {
@@ -776,48 +765,57 @@ static bool ws_pump() {
   return true;
 }
 
-void player_init() {
-  lm_player_init(64);
-  // Identity: factory MAC + a default display name (the e2e renames it via
-  // set_device_name and expects the welcome to echo the change).
-  uint8_t mac[6];
-  esp_read_mac(mac, ESP_MAC_WIFI_STA);
-  const char *name = "LED Mapper (heapless)";
-  lm_player_set_identity(mac, sizeof mac, (const uint8_t *)name, strlen(name));
-  // Real build info stamped at build time (FUG-126): the full git commit + dirty flag,
-  // echoed in every welcome (fwGitCommit/fwGitDirty), same as the vendor-WiFi player.
-  lm_player_set_build_info((const uint8_t *)LM_GIT_COMMIT, strlen(LM_GIT_COMMIT), LM_GIT_DIRTY);
-  lm_set_board_caps(board_caps_binaryproto, board_caps_binaryproto_len);
-  Serial.printf("player init: board_caps=%u B\n", board_caps_binaryproto_len);
+// Push an unsolicited server frame (a PerfReport) over the active TLS/WS, if a client is
+// upgraded. Called from the app's perf-report cadence. Best-effort (drops if not connected).
+bool netstack_ws_send_frame(const uint8_t *data, size_t len) {
+  if (!g_tls_hs || !g_ws_up) return false;
+  ws_send(WS_OP_BINARY, data, len);
+  return true;
 }
+bool netstack_ws_is_open() { return g_tls_hs && g_ws_up; }
 
 } // namespace
 
-void setup() {
-  Serial.begin(115200);
-  // NON-BLOCKING serial (THE provisioning fix): on the C6's USB-Serial-JTAG, Serial.write
-  // BLOCKS when the TX FIFO fills and no host is draining the port. Our heavy debug logging
-  // then wedges loopTask mid-association whenever serial isn't monitored — which is exactly
-  // the HITL provisioning phase (the harness monitors only during flash). A 0ms TX timeout
-  // makes writes drop instead of block, so the stack keeps running headless. This is why
-  // every serial-monitored test passed while the real harness join timed out.
+bool netstack_ws_send(const uint8_t *data, size_t len) { return netstack_ws_send_frame(data, len); }
+bool netstack_ws_open() { return netstack_ws_is_open(); }
+
+// Bring up the heapless WiFi transport. Call from the app's setup() AFTER the shared player
+// init + improv_ble_begin (BLE must init before we hijack the MAC so our radio setup wins).
+void netstack_setup() {
+  // NON-BLOCKING serial: on the C6 USB-Serial-JTAG, Serial.write BLOCKS when the TX FIFO
+  // fills with no host draining the port, which would wedge loopTask mid-association during
+  // the HITL provisioning phase (the harness monitors serial only during flash). 0ms TX
+  // timeout drops instead of blocks so the stack runs headless. (The app routes its own logs
+  // through the non-blocking Log() ring; this covers our direct Serial.printf diagnostics.)
   Serial.setTxTimeoutMs(0);
-  delay(300);
-  Serial.println("wifi_sta_own: heapless STA owning the MAC (no promiscuous)");
   uint8_t aesct[16];
   uint32_t aes = ns_aes_selftest(aesct);
-  Serial.printf("AES self-test: enc=%d dec=%d ct=%02x%02x%02x%02x (want 69c4e0d8)\n",
+  Serial.printf("[netstack] AES self-test: enc=%d dec=%d ct=%02x%02x%02x%02x (want 69c4e0d8)\n",
                 aes & 1, (aes >> 1) & 1, aesct[0], aesct[1], aesct[2], aesct[3]);
-  // BLE Improv onboarding FIRST: bring up the BT controller before we hijack the MAC, so
-  // our heapless RX/BSSID/force-awake setup runs last and wins the shared radio config.
-  // (BLE-after-WiFi wedged association — the BT controller init reset radio/coex state.)
-  if (PLAYER_MODE) {
-    log_drain_start();  // flush improv_ble's Log() ring to serial — the harness reads the
-                        // "[ble] advertising ... as <MAC>" line to find the DUT's BLE MAC.
-    improv_ble_begin("LED Mapper (heapless)", IMPROV_STATE_AUTHORIZED);
-  }
-  WiFi.mode(WIFI_STA);
-  esp_wifi_start();
+  // The BT controller is already up (the app's improv_ble_begin ran first); hijack the MAC
+  // last so our heapless RX/BSSID/force-awake setup wins the shared radio config.
+  //
+  // We OWN the RX ring (ns_mac_rx_install), so the vendor WiFi driver's default static/dynamic
+  // RX buffers are pure waste — and they're DMA-capable, the scarce pool the RMT LED driver +
+  // our ring also draw from. Under the full player runtime those allocs FAIL (beacons=0), so
+  // init esp_wifi with a minimal RX/TX buffer config instead of Arduino's WiFi.mode defaults.
+  esp_netif_init();
+  esp_event_loop_create_default();  // BLE may have created it already (ESP_ERR_INVALID_STATE ok)
+  wifi_init_config_t wcfg = WIFI_INIT_CONFIG_DEFAULT();
+  wcfg.static_rx_buf_num = 2;    // default 10 — we own the RX ring, minimize the vendor's DMA
+  wcfg.dynamic_rx_buf_num = 6;   // default 32
+  wcfg.static_tx_buf_num = 2;
+  wcfg.ampdu_rx_enable = 0;      // no block-ack reorder buffers (big DMA saving)
+  wcfg.ampdu_tx_enable = 0;
+  wcfg.rx_ba_win = 0;
+  wcfg.cache_tx_buf_num = 0;
+  esp_err_t werr = esp_wifi_init(&wcfg);
+  esp_wifi_set_storage(WIFI_STORAGE_RAM);
+  esp_wifi_set_mode(WIFI_MODE_STA);
+  esp_err_t serr = esp_wifi_start();
+  Serial.printf("[netstack] esp_wifi_init(min-bufs)=%d start=%d free=%u dma=%u\n", (int)werr,
+                (int)serr, (unsigned)esp_get_free_heap_size(),
+                (unsigned)heap_caps_get_free_size(MALLOC_CAP_DMA));
   uint8_t rnd[4]; esp_fill_random(rnd, 4);
   OUR_MAC[0] = 0x02; OUR_MAC[1] = 0x0c; OUR_MAC[2] = 0x6a;
   OUR_MAC[3] = rnd[0]; OUR_MAC[4] = rnd[1]; OUR_MAC[5] = rnd[2];
@@ -851,13 +849,15 @@ void setup() {
     if (n && rx[0] == 0x80) beacons++;
     delay(3);
   }
-  Serial.printf("RX sanity (STA vif, no promiscuous, HW crypto inline): beacons=%u\n", beacons);
-  if (TCP_SERVER && TLS_SERVER) tls_init();
-  if (TCP_SERVER && TLS_SERVER && PLAYER_MODE) player_init();
+  Serial.printf("[netstack] RX sanity (STA vif, no promiscuous, HW crypto inline): beacons=%u\n",
+                beacons);
+  tls_init();
 }
 
 enum St { AUTH, ASSOC, FOURWAY, DONE };
-void loop() {
+// Service the transport once per app loop(): RX drain + on_ip + DHCP + BLE-Improv join +
+// TLS handshake + WS pump (dispatched via lm_ws_dispatch). Non-blocking; returns quickly.
+void netstack_loop() {
   static St st = AUTH;
   static uint32_t t = 0;
   static bool inited = false;
