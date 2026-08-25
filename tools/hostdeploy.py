@@ -130,9 +130,16 @@ def main() -> int:
             alivef.write_text(str(time.time()))
             if reqf.exists():
                 req = json.loads(reqf.read_text())
-                if req.get("id") != seen:
-                    seen = req.get("id")
-                    run(req)
+                rid = req.get("id")
+                if rid != seen:
+                    seen = rid
+                    # Idempotent across restarts: a request that already ran wrote
+                    # its <id>.status, so skip it rather than re-executing the last
+                    # request.json every time the watcher restarts.
+                    if (BOX / f"{rid}.status").exists():
+                        log(f"skip #{rid}: already completed (status exists)")
+                    else:
+                        run(req)
         except KeyboardInterrupt:
             log("stopping.")
             return 0
