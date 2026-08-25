@@ -48,7 +48,10 @@ def main() -> int:
     args = ap.parse_args()
 
     caps = [c.strip() for c in args.require_caps.split(",") if c.strip()]
-    res = Reservation(server=args.server, owner=args.owner, require_caps=caps)
+    # Pin by SKU so this fanned-out variant lands on its exact hardware (a C6 vs the
+    # Pi), not just any DUT that happens to share the capability; require_caps is
+    # kept as a sanity constraint (the SKU must also advertise the caps).
+    res = Reservation(server=args.server, owner=args.owner, sku=args.sku, require_caps=caps)
     res.acquire()
     print(f"[improv-e2e] reserved {res.id} sku={args.sku} caps={caps} on {res.server}", flush=True)
     try:

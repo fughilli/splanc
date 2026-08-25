@@ -67,6 +67,7 @@ class Reservation:
         require: str | None = None,
         device: str | None = None,
         require_caps: list[str] | None = None,
+        sku: str | None = None,
     ):
         # server=None lets `hitl` select a free rig from the pool (tag discovery
         # or $HITL_SERVERS); once acquired, self.server pins the chosen rig so
@@ -76,12 +77,16 @@ class Reservation:
         # of whichever frees first — for walking every DUT (see hitl_dut_id.py).
         # require_caps (e.g. ["improv"]) lands on any free DUT whose advertised
         # capabilities are a superset — how a capability-targeted test runs on any
-        # SKU that satisfies it (esp32c6, led-mapper-pi, …).
+        # SKU that satisfies it (esp32c6, led-mapper-pi, …). sku (e.g.
+        # "led-mapper-pi") pins to any free DUT of that hardware SKU — an explicit
+        # hardware target, so unlike require_caps it can reach a pin-only network
+        # DUT; a SKU-fanned test uses it to run on its exact hardware.
         self.server = server
         self.owner = owner or os.environ.get("HITL_OWNER")
         self.require = require
         self.device = device
         self.require_caps = require_caps
+        self.sku = sku
         self._hitl = hitl or default_hitl()
         self.id: str | None = None
         self.host: str | None = None
@@ -100,6 +105,8 @@ class Reservation:
             argv += ["--require", self.require]
         if self.require_caps:
             argv += ["--require-caps", ",".join(self.require_caps)]
+        if self.sku:
+            argv += ["--sku", self.sku]
         if self.device:
             argv += ["--device", self.device]
         # stderr inherits (human progress -> our logs); stdout is the machine

@@ -11,6 +11,7 @@ package pool
 
 import (
 	"fmt"
+	"math"
 	"net/url"
 	"sort"
 	"strings"
@@ -127,32 +128,97 @@ func Probes(servers []string, get StatusFn) []Probe {
 
 // Require is an optional capability filter for Pick: only rigs whose /status
 // advertises the required capability are considered.
+// Require is a rig-selection filter: keep only rigs that can serve a reservation
+// needing this hardware SKU and/or these per-DUT capabilities. The logic analyzer
+// is just another capability ("logic-analyzer"), advertised per-DUT by the daemon —
+// there is no separate rig-level analyzer knob.
 type Require struct {
-	Analyzer bool     // require a shared logic analyzer (rig-level, Status.Analyzer.Present)
-	Caps     []string // require a FREE DUT whose Capabilities ⊇ Caps (per-DUT)
+	SKU  string   // require a FREE DUT of this hardware SKU ("" = any)
+	Caps []string // require a FREE DUT whose Capabilities ⊇ Caps
 }
 
-// hasAnalyzer reports whether a reachable probe advertises a logic analyzer.
-func hasAnalyzer(p Probe) bool {
-	return p.Err == nil && p.Status != nil && p.Status.Analyzer != nil && p.Status.Analyzer.Present
+// dutServes reports whether a free DeviceStatus can host a reservation for the given
+// SKU and caps under the pin rules the pool can see. An explicit SKU target may land
+// on a pin-only network DUT; a caps-only/unconstrained request never does — matching
+// the daemon's own placement, so the pool doesn't route work to a rig whose only fit
+// is a DUT the daemon will refuse.
+func dutServes(d api.DeviceStatus, sku string, caps []string) bool {
+	if d.Active != nil {
+		return false // busy
+	}
+	if sku != "" && d.SKU != sku {
+		return false
+	}
+	if !capsSubset(caps, d.Capabilities) {
+		return false
+	}
+	if sku == "" && d.Kind == "network" {
+		return false // a caps-only/unconstrained request never targets a pin-only DUT
+	}
+	return true
 }
 
-// hasFreeDUTWithCaps reports whether the rig has a currently-free DUT whose
-// advertised capabilities are a superset of caps — so a capability-targeted
-// reservation can actually land there right now.
-func hasFreeDUTWithCaps(p Probe, caps []string) bool {
+// hasFreeServingDUT reports whether the rig has a currently-free DUT that can serve
+// the reservation right now (SKU + caps + pin rules).
+func hasFreeServingDUT(p Probe, sku string, caps []string) bool {
 	if p.Err != nil || p.Status == nil {
 		return false
 	}
 	for _, d := range p.Status.Devices {
-		if d.Active != nil {
-			continue // busy
-		}
-		if capsSubset(caps, d.Capabilities) {
+		if dutServes(d, sku, caps) {
 			return true
 		}
 	}
 	return false
+}
+
+// fitScore is the fewest capabilities beyond `caps` among a rig's FREE DUTs that can
+// serve the reservation — the tightest DUT the rig can offer right now. A rig with
+// no free serving DUT scores math.MaxInt (ranked last on fit), so a rig that can
+// serve now always beats one that can't. Lower is a better fit.
+func fitScore(p Probe, sku string, caps []string) int {
+	best := math.MaxInt
+	if p.Err != nil || p.Status == nil {
+		return best
+	}
+	for _, d := range p.Status.Devices {
+		if !dutServes(d, sku, caps) {
+			continue
+		}
+		if e := extraCaps(d.Capabilities, caps); e < best {
+			best = e
+		}
+	}
+	return best
+}
+
+// describeReq renders a Require for an error message ("sku led-mapper-pi",
+// "caps [improv mic]", or both).
+func describeReq(r Require) string {
+	switch {
+	case r.SKU != "" && len(r.Caps) > 0:
+		return fmt.Sprintf("sku %s + caps %v", r.SKU, r.Caps)
+	case r.SKU != "":
+		return fmt.Sprintf("sku %s", r.SKU)
+	default:
+		return fmt.Sprintf("caps %v", r.Caps)
+	}
+}
+
+// extraCaps counts the capabilities a DUT has beyond those required. Robust to
+// duplicates in need.
+func extraCaps(have, need []string) int {
+	req := make(map[string]bool, len(need))
+	for _, c := range need {
+		req[c] = true
+	}
+	n := 0
+	for _, c := range have {
+		if !req[c] {
+			n++
+		}
+	}
+	return n
 }
 
 // capsSubset reports whether every cap in need is present in have.
@@ -171,8 +237,9 @@ func capsSubset(need, have []string) bool {
 
 // Pick chooses the best runner from already-collected probes. It returns the
 // chosen base URL, or an error if every runner was unreachable. An optional
-// Require narrows the pool to capability-matching rigs first, so a test that
-// needs to capture the wire gets an analyzer rig, not whichever frees first.
+// Require narrows the pool to rigs with a free capability-matching DUT first, then
+// best-fit ranking keeps scarce, over-provisioned rigs (e.g. one with a logic
+// analyzer) free for the work that needs them.
 func Pick(probes []Probe, req ...Require) (string, error) {
 	if len(probes) == 0 {
 		return "", fmt.Errorf("no runners in pool")
@@ -181,38 +248,38 @@ func Pick(probes []Probe, req ...Require) (string, error) {
 	if len(req) > 0 {
 		r = req[0]
 	}
-	if r.Analyzer {
+	if r.SKU != "" || len(r.Caps) > 0 {
 		var capable []Probe
 		for _, p := range probes {
-			if hasAnalyzer(p) {
+			if hasFreeServingDUT(p, r.SKU, r.Caps) {
 				capable = append(capable, p)
 			}
 		}
 		if len(capable) == 0 {
-			return "", fmt.Errorf("no logic-analyzer rig in pool of %d: %s", len(probes), summarizeErrs(probes))
+			return "", fmt.Errorf("no rig with a free DUT matching %s in pool of %d: %s", describeReq(r), len(probes), summarizeErrs(probes))
 		}
 		probes = capable
 	}
-	if len(r.Caps) > 0 {
-		var capable []Probe
-		for _, p := range probes {
-			if hasFreeDUTWithCaps(p, r.Caps) {
-				capable = append(capable, p)
-			}
-		}
-		if len(capable) == 0 {
-			return "", fmt.Errorf("no rig with a free DUT having caps %v in pool of %d: %s", r.Caps, len(probes), summarizeErrs(probes))
-		}
-		probes = capable
+	// Best-fit is the primary selection criterion: prefer the rig whose tightest
+	// free DUT has the fewest capabilities beyond what's required, so scarce,
+	// over-provisioned rigs (e.g. one with a logic-analyzer DUT) aren't consumed by
+	// work that doesn't need them. Precompute the fit once per rig (the comparator
+	// runs O(n log n) times); ties fall through to the load heuristics.
+	fit := make(map[string]int, len(probes))
+	for _, p := range probes {
+		fit[p.URL] = fitScore(p, r.SKU, r.Caps)
 	}
-	// Stable sort keeps input order as the tie-break; keys: reachable first,
-	// then idle first, then shortest queue.
+	// Stable sort keeps input order as the final tie-break; keys: reachable first,
+	// then tightest fit, then idle, then more free DUTs, then shortest queue.
 	ordered := make([]Probe, len(probes))
 	copy(ordered, probes)
 	sort.SliceStable(ordered, func(i, j int) bool {
 		a, b := ordered[i], ordered[j]
 		if (a.Err == nil) != (b.Err == nil) {
 			return a.Err == nil // reachable before unreachable
+		}
+		if fa, fb := fit[a.URL], fit[b.URL]; fa != fb {
+			return fa < fb // tightest-fitting free DUT first
 		}
 		if a.idle() != b.idle() {
 			return a.idle() // idle before busy

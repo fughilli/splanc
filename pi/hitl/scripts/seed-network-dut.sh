@@ -14,7 +14,8 @@
 # never collide with a discovered board (c6-*). --addr is the DUT's LAN management
 # address (mDNS host or IP) — prefer its ETHERNET address so provisioning (which
 # cycles the DUT's WiFi) can never drop monitoring/journalctl. The DUT is PIN-ONLY:
-# only `hitl reserve --device <name>` lands on it, never an unpinned "any DUT" run.
+# only an explicit hardware target — `hitl reserve --device <name>` or `--sku <sku>`
+# — lands on it, never an unpinned "any DUT" or a bare `--require-caps` request.
 #
 # JSON is merged locally (the rig host may lack python3/jq) and shipped atomically.
 set -euo pipefail

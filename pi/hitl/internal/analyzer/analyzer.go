@@ -150,6 +150,34 @@ func (b *Broker) Describe() *api.AnalyzerInfo {
 // math on sample offsets. Returns 0 if it can't be parsed.
 func (b *Broker) SampleRateHz() int { return parseSampleRate(b.cfg.SampleRate) }
 
+// Taps reports whether this rig's shared analyzer is wired to the named DUT's data
+// line — i.e. the DUT should advertise the "logic-analyzer" capability. The
+// analyzer is rig wiring, not a SKU trait: two identical DUTs can differ, so this
+// is the source of truth for that capability. True when the broker is enabled AND
+// either the DUT has an explicit channel-map entry, or a default ("") entry exists
+// and no DUT has an explicit tap (a uniform or single-DUT rig, where every DUT is
+// captured on the default channels). On a mixed rig, give the tapped DUTs explicit
+// entries so un-tapped DUTs don't falsely advertise the analyzer.
+func (b *Broker) Taps(dut string) bool {
+	if !b.Enabled() {
+		return false
+	}
+	b.mapMu.RLock()
+	defer b.mapMu.RUnlock()
+	if _, ok := b.cfg.Map[dut]; ok {
+		return true
+	}
+	if _, hasDefault := b.cfg.Map[""]; hasDefault {
+		for k := range b.cfg.Map {
+			if k != "" {
+				return false // explicit taps exist; this un-mapped DUT isn't one
+			}
+		}
+		return true
+	}
+	return false
+}
+
 // mapping resolves a DUT name to its channel/protocol assignment, falling back to
 // the default ("") entry, then to a single-channel D0/ws2812 tap so a
 // minimally-configured rig still captures its sole DUT.

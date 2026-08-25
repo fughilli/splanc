@@ -157,19 +157,19 @@ func main() {
 	var mon *dutMonitor
 	switch {
 	case len(duts) > 0:
-		devs, err = buildDevices(duts, *sshPort, devices)
+		devs, err = buildDevices(duts, *sshPort, devices, brk)
 	case *discover:
 		netFile := *networkDutsFile
 		if netFile == "" {
 			netFile = filepath.Join(*stateDir, "network-duts.json")
 		}
-		mon = newDUTMonitor(*discoverGlob, *sshPort, *discoverMax, *discoverRetention, netFile, *networkMax)
+		mon = newDUTMonitor(*discoverGlob, *sshPort, *discoverMax, *discoverRetention, netFile, *networkMax, brk)
 		devs, err = mon.scan()
 		if err == nil && len(devs) == 0 {
 			log.Printf("discover: no DUTs matched %q yet; will attach them live as they appear", *discoverGlob)
 		}
 	default:
-		devs, err = buildDevices(nil, *sshPort, devices)
+		devs, err = buildDevices(nil, *sshPort, devices, brk)
 	}
 	if err != nil {
 		log.Fatalf("dut config: %v", err)
@@ -266,11 +266,20 @@ const defaultUSBSKU = "esp32c6"
 
 // withCaps fills a Device's Capabilities from its SKU (the registry), warning on an
 // unknown SKU (which yields no capabilities — the DUT then matches no requirement).
-func withCaps(d runner.Device) runner.Device {
+// It also merges in rig-wiring capabilities that aren't SKU traits: a DUT tapped by
+// this rig's shared logic analyzer advertises "logic-analyzer", so capability
+// selection (and best-fit) treat the analyzer like any other capability. brk may be
+// nil (no analyzer on this rig).
+func withCaps(d runner.Device, brk *analyzer.Broker) runner.Device {
 	if d.SKU != "" && !skus.Known(d.SKU) {
 		log.Printf("dut %s: unknown SKU %q; advertising no capabilities", d.Name, d.SKU)
 	}
-	d.Capabilities = skus.Capabilities(d.SKU)
+	caps := skus.Capabilities(d.SKU)
+	if brk.Taps(d.Name) {
+		caps = append(caps, "logic-analyzer")
+		sort.Strings(caps)
+	}
+	d.Capabilities = caps
 	return d
 }
 
@@ -278,9 +287,9 @@ func withCaps(d runner.Device) runner.Device {
 // synthesizes a single DUT from the legacy --ssh-port/--device flags, preserving
 // the original single-DUT behavior. It rejects duplicate names and ports so a
 // misconfiguration can't collide two DUTs onto one container port.
-func buildDevices(duts []string, sshPort int, devices []string) ([]runner.Device, error) {
+func buildDevices(duts []string, sshPort int, devices []string, brk *analyzer.Broker) ([]runner.Device, error) {
 	if len(duts) == 0 {
-		return []runner.Device{withCaps(runner.Device{Name: "dut0", SKU: defaultUSBSKU, SSHPort: sshPort, Devices: devices})}, nil
+		return []runner.Device{withCaps(runner.Device{Name: "dut0", SKU: defaultUSBSKU, SSHPort: sshPort, Devices: devices}, brk)}, nil
 	}
 	var out []runner.Device
 	names, ports := map[string]bool{}, map[int]bool{}
@@ -306,7 +315,7 @@ func buildDevices(duts []string, sshPort int, devices []string) ([]runner.Device
 		if sku == "" && s.Kind != "network" {
 			sku = defaultUSBSKU // an explicit USB DUT that omits its SKU is a C6
 		}
-		out = append(out, withCaps(runner.Device{Name: s.Name, Kind: s.Kind, SKU: sku, SSHPort: s.SSHPort, Devices: s.Devices, Env: s.Env}))
+		out = append(out, withCaps(runner.Device{Name: s.Name, Kind: s.Kind, SKU: sku, SSHPort: s.SSHPort, Devices: s.Devices, Env: s.Env}, brk))
 	}
 	return out, nil
 }
@@ -434,9 +443,11 @@ type dutMonitor struct {
 	netBase, netMax int
 	netLast         map[string]runner.Device
 	lastGoodNetwork []runner.Device
+
+	brk *analyzer.Broker // resolves the per-DUT "logic-analyzer" capability (may be nil)
 }
 
-func newDUTMonitor(glob string, basePort, maxDuts int, retention time.Duration, networkFile string, netMax int) *dutMonitor {
+func newDUTMonitor(glob string, basePort, maxDuts int, retention time.Duration, networkFile string, netMax int, brk *analyzer.Broker) *dutMonitor {
 	return &dutMonitor{
 		glob:        glob,
 		basePort:    basePort,
@@ -449,6 +460,7 @@ func newDUTMonitor(glob string, basePort, maxDuts int, retention time.Duration, 
 		netBase:     basePort + maxDuts, // dedicated range, above the USB pool
 		netMax:      netMax,
 		netLast:     map[string]runner.Device{},
+		brk:         brk,
 	}
 }
 
@@ -482,7 +494,7 @@ func (dm *dutMonitor) scan() ([]runner.Device, error) {
 			continue
 		}
 		used[port] = true
-		dm.last[b.name] = withCaps(runner.Device{Name: b.name, SKU: defaultUSBSKU, SSHPort: port, Devices: b.devices, Env: b.env})
+		dm.last[b.name] = withCaps(runner.Device{Name: b.name, SKU: defaultUSBSKU, SSHPort: port, Devices: b.devices, Env: b.env}, dm.brk)
 	}
 	// Absent boards: drop (and free the port of) only those gone for the whole
 	// retention window; a briefly-missing board (resetting DUT) is kept.
@@ -586,7 +598,7 @@ func (dm *dutMonitor) readNetworkDUTs() ([]runner.Device, error) {
 			continue
 		}
 		used[port] = true
-		dev := withCaps(runner.Device{Name: s.Name, Kind: "network", SKU: s.SKU, SSHPort: port, Env: s.Env})
+		dev := withCaps(runner.Device{Name: s.Name, Kind: "network", SKU: s.SKU, SSHPort: port, Env: s.Env}, dm.brk)
 		next[s.Name] = dev
 		out = append(out, dev)
 	}

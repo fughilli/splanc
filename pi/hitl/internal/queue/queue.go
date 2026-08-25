@@ -40,6 +40,7 @@ type Manager struct {
 	items []*api.Reservation  // admission order; several may be Active (one per DUT)
 	keys  map[string]string   // reservation id -> SSH pubkey (not serialized out)
 	want  map[string]string   // reservation id -> pinned DUT name ("" = any free DUT)
+	sku   map[string]string   // reservation id -> pinned hardware SKU ("" = any SKU)
 	caps  map[string][]string // reservation id -> required DUT capabilities (nil = none)
 
 	// Monotonic lifecycle counters, exported via Metrics() for /metrics. Guarded
@@ -93,7 +94,7 @@ func WithDevices(devs []runner.Device) Option {
 // New creates a Manager. lease is the heartbeat window: an active reservation
 // whose holder stops heartbeating for longer than lease is reaped.
 func New(rig string, lease time.Duration, run runner.Runner, opts ...Option) *Manager {
-	m := &Manager{rig: rig, lease: lease, run: run, keys: map[string]string{}, want: map[string]string{}, caps: map[string][]string{}}
+	m := &Manager{rig: rig, lease: lease, run: run, keys: map[string]string{}, want: map[string]string{}, sku: map[string]string{}, caps: map[string][]string{}}
 	for _, o := range opts {
 		o(m)
 	}
@@ -290,6 +291,9 @@ func (m *Manager) Reserve(ctx context.Context, req api.ReserveRequest) *api.Rese
 	if req.Device != "" {
 		m.want[r.ID] = req.Device
 	}
+	if req.SKU != "" {
+		m.sku[r.ID] = req.SKU
+	}
 	if len(req.RequireCaps) > 0 {
 		m.caps[r.ID] = append([]string(nil), req.RequireCaps...)
 	}
@@ -351,6 +355,8 @@ func (m *Manager) Release(ctx context.Context, id, reason string) error {
 	}
 	delete(m.keys, id)
 	delete(m.want, id)
+	delete(m.sku, id)
+	delete(m.caps, id)
 	m.items = append(m.items[:idx], m.items[idx+1:]...)
 	m.reconcileLocked(ctx)
 	return nil
@@ -612,10 +618,11 @@ func (m *Manager) anyOtherActiveLocked(exceptID string) bool {
 	return false
 }
 
-// nextAssignmentLocked finds a free DUT paired with the earliest queued waiter
-// that can run on it, or (nil, nil) if no such pair exists. It scans every free
-// DUT — not just the first — so a waiter pinned to a later DUT still activates
-// while an earlier DUT sits free with no compatible work.
+// nextAssignmentLocked pairs the earliest queued waiter that can run with the
+// best-fitting free DUT for it, or (nil, nil) if no such pair exists. It considers
+// every free DUT (not just the first) so a waiter pinned to — or needing the
+// capabilities of — a later DUT still activates while an earlier DUT sits free with
+// no compatible work.
 func (m *Manager) nextAssignmentLocked() (*runner.Device, *api.Reservation) {
 	busy := map[string]bool{}
 	for _, r := range m.items {
@@ -623,43 +630,70 @@ func (m *Manager) nextAssignmentLocked() (*runner.Device, *api.Reservation) {
 			busy[r.Device] = true
 		}
 	}
-	for i := range m.devices {
-		if busy[m.devices[i].Name] {
+	// Waiter-driven and FIFO-fair: honor admission order across reservations, and
+	// give each the *tightest-fitting* free DUT — the one with the fewest
+	// capabilities beyond what it requires. That keeps scarce, over-provisioned
+	// DUTs (e.g. one wired to the logic analyzer) free for the tests that actually
+	// need those capabilities, instead of pinning them to plain work.
+	for _, r := range m.items {
+		if r.State != api.StateQueued {
 			continue
 		}
-		if head := m.nextWaiterForLocked(&m.devices[i]); head != nil {
-			return &m.devices[i], head
+		best := -1
+		bestExtra := 0
+		for i := range m.devices {
+			if busy[m.devices[i].Name] || !m.deviceServesLocked(&m.devices[i], r) {
+				continue
+			}
+			if extra := extraCaps(m.devices[i].Capabilities, m.caps[r.ID]); best < 0 || extra < bestExtra {
+				best, bestExtra = i, extra
+			}
+		}
+		if best >= 0 {
+			return &m.devices[best], r
 		}
 	}
 	return nil, nil
 }
 
-// nextWaiterForLocked returns the earliest queued reservation that can run on the
-// given DUT, or nil if none. A normal (USB) DUT accepts an unpinned waiter or one
-// pinned to it. A network DUT is PIN-ONLY: it accepts only a waiter that named it,
-// so an ordinary "any DUT" reservation (e.g. a C6 test) never lands on the Pi.
-func (m *Manager) nextWaiterForLocked(dev *runner.Device) *api.Reservation {
-	pinOnly := dev.Kind == "network"
-	for _, r := range m.items {
-		if r.State != api.StateQueued {
-			continue
-		}
-		// A capability requirement must be met by this DUT regardless of pinning.
-		if need := m.caps[r.ID]; len(need) > 0 && !hasCaps(dev.Capabilities, need) {
-			continue
-		}
-		switch want := m.want[r.ID]; {
-		case want == dev.Name:
-			return r // pinned to this DUT by name
-		case want != "":
-			continue // pinned to a different DUT
-		case len(m.caps[r.ID]) > 0:
-			return r // "any DUT with these caps" — matched above; opts in past pin-only
-		case !pinOnly:
-			return r // unpinned "any DUT" — but never a pin-only (network) DUT
+// deviceServesLocked reports whether dev may host queued reservation r: dev must
+// match r's SKU pin (if any) and satisfy r's capability requirement, and name
+// pinning is honored. A network DUT is PIN-ONLY: it is reached only by an explicit
+// hardware target — a Device (name) or SKU pin — never by a bare "any DUT" or a
+// capability-only request, so ordinary work can't drift onto the scarce Pi.
+func (m *Manager) deviceServesLocked(dev *runner.Device, r *api.Reservation) bool {
+	if sku := m.sku[r.ID]; sku != "" && dev.SKU != sku {
+		return false
+	}
+	if need := m.caps[r.ID]; len(need) > 0 && !hasCaps(dev.Capabilities, need) {
+		return false
+	}
+	switch want := m.want[r.ID]; {
+	case want == dev.Name:
+		return true // pinned to this DUT by name
+	case want != "":
+		return false // pinned to a different DUT
+	case m.sku[r.ID] != "":
+		return true // pinned by SKU — an explicit hardware target; opts in past pin-only
+	default:
+		return dev.Kind != "network" // caps-only or unpinned: never a pin-only (network) DUT
+	}
+}
+
+// extraCaps counts the capabilities a DUT has beyond those required — the excess
+// that best-fit assignment minimizes. Robust to duplicates in need.
+func extraCaps(have, need []string) int {
+	req := make(map[string]bool, len(need))
+	for _, c := range need {
+		req[c] = true
+	}
+	n := 0
+	for _, c := range have {
+		if !req[c] {
+			n++
 		}
 	}
-	return nil
+	return n
 }
 
 // hasCaps reports whether have ⊇ need (the DUT advertises every required capability).
@@ -685,5 +719,6 @@ func (m *Manager) removeLocked(id string) {
 	m.items = append(m.items[:i], m.items[i+1:]...)
 	delete(m.keys, id)
 	delete(m.want, id)
+	delete(m.sku, id)
 	delete(m.caps, id)
 }
