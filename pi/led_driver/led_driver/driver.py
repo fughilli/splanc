@@ -21,6 +21,7 @@ from typing import Callable, Dict, Optional
 from ledmapper_protocol import CodeParams
 
 from .clock import now_ms
+from .fpga_spi import FpgaCodec
 from .graycode import color_plan
 from .spi import RGB, SpiSink, frame_bytes, frame_bytes_colors
 
@@ -28,7 +29,8 @@ from .spi import RGB, SpiSink, frame_bytes, frame_bytes_colors
 MODE_CYCLE = "cycle"  # normal Gray-code cycle
 MODE_SINGLE = "single"  # light one LED continuously (wiring/debug)
 MODE_OFF = "off"  # all LEDs dark
-_MODES = {MODE_CYCLE, MODE_SINGLE, MODE_OFF}
+MODE_STATIC = "static"  # hold an explicit per-LED frame (deterministic capture)
+_MODES = {MODE_CYCLE, MODE_SINGLE, MODE_OFF, MODE_STATIC}
 
 
 class LedDriver:
@@ -38,12 +40,16 @@ class LedDriver:
         *,
         on_color: RGB = (255, 255, 255),
         brightness: int = 31,
+        fpga: Optional[FpgaCodec] = None,
         clock: Callable[[], float] = now_ms,
         sleep: Callable[[float], None] | None = None,
     ):
         self._sink = sink
         self._on_color = on_color
         self._brightness = brightness
+        # When set, frames are encoded for the spi_ws281x FPGA instead of APA102.
+        self._fpga = fpga
+        self._static_colors: list[RGB] = []
         self._clock = clock
         if sleep is None:
             import time
@@ -114,17 +120,43 @@ class LedDriver:
                 if not 0 <= led < n:
                     raise ValueError(f"ledId {led} out of range [0, {n})")
                 self._debug_led = led
+            elif mode == MODE_STATIC:
+                self._static_colors = [
+                    tuple(int(c) for c in px) for px in (args or {}).get("colors", [])
+                ]
 
     # -- worker -----------------------------------------------------------
 
+    def _colors_for(self, mode: str, plan, frame_idx: int, n: int, led: int, static) -> list:
+        """Semantic per-LED colours for a frame (the FPGA codec's input)."""
+        if mode == MODE_OFF:
+            return [(0, 0, 0)] * n
+        if mode == MODE_SINGLE:
+            c = [(0, 0, 0)] * n
+            if 0 <= led < n:
+                c[led] = self._on_color
+            return c
+        if mode == MODE_STATIC:
+            s = list(static)[:n]
+            return s + [(0, 0, 0)] * (n - len(s))
+        return list(plan[frame_idx % len(plan)])
+
     def _frame_for(self, frame_idx: int, plan, n: int) -> bytes:
         with self._lock:
-            mode, led = self._mode, self._debug_led
+            mode, led, static = self._mode, self._debug_led, list(self._static_colors)
+        # FPGA output: encode the semantic frame for the spi_ws281x stream.
+        if self._fpga is not None:
+            return self._fpga.frame(self._colors_for(mode, plan, frame_idx, n, led, static))
+        # APA102/SK9822 output (unchanged wire bytes).
         if mode == MODE_OFF:
             return frame_bytes(frozenset(), n, brightness=self._brightness)
         if mode == MODE_SINGLE:
             return frame_bytes(
                 frozenset((led,)), n, color=self._on_color, brightness=self._brightness
+            )
+        if mode == MODE_STATIC:
+            return frame_bytes_colors(
+                self._colors_for(mode, plan, frame_idx, n, led, static), brightness=self._brightness
             )
         # Normal hue cycle: every LED lit, per-LED colors from the plan.
         return frame_bytes_colors(plan[frame_idx % len(plan)], brightness=self._brightness)
@@ -135,6 +167,10 @@ class LedDriver:
         plan = color_plan(params)
         n = params.ledCount
         period_s = params.bitPeriodMs / 1000.0
+
+        # FPGA output: send the one-time CSR (active port count) before streaming.
+        if self._fpga is not None:
+            self._sink.write(self._fpga.configure())
 
         # Stamp the epoch at the start of the cycle, then release start().
         self._epoch = self._clock()
@@ -148,4 +184,7 @@ class LedDriver:
                 self._sleep(period_s)
         finally:
             # Leave the strip dark whenever the loop ends, however triggered.
-            self._sink.write(frame_bytes(frozenset(), n, brightness=self._brightness))
+            if self._fpga is not None:
+                self._sink.write(self._fpga.dark(n))
+            else:
+                self._sink.write(frame_bytes(frozenset(), n, brightness=self._brightness))

@@ -18,6 +18,7 @@ from pathlib import Path
 
 from led_driver.control import ControlServer
 from led_driver.driver import LedDriver
+from led_driver.fpga_spi import FpgaCodec, matched_speed_hz
 from led_driver.graycode import default_code_params
 from led_driver.spi import RecordingSink, SpidevSink
 
@@ -27,8 +28,15 @@ def main(argv=None) -> int:
     parser.add_argument("--socket", default="/run/ledmapper/control.sock", type=Path)
     parser.add_argument("--bus", type=int, default=0)
     parser.add_argument("--device", type=int, default=0)
-    parser.add_argument("--speed-hz", type=int, default=8_000_000)
+    parser.add_argument("--speed-hz", type=int, default=None, help="SPI clock; default per output")
     parser.add_argument("--brightness", type=int, default=31, help="global brightness 0..31")
+    parser.add_argument(
+        "--output",
+        choices=("apa102", "fpga"),
+        default="apa102",
+        help="apa102 = SK9822/APA102 strip; fpga = spi_ws281x streaming WS281x FPGA",
+    )
+    parser.add_argument("--fpga-ports", type=int, default=8, help="FPGA active output count")
     parser.add_argument("--dry-run", action="store_true", help="in-memory sink, no SPI hardware")
     parser.add_argument(
         "--start",
@@ -39,11 +47,20 @@ def main(argv=None) -> int:
     )
     args = parser.parse_args(argv)
 
-    sink = RecordingSink() if args.dry_run else SpidevSink(args.bus, args.device, args.speed_hz)
-    driver = LedDriver(sink, brightness=args.brightness)
+    # FPGA needs a rate-matched clock; APA102 is happy fast. --speed-hz overrides.
+    default_speed = matched_speed_hz(args.fpga_ports) if args.output == "fpga" else 8_000_000
+    speed = args.speed_hz or default_speed
+    fpga = FpgaCodec(args.fpga_ports) if args.output == "fpga" else None
+
+    sink = RecordingSink() if args.dry_run else SpidevSink(args.bus, args.device, speed)
+    driver = LedDriver(sink, brightness=args.brightness, fpga=fpga)
     server = ControlServer(driver, str(args.socket))
     server.start()
-    print(f"led_driver listening on {args.socket} (dry-run={args.dry_run})", flush=True)
+    print(
+        f"led_driver listening on {args.socket} "
+        f"(output={args.output}, speed={speed}, dry-run={args.dry_run})",
+        flush=True,
+    )
 
     if args.start is not None:
         epoch = driver.start(default_code_params(args.start))
