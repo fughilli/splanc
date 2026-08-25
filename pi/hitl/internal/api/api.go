@@ -41,6 +41,12 @@ type ReserveRequest struct {
 	// Status.Devices). Empty (the default, and what older clients send) means
 	// "any free DUT" — the daemon assigns whichever frees first.
 	Device string `json:"device,omitempty"`
+	// RequireCaps optionally restricts the reservation to a DUT whose advertised
+	// Capabilities are a superset of these (e.g. ["improv"]). Combined with an
+	// empty Device, it means "any free DUT with these capabilities" — the way a
+	// capability-targeted test lands on any SKU that satisfies it (incl. a network
+	// DUT, since requesting caps it has is an explicit opt-in past pin-only).
+	RequireCaps []string `json:"require_caps,omitempty"`
 }
 
 // SSHEndpoint is where the holder connects once active.
@@ -99,9 +105,11 @@ type AnalyzerInfo struct {
 
 // DeviceStatus is one DUT's slice of the rig's Status.
 type DeviceStatus struct {
-	Name   string       `json:"name"`           // DUT name (matches ReserveRequest.Device)
-	Kind   string       `json:"kind,omitempty"` // "" == usb board; "network" == LAN DUT (pin-only)
-	Active *Reservation `json:"active"`         // this DUT's current holder, or null if free
+	Name         string       `json:"name"`                   // DUT name (matches ReserveRequest.Device)
+	Kind         string       `json:"kind,omitempty"`         // "" == usb board; "network" == LAN DUT (pin-only)
+	SKU          string       `json:"sku,omitempty"`          // hardware config, e.g. "esp32c6" / "led-mapper-pi"
+	Capabilities []string     `json:"capabilities,omitempty"` // baked-in features (from the SKU registry)
+	Active       *Reservation `json:"active"`                 // this DUT's current holder, or null if free
 }
 
 // WiFiInfo is the rig's self-hosted provisioning AP: the network a test flow

@@ -37,9 +37,10 @@ type Manager struct {
 	ap       AP                // brings that AP up/down around active reservations (or nil)
 
 	mu    sync.Mutex
-	items []*api.Reservation // admission order; several may be Active (one per DUT)
-	keys  map[string]string  // reservation id -> SSH pubkey (not serialized out)
-	want  map[string]string  // reservation id -> pinned DUT name ("" = any free DUT)
+	items []*api.Reservation  // admission order; several may be Active (one per DUT)
+	keys  map[string]string   // reservation id -> SSH pubkey (not serialized out)
+	want  map[string]string   // reservation id -> pinned DUT name ("" = any free DUT)
+	caps  map[string][]string // reservation id -> required DUT capabilities (nil = none)
 
 	// Monotonic lifecycle counters, exported via Metrics() for /metrics. Guarded
 	// by mu; only ever incremented, so a scraper sees rates (reservations/min,
@@ -92,7 +93,7 @@ func WithDevices(devs []runner.Device) Option {
 // New creates a Manager. lease is the heartbeat window: an active reservation
 // whose holder stops heartbeating for longer than lease is reaped.
 func New(rig string, lease time.Duration, run runner.Runner, opts ...Option) *Manager {
-	m := &Manager{rig: rig, lease: lease, run: run, keys: map[string]string{}, want: map[string]string{}}
+	m := &Manager{rig: rig, lease: lease, run: run, keys: map[string]string{}, want: map[string]string{}, caps: map[string][]string{}}
 	for _, o := range opts {
 		o(m)
 	}
@@ -183,8 +184,9 @@ func (m *Manager) SyncDevices(ctx context.Context, devs []runner.Device) (added,
 // port, device mounts, env). Used to detect a re-seeded network DUT whose env
 // changed so an idle DUT adopts it in place.
 func sameSpec(a, b runner.Device) bool {
-	return a.Kind == b.Kind && a.SSHPort == b.SSHPort &&
-		reflect.DeepEqual(a.Devices, b.Devices) && reflect.DeepEqual(a.Env, b.Env)
+	return a.Kind == b.Kind && a.SKU == b.SKU && a.SSHPort == b.SSHPort &&
+		reflect.DeepEqual(a.Devices, b.Devices) && reflect.DeepEqual(a.Env, b.Env) &&
+		reflect.DeepEqual(a.Capabilities, b.Capabilities)
 }
 
 // deviceBusyLocked reports whether the named DUT currently has an active holder.
@@ -288,6 +290,9 @@ func (m *Manager) Reserve(ctx context.Context, req api.ReserveRequest) *api.Rese
 	if req.Device != "" {
 		m.want[r.ID] = req.Device
 	}
+	if len(req.RequireCaps) > 0 {
+		m.caps[r.ID] = append([]string(nil), req.RequireCaps...)
+	}
 	m.items = append(m.items, r)
 	m.cReservations++
 	log.Printf("reserve: id=%s owner=%q device=%q queued (position %d)", r.ID, r.Owner, req.Device, len(m.items)-1)
@@ -369,7 +374,7 @@ func (m *Manager) Status() api.Status {
 	var firstBusy *api.Reservation
 	for _, d := range m.devices {
 		h := holders[d.Name]
-		s.Devices = append(s.Devices, api.DeviceStatus{Name: d.Name, Kind: d.Kind, Active: h})
+		s.Devices = append(s.Devices, api.DeviceStatus{Name: d.Name, Kind: d.Kind, SKU: d.SKU, Capabilities: d.Capabilities, Active: h})
 		if h == nil {
 			anyFree = true
 		} else if firstBusy == nil {
@@ -639,14 +644,36 @@ func (m *Manager) nextWaiterForLocked(dev *runner.Device) *api.Reservation {
 		if r.State != api.StateQueued {
 			continue
 		}
+		// A capability requirement must be met by this DUT regardless of pinning.
+		if need := m.caps[r.ID]; len(need) > 0 && !hasCaps(dev.Capabilities, need) {
+			continue
+		}
 		switch want := m.want[r.ID]; {
 		case want == dev.Name:
-			return r
-		case want == "" && !pinOnly:
-			return r
+			return r // pinned to this DUT by name
+		case want != "":
+			continue // pinned to a different DUT
+		case len(m.caps[r.ID]) > 0:
+			return r // "any DUT with these caps" — matched above; opts in past pin-only
+		case !pinOnly:
+			return r // unpinned "any DUT" — but never a pin-only (network) DUT
 		}
 	}
 	return nil
+}
+
+// hasCaps reports whether have ⊇ need (the DUT advertises every required capability).
+func hasCaps(have, need []string) bool {
+	set := make(map[string]bool, len(have))
+	for _, c := range have {
+		set[c] = true
+	}
+	for _, c := range need {
+		if !set[c] {
+			return false
+		}
+	}
+	return true
 }
 
 // removeLocked drops a reservation and its side-table entries.
@@ -658,4 +685,5 @@ func (m *Manager) removeLocked(id string) {
 	m.items = append(m.items[:i], m.items[i+1:]...)
 	delete(m.keys, id)
 	delete(m.want, id)
+	delete(m.caps, id)
 }

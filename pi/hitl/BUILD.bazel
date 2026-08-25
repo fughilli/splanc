@@ -14,6 +14,10 @@ load("@rules_python//python:defs.bzl", "py_binary")
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 load("@sbc_deploy//deploy:defs.bzl", "sbc_application")
 
+# The SKU -> capabilities registry lives in skus.bzl (source of truth) + the
+# go:embedded internal/skus package. See //pi/hitl/internal/skus.
+exports_files(["skus.bzl"])
+
 # Go BUILD files under pi/hitl are gazelle-generated. Regenerate after editing
 # .go sources:  bazel run //pi/hitl:gazelle
 # gazelle:prefix github.com/fughilli/splanc/pi/hitl

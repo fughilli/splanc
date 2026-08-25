@@ -664,3 +664,49 @@ func TestSyncDevicesUpdatesIdleDUTSpec(t *testing.T) {
 		t.Fatalf("re-seed after release should apply: container got K=%q, want C", got)
 	}
 }
+
+// A reservation can require DUT capabilities: it lands only on a DUT whose
+// advertised capabilities are a superset, it may land on a (pin-only) network DUT
+// when the caps match — an explicit opt-in — and it queues if nothing satisfies it.
+func TestReserveByCapabilities(t *testing.T) {
+	ctx := context.Background()
+	fr := &fakeRunner{}
+	m := New("rig", 30*time.Minute, fr, WithDevices([]runner.Device{
+		{Name: "c6-0", SSHPort: 2222, Capabilities: []string{"flash", "improv", "wss-app"}},
+		{Name: "pi-1", SSHPort: 2230, Kind: "network", Capabilities: []string{"improv"}},
+	}))
+
+	// require improv → first matching free DUT (c6-0).
+	a := m.Reserve(ctx, api.ReserveRequest{Owner: "a", RequireCaps: []string{"improv"}})
+	if a.State != api.StateActive || a.Device != "c6-0" {
+		t.Fatalf("improv reserve should take c6-0, got state=%q dev=%q", a.State, a.Device)
+	}
+	// require improv again → c6-0 busy; pi-1 has improv, so caps opt PAST the
+	// network pin-only guard and it lands there.
+	b := m.Reserve(ctx, api.ReserveRequest{Owner: "b", RequireCaps: []string{"improv"}})
+	if b.State != api.StateActive || b.Device != "pi-1" {
+		t.Fatalf("second improv reserve should fall to pi-1 via caps opt-in, got state=%q dev=%q", b.State, b.Device)
+	}
+}
+
+// A capability only one DUT has, while that DUT is busy, makes the reservation
+// wait — it never lands on a DUT missing the capability.
+func TestReserveByCapabilityRespectsMissingCaps(t *testing.T) {
+	ctx := context.Background()
+	m := New("rig", 30*time.Minute, &fakeRunner{}, WithDevices([]runner.Device{
+		{Name: "c6-0", SSHPort: 2222, Capabilities: []string{"improv", "wss-app"}},
+		{Name: "pi-1", SSHPort: 2230, Kind: "network", Capabilities: []string{"improv"}},
+	}))
+	// Occupy the only wss-app DUT (c6-0) with an improv holder.
+	m.Reserve(ctx, api.ReserveRequest{Owner: "a", Device: "c6-0"})
+	// A wss-app reservation must queue — pi-1 lacks wss-app, c6-0 is busy.
+	b := m.Reserve(ctx, api.ReserveRequest{Owner: "b", RequireCaps: []string{"wss-app"}})
+	if b.State != api.StateQueued {
+		t.Fatalf("wss-app reserve should queue (only c6-0 has it, busy), got %q on %q", b.State, b.Device)
+	}
+	// An unrelated absent capability never matches, even with a free DUT.
+	c := m.Reserve(ctx, api.ReserveRequest{Owner: "c", RequireCaps: []string{"mic"}})
+	if c.State != api.StateQueued {
+		t.Fatalf("mic reserve should queue (no DUT has mic), got %q on %q", c.State, c.Device)
+	}
+}

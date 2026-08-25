@@ -128,12 +128,45 @@ func Probes(servers []string, get StatusFn) []Probe {
 // Require is an optional capability filter for Pick: only rigs whose /status
 // advertises the required capability are considered.
 type Require struct {
-	Analyzer bool // require a shared logic analyzer (Status.Analyzer.Present)
+	Analyzer bool     // require a shared logic analyzer (rig-level, Status.Analyzer.Present)
+	Caps     []string // require a FREE DUT whose Capabilities ⊇ Caps (per-DUT)
 }
 
 // hasAnalyzer reports whether a reachable probe advertises a logic analyzer.
 func hasAnalyzer(p Probe) bool {
 	return p.Err == nil && p.Status != nil && p.Status.Analyzer != nil && p.Status.Analyzer.Present
+}
+
+// hasFreeDUTWithCaps reports whether the rig has a currently-free DUT whose
+// advertised capabilities are a superset of caps — so a capability-targeted
+// reservation can actually land there right now.
+func hasFreeDUTWithCaps(p Probe, caps []string) bool {
+	if p.Err != nil || p.Status == nil {
+		return false
+	}
+	for _, d := range p.Status.Devices {
+		if d.Active != nil {
+			continue // busy
+		}
+		if capsSubset(caps, d.Capabilities) {
+			return true
+		}
+	}
+	return false
+}
+
+// capsSubset reports whether every cap in need is present in have.
+func capsSubset(need, have []string) bool {
+	set := make(map[string]bool, len(have))
+	for _, c := range have {
+		set[c] = true
+	}
+	for _, c := range need {
+		if !set[c] {
+			return false
+		}
+	}
+	return true
 }
 
 // Pick chooses the best runner from already-collected probes. It returns the
@@ -157,6 +190,18 @@ func Pick(probes []Probe, req ...Require) (string, error) {
 		}
 		if len(capable) == 0 {
 			return "", fmt.Errorf("no logic-analyzer rig in pool of %d: %s", len(probes), summarizeErrs(probes))
+		}
+		probes = capable
+	}
+	if len(r.Caps) > 0 {
+		var capable []Probe
+		for _, p := range probes {
+			if hasFreeDUTWithCaps(p, r.Caps) {
+				capable = append(capable, p)
+			}
+		}
+		if len(capable) == 0 {
+			return "", fmt.Errorf("no rig with a free DUT having caps %v in pool of %d: %s", r.Caps, len(probes), summarizeErrs(probes))
 		}
 		probes = capable
 	}

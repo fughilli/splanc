@@ -127,11 +127,13 @@ func cmdReserve(args []string) error {
 	keep := fs.Bool("keep", false, "keep the reservation after the SSH session exits (default: release)")
 	noShell := fs.Bool("no-shell", false, "just wait until active and print the endpoint; don't open a shell")
 	require := requireFlag(fs)
+	caps := capsFlag(fs)
 	_ = fs.Parse(args)
 	req, err := parseRequire(*require)
 	if err != nil {
 		return err
 	}
+	req.Caps = parseCaps(*caps)
 	if err := resolve(server, req); err != nil {
 		return err
 	}
@@ -147,7 +149,7 @@ func cmdReserve(args []string) error {
 
 	c := client{base: *server}
 	var res api.Reservation
-	if err := c.post("/reserve", api.ReserveRequest{Owner: *owner, SSHPublicKey: string(pubBytes), Device: *device}, &res); err != nil {
+	if err := c.post("/reserve", api.ReserveRequest{Owner: *owner, SSHPublicKey: string(pubBytes), Device: *device, RequireCaps: req.Caps}, &res); err != nil {
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "reserved: id=%s\n", res.ID)
@@ -1243,6 +1245,25 @@ func resolve(server *string, req ...pool.Require) error {
 // requireFlag registers a --require capability filter for pool selection.
 func requireFlag(fs *flag.FlagSet) *string {
 	return fs.String("require", "", "only pick a rig with this capability (e.g. analyzer)")
+}
+
+// capsFlag registers --require-caps: a comma-separated set of DUT capabilities the
+// reservation needs (e.g. "improv,mic"). The daemon lands it on any free DUT whose
+// advertised capabilities are a superset — the way a capability-targeted test runs
+// on any SKU that satisfies it.
+func capsFlag(fs *flag.FlagSet) *string {
+	return fs.String("require-caps", "", "comma-separated DUT capabilities to require (e.g. improv,mic)")
+}
+
+// parseCaps splits a --require-caps value into a trimmed, non-empty capability list.
+func parseCaps(s string) []string {
+	var out []string
+	for _, c := range strings.Split(s, ",") {
+		if c = strings.TrimSpace(c); c != "" {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // parseRequire maps the --require value to a pool.Require.

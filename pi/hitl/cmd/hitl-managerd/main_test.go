@@ -58,7 +58,14 @@ func TestBuildDevicesLegacyFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []runner.Device{{Name: "dut0", SSHPort: 2222, Devices: []string{"/dev/ttyACM0"}}}
+	// The legacy USB DUT is an ESP32-C6; it gets that SKU and the registry's caps.
+	want := []runner.Device{{
+		Name:         "dut0",
+		SKU:          "esp32c6",
+		Capabilities: []string{"flash", "improv", "jtag", "led-strip", "wss-app"},
+		SSHPort:      2222,
+		Devices:      []string{"/dev/ttyACM0"},
+	}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("buildDevices legacy = %+v, want %+v", got, want)
 	}
@@ -242,8 +249,9 @@ func TestReadNetworkDUTs(t *testing.T) {
 		}
 	}
 
-	// One valid network DUT → port from the dedicated range, kind + env carried.
-	write(`[{"name":"pi-1","kind":"network","devices":[],"env":{"HITL_DUT_ADDR":"pi.local"}}]`)
+	// One valid network DUT → port from the dedicated range, kind + env carried,
+	// and its SKU's capabilities resolved from the registry.
+	write(`[{"name":"pi-1","kind":"network","sku":"led-mapper-pi","devices":[],"env":{"HITL_DUT_ADDR":"pi.local"}}]`)
 	got, err := dm.readNetworkDUTs()
 	if err != nil {
 		t.Fatalf("valid: %v", err)
@@ -254,10 +262,13 @@ func TestReadNetworkDUTs(t *testing.T) {
 	if got[0].Env["HITL_DUT_ADDR"] != "pi.local" {
 		t.Fatalf("env not carried: %+v", got[0].Env)
 	}
+	if got[0].SKU != "led-mapper-pi" || !reflect.DeepEqual(got[0].Capabilities, []string{"improv"}) {
+		t.Fatalf("SKU/caps not resolved from registry: sku=%q caps=%v", got[0].SKU, got[0].Capabilities)
+	}
 
 	// Sticky port: add a second DUT; pi-1 keeps 2230, pi-2 gets a distinct port.
-	write(`[{"name":"pi-2","kind":"network","devices":[],"env":{"HITL_DUT_ADDR":"b"}},
-	        {"name":"pi-1","kind":"network","devices":[],"env":{"HITL_DUT_ADDR":"a"}}]`)
+	write(`[{"name":"pi-2","kind":"network","sku":"led-mapper-pi","devices":[],"env":{"HITL_DUT_ADDR":"b"}},
+	        {"name":"pi-1","kind":"network","sku":"led-mapper-pi","devices":[],"env":{"HITL_DUT_ADDR":"a"}}]`)
 	got, _ = dm.readNetworkDUTs()
 	ports := map[string]int{}
 	for _, d := range got {
@@ -272,12 +283,20 @@ func TestReadNetworkDUTs(t *testing.T) {
 
 	// Every invalid file returns an error (caller keeps the last good set).
 	for _, bad := range []string{
-		`[{"name":"c6-x","kind":"network","devices":[],"env":{"HITL_DUT_ADDR":"a"}}]`,        // bad name prefix
-		`[{"name":"pi-x","kind":"usb","devices":[],"env":{"HITL_DUT_ADDR":"a"}}]`,             // wrong kind
-		`[{"name":"pi-x","kind":"network","devices":["/dev/x"],"env":{"HITL_DUT_ADDR":"a"}}]`, // has devices
-		`[{"name":"pi-x","kind":"network","devices":[],"env":{}}]`,                            // missing addr
-		`[{"name":"pi-x","kind":"network","devices":[],"env":{"HITL_DUT_ADDR":"a"}},{"name":"pi-x","kind":"network","devices":[],"env":{"HITL_DUT_ADDR":"b"}}]`, // dup name
-		`{not json`, // malformed
+		// bad name prefix
+		`[{"name":"c6-x","kind":"network","sku":"led-mapper-pi","devices":[],"env":{"HITL_DUT_ADDR":"a"}}]`,
+		// wrong kind
+		`[{"name":"pi-x","kind":"usb","sku":"led-mapper-pi","devices":[],"env":{"HITL_DUT_ADDR":"a"}}]`,
+		// has devices
+		`[{"name":"pi-x","kind":"network","sku":"led-mapper-pi","devices":["/dev/x"],"env":{"HITL_DUT_ADDR":"a"}}]`,
+		// missing addr
+		`[{"name":"pi-x","kind":"network","sku":"led-mapper-pi","devices":[],"env":{}}]`,
+		// missing sku
+		`[{"name":"pi-x","kind":"network","devices":[],"env":{"HITL_DUT_ADDR":"a"}}]`,
+		// dup name
+		`[{"name":"pi-x","kind":"network","sku":"led-mapper-pi","devices":[],"env":{"HITL_DUT_ADDR":"a"}},{"name":"pi-x","kind":"network","sku":"led-mapper-pi","devices":[],"env":{"HITL_DUT_ADDR":"b"}}]`,
+		// malformed
+		`{not json`,
 	} {
 		write(bad)
 		if _, err := dm.readNetworkDUTs(); err == nil {
