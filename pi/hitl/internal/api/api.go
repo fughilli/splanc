@@ -41,11 +41,17 @@ type ReserveRequest struct {
 	// Status.Devices). Empty (the default, and what older clients send) means
 	// "any free DUT" — the daemon assigns whichever frees first.
 	Device string `json:"device,omitempty"`
+	// SKU optionally pins the reservation to any free DUT of a given hardware SKU
+	// (e.g. "led-mapper-pi"). This is how a SKU-specific test targets its exact
+	// hardware; like Device (and unlike RequireCaps), it is an explicit hardware
+	// target, so it may land on a pin-only network DUT.
+	SKU string `json:"sku,omitempty"`
 	// RequireCaps optionally restricts the reservation to a DUT whose advertised
-	// Capabilities are a superset of these (e.g. ["improv"]). Combined with an
-	// empty Device, it means "any free DUT with these capabilities" — the way a
-	// capability-targeted test lands on any SKU that satisfies it (incl. a network
-	// DUT, since requesting caps it has is an explicit opt-in past pin-only).
+	// Capabilities are a superset of these (e.g. ["improv"]). Combined with an empty
+	// Device/SKU it means "any free DUT with these capabilities" — the way a
+	// capability-targeted test lands on any SKU that satisfies it. It selects among
+	// the best-fitting DUTs (fewest extra capabilities) but never a pin-only network
+	// DUT: reaching one of those requires an explicit Device or SKU target.
 	RequireCaps []string `json:"require_caps,omitempty"`
 }
 

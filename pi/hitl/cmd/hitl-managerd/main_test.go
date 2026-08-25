@@ -8,10 +8,43 @@ import (
 	"testing"
 	"time"
 
+	"github.com/fughilli/splanc/pi/hitl/internal/analyzer"
 	"github.com/fughilli/splanc/pi/hitl/internal/metrics"
 	"github.com/fughilli/splanc/pi/hitl/internal/queue"
 	"github.com/fughilli/splanc/pi/hitl/internal/runner"
 )
+
+// capListHas reports whether a capability list contains s.
+func capListHas(xs []string, s string) bool {
+	for _, x := range xs {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
+// withCaps merges the rig-wiring "logic-analyzer" capability onto a DUT that the
+// shared analyzer taps (an explicit channel-map entry), and only that DUT — so a
+// mixed rig distinguishes its analyzer DUT from plain ones. A nil broker (no
+// analyzer on the rig) never adds it.
+func TestWithCapsMergesLogicAnalyzer(t *testing.T) {
+	brk := analyzer.New(analyzer.Config{
+		Driver: "fx2lafw",
+		Map: map[string]analyzer.DUTMap{
+			"c6-la": {Channels: []string{"D1"}, Protocol: analyzer.ProtocolWS2812},
+		},
+	})
+	if la := withCaps(runner.Device{Name: "c6-la", SKU: "esp32c6"}, brk); !capListHas(la.Capabilities, "logic-analyzer") {
+		t.Errorf("tapped DUT should advertise logic-analyzer, got %v", la.Capabilities)
+	}
+	if plain := withCaps(runner.Device{Name: "c6-plain", SKU: "esp32c6"}, brk); capListHas(plain.Capabilities, "logic-analyzer") {
+		t.Errorf("un-tapped DUT must not advertise logic-analyzer, got %v", plain.Capabilities)
+	}
+	if none := withCaps(runner.Device{Name: "c6-la", SKU: "esp32c6"}, nil); capListHas(none.Capabilities, "logic-analyzer") {
+		t.Errorf("nil broker must not add logic-analyzer, got %v", none.Capabilities)
+	}
+}
 
 // writeMetrics emits every configured metric family with the rig label, a
 // per-DUT busy series, and omits any host metric whose source was unreadable.
@@ -54,7 +87,7 @@ func TestWriteMetrics(t *testing.T) {
 // With no --dut flags, buildDevices synthesizes one DUT from the legacy
 // --ssh-port/--device flags — preserving the original single-DUT behavior.
 func TestBuildDevicesLegacyFallback(t *testing.T) {
-	got, err := buildDevices(nil, 2222, []string{"/dev/ttyACM0"})
+	got, err := buildDevices(nil, 2222, []string{"/dev/ttyACM0"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +110,7 @@ func TestBuildDevicesMultiDUT(t *testing.T) {
 		`{"name":"c6-0","ssh_port":2222,"devices":["/dev/serial/by-id/a:/dev/ttyACM0"]}`,
 		`{"name":"c6-1","ssh_port":2223,"devices":["/dev/serial/by-id/b:/dev/ttyACM0"],"env":{"HITL_ADAPTER_SERIAL":"XYZ"}}`,
 	}
-	got, err := buildDevices(duts, 2222, nil)
+	got, err := buildDevices(duts, 2222, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +136,7 @@ func TestBuildDevicesRejectsBadConfig(t *testing.T) {
 		"bad json":       {`{not json}`},
 	}
 	for name, duts := range cases {
-		if _, err := buildDevices(duts, 2222, nil); err == nil {
+		if _, err := buildDevices(duts, 2222, nil, nil); err == nil {
 			t.Errorf("%s: expected an error, got nil", name)
 		}
 	}
@@ -190,7 +223,7 @@ func TestDutMonitorStickyPortsAndRetention(t *testing.T) {
 	mk(nameA, "ttyA")
 	mk("usb-Espressif_USB_JTAG_serial_debug_unit_BBBBBB-if00", "ttyB")
 
-	dm := newDUTMonitor(filepath.Join(dir, "usb-*-if00"), 2222, 8, 30*time.Second, "", 0)
+	dm := newDUTMonitor(filepath.Join(dir, "usb-*-if00"), 2222, 8, 30*time.Second, "", 0, nil)
 	clock := time.Unix(0, 0)
 	dm.now = func() time.Time { return clock }
 
@@ -235,7 +268,7 @@ func TestReadNetworkDUTs(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "network-duts.json")
 	// USB pool [2222,2230); network range starts at 2222+8 = 2230.
-	dm := newDUTMonitor("/nonexistent/*", 2222, 8, 30*time.Second, path, 4)
+	dm := newDUTMonitor("/nonexistent/*", 2222, 8, 30*time.Second, path, 4, nil)
 
 	// Absent file: no DUTs, no error (and it forgets any prior set).
 	if got, err := dm.readNetworkDUTs(); err != nil || got != nil {

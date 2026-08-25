@@ -128,12 +128,14 @@ func cmdReserve(args []string) error {
 	noShell := fs.Bool("no-shell", false, "just wait until active and print the endpoint; don't open a shell")
 	require := requireFlag(fs)
 	caps := capsFlag(fs)
+	sku := skuFlag(fs)
 	_ = fs.Parse(args)
 	req, err := parseRequire(*require)
 	if err != nil {
 		return err
 	}
-	req.Caps = parseCaps(*caps)
+	req.SKU = *sku
+	req.Caps = mergeCaps(req.Caps, parseCaps(*caps))
 	if err := resolve(server, req); err != nil {
 		return err
 	}
@@ -149,7 +151,7 @@ func cmdReserve(args []string) error {
 
 	c := client{base: *server}
 	var res api.Reservation
-	if err := c.post("/reserve", api.ReserveRequest{Owner: *owner, SSHPublicKey: string(pubBytes), Device: *device, RequireCaps: req.Caps}, &res); err != nil {
+	if err := c.post("/reserve", api.ReserveRequest{Owner: *owner, SSHPublicKey: string(pubBytes), Device: *device, SKU: req.SKU, RequireCaps: req.Caps}, &res); err != nil {
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "reserved: id=%s\n", res.ID)
@@ -1242,9 +1244,10 @@ func resolve(server *string, req ...pool.Require) error {
 	return nil
 }
 
-// requireFlag registers a --require capability filter for pool selection.
+// requireFlag registers a --require capability filter for pool selection. It's a
+// back-compat convenience: "analyzer" is an alias for --require-caps logic-analyzer.
 func requireFlag(fs *flag.FlagSet) *string {
-	return fs.String("require", "", "only pick a rig with this capability (e.g. analyzer)")
+	return fs.String("require", "", "back-compat alias for a capability (analyzer = logic-analyzer); prefer --require-caps")
 }
 
 // capsFlag registers --require-caps: a comma-separated set of DUT capabilities the
@@ -1253,6 +1256,13 @@ func requireFlag(fs *flag.FlagSet) *string {
 // on any SKU that satisfies it.
 func capsFlag(fs *flag.FlagSet) *string {
 	return fs.String("require-caps", "", "comma-separated DUT capabilities to require (e.g. improv,mic)")
+}
+
+// skuFlag registers --sku: pin the reservation to any free DUT of a hardware SKU
+// (e.g. "led-mapper-pi"). Unlike --require-caps, it's an explicit hardware target,
+// so it can land on a pin-only network DUT.
+func skuFlag(fs *flag.FlagSet) *string {
+	return fs.String("sku", "", "pin to any free DUT of this hardware SKU (e.g. esp32c6, led-mapper-pi)")
 }
 
 // parseCaps splits a --require-caps value into a trimmed, non-empty capability list.
@@ -1266,16 +1276,34 @@ func parseCaps(s string) []string {
 	return out
 }
 
-// parseRequire maps the --require value to a pool.Require.
+// parseRequire maps the --require value to a pool.Require. The logic analyzer is a
+// per-DUT capability now, so "analyzer" is just an alias for the logic-analyzer cap.
 func parseRequire(s string) (pool.Require, error) {
 	switch strings.TrimSpace(s) {
 	case "":
 		return pool.Require{}, nil
 	case "analyzer":
-		return pool.Require{Analyzer: true}, nil
+		return pool.Require{Caps: []string{"logic-analyzer"}}, nil
 	default:
 		return pool.Require{}, fmt.Errorf("unknown --require %q (known: analyzer)", s)
 	}
+}
+
+// mergeCaps concatenates capability lists, dropping blanks and duplicates while
+// preserving first-seen order — so --require and --require-caps compose.
+func mergeCaps(lists ...[]string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, l := range lists {
+		for _, c := range l {
+			if c == "" || seen[c] {
+				continue
+			}
+			seen[c] = true
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // hostFromServer extracts the host (name or IP) from the --server URL, so the
