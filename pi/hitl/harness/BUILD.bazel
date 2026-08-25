@@ -398,6 +398,38 @@ py_test(
     ],
 )
 
+# The JIT effects benchmark against the heapless esp32c6_netstack drop-in — the
+# netstack twin of :fx_bench_jit (chunked fixture map, netstack bundle).
+py_test(
+    name = "fx_bench_jit_netstack",
+    timeout = "eternal",
+    srcs = ["fx_bench.py"],
+    args = ["--jit"],
+    data = [
+        ":fx_benchmarks",
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "//fx_compiler:fx_compile",
+        "//pi/hitl/cmd/hitl",
+        "//web:tests/testdata/device-bench-esp32c6-jit.json",
+    ],
+    env = {
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        "HITL_CHUNK_BYTES": "1024",
+    },
+    imports = ["."],
+    main = "fx_bench.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
 # On-hardware JIT-on soak (FUG-135): reserve a rig, flash, provision, load a
 # JIT-able effect (benchmarks/lavalamp.heldout.fx, compiled via fx_compile), drive
 # set_perf FULL for ~30 s, and assert the DUT never faults / reboots and stays
