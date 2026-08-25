@@ -862,6 +862,9 @@ void netstack_loop() {
   static St st = AUTH;
   static uint32_t t = 0;
   static bool inited = false;
+  // Service the heapless BLE host (drain the controller's HCI queue, run the Improv
+  // GATT state machine). No-op after onboarding once the central disconnects.
+  improv_ble_poll();
   // rx must hold a FULL MPDU: ns_mac_recv truncates to cap, and a truncated frame fails
   // CCMP's MIC (silently dropped, no ACK) — which stalled inbound data segments >~360B
   // (e.g. a 410-byte TLS ClientHello -> ~498-byte MPDU) while small control frames passed.

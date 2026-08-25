@@ -18,6 +18,12 @@
 // initial state (IMPROV_STATE_*).
 void improv_ble_begin(const char *device_name, uint8_t initial_state);
 
+// Service the BLE host once from the main loop. No-op for the Bluedroid backend
+// (which runs its own Bluetooth task); the heapless netstack backend drains the
+// controller's HCI queue and runs the GATT/Improv state machine here, so it must
+// be called regularly (e.g. from the transport loop) while onboarding.
+void improv_ble_poll();
+
 // Rename the advertised device live (after a set_device_name): update the
 // scan-response name shown in the Bluetooth chooser + restart advertising. The
 // GAP name fully re-applies on the next boot via improv_ble_begin.

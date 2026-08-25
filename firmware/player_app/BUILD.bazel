@@ -296,8 +296,11 @@ cc_binary(
     # TCP/TLS/WS), while the render task, effects+JIT, upload, persistence, perf, hardware
     # config and WS dispatch are shared verbatim.
     srcs = [
-        "improv_ble.cpp",
+        # The heapless BLE Improv backend (drives only the radio controller over native
+        # HCI) replaces the Bluedroid improv_ble.cpp — no vendor BLE host stack, so BLE
+        # onboarding costs no heap churn and the TLS server survives many reconnects.
         "improv_ble.h",
+        "improv_ble_netstack.cpp",
         "led_config.h",
         "main.cpp",
         "netstack_transport.cpp",
@@ -326,10 +329,11 @@ cc_binary(
         ":improv_codec",
         ":player_ffi",
         ":ws_codec",
+        "//firmware/blehost:ble_ffi",  # heapless BLE host (GAP/GATT/ATT/Improv), no Bluedroid
         "//firmware/landing:landing_page",
         "//firmware/netstack:wifi_sta_ffi",  # ns_* heapless MAC/CCMP/TCP FFI
         "@embedded//libs/board:arduino_core",
-        "@embedded//libs/vendor:ble",
+        "@embedded//libs/vendor:ble",  # vendor BLE *controller* + native ble_hci_trans only
         "@embedded//libs/vendor:preferences",
         "@embedded//libs/vendor:wifi",  # reversed vendor MAC/PM externs the netstack drives
     ],

@@ -21,7 +21,7 @@ uint32_t ns_ble_on_hci(const uint8_t *pkt, uint32_t len, uint8_t *out, uint32_t 
 uint32_t ns_ble_state();
 uint32_t ns_ble_poll_notify(uint8_t *out, uint32_t cap);
 uint32_t ns_ble_take_wifi(uint8_t *ssid, uint32_t ssid_cap, uint8_t *pass, uint32_t pass_cap);
-void ns_ble_provision_result(uint32_t ok);
+void ns_ble_provision_result(uint32_t ok, const uint8_t *url, uint32_t url_len);
 
 // --- vendor controller low-level HCI transport (NimBLE ble_hci_trans API) -----
 // Not in the SDK's public headers (internal r_-prefixed controller symbols), but
@@ -191,7 +191,7 @@ void loop() {
     uint8_t ssid[33], pass[65];
     if (ns_ble_take_wifi(ssid, sizeof(ssid), pass, sizeof(pass))) {
       Serial.printf("blehost: improv wifi ssid='%s' (demo: reporting provisioned)\n", ssid);
-      ns_ble_provision_result(1);
+      ns_ble_provision_result(1, nullptr, 0);
     }
   }
   if ((t++ % 100) == 0) {

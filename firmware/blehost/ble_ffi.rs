@@ -188,17 +188,58 @@ pub extern "C" fn ns_ble_take_wifi(ssid: *mut u8, ssid_cap: u32, pass: *mut u8, 
 }
 
 /// Report the outcome of the firmware's Wi-Fi connection attempt back to Improv
-/// (updates current-state/error/result + queues their notifications).
+/// (updates current-state/error/result + queues their notifications). On success,
+/// `url` (UTF-8, `url_len` bytes; may be null/0) is packed into the SendWifi RPC
+/// result as the redirect the provisioner reads to reach the joined device.
 #[no_mangle]
-pub extern "C" fn ns_ble_provision_result(ok: u32) {
+pub extern "C" fn ns_ble_provision_result(ok: u32, url: *const u8, url_len: u32) {
     unsafe {
-        if let Some(svc) = IMPROV.as_mut() {
+        let Some(svc) = IMPROV.as_mut() else { return };
+        // The &str borrow is valid for this call; finish_provisioning copies the bytes
+        // into the result buffer immediately, so it need not outlive the call.
+        if ok != 0 && !url.is_null() && url_len > 0 {
+            let s = core::slice::from_raw_parts(url, url_len as usize);
+            match core::str::from_utf8(s) {
+                Ok(u) => svc.finish_provisioning(true, &[u]),
+                Err(_) => svc.finish_provisioning(true, &[]),
+            }
+        } else {
             svc.finish_provisioning(ok != 0, &[]);
-            let (c, e, r) =
-                (svc.current_state_handle(), svc.error_state_handle(), svc.rpc_result_handle());
-            queue_notifications(&[c, e, r]);
         }
+        let (c, e, r) =
+            (svc.current_state_handle(), svc.error_state_handle(), svc.rpc_result_handle());
+        queue_notifications(&[c, e, r]);
     }
+}
+
+/// Override the advertised local name (scan-response Complete Local Name) before
+/// advertising starts. Lets the player advertise its device name instead of the
+/// build-fixed default so the provisioner's name scan (and humans) see the board.
+#[no_mangle]
+pub extern "C" fn ns_ble_set_name(name: *const u8, len: u32) {
+    if name.is_null() || len == 0 {
+        return;
+    }
+    let s = unsafe { core::slice::from_raw_parts(name, (len as usize).min(29)) };
+    let mut sr: Buf<31> = Buf::new();
+    let _ = sr.extend(&[(s.len() + 1) as u8, 0x09]); // AD length, type=Complete Local Name
+    let _ = sr.extend(s);
+    unsafe { HOST.set_scan_rsp(sr.as_slice()) };
+}
+
+/// Override the advertised (static random) BLE address before advertising starts.
+/// `mac` is 6 bytes in on-air LE order (MSB must have its top two bits set for a
+/// static random address). Gives each board a distinct address so a central can't
+/// serve a stale GATT cache and two DUTs don't collide.
+#[no_mangle]
+pub extern "C" fn ns_ble_set_addr(mac: *const u8) {
+    if mac.is_null() {
+        return;
+    }
+    let s = unsafe { core::slice::from_raw_parts(mac, 6) };
+    let mut a = [0u8; 6];
+    a.copy_from_slice(s);
+    unsafe { HOST.set_random_addr(a) };
 }
 
 /// Host state for telemetry: 0=Init .. 6=Advertising, 7=Connected.

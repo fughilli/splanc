@@ -45,6 +45,7 @@ const ERR_ATTRIBUTE_NOT_FOUND: u8 = 0x0a;
 
 // GATT declaration UUIDs (16-bit).
 const UUID_PRIMARY_SERVICE: u16 = 0x2800;
+const UUID_SECONDARY_SERVICE: u16 = 0x2801;
 const UUID_CHARACTERISTIC: u16 = 0x2803;
 const UUID_CCCD: u16 = 0x2902;
 
@@ -232,14 +233,24 @@ impl<const N: usize> GattDb<N> {
         let Some((start, end, ty)) = parse_range_type(params) else {
             return att_error(ATT_READ_BY_GROUP_TYPE_REQ, 0, ERR_INVALID_LENGTH, out);
         };
-        if !matches_u16(ty, UUID_PRIMARY_SERVICE) {
+        // Service discovery groups by primary (0x2800) or secondary (0x2801) service.
+        // We expose only primary services — but a SECONDARY-service probe (which BlueZ
+        // always issues) must still get ATTRIBUTE_NOT_FOUND (an empty result), NOT
+        // REQUEST_NOT_SUPPORTED: BlueZ treats the latter as a fatal error and ABORTS
+        // discovery before it ever enumerates the characteristics, so the central then
+        // reports every characteristic (e.g. the Improv rpc-result) as "not found".
+        let group = if matches_u16(ty, UUID_PRIMARY_SERVICE) {
+            UUID_PRIMARY_SERVICE
+        } else if matches_u16(ty, UUID_SECONDARY_SERVICE) {
+            UUID_SECONDARY_SERVICE
+        } else {
             return att_error(ATT_READ_BY_GROUP_TYPE_REQ, start, ERR_REQUEST_NOT_SUPPORTED, out);
-        }
+        };
         // Element = [handle:2][end_group:2][service UUID]; all elements same len.
         let mut wrote = false;
         let mut elem_len = 0usize;
         for a in self.iter() {
-            if a.handle < start || a.handle > end || a.uuid != Uuid::U16(UUID_PRIMARY_SERVICE) {
+            if a.handle < start || a.handle > end || a.uuid != Uuid::U16(group) {
                 continue;
             }
             let this_len = 4 + a.value.len();
@@ -534,6 +545,24 @@ mod tests {
         let s = out.as_slice();
         assert_eq!(s[0], ATT_ERROR_RSP);
         assert_eq!(s[4], ERR_INVALID_HANDLE);
+    }
+
+    #[test]
+    fn secondary_service_probe_returns_not_found_not_unsupported() {
+        // BlueZ issues a Read-By-Group-Type for SECONDARY services (0x2801) during
+        // discovery. We have none, but the answer MUST be ATTRIBUTE_NOT_FOUND — a
+        // REQUEST_NOT_SUPPORTED aborts BlueZ's whole discovery, so it never enumerates
+        // the characteristics (observed on-air as "Characteristic ...268004 not found").
+        let mut db = improv_db();
+        let mut out: Buf<GATT_RSP_MAX> = Buf::new();
+        let params = [0x01, 0x00, 0xff, 0xff, 0x01, 0x28]; // 1..0xffff, type=0x2801
+        db.handle_att(ATT_READ_BY_GROUP_TYPE_REQ, &params, &mut out);
+        assert_eq!(out.as_slice()[0], ATT_ERROR_RSP);
+        assert_eq!(out.as_slice()[4], ERR_ATTRIBUTE_NOT_FOUND);
+        // A primary-service probe still works.
+        let p2 = [0x01, 0x00, 0xff, 0xff, 0x00, 0x28];
+        db.handle_att(ATT_READ_BY_GROUP_TYPE_REQ, &p2, &mut out);
+        assert_eq!(out.as_slice()[0], ATT_READ_BY_GROUP_TYPE_RSP);
     }
 
     #[test]
