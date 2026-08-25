@@ -5,16 +5,41 @@
 #   * led-server (M2) — FastAPI/uvicorn web server; depends on the driver's
 #     control socket, binds :80, serves the web app.
 #
-# PLACEHOLDER PACKAGES: M1/M2 are Bazel-built (Python + the native Rust solver)
-# and not yet packaged for Nix, so `package` points at inert stubs. When they
-# land, swap in the real derivations — the unit shape, service user, dirs,
-# capabilities, and firewall openings here are already correct.
+# M1 (led-driver) is now a REAL package: the //pi/led_driver app run over
+# hardware SPI. M2 (led-server) is still an inert stub. The unit shape, service
+# user, dirs, capabilities, and firewall openings here are already correct.
 { pkgs, ... }:
 let
-  ledDriverPkg = pkgs.writeShellScriptBin "led-driver" ''
-    echo "led-driver placeholder — M1 (pi/led_driver:drive) not packaged yet" >&2
-    exec sleep infinity
-  '';
+  # The driver's only runtime deps: spidev (native, lazy-imported, Pi-only) and
+  # pydantic v2 (ledmapper_protocol's models). Everything else is stdlib.
+  ledPyEnv = pkgs.python3.withPackages (ps: [ ps.spidev ps.pydantic ]);
+
+  # Output backend baked into this image. The Pi3 test board (splanc-max-2) drives
+  # the //fpga/spi_ws281x streaming WS281x FPGA over SPI; the Pi5 (splanc-max-1)
+  # can revert to APA102 strips by flipping ledOutput back to "apa102". --start N
+  # self-drives a default cycle at boot so the SPI wire is always active for the
+  # logic-analyzer probe (//pi/tools/la_probe) without needing a client.
+  ledOutput = "fpga";
+  ledFpgaPorts = 2;
+  ledStartLeds = 16;
+
+  # Sources are VENDORED under ./ledapp because the deploy builds the flake as
+  # `path:pi/provisioning/nix`, whose tree can't reach ../../{pi/led_driver,
+  # shared/protocol}. TODO: bazel-generate ./ledapp from the canonical sources +
+  # a sync test (mirrors //pi/hitl/internal/skus) to prevent drift.
+  ledDriverPkg = pkgs.runCommand "led-mapper-driver"
+    { nativeBuildInputs = [ pkgs.makeWrapper ]; }
+    ''
+      mkdir -p "$out/bin" "$out/libexec"
+      cp -r ${./ledapp}/. "$out/libexec/"
+      makeWrapper ${ledPyEnv}/bin/python3 "$out/bin/led-driver" \
+        --set PYTHONPATH "$out/libexec" \
+        --set PYTHONUNBUFFERED 1 \
+        --add-flags "-m led_driver" \
+        --add-flags "--output ${ledOutput}" \
+        --add-flags "--fpga-ports ${toString ledFpgaPorts}" \
+        --add-flags "--start ${toString ledStartLeds}"
+    '';
 
   ledServerPkg = pkgs.writeShellScriptBin "led-server" ''
     echo "led-server placeholder — M2 (pi/server:serve) not packaged yet" >&2
