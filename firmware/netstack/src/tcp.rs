@@ -81,10 +81,18 @@ pub struct TcpConn {
     // expiry it goes back-N (rewinds `sent` to 0) so the whole window is resent.
     tx_at_ms: u32,   // clock when the RTO was armed (0 = nothing in flight / disarmed)
     rto_ms: u32,     // current retransmit timeout, doubled on each expiry (capped)
+    rto_count: u32,  // consecutive RTO fires with no ACK — a dead-peer detector
 }
 
 const RTO_INITIAL_MS: u32 = 300;
 const RTO_MAX_MS: u32 = 2000;
+/// Give up on a connection after this many consecutive RTOs with no ACK — the peer is
+/// gone. With the backoff above that's ~12 s. A single-connection TLS server MUST do
+/// this: if a client times out mid-request and vanishes without a clean RST, the server
+/// would otherwise stay Established forever, locked out to every reconnect (observed
+/// wedging the netstack player under a heavy fx_bench sweep). On give-up we go to Done so
+/// the app re-listens; the client's reconnect (it retries ~45 s) then gets in.
+const MAX_RTO_RETRIES: u32 = 8;
 /// Outbound window buffer: bytes we may have in flight + queued at once. Bounds RAM and
 /// the reply/stream burst we can pipeline before an ACK must free space. Kept close to the
 /// old single-segment size on purpose — this struct is a static, and every extra byte here
@@ -108,7 +116,7 @@ impl TcpConn {
             last_adv_wnd: 0,
             window_closed: false,
             snd_buf: [0; SND_BUF], snd_len: 0, sent: 0, peer_wnd: 0,
-            tx_at_ms: 0, rto_ms: RTO_INITIAL_MS,
+            tx_at_ms: 0, rto_ms: RTO_INITIAL_MS, rto_count: 0,
         }
     }
 
@@ -232,8 +240,16 @@ impl TcpConn {
         if now_ms.wrapping_sub(self.tx_at_ms) < self.rto_ms {
             return 0;
         }
-        // RTO fired: go back N — rewind the window and resend from the oldest unacked
-        // byte. `pump_tx` re-arms the timer as the first resent segment goes out.
+        // RTO fired. If the peer has gone silent through too many of these, declare it
+        // dead and tear the connection down so the app can re-listen (a single-connection
+        // server would otherwise be locked out to reconnects forever).
+        self.rto_count += 1;
+        if self.rto_count > MAX_RTO_RETRIES {
+            self.state = State::Done;
+            return 0;
+        }
+        // Otherwise go back N — rewind the window and resend from the oldest unacked byte.
+        // `pump_tx` re-arms the timer as the first resent segment goes out.
         self.rto_ms = (self.rto_ms.saturating_mul(2)).min(RTO_MAX_MS);
         self.sent = 0;
         self.snd_nxt = self.snd_una;
@@ -301,6 +317,7 @@ impl TcpConn {
                 }
                 self.snd_una = ack;
                 self.rto_ms = RTO_INITIAL_MS;
+                self.rto_count = 0; // peer is alive — reset the dead-peer counter
                 self.tx_at_ms = 0; // re-armed by pump_tx/tick if data is still in flight
             }
             // Peer's advertised receive window (we send window-scale 0, so it's unscaled).
@@ -592,6 +609,52 @@ mod tests {
         }
         assert_eq!(delivered, N, "all bytes delivered in order");
         assert_eq!(srv.snd_len, 0, "send buffer fully acknowledged");
+    }
+
+    #[test]
+    fn dead_peer_tears_down_after_max_rto() {
+        // A peer that vanishes mid-request (times out, no clean RST) leaves data in flight.
+        // After MAX_RTO_RETRIES unacked RTOs the server declares it dead and goes to Done so
+        // it can re-listen — without this a single-connection TLS server is locked out to
+        // every reconnect forever (observed wedging the netstack player under fx_bench).
+        let (cli_ip, srv_ip) = ([10, 0, 0, 1], [10, 0, 0, 2]);
+        let mut cli = TcpConn::new(cli_ip, srv_ip, 5000, 443, 1000);
+        let mut srv = TcpConn::listen(srv_ip, 443, 9000);
+        let (mut a, mut b) = ([0u8; 1600], [0u8; 1600]);
+        let n = cli.connect(&mut a);
+        let r = srv.on_ip(&a[..n], &mut b);
+        let n = cli.on_ip(&b[..r], &mut a);
+        let _ = srv.on_ip(&a[..n], &mut b);
+        assert_eq!(srv.state, State::Established);
+
+        // Server replies, the client never ACKs (gone). Drive the RTO past the limit.
+        srv.enqueue(b"perf_report reply");
+        let _ = srv.pump_tx(1, &mut b);
+        let mut t = 1u32;
+        for _ in 0..(MAX_RTO_RETRIES + 3) {
+            t = t.wrapping_add(RTO_MAX_MS + 1);
+            let _ = srv.tick(t, &mut b);
+        }
+        assert_eq!(srv.state, State::Done, "dead peer -> connection torn down");
+
+        // A LIVE peer that keeps ACKing never trips it: the counter resets on each ACK.
+        let mut srv2 = TcpConn::listen(srv_ip, 443, 7000);
+        let mut cli2 = TcpConn::new(cli_ip, srv_ip, 5001, 443, 2000);
+        let n = cli2.connect(&mut a);
+        let r = srv2.on_ip(&a[..n], &mut b);
+        let n = cli2.on_ip(&b[..r], &mut a);
+        let _ = srv2.on_ip(&a[..n], &mut b);
+        let mut t2 = 1u32;
+        for _ in 0..(MAX_RTO_RETRIES + 3) {
+            srv2.enqueue(b"x");
+            let m = srv2.pump_tx(t2, &mut b);
+            let r = cli2.on_ip(&b[..m], &mut a); // client ACKs each
+            if r > 0 {
+                let _ = srv2.on_ip(&a[..r], &mut b);
+            }
+            t2 = t2.wrapping_add(RTO_MAX_MS + 1);
+        }
+        assert_eq!(srv2.state, State::Established, "a live, ACKing peer is never dropped");
     }
 
     impl TcpConn {
