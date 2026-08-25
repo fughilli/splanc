@@ -12,6 +12,7 @@ go_library(
         "//pi/hitl/internal/metrics",
         "//pi/hitl/internal/queue",
         "//pi/hitl/internal/runner",
+        "//pi/hitl/internal/skus",
     ],
 )
 

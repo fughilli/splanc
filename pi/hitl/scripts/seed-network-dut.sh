@@ -14,18 +14,22 @@
 # never collide with a discovered board (c6-*). --addr is the DUT's LAN management
 # address (mDNS host or IP) — prefer its ETHERNET address so provisioning (which
 # cycles the DUT's WiFi) can never drop monitoring/journalctl. The DUT is PIN-ONLY:
-# only `hitl reserve --device <name>` lands on it, never an unpinned "any DUT" run.
+# only an explicit hardware target — `hitl reserve --device <name>` or `--sku <sku>`
+# — lands on it, never an unpinned "any DUT" or a bare `--require-caps` request.
 #
 # JSON is merged locally (the rig host may lack python3/jq) and shipped atomically.
 set -euo pipefail
 
 HOST="hitl-rig.local"
-NAME=""; ADDR=""; BLE_MAC=""; BLE_ADAPTER=""; SSH_USER="root"; SSH_PORT="22"; ACTION="add"
+NAME=""; ADDR=""; BLE_MAC=""; BLE_ADAPTER=""; SKU=""; SSH_USER="root"; SSH_PORT="22"; ACTION="add"
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --name) NAME="$2"; shift 2;;
     --addr) ADDR="$2"; shift 2;;
     --ble-mac) BLE_MAC="$2"; shift 2;;
+    # The DUT's hardware SKU (e.g. "led-mapper-pi"). Its capabilities are looked up
+    # from the registry (pi/hitl/skus.bzl) so capability-targeted tests fan to it.
+    --sku) SKU="$2"; shift 2;;
     # Override the container's BLE central (HITL_BLE_ADAPTER, e.g. "hci1"). Only
     # needed when the rig doesn't set --ble-adapter itself AND its default adapter
     # can't reach this DUT — e.g. a Pi5 rig whose flaky onboard controller scans
@@ -57,11 +61,12 @@ fi
 
 [ -n "$NAME" ] || { echo "--name is required" >&2; exit 2; }
 case "$NAME" in pi-*|net-*) ;; *) echo "name must start with pi- or net- (got '$NAME')" >&2; exit 2;; esac
-if [ "$ACTION" = "add" ] && [ -z "$ADDR" ]; then
-  echo "--addr is required for add" >&2; exit 2
+if [ "$ACTION" = "add" ]; then
+  [ -n "$ADDR" ] || { echo "--addr is required for add" >&2; exit 2; }
+  [ -n "$SKU" ]  || { echo "--sku is required for add (e.g. led-mapper-pi)" >&2; exit 2; }
 fi
 
-MERGED="$(CURRENT="$CURRENT" NAME="$NAME" ADDR="$ADDR" BLE_MAC="$BLE_MAC" BLE_ADAPTER="$BLE_ADAPTER" \
+MERGED="$(CURRENT="$CURRENT" NAME="$NAME" ADDR="$ADDR" BLE_MAC="$BLE_MAC" BLE_ADAPTER="$BLE_ADAPTER" SKU="$SKU" \
           SSH_USER="$SSH_USER" SSH_PORT="$SSH_PORT" ACTION="$ACTION" python3 - <<'PY'
 import json, os, sys
 try:
@@ -82,7 +87,7 @@ if os.environ["ACTION"] == "add":
         env["HITL_DUT_BLE_MAC"] = os.environ["BLE_MAC"]
     if os.environ["BLE_ADAPTER"]:
         env["HITL_BLE_ADAPTER"] = os.environ["BLE_ADAPTER"]
-    cur.append({"name": name, "kind": "network", "devices": [], "env": env})
+    cur.append({"name": name, "kind": "network", "sku": os.environ["SKU"], "devices": [], "env": env})
 json.dump(cur, sys.stdout, indent=2)
 PY
 )"
