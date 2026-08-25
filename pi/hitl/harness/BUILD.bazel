@@ -80,6 +80,37 @@ py_test(
     ],
 )
 
+# Same e2e driver, but against the HEAPLESS-NETSTACK player variant
+# (//firmware/player_app:esp32c6_netstack): BLE Improv provisioning -> our heapless
+# MAC/WPA2/CCMP/DHCP/TCP/TLS/WS -> lm_player_handle, no vendor WiFi on the data path.
+# $HITL_BUNDLE_RUNFILE points default_bundle() at the netstack bundle in this target's
+# runfiles; the board-caps descriptor is identical (same C6 board).
+py_test(
+    name = "e2e_netstack",
+    timeout = "eternal",
+    srcs = ["hitl_e2e.py"],
+    data = [
+        "//firmware/player_app:board_caps.textproto",
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "//pi/hitl/cmd/hitl",
+    ],
+    env = {
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+    },
+    imports = ["."],
+    main = "hitl_e2e.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
 # On-hardware LED-driver correctness test (logic-analyzer rig): reserve, flash,
 # provision, drive a static counting pattern over the player WebSocket, then
 # `hitl-capture` the WS2812 wire via the rig's shared FX2 and assert the decoded

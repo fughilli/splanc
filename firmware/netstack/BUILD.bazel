@@ -315,54 +315,9 @@ flash_bundle(
     tags = ["manual"],
 )
 
-# wifi_sta_own — full STA that OWNS the MAC (no vendor promiscuous), so the
-# hardware-ACK registers stay stable and the WPA2 4-way is deterministic.
-cc_binary(
-    name = "wifi_sta_own",
-    srcs = ["examples/wifi_sta_own.cpp"],
-    copts = ["-fno-rtti"],
-    # Two no_std Rust staticlibs (our wifi_sta_ffi + the app's player_ffi) each define
-    # the panic handler (rust_begin_unwind) / eh_personality; take the first definition.
-    linkopts = ["-Wl,--allow-multiple-definition"],
-    target_compatible_with = _C6,
-    deps = _arduino + [
-        ":wifi_sta_ffi",
-        "@embedded//libs/vendor:wifi",
-        # Player session core + WS codec + board caps: serve the LED Mapper protocol
-        # (the HITL e2e transport) over the proven heapless TLS server.
-        "//firmware/player_app:player_ffi",
-        "//firmware/player_app:player_ffi_hdr",
-        "//firmware/player_app:ws_codec",
-        "//firmware/player_app:board_caps_res",
-        # BLE Improv onboarding: advertise + receive WiFi creds like the app, so a
-        # full //pi/hitl/harness:e2e (with the provisioning phase) runs no-override.
-        "//firmware/player_app:improv_ble",
-        "//firmware/player_app:improv_codec",
-    ],
-)
-
-firmware_binary(
-    name = "wifi_sta_own_esp32c6",
-    binary = ":wifi_sta_own",
-    board = "esp32c6",
-    opt_mode = "opt",
-    tags = ["manual"],
-)
-
-esptool_flash(
-    name = "wifi_sta_own_flash",
-    app = ":wifi_sta_own_esp32c6",
-    # mbedtls TLS server pushes the image past the 1.25MB default OTA slot; use
-    # the single-app huge partition (same as player_app) — this example never OTAs.
-    partitions = "@embedded//libs/vendor:partitions_huge_app",
-    tags = ["manual"],
-)
-
-flash_bundle(
-    name = "wifi_sta_own_flashbundle",
-    flash = ":wifi_sta_own_flash",
-    tags = ["manual"],
-)
+# NB: the full heapless-netstack player (former wifi_sta_own example) is now a first-class
+# player_app variant — //firmware/player_app:esp32c6_netstack (built from main_netstack.cpp),
+# which links :wifi_sta_ffi. It's exercised by //pi/hitl/harness:e2e_netstack.
 
 # wifi_hw_rx_test — validate non-promiscuous STA RX bring-up (keeps HW crypto inline).
 cc_binary(

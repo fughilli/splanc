@@ -1,15 +1,16 @@
-// wifi_sta_own — full heapless STA that OWNS the RX path, NO promiscuous. We bring up
-// CONTINUOUS STA RX the vendor way (reversed): via the ieee80211_ioctl marshal in the
-// WiFi-task context we run wifi_hw_stop -> wifi_hw_start -> ic_set_vif(STA) ->
-// pm_disconnected_stop -> pm_go_to_wake (force the MAC awake so RX is continuous, not
-// duty-cycled), then install our own RX ring and pull frames directly. This uses the
-// real STA vif (crypto-capable, unlike monitor/promiscuous), is deterministic (fixed
-// the 4-way flakiness the promiscuous callback caused), and keeps hardware auto-ACK via
-// the own-MAC/BSSID registers. TX + auth/assoc + WPA2 4-way + CCMP are all ours.
+// main_netstack — the LED Mapper player over the fully HEAPLESS WiFi netstack (the
+// esp32c6_netstack build variant). Same session core / BLE Improv / board caps as the
+// vendor-WiFi player_app, but the entire transport is ours from the PHY blob up:
+// BLE Improv provisioning -> heapless MAC (own RX ring, no promiscuous) -> WPA2 4-way
+// (HW-AES CCMP) -> DHCP -> TCP -> mbedtls TLS 1.2 -> RFC6455 WebSocket -> lm_player_handle.
+// Proven end to end against the full //pi/hitl/harness:e2e_netstack (BLE provisioning incl.).
 //
-// Software CCMP (HW crypto engine disabled post-link) currently drives the data plane;
-// the HW crypto slot programs (valid=1) but RX-decrypt needs ic_set_key's key-info
-// table, not the raw wDev_Insert_KeyEntry — that's the remaining acceleration step.
+// STA RX bring-up (reversed vendor path): via the ieee80211_ioctl marshal in the WiFi-task
+// context we run wifi_hw_stop -> wifi_hw_start -> ic_set_vif(STA) -> pm_disconnected_stop ->
+// pm_go_to_wake (force the MAC awake so RX is continuous), then install our own RX ring and
+// pull frames directly. Real STA vif (crypto-capable), deterministic 4-way, HW auto-ACK via
+// the own-MAC/BSSID registers. TX + auth/assoc + WPA2 4-way + CCMP are all ours. Software
+// CCMP drives the data plane; the standalone AES-128 accelerator does the block cipher.
 
 #include <Arduino.h>
 #include <WiFi.h>
@@ -20,11 +21,12 @@
 #include <mbedtls/ssl.h>
 #include <mbedtls/x509_crt.h>
 #include <mbedtls/pk.h>
-#include "ws_codec.h"     // RFC6455 server codec (from //firmware/player_app:ws_codec)
-#include "player_ffi.h"   // lm_player_* session core (from //firmware/player_app:player_ffi)
-#include "firmware/player_app/improv_ble.h"    // BLE Improv onboarding (advertise + creds)
-#include "firmware/player_app/improv_codec.h"  // IMPROV_STATE_* constants
-#include "firmware/player_app/serial_log.h"    // Log() ring + log_drain_start (improv_ble logs here)
+#include "ws_codec.h"      // RFC6455 server codec
+#include "player_ffi.h"    // lm_player_* session core
+#include "improv_ble.h"    // BLE Improv onboarding (advertise + creds)
+#include "improv_codec.h"  // IMPROV_STATE_* constants
+#include "serial_log.h"    // Log() ring + log_drain_start (improv_ble logs here)
+#include "build_info.h"    // LM_GIT_COMMIT / LM_GIT_DIRTY (stamped at build time)
 
 // Board capability descriptor, compiled from //firmware/player_app:board_caps_res
 // (symbols named after the binaryproto basename). Handed to the player at boot so
@@ -782,9 +784,9 @@ void player_init() {
   esp_read_mac(mac, ESP_MAC_WIFI_STA);
   const char *name = "LED Mapper (heapless)";
   lm_player_set_identity(mac, sizeof mac, (const uint8_t *)name, strlen(name));
-  // 40-char git commit + dirty flag echoed in welcome (fwGitCommit/fwGitDirty).
-  const char *commit = "0000000000000000000000000000000000000000";
-  lm_player_set_build_info((const uint8_t *)commit, strlen(commit), true);
+  // Real build info stamped at build time (FUG-126): the full git commit + dirty flag,
+  // echoed in every welcome (fwGitCommit/fwGitDirty), same as the vendor-WiFi player.
+  lm_player_set_build_info((const uint8_t *)LM_GIT_COMMIT, strlen(LM_GIT_COMMIT), LM_GIT_DIRTY);
   lm_set_board_caps(board_caps_binaryproto, board_caps_binaryproto_len);
   Serial.printf("player init: board_caps=%u B\n", board_caps_binaryproto_len);
 }

@@ -283,6 +283,60 @@ firmware_binary(
     tags = ["manual"],
 )
 
+# -- Heapless-netstack player variant (esp32c6_netstack) ----------------------
+# The same LED Mapper player, but the ENTIRE WiFi transport is ours from the PHY
+# blob up (//firmware/netstack): BLE Improv provisioning -> heapless MAC -> WPA2
+# 4-way (HW-AES CCMP) -> DHCP -> TCP -> mbedtls TLS 1.2 -> RFC6455 WS ->
+# lm_player_handle. No vendor WiFi/lwIP/esp_https_server on the data path. Passes
+# the full //pi/hitl/harness:e2e_netstack (BLE provisioning included) on silicon.
+cc_binary(
+    name = "player_app_netstack",
+    srcs = [
+        "main_netstack.cpp",
+        ":build_info_h",  # generated build_info.h (git commit + dirty flag)
+    ],
+    copts = ["-fno-rtti"],
+    # Two no_std Rust staticlibs (the netstack's wifi_sta_ffi + our player_ffi) each
+    # define the panic handler (rust_begin_unwind)/eh_personality; take the first.
+    linkopts = ["-Wl,--allow-multiple-definition"],
+    target_compatible_with = select({
+        "@embedded//platforms:is_esp32c6": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        ":board_caps_res",
+        ":improv_ble",
+        ":improv_codec",
+        ":player_ffi",
+        ":player_ffi_hdr",
+        ":ws_codec",
+        "//firmware/netstack:wifi_sta_ffi",  # ns_* heapless MAC/CCMP/TCP FFI
+        "@embedded//libs/board:arduino_core",
+        "@embedded//libs/vendor:wifi",  # reversed vendor MAC/PM externs the netstack drives
+    ],
+)
+
+firmware_binary(
+    name = "esp32c6_netstack",
+    binary = ":player_app_netstack",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "flash_esp32c6_netstack",
+    app = ":esp32c6_netstack",
+    partitions = "@embedded//libs/vendor:partitions_huge_app",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "esp32c6_netstack_flashbundle",
+    flash = ":flash_esp32c6_netstack",
+    tags = ["manual"],
+)
+
 # -- On-device OSC bench image (FUG-121) -------------------------------------
 # A dedicated -DLM_OSC_BENCH build that, at boot, times one uniform update via
 # each transport with the C6 cycle counter, logs `[oscbench]` lines and halts.
