@@ -64,6 +64,7 @@ uint32_t ns_tcp_connect(const uint8_t *src, const uint8_t *dst, uint16_t sport, 
 uint32_t ns_tcp_on_ip(const uint8_t *ip, uint32_t len, uint8_t *out, uint32_t cap);
 uint32_t ns_tcp_enqueue(const uint8_t *data, uint32_t len);          // buffer into the send window
 uint32_t ns_tcp_pump_tx(uint32_t now_ms, uint8_t *out, uint32_t cap); // emit next windowed segment
+uint32_t ns_tcp_tx_room(void);                                       // free send-window bytes
 uint32_t ns_tcp_tick(uint32_t now_ms, uint8_t *out, uint32_t cap); // stack RTO: emits a retransmit when it fires
 uint32_t ns_tcp_window_ack(uint8_t *out, uint32_t cap); // window-update ACK after draining rx
 uint32_t ns_tcp_recv(uint8_t *out, uint32_t cap);
@@ -615,7 +616,7 @@ static uint32_t tcp_send_all(const uint8_t *data, uint32_t len) {
 // flight at once, so replies/streams pipeline instead of blocking one RTT per segment.
 static int bio_send(void *, const unsigned char *buf, size_t len) {
   uint32_t acc = tcp_send_all(buf, (uint32_t)len);
-  if (acc == 0) { static uint32_t ww = 0; if (ww++ < 8) Serial.printf("  bio_send len=%u WANT_WRITE\n", (unsigned)len); return MBEDTLS_ERR_SSL_WANT_WRITE; }
+  if (acc == 0) return MBEDTLS_ERR_SSL_WANT_WRITE;  // window full; ACKs drain it, record retried
   if (g_bio_tx++ < 24) Serial.printf("  bio_send len=%u took=%u\n", (unsigned)len, (unsigned)acc);
   return (int)acc;
 }
@@ -666,38 +667,46 @@ size_t g_ws_rxlen = 0;
 static void pump_link_once() {
   static uint8_t rxb[1600];
   uint32_t n = ns_mac_recv(rxb, sizeof(rxb));
-  if (n == 0) return;
-  if ((rxb[0] & 0x0c) == 0x08 && (rxb[1] & 0x40)) {  // protected data frame from the AP
+  if (n > 0 && (rxb[0] & 0x0c) == 0x08 && (rxb[1] & 0x40)) {  // protected data frame from the AP
     static uint8_t pt[1600];  // static: single-threaded, and keeps this off the deep TLS-write stack
     uint32_t pl = 0;
     for (uint32_t trim = 0; trim <= 4 && pl == 0; trim++)
       if (n > trim + 32) pl = ns_sta_decrypt(rxb, n - trim, pt, sizeof(pt));
     if (pl) handle_l3(pt, pl);
-    // The inbound ACK may have freed send-window space — stream out anything now allowed.
-    static uint8_t tseg[1600];
-    uint32_t tn;
-    while ((tn = ns_tcp_pump_tx((uint32_t)millis(), tseg, sizeof tseg)) > 0) send_ip(tseg, tn);
   }
+  // ALWAYS try to stream the send window out — whether or not a frame arrived. During a
+  // TLS write-stall (snd_buf full) the only way it drains is ACKs freeing space + the RTO's
+  // go-back-N resend; both need pump_tx to run every spin, not just when RX happens to land.
+  static uint8_t tseg[1600];
+  uint32_t tn;
+  while ((tn = ns_tcp_pump_tx((uint32_t)millis(), tseg, sizeof tseg)) > 0) send_ip(tseg, tn);
 }
 
-// Write all `len` bytes through TLS. On WANT_WRITE the stop-and-wait TCP has a segment in
-// flight — pump the link so its ACK clears tx_data and the next segment can go.
+// Write all `len` bytes through TLS. On WANT_WRITE the send window is full — pump the link
+// so the peer's ACKs free space (and the RTO's go-back-N resend recovers a lost segment)
+// until the write can proceed.
 static bool tls_write_all(const uint8_t *buf, size_t len) {
   size_t off = 0;
-  uint32_t guard = 0;
+  uint32_t stall_since = 0;
   while (off < len) {
     int w = mbedtls_ssl_write(&g_ssl, buf + off, len - off);
     if (w > 0) {
       off += w;
-      guard = 0;
+      stall_since = 0;  // progress — reset the stall clock
     } else if (w == MBEDTLS_ERR_SSL_WANT_WRITE || w == MBEDTLS_ERR_SSL_WANT_READ) {
-      pump_link_once();  // drive on_ip so the in-flight ACK frees the TCP tx slot
-      // Also let the stack's RTO fire while we spin here (a lost segment is retransmitted by
-      // ns_tcp_tick, not by this loop): pump the tick so a stall during a write can recover.
+      pump_link_once();  // process ACKs (free send-window space) + stream out the window
+      // Let the stack's RTO fire while we spin (a lost segment is retransmitted by the stack,
+      // not this loop): go-back-N re-sends the window so a stall during a write recovers.
       static uint8_t rseg[1600];
       uint32_t rn = ns_tcp_tick((uint32_t)millis(), rseg, sizeof rseg);
       if (rn > 0) send_ip(rseg, rn);
-      if (++guard > 4000000) return false;  // don't wedge if the peer vanished
+      // Time-based deadline, not an iteration count: a burst of small replies can legitimately
+      // back-pressure for a few RTOs (300ms, backed off), and an iteration cap could trip
+      // BEFORE the first RTO even fires — dropping the connection mid-sweep. Give real loss
+      // several RTO/backoff cycles to recover before giving up.
+      uint32_t now = (uint32_t)millis();
+      if (stall_since == 0) stall_since = now == 0 ? 1 : now;
+      else if (now - stall_since > 8000) return false;  // peer truly vanished
     } else {
       return false;
     }
@@ -783,6 +792,12 @@ static bool ws_pump() {
 // upgraded. Called from the app's perf-report cadence. Best-effort (drops if not connected).
 bool netstack_ws_send_frame(const uint8_t *data, size_t len) {
   if (!g_tls_hs || !g_ws_up) return false;
+  // Best-effort: unsolicited PerfReports must NEVER starve the request/reply path. If the
+  // send window doesn't comfortably hold this frame (+ TLS record overhead), drop it — a
+  // full window means RPC replies are already queued, and a blocking perf write there
+  // wedges tls_write_all long enough for the client to time out and reset (observed as
+  // mid-sweep socket drops in fx_bench). A dropped perf sample just means one fewer report.
+  if (ns_tcp_tx_room() < len + 96) return false;
   ws_send(WS_OP_BINARY, data, len);
   return true;
 }

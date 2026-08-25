@@ -1592,6 +1592,18 @@ static void led_show_async(bool timed, uint32_t count0, uint32_t count1,
 static void render_task(void *) {
   for (;;) {
     uint32_t delay_ms = render_once();
+#if defined(LM_NETSTACK)
+    // The heapless netstack runs on the LOWER-priority Arduino loopTask. Under a
+    // FULL-perf benchmark render_once() returns 0 (run flat out to measure), and a
+    // vTaskDelay(0) at this higher priority never cedes the CPU to loopTask — so the
+    // netstack gets zero time to service RX/ACK/retransmit and the control connection
+    // drops mid-sweep. Cede at least one tick each frame so the network keeps flowing.
+    // (The vendor build serves the network from separate IDF tasks, so it needn't.)
+    if (delay_ms == 0) {
+      vTaskDelay(1);
+      continue;
+    }
+#endif
     vTaskDelay(pdMS_TO_TICKS(delay_ms));
   }
 }
@@ -2286,6 +2298,17 @@ void setup() {
   // (FUG-121). Independent of the WS/TLS player path; binds now and receives
   // once the LAN is up.
   xTaskCreate(osc_task, "osc", kOscTaskStack, nullptr, tskIDLE_PRIORITY + 1, nullptr);
+#if defined(LM_NETSTACK)
+  // The heapless netstack is serviced on THIS (Arduino loop) task; the vendor build
+  // uses IDF net tasks. Left at the default priority 1 it's starved by the priority-10
+  // render task under a heavy FULL-perf sweep — the network can't service RX/ACK/
+  // retransmit and the control connection resets mid-measurement. Run it at render's
+  // priority so the two round-robin and the network keeps a fair share; observed as
+  // the most reliable (fewest mid-sweep drops) of the options tried. (The remaining
+  // unmeasurable effect, sweep256, fails on its ~4.6KB fixture-map record — the
+  // netstack's large-record limit — not on scheduling.)
+  vTaskPrioritySet(nullptr, kRenderTaskPrio);
+#endif
 }
 
 #if !defined(LM_NETSTACK)

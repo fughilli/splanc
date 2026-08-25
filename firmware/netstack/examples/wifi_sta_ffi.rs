@@ -143,6 +143,14 @@ pub extern "C" fn ns_tcp_enqueue(data: *const u8, len: u32) -> u32 {
     }
 }
 
+/// Free space in the send window right now (bytes the next enqueue would accept). Lets the
+/// app shed best-effort traffic (unsolicited perf reports) when the window is busy, so the
+/// critical RPC replies aren't starved behind it.
+#[no_mangle]
+pub extern "C" fn ns_tcp_tx_room() -> u32 {
+    unsafe { TCP.as_ref().map(|c| c.tx_room() as u32).unwrap_or(0) }
+}
+
 /// Emit the next in-flight segment into `out` if the peer's window allows; returns its
 /// length or 0. Call repeatedly to stream the window out (after enqueue + each loop).
 #[no_mangle]

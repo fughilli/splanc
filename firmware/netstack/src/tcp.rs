@@ -160,6 +160,11 @@ impl TcpConn {
         n
     }
 
+    /// Free space in the send window (bytes a subsequent `enqueue` would accept).
+    pub fn tx_room(&self) -> usize {
+        SND_BUF - self.snd_len
+    }
+
     /// Put the next in-flight segment on air if the peer's window allows, building it into
     /// `out`. Returns its length, or 0 if nothing to send / the window is full. Call
     /// repeatedly (each loop and after `enqueue`) to stream the window out; arms the RTO
@@ -537,27 +542,33 @@ mod tests {
         let _ = srv.on_ip(&a[..n], &mut b); // both Established; peer_wnd learned from the handshake
         assert!(srv.peer_wnd >= 1500);
 
-        // Pipelining: enqueue 3200 bytes, then pump TWICE with no ACK in between — a second
-        // segment must go out before the first is acknowledged (stop-and-wait emits one).
-        let payload = [0x5au8; 3200];
-        assert_eq!(srv.enqueue(&payload), 3200);
+        // Pipelining: enqueue 2000 bytes (fits the send buffer), then pump TWICE with no ACK
+        // in between — a second segment must go out before the first is acknowledged
+        // (stop-and-wait would emit exactly one).
+        const N: usize = 2000;
+        let payload = [0x5au8; N];
+        assert_eq!(srv.enqueue(&payload), N);
         let s1 = srv.pump_tx(1000, &mut b);
         let mut a2 = [0u8; 1600];
         let s2 = srv.pump_tx(1000, &mut a2);
         assert!(s1 > 0 && s2 > 0, "two segments in flight before any ACK: {s1},{s2}");
         assert_eq!(srv.sent, 1600, "in-flight capped at the peer's 1600-byte window");
 
-        // Now deliver everything: client buffers + ACKs each segment and drains so its
-        // window reopens; the server streams the rest. All 3200 bytes arrive, in order.
+        // Deliver everything: the client buffers + ACKs each segment and drains so its window
+        // reopens; the server streams the rest. All 2000 bytes arrive, in order.
         let mut delivered = 0usize;
-        for &seg in &[&s1, &s2] {
-            let buf = if *seg == s1 { &b } else { &a2 };
-            let r = cli.on_ip(&buf[..*seg], &mut a);
-            delivered += cli.rx_len;
-            cli.take_rx();
-            if r > 0 {
-                let _ = srv.on_ip(&a[..r], &mut b);
-            }
+        // The first two segments (s1 in `b`, s2 in `a2`) went out before any ACK.
+        let r = cli.on_ip(&b[..s1], &mut a);
+        delivered += cli.rx_len;
+        cli.take_rx();
+        if r > 0 {
+            let _ = srv.on_ip(&a[..r], &mut b);
+        }
+        let r = cli.on_ip(&a2[..s2], &mut a);
+        delivered += cli.rx_len;
+        cli.take_rx();
+        if r > 0 {
+            let _ = srv.on_ip(&a[..r], &mut b);
         }
         for _ in 0..60 {
             if srv.snd_len == 0 {
@@ -572,7 +583,6 @@ mod tests {
                     let _ = srv.on_ip(&a[..r], &mut b);
                 }
             } else {
-                // window full with nothing acked yet: nudge it with a client window update
                 let mut w = [0u8; 80];
                 let wn = cli.window_ack(&mut w);
                 if wn > 0 {
@@ -580,7 +590,7 @@ mod tests {
                 }
             }
         }
-        assert_eq!(delivered, 3200, "all bytes delivered in order");
+        assert_eq!(delivered, N, "all bytes delivered in order");
         assert_eq!(srv.snd_len, 0, "send buffer fully acknowledged");
     }
 
