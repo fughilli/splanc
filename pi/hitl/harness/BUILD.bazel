@@ -615,6 +615,42 @@ py_test(
     ],
 )
 
+# Video streaming against the heapless esp32c6_netstack drop-in — over the wss (TLS)
+# transport ONLY, since the netstack serves no plaintext ws:81 (and TLS is the phone's
+# camera-streaming path anyway). stream_bench speaks plain ws, so the harness drives it
+# through a local TLS-terminating proxy to the device's wss:443.
+py_test(
+    name = "video_stream_netstack",
+    timeout = "eternal",
+    srcs = ["hitl_video_stream.py"],
+    args = [
+        "--transport",
+        "wss",
+    ],
+    data = [
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "//fx_compiler:fx_compile",
+        "//pi/hitl/cmd/hitl",
+        "//tools/touchdesigner/stream_bench",
+    ],
+    env = {
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        "HITL_CHUNK_BYTES": "1024",
+    },
+    imports = ["."],
+    main = "hitl_video_stream.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
 # Uniform-update drop-rate / bandwidth bench (FUG: slider drags losing the final
 # value). Reserves a rig, flashes + provisions the DUT, then blasts N set_uniforms
 # and confirms the device processed all of them (playback_state reply per message

@@ -34,6 +34,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import contextlib
 import os
 import subprocess
 import sys
@@ -51,7 +52,11 @@ def _log(msg: str) -> None:
 
 _FXC_RUNFILE = "_main/fx_compiler/fx_compile"
 _STREAM_BENCH_RUNFILE = "_main/tools/touchdesigner/stream_bench/stream_bench"
-_BUNDLE_RUNFILE = "_main/firmware/player_app/esp32c6_flashbundle.tar"
+# HITL_BUNDLE_RUNFILE lets a variant target (video_stream_netstack) point at a different
+# firmware bundle in its runfiles without a code change.
+_BUNDLE_RUNFILE = os.environ.get(
+    "HITL_BUNDLE_RUNFILE", "_main/firmware/player_app/esp32c6_flashbundle.tar"
+)
 
 
 def _rlocation(rloc: str) -> str | None:
@@ -118,6 +123,32 @@ def _linear_map(n: int) -> dict[str, Any]:
     return {"type": "submit_map", "map": {"map_id": "__vidstream", "led_count": n, "leds": leds}}
 
 
+async def _submit_map(sock, led_count: int) -> None:
+    """Submit the fixture map, ALWAYS chunked (like the web client / fx_bench). At the
+    default 256 LEDs the map is ~4.6 KB — one oversized TLS record the heapless-netstack
+    player can't buffer — so shard it through the UploadChunk window path (HITL_CHUNK_BYTES
+    sizes the windows). Small maps still go as one window."""
+    from map_upload_core import window_plan
+    from server import proto_wire
+
+    flat = _linear_map(led_count)
+    frame = proto_wire.encode_client(flat)
+    windows = window_plan(len(frame))
+    if len(windows) <= 1:
+        await _rpc(sock, flat, "result_ready", timeout=10.0)
+        return
+    for seq, off, end, last in windows:
+        chunk = {
+            "type": "upload_chunk",
+            "upload_id": 1,
+            "seq": seq,
+            "last": last,
+            "kind": "MAP",
+            "payload": base64.b64encode(frame[off:end]).decode("ascii"),
+        }
+        await _rpc(sock, chunk, "result_ready" if last else "chunk_ack", timeout=10.0)
+
+
 async def _open_ws(ws_url: str, insecure: bool, settle_deadline: float):
     import ssl
 
@@ -150,7 +181,7 @@ async def _setup_effect_once(sock, args, fxb: bytes) -> None:
     device declares the WxH texture. Raises SystemExit on a texture mismatch (a
     real failure — the device would silently drop every frame)."""
     if args.led_count > 0:
-        await _rpc(sock, _linear_map(args.led_count), "result_ready", timeout=10.0)
+        await _submit_map(sock, args.led_count)  # chunked — a 256-LED map is one big record
         await _rpc(sock, {"type": "set_led_count", "led_count": args.led_count}, "led_count_state")
     await _rpc(
         sock,
@@ -281,17 +312,75 @@ def _drive(setup_ws_url: str, stream_addr: str, host_header: str, args, fxb: byt
     return False
 
 
-def _plain_hostport(ws_url: str) -> tuple[str, int]:
-    """Parse host:port from a plain ws:// URL (stream_bench speaks plain ws only)."""
+def _hostport(ws_url: str) -> tuple[str, int]:
+    """Parse host:port from a ws:// or wss:// URL (default ports 81 / 443)."""
     u = urlparse(ws_url)
-    if u.scheme != "ws":
-        raise SystemExit(
-            f"--device-ws must be a plain ws:// URL (got {ws_url!r}); stream_bench speaks "
-            f"plain ws like the TouchDesigner plugin, not TLS"
-        )
+    if u.scheme not in ("ws", "wss"):
+        raise SystemExit(f"--device-ws must be a ws:// or wss:// URL (got {ws_url!r})")
     if not u.hostname:
         raise SystemExit(f"could not parse a host from {ws_url!r}")
-    return u.hostname, (u.port or 81)
+    return u.hostname, (u.port or (443 if u.scheme == "wss" else 81))
+
+
+@contextlib.contextmanager
+def _tls_terminating_proxy(target_host: str, target_port: int):
+    """A local plain-TCP listener that TLS-wraps every byte to target_host:target_port
+    (insecure — the device presents a self-signed LAN cert). stream_bench speaks plain ws
+    like the TouchDesigner plugin, so to exercise the DEVICE's TLS transport — the SAME
+    wss path a phone streams camera video over — we terminate TLS here: stream_bench
+    connects to this listener in the clear and its bytes ride TLS to the device. Yields the
+    local port. (A transparent byte pipe: it needn't understand WS — the upgrade + frames
+    pass through, TLS on the device side.)"""
+    import socket
+    import ssl
+    import threading
+
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(4)
+    local_port = listener.getsockname()[1]
+    stop = threading.Event()
+
+    def _pipe(src, dst):
+        try:
+            while not stop.is_set():
+                data = src.recv(65536)
+                if not data:
+                    break
+                dst.sendall(data)
+        except OSError:
+            pass
+        finally:
+            try:
+                dst.shutdown(socket.SHUT_WR)
+            except OSError:
+                pass
+
+    def _serve():
+        while not stop.is_set():
+            try:
+                client, _ = listener.accept()
+            except OSError:
+                break
+            try:
+                up = socket.create_connection((target_host, target_port), timeout=8)
+                tls = ctx.wrap_socket(up, server_hostname=target_host)
+            except OSError:
+                client.close()
+                continue
+            threading.Thread(target=_pipe, args=(client, tls), daemon=True).start()
+            threading.Thread(target=_pipe, args=(tls, client), daemon=True).start()
+
+    threading.Thread(target=_serve, daemon=True).start()
+    try:
+        yield local_port
+    finally:
+        stop.set()
+        listener.close()
 
 
 def run_on_hardware(args) -> bool:
@@ -303,9 +392,16 @@ def run_on_hardware(args) -> bool:
     )
     _log(f"[fx] compiled {args.width}x{args.height} texture effect ({len(fxb)} B .fxb)")
 
-    # An explicit --device-ws that's reachable from here skips the rig entirely.
+    schemes = ["ws", "wss"] if args.transport == "both" else [args.transport]
+
+    # An explicit --device-ws that's reachable from here skips the rig entirely. Its scheme
+    # (ws/wss) fixes the transport; --transport is only consulted for the reserve path.
     if args.device_ws:
-        host, port = _plain_hostport(args.device_ws)
+        host, port = _hostport(args.device_ws)
+        if args.device_ws.startswith("wss:"):
+            with _tls_terminating_proxy(host, port) as pport:
+                _log(f"[transport] wss (TLS) via proxy -> {host}:{port}")
+                return _drive(args.device_ws, f"127.0.0.1:{pport}", host, args, fxb)
         return _drive(args.device_ws, f"{host}:{port}", host, args, fxb)
 
     res = Reservation(server=args.server, owner=args.owner)
@@ -331,11 +427,40 @@ def run_on_hardware(args) -> bool:
         if not ssid:
             raise SystemExit("no WiFi: rig serves no AP; pass --wifi-ssid or --device-ws")
         redirect = provision_dut(res, ssid, password, args.improv_timeout, args.improv_attempts)
-        # Stream over the DUT's plain ws:81 player socket — the plugin's transport.
-        host, port = dut_target(redirect, "ws")
-        with res.forward(host, port) as local_port:
-            setup_url = f"ws://localhost:{local_port}/ws"
-            return _drive(setup_url, f"127.0.0.1:{local_port}", "localhost", args, fxb)
+        # Stream over each requested transport (sequential, reusing the reservation). ws is
+        # the plain :81 plugin path; wss is the device's TLS transport — the SAME path a
+        # phone streams camera video over — driven through a local TLS-terminating proxy so
+        # the plain-ws stream_bench still exercises it.
+        ok = True
+        for scheme in schemes:
+            host, port = dut_target(redirect, scheme)
+            with res.forward(host, port) as local_port:
+                if scheme == "wss":
+                    with _tls_terminating_proxy("127.0.0.1", local_port) as pport:
+                        _log(f"[transport] wss (TLS) — stream_bench -> TLS proxy -> device:{port}")
+                        ok = (
+                            _drive(
+                                f"wss://localhost:{local_port}/ws",
+                                f"127.0.0.1:{pport}",
+                                "localhost",
+                                args,
+                                fxb,
+                            )
+                            and ok
+                        )
+                else:
+                    _log(f"[transport] ws:{port} (plaintext)")
+                    ok = (
+                        _drive(
+                            f"ws://localhost:{local_port}/ws",
+                            f"127.0.0.1:{local_port}",
+                            "localhost",
+                            args,
+                            fxb,
+                        )
+                        and ok
+                    )
+        return ok
     finally:
         res.release()
 
@@ -403,6 +528,14 @@ def main() -> None:
         "pass --no-bundle to measure whatever is already flashed",
     )
     ap.add_argument("--no-bundle", dest="bundle", action="store_const", const=None)
+    ap.add_argument(
+        "--transport",
+        choices=["ws", "wss", "both"],
+        default=os.environ.get("HITL_VIDEO_TRANSPORT", "both"),
+        help="stream over the plain ws:81 plugin path, the wss:443 TLS path (the phone's "
+        "camera-video path, via a local TLS-terminating proxy), or BOTH (default). The "
+        "heapless netstack serves only wss, so its variant pins 'wss'.",
+    )
     ap.add_argument("--wifi-ssid", default=os.environ.get("HITL_WIFI_SSID"))
     ap.add_argument("--wifi-pass", default=os.environ.get("HITL_WIFI_PASS", ""))
     ap.add_argument("--improv-timeout", type=float, default=75.0)
