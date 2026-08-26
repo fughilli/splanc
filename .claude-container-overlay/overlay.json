@@ -6,7 +6,8 @@
       "port": 8443,
       "tls": true
     },
-    "dev": 5173
+    "dev": 5173,
+    "waveforms": 8091
   },
   "capabilities": ["NET_ADMIN"],
   "devices": ["/dev/net/tun"],

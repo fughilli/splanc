@@ -166,9 +166,26 @@ def decode(args: argparse.Namespace, in_sr: str, annotation: str) -> str:
     return out.stdout
 
 
-def ws_decode(args: argparse.Namespace, in_sr: str, din: str) -> List[Tuple[int, int, int]]:
-    """Decode a WS281x output line with sigrok's rgb_led_ws281x PD -> RGB pixels.
-    Same decoder the rig's HITL analyzer uses; output is one '#rrggbb' per LED."""
+def parse_rate(s: str) -> int:
+    """'24m'/'24M'/'24MHz'/'24000000' -> Hz."""
+    s = s.strip().lower().replace("hz", "").strip()
+    mult = 1
+    if s.endswith("m"):
+        mult, s = 1_000_000, s[:-1]
+    elif s.endswith("k"):
+        mult, s = 1_000, s[:-1]
+    try:
+        return int(float(s) * mult)
+    except ValueError:
+        return 0
+
+
+def ws_decode(
+    args: argparse.Namespace, in_sr: str, din: str
+) -> List[Tuple[int, int, Tuple[int, int, int]]]:
+    """Decode a WS281x line with sigrok's rgb_led_ws281x PD. Returns (start, end,
+    rgb) samples per LED — the sample span lets us split frames on the reset gap
+    (the LOW time from one LED's end to the next LED's start)."""
     cmd = [
         args.sigrok_cli,
         "-i",
@@ -177,43 +194,86 @@ def ws_decode(args: argparse.Namespace, in_sr: str, din: str) -> List[Tuple[int,
         f"rgb_led_ws281x:din={din}",
         "-A",
         "rgb_led_ws281x=rgb",
+        "--protocol-decoder-samplenum",
     ]
     out = subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=args.timeout)
-    px: List[Tuple[int, int, int]] = []
+    px: List[Tuple[int, int, Tuple[int, int, int]]] = []
     for line in out.stdout.splitlines():
-        m = re.search(r"#([0-9A-Fa-f]{6})", line)
-        if m:
-            v = int(m.group(1), 16)
-            px.append(((v >> 16) & 255, (v >> 8) & 255, v & 255))
+        # '<start>-<end> rgb_led_ws281x-1: #rrggbb'
+        m = re.match(r"\s*(\d+)-(\d+)\s", line)
+        c = re.search(r"#([0-9A-Fa-f]{6})", line)
+        if m and c:
+            v = int(c.group(1), 16)
+            px.append(
+                (int(m.group(1)), int(m.group(2)), ((v >> 16) & 255, (v >> 8) & 255, v & 255))
+            )
     return px
 
 
+def split_frames(
+    px: List[Tuple[int, int, Tuple[int, int, int]]], reset_samples: int
+) -> List[List[Tuple[int, int, int]]]:
+    """Group LEDs into frames: a LOW gap (this LED's start - previous LED's end)
+    longer than reset_samples (the >50us WS reset latch) starts a new frame."""
+    frames: List[List[Tuple[int, int, int]]] = []
+    cur: List[Tuple[int, int, int]] = []
+    prev_end: Optional[int] = None
+    for start, end, rgb in px:
+        if prev_end is not None and (start - prev_end) > reset_samples:
+            frames.append(cur)
+            cur = []
+        cur.append(rgb)
+        prev_end = end
+    if cur:
+        frames.append(cur)
+    return frames
+
+
 def run_ws(args: argparse.Namespace, in_sr: str) -> Dict:
-    """Decode each tapped WS output (one channel per FPGA port) and report the
-    pixels the FPGA actually drove — the far end of the Pi->SPI->FPGA->WS chain."""
+    """Decode each tapped WS output (one channel per FPGA port), split into frames
+    on the reset gap, and report a COMPLETE (interior, reset-bounded) frame per port
+    — the far end of the Pi->SPI->FPGA->WS chain. Partial frames at the capture
+    edges are dropped."""
+    hz = parse_rate(args.samplerate)
+    gap = int(hz * 40e-6) if hz else 800  # 40us > one 30us LED, < the 50us+ reset
     chans = [c for c in args.ws_channels.split(",") if c]
-    report: Dict = {"mode": "ws", "ports": [], "notes": [], "ok": True}
-    for p, din in enumerate(chans):
-        px = ws_decode(args, in_sr, din)
-        report["ports"].append({"port": p, "channel": din, "leds": len(px), "pixels": px})
-        if not px:
-            report["notes"].append(f"port {p} ({din}): no WS2812 pixels decoded")
-            report["ok"] = False
+    report: Dict = {"mode": "ws", "samplerate_hz": hz, "ports": [], "notes": [], "ok": True}
     print("\n=== spi_ws281x FPGA WS2812 output report ===")
-    for pr in report["ports"]:
-        head = pr["pixels"][:6]
+    for p, din in enumerate(chans):
+        frames = split_frames(ws_decode(args, in_sr, din), gap)
+        # Interior frames are reset-bounded on both sides; edges may be partial.
+        interior = frames[1:-1] if len(frames) >= 3 else []
+        chosen = interior[0] if interior else (frames[1] if len(frames) == 2 else None)
+        entry = {
+            "port": p,
+            "channel": din,
+            "frames_seen": len(frames),
+            "frame_leds": [len(f) for f in frames],
+            "complete": chosen is not None and len(frames) >= 3,
+            "pixels": chosen or [],
+        }
+        report["ports"].append(entry)
+        tag = "complete" if entry["complete"] else "UNVERIFIED (need >=3 frames)"
         print(
-            f"  port {pr['port']} (din={pr['channel']}): {pr['leds']} LEDs  {head}"
-            f"{'…' if pr['leds'] > 6 else ''}"
+            f"  port {p} (din={din}): {len(frames)} frames {entry['frame_leds']} "
+            f"-> {tag}: {len(chosen or [])} LEDs {(chosen or [])[:8]}"
         )
+        if chosen is None:
+            report["notes"].append(f"port {p} ({din}): no WS2812 frames decoded")
+            report["ok"] = False
+        elif not entry["complete"]:
+            report["notes"].append(
+                f"port {p} ({din}): only {len(frames)} frame(s) — capture more to bound a full one"
+            )
+            report["ok"] = False
+    # Cross-port consistency: all complete frames should have the same LED count.
+    lens = {len(p["pixels"]) for p in report["ports"] if p["complete"]}
+    if len(lens) > 1:
+        report["notes"].append(f"ports disagree on LED count: {lens}")
+        report["ok"] = False
     for n in report["notes"]:
         print(f"  ! {n}")
-    ok = report["ok"] and all(p["leds"] for p in report["ports"])
-    print(
-        f"\nRESULT: {'PASS ✓' if ok else 'FAIL ✗'} "
-        f"({sum(p['leds'] for p in report['ports'])} LEDs across {len(report['ports'])} port(s))"
-    )
-    report["ok"] = ok
+    print(f"\nRESULT: {'PASS ✓' if report['ok'] else 'FAIL ✗'}")
     return report
 
 
