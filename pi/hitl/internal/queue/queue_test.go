@@ -18,15 +18,18 @@ type fakeRunner struct {
 	stopped    []string
 	capStarted []string
 	capStopped []string
-	onDev      map[string]string // reservation id -> DUT name it started on
+	onDev      map[string]string            // reservation id -> DUT name it started on
+	onEnv      map[string]map[string]string // reservation id -> DUT env it started with
 }
 
 func (f *fakeRunner) Start(_ context.Context, id, _, _ string, dev runner.Device) (*api.SSHEndpoint, error) {
 	f.started = append(f.started, id)
 	if f.onDev == nil {
 		f.onDev = map[string]string{}
+		f.onEnv = map[string]map[string]string{}
 	}
 	f.onDev[id] = dev.Name
+	f.onEnv[id] = dev.Env
 	port := dev.SSHPort
 	if port == 0 {
 		port = 2222
@@ -582,5 +585,196 @@ func TestCaptureRequiresActiveReservation(t *testing.T) {
 	}
 	if len(fr.capStarted) != 1 {
 		t.Errorf("runner capture must not be touched for a non-active id, got %v", fr.capStarted)
+	}
+}
+
+// A network DUT is PIN-ONLY: an unpinned "any DUT" reservation never lands on it
+// (so a C6 test can't accidentally run against a Pi), but a reservation that pins
+// it by name activates on it.
+func TestNetworkDUTPinOnly(t *testing.T) {
+	ctx := context.Background()
+	fr := &fakeRunner{}
+	m := New("rig", 30*time.Minute, fr, WithDevices([]runner.Device{
+		{Name: "c6-0", SSHPort: 2222},
+		{Name: "pi-1", SSHPort: 2230, Kind: "network"},
+	}))
+
+	// Unpinned reservation takes the C6, never the network DUT.
+	a := m.Reserve(ctx, api.ReserveRequest{Owner: "a"})
+	if a.State != api.StateActive || a.Device != "c6-0" {
+		t.Fatalf("unpinned should land on c6-0, got state=%q dev=%q", a.State, a.Device)
+	}
+
+	// A second unpinned reservation must QUEUE: the C6 is busy and the only free
+	// DUT (pi-1) is pin-only, so it must not silently take the Pi.
+	b := m.Reserve(ctx, api.ReserveRequest{Owner: "b"})
+	if b.State != api.StateQueued {
+		t.Fatalf("second unpinned should queue (network DUT is pin-only), got state=%q dev=%q", b.State, b.Device)
+	}
+
+	// A reservation pinned to the network DUT activates on it.
+	c := m.Reserve(ctx, api.ReserveRequest{Owner: "c", Device: "pi-1"})
+	if c.State != api.StateActive || c.Device != "pi-1" {
+		t.Fatalf("pin to pi-1 should activate on it, got state=%q dev=%q", c.State, c.Device)
+	}
+
+	// b is still queued (it wanted any DUT; only the pin-only Pi was free).
+	if got, _ := m.Get(b.ID); got.State != api.StateQueued {
+		t.Fatalf("b should remain queued, got %q", got.State)
+	}
+}
+
+// A re-seeded network DUT's changed env is adopted in place while the DUT is
+// IDLE (no remove/re-add needed), but a DUT with a live reservation keeps its
+// spec until the holder releases — the container is never restarted under it.
+func TestSyncDevicesUpdatesIdleDUTSpec(t *testing.T) {
+	ctx := context.Background()
+	fr := &fakeRunner{}
+	m := New("rig", 30*time.Minute, fr) // starts with no DUTs
+	mk := func(v string) runner.Device {
+		return runner.Device{Name: "pi-1", Kind: "network", SSHPort: 2230, Env: map[string]string{"K": v}}
+	}
+
+	m.SyncDevices(ctx, []runner.Device{mk("A")}) // attach
+	m.SyncDevices(ctx, []runner.Device{mk("B")}) // idle → adopt changed env in place
+
+	// Reserving it brings the container up with the UPDATED env.
+	r := m.Reserve(ctx, api.ReserveRequest{Owner: "o", Device: "pi-1"})
+	if r.State != api.StateActive {
+		t.Fatalf("pinned reserve should activate, got %q", r.State)
+	}
+	if got := fr.onEnv[r.ID]["K"]; got != "B" {
+		t.Fatalf("idle re-seed should update env in place: container got K=%q, want B", got)
+	}
+
+	// Now busy: a further re-seed must NOT restart or mutate the live container.
+	startsBefore := len(fr.started)
+	m.SyncDevices(ctx, []runner.Device{mk("C")})
+	if len(fr.started) != startsBefore {
+		t.Fatalf("busy DUT re-seed should not restart the container (starts %d -> %d)", startsBefore, len(fr.started))
+	}
+
+	// After release, the pending change is applied on the next scan.
+	if err := m.Release(ctx, r.ID, "done"); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	m.SyncDevices(ctx, []runner.Device{mk("C")})
+	r2 := m.Reserve(ctx, api.ReserveRequest{Owner: "o2", Device: "pi-1"})
+	if got := fr.onEnv[r2.ID]["K"]; got != "C" {
+		t.Fatalf("re-seed after release should apply: container got K=%q, want C", got)
+	}
+}
+
+// A capability request lands on the best-fitting free DUT whose capabilities are a
+// superset, and NEVER on a pin-only network DUT (reaching one needs an explicit
+// --device or --sku). It queues rather than spilling onto the network DUT.
+func TestReserveByCapabilities(t *testing.T) {
+	ctx := context.Background()
+	fr := &fakeRunner{}
+	m := New("rig", 30*time.Minute, fr, WithDevices([]runner.Device{
+		{Name: "c6-0", SSHPort: 2222, Capabilities: []string{"flash", "improv", "wss-app"}},
+		{Name: "c6-1", SSHPort: 2223, Capabilities: []string{"improv"}},
+		{Name: "pi-1", SSHPort: 2230, Kind: "network", Capabilities: []string{"improv"}},
+	}))
+
+	// improv → best-fit prefers the plainer c6-1 (one cap) over c6-0 (three), and
+	// never the pin-only network pi-1.
+	a := m.Reserve(ctx, api.ReserveRequest{Owner: "a", RequireCaps: []string{"improv"}})
+	if a.State != api.StateActive || a.Device != "c6-1" {
+		t.Fatalf("improv reserve should best-fit c6-1, got state=%q dev=%q", a.State, a.Device)
+	}
+	// Next improv → c6-1 busy; c6-0 also has improv → lands there. Still not pi-1.
+	b := m.Reserve(ctx, api.ReserveRequest{Owner: "b", RequireCaps: []string{"improv"}})
+	if b.State != api.StateActive || b.Device != "c6-0" {
+		t.Fatalf("second improv reserve should take c6-0, got state=%q dev=%q", b.State, b.Device)
+	}
+	// Both C6s busy → a third improv reserve queues rather than spilling onto the
+	// pin-only network DUT.
+	c := m.Reserve(ctx, api.ReserveRequest{Owner: "c", RequireCaps: []string{"improv"}})
+	if c.State != api.StateQueued {
+		t.Fatalf("improv reserve must queue, never the pin-only network DUT, got %q on %q", c.State, c.Device)
+	}
+}
+
+// --sku is an explicit hardware target: it pins to a free DUT of that SKU and, like
+// --device, may reach a pin-only network DUT — while an unknown SKU queues.
+func TestReserveBySKU(t *testing.T) {
+	ctx := context.Background()
+	fr := &fakeRunner{}
+	m := New("rig", 30*time.Minute, fr, WithDevices([]runner.Device{
+		{Name: "c6-0", SSHPort: 2222, SKU: "esp32c6", Capabilities: []string{"flash", "improv"}},
+		{Name: "pi-1", SSHPort: 2230, Kind: "network", SKU: "led-mapper-pi", Capabilities: []string{"improv"}},
+	}))
+
+	a := m.Reserve(ctx, api.ReserveRequest{Owner: "a", SKU: "esp32c6"})
+	if a.State != api.StateActive || a.Device != "c6-0" {
+		t.Fatalf("sku esp32c6 should take the C6, got state=%q dev=%q", a.State, a.Device)
+	}
+	// The SKU pin reaches the pin-only network Pi — an explicit hardware target.
+	b := m.Reserve(ctx, api.ReserveRequest{Owner: "b", SKU: "led-mapper-pi"})
+	if b.State != api.StateActive || b.Device != "pi-1" {
+		t.Fatalf("sku led-mapper-pi should reach the network pi-1, got state=%q dev=%q", b.State, b.Device)
+	}
+	c := m.Reserve(ctx, api.ReserveRequest{Owner: "c", SKU: "nonesuch"})
+	if c.State != api.StateQueued {
+		t.Fatalf("unknown sku should queue, got %q on %q", c.State, c.Device)
+	}
+}
+
+// A capability only one DUT has, while that DUT is busy, makes the reservation
+// wait — it never lands on a DUT missing the capability.
+func TestReserveByCapabilityRespectsMissingCaps(t *testing.T) {
+	ctx := context.Background()
+	m := New("rig", 30*time.Minute, &fakeRunner{}, WithDevices([]runner.Device{
+		{Name: "c6-0", SSHPort: 2222, Capabilities: []string{"improv", "wss-app"}},
+		{Name: "pi-1", SSHPort: 2230, Kind: "network", Capabilities: []string{"improv"}},
+	}))
+	// Occupy the only wss-app DUT (c6-0) with an improv holder.
+	m.Reserve(ctx, api.ReserveRequest{Owner: "a", Device: "c6-0"})
+	// A wss-app reservation must queue — pi-1 lacks wss-app, c6-0 is busy.
+	b := m.Reserve(ctx, api.ReserveRequest{Owner: "b", RequireCaps: []string{"wss-app"}})
+	if b.State != api.StateQueued {
+		t.Fatalf("wss-app reserve should queue (only c6-0 has it, busy), got %q on %q", b.State, b.Device)
+	}
+	// An unrelated absent capability never matches, even with a free DUT.
+	c := m.Reserve(ctx, api.ReserveRequest{Owner: "c", RequireCaps: []string{"mic"}})
+	if c.State != api.StateQueued {
+		t.Fatalf("mic reserve should queue (no DUT has mic), got %q on %q", c.State, c.Device)
+	}
+}
+
+// Best-fit DUT selection: a plain reservation avoids an over-capable DUT (one with
+// a logic analyzer) when a plainer DUT is free — even when the over-capable DUT is
+// listed first — so scarce peripherals stay free for the tests that need them.
+func TestBestFitAvoidsOverCapableDUT(t *testing.T) {
+	ctx := context.Background()
+	fr := &fakeRunner{}
+	m := New("rig", 30*time.Minute, fr, WithDevices([]runner.Device{
+		{Name: "c6-la", SSHPort: 2222, Capabilities: []string{"flash", "improv", "logic-analyzer"}},
+		{Name: "c6-plain", SSHPort: 2223, Capabilities: []string{"flash", "improv"}},
+	}))
+
+	// A plain reserve (no caps) lands on the plain DUT, though c6-la is listed first.
+	a := m.Reserve(ctx, api.ReserveRequest{Owner: "a"})
+	if a.State != api.StateActive || a.Device != "c6-plain" {
+		t.Fatalf("plain reserve should take the plain DUT, got state=%q dev=%q", a.State, a.Device)
+	}
+	// The analyzer DUT is still free for a reservation that requires it.
+	b := m.Reserve(ctx, api.ReserveRequest{Owner: "b", RequireCaps: []string{"logic-analyzer"}})
+	if b.State != api.StateActive || b.Device != "c6-la" {
+		t.Fatalf("analyzer reserve should take c6-la, got state=%q dev=%q", b.State, b.Device)
+	}
+}
+
+// Best-fit never starves: if the only free DUT is over-capable, a plain reservation
+// still uses it rather than queueing.
+func TestBestFitFallsBackToOnlyDUT(t *testing.T) {
+	ctx := context.Background()
+	m := New("rig", 30*time.Minute, &fakeRunner{}, WithDevices([]runner.Device{
+		{Name: "c6-la", SSHPort: 2222, Capabilities: []string{"flash", "logic-analyzer"}},
+	}))
+	a := m.Reserve(ctx, api.ReserveRequest{Owner: "a"})
+	if a.State != api.StateActive || a.Device != "c6-la" {
+		t.Fatalf("plain reserve should use the only (over-capable) DUT, got state=%q dev=%q", a.State, a.Device)
 	}
 }

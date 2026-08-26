@@ -262,25 +262,34 @@ func (p *PodmanRunner) Start(ctx context.Context, id, owner, sshKey string, dev 
 		return nil, fmt.Errorf("mkdir capture: %w", err)
 	}
 	args = append(args, "-v", captureDir+":"+captureContainerDir+":ro")
-	// JTAG: give the container raw USB (libusb, for openocd on the C6's built-in
-	// USB-JTAG, and esptool's native-USB reset). Isolated to this DUT's board where
-	// we can resolve it (see isolateUSB), else the whole bus as a fallback.
-	args = append(args, p.isolateUSB(id, dev)...)
+	// USB wiring is for board DUTs only. A network DUT owns no board on this rig,
+	// so skip it entirely: isolateUSB falls back to a WHOLE-BUS mount when a DUT
+	// has no serial tty, which would expose every other DUT's board to this
+	// container — the one thing per-DUT isolation must never allow. The device
+	// loop is a no-op for a network DUT (empty Devices) but is guarded too for
+	// clarity. The Pi is reached over the network + provisioned over BLE (dbus
+	// mount + HITL_BLE_ADAPTER above), so it needs none of this.
+	if dev.Kind != "network" {
+		// JTAG: give the container raw USB (libusb, for openocd on the C6's built-in
+		// USB-JTAG, and esptool's native-USB reset). Isolated to this DUT's board
+		// where we can resolve it (see isolateUSB), else the whole bus as a fallback.
+		args = append(args, p.isolateUSB(id, dev)...)
+		for _, d := range dev.Devices {
+			if d == "" {
+				continue
+			}
+			arg, ok := deviceMapping(d)
+			if !ok {
+				// Skip devices that aren't present (e.g. the ESP32 isn't plugged in
+				// yet), so a reservation can still come up for non-hardware testing.
+				log.Printf("podman: device %q not present, skipping", d)
+				continue
+			}
+			args = append(args, "--device", arg)
+		}
+	}
 	if p.cfg.Privileged {
 		args = append(args, "--privileged")
-	}
-	for _, d := range dev.Devices {
-		if d == "" {
-			continue
-		}
-		arg, ok := deviceMapping(d)
-		if !ok {
-			// Skip devices that aren't present (e.g. the ESP32 isn't plugged in yet),
-			// so a reservation can still come up for non-hardware testing.
-			log.Printf("podman: device %q not present, skipping", d)
-			continue
-		}
-		args = append(args, "--device", arg)
 	}
 	args = append(args, p.cfg.Image)
 

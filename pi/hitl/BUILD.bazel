@@ -14,6 +14,10 @@ load("@rules_python//python:defs.bzl", "py_binary")
 load("@rules_shell//shell:sh_binary.bzl", "sh_binary")
 load("@sbc_deploy//deploy:defs.bzl", "sbc_application")
 
+# The SKU -> capabilities registry lives in skus.bzl (source of truth) + the
+# go:embedded internal/skus package. See //pi/hitl/internal/skus.
+exports_files(["skus.bzl"])
+
 # Go BUILD files under pi/hitl are gazelle-generated. Regenerate after editing
 # .go sources:  bazel run //pi/hitl:gazelle
 # gazelle:prefix github.com/fughilli/splanc/pi/hitl
@@ -101,6 +105,15 @@ sh_binary(
 sh_binary(
     name = "seed_grafana",
     srcs = ["scripts/seed-grafana.sh"],
+)
+
+# Attach a network DUT (a Pi reached over the LAN + provisioned over BLE) to a
+# running rig so it gets its own work queue — seeded, not baked. See the script
+# header and pi/hitl/DESIGN.md.
+#   bazel run //pi/hitl:seed_network_dut -- [host] --name pi-… --addr …
+sh_binary(
+    name = "seed_network_dut",
+    srcs = ["scripts/seed-network-dut.sh"],
 )
 
 # HTTP-driven runner for the on-hardware HITL suite (see the file's docstring).

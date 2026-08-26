@@ -205,10 +205,26 @@ use_repo(host_crate, "host_crates")
 bazel_dep(name = "sbc_deploy", version = "0.0.0")
 git_override(
     module_name = "sbc_deploy",
-    # sbc-deploy main @ f51b3f2 (#7 persistent hostname identity + #8 `update`
-    # mode). Kept in lockstep with pi/hitl/nix flake.lock.
-    commit = "f51b3f2cd0036caf4f594c70ad79e86ce51fec31",
+    # sbc-deploy main @ 94d174a (#9 quote detect_caps_cmd so `:update` doesn't split
+    # it; atop #7 persistent hostname identity + #8 `update` mode). The .bzl-only
+    # fix doesn't touch the Nix side, so pi/hitl/nix + pi/provisioning/nix flake.lock
+    # (still at #8's nix/ tree) build the same closure; bump them on the next Nix change.
+    commit = "94d174ada8f611e8dea1b1e3246221621e4c4a6e",
     remote = "https://github.com/fughilli/sbc-deploy.git",
+)
+
+# rules_fpga: Bazel rules for Verilog + open FPGA toolchains (yosys/nextpnr/
+# apicula/verilator/surfer/wavepeek), all vendored via its own isolated Nix
+# usage. Used by //fpga/spi_ws281x (streaming SPI->WS281x). For co-developing
+# rules_fpga locally: bazel --override_module=rules_fpga=/path.
+bazel_dep(name = "rules_fpga", version = "0.0.0")
+git_override(
+    module_name = "rules_fpga",
+    # main @ c33f2b5 (#1, squash-merged): the Verilator cc toolchain is under a
+    # dedicated type so it doesn't hijack splanc's host C++, and the injected
+    # cc BUILD resolves correctly when rules_fpga is a dependency.
+    commit = "c33f2b54cac7893a0d043e6e8c3dbfe6c30866ca",
+    remote = "https://github.com/fughilli/rules_fpga.git",
 )
 
 bazel_dep(name = "firmware", version = "0.0.0", repo_name = "embedded")

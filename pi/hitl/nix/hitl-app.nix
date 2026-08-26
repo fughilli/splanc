@@ -39,6 +39,12 @@ let
   # Ports opened for discovered DUTs (they're assigned at runtime, sequentially
   # from sshPort, so we open a fixed range up front).
   discoverMaxDuts = 8;
+  # Seeded network DUTs (a Pi reached over the LAN, provisioned over BLE; see
+  # scripts/seed-network-dut.sh) get sshd ports from a DEDICATED range just above
+  # the discovery pool ([sshPort+discoverMaxDuts .. +networkMaxDuts)), so a
+  # hot-plugged board can never steal one. Keep this in sync with the daemon's
+  # --network-max-duts below and open the range in the firewall.
+  networkMaxDuts = 4;
 
   # Run reservation containers UNprivileged so each is confined to its own DUT's
   # tty (mounted as /dev/ttyACM0) plus the USB bus — a privileged container
@@ -64,12 +70,13 @@ let
   # without a restart; --discover-max-duts must match the opened port range below.
   dutArgs =
     if autoDiscover
-    then "--discover --ssh-port ${toString sshPort} --discover-max-duts ${toString discoverMaxDuts}"
+    then "--discover --ssh-port ${toString sshPort} --discover-max-duts ${toString discoverMaxDuts} --network-max-duts ${toString networkMaxDuts}"
     else dutFlags;
-  # sshd ports to open in the firewall: the discovery range, or the explicit ports.
+  # sshd ports to open in the firewall: the discovery range PLUS the seeded
+  # network-DUT range (discover mode), or the explicit ports.
   dutPorts =
     if autoDiscover
-    then lib.genList (i: sshPort + i) discoverMaxDuts
+    then lib.genList (i: sshPort + i) (discoverMaxDuts + networkMaxDuts)
     else map (d: d.sshPort) duts;
 
   # Provisioning AP: the onboard WiFi radio is a DEDICATED, always-on 2.4 GHz

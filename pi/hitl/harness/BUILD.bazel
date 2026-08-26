@@ -15,8 +15,34 @@ other.
 
 load("@pypi//:requirements.bzl", "requirement")
 load("@rules_python//python:defs.bzl", "py_binary", "py_library", "py_test")
+load(":hitl_test.bzl", "hitl_test")
 
 package(default_visibility = ["//visibility:public"])
+
+# Cross-hardware Improv-provisioning contract test. Fans out (via the SKU registry
+# in //pi/hitl:skus.bzl) to one hitl-tagged target per SKU with the "improv"
+# capability — today improv_e2e_esp32c6 + improv_e2e_led-mapper-pi. Reuses
+# hitl_e2e.flash (C6 path) + provision.provision_dut. See hitl_test.bzl.
+hitl_test(
+    name = "improv_e2e",
+    srcs = [
+        "hitl_e2e.py",  # reused for flash() + default_bundle() on the C6 path
+        "hitl_improv_e2e.py",
+    ],
+    data = [
+        "//firmware/player_app:board_caps.textproto",
+        "//firmware/player_app:esp32c6_flashbundle",
+        "//pi/hitl/cmd/hitl",
+    ],
+    main = "hitl_improv_e2e.py",
+    requires = ["improv"],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
 
 py_library(
     name = "harness",

@@ -38,6 +38,7 @@ import (
 	"github.com/fughilli/splanc/pi/hitl/internal/metrics"
 	"github.com/fughilli/splanc/pi/hitl/internal/queue"
 	"github.com/fughilli/splanc/pi/hitl/internal/runner"
+	"github.com/fughilli/splanc/pi/hitl/internal/skus"
 )
 
 type stringList []string
@@ -86,6 +87,13 @@ func main() {
 	discoverMax := flag.Int("discover-max-duts", 8, "max concurrent DUTs (sshd port range from --ssh-port) for --discover")
 	discoverInterval := flag.Duration("discover-interval", 3*time.Second, "how often --discover rescans for hot-plugged/removed DUTs")
 	discoverRetention := flag.Duration("discover-retention", 30*time.Second, "how long a DUT must be continuously absent before --discover treats it as unplugged (tolerates resetting boards)")
+	// Seeded network DUTs (non-USB, e.g. a Raspberry Pi reached over the LAN and
+	// provisioned over BLE): a JSON array of dutSpec with kind=="network", written
+	// onto the running rig out of band (scripts/seed-network-dut.sh). Ingested live
+	// by the same --discover monitor; their sshd ports come from a dedicated range
+	// ABOVE the USB pool (so a hot-plugged board can never steal one).
+	networkDutsFile := flag.String("network-duts-file", "", "seeded network-DUT JSON file (default <state-dir>/network-duts.json); ingested in --discover mode")
+	networkMax := flag.Int("network-max-duts", 4, "max concurrent seeded network DUTs (sshd port range just above the --discover pool)")
 	// The rig's self-hosted provisioning AP (NetworkManager connection toggled
 	// per-reservation). With --ap-conn set, the daemon brings it up while a
 	// reservation is active and advertises its creds in /status so the harness
@@ -149,15 +157,19 @@ func main() {
 	var mon *dutMonitor
 	switch {
 	case len(duts) > 0:
-		devs, err = buildDevices(duts, *sshPort, devices)
+		devs, err = buildDevices(duts, *sshPort, devices, brk)
 	case *discover:
-		mon = newDUTMonitor(*discoverGlob, *sshPort, *discoverMax, *discoverRetention)
+		netFile := *networkDutsFile
+		if netFile == "" {
+			netFile = filepath.Join(*stateDir, "network-duts.json")
+		}
+		mon = newDUTMonitor(*discoverGlob, *sshPort, *discoverMax, *discoverRetention, netFile, *networkMax, brk)
 		devs, err = mon.scan()
 		if err == nil && len(devs) == 0 {
 			log.Printf("discover: no DUTs matched %q yet; will attach them live as they appear", *discoverGlob)
 		}
 	default:
-		devs, err = buildDevices(nil, *sshPort, devices)
+		devs, err = buildDevices(nil, *sshPort, devices, brk)
 	}
 	if err != nil {
 		log.Fatalf("dut config: %v", err)
@@ -236,21 +248,48 @@ func main() {
 	}
 }
 
-// dutSpec is the JSON shape of a --dut flag value.
+// dutSpec is the JSON shape of a --dut flag value (and of an entry in the seeded
+// network-DUT file). Kind selects the wiring: "" (== "usb") maps the board's
+// serial/JTAG nodes in; "network" is a LAN DUT with no board (see runner.Device).
 type dutSpec struct {
 	Name    string            `json:"name"`
+	Kind    string            `json:"kind,omitempty"`
+	SKU     string            `json:"sku,omitempty"`
 	SSHPort int               `json:"ssh_port"`
 	Devices []string          `json:"devices"`
 	Env     map[string]string `json:"env"`
+}
+
+// defaultUSBSKU is the SKU assumed for a USB DUT that doesn't name one — the rigs
+// only host ESP32-C6 player boards over USB, so an auto-discovered board is one.
+const defaultUSBSKU = "esp32c6"
+
+// withCaps fills a Device's Capabilities from its SKU (the registry), warning on an
+// unknown SKU (which yields no capabilities — the DUT then matches no requirement).
+// It also merges in rig-wiring capabilities that aren't SKU traits: a DUT tapped by
+// this rig's shared logic analyzer advertises "logic-analyzer", so capability
+// selection (and best-fit) treat the analyzer like any other capability. brk may be
+// nil (no analyzer on this rig).
+func withCaps(d runner.Device, brk *analyzer.Broker) runner.Device {
+	if d.SKU != "" && !skus.Known(d.SKU) {
+		log.Printf("dut %s: unknown SKU %q; advertising no capabilities", d.Name, d.SKU)
+	}
+	caps := skus.Capabilities(d.SKU)
+	if brk.Taps(d.Name) {
+		caps = append(caps, "logic-analyzer")
+		sort.Strings(caps)
+	}
+	d.Capabilities = caps
+	return d
 }
 
 // buildDevices turns the --dut flags into runner.Devices. With no --dut flags it
 // synthesizes a single DUT from the legacy --ssh-port/--device flags, preserving
 // the original single-DUT behavior. It rejects duplicate names and ports so a
 // misconfiguration can't collide two DUTs onto one container port.
-func buildDevices(duts []string, sshPort int, devices []string) ([]runner.Device, error) {
+func buildDevices(duts []string, sshPort int, devices []string, brk *analyzer.Broker) ([]runner.Device, error) {
 	if len(duts) == 0 {
-		return []runner.Device{{Name: "dut0", SSHPort: sshPort, Devices: devices}}, nil
+		return []runner.Device{withCaps(runner.Device{Name: "dut0", SKU: defaultUSBSKU, SSHPort: sshPort, Devices: devices}, brk)}, nil
 	}
 	var out []runner.Device
 	names, ports := map[string]bool{}, map[int]bool{}
@@ -272,7 +311,11 @@ func buildDevices(duts []string, sshPort int, devices []string) ([]runner.Device
 			return nil, fmt.Errorf("--dut %q: ssh_port %d already used by another DUT", s.Name, s.SSHPort)
 		}
 		names[s.Name], ports[s.SSHPort] = true, true
-		out = append(out, runner.Device{Name: s.Name, SSHPort: s.SSHPort, Devices: s.Devices, Env: s.Env})
+		sku := s.SKU
+		if sku == "" && s.Kind != "network" {
+			sku = defaultUSBSKU // an explicit USB DUT that omits its SKU is a C6
+		}
+		out = append(out, withCaps(runner.Device{Name: s.Name, Kind: s.Kind, SKU: sku, SSHPort: s.SSHPort, Devices: s.Devices, Env: s.Env}, brk))
 	}
 	return out, nil
 }
@@ -390,17 +433,34 @@ type dutMonitor struct {
 	now       func() time.Time         // injectable for tests
 	last      map[string]runner.Device // stable name -> last-known DUT (sticky port/spec)
 	seen      map[string]time.Time     // stable name -> last time the board was present
+
+	// Seeded network DUTs, read from networkFile each poll. Their sshd ports come
+	// from a dedicated range [netBase, netBase+netMax) above the USB pool, so a
+	// hot-plugged board can never collide with one. netLast keeps ports sticky by
+	// name; lastGoodNetwork is the last cleanly-parsed set, reused if a later read
+	// is malformed so a bad write never disturbs the USB DUTs.
+	networkFile     string
+	netBase, netMax int
+	netLast         map[string]runner.Device
+	lastGoodNetwork []runner.Device
+
+	brk *analyzer.Broker // resolves the per-DUT "logic-analyzer" capability (may be nil)
 }
 
-func newDUTMonitor(glob string, basePort, maxDuts int, retention time.Duration) *dutMonitor {
+func newDUTMonitor(glob string, basePort, maxDuts int, retention time.Duration, networkFile string, netMax int, brk *analyzer.Broker) *dutMonitor {
 	return &dutMonitor{
-		glob:      glob,
-		basePort:  basePort,
-		maxDuts:   maxDuts,
-		retention: retention,
-		now:       time.Now,
-		last:      map[string]runner.Device{},
-		seen:      map[string]time.Time{},
+		glob:        glob,
+		basePort:    basePort,
+		maxDuts:     maxDuts,
+		retention:   retention,
+		now:         time.Now,
+		last:        map[string]runner.Device{},
+		seen:        map[string]time.Time{},
+		networkFile: networkFile,
+		netBase:     basePort + maxDuts, // dedicated range, above the USB pool
+		netMax:      netMax,
+		netLast:     map[string]runner.Device{},
+		brk:         brk,
 	}
 }
 
@@ -434,7 +494,7 @@ func (dm *dutMonitor) scan() ([]runner.Device, error) {
 			continue
 		}
 		used[port] = true
-		dm.last[b.name] = runner.Device{Name: b.name, SSHPort: port, Devices: b.devices, Env: b.env}
+		dm.last[b.name] = withCaps(runner.Device{Name: b.name, SKU: defaultUSBSKU, SSHPort: port, Devices: b.devices, Env: b.env}, dm.brk)
 	}
 	// Absent boards: drop (and free the port of) only those gone for the whole
 	// retention window; a briefly-missing board (resetting DUT) is kept.
@@ -467,6 +527,96 @@ func (dm *dutMonitor) allocPort(used map[int]bool) int {
 	return 0
 }
 
+// networkDUTPrefixes bound a seeded DUT's name so it can never collide with a
+// discovered board (c6-*). A network DUT must be pi-* or net-*.
+var networkDUTPrefixes = []string{"pi-", "net-"}
+
+func hasNetworkPrefix(name string) bool {
+	for _, p := range networkDUTPrefixes {
+		if strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// readNetworkDUTs loads the seeded network-DUT file: a JSON array of dutSpec with
+// kind=="network". It returns them as runner.Devices with sticky sshd ports from
+// the dedicated [netBase, netBase+netMax) range. An absent file is not an error
+// (returns nil, and forgets any previously-seeded DUTs so they're removed). A
+// parse/validation error is returned WITHOUT mutating state, so the caller can
+// keep the last good set and leave the USB DUTs untouched. Runs on the monitor's
+// single goroutine, so netLast needs no lock.
+func (dm *dutMonitor) readNetworkDUTs() ([]runner.Device, error) {
+	if dm.networkFile == "" {
+		return nil, nil
+	}
+	raw, err := os.ReadFile(dm.networkFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			dm.netLast = map[string]runner.Device{}
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read %s: %w", dm.networkFile, err)
+	}
+	var specs []dutSpec
+	if err := json.Unmarshal(raw, &specs); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", dm.networkFile, err)
+	}
+	used := map[int]bool{}
+	for _, d := range dm.netLast {
+		used[d.SSHPort] = true
+	}
+	names := map[string]bool{}
+	next := map[string]runner.Device{}
+	out := make([]runner.Device, 0, len(specs))
+	for i, s := range specs {
+		switch {
+		case s.Name == "":
+			return nil, fmt.Errorf("network-dut #%d: name is required", i+1)
+		case !hasNetworkPrefix(s.Name):
+			return nil, fmt.Errorf("network-dut %q: name must start with pi- or net-", s.Name)
+		case s.Kind != "network":
+			return nil, fmt.Errorf("network-dut %q: kind must be %q", s.Name, "network")
+		case len(s.Devices) != 0:
+			return nil, fmt.Errorf("network-dut %q: devices must be empty (no board on this rig)", s.Name)
+		case s.Env["HITL_DUT_ADDR"] == "":
+			return nil, fmt.Errorf("network-dut %q: env.HITL_DUT_ADDR is required", s.Name)
+		case s.SKU == "":
+			return nil, fmt.Errorf("network-dut %q: sku is required (e.g. led-mapper-pi)", s.Name)
+		case names[s.Name]:
+			return nil, fmt.Errorf("network-dut %q: duplicate name", s.Name)
+		}
+		names[s.Name] = true
+		// Sticky port: reuse the DUT's prior port if we've seen it, else allocate
+		// the lowest free one from the dedicated network range.
+		port := 0
+		if prev, ok := dm.netLast[s.Name]; ok {
+			port = prev.SSHPort
+		} else if port = dm.allocNetPort(used); port == 0 {
+			log.Printf("network-dut: %s seeded but all %d network ports are in use; ignoring", s.Name, dm.netMax)
+			continue
+		}
+		used[port] = true
+		dev := withCaps(runner.Device{Name: s.Name, Kind: "network", SKU: s.SKU, SSHPort: port, Env: s.Env}, dm.brk)
+		next[s.Name] = dev
+		out = append(out, dev)
+	}
+	dm.netLast = next
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
+// allocNetPort returns the lowest free port in the dedicated network range, or 0.
+func (dm *dutMonitor) allocNetPort(used map[int]bool) int {
+	for i := 0; i < dm.netMax; i++ {
+		if p := dm.netBase + i; !used[p] {
+			return p
+		}
+	}
+	return 0
+}
+
 // run polls the by-id glob every interval and syncs the manager's DUT set, so
 // boards hot-plugged (or unplugged) after boot come and go without a restart.
 func (dm *dutMonitor) run(ctx context.Context, mgr *queue.Manager, interval time.Duration) {
@@ -482,7 +632,17 @@ func (dm *dutMonitor) run(ctx context.Context, mgr *queue.Manager, interval time
 				log.Printf("discover: %v", err)
 				continue
 			}
-			added, removed := mgr.SyncDevices(ctx, devs)
+			// Merge seeded network DUTs. A malformed/partly-written file must NOT
+			// disturb the USB DUTs: on error, keep the last good network set.
+			net, nerr := dm.readNetworkDUTs()
+			if nerr != nil {
+				log.Printf("network-dut: %v; keeping %d cached", nerr, len(dm.lastGoodNetwork))
+				net = dm.lastGoodNetwork
+			} else {
+				dm.lastGoodNetwork = net
+			}
+			all := append(append(make([]runner.Device, 0, len(devs)+len(net)), devs...), net...)
+			added, removed := mgr.SyncDevices(ctx, all)
 			for _, n := range added {
 				log.Printf("discover: DUT %s attached", n)
 			}

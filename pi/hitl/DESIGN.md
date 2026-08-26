@@ -114,8 +114,41 @@ so it can't fabricate a node for a neighbour. When the port can't be resolved (n
 board attached, or a non-USB tty) the runner falls back to the whole-bus mount so
 non-hardware reservations still come up. See `internal/runner/usbport.go`.
 
-Remaining hardware caveats (shared single resources, follow-ups): BLE shares the
-one host Bluetooth radio, and the provisioning AP is still rig-level.
+### Network DUTs (a non-USB device, e.g. a Pi)
+
+A DUT need not be a USB board. A **network DUT** (`Device.Kind == "network"`) is a
+whole networked device — e.g. the LED Mapper Raspberry Pi — reached over the LAN
+and provisioned onto the rig AP over Improv BLE, with no board attached to this
+rig. It reuses the entire queue/reservation/container/BLE machinery; only two
+things differ:
+
+- **No USB.** `PodmanRunner.Start` skips `isolateUSB` and the device mounts for a
+  network DUT — crucially, so the empty-`Devices` **whole-bus fallback above can't
+  expose every C6** to it. The Pi is reached over the network (its
+  `HITL_DUT_ADDR`, injected into the container's env) and driven over BLE from the
+  same container (the mounted host `dbus` + `HITL_BLE_ADAPTER`, exactly as the C6
+  Improv flow).
+- **Pin-only.** A network DUT never matches an _unpinned_ waiter, so an ordinary
+  "any DUT" reservation (a C6 test) can never land on the Pi; only
+  `hitl reserve --device <name>` selects it (`queue.nextWaiterForLocked`).
+
+**Attach = seed, not bake.** Rather than a fourth startup mode, network DUTs are
+**seeded onto a running rig** — `scripts/seed-network-dut.sh` (a
+`//pi/hitl:seed_network_dut` target, like `seed_grafana`) writes an entry to
+`/var/lib/hitl/network-duts.json`, and the same `--discover` monitor ingests it on
+its next poll (no restart). A malformed/partly-written file never disturbs the USB
+DUTs (the monitor keeps the last good network set). Their sshd ports come from a
+**dedicated range above the USB pool** (`--network-max-duts`) so a hot-plugged
+board can never steal one. The management address should be the DUT's **Ethernet**
+IP so provisioning — which cycles the DUT's WiFi onto the rig AP — never drops
+monitoring/journalctl.
+
+Remaining hardware caveats: all reservations share the one host Bluetooth radio
+and the one provisioning AP. The BLE radio is **shared, not exclusive** — BlueZ
+multiplexes multiple concurrent central connections on a single adapter, so
+several reservations can drive BLE (scan / connect / GATT) at the same time; it
+is not a mutex, and a reservation need not wait for the rig to be otherwise idle
+to use BLE. The AP is rig-level (one SSID for the whole rig).
 
 ## Logic-analyzer rig (shared FX2 capture)
 
@@ -154,13 +187,26 @@ reserve→flash→drive→capture→assert loop is `//pi/hitl/harness:led_captur
 (`manual`+`hitl`). Wiring caveat: the FX2 clone's inputs aren't reliably 5 V
 tolerant — tap the 3.3 V side of the DIN or level-shift, and share ground.
 
-**Capability-based rig selection.** A rig with an analyzer advertises it in
-`/status` (`Analyzer{present, driver, protocols, channels}`), so a test picks a
-rig by CAPABILITY, not by name or tag (tags are too coarse). `hitl reserve/run
---require analyzer` filters pool selection to analyzer-capable rigs
-(`pool.Require`), and `led_capture` sets `require="analyzer"` + asserts the chosen
-rig's `/status` before driving — so an analyzer test can never silently land on an
-ESP-toolbox rig and fail at capture.
+**Capability-based selection.** DUTs are matched by CAPABILITY, not name or tag
+(tags are too coarse). Each DUT advertises `sku` + `capabilities` in `/status`
+(`DeviceStatus`); capabilities come from a single source-of-truth registry
+(`pi/hitl/skus.bzl` → committed `skus.json`, `go:embed`ded — a `diff_test` keeps
+them in sync) merged with rig-wiring caps the SKU can't express. The **logic
+analyzer is one such capability**: a DUT the FX2 taps advertises `logic-analyzer`
+(from the channel map, not the SKU — two identical DUTs can differ). `hitl reserve
+--require-caps logic-analyzer` (or the back-compat alias `--require analyzer`) lands
+on any DUT that has it; `led_capture` asserts the chosen rig's `/status` before
+driving, so an analyzer test can never silently land on a non-analyzer DUT.
+
+Two knobs, two jobs. **`--require-caps`** selects by capability (cross-hardware:
+"any DUT that can do Improv"). **`--sku`** targets exact hardware ("a
+led-mapper-pi"): it's how a SKU-fanned test (`hitl_test`) runs each variant on its
+own hardware, and — like `--device` — it's the only way to reach a **pin-only
+network DUT** (a bare `--require-caps` never drifts onto the scarce Pi). Selection
+is **best-fit**: among free DUTs that satisfy the request, both the queue (per-DUT)
+and `pool.Pick` (per-rig) prefer the one with the FEWEST capabilities beyond what's
+required — so an over-provisioned DUT (e.g. one wired to the analyzer) stays free
+for the tests that actually need it.
 
 Latency is scaffolded (`CaptureResult.TriggerSample`/`SampleRate`); a full E2E
 number needs the stimulus and the capture co-timed in one clock (route the "show
@@ -264,8 +310,8 @@ container is destroyed on release, so state never leaks between holders.
    `/dev/bus/usb`, keyed on the stable physical port, refreshed across
    re-enumeration. Host-side BLE HCI (btmon) capture per reservation — done
    (FUG-93): bounded, torn down on release, read back as btsnoop, annotated by
-   the DUT BLE MAC (the adapter is still shared — see the caveat above).
-   Remaining: per-DUT BLE radio; per-DUT AP.
+   the DUT BLE MAC (one shared adapter, but concurrently usable — see the caveat
+   above; not a mutex). Remaining: per-DUT AP.
 
 ## Open items (need the hardware / decisions)
 
