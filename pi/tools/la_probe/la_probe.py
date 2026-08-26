@@ -166,6 +166,57 @@ def decode(args: argparse.Namespace, in_sr: str, annotation: str) -> str:
     return out.stdout
 
 
+def ws_decode(args: argparse.Namespace, in_sr: str, din: str) -> List[Tuple[int, int, int]]:
+    """Decode a WS281x output line with sigrok's rgb_led_ws281x PD -> RGB pixels.
+    Same decoder the rig's HITL analyzer uses; output is one '#rrggbb' per LED."""
+    cmd = [
+        args.sigrok_cli,
+        "-i",
+        in_sr,
+        "-P",
+        f"rgb_led_ws281x:din={din}",
+        "-A",
+        "rgb_led_ws281x=rgb",
+    ]
+    out = subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=args.timeout)
+    px: List[Tuple[int, int, int]] = []
+    for line in out.stdout.splitlines():
+        m = re.search(r"#([0-9A-Fa-f]{6})", line)
+        if m:
+            v = int(m.group(1), 16)
+            px.append(((v >> 16) & 255, (v >> 8) & 255, v & 255))
+    return px
+
+
+def run_ws(args: argparse.Namespace, in_sr: str) -> Dict:
+    """Decode each tapped WS output (one channel per FPGA port) and report the
+    pixels the FPGA actually drove — the far end of the Pi->SPI->FPGA->WS chain."""
+    chans = [c for c in args.ws_channels.split(",") if c]
+    report: Dict = {"mode": "ws", "ports": [], "notes": [], "ok": True}
+    for p, din in enumerate(chans):
+        px = ws_decode(args, in_sr, din)
+        report["ports"].append({"port": p, "channel": din, "leds": len(px), "pixels": px})
+        if not px:
+            report["notes"].append(f"port {p} ({din}): no WS2812 pixels decoded")
+            report["ok"] = False
+    print("\n=== spi_ws281x FPGA WS2812 output report ===")
+    for pr in report["ports"]:
+        head = pr["pixels"][:6]
+        print(
+            f"  port {pr['port']} (din={pr['channel']}): {pr['leds']} LEDs  {head}"
+            f"{'…' if pr['leds'] > 6 else ''}"
+        )
+    for n in report["notes"]:
+        print(f"  ! {n}")
+    ok = report["ok"] and all(p["leds"] for p in report["ports"])
+    print(
+        f"\nRESULT: {'PASS ✓' if ok else 'FAIL ✗'} "
+        f"({sum(p['leds'] for p in report['ports'])} LEDs across {len(report['ports'])} port(s))"
+    )
+    report["ok"] = ok
+    return report
+
+
 def _frames_from_transfers(stdout: str) -> List[List[int]]:
     """Each `mosi-transfer` line groups one CS transaction's bytes -> a frame."""
     frames: List[List[int]] = []
@@ -308,6 +359,12 @@ def main(argv=None) -> int:
     )
     ap.add_argument("--timeout", type=float, default=90.0, help="hard cap (s) on each sigrok call")
     ap.add_argument("--num-ports", type=int, default=2, help="expected FPGA num_ports")
+    ap.add_argument(
+        "--ws-channels",
+        default="",
+        help="decode FPGA WS2812 outputs instead of SPI: comma list, one LA channel "
+        "per port (e.g. D0,D2). Uses the rgb_led_ws281x decoder.",
+    )
     ap.add_argument("--sr-in", help="decode this existing .sr instead of capturing")
     ap.add_argument("--sr-out", help="also save the captured .sr here (open in PulseView)")
     ap.add_argument("--json-out", help="write the structured report as JSON")
@@ -343,6 +400,15 @@ def main(argv=None) -> int:
                 tmp.close()
                 in_sr = tmp.name
             capture(args, in_sr)
+
+        if args.ws_channels:
+            report = run_ws(args, in_sr)
+            jout = _resolve_out(args.json_out)
+            if jout:
+                with open(jout, "w") as fh:
+                    json.dump(report, fh, indent=2)
+                print(f"[la] wrote {jout}", file=sys.stderr)
+            return 0 if report["ok"] else 1
 
         transfers = decode(args, in_sr, "mosi-transfer")
         frames = _frames_from_transfers(transfers)
