@@ -48,7 +48,14 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
 
     # FPGA needs a rate-matched clock; APA102 is happy fast. --speed-hz overrides.
-    default_speed = matched_speed_hz(args.fpga_ports) if args.output == "fpga" else 8_000_000
+    # FPGA: clock SPI ABOVE the matched rate so the FPGA's per-port FIFO always
+    # stays ahead of the WS drain (no underflow -> no mid-frame stalls or tail
+    # loss). The FIFO absorbs the burst; 2x matched gives margin, capped at a
+    # rate the Pi's SPI can sustain. APA102 is happy fast.
+    if args.output == "fpga":
+        default_speed = min(matched_speed_hz(args.fpga_ports) * 2, 24_000_000)
+    else:
+        default_speed = 8_000_000
     speed = args.speed_hz or default_speed
     fpga = FpgaCodec(args.fpga_ports) if args.output == "fpga" else None
 

@@ -202,8 +202,11 @@ module ws281x_stream #(
         end
         S_WAIT: begin
           ws <= {MAX_PORTS{1'b0}};
-          if (!stream_active) state <= S_RESET;
-          else if (all_ne) state <= S_POP;
+          // Drain-before-reset: emit any buffered byte even if the stream just
+          // ended, so a byte that lands as CS deasserts isn't flushed. Only reset
+          // once every active FIFO is truly empty.
+          if (all_ne) state <= S_POP;
+          else if (!stream_active) state <= S_RESET;
         end
         S_RESET: begin
           ws <= {MAX_PORTS{1'b0}};

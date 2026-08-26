@@ -127,10 +127,12 @@ module ws281x_stream_tb;
     for (k = 0; k < K; k = k + 1)
       for (p = 0; p < NP; p = p + 1) send_byte(frame[p][k]);
 
-    // Let the (much slower) WS drain finish, then end the frame -> latch.
-    repeat (BYTE_CLK * K + 200) @(posedge clk);
+    // End the frame almost immediately -- SPI has delivered everything but the
+    // strip is only ~1 byte into emission, so the FSM must drain the still-full
+    // FIFO AFTER stream_active drops (the real fast-SPI case). No byte may be lost.
+    repeat (BYTE_CLK) @(posedge clk);
     stream_active <= 1'b0;
-    repeat (BYTE_CLK * 4) @(posedge clk);
+    repeat (BYTE_CLK * (K + 4)) @(posedge clk);
 
     // ---- checks ----
     for (p = 0; p < NP; p = p + 1) begin

@@ -168,10 +168,6 @@ class LedDriver:
         n = params.ledCount
         period_s = params.bitPeriodMs / 1000.0
 
-        # FPGA output: send the one-time CSR (active port count) before streaming.
-        if self._fpga is not None:
-            self._sink.write(self._fpga.configure())
-
         # Stamp the epoch at the start of the cycle, then release start().
         self._epoch = self._clock()
         self._started.set()
@@ -179,6 +175,14 @@ class LedDriver:
         frame_idx = 0
         try:
             while not self._stop.is_set():
+                # FPGA output: re-send the CSR (active port count) every frame.
+                # The FPGA resets num_ports to its default (= MAX_PORTS) on any
+                # reconfig — reflash, power-cycle, or USB replug — so a one-time
+                # write at startup silently reverts and the data smears across all
+                # ports. Refreshing it each frame (3 bytes, one CS transaction)
+                # keeps it correct through any FPGA reset.
+                if self._fpga is not None:
+                    self._sink.write(self._fpga.configure())
                 self._sink.write(self._frame_for(frame_idx, plan, n))
                 frame_idx += 1
                 self._sleep(period_s)
