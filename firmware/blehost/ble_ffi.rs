@@ -91,8 +91,22 @@ pub extern "C" fn ns_ble_on_hci(pkt: *const u8, len: u32, out: *mut u8, cap: u32
     let s = unsafe { core::slice::from_raw_parts(pkt, len as usize) };
     match s[0] {
         H4_EVT => {
+            let was_connected = matches!(unsafe { HOST.state }, HostState::Connected(_));
             let mut b: Buf<64> = Buf::new();
             let n = unsafe { HOST.on_event(s, &mut b) };
+            // A fresh central connection must start the Improv flow CLEAN. The service is a
+            // static, so a stale error/state from a prior FAILED attempt otherwise persists
+            // and every reconnect reads it straight back — making the provisioner's retries
+            // useless (a sticky "invalid_rpc" across all 3 attempts). Reset on the 0->1
+            // connection edge.
+            let now_connected = matches!(unsafe { HOST.state }, HostState::Connected(_));
+            if now_connected && !was_connected {
+                unsafe {
+                    IMPROV = Some(ImprovService::new());
+                    NOTIFY_N = 0;
+                    HAS_PENDING = false;
+                }
+            }
             if n == 0 {
                 0
             } else {

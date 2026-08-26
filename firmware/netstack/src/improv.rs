@@ -141,13 +141,19 @@ impl Improv {
             return Action::None;
         }
         let data_len = pkt[1] as usize;
-        if pkt.len() != data_len + 3 {
+        // The packet is [command][data_len][data..][checksum] = data_len + 3 bytes. Accept a
+        // LONGER write (>=) and read the checksum at the FRAMED position, not pkt[len-1]: some
+        // ATT stacks pad the write value, and requiring an exact length (or checksumming to the
+        // last byte) rejected an otherwise-valid SendWifi — an intermittent provisioning
+        // "invalid_rpc" on marginal links. A genuinely short/corrupt packet still fails.
+        let checksum_idx = data_len + 2;
+        if pkt.len() < data_len + 3 {
             self.error = ErrorState::InvalidRpcPacket;
             return Action::None;
         }
-        // Checksum = sum of all preceding bytes, low 8 bits.
-        let sum = pkt[..pkt.len() - 1].iter().fold(0u8, |a, &b| a.wrapping_add(b));
-        if sum != pkt[pkt.len() - 1] {
+        // Checksum = sum of the command + length + data bytes, low 8 bits.
+        let sum = pkt[..checksum_idx].iter().fold(0u8, |a, &b| a.wrapping_add(b));
+        if sum != pkt[checksum_idx] {
             self.error = ErrorState::InvalidRpcPacket;
             return Action::None;
         }
