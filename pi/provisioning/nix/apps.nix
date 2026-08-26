@@ -45,8 +45,18 @@ let
 
   # FPGA gateware shipped in this image; the DUT flashes its own Tang Nano 9K
   # over USB-JTAG before the player opens SPI (openFPGALoader + udev in fpga.nix).
-  # Vendored .fs (built by //fpga/spi_ws281x) for the same reason as ./ledapp.
-  fpgaBitstream = ./fpga/spi_ws281x.fs;
+  #
+  # The bitstream comes from Bazel (//fpga/spi_ws281x:spi_ws281x_tangnano9k), not
+  # committed. Preferred: SBC_FPGA_BITSTREAM exported to the --impure eval (the
+  # data-dependency path — needs sbc-deploy to add it to its env passthrough, the
+  # way it exports SBC_DEPLOY_PUBKEY_FILE; TODO). Until then it falls back to a
+  # gitignored ./fpga/spi_ws281x.fs that the deploy copies from bazel-bin (see
+  # fpga/README.md) — Bazel-built, just not yet a single-command data dep.
+  fpgaBitstreamEnv = builtins.getEnv "SBC_FPGA_BITSTREAM";
+  fpgaBitstream =
+    if fpgaBitstreamEnv != "" && builtins.pathExists (/. + fpgaBitstreamEnv)
+    then builtins.path { path = /. + fpgaBitstreamEnv; name = "spi_ws281x.fs"; }
+    else ./fpga/spi_ws281x.fs;
   fpgaCommission = pkgs.writeShellScript "fpga-commission" ''
     echo "[fpga-commission] loading gateware onto the Tang Nano 9K" >&2
     # SRAM load (volatile): the deployed bitstream is (re)applied on every player
@@ -92,10 +102,14 @@ in
       runtimeDirectory = "ledmapper";
       readWritePaths = [ "/run/ledmapper" ];
       after = [ "local-fs.target" ];
-      # Commission the FPGA (flash the Tang Nano over USB) BEFORE streaming SPI.
-      # `+` runs it as root (bypasses the User=ledmapper sandbox) so it can claim
-      # the USB device; the player's own ExecStart then opens /dev/spidev.
-      extraServiceConfig.ExecStartPre = "+${fpgaCommission}";
+      # Commission the FPGA (flash the Tang Nano over USB) BEFORE streaming SPI,
+      # only when driving the FPGA. `+` runs it as root (bypasses the
+      # User=ledmapper sandbox) so it can claim the USB device; the player's own
+      # ExecStart then opens /dev/spidev. Gating keeps the apa102 path (and its
+      # bare eval) from needing SBC_FPGA_BITSTREAM.
+      extraServiceConfig = pkgs.lib.optionalAttrs (ledOutput == "fpga") {
+        ExecStartPre = "+${fpgaCommission}";
+      };
     };
 
     # M2 — web server. Reuses the driver's `ledmapper` user, binds :80, persists
