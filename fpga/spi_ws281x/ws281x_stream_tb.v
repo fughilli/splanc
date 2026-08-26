@@ -1,14 +1,18 @@
-// Tests the streaming core directly: feed a paced, round-robin byte stream and
-// decode each WS output by high-pulse width back into bytes, checking they match
-// per port, inactive ports stay low, and there's exactly one frame.
+// Tests the streaming core directly. Feeds a round-robin byte stream FAST (SPI
+// far outrunning the WS drain -- the case the old 2-byte-buffer core truncated)
+// into the per-port FIFOs, decodes each WS output by high-pulse width back into
+// bytes, and checks every byte emits per port, inactive ports stay low, and the
+// count is exactly right (no dropped or duplicated LEDs).
 `timescale 1ns / 1ps
 
 module ws281x_stream_tb;
   localparam integer MAX_PORTS = 4;
   localparam integer NP = 3;  // active ports (port 3 must stay low)
+  localparam integer MAX_LEDS = 8;  // DEPTH = 24 bytes/port
   localparam integer CLK_MHZ = 54;
   localparam integer T0H_NS = 350, T1H_NS = 700, PERIOD_NS = 1250, RESET_NS = 2000;
-  localparam integer K = 3;  // bytes per port in the frame
+  localparam integer PREFILL = 2;
+  localparam integer K = 6;  // bytes per port in the frame (2 LEDs)
 
   localparam integer PERIOD_CLK = PERIOD_NS * CLK_MHZ / 1000;
   localparam integer T0H_CLK = T0H_NS * CLK_MHZ / 1000;
@@ -19,21 +23,23 @@ module ws281x_stream_tb;
   reg clk = 0;
   always #1 clk = ~clk;
 
-  reg               rst = 1;
-  reg  [       7:0] num_ports = NP;
-  reg  [       7:0] led_type = 0;
-  reg  [       7:0] stream_byte = 0;
-  reg               stream_valid = 0;
-  reg               stream_active = 0;
+  reg                  rst = 1;
+  reg  [          7:0] num_ports = NP;
+  reg  [          7:0] led_type = 0;
+  reg  [          7:0] stream_byte = 0;
+  reg                  stream_valid = 0;
+  reg                  stream_active = 0;
   wire [MAX_PORTS-1:0] ws;
 
   ws281x_stream #(
       .MAX_PORTS(MAX_PORTS),
+      .MAX_LEDS (MAX_LEDS),
       .CLK_MHZ  (CLK_MHZ),
       .T0H_NS   (T0H_NS),
       .T1H_NS   (T1H_NS),
       .PERIOD_NS(PERIOD_NS),
-      .RESET_NS (RESET_NS)
+      .RESET_NS (RESET_NS),
+      .PREFILL  (PREFILL)
   ) dut (
       .clk(clk),
       .rst(rst),
@@ -77,7 +83,7 @@ module ws281x_stream_tb;
         dbit  = (hilen > MID);
         acc[di] <= {acc[di][6:0], dbit};
         if (bitcnt[di] == 7) begin
-          recv[di][recvcnt[di]] <= {acc[di][6:0], dbit};
+          if (recvcnt[di] < K) recv[di][recvcnt[di]] <= {acc[di][6:0], dbit};
           recvcnt[di] <= recvcnt[di] + 1;
           bitcnt[di]  <= 0;
         end else begin
@@ -90,13 +96,15 @@ module ws281x_stream_tb;
 
   // ---- stimulus ----
   integer p, k, errors = 0;
+  // Fast SPI byte: valid for one cycle, one gap cycle -- no byte-time pacing, so
+  // the whole frame lands in the FIFO far faster than the strip drains.
   task send_byte(input [7:0] b);
     begin
       stream_byte  <= b;
       stream_valid <= 1'b1;
       @(posedge clk);
       stream_valid <= 1'b0;
-      @(posedge clk);  // one gap cycle between demux writes
+      @(posedge clk);
     end
   endtask
 
@@ -115,15 +123,14 @@ module ws281x_stream_tb;
     @(posedge clk);
     stream_active <= 1'b1;
 
-    // Deliver K rounds, one byte per active port, paced to one round per WS
-    // byte-time so the double buffer never under/overflows.
-    for (k = 0; k < K; k = k + 1) begin
+    // Dump the whole frame round-robin as fast as the bus allows.
+    for (k = 0; k < K; k = k + 1)
       for (p = 0; p < NP; p = p + 1) send_byte(frame[p][k]);
-      repeat (BYTE_CLK - NP * 2) @(posedge clk);
-    end
 
-    stream_active <= 1'b0;  // end of frame -> latch (reset pulse)
-    repeat (BYTE_CLK * 2) @(posedge clk);
+    // Let the (much slower) WS drain finish, then end the frame -> latch.
+    repeat (BYTE_CLK * K + 200) @(posedge clk);
+    stream_active <= 1'b0;
+    repeat (BYTE_CLK * 4) @(posedge clk);
 
     // ---- checks ----
     for (p = 0; p < NP; p = p + 1) begin
