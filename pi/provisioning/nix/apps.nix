@@ -20,8 +20,9 @@ let
   # self-drives a default cycle at boot so the SPI wire is always active for the
   # logic-analyzer probe (//pi/tools/la_probe) without needing a client.
   ledOutput = "fpga";
-  ledFpgaPorts = 2;
-  ledStartLeds = 16;
+  ledFpgaPorts = 4;
+  ledStartLeds = 2200; # 4 ports x 550 LEDs (60Hz max-length HITL case)
+  ledFps = 60;
 
   # Sources are VENDORED under ./ledapp because the deploy builds the flake as
   # `path:pi/provisioning/nix`, whose tree can't reach ../../{pi/led_driver,
@@ -38,7 +39,8 @@ let
         --add-flags "-m led_driver" \
         --add-flags "--output ${ledOutput}" \
         --add-flags "--fpga-ports ${toString ledFpgaPorts}" \
-        --add-flags "--start ${toString ledStartLeds}"
+        --add-flags "--start ${toString ledStartLeds}" \
+        --add-flags "--fps ${toString ledFps}"
     '';
 
   ledServerPkg = pkgs.writeShellScriptBin "led-server" ''

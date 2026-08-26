@@ -45,6 +45,9 @@ def main(argv=None) -> int:
         metavar="LED_COUNT",
         help="immediately start a default cycle for LED_COUNT LEDs (debug)",
     )
+    parser.add_argument(
+        "--fps", type=float, default=10.0, help="frame rate for --start (bit period = 1000/fps ms)"
+    )
     args = parser.parse_args(argv)
 
     # FPGA needs a rate-matched clock; APA102 is happy fast. --speed-hz overrides.
@@ -70,7 +73,7 @@ def main(argv=None) -> int:
     )
 
     if args.start is not None:
-        epoch = driver.start(default_code_params(args.start))
+        epoch = driver.start(default_code_params(args.start, bit_period_ms=1000.0 / args.fps))
         print(f"started cycle for {args.start} LEDs; patternClockEpoch={epoch:.1f} ms", flush=True)
 
     stop = threading.Event()

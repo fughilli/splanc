@@ -73,7 +73,9 @@ module ws281x_stream #(
     parameter integer T0H_NS    = 350,
     parameter integer T1H_NS    = 700,
     parameter integer PERIOD_NS = 1250,
-    parameter integer RESET_NS  = 300000,
+    // WS2812/WS2812B latch is >50us; 80us keeps a full 60Hz/550-LED (and
+    // 120Hz/270-LED) frame inside its refresh budget. Too short for WS2813 (280us).
+    parameter integer RESET_NS  = 80000,
     parameter integer PREFILL   = 2      // bytes/port buffered before emit starts
 ) (
     input  wire                 clk,

@@ -89,18 +89,20 @@ def _capture_spi_bytes(server: str, device: str, samples: int) -> bytes:
     return base64.b64decode(res.get("bytes") or "")
 
 
-def _drive_static(res: Reservation, colors: List[RGB]) -> None:
-    """Hold a known static frame on the Pi's led_driver (via its control socket).
+def _drive_static(res: Reservation, colors: List[RGB], fps: float = 10.0) -> None:
+    """Hold a known static frame on the Pi's led_driver (via its control socket),
+    refreshed at ``fps`` (bit period = 1000/fps ms).
 
     Assumes the Pi runs led-driver.service with ``--output=fpga`` (see
     pi/provisioning); we just start a cycle sized to the frame and pin it to the
     static frame. The socket path matches led_driver's default.
     """
+    bit_ms = 1000.0 / fps
     snippet = (
         "from led_driver.control import ControlClient;"
         "from led_driver.graycode import default_code_params;"
         "c=ControlClient('/run/ledmapper/control.sock');"
-        f"c.start(default_code_params({len(colors)}));"
+        f"c.start(default_code_params({len(colors)}, bit_period_ms={bit_ms!r}));"
         f"c.set_debug('static', {{'colors': {[list(c) for c in colors]}}})"
     )
     proc = res.ssh(["python3", "-c", snippet], capture=True, timeout=30)
@@ -136,6 +138,10 @@ def run(args: argparse.Namespace) -> int:
     port_frames = _expected_frame(args.num_ports, args.leds_per_port)
     flat: List[RGB] = [px for pf in port_frames for px in pf]
 
+    # Auto-size the capture to span one full frame + reset at 24 MHz (leds*24 bits
+    # * 1.25us/bit), with margin, unless overridden.
+    samples = args.samples or int(args.leds_per_port * 24 * 1.25e-6 * 24e6 * 1.6) + 100_000
+
     res = Reservation(
         server=args.server or None,
         owner=args.owner,
@@ -148,7 +154,7 @@ def run(args: argparse.Namespace) -> int:
         require_analyzer(res.server)
         device = args.device or _reserved_device(res.server, res.id)
 
-        _drive_static(res, flat)
+        _drive_static(res, flat, fps=args.fps)
         time.sleep(0.5)  # let the CSR + a few STREAM frames reach the wire
 
         saved = _channel_map(res.server)
@@ -159,7 +165,7 @@ def run(args: argparse.Namespace) -> int:
                 _set_channel_map(
                     res.server, {device: {"channels": [ws_channels[p]], "protocol": "ws2812"}}
                 )
-                got = _capture_pixels(res.server, device, args.samples)
+                got = _capture_pixels(res.server, device, samples)
                 want = port_frames[p]
                 if got[: len(want)] != want:
                     errors.append(f"port {p} ws2812: got {got[:len(want)]} want {want}")
@@ -168,7 +174,7 @@ def run(args: argparse.Namespace) -> int:
             _set_channel_map(
                 res.server, {device: {"channels": spi_channels, "protocol": "spi-raw"}}
             )
-            wire = _capture_spi_bytes(res.server, device, args.samples)
+            wire = _capture_spi_bytes(res.server, device, samples)
             payload = fpga_spi.encode_stream(port_frames)  # 0x02 + round-robin GRB
             if bytes(payload) not in bytes(wire):
                 errors.append(
@@ -195,7 +201,10 @@ def main(argv=None) -> int:
     ap.add_argument("--require-caps", default="")
     ap.add_argument("--num-ports", type=int, default=2)
     ap.add_argument("--leds-per-port", type=int, default=2)
-    ap.add_argument("--samples", type=int, default=400_000)
+    ap.add_argument("--fps", type=float, default=10.0, help="refresh rate to drive + validate")
+    # One WS frame = leds*24 bits * 1.25us; size samples to span it + reset. At
+    # 24 MHz, 550 LEDs (~16.5ms) needs ~400k; default scales with leds below.
+    ap.add_argument("--samples", type=int, default=0, help="0 = auto from leds-per-port")
     ap.add_argument("--ws-channels", default="D3,D4", help="one channel per WS output")
     ap.add_argument("--spi-channels", default="D0,D1,D2", help="clk,mosi,cs")
     return run(ap.parse_args(argv))
