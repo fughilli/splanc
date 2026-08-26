@@ -3,10 +3,14 @@
 import asyncio
 import json
 
+import pytest
 from ledmapper_protocol import DetectionRecord, OutputMap, OutputMapStats
 from server.handler import ConnectionHandler, ServerContext
 from server.reconstruct import LiveSolver, _decimate_per_led
 from server.session import SessionManager
+
+# Traceability: PR(s) this suite verifies (see requirements/requirements.yaml).
+pytestmark = pytest.mark.requirements("PR-11", "PR-13")
 
 
 def _stub_map() -> OutputMap:

@@ -6,6 +6,10 @@ Library + CLI (`serve`).
 
 `imports = ["."]` puts this directory on the import path so the nested
 `server/` package is importable as `server` (and runnable as `python -m server`).
+
+
+
+Requirements (PRs implemented here; see requirements/requirements.yaml): PR-11, PR-12, PR-13, PR-22, PR-31, PR-34
 """
 
 load("@pypi//:requirements.bzl", "requirement")
@@ -64,6 +68,7 @@ py_test(
     deps = [
         ":server",
         "//shared/protocol",
+        "//tools/traceability",
         requirement("pytest"),
     ],
 )
@@ -86,6 +91,7 @@ py_test(
         "//pi/reconstruction",
         "//shared/protocol",
         "//shared/simulator",
+        "//tools/traceability",
         requirement("pytest"),
         requirement("scipy"),
         requirement("websockets"),

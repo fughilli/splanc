@@ -1,0 +1,614 @@
+# Splanc — machine-readable requirements & risk model.
+#
+# This is the single source of truth for the requirements-driven-development
+# workflow (see docs/requirements-driven-development.md). It is validated by
+# //requirements:requirements_valid_test and consumed by the traceability
+# tooling in //tools/traceability to build the HTML verification/validation
+# report.
+#
+# Content is the FUG-88 "Draft requirements and risk assessment for Splanc"
+# baseline, translated verbatim (UN-1..8, PR-1..25, RISK-1..12). FUG-88 states
+# each risk's mitigation as prose; per FUG-89 those mitigations are captured as
+# DERIVED product requirements (PR-26..37, kind: derived) that `mitigates` the
+# risk, with the risk's `mitigated_by` naming the derived PR back.
+#
+# Entity kinds:
+#   * user_needs (UN)      — what a user must be able to do. VALIDATED by the
+#                            verification of the PRs that satisfy them.
+#   * product_requirements — direct PRs `satisfies` user needs; derived PRs
+#     (PR)                   `mitigates` risks (and may also satisfy needs).
+#                            VERIFIED by the tests that reference them.
+#   * risks (RISK)         — failure modes. MITIGATED when the derived PRs that
+#                            mitigate them are verified.
+#
+# Traceability from a PR to its tests comes from either per-testcase
+# `@requirements("PR-…")` markers (emitted as jUnit tags) or the `verified_by`
+# Bazel target list (whole-target pass/fail, for languages without per-case
+# tags yet). Requirements that describe product areas not implemented in this
+# repository yet (e.g. AI workflow surfaces) are intentionally left without
+# verifying tests and surface as UNVERIFIED in the report.
+#
+# `method` (FUG-89) declares the verification RIGOR a requirement demands, from
+# an ordered scale analysis < simulation < sil < hil < hitl (plus a non-ordered
+# `inspection` for manual/visual sign-off). A PR is only GREEN when a passing
+# test provides rigor >= the method it demands; passing evidence below that shows
+# as AMBER ("under-verified"). Missing `method` defaults to `simulation`, so only
+# the hardware-implicated PRs (modules touching firmware/pi/hitl, and derived PRs
+# mitigating hardware/stability risks) are annotated with their true hil/hitl
+# demand below. TODO(FUG-89): audit the PRs still defaulting to `simulation` and
+# give each its true demanded method.
+
+meta:
+  project: splanc
+  source: >-
+    FUG-88 "Draft requirements and risk assessment for Splanc" baseline
+    (UN-1..8, PR-1..25, RISK-1..12), verbatim. Derived PRs PR-26..37 capture the
+    per-risk mitigations FUG-88 states as prose (FUG-89).
+
+# --------------------------------------------------------------------------- #
+# User needs (FUG-88)                                                         #
+# --------------------------------------------------------------------------- #
+user_needs:
+  - id: UN-1
+    title: Create, preview and tune effects quickly on desktop and mobile
+    description: >-
+      Users need to create, preview, and tune effects quickly on desktop and
+      mobile with responsive controls and efficient layouts.
+
+  - id: UN-2
+    title: Understandable, non-blocking, trustworthy AI + remapping workflows
+    description: >-
+      Users need AI-assisted workflows and control remapping that are
+      understandable, non-blocking, and trustworthy.
+
+  - id: UN-3
+    title: Drive effects from external inputs without extra hardware
+    description: >-
+      Users need to drive effects from external inputs such as cameras and
+      TouchDesigner without unnecessary hardware dependencies.
+
+  - id: UN-4
+    title: Reliably manage LED topology maps
+    description: >-
+      Users need to create, reconstruct, import, export, and manage LED topology
+      maps reliably, including larger installations.
+
+  - id: UN-5
+    title: Commission and update devices from the browser
+    description: >-
+      Users need to commission, name, discover, connect to, and update devices
+      from the browser with minimal setup friction.
+
+  - id: UN-6
+    title: Acceptable quality and predictable performance on device
+    description: >-
+      Users need acceptable visual quality and predictable runtime performance
+      on constrained device hardware.
+
+  - id: UN-7
+    title: Stability during long sessions and networking/memory pressure
+    description: >-
+      Users need the device and app to remain stable during long sessions,
+      networking transitions, and memory pressure.
+
+  - id: UN-8
+    title: Fast, reliable, representative automated validation
+    description: >-
+      Users need automated validation that is fast, reliable, and representative
+      of real device behavior.
+
+# --------------------------------------------------------------------------- #
+# Product requirements (FUG-88 PR-1..25, direct)                             #
+# --------------------------------------------------------------------------- #
+product_requirements:
+  - id: PR-1
+    title: Apply display scaling consistently across control types and views
+    description: >-
+      The UI shall apply display scaling consistently across supported control
+      types and views.
+    satisfies: [UN-1]
+    modules: [web]
+
+  - id: PR-2
+    title: Immediate feedback with bounded expensive recompute during drag
+    description: >-
+      The UI shall provide immediate perceptual feedback during continuous
+      adjustments while avoiding excessive expensive recomputation during active
+      drag interactions.
+    satisfies: [UN-1]
+    modules: [web]
+
+  - id: PR-3
+    title: Preserve per-view settings; defaults never override explicit settings
+    description: >-
+      The workspace shall preserve per-view settings and prevent default view
+      modes from overriding explicit user settings.
+    satisfies: [UN-1]
+    modules: [web]
+
+  - id: PR-4
+    title: Efficient use of screen space on desktop and mobile
+    description: >-
+      The workspace shall make efficient use of screen space on desktop and
+      mobile, including 3D previews, panes, menus, and workspace controls.
+    satisfies: [UN-1]
+    modules: [web]
+
+  - id: PR-5
+    title: Informational UI elements never obstruct primary workflows
+    description: >-
+      Informational UI elements such as banners and tooltips shall not obstruct
+      primary workflows and shall be dismissible or self-clearing when
+      appropriate.
+    satisfies: [UN-1, UN-2]
+    modules: [web]
+
+  - id: PR-6
+    title: AI workflow surfaces render responses and progress clearly
+    description: >-
+      AI workflow surfaces shall render responses clearly, including Markdown
+      where applicable, and shall expose useful progress and completion feedback
+      to the user.
+    satisfies: [UN-2]
+    modules: [web]
+
+  - id: PR-7
+    title: Control remapping to semantic effect inputs without editing source
+    description: >-
+      Control remapping shall let users map hardware controls to semantic effect
+      inputs without rewriting effect source code.
+    satisfies: [UN-2]
+    modules: [web]
+    verified_by: ['//web:midi_test', '//web:midiStore_test']
+
+  - id: PR-8
+    title: Support local / on-device model workflows where documented
+    description: >-
+      The system shall support local or on-device model workflows where
+      documented capabilities call for them.
+    satisfies: [UN-2]
+    modules: [web]
+
+  - id: PR-9
+    title: Preview effects from camera/video inputs without dedicated hardware
+    description: >-
+      The workspace shall support previewing effects from camera or
+      video-derived inputs even when dedicated hardware is not connected, where
+      feasible.
+    satisfies: [UN-3]
+    modules: [web]
+
+  - id: PR-10
+    title: TouchDesigner texture/uniform-driven effect integration
+    description: >-
+      The system shall support TouchDesigner integration for texture and
+      uniform-driven effect workflows.
+    satisfies: [UN-3]
+    modules: [tools, web]
+    verified_by: ['//tools/touchdesigner/stream_bench:stream_bench_test']
+
+  - id: PR-11
+    title: Capture, reconstruct, upload, import/export and conflict handling
+    description: >-
+      The mapping workflow shall support capture, reconstruction, upload,
+      import, export, and conflict handling for topology maps.
+    satisfies: [UN-4]
+    modules: [pi/reconstruction, pi/server, pi/led_driver, solver, shared/simulator, web]
+    verified_by:
+      - '//solver:solver_test'
+      - '//web:mapBundle_test'
+      - '//web:pinhole_test'
+      - '//web:placement_test'
+      - '//web:exposure_test'
+      - '//web:intrinsics_test'
+      - '//web:mapTransform_test'
+
+  - id: PR-12
+    title: Tolerate larger installations (batching, scale-aware, recovery)
+    description: >-
+      The mapping workflow shall tolerate larger installations through batching,
+      scale-aware upload behavior, and recovery-oriented handling of
+      reconstruction interruptions.
+    satisfies: [UN-4, UN-7]
+    method: hitl
+    modules: [pi/server, web, pi/hitl]
+
+  - id: PR-13
+    title: Browser provisioning, rename, discovery, LAN and direct connection
+    description: >-
+      The browser experience shall support device provisioning, rename,
+      discovery, LAN connection, and direct connection by available connection
+      modes.
+    satisfies: [UN-5]
+    method: hitl
+    modules: [firmware, pi/server, pi/hitl, web]
+    verified_by:
+      - '//firmware/player_app:improv_codec_test'
+      - '//firmware/player_app:ws_codec_test'
+      - '//web:clocksync_test'
+      - '//web:improv_test'
+      - '//web:improv_provision_test'
+
+  - id: PR-14
+    title: Consistent device-visible identity across name/AP/hostname
+    description: >-
+      The system shall derive or maintain device-visible identity consistently
+      across configured name, AP name, hostname, and related discovery surfaces.
+    satisfies: [UN-5]
+    method: hil
+    modules: [firmware]
+
+  - id: PR-15
+    title: Browser firmware update detects hardware and flashes compatible image
+    description: >-
+      The browser-based firmware update flow shall detect hardware appropriately
+      and flash compatible firmware images for the detected target.
+    satisfies: [UN-5]
+    modules: [web]
+    verified_by: ['//web:flashManifest_test', '//web:flashUsb_test']
+
+  - id: PR-16
+    title: Cross-platform browser flashing with safe fallback
+    description: >-
+      The product shall support browser-based flashing across supported client
+      platforms and provide safe fallback behavior where support is limited.
+    satisfies: [UN-5]
+    modules: [web]
+    verified_by: ['//web:flashEnv_test', '//web:flashUsb_test']
+
+  - id: PR-17
+    title: Effect runtime capability + calibrated performance-estimation inputs
+    description: >-
+      The runtime shall support effect execution features needed by the
+      documented effect system, including embedded/runtime type support and
+      calibrated performance estimation inputs.
+    satisfies: [UN-6]
+    method: hil
+    modules: [firmware, fx_compiler]
+    verified_by:
+      - '//firmware/player_app:ffi_test'
+      - '//web:fxTopology_test'
+      - '//web:fxbTextures_test'
+
+  - id: PR-18
+    title: Performance visibility against device budget
+    description: >-
+      The system shall provide users with performance visibility sufficient to
+      understand whether an effect is likely to run within device budget.
+    satisfies: [UN-6]
+    method: hil
+    modules: [web, firmware]
+    verified_by:
+      - '//web:costModel_test'
+      - '//web:budget_test'
+      - '//web:executionProfile_test'
+      - '//web:profileValidation_test'
+
+  - id: PR-19
+    title: Adapt playback/execution rate to preserve stability
+    description: >-
+      The system shall adapt effect playback rate or execution rate to preserve
+      system stability when performance headroom becomes insufficient.
+    satisfies: [UN-6, UN-7]
+    method: hil
+    modules: [firmware]
+
+  - id: PR-20
+    title: Visual output calibration (color correction)
+    description: >-
+      The product shall support visual output calibration features such as color
+      correction where documented.
+    satisfies: [UN-6]
+    method: hil
+    modules: [firmware, web]
+    verified_by:
+      - '//firmware/player_app:color_correction_test'
+      - '//web:colorCorrection_test'
+
+  - id: PR-21
+    title: Careful device memory management for networking/control/effects
+    description: >-
+      The device firmware and associated protocols shall manage memory carefully
+      enough to support intended networking, control, and effect workloads on
+      target hardware.
+    satisfies: [UN-7]
+    method: hil
+    modules: [firmware]
+
+  - id: PR-22
+    title: Preserve user work across transient disconnects
+    description: >-
+      The system shall preserve important user work products, such as captures
+      or map data, across transient disconnects whenever practical.
+    satisfies: [UN-4, UN-7]
+    modules: [pi/server, web]
+
+  - id: PR-23
+    title: HITL + CI infrastructure validates representative operational flows
+    description: >-
+      HITL and CI infrastructure shall validate provisioning, flashing,
+      connectivity, mapping, and representative operational flows.
+    satisfies: [UN-8]
+    method: hitl
+    modules: [pi/hitl, tools/traceability, requirements]
+
+  - id: PR-24
+    title: Multi-DUT validation isolates test resources safely
+    description: >-
+      The validation system shall support multiple DUTs safely and isolate test
+      resources well enough to prevent cross-device interference.
+    satisfies: [UN-8]
+    method: hitl
+    modules: [pi/hitl]
+
+  - id: PR-25
+    title: CI enforces quality gates under routine infrastructure constraints
+    description: >-
+      CI shall enforce quality gates and remain operable under routine
+      infrastructure constraints such as noisy builds, storage pressure, and
+      shared-resource contention.
+    satisfies: [UN-8]
+    modules: [tools/traceability, requirements]
+
+  # ------------------------------------------------------------------------- #
+  # Derived requirements — risk mitigations (FUG-89, one per FUG-88 risk).    #
+  # ------------------------------------------------------------------------- #
+  - id: PR-26
+    title: Bound device allocation pressure and abort unsafe workloads
+    description: >-
+      Reduce allocation pressure, prefer zero-copy or streamed handling where
+      possible, store large static data efficiently, monitor memory budgets, and
+      abort unsafe workloads (mitigates device heap exhaustion/fragmentation).
+    kind: derived
+    satisfies: [UN-7]
+    mitigates: [RISK-1]
+    method: hitl
+    modules: [firmware]
+
+  - id: PR-27
+    title: Calibrate and cover the effect performance model
+    description: >-
+      Expand coverage of modeled operations, calibrate the cost model, validate
+      against held-out workloads, and expose budget visibility so the model does
+      not give false confidence.
+    kind: derived
+    satisfies: [UN-6]
+    mitigates: [RISK-2]
+    method: hil
+    modules: [firmware, fx_compiler, web]
+    verified_by: ['//web:costModel_test']
+
+  - id: PR-28
+    title: Autoscale frame rate and enforce headroom
+    description: >-
+      Autoscale frame rate, enforce headroom targets, and notify or abort when
+      safe operation cannot be maintained, so expensive effects cannot starve
+      the runtime.
+    kind: derived
+    satisfies: [UN-6, UN-7]
+    mitigates: [RISK-3]
+    method: hil
+    modules: [firmware]
+
+  - id: PR-29
+    title: Readiness-aware, reconnect-hardened provisioning
+    description: >-
+      Improve readiness checks, investigate coexistence/reconnect behavior,
+      perform repeated provisioning validation, and harden naming/discovery so
+      provisioning/association is reliable.
+    kind: derived
+    satisfies: [UN-5]
+    mitigates: [RISK-4]
+    method: hitl
+    modules: [firmware, pi/hitl, web]
+    verified_by: ['//web:improv_provision_test', '//web:clocksync_test']
+
+  - id: PR-30
+    title: Isolate per-DUT USB/serial/debug by stable physical identity
+    description: >-
+      Isolate USB/serial/debug resources by stable physical identity while
+      preserving compatibility, so multi-DUT runs never flash/reset/inspect the
+      wrong board.
+    kind: derived
+    satisfies: [UN-8]
+    mitigates: [RISK-5]
+    method: hitl
+    modules: [pi/hitl]
+
+  - id: PR-31
+    title: Recover mapping from large or interrupted captures
+    description: >-
+      Preserve capture data locally, decouple reconstruction from transient
+      device presence, batch uploads, and scale-test the workflow so large or
+      interrupted captures do not lose user work.
+    kind: derived
+    satisfies: [UN-4, UN-7]
+    mitigates: [RISK-6]
+    method: hitl
+    modules: [pi/reconstruction, pi/server, web, pi/hitl]
+
+  - id: PR-32
+    title: Detect flashing capability and provide fallback transports
+    description: >-
+      Detect platform capability, support alternate transport strategies where
+      feasible, and provide clear fallback behavior so browser flashing is
+      usable across client platforms.
+    kind: derived
+    satisfies: [UN-5]
+    mitigates: [RISK-7]
+    modules: [web]
+    verified_by: ['//web:flashEnv_test', '//web:flashUsb_test']
+
+  - id: PR-33
+    title: Bound preview/thumbnail rendering cost and cache growth
+    description: >-
+      Lazy rendering, bounded cache/TTL policies, and preview performance
+      budgets so media-driven preview and animated thumbnails cannot collapse
+      performance or grow storage unbounded.
+    kind: derived
+    satisfies: [UN-1, UN-3, UN-6]
+    mitigates: [RISK-8]
+    modules: [web]
+
+  - id: PR-34
+    title: Pin the wire schema with cross-language conformance tests
+    description: >-
+      Strengthen schema ownership and compatibility tests, validate payload
+      dimensions/boundaries, and add cross-language conformance tests so binary
+      schema/protocol drift cannot cause catastrophic allocations or corruption.
+    kind: derived
+    satisfies: [UN-3, UN-4, UN-6, UN-7]
+    mitigates: [RISK-9]
+    modules: [shared/protocol, pi/server, pi/reconstruction, web, solver]
+    verified_by:
+      - '//web:proto_test'
+      - '//web:pinhole_test'
+      - '//web:fec_test'
+      - '//web:gray_test'
+
+  - id: PR-35
+    title: Reconcile device identity on stable attributes
+    description: >-
+      Reconcile identity on stable hardware attributes where possible, keep
+      naming surfaces consistent, and refresh network-facing identity correctly
+      after changes so IP/hostname/AP/device-record confusion is avoided.
+    kind: derived
+    satisfies: [UN-5]
+    mitigates: [RISK-10]
+    method: hitl
+    modules: [firmware, web]
+
+  - id: PR-36
+    title: Readiness-aware HITL/CI orchestration with contention control
+    description: >-
+      Replace timing assumptions with readiness-aware orchestration, control
+      shared-resource contention, manage runner storage, and enforce cleaner
+      quality gates so HITL/CI flakiness does not erode trust in results.
+    kind: derived
+    satisfies: [UN-8]
+    mitigates: [RISK-11]
+    method: hitl
+    modules: [pi/hitl, tools/traceability, requirements]
+
+  - id: PR-37
+    title: UI regression coverage for state, visibility and layout
+    description: >-
+      Regression coverage for settings persistence, visibility, focus,
+      tooltip/banner behavior, and responsive layout so UI state inconsistency
+      or obstruction cannot block primary tasks.
+    kind: derived
+    satisfies: [UN-1, UN-2]
+    mitigates: [RISK-12]
+    modules: [web]
+    verified_by: ['//web:appearance_test']
+
+# --------------------------------------------------------------------------- #
+# Risks (FUG-88 RISK-1..12)                                                   #
+# --------------------------------------------------------------------------- #
+risks:
+  - id: RISK-1
+    title: Device heap exhaustion or fragmentation during runtime workloads
+    description: >-
+      Undermines UN-5, UN-6, UN-7 by causing disconnects, instability, or
+      inability to complete operations during networking/control workloads.
+    severity: high
+    likelihood: likely
+    residual: >-
+      Reduced but not eliminated — long-session heap headroom still needs
+      on-hardware soak coverage (PR-26 is HITL-demanded).
+    mitigated_by: [PR-26]
+
+  - id: RISK-2
+    title: Effect performance model gives false confidence
+    description: >-
+      The model allows effects that exceed realistic runtime budget, undermining
+      UN-6 and indirectly threatening UN-7.
+    severity: high
+    likelihood: possible
+    residual: >-
+      Bounded by held-out validation, but the cost model only tracks reality as
+      well as its device calibration (PR-27 is HIL-demanded).
+    mitigated_by: [PR-27]
+
+  - id: RISK-3
+    title: Runtime starvation from expensive effects
+    description: >-
+      Expensive effects cause unstable frame rate or harm other firmware
+      responsibilities, undermining UN-6 and UN-7.
+    severity: high
+    mitigated_by: [PR-28]
+
+  - id: RISK-4
+    title: Provisioning or wireless association is unreliable
+    description: >-
+      Directly harms UN-5 and weakens UN-8 when HITL depends on it.
+    severity: high
+    likelihood: possible
+    residual: >-
+      Reconnect/coexistence hardening helps, but association reliability is only
+      as good as the last repeated on-bench provisioning run (PR-29 is HITL).
+    mitigated_by: [PR-29]
+
+  - id: RISK-5
+    title: Cross-device interference in multi-DUT environments
+    description: >-
+      The wrong board is flashed, reset, or inspected, harming UN-8 and
+      invalidating automation confidence.
+    severity: high
+    mitigated_by: [PR-30]
+
+  - id: RISK-6
+    title: Mapping reconstruction or upload fails for large/interrupted captures
+    description: >-
+      Harms UN-4 and UN-7 by risking loss of user work or inability to complete
+      installations.
+    severity: medium
+    mitigated_by: [PR-31]
+
+  - id: RISK-7
+    title: Browser flashing unavailable/unreliable on important platforms
+    description: >-
+      Harms UN-5 (e.g. Android browser flashing).
+    severity: medium
+    mitigated_by: [PR-32]
+
+  - id: RISK-8
+    title: Media preview/thumbnail causes perf collapse or cache growth
+    description: >-
+      Harms UN-1, UN-3, UN-6 through performance collapse or unbounded
+      cache/storage growth.
+    severity: medium
+    mitigated_by: [PR-33]
+
+  - id: RISK-9
+    title: Binary schema or protocol drift across components
+    description: >-
+      Causes catastrophic allocations or corrupted behavior, harming UN-3, UN-4,
+      UN-6, UN-7.
+    severity: high
+    likelihood: unlikely
+    residual: >-
+      Cross-language conformance tests catch drift at simulation level; the
+      residual is schema changes shipped without regenerating a consumer.
+    mitigated_by: [PR-34]
+
+  - id: RISK-10
+    title: Device identity inconsistencies across IP/hostname/AP/records
+    description: >-
+      Cause connection confusion, harming UN-5.
+    severity: medium
+    mitigated_by: [PR-35]
+
+  - id: RISK-11
+    title: HITL and CI infrastructure flakiness reduces trust in validation
+    description: >-
+      Harms UN-8 through unreliable validation results.
+    severity: medium
+    mitigated_by: [PR-36]
+
+  - id: RISK-12
+    title: UI state inconsistency or obstruction blocks primary tasks
+    description: >-
+      Confuses users and blocks primary tasks, harming UN-1 and UN-2.
+    severity: low
+    mitigated_by: [PR-37]

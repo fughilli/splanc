@@ -49,6 +49,7 @@ from hitl_client import Reservation, ReserveError
 from provision import HarnessError as E2EFailure
 from provision import dut_target, ensure_booted, provision_dut
 from sync import best_sample, is_sane, sync_sample
+from traceability.junit_writer import JUnitWriter
 
 # Boot markers the firmware prints (see pi/hitl/AGENTS.md "A typical E2E test").
 # The SPI_FAST_FLASH_BOOT check + its strap-race retry live in provision.ensure_booted.
@@ -232,10 +233,36 @@ def default_board_caps() -> dict | None:
         return None
 
 
+def _dut_identity(args: argparse.Namespace) -> dict:
+    """Identity of the artifact this run exercises, for evidence-freshness.
+
+    Stamped on every jUnit case so the aggregator can tell a result about the
+    current firmware from a stale one (see docs/requirements-driven-development.md).
+    Uses the flash-bundle name plus the CI commit / board revision from the
+    environment when present; missing keys are simply omitted.
+    """
+    identity: dict = {}
+    bundle = args.bundle or default_bundle()
+    if bundle:
+        identity["firmware_build_id"] = os.path.basename(bundle)
+    sha = os.environ.get("GIT_COMMIT") or os.environ.get("GITHUB_SHA")
+    if sha:
+        identity["dut_git_sha"] = sha
+    board = os.environ.get("HITL_BOARD_REV") or args.device
+    if board:
+        identity["board_rev"] = board
+    return identity
+
+
 def run(args: argparse.Namespace) -> int:
     # server=None lets `hitl` pick a free rig from the pool (tailnet tag discovery
     # or $HITL_SERVERS); --server pins a specific one.
     res = Reservation(server=args.server or None, owner=args.owner, device=args.device or None)
+    # Traceability: each phase is a jUnit testcase tagged with the PRs it verifies
+    # and the identity of the firmware it exercised, so the on-hardware HITL run
+    # feeds the same requirements report as the software suites — and stale results
+    # are detectable (see docs/requirements-driven-development.md).
+    report = JUnitWriter("hitl_e2e", artifact=_dut_identity(args))
     try:
         res.acquire()
         # Default WiFi to the rig's own provisioning AP (creds served by the
@@ -249,7 +276,9 @@ def run(args: argparse.Namespace) -> int:
             bundle = args.bundle or default_bundle()
             if not bundle:
                 raise E2EFailure("no flash-bundle in runfiles; pass --bundle or --skip-flash")
-            flash(res, bundle, args.monitor_seconds)
+            # Boots the app and brings the Improv BLE service up (heap not starved).
+            with report.case("flash_boot", ["PR-13", "PR-21", "PR-26"]):
+                flash(res, bundle, args.monitor_seconds)
 
         redirect = args.device_url
         if not args.skip_improv:
@@ -257,13 +286,17 @@ def run(args: argparse.Namespace) -> int:
                 raise E2EFailure(
                     "--wifi-ssid (or $HITL_WIFI_SSID) is required unless --skip-improv"
                 )
-            redirect = provision_dut(res, args.wifi_ssid, args.wifi_pass, args.improv_timeout)
+            with report.case("improv_provision", ["PR-13", "PR-29"]):
+                redirect = provision_dut(res, args.wifi_ssid, args.wifi_pass, args.improv_timeout)
 
         if not args.skip_ws:
             expected_caps = default_board_caps()
+            # WS connect (TLS heap) + time sync + rename over the §7 protobuf protocol.
+            ws_prs = ["PR-13", "PR-22", "PR-35"]
             if args.device_ws:
                 # Explicit override: connect straight to a reachable ws(s) URL.
-                ws_checks(args.device_ws, args.rename_to, not args.ws_verify, expected_caps)
+                with report.case("websocket_checks", ws_prs):
+                    ws_checks(args.device_ws, args.rename_to, not args.ws_verify, expected_caps)
             else:
                 if not redirect:
                     raise E2EFailure(
@@ -275,17 +308,35 @@ def run(args: argparse.Namespace) -> int:
                 # ssh (the far end dials the DUT from the Pi's container).
                 with res.forward(host, port) as local_port:
                     ws_url = f"{args.ws_scheme}://localhost:{local_port}/ws"
-                    ws_checks(ws_url, args.rename_to, not args.ws_verify, expected_caps)
+                    with report.case("websocket_checks", ws_prs):
+                        ws_checks(ws_url, args.rename_to, not args.ws_verify, expected_caps)
     except (E2EFailure, ReserveError) as e:
         print(f"\nFAIL: {e}", file=sys.stderr)
         return 1
     finally:
         res.release()
+        _write_report(report, args)
     print(
         "\nPASS — ImprovBLE setup, rename, time sync, and board caps all checked out",
         flush=True,
     )
     return 0
+
+
+def _write_report(report: JUnitWriter, args: argparse.Namespace) -> None:
+    """Write the phase jUnit (with requirement tags) if a destination is set.
+
+    Defaults to Bazel's ``$XML_OUTPUT_FILE`` so ``bazel run`` / ``bazel test``
+    captures it; ``--junit-xml`` overrides.
+    """
+    path = args.junit_xml or os.environ.get("XML_OUTPUT_FILE")
+    if not path or not report.cases:
+        return
+    try:
+        report.write(path)
+        print(f"[junit] wrote {len(report.cases)} phase result(s) -> {path}", flush=True)
+    except OSError as e:
+        print(f"[junit] could not write {path}: {e}", file=sys.stderr)
 
 
 def main() -> int:
@@ -337,6 +388,11 @@ def main() -> int:
     ap.add_argument("--skip-flash", action="store_true")
     ap.add_argument("--skip-improv", action="store_true")
     ap.add_argument("--skip-ws", action="store_true")
+    ap.add_argument(
+        "--junit-xml",
+        default=None,
+        help="write per-phase jUnit (with requirement tags) here " "(default: $XML_OUTPUT_FILE)",
+    )
     return run(ap.parse_args())
 
 
