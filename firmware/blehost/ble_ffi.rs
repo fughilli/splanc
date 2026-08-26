@@ -9,7 +9,8 @@
 
 use ledmapper_netstack::ble::att::AttPdu;
 use ledmapper_netstack::gatt::{GATT_RSP_MAX, GATT_VAL_MAX};
-use ledmapper_netstack::hci::{acl, parse_acl, BleHost, HostState, H4_ACL, H4_EVT};
+use ledmapper_netstack::ble::{AclPacket, L2capReassembler};
+use ledmapper_netstack::hci::{acl, BleHost, HostState, H4_ACL, H4_EVT};
 use ledmapper_netstack::improv::{Action, ImprovService, IMPROV_SVC_UUID, MAX_PASS, MAX_SSID};
 use ledmapper_netstack::rx::Buf;
 
@@ -23,6 +24,11 @@ static mut PENDING_PASS: Buf<MAX_PASS> = Buf::new();
 static mut HAS_PENDING: bool = false;
 static mut NOTIFY_Q: [u16; 4] = [0; 4];
 static mut NOTIFY_N: usize = 0;
+/// Recombines an L2CAP PDU across HCI-ACL fragments. A >MTU ATT write (e.g. the
+/// 35-byte Improv SendWifi RPC) is handed up as multiple ACL fragments when it
+/// exceeds the controller's ACL buffer; without this the first fragment is a
+/// truncated ATT PDU and the rest is dropped — the intermittent "invalid_rpc".
+static mut L2CAP: L2capReassembler = L2capReassembler::new();
 
 fn copy_out(src: &[u8], out: *mut u8, cap: u32) -> u32 {
     let n = src.len().min(cap as usize);
@@ -105,6 +111,7 @@ pub extern "C" fn ns_ble_on_hci(pkt: *const u8, len: u32, out: *mut u8, cap: u32
                     IMPROV = Some(ImprovService::new());
                     NOTIFY_N = 0;
                     HAS_PENDING = false;
+                    L2CAP.reset(); // drop any partial fragment from a prior link
                 }
             }
             if n == 0 {
@@ -114,8 +121,21 @@ pub extern "C" fn ns_ble_on_hci(pkt: *const u8, len: u32, out: *mut u8, cap: u32
             }
         }
         H4_ACL => {
-            let Some((handle, l2)) = parse_acl(s) else {
+            // AclPacket wants the ACL packet WITHOUT the H4 type byte: [handle:2][len:2][data..].
+            let Some(acl_pkt) = AclPacket::parse(&s[1..]) else {
                 return 0;
+            };
+            let handle = acl_pkt.handle;
+            // Recombine across HCI-ACL fragments before touching ATT. A single-fragment write
+            // completes in one push; a fragmented one (the 35-byte SendWifi RPC when the
+            // controller's ACL buffer is smaller than the PDU) completes on a later fragment.
+            let l2 = match unsafe { L2CAP.push(&acl_pkt) } {
+                Ok(Some(full)) => full,
+                Ok(None) => return 0, // more fragments needed
+                Err(_) => {
+                    unsafe { L2CAP.reset() };
+                    return 0;
+                }
             };
             if l2.len() < 4 || u16::from_le_bytes([l2[2], l2[3]]) != 0x0004 {
                 return 0; // only the ATT channel

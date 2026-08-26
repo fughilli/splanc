@@ -303,10 +303,16 @@ impl ImprovService {
             let action = self.improv.on_rpc(&params[2..]);
             self.sync();
             let resp_len = self.db.handle_att(opcode, params, out); // records value + ACKs
+            // Notify the RPC-result characteristic ONLY when it actually carries a result. A
+            // SendWifi write leaves it empty (the result — the redirect URL — is produced later
+            // by finish_provisioning), and an empty Handle-Value-Notification on it still reaches
+            // the central: the provisioner treats ANY rpc-result notification as "join done" and
+            // completes early with no URL (state 3), never seeing the real redirect. Gate it.
+            let rpc_h = if self.improv.rpc_result().is_empty() { 0 } else { self.h_rpc_result };
             return ImprovOutcome {
                 resp_len,
                 action,
-                notify: [self.h_current, self.h_error, self.h_rpc_result],
+                notify: [self.h_current, self.h_error, rpc_h],
             };
         }
         let resp_len = self.db.handle_att(opcode, params, out);
@@ -537,6 +543,13 @@ mod tests {
             _ => panic!("expected Provision"),
         }
         assert_eq!(svc.improv.state, State::Provisioning);
+        // The write must NOT notify the (still-empty) RPC-result characteristic — an empty
+        // notification makes the provisioner complete early with no redirect URL. Only
+        // current-state + error are notified here; the result is notified by
+        // finish_provisioning once it holds the URL.
+        assert_eq!(outcome.notify[0], svc.h_current);
+        assert_eq!(outcome.notify[1], svc.h_error);
+        assert_eq!(outcome.notify[2], 0, "empty rpc-result must not be notified on the write");
         // Current-state characteristic now reads "provisioning" via a GATT read.
         let mut rd: Buf<GATT_RSP_MAX> = Buf::new();
         svc.db.handle_att(0x0a /*READ_REQ*/, &svc.h_current.to_le_bytes(), &mut rd);

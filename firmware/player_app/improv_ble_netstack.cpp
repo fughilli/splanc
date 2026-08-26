@@ -161,15 +161,21 @@ void improv_ble_begin(const char *device_name, uint8_t /*initial_state*/) {
 
 void improv_ble_poll() {
   if (!g_up) return;
+  uint8_t out[268];
   while (s_tail != s_head) {
     Pkt &p = s_ring[s_tail];
-    uint8_t out[268];
     uint32_t n = ns_ble_on_hci(p.data, p.len, out, sizeof out);
     if (n) hci_send(out, n);
-    uint32_t m;
-    while ((m = ns_ble_poll_notify(out, sizeof out)) > 0) hci_send(out, m);
     s_tail = (s_tail + 1) & 7;
   }
+  // Flush queued characteristic notifications on EVERY poll, not only when an HCI packet
+  // just arrived. The Improv redirect (current-state -> Provisioned + the RPC-result URL) is
+  // queued by ns_ble_provision_result from the Wi-Fi service loop once the DHCP lease lands —
+  // there is no inbound HCI packet to ride out on, and the central is idle awaiting the join.
+  // Draining inside the RX loop stranded those notifications in NOTIFY_Q, so the provisioner
+  // saw the join complete on-device yet timed out waiting for the redirect ("state 3, no URL").
+  uint32_t m;
+  while ((m = ns_ble_poll_notify(out, sizeof out)) > 0) hci_send(out, m);
 }
 
 bool improv_ble_take_credentials(char *ssid, size_t ssid_cap, char *pass, size_t pass_cap) {

@@ -125,9 +125,25 @@ def flash(res: Reservation, bundle: str, monitor_seconds: float) -> str:
     return log
 
 
+async def _connect_ws(ws_url: str, ssl_ctx, settle_s: float = 30.0):
+    """Open the player WebSocket, retrying transient failures. A just-provisioned DUT's
+    TLS server needs a moment to bind after joining WiFi — the heapless netstack re-LISTENs
+    right after its DHCP lease, so a single-shot connect races it (ConnectionResetError)."""
+    import websockets
+
+    deadline = time.monotonic() + settle_s
+    while True:
+        try:
+            return await websockets.connect(ws_url, max_size=2**22, ssl=ssl_ctx, open_timeout=8)
+        except (OSError, asyncio.TimeoutError, websockets.exceptions.WebSocketException) as e:
+            if time.monotonic() >= deadline:
+                raise
+            _log(f"[drive] ws not up yet ({type(e).__name__}); retrying…")
+            await asyncio.sleep(1.5)
+
+
 async def _drive_pattern(ws_url: str, insecure: bool) -> None:
     """Connect the player WebSocket and latch the counting pattern."""
-    import websockets
     from server import proto_wire
 
     ssl_ctx = None
@@ -147,7 +163,7 @@ async def _drive_pattern(ws_url: str, insecure: bool) -> None:
                 raise SystemExit(f"[drive] device error: {msg}")
 
     _log(f"[drive] connecting {ws_url}")
-    sock = await websockets.connect(ws_url, max_size=2**22, ssl=ssl_ctx, open_timeout=8)
+    sock = await _connect_ws(ws_url, ssl_ctx)
     async with sock:
         await rpc(sock, {"type": "hello", "client": "led_capture", "app_version": "1"}, "welcome")
         # Drive the probe in GRB (the WS2812B wire order the analyzer decodes and
@@ -187,7 +203,6 @@ async def _drive_order(ws_url: str, insecure: bool, order: str) -> None:
     to make the DIN carry a given order we drive the probe with that color_order —
     NOT set_hardware_config, which only reorders the content path and leaves the
     probe raw (that mismatch is FUG-140: every order came out identity/raw)."""
-    import websockets
     from server import proto_wire
 
     ssl_ctx = None
@@ -206,7 +221,7 @@ async def _drive_order(ws_url: str, insecure: bool, order: str) -> None:
             if msg.get("type") == "error":
                 raise SystemExit(f"[order] device error: {msg}")
 
-    sock = await websockets.connect(ws_url, max_size=2**22, ssl=ssl_ctx, open_timeout=8)
+    sock = await _connect_ws(ws_url, ssl_ctx)
     async with sock:
         await rpc(sock, {"type": "hello", "client": "led_capture", "app_version": "1"}, "welcome")
         state = await rpc(sock, counting_message(BLOCKS, color_order=order), "counting_state")
@@ -417,7 +432,6 @@ def _capture_on_pin(server: str, device: str, samples: int, pin: str | None):
 async def _drive_two_channel(ws_url: str, insecure: bool, half0: int, half1: int) -> None:
     """Configure the DUT with a per-channel split (set_led_count 0/1) then latch
     the counting pattern over the whole logical strip."""
-    import websockets
     from server import proto_wire
 
     ssl_ctx = None
@@ -437,7 +451,7 @@ async def _drive_two_channel(ws_url: str, insecure: bool, half0: int, half1: int
                 raise SystemExit(f"[drive] device error: {msg}")
 
     _log(f"[drive] connecting {ws_url} (split {half0}+{half1})")
-    sock = await websockets.connect(ws_url, max_size=2**22, ssl=ssl_ctx, open_timeout=8)
+    sock = await _connect_ws(ws_url, ssl_ctx)
     async with sock:
         await rpc(sock, {"type": "hello", "client": "led_capture", "app_version": "1"}, "welcome")
         await rpc(
@@ -498,7 +512,6 @@ async def _drive_fx(ws_url: str, insecure: bool, fxb_b64: str, jit: bool, leds: 
     so it is sent BEFORE submit_effect; it is fire-and-forget (no reply), and the
     single-threaded player guarantees it lands first. The map + led_count are
     (re)sent each pass so a pass is self-contained even if the DUT rebooted."""
-    import websockets
     from server import proto_wire
 
     ssl_ctx = None
@@ -518,7 +531,7 @@ async def _drive_fx(ws_url: str, insecure: bool, fxb_b64: str, jit: bool, leds: 
                 raise SystemExit(f"[drive] device error: {msg}")
 
     _log(f"[drive] connecting {ws_url} (jit {'ON' if jit else 'OFF'})")
-    sock = await websockets.connect(ws_url, max_size=2**22, ssl=ssl_ctx, open_timeout=8)
+    sock = await _connect_ws(ws_url, ssl_ctx)
     async with sock:
         await rpc(sock, {"type": "hello", "client": "led_capture", "app_version": "1"}, "welcome")
         # Pin the JIT for the load that follows (fire-and-forget, ordered before it).
@@ -835,10 +848,15 @@ def main() -> int:
 
 
 def _default_bundle():
+    # HITL_BUNDLE_RUNFILE lets a variant target (led_capture_netstack) point at a different
+    # firmware bundle in its runfiles without a code change.
+    runfile = os.environ.get(
+        "HITL_BUNDLE_RUNFILE", "_main/firmware/player_app/esp32c6_flashbundle.tar"
+    )
     try:
         from python.runfiles import runfiles
 
-        return runfiles.Create().Rlocation("_main/firmware/player_app/esp32c6_flashbundle.tar")
+        return runfiles.Create().Rlocation(runfile)
     except Exception:
         return None
 

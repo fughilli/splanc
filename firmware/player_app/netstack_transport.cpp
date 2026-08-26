@@ -208,7 +208,7 @@ bool scan_latch_ap() {
       g_chan = g_scan[i].chan;
       esp_wifi_set_channel(g_chan, WIFI_SECOND_CHAN_NONE);
       mac_own_bssid();  // re-program the hardware BSSID register for the scanned AP
-      Serial.printf("[scan] latched \"%s\" -> bssid=%02x:%02x:%02x:%02x:%02x:%02x ch=%u\n", g_ssid,
+      Serial.printf("[t=%lu] [scan] latched \"%s\" -> bssid=%02x:%02x:%02x:%02x:%02x:%02x ch=%u\n", (unsigned long)millis(), g_ssid,
                     g_bssid[0], g_bssid[1], g_bssid[2], g_bssid[3], g_bssid[4], g_bssid[5], g_chan);
       return true;
     }
@@ -235,8 +235,13 @@ int build_auth(uint8_t *f) {
 int build_assoc(uint8_t *f) {
   int n = mgmt_hdr(f, 0x00);
   f[n++] = 0x31; f[n++] = 0x04; f[n++] = 0x0a; f[n++] = 0x00;
-  int sl = strlen(SSID); f[n++] = 0x00; f[n++] = (uint8_t)sl;
-  memcpy(f + n, SSID, sl); n += sl;
+  // SSID element MUST be the ACTIVE (provisioned) SSID, not the baked default: the AP
+  // rejects an Association Request whose SSID element doesn't match its own with status 38
+  // (INVALID_PARAMETERS). Using the baked SSID silently "worked" only on the rig whose name
+  // happened to equal the default (rig-3); on any other rig assoc was declined. g_ssid is
+  // committed (fallback or BLE) before we ever reach ASSOC, so it's always populated here.
+  int sl = strlen(g_ssid); f[n++] = 0x00; f[n++] = (uint8_t)sl;
+  memcpy(f + n, g_ssid, sl); n += sl;
   const uint8_t r[] = {0x01, 0x08, 0x82, 0x84, 0x8b, 0x96, 0x12, 0x24, 0x48, 0x6c};
   memcpy(f + n, r, sizeof(r)); n += sizeof(r);
   const uint8_t rsn[] = {0x30, 0x14, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x02, 0x01, 0x00, 0x00,
@@ -605,13 +610,13 @@ void handle_l3(const uint8_t *pt, int pl) {
       if (mt == 2 && !g_have_offer && !g_leased) {
         memcpy(g_offer_ip, dh + 16, 4);
         g_have_offer = true;
-        Serial.println("*** DHCP OFFER received — L3 over heapless CCMP link ***");
+        Serial.printf("[t=%lu] *** DHCP OFFER received — L3 over heapless CCMP link ***\n", (unsigned long)millis());
         send_dhcp(3, g_offer_ip, g_server_id, "REQUEST");
       } else if (mt == 5) {
         g_leased = true;
         memcpy(g_offer_ip, dh + 16, 4);
-        Serial.printf("*** DHCP LEASE ACQUIRED — IP %u.%u.%u.%u over heapless WiFi ***\n",
-                      dh[16], dh[17], dh[18], dh[19]);
+        Serial.printf("[t=%lu] *** DHCP LEASE ACQUIRED — IP %u.%u.%u.%u over heapless WiFi ***\n",
+                      (unsigned long)millis(), dh[16], dh[17], dh[18], dh[19]);
       }
     }
   }
@@ -1027,7 +1032,7 @@ void netstack_loop() {
         }
         if (code == 2) {
           st = DONE;
-          Serial.println("*** 4-WAY COMPLETE — CCMP KEYS INSTALLED, LINK UP ***");
+          Serial.printf("[t=%lu] *** 4-WAY COMPLETE — CCMP KEYS INSTALLED, LINK UP ***\n", (unsigned long)millis());
           install_hw_key(); // program HW slot so auto-ACK + HW decrypt coexist
         }
       }
@@ -1068,7 +1073,24 @@ void netstack_loop() {
   // (Association coexists fine with an active BLE link — the earlier "join timeout" was NOT
   //  coex but blocking Serial.printf wedging loopTask when the port wasn't drained; see
   //  Serial.setTxTimeoutMs(0) in setup. Either association order works now.)
-  if (PLAYER_MODE && !g_creds_ready && !improv_ble_central_connected() && millis() > 8000) {
+  //
+  // CRITICAL: once a central has EVER connected, suppress the baked fallback entirely. A
+  // connected central means a harness is actively provisioning us over BLE; the baked SSID
+  // is only this rig's default and on a shared bench (multiple rigs in radio range) it names
+  // a DIFFERENT rig's AP. Falling back mid-provisioning (e.g. between failed Improv attempts,
+  // when no central is momentarily connected) would latch+associate to the wrong rig's AP and
+  // lease an IP on that rig's subnet — unreachable from this rig's host (the wss ConnectionReset
+  // on rig-2). --skip-improv runs never connect a central, so the fallback still fires for them.
+  static bool g_ble_central_ever = false;
+  if (improv_ble_central_connected()) g_ble_central_ever = true;
+  // Grace must outlast BLE provisioning: from boot a central has to scan+connect+subscribe+RPC,
+  // which routinely takes >15s — an 8s grace fired mid-provisioning and latched the baked
+  // (wrong-rig) SSID before the real creds arrived. 45s comfortably clears a successful
+  // provision (real creds set g_creds_ready via path 2 the instant they arrive, so provisioning
+  // is NOT delayed by this); the ever-connected guard suppresses it entirely once a central
+  // shows up. Only genuinely central-less --skip-improv runs wait out the full grace.
+  static const uint32_t kBakedFallbackMs = 45000;
+  if (PLAYER_MODE && !g_creds_ready && !g_ble_central_ever && millis() > kBakedFallbackMs) {
     strncpy(g_ssid, SSID, sizeof g_ssid - 1);
     strncpy(g_pass, PASS, sizeof g_pass - 1);
     g_creds_ready = true;
@@ -1111,7 +1133,7 @@ void netstack_loop() {
       g_creds_ready = true;  // trigger association with the provisioner's creds
       ble_creds_pending = true;
       improv_ble_set_state(IMPROV_STATE_PROVISIONING);
-      Serial.printf("[ble] wifi-settings received (ssid=%s) -> associating + PROVISIONING\n", s);
+      Serial.printf("[t=%lu] [ble] wifi-settings received (ssid=%s) -> associating + PROVISIONING\n", (unsigned long)millis(), s);
     }
     if (ble_creds_pending && !redirect_sent && g_leased) {
       char url[40];
@@ -1120,7 +1142,7 @@ void netstack_loop() {
       improv_ble_send_redirect(url);
       improv_ble_set_state(IMPROV_STATE_PROVISIONED);
       redirect_sent = true;
-      Serial.printf("[ble] PROVISIONED -> redirect %s\n", url);
+      Serial.printf("[t=%lu] [ble] PROVISIONED -> redirect %s\n", (unsigned long)millis(), url);
     }
   }
   // Once linked, resend DISCOVER (until an OFFER) or REQUEST (until the ACK) ~1.2s.
