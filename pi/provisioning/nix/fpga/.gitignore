@@ -1,0 +1,8 @@
+# Vendored FPGA bitstream: a build artifact of //fpga/spi_ws281x, too big for git.
+# Regenerate before deploying:
+#   bazel build //fpga/spi_ws281x:spi_ws281x_tangnano9k
+#   cp bazel-bin/fpga/spi_ws281x/spi_ws281x_tangnano9k.fs \
+#      pi/provisioning/nix/fpga/spi_ws281x.fs
+# TODO: build the bitstream in Nix (rules_fpga toolchain is Nix-vendored) so a
+# fresh checkout deploys without this manual step.
+*.fs

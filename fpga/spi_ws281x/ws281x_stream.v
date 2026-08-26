@@ -85,7 +85,8 @@ module ws281x_stream #(
     input  wire [          7:0] stream_byte,
     input  wire                 stream_valid,
     input  wire                 stream_active,
-    output reg  [MAX_PORTS-1:0] ws
+    output reg  [MAX_PORTS-1:0] ws,
+    output reg                  frame_pulse   // 1-cycle strobe when a frame starts
 );
   localparam integer DEPTH = MAX_LEDS * 3;
   localparam integer AW = $clog2(DEPTH);
@@ -159,6 +160,7 @@ module ws281x_stream #(
   integer   i;
 
   always @(posedge clk) begin
+    frame_pulse <= 1'b0;  // default: single-cycle strobe
     if (rst) begin
       state   <= S_IDLE;
       cnt     <= 0;
@@ -173,7 +175,10 @@ module ws281x_stream #(
       case (state)
         S_IDLE: begin
           ws <= {MAX_PORTS{1'b0}};
-          if (stream_active && all_pre) state <= S_POP;
+          if (stream_active && all_pre) begin
+            state       <= S_POP;
+            frame_pulse <= 1'b1;  // a new frame begins driving
+          end
         end
         S_POP: begin  // rd_en asserted (comb); FIFOs advance this edge
           ws    <= {MAX_PORTS{1'b0}};

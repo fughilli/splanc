@@ -43,6 +43,25 @@ let
         --add-flags "--fps ${toString ledFps}"
     '';
 
+  # FPGA gateware shipped in this image; the DUT flashes its own Tang Nano 9K
+  # over USB-JTAG before the player opens SPI (openFPGALoader + udev in fpga.nix).
+  # Vendored .fs (built by //fpga/spi_ws281x) for the same reason as ./ledapp.
+  fpgaBitstream = ./fpga/spi_ws281x.fs;
+  fpgaCommission = pkgs.writeShellScript "fpga-commission" ''
+    echo "[fpga-commission] loading gateware onto the Tang Nano 9K" >&2
+    # SRAM load (volatile): the deployed bitstream is (re)applied on every player
+    # start, so the FPGA always matches this image. -f would persist to the
+    # board's SPI flash instead (slower, wears flash, survives power cycles).
+    # NON-FATAL during bring-up: log + continue so a DUT without a (working) Tang
+    # still boots the player. Flip to required (exit on failure) once validated.
+    if ${pkgs.openfpgaloader}/bin/openFPGALoader -b tangnano9k ${fpgaBitstream}; then
+      echo "[fpga-commission] done" >&2
+    else
+      echo "[fpga-commission] FAILED (rc=$?) — continuing without a fresh FPGA" >&2
+    fi
+    exit 0
+  '';
+
   ledServerPkg = pkgs.writeShellScriptBin "led-server" ''
     echo "led-server placeholder — M2 (pi/server:serve) not packaged yet" >&2
     exec sleep infinity
@@ -73,6 +92,10 @@ in
       runtimeDirectory = "ledmapper";
       readWritePaths = [ "/run/ledmapper" ];
       after = [ "local-fs.target" ];
+      # Commission the FPGA (flash the Tang Nano over USB) BEFORE streaming SPI.
+      # `+` runs it as root (bypasses the User=ledmapper sandbox) so it can claim
+      # the USB device; the player's own ExecStart then opens /dev/spidev.
+      extraServiceConfig.ExecStartPre = "+${fpgaCommission}";
     };
 
     # M2 — web server. Reuses the driver's `ledmapper` user, binds :80, persists

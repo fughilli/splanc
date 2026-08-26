@@ -11,7 +11,8 @@ module tangnano9k_top #(
     input  wire              ss,     // SPI chip select (active low)
     input  wire              sck,    // SPI clock
     input  wire              mosi,   // SPI data in
-    output wire [NUM_WS-1:0] ws      // WS281x outputs
+    output wire [NUM_WS-1:0] ws,     // WS281x outputs
+    output wire [       5:0] led     // 6 onboard LEDs (active low) — activity anim
 );
   wire clk54;
   wire pll_lock;
@@ -63,16 +64,43 @@ module tangnano9k_top #(
     if (pll_lock && !rst_cnt[9]) rst_cnt <= rst_cnt + 1'b1;
   end
 
+  wire frame_pulse;
+
   spi_ws281x #(
       .MAX_PORTS(NUM_WS),
       .CLK_MHZ  (54),
-      .RESET_NS (300000)
+      .RESET_NS (80000)   // WS2812/B latch >50us; fits 60Hz/550-LED refresh budget
   ) u_core (
       .clk (clk54),
       .rst (rst),
       .ss  (ss),
       .sck (sck),
       .mosi(mosi),
-      .ws  (ws)
+      .ws  (ws),
+      .frame_pulse(frame_pulse)
   );
+
+  // Onboard-LED activity animation: a Cylon bounce across the 6 LEDs that steps
+  // once every ANIM_DIV driven frames -- a visible "SPI frames are streaming"
+  // heartbeat at a clean divider of the frame clock. Frozen (last LED held) when
+  // no frames arrive.
+  localparam integer ANIM_DIV = 4;
+  reg [7:0] div_cnt = 8'd0;
+  reg [3:0] phase = 4'd0;  // 0..9 ping-pong over the 6 LEDs
+  always @(posedge clk54) begin
+    if (rst) begin
+      div_cnt <= 8'd0;
+      phase   <= 4'd0;
+    end else if (frame_pulse) begin
+      if (div_cnt == ANIM_DIV - 1) begin
+        div_cnt <= 8'd0;
+        phase   <= (phase == 4'd9) ? 4'd0 : phase + 4'd1;
+      end else begin
+        div_cnt <= div_cnt + 8'd1;
+      end
+    end
+  end
+  // phase 0..5 -> pos 0..5, phase 6..9 -> pos 4..1 (bounce)
+  wire [2:0] pos = (phase <= 4'd5) ? phase[2:0] : (4'd10 - phase);
+  assign led = ~(6'b000001 << pos);  // active low: lit LED at `pos`
 endmodule
