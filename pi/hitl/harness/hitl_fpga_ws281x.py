@@ -90,20 +90,28 @@ def _capture_spi_bytes(server: str, device: str, samples: int) -> bytes:
 
 
 def _drive_static(res: Reservation, colors: List[RGB], fps: float = 10.0) -> None:
-    """Hold a known static frame on the Pi's led_driver (via its control socket),
-    refreshed at ``fps`` (bit period = 1000/fps ms).
+    """Hold a known static frame on the Pi's led_driver via its control socket.
 
-    Assumes the Pi runs led-driver.service with ``--output=fpga`` (see
-    pi/provisioning); we just start a cycle sized to the frame and pin it to the
-    static frame. The socket path matches led_driver's default.
+    The Pi runs led-driver.service with ``--output=fpga --start N`` (see
+    pi/provisioning), so the render loop is already live; ``set_debug static``
+    overrides the frame it drives. We speak the control protocol (newline JSON
+    over the unix socket) with STDLIB ONLY: this is a NETWORK DUT, whose system
+    python3 has no ``led_driver`` on its path (it lives in the service's Nix
+    env), so importing ControlClient there fails.
     """
-    bit_ms = 1000.0 / fps
+    frame = [list(c) for c in colors]
     snippet = (
-        "from led_driver.control import ControlClient;"
-        "from led_driver.graycode import default_code_params;"
-        "c=ControlClient('/run/ledmapper/control.sock');"
-        f"c.start(default_code_params({len(colors)}, bit_period_ms={bit_ms!r}));"
-        f"c.set_debug('static', {{'colors': {[list(c) for c in colors]}}})"
+        "import socket, json, sys\n"
+        "s = socket.socket(socket.AF_UNIX)\n"
+        "s.connect('/run/ledmapper/control.sock')\n"
+        f"msg = {{'cmd': 'set_debug', 'mode': 'static', 'args': {{'colors': {frame}}}}}\n"
+        "s.sendall((json.dumps(msg) + '\\n').encode())\n"
+        "buf = b''\n"
+        "while b'\\n' not in buf:\n"
+        "    buf += s.recv(4096)\n"
+        "reply = json.loads(buf.split(b'\\n')[0])\n"
+        "print(reply)\n"
+        "sys.exit(0 if reply.get('ok') else 1)\n"
     )
     proc = res.ssh(["python3", "-c", snippet], capture=True, timeout=30)
     if proc.returncode != 0:

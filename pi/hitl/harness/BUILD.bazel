@@ -148,6 +148,9 @@ py_test(
 hitl_test(
     name = "fpga_ws281x",
     srcs = ["hitl_fpga_ws281x.py"],
+    # The `hitl` CLI rides in runfiles so the reservation works without PATH setup
+    # (default_hitl() resolves it there); mirrors :improv_e2e.
+    data = ["//pi/hitl/cmd/hitl"],
     main = "hitl_fpga_ws281x.py",
     requires = [
         "spi-fpga",
@@ -156,6 +159,7 @@ hitl_test(
     deps = [
         ":harness",
         "//pi/led_driver",
+        "@rules_python//python/runfiles",
     ],
 )
 
