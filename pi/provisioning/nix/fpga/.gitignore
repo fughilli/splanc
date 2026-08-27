@@ -1,4 +1,0 @@
-# Bazel-built bitstream (//fpga/spi_ws281x:spi_ws281x_tangnano9k), not committed.
-# Copied here by the deploy flow (see README.md) until sbc-deploy learns to inject
-# it via SBC_FPGA_BITSTREAM as a first-class data dependency.
-*.fs

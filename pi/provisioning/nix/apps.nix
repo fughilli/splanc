@@ -8,7 +8,7 @@
 # M1 (led-driver) is now a REAL package: the //pi/led_driver app run over
 # hardware SPI. M2 (led-server) is still an inert stub. The unit shape, service
 # user, dirs, capabilities, and firewall openings here are already correct.
-{ pkgs, ... }:
+{ pkgs, sbcBuildData ? { }, ... }:
 let
   # The driver's only runtime deps: spidev (native, lazy-imported, Pi-only) and
   # pydantic v2 (ledmapper_protocol's models). Everything else is stdlib.
@@ -46,25 +46,58 @@ let
   # FPGA gateware shipped in this image; the DUT flashes its own Tang Nano 9K
   # over USB-JTAG before the player opens SPI (openFPGALoader + udev in fpga.nix).
   #
-  # The bitstream comes from Bazel (//fpga/spi_ws281x:spi_ws281x_tangnano9k), not
-  # committed. Preferred: SBC_FPGA_BITSTREAM exported to the --impure eval (the
-  # data-dependency path — needs sbc-deploy to add it to its env passthrough, the
-  # way it exports SBC_DEPLOY_PUBKEY_FILE; TODO). Until then it falls back to a
-  # gitignored ./fpga/spi_ws281x.fs that the deploy copies from bazel-bin (see
-  # fpga/README.md) — Bazel-built, just not yet a single-command data dep.
-  fpgaBitstreamEnv = builtins.getEnv "SBC_FPGA_BITSTREAM";
-  fpgaBitstream =
-    if fpgaBitstreamEnv != "" && builtins.pathExists (/. + fpgaBitstreamEnv)
-    then builtins.path { path = /. + fpgaBitstreamEnv; name = "spi_ws281x.fs"; }
-    else ./fpga/spi_ws281x.fs;
+  # The bitstream is a Bazel data dependency, injected through sbc-deploy's
+  # generic `build_data` (//pi/provisioning:BUILD -> sbcBuildData, keyed by
+  # basename). Not vendored, not copied — Bazel builds //fpga/spi_ws281x and the
+  # deploy hands it to the flake. Only forced on the FPGA path (commission is
+  # gated below), so the apa102 path / bare eval needs nothing.
+  fpgaBitstream = sbcBuildData."spi_ws281x_tangnano9k.fs" or
+    (throw "spi_ws281x bitstream missing from build_data — add "
+      + "//fpga/spi_ws281x:spi_ws281x_tangnano9k to sbc_application(build_data=…).");
   fpgaCommission = pkgs.writeShellScript "fpga-commission" ''
-    echo "[fpga-commission] loading gateware onto the Tang Nano 9K" >&2
-    # SRAM load (volatile): the deployed bitstream is (re)applied on every player
-    # start, so the FPGA always matches this image. -f would persist to the
-    # board's SPI flash instead (slower, wears flash, survives power cycles).
+    # Commission the Tang on every boot, but READ what's actually on its SPI flash
+    # and only (slowly, wearingly) rewrite when it differs — so a persistent flash
+    # (-f, survives power cycles) isn't recycled needlessly.
+    #
+    # The comparison reads the REAL board, not a Pi-side marker, so a swapped /
+    # blank / corrupted Tang is caught. openFPGALoader's Gowin backend refuses to
+    # write a raw stamp blob ("incompatible file format") but reads any offset
+    # fast, so the fingerprint is a sha of the first slice of the flashed
+    # bitstream read back off the board. Two independent guards: the
+    # content-addressed store path catches gateware CHANGES; the flash slice
+    # catches BOARD changes (swap/blank) for the same gateware. A full read-back
+    # is impractical — openFPGALoader's Tang flash READ is ~100 B/s — hence a
+    # small (256 B) slice, which is plenty since the store path already fingerprints
+    # the whole gateware.
+    ofl=${pkgs.openfpgaloader}/bin/openFPGALoader
+    sha=${pkgs.coreutils}/bin/sha256sum
+    want=${fpgaBitstream}
+    stamp=/var/lib/ledmapper/fpga.stamp   # "<store-path> <flash-slice-sha256>"
+    mkdir -p /var/lib/ledmapper
+
+    flash_fingerprint() {
+      local d; d=$(mktemp)
+      if $ofl -b tangnano9k --freq 10000000 --dump-flash -o 0 --file-size 256 "$d" >/dev/null 2>&1; then
+        $sha "$d" | cut -c1-64
+      fi
+      rm -f "$d"
+    }
+
+    cur=$(flash_fingerprint)
+    if [ -n "$cur" ] && [ -r "$stamp" ]; then
+      set -- $(cat "$stamp")
+      if [ "$1" = "$want" ] && [ "$2" = "$cur" ]; then
+        echo "[fpga-commission] Tang flash already holds this gateware — skipping write" >&2
+        exit 0
+      fi
+    fi
+
+    echo "[fpga-commission] flashing gateware onto the Tang Nano 9K" >&2
     # NON-FATAL during bring-up: log + continue so a DUT without a (working) Tang
     # still boots the player. Flip to required (exit on failure) once validated.
-    if ${pkgs.openfpgaloader}/bin/openFPGALoader -b tangnano9k ${fpgaBitstream}; then
+    if $ofl -b tangnano9k -f "$want"; then
+      new=$(flash_fingerprint)
+      [ -n "$new" ] && echo "$want $new" > "$stamp"
       echo "[fpga-commission] done" >&2
     else
       echo "[fpga-commission] FAILED (rc=$?) — continuing without a fresh FPGA" >&2

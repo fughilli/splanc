@@ -18,7 +18,7 @@
 
   description = "LED Mapper — Raspberry Pi image + live-deploy (sbc-deploy consumer)";
 
-  inputs.sbc-deploy.url = "github:fughilli/sbc-deploy?dir=nix";
+  inputs.sbc-deploy.url = "github:fughilli/sbc-deploy/build-data?dir=nix";
 
   outputs = { self, sbc-deploy, ... }:
     sbc-deploy.lib.mkSbcProject {

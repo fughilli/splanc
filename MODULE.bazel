@@ -205,14 +205,11 @@ use_repo(host_crate, "host_crates")
 bazel_dep(name = "sbc_deploy", version = "0.0.0")
 git_override(
     module_name = "sbc_deploy",
-    # sbc-deploy main @ 5c4c3e7 (#11: sd_seed_wifi uses e2fsprogs `debugfs`, since
-    # e2tools is nixpkgs-linux-only and wouldn't evaluate on macOS) — atop #10 (offline
-    # SD WiFi seeder + raspberry-pi-zero-2w alias), #9 quote detect_caps_cmd, #8
-    # `update` mode, #7 persistent hostname identity. All Bazel/host-side only (debugfs
-    # vendored like zstd/pv; the alias resolves to raspberry-pi-02) — no Nix side change,
-    # so pi/hitl/nix + pi/provisioning/nix flake.lock build the same closure; bump on
-    # the next Nix change.
-    commit = "5c4c3e7fce0dfc5ce8b1646019084b1bb86a6a6b",
+    # sbc-deploy main @ 94d174a (#9 quote detect_caps_cmd so `:update` doesn't split
+    # it; atop #7 persistent hostname identity + #8 `update` mode). The .bzl-only
+    # fix doesn't touch the Nix side, so pi/hitl/nix + pi/provisioning/nix flake.lock
+    # (still at #8's nix/ tree) build the same closure; bump them on the next Nix change.
+    commit = "990f07161bc70475f8db8ad8bfa703a79d075ffd",  # build-data branch
     remote = "https://github.com/fughilli/sbc-deploy.git",
 )
 
