@@ -9,9 +9,9 @@ Rewrote `pi/hitl/harness/hitl_fpga_ws281x.py` to drive the **network DUT**
 (`pi-ledmapper-1` = the Pi player at rig-1, 192.168.68.50) the way the phone does —
 over its WSS — instead of the old `_drive_static` control-socket path (which can't
 work: the reservation is a container on the rig, with no line to the Pi's local
-unix socket). This is Phase 5 of the player_rs rewrite (see the
-`pi-player-rust-rewrite` memory + the `pi/player_rs/*` commits): get the FPGA E2E
-green against the deployed Rust player.
+unix socket). This is Phase 5 of the Python→Rust player rewrite (the `pi/player_rs/*`
+commits; context inlined below under "Inlined context"): get the FPGA E2E green
+against the deployed Rust player.
 
 **What the harness now does** (this change; not yet committed-green — see blocker):
 
@@ -56,14 +56,63 @@ LAN; only the harness's local host can't ssh the Pi):
    rig-1, the player never binds 8443. Check `systemctl status sbc-led-driver`
    and the commission log on the DUT (needs a shell on the Pi — via tailscale or
    the rig's LAN, out of band).
-3. Or a single-connection server wedge in the Rust player (cf. the C6
-   `wss-reliability` note): `res.forward` opens/half-closes a probe dial that
-   could wedge a single-task accept loop. If so, fix in `pi/player_rs/src/server.rs`
-   (serve loop) — it must accept serially without wedging on an aborted TLS
-   client. Was live-verified serving WSS on splanc-max-2 before the move to rig-1;
-   verify it survived the move/reboot.
+3. Or a single-connection server wedge in the Rust player (see the "Server-wedge
+   precedent" below): `res.forward` opens/half-closes a probe dial that could wedge
+   a single-task accept loop. If so, fix in `pi/player_rs/src/server.rs` (serve
+   loop) — it must accept serially without wedging on an aborted TLS client. Was
+   live-verified serving WSS on splanc-max-2 before the move to rig-1; verify it
+   survived the move/reboot.
 
 Always `hitl release` — the run above released cleanly (`released`).
+
+### Inlined context (facts a fresh agent won't have — they lived in prior-session memory)
+
+**Network-DUT model** (how the Pi attaches to a rig; `runner.Device.Kind == "network"`):
+
+- Reached over the LAN via `$HITL_DUT_ADDR` (the DUT env, injected into the reservation
+  container with `-e`), plus BLE. The reservation is a podman container on the rig,
+  published on the DUT's SSH port (2230); **`res.ssh` runs IN that container**, which
+  reaches the Pi ONLY over the network/BLE — it CANNOT touch the Pi's local
+  `/run/ledmapper/control.sock`. That is the whole reason this test drives over WSS
+  instead of the old control-socket path.
+- The container has NO mDNS resolver → address the Pi by ETH IP `192.168.68.50`, never
+  `*.local`.
+- Pin-only: a network DUT is reachable only by `--sku` or `--device`, never a bare
+  `--require-caps`/unpinned reserve (so a C6 test can't drift onto the Pi).
+- Seeded at runtime (not baked): `bazel run //pi/hitl:seed_network_dut -- hitl-rig-1
+--name pi-ledmapper-1 --addr 192.168.68.50 --sku led-mapper-pi-fpga
+--ble-mac B8:27:EB:63:E8:18`. Writes `/var/lib/hitl/network-duts.json`; the `--discover`
+  monitor ingests it in ~3s (no restart). `--sku` is REQUIRED; re-seed after any reflash.
+- rig-1 is now a Pi5 ANALYZER rig (`SBC_ANALYZER=1`, fx2lafw). DUT caps under the
+  `led-mapper-pi-fpga` sku = `[improv, led-strip, logic-analyzer, spi-fpga]`. LA wiring:
+  FPGA ws pins 70,71,72,73 → FX2 D0,D2,D4,D6; SPI clk=D3, mosi=D1, cs=D5 (== the harness
+  defaults). Pi BLE MAC `B8:27:EB:63:E8:18`.
+
+**The deployed player** (Phase 5 of the Python→Rust rewrite; branch `pi/spi-ws281x`):
+
+- The DUT at rig-1 (physically `splanc-max-2`) runs the unified RUST player
+  `//pi/player_rs:player` — it REPLACED the Python `led_driver` M1 + `pi/server` M2 on the
+  FPGA path. ONE process: serves the protocol over WSS AND drives the FPGA from a shared
+  `Arc<Mutex<Player>>`, reusing the firmware Rust core directly (no FFI). Shipped as a
+  fully-STATIC aarch64-linux-musl binary through the build graph
+  (`//pi/player_rs/musl:player_musl`); 100% Rust (rustls + rustls-rustcrypto +
+  x509-cert/p256, no ring/C), self-signed EC cert (phone/harness bypass verification).
+- Live-verified at deploy time: `sbc-led-driver.service` active, `render 4 ports @ 60 fps,
+spidev0.0 @ 6400000 Hz`, `WSS listening 0.0.0.0:8443` — so the harness targets `:8443`.
+  If it isn't answering now, something changed after the move to rig-1 (see the blocker).
+- The render's counting path honours `counting_color_order()` (render.rs `Source::Counting`
+  applies the message's order), which is why we send `color_order="GRB"`.
+
+**Server-wedge precedent** (from the C6 firmware TLS server — an analogous risk here):
+
+- On the C6, a single-task TLS server with `max_open_sockets=2` held dead/half-open
+  sessions FOREVER and never recovered without a reboot; fixed there with TCP keepalive +
+  recv/send timeouts + a TLS-handshake timeout + SO_LINGER. Two durable lessons if the Rust
+  player has an analogous single-connection wedge (e.g. `res.forward`'s far-end probe dial
+  leaving a half-open TLS session): a wedged device STAYS wedged until reboot, so
+  **power-cycle the Pi and measure against a known-clean device**; and the fix would live in
+  `pi/player_rs/src/server.rs`'s accept loop (accept serially without wedging on an aborted
+  TLS client).
 
 ## 2026-08-22 — BT dongle deflakes provisioning (Pi 5 onboard Cypress is the flake)
 

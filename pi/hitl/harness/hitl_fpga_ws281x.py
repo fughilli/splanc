@@ -10,8 +10,9 @@ chain:
     Pi sent, and
   * the raw SPI wire carries the expected `spi_ws281x` STREAM framing.
 
-The Pi is a *network DUT* (§`hitl-network-dut`): the reservation is a container on
-the rig with no board, reachable to the Pi only over the LAN. So — like
+The Pi is a *network DUT* (`runner.Device.Kind == "network"`): the reservation is a
+container on the rig with no board, and it reaches the Pi only over the LAN (via
+`$HITL_DUT_ADDR`) — never the Pi's local control socket. So — like
 //pi/hitl/harness:map_upload against the ESP32 — we `res.forward` a local port to
 the Pi's WSS (:8443, `$HITL_DUT_ADDR` inside the container) and speak the protocol
 over it: a `set_counting_pattern` of one solid ColorBlock per FPGA port. The Rust
