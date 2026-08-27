@@ -17,14 +17,29 @@ rust_library(
     name = "player_rs",
     srcs = [
         "src/lib.rs",
+        "src/render.rs",
         "src/wire.rs",
     ],
     crate_name = "ledmapper_player_rs",
     edition = "2021",
+    deps = [
+        # The reused firmware session/pattern/effects core — host protobuf
+        # profile (the Pi has RAM to spare), depended on directly (no FFI).
+        "//firmware/player",
+    ],
 )
 
 rust_test(
-    name = "wire_test",
+    name = "player_rs_test",
     crate = ":player_rs",
     edition = "2021",
+    # Envelope structs carry inline heapless storage (see //shared/protocol/rust)
+    # and land on the test thread's stack — same bump the firmware player tests use.
+    env = {"RUST_MIN_STACK": "16777216"},
+    # The render tests drive the real Player through the protocol, so they need
+    # the protobuf message types + runtime to build ClientMessages.
+    deps = [
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+    ],
 )
