@@ -9,7 +9,7 @@ Phase 1: the wire-framing layer, a byte-exact port of the Python
 led_driver/{fpga_spi,spi}.py, pinned by the same encoder vectors.
 """
 
-load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -18,6 +18,7 @@ rust_library(
     srcs = [
         "src/lib.rs",
         "src/render.rs",
+        "src/session.rs",
         "src/wire.rs",
     ],
     crate_name = "ledmapper_player_rs",
@@ -26,6 +27,24 @@ rust_library(
         # The reused firmware session/pattern/effects core — host protobuf
         # profile (the Pi has RAM to spare), depended on directly (no FFI).
         "//firmware/player",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+    ],
+)
+
+# The player binary: pure render library + the Linux spidev sink. Builds for the
+# host, which on the aarch64 Pi IS the deploy triple.
+rust_binary(
+    name = "player",
+    srcs = [
+        "src/main.rs",
+        "src/sink.rs",
+    ],
+    edition = "2021",
+    deps = [
+        ":player_rs",
+        "//firmware/player",
+        "@crates//:spidev",
     ],
 )
 
@@ -36,10 +55,4 @@ rust_test(
     # Envelope structs carry inline heapless storage (see //shared/protocol/rust)
     # and land on the test thread's stack — same bump the firmware player tests use.
     env = {"RUST_MIN_STACK": "16777216"},
-    # The render tests drive the real Player through the protocol, so they need
-    # the protobuf message types + runtime to build ClientMessages.
-    deps = [
-        "//shared/protocol/rust:ledmapper_pb",
-        "@crates//:micropb",
-    ],
 )

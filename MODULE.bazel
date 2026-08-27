@@ -147,6 +147,14 @@ crate.spec(
     package = "base64",
     version = "0.22",
 )
+
+# Pi player (//pi/player_rs) platform dep: the Linux spidev ioctl wrapper for
+# the SK9822/FPGA SPI output. Linux-only; only enters the aarch64/x86_64-linux
+# player binary's closure (never the firmware/wasm/darwin triples).
+crate.spec(
+    package = "spidev",
+    version = "0.6",
+)
 crate.from_specs(
     # rules_rust's default list is a small host-centric subset (splicing is
     # O(N^2) per triple) — it must be restated here to EXTEND it with the

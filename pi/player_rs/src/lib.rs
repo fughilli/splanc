@@ -11,6 +11,7 @@
 //! encoder vectors.
 
 pub mod render;
+pub mod session;
 pub mod wire;
 
 pub use render::{render_fpga, tick_fpga, RecordingSink, Sink};
