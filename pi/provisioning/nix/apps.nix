@@ -43,6 +43,34 @@ let
         --add-flags "--fps ${toString ledFps}"
     '';
 
+  # The Rust player (//pi/player_rs:player) — the unified aarch64/std sibling of
+  # the ESP32 firmware: ONE process that serves the protocol over WSS AND drives
+  # the FPGA from the reused core, replacing the Python M1 driver + M2 server on
+  # the FPGA path. Built in the aarch64-linux container and shipped via build_data
+  # (keyed by basename "player"; see //pi/player_rs:player_prebuilt), then
+  # autoPatchelf'd onto NixOS's glibc (the container links 2.39; the Pi is 2.40).
+  # TODO: swap to a static-musl build to drop the patchelf (see //pi/player_rs/musl).
+  playerRsWssPort = 8443;
+  playerRsBin = sbcBuildData."player" or (throw
+    "player binary missing from build_data — add //pi/player_rs:player_prebuilt "
+  + "to sbc_application(build_data=…) and stage it (bazel build //pi/player_rs:player "
+  + "&& cp -L bazel-bin/pi/player_rs/player pi/player_rs/dist/player).");
+  playerRsPkg = pkgs.stdenv.mkDerivation {
+    name = "led-mapper-player-rs";
+    dontUnpack = true;
+    nativeBuildInputs = [ pkgs.autoPatchelfHook pkgs.makeWrapper ];
+    buildInputs = [ pkgs.stdenv.cc.cc.lib ]; # libgcc_s / libstdc++; glibc implicit
+    installPhase = "install -Dm755 ${playerRsBin} $out/libexec/player";
+    # autoPatchelfHook (fixupPhase) rewrites the interpreter + rpath; wrap after.
+    postFixup = ''
+      makeWrapper $out/libexec/player $out/bin/player \
+        --add-flags "--fpga-ports ${toString ledFpgaPorts}" \
+        --add-flags "--start ${toString ledStartLeds}" \
+        --add-flags "--fps ${toString ledFps}" \
+        --add-flags "--serve-port ${toString playerRsWssPort}"
+    '';
+  };
+
   # FPGA gateware shipped in this image; the DUT flashes its own Tang Nano 9K
   # over USB-JTAG before the player opens SPI (openFPGALoader + udev in fpga.nix).
   #
@@ -131,12 +159,19 @@ in
     # exposes the control socket under /run/ledmapper. Creates the shared
     # `ledmapper` service user (member of spi/gpio via extraGroups).
     led-driver = {
-      description = "LED Mapper pattern driver (M1) — SPI / pattern clock";
-      package = ledDriverPkg;
-      exec = "bin/led-driver";
+      # On the FPGA path this is the unified Rust player (WSS protocol + FPGA
+      # render, the firmware's model); the apa102 path keeps the Python M1 driver
+      # (the Rust render loop is FPGA-only so far). The unit name stays
+      # sbc-led-driver.service for continuity (HITL harness restarts it).
+      description = "LED Mapper player — WSS protocol + LED render";
+      package = if ledOutput == "fpga" then playerRsPkg else ledDriverPkg;
+      exec = if ledOutput == "fpga" then "bin/player" else "bin/led-driver";
       user = "ledmapper";
       extraGroups = [ "spi" "gpio" ];
       realtime = true;
+      # The Rust player serves WSS on this port (the phone + HITL harness reach it
+      # over the net, via res.forward on the rig); opens the firewall.
+      ports = pkgs.lib.optionals (ledOutput == "fpga") [ playerRsWssPort ];
       runtimeDirectory = "ledmapper";
       readWritePaths = [ "/run/ledmapper" ];
       after = [ "local-fs.target" ];
