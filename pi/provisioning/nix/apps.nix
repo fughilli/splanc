@@ -46,30 +46,24 @@ let
   # The Rust player (//pi/player_rs:player) — the unified aarch64/std sibling of
   # the ESP32 firmware: ONE process that serves the protocol over WSS AND drives
   # the FPGA from the reused core, replacing the Python M1 driver + M2 server on
-  # the FPGA path. Built in the aarch64-linux container and shipped via build_data
-  # (keyed by basename "player"; see //pi/player_rs:player_prebuilt), then
-  # autoPatchelf'd onto NixOS's glibc (the container links 2.39; the Pi is 2.40).
-  # TODO: swap to a static-musl build to drop the patchelf (see //pi/player_rs/musl).
+  # the FPGA path. A fully-STATIC aarch64-linux-musl binary
+  # (//pi/player_rs/musl:player_musl), cross-compiled by rustc alone (100% Rust,
+  # no C) and shipped through the build graph as build_data (keyed by basename
+  # "player") — no staged prebuilt, and static so it runs on NixOS with NO loader
+  # and NO patchelf.
   playerRsWssPort = 8443;
   playerRsBin = sbcBuildData."player" or (throw
-    "player binary missing from build_data — add //pi/player_rs:player_prebuilt "
-  + "to sbc_application(build_data=…) and stage it (bazel build //pi/player_rs:player "
-  + "&& cp -L bazel-bin/pi/player_rs/player pi/player_rs/dist/player).");
-  playerRsPkg = pkgs.stdenv.mkDerivation {
-    name = "led-mapper-player-rs";
-    dontUnpack = true;
-    nativeBuildInputs = [ pkgs.autoPatchelfHook pkgs.makeWrapper ];
-    buildInputs = [ pkgs.stdenv.cc.cc.lib ]; # libgcc_s / libstdc++; glibc implicit
-    installPhase = "install -Dm755 ${playerRsBin} $out/libexec/player";
-    # autoPatchelfHook (fixupPhase) rewrites the interpreter + rpath; wrap after.
-    postFixup = ''
-      makeWrapper $out/libexec/player $out/bin/player \
-        --add-flags "--fpga-ports ${toString ledFpgaPorts}" \
-        --add-flags "--start ${toString ledStartLeds}" \
-        --add-flags "--fps ${toString ledFps}" \
-        --add-flags "--serve-port ${toString playerRsWssPort}"
-    '';
-  };
+    "player binary missing from build_data — add //pi/player_rs/musl:player_musl "
+  + "to sbc_application(build_data=…).");
+  playerRsPkg = pkgs.runCommand "led-mapper-player-rs"
+    { nativeBuildInputs = [ pkgs.makeWrapper ]; } ''
+    install -Dm755 ${playerRsBin} "$out/libexec/player"
+    makeWrapper "$out/libexec/player" "$out/bin/player" \
+      --add-flags "--fpga-ports ${toString ledFpgaPorts}" \
+      --add-flags "--start ${toString ledStartLeds}" \
+      --add-flags "--fps ${toString ledFps}" \
+      --add-flags "--serve-port ${toString playerRsWssPort}"
+  '';
 
   # FPGA gateware shipped in this image; the DUT flashes its own Tang Nano 9K
   # over USB-JTAG before the player opens SPI (openFPGALoader + udev in fpga.nix).

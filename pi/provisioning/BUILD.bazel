@@ -20,7 +20,7 @@ sbc_application(
     build_data = [
         "//fpga/spi_ws281x:spi_ws281x_tangnano9k",
         # The Rust player binary (staged, autoPatchelf'd in the image).
-        "//pi/player_rs:player_prebuilt",
+        "//pi/player_rs/musl:player_musl",
     ],
     flake = "pi/provisioning/nix",
     hostname = "ledmapper",
@@ -41,7 +41,7 @@ sbc_application(
     build_data = [
         "//fpga/spi_ws281x:spi_ws281x_tangnano9k",
         # The Rust player binary (staged, autoPatchelf'd in the image).
-        "//pi/player_rs:player_prebuilt",
+        "//pi/player_rs/musl:player_musl",
     ],
     flake = "pi/provisioning/nix",
     hostname = "ledmapper",

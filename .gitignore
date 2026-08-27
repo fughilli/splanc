@@ -67,7 +67,3 @@ venv/
 
 # hostdeploy runtime mailbox (container<->host deploy driver)
 .hostdeploy/
-
-# Staged container-built Rust player binary (aarch64-linux-gnu), consumed by
-# the deploy as build_data + autoPatchelf'd for NixOS. Rebuilt per-deploy, never committed.
-/pi/player_rs/dist/

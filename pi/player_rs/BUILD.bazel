@@ -51,32 +51,22 @@ rust_binary(
         "src/sink.rs",
     ],
     edition = "2021",
+    # On the musl platform: rustc emits the self-contained musl crt + libc.a and
+    # a static object; the //pi/player_rs/musl cc toolchain links it with rust-lld
+    # + -static. No-op on the gnu host build.
+    rustc_flags = select({
+        "//pi/player_rs/musl:is_musl": [
+            "-Ctarget-feature=+crt-static",
+            "-Clink-self-contained=yes",
+        ],
+        "//conditions:default": [],
+    }),
     deps = [
         ":player_rs",
         "//firmware/player",
         "@crates//:spidev",
         "@crates//:tokio",
     ],
-)
-
-# The container-built (aarch64-linux-gnu) player binary, STAGED under dist/ for
-# the deploy to ship as build_data. The binary can't be a normal build_data
-# Bazel target (`:player`) because the deploy builds build_data on the macOS host
-# -> a darwin binary; instead we build it natively in the aarch64-linux container
-# (`bazel build //pi/player_rs:player && cp -L bazel-bin/.../player dist/player`)
-# and the shared /workspace makes it visible to the host deploy. The Nix image
-# autoPatchelfs it onto NixOS's glibc (2.40 >= the container's 2.39). dist/ is
-# gitignored. TODO: replace with a static-musl build (no patchelf) once a musl cc
-# toolchain is wired (see //pi/player_rs/musl plan in memory).
-filegroup(
-    name = "player_prebuilt",
-    # glob (not a literal) so a fresh checkout without the staged binary doesn't
-    # break `bazel build //...`; a deploy that forgot to stage gets a clear
-    # "player binary missing from build_data" throw from apps.nix instead.
-    srcs = glob(
-        ["dist/*"],
-        allow_empty = True,
-    ),
 )
 
 rust_test(
