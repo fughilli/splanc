@@ -158,8 +158,10 @@ hitl_test(
     ],
     deps = [
         ":harness",
-        "//pi/led_driver",
+        "//pi/led_driver",  # fpga_spi.encode_stream, for the raw-SPI cross-check
+        "//pi/server",  # proto_wire: §7 flat-JSON <-> protobuf over the WS
         "@rules_python//python/runfiles",
+        requirement("websockets"),
     ],
 )
 

@@ -3,6 +3,68 @@
 Handoff notes alongside git history. Newest first. Read this before touching the
 rig's networking — there's live runtime state that isn't fully declarative yet.
 
+## 2026-08-27 — fpga_ws281x HITL drives the DUT over WS; BLOCKED on the DUT WSS
+
+Rewrote `pi/hitl/harness/hitl_fpga_ws281x.py` to drive the **network DUT**
+(`pi-ledmapper-1` = the Pi player at rig-1, 192.168.68.50) the way the phone does —
+over its WSS — instead of the old `_drive_static` control-socket path (which can't
+work: the reservation is a container on the rig, with no line to the Pi's local
+unix socket). This is Phase 5 of the player_rs rewrite (see the
+`pi-player-rust-rewrite` memory + the `pi/player_rs/*` commits): get the FPGA E2E
+green against the deployed Rust player.
+
+**What the harness now does** (this change; not yet committed-green — see blocker):
+
+- `_dut_addr(res)` reads `$HITL_DUT_ADDR` from the reservation container (the
+  network-DUT env, seeded via `//pi/hitl:seed_network_dut`) → `res.forward(addr,
+8443)` tunnels a local port to the Pi's WSS, exactly like `:map_upload`.
+- `_open_ws` (bounded 30s retry, mirrors `:map_upload`) → hello→welcome, then
+  `set_counting_pattern` with **one solid ColorBlock per FPGA port** and
+  `color_order="GRB"`. The render's counting path (`render.rs Source::Counting`)
+  honours that order, so the WS2812 wire bytes come out GRB for the sigrok decoder.
+- `_expected_frame` is now **per-port solids** (`_PALETTE[p]`); `_counting_blocks`
+  emits `{start:p*lpp, count:lpp, rgb:[…]/255}`. The player codec splits the
+  `num_ports*lpp` counting LEDs evenly across ports (`wire.rs split_ports`,
+  port_counts=None) so block p lands entirely on port p. **`--num-ports` MUST
+  match the deployed player `--fpga-ports` (=4)** or the split misaligns.
+- Capture/verify path unchanged (ws2812 per port + raw-SPI STREAM cross-check via
+  `fpga_spi.encode_stream`). Defaults updated to rig-1 wiring: `--ws-channels
+D0,D2,D4,D6`, `--spi-channels D3,D1,D5` (clk,mosi,cs), `--num-ports 4`,
+  `--leds-per-port 8`, `--serve-port 8443`.
+- Fixed `_reserved_device`: match the nested `active.id` in `/status` (was looking
+  for a flat `reservation`/`reservationId` key that doesn't exist) — now resolves
+  network DUTs.
+
+**Builds + runs**: `bazel build //pi/hitl/harness:fpga_ws281x_led-mapper-pi-fpga`
+green; `bazel run … -- --server http://hitl-rig-1:8087` reserves `pi-ledmapper-1`,
+resolves the addr, and forwards `localhost:NNNNN -> (rig) -> 192.168.68.50:8443`.
+
+**BLOCKER — the DUT's WSS never completes the opening handshake.** The TCP tunnel
+establishes but websockets reports `TimeoutError: timed out during opening
+handshake`, and it persists across the 30s retry loop — so it is NOT a
+first-connect race and NOT the harness. Something on the Pi at
+`192.168.68.50:8443` accepts TCP but doesn't answer TLS/WS.
+
+Next agent — narrow it from the container (the container CAN reach the Pi over the
+LAN; only the harness's local host can't ssh the Pi):
+
+1. `res.ssh('curl -kv --max-time 8 https://192.168.68.50:8443/ 2>&1; nc -zv
+192.168.68.50 8443')` — is 8443 listening / does TLS respond?
+2. Prime suspect: **the player service isn't up**. Its unit has
+   `ExecStartPre = "+${fpgaCommission}"` (apps.nix) which flashes the Tang over
+   USB-JTAG before ExecStart; if commissioning hangs or the Tang is absent at
+   rig-1, the player never binds 8443. Check `systemctl status sbc-led-driver`
+   and the commission log on the DUT (needs a shell on the Pi — via tailscale or
+   the rig's LAN, out of band).
+3. Or a single-connection server wedge in the Rust player (cf. the C6
+   `wss-reliability` note): `res.forward` opens/half-closes a probe dial that
+   could wedge a single-task accept loop. If so, fix in `pi/player_rs/src/server.rs`
+   (serve loop) — it must accept serially without wedging on an aborted TLS
+   client. Was live-verified serving WSS on splanc-max-2 before the move to rig-1;
+   verify it survived the move/reboot.
+
+Always `hitl release` — the run above released cleanly (`released`).
+
 ## 2026-08-22 — BT dongle deflakes provisioning (Pi 5 onboard Cypress is the flake)
 
 The long-hunted ImprovBLE provisioning flake (FUG-61/FUG-94: ~50% per-attempt
