@@ -723,6 +723,7 @@ py_test(
     timeout = "eternal",
     srcs = ["hitl_video_stream.py"],
     data = [
+        "wss_stream.py",  # pure-stdlib rig-side streamer for the wss (TLS) transport
         "//firmware/player_app:esp32c6_flashbundle",
         "//fx_compiler:fx_compile",
         "//pi/hitl/cmd/hitl",
@@ -755,6 +756,7 @@ py_test(
         "wss",
     ],
     data = [
+        "wss_stream.py",  # pure-stdlib rig-side streamer for the wss (TLS) transport
         "//firmware/player_app:esp32c6_netstack_flashbundle",
         "//fx_compiler:fx_compile",
         "//pi/hitl/cmd/hitl",

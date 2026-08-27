@@ -52,6 +52,8 @@ def _log(msg: str) -> None:
 
 _FXC_RUNFILE = "_main/fx_compiler/fx_compile"
 _STREAM_BENCH_RUNFILE = "_main/tools/touchdesigner/stream_bench/stream_bench"
+# Pure-stdlib rig-side wss streamer (shipped into the reservation container for the wss path).
+_WSS_STREAM_RUNFILE = "_main/pi/hitl/harness/wss_stream.py"
 # HITL_BUNDLE_RUNFILE lets a variant target (video_stream_netstack) point at a different
 # firmware bundle in its runfiles without a code change.
 _BUNDLE_RUNFILE = os.environ.get(
@@ -79,6 +81,15 @@ def default_stream_bench() -> str:
 
 def default_flashbundle() -> str | None:
     return _rlocation(_BUNDLE_RUNFILE)
+
+
+def default_wss_stream() -> str | None:
+    return _rlocation(_WSS_STREAM_RUNFILE)
+
+
+# SetTexture.format wire values (ledmapper.proto) for the rig-side streamer, which sends raw
+# (uncompressed) pixels; gray4/mono aren't raw-representable so they map to their byte-per-px kin.
+_TEX_FORMAT_CODE = {"rgb888": 0, "rgb565": 1, "rgb332": 2, "gray8": 3, "gray4": 3, "mono": 3}
 
 
 def compile_fx_src(fx_compile: str, src: str) -> bytes:
@@ -287,6 +298,36 @@ def _run_stream_bench(addr: str, host_header: str, args) -> tuple[dict[str, Any]
     return parse_result(proc.stdout), proc.returncode
 
 
+def _stream_rigside(res, device_ip: str, port: int, args) -> bool:
+    """Run the pure-stdlib wss streamer INSIDE the reservation container so the high-rate TLS
+    flood is container -> device local (no reservation tunnel in the path). The effect + its WxH
+    texture are already set up over the control connection; this floods raw SetTexture frames and
+    barriers on get_effect_uniforms, printing a RESULT line we parse. Returns True on PASS."""
+    streamer = default_wss_stream()
+    if not streamer:
+        raise SystemExit("wss streamer (pi/hitl/harness/wss_stream.py) not found in runfiles")
+    res.scp_to([streamer], "/tmp/")
+    fmt = _TEX_FORMAT_CODE.get(args.format, 1)
+    cmd = (
+        f"python3 /tmp/{os.path.basename(streamer)} {device_ip} {port} {args.tex_index} "
+        f"{args.width} {args.height} {fmt} {args.seconds:g} {args.sync_every} {args.min_fps:g}"
+    )
+    _log(f"[stream] rig-side: {cmd}")
+    proc = res.ssh(cmd, capture=True, timeout=args.seconds + 90)
+    if proc.stderr:
+        sys.stderr.write(proc.stderr)
+    line = next(
+        (ln for ln in (proc.stdout or "").splitlines() if ln.startswith("RESULT")),
+        (proc.stdout or "").strip() or "no RESULT",
+    )
+    _log(f"[video-stream] {line}")
+    if "verdict=PASS" in line:
+        _log(f"PASS: wss video streaming sustained the flood rig-side — {line}")
+        return True
+    _log("FAIL: rig-side wss stream did not pass; see the RESULT line above")
+    return False
+
+
 def _drive(setup_ws_url: str, stream_addr: str, host_header: str, args, fxb: bytes) -> bool:
     """Set the effect up over the player socket, then stream + measure via the
     TouchDesigner encoder. Returns True on PASS."""
@@ -434,21 +475,20 @@ def run_on_hardware(args) -> bool:
         ok = True
         for scheme in schemes:
             host, port = dut_target(redirect, scheme)
-            with res.forward(host, port) as local_port:
-                if scheme == "wss":
-                    with _tls_terminating_proxy("127.0.0.1", local_port) as pport:
-                        _log(f"[transport] wss (TLS) — stream_bench -> TLS proxy -> device:{port}")
-                        ok = (
-                            _drive(
-                                f"wss://localhost:{local_port}/ws",
-                                f"127.0.0.1:{pport}",
-                                "localhost",
-                                args,
-                                fxb,
-                            )
-                            and ok
-                        )
-                else:
+            if scheme == "wss":
+                _log(f"[transport] wss (TLS) — rig-side streamer -> device:{port}")
+                # Set the effect up over the control connection (low-rate TLS through the
+                # reservation tunnel — reliable). The high-rate FLOOD, though, must NOT cross
+                # that tunnel: a proxied TLS video stream stalls over it (the device's tiny
+                # TCP window churns zero-window recoveries that the reservation-container
+                # ssh -L forward can't service fast enough), while plaintext ws:81 and this
+                # control channel are fine. So the flood runs IN the reservation container —
+                # container -> device local, the SAME path a phone streams camera video over.
+                with res.forward(host, port) as local_port:
+                    asyncio.run(_setup_effect(f"wss://localhost:{local_port}/ws", args, fxb))
+                ok = _stream_rigside(res, host, port, args) and ok
+            else:
+                with res.forward(host, port) as local_port:
                     _log(f"[transport] ws:{port} (plaintext)")
                     ok = (
                         _drive(
