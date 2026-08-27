@@ -54,51 +54,56 @@ let
   fpgaBitstream = sbcBuildData."spi_ws281x_tangnano9k.fs" or
     (throw "spi_ws281x bitstream missing from build_data — add "
       + "//fpga/spi_ws281x:spi_ws281x_tangnano9k to sbc_application(build_data=…).");
+  # Where the gateware sha STAMP lives in the Tang's 4MB external SPI flash: 3MB
+  # in, well past the ~0.6MB bitstream (offset 0), in its own 64KB sector.
+  fpgaStampOffset = "0x300000";
   fpgaCommission = pkgs.writeShellScript "fpga-commission" ''
-    # Commission the Tang on every boot, but READ what's actually on its SPI flash
-    # and only (slowly, wearingly) rewrite when it differs — so a persistent flash
-    # (-f, survives power cycles) isn't recycled needlessly.
+    # Commission the Tang on every boot, only (re)flashing when its gateware
+    # actually differs — so a persistent flash (survives power cycles) isn't
+    # recycled needlessly. The decision is a sha STAMP written into the FPGA's
+    # OWN SPI flash and read back off the board, so it is fully BOARD-authoritative
+    # and needs ZERO Pi-side state: a reimaged/fresh Pi, a swapped board, and a
+    # blank board all resolve correctly (unlike a Pi-side marker, which can't see
+    # any of those). The stamp is the sha256 of the flashed .fs.
     #
-    # The comparison reads the REAL board, not a Pi-side marker, so a swapped /
-    # blank / corrupted Tang is caught. openFPGALoader's Gowin backend refuses to
-    # write a raw stamp blob ("incompatible file format") but reads any offset
-    # fast, so the fingerprint is a sha of the first slice of the flashed
-    # bitstream read back off the board. Two independent guards: the
-    # content-addressed store path catches gateware CHANGES; the flash slice
-    # catches BOARD changes (swap/blank) for the same gateware. A full read-back
-    # is impractical — openFPGALoader's Tang flash READ is ~100 B/s — hence a
-    # small (256 B) slice, which is plenty since the store path already fingerprints
-    # the whole gateware.
+    # openFPGALoader can read/write arbitrary flash offsets on the Tang with NO
+    # patch — its Gowin raw-write path is just gated behind --external-flash (the
+    # Tang's config flash IS that external SPI chip). Reads are tiny (64B) so
+    # they're ~instant despite the Tang's slow (~100 B/s) flash read.
     ofl=${pkgs.openfpgaloader}/bin/openFPGALoader
     sha=${pkgs.coreutils}/bin/sha256sum
     want=${fpgaBitstream}
-    stamp=/var/lib/ledmapper/fpga.stamp   # "<store-path> <flash-slice-sha256>"
-    mkdir -p /var/lib/ledmapper
+    off=${fpgaStampOffset}
+    wantsha=$($sha "$want" | cut -c1-64)
 
-    flash_fingerprint() {
+    read_stamp() {
       local d; d=$(mktemp)
-      if $ofl -b tangnano9k --freq 10000000 --dump-flash -o 0 --file-size 256 "$d" >/dev/null 2>&1; then
-        $sha "$d" | cut -c1-64
+      if $ofl -b tangnano9k --freq 10000000 --external-flash --dump-flash \
+            -o "$off" --file-size 64 "$d" >/dev/null 2>&1; then
+        LC_ALL=C tr -cd '0-9a-f' < "$d" | head -c 64
       fi
       rm -f "$d"
     }
 
-    cur=$(flash_fingerprint)
-    if [ -n "$cur" ] && [ -r "$stamp" ]; then
-      set -- $(cat "$stamp")
-      if [ "$1" = "$want" ] && [ "$2" = "$cur" ]; then
-        echo "[fpga-commission] Tang flash already holds this gateware — skipping write" >&2
-        exit 0
-      fi
+    if [ "$(read_stamp)" = "$wantsha" ]; then
+      echo "[fpga-commission] Tang already holds this gateware (stamp match) — skipping" >&2
+      exit 0
     fi
 
     echo "[fpga-commission] flashing gateware onto the Tang Nano 9K" >&2
     # NON-FATAL during bring-up: log + continue so a DUT without a (working) Tang
     # still boots the player. Flip to required (exit on failure) once validated.
     if $ofl -b tangnano9k -f "$want"; then
-      new=$(flash_fingerprint)
-      [ -n "$new" ] && echo "$want $new" > "$stamp"
-      echo "[fpga-commission] done" >&2
+      # Stamp the board so the next boot can skip. Best-effort: a missing/failed
+      # stamp only costs a reflash next boot, never a wrong "skip".
+      s=$(mktemp); printf '%s' "$wantsha" > "$s"
+      if $ofl -b tangnano9k --freq 10000000 --external-flash -f \
+            -o "$off" --file-type raw "$s" >/dev/null 2>&1; then
+        echo "[fpga-commission] done (stamped $wantsha)" >&2
+      else
+        echo "[fpga-commission] flashed, but stamp write failed — will reflash next boot" >&2
+      fi
+      rm -f "$s"
     else
       echo "[fpga-commission] FAILED (rc=$?) — continuing without a fresh FPGA" >&2
     fi
