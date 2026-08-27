@@ -155,6 +155,66 @@ crate.spec(
     package = "spidev",
     version = "0.6",
 )
+
+# Pi player (//pi/player_rs) Phase 3 — the WS+TLS server that the phone (and the
+# HITL harness, via res.forward) talks to, wrapping the reused Player core. Same
+# transport the ESP32 firmware exposes: TLS 1.2 + RFC6455 WebSocket + protobuf.
+# rustls/rcgen pinned to the RING crypto backend (default_features=False) — NOT
+# aws-lc-rs, whose C/CMake build fights the hermetic Bazel+Nix sandbox.
+crate.spec(
+    features = [
+        "rt-multi-thread",
+        "net",
+        "io-util",
+        "macros",
+        "sync",
+        "time",
+    ],
+    package = "tokio",
+    version = "1",
+)
+crate.spec(
+    default_features = False,
+    features = [
+        "std",
+        "ring",
+        "tls12",
+        "logging",
+    ],
+    package = "rustls",
+    version = "0.23",
+)
+crate.spec(
+    default_features = False,
+    features = ["ring"],
+    package = "tokio-rustls",
+    version = "0.26",
+)
+crate.spec(
+    default_features = False,
+    features = ["handshake"],
+    package = "tokio-tungstenite",
+    version = "0.24",
+)
+crate.spec(
+    default_features = False,
+    features = [
+        "ring",
+        "pem",
+        "crypto",
+    ],
+    package = "rcgen",
+    version = "0.13",
+)
+
+# Pin `time` (transitive via rcgen's cert validity) below 0.3.55, which needs
+# rustc 1.87+ (integer_sign_cast / unsigned_is_multiple_of / let-chains); we're
+# on the firmware-validated 1.85.0.
+crate.spec(
+    default_features = False,
+    package = "time",
+    version = "=0.3.36",
+)
 crate.from_specs(
     # rules_rust's default list is a small host-centric subset (splicing is
     # O(N^2) per triple) — it must be restated here to EXTEND it with the

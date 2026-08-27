@@ -11,6 +11,7 @@
 //! encoder vectors.
 
 pub mod render;
+pub mod server;
 pub mod session;
 pub mod wire;
 

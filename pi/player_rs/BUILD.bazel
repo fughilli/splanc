@@ -18,6 +18,7 @@ rust_library(
     srcs = [
         "src/lib.rs",
         "src/render.rs",
+        "src/server.rs",
         "src/session.rs",
         "src/wire.rs",
     ],
@@ -29,6 +30,11 @@ rust_library(
         "//firmware/player",
         "//shared/protocol/rust:ledmapper_pb",
         "@crates//:micropb",
+        # Phase 3 WS+TLS transport (server.rs).
+        "@crates//:rcgen",
+        "@crates//:tokio",
+        "@crates//:tokio-rustls",
+        "@crates//:tokio-tungstenite",
     ],
 )
 
