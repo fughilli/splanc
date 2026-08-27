@@ -1,0 +1,30 @@
+"""LED Mapper — Raspberry Pi player app (Rust).
+
+A native-Rust reimplementation of the Pi player (replacing pi/led_driver +
+pi/server) that reuses the firmware Rust core (//firmware/player et al.) directly
+as crate deps — no FFI — and adds the Pi platform layer. Builds for the host,
+which on the aarch64 Pi is the deploy target triple; no ESP gate.
+
+Phase 1: the wire-framing layer, a byte-exact port of the Python
+led_driver/{fpga_spi,spi}.py, pinned by the same encoder vectors.
+"""
+
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "player_rs",
+    srcs = [
+        "src/lib.rs",
+        "src/wire.rs",
+    ],
+    crate_name = "ledmapper_player_rs",
+    edition = "2021",
+)
+
+rust_test(
+    name = "wire_test",
+    crate = ":player_rs",
+    edition = "2021",
+)
