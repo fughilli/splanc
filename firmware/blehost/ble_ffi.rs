@@ -296,6 +296,13 @@ pub extern "C" fn ns_ble_state() -> u32 {
     }
 }
 
+/// Negotiated BLE connection interval in 1.25 ms units (0 if not connected). The coex
+/// arbiter uses it to predict connection-event anchors and yield the radio to BLE only around them.
+#[no_mangle]
+pub extern "C" fn ns_ble_conn_interval() -> u32 {
+    unsafe { HOST.conn_interval() as u32 }
+}
+
 // Keep the Wi-Fi buffer bound referenced (documents the FFI contract for callers).
 const _: () = assert!(MAX_SSID <= GATT_VAL_MAX && MAX_PASS <= GATT_VAL_MAX);
 

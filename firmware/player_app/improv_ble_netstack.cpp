@@ -27,6 +27,7 @@ void ns_ble_setup();
 uint32_t ns_ble_poll_cmd(uint8_t *out, uint32_t cap);
 uint32_t ns_ble_on_hci(const uint8_t *pkt, uint32_t len, uint8_t *out, uint32_t cap);
 uint32_t ns_ble_state();
+uint32_t ns_ble_conn_interval();
 uint32_t ns_ble_poll_notify(uint8_t *out, uint32_t cap);
 uint32_t ns_ble_take_wifi(uint8_t *ssid, uint32_t ssid_cap, uint8_t *pass, uint32_t pass_cap);
 void ns_ble_provision_result(uint32_t ok, const uint8_t *url, uint32_t url_len);
@@ -78,9 +79,15 @@ int on_evt(uint8_t *evt, void *) {
   return 0;
 }
 
+// millis() of the last inbound ACL from the central. Each inbound ACL rides a connection
+// event, so this is a hard phase anchor: the coex arbiter predicts future connection-event
+// anchors as g_ble_last_acl_ms + n*interval and yields the radio to BLE only around them.
+volatile uint32_t g_ble_last_acl_ms = 0;
+
 // Controller -> host ACL (connection data, e.g. an ATT request): copy the packet out
 // of the mbuf chain, prepend the H4 ACL type, queue it, free the mbuf.
 int on_acl(void *om, void *) {
+  g_ble_last_acl_ms = millis();  // connection-event phase anchor for the coex arbiter
   uint8_t hdr[4];
   if (r_os_mbuf_copydata(om, 0, 4, hdr) != 0) {
     r_os_mbuf_free_chain(om);
@@ -184,6 +191,12 @@ bool improv_ble_take_credentials(char *ssid, size_t ssid_cap, char *pass, size_t
 }
 
 bool improv_ble_central_connected() { return ns_ble_state() == 7; }
+
+// Coex phase inputs: the last connection-event anchor (ms) and the negotiated connection
+// interval (1.25 ms units, 0 if unknown). Used by the coex arbiter to yield the radio to
+// BLE only in a tight window around each predicted connection event.
+uint32_t improv_ble_last_acl_ms() { return g_ble_last_acl_ms; }
+uint32_t improv_ble_conn_interval() { return ns_ble_conn_interval(); }
 
 // The heapless Improv service drives its own current-state/error characteristics
 // from the RPC (Provisioning latches on the SendWifi write; Provisioned/Authorized

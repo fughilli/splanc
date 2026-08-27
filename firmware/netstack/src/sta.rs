@@ -44,6 +44,13 @@ impl Sta {
     /// `snonce` is this station's nonce for the handshake (from an RNG).
     pub fn new(ssid: &[u8], passphrase: &[u8], ap: Mac, self_mac: Mac, snonce: Nonce) -> Self {
         let pmk = derive_pmk(passphrase, ssid);
+        Self::from_pmk(pmk, ap, self_mac, snonce)
+    }
+
+    /// Build an STA from an already-derived PMK. The PMK is the expensive part (PBKDF2 c=4096,
+    /// ~1.8s); deriving it incrementally off the hot path and passing it here keeps the transport
+    /// loop responsive (BLE link alive) through the join. See `wpa::PmkDeriv`.
+    pub fn from_pmk(pmk: [u8; 32], ap: Mac, self_mac: Mac, snonce: Nonce) -> Self {
         Sta {
             mlme: StaMlme::new(),
             sup: Supplicant::new(pmk, ap, self_mac, snonce),

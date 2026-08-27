@@ -12,10 +12,53 @@ use ledmapper_netstack::lmac;
 use ledmapper_netstack::mac::{rx_frame, RxRing};
 use ledmapper_netstack::sta::{Out, Sta};
 use ledmapper_netstack::tx::TxRing;
+use ledmapper_netstack::wpa::PmkDeriv;
 
 static mut RX: RxRing<16> = RxRing::new();
 static mut TX: TxRing<4> = TxRing::new();
 static mut SUP: Option<Sta> = None;
+
+// Incremental PMK derivation (PBKDF2 c=4096 ~1.8s): driven in small chunks off the transport
+// hot path so the BLE link stays serviced through the join. ns_pmk_begin latches ssid+pass the
+// moment they arrive; ns_pmk_step is pumped each loop; the finished PMK is cached in PMK_READY and
+// consumed by ns_wpa_init (fast, no derivation).
+static mut PMK_DERIV: Option<PmkDeriv> = None;
+static mut PMK_READY: Option<[u8; 32]> = None;
+
+/// Start incrementally deriving the PMK for `ssid`/`pass`. Call as soon as credentials are known.
+#[no_mangle]
+pub extern "C" fn ns_pmk_begin(ssid: *const u8, ssid_len: u32, pass: *const u8, pass_len: u32) {
+    unsafe {
+        let ssid = core::slice::from_raw_parts(ssid, ssid_len as usize);
+        let pass = core::slice::from_raw_parts(pass, pass_len as usize);
+        PMK_DERIV = Some(PmkDeriv::new(pass, ssid));
+        PMK_READY = None;
+    }
+}
+
+/// Advance the PMK derivation by up to `chunk` HMAC-SHA1 iterations. Returns 1 once the PMK is
+/// ready (cached for ns_wpa_init), 0 while more work remains. No-op/returns 1 if not begun.
+#[no_mangle]
+pub extern "C" fn ns_pmk_step(chunk: u32) -> u32 {
+    unsafe {
+        if PMK_READY.is_some() {
+            return 1;
+        }
+        let Some(d) = PMK_DERIV.as_mut() else { return 1 };
+        if d.step(chunk) {
+            PMK_READY = Some(d.pmk());
+            1
+        } else {
+            0
+        }
+    }
+}
+
+/// 1 if the precomputed PMK is ready for ns_wpa_init (so it won't block deriving), else 0.
+#[no_mangle]
+pub extern "C" fn ns_pmk_ready() -> u32 {
+    unsafe { PMK_READY.is_some() as u32 }
+}
 
 /// Initialise the WPA2-PSK supplicant for the 4-way handshake: derive the PMK from
 /// `ssid`/`pass` and set the peer/self MACs + this station's SNonce.
@@ -38,7 +81,13 @@ pub extern "C" fn ns_wpa_init(
         core::ptr::copy_nonoverlapping(ap, apm.as_mut_ptr(), 6);
         core::ptr::copy_nonoverlapping(self_mac, sm.as_mut_ptr(), 6);
         core::ptr::copy_nonoverlapping(snonce, sn.as_mut_ptr(), 32);
-        SUP = Some(Sta::new(ssid, pass, apm, sm, sn));
+        // Fast path: if the PMK was precomputed off the hot path (ns_pmk_begin/step), use it so we
+        // don't freeze the loop deriving it here. Fall back to synchronous derivation otherwise
+        // (e.g. a caller that never pumped ns_pmk_step) so the handshake still works.
+        SUP = Some(match PMK_READY {
+            Some(pmk) => Sta::from_pmk(pmk, apm, sm, sn),
+            None => Sta::new(ssid, pass, apm, sm, sn),
+        });
     }
 }
 

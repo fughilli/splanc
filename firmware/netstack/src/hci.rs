@@ -30,6 +30,7 @@ const EV_CMD_STATUS: u8 = 0x0F;
 const EV_DISCONN: u8 = 0x05;
 const EV_LE_META: u8 = 0x3E;
 const LE_CONN_COMPLETE: u8 = 0x01;
+const LE_CONN_UPDATE_COMPLETE: u8 = 0x03;
 
 fn cmd(op: u16, params: &[u8], out: &mut Buf<64>) -> usize {
     out.clear();
@@ -67,6 +68,10 @@ pub struct BleHost {
     /// Static random advertising address (little-endian; MSB has the top two bits
     /// set = static-random). Default is distinctive; the firmware overrides it.
     rand_addr: [u8; 6],
+    /// Negotiated connection interval in 1.25 ms units (from LE Connection Complete /
+    /// Connection Update Complete). 0 when not connected. The coex arbiter uses it to
+    /// predict connection-event anchors and yield the radio to BLE only around them.
+    conn_interval: u16,
 }
 
 impl BleHost {
@@ -77,7 +82,13 @@ impl BleHost {
             adv_len: 0,
             scan_rsp: [0; 32],
             rand_addr: [0x01, 0x00, 0x00, 0x00, 0xDE, 0xC0], // C0:DE:00:00:00:01
+            conn_interval: 0,
         }
+    }
+
+    /// Negotiated connection interval in 1.25 ms units (0 if not connected).
+    pub fn conn_interval(&self) -> u16 {
+        self.conn_interval
     }
 
     /// Set the static random advertising address (LE byte order). The MSB
@@ -132,11 +143,31 @@ impl BleHost {
             EV_LE_META if !params.is_empty() && params[0] == LE_CONN_COMPLETE && params.len() >= 4 => {
                 let handle = u16::from_le_bytes([params[2], params[3]]) & 0x0fff;
                 self.state = HostState::Connected(handle);
+                // Capture the negotiated connection interval (params[12..14], 1.25 ms units) so the
+                // coex arbiter can predict connection-event anchors and yield the radio to BLE only
+                // around them. NOTE: we deliberately do NOT issue an LE Connection Update to raise
+                // the supervision timeout — measured on rig-2 it made things WORSE (a peripheral-
+                // initiated update creates an LL "instant" that, if the WiFi join starves BLE right
+                // then, drops the link with reason 0x28 Instant Passed even FASTER). The link is
+                // kept alive through the join by the event-aligned coex yield in
+                // netstack_transport.cpp (coex_update) instead. Left as a signpost.
+                if params.len() >= 14 {
+                    self.conn_interval = u16::from_le_bytes([params[12], params[13]]);
+                }
+                0
+            }
+            EV_LE_META
+                if !params.is_empty() && params[0] == LE_CONN_UPDATE_COMPLETE && params.len() >= 6 =>
+            {
+                // The central re-negotiated params mid-session: re-capture the interval
+                // (params[4..6], 1.25 ms units) so the coex phase prediction stays aligned.
+                self.conn_interval = u16::from_le_bytes([params[4], params[5]]);
                 0
             }
             EV_DISCONN => {
                 // back to advertising after a disconnect
                 self.state = HostState::AdvEnableSent;
+                self.conn_interval = 0;
                 cmd(OP_LE_SET_ADV_ENABLE, &[0x01], out)
             }
             _ => 0,

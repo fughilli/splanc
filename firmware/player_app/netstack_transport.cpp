@@ -15,6 +15,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <esp_wifi.h>
+#include <esp_timer.h>  // high-frequency coex tick (coex_timer_cb) — finer than the netstack loop
 #include <esp_event.h>
 #include <esp_netif.h>
 #include <esp_heap_caps.h>
@@ -39,6 +40,11 @@ void ns_wpa_init(const uint8_t *ssid, uint32_t ssid_len, const uint8_t *pass, ui
                  const uint8_t *ap, const uint8_t *self_mac, const uint8_t *snonce);
 uint32_t ns_wpa_on_eapol(const uint8_t *eapol, uint32_t len, uint8_t *out, uint32_t cap);
 uint32_t ns_wpa_diag(const uint8_t *eapol, uint32_t len);
+// Incremental PMK derivation (PBKDF2 c=4096 ~1.8s) — spread off the hot path so the BLE link
+// survives the join. begin when creds are known, step() each loop, then ns_wpa_init uses it.
+void ns_pmk_begin(const uint8_t *ssid, uint32_t ssid_len, const uint8_t *pass, uint32_t pass_len);
+uint32_t ns_pmk_step(uint32_t chunk);
+uint32_t ns_pmk_ready(void);
 uint32_t ns_sta_encrypt(const uint8_t *hdr, uint32_t hdr_len, const uint8_t *payload,
                         uint32_t payload_len, uint8_t *out, uint32_t cap);
 uint32_t ns_sta_decrypt(const uint8_t *frame, uint32_t frame_len, uint8_t *out, uint32_t cap);
@@ -963,15 +969,107 @@ void netstack_setup() {
 }
 
 enum St { AUTH, ASSOC, FOURWAY, DONE };
+
+// Vendor PM lever (libpp): the counterpart of pm_go_to_wake — releases the hardware force-awake
+// so the MAC duty-cycles and the coex silicon can hand radio slots to BLE.
+extern "C" void pm_go_to_sleep();
+
+// Activity-driven WiFi/BT coexistence for the single-core C6, which shares one 2.4 GHz radio.
+// The netstack force-awakes the MAC (pm_go_to_wake in sta_rx_start_handler) for continuous RX,
+// because our stack does NOT implement connected-mode power-save (no TIM/PS-poll) and would miss
+// buffered downlink if the MAC slept. But that force-awake pins the shared radio to WiFi and
+// starves the BLE controller's connection events.
+//
+// The failure this fixes (root-caused on rig-2 via a BLE link-state trace): during the ~3-5s WiFi
+// join (assoc + 4-way + DHCP) the force-awake MAC starves BLE so completely that the central's
+// supervision timer expires and it DROPS the link ~2s in — BEFORE the DHCP lease, so the Improv
+// redirect (gated on a connected central) is never even sent, and provisioning times out.
+//
+// The C6's native coex (enabled by the vendor BT controller) protects BLE by TIME-SLICING the WiFi
+// MAC off the radio; our force-awake (for continuous RX, since we do no connected-mode power-save)
+// suppresses that, so the ESP-IDF coex knobs are no-ops and BLE would be starved. So while a BLE
+// central is connected we duty-cycle the radio ourselves via the vendor PM force-awake toggle
+// (pm_go_to_sleep/pm_go_to_wake — the only lever that reaches the coex silicon).
+//
+// The amount handed to BLE is PHASE-AWARE. The provisioning join has two very different phases:
+//   1. PMK derivation (PBKDF2 c=4096, ~1.8s) — this is PURE CPU; association is gated until it
+//      finishes (see the ns_pmk_ready() gate on the auth send), so WiFi needs almost no radio.
+//      Hand BLE the lion's share so the link is rock-solid going into the join.
+//   2. Association + DHCP + session — WiFi is actively on-air; give BLE a ~20% keep-alive slice,
+//      enough to service its connection events (reset the supervision timer) without stalling the
+//      join. (This ~20% was reliable ONCE the 1.8s PBKDF2 freeze that used to sabotage it — a
+//      synchronous derive on the loop — was moved off the hot path via ns_pmk_step.)
+// With NO central connected the MAC stays fully force-awake, so a streaming session is unaffected.
+//
+// This runs on a high-frequency esp_timer (COEX_TICK_US, in the high-priority esp_timer TASK — task
+// context, so calling the vendor PM lever is safe, unlike a raw ISR) rather than being polled once
+// per netstack_loop. The loop's ~22ms period was too coarse to time the BLE yield; a 4ms tick lets
+// us place a SHORT slice precisely. Decoupled from the loop, it keeps ticking through the RX drain
+// and the PMK chunks.
+//
+// The WiFi-active join needs the slice ALIGNED to the BLE connection event: a fixed-phase duty-cycle
+// (measured 0/3) misses, because the event interval (50ms) and any fixed tick period aren't harmonic
+// so the event drifts through the gaps. So predict the event anchors from the negotiated interval
+// (improv_ble_conn_interval) and the last inbound-ACL timestamp (improv_ble_last_acl_ms — every ACL
+// rides a connection event, a hard phase anchor) and yield BLE in a window STRADDLING each predicted
+// anchor, wide enough (+-7ms) to absorb the controller's delivery offset and clock drift so the
+// event is always covered. During PMK derivation WiFi is idle, so just hand BLE ~80% (no alignment
+// needed). Falls back to a fine fixed duty-cycle only until a phase lock exists.
+static const uint32_t COEX_TICK_US = 4000;  // 4ms
+static void coex_timer_cb(void *) {
+  static int mode = 0;  // 0 = MAC force-awake (WiFi), 1 = MAC asleep (BLE owns the slice)
+  if (!improv_ble_central_connected()) {
+    if (mode != 0) { pm_go_to_wake(); mode = 0; }
+    return;
+  }
+  uint32_t now = millis();
+  int want;
+  if (g_creds_ready && !ns_pmk_ready()) {
+    want = ((now % 20) < 16) ? 1 : 0;  // PMK derive (WiFi idle): ~80% to BLE, no alignment needed
+  } else {
+    uint32_t iv_u = improv_ble_conn_interval();  // 1.25ms units
+    uint32_t anchor = improv_ble_last_acl_ms();
+    if (iv_u >= 12 && anchor) {
+      uint32_t iv = iv_u + (iv_u >> 2);          // *1.25 -> ms (e.g. 40 units = 50ms)
+      uint32_t phase = (now - anchor) % iv;      // 0 == a predicted connection-event anchor
+      want = (phase <= 7 || (iv - phase) <= 7) ? 1 : 0;  // +-7ms window straddling the anchor
+    } else {
+      want = ((now % 16) < 4) ? 1 : 0;           // no phase lock yet: fine fixed duty-cycle
+    }
+  }
+  if (want == mode) return;
+  if (want == 1) pm_go_to_sleep();  // release the force-awake so BLE gets its slice
+  else pm_go_to_wake();             // reclaim the radio for WiFi RX
+  mode = want;
+}
+
 // Service the transport once per app loop(): RX drain + on_ip + DHCP + BLE-Improv join +
 // TLS handshake + WS pump (dispatched via lm_ws_dispatch). Non-blocking; returns quickly.
 void netstack_loop() {
   static St st = AUTH;
   static uint32_t t = 0;
   static bool inited = false;
+  // Start the high-frequency coex tick once (defined above; the vendor PM lever it calls is only
+  // declared after netstack_setup, so arm it here on the first loop rather than in setup).
+  static esp_timer_handle_t coex_timer = nullptr;
+  if (!coex_timer) {
+    esp_timer_create_args_t a = {};
+    a.callback = &coex_timer_cb;
+    a.dispatch_method = ESP_TIMER_TASK;
+    a.name = "coex";
+    if (esp_timer_create(&a, &coex_timer) == ESP_OK)
+      esp_timer_start_periodic(coex_timer, COEX_TICK_US);
+  }
   // Service the heapless BLE host (drain the controller's HCI queue, run the Improv
   // GATT state machine). No-op after onboarding once the central disconnects.
   improv_ble_poll();
+  // NB: WiFi/BT coex arbitration runs on its own high-frequency esp_timer (coex_timer_cb), not here
+  // — the ~22ms loop period was too coarse to time the BLE-yield slices. See coex_timer_cb.
+  // Advance the incremental PMK derivation a small chunk per loop (once creds arrive). 64 HMAC-
+  // SHA1s is ~14ms — under a BLE connection interval — so improv_ble_poll above keeps the link
+  // alive between chunks instead of the loop freezing ~1.8s in one synchronous PBKDF2 (which was
+  // the real cause of the rig-2 provisioning flake: a mid-join loop stall dropped the BLE link).
+  if (g_creds_ready && !ns_pmk_ready()) ns_pmk_step(64);
   // rx must hold a FULL MPDU: ns_mac_recv truncates to cap, and a truncated frame fails
   // CCMP's MIC (silently dropped, no ACK) — which stalled inbound data segments >~360B
   // (e.g. a 410-byte TLS ClientHello -> ~498-byte MPDU) while small control frames passed.
@@ -1016,9 +1114,21 @@ void netstack_loop() {
     } else if ((rx[0] & 0x0c) == 0x08 && st == FOURWAY) { // EAPOL data
       const uint8_t *eb; int el = eapol_body(rx, n, &eb);
       if (el > 4) {
-        if (!inited) { uint8_t sn[32]; esp_fill_random(sn, 32);
+        if (!inited) {
+          if (!ns_pmk_ready()) {
+            // The PMK (PBKDF2 c=4096) is still deriving off the hot path (ns_pmk_step above).
+            // Do NOT init the supplicant here — ns_wpa_init would then derive it synchronously and
+            // FREEZE the loop ~1.8s, dropping the BLE link mid-join (the rig-2 flake). Skip this
+            // M1; the AP retransmits EAPOL-M1 until we answer, by which point the PMK is ready.
+            static uint32_t waitlog = 0;
+            if (millis() - waitlog > 500) { waitlog = millis();
+              Serial.printf("[t=%lu] 4-way: PMK deriving, deferring M2 (AP retransmits M1)\n", (unsigned long)millis()); }
+            continue;
+          }
+          uint8_t sn[32]; esp_fill_random(sn, 32);
           ns_wpa_init((const uint8_t *)g_ssid, strlen(g_ssid), (const uint8_t *)g_pass, strlen(g_pass), g_bssid, OUR_MAC, sn);
-          inited = true; }
+          inited = true;
+        }
         uint8_t e[256]; int elen = el; memcpy(e, eb, elen);
         int exact = 4 + ((e[2] << 8) | e[3]); if (exact > 0 && exact <= elen) elen = exact;
         uint16_t kinfo = (e[5] << 8) | e[6]; // 802.1X(4) + desc_type(1) then key_info BE
@@ -1091,6 +1201,19 @@ void netstack_loop() {
   // on rig-2). --skip-improv runs never connect a central, so the fallback still fires for them.
   static bool g_ble_central_ever = false;
   if (improv_ble_central_connected()) g_ble_central_ever = true;
+  // Log BLE link-state transitions (e.g. 7->6 = central dropped). A drop while leased==0 means the
+  // link died mid-join before we could send the Improv redirect — the failure the PMK-off-the-hot-
+  // path + coex duty-cycle defend against; low-noise telemetry (fires only on change, not per loop).
+  {
+    static uint32_t diag_last_state = 999;
+    uint32_t st_now = ns_ble_state();
+    if (st_now != diag_last_state) {
+      Serial.printf("[t=%lu] [ble] link state=%lu connected=%d leased=%d\n",
+                    (unsigned long)millis(), (unsigned long)st_now,
+                    improv_ble_central_connected(), g_leased ? 1 : 0);
+      diag_last_state = st_now;
+    }
+  }
   // Grace must outlast BLE provisioning: from boot a central has to scan+connect+subscribe+RPC,
   // which routinely takes >15s — an 8s grace fired mid-provisioning and latched the baked
   // (wrong-rig) SSID before the real creds arrived. 45s comfortably clears a successful
@@ -1102,6 +1225,7 @@ void netstack_loop() {
     strncpy(g_ssid, SSID, sizeof g_ssid - 1);
     strncpy(g_pass, PASS, sizeof g_pass - 1);
     g_creds_ready = true;
+    ns_pmk_begin((const uint8_t *)g_ssid, strlen(g_ssid), (const uint8_t *)g_pass, strlen(g_pass));
     Serial.printf("[assoc] no BLE central — associating with baked creds ssid=%s\n", g_ssid);
   }
   if (!PLAYER_MODE) g_creds_ready = true;  // non-player transport demo associates immediately
@@ -1112,8 +1236,13 @@ void netstack_loop() {
     scan_latch_ap();
     g_ap_latched = true;
   }
-  // Kick the state machine: (re)send auth periodically until associated (once creds committed).
-  if (st == AUTH && g_creds_ready && millis() - t > 200) { t = millis(); int a = build_auth(f); ns_mac_send(f, a, 0); }
+  // Kick the state machine: (re)send auth periodically until associated (once creds committed AND
+  // the PMK is derived). Gating on ns_pmk_ready() sequences the ~1.8s PBKDF2 (pure CPU, radio
+  // yielded to BLE by coex_update) BEFORE the WiFi-active join, so the join is short + the 4-way's
+  // first EAPOL finds the PMK ready (immediate M2) — the link isn't dragged through a long join.
+  if (st == AUTH && g_creds_ready && ns_pmk_ready() && millis() - t > 200) {
+    t = millis(); int a = build_auth(f); ns_mac_send(f, a, 0);
+  }
   // Stream out any send-window segments the just-processed ACKs now allow (the send
   // window pipelines many segments in flight rather than one-per-RTT).
   {
@@ -1133,28 +1262,52 @@ void netstack_loop() {
   // associating, then answer with the redirect URL once leased (Improv result FIRST, then
   // PROVISIONED — spec order) so a no-override e2e completes its provisioning phase.
   if (PLAYER_MODE) {
-    static bool ble_creds_pending = false, redirect_sent = false;
+    static bool ble_creds_pending = false;
+    static uint32_t redirect_first_ms = 0, redirect_last_ms = 0;
     char s[33], p[65];
     if (improv_ble_take_credentials(s, sizeof s, p, sizeof p)) {
       strncpy(g_ssid, s, sizeof g_ssid - 1);
       strncpy(g_pass, p, sizeof g_pass - 1);
       g_creds_ready = true;  // trigger association with the provisioner's creds
+      // Start deriving the PMK NOW (off the hot path), overlapped with auth/assoc, so it's ready
+      // by the 4-way and we never freeze the loop (which would drop the BLE link mid-join).
+      ns_pmk_begin((const uint8_t *)g_ssid, strlen(g_ssid), (const uint8_t *)g_pass, strlen(g_pass));
       ble_creds_pending = true;
       improv_ble_set_state(IMPROV_STATE_PROVISIONING);
       Serial.printf("[t=%lu] [ble] wifi-settings received (ssid=%s) -> associating + PROVISIONING\n", (unsigned long)millis(), s);
     }
-    if (ble_creds_pending && !redirect_sent && g_leased) {
-      char url[40];
-      snprintf(url, sizeof url, "http://%u.%u.%u.%u/", g_offer_ip[0], g_offer_ip[1],
-               g_offer_ip[2], g_offer_ip[3]);
-      improv_ble_send_redirect(url);
-      improv_ble_set_state(IMPROV_STATE_PROVISIONED);
-      redirect_sent = true;
-      Serial.printf("[t=%lu] [ble] PROVISIONED -> redirect %s\n", (unsigned long)millis(), url);
+    // Send the Provisioned redirect on first lease, then RE-SEND it a few times/sec while the
+    // central is still connected. On a marginal BLE link the single post-join notification is
+    // often dropped even though the join SUCCEEDED — e.g. rig-2's RTL8851BU BT dongle, whose
+    // reception the C6's now-active WiFi interferes with (verified: 4/5 provisions there reached
+    // DHCP-lease + sent the redirect, but the central never saw STATE 04; rig-3's onboard BT is
+    // reliable). Re-advertising for a short window gives the central many chances to catch one
+    // copy; it stops once the central disconnects (it got it). Harmless on a good link — the
+    // provisioner completes on the first copy and drops the link.
+    if (ble_creds_pending && g_leased && improv_ble_central_connected()) {
+      uint32_t now = millis();
+      if (redirect_first_ms == 0) redirect_first_ms = now;
+      if (now - redirect_first_ms < 12000 && (redirect_last_ms == 0 || now - redirect_last_ms >= 400)) {
+        char url[40];
+        snprintf(url, sizeof url, "http://%u.%u.%u.%u/", g_offer_ip[0], g_offer_ip[1],
+                 g_offer_ip[2], g_offer_ip[3]);
+        improv_ble_send_redirect(url);
+        improv_ble_set_state(IMPROV_STATE_PROVISIONED);
+        if (redirect_last_ms == 0)
+          Serial.printf("[t=%lu] [ble] PROVISIONED -> redirect %s (retrying until central acks)\n",
+                        (unsigned long)now, url);
+        redirect_last_ms = now;
+      }
     }
   }
-  // Once linked, resend DISCOVER (until an OFFER) or REQUEST (until the ACK) ~1.2s.
-  if (st == DONE && !g_leased && millis() - t > 1200) {
+  // Once linked, resend DISCOVER (until an OFFER) or REQUEST (until the ACK). Retransmit FAST
+  // (~350ms): DHCP is the last WiFi-active stretch before the lease, and while a BLE central is
+  // connected the coex duty-cycle can drop an OFFER/ACK into a sleep window — a slow (1.2s) retry
+  // then stretches the join to ~4-5s, long enough for the central's supervision timer to drop the
+  // link mid-DHCP (the remaining rig-2 failure mode). A tight retry recovers a lost packet quickly
+  // so the lease lands fast and the redirect goes out while the link is still up.
+  uint32_t dhcp_retry = improv_ble_central_connected() ? 350 : 1200;
+  if (st == DONE && !g_leased && millis() - t > dhcp_retry) {
     t = millis();
     if (g_have_offer) send_dhcp(3, g_offer_ip, g_server_id, "REQUEST");
     else send_dhcp(1, nullptr, nullptr, "DISCOVER");

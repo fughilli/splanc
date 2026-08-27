@@ -5,6 +5,64 @@ scan back for context. The dated sections toward the bottom were migrated out of
 `README.md` (now a user-facing intro; see `DEVELOPERS.md` for contributing) and
 are kept as historical record.
 
+## rig-2 provisioning flake ROOT CAUSE = 1.8s PBKDF2 loop-freeze (branch `claude/heapless-netstack`)
+
+Chasing the netstack-drop-in's flaky rig-2 BLE provisioning ("STATE 03 timed out"
+~40% of the time). It was NOT a coexistence-tuning problem, which is where the
+investigation started — it's a **1.8-second synchronous freeze of the transport
+loop** during the WPA2 4-way handshake. Full technical writeup is in the session
+memory `heapless-netstack-e2e-integration.md`; summary:
+
+- **Root cause:** `wpa::pmk` → `pbkdf2_sha1(pass, ssid, 4096, ..)` — ~8192 software
+  HMAC-SHA1s ≈ 1.8s of pure CPU — ran synchronously in `ns_wpa_init` on the first
+  EAPOL frame, freezing the single-core `netstack_loop` (coex, BLE, RX all dead).
+  The BLE central's supervision timer then expired and it dropped the link before
+  the redirect → provisioning timed out. Localized with a per-loop gap tracer
+  (`[gap] INSIDE netstack 1810ms rxdrain=1810 frames=18 dec_try=0` at st=FOURWAY).
+  This is why EVERY coex experiment plateaued at ~60%: the freeze dropped the link
+  ~40% of the time regardless of coex.
+
+- **Fix (the solid, TESTED win):** incremental PMK derivation. `wpa::PmkDeriv` (new,
+  unit-tested bit-identical to `pmk()` for all chunk sizes) is a resumable PBKDF2
+  state machine; FFI `ns_pmk_begin/step/ready` (`wifi_sta_ffi.rs`); `Sta::from_pmk`
+  skips derivation. In `netstack_transport.cpp`: `ns_pmk_begin` the instant creds
+  arrive, pump `ns_pmk_step(64)` (~14ms/chunk) each loop, and GATE the association
+  auth-send on `ns_pmk_ready()` so the ~1.8s CPU-bound derive happens FIRST (WiFi
+  idle → coex hands ~80% radio to BLE → link healthy), then a fast association uses
+  the ready PMK. `loop_dt_max` went 1810ms → ~22ms. Also **fast DHCP retransmit**
+  (350ms vs 1200ms while a central is connected) so a coex-dropped OFFER/ACK
+  recovers fast and the join stays short. `e2e_netstack` + `video_stream_netstack`
+  both PASS and are FASTER (e2e 150s→68s — the shorter join helps everywhere).
+  rig-2 single-attempt ~25/60% → ~67% aggregate (noisy; individual clean runs
+  50–80%), reliable with the harness's 3× retry.
+
+- **Coex — IN-FLIGHT / UNTESTED (the current tree tip):** the residual failures are
+  BLE starvation during the WiFi-active association/DHCP burst. Coex evolution:
+  (1) polled phase-aware duty-cycle in `netstack_loop` (`ble_ms = deriving?48:12` per
+  60ms) = the TESTED ~67% baseline; (2) moved to a high-freq `esp_timer`
+  (`coex_timer_cb`, 4ms tick) to beat the ~22ms loop-polling granularity wall —
+  fixed-phase 4ms slices measured **0/3** (a fixed tick and the 50ms BLE interval
+  aren't harmonic, so the event drifts through the gaps); (3) **current tip =
+  event-ALIGNED timer**: predict connection-event anchors from
+  `improv_ble_conn_interval()` + `improv_ble_last_acl_ms()` and yield a ±7ms window
+  straddling each anchor. Builds + unit tests pass; NO rig crash (the timer/PM-from-
+  esp_timer-task is safe); **NOT yet flashed/measured on rig** (interrupted).
+
+- **NEXT STEPS for whoever picks this up:**
+  1. Flash the current build to rig-2 and measure: `bash /tmp/prov_diag2.sh
+hitl-rig-2 hci1 c6-003f08` (6 attempts + `[ble] link state=` trace). Watch the
+     pass rate + whether the link survives to `leased=1`. ALWAYS `hitl release
+<id>` after — `flash --keep` leaks the lease and the NEXT run queues behind it
+     (symptom: `FAIL []` with empty MAC).
+  2. If the event-aligned timer beats ~67%, keep it. If not, fall back to the polled
+     phase-aware coex (move the `coex_timer_cb` body back into `netstack_loop` as a
+     `coex_update()` call, drop the esp_timer) — that was the tested ~67%.
+  3. Fully closing rig-2 may just be its RTL8851BU dongle's short supervision
+     timeout vs the ~5s join; a raw-GPTimer ISR yield (finer than esp_timer) or
+     shortening the join further are the remaining levers. NB an HCI LE Connection
+     Update to raise the supervision timeout was tried and made it WORSE (0x28
+     Instant Passed) — don't rediscover it (signpost comment in `hci.rs`).
+
 ## FX engine optimizations + superinstructions (FUG-125, branch `agent/fug-125-fx-engine-optimizations-jit`)
 
 A bytecode optimizer for the fx compiler + a first set of VM superinstructions,

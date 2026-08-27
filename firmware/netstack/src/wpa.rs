@@ -178,6 +178,86 @@ pub fn pmk(passphrase: &[u8], ssid: &[u8]) -> [u8; 32] {
     k
 }
 
+/// Incremental PMK derivation. The PMK is PBKDF2-HMAC-SHA1 with c=4096 — ~8192 HMAC-SHA1s,
+/// ~1.8s of pure compute on the C6. Done synchronously it FREEZES the single-core transport
+/// loop for that whole time, starving the BLE link (its supervision timer expires and a
+/// provisioner drops the link mid-join). This spreads the work across many `step()` calls so
+/// the caller can service BLE/coex/RX between chunks; the result is bit-identical to `pmk()`.
+pub struct PmkDeriv {
+    pass: [u8; 64],
+    pass_len: usize,
+    salt: [u8; 32], // ssid
+    salt_len: usize,
+    out: [u8; 32],
+    block: u32,  // 1-based PBKDF2 block index (dkLen 32 / 20 => 2 blocks)
+    u: [u8; 20],  // current U_j
+    t: [u8; 20],  // running XOR accumulator T for this block
+    iter: u32,    // HMACs done in this block so far (1..=4096)
+    off: usize,   // output bytes filled
+    done: bool,
+}
+
+impl PmkDeriv {
+    pub fn new(passphrase: &[u8], ssid: &[u8]) -> Self {
+        let mut s = PmkDeriv {
+            pass: [0; 64], pass_len: passphrase.len().min(64),
+            salt: [0; 32], salt_len: ssid.len().min(32),
+            out: [0; 32], block: 1, u: [0; 20], t: [0; 20], iter: 0, off: 0, done: false,
+        };
+        s.pass[..s.pass_len].copy_from_slice(&passphrase[..s.pass_len]);
+        s.salt[..s.salt_len].copy_from_slice(&ssid[..s.salt_len]);
+        s.start_block();
+        s
+    }
+
+    // U1 = HMAC(pass, salt || INT(block)); T = U1; iter = 1.
+    fn start_block(&mut self) {
+        let mut u = [0u8; 20];
+        hmac_sha1(&self.pass[..self.pass_len],
+                  &[&self.salt[..self.salt_len], &self.block.to_be_bytes()], &mut u);
+        self.u = u;
+        self.t = u;
+        self.iter = 1;
+    }
+
+    /// Perform up to `chunk` HMAC-SHA1 iterations. Returns true once the full 32-byte PMK is ready.
+    pub fn step(&mut self, chunk: u32) -> bool {
+        if self.done {
+            return true;
+        }
+        let mut budget = chunk;
+        while budget > 0 {
+            if self.iter >= 4096 {
+                // Block complete: fold T into the output, advance to the next block (or finish).
+                let take = core::cmp::min(20, self.out.len() - self.off);
+                self.out[self.off..self.off + take].copy_from_slice(&self.t[..take]);
+                self.off += take;
+                if self.off >= self.out.len() {
+                    self.done = true;
+                    return true;
+                }
+                self.block += 1;
+                self.start_block(); // does U1 for the new block (one HMAC)
+                budget -= 1;
+                continue;
+            }
+            let mut next = [0u8; 20];
+            hmac_sha1(&self.pass[..self.pass_len], &[&self.u], &mut next);
+            self.u = next;
+            for i in 0..20 {
+                self.t[i] ^= self.u[i];
+            }
+            self.iter += 1;
+            budget -= 1;
+        }
+        false
+    }
+
+    pub fn pmk(&self) -> [u8; 32] {
+        self.out
+    }
+}
+
 /// Derive the PTK from the PMK and the two nonces + MAC addresses (802.11i
 /// "Pairwise key expansion"): data = min(AA,SA)||max(AA,SA)||min(N)||max(N).
 pub fn derive_ptk(pmk: &[u8; 32], aa: &[u8; 6], sa: &[u8; 6], anonce: &Nonce, snonce: &Nonce) -> Ptk {
@@ -518,6 +598,21 @@ mod tests {
         // 802.11i / wpa_passphrase: passphrase="password", ssid="IEEE"
         let k = pmk(b"password", b"IEEE");
         assert_eq!(&k, &hex("f42c6fc52df0ebef9ebb4b90b38a5f902e83fe1b135a70e23aed762e9710a12e"));
+    }
+
+    #[test]
+    fn incremental_pmk_matches_oneshot() {
+        // The chunked PmkDeriv must be bit-identical to pmk() for any chunk size, including ones
+        // that don't divide the 4096-iter blocks evenly (exercises the block-boundary handling).
+        for chunk in [1u32, 7, 64, 100, 4096, 9000] {
+            let mut d = PmkDeriv::new(b"password", b"IEEE");
+            let mut guard = 0;
+            while !d.step(chunk) {
+                guard += 1;
+                assert!(guard < 100_000, "PmkDeriv did not converge for chunk={chunk}");
+            }
+            assert_eq!(d.pmk(), pmk(b"password", b"IEEE"), "chunk={chunk}");
+        }
     }
 
     struct NoUnwrap;
