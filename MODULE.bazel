@@ -199,6 +199,16 @@ crate.spec(
 crate.spec(
     default_features = False,
     features = [
+        "std",
+        "sink",
+        "async-await",
+    ],
+    package = "futures-util",
+    version = "0.3",
+)
+crate.spec(
+    default_features = False,
+    features = [
         "ring",
         "pem",
         "crypto",

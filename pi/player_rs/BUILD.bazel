@@ -31,7 +31,9 @@ rust_library(
         "//shared/protocol/rust:ledmapper_pb",
         "@crates//:micropb",
         # Phase 3 WS+TLS transport (server.rs).
+        "@crates//:futures-util",
         "@crates//:rcgen",
+        "@crates//:rustls",
         "@crates//:tokio",
         "@crates//:tokio-rustls",
         "@crates//:tokio-tungstenite",
@@ -51,6 +53,7 @@ rust_binary(
         ":player_rs",
         "//firmware/player",
         "@crates//:spidev",
+        "@crates//:tokio",
     ],
 )
 
