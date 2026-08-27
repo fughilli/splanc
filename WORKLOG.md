@@ -5,7 +5,101 @@ scan back for context. The dated sections toward the bottom were migrated out of
 `README.md` (now a user-facing intro; see `DEVELOPERS.md` for contributing) and
 are kept as historical record.
 
-## rig-2 provisioning flake ROOT CAUSE = 1.8s PBKDF2 loop-freeze (branch `claude/heapless-netstack`)
+## HANDOFF — merging the from-source heapless BLE+WiFi netstack line (branch `claude/pmk-freeze-fix`)
+
+Context for whoever picks this up: I was handed a session with a lot of accumulated
+context that will NOT carry over to you (it lived in a private agent scratchpad, not
+this repo). This section transcribes the operationally-relevant parts so you can
+continue. **Goal stated by the owner: merge the WHOLE line — the from-source BLE+WiFi
+stack (`firmware/netstack`), the app porting (`firmware/player_app` drop-in), and the
+HITL conformance harness — not just cherry-pick the PMK fix below.**
+
+**Branch state (READ THIS FIRST):** the local tree at `/workspace/_split/splanc-netstack`
+is on a line that forked from `origin/claude/heapless-netstack` a LONG time ago (old
+merge-base `58a95477`) and has since diverged hard — each side has ~10 commits the other
+lacks, and both rewrote the same BLE files. My work is pushed to a NEW branch
+`claude/pmk-freeze-fix` (tip `52c305e3`) so nothing was clobbered. To land the whole
+line you'll need to reconcile with `origin/claude/heapless-netstack` (which has extra BLE
+bring-up commits: GATT 0x1801 service, static-random adv addr, ATT-MTU-respecting
+discovery, GattDb 12→16, RxRing::reap, etc. — some may already be superseded here). Expect
+a conflict-heavy merge across `firmware/netstack/src/{hci,gatt,improv,mac,tx}.rs` and
+`firmware/blehost/`; diff carefully rather than trusting either side wholesale.
+
+**Keep this repo clean-room.** It is presented as an independent from-source stack. Do NOT
+add reverse-engineering provenance, vendor-blob disassembly citations, or any
+security-disclosure material to it — that context is tracked separately and out of scope
+here. Register offsets/names that already appear in the driver are fine (public TRM); just
+don't annotate them with "reversed from <blob>".
+
+**What the line is (module map):**
+
+- `firmware/netstack/` — `no_std` rust*library `ledmapper_netstack` (host-tested): heapless
+  WiFi MLME + WPA2-PSK supplicant (`wpa.rs`, `sta.rs`), CCMP (`ccmp.rs`, SW + C6 standalone
+  AES-128 peripheral for the AES blocks), IPv4/TCP (`tcp.rs`), DHCP, and the BLE side
+  (`hci.rs`, `gatt.rs`, `improv.rs`) driving the vendor BLE *controller* over its native HCI
+  transport. Plus `examples/wifi_sta_ffi.rs` (the C-ABI FFI surface: `ns*\*`).
+- `firmware/blehost/` — the C++ glue that binds the vendor controller's native
+  `ble_hci_trans` and pumps the heapless BLE host (`ble_ffi.rs`).
+- `firmware/player_app/` — the app. `esp32c6_netstack` builds the SAME `main.cpp` as the
+  vendor `esp32c6`, gated `-DLM_NETSTACK`; only the transport swaps (`netstack_transport.cpp`
+  = the WiFi/TLS/WS datapath; `improv_ble_netstack.cpp` = Improv over the heapless BLE host).
+- `pi/hitl/harness/` — conformance: `e2e_netstack`, `led_capture_netstack`,
+  `video_stream_netstack`, `fx_bench(_jit)_netstack`, `map_upload_netstack`, `tls_churn_netstack`,
+  etc. (netstack siblings of the vendor targets; tagged `hitl`+`manual`).
+
+**Milestone status (what's PROVEN on silicon vs not):** the full LED-Mapper onboarding runs
+PHY-blob-up on the drop-in: BLE Improv provision → heapless MAC → WPA2 4-way (HW-AES CCMP) →
+DHCP → TCP → mbedtls TLS 1.2 → RFC6455 WS → `lm_player_handle`. `e2e_netstack` +
+`video_stream_netstack` PASS on the rigs. HITL validates the LOGIC + the vendor-PHY-up
+datapath; the PHY/lower-MAC RF bring-up itself is NOT reimplemented (still leans on the
+vendor blob to power the radio) — `phy.rs`/`lmac.rs` are stubs, blocked on a ROM-resident
+RF-I²C write. Be honest about that scope when describing the stack. HW MAC TX-_encrypt_ is
+UNREACHABLE from our direct-submission path (verified exhaustively) → the data plane is
+all-SW CCMP with the standalone AES peripheral accelerating the AES blocks; HW-_decrypt_
+works but can't combine with SW-encrypt (double-encrypt), so it's off by default.
+
+**Build + test (this container):**
+
+- Firmware image: `bazel build -c opt //firmware/player_app:esp32c6_netstack_flashbundle`
+  (and `:esp32c6` for the vendor build). ~seconds; real cross-compile, so C++ changes are
+  build-verifiable here.
+- Host unit tests: `bazel test //firmware/netstack:netstack_test` (the whole heapless stack).
+- Bazel's bundled JDK SIGILLs on this aarch64 host — `.bazelrc` already has
+  `startup --host_jvm_args=-XX:UseSVE=0`; keep it. Guru crashes: symbolize the register dump
+  with the nix `riscv32-esp-elf-addr2line -e bazel-bin/.../esp32c6_netstack.elf`.
+- mbedtls is built from source in `@embedded` (esp-idf v5.5.4, mbedtls fork `ffb280bb`) with
+  `CONFIG_MBEDTLS_DYNAMIC_BUFFER` + a from-source record-size patch; ABI-safe (link-`--wrap`,
+  no struct change) so esp-tls/https_server stay precompiled.
+
+**Rig operations (the HITL bench — 3 shared rigs, also used by CI):**
+
+- Reserve/flash/monitor via the `hitl` CLI (`bazel build -c opt //pi/hitl/cmd/hitl` →
+  `bazel-bin/pi/hitl/cmd/hitl/hitl_/hitl`), `--server http://hitl-rig-N:8087`.
+- **HARDWARE MAP (identify by hardware, names shuffle):** rig-1 = Pi5 (no LA); rig-2 = Pi5 +
+  Saleae logic analyzer (needs `SBC_ANALYZER=1`); rig-3 = Pi3 — deploying a Pi5 closure to
+  rig-3 BRICKS it, use the `hitl_pi3` / `bazel run //pi/hitl:update -- <host>` path.
+- **rig-2 BLE MUST use `hci1`** (the RTL8851BU USB dongle) not the flaky onboard `hci0`;
+  pass `HITL_BLE_ADAPTER=hci1` (the diag script does).
+- **`flash --keep` LEAKS the lease** — always `hitl release <id> --server ...` (POSITIONAL id,
+  ~40s). A leaked lease makes the NEXT run queue behind it → symptom `FAIL []` with empty MAC.
+- `hitl flash` scps to `/tmp/<bundle-basename>` on the rig → concurrent users with the same
+  basename collide (`Permission denied`, silent stale image). Flash a uniquely-named copy.
+- **Blocking-serial observer effect:** on the C6 USB-Serial-JTAG, `Serial.printf` BLOCKS when
+  the TX FIFO fills with no host draining it, wedging the loop — a bug that repros ONLY
+  un-monitored is this, not the radio. `Serial.setTxTimeoutMs(0)` is set in `netstack_setup`;
+  keep it. (This exact thing once masqueraded as a WiFi/BLE coex problem for hours.)
+- rig-2 provisioning is inherently a bit flaky (dongle); take multiple samples. Handy driver:
+  `bash /tmp/prov_diag2.sh hitl-rig-2 hci1 c6-003f08` (6 attempts + serial trace) — but note
+  `/tmp` scripts are wiped on container restart; recreate from the recipe if gone.
+
+**Commit/push discipline:** commit only when asked; branch, don't push to a shared default;
+commit trailer `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>` and NO
+session-URL trailer. Push works from the container over SSH (`credentials/id_ed25519_nopass`).
+
+The next entry below is the substantive technical work on this branch (the PBKDF2 fix + the
+in-flight coex). Read it next.
+
+## rig-2 provisioning flake ROOT CAUSE = 1.8s PBKDF2 loop-freeze (branch `claude/pmk-freeze-fix`)
 
 Chasing the netstack-drop-in's flaky rig-2 BLE provisioning ("STATE 03 timed out"
 ~40% of the time). It was NOT a coexistence-tuning problem, which is where the
