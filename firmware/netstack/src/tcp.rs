@@ -8,6 +8,8 @@
 
 const IP_HDR: usize = 20;
 const TCP_HDR: usize = 20;
+// Receive buffer / max advertised window. ~3 TLS records in flight (see the `rx` field note).
+const RX_BUF: usize = 4096;
 
 /// TCP flags.
 const FIN: u8 = 0x01;
@@ -53,8 +55,13 @@ pub struct TcpConn {
     rcv_nxt: u32, // next sequence we expect
     ip_id: u16,
     pub state: State,
-    // Received application bytes, delivered to the caller via `take_rx`.
-    rx: [u8; 1600],
+    // Received application bytes, delivered to the caller via `take_rx`. Sized to hold several
+    // ~1.2 KB TLS records in flight: a 1-record (1600 B) window forced a stop-and-wait cadence
+    // (one inbound frame per window round-trip) that capped a wss video stream at ~one frame per
+    // loop; a few records in flight lets the WS pump drain a burst per iteration. Kept modest —
+    // this is static RAM contended with the resident heapless-BLE host (a bigger bump reintroduced
+    // the ATT 0x11 Insufficient-Resource alloc failure during BLE provisioning).
+    rx: [u8; RX_BUF],
     rx_len: usize,
     // Largest window we've advertised since the peer last filled us. On a big inbound
     // transfer (a 4096B upload window) rx fills, we advertise window=0, and — because we only
@@ -112,7 +119,7 @@ impl TcpConn {
             src, dst, sport, dport,
             snd_nxt: iss, snd_una: iss, rcv_nxt: 0, ip_id: 1,
             state: State::Closed,
-            rx: [0; 1600], rx_len: 0,
+            rx: [0; RX_BUF], rx_len: 0,
             last_adv_wnd: 0,
             window_closed: false,
             snd_buf: [0; SND_BUF], snd_len: 0, sent: 0, peer_wnd: 0,
@@ -558,6 +565,10 @@ mod tests {
         let n = cli.on_ip(&b[..r], &mut a);
         let _ = srv.on_ip(&a[..n], &mut b); // both Established; peer_wnd learned from the handshake
         assert!(srv.peer_wnd >= 1500);
+        // Pin a modest peer window so the cap below is exercised regardless of our own rx size
+        // (the handshake learned peer_wnd from the client's advertised window = RX_BUF); a real
+        // ACK re-learns the client's actual window and reopens it for the rest of the transfer.
+        srv.peer_wnd = 1600;
 
         // Pipelining: enqueue 2000 bytes (fits the send buffer), then pump TWICE with no ACK
         // in between — a second segment must go out before the first is acknowledged

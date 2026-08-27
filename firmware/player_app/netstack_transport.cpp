@@ -801,55 +801,63 @@ static void ws_send(uint8_t opcode, const uint8_t *payload, size_t len) {
 // Drive the WS layer once: pull TLS bytes, complete the upgrade, then dispatch any
 // complete frames. Returns false if the connection should be torn down.
 static bool ws_pump() {
-  int r = mbedtls_ssl_read(&g_ssl, g_ws_rx + g_ws_rxlen, sizeof(g_ws_rx) - g_ws_rxlen);
-  if (r == MBEDTLS_ERR_SSL_WANT_READ || r == MBEDTLS_ERR_SSL_WANT_WRITE) return true;
-  if (r <= 0) return false;  // close_notify or error
-  g_ws_rxlen += r;
+  // Drain EVERY TLS record available this call, not one. mbedtls_ssl_read returns one record's
+  // plaintext; a single WS frame (e.g. a set_texture) is ~one record, so reading one per loop()
+  // capped inbound throughput at one frame per cooperative render round-robin — well under what
+  // the link sustains (the vendor's esp_https_server task processes many frames per render
+  // cycle). Loop until WANT_READ (nothing buffered in mbedtls AND nothing new on ns_tcp) so a
+  // burst of streamed frames is applied in one iteration and the per-loop overhead amortizes.
+  for (int iter = 0; iter < 128; iter++) {
+    int r = mbedtls_ssl_read(&g_ssl, g_ws_rx + g_ws_rxlen, sizeof(g_ws_rx) - g_ws_rxlen);
+    if (r == MBEDTLS_ERR_SSL_WANT_READ || r == MBEDTLS_ERR_SSL_WANT_WRITE) return true;  // drained
+    if (r <= 0) return false;  // close_notify or error
+    g_ws_rxlen += r;
 
-  if (!g_ws_up) {
-    // Wait for the full HTTP upgrade request (ends with a blank line), then 101.
-    g_ws_rx[g_ws_rxlen < sizeof(g_ws_rx) ? g_ws_rxlen : sizeof(g_ws_rx) - 1] = 0;
-    if (!strstr((char *)g_ws_rx, "\r\n\r\n")) return true;  // headers incomplete
-    char key[80];
-    if (!ws_find_key((char *)g_ws_rx, key, sizeof key)) return false;
-    char accept[29];
-    ws_accept_key(key, accept);
-    char resp[200];
-    int n = snprintf(resp, sizeof resp,
-                     "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
-                     "Connection: Upgrade\r\nSec-WebSocket-Accept: %s\r\n\r\n", accept);
-    if (!tls_write_all((const uint8_t *)resp, n)) return false;
-    g_ws_up = true;
-    g_ws_rxlen = 0;  // the request body ends at the blank line; nothing after it yet
-    Serial.println("*** WS UPGRADED — LED Mapper protocol over heapless TLS ***");
-    return true;
-  }
-
-  // Parse and dispatch every complete frame currently buffered.
-  for (;;) {
-    ws_frame_header h;
-    int pr = ws_parse_frame_header(g_ws_rx, g_ws_rxlen, &h);
-    if (pr > 0) break;       // need more bytes
-    if (pr < 0) return false;  // protocol violation
-    size_t total = h.header_len + (size_t)h.payload_len;
-    if (g_ws_rxlen < total) break;  // full payload not in yet
-    uint8_t *payload = g_ws_rx + h.header_len;
-    if (h.masked) ws_unmask(payload, h.payload_len, h.mask, 0);
-    if (h.opcode == WS_OP_BINARY || h.opcode == WS_OP_CONT) {
-      // Hand the message to the SHARED app dispatch (main.cpp): upload-chunk streaming +
-      // lm_player_handle + persistence + device-side polling, identical to the vendor ws/wss
-      // paths. Returns the reply length; reply bytes are in *reply (the app's tx buffer).
-      const uint8_t *reply = nullptr;
-      int tn = lm_ws_dispatch(payload, (size_t)h.payload_len, &reply);
-      if (tn > 0 && reply) ws_send(WS_OP_BINARY, reply, (size_t)tn);
-    } else if (h.opcode == WS_OP_PING) {
-      ws_send(WS_OP_PONG, payload, h.payload_len);
-    } else if (h.opcode == WS_OP_CLOSE) {
-      return false;
+    if (!g_ws_up) {
+      // Wait for the full HTTP upgrade request (ends with a blank line), then 101.
+      g_ws_rx[g_ws_rxlen < sizeof(g_ws_rx) ? g_ws_rxlen : sizeof(g_ws_rx) - 1] = 0;
+      if (!strstr((char *)g_ws_rx, "\r\n\r\n")) return true;  // headers incomplete
+      char key[80];
+      if (!ws_find_key((char *)g_ws_rx, key, sizeof key)) return false;
+      char accept[29];
+      ws_accept_key(key, accept);
+      char resp[200];
+      int n = snprintf(resp, sizeof resp,
+                       "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n"
+                       "Connection: Upgrade\r\nSec-WebSocket-Accept: %s\r\n\r\n", accept);
+      if (!tls_write_all((const uint8_t *)resp, n)) return false;
+      g_ws_up = true;
+      g_ws_rxlen = 0;  // the request body ends at the blank line; nothing after it yet
+      Serial.println("*** WS UPGRADED — LED Mapper protocol over heapless TLS ***");
+      continue;  // keep draining: streamed frames may already be buffered behind the upgrade
     }
-    size_t rest = g_ws_rxlen - total;
-    memmove(g_ws_rx, g_ws_rx + total, rest);
-    g_ws_rxlen = rest;
+
+    // Parse and dispatch every complete frame currently buffered.
+    for (;;) {
+      ws_frame_header h;
+      int pr = ws_parse_frame_header(g_ws_rx, g_ws_rxlen, &h);
+      if (pr > 0) break;       // need more bytes
+      if (pr < 0) return false;  // protocol violation
+      size_t total = h.header_len + (size_t)h.payload_len;
+      if (g_ws_rxlen < total) break;  // full payload not in yet
+      uint8_t *payload = g_ws_rx + h.header_len;
+      if (h.masked) ws_unmask(payload, h.payload_len, h.mask, 0);
+      if (h.opcode == WS_OP_BINARY || h.opcode == WS_OP_CONT) {
+        // Hand the message to the SHARED app dispatch (main.cpp): upload-chunk streaming +
+        // lm_player_handle + persistence + device-side polling, identical to the vendor ws/wss
+        // paths. Returns the reply length; reply bytes are in *reply (the app's tx buffer).
+        const uint8_t *reply = nullptr;
+        int tn = lm_ws_dispatch(payload, (size_t)h.payload_len, &reply);
+        if (tn > 0 && reply) ws_send(WS_OP_BINARY, reply, (size_t)tn);
+      } else if (h.opcode == WS_OP_PING) {
+        ws_send(WS_OP_PONG, payload, h.payload_len);
+      } else if (h.opcode == WS_OP_CLOSE) {
+        return false;
+      }
+      size_t rest = g_ws_rxlen - total;
+      memmove(g_ws_rx, g_ws_rx + total, rest);
+      g_ws_rxlen = rest;
+    }
   }
   return true;
 }
