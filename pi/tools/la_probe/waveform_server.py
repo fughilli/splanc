@@ -150,6 +150,7 @@ INDEX = """<!doctype html><html><head><meta charset=utf-8>
 </style></head><body>
 <header>
  <b>la_probe</b>
+ <a href="/fifo" style="color:#6ea8fe;text-decoration:none">FIFO model →</a>
  <label>file <select id=file></select></label>
  <label><input type=checkbox id=latest checked> follow latest</label>
  <label><input type=checkbox id=auto checked> auto-refresh</label>
@@ -213,6 +214,113 @@ q('#file').onchange=draw; q('#latest').onchange=()=>{loadFiles().then(draw);};
 </script></body></html>"""
 
 
+FIFO_INDEX = r"""<!doctype html><html><head><meta charset=utf-8>
+<title>spi_ws281x FIFO model</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+ body{font:13px/1.45 -apple-system,system-ui,sans-serif;margin:0;background:#0f1117;color:#d7dae0}
+ header{padding:8px 14px;background:#171a22;border-bottom:1px solid #2a2f3a}
+ header a{color:#6ea8fe;text-decoration:none;margin-right:14px}
+ #ctl{display:flex;flex-wrap:wrap;gap:16px;padding:10px 14px;background:#141722;border-bottom:1px solid #2a2f3a}
+ .f{display:flex;flex-direction:column;gap:2px;min-width:130px}
+ .f label{color:#8b93a7;font-size:11px} .f b{color:#e8ebf1}
+ input[type=range]{width:150px} input[type=number]{width:70px;background:#222735;color:#d7dae0;
+   border:1px solid #3a4152;border-radius:5px;padding:3px 6px}
+ label.cb{flex-direction:row;align-items:center;gap:6px;color:#d7dae0}
+ #verdict{padding:8px 14px;font-weight:600}
+ .ok{color:#4ade80} .bad{color:#f87171} .warn{color:#fbbf24}
+ #plot{height:calc(100vh - 240px)} #stats{padding:4px 14px;color:#8b93a7;font-size:12px}
+ code{background:#222735;padding:1px 5px;border-radius:4px}
+</style></head><body>
+<header><a href="/">← waveforms</a><b>spi_ws281x single circular-FIFO model</b>
+ — occupancy of one per-port elastic FIFO as SPI fills and the WS strip drains.</header>
+<div id=ctl></div>
+<div id=verdict></div>
+<div id=plot></div>
+<div id=stats></div>
+<script>
+const W=0.1; // WS drain: 1 byte / 10us, per port (bytes/us)
+const P=[
+ {k:'spiMHz',t:'SPI clock (MHz)',min:1,max:24,step:0.5,v:8},
+ {k:'ports',t:'num_ports',min:1,max:8,step:1,v:2},
+ {k:'leds',t:'LEDs / port',min:1,max:600,step:1,v:553},
+ {k:'prefill',t:'prefill (LEDs)',min:0,max:32,step:1,v:2},
+ {k:'refresh',t:'refresh (Hz)',min:1,max:120,step:1,v:60},
+ {k:'depth',t:'FIFO depth (bytes)',min:8,max:2048,step:8,v:1659},
+ {k:'reset',t:'reset gap (us)',min:0,max:300,step:10,v:50},
+ {k:'frames',t:'frames shown',min:2,max:6,step:1,v:3},
+];
+const st={}; P.forEach(p=>st[p.k]=p.v); st.b2b=true;
+const q=s=>document.querySelector(s);
+function ctl(){
+ const c=q('#ctl');
+ c.innerHTML=P.map(p=>`<div class=f><label>${p.t}: <b id=v_${p.k}>${st[p.k]}</b></label>
+   <input type=range id=r_${p.k} min=${p.min} max=${p.max} step=${p.step} value=${st[p.k]}></div>`).join('')
+  +`<label class=cb><input type=checkbox id=b2b ${st.b2b?'checked':''}> back-to-back (ignore refresh)</label>
+    <label class=cb><input type=checkbox id=autodepth> depth = full frame</label>`;
+ P.forEach(p=>{q('#r_'+p.k).oninput=e=>{st[p.k]=+e.target.value;q('#v_'+p.k).textContent=st[p.k];run();};});
+ q('#b2b').onchange=e=>{st.b2b=e.target.checked;run();};
+ q('#autodepth').onchange=e=>{if(e.target.checked){st.depth=st.leds*3;q('#r_depth').value=st.depth;q('#v_depth').textContent=st.depth;}run();};
+}
+function sim(){
+ const w=W, s=st.spiMHz/(8*st.ports); // bytes/us per port
+ const B=st.leds*3, pre=st.prefill*3;
+ const Tspi=B/s, Tws=B/w, reset=st.reset;
+ const Tper=st.b2b ? (Tws+reset) : 1e6/st.refresh;
+ const emit=pre/s;               // latency from frame start to WS emit start
+ const nF=st.frames, tEnd=nF*Tper, dt=Math.max(0.5,tEnd/6000);
+ const xs=[],ys=[]; let peak=0,minv=1e9,overflow=false,underrun=false;
+ for(let t=0;t<=tEnd;t+=dt){
+   let wrote=0,read=0;
+   for(let f=0;f<nF;f++){
+     const tf=f*Tper;
+     wrote+=Math.min(Math.max((t-tf)*s,0),B);
+     read +=Math.min(Math.max((t-(tf+emit))*w,0),B);
+   }
+   const o=wrote-read; xs.push(t/1000); ys.push(o);
+   if(o>peak)peak=o; if(o<minv)minv=o;
+   if(o>st.depth+1e-6)overflow=true; if(o<-1e-6)underrun=true;
+ }
+ return {xs,ys,peak,minv,overflow,underrun,s,w,B,Tspi,Tws,Tper,emit,
+   refreshMax:1e6/(Tws+reset), peakTheory:B*(1-w/s)+pre};
+}
+function run(){
+ const r=sim();
+ const shade=st.depth;
+ const traces=[
+  {x:r.xs,y:r.ys,mode:'lines',line:{color:'#6ea8fe',width:2},name:'FIFO occupancy',
+   fill:'tozeroy',fillcolor:'rgba(110,168,254,0.12)'},
+ ];
+ const shapes=[
+  {type:'line',x0:r.xs[0],x1:r.xs[r.xs.length-1],y0:shade,y1:shade,
+   line:{color:'#f87171',width:1.5,dash:'dash'}},
+ ];
+ const lay={paper_bgcolor:'#0f1117',plot_bgcolor:'#0f1117',font:{color:'#d7dae0'},
+   margin:{l:60,r:16,t:10,b:40},showlegend:false,shapes,
+   xaxis:{title:'time (ms)',gridcolor:'#232838',zeroline:false},
+   yaxis:{title:'bytes in FIFO',gridcolor:'#232838',rangemode:'tozero'},
+   annotations:[{x:r.xs[Math.floor(r.xs.length*0.5)],y:shade,text:'FIFO depth ('+shade+'B)',
+     showarrow:false,yshift:10,font:{color:'#f87171',size:11}}]};
+ Plotly.react('plot',traces,lay,{responsive:true,displaylogo:false});
+ const sw=(r.s/r.w).toFixed(2);
+ let v,cls;
+ if(r.overflow){v=`⚠ STOMP: occupancy peaks ${Math.round(r.peak)}B > depth ${shade}B — write laps read. `+
+   `Reduce refresh (≤ ${r.refreshMax.toFixed(1)} Hz), deepen FIFO, or slow SPI.`;cls='bad';}
+ else if(r.underrun){v=`⚠ UNDERRUN: FIFO empties mid-frame (SPI slower than drain, s/w=${sw}). `+
+   `Raise SPI clock above num_ports×0.8 MHz.`;cls='bad';}
+ else {v=`✓ OK: peak ${Math.round(r.peak)}B ≤ depth ${shade}B, never empties. s/w=${sw}, `+
+   `headroom ${Math.round(shade-r.peak)}B.`;cls='ok';}
+ q('#verdict').innerHTML=`<span class=${cls}>${v}</span>`;
+ q('#stats').innerHTML=
+   `frame=${r.B}B/port · SPI fill ${r.s.toFixed(3)}B/us · WS drain ${r.w}B/us · `+
+   `SPI burst ${(r.Tspi/1000).toFixed(2)}ms · WS emit ${(r.Tws/1000).toFixed(2)}ms · `+
+   `frame period ${(r.Tper/1000).toFixed(2)}ms · <b>crossover refresh ≤ ${r.refreshMax.toFixed(1)} Hz</b> · `+
+   `theoretical peak ${Math.round(r.peakTheory)}B`;
+}
+ctl(); run();
+</script></body></html>"""
+
+
 class Handler(BaseHTTPRequestHandler):
     directory = DIR
 
@@ -229,6 +337,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if u.path in ("/", "/index.html"):
                 self._send(200, INDEX, "text/html; charset=utf-8")
+            elif u.path == "/fifo":
+                self._send(200, FIFO_INDEX, "text/html; charset=utf-8")
             elif u.path == "/api/files":
                 self._send(200, json.dumps(_sr_files(self.directory)))
             elif u.path == "/api/wave":
