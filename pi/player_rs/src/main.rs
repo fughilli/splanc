@@ -128,7 +128,7 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // WS+TLS server on a tokio runtime (blocks). Self-signed cert: the phone
     // bypasses validation, so the SANs are cosmetic.
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], serve_port));
-    let config = server::self_signed_config(vec!["localhost".into(), "ledmapper.local".into()])?;
+    let config = server::self_signed_config()?;
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;

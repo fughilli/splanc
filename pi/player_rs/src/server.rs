@@ -39,21 +39,43 @@ pub fn now_ms(epoch: Instant) -> i64 {
 /// need a larger/streamed buffer — revisit when that path lands.
 const REPLY_CAP: usize = 16 * 1024;
 
-/// A rustls server config with a fresh in-memory self-signed cert (rcgen over
-/// the ring provider) covering `sans`. Both TLS 1.2 and 1.3 stay enabled so the
-/// phone + firmware clients (TLS 1.2) negotiate cleanly.
-pub fn self_signed_config(
-    sans: Vec<String>,
-) -> Result<ServerConfig, Box<dyn std::error::Error + Send + Sync>> {
-    let ck = rcgen::generate_simple_self_signed(sans)?;
-    let cert: CertificateDer<'static> = ck.cert.der().clone();
-    let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(ck.key_pair.serialize_der()));
-    let cfg = ServerConfig::builder_with_provider(Arc::new(
-        tokio_rustls::rustls::crypto::ring::default_provider(),
-    ))
-    .with_safe_default_protocol_versions()?
-    .with_no_client_auth()
-    .with_single_cert(vec![cert], key)?;
+/// A rustls server config with a fresh in-memory self-signed P-256 cert, over the
+/// PURE-RUST RustCrypto provider (no ring / no C, so the whole binary
+/// cross-compiles with rustc alone). TLS 1.2 + 1.3 both enabled so the phone +
+/// firmware clients (TLS 1.2) negotiate cleanly. The cert has no SANs — the phone
+/// bypasses validation (a self-signed device cert), so identity isn't asserted.
+pub fn self_signed_config() -> Result<ServerConfig, Box<dyn std::error::Error + Send + Sync>> {
+    use p256::ecdsa::{DerSignature, SigningKey};
+    use p256::pkcs8::EncodePrivateKey;
+    use x509_cert::builder::{Builder, CertificateBuilder, Profile};
+    use x509_cert::der::Encode;
+    use x509_cert::name::Name;
+    use x509_cert::serial_number::SerialNumber;
+    use x509_cert::spki::SubjectPublicKeyInfoOwned;
+    use x509_cert::time::Validity;
+
+    use std::str::FromStr;
+
+    let signing_key = SigningKey::random(&mut p256::elliptic_curve::rand_core::OsRng);
+    let spki = SubjectPublicKeyInfoOwned::from_key(*signing_key.verifying_key())?;
+    let cert = CertificateBuilder::new(
+        Profile::Root, // self-signed (issuer == subject); client bypasses validation
+        SerialNumber::from(1u32),
+        Validity::from_now(std::time::Duration::from_secs(3650 * 24 * 3600))?,
+        Name::from_str("CN=ledmapper")?,
+        spki,
+        &signing_key,
+    )?
+    .build::<DerSignature>()?;
+
+    let cert = CertificateDer::from(cert.to_der()?);
+    let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(
+        signing_key.to_pkcs8_der()?.as_bytes().to_vec(),
+    ));
+    let cfg = ServerConfig::builder_with_provider(Arc::new(rustls_rustcrypto::provider()))
+        .with_safe_default_protocol_versions()?
+        .with_no_client_auth()
+        .with_single_cert(vec![cert], key)?;
     Ok(cfg)
 }
 
@@ -156,9 +178,8 @@ mod tests {
 
     #[test]
     fn builds_self_signed_config() {
-        // Exercises rcgen + rustls over the ring provider end-to-end.
-        self_signed_config(vec!["localhost".into(), "ledmapper.local".into()])
-            .expect("self-signed TLS config should build");
+        // Exercises x509-cert + p256 + rustls over the pure-Rust RustCrypto provider.
+        self_signed_config().expect("self-signed TLS config should build");
     }
 
     #[test]
@@ -242,14 +263,14 @@ mod tests {
         use tokio::net::{TcpListener, TcpStream};
         // Server: a real player on an ephemeral port.
         let player: SharedPlayer = Arc::new(Mutex::new(Player::new("pi-0001", 64)));
-        let config = self_signed_config(vec!["localhost".into()]).unwrap();
+        let config = self_signed_config().unwrap();
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         let epoch = Instant::now();
         tokio::spawn(serve_on(player, listener, config, epoch));
 
         // Client: TLS (trust-any) -> WS -> send a hello -> expect a welcome.
-        let provider = Arc::new(tokio_rustls::rustls::crypto::ring::default_provider());
+        let provider = Arc::new(rustls_rustcrypto::provider());
         let client_cfg = tokio_rustls::rustls::ClientConfig::builder_with_provider(provider.clone())
             .with_safe_default_protocol_versions()
             .unwrap()

@@ -159,8 +159,11 @@ crate.spec(
 # Pi player (//pi/player_rs) Phase 3 — the WS+TLS server that the phone (and the
 # HITL harness, via res.forward) talks to, wrapping the reused Player core. Same
 # transport the ESP32 firmware exposes: TLS 1.2 + RFC6455 WebSocket + protobuf.
-# rustls/rcgen pinned to the RING crypto backend (default_features=False) — NOT
-# aws-lc-rs, whose C/CMake build fights the hermetic Bazel+Nix sandbox.
+# PURE-RUST crypto (rustls-rustcrypto) — NO C. ring (C/asm) and aws-lc-rs (C/CMake)
+# are both out: the player must be 100% Rust so rustc alone cross-compiles it to a
+# static aarch64-linux-musl binary (no cc/zig, no patchelf) that ships through the
+# build graph. The app installs the RustCrypto provider explicitly, so rustls +
+# tokio-rustls carry NO built-in provider feature.
 crate.spec(
     features = [
         "rt-multi-thread",
@@ -177,7 +180,6 @@ crate.spec(
     default_features = False,
     features = [
         "std",
-        "ring",
         "tls12",
         "logging",
     ],
@@ -186,9 +188,12 @@ crate.spec(
 )
 crate.spec(
     default_features = False,
-    features = ["ring"],
     package = "tokio-rustls",
     version = "0.26",
+)
+crate.spec(
+    package = "rustls-rustcrypto",
+    version = "0.0.2-alpha",
 )
 crate.spec(
     default_features = False,
@@ -206,20 +211,38 @@ crate.spec(
     package = "futures-util",
     version = "0.3",
 )
+
+# Self-signed cert generation — PURE RUST (RustCrypto), replacing rcgen (which
+# only has ring/aws-lc-rs C backends). p256 makes the ECDSA key + signs; x509-cert
+# assembles + self-signs the DER cert.
 crate.spec(
     default_features = False,
     features = [
-        "ring",
-        "pem",
-        "crypto",
+        "ecdsa",
+        "pkcs8",
+        "std",
     ],
-    package = "rcgen",
+    package = "p256",
     version = "0.13",
 )
+crate.spec(
+    default_features = False,
+    features = [
+        "std",
+        "builder",
+    ],
+    package = "x509-cert",
+    version = "0.2",
+)
+crate.spec(
+    default_features = False,
+    features = ["getrandom"],
+    package = "rand_core",
+    version = "0.6",
+)
 
-# Pin `time` (transitive via rcgen's cert validity) below 0.3.55, which needs
-# rustc 1.87+ (integer_sign_cast / unsigned_is_multiple_of / let-chains); we're
-# on the firmware-validated 1.85.0.
+# Pin `time` below 0.3.55, which needs rustc 1.87+ (integer_sign_cast /
+# unsigned_is_multiple_of / let-chains); we're on the firmware-validated 1.85.0.
 crate.spec(
     default_features = False,
     package = "time",

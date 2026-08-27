@@ -30,13 +30,15 @@ rust_library(
         "//firmware/player",
         "//shared/protocol/rust:ledmapper_pb",
         "@crates//:micropb",
-        # Phase 3 WS+TLS transport (server.rs).
+        # Phase 3 WS+TLS transport (server.rs) — PURE RUST crypto (no ring/C).
         "@crates//:futures-util",
-        "@crates//:rcgen",
+        "@crates//:p256",
         "@crates//:rustls",
+        "@crates//:rustls-rustcrypto",
         "@crates//:tokio",
         "@crates//:tokio-rustls",
         "@crates//:tokio-tungstenite",
+        "@crates//:x509-cert",
     ],
 )
 
