@@ -60,6 +60,18 @@ musl_toolchains(
     tools = "@rust_macos_x86_64__aarch64-unknown-linux-musl__stable_tools",
 )
 
+# x86_64-linux exec host — CI runners (and any x86_64 Linux dev box). Without it a
+# plain `bazel test //...` on an x86_64 Linux runner can't resolve a CC toolchain
+# for the aarch64-musl player and analysis fails.
+musl_toolchains(
+    name = "linux_x86_64",
+    exec_compatible_with = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:linux",
+    ],
+    tools = "@rust_linux_x86_64__aarch64-unknown-linux-musl__stable_tools",
+)
+
 # The deploy's build_data target: builds //pi/player_rs:player under the musl
 # platform (target-only transition; exec stays gnu). Pure Rust, so it
 # cross-compiles on the macOS deploy host too — nothing staged.

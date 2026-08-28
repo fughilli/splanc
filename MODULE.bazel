@@ -92,9 +92,10 @@ rust.toolchain(
 use_repo(
     rust,
     # musl tools per EXEC host (the static player's rust-lld/rustc run on the
-    # build host): linux container + macOS deploy (aarch64 or x86_64). Fetched
-    # lazily, so each host pulls only what it uses.
+    # build host): linux container (aarch64) + x86_64-linux (CI) + macOS deploy
+    # (aarch64 or x86_64). Fetched lazily, so each host pulls only what it uses.
     "rust_linux_aarch64__aarch64-unknown-linux-musl__stable_tools",
+    "rust_linux_x86_64__aarch64-unknown-linux-musl__stable_tools",
     "rust_macos_aarch64__aarch64-unknown-linux-musl__stable_tools",
     "rust_macos_x86_64__aarch64-unknown-linux-musl__stable_tools",
     "rust_toolchains",
@@ -106,6 +107,8 @@ use_repo(
 register_toolchains(
     "//pi/player_rs/musl:linux_rust_toolchain",
     "//pi/player_rs/musl:linux_cc_toolchain",
+    "//pi/player_rs/musl:linux_x86_64_rust_toolchain",
+    "//pi/player_rs/musl:linux_x86_64_cc_toolchain",
     "//pi/player_rs/musl:macos_arm64_rust_toolchain",
     "//pi/player_rs/musl:macos_arm64_cc_toolchain",
     "//pi/player_rs/musl:macos_x86_64_rust_toolchain",
