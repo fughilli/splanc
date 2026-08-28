@@ -113,3 +113,18 @@ func TestResolveUSBHCI(t *testing.T) {
 		t.Errorf("resolveUSBHCIIn with no USB controller = %q, want \"\"", got)
 	}
 }
+
+func TestResolveDUTAddr(t *testing.T) {
+	// IP literals and empty pass through unchanged (no resolution attempted).
+	for _, in := range []string{"", "192.168.68.68", "10.0.0.1", "::1"} {
+		if got := resolveDUTAddr(in); got != in {
+			t.Errorf("resolveDUTAddr(%q) = %q, want unchanged", in, got)
+		}
+	}
+	// An unresolvable hostname is best-effort: keep the name (the harness then
+	// fails loudly rather than silently mis-dialing), never empty/garbage.
+	const bad = "definitely-not-a-real-host.invalid"
+	if got := resolveDUTAddr(bad); got != bad {
+		t.Errorf("resolveDUTAddr(%q) = %q, want the name back on failure", bad, got)
+	}
+}

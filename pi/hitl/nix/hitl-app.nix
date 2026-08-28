@@ -179,6 +179,17 @@ in
     extraUpFlags = [ "--ssh" "--hostname=${config.networking.hostName}" ];
   };
 
+  # mDNS: the host resolves LAN *.local (nssmdns4) AND runs avahi-daemon, whose
+  # socket the reservation container bind-mounts so its nss-mdns can resolve
+  # *.local through the host (the bridged container can't multicast to the LAN
+  # itself). Lets the harness reach a network DUT seeded by hostname
+  # (e.g. splanc-max-2.local), not just its ETH IP. See nix/container.nix +
+  # internal/runner/podman.go.
+  services.avahi = {
+    enable = true;
+    nssmdns4 = true;
+  };
+
   # `tailscale up` (above) only sets --hostname on a fresh login, so an already-
   # registered rig keeps its old tailnet name across a redeploy. Enforce the
   # canonical hostname on every boot with `tailscale set` (a no-op once correct),
@@ -395,8 +406,10 @@ in
     after = [ "network-online.target" "tailscaled.service" "hitl-image-load.service" ];
     wants = [ "network-online.target" "hitl-image-load.service" ];
     # networkmanager (nmcli) toggles the AP; iw/iproute2 create the AP vif on
-    # demand; sigrok-cli (analyzer rig only) captures the DUT's tapped LED line.
-    path = [ pkgs.podman pkgs.iproute2 pkgs.openssh ]
+    # demand; sigrok-cli (analyzer rig only) captures the DUT's tapped LED line;
+    # getent resolves a *.local network-DUT address host-side (nss-mdns) before
+    # injecting the IP into the reservation container (see resolveDUTAddr).
+    path = [ pkgs.podman pkgs.iproute2 pkgs.openssh pkgs.getent ]
       ++ lib.optionals isAnalyzerRig sigrok.packages;
     serviceConfig = {
       ExecStart =
