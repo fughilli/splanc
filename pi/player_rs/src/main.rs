@@ -90,6 +90,10 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let player = player.clone();
         std::thread::Builder::new()
             .name("render".into())
+            // musl defaults spawned-thread stacks to 128 KiB (vs glibc's 8 MiB);
+            // the per-frame render over 2200 LEDs needs more headroom. See the
+            // tokio runtime below for the same reason on the WS workers.
+            .stack_size(4 * 1024 * 1024)
             .spawn(move || {
                 let mut sink = match SpidevSink::open(bus, device, speed) {
                     Ok(s) => s,
@@ -129,8 +133,13 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // bypasses validation, so the SANs are cosmetic.
     let addr = std::net::SocketAddr::from(([0, 0, 0, 0], serve_port));
     let config = server::self_signed_config()?;
+    // musl defaults spawned-thread stacks to 128 KiB, and tokio does NOT impose a
+    // worker-thread stack size — so on the static-musl build the rustls TLS +
+    // tokio-tungstenite + protobuf task overflows 128 KiB and aborts the whole
+    // process (glibc's 8 MiB default hid this pre-musl). Pin a generous stack.
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
+        .thread_stack_size(8 * 1024 * 1024)
         .build()?;
     rt.block_on(server::serve(player, addr, config, epoch))?;
     Ok(())
