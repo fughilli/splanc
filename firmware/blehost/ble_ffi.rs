@@ -86,6 +86,37 @@ fn wrap_att_acl(handle: u16, att: &[u8], out: *mut u8, cap: u32) -> u32 {
     copy_out(aclb.as_slice(), out, cap)
 }
 
+/// Build an L2CAP Connection Parameter Update Request (LE signaling channel, CID
+/// 0x0005) as a ready-to-send HCI ACL, asking the central to raise the BLE
+/// supervision timeout to ~6s (interval 30-50ms, latency 0).
+///
+/// WHY: provisioning fails on rig-2 when the BLE central drops mid-join. The
+/// WiFi-active association+4-way+DHCP window is ~4-5s, dominated by a ~3s AP-side
+/// DHCP-OFFER stall (the rig's hostapd/dnsmasq buffer-then-bursts the OFFER —
+/// measured, and independent of our coex: it persists with WiFi at full priority
+/// and our uplink frames are already PM=0). Single-radio coex can't both service
+/// BLE every connection interval AND keep DHCP fast, so the short-supervision
+/// dongle times the link out. Raising the supervision timeout lets the link ride
+/// out the stall. This is the SPEC-CORRECT request (the central owns the LL
+/// instant), distinct from the peripheral-initiated LL Connection Update that hit
+/// 0x28 Instant Passed (see hci.rs). BlueZ applies it via a proper LL update; we
+/// pick up the new interval from the LE Connection Update Complete event.
+fn conn_param_update_req_acl(handle: u16, out: *mut u8, cap: u32) -> u32 {
+    let mut l2: Buf<20> = Buf::new();
+    let _ = l2.extend(&12u16.to_le_bytes()); // L2CAP basic length = 12 (the C-frame below)
+    let _ = l2.extend(&[0x05, 0x00]); // CID = 0x0005 (LE signaling)
+    let _ = l2.extend(&[0x12, 0x01, 0x08, 0x00]); // Code=Conn Param Update Req, Id=1, CmdLen=8
+    let _ = l2.extend(&24u16.to_le_bytes()); // interval min = 24 * 1.25ms = 30ms
+    let _ = l2.extend(&40u16.to_le_bytes()); // interval max = 40 * 1.25ms = 50ms
+    let _ = l2.extend(&0u16.to_le_bytes()); // slave latency = 0 (answer every event when we can)
+    let _ = l2.extend(&600u16.to_le_bytes()); // supervision timeout = 600 * 10ms = 6s
+    let mut aclb: Buf<24> = Buf::new();
+    if acl(handle, l2.as_slice(), &mut aclb).is_err() {
+        return 0;
+    }
+    copy_out(aclb.as_slice(), out, cap)
+}
+
 /// Process a received HCI packet (event or ACL). Writes any response ACL into
 /// `out`, returning its length. ATT requests run the Improv GATT service; an RPC
 /// write that carries Wi-Fi credentials stashes them for the firmware to act on.
@@ -112,6 +143,15 @@ pub extern "C" fn ns_ble_on_hci(pkt: *const u8, len: u32, out: *mut u8, cap: u32
                     NOTIFY_N = 0;
                     HAS_PENDING = false;
                     L2CAP.reset(); // drop any partial fragment from a prior link
+                }
+                // On the fresh connection, ask the central to raise the supervision timeout so the
+                // link survives the multi-second WiFi-active join (see conn_param_update_req_acl).
+                // A connection-complete event carries no HCI command (n==0), so the ACL is the only
+                // thing to send here. BlueZ's response arrives on CID 0x0005 and is harmlessly
+                // ignored by the ATT-only ACL path below; the applied params surface via the LE
+                // Connection Update Complete event.
+                if let Some(h) = unsafe { HOST.conn_handle() } {
+                    return conn_param_update_req_acl(h, out, cap);
                 }
             }
             if n == 0 {

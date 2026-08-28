@@ -99,6 +99,60 @@ session-URL trailer. Push works from the container over SSH (`credentials/id_ed2
 The next entry below is the substantive technical work on this branch (the PBKDF2 fix + the
 in-flight coex). Read it next.
 
+## rig-2 single-attempt provisioning 62%->92%: raise the BLE supervision timeout via L2CAP (branch `claude/pmk-freeze-fix`)
+
+Picks up the PMK entry's NEXT STEP ("raise the single-attempt provisioning rate on rig-2").
+The coex tuning that entry was chasing turned out to be a dead end; the real fix is a longer
+BLE supervision timeout. Single-attempt ImprovBLE provisioning on rig-2 went 5/8 (62%) ->
+11/12 (92%), and a monitored stress run (serial capture, which used to force near-total link
+drops) went 2/6 -> 4/4.
+
+Root cause (nailed with on-rig serial, `hitl-monitor` alongside the provisioner): a FAIL is
+always the BLE central dropping during the ~4-5s WiFi-active join (association -> WPA2 4-way
+-> DHCP), before the Improv redirect can be delivered — so even runs that DID lease failed (no
+central left to notify). That window is dominated by a deterministic ~3s AP-side DHCP-OFFER
+stall: the C6 sends DISCOVER every 350ms from link-up, but the rig's hostapd/dnsmasq stays
+silent, then burst-delivers ~8 queued OFFERs at once (CCMP PN 01..08 back to back). rig-2's
+RTL8851BU USB BT dongle has a SHORT BLE supervision timeout, so the starved link times out
+across that stall.
+
+What it is NOT (each ruled out on the rig):
+
+- Not our coex power-save: the ~3s stall persists with WiFi at FULL priority during the
+  DHCP-wait, and our uplink data frames already carry PM=0 (FC `0x08 0x41`). It is genuinely
+  AP-side (rig hostapd/dnsmasq), not DUT-controllable.
+- Not fixable by coex radio-share: 28% BLE (event-aligned, the committed baseline), a wide 50%
+  fine duty, and WiFi-full were all measured — each just trades a link-drop for a starved
+  association / starved DHCP. The single radio cannot both service BLE every connection interval
+  AND keep DHCP fast; none reliably beat the 62% baseline.
+
+Fix (`firmware/blehost/ble_ffi.rs`, `conn_param_update_req_acl`): on the 0->1 connection edge
+the heapless BLE host now sends an L2CAP Connection Parameter Update Request (LE signaling
+channel, CID 0x0005) asking the central to set interval 30-50ms, latency 0, supervision
+timeout ~6s. BlueZ applies it via a proper LL update (it owns the "instant"), and we pick up the
+new interval from the LE Connection Update Complete event. The link now rides out the ~3s AP
+stall: the central stays connected through the OFFER burst and the redirect lands, dropping only
+AFTER `leased=1`. The AP stall itself is unchanged (rig-side) but no longer fatal.
+
+This is the spec-correct path and is DISTINCT from the peripheral-initiated LE Connection
+Update that the `hci.rs` signpost (line ~148) warns off — that one has the peripheral choose the
+LL instant and dropped the link even faster with `0x28 Instant Passed`. The L2CAP request
+delegates the instant to the central, which is why it works. The `hci.rs` comment now points here.
+
+Verified: `//firmware/netstack:netstack_test` passes; `//firmware/player_app:esp32c6_netstack_flashbundle`
+builds `-c opt`. The change is general (helps every BLE connection through any WiFi burst) and the
+post-provisioning datapath is untouched. The 12x single-attempt sweep exercises the full onboarding
+(BLE Improv -> WPA2 -> DHCP -> redirect), so it doubles as an e2e check; a follow-up `bazel test` of
+the whole `hitl` lane is still worth running before merge.
+
+Repro/measure (container, tailnet up): `N=12 python3 /tmp/measure_coex.py` — reserves rig-2,
+flashes `esp32c6_netstack_flashbundle`, then per iteration erase-fs reflashes and does ONE
+attempts=1 ImprovBLE provision (single-attempt is the number comparable to the baseline; the
+harness's own 3x retry masks it). `/tmp/diag_serial.py` is the serial-capture variant that
+disambiguated the failure (it ships the provisioner + runs `hitl-monitor` in ONE `hitl run` shell,
+since concurrent `hitl run`s on a reservation collide). Both are throwaway `/tmp` scripts — wiped on
+container restart; recreate from this description if gone.
+
 ## rig-2 provisioning flake ROOT CAUSE = 1.8s PBKDF2 loop-freeze (branch `claude/pmk-freeze-fix`)
 
 Chasing the netstack-drop-in's flaky rig-2 BLE provisioning ("STATE 03 timed out"

@@ -145,12 +145,15 @@ impl BleHost {
                 self.state = HostState::Connected(handle);
                 // Capture the negotiated connection interval (params[12..14], 1.25 ms units) so the
                 // coex arbiter can predict connection-event anchors and yield the radio to BLE only
-                // around them. NOTE: we deliberately do NOT issue an LE Connection Update to raise
-                // the supervision timeout — measured on rig-2 it made things WORSE (a peripheral-
-                // initiated update creates an LL "instant" that, if the WiFi join starves BLE right
-                // then, drops the link with reason 0x28 Instant Passed even FASTER). The link is
-                // kept alive through the join by the event-aligned coex yield in
-                // netstack_transport.cpp (coex_update) instead. Left as a signpost.
+                // around them. NOTE: we deliberately do NOT issue an *HCI LE Connection Update* here
+                // to raise the supervision timeout — measured on rig-2 it made things WORSE (a
+                // peripheral-initiated update creates an LL "instant" that, if the WiFi join starves
+                // BLE right then, drops the link with reason 0x28 Instant Passed even FASTER). The
+                // supervision timeout IS raised (~6s, so the link rides out the ~3s AP-side DHCP-OFFER
+                // stall that otherwise dropped it) — but via the spec-correct L2CAP Connection
+                // Parameter Update Request the host sends on connect (ble_ffi.rs
+                // conn_param_update_req_acl), which lets the CENTRAL own the LL instant. Raised
+                // rig-2 single-attempt provisioning 62%->92%; see WORKLOG.
                 if params.len() >= 14 {
                     self.conn_interval = u16::from_le_bytes([params[12], params[13]]);
                 }
