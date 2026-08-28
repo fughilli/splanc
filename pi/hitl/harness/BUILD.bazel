@@ -436,6 +436,12 @@ py_test(
     name = "fx_bench_netstack",
     timeout = "eternal",
     srcs = ["fx_bench.py"],
+    # The heapless netstack serves the player socket over wss (TLS) ONLY — no plaintext
+    # ws:81 — so the bench must tunnel to :443, not fx_bench.py's default plain-ws scheme.
+    args = [
+        "--ws-scheme",
+        "wss",
+    ],
     data = [
         ":fx_benchmarks",
         "//firmware/player_app:esp32c6_netstack_flashbundle",
@@ -500,7 +506,12 @@ py_test(
     name = "fx_bench_jit_netstack",
     timeout = "eternal",
     srcs = ["fx_bench.py"],
-    args = ["--jit"],
+    # wss-only netstack (no plaintext ws:81) — tunnel to :443, not the default plain ws.
+    args = [
+        "--jit",
+        "--ws-scheme",
+        "wss",
+    ],
     data = [
         ":fx_benchmarks",
         "//firmware/player_app:esp32c6_netstack_flashbundle",
