@@ -14,9 +14,13 @@ let
   # pydantic v2 (ledmapper_protocol's models). Everything else is stdlib.
   ledPyEnv = pkgs.python3.withPackages (ps: [ ps.spidev ps.pydantic ]);
 
-  # Output backend baked into this image. The Pi3 test board (splanc-max-2) drives
-  # the //fpga/spi_ws281x streaming WS281x FPGA over SPI; the Pi5 (splanc-max-1)
-  # can revert to APA102 strips by flipping ledOutput back to "apa102". --start N
+  # Output backend baked into this image. Both current test boards are Raspberry
+  # Pi 3s: splanc-max-2 (the FPGA rig, Tang Nano 9K attached) drives the
+  # //fpga/spi_ws281x streaming WS281x FPGA over SPI, and splanc-max-1 is the same
+  # config. `fpga` needs the Tang wired to the board; a board without one can run
+  # APA102 strips by flipping ledOutput back to "apa102". (The Pi 3/Pi 5 split is a
+  # BOARD choice, not tied to a specific host — deploy the matching sbc_application
+  # variant; deploy_live's board guard refuses a mismatched closure.) --start N
   # self-drives a default cycle at boot so the SPI wire is always active for the
   # logic-analyzer probe (//pi/tools/la_probe) without needing a client.
   ledOutput = "fpga";
