@@ -49,17 +49,38 @@ check should be made sample-rate-aware (or gated) separately.
 watcher (stdin=/dev/null, threaded heartbeat + `running` marker, per-command
 timeout, cancel-on-exit) — separate commit, self-tested.
 
+**Follow-ups landed the same day:**
+
+- **Deploy hardware guard** (the real root cause of the splanc-max-1 brick — I
+  deployed a **Pi5 closure to a Pi3**, which installs an incompatible kernel and
+  bricks the next boot). sbc-deploy's `cmd_deploy` now reads the target's
+  `/proc/device-tree/model` and REFUSES a `$SBC_BOARD` mismatch (PR #13, merged;
+  MODULE.bazel bumped). Verified live on both a Pi3 deploy and the Pi5 rig deploy
+  (prints `==> Board check: … matches SBC_BOARD=…`). **BOTH test boards are Pi3s**
+  (the `apps.nix` "Pi5 splanc-max-1" label was wrong — fixed); the Pi5 target stays
+  for a future SKU.
+- **splanc-max-2 persistent deploy** via `:ledmapper_pi3.deploy_live -- --hostname
+splanc-max-2 192.168.68.68` (replaced the manual player; `NRestarts=0`, E2E
+  ws2812 green). Watch hostrun's STREAMED stdout, not one-shot reads of the raw
+  `.hostdeploy/<id>.log` — it lags over the shared mount and twice fooled me into
+  cancelling a healthy deploy.
+- **`.local` DUT seeds now work.** The reservation container has no mDNS (glibc NSS
+  in the minimal nix image ignores `LD_LIBRARY_PATH` and reads its own store-path
+  `ld.so.cache`, so nss-mdns won't load without nsncd/a custom glibc). So the
+  manager resolves `HITL_DUT_ADDR` `*.local` → IP HOST-side (`getent`, needs
+  `pkgs.getent` on the daemon PATH + `services.avahi`) before injecting it. Seed by
+  hostname freely; it's re-resolved per reservation.
+
 **Live-state caveats a fresh agent must know:**
 
 - **splanc-max-1 (`.50`) is DOWN** — I rebooted it (chasing the Tang, before
-  realising it's the wrong box) and it did NOT rejoin the LAN. No rig-side power
-  control for a network DUT → needs a **physical power-cycle at rig-1**.
-- **splanc-max-2 (`.68`)** was validated running the fixed player _manually_
-  (`/var/lib/ledmapper-fixed/player`, service stopped — NixOS read-only `/etc`
-  blocks a systemd drop-in). A `:ledmapper_pi3.deploy_live -- --hostname splanc-max-2
-192.168.68.68` makes it persistent (the RPi3 kernel builds from source, ~30–60 min
-  on the emulated builder — don't mistake the long silent kernel build for a hang;
-  watch hostrun's streamed stdout, the raw `.hostdeploy/<id>.log` lags over the mount).
+  realising it's the wrong box) and it did NOT rejoin the LAN (it had the wrong-board
+  Pi5 closure). No rig-side power control for a network DUT → needs a **physical
+  power-cycle at rig-1**, then redeploy with the **Pi3** target (`:ledmapper_pi3`) or
+  `update` — the guard now blocks a wrong-board repeat.
+- **The raw-SPI E2E check** is FX2-sample-rate-limited (24 MHz vs 6.4 MHz SPI); it's
+  redundant with ws2812 (the accepted validation) and should be made sample-rate-
+  aware or gated separately.
 
 ## 2026-08-27 — fpga_ws281x HITL drives the DUT over WS; BLOCKED on the DUT WSS
 
