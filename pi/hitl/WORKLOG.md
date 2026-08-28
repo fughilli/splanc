@@ -3,6 +3,64 @@
 Handoff notes alongside git history. Newest first. Read this before touching the
 rig's networking — there's live runtime state that isn't fully declarative yet.
 
+## 2026-08-28 — fpga_ws281x E2E green (ws2812) — wrong DUT + a musl crash-loop
+
+Resolved the previous entry's "DUT WSS never completes the handshake" block. It was
+a chain of three unrelated problems, none of them the harness:
+
+1. **The network-DUT seed pointed at the WRONG Pi.** `pi-ledmapper-1` was seeded to
+   `192.168.68.50` = **splanc-max-1** (a Pi5, APA102 role, **no Tang FPGA**). The
+   actual FPGA rig is **splanc-max-2** = `192.168.68.68` (a **Pi3**, Tang Nano 9K
+   attached; `apps.nix` even says so). So every capture had nothing to see. Re-seeded
+   to `.68` (edit `/var/lib/hitl/network-duts.json` on the rig — reached via
+   `tailscale ssh root@hitl-rig-1`, since the seed tool needs `pi/secrets/deploy_key`
+   which the container lacks; the `--discover` monitor ingests it in ~3s). A fresh
+   reservation then injects `HITL_DUT_ADDR=192.168.68.68`.
+
+   - Note: the WSS on `.50` was ALSO down at first because that box was running a
+     stale pre-fpga image (8443 firewall-closed → SYN dropped → "opening handshake
+     timeout"); a `deploy_live` fixed that, but `.50` is the wrong box regardless.
+
+2. **The static-musl player crash-loops on WS connections** (real bug, fixed in
+   commit "pi/player_rs: pin thread stacks"). musl's 128 KiB default spawned-thread
+   stack + tokio not setting a worker stack → rustls/tungstenite/protobuf overflows
+   it and SIGABRTs the whole process on the harness's `set_counting_pattern`
+   (`NRestarts` climbed to 18 on `.50`; coredump = `stack_overflow::signal_handler`
+   on a `tokio-rt-worker`). Fix: `thread_stack_size(8 MiB)` + render `stack_size(4
+MiB)`. Same `player_musl` artifact runs on both boxes, so `.68` needed it too.
+
+3. **The macOS host builder chain** (to run `deploy_live` via hostdeploy) needed
+   three one-time fixes, see the new `sbc-deploy-host-builder-chain` memory:
+   `trusted-users += kevin`, a `linux-builder` ssh alias, and `StrictHostKeyChecking
+accept-new` + `UserKnownHostsFile /dev/null` on that alias (ephemeral builder-VM
+   host key). Debug with `nix store info --store ssh-ng://builder@linux-builder … -vvv`.
+
+**E2E result on splanc-max-2** (fixed player, Tang present): the WS drive succeeds
+(no crash) and the **ws2812 capture PASSES all 4 ports** — correct per-port WS281x
+colours, i.e. the whole WSS→player→SPI→FPGA→WS281x chain works end-to-end. The
+**raw-SPI cross-check does NOT pass**: the FX2 (`fx2lafw`) samples at 24 MHz but the
+player drives SPI at 6.4 MHz = **3.75 samples/bit**, too marginal for a clean sigrok
+SPI decode (byte count grows with the window — 57→285 — but no clean 97 B STREAM
+frame). Redundant with ws2812 (which proves the SPI stream is correct); it's an
+analyzer-fidelity limit, so **ws2812 is the accepted validation** and the raw-SPI
+check should be made sample-rate-aware (or gated) separately.
+
+**Also hardened `tools/hostdeploy`** so a hung/interactive command can't wedge the
+watcher (stdin=/dev/null, threaded heartbeat + `running` marker, per-command
+timeout, cancel-on-exit) — separate commit, self-tested.
+
+**Live-state caveats a fresh agent must know:**
+
+- **splanc-max-1 (`.50`) is DOWN** — I rebooted it (chasing the Tang, before
+  realising it's the wrong box) and it did NOT rejoin the LAN. No rig-side power
+  control for a network DUT → needs a **physical power-cycle at rig-1**.
+- **splanc-max-2 (`.68`)** was validated running the fixed player _manually_
+  (`/var/lib/ledmapper-fixed/player`, service stopped — NixOS read-only `/etc`
+  blocks a systemd drop-in). A `:ledmapper_pi3.deploy_live -- --hostname splanc-max-2
+192.168.68.68` makes it persistent (the RPi3 kernel builds from source, ~30–60 min
+  on the emulated builder — don't mistake the long silent kernel build for a hang;
+  watch hostrun's streamed stdout, the raw `.hostdeploy/<id>.log` lags over the mount).
+
 ## 2026-08-27 — fpga_ws281x HITL drives the DUT over WS; BLOCKED on the DUT WSS
 
 Rewrote `pi/hitl/harness/hitl_fpga_ws281x.py` to drive the **network DUT**
