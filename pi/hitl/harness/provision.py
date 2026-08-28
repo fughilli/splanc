@@ -18,6 +18,7 @@ import json
 import os
 import re
 import sys
+import time
 from urllib.parse import urlparse
 
 
@@ -173,8 +174,30 @@ def reserved_board_ble_mac(res, seconds: float = 6.0) -> str | None:
     return m.group(1).lower() if m else None
 
 
+# Cap the inter-attempt improv backoff: exponential so a transient RF/BLE hiccup
+# (GATT `unable_to_connect`, a stalled advertising rebind after a reboot) gets more
+# settle time each retry, but bounded so a genuinely-dead board still fails fast.
+_PROVISION_BACKOFF_CAP_S = 8.0
+
+
+def provision_backoff(attempt: int) -> float:
+    """Seconds to wait before provisioning `attempt` (2, 3, …), FUG-137. Attempt 1
+    never waits (it's the first try); later attempts back off 2, 4, 8, … capped at
+    `_PROVISION_BACKOFF_CAP_S`, so BLE/RF (and a rebooted DUT's advertising) settle
+    before the reset+retry rather than hammering a board that just NAK'd a connect."""
+    if attempt <= 1:
+        return 0.0
+    return min(2.0 ** (attempt - 1), _PROVISION_BACKOFF_CAP_S)
+
+
 def provision_dut(
-    res, ssid: str, password: str, timeout: float, attempts: int = 3, address: str | None = None
+    res,
+    ssid: str,
+    password: str,
+    timeout: float,
+    attempts: int = 3,
+    address: str | None = None,
+    sleep=time.sleep,
 ) -> str:
     """Provision the DUT onto WiFi over ImprovBLE; return its redirect URL.
 
@@ -210,11 +233,21 @@ def provision_dut(
     last: HarnessError | None = None
     for attempt in range(1, attempts + 1):
         if attempt > 1:
-            # A failed join leaves the WiFi stack wedged (re-sending creds on the
-            # same boot fares worse — the retry often can't even re-advertise
-            # PROVISIONING). A hard reset returns the board to a clean soft-AP
-            # first-join state (creds were cleared on the join-timeout), which is
-            # the reliably-provisionable path. The 4s read lets the boot settle.
+            # Back off first so a transient BLE/RF failure (GATT unable_to_connect,
+            # advertising not yet rebound after a reboot) gets settle time that
+            # grows each retry — then reset. A failed join also leaves the WiFi
+            # stack wedged (re-sending creds on the same boot fares worse — the
+            # retry often can't even re-advertise PROVISIONING); a hard reset
+            # returns the board to a clean soft-AP first-join state (creds were
+            # cleared on the join-timeout), the reliably-provisionable path. The 4s
+            # read lets the boot settle.
+            backoff = provision_backoff(attempt)
+            if backoff:
+                print(
+                    f"[improv] backing off {backoff:g}s before retry {attempt}/{attempts}…",
+                    flush=True,
+                )
+                sleep(backoff)
             print(f"[improv] resetting DUT for a clean retry {attempt}/{attempts}…", flush=True)
             res.ssh("hitl-monitor --reset --seconds 4", capture=True, timeout=30)
         try:
