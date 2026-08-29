@@ -3,9 +3,10 @@
 
 The one behavior an ESP32-C6 and the LED-Mapper Pi both implement: accept WiFi
 credentials over Improv-over-BLE and join. `hitl_test(requires=["improv"])` fans
-this out to every SKU that advertises the `improv` capability
-(improv_e2e_esp32c6, improv_e2e_led-mapper-pi), so the SAME contract is checked on
-every hardware type — and a new SKU with `improv` is covered automatically.
+this out to every SKU that advertises the `improv` capability (improv_e2e_esp32c6,
+improv_e2e_led-mapper-pi — there is one Pi SKU; an attached FPGA is a per-DUT
+capability, not a separate SKU), so the SAME contract is checked on every hardware
+type — and a new SKU with `improv` is covered automatically.
 
 It reserves any free DUT with the required caps, reads the rig's provisioning-AP
 credentials, provisions the DUT onto that AP over Improv, and asserts it reports a

@@ -1245,9 +1245,11 @@ func resolve(server *string, req ...pool.Require) error {
 }
 
 // requireFlag registers a --require capability filter for pool selection. It's a
-// back-compat convenience: "analyzer" is an alias for --require-caps logic-analyzer.
+// back-compat convenience: "analyzer" aliases the granular logic-analyzer caps
+// (analyzer / analyzer-led-strip -> logic-analyzer-led-strip; analyzer-spi ->
+// logic-analyzer-spi).
 func requireFlag(fs *flag.FlagSet) *string {
-	return fs.String("require", "", "back-compat alias for a capability (analyzer = logic-analyzer); prefer --require-caps")
+	return fs.String("require", "", "capability alias (analyzer[-led-strip] = logic-analyzer-led-strip, analyzer-spi = logic-analyzer-spi); prefer --require-caps")
 }
 
 // capsFlag registers --require-caps: a comma-separated set of DUT capabilities the
@@ -1277,15 +1279,18 @@ func parseCaps(s string) []string {
 }
 
 // parseRequire maps the --require value to a pool.Require. The logic analyzer is a
-// per-DUT capability now, so "analyzer" is just an alias for the logic-analyzer cap.
+// per-DUT capability now, granular by the signal it taps, so "analyzer" aliases the
+// strip tap (the common LED case) and "analyzer-spi" the SPI-wire tap.
 func parseRequire(s string) (pool.Require, error) {
 	switch strings.TrimSpace(s) {
 	case "":
 		return pool.Require{}, nil
-	case "analyzer":
-		return pool.Require{Caps: []string{"logic-analyzer"}}, nil
+	case "analyzer", "analyzer-led-strip":
+		return pool.Require{Caps: []string{"logic-analyzer-led-strip"}}, nil
+	case "analyzer-spi":
+		return pool.Require{Caps: []string{"logic-analyzer-spi"}}, nil
 	default:
-		return pool.Require{}, fmt.Errorf("unknown --require %q (known: analyzer)", s)
+		return pool.Require{}, fmt.Errorf("unknown --require %q (known: analyzer, analyzer-led-strip, analyzer-spi)", s)
 	}
 }
 

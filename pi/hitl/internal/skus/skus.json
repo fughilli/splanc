@@ -1,1 +1,1 @@
-{"esp32c6":["flash","jtag","improv","wss-app","led-strip"],"led-mapper-pi":["improv"],"led-mapper-pi-fpga":["improv","led-strip","spi-fpga"]}
+{"esp32c6":["flash","jtag","improv","wss-app","led-strip"],"led-mapper-pi":["improv","wss-app","led-strip","spi-fpga"]}

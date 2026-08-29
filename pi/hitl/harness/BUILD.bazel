@@ -142,9 +142,10 @@ py_test(
     ],
 )
 
-# Pi -> spi_ws281x FPGA -> WS2812. Fans to the led-mapper-pi-fpga SKU; drives a
-# known static frame over SPI and validates both the FPGA's WS2812 outputs (per
-# port) and the raw SPI wire framing via the FX2 analyzer.
+# Pi -> spi_ws281x FPGA -> WS2812. Fans to any SKU with the spi-fpga + led-strip
+# caps (the led-mapper-pi SKU — the FPGA is a per-DUT capability, not its own SKU);
+# drives a known static frame over SPI and validates both the FPGA's WS2812 outputs
+# (per port) and the raw SPI wire framing via the FX2 analyzer.
 hitl_test(
     name = "fpga_ws281x",
     srcs = ["hitl_fpga_ws281x.py"],

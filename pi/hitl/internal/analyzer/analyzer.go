@@ -151,7 +151,8 @@ func (b *Broker) Describe() *api.AnalyzerInfo {
 func (b *Broker) SampleRateHz() int { return parseSampleRate(b.cfg.SampleRate) }
 
 // Taps reports whether this rig's shared analyzer is wired to the named DUT's data
-// line — i.e. the DUT should advertise the "logic-analyzer" capability. The
+// line — i.e. the DUT should advertise a logic-analyzer-* capability (see TapCaps
+// for the granular, signal-specific name). The
 // analyzer is rig wiring, not a SKU trait: two identical DUTs can differ, so this
 // is the source of truth for that capability. True when the broker is enabled AND
 // either the DUT has an explicit channel-map entry, or a default ("") entry exists
@@ -176,6 +177,26 @@ func (b *Broker) Taps(dut string) bool {
 		return true
 	}
 	return false
+}
+
+// TapCaps returns the granular logic-analyzer capabilities a DUT advertises from
+// this rig's wiring, or nil if it isn't tapped. The capability names the SIGNAL the
+// FX2 is on so tests can map precisely: a ws2812 tap on the strip DIN advertises
+// "logic-analyzer-led-strip"; a spi/spi-raw tap on the SPI wire advertises
+// "logic-analyzer-spi". (One channel-map entry per DUT = one protocol today, so a
+// DUT tapped on BOTH signals advertises the one its map entry names; multi-tap per
+// DUT would return both.) This is rig instrumentation, not a SKU trait — hence it
+// lives here, keyed off the broker's channel map, not in the SKU registry.
+func (b *Broker) TapCaps(dut string) []string {
+	if !b.Taps(dut) {
+		return nil
+	}
+	switch b.mapping(dut).Protocol {
+	case ProtocolSPI, ProtocolSPIRaw:
+		return []string{"logic-analyzer-spi"}
+	default: // ProtocolWS2812 (and the D0/ws2812 fallback)
+		return []string{"logic-analyzer-led-strip"}
+	}
 }
 
 // mapping resolves a DUT name to its channel/protocol assignment, falling back to

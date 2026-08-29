@@ -130,7 +130,8 @@ func Probes(servers []string, get StatusFn) []Probe {
 // advertises the required capability are considered.
 // Require is a rig-selection filter: keep only rigs that can serve a reservation
 // needing this hardware SKU and/or these per-DUT capabilities. The logic analyzer
-// is just another capability ("logic-analyzer"), advertised per-DUT by the daemon —
+// is just another capability (logic-analyzer-led-strip / logic-analyzer-spi),
+// advertised per-DUT by the daemon —
 // there is no separate rig-level analyzer knob.
 type Require struct {
 	SKU  string   // require a FREE DUT of this hardware SKU ("" = any)

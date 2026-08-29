@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """HITL E2E: Pi player_rs (Rust) -> spi_ws281x FPGA -> WS2812 strips.
 
-Reserves a `led-mapper-pi-fpga` DUT (a LED Mapper Pi wired to the spi_ws281x
-FPGA), drives a known static frame over the player's WebSocket — exactly as the
-phone would — and uses the rig's FX2 logic analyzer to validate BOTH ends of the
-chain:
+Reserves a `led-mapper-pi` DUT with the `spi-fpga` + `led-strip` capabilities (a
+LED Mapper Pi wired to the spi_ws281x FPGA — the FPGA is a per-DUT capability, not
+a distinct SKU), drives a known static frame over the player's WebSocket — exactly
+as the phone would — and uses the rig's FX2 logic analyzer to validate BOTH ends of
+the chain:
 
   * the FPGA's WS2812 strip outputs decode (per port) to exactly the pixels the
     Pi sent, and
@@ -26,7 +27,7 @@ how the rig is wired; `--num-ports` MUST match the deployed player's `--fpga-por
 (the codec splits the counting LEDs evenly across that many ports).
 
 Run on a tailnet host via `//pi/hitl:hitl_shim` (see pi/hitl/BUILD.bazel), or as
-the generated `//pi/hitl/harness:fpga_ws281x_led-mapper-pi-fpga` target.
+the generated `//pi/hitl/harness:fpga_ws281x_led-mapper-pi` target.
 """
 
 from __future__ import annotations
@@ -228,8 +229,11 @@ def _dut_addr(res: Reservation) -> str:
 
 def run(args: argparse.Namespace) -> int:
     caps = [c for c in (args.require_caps or "").split(",") if c]
-    # Ensure we land on an analyzer rig with the FPGA DUT mapped.
-    for extra in ("logic-analyzer",):
+    # Ensure we land on an analyzer rig whose FX2 taps the FPGA's WS2812 strip
+    # outputs (the primary, always-on validation). The raw-SPI STREAM cross-check
+    # (--check-spi-stream) additionally wants a logic-analyzer-spi tap; it's gated
+    # off by default (FX2 sample-rate fidelity), so we don't require it here.
+    for extra in ("logic-analyzer-led-strip",):
         if extra not in caps:
             caps.append(extra)
 

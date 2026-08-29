@@ -17,11 +17,11 @@ func TestPickRequireAnalyzer(t *testing.T) {
 			{Name: "c6-0", Capabilities: []string{"flash", "improv"}},
 		}},
 		"http://b:8087": {Devices: []api.DeviceStatus{
-			{Name: "c6-la", Capabilities: []string{"flash", "improv", "logic-analyzer"}},
+			{Name: "c6-la", Capabilities: []string{"flash", "improv", "logic-analyzer-led-strip"}},
 		}},
 	}
 	servers := []string{"http://a:8087", "http://b:8087"}
-	got, err := Pick(Probes(servers, fakeGet(states, nil)), Require{Caps: []string{"logic-analyzer"}})
+	got, err := Pick(Probes(servers, fakeGet(states, nil)), Require{Caps: []string{"logic-analyzer-led-strip"}})
 	if err != nil {
 		t.Fatalf("Pick(require analyzer): %v", err)
 	}
@@ -31,7 +31,7 @@ func TestPickRequireAnalyzer(t *testing.T) {
 
 	// No rig with a free analyzer DUT -> a clear error, not a wrong pick.
 	only := map[string]*api.Status{"http://a:8087": states["http://a:8087"]}
-	if _, err := Pick(Probes([]string{"http://a:8087"}, fakeGet(only, nil)), Require{Caps: []string{"logic-analyzer"}}); err == nil {
+	if _, err := Pick(Probes([]string{"http://a:8087"}, fakeGet(only, nil)), Require{Caps: []string{"logic-analyzer-led-strip"}}); err == nil {
 		t.Error("Pick(require analyzer) with no analyzer rig: want error, got nil")
 	}
 
