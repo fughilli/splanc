@@ -31,14 +31,14 @@ rust_library(
         "//shared/protocol/rust:ledmapper_pb",
         "@crates//:micropb",
         # Phase 3 WS+TLS transport (server.rs) — PURE RUST crypto (no ring/C).
-        "@crates//:futures-util",
-        "@crates//:p256",
-        "@crates//:rustls",
-        "@crates//:rustls-rustcrypto",
-        "@crates//:tokio",
-        "@crates//:tokio-rustls",
-        "@crates//:tokio-tungstenite",
-        "@crates//:x509-cert",
+        "@player_crates//:futures-util",
+        "@player_crates//:p256",
+        "@player_crates//:rustls",
+        "@player_crates//:rustls-rustcrypto",
+        "@player_crates//:tokio",
+        "@player_crates//:tokio-rustls",
+        "@player_crates//:tokio-tungstenite",
+        "@player_crates//:x509-cert",
     ],
 )
 
@@ -64,8 +64,8 @@ rust_binary(
     deps = [
         ":player_rs",
         "//firmware/player",
-        "@crates//:spidev",
-        "@crates//:tokio",
+        "@player_crates//:spidev",
+        "@player_crates//:tokio",
     ],
 )
 

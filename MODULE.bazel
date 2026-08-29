@@ -173,106 +173,12 @@ crate.spec(
     version = "0.22",
 )
 
-# Pi player (//pi/player_rs) platform dep: the Linux spidev ioctl wrapper for
-# the SK9822/FPGA SPI output. Linux-only; only enters the aarch64/x86_64-linux
-# player binary's closure (never the firmware/wasm/darwin triples).
-crate.spec(
-    package = "spidev",
-    version = "0.6",
-)
-
-# Pi player (//pi/player_rs) Phase 3 — the WS+TLS server that the phone (and the
-# HITL harness, via res.forward) talks to, wrapping the reused Player core. Same
-# transport the ESP32 firmware exposes: TLS 1.2 + RFC6455 WebSocket + protobuf.
-# PURE-RUST crypto (rustls-rustcrypto) — NO C. ring (C/asm) and aws-lc-rs (C/CMake)
-# are both out: the player must be 100% Rust so rustc alone cross-compiles it to a
-# static aarch64-linux-musl binary (no cc/zig, no patchelf) that ships through the
-# build graph. The app installs the RustCrypto provider explicitly, so rustls +
-# tokio-rustls carry NO built-in provider feature.
-crate.spec(
-    features = [
-        "rt-multi-thread",
-        "net",
-        "io-util",
-        "macros",
-        "sync",
-        "time",
-    ],
-    package = "tokio",
-    version = "1",
-)
-crate.spec(
-    default_features = False,
-    features = [
-        "std",
-        "tls12",
-        "logging",
-    ],
-    package = "rustls",
-    version = "0.23",
-)
-crate.spec(
-    default_features = False,
-    package = "tokio-rustls",
-    version = "0.26",
-)
-crate.spec(
-    package = "rustls-rustcrypto",
-    version = "0.0.2-alpha",
-)
-crate.spec(
-    default_features = False,
-    features = ["handshake"],
-    package = "tokio-tungstenite",
-    version = "0.24",
-)
-crate.spec(
-    default_features = False,
-    features = [
-        "std",
-        "sink",
-        "async-await",
-    ],
-    package = "futures-util",
-    version = "0.3",
-)
-
-# Self-signed cert generation — PURE RUST (RustCrypto), replacing rcgen (which
-# only has ring/aws-lc-rs C backends). p256 makes the ECDSA key + signs; x509-cert
-# assembles + self-signs the DER cert.
-crate.spec(
-    default_features = False,
-    features = [
-        "ecdsa",
-        "pkcs8",
-        "std",
-    ],
-    package = "p256",
-    version = "0.13",
-)
-crate.spec(
-    default_features = False,
-    features = [
-        "std",
-        "builder",
-    ],
-    package = "x509-cert",
-    version = "0.2",
-)
-crate.spec(
-    default_features = False,
-    features = ["getrandom"],
-    package = "rand_core",
-    version = "0.6",
-)
-
-# Pin `time` below 0.3.55, which needs rustc 1.87+ (integer_sign_cast /
-# unsigned_is_multiple_of / let-chains); we're on the firmware-validated 1.85.0.
-crate.spec(
-    default_features = False,
-    package = "time",
-    version = "=0.3.36",
-)
+# NOTE: the Pi player's std deps (spidev, tokio, rustls*, tokio-tungstenite,
+# futures-util, p256, x509-cert, rand_core, time) live in the ISOLATED
+# `player_crates` universe (defined after host_crates below) — tungstenite pulls
+# byteorder WITH std, and a shared universe would unify that std feature onto the
+# firmware's heapless->hash32->byteorder and break the no_std riscv32imac-none
+# build (same reasoning as the host_crates isolation).
 crate.from_specs(
     # rules_rust's default list is a small host-centric subset (splicing is
     # O(N^2) per triple) — it must be restated here to EXTEND it with the
@@ -311,6 +217,116 @@ host_crate.spec(
 )
 host_crate.from_specs(name = "host_crates")
 use_repo(host_crate, "host_crates")
+
+# Pi player (//pi/player_rs) std deps — the WS+TLS server + Linux SPI + pure-Rust
+# crypto. ISOLATED universe (like host_crates): tungstenite pulls byteorder WITH
+# std (it uses std::io via ReadBytesExt), and crate_universe unifies features per
+# crate across a universe — sharing the main "crates" universe leaked byteorder's
+# std feature onto the firmware's heapless->hash32->byteorder and broke the no_std
+# riscv32imac-none build. These crates are std/musl/host only, never firmware, so
+# a separate universe keeps the device graph no_std. (PURE-RUST crypto: rustls +
+# rustls-rustcrypto, no ring/aws-lc-rs C — the player must cross-compile to a
+# static aarch64-linux-musl binary with rustc alone.)
+player_crate = use_extension(
+    "@rules_rust//crate_universe:extensions.bzl",
+    "crate",
+    isolate = True,
+)
+player_crate.spec(
+    package = "spidev",
+    version = "0.6",
+)
+player_crate.spec(
+    features = [
+        "rt-multi-thread",
+        "net",
+        "io-util",
+        "macros",
+        "sync",
+        "time",
+    ],
+    package = "tokio",
+    version = "1",
+)
+player_crate.spec(
+    default_features = False,
+    features = [
+        "std",
+        "tls12",
+        "logging",
+    ],
+    package = "rustls",
+    version = "0.23",
+)
+player_crate.spec(
+    default_features = False,
+    package = "tokio-rustls",
+    version = "0.26",
+)
+player_crate.spec(
+    package = "rustls-rustcrypto",
+    version = "0.0.2-alpha",
+)
+player_crate.spec(
+    default_features = False,
+    features = ["handshake"],
+    package = "tokio-tungstenite",
+    version = "0.24",
+)
+player_crate.spec(
+    default_features = False,
+    features = [
+        "std",
+        "sink",
+        "async-await",
+    ],
+    package = "futures-util",
+    version = "0.3",
+)
+player_crate.spec(
+    default_features = False,
+    features = [
+        "ecdsa",
+        "pkcs8",
+        "std",
+    ],
+    package = "p256",
+    version = "0.13",
+)
+player_crate.spec(
+    default_features = False,
+    features = [
+        "std",
+        "builder",
+    ],
+    package = "x509-cert",
+    version = "0.2",
+)
+player_crate.spec(
+    default_features = False,
+    features = ["getrandom"],
+    package = "rand_core",
+    version = "0.6",
+)
+
+# Pin `time` below 0.3.55 (needs rustc 1.87+); we're on the firmware-validated 1.85.0.
+player_crate.spec(
+    default_features = False,
+    package = "time",
+    version = "=0.3.36",
+)
+player_crate.from_specs(
+    name = "player_crates",
+    # Host/musl only (no bare-metal or wasm — the player never targets those).
+    supported_platform_triples = [
+        "aarch64-apple-darwin",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-pc-windows-msvc",
+        "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-nixos-gnu",
+    ],
+)
+use_repo(player_crate, "player_crates")
 
 # ---------------------------------------------------------------------------
 # ESP32-C6/RP2350 firmware monorepo (docs/esp32-led-mapping-plan.md Phase 0a):
