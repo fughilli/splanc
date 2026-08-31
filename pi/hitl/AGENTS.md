@@ -184,6 +184,44 @@ download`, the BOOT button is held/stuck — this needs a human to release it an
 - The lease is heartbeated while a `hitl` command runs; if your process dies the
   lease expires and the next agent is promoted.
 
+## Deploying the rig (and the `bazel run` hang)
+
+Push a new rig image with `bazel run //pi/hitl:update -- <host>` (autodetects the
+board + committed profile; board-guarded). On aarch64-linux (the container) it
+builds the closure natively — no macOS builder VM.
+
+**GOTCHA: the `bazel run` wrapper does NOT exit when the deploy is done.** The
+final step is `nix copy --to ssh-ng://<rig>` + an ssh `switch-to-configuration
+switch`. `nix copy` over ssh-ng opens a _persistent_ SSH master (ControlPersist
+style) that inherits the wrapper's stdout/stderr pipe. So after the deploy prints
+
+```text
+==> Switch complete on <host>.
+```
+
+the actual work is FINISHED, but `bazel run` blocks indefinitely waiting for that
+pipe to EOF because the lingering ssh master still holds it. Observed hanging for
+hours twice. Do **not** wait for the process to exit.
+
+Reliable procedure (don't one-shot-wait on it):
+
+```sh
+# run detached, watch the log for the completion line, then kill the wrapper
+nohup bash -c 'bazel run //pi/hitl:update -- <host> 2>&1' > /tmp/deploy.log 2>&1 &
+#   ...watch /tmp/deploy.log for "==> Switch complete on <host>."...
+kill <pid>            # the deploy is already done; this just reaps the stuck wrapper
+```
+
+Then VERIFY the new daemon is actually live (don't trust the wrapper):
+
+```sh
+ssh <deploy-key> root@<host> 'systemctl show -p ExecMainStartTimestamp hitl-manager'  # should be ~now
+curl -s http://<host>:8087/status | ...   # check the DUTs/caps you changed
+```
+
+Log to a path that survives a container restart (`/tmp` is wiped) — e.g.
+`/home/claude/deploy.log` — so a mid-build restart doesn't lose the transcript.
+
 ## USBIP (remote attach)
 
 The rig host can export the C6 over the tailnet so a remote machine attaches it as
