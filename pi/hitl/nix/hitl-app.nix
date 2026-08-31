@@ -412,6 +412,19 @@ in
     wantedBy = [ "multi-user.target" ];
     after = [ "network-online.target" "tailscaled.service" "hitl-image-load.service" ];
     wants = [ "network-online.target" "hitl-image-load.service" ];
+    # Force switch-to-configuration to RESTART the daemon whenever its binary
+    # changes. The ExecStart store path already changes with `hitl`, so this should
+    # be implicit — but in practice a live `deploy_live` switch left the OLD daemon
+    # process running against the NEW unit (only a reboot picked up the new binary,
+    # so a redeployed rig silently kept serving stale behaviour). Listing the
+    # package in restartTriggers puts the unit in switch-to-configuration's
+    # always-restart set, keyed on the exact binary, so a deploy reliably swaps it.
+    restartTriggers = [ "${hitl}/bin/hitl-managerd" ];
+    # No restart rate-limit ([Unit] section): a reservation rig's daemon must
+    # always come back, and rapid redeploys (or a crash loop during bring-up)
+    # shouldn't trip the default StartLimitBurst and wedge it into a
+    # "failed, refuses to start" state that then needs a manual reset-failed.
+    unitConfig.StartLimitIntervalSec = 0;
     # networkmanager (nmcli) toggles the AP; iw/iproute2 create the AP vif on
     # demand; sigrok-cli captures the DUT's tapped LED line when an FX2 is present
     # (shipped on every rig; the daemon self-gates); getent resolves a *.local
