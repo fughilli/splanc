@@ -54,6 +54,14 @@ type Config struct {
 	// map_la-written mapping survives daemon restarts and outranks the deploy
 	// default) and rewritten by SetMap. "" disables persistence.
 	MapPath string
+	// HardwareProbe reports whether the shared FX2 is physically attached to this
+	// rig. The image ALWAYS ships the analyzer (sigrok + driver) so there is no
+	// build-time on/off flag to commit wrong; instead the broker is dormant
+	// (Enabled()==false) when the driver is set but the FX2 isn't present, so a rig
+	// with no analyzer wired never advertises logic-analyzer-* caps. nil means
+	// "assume present" (the default — used by unit tests, which have no FX2);
+	// production passes FX2Present (the sysfs USB scan).
+	HardwareProbe func() bool
 }
 
 // Broker owns the single shared analyzer and serializes captures on it.
@@ -62,6 +70,39 @@ type Broker struct {
 	mu      sync.Mutex   // exactly one capture at a time on the one instrument
 	mapMu   sync.RWMutex // guards cfg.Map (read by captures/status, rewritten by SetMap)
 	mapPath string
+	present bool // driver configured AND the FX2 is physically attached (see New)
+}
+
+// fx2USBIDs are the USB VID:PIDs the shared FX2/fx2lafw logic analyzer enumerates
+// as: the Saleae-clone and Cypress-default IDs of a BARE board, plus the fx2lafw ID
+// it takes AFTER sigrok uploads firmware. Probed from sysfs (FX2Present) so a rig
+// with no analyzer wired stays dormant with no build-time flag and no per-rig seed.
+var fx2USBIDs = map[string]bool{
+	"0925:3881": true, // Saleae Logic clone (bare)
+	"04b4:8613": true, // Cypress EZ-USB FX2 (default, pre-firmware)
+	"1d50:608c": true, // fx2lafw (post firmware upload)
+}
+
+// FX2Present reports whether an FX2 logic analyzer is attached, by scanning the
+// USB device tree in sysfs for a known VID:PID. Cheap and side-effect-free (unlike
+// a sigrok scan, which uploads firmware), so it's safe to call at daemon startup.
+func FX2Present() bool {
+	entries, err := os.ReadDir("/sys/bus/usb/devices")
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		base := filepath.Join("/sys/bus/usb/devices", e.Name())
+		vid, err1 := os.ReadFile(filepath.Join(base, "idVendor"))
+		pid, err2 := os.ReadFile(filepath.Join(base, "idProduct"))
+		if err1 != nil || err2 != nil {
+			continue
+		}
+		if fx2USBIDs[strings.TrimSpace(string(vid))+":"+strings.TrimSpace(string(pid))] {
+			return true
+		}
+	}
+	return false
 }
 
 // New builds a broker, filling defaults. A nil/disabled broker (empty Driver) is
@@ -102,11 +143,19 @@ func New(cfg Config) *Broker {
 			}
 		}
 	}
-	return &Broker{cfg: cfg, mapPath: cfg.MapPath}
+	// The broker is live only when a driver is configured AND the FX2 is actually
+	// attached. HardwareProbe==nil means "assume present" (unit tests, no FX2);
+	// production passes FX2Present, so a rig without the analyzer wired is dormant.
+	present := cfg.Driver != ""
+	if present && cfg.HardwareProbe != nil {
+		present = cfg.HardwareProbe()
+	}
+	return &Broker{cfg: cfg, mapPath: cfg.MapPath, present: present}
 }
 
-// Enabled reports whether an analyzer is configured on this rig.
-func (b *Broker) Enabled() bool { return b != nil && b.cfg.Driver != "" }
+// Enabled reports whether the shared analyzer is live on this rig: a capture driver
+// is configured AND (per Config.HardwareProbe) the FX2 is physically attached.
+func (b *Broker) Enabled() bool { return b != nil && b.present }
 
 // Describe returns the rig's analyzer capability for /status, or nil when there
 // is no analyzer — so clients can select a rig by capability. Protocols/channels

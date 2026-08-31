@@ -99,17 +99,17 @@ let
   apSsid = config.networking.hostName;
   apPsk = "${config.networking.hostName}-provision"; # ≥8 chars; override for a fixed one
 
-  # Two independent, board-agnostic capabilities, each toggled by an env var at
-  # (impure) deploy eval — so ONE appModule builds any of {Pi 3, Pi 5} × {analyzer,
-  # plain} × {onboard AP, dongle AP}. Unset = off, so a bare rig stays lean (no
-  # sigrok closure, no out-of-tree WiFi driver). These were previously conflated
-  # with the board (analyzer == Pi 3, dongle == analyzer); decoupled so the analyzer
-  # can live on a Pi 5 with an onboard-wlan0 AP, etc.
+  # The shared FX2/fx2lafw logic analyzer is shipped UNCONDITIONALLY: sigrok, the
+  # capture broker, the udev rules, and the fx2lafw firmware are in EVERY rig image.
+  # There is NO build-time analyzer flag to commit wrong (a stale SBC_ANALYZER=0
+  # once silently disabled a wired rig). Instead the daemon probes for the FX2 at
+  # runtime (analyzer.FX2Present); a rig with no FX2 attached is simply dormant and
+  # advertises no logic-analyzer-* caps, while the seeded per-DUT channel map
+  # (map_la, persisted under /var/lib/hitl) decides how a present FX2 is used.
   #
-  #   SBC_ANALYZER=1   → wire the shared FX2/fx2lafw logic analyzer: sigrok capture
-  #                      broker, POST /capture, per-DUT channel map. The FX2 is a
-  #                      rig-level instrument the daemon owns (never passed into a
-  #                      container). See internal/analyzer and DESIGN.md.
+  # The remaining board-agnostic knobs are still env-toggled at (impure) deploy eval
+  # — so ONE appModule builds any {Pi 3, Pi 5} × {onboard AP, dongle AP}:
+  #
   #   SBC_AP_DONGLE=1  → host the provisioning AP on a dedicated RTL8851BU USB radio
   #                      (ap0) instead of onboard wlan0 — for a board that can't AP.
   #   SBC_BT_DONGLE=1  → use the RTL8851BU USB dongle's BLUETOOTH half (btusb/hci) as
@@ -121,7 +121,6 @@ let
   #                      dongle out of CD-ROM mode, and points the daemon (btmon) +
   #                      container (bleak) at the USB controller via --ble-adapter.
   sigrok = import ./sigrok.nix { inherit pkgs; };
-  isAnalyzerRig = builtins.getEnv "SBC_ANALYZER" == "1";
   useApDongle = builtins.getEnv "SBC_AP_DONGLE" == "1";
   useBtDongle = builtins.getEnv "SBC_BT_DONGLE" == "1";
   isPi3 = builtins.getEnv "SBC_BOARD" == "raspberry-pi-3";
@@ -143,7 +142,10 @@ let
   analyzerChannelMap = builtins.toJSON {
     "default" = { channels = [ "D6" ]; protocol = "ws2812"; };
   };
-  analyzerArgs = lib.optionals isAnalyzerRig [
+  # Always wire the analyzer flags — the daemon self-gates on the FX2 being present
+  # (see the header comment). The baked channel map is the single-DUT default; a
+  # persisted map_la seed (MapPath) overlays it per DUT at runtime.
+  analyzerArgs = [
     "--analyzer-driver"
     "fx2lafw"
     "--analyzer-sigrok"
@@ -262,10 +264,11 @@ in
   # over the built-in USB-JTAG); the device nodes are otherwise root-only.
   services.udev.extraRules = ''
     SUBSYSTEM=="usb", ATTR{idVendor}=="303a", MODE="0666"
-  '' + lib.optionalString isAnalyzerRig ''
+  '' + ''
     # FX2/fx2lafw logic analyzer, both the bare-clone VID:PID and the fx2lafw one
-    # it re-enumerates to after firmware upload. World-writable on this
-    # single-purpose bench; the daemon (root) owns it, this is belt-and-suspenders.
+    # it re-enumerates to after firmware upload. Shipped on every rig (the daemon
+    # self-gates on the FX2 being present); world-writable on this single-purpose
+    # bench, where the daemon (root) owns it — belt-and-suspenders.
     SUBSYSTEM=="usb", ATTR{idVendor}=="0925", ATTR{idProduct}=="3881", MODE="0666"
     SUBSYSTEM=="usb", ATTR{idVendor}=="1d50", ATTR{idProduct}=="608c", MODE="0666"
   '' + lib.optionalString useDongle ''
@@ -310,8 +313,9 @@ in
   # bind/attach; bluez for btmon (the daemon runs it for per-reservation BLE HCI
   # capture, and a human on the rig can `btmon -r` a fetched trace).
   environment.systemPackages = [ hitl pkgs.usbutils pkgs.linuxPackages.usbip pkgs.bluez ]
-    # sigrok-cli + fx2lafw firmware for the analyzer; usb-modeswitch for the dongle.
-    ++ lib.optionals isAnalyzerRig sigrok.packages
+    # sigrok-cli + fx2lafw firmware ship on every rig (the daemon self-gates on the
+    # FX2 being present); usb-modeswitch for the dongle.
+    ++ sigrok.packages
     ++ lib.optionals useDongle [ pkgs.usb-modeswitch ];
 
   # Load the test image into Podman at boot (and on every deploy — the ExecStart
@@ -406,11 +410,12 @@ in
     after = [ "network-online.target" "tailscaled.service" "hitl-image-load.service" ];
     wants = [ "network-online.target" "hitl-image-load.service" ];
     # networkmanager (nmcli) toggles the AP; iw/iproute2 create the AP vif on
-    # demand; sigrok-cli (analyzer rig only) captures the DUT's tapped LED line;
-    # getent resolves a *.local network-DUT address host-side (nss-mdns) before
-    # injecting the IP into the reservation container (see resolveDUTAddr).
+    # demand; sigrok-cli captures the DUT's tapped LED line when an FX2 is present
+    # (shipped on every rig; the daemon self-gates); getent resolves a *.local
+    # network-DUT address host-side (nss-mdns) before injecting the IP into the
+    # reservation container (see resolveDUTAddr).
     path = [ pkgs.podman pkgs.iproute2 pkgs.openssh pkgs.getent ]
-      ++ lib.optionals isAnalyzerRig sigrok.packages;
+      ++ sigrok.packages;
     serviceConfig = {
       ExecStart =
         lib.concatStringsSep " " ([
@@ -440,13 +445,14 @@ in
           "--ap-ssid ${apSsid}"
           "--ap-psk ${apPsk}"
           dutArgs
-        ] ++ analyzerArgs # --analyzer-* only on the logic-analyzer rig
+        ] ++ analyzerArgs # --analyzer-* always; daemon self-gates on the FX2
         # BT dongle rig: point BLE central (btmon capture host-side + bleak in the
         # container) at the USB controller instead of the flaky onboard one. "usb"
         # auto-resolves the hci by bus at runtime, so it's robust to hciN ordering.
         ++ lib.optionals useBtDongle [ "--ble-adapter" "usb" ]);
-      # libsigrok uploads fx2lafw firmware to the bare FX2 from here (analyzer rig).
-      Environment = lib.optionals isAnalyzerRig [ "SIGROK_FIRMWARE_DIR=${sigrok.firmwareDir}" ];
+      # libsigrok uploads fx2lafw firmware to the bare FX2 from here. Set on every
+      # rig (harmless when no FX2 is attached; the daemon self-gates on presence).
+      Environment = [ "SIGROK_FIRMWARE_DIR=${sigrok.firmwareDir}" ];
       StateDirectory = "hitl";
       Restart = "on-failure";
       RestartSec = 3;

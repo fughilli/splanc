@@ -34,11 +34,12 @@ _wifi_config = (glob(
 ) or ["wifi.yaml.example"])[0]
 
 sbc_application(
+    # The logic analyzer is no longer a deploy-time capability: every image ships
+    # sigrok + the FX2 broker and the daemon self-gates on the FX2 being physically
+    # present (analyzer.FX2Present), so there's no SBC_ANALYZER to detect, commit, or
+    # drift. See nix/hitl-app.nix and internal/analyzer. (No detect_caps_cmd — the
+    # remaining SBC_* dongle knobs aren't board-probed.)
     name = "hitl",
-    # Hybrid detect-warn for `:update`: probe the board for the Saleae Logic
-    # analyzer (USB 0925:3881) and report the capability it implies; `.update`
-    # warns if this disagrees with the board's committed /var/lib/sbc/profile.
-    detect_caps_cmd = "lsusb | grep -q 0925:3881 && echo SBC_ANALYZER=1 || echo SBC_ANALYZER=0",
     flake = "pi/hitl",
     hostname = "hitl-rig",
     wifi_config_file = _wifi_config,

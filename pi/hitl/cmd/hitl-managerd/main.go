@@ -148,9 +148,16 @@ func main() {
 		// Persist runtime map edits (map_la) next to the other daemon state so the
 		// acquired DUT→channel mapping survives restarts/reboots without a redeploy.
 		MapPath: filepath.Join(*stateDir, "analyzer-channel-map.json"),
+		// The image always ships the analyzer; presence of the FX2 (not a build-time
+		// flag) decides whether the broker is live. A rig with no FX2 stays dormant.
+		HardwareProbe: analyzer.FX2Present,
 	})
-	if brk.Enabled() {
-		log.Printf("logic analyzer: driver=%s samplerate=%s (shared, brokered over /capture)", *analyzerDriver, *analyzerRate)
+	if *analyzerDriver != "" {
+		if brk.Enabled() {
+			log.Printf("logic analyzer: driver=%s samplerate=%s — FX2 present (shared, brokered over /capture)", *analyzerDriver, *analyzerRate)
+		} else {
+			log.Printf("logic analyzer: driver=%s configured but no FX2 attached — dormant (no logic-analyzer-* caps)", *analyzerDriver)
+		}
 	}
 
 	var devs []runner.Device
