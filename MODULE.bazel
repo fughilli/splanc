@@ -347,13 +347,15 @@ use_repo(player_crate, "player_crates")
 bazel_dep(name = "sbc_deploy", version = "0.0.0")
 git_override(
     module_name = "sbc_deploy",
-    # build-data @ d6eb5cc — includes the deploy_live hardware guard (PR #13,
-    # squash-merged): cmd_deploy now reads the target's /proc/device-tree/model and
-    # REFUSES a board/hardware mismatch (e.g. a Pi5 closure onto a Pi3, which bricks
-    # the next boot) — the footgun that took down splanc-max-1. deploy/scripts-only,
-    # so the Nix side is untouched and pi/hitl/nix + pi/provisioning/nix flake.lock
-    # build the same closure; bump them on the next Nix change.
-    commit = "d6eb5cc98b140741203165e7a821ef831e63d1c9",  # build-data (PR #13 merged)
+    # hermetic flake source @ 5611bec (branch pi/hermetic-flake-src, PR pending):
+    # sbc_application grows a `flake_srcs` attr — Bazel stages EXACTLY the declared
+    # flake files into a TreeArtifact and the deploy builds `path:$SBC_FLAKE_DIR`
+    # from that, never the live workspace. Fixes non-deterministic builds: pointing
+    # nix at $BUILD_WORKSPACE_DIRECTORY exposed the churning .bazelisk cache, so the
+    # same inputs hashed to the same store path with different bytes and nix copy
+    # served stale daemons (rig-2 stuck on an old binary). Descends from d6eb5cc
+    # (the deploy_live board/hardware brick guard, PR #13).
+    commit = "5611bec7161f3210c2aa39e524017ed44cff43ef",  # hermetic flake_srcs
     remote = "https://github.com/fughilli/sbc-deploy.git",
 )
 
