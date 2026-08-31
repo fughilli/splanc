@@ -190,37 +190,51 @@ Push a new rig image with `bazel run //pi/hitl:update -- <host>` (autodetects th
 board + committed profile; board-guarded). On aarch64-linux (the container) it
 builds the closure natively — no macOS builder VM.
 
-**GOTCHA: the `bazel run` wrapper does NOT exit when the deploy is done.** The
-final step is `nix copy --to ssh-ng://<rig>` + an ssh `switch-to-configuration
-switch`. `nix copy` over ssh-ng opens a _persistent_ SSH master (ControlPersist
-style) that inherits the wrapper's stdout/stderr pipe. So after the deploy prints
+**GOTCHA: a backgrounded deploy looks like it "hangs" but it actually FINISHED.**
+The deploy completes and prints
 
 ```text
 ==> Switch complete on <host>.
 ```
 
-the actual work is FINISHED, but `bazel run` blocks indefinitely waiting for that
-pipe to EOF because the lingering ssh master still holds it. Observed hanging for
-hours twice. Do **not** wait for the process to exit.
+If you launched it detached (`nohup bazel run … &`), the finished `bash`/`bazel`
+wrapper gets orphaned to PID 1, and this container's PID 1 does NOT reap orphans —
+so it lingers as a **zombie** (`ps` shows `STAT Z`, `<defunct>`). A `kill -0 <pid>`
+liveness check can't distinguish a zombie from a running process, so a naive
+"is it still running?" poll reports the completed deploy as a hang forever. (This
+is NOT a `nix copy`/ssh-ng EOF hang — that was an earlier misdiagnosis; an isolated
+`nix copy --to ssh-ng://…` exits cleanly with no lingering ssh master.)
 
-Reliable procedure (don't one-shot-wait on it):
+Reliable procedure — watch the LOG for completion, not the process:
 
 ```sh
-# run detached, watch the log for the completion line, then kill the wrapper
-nohup bash -c 'bazel run //pi/hitl:update -- <host> 2>&1' > /tmp/deploy.log 2>&1 &
-#   ...watch /tmp/deploy.log for "==> Switch complete on <host>."...
-kill <pid>            # the deploy is already done; this just reaps the stuck wrapper
+# run detached, watch the log for the completion line (NOT `kill -0` on the pid,
+# which a zombie satisfies forever)
+nohup bash -c 'bazel run //pi/hitl:update -- <host> 2>&1' > /home/claude/deploy.log 2>&1 &
+#   ...poll: grep -q 'Switch complete on <host>' /home/claude/deploy.log  → done.
+#   To detect a real still-running build vs a done-zombie, check the STATE:
+#   ps -o stat= -p <pid>  → 'Z' means finished (defunct), anything else = running.
 ```
 
-Then VERIFY the new daemon is actually live (don't trust the wrapper):
+Then VERIFY the new daemon is actually live (don't trust "Switch complete" alone —
+see the stale-binary caveat below):
 
 ```sh
-ssh <deploy-key> root@<host> 'systemctl show -p ExecMainStartTimestamp hitl-manager'  # should be ~now
+ssh <deploy-key> root@<host> \
+  'pid=$(systemctl show -p MainPID --value hitl-manager); readlink /proc/$pid/exe'  # the ACTUAL binary
+ssh … 'journalctl -u hitl-manager -n5 | grep "logic analyzer"'   # new build logs "— FX2 present/dormant"
 curl -s http://<host>:8087/status | ...   # check the DUTs/caps you changed
 ```
 
 Log to a path that survives a container restart (`/tmp` is wiped) — e.g.
 `/home/claude/deploy.log` — so a mid-build restart doesn't lose the transcript.
+
+**Stale-binary caveat:** a deploy can print "Switch complete" and update the unit's
+FLAGS while the hitl-manager service still execs an OLD daemon store path (seen on
+rig-2: unit showed the new `--analyzer-*` flags but `/proc/<pid>/exe` pointed at a
+months-old `…-hitl` path, so DUTs advertised the flat `logic-analyzer` cap instead
+of the granular `logic-analyzer-led-strip`). ALWAYS confirm via `/proc/<pid>/exe`
+and a version-distinctive log line — not just the deploy's exit message.
 
 ## USBIP (remote attach)
 
