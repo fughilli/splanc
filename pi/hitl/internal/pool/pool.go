@@ -144,9 +144,15 @@ type Require struct {
 // the daemon's own placement, so the pool doesn't route work to a rig whose only fit
 // is a DUT the daemon will refuse.
 func dutServes(d api.DeviceStatus, sku string, caps []string) bool {
-	if d.Active != nil {
-		return false // busy
-	}
+	return d.Active == nil && dutMatches(d, sku, caps) // free AND a match
+}
+
+// dutMatches is dutServes WITHOUT the free (Active==nil) requirement: it reports
+// whether a DUT could serve the reservation once free. The pool uses it to route a
+// request to a rig for QUEUEING when nothing matching is free right now — so a busy
+// scarce DUT (e.g. the single led-mapper-pi) enqueues on managerd's FIFO instead of
+// the client fast-failing before it ever reaches a queue.
+func dutMatches(d api.DeviceStatus, sku string, caps []string) bool {
 	if sku != "" && d.SKU != sku {
 		return false
 	}
@@ -167,6 +173,21 @@ func hasFreeServingDUT(p Probe, sku string, caps []string) bool {
 	}
 	for _, d := range p.Status.Devices {
 		if dutServes(d, sku, caps) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasQueueableDUT reports whether the rig has a matching DUT at all — free OR busy —
+// so a request can be routed there to WAIT in managerd's FIFO queue when nothing is
+// free right now, rather than the client fast-failing.
+func hasQueueableDUT(p Probe, sku string, caps []string) bool {
+	if p.Err != nil || p.Status == nil {
+		return false
+	}
+	for _, d := range p.Status.Devices {
+		if dutMatches(d, sku, caps) {
 			return true
 		}
 	}
@@ -250,16 +271,26 @@ func Pick(probes []Probe, req ...Require) (string, error) {
 		r = req[0]
 	}
 	if r.SKU != "" || len(r.Caps) > 0 {
-		var capable []Probe
+		var free, queueable []Probe
 		for _, p := range probes {
 			if hasFreeServingDUT(p, r.SKU, r.Caps) {
-				capable = append(capable, p)
+				free = append(free, p)
+			} else if hasQueueableDUT(p, r.SKU, r.Caps) {
+				queueable = append(queueable, p)
 			}
 		}
-		if len(capable) == 0 {
-			return "", fmt.Errorf("no rig with a free DUT matching %s in pool of %d: %s", describeReq(r), len(probes), summarizeErrs(probes))
+		switch {
+		case len(free) > 0:
+			probes = free // something's free now — take it (best-fit below)
+		case len(queueable) > 0:
+			// Nothing free, but some rig has the matching DUT busy. Route there so
+			// managerd's FIFO queue admits us when it frees — don't fast-fail a
+			// contended-but-serviceable request (e.g. the single led-mapper-pi held
+			// by another test). The reserve then waits in the queue, not errors.
+			probes = queueable
+		default:
+			return "", fmt.Errorf("no rig with a DUT matching %s in pool of %d: %s", describeReq(r), len(probes), summarizeErrs(probes))
 		}
-		probes = capable
 	}
 	// Best-fit is the primary selection criterion: prefer the rig whose tightest
 	// free DUT has the fewest capabilities beyond what's required, so scarce,
