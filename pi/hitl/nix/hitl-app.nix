@@ -112,22 +112,20 @@ let
   #
   #   SBC_AP_DONGLE=1  → host the provisioning AP on a dedicated RTL8851BU USB radio
   #                      (ap0) instead of onboard wlan0 — for a board that can't AP.
-  #   SBC_BT_DONGLE=1  → use the RTL8851BU USB dongle's BLUETOOTH half (btusb/hci) as
-  #                      the BLE central adapter instead of the onboard controller.
-  #                      The Pi 5 onboard Cypress BCM4345/6 marginally fails LE
-  #                      connection establishment (0x3E storm, 0 GATT) — proven
-  #                      0/20 vs the dongle's 20/20 on the same DUT — so the harness
-  #                      must talk to the dongle. Ships the BT firmware, flips the
-  #                      dongle out of CD-ROM mode, and points the daemon (btmon) +
-  #                      container (bleak) at the USB controller via --ble-adapter.
+  #                      (Still a build-time flag: which interface hosts the AP is
+  #                      baked NetworkManager config. Runtime auto-select is a TODO.)
+  #
+  # The RTL8851BU dongle's BLUETOOTH half is NOT a build-time flag: like the analyzer,
+  # every image ships its BT firmware + the CD-ROM→combo modeswitch, and the daemon
+  # ALWAYS runs --ble-adapter usb, which resolves the USB Bluetooth controller at
+  # runtime (resolveBLEAdapter) and falls back to the onboard controller when no
+  # dongle is up. So a dongle plugged into any rig is used automatically (the Pi 5
+  # onboard Cypress BCM4345/6 marginally fails LE — 0/20 vs the dongle's 20/20 — so
+  # the harness must prefer the dongle wherever present), and a dongle-less rig just
+  # uses onboard. No SBC_BT_DONGLE to commit wrong.
   sigrok = import ./sigrok.nix { inherit pkgs; };
   useApDongle = builtins.getEnv "SBC_AP_DONGLE" == "1";
-  useBtDongle = builtins.getEnv "SBC_BT_DONGLE" == "1";
   isPi3 = builtins.getEnv "SBC_BOARD" == "raspberry-pi-3";
-  # The RTL8851BU dongle must be flipped out of USB CD-ROM mode (0bda:1a2b →
-  # 0bda:b851) before either its WiFi (rtw89) or BT (btusb) half enumerates, so the
-  # modeswitch udev rule + usb-modeswitch package are shared by both dongle uses.
-  useDongle = useApDongle || useBtDongle;
   # RTL8851BU driver + WiFi firmware for the optional dongle AP (see rtl8851bu.nix).
   # usb_modeswitch flips the CD-ROM dongle to WiFi mode + a .link renames it to ap0;
   # rtw89 is mac80211-based, so it supports hostapd AP cleanly.
@@ -241,8 +239,11 @@ in
   # ships it (nixpkgs' linux-firmware predates 8851BU). No WiFi without it. The BT
   # half needs rtl_bt/rtl8851bu_fw.bin, which the trimmed rig firmware set omits —
   # ship it so btusb can bring the dongle's hci up (else it registers but stays DOWN).
+  # rtl8851buBt (the BT half's firmware) ships on EVERY rig so a dongle plugged into
+  # any bench brings its hci up and the daemon can prefer it (see the header comment).
+  # rtl8851bu (the WiFi/AP half) is still gated on the AP-dongle flag.
   hardware.firmware = lib.optionals useApDongle [ rtl8851bu ]
-    ++ lib.optionals useBtDongle [ rtl8851buBt ];
+    ++ [ rtl8851buBt ];
 
   # Stable name for the USB AP radio: rename the rtw89 AP interface (driver
   # rtw89_8851bu_git, the usb_driver's KBUILD_MODNAME) to ap0 so the AP profile
@@ -271,11 +272,13 @@ in
     # bench, where the daemon (root) owns it — belt-and-suspenders.
     SUBSYSTEM=="usb", ATTR{idVendor}=="0925", ATTR{idProduct}=="3881", MODE="0666"
     SUBSYSTEM=="usb", ATTR{idVendor}=="1d50", ATTR{idProduct}=="608c", MODE="0666"
-  '' + lib.optionalString useDongle ''
+  '' + ''
     # RTL8851BU USB dongle: it enumerates as a CD-ROM (0bda:1a2b); StandardEject
     # flips it into combo mode (re-enumerates as 0bda:b851), after which the
     # rtw89_8851bu_git driver binds the WiFi half (AP dongle → .link renames to ap0)
-    # and the in-tree btusb binds the BT half (BT dongle → its hci, firmware above).
+    # and the in-tree btusb binds the BT half (its hci, firmware above). Shipped on
+    # every rig so a dongle plugged into any bench is used automatically (BT half);
+    # the rule only matches the dongle's VID:PID, so it's inert without one.
     ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="0bda", ATTR{idProduct}=="1a2b", RUN+="${pkgs.usb-modeswitch}/bin/usb_modeswitch -v 0bda -p 1a2b -K"
   '';
 
@@ -316,7 +319,7 @@ in
     # sigrok-cli + fx2lafw firmware ship on every rig (the daemon self-gates on the
     # FX2 being present); usb-modeswitch for the dongle.
     ++ sigrok.packages
-    ++ lib.optionals useDongle [ pkgs.usb-modeswitch ];
+    ++ [ pkgs.usb-modeswitch ];
 
   # Load the test image into Podman at boot (and on every deploy — the ExecStart
   # store path changes with the image, so switch-to-configuration re-runs this).
@@ -446,10 +449,12 @@ in
           "--ap-psk ${apPsk}"
           dutArgs
         ] ++ analyzerArgs # --analyzer-* always; daemon self-gates on the FX2
-        # BT dongle rig: point BLE central (btmon capture host-side + bleak in the
-        # container) at the USB controller instead of the flaky onboard one. "usb"
-        # auto-resolves the hci by bus at runtime, so it's robust to hciN ordering.
-        ++ lib.optionals useBtDongle [ "--ble-adapter" "usb" ]);
+        # Always prefer a USB BLE dongle for central (btmon capture host-side + bleak
+        # in the container) over the flaky onboard controller. "usb" auto-resolves the
+        # dongle's hci by bus at runtime and FALLS BACK to onboard when none is up
+        # (resolveBLEAdapter) — so this is safe on every rig, dongle or not, and needs
+        # no build-time flag.
+        ++ [ "--ble-adapter" "usb" ]);
       # libsigrok uploads fx2lafw firmware to the bare FX2 from here. Set on every
       # rig (harmless when no FX2 is attached; the daemon self-gates on presence).
       Environment = [ "SIGROK_FIRMWARE_DIR=${sigrok.firmwareDir}" ];
