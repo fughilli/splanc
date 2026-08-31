@@ -355,7 +355,7 @@ git_override(
     # same inputs hashed to the same store path with different bytes and nix copy
     # served stale daemons (rig-2 stuck on an old binary). Descends from d6eb5cc
     # (the deploy_live board/hardware brick guard, PR #13).
-    commit = "5611bec7161f3210c2aa39e524017ed44cff43ef",  # hermetic flake_srcs
+    commit = "b40d2f4277eebc6d1714dee92eab410e5f324225",  # hermetic flake_srcs + content-addressed staged dir
     remote = "https://github.com/fughilli/sbc-deploy.git",
 )
 
