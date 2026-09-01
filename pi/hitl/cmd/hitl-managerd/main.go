@@ -494,7 +494,16 @@ func (dm *dutMonitor) scan() ([]runner.Device, error) {
 	for _, b := range boards {
 		present[b.name] = true
 		dm.seen[b.name] = now
-		if _, ok := dm.last[b.name]; ok {
+		if prev, ok := dm.last[b.name]; ok {
+			// Known board: keep its sticky port and by-id device spec, but re-derive
+			// capabilities every scan so a channel-map change — a runtime POST, or the
+			// map settling AFTER this board was first discovered — is reflected. Tap
+			// caps are rig wiring, not board identity; freezing them at first sight
+			// left a newly-tapped DUT without its logic-analyzer-* cap (and an
+			// un-tapped one advertising a stale one) until a daemon restart. Mirrors
+			// the network-DUT path, which rebuilds caps from the broker each cycle;
+			// SyncDevices adopts the changed caps in place while the DUT is idle.
+			dm.last[b.name] = withCaps(prev, dm.brk)
 			continue
 		}
 		port := dm.allocPort(used)
