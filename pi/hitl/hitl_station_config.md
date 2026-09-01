@@ -87,6 +87,16 @@ Notes:
   (`clk=D3,mosi=D1,cs=D5`) at capture time, decoding the LED outputs as `ws2812`
   and the SPI wire as `spi-raw`.
 
+  **Why splanc-max-2 advertises no `logic-analyzer-spi` cap (and the SPI wire tap
+  is unused):** the FX2/fx2lafw samples at 24 MHz, but the player drives the SPI at
+  6.4 MHz — only ~3.75 samples/bit, below the ~4 samples/bit sigrok needs for a
+  clean SPI decode. So the raw-SPI STREAM cross-check is **gated off by default**
+  (`--check-spi-stream`), the persisted channel map leaves the SPI channels out,
+  and the daemon never derives `logic-analyzer-spi` for splanc-max-2. The WS2812
+  outputs (well within the FX2's rate) are decoded instead and prove the FPGA
+  received the correct SPI stream. Re-enable once the tap is sample-rate-aware —
+  lower the test SPI clock, or use a faster analyzer.
+
 - **splanc-max-1 has no Tang attached right now.** It still advertises `spi-fpga`
   because that cap comes from the `led-mapper-pi` SKU (the whole Pi fleet is
   modelled as FPGA-capable), but with no FPGA it can only serve `improv` / `wss`
