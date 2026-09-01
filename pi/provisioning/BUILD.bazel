@@ -14,6 +14,14 @@ load("@sbc_deploy//deploy:defs.bzl", "sbc_application")
 
 sbc_application(
     name = "ledmapper",
+    # The spi_ws281x FPGA gateware, injected into the flake build as a generic
+    # data dependency (-> sbcBuildData."spi_ws281x_tangnano9k.fs" in apps.nix).
+    # No vendored/copied bitstream — Bazel is the single source.
+    build_data = [
+        "//fpga/spi_ws281x:spi_ws281x_tangnano9k",
+        # The Rust player binary (staged, autoPatchelf'd in the image).
+        "//pi/player_rs/musl:player_musl",
+    ],
     flake = "pi/provisioning/nix",
     hostname = "ledmapper",
     # Self-contained: the Nix side pins sbc-deploy via the flake input +
@@ -30,6 +38,11 @@ sbc_application(
 sbc_application(
     name = "ledmapper_pi3",
     board = "@sbc_deploy//deploy/boards:raspberry-pi-3",
+    build_data = [
+        "//fpga/spi_ws281x:spi_ws281x_tangnano9k",
+        # The Rust player binary (staged, autoPatchelf'd in the image).
+        "//pi/player_rs/musl:player_musl",
+    ],
     flake = "pi/provisioning/nix",
     hostname = "ledmapper",
 )

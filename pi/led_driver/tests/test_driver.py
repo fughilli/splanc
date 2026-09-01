@@ -87,3 +87,24 @@ def test_stop_when_idle_is_noop():
     driver = LedDriver(RecordingSink())
     driver.stop()  # no thread running → must not raise
     driver.stop()
+
+
+def test_fpga_output_writes_csr_then_streams():
+    from led_driver.fpga_spi import OP_STREAM, FpgaCodec, set_num_ports
+
+    cp = default_code_params(4)  # 4 LEDs -> 2 per port across 2 ports
+    sink = RecordingSink()
+    codec = FpgaCodec(2)
+    driver = LedDriver(sink, fpga=codec, clock=lambda: 0.0)
+    frame = [(1, 2, 3), (4, 5, 6), (7, 8, 9), (10, 11, 12)]
+    driver.set_debug("static", {"colors": [list(c) for c in frame]})
+    driver._sleep = _auto_stop_sleep(driver, stop_after=1)
+
+    driver.start(cp)
+    driver.join(timeout=5.0)
+
+    # One-time CSR (num_ports), then the static STREAM frame, then dark on exit.
+    assert sink.writes[0] == set_num_ports(2)
+    assert sink.writes[1] == codec.frame(frame)
+    assert sink.writes[1][0] == OP_STREAM
+    assert sink.writes[-1] == codec.dark(4)

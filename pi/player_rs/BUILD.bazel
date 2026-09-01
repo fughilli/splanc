@@ -1,0 +1,79 @@
+"""LED Mapper — Raspberry Pi player app (Rust).
+
+A native-Rust reimplementation of the Pi player (replacing pi/led_driver +
+pi/server) that reuses the firmware Rust core (//firmware/player et al.) directly
+as crate deps — no FFI — and adds the Pi platform layer. Builds for the host,
+which on the aarch64 Pi is the deploy target triple; no ESP gate.
+
+Phase 1: the wire-framing layer, a byte-exact port of the Python
+led_driver/{fpga_spi,spi}.py, pinned by the same encoder vectors.
+"""
+
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library", "rust_test")
+
+package(default_visibility = ["//visibility:public"])
+
+rust_library(
+    name = "player_rs",
+    srcs = [
+        "src/lib.rs",
+        "src/render.rs",
+        "src/server.rs",
+        "src/session.rs",
+        "src/wire.rs",
+    ],
+    crate_name = "ledmapper_player_rs",
+    edition = "2021",
+    deps = [
+        # The reused firmware session/pattern/effects core — host protobuf
+        # profile (the Pi has RAM to spare), depended on directly (no FFI).
+        "//firmware/player",
+        "//shared/protocol/rust:ledmapper_pb",
+        "@crates//:micropb",
+        # Phase 3 WS+TLS transport (server.rs) — PURE RUST crypto (no ring/C).
+        "@player_crates//:futures-util",
+        "@player_crates//:p256",
+        "@player_crates//:rustls",
+        "@player_crates//:rustls-rustcrypto",
+        "@player_crates//:tokio",
+        "@player_crates//:tokio-rustls",
+        "@player_crates//:tokio-tungstenite",
+        "@player_crates//:x509-cert",
+    ],
+)
+
+# The player binary: pure render library + the Linux spidev sink. Builds for the
+# host, which on the aarch64 Pi IS the deploy triple.
+rust_binary(
+    name = "player",
+    srcs = [
+        "src/main.rs",
+        "src/sink.rs",
+    ],
+    edition = "2021",
+    # On the musl platform: rustc emits the self-contained musl crt + libc.a and
+    # a static object; the //pi/player_rs/musl cc toolchain links it with rust-lld
+    # + -static. No-op on the gnu host build.
+    rustc_flags = select({
+        "//pi/player_rs/musl:is_musl": [
+            "-Ctarget-feature=+crt-static",
+            "-Clink-self-contained=yes",
+        ],
+        "//conditions:default": [],
+    }),
+    deps = [
+        ":player_rs",
+        "//firmware/player",
+        "@player_crates//:spidev",
+        "@player_crates//:tokio",
+    ],
+)
+
+rust_test(
+    name = "player_rs_test",
+    crate = ":player_rs",
+    edition = "2021",
+    # Envelope structs carry inline heapless storage (see //shared/protocol/rust)
+    # and land on the test thread's stack — same bump the firmware player tests use.
+    env = {"RUST_MIN_STACK": "16777216"},
+)

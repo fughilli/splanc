@@ -6,12 +6,22 @@ import (
 )
 
 func TestCapabilitiesResolveFromRegistry(t *testing.T) {
-	// esp32c6 has the full board caps; the pi has just improv today.
+	// esp32c6 has the full board caps; the Pi carries improv + the FPGA output
+	// path (led-strip + spi-fpga). Neither lists any logic-analyzer-* cap — that's
+	// per-DUT instrumentation the daemon adds from the analyzer broker, not a SKU
+	// trait.
 	if got := Capabilities("esp32c6"); !contains(got, "improv") || !contains(got, "jtag") {
 		t.Errorf("esp32c6 caps = %v, want improv+jtag present", got)
 	}
-	if got := Capabilities("led-mapper-pi"); !reflect.DeepEqual(got, []string{"improv"}) {
-		t.Errorf("led-mapper-pi caps = %v, want [improv]", got)
+	if got := Capabilities("led-mapper-pi"); !reflect.DeepEqual(got, []string{"improv", "led-strip", "spi-fpga", "wss-app"}) {
+		t.Errorf("led-mapper-pi caps = %v, want [improv led-strip spi-fpga wss-app]", got)
+	}
+	for _, sku := range []string{"esp32c6", "led-mapper-pi"} {
+		for _, c := range Capabilities(sku) {
+			if len(c) >= 15 && c[:15] == "logic-analyzer-" {
+				t.Errorf("%s must not carry instrumentation cap %q from the SKU registry", sku, c)
+			}
+		}
 	}
 	// Sorted + copy-safe (mutating the result must not corrupt the registry).
 	got := Capabilities("esp32c6")

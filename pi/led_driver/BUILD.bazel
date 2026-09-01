@@ -46,6 +46,7 @@ py_test(
         "tests/pytest_main.py",
         "tests/test_control.py",
         "tests/test_driver.py",
+        "tests/test_fpga_spi.py",
         "tests/test_graycode.py",
         "tests/test_spi.py",
     ],

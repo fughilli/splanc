@@ -1,0 +1,18 @@
+"""la_probe — host-side logic-analyzer probe for the Pi's spi_ws281x SPI wire.
+
+Run on the machine the LA is attached to (needs `sigrok-cli` on PATH):
+
+    bazel run //pi/tools/la_probe -- --clk D0 --mosi D1 --cs D2 --num-ports 2
+
+Pure stdlib + sigrok-cli (no pydantic/spidev), so it builds and runs on macOS.
+"""
+
+load("@rules_python//python:defs.bzl", "py_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+py_binary(
+    name = "la_probe",
+    srcs = ["la_probe.py"],
+    main = "la_probe.py",
+)

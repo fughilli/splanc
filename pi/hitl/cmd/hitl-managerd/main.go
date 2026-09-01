@@ -148,9 +148,16 @@ func main() {
 		// Persist runtime map edits (map_la) next to the other daemon state so the
 		// acquired DUT→channel mapping survives restarts/reboots without a redeploy.
 		MapPath: filepath.Join(*stateDir, "analyzer-channel-map.json"),
+		// The image always ships the analyzer; presence of the FX2 (not a build-time
+		// flag) decides whether the broker is live. A rig with no FX2 stays dormant.
+		HardwareProbe: analyzer.FX2Present,
 	})
-	if brk.Enabled() {
-		log.Printf("logic analyzer: driver=%s samplerate=%s (shared, brokered over /capture)", *analyzerDriver, *analyzerRate)
+	if *analyzerDriver != "" {
+		if brk.Enabled() {
+			log.Printf("logic analyzer: driver=%s samplerate=%s — FX2 present (shared, brokered over /capture)", *analyzerDriver, *analyzerRate)
+		} else {
+			log.Printf("logic analyzer: driver=%s configured but no FX2 attached — dormant (no logic-analyzer-* caps)", *analyzerDriver)
+		}
 	}
 
 	var devs []runner.Device
@@ -180,8 +187,9 @@ func main() {
 
 	var opts []queue.Option
 	opts = append(opts, queue.WithDevices(devs))
-	// Advertise the shared logic-analyzer capability in /status so clients can
-	// select this rig by capability (e.g. `hitl reserve --require analyzer`).
+	// Advertise the shared logic-analyzer in /status so clients can select this rig
+	// by capability (e.g. `hitl reserve --require analyzer`; per-DUT taps surface as
+	// logic-analyzer-led-strip / logic-analyzer-spi on each Device).
 	if brk.Enabled() {
 		opts = append(opts, queue.WithAnalyzer(brk.Describe()))
 	}
@@ -267,7 +275,8 @@ const defaultUSBSKU = "esp32c6"
 // withCaps fills a Device's Capabilities from its SKU (the registry), warning on an
 // unknown SKU (which yields no capabilities — the DUT then matches no requirement).
 // It also merges in rig-wiring capabilities that aren't SKU traits: a DUT tapped by
-// this rig's shared logic analyzer advertises "logic-analyzer", so capability
+// this rig's shared logic analyzer advertises the granular capability naming the
+// signal it's on (logic-analyzer-led-strip / logic-analyzer-spi), so capability
 // selection (and best-fit) treat the analyzer like any other capability. brk may be
 // nil (no analyzer on this rig).
 func withCaps(d runner.Device, brk *analyzer.Broker) runner.Device {
@@ -275,8 +284,8 @@ func withCaps(d runner.Device, brk *analyzer.Broker) runner.Device {
 		log.Printf("dut %s: unknown SKU %q; advertising no capabilities", d.Name, d.SKU)
 	}
 	caps := skus.Capabilities(d.SKU)
-	if brk.Taps(d.Name) {
-		caps = append(caps, "logic-analyzer")
+	if la := brk.TapCaps(d.Name); len(la) > 0 {
+		caps = append(caps, la...)
 		sort.Strings(caps)
 	}
 	d.Capabilities = caps
@@ -444,7 +453,7 @@ type dutMonitor struct {
 	netLast         map[string]runner.Device
 	lastGoodNetwork []runner.Device
 
-	brk *analyzer.Broker // resolves the per-DUT "logic-analyzer" capability (may be nil)
+	brk *analyzer.Broker // resolves the per-DUT logic-analyzer-* capabilities (may be nil)
 }
 
 func newDUTMonitor(glob string, basePort, maxDuts int, retention time.Duration, networkFile string, netMax int, brk *analyzer.Broker) *dutMonitor {

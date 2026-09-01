@@ -12,3 +12,15 @@ go_test(
     srcs = ["tailnet_test.go"],
     embed = [":tailnet"],
 )
+
+# Source files staged into the hermetic flake TreeArtifact (sbc_application
+# flake_srcs) so `nix build` reads deterministic content, never the live
+# workspace. Referenced by //pi/hitl:flake_srcs.
+filegroup(
+    name = "flake_srcs",
+    srcs = glob(
+        ["**"],
+        exclude = ["BUILD.bazel"],
+    ),
+    visibility = ["//pi/hitl:__pkg__"],
+)

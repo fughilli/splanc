@@ -18,13 +18,13 @@
 
   description = "LED Mapper — Raspberry Pi image + live-deploy (sbc-deploy consumer)";
 
-  inputs.sbc-deploy.url = "github:fughilli/sbc-deploy?dir=nix";
+  inputs.sbc-deploy.url = "github:fughilli/sbc-deploy/build-data?dir=nix";
 
   outputs = { self, sbc-deploy, ... }:
     sbc-deploy.lib.mkSbcProject {
       hostName = "ledmapper";
       board = "raspberry-pi-5"; # or "raspberry-pi-4"
-      appModules = [ ./apps.nix ./improv.nix ];
+      appModules = [ ./apps.nix ./improv.nix ./fpga.nix ];
       # Baked into BOTH the base and full images: hardware SPI (SK9822/APA102)
       # for the driver. WiFi can be added here too (sbcDeploy.wifi.networks).
       systemModules = [ sbc-deploy.nixosModules.spi ];

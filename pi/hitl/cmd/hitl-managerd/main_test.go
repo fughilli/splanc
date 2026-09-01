@@ -24,25 +24,35 @@ func capListHas(xs []string, s string) bool {
 	return false
 }
 
-// withCaps merges the rig-wiring "logic-analyzer" capability onto a DUT that the
+// withCaps merges the rig-wiring logic-analyzer capability onto a DUT that the
 // shared analyzer taps (an explicit channel-map entry), and only that DUT — so a
-// mixed rig distinguishes its analyzer DUT from plain ones. A nil broker (no
+// mixed rig distinguishes its analyzer DUT from plain ones. The capability is
+// GRANULAR by the tapped signal: a ws2812 tap on the strip yields
+// logic-analyzer-led-strip, an spi tap yields logic-analyzer-spi. A nil broker (no
 // analyzer on the rig) never adds it.
 func TestWithCapsMergesLogicAnalyzer(t *testing.T) {
 	brk := analyzer.New(analyzer.Config{
 		Driver: "fx2lafw",
 		Map: map[string]analyzer.DUTMap{
-			"c6-la": {Channels: []string{"D1"}, Protocol: analyzer.ProtocolWS2812},
+			"c6-la":  {Channels: []string{"D1"}, Protocol: analyzer.ProtocolWS2812},
+			"pi-spi": {Channels: []string{"D0", "D1"}, Protocol: analyzer.ProtocolSPI},
 		},
 	})
-	if la := withCaps(runner.Device{Name: "c6-la", SKU: "esp32c6"}, brk); !capListHas(la.Capabilities, "logic-analyzer") {
-		t.Errorf("tapped DUT should advertise logic-analyzer, got %v", la.Capabilities)
+	if la := withCaps(runner.Device{Name: "c6-la", SKU: "esp32c6"}, brk); !capListHas(la.Capabilities, "logic-analyzer-led-strip") {
+		t.Errorf("ws2812-tapped DUT should advertise logic-analyzer-led-strip, got %v", la.Capabilities)
 	}
-	if plain := withCaps(runner.Device{Name: "c6-plain", SKU: "esp32c6"}, brk); capListHas(plain.Capabilities, "logic-analyzer") {
-		t.Errorf("un-tapped DUT must not advertise logic-analyzer, got %v", plain.Capabilities)
+	if spi := withCaps(runner.Device{Name: "pi-spi", SKU: "led-mapper-pi"}, brk); !capListHas(spi.Capabilities, "logic-analyzer-spi") {
+		t.Errorf("spi-tapped DUT should advertise logic-analyzer-spi, got %v", spi.Capabilities)
 	}
-	if none := withCaps(runner.Device{Name: "c6-la", SKU: "esp32c6"}, nil); capListHas(none.Capabilities, "logic-analyzer") {
-		t.Errorf("nil broker must not add logic-analyzer, got %v", none.Capabilities)
+	// The granular cap is exclusive: a strip tap is not an spi tap.
+	if la := withCaps(runner.Device{Name: "c6-la", SKU: "esp32c6"}, brk); capListHas(la.Capabilities, "logic-analyzer-spi") {
+		t.Errorf("ws2812-tapped DUT must not advertise logic-analyzer-spi, got %v", la.Capabilities)
+	}
+	if plain := withCaps(runner.Device{Name: "c6-plain", SKU: "esp32c6"}, brk); capListHas(plain.Capabilities, "logic-analyzer-led-strip") {
+		t.Errorf("un-tapped DUT must not advertise a logic-analyzer cap, got %v", plain.Capabilities)
+	}
+	if none := withCaps(runner.Device{Name: "c6-la", SKU: "esp32c6"}, nil); capListHas(none.Capabilities, "logic-analyzer-led-strip") {
+		t.Errorf("nil broker must not add a logic-analyzer cap, got %v", none.Capabilities)
 	}
 }
 
@@ -295,7 +305,7 @@ func TestReadNetworkDUTs(t *testing.T) {
 	if got[0].Env["HITL_DUT_ADDR"] != "pi.local" {
 		t.Fatalf("env not carried: %+v", got[0].Env)
 	}
-	if got[0].SKU != "led-mapper-pi" || !reflect.DeepEqual(got[0].Capabilities, []string{"improv"}) {
+	if got[0].SKU != "led-mapper-pi" || !reflect.DeepEqual(got[0].Capabilities, []string{"improv", "led-strip", "spi-fpga", "wss-app"}) {
 		t.Fatalf("SKU/caps not resolved from registry: sku=%q caps=%v", got[0].SKU, got[0].Capabilities)
 	}
 

@@ -84,11 +84,36 @@ rust.toolchain(
         "wasm32-unknown-unknown",  # phone solver
         "riscv32imac-unknown-none-elf",  # ESP32-C6
         "thumbv8m.main-none-eabi",  # RP2350 (soft-float ABI; see firmware)
+        "aarch64-unknown-linux-musl",  # static Pi player; see //pi/player_rs/musl
     ],
     # Pinned to the version the vendored firmware validated on-device.
     versions = ["1.85.0"],
 )
-use_repo(rust, "rust_toolchains")
+use_repo(
+    rust,
+    # musl tools per EXEC host (the static player's rust-lld/rustc run on the
+    # build host): linux container (aarch64) + x86_64-linux (CI) + macOS deploy
+    # (aarch64 or x86_64). Fetched lazily, so each host pulls only what it uses.
+    "rust_linux_aarch64__aarch64-unknown-linux-musl__stable_tools",
+    "rust_linux_x86_64__aarch64-unknown-linux-musl__stable_tools",
+    "rust_macos_aarch64__aarch64-unknown-linux-musl__stable_tools",
+    "rust_macos_x86_64__aarch64-unknown-linux-musl__stable_tools",
+    "rust_toolchains",
+)
+
+# libc:musl-scoped rust + cc toolchains for the static Pi player, BEFORE the
+# defaults so they win on the musl platform (and are skipped elsewhere — the
+# constraint keeps them off the gnu host + exec-side tool builds).
+register_toolchains(
+    "//pi/player_rs/musl:linux_rust_toolchain",
+    "//pi/player_rs/musl:linux_cc_toolchain",
+    "//pi/player_rs/musl:linux_x86_64_rust_toolchain",
+    "//pi/player_rs/musl:linux_x86_64_cc_toolchain",
+    "//pi/player_rs/musl:macos_arm64_rust_toolchain",
+    "//pi/player_rs/musl:macos_arm64_cc_toolchain",
+    "//pi/player_rs/musl:macos_x86_64_rust_toolchain",
+    "//pi/player_rs/musl:macos_x86_64_cc_toolchain",
+)
 
 register_toolchains("@rust_toolchains//:all")
 
@@ -147,6 +172,13 @@ crate.spec(
     package = "base64",
     version = "0.22",
 )
+
+# NOTE: the Pi player's std deps (spidev, tokio, rustls*, tokio-tungstenite,
+# futures-util, p256, x509-cert, rand_core, time) live in the ISOLATED
+# `player_crates` universe (defined after host_crates below) — tungstenite pulls
+# byteorder WITH std, and a shared universe would unify that std feature onto the
+# firmware's heapless->hash32->byteorder and break the no_std riscv32imac-none
+# build (same reasoning as the host_crates isolation).
 crate.from_specs(
     # rules_rust's default list is a small host-centric subset (splicing is
     # O(N^2) per triple) — it must be restated here to EXTEND it with the
@@ -186,6 +218,116 @@ host_crate.spec(
 host_crate.from_specs(name = "host_crates")
 use_repo(host_crate, "host_crates")
 
+# Pi player (//pi/player_rs) std deps — the WS+TLS server + Linux SPI + pure-Rust
+# crypto. ISOLATED universe (like host_crates): tungstenite pulls byteorder WITH
+# std (it uses std::io via ReadBytesExt), and crate_universe unifies features per
+# crate across a universe — sharing the main "crates" universe leaked byteorder's
+# std feature onto the firmware's heapless->hash32->byteorder and broke the no_std
+# riscv32imac-none build. These crates are std/musl/host only, never firmware, so
+# a separate universe keeps the device graph no_std. (PURE-RUST crypto: rustls +
+# rustls-rustcrypto, no ring/aws-lc-rs C — the player must cross-compile to a
+# static aarch64-linux-musl binary with rustc alone.)
+player_crate = use_extension(
+    "@rules_rust//crate_universe:extensions.bzl",
+    "crate",
+    isolate = True,
+)
+player_crate.spec(
+    package = "spidev",
+    version = "0.6",
+)
+player_crate.spec(
+    features = [
+        "rt-multi-thread",
+        "net",
+        "io-util",
+        "macros",
+        "sync",
+        "time",
+    ],
+    package = "tokio",
+    version = "1",
+)
+player_crate.spec(
+    default_features = False,
+    features = [
+        "std",
+        "tls12",
+        "logging",
+    ],
+    package = "rustls",
+    version = "0.23",
+)
+player_crate.spec(
+    default_features = False,
+    package = "tokio-rustls",
+    version = "0.26",
+)
+player_crate.spec(
+    package = "rustls-rustcrypto",
+    version = "0.0.2-alpha",
+)
+player_crate.spec(
+    default_features = False,
+    features = ["handshake"],
+    package = "tokio-tungstenite",
+    version = "0.24",
+)
+player_crate.spec(
+    default_features = False,
+    features = [
+        "std",
+        "sink",
+        "async-await",
+    ],
+    package = "futures-util",
+    version = "0.3",
+)
+player_crate.spec(
+    default_features = False,
+    features = [
+        "ecdsa",
+        "pkcs8",
+        "std",
+    ],
+    package = "p256",
+    version = "0.13",
+)
+player_crate.spec(
+    default_features = False,
+    features = [
+        "std",
+        "builder",
+    ],
+    package = "x509-cert",
+    version = "0.2",
+)
+player_crate.spec(
+    default_features = False,
+    features = ["getrandom"],
+    package = "rand_core",
+    version = "0.6",
+)
+
+# Pin `time` below 0.3.55 (needs rustc 1.87+); we're on the firmware-validated 1.85.0.
+player_crate.spec(
+    default_features = False,
+    package = "time",
+    version = "=0.3.36",
+)
+player_crate.from_specs(
+    name = "player_crates",
+    # Host/musl only (no bare-metal or wasm — the player never targets those).
+    supported_platform_triples = [
+        "aarch64-apple-darwin",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-pc-windows-msvc",
+        "x86_64-unknown-linux-gnu",
+        "x86_64-unknown-nixos-gnu",
+    ],
+)
+use_repo(player_crate, "player_crates")
+
 # ---------------------------------------------------------------------------
 # ESP32-C6/RP2350 firmware monorepo (docs/esp32-led-mapping-plan.md Phase 0a):
 # fetched directly from GitHub as a Bazel module (repo name @embedded).
@@ -205,14 +347,15 @@ use_repo(host_crate, "host_crates")
 bazel_dep(name = "sbc_deploy", version = "0.0.0")
 git_override(
     module_name = "sbc_deploy",
-    # sbc-deploy main @ 5c4c3e7 (#11: sd_seed_wifi uses e2fsprogs `debugfs`, since
-    # e2tools is nixpkgs-linux-only and wouldn't evaluate on macOS) — atop #10 (offline
-    # SD WiFi seeder + raspberry-pi-zero-2w alias), #9 quote detect_caps_cmd, #8
-    # `update` mode, #7 persistent hostname identity. All Bazel/host-side only (debugfs
-    # vendored like zstd/pv; the alias resolves to raspberry-pi-02) — no Nix side change,
-    # so pi/hitl/nix + pi/provisioning/nix flake.lock build the same closure; bump on
-    # the next Nix change.
-    commit = "5c4c3e7fce0dfc5ce8b1646019084b1bb86a6a6b",
+    # hermetic flake source @ 8d6f66b (PR #14, squash-merged to main): sbc_application
+    # grows a `flake_srcs` attr — Bazel stages EXACTLY the declared flake files into a
+    # TreeArtifact and the deploy builds `path:$SBC_FLAKE_DIR` from that (content-
+    # addressed), never the live workspace. Fixes non-deterministic builds: pointing
+    # nix at $BUILD_WORKSPACE_DIRECTORY exposed the churning .bazelisk cache, so the
+    # same inputs hashed to the same store path with different bytes and nix copy
+    # served stale daemons (rig-2 stuck on an old binary). Also folds in the
+    # deploy_live board/hardware brick guard (was PR #13, never merged on its own).
+    commit = "8d6f66b54742cbb1d492783c5513e37792384c77",  # hermetic flake_srcs (PR #14 merged)
     remote = "https://github.com/fughilli/sbc-deploy.git",
 )
 

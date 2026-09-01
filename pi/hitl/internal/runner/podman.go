@@ -240,7 +240,16 @@ func (p *PodmanRunner) Start(ctx context.Context, id, owner, sshKey string, dev 
 	}
 	// Per-DUT env (e.g. HITL_ADAPTER_SERIAL so openocd targets this DUT's board).
 	for _, k := range sortedKeys(dev.Env) {
-		args = append(args, "-e", k+"="+dev.Env[k])
+		v := dev.Env[k]
+		// The reservation container has no mDNS resolver (glibc NSS won't load
+		// nss-mdns in the minimal nix image), so resolve a hostname DUT address
+		// (e.g. a network DUT seeded as splanc-max-2.local) to an IP HERE on the
+		// host — which does have mDNS — and inject the IP the harness's res.forward
+		// can actually dial.
+		if k == "HITL_DUT_ADDR" {
+			v = resolveDUTAddr(v)
+		}
+		args = append(args, "-e", k+"="+v)
 	}
 	// BLE central adapter: tell the container's bleak (hitl-ble, ImprovBLE
 	// provisioning) which host controller to drive, so it uses the USB dongle rather
@@ -478,6 +487,34 @@ func sortedKeys(m map[string]string) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// resolveDUTAddr resolves a DUT management address to an IP the reservation
+// container can dial. A network DUT may be seeded by hostname (e.g.
+// splanc-max-2.local), but the container has no mDNS resolver, so resolve it HERE
+// on the host — which does (nss-mdns, see hitl-app.nix) — and inject the IP.
+// Best-effort: an IP literal or empty string passes through unchanged, and any
+// resolution failure keeps the original name (the harness then fails loudly rather
+// than silently mis-dialing). Uses `getent hosts`, which goes through the host
+// glibc NSS, so it works regardless of this binary's Go resolver (pure-Go builds
+// can't do mDNS via net.LookupHost).
+func resolveDUTAddr(addr string) string {
+	if addr == "" || net.ParseIP(addr) != nil {
+		return addr
+	}
+	out, err := exec.Command("getent", "hosts", addr).Output()
+	if err != nil {
+		log.Printf("resolveDUTAddr: getent hosts %q failed: %v (using name)", addr, err)
+		return addr
+	}
+	// getent output: "<ip>\t<canonical> [aliases...]".
+	if f := strings.Fields(string(out)); len(f) > 0 && net.ParseIP(f[0]) != nil {
+		if f[0] != addr {
+			log.Printf("resolveDUTAddr: %s -> %s", addr, f[0])
+		}
+		return f[0]
+	}
+	return addr
 }
 
 // waitTCP blocks until addr accepts a connection or timeout.

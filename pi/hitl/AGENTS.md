@@ -184,6 +184,58 @@ download`, the BOOT button is held/stuck — this needs a human to release it an
 - The lease is heartbeated while a `hitl` command runs; if your process dies the
   lease expires and the next agent is promoted.
 
+## Deploying the rig (and the `bazel run` hang)
+
+Push a new rig image with `bazel run //pi/hitl:update -- <host>` (autodetects the
+board + committed profile; board-guarded). On aarch64-linux (the container) it
+builds the closure natively — no macOS builder VM.
+
+**GOTCHA: a backgrounded deploy looks like it "hangs" but it actually FINISHED.**
+The deploy completes and prints
+
+```text
+==> Switch complete on <host>.
+```
+
+If you launched it detached (`nohup bazel run … &`), the finished `bash`/`bazel`
+wrapper gets orphaned to PID 1, and this container's PID 1 does NOT reap orphans —
+so it lingers as a **zombie** (`ps` shows `STAT Z`, `<defunct>`). A `kill -0 <pid>`
+liveness check can't distinguish a zombie from a running process, so a naive
+"is it still running?" poll reports the completed deploy as a hang forever. (This
+is NOT a `nix copy`/ssh-ng EOF hang — that was an earlier misdiagnosis; an isolated
+`nix copy --to ssh-ng://…` exits cleanly with no lingering ssh master.)
+
+Reliable procedure — watch the LOG for completion, not the process:
+
+```sh
+# run detached, watch the log for the completion line (NOT `kill -0` on the pid,
+# which a zombie satisfies forever)
+nohup bash -c 'bazel run //pi/hitl:update -- <host> 2>&1' > /home/claude/deploy.log 2>&1 &
+#   ...poll: grep -q 'Switch complete on <host>' /home/claude/deploy.log  → done.
+#   To detect a real still-running build vs a done-zombie, check the STATE:
+#   ps -o stat= -p <pid>  → 'Z' means finished (defunct), anything else = running.
+```
+
+Then VERIFY the new daemon is actually live (don't trust "Switch complete" alone —
+see the stale-binary caveat below):
+
+```sh
+ssh <deploy-key> root@<host> \
+  'pid=$(systemctl show -p MainPID --value hitl-manager); readlink /proc/$pid/exe'  # the ACTUAL binary
+ssh … 'journalctl -u hitl-manager -n5 | grep "logic analyzer"'   # new build logs "— FX2 present/dormant"
+curl -s http://<host>:8087/status | ...   # check the DUTs/caps you changed
+```
+
+Log to a path that survives a container restart (`/tmp` is wiped) — e.g.
+`/home/claude/deploy.log` — so a mid-build restart doesn't lose the transcript.
+
+**Stale-binary caveat:** a deploy can print "Switch complete" and update the unit's
+FLAGS while the hitl-manager service still execs an OLD daemon store path (seen on
+rig-2: unit showed the new `--analyzer-*` flags but `/proc/<pid>/exe` pointed at a
+months-old `…-hitl` path, so DUTs advertised the flat `logic-analyzer` cap instead
+of the granular `logic-analyzer-led-strip`). ALWAYS confirm via `/proc/<pid>/exe`
+and a version-distinctive log line — not just the deploy's exit message.
+
 ## USBIP (remote attach)
 
 The rig host can export the C6 over the tailnet so a remote machine attaches it as

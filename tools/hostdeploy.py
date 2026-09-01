@@ -20,6 +20,17 @@ Then the container drives it (see tools/hostrun.sh) by writing
 
 Safety: only commands whose program (argv[0]) is in ALLOWED run, and always in the
 repo root. It's a build/deploy driver, not a shell.
+
+Un-wedgeable by design (a single hung command must never strand the watcher):
+  * the child's stdin is /dev/null, so a stray interactive program (e.g. an `ssh`
+    that opens a shell) gets EOF immediately and exits instead of blocking forever;
+  * the heartbeat runs on its own thread, so `.hostdeploy/alive` stays fresh even
+    during a long deploy — staleness means the watcher is DEAD, not merely busy
+    (`.hostdeploy/running` reports the in-flight command + its age);
+  * every command has a wall-clock timeout (req["timeout"], default DEFAULT_TIMEOUT)
+    after which its whole process group is killed (rc=124);
+  * the container can abort an orphaned command by writing its id to
+    `.hostdeploy/cancel` (tools/hostrun.sh does this from its exit trap).
 """
 from __future__ import annotations  # `str | None` on macOS's older python3
 
@@ -28,13 +39,20 @@ import os
 import pathlib
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
+import threading
 import time
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent  # repo root (tools/..)
 BOX = ROOT / ".hostdeploy"
 ALLOWED = {"bazel", "bazelisk", "nix", "git"}  # argv[0] allowlist
+# Wall-clock backstop for a single command. Deploys are minutes; this only fires on
+# a genuinely hung child (e.g. a stuck ssh). Override per-request with req["timeout"].
+DEFAULT_TIMEOUT = 3600.0
+RUNNING = BOX / "running"  # {id,pid,started} while a command is in flight; removed after
+CANCEL = BOX / "cancel"  # container writes the in-flight id here to abort it
 
 
 def log(msg: str) -> None:
@@ -93,6 +111,59 @@ def ssh_shim_path() -> str | None:
     return str(shimdir)
 
 
+def _cancel_requested(rid: str) -> bool:
+    """True if the container asked to abort THIS command (id-matched, so a stale
+    cancel for a prior id can't kill a fresh run)."""
+    try:
+        return CANCEL.exists() and CANCEL.read_text().strip() == rid
+    except OSError:
+        return False
+
+
+def _kill_tree(proc: subprocess.Popen) -> None:
+    """SIGTERM then (after a grace period) SIGKILL the child's whole process group.
+    The child is a session/group leader (start_new_session=True), so this reaps its
+    descendants too — ssh, nix, bazel — not just the top process."""
+    for sig, grace in ((signal.SIGTERM, 10), (signal.SIGKILL, 0)):
+        try:
+            os.killpg(proc.pid, sig)
+        except ProcessLookupError:
+            return  # already gone
+        except OSError:
+            try:
+                proc.send_signal(sig)
+            except OSError:
+                pass
+        for _ in range(int(grace * 2)):
+            if proc.poll() is not None:
+                return
+            time.sleep(0.5)
+
+
+def _supervise(proc: subprocess.Popen, rid: str, timeout: float, lf) -> str:
+    """Wait for proc, killing it on wall-clock timeout or a container cancel.
+    Returns a reason ('timeout'/'cancelled') or '' on a normal exit."""
+    deadline = time.time() + timeout
+    while True:
+        try:
+            proc.wait(timeout=1.0)
+            return ""
+        except subprocess.TimeoutExpired:
+            pass
+        reason = (
+            "timeout" if time.time() > deadline else ("cancelled" if _cancel_requested(rid) else "")
+        )
+        if reason:
+            lf.write(f"\n[hostdeploy] {reason} — killing process group {proc.pid}\n")
+            lf.flush()
+            _kill_tree(proc)
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+            return reason
+
+
 def run(req: dict) -> None:
     rid = str(req.get("id"))
     argv = req.get("argv") or []
@@ -108,37 +179,95 @@ def run(req: dict) -> None:
         statusf.write_text(json.dumps({"rc": -1, "error": f"argv[0] not allowed: {argv[:1]}"}))
         log(f"REJECTED #{rid}: {argv[:1]} not in {sorted(ALLOWED)}")
         return
+    try:
+        timeout = float(req.get("timeout") or DEFAULT_TIMEOUT)
+    except (TypeError, ValueError):
+        timeout = DEFAULT_TIMEOUT
     pretty = " ".join(shlex.quote(a) for a in argv)
     log(f"running #{rid}: {pretty}")
     envnote = " ".join(f"{k}={v}" for k, v in (req.get("env") or {}).items())
+    reason = ""
     with open(logf, "w") as lf:
         lf.write(f"$ {envnote + ' ' if envnote else ''}{pretty}\n")
         lf.flush()
-        rc = subprocess.call(argv, cwd=str(ROOT), env=env, stdout=lf, stderr=subprocess.STDOUT)
-    statusf.write_text(json.dumps({"rc": rc}))
-    log(f"done #{rid} rc={rc}")
+        # stdin=DEVNULL: a stray interactive child (e.g. an `ssh` that opens a shell)
+        # reads EOF and exits instead of blocking the watcher forever.
+        # start_new_session: own process group, so a timeout/cancel kill reaps the
+        # whole tree (ssh + nix + bazel), not just the parent.
+        proc = subprocess.Popen(
+            argv,
+            cwd=str(ROOT),
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=lf,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        RUNNING.write_text(json.dumps({"id": rid, "pid": proc.pid, "started": time.time()}))
+        try:
+            reason = _supervise(proc, rid, timeout, lf)
+        finally:
+            try:
+                RUNNING.unlink()
+            except OSError:
+                pass
+    rc = 124 if reason == "timeout" else proc.returncode
+    status = {"rc": rc}
+    if reason:
+        status["reason"] = reason
+    statusf.write_text(json.dumps(status))
+    log(f"done #{rid} rc={rc}" + (f" ({reason})" if reason else ""))
+
+
+def _heartbeat(alivef: pathlib.Path, stop: threading.Event) -> None:
+    """Refresh the liveness stamp on its own thread so it stays fresh even while a
+    command runs — the container's preflight can then tell a DEAD watcher (stale
+    stamp) from a merely BUSY one (fresh stamp + a `running` marker)."""
+    while not stop.is_set():
+        try:
+            alivef.write_text(str(time.time()))
+        except OSError:
+            pass
+        stop.wait(1.0)
 
 
 def main() -> int:
     BOX.mkdir(exist_ok=True)
     reqf = BOX / "request.json"
-    alivef = BOX / "alive"
+    # A stale `running`/`cancel` from a previous watcher process is meaningless now.
+    for f in (RUNNING, CANCEL):
+        try:
+            f.unlink()
+        except OSError:
+            pass
+    stop = threading.Event()
+    hb = threading.Thread(target=_heartbeat, args=(BOX / "alive", stop), daemon=True)
+    hb.start()
     log(f"watching {BOX} (repo {ROOT}); allowlist={sorted(ALLOWED)}. Ctrl-C to stop.")
     seen = None
-    while True:
-        try:
-            alivef.write_text(str(time.time()))
-            if reqf.exists():
-                req = json.loads(reqf.read_text())
-                if req.get("id") != seen:
-                    seen = req.get("id")
-                    run(req)
-        except KeyboardInterrupt:
-            log("stopping.")
-            return 0
-        except Exception as e:  # keep the watcher alive across a bad request
-            log(f"error: {e}")
-        time.sleep(1)
+    try:
+        while True:
+            try:
+                if reqf.exists():
+                    req = json.loads(reqf.read_text())
+                    rid = req.get("id")
+                    if rid != seen:
+                        seen = rid
+                        # Idempotent across restarts: a request that already ran wrote
+                        # its <id>.status, so skip it rather than re-executing the last
+                        # request.json every time the watcher restarts.
+                        if (BOX / f"{rid}.status").exists():
+                            log(f"skip #{rid}: already completed (status exists)")
+                        else:
+                            run(req)
+            except Exception as e:  # keep the watcher alive across a bad request
+                log(f"error: {e}")
+            time.sleep(1)
+    except KeyboardInterrupt:
+        log("stopping.")
+        return 0
+    finally:
+        stop.set()
 
 
 if __name__ == "__main__":

@@ -22,6 +22,7 @@ holder, which drops the reservation.
 from __future__ import annotations
 
 import os
+import shlex
 import shutil
 import subprocess
 from contextlib import contextmanager
@@ -178,7 +179,10 @@ class Reservation:
     ) -> subprocess.CompletedProcess:
         """Run a shell command in the reservation's container (via `hitl run`)."""
         if isinstance(remote_cmd, list):
-            remote_cmd = " ".join(remote_cmd)
+            # shlex.join (not a bare space-join) so an argv element that itself
+            # contains shell metacharacters — e.g. `python3 -c '<snippet with
+            # (){}quotes>'` — survives the remote `sh -c` as ONE token.
+            remote_cmd = shlex.join(remote_cmd)
         # `hitl run` shell-quotes each arg, so wrap in `sh -c` to have the remote
         # shell interpret the whole line (env prefixes, pipes, redirection).
         return self._sub("run", "--", "sh", "-c", remote_cmd, capture=capture, timeout=timeout)

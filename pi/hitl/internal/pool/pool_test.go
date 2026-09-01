@@ -17,11 +17,11 @@ func TestPickRequireAnalyzer(t *testing.T) {
 			{Name: "c6-0", Capabilities: []string{"flash", "improv"}},
 		}},
 		"http://b:8087": {Devices: []api.DeviceStatus{
-			{Name: "c6-la", Capabilities: []string{"flash", "improv", "logic-analyzer"}},
+			{Name: "c6-la", Capabilities: []string{"flash", "improv", "logic-analyzer-led-strip"}},
 		}},
 	}
 	servers := []string{"http://a:8087", "http://b:8087"}
-	got, err := Pick(Probes(servers, fakeGet(states, nil)), Require{Caps: []string{"logic-analyzer"}})
+	got, err := Pick(Probes(servers, fakeGet(states, nil)), Require{Caps: []string{"logic-analyzer-led-strip"}})
 	if err != nil {
 		t.Fatalf("Pick(require analyzer): %v", err)
 	}
@@ -31,7 +31,7 @@ func TestPickRequireAnalyzer(t *testing.T) {
 
 	// No rig with a free analyzer DUT -> a clear error, not a wrong pick.
 	only := map[string]*api.Status{"http://a:8087": states["http://a:8087"]}
-	if _, err := Pick(Probes([]string{"http://a:8087"}, fakeGet(only, nil)), Require{Caps: []string{"logic-analyzer"}}); err == nil {
+	if _, err := Pick(Probes([]string{"http://a:8087"}, fakeGet(only, nil)), Require{Caps: []string{"logic-analyzer-led-strip"}}); err == nil {
 		t.Error("Pick(require analyzer) with no analyzer rig: want error, got nil")
 	}
 
@@ -40,6 +40,45 @@ func TestPickRequireAnalyzer(t *testing.T) {
 	// free for work that actually needs it.
 	if got, _ := Pick(Probes(servers, fakeGet(states, nil))); got != "http://a:8087" {
 		t.Errorf("Pick(no require) = %q, want the non-analyzer rig a (best-fit conserves the LA rig)", got)
+	}
+}
+
+func TestPickQueuesOnBusyMatchingRig(t *testing.T) {
+	busy := &api.Reservation{} // non-nil Active == the DUT is held
+	// Only rig a has a led-mapper-pi DUT and it's BUSY; rig b has an esp32 only.
+	// A reservation for sku led-mapper-pi must ROUTE TO a (to wait in its FIFO
+	// queue), not fast-fail — the DUT exists, it's just contended right now.
+	states := map[string]*api.Status{
+		"http://a:8087": {Devices: []api.DeviceStatus{
+			{Name: "pi-1", Kind: "network", SKU: "led-mapper-pi", Capabilities: []string{"improv"}, Active: busy},
+		}},
+		"http://b:8087": {Devices: []api.DeviceStatus{
+			{Name: "c6-0", SKU: "esp32c6", Capabilities: []string{"flash", "improv"}},
+		}},
+	}
+	servers := []string{"http://a:8087", "http://b:8087"}
+	got, err := Pick(Probes(servers, fakeGet(states, nil)), Require{SKU: "led-mapper-pi"})
+	if err != nil {
+		t.Fatalf("Pick(sku led-mapper-pi, busy) should queue on a, got error: %v", err)
+	}
+	if got != "http://a:8087" {
+		t.Errorf("Pick(sku led-mapper-pi, busy) = %q, want a (queue on the rig that has the DUT)", got)
+	}
+
+	// A FREE matching DUT still wins over a busy one: free rig b beats busy rig a.
+	states2 := map[string]*api.Status{
+		"http://a:8087": states["http://a:8087"], // busy pi
+		"http://b:8087": {Devices: []api.DeviceStatus{
+			{Name: "pi-2", Kind: "network", SKU: "led-mapper-pi", Capabilities: []string{"improv"}},
+		}},
+	}
+	if got, _ := Pick(Probes(servers, fakeGet(states2, nil)), Require{SKU: "led-mapper-pi"}); got != "http://b:8087" {
+		t.Errorf("Pick with a free match = %q, want b (free beats busy/queue)", got)
+	}
+
+	// No matching DUT anywhere (free or busy) -> still a clear error.
+	if _, err := Pick(Probes([]string{"http://b:8087"}, fakeGet(map[string]*api.Status{"http://b:8087": states["http://b:8087"]}, nil)), Require{SKU: "led-mapper-pi"}); err == nil {
+		t.Error("Pick(sku led-mapper-pi) with no such DUT: want error, got nil")
 	}
 }
 
@@ -240,13 +279,20 @@ func TestPickRequireCaps(t *testing.T) {
 		t.Errorf("Pick(require mic) = %q, want rig c with the free mic DUT", got)
 	}
 
-	// No rig with a free mic DUT -> a clear error, not a wrong pick.
-	noMic := map[string]*api.Status{
+	// No FREE mic DUT, but rig b has one BUSY: route to b so the reserve waits in
+	// its FIFO queue instead of fast-failing a contended-but-serviceable request.
+	noFree := map[string]*api.Status{
 		"http://a:8087": states["http://a:8087"],
 		"http://b:8087": states["http://b:8087"],
 	}
-	if _, err := Pick(Probes([]string{"http://a:8087", "http://b:8087"}, fakeGet(noMic, nil)), Require{Caps: []string{"mic"}}); err == nil {
-		t.Error("Pick(require mic) with no free mic DUT: want error, got nil")
+	if got, err := Pick(Probes([]string{"http://a:8087", "http://b:8087"}, fakeGet(noFree, nil)), Require{Caps: []string{"mic"}}); err != nil || got != "http://b:8087" {
+		t.Errorf("Pick(require mic, none free) = %q err=%v, want b (queue on the busy mic rig)", got, err)
+	}
+
+	// No mic DUT ANYWHERE (rig a only) -> a clear error, not a wrong pick.
+	aOnly := map[string]*api.Status{"http://a:8087": states["http://a:8087"]}
+	if _, err := Pick(Probes([]string{"http://a:8087"}, fakeGet(aOnly, nil)), Require{Caps: []string{"mic"}}); err == nil {
+		t.Error("Pick(require mic) with no mic DUT at all: want error, got nil")
 	}
 }
 
