@@ -274,6 +274,60 @@ func TestDutMonitorStickyPortsAndRetention(t *testing.T) {
 	}
 }
 
+// A channel-map change AFTER a USB board is first discovered must be reflected in
+// that board's capabilities on the next scan — a newly-tapped DUT gains its
+// logic-analyzer-* cap and an un-tapped one loses it — WITHOUT a daemon restart.
+// Regression: the monitor used to cache a board's caps at first sight and skip
+// recompute for known boards, so a runtime SetMap (or the map settling after
+// discovery) never propagated, and led_capture reservations found no tapped DUT.
+func TestDutMonitorRecomputesCapsOnMapChange(t *testing.T) {
+	dir := t.TempDir()
+	tp := filepath.Join(dir, "ttyA")
+	if err := os.WriteFile(tp, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(tp, filepath.Join(dir, "usb-Espressif_USB_JTAG_serial_debug_unit_AAAAAA-if00")); err != nil {
+		t.Fatal(err)
+	}
+	const board = "c6-aaaaaa"
+
+	// Broker is enabled (present defaults true in tests) but starts with an empty
+	// map, so the board is un-tapped at first discovery.
+	brk := analyzer.New(analyzer.Config{Driver: "fx2lafw"})
+	dm := newDUTMonitor(filepath.Join(dir, "usb-*-if00"), 2222, 8, 30*time.Second, "", 0, brk)
+
+	first, err := dm.scan()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 1 || first[0].Name != board {
+		t.Fatalf("first scan = %+v", first)
+	}
+	if capListHas(first[0].Capabilities, "logic-analyzer-led-strip") {
+		t.Fatalf("un-tapped board should advertise no analyzer cap, got %v", first[0].Capabilities)
+	}
+
+	// Tap it at runtime. The next scan (board already known) must re-derive caps.
+	if err := brk.SetMap(map[string]analyzer.DUTMap{
+		board: {Channels: []string{"D6"}, Protocol: analyzer.ProtocolWS2812},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	tapped, _ := dm.scan()
+	if len(tapped) != 1 || !capListHas(tapped[0].Capabilities, "logic-analyzer-led-strip") {
+		t.Fatalf("after tapping via SetMap, known board should gain logic-analyzer-led-strip, got %+v", tapped)
+	}
+
+	// Un-tap it again; the cap must drop on the next scan (not stay stale-high).
+	if err := brk.SetMap(map[string]analyzer.DUTMap{}); err != nil {
+		t.Fatal(err)
+	}
+	untapped, _ := dm.scan()
+	if len(untapped) != 1 || capListHas(untapped[0].Capabilities, "logic-analyzer-led-strip") {
+		t.Fatalf("after un-tapping via SetMap, board should lose the analyzer cap, got %+v", untapped)
+	}
+}
+
 func TestReadNetworkDUTs(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "network-duts.json")
