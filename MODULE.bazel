@@ -347,15 +347,15 @@ use_repo(player_crate, "player_crates")
 bazel_dep(name = "sbc_deploy", version = "0.0.0")
 git_override(
     module_name = "sbc_deploy",
-    # hermetic flake source @ 5611bec (branch pi/hermetic-flake-src, PR pending):
-    # sbc_application grows a `flake_srcs` attr — Bazel stages EXACTLY the declared
-    # flake files into a TreeArtifact and the deploy builds `path:$SBC_FLAKE_DIR`
-    # from that, never the live workspace. Fixes non-deterministic builds: pointing
+    # hermetic flake source @ 8d6f66b (PR #14, squash-merged to main): sbc_application
+    # grows a `flake_srcs` attr — Bazel stages EXACTLY the declared flake files into a
+    # TreeArtifact and the deploy builds `path:$SBC_FLAKE_DIR` from that (content-
+    # addressed), never the live workspace. Fixes non-deterministic builds: pointing
     # nix at $BUILD_WORKSPACE_DIRECTORY exposed the churning .bazelisk cache, so the
     # same inputs hashed to the same store path with different bytes and nix copy
-    # served stale daemons (rig-2 stuck on an old binary). Descends from d6eb5cc
-    # (the deploy_live board/hardware brick guard, PR #13).
-    commit = "b40d2f4277eebc6d1714dee92eab410e5f324225",  # hermetic flake_srcs + content-addressed staged dir
+    # served stale daemons (rig-2 stuck on an old binary). Also folds in the
+    # deploy_live board/hardware brick guard (was PR #13, never merged on its own).
+    commit = "8d6f66b54742cbb1d492783c5513e37792384c77",  # hermetic flake_srcs (PR #14 merged)
     remote = "https://github.com/fughilli/sbc-deploy.git",
 )
 
