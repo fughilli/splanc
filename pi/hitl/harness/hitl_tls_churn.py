@@ -47,8 +47,13 @@ def _log(msg: str) -> None:
 
 
 def default_flashbundle() -> str | None:
+    # HITL_BUNDLE_RUNFILE lets a variant target (tls_churn_netstack) point at a different
+    # firmware bundle in its runfiles without a code change.
+    runfile = os.environ.get(
+        "HITL_BUNDLE_RUNFILE", "_main/firmware/player_app/esp32c6_flashbundle.tar"
+    )
     try:
-        return runfiles.Create().Rlocation("_main/firmware/player_app/esp32c6_flashbundle.tar")
+        return runfiles.Create().Rlocation(runfile)
     except Exception:
         return None
 
@@ -337,27 +342,36 @@ def run_on_hardware(args) -> int:
         host, port = dut_target(redirect, "wss")
         _log(f"[dut] {host}:{port}")
 
-        # The board tends to drop its STA right after an Improv session (BLE
+        # The vendor board tends to drop its STA right after an Improv session (BLE
         # coexistence); a clean reboot re-joins from stored NVS creds and holds
         # far better. Reset, then wait until the rig can reach the DUT before we
-        # test wss. (Same dance as rename_wss / the e2e.)
-        _log("[reset] rebooting DUT for a clean NVS-join (stable STA)…")
-        res.ssh("hitl-monitor --reset --seconds 3", capture=True, timeout=30)
-        # Poll :80 (the HTTP landing) for reachability, like rename_wss — it binds
-        # as soon as the STA rejoins, whereas :443 comes up a beat later after the
-        # LAN cert re-issue; the baseline's own settle window then waits for :443.
-        iters = max(1, int(args.rejoin_wait // 5))
-        poll = (
-            f"for i in $(seq 1 {iters}); do "
-            f'if timeout 2 bash -c "cat </dev/null >/dev/tcp/{host}/80" 2>/dev/null; '
-            f'then echo "REACHABLE after $((i*5))s"; exit 0; fi; sleep 3; done; echo UNREACHABLE'
-        )
-        _log(f"[rejoin] polling rig -> {host}:80 for up to ~{iters * 5}s…")
-        rp = res.ssh(poll, capture=True, timeout=iters * 5 + 40)
-        _log("[rejoin] " + (rp.stdout or "").strip())
-        if "UNREACHABLE" in (rp.stdout or ""):
-            _log("[rejoin] DUT never came back on the network — SKIP (cannot test wss).")
-            return 0
+        # test wss. (Same dance as rename_wss / the e2e.) The heapless netstack keeps
+        # creds in RAM (no NVS) and would need re-provisioning to rejoin — but it's
+        # already the stable LISTENing STA right after Improv, so --skip-nvs-reboot
+        # goes straight to the churn on the just-provisioned link.
+        if args.skip_nvs_reboot:
+            _log(
+                "[reset] skipping the NVS-join reboot (--skip-nvs-reboot); testing the "
+                "just-provisioned link directly"
+            )
+        else:
+            _log("[reset] rebooting DUT for a clean NVS-join (stable STA)…")
+            res.ssh("hitl-monitor --reset --seconds 3", capture=True, timeout=30)
+            # Poll :80 (the HTTP landing) for reachability, like rename_wss — it binds
+            # as soon as the STA rejoins, whereas :443 comes up a beat later after the
+            # LAN cert re-issue; the baseline's own settle window then waits for :443.
+            iters = max(1, int(args.rejoin_wait // 5))
+            poll = (
+                f"for i in $(seq 1 {iters}); do "
+                f'if timeout 2 bash -c "cat </dev/null >/dev/tcp/{host}/80" 2>/dev/null; '
+                f'then echo "REACHABLE after $((i*5))s"; exit 0; fi; sleep 3; done; echo UNREACHABLE'
+            )
+            _log(f"[rejoin] polling rig -> {host}:80 for up to ~{iters * 5}s…")
+            rp = res.ssh(poll, capture=True, timeout=iters * 5 + 40)
+            _log("[rejoin] " + (rp.stdout or "").strip())
+            if "UNREACHABLE" in (rp.stdout or ""):
+                _log("[rejoin] DUT never came back on the network — SKIP (cannot test wss).")
+                return 0
 
         # Opening the C6's USB-CDC serial resets the chip (drops the just-joined
         # WiFi), so the monitor is OFF by default — a clean run measures wss purely
@@ -470,6 +484,13 @@ def main() -> None:
         type=float,
         default=90.0,
         help="seconds to wait for the DUT to rejoin after reboot",
+    )
+    ap.add_argument(
+        "--skip-nvs-reboot",
+        action="store_true",
+        help="skip the post-provision NVS-join reboot and test the just-provisioned link "
+        "directly (for the heapless netstack, which keeps creds in RAM and would need "
+        "re-provisioning to rejoin — it is already the stable LISTENing STA after Improv)",
     )
     ap.add_argument("--improv-timeout", type=float, default=90.0)
     ap.add_argument("--improv-attempts", type=int, default=3)

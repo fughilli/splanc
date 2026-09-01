@@ -1,0 +1,353 @@
+//! BLE-host FFI: a static HCI host + Improv GATT service driving the vendor BLE
+//! controller. The firmware pumps HCI packets between the controller and this
+//! state machine; advertising bring-up, ATT/GATT discovery, and the Improv
+//! provisioning flow are all here in the heapless netstack — the controller only
+//! owns the radio link.
+
+#![no_std]
+#![allow(static_mut_refs)]
+
+use ledmapper_netstack::ble::att::AttPdu;
+use ledmapper_netstack::gatt::{GATT_RSP_MAX, GATT_VAL_MAX};
+use ledmapper_netstack::ble::{AclPacket, L2capReassembler};
+use ledmapper_netstack::hci::{acl, BleHost, HostState, H4_ACL, H4_EVT};
+use ledmapper_netstack::improv::{Action, ImprovService, IMPROV_SVC_UUID, MAX_PASS, MAX_SSID};
+use ledmapper_netstack::rx::Buf;
+
+static mut HOST: BleHost = BleHost::new();
+static mut IMPROV: Option<ImprovService> = None;
+
+// Pending provisioning request handed to the firmware (which owns Wi-Fi), plus a
+// queue of value handles to notify the central after an RPC.
+static mut PENDING_SSID: Buf<MAX_SSID> = Buf::new();
+static mut PENDING_PASS: Buf<MAX_PASS> = Buf::new();
+static mut HAS_PENDING: bool = false;
+static mut NOTIFY_Q: [u16; 4] = [0; 4];
+static mut NOTIFY_N: usize = 0;
+/// Recombines an L2CAP PDU across HCI-ACL fragments. A >MTU ATT write (e.g. the
+/// 35-byte Improv SendWifi RPC) is handed up as multiple ACL fragments when it
+/// exceeds the controller's ACL buffer; without this the first fragment is a
+/// truncated ATT PDU and the rest is dropped — the intermittent "invalid_rpc".
+static mut L2CAP: L2capReassembler = L2capReassembler::new();
+
+fn copy_out(src: &[u8], out: *mut u8, cap: u32) -> u32 {
+    let n = src.len().min(cap as usize);
+    unsafe { core::ptr::copy_nonoverlapping(src.as_ptr(), out, n) };
+    n as u32
+}
+
+/// One-time setup: advertise Flags + the Improv 128-bit service UUID (so the
+/// Improv provisioner recognises us), the name in the scan response, and build the
+/// Improv GATT service.
+#[no_mangle]
+pub extern "C" fn ns_ble_setup() {
+    unsafe {
+        // Primary ADV: Flags (LE General Discoverable, BR/EDR not supported) +
+        // Complete List of 128-bit Service UUIDs (0x07) = the Improv service.
+        let mut adv: Buf<31> = Buf::new();
+        let _ = adv.extend(&[0x02, 0x01, 0x06]);
+        let _ = adv.extend(&[0x11, 0x07]);
+        let _ = adv.extend(&IMPROV_SVC_UUID);
+        HOST.set_adv(adv.as_slice());
+        // Scan response: the complete local name (NO Flags AD). A distinct name
+        // ("heapless-ble") so a scanner doesn't confuse us with older DUTs still
+        // advertising "heapless-c6"/"-imp" within the rigs' shared BLE range.
+        HOST.set_scan_rsp(&[
+            0x09, 0x09, b'h', b'l', b's', b'-', b'f', b'i', b'x', b'2',
+        ]);
+        // Distinctive static random address for this build so a central can't reuse
+        // a GATT cache from an earlier build (LE order; MSB C0 = static random).
+        HOST.set_random_addr([0x02, 0x00, 0x0f, 0x1f, 0xde, 0xc0]); // C0:DE:1F:0F:00:02
+        IMPROV = Some(ImprovService::new());
+    }
+}
+
+/// Next HCI command to send for bring-up (the initial Reset). 0 when idle.
+#[no_mangle]
+pub extern "C" fn ns_ble_poll_cmd(out: *mut u8, cap: u32) -> u32 {
+    let mut b: Buf<64> = Buf::new();
+    let n = unsafe { HOST.poll_cmd(&mut b) };
+    if n == 0 {
+        return 0;
+    }
+    copy_out(b.as_slice(), out, cap)
+}
+
+/// Wrap an ATT payload in L2CAP (CID 0x0004) + an HCI ACL for `handle` into `out`.
+fn wrap_att_acl(handle: u16, att: &[u8], out: *mut u8, cap: u32) -> u32 {
+    let mut l2buf: Buf<{ GATT_RSP_MAX + 4 }> = Buf::new();
+    let _ = l2buf.extend(&(att.len() as u16).to_le_bytes());
+    let _ = l2buf.extend(&[0x04, 0x00]);
+    let _ = l2buf.extend(att);
+    let mut aclb: Buf<{ GATT_RSP_MAX + 8 }> = Buf::new();
+    if acl(handle, l2buf.as_slice(), &mut aclb).is_err() {
+        return 0;
+    }
+    copy_out(aclb.as_slice(), out, cap)
+}
+
+/// Build an L2CAP Connection Parameter Update Request (LE signaling channel, CID
+/// 0x0005) as a ready-to-send HCI ACL, asking the central to raise the BLE
+/// supervision timeout to ~6s (interval 30-50ms, latency 0).
+///
+/// WHY: provisioning fails on rig-2 when the BLE central drops mid-join. The
+/// WiFi-active association+4-way+DHCP window is ~4-5s, dominated by a ~3s AP-side
+/// DHCP-OFFER stall (the rig's hostapd/dnsmasq buffer-then-bursts the OFFER —
+/// measured, and independent of our coex: it persists with WiFi at full priority
+/// and our uplink frames are already PM=0). Single-radio coex can't both service
+/// BLE every connection interval AND keep DHCP fast, so the short-supervision
+/// dongle times the link out. Raising the supervision timeout lets the link ride
+/// out the stall. This is the SPEC-CORRECT request (the central owns the LL
+/// instant), distinct from the peripheral-initiated LL Connection Update that hit
+/// 0x28 Instant Passed (see hci.rs). BlueZ applies it via a proper LL update; we
+/// pick up the new interval from the LE Connection Update Complete event.
+fn conn_param_update_req_acl(handle: u16, out: *mut u8, cap: u32) -> u32 {
+    let mut l2: Buf<20> = Buf::new();
+    let _ = l2.extend(&12u16.to_le_bytes()); // L2CAP basic length = 12 (the C-frame below)
+    let _ = l2.extend(&[0x05, 0x00]); // CID = 0x0005 (LE signaling)
+    let _ = l2.extend(&[0x12, 0x01, 0x08, 0x00]); // Code=Conn Param Update Req, Id=1, CmdLen=8
+    let _ = l2.extend(&24u16.to_le_bytes()); // interval min = 24 * 1.25ms = 30ms
+    let _ = l2.extend(&40u16.to_le_bytes()); // interval max = 40 * 1.25ms = 50ms
+    let _ = l2.extend(&0u16.to_le_bytes()); // slave latency = 0 (answer every event when we can)
+    let _ = l2.extend(&600u16.to_le_bytes()); // supervision timeout = 600 * 10ms = 6s
+    let mut aclb: Buf<24> = Buf::new();
+    if acl(handle, l2.as_slice(), &mut aclb).is_err() {
+        return 0;
+    }
+    copy_out(aclb.as_slice(), out, cap)
+}
+
+/// Process a received HCI packet (event or ACL). Writes any response ACL into
+/// `out`, returning its length. ATT requests run the Improv GATT service; an RPC
+/// write that carries Wi-Fi credentials stashes them for the firmware to act on.
+#[no_mangle]
+pub extern "C" fn ns_ble_on_hci(pkt: *const u8, len: u32, out: *mut u8, cap: u32) -> u32 {
+    if pkt.is_null() || len == 0 {
+        return 0;
+    }
+    let s = unsafe { core::slice::from_raw_parts(pkt, len as usize) };
+    match s[0] {
+        H4_EVT => {
+            let was_connected = matches!(unsafe { HOST.state }, HostState::Connected(_));
+            let mut b: Buf<64> = Buf::new();
+            let n = unsafe { HOST.on_event(s, &mut b) };
+            // A fresh central connection must start the Improv flow CLEAN. The service is a
+            // static, so a stale error/state from a prior FAILED attempt otherwise persists
+            // and every reconnect reads it straight back — making the provisioner's retries
+            // useless (a sticky "invalid_rpc" across all 3 attempts). Reset on the 0->1
+            // connection edge.
+            let now_connected = matches!(unsafe { HOST.state }, HostState::Connected(_));
+            if now_connected && !was_connected {
+                unsafe {
+                    IMPROV = Some(ImprovService::new());
+                    NOTIFY_N = 0;
+                    HAS_PENDING = false;
+                    L2CAP.reset(); // drop any partial fragment from a prior link
+                }
+                // On the fresh connection, ask the central to raise the supervision timeout so the
+                // link survives the multi-second WiFi-active join (see conn_param_update_req_acl).
+                // A connection-complete event carries no HCI command (n==0), so the ACL is the only
+                // thing to send here. BlueZ's response arrives on CID 0x0005 and is harmlessly
+                // ignored by the ATT-only ACL path below; the applied params surface via the LE
+                // Connection Update Complete event.
+                if let Some(h) = unsafe { HOST.conn_handle() } {
+                    return conn_param_update_req_acl(h, out, cap);
+                }
+            }
+            if n == 0 {
+                0
+            } else {
+                copy_out(b.as_slice(), out, cap)
+            }
+        }
+        H4_ACL => {
+            // AclPacket wants the ACL packet WITHOUT the H4 type byte: [handle:2][len:2][data..].
+            let Some(acl_pkt) = AclPacket::parse(&s[1..]) else {
+                return 0;
+            };
+            let handle = acl_pkt.handle;
+            // Recombine across HCI-ACL fragments before touching ATT. A single-fragment write
+            // completes in one push; a fragmented one (the 35-byte SendWifi RPC when the
+            // controller's ACL buffer is smaller than the PDU) completes on a later fragment.
+            let l2 = match unsafe { L2CAP.push(&acl_pkt) } {
+                Ok(Some(full)) => full,
+                Ok(None) => return 0, // more fragments needed
+                Err(_) => {
+                    unsafe { L2CAP.reset() };
+                    return 0;
+                }
+            };
+            if l2.len() < 4 || u16::from_le_bytes([l2[2], l2[3]]) != 0x0004 {
+                return 0; // only the ATT channel
+            }
+            let Some(pdu) = AttPdu::parse(&l2[4..]) else {
+                return 0;
+            };
+            let svc = unsafe { IMPROV.as_mut() };
+            let Some(svc) = svc else { return 0 };
+            let mut att: Buf<GATT_RSP_MAX> = Buf::new();
+            let outcome = svc.handle_att(pdu.opcode, pdu.params, &mut att);
+            // Stash Wi-Fi credentials for the firmware; queue notifications.
+            if let Action::Provision(creds) = outcome.action {
+                unsafe {
+                    PENDING_SSID.clear();
+                    PENDING_PASS.clear();
+                    let _ = PENDING_SSID.extend(creds.ssid.as_slice());
+                    let _ = PENDING_PASS.extend(creds.pass.as_slice());
+                    HAS_PENDING = true;
+                }
+            }
+            queue_notifications(&outcome.notify);
+            if outcome.resp_len == 0 {
+                return 0; // write-command: no ATT response
+            }
+            wrap_att_acl(handle, att.as_slice(), out, cap)
+        }
+        _ => 0,
+    }
+}
+
+fn queue_notifications(handles: &[u16]) {
+    unsafe {
+        for &h in handles {
+            if h != 0 && NOTIFY_N < NOTIFY_Q.len() {
+                NOTIFY_Q[NOTIFY_N] = h;
+                NOTIFY_N += 1;
+            }
+        }
+    }
+}
+
+/// Poll for the next queued characteristic notification (current-state / error /
+/// RPC-result) as a ready-to-send ACL. Returns 0 when the queue is empty. The
+/// firmware calls this in its loop after `ns_ble_on_hci`.
+#[no_mangle]
+pub extern "C" fn ns_ble_poll_notify(out: *mut u8, cap: u32) -> u32 {
+    unsafe {
+        if NOTIFY_N == 0 {
+            return 0;
+        }
+        let Some(conn) = HOST.conn_handle() else {
+            NOTIFY_N = 0;
+            return 0;
+        };
+        let h = NOTIFY_Q[0];
+        NOTIFY_Q.copy_within(1..NOTIFY_N, 0);
+        NOTIFY_N -= 1;
+        let Some(svc) = IMPROV.as_ref() else { return 0 };
+        let mut ntf: Buf<GATT_RSP_MAX> = Buf::new();
+        if svc.db.notification(h, &mut ntf) == 0 {
+            return 0;
+        }
+        wrap_att_acl(conn, ntf.as_slice(), out, cap)
+    }
+}
+
+/// Retrieve pending Wi-Fi credentials from an Improv SendWifi RPC. Copies the SSID
+/// and passphrase (NUL-terminated) into the caller's buffers and returns 1 if a
+/// request was pending (clearing it), else 0.
+#[no_mangle]
+pub extern "C" fn ns_ble_take_wifi(ssid: *mut u8, ssid_cap: u32, pass: *mut u8, pass_cap: u32) -> u32 {
+    unsafe {
+        if !HAS_PENDING {
+            return 0;
+        }
+        HAS_PENDING = false;
+        let sn = copy_out(PENDING_SSID.as_slice(), ssid, ssid_cap.saturating_sub(1));
+        *ssid.add(sn as usize) = 0;
+        let pn = copy_out(PENDING_PASS.as_slice(), pass, pass_cap.saturating_sub(1));
+        *pass.add(pn as usize) = 0;
+        1
+    }
+}
+
+/// Report the outcome of the firmware's Wi-Fi connection attempt back to Improv
+/// (updates current-state/error/result + queues their notifications). On success,
+/// `url` (UTF-8, `url_len` bytes; may be null/0) is packed into the SendWifi RPC
+/// result as the redirect the provisioner reads to reach the joined device.
+#[no_mangle]
+pub extern "C" fn ns_ble_provision_result(ok: u32, url: *const u8, url_len: u32) {
+    unsafe {
+        let Some(svc) = IMPROV.as_mut() else { return };
+        // The &str borrow is valid for this call; finish_provisioning copies the bytes
+        // into the result buffer immediately, so it need not outlive the call.
+        if ok != 0 && !url.is_null() && url_len > 0 {
+            let s = core::slice::from_raw_parts(url, url_len as usize);
+            match core::str::from_utf8(s) {
+                Ok(u) => svc.finish_provisioning(true, &[u]),
+                Err(_) => svc.finish_provisioning(true, &[]),
+            }
+        } else {
+            svc.finish_provisioning(ok != 0, &[]);
+        }
+        let (c, e, r) =
+            (svc.current_state_handle(), svc.error_state_handle(), svc.rpc_result_handle());
+        queue_notifications(&[c, e, r]);
+    }
+}
+
+/// Override the advertised local name (scan-response Complete Local Name) before
+/// advertising starts. Lets the player advertise its device name instead of the
+/// build-fixed default so the provisioner's name scan (and humans) see the board.
+#[no_mangle]
+pub extern "C" fn ns_ble_set_name(name: *const u8, len: u32) {
+    if name.is_null() || len == 0 {
+        return;
+    }
+    let s = unsafe { core::slice::from_raw_parts(name, (len as usize).min(29)) };
+    let mut sr: Buf<31> = Buf::new();
+    let _ = sr.extend(&[(s.len() + 1) as u8, 0x09]); // AD length, type=Complete Local Name
+    let _ = sr.extend(s);
+    unsafe { HOST.set_scan_rsp(sr.as_slice()) };
+}
+
+/// Override the advertised (static random) BLE address before advertising starts.
+/// `mac` is 6 bytes in on-air LE order (MSB must have its top two bits set for a
+/// static random address). Gives each board a distinct address so a central can't
+/// serve a stale GATT cache and two DUTs don't collide.
+#[no_mangle]
+pub extern "C" fn ns_ble_set_addr(mac: *const u8) {
+    if mac.is_null() {
+        return;
+    }
+    let s = unsafe { core::slice::from_raw_parts(mac, 6) };
+    let mut a = [0u8; 6];
+    a.copy_from_slice(s);
+    unsafe { HOST.set_random_addr(a) };
+}
+
+/// Host state for telemetry: 0=Init .. 6=Advertising, 7=Connected.
+#[no_mangle]
+pub extern "C" fn ns_ble_state() -> u32 {
+    match unsafe { HOST.state } {
+        HostState::Init => 0,
+        HostState::ResetSent => 1,
+        HostState::EvtMaskSent => 2,
+        HostState::LeMaskSent => 8,
+        HostState::BufSizeSent => 10,
+        HostState::FeatSent => 11,
+        HostState::RandAddrSent => 12,
+        HostState::AdvParamsSent => 3,
+        HostState::AdvDataSent => 4,
+        HostState::ScanRspSent => 9,
+        HostState::AdvEnableSent => 5,
+        HostState::Advertising => 6,
+        HostState::Connected(_) => 7,
+    }
+}
+
+/// Negotiated BLE connection interval in 1.25 ms units (0 if not connected). The coex
+/// arbiter uses it to predict connection-event anchors and yield the radio to BLE only around them.
+#[no_mangle]
+pub extern "C" fn ns_ble_conn_interval() -> u32 {
+    unsafe { HOST.conn_interval() as u32 }
+}
+
+// Keep the Wi-Fi buffer bound referenced (documents the FFI contract for callers).
+const _: () = assert!(MAX_SSID <= GATT_VAL_MAX && MAX_PASS <= GATT_VAL_MAX);
+
+#[cfg(not(test))]
+#[panic_handler]
+fn panic(_: &core::panic::PanicInfo) -> ! {
+    loop {}
+}

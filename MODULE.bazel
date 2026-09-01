@@ -396,6 +396,11 @@ archive_override(
     patches = [
         "//patches:embedded-fug90-gen-key.patch",
         "//patches:embedded-esp32-libs-c6-only.patch",
+        # Shrink the from-source mbedTLS TLS record buffer 8 KB -> 6 KB now that all
+        # large control frames are chunked at the client — halves the per-connection
+        # dynamic record alloc so the heapless-netstack player survives many TLS
+        # reconnects on the C6's tight heap. ABI-safe (record buffer is off the struct).
+        "//patches:embedded-mbedtls-record-6k.patch",
     ],
     strip_prefix = "embedded-569102d541664d790fc708206f450dce477ca220",
     urls = ["https://github.com/fughilli/embedded/archive/569102d541664d790fc708206f450dce477ca220.tar.gz"],

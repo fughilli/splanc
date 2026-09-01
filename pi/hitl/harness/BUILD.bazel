@@ -106,6 +106,37 @@ py_test(
     ],
 )
 
+# Same e2e driver, but against the HEAPLESS-NETSTACK player variant
+# (//firmware/player_app:esp32c6_netstack): BLE Improv provisioning -> our heapless
+# MAC/WPA2/CCMP/DHCP/TCP/TLS/WS -> lm_player_handle, no vendor WiFi on the data path.
+# $HITL_BUNDLE_RUNFILE points default_bundle() at the netstack bundle in this target's
+# runfiles; the board-caps descriptor is identical (same C6 board).
+py_test(
+    name = "e2e_netstack",
+    timeout = "eternal",
+    srcs = ["hitl_e2e.py"],
+    data = [
+        "//firmware/player_app:board_caps.textproto",
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "//pi/hitl/cmd/hitl",
+    ],
+    env = {
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+    },
+    imports = ["."],
+    main = "hitl_e2e.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
 # On-hardware LED-driver correctness test (logic-analyzer rig): reserve, flash,
 # provision, drive a static counting pattern over the player WebSocket, then
 # `hitl-capture` the WS2812 wire via the rig's shared FX2 and assert the decoded
@@ -128,6 +159,40 @@ py_test(
         "//firmware/player_app:jit_bench_fxb_file",
         "//pi/hitl/cmd/hitl",
     ],
+    imports = ["."],
+    main = "hitl_led_capture.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# LED-capture against the heapless esp32c6_netstack drop-in on the analyzer rig (rig-2).
+# The WiFi scan lets the netstack join rig-2's AP; --ws-scheme wss because the netstack
+# serves only TLS. The captured-pixel + color-order contract is identical (same board /
+# RMT driver) — only the WiFi/TLS transport differs. Run with --server http://hitl-rig-2.
+py_test(
+    name = "led_capture_netstack",
+    timeout = "eternal",
+    srcs = ["hitl_led_capture.py"],
+    args = [
+        "--ws-scheme",
+        "wss",
+    ],
+    data = [
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "//firmware/player_app:jit_bench_fxb_file",
+        "//pi/hitl/cmd/hitl",
+    ],
+    env = {
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+    },
     imports = ["."],
     main = "hitl_led_capture.py",
     tags = [
@@ -185,6 +250,42 @@ py_test(
         "//firmware/player_app:jit_bench_fxb_file",
         "//pi/hitl/cmd/hitl",
     ],
+    imports = ["."],
+    main = "hitl_led_capture.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# JIT-correctness over the heapless esp32c6_netstack drop-in on the analyzer rig (rig-2):
+# the netstack sibling of :led_capture_jit, exactly as :led_capture_netstack is to
+# :led_capture. Streams jit_bench.fx JIT-OFF then JIT-ON over the heapless WiFi/TLS
+# transport (--ws-scheme wss) and asserts the captured WS2812 pixels are BIT-IDENTICAL —
+# proving the on-device RV32IM JIT renders identically when fed over our own stack.
+py_test(
+    name = "led_capture_jit_netstack",
+    timeout = "eternal",
+    srcs = ["hitl_led_capture.py"],
+    args = [
+        "--jit-verify",
+        "--ws-scheme",
+        "wss",
+    ],
+    data = [
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "//firmware/player_app:jit_bench_fxb_file",
+        "//pi/hitl/cmd/hitl",
+    ],
+    env = {
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+    },
     imports = ["."],
     main = "hitl_led_capture.py",
     tags = [
@@ -351,6 +452,45 @@ py_test(
     ],
 )
 
+# Same effects benchmark against the heapless esp32c6_netstack drop-in. The fixture
+# map is chunked (HITL_CHUNK_BYTES=1024) so even the 256-LED map stays small TLS
+# records the from-scratch stack buffers comfortably, and HITL_BUNDLE_RUNFILE points
+# the harness at the netstack bundle.
+py_test(
+    name = "fx_bench_netstack",
+    timeout = "eternal",
+    srcs = ["fx_bench.py"],
+    # The heapless netstack serves the player socket over wss (TLS) ONLY — no plaintext
+    # ws:81 — so the bench must tunnel to :443, not fx_bench.py's default plain-ws scheme.
+    args = [
+        "--ws-scheme",
+        "wss",
+    ],
+    data = [
+        ":fx_benchmarks",
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "//fx_compiler:fx_compile",
+        "//pi/hitl/cmd/hitl",
+        "//web:tests/testdata/device-bench-esp32c6.json",
+    ],
+    env = {
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        "HITL_CHUNK_BYTES": "1024",
+    },
+    imports = ["."],
+    main = "fx_bench.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
 # FUG-125: the JIT-enabled sibling of :fx_bench. The shipped firmware runs the
 # on-device JIT by DEFAULT, so :fx_bench pins it OFF (set_jit false) to keep
 # checking the interpreter golden, and THIS target pins it ON (--jit) and checks
@@ -370,6 +510,43 @@ py_test(
         # The JIT golden (JIT pinned ON); its interpreter twin is on :fx_bench.
         "//web:tests/testdata/device-bench-esp32c6-jit.json",
     ],
+    imports = ["."],
+    main = "fx_bench.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# The JIT effects benchmark against the heapless esp32c6_netstack drop-in — the
+# netstack twin of :fx_bench_jit (chunked fixture map, netstack bundle).
+py_test(
+    name = "fx_bench_jit_netstack",
+    timeout = "eternal",
+    srcs = ["fx_bench.py"],
+    # wss-only netstack (no plaintext ws:81) — tunnel to :443, not the default plain ws.
+    args = [
+        "--jit",
+        "--ws-scheme",
+        "wss",
+    ],
+    data = [
+        ":fx_benchmarks",
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "//fx_compiler:fx_compile",
+        "//pi/hitl/cmd/hitl",
+        "//web:tests/testdata/device-bench-esp32c6-jit.json",
+    ],
+    env = {
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        "HITL_CHUNK_BYTES": "1024",
+    },
     imports = ["."],
     main = "fx_bench.py",
     tags = [
@@ -448,6 +625,39 @@ py_test(
     ],
 )
 
+# Same sharded-upload test against the heapless esp32c6_netstack drop-in. The
+# from-scratch TLS decrypts each record into one contiguous heap buffer while
+# BLE+WiFi+LED+FX are all resident, so a 4KB record overflows the C6's fragmented
+# DMA/internal heap (a genuine RAM ceiling — the full record arrives and is ACKed;
+# only the decrypt allocation fails). HITL_CHUNK_BYTES=1024 keeps each window one
+# small record, which the drop-in uploads + round-trips cleanly. (esp-aes: Failed to
+# allocate / mbedtls Dynamic Impl alloc failed at 4096; PASS at 1024.)
+py_test(
+    name = "map_upload_netstack",
+    timeout = "eternal",
+    srcs = ["hitl_map_upload.py"],
+    data = [
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "//pi/hitl/cmd/hitl",
+    ],
+    env = {
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        "HITL_CHUNK_BYTES": "1024",
+    },
+    imports = ["."],
+    main = "hitl_map_upload.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
 # On-hardware rename -> wss-wedge repro (FUG-85 follow-up): reserve, flash,
 # provision, then rename the device and probe whether its TLS server recovers,
 # capturing the serial `[wss]`/heap lines. A manual+hitl py_test; --device-ws
@@ -504,6 +714,37 @@ py_test(
     ],
 )
 
+# Connection-churn resilience against the heapless esp32c6_netstack drop-in. The netstack
+# TLS server is SINGLE-connection (one TcpConn / one ~6 KB mbedTLS session), so it serves
+# one and sheds the rest — excess SYNs are never accepted, so there is no multi-session heap
+# pressure; the anti-wedge gate is that a clean wss handshake recovers within --recover-window
+# (the dead-peer RTO re-listen frees a vanished client's slot well inside the default 40s).
+py_test(
+    name = "tls_churn_netstack",
+    timeout = "eternal",
+    srcs = ["hitl_tls_churn.py"],
+    args = ["--skip-nvs-reboot"],
+    data = [
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "//pi/hitl/cmd/hitl",
+    ],
+    env = {
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+    },
+    imports = ["."],
+    main = "hitl_tls_churn.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
 # On-hardware video-streaming performance test: reserve, flash, provision, load a
 # WxH texture effect, then stream a scrolling-bars pattern into it and assert the
 # device sustains >=10 FPS. The frame encoding + FPS measurement run in the Rust
@@ -517,11 +758,49 @@ py_test(
     timeout = "eternal",
     srcs = ["hitl_video_stream.py"],
     data = [
+        "wss_stream.py",  # pure-stdlib rig-side streamer for the wss (TLS) transport
         "//firmware/player_app:esp32c6_flashbundle",
         "//fx_compiler:fx_compile",
         "//pi/hitl/cmd/hitl",
         "//tools/touchdesigner/stream_bench",
     ],
+    imports = ["."],
+    main = "hitl_video_stream.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "//pi/server",
+        "@rules_python//python/runfiles",
+        requirement("websockets"),
+    ],
+)
+
+# Video streaming against the heapless esp32c6_netstack drop-in — over the wss (TLS)
+# transport ONLY, since the netstack serves no plaintext ws:81 (and TLS is the phone's
+# camera-streaming path anyway). stream_bench speaks plain ws, so the harness drives it
+# through a local TLS-terminating proxy to the device's wss:443.
+py_test(
+    name = "video_stream_netstack",
+    timeout = "eternal",
+    srcs = ["hitl_video_stream.py"],
+    args = [
+        "--transport",
+        "wss",
+    ],
+    data = [
+        "wss_stream.py",  # pure-stdlib rig-side streamer for the wss (TLS) transport
+        "//firmware/player_app:esp32c6_netstack_flashbundle",
+        "//fx_compiler:fx_compile",
+        "//pi/hitl/cmd/hitl",
+        "//tools/touchdesigner/stream_bench",
+    ],
+    env = {
+        "HITL_BUNDLE_RUNFILE": "_main/firmware/player_app/esp32c6_netstack_flashbundle.tar",
+        "HITL_CHUNK_BYTES": "1024",
+    },
     imports = ["."],
     main = "hitl_video_stream.py",
     tags = [
@@ -647,5 +926,31 @@ py_test(
         "//pi/server",
         "@rules_python//python/runfiles",
         requirement("websockets"),
+    ],
+)
+
+# Exercise the netstack example roles (BLE peripheral, STA client, AP webserver)
+# on real C6 hardware — one reservation, flash each in turn, assert the role
+# reaches its end state. hitl-tagged so it runs in the HITL CI lane.
+py_test(
+    name = "netstack_examples",
+    size = "large",
+    timeout = "eternal",
+    srcs = ["hitl_netstack_examples.py"],
+    data = [
+        "//firmware/netstack:ap_webserver_flashbundle",
+        "//firmware/netstack:ble_peripheral_flashbundle",
+        "//firmware/netstack:sta_client_flashbundle",
+        "//pi/hitl/cmd/hitl",
+    ],
+    imports = ["."],
+    main = "hitl_netstack_examples.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        ":harness",
+        "@rules_python//python/runfiles",
     ],
 )

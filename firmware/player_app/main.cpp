@@ -20,12 +20,9 @@
 //    submit_map is ~45 KB); larger -> close 1009 (message too big).
 #include <Arduino.h>
 #include <Preferences.h>
-#include <WebServer.h>
 #include <WiFi.h>
 #include <esp_cpu.h>
-#include <esp_https_server.h>
 #include <esp_mac.h>
-#include <mdns.h>
 #include <esp_littlefs.h>
 #include <esp_partition.h>
 #include <esp_rom_crc.h>
@@ -36,14 +33,26 @@
 #include <freertos/semphr.h>
 #include <freertos/task.h>
 #include <errno.h>
-#include <lwip/sockets.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
+#if defined(LM_NETSTACK)
+// The heapless-WiFi transport variant: our own MAC/WPA2/CCMP/DHCP/TCP/TLS/WS replaces vendor
+// WiFi + esp_https_server + the ws:81 listener + mDNS + the lwIP OSC socket. See main.cpp's
+// LM_NETSTACK gates below and netstack_transport.cpp.
+#include "netstack_transport.h"
+#else
+#include <WebServer.h>
+#include <esp_https_server.h>
+#include <mdns.h>
+#include <lwip/sockets.h>
+#endif
 
 #include "firmware/landing/landing_page.h"
 #include "firmware/player_app/improv_ble.h"
+#if !defined(LM_NETSTACK)
 #include "selfsigned.h"  // @embedded//libs/tls: on-device keygen + cert re-issuance
+#endif
 #include "firmware/player_app/build_info.h"  // generated: LM_GIT_COMMIT / LM_GIT_DIRTY
 #include "firmware/player_app/color_correction.h"
 #include "firmware/player_app/improv_codec.h"
@@ -117,7 +126,14 @@ size_t lm_jit_region_size(void) { return kJitRegionSize; }
 // global scope (overrides a weak core getter). If the protobuf frames ever
 // grow, re-measure with objdump on the .elf prologues. (The render task has
 // its own stack; it only calls the small pure-read accessors + the RMT show.)
+#if defined(LM_NETSTACK)
+// The netstack loop adds the mbedtls handshake + a deep protobuf-encode (~800B
+// hardware_config_state) + link-pump nested inside a TLS write on top of Player::handle;
+// 24KB overflowed, so give loopTask more headroom.
+SET_LOOP_TASK_STACK_SIZE(48 * 1024);
+#else
 SET_LOOP_TASK_STACK_SIZE(24 * 1024);
+#endif
 
 static const char *kApPassword = "ledmapper";
 static const uint16_t kWsPort = 81;
@@ -282,6 +298,7 @@ static uint32_t upload_next_seq = 0;  // expected seq of the next window
 static int upload_kind = 0;           // 0 = map (submit_map), 1 = topology
 static size_t upload_total = 0;       // bytes written to the temp file so far
 static bool upload_active = false;    // a window sequence is in progress
+#if !defined(LM_NETSTACK)
 static uint8_t hs[1024];        // handshake request accumulator
 static size_t hs_len = 0;
 static uint8_t hdr[16];         // in-progress frame header accumulator
@@ -290,6 +307,7 @@ static size_t hdr_len = 0;
 static WebServer http(80);
 static WiFiServer ws_listener(kWsPort);
 static WiFiClient ws;
+#endif
 
 // WiFi credentials persisted across boots (BLE-provisioned, Improv).
 static Preferences prefs;
@@ -362,6 +380,7 @@ static const uint32_t kProvisionGraceMs = 3000;
 static bool softap_up = false;
 // STA IP currently baked into the served wss cert's SAN; 0 == the build-time
 // cert (no SAN) or "re-issue needed". Full rationale at reissue_cert_for_lan.
+#if !defined(LM_NETSTACK)
 static uint32_t g_cert_ip = 0;
 enum class WsState { kIdle, kHandshake, kOpen };
 static WsState ws_state = WsState::kIdle;
@@ -388,6 +407,7 @@ static void ws_drop(uint16_t close_code) {
   hs_len = rx_len = hdr_len = 0;
   in_frame = false;
 }
+#endif  // !LM_NETSTACK
 
 static void fs_write_file(const char *path, const uint8_t *data, size_t len) {
   FILE *f = fopen(path, "wb");
@@ -835,6 +855,7 @@ static void names_from_identity() {
 // instance name (the friendly display name) and advertises a lightweight
 // _http._tcp service (the :80 landing page) for discovery; later calls just
 // re-point the hostname/instance at the renamed value.
+#if !defined(LM_NETSTACK)
 static bool g_mdns_up = false;
 static void mdns_begin_or_update() {
   if (!g_mdns_up) {
@@ -854,6 +875,9 @@ static void mdns_begin_or_update() {
     Log().printf("[mdns] renamed: %s.local (\"%s\")\n", g_hostname, g_device_name);
   }
 }
+#else
+static void mdns_begin_or_update() {}  // no mDNS on the heapless stack (harness reaches the DUT by IP)
+#endif
 
 // After handling a message, pick up a set_device_name rename: read the player's
 // current name (under the lock), and if it changed, persist it to NVS and rename
@@ -981,35 +1005,56 @@ static int32_t process_upload_chunk(const LmUploadChunk *ch, const uint8_t *payl
   return n;
 }
 
-static void ws_dispatch_message() {
-  // Sharded upload window? Stream it to flash — the ws:81 mirror of the wss
-  // path (process_upload_chunk handles the ack / final-decode / persist).
+// Compute the reply for the message currently in rx[0..rx_len). Returns the reply length
+// (bytes written to the global tx, >0), 0 (no reply / fire-and-forget), or -1 (fs error /
+// out-of-order upload window → the transport should drop the connection). Shared verbatim by
+// the ws:81, wss:443 and netstack transports — upload-chunk streaming + lm_player_handle +
+// persistence + device-side polling all live here, so a message behaves identically on each.
+static int ws_compute_reply() {
+  // Sharded upload window? Stream it to flash (process_upload_chunk writes the ack into tx
+  // and handles the final-decode + persist).
   LmUploadChunk ch;
   if (lm_parse_upload_chunk(rx, rx_len, &ch) == 1) {
-    int32_t n = process_upload_chunk(&ch, rx + ch.payload_off);
-    if (n > 0) {
-      ws_send_frame(WS_OP_BINARY, tx, (size_t)n);
-    } else if (n < 0) {
-      ws_drop(1011);  // fs error / out-of-order window → drop; the client retries
-    }
-    rx_len = 0;
-    return;
+    return (int)process_upload_chunk(&ch, rx + ch.payload_off);
   }
-  // Integer player clock (millis()) — no f64: the session core does its time
-  // arithmetic in integers and widens to the wire's double only at encode.
+  // Integer player clock (millis()) — no f64: the session core does its time arithmetic in
+  // integers and widens to the wire's double only at encode.
   int64_t now = (int64_t)millis();
   // Serialize with the render task's Player access (single-threaded core).
   xSemaphoreTake(player_mutex, portMAX_DELAY);
   int32_t n = lm_player_handle(rx, rx_len, now, now, tx, sizeof tx);
   xSemaphoreGive(player_mutex);
-  if (n > 0) {
-    ws_send_frame(WS_OP_BINARY, tx, (size_t)n);
-    persist_if_upload(rx, rx_len, tx, (size_t)n);
-  }
+  if (n > 0) persist_if_upload(rx, rx_len, tx, (size_t)n);
   poll_after_message();
-  rx_len = 0;
+  return (int)n;
 }
 
+#if !defined(LM_NETSTACK)
+static void ws_dispatch_message() {
+  int n = ws_compute_reply();
+  if (n > 0) {
+    ws_send_frame(WS_OP_BINARY, tx, (size_t)n);
+  } else if (n < 0) {
+    ws_drop(1011);  // fs error / out-of-order window → drop; the client retries
+  }
+  rx_len = 0;
+}
+#else
+// The netstack transport's WS pump calls this: copy the received message into the shared rx,
+// compute the reply into the shared tx, and hand back a pointer to it. (One extra copy vs the
+// vendor path, which receives directly into rx; the player protocol frames are small.)
+int lm_ws_dispatch(const uint8_t *in, size_t len, const uint8_t **reply) {
+  if (len > kRxCap) return -1;
+  memcpy(rx, in, len);
+  rx_len = len;
+  int n = ws_compute_reply();
+  *reply = tx;
+  rx_len = 0;
+  return n;
+}
+#endif
+
+#if !defined(LM_NETSTACK)
 // One frame-parsing step; returns false when no forward progress was made
 // (need more bytes than are available right now).
 static bool ws_pump_once() {
@@ -1134,6 +1179,7 @@ static void ws_poll() {
     if (!ws_pump_once()) break;
   }
 }
+#endif  // !LM_NETSTACK
 
 // -- LED rendering (own high-priority task; see player_mutex note above) ------
 
@@ -1435,6 +1481,7 @@ static constexpr uint16_t kOscPort = 9000;
 static constexpr uint32_t kOscTaskStack = 4096;  // recv buffer is static, not here
 static constexpr size_t kOscRxCap = 1472;        // one Ethernet-MTU UDP payload
 
+#if !defined(LM_NETSTACK)
 static void osc_task(void *) {
   int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
   if (sock < 0) {
@@ -1470,6 +1517,12 @@ static void osc_task(void *) {
     xSemaphoreGive(player_mutex);
   }
 }
+#else
+// TODO(netstack-osc): the heapless stack has no UDP receive path yet, so native OSC input
+// (uniform_bench / video_stream) is disabled on this build. Add a ns UDP listener + feed
+// lm_osc_ingest to re-enable. Everything else (WS player, effects, render) is unaffected.
+static void osc_task(void *) { vTaskDelete(nullptr); }
+#endif
 
 // The render task: forever, render one frame then sleep until the next is due.
 // Dedicated LED transmit task (higher priority than render). Sleeps until the
@@ -1539,6 +1592,18 @@ static void led_show_async(bool timed, uint32_t count0, uint32_t count1,
 static void render_task(void *) {
   for (;;) {
     uint32_t delay_ms = render_once();
+#if defined(LM_NETSTACK)
+    // The heapless netstack runs on the LOWER-priority Arduino loopTask. Under a
+    // FULL-perf benchmark render_once() returns 0 (run flat out to measure), and a
+    // vTaskDelay(0) at this higher priority never cedes the CPU to loopTask — so the
+    // netstack gets zero time to service RX/ACK/retransmit and the control connection
+    // drops mid-sweep. Cede at least one tick each frame so the network keeps flowing.
+    // (The vendor build serves the network from separate IDF tasks, so it needn't.)
+    if (delay_ms == 0) {
+      vTaskDelay(1);
+      continue;
+    }
+#endif
     vTaskDelay(pdMS_TO_TICKS(delay_ms));
   }
 }
@@ -1557,8 +1622,12 @@ static void emit_perf_report_if_due() {
   uint32_t mode = lm_perf_mode();
   uint32_t interval = lm_perf_interval_ms();
   xSemaphoreGive(player_mutex);
-  if (mode == 0 || interval == 0) return;   // OFF or poll-only
-  if (ws_state != WsState::kOpen) return;   // only the plain ws:81 push path
+  if (mode == 0 || interval == 0) return;  // OFF or poll-only
+#if defined(LM_NETSTACK)
+  if (!netstack_ws_open()) return;  // push over the active TLS/WS
+#else
+  if (ws_state != WsState::kOpen) return;  // only the plain ws:81 push path
+#endif
 
   static uint32_t last_push = 0;
   uint32_t nowm = millis();
@@ -1568,11 +1637,16 @@ static void emit_perf_report_if_due() {
   xSemaphoreTake(player_mutex, portMAX_DELAY);
   int32_t n = lm_perf_build_report(tx, sizeof tx);
   xSemaphoreGive(player_mutex);
+#if defined(LM_NETSTACK)
+  if (n > 0) netstack_ws_send(tx, (size_t)n);
+#else
   if (n > 0) ws_send_frame(WS_OP_BINARY, tx, (size_t)n);
+#endif
 }
 
 // -- app ----------------------------------------------------------------------
 
+#if !defined(LM_NETSTACK)
 // -- wss: TLS WebSocket player endpoint (:443) -------------------------------
 // The hosted https app (ledmapper.pages.dev) can't open a plain ws:// to the
 // player — mixed content — so expose the SAME player protocol over wss via the
@@ -1899,6 +1973,7 @@ static volatile bool sta_relisten_pending = false;
 static void on_sta_got_ip(arduino_event_id_t, arduino_event_info_t) {
   sta_relisten_pending = true;
 }
+#endif  // !LM_NETSTACK
 
 #ifdef LM_OSC_BENCH
 #include "firmware/player_app/osc_bench_fxb_res.h"
@@ -2154,6 +2229,7 @@ void setup() {
   // reach the player (the AP-only onboarding was a dead end: a phone on
   // the AP routes everything there and the hosted app can never load).
   String ssid = prefs.getString("ssid", "");
+#if !defined(LM_NETSTACK)
   WiFi.mode(WIFI_AP_STA);
   // Set both hostnames before the netifs come up: STA before begin() (the DHCP
   // client name the router shows), AP before softAP().
@@ -2170,6 +2246,7 @@ void setup() {
   }
   // mDNS responder: makes <hostname>.local resolve to the device (STA + AP).
   mdns_begin_or_update();
+#endif  // !LM_NETSTACK
 
   lm_player_set_identity(reinterpret_cast<const uint8_t *>(macstr), strlen(macstr),
                          reinterpret_cast<const uint8_t *>(g_device_name), strlen(g_device_name));
@@ -2187,9 +2264,12 @@ void setup() {
   // render_task starts, so a GPIO reconfigure here can't race a push.
   hardware_config_begin();
 
+  // BLE Improv onboarding. On the netstack build this MUST run before netstack_setup()
+  // (the BT controller has to init before we hijack the MAC so our radio config wins).
   improv_ble_begin(g_device_name,
                    ssid.length() > 0 ? IMPROV_STATE_PROVISIONING : IMPROV_STATE_AUTHORIZED);
 
+#if !defined(LM_NETSTACK)
   http.on("/", []() {
     http.sendHeader("Cache-Control", "no-store");  // cert-rotation safety
     http.send(200, "text/html", landing_html);
@@ -2205,6 +2285,10 @@ void setup() {
   if (load_or_gen_dev_key() && issue_boot_cert()) {
     wss_start();  // TLS player on :443 for the hosted https app (direct, no relay)
   }
+#else
+  // Heapless transport: our own MAC/WPA2/CCMP/DHCP/TCP + a baked-cert TLS server on :443.
+  netstack_setup();
+#endif
 
   // Drive the LEDs from a dedicated high-priority task so the pattern cadence
   // no longer rides on loop()'s cooperative WiFi/HTTP/BLE servicing.
@@ -2214,8 +2298,20 @@ void setup() {
   // (FUG-121). Independent of the WS/TLS player path; binds now and receives
   // once the LAN is up.
   xTaskCreate(osc_task, "osc", kOscTaskStack, nullptr, tskIDLE_PRIORITY + 1, nullptr);
+#if defined(LM_NETSTACK)
+  // The heapless netstack is serviced on THIS (Arduino loop) task; the vendor build
+  // uses IDF net tasks. Left at the default priority 1 it's starved by the priority-10
+  // render task under a heavy FULL-perf sweep — the network can't service RX/ACK/
+  // retransmit and the control connection resets mid-measurement. Run it at render's
+  // priority so the two round-robin and the network keeps a fair share; observed as
+  // the most reliable (fewest mid-sweep drops) of the options tried. (The remaining
+  // unmeasurable effect, sweep256, fails on its ~4.6KB fixture-map record — the
+  // netstack's large-record limit — not on scheduling.)
+  vTaskPrioritySet(nullptr, kRenderTaskPrio);
+#endif
 }
 
+#if !defined(LM_NETSTACK)
 // Improv provisioning state machine (Arduino task; BLE callbacks only latch).
 static void provisioning_poll() {
   char ssid[33], pass[65];
@@ -2282,10 +2378,12 @@ static void provisioning_poll() {
     improv_ble_set_state(IMPROV_STATE_AUTHORIZED);
   }
 }
+#endif  // !LM_NETSTACK
 
 void loop() {
   // loop() now only services the network stacks; the LEDs are driven by
   // render_task (started in setup), decoupled from this cooperative cycle.
+#if !defined(LM_NETSTACK)
   if (sta_relisten_pending) {
     // The STA (re)acquired an IP; the old listeners died with the netif. Rebind
     // so :81 (bench ws) + :80 (landing/http) accept again after a provisioning
@@ -2314,6 +2412,9 @@ void loop() {
     last_cert_reconcile = millis();
     reissue_cert_for_lan();
   }
+#else
+  netstack_loop();  // RX drain + DHCP + BLE-Improv join + TLS/WS pump (dispatched shared)
+#endif
   if (fs_ok) {
     flush_playback_save();
     flush_fx_sel_save();
@@ -2326,6 +2427,7 @@ void loop() {
     xSemaphoreTake(player_mutex, portMAX_DELAY);
     unsigned long map_leds = (unsigned long)lm_map_len();
     xSemaphoreGive(player_mutex);
+#if !defined(LM_NETSTACK)
     String sta = WiFi.status() == WL_CONNECTED
                      ? "sta " + WiFi.localIP().toString()
                      : (sta_joining ? String("sta joining…") : String("sta off"));
@@ -2343,6 +2445,11 @@ void loop() {
                                           : "idle",
         map_leds, (unsigned)esp_get_free_heap_size(), heap_largest(),
         (unsigned)esp_get_minimum_free_heap_size());
+#else
+    Log().printf("[player-netstack] map=%lu leds heap=%u max=%u min=%u\n", map_leds,
+                 (unsigned)esp_get_free_heap_size(), heap_largest(),
+                 (unsigned)esp_get_minimum_free_heap_size());
+#endif
   }
   delay(1);
 }

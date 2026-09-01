@@ -198,8 +198,12 @@ def ws_checks(ws_url: str, new_name: str, insecure: bool, expected_caps: dict | 
 # --- driver ----------------------------------------------------------------
 
 # The flash-bundle is a data dep of this target, so `bazel run` ships it in
-# runfiles (no separate build / workspace-relative path needed).
-_BUNDLE_RUNFILE = "_main/firmware/player_app/esp32c6_flashbundle.tar"
+# runfiles (no separate build / workspace-relative path needed). $HITL_BUNDLE_RUNFILE
+# lets a sibling target (e.g. :e2e_netstack) point at a different bundle in its own
+# runfiles without a second copy of this driver.
+_BUNDLE_RUNFILE = os.environ.get(
+    "HITL_BUNDLE_RUNFILE", "_main/firmware/player_app/esp32c6_flashbundle.tar"
+)
 
 
 def default_bundle() -> str | None:

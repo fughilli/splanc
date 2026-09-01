@@ -137,6 +137,17 @@ rust_binary(
 cc_library(
     name = "ws_codec",
     hdrs = ["ws_codec.h"],
+    # includes=["."] so out-of-package consumers (the netstack player variant) can
+    # `#include "ws_codec.h"` with a bare name, same as in-package main.cpp.
+    includes = ["."],
+)
+
+# The C ABI header for the Rust player core (:player_ffi provides the symbols).
+# Exposed as a header-only lib so the netstack player variant can declare lm_*.
+cc_library(
+    name = "player_ffi_hdr",
+    hdrs = ["player_ffi.h"],
+    includes = ["."],
 )
 
 cc_test(
@@ -148,6 +159,28 @@ cc_test(
 cc_library(
     name = "improv_codec",
     hdrs = ["improv_codec.h"],
+)
+
+# Improv BLE GATT service (advertising + credential exchange). Exposed as a lib so
+# the netstack player variant can onboard over BLE exactly like the app.
+cc_library(
+    name = "improv_ble",
+    srcs = ["improv_ble.cpp"],
+    hdrs = [
+        "improv_ble.h",
+        "serial_log.h",
+    ],
+    copts = ["-fno-rtti"],
+    includes = ["."],
+    target_compatible_with = select({
+        "@embedded//platforms:is_esp32c6": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        ":improv_codec",
+        "@embedded//libs/board:arduino_core",
+        "@embedded//libs/vendor:ble",
+    ],
 )
 
 cc_library(
@@ -247,6 +280,83 @@ firmware_binary(
     binary = ":player_app",
     board = "esp32c6",
     opt_mode = "opt",
+    tags = ["manual"],
+)
+
+# -- Heapless-netstack player variant (esp32c6_netstack) ----------------------
+# The same LED Mapper player, but the ENTIRE WiFi transport is ours from the PHY
+# blob up (//firmware/netstack): BLE Improv provisioning -> heapless MAC -> WPA2
+# 4-way (HW-AES CCMP) -> DHCP -> TCP -> mbedtls TLS 1.2 -> RFC6455 WS ->
+# lm_player_handle. No vendor WiFi/lwIP/esp_https_server on the data path. Passes
+# the full //pi/hitl/harness:e2e_netstack (BLE provisioning included) on silicon.
+cc_binary(
+    name = "player_app_netstack",
+    # SAME main.cpp as the vendor build, gated by -DLM_NETSTACK: the WiFi/WSS/mDNS/OSC
+    # transport is swapped for netstack_transport.cpp (our heapless MAC/WPA2/CCMP/DHCP/
+    # TCP/TLS/WS), while the render task, effects+JIT, upload, persistence, perf, hardware
+    # config and WS dispatch are shared verbatim.
+    srcs = [
+        # The heapless BLE Improv backend (drives only the radio controller over native
+        # HCI) replaces the Bluedroid improv_ble.cpp — no vendor BLE host stack, so BLE
+        # onboarding costs no heap churn and the TLS server survives many reconnects.
+        "improv_ble.h",
+        "improv_ble_netstack.cpp",
+        "led_config.h",
+        "main.cpp",
+        "netstack_transport.cpp",
+        "netstack_transport.h",
+        "player_ffi.h",
+        "serial_log.h",
+        "ws2812_rmt.cpp",
+        "ws2812_rmt.h",
+        ":build_info_h",
+    ],
+    copts = ["-fno-rtti"],
+    # Two no_std Rust staticlibs (the netstack's wifi_sta_ffi + our player_ffi) each
+    # define the panic handler (rust_begin_unwind)/eh_personality; take the first.
+    linkopts = ["-Wl,--allow-multiple-definition"],
+    local_defines = [
+        "LM_MAX_LEDS=%d" % MAX_LEDS,
+        "LM_NETSTACK",
+    ],
+    target_compatible_with = select({
+        "@embedded//platforms:is_esp32c6": [],
+        "//conditions:default": ["@platforms//:incompatible"],
+    }),
+    deps = [
+        ":board_caps_res",
+        ":color_correction",
+        ":improv_codec",
+        ":player_ffi",
+        ":ws_codec",
+        "//firmware/blehost:ble_ffi",  # heapless BLE host (GAP/GATT/ATT/Improv), no Bluedroid
+        "//firmware/landing:landing_page",
+        "//firmware/netstack:wifi_sta_ffi",  # ns_* heapless MAC/CCMP/TCP FFI
+        "@embedded//libs/board:arduino_core",
+        "@embedded//libs/vendor:ble",  # vendor BLE *controller* + native ble_hci_trans only
+        "@embedded//libs/vendor:preferences",
+        "@embedded//libs/vendor:wifi",  # reversed vendor MAC/PM externs the netstack drives
+    ],
+)
+
+firmware_binary(
+    name = "esp32c6_netstack",
+    binary = ":player_app_netstack",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "flash_esp32c6_netstack",
+    app = ":esp32c6_netstack",
+    partitions = "@embedded//libs/vendor:partitions_huge_app",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "esp32c6_netstack_flashbundle",
+    flash = ":flash_esp32c6_netstack",
     tags = ["manual"],
 )
 

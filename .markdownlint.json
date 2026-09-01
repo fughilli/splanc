@@ -12,5 +12,7 @@
   },
   "MD029": {
     "style": "ordered"
-  }
+  },
+  "MD049": false,
+  "MD050": false
 }

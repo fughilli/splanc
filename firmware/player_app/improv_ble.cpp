@@ -161,6 +161,9 @@ void improv_ble_set_name(const char *device_name) {
 
 bool improv_ble_central_connected() { return g_central_connected; }
 
+// Bluedroid runs its own Bluetooth task; nothing to pump from the app loop.
+void improv_ble_poll() {}
+
 bool improv_ble_take_credentials(char *ssid, size_t ssid_cap, char *pass, size_t pass_cap) {
   if (!g_have_creds) return false;
   g_have_creds = false;

@@ -1,0 +1,32 @@
+Shrink the from-source mbedTLS TLS record length 8 KB -> 6 KB.
+
+The record buffer was sized (16 KB -> 8 KB, then here -> 6 KB) to hold the largest
+control message. All large control frames (submit_map / submit_topology) are ALWAYS
+chunked at the client (web/src/net/client.ts sendChunked; the fx_bench and map_upload
+harnesses shard likewise), so no single record exceeds one base64-inflated chunk (a
+4 KB window -> ~5.6 KB record) — comfortably under 6 KB. With
+CONFIG_MBEDTLS_DYNAMIC_BUFFER the record buffer is allocated per-connection off the ssl
+context sized to this cap, so the smaller cap shrinks that allocation (~8.7 KB -> ~6.7 KB
+contiguous) — headroom that lets the heapless-netstack player serve many TLS connections
+on the C6's tight, fragmentable heap instead of wedging after one. ABI-safe vs the
+prebuilt esp-tls / esp_https_server (the length lives off the struct). Applied to the
+pinned embedded archive via archive_override(patches=...) in //MODULE.bazel.
+
+diff --git a/nix/mbedtls_src.BUILD b/nix/mbedtls_src.BUILD
+--- a/nix/mbedtls_src.BUILD
++++ b/nix/mbedtls_src.BUILD
+@@ -106,11 +106,11 @@
+     cmd = """cat > $@ <<'HDR'
+ #include "mbedtls/esp_config.h"
+ #undef MBEDTLS_SSL_MAX_CONTENT_LEN
+-#define MBEDTLS_SSL_MAX_CONTENT_LEN 8192
++#define MBEDTLS_SSL_MAX_CONTENT_LEN 6144
+ #undef MBEDTLS_SSL_IN_CONTENT_LEN
+-#define MBEDTLS_SSL_IN_CONTENT_LEN 8192
++#define MBEDTLS_SSL_IN_CONTENT_LEN 6144
+ #undef MBEDTLS_SSL_OUT_CONTENT_LEN
+-#define MBEDTLS_SSL_OUT_CONTENT_LEN 8192
++#define MBEDTLS_SSL_OUT_CONTENT_LEN 6144
+ /* On-device self-signed cert (re)issuance needs the X.509/PK/PEM writers, which
+    the ESP config prunes. Purely additive (new writer functions + a separate
+    mbedtls_x509write_cert struct we own); no ssl-context struct changes, so

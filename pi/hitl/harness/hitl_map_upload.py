@@ -44,10 +44,15 @@ def _log(msg: str) -> None:
 
 
 def default_flashbundle() -> str | None:
+    # HITL_BUNDLE_RUNFILE lets a variant target (e.g. map_upload_netstack) point at a
+    # different firmware bundle in its runfiles without a code change.
+    runfile = os.environ.get(
+        "HITL_BUNDLE_RUNFILE", "_main/firmware/player_app/esp32c6_flashbundle.tar"
+    )
     try:
         from python.runfiles import runfiles
 
-        return runfiles.Create().Rlocation("_main/firmware/player_app/esp32c6_flashbundle.tar")
+        return runfiles.Create().Rlocation(runfile)
     except Exception:
         return None
 

@@ -18,6 +18,12 @@
 // initial state (IMPROV_STATE_*).
 void improv_ble_begin(const char *device_name, uint8_t initial_state);
 
+// Service the BLE host once from the main loop. No-op for the Bluedroid backend
+// (which runs its own Bluetooth task); the heapless netstack backend drains the
+// controller's HCI queue and runs the GATT/Improv state machine here, so it must
+// be called regularly (e.g. from the transport loop) while onboarding.
+void improv_ble_poll();
+
 // Rename the advertised device live (after a set_device_name): update the
 // scan-response name shown in the Bluetooth chooser + restart advertising. The
 // GAP name fully re-applies on the next boot via improv_ble_begin.
@@ -31,6 +37,18 @@ bool improv_ble_take_credentials(char *ssid, size_t ssid_cap, char *pass, size_t
 // app defer BLE-disrupting work (soft-AP teardown, cert re-sign) until the peer
 // has taken the provisioning result and disconnected.
 bool improv_ble_central_connected();
+
+// Raw BLE link state (Rust FFI ns_ble_state): 7 == central connected+subscribed.
+// Exposed for diagnostics (distinguish link-drop vs notification-loss).
+extern "C" uint32_t ns_ble_state();
+
+// Coex phase inputs for the activity-driven WiFi/BT arbiter (netstack build only):
+//  - improv_ble_last_acl_ms(): millis() of the last inbound ACL = a connection-event anchor.
+//  - improv_ble_conn_interval(): negotiated connection interval in 1.25 ms units (0 if unknown).
+// Together they let the arbiter predict connection-event anchors and yield the radio to BLE
+// only around them, instead of on a blind duty-cycle timer.
+uint32_t improv_ble_last_acl_ms();
+uint32_t improv_ble_conn_interval();
 
 // Update + notify the Improv state / error characteristics.
 void improv_ble_set_state(uint8_t state);

@@ -1,0 +1,66 @@
+"""blehost — the heapless BLE host over VHCI (replaces NimBLE).
+
+Drives the vendor BLE controller (esp_bt) from the netstack HCI host: advertising
+bring-up + ATT/GATT are all in the heapless stack; the controller owns only the
+radio link. Validate with `hitl ble scan` / `hitl ble gatt`. tags=manual.
+"""
+
+load("@embedded//rules:firmware.bzl", "firmware_binary")
+load("@embedded//rules:flash.bzl", "esptool_flash")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_rust//rust:defs.bzl", "rust_static_library")
+load("//tools:flash_bundle.bzl", "flash_bundle")
+
+package(default_visibility = ["//visibility:public"])
+
+_C6 = select({
+    "@embedded//platforms:is_esp32c6": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+
+rust_static_library(
+    name = "ble_ffi",
+    srcs = ["ble_ffi.rs"],
+    crate_name = "ble_ffi",
+    edition = "2021",
+    target_compatible_with = _C6,
+    deps = ["//firmware/netstack"],
+)
+
+cc_binary(
+    name = "blehost",
+    srcs = ["blehost.cpp"],
+    copts = ["-fno-rtti"],
+    # Advertising VALIDATED on hardware: brings the vendor controller up and drives
+    # it over its native ble_hci_trans host transport (the API NimBLE binds to).
+    # Full advertising bring-up completes (state=Advertising) and the device is
+    # discoverable on air ("heapless-c6"). Connections are not yet handled: async
+    # events (LE Connection Complete / ACL) route through the ble_transport host
+    # layer, not the ble_hci_trans command path — see blehost.cpp.
+    target_compatible_with = _C6,
+    deps = [
+        ":ble_ffi",
+        "@embedded//libs/board:arduino_core",
+        "@embedded//libs/vendor:ble",  # esp_bt controller + VHCI
+    ],
+)
+
+firmware_binary(
+    name = "blehost_esp32c6",
+    binary = ":blehost",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "blehost_flash",
+    app = ":blehost_esp32c6",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "blehost_flashbundle",
+    flash = ":blehost_flash",
+    tags = ["manual"],
+)

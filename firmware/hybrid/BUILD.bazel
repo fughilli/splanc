@@ -1,0 +1,85 @@
+"""hybrid — heapless netstack over the vendor PHY/MAC blobs, zero system-heap alloc.
+
+The vendor Wi-Fi stack's OS-adapter malloc family is redirected to a real
+allocator over a fixed static arena, so the blobs never touch the system heap;
+the radio runs promiscuous and hands raw frames to the heapless netstack. A lab
+integration target (tags=manual).
+"""
+
+load("@embedded//rules:firmware.bzl", "firmware_binary")
+load("@embedded//rules:flash.bzl", "esptool_flash")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_python//python:defs.bzl", "py_test")
+load("@rules_rust//rust:defs.bzl", "rust_static_library")
+load("//tools:flash_bundle.bzl", "flash_bundle")
+
+package(default_visibility = ["//visibility:public"])
+
+_C6 = select({
+    "@embedded//platforms:is_esp32c6": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+
+# RX-ingest FFI: a static netstack Stack + extern-"C" entry.
+rust_static_library(
+    name = "netstack_rx_ffi",
+    srcs = ["rx_ffi.rs"],
+    crate_name = "netstack_rx_ffi",
+    edition = "2021",
+    target_compatible_with = _C6,
+    deps = ["//firmware/netstack"],
+)
+
+cc_binary(
+    name = "hybrid",
+    srcs = ["hybrid.cpp"],
+    copts = ["-fno-rtti"],
+    target_compatible_with = _C6,
+    deps = [
+        ":netstack_rx_ffi",
+        "@embedded//libs/board:arduino_core",
+        "@embedded//libs/vendor:wifi",  # esp_wifi + PHY/MAC blobs + os-adapter + heap
+    ],
+)
+
+firmware_binary(
+    name = "hybrid_esp32c6",
+    binary = ":hybrid",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "hybrid_flash",
+    app = ":hybrid_esp32c6",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "hybrid_flashbundle",
+    flash = ":hybrid_flash",
+    tags = ["manual"],
+)
+
+# Prove zero system-heap allocation during operation on real hardware.
+py_test(
+    name = "hybrid_heap_hitl",
+    size = "large",
+    timeout = "eternal",
+    srcs = ["hitl_hybrid_heap.py"],
+    data = [
+        ":hybrid_flashbundle",
+        "//pi/hitl/cmd/hitl",
+    ],
+    imports = ["../../pi/hitl/harness"],
+    main = "hitl_hybrid_heap.py",
+    tags = [
+        "hitl",
+        "manual",
+    ],
+    deps = [
+        "//pi/hitl/harness",
+        "@rules_python//python/runfiles",
+    ],
+)

@@ -1,0 +1,504 @@
+"""Heapless WiFi + BLE + coexistence network stack for the ESP32-C6 (DESIGN.md).
+
+`no_std`, allocation-free: every buffer, ring, and table is sized at compile time
+and the protocol parsers are bounded by their input. The library is host-tested
+(pure logic) and exercised on real hardware through the three example roles under
+`examples/` (BLE peripheral, STA client, AP webserver).
+"""
+
+load("@embedded//rules:firmware.bzl", "firmware_binary")
+load("@embedded//rules:flash.bzl", "esptool_flash")
+load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_static_library", "rust_test")
+load("//tools:flash_bundle.bzl", "flash_bundle")
+
+package(default_visibility = ["//visibility:public"])
+
+_C6 = select({
+    "@embedded//platforms:is_esp32c6": [],
+    "//conditions:default": ["@platforms//:incompatible"],
+})
+
+# The stack itself — host-testable logic and the firmware dependency.
+rust_library(
+    name = "netstack",
+    srcs = glob(["src/*.rs"]),
+    crate_name = "ledmapper_netstack",
+    crate_root = "src/lib.rs",
+    edition = "2021",
+)
+
+# Host unit tests (the crate's inline #[cfg(test)] modules: parsers, rings,
+# role state machines, coex arbiter, HTTP).
+rust_test(
+    name = "netstack_test",
+    crate = ":netstack",
+    edition = "2021",
+)
+
+# ---- example roles ----------------------------------------------------------
+# One FFI static library exposing an extern-"C" runner per role, linked into a
+# tiny Arduino shim per app. `tags=["manual"]` keeps the C6-only firmware out of
+# the //... wildcard.
+rust_static_library(
+    name = "netstack_examples_ffi",
+    srcs = ["examples/ffi.rs"],
+    crate_name = "netstack_examples_ffi",
+    edition = "2021",
+    target_compatible_with = _C6,
+    deps = [":netstack"],
+)
+
+_arduino = ["@embedded//libs/board:arduino_core"]
+
+# ble_peripheral — GAP advertising + a fixed GATT server.
+cc_binary(
+    name = "ble_peripheral",
+    srcs = ["examples/ble_peripheral.cpp"],
+    copts = ["-fno-rtti"],
+    target_compatible_with = _C6,
+    deps = _arduino + [":netstack_examples_ffi"],
+)
+
+firmware_binary(
+    name = "ble_peripheral_esp32c6",
+    binary = ":ble_peripheral",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "ble_peripheral_flash",
+    app = ":ble_peripheral_esp32c6",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "ble_peripheral_flashbundle",
+    flash = ":ble_peripheral_flash",
+    tags = ["manual"],
+)
+
+# sta_client — STA MLME (scan/auth/assoc -> Associated).
+cc_binary(
+    name = "sta_client",
+    srcs = ["examples/sta_client.cpp"],
+    copts = ["-fno-rtti"],
+    target_compatible_with = _C6,
+    deps = _arduino + [":netstack_examples_ffi"],
+)
+
+firmware_binary(
+    name = "sta_client_esp32c6",
+    binary = ":sta_client",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "sta_client_flash",
+    app = ":sta_client_esp32c6",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "sta_client_flashbundle",
+    flash = ":sta_client_flash",
+    tags = ["manual"],
+)
+
+# ap_webserver — AP MLME accepts a station + serves a bounded HTTP 200.
+cc_binary(
+    name = "ap_webserver",
+    srcs = ["examples/ap_webserver.cpp"],
+    copts = ["-fno-rtti"],
+    target_compatible_with = _C6,
+    deps = _arduino + [":netstack_examples_ffi"],
+)
+
+firmware_binary(
+    name = "ap_webserver_esp32c6",
+    binary = ":ap_webserver",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "ap_webserver_flash",
+    app = ":ap_webserver_esp32c6",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "ap_webserver_flashbundle",
+    flash = ":ap_webserver_flash",
+    tags = ["manual"],
+)
+
+# wifi_rx_probe — MAC RX RE observation probe (Milestone 0a). Runs the VENDOR
+# esp_wifi in promiscuous mode as a reference oracle and dumps the live WiFi-MAC
+# register state (RX_DSCR_BASE/NEXT/LAST, lldesc words, RX_CTRL, INT_STATUS) so
+# the RE'd register map can be validated on silicon. Not the heapless stack;
+# a measurement tool. Needs the vendor wifi lib for esp_wifi.
+cc_binary(
+    name = "wifi_rx_probe",
+    srcs = ["examples/wifi_rx_probe.cpp"],
+    copts = ["-fno-rtti"],
+    target_compatible_with = _C6,
+    deps = _arduino + ["@embedded//libs/vendor:wifi"],
+)
+
+firmware_binary(
+    name = "wifi_rx_probe_esp32c6",
+    binary = ":wifi_rx_probe",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "wifi_rx_probe_flash",
+    app = ":wifi_rx_probe_esp32c6",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "wifi_rx_probe_flashbundle",
+    flash = ":wifi_rx_probe_flash",
+    tags = ["manual"],
+)
+
+# wifi_rx_ffi — heapless MAC RX driver FFI (Milestone 0b): installs OUR RxRing
+# into the MAC and polls it for real frames. Built on the netstack lower-MAC.
+rust_static_library(
+    name = "wifi_rx_ffi",
+    srcs = ["examples/wifi_rx_ffi.rs"],
+    crate_name = "wifi_rx_ffi",
+    edition = "2021",
+    target_compatible_with = _C6,
+    deps = [":netstack"],
+)
+
+# wifi_rx_driver — M0b: vendor brings up PHY/clock/channel, then we take over the
+# RX descriptor ring and prove real beacons land in the heapless ring.
+cc_binary(
+    name = "wifi_rx_driver",
+    srcs = ["examples/wifi_rx_driver.cpp"],
+    copts = ["-fno-rtti"],
+    target_compatible_with = _C6,
+    deps = _arduino + [
+        ":wifi_rx_ffi",
+        "@embedded//libs/vendor:wifi",
+    ],
+)
+
+firmware_binary(
+    name = "wifi_rx_driver_esp32c6",
+    binary = ":wifi_rx_driver",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "wifi_rx_driver_flash",
+    app = ":wifi_rx_driver_esp32c6",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "wifi_rx_driver_flashbundle",
+    flash = ":wifi_rx_driver_flash",
+    tags = ["manual"],
+)
+
+# wifi_tx_probe — TX-path RE observation probe (Milestone 1a). Vendor esp_wifi as
+# a TX oracle: snapshot the live TXQ PLCP registers + TX buffer the vendor builds.
+cc_binary(
+    name = "wifi_tx_probe",
+    srcs = ["examples/wifi_tx_probe.cpp"],
+    copts = ["-fno-rtti"],
+    target_compatible_with = _C6,
+    deps = _arduino + ["@embedded//libs/vendor:wifi"],
+)
+
+firmware_binary(
+    name = "wifi_tx_probe_esp32c6",
+    binary = ":wifi_tx_probe",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "wifi_tx_probe_flash",
+    app = ":wifi_tx_probe_esp32c6",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "wifi_tx_probe_flashbundle",
+    flash = ":wifi_tx_probe_flash",
+    tags = ["manual"],
+)
+
+# wifi_tx_driver — M1b: first transmit via our descriptor+PLCP0 (clone-and-replay).
+cc_binary(
+    name = "wifi_tx_driver",
+    srcs = ["examples/wifi_tx_driver.cpp"],
+    copts = ["-fno-rtti"],
+    target_compatible_with = _C6,
+    deps = _arduino + ["@embedded//libs/vendor:wifi"],
+)
+
+firmware_binary(
+    name = "wifi_tx_driver_esp32c6",
+    binary = ":wifi_tx_driver",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "wifi_tx_driver_flash",
+    app = ":wifi_tx_driver_esp32c6",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "wifi_tx_driver_flashbundle",
+    flash = ":wifi_tx_driver_flash",
+    tags = ["manual"],
+)
+
+# wifi_sta_ffi / wifi_sta_driver — M2: live STA association over the heapless MAC.
+rust_static_library(
+    name = "wifi_sta_ffi",
+    srcs = ["examples/wifi_sta_ffi.rs"],
+    crate_name = "wifi_sta_ffi",
+    edition = "2021",
+    target_compatible_with = _C6,
+    deps = [":netstack"],
+)
+
+cc_binary(
+    name = "wifi_sta_driver",
+    srcs = ["examples/wifi_sta_driver.cpp"],
+    copts = ["-fno-rtti"],
+    target_compatible_with = _C6,
+    deps = _arduino + [
+        ":wifi_sta_ffi",
+        "@embedded//libs/vendor:wifi",
+    ],
+)
+
+firmware_binary(
+    name = "wifi_sta_driver_esp32c6",
+    binary = ":wifi_sta_driver",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "wifi_sta_driver_flash",
+    app = ":wifi_sta_driver_esp32c6",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "wifi_sta_driver_flashbundle",
+    flash = ":wifi_sta_driver_flash",
+    tags = ["manual"],
+)
+
+# NB: the full heapless-netstack player (former wifi_sta_own example) is now a first-class
+# player_app variant — //firmware/player_app:esp32c6_netstack (built from main_netstack.cpp),
+# which links :wifi_sta_ffi. It's exercised by //pi/hitl/harness:e2e_netstack.
+
+# wifi_hw_rx_test — validate non-promiscuous STA RX bring-up (keeps HW crypto inline).
+cc_binary(
+    name = "wifi_hw_rx_test",
+    srcs = ["examples/wifi_hw_rx_test.cpp"],
+    copts = ["-fno-rtti"],
+    target_compatible_with = _C6,
+    deps = _arduino + [
+        ":wifi_sta_ffi",
+        "@embedded//libs/vendor:wifi",
+    ],
+)
+
+firmware_binary(
+    name = "wifi_hw_rx_test_esp32c6",
+    binary = ":wifi_hw_rx_test",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "wifi_hw_rx_test_flash",
+    app = ":wifi_hw_rx_test_esp32c6",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "wifi_hw_rx_test_flashbundle",
+    flash = ":wifi_hw_rx_test_flash",
+    tags = ["manual"],
+)
+
+# wifi_isr_driver — M5: interrupt-driven RX via our own WiFi-MAC ISR (reuses the
+# M0b RX-ring FFI).
+cc_binary(
+    name = "wifi_isr_driver",
+    srcs = ["examples/wifi_isr_driver.cpp"],
+    copts = ["-fno-rtti"],
+    target_compatible_with = _C6,
+    deps = _arduino + [
+        ":wifi_rx_ffi",
+        "@embedded//libs/vendor:wifi",
+    ],
+)
+
+firmware_binary(
+    name = "wifi_isr_driver_esp32c6",
+    binary = ":wifi_isr_driver",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "wifi_isr_driver_flash",
+    app = ":wifi_isr_driver_esp32c6",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "wifi_isr_driver_flashbundle",
+    flash = ":wifi_isr_driver_flash",
+    tags = ["manual"],
+)
+
+# wifi_fullduplex_driver — combined heapless RX ring + our ISR + heapless TX.
+cc_binary(
+    name = "wifi_fullduplex_driver",
+    srcs = ["examples/wifi_fullduplex_driver.cpp"],
+    copts = ["-fno-rtti"],
+    target_compatible_with = _C6,
+    deps = _arduino + [
+        ":wifi_sta_ffi",
+        "@embedded//libs/vendor:wifi",
+    ],
+)
+
+firmware_binary(
+    name = "wifi_fullduplex_driver_esp32c6",
+    binary = ":wifi_fullduplex_driver",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "wifi_fullduplex_driver_flash",
+    app = ":wifi_fullduplex_driver_esp32c6",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "wifi_fullduplex_driver_flashbundle",
+    flash = ":wifi_fullduplex_driver_flash",
+    tags = ["manual"],
+)
+
+# wifi_vendor_join — clean vendor-association control (no heapless state).
+cc_binary(
+    name = "wifi_vendor_join",
+    srcs = ["examples/wifi_vendor_join.cpp"],
+    copts = ["-fno-rtti"],
+    target_compatible_with = _C6,
+    deps = _arduino + ["@embedded//libs/vendor:wifi"],
+)
+
+firmware_binary(
+    name = "wifi_vendor_join_esp32c6",
+    binary = ":wifi_vendor_join",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "wifi_vendor_join_flash",
+    app = ":wifi_vendor_join_esp32c6",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "wifi_vendor_join_flashbundle",
+    flash = ":wifi_vendor_join_flash",
+    tags = ["manual"],
+)
+
+# wifi_auth_capture — capture the vendor's own auth frame to diff vs ours.
+cc_binary(
+    name = "wifi_auth_capture",
+    srcs = ["examples/wifi_auth_capture.cpp"],
+    copts = ["-fno-rtti"],
+    target_compatible_with = _C6,
+    deps = _arduino + ["@embedded//libs/vendor:wifi"],
+)
+
+firmware_binary(
+    name = "wifi_auth_capture_esp32c6",
+    binary = ":wifi_auth_capture",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "wifi_auth_capture_flash",
+    app = ":wifi_auth_capture_esp32c6",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "wifi_auth_capture_flashbundle",
+    flash = ":wifi_auth_capture_flash",
+    tags = ["manual"],
+)
+
+# wifi_auth_replay — test PLCP1=len+4 (FCS) auth against the AP.
+cc_binary(
+    name = "wifi_auth_replay",
+    srcs = ["examples/wifi_auth_replay.cpp"],
+    copts = ["-fno-rtti"],
+    target_compatible_with = _C6,
+    deps = _arduino + ["@embedded//libs/vendor:wifi"],
+)
+
+firmware_binary(
+    name = "wifi_auth_replay_esp32c6",
+    binary = ":wifi_auth_replay",
+    board = "esp32c6",
+    opt_mode = "opt",
+    tags = ["manual"],
+)
+
+esptool_flash(
+    name = "wifi_auth_replay_flash",
+    app = ":wifi_auth_replay_esp32c6",
+    tags = ["manual"],
+)
+
+flash_bundle(
+    name = "wifi_auth_replay_flashbundle",
+    flash = ":wifi_auth_replay_flash",
+    tags = ["manual"],
+)
