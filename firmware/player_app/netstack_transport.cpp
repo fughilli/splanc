@@ -1342,6 +1342,34 @@ void netstack_loop() {
     static uint32_t last_state = 99;
     uint32_t s = ns_tcp_state();
     if (s != last_state) { Serial.printf("*** SERVER state -> %u ***\n", s); last_state = s; }
+    // Reclaim a wedged half-open connection. A concurrent-handshake burst (the tls_churn
+    // stress) can leave the single connection slot stuck ESTABLISHED with the client gone
+    // mid-TLS-handshake (or pre-WS): the s==4/0 re-listen below never fires (the peer sent no
+    // FIN), so every later client is rejected — a persistent wss wedge. The write-stall guard
+    // (tls_write_all) only covers a stalled reply, not the accept/handshake phase. So bound
+    // the not-yet-serving stretch: once ESTABLISHED-but-not-up exceeds a few seconds (a real
+    // handshake+WS completes in <3s), force a fresh listener — ns_tcp_listen swaps the conn to
+    // a clean LISTEN state — abandoning the dead peer and freeing the slot for the next client.
+    {
+      static uint32_t est_since = 0;
+      bool up = TLS_SERVER ? (PLAYER_MODE ? g_ws_up : g_tls_hs) : true;
+      if (s == 2 && !up) {
+        if (est_since == 0) est_since = millis() == 0 ? 1 : millis();
+        else if (millis() - est_since > 8000) {
+          Serial.println("*** SERVER half-open handshake wedge — reclaiming (re-listen) ***");
+          static uint32_t riss = 0x5000;
+          ns_tcp_listen(g_offer_ip, SERVER_PORT, riss);
+          riss += 0x1000;
+          if (TLS_SERVER) { mbedtls_ssl_session_reset(&g_ssl); g_tls_hs = false; g_ws_up = false; g_ws_rxlen = 0; }
+          g_bio_tx = g_bio_rx = 0;
+          est_since = 0;
+          last_state = 99;      // re-log SERVER state on the next scan
+          s = ns_tcp_state();   // now LISTEN — skip the stale handshake drive below this scan
+        }
+      } else {
+        est_since = 0;
+      }
+    }
     if (s == 2 && TLS_SERVER) { // Established: drive the TLS handshake, then read+echo
       if (!g_tls_hs) {
         static int last_hstate = -1;
