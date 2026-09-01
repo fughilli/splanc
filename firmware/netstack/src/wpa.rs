@@ -435,6 +435,36 @@ impl Supplicant {
                 }
             };
         }
+        if has_mic
+            && k.key_info & KEY_INFO_ACK != 0
+            && k.key_info & KEY_INFO_INSTALL == 0
+            && k.key_info & KEY_INFO_KEY_TYPE == 0
+            && self.state == HsState::Done
+        {
+            // Group Key rekey, message 1 (authenticator -> STA): a 2-way handshake the AP
+            // runs periodically to roll the group (broadcast/multicast) key. It carries
+            // MIC + ACK + Secure with the GROUP key type (KEY_TYPE bit clear) and no
+            // Install bit, and its key data is a fresh encrypted GTK KDE. If we never
+            // answer it, the authenticator times out the Group Key Handshake and DEAUTHs
+            // us (reason 16) — which stranded the link mid-session. Verify the MIC (KCK),
+            // unwrap + install the new GTK (so we can still decrypt group traffic), and
+            // reply with Group message 2 (Secure + MIC, group key type, no key data).
+            if !self.verify_mic(frame) {
+                return Step::Ignored; // a bad group msg must not fail the whole supplicant
+            }
+            let mut kd_buf = [0u8; 128];
+            if let Ok(n) = unwrap.aes_unwrap(&self.ptk.kek, k.key_data, &mut kd_buf) {
+                if let Some(gtk) = find_gtk_kde(&kd_buf[..n]) {
+                    self.gtk_len = core::cmp::min(gtk.len(), 32);
+                    self.gtk[..self.gtk_len].copy_from_slice(&gtk[..self.gtk_len]);
+                }
+            }
+            let empty = [0u8; 32]; // group M2 carries no nonce and no key data
+            return match self.build_reply(KEY_INFO_MIC | KEY_INFO_SECURE | ver, &empty, &[], out) {
+                Ok(n) => Step::Send(n), // just send the ACK; the 4-way state stays Done
+                Err(_) => Step::Ignored,
+            };
+        }
         Step::Ignored
     }
 

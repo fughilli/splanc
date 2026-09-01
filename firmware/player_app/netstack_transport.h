@@ -24,6 +24,10 @@ bool netstack_ws_send(const uint8_t *data, size_t len);
 // True when a WS client is upgraded (for gating unsolicited pushes).
 bool netstack_ws_open(void);
 
+// Count of AP group-key rekeys serviced this session (surfaced in the status line so a
+// rekey is visible even when it scrolls past the serial-log tail).
+uint32_t netstack_rekey_count(void);
+
 // PROVIDED BY main.cpp (the shared dispatch seam). Handle one received binary WS message
 // (`in`/`len`): upload-chunk streaming OR lm_player_handle + persistence + poll_after_message,
 // identical to the vendor ws:81 / wss:443 paths. Writes the reply into the app's tx buffer and
