@@ -18,7 +18,8 @@ module spi_ws281x #(
     input  wire                 ss,
     input  wire                 sck,
     input  wire                 mosi,
-    output wire [MAX_PORTS-1:0] ws
+    output wire [MAX_PORTS-1:0] ws,
+    output wire                 frame_pulse   // 1-cycle strobe per driven frame
 );
   wire [7:0] spi_dout;
   wire       spi_done;
@@ -86,6 +87,7 @@ module spi_ws281x #(
       .stream_byte(stream_byte),
       .stream_valid(stream_valid),
       .stream_active(stream_active),
-      .ws(ws)
+      .ws(ws),
+      .frame_pulse(frame_pulse)
   );
 endmodule

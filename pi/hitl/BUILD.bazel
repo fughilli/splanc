@@ -23,6 +23,40 @@ exports_files(["skus.bzl"])
 # gazelle:prefix github.com/fughilli/splanc/pi/hitl
 gazelle(name = "gazelle")
 
+# EXACTLY the files the nix flake build reads, staged by sbc_application into a
+# hermetic TreeArtifact so `nix build path:` sees deterministic content instead of
+# the live workspace (whose .bazelisk cache Bazel rewrites mid-deploy — the churn
+# that made redeploys non-deterministic and pinned stale daemons). This is the
+# flake root's own files (flake.nix/.lock, go.mod, the nix/ + observability/
+# modules) plus the Go module sources from the sub-packages. NOT the whole tree:
+# harness/tests (python), docs, BUILD files, and skus.bzl aren't read by nix, and
+# the churn dirs are excluded outright. A new Go sub-package must add a
+# `:flake_srcs` filegroup and be listed here (a missing one fails the daemon build
+# loudly, never silently stale).
+filegroup(
+    name = "flake_srcs",
+    srcs = [
+        "flake.lock",
+        "flake.nix",
+        "go.mod",
+    ] + glob([
+        "nix/**",
+        "observability/**",
+    ]) + [
+        "//pi/hitl/cmd/hitl:flake_srcs",
+        "//pi/hitl/cmd/hitl-managerd:flake_srcs",
+        "//pi/hitl/internal/analyzer:flake_srcs",
+        "//pi/hitl/internal/ap:flake_srcs",
+        "//pi/hitl/internal/api:flake_srcs",
+        "//pi/hitl/internal/metrics:flake_srcs",
+        "//pi/hitl/internal/pool:flake_srcs",
+        "//pi/hitl/internal/queue:flake_srcs",
+        "//pi/hitl/internal/runner:flake_srcs",
+        "//pi/hitl/internal/skus:flake_srcs",
+        "//pi/hitl/internal/tailnet:flake_srcs",
+    ],
+)
+
 # Default to the tracked placeholder so a fresh checkout / CI builds; a local
 # (gitignored) wifi.yaml with real SSID/PSKs overrides it when present. Without any
 # wifi the rig bakes no profile and gets stranded when moved. The constant glob is
@@ -34,12 +68,14 @@ _wifi_config = (glob(
 ) or ["wifi.yaml.example"])[0]
 
 sbc_application(
+    # The logic analyzer is no longer a deploy-time capability: every image ships
+    # sigrok + the FX2 broker and the daemon self-gates on the FX2 being physically
+    # present (analyzer.FX2Present), so there's no SBC_ANALYZER to detect, commit, or
+    # drift. See nix/hitl-app.nix and internal/analyzer. (No detect_caps_cmd — the
+    # remaining SBC_* dongle knobs aren't board-probed.)
     name = "hitl",
-    # Hybrid detect-warn for `:update`: probe the board for the Saleae Logic
-    # analyzer (USB 0925:3881) and report the capability it implies; `.update`
-    # warns if this disagrees with the board's committed /var/lib/sbc/profile.
-    detect_caps_cmd = "lsusb | grep -q 0925:3881 && echo SBC_ANALYZER=1 || echo SBC_ANALYZER=0",
     flake = "pi/hitl",
+    flake_srcs = [":flake_srcs"],
     hostname = "hitl-rig",
     wifi_config_file = _wifi_config,
 )
@@ -74,6 +110,7 @@ sbc_application(
     name = "hitl_pi3",
     board = "@sbc_deploy//deploy/boards:raspberry-pi-3",
     flake = "pi/hitl",
+    flake_srcs = [":flake_srcs"],
     hostname = "hitl-rig",
     wifi_config_file = _wifi_config,
 )
@@ -88,6 +125,20 @@ sh_binary(
     srcs = ["scripts/seed-wifi.sh"],
     data = ["@sbc_deploy//deploy:scripts/seed_wifi.sh"],
     deps = ["@bazel_tools//tools/bash/runfiles"],
+)
+
+# Offline sibling: add the SAME persistent WiFi profiles to an ALREADY-IMAGED SD
+# card (no boot, no rebuild) — writes the seed-<ssid>.nmconnection into the card's
+# ext4 root via e2tools. An alias to the sbc-deploy target, which bundles e2tools
+# (an sbc-deploy-internal repo, so it can't be re-wrapped here); pass the wifi-seed
+# file by absolute path since `bazel run` starts in the runfiles tree. See the
+# script header for --device/--partition/--root + auto ext4-root detection.
+#   bazel run //pi/hitl:sd_seed_wifi -- --device /dev/sdX --ssid X --psk Y
+#   bazel run //pi/hitl:sd_seed_wifi -- --device /dev/sdX --file "$PWD/pi/secrets/wifi-seed.yaml"
+#   bazel run //pi/hitl:sd_seed_wifi -- --device /dev/sdX --list / --remove SSID
+alias(
+    name = "sd_seed_wifi",
+    actual = "@sbc_deploy//deploy:sd_seed_wifi",
 )
 
 # Re-seed the Tailscale auth key onto the rig (needed after a reflash wipes

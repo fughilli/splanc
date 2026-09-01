@@ -21,7 +21,33 @@ const (
 	// ProtocolSPI is APA102/SK9822-style RGB clocked over SPI (clk + data), for
 	// the pi/led_driver path. Decoded by rgb_led_spi stacked on the spi decoder.
 	ProtocolSPI Protocol = "spi"
+	// ProtocolSPIRaw returns the raw MOSI byte stream (no RGB interpretation), for
+	// validating the spi_ws281x FPGA wire framing (opcode/CSR/STREAM/round-robin).
+	// Channels are [clk, mosi, cs]; cs frames the transactions.
+	ProtocolSPIRaw Protocol = "spi-raw"
 )
+
+// hexByte matches one 2-hex-digit token (a sigrok spi "mosi-data" byte value).
+var hexByte = regexp.MustCompile(`\b([0-9a-fA-F]{2})\b`)
+
+// parseSPIBytes turns sigrok-cli `-A spi=mosi-data` output into the MOSI byte
+// stream, one byte per annotated line (the last hex-byte token on the line, so
+// the "spi-1:" channel prefix is ignored).
+func parseSPIBytes(stdout string) ([]byte, error) {
+	var out []byte
+	for _, line := range strings.Split(stdout, "\n") {
+		m := hexByte.FindAllStringSubmatch(line, -1)
+		if len(m) == 0 {
+			continue
+		}
+		v, err := strconv.ParseUint(m[len(m)-1][1], 16, 8)
+		if err != nil {
+			return nil, fmt.Errorf("parse spi byte %q: %w", m[len(m)-1][1], err)
+		}
+		out = append(out, byte(v))
+	}
+	return out, nil
+}
 
 // rgbHex matches one "#rrggbb" pixel token in a sigrok annotation line. The
 // rgb_led_ws281x / rgb_led_spi decoders print exactly one such token per LED,
@@ -72,6 +98,15 @@ func decoderArgs(proto Protocol, channels []string) ([]string, error) {
 			"-P", "rgb_led_spi",
 			"-A", "rgb_led_spi=rgb",
 		}, nil
+	case ProtocolSPIRaw:
+		if len(channels) < 2 {
+			return nil, fmt.Errorf("spi-raw needs >=2 channels (clk, mosi[, cs]), got %d", len(channels))
+		}
+		spi := "spi:clk=" + channels[0] + ":mosi=" + channels[1] + ":cpol=0:cpha=0"
+		if len(channels) >= 3 {
+			spi += ":cs=" + channels[2]
+		}
+		return []string{"-P", spi, "-A", "spi=mosi-data"}, nil
 	default:
 		return nil, fmt.Errorf("unknown protocol %q", proto)
 	}

@@ -1,0 +1,82 @@
+"""Fully-static aarch64-linux-musl build of the (100% Rust) Pi player. rustc
+provides the musl crt + libc.a (self-contained); a minimal cc toolchain here
+supplies rust-lld + `-static` and none of gcc's glibc defaults. Both the rust
+and cc toolchains are constrained to `libc:musl`, so they bind ONLY this build —
+never the gnu host/exec tool builds. Flows through the build graph as build_data.
+"""
+
+load(":toolchains.bzl", "musl_toolchains")
+load(":transition.bzl", "static_musl_binary")
+
+package(default_visibility = ["//visibility:public"])
+
+constraint_setting(name = "libc")
+
+constraint_value(
+    name = "musl",
+    constraint_setting = ":libc",
+)
+
+platform(
+    name = "aarch64_linux_musl",
+    constraint_values = [
+        "@platforms//cpu:aarch64",
+        "@platforms//os:linux",
+        ":musl",
+    ],
+)
+
+config_setting(
+    name = "is_musl",
+    constraint_values = [":musl"],
+)
+
+# rust + cc musl toolchains, one pair per EXEC host (linux container, macOS
+# deploy on aarch64 or x86_64). Registered in //MODULE.bazel.
+musl_toolchains(
+    name = "linux",
+    exec_compatible_with = [
+        "@platforms//cpu:aarch64",
+        "@platforms//os:linux",
+    ],
+    tools = "@rust_linux_aarch64__aarch64-unknown-linux-musl__stable_tools",
+)
+
+musl_toolchains(
+    name = "macos_arm64",
+    exec_compatible_with = [
+        "@platforms//cpu:aarch64",
+        "@platforms//os:macos",
+    ],
+    tools = "@rust_macos_aarch64__aarch64-unknown-linux-musl__stable_tools",
+)
+
+musl_toolchains(
+    name = "macos_x86_64",
+    exec_compatible_with = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:macos",
+    ],
+    tools = "@rust_macos_x86_64__aarch64-unknown-linux-musl__stable_tools",
+)
+
+# x86_64-linux exec host — CI runners (and any x86_64 Linux dev box). Without it a
+# plain `bazel test //...` on an x86_64 Linux runner can't resolve a CC toolchain
+# for the aarch64-musl player and analysis fails.
+musl_toolchains(
+    name = "linux_x86_64",
+    exec_compatible_with = [
+        "@platforms//cpu:x86_64",
+        "@platforms//os:linux",
+    ],
+    tools = "@rust_linux_x86_64__aarch64-unknown-linux-musl__stable_tools",
+)
+
+# The deploy's build_data target: builds //pi/player_rs:player under the musl
+# platform (target-only transition; exec stays gnu). Pure Rust, so it
+# cross-compiles on the macOS deploy host too — nothing staged.
+static_musl_binary(
+    name = "player_musl",
+    src = "//pi/player_rs:player",
+    target_platform = ":aarch64_linux_musl",
+)

@@ -197,6 +197,9 @@ type CaptureResult struct {
 	Protocol string `json:"protocol"`
 	// Pixels are the decoded LEDs in wire order (index 0 = first LED / DIN).
 	Pixels []Pixel `json:"pixels"`
+	// Bytes is the raw MOSI byte stream for the "spi-raw" protocol (spi_ws281x
+	// FPGA wire validation). base64 in JSON.
+	Bytes []byte `json:"bytes,omitempty"`
 	// SampleRate is the capture sample rate in Hz (for latency math on Samples).
 	SampleRate int `json:"sample_rate,omitempty"`
 	// TriggerSample is the sample index of the trigger edge that armed the capture

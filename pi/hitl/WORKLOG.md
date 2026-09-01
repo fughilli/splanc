@@ -3,6 +3,196 @@
 Handoff notes alongside git history. Newest first. Read this before touching the
 rig's networking — there's live runtime state that isn't fully declarative yet.
 
+## 2026-08-28 — fpga_ws281x E2E green (ws2812) — wrong DUT + a musl crash-loop
+
+Resolved the previous entry's "DUT WSS never completes the handshake" block. It was
+a chain of three unrelated problems, none of them the harness:
+
+1. **The network-DUT seed pointed at the WRONG Pi.** `pi-ledmapper-1` was seeded to
+   `192.168.68.50` = **splanc-max-1** (a Pi5, APA102 role, **no Tang FPGA**). The
+   actual FPGA rig is **splanc-max-2** = `192.168.68.68` (a **Pi3**, Tang Nano 9K
+   attached; `apps.nix` even says so). So every capture had nothing to see. Re-seeded
+   to `.68` (edit `/var/lib/hitl/network-duts.json` on the rig — reached via
+   `tailscale ssh root@hitl-rig-1`, since the seed tool needs `pi/secrets/deploy_key`
+   which the container lacks; the `--discover` monitor ingests it in ~3s). A fresh
+   reservation then injects `HITL_DUT_ADDR=192.168.68.68`.
+
+   - Note: the WSS on `.50` was ALSO down at first because that box was running a
+     stale pre-fpga image (8443 firewall-closed → SYN dropped → "opening handshake
+     timeout"); a `deploy_live` fixed that, but `.50` is the wrong box regardless.
+
+2. **The static-musl player crash-loops on WS connections** (real bug, fixed in
+   commit "pi/player_rs: pin thread stacks"). musl's 128 KiB default spawned-thread
+   stack + tokio not setting a worker stack → rustls/tungstenite/protobuf overflows
+   it and SIGABRTs the whole process on the harness's `set_counting_pattern`
+   (`NRestarts` climbed to 18 on `.50`; coredump = `stack_overflow::signal_handler`
+   on a `tokio-rt-worker`). Fix: `thread_stack_size(8 MiB)` + render `stack_size(4
+MiB)`. Same `player_musl` artifact runs on both boxes, so `.68` needed it too.
+
+3. **The macOS host builder chain** (to run `deploy_live` via hostdeploy) needed
+   three one-time fixes, see the new `sbc-deploy-host-builder-chain` memory:
+   `trusted-users += kevin`, a `linux-builder` ssh alias, and `StrictHostKeyChecking
+accept-new` + `UserKnownHostsFile /dev/null` on that alias (ephemeral builder-VM
+   host key). Debug with `nix store info --store ssh-ng://builder@linux-builder … -vvv`.
+
+**E2E result on splanc-max-2** (fixed player, Tang present): the WS drive succeeds
+(no crash) and the **ws2812 capture PASSES all 4 ports** — correct per-port WS281x
+colours, i.e. the whole WSS→player→SPI→FPGA→WS281x chain works end-to-end. The
+**raw-SPI cross-check does NOT pass**: the FX2 (`fx2lafw`) samples at 24 MHz but the
+player drives SPI at 6.4 MHz = **3.75 samples/bit**, too marginal for a clean sigrok
+SPI decode (byte count grows with the window — 57→285 — but no clean 97 B STREAM
+frame). Redundant with ws2812 (which proves the SPI stream is correct); it's an
+analyzer-fidelity limit, so **ws2812 is the accepted validation** and the raw-SPI
+check should be made sample-rate-aware (or gated) separately.
+
+**Also hardened `tools/hostdeploy`** so a hung/interactive command can't wedge the
+watcher (stdin=/dev/null, threaded heartbeat + `running` marker, per-command
+timeout, cancel-on-exit) — separate commit, self-tested.
+
+**Follow-ups landed the same day:**
+
+- **Deploy hardware guard** (the real root cause of the splanc-max-1 brick — I
+  deployed a **Pi5 closure to a Pi3**, which installs an incompatible kernel and
+  bricks the next boot). sbc-deploy's `cmd_deploy` now reads the target's
+  `/proc/device-tree/model` and REFUSES a `$SBC_BOARD` mismatch (PR #13, merged;
+  MODULE.bazel bumped). Verified live on both a Pi3 deploy and the Pi5 rig deploy
+  (prints `==> Board check: … matches SBC_BOARD=…`). **BOTH test boards are Pi3s**
+  (the `apps.nix` "Pi5 splanc-max-1" label was wrong — fixed); the Pi5 target stays
+  for a future SKU.
+- **splanc-max-2 persistent deploy** via `:ledmapper_pi3.deploy_live -- --hostname
+splanc-max-2 192.168.68.68` (replaced the manual player; `NRestarts=0`, E2E
+  ws2812 green). Watch hostrun's STREAMED stdout, not one-shot reads of the raw
+  `.hostdeploy/<id>.log` — it lags over the shared mount and twice fooled me into
+  cancelling a healthy deploy.
+- **`.local` DUT seeds now work.** The reservation container has no mDNS (glibc NSS
+  in the minimal nix image ignores `LD_LIBRARY_PATH` and reads its own store-path
+  `ld.so.cache`, so nss-mdns won't load without nsncd/a custom glibc). So the
+  manager resolves `HITL_DUT_ADDR` `*.local` → IP HOST-side (`getent`, needs
+  `pkgs.getent` on the daemon PATH + `services.avahi`) before injecting it. Seed by
+  hostname freely; it's re-resolved per reservation.
+
+**Live-state caveats a fresh agent must know:**
+
+- **splanc-max-1 (`.50`) is DOWN** — I rebooted it (chasing the Tang, before
+  realising it's the wrong box) and it did NOT rejoin the LAN (it had the wrong-board
+  Pi5 closure). No rig-side power control for a network DUT → needs a **physical
+  power-cycle at rig-1**, then redeploy with the **Pi3** target (`:ledmapper_pi3`) or
+  `update` — the guard now blocks a wrong-board repeat.
+- **The raw-SPI E2E check** is FX2-sample-rate-limited (24 MHz vs 6.4 MHz SPI); it's
+  redundant with ws2812 (the accepted validation) and should be made sample-rate-
+  aware or gated separately.
+
+## 2026-08-27 — fpga_ws281x HITL drives the DUT over WS; BLOCKED on the DUT WSS
+
+Rewrote `pi/hitl/harness/hitl_fpga_ws281x.py` to drive the **network DUT**
+(`pi-ledmapper-1` = the Pi player at rig-1, 192.168.68.50) the way the phone does —
+over its WSS — instead of the old `_drive_static` control-socket path (which can't
+work: the reservation is a container on the rig, with no line to the Pi's local
+unix socket). This is Phase 5 of the Python→Rust player rewrite (the `pi/player_rs/*`
+commits; context inlined below under "Inlined context"): get the FPGA E2E green
+against the deployed Rust player.
+
+**What the harness now does** (this change; not yet committed-green — see blocker):
+
+- `_dut_addr(res)` reads `$HITL_DUT_ADDR` from the reservation container (the
+  network-DUT env, seeded via `//pi/hitl:seed_network_dut`) → `res.forward(addr,
+8443)` tunnels a local port to the Pi's WSS, exactly like `:map_upload`.
+- `_open_ws` (bounded 30s retry, mirrors `:map_upload`) → hello→welcome, then
+  `set_counting_pattern` with **one solid ColorBlock per FPGA port** and
+  `color_order="GRB"`. The render's counting path (`render.rs Source::Counting`)
+  honours that order, so the WS2812 wire bytes come out GRB for the sigrok decoder.
+- `_expected_frame` is now **per-port solids** (`_PALETTE[p]`); `_counting_blocks`
+  emits `{start:p*lpp, count:lpp, rgb:[…]/255}`. The player codec splits the
+  `num_ports*lpp` counting LEDs evenly across ports (`wire.rs split_ports`,
+  port_counts=None) so block p lands entirely on port p. **`--num-ports` MUST
+  match the deployed player `--fpga-ports` (=4)** or the split misaligns.
+- Capture/verify path unchanged (ws2812 per port + raw-SPI STREAM cross-check via
+  `fpga_spi.encode_stream`). Defaults updated to rig-1 wiring: `--ws-channels
+D0,D2,D4,D6`, `--spi-channels D3,D1,D5` (clk,mosi,cs), `--num-ports 4`,
+  `--leds-per-port 8`, `--serve-port 8443`.
+- Fixed `_reserved_device`: match the nested `active.id` in `/status` (was looking
+  for a flat `reservation`/`reservationId` key that doesn't exist) — now resolves
+  network DUTs.
+
+**Builds + runs**: `bazel build //pi/hitl/harness:fpga_ws281x_led-mapper-pi-fpga`
+green; `bazel run … -- --server http://hitl-rig-1:8087` reserves `pi-ledmapper-1`,
+resolves the addr, and forwards `localhost:NNNNN -> (rig) -> 192.168.68.50:8443`.
+
+**BLOCKER — the DUT's WSS never completes the opening handshake.** The TCP tunnel
+establishes but websockets reports `TimeoutError: timed out during opening
+handshake`, and it persists across the 30s retry loop — so it is NOT a
+first-connect race and NOT the harness. Something on the Pi at
+`192.168.68.50:8443` accepts TCP but doesn't answer TLS/WS.
+
+Next agent — narrow it from the container (the container CAN reach the Pi over the
+LAN; only the harness's local host can't ssh the Pi):
+
+1. `res.ssh('curl -kv --max-time 8 https://192.168.68.50:8443/ 2>&1; nc -zv
+192.168.68.50 8443')` — is 8443 listening / does TLS respond?
+2. Prime suspect: **the player service isn't up**. Its unit has
+   `ExecStartPre = "+${fpgaCommission}"` (apps.nix) which flashes the Tang over
+   USB-JTAG before ExecStart; if commissioning hangs or the Tang is absent at
+   rig-1, the player never binds 8443. Check `systemctl status sbc-led-driver`
+   and the commission log on the DUT (needs a shell on the Pi — via tailscale or
+   the rig's LAN, out of band).
+3. Or a single-connection server wedge in the Rust player (see the "Server-wedge
+   precedent" below): `res.forward` opens/half-closes a probe dial that could wedge
+   a single-task accept loop. If so, fix in `pi/player_rs/src/server.rs` (serve
+   loop) — it must accept serially without wedging on an aborted TLS client. Was
+   live-verified serving WSS on splanc-max-2 before the move to rig-1; verify it
+   survived the move/reboot.
+
+Always `hitl release` — the run above released cleanly (`released`).
+
+### Inlined context (facts a fresh agent won't have — they lived in prior-session memory)
+
+**Network-DUT model** (how the Pi attaches to a rig; `runner.Device.Kind == "network"`):
+
+- Reached over the LAN via `$HITL_DUT_ADDR` (the DUT env, injected into the reservation
+  container with `-e`), plus BLE. The reservation is a podman container on the rig,
+  published on the DUT's SSH port (2230); **`res.ssh` runs IN that container**, which
+  reaches the Pi ONLY over the network/BLE — it CANNOT touch the Pi's local
+  `/run/ledmapper/control.sock`. That is the whole reason this test drives over WSS
+  instead of the old control-socket path.
+- The container has NO mDNS resolver → address the Pi by ETH IP `192.168.68.50`, never
+  `*.local`.
+- Pin-only: a network DUT is reachable only by `--sku` or `--device`, never a bare
+  `--require-caps`/unpinned reserve (so a C6 test can't drift onto the Pi).
+- Seeded at runtime (not baked): `bazel run //pi/hitl:seed_network_dut -- hitl-rig-1
+--name pi-ledmapper-1 --addr 192.168.68.50 --sku led-mapper-pi-fpga
+--ble-mac B8:27:EB:63:E8:18`. Writes `/var/lib/hitl/network-duts.json`; the `--discover`
+  monitor ingests it in ~3s (no restart). `--sku` is REQUIRED; re-seed after any reflash.
+- rig-1 is now a Pi5 ANALYZER rig (`SBC_ANALYZER=1`, fx2lafw). DUT caps under the
+  `led-mapper-pi-fpga` sku = `[improv, led-strip, logic-analyzer, spi-fpga]`. LA wiring:
+  FPGA ws pins 70,71,72,73 → FX2 D0,D2,D4,D6; SPI clk=D3, mosi=D1, cs=D5 (== the harness
+  defaults). Pi BLE MAC `B8:27:EB:63:E8:18`.
+
+**The deployed player** (Phase 5 of the Python→Rust rewrite; branch `pi/spi-ws281x`):
+
+- The DUT at rig-1 (physically `splanc-max-2`) runs the unified RUST player
+  `//pi/player_rs:player` — it REPLACED the Python `led_driver` M1 + `pi/server` M2 on the
+  FPGA path. ONE process: serves the protocol over WSS AND drives the FPGA from a shared
+  `Arc<Mutex<Player>>`, reusing the firmware Rust core directly (no FFI). Shipped as a
+  fully-STATIC aarch64-linux-musl binary through the build graph
+  (`//pi/player_rs/musl:player_musl`); 100% Rust (rustls + rustls-rustcrypto +
+  x509-cert/p256, no ring/C), self-signed EC cert (phone/harness bypass verification).
+- Live-verified at deploy time: `sbc-led-driver.service` active, `render 4 ports @ 60 fps,
+spidev0.0 @ 6400000 Hz`, `WSS listening 0.0.0.0:8443` — so the harness targets `:8443`.
+  If it isn't answering now, something changed after the move to rig-1 (see the blocker).
+- The render's counting path honours `counting_color_order()` (render.rs `Source::Counting`
+  applies the message's order), which is why we send `color_order="GRB"`.
+
+**Server-wedge precedent** (from the C6 firmware TLS server — an analogous risk here):
+
+- On the C6, a single-task TLS server with `max_open_sockets=2` held dead/half-open
+  sessions FOREVER and never recovered without a reboot; fixed there with TCP keepalive +
+  recv/send timeouts + a TLS-handshake timeout + SO_LINGER. Two durable lessons if the Rust
+  player has an analogous single-connection wedge (e.g. `res.forward`'s far-end probe dial
+  leaving a half-open TLS session): a wedged device STAYS wedged until reboot, so
+  **power-cycle the Pi and measure against a known-clean device**; and the fix would live in
+  `pi/player_rs/src/server.rs`'s accept loop (accept serially without wedging on an aborted
+  TLS client).
+
 ## 2026-08-22 — BT dongle deflakes provisioning (Pi 5 onboard Cypress is the flake)
 
 The long-hunted ImprovBLE provisioning flake (FUG-61/FUG-94: ~50% per-attempt

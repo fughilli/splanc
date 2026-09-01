@@ -61,5 +61,9 @@ venv/
 # sbc-deploy local build gc-roots/logs (consumer side)
 .sbc-build/
 
+# sbc-deploy nested repo checkout for local co-development (git_override'd; not
+# vendored into this tree). Push it from its own repo, not from here.
+/sbc-deploy-dev/
+
 # hostdeploy runtime mailbox (container<->host deploy driver)
 .hostdeploy/

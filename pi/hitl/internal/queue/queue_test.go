@@ -750,7 +750,7 @@ func TestBestFitAvoidsOverCapableDUT(t *testing.T) {
 	ctx := context.Background()
 	fr := &fakeRunner{}
 	m := New("rig", 30*time.Minute, fr, WithDevices([]runner.Device{
-		{Name: "c6-la", SSHPort: 2222, Capabilities: []string{"flash", "improv", "logic-analyzer"}},
+		{Name: "c6-la", SSHPort: 2222, Capabilities: []string{"flash", "improv", "logic-analyzer-led-strip"}},
 		{Name: "c6-plain", SSHPort: 2223, Capabilities: []string{"flash", "improv"}},
 	}))
 
@@ -760,7 +760,7 @@ func TestBestFitAvoidsOverCapableDUT(t *testing.T) {
 		t.Fatalf("plain reserve should take the plain DUT, got state=%q dev=%q", a.State, a.Device)
 	}
 	// The analyzer DUT is still free for a reservation that requires it.
-	b := m.Reserve(ctx, api.ReserveRequest{Owner: "b", RequireCaps: []string{"logic-analyzer"}})
+	b := m.Reserve(ctx, api.ReserveRequest{Owner: "b", RequireCaps: []string{"logic-analyzer-led-strip"}})
 	if b.State != api.StateActive || b.Device != "c6-la" {
 		t.Fatalf("analyzer reserve should take c6-la, got state=%q dev=%q", b.State, b.Device)
 	}
@@ -771,7 +771,7 @@ func TestBestFitAvoidsOverCapableDUT(t *testing.T) {
 func TestBestFitFallsBackToOnlyDUT(t *testing.T) {
 	ctx := context.Background()
 	m := New("rig", 30*time.Minute, &fakeRunner{}, WithDevices([]runner.Device{
-		{Name: "c6-la", SSHPort: 2222, Capabilities: []string{"flash", "logic-analyzer"}},
+		{Name: "c6-la", SSHPort: 2222, Capabilities: []string{"flash", "logic-analyzer-led-strip"}},
 	}))
 	a := m.Reserve(ctx, api.ReserveRequest{Owner: "a"})
 	if a.State != api.StateActive || a.Device != "c6-la" {

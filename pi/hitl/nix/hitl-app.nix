@@ -99,36 +99,33 @@ let
   apSsid = config.networking.hostName;
   apPsk = "${config.networking.hostName}-provision"; # ≥8 chars; override for a fixed one
 
-  # Two independent, board-agnostic capabilities, each toggled by an env var at
-  # (impure) deploy eval — so ONE appModule builds any of {Pi 3, Pi 5} × {analyzer,
-  # plain} × {onboard AP, dongle AP}. Unset = off, so a bare rig stays lean (no
-  # sigrok closure, no out-of-tree WiFi driver). These were previously conflated
-  # with the board (analyzer == Pi 3, dongle == analyzer); decoupled so the analyzer
-  # can live on a Pi 5 with an onboard-wlan0 AP, etc.
+  # The shared FX2/fx2lafw logic analyzer is shipped UNCONDITIONALLY: sigrok, the
+  # capture broker, the udev rules, and the fx2lafw firmware are in EVERY rig image.
+  # There is NO build-time analyzer flag to commit wrong (a stale SBC_ANALYZER=0
+  # once silently disabled a wired rig). Instead the daemon probes for the FX2 at
+  # runtime (analyzer.FX2Present); a rig with no FX2 attached is simply dormant and
+  # advertises no logic-analyzer-* caps, while the seeded per-DUT channel map
+  # (map_la, persisted under /var/lib/hitl) decides how a present FX2 is used.
   #
-  #   SBC_ANALYZER=1   → wire the shared FX2/fx2lafw logic analyzer: sigrok capture
-  #                      broker, POST /capture, per-DUT channel map. The FX2 is a
-  #                      rig-level instrument the daemon owns (never passed into a
-  #                      container). See internal/analyzer and DESIGN.md.
+  # The remaining board-agnostic knobs are still env-toggled at (impure) deploy eval
+  # — so ONE appModule builds any {Pi 3, Pi 5} × {onboard AP, dongle AP}:
+  #
   #   SBC_AP_DONGLE=1  → host the provisioning AP on a dedicated RTL8851BU USB radio
   #                      (ap0) instead of onboard wlan0 — for a board that can't AP.
-  #   SBC_BT_DONGLE=1  → use the RTL8851BU USB dongle's BLUETOOTH half (btusb/hci) as
-  #                      the BLE central adapter instead of the onboard controller.
-  #                      The Pi 5 onboard Cypress BCM4345/6 marginally fails LE
-  #                      connection establishment (0x3E storm, 0 GATT) — proven
-  #                      0/20 vs the dongle's 20/20 on the same DUT — so the harness
-  #                      must talk to the dongle. Ships the BT firmware, flips the
-  #                      dongle out of CD-ROM mode, and points the daemon (btmon) +
-  #                      container (bleak) at the USB controller via --ble-adapter.
+  #                      (Still a build-time flag: which interface hosts the AP is
+  #                      baked NetworkManager config. Runtime auto-select is a TODO.)
+  #
+  # The RTL8851BU dongle's BLUETOOTH half is NOT a build-time flag: like the analyzer,
+  # every image ships its BT firmware + the CD-ROM→combo modeswitch, and the daemon
+  # ALWAYS runs --ble-adapter usb, which resolves the USB Bluetooth controller at
+  # runtime (resolveBLEAdapter) and falls back to the onboard controller when no
+  # dongle is up. So a dongle plugged into any rig is used automatically (the Pi 5
+  # onboard Cypress BCM4345/6 marginally fails LE — 0/20 vs the dongle's 20/20 — so
+  # the harness must prefer the dongle wherever present), and a dongle-less rig just
+  # uses onboard. No SBC_BT_DONGLE to commit wrong.
   sigrok = import ./sigrok.nix { inherit pkgs; };
-  isAnalyzerRig = builtins.getEnv "SBC_ANALYZER" == "1";
   useApDongle = builtins.getEnv "SBC_AP_DONGLE" == "1";
-  useBtDongle = builtins.getEnv "SBC_BT_DONGLE" == "1";
   isPi3 = builtins.getEnv "SBC_BOARD" == "raspberry-pi-3";
-  # The RTL8851BU dongle must be flipped out of USB CD-ROM mode (0bda:1a2b →
-  # 0bda:b851) before either its WiFi (rtw89) or BT (btusb) half enumerates, so the
-  # modeswitch udev rule + usb-modeswitch package are shared by both dongle uses.
-  useDongle = useApDongle || useBtDongle;
   # RTL8851BU driver + WiFi firmware for the optional dongle AP (see rtl8851bu.nix).
   # usb_modeswitch flips the CD-ROM dongle to WiFi mode + a .link renames it to ap0;
   # rtw89 is mac80211-based, so it supports hostapd AP cleanly.
@@ -143,7 +140,10 @@ let
   analyzerChannelMap = builtins.toJSON {
     "default" = { channels = [ "D6" ]; protocol = "ws2812"; };
   };
-  analyzerArgs = lib.optionals isAnalyzerRig [
+  # Always wire the analyzer flags — the daemon self-gates on the FX2 being present
+  # (see the header comment). The baked channel map is the single-DUT default; a
+  # persisted map_la seed (MapPath) overlays it per DUT at runtime.
+  analyzerArgs = [
     "--analyzer-driver"
     "fx2lafw"
     "--analyzer-sigrok"
@@ -177,6 +177,17 @@ in
     enable = true;
     authKeyFile = "/var/lib/tailscale/authkey";
     extraUpFlags = [ "--ssh" "--hostname=${config.networking.hostName}" ];
+  };
+
+  # mDNS: the host resolves LAN *.local (nssmdns4) AND runs avahi-daemon, whose
+  # socket the reservation container bind-mounts so its nss-mdns can resolve
+  # *.local through the host (the bridged container can't multicast to the LAN
+  # itself). Lets the harness reach a network DUT seeded by hostname
+  # (e.g. splanc-max-2.local), not just its ETH IP. See nix/container.nix +
+  # internal/runner/podman.go.
+  services.avahi = {
+    enable = true;
+    nssmdns4 = true;
   };
 
   # `tailscale up` (above) only sets --hostname on a fresh login, so an already-
@@ -228,8 +239,11 @@ in
   # ships it (nixpkgs' linux-firmware predates 8851BU). No WiFi without it. The BT
   # half needs rtl_bt/rtl8851bu_fw.bin, which the trimmed rig firmware set omits —
   # ship it so btusb can bring the dongle's hci up (else it registers but stays DOWN).
+  # rtl8851buBt (the BT half's firmware) ships on EVERY rig so a dongle plugged into
+  # any bench brings its hci up and the daemon can prefer it (see the header comment).
+  # rtl8851bu (the WiFi/AP half) is still gated on the AP-dongle flag.
   hardware.firmware = lib.optionals useApDongle [ rtl8851bu ]
-    ++ lib.optionals useBtDongle [ rtl8851buBt ];
+    ++ [ rtl8851buBt ];
 
   # Stable name for the USB AP radio: rename the rtw89 AP interface (driver
   # rtw89_8851bu_git, the usb_driver's KBUILD_MODNAME) to ap0 so the AP profile
@@ -251,17 +265,20 @@ in
   # over the built-in USB-JTAG); the device nodes are otherwise root-only.
   services.udev.extraRules = ''
     SUBSYSTEM=="usb", ATTR{idVendor}=="303a", MODE="0666"
-  '' + lib.optionalString isAnalyzerRig ''
+  '' + ''
     # FX2/fx2lafw logic analyzer, both the bare-clone VID:PID and the fx2lafw one
-    # it re-enumerates to after firmware upload. World-writable on this
-    # single-purpose bench; the daemon (root) owns it, this is belt-and-suspenders.
+    # it re-enumerates to after firmware upload. Shipped on every rig (the daemon
+    # self-gates on the FX2 being present); world-writable on this single-purpose
+    # bench, where the daemon (root) owns it — belt-and-suspenders.
     SUBSYSTEM=="usb", ATTR{idVendor}=="0925", ATTR{idProduct}=="3881", MODE="0666"
     SUBSYSTEM=="usb", ATTR{idVendor}=="1d50", ATTR{idProduct}=="608c", MODE="0666"
-  '' + lib.optionalString useDongle ''
+  '' + ''
     # RTL8851BU USB dongle: it enumerates as a CD-ROM (0bda:1a2b); StandardEject
     # flips it into combo mode (re-enumerates as 0bda:b851), after which the
     # rtw89_8851bu_git driver binds the WiFi half (AP dongle → .link renames to ap0)
-    # and the in-tree btusb binds the BT half (BT dongle → its hci, firmware above).
+    # and the in-tree btusb binds the BT half (its hci, firmware above). Shipped on
+    # every rig so a dongle plugged into any bench is used automatically (BT half);
+    # the rule only matches the dongle's VID:PID, so it's inert without one.
     ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="0bda", ATTR{idProduct}=="1a2b", RUN+="${pkgs.usb-modeswitch}/bin/usb_modeswitch -v 0bda -p 1a2b -K"
   '';
 
@@ -299,9 +316,10 @@ in
   # bind/attach; bluez for btmon (the daemon runs it for per-reservation BLE HCI
   # capture, and a human on the rig can `btmon -r` a fetched trace).
   environment.systemPackages = [ hitl pkgs.usbutils pkgs.linuxPackages.usbip pkgs.bluez ]
-    # sigrok-cli + fx2lafw firmware for the analyzer; usb-modeswitch for the dongle.
-    ++ lib.optionals isAnalyzerRig sigrok.packages
-    ++ lib.optionals useDongle [ pkgs.usb-modeswitch ];
+    # sigrok-cli + fx2lafw firmware ship on every rig (the daemon self-gates on the
+    # FX2 being present); usb-modeswitch for the dongle.
+    ++ sigrok.packages
+    ++ [ pkgs.usb-modeswitch ];
 
   # Load the test image into Podman at boot (and on every deploy — the ExecStart
   # store path changes with the image, so switch-to-configuration re-runs this).
@@ -394,10 +412,26 @@ in
     wantedBy = [ "multi-user.target" ];
     after = [ "network-online.target" "tailscaled.service" "hitl-image-load.service" ];
     wants = [ "network-online.target" "hitl-image-load.service" ];
+    # Force switch-to-configuration to RESTART the daemon whenever its binary
+    # changes. The ExecStart store path already changes with `hitl`, so this should
+    # be implicit — but in practice a live `deploy_live` switch left the OLD daemon
+    # process running against the NEW unit (only a reboot picked up the new binary,
+    # so a redeployed rig silently kept serving stale behaviour). Listing the
+    # package in restartTriggers puts the unit in switch-to-configuration's
+    # always-restart set, keyed on the exact binary, so a deploy reliably swaps it.
+    restartTriggers = [ "${hitl}/bin/hitl-managerd" ];
+    # No restart rate-limit ([Unit] section): a reservation rig's daemon must
+    # always come back, and rapid redeploys (or a crash loop during bring-up)
+    # shouldn't trip the default StartLimitBurst and wedge it into a
+    # "failed, refuses to start" state that then needs a manual reset-failed.
+    unitConfig.StartLimitIntervalSec = 0;
     # networkmanager (nmcli) toggles the AP; iw/iproute2 create the AP vif on
-    # demand; sigrok-cli (analyzer rig only) captures the DUT's tapped LED line.
-    path = [ pkgs.podman pkgs.iproute2 pkgs.openssh ]
-      ++ lib.optionals isAnalyzerRig sigrok.packages;
+    # demand; sigrok-cli captures the DUT's tapped LED line when an FX2 is present
+    # (shipped on every rig; the daemon self-gates); getent resolves a *.local
+    # network-DUT address host-side (nss-mdns) before injecting the IP into the
+    # reservation container (see resolveDUTAddr).
+    path = [ pkgs.podman pkgs.iproute2 pkgs.openssh pkgs.getent ]
+      ++ sigrok.packages;
     serviceConfig = {
       ExecStart =
         lib.concatStringsSep " " ([
@@ -427,13 +461,16 @@ in
           "--ap-ssid ${apSsid}"
           "--ap-psk ${apPsk}"
           dutArgs
-        ] ++ analyzerArgs # --analyzer-* only on the logic-analyzer rig
-        # BT dongle rig: point BLE central (btmon capture host-side + bleak in the
-        # container) at the USB controller instead of the flaky onboard one. "usb"
-        # auto-resolves the hci by bus at runtime, so it's robust to hciN ordering.
-        ++ lib.optionals useBtDongle [ "--ble-adapter" "usb" ]);
-      # libsigrok uploads fx2lafw firmware to the bare FX2 from here (analyzer rig).
-      Environment = lib.optionals isAnalyzerRig [ "SIGROK_FIRMWARE_DIR=${sigrok.firmwareDir}" ];
+        ] ++ analyzerArgs # --analyzer-* always; daemon self-gates on the FX2
+        # Always prefer a USB BLE dongle for central (btmon capture host-side + bleak
+        # in the container) over the flaky onboard controller. "usb" auto-resolves the
+        # dongle's hci by bus at runtime and FALLS BACK to onboard when none is up
+        # (resolveBLEAdapter) — so this is safe on every rig, dongle or not, and needs
+        # no build-time flag.
+        ++ [ "--ble-adapter" "usb" ]);
+      # libsigrok uploads fx2lafw firmware to the bare FX2 from here. Set on every
+      # rig (harmless when no FX2 is attached; the daemon self-gates on presence).
+      Environment = [ "SIGROK_FIRMWARE_DIR=${sigrok.firmwareDir}" ];
       StateDirectory = "hitl";
       Restart = "on-failure";
       RestartSec = 3;

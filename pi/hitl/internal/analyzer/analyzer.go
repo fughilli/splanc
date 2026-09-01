@@ -54,6 +54,14 @@ type Config struct {
 	// map_la-written mapping survives daemon restarts and outranks the deploy
 	// default) and rewritten by SetMap. "" disables persistence.
 	MapPath string
+	// HardwareProbe reports whether the shared FX2 is physically attached to this
+	// rig. The image ALWAYS ships the analyzer (sigrok + driver) so there is no
+	// build-time on/off flag to commit wrong; instead the broker is dormant
+	// (Enabled()==false) when the driver is set but the FX2 isn't present, so a rig
+	// with no analyzer wired never advertises logic-analyzer-* caps. nil means
+	// "assume present" (the default — used by unit tests, which have no FX2);
+	// production passes FX2Present (the sysfs USB scan).
+	HardwareProbe func() bool
 }
 
 // Broker owns the single shared analyzer and serializes captures on it.
@@ -62,6 +70,39 @@ type Broker struct {
 	mu      sync.Mutex   // exactly one capture at a time on the one instrument
 	mapMu   sync.RWMutex // guards cfg.Map (read by captures/status, rewritten by SetMap)
 	mapPath string
+	present bool // driver configured AND the FX2 is physically attached (see New)
+}
+
+// fx2USBIDs are the USB VID:PIDs the shared FX2/fx2lafw logic analyzer enumerates
+// as: the Saleae-clone and Cypress-default IDs of a BARE board, plus the fx2lafw ID
+// it takes AFTER sigrok uploads firmware. Probed from sysfs (FX2Present) so a rig
+// with no analyzer wired stays dormant with no build-time flag and no per-rig seed.
+var fx2USBIDs = map[string]bool{
+	"0925:3881": true, // Saleae Logic clone (bare)
+	"04b4:8613": true, // Cypress EZ-USB FX2 (default, pre-firmware)
+	"1d50:608c": true, // fx2lafw (post firmware upload)
+}
+
+// FX2Present reports whether an FX2 logic analyzer is attached, by scanning the
+// USB device tree in sysfs for a known VID:PID. Cheap and side-effect-free (unlike
+// a sigrok scan, which uploads firmware), so it's safe to call at daemon startup.
+func FX2Present() bool {
+	entries, err := os.ReadDir("/sys/bus/usb/devices")
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		base := filepath.Join("/sys/bus/usb/devices", e.Name())
+		vid, err1 := os.ReadFile(filepath.Join(base, "idVendor"))
+		pid, err2 := os.ReadFile(filepath.Join(base, "idProduct"))
+		if err1 != nil || err2 != nil {
+			continue
+		}
+		if fx2USBIDs[strings.TrimSpace(string(vid))+":"+strings.TrimSpace(string(pid))] {
+			return true
+		}
+	}
+	return false
 }
 
 // New builds a broker, filling defaults. A nil/disabled broker (empty Driver) is
@@ -102,11 +143,19 @@ func New(cfg Config) *Broker {
 			}
 		}
 	}
-	return &Broker{cfg: cfg, mapPath: cfg.MapPath}
+	// The broker is live only when a driver is configured AND the FX2 is actually
+	// attached. HardwareProbe==nil means "assume present" (unit tests, no FX2);
+	// production passes FX2Present, so a rig without the analyzer wired is dormant.
+	present := cfg.Driver != ""
+	if present && cfg.HardwareProbe != nil {
+		present = cfg.HardwareProbe()
+	}
+	return &Broker{cfg: cfg, mapPath: cfg.MapPath, present: present}
 }
 
-// Enabled reports whether an analyzer is configured on this rig.
-func (b *Broker) Enabled() bool { return b != nil && b.cfg.Driver != "" }
+// Enabled reports whether the shared analyzer is live on this rig: a capture driver
+// is configured AND (per Config.HardwareProbe) the FX2 is physically attached.
+func (b *Broker) Enabled() bool { return b != nil && b.present }
 
 // Describe returns the rig's analyzer capability for /status, or nil when there
 // is no analyzer — so clients can select a rig by capability. Protocols/channels
@@ -151,7 +200,8 @@ func (b *Broker) Describe() *api.AnalyzerInfo {
 func (b *Broker) SampleRateHz() int { return parseSampleRate(b.cfg.SampleRate) }
 
 // Taps reports whether this rig's shared analyzer is wired to the named DUT's data
-// line — i.e. the DUT should advertise the "logic-analyzer" capability. The
+// line — i.e. the DUT should advertise a logic-analyzer-* capability (see TapCaps
+// for the granular, signal-specific name). The
 // analyzer is rig wiring, not a SKU trait: two identical DUTs can differ, so this
 // is the source of truth for that capability. True when the broker is enabled AND
 // either the DUT has an explicit channel-map entry, or a default ("") entry exists
@@ -176,6 +226,26 @@ func (b *Broker) Taps(dut string) bool {
 		return true
 	}
 	return false
+}
+
+// TapCaps returns the granular logic-analyzer capabilities a DUT advertises from
+// this rig's wiring, or nil if it isn't tapped. The capability names the SIGNAL the
+// FX2 is on so tests can map precisely: a ws2812 tap on the strip DIN advertises
+// "logic-analyzer-led-strip"; a spi/spi-raw tap on the SPI wire advertises
+// "logic-analyzer-spi". (One channel-map entry per DUT = one protocol today, so a
+// DUT tapped on BOTH signals advertises the one its map entry names; multi-tap per
+// DUT would return both.) This is rig instrumentation, not a SKU trait — hence it
+// lives here, keyed off the broker's channel map, not in the SKU registry.
+func (b *Broker) TapCaps(dut string) []string {
+	if !b.Taps(dut) {
+		return nil
+	}
+	switch b.mapping(dut).Protocol {
+	case ProtocolSPI, ProtocolSPIRaw:
+		return []string{"logic-analyzer-spi"}
+	default: // ProtocolWS2812 (and the D0/ws2812 fallback)
+		return []string{"logic-analyzer-led-strip"}
+	}
 }
 
 // mapping resolves a DUT name to its channel/protocol assignment, falling back to
@@ -270,16 +340,23 @@ func (b *Broker) Capture(ctx context.Context, req api.CaptureRequest) (*api.Capt
 		return nil, fmt.Errorf("no data captured on %s (trigger %s=r never fired — is the DUT driving this line? wrong channel?)",
 			strings.Join(m.Channels, ","), m.Channels[0])
 	}
-	pixels, err := b.decodeSR(ctx, srPath, m)
-	if err != nil {
-		return nil, err
-	}
-
 	res := &api.CaptureResult{
 		Device:     req.Device,
 		Protocol:   string(m.Protocol),
-		Pixels:     pixels,
 		SampleRate: b.SampleRateHz(),
+	}
+	if m.Protocol == ProtocolSPIRaw {
+		data, err := b.decodeSRBytes(ctx, srPath, m)
+		if err != nil {
+			return nil, err
+		}
+		res.Bytes = data
+	} else {
+		pixels, err := b.decodeSR(ctx, srPath, m)
+		if err != nil {
+			return nil, err
+		}
+		res.Pixels = pixels
 	}
 	if req.SaveSR {
 		raw, err := os.ReadFile(srPath)
@@ -345,6 +422,22 @@ func (b *Broker) decodeSR(ctx context.Context, srPath string, m DUTMap) ([]api.P
 		return nil, fmt.Errorf("sigrok decode: %w: %s", err, out)
 	}
 	return parseRGBHex(out)
+}
+
+// decodeSRBytes runs the spi decoder over a captured .sr and returns the raw MOSI
+// byte stream (for spi-raw / FPGA wire validation). No WS2812 reset prepend: SPI
+// is clocked, so there's no bit-0 anchoring problem.
+func (b *Broker) decodeSRBytes(ctx context.Context, srPath string, m DUTMap) ([]byte, error) {
+	dargs, err := decoderArgs(m.Protocol, m.Channels)
+	if err != nil {
+		return nil, err
+	}
+	args := append([]string{"-i", srPath}, dargs...)
+	out, err := run(ctx, b.cfg.SigrokCLI, args...)
+	if err != nil {
+		return nil, fmt.Errorf("sigrok decode: %w: %s", err, out)
+	}
+	return parseSPIBytes(out)
 }
 
 // run executes sigrok-cli and returns combined output.
