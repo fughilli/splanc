@@ -57,17 +57,36 @@ Raspberry Pi 3B+ boards running the unified Rust player, reached over the LAN
 `/var/lib/hitl/network-duts.json`. SSH uses the _LED-Mapper_ deploy key
 (`pi/provisioning/secrets/deploy_key`), not the rig key.
 
-| DUT              | Host         | Addr                 | BLE MAC             | Tang Nano 9K (FPGA)          | FX2 tap                  | Caps                                                               |
-| ---------------- | ------------ | -------------------- | ------------------- | ---------------------------- | ------------------------ | ------------------------------------------------------------------ |
-| `pi-ledmapper-1` | splanc-max-2 | `splanc-max-2.local` | `B8:27:EB:64:D2:20` | **yes** (FT2232 `0403:6010`) | **D0** (ws2812) on rig-1 | improv, led-strip, spi-fpga, **logic-analyzer-led-strip**, wss-app |
-| `pi-ledmapper-2` | splanc-max-1 | `splanc-max-1.local` | `B8:27:EB:63:E8:18` | **no** (not attached)        | —                        | improv, led-strip, spi-fpga, wss-app                               |
+| DUT              | Host         | Addr                 | BLE MAC             | Tang Nano 9K (FPGA)          | FX2 tap                                | Caps                                                               |
+| ---------------- | ------------ | -------------------- | ------------------- | ---------------------------- | -------------------------------------- | ------------------------------------------------------------------ |
+| `pi-ledmapper-1` | splanc-max-2 | `splanc-max-2.local` | `B8:27:EB:64:D2:20` | **yes** (FT2232 `0403:6010`) | D0/D2/D4/D6 (LED 0–3) + D1/D3/D5 (SPI) | improv, led-strip, spi-fpga, **logic-analyzer-led-strip**, wss-app |
+| `pi-ledmapper-2` | splanc-max-1 | `splanc-max-1.local` | `B8:27:EB:63:E8:18` | **no** (not attached)        | —                                      | improv, led-strip, spi-fpga, wss-app                               |
 
 Notes:
 
 - **splanc-max-2** is the FPGA test rig: a Tang Nano 9K is wired on SPI, and the
-  rig-1 FX2 taps its output. It's the only DUT that satisfies `fpga_ws281x`
-  (needs `spi-fpga` + `led-strip` + `logic-analyzer-led-strip`); the harness also
-  taps the SPI clk/mosi/cs lines via CLI channels on top of the persisted D0 map.
+  rig-1 FX2 taps **both** ends of the chain — all four FPGA LED outputs **and** the
+  SPI wire feeding the Tang. The physical wiring (8-channel FX2, per the
+  `fpga_ws281x` harness defaults):
+
+  | FX2 channel | Signal                    |
+  | ----------- | ------------------------- |
+  | D0          | FPGA LED output channel 0 |
+  | D2          | FPGA LED output channel 1 |
+  | D4          | FPGA LED output channel 2 |
+  | D6          | FPGA LED output channel 3 |
+  | D1          | SPI MOSI (Pi → FPGA)      |
+  | D3          | SPI CLK                   |
+  | D5          | SPI CS                    |
+  | D7          | (spare)                   |
+
+  It's the only DUT that satisfies `fpga_ws281x` (needs `spi-fpga` + `led-strip` +
+  `logic-analyzer-led-strip`). The persisted channel map only records `D0`
+  (ws2812) — enough to grant the `logic-analyzer-led-strip` cap; the harness drives
+  the full topology above via `--ws-channels D0,D2,D4,D6` / `--spi-channels`
+  (`clk=D3,mosi=D1,cs=D5`) at capture time, decoding the LED outputs as `ws2812`
+  and the SPI wire as `spi-raw`.
+
 - **splanc-max-1 has no Tang attached right now.** It still advertises `spi-fpga`
   because that cap comes from the `led-mapper-pi` SKU (the whole Pi fleet is
   modelled as FPGA-capable), but with no FPGA it can only serve `improv` / `wss`
@@ -104,7 +123,11 @@ Persisted per rig at `/var/lib/hitl/analyzer-channel-map.json` (editable at
 runtime via `//pi/hitl/harness:map_la`). Determines which DUTs advertise a
 `logic-analyzer-*` capability and how a capture decodes.
 
-- **rig-1**: `pi-ledmapper-1 → D0 (ws2812)`; default `D6 (ws2812)`.
+- **rig-1**: `pi-ledmapper-1 → D0 (ws2812)`; default `D6 (ws2812)`. This is only
+  the persisted default (enough for the `logic-analyzer-led-strip` cap) — the
+  physical FX2 taps splanc-max-2 on all four LED outputs (D0/D2/D4/D6) plus the SPI
+  wire (mosi=D1, clk=D3, cs=D5); the `fpga_ws281x` harness selects those per capture
+  (see the LED-Mapper Pi notes above).
 - **rig-2**: `c6-003f08 → D6 (ws2812)`, `c6-fa0324 → D7 (ws2812)`.
 - **rig-3**: none (no FX2).
 
