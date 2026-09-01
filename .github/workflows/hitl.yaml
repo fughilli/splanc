@@ -190,6 +190,12 @@ jobs:
             n=$(echo "$t" | wc -w)
             if [ "$n" -eq 0 ]; then echo "(no targets in this set)"; return 0; fi
             echo "running $n HITL tests in parallel (queued on the bench)"
+            # --flaky_test_attempts=3: the whole set is fired at once onto a ~3-rig
+            # bench, so a held reservation can get preempted mid-test under contention
+            # (FUG-94) — a transient, infra-level flake, NOT a device/code failure. Bazel
+            # re-runs only FAILED tests, so a real regression still fails all 3 attempts
+            # and gates; a contention flake recovers. (Every netstack target passes
+            # deterministically when run in isolation.)
             bazel test $t \
               -c opt \
               --experimental_worker_for_repo_fetching=off \
@@ -197,6 +203,7 @@ jobs:
               --disk_cache="$HOME/.cache/bazel-disk" \
               --test_output=all \
               --local_test_jobs="$n" \
+              --flaky_test_attempts=3 \
               --test_env=HITL_SERVERS \
               --test_env=HITL_WIFI_SSID \
               --test_env=HITL_WIFI_PASS \
