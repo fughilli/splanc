@@ -425,6 +425,7 @@ class WelcomeMessage(_StrictModel):
     deviceName: str = ""
     fwGitCommit: str = ""
     fwGitDirty: bool = False
+    fwVersion: str = ""
 
 
 class MappingStoppedMessage(_StrictModel):

@@ -88,6 +88,9 @@ jobs:
         with:
           files: _assets/*.tar
           generate_release_notes: true
+          # Record the exact tagged commit so the webapp can show + link the build
+          # each firmware asset was cut from (githubReleaseRepo reads this).
+          target_commitish: ${{ github.sha }}
 
   # --- pi-v* : Pi 3 player SD image + wiring README ---------------------------
   # Native aarch64 build on GitHub's arm64 Linux runner (the SD image is an

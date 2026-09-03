@@ -31,6 +31,7 @@ export interface ProbeInfo {
   deviceName: string;
   fwGitCommit: string;
   fwGitDirty: boolean;
+  fwVersion: string;
 }
 
 /** Read a device's welcome (MAC + name). If a comms client already owns this
@@ -52,6 +53,7 @@ export async function probeDevice(wssUrl: string): Promise<ProbeInfo | null> {
           deviceName: w.deviceName,
           fwGitCommit: w.fwGitCommit,
           fwGitDirty: w.fwGitDirty,
+          fwVersion: w.fwVersion,
         }
       : null;
   }
@@ -74,6 +76,7 @@ export async function probeDevice(wssUrl: string): Promise<ProbeInfo | null> {
           deviceName: w.deviceName,
           fwGitCommit: w.fwGitCommit,
           fwGitDirty: w.fwGitDirty,
+          fwVersion: w.fwVersion,
         }
       : null;
   } catch {

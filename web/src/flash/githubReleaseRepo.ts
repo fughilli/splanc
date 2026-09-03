@@ -36,6 +36,12 @@ export function releasesToFirmwareIndex(json: unknown): FirmwareIndex | null {
     if (r["draft"] === true) continue; // unpublished — not selectable
     const tag = typeof r["tag_name"] === "string" ? r["tag_name"] : null;
     if (!tag) continue;
+    // Version is the tag without its component prefix ("firmware-v1.2.0" → "1.2.0");
+    // the exact commit is the release's target when it recorded a full 40-hex SHA
+    // (release.yaml pins target_commitish to the tagged commit), else omitted.
+    const version = tag.replace(/^[a-z]+-v/i, "");
+    const target = typeof r["target_commitish"] === "string" ? r["target_commitish"] : "";
+    const commit = /^[0-9a-f]{40}$/i.test(target) ? target : undefined;
     const assets = Array.isArray(r["assets"]) ? r["assets"] : [];
     for (const a of assets) {
       if (typeof a !== "object" || a === null) continue;
@@ -52,6 +58,8 @@ export function releasesToFirmwareIndex(json: unknown): FirmwareIndex | null {
         family: "esp" as ChipFamily,
         manifest: "flash.json", // lives inside the tar
         tarUrl: url,
+        version,
+        ...(commit ? { commit } : {}),
       });
     }
   }

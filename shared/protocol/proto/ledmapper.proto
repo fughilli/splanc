@@ -560,6 +560,10 @@ message Welcome {
   // True when the firmware was built from a dirty working tree (uncommitted
   // changes). Always false on older firmware.
   bool fw_git_dirty = 8;
+  // Release version the firmware was built at, from the nearest firmware-v* tag
+  // (e.g. "1.2.0", or "1.2.0-<n>-g<sha>" ahead of it, or "0.0.0-dev"). Stamped in
+  // at build time alongside the commit. Empty on older firmware / an unstamped build.
+  string fw_version = 9;
 }
 
 // One LED output channel's hardware config, carried in hardware_config_state.

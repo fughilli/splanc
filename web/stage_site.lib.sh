@@ -42,8 +42,15 @@ stage_site() {
   # skip firmware and the app reports "no bundled firmware".
   if [[ -n "${LEDMAPPER_FLASHBUNDLE:-}" && -f "${LEDMAPPER_FLASHBUNDLE}" ]]; then
     local rev="${LEDMAPPER_FLASHBUNDLE_REV:-}"
-    if [[ -z "$rev" && -n "${BUILD_WORKSPACE_DIRECTORY:-}" ]]; then
-      rev="$(git -C "$BUILD_WORKSPACE_DIRECTORY" rev-parse --short HEAD 2>/dev/null || true)"
+    local commit="" fwver=""
+    if [[ -n "${BUILD_WORKSPACE_DIRECTORY:-}" ]]; then
+      [[ -z "$rev" ]] && rev="$(git -C "$BUILD_WORKSPACE_DIRECTORY" rev-parse --short HEAD 2>/dev/null || true)"
+      commit="$(git -C "$BUILD_WORKSPACE_DIRECTORY" rev-parse HEAD 2>/dev/null || true)"
+      # Same firmware-v* stamp status.sh uses, so the dev flash source names the
+      # version it would write (a plain checkout without the tag → 0.0.0-dev).
+      fwver="$(git -C "$BUILD_WORKSPACE_DIRECTORY" describe --tags --match 'firmware-v*' 2>/dev/null || true)"
+      fwver="${fwver#firmware-v}"
+      [[ -z "$fwver" ]] && fwver="0.0.0-dev"
     fi
     local -a images=(--image "esp32c6=${LEDMAPPER_FLASHBUNDLE}")
     if [[ -n "${LEDMAPPER_FLASHBUNDLE_NETSTACK:-}" && -f "${LEDMAPPER_FLASHBUNDLE_NETSTACK}" ]]; then
@@ -51,6 +58,8 @@ stage_site() {
     fi
     tools/stage_firmware --out "$out/firmware" \
       ${rev:+--revision "$rev"} \
+      ${commit:+--commit "$commit"} \
+      ${fwver:+--fw-version "$fwver"} \
       "${images[@]}"
   fi
   # Developer documentation (Sphinx site) at /docs/, so the app's About >

@@ -10,10 +10,12 @@ function asset(name: string) {
 
 // Two releases (newest first, as the API returns them), each shipping both variants
 // plus an unrelated asset that must be ignored.
+const SHA_120 = "0123456789abcdef0123456789abcdef01234567";
 const RELEASES = [
   {
     tag_name: "firmware-v1.2.0",
     draft: false,
+    target_commitish: SHA_120, // release.yaml pins this to the tagged commit
     assets: [
       asset("esp32c6-vendor-1.2.0.tar"),
       asset("esp32c6-netstack-1.2.0.tar"),
@@ -23,6 +25,7 @@ const RELEASES = [
   {
     tag_name: "firmware-v1.1.0",
     draft: false,
+    target_commitish: "main", // older release without a pinned SHA → commit omitted
     assets: [asset("esp32c6-vendor-1.1.0.tar"), asset("esp32c6-netstack-1.1.0.tar")],
   },
 ];
@@ -39,9 +42,21 @@ test("releasesToFirmwareIndex yields one entry per release × variant, newest fi
   assert.equal(vendor.manifest, "flash.json");
   assert.equal(vendor.tarUrl, "https://example.test/esp32c6-vendor-1.2.0.tar");
   assert.match(vendor.label, /Vendor/);
+  // Version = tag minus the component prefix; commit = the pinned 40-hex SHA.
+  assert.equal(vendor.version, "1.2.0");
+  assert.equal(vendor.commit, SHA_120);
   const netstack = idx!.entries.find((e) => e.id === "firmware-v1.2.0::netstack")!;
   assert.match(netstack.label, /netstack/i);
   assert.equal(netstack.tarUrl, "https://example.test/esp32c6-netstack-1.2.0.tar");
+  assert.equal(netstack.version, "1.2.0");
+  assert.equal(netstack.commit, SHA_120);
+});
+
+test("version comes from the tag; a non-SHA target_commitish yields no commit", () => {
+  const idx = releasesToFirmwareIndex(RELEASES)!;
+  const older = idx.entries.find((e) => e.id === "firmware-v1.1.0::vendor")!;
+  assert.equal(older.version, "1.1.0");
+  assert.equal(older.commit, undefined); // "main" is not a full SHA → omitted
 });
 
 test("entry ids are unique across releases and variants", () => {

@@ -34,6 +34,7 @@ import { summarizeEnv } from "../../flash/env";
 import { identifyUsb, formatUsbId } from "../../flash/usb";
 import { getFlasher, type FlashHooks } from "../../flash/flasher";
 import { isNativePlatform } from "../../net/native";
+import { buildLabel, commitUrl } from "../../buildInfo";
 import type { FirmwareEntry, FirmwareIndex } from "../../flash/manifest";
 
 let openHandle: SheetHandle | null = null;
@@ -236,7 +237,11 @@ function renderIdle(sheet: SheetHandle, index: FirmwareIndex, selected: Firmware
   card.append(
     kv("Firmware", selected.label),
     kv("Chip", selected.chip),
-    kv("Built at", index.revision ? `revision ${index.revision}` : "unknown revision"),
+    kv("Version", selected.version || "dev (unversioned build)"),
+    // The exact source: link the full commit when known, else the bundled short SHA.
+    selected.commit
+      ? kvCommit("Build", selected.commit)
+      : kv("Built at", index.revision ? `revision ${index.revision}` : "unknown revision"),
   );
   sheet.body.append(card);
 
@@ -476,6 +481,25 @@ function kv(cap: string, value: string): HTMLElement {
   v.className = "flash-kv-val metric";
   v.textContent = value;
   r.append(c, v);
+  return r;
+}
+
+/** Like kv, but the value links to the GitHub commit page (the exact source the
+ * selected image was built from), matching the device card's build row. */
+function kvCommit(cap: string, commit: string): HTMLElement {
+  const r = document.createElement("div");
+  r.className = "flash-kv";
+  const c = document.createElement("span");
+  c.className = "flash-kv-cap";
+  c.textContent = cap;
+  const a = document.createElement("a");
+  a.className = "flash-kv-val metric about-link";
+  a.href = commitUrl(commit);
+  a.textContent = buildLabel(commit, false);
+  a.title = commit;
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+  r.append(c, a);
   return r;
 }
 

@@ -9,11 +9,12 @@ this build bundles, at what revision, and which flasher family each needs. The
 per-image flash.json (offsets/params) is served untouched — the browser flasher
 writes exactly what `bazel run …:flash_<id>` would.
 
-  stage_firmware.py --out DIR [--revision R] [--built-at ISO] \
-      --image esp32c6=path/to/esp32c6_flashbundle.tar
+  stage_firmware.py --out DIR [--revision R] [--commit SHA] [--fw-version V] \
+      [--built-at ISO] --image esp32c6=path/to/esp32c6_flashbundle.tar
 
 The webapp expects, under DIR:
-  manifest.json              {revision, builtAt, entries:[{id,label,chip,family,manifest}]}
+  manifest.json              {revision, builtAt, version?, commit?,
+                              entries:[{id,label,chip,family,manifest}]}
   <ID>/flash.json            the bundle's manifest (chip, flash params, images[])
   <ID>/<image>.bin           each referenced image, flat by basename
 
@@ -93,6 +94,12 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True, help="firmware tree output directory")
     ap.add_argument("--revision", default="", help="git short SHA the images were built at")
+    ap.add_argument("--commit", default="", help="full git commit the images were built at")
+    ap.add_argument(
+        "--fw-version",
+        default="",
+        help="firmware release version (nearest firmware-v* tag, e.g. 1.2.0)",
+    )
     ap.add_argument("--built-at", default="", help="ISO build timestamp")
     ap.add_argument(
         "--image",
@@ -131,6 +138,13 @@ def main() -> None:
         "builtAt": a.built_at or None,
         "entries": entries,
     }
+    # A single bundled build shares one version/commit stamp — record it index-level
+    # (parseFirmwareIndex applies it to every entry) so the flash sheet can show what
+    # the "this build (dev)" source would write, exactly like a release entry.
+    if a.fw_version:
+        index["version"] = a.fw_version
+    if a.commit:
+        index["commit"] = a.commit
     with open(os.path.join(a.out, "manifest.json"), "w") as f:
         f.write(json.dumps(index, indent=2) + "\n")
 

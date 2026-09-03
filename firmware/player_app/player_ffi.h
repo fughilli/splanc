@@ -20,12 +20,14 @@ void lm_player_init(uint32_t default_led_count);
 void lm_player_set_identity(const uint8_t *mac, size_t mac_len,
                             const uint8_t *name, size_t name_len);
 
-// Set the firmware build info (git commit + dirty flag) echoed in every welcome.
-// `commit` is the full git hash (UTF-8); `dirty` is true when the working tree
-// had uncommitted changes at build time. Call once after lm_player_init. The
-// firmware owns the stamped build_info.h (LM_GIT_COMMIT / LM_GIT_DIRTY).
-void lm_player_set_build_info(const uint8_t *commit, size_t commit_len,
-                              bool dirty);
+// Set the firmware build info (git commit + dirty flag + release version) echoed
+// in every welcome. `commit` is the full git hash (UTF-8); `dirty` is true when
+// the working tree had uncommitted changes at build time; `version` is the
+// release version from the nearest firmware-v* tag (UTF-8). Call once after
+// lm_player_init. The firmware owns the stamped build_info.h (LM_GIT_COMMIT /
+// LM_GIT_DIRTY / LM_VERSION).
+void lm_player_set_build_info(const uint8_t *commit, size_t commit_len, bool dirty,
+                              const uint8_t *version, size_t version_len);
 // Copy the player's CURRENT display name into out (cap bytes). Returns the
 // length written, or -2 when it doesn't fit. The app polls this after each
 // lm_player_handle so a set_device_name is persisted + reflected to BLE.
