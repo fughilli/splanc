@@ -15,6 +15,7 @@ import {
   type FirmwareEntry,
   type FirmwareIndex,
 } from "./manifest";
+import { untar } from "./tar";
 import type { FlashRequest } from "./flasher";
 
 /** Deploy-root URL of the firmware tree (works from origin root or a subpath). */
@@ -36,8 +37,12 @@ export async function loadFirmwareIndex(): Promise<FirmwareIndex | null> {
 /**
  * Fetch and resolve one entry's flash bundle into a ready-to-write FlashRequest:
  * its flash.json plus every image's bytes, at the manifest's byte offsets.
+ *
+ * Two sources: a GitHub-release entry (`entry.tarUrl` set) downloads + untars the
+ * `.tar` asset; a bundled entry fetches the per-file layout from `/firmware/<id>/`.
  */
 export async function loadFlashRequest(entry: FirmwareEntry): Promise<FlashRequest> {
+  if (entry.tarUrl) return loadFlashRequestFromTar(entry);
   const base = `${firmwareBase()}/${entry.id}`;
   const manRes = await fetch(`${base}/${entry.manifest}`, { cache: "no-cache" });
   if (!manRes.ok) throw new Error(`Couldn't load ${entry.manifest} (HTTP ${manRes.status}).`);
@@ -51,6 +56,25 @@ export async function loadFlashRequest(entry: FirmwareEntry): Promise<FlashReque
     }),
   );
 
+  return { entry, manifest, images };
+}
+
+/** GitHub-releases path: download the flashbundle `.tar` asset and untar it in the
+ * browser, then resolve flash.json + the image bytes it names (all stored under
+ * their basenames by mk_flashbundle.py) into the same FlashRequest. */
+async function loadFlashRequestFromTar(entry: FirmwareEntry): Promise<FlashRequest> {
+  const res = await fetch(entry.tarUrl!, { cache: "no-cache" });
+  if (!res.ok) throw new Error(`Couldn't download firmware (HTTP ${res.status}).`);
+  const members = untar(new Uint8Array(await res.arrayBuffer()));
+  const manBytes = members.get(entry.manifest);
+  if (!manBytes) throw new Error(`Firmware archive is missing ${entry.manifest}.`);
+  const manifest = parseFlashManifest(JSON.parse(new TextDecoder().decode(manBytes)));
+  const images = manifest.images.map((img) => {
+    const name = img.file.slice(img.file.lastIndexOf("/") + 1);
+    const data = members.get(name);
+    if (!data) throw new Error(`Firmware archive is missing image ${img.file}.`);
+    return { offset: img.offset, data };
+  });
   return { entry, manifest, images };
 }
 

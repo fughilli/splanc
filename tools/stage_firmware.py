@@ -53,8 +53,16 @@ _CHIP_NAMES = {
 }
 
 
-def _label_for(chip: str) -> str:
-    return "LED Mapper player — %s" % _CHIP_NAMES.get(chip.lower(), chip.upper())
+def _label_for(chip: str, image_id: str = "") -> str:
+    base = "LED Mapper player — %s" % _CHIP_NAMES.get(chip.lower(), chip.upper())
+    # Distinguish variants that share a chip (e.g. esp32c6 vs esp32c6_netstack):
+    # append whatever the image id carries beyond the bare chip name.
+    suffix = ""
+    if image_id and image_id.lower().startswith(chip.lower()):
+        suffix = image_id[len(chip) :].lstrip("_-")
+    elif image_id and image_id.lower() != chip.lower():
+        suffix = image_id
+    return "%s (%s)" % (base, suffix) if suffix else base
 
 
 def _extract_bundle(tar_path: str, dest: str) -> dict:
@@ -111,7 +119,7 @@ def main() -> None:
         entries.append(
             {
                 "id": image_id,
-                "label": _label_for(chip),
+                "label": _label_for(chip, image_id),
                 "chip": chip,
                 "family": _family_for(chip),
                 "manifest": "flash.json",

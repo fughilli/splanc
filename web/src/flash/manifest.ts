@@ -54,8 +54,13 @@ export interface FirmwareEntry {
   chip: string;
   /** Chip family that selects the flasher backend (see usb.ts). */
   family: ChipFamily;
-  /** Flash-manifest basename within the entry directory (default flash.json). */
+  /** Flash-manifest basename — the entry's flash.json (default flash.json), read
+   * from the entry directory (bundled source) or from inside `tarUrl` (releases). */
   manifest: string;
+  /** GitHub-releases source only: URL of the flashbundle `.tar` asset to fetch +
+   * untar in the browser (see firmwareRepo.loadFlashRequestFromTar). Absent for the
+   * bundled `/firmware/` source, whose images are fetched from the entry directory. */
+  tarUrl?: string;
 }
 
 /** `/firmware/manifest.json` — what this build bundles, and from where. */

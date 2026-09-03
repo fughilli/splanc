@@ -34,18 +34,24 @@ stage_site() {
   # Captured app screenshots the guide embeds (may be absent on a bare build).
   if [ -d docs/user-guide/img ]; then cp -RL docs/user-guide/img "$out/user-guide/img"; fi
   # Firmware image(s) for in-browser USB flashing (FUG-60), staged at /firmware/
-  # (the webapp fetches /firmware/manifest.json). The flash bundle is NOT built
-  # here — it compiles the esp32c6 image from source. CI's firmware job builds it
-  # and hands the tar path in $LEDMAPPER_FLASHBUNDLE; when it's absent (a plain
-  # dev/site build) we skip firmware and the app reports "no bundled firmware".
+  # (the webapp fetches /firmware/manifest.json) — the "This build (dev)" flash
+  # source. The flash bundles are NOT built here; CI's firmware job builds them and
+  # hands the tar paths in $LEDMAPPER_FLASHBUNDLE (vendor) and, optionally,
+  # $LEDMAPPER_FLASHBUNDLE_NETSTACK. When both are absent (a plain dev/site build,
+  # or a production app release that ships firmware via GitHub Releases instead) we
+  # skip firmware and the app reports "no bundled firmware".
   if [[ -n "${LEDMAPPER_FLASHBUNDLE:-}" && -f "${LEDMAPPER_FLASHBUNDLE}" ]]; then
     local rev="${LEDMAPPER_FLASHBUNDLE_REV:-}"
     if [[ -z "$rev" && -n "${BUILD_WORKSPACE_DIRECTORY:-}" ]]; then
       rev="$(git -C "$BUILD_WORKSPACE_DIRECTORY" rev-parse --short HEAD 2>/dev/null || true)"
     fi
+    local -a images=(--image "esp32c6=${LEDMAPPER_FLASHBUNDLE}")
+    if [[ -n "${LEDMAPPER_FLASHBUNDLE_NETSTACK:-}" && -f "${LEDMAPPER_FLASHBUNDLE_NETSTACK}" ]]; then
+      images+=(--image "esp32c6_netstack=${LEDMAPPER_FLASHBUNDLE_NETSTACK}")
+    fi
     tools/stage_firmware --out "$out/firmware" \
       ${rev:+--revision "$rev"} \
-      --image "esp32c6=${LEDMAPPER_FLASHBUNDLE}"
+      "${images[@]}"
   fi
   # Developer documentation (Sphinx site) at /docs/, so the app's About >
   # Documentation tab can link to ./docs/ from every origin. Like the firmware
