@@ -2141,6 +2141,25 @@ void setup() {
   // serial is disconnected.
   Serial.setTxTimeoutMs(100);
   log_drain_start();
+  // Self-report WHY we last reset, first thing each boot. A clean power-on/USB reset is
+  // expected; a PANIC/INT_WDT/TASK_WDT/BROWNOUT means the firmware actually crashed. This
+  // one line disambiguates "device rebooted" from "device merely went unreachable" without
+  // needing a special non-resetting serial capture (an fx_bench "board unreachable" was long
+  // assumed to be a reboot; it was a netstack wedge — the chip never reset).
+  {
+    esp_reset_reason_t rr = esp_reset_reason();
+    const char *n = rr == ESP_RST_POWERON    ? "POWERON"
+                    : rr == ESP_RST_SW        ? "SW"
+                    : rr == ESP_RST_PANIC     ? "PANIC"
+                    : rr == ESP_RST_INT_WDT   ? "INT_WDT"
+                    : rr == ESP_RST_TASK_WDT  ? "TASK_WDT"
+                    : rr == ESP_RST_WDT       ? "WDT"
+                    : rr == ESP_RST_BROWNOUT  ? "BROWNOUT"
+                    : rr == ESP_RST_DEEPSLEEP ? "DEEPSLEEP"
+                    : rr == ESP_RST_USB       ? "USB"
+                                              : "OTHER";
+    Log().printf("[boot] reset_reason=%s (%d)\n", n, (int)rr);
+  }
   // Capture the exact size of any failing allocation — above all the mbedtls TLS
   // session on a fragmented heap (-0x7F00) — with a rough backtrace to its call
   // site. Registered before anything allocates so no early failure is missed.
@@ -2446,9 +2465,9 @@ void loop() {
         map_leds, (unsigned)esp_get_free_heap_size(), heap_largest(),
         (unsigned)esp_get_minimum_free_heap_size());
 #else
-    Log().printf("[player-netstack] map=%lu leds heap=%u max=%u min=%u\n", map_leds,
+    Log().printf("[player-netstack] map=%lu leds heap=%u max=%u min=%u rekeys=%u\n", map_leds,
                  (unsigned)esp_get_free_heap_size(), heap_largest(),
-                 (unsigned)esp_get_minimum_free_heap_size());
+                 (unsigned)esp_get_minimum_free_heap_size(), (unsigned)netstack_rekey_count());
 #endif
   }
   delay(1);

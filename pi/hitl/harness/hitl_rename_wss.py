@@ -28,6 +28,7 @@ import threading
 import time
 from typing import Any
 
+import hitl_ws
 from python.runfiles import runfiles
 
 
@@ -42,7 +43,9 @@ def default_flashbundle() -> str | None:
         return None
 
 
-async def _rpc(sock, flat: dict[str, Any], expect: str, timeout: float = 15.0) -> dict[str, Any]:
+async def _rpc(
+    sock, flat: dict[str, Any], expect: str, timeout: float = hitl_ws.RPC_TIMEOUT
+) -> dict[str, Any]:
     from server import proto_wire
 
     await sock.send(proto_wire.encode_client(flat))
@@ -70,7 +73,7 @@ async def _connect_once(ws_url: str, insecure: bool):
     import websockets
 
     sock = await websockets.connect(
-        ws_url, max_size=2**22, ssl=_ssl_ctx(ws_url, insecure), open_timeout=8
+        ws_url, max_size=2**22, ssl=_ssl_ctx(ws_url, insecure), open_timeout=hitl_ws.OPEN_TIMEOUT
     )
     welcome = await _rpc(
         sock, {"type": "hello", "client": "rename_wss", "app_version": "1"}, "welcome"

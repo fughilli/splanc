@@ -132,6 +132,7 @@ bool g_have_offer = false, g_leased = false;
 const uint8_t GATEWAY[4] = {10, 42, 0, 1};
 bool g_pinged = false;
 bool g_hwkey = false;
+uint32_t g_rekey_serviced = 0; // count of AP group-key rekeys we ACKed (see handle_l3)
 void *g_trc = nullptr; // default TRC (ic_get_trc(0,0)) for the ppTxPkt HW-encrypt bridge
 bool g_tcp_started = false, g_tcp_requested = false;
 // De-risk the WSS server path: after the lease, LISTEN on :4433 and echo, instead of the
@@ -465,6 +466,21 @@ void send_ip(const uint8_t *ip, int iplen) {
   tx_l2(hdr, payload, 8 + iplen, nullptr);
 }
 
+// CCMP-encrypt + transmit an EAPOL-Key frame to the AP over the established link — the
+// group-key rekey ACK (Group message 2). Same protected data path as send_ip, but the
+// LLC/SNAP ethertype is 0x888E (EAPOL) rather than 0x0800 (IPv4).
+void send_eapol_encrypted(const uint8_t *eapol, int elen) {
+  uint8_t payload[256];
+  const uint8_t llc[] = {0xaa, 0xaa, 0x03, 0x00, 0x00, 0x00, 0x88, 0x8e};
+  memcpy(payload, llc, 8);
+  memcpy(payload + 8, eapol, elen);
+  uint8_t hdr[24]; // ToDS=1 + Protected=1; a1=g_bssid a2=us a3=g_bssid (gateway == AP)
+  hdr[0] = 0x08; hdr[1] = 0x41; hdr[2] = 0x00; hdr[3] = 0x00;
+  memcpy(hdr + 4, g_bssid, 6); memcpy(hdr + 10, OUR_MAC, 6); memcpy(hdr + 16, g_bssid, 6);
+  hdr[22] = 0x00; hdr[23] = 0x00;
+  tx_l2(hdr, payload, 8 + elen, "group-m2");
+}
+
 // Program the HW CCMP key slot for our pairwise key so the MAC hardware-decrypts
 // protected unicast to us (delivering plaintext) AND keeps hardware auto-ACK.
 void install_hw_key() {
@@ -554,6 +570,24 @@ void handle_arp(const uint8_t *pt, int pl) {
 }
 
 void handle_l3(const uint8_t *pt, int pl) {
+  // EAPOL-Key (ethertype 0x888E) over the established, encrypted link: the AP's periodic
+  // GROUP-KEY REKEY (message 1). If we ignore it, the authenticator times out the Group
+  // Key Handshake and DEAUTHs us (reason 16) — which used to strand the link mid-session
+  // (the fx_bench "board unreachable" wedge). Service it: the supplicant verifies the MIC,
+  // installs the fresh GTK, and returns Group message 2, which we send back CCMP-encrypted.
+  // (The reason-16 auto-rejoin remains as a backstop for any deauth we can't service here.)
+  if (pl > 8 + 4 && pt[6] == 0x88 && pt[7] == 0x8e) {
+    uint8_t reply[160];
+    uint32_t r = ns_wpa_on_eapol(pt + 8, (uint32_t)(pl - 8), reply, sizeof(reply));
+    uint32_t code = r >> 16, rl = r & 0xffff;
+    if (code >= 1 && rl > 0) {
+      send_eapol_encrypted(reply, (int)rl);
+      g_rekey_serviced++;
+    }
+    Serial.printf("[t=%lu] *** group-key rekey serviced #%u (code=%u reply=%u) ***\n",
+                  (unsigned long)millis(), (unsigned)g_rekey_serviced, code, rl);
+    return;
+  }
   if (pl <= 8 || pt[6] != 0x08) return; // not an EtherType we route
   if (pt[7] == 0x06) { handle_arp(pt, pl); return; } // ARP
   if (pt[7] != 0x00) return;            // only IPv4 past here
@@ -775,10 +809,15 @@ static bool tls_write_all(const uint8_t *buf, size_t len) {
       // Time-based deadline, not an iteration count: a burst of small replies can legitimately
       // back-pressure for a few RTOs (300ms, backed off), and an iteration cap could trip
       // BEFORE the first RTO even fires — dropping the connection mid-sweep. Give real loss
-      // several RTO/backoff cycles to recover before giving up.
+      // several RTO/backoff cycles to recover before giving up. The clock resets on ANY
+      // progress (above), so a slow-but-alive peer never trips it — only ZERO ACKs for the
+      // whole window. Bounded to 3s (was 8s): this loop runs on loopTask, so while it spins
+      // NOTHING else in the netstack is serviced — no RX, no ICMP, no reconnect-accept. A
+      // faster give-up caps that deafness (fx_bench saw a fast effect fill the window and a
+      // reply-write spin ~8s, going deaf mid-sweep); 3s is still many RTO/backoff cycles.
       uint32_t now = (uint32_t)millis();
       if (stall_since == 0) stall_since = now == 0 ? 1 : now;
-      else if (now - stall_since > 8000) return false;  // peer truly vanished
+      else if (now - stall_since > 3000) return false;  // peer truly vanished
     } else {
       return false;
     }
@@ -788,7 +827,10 @@ static bool tls_write_all(const uint8_t *buf, size_t len) {
 
 // Frame + send one server WS message (unmasked). Header + payload go out as ONE buffer so
 // a small reply is a single TLS record / TCP segment (no mid-message stop-and-wait stall).
-static void ws_send(uint8_t opcode, const uint8_t *payload, size_t len) {
+// Returns false if the write ultimately failed (tls_write_all gave up on a vanished peer) —
+// the caller tears the connection down so the single server slot is freed for the next client
+// instead of being held by a dead peer (a wss wedge). Best-effort callers may ignore it.
+static bool ws_send(uint8_t opcode, const uint8_t *payload, size_t len) {
   // Server replies come from the app's tx buffer (<=2KB); size the coalesce buffer to match
   // (the oversized path below handles anything larger). Small on purpose — see g_ws_rx note.
   static uint8_t frame[2560];
@@ -797,11 +839,11 @@ static void ws_send(uint8_t opcode, const uint8_t *payload, size_t len) {
   if (hn + len <= sizeof(frame)) {
     memcpy(frame, hdr, hn);
     if (len) memcpy(frame + hn, payload, len);
-    tls_write_all(frame, hn + len);
-  } else {  // oversized: header then payload (tls_write_all pumps the link between segments)
-    tls_write_all(hdr, hn);
-    if (len) tls_write_all(payload, len);
+    return tls_write_all(frame, hn + len);
   }
+  // oversized: header then payload (tls_write_all pumps the link between segments)
+  if (!tls_write_all(hdr, hn)) return false;
+  return len ? tls_write_all(payload, len) : true;
 }
 
 // Drive the WS layer once: pull TLS bytes, complete the upgrade, then dispatch any
@@ -854,9 +896,12 @@ static bool ws_pump() {
         // paths. Returns the reply length; reply bytes are in *reply (the app's tx buffer).
         const uint8_t *reply = nullptr;
         int tn = lm_ws_dispatch(payload, (size_t)h.payload_len, &reply);
-        if (tn > 0 && reply) ws_send(WS_OP_BINARY, reply, (size_t)tn);
+        // A reply that can't be delivered means the peer vanished mid-write: tear the
+        // connection down (return false) so the poll loop re-listens and frees the slot,
+        // rather than silently dropping the reply and holding a dead ESTABLISHED slot.
+        if (tn > 0 && reply && !ws_send(WS_OP_BINARY, reply, (size_t)tn)) return false;
       } else if (h.opcode == WS_OP_PING) {
-        ws_send(WS_OP_PONG, payload, h.payload_len);
+        if (!ws_send(WS_OP_PONG, payload, h.payload_len)) return false;
       } else if (h.opcode == WS_OP_CLOSE) {
         return false;
       }
@@ -887,6 +932,9 @@ bool netstack_ws_is_open() { return g_tls_hs && g_ws_up; }
 
 bool netstack_ws_send(const uint8_t *data, size_t len) { return netstack_ws_send_frame(data, len); }
 bool netstack_ws_open() { return netstack_ws_is_open(); }
+// External linkage (g_rekey_serviced lives in the anonymous namespace above but is visible
+// in this TU): count of AP group-key rekeys serviced, surfaced in the status line.
+uint32_t netstack_rekey_count() { return g_rekey_serviced; }
 
 // Bring up the heapless WiFi transport. Call from the app's setup() AFTER the shared player
 // init + improv_ble_begin (BLE must init before we hijack the MAC so our radio setup wins).
@@ -1111,6 +1159,31 @@ void netstack_loop() {
       uint16_t status = rx[26] | (rx[27] << 8);
       Serial.printf("assoc status=%u\n", status);
       if (status == 0) { st = FOURWAY; Serial.println("ASSOCIATED -> 4-way"); }
+    } else if ((rx[0] == 0xc0 || rx[0] == 0xa0) && st != AUTH) { // deauth / disassoc from our AP
+      // The AP dropped us mid-session (missed beacons under heavy FULL-perf render load,
+      // an AP inactivity/keepalive timeout, roaming, or RF). Nothing used to handle this:
+      // `st` stayed DONE, so TX kept going into the void and RX was dead — we never
+      // re-joined, so the board rendered on but was PERMANENTLY UNREACHABLE and never
+      // rebooted. This is the fx_bench "board unreachable" wedge, confirmed via a
+      // non-resetting serial capture (frames kept logging + PINGs went out but zero
+      // replies came back). Re-drive the join from AUTH — the PMK is cached, so
+      // re-auth/assoc/4-way is quick — and reset the now-dead lease + TCP/TLS/WS so the
+      // server re-listens on the fresh link.
+      uint16_t reason = (n >= 26) ? (uint16_t)(rx[24] | (rx[25] << 8)) : 0;
+      Serial.printf("[t=%lu] *** WiFi %s (reason=%u) — re-joining ***\n",
+                    (unsigned long)millis(), rx[0] == 0xc0 ? "DEAUTH" : "DISASSOC", reason);
+      st = AUTH;
+      inited = false;
+      t = 0;
+      g_leased = false;
+      g_tcp_started = false;
+      if (TLS_SERVER) {
+        mbedtls_ssl_session_reset(&g_ssl);
+        g_tls_hs = false;
+        g_ws_up = false;
+        g_ws_rxlen = 0;
+      }
+      g_bio_tx = g_bio_rx = 0;
     } else if ((rx[0] & 0x0c) == 0x08 && st == FOURWAY) { // EAPOL data
       const uint8_t *eb; int el = eapol_body(rx, n, &eb);
       if (el > 4) {
@@ -1342,6 +1415,64 @@ void netstack_loop() {
     static uint32_t last_state = 99;
     uint32_t s = ns_tcp_state();
     if (s != last_state) { Serial.printf("*** SERVER state -> %u ***\n", s); last_state = s; }
+    // Reclaim a wedged half-open connection. A concurrent-handshake burst (the tls_churn
+    // stress) can leave the single connection slot stuck ESTABLISHED with the client gone
+    // mid-TLS-handshake (or pre-WS): the s==4/0 re-listen below never fires (the peer sent no
+    // FIN), so every later client is rejected — a persistent wss wedge. The write-stall guard
+    // (tls_write_all) only covers a stalled reply, not the accept/handshake phase. So bound
+    // the not-yet-serving stretch: once ESTABLISHED-but-not-up exceeds a few seconds (a real
+    // handshake+WS completes in <3s), force a fresh listener — ns_tcp_listen swaps the conn to
+    // a clean LISTEN state — abandoning the dead peer and freeing the slot for the next client.
+    {
+      static uint32_t est_since = 0;
+      bool up = TLS_SERVER ? (PLAYER_MODE ? g_ws_up : g_tls_hs) : true;
+      if (s == 2 && !up) {
+        if (est_since == 0) est_since = millis() == 0 ? 1 : millis();
+        else if (millis() - est_since > 8000) {
+          Serial.println("*** SERVER half-open handshake wedge — reclaiming (re-listen) ***");
+          static uint32_t riss = 0x5000;
+          ns_tcp_listen(g_offer_ip, SERVER_PORT, riss);
+          riss += 0x1000;
+          if (TLS_SERVER) { mbedtls_ssl_session_reset(&g_ssl); g_tls_hs = false; g_ws_up = false; g_ws_rxlen = 0; }
+          g_bio_tx = g_bio_rx = 0;
+          est_since = 0;
+          last_state = 99;      // re-log SERVER state on the next scan
+          s = ns_tcp_state();   // now LISTEN — skip the stale handshake drive below this scan
+        }
+      } else {
+        est_since = 0;
+      }
+    }
+    // Post-WS peer-gone reclaim. The block above only catches a wedge BEFORE the WS is up.
+    // Once UPGRADED (up==true), a peer that vanishes mid-stream — a client crash, a network
+    // drop, or a benchmark host that stopped reading (fx_bench's "board unreachable after
+    // sweep16") — sends no FIN, and unsolicited perf pushes are best-effort (dropped on a full
+    // window, not torn down), so nothing frees the single slot and every later client is
+    // rejected. Liveness signal: a live reader keeps ACKing, so our send window keeps draining
+    // and tx_room recovers; a dead peer never ACKs and the window stays pinned near-empty. If
+    // it can't hold even a small frame for 6s straight (well past any legitimate LAN burst),
+    // treat the peer as gone and re-listen — dropping at most one genuinely slow client, which
+    // simply reconnects, in exchange for never staying permanently unreachable.
+    {
+      static uint32_t txstuck_since = 0;
+      bool up = TLS_SERVER ? (PLAYER_MODE ? g_ws_up : g_tls_hs) : true;
+      if (s == 2 && up && ns_tcp_tx_room() < 512) {
+        if (txstuck_since == 0) txstuck_since = millis() == 0 ? 1 : millis();
+        else if (millis() - txstuck_since > 6000) {
+          Serial.println("*** SERVER post-WS peer-gone wedge (tx window pinned) — reclaiming (re-listen) ***");
+          static uint32_t piss = 0x6000;
+          ns_tcp_listen(g_offer_ip, SERVER_PORT, piss);
+          piss += 0x1000;
+          if (TLS_SERVER) { mbedtls_ssl_session_reset(&g_ssl); g_tls_hs = false; g_ws_up = false; g_ws_rxlen = 0; }
+          g_bio_tx = g_bio_rx = 0;
+          txstuck_since = 0;
+          last_state = 99;      // re-log SERVER state on the next scan
+          s = ns_tcp_state();   // now LISTEN — skip the stale handshake drive below this scan
+        }
+      } else {
+        txstuck_since = 0;  // window draining (or not up) — peer is alive
+      }
+    }
     if (s == 2 && TLS_SERVER) { // Established: drive the TLS handshake, then read+echo
       if (!g_tls_hs) {
         static int last_hstate = -1;

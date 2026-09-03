@@ -36,6 +36,7 @@ import sys
 import time
 from typing import Any
 
+import hitl_ws
 from map_upload_core import synth_output_map, synth_topology, window_plan
 
 
@@ -60,7 +61,9 @@ def default_flashbundle() -> str | None:
 # -- WebSocket plumbing (mirrors hitl_mapping / fx_bench) ---------------------
 
 
-async def _rpc(sock, flat: dict[str, Any], expect: str, timeout: float = 15.0) -> dict[str, Any]:
+async def _rpc(
+    sock, flat: dict[str, Any], expect: str, timeout: float = hitl_ws.RPC_TIMEOUT
+) -> dict[str, Any]:
     from server import proto_wire
 
     await sock.send(proto_wire.encode_client(flat))
@@ -85,7 +88,9 @@ async def _open_ws(ws_url: str, insecure: bool, settle_deadline: float):
             ssl_ctx.verify_mode = ssl.CERT_NONE
     while True:
         try:
-            sock = await websockets.connect(ws_url, max_size=2**22, ssl=ssl_ctx, open_timeout=8)
+            sock = await websockets.connect(
+                ws_url, max_size=2**22, ssl=ssl_ctx, open_timeout=hitl_ws.OPEN_TIMEOUT
+            )
             await _rpc(
                 sock, {"type": "hello", "client": "hitl_map_upload", "app_version": "1"}, "welcome"
             )
@@ -170,7 +175,7 @@ async def _run(ws_url: str, n_leds: int, insecure: bool) -> bool:
     # --erase-fs flash it reformats littlefs, joins WiFi, re-issues the LAN cert
     # and restarts the TLS server, which occasionally exceeds 25s (that race is
     # what reddened CI). 60s is pure slack — a warm DUT answers on the first try.
-    sock = await _open_ws(ws_url, insecure, time.monotonic() + 60.0)
+    sock = await _open_ws(ws_url, insecure, time.monotonic() + hitl_ws.CONNECT_SETTLE)
     try:
         # (1) + (2): the uploads themselves. A dropped socket / OOM raises here.
         got_map_id = await _submit_chunked(sock, map_flat, "MAP", 1, "map")

@@ -45,6 +45,7 @@ import sys
 import time
 
 import board_caps
+import hitl_ws
 from hitl_client import Reservation, ReserveError
 from provision import HarnessError as E2EFailure
 from provision import dut_target, ensure_booted, provision_dut
@@ -98,7 +99,9 @@ async def _ws_checks(
 
     async def rpc(sock, flat: dict, expect: str) -> dict:
         await sock.send(proto_wire.encode_client(flat))
-        reply = proto_wire.decode_server(await asyncio.wait_for(sock.recv(), timeout=5.0))
+        reply = proto_wire.decode_server(
+            await asyncio.wait_for(sock.recv(), timeout=hitl_ws.RPC_TIMEOUT)
+        )
         if reply.get("type") != expect:
             raise E2EFailure(f"{flat['type']}: expected {expect}, got {reply}")
         return reply
@@ -110,10 +113,12 @@ async def _ws_checks(
     # 25s window (that race reddened map_upload in CI). Retry the initial open
     # rather than fail the whole run on that transient; 60s is pure slack.
     print(f"[ws] connecting {ws_url}", flush=True)
-    deadline = time.monotonic() + 60.0
+    deadline = time.monotonic() + hitl_ws.CONNECT_SETTLE
     while True:
         try:
-            sock = await websockets.connect(ws_url, max_size=2**22, ssl=ssl_ctx, open_timeout=8)
+            sock = await websockets.connect(
+                ws_url, max_size=2**22, ssl=ssl_ctx, open_timeout=hitl_ws.OPEN_TIMEOUT
+            )
             break
         except (OSError, TimeoutError, websockets.exceptions.WebSocketException) as e:
             if time.monotonic() >= deadline:
