@@ -52,6 +52,7 @@ py_library(
         "hardware_config_pattern.py",
         "hitl_client.py",
         "hitl_improv.py",
+        "hitl_ws.py",
         "improv.py",
         "jit_soak_core.py",
         "led_pattern.py",

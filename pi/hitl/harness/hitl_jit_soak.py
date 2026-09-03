@@ -48,6 +48,7 @@ import threading
 import time
 from typing import Any
 
+import hitl_ws
 from fx_bench_core import intended_led_count
 from jit_soak_core import evaluate_soak, format_report
 
@@ -115,7 +116,9 @@ def _linear_map(n: int) -> dict[str, Any]:
     return {"type": "submit_map", "map": {"map_id": "__soak", "led_count": n, "leds": leds}}
 
 
-async def _rpc(sock, flat: dict[str, Any], expect: str, timeout: float = 8.0) -> dict[str, Any]:
+async def _rpc(
+    sock, flat: dict[str, Any], expect: str, timeout: float = hitl_ws.RPC_TIMEOUT
+) -> dict[str, Any]:
     from server import proto_wire
 
     await sock.send(proto_wire.encode_client(flat))
@@ -145,7 +148,10 @@ async def _open_ws(ws_url: str, insecure: bool, settle_deadline: float):
     while True:
         try:
             sock = await websockets.connect(
-                ws_url, max_size=2**22, ssl=_ssl_ctx(ws_url, insecure), open_timeout=8
+                ws_url,
+                max_size=2**22,
+                ssl=_ssl_ctx(ws_url, insecure),
+                open_timeout=hitl_ws.OPEN_TIMEOUT,
             )
             await _rpc(sock, {"type": "hello", "client": "jit_soak", "app_version": "1"}, "welcome")
             return sock
@@ -166,7 +172,7 @@ async def _soak_over_ws(
     from server import proto_wire
 
     _log(f"[ws] connecting {ws_url}")
-    sock = await _open_ws(ws_url, insecure, time.monotonic() + 60.0)
+    sock = await _open_ws(ws_url, insecure, time.monotonic() + hitl_ws.CONNECT_SETTLE)
 
     # Pin the JIT state for this run BEFORE the submit_effect (it takes effect on
     # the next load). The shipped firmware defaults the JIT ON; we send it anyway

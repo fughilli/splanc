@@ -58,6 +58,7 @@ import tempfile
 import time
 from typing import Any
 
+import hitl_ws
 from fx_bench_core import (
     assemble_bundle,
     bundle_to_golden,
@@ -177,7 +178,9 @@ def discover_benchmarks(bench_dir: str) -> tuple[list[str], list[str]]:
     return fit, held
 
 
-async def _rpc(sock, flat: dict[str, Any], expect: str, timeout: float = 6.0) -> dict[str, Any]:
+async def _rpc(
+    sock, flat: dict[str, Any], expect: str, timeout: float = hitl_ws.RPC_TIMEOUT
+) -> dict[str, Any]:
     from server import proto_wire
 
     await sock.send(proto_wire.encode_client(flat))
@@ -216,7 +219,7 @@ async def _submit_map(sock, led_count: int) -> None:
     frame = proto_wire.encode_client(flat)
     windows = window_plan(len(frame))
     if len(windows) <= 1:
-        await _rpc(sock, flat, "result_ready", timeout=8.0)
+        await _rpc(sock, flat, "result_ready")
         return
     _map_upload_id += 1
     uid = _map_upload_id
@@ -229,7 +232,7 @@ async def _submit_map(sock, led_count: int) -> None:
             "kind": "MAP",
             "payload": base64.b64encode(frame[off:end]).decode("ascii"),
         }
-        await _rpc(sock, chunk, "result_ready" if last else "chunk_ack", timeout=8.0)
+        await _rpc(sock, chunk, "result_ready" if last else "chunk_ack")
 
 
 async def measure_program(
@@ -296,7 +299,9 @@ async def _open_ws(ws_url: str, args, settle_deadline: float):
             ssl_ctx.verify_mode = ssl.CERT_NONE
     while True:
         try:
-            sock = await websockets.connect(ws_url, max_size=2**22, ssl=ssl_ctx, open_timeout=8)
+            sock = await websockets.connect(
+                ws_url, max_size=2**22, ssl=ssl_ctx, open_timeout=hitl_ws.OPEN_TIMEOUT
+            )
             await _rpc(sock, {"type": "hello", "client": "fx_bench", "app_version": "1"}, "welcome")
             # Pin the JIT state for this run BEFORE any submit_effect (it takes
             # effect on the next load). Fire-and-forget; re-sent on every reconnect
@@ -329,7 +334,7 @@ async def _measure(ws_url: str, fit_src, held_src, args) -> tuple[list, list, in
     try:
         # 60s: a cold --erase-fs flash + LAN-cert reissue can be slow to bring
         # up the socket. Slack only — a warm DUT answers on the first attempt.
-        sock = await _open_ws(ws_url, args, time.monotonic() + 60.0)
+        sock = await _open_ws(ws_url, args, time.monotonic() + hitl_ws.CONNECT_SETTLE)
     except WsUnavailable as e:
         raise SystemExit(str(e))  # nothing measured yet — a hard failure
 
@@ -385,7 +390,9 @@ async def _measure(ws_url: str, fit_src, held_src, args) -> tuple[list, list, in
                     # The board may be rebooting (auto-resuming the persisted
                     # effect); give it room and re-establish before retrying.
                     try:
-                        sock = await _open_ws(ws_url, args, time.monotonic() + 45.0)
+                        sock = await _open_ws(
+                            ws_url, args, time.monotonic() + hitl_ws.RECONNECT_SETTLE
+                        )
                     except WsUnavailable:
                         # Board isn't coming back (a program may be crash-looping
                         # via auto-resume). Keep what we measured rather than lose

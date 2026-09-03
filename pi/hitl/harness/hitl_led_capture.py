@@ -62,6 +62,7 @@ import sys
 import time
 from typing import Dict, List, Tuple
 
+import hitl_ws
 from hardware_config_pattern import expected_decoded_pixels
 from hitl_client import Reservation, ReserveError
 from led_pattern import (
@@ -134,7 +135,9 @@ async def _connect_ws(ws_url: str, ssl_ctx, settle_s: float = 30.0):
     deadline = time.monotonic() + settle_s
     while True:
         try:
-            return await websockets.connect(ws_url, max_size=2**22, ssl=ssl_ctx, open_timeout=8)
+            return await websockets.connect(
+                ws_url, max_size=2**22, ssl=ssl_ctx, open_timeout=hitl_ws.OPEN_TIMEOUT
+            )
         except (OSError, asyncio.TimeoutError, websockets.exceptions.WebSocketException) as e:
             if time.monotonic() >= deadline:
                 raise
@@ -156,7 +159,9 @@ async def _drive_pattern(ws_url: str, insecure: bool) -> None:
     async def rpc(sock, flat, expect):
         await sock.send(proto_wire.encode_client(flat))
         while True:
-            msg = proto_wire.decode_server(await asyncio.wait_for(sock.recv(), timeout=15))
+            msg = proto_wire.decode_server(
+                await asyncio.wait_for(sock.recv(), timeout=hitl_ws.RPC_TIMEOUT)
+            )
             if msg.get("type") == expect:
                 return msg
             if msg.get("type") == "error":
@@ -215,7 +220,9 @@ async def _drive_order(ws_url: str, insecure: bool, order: str) -> None:
     async def rpc(sock, flat, expect):
         await sock.send(proto_wire.encode_client(flat))
         while True:
-            msg = proto_wire.decode_server(await asyncio.wait_for(sock.recv(), timeout=15))
+            msg = proto_wire.decode_server(
+                await asyncio.wait_for(sock.recv(), timeout=hitl_ws.RPC_TIMEOUT)
+            )
             if msg.get("type") == expect:
                 return msg
             if msg.get("type") == "error":
@@ -444,7 +451,9 @@ async def _drive_two_channel(ws_url: str, insecure: bool, half0: int, half1: int
     async def rpc(sock, flat, expect):
         await sock.send(proto_wire.encode_client(flat))
         while True:
-            msg = proto_wire.decode_server(await asyncio.wait_for(sock.recv(), timeout=15))
+            msg = proto_wire.decode_server(
+                await asyncio.wait_for(sock.recv(), timeout=hitl_ws.RPC_TIMEOUT)
+            )
             if msg.get("type") == expect:
                 return msg
             if msg.get("type") == "error":
@@ -524,7 +533,9 @@ async def _drive_fx(ws_url: str, insecure: bool, fxb_b64: str, jit: bool, leds: 
     async def rpc(sock, flat, expect):
         await sock.send(proto_wire.encode_client(flat))
         while True:
-            msg = proto_wire.decode_server(await asyncio.wait_for(sock.recv(), timeout=15))
+            msg = proto_wire.decode_server(
+                await asyncio.wait_for(sock.recv(), timeout=hitl_ws.RPC_TIMEOUT)
+            )
             if msg.get("type") == expect:
                 return msg
             if msg.get("type") == "error":
