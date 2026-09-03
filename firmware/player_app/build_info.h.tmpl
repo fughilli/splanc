@@ -10,5 +10,7 @@
 #define LM_GIT_COMMIT_SHORT "@STABLE_GIT_COMMIT_SHORT@"
 // 1 when the working tree had uncommitted changes at build time, else 0.
 #define LM_GIT_DIRTY @STABLE_GIT_DIRTY@
+// Release version from the nearest firmware-v* tag (e.g. "1.2.0"), or "0.0.0-dev".
+#define LM_VERSION "@STABLE_FIRMWARE_VERSION@"
 
 #endif  // FIRMWARE_PLAYER_APP_BUILD_INFO_H_
